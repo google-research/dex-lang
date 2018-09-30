@@ -2,6 +2,7 @@ import System.Console.Haskeline
 import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
+import Data.List
 import Text.ParserCombinators.Parsec
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
@@ -105,7 +106,9 @@ term =   parens expr
 opNames = ["+", "*", "/", "-"]
 resNames = ["let", "in"]
 languageDef = haskellStyle { Token.reservedOpNames = opNames
-                           , Token.reservedNames   = resNames}
+                           , Token.reservedNames   = resNames
+                           , Token.commentLine     = "--"
+                           }
 lexer = Token.makeTokenParser languageDef
 identifier = Token.identifier lexer
 parens     = Token.parens     lexer
@@ -142,26 +145,31 @@ arrExpr = do
   return $ Arr v body
 
 expr :: Parser Expr
-expr = buildExpressionParser ops term
+expr = buildExpressionParser ops (whiteSpace >> term)
 
 parseExpr = parse expr ""
 
 -- -------------------- try it out --------------------
 
-testCases = [  "1 + 1"
-            ,  "1 + 2 * 3 + 4"
-            ,  "let x = 2 in x * 3"
-            ,  "(\\x -> x + x) 1"
-            ,  "let f = (\\x -> x + x) in f (1 + 1)"
-            ,  "[i: x[i] + x[i]]"
-            ]
+-- showParse _ = ""
+showParse p = "Parse: " ++ (show $ p) ++ "\n"
 
-processLine :: String -> String
-processLine line = "Source :  " ++ line ++ "\n" ++
+evalSource :: String -> String
+evalSource line =
   case parseExpr line of
     Left e ->  "Parse error:\n" ++ show e
-    Right r -> "Parse  : " ++ (show $ r) ++ "\nValue  : " ++ (show $ eval r Map.empty)
-  ++ "\n"
+    Right r -> showParse r ++ (show $ eval r Map.empty)
+
+splitString :: Char -> String -> [String]
+splitString c s = case dropWhile (== c) s of
+             ""   -> []
+             rest -> prefix : splitString c rest'
+                     where (prefix, rest') = break (== c) rest
+
+evalMultiSource :: String -> String
+evalMultiSource s = let results = map evalSource $ splitString '~' s
+                    in concat $ intersperse "\n\n" results
+
 
 repl :: IO ()
 repl = runInputT defaultSettings loop
@@ -170,19 +178,17 @@ repl = runInputT defaultSettings loop
     minput <- getInputLine "> "
     case minput of
       Nothing -> return ()
-      Just line -> (liftIO . putStrLn . processLine $ line)
+      Just line -> (liftIO . putStrLn . evalSource $ line)
                    >> loop
 
-runTests :: IO ()
-runTests = loop testCases
-  where
-    loop tests = do
-      case tests of
-        [] -> return ()
-        t:ts -> (putStrLn $ processLine t) >> loop ts
+evalFile :: IO ()
+evalFile = do
+    source <- readFile "examples.cd"
+    putStrLn $ evalMultiSource source
+    return ()
 
 main :: IO ()
-main = runTests
+main = evalFile
 
 
 -- ---------- TODO ----------
