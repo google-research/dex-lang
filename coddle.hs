@@ -1,4 +1,5 @@
 import System.Console.Haskeline
+import System.Environment
 import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
@@ -181,15 +182,18 @@ repl = runInputT defaultSettings loop
       Just line -> (liftIO . putStrLn . evalSource $ line)
                    >> loop
 
-evalFile :: IO ()
-evalFile = do
-    source <- readFile "examples.cd"
+evalFile :: String -> IO ()
+evalFile s = do
+    source <- readFile s
     putStrLn $ evalMultiSource source
     return ()
 
 main :: IO ()
-main = evalFile
-
+main = do
+  args <- getArgs
+  case args of
+    fname:[] -> evalFile fname
+    []       -> repl
 
 -- ---------- TODO ----------
 
@@ -202,9 +206,6 @@ main = evalFile
 
 -- types (syntax)
 -- type checking/inference
-
--- optional script arg (that switches interaction mode or not)
-
 
 -- think about
 --   reduce

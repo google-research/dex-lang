@@ -6,6 +6,7 @@ let x = 2 in x * 3
 ~
 (\x -> x + x) 1
 ~
-let f = (\x -> x + x) in f (1 + 1)
+let f = (\x -> x + x)
+ in f (1 + 1)
 ~
 [i: x[i] + x[i]]
