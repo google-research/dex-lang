@@ -1,3 +1,5 @@
+{-# LANGUAGE GADTs #-}
+
 module Interpreter (Expr (..), BinOpName (..), evalClosed) where
 
 import qualified Data.Map.Strict as Map
@@ -12,6 +14,46 @@ data Expr = BinOp BinOpName Expr Expr
           | IdxComp IdxVarName Expr
           | Get Expr IdxVarName
           deriving (Show)
+
+data TExpr env ienv t where
+  TLit  :: Integer -> TExpr env ienv Integer
+  TVar  :: TVar env t -> TExpr env ienv t
+  TLet  :: TExpr env ienv a -> TExpr (a, env) ienv b -> TExpr env ienv b
+  TLam  :: TExpr (a,env) ienv b -> TExpr env ienv (a -> b)
+  TApp  :: TExpr env ienv (a -> b) -> TExpr env ienv a -> TExpr env ienv b
+  TComp :: TExpr env (i, ienv) t -> TExpr env ienv t
+  TGet  :: TExpr env ienv t -> IVar ienv -> TExpr env ienv t
+  TBinOp:: BinOpName -> TExpr env ienv Integer -> TExpr env ienv Integer
+                                               -> TExpr env ienv Integer
+
+data TVar env t where
+  VZ :: TVar (t, env) t  -- s/env/()/ ?
+  VS :: TVar env t -> TVar (a, env) t
+
+data IVar ienv where
+  IVZ :: IVar ((), env)
+  IVS :: IVar env -> IVar ((), env)
+
+-- typeEvalShow :: Expr -> String
+-- typeEvalShow = undefined
+
+
+evalTyped :: env -> ienv -> TExpr env ienv t -> t
+evalTyped _ _ (TLit x) = x
+evalTyped env _ (TVar v) = lookp v env
+-- evalTyped env _ (TVar v) = lookp v env
+
+lookp :: TVar env t -> env -> t
+lookp = undefined
+
+
+
+-- typeExpr :: Expr -> TExpr env ienv t
+-- typeExpr (Lit x) = TLit x
+-- typeExpr (Lit x) = TLit x
+
+
+
 
 data BinOpName = Add | Mul | Sub | Div deriving (Show)
 
@@ -44,8 +86,8 @@ promoteKey n x = transpose $ valMapMap (promoteKey (n-1)) x
 
 transpose :: ValMap -> ValMap
 transpose (BMap.Dict m) = undefined
--- transpose (BMap.Broadcast v) = case v of
---    MapVal v' -> BMap.map (MapVal . BMap.Broadcast)   v'
+transpose (BMap.Broadcast v) = case v of
+   MapVal v' -> BMap.map (MapVal . BMap.Broadcast)   v'
 
 
 valMapMap :: (ValMap -> ValMap) -> ValMap -> ValMap
