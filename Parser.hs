@@ -76,4 +76,4 @@ arrExpr = do
   str ":"
   body <- expr
   str "]"
-  return $ Arr v body
+  return $ IdxComp v body

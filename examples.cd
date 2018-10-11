@@ -13,4 +13,4 @@ let f = \x -> let y = x + x
               in y + y
 in f (1 + 1)
 ~
-[i: x[i] + x[i]]
+[i: d[i] + d[i]]

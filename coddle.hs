@@ -27,7 +27,6 @@ evalMultiSource :: String -> String
 evalMultiSource s = let results = map evalSource $ splitString '~' s
                     in concat $ intersperse "\n\n" results
 
-
 repl :: IO ()
 repl = runInputT defaultSettings loop
   where
@@ -53,11 +52,11 @@ main = do
 
 -- ---------- TODO ----------
 
--- alpha abstraction and application
---   syntax
---   eval
+-- eval index comprehensions
 
--- handle multiple vars (desugaring to single ones)
+-- builtins as syntactically the same as biops
+-- make it monadic
+-- handle multiple vars/idxvars (desugaring to single ones)
 -- indentation and top-level functions?
 
 -- types (syntax)
@@ -66,3 +65,7 @@ main = do
 -- think about
 --   reduce
 --   binary op loop
+
+-- emit LLVM for actual compilation?
+
+-- syntax for pinning layouts?
