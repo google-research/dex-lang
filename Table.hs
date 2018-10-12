@@ -4,7 +4,11 @@ import Prelude hiding (map, lookup)
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-data Table a b = Table [Bool] (M.Map [a] b)  deriving (Show)
+data Table a b = Table [Bool] (M.Map [a] b)
+
+instance (Show a, Show b) => Show (Table a b) where
+  show (Table mask m) = show (M.toList m)
+
 
 scalar ::  Ord a => b -> Table a b
 scalar x = Table [] $ M.singleton [] x
@@ -93,7 +97,11 @@ splitList (v:vs) (x:xs) = let (ys, zs) = splitList vs xs
                                False -> (x:ys, zs)
 
 mergeList :: [Bool] -> [Bool] -> ([a], [a], [a]) -> [a]
-mergeList = undefined
+mergeList [] [] ([], [], []) = []
+mergeList (False:m1) (False:m2) (  xs,   ys,   zs) =   (mergeList m1 m2 (xs, ys, zs))
+mergeList (False:m1) (True:m2)  (  xs, y:ys,   zs) = y:(mergeList m1 m2 (xs, ys, zs))
+mergeList (True:m1)  (False:m2) (x:xs,   ys,   zs) = x:(mergeList m1 m2 (xs, ys, zs))
+mergeList (True:m1)  (True:m2)  (  xs,   ys, z:zs) = z:(mergeList m1 m2 (xs, ys, zs))
 
 unflatten2 :: (Ord k1, Ord k2) => M.Map (k1,k2) a -> Map2 k1 k2 a
 unflatten2 m = let l = [(k1, [(k2, v)]) | ((k1, k2), v) <- M.toList m]
