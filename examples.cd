@@ -13,4 +13,5 @@ let f = \x -> let y = x + x
               in y + y
 in f (1 + 1)
 ~
-[i: d[i] + d[i]]
+let d = iota 3
+ in [i: d[i] + d[i]]

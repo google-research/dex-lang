@@ -4,8 +4,7 @@
 module Interpreter (Expr (..), BinOpName (..)) where
 
 import qualified Data.Map.Strict as Map
-import qualified BMap as BMap
--- import qualified Table as Table
+import qualified Table as Table
 
 
 data Expr = BinOp BinOpName Expr Expr
@@ -17,20 +16,52 @@ data Expr = BinOp BinOpName Expr Expr
           | Get Expr Integer
           deriving (Show)
 
-
-
-
--- data Type = ArrowT Type Type | TableT [Integer] Integer
 data BinOpName = Add | Mul | Sub | Div deriving (Show)
--- data Val = TableVal Table | LamVal Env IdxEnv VarName Expr deriving (Show)
--- type Env = Map.Map VarName Val
 
--- evalGet :: IdxVarName -> IdxEnv -> Val -> Val
--- evalGet iv (cur_iv:rest) (MapVal m)
---      | iv == cur_iv = let f = MapVal . promoteKey (length rest) . unMapVal
---                       in  zipIdxs $ BMap.map f m
---      | otherwise = MapVal $ BMap.map (evalGet iv rest) m
+-- rank: what's the semantic rank of the table
+-- idepth : how many dynamically enclosing indices do we have
+-- ienv :: list of
 
+data Val = TableVal (Table Integer Integer) Rank [Integer]
+         | LamVal Env IEnv Expr deriving (Show)
+type IEnv = (Integer, [Integer]) -- depth, and positions of in-scope indices
+type Env = [Val]
+type Rank = Integer
+
+eval :: Expr -> Env -> IEnv -> Val
+eval (Lit c) _ _ = TableVal (Table.scalar c)
+eval (Var v) env _ = env !! v
+eval (BinOp b e1 e2) env ienv = let v1 = eval e1 env ienv
+                                    v2 = eval e2 env ienv
+                                in evalBinOp b v1 v2
+eval (Lam body) env ienv = LamVal env ienv body
+eval (App fexpr arg) env =
+    let f = eval fexpr env ienv
+        x = eval arg env ienv
+        (d, _) = ienv
+    in case f of
+        LamVal env' (_, idxs) body -> eval body (x:env') (d, idxs)
+
+eval (IdxComp body) env (d, idxs) = let ienv' = ((d + 1), d:idxs) in
+                                    case eval body env ienv' of
+                                      TableVal t r -> TableVal t (r + 1)
+eval (Get e i) env ienv = let (_, idxs) = ienv
+                              i' = idxs !! i
+                          in case eval e env ienv of
+              TableVal t r -> TableVal $ (Table.diag t i' r) (r - 1)
+
+evalBinOp :: BinOpName -> Val -> Val -> Val
+evalBinOp b (TableVal t1) (TableVal t2) =
+    TableVal $ Table.intersectionWith (evalBinOp b) t1 t2
+
+evalBinOpFun Add = (+)
+evalBinOpFun Mul = (*)
+evalBinOpFun Sub = (-)
+
+
+-- ienv
+-- rank
+-- which indices point to what
 
 -- unMapVal :: Val -> ValMap
 -- unMapVal (MapVal m) = m
@@ -63,24 +94,6 @@ data BinOpName = Add | Mul | Sub | Div deriving (Show)
 
 -- -- evalGet (Dict (MapVal (Broadcast v)) iv (curIEnv:[]) | iv == curIEnv =
 
--- eval :: Expr -> Env -> IdxEnv -> Val
--- eval (Lit c) _ ienv = lift (length ienv) (IntVal c)
--- eval (Var v) env _ = case Map.lookup v env of
---                      Just val -> val
---                      Nothing -> error $ "Undefined variable: " ++ show v
--- eval (BinOp b e1 e2) env ienv = let v1 = eval e1 env ienv
---                                     v2 = eval e2 env ienv
---                                 in evalBinOp b v1 v2
--- eval (Let v bound body) env ienv = let boundVal = eval bound env ienv
---                                        newEnv = Map.insert v boundVal env
---                                    in eval body newEnv ienv
--- eval (Lam v body) env ienv = LamVal env ienv v body
--- eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
---                                     x = eval arg env ienv
---                                 in evalApp f x
--- eval (IdxComp iv body) env ienv = eval body (Map.map (lift 0) env) (iv:ienv)
--- eval (Get e iv) env ienv = let v = eval e env ienv
---                            in evalGet iv ienv v
 
 -- dummyVal :: Val
 -- dummyVal = (MapVal . BMap.fromList) [(0, IntVal 10), (1, IntVal 20)]
@@ -100,14 +113,6 @@ data BinOpName = Add | Mul | Sub | Div deriving (Show)
 -- evalClosed :: Expr -> Val
 -- evalClosed e = eval e emptyEnv []
 
--- evalBinOp :: BinOpName -> Val -> Val -> Val
--- evalBinOp b (IntVal v1) (IntVal v2) = IntVal $ evalBinOpFun b v1 v2
--- evalBinOp b (MapVal m1) (MapVal m2) =
---     MapVal $ BMap.intersectionWith (evalBinOp b) m1 m2
-
--- evalBinOpFun Add = (+)
--- evalBinOpFun Mul = (*)
--- evalBinOpFun Sub = (-)
 
 
 -- -- typed experiments
@@ -144,5 +149,3 @@ data BinOpName = Add | Mul | Sub | Div deriving (Show)
 -- -- typeExpr :: Expr -> TExpr env ienv t
 -- -- typeExpr (Lit x) = TLit x
 -- -- typeExpr (Lit x) = TLit x
-
-
