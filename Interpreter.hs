@@ -1,41 +1,50 @@
 {-# LANGUAGE GADTs #-}
 
--- module Interpreter (Expr (..), BinOpName (..), evalClosed) where
-module Interpreter (Expr (..), BinOpName (..)) where
+module Interpreter (Expr (..), BinOpName (..), evalClosed) where
 
 import qualified Data.Map.Strict as Map
 import qualified Table as Table
 
 
 data Expr = BinOp BinOpName Expr Expr
-          | Lit Integer
-          | Var Integer
+          | Lit Int
+          | Var Int
           | Lam Expr
           | App Expr Expr
           | IdxComp Expr
-          | Get Expr Integer
+          | Get Expr Int
           deriving (Show)
 
 data BinOpName = Add | Mul | Sub | Div deriving (Show)
+data UnOpName = Iota deriving (Show)
 
--- rank: what's the semantic rank of the table
--- idepth : how many dynamically enclosing indices do we have
+-- example:
+-- index env depth : how many dynamically enclosing indices do we have
+-- index env:  (5, [0, 2])
+-- rank: 4
+    --                     1   0  --rank---
+-- table indices: [... * * * * * | * * * * ]
 -- ienv :: list of
 
-data Val = TableVal (Table Integer Integer) Rank [Integer]
-         | LamVal Env IEnv Expr deriving (Show)
-type IEnv = (Integer, [Integer]) -- depth, and positions of in-scope indices
+data Val = TableVal (Table.Table Int Int) Rank
+         | LamVal Env IEnv Expr
+         | UnOp UnOpName  deriving (Show)
+
+type IEnv = (Int, [Int]) -- depth, and positions of in-scope indices
 type Env = [Val]
-type Rank = Integer
+type Rank = Int
 
 eval :: Expr -> Env -> IEnv -> Val
-eval (Lit c) _ _ = TableVal (Table.scalar c)
-eval (Var v) env _ = env !! v
+eval (Lit c) _ (d, _) = TableVal (Table.scalar c) 0
+eval (Var v) env (d, _) = env !! v
 eval (BinOp b e1 e2) env ienv = let v1 = eval e1 env ienv
                                     v2 = eval e2 env ienv
-                                in evalBinOp b v1 v2
+                                in case (v1, v2) of
+     ((TableVal t1 r1), (TableVal t2 r2)) | r1 == r2 ->
+           TableVal (Table.map2 (binOpFun b) t1 t2) r1
+
 eval (Lam body) env ienv = LamVal env ienv body
-eval (App fexpr arg) env =
+eval (App fexpr arg) env ienv =
     let f = eval fexpr env ienv
         x = eval arg env ienv
         (d, _) = ienv
@@ -48,15 +57,17 @@ eval (IdxComp body) env (d, idxs) = let ienv' = ((d + 1), d:idxs) in
 eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs !! i
                           in case eval e env ienv of
-              TableVal t r -> TableVal $ (Table.diag t i' r) (r - 1)
+              TableVal t r -> TableVal (Table.diag t (r - 1) (r + i')) (r - 1)
 
-evalBinOp :: BinOpName -> Val -> Val -> Val
-evalBinOp b (TableVal t1) (TableVal t2) =
-    TableVal $ Table.intersectionWith (evalBinOp b) t1 t2
+binOpFun :: BinOpName -> Int -> Int -> Int
+binOpFun Add = (+)
+binOpFun Mul = (*)
+binOpFun Sub = (-)
 
-evalBinOpFun Add = (+)
-evalBinOpFun Mul = (*)
-evalBinOpFun Sub = (-)
+builtinEnv = [UnOp Iota]
+
+evalClosed :: Expr -> Val
+evalClosed e = eval e builtinEnv (0, [])
 
 
 -- ienv
@@ -110,23 +121,21 @@ evalBinOpFun Sub = (-)
 -- evalApp (LamVal env ienv v body) x = eval body (Map.insert v x env) ienv
 -- evalApp (MapVal f) (MapVal x) = MapVal $ BMap.intersectionWith evalApp f x
 
--- evalClosed :: Expr -> Val
--- evalClosed e = eval e emptyEnv []
 
 
 
 -- -- typed experiments
 
 -- -- data TExpr env ienv t where
--- --   TLit  :: Integer -> TExpr env ienv Integer
+-- --   TLit  :: Int -> TExpr env ienv Int
 -- --   TVar  :: TVar env t -> TExpr env ienv t
 -- --   TLet  :: TExpr env ienv a -> TExpr (a, env) ienv b -> TExpr env ienv b
 -- --   TLam  :: TExpr (a,env) ienv b -> TExpr env ienv (a -> b)
 -- --   TApp  :: TExpr env ienv (a -> b) -> TExpr env ienv a -> TExpr env ienv b
 -- --   TComp :: TExpr env (i, ienv) t -> TExpr env ienv t
 -- --   TGet  :: TExpr env ienv t -> IVar ienv -> TExpr env ienv t
--- --   TBinOp:: BinOpName -> TExpr env ienv Integer -> TExpr env ienv Integer
--- --                                                -> TExpr env ienv Integer
+-- --   TBinOp:: BinOpName -> TExpr env ienv Int -> TExpr env ienv Int
+-- --                                                -> TExpr env ienv Int
 -- -- data TVar env t where
 -- --   VZ :: TVar (t, env) t  -- s/env/()/ ?
 -- --   VS :: TVar env t -> TVar (a, env) t

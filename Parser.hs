@@ -10,7 +10,7 @@ import qualified Text.ParserCombinators.Parsec.Token as Token
 import qualified Interpreter as I
 
 data Expr = BinOp I.BinOpName Expr Expr
-          | Lit Integer
+          | Lit Int
           | Var VarName
           | Let VarName Expr Expr
           | Lam VarName Expr
@@ -24,8 +24,9 @@ type IdxVarName = String
 
 parseExpr s = do
   r <- parse expr "" s
-  return $ lower r [] []
+  return $ lower r builtinVars []
 
+builtinVars = ["iota"]
 
 lower :: Expr -> [VarName] -> [IdxVarName] -> I.Expr
 lower (Lit c)   _  _ = I.Lit c
@@ -47,7 +48,7 @@ lower (Get e iv) env ienv = let e' = lower e env ienv
                     Nothing -> error $ "Index variable not in scopr: " ++ show iv
 
 
-lookup :: (Eq a) => a -> [a] -> Maybe Integer
+lookup :: (Eq a) => a -> [a] -> Maybe Int
 lookup _ [] = Nothing
 lookup target (x:xs) | x == target = Just 0
                      | otherwise = do
@@ -90,7 +91,7 @@ ops = [ [getRule, appRule],
 
 term =   parens expr
      <|> liftM Var identifier
-     <|> liftM Lit integer
+     <|> liftM (Lit . fromIntegral) integer
      <|> letExpr
      <|> lamExpr
      <|> arrExpr

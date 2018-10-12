@@ -5,7 +5,7 @@ import Control.Monad
 import Control.Monad.IO.Class
 import Data.List
 
--- import Interpreter
+import Interpreter
 import Parser
 
 -- showParse _ = ""
@@ -15,8 +15,7 @@ evalSource :: String -> String
 evalSource line =
   case parseExpr line of
     Left e ->  "Parse error:\n" ++ show e
-    -- Right r -> showParse r ++ (show $ evalClosed r)
-    Right r -> showParse r
+    Right r -> showParse r ++ (show $ evalClosed r)
 
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
