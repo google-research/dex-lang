@@ -1,3 +1,8 @@
+# Todo ordered (easy things)
+  * get tables working at all (simplest possible path)
+  * debruijn indices for index comprehensions? (then no ienv)
+  * desugar let to lambda?
+
 # Want
   * parallel
   * performant
@@ -17,7 +22,6 @@
 * language features
   * syntax
     * multi-let/lam/idxcomp
-    * desugar let to lambda?
     * top-level lambda without '\'
   * builtins
     * reduce

@@ -1,14 +1,58 @@
 module Parser (parseExpr) where
 
+import Prelude hiding (lookup)
 import Control.Monad
-import Text.ParserCombinators.Parsec
+import Text.ParserCombinators.Parsec hiding (lower)
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
 
-import Interpreter
+import qualified Interpreter as I
 
-parseExpr = parse expr ""
+data Expr = BinOp I.BinOpName Expr Expr
+          | Lit Integer
+          | Var VarName
+          | Let VarName Expr Expr
+          | Lam VarName Expr
+          | App Expr Expr
+          | IdxComp IdxVarName Expr
+          | Get Expr IdxVarName
+          deriving (Show)
+
+type VarName = String
+type IdxVarName = String
+
+parseExpr s = do
+  r <- parse expr "" s
+  return $ lower r [] []
+
+
+lower :: Expr -> [VarName] -> [IdxVarName] -> I.Expr
+lower (Lit c)   _  _ = I.Lit c
+lower (Var v) env _  = case lookup v env of
+    Just i  -> I.Var i
+    Nothing -> error $ "Variable not in scope: " ++ show v
+lower (BinOp b e1 e2) env ienv = let l1 = lower e1 env ienv
+                                     l2 = lower e2 env ienv
+                                 in I.BinOp b l1 l2
+lower (Let v bound body) env ienv = lower (App (Lam v body) bound) env ienv
+lower (Lam v body) env ienv = I.Lam $ lower body (v:env) ienv
+lower (App fexpr arg) env ienv = let f = lower fexpr env ienv
+                                     x = lower arg env ienv
+                                 in I.App f x
+lower (IdxComp iv body) env ienv = I.IdxComp $ lower body env (iv:ienv)
+lower (Get e iv) env ienv = let e' = lower e env ienv
+                            in case lookup iv ienv of
+                    Just i  -> I.Get e' i
+                    Nothing -> error $ "Index variable not in scopr: " ++ show iv
+
+
+lookup :: (Eq a) => a -> [a] -> Maybe Integer
+lookup _ [] = Nothing
+lookup target (x:xs) | x == target = Just 0
+                     | otherwise = do
+                         ans <- lookup target xs
+                         return (ans + 1)
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
@@ -40,8 +84,8 @@ getRule = Postfix $ do
   return $ \body -> Get body v
 
 ops = [ [getRule, appRule],
-        [binOpRule "*" Mul, binOpRule "/" Div],
-        [binOpRule "+" Add, binOpRule "-" Sub]
+        [binOpRule "*" I.Mul, binOpRule "/" I.Div],
+        [binOpRule "+" I.Add, binOpRule "-" I.Sub]
       ]
 
 term =   parens expr
