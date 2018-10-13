@@ -48,7 +48,7 @@ diag (Table idxs m) i j =
     let
        iIdx = idxOf idxs i
        delta = (idxOf idxs j) - iIdx
-       m' = case (maskIdx idxs i, maskIdx idxs j) of
+       m' = case (idxs !! i, idxs !! j) of
                (True, True)   -> mapKeysMaybe (diagIdx iIdx delta) m
                (True, False)  -> promoteMapIdx iIdx delta m
                (False, _)     -> m
@@ -71,17 +71,13 @@ mapFstMaybe f ((a,c):xs) = let rest = mapFstMaybe f xs
                                 Just b -> (b,c):rest
                                 Nothing -> rest
 
-maskIdx :: [Bool] -> Int -> Bool
-maskIdx []     _ = False
-maskIdx (x:xs) 0 = x
-maskIdx (x:xs) i = maskIdx xs (i - 1)
-
 diagIdx :: Eq k => Int -> Int -> [k] -> Maybe [k]
-diagIdx i delta init = let (prefix, suffix) = splitAt i init
-                           (x, xs) = uncons suffix
-                       in if (xs !! delta) == x
-                             then Just $ prefix ++ xs
-                             else Nothing
+diagIdx = error "foo"
+-- diagIdx i delta init = let (prefix, suffix) = splitAt i init
+--                            (x, xs) = uncons suffix
+--                        in if (xs !! delta) == x
+--                              then Just $ prefix ++ xs
+--                              else Nothing
 
 uncons :: [a] -> (a, [a])
 uncons (x:xs) = (x,xs)
