@@ -11,7 +11,7 @@ instance (Show a, Show b) => Show (Table a b) where
 
 
 fromScalar :: Ord a => b -> Table a b
-fromScalar x = Table [] $ M.singleton [] x
+fromScalar x = Table (repeat False) $ M.singleton [] x
 
 map ::  Ord k => (a -> b) -> Table k a -> Table k b
 map f (Table idxs m) = Table idxs $ M.map f m
@@ -26,23 +26,22 @@ iota (Table idxs m) =
 map2 :: Ord k => (a -> b -> c) -> Table k a -> Table k b -> Table k c
 map2 f (Table idxs1 m1) (Table idxs2 m2) =
   let decompose idxs = unflatten2 . M.mapKeys (splitList idxs)
-      m1' = decompose (idxs1 `sharedWith` idxs2) m1
-      m2' = decompose (idxs2 `sharedWith` idxs1) m2
+      (shared1, shared2, sharedBoth) = shared idxs1 idxs2
+      m1' = decompose shared1 m1
+      m2' = decompose shared2 m2
       combined = mapIntersectionWith f m1' m2'
-      mfinal = M.mapKeys (mergeList idxs1 idxs2) $ flatten3 combined
-      allIdxs = longestOr idxs1 idxs2
+      mfinal = M.mapKeys (mergeList sharedBoth) $ flatten3 combined
+      allIdxs = zipWith (||) idxs1 idxs2
       in Table allIdxs mfinal
 
-sharedWith :: [Bool] -> [Bool] -> [Bool]
-sharedWith xs [] = take (numTrue xs) (repeat False)
-sharedWith [] _ = []
-sharedWith (False:xs) ys = sharedWith xs ys
-sharedWith (True:xs) (y:ys) = y : sharedWith xs ys
+data LRB = L | R | B
 
-longestOr :: [Bool] -> [Bool] -> [Bool]
-longestOr xs [] = xs
-longestOr [] ys = ys
-longestOr (x:xs) (y:ys) = (x || y) : longestOr xs ys
+shared :: [Bool] -> [Bool] -> ([Bool], [Bool], [LRB])
+shared (x:xs) (y:ys) = let (xs', ys', xys') = shared xs ys
+                       in case (x, y) of
+                            (True, False) -> (False:xs', False:ys', L:xys')
+                            (False, True) -> (False:xs', False:ys', R:xys')
+                            (True, True)  -> (True:xs' , True:ys' , B:xys')
 
 diag ::  Ord k => Table k a -> Int -> Int -> Table k a
 diag (Table idxs m) i j =
@@ -118,18 +117,17 @@ type Map2 k1 k2 a = M.Map k1 (M.Map k2 a)
 type Map3 k1 k2 k3 a = M.Map k1 (Map2 k2 k3 a)
 
 splitList :: [Bool] -> [a] -> ([a], [a])
-splitList [] [] = ([], [])
+splitList _ [] = ([], [])
 splitList (v:vs) (x:xs) = let (ys, zs) = splitList vs xs
                           in case v of
                                True  -> (ys, x:zs)
                                False -> (x:ys, zs)
 
-mergeList :: [Bool] -> [Bool] -> ([a], [a], [a]) -> [a]
-mergeList [] [] ([], [], []) = []
--- mergeList (False:m1) (False:m2) (  xs,   ys,   zs) =   (mergeList m1 m2 (xs, ys, zs))
--- mergeList (False:m1) (True:m2)  (x:xs,   ys,   zs) = x:(mergeList m1 m2 (xs, ys, zs))
--- mergeList (True:m1)  (False:m2) (  xs, y:ys,   zs) = y:(mergeList m1 m2 (xs, ys, zs))
--- mergeList (True:m1)  (True:m2)  (  xs,   ys, z:zs) = z:(mergeList m1 m2 (xs, ys, zs))
+mergeList :: [LRB] -> ([a], [a], [a]) -> [a]
+mergeList _ ([], [], []) = []
+mergeList (L:vs) (x:xs,   ys,   zs) = x:(mergeList vs (xs, ys, zs))
+mergeList (R:vs) (  xs, y:ys,   zs) = y:(mergeList vs (xs, ys, zs))
+mergeList (B:vs) (  xs,   ys, z:zs) = z:(mergeList vs (xs, ys, zs))
 
 unflatten2 :: (Ord k1, Ord k2) => M.Map (k1,k2) a -> Map2 k1 k2 a
 unflatten2 m = let l = [(k1, [(k2, v)]) | ((k1, k2), v) <- M.toList m]
