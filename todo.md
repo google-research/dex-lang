@@ -1,7 +1,13 @@
 # Todo ordered (easy things)
+  * make values for functions including infix ops
   * get tables working at all (simplest possible path)
-  * debruijn indices for index comprehensions? (then no ienv)
-  * desugar let to lambda?
+  * implement reduce, group
+  * pretty-print tables
+  * repl with partial programs
+  * sqlite i/o
+  * type inference (and print types)
+  * product and record types
+
 
 # Want
   * parallel

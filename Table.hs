@@ -1,4 +1,4 @@
-module Table (Table, scalar, diag, map, map2) where
+module Table (Table, fromScalar, diag, map, map2, iota) where
 
 import Prelude hiding (map, lookup)
 import qualified Prelude as P
@@ -10,11 +10,18 @@ instance (Show a, Show b) => Show (Table a b) where
   show (Table mask m) = show (M.toList m)
 
 
-scalar ::  Ord a => b -> Table a b
-scalar x = Table [] $ M.singleton [] x
+fromScalar :: Ord a => b -> Table a b
+fromScalar x = Table [] $ M.singleton [] x
 
 map ::  Ord k => (a -> b) -> Table k a -> Table k b
 map f (Table idxs m) = Table idxs $ M.map f m
+
+iota :: Table Int Int -> Table Int Int
+iota (Table idxs m) =
+    let f n = M.fromList $ zip [0..n-1] [0..n-1]
+        g (is, i) = i:is
+        m' = M.mapKeys g . flatten2 . M.map f $ m
+    in Table (True:idxs) m'
 
 map2 :: Ord k => (a -> b -> c) -> Table k a -> Table k b -> Table k c
 map2 f (Table idxs1 m1) (Table idxs2 m2) =

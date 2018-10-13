@@ -35,7 +35,8 @@ lower (Var v) env _  = case lookup v env of
     Nothing -> error $ "Variable not in scope: " ++ show v
 lower (BinOp b e1 e2) env ienv = let l1 = lower e1 env ienv
                                      l2 = lower e2 env ienv
-                                 in I.BinOp b l1 l2
+                                     f = I.Var (I.binOpIdx b + length env)
+                                 in I.App (I.App f l1) l2
 lower (Let v bound body) env ienv = lower (App (Lam v body) bound) env ienv
 lower (Lam v body) env ienv = I.Lam $ lower body (v:env) ienv
 lower (App fexpr arg) env ienv = let f = lower fexpr env ienv
