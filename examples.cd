@@ -15,12 +15,12 @@ in f (1 + 1)
 ~
 iota 3
 ~
-[i: 1 + 3]
+[i: 1 + 300]
 ~
-let d = iota 3
+let d = iota 30
  in [i: d[i] * 2]
 ~
-let d = iota 3
+let d = iota 10
  in [i: d[i] + d[i]]
 ~
 let d = iota 3

@@ -4,143 +4,96 @@ import Prelude hiding (map, lookup)
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-data Table a b = Table [Bool] (M.Map [a] b)
-
-instance (Show a, Show b) => Show (Table a b) where
-  show (Table mask m) = show (M.toList m)
-
+data Idx a = Only a | Anything deriving (Show)
+data Comparison a = LeftSmall | RightSmall | Match a Ordering
+newtype Table a b = Table (Rows a b) deriving (Show)
+type Rows a b = [([Idx a], b)]
 
 fromScalar :: Ord a => b -> Table a b
-fromScalar x = Table (repeat False) $ M.singleton [] x
+fromScalar x = Table [([], x)]
 
 map ::  Ord k => (a -> b) -> Table k a -> Table k b
-map f (Table idxs m) = Table idxs $ M.map f m
+map f (Table rows) = Table (P.map (second f) rows)
 
-iota :: Table Int Int -> Table Int Int
-iota (Table idxs m) =
-    let f n = M.fromList $ zip [0..n-1] [0..n-1]
-        g (is, i) = i:is
-        m' = M.mapKeys g . flatten2 . M.map f $ m
-    in Table (True:idxs) m'
+second :: (a -> b) -> (c, a) -> (c, b)
+second f (x, y) = (x, f y)
 
 map2 :: Ord k => (a -> b -> c) -> Table k a -> Table k b -> Table k c
-map2 f (Table idxs1 m1) (Table idxs2 m2) =
-  let decompose idxs = unflatten2 . M.mapKeys (splitList idxs)
-      (shared1, shared2, sharedBoth) = shared idxs1 idxs2
-      m1' = decompose shared1 m1
-      m2' = decompose shared2 m2
-      combined = mapIntersectionWith f m1' m2'
-      mfinal = M.mapKeys (mergeList sharedBoth) $ flatten3 combined
-      allIdxs = zipWith (||) idxs1 idxs2
-      in Table allIdxs mfinal
+map2 f (Table rows1) (Table rows2) = Table $ map2' f rows1 rows2
 
-data LRB = L | R | B
+map2' :: Ord k => (a -> b -> c) -> Rows k a -> Rows k b -> Rows k c
+map2' f [] _ = []
+map2' f _ [] = []
+map2' f ((k1,v1):rem1) ((k2,v2):rem2) =
+  let cur1 = (k1,v1):rem1
+      cur2 = (k2,v2):rem2
+      (match, rest1, rest2) =
+        case cmpIdxs k1 k2 of
+          LeftSmall  -> (Nothing, rem1, cur2)
+          RightSmall -> (Nothing, cur1, rem2)
+          Match k LT -> (Just k , rem1, cur2)
+          Match k GT -> (Just k , cur1, rem2)
+          Match k EQ -> (Just k , rem1, rem2)
+      rest = map2' f rest1 rest2
+   in case match of
+        Nothing -> rest
+        Just k  -> (k, f v1 v2):rest
 
-shared :: [Bool] -> [Bool] -> ([Bool], [Bool], [LRB])
-shared (x:xs) (y:ys) = let (xs', ys', xys') = shared xs ys
-                       in case (x, y) of
-                            (True, False) -> (False:xs', False:ys', L:xys')
-                            (False, True) -> (False:xs', False:ys', R:xys')
-                            (True, True)  -> (True:xs' , True:ys' , B:xys')
+iota :: Table Int Int -> Table Int Int
+iota (Table rows) = Table [((Only i):k, i) | (k,v) <- rows, i <- [0..(v-1)]]
 
-diag ::  Ord k => Table k a -> Int -> Int -> Table k a
-diag (Table idxs m) i j =
-    let
-       iIdx = idxOf idxs i
-       delta = (idxOf idxs j) - iIdx
-       m' = case (idxs !! i, idxs !! j) of
-               (True, True)   -> mapKeysMaybe (diagIdx iIdx delta) m
-               (True, False)  -> promoteMapIdx iIdx delta m
-               (False, _)     -> m
-    in Table (updateIdxs i j idxs) m'
+diag :: Ord k => Table k a -> Int -> Int -> Table k a
+diag (Table rows) i j = Table $ diag' rows i j
 
-updateIdxs :: Int -> Int -> [Bool] -> [Bool]
-updateIdxs i j idxs =
-  let idxs' = case (idxs !! i, idxs !! j) of
-                (True, False) -> setTrue j idxs
-                otherwise     -> idxs
-  in delIdx i idxs'
+diag' :: Ord k => Rows k a -> Int -> Int -> Rows k a
+diag' [] _ _ = []
+diag' ((kraw,v):rem) i j =
+  let rest = diag' rem i j
+      k = pad (j + 1) kraw
+  in case cmpIdx (k!!i) (k!!j) of
+       Nothing -> rest
+       Just idx -> let k' = delIdx i . replaceIdx j idx $ k
+                   in (k',v):rest
 
-mapKeysMaybe :: (Ord k1, Ord k2) => (k1 -> Maybe k2) -> M.Map k1 v -> M.Map k2 v
-mapKeysMaybe f = M.fromList . mapFstMaybe f . M.toList
 
-mapFstMaybe :: (a -> Maybe b) -> [(a, c)] -> [(b, c)]
-mapFstMaybe f [] = []
-mapFstMaybe f ((a,c):xs) = let rest = mapFstMaybe f xs
-                           in case f a of
-                                Just b -> (b,c):rest
-                                Nothing -> rest
-
-diagIdx :: Eq k => Int -> Int -> [k] -> Maybe [k]
-diagIdx = error "foo"
--- diagIdx i delta init = let (prefix, suffix) = splitAt i init
---                            (x, xs) = uncons suffix
---                        in if (xs !! delta) == x
---                              then Just $ prefix ++ xs
---                              else Nothing
-
-uncons :: [a] -> (a, [a])
-uncons (x:xs) = (x,xs)
+pad :: Int -> [Idx a] -> [Idx a]
+pad n xs = xs ++ take (n - length(xs)) (repeat Anything)
 
 delIdx :: Int -> [a] -> [a]
-delIdx _ []     = []
-delIdx 0 (x:xs) = xs
-delIdx i (x:xs) = x:(delIdx (i - 1) xs)
+delIdx i xs = case splitAt i xs of
+  (prefix, x:suffix) -> prefix ++ suffix
 
-setTrue :: Int -> [Bool] -> [Bool]
-setTrue n xs = case splitAt n xs of
-  (prefix, _:suffix) -> prefix ++ (True : suffix)
+replaceIdx :: Int -> a -> [a] -> [a]
+replaceIdx i x xs = case splitAt i xs of
+  (prefix, _:suffix) -> prefix ++ (x:suffix)
 
-idxOf :: [Bool] -> Int -> Int
-idxOf mask i = numTrue $ take i mask
+cmpIdx :: Ord a => Idx a -> Idx a -> Maybe (Idx a)
+cmpIdx (Only x) (Only y) | x == y = Just (Only x)
+                         | otherwise = Nothing
+cmpIdx (Only x) Anything = Just (Only x)
+cmpIdx Anything (Only y) = Just (Only y)
+cmpIdx Anything Anything = Just Anything
 
-numTrue :: [Bool] -> Int
-numTrue [] = 0
-numTrue (True:xs) = 1 + numTrue xs
-numTrue (False:xs) = numTrue xs
+cmpIdxs :: Ord a => [Idx a] -> [Idx a] -> Comparison [Idx a]
+cmpIdxs [] ys = Match ys GT
+cmpIdxs xs [] = Match xs LT
+cmpIdxs (x:xs) (y:ys) =
+  let curmatch = case (x,y) of
+                   (Only x', Only y') -> case compare x' y' of
+                                            LT -> LeftSmall
+                                            GT -> RightSmall
+                                            EQ -> Match (Only x') EQ
+                   (Only x' , Anything) -> Match (Only x') LT
+                   (Anything, Only y' ) -> Match (Only y') GT
+                   (Anything, Anything) -> Match Anything EQ
+  in case curmatch of
+    LeftSmall  -> LeftSmall
+    RightSmall -> RightSmall
+    Match z order -> case cmpIdxs xs ys of
+                       LeftSmall  -> LeftSmall
+                       RightSmall -> RightSmall
+                       Match zs order' -> Match (z:zs) $ mergeOrder order' order
 
-promoteMapIdx :: (Ord k) => Int -> Int -> M.Map [k] a -> M.Map [k] a
-promoteMapIdx _ 0     m = m
-promoteMapIdx i delta m = M.mapKeys (promoteElt i delta) m
-
-promoteElt :: Int -> Int -> [a] -> [a]
-promoteElt i delta init = let (prefix, suffix) = splitAt i init
-                              (x, xs) = uncons suffix
-                              (prefix2, suffix2) = splitAt delta xs
-                          in prefix ++ (prefix2 ++ x:suffix2)
-
-type Map2 k1 k2 a = M.Map k1 (M.Map k2 a)
-type Map3 k1 k2 k3 a = M.Map k1 (Map2 k2 k3 a)
-
-splitList :: [Bool] -> [a] -> ([a], [a])
-splitList _ [] = ([], [])
-splitList (v:vs) (x:xs) = let (ys, zs) = splitList vs xs
-                          in case v of
-                               True  -> (ys, x:zs)
-                               False -> (x:ys, zs)
-
-mergeList :: [LRB] -> ([a], [a], [a]) -> [a]
-mergeList _ ([], [], []) = []
-mergeList (L:vs) (x:xs,   ys,   zs) = x:(mergeList vs (xs, ys, zs))
-mergeList (R:vs) (  xs, y:ys,   zs) = y:(mergeList vs (xs, ys, zs))
-mergeList (B:vs) (  xs,   ys, z:zs) = z:(mergeList vs (xs, ys, zs))
-
-unflatten2 :: (Ord k1, Ord k2) => M.Map (k1,k2) a -> Map2 k1 k2 a
-unflatten2 m = let l = [(k1, [(k2, v)]) | ((k1, k2), v) <- M.toList m]
-               in M.map M.fromList . M.fromListWith (++) $ l
-
-flatten2 :: (Ord k1, Ord k2) => Map2 k1 k2 a -> M.Map (k1,k2) a
-flatten2 m = M.fromList [((k1, k2), v) | (k1, m') <- M.toList m ,
-                                         (k2, v)  <- M.toList m']
-
-
-flatten3 :: (Ord k1, Ord k2, Ord k3) => Map3 k1 k2 k3 a -> M.Map (k1,k2,k3) a
-flatten3 m = M.fromList [((k1, k2, k3), v) | (k1, m')  <- M.toList m  ,
-                                             (k2, m'') <- M.toList m' ,
-                                             (k3, v)   <- M.toList m'']
-
-mapIntersectionWith :: (Ord k1, Ord k2, Ord k3) =>
-  (a -> b -> c) -> Map2 k1 k3 a -> Map2 k2 k3 b -> Map3 k1 k2 k3 c
-mapIntersectionWith f m1 m2 = M.map (\x ->
-                              M.map (\y ->
-                              M.intersectionWith f x y) m2) m1
+mergeOrder :: Ordering -> Ordering -> Ordering
+mergeOrder x y | x == EQ   = y
+               | otherwise = x
