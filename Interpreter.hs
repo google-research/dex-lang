@@ -15,7 +15,7 @@ data Expr = Lit Int
 
 data Val = TV (Table.Table Int Int) Rank
          | LamVal Env IEnv Expr
-         | Builtin BuiltinName [Val]  deriving (Show)
+         | Builtin BuiltinName [Val]
 
 data BinOpName = Add | Mul | Sub | Div  deriving (Show)
 
@@ -83,3 +83,8 @@ binOpIdx b = case b of Add -> 0 ; Mul -> 1;
 
 evalClosed :: Expr -> Val
 evalClosed e = eval e builtinEnv (0, [])
+
+instance Show Val where
+  show (TV t r) = Table.printTable r t
+  show (LamVal _ _ _) = "<lambda>"
+  show (Builtin _ _ ) = "<builtin>"

@@ -1,12 +1,13 @@
-module Table (Table, fromScalar, diag, map, map2, iota) where
+module Table (Table, fromScalar, diag, map, map2, iota, printTable) where
 
 import Prelude hiding (map, lookup)
+import Data.List (intersperse, transpose)
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-data Idx a = Only a | Anything deriving (Show)
+data Idx a = Only a | Anything
 data Comparison a = LeftSmall | RightSmall | Match a Ordering
-newtype Table a b = Table (Rows a b) deriving (Show)
+newtype Table a b = Table (Rows a b)
 type Rows a b = [([Idx a], b)]
 
 fromScalar :: Ord a => b -> Table a b
@@ -49,15 +50,17 @@ diag' :: Ord k => Rows k a -> Int -> Int -> Rows k a
 diag' [] _ _ = []
 diag' ((kraw,v):rem) i j =
   let rest = diag' rem i j
-      k = pad (j + 1) kraw
+      k = pad (j + 1) Anything kraw
   in case cmpIdx (k!!i) (k!!j) of
        Nothing -> rest
        Just idx -> let k' = delIdx i . replaceIdx j idx $ k
                    in (k',v):rest
 
+pad :: Int -> a -> [a] -> [a]
+pad n v xs = xs ++ take (n - length(xs)) (repeat v)
 
-pad :: Int -> [Idx a] -> [Idx a]
-pad n xs = xs ++ take (n - length(xs)) (repeat Anything)
+padLeft :: Int -> a -> [a] -> [a]
+padLeft  n v xs = take (n - length(xs)) (repeat v) ++ xs
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of
@@ -97,3 +100,26 @@ cmpIdxs (x:xs) (y:ys) =
 mergeOrder :: Ordering -> Ordering -> Ordering
 mergeOrder x y | x == EQ   = y
                | otherwise = x
+
+instance (Show a) => Show (Idx a) where
+  show (Only x) = show x
+  show Anything = "*"
+
+mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
+mapFst f zs = [(f x, y) | (x, y) <- zs]
+
+printTable :: (Show a, Show b) => Int -> Table a b -> String
+printTable rank (Table rows) =
+  let rowsWithRank = mapFst (pad rank Anything) rows
+  in concat . P.map formatRow . rowsToStrings $ rowsWithRank
+
+rowsToStrings :: (Show a, Show b) => [([a], b)] -> [[String]]
+rowsToStrings rows =
+  let stringRows = [[show k | k <- ks] ++ [show v] | (ks,v) <- rows]
+      evalMaxLen = foldr (\s w -> max (length s) w) 0
+      ws = P.map evalMaxLen . transpose $ stringRows
+      padRow xs = [padLeft w ' ' x | (w, x) <- zip ws xs]
+  in P.map padRow stringRows
+
+formatRow :: [String] -> String
+formatRow rows = " " ++ concat (intersperse " | " rows) ++ "\n"
