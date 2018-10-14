@@ -51,7 +51,7 @@ eval (Get e i) env ienv = let (_, idxs) = ienv
               TV t r -> TV (Table.diag t (r - 1) (r + i')) (r - 1)
 
 -- example:
--- index env depth : how many dynamically enclosing indices do we have
+-- index env depth : how many *dynamically* enclosing indices do we have
 -- index env:  (5, [0, 2])
 -- rank: 4
     --                     1   0  --rank---

@@ -1,12 +1,20 @@
 # Todo ordered (easy things)
-  * make values for functions including infix ops
-  * get tables working at all (simplest possible path)
+  * check that it's actually working
   * implement reduce, group
-  * pretty-print tables
+  * make a prelude: map, dot, etc
+  * sugar
+    * multi-let/lam/idxcomp
+    * top-level lambda without '\'
+
   * repl with partial programs
+
+
   * sqlite i/o
   * type inference (and print types)
+  * string/float/bool types
   * product and record types
+
+
 
 
 # Want

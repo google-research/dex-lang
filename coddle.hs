@@ -8,6 +8,8 @@ import Data.List
 import Interpreter
 import Parser
 
+import Table (testAns)
+
 -- showParse _ = ""
 showParse p = "Parse: " ++ (show $ p) ++ "\n"
 
@@ -45,10 +47,11 @@ evalFile s = do
 
 main :: IO ()
 main = do
-  args <- getArgs
-  case args of
-    fname:[] -> evalFile fname
-    []       -> repl
+  putStrLn testAns
+  -- args <- getArgs
+  -- case args of
+  --   fname:[] -> evalFile fname
+  --   []       -> repl
 
 -- ---------- TODO ----------
 
