@@ -10,14 +10,11 @@ import Parser
 
 import Table (testAns)
 
--- showParse _ = ""
-showParse p = "Parse: " ++ (show $ p) ++ "\n"
-
 evalSource :: String -> String
 evalSource line =
   case parseExpr line of
     Left e ->  "Parse error:\n" ++ show e
-    Right r -> showParse r ++ (show $ evalClosed r)
+    Right r -> line ++ (show $ evalClosed r)
 
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
@@ -48,10 +45,10 @@ evalFile s = do
 main :: IO ()
 main = do
   putStrLn testAns
-  -- args <- getArgs
-  -- case args of
-  --   fname:[] -> evalFile fname
-  --   []       -> repl
+  args <- getArgs
+  case args of
+    fname:[] -> evalFile fname
+    []       -> repl
 
 -- ---------- TODO ----------
 

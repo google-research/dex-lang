@@ -48,7 +48,7 @@ eval (IdxComp body) env (d, idxs) = let ienv' = ((d + 1), d:idxs) in
 eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs !! i
                           in case eval e env ienv of
-              TV t r -> TV (Table.diag t (r - 1) (r + i')) (r - 1)
+              TV t r -> TV (Table.diag (r - 1) (r + i') t) (r - 1)
 
 -- example:
 -- index env depth : how many *dynamically* enclosing indices do we have
