@@ -17,9 +17,6 @@ iota 3
 ~
 [i: 1 + 300]
 ~
-let d = iota 4
- in [i: d[i] * 2]
-~
 let d = iota 2
  in [i: d[i] + d[i]]
 ~
@@ -37,3 +34,6 @@ let d = iota 3
 [k: [j:
   [l:[i: (iota 3)[i]][l]][k] + (iota 4)[j]
 ]]
+~
+let d = iota 4
+in [i: d[i] * 2]

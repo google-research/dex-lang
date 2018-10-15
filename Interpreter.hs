@@ -69,7 +69,8 @@ numArgs Iota      = 1
 evalBuiltin :: BuiltinName -> [Val] -> Val
 evalBuiltin (BinOp b) (TV t1 d : TV t2 d' : []) | d == d' =
     TV (T.map2 (binOpFun b) t1 t2) d
-evalBuiltin Iota (TV t 0 : []) = TV (T.iota t) 1
+evalBuiltin Iota (TV t d : []) = TV (T.iota t) d
+
 
 binOpFun :: BinOpName -> Int -> Int -> Int
 binOpFun Add = (+)
