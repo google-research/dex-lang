@@ -1,32 +1,21 @@
-module Table (Table, fromScalar, diag, map, map2, iota, printTable,
-             testAns) where
+module Table (Table, fromScalar, diag, map, map2, iota, printTable, insert) where
 
 import Prelude hiding (map, lookup)
 import Data.List (intersperse, transpose)
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-t1 :: Table Int Int
-t1 = Table [True, False, False] [([10], 10),
-                                 ([20], 20)]
-
-t2 :: Table Int Int
-t2 = Table [False, True, False] [([1], 1),
-                                 ([2], 2)]
-
-testAns :: String
-testAns =
-  printTable 2 t1 ++ "\n" ++
-  printTable 2 t2 ++ "\n" ++
-  printTable 2 (map2 (+) t1 t2)
-
 data Table a b = Table [Bool] (Rows a b)
 type Rows a b = [([a], b)]
 data MaybeKeyed k v = Keyed [(k, v)] | UnKeyed v
 
 fromScalar :: Ord a => b -> Table a b
-fromScalar x = Table (take 10 $ repeat False) [([], x)]
--- fromScalar x = Table (repeat False) [([], x)]
+fromScalar x = Table [] [([], x)]
+
+insert :: Int -> Int -> Table k a -> Table k a
+insert pos num (Table mask rows) =
+  let mask' = repeatApply num (insertIdx pos False) mask
+  in Table mask' rows
 
 map ::  Ord k => (a -> b) -> Table k a -> Table k b
 map f (Table mask rows) = Table mask (mapSnd f rows)
@@ -84,9 +73,6 @@ ungroup ::  [(a, [b])] -> [(a,b)]
 ungroup [] = []
 ungroup ((k,vs):rem) = (zip (repeat k) vs) ++ ungroup rem
 
-splitWhile :: (a -> Bool) -> [a] -> ([a], [a])
-splitWhile f xs = (takeWhile f xs, dropWhile f xs)
-
 iota :: Table Int Int -> Table Int Int
 iota (Table mask rows) = let rows' = [(i:k,i) | (k,v) <- rows, i <- [0..(v-1)]]
                          in Table (True:mask) rows'
@@ -95,62 +81,38 @@ diag :: Ord k => Int -> Int -> Table k a -> Table k a
 diag i j (Table mask rows) =
   let mi = mask!!i
       mj = mask!!j
-      mask' = delIdx i $ replaceIdx j (mi || mj) mask
-      rows' = case mi of
+      mask' = delIdx j $ replaceIdx i (mi || mj) mask
+      rows' = case mj of
           False -> rows
           True  ->
             let i' = numTrue $ take i mask
                 j' = numTrue $ take j mask
-            in case mj of
-                 False -> [(promoteIdx i' j' k, v) | (k,v) <- rows]
-                 True  -> [(delIdx i' k,        v) | (k,v) <- rows
-                                                   , k!!i' == k!!j']
+            in case mi of
+                 False -> [(mvIdx  j' i' k, v) | (k,v) <- rows]
+                 True  -> [(delIdx j'    k, v) | (k,v) <- rows
+                                               , k!!i' == k!!j']
   in Table mask' rows'
 
 
-promoteIdx :: Int -> Int -> [a] -> [a]
-promoteIdx i j xs = let x = xs!!i
-                    in delIdx i . insertIdx j x $ xs
+mvIdx :: Int -> Int -> [a] -> [a]
+mvIdx i j xs = let x = xs!!i
+               in delIdx i . insertIdx j x $ xs
 
 numTrue :: [Bool] -> Int
 numTrue [] = 0
 numTrue (True :xs) = 1 + numTrue xs
 numTrue (False:xs) = numTrue xs
 
-insertNothings :: Int -> [Bool] -> [a] -> [Maybe a]
-insertNothings 0 _ _ = []
-insertNothings n (True:mask)  (x:xs) = (Just x) : (insertNothings (n-1) mask xs)
-insertNothings n (False:mask) xs     = Nothing  : (insertNothings (n-1) mask xs)
+insertNothings :: [Bool] -> [a] -> [Maybe a]
+insertNothings [] [] = []
+insertNothings (True:mask)  (x:xs) = (Just x) : (insertNothings mask xs)
+insertNothings (False:mask) xs     = Nothing  : (insertNothings mask xs)
 
-pad :: Int -> a -> [a] -> [a]
-pad n v xs = xs ++ take (n - length(xs)) (repeat v)
-
-padLeft :: Int -> a -> [a] -> [a]
-padLeft  n v xs = take (n - length(xs)) (repeat v) ++ xs
-
-delIdx :: Int -> [a] -> [a]
-delIdx i xs = case splitAt i xs of
-  (prefix, x:suffix) -> prefix ++ suffix
-
-replaceIdx :: Int -> a -> [a] -> [a]
-replaceIdx i x xs = case splitAt i xs of
-  (prefix, _:suffix) -> prefix ++ (x:suffix)
-
-insertIdx :: Int -> a -> [a] -> [a]
-insertIdx i x xs = case splitAt i xs of
-  (prefix, suffix) -> prefix ++ (x:suffix)
-
-
-mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
-mapFst f zs = [(f x, y) | (x, y) <- zs]
-
-mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
-mapSnd f zs = [(x, f y) | (x, y) <- zs]
-
-printTable :: (Show a, Show b) => Int -> Table a b -> String
-printTable rank (Table mask rows) =
-  let rowsWithRank = mapFst (insertNothings rank mask) rows
+printTable :: (Show a, Show b) => Table a b -> String
+printTable (Table mask rows) =
+  let rowsWithRank = mapFst (insertNothings mask) rows
   in concat . P.map formatRow . rowsToStrings $ rowsWithRank
+
 
 showMaybe :: (Show a) => Maybe a -> String
 showMaybe Nothing = "*"
@@ -166,3 +128,38 @@ rowsToStrings rows =
 
 formatRow :: [String] -> String
 formatRow rows = " " ++ concat (intersperse " | " rows) ++ "\n"
+
+-- ----- util -----
+
+pad :: Int -> a -> [a] -> [a]
+pad n v xs = xs ++ repeatN (n - length(xs)) v
+
+padLeft :: Int -> a -> [a] -> [a]
+padLeft  n v xs = repeatN (n - length(xs)) v ++ xs
+
+delIdx :: Int -> [a] -> [a]
+delIdx i xs = case splitAt i xs of
+  (prefix, x:suffix) -> prefix ++ suffix
+
+replaceIdx :: Int -> a -> [a] -> [a]
+replaceIdx i x xs = case splitAt i xs of
+  (prefix, _:suffix) -> prefix ++ (x:suffix)
+
+insertIdx :: Int -> a -> [a] -> [a]
+insertIdx i x xs = case splitAt i xs of
+  (prefix, suffix) -> prefix ++ (x:suffix)
+
+mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
+mapFst f zs = [(f x, y) | (x, y) <- zs]
+
+mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
+mapSnd f zs = [(x, f y) | (x, y) <- zs]
+
+splitWhile :: (a -> Bool) -> [a] -> ([a], [a])
+splitWhile f xs = (takeWhile f xs, dropWhile f xs)
+
+repeatN :: Int -> a -> [a]
+repeatN n x = take n (repeat x)
+
+repeatApply :: Int -> (a -> a) -> a -> a
+repeatApply n f = foldr (.) id (repeatN n f)

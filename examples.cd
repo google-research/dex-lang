@@ -33,3 +33,7 @@ let d = iota 3
 [j: [i:
    ([k: (iota 4)[k]])[j] + (iota 5)[i]
 ]]
+~
+[k: [j:
+  [l:[i: (iota 3)[i]][l]][k] + (iota 4)[j]
+]]

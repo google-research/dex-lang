@@ -1,15 +1,16 @@
 # Todo ordered (easy things)
   * check that it's actually working
   * implement reduce, group
-  * make a prelude: map, dot, etc
   * sugar
     * multi-let/lam/idxcomp
     * top-level lambda without '\'
 
   * repl with partial programs
+    * including non-crashing parse errors and type errors (don't need to be helpful)
 
 
   * sqlite i/o
+
   * type inference (and print types)
   * string/float/bool types
   * product and record types

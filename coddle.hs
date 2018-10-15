@@ -8,8 +8,6 @@ import Data.List
 import Interpreter
 import Parser
 
-import Table (testAns)
-
 evalSource :: String -> String
 evalSource line =
   case parseExpr line of
@@ -44,7 +42,6 @@ evalFile s = do
 
 main :: IO ()
 main = do
-  putStrLn testAns
   args <- getArgs
   case args of
     fname:[] -> evalFile fname
