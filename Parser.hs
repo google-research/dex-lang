@@ -26,7 +26,8 @@ parseExpr s = do
   r <- parse expr "" s
   return $ lower r builtinVars []
 
-builtinVars = ["iota"]
+builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
+numBinOps = 4
 
 lower :: Expr -> [VarName] -> [IdxVarName] -> I.Expr
 lower (Lit c)   _  _ = I.Lit c
@@ -35,7 +36,7 @@ lower (Var v) env _  = case lookup v env of
     Nothing -> error $ "Variable not in scope: " ++ show v
 lower (BinOp b e1 e2) env ienv = let l1 = lower e1 env ienv
                                      l2 = lower e2 env ienv
-                                     f = I.Var (I.binOpIdx b + length env)
+                                     f = I.Var (I.binOpIdx b + length env - numBinOps)
                                  in I.App (I.App f l1) l2
 lower (Let v bound body) env ienv = lower (App (Lam v body) bound) env ienv
 lower (Lam v body) env ienv = I.Lam $ lower body (v:env) ienv

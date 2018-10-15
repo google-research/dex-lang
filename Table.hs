@@ -1,4 +1,5 @@
-module Table (Table, fromScalar, diag, map, map2, iota, printTable, insert) where
+module Table (Table, fromScalar, diag, map, map2, iota,
+              printTable, insert, reduce) where
 
 import Prelude hiding (map, lookup)
 import Data.List (intersperse, transpose)
@@ -25,6 +26,25 @@ map2 f (Table mask1 rows1) (Table mask2 rows2) =
   let mask = zipWith (||) mask1 mask2
       rows = map2' f mask1 mask2 rows1 rows2
   in Table mask rows
+
+
+reduce :: Ord k => Int -> (Table k a -> Table k a -> Table k a)
+                       -> Table k a -> Table k a -> Table k a
+reduce depth f zero table =
+  let g z t = foldr f z (toList t)
+  in unNestTable $ map2 g (nestTable depth zero) (nestTable depth table)
+
+toList :: Ord k => Table k a -> [Table k a]
+toList (Table (m:mask) rows) =
+    case toMaybeKeyed m rows
+      of Keyed kvPairs -> P.map (Table mask . snd) kvPairs
+
+
+nestTable :: Ord k => Int -> Table k a -> Table k (Table k a)
+nestTable = undefined
+
+unNestTable :: Ord k => Table k (Table k a) -> Table k a
+unNestTable = undefined
 
 map2' :: Ord k => (a -> b -> c) ->
             [Bool] -> [Bool] -> Rows k a -> Rows k b -> Rows k c
