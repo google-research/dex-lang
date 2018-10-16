@@ -17,8 +17,7 @@ iota 3
 ~
 [i: 1 + 300]
 ~
-let d = iota 2
- in [i: d[i] + d[i]]
+[i: (iota 3)[i] + 2 + (iota 2)[i]]
 ~
 let d = iota 3
  in [j: [i: (d[j]*100) + d[i]]]
@@ -39,5 +38,12 @@ let d = iota 4
 in [i: d[i] * 2]
 ~
 add 1 2
+~
+let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
+in outer (iota 3) (iota 4)
+~
+let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
+in let transpose = \x -> [i: [j:   (x[j])[i] ] ]
+   in transpose (outer (iota 3) (iota 4))
 ~
 reduce add 0 (iota 10)

@@ -1,86 +1,82 @@
-module Table (Table, fromScalar, diag, map, map2, iota,
-              printTable, insert, reduce) where
+module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, iota,
+              printTable, insert) where
 
 import Prelude hiding (map, lookup)
 import Data.List (intersperse, transpose)
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-data Table a b = Table [Bool] (Rows a b)
-type Rows a b = [([a], b)]
-data MaybeKeyed k v = Keyed [(k, v)] | UnKeyed v
 
-fromScalar :: Ord a => b -> Table a b
-fromScalar x = Table [] [([], x)]
+data Table a b = Table [([Maybe a], b)]
+data MMap k v = MMap (M.Map k v) | Always v
+type T = Table
 
-insert :: Int -> Int -> Table k a -> Table k a
-insert pos num (Table mask rows) =
-  let mask' = repeatApply num (insertIdx pos False) mask
-  in Table mask' rows
+fromScalar :: Ord a => b -> T a b
+fromScalar x = Table [([], x)]
 
-map ::  Ord k => (a -> b) -> Table k a -> Table k b
-map f (Table mask rows) = Table mask (mapSnd f rows)
+toScalar :: Ord a => T a b -> b
+toScalar (Table [([], x)]) = x
 
-map2 :: Ord k => (a -> b -> c) -> Table k a -> Table k b -> Table k c
-map2 f (Table mask1 rows1) (Table mask2 rows2) =
-  let mask = zipWith (||) mask1 mask2
-      rows = map2' f mask1 mask2 rows1 rows2
-  in Table mask rows
+insert :: Int -> Int -> T k a -> T k a
+insert pos num (Table rows) =
+  let update = composeN num $ insertIdx pos Nothing
+  in Table [(update ks, v) | (ks, v) <- rows]
+
+mapD ::  Ord k => Int -> (T k a -> T k b) -> T k a -> T k b
+mapD d = composeN d map
+
+map ::  Ord k => (T k a -> T k b) -> T k a -> T k b
+map f t = fromMMap $ map' f (toMMap t)
+
+mapD2 :: Ord k => Int -> (T k a -> T k b -> T k c) -> T k a -> T k b -> T k c
+mapD2 d = composeN d map2
+
+map2 :: Ord k => (T k a -> T k b -> T k c) -> T k a -> T k b -> T k c
+map2 f x y = fromMMap $ map2' f (toMMap x) (toMMap y)
+
+toMMap :: Ord k => T k v -> MMap k (T k v)
+toMMap (Table rows) =
+    let peelIdx (k:ks, v) = (k, (ks, v))
+    in case group (P.map peelIdx rows) of
+        [(Nothing, rows')] -> Always $ Table rows'
+        groupedRows -> let rows' = [(unJust k, Table v) | (k, v) <- groupedRows]
+                       in MMap (M.fromList rows')
+
+fromMMap :: Ord k => MMap k (T k v) -> T k v
+fromMMap (Always t) = t
+fromMMap (MMap m)   = Table [(Just k : ks, v) | (k, Table rows) <- M.toList m
+                                              , (ks, v) <- rows]
+
+iota :: T Int Int -> T Int Int
+iota (Table [([], v)]) = Table [([Just i], i) | i <- [0..(v-1)]]
+
+diag :: Ord k => Int -> Int -> Table k a -> Table k a
+diag 0 j (Table rows) = Table $ mapFst (mvIdx j 1) rows
+diag i j t = mapD i (diag 0 j) t
+
+merge :: Ord k => Table k a -> Table k a
+merge = fromMMap . merge' . map' toMMap . toMMap
+
+-- -- ----- operations on maps -----
+
+map' :: (a -> b) -> MMap k a -> MMap k b
+map' f (Always v) = Always $ f v
+map' f (MMap m) = MMap $ M.map f m
+
+map2' :: Ord k => (a -> b -> c) -> MMap k a -> MMap k b -> MMap k c
+map2' f (Always x) (Always y) = Always $ f x y
+map2' f (Always x) (MMap  my) = MMap $ M.map (f x) my
+map2' f (MMap  mx) (Always y) = MMap $ M.map (flip f $ y) mx
+map2' f (MMap  mx) (MMap  my) = MMap $ M.intersectionWith f mx my
 
 
-reduce :: Ord k => Int -> (Table k a -> Table k a -> Table k a)
-                       -> Table k a -> Table k a -> Table k a
-reduce depth f zero table =
-  let g z t = foldr f z (toList t)
-  in unNestTable $ map2 g (nestTable depth zero) (nestTable depth table)
+reduce' :: (v -> v -> v) -> v -> MMap k v -> v
+reduce' = undefined
 
-toList :: Ord k => Table k a -> [Table k a]
-toList (Table (m:mask) rows) =
-    case toMaybeKeyed m rows
-      of Keyed kvPairs -> P.map (Table mask . snd) kvPairs
+merge' :: MMap k (MMap k v) -> MMap k v
+merge' = undefined
 
-
-nestTable :: Ord k => Int -> Table k a -> Table k (Table k a)
-nestTable = undefined
-
-unNestTable :: Ord k => Table k (Table k a) -> Table k a
-unNestTable = undefined
-
-map2' :: Ord k => (a -> b -> c) ->
-            [Bool] -> [Bool] -> Rows k a -> Rows k b -> Rows k c
-map2' f _ _ (([],x):[]) (([],y):[]) = [([], f x y)]
-map2' f (m1:ms1) (m2:ms2) rows1 rows2 =
-  fromMaybeKeyed (mergeMaybeKeyed (map2' f ms1 ms2)
-                                  (toMaybeKeyed m1 rows1)
-                                  (toMaybeKeyed m2 rows2))
-
-toMaybeKeyed :: (Ord k) => Bool -> Rows k v -> MaybeKeyed k (Rows k v)
-toMaybeKeyed False rows = UnKeyed rows
-toMaybeKeyed True  rows = let peelIdx (k:ks, v) = (k, (ks, v))
-                          in Keyed $ group (P.map peelIdx rows)
-
-fromMaybeKeyed :: (Ord k) => MaybeKeyed k  (Rows k v) -> Rows k v
-fromMaybeKeyed (UnKeyed rows) = rows
-fromMaybeKeyed (Keyed rows) = let addIdx (k, (ks, v)) = (k:ks, v)
-                              in P.map addIdx $ ungroup rows
-
-mergeMaybeKeyed :: (Ord k) => (a -> b -> c) ->
-                   MaybeKeyed k a -> MaybeKeyed k b -> MaybeKeyed k c
-mergeMaybeKeyed f (UnKeyed x ) (UnKeyed y ) = UnKeyed $ f x y
-mergeMaybeKeyed f (Keyed   xs) (UnKeyed y ) = Keyed $ [(k, f x y) | (k, x) <- xs]
-mergeMaybeKeyed f (UnKeyed x ) (Keyed   ys) = Keyed $ [(k, f x y) | (k, y) <- ys]
-mergeMaybeKeyed f (Keyed   xs) (Keyed   ys) = Keyed $ mergeWith f xs ys
-
-mergeWith :: (Ord k) => (a -> b -> c) -> [(k,a)] -> [(k,b)] -> [(k,c)]
-mergeWith f [] _ = []
-mergeWith f _ [] = []
-mergeWith f ((k1,x1):rem1) ((k2,x2):rem2) =
-  let cur1 = (k1,x1):rem1
-      cur2 = (k2,x2):rem2
-  in case compare k1 k2 of
-       LT -> mergeWith f rem1 cur2
-       GT -> mergeWith f cur1 rem2
-       EQ -> (k1, f x1 x2) : (mergeWith f rem1 rem2)
+-- ----- util -----
 
 group :: (Ord a) => [(a,b)] -> [(a, [b])]
 group [] = []
@@ -93,63 +89,9 @@ ungroup ::  [(a, [b])] -> [(a,b)]
 ungroup [] = []
 ungroup ((k,vs):rem) = (zip (repeat k) vs) ++ ungroup rem
 
-iota :: Table Int Int -> Table Int Int
-iota (Table mask rows) = let rows' = [(i:k,i) | (k,v) <- rows, i <- [0..(v-1)]]
-                         in Table (True:mask) rows'
-
-diag :: Ord k => Int -> Int -> Table k a -> Table k a
-diag i j (Table mask rows) =
-  let mi = mask!!i
-      mj = mask!!j
-      mask' = delIdx j $ replaceIdx i (mi || mj) mask
-      rows' = case mj of
-          False -> rows
-          True  ->
-            let i' = numTrue $ take i mask
-                j' = numTrue $ take j mask
-            in case mi of
-                 False -> [(mvIdx  j' i' k, v) | (k,v) <- rows]
-                 True  -> [(delIdx j'    k, v) | (k,v) <- rows
-                                               , k!!i' == k!!j']
-  in Table mask' rows'
-
-
-mvIdx :: Int -> Int -> [a] -> [a]
-mvIdx i j xs = let x = xs!!i
-               in delIdx i . insertIdx j x $ xs
-
-numTrue :: [Bool] -> Int
-numTrue [] = 0
-numTrue (True :xs) = 1 + numTrue xs
-numTrue (False:xs) = numTrue xs
-
-insertNothings :: [Bool] -> [a] -> [Maybe a]
-insertNothings [] [] = []
-insertNothings (True:mask)  (x:xs) = (Just x) : (insertNothings mask xs)
-insertNothings (False:mask) xs     = Nothing  : (insertNothings mask xs)
-
-printTable :: (Show a, Show b) => Table a b -> String
-printTable (Table mask rows) =
-  let rowsWithRank = mapFst (insertNothings mask) rows
-  in concat . P.map formatRow . rowsToStrings $ rowsWithRank
-
-
-showMaybe :: (Show a) => Maybe a -> String
-showMaybe Nothing = "*"
-showMaybe (Just x) = show x
-
-rowsToStrings :: (Show a, Show b) => [([Maybe a], b)] -> [[String]]
-rowsToStrings rows =
-  let stringRows = [[showMaybe k | k <- ks] ++ [show v] | (ks,v) <- rows]
-      evalMaxLen = foldr (\s w -> max (length s) w) 0
-      ws = P.map evalMaxLen . transpose $ stringRows
-      padRow xs = [padLeft w ' ' x | (w, x) <- zip ws xs]
-  in P.map padRow stringRows
-
-formatRow :: [String] -> String
-formatRow rows = " " ++ concat (intersperse " | " rows) ++ "\n"
-
--- ----- util -----
+unJust :: Maybe a -> a
+unJust (Just x) = x
+unJust Nothing = error "whoops!"
 
 pad :: Int -> a -> [a] -> [a]
 pad n v xs = xs ++ repeatN (n - length(xs)) v
@@ -169,6 +111,10 @@ insertIdx :: Int -> a -> [a] -> [a]
 insertIdx i x xs = case splitAt i xs of
   (prefix, suffix) -> prefix ++ (x:suffix)
 
+mvIdx :: Int -> Int -> [a] -> [a]
+mvIdx i j xs = let x = xs!!i
+               in delIdx i . insertIdx j x $ xs
+
 mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
 mapFst f zs = [(f x, y) | (x, y) <- zs]
 
@@ -181,5 +127,25 @@ splitWhile f xs = (takeWhile f xs, dropWhile f xs)
 repeatN :: Int -> a -> [a]
 repeatN n x = take n (repeat x)
 
-repeatApply :: Int -> (a -> a) -> a -> a
-repeatApply n f = foldr (.) id (repeatN n f)
+composeN :: Int -> (a -> a) -> a -> a
+composeN n f = foldr (.) id (repeatN n f)
+
+-- -- ----- printing -----
+
+printTable :: (Show a, Show b) => Table a b -> String
+printTable (Table rows) = concat . P.map formatRow . rowsToStrings $ rows
+
+showMaybe :: (Show a) => Maybe a -> String
+showMaybe Nothing = "*"
+showMaybe (Just x) = show x
+
+rowsToStrings :: (Show a, Show b) => [([Maybe a], b)] -> [[String]]
+rowsToStrings rows =
+  let stringRows = [[showMaybe k | k <- ks] ++ [show v] | (ks,v) <- rows]
+      evalMaxLen = foldr (\s w -> max (length s) w) 0
+      ws = P.map evalMaxLen . transpose $ stringRows
+      padRow xs = [padLeft w ' ' x | (w, x) <- zip ws xs]
+  in P.map padRow stringRows
+
+formatRow :: [String] -> String
+formatRow rows = " " ++ concat (intersperse " | " rows) ++ "\n"

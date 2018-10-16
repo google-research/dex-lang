@@ -19,7 +19,7 @@ data Val = TV (T.Table Int Int) Depth
 
 data BinOpName = Add | Mul | Sub | Div  deriving (Show)
 
-type IEnv = (Depth, [Int]) -- depth, and positions of in-scope indices
+type IEnv = (Depth, [Int])
 type Env = [Val]
 type Depth = Int
 
@@ -27,21 +27,21 @@ eval :: Expr -> Env -> IEnv -> Val
 eval (Lit c) _   (depth, _) = lift depth $ TV (T.fromScalar c) 0
 eval (Var v) env (depth, _) = lift depth $ env !! v
 eval (Lam body) env ienv = LamVal env ienv body
-eval (App fexpr arg) env ienv =
-    let f = eval fexpr env ienv
-        x = eval arg env ienv
-    in evalApp f x
-eval (IdxComp body) env (d, idxs) = let ienv = ((d + 1), d:idxs) in
-                                    case eval body env ienv of
+eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
+                                    x = eval arg env ienv
+                                in evalApp f x
+eval (IdxComp body) env (d, idxs) = let ienv = (d+1, d:idxs)
+                                    in case eval body env ienv of
                                       TV t d -> TV t (d-1)
 eval (Get e i) env ienv = let (_, idxs) = ienv
-                              i' = idxs !! i
+                              i' = idxs!!i
                           in case eval e env ienv of
                               TV t d -> TV (T.diag i' d t) d
 
+
 lift :: Int -> Val -> Val
 lift d (TV t d') = TV (T.insert d' (d - d') t) d
-lift d (LamVal env (_, idxs) body) = LamVal env (d, idxs) body
+lift d (LamVal env (d',idxs) body) = LamVal env (d,idxs) body
 lift d (Builtin name args) = Builtin name (map (lift d) args)
 
 data BuiltinName = BinOp BinOpName
@@ -54,20 +54,22 @@ numArgs Iota      = 1
 numArgs Reduce    = 3
 
 evalApp :: Val -> Val -> Val
-evalApp (LamVal env' ienv' body) x = eval body (x:env') ienv'
+evalApp (LamVal env ienv body) x = eval body (x:env) ienv
 evalApp (Builtin name vs) x = let args = x:vs
                               in if length args < numArgs name
                                    then Builtin name args
                                    else evalBuiltin name (reverse args)
 
 evalBuiltin :: BuiltinName -> [Val] -> Val
-evalBuiltin (BinOp b) (TV t1 d : TV t2 d' : []) | d == d' =
-    TV (T.map2 (binOpFun b) t1 t2) d
-evalBuiltin Iota (TV t d : []) = TV (T.iota t) d
-evalBuiltin Reduce (f : TV z d : TV t d' : []) | d == d' =
-    let f' x y = case evalApp (evalApp f (TV x d)) (TV y d)
-                 of TV t d -> t
-    in TV (T.reduce d f' z t) d
+evalBuiltin (BinOp b) [TV t1 d , TV t2 d'] | d == d' =
+    let f x y = T.fromScalar $ binOpFun b (T.toScalar x) (T.toScalar y)
+    in TV (T.mapD2 d f t1 t2) d
+evalBuiltin Iota [TV t d] = TV (T.mapD d T.iota t)
+
+-- evalBuiltin Reduce (f : TV z d : TV t d' : []) | d == d' = undefined
+    -- let f' x y = case evalApp (evalApp f (TV x d)) (TV y d)
+    --              of TV t d -> t
+    -- in TV (T.reduce d f' z t) d
 
 binOpFun :: BinOpName -> Int -> Int -> Int
 binOpFun Add = (+)
