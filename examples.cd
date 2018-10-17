@@ -1,59 +1,55 @@
 1 + 2
 ~
-[i: 10]
+for i: 10
 ~
-[i: (1 + 10)]
+for i: (1 + 10)
 ~
 1 + 2 * 3 + 4
 ~
-let x = 2 in x * 3
+let x = 2
+in x * 3
 ~
-(\x -> x + x) 1
+(lam x: x + x) 1
 ~
-let f = (\x -> x + x)
- in f (1 + 1)
+let f = (lam x: x + x)
+in f (1 + 1)
 ~
 let f = \x -> let y = x + x
               in y + y
 in f (1 + 1)
 ~
-[i: (iota 3)[i]]
+for i: (iota 3).i
 ~
-[j: [i: 1 + 300]]
+for j: (for i: 1 + 300)
 ~
-[i: 2 + (iota 3)[i]]
+for i: 2 + (iota 3).i
 ~
 let d = iota 3
- in [j: [i: (d[j]*100) + d[i]]]
+in for j: (for i: (d.j * 100) + d.i)
 ~
-[j: [i: ([k: (iota 4)[k] + 1])[j] + (iota 5)[i]]]
+for j: for i: (for k: (iota 4).k + 1).j + (iota 5).i
 ~
-[j: [i: [k: (iota 3)[j]]]]
+for j: for i: for k: (iota 3).j
 ~
-[j: [i:
-   ([k: (iota 4)[k]])[j] + (iota 5)[i]
-]]
+for j: for i:
+   (for k: (iota 4).k).j + (iota 5).i
 ~
-[k: [j:
-  [l:[i: (iota 3)[i]][l]][k] + (iota 4)[j]
-]]
+for k: for j:
+  (for l: (for i: (iota 3).i).l).k + (iota 4).j
 ~
 let d = iota 4
-in [i: d[i] * 2]
+in for i: d.i * 2
 ~
 add 1 2
 ~
-let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
+let outer = lam x: lam y: for i: for j: x.i * y.j
 in outer (iota 3) (iota 4)
 ~
-let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
-in let transpose = \x -> [i: [j:   (x[j])[i] ] ]
+let outer = lam x: lam y: for i: for j: x.i * y.j
+in let transpose = lam x: for i: for j:  x.j.i
    in transpose (outer (iota 3) (iota 4))
-~
-let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
-in [i: outer[i]] (iota 3) (iota 4)
 ~
 reduce add 0 (iota 10)
 ~
-let dot = \x -> \y -> (reduce add 0 ( [i: x[i] * y[i] ]) )
+let dot = lam x: lam y: reduce add 0 (for i: x.i * y.i)
 in dot (iota 3) (iota 3)

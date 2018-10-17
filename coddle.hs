@@ -12,7 +12,7 @@ evalSource :: String -> String
 evalSource line =
   case parseExpr line of
     Left e ->  "Parse error:\n" ++ show e
-    Right r -> line ++ "\n" ++ show r -- ++ (show $ evalClosed r)
+    Right r -> line ++ "\n" ++ (show $ evalClosed r)
 
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
