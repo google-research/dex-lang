@@ -46,23 +46,3 @@ main = do
   case args of
     fname:[] -> evalFile fname
     []       -> repl
-
--- ---------- TODO ----------
-
--- eval index comprehensions
-
--- builtins as syntactically the same as biops
--- make it monadic
--- handle multiple vars/idxvars (desugaring to single ones)
--- indentation and top-level functions?
-
--- types (syntax)
--- type checking/inference
-
--- think about
---   reduce
---   binary op loop
-
--- emit LLVM for actual compilation?
-
--- syntax for pinning layouts?

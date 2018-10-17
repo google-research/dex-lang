@@ -14,8 +14,8 @@ in x * 3
 let f = (lam x: x + x)
 in f (1 + 1)
 ~
-let f = \x -> let y = x + x
-              in y + y
+let f = lam x: let y = x + x
+               in y + y
 in f (1 + 1)
 ~
 for i: (iota 3).i
@@ -45,9 +45,9 @@ add 1 2
 let outer = lam x: lam y: for i: for j: x.i * y.j
 in outer (iota 3) (iota 4)
 ~
-let outer = lam x: lam y: for i: for j: x.i * y.j
-in let transpose = lam x: for i: for j:  x.j.i
-   in transpose (outer (iota 3) (iota 4))
+let outer     = lam x: lam y: for i: for j: x.i * y.j ;
+    transpose = lam x: for i: for j:  x.j.i
+in transpose (outer (iota 3) (iota 4))
 ~
 reduce add 0 (iota 10)
 ~

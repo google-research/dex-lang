@@ -1,15 +1,18 @@
 
-map :: (a -> b) -> i=>a -> i=>b
-map f x = [i: f x[i]]
+map :: (a -> b) -> i>a -> i>b
+map f x = for i: f x.i
 
-matmul :: i=>k=>Real -> k=>j=>Real -> i=>k=>Real
-matmul x y = [i,j: reduce add [k: x[i,k] * y[k,j]]]
+sum :: k>Real -> Real
+sum = reduce add
 
-dot :: i=>Real -> i=>Real -> Real
-dot x y = reduce add [i: x[i] * y[i]]
+matmul :: k>Real -> k>j>Real -> i>k>Real
+matmul x y = for i j: sum (for k: x.i.k * y.k.j)
 
-outer :: i=>Real -> j=>Real -> i=>j=>Real
-outer x y :: [i,j: x[i] * y[j]]
+dot :: i>Real -> i>Real -> Real
+dot x y = sum (for i: x.i * y.i)
 
-transpose :: i=>j=>a -> j=>i=>a
-transpose x = [i,j: x[j,i]]
+outer :: i>Real -> j>Real -> i>j>Real
+outer x y = for i j: x.i * y.j
+
+transpose :: i>j>a -> j>i>a
+transpose x = for i j: x.j.i

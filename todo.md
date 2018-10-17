@@ -1,13 +1,12 @@
 # Todo ordered (easy things)
-  * sugar
-    * for/lam instead of (or as well as?) current syntax
-    * multi arg let/for
-    * multi-let (semicolon-separated)
+  * concrete syntax
+    * multi arg lam/for
     * top-level let
+    * comments
 
   * repl with partial programs
-    * including non-crashing parse and runtime errors
-
+    * including non-crashing parse and runtime errors (probably justifies
+      monadic interpreter)
 
 
 
@@ -19,9 +18,6 @@
 
   * type inference (and print types)
   * string/float/bool types
-
-
-
 
 # Want
   * parallel
