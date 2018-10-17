@@ -1,6 +1,4 @@
 # Todo ordered (easy things)
-  * correctly handle index-lifting of lambdas
-  * make interpreter/lowerer monadic
   * implement reduce and check matmul
   * sugar
     * multi-let/lam/idxcomp
@@ -57,6 +55,7 @@
 
 
 * implementation
+  * make interpreter/lowerer monadic
   * type inference/checking with HM
     * good example here:
       https://github.com/sdiehl/write-you-a-haskell/tree/master/chapter7/poly)

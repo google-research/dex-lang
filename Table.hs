@@ -1,4 +1,4 @@
-module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, iota,
+module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, reduceD, iota,
               printTable, insert) where
 
 import Prelude hiding (map, lookup)
@@ -28,6 +28,12 @@ mapD d = composeN d map
 
 map ::  Ord k => (T k a -> T k b) -> T k a -> T k b
 map f t = fromMMap $ map' f (toMMap t)
+
+reduceD :: Ord k => Int -> (T k a -> T k a -> T k a) -> T k a -> T k a -> T k a
+reduceD d f z xs = mapD2 d (reduce f) z xs
+
+reduce :: Ord k => (T k a -> T k a -> T k a) -> T k a -> T k a -> T k a
+reduce f z xs = reduce' f z (toMMap xs)
 
 mapD2 :: Ord k => Int -> (T k a -> T k b -> T k c) -> T k a -> T k b -> T k c
 mapD2 d = composeN d map2
@@ -75,7 +81,8 @@ map2' f (MMap  mx) (MMap  my) = MMap $ M.intersectionWith f mx my
 
 
 reduce' :: (v -> v -> v) -> v -> MMap k v -> v
-reduce' = undefined
+reduce' f z (Always x) = error "Can't reduce infinite map"
+reduce' f z (MMap mx ) = M.foldr f z mx
 
 -- -- ----- printing -----
 

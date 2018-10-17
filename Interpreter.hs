@@ -75,10 +75,10 @@ evalBuiltin (BinOp b) [IntVal d t1 , IntVal d' t2] | d == d' =
 evalBuiltin Iota [IntVal d t] = IntVal d (T.mapD d T.iota t)
 
 
--- evalBuiltin Reduce (f : IntVal z d : IntVal t d' : []) | d == d' = undefined
-    -- let f' x y = case evalApp (evalApp f (IntVal x d)) (IntVal y d)
-    --              of IntVal t d -> t
-    -- in IntVal (T.reduce d f' z t) d
+evalBuiltin Reduce (f : IntVal d z : IntVal d' t: []) | d == d' =
+    let f' x y = case evalApp (evalApp f (IntVal d x)) (IntVal d y)
+                 of IntVal d t -> t
+    in IntVal d (T.reduceD d f' z t)
 
 binOpFun :: BinOpName -> Int -> Int -> Int
 binOpFun Add = (+)
