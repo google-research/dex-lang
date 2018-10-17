@@ -31,17 +31,26 @@ eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
                                 in evalApp f x
 eval (IdxComp body) env (d, idxs) = let ienv = (d+1, d:idxs)
                                         env' = map lift env
-                                    in case eval body env' ienv of
-                                        IntVal d t -> IntVal (d-1) t
+                                     in lower $ eval body env' ienv
 eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs!!i
-                          in case eval e env ienv of
-                              IntVal d t -> IntVal d (T.diag i' d t)
+                              x = eval e env ienv
+                          in contract i' x
+
+contract :: Int -> Val -> Val
+contract i (IntVal d t) = IntVal d $ T.diag i d t
+contract i (LamVal env ienv body) = LamVal (map (contract i) env) ienv body
+contract i (Builtin name args) = Builtin name (map (contract i) args)
 
 lift :: Val -> Val
-lift (IntVal d t) = IntVal (d+1) (T.insert d t)
+lift (IntVal d t) = IntVal (d+1) $ T.insert d t
 lift (LamVal env (d,idxs) body) = LamVal (map lift env) (d+1, idxs) body
 lift (Builtin name args) = Builtin name (map lift args)
+
+lower :: Val -> Val
+lower (IntVal d t) = IntVal (d-1) t
+lower (LamVal env (d,idxs) body) = LamVal (map lower env) (d-1, idxs) body
+lower (Builtin name args) = Builtin name (map lower args)
 
 data BuiltinName = BinOp BinOpName
                  | Iota

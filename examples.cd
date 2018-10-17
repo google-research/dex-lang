@@ -50,4 +50,7 @@ let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
 in let transpose = \x -> [i: [j:   (x[j])[i] ] ]
    in transpose (outer (iota 3) (iota 4))
 ~
+let outer = \x -> \y -> [i: [j: x[i] * y[j] ] ]
+in [i: outer[i]] (iota 3) (iota 4)
+~
 reduce add 0 (iota 10)
