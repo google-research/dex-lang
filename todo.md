@@ -1,16 +1,21 @@
 # Todo ordered (easy things)
-  * implement reduce and check matmul
   * sugar
-    * multi-let/lam/idxcomp
-    * top-level lambda without '\'
-    * for/lam instead of current syntax
+    * for/lam instead of (or as well as?) current syntax
+    * multi arg let/for
+    * multi-let (semicolon-separated)
+    * top-level let
 
   * repl with partial programs
-    * including non-crashing parse errors and type errors (don't need to be helpful)
+    * including non-crashing parse and runtime errors
+
+
+
+
+  * sqlite i/o
+
 
   * product and record types
 
-  * sqlite i/o
 
   * type inference (and print types)
   * string/float/bool types

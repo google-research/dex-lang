@@ -16,7 +16,7 @@ data Val = IntVal Depth (T.Table Int Int)
          | LamVal Env IEnv Expr
          | Builtin BuiltinName [Val]
 
-data BinOpName = Add | Mul | Sub | Div  deriving (Show)
+data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq)
 
 type IEnv = (Depth, [Int])
 type Env = [Val]

@@ -1,5 +1,6 @@
-module Parser (parseExpr) where
+module Parser (parseExpr, tests) where
 
+import Test.HUnit
 import Prelude hiding (lookup)
 import Control.Monad
 import Text.ParserCombinators.Parsec hiding (lower)
@@ -17,11 +18,12 @@ data Expr = BinOp I.BinOpName Expr Expr
           | App Expr Expr
           | IdxComp IdxVarName Expr
           | Get Expr IdxVarName
-          deriving (Show)
+          deriving (Show, Eq)
 
 type VarName = String
 type IdxVarName = String
 
+parseExpr :: String -> Either ParseError I.Expr
 parseExpr s = do
   r <- parse expr "" s
   return $ lower r builtinVars []
@@ -61,7 +63,7 @@ expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
 
 opNames = ["+", "*", "/", "-"]
-resNames = ["let", "in"]
+resNames = ["for", "lam", "let", "in"]
 languageDef = haskellStyle { Token.reservedOpNames = opNames
                            , Token.reservedNames   = resNames
                            , Token.commentLine     = "--"
@@ -96,7 +98,7 @@ term =   parens expr
      <|> liftM (Lit . fromIntegral) integer
      <|> letExpr
      <|> lamExpr
-     <|> arrExpr
+     <|> forExpr
      <?> "term"
 
 str = lexeme . string
@@ -111,16 +113,37 @@ letExpr = do
   return $ Let v bound body
 
 lamExpr = do
-  try $ str "\\"
-  v <- liftM id identifier
-  str "->"
-  body <- expr
-  return $ Lam v body
-
-arrExpr = do
-  try $ str "["
+  try $ str "lam"
   v <- liftM id identifier
   str ":"
   body <- expr
-  str "]"
+  return $ Lam v body
+
+forExpr = do
+  try $ str "for"
+  v <- liftM id identifier
+  str ":"
+  body <- expr
   return $ IdxComp v body
+
+
+testParses =
+  [ ("1 + 2"        , BinOp I.Add (Lit 1) (Lit 2))
+  , ("for i: 10"    , IdxComp "i" (Lit 10))
+  , ("lam x: x"     , Lam "x" (Var "x"))
+  , ("y x"          , App (Var "y") (Var "x"))
+  , ("x.i"          , Get (Var "x") "i")
+  , ("f x y"        , App (App (Var "f") (Var "x")) (Var "y"))
+  , ("x.i.j"        , Get (Get (Var "x") "i") "j")
+  , ("let x = 1 in x"        ,  Let "x" (Lit 1) (Var "x"))
+  -- , ("let f x = x in f"      , Lit 1)
+  -- , ("let x.i = y.i in x"    , Lit 1)
+  -- , ("let f x y = x + y in f", Lit 1)
+  -- , ("let x.i.j = y.j.i in x", Lit 1)
+  ]
+
+tests = TestList $ [
+    let msg = "  tried: " ++ s
+        p = parse expr "" s
+    in TestCase $ assertEqual msg (Right e) p
+    | (s, e) <- testParses]
