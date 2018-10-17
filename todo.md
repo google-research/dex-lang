@@ -1,8 +1,11 @@
 # Todo ordered (easy things)
+  * correctly handle index-lifting of lambdas
+  * make interpreter/lowerer monadic
   * implement reduce and check matmul
   * sugar
     * multi-let/lam/idxcomp
     * top-level lambda without '\'
+    * for/lam instead of current syntax
 
   * repl with partial programs
     * including non-crashing parse errors and type errors (don't need to be helpful)

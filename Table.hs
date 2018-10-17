@@ -3,11 +3,12 @@ module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, iota,
 
 import Prelude hiding (map, lookup)
 import Data.List (intersperse, transpose)
+import Util
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
 
-data Table a b = Table [([Maybe a], b)]
+newtype Table a b = Table [([Maybe a], b)]
 data MMap k v = MMap (M.Map k v) | Always v
 type T = Table
 
@@ -17,9 +18,9 @@ fromScalar x = Table [([], x)]
 toScalar :: Ord a => T a b -> b
 toScalar (Table [([], x)]) = x
 
-insert :: Int -> Int -> T k a -> T k a
-insert pos num (Table rows) =
-  let update = composeN num $ insertIdx pos Nothing
+insert :: Int -> T k a -> T k a
+insert pos (Table rows) =
+  let update = insertIdx pos Nothing
   in Table [(update ks, v) | (ks, v) <- rows]
 
 mapD ::  Ord k => Int -> (T k a -> T k b) -> T k a -> T k b
@@ -43,7 +44,7 @@ toMMap (Table rows) =
                        in MMap (M.fromList rows')
 
 fromMMap :: Ord k => MMap k (T k v) -> T k v
-fromMMap (Always t) = t
+fromMMap (Always t) = insert 0 t
 fromMMap (MMap m)   = Table [(Just k : ks, v) | (k, Table rows) <- M.toList m
                                               , (ks, v) <- rows]
 
@@ -51,11 +52,14 @@ iota :: T Int Int -> T Int Int
 iota (Table [([], v)]) = Table [([Just i], i) | i <- [0..(v-1)]]
 
 diag :: Ord k => Int -> Int -> Table k a -> Table k a
-diag 0 j (Table rows) = Table $ mapFst (mvIdx j 1) rows
-diag i j t = mapD i (diag 0 j) t
+diag 0 j (Table rows) = Table . mapMaybe mergeRow . mapFst (mvIdx j 1) $ rows
+diag i j t = mapD i (diag 0 (j-i)) t
 
-merge :: Ord k => Table k a -> Table k a
-merge = fromMMap . merge' . map' toMMap . toMMap
+mergeRow :: Ord k => ([Maybe k], v) -> Maybe ([Maybe k], v)
+mergeRow ((Nothing : Nothing : ks), v)             = Just (Nothing :ks, v)
+mergeRow ((Nothing : Just k  : ks), v)             = Just ((Just k):ks, v)
+mergeRow ((Just k' : Just k  : ks), v) | k == k'   = Just ((Just k):ks, v)
+                                       | otherwise = Nothing
 
 -- -- ----- operations on maps -----
 
@@ -72,63 +76,6 @@ map2' f (MMap  mx) (MMap  my) = MMap $ M.intersectionWith f mx my
 
 reduce' :: (v -> v -> v) -> v -> MMap k v -> v
 reduce' = undefined
-
-merge' :: MMap k (MMap k v) -> MMap k v
-merge' = undefined
-
--- ----- util -----
-
-group :: (Ord a) => [(a,b)] -> [(a, [b])]
-group [] = []
-group ((k,v):rem) =
-  let (prefix, suffix) = splitWhile ((== k) . fst) rem
-      g = v:(P.map snd prefix)
-  in (k, g) : group suffix
-
-ungroup ::  [(a, [b])] -> [(a,b)]
-ungroup [] = []
-ungroup ((k,vs):rem) = (zip (repeat k) vs) ++ ungroup rem
-
-unJust :: Maybe a -> a
-unJust (Just x) = x
-unJust Nothing = error "whoops!"
-
-pad :: Int -> a -> [a] -> [a]
-pad n v xs = xs ++ repeatN (n - length(xs)) v
-
-padLeft :: Int -> a -> [a] -> [a]
-padLeft  n v xs = repeatN (n - length(xs)) v ++ xs
-
-delIdx :: Int -> [a] -> [a]
-delIdx i xs = case splitAt i xs of
-  (prefix, x:suffix) -> prefix ++ suffix
-
-replaceIdx :: Int -> a -> [a] -> [a]
-replaceIdx i x xs = case splitAt i xs of
-  (prefix, _:suffix) -> prefix ++ (x:suffix)
-
-insertIdx :: Int -> a -> [a] -> [a]
-insertIdx i x xs = case splitAt i xs of
-  (prefix, suffix) -> prefix ++ (x:suffix)
-
-mvIdx :: Int -> Int -> [a] -> [a]
-mvIdx i j xs = let x = xs!!i
-               in delIdx i . insertIdx j x $ xs
-
-mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
-mapFst f zs = [(f x, y) | (x, y) <- zs]
-
-mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
-mapSnd f zs = [(x, f y) | (x, y) <- zs]
-
-splitWhile :: (a -> Bool) -> [a] -> ([a], [a])
-splitWhile f xs = (takeWhile f xs, dropWhile f xs)
-
-repeatN :: Int -> a -> [a]
-repeatN n x = take n (repeat x)
-
-composeN :: Int -> (a -> a) -> a -> a
-composeN n f = foldr (.) id (repeatN n f)
 
 -- -- ----- printing -----
 
