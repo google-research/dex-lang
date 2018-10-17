@@ -85,8 +85,8 @@ binOpRule opchar opname = Infix (reservedOp opchar
                                  >> return (BinOp opname)) AssocLeft
 
 getRule = Postfix $ do
-  v  <- brackets $ liftM id identifier
-  return $ \body -> Get body v
+  vs  <- many $ str "." >> liftM id identifier
+  return $ \body -> foldr (flip Get) body (reverse vs)
 
 ops = [ [getRule, appRule],
         [binOpRule "*" I.Mul, binOpRule "/" I.Div],
