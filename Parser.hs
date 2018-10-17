@@ -102,9 +102,10 @@ term =   parens expr
      <?> "term"
 
 str = lexeme . string
+var = liftM id identifier
 
 assignment = do
-  v <- liftM id identifier
+  v <- var
   str "="
   bound <- expr
   return (v, bound)
@@ -118,17 +119,17 @@ letExpr = do
 
 lamExpr = do
   try $ str "lam"
-  v <- liftM id identifier
+  vs <- var `sepBy` whiteSpace
   str ":"
   body <- expr
-  return $ Lam v body
+  return $ foldr Lam body vs
 
 forExpr = do
   try $ str "for"
-  v <- liftM id identifier
+  vs <- var `sepBy` whiteSpace
   str ":"
   body <- expr
-  return $ IdxComp v body
+  return $ foldr IdxComp body vs
 
 
 testParses =
@@ -141,6 +142,8 @@ testParses =
   , ("x.i.j"        , Get (Get (Var "x") "i") "j")
   , ("let x = 1 in x"        ,  Let "x" (Lit 1) (Var "x"))
   , ("let x = 1; y = 2 in x" ,  Let "x" (Lit 1) (Let "y" (Lit 2) (Var "x")))
+  , ("for i j: 10"    , IdxComp "i" (IdxComp "j" (Lit 10)))
+  , ("lam x y: x"     , Lam "x" (Lam "y" (Var "x")))
   -- , ("let f x = x in f"      , Lit 1)
   -- , ("let x.i = y.i in x"    , Lit 1)
   -- , ("let f x y = x + y in f", Lit 1)

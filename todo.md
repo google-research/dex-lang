@@ -1,14 +1,13 @@
 # Todo ordered (easy things)
   * concrete syntax
     * multi arg lam/for
+    * named lam/for using let
     * top-level let
-    * comments
+    * comments?
 
   * repl with partial programs
     * including non-crashing parse and runtime errors (probably justifies
       monadic interpreter)
-
-
 
   * sqlite i/o
 
