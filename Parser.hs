@@ -103,14 +103,18 @@ term =   parens expr
 
 str = lexeme . string
 
-letExpr = do
-  try $ str "let"
+assignment = do
   v <- liftM id identifier
   str "="
   bound <- expr
+  return (v, bound)
+
+letExpr = do
+  try $ str "let"
+  bindings <- assignment `sepBy` str ";"
   str "in"
   body <- expr
-  return $ Let v bound body
+  return $ foldr (uncurry Let) body bindings
 
 lamExpr = do
   try $ str "lam"
@@ -136,6 +140,7 @@ testParses =
   , ("f x y"        , App (App (Var "f") (Var "x")) (Var "y"))
   , ("x.i.j"        , Get (Get (Var "x") "i") "j")
   , ("let x = 1 in x"        ,  Let "x" (Lit 1) (Var "x"))
+  , ("let x = 1; y = 2 in x" ,  Let "x" (Lit 1) (Let "y" (Lit 2) (Var "x")))
   -- , ("let f x = x in f"      , Lit 1)
   -- , ("let x.i = y.i in x"    , Lit 1)
   -- , ("let f x y = x + y in f", Lit 1)
