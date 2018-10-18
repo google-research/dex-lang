@@ -33,10 +33,16 @@ parseProg s = do
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
 numBinOps = 4
 
-parseLine :: String -> VarEnv -> Either ParseError (VarName, I.Expr)
+parseLine :: String -> VarEnv -> Either ParseError (Either (VarName, I.Expr) I.Expr)
 parseLine line env = do
-  (v, e) <- parse binding "" line
-  return $ (v, lower e env [])
+  result <- parse bindingOrExpr "" line
+  case result of
+    Left (v, e) -> return $ Left  (v, lower e env [])
+    Right e    ->  return $ Right $ lower e env []
+
+bindingOrExpr :: Parser (Either Binding Expr)
+bindingOrExpr =   try (binding >>= return . Left)
+              <|> (expr >>= return . Right)
 
 
 lower :: Expr -> VarEnv -> [IdxVarName] -> I.Expr

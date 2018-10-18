@@ -1,7 +1,7 @@
 # Todo ordered (easy things)
   * repl with one line per assignment
-  * repl with multiline assignments
-  * make it non-crashing on parse errors
+  * moadify: make it non-crashing on parse errors
+  * allow backslash to escape multiline assignments
 
   * comments?
   * sqlite i/o
