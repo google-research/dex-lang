@@ -12,19 +12,16 @@ out = x * 3
 f x = x + x
 out = f 1
 ~
-f x = x + x  ;
+f x = x + x
 out = f (1 + 1)
 ~
-f x = let y = x + x \
-      in y + y
+f x = let y = x + x in y + y
 out = f (1 + 1)
 ~
-f x = let y = x + x; \
-          z = y + x  \
-      in y + z
+f x = let y = x + x; z = y + x in y + z
 out = f (1 + 1)
 ~
-x.i: (iota 3).i
+x.i = (iota 3).i
 out = x
 ~
 x.j.i = 1 + 300

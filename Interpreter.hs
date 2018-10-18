@@ -1,4 +1,4 @@
-module Interpreter (Expr (..), Env, BinOpName (..), binOpIdx, evalClosed) where
+module Interpreter (Expr (..), Env, BinOpName (..), binOpIdx, evalClosed, Val, eval, builtinEnv) where
 
 import qualified Data.Map.Strict as Map
 import Util
@@ -21,6 +21,8 @@ data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq)
 type IEnv = (Depth, [Int])
 type Env = [Val]
 type Depth = Int
+
+
 
 eval :: Expr -> Env -> IEnv -> Val
 eval (Lit c) _   (d, _) = (composeN d lift) $ IntVal 0 (T.fromScalar c)

@@ -1,4 +1,4 @@
-module Parser (parseProg, tests) where
+module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
 
 import Test.HUnit
 import Prelude hiding (lookup)
@@ -23,16 +23,23 @@ data Expr = BinOp I.BinOpName Expr Expr
 type Binding = (VarName, Expr)
 type VarName = String
 type IdxVarName = String
+type VarEnv = [VarName]
 
-parseBinding :: [String] -> Either ParseError I.Expr
-parseProg lines =
+parseProg :: String -> Either ParseError I.Expr
+parseProg s = do
   r <- parse prog "" s
   return $ lower r builtinVars []
 
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
 numBinOps = 4
 
-lower :: Expr -> [VarName] -> [IdxVarName] -> I.Expr
+parseLine :: String -> VarEnv -> Either ParseError (VarName, I.Expr)
+parseLine line env = do
+  (v, e) <- parse binding "" line
+  return $ (v, lower e env [])
+
+
+lower :: Expr -> VarEnv -> [IdxVarName] -> I.Expr
 lower (Lit c)   _  _ = I.Lit c
 lower (Var v) env _  = case lookup v env of
     Just i  -> I.Var i
