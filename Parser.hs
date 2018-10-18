@@ -20,11 +20,12 @@ data Expr = BinOp I.BinOpName Expr Expr
           | Get Expr IdxVarName
           deriving (Show, Eq)
 
+type Binding = (VarName, Expr)
 type VarName = String
 type IdxVarName = String
 
-parseProg :: String -> Either ParseError I.Expr
-parseProg s = do
+parseBinding :: [String] -> Either ParseError I.Expr
+parseProg lines =
   r <- parse prog "" s
   return $ lower r builtinVars []
 
@@ -65,7 +66,7 @@ expr = buildExpressionParser ops (whiteSpace >> term)
 prog :: Parser Expr
 prog = do
   whiteSpace
-  bindings <- assignment `sepBy` str ";"
+  bindings <- binding `sepBy` str ";"
   case bindings of
     [] -> fail "Empty program"
     bindings -> let (_, finalExpr) = last bindings
@@ -110,7 +111,7 @@ term =   parens expr
      <|> forExpr
      <?> "term"
 
-assignment = do
+binding = do
   v <- var
   wrap <- idxLhsArgs <|> lamLhsArgs
   str "="
@@ -131,7 +132,7 @@ lamLhsArgs = do
 
 letExpr = do
   try $ str "let"
-  bindings <- assignment `sepBy` str ";"
+  bindings <- binding `sepBy` str ";"
   str "in"
   body <- expr
   return $ foldr (uncurry Let) body bindings
@@ -149,6 +150,12 @@ forExpr = do
   str ":"
   body <- expr
   return $ foldr For body vs
+
+escapeChars :: String -> String
+escapeChars [] = []
+escapeChars (x:xs) = case x of
+                     '\\' -> escapeChars $ drop 1 xs
+                     otherwise -> x : escapeChars xs
 
 
 testParses =

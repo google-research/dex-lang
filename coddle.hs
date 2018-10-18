@@ -14,6 +14,13 @@ evalSource source =
     Left e ->  "Parse error:\n" ++ show e
     Right r -> source ++ "\n" ++ (show $ evalClosed r)
 
+-- evalLine :: String -> (String,
+-- evalSource source =
+--   case parseProg source of
+--     Left e ->  "Parse error:\n" ++ show e
+--     Right r -> source ++ "\n" ++ (show $ evalClosed r)
+
+
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
              ""   -> []
@@ -25,14 +32,14 @@ evalMultiSource s = let results = map evalSource $ splitString '~' s
                     in concat $ intersperse "\n\n" results
 
 repl :: IO ()
-repl = runInputT defaultSettings loop
+repl = runInputT defaultSettings (loop [])
   where
-  loop = do
+  loop env = do
     minput <- getInputLine "> "
     case minput of
       Nothing -> return ()
-      Just line -> (liftIO . putStrLn . evalSource $ line)
-                   >> loop
+      Just line -> let ans = evalSource line
+                   in (liftIO (putStrLn ans)) >> loop []
 
 evalFile :: String -> IO ()
 evalFile s = do

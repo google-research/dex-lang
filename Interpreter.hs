@@ -1,4 +1,4 @@
-module Interpreter (Expr (..), BinOpName (..), binOpIdx, evalClosed) where
+module Interpreter (Expr (..), Env, BinOpName (..), binOpIdx, evalClosed) where
 
 import qualified Data.Map.Strict as Map
 import Util
