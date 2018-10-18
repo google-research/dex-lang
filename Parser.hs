@@ -16,7 +16,7 @@ data Expr = BinOp I.BinOpName Expr Expr
           | Let VarName Expr Expr
           | Lam VarName Expr
           | App Expr Expr
-          | IdxComp IdxVarName Expr
+          | For IdxVarName Expr
           | Get Expr IdxVarName
           deriving (Show, Eq)
 
@@ -45,7 +45,7 @@ lower (Lam v body) env ienv = I.Lam $ lower body (v:env) ienv
 lower (App fexpr arg) env ienv = let f = lower fexpr env ienv
                                      x = lower arg env ienv
                                  in I.App f x
-lower (IdxComp iv body) env ienv = I.IdxComp $ lower body env (iv:ienv)
+lower (For iv body) env ienv = I.For $ lower body env (iv:ienv)
 lower (Get e iv) env ienv = let e' = lower e env ienv
                             in case lookup iv ienv of
                     Just i  -> I.Get e' i
@@ -104,11 +104,21 @@ term =   parens expr
 str = lexeme . string
 var = liftM id identifier
 
+idxLhsArgs = do
+  try $ str "."
+  args <- var `sepBy` str "."
+  return $ \body -> foldr For body args
+
+lamLhsArgs = do
+  args <- var `sepBy` whiteSpace
+  return $ \body -> foldr Lam body args
+
 assignment = do
   v <- var
+  wrap <- idxLhsArgs <|> lamLhsArgs
   str "="
-  bound <- expr
-  return (v, bound)
+  body <- expr
+  return (v, wrap body)
 
 letExpr = do
   try $ str "let"
@@ -129,25 +139,25 @@ forExpr = do
   vs <- var `sepBy` whiteSpace
   str ":"
   body <- expr
-  return $ foldr IdxComp body vs
+  return $ foldr For body vs
 
 
 testParses =
   [ ("1 + 2"        , BinOp I.Add (Lit 1) (Lit 2))
-  , ("for i: 10"    , IdxComp "i" (Lit 10))
+  , ("for i: 10"    , For "i" (Lit 10))
   , ("lam x: x"     , Lam "x" (Var "x"))
   , ("y x"          , App (Var "y") (Var "x"))
   , ("x.i"          , Get (Var "x") "i")
   , ("f x y"        , App (App (Var "f") (Var "x")) (Var "y"))
   , ("x.i.j"        , Get (Get (Var "x") "i") "j")
-  , ("let x = 1 in x"        ,  Let "x" (Lit 1) (Var "x"))
-  , ("let x = 1; y = 2 in x" ,  Let "x" (Lit 1) (Let "y" (Lit 2) (Var "x")))
-  , ("for i j: 10"    , IdxComp "i" (IdxComp "j" (Lit 10)))
-  , ("lam x y: x"     , Lam "x" (Lam "y" (Var "x")))
-  -- , ("let f x = x in f"      , Lit 1)
-  -- , ("let x.i = y.i in x"    , Lit 1)
-  -- , ("let f x y = x + y in f", Lit 1)
-  -- , ("let x.i.j = y.j.i in x", Lit 1)
+  , ("let x = 1 in x"        , Let "x" (Lit 1) (Var "x"))
+  , ("let x = 1; y = 2 in x" , Let "x" (Lit 1) (Let "y" (Lit 2) (Var "x")))
+  , ("for i j: 10"           , For "i" (For "j" (Lit 10)))
+  , ("lam x y: x"            , Lam "x" (Lam "y" (Var "x")))
+  , ("let f x = x in f"      , Let "f" (Lam "x" (Var "x")) (Var "f"))
+  , ("let x . i = y in x"    , Let "x" (For "i" (Var "y")) (Var "x"))
+  , ("let f x y = x in f"    , Let "f" (Lam "x" (Lam "y" (Var "x"))) (Var "f"))
+  , ("let x.i.j = y in x"    , Let "x" (For "i" (For "j" (Var "y"))) (Var "x"))
   ]
 
 tests = TestList $ [

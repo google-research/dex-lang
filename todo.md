@@ -1,7 +1,5 @@
 # Todo ordered (easy things)
   * concrete syntax
-    * multi arg lam/for
-    * named lam/for using let
     * top-level let
     * comments?
 

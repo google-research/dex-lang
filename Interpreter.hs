@@ -8,7 +8,7 @@ data Expr = Lit Int
           | Var Int
           | Lam Expr
           | App Expr Expr
-          | IdxComp Expr
+          | For Expr
           | Get Expr Int
               deriving (Show)
 
@@ -29,9 +29,9 @@ eval (Lam body) env ienv = LamVal env ienv body
 eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
                                     x = eval arg env ienv
                                 in evalApp f x
-eval (IdxComp body) env (d, idxs) = let ienv = (d+1, d:idxs)
-                                        env' = map lift env
-                                     in lower $ eval body env' ienv
+eval (For body) env (d, idxs) = let ienv = (d+1, d:idxs)
+                                    env' = map lift env
+                                in lower $ eval body env' ienv
 eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs!!i
                               x = eval e env ienv

@@ -11,11 +11,11 @@ in x * 3
 ~
 (lam x: x + x) 1
 ~
-let f = (lam x: x + x)
+let f x = x + x
 in f (1 + 1)
 ~
-let f = lam x: let y = x + x
-               in y + y
+let f x = let y = x + x
+          in y + y
 in f (1 + 1)
 ~
 for i: (iota 3).i
@@ -42,14 +42,14 @@ in for i: d.i * 2
 ~
 add 1 2
 ~
-let outer = lam x y: for i j: x.i * y.j
+let outer x y = for i j: x.i * y.j
 in outer (iota 3) (iota 4)
 ~
-let outer     = lam x y: for i j: x.i * y.j ;
-    transpose = lam x: for i j: x.j.i
+let outer x y = for i j: x.i * y.j ;
+    transpose x = for i j: x.j.i
 in transpose (outer (iota 3) (iota 4))
 ~
 reduce add 0 (iota 10)
 ~
-let dot = lam x y: reduce add 0 (for i: x.i * y.i)
+let dot x y = reduce add 0 (for i: x.i * y.i)
 in dot (iota 3) (iota 3)
