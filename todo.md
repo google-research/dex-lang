@@ -1,12 +1,9 @@
 # Todo ordered (easy things)
-  * concrete syntax
-    * top-level let
-    * comments?
+  * repl with one line per assignment
+  * repl with multiline assignments
+  * make it non-crashing on parse errors
 
-  * repl with partial programs
-    * including non-crashing parse and runtime errors (probably justifies
-      monadic interpreter)
-
+  * comments?
   * sqlite i/o
 
 
@@ -23,7 +20,14 @@
   * linear algebra and relational together (all of data science)
   * statically typed
   * io statically determined
-  * partially rank-polymorphic
+  * partially rank-polymorphicassignment = do
+  v <- var
+  wrap <- idxLhsArgs <|> lamLhsArgs
+  str "="
+  body <- expr
+  return (v, wrap body)
+
+
 
 # Todo
 * example programs

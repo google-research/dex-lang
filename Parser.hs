@@ -1,4 +1,4 @@
-module Parser (parseExpr, tests) where
+module Parser (parseProg, tests) where
 
 import Test.HUnit
 import Prelude hiding (lookup)
@@ -23,9 +23,9 @@ data Expr = BinOp I.BinOpName Expr Expr
 type VarName = String
 type IdxVarName = String
 
-parseExpr :: String -> Either ParseError I.Expr
-parseExpr s = do
-  r <- parse expr "" s
+parseProg :: String -> Either ParseError I.Expr
+parseProg s = do
+  r <- parse prog "" s
   return $ lower r builtinVars []
 
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
@@ -61,6 +61,15 @@ lookup target (x:xs) | x == target = Just 0
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
+
+prog :: Parser Expr
+prog = do
+  whiteSpace
+  bindings <- assignment `sepBy` str ";"
+  case bindings of
+    [] -> fail "Empty program"
+    bindings -> let (_, finalExpr) = last bindings
+                in return $ foldr (uncurry Let) finalExpr (init bindings)
 
 opNames = ["+", "*", "/", "-"]
 resNames = ["for", "lam", "let", "in"]
@@ -101,6 +110,13 @@ term =   parens expr
      <|> forExpr
      <?> "term"
 
+assignment = do
+  v <- var
+  wrap <- idxLhsArgs <|> lamLhsArgs
+  str "="
+  body <- expr
+  return (v, wrap body)
+
 str = lexeme . string
 var = liftM id identifier
 
@@ -112,13 +128,6 @@ idxLhsArgs = do
 lamLhsArgs = do
   args <- var `sepBy` whiteSpace
   return $ \body -> foldr Lam body args
-
-assignment = do
-  v <- var
-  wrap <- idxLhsArgs <|> lamLhsArgs
-  str "="
-  body <- expr
-  return (v, wrap body)
 
 letExpr = do
   try $ str "let"

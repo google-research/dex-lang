@@ -1,55 +1,54 @@
-1 + 2
+out = for i: 10
 ~
-for i: 10
+out = 1 + 2
 ~
-for i: (1 + 10)
+out = for i: (1 + 10)
 ~
-1 + 2 * 3 + 4
+out = 1 + 2 * 3 + 4
 ~
-let x = 2
-in x * 3
+x = 2 ;
+out = x * 3
 ~
-(lam x: x + x) 1
+f x = x + x  ;
+out = f 1
 ~
-let f x = x + x
-in f (1 + 1)
+f x = x + x  ;
+out = f (1 + 1)
 ~
-let f x = let y = x + x
-          in y + y
-in f (1 + 1)
+f x = let y = x + x
+      in y + y ;
+out = f (1 + 1)
 ~
-for i: (iota 3).i
+x.i: (iota 3).i  ;
+out = x
 ~
-for j: (for i: 1 + 300)
+x.j.i = 1 + 300 ;
+out = x
 ~
-for i: 2 + (iota 3).i
+out = for i: 2 + (iota 3).i
 ~
-let d = iota 3
-in for j i: (d.j * 100) + d.i
+d = iota 3  ;
+out.j.i = (d.j * 100) + d.i
 ~
-for j i k: (iota 4).k + 1).j + (iota 5).i
+out.j.i.k = (iota 4).k + 1).j + (iota 5).i
 ~
-for j i: for k: (iota 3).j
+out.j.i.k = (iota 3).j
 ~
-for j i:
-   (for k: (iota 4).k).j + (iota 5).i
+out = for j i: (for k: (iota 4).k).j + (iota 5).i
 ~
-for k j:
-  (for l: (for i: (iota 3).i).l).k + (iota 4).j
+out.k.j = (for l: (for i: (iota 3).i).l).k + (iota 4).j
 ~
-let d = iota 4
-in for i: d.i * 2
+d = iota 4 ;
+out.i = d.i * 2
 ~
-add 1 2
+outer x y = for i j: x.i * y.j ;
+out = outer (iota 3) (iota 4)
 ~
-let outer x y = for i j: x.i * y.j
-in outer (iota 3) (iota 4)
+outer x y = for i j: x.i * y.j  ;
+transpose x = for i j: x.j.i    ;
+out = transpose (outer (iota 3) (iota 4))
 ~
-let outer x y = for i j: x.i * y.j ;
-    transpose x = for i j: x.j.i
-in transpose (outer (iota 3) (iota 4))
+out = reduce add 0 (iota 10)
 ~
-reduce add 0 (iota 10)
-~
-let dot x y = reduce add 0 (for i: x.i * y.i)
-in dot (iota 3) (iota 3)
+dot x y = reduce add 0 (for i: x.i * y.i)   ;
+out = dot (iota 3) (iota 3)

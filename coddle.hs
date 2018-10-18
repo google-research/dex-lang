@@ -9,10 +9,10 @@ import Interpreter
 import Parser
 
 evalSource :: String -> String
-evalSource line =
-  case parseExpr line of
+evalSource source =
+  case parseProg source of
     Left e ->  "Parse error:\n" ++ show e
-    Right r -> line ++ "\n" ++ (show $ evalClosed r)
+    Right r -> source ++ "\n" ++ (show $ evalClosed r)
 
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
