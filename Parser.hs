@@ -1,5 +1,5 @@
 module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
-
+import Control.Monad (liftM, ap)
 import Test.HUnit
 import Prelude hiding (lookup)
 import Control.Monad
@@ -25,45 +25,78 @@ type VarName = String
 type IdxVarName = String
 type VarEnv = [VarName]
 
-parseProg :: String -> Either ParseError I.Expr
+parseProg :: String -> Either String I.Expr
 parseProg s = do
-  r <- parse prog "" s
-  return $ lower r builtinVars []
+  r <- parse' prog s
+  r' <- runLower (lower r) builtinVars []
+  return r'
+
+parse' :: Parser a -> String -> Either String a
+parse' p s = case parse p "" s of
+               Left e -> Left (show e)
+               Right r -> Right r
 
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
 numBinOps = 4
 
-parseLine :: String -> VarEnv -> Either ParseError (Either (VarName, I.Expr) I.Expr)
+parseLine :: String -> VarEnv -> Either String (Either (VarName, I.Expr) I.Expr)
 parseLine line env = do
-  result <- parse bindingOrExpr "" line
+  result <- parse' bindingOrExpr line
   case result of
-    Left (v, e) -> return $ Left  (v, lower e env [])
-    Right e    ->  return $ Right $ lower e env []
+    Left (v, e) -> do r <- runLower (lower e) env []
+                      return $ Left (v, r)
+    Right e     -> do r <- runLower (lower e) env []
+                      return $ Right r
+
 
 bindingOrExpr :: Parser (Either Binding Expr)
 bindingOrExpr =   try (binding >>= return . Left)
               <|> (expr >>= return . Right)
 
 
-lower :: Expr -> VarEnv -> [IdxVarName] -> I.Expr
-lower (Lit c)   _  _ = I.Lit c
-lower (Var v) env _  = case lookup v env of
-    Just i  -> I.Var i
-    Nothing -> error $ "Variable not in scope: " ++ show v
-lower (BinOp b e1 e2) env ienv = let l1 = lower e1 env ienv
-                                     l2 = lower e2 env ienv
-                                     f = I.Var (I.binOpIdx b + length env - numBinOps)
-                                 in I.App (I.App f l1) l2
-lower (Let v bound body) env ienv = lower (App (Lam v body) bound) env ienv
-lower (Lam v body) env ienv = I.Lam $ lower body (v:env) ienv
-lower (App fexpr arg) env ienv = let f = lower fexpr env ienv
-                                     x = lower arg env ienv
-                                 in I.App f x
-lower (For iv body) env ienv = I.For $ lower body env (iv:ienv)
-lower (Get e iv) env ienv = let e' = lower e env ienv
-                            in case lookup iv ienv of
-                    Just i  -> I.Get e' i
-                    Nothing -> error $ "Index variable not in scopr: " ++ show iv
+newtype Lower a = Lower { runLower :: VarEnv -> [IdxVarName] -> Either String a }
+
+instance Monad Lower where
+  return x = Lower $ \_ _ -> Right x
+  x >>= f  = Lower $ \env ienv -> case runLower x env ienv
+                                      of Left e  -> Left e
+                                         Right y -> runLower (f y) env ienv
+
+instance Functor Lower where
+  fmap = liftM
+
+instance Applicative Lower where
+  pure  = return
+  (<*>) = ap
+
+
+lower :: Expr -> Lower I.Expr
+lower (Lit c) = return $ I.Lit c
+lower (Var v) = Lower $ \env ienv ->
+    case lookup v env of
+        Nothing -> Left $ "Variable not in scope: " ++ show v
+        Just i  -> Right $ I.Var i
+lower (BinOp b e1 e2) = do l1 <- lower e1
+                           l2 <- lower e2
+                           Lower $ \env ienv ->
+                               let f = I.Var (I.binOpIdx b + length env - numBinOps)
+                               in Right $ I.App (I.App f l1) l2
+lower (Let v bound body) = lower $ App (Lam v body) bound
+lower (Lam v body) = do
+    e <- Lower $ \env ienv -> runLower (lower body) (v:env) ienv
+    return $ I.Lam e
+lower (App fexpr arg) = do f <- lower fexpr
+                           x <- lower arg
+                           return $ I.App f x
+lower (For iv body) = do
+    e <- Lower $ \env ienv -> runLower (lower body) env (iv:ienv)
+    return $ I.For e
+lower (Get e iv) = do
+    e' <- lower e
+    Lower $ \env ienv ->
+      case lookup iv ienv of
+          Nothing -> Left $ "Index variable not in scope: " ++ show iv
+          Just i  -> Right $ I.Get e' i
 
 
 lookup :: (Eq a) => a -> [a] -> Maybe Int
