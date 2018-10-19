@@ -1,8 +1,10 @@
 # Todo ordered (easy things)
-  * sqlite i/o
-  * product and record types
+  * sqlite input
+  * string/real/bool types
+  * raster/ggplot/canvas output?
+
   * type inference (and print types)
-  * string/float/bool types
+  * product and record types
 
 # Want
   * parallel
@@ -47,9 +49,19 @@
       http://www.cs.ox.ac.uk/projects/gip/school/tc.hs
   * --------------------
   * arrays instead of maps
+* execution backends
   * SQL backend
   * Halide backend
   * LLVM backend
+
+* interactive outputs
+  * sql-like
+  * array-like view (last two dims as rectangle)
+  * ggplot and raster images (b/w and color) - via canvas?
+    * simplest: navigate up and down in extra dimensions
+    * on ggplot and raster images, maybe even use faceting for extra dimensions...
+    * auto-advance gives an animation
+    * maybe handles/sliders for exploring extra dimensions
 
 
 * design decisions

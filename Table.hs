@@ -1,5 +1,5 @@
-module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, reduceD, iota,
-              printTable, insert) where
+module Table (fromScalar, toScalar, diag, mapD, mapD2, reduceD, iota,
+              printTable, insert, Table (..)) where
 
 import Prelude hiding (map, lookup)
 import Data.List (intersperse, transpose, sortOn)
