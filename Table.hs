@@ -2,7 +2,7 @@ module Table (Table, fromScalar, toScalar, diag, mapD, mapD2, reduceD, iota,
               printTable, insert) where
 
 import Prelude hiding (map, lookup)
-import Data.List (intersperse, transpose)
+import Data.List (intersperse, transpose, sortOn)
 import Util
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
@@ -44,21 +44,21 @@ map2 f x y = fromMMap $ map2' f (toMMap x) (toMMap y)
 toMMap :: Ord k => T k v -> MMap k (T k v)
 toMMap (Table rows) =
     let peelIdx (k:ks, v) = (k, (ks, v))
-    in case group (P.map peelIdx rows) of
+    in case group $ P.map peelIdx rows of
         [(Nothing, rows')] -> Always $ Table rows'
         groupedRows -> let rows' = [(unJust k, Table v) | (k, v) <- groupedRows]
                        in MMap (M.fromList rows')
 
 fromMMap :: Ord k => MMap k (T k v) -> T k v
 fromMMap (Always t) = insert 0 t
-fromMMap (MMap m)   = Table [(Just k : ks, v) | (k, Table rows) <- M.toList m
-                                              , (ks, v) <- rows]
+fromMMap (MMap m)   = Table $ (sortOn fst) [(Just k : ks, v) | (k, Table rows) <- M.toList m
+                                           , (ks, v) <- rows]
 
 iota :: T Int Int -> T Int Int
 iota (Table [([], v)]) = Table [([Just i], i) | i <- [0..(v-1)]]
 
 diag :: Ord k => Int -> Int -> Table k a -> Table k a
-diag 0 j (Table rows) = Table . mapMaybe mergeRow . mapFst (mvIdx j 1) $ rows
+diag 0 j (Table rows) = Table . sortOn fst . mapMaybe mergeRow . mapFst (mvIdx j 1) $ rows
 diag i j t = mapD i (diag 0 (j-i)) t
 
 mergeRow :: Ord k => ([Maybe k], v) -> Maybe ([Maybe k], v)
