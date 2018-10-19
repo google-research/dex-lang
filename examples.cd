@@ -61,7 +61,21 @@ out = w
 x = for i j: w.j.i + w.i.j
 out = x
 ~
+map2 f x y = for i: f x.i y.i
 z = iota 3
 w = for i j: (z.i + z.j)
+out = reduce (map2 add) (for i: 0) w
+~
+z = iota 3
+w.i.j = z.i
+out.i = reduce add 0 (for j: w.j.i)
+~
+z = iota 3
+w.i.j = z.i + z.j
 x.i.j = reduce add 0 (for k: w.i.k * w.k.j)
 out = x
+~
+matmul x y = for i j: reduce add 0 (for k: x.i.k * y.k.j)
+z = iota 3
+w.i.j = z.i + z.j
+out = matmul w w

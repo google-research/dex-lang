@@ -75,8 +75,8 @@ evalBuiltin (BinOp b) [IntVal d t1 , IntVal d' t2] | d == d' =
     in IntVal d (T.mapD2 d f t1 t2)
 evalBuiltin Iota [IntVal d t] = IntVal d (T.mapD d T.iota t)
 evalBuiltin Reduce (f : IntVal d z : IntVal d' t: []) | d == d' =
-    let f' x y = case evalApp (evalApp f (IntVal d x)) (IntVal d y)
-                 of IntVal d t -> t
+    let f' x y = case evalApp (evalApp f (IntVal 0 x)) (IntVal 0 y)
+                 of IntVal 0 t -> t
     in IntVal d (T.reduceD d f' z t)
 
 binOpFun :: BinOpName -> Int -> Int -> Int

@@ -8,57 +8,61 @@ import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
 
-newtype Table a b = Table [([Maybe a], b)]
+data Table a b = Table Int [([Maybe a], b)]
 data MMap k v = MMap (M.Map k v) | Always v
 type T = Table
 
 fromScalar :: Ord a => b -> T a b
-fromScalar x = Table [([], x)]
+fromScalar x = Table 0 [([], x)]
 
 toScalar :: Ord a => T a b -> b
-toScalar (Table [([], x)]) = x
+toScalar (Table n [([], x)]) | n == 0 = x
 
 insert :: Int -> T k a -> T k a
-insert pos (Table rows) =
+insert pos (Table n rows) =
   let update = insertIdx pos Nothing
-  in Table [(update ks, v) | (ks, v) <- rows]
+  in Table (n+1) [(update ks, v) | (ks, v) <- rows]
 
 mapD ::  Ord k => Int -> (T k a -> T k b) -> T k a -> T k b
 mapD d = composeN d map
 
 map ::  Ord k => (T k a -> T k b) -> T k a -> T k b
-map f t = fromMMap $ map' f (toMMap t)
+map f t = fromMMap $ map' f (toMMap "4" t)
 
 reduceD :: Ord k => Int -> (T k a -> T k a -> T k a) -> T k a -> T k a -> T k a
 reduceD d f z xs = mapD2 d (reduce f) z xs
 
 reduce :: Ord k => (T k a -> T k a -> T k a) -> T k a -> T k a -> T k a
-reduce f z xs = reduce' f z (toMMap xs)
+reduce f z xs = reduce' f z (toMMap "3" xs)
 
 mapD2 :: Ord k => Int -> (T k a -> T k b -> T k c) -> T k a -> T k b -> T k c
 mapD2 d = composeN d map2
 
 map2 :: Ord k => (T k a -> T k b -> T k c) -> T k a -> T k b -> T k c
-map2 f x y = fromMMap $ map2' f (toMMap x) (toMMap y)
+map2 f x y = fromMMap $ map2' f (toMMap "1" x) (toMMap "2" y)
 
-toMMap :: Ord k => T k v -> MMap k (T k v)
-toMMap (Table rows) =
+toMMap :: Ord k => String -> T k v -> MMap k (T k v)
+toMMap s (Table 0 [([],_)]) = error $ "Can't express scalar table as map" ++ s
+toMMap s (Table n rows) | n > 0 =
     let peelIdx (k:ks, v) = (k, (ks, v))
     in case group $ P.map peelIdx rows of
-        [(Nothing, rows')] -> Always $ Table rows'
-        groupedRows -> let rows' = [(unJust k, Table v) | (k, v) <- groupedRows]
+        [(Nothing, rows')] -> Always $ Table (n-1) rows'
+        groupedRows -> let rows' = [(unJust k, Table (n-1) v) | (k, v) <- groupedRows]
                        in MMap (M.fromList rows')
 
 fromMMap :: Ord k => MMap k (T k v) -> T k v
 fromMMap (Always t) = insert 0 t
-fromMMap (MMap m)   = Table $ (sortOn fst) [(Just k : ks, v) | (k, Table rows) <- M.toList m
-                                           , (ks, v) <- rows]
+fromMMap (MMap m)   = let rows = [(Just k : ks, v) | (k, Table _ rows) <- M.toList m
+                                                   , (ks, v) <- rows]
+                          (_, Table n _):_ = M.toList m
+                      in Table (n+1) $ (sortOn fst) rows
 
 iota :: T Int Int -> T Int Int
-iota (Table [([], v)]) = Table [([Just i], i) | i <- [0..(v-1)]]
+iota (Table n [([], v)]) = Table (n+1) [([Just i], i) | i <- [0..(v-1)]]
 
 diag :: Ord k => Int -> Int -> Table k a -> Table k a
-diag 0 j (Table rows) = Table . sortOn fst . mapMaybe mergeRow . mapFst (mvIdx j 1) $ rows
+diag 0 0 t = t
+diag 0 j (Table n rows) | n > 0 = Table (n-1) . sortOn fst . mapMaybe mergeRow . mapFst (mvIdx j 1) $ rows
 diag i j t = mapD i (diag 0 (j-i)) t
 
 mergeRow :: Ord k => ([Maybe k], v) -> Maybe ([Maybe k], v)
@@ -87,7 +91,7 @@ reduce' f z (MMap mx ) = M.foldr f z mx
 -- -- ----- printing -----
 
 printTable :: (Show a, Show b) => Table a b -> String
-printTable (Table rows) = concat . P.map formatRow . rowsToStrings $ rows
+printTable (Table n rows) = concat . P.map formatRow . rowsToStrings $ rows
 
 showMaybe :: (Show a) => Maybe a -> String
 showMaybe Nothing = "*"
