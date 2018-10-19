@@ -1,4 +1,5 @@
-module Interpreter (Expr (..), Env, BinOpName (..), binOpIdx, evalClosed, Val, eval, builtinEnv) where
+module Interpreter (Expr (..), Env, BinOpName (..), evalClosed,
+                    Val, eval, builtinEnv) where
 
 import qualified Data.Map.Strict as Map
 import Util
@@ -93,10 +94,6 @@ builtinEnv = [ Builtin Iota []
              , Builtin (BinOp Mul) []
              , Builtin (BinOp Sub) []
              , Builtin (BinOp Div) [] ]
-
-binOpIdx :: BinOpName -> Int
-binOpIdx b = case b of Add -> 0 ; Mul -> 1;
-                       Sub -> 2 ; Div -> 3
 
 evalClosed :: Expr -> Val
 evalClosed e = eval e builtinEnv (0, [])

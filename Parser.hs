@@ -1,5 +1,4 @@
 module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
-import Control.Monad (liftM, ap)
 import Control.Monad.Trans.Reader
 import Test.HUnit
 import Prelude hiding (lookup)
@@ -27,10 +26,8 @@ type IdxVarName = String
 type VarEnv = [VarName]
 
 parseProg :: String -> Either String I.Expr
-parseProg s = do
-  r <- parse' prog s
-  r' <- runReaderT (lower r) (builtinVars, [])
-  return r'
+parseProg s = do r <- parse' prog s
+                 runReaderT (lower r) (builtinVars, [])
 
 parse' :: Parser a -> String -> Either String a
 parse' p s = case parse p "" s of
@@ -38,7 +35,12 @@ parse' p s = case parse p "" s of
                Right r -> Right r
 
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
-numBinOps = 4
+
+binOpName :: I.BinOpName -> String
+binOpName I.Add = "add"
+binOpName I.Mul = "mul"
+binOpName I.Sub = "sub"
+binOpName I.Div = "div"
 
 parseLine :: String -> VarEnv -> Either String (Either (VarName, I.Expr) I.Expr)
 parseLine line env = do
@@ -50,21 +52,13 @@ parseLine line env = do
                       return $ Right r
 
 
-bindingOrExpr :: Parser (Either Binding Expr)
-bindingOrExpr =   try (binding >>= return . Left)
-              <|> (expr >>= return . Right)
-
-
 type LoweringEnv = (VarEnv, [IdxVarName])
 type Lower a = ReaderT LoweringEnv (Either String) a
 
 lower :: Expr -> Lower I.Expr
 lower (Lit c) = return $ I.Lit c
 lower (Var v) = liftM I.Var $ lookupEnv v
-lower (BinOp b e1 e2) = do l1 <- lower e1; l2 <- lower e2
-                           (env, _) <- ask
-                           return $ let i = length env + I.binOpIdx b - numBinOps
-                                    in I.App (I.App (I.Var i) l1) l2
+lower (BinOp b e1 e2)    = lower $ App (App (Var $ binOpName b) e1) e2
 lower (Let v bound body) = lower $ App (Lam v body) bound
 lower (Lam v body)    = liftM  I.Lam $ local (updateEnv v) (lower body)
 lower (App fexpr arg) = liftM2 I.App (lower fexpr) (lower arg)
@@ -79,33 +73,30 @@ lookup target (x:xs) | x == target = Just 0
                          ans <- lookup target xs
                          return (ans + 1)
 
-updateEnv :: VarName -> LoweringEnv -> LoweringEnv
-updateEnv v (env,ienv) = (v:env,ienv)
-
-updateIEnv :: IdxVarName -> LoweringEnv -> LoweringEnv
+updateEnv  v (env,ienv) = (v:env,ienv)
 updateIEnv i (env,ienv) = (env,i:ienv)
 
 lookupEnv :: VarName -> Lower Int
 lookupEnv v = do
     (env,_) <- ask
-    case lookup v env of
-      Nothing -> pfail $ "Variable not in scope: " ++ show v
-      Just i  -> return $ i
+    maybeReturn (lookup v env) $ "Variable not in scope: " ++ show v
 
 lookupIEnv :: IdxVarName -> Lower Int
 lookupIEnv iv = do
     (_,ienv) <- ask
-    case lookup iv ienv of
-      Nothing -> pfail $ "Index variable not in scope: " ++ show iv
-      Just i  -> return $ i
+    maybeReturn (lookup iv ienv) $ "Index variable not in scope: " ++ show iv
 
-
-pfail :: String -> Lower a
-pfail s = ReaderT $ \_ -> Left s
+maybeReturn :: Maybe a -> String -> Lower a
+maybeReturn (Just x) _ = return x
+maybeReturn Nothing  s = ReaderT $ \_ -> Left s
 
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
+
+bindingOrExpr :: Parser (Either Binding Expr)
+bindingOrExpr =   try (binding >>= return . Left)
+              <|> (expr >>= return . Right)
 
 prog :: Parser Expr
 prog = do
@@ -155,15 +146,15 @@ term =   parens expr
      <|> forExpr
      <?> "term"
 
+str = lexeme . string
+var = liftM id identifier
+
 binding = do
   v <- var
   wrap <- idxLhsArgs <|> lamLhsArgs
   str "="
   body <- expr
   return (v, wrap body)
-
-str = lexeme . string
-var = liftM id identifier
 
 idxLhsArgs = do
   try $ str "."
