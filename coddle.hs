@@ -51,6 +51,7 @@ repl = runInputT defaultSettings (loop emptyEnv)
     minput <- getInputLine ">=> "
     case minput of
       Nothing -> return ()
+      Just "" -> loop env
       Just line -> let (env', s) = evalLine env line
                    in liftIO (putStr s) >> loop env'
 

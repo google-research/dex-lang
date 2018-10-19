@@ -23,7 +23,6 @@ type IEnv = (Depth, [Int])
 type ValEnv = [Val]
 type Depth = Int
 
-
 eval :: Expr -> ValEnv -> IEnv -> Val
 eval (Lit c) _   (d, _) = (composeN d lift) $ IntVal 0 (T.fromScalar c)
 eval (Var v) env ienv = env !! v
@@ -38,7 +37,6 @@ eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs!!i
                               x = eval e env ienv
                           in contract i' x
-
 
 contract :: Int -> Val -> Val
 contract i (IntVal d t) = IntVal d $ T.diag i d t
@@ -76,8 +74,6 @@ evalBuiltin (BinOp b) [IntVal d t1 , IntVal d' t2] | d == d' =
     let f x y = T.fromScalar $ binOpFun b (T.toScalar x) (T.toScalar y)
     in IntVal d (T.mapD2 d f t1 t2)
 evalBuiltin Iota [IntVal d t] = IntVal d (T.mapD d T.iota t)
-
-
 evalBuiltin Reduce (f : IntVal d z : IntVal d' t: []) | d == d' =
     let f' x y = case evalApp (evalApp f (IntVal d x)) (IntVal d y)
                  of IntVal d t -> t

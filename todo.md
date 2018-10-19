@@ -1,15 +1,6 @@
 # Todo ordered (easy things)
-  * repl with one line per assignment
-  * moadify: make it non-crashing on parse errors
-  * allow backslash to escape multiline assignments
-
-  * comments?
   * sqlite i/o
-
-
   * product and record types
-
-
   * type inference (and print types)
   * string/float/bool types
 
@@ -20,14 +11,7 @@
   * linear algebra and relational together (all of data science)
   * statically typed
   * io statically determined
-  * partially rank-polymorphicassignment = do
-  v <- var
-  wrap <- idxLhsArgs <|> lamLhsArgs
-  str "="
-  body <- expr
-  return (v, wrap body)
-
-
+  * partially rank-polymorphic
 
 # Todo
 * example programs
@@ -38,10 +22,9 @@
 
 * language features
   * syntax
-    * multi-let/lam/idxcomp
-    * top-level lambda without '\'
+    * backslash to escape multiline assignments
+    * comments
   * builtins
-    * reduce
     * group by
   * floats/strings
   * in/out: csv/sql input
@@ -55,9 +38,7 @@
   * make named indices more central?
   * static checking of keys etc?
 
-
 * implementation
-  * make interpreter/lowerer monadic
   * type inference/checking with HM
     * good example here:
       https://github.com/sdiehl/write-you-a-haskell/tree/master/chapter7/poly)
