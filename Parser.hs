@@ -1,5 +1,6 @@
 module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
 import Control.Monad.Trans.Reader
+import Util
 import Test.HUnit
 import Prelude hiding (lookup)
 import Control.Monad
@@ -29,28 +30,23 @@ parseProg :: String -> Either String I.Expr
 parseProg s = do r <- parse' prog s
                  runReaderT (lower r) (builtinVars, [])
 
+parseLine :: String -> VarEnv -> Either String (Maybe VarName, I.Expr)
+parseLine line env = do (v, e) <- parse' bindingOrExpr line
+                        e' <- runReaderT (lower e) (env, [])
+                        return (v, e')
+
 parse' :: Parser a -> String -> Either String a
-parse' p s = case parse p "" s of
-               Left e -> Left (show e)
-               Right r -> Right r
+parse' p s = errorAsStr $ parse p "" s
 
 builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
 
 binOpName :: I.BinOpName -> String
-binOpName I.Add = "add"
-binOpName I.Mul = "mul"
-binOpName I.Sub = "sub"
-binOpName I.Div = "div"
+binOpName b = case b of  I.Add -> "add";  I.Mul -> "mul"
+                         I.Sub -> "sub";  I.Div -> "div"
 
-parseLine :: String -> VarEnv -> Either String (Either (VarName, I.Expr) I.Expr)
-parseLine line env = do
-  result <- parse' bindingOrExpr line
-  case result of
-    Left (v, e) -> do r <- runReaderT (lower e) (env, [])
-                      return $ Left (v, r)
-    Right e     -> do r <- runReaderT (lower e) (env, [])
-                      return $ Right r
-
+errorAsStr :: Either ParseError a -> Either String a
+errorAsStr (Left  e) = Left (show e)
+errorAsStr (Right x) = Right x
 
 type LoweringEnv = (VarEnv, [IdxVarName])
 type Lower a = ReaderT LoweringEnv (Either String) a
@@ -65,13 +61,6 @@ lower (App fexpr arg) = liftM2 I.App (lower fexpr) (lower arg)
 lower (For iv body)   = liftM  I.For $ local (updateIEnv iv) (lower body)
 lower (Get e iv)      = liftM2 I.Get (lower e) (lookupIEnv iv)
 
-
-lookup :: (Eq a) => a -> [a] -> Maybe Int
-lookup _ [] = Nothing
-lookup target (x:xs) | x == target = Just 0
-                     | otherwise = do
-                         ans <- lookup target xs
-                         return (ans + 1)
 
 updateEnv  v (env,ienv) = (v:env,ienv)
 updateIEnv i (env,ienv) = (env,i:ienv)
@@ -94,9 +83,9 @@ maybeReturn Nothing  s = ReaderT $ \_ -> Left s
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
 
-bindingOrExpr :: Parser (Either Binding Expr)
-bindingOrExpr =   try (binding >>= return . Left)
-              <|> (expr >>= return . Right)
+bindingOrExpr :: Parser (Maybe VarName, Expr)
+bindingOrExpr =   liftM (\(v,e)-> (Just v , e)) (try binding)
+              <|> liftM (\   e -> (Nothing, e)) expr
 
 prog :: Parser Expr
 prog = do

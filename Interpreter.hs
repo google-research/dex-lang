@@ -1,4 +1,4 @@
-module Interpreter (Expr (..), Env, BinOpName (..), evalClosed,
+module Interpreter (Expr (..), ValEnv, BinOpName (..), evalClosed,
                     Val, eval, builtinEnv) where
 
 import qualified Data.Map.Strict as Map
@@ -14,18 +14,17 @@ data Expr = Lit Int
               deriving (Show)
 
 data Val = IntVal Depth (T.Table Int Int)
-         | LamVal Env IEnv Expr
+         | LamVal ValEnv IEnv Expr
          | Builtin BuiltinName [Val]
 
 data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq)
 
 type IEnv = (Depth, [Int])
-type Env = [Val]
+type ValEnv = [Val]
 type Depth = Int
 
 
-
-eval :: Expr -> Env -> IEnv -> Val
+eval :: Expr -> ValEnv -> IEnv -> Val
 eval (Lit c) _   (d, _) = (composeN d lift) $ IntVal 0 (T.fromScalar c)
 eval (Var v) env ienv = env !! v
 eval (Lam body) env ienv = LamVal env ienv body
@@ -39,6 +38,7 @@ eval (Get e i) env ienv = let (_, idxs) = ienv
                               i' = idxs!!i
                               x = eval e env ienv
                           in contract i' x
+
 
 contract :: Int -> Val -> Val
 contract i (IntVal d t) = IntVal d $ T.diag i d t
@@ -91,8 +91,8 @@ binOpFun Sub = (-)
 builtinEnv = [ Builtin Iota []
              , Builtin Reduce []
              , Builtin (BinOp Add) []
-             , Builtin (BinOp Mul) []
              , Builtin (BinOp Sub) []
+             , Builtin (BinOp Mul) []
              , Builtin (BinOp Div) [] ]
 
 evalClosed :: Expr -> Val

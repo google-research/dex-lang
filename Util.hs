@@ -1,6 +1,7 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitWhile, repeatN,
-             composeN, mapMaybe) where
+             composeN, mapMaybe, lookup) where
+import Prelude hiding (lookup)
 
 
 group :: (Ord a) => [(a,b)] -> [(a, [b])]
@@ -62,3 +63,10 @@ repeatN n x = take n (repeat x)
 
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (repeatN n f)
+
+lookup :: (Eq a) => a -> [a] -> Maybe Int
+lookup _ [] = Nothing
+lookup target (x:xs) | x == target = Just 0
+                     | otherwise = do
+                         ans <- lookup target xs
+                         return (ans + 1)

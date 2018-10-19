@@ -10,28 +10,26 @@ import Prelude hiding (lookup)
 import Interpreter
 import Parser
 
-evalLines :: Env -> VarEnv -> [String] -> String
-evalLines env varEnv [] = show $ getOutVal env varEnv
-evalLines env varEnv ("":lines) = evalLines env varEnv lines
-evalLines env varEnv (line:lines) =
-    case evalLine env varEnv line
-        of Left (newValEnv, newVarEnv) ->
-             line ++ "\n" ++ evalLines newValEnv newVarEnv lines
+type Env = (ValEnv, VarEnv)
 
+evalLines :: Env -> [String] -> String
+evalLines env [] = show $ getOutVal env
+evalLines env ("":lines) = evalLines env lines
+evalLines env (line:lines) = let (env', out) = evalLine env line
+                             in out ++ evalLines env' lines
 
-getOutVal :: Env -> VarEnv -> Val
-getOutVal env varEnv =
-  case lookup "out" varEnv
-      of (Just i) -> env !! i
+getOutVal :: Env -> Val
+getOutVal (env, varEnv) = case lookup "out" varEnv of (Just i) -> env !! i
 
-evalLine :: Env -> VarEnv -> String -> Either (Env, VarEnv) String
-evalLine valEnv varEnv line =
-  case parseLine line varEnv of
-    Right p -> case p of
-                  Left (v, e) -> Left (let ans = eval e valEnv (0, [])
-                                       in (ans:valEnv, v:varEnv))
-                  Right e -> Right . show $ eval e valEnv (0, [])
-    Left e  -> error ("parse error in line:" ++ line ++ (show e))
+evalLine :: Env -> String -> (Env, String)
+evalLine env line =
+  let (valEnv, varEnv) = env
+      eval' e = eval e valEnv (0, [])
+  in case parseLine line varEnv of
+        Left e             -> (env, "error: " ++ e ++ "\n")
+        Right (Nothing, e) -> (env, show $ eval' e)
+        Right (Just v , e) -> let ans = eval' e
+                              in ((ans:valEnv, v:varEnv), "")
 
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
@@ -39,22 +37,22 @@ splitString c s = case dropWhile (== c) s of
              rest -> prefix : splitString c rest'
                      where (prefix, rest') = break (== c) rest
 
+emptyEnv = (builtinEnv, builtinVars)
+
 evalMultiSource :: String -> String
-evalMultiSource s = let results = map (evalLines builtinEnv builtinVars . lines) $ splitString '~' s
-                    in concat $ intersperse "\n\n" results
+evalMultiSource s =
+  let results = map (evalLines emptyEnv . lines) $ splitString '~' s
+  in concat $ intersperse "\n\n" results
 
 repl :: IO ()
-repl = runInputT defaultSettings (loop builtinEnv builtinVars)
+repl = runInputT defaultSettings (loop emptyEnv)
   where
-  loop env varEnv = do
-    minput <- getInputLine "> "
+  loop env = do
+    minput <- getInputLine ">=> "
     case minput of
-      Nothing -> let ans =  show $ getOutVal env varEnv
-                 in (liftIO (putStrLn ans)) >> return ()
-      Just line -> case evalLine env varEnv line of
-                      Left (newEnv, newVarEnv)  -> loop newEnv newVarEnv
-                      Right s -> liftIO (putStrLn s) >> loop env varEnv
-
+      Nothing -> return ()
+      Just line -> let (env', s) = evalLine env line
+                   in liftIO (putStr s) >> loop env'
 
 evalFile :: String -> IO ()
 evalFile s = do
