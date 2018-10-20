@@ -1,10 +1,9 @@
 # Todo ordered (easy things)
-  * sqlite input
   * string/real/bool types
   * raster/ggplot/canvas output?
-
   * type inference (and print types)
   * product and record types
+  * write up explanation and make some demos
 
 # Want
   * parallel

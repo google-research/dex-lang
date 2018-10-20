@@ -1,5 +1,5 @@
 module Interpreter (Expr (..), ValEnv, BinOpName (..), evalClosed,
-                    Val, eval, builtinEnv) where
+                    Val (..), eval, builtinEnv) where
 
 import qualified Data.Map.Strict as Map
 import Util

@@ -2,3 +2,4 @@ coddle
 *.hi
 *.o
 tests
+test.db

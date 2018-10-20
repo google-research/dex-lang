@@ -4,7 +4,7 @@ import System.IO
 import Control.Monad
 import Control.Monad.IO.Class
 import Data.List hiding (lookup)
-
+import IOSql
 import Prelude hiding (lookup)
 
 import Interpreter
@@ -37,15 +37,21 @@ splitString c s = case dropWhile (== c) s of
              rest -> prefix : splitString c rest'
                      where (prefix, rest') = break (== c) rest
 
-emptyEnv = (builtinEnv, builtinVars)
+initEnv :: [Val] -> Env
+initEnv xs =
+  let inputName n = "in" ++ (show n)
+  in ( builtinEnv ++ xs
+     , builtinVars ++ map inputName [0..(length xs - 1)])
+
+emptyEnv = initEnv []
 
 evalMultiSource :: String -> String
 evalMultiSource s =
   let results = map (evalLines emptyEnv . lines) $ splitString '~' s
   in concat $ intersperse "\n\n" results
 
-repl :: IO ()
-repl = runInputT defaultSettings (loop emptyEnv)
+repl :: Env -> IO ()
+repl env = runInputT defaultSettings (loop $ env)
   where
   loop env = do
     minput <- getInputLine ">=> "
@@ -54,6 +60,10 @@ repl = runInputT defaultSettings (loop emptyEnv)
       Just "" -> loop env
       Just line -> let (env', s) = evalLine env line
                    in liftIO (putStr s) >> loop env'
+
+sqlrepl :: IO ()
+sqlrepl = undefined
+
 
 evalFile :: String -> IO ()
 evalFile s = do
@@ -65,5 +75,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    fname:[] -> evalFile fname
-    []       -> repl
+    ["sql"] -> do intable <- loadData "test.db" "test" ["x", "y", "v"]
+                  repl $ initEnv [intable]
+    [fname] -> evalFile fname
+    []      -> repl emptyEnv
