@@ -7,6 +7,7 @@ import qualified Table as T
 
 data Expr = Lit Int
           | Var Int
+          | Let Expr Expr
           | Lam Expr
           | App Expr Expr
           | For Expr
@@ -27,6 +28,8 @@ eval :: Expr -> ValEnv -> IEnv -> Val
 eval (Lit c) _   (d, _) = (composeN d lift) $ IntVal 0 (T.fromScalar c)
 eval (Var v) env ienv = env !! v
 eval (Lam body) env ienv = LamVal env ienv body
+eval (Let bound body) env ienv = let x = eval bound env ienv
+                                 in eval body (x:env) ienv
 eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
                                     x = eval arg env ienv
                                 in evalApp f x
@@ -98,3 +101,32 @@ instance Show Val where
   show (IntVal _ t) = T.printTable t
   show (LamVal _ _ _) = "<lambda>"
   show (Builtin _ _ ) = "<builtin>"
+
+
+-- data Ty = IntTy
+--         | ArrTy Ty Ty
+--         | TabTy Ty Ty
+--         | TyVar TyVarName
+
+-- data Scheme = Scheme [TyVarName] Ty
+
+-- type TyEnv = [Ty]
+
+-- typeCheck :: Expr -> TyEnv -> Either String Scheme
+-- typeCheck (Lit c) _ = IntTy
+-- typeCheck (Var v) env = env !! v
+-- typeCheck (Lam v) env =
+
+
+
+-- typeCheck (Lam body) env ienv = LamVal env ienv body
+-- typeCheck (App fexpr arg) env ienv = let f = typeCheck fexpr env ienv
+--                                     x = typeCheck arg env ienv
+--                                 in typeCheckApp f x
+-- typeCheck (For body) env (d, idxs) = let ienv = (d+1, d:idxs)
+--                                     env' = map lift env
+--                                 in lower $ typeCheck body env' ienv
+-- typeCheck (Get e i) env ienv = let (_, idxs) = ienv
+--                               i' = idxs!!i
+--                               x = typeCheck e env ienv
+--                           in contract i' x

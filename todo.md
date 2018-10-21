@@ -1,8 +1,9 @@
 # Todo ordered (easy things)
-  * string/real/bool types
-  * raster/ggplot/canvas output?
+  * reinstate let (since HM distinguishes between let and lambda)
   * type inference (and print types)
   * product and record types
+  * string/real/bool types
+  * raster/ggplot/canvas output?
   * write up explanation and make some demos
 
 # Want

@@ -55,7 +55,8 @@ lower :: Expr -> Lower I.Expr
 lower (Lit c) = return $ I.Lit c
 lower (Var v) = liftM I.Var $ lookupEnv v
 lower (BinOp b e1 e2)    = lower $ App (App (Var $ binOpName b) e1) e2
-lower (Let v bound body) = lower $ App (Lam v body) bound
+lower (Let v bound body) = liftM2 I.Let (lower bound) $
+                               local (updateEnv v) (lower body)
 lower (Lam v body)    = liftM  I.Lam $ local (updateEnv v) (lower body)
 lower (App fexpr arg) = liftM2 I.App (lower fexpr) (lower arg)
 lower (For iv body)   = liftM  I.For $ local (updateIEnv iv) (lower body)
