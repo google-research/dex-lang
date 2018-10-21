@@ -104,3 +104,10 @@ actually work pretty nicely. Actually, it's not too far off from
 pattern-matching in the index comprehensions, so maybe it just desugars to that.
 This, again, suggests implementing the vanilla version first, looking at what's
 hard, and creating some sugar accordingly.
+
+# typed map for interpreter, with gadts
+
+How to implement e.g. map? The hard part is that we need to give it an untyped
+function that we know is `a -> b` but is encoded as `Val -> Val`. At the very
+least, I need to know ahead of time what the actual output type is. So let's
+maybe revisit this once we have type inference.
