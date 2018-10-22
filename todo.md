@@ -1,6 +1,8 @@
 # Todo ordered (easy things)
-  * reinstate let (since HM distinguishes between let and lambda)
   * type inference (and print types)
+    * let is complicated. let's start by typing lam and app
+      1st goal: type id and flip
+
   * product and record types
   * string/real/bool types
   * raster/ggplot/canvas output?

@@ -27,9 +27,9 @@ type Depth = Int
 eval :: Expr -> ValEnv -> IEnv -> Val
 eval (Lit c) _   (d, _) = (composeN d lift) $ IntVal 0 (T.fromScalar c)
 eval (Var v) env ienv = env !! v
-eval (Lam body) env ienv = LamVal env ienv body
 eval (Let bound body) env ienv = let x = eval bound env ienv
                                  in eval body (x:env) ienv
+eval (Lam body) env ienv = LamVal env ienv body
 eval (App fexpr arg) env ienv = let f = eval fexpr env ienv
                                     x = eval arg env ienv
                                 in evalApp f x
@@ -102,31 +102,75 @@ instance Show Val where
   show (LamVal _ _ _) = "<lambda>"
   show (Builtin _ _ ) = "<builtin>"
 
+paren :: Show a => a -> String
+paren x == "(" ++ show x ++ ")"
 
--- data Ty = IntTy
---         | ArrTy Ty Ty
---         | TabTy Ty Ty
---         | TyVar TyVarName
+instance Show Ty where
+  show (ArrayTy a b) = paren a ++ "->" ++ paren b
+  show (TabTy a b) = paren a ++ "=>" ++ paren b
+  show IntTy = "Int"
+  show (TyVar v) = v
 
--- data Scheme = Scheme [TyVarName] Ty
+data Type = IntType
+          | ArrType Type Type
+          | TabType Type Type
+          | TypeVar TypeVarName   deriving (Eq)
 
--- type TyEnv = [Ty]
+type Scheme = ([TypeVarName], Ty)
+type ConstrainEnv = [Scheme]
+type ConstrainMonad = ReaderT ConstrainEnv (Either String) a -- also freshvars
+type Constraint = (Type, Type)
+type TypeVarName = String
+type Subst = Map.Map TypeVarName TypeVarName
 
--- typeCheck :: Expr -> TyEnv -> Either String Scheme
--- typeCheck (Lit c) _ = IntTy
--- typeCheck (Var v) env = env !! v
--- typeCheck (Lam v) env =
+constrain :: Expr -> ConstrainMonad (Type, [Constraint])
+constrain expr = case expr of
+  Lit c -> return (IntTy, [])
+  Var v -> do
+    t <- lookupTEnv v
+    return (t, [])
+  Lam body -> do
+    a <- fresh
+    (b, c) <- local (updateTEnv $ Scheme [] a) (constrain body)
+    return (a `ArrType` b, c)
+  App fexpr arg -> do
+    (x, c1) <- constrain arg
+    (f, c2) <- constrain fexpr
+    y <- fresh
+    return (y, c1 ++ c2 ++ [(f, x `ArrType` y])
 
+lookupTEnv :: Int -> ConstrainMonad Type
+lookupTEnv = undefined
 
+updateTEnv :: Scheme -> ConstrainEnv -> ConstrainEnv
+updateTEnv = undefined
 
--- typeCheck (Lam body) env ienv = LamVal env ienv body
--- typeCheck (App fexpr arg) env ienv = let f = typeCheck fexpr env ienv
---                                     x = typeCheck arg env ienv
---                                 in typeCheckApp f x
--- typeCheck (For body) env (d, idxs) = let ienv = (d+1, d:idxs)
---                                     env' = map lift env
---                                 in lower $ typeCheck body env' ienv
--- typeCheck (Get e i) env ienv = let (_, idxs) = ienv
---                               i' = idxs!!i
---                               x = typeCheck e env ienv
---                           in contract i' x
+bind :: TypeVar -> Type -> SolverMonad Subst
+bind v t | v `occursIn` t = Left "Infinite type"
+         | otherwise Map.singleton v t
+
+unify :: Type -> Type -> SolverMonad Subst
+unify t1 t2 | t1 == t2 = idSubst
+unify t (TypeVar v) = bind v t
+unify (TypeVar v) t = bind v t
+unify (ArrType a b) (ArrType a' b') = do
+  s  <- unify a a'
+  s' <- unify (applySub s b) (applySub s b')
+  return s >>> s'
+
+applySub :: Subst -> Type -> Type
+applySub s = case t of
+  IntType     -> IntType
+  ArrType a b -> applySub s a `ArrType` applySub s b
+  TabType k v -> applySub s k `TabType` applySub s v
+  TypeVar v   -> case lookup v s of
+                   Just t  -> t
+                   Nothing -> TypeVar v
+
+solve :: Constraint -> Subst -> SolverMonad Subst
+solve (t1, t2) s =
+  s' <- unify (applySub s t1) (applySub s t2)
+  return s >>> s'
+
+solveAll :: [Constraint] -> SolverMonad Subst
+solveAll constraints = foldM solve idSubst constraints
