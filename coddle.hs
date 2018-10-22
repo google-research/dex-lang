@@ -31,6 +31,16 @@ evalLine env line =
         Right (Just v , e) -> let ans = eval' e
                               in ((ans:valEnv, v:varEnv), "")
 
+evalType :: Env -> String -> String
+evalType env line =
+   let (valEnv, varEnv) = env
+   in case parseLine line varEnv of
+        Left e             -> "error: " ++ e ++ "\n"
+        Right (Nothing, e) -> case gettype e of
+                                 Left e -> "Type error: " ++ e
+                                 Right t -> show t ++ "\n"
+        Right (Just v , e) -> error "can't ask for type of declaration"
+
 splitString :: Char -> String -> [String]
 splitString c s = case dropWhile (== c) s of
              ""   -> []
@@ -58,8 +68,11 @@ repl env = runInputT defaultSettings (loop $ env)
     case minput of
       Nothing -> return ()
       Just "" -> loop env
-      Just line -> let (env', s) = evalLine env line
-                   in liftIO (putStr s) >> loop env'
+      Just line | ":t" `isPrefixOf` line ->
+                               let s = evalType env (drop 2 line)
+                               in liftIO (putStr s) >> loop env
+                | otherwise -> let (env', s) = evalLine env line
+                               in liftIO (putStr s) >> loop env'
 
 sqlrepl :: IO ()
 sqlrepl = undefined

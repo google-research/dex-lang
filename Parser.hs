@@ -1,9 +1,9 @@
 module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
-import Control.Monad.Trans.Reader
 import Util
 import Test.HUnit
 import Prelude hiding (lookup)
 import Control.Monad
+import Control.Monad.Reader (ReaderT (..), runReaderT, local, ask)
 import Text.ParserCombinators.Parsec hiding (lower)
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language

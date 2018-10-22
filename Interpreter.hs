@@ -1,8 +1,9 @@
 module Interpreter (Expr (..), ValEnv, BinOpName (..), evalClosed,
-                    Val (..), eval, builtinEnv) where
+                    Val (..), eval, gettype, builtinEnv) where
 
 import Control.Monad
-import Control.Monad.Trans.Reader
+import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
+import Control.Monad.State (StateT, evalStateT, put, get)
 import qualified Data.Map.Strict as Map
 import Util
 import qualified Table as T
@@ -119,7 +120,7 @@ type Constraint = (Type, Type)
 type TypeVarName = String
 type Subst = Map.Map TypeVarName Type
 
-type ConstrainMonad a = ReaderT ConstrainEnv (Either String) a -- also freshvars
+type ConstrainMonad a = ReaderT ConstrainEnv (StateT Int (Either String)) a
 type SolverMonad a = Either String a
 
 instance Show Type where
@@ -127,6 +128,17 @@ instance Show Type where
   show (TabType a b) = paren a ++ "=>" ++ paren b
   show IntType = "Int"
   show (TypeVar v) = v
+
+emptyConstrainEnv :: ConstrainEnv
+emptyConstrainEnv = undefined
+
+gettype :: Expr -> Either String Type
+gettype expr = let f = runReaderT (constrain expr) emptyConstrainEnv
+                   t = evalStateT f 0
+               in case t of
+                    Left e -> Left e
+                    Right (t, _) -> Right t
+
 
 paren :: Show a => a -> String
 paren x = "(" ++ show x ++ ")"
@@ -148,20 +160,24 @@ constrain expr = case expr of
     return (y, c1 ++ c2 ++ [(f, x `ArrType` y)])
 
 lookupTEnv :: Int -> ConstrainMonad Type
-lookupTEnv = undefined
+lookupTEnv i = do env <- ask
+                  return $ env !! i
 
 updateTEnv :: Scheme -> ConstrainEnv -> ConstrainEnv
-updateTEnv = undefined
+updateTEnv = (:)
 
 fresh :: ConstrainMonad Type
-fresh = undefined
+fresh = do i <- get
+           put $ i + 1
+           return $ TypeVar (show i)
+
 
 bind :: TypeVarName -> Type -> SolverMonad Subst
 bind v t | v `occursIn` t = Left "Infinite type"
          | otherwise = Right $ Map.singleton v t
 
 occursIn :: TypeVarName -> Type -> Bool
-occursIn = undefined
+occursIn v t = False -- todo: fix!
 
 unify :: Type -> Type -> SolverMonad Subst
 unify t1 t2 | t1 == t2 = return idSubst
@@ -173,7 +189,8 @@ unify (ArrType a b) (ArrType a' b') = do
   return $ sa >>> sb
 
 (>>>) :: Subst -> Subst -> Subst
-(>>>) = undefined
+(>>>) s1 s2 = let s1' = Map.map (applySub s2) s1
+              in Map.union s1' s2
 
 applySub :: Subst -> Type -> Type
 applySub s t = case t of
@@ -185,7 +202,7 @@ applySub s t = case t of
                    Nothing -> TypeVar v
 
 idSubst :: Subst
-idSubst = undefined
+idSubst = Map.empty
 
 solve :: Subst -> Constraint -> SolverMonad Subst
 solve s (t1, t2) = do
