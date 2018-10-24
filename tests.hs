@@ -1,4 +1,6 @@
 import Test.HUnit
 import qualified Parser
 
-main = runTestTT Parser.tests
+main = runTestTT $ do
+  Parser.tests
+

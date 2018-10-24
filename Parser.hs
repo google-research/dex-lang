@@ -1,4 +1,4 @@
-module Parser (parseProg, tests, VarEnv, parseLine, lookup, builtinVars) where
+module Parser (VarEnv, parseExpr, parseDeclOrExpr, tests) where
 import Util
 import Test.HUnit
 import Prelude hiding (lookup)
@@ -9,9 +9,9 @@ import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
 
-import qualified Interpreter as I
+import qualified Syntax as S
 
-data Expr = BinOp I.BinOpName Expr Expr
+data Expr = BinOp BinOpName Expr Expr
           | Lit Int
           | Var VarName
           | Let VarName Expr Expr
@@ -21,47 +21,54 @@ data Expr = BinOp I.BinOpName Expr Expr
           | Get Expr IdxVarName
           deriving (Show, Eq)
 
-type Binding = (VarName, Expr)
+data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq)
 type VarName = String
 type IdxVarName = String
 type VarEnv = [VarName]
 
-parseProg :: String -> Either String I.Expr
-parseProg s = do r <- parse' prog s
-                 runReaderT (lower r) (builtinVars, [])
+data ParseErr = ParseErr String
+              | UnboundVarErr VarName
+              | UnboundIdxVarErr IdxVarName deriving (Show)
+type Except a = Either ParseErr a
 
-parseLine :: String -> VarEnv -> Either String (Maybe VarName, I.Expr)
-parseLine line env = do (v, e) <- parse' bindingOrExpr line
-                        e' <- runReaderT (lower e) (env, [])
-                        return (v, e')
+parseExpr :: String -> VarEnv -> Except S.Expr
+parseExpr s env = runParse expr s >>= runLower env
 
-parse' :: Parser a -> String -> Either String a
-parse' p s = errorAsStr $ parse p "" s
+parseDeclOrExpr :: String -> VarEnv -> Except (Maybe VarName, S.Expr)
+parseDeclOrExpr s env = do (v, e) <- runParse declOrExpr s
+                           e' <- runLower env e
+                           return (v, e')
 
-builtinVars = ["iota", "reduce", "add", "sub", "mul", "div"]
+runParse :: Parser a -> String -> Except a
+runParse p s = liftErr $ parse p "" s
 
-binOpName :: I.BinOpName -> String
-binOpName b = case b of  I.Add -> "add";  I.Mul -> "mul"
-                         I.Sub -> "sub";  I.Div -> "div"
+runLower :: VarEnv -> Expr -> Except S.Expr
+runLower env expr = runReaderT (lower expr) (env, [])
 
-errorAsStr :: Either ParseError a -> Either String a
-errorAsStr (Left  e) = Left (show e)
-errorAsStr (Right x) = Right x
+initVarEnv :: VarEnv
+initVarEnv = ["iota", "reduce", "add", "sub", "mul", "div"]
+
+liftErr :: Either ParseError a -> Except a
+liftErr (Left  e) = Left $ ParseErr (show e)
+liftErr (Right x) = Right x
 
 type LoweringEnv = (VarEnv, [IdxVarName])
-type Lower a = ReaderT LoweringEnv (Either String) a
+type Lower a = ReaderT LoweringEnv (Either ParseErr) a
 
-lower :: Expr -> Lower I.Expr
-lower (Lit c) = return $ I.Lit c
-lower (Var v) = liftM I.Var $ lookupEnv v
+lower :: Expr -> Lower S.Expr
+lower (Lit c) = return $ S.Lit c
+lower (Var v) = liftM S.Var $ lookupEnv v
 lower (BinOp b e1 e2)    = lower $ App (App (Var $ binOpName b) e1) e2
-lower (Let v bound body) = liftM2 I.Let (lower bound) $
+lower (Let v bound body) = liftM2 S.Let (lower bound) $
                                local (updateEnv v) (lower body)
-lower (Lam v body)    = liftM  I.Lam $ local (updateEnv v) (lower body)
-lower (App fexpr arg) = liftM2 I.App (lower fexpr) (lower arg)
-lower (For iv body)   = liftM  I.For $ local (updateIEnv iv) (lower body)
-lower (Get e iv)      = liftM2 I.Get (lower e) (lookupIEnv iv)
+lower (Lam v body)    = liftM  S.Lam $ local (updateEnv v) (lower body)
+lower (App fexpr arg) = liftM2 S.App (lower fexpr) (lower arg)
+lower (For iv body)   = liftM  S.For $ local (updateIEnv iv) (lower body)
+lower (Get e iv)      = liftM2 S.Get (lower e) (lookupIEnv iv)
 
+binOpName :: BinOpName -> String
+binOpName b = case b of  Add -> "add";  Mul -> "mul"
+                         Sub -> "sub";  Div -> "div"
 
 updateEnv  v (env,ienv) = (v:env,ienv)
 updateIEnv i (env,ienv) = (env,i:ienv)
@@ -69,24 +76,23 @@ updateIEnv i (env,ienv) = (env,i:ienv)
 lookupEnv :: VarName -> Lower Int
 lookupEnv v = do
     (env,_) <- ask
-    maybeReturn (lookup v env) $ "Variable not in scope: " ++ show v
+    maybeReturn (lookup v env) $ UnboundVarErr v
 
 lookupIEnv :: IdxVarName -> Lower Int
 lookupIEnv iv = do
     (_,ienv) <- ask
-    maybeReturn (lookup iv ienv) $ "Index variable not in scope: " ++ show iv
+    maybeReturn (lookup iv ienv) $ UnboundIdxVarErr iv
 
-maybeReturn :: Maybe a -> String -> Lower a
+maybeReturn :: Maybe a -> ParseErr -> Lower a
 maybeReturn (Just x) _ = return x
-maybeReturn Nothing  s = ReaderT $ \_ -> Left s
-
+maybeReturn Nothing  e = ReaderT $ \_ -> Left e
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
 
-bindingOrExpr :: Parser (Maybe VarName, Expr)
-bindingOrExpr =   liftM (\(v,e)-> (Just v , e)) (try binding)
-              <|> liftM (\   e -> (Nothing, e)) expr
+declOrExpr :: Parser (Maybe VarName, Expr)
+declOrExpr =   liftM (\(v,e)-> (Just v , e)) (try binding)
+           <|> liftM (\   e -> (Nothing, e)) expr
 
 prog :: Parser Expr
 prog = do
@@ -124,8 +130,8 @@ getRule = Postfix $ do
   return $ \body -> foldr (flip Get) body (reverse vs)
 
 ops = [ [getRule, appRule],
-        [binOpRule "*" I.Mul, binOpRule "/" I.Div],
-        [binOpRule "+" I.Add, binOpRule "-" I.Sub]
+        [binOpRule "*" Mul, binOpRule "/" Div],
+        [binOpRule "+" Add, binOpRule "-" Sub]
       ]
 
 term =   parens expr
@@ -182,9 +188,8 @@ escapeChars (x:xs) = case x of
                      '\\' -> escapeChars $ drop 1 xs
                      otherwise -> x : escapeChars xs
 
-
 testParses =
-  [ ("1 + 2"        , BinOp I.Add (Lit 1) (Lit 2))
+  [ ("1 + 2"        , BinOp Add (Lit 1) (Lit 2))
   , ("for i: 10"    , For "i" (Lit 10))
   , ("lam x: x"     , Lam "x" (Var "x"))
   , ("y x"          , App (Var "y") (Var "x"))
