@@ -11,25 +11,26 @@ data Type = IntType
           | TabType Type Type
           | TypeVar TypeVarName   deriving (Eq)
 
--- data Scheme = Scheme [TypeVarName] Type
-type Scheme = Type
-type ConstrainEnv = [Scheme]
+data TypeErr = TypeErr String
+             | InfiniteType  deriving (Show)
+
+type Except a = Either TypeErr a
+type Scheme = Type   -- data Scheme = Scheme [TypeVarName] Type
+type TypeEnv = [Scheme]
 type Constraint = (Type, Type)
 type TypeVarName = String
 type Subst = Map.Map TypeVarName Type
+type ConstrainMonad a = ReaderT TypeEnv (StateT Int (Either TypeErr)) a
 
-type ConstrainMonad a = ReaderT ConstrainEnv (StateT Int (Either String)) a
-type SolverMonad a = Either String a
+initTypeEnv :: TypeEnv
+initTypeEnv = []
 
-emptyConstrainEnv :: ConstrainEnv
-emptyConstrainEnv = undefined
-
-gettype :: Expr -> Either String Type
-gettype expr = let f = runReaderT (constrain expr) emptyConstrainEnv
-                   t = evalStateT f 0
-               in case t of
-                    Left e -> Left e
-                    Right (t, _) -> Right t
+gettype :: Expr -> TypeEnv -> Except Type
+gettype expr env = let f = runReaderT (constrain expr) env
+                       t = evalStateT f 0
+                   in case t of
+                       Left e       -> Left e
+                       Right (t, _) -> Right t
 
 
 paren :: Show a => a -> String
@@ -55,7 +56,7 @@ lookupTEnv :: Int -> ConstrainMonad Type
 lookupTEnv i = do env <- ask
                   return $ env !! i
 
-updateTEnv :: Scheme -> ConstrainEnv -> ConstrainEnv
+updateTEnv :: Scheme -> TypeEnv -> TypeEnv
 updateTEnv = (:)
 
 fresh :: ConstrainMonad Type
@@ -63,15 +64,14 @@ fresh = do i <- get
            put $ i + 1
            return $ TypeVar (show i)
 
-
-bind :: TypeVarName -> Type -> SolverMonad Subst
-bind v t | v `occursIn` t = Left "Infinite type"
+bind :: TypeVarName -> Type -> Except Subst
+bind v t | v `occursIn` t = Left InfiniteType
          | otherwise = Right $ Map.singleton v t
 
 occursIn :: TypeVarName -> Type -> Bool
 occursIn v t = False -- todo: fix!
 
-unify :: Type -> Type -> SolverMonad Subst
+unify :: Type -> Type -> Except Subst
 unify t1 t2 | t1 == t2 = return idSubst
 unify t (TypeVar v) = bind v t
 unify (TypeVar v) t = bind v t
@@ -96,12 +96,12 @@ applySub s t = case t of
 idSubst :: Subst
 idSubst = Map.empty
 
-solve :: Subst -> Constraint -> SolverMonad Subst
+solve :: Subst -> Constraint -> Except Subst
 solve s (t1, t2) = do
   s' <- unify (applySub s t1) (applySub s t2)
   return $ s >>> s'
 
-solveAll :: [Constraint] -> SolverMonad Subst
+solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
 instance Show Type where
