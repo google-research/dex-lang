@@ -14,14 +14,11 @@ import Interpreter
 
 type Env = (ValEnv, VarEnv)
 
-evalLines :: Env -> [String] -> String
-evalLines env [] = show $ getOutVal env
-evalLines env ("":lines) = evalLines env lines
-evalLines env (line:lines) = let (env', out) = evalLine env line
-                             in out ++ evalLines env' lines
-
-getOutVal :: Env -> Val
-getOutVal (env, varEnv) = case lookup "out" varEnv of (Just i) -> env !! i
+initEnv :: [Val] -> Env
+initEnv inputVals =
+  let inputVars = ["in" ++ (show n) | n <- [0..(length inputVals - 1)]]
+  in ( initValEnv ++ inputVals
+     , initVarEnv ++ inputVars)
 
 evalLine :: Env -> String -> (Env, String)
 evalLine env line =
@@ -32,64 +29,29 @@ evalLine env line =
         Right (Just v , e) -> let ans = evalExpr e valEnv
                               in ((ans:valEnv, v:varEnv), "")
 
-evalType :: Env -> String -> String
-evalType env line =
-   let (valEnv, varEnv) = env
-   in case parseDeclOrExpr line varEnv of
-        Left e             -> "error: " ++ show e ++ "\n"
-        Right (Nothing, e) -> case gettype e [] of
-                                 Left e -> "Type error: " ++ show e
-                                 Right t -> show t ++ "\n"
-        Right (Just v , e) -> error "can't ask for type of declaration"
 
-splitString :: Char -> String -> [String]
-splitString c s = case dropWhile (== c) s of
-             ""   -> []
-             rest -> prefix : splitString c rest'
-                     where (prefix, rest') = break (== c) rest
-
-initEnv :: [Val] -> Env
-initEnv xs =
-  let inputName n = "in" ++ (show n)
-  in ( initValEnv ++ xs
-     , initVarEnv ++ map inputName [0..(length xs - 1)])
-
-emptyEnv = initEnv []
-
-evalMultiSource :: String -> String
-evalMultiSource s =
-  let results = map (evalLines emptyEnv . lines) $ splitString '~' s
-  in concat $ intersperse "\n\n" results
-
-repl :: Env -> IO ()
-repl env = runInputT defaultSettings (loop $ env)
+repl :: String -> Behavior -> Env -> IO ()
+repl prompt behavior env = runInputTBehavior behavior defaultSettings (loop $ env)
   where
   loop env = do
-    minput <- getInputLine ">=> "
+    minput <- getInputLine prompt
     case minput of
       Nothing -> return ()
       Just "" -> loop env
-      Just line | ":t" `isPrefixOf` line ->
-                               let s = evalType env (drop 2 line)
-                               in liftIO (putStr s) >> loop env
-                | otherwise -> let (env', s) = evalLine env line
-                               in liftIO (putStr s) >> loop env'
+      Just line -> let (env', s) = evalLine env line
+                   in outputStrLn s >> loop env'
 
-sqlrepl :: IO ()
-sqlrepl = undefined
+terminalRepl :: Env -> IO ()
+terminalRepl = repl ">=> " defaultBehavior
 
-
-evalFile :: String -> IO ()
-evalFile s = do
-    source <- readFile s
-    putStrLn $ evalMultiSource source
-    return ()
+fileRepl :: String -> Env -> IO ()
+fileRepl fname = repl "" (useFile fname)
 
 main :: IO ()
 main = do
   args <- getArgs
   case args of
     ["sql"] -> do intable <- loadData "test.db" "test" ["x", "y", "v"]
-                  repl $ initEnv [intable]
-    [fname] -> evalFile fname
-    []      -> repl emptyEnv
+                  terminalRepl $ initEnv [intable]
+    [fname] -> fileRepl fname $ initEnv []
+    []      -> terminalRepl $ initEnv []

@@ -1,81 +1,81 @@
-out = for i: 10
-~
-out = 1 + 2
-~
-out = for i: (1 + 10)
-~
-out = 1 + 2 * 3 + 4
-~
+for i: 10
+
+1 + 2
+
+for i: (1 + 10)
+
+1 + 2 * 3 + 4
+
 x = 2
-out = x * 3
-~
+x * 3
+
 f x = x + x
-out = f 1
-~
+f 1
+
 f x = x + x
-out = f (1 + 1)
-~
+f (1 + 1)
+
 f x = let y = x + x in y + y
-out = f (1 + 1)
-~
+f (1 + 1)
+
 f x = let y = x + x; z = y + x in y + z
-out = f (1 + 1)
-~
+f (1 + 1)
+
 x.i = (iota 3).i
-out = x
-~
+x
+
 x.j.i = 1 + 300
-out = x
-~
-out = for i: 2 + (iota 3).i
-~
+x
+
+for i: 2 + (iota 3).i
+
 d = iota 3
 out.j.i = (d.j * 100) + d.i
-~
+
 out.j.i.k = (iota 4).k + 1).j + (iota 5).i
-~
+
 out.j.i.k = (iota 3).j
-~
-out = for j i: (for k: (iota 4).k).j + (iota 5).i
-~
+
+for j i: (for k: (iota 4).k).j + (iota 5).i
+
 out.k.j = (for l: (for i: (iota 3).i).l).k + (iota 4).j
-~
+
 d = iota 4
 out.i = d.i * 2
-~
+
 outer x y = for i j: x.i * y.j
-out = outer (iota 3) (iota 4)
-~
+outer (iota 3) (iota 4)
+
 outer x y = for i j: x.i * y.j
 transpose x = for i j: x.j.i
-out = transpose (outer (iota 3) (iota 4))
-~
-out = reduce add 0 (iota 10)
-~
+transpose (outer (iota 3) (iota 4))
+
+reduce add 0 (iota 10)
+
 dot x y = reduce add 0 (for i: x.i * y.i)
-out = dot (iota 3) (iota 3)
-~
+dot (iota 3) (iota 3)
+
 z = iota 3
 w = for i j: (z.i + z.j)
-out = w
+w
 x = for i j: w.j.i + w.i.j
-out = x
-~
+x
+
 map2 f x y = for i: f x.i y.i
 z = iota 3
 w = for i j: (z.i + z.j)
-out = reduce (map2 add) (for i: 0) w
-~
+reduce (map2 add) (for i: 0) w
+
 z = iota 3
 w.i.j = z.i
 out.i = reduce add 0 (for j: w.j.i)
-~
+
 z = iota 3
 w.i.j = z.i + z.j
 x.i.j = reduce add 0 (for k: w.i.k * w.k.j)
-out = x
-~
+x
+
 matmul x y = for i j: reduce add 0 (for k: x.i.k * y.k.j)
 z = iota 3
 w.i.j = z.i + z.j
-out = matmul w w
+matmul w w

@@ -1,4 +1,4 @@
-module Typer (gettype) where
+module Typer (TypeEnv, initTypeEnv, gettype) where
 
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
