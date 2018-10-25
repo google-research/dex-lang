@@ -1,4 +1,4 @@
-module Interpreter (evalExpr, initValEnv) where
+module Interpreter (evalExpr, initValEnv, ValEnv, Val (..)) where
 
 import qualified Table as T
 import Syntax

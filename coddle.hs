@@ -7,8 +7,10 @@ import Data.List hiding (lookup)
 import IOSql
 import Prelude hiding (lookup)
 
-import Interpreter
+import Util
 import Parser
+import Typer
+import Interpreter
 
 type Env = (ValEnv, VarEnv)
 
@@ -24,20 +26,19 @@ getOutVal (env, varEnv) = case lookup "out" varEnv of (Just i) -> env !! i
 evalLine :: Env -> String -> (Env, String)
 evalLine env line =
   let (valEnv, varEnv) = env
-      eval' e = eval e valEnv (0, [])
-  in case parseLine line varEnv of
-        Left e             -> (env, "error: " ++ e ++ "\n")
-        Right (Nothing, e) -> (env, show $ eval' e)
-        Right (Just v , e) -> let ans = eval' e
+  in case parseDeclOrExpr line varEnv of
+        Left e             -> (env, "error: " ++ show e ++ "\n")
+        Right (Nothing, e) -> (env, show $ evalExpr e valEnv)
+        Right (Just v , e) -> let ans = evalExpr e valEnv
                               in ((ans:valEnv, v:varEnv), "")
 
 evalType :: Env -> String -> String
 evalType env line =
    let (valEnv, varEnv) = env
-   in case parseLine line varEnv of
-        Left e             -> "error: " ++ e ++ "\n"
-        Right (Nothing, e) -> case gettype e of
-                                 Left e -> "Type error: " ++ e
+   in case parseDeclOrExpr line varEnv of
+        Left e             -> "error: " ++ show e ++ "\n"
+        Right (Nothing, e) -> case gettype e [] of
+                                 Left e -> "Type error: " ++ show e
                                  Right t -> show t ++ "\n"
         Right (Just v , e) -> error "can't ask for type of declaration"
 
@@ -50,8 +51,8 @@ splitString c s = case dropWhile (== c) s of
 initEnv :: [Val] -> Env
 initEnv xs =
   let inputName n = "in" ++ (show n)
-  in ( builtinEnv ++ xs
-     , builtinVars ++ map inputName [0..(length xs - 1)])
+  in ( initValEnv ++ xs
+     , initVarEnv ++ map inputName [0..(length xs - 1)])
 
 emptyEnv = initEnv []
 

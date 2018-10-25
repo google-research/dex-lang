@@ -1,12 +1,12 @@
 # Todo ordered (easy things)
   * clean it up a bit
-    * split up typer and interpreter
-    * better monads, e.g. error handling with IO
-    * typed errors, with error-checking parses
+    * get repl working
+    * better repl error handling
 
   * type inference (and print types)
-    * let is complicated. let's start by typing lam and app
-      1st goal: type id and flip
+    * type checking tests
+    * get non-let stuff working
+    * let
 
   * product and record types
   * string/real/bool types
