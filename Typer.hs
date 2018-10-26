@@ -1,4 +1,4 @@
-module Typer (Type, TypeEnv, initTypeEnv, gettype) where
+module Typer (Type, TypeEnv, initTypeEnv, typeExpr) where
 
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
@@ -25,12 +25,12 @@ type ConstrainMonad a = ReaderT TypeEnv (StateT Int (Either TypeErr)) a
 initTypeEnv :: TypeEnv
 initTypeEnv = []
 
-gettype :: Expr -> TypeEnv -> Except Type
-gettype expr env = let f = runReaderT (constrain expr) env
-                       t = evalStateT f 0
-                   in case t of
-                       Left e       -> Left e
-                       Right (t, _) -> Right t
+typeExpr :: Expr -> TypeEnv -> Except Type
+typeExpr expr env = let f = runReaderT (constrain expr) env
+                        t = evalStateT f 0
+                    in case t of
+                        Left e       -> Left e
+                        Right (t, _) -> Right t
 
 
 paren :: Show a => a -> String

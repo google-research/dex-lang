@@ -27,10 +27,8 @@ type VarName = String
 type IdxVarName = String
 type Decl = (VarName, Expr)
 
-parseCommand :: String -> Either String Command
-parseCommand s = case parse command "" s of
-                 Left e  -> Left $ show e
-                 Right p -> Right p
+parseCommand :: String -> Either ParseError Command
+parseCommand s = parse command "" s
 
 command :: Parser Command
 command =   explicitCommand
