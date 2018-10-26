@@ -74,8 +74,6 @@ updateEnv var ty val =
 parseLine :: String -> Either String Command
 parseLine = undefined
 
-
-
 runRepl :: Repl () -> Behavior -> Env -> IO ()
 runRepl repl behavior env =
   let stateMonad = runInputTBehavior behavior defaultSettings repl
