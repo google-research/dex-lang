@@ -10,10 +10,14 @@ import Interpreter
 
 
 typeTestCases =
-  [ ("1"            , IntType)
-  , ("1 + 3"        , IntType)
-  , ("lam x: x"     , TypeVar "a" `ArrType` TypeVar "a")
-  , ("(lam x: x) 2" , IntType)
+  [ ("1"                     , IntType)
+  , ("1 + 3"                 , IntType)
+  , ("lam x: x"              , TypeVar "a" `ArrType` TypeVar "a")
+  , ("(lam x: x) 2"          , IntType)
+  , ("for i: 1"              , TypeVar "a" `TabType` IntType)
+  , ("for i: (for j: 3).i"   , TypeVar "a" `TabType` IntType)
+  , ("for i: (iota 3).i"     , IntType `TabType` IntType)
+  , ("reduce add 0 (iota 3)"   , IntType)
   ]
 
 typeErrorTestCases =

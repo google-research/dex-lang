@@ -19,20 +19,30 @@ data TypeErr = TypeErr String
 type Except a = Either TypeErr a
 type Scheme = Type   -- data Scheme = Scheme [TypeVarName] Type
 type TypeEnv = [Scheme]
+type ITypeEnv = [Scheme]
+type Env = (TypeEnv, ITypeEnv)
 type Constraint = (Type, Type)
 type TypeVarName = String
 type Subst = Map.Map TypeVarName Type
-type ConstrainMonad a = ReaderT TypeEnv (StateT Int (Either TypeErr)) a
+type ConstrainMonad a = ReaderT Env (StateT Int (Either TypeErr)) a
 
+infixr 0 -->
+infixr 1 ==>
+
+(-->) = ArrType
+(==>) = TabType
 
 typeExpr :: Expr -> TypeEnv -> Except Type
 typeExpr expr env = do
-  (ty, constraints) <- evalStateT (runReaderT (constrain expr) env) 0
+  (ty, constraints) <- evalStateT (runReaderT (constrain expr) (env, [])) 0
   subst <- solveAll constraints
   return $ canonicalize $ applySub subst ty
 
 initTypeEnv :: TypeEnv
-initTypeEnv = [TypeVar "BAD", TypeVar "BAD", binOpT, binOpT, binOpT, binOpT]
+initTypeEnv = [IntType --> IntType ==> IntType,  -- iota
+               (IntType --> IntType --> IntType) --> IntType
+                   --> (TypeVar "xx" ==> IntType) --> IntType,
+               binOpT, binOpT, binOpT, binOpT]
 
 binOpT = IntType `ArrType` (IntType `ArrType` IntType)
 
@@ -40,24 +50,42 @@ constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of
   Lit c -> return (IntType, [])
   Var v -> do
-    t <- lookupTEnv v
+    t <- lookupEnv v
     return (t, [])
   Lam body -> do
     a <- fresh
-    (b, c) <- local (updateTEnv a) (constrain body)
+    (b, c) <- local (updateEnv a) (constrain body)
     return (a `ArrType` b, c)
   App fexpr arg -> do
     (x, c1) <- constrain arg
     (f, c2) <- constrain fexpr
     y <- fresh
     return (y, c1 ++ c2 ++ [(f, x `ArrType` y)])
+  For body -> do
+    a <- fresh
+    (b, c) <- local (updateIEnv a) (constrain body)
+    return (a `TabType` b, c)
+  Get expr idx -> do
+    i <- lookupIEnv idx
+    (e, c2) <- constrain expr
+    y <- fresh
+    return (y, c2 ++ [(e, i `TabType` y)])
 
-lookupTEnv :: Int -> ConstrainMonad Type
-lookupTEnv i = do env <- ask
-                  return $ env !! i
 
-updateTEnv :: Scheme -> TypeEnv -> TypeEnv
-updateTEnv = (:)
+lookupEnv :: Int -> ConstrainMonad Type
+lookupEnv i = do (env,_) <- ask
+                 return $ env !! i
+
+lookupIEnv :: Int -> ConstrainMonad Type
+lookupIEnv i = do (_,ienv) <- ask
+                  return $ ienv !! i
+
+updateEnv :: Scheme -> Env -> Env
+updateEnv t (env, ienv) = ((t:env), ienv)
+
+updateIEnv :: Scheme -> Env -> Env
+updateIEnv t (env, ienv) = (env, (t:ienv))
+
 
 fresh :: ConstrainMonad Type
 fresh = do i <- get
@@ -84,11 +112,15 @@ unify :: Type -> Type -> Except Subst
 unify t1 t2 | t1 == t2 = return idSubst
 unify t (TypeVar v) = bind v t
 unify (TypeVar v) t = bind v t
-unify (ArrType a b) (ArrType a' b') = do
+unify (ArrType a b) (ArrType a' b') = unifyPair (a,b) (a', b')
+unify (TabType a b) (TabType a' b') = unifyPair (a,b) (a', b')
+unify t1 t2 = Left $ UnificationError t1 t2
+
+unifyPair :: (Type,Type) -> (Type,Type) -> Except Subst
+unifyPair (a,b) (a',b') = do
   sa  <- unify a a'
   sb <- unify (applySub sa b) (applySub sa b')
   return $ sa >>> sb
-unify t1 t2 = Left $ UnificationError t1 t2
 
 
 (>>>) :: Subst -> Subst -> Subst
@@ -129,7 +161,8 @@ solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
 instance Show Type where
-  show (ArrType a b) = "(" ++ show a ++ " -> " ++ show b ++ ")"
-  show (TabType a b) = "(" ++ show a ++ "=>" ++ show b ++ ")"
-  show IntType = "Int"
-  show (TypeVar v) = v
+  show t = case t of
+    ArrType a b -> "(" ++ show a ++ " -> " ++ show b ++ ")"
+    TabType a b -> "(" ++ show a ++ "=>" ++ show b ++ ")"
+    IntType     -> "Int"
+    TypeVar v   -> v
