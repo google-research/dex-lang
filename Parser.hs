@@ -33,7 +33,10 @@ parseCommand s = case parse command "" s of
                  Right p -> Right p
 
 command :: Parser Command
-command = undefined
+command =   explicitCommand
+        <|> liftM (uncurry EvalDecl) (try decl)
+        <|> liftM EvalExpr expr
+        <?> "command"
 
 opNames = ["+", "*", "/", "-"]
 resNames = ["for", "lam", "let", "in"]
@@ -91,6 +94,17 @@ decl = do
   body <- expr
   return (v, wrap body)
 
+explicitCommand :: Parser Command
+explicitCommand = do
+  try $ str ":"
+  cmd <- identifier
+  e <- expr
+  case cmd of
+    "t" -> return $ GetType e
+    "p" -> return $ GetParse e
+    "l" -> return $ GetLowered e
+    otherwise -> fail $ "unrecognized command: " ++ show cmd
+
 idxLhsArgs = do
   try $ str "."
   args <- var `sepBy` str "."
@@ -120,6 +134,8 @@ forExpr = do
   str ":"
   body <- expr
   return $ foldr For body vs
+
+
 
 escapeChars :: String -> String
 escapeChars [] = []

@@ -47,13 +47,13 @@ evalCmd c = case c of
                         updateEnv v t val
 
 liftErr :: Show a => Either a b -> Repl b
-liftErr = undefined
-
-catchR :: Repl a -> Repl a
-catchR = undefined
+liftErr (Left e)  = printR e >> throwIO Interrupt
+liftErr (Right x) = return x
 
 lowerR :: P.Expr -> Repl Expr
-lowerR = undefined
+lowerR expr = do
+  env <- lift $ gets varEnv
+  liftErr $ lowerExpr expr env
 
 gettypeR :: Expr -> Repl Type
 gettypeR expr = do
@@ -90,8 +90,8 @@ repl prompt = loop
          Nothing -> return ()
          Just "" -> loop
          Just line -> case parseCommand line of
-           Left e -> printR e >> loop
-           Right cmd -> catchR (evalCmd cmd) >> loop
+           Left e -> outputStrLn e >> loop
+           Right cmd -> handleInterrupt (return ()) (evalCmd cmd) >> loop
 
 
 terminalRepl :: Env -> IO ()
