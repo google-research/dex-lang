@@ -4,6 +4,7 @@ import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
 import Control.Monad.State (StateT, evalStateT, put, get)
 import qualified Data.Map.Strict as Map
+import Data.List (nub)
 import Syntax
 
 data Type = IntType
@@ -12,6 +13,7 @@ data Type = IntType
           | TypeVar TypeVarName   deriving (Eq)
 
 data TypeErr = TypeErr String
+             | UnificationError Type Type
              | InfiniteType  deriving (Show, Eq)
 
 type Except a = Either TypeErr a
@@ -22,19 +24,17 @@ type TypeVarName = String
 type Subst = Map.Map TypeVarName Type
 type ConstrainMonad a = ReaderT TypeEnv (StateT Int (Either TypeErr)) a
 
-initTypeEnv :: TypeEnv
-initTypeEnv = []
 
 typeExpr :: Expr -> TypeEnv -> Except Type
-typeExpr expr env = let f = runReaderT (constrain expr) env
-                        t = evalStateT f 0
-                    in case t of
-                        Left e       -> Left e
-                        Right (t, _) -> Right t
+typeExpr expr env = do
+  (ty, constraints) <- evalStateT (runReaderT (constrain expr) env) 0
+  subst <- solveAll constraints
+  return $ canonicalize $ applySub subst ty
 
+initTypeEnv :: TypeEnv
+initTypeEnv = [TypeVar "BAD", TypeVar "BAD", binOpT, binOpT, binOpT, binOpT]
 
-paren :: Show a => a -> String
-paren x = "(" ++ show x ++ ")"
+binOpT = IntType `ArrType` (IntType `ArrType` IntType)
 
 constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of
@@ -62,7 +62,11 @@ updateTEnv = (:)
 fresh :: ConstrainMonad Type
 fresh = do i <- get
            put $ i + 1
-           return $ TypeVar (show i)
+           return $ TypeVar (varName i)
+
+varName :: Int -> String
+varName n | n < 26    = [['a'..'z'] !! n]
+          | otherwise = varName (mod n 26) ++ show (div n 26)
 
 bind :: TypeVarName -> Type -> Except Subst
 bind v t | v `occursIn` t = Left InfiniteType
@@ -79,6 +83,8 @@ unify (ArrType a b) (ArrType a' b') = do
   sa  <- unify a a'
   sb <- unify (applySub sa b) (applySub sa b')
   return $ sa >>> sb
+unify t1 t2 = Left $ UnificationError t1 t2
+
 
 (>>>) :: Subst -> Subst -> Subst
 (>>>) s1 s2 = let s1' = Map.map (applySub s2) s1
@@ -88,10 +94,23 @@ applySub :: Subst -> Type -> Type
 applySub s t = case t of
   IntType     -> IntType
   ArrType a b -> applySub s a `ArrType` applySub s b
-  TabType k v -> applySub s k `TabType` applySub s v
+  TabType a b -> applySub s a `TabType` applySub s b
   TypeVar v   -> case Map.lookup v s of
                    Just t  -> t
                    Nothing -> TypeVar v
+
+allVars :: Type -> [TypeVarName]
+allVars t = case t of
+  IntType     -> []
+  ArrType a b -> allVars a ++ allVars b
+  TabType a b -> allVars a ++ allVars b
+  TypeVar v   -> [v]
+
+canonicalize :: Type -> Type
+canonicalize t = let prevVars = nub $ allVars t
+                     newTypeVars = map (TypeVar . varName) [0..]
+                     sub = Map.fromList $ zip prevVars newTypeVars
+                 in applySub sub t
 
 idSubst :: Subst
 idSubst = Map.empty
@@ -105,7 +124,7 @@ solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
 instance Show Type where
-  show (ArrType a b) = paren a ++ "->" ++ paren b
-  show (TabType a b) = paren a ++ "=>" ++ paren b
+  show (ArrType a b) = "(" ++ show a ++ "->" ++ show b ++ ")"
+  show (TabType a b) = "(" ++ show a ++ "=>" ++ show b ++ ")"
   show IntType = "Int"
   show (TypeVar v) = v

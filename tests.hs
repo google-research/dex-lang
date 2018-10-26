@@ -10,9 +10,10 @@ import Interpreter
 
 
 typeTestCases =
-  [ ("1"        , IntType)
-  , ("1 + 3"    , IntType)
-  , ("lam x: x" , ArrType (TypeVar "a") (TypeVar "a") )
+  [ ("1"            , IntType)
+  , ("1 + 3"        , IntType)
+  , ("lam x: x"     , ArrType (TypeVar "a") (TypeVar "a") )
+  , ("(lam x: x) 2" , IntType)
   ]
 
 parseTestCases =
