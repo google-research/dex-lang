@@ -1,4 +1,4 @@
-module Parser (VarEnv, parseExpr, parseDeclOrExpr, initVarEnv, tests) where
+module Parser (VarName, VarEnv, parseExpr, parseDeclOrExpr, initVarEnv, tests) where
 import Util
 import Test.HUnit
 import Prelude hiding (lookup)
