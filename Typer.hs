@@ -67,9 +67,9 @@ constrain expr = case expr of
     return (a `TabType` b, c)
   Get expr idx -> do
     i <- lookupIEnv idx
-    (e, c2) <- constrain expr
+    (e, c) <- constrain expr
     y <- fresh
-    return (y, c2 ++ [(e, i `TabType` y)])
+    return (y, c ++ [(e, i `TabType` y)])
 
 
 lookupEnv :: Int -> ConstrainMonad Type

@@ -28,7 +28,7 @@ initEnv :: [Val] -> Env
 initEnv inputVals =
   let inputVars = ["in" ++ (show n) | n <- [0..(length inputVals - 1)]]
   in Env { varEnv = initVarEnv ++ inputVars
-         , typeEnv = []
+         , typeEnv = initTypeEnv
          , valEnv = initValEnv ++ inputVals }
 
 
