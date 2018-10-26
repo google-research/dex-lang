@@ -10,19 +10,17 @@ import Data.List hiding (lookup)
 import IOSql
 import Prelude hiding (lookup)
 
+import qualified Parser as P
+import Parser hiding (Expr (..))
+import Lower
 import Syntax
 import Util
-import Parser
 import Typer
 import Interpreter
 
 data Env = Env { varEnv  :: VarEnv
                , typeEnv :: TypeEnv
                , valEnv  :: ValEnv }
-
-data Command = GetType Expr
-             | PrintExpr Expr
-             | EvalDecl VarName Expr
 
 type Repl a = InputT (StateT Env IO) a
 
@@ -36,20 +34,26 @@ initEnv inputVals =
 
 evalCmd :: Command -> Repl ()
 evalCmd c = case c of
-  GetType expr    -> do t <- gettypeR expr
-                        printR t
-  PrintExpr expr  -> do gettypeR expr
-                        v <- evalR expr
+  GetParse expr   -> printR expr
+  GetLowered expr -> lowerR expr >>= printR
+  GetType expr    -> lowerR expr >>= gettypeR >>= printR
+  EvalExpr expr   -> do e <- lowerR expr
+                        gettypeR e
+                        v <- evalR e
                         printR v
-  EvalDecl v expr -> do t   <- gettypeR expr
-                        val <- evalR expr
+  EvalDecl v expr -> do e   <- lowerR expr
+                        t   <- gettypeR e
+                        val <- evalR e
                         updateEnv v t val
 
 liftErr :: Show a => Either a b -> Repl b
 liftErr = undefined
 
 catchR :: Repl a -> Repl a
-catchR = id
+catchR = undefined
+
+lowerR :: P.Expr -> Repl Expr
+lowerR = undefined
 
 gettypeR :: Expr -> Repl Type
 gettypeR expr = do
@@ -71,9 +75,6 @@ updateEnv var ty val =
                        , valEnv  = val:(valEnv  env) }
   in lift $ modify update
 
-parseLine :: String -> Either String Command
-parseLine = undefined
-
 runRepl :: Repl () -> Behavior -> Env -> IO ()
 runRepl repl behavior env =
   let stateMonad = runInputTBehavior behavior defaultSettings repl
@@ -88,9 +89,9 @@ repl prompt = loop
       case input of
          Nothing -> return ()
          Just "" -> loop
-         Just line -> case parseLine line of
+         Just line -> case parseCommand line of
            Left e -> printR e >> loop
-           Right cmd -> (catchR $ evalCmd cmd) >> loop
+           Right cmd -> catchR (evalCmd cmd) >> loop
 
 
 terminalRepl :: Env -> IO ()

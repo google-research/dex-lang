@@ -1,4 +1,4 @@
-module Parser (VarName, IdxVarName, Expr (..), tests) where
+module Parser (VarName, IdxVarName, Expr (..), parseCommand, Command (..), tests) where
 import Util
 import Control.Monad
 import Test.HUnit
@@ -16,9 +16,24 @@ data Expr = Lit Int
           | Get Expr IdxVarName
           deriving (Show, Eq)
 
+
+data Command = GetType    Expr
+             | GetParse   Expr
+             | GetLowered Expr
+             | EvalExpr   Expr
+             | EvalDecl   VarName Expr
+
 type VarName = String
 type IdxVarName = String
 type Decl = (VarName, Expr)
+
+parseCommand :: String -> Either String Command
+parseCommand s = case parse command "" s of
+                 Left e  -> Left $ show e
+                 Right p -> Right p
+
+command :: Parser Command
+command = undefined
 
 opNames = ["+", "*", "/", "-"]
 resNames = ["for", "lam", "let", "in"]
