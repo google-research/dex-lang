@@ -12,9 +12,15 @@ import Interpreter
 typeTestCases =
   [ ("1"            , IntType)
   , ("1 + 3"        , IntType)
-  , ("lam x: x"     , ArrType (TypeVar "a") (TypeVar "a") )
+  , ("lam x: x"     , TypeVar "a" `ArrType` TypeVar "a")
   , ("(lam x: x) 2" , IntType)
   ]
+
+typeErrorTestCases =
+  [ ("lam f: f f"   , InfiniteType)
+  , ("1 1"          , UnificationError IntType (IntType `ArrType` TypeVar "a"))
+  ]
+
 
 parseTestCases =
   [ ("1 + 2"        , P.App (P.App (P.Var "add") (P.Lit 1)) (P.Lit 2))
@@ -46,8 +52,10 @@ gettype s = case parseCommand s of
 
 parseTests = TestList [testCase s parseCommand (Right (EvalExpr p)) | (s,p) <- parseTestCases]
 typeTests  = TestList [testCase s gettype (Right t) | (s,t) <- typeTestCases]
+typeErrorTests = TestList [testCase s gettype (Left e) | (s,e) <- typeErrorTestCases]
 
 
 main = do
   runTestTT $ parseTests
   runTestTT $ typeTests
+  runTestTT $ typeErrorTests

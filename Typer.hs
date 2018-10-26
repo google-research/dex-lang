@@ -73,7 +73,12 @@ bind v t | v `occursIn` t = Left InfiniteType
          | otherwise = Right $ Map.singleton v t
 
 occursIn :: TypeVarName -> Type -> Bool
-occursIn v t = False -- todo: fix!
+occursIn v t = case t of
+  IntType     -> False
+  ArrType a b -> occursIn v a || occursIn v b
+  TabType a b -> occursIn v a || occursIn v b
+  TypeVar v'  -> v == v'
+
 
 unify :: Type -> Type -> Except Subst
 unify t1 t2 | t1 == t2 = return idSubst
@@ -124,7 +129,7 @@ solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
 instance Show Type where
-  show (ArrType a b) = "(" ++ show a ++ "->" ++ show b ++ ")"
+  show (ArrType a b) = "(" ++ show a ++ " -> " ++ show b ++ ")"
   show (TabType a b) = "(" ++ show a ++ "=>" ++ show b ++ ")"
   show IntType = "Int"
   show (TypeVar v) = v
