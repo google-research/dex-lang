@@ -1,4 +1,4 @@
-module Typer (Type, TypeEnv, initTypeEnv, typeExpr) where
+module Typer (Type (..), TypeErr (..), TypeEnv, initTypeEnv, typeExpr) where
 
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
@@ -12,7 +12,7 @@ data Type = IntType
           | TypeVar TypeVarName   deriving (Eq)
 
 data TypeErr = TypeErr String
-             | InfiniteType  deriving (Show)
+             | InfiniteType  deriving (Show, Eq)
 
 type Except a = Either TypeErr a
 type Scheme = Type   -- data Scheme = Scheme [TypeVarName] Type

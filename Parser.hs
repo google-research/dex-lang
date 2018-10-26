@@ -1,4 +1,4 @@
-module Parser (VarName, IdxVarName, Expr (..), parseCommand, Command (..), tests) where
+module Parser (VarName, IdxVarName, Expr (..), parseCommand, Command (..)) where
 import Util
 import Control.Monad
 import Test.HUnit
@@ -21,7 +21,7 @@ data Command = GetType    Expr
              | GetParse   Expr
              | GetLowered Expr
              | EvalExpr   Expr
-             | EvalDecl   VarName Expr
+             | EvalDecl   VarName Expr deriving (Show, Eq)
 
 type VarName = String
 type IdxVarName = String
@@ -140,27 +140,3 @@ escapeChars [] = []
 escapeChars (x:xs) = case x of
                      '\\' -> escapeChars $ drop 1 xs
                      otherwise -> x : escapeChars xs
-
-testParses =
-  [ ("1 + 2"        , App (App (Var "add") (Lit 1)) (Lit 2))
-  , ("for i: 10"    , For "i" (Lit 10))
-  , ("lam x: x"     , Lam "x" (Var "x"))
-  , ("y x"          , App (Var "y") (Var "x"))
-  , ("x.i"          , Get (Var "x") "i")
-  , ("f x y"        , App (App (Var "f") (Var "x")) (Var "y"))
-  , ("x.i.j"        , Get (Get (Var "x") "i") "j")
-  , ("let x = 1 in x"        , Let "x" (Lit 1) (Var "x"))
-  , ("let x = 1; y = 2 in x" , Let "x" (Lit 1) (Let "y" (Lit 2) (Var "x")))
-  , ("for i j: 10"           , For "i" (For "j" (Lit 10)))
-  , ("lam x y: x"            , Lam "x" (Lam "y" (Var "x")))
-  , ("let f x = x in f"      , Let "f" (Lam "x" (Var "x")) (Var "f"))
-  , ("let x . i = y in x"    , Let "x" (For "i" (Var "y")) (Var "x"))
-  , ("let f x y = x in f"    , Let "f" (Lam "x" (Lam "y" (Var "x"))) (Var "f"))
-  , ("let x.i.j = y in x"    , Let "x" (For "i" (For "j" (Var "y"))) (Var "x"))
-  ]
-
-tests = TestList $ [
-    let msg = "  tried: " ++ s
-        p = parse expr "" s
-    in TestCase $ assertEqual msg (Right e) p
-    | (s, e) <- testParses]
