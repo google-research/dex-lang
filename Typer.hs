@@ -44,11 +44,11 @@ initTypeEnv =
  let a = TypeVar "a"
      b = TypeVar "b"
      int = IntType
- in [ ForAll [] $ int --> int ==> int  -- iota
-    ,  ForAll ["a", "b"] $ (b --> b --> b) --> b --> (a ==> b) --> b -- reduce
-    , binOpScheme, binOpScheme, binOpScheme, binOpScheme]
+     binOp = ForAll [] $ int --> int --> int
+ in [ ForAll [] $ int --> int ==> int                                -- iota
+    , ForAll ["a", "b"] $ (b --> b --> b) --> b --> (a ==> b) --> b  -- reduce
+    , binOp, binOp, binOp, binOp]
 
-binOpScheme = ForAll [] $ IntType `ArrType` (IntType `ArrType` IntType)
 
 generalize :: Type -> Scheme
 generalize ty = ForAll (allVars ty) ty
@@ -123,7 +123,6 @@ occursIn v t = case t of
   ArrType a b -> occursIn v a || occursIn v b
   TabType a b -> occursIn v a || occursIn v b
   TypeVar v'  -> v == v'
-
 
 unify :: Type -> Type -> Except Subst
 unify t1 t2 | t1 == t2 = return idSubst
