@@ -1,4 +1,5 @@
-module Typer (Type (..), TypeErr (..), TypeEnv, initTypeEnv, typeExpr) where
+module Typer (Type (..), TypeErr (..), Scheme (..),
+              TypeEnv, initTypeEnv, typeExpr) where
 
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
@@ -16,7 +17,7 @@ data TypeErr = TypeErr String
              | UnificationError Type Type
              | InfiniteType  deriving (Show, Eq)
 
-data Scheme = ForAll [TypeVarName] Type
+data Scheme = ForAll [TypeVarName] Type deriving (Show, Eq)
 type Except a = Either TypeErr a
 type TypeEnv = [Scheme]
 type ITypeEnv = [Type]
@@ -32,20 +33,25 @@ infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-typeExpr :: Expr -> TypeEnv -> Except Type
+typeExpr :: Expr -> TypeEnv -> Except Scheme
 typeExpr expr env = do
   (ty, constraints) <- evalStateT (runReaderT (constrain expr) (env, [])) 0
   subst <- solveAll constraints
-  return $ canonicalize $ applySub subst ty
+  return $ generalize $ canonicalize $ applySub subst ty
 
 initTypeEnv :: TypeEnv
-initTypeEnv = [
-  ForAll [] $ IntType --> IntType ==> IntType,  -- iota
-  ForAll [] $ (IntType --> IntType --> IntType) --> IntType
-    --> (TypeVar "xx" ==> IntType) --> IntType, -- reduce
-  binOpScheme, binOpScheme, binOpScheme, binOpScheme]
+initTypeEnv =
+ let a = TypeVar "a"
+     b = TypeVar "b"
+     int = IntType
+ in [ ForAll [] $ int --> int ==> int  -- iota
+    ,  ForAll ["a", "b"] $ (b --> b --> b) --> b --> (a ==> b) --> b -- reduce
+    , binOpScheme, binOpScheme, binOpScheme, binOpScheme]
 
 binOpScheme = ForAll [] $ IntType `ArrType` (IntType `ArrType` IntType)
+
+generalize :: Type -> Scheme
+generalize ty = ForAll (allVars ty) ty
 
 constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of
@@ -150,8 +156,8 @@ applySub s t = case t of
 allVars :: Type -> [TypeVarName]
 allVars t = case t of
   IntType     -> []
-  ArrType a b -> allVars a ++ allVars b
-  TabType a b -> allVars a ++ allVars b
+  ArrType a b -> nub $ allVars a ++ allVars b
+  TabType a b -> nub $ allVars a ++ allVars b
   TypeVar v   -> [v]
 
 canonicalize :: Type -> Type

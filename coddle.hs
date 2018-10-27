@@ -58,7 +58,7 @@ lower expr = do
   env <- lift $ gets varEnv
   liftErr $ lowerExpr expr env
 
-gettype :: Expr -> Repl Type
+gettype :: Expr -> Repl Scheme
 gettype expr = do
   env <- lift $ gets typeEnv
   liftErr $ typeExpr expr env
@@ -71,7 +71,7 @@ eval expr = do
 print :: Show a => a -> Repl ()
 print x = outputStrLn $ show x
 
-updateEnv :: VarName -> Type -> Val -> Repl ()
+updateEnv :: VarName -> Scheme -> Val -> Repl ()
 updateEnv var ty val =
   let update env = Env { varEnv  = var:(varEnv  env)
                        , typeEnv = ty :(typeEnv env)

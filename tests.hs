@@ -10,15 +10,15 @@ import Interpreter
 
 
 typeTestCases =
-  [ ("1"                     , IntType)
-  , ("1 + 3"                 , IntType)
-  , ("lam x: x"              , TypeVar "a" `ArrType` TypeVar "a")
-  , ("(lam x: x) 2"          , IntType)
-  , ("for i: 1"              , TypeVar "a" `TabType` IntType)
-  , ("for i: (for j: 3).i"   , TypeVar "a" `TabType` IntType)
-  , ("for i: (iota 3).i"     , IntType `TabType` IntType)
-  , ("reduce add 0 (iota 3)" , IntType)
-  , ("let x = 1 in x"        , IntType)
+  [ ("1"                     , ForAll [] $ IntType)
+  , ("1 + 3"                 , ForAll [] $ IntType)
+  , ("lam x: x"              , ForAll ["a"] $ TypeVar "a" `ArrType` TypeVar "a")
+  , ("(lam x: x) 2"          , ForAll [] $ IntType)
+  , ("for i: 1"              , ForAll ["a"] $ TypeVar "a" `TabType` IntType)
+  , ("for i: (for j: 3).i"   , ForAll ["a"] $ TypeVar "a" `TabType` IntType)
+  , ("for i: (iota 3).i"     , ForAll [] $ IntType `TabType` IntType)
+  , ("reduce add 0 (iota 3)" , ForAll [] $ IntType)
+  , ("let x = 1 in x"        , ForAll [] $ IntType)
   ]
 
 typeErrorTestCases =
@@ -51,7 +51,7 @@ parseTestCases =
 testCase :: (Show a, Eq a) => String -> (String -> a) -> a -> Test
 testCase s f target = TestCase $ assertEqual ("   input: " ++ s) target (f s)
 
-gettype :: String -> Either TypeErr Type
+gettype :: String -> Either TypeErr Scheme
 gettype s = case parseCommand s of
               Right (EvalExpr p) ->
                 case lowerExpr p initVarEnv of

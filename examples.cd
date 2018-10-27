@@ -69,6 +69,7 @@ reduce (map2 add) (for i: 0) w
 z = iota 3
 w.i.j = z.i
 out.i = reduce add 0 (for j: w.j.i)
+out
 
 z = iota 3
 w.i.j = z.i + z.j
