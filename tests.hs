@@ -17,12 +17,15 @@ typeTestCases =
   , ("for i: 1"              , TypeVar "a" `TabType` IntType)
   , ("for i: (for j: 3).i"   , TypeVar "a" `TabType` IntType)
   , ("for i: (iota 3).i"     , IntType `TabType` IntType)
-  , ("reduce add 0 (iota 3)"   , IntType)
+  , ("reduce add 0 (iota 3)" , IntType)
+  , ("let x = 1 in x"        , IntType)
   ]
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
   , ("1 1"          , UnificationError IntType (IntType `ArrType` TypeVar "a"))
+  , ("(lam f: (f 1) + f (lam z: z) 2) (lam x: x)" ,
+       UnificationError (TypeVar "c" `ArrType` TypeVar "c") IntType )
   ]
 
 
@@ -53,6 +56,7 @@ gettype s = case parseCommand s of
               Right (EvalExpr p) ->
                 case lowerExpr p initVarEnv of
                   Right e -> typeExpr e initTypeEnv
+              Left _ -> error "parse error"
 
 parseTests = TestList [testCase s parseCommand (Right (EvalExpr p)) | (s,p) <- parseTestCases]
 typeTests  = TestList [testCase s gettype (Right t) | (s,t) <- typeTestCases]

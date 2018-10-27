@@ -16,18 +16,18 @@ data TypeErr = TypeErr String
              | UnificationError Type Type
              | InfiniteType  deriving (Show, Eq)
 
+data Scheme = ForAll [TypeVarName] Type
 type Except a = Either TypeErr a
-type Scheme = Type   -- data Scheme = Scheme [TypeVarName] Type
 type TypeEnv = [Scheme]
-type ITypeEnv = [Scheme]
+type ITypeEnv = [Type]
 type Env = (TypeEnv, ITypeEnv)
 type Constraint = (Type, Type)
 type TypeVarName = String
 type Subst = Map.Map TypeVarName Type
 type ConstrainMonad a = ReaderT Env (StateT Int (Either TypeErr)) a
 
-infixr 0 -->
-infixr 1 ==>
+infixr 1 -->
+infixr 2 ==>
 
 (-->) = ArrType
 (==>) = TabType
@@ -39,12 +39,13 @@ typeExpr expr env = do
   return $ canonicalize $ applySub subst ty
 
 initTypeEnv :: TypeEnv
-initTypeEnv = [IntType --> IntType ==> IntType,  -- iota
-               (IntType --> IntType --> IntType) --> IntType
-                   --> (TypeVar "xx" ==> IntType) --> IntType,
-               binOpT, binOpT, binOpT, binOpT]
+initTypeEnv = [
+  ForAll [] $ IntType --> IntType ==> IntType,  -- iota
+  ForAll [] $ (IntType --> IntType --> IntType) --> IntType
+    --> (TypeVar "xx" ==> IntType) --> IntType, -- reduce
+  binOpScheme, binOpScheme, binOpScheme, binOpScheme]
 
-binOpT = IntType `ArrType` (IntType `ArrType` IntType)
+binOpScheme = ForAll [] $ IntType `ArrType` (IntType `ArrType` IntType)
 
 constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of
@@ -52,9 +53,14 @@ constrain expr = case expr of
   Var v -> do
     t <- lookupEnv v
     return (t, [])
+  Let bound body -> do
+    (t1, c1) <- constrain bound
+    (env, _) <- ask
+    (t2, c2) <- local (updateEnv $ ForAll [] t1) (constrain body)
+    return (t2, c1 ++ c2)
   Lam body -> do
     a <- fresh
-    (b, c) <- local (updateEnv a) (constrain body)
+    (b, c) <- local (updateEnv $ ForAll [] a) (constrain body)
     return (a `ArrType` b, c)
   App fexpr arg -> do
     (x, c1) <- constrain arg
@@ -74,7 +80,7 @@ constrain expr = case expr of
 
 lookupEnv :: Int -> ConstrainMonad Type
 lookupEnv i = do (env,_) <- ask
-                 return $ env !! i
+                 instantiate $ env !! i
 
 lookupIEnv :: Int -> ConstrainMonad Type
 lookupIEnv i = do (_,ienv) <- ask
@@ -83,9 +89,14 @@ lookupIEnv i = do (_,ienv) <- ask
 updateEnv :: Scheme -> Env -> Env
 updateEnv t (env, ienv) = ((t:env), ienv)
 
-updateIEnv :: Scheme -> Env -> Env
+updateIEnv :: Type -> Env -> Env
 updateIEnv t (env, ienv) = (env, (t:ienv))
 
+instantiate :: Scheme -> ConstrainMonad Type
+instantiate (ForAll vs t) = do
+  freshVs <- replicateM (length vs) fresh
+  let subst = Map.fromList $ zip vs freshVs
+  return $ applySub subst t
 
 fresh :: ConstrainMonad Type
 fresh = do i <- get

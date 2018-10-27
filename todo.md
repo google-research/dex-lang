@@ -1,16 +1,19 @@
 # Todo ordered (easy things)
-  * clean it up a bit
-    * get repl working
-    * better repl error handling
-
   * type inference (and print types)
-    * type checking tests
-    * get non-let stuff working
-    * let
+    * let generalization
 
-  * product and record types
   * string/real/bool types
+
+  * product types
+    * record types?
+      * could singleton records reduce the need for newtype?)
+      * enough to be worth playing with, I think
+    * anonymous tuples?
+    * might be easier to do all of these at once
+    * data/newtype
+
   * raster/ggplot/canvas output?
+
   * write up explanation and make some demos
 
 # Want
@@ -40,6 +43,7 @@
   * non-invertible output: ggplot, pretty-print
   * anonymous sum, product and record types
   * repl: printing parses, types, etc, values, etc
+  * type decls (type parsing will also make tests easier to write)
   * --------------------
   * type annotations?
   * autodiff?
