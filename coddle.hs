@@ -58,7 +58,7 @@ lower expr = do
   env <- lift $ gets varEnv
   liftErr $ lowerExpr expr env
 
-gettype :: Expr -> Repl Scheme
+gettype :: Expr -> Repl ClosedType
 gettype expr = do
   env <- lift $ gets typeEnv
   liftErr $ typeExpr expr env
@@ -71,7 +71,7 @@ eval expr = do
 print :: Show a => a -> Repl ()
 print x = outputStrLn $ show x
 
-updateEnv :: VarName -> Scheme -> Val -> Repl ()
+updateEnv :: VarName -> ClosedType -> Val -> Repl ()
 updateEnv var ty val =
   let update env = Env { varEnv  = var:(varEnv  env)
                        , typeEnv = ty :(typeEnv env)
@@ -93,7 +93,7 @@ repl prompt = loop
          Nothing -> return ()
          Just "" -> loop
          Just line -> case parseCommand line of
-           Left e -> print e >> loop
+           Left e -> outputStrLn "Parse error:" >> print e >> loop
            Right cmd -> catchErr (evalCmd cmd) >> loop
 
 

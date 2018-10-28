@@ -8,7 +8,7 @@ import qualified Parser as P
 import Parser (VarName, IdxVarName)
 
 data LowerErr = UnboundVarErr VarName
-              | UnboundIdxVarErr IdxVarName deriving (Show)
+              | UnboundIdxVarErr IdxVarName
 
 type Except a = Either LowerErr a
 type VarEnv = [VarName]
@@ -48,3 +48,9 @@ lookupIEnv iv = do
 maybeReturn :: Maybe a -> LowerErr -> Lower a
 maybeReturn (Just x) _ = return x
 maybeReturn Nothing  e = ReaderT $ \_ -> Left e
+
+instance Show LowerErr where
+  show e = "Error: " ++
+    case e of
+      UnboundVarErr    v -> "unbound variable: " ++  v
+      UnboundIdxVarErr v -> "unbound index variable: " ++ v
