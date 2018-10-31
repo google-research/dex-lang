@@ -1,6 +1,7 @@
 {-# LANGUAGE GADTs #-}
 -- module TypedInterpreter where
 
+import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
 
 type Table a b = M.Map a b
@@ -17,13 +18,9 @@ data RawType = RIntType
 
 data TTerm e t where
   TLit :: Int -> TTerm e Int
-  TVar :: TVar e t -> TTerm e t
+  TVar :: TIdx e t -> TTerm e t
   TLam :: Ty a -> TTerm (a,e) b -> TTerm e (a -> b)
   TApp :: TTerm e (a -> b) -> TTerm e a -> TTerm e b
-
-data TVar e t where
-  Zero ::             TVar (t , e) t
-  Succ :: TVar e t -> TVar (t', e) t
 
 data Ty t where
   IntType :: Ty Int
@@ -36,22 +33,30 @@ data Typed a where
 data SomeType where
   SomeType :: Ty t -> SomeType
 
-data Env e where
-  Nil  :: Env ()
-  Cons :: Ty t -> Env e -> Env (t, e)
 
-data ValEnv e where
-  VNil  :: ValEnv ()
-  VCons :: t -> ValEnv e -> ValEnv (t, e)
+data TIdx xs x where
+  Z ::              TIdx (x , xs) x
+  S :: TIdx xs x -> TIdx (x', xs) x
 
-lookupVal :: TVar e t -> ValEnv e -> t
-lookupVal Zero (VCons x _) = x
-lookupVal (Succ n) (VCons _ env) = lookupVal n env
+data TList c xs where
+  Nil  :: TList c ()
+  Cons :: c x -> TList c xs -> TList c (x, xs)
 
-lookupType :: Int -> Env e -> Typed (TVar e)
-lookupType 0 (Cons t _) = Typed t Zero
+type Env = TList Ty
+type ValEnv = TList Id
+newtype Id a = Id a
+
+lookup :: TIdx xs x -> TList c xs -> c x
+lookup Z (Cons x _) = x
+lookup (S n) (Cons _ xs) = lookup n xs
+
+lookupVal :: TIdx xs x -> ValEnv xs -> x
+lookupVal i xs = let Id ans = lookup i xs in ans
+
+lookupType :: Int -> Env e -> Typed (TIdx e)
+lookupType 0 (Cons t _) = Typed t Z
 lookupType n (Cons _ env) = case lookupType (n-1) env of
-                              Typed t v -> Typed t (Succ v)
+                              Typed t v -> Typed t (S v)
 
 typeType :: RawType -> SomeType
 typeType rt = case rt of
@@ -69,7 +74,6 @@ typesEqual (ArrType a b) (ArrType a' b') = do
   Equal <- typesEqual a a'
   Equal <- typesEqual b b'
   return Equal
-
 
 typeExpr :: Term -> Env e -> Maybe (Typed (TTerm e))
 typeExpr expr env =
@@ -90,7 +94,7 @@ eval :: TTerm e t -> ValEnv e -> t
 eval expr env = case expr of
   TVar v -> lookupVal v env
   TLit x -> x
-  TLam _ body -> \x -> eval body (VCons x env)
+  TLam _ body -> \x -> eval body (Cons (Id x) env)
   TApp e1 e2 -> (eval e1 env) (eval e2 env)
 
 evalt :: Typed (TTerm e) -> ValEnv e-> String
@@ -101,7 +105,7 @@ evalt (Typed t expr) env =
     ArrType _ _  -> "<lambda>"
 
 tenv = Cons IntType Nil
-venv = VCons 5 VNil
+venv = Cons (Id 5) Nil
 
 expr = App (Lam RIntType (Var 0)) (Var 0)
 texpr = case typeExpr expr tenv of
