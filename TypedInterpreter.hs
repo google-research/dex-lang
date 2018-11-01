@@ -16,11 +16,12 @@ data RawType = RIntType
              | RArrType RawType RawType
                  deriving (Show)
 
-data TTerm e t where
-  TLit :: Int -> TTerm e Int
-  TVar :: TIdx e t -> TTerm e t
-  TLam :: Ty a -> TTerm (a,e) b -> TTerm e (a -> b)
-  TApp :: TTerm e (a -> b) -> TTerm e a -> TTerm e b
+data TTerm e k t where
+  TLit :: Int -> TTerm e k Int
+  TVar :: TIdx e t -> TTerm e k t
+  TLam :: Ty a -> TTerm (a,e) k b -> TTerm e k (a -> b)
+  TApp :: TTerm e k (a -> b) -> TTerm e k a -> TTerm e k b
+  TLAM :: TTerm e ((),k) t -> TTerm e k t
 
 data Ty t where
   IntType :: Ty Int
@@ -75,7 +76,7 @@ typesEqual (ArrType a b) (ArrType a' b') = do
   Equal <- typesEqual b b'
   return Equal
 
-typeExpr :: Term -> Env e -> Maybe (Typed (TTerm e))
+typeExpr :: Term -> Env e -> Maybe (Typed (TTerm e ()))
 typeExpr expr env =
   case expr of
   Lit x -> return $ Typed IntType (TLit x)
@@ -90,14 +91,14 @@ typeExpr expr env =
          Nothing -> Nothing
          Just Equal -> Just $ Typed b (TApp e1' e2')
 
-eval :: TTerm e t -> ValEnv e -> t
+eval :: TTerm e k t -> ValEnv e -> t
 eval expr env = case expr of
   TVar v -> lookupVal v env
   TLit x -> x
   TLam _ body -> \x -> eval body (Cons (Id x) env)
   TApp e1 e2 -> (eval e1 env) (eval e2 env)
 
-evalt :: Typed (TTerm e) -> ValEnv e-> String
+evalt :: Typed (TTerm e k) -> ValEnv e-> String
 evalt (Typed t expr) env =
   let v = eval expr env
   in case t of

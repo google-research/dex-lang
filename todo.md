@@ -1,7 +1,4 @@
 # Todo ordered (easy things)
-  * type inference (and print types)
-    * let generalization
-
   * string/real/bool types
 
   * product types
