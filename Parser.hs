@@ -16,7 +16,6 @@ data Expr = Lit Int
           | Get Expr IdxVarName
           deriving (Show, Eq)
 
-
 data Command = GetType    Expr
              | GetParse   Expr
              | GetLowered Expr

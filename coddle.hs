@@ -7,7 +7,7 @@ import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.List hiding (lookup)
-import IOSql
+-- import IOSql
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
@@ -38,9 +38,9 @@ evalCmd c = case c of
   GetLowered expr -> lower expr >>= print
   GetType expr    -> lower expr >>= gettype >>= print
   EvalExpr expr   -> do e <- lower expr
-                        gettype e
+                        t <- gettype e
                         v <- eval e
-                        print v
+                        outputStrLn $ showVal v t
   EvalDecl v expr -> do e   <- lower expr
                         t   <- gettype e
                         val <- eval e
@@ -107,7 +107,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    ["sql"] -> do intable <- loadData "test.db" "test" ["x", "y", "v"]
-                  terminalRepl $ initEnv [intable]
+    -- ["sql"] -> do intable <- loadData "test.db" "test" ["x", "y", "v"]
+    --               terminalRepl $ initEnv [intable]
     [fname] -> fileRepl fname $ initEnv []
     []      -> terminalRepl $ initEnv []

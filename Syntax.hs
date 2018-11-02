@@ -7,4 +7,4 @@ data Expr = Lit Int
           | App Expr Expr
           | For Expr
           | Get Expr Int
-              deriving (Show)
+              deriving (Show, Eq)

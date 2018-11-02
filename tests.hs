@@ -53,22 +53,51 @@ parseTestCases =
   ]
 
 
+type TestVal = (Int, [([Int], Int)])
+
+evalTestCases :: [(String, Val)]
+evalTestCases =
+  [ ("1 + 2"                              ,  IntVal 3)
+  , ("reduce add 0 (iota 4)"              ,  IntVal 6)
+  , ("reduce add 0 (for i: (iota 4).i)"   ,  IntVal 6)
+  , ("reduce add 0 (for i: (iota 5).i + (iota 4).i)"   ,  IntVal 12)
+  , ("reduce add 0 (for i: reduce add 0 (for j: (iota 2).i * (iota 3).j))" ,  IntVal 3)
+  ]
+
+
 testCase :: (Show a, Eq a) => String -> (String -> a) -> a -> Test
 testCase s f target = TestCase $ assertEqual ("   input: " ++ s) target (f s)
 
-gettype :: String -> Either TypeErr ClosedType
-gettype s = case parseCommand s of
+getParse :: String -> Expr
+getParse s = case parseCommand s of
               Right (EvalExpr p) ->
                 case lowerExpr p initVarEnv of
-                  Right e -> typeExpr e initTypeEnv
+                  Right e -> e
               Left _ -> error "parse error"
 
-parseTests = TestList [testCase s parseCommand (Right (EvalExpr p)) | (s,p) <- parseTestCases]
-typeTests  = TestList [testCase s gettype (Right t) | (s,t) <- typeTestCases]
-typeErrorTests = TestList [testCase s gettype (Left e) | (s,e) <- typeErrorTestCases]
+gettype :: String -> Either TypeErr ClosedType
+gettype s = typeExpr (getParse s) initTypeEnv
+
+getVal :: String -> Val
+getVal s = evalExpr (getParse s) initValEnv
+
+
+
+parseTests = TestList [testCase s parseCommand (Right (EvalExpr p))
+                      | (s,p) <- parseTestCases]
+
+evalTests = TestList [testCase s getVal v
+                     | (s,v) <- evalTestCases]
+
+typeTests = TestList [testCase s gettype (Right t)
+                     | (s,t) <- typeTestCases]
+
+typeErrorTests = TestList [testCase s gettype (Left e)
+                          | (s,e) <- typeErrorTestCases]
 
 
 main = do
   runTestTT $ parseTests
   runTestTT $ typeTests
   runTestTT $ typeErrorTests
+  runTestTT $ evalTests

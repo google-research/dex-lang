@@ -31,10 +31,13 @@ for i: 2 + (iota 3).i
 
 d = iota 3
 out.j.i = (d.j * 100) + d.i
+out
 
 out.j.i.k = (iota 4).k + 1).j + (iota 5).i
+out
 
 out.j.i.k = (iota 3).j
+out
 
 for j i: (for k: (iota 4).k).j + (iota 5).i
 

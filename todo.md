@@ -1,5 +1,6 @@
 # Todo ordered (easy things)
   * string/real/bool types
+  * fix weird trailing stuff parse failure e.g. : lam x y: reduce add 0 for i: x.i * y.i
 
   * product types
     * record types?

@@ -1,6 +1,7 @@
 module Typer (Type (..), TypeErr (..), ClosedType (..), TypeEnv,
               initTypeEnv, typeExpr) where
 
+
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
 import Control.Monad.State (StateT, evalStateT, put, get)
