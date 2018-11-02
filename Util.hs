@@ -1,6 +1,6 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitWhile, repeatN,
-             composeN, mapMaybe, lookup) where
+             composeN, mapMaybe, lookup, uncons) where
 import Prelude hiding (lookup)
 
 
@@ -18,6 +18,9 @@ ungroup ((k,vs):rem) = (zip (repeat k) vs) ++ ungroup rem
 unJust :: Maybe a -> a
 unJust (Just x) = x
 unJust Nothing = error "whoops!"
+
+uncons :: [a] -> (a, [a])
+uncons (x:xs) = (x, xs)
 
 pad :: Int -> a -> [a] -> [a]
 pad n v xs = xs ++ repeatN (n - length(xs)) v

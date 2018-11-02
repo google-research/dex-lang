@@ -7,7 +7,7 @@ import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.List hiding (lookup)
--- import IOSql
+import IOSql
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
@@ -24,13 +24,17 @@ data Env = Env { varEnv  :: VarEnv
 
 type Repl a = InputT (StateT Env IO) a
 
-initEnv :: [Val] -> Env
-initEnv inputVals =
-  let inputVars = ["in" ++ (show n) | n <- [0..(length inputVals - 1)]]
-  in Env { varEnv = initVarEnv ++ inputVars
-         , typeEnv = initTypeEnv
-         , valEnv = initValEnv ++ inputVals }
+initEnv :: Env
+initEnv = Env { varEnv  = initVarEnv
+              , typeEnv = initTypeEnv
+              , valEnv  = initValEnv }
 
+
+consEnv :: (String, ClosedType, Val) -> Env -> Env
+consEnv (var, ty, val) env =
+  Env { varEnv  = var : varEnv  env
+      , typeEnv = ty  : typeEnv env
+      , valEnv  = val : valEnv  env }
 
 evalCmd :: Command -> Repl ()
 evalCmd c = case c of
@@ -107,7 +111,7 @@ main :: IO ()
 main = do
   args <- getArgs
   case args of
-    -- ["sql"] -> do intable <- loadData "test.db" "test" ["x", "y", "v"]
-    --               terminalRepl $ initEnv [intable]
-    [fname] -> fileRepl fname $ initEnv []
-    []      -> terminalRepl $ initEnv []
+    ["sql"] -> do (inVal, inTy) <- readDB "test.db"
+                  terminalRepl $ ("data", inTy, inVal) `consEnv` initEnv
+    [fname] -> fileRepl fname $ initEnv
+    []      -> terminalRepl $ initEnv

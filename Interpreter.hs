@@ -1,4 +1,4 @@
-module Interpreter (evalExpr, initValEnv, showVal, ValEnv, Val (..)) where
+module Interpreter (evalExpr, initValEnv, showVal, ValEnv, Val (..), IdxVal (..)) where
 
 import qualified Data.Map.Strict as M
 import Data.List (sortOn)
