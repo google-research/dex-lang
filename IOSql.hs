@@ -3,6 +3,7 @@ import qualified Data.Map.Strict as M
 import Database.HDBC
 import Database.HDBC.Sqlite3
 import Data.List (intersperse)
+import Data.ByteString.Char8 (unpack)
 import Interpreter
 import Typer
 import Util
@@ -27,26 +28,30 @@ descToColTypes desc = sequence (map (fromSqlType . colType . snd) desc)
 
 fromSqlType :: SqlTypeId -> Except Type
 fromSqlType t = case t of
-  SqlIntegerT -> Right IntType
+  SqlIntegerT -> Right (BaseType IntType)
+  SqlVarCharT -> Right (BaseType StrType)
   otherwise -> Left $ "Unrecognized SQL type: " ++ show t
 
 rowsToVal :: Type -> [[SqlValue]] -> Val
 rowsToVal t rows = case t of
   TabType k v -> let grouped = group (mapFst (toScalar k)$ map uncons rows)
                  in TabVal $ M.fromList $ mapSnd (rowsToVal v) grouped
-  IntType -> IntVal 42
+  BaseType b -> IntVal 42
 
 tabType :: [Type] -> Type
-tabType [] = IntType
+tabType [] = BaseType IntType
 tabType (t:ts) = TabType t (tabType ts)
 
 selectQuery :: [String] -> String -> String
 selectQuery colNames tableName =
   "select " ++ concat (intersperse " , " colNames) ++ " from " ++ tableName
 
-toScalar :: Type -> SqlValue -> IdxVal
+toScalar :: Type -> SqlValue -> Maybe IdxVal
 toScalar t v = case t of
-  IntType -> IntIdxVal . Just $ case v of
-    SqlInt32   x -> fromIntegral x
-    SqlInt64   x -> fromIntegral x
-    SqlInteger x -> fromIntegral x
+  BaseType IntType -> Just . IntIdxVal $ case v of
+      SqlInt32   x -> fromIntegral x
+      SqlInt64   x -> fromIntegral x
+      SqlInteger x -> fromIntegral x
+  BaseType StrType -> Just . StrIdxVal $ case v of
+      SqlString s -> s
+      SqlByteString s -> unpack s

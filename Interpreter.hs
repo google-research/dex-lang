@@ -9,11 +9,14 @@ import Util
 import Typer
 
 data Val = IntVal Int
-         | TabVal (M.Map IdxVal Val)
+         | TabVal (M.Map (Maybe IdxVal) Val)
          | LamVal Env Expr
          | Builtin BuiltinName [Val]  deriving (Eq, Show)
 
-data IdxVal = IntIdxVal (Maybe Int)  deriving (Eq, Ord, Show)
+data IdxVal = IntIdxVal  Int
+            | RealIdxVal Float
+            | StrIdxVal  String
+                deriving (Eq, Ord, Show)
 
 type IEnv = Int
 type ValEnv = [Val]
@@ -60,7 +63,7 @@ map2 f (TabVal m1) (TabVal m2) = TabVal . M.fromList $
                , Just k <- [tryEq k1 k2] ]
 
 lift :: Val -> Val
-lift v = TabVal $ M.singleton (IntIdxVal Nothing) v
+lift v = TabVal $ M.singleton Nothing v
 
 promoteIdx :: Int -> Val -> Val
 promoteIdx 0 x = x
@@ -77,13 +80,13 @@ diag (TabVal m) = TabVal . M.fromList $ [(k,v) | (k1, (TabVal m')) <- M.toList m
                                                , (k2, v ) <- M.toList m'
                                                , Just k <- [tryEq k1 k2] ]
 
-tryEq :: IdxVal -> IdxVal -> Maybe IdxVal
-tryEq (IntIdxVal x) (IntIdxVal y) = case (x, y) of
-  (Just x, Just y) | x == y    -> Just $ IntIdxVal (Just x)
+tryEq :: Eq a => Maybe a -> Maybe a -> Maybe (Maybe a)
+tryEq x y = case (x, y) of
+  (Just x, Just y) | x == y    -> Just $ Just x
                    | otherwise -> Nothing
-  (Just x , Nothing) -> Just $ IntIdxVal (Just x)
-  (Nothing, Just y ) -> Just $ IntIdxVal (Just y)
-  (Nothing, Nothing) -> Just $ IntIdxVal Nothing
+  (Just x , Nothing) -> Just $ Just x
+  (Nothing, Just y ) -> Just $ Just y
+  (Nothing, Nothing) -> Just $ Nothing
 
 
 evalApp :: Val -> Val -> Val
@@ -95,7 +98,7 @@ evalApp (Builtin name vs) x = let args = x:vs
 
 evalBuiltin :: BuiltinName -> [Val] -> Val
 evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
-evalBuiltin Iota [IntVal n] = TabVal $ M.fromList [(IntIdxVal $ Just i, IntVal i)
+evalBuiltin Iota [IntVal n] = TabVal $ M.fromList [(Just $ IntIdxVal i, IntVal i)
                                                   | i <- [0..(n-1)]]
 evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
                                       in foldr f' z (M.elems m)
@@ -125,14 +128,14 @@ showVal v t = render $ text " " <> valToBox v
 valToBox :: Val -> Box
 valToBox v = case v of
   IntVal x -> text (show x)
-  TabVal m -> vcat left [ idxValToBox k <> text " | " <> valToBox v
+  TabVal m -> vcat left [ text (showMaybeIdxVal k) <> text " | " <> valToBox v
                         | (k, v) <- M.toList m]
   LamVal _ _  -> text "<builtin>"
   Builtin _ _ -> text "<builtin>"
 
-idxValToBox :: IdxVal -> Box
-idxValToBox (IntIdxVal i) = text $ showMaybe i
-
-showMaybe :: (Show a) => Maybe a -> String
-showMaybe Nothing = "*"
-showMaybe (Just x) = show x
+showMaybeIdxVal :: Maybe IdxVal -> String
+showMaybeIdxVal Nothing = "*"
+showMaybeIdxVal (Just x) = case x of
+  IntIdxVal  x -> show x
+  RealIdxVal x -> show x
+  StrIdxVal  s -> s

@@ -1,4 +1,4 @@
-module Typer (Type (..), TypeErr (..), ClosedType (..), TypeEnv,
+module Typer (Type (..), TypeErr (..), ClosedType (..), BaseType (..), TypeEnv,
               initTypeEnv, typeExpr) where
 
 
@@ -9,10 +9,12 @@ import qualified Data.Map.Strict as Map
 import Data.List (nub, intersperse)
 import Syntax
 
-data Type = IntType
+data Type = BaseType BaseType
           | ArrType Type Type
           | TabType Type Type
           | TypeVar Int  deriving (Eq)
+
+data BaseType = IntType | RealType | StrType deriving (Eq, Show)
 
 data ClosedType = Forall Int Type  deriving (Eq)
 data InferType = Open Type | Closed ClosedType
@@ -39,7 +41,7 @@ initTypeEnv :: TypeEnv
 initTypeEnv =
   let a = TypeVar 0
       b = TypeVar 1
-      int = IntType
+      int = BaseType IntType
       binOp = Forall 0 $ int --> int --> int
   in [ Forall 0 $ int --> int ==> int                        -- iota
      , Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b  -- reduce
@@ -52,7 +54,7 @@ infixr 2 ==>
 
 constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of
-  Lit c -> return (IntType, [])
+  Lit c -> return (BaseType IntType, [])
   Var v -> do
     t <- lookupEnv v
     return (t, [])
@@ -118,7 +120,7 @@ bind v t | v `occursIn` t = Left InfiniteType
 
 occursIn :: Int -> Type -> Bool
 occursIn v t = case t of
-  IntType     -> False
+  BaseType _  -> False
   ArrType a b -> occursIn v a || occursIn v b
   TabType a b -> occursIn v a || occursIn v b
   TypeVar v'  -> v == v'
@@ -143,7 +145,7 @@ unifyPair (a,b) (a',b') = do
 
 applySub :: Subst -> Type -> Type
 applySub s t = case t of
-  IntType     -> IntType
+  BaseType b  -> BaseType b
   ArrType a b -> applySub s a --> applySub s b
   TabType a b -> applySub s a ==> applySub s b
   TypeVar v   -> case Map.lookup v s of
@@ -152,7 +154,7 @@ applySub s t = case t of
 
 allVars :: Type -> [Int]
 allVars t = case t of
-  IntType     -> []
+  BaseType _  -> []
   ArrType a b -> nub $ allVars a ++ allVars b
   TabType a b -> nub $ allVars a ++ allVars b
   TypeVar v   -> [v]
@@ -177,7 +179,10 @@ instance Show Type where
   show t = case t of
     ArrType a b -> "(" ++ show a ++ " -> " ++ show b ++ ")"
     TabType a b -> "(" ++ show a ++ "=>" ++ show b ++ ")"
-    IntType     -> "Int"
+    BaseType b  -> case b of
+                     IntType -> "Int"
+                     StrType -> "Str"
+                     RealType -> "Real"
     TypeVar v   -> varName v
 
 instance Show TypeErr where

@@ -13,24 +13,25 @@ infixr 1 -->
 infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
+int = BaseType IntType
 a = TypeVar 0
 b = TypeVar 1
 
 typeTestCases =
-  [ ("1"                     , Forall 0 $ IntType)
-  , ("1 + 3"                 , Forall 0 $ IntType)
+  [ ("1"                     , Forall 0 $ int)
+  , ("1 + 3"                 , Forall 0 $ int)
   , ("lam x: x"              , Forall 1 $ a --> a)
-  , ("(lam x: x) 2"          , Forall 0 $ IntType)
-  , ("for i: 1"              , Forall 1 $ a ==> IntType)
-  , ("for i: (for j: 3).i"   , Forall 1 $ a ==> IntType)
-  , ("for i: (iota 3).i"     , Forall 0 $ IntType ==> IntType)
-  , ("reduce add 0 (iota 3)" , Forall 0 $ IntType)
-  , ("let x = 1 in x"        , Forall 0 $ IntType)
+  , ("(lam x: x) 2"          , Forall 0 $ int)
+  , ("for i: 1"              , Forall 1 $ a ==> int)
+  , ("for i: (for j: 3).i"   , Forall 1 $ a ==> int)
+  , ("for i: (iota 3).i"     , Forall 0 $ int ==> int)
+  , ("reduce add 0 (iota 3)" , Forall 0 $ int)
+  , ("let x = 1 in x"        , Forall 0 $ int)
   ]
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
-  , ("1 1"          , UnificationError IntType (IntType --> TypeVar 0))
+  , ("1 1"          , UnificationError int (int --> TypeVar 0))
   ]
 
 
