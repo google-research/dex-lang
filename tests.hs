@@ -1,7 +1,7 @@
 import Test.HUnit
 import Typer
 import qualified Parser as P
-import Parser hiding (Expr (..))
+import Parser hiding (Expr (..), Pat (..))
 import Lower
 import Syntax
 import Util
@@ -34,25 +34,37 @@ typeErrorTestCases =
   , ("1 1"          , UnificationError int (int --> TypeVar 0))
   ]
 
+x = P.Var "x"
+y = P.Var "y"
+f = P.Var "f"
+
+x' = P.VarPat "x"
+y' = P.VarPat "y"
+f' = P.VarPat "f"
+
+l1 = P.Lit 1
+l2 = P.Lit 2
 
 parseTestCases =
-  [ ("1 + 2"        , P.App (P.App (P.Var "add") (P.Lit 1)) (P.Lit 2))
-  , ("for i: 10"    , P.For "i" (P.Lit 10))
-  , ("lam x: x"     , P.Lam "x" (P.Var "x"))
-  , ("y x"          , P.App (P.Var "y") (P.Var "x"))
-  , ("x.i"          , P.Get (P.Var "x") "i")
-  , ("f x y"        , P.App (P.App (P.Var "f") (P.Var "x")) (P.Var "y"))
-  , ("x.i.j"        , P.Get (P.Get (P.Var "x") "i") "j")
-  , ("let x = 1 in x"        , P.Let "x" (P.Lit 1) (P.Var "x"))
-  , ("let x = 1; y = 2 in x" , P.Let "x" (P.Lit 1) (P.Let "y" (P.Lit 2) (P.Var "x")))
-  , ("for i j: 10"           , P.For "i" (P.For "j" (P.Lit 10)))
-  , ("lam x y: x"            , P.Lam "x" (P.Lam "y" (P.Var "x")))
-  , ("let f x = x in f"      , P.Let "f" (P.Lam "x" (P.Var "x")) (P.Var "f"))
-  , ("let x . i = y in x"    , P.Let "x" (P.For "i" (P.Var "y")) (P.Var "x"))
-  , ("let f x y = x in f"    , P.Let "f" (P.Lam "x" (P.Lam "y" (P.Var "x"))) (P.Var "f"))
-  , ("let x.i.j = y in x"    , P.Let "x" (P.For "i" (P.For "j" (P.Var "y"))) (P.Var "x"))
+  [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
+  , ("for i: 1"             , P.For "i" l1)
+  , ("lam x: x"              , P.Lam x' x)
+  , ("y x"                   , P.App y x)
+  , ("x.i"                   , P.Get x "i")
+  , ("f x y"                 , P.App (P.App f x) y)
+  , ("x.i.j"                 , P.Get (P.Get x "i") "j")
+  , ("let x = 1 in x"        , P.Let x' l1 x)
+  , ("let x = 1; y = 2 in x" , P.Let x' l1 (P.Let y' l2 x))
+  , ("for i j: 1"           , P.For "i" (P.For "j" l1))
+  , ("lam x y: x"            , P.Lam x' (P.Lam y' x))
+  , ("let f x = x in f"      , P.Let f' (P.Lam x' x) f)
+  , ("let x . i = y in x"    , P.Let x' (P.For "i" y) x)
+  , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
+  , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
+  , ("(x, y)"                , P.RecCon [("0",x), ("1",y)] )
+  , ("()"                    , P.RecCon [] )
+  -- , ("lam (x,y): 1"          , P.Lam (P.RecPat [("0", x'), ("1",y')]) l1 )
   ]
-
 
 type TestVal = (Int, [([Int], Int)])
 

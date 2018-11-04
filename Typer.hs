@@ -58,12 +58,12 @@ constrain expr = case expr of
   Var v -> do
     t <- lookupEnv v
     return (t, [])
-  Let bound body -> do
+  Let p bound body -> do
     (t1, c1) <- constrain bound
     (env, _) <- ask
     (t2, c2) <- local (updateEnv t1) (constrain body)
     return (t2, c1 ++ c2)
-  Lam body -> do
+  Lam p body -> do
     a <- fresh
     (b, c) <- local (updateEnv a) (constrain body)
     return (a --> b, c)

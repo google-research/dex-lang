@@ -26,13 +26,25 @@ lower :: P.Expr -> Lower Expr
 lower expr = case expr of
   P.Lit c         -> return $ Lit c
   P.Var v         -> liftM  Var $ lookupEnv v
-  P.Let v e body  -> liftM2 Let (lower e) $ local (updateEnv v) (lower body)
-  P.Lam v body    -> liftM  Lam $ local (updateEnv v) (lower body)
+  P.Let p e body  -> do (p', vs)  <- lowerPat p
+                        e' <- lower e
+                        body' <- local (updateEnv vs) (lower body)
+                        return $ Let p' e' body'
+  P.Lam p body    -> do (p', vs) <- lowerPat p
+                        body' <- local (updateEnv vs) (lower body)
+                        return $ Lam p' body'
   P.App fexpr arg -> liftM2 App (lower fexpr) (lower arg)
   P.For iv body   -> liftM  For $ local (updateIEnv iv) (lower body)
   P.Get e iv      -> liftM2 Get (lower e) (lookupIEnv iv)
 
-updateEnv  v (env,ienv) = (v:env,ienv)
+lowerPat :: P.Pat -> Lower (Pat, [VarName])
+lowerPat p = case p of
+  P.VarPat v -> return $ (VarPat, [v])
+
+updateEnv :: [VarName] -> Env -> Env
+updateEnv vs (env,ienv) = (vs ++ env,ienv)
+
+updateIEnv :: IdxVarName -> Env -> Env
 updateIEnv i (env,ienv) = (env,i:ienv)
 
 lookupEnv :: VarName -> Lower Int

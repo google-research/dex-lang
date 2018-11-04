@@ -1,4 +1,5 @@
-module Parser (VarName, IdxVarName, Expr (..), parseCommand, Command (..)) where
+module Parser (VarName, IdxVarName, Expr (..), Pat (..),
+               parseCommand, Command (..)) where
 import Util
 import Control.Monad
 import Test.HUnit
@@ -9,22 +10,26 @@ import qualified Text.ParserCombinators.Parsec.Token as Token
 
 data Expr = Lit Int
           | Var VarName
-          | Let VarName Expr Expr
-          | Lam VarName Expr
+          | Let Pat Expr Expr
+          | Lam Pat Expr
           | App Expr Expr
           | For IdxVarName Expr
           | Get Expr IdxVarName
+          | RecCon [(String, Expr)]
           deriving (Show, Eq)
+
+data Pat = VarPat VarName
+         | RecPat [(String, Pat)]  deriving (Show, Eq)
 
 data Command = GetType    Expr
              | GetParse   Expr
              | GetLowered Expr
              | EvalExpr   Expr
-             | EvalDecl   VarName Expr deriving (Show, Eq)
+             | EvalDecl   Pat Expr deriving (Show, Eq)
 
 type VarName = String
 type IdxVarName = String
-type Decl = (VarName, Expr)
+type Decl = (Pat, Expr)
 
 parseCommand :: String -> Either ParseError Command
 parseCommand s = parse command "" s
@@ -69,7 +74,7 @@ ops = [ [getRule, appRule],
         [binOpRule "+" "add", binOpRule "-" "sub"]
       ]
 
-term =   parens expr
+term =   parenExpr
      <|> liftM Var identifier
      <|> liftM (Lit . fromIntegral) integer
      <|> letExpr
@@ -89,7 +94,7 @@ decl = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   str "="
   body <- expr
-  return (v, wrap body)
+  return (VarPat v, wrap body)
 
 explicitCommand :: Parser Command
 explicitCommand = do
@@ -102,6 +107,12 @@ explicitCommand = do
     "l" -> return $ GetLowered e
     otherwise -> fail $ "unrecognized command: " ++ show cmd
 
+parenExpr = do
+  xs <- parens $ expr `sepBy` str ","
+  return $ case xs of
+    [x] -> x
+    xs  -> RecCon $ zip (map show [0..]) xs
+
 idxLhsArgs = do
   try $ str "."
   args <- var `sepBy` str "."
@@ -109,7 +120,7 @@ idxLhsArgs = do
 
 lamLhsArgs = do
   args <- var `sepBy` whiteSpace
-  return $ \body -> foldr Lam body args
+  return $ \body -> foldr Lam body (map VarPat args)
 
 letExpr = do
   try $ str "let"
@@ -123,7 +134,7 @@ lamExpr = do
   vs <- var `sepBy` whiteSpace
   str ":"
   body <- expr
-  return $ foldr Lam body vs
+  return $ foldr Lam body (map VarPat vs)
 
 forExpr = do
   try $ str "for"
@@ -131,8 +142,6 @@ forExpr = do
   str ":"
   body <- expr
   return $ foldr For body vs
-
-
 
 escapeChars :: String -> String
 escapeChars [] = []

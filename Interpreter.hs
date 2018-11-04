@@ -37,9 +37,9 @@ eval expr env =
   in case expr of
     Lit c          -> composeN d lift $ IntVal c
     Var v          -> venv !! v
-    Let bound body -> let x = eval bound env
-                      in eval body ((x:venv),d)
-    Lam body       -> LamVal env body
+    Let p bound body -> let x = eval bound env
+                        in eval body ((x:venv),d)
+    Lam p body     -> LamVal env body
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
                       in (tabmap2 d) evalApp f x
