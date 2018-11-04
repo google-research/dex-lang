@@ -3,6 +3,7 @@ module Parser (VarName, IdxVarName, Expr (..), Pat (..),
 import Util
 import Control.Monad
 import Test.HUnit
+import qualified Data.Map.Strict as M
 import Text.ParserCombinators.Parsec hiding (lower)
 import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
@@ -15,7 +16,7 @@ data Expr = Lit Int
           | App Expr Expr
           | For IdxVarName Expr
           | Get Expr IdxVarName
-          | RecCon [(String, Expr)]
+          | RecCon (M.Map String Expr)
           deriving (Show, Eq)
 
 data Pat = VarPat VarName
@@ -111,7 +112,7 @@ parenExpr = do
   xs <- parens $ expr `sepBy` str ","
   return $ case xs of
     [x] -> x
-    xs  -> RecCon $ zip (map show [0..]) xs
+    xs  -> RecCon $ M.fromList $ zip (map show [0..]) xs
 
 idxLhsArgs = do
   try $ str "."

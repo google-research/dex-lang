@@ -7,6 +7,7 @@ import Syntax
 import Util
 import Typer
 import Interpreter
+import qualified Data.Map.Strict as Map
 
 
 infixr 1 -->
@@ -16,6 +17,7 @@ infixr 2 ==>
 int = BaseType IntType
 a = TypeVar 0
 b = TypeVar 1
+rect = RecType . Map.fromList
 
 typeTestCases =
   [ ("1"                     , Forall 0 $ int)
@@ -27,6 +29,7 @@ typeTestCases =
   , ("for i: (iota 3).i"     , Forall 0 $ int ==> int)
   , ("reduce add 0 (iota 3)" , Forall 0 $ int)
   , ("let x = 1 in x"        , Forall 0 $ int)
+  , ("lam x: (x,x)"          , Forall 1 $ a --> rect [("0", a), ("1", a)])
   ]
 
 typeErrorTestCases =
@@ -61,8 +64,8 @@ parseTestCases =
   , ("let x . i = y in x"    , P.Let x' (P.For "i" y) x)
   , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
   , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
-  , ("(x, y)"                , P.RecCon [("0",x), ("1",y)] )
-  , ("()"                    , P.RecCon [] )
+  , ("(x, y)"                , P.RecCon $ Map.fromList [("0",x), ("1",y)] )
+  , ("()"                    , P.RecCon Map.empty )
   -- , ("lam (x,y): 1"          , P.Lam (P.RecPat [("0", x'), ("1",y')]) l1 )
   ]
 

@@ -12,6 +12,7 @@ import Syntax
 data Type = BaseType BaseType
           | ArrType Type Type
           | TabType Type Type
+          | RecType (Map.Map String Type)
           | TypeVar Int  deriving (Eq)
 
 data BaseType = IntType | RealType | StrType deriving (Eq, Show)
@@ -81,6 +82,11 @@ constrain expr = case expr of
     (e, c) <- constrain expr
     y <- fresh
     return (y, c ++ [(e, i ==> y)])
+  RecCon m -> do
+    let (ks, exprs) = unzip (Map.toList m)
+    typesAndConstraints <- sequence (map constrain exprs)
+    let (ts, cs) = unzip typesAndConstraints
+    return (RecType . Map.fromList $ zip ks ts, concat cs)
 
 lookupEnv :: Int -> ConstrainMonad Type
 lookupEnv i = do (env,_) <- ask
@@ -148,6 +154,7 @@ applySub s t = case t of
   BaseType b  -> BaseType b
   ArrType a b -> applySub s a --> applySub s b
   TabType a b -> applySub s a ==> applySub s b
+  RecType m   -> RecType $ Map.map (applySub s) m
   TypeVar v   -> case Map.lookup v s of
                    Just t  -> t
                    Nothing -> TypeVar v
@@ -157,6 +164,7 @@ allVars t = case t of
   BaseType _  -> []
   ArrType a b -> nub $ allVars a ++ allVars b
   TabType a b -> nub $ allVars a ++ allVars b
+  RecType m   -> nub .  concat . Map.elems . Map.map allVars $ m
   TypeVar v   -> [v]
 
 idSubst :: Subst
@@ -183,7 +191,11 @@ instance Show Type where
                      IntType -> "Int"
                      StrType -> "Str"
                      RealType -> "Real"
+    RecType m   -> let showRec (k,t) = k ++ "=" ++ show t
+                       xs = map showRec (Map.toList m)
+                   in "{" ++ concat (intersperse "," xs) ++ "}"
     TypeVar v   -> varName v
+
 
 instance Show TypeErr where
   show e = "Type error: " ++
