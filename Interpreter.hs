@@ -1,4 +1,5 @@
-module Interpreter (evalExpr, initValEnv, showVal, ValEnv, Val (..), IdxVal (..)) where
+module Interpreter (evalExpr, initValEnv, showVal, ValEnv,
+                    Val (..), IdxVal (..)) where
 
 import qualified Data.Map.Strict as M
 import Data.List (sortOn)
@@ -7,9 +8,11 @@ import Text.PrettyPrint.Boxes
 import Syntax
 import Util
 import Typer
+import Record
 
 data Val = IntVal Int
          | TabVal (M.Map (Maybe IdxVal) Val)
+         | RecVal (Record Val)
          | LamVal Env Expr
          | Builtin BuiltinName [Val]  deriving (Eq, Show)
 
@@ -47,6 +50,8 @@ eval expr env =
                       in eval body (venv',d+1)
     Get e i        -> let x = eval e env
                       in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
+    RecCon r       -> RecVal $ mapRecord (flip eval env) r
+
 
 tabmap :: Int -> (Val -> Val) -> Val -> Val
 tabmap d = let map f (TabVal m) = TabVal $ M.map f m

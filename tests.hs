@@ -78,6 +78,7 @@ evalTestCases =
   , ("reduce add 0 (for i: (iota 4).i)"   ,  IntVal 6)
   , ("reduce add 0 (for i: (iota 5).i + (iota 4).i)"   ,  IntVal 12)
   , ("reduce add 0 (for i: reduce add 0 (for j: (iota 2).i * (iota 3).j))" ,  IntVal 3)
+  , ("(1, 1+2)", RecVal $ posRecord [IntVal 1, IntVal 3])
   ]
 
 
