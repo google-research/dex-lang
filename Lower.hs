@@ -2,6 +2,7 @@ module Lower (VarName, VarEnv, initVarEnv, lowerExpr) where
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
 import Util
+import Record
 import Control.Monad
 import Control.Monad.Reader (ReaderT (..), runReaderT, local, ask)
 import Syntax
@@ -37,7 +38,7 @@ lower expr = case expr of
   P.App fexpr arg -> liftM2 App (lower fexpr) (lower arg)
   P.For iv body   -> liftM  For $ local (updateIEnv iv) (lower body)
   P.Get e iv      -> liftM2 Get (lower e) (lookupIEnv iv)
-  P.RecCon exprs  -> liftM RecCon $ sequenceMapVals $ M.map lower exprs
+  P.RecCon exprs  -> liftM RecCon $ sequenceRecord $ mapRecord lower exprs
 
 lowerPat :: P.Pat -> Lower (Pat, [VarName])
 lowerPat p = case p of
@@ -62,12 +63,6 @@ lookupIEnv iv = do
 maybeReturn :: Maybe a -> LowerErr -> Lower a
 maybeReturn (Just x) _ = return x
 maybeReturn Nothing  e = ReaderT $ \_ -> Left e
-
-sequenceMapVals :: (Ord k, Monad m) => M.Map k (m v) -> m (M.Map k v)
-sequenceMapVals x = do
-    let (ks, vs) = unzip (M.toList x)
-    vs' <- sequence vs
-    return $ M.fromList $ zip ks vs'
 
 instance Show LowerErr where
   show e = "Error: " ++

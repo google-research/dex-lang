@@ -1,6 +1,7 @@
 module Syntax (Expr (..), Pat (..)) where
 
 import qualified Data.Map.Strict as M
+import Record
 
 data Expr = Lit Int
           | Var Int
@@ -9,7 +10,7 @@ data Expr = Lit Int
           | App Expr Expr
           | For Expr
           | Get Expr Int
-          | RecCon (M.Map String Expr)
+          | RecCon (Record Expr)
               deriving (Show, Eq)
 
 data Pat = VarPat  deriving (Show, Eq)

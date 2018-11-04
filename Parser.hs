@@ -1,6 +1,7 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
                parseCommand, Command (..)) where
 import Util
+import Record
 import Control.Monad
 import Test.HUnit
 import qualified Data.Map.Strict as M
@@ -16,7 +17,7 @@ data Expr = Lit Int
           | App Expr Expr
           | For IdxVarName Expr
           | Get Expr IdxVarName
-          | RecCon (M.Map String Expr)
+          | RecCon (Record Expr)
           deriving (Show, Eq)
 
 data Pat = VarPat VarName
@@ -112,7 +113,7 @@ parenExpr = do
   xs <- parens $ expr `sepBy` str ","
   return $ case xs of
     [x] -> x
-    xs  -> RecCon $ M.fromList $ zip (map show [0..]) xs
+    xs  -> RecCon (posRecord xs)
 
 idxLhsArgs = do
   try $ str "."
