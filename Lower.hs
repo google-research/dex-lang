@@ -42,7 +42,13 @@ lower expr = case expr of
 
 lowerPat :: P.Pat -> Lower (Pat, [VarName])
 lowerPat p = case p of
-  P.VarPat v -> return $ (VarPat, [v])
+  P.VarPat v -> return (VarPat, [v])
+  P.RecPat r -> do
+    ps_vs <- sequenceRecord $ mapRecord lowerPat r
+    let ps = mapRecord fst ps_vs
+    let vs = concat . recordElems . mapRecord snd $ ps_vs
+    return (RecPat ps, vs)
+
 
 updateEnv :: [VarName] -> Env -> Env
 updateEnv vs (env,ienv) = (vs ++ env,ienv)

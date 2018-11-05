@@ -61,14 +61,15 @@ constrain expr = case expr of
     t <- lookupEnv v
     return (t, [])
   Let p bound body -> do
-    (t1, c1) <- constrain bound
-    (env, _) <- ask
-    (t2, c2) <- local (updateEnv t1) (constrain body)
-    return (t2, c1 ++ c2)
+    (tBound, c1) <- constrain bound
+    (tVars, c2) <- constrainPat p tBound
+    (t, c3) <- local (updateEnv tVars) (constrain body)
+    return (t, c1 ++ c2 ++ c3)
   Lam p body -> do
     a <- fresh
-    (b, c) <- local (updateEnv a) (constrain body)
-    return (a --> b, c)
+    (tVars, c1) <- constrainPat p a
+    (b, c2) <- local (updateEnv tVars) (constrain body)
+    return (a --> b, c1 ++ c2)
   App fexpr arg -> do
     (x, c1) <- constrain arg
     (f, c2) <- constrain fexpr
@@ -88,6 +89,11 @@ constrain expr = case expr of
     return ( RecType              $ mapRecord fst ts_and_cs
            , concat . recordElems $ mapRecord snd ts_and_cs)
 
+constrainPat :: Pat -> Type -> ConstrainMonad ([Type], [Constraint])
+constrainPat p t = case p of
+  VarPat   -> return ([t], [])
+  RecPat r -> error "foo"
+
 lookupEnv :: Int -> ConstrainMonad Type
 lookupEnv i = do (env,_) <- ask
                  case env !! i of
@@ -98,8 +104,9 @@ lookupIEnv :: Int -> ConstrainMonad Type
 lookupIEnv i = do (_,ienv) <- ask
                   return $ ienv !! i
 
-updateEnv :: Type -> Env -> Env
-updateEnv t (env, ienv) = (Open t : env, ienv)
+updateEnv :: [Type] -> Env -> Env
+updateEnv ts (env, ienv) = (map Open ts ++ env, ienv)
+
 
 updateIEnv :: Type -> Env -> Env
 updateIEnv t (env, ienv) = (env, t:ienv)

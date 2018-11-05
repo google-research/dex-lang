@@ -13,7 +13,7 @@ import Prelude hiding (lookup, print)
 import qualified Parser as P
 import Parser hiding (Expr (..))
 import Lower
-import Syntax
+import Syntax hiding (Pat (..))
 import Util
 import Typer
 import Interpreter
@@ -45,10 +45,10 @@ evalCmd c = case c of
                         t <- gettype e
                         v <- eval e
                         outputStrLn $ showVal v t
-  EvalDecl v expr -> do e   <- lower expr
+  EvalDecl p expr -> do e   <- lower expr
                         t   <- gettype e
                         val <- eval e
-                        updateEnv v t val
+                        updateEnv p t val
 
 liftErr :: Show a => Either a b -> Repl b
 liftErr (Left e)  = print e >> throwIO Interrupt
@@ -75,9 +75,9 @@ eval expr = do
 print :: Show a => a -> Repl ()
 print x = outputStrLn $ show x
 
-updateEnv :: VarName -> ClosedType -> Val -> Repl ()
-updateEnv var ty val =
-  let update env = Env { varEnv  = var:(varEnv  env)
+updateEnv :: Pat -> ClosedType -> Val -> Repl ()
+updateEnv pat ty val =
+  let update env = Env { varEnv  = pat:(varEnv  env)
                        , typeEnv = ty :(typeEnv env)
                        , valEnv  = val:(valEnv  env) }
   in lift $ modify update

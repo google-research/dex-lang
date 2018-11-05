@@ -21,7 +21,7 @@ data Expr = Lit Int
           deriving (Show, Eq)
 
 data Pat = VarPat VarName
-         | RecPat [(String, Pat)]  deriving (Show, Eq)
+         | RecPat (Record Pat) deriving (Show, Eq)
 
 data Command = GetType    Expr
              | GetParse   Expr
@@ -85,18 +85,31 @@ term =   parenExpr
      <?> "term"
 
 str = lexeme . string
+
 var = liftM id identifier
+idxVar = liftM id identifier
+
+pat :: Parser Pat
+pat =   parenPat
+    <|> liftM VarPat identifier
+
+parenPat :: Parser Pat
+parenPat = do
+  xs <- parens $ pat `sepBy` str ","
+  return $ case xs of
+    [x] -> x
+    xs  -> RecPat (posRecord xs)
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
 
 decl :: Parser Decl
 decl = do
-  v <- var
+  v <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   str "="
   body <- expr
-  return (VarPat v, wrap body)
+  return (v, wrap body)
 
 explicitCommand :: Parser Command
 explicitCommand = do
@@ -117,12 +130,12 @@ parenExpr = do
 
 idxLhsArgs = do
   try $ str "."
-  args <- var `sepBy` str "."
+  args <- idxVar `sepBy` str "."
   return $ \body -> foldr For body args
 
 lamLhsArgs = do
-  args <- var `sepBy` whiteSpace
-  return $ \body -> foldr Lam body (map VarPat args)
+  args <- pat `sepBy` whiteSpace
+  return $ \body -> foldr Lam body args
 
 letExpr = do
   try $ str "let"
@@ -133,14 +146,14 @@ letExpr = do
 
 lamExpr = do
   try $ str "lam"
-  vs <- var `sepBy` whiteSpace
+  ps <- pat `sepBy` whiteSpace
   str ":"
   body <- expr
-  return $ foldr Lam body (map VarPat vs)
+  return $ foldr Lam body ps
 
 forExpr = do
   try $ str "for"
-  vs <- var `sepBy` whiteSpace
+  vs <- idxVar `sepBy` whiteSpace
   str ":"
   body <- expr
   return $ foldr For body vs

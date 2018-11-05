@@ -1,7 +1,8 @@
 # Todo ordered (easy things)
+  * get rid of error and add writer (for constraints) to constrain monad?
+
   * non-index trivial pattern
   * non-index record types and patters
-
 
   * product types
     * record types?

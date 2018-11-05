@@ -11,6 +11,41 @@ import Interpreter
 import qualified Data.Map.Strict as Map
 
 
+x = P.Var "x"
+y = P.Var "y"
+f = P.Var "f"
+
+x' = P.VarPat "x"
+y' = P.VarPat "y"
+f' = P.VarPat "f"
+
+l1 = P.Lit 1
+l2 = P.Lit 2
+
+parseTestCases =
+  [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
+  , ("for i: 1"             , P.For "i" l1)
+  , ("lam x: x"              , P.Lam x' x)
+  , ("y x"                   , P.App y x)
+  , ("x.i"                   , P.Get x "i")
+  , ("f x y"                 , P.App (P.App f x) y)
+  , ("x.i.j"                 , P.Get (P.Get x "i") "j")
+  , ("let x = 1 in x"        , P.Let x' l1 x)
+  , ("let x = 1; y = 2 in x" , P.Let x' l1 (P.Let y' l2 x))
+  , ("for i j: 1"            , P.For "i" (P.For "j" l1))
+  , ("lam x y: x"            , P.Lam x' (P.Lam y' x))
+  , ("let f x = x in f"      , P.Let f' (P.Lam x' x) f)
+  , ("let x . i = y in x"    , P.Let x' (P.For "i" y) x)
+  , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
+  , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
+  , ("(x, y)"                , P.RecCon $ posRecord [x, y])
+  , ("()"                    , P.RecCon $ emptyRecord )
+  , ("lam (x,y): 1"          , P.Lam (P.RecPat $ posRecord [x', y']) l1 )
+  , ("let f (x,y) = 1 in f"  , P.Let f' (P.Lam (P.RecPat $ posRecord [x',y']) l1) f)
+  , ("let (x,y) = (1,2) in x", P.Let (P.RecPat $ posRecord [x',y'])
+                                     (P.RecCon $ posRecord [l1, l2]) x)
+  ]
+
 infixr 1 -->
 infixr 2 ==>
 (-->) = ArrType
@@ -35,40 +70,8 @@ typeTestCases =
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
   , ("1 1"          , UnificationError int (int --> TypeVar 0))
+  , ("let (x,y) = 1 in x", UnificationError int (int --> TypeVar 0))
   ]
-
-x = P.Var "x"
-y = P.Var "y"
-f = P.Var "f"
-
-x' = P.VarPat "x"
-y' = P.VarPat "y"
-f' = P.VarPat "f"
-
-l1 = P.Lit 1
-l2 = P.Lit 2
-
-parseTestCases =
-  [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
-  , ("for i: 1"             , P.For "i" l1)
-  , ("lam x: x"              , P.Lam x' x)
-  , ("y x"                   , P.App y x)
-  , ("x.i"                   , P.Get x "i")
-  , ("f x y"                 , P.App (P.App f x) y)
-  , ("x.i.j"                 , P.Get (P.Get x "i") "j")
-  , ("let x = 1 in x"        , P.Let x' l1 x)
-  , ("let x = 1; y = 2 in x" , P.Let x' l1 (P.Let y' l2 x))
-  , ("for i j: 1"           , P.For "i" (P.For "j" l1))
-  , ("lam x y: x"            , P.Lam x' (P.Lam y' x))
-  , ("let f x = x in f"      , P.Let f' (P.Lam x' x) f)
-  , ("let x . i = y in x"    , P.Let x' (P.For "i" y) x)
-  , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
-  , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
-  , ("(x, y)"                , P.RecCon $ posRecord [x, y])
-  , ("()"                    , P.RecCon $ emptyRecord )
-  -- , ("lam (x,y): 1"          , P.Lam (P.RecPat [("0", x'), ("1",y')]) l1 )
-  ]
-
 type TestVal = (Int, [([Int], Int)])
 
 evalTestCases :: [(String, Val)]
@@ -79,6 +82,7 @@ evalTestCases =
   , ("reduce add 0 (for i: (iota 5).i + (iota 4).i)"   ,  IntVal 12)
   , ("reduce add 0 (for i: reduce add 0 (for j: (iota 2).i * (iota 3).j))" ,  IntVal 3)
   , ("(1, 1+2)", RecVal $ posRecord [IntVal 1, IntVal 3])
+  , ("let (x,y) = (1,2) in y", IntVal 2)
   ]
 
 

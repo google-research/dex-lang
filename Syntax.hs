@@ -13,5 +13,5 @@ data Expr = Lit Int
           | RecCon (Record Expr)
               deriving (Show, Eq)
 
-data Pat = VarPat  deriving (Show, Eq)
-      -- | RecPat [(String, Pattern)]
+data Pat = VarPat
+         | RecPat (Record Pat)  deriving (Show, Eq)
