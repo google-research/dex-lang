@@ -1,4 +1,4 @@
-module Interpreter (evalExpr, initValEnv, showVal, ValEnv,
+module Interpreter (evalExpr, valPatMatch, initValEnv, showVal, ValEnv,
                     Val (..), IdxVal (..)) where
 
 import qualified Data.Map.Strict as M
@@ -13,7 +13,7 @@ import Record
 data Val = IntVal Int
          | TabVal (M.Map (Maybe IdxVal) Val)
          | RecVal (Record Val)
-         | LamVal Env Expr
+         | LamVal Pat Env Expr
          | Builtin BuiltinName [Val]  deriving (Eq, Show)
 
 data IdxVal = IntIdxVal  Int
@@ -41,8 +41,8 @@ eval expr env =
     Lit c          -> composeN d lift $ IntVal c
     Var v          -> venv !! v
     Let p bound body -> let x = eval bound env
-                        in eval body ((x:venv),d)
-    Lam p body     -> LamVal env body
+                        in eval body (valPatMatch p x ++ venv, d)
+    Lam p body     -> LamVal p env body
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
                       in (tabmap2 d) evalApp f x
@@ -52,6 +52,12 @@ eval expr env =
                       in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
     RecCon r       -> RecVal $ mapRecord (flip eval env) r
 
+
+valPatMatch :: Pat -> Val -> [Val]
+valPatMatch VarPat v = [v]
+valPatMatch (RecPat p) (RecVal v) = let vs = recordElems v
+                                        ps = recordElems p
+                                    in concat $ zipWith valPatMatch ps vs
 
 tabmap :: Int -> (Val -> Val) -> Val -> Val
 tabmap d = let map f (TabVal m) = TabVal $ M.map f m
@@ -95,7 +101,7 @@ tryEq x y = case (x, y) of
 
 
 evalApp :: Val -> Val -> Val
-evalApp (LamVal (venv,ienv) body) x = eval body ((x:venv), ienv)
+evalApp (LamVal p (venv,ienv) body) x = eval body (valPatMatch p x ++ venv, ienv)
 evalApp (Builtin name vs) x = let args = x:vs
                               in if length args < numArgs name
                                     then Builtin name args
@@ -135,8 +141,9 @@ valToBox v = case v of
   IntVal x -> text (show x)
   TabVal m -> vcat left [ text (showMaybeIdxVal k) <> text " | " <> valToBox v
                         | (k, v) <- M.toList m]
-  LamVal _ _  -> text "<builtin>"
-  Builtin _ _ -> text "<builtin>"
+  RecVal _ -> text "<rec>"
+  LamVal _ _ _ -> text "<lambda>"
+  Builtin _ _  -> text "<builtin>"
 
 showMaybeIdxVal :: Maybe IdxVal -> String
 showMaybeIdxVal Nothing = "*"

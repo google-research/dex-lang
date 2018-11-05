@@ -11,9 +11,9 @@ import IOSql
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
-import Parser hiding (Expr (..))
+import Parser hiding (Expr (..), Pat (..))
 import Lower
-import Syntax hiding (Pat (..))
+import Syntax
 import Util
 import Typer
 import Interpreter
@@ -45,10 +45,13 @@ evalCmd c = case c of
                         t <- gettype e
                         v <- eval e
                         outputStrLn $ showVal v t
-  EvalDecl p expr -> do e   <- lower expr
-                        t   <- gettype e
-                        val <- eval e
-                        updateEnv p t val
+  EvalDecl pat expr -> do e <- lower expr
+                          (p, vars) <- liftErr $ lowerPat pat
+                          ts <- do t <- gettype e
+                                   liftErr $ typePatMatch p t
+                          vals <- do v <- eval e
+                                     return $ valPatMatch p v
+                          updateEnv vars ts vals
 
 liftErr :: Show a => Either a b -> Repl b
 liftErr (Left e)  = print e >> throwIO Interrupt
@@ -75,11 +78,11 @@ eval expr = do
 print :: Show a => a -> Repl ()
 print x = outputStrLn $ show x
 
-updateEnv :: Pat -> ClosedType -> Val -> Repl ()
-updateEnv pat ty val =
-  let update env = Env { varEnv  = pat:(varEnv  env)
-                       , typeEnv = ty :(typeEnv env)
-                       , valEnv  = val:(valEnv  env) }
+updateEnv :: [VarName] -> [ClosedType] -> [Val] -> Repl ()
+updateEnv vars ts vals =
+  let update env = Env { varEnv  = vars ++ (varEnv  env)
+                       , typeEnv = ts   ++ (typeEnv env)
+                       , valEnv  = vals ++ (valEnv  env) }
   in lift $ modify update
 
 runRepl :: Repl () -> Behavior -> Env -> IO ()

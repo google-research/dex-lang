@@ -1,23 +1,16 @@
 # Todo ordered (easy things)
-  * evaluation with patterns
   * get rid of error and add writer (for constraints) to constrain monad?
   * syntax for named records (and make it consistent with tuple syntax)
   * make record traversable
 
-
-  * product types
-    * record types?
-      * could singleton records reduce the need for newtype?)
-      * enough to be worth playing with, I think
-    * anonymous tuples?
-    * might be easier to do all of these at once
-    * data/newtype
-
-  * fix weird trailing stuff parse failure e.g. : lam x y: reduce add 0 for i: x.i * y.i
-
   * raster/ggplot/canvas output?
-
   * write up explanation and make some demos
+
+
+
+  * records polymorphic?
+    * this is going to get tricky. Let's get a working demo with some compelling
+      examples before tackling it
 
 # Want
   * parallel
@@ -27,6 +20,10 @@
   * statically typed
   * io statically determined
   * partially rank-polymorphic
+
+# bugfixes
+  * weird trailing stuff parse failure e.g. : lam x y: reduce add 0 for i: x.i * y.i
+
 
 # Todo
 * example programs

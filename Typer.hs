@@ -1,5 +1,5 @@
 module Typer (Type (..), TypeErr (..), ClosedType (..), BaseType (..), TypeEnv,
-              initTypeEnv, typeExpr) where
+              initTypeEnv, typeExpr, typePatMatch) where
 
 
 import Control.Monad
@@ -35,9 +35,19 @@ type ConstrainMonad a = ReaderT Env (StateT Int (Either TypeErr)) a
 typeExpr :: Expr -> TypeEnv -> Except ClosedType
 typeExpr expr tenv = do
   let env = (map Closed tenv, [])
-  (ty, constraints) <- evalStateT (runReaderT (constrain expr) env) 0
+  (ty, constraints) <- runConstrainMonad env (constrain expr)
   subst <- solveAll constraints
   return $ generalize $ applySub subst ty
+
+typePatMatch :: Pat -> ClosedType -> Except [ClosedType]
+typePatMatch p t = do
+  let m = specialize t >>= constrainPat p
+  (ts, constraints) <- runConstrainMonad ([],[]) m
+  subst <- solveAll constraints
+  return $ map (generalize . applySub subst) ts
+
+runConstrainMonad :: Env -> ConstrainMonad a -> Either TypeErr a
+runConstrainMonad env m = evalStateT (runReaderT m env) 0
 
 initTypeEnv :: TypeEnv
 initTypeEnv =
@@ -53,6 +63,7 @@ infixr 1 -->
 infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
+
 
 constrain :: Expr -> ConstrainMonad (Type, [Constraint])
 constrain expr = case expr of

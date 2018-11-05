@@ -85,6 +85,7 @@ evalTestCases =
   , ("reduce add 0 (for i: reduce add 0 (for j: (iota 2).i * (iota 3).j))" ,  IntVal 3)
   , ("(1, 1+2)", RecVal $ posRecord [IntVal 1, IntVal 3])
   , ("let (x,y) = (1,2) in y", IntVal 2)
+  , ("(lam (x,y): x) (2,1)"  , IntVal 2)
   ]
 
 

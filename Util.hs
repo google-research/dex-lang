@@ -1,6 +1,7 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitWhile, repeatN,
-             composeN, mapMaybe, lookup, uncons) where
+             composeN, mapMaybe, lookup, uncons, repeated) where
+import Data.List (sort)
 import Prelude hiding (lookup)
 
 
@@ -73,3 +74,12 @@ lookup target (x:xs) | x == target = Just 0
                      | otherwise = do
                          ans <- lookup target xs
                          return (ans + 1)
+
+repeated :: Ord a => [a] -> [a]
+repeated = repeatedSorted . sort
+
+repeatedSorted :: Eq a => [a] -> [a]
+repeatedSorted [] = []
+repeatedSorted [x] = []
+repeatedSorted (x:y:rest) | x == y = [x] ++ repeatedSorted (dropWhile (== x) rest)
+                          | otherwise = repeatedSorted (y:rest)
