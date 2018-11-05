@@ -1,5 +1,5 @@
 module Record (Record, posRecord, nameRecord, emptyRecord,
-               sequenceRecord, mapRecord, recordElems) where
+               sequenceRecord, mapRecord, recordElems, zipWithRecord) where
 
 import Util
 import Control.Monad
@@ -21,6 +21,11 @@ nameRecord = Record . M.fromList . mapFst RecName
 
 mapRecord :: (a -> b) -> Record a -> Record b
 mapRecord f (Record m) = Record $ M.map f m
+
+zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
+zipWithRecord f (Record m) (Record m')
+    | M.keys m == M.keys m' = Just . Record $ M.intersectionWith f m m'
+    | otherwise = Nothing
 
 recordElems :: Record a -> [a]
 recordElems (Record m) = M.elems m

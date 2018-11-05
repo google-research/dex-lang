@@ -1,8 +1,9 @@
 # Todo ordered (easy things)
+  * evaluation with patterns
   * get rid of error and add writer (for constraints) to constrain monad?
+  * syntax for named records (and make it consistent with tuple syntax)
+  * make record traversable
 
-  * non-index trivial pattern
-  * non-index record types and patters
 
   * product types
     * record types?

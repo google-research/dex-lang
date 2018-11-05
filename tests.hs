@@ -65,12 +65,14 @@ typeTestCases =
   , ("reduce add 0 (iota 3)" , Forall 0 $ int)
   , ("let x = 1 in x"        , Forall 0 $ int)
   , ("lam x: (x,x)"          , Forall 1 $ a --> RecType (posRecord [a, a]))
+  , ("let (x,y) = (1,(2,3)) in (y,x)", Forall 0 $
+        RecType (posRecord [RecType (posRecord [int, int]), int]))
   ]
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
   , ("1 1"          , UnificationError int (int --> TypeVar 0))
-  , ("let (x,y) = 1 in x", UnificationError int (int --> TypeVar 0))
+  , ("let (x,y) = 1 in x", UnificationError int (RecType (posRecord [a,b])))
   ]
 type TestVal = (Int, [([Int], Int)])
 

@@ -92,7 +92,14 @@ constrain expr = case expr of
 constrainPat :: Pat -> Type -> ConstrainMonad ([Type], [Constraint])
 constrainPat p t = case p of
   VarPat   -> return ([t], [])
-  RecPat r -> error "foo"
+  RecPat r -> do
+    freshRecType <- sequenceRecord $ mapRecord (\_ -> fresh) r
+    let c = (t, RecType freshRecType)
+    ts_cs <- sequence $ zipWith constrainPat (recordElems r)
+                                             (recordElems freshRecType)
+    let (ts, cs) = unzip ts_cs
+    return (concat ts, c:(concat cs))
+
 
 lookupEnv :: Int -> ConstrainMonad Type
 lookupEnv i = do (env,_) <- ask
@@ -136,6 +143,8 @@ occursIn v t = case t of
   BaseType _  -> False
   ArrType a b -> occursIn v a || occursIn v b
   TabType a b -> occursIn v a || occursIn v b
+  RecType r   -> let f ty occurs = occurs || occursIn v ty
+                 in foldr f False (recordElems r)
   TypeVar v'  -> v == v'
 
 unify :: Type -> Type -> Except Subst
@@ -144,6 +153,7 @@ unify t (TypeVar v) = bind v t
 unify (TypeVar v) t = bind v t
 unify (ArrType a b) (ArrType a' b') = unifyPair (a,b) (a', b')
 unify (TabType a b) (TabType a' b') = unifyPair (a,b) (a', b')
+unify (RecType r) (RecType r') = unifyRec r r'
 unify t1 t2 = Left $ UnificationError t1 t2
 
 unifyPair :: (Type,Type) -> (Type,Type) -> Except Subst
@@ -152,9 +162,17 @@ unifyPair (a,b) (a',b') = do
   sb <- unify (applySub sa b) (applySub sa b')
   return $ sa >>> sb
 
+unifyRec :: Record Type -> Record Type -> Except Subst
+unifyRec r r' = case zipWithRecord unify r r' of
+  Just s -> do subs <- sequenceRecord s
+               return $ foldr (>>>) idSubst (recordElems subs)
+  Nothing -> Left $ UnificationError (RecType r) (RecType r')
+
+
 (>>>) :: Subst -> Subst -> Subst
 (>>>) s1 s2 = let s1' = Map.map (applySub s2) s1
               in Map.union s1' s2
+
 
 applySub :: Subst -> Type -> Type
 applySub s t = case t of
