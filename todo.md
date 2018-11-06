@@ -1,5 +1,4 @@
 # Todo ordered (easy things)
-  * get rid of error and add writer (for constraints) to constrain monad?
   * syntax for named records (and make it consistent with tuple syntax)
   * make record traversable
 

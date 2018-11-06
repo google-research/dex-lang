@@ -3,8 +3,10 @@ module Typer (Type (..), TypeErr (..), ClosedType (..), BaseType (..), TypeEnv,
 
 
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
-import Control.Monad.State (StateT, evalStateT, put, get)
+import Control.Monad.Writer (WriterT, runWriterT, tell)
+import Control.Monad.State (StateT, evalState, put, get)
 import qualified Data.Map.Strict as Map
 import Data.List (nub, intersperse)
 import Syntax
@@ -30,24 +32,26 @@ type ITypeEnv = [Type]
 type Env = ([InferType], ITypeEnv)
 type Constraint = (Type, Type)
 type Subst = Map.Map Int Type
-type ConstrainMonad a = ReaderT Env (StateT Int (Either TypeErr)) a
+type ConstrainMonad a = ReaderT Env (
+                          WriterT [Constraint] (
+                            StateT Int Identity)) a
 
 typeExpr :: Expr -> TypeEnv -> Except ClosedType
 typeExpr expr tenv = do
   let env = (map Closed tenv, [])
-  (ty, constraints) <- runConstrainMonad env (constrain expr)
+      (ty, constraints) = runConstrainMonad env (constrain expr)
   subst <- solveAll constraints
   return $ generalize $ applySub subst ty
 
 typePatMatch :: Pat -> ClosedType -> Except [ClosedType]
 typePatMatch p t = do
   let m = specialize t >>= constrainPat p
-  (ts, constraints) <- runConstrainMonad ([],[]) m
+      (ts, constraints) = runConstrainMonad ([],[]) m
   subst <- solveAll constraints
   return $ map (generalize . applySub subst) ts
 
-runConstrainMonad :: Env -> ConstrainMonad a -> Either TypeErr a
-runConstrainMonad env m = evalStateT (runReaderT m env) 0
+runConstrainMonad :: Env -> ConstrainMonad a -> (a, [Constraint])
+runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
 
 initTypeEnv :: TypeEnv
 initTypeEnv =
@@ -64,58 +68,59 @@ infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-
-constrain :: Expr -> ConstrainMonad (Type, [Constraint])
+constrain :: Expr -> ConstrainMonad Type
 constrain expr = case expr of
-  Lit c -> return (BaseType IntType, [])
+  Lit c -> return (BaseType IntType)
   Var v -> do
     t <- lookupEnv v
-    return (t, [])
+    return t
   Let p bound body -> do
-    (tBound, c1) <- constrain bound
-    (tVars, c2) <- constrainPat p tBound
-    (t, c3) <- local (updateEnv tVars) (constrain body)
-    return (t, c1 ++ c2 ++ c3)
+    tBound <- constrain bound
+    tVars  <- constrainPat p tBound
+    t      <- local (updateEnv tVars) (constrain body)
+    return t
   Lam p body -> do
-    a <- fresh
-    (tVars, c1) <- constrainPat p a
-    (b, c2) <- local (updateEnv tVars) (constrain body)
-    return (a --> b, c1 ++ c2)
+    a     <- fresh
+    tVars <- constrainPat p a
+    b     <- local (updateEnv tVars) (constrain body)
+    return (a --> b)
   App fexpr arg -> do
-    (x, c1) <- constrain arg
-    (f, c2) <- constrain fexpr
+    x <- constrain arg
+    f <- constrain fexpr
     y <- fresh
-    return (y, c1 ++ c2 ++ [(f, x --> y)])
+    addConstraint (f, x --> y)
+    return y
   For body -> do
     a <- fresh
-    (b, c) <- local (updateIEnv a) (constrain body)
-    return (a ==> b, c)
+    b <- local (updateIEnv a) (constrain body)
+    return (a ==> b)
   Get expr idx -> do
     i <- lookupIEnv idx
-    (e, c) <- constrain expr
+    e <- constrain expr
     y <- fresh
-    return (y, c ++ [(e, i ==> y)])
+    addConstraint (e, i ==> y)
+    return y
   RecCon exprs -> do
-    ts_and_cs <- sequenceRecord (mapRecord constrain exprs)
-    return ( RecType              $ mapRecord fst ts_and_cs
-           , concat . recordElems $ mapRecord snd ts_and_cs)
+    ts <- sequenceRecord (mapRecord constrain exprs)
+    return (RecType ts)
 
-constrainPat :: Pat -> Type -> ConstrainMonad ([Type], [Constraint])
+constrainPat :: Pat -> Type -> ConstrainMonad [Type]
 constrainPat p t = case p of
-  VarPat   -> return ([t], [])
+  VarPat   -> return [t]
   RecPat r -> do
     freshRecType <- sequenceRecord $ mapRecord (\_ -> fresh) r
-    let c = (t, RecType freshRecType)
-    ts_cs <- sequence $ zipWith constrainPat (recordElems r)
-                                             (recordElems freshRecType)
-    let (ts, cs) = unzip ts_cs
-    return (concat ts, c:(concat cs))
+    addConstraint (t, RecType freshRecType)
+    ts <- sequence $ zipWith constrainPat (recordElems r)
+                                          (recordElems freshRecType)
+    return (concat ts)
 
+addConstraint :: Constraint -> ConstrainMonad ()
+addConstraint x = tell [x]
 
 lookupEnv :: Int -> ConstrainMonad Type
 lookupEnv i = do (env,_) <- ask
                  case env !! i of
-                   Open t     -> return t
+                   Open t   -> return t
                    Closed t -> specialize t
 
 lookupIEnv :: Int -> ConstrainMonad Type
