@@ -35,7 +35,7 @@ type IdxVarName = String
 type Decl = (Pat, Expr)
 
 parseCommand :: String -> Either ParseError Command
-parseCommand s = parse command "" s
+parseCommand s = parse (command <* eof) "" s
 
 command :: Parser Command
 command =   explicitCommand
@@ -167,9 +167,3 @@ forExpr = do
   str ":"
   body <- expr
   return $ foldr For body vs
-
-escapeChars :: String -> String
-escapeChars [] = []
-escapeChars (x:xs) = case x of
-                     '\\' -> escapeChars $ drop 1 xs
-                     otherwise -> x : escapeChars xs

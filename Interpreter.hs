@@ -142,7 +142,7 @@ valToBox v = case v of
   IntVal x -> text (show x)
   TabVal m -> vcat left [ text (showMaybeIdxVal k) <> text " | " <> valToBox v
                         | (k, v) <- M.toList m]
-  RecVal _ -> text "<rec>"
+  RecVal r -> text $ show r
   LamVal _ _ _ -> text "<lambda>"
   Builtin _ _  -> text "<builtin>"
 
