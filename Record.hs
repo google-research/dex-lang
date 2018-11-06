@@ -1,4 +1,5 @@
-module Record (Record, posRecord, nameRecord, emptyRecord, zipWithRecord) where
+module Record (Record, posRecord, nameRecord, emptyRecord,
+               mixedRecord, zipWithRecord) where
 
 import Util
 import Control.Monad
@@ -23,10 +24,15 @@ emptyRecord :: Record a
 emptyRecord = Record M.empty
 
 posRecord :: [a] -> Record a
-posRecord = Record . M.fromList . zip (map RecPos [0..])
+posRecord = mixedRecord . zip (repeat Nothing)
 
 nameRecord :: [(String, a)] -> Record a
-nameRecord = Record . M.fromList . mapFst RecName
+nameRecord = mixedRecord . mapFst Just
+
+mixedRecord ::[(Maybe String, a)] -> Record a
+mixedRecord xs = Record $ M.fromList $
+    [(RecPos  i, v) | (i, (Nothing, v)) <- zip [0..] xs] ++
+    [(RecName k, v) |      (Just k, v)  <-           xs]
 
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Record m) (Record m')

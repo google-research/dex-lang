@@ -39,11 +39,15 @@ parseTestCases =
   , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
   , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
   , ("(x, y)"                , P.RecCon $ posRecord [x, y])
+  , ("(x=1, y=2)"            , P.RecCon $ nameRecord [("x",l1),("y",l2)])
   , ("()"                    , P.RecCon $ emptyRecord )
   , ("lam (x,y): 1"          , P.Lam (P.RecPat $ posRecord [x', y']) l1 )
   , ("let f (x,y) = 1 in f"  , P.Let f' (P.Lam (P.RecPat $ posRecord [x',y']) l1) f)
   , ("let (x,y) = (1,2) in x", P.Let (P.RecPat $ posRecord [x',y'])
                                      (P.RecCon $ posRecord [l1, l2]) x)
+  , ("let (x=x,y=y) = (y=1,x=2) in x",
+        P.Let (P.RecPat $ nameRecord [("x",x'),("y",y')])
+              (P.RecCon $ nameRecord [("x",l2),("y",l1)]) x)
   ]
 
 infixr 1 -->

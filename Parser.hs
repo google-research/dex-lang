@@ -30,6 +30,7 @@ data Command = GetType    Expr
              | EvalDecl   Pat Expr deriving (Show, Eq)
 
 type VarName = String
+type RecName = String
 type IdxVarName = String
 type Decl = (Pat, Expr)
 
@@ -95,10 +96,10 @@ pat =   parenPat
 
 parenPat :: Parser Pat
 parenPat = do
-  xs <- parens $ pat `sepBy` str ","
+  xs <- parens $ maybeNamed pat `sepBy` str ","
   return $ case xs of
-    [x] -> x
-    xs  -> RecPat (posRecord xs)
+    [(Nothing, x)] -> x
+    xs -> RecPat $ mixedRecord xs
 
 expr :: Parser Expr
 expr = buildExpressionParser ops (whiteSpace >> term)
@@ -122,11 +123,20 @@ explicitCommand = do
     "l" -> return $ GetLowered e
     otherwise -> fail $ "unrecognized command: " ++ show cmd
 
+maybeNamed ::Parser a -> Parser (Maybe RecName, a)
+maybeNamed p = do
+  v <- optionMaybe $ try $
+    do v <- identifier
+       str "="
+       return v
+  x <- p
+  return (v, x)
+
 parenExpr = do
-  xs <- parens $ expr `sepBy` str ","
-  return $ case xs of
-    [x] -> x
-    xs  -> RecCon (posRecord xs)
+  elts <- parens $ maybeNamed expr `sepBy` str ","
+  return $ case elts of
+    [(Nothing, expr)] -> expr
+    elts -> RecCon $ mixedRecord elts
 
 idxLhsArgs = do
   try $ str "."

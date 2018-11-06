@@ -1,6 +1,6 @@
 # Todo ordered (easy things)
   * syntax for named records (and make it consistent with tuple syntax)
-
+  * records on indices
   * raster/ggplot/canvas output?
   * write up explanation and make some demos
 
