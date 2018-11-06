@@ -9,6 +9,8 @@ import Control.Monad.Writer (WriterT, runWriterT, tell)
 import Control.Monad.State (StateT, evalState, put, get)
 import qualified Data.Map.Strict as Map
 import Data.List (nub, intersperse)
+import Data.Foldable (toList)
+import Data.Traversable
 import Syntax
 import Record
 
@@ -101,17 +103,17 @@ constrain expr = case expr of
     addConstraint (e, i ==> y)
     return y
   RecCon exprs -> do
-    ts <- sequenceRecord (mapRecord constrain exprs)
+    ts <- mapM constrain exprs
     return (RecType ts)
 
 constrainPat :: Pat -> Type -> ConstrainMonad [Type]
 constrainPat p t = case p of
   VarPat   -> return [t]
   RecPat r -> do
-    freshRecType <- sequenceRecord $ mapRecord (\_ -> fresh) r
+    freshRecType <- mapM (\_ -> fresh) r
     addConstraint (t, RecType freshRecType)
-    ts <- sequence $ zipWith constrainPat (recordElems r)
-                                          (recordElems freshRecType)
+    ts <- sequence $ zipWith constrainPat (toList r)
+                                          (toList freshRecType)
     return (concat ts)
 
 addConstraint :: Constraint -> ConstrainMonad ()
@@ -155,13 +157,7 @@ bind v t | v `occursIn` t = Left InfiniteType
          | otherwise = Right $ Map.singleton v t
 
 occursIn :: Int -> Type -> Bool
-occursIn v t = case t of
-  BaseType _  -> False
-  ArrType a b -> occursIn v a || occursIn v b
-  TabType a b -> occursIn v a || occursIn v b
-  RecType r   -> let f ty occurs = occurs || occursIn v ty
-                 in foldr f False (recordElems r)
-  TypeVar v'  -> v == v'
+occursIn v t = v `elem` allVars t
 
 unify :: Type -> Type -> Except Subst
 unify t1 t2 | t1 == t2 = return idSubst
@@ -180,8 +176,8 @@ unifyPair (a,b) (a',b') = do
 
 unifyRec :: Record Type -> Record Type -> Except Subst
 unifyRec r r' = case zipWithRecord unify r r' of
-  Just s -> do subs <- sequenceRecord s
-               return $ foldr (>>>) idSubst (recordElems subs)
+  Just s -> do subs <- sequence s
+               return $ foldr (>>>) idSubst subs
   Nothing -> Left $ UnificationError (RecType r) (RecType r')
 
 
@@ -189,13 +185,12 @@ unifyRec r r' = case zipWithRecord unify r r' of
 (>>>) s1 s2 = let s1' = Map.map (applySub s2) s1
               in Map.union s1' s2
 
-
 applySub :: Subst -> Type -> Type
 applySub s t = case t of
   BaseType b  -> BaseType b
   ArrType a b -> applySub s a --> applySub s b
   TabType a b -> applySub s a ==> applySub s b
-  RecType r   -> RecType $ mapRecord (applySub s) r
+  RecType r   -> RecType $ fmap (applySub s) r
   TypeVar v   -> case Map.lookup v s of
                    Just t  -> t
                    Nothing -> TypeVar v
@@ -205,7 +200,7 @@ allVars t = case t of
   BaseType _  -> []
   ArrType a b -> nub $ allVars a ++ allVars b
   TabType a b -> nub $ allVars a ++ allVars b
-  RecType r   -> nub . concat . recordElems . mapRecord allVars $ r
+  RecType r   -> nub . foldr (++) [] . fmap allVars $ r
   TypeVar v   -> [v]
 
 idSubst :: Subst

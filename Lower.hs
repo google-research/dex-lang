@@ -2,6 +2,7 @@ module Lower (VarName, VarEnv, initVarEnv, lowerExpr, lowerPat) where
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
 import Util
+import Data.Foldable (toList)
 import Record
 import Control.Monad
 import Control.Monad.Except
@@ -46,18 +47,18 @@ lower expr = case expr of
   P.App fexpr arg -> liftM2 App (lower fexpr) (lower arg)
   P.For iv body   -> liftM  For $ local (updateIEnv iv) (lower body)
   P.Get e iv      -> liftM2 Get (lower e) (lookupIEnv iv)
-  P.RecCon exprs  -> liftM RecCon $ sequenceRecord $ mapRecord lower exprs
+  P.RecCon exprs  -> liftM RecCon $ mapM lower exprs
 
 
 lowerPat' :: P.Pat -> Pat
 lowerPat' p = case p of
   P.VarPat v -> VarPat
-  P.RecPat r -> RecPat $ mapRecord lowerPat' r
+  P.RecPat r -> RecPat $ fmap lowerPat' r
 
 patVars :: P.Pat -> [VarName]
 patVars p = case p of
   P.VarPat v -> [v]
-  P.RecPat r -> concat . recordElems . mapRecord patVars $ r
+  P.RecPat r -> concat $ fmap patVars r
 
 updateEnv :: [VarName] -> Env -> Env
 updateEnv vs (env,ienv) = (vs ++ env,ienv)

@@ -1,6 +1,5 @@
 # Todo ordered (easy things)
   * syntax for named records (and make it consistent with tuple syntax)
-  * make record traversable
 
   * raster/ggplot/canvas output?
   * write up explanation and make some demos

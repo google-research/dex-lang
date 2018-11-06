@@ -3,6 +3,7 @@ module Interpreter (evalExpr, valPatMatch, initValEnv, showVal, ValEnv,
 
 import qualified Data.Map.Strict as M
 import Data.List (sortOn)
+import Data.Foldable (toList)
 import Text.PrettyPrint.Boxes
 
 import Syntax
@@ -50,13 +51,13 @@ eval expr env =
                       in eval body (venv',d+1)
     Get e i        -> let x = eval e env
                       in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
-    RecCon r       -> RecVal $ mapRecord (flip eval env) r
+    RecCon r       -> RecVal $ fmap (flip eval env) r
 
 
 valPatMatch :: Pat -> Val -> [Val]
 valPatMatch VarPat v = [v]
-valPatMatch (RecPat p) (RecVal v) = let vs = recordElems v
-                                        ps = recordElems p
+valPatMatch (RecPat p) (RecVal v) = let vs = toList v
+                                        ps = toList p
                                     in concat $ zipWith valPatMatch ps vs
 
 tabmap :: Int -> (Val -> Val) -> Val -> Val
