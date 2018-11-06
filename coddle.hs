@@ -47,11 +47,9 @@ evalCmd c = case c of
                         outputStrLn $ showVal v t
   EvalDecl pat expr -> do e <- lower expr
                           (p, vars) <- liftErr $ lowerPat pat
-                          ts <- do t <- gettype e
-                                   liftErr $ typePatMatch p t
-                          vals <- do v <- eval e
-                                     return $ valPatMatch p v
-                          updateEnv vars ts vals
+                          ts <- gettype e >>= liftErr . typePatMatch p
+                          vs <- eval e >>= return . valPatMatch p
+                          updateEnv vars ts vs
 
 liftErr :: Show a => Either a b -> Repl b
 liftErr (Left e)  = print e >> throwIO Interrupt
