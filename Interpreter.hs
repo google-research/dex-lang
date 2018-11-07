@@ -36,9 +36,8 @@ initValEnv = let builtinNames = [Iota, Reduce,
              in [Builtin b [] | b <- builtinNames]
 
 eval :: Expr -> Env -> Val
-eval expr env =
-  let (venv, d) = env
-  in case expr of
+eval expr env@(venv, d) =
+  case expr of
     Lit c          -> composeN d lift $ IntVal c
     Var v          -> venv !! v
     Let p bound body -> let x = eval bound env
