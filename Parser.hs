@@ -15,11 +15,16 @@ data Expr = Lit Int
           | Let Pat Expr Expr
           | Lam Pat Expr
           | App Expr Expr
-          | For IdxVarName Expr
-          | Get Expr IdxVarName
+          | For IdxPat Expr
+          | Get Expr IdxExpr
           | RecCon (Record Expr)
-          deriving (Show, Eq)
+              deriving (Show, Eq)
 
+data IdxExpr = IdxVar IdxVarName
+             | IdxRecCon (Record IdxExpr)
+                 deriving (Show, Eq)
+
+type IdxPat = Pat
 data Pat = VarPat VarName
          | RecPat (Record Pat) deriving (Show, Eq)
 
@@ -28,6 +33,7 @@ data Command = GetType    Expr
              | GetLowered Expr
              | EvalExpr   Expr
              | EvalDecl   Pat Expr deriving (Show, Eq)
+
 
 type VarName = String
 type RecName = String
@@ -69,7 +75,7 @@ binOpApp :: String -> Expr -> Expr -> Expr
 binOpApp s e1 e2 = App (App (Var s) e1) e2
 
 getRule = Postfix $ do
-  vs  <- many $ str "." >> liftM id identifier
+  vs  <- many $ str "." >> idxExpr
   return $ \body -> foldr (flip Get) body (reverse vs)
 
 ops = [ [getRule, appRule],
@@ -88,7 +94,9 @@ term =   parenExpr
 str = lexeme . string
 
 var = liftM id identifier
-idxVar = liftM id identifier
+
+idxPat = liftM VarPat identifier
+idxExpr = liftM IdxVar identifier
 
 pat :: Parser Pat
 pat =   parenPat
@@ -140,7 +148,7 @@ parenExpr = do
 
 idxLhsArgs = do
   try $ str "."
-  args <- idxVar `sepBy` str "."
+  args <- idxPat `sepBy` str "."
   return $ \body -> foldr For body args
 
 lamLhsArgs = do
@@ -163,7 +171,7 @@ lamExpr = do
 
 forExpr = do
   try $ str "for"
-  vs <- idxVar `sepBy` whiteSpace
+  vs <- idxPat `sepBy` whiteSpace
   str ":"
   body <- expr
   return $ foldr For body vs

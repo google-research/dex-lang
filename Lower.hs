@@ -45,8 +45,8 @@ lower expr = case expr of
                         body' <- local (updateEnv vs) (lower body)
                         return $ Lam p' body'
   P.App fexpr arg -> liftM2 App (lower fexpr) (lower arg)
-  P.For iv body   -> liftM  For $ local (updateIEnv iv) (lower body)
-  P.Get e iv      -> liftM2 Get (lower e) (lookupIEnv iv)
+  P.For p body    -> liftM  For $ local (updateIEnv p) (lower body)
+  P.Get e ie      -> liftM2 Get (lower e) (lookupIEnv ie)
   P.RecCon exprs  -> liftM RecCon $ mapM lower exprs
 
 
