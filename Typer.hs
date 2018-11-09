@@ -92,12 +92,13 @@ constrain expr = case expr of
     y <- fresh
     addConstraint (f, x --> y)
     return y
-  For body -> do
+  For p body -> do
     a <- fresh
-    b <- local (updateIEnv a) (constrain body)
+    tVars <- constrainIdxPat p a
+    b <- local (updateIEnv tVars) (constrain body)
     return (a ==> b)
-  Get expr idx -> do
-    i <- lookupIEnv idx
+  Get expr p -> do
+    i <- constrainIdxExpr p
     e <- constrain expr
     y <- fresh
     addConstraint (e, i ==> y)
@@ -105,6 +106,12 @@ constrain expr = case expr of
   RecCon exprs -> do
     ts <- mapM constrain exprs
     return (RecType ts)
+
+constrainIdxExpr :: IdxExpr -> ConstrainMonad Type
+constrainIdxExpr expr = case expr of
+  IdxVar v -> lookupIEnv v
+  IdxRecCon r -> do ts <- mapM constrainIdxExpr r
+                    return (RecType ts)
 
 constrainPat :: Pat -> Type -> ConstrainMonad [Type]
 constrainPat p t = case p of
@@ -115,6 +122,9 @@ constrainPat p t = case p of
     ts <- sequence $ zipWith constrainPat (toList r)
                                           (toList freshRecType)
     return (concat ts)
+
+constrainIdxPat :: IdxPat -> Type -> ConstrainMonad [Type]
+constrainIdxPat = constrainPat
 
 addConstraint :: Constraint -> ConstrainMonad ()
 addConstraint x = tell [x]
@@ -133,8 +143,8 @@ updateEnv :: [Type] -> Env -> Env
 updateEnv ts (env, ienv) = (map Open ts ++ env, ienv)
 
 
-updateIEnv :: Type -> Env -> Env
-updateIEnv t (env, ienv) = (env, t:ienv)
+updateIEnv :: [Type] -> Env -> Env
+updateIEnv t (env, ienv) = (env, t ++ ienv)
 
 generalize :: Type -> ClosedType
 generalize t = let vs = allVars t
