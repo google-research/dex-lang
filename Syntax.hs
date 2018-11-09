@@ -1,4 +1,4 @@
-module Syntax (Expr (..), Pat (..)) where
+module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat) where
 
 import qualified Data.Map.Strict as M
 import Record

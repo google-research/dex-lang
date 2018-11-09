@@ -1,5 +1,5 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
-               parseCommand, Command (..)) where
+               IdxPat, IdxExpr (..), parseCommand, Command (..)) where
 import Util
 import Record
 import Control.Monad

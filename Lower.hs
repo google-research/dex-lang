@@ -36,7 +36,7 @@ initVarEnv = ["iota", "reduce", "add", "sub", "mul", "div"]
 lower :: P.Expr -> Lower Expr
 lower expr = case expr of
   P.Lit c         -> return $ Lit c
-  P.Var v         -> liftM  Var $ lookupEnv v
+  P.Var v         -> liftM Var $ lookupEnv v
   P.Let p e body  -> do (p', vs)  <- lift $ lowerPat p
                         e' <- lower e
                         body' <- local (updateEnv vs) (lower body)
@@ -45,8 +45,10 @@ lower expr = case expr of
                         body' <- local (updateEnv vs) (lower body)
                         return $ Lam p' body'
   P.App fexpr arg -> liftM2 App (lower fexpr) (lower arg)
-  P.For p body    -> liftM  For $ local (updateIEnv p) (lower body)
-  P.Get e ie      -> liftM2 Get (lower e) (lookupIEnv ie)
+  P.For p body    -> do (p', vs) <- lift $ lowerIdxPat p
+                        body' <- local (updateIEnv vs) (lower body)
+                        return $ For p' body'
+  P.Get e ie      -> liftM2 Get (lower e) (lowerIdxExpr ie)
   P.RecCon exprs  -> liftM RecCon $ mapM lower exprs
 
 
@@ -54,6 +56,14 @@ lowerPat' :: P.Pat -> Pat
 lowerPat' p = case p of
   P.VarPat v -> VarPat
   P.RecPat r -> RecPat $ fmap lowerPat' r
+
+lowerIdxPat :: P.IdxPat -> Either LowerErr (IdxPat, [IdxVarName])
+lowerIdxPat = lowerPat
+
+lowerIdxExpr :: P.IdxExpr -> Lower IdxExpr
+lowerIdxExpr expr = case expr of
+  P.IdxVar v    -> liftM IdxVar $ lookupIEnv v
+  P.IdxRecCon r -> liftM IdxRecCon $ mapM lowerIdxExpr r
 
 patVars :: P.Pat -> [VarName]
 patVars p = case p of
@@ -63,8 +73,8 @@ patVars p = case p of
 updateEnv :: [VarName] -> Env -> Env
 updateEnv vs (env,ienv) = (vs ++ env,ienv)
 
-updateIEnv :: IdxVarName -> Env -> Env
-updateIEnv i (env,ienv) = (env,i:ienv)
+updateIEnv :: [IdxVarName] -> Env -> Env
+updateIEnv is (env,ienv) = (env, is ++ ienv)
 
 lookupEnv :: VarName -> Lower Int
 lookupEnv v = do
