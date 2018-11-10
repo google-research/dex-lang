@@ -19,25 +19,31 @@ x' = P.VarPat "x"
 y' = P.VarPat "y"
 f' = P.VarPat "f"
 
+i = P.IdxVar "i"
+j = P.IdxVar "j"
+
+i' = P.VarPat "i"
+j' = P.VarPat "j"
+
 l1 = P.Lit 1
 l2 = P.Lit 2
 
 parseTestCases =
   [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
-  , ("for i: 1"             , P.For "i" l1)
+  , ("for i: 1"              , P.For i' l1)
   , ("lam x: x"              , P.Lam x' x)
   , ("y x"                   , P.App y x)
-  , ("x.i"                   , P.Get x "i")
+  , ("x.i"                   , P.Get x i)
   , ("f x y"                 , P.App (P.App f x) y)
-  , ("x.i.j"                 , P.Get (P.Get x "i") "j")
+  , ("x.i.j"                 , P.Get (P.Get x i) j)
   , ("let x = 1 in x"        , P.Let x' l1 x)
   , ("let x = 1; y = 2 in x" , P.Let x' l1 (P.Let y' l2 x))
-  , ("for i j: 1"            , P.For "i" (P.For "j" l1))
+  , ("for i j: 1"            , P.For i' (P.For j' l1))
   , ("lam x y: x"            , P.Lam x' (P.Lam y' x))
   , ("let f x = x in f"      , P.Let f' (P.Lam x' x) f)
-  , ("let x . i = y in x"    , P.Let x' (P.For "i" y) x)
+  , ("let x . i = y in x"    , P.Let x' (P.For i' y) x)
   , ("let f x y = x in f"    , P.Let f' (P.Lam x' (P.Lam y' x)) f)
-  , ("let x.i.j = y in x"    , P.Let x' (P.For "i" (P.For "j" y)) x)
+  , ("let x.i.j = y in x"    , P.Let x' (P.For i' (P.For j' y)) x)
   , ("(x, y)"                , P.RecCon $ posRecord [x, y])
   , ("(x=1, y=2)"            , P.RecCon $ nameRecord [("x",l1),("y",l2)])
   , ("()"                    , P.RecCon $ emptyRecord )

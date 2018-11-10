@@ -46,10 +46,12 @@ eval expr env@(venv, d) =
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
                       in (tabmap2 d) evalApp f x
-    For body       -> let venv' = map (tabmap d lift) venv
-                      in eval body (venv',d+1)
-    Get e i        -> let x = eval e env
-                      in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
+    For p body     -> undefined
+      -- let venv' = map (tabmap d lift) venv
+      -- in eval body (venv',d+1)
+    Get e p        -> undefined
+      -- let x = eval e env
+      -- in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
     RecCon r       -> RecVal $ fmap (flip eval env) r
 
 
