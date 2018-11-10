@@ -1,5 +1,6 @@
-module Record (Record, posRecord, nameRecord, emptyRecord,
-               mixedRecord, zipWithRecord) where
+module Record (Record (..), posRecord, nameRecord, emptyRecord,
+               mixedRecord, zipWithRecord,
+               consRecord, unConsRecord, fromPosRecord) where
 
 import Util
 import Control.Monad
@@ -26,6 +27,10 @@ emptyRecord = Record M.empty
 posRecord :: [a] -> Record a
 posRecord = mixedRecord . zip (repeat Nothing)
 
+fromPosRecord :: Record a -> [a]
+fromPosRecord (Record m) = case unzip (M.toList m) of
+  (ks, vs) | ks == map RecPos [0..(length ks - 1)] -> vs
+
 nameRecord :: [(String, a)] -> Record a
 nameRecord = mixedRecord . mapFst Just
 
@@ -38,6 +43,14 @@ zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Record m) (Record m')
     | M.keys m == M.keys m' = Just . Record $ M.intersectionWith f m m'
     | otherwise = Nothing
+
+consRecord :: a -> Record a -> Record a
+consRecord v r = let vs = fromPosRecord r
+                 in posRecord (v:vs)
+
+unConsRecord :: Record a -> (a, Record a)
+unConsRecord r = let v:vs = fromPosRecord r
+                 in (v, posRecord vs)
 
 instance Show a => Show (Record a) where
   show (Record m) = let showElt (k,v) = case k of

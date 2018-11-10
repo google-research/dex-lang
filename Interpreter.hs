@@ -54,7 +54,7 @@ eval expr env@(venv, d) =
     For p body     -> let n = patSize p
                           venv' = map (tabmap d (composeN n lift)) venv
                           ans = eval body (venv',d+n)
-                      in tabmap d (structureIdxs p . uncurryTabVal n) ans
+                      in tabmap d (structureTabVal p . uncurryTabVal n) ans
     Get e ie        ->
         curryTabVal d $ diagWithIdxExpr d ie $ uncurryTabVal d $ eval e env
     RecCon r       -> RecVal $ fmap (flip eval env) r
@@ -66,18 +66,48 @@ valPatMatch (RecPat p) (RecVal v) = let vs = toList v
                                         ps = toList p
                                     in concat $ zipWith valPatMatch ps vs
 
+tabVal :: [(IdxVal, Val)] -> Val
+tabVal = TabVal . M.fromList
+
 uncurryTabVal :: Int -> Val -> Val
-uncurryTabVal = undefined
+uncurryTabVal 0 v = tabVal [(RecIdxVal emptyRecord, v)]
+uncurryTabVal n (TabVal m) = tabVal [(RecIdxVal $ consRecord k ks, v')
+                                       | (k, v) <- M.toList m
+                                       , let TabVal m'= uncurryTabVal (n-1) v
+                                       , (RecIdxVal ks, v') <- M.toList m' ]
 
 curryTabVal :: Int -> Val -> Val
-curryTabVal = undefined
+curryTabVal 0 (TabVal m) = case M.toList m of [(emptyRecord, v)] -> v
+curryTabVal n (TabVal m) =
+  let grouped = group [(k, (RecIdxVal r, v)) | (RecIdxVal r, v) <- M.toList m
+                                             , let (k, r) = unConsRecord r]
+  in tabVal [(k, curryTabVal (n-1) (tabVal v)) | (k, v) <- grouped]
 
-structureIdxs :: IdxPat -> Val -> Val
-structureIdxs = undefined
+structureTabVal :: IdxPat -> Val -> Val
+structureTabVal p (TabVal m) =
+  tabVal [(structureIdx p (fromPosRecord r), v)
+             | (RecIdxVal r, v) <- M.toList m]
+
+structureIdx :: IdxPat -> [IdxVal] -> IdxVal
+structureIdx VarPat [k] = k
+structureIdx (RecPat (Record r)) idxs =
+  let (ks, ps) = unzip $ M.toList r
+      subPatSizes = map numLeaves ps
+      idxGroups = part subPatSizes idxs
+  in RecIdxVal . Record . M.fromList $ zip ks $ zipWith structureIdx ps idxGroups
+
+numLeaves :: IdxPat -> Int
+numLeaves VarPat = 1
+numLeaves (RecPat r) = foldr (+) 0 $ fmap numLeaves r
+
+part :: [Int] -> [a] -> [[a]]
+part [] [] = []
+part (size:sizes) xs = let (prefix, rest) = splitAt size xs
+                       in prefix : part sizes rest
 
 diagWithIdxExpr :: Int -> IdxExpr -> Val -> Val
 diagWithIdxExpr d ie (TabVal m) =
-  TabVal . M.fromList $ [(RecIdxVal (posRecord k),v)
+  tabVal $ [(RecIdxVal (posRecord k),v)
                            | (RecIdxVal r, (TabVal m')) <- M.toList m
                            , (k2, v ) <- M.toList m'
                            , Just k <- [matchIdxExpr (toList r) ie k2] ]
@@ -93,7 +123,7 @@ mergeIdxs :: [IdxVal] -> [IdxVal] -> Maybe [IdxVal]
 mergeIdxs idxs1 idxs2 = sequence $ zipWith tryEq idxs1 idxs2
 
 diag :: Val -> Val
-diag (TabVal m) = TabVal . M.fromList $ [(k,v) | (k1, (TabVal m')) <- M.toList m
+diag (TabVal m) = tabVal $ [(k,v) | (k1, (TabVal m')) <- M.toList m
                                                , (k2, v ) <- M.toList m'
                                                , Just k <- [tryEq k1 k2] ]
 
@@ -114,13 +144,12 @@ tabmap2 d = composeN d map2
 
 -- this is O(N^2) in the number of keys. Should be linear.
 map2 :: (Val -> Val -> Val) -> Val -> Val -> Val
-map2 f (TabVal m1) (TabVal m2) = TabVal . M.fromList $
-  [ (k, f x y) | (k1, x) <- M.toList m1
-               , (k2, y) <- M.toList m2
-               , Just k <- [tryEq k1 k2] ]
+map2 f (TabVal m1) (TabVal m2) = tabVal [ (k, f x y) | (k1, x) <- M.toList m1
+                                                     , (k2, y) <- M.toList m2
+                                                     , Just k <- [tryEq k1 k2] ]
 
 lift :: Val -> Val
-lift v = TabVal $ M.singleton Any v
+lift v = tabVal [(Any, v)]
 
 promoteIdx :: Int -> Val -> Val
 promoteIdx 0 x = x
@@ -128,7 +157,7 @@ promoteIdx n x = promoteIdx (n-1) $ tabmap (n-1) swapidxs x
 
 swapidxs :: Val -> Val
 swapidxs (TabVal m) =
-  TabVal . M.map (TabVal . M.fromList) . M.fromList . group . sortOn fst $
+  TabVal . M.map tabVal . M.fromList . group . sortOn fst $
   [(k2,(k1,v)) | (k1, (TabVal m')) <- M.toList m
                , (k2, v ) <- M.toList m']
 
@@ -150,8 +179,8 @@ evalApp (Builtin name vs) x = let args = x:vs
 
 evalBuiltin :: BuiltinName -> [Val] -> Val
 evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
-evalBuiltin Iota [IntVal n] = TabVal $ M.fromList [(IntIdxVal i, IntVal i)
-                                                  | i <- [0..(n-1)]]
+evalBuiltin Iota [IntVal n] = tabVal [(IntIdxVal i, IntVal i)
+                                         | i <- [0..(n-1)]]
 evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
                                       in foldr f' z (M.elems m)
 
