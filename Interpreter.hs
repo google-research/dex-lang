@@ -2,6 +2,9 @@ module Interpreter (evalExpr, valPatMatch, initValEnv, showVal, ValEnv,
                     Val (..), IdxVal (..)) where
 
 import qualified Data.Map.Strict as M
+import Control.Monad
+
+import Data.Foldable
 import Data.List (sortOn)
 import Data.Foldable (toList)
 import Text.PrettyPrint.Boxes
@@ -12,14 +15,16 @@ import Typer
 import Record
 
 data Val = IntVal Int
-         | TabVal (M.Map (Maybe IdxVal) Val)
+         | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
          | Builtin BuiltinName [Val]  deriving (Eq, Show)
 
-data IdxVal = IntIdxVal  Int
+data IdxVal = Any
+            | IntIdxVal  Int
             | RealIdxVal Float
             | StrIdxVal  String
+            | RecIdxVal (Record IdxVal)
                 deriving (Eq, Ord, Show)
 
 type IEnv = Int
@@ -46,12 +51,12 @@ eval expr env@(venv, d) =
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
                       in (tabmap2 d) evalApp f x
-    For p body     -> undefined
-      -- let venv' = map (tabmap d lift) venv
-      -- in eval body (venv',d+1)
-    Get e p        -> undefined
-      -- let x = eval e env
-      -- in tabmap (d-i-1) (diag . (tabmap 1) (promoteIdx i)) x
+    For p body     -> let n = patSize p
+                          venv' = map (tabmap d (composeN n lift)) venv
+                          ans = eval body (venv',d+n)
+                      in tabmap d (structureIdxs p . uncurryTabVal n) ans
+    Get e ie        ->
+        curryTabVal d $ diagWithIdxExpr d ie $ uncurryTabVal d $ eval e env
     RecCon r       -> RecVal $ fmap (flip eval env) r
 
 
@@ -60,6 +65,45 @@ valPatMatch VarPat v = [v]
 valPatMatch (RecPat p) (RecVal v) = let vs = toList v
                                         ps = toList p
                                     in concat $ zipWith valPatMatch ps vs
+
+uncurryTabVal :: Int -> Val -> Val
+uncurryTabVal = undefined
+
+curryTabVal :: Int -> Val -> Val
+curryTabVal = undefined
+
+structureIdxs :: IdxPat -> Val -> Val
+structureIdxs = undefined
+
+diagWithIdxExpr :: Int -> IdxExpr -> Val -> Val
+diagWithIdxExpr d ie (TabVal m) =
+  TabVal . M.fromList $ [(RecIdxVal (posRecord k),v)
+                           | (RecIdxVal r, (TabVal m')) <- M.toList m
+                           , (k2, v ) <- M.toList m'
+                           , Just k <- [matchIdxExpr (toList r) ie k2] ]
+
+matchIdxExpr :: [IdxVal] -> IdxExpr -> IdxVal -> Maybe [IdxVal]
+matchIdxExpr idxs (IdxVar v) i = do i' <- tryEq i (idxs !! v)
+                                    return $ update v i' idxs
+matchIdxExpr idxs (IdxRecCon vs) (RecIdxVal is) = do
+  idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
+  foldM mergeIdxs (repeat Any) idxs'
+
+mergeIdxs :: [IdxVal] -> [IdxVal] -> Maybe [IdxVal]
+mergeIdxs idxs1 idxs2 = sequence $ zipWith tryEq idxs1 idxs2
+
+diag :: Val -> Val
+diag (TabVal m) = TabVal . M.fromList $ [(k,v) | (k1, (TabVal m')) <- M.toList m
+                                               , (k2, v ) <- M.toList m'
+                                               , Just k <- [tryEq k1 k2] ]
+
+patSize :: IdxPat -> Int
+patSize VarPat = 1
+patSize (RecPat r) = foldr (+) 0 $ fmap patSize r
+
+update :: Int -> a -> [a] -> [a]
+update i x xs = let (prefix, _:rest) = splitAt i xs
+                in prefix ++ (x:rest)
 
 tabmap :: Int -> (Val -> Val) -> Val -> Val
 tabmap d = let map f (TabVal m) = TabVal $ M.map f m
@@ -76,7 +120,7 @@ map2 f (TabVal m1) (TabVal m2) = TabVal . M.fromList $
                , Just k <- [tryEq k1 k2] ]
 
 lift :: Val -> Val
-lift v = TabVal $ M.singleton Nothing v
+lift v = TabVal $ M.singleton Any v
 
 promoteIdx :: Int -> Val -> Val
 promoteIdx 0 x = x
@@ -88,18 +132,13 @@ swapidxs (TabVal m) =
   [(k2,(k1,v)) | (k1, (TabVal m')) <- M.toList m
                , (k2, v ) <- M.toList m']
 
-diag :: Val -> Val
-diag (TabVal m) = TabVal . M.fromList $ [(k,v) | (k1, (TabVal m')) <- M.toList m
-                                               , (k2, v ) <- M.toList m'
-                                               , Just k <- [tryEq k1 k2] ]
-
-tryEq :: Eq a => Maybe a -> Maybe a -> Maybe (Maybe a)
+tryEq :: IdxVal -> IdxVal -> Maybe IdxVal
 tryEq x y = case (x, y) of
-  (Just x, Just y) | x == y    -> Just $ Just x
-                   | otherwise -> Nothing
-  (Just x , Nothing) -> Just $ Just x
-  (Nothing, Just y ) -> Just $ Just y
-  (Nothing, Nothing) -> Just $ Nothing
+  (Any, Any) -> Nothing
+  (Any, y) -> Just y
+  (x, Any) -> Just x
+  (x, y) | x == y -> Just x
+         | otherwise -> Nothing
 
 
 evalApp :: Val -> Val -> Val
@@ -111,7 +150,7 @@ evalApp (Builtin name vs) x = let args = x:vs
 
 evalBuiltin :: BuiltinName -> [Val] -> Val
 evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
-evalBuiltin Iota [IntVal n] = TabVal $ M.fromList [(Just $ IntIdxVal i, IntVal i)
+evalBuiltin Iota [IntVal n] = TabVal $ M.fromList [(IntIdxVal i, IntVal i)
                                                   | i <- [0..(n-1)]]
 evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
                                       in foldr f' z (M.elems m)
@@ -141,15 +180,15 @@ showVal v t = render $ text " " <> valToBox v
 valToBox :: Val -> Box
 valToBox v = case v of
   IntVal x -> text (show x)
-  TabVal m -> vcat left [ text (showMaybeIdxVal k) <> text " | " <> valToBox v
+  TabVal m -> vcat left [ text (showIdxVal k) <> text " | " <> valToBox v
                         | (k, v) <- M.toList m]
   RecVal r -> text $ show r
   LamVal _ _ _ -> text "<lambda>"
   Builtin _ _  -> text "<builtin>"
 
-showMaybeIdxVal :: Maybe IdxVal -> String
-showMaybeIdxVal Nothing = "*"
-showMaybeIdxVal (Just x) = case x of
+showIdxVal :: IdxVal -> String
+showIdxVal Any = "*"
+showIdxVal x = case x of
   IntIdxVal  x -> show x
   RealIdxVal x -> show x
   StrIdxVal  s -> s
