@@ -92,11 +92,11 @@ term =   parenExpr
      <?> "term"
 
 str = lexeme . string
-
 var = liftM id identifier
 
-idxPat = liftM VarPat identifier
-idxExpr = liftM IdxVar identifier
+idxPat = pat
+idxExpr =   parenIdxExpr
+        <|> liftM IdxVar identifier
 
 pat :: Parser Pat
 pat =   parenPat
@@ -139,6 +139,12 @@ maybeNamed p = do
        return v
   x <- p
   return (v, x)
+
+parenIdxExpr = do
+  elts <- parens $ maybeNamed idxExpr `sepBy` str ","
+  return $ case elts of
+    [(Nothing, expr)] -> expr
+    elts -> IdxRecCon $ mixedRecord elts
 
 parenExpr = do
   elts <- parens $ maybeNamed expr `sepBy` str ","

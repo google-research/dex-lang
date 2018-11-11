@@ -54,6 +54,9 @@ parseTestCases =
   , ("let (x=x,y=y) = (y=1,x=2) in x",
         P.Let (P.RecPat $ nameRecord [("x",x'),("y",y')])
               (P.RecCon $ nameRecord [("x",l2),("y",l1)]) x)
+  , ("for (i,j): 1"          , P.For (P.RecPat $ posRecord [i', j']) l1)
+  , ("for (i,j): x.(j,i)"    , P.For (P.RecPat $ posRecord [i', j'])
+                                   (P.Get x (P.IdxRecCon $ posRecord [j, i])))
   ]
 
 infixr 1 -->

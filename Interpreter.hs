@@ -25,7 +25,7 @@ data IdxVal = Any
             | RealIdxVal Float
             | StrIdxVal  String
             | RecIdxVal (Record IdxVal)
-                deriving (Eq, Ord, Show)
+                deriving (Eq, Ord)
 
 type IEnv = Int
 type ValEnv = [Val]
@@ -194,15 +194,16 @@ showVal v t = render $ text " " <> valToBox v
 valToBox :: Val -> Box
 valToBox v = case v of
   IntVal x -> text (show x)
-  TabVal m -> vcat left [ text (showIdxVal k) <> text " | " <> valToBox v
+  TabVal m -> vcat left [ text (show k) <> text " | " <> valToBox v
                         | (k, v) <- M.toList m]
   RecVal r -> text $ show r
   LamVal _ _ _ -> text "<lambda>"
   Builtin _ _  -> text "<builtin>"
 
-showIdxVal :: IdxVal -> String
-showIdxVal Any = "*"
-showIdxVal x = case x of
-  IntIdxVal  x -> show x
-  RealIdxVal x -> show x
-  StrIdxVal  s -> s
+instance Show IdxVal where
+  show x = case x of
+    Any -> "*"
+    IntIdxVal  x -> show x
+    RealIdxVal x -> show x
+    StrIdxVal  s -> s
+    RecIdxVal  r -> show r
