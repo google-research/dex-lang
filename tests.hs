@@ -131,7 +131,11 @@ typeErrorTests = TestList [testCase s gettype (Left e)
 
 
 main = do
+  putStrLn "Parse tests"
   runTestTT $ parseTests
+  putStrLn "Type tests"
   runTestTT $ typeTests
+  putStrLn "Type error tests"
   runTestTT $ typeErrorTests
+  putStrLn "Eval tests"
   runTestTT $ evalTests

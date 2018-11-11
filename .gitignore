@@ -3,3 +3,4 @@ coddle
 *.o
 tests
 test.db
+*.prof

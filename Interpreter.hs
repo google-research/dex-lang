@@ -79,8 +79,8 @@ uncurryTabVal n (TabVal m) = tabVal [(RecIdxVal $ consRecord k ks, v')
 curryTabVal :: Int -> Val -> Val
 curryTabVal 0 (TabVal m) = case M.toList m of [(emptyRecord, v)] -> v
 curryTabVal n (TabVal m) =
-  let grouped = group [(k, (RecIdxVal r, v)) | (RecIdxVal r, v) <- M.toList m
-                                             , let (k, r) = unConsRecord r]
+  let grouped = group [(k, (RecIdxVal r', v)) | (RecIdxVal r, v) <- M.toList m
+                                              , let (k, r') = unConsRecord r]
   in tabVal [(k, curryTabVal (n-1) (tabVal v)) | (k, v) <- grouped]
 
 structureTabVal :: IdxPat -> Val -> Val
@@ -92,13 +92,9 @@ structureIdx :: IdxPat -> [IdxVal] -> IdxVal
 structureIdx VarPat [k] = k
 structureIdx (RecPat (Record r)) idxs =
   let (ks, ps) = unzip $ M.toList r
-      subPatSizes = map numLeaves ps
+      subPatSizes = map patSize ps
       idxGroups = part subPatSizes idxs
   in RecIdxVal . Record . M.fromList $ zip ks $ zipWith structureIdx ps idxGroups
-
-numLeaves :: IdxPat -> Int
-numLeaves VarPat = 1
-numLeaves (RecPat r) = foldr (+) 0 $ fmap numLeaves r
 
 part :: [Int] -> [a] -> [[a]]
 part [] [] = []
@@ -117,7 +113,7 @@ matchIdxExpr idxs (IdxVar v) i = do i' <- tryEq i (idxs !! v)
                                     return $ update v i' idxs
 matchIdxExpr idxs (IdxRecCon vs) (RecIdxVal is) = do
   idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
-  foldM mergeIdxs (repeat Any) idxs'
+  foldM mergeIdxs (take (length idxs) (repeat Any)) idxs'
 
 mergeIdxs :: [IdxVal] -> [IdxVal] -> Maybe [IdxVal]
 mergeIdxs idxs1 idxs2 = sequence $ zipWith tryEq idxs1 idxs2
@@ -148,27 +144,16 @@ map2 f (TabVal m1) (TabVal m2) = tabVal [ (k, f x y) | (k1, x) <- M.toList m1
                                                      , (k2, y) <- M.toList m2
                                                      , Just k <- [tryEq k1 k2] ]
 
-lift :: Val -> Val
-lift v = tabVal [(Any, v)]
-
-promoteIdx :: Int -> Val -> Val
-promoteIdx 0 x = x
-promoteIdx n x = promoteIdx (n-1) $ tabmap (n-1) swapidxs x
-
-swapidxs :: Val -> Val
-swapidxs (TabVal m) =
-  TabVal . M.map tabVal . M.fromList . group . sortOn fst $
-  [(k2,(k1,v)) | (k1, (TabVal m')) <- M.toList m
-               , (k2, v ) <- M.toList m']
-
 tryEq :: IdxVal -> IdxVal -> Maybe IdxVal
 tryEq x y = case (x, y) of
-  (Any, Any) -> Nothing
+  (Any, Any) -> Just Any
   (Any, y) -> Just y
   (x, Any) -> Just x
   (x, y) | x == y -> Just x
          | otherwise -> Nothing
 
+lift :: Val -> Val
+lift v = tabVal [(Any, v)]
 
 evalApp :: Val -> Val -> Val
 evalApp (LamVal p (venv,ienv) body) x = eval body (valPatMatch p x ++ venv, ienv)

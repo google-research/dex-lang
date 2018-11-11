@@ -46,12 +46,12 @@ selectQuery :: [String] -> String -> String
 selectQuery colNames tableName =
   "select " ++ concat (intersperse " , " colNames) ++ " from " ++ tableName
 
-toScalar :: Type -> SqlValue -> Maybe IdxVal
+toScalar :: Type -> SqlValue -> IdxVal
 toScalar t v = case t of
-  BaseType IntType -> Just . IntIdxVal $ case v of
+  BaseType IntType -> IntIdxVal $ case v of
       SqlInt32   x -> fromIntegral x
       SqlInt64   x -> fromIntegral x
       SqlInteger x -> fromIntegral x
-  BaseType StrType -> Just . StrIdxVal $ case v of
+  BaseType StrType -> StrIdxVal $ case v of
       SqlString s -> s
       SqlByteString s -> unpack s
