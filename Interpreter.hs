@@ -1,4 +1,4 @@
-module Interpreter (evalExpr, valPatMatch, initValEnv, showVal, ValEnv,
+module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
                     Val (..), IdxVal (..)) where
 
 import qualified Data.Map.Strict as M
@@ -25,7 +25,7 @@ data IdxVal = Any
             | RealIdxVal Float
             | StrIdxVal  String
             | RecIdxVal (Record IdxVal)
-                deriving (Eq, Ord)
+                deriving (Eq, Ord, Show)
 
 type IEnv = Int
 type ValEnv = [Val]
@@ -113,15 +113,15 @@ matchIdxExpr idxs (IdxVar v) i = do i' <- tryEq i (idxs !! v)
                                     return $ update v i' idxs
 matchIdxExpr idxs (IdxRecCon vs) (RecIdxVal is) = do
   idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
-  foldM mergeIdxs (take (length idxs) (repeat Any)) idxs'
+  foldM mergeIdxs (replicate (length idxs) Any) idxs'
 
 mergeIdxs :: [IdxVal] -> [IdxVal] -> Maybe [IdxVal]
 mergeIdxs idxs1 idxs2 = sequence $ zipWith tryEq idxs1 idxs2
 
 diag :: Val -> Val
 diag (TabVal m) = tabVal $ [(k,v) | (k1, (TabVal m')) <- M.toList m
-                                               , (k2, v ) <- M.toList m'
-                                               , Just k <- [tryEq k1 k2] ]
+                                  , (k2, v ) <- M.toList m'
+                                  , Just k <- [tryEq k1 k2] ]
 
 patSize :: IdxPat -> Int
 patSize VarPat = 1
@@ -185,60 +185,3 @@ binOpFun :: BinOpName -> Int -> Int -> Int
 binOpFun Add = (+)
 binOpFun Mul = (*)
 binOpFun Sub = (-)
-
--- -- ----- printing -----
-
-type Col = [Val]
-type IdxCol = [IdxVal]
-
-type ColName = [RecName]
-type TabName = [RecName]
-
-data Table = Table [[(ColName, IdxCol)]] [(ColName, Col)]
-data FlatVal = FlatVal [(TabName, Table)]
-
-singletonTable :: Val -> Table
-singletonTable x = Table [] [([], [x])]
-
-singletonFlatVal :: Val -> FlatVal
-singletonFlatVal x = FlatVal [([], singletonTable x)]
-
-flattenVal :: Type -> Val -> FlatVal
-flattenVal t v = case v of
-    TabVal m -> case t of TabType a b ->
-        let idxColNames = flattenIdxType a
-            [       | (k, v) <- M.toList m]
-    RecVal (Record m) -> FlatVal [((k:tabname), tab)
-                                     | (k,v) <- M.toList m
-                                     , let (FlatVal tabs) = flattenVal v
-                                     , (tabname, tab) <- tabs  ]
-    x -> singletonFlatVal x
-
-instance Show Table where
-  show (Table idxTabs valTab) = undefined
-
-instance Show FlatVal where
-  show (FlatVal namedTabs) = concat [show name ++ "\n" ++ show tab ++ "\n"
-                                        | (name, tab) <- namedTabs]
-
-showVal :: Val -> ClosedType -> String
-showVal v t = show $ flattenVal t v
-
--- render $ text " " <> valToBox v
-
--- valToBox :: Val -> Box
--- valToBox v = case v of
---   IntVal x -> text (show x)
---   TabVal m -> vcat left [ text (show k) <> text " | " <> valToBox v
---                         | (k, v) <- M.toList m]
---   RecVal r -> text $ show r
---   LamVal _ _ _ -> text "<lambda>"
---   Builtin _ _  -> text "<builtin>"
-
-instance Show IdxVal where
-  show x = case x of
-    Any -> "*"
-    IntIdxVal  x -> show x
-    RealIdxVal x -> show x
-    StrIdxVal  s -> s
-    RecIdxVal  r -> show r

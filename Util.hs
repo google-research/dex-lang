@@ -1,5 +1,5 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitWhile, repeatN,
+             insertIdx, mvIdx, mapFst, mapSnd, splitWhile,
              composeN, mapMaybe, lookup, uncons, repeated) where
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -24,10 +24,10 @@ uncons :: [a] -> (a, [a])
 uncons (x:xs) = (x, xs)
 
 pad :: Int -> a -> [a] -> [a]
-pad n v xs = xs ++ repeatN (n - length(xs)) v
+pad n v xs = xs ++ replicate (n - length(xs)) v
 
 padLeft :: Int -> a -> [a] -> [a]
-padLeft  n v xs = repeatN (n - length(xs)) v ++ xs
+padLeft  n v xs = replicate (n - length(xs)) v ++ xs
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of
@@ -62,11 +62,8 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
 splitWhile :: (a -> Bool) -> [a] -> ([a], [a])
 splitWhile f xs = (takeWhile f xs, dropWhile f xs)
 
-repeatN :: Int -> a -> [a]
-repeatN n x = take n (repeat x)
-
 composeN :: Int -> (a -> a) -> a -> a
-composeN n f = foldr (.) id (repeatN n f)
+composeN n f = foldr (.) id (replicate n f)
 
 lookup :: (Eq a) => a -> [a] -> Maybe Int
 lookup _ [] = Nothing
