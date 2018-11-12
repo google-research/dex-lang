@@ -14,6 +14,16 @@ import Util
 import Typer
 import Record
 
+data Col = All
+         | IntCol [Int]
+         | RealCol [Float]
+         | StrCol [Str]
+         | ArrCol [Val -> Val]
+
+type Key = [RecName]
+
+data Val = Val Type (M.Map [RecName]TabId Tab)
+
 data Val = IntVal Int
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
@@ -26,6 +36,9 @@ data IdxVal = Any
             | StrIdxVal  String
             | RecIdxVal (Record IdxVal)
                 deriving (Eq, Ord)
+
+
+
 
 type IEnv = Int
 type ValEnv = [Val]
@@ -188,52 +201,17 @@ binOpFun Sub = (-)
 
 -- -- ----- printing -----
 
-type Col = [Val]
-type IdxCol = [IdxVal]
-
-type ColName = [RecName]
-type TabName = [RecName]
-
-data Table = Table [[(ColName, IdxCol)]] [(ColName, Col)]
-data FlatVal = FlatVal [(TabName, Table)]
-
-singletonTable :: Val -> Table
-singletonTable x = Table [] [([], [x])]
-
-singletonFlatVal :: Val -> FlatVal
-singletonFlatVal x = FlatVal [([], singletonTable x)]
-
-flattenVal :: Type -> Val -> FlatVal
-flattenVal t v = case v of
-    TabVal m -> case t of TabType a b ->
-        let idxColNames = flattenIdxType a
-            [       | (k, v) <- M.toList m]
-    RecVal (Record m) -> FlatVal [((k:tabname), tab)
-                                     | (k,v) <- M.toList m
-                                     , let (FlatVal tabs) = flattenVal v
-                                     , (tabname, tab) <- tabs  ]
-    x -> singletonFlatVal x
-
-instance Show Table where
-  show (Table idxTabs valTab) = undefined
-
-instance Show FlatVal where
-  show (FlatVal namedTabs) = concat [show name ++ "\n" ++ show tab ++ "\n"
-                                        | (name, tab) <- namedTabs]
-
 showVal :: Val -> ClosedType -> String
-showVal v t = show $ flattenVal t v
+showVal v t = render $ text " " <> valToBox v
 
--- render $ text " " <> valToBox v
-
--- valToBox :: Val -> Box
--- valToBox v = case v of
---   IntVal x -> text (show x)
---   TabVal m -> vcat left [ text (show k) <> text " | " <> valToBox v
---                         | (k, v) <- M.toList m]
---   RecVal r -> text $ show r
---   LamVal _ _ _ -> text "<lambda>"
---   Builtin _ _  -> text "<builtin>"
+valToBox :: Val -> Box
+valToBox v = case v of
+  IntVal x -> text (show x)
+  TabVal m -> vcat left [ text (show k) <> text " | " <> valToBox v
+                        | (k, v) <- M.toList m]
+  RecVal r -> text $ show r
+  LamVal _ _ _ -> text "<lambda>"
+  Builtin _ _  -> text "<builtin>"
 
 instance Show IdxVal where
   show x = case x of

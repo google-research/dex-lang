@@ -1,10 +1,8 @@
 # Todo ordered (easy things)
-  * syntax for named records (and make it consistent with tuple syntax)
-  * records on indices
+  * print tables with records etc flattened
+
   * raster/ggplot/canvas output?
   * write up explanation and make some demos
-
-
 
   * records polymorphic?
     * this is going to get tricky. Let's get a working demo with some compelling

@@ -1,5 +1,5 @@
 module Record (Record (..), posRecord, nameRecord, emptyRecord,
-               mixedRecord, zipWithRecord,
+               mixedRecord, zipWithRecord, RecName,
                consRecord, unConsRecord, fromPosRecord) where
 
 import Util
