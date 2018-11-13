@@ -84,4 +84,7 @@ z = iota 3
 w.i.j = z.i + z.j
 matmul w w
 
-(x=iota 3, iota 4)
+x = iota 3
+y.(xx=i,yy=j) = 10 * x.i + x.j
+
+(x=x, z=(y=y))

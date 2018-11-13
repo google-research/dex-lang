@@ -109,6 +109,8 @@ showVal v (T.Forall _ t) =
     in unlines $ zipWith showTab vsFlat tsFlat
 
 
+-- TODO: should distinguish each segment, and align components of table name
+-- with corresponding segment
 showTab :: TabVal -> TabType -> String
 showTab v t = let headers = concat $ headerBoxes t
                   cols = concat $ colBoxes v
