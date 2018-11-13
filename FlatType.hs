@@ -1,6 +1,6 @@
 module FlatType (showVal) where
 import Text.PrettyPrint.Boxes
-import Data.List (intersperse)
+import Data.List (intersperse, transpose)
 
 import Record
 import Util
@@ -110,7 +110,12 @@ showVal v (T.Forall _ t) =
 
 
 showTab :: TabVal -> TabType -> String
-showTab v t = 
+showTab v t = let headers = concat $ headerBoxes t
+                  cols = concat $ colBoxes v
+                  colsWithHeaders = zipWith (//) headers cols
+                  name = concat $ intersperse " " (tabName t)
+              in  " " ++ name ++ "\n" ++
+                  (render $ text "  " <> (hsepWith " | " colsWithHeaders))
 
 headerBoxes :: TabType -> [[Box]]
 headerBoxes t =
@@ -119,45 +124,31 @@ headerBoxes t =
     FinalSegmentType colTypes   -> [colsToBoxes colTypes]
     TabType _ colTypes restType -> colsToBoxes colTypes : headerBoxes restType
 
+tabName :: TabType -> [String]
+tabName (FinalSegmentType _) = []
+tabName (TabType name _ rest) = showTabName name : tabName rest
+
 colBoxes :: TabVal -> [[Box]]
 colBoxes v =
   case v of
-    FinalSegmentVal h cols -> [map (text . show) cols]
-    TabVal cols rest       -> map (text . show) cols : colBoxes rest
+    FinalSegmentVal h cols -> [map colToBox cols]
+    TabVal cols rest       -> map colToBox cols : colBoxes rest
 
-renderBoxes :: [[(Box, [Box])]] -> String
-renderBoxes boxes = "val"
+colToBox :: (Show a) => [a] -> Box
+colToBox rows = vcat left $ map (text . show) rows
 
-vsepWith :: [Box] -> Char -> [Box]
+vsepWith :: String -> [Box] -> Box
 vsepWith = undefined
 
-hsepWith :: [Box] -> Char -> [Box]
-hsepWith = undefined
+hsepWith :: String -> [Box] -> Box
+hsepWith s bs = case bs of
+  [] -> emptyBox 0 0
+  b:[] -> b
+  b:bs -> let sep = vcat left $ replicate (rows b) (text s)
+          in b <> sep <> hsepWith s bs
 
 showColName :: ColName -> String
 showColName names = concat $ intersperse "." (map show names)
 
 showTabName :: TabName -> String
 showTabName = showColName
-
--- showVal :: Val -> ClosedType -> String
--- showVal v (Forall _ t) = show $ flattenVal t v
-
--- -- render $ text " " <> valToBox v
-
--- -- valToBox :: Val -> Box
--- -- valToBox v = case v of
--- --   IntVal x -> text (show x)
--- --   TabVal m -> vcat left [ text (show k) <> text " | " <> valToBox v
--- --                         | (k, v) <- M.toList m]
--- --   RecVal r -> text $ show r
--- --   LamVal _ _ _ -> text "<lambda>"
--- --   Builtin _ _  -> text "<builtin>"
-
--- instance Show IdxVal where
---   show x = case x of
---     Any -> "*"
---     IntIdxVal  x -> show x
---     RealIdxVal x -> show x
---     StrIdxVal  s -> s
---     RecIdxVal  r -> show r

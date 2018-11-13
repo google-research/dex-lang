@@ -17,14 +17,14 @@ data Val = IntVal Int
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
-         | Builtin BuiltinName [Val]  deriving (Eq, Show)
+         | Builtin BuiltinName [Val]  deriving (Eq)
 
 data IdxVal = Any
             | IntIdxVal  Int
             | RealIdxVal Float
             | StrIdxVal  String
             | RecIdxVal (Record IdxVal)
-                deriving (Eq, Ord, Show)
+                deriving (Eq, Ord)
 
 type IEnv = Int
 type ValEnv = [Val]
@@ -184,3 +184,21 @@ binOpFun :: BinOpName -> Int -> Int -> Int
 binOpFun Add = (+)
 binOpFun Mul = (*)
 binOpFun Sub = (-)
+
+
+-- valToBox :: Val -> Box
+instance Show Val where
+  show x = case x of
+    IntVal x -> show x
+    TabVal m -> "<table>"
+    RecVal r -> "<record>"
+    LamVal _ _ _ -> "<lambda>"
+    Builtin _ _  ->  "<builtin>"
+
+instance Show IdxVal where
+  show x = case x of
+    Any -> "*"
+    IntIdxVal  x -> show x
+    RealIdxVal x -> show x
+    StrIdxVal  s -> s
+    RecIdxVal  r -> show r

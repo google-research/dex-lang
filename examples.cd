@@ -83,3 +83,5 @@ matmul x y = for i j: reduce add 0 (for k: x.i.k * y.k.j)
 z = iota 3
 w.i.j = z.i + z.j
 matmul w w
+
+(x=iota 3, iota 4)

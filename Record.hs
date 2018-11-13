@@ -10,7 +10,7 @@ import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
 
-data RecName = RecPos Int | RecName String  deriving (Show, Eq, Ord)
+data RecName = RecPos Int | RecName String  deriving (Eq, Ord)
 
 instance Functor Record where
   fmap = fmapDefault
@@ -58,3 +58,7 @@ instance Show a => Show (Record a) where
                             RecName s -> s ++ "=" ++ show v
                         shownElts = map showElt (M.toList m)
                     in "(" ++ concat (intersperse "," shownElts) ++ ")"
+
+instance Show RecName where
+  show (RecPos i)  = show i
+  show (RecName s) = s
