@@ -36,7 +36,6 @@ data Command = GetType    Expr
 
 
 type VarName = String
-type RecName = String
 type IdxVarName = String
 type Decl = (Pat, Expr)
 
@@ -131,7 +130,7 @@ explicitCommand = do
     "l" -> return $ GetLowered e
     otherwise -> fail $ "unrecognized command: " ++ show cmd
 
-maybeNamed ::Parser a -> Parser (Maybe RecName, a)
+maybeNamed ::Parser a -> Parser (Maybe String, a)
 maybeNamed p = do
   v <- optionMaybe $ try $
     do v <- identifier

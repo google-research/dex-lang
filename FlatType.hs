@@ -1,4 +1,6 @@
-module FlatType where
+module FlatType (showVal) where
+import Text.PrettyPrint.Boxes
+import Data.List (intersperse)
 
 import Record
 import Util
@@ -44,7 +46,7 @@ flattenType t = case t of
    x -> [FinalSegmentType [([], x)]]
 
 
--- ----- printing -----
+-- ----- flattening vals -----
 
 type ColVal = [I.Val]
 type IdxColVal = [I.IdxVal]
@@ -52,13 +54,13 @@ type IdxColVal = [I.IdxVal]
 data TabVal = TabVal [IdxColVal] TabVal
             | FinalSegmentVal Int [ColVal]
 
-flattenVal :: TabType -> I.Val -> TabVal
-flattenVal t v = case t of
+flattenVal :: I.Val -> TabType -> TabVal
+flattenVal v t = case t of
   FinalSegmentType colTypes ->
     FinalSegmentVal 1 [[lookupPath colName v] | (colName, _) <- colTypes]
   TabType tabname colTypes restType ->
     let I.TabVal m = lookupPath tabname v
-    in vCat t [ let rhsTab = flattenVal restType val
+    in vCat t [ let rhsTab = flattenVal val restType
                     n = numRows rhsTab
                     idxTab = map (replicate n . flattenIdxs idxVal) colTypes
                 in TabVal idxTab rhsTab
@@ -97,6 +99,46 @@ lookupIdxPath [] v = v
 lookupIdxPath (name:rest) (I.RecIdxVal (Record m)) =
   let Just v = M.lookup name m
   in lookupIdxPath rest v
+
+-- ----- printing -----
+
+showVal :: I.Val -> T.ClosedType -> String
+showVal v (T.Forall _ t) =
+    let tsFlat = flattenType t
+        vsFlat = map (flattenVal v) tsFlat
+    in unlines $ zipWith showTab vsFlat tsFlat
+
+
+showTab :: TabVal -> TabType -> String
+showTab v t = 
+
+headerBoxes :: TabType -> [[Box]]
+headerBoxes t =
+  let colsToBoxes = map (text . showColName . fst)
+  in case t of
+    FinalSegmentType colTypes   -> [colsToBoxes colTypes]
+    TabType _ colTypes restType -> colsToBoxes colTypes : headerBoxes restType
+
+colBoxes :: TabVal -> [[Box]]
+colBoxes v =
+  case v of
+    FinalSegmentVal h cols -> [map (text . show) cols]
+    TabVal cols rest       -> map (text . show) cols : colBoxes rest
+
+renderBoxes :: [[(Box, [Box])]] -> String
+renderBoxes boxes = "val"
+
+vsepWith :: [Box] -> Char -> [Box]
+vsepWith = undefined
+
+hsepWith :: [Box] -> Char -> [Box]
+hsepWith = undefined
+
+showColName :: ColName -> String
+showColName names = concat $ intersperse "." (map show names)
+
+showTabName :: TabName -> String
+showTabName = showColName
 
 -- showVal :: Val -> ClosedType -> String
 -- showVal v (Forall _ t) = show $ flattenVal t v

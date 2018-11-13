@@ -17,6 +17,7 @@ import Syntax
 import Util
 import Typer
 import Interpreter
+import FlatType
 
 data Env = Env { varEnv  :: VarEnv
                , typeEnv :: TypeEnv

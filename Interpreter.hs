@@ -7,7 +7,6 @@ import Control.Monad
 import Data.Foldable
 import Data.List (sortOn)
 import Data.Foldable (toList)
-import Text.PrettyPrint.Boxes
 
 import Syntax
 import Util
