@@ -60,5 +60,5 @@ instance Show a => Show (Record a) where
                     in "(" ++ concat (intersperse "," shownElts) ++ ")"
 
 instance Show RecName where
-  show (RecPos i)  = show i
+  show (RecPos i)  = "#" ++ show i
   show (RecName s) = s
