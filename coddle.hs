@@ -8,6 +8,8 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.List hiding (lookup)
 import IOSql
+import Options.Applicative
+import Data.Semigroup ((<>))
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
@@ -109,11 +111,26 @@ terminalRepl = runRepl (repl ">=> ") defaultBehavior
 fileRepl :: String -> Env -> IO ()
 fileRepl fname = runRepl (repl "") (useFile fname)
 
+type ProgramSource = String
+type DataSource = String
+data CmdOpts = CmdOpts (Maybe ProgramSource) (Maybe DataSource)
+
+opts :: ParserInfo CmdOpts
+opts = info (p <**> helper) mempty
+  where p = CmdOpts
+            <$> (optional $ argument str (    metavar "FILE"
+                                           <> help "Source program"))
+            <*> (optional $ strOption (    long "data"
+                                        <> metavar "DATA"
+                                        <> help "Data source (optional)" ))
+
 main :: IO ()
 main = do
-  args <- getArgs
-  case args of
-    ["sql"] -> do (inVal, inTy) <- readDB "test.db"
-                  terminalRepl $ ("data", inTy, inVal) `consEnv` initEnv
-    [fname] -> fileRepl fname $ initEnv
-    []      -> terminalRepl $ initEnv
+  CmdOpts fname dbname <- execParser opts
+  let repl = case fname of
+               Just fname -> fileRepl fname
+               Nothing -> terminalRepl
+  (inVal, inTy) <- case dbname of
+                     Just dbname -> readDB dbname
+                     Nothing -> return (unitVal, unitType)
+  repl $ ("data", inTy, inVal) `consEnv` initEnv

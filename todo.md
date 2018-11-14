@@ -1,6 +1,9 @@
 # Todo ordered (easy things)
-  * print tables with records etc flattened
+  * play with some data set
+    * download R's datasets
+    * write csvToSqlite (includes metadata about primary keys etc)
 
+  * literate programming output
   * raster/ggplot/canvas output?
   * write up explanation and make some demos
 

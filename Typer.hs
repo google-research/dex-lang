@@ -1,5 +1,5 @@
 module Typer (Type (..), TypeErr (..), ClosedType (..), BaseType (..), TypeEnv,
-              initTypeEnv, typeExpr, typePatMatch) where
+              initTypeEnv, typeExpr, typePatMatch, unitType) where
 
 
 import Control.Monad
@@ -223,6 +223,9 @@ solve s (t1, t2) = do
 
 solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
+
+unitType :: ClosedType
+unitType = Forall 0 (RecType emptyRecord)
 
 instance Show ClosedType where
   show (Forall 0 t) = show t

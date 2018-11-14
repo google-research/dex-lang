@@ -1,5 +1,5 @@
 module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
-                    Val (..), IdxVal (..)) where
+                    Val (..), IdxVal (..), unitVal) where
 
 import qualified Data.Map.Strict as M
 import Control.Monad
@@ -185,6 +185,8 @@ binOpFun Add = (+)
 binOpFun Mul = (*)
 binOpFun Sub = (-)
 
+unitVal :: Val
+unitVal = RecVal emptyRecord
 
 -- valToBox :: Val -> Box
 instance Show Val where
