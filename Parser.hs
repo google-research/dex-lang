@@ -1,7 +1,9 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
-               IdxPat, IdxExpr (..), parseCommand, Command (..)) where
+               IdxPat, IdxExpr (..), parseCommand, typedName,
+               str, Command (..)) where
 import Util
 import Record
+import Typer
 import Control.Monad
 import Test.HUnit
 import qualified Data.Map.Strict as M
@@ -52,7 +54,6 @@ opNames = ["+", "*", "/", "-"]
 resNames = ["for", "lam", "let", "in"]
 languageDef = haskellStyle { Token.reservedOpNames = opNames
                            , Token.reservedNames   = resNames
-                           , Token.commentLine     = "--"
                            }
 
 lexer = Token.makeTokenParser languageDef
@@ -119,6 +120,19 @@ decl = do
   body <- expr
   return (v, wrap body)
 
+
+typedName :: Parser (String, BaseType)
+typedName = do
+  name <- identifier
+  str "::"
+  typeName <- identifier
+  ty <- case typeName of
+    "Int"  -> return IntType
+    "Str"  -> return StrType
+    "Real" -> return RealType
+    _      -> fail $ show typeName ++ " is not a valid type"
+  return (name, ty)
+
 explicitCommand :: Parser Command
 explicitCommand = do
   try $ str ":"
@@ -128,7 +142,7 @@ explicitCommand = do
     "t" -> return $ GetType e
     "p" -> return $ GetParse e
     "l" -> return $ GetLowered e
-    otherwise -> fail $ "unrecognized command: " ++ show cmd
+    _   -> fail $ "unrecognized command: " ++ show cmd
 
 maybeNamed ::Parser a -> Parser (Maybe String, a)
 maybeNamed p = do

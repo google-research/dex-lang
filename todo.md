@@ -1,4 +1,5 @@
 # Todo ordered (easy things)
+  * parse csv with typed headers
   * play with some data set
     * download R's datasets
     * write csvToSqlite (includes metadata about primary keys etc)

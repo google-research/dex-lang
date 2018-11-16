@@ -1,5 +1,5 @@
 module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
-                    Val (..), IdxVal (..), unitVal) where
+                    Val (..), IdxVal (..), unitVal, idxValToVal) where
 
 import qualified Data.Map.Strict as M
 import Control.Monad
@@ -14,6 +14,9 @@ import Typer
 import Record
 
 data Val = IntVal Int
+         | RealVal Float
+         | StrVal  String
+         | BoolVal  Bool
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
@@ -23,6 +26,7 @@ data IdxVal = Any
             | IntIdxVal  Int
             | RealIdxVal Float
             | StrIdxVal  String
+            | BoolIdxVal  Bool
             | RecIdxVal (Record IdxVal)
                 deriving (Eq, Ord)
 
@@ -187,6 +191,14 @@ binOpFun Sub = (-)
 
 unitVal :: Val
 unitVal = RecVal emptyRecord
+
+idxValToVal :: IdxVal -> Val
+idxValToVal v = case v of
+  IntIdxVal x  -> IntVal x
+  RealIdxVal x -> RealVal x
+  StrIdxVal x  -> StrVal x
+  BoolIdxVal x -> BoolVal x
+  RecIdxVal r  -> RecVal $ fmap idxValToVal r
 
 -- valToBox :: Val -> Box
 instance Show Val where
