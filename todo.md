@@ -1,5 +1,11 @@
 # Todo ordered (easy things)
-  * parse csv with typed headers
+  * .cod file format parser and pretty-printer
+  * json i/o
+  * ffi for calling shell scripts
+
+
+  * orchestrate jax benchmarking from coddle
+
   * play with some data set
     * download R's datasets
     * write csvToSqlite (includes metadata about primary keys etc)
@@ -26,6 +32,12 @@
 
 
 # Todo
+* parser for non-csv user-entered tables
+  * could also be used for literal tables in programs
+  * can we use a joint parser-printer library like Data.Syntax
+  * emacs mode to re-align
+
+
 * example programs
   * prelude: matmul, standard deviation, promote, normalize-over
   * summary stats (R-style workflow)
@@ -123,3 +135,95 @@ How to implement e.g. map? The hard part is that we need to give it an untyped
 function that we know is `a -> b` but is encoded as `Val -> Val`. At the very
 least, I need to know ahead of time what the actual output type is. So let's
 maybe revisit this once we have type inference.
+
+
+# textual representation for tabular data
+
+We need to pretty-print tables. We also need an easy way to make table literals,
+either in the source program or as a separate file. We also want to read
+existing textual quasi-formats like csv but that could be separate.
+
+{tab,whitespace,comma}-separated values are close. But we need a few more
+features:
+  * Explicitly typed columns (avoid the "OCT4 problem"!)
+  * Distinction between primary keys and the rest
+  * Multiple named tables in one file
+
+Some more desiderata:
+  * pretty-printing that's also a valid serialization
+  * small delta from existing formats - e.g. csv
+  * easy to edit in emacs etc
+  * easy to read, possibly edit, with unix tools
+
+The existing pretty-printing representation, seems reasonable.
+
+One bifurcation is whether to use possibly-aligned spaces or tabs.
+Tabs seem like the better approach (the tab explicitly means 'table'!)
+But the columns won't be aligned with terminal output or default text editor
+settings. We could allow tabs and spaces. That removes some of the benefits of
+tabs (e.g. allowing data containing spaces). And even if we accept either,
+there's still the question of what to use by default.
+
+pro spaces:
+  * easy to align in a way that works in any fixed-width font
+  * easy to edit without magic (or maybe just an "align everything" command)
+  * probably need space output when writing to terminal anyway
+pro tabs:
+  * don't have to update whole file to maintain alignment
+  * more space-efficient (but textual data isn't going to be space-efficient
+    anyway)
+  * don't have problems with occasional pathologically large cells
+
+I think we should accept both. And pretty-printing output needs to be spaces
+too, for now, for the sake of rendering.
+
+Let's also make a csv2cod converter that "sniffs" the columns to guess col types.
+
+Another q: should pretty-printing include col types?
+ * We need it for deserialization. But we don't want it in data to share
+ * Maybe it's a repr/str distinction? We just need an alternative pretty-printer
+   that isn't invertible. (Maybe that one would also have things for controlling
+   layout and precision. Even column names might be different - things with
+   spaces and so on rather than valid identifiers. It's a distinct sink type,
+   like plotting, that's explicitly only for human consumption. But the default
+   can still be repr, which is both human-consumable and machine-consumable)
+
+More questions
+  * Should input be sorted? (Probably not - liberal in what we accept)
+  * what about missing keys (with the "use the key above" convention)?
+    * It does imply sorted
+    * tricky with whitespace-separated - have to count number of fields in each
+      row and right-align. But it could lead to hard-to-catch errors if there
+      are fields missing for other reasons.
+      * maybe a character like '.' or '_' meaning "as above" might be more explicit.
+        * yes, I think that works
+
+Representing things like empty tuples is tricky if we only handle the leaves
+(since it's hard to distinguish (Int, Int) from (Int, (), Int) ).
+
+Consider the following (flat) table types:
+
+(Int,Int)=>(Int,Int)
+(Int,)=>(Int,)
+(Int)=>(Int)
+()=>()
+()
+
+The simplest approach would be to keep the parens and maybe replace '=>' with
+whitespace. But the commas are a bit ugly. If we drop them, we need to make the
+parens significant, so that `(Int)` is a singleton tuple and `Int` is Int:
+
+(Int Int) (Int Int)
+Int Int
+(Int) (Int)
+() ()
+()
+
+Maybe if we realy wanted we could introduce special syntax '|' which means
+"treat left and right as components of a record, so that the first example
+(which is the most common in translation from csvs) would become:
+Int Int | Int Int
+But let's leave that for later, with feedback from others. The parens syntax
+seems clean and uniform for now.
+
+

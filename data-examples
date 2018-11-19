@@ -1,0 +1,99 @@
+Int
+
+Int
+1
+
+--
+(Int, Int)
+
+(Int Int)
+   1   2
+
+--
+(Int, (Int,x:Real)
+
+Int  (Int  x:Real)
+  1     2     1.2
+
+--
+Int => Int
+
+Int   Int
+  0    10
+  1    20
+
+--
+(Int,Str) => Real
+
+(  Int   Str)  Real
+    1   foo    1.0
+    2   bar    1.1
+
+--
+(x:Int,y:Str) => (a:Int,b:Real)
+
+(x:Int y:Str) (a:Int b:Real)
+     1   foo       2    bar
+     2   baz       3    foz
+
+--
+Int => (x:Int,y:Str) => (a:Int,b:Real)
+
+Int (x:Int y:Str) (a:Int b:Real)
+  1      2   foo       1   1.0
+  2      3   baz       1   1.0
+
+--
+(x:Int, y:(Int=>Real), z:Str)
+
+x:Int  z:Str
+1      foo
+
+> y
+Int   Real
+  1    1.0
+
+--
+(x:Int,)=>(Int, (z:Str,w:Int)=>Real, foo:(Int=>Real))
+
+(x:Int)  Int
+     1     1
+
+> . 1
+(x:Int) (z:Str w:Int) Real
+     1     abc     2   1.2
+
+> . foo
+(x:Int) Int Real
+     1    2  1.2
+
+--
+()
+
+()
+
+--
+() => ()
+
+() ()
+
+--
+((),()) => ()
+
+(() ()) ()
+
+--
+(tab1:Int=>Int, tab2:(x:Int,y:Int)=>(z:Real))
+
+> tab1
+Int  Int
+  1    2
+
+> tab2
+(x:Int y:Int) (z:Real)
+     1     2      1.2
+--
+(x:Int, y:(Int, z:Int))=>Int
+
+(x:Int y:(Int z:Int)) Int
+     1      2     3     4
