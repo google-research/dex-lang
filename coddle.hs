@@ -13,7 +13,7 @@ import Data.Semigroup ((<>))
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
-import Parser hiding (Expr (..), Pat (..))
+import Parser hiding (Expr (..), Pat (..), str)
 import Lower
 import Syntax
 import Util

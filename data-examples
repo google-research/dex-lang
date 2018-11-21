@@ -1,14 +1,10 @@
 Int
-
-Int
 1
 
 --
 (Int, Int)
 
-(Int Int)
-   1   2
-
+(1 2)
 --
 (Int, (Int,x:Real)
 
@@ -25,9 +21,18 @@ Int   Int
 --
 (Int,Str) => Real
 
-(  Int   Str)  Real
-    1   foo    1.0
-    2   bar    1.1
+(Int   Str)  Real
+   1   foo    1.0
+   2   bar    1.1
+
+--
+Int => (Int => Int)
+
+Int Int Int
+  1   1  11
+  .   2  12
+  .   3  13
+  2 []
 
 --
 (x:Int,y:Str) => (a:Int,b:Real)
@@ -46,8 +51,8 @@ Int (x:Int y:Str) (a:Int b:Real)
 --
 (x:Int, y:(Int=>Real), z:Str)
 
-x:Int  z:Str
-1      foo
+>
+(x=1, z="foo")
 
 > y
 Int   Real
@@ -78,8 +83,28 @@ Int   Real
 () ()
 
 --
+() => ()
+
+() ()
+() ()
+
+--
+(()=>()=>(), ()=>()=>(), ()=>()=>())
+
+> 0
+() () ()
+
+> 1
+() () ()
+() []
+
+> 2
+() () ()
+() () ()
+--
 ((),()) => ()
 
+(() ()) ()
 (() ()) ()
 
 --

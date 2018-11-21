@@ -1,8 +1,10 @@
 # Todo ordered (easy things)
-  * .cod file format parser and pretty-printer
+  * .cod file format
+    * pretty-printer
+    * parser
+
   * json i/o
   * ffi for calling shell scripts
-
 
   * orchestrate jax benchmarking from coddle
 
@@ -227,3 +229,92 @@ But let's leave that for later, with feedback from others. The parens syntax
 seems clean and uniform for now.
 
 
+# curry . uncurry != id
+
+The curried form, `a=>b=>c` contains information about which keys `a` map to
+empty tables `b=>c`. The uncurried form loses this information. Can we recover
+it by including an empty table symbol (analogous to our)
+
+What about `flip . flip`? Maybe that always has to risk throwing out information
+because we can't handle mixes full tables ('*'). hmm, but that would mean that
+order in records matters.
+(But it'd be a very nice property to have if we could achieve it.)
+
+What are some solutions?
+  1. Accept that `curry . uncurry != id`. Uncurrying loses information
+  2. Make uncurried form similar to curried form with a special "empty set"
+     token, like
+     (a, b) c
+      1  -  1  <-- '1' maps to the empty map `b=>c`
+      2  3  2
+      2  4  3
+     This means that the semantics (not just performance) depends on the order
+     of the keys in the tuple
+  3. Make curried form similar to uncurried form. Empty maps are not allowed.
+     This seems absurd.
+
+Is it even true with functions that `curry . uncurry = id`? Maybe there's some
+subtelty with strictness by which they could be different? The empty map is a
+bit like bottom, after all.
+
+If we're accepting that 'uncurry' might lose information', should we remove the
+'all' symbol, '*' too?
+  1. Remove it completely, so that `for i: 0.0` evaluates to bottom
+  2. Only allow it as a complete substitute for a key, so that
+     `for i j: x.j` is ok but `for (i,j): x.j` evaluates to bottom.
+
+The current setup, which tries to put 'all' symbols anywhere, is probably
+inconsistent, since it doesn't check that there's an order on the key
+components.
+
+Again, I think the design decision comes down to
+  1. (partial) within-tuple tracking of full/empty, and give total order to subkeys
+  2. only top-of-key full/empty, and subkeys are unordered
+
+2 is definitely simpler to implement. And maybe it's not actually losing so
+much, because we're not going to be able to do things like flip anyway, so the
+"tuples are just bookkeeping" story falls flat anyway.
+
+Let's go with 2 for now, purely for simplicity
+Hmm, and maybe with that I can even do slightly more interesting things like
+having a background and a foreground together, making it feasible to express
+things like monoids.
+
+Another option in all of this is to disallow infinite tables. This could be done
+by, for example, requiring that indices be used at least once.
+
+Yet, another option, which might actually be closest to current head, is to only
+try to represent * for every table `b=>c` in `a=>b=>c` or for none of them. It
+can help to separate semantics from implementation. It's clear that the semantic
+domain we're interested in for a table `a=>b` is the set of (possibly infinite)
+lists `[(a,b)]` with unique `a`. But nobody says we need to be able to represent
+all possibilities in that list. We just need to make sure that our internal
+representation can handle anything that a valid term denotes. Then the burden is
+on us to make sure all valid terms are accounted for.
+
+
+# how to flatten `a=>b=>c` and `a=>(b=>c,d)`?
+We'd like the former to be represented as something like a regular table. But
+how do we represent the empty set `b=>c`? Is the latter represented as one table
+with a complicated rhs or two?
+To handle the empty set, here are two options:
+  1. two tables, of tuples `[(a,b)]` and `[(a,b,c)]` where the former accounts
+     for empty tables. (Roughly, like splittling `b=>c` into `(*, b=>c)`).
+     Seems sound but a bit wasteful. Not great for pretty-printing
+  2. special 'empty' token. So tuples `[(a, Either (b,c) Empty)]`
+  3. don't store duplicate 'a's, just unique 'a's and the number of entries at
+     the next level (which may be zero).
+     * this seems like a good representation, but not clear how it maps to
+       ascii.
+
+# How to represent dee and dum
+the empty and non-emtpy tables `()=>()`
+Is it enough just to treat `()` as a leaf?
+Or treat () by itself as a special case (paired with anything else, it's easy).
+Hmm, what about ((),()). I guess anything isomorphic to unit gets the special
+treatment? Maybe easier to just treat () as a leaf.
+
+() ()  -- dee
+
+() ()  -- dum
+() ()

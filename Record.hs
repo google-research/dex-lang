@@ -1,6 +1,7 @@
 module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName,
-               consRecord, unConsRecord, fromPosRecord) where
+               consRecord, unConsRecord, fromPosRecord,
+               RecTree (..), emptyRecTree) where
 
 import Util
 import Control.Monad
@@ -9,7 +10,7 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
-
+data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a
 data RecName = RecPos Int | RecName String  deriving (Eq, Ord)
 
 instance Functor Record where
@@ -21,8 +22,22 @@ instance Foldable Record where
 instance Traversable Record where
   traverse f (Record m) = fmap Record $ traverse f m
 
+instance Functor RecTree where
+  fmap = fmapDefault
+
+instance Foldable RecTree where
+  foldMap = foldMapDefault
+
+instance Traversable RecTree where
+  traverse f t = case t of
+    RecTree r -> fmap RecTree $ traverse (traverse f) r
+    RecLeaf x -> fmap RecLeaf $ f x
+
 emptyRecord :: Record a
 emptyRecord = Record M.empty
+
+emptyRecTree :: RecTree a
+emptyRecTree = RecTree emptyRecord
 
 posRecord :: [a] -> Record a
 posRecord = mixedRecord . zip (repeat Nothing)
