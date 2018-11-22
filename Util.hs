@@ -1,9 +1,9 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitWhile,
-             composeN, mapMaybe, lookup, uncons, repeated) where
+             composeN, mapMaybe, lookup, uncons, repeated, shortList) where
 import Data.List (sort)
 import Prelude hiding (lookup)
-
+import Test.QuickCheck
 
 group :: (Ord a) => [(a,b)] -> [(a, [b])]
 group [] = []
@@ -80,3 +80,8 @@ repeatedSorted [] = []
 repeatedSorted [x] = []
 repeatedSorted (x:y:rest) | x == y = [x] ++ repeatedSorted (dropWhile (== x) rest)
                           | otherwise = repeatedSorted (y:rest)
+
+shortList :: Int -> Gen a -> Gen [a]
+shortList n g = do
+   n' <- choose (0, n)
+   sequence $ replicate n' g

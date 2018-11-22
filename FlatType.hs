@@ -1,4 +1,4 @@
-module FlatType (showVal) where
+module FlatType (flattenType, unflattenType, showVal) where
 import Text.PrettyPrint.Boxes
 import Data.List (intersperse, transpose)
 

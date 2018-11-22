@@ -1,4 +1,5 @@
 import Test.HUnit
+import Test.QuickCheck
 import Typer
 import qualified Parser as P
 import Parser hiding (Expr (..), Pat (..))
@@ -8,6 +9,8 @@ import Syntax
 import Util
 import Typer
 import Interpreter
+import FlatType
+import Control.Monad (liftM2)
 import qualified Data.Map.Strict as Map
 
 
@@ -60,9 +63,9 @@ parseTestCases =
   ]
 
 infixr 1 -->
-infixr 2 ==>
+infixr 2 ===>
 (-->) = ArrType
-(==>) = TabType
+(===>) = TabType
 int = BaseType IntType
 a = TypeVar 0
 b = TypeVar 1
@@ -72,15 +75,20 @@ typeTestCases =
   , ("1 + 3"                 , Forall 0 $ int)
   , ("lam x: x"              , Forall 1 $ a --> a)
   , ("(lam x: x) 2"          , Forall 0 $ int)
-  , ("for i: 1"              , Forall 1 $ a ==> int)
-  , ("for i: (for j: 3).i"   , Forall 1 $ a ==> int)
-  , ("for i: (iota 3).i"     , Forall 0 $ int ==> int)
+  , ("for i: 1"              , Forall 1 $ a ===> int)
+  , ("for i: (for j: 3).i"   , Forall 1 $ a ===> int)
+  , ("for i: (iota 3).i"     , Forall 0 $ int ===> int)
   , ("reduce add 0 (iota 3)" , Forall 0 $ int)
   , ("let x = 1 in x"        , Forall 0 $ int)
   , ("lam x: (x,x)"          , Forall 1 $ a --> RecType (posRecord [a, a]))
   , ("let (x,y) = (1,(2,3)) in (y,x)", Forall 0 $
         RecType (posRecord [RecType (posRecord [int, int]), int]))
   ]
+
+prop_flatUnflatType :: Type -> Property
+prop_flatUnflatType t = case flattenType t of
+    Left _ -> property Discard
+    Right tabs -> t === unflattenType tabs
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
@@ -134,11 +142,9 @@ typeErrorTests = TestList [testCase s gettype (Left e)
 
 
 main = do
-  putStrLn "Parse tests"
-  runTestTT $ parseTests
-  putStrLn "Type tests"
-  runTestTT $ typeTests
-  putStrLn "Type error tests"
-  runTestTT $ typeErrorTests
-  putStrLn "Eval tests"
-  runTestTT $ evalTests
+  putStrLn "Parse tests"        >> runTestTT parseTests
+  putStrLn "Type tests"         >> runTestTT typeTests
+  putStrLn "Type error tests"   >> runTestTT typeErrorTests
+  putStrLn "Eval tests"         >> runTestTT evalTests
+  putStrLn "Flatten quickcheck" >> verboseCheck prop_flatUnflatType
+  -- putStrLn "Flatten quickcheck" >> quickCheck prop_flatUnflatType

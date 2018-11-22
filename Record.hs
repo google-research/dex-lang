@@ -1,12 +1,13 @@
 module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName,
                consRecord, unConsRecord, fromPosRecord,
-               RecTree (..), emptyRecTree) where
+               RecTree (..), emptyRecTree, arbitraryRecord) where
 
 import Util
 import Control.Monad
 import Data.List (nub, intersperse)
 import Data.Traversable
+import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
@@ -77,3 +78,26 @@ instance Show a => Show (Record a) where
 instance Show RecName where
   show (RecPos i)  = "#" ++ show i
   show (RecName s) = s
+
+arbitraryName :: Gen String
+arbitraryName = liftM2 (:) arbLower (shortList 2 arbValid)
+  where arbLower = choose ('\97', '\122')
+        arbUpper = choose ('\65', '\90')
+        arbNum   = choose ('\48', '\57')
+        arbValid = oneof [arbLower, arbUpper, arbNum]
+
+nonNeg :: Gen Int
+nonNeg = fmap unwrap arbitrary
+  where unwrap (NonNegative x) = x
+
+instance Arbitrary RecName where
+  arbitrary = oneof [ fmap RecPos nonNeg
+                    , fmap RecName arbitraryName
+                    , fmap RecName (elements ["x", "y"]) ]
+
+arbitraryRecord :: Gen a -> Gen (Record a)
+arbitraryRecord g = let kvPair = liftM2 (,) arbitrary g
+                    in fmap (Record . M.fromList) (shortList 3 kvPair)
+
+instance Arbitrary a => Arbitrary (Record a) where
+  arbitrary = arbitraryRecord arbitrary

@@ -7,6 +7,7 @@ import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
 import Control.Monad.Writer (WriterT, runWriterT, tell)
 import Control.Monad.State (StateT, evalState, put, get)
+import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as Map
 import Data.List (nub, intersperse)
 import Data.Foldable (toList)
@@ -254,3 +255,35 @@ instance Show TypeErr where
 varName :: Int -> String
 varName n | n < 26    = [['a'..'z'] !! n]
           | otherwise = varName (mod n 26) ++ show (div n 26)
+
+nonNeg :: Gen Int
+nonNeg = fmap unwrap arbitrary
+  where unwrap (NonNegative x) = x
+
+genLeaf :: Gen Type
+genLeaf = frequency [ (4, fmap BaseType arbitrary)
+                    , (1, fmap TypeVar nonNeg) ]
+
+genSimpleType :: Int -> Gen Type
+genSimpleType 0 = genLeaf
+genSimpleType n = oneof [ genLeaf
+                        , fmap RecType (arbitraryRecord subtree)]
+  where subtree = genSimpleType (n `div` 2)
+
+genType :: Int -> Gen Type
+genType 0 = genLeaf
+genType n = frequency $
+  [ (3, genLeaf)
+  , (3, fmap RecType (arbitraryRecord subTree))
+  , (1, liftM2 ArrType subTree subTree)
+  , (3, liftM2 TabType simpleSubTree subTree) ]
+            where
+              subTree       = genType n' -- genType n'
+              simpleSubTree = genSimpleType n'
+              n' = n `div` 2
+
+instance Arbitrary BaseType where
+  arbitrary = elements [IntType, RealType, StrType]
+
+instance Arbitrary Type where
+  arbitrary = sized genType
