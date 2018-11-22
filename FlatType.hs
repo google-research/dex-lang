@@ -60,6 +60,8 @@ unflattenScalarTree st = case st of
 mergeTypes :: T.Type -> T.Type -> T.Type
 mergeTypes (T.RecType (Record m1)) (T.RecType (Record m2)) =
   T.RecType . Record $ M.unionWith mergeTypes m1 m2
+mergeTypes (T.TabType a1 b1) (T.TabType a2 b2) | a1 == a2 =
+  T.TabType a1 (mergeTypes b1 b2)
 
 recTypeFromName :: [RecName] -> T.Type -> T.Type
 recTypeFromName [] = id
