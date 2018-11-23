@@ -1,12 +1,14 @@
 module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
-                    Val (..), IdxVal (..), unitVal, idxValToVal) where
+                    Val (..), IdxVal (..), unitVal, idxValToVal,
+                    TypedVal, TypedIdxVal,
+                    validTypedVal, validTypedIdxVal) where
 
 import qualified Data.Map.Strict as M
 import Control.Monad
-
 import Data.Foldable
 import Data.List (sortOn)
 import Data.Foldable (toList)
+import Test.QuickCheck
 
 import Syntax
 import Util
@@ -204,6 +206,9 @@ idxValToVal v = case v of
 instance Show Val where
   show x = case x of
     IntVal x -> show x
+    BoolVal x -> show x
+    RealVal x -> show x
+    StrVal x -> x
     TabVal m -> "<table>"
     RecVal r -> "<record>"
     LamVal _ _ _ -> "<lambda>"
@@ -216,3 +221,39 @@ instance Show IdxVal where
     RealIdxVal x -> show x
     StrIdxVal  s -> s
     RecIdxVal  r -> show r
+
+data TypedVal = TypedVal Type Val  deriving (Show)
+data TypedIdxVal = TypedIdxVal Type IdxVal  deriving (Show)
+
+instance Arbitrary TypedVal where
+  arbitrary = return $ TypedVal (BaseType IntType) (BoolVal True)
+
+instance Arbitrary TypedIdxVal where
+  arbitrary = undefined
+
+validTypedVal :: TypedVal -> Either String ()
+validTypedVal (TypedVal t v) = case (t,v) of
+  (BaseType b, v') -> case (b,v') of
+                        (IntType , IntVal  _) -> return ()
+                        (BoolType, BoolVal _) -> return ()
+                        (RealType, RealVal _) -> return ()
+                        (StrType , StrVal  _) -> return ()
+                        _ -> failValid b v'
+  (ArrType _ _ , LamVal _ _ _) -> undefined
+  (ArrType _ _ , Builtin _ _ ) -> undefined
+  (TabType a b, TabVal m) -> undefined
+  (RecType t, RecVal v) -> undefined
+  _ -> failValid t v
+
+failValid t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
+
+validTypedIdxVal :: TypedIdxVal -> Either String ()
+validTypedIdxVal (TypedIdxVal t v) = case (t,v) of
+  (BaseType b, v') -> case (b,v') of
+                        (IntType , IntIdxVal  _) -> return ()
+                        (BoolType, BoolIdxVal _) -> return ()
+                        (RealType, RealIdxVal _) -> return ()
+                        (StrType , StrIdxVal  _) -> return ()
+                        _ -> failValid b v'
+  (RecType t, RecIdxVal v) -> undefined
+  _ -> failValid t v

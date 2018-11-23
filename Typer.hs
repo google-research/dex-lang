@@ -21,7 +21,7 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | TypeVar Int  deriving (Eq)
 
-data BaseType = IntType | RealType | StrType deriving (Eq, Show)
+data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Show)
 
 data ClosedType = Forall Int Type  deriving (Eq)
 data InferType = Open Type | Closed ClosedType

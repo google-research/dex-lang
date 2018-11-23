@@ -1,4 +1,4 @@
-import Test.HUnit
+import Test.HUnit hiding (Testable)
 import Test.QuickCheck
 import Typer
 import qualified Parser as P
@@ -85,10 +85,17 @@ typeTestCases =
         RecType (posRecord [RecType (posRecord [int, int]), int]))
   ]
 
+instance Show a => Testable (Either a b) where
+  property (Left s) = counterexample (show s) False
+  property (Right _) = property True
+
 prop_flatUnflatType :: Type -> Property
 prop_flatUnflatType t = case flattenType t of
     Left _ -> property Discard
     Right tabs -> t === unflattenType tabs
+
+prop_validVal :: TypedVal -> Property
+prop_validVal = property . validTypedVal
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
@@ -126,8 +133,6 @@ gettype s = typeExpr (getParse s) initTypeEnv
 getVal :: String -> Val
 getVal s = evalExpr (getParse s) initValEnv
 
-
-
 parseTests = TestList [testCase s parseCommand (Right (EvalExpr p))
                       | (s,p) <- parseTestCases]
 
@@ -139,11 +144,10 @@ typeTests = TestList [testCase s gettype (Right t)
 
 typeErrorTests = TestList [testCase s gettype (Left e)
                           | (s,e) <- typeErrorTestCases]
-
-
 main = do
   putStrLn "Parse tests"        >> runTestTT parseTests
   putStrLn "Type tests"         >> runTestTT typeTests
   putStrLn "Type error tests"   >> runTestTT typeErrorTests
   putStrLn "Eval tests"         >> runTestTT evalTests
   putStrLn "Flatten quickcheck" >> quickCheck prop_flatUnflatType
+  putStrLn "Valid val quickcheck" >> quickCheck prop_validVal
