@@ -1,9 +1,9 @@
 module FlatType (flattenType, unflattenType,
                  flattenVal, unflattenVal,
-                 showVal, printHeader, parseHeader,
+                 showVal, printTabType, parseHeader,
                  TabType) where
 import Text.PrettyPrint.Boxes
-import Data.List (intersperse, transpose)
+import Data.List (intercalate, transpose)
 
 import Record
 import Util
@@ -126,11 +126,20 @@ showVal v (T.Forall _ t) =
     Left e -> "<unprintable value of type " ++ show t ++ ">"
     Right tsFlat -> "tree"
 
+printTabType :: TabType -> String
+printTabType t = printTabName t ++ printHeader t
+
+printTabName :: TabType -> String
+printTabName t = case getTabName t of
+  names | length (concat names) == 0 -> ""
+        | otherwise -> "> " ++ (intercalate "  " $ map printName names) ++ "\n"
+
+getTabName :: TabType -> [[RecName]]
+getTabName (TabType name _ rest) = name : getTabName rest
+getTabName (ValPart _) = []
 
 printHeader :: TabType -> String
-printHeader (TabType [] s rest) = printTree s ++ " " ++ printHeader rest
-printHeader (TabType name s rest) = "> " ++ printName name ++ "\n" ++
-                                    printHeader (TabType [] s rest)
+printHeader (TabType _ s rest) = printTree s ++ " " ++ printHeader rest
 printHeader (ValPart s) = printTree s ++ "\n"
 
 printTree :: ScalarTree -> String
@@ -142,8 +151,7 @@ printName :: [RecName] -> String
 printName names = concat $ intersperse "." (map show names)
 
 parseHeader :: String -> Except TabType
-parseHeader = undefined
-
+parseHeader = undefined --tabypeP `sepBy
 
 --         let vsFlat = map (flattenVal v) tsFlat
 --         in unlines $ zipWith showTab vsFlat tsFlat

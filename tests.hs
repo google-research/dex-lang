@@ -108,8 +108,8 @@ prop_printParseHeader :: Type -> Property
 prop_printParseHeader t = case flattenType t of
     Left _ -> property Discard
     Right tabs -> conjoin $ map checkTab tabs
-  -- where checkTab t = Right t === parseHeader (printHeader t)
-  where checkTab t' = label (show t ++ "\n" ++ printHeader t') $ property True
+  -- where checkTab t = Right t === parseHeader (printTabType t)
+  where checkTab t' = label (show t ++ "\n" ++ printTabType t') $ property True
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)

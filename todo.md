@@ -174,6 +174,8 @@ pro spaces:
   * probably need space output when writing to terminal anyway
 pro tabs:
   * don't have to update whole file to maintain alignment
+    * particularly important if you want to use line-oriented things like git,
+      diff etc. This might be the clincher.
   * more space-efficient (but textual data isn't going to be space-efficient
     anyway)
   * don't have problems with occasional pathologically large cells
