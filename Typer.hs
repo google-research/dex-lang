@@ -21,7 +21,7 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | TypeVar Int  deriving (Eq)
 
-data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Show)
+data BaseType = IntType | BoolType | RealType | StrType deriving (Eq)
 
 data ClosedType = Forall Int Type  deriving (Eq)
 data InferType = Open Type | Closed ClosedType
@@ -211,7 +211,7 @@ allVars t = case t of
   BaseType _  -> []
   ArrType a b -> nub $ allVars a ++ allVars b
   TabType a b -> nub $ allVars a ++ allVars b
-  RecType r   -> nub . foldr (++) [] . fmap allVars $ r
+  RecType r   -> nub . foldMap allVars $ r
   TypeVar v   -> [v]
 
 idSubst :: Subst
@@ -237,14 +237,16 @@ instance Show Type where
   show t = case t of
     ArrType a b -> "(" ++ show a ++ " -> " ++ show b ++ ")"
     TabType a b -> "(" ++ show a ++ "=>" ++ show b ++ ")"
-    BaseType b  -> case b of
-                     IntType -> "Int"
-                     StrType -> "Str"
-                     BoolType -> "Bool"
-                     RealType -> "Real"
-    RecType m   -> show m
+    BaseType b  -> show b
+    RecType m   -> printRecord show (RecordPrintSpec ", " ":" True) m
     TypeVar v   -> varName v
 
+instance Show BaseType where
+  show b = case b of
+             IntType -> "Int"
+             StrType -> "Str"
+             BoolType -> "Bool"
+             RealType -> "Real"
 
 instance Show TypeErr where
   show e = "Type error: " ++

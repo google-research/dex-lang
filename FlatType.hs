@@ -1,6 +1,7 @@
 module FlatType (flattenType, unflattenType,
                  flattenVal, unflattenVal,
-                 showVal) where
+                 showVal, printHeader, parseHeader,
+                 TabType) where
 import Text.PrettyPrint.Boxes
 import Data.List (intersperse, transpose)
 
@@ -9,7 +10,7 @@ import Util
 import qualified Data.Map.Strict as M
 import qualified Typer as T
 import qualified Interpreter as I
-import Data.List (partition, foldr1)
+import Data.List (partition, foldr1, intersperse)
 import Data.Foldable (toList)
 
 type Except a = Either String a
@@ -18,7 +19,7 @@ type TabName = [RecName]
 type ScalarTree = RecTree (Maybe T.BaseType)
 data TabType = TabType TabName ScalarTree TabType
              | ValPart ScalarTree
-                 deriving (Show)
+                 deriving (Eq, Show)
 
 flattenType :: T.Type -> Except [TabType]
 flattenType t = case t of
@@ -124,6 +125,25 @@ showVal v (T.Forall _ t) =
   case flattenType t of
     Left e -> "<unprintable value of type " ++ show t ++ ">"
     Right tsFlat -> "tree"
+
+
+printHeader :: TabType -> String
+printHeader (TabType [] s rest) = printTree s ++ " " ++ printHeader rest
+printHeader (TabType name s rest) = "> " ++ printName name ++ "\n" ++
+                                    printHeader (TabType [] s rest)
+printHeader (ValPart s) = printTree s ++ "\n"
+
+printTree :: ScalarTree -> String
+printTree (RecTree r) = printRecord printTree (RecordPrintSpec " " ":" False) r
+printTree (RecLeaf x) = case x of Nothing -> "()"
+                                  Just x' -> show x'
+
+printName :: [RecName] -> String
+printName names = concat $ intersperse "." (map show names)
+
+parseHeader :: String -> Except TabType
+parseHeader = undefined
+
 
 --         let vsFlat = map (flattenVal v) tsFlat
 --         in unlines $ zipWith showTab vsFlat tsFlat

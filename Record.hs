@@ -2,17 +2,18 @@ module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName,
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
-               recTreePaths, recFromName, isEmpty) where
+               recTreePaths, recFromName, isEmpty, printRecord,
+               RecordPrintSpec (..)) where
 
 import Util
 import Control.Monad
-import Data.List (nub, intersperse)
+import Data.List (nub, intercalate)
 import Data.Traversable
 import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
-data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a  deriving (Show)
+data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a  deriving (Eq, Show)
 data RecName = RecPos Int | RecName String  deriving (Eq, Ord)
 
 instance Functor Record where
@@ -41,11 +42,15 @@ emptyRecord = Record M.empty
 emptyRecTree :: RecTree a
 emptyRecTree = RecTree emptyRecord
 
+recTreeLeaves :: RecTree a -> [([RecName], Maybe a)]
+recTreeLeaves (RecLeaf x) = [([], Just x)]
+recTreeLeaves (RecTree (Record m))
+  | M.null m = [([], Nothing)]
+  | otherwise = [(k:ks, x) | (k,subtree) <- M.toList m
+                                , (ks, x) <- recTreeLeaves subtree]
+
 recTreePaths :: RecTree a -> [[RecName]]
-recTreePaths (RecLeaf _) = [[]]
-recTreePaths (RecTree (Record m))
-  | M.null m = [[]]
-  | otherwise = [(k:ks) | (k,subtree) <- M.toList m, ks <- recTreePaths subtree]
+recTreePaths = map fst . recTreeLeaves
 
 recFromName :: (Record a -> a) -> [RecName] -> a -> a
 recFromName _ [] = id
@@ -82,16 +87,31 @@ unConsRecord :: Record a -> (a, Record a)
 unConsRecord r = let v:vs = fromPosRecord r
                  in (v, posRecord vs)
 
+
 instance Show a => Show (Record a) where
-  show (Record m) = let showElt (k,v) = case k of
-                            RecPos _  -> show v
-                            RecName s -> s ++ "=" ++ show v
-                        shownElts = map showElt (M.toList m)
-                    in "(" ++ concat (intersperse "," shownElts) ++ ")"
+  show = printRecord show defaultPrintSpec
 
 instance Show RecName where
   show (RecPos i)  = "#" ++ show i
   show (RecName s) = s
+
+data RecordPrintSpec = RecordPrintSpec { recSep::String
+                                       , kvSep::String
+                                       , trail::Bool}
+
+defaultPrintSpec = RecordPrintSpec "=" "," False
+
+printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
+printRecord show spec (Record m) = "(" ++ intercalate (recSep spec) xs ++ ")"
+  where showKV (k,v) = let prefix = case k of RecPos  _ -> ""
+                                              RecName s -> s ++ kvSep spec
+                           suffix = case v of Just x -> show x
+                                              Nothing -> "."
+                       in prefix ++ suffix
+        xs = map showKV $ insertPlaceholders (M.toList m)
+
+insertPlaceholders :: [(RecName, a)] -> [(RecName, Maybe a)]
+insertPlaceholders = mapSnd Just
 
 arbitraryName :: Gen String
 arbitraryName = liftM2 (:) arbLower (shortList 2 arbValid)
@@ -100,12 +120,8 @@ arbitraryName = liftM2 (:) arbLower (shortList 2 arbValid)
         arbNum   = choose ('\48', '\57')
         arbValid = oneof [arbLower, arbUpper, arbNum]
 
-nonNeg :: Gen Int
-nonNeg = fmap unwrap arbitrary
-  where unwrap (NonNegative x) = x
-
 instance Arbitrary RecName where
-  arbitrary = oneof [ fmap RecPos nonNeg
+  arbitrary = oneof [ fmap RecPos (elements [0..5])
                     , fmap RecName arbitraryName
                     , fmap RecName (elements ["x", "y"]) ]
 

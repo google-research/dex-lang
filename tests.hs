@@ -97,12 +97,19 @@ prop_flatUnflatType t = case flattenType t of
 prop_flatUnflatVal :: TypedVal -> Property
 prop_flatUnflatVal (TypedVal t v) = case flattenType t of
   Left _ -> property Discard
-  Right tabTypes -> let flatTabs = flattenVal v tabTypes
-                in counterexample (show tabTypes) $    v === unflattenVal flatTabs tabTypes
+  Right tabTypes ->
+    let flatTabs = flattenVal v tabTypes
+    in counterexample (show tabTypes) $    v === unflattenVal flatTabs tabTypes
 
 prop_validVal :: TypedVal -> Property
 prop_validVal = property . validTypedVal
 
+prop_printParseHeader :: Type -> Property
+prop_printParseHeader t = case flattenType t of
+    Left _ -> property Discard
+    Right tabs -> conjoin $ map checkTab tabs
+  -- where checkTab t = Right t === parseHeader (printHeader t)
+  where checkTab t' = label (show t ++ "\n" ++ printHeader t') $ property True
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
@@ -159,3 +166,5 @@ main = do
   putStrLn "Flatten"            >> quickCheck prop_flatUnflatType
   putStrLn "Valid val"          >> quickCheck prop_validVal
   putStrLn "Flatten val"        >> quickCheck prop_flatUnflatVal
+  putStrLn "Print header"       >> quickCheck prop_printParseHeader
+

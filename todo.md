@@ -19,6 +19,8 @@
   * records polymorphic?
     * this is going to get tricky. Let's get a working demo with some compelling
       examples before tackling it
+      * (flattening would be cleaner if unit was a base type instead of empty
+        record. But it might make it trickier here)
 
 # Want
   * parallel
