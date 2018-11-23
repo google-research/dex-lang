@@ -1,4 +1,6 @@
-module FlatType (flattenType, unflattenType, showVal) where
+module FlatType (flattenType, unflattenType,
+                 flattenVal, unflattenVal,
+                 showVal) where
 import Text.PrettyPrint.Boxes
 import Data.List (intersperse, transpose)
 
@@ -64,23 +66,30 @@ mergeTypes (T.TabType a1 b1) (T.TabType a2 b2) | a1 == a2 =
 type ColName = [RecName]
 data TabVal = TabVal (M.Map [I.IdxVal] TabVal) | ValPartV [I.Val]
 
-flattenVal :: I.Val -> TabType -> TabVal
-flattenVal v t = case t of
+flattenVal :: I.Val -> [TabType] -> [TabVal]
+flattenVal v = map (flattenVal' v)
+
+unflattenVal :: [TabVal] -> [TabType] -> I.Val
+unflattenVal vs ts = foldr1 mergeVals (zipWith unflattenVal' vs ts)
+
+flattenVal' :: I.Val -> TabType -> TabVal
+flattenVal' v t = case t of
   ValPart s -> ValPartV $ map (lookupPath v . fst) (recTreeLeaves s)
   TabType name s rest ->
     let I.TabVal m = lookupPath v name
-    in TabVal $ M.fromList [(flattenIVal k s, flattenVal v' rest)
+    in TabVal $ M.fromList [(flattenIVal k s, flattenVal' v' rest)
                            | (k,v') <- M.toList m]
 
 flattenIVal :: I.IdxVal -> ScalarTree -> [I.IdxVal]
 flattenIVal v s = map (lookupPath v . fst) (recTreeLeaves s)
 
-unflattenVal :: TabVal -> TabType -> I.Val
-unflattenVal (TabVal m) (TabType name s rest) =
+unflattenVal' :: TabVal -> TabType -> I.Val
+unflattenVal' (TabVal m) (TabType tabname s rest) =
   let colNames = map fst (recTreeLeaves s)
-  in I.TabVal $ M.fromList [(unflattenRow k colNames, unflattenVal v rest)
-                           | (k, v) <- M.toList m]
-unflattenVal (ValPartV v) (ValPart s) =
+      tab = I.TabVal $ M.fromList [(unflattenRow k colNames, unflattenVal' v rest)
+                                  | (k, v) <- M.toList m]
+  in recFromName I.RecVal tabname tab
+unflattenVal' (ValPartV v) (ValPart s) =
   unflattenRow v (map fst (recTreeLeaves s))
 
 unflattenRow :: [I.Val] -> [ColName] -> I.Val

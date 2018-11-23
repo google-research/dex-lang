@@ -94,8 +94,15 @@ prop_flatUnflatType t = case flattenType t of
     Left _ -> property Discard
     Right tabs -> t === unflattenType tabs
 
+prop_flatUnflatVal :: TypedVal -> Property
+prop_flatUnflatVal (TypedVal t v) = case flattenType t of
+  Left _ -> property Discard
+  Right tabTypes -> let flatTabs = flattenVal v tabTypes
+                in v === unflattenVal flatTabs tabTypes
+
 prop_validVal :: TypedVal -> Property
 prop_validVal = property . validTypedVal
+
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
@@ -149,5 +156,6 @@ main = do
   putStrLn "Type tests"         >> runTestTT typeTests
   putStrLn "Type error tests"   >> runTestTT typeErrorTests
   putStrLn "Eval tests"         >> runTestTT evalTests
-  putStrLn "Flatten quickcheck" >> quickCheck prop_flatUnflatType
-  putStrLn "Valid val quickcheck" >> quickCheck prop_validVal
+  putStrLn "Flatten"            >> quickCheck prop_flatUnflatType
+  putStrLn "Valid val"          >> quickCheck prop_validVal
+  putStrLn "Flatten val"        >> quickCheck prop_flatUnflatVal

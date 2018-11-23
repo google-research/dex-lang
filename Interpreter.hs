@@ -1,5 +1,6 @@
 module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
-                    Val (..), IdxVal, unitVal, TypedVal, validTypedVal) where
+                    Val (..), IdxVal, unitVal, TypedVal (..),
+                    validTypedVal) where
 
 import qualified Data.Map.Strict as M
 import Control.Monad
