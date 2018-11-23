@@ -1,7 +1,5 @@
 module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
-                    Val (..), IdxVal (..), unitVal, idxValToVal,
-                    TypedVal, TypedIdxVal,
-                    validTypedVal, validTypedIdxVal) where
+                    Val (..), IdxVal, unitVal, TypedVal, validTypedVal) where
 
 import qualified Data.Map.Strict as M
 import Control.Monad
@@ -15,23 +13,17 @@ import Util
 import Typer
 import Record
 
-data Val = IntVal Int
+data Val = Any
+         | IntVal Int
          | RealVal Float
          | StrVal  String
          | BoolVal  Bool
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
-         | Builtin BuiltinName [Val]  deriving (Eq)
+         | Builtin BuiltinName [Val]  deriving (Eq, Ord)
 
-data IdxVal = Any
-            | IntIdxVal  Int
-            | RealIdxVal Float
-            | StrIdxVal  String
-            | BoolIdxVal  Bool
-            | RecIdxVal (Record IdxVal)
-                deriving (Eq, Ord)
-
+type IdxVal = Val
 type IEnv = Int
 type ValEnv = [Val]
 type Env = (ValEnv, IEnv)
@@ -75,23 +67,23 @@ tabVal :: [(IdxVal, Val)] -> Val
 tabVal = TabVal . M.fromList
 
 uncurryTabVal :: Int -> Val -> Val
-uncurryTabVal 0 v = tabVal [(RecIdxVal emptyRecord, v)]
-uncurryTabVal n (TabVal m) = tabVal [(RecIdxVal $ consRecord k ks, v')
+uncurryTabVal 0 v = tabVal [(RecVal emptyRecord, v)]
+uncurryTabVal n (TabVal m) = tabVal [(RecVal $ consRecord k ks, v')
                                        | (k, v) <- M.toList m
                                        , let TabVal m'= uncurryTabVal (n-1) v
-                                       , (RecIdxVal ks, v') <- M.toList m' ]
+                                       , (RecVal ks, v') <- M.toList m' ]
 
 curryTabVal :: Int -> Val -> Val
 curryTabVal 0 (TabVal m) = case M.toList m of [(emptyRecord, v)] -> v
 curryTabVal n (TabVal m) =
-  let grouped = group [(k, (RecIdxVal r', v)) | (RecIdxVal r, v) <- M.toList m
+  let grouped = group [(k, (RecVal r', v)) | (RecVal r, v) <- M.toList m
                                               , let (k, r') = unConsRecord r]
   in tabVal [(k, curryTabVal (n-1) (tabVal v)) | (k, v) <- grouped]
 
 structureTabVal :: IdxPat -> Val -> Val
 structureTabVal p (TabVal m) =
   tabVal [(structureIdx p (fromPosRecord r), v)
-             | (RecIdxVal r, v) <- M.toList m]
+             | (RecVal r, v) <- M.toList m]
 
 structureIdx :: IdxPat -> [IdxVal] -> IdxVal
 structureIdx VarPat [k] = k
@@ -99,7 +91,7 @@ structureIdx (RecPat (Record r)) idxs =
   let (ks, ps) = unzip $ M.toList r
       subPatSizes = map patSize ps
       idxGroups = part subPatSizes idxs
-  in RecIdxVal . Record . M.fromList $ zip ks $ zipWith structureIdx ps idxGroups
+  in RecVal . Record . M.fromList $ zip ks $ zipWith structureIdx ps idxGroups
 
 part :: [Int] -> [a] -> [[a]]
 part [] [] = []
@@ -108,15 +100,15 @@ part (size:sizes) xs = let (prefix, rest) = splitAt size xs
 
 diagWithIdxExpr :: Int -> IdxExpr -> Val -> Val
 diagWithIdxExpr d ie (TabVal m) =
-  tabVal $ [(RecIdxVal (posRecord k),v)
-                           | (RecIdxVal r, (TabVal m')) <- M.toList m
+  tabVal $ [(RecVal (posRecord k),v)
+                           | (RecVal r, (TabVal m')) <- M.toList m
                            , (k2, v ) <- M.toList m'
                            , Just k <- [matchIdxExpr (toList r) ie k2] ]
 
 matchIdxExpr :: [IdxVal] -> IdxExpr -> IdxVal -> Maybe [IdxVal]
 matchIdxExpr idxs (IdxVar v) i = do i' <- tryEq i (idxs !! v)
                                     return $ update v i' idxs
-matchIdxExpr idxs (IdxRecCon vs) (RecIdxVal is) = do
+matchIdxExpr idxs (IdxRecCon vs) (RecVal is) = do
   idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
   foldM mergeIdxs (replicate (length idxs) Any) idxs'
 
@@ -169,16 +161,16 @@ evalApp (Builtin name vs) x = let args = x:vs
 
 evalBuiltin :: BuiltinName -> [Val] -> Val
 evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
-evalBuiltin Iota [IntVal n] = tabVal [(IntIdxVal i, IntVal i)
+evalBuiltin Iota [IntVal n] = tabVal [(IntVal i, IntVal i)
                                          | i <- [0..(n-1)]]
 evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
                                       in foldr f' z (M.elems m)
 
 data BuiltinName = BinOp BinOpName
                  | Iota
-                 | Reduce deriving (Show, Eq)
+                 | Reduce deriving (Show, Eq, Ord)
 
-data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq)
+data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq, Ord)
 
 numArgs :: BuiltinName -> Int
 numArgs x = case x of
@@ -194,17 +186,10 @@ binOpFun Sub = (-)
 unitVal :: Val
 unitVal = RecVal emptyRecord
 
-idxValToVal :: IdxVal -> Val
-idxValToVal v = case v of
-  IntIdxVal x  -> IntVal x
-  RealIdxVal x -> RealVal x
-  StrIdxVal x  -> StrVal x
-  BoolIdxVal x -> BoolVal x
-  RecIdxVal r  -> RecVal $ fmap idxValToVal r
-
 -- valToBox :: Val -> Box
 instance Show Val where
   show x = case x of
+    Any -> "*"
     IntVal x -> show x
     BoolVal x -> show x
     RealVal x -> show x
@@ -214,22 +199,10 @@ instance Show Val where
     LamVal _ _ _ -> "<lambda>"
     Builtin _ _  ->  "<builtin>"
 
-instance Show IdxVal where
-  show x = case x of
-    Any -> "*"
-    IntIdxVal  x -> show x
-    RealIdxVal x -> show x
-    StrIdxVal  s -> s
-    RecIdxVal  r -> show r
-
 data TypedVal = TypedVal Type Val  deriving (Show)
-data TypedIdxVal = TypedIdxVal Type IdxVal  deriving (Show)
 
 instance Arbitrary TypedVal where
   arbitrary = return $ TypedVal (BaseType IntType) (BoolVal True)
-
-instance Arbitrary TypedIdxVal where
-  arbitrary = undefined
 
 validTypedVal :: TypedVal -> Either String ()
 validTypedVal (TypedVal t v) = case (t,v) of
@@ -244,16 +217,5 @@ validTypedVal (TypedVal t v) = case (t,v) of
   (TabType a b, TabVal m) -> undefined
   (RecType t, RecVal v) -> undefined
   _ -> failValid t v
-
-failValid t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
-
-validTypedIdxVal :: TypedIdxVal -> Either String ()
-validTypedIdxVal (TypedIdxVal t v) = case (t,v) of
-  (BaseType b, v') -> case (b,v') of
-                        (IntType , IntIdxVal  _) -> return ()
-                        (BoolType, BoolIdxVal _) -> return ()
-                        (RealType, RealIdxVal _) -> return ()
-                        (StrType , StrIdxVal  _) -> return ()
-                        _ -> failValid b v'
-  (RecType t, RecIdxVal v) -> undefined
-  _ -> failValid t v
+  where failValid t v =
+          Left $ "Couldn't match type " ++ show t ++ " with " ++ show v

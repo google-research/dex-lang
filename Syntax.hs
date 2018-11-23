@@ -11,12 +11,12 @@ data Expr = Lit Int
           | For IdxPat Expr
           | Get Expr IdxExpr
           | RecCon (Record Expr)
-              deriving (Show, Eq)
+              deriving (Show, Eq, Ord)
 
 data IdxExpr = IdxVar Int
              | IdxRecCon (Record IdxExpr)
-                 deriving (Show, Eq)
+                 deriving (Show, Eq, Ord)
 
 type IdxPat = Pat
 data Pat = VarPat
-         | RecPat (Record Pat)  deriving (Show, Eq)
+         | RecPat (Record Pat)  deriving (Show, Eq, Ord)

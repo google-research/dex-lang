@@ -73,27 +73,19 @@ flattenVal v t = case t of
                            | (k,v') <- M.toList m]
 
 flattenIVal :: I.IdxVal -> ScalarTree -> [I.IdxVal]
-flattenIVal v s = map (lookupIdxPath v . fst) (recTreeLeaves s)
+flattenIVal v s = map (lookupPath v . fst) (recTreeLeaves s)
 
 unflattenVal :: TabVal -> TabType -> I.Val
 unflattenVal (TabVal m) (TabType name s rest) =
   let colNames = map fst (recTreeLeaves s)
-  in I.TabVal $ M.fromList [(unflattenIRow k colNames, unflattenVal v rest)
+  in I.TabVal $ M.fromList [(unflattenRow k colNames, unflattenVal v rest)
                            | (k, v) <- M.toList m]
 unflattenVal (ValPartV v) (ValPart s) =
   unflattenRow v (map fst (recTreeLeaves s))
 
-unflattenIRow :: [I.IdxVal] -> [ColName] -> I.IdxVal
-unflattenIRow vals names =
-  foldr1 mergeIVals $ zipWith (recFromName I.RecIdxVal) names vals
-
 unflattenRow :: [I.Val] -> [ColName] -> I.Val
 unflattenRow vals names =
   foldr1 mergeVals $ zipWith (recFromName I.RecVal) names vals
-
-mergeIVals :: I.IdxVal -> I.IdxVal -> I.IdxVal
-mergeIVals (I.RecIdxVal (Record m1)) (I.RecIdxVal (Record m2)) =
-  I.RecIdxVal . Record $ M.unionWith mergeIVals m1 m2
 
 mergeVals :: I.Val -> I.Val -> I.Val
 mergeVals (I.RecVal (Record m1)) (I.RecVal (Record m2)) =
@@ -103,12 +95,6 @@ lookupPath :: I.Val -> [RecName] -> I.Val
 lookupPath v [] = v
 lookupPath (I.RecVal (Record m)) (name:rest) = let Just v = M.lookup name m
                                                in lookupPath v rest
-
-lookupIdxPath :: I.IdxVal -> [RecName] -> I.IdxVal
-lookupIdxPath v [] = v
-lookupIdxPath (I.RecIdxVal (Record m)) (name:rest) =
-  let Just v = M.lookup name m
-  in lookupIdxPath v rest
 
 -- ----- printing -----
 
