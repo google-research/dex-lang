@@ -7,6 +7,8 @@ import Data.Foldable
 import Data.List (sortOn)
 import Data.Foldable (toList)
 import Test.QuickCheck
+import qualified Data.Map.Strict as M
+
 
 import Syntax
 import Util
@@ -16,12 +18,12 @@ import Record
 data Val = Any
          | IntVal Int
          | RealVal Float
-         | StrVal  String
+         | StrVal String
          | BoolVal  Bool
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
-         | Builtin BuiltinName [Val]  deriving (Eq, Ord)
+         | Builtin BuiltinName [Val]  deriving (Eq, Ord, Show)
 
 type IdxVal = Val
 type IEnv = Int
@@ -186,19 +188,6 @@ binOpFun Sub = (-)
 unitVal :: Val
 unitVal = RecVal emptyRecord
 
--- valToBox :: Val -> Box
-instance Show Val where
-  show x = case x of
-    Any -> "*"
-    IntVal x -> show x
-    BoolVal x -> show x
-    RealVal x -> show x
-    StrVal x -> x
-    TabVal m -> "<table>"
-    RecVal r -> "<record>"
-    LamVal _ _ _ -> "<lambda>"
-    Builtin _ _  ->  "<builtin>"
-
 data TypedVal = TypedVal Type Val  deriving (Show)
 
 instance Arbitrary TypedVal where
@@ -215,7 +204,7 @@ arbitraryVal t = case t of
                   RealType -> fmap RealVal arbitrary
                   StrType  -> fmap StrVal arbitrary
   TabType a b -> let rowGen = liftM2 (,) (arbitraryVal a) (arbitraryVal b)
-                 in fmap (TabVal . M.fromList) (listOf rowGen)
+                 in fmap (TabVal . M.fromList) (shortList 4 rowGen)
   RecType r -> fmap RecVal $ sequence (fmap arbitraryVal r)
   ArrType _ _ -> return Any
   TypeVar _ -> return Any
@@ -231,12 +220,13 @@ validVal t v = case (t,v) of
                         (RealType, RealVal _) -> return ()
                         (StrType , StrVal  _) -> return ()
                         _ -> fail b v'
-  (ArrType _ _ , LamVal _ _ _) -> return ()
-  (ArrType _ _ , Builtin _ _ ) -> return ()
   (TabType a b, TabVal m) -> sequence [ validVal a k >> validVal b v
                                       | (k, v) <- M.toList m] >> return ()
   (RecType t, RecVal v) -> case zipWithRecord validVal t v of
                              Nothing -> Left $ "Records with mismatched keys"
                              Just r -> sequence r >> return ()
+  (ArrType _ _ , LamVal _ _ _) -> return ()
+  (ArrType _ _ , Builtin _ _ ) -> return ()
+  (_, Any) -> return ()
   _ -> fail t v
   where fail t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
