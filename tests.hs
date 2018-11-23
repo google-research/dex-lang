@@ -146,5 +146,4 @@ main = do
   putStrLn "Type tests"         >> runTestTT typeTests
   putStrLn "Type error tests"   >> runTestTT typeErrorTests
   putStrLn "Eval tests"         >> runTestTT evalTests
-  -- putStrLn "Flatten quickcheck" >> verboseCheck prop_flatUnflatType
   putStrLn "Flatten quickcheck" >> quickCheck prop_flatUnflatType

@@ -1,7 +1,8 @@
 module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName,
                consRecord, unConsRecord, fromPosRecord,
-               RecTree (..), emptyRecTree, arbitraryRecord) where
+               RecTree (..), emptyRecTree, arbitraryRecord,
+               recTreeLeaves, recFromName) where
 
 import Util
 import Control.Monad
@@ -39,6 +40,16 @@ emptyRecord = Record M.empty
 
 emptyRecTree :: RecTree a
 emptyRecTree = RecTree emptyRecord
+
+recTreeLeaves :: RecTree a -> [([RecName], a)]
+recTreeLeaves (RecLeaf x) = [([], x)]
+recTreeLeaves (RecTree (Record m)) =
+  [(k:ks, x) | (k, subtree) <- M.toList m
+             , (ks, x) <- recTreeLeaves subtree ]
+
+recFromName :: (Record a -> a) -> [RecName] -> a -> a
+recFromName _ [] = id
+recFromName con (k:ks) = con . Record . M.singleton k . recFromName con ks
 
 posRecord :: [a] -> Record a
 posRecord = mixedRecord . zip (repeat Nothing)
