@@ -15,8 +15,10 @@ import Data.Foldable (toList)
 type Except a = Either String a
 
 type TabName = [RecName]
-type ScalarTree = RecTree T.BaseType
-data TabType = TabType TabName ScalarTree TabType | ValPart ScalarTree
+type ScalarTree = RecTree (Maybe T.BaseType)
+data TabType = TabType TabName ScalarTree TabType
+             | ValPart ScalarTree
+                 deriving (Show)
 
 flattenType :: T.Type -> Except [TabType]
 flattenType t = case t of
@@ -24,18 +26,23 @@ flattenType t = case t of
        leftKeys <- flattenIdxType a
        rightTabs <- flattenType b
        return $ map (TabType [] leftKeys) rightTabs
-   T.RecType r -> do
+   T.RecType r | isEmpty r -> return $ [ValPart (RecLeaf Nothing)]
+               | otherwise -> do
      Record m <- sequence $ fmap flattenType r
      let ts = [(k,t) | (k, ts) <- M.toList m, t <- ts]
-     return $ valRec [(k, s) | (k, ValPart s) <- ts]
-       : [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
-   T.BaseType b -> return $ [ValPart (RecLeaf b)]
+         maybeVal = case [(k, s) | (k, ValPart s) <- ts] of
+                  [] -> []
+                  vs -> [valRec vs]
+         tabs = [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
+     return $ maybeVal ++ tabs
+   T.BaseType b -> return $ [ValPart (RecLeaf (Just b))]
    _ -> Left $ "Can't flatten " ++ show t
 
 flattenIdxType :: T.Type -> Except ScalarTree
 flattenIdxType t = case t of
-   T.RecType r -> fmap RecTree $ sequence (fmap flattenIdxType r)
-   T.BaseType b -> return (RecLeaf b)
+   T.RecType r | isEmpty r -> return (RecLeaf Nothing)
+               | otherwise -> fmap RecTree $ sequence (fmap flattenIdxType r)
+   T.BaseType b -> return (RecLeaf (Just b))
    _ -> Left $ "Can't flatten index type" ++ show t
 
 valRec :: [(RecName, ScalarTree)] -> TabType
@@ -53,7 +60,8 @@ unflattenTab (TabType name st rest) =
 unflattenScalarTree :: ScalarTree -> T.Type
 unflattenScalarTree st = case st of
   RecTree r -> T.RecType $ fmap unflattenScalarTree r
-  RecLeaf b -> T.BaseType b
+  RecLeaf (Just b) -> T.BaseType b
+  RecLeaf Nothing  -> T.RecType emptyRecord
 
 mergeTypes :: T.Type -> T.Type -> T.Type
 mergeTypes (T.RecType (Record m1)) (T.RecType (Record m2)) =
@@ -74,23 +82,23 @@ unflattenVal vs ts = foldr1 mergeVals (zipWith unflattenVal' vs ts)
 
 flattenVal' :: I.Val -> TabType -> TabVal
 flattenVal' v t = case t of
-  ValPart s -> ValPartV $ map (lookupPath v . fst) (recTreeLeaves s)
+  ValPart s -> ValPartV $ map (lookupPath v) (recTreePaths s)
   TabType name s rest ->
     let I.TabVal m = lookupPath v name
     in TabVal $ M.fromList [(flattenIVal k s, flattenVal' v' rest)
                            | (k,v') <- M.toList m]
 
 flattenIVal :: I.IdxVal -> ScalarTree -> [I.IdxVal]
-flattenIVal v s = map (lookupPath v . fst) (recTreeLeaves s)
+flattenIVal v s = map (lookupPath v) (recTreePaths s)
 
 unflattenVal' :: TabVal -> TabType -> I.Val
 unflattenVal' (TabVal m) (TabType tabname s rest) =
-  let colNames = map fst (recTreeLeaves s)
+  let colNames = recTreePaths s
       tab = I.TabVal $ M.fromList [(unflattenRow k colNames, unflattenVal' v rest)
                                   | (k, v) <- M.toList m]
   in recFromName I.RecVal tabname tab
 unflattenVal' (ValPartV v) (ValPart s) =
-  unflattenRow v (map fst (recTreeLeaves s))
+  unflattenRow v (recTreePaths s)
 
 unflattenRow :: [I.Val] -> [ColName] -> I.Val
 unflattenRow vals names =
@@ -99,6 +107,10 @@ unflattenRow vals names =
 mergeVals :: I.Val -> I.Val -> I.Val
 mergeVals (I.RecVal (Record m1)) (I.RecVal (Record m2)) =
   I.RecVal . Record $ M.unionWith mergeVals m1 m2
+mergeVals (I.TabVal m1) (I.TabVal m2) | M.keys m1 == M.keys m1 =
+  I.TabVal $ M.intersectionWith mergeVals m1 m2
+mergeVals v1 v2 = error ("Can't merge " ++ show v1 ++ " and " ++ show v2)
+
 
 lookupPath :: I.Val -> [RecName] -> I.Val
 lookupPath v [] = v

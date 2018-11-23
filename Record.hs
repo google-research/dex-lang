@@ -2,7 +2,7 @@ module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName,
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
-               recTreeLeaves, recFromName) where
+               recTreePaths, recFromName, isEmpty) where
 
 import Util
 import Control.Monad
@@ -12,7 +12,7 @@ import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
-data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a
+data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a  deriving (Show)
 data RecName = RecPos Int | RecName String  deriving (Eq, Ord)
 
 instance Functor Record where
@@ -41,15 +41,18 @@ emptyRecord = Record M.empty
 emptyRecTree :: RecTree a
 emptyRecTree = RecTree emptyRecord
 
-recTreeLeaves :: RecTree a -> [([RecName], a)]
-recTreeLeaves (RecLeaf x) = [([], x)]
-recTreeLeaves (RecTree (Record m)) =
-  [(k:ks, x) | (k, subtree) <- M.toList m
-             , (ks, x) <- recTreeLeaves subtree ]
+recTreePaths :: RecTree a -> [[RecName]]
+recTreePaths (RecLeaf _) = [[]]
+recTreePaths (RecTree (Record m))
+  | M.null m = [[]]
+  | otherwise = [(k:ks) | (k,subtree) <- M.toList m, ks <- recTreePaths subtree]
 
 recFromName :: (Record a -> a) -> [RecName] -> a -> a
 recFromName _ [] = id
 recFromName con (k:ks) = con . Record . M.singleton k . recFromName con ks
+
+isEmpty :: Record a -> Bool
+isEmpty (Record m) = M.null m
 
 posRecord :: [a] -> Record a
 posRecord = mixedRecord . zip (repeat Nothing)

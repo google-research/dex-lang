@@ -203,7 +203,7 @@ arbitraryVal t = case t of
                   IntType  -> fmap IntVal arbitrary
                   BoolType -> fmap BoolVal arbitrary
                   RealType -> fmap RealVal arbitrary
-                  StrType  -> fmap StrVal arbitrary
+                  StrType  -> fmap StrVal (shortList 4 (choose ('\0', '\127')))
   TabType a b -> let rowGen = liftM2 (,) (arbitraryVal a) (arbitraryVal b)
                  in fmap (TabVal . M.fromList) (shortList 4 rowGen)
   RecType r -> fmap RecVal $ sequence (fmap arbitraryVal r)

@@ -98,7 +98,7 @@ prop_flatUnflatVal :: TypedVal -> Property
 prop_flatUnflatVal (TypedVal t v) = case flattenType t of
   Left _ -> property Discard
   Right tabTypes -> let flatTabs = flattenVal v tabTypes
-                in v === unflattenVal flatTabs tabTypes
+                in counterexample (show tabTypes) $    v === unflattenVal flatTabs tabTypes
 
 prop_validVal :: TypedVal -> Property
 prop_validVal = property . validTypedVal

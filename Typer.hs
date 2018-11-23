@@ -240,6 +240,7 @@ instance Show Type where
     BaseType b  -> case b of
                      IntType -> "Int"
                      StrType -> "Str"
+                     BoolType -> "Bool"
                      RealType -> "Real"
     RecType m   -> show m
     TypeVar v   -> varName v
@@ -283,7 +284,7 @@ genType n = frequency $
               n' = n `div` 2
 
 instance Arbitrary BaseType where
-  arbitrary = elements [IntType, RealType, StrType]
+  arbitrary = elements [IntType, BoolType, StrType]
 
 instance Arbitrary Type where
   arbitrary = sized genType
