@@ -202,20 +202,41 @@ instance Show Val where
 data TypedVal = TypedVal Type Val  deriving (Show)
 
 instance Arbitrary TypedVal where
-  arbitrary = return $ TypedVal (BaseType IntType) (BoolVal True)
+  arbitrary = do
+    t <- arbitrary
+    v <- arbitraryVal t
+    return $ TypedVal t v
+
+arbitraryVal :: Type -> Gen Val
+arbitraryVal t = case t of
+  BaseType b -> case b of
+                  IntType  -> fmap IntVal arbitrary
+                  BoolType -> fmap BoolVal arbitrary
+                  RealType -> fmap RealVal arbitrary
+                  StrType  -> fmap StrVal arbitrary
+  TabType a b -> let rowGen = liftM2 (,) (arbitraryVal a) (arbitraryVal b)
+                 in fmap (TabVal . M.fromList) (listOf rowGen)
+  RecType r -> fmap RecVal $ sequence (fmap arbitraryVal r)
+  ArrType _ _ -> return Any
+  TypeVar _ -> return Any
 
 validTypedVal :: TypedVal -> Either String ()
-validTypedVal (TypedVal t v) = case (t,v) of
+validTypedVal (TypedVal t v) = validVal t v
+
+validVal :: Type -> Val -> Either String ()
+validVal t v = case (t,v) of
   (BaseType b, v') -> case (b,v') of
                         (IntType , IntVal  _) -> return ()
                         (BoolType, BoolVal _) -> return ()
                         (RealType, RealVal _) -> return ()
                         (StrType , StrVal  _) -> return ()
-                        _ -> failValid b v'
-  (ArrType _ _ , LamVal _ _ _) -> undefined
-  (ArrType _ _ , Builtin _ _ ) -> undefined
-  (TabType a b, TabVal m) -> undefined
-  (RecType t, RecVal v) -> undefined
-  _ -> failValid t v
-  where failValid t v =
-          Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
+                        _ -> fail b v'
+  (ArrType _ _ , LamVal _ _ _) -> return ()
+  (ArrType _ _ , Builtin _ _ ) -> return ()
+  (TabType a b, TabVal m) -> sequence [ validVal a k >> validVal b v
+                                      | (k, v) <- M.toList m] >> return ()
+  (RecType t, RecVal v) -> case zipWithRecord validVal t v of
+                             Nothing -> Left $ "Records with mismatched keys"
+                             Just r -> sequence r >> return ()
+  _ -> fail t v
+  where fail t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
