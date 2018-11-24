@@ -236,9 +236,9 @@ instance Show ClosedType where
 instance Show Type where
   show t = case t of
     ArrType a b -> "(" ++ show a ++ " -> " ++ show b ++ ")"
-    TabType a b -> "(" ++ show a ++ "=>" ++ show b ++ ")"
+    TabType a b -> show a ++ "=>" ++ show b
     BaseType b  -> show b
-    RecType m   -> printRecord show (RecordPrintSpec ", " ":" True) m
+    RecType m   -> printRecord show (RecordPrintSpec ", " ":" ",") m
     TypeVar v   -> varName v
 
 instance Show BaseType where

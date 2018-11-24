@@ -143,7 +143,7 @@ printHeader (TabType _ s rest) = printTree s ++ " " ++ printHeader rest
 printHeader (ValPart s) = printTree s ++ "\n"
 
 printTree :: ScalarTree -> String
-printTree (RecTree r) = printRecord printTree (RecordPrintSpec " " ":" False) r
+printTree (RecTree r) = printRecord printTree (RecordPrintSpec "\t" ":" "") r
 printTree (RecLeaf x) = case x of Nothing -> "()"
                                   Just x' -> show x'
 

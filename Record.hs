@@ -95,23 +95,23 @@ instance Show RecName where
   show (RecPos i)  = "#" ++ show i
   show (RecName s) = s
 
-data RecordPrintSpec = RecordPrintSpec { recSep::String
-                                       , kvSep::String
-                                       , trail::Bool}
+data RecordPrintSpec = RecordPrintSpec { recSep :: String
+                                       , kvSep :: String
+                                       , trailSep :: String}
 
-defaultPrintSpec = RecordPrintSpec "=" "," False
+defaultPrintSpec = RecordPrintSpec "=" "," ""
 
 printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
-printRecord show spec (Record m) = "(" ++ intercalate (recSep spec) xs ++ ")"
-  where showKV (k,v) = let prefix = case k of RecPos  _ -> ""
-                                              RecName s -> s ++ kvSep spec
-                           suffix = case v of Just x -> show x
-                                              Nothing -> "."
-                       in prefix ++ suffix
-        xs = map showKV $ insertPlaceholders (M.toList m)
-
-insertPlaceholders :: [(RecName, a)] -> [(RecName, Maybe a)]
-insertPlaceholders = mapSnd Just
+printRecord showVal spec (Record m) =
+  "(" ++ intercalate (recSep spec) xs ++ trail ++  ")"
+  where showKV (i, (k,v)) =
+          let prefix = case k of
+                RecPos  i' | i' == i -> ""
+                           | otherwise -> "#" ++ show i' ++ kvSep spec
+                RecName s -> s ++ kvSep spec
+          in prefix ++ showVal v
+        xs = map showKV $ zip [0..] (M.toList m)
+        trail = if length (M.keys m) == 1 then trailSep spec else ""
 
 arbitraryName :: Gen String
 arbitraryName = liftM2 (:) arbLower (shortList 2 arbValid)
