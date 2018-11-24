@@ -1,9 +1,13 @@
 module FlatType (flattenType, unflattenType,
                  flattenVal, unflattenVal,
-                 showVal, printTabType, parseHeader,
+                 showVal, printTabType, parseTabType,
                  TabType) where
-import Text.PrettyPrint.Boxes
 import Data.List (intercalate, transpose)
+import Data.Void
+import Control.Monad (void)
+import Text.Megaparsec
+import Text.Megaparsec.Char hiding (space)
+import qualified Text.Megaparsec.Char.Lexer as L
 
 import Record
 import Util
@@ -132,7 +136,7 @@ printTabType t = printTabName t ++ printHeader t
 printTabName :: TabType -> String
 printTabName t = case getTabName t of
   names | length (concat names) == 0 -> ""
-        | otherwise -> "> " ++ (intercalate "  " $ map printName names) ++ "\n"
+        | otherwise -> "> " ++ (intercalate " | " $ map printName names) ++ "\n"
 
 getTabName :: TabType -> [[RecName]]
 getTabName (TabType name _ rest) = name : getTabName rest
@@ -150,8 +154,77 @@ printTree (RecLeaf x) = case x of Nothing -> "()"
 printName :: [RecName] -> String
 printName names = concat $ intersperse "." (map show names)
 
-parseHeader :: String -> Except TabType
-parseHeader = undefined --tabypeP `sepBy
+-- ----- parsing -----
+
+parseTabType :: String -> Except TabType
+parseTabType s = case parse tabTypeP "" s of
+  Left e -> Left (errorBundlePretty e)
+  Right x -> Right x
+
+type Parser = Parsec Void String
+
+tabTypeP :: Parser TabType
+tabTypeP = do
+  tabNames <- fullTabNameP <|> return []
+  sectionTypes <- lineof $ scalarTreeP `sepBy` sc
+  return $ makeTabType (tabNames ++ repeat []) sectionTypes
+
+makeTabType :: [[RecName]] -> [ScalarTree] -> TabType
+makeTabType names [st] = ValPart st
+makeTabType (name:names) (st:sts) = TabType name st (makeTabType names sts)
+
+fullTabNameP :: Parser [[RecName]]
+fullTabNameP = lineof $ symbol ">" >> tabNameP `sepBy1` symbol "|"
+
+tabNameP :: Parser [RecName]
+tabNameP = recNameP `sepBy` char '.' <* sc
+
+scalarTreeP :: Parser ScalarTree
+scalarTreeP =     (symbol "()" >> return (RecLeaf Nothing))
+              <|> fmap RecTree (recordP scalarTreeP)
+              <|> fmap (RecLeaf . Just) baseTypeP
+
+maybeNamed :: Parser a -> Parser (Maybe RecName, a)
+maybeNamed p = do
+  v <- optional . try $ recNameP <* symbol ":"
+  x <- p
+  return (v, x)
+
+recordP :: Parser a -> Parser (Record a)
+recordP p = mixedRecordPosName <$> (parens $ maybeNamed p `sepBy1` sc)
+
+baseTypeP :: Parser T.BaseType
+baseTypeP =     (symbol "Int"  >> return T.IntType)
+            <|> (symbol "Bool" >> return T.BoolType)
+            <|> (symbol "Real" >> return T.RealType)
+            <|> (symbol "Str"  >> return T.StrType)
+
+identifierP :: Parser String
+identifierP = lexeme . try $ (:) <$> letterChar <*> many alphaNumChar
+
+recNameP :: Parser RecName
+recNameP =     (RecPos  <$> (char '#' >> L.decimal))
+           <|> (RecName <$> identifierP)
+
+lineof :: Parser a -> Parser a
+lineof = (<* (sc >> some eol))
+
+sc :: Parser ()
+sc = L.space space empty empty
+
+space :: Parser ()
+space = void $ takeWhile1P (Just "white space") (`elem` " \t")
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme sc
+
+symbol :: String -> Parser String
+symbol = L.symbol sc
+
+parens :: Parser a -> Parser a
+parens = between (symbol "(") (symbol ")")
+
+
 
 --         let vsFlat = map (flattenVal v) tsFlat
 --         in unlines $ zipWith showTab vsFlat tsFlat
@@ -199,11 +272,6 @@ parseHeader = undefined --tabypeP `sepBy
 -- showTabName :: TabName -> String
 -- showTabName = concat $ intersperse "." (map show names)
 
-
-
-
-
-
 -- prependName :: RecName -> TabType -> TabType
 -- prependName name t = case t of
 --   TabType tabname segment rest -> TabType (name:tabname) segment rest
@@ -229,9 +297,6 @@ parseHeader = undefined --tabypeP `sepBy
 -- numRows :: TabVal -> Int
 -- numRows (TabVal _ t) = numRows t
 -- numRows (FinalSegmentVal n _) = n
-
-
-
     -- in vCat t [ let rhsTab = flattenVal val restType
     --                 n = numRows rhsTab
     --                 idxTab = map (replicate n . flattenIdxs idxVal) colTypes

@@ -1,9 +1,9 @@
 module Record (Record (..), posRecord, nameRecord, emptyRecord,
-               mixedRecord, zipWithRecord, RecName,
+               mixedRecord, zipWithRecord, RecName (..),
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
                recTreePaths, recFromName, isEmpty, printRecord,
-               RecordPrintSpec (..)) where
+               RecordPrintSpec (..), mixedRecordPosName) where
 
 import Util
 import Control.Monad
@@ -73,6 +73,11 @@ mixedRecord ::[(Maybe String, a)] -> Record a
 mixedRecord xs = Record $ M.fromList $
     [(RecPos  i, v) | (i, (Nothing, v)) <- zip [0..] xs] ++
     [(RecName k, v) |      (Just k, v)  <-           xs]
+
+mixedRecordPosName ::[(Maybe RecName, a)] -> Record a
+mixedRecordPosName xs = Record $ M.fromList $
+    [(RecPos  i, v) | (i, (Nothing, v)) <- zip [0..] xs] ++
+    [(k        , v) |      (Just k, v)  <-           xs]
 
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Record m) (Record m')

@@ -144,7 +144,7 @@ explicitCommand = do
     "l" -> return $ GetLowered e
     _   -> fail $ "unrecognized command: " ++ show cmd
 
-maybeNamed ::Parser a -> Parser (Maybe String, a)
+maybeNamed :: Parser a -> Parser (Maybe String, a)
 maybeNamed p = do
   v <- optionMaybe $ try $
     do v <- identifier

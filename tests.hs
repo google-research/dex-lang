@@ -13,6 +13,7 @@ import FlatType
 import Control.Monad (liftM2)
 import qualified Data.Map.Strict as Map
 
+import Debug.Trace (trace)
 
 x = P.Var "x"
 y = P.Var "y"
@@ -104,12 +105,15 @@ prop_flatUnflatVal (TypedVal t v) = case flattenType t of
 prop_validVal :: TypedVal -> Property
 prop_validVal = property . validTypedVal
 
-prop_printParseHeader :: Type -> Property
-prop_printParseHeader t = case flattenType t of
+prop_printParseTabType :: Type -> Property
+prop_printParseTabType t = case flattenType t of
     Left _ -> property Discard
     Right tabs -> conjoin $ map checkTab tabs
-  -- where checkTab t = Right t === parseHeader (printTabType t)
-  where checkTab t' = label (show t ++ "\n" ++ printTabType t') $ property True
+  where checkTab t =
+          let s = printTabType t
+          in case parseTabType s of
+               Left e -> counterexample e $ property False
+               Right t' -> counterexample s $ Right t === parseTabType s
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
@@ -166,5 +170,5 @@ main = do
   putStrLn "Flatten"            >> quickCheck prop_flatUnflatType
   putStrLn "Valid val"          >> quickCheck prop_validVal
   putStrLn "Flatten val"        >> quickCheck prop_flatUnflatVal
-  putStrLn "Print header"       >> quickCheck prop_printParseHeader
+  putStrLn "Print tab type"     >> quickCheck prop_printParseTabType
 
