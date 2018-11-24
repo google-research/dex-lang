@@ -1,4 +1,7 @@
 # Todo ordered (easy things)
+  * flatvals
+     * make flatval a list of rows, with ([Type], [[Val]]) Shorter rows mean
+       empty
   * .cod file format
     * pretty-printer
     * parser

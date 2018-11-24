@@ -115,6 +115,13 @@ prop_printParseTabType t = case flattenType t of
                Left e -> counterexample e $ property False
                Right t' -> counterexample s $ Right t === parseTabType s
 
+prop_printParseTab :: TypedVal -> Property
+prop_printParseTab (TypedVal t v) = case printVal t v of
+  Left _ -> property Discard
+  Right s -> case parseVal s of
+               Left e -> counterexample e $ property False
+               Right (t', v') -> counterexample s $ t === t' .&&. v === v'
+
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
   , ("1 1"          , UnificationError int (int --> TypeVar 0))
@@ -171,4 +178,6 @@ main = do
   putStrLn "Valid val"          >> quickCheck prop_validVal
   putStrLn "Flatten val"        >> quickCheck prop_flatUnflatVal
   putStrLn "Print tab type"     >> quickCheck prop_printParseTabType
+  -- putStrLn "Print/parse tab"    >> quickCheck prop_printParseTab
+
 

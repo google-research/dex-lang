@@ -2,7 +2,7 @@ module Record (Record (..), posRecord, nameRecord, emptyRecord,
                mixedRecord, zipWithRecord, RecName (..),
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
-               recTreePaths, recFromName, isEmpty, printRecord,
+               recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
                RecordPrintSpec (..), mixedRecordPosName) where
 
 import Util
@@ -42,12 +42,11 @@ emptyRecord = Record M.empty
 emptyRecTree :: RecTree a
 emptyRecTree = RecTree emptyRecord
 
-recTreeLeaves :: RecTree a -> [([RecName], Maybe a)]
-recTreeLeaves (RecLeaf x) = [([], Just x)]
-recTreeLeaves (RecTree (Record m))
-  | M.null m = [([], Nothing)]
-  | otherwise = [(k:ks, x) | (k,subtree) <- M.toList m
-                                , (ks, x) <- recTreeLeaves subtree]
+recTreeLeaves :: RecTree a -> [([RecName], a)]
+recTreeLeaves (RecLeaf x) = [([], x)]
+recTreeLeaves (RecTree (Record m)) =
+   [(k:ks, x) | (k,subtree) <- M.toList m
+              , (ks, x) <- recTreeLeaves subtree]
 
 recTreePaths :: RecTree a -> [[RecName]]
 recTreePaths = map fst . recTreeLeaves

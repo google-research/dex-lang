@@ -47,7 +47,7 @@ evalCmd c = case c of
   EvalExpr expr   -> do e <- lower expr
                         t <- gettype e
                         v <- eval e
-                        outputStrLn $ showVal v t
+                        outputStrLn $ showVal t v
   EvalDecl pat expr -> do e <- lower expr
                           (p, vars) <- liftErr $ lowerPat pat
                           ts <- gettype e >>= liftErr . typePatMatch p
