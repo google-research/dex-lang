@@ -29,30 +29,37 @@ data TabType = TabType TabName ScalarTree TabType
              | ValPart ScalarTree
                  deriving (Eq, Show)
 
-flattenType :: T.Type -> Except [TabType]
-flattenType t = case t of
-   T.TabType a b -> do
-       leftKeys <- flattenIdxType a
-       rightTabs <- flattenType b
-       return $ map (TabType [] leftKeys) rightTabs
-   T.RecType r | isEmpty r -> return $ [ValPart (RecLeaf UnitType)]
-               | otherwise -> do
-     r' <- sequence $ fmap flattenType r
-     let ts = [(k,t) | (k, ts) <- recToList r', t <- ts]
-         maybeVal = case [(k, s) | (k, ValPart s) <- ts] of
-                  [] -> []
-                  vs -> [valRec vs]
-         tabs = [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
-     return $ maybeVal ++ tabs
-   T.BaseType b -> return $ [ValPart (RecLeaf (BaseType b))]
+checkType :: T.Type -> Except ()
+checkType t = case t of
+   T.TabType a b -> checkType a >> checkType b
+   T.RecType r -> sequence (fmap checkType r) >> return ()
+   T.BaseType b -> Right ()
    _ -> Left $ "can't print value with type " ++ show t
 
-flattenIdxType :: T.Type -> Except ScalarTree
+flattenType :: T.Type -> Except [TabType]
+flattenType t = checkType t >> (return $ flattenTypeRec t)
+
+flattenTypeRec :: T.Type -> [TabType]
+flattenTypeRec t = case t of
+   T.TabType a b -> let leftKeys = flattenIdxType a
+                        rightTabs = flattenTypeRec b
+                    in map (TabType [] leftKeys) rightTabs
+   T.RecType r | isEmpty r -> [ValPart (RecLeaf UnitType)]
+               | otherwise -> let
+                   r'  = fmap flattenTypeRec r
+                   ts = [(k,t) | (k, ts) <- recToList r', t <- ts]
+                   maybeVal = case [(k, s) | (k, ValPart s) <- ts] of
+                                [] -> []
+                                vs -> [valRec vs]
+                   tabs = [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
+                 in maybeVal ++ tabs
+   T.BaseType b -> [ValPart (RecLeaf (BaseType b))]
+
+flattenIdxType :: T.Type -> ScalarTree
 flattenIdxType t = case t of
-   T.RecType r | isEmpty r -> return (RecLeaf UnitType)
-               | otherwise -> fmap RecTree $ sequence (fmap flattenIdxType r)
-   T.BaseType b -> return (RecLeaf (BaseType b))
-   _ -> Left $ "can't print value with type " ++ show t
+   T.RecType r | isEmpty r -> (RecLeaf UnitType)
+               | otherwise -> RecTree $ fmap flattenIdxType r
+   T.BaseType b -> RecLeaf (BaseType b)
 
 valRec :: [(RecName, ScalarTree)] -> TabType
 valRec = ValPart . RecTree . recFromList
