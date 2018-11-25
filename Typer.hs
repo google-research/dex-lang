@@ -286,8 +286,7 @@ genType n = frequency $
               n' = n `div` 2
 
 instance Arbitrary BaseType where
-  -- arbitrary = elements [IntType, BoolType, RealType, StrType]
-  arbitrary = elements [IntType]
+  arbitrary = elements [IntType, BoolType, RealType, StrType]
 
 instance Arbitrary Type where
   arbitrary = sized genType

@@ -274,23 +274,27 @@ baseTypeP =     (symbol "Int"  >> return T.IntType)
             <|> (symbol "Str"  >> return T.StrType)
 
 tabValP :: TabType -> Parser TabVal
-tabValP tabType = let col1:cols = getColTypes tabType
-                      rowP = (:) <$> (fieldP col1) <*> (trailingRowP cols)
-                  in (many $ lineof rowP)
+tabValP tabType = let cols = getColTypes tabType
+                      end = void eol <|> eof
+                  in manyTill (rowP cols) end
 
-trailingRowP :: [ScalarType] -> Parser [ScalarVal]
-trailingRowP [] = sc >> return []
-trailingRowP (t:ts) = do
+rowP :: [ScalarType] -> Parser [ScalarVal]
+rowP [] = lineof $ return []
+rowP (t:ts) = do
   sc
   v <- optional $ fieldP t
   case v of
-    Nothing -> return []
-    Just v' -> do {vs <- trailingRowP ts; return (v':vs)}
+    Nothing -> lineof $ return []
+    Just v' -> do {vs <- rowP ts; return (v':vs)}
 
 fieldP :: ScalarType -> Parser ScalarVal
 fieldP t = case t of
   BaseType b -> case b of
     T.IntType -> IntVal <$> intP
+    T.BoolType ->     (symbol "True"  >> return (BoolVal True ))
+                  <|> (symbol "False" >> return (BoolVal False))
+    T.StrType -> StrVal <$> stringLiteral
+    T.RealType -> RealVal <$> realP
   UnitType -> symbol "()" >> return UnitVal
 
 recNameP :: Parser RecName
@@ -308,6 +312,9 @@ sc = L.space space empty empty
 blankLines :: Parser ()
 blankLines = void $ many eol
 
+stringLiteral :: Parser String
+stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
+
 identifierP :: Parser String
 identifierP = lexeme . try $ (:) <$> letterChar <*> many alphaNumChar
 
@@ -315,7 +322,10 @@ space :: Parser ()
 space = void $ takeWhile1P (Just "white space") (`elem` " \t")
 
 intP :: Parser Int
-intP = L.signed (return ()) (lexeme L.decimal)
+intP = L.signed (return ()) L.decimal
+
+realP :: Parser Float
+realP = L.signed (return ()) L.float
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc

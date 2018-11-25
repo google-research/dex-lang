@@ -1,17 +1,14 @@
 # Todo ordered (easy things)
   * flatvals
-    * .cod file format
-    * pretty-printer
-    * parser
+    * format options
+      * numeric precision
+      * spaces or tabs
+    * align numeric right
+    * use in repl
 
   * json i/o
-  * ffi for calling shell scripts
-
-  * orchestrate jax benchmarking from coddle
-
-  * play with some data set
-    * download R's datasets
-    * write csvToSqlite (includes metadata about primary keys etc)
+  * orchestrate jax benchmarking from coddle (use ffi for calling shell scripts)
+  * play with R's datasets
 
   * literate programming output
   * raster/ggplot/canvas output?
