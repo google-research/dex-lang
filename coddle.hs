@@ -1,5 +1,6 @@
 import System.Console.Haskeline
 import System.Environment
+import System.Exit
 import System.IO hiding (print)
 import Control.Monad
 import Control.Monad.State.Strict
@@ -7,7 +8,6 @@ import Control.Monad.Identity
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.List hiding (lookup)
-import IOSql
 import Options.Applicative
 import Data.Semigroup ((<>))
 import Prelude hiding (lookup, print)
@@ -111,6 +111,15 @@ terminalRepl = runRepl (repl ">=> ") defaultBehavior
 fileRepl :: String -> Env -> IO ()
 fileRepl fname = runRepl (repl "") (useFile fname)
 
+loadData :: String -> IO (Val, ClosedType)
+loadData fname = do
+  contents <- readFile fname
+  case parseVal contents of
+    Left e -> do putStrLn "Error loading data"
+                 putStrLn e
+                 exitFailure
+    Right (t,v) -> return (v, Forall 0 t)
+
 type ProgramSource = String
 type DataSource = String
 data CmdOpts = CmdOpts (Maybe ProgramSource) (Maybe DataSource)
@@ -131,6 +140,6 @@ main = do
                Just fname -> fileRepl fname
                Nothing -> terminalRepl
   (inVal, inTy) <- case dbname of
-                     Just dbname -> readDB dbname
+                     Just dbname -> loadData dbname
                      Nothing -> return (unitVal, unitType)
   repl $ ("data", inTy, inVal) `consEnv` initEnv

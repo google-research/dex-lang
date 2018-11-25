@@ -1,12 +1,19 @@
 # Todo ordered (easy things)
-  * flatvals
-    * format options
-      * numeric precision
-      * spaces or tabs
-    * align numeric right
-    * use in repl
-
+  * table i/o
+    * read in data to examples
+    * cosmetic
+      * simple strings without quotes
+      * use fixed numeric precision
+      * emit in spaces or tabs
+      * avoid repeating keys
+      * align numeric right
+    * actual sepby space rather than repeated parsers
+    * check validity of data read
+      * no duplicate rows
+      * empties in valid places
+  * parsec -> megaparsec for ast too
   * json i/o
+
   * orchestrate jax benchmarking from coddle (use ffi for calling shell scripts)
   * play with R's datasets
 

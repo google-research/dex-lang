@@ -45,14 +45,14 @@ flattenType t = case t of
          tabs = [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
      return $ maybeVal ++ tabs
    T.BaseType b -> return $ [ValPart (RecLeaf (BaseType b))]
-   _ -> Left $ "Can't flatten " ++ show t
+   _ -> Left $ "can't print value with type " ++ show t
 
 flattenIdxType :: T.Type -> Except ScalarTree
 flattenIdxType t = case t of
    T.RecType r | isEmpty r -> return (RecLeaf UnitType)
                | otherwise -> fmap RecTree $ sequence (fmap flattenIdxType r)
    T.BaseType b -> return (RecLeaf (BaseType b))
-   _ -> Left $ "Can't flatten index type" ++ show t
+   _ -> Left $ "can't print value with type " ++ show t
 
 valRec :: [(RecName, ScalarTree)] -> TabType
 valRec = ValPart . RecTree . Record . M.fromList
@@ -85,6 +85,7 @@ data ScalarVal = IntVal Int
                | BoolVal Bool
                | RealVal Float
                | StrVal String
+               | AnyVal
                | UnitVal  deriving (Ord, Eq, Show)
 
 type Row = [ScalarVal]
@@ -123,6 +124,7 @@ valToScalarVal v = case v of
   I.IntVal  x -> IntVal  x ; I.BoolVal x -> BoolVal x
   I.RealVal x -> RealVal x ; I.StrVal  x -> StrVal  x
   I.RecVal r | isEmpty r -> UnitVal
+  I.Any -> AnyVal
 
 scalarValToVal :: ScalarVal -> I.Val
 scalarValToVal v = case v of
@@ -165,7 +167,7 @@ lookupPath (I.RecVal (Record m)) (name:rest) = let Just v = M.lookup name m
 showVal :: T.ClosedType -> I.Val -> String
 showVal (T.Forall _ t) v =
   case printVal t v of
-    Left e -> "<" ++ show t ++ ">"
+    Left e -> "Print error: " ++ e
     Right s -> s
 
 printVal :: T.Type -> I.Val -> Except String
@@ -210,6 +212,7 @@ printScalar v = case v of
   IntVal  x -> show x ; BoolVal x -> show x
   RealVal x -> show x ; StrVal  x -> show x
   UnitVal -> "()"
+  AnyVal -> "*"
 
 -- ----- parsing -----
 

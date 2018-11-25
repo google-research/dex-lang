@@ -1,0 +1,4 @@
+(a:Int   b:Bool   c:Str)  Real
+     0   True     "foo"      1.5
+     0   False    "foo"      2.5
+     1   True     "bar"      2.0
