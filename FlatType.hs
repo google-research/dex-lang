@@ -87,14 +87,14 @@ data ScalarVal = IntVal Int
                | StrVal String
                | UnitVal  deriving (Ord, Eq, Show)
 
-data TabVal = TabVal [ScalarType] [[ScalarVal]]
+type Row = [ScalarVal]
+type TabVal = [Row]
 
 flattenVal :: I.Val -> [TabType] -> [TabVal]
-flattenVal v ts = [TabVal (getColTypes t) (getRows v t) | t <- ts]
+flattenVal v ts = map (getRows v) ts
 
 unflattenVal :: [TabVal] -> [TabType] -> I.Val
-unflattenVal vs ts = let rows = [rows | TabVal _ rows <- vs]
-                     in foldr1 mergeVals (zipWith unflattenRows rows ts)
+unflattenVal rows ts = foldr1 mergeVals (zipWith unflattenRows rows ts)
 
 getColTypes :: TabType -> [ScalarType]
 getColTypes t = case t of
@@ -103,7 +103,7 @@ getColTypes t = case t of
   where
     getTypes s = map snd (recTreeLeaves s)
 
-getRows :: I.Val -> TabType -> [[ScalarVal]]
+getRows :: I.Val -> TabType -> TabVal
 getRows v t = case t of
   ValPart s -> [flattenScalarTree v s]
   TabType name s rest ->
@@ -175,7 +175,7 @@ printVal t v = do
   return . intercalate "\n" $ zipWith printTab tabTypes tabVals
 
 printTab :: TabType -> TabVal -> String
-printTab t v = printTabType t ++ printTabVal t v
+printTab t v = printTabType t ++ printTabVal v
 
 printTabType :: TabType -> String
 printTabType t = printTabName t ++ printHeader t
@@ -201,13 +201,24 @@ printTree (RecLeaf x) = case x of UnitType -> "()"
 printName :: [RecName] -> String
 printName names = concat $ intersperse "." (map show names)
 
-printTabVal :: TabType -> TabVal -> String
-printTabVal t v = undefined
+printTabVal :: TabVal -> String
+printTabVal rows = unlines $ map printRow rows
+  where printRow row = intercalate "\t" $ map printScalar row
+
+printScalar :: ScalarVal -> String
+printScalar v = case v of
+  IntVal  x -> show x ; BoolVal x -> show x
+  RealVal x -> show x ; StrVal  x -> show x
+  UnitVal -> "()"
 
 -- ----- parsing -----
 
 parseVal :: String -> Except (T.Type, I.Val)
-parseVal = undefined
+parseVal s = case parse topP "" s of
+  Left e -> Left (errorBundlePretty e)
+  Right tabs -> let (tabTypes, tabVals) = unzip tabs
+                in  Right ( unflattenType tabTypes
+                          , unflattenVal tabVals tabTypes)
 
 parseTabType :: String -> Except TabType
 parseTabType s = case parse tabTypeP "" s of
@@ -215,6 +226,16 @@ parseTabType s = case parse tabTypeP "" s of
   Right x -> Right x
 
 type Parser = Parsec Void String
+
+topP :: Parser [(TabType, TabVal)]
+topP = do blankLines >> some parseTab
+
+parseTab :: Parser (TabType, TabVal)
+parseTab = do
+  tabType <- tabTypeP
+  rows <- tabValP tabType
+  blankLines
+  return (tabType, rows)
 
 tabTypeP :: Parser TabType
 tabTypeP = do
@@ -252,21 +273,49 @@ baseTypeP =     (symbol "Int"  >> return T.IntType)
             <|> (symbol "Real" >> return T.RealType)
             <|> (symbol "Str"  >> return T.StrType)
 
-identifierP :: Parser String
-identifierP = lexeme . try $ (:) <$> letterChar <*> many alphaNumChar
+tabValP :: TabType -> Parser TabVal
+tabValP tabType = let col1:cols = getColTypes tabType
+                      rowP = (:) <$> (fieldP col1) <*> (trailingRowP cols)
+                  in (many $ lineof rowP)
+
+trailingRowP :: [ScalarType] -> Parser [ScalarVal]
+trailingRowP [] = sc >> return []
+trailingRowP (t:ts) = do
+  sc
+  v <- optional $ fieldP t
+  case v of
+    Nothing -> return []
+    Just v' -> do {vs <- trailingRowP ts; return (v':vs)}
+
+fieldP :: ScalarType -> Parser ScalarVal
+fieldP t = case t of
+  BaseType b -> case b of
+    T.IntType -> IntVal <$> intP
+  UnitType -> symbol "()" >> return UnitVal
 
 recNameP :: Parser RecName
 recNameP =     (RecPos  <$> (char '#' >> L.decimal))
            <|> (RecName <$> identifierP)
 
+-- ----- parser utils -----
+
 lineof :: Parser a -> Parser a
-lineof = (<* (sc >> some eol))
+lineof = (<* (sc >> eol))
 
 sc :: Parser ()
 sc = L.space space empty empty
 
+blankLines :: Parser ()
+blankLines = void $ many eol
+
+identifierP :: Parser String
+identifierP = lexeme . try $ (:) <$> letterChar <*> many alphaNumChar
+
 space :: Parser ()
 space = void $ takeWhile1P (Just "white space") (`elem` " \t")
+
+intP :: Parser Int
+intP = L.signed (return ()) (lexeme L.decimal)
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
@@ -276,81 +325,3 @@ symbol = L.symbol sc
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
-
-
---         let vsFlat = map (flattenVal v) tsFlat
---         in unlines $ zipWith showTab vsFlat tsFlat
-
--- -- TODO: should distinguish each segment, and align components of table name
--- -- with corresponding segment
--- showTab :: TabVal -> TabType -> String
--- showTab v t = let headers = concat $ headerBoxes t
---                   cols = concat $ colBoxes v
---                   colsWithHeaders = zipWith (//) headers cols
---                   name = concat $ intersperse " " (tabName t)
---               in  " " ++ name ++ "\n" ++
---                   (render $ text "  " <> (hsepWith " | " colsWithHeaders))
-
--- headerBoxes :: TabType -> [[Box]]
--- headerBoxes t =
---   let colsToBoxes = map (text . showColName . fst)
---   in case t of
---     FinalSegmentType colTypes   -> [colsToBoxes colTypes]
---     TabType _ colTypes restType -> colsToBoxes colTypes : headerBoxes restType
-
--- tabName :: TabType -> [String]
--- tabName (FinalSegmentType _) = []
--- tabName (TabType name _ rest) = showTabName name : tabName rest
-
--- colBoxes :: TabVal -> [[Box]]
--- colBoxes v =
---   case v of
---     FinalSegmentVal h cols -> [map colToBox cols]
---     TabVal cols rest       -> map colToBox cols : colBoxes rest
-
--- colToBox :: (Show a) => [a] -> Box
--- colToBox rows = vcat left $ map (text . show) rows
-
--- vsepWith :: String -> [Box] -> Box
--- vsepWith = undefined
-
--- hsepWith :: String -> [Box] -> Box
--- hsepWith s bs = case bs of
---   [] -> emptyBox 0 0
---   b:[] -> b
---   b:bs -> let sep = vcat left $ replicate (rows b) (text s)
---           in b <> sep <> hsepWith s bs
-
--- showTabName :: TabName -> String
--- showTabName = concat $ intersperse "." (map show names)
-
--- prependName :: RecName -> TabType -> TabType
--- prependName name t = case t of
---   TabType tabname segment rest -> TabType (name:tabname) segment rest
---   FinalSegmentType cols -> FinalSegmentType $ mapFst ((:) name) cols
--- vCat :: TabType -> [TabVal] -> TabVal
--- vCat t tabs = foldr stackTabs (emptyTab t) tabs
-
--- stackTabs :: TabVal -> TabVal -> TabVal
--- stackTabs (FinalSegmentVal h1 cols1) (FinalSegmentVal h2 cols2) =
---     FinalSegmentVal (h1 + h2) (zipWith (++) cols1 cols2)
--- stackTabs (TabVal cols1 rest1) (TabVal cols2 rest2) =
---     TabVal (zipWith (++) cols1 cols2) (stackTabs rest1 rest2)
-
--- emptyTab :: TabType -> TabVal
--- emptyTab (FinalSegmentType colTypes) =
---     FinalSegmentVal 0 $ replicate (length colTypes) []
--- emptyTab (TabType _ colTypes restType) =
---     TabVal (replicate (length colTypes) []) (emptyTab restType)
-
--- flattenIdxs :: I.IdxVal -> ColType -> I.IdxVal
--- flattenIdxs v (name, _) = lookupIdxPath name v
-
--- numRows :: TabVal -> Int
--- numRows (TabVal _ t) = numRows t
--- numRows (FinalSegmentVal n _) = n
-    -- in vCat t [ let rhsTab = flattenVal val restType
-    --                 n = numRows rhsTab
-    --                 idxTab = map (replicate n . flattenIdxs idxVal) colTypes
-    --             in TabVal idxTab rhsTab
-    --           | (idxVal, val) <- M.toList m]

@@ -281,12 +281,13 @@ genType n = frequency $
   , (1, liftM2 ArrType subTree subTree)
   , (3, liftM2 TabType simpleSubTree subTree) ]
             where
-              subTree       = genType n' -- genType n'
+              subTree       = genType n'
               simpleSubTree = genSimpleType n'
               n' = n `div` 2
 
 instance Arbitrary BaseType where
-  arbitrary = elements [IntType, BoolType, StrType]
+  -- arbitrary = elements [IntType, BoolType, RealType, StrType]
+  arbitrary = elements [IntType]
 
 instance Arbitrary Type where
   arbitrary = sized genType
