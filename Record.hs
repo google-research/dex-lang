@@ -1,5 +1,6 @@
-module Record (Record (..), posRecord, nameRecord, emptyRecord,
-               mixedRecord, zipWithRecord, RecName (..),
+module Record (Record,  RecName (..), posRecord, nameRecord, emptyRecord,
+               recToList, recFromList, recUnionWith, recLookup,
+               mixedRecord, zipWithRecord,
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
                recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
@@ -35,6 +36,18 @@ instance Traversable RecTree where
   traverse f t = case t of
     RecTree r -> fmap RecTree $ traverse (traverse f) r
     RecLeaf x -> fmap RecLeaf $ f x
+
+recToList :: Record a -> [(RecName, a)]
+recToList (Record m) = M.toList m
+
+recFromList :: [(RecName, a)] -> Record a
+recFromList xs = Record $ M.fromList xs
+
+recUnionWith :: (a -> a -> a) -> Record a -> Record a -> Record a
+recUnionWith f (Record m1) (Record m2) = Record $ M.unionWith f m1 m2
+
+recLookup :: RecName -> Record a -> Maybe a
+recLookup k (Record m) = M.lookup k m
 
 emptyRecord :: Record a
 emptyRecord = Record M.empty

@@ -1,17 +1,17 @@
 # Todo ordered (easy things)
   * table i/o
-    * read in data to examples
+    * fix column order issue
     * cosmetic
       * simple strings without quotes
-      * use fixed numeric precision
-      * emit in spaces or tabs
       * avoid repeating keys
+      * emit in spaces or tabs
       * align numeric right
+      * use fixed numeric precision
     * actual sepby space rather than repeated parsers
     * check validity of data read
       * no duplicate rows
       * empties in valid places
-  * parsec -> megaparsec for ast too
+
   * json i/o
 
   * orchestrate jax benchmarking from coddle (use ffi for calling shell scripts)

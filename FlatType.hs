@@ -37,8 +37,8 @@ flattenType t = case t of
        return $ map (TabType [] leftKeys) rightTabs
    T.RecType r | isEmpty r -> return $ [ValPart (RecLeaf UnitType)]
                | otherwise -> do
-     Record m <- sequence $ fmap flattenType r
-     let ts = [(k,t) | (k, ts) <- M.toList m, t <- ts]
+     r' <- sequence $ fmap flattenType r
+     let ts = [(k,t) | (k, ts) <- recToList r', t <- ts]
          maybeVal = case [(k, s) | (k, ValPart s) <- ts] of
                   [] -> []
                   vs -> [valRec vs]
@@ -55,7 +55,7 @@ flattenIdxType t = case t of
    _ -> Left $ "can't print value with type " ++ show t
 
 valRec :: [(RecName, ScalarTree)] -> TabType
-valRec = ValPart . RecTree . Record . M.fromList
+valRec = ValPart . RecTree . recFromList
 
 unflattenType :: [TabType] -> T.Type
 unflattenType tabs = foldr1 mergeTypes (map unflattenTab tabs)
@@ -73,8 +73,8 @@ unflattenScalarTree st = case st of
   RecLeaf UnitType  -> T.RecType emptyRecord
 
 mergeTypes :: T.Type -> T.Type -> T.Type
-mergeTypes (T.RecType (Record m1)) (T.RecType (Record m2)) =
-  T.RecType . Record $ M.unionWith mergeTypes m1 m2
+mergeTypes (T.RecType r1) (T.RecType r2) =
+  T.RecType $ recUnionWith mergeTypes r1 r2
 mergeTypes (T.TabType a1 b1) (T.TabType a2 b2) | a1 == a2 =
   T.TabType a1 (mergeTypes b1 b2)
 
@@ -151,16 +151,16 @@ unflattenRow vals s =
   in foldr1 mergeVals $ zipWith (recFromName I.RecVal) names vals'
 
 mergeVals :: I.Val -> I.Val -> I.Val
-mergeVals (I.RecVal (Record m1)) (I.RecVal (Record m2)) =
-  I.RecVal . Record $ M.unionWith mergeVals m1 m2
+mergeVals (I.RecVal r1) (I.RecVal r2) =
+  I.RecVal $ recUnionWith mergeVals r1 r2
 mergeVals (I.TabVal m1) (I.TabVal m2) | M.keys m1 == M.keys m1 =
   I.TabVal $ M.intersectionWith mergeVals m1 m2
 mergeVals v1 v2 = error ("Can't merge " ++ show v1 ++ " and " ++ show v2)
 
 lookupPath :: I.Val -> [RecName] -> I.Val
 lookupPath v [] = v
-lookupPath (I.RecVal (Record m)) (name:rest) = let Just v = M.lookup name m
-                                               in lookupPath v rest
+lookupPath (I.RecVal r) (name:rest) = let Just v = recLookup name r
+                                       in lookupPath v rest
 
 -- ----- printing -----
 

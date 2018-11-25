@@ -90,11 +90,11 @@ structureTabVal p (TabVal m) =
 
 structureIdx :: IdxPat -> [IdxVal] -> IdxVal
 structureIdx VarPat [k] = k
-structureIdx (RecPat (Record r)) idxs =
-  let (ks, ps) = unzip $ M.toList r
+structureIdx (RecPat r) idxs =
+  let (ks, ps) = unzip $ recToList r
       subPatSizes = map patSize ps
       idxGroups = part subPatSizes idxs
-  in RecVal . Record . M.fromList $ zip ks $ zipWith structureIdx ps idxGroups
+  in RecVal . recFromList $ zip ks $ zipWith structureIdx ps idxGroups
 
 part :: [Int] -> [a] -> [[a]]
 part [] [] = []
