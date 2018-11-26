@@ -238,7 +238,7 @@ instance Show Type where
     ArrType a b -> "(" ++ show a ++ " -> " ++ show b ++ ")"
     TabType a b -> show a ++ "=>" ++ show b
     BaseType b  -> show b
-    RecType m   -> printRecord show (RecordPrintSpec ", " ":" ",") m
+    RecType m   -> printRecord show (RecordPrintSpec ", " ":" "," Nothing) m
     TypeVar v   -> varName v
 
 instance Show BaseType where

@@ -4,7 +4,8 @@ module Record (Record,  RecName (..), posRecord, nameRecord, emptyRecord,
                consRecord, unConsRecord, fromPosRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
                recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
-               RecordPrintSpec (..), mixedRecordPosName) where
+               RecordPrintSpec (..), mixedRecordPosName,
+               mixedRecordPosNameList) where
 
 import Util
 import Control.Monad
@@ -86,10 +87,15 @@ mixedRecord xs = Record $ M.fromList $
     [(RecPos  i, v) | (i, (Nothing, v)) <- zip [0..] xs] ++
     [(RecName k, v) |      (Just k, v)  <-           xs]
 
+mixedRecordPosNameList :: [(Maybe RecName, a)] -> [(RecName, a)]
+mixedRecordPosNameList xs =
+  [(k, v) | (i, (maybeK, v)) <- zip [0..] xs
+          , let k = case maybeK of Nothing -> RecPos i
+                                   Just k -> k ]
+
+
 mixedRecordPosName ::[(Maybe RecName, a)] -> Record a
-mixedRecordPosName xs = Record $ M.fromList $
-    [(RecPos  i, v) | (i, (Nothing, v)) <- zip [0..] xs] ++
-    [(k        , v) |      (Just k, v)  <-           xs]
+mixedRecordPosName = Record . M.fromList . mixedRecordPosNameList
 
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Record m) (Record m')
@@ -114,9 +120,10 @@ instance Show RecName where
 
 data RecordPrintSpec = RecordPrintSpec { recSep :: String
                                        , kvSep :: String
-                                       , trailSep :: String}
+                                       , trailSep :: String
+                                       , order :: Maybe [RecName]}
 
-defaultPrintSpec = RecordPrintSpec "=" "," ""
+defaultPrintSpec = RecordPrintSpec "=" "," "" Nothing
 
 printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
 printRecord showVal spec (Record m) =
@@ -127,7 +134,10 @@ printRecord showVal spec (Record m) =
                            | otherwise -> "#" ++ show i' ++ kvSep spec
                 RecName s -> s ++ kvSep spec
           in prefix ++ showVal v
-        xs = map showKV $ zip [0..] (M.toList m)
+        kvOrdered = case (order spec) of
+                      Nothing -> M.toList m
+                      Just ks -> [(k, unJust (M.lookup k m)) | k <- ks]
+        xs = map showKV $ zip [0..] kvOrdered
         trail = if length (M.keys m) == 1 then trailSep spec else ""
 
 arbitraryName :: Gen String

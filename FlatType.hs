@@ -24,10 +24,28 @@ type Except a = Either String a
 type TabName = [RecName]
 data ScalarType = BaseType T.BaseType
                 | UnitType  deriving (Eq, Show)
-type ScalarTree = RecTree ScalarType
-data TabType = TabType TabName ScalarTree TabType
-             | ValPart ScalarTree
+type FlatTree a = [([RecName], a)]
+type Scalars = FlatTree ScalarType
+data TabType = TabType TabName Scalars TabType
+             | ValPart Scalars
                  deriving (Eq, Show)
+
+
+flatLeaf :: a -> FlatTree a
+flatLeaf x = [([], x)]
+
+flatTree :: [(RecName, FlatTree a)] -> FlatTree a
+flatTree namedTrees = [(name:names, v) | (name,  tree) <- namedTrees
+                                       , (names, v) <- tree]
+
+unFlatTree :: FlatTree a -> [(RecName, FlatTree a)]
+unFlatTree t = group $ [(k, (ks, v)) | (k:ks, v) <- t]
+
+unFlatTreeRec :: (a -> b) -> (Record b -> b) -> FlatTree a -> b
+unFlatTreeRec leafFun nodeFun t = case t of
+  [([], v)] -> leafFun v
+  xs -> nodeFun . recFromList . mapSnd recurse . unFlatTree $ xs
+  where recurse = unFlatTreeRec leafFun nodeFun
 
 checkType :: T.Type -> Except ()
 checkType t = case t of
@@ -44,40 +62,36 @@ flattenTypeRec t = case t of
    T.TabType a b -> let leftKeys = flattenIdxType a
                         rightTabs = flattenTypeRec b
                     in map (TabType [] leftKeys) rightTabs
-   T.RecType r | isEmpty r -> [ValPart (RecLeaf UnitType)]
+   T.RecType r | isEmpty r -> [ValPart (flatLeaf UnitType)]
                | otherwise -> let
-                   r'  = fmap flattenTypeRec r
-                   ts = [(k,t) | (k, ts) <- recToList r', t <- ts]
-                   maybeVal = case [(k, s) | (k, ValPart s) <- ts] of
-                                [] -> []
-                                vs -> [valRec vs]
-                   tabs = [TabType (k:name) s rest | (k, TabType name s rest) <- ts]
-                 in maybeVal ++ tabs
-   T.BaseType b -> [ValPart (RecLeaf (BaseType b))]
+                   ts = [(k,t) | (k, ts) <- recToList $ fmap flattenTypeRec r
+                               , t <- ts]
+                   nonValTabs = [TabType (k:name) s rest
+                                  | (k, TabType name s rest) <- ts]
+                 in case [(k, s) | (k, ValPart s) <- ts] of
+                      [] -> nonValTabs
+                      vs -> (ValPart $ flatTree vs) : nonValTabs
+   T.BaseType b -> [ValPart (flatLeaf $ BaseType b)]
 
-flattenIdxType :: T.Type -> ScalarTree
+flattenIdxType :: T.Type -> Scalars
 flattenIdxType t = case t of
-   T.RecType r | isEmpty r -> (RecLeaf UnitType)
-               | otherwise -> RecTree $ fmap flattenIdxType r
-   T.BaseType b -> RecLeaf (BaseType b)
-
-valRec :: [(RecName, ScalarTree)] -> TabType
-valRec = ValPart . RecTree . recFromList
+   T.RecType r | isEmpty r -> flatLeaf UnitType
+               | otherwise -> flatTree . recToList $ fmap flattenIdxType r
+   T.BaseType b -> flatLeaf (BaseType b)
 
 unflattenType :: [TabType] -> T.Type
 unflattenType tabs = foldr1 mergeTypes (map unflattenTab tabs)
 
 unflattenTab :: TabType -> T.Type
-unflattenTab (ValPart st) = unflattenScalarTree st
-unflattenTab (TabType name st rest) =
-  let t = T.TabType (unflattenScalarTree st) (unflattenTab rest)
-  in recFromName T.RecType name t
+unflattenTab tab = case tab of
+    ValPart s -> scalarType s
+    TabType name s rest -> let t = T.TabType (scalarType s) (unflattenTab rest)
+                            in recFromName T.RecType name t
+  where scalarType = unFlatTreeRec scalarTypeToType T.RecType
 
-unflattenScalarTree :: ScalarTree -> T.Type
-unflattenScalarTree st = case st of
-  RecTree r -> T.RecType $ fmap unflattenScalarTree r
-  RecLeaf (BaseType b) -> T.BaseType b
-  RecLeaf UnitType  -> T.RecType emptyRecord
+scalarTypeToType :: ScalarType -> T.Type
+scalarTypeToType s = case s of BaseType b -> T.BaseType b
+                               UnitType   -> T.RecType emptyRecord
 
 mergeTypes :: T.Type -> T.Type -> T.Type
 mergeTypes (T.RecType r1) (T.RecType r2) =
@@ -109,7 +123,7 @@ getColTypes t = case t of
     ValPart s -> getTypes s
     TabType name s rest -> getTypes s ++ getColTypes rest
   where
-    getTypes s = map snd (recTreeLeaves s)
+    getTypes s = map snd s
 
 getRows :: I.Val -> TabType -> TabVal
 getRows v t = case t of
@@ -123,8 +137,8 @@ catRows :: Monoid a => a -> [a] -> [a]
 catRows x [] = [x]
 catRows x xs = map (x <>) xs
 
-flattenScalarTree :: I.Val -> ScalarTree -> [ScalarVal]
-flattenScalarTree v s = map (valToScalarVal . lookupPath v) (recTreePaths s)
+flattenScalarTree :: I.Val -> Scalars -> [ScalarVal]
+flattenScalarTree v s = map (valToScalarVal . lookupPath v) (map fst s)
 
 valToScalarVal :: I.Val -> ScalarVal
 valToScalarVal v = case v of
@@ -145,15 +159,15 @@ unflattenRows rows (TabType tabname s rest) = recFromName I.RecVal tabname tab
     tab = I.TabVal $
       case rows of
         [[]]  -> M.empty
-        rows' -> let numCols = length (recTreePaths s)
+        rows' -> let numCols = length (map fst s)
                      groupedRows = group . map (splitAt numCols) $ rows'
                  in M.fromList [(unflattenRow k s, unflattenRows v rest)
                                 | (k, v) <- groupedRows]
 unflattenRows [row] (ValPart s) = unflattenRow row s
 
-unflattenRow :: [ScalarVal] -> ScalarTree -> I.Val
+unflattenRow :: [ScalarVal] -> Scalars -> I.Val
 unflattenRow vals s =
-  let names = recTreePaths s
+  let names = map fst s
       vals' = map scalarValToVal vals
   in foldr1 mergeVals $ zipWith (recFromName I.RecVal) names vals'
 
@@ -202,10 +216,13 @@ printHeader :: TabType -> String
 printHeader (TabType _ s rest) = printTree s ++ " " ++ printHeader rest
 printHeader (ValPart s) = printTree s ++ "\n"
 
-printTree :: ScalarTree -> String
-printTree (RecTree r) = printRecord printTree (RecordPrintSpec "\t" ":" "") r
-printTree (RecLeaf x) = case x of UnitType -> "()"
-                                  BaseType x' -> show x'
+printTree :: Scalars -> String
+printTree [([], v)] = case v of UnitType -> "()"
+                                BaseType x -> show x
+printTree s = let (ks, vs) = unzip $ unFlatTree s
+                  spec = RecordPrintSpec "\t" ":" "" (Just ks)
+                  r = recFromList $ zip ks vs
+              in printRecord printTree spec r
 
 printName :: [RecName] -> String
 printName names = concat $ intersperse "." (map show names)
@@ -253,7 +270,7 @@ tabTypeP = do
   sectionTypes <- lineof $ scalarTreeP `sepBy` sc
   return $ makeTabType (tabNames ++ repeat []) sectionTypes
 
-makeTabType :: [[RecName]] -> [ScalarTree] -> TabType
+makeTabType :: [[RecName]] -> [Scalars] -> TabType
 makeTabType names [st] = ValPart st
 makeTabType (name:names) (st:sts) = TabType name st (makeTabType names sts)
 
@@ -263,10 +280,10 @@ fullTabNameP = lineof $ symbol ">" >> tabNameP `sepBy1` symbol "|"
 tabNameP :: Parser [RecName]
 tabNameP = recNameP `sepBy` char '.' <* sc
 
-scalarTreeP :: Parser ScalarTree
-scalarTreeP =     (symbol "()" >> return (RecLeaf UnitType))
-              <|> fmap RecTree (recordP scalarTreeP)
-              <|> fmap (RecLeaf . BaseType) baseTypeP
+scalarTreeP :: Parser Scalars
+scalarTreeP =     (symbol "()" >> return (flatLeaf UnitType))
+              <|> fmap flatTree (recordP scalarTreeP)
+              <|> fmap (flatLeaf . BaseType) baseTypeP
 
 maybeNamed :: Parser a -> Parser (Maybe RecName, a)
 maybeNamed p = do
@@ -274,8 +291,8 @@ maybeNamed p = do
   x <- p
   return (v, x)
 
-recordP :: Parser a -> Parser (Record a)
-recordP p = mixedRecordPosName <$> (parens $ maybeNamed p `sepBy1` sc)
+recordP :: Parser a -> Parser [(RecName, a)]
+recordP p = mixedRecordPosNameList <$> (parens $ maybeNamed p `sepBy1` sc)
 
 baseTypeP :: Parser T.BaseType
 baseTypeP =     (symbol "Int"  >> return T.IntType)
