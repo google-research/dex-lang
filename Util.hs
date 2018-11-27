@@ -1,5 +1,5 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitWhile,
+             insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList) where
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -8,7 +8,7 @@ import Test.QuickCheck
 group :: (Ord a) => [(a,b)] -> [(a, [b])]
 group [] = []
 group ((k,v):rem) =
-  let (prefix, suffix) = splitWhile ((== k) . fst) rem
+  let (prefix, suffix) = span ((== k) . fst) rem
       g = v:(map snd prefix)
   in (k, g) : group suffix
 
@@ -23,11 +23,11 @@ unJust Nothing = error "whoops!"
 uncons :: [a] -> (a, [a])
 uncons (x:xs) = (x, xs)
 
-pad :: Int -> a -> [a] -> [a]
-pad n v xs = xs ++ replicate (n - length(xs)) v
+pad :: a -> Int -> [a] -> [a]
+pad v n xs = xs ++ replicate (n - length(xs)) v
 
-padLeft :: Int -> a -> [a] -> [a]
-padLeft  n v xs = replicate (n - length(xs)) v ++ xs
+padLeft :: a -> Int -> [a] -> [a]
+padLeft v n xs = replicate (n - length(xs)) v ++ xs
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of
@@ -59,9 +59,6 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
                         Just y  -> y : rest
                         Nothing -> rest
 
-splitWhile :: (a -> Bool) -> [a] -> ([a], [a])
-splitWhile f xs = (takeWhile f xs, dropWhile f xs)
-
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (replicate n f)
 
@@ -85,3 +82,9 @@ shortList :: Int -> Gen a -> Gen [a]
 shortList n g = do
    n' <- choose (0, n)
    sequence $ replicate n' g
+
+splitOn :: (a -> Bool) -> [a] -> [[a]]
+splitOn f s = let (prefix, suffix) = break f s
+              in case suffix of
+                   [] -> [prefix]
+                   x:xs -> prefix : splitOn f xs

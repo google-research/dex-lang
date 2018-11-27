@@ -105,24 +105,14 @@ prop_flatUnflatVal (TypedVal t v) = case flattenType t of
 prop_validVal :: TypedVal -> Property
 prop_validVal = property . validTypedVal
 
-prop_printParseTabType :: Type -> Property
-prop_printParseTabType t = case flattenType t of
-    Left _ -> property Discard
-    Right tabs -> conjoin $ map checkTab tabs
-  where checkTab t =
-          let s = printTabType t
-          in case parseTabType s of
-               Left e -> counterexample e $ property False
-               Right t' -> counterexample s $ Right t === parseTabType s
-
 prop_printParseTab :: TypedVal -> Property
-prop_printParseTab (TypedVal t v) = case printVal t v of
-  Left _ -> property Discard
-  Right s -> case parseVal s of
+prop_printParseTab (TypedVal t v) =
+    case showVal defaultPrintSpec (Forall 0 t) v of
+      Left _ -> property Discard
+      Right s -> case parseVal s of
                Left e -> counterexample (addLines s ++ e) $ property False
                Right (t', v') -> counterexample s $
                                    t === t' .&&. v === v'
-
 
 addLines s = "###\n" ++ s ++ "###\n"
 
@@ -182,5 +172,4 @@ main = do
   putStrLn "Flatten"            >> quickCheck prop_flatUnflatType
   putStrLn "Valid val"          >> quickCheck prop_validVal
   putStrLn "Flatten val"        >> quickCheck prop_flatUnflatVal
-  putStrLn "Print tab type"     >> quickCheck prop_printParseTabType
   putStrLn "Print/parse tab"    >> quickCheck prop_printParseTab

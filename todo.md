@@ -1,13 +1,5 @@
 # Todo ordered (easy things)
   * table i/o
-    * fix column order issue
-    * cosmetic
-      * simple strings without quotes
-      * avoid repeating keys
-      * emit in spaces or tabs
-      * align numeric right
-      * use fixed numeric precision
-    * actual sepby space rather than repeated parsers
     * check validity of data read
       * no duplicate rows
       * empties in valid places
@@ -71,6 +63,11 @@
   * rank polymorphism?
   * make named indices more central?
   * static checking of keys etc?
+
+  * tab format - cosmetic
+    * simple strings without quotes
+    * avoid repeating keys
+    * use fixed numeric precision
 
 * implementation
   * type inference/checking with HM

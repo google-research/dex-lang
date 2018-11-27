@@ -1,8 +1,6 @@
-module FlatType (flattenType, unflattenType,
-                 flattenVal, unflattenVal,
-                 showVal, printTabType, parseTabType,
-                 printVal, parseVal,
-                 TabType) where
+module FlatType (flattenType, unflattenType, flattenVal, unflattenVal,
+                 showVal, parseVal, PrintSpec, defaultPrintSpec, TabType) where
+
 import Data.List (intercalate, transpose)
 import Data.Void
 import Data.Monoid ((<>))
@@ -52,7 +50,7 @@ checkType t = case t of
    T.TabType a b -> checkType a >> checkType b
    T.RecType r -> sequence (fmap checkType r) >> return ()
    T.BaseType b -> Right ()
-   _ -> Left $ "can't print value with type " ++ show t
+   _ -> Left $ "Can't print value with type " ++ show t
 
 flattenType :: T.Type -> Except [TabType]
 flattenType t = checkType t >> (return $ flattenTypeRec t)
@@ -185,23 +183,30 @@ lookupPath (I.RecVal r) (name:rest) = let Just v = recLookup name r
 
 -- ----- printing -----
 
-showVal :: T.ClosedType -> I.Val -> String
-showVal (T.Forall _ t) v =
-  case printVal t v of
-    Left e -> "Print error: " ++ e
-    Right s -> s
+data PrintSpec = PrintSpec { manualAlign :: Bool }
 
-printVal :: T.Type -> I.Val -> Except String
-printVal t v = do
+defaultPrintSpec = PrintSpec True
+
+showVal :: PrintSpec -> T.ClosedType -> I.Val -> Except String
+showVal ps (T.Forall _ t) v = do
   tabTypes <- flattenType t
   let tabVals = flattenVal v tabTypes
-  return . intercalate "\n" $ zipWith printTab tabTypes tabVals
+  return . intercalate "\n" $ zipWith (printTab ps) tabTypes tabVals
 
-printTab :: TabType -> TabVal -> String
-printTab t v = printTabType t ++ printTabVal v
+printTab :: PrintSpec -> TabType -> TabVal -> String
+printTab ps t v =
+  printTabName t ++ (alignCells ps $ printHeader t : map (map printScalar) v)
 
-printTabType :: TabType -> String
-printTabType t = printTabName t ++ printHeader t
+alignCells :: PrintSpec -> [[String]] -> String
+alignCells ps rows = unlines $ if manualAlign ps
+  then let colLengths = map maxLength (transpose rows)
+           rows' = map padRow rows
+           padRow = zipWith (padLeft ' ') colLengths
+       in map (intercalate " ") rows'
+  else map (intercalate "\t") rows
+
+maxLength :: [String] -> Int
+maxLength = foldr (\x y -> max (length x) y) 0
 
 printTabName :: TabType -> String
 printTabName t = case getTabName t of
@@ -212,9 +217,12 @@ getTabName :: TabType -> [[RecName]]
 getTabName (TabType name _ rest) = name : getTabName rest
 getTabName (ValPart _) = []
 
-printHeader :: TabType -> String
-printHeader (TabType _ s rest) = printTree s ++ " " ++ printHeader rest
-printHeader (ValPart s) = printTree s ++ "\n"
+printHeader :: TabType -> [String]
+printHeader (TabType _ s rest) = printTreeList s ++ printHeader rest
+printHeader (ValPart s) = printTreeList s
+
+printTreeList :: Scalars -> [String]
+printTreeList = splitOn ('\t' ==) . printTree
 
 printTree :: Scalars -> String
 printTree [([], v)] = case v of UnitType -> "()"
@@ -226,10 +234,6 @@ printTree s = let (ks, vs) = unzip $ unFlatTree s
 
 printName :: [RecName] -> String
 printName names = concat $ intersperse "." (map show names)
-
-printTabVal :: TabVal -> String
-printTabVal rows = unlines $ map printRow rows
-  where printRow row = intercalate "\t" $ map printScalar row
 
 printScalar :: ScalarVal -> String
 printScalar v = case v of
@@ -267,7 +271,7 @@ parseTab = do
 tabTypeP :: Parser TabType
 tabTypeP = do
   tabNames <- fullTabNameP <|> return []
-  sectionTypes <- lineof $ scalarTreeP `sepBy` sc
+  sectionTypes <- lineof $ sc >> scalarTreeP `sepBy` sc
   return $ makeTabType (tabNames ++ repeat []) sectionTypes
 
 makeTabType :: [[RecName]] -> [Scalars] -> TabType
