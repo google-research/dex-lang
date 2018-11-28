@@ -1,5 +1,5 @@
 module Typer (Type (..), TypeErr (..), ClosedType (..), BaseType (..), TypeEnv,
-              initTypeEnv, typeExpr, typePatMatch, unitType) where
+              typeExpr, typePatMatch, unitType) where
 
 
 import Control.Monad
@@ -56,15 +56,6 @@ typePatMatch p t = do
 runConstrainMonad :: Env -> ConstrainMonad a -> (a, [Constraint])
 runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
 
-initTypeEnv :: TypeEnv
-initTypeEnv =
-  let a = TypeVar 0
-      b = TypeVar 1
-      int = BaseType IntType
-      binOp = Forall 0 $ int --> int --> int
-  in [ Forall 0 $ int --> int ==> int                        -- iota
-     , Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b  -- reduce
-     , binOp, binOp, binOp, binOp]
 
 infixr 1 -->
 infixr 2 ==>

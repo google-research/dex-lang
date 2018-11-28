@@ -1,8 +1,8 @@
-module Interpreter (evalExpr, valPatMatch, initValEnv, ValEnv,
+module Interpreter (evalExpr, valPatMatch, ValEnv,
                     Val (..), IdxVal, unitVal, TypedVal (..),
-                    validTypedVal) where
+                    BuiltinVal (..), validTypedVal, evalApp,
+                    tabVal) where
 
-import qualified Data.Map.Strict as M
 import Control.Monad
 import Data.Foldable
 import Data.List (sortOn)
@@ -24,7 +24,7 @@ data Val = Any
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
          | LamVal Pat Env Expr
-         | Builtin BuiltinName [Val]  deriving (Eq, Ord, Show)
+         | Builtin BuiltinVal [Val]  deriving (Eq, Ord, Show)
 
 type IdxVal = Val
 type IEnv = Int
@@ -33,12 +33,6 @@ type Env = (ValEnv, IEnv)
 
 evalExpr :: Expr -> ValEnv -> Val
 evalExpr expr env = eval expr (env, 0)
-
-initValEnv :: ValEnv
-initValEnv = let builtinNames = [Iota, Reduce,
-                                 BinOp Add, BinOp Sub,
-                                 BinOp Mul, BinOp Div]
-             in [Builtin b [] | b <- builtinNames]
 
 eval :: Expr -> Env -> Val
 eval expr env@(venv, d) =
@@ -157,37 +151,26 @@ lift v = tabVal [(Any, v)]
 
 evalApp :: Val -> Val -> Val
 evalApp (LamVal p (venv,ienv) body) x = eval body (valPatMatch p x ++ venv, ienv)
-evalApp (Builtin name vs) x = let args = x:vs
-                              in if length args < numArgs name
-                                    then Builtin name args
-                                    else evalBuiltin name (reverse args)
-
-evalBuiltin :: BuiltinName -> [Val] -> Val
-evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
-evalBuiltin Iota [IntVal n] = tabVal [(IntVal i, IntVal i)
-                                         | i <- [0..(n-1)]]
-evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
-                                      in foldr f' z (M.elems m)
-
-data BuiltinName = BinOp BinOpName
-                 | Iota
-                 | Reduce deriving (Show, Eq, Ord)
-
-data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq, Ord)
-
-numArgs :: BuiltinName -> Int
-numArgs x = case x of
-  BinOp _ -> 2
-  Iota    -> 1
-  Reduce  -> 3
-
-binOpFun :: BinOpName -> Int -> Int -> Int
-binOpFun Add = (+)
-binOpFun Mul = (*)
-binOpFun Sub = (-)
+evalApp (Builtin builtin vs) x = let args = x:vs
+                                 in if length args < builtinNumArgs builtin
+                                      then Builtin builtin args
+                                      else evalBuiltin builtin (reverse args)
 
 unitVal :: Val
 unitVal = RecVal emptyRecord
+
+data BuiltinVal = BuiltinVal { builtinNumArgs :: Int
+                             , builtinName :: String
+                             , evalBuiltin :: [Val] -> Val }
+
+instance Show BuiltinVal where
+  show (BuiltinVal _ name _) = name
+
+instance Eq BuiltinVal where
+  (==) (BuiltinVal _ name1 _) (BuiltinVal _ name2 _) = name1 == name2
+
+instance Ord BuiltinVal where
+  compare (BuiltinVal _ name1 _) (BuiltinVal _ name2 _) = compare name1 name2
 
 data TypedVal = TypedVal Type Val  deriving (Show)
 

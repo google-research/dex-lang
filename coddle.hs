@@ -20,24 +20,9 @@ import Util
 import Typer
 import Interpreter
 import FlatType
-
-data Env = Env { varEnv  :: VarEnv
-               , typeEnv :: TypeEnv
-               , valEnv  :: ValEnv }
+import Builtins
 
 type Repl a = InputT (StateT Env IO) a
-
-initEnv :: Env
-initEnv = Env { varEnv  = initVarEnv
-              , typeEnv = initTypeEnv
-              , valEnv  = initValEnv }
-
-
-consEnv :: (String, ClosedType, Val) -> Env -> Env
-consEnv (var, ty, val) env =
-  Env { varEnv  = var : varEnv  env
-      , typeEnv = ty  : typeEnv env
-      , valEnv  = val : valEnv  env }
 
 evalCmd :: Command -> Repl ()
 evalCmd c = case c of

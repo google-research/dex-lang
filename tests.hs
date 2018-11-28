@@ -10,6 +10,7 @@ import Util
 import Typer
 import Interpreter
 import FlatType
+import Builtins
 import Control.Monad (liftM2)
 import qualified Data.Map.Strict as Map
 
@@ -143,15 +144,18 @@ testCase s f target = TestCase $ assertEqual ("   input: " ++ s) target (f s)
 getParse :: String -> Expr
 getParse s = case parseCommand s of
               Right (EvalExpr p) ->
-                case lowerExpr p initVarEnv of
+                case lowerExpr p (varEnv initEnv) of
+                  Left e -> error $ show e
                   Right e -> e
+              Right c -> error $ "unexpected command parse: " ++ show c
               Left _ -> error "parse error"
 
+
 gettype :: String -> Either TypeErr ClosedType
-gettype s = typeExpr (getParse s) initTypeEnv
+gettype s = typeExpr (getParse s) (typeEnv initEnv)
 
 getVal :: String -> Val
-getVal s = evalExpr (getParse s) initValEnv
+getVal s = evalExpr (getParse s) (valEnv initEnv)
 
 parseTests = TestList [testCase s parseCommand (Right (EvalExpr p))
                       | (s,p) <- parseTestCases]
