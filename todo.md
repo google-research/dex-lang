@@ -1,4 +1,9 @@
 # Todo ordered (easy things)
+  * exp and log, sqrt and pow
+  * type annotations (as asserts)?
+  * more helpful errors when running a script (really should typecheck whole
+    thing before evaluating anything)
+
   * table i/o
     * check validity of data read
       * no duplicate rows
@@ -33,12 +38,6 @@
 
 
 # Todo
-* parser for non-csv user-entered tables
-  * could also be used for literal tables in programs
-  * can we use a joint parser-printer library like Data.Syntax
-  * emacs mode to re-align
-
-
 * example programs
   * prelude: matmul, standard deviation, promote, normalize-over
   * summary stats (R-style workflow)

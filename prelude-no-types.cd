@@ -1,0 +1,24 @@
+
+
+map f x = for i: f x.i
+
+lift x = for i: x
+
+sum = reduce add 0
+
+count x = sum (map (lam x: 1) x)
+
+mean x = sum x / count x
+
+matmul x y = for i j: sum (for k: x.i.k * y.k.j)
+
+dot x y = sum (for i: x.i * y.i)
+
+outer x y = for i j: x.i * y.j
+
+transpose x = for i j: x.j.i
+
+std x = mean (x^2) - (mean x)^2
+
+normalize' x = map (/) x (lift (std x))
+normalize x = for i: x.i / std x
