@@ -64,7 +64,7 @@ infixr 2 ==>
 
 constrain :: Expr -> ConstrainMonad Type
 constrain expr = case expr of
-  Lit c -> return (BaseType IntType)
+  Lit c -> return $ litType c
   Var v -> do
     t <- lookupEnv v
     return t
@@ -98,6 +98,12 @@ constrain expr = case expr of
   RecCon exprs -> do
     ts <- mapM constrain exprs
     return (RecType ts)
+
+litType :: LitVal -> Type
+litType v = BaseType $ case v of
+  IntLit  _ -> IntType
+  RealLit _ -> RealType
+  StrLit  _ -> StrType
 
 constrainIdxExpr :: IdxExpr -> ConstrainMonad Type
 constrainIdxExpr expr = case expr of

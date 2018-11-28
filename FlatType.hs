@@ -11,6 +11,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 
 import Record
 import Util
+import ParseUtil
 import qualified Data.Map.Strict as M
 import qualified Typer as T
 import qualified Interpreter as I
@@ -256,8 +257,6 @@ parseTabType s = case parse tabTypeP "" s of
   Left e -> Left (errorBundlePretty e)
   Right x -> Right x
 
-type Parser = Parsec Void String
-
 topP :: Parser [(TabType, TabVal)]
 topP = do blankLines >> some parseTab
 
@@ -321,48 +320,15 @@ rowP (t:ts) = do
 fieldP :: ScalarType -> Parser ScalarVal
 fieldP t = case t of
   BaseType b -> case b of
-    T.IntType -> IntVal <$> intP
+    T.IntType -> IntVal <$> int
     T.BoolType ->     (symbol "True"  >> return (BoolVal True ))
                   <|> (symbol "False" >> return (BoolVal False))
     T.StrType -> StrVal <$> stringLiteral
-    T.RealType -> RealVal <$> realP
+    T.RealType -> RealVal <$> real
   UnitType -> symbol "()" >> return UnitVal
 
 recNameP :: Parser RecName
 recNameP =     (RecPos  <$> (char '#' >> L.decimal))
-           <|> (RecName <$> identifierP)
+           <|> (RecName <$> identifier)
 
--- ----- parser utils -----
-
-lineof :: Parser a -> Parser a
-lineof = (<* (sc >> eol))
-
-sc :: Parser ()
-sc = L.space space empty empty
-
-blankLines :: Parser ()
-blankLines = void $ many eol
-
-stringLiteral :: Parser String
-stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
-
-identifierP :: Parser String
-identifierP = lexeme . try $ (:) <$> letterChar <*> many alphaNumChar
-
-space :: Parser ()
-space = void $ takeWhile1P (Just "white space") (`elem` " \t")
-
-intP :: Parser Int
-intP = L.signed (return ()) L.decimal
-
-realP :: Parser Float
-realP = L.signed (return ()) L.float
-
-lexeme :: Parser a -> Parser a
-lexeme = L.lexeme sc
-
-symbol :: String -> Parser String
-symbol = L.symbol sc
-
-parens :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
+identifier = makeIdentifier []

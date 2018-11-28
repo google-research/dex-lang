@@ -88,7 +88,7 @@ repl prompt = loop
          Nothing -> return ()
          Just "" -> loop
          Just line -> case parseCommand line of
-           Left e -> outputStrLn "Parse error:" >> print e >> loop
+           Left e -> outputStrLn e >> loop
            Right cmd -> catchErr (evalCmd cmd) >> loop
 
 

@@ -58,7 +58,7 @@ binOp name f = BuiltinSpec name ty 2 f'
      ty = Forall 0 $ int --> int --> int
 
 realUnOp :: String -> (Float -> Float) -> BuiltinSpec
-realUnOp name f = BuiltinSpec name ty 2 f'
+realUnOp name f = BuiltinSpec name ty 1 f'
   where
      f' [RealVal x] = RealVal $ f x
      ty = Forall 0 $ real --> real
@@ -69,48 +69,3 @@ reduceEval [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
 
 iotaType = Forall 0 $ int --> int ==> int
 iotaEval [IntVal n] = tabVal [(IntVal i, IntVal i) | i <- [0..(n-1)]]
-
-
--- initEnv = unzip3 [ add, sub, mul, div
---                  , iota, reduce]
--- -- initEnv :: Env
--- -- initEnv = Env { varEnv  = initVarEnv
--- --               , typeEnv = initTypeEnv
--- --               , valEnv  = initValEnv }
-
-
--- consEnv :: (String, ClosedType, Val) -> Env -> Env
--- consEnv (var, ty, val) env =
---   Env { varEnv  = var : varEnv  env
---       , typeEnv = ty  : typeEnv env
---       , valEnv  = val : valEnv  env }
-
--- evalBuiltin (BinOp b) [IntVal x, IntVal y] = IntVal $ binOpFun b x y
--- data BuiltinName = BinOp BinOpName
---                  | Iota
---                  | Reduce deriving (Show, Eq, Ord)
-
--- data BinOpName = Add | Mul | Sub | Div  deriving (Show, Eq, Ord)
-
--- numArgs :: BuiltinName -> Int
--- numArgs x = case x of
---   BinOp _ -> 2
---   Iota    -> 1
---   Reduce  -> 3
-
--- binOpFun :: BinOpName -> Int -> Int -> Int
--- binOpFun Add = (+)
--- binOpFun Mul = (*)
--- binOpFun Sub = (-)
---   "iota", "reduce", "add", "sub", "mul", "div"
---              , "exp", "log", "sqrt", "pow"]
-
--- ("iota"  , 
---      , ("reduce", Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b , reduceImpl)
---      -- reduce
---      , binOp, binOp, binOp, binOp]
-
--- evalBuiltin :: BuiltinName -> [Val] -> Val
--- evalBuiltin Reduce [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
---                                       in foldr f' z (M.elems m)
-

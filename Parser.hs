@@ -1,18 +1,22 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
                IdxPat, IdxExpr (..), parseCommand, typedName,
-               str, Command (..)) where
+               Command (..)) where
 import Util
 import Record
 import Typer
+import ParseUtil
 import qualified Syntax as S
 
 import Control.Monad
 import Test.HUnit
 import qualified Data.Map.Strict as M
-import Text.ParserCombinators.Parsec hiding (lower)
-import Text.ParserCombinators.Parsec.Expr
-import Text.ParserCombinators.Parsec.Language
-import qualified Text.ParserCombinators.Parsec.Token as Token
+
+import Data.Monoid ((<>))
+import Control.Monad (void)
+import Control.Monad.Combinators.Expr
+import Text.Megaparsec
+import Text.Megaparsec.Char hiding (space)
+import qualified Text.Megaparsec.Char.Lexer as L
 
 data Expr = Lit S.LitVal
           | Var VarName
@@ -43,8 +47,10 @@ type VarName = String
 type IdxVarName = String
 type Decl = (Pat, Expr)
 
-parseCommand :: String -> Either ParseError Command
-parseCommand s = parse (command <* eof) "" s
+parseCommand :: String -> Either String Command
+parseCommand s = case parse (command <* eof) "" s of
+  Left  e -> Left $ errorBundlePretty e
+  Right p -> Right p
 
 command :: Parser Command
 command =   explicitCommand
@@ -54,30 +60,20 @@ command =   explicitCommand
 
 opNames = ["+", "*", "/", "-", "^"]
 resNames = ["for", "lam", "let", "in"]
-languageDef = haskellStyle { Token.reservedOpNames = opNames
-                           , Token.reservedNames   = resNames
-                           }
 
-lexer = Token.makeTokenParser languageDef
-identifier = Token.identifier lexer
-parens     = Token.parens     lexer
-lexeme     = Token.lexeme     lexer
-brackets   = Token.brackets   lexer
-integer    = Token.integer    lexer
-whiteSpace = Token.whiteSpace lexer
-reservedOp = Token.reservedOp lexer
+identifier = makeIdentifier resNames
 
-appRule = Infix (whiteSpace
-                 *> notFollowedBy (choice . map reservedOp $ opNames ++ resNames)
-                 >> return App) AssocLeft
-binOpRule opchar opname = Infix (reservedOp opchar
-                                 >> return (binOpApp opname)) AssocLeft
+appRule = InfixL (sc
+                  *> notFollowedBy (choice . map symbol $ opNames ++ resNames)
+                  >> return App)
+binOpRule opchar opname = InfixL (symbol opchar
+                                 >> return (binOpApp opname))
 
 binOpApp :: String -> Expr -> Expr -> Expr
 binOpApp s e1 e2 = App (App (Var s) e1) e2
 
 getRule = Postfix $ do
-  vs  <- many $ str "." >> idxExpr
+  vs  <- many $ symbol "." >> idxExpr
   return $ \body -> foldr (flip Get) body (reverse vs)
 
 ops = [ [getRule, appRule]
@@ -88,16 +84,14 @@ ops = [ [getRule, appRule]
 
 term =   parenExpr
      <|> liftM Var identifier
-     <|> liftM (Lit . S.IntLit . fromIntegral) integer
+     <|> liftM Lit literal
      <|> letExpr
      <|> lamExpr
      <|> forExpr
      <?> "term"
 
-str = lexeme . string
-var = liftM id identifier
-
 idxPat = pat
+
 idxExpr =   parenIdxExpr
         <|> liftM IdxVar identifier
 
@@ -107,26 +101,26 @@ pat =   parenPat
 
 parenPat :: Parser Pat
 parenPat = do
-  xs <- parens $ maybeNamed pat `sepBy` str ","
+  xs <- parens $ maybeNamed pat `sepBy` symbol ","
   return $ case xs of
     [(Nothing, x)] -> x
     xs -> RecPat $ mixedRecord xs
 
 expr :: Parser Expr
-expr = buildExpressionParser ops (whiteSpace >> term)
+expr = makeExprParser (sc >> term) ops
 
 decl :: Parser Decl
 decl = do
   v <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
-  str "="
+  symbol "="
   body <- expr
   return (v, wrap body)
 
 typedName :: Parser (String, BaseType)
 typedName = do
   name <- identifier
-  str "::"
+  symbol "::"
   typeName <- identifier
   ty <- case typeName of
     "Int"  -> return IntType
@@ -137,7 +131,7 @@ typedName = do
 
 explicitCommand :: Parser Command
 explicitCommand = do
-  try $ str ":"
+  try $ symbol ":"
   cmd <- identifier
   e <- expr
   case cmd of
@@ -148,51 +142,57 @@ explicitCommand = do
 
 maybeNamed :: Parser a -> Parser (Maybe String, a)
 maybeNamed p = do
-  v <- optionMaybe $ try $
+  v <- optional $ try $
     do v <- identifier
-       str "="
+       symbol "="
        return v
   x <- p
   return (v, x)
 
+literal :: Parser S.LitVal
+literal = lexeme $  fmap S.IntLit  (try (int <* notFollowedBy (char '.')))
+                <|> fmap S.RealLit real
+                <|> fmap S.StrLit stringLiteral
+
+
 parenIdxExpr = do
-  elts <- parens $ maybeNamed idxExpr `sepBy` str ","
+  elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
   return $ case elts of
     [(Nothing, expr)] -> expr
     elts -> IdxRecCon $ mixedRecord elts
 
 parenExpr = do
-  elts <- parens $ maybeNamed expr `sepBy` str ","
+  elts <- parens $ maybeNamed expr `sepBy` symbol ","
   return $ case elts of
     [(Nothing, expr)] -> expr
     elts -> RecCon $ mixedRecord elts
 
 idxLhsArgs = do
-  try $ str "."
-  args <- idxPat `sepBy` str "."
+  try $ symbol "."
+  args <- idxPat `sepBy` symbol "."
   return $ \body -> foldr For body args
 
 lamLhsArgs = do
-  args <- pat `sepBy` whiteSpace
+  args <- pat `sepBy` sc
   return $ \body -> foldr Lam body args
 
 letExpr = do
-  try $ str "let"
-  bindings <- decl `sepBy` str ";"
-  str "in"
+  try $ symbol "let"
+  bindings <- decl `sepBy` symbol ";"
+  symbol "in"
   body <- expr
   return $ foldr (uncurry Let) body bindings
 
 lamExpr = do
-  try $ str "lam"
-  ps <- pat `sepBy` whiteSpace
-  str ":"
+  try $ symbol "lam"
+  ps <- pat `sepBy` sc
+  symbol ":"
   body <- expr
   return $ foldr Lam body ps
 
 forExpr = do
-  try $ str "for"
-  vs <- idxPat `sepBy` whiteSpace
-  str ":"
+  try $ symbol "for"
+  vs <- some idxPat -- `sepBy` sc
+  symbol ":"
   body <- expr
   return $ foldr For body vs

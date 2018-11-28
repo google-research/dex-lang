@@ -41,7 +41,8 @@ s2 = P.Lit (StrLit "bar")
 
 parseTestCases =
   [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
-  -- , ("sqrt 2.0"              , P.App (P.Var "sqrt") f2)
+  , ("\"foo\""               , s1)
+  , ("sqrt 2.0"              , P.App (P.Var "sqrt") f2)
   , ("for i: 1"              , P.For i' l1)
   , ("lam x: x"              , P.Lam x' x)
   , ("y x"                   , P.App y x)
@@ -81,6 +82,8 @@ b = TypeVar 1
 
 typeTestCases =
   [ ("1"                     , Forall 0 $ int)
+  , ("1.0"                   , Forall 0 $ BaseType RealType)
+  , ("\"foo\""               , Forall 0 $ BaseType StrType)
   , ("1 + 3"                 , Forall 0 $ int)
   , ("lam x: x"              , Forall 1 $ a --> a)
   , ("(lam x: x) 2"          , Forall 0 $ int)
@@ -135,7 +138,7 @@ type TestVal = (Int, [([Int], Int)])
 evalTestCases :: [(String, Val)]
 evalTestCases =
   [ ("1 + 2"                              ,  IntVal 3)
-  -- , ("sqrt 4.0"                           ,  RealVal 2)
+  , ("sqrt 4.0"                           ,  RealVal 2)
   , ("reduce add 0 (iota 4)"              ,  IntVal 6)
   , ("reduce add 0 (for i: (iota 4).i)"   ,  IntVal 6)
   , ("reduce add 0 (for i: (iota 5).i + (iota 4).i)"   ,  IntVal 12)
