@@ -50,7 +50,7 @@ command =   explicitCommand
         <|> liftM EvalExpr expr
         <?> "command"
 
-opNames = ["+", "*", "/", "-"]
+opNames = ["+", "*", "/", "-", "^"]
 resNames = ["for", "lam", "let", "in"]
 languageDef = haskellStyle { Token.reservedOpNames = opNames
                            , Token.reservedNames   = resNames
@@ -78,9 +78,10 @@ getRule = Postfix $ do
   vs  <- many $ str "." >> idxExpr
   return $ \body -> foldr (flip Get) body (reverse vs)
 
-ops = [ [getRule, appRule],
-        [binOpRule "*" "mul", binOpRule "/" "div"],
-        [binOpRule "+" "add", binOpRule "-" "sub"]
+ops = [ [getRule, appRule]
+      , [binOpRule "^" "pow"]
+      , [binOpRule "*" "mul", binOpRule "/" "div"]
+      , [binOpRule "+" "add", binOpRule "-" "sub"]
       ]
 
 term =   parenExpr

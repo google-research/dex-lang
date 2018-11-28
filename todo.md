@@ -1,6 +1,4 @@
 # Todo ordered (easy things)
-  * builtins (names, values, types) in separate file
-    * including - make sure that builtin names get passed to parser.
   * exp and log, sqrt and pow
   * string, bool and real literals
   * type annotations (as asserts)?

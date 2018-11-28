@@ -6,10 +6,6 @@ import Interpreter
 import Typer
 import Lower
 
-a = TypeVar 0
-b = TypeVar 1
-int = BaseType IntType
-
 data Env = Env { varEnv  :: VarEnv
                , typeEnv :: TypeEnv
                , valEnv  :: ValEnv }
@@ -23,6 +19,13 @@ initEnv = Env { varEnv  = map name builtins
 builtins = [ binOp "add" (+)
            , binOp "sub" (-)
            , binOp "mul" (*)
+           , binOp "pow" (^)
+           , realUnOp "exp" exp
+           , realUnOp "log" log
+           , realUnOp "sqrt" sqrt
+           , realUnOp "sin" sin
+           , realUnOp "cos" cos
+           , realUnOp "tan" tan
            , BuiltinSpec "reduce" reduceType 3 reduceEval
            , BuiltinSpec "iota" iotaType 1 iotaEval
            ]
@@ -38,17 +41,27 @@ data BuiltinSpec = BuiltinSpec { name    :: String
                                , numArgs :: Int
                                , evalFun :: [Val] -> Val }
 
+a = TypeVar 0
+b = TypeVar 1
+int = BaseType IntType
+real = BaseType RealType
+
 infixr 1 -->
 infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-
 binOp :: String -> (Int -> Int -> Int) -> BuiltinSpec
-binOp name binOpFun = BuiltinSpec name binOpType 2 binOpEval
+binOp name f = BuiltinSpec name ty 2 f'
   where
-     binOpEval [IntVal x, IntVal y] = IntVal $ binOpFun x y
-     binOpType = Forall 0 $ int --> int --> int
+     f' [IntVal x, IntVal y] = IntVal $ f x y
+     ty = Forall 0 $ int --> int --> int
+
+realUnOp :: String -> (Float -> Float) -> BuiltinSpec
+realUnOp name f = BuiltinSpec name ty 2 f'
+  where
+     f' [RealVal x] = RealVal $ f x
+     ty = Forall 0 $ real --> real
 
 reduceType = Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b
 reduceEval [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
