@@ -4,6 +4,8 @@ module Parser (VarName, IdxVarName, Expr (..), Pat (..),
 import Util
 import Record
 import Typer
+import qualified Syntax as S
+
 import Control.Monad
 import Test.HUnit
 import qualified Data.Map.Strict as M
@@ -12,7 +14,7 @@ import Text.ParserCombinators.Parsec.Expr
 import Text.ParserCombinators.Parsec.Language
 import qualified Text.ParserCombinators.Parsec.Token as Token
 
-data Expr = Lit Int
+data Expr = Lit S.LitVal
           | Var VarName
           | Let Pat Expr Expr
           | Lam Pat Expr
@@ -86,7 +88,7 @@ ops = [ [getRule, appRule]
 
 term =   parenExpr
      <|> liftM Var identifier
-     <|> liftM (Lit . fromIntegral) integer
+     <|> liftM (Lit . S.IntLit . fromIntegral) integer
      <|> letExpr
      <|> lamExpr
      <|> forExpr
@@ -120,7 +122,6 @@ decl = do
   str "="
   body <- expr
   return (v, wrap body)
-
 
 typedName :: Parser (String, BaseType)
 typedName = do

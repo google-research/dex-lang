@@ -1,9 +1,9 @@
-module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat) where
+module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..)) where
 
 import qualified Data.Map.Strict as M
 import Record
 
-data Expr = Lit Int
+data Expr = Lit LitVal
           | Var Int
           | Let Pat Expr Expr
           | Lam Pat Expr
@@ -12,6 +12,11 @@ data Expr = Lit Int
           | Get Expr IdxExpr
           | RecCon (Record Expr)
               deriving (Show, Eq, Ord)
+
+data LitVal = IntLit  Int
+            | RealLit Float
+            | StrLit  String
+                 deriving (Show, Eq, Ord)
 
 data IdxExpr = IdxVar Int
              | IdxRecCon (Record IdxExpr)

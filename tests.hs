@@ -30,11 +30,18 @@ j = P.IdxVar "j"
 i' = P.VarPat "i"
 j' = P.VarPat "j"
 
-l1 = P.Lit 1
-l2 = P.Lit 2
+l1 = P.Lit (IntLit 1)
+l2 = P.Lit (IntLit 2)
+
+f1 = P.Lit (RealLit 1)
+f2 = P.Lit (RealLit 2)
+
+s1 = P.Lit (StrLit "foo")
+s2 = P.Lit (StrLit "bar")
 
 parseTestCases =
   [ ("1 + 2"                 , P.App (P.App (P.Var "add") l1) l2)
+  -- , ("sqrt 2.0"              , P.App (P.Var "sqrt") f2)
   , ("for i: 1"              , P.For i' l1)
   , ("lam x: x"              , P.Lam x' x)
   , ("y x"                   , P.App y x)
@@ -128,6 +135,7 @@ type TestVal = (Int, [([Int], Int)])
 evalTestCases :: [(String, Val)]
 evalTestCases =
   [ ("1 + 2"                              ,  IntVal 3)
+  -- , ("sqrt 4.0"                           ,  RealVal 2)
   , ("reduce add 0 (iota 4)"              ,  IntVal 6)
   , ("reduce add 0 (for i: (iota 4).i)"   ,  IntVal 6)
   , ("reduce add 0 (for i: (iota 5).i + (iota 4).i)"   ,  IntVal 12)

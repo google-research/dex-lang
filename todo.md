@@ -1,5 +1,4 @@
 # Todo ordered (easy things)
-  * exp and log, sqrt and pow
   * string, bool and real literals
   * type annotations (as asserts)?
   * more helpful errors when running a script (really should typecheck whole

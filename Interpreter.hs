@@ -37,7 +37,7 @@ evalExpr expr env = eval expr (env, 0)
 eval :: Expr -> Env -> Val
 eval expr env@(venv, d) =
   case expr of
-    Lit c          -> composeN d lift $ IntVal c
+    Lit c          -> composeN d lift $ litVal c
     Var v          -> venv !! v
     Let p bound body -> let x = eval bound env
                         in eval body (valPatMatch p x ++ venv, d)
@@ -59,6 +59,12 @@ valPatMatch VarPat v = [v]
 valPatMatch (RecPat p) (RecVal v) = let vs = toList v
                                         ps = toList p
                                     in concat $ zipWith valPatMatch ps vs
+
+litVal :: LitVal -> Val
+litVal v = case v of
+  IntLit  v -> IntVal  v
+  RealLit v -> RealVal v
+  StrLit  v -> StrVal  v
 
 tabVal :: [(IdxVal, Val)] -> Val
 tabVal = TabVal . M.fromList
