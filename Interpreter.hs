@@ -10,6 +10,7 @@ import Data.Foldable (toList)
 import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
+import qualified LLVM.AST as L
 
 import Syntax
 import Util
@@ -167,7 +168,8 @@ unitVal = RecVal emptyRecord
 
 data BuiltinVal = BuiltinVal { builtinNumArgs :: Int
                              , builtinName :: String
-                             , evalBuiltin :: [Val] -> Val }
+                             , evalBuiltin :: [Val] -> Val
+                             }
 
 instance Show BuiltinVal where
   show (BuiltinVal _ name _) = name

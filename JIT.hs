@@ -8,10 +8,12 @@ import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
 import Control.Monad.Writer (WriterT, runWriterT, tell)
 import Control.Monad.State (StateT, evalState, put, get)
 
+import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
+import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.Module as Mod
 import qualified LLVM.Analysis as Mod
@@ -26,7 +28,7 @@ import qualified Syntax as S
 import qualified Interpreter as I
 import Record
 
-foreign import ccall "dynamic" haskFun :: FunPtr (Int32 -> Int32) -> (Int32 -> Int32)
+foreign import ccall "dynamic" haskFun :: FunPtr Int32 -> Int32
 
 type Compiled = L.Module
 type Env = [Val]
@@ -36,7 +38,7 @@ data Val = Operand L.Operand
          | RecVal (Record Val)
 
 type Instr = L.Named L.Instruction
-data BuiltinVal = Add | Mul
+type BuiltinVal = (Int, [Val] -> L.Instruction)
 
 lowerLLVM :: I.ValEnv -> S.Expr -> L.Module
 lowerLLVM interpEnv e =
@@ -64,27 +66,35 @@ runCompileMonad env m = evalState (runWriterT (runReaderT m env)) 0
 
 compile :: S.Expr -> CompileMonad Val
 compile expr = case expr of
-  S.Lit (S.IntLit x) -> return $ Operand $ L.ConstantOperand $ C.Int 32 (fromIntegral x)
-  S.Var v            -> lookupEnv v
+  S.Lit x -> return . Operand . L.ConstantOperand . litVal $ x
+  S.Var v -> lookupEnv v
   S.Let p bound body -> do x <- compile bound
                            local (updateEnv $ valPatMatch p x) (compile body)
-  S.Lam p body        -> do env <- ask
-                            return $ LamVal p env body
-  S.App e1 e2         ->
-    do f <- compile e1
-       x <- compile e2
-       case f of
-         LamVal p env body -> local (\_ -> valPatMatch p x ++ env) (compile body)
-         Builtin b [] -> return $ Builtin b [x]
-         Builtin b [y] -> case (x, y) of
-           (Operand x, Operand y) -> do
-             out <- fresh
-             case b of
-               Add -> addInstr $ (L.:=) out (L.Add False False x y [])
-               Mul -> addInstr $ (L.:=) out (L.Mul False False x y [])
-             return $ Operand $ L.LocalReference int out
-  S.RecCon r          -> liftM RecVal $ mapM compile r
+  S.Lam p body -> do env <- ask
+                     return $ LamVal p env body
+  S.App e1 e2  -> do f <- compile e1
+                     x <- compile e2
+                     case f of
+                       LamVal p env body ->
+                         withEnv (valPatMatch p x ++ env) (compile body)
+                       Builtin b vs -> compileBuiltin b (x:vs)
+  S.RecCon r   -> liftM RecVal $ mapM compile r
 
+compileBuiltin :: BuiltinVal -> [Val] -> CompileMonad Val
+compileBuiltin b@(numArgs, makeInstr) args =
+    if length args < numArgs
+      then return $ Builtin b args
+      else do out <- fresh
+              addInstr $ (L.:=) out (makeInstr (reverse args))
+              return $ Operand $ L.LocalReference int out
+
+litVal :: S.LitVal -> C.Constant
+litVal lit = case lit of
+  S.IntLit x -> C.Int 32 (fromIntegral x)
+  S.RealLit x -> C.Float (L.Single x)
+
+withEnv :: Env -> CompileMonad a -> CompileMonad a
+withEnv env = local (\_ -> env)
 
 valPatMatch :: S.Pat -> Val -> [Val]
 valPatMatch S.VarPat v = [v]
@@ -107,8 +117,8 @@ addInstr instr = tell [instr]
 fromInterpVal :: I.Val -> Val
 fromInterpVal v = case v of
   I.IntVal x -> Operand $ L.ConstantOperand $ C.Int 32 (fromIntegral x)
-  I.Builtin b [] | I.builtinName b == "add" -> Builtin Add []
-                 | I.builtinName b == "mul" -> Builtin Mul []
+  I.Builtin b vs -> case M.lookup (I.builtinName b) builtins of
+                      Just b -> Builtin b (map fromInterpVal vs)
   I.LamVal p (env, _) body -> LamVal p (map fromInterpVal env) body
   I.RecVal r -> RecVal $ fmap fromInterpVal r
   x -> error $ "Can't compile value " ++ show x
@@ -131,7 +141,7 @@ evalJit m =
         EE.withModuleInEngine ee m $ \eee -> do
           fn <- EE.getFunction eee (L.Name "thefun")
           case fn of
-            Just fn -> do let x = show $ runJitted fn 100
+            Just fn -> do let x = show $ runJitted fn
                           putStr $ x `seq` ""  -- segfaults without this
                           return x
             Nothing -> return "Failed - couldn't find function"
@@ -139,8 +149,14 @@ evalJit m =
 int :: L.Type
 int = L.IntegerType 32
 
-runJitted :: FunPtr a -> Int32 -> Int32
-runJitted fn = haskFun (castFunPtr fn :: FunPtr (Int32 -> Int32))
+runJitted :: FunPtr a -> Int32
+runJitted fn = haskFun (castFunPtr fn :: FunPtr Int32)
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
+
+
+builtins :: M.Map String BuiltinVal
+builtins = M.fromList $
+  [ ("add", (2, \[Operand x, Operand y]-> L.Add False False x y []))
+  , ("mul", (2, \[Operand x, Operand y]-> L.Mul False False x y [])) ]
