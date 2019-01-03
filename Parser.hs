@@ -39,6 +39,8 @@ data Pat = VarPat VarName
 data Command = GetType    Expr
              | GetParse   Expr
              | GetLowered Expr
+             | GetLLVM    Expr
+             | EvalJit    Expr
              | EvalExpr   Expr
              | EvalDecl   Pat Expr deriving (Show, Eq)
 
@@ -138,6 +140,8 @@ explicitCommand = do
     "t" -> return $ GetType e
     "p" -> return $ GetParse e
     "l" -> return $ GetLowered e
+    "llvm" -> return $ GetLLVM e
+    "jit" -> return $ EvalJit e
     _   -> fail $ "unrecognized command: " ++ show cmd
 
 maybeNamed :: Parser a -> Parser (Maybe String, a)
