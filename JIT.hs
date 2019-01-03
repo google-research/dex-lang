@@ -29,6 +29,7 @@ type Compiled = L.Module
 type Env = [Val]
 data Val = Operand L.Operand
          | Builtin BuiltinVal [Val]
+         | LamVal Env S.Expr
 type Instr = L.Named L.Instruction
 data BuiltinVal = Add | Mul
 
@@ -63,10 +64,13 @@ compile expr = case expr of
   S.Var v            -> lookupEnv v
   S.Let p bound body -> do x <- compile bound
                            local (updateEnv $ valPatMatch p x) (compile body)
+  S.Lam S.VarPat body -> do env <- ask
+                            return $ LamVal env body
   S.App e1 e2        ->
     do f <- compile e1
        x <- compile e2
        case f of
+         LamVal env body -> local (\_ -> x:env) (compile body)
          Builtin b [] -> return $ Builtin b [x]
          Builtin b [y] -> case (x, y) of
            (Operand x, Operand y) -> do
@@ -75,6 +79,9 @@ compile expr = case expr of
                Add -> addInstr $ (L.:=) out (L.Add False False x y [])
                Mul -> addInstr $ (L.:=) out (L.Mul False False x y [])
              return $ Operand $ L.LocalReference int out
+
+
+
 
 valPatMatch :: S.Pat -> Val -> [Val]
 valPatMatch S.VarPat v = [v]
@@ -96,6 +103,7 @@ fromInterpVal v = case v of
   I.IntVal x -> Operand $ L.ConstantOperand $ C.Int 32 (fromIntegral x)
   I.Builtin b [] | I.builtinName b == "add" -> Builtin Add []
                  | I.builtinName b == "mul" -> Builtin Mul []
+  I.LamVal (S.VarPat) (env, _) body -> LamVal (map fromInterpVal env) body
   x -> error $ "Can't compile value " ++ show x
 
 
