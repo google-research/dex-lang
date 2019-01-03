@@ -61,6 +61,8 @@ compile :: S.Expr -> CompileMonad Val
 compile expr = case expr of
   S.Lit (S.IntLit x) -> return $ Operand $ L.ConstantOperand $ C.Int 32 (fromIntegral x)
   S.Var v            -> lookupEnv v
+  S.Let p bound body -> do x <- compile bound
+                           local (updateEnv $ valPatMatch p x) (compile body)
   S.App e1 e2        ->
     do f <- compile e1
        x <- compile e2
@@ -73,6 +75,12 @@ compile expr = case expr of
                Add -> addInstr $ (L.:=) out (L.Add False False x y [])
                Mul -> addInstr $ (L.:=) out (L.Mul False False x y [])
              return $ Operand $ L.LocalReference int out
+
+valPatMatch :: S.Pat -> Val -> [Val]
+valPatMatch S.VarPat v = [v]
+
+updateEnv :: [Val] -> Env -> Env
+updateEnv = (++)
 
 fresh :: CompileMonad L.Name
 fresh = do i <- get
