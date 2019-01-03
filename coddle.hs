@@ -30,13 +30,11 @@ evalCmd c = case c of
   GetParse expr   -> print expr
   GetLowered expr -> lower expr >>= print
   GetType expr    -> lower expr >>= gettype >>= print
-  GetLLVM expr    -> do e <- lower expr
-                        t <- gettype e
-                        s <- liftIO $ showLLVM $ lowerLLVM e
+  GetLLVM expr    -> do c <- compile expr
+                        s <- liftIO $ showLLVM c
                         outputStrLn s
-  EvalJit expr    -> do e <- lower expr
-                        t <- gettype e
-                        s <- liftIO $ evalJit $ lowerLLVM e
+  EvalJit expr    -> do c <- compile expr
+                        s <- liftIO $ evalJit c
                         outputStrLn s
   EvalExpr expr   -> do e <- lower expr
                         t <- gettype e
@@ -61,6 +59,13 @@ lower :: P.Expr -> Repl Expr
 lower expr = do
   env <- lift $ gets varEnv
   liftErr $ lowerExpr expr env
+
+compile :: P.Expr -> Repl Compiled
+compile expr = do
+  env <- lift $ gets valEnv
+  e <- lower expr
+  t <- gettype e
+  return $ lowerLLVM env e
 
 gettype :: Expr -> Repl ClosedType
 gettype expr = do
