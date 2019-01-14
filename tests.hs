@@ -163,10 +163,11 @@ getParse s = case parseCommand s of
               Left _ -> error "parse error"
 
 getTypedExpr :: String -> Expr
-getTypedExpr s = case typedExpr (getParse s) (typeEnv initEnv) of Right e -> e
+getTypedExpr s = case inferTypes (getParse s) (typeEnv initEnv) of
+                   Right (t, e) -> e
 
 gettype :: String -> Either TypeErr SigmaType
-gettype s = typeExpr (getParse s) (typeEnv initEnv)
+gettype s = fmap fst $ inferTypes (getParse s) (typeEnv initEnv)
 
 getVal :: String -> Val
 getVal s = evalExpr (getTypedExpr s) (valEnv initEnv)

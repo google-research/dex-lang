@@ -56,17 +56,17 @@ binOp :: String -> (Int -> Int -> Int) -> BuiltinSpec
 binOp name f = BuiltinSpec name ty 2 f'
   where
      f' [IntVal x, IntVal y] = IntVal $ f x y
-     ty = Forall 0 $ int --> int --> int
+     ty = int --> int --> int
 
 realUnOp :: String -> (Float -> Float) -> BuiltinSpec
 realUnOp name f = BuiltinSpec name ty 1 f'
   where
      f' [RealVal x] = RealVal $ f x
-     ty = Forall 0 $ real --> real
+     ty = real --> real
 
 reduceType = Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b
 reduceEval [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
                               in foldr f' z (M.elems m)
 
-iotaType = Forall 0 $ int --> int ==> int
+iotaType = int --> int ==> int
 iotaEval [IntVal n] = tabVal [(IntVal i, IntVal i) | i <- [0..(n-1)]]

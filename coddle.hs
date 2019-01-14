@@ -13,8 +13,9 @@ import Data.Semigroup ((<>))
 import Prelude hiding (lookup, print)
 
 import qualified Parser as P
+import qualified Lower as L
 import Parser hiding (Expr (..), Pat (..), str)
-import Lower
+import Lower (lowerExpr)
 import Syntax
 import Util
 import Typer
@@ -29,24 +30,25 @@ evalCmd :: Command -> Repl ()
 evalCmd c = case c of
   GetParse expr   -> print expr
   GetLowered expr -> lower expr >>= print
-  GetType expr    -> lower expr >>= gettype >>= print
+  GetType expr    -> do (t, e) <- infer expr
+                        print t
+  GetTyped expr    -> do (t, e) <- infer expr
+                         print t
+                         print e
   GetLLVM expr    -> do c <- compile expr
                         s <- liftIO $ showLLVM c
                         outputStrLn s
   EvalJit expr    -> do c <- compile expr
                         s <- liftIO $ evalJit c
                         outputStrLn s
-  EvalExpr expr   -> do e <- lower expr
-                        t <- gettype e
+  EvalExpr expr   -> do (t, e) <- infer expr
                         v <- eval e
                         outputStrLn $ case showVal defaultPrintSpec t v of
                                         Left  e -> e
                                         Right s -> s
-  EvalDecl pat expr -> do e <- lower expr
-                          (p, vars) <- liftErr $ lowerPat pat
-                          ts <- gettype e >>= liftErr . typePatMatch p
-                          vs <- eval e >>= return . valPatMatch p
-                          updateEnv vars ts vs
+  EvalDecl v expr -> do (t, e) <- infer expr
+                        val <- eval e
+                        updateEnv v t val
 
 liftErr :: Show a => Either a b -> Repl b
 liftErr (Left e)  = print e >> throwIO Interrupt
@@ -55,22 +57,22 @@ liftErr (Right x) = return x
 catchErr :: Repl () -> Repl ()
 catchErr = handleInterrupt $ return ()
 
-lower :: P.Expr -> Repl Expr
+lower :: P.Expr -> Repl L.Expr
 lower expr = do
   env <- lift $ gets varEnv
   liftErr $ lowerExpr expr env
 
+infer :: P.Expr -> Repl (SigmaType, Expr)
+infer expr = do
+  lowered <- lower expr
+  env <- lift $ gets typeEnv
+  liftErr $ inferTypes lowered env
+
 compile :: P.Expr -> Repl Compiled
 compile expr = do
+  (t, e) <- infer expr
   env <- lift $ gets valEnv
-  e <- lower expr
-  t <- gettype e
   return $ lowerLLVM env e
-
-gettype :: Expr -> Repl ClosedType
-gettype expr = do
-  env <- lift $ gets typeEnv
-  liftErr $ typeExpr expr env
 
 eval :: Expr -> Repl Val
 eval expr = do
@@ -80,11 +82,11 @@ eval expr = do
 print :: Show a => a -> Repl ()
 print x = outputStrLn $ show x
 
-updateEnv :: [VarName] -> [ClosedType] -> [Val] -> Repl ()
-updateEnv vars ts vals =
-  let update env = Env { varEnv  = vars ++ (varEnv  env)
-                       , typeEnv = ts   ++ (typeEnv env)
-                       , valEnv  = vals ++ (valEnv  env) }
+updateEnv :: VarName -> SigmaType -> Val -> Repl ()
+updateEnv var t val =
+  let update env = Env { varEnv  = var : (varEnv  env)
+                       , typeEnv = t   : (typeEnv env)
+                       , valEnv  = val : (valEnv  env) }
   in lift $ modify update
 
 runRepl :: Repl () -> Behavior -> Env -> IO ()
@@ -112,7 +114,7 @@ terminalRepl = runRepl (repl ">=> ") defaultBehavior
 fileRepl :: String -> Env -> IO ()
 fileRepl fname = runRepl (repl "") (useFile fname)
 
-loadData :: String -> IO (Val, ClosedType)
+loadData :: String -> IO (Val, SigmaType)
 loadData fname = do
   contents <- readFile fname
   case parseVal contents of

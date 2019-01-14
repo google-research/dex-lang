@@ -37,12 +37,13 @@ data Pat = VarPat VarName
          | RecPat (Record Pat) deriving (Show, Eq)
 
 data Command = GetType    Expr
+             | GetTyped   Expr
              | GetParse   Expr
              | GetLowered Expr
              | GetLLVM    Expr
              | EvalJit    Expr
              | EvalExpr   Expr
-             | EvalDecl   Pat Expr deriving (Show, Eq)
+             | EvalDecl   VarName Expr deriving (Show, Eq)
 
 
 type VarName = String
@@ -56,7 +57,7 @@ parseCommand s = case parse (command <* eof) "" s of
 
 command :: Parser Command
 command =   explicitCommand
-        <|> liftM (uncurry EvalDecl) (try decl)
+        <|> liftM (uncurry EvalDecl) (try topDecl)
         <|> liftM EvalExpr expr
         <?> "command"
 
@@ -111,6 +112,14 @@ parenPat = do
 expr :: Parser Expr
 expr = makeExprParser (sc >> term) ops
 
+topDecl :: Parser (VarName, Expr)
+topDecl = do
+  v <- identifier
+  wrap <- idxLhsArgs <|> lamLhsArgs
+  symbol "="
+  body <- expr
+  return (v, wrap body)
+
 decl :: Parser Decl
 decl = do
   v <- pat
@@ -138,6 +147,7 @@ explicitCommand = do
   e <- expr
   case cmd of
     "t" -> return $ GetType e
+    "f" -> return $ GetTyped e
     "p" -> return $ GetParse e
     "l" -> return $ GetLowered e
     "llvm" -> return $ GetLLVM e

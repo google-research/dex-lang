@@ -1,5 +1,5 @@
 module Typer (Type (..), TypeErr (..), SigmaType (..), BaseType (..), TypeEnv,
-              typeExpr, typedExpr, unitType) where
+              inferTypes, unitType) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -31,12 +31,6 @@ type Subst = Map.Map MetaVar Type
 type ConstrainMonad a = ReaderT Env (
                           WriterT [Constraint] (
                             StateT Int Identity)) a
-
-typeExpr :: Expr -> TypeEnv -> Except SigmaType
-typeExpr rawExpr tenv = fmap fst (inferTypes rawExpr tenv)
-
-typedExpr :: Expr -> TypeEnv -> Except S.Expr
-typedExpr rawExpr tenv = fmap snd (inferTypes rawExpr tenv)
 
 inferTypes :: Expr -> TypeEnv -> Except (SigmaType, S.Expr)
 inferTypes rawExpr tenv = do
@@ -70,8 +64,8 @@ constrain expr = case expr of
     (b, body') <- local (updateEnv tVars) (constrain body)
     return (a --> b, S.Lam p' body')
   App fexpr arg -> do
-    (x, fexpr') <- constrain arg
-    (f, arg')  <- constrain fexpr
+    (f, fexpr')  <- constrain fexpr
+    (x, arg') <- constrain arg
     y <- fresh
     addConstraint (f, x --> y)
     return (y, S.App fexpr' (S.TLam 0 arg'))
@@ -108,9 +102,9 @@ constrainPat p t = case p of
   RecPat r -> do
     freshRecType <- mapM (\_ -> fresh) r
     addConstraint (t, RecType freshRecType)
-    tes <- sequence $ zipWith constrainPat (toList r)
-                                           (toList freshRecType)
-    return (concat (fmap fst tes), undefined)
+    tes <- sequence $ case zipWithRecord constrainPat r freshRecType
+                        of Just r' -> r'
+    return (concat (map fst (toList tes)), S.RecPat $ fmap snd tes)
 
 constrainIdxPat :: IdxPat -> Type -> ConstrainMonad ([Type], S.IdxPat)
 constrainIdxPat = constrainPat
@@ -229,7 +223,21 @@ metaTypeVars t = case t of
   MetaTypeVar v   -> [v]
 
 metaTypeVarsExpr :: S.Expr -> [MetaVar]
-metaTypeVarsExpr = undefined
+metaTypeVarsExpr expr = case expr of
+    S.Let p bound body -> metaTypeVarsPat p ++ recur bound ++ recur body
+    S.Lam p body     -> metaTypeVarsPat p ++ recur body
+    S.App fexpr arg  -> recur fexpr ++ recur arg
+    S.For p body     -> metaTypeVarsPat p ++ recur body
+    S.Get e ie       -> recur e
+    S.RecCon r       -> concat $ map recur (toList r)
+    S.TLam n expr    -> recur expr
+    S.TApp expr ts   -> recur expr ++ concat (map metaTypeVars ts)
+    expr -> []
+  where
+    recur = metaTypeVarsExpr
+    metaTypeVarsPat p = case p of
+      S.VarPat t -> metaTypeVars t
+      S.RecPat r -> concat $ map metaTypeVarsPat (toList r)
 
 idSubst :: Subst
 idSubst = Map.empty

@@ -97,7 +97,7 @@ withEnv :: Env -> CompileMonad a -> CompileMonad a
 withEnv env = local (\_ -> env)
 
 valPatMatch :: S.Pat -> Val -> [Val]
-valPatMatch S.VarPat v = [v]
+valPatMatch (S.VarPat _) v = [v]
 valPatMatch (S.RecPat p) (RecVal v) = let vs = toList v
                                           ps = toList p
                                       in concat $ zipWith valPatMatch ps vs
