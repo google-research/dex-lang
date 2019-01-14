@@ -3,6 +3,7 @@ module Builtins (initEnv, Env (..), consEnv) where
 import qualified Data.Map.Strict as M
 
 import Interpreter
+import qualified Syntax as S
 import Typer
 import Lower
 
@@ -30,14 +31,14 @@ builtins = [ binOp "add" (+)
            , BuiltinSpec "iota" iotaType 1 iotaEval
            ]
 
-consEnv :: (String, ClosedType, Val) -> Env -> Env
+consEnv :: (String, S.SigmaType, Val) -> Env -> Env
 consEnv (var, ty, val) env =
   Env { varEnv  = var : varEnv  env
       , typeEnv = ty  : typeEnv env
       , valEnv  = val : valEnv  env }
 
 data BuiltinSpec = BuiltinSpec { name    :: String
-                               , ty      :: ClosedType
+                               , ty      :: S.SigmaType
                                , numArgs :: Int
                                , evalFun :: [Val] -> Val }
 

@@ -3,7 +3,8 @@ import Test.QuickCheck
 import Typer
 import qualified Parser as P
 import Parser hiding (Expr (..), Pat (..))
-import Lower
+import qualified Lower as L
+import Lower hiding (Expr (..), Pat (..))
 import Record
 import Syntax
 import Util
@@ -126,12 +127,12 @@ prop_printParseTab (TypedVal t v) =
                                    t === t' .&&. v === v'
 
 addLines s = "###\n" ++ s ++ "###\n"
-
+mv = MetaTypeVar . MetaVar
 
 typeErrorTestCases =
   [ ("lam f: f f"   , InfiniteType)
-  , ("1 1"          , UnificationError int (int --> TypeVar 0))
-  , ("let (x,y) = 1 in x", UnificationError int (RecType (posRecord [a,b])))
+  , ("1 1"          , UnificationError int (int --> mv 0))
+  , ("let (x,y) = 1 in x", UnificationError int (RecType (posRecord [mv 0, mv 1])))
   ]
 type TestVal = (Int, [([Int], Int)])
 
@@ -152,7 +153,7 @@ evalTestCases =
 testCase :: (Show a, Eq a) => String -> (String -> a) -> a -> Test
 testCase s f target = TestCase $ assertEqual ("   input: " ++ s) target (f s)
 
-getParse :: String -> Expr
+getParse :: String -> L.Expr
 getParse s = case parseCommand s of
               Right (EvalExpr p) ->
                 case lowerExpr p (varEnv initEnv) of
@@ -161,12 +162,14 @@ getParse s = case parseCommand s of
               Right c -> error $ "unexpected command parse: " ++ show c
               Left _ -> error "parse error"
 
+getTypedExpr :: String -> Expr
+getTypedExpr s = case typedExpr (getParse s) (typeEnv initEnv) of Right e -> e
 
-gettype :: String -> Either TypeErr ClosedType
+gettype :: String -> Either TypeErr SigmaType
 gettype s = typeExpr (getParse s) (typeEnv initEnv)
 
 getVal :: String -> Val
-getVal s = evalExpr (getParse s) (valEnv initEnv)
+getVal s = evalExpr (getTypedExpr s) (valEnv initEnv)
 
 parseTests = TestList [testCase s parseCommand (Right (EvalExpr p))
                       | (s,p) <- parseTestCases]

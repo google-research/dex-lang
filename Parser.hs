@@ -1,9 +1,9 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
-               IdxPat, IdxExpr (..), parseCommand, typedName,
+               IdxPat, IdxExpr (..), parseCommand,
                Command (..)) where
 import Util
 import Record
-import Typer
+-- import Typer
 import ParseUtil
 import qualified Syntax as S
 
@@ -119,17 +119,17 @@ decl = do
   body <- expr
   return (v, wrap body)
 
-typedName :: Parser (String, BaseType)
-typedName = do
-  name <- identifier
-  symbol "::"
-  typeName <- identifier
-  ty <- case typeName of
-    "Int"  -> return IntType
-    "Str"  -> return StrType
-    "Real" -> return RealType
-    _      -> fail $ show typeName ++ " is not a valid type"
-  return (name, ty)
+-- typedName :: Parser (String, BaseType)
+-- typedName = do
+--   name <- identifier
+--   symbol "::"
+--   typeName <- identifier
+--   ty <- case typeName of
+--     "Int"  -> return IntType
+--     "Str"  -> return StrType
+--     "Real" -> return RealType
+--     _      -> fail $ show typeName ++ " is not a valid type"
+--   return (name, ty)
 
 explicitCommand :: Parser Command
 explicitCommand = do

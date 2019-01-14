@@ -14,6 +14,7 @@ import Util
 import ParseUtil
 import qualified Data.Map.Strict as M
 import qualified Typer as T
+import qualified Syntax as S
 import qualified Interpreter as I
 import Data.List (partition, foldr1, intersperse)
 import Data.Foldable (toList)
@@ -188,8 +189,8 @@ data PrintSpec = PrintSpec { manualAlign :: Bool }
 
 defaultPrintSpec = PrintSpec True
 
-showVal :: PrintSpec -> T.ClosedType -> I.Val -> Except String
-showVal ps (T.Forall _ t) v = do
+showVal :: PrintSpec -> S.SigmaType -> I.Val -> Except String
+showVal ps (S.Forall _ t) v = do
   tabTypes <- flattenType t
   let tabVals = flattenVal v tabTypes
   return . intercalate "\n" $ zipWith (printTab ps) tabTypes tabVals

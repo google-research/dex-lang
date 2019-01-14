@@ -1,4 +1,5 @@
-module Lower (VarName, VarEnv, initVarEnv, lowerExpr, lowerPat) where
+module Lower (VarName, VarEnv, initVarEnv, lowerExpr, lowerPat,
+              Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
 import Util
@@ -7,7 +8,7 @@ import Record
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader (ReaderT (..), runReaderT, local, ask)
-import Syntax
+import qualified Syntax as S
 import qualified Parser as P
 import Parser (VarName, IdxVarName)
 
@@ -19,6 +20,24 @@ type VarEnv = [VarName]
 type IdxVarEnv = [IdxVarName]
 type Env = (VarEnv, IdxVarEnv)
 type Lower a = ReaderT Env (Either LowerErr) a
+
+data Expr = Lit S.LitVal
+          | Var Int
+          | Let Pat Expr Expr
+          | Lam Pat Expr
+          | App Expr Expr
+          | For IdxPat Expr
+          | Get Expr IdxExpr
+          | RecCon (Record Expr)
+              deriving (Show, Eq, Ord)
+
+data IdxExpr = IdxVar Int
+             | IdxRecCon (Record IdxExpr)
+                 deriving (Show, Eq, Ord)
+
+type IdxPat = Pat
+data Pat = VarPat
+         | RecPat (Record Pat)  deriving (Show, Eq, Ord)
 
 lowerExpr :: P.Expr -> VarEnv -> Either LowerErr Expr
 lowerExpr expr env = runReaderT (lower expr) (env, [])
