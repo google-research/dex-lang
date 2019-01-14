@@ -53,10 +53,12 @@ eval expr env@(venv, d) =
     Get e ie        ->
         curryTabVal d $ diagWithIdxExpr d ie $ uncurryTabVal d $ eval e env
     RecCon r       -> RecVal $ fmap (flip eval env) r
+    TLam _ expr    -> eval expr env
+    TApp expr _    -> eval expr env
 
 
 valPatMatch :: Pat -> Val -> [Val]
-valPatMatch VarPat v = [v]
+valPatMatch (VarPat _) v = [v]
 valPatMatch (RecPat p) (RecVal v) = let vs = toList v
                                         ps = toList p
                                     in concat $ zipWith valPatMatch ps vs
@@ -90,7 +92,7 @@ structureTabVal p (TabVal m) =
              | (RecVal r, v) <- M.toList m]
 
 structureIdx :: IdxPat -> [IdxVal] -> IdxVal
-structureIdx VarPat [k] = k
+structureIdx (VarPat _) [k] = k
 structureIdx (RecPat r) idxs =
   let (ks, ps) = unzip $ recToList r
       subPatSizes = map patSize ps
@@ -125,7 +127,7 @@ diag (TabVal m) = tabVal $ [(k,v) | (k1, (TabVal m')) <- M.toList m
                                   , Just k <- [tryEq k1 k2] ]
 
 patSize :: IdxPat -> Int
-patSize VarPat = 1
+patSize (VarPat _) = 1
 patSize (RecPat r) = foldr (+) 0 $ fmap patSize r
 
 update :: Int -> a -> [a] -> [a]

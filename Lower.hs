@@ -8,6 +8,7 @@ import Record
 import Control.Monad
 import Control.Monad.Except
 import Control.Monad.Reader (ReaderT (..), runReaderT, local, ask)
+import Syntax (IdxExpr (..))
 import qualified Syntax as S
 import qualified Parser as P
 import Parser (VarName, IdxVarName)
@@ -30,10 +31,6 @@ data Expr = Lit S.LitVal
           | Get Expr IdxExpr
           | RecCon (Record Expr)
               deriving (Show, Eq, Ord)
-
-data IdxExpr = IdxVar Int
-             | IdxRecCon (Record IdxExpr)
-                 deriving (Show, Eq, Ord)
 
 type IdxPat = Pat
 data Pat = VarPat

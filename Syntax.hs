@@ -1,5 +1,5 @@
 module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..),
-               Type (..), BaseType (..), SigmaType (..),
+               Type (..), BaseType (..), SigmaType,
                MetaVar (..), IdxType) where
 
 import Data.List (intersperse)
@@ -14,6 +14,8 @@ data Expr = Lit LitVal
           | For IdxPat Expr
           | Get Expr IdxExpr
           | RecCon (Record Expr)
+          | TLam Int Expr
+          | TApp Expr [Type]
               deriving (Show, Eq, Ord)
 
 data LitVal = IntLit  Int
@@ -26,7 +28,7 @@ data IdxExpr = IdxVar Int
                  deriving (Show, Eq, Ord)
 
 type IdxPat = Pat
-data Pat = VarPat
+data Pat = VarPat Type
          | RecPat (Record Pat)  deriving (Show, Eq, Ord)
 
 data Type = BaseType BaseType
@@ -35,11 +37,11 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | TypeVar Int
           | MetaTypeVar MetaVar
-            deriving (Eq, Ord)
+          | Forall Int Type
+              deriving (Eq, Ord)
 
 type IdxType = Type
-data SigmaType = Forall Int Type  deriving (Eq, Ord)
-
+type SigmaType = Type
 newtype MetaVar = MetaVar Int  deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Ord)
@@ -47,11 +49,6 @@ data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Ord)
 varName :: Int -> String
 varName n | n < 26    = [['a'..'z'] !! n]
           | otherwise = varName (mod n 26) ++ show (div n 26)
-
-instance Show SigmaType where
-  show (Forall 0 t) = show t
-  show (Forall n t) = let vs = concat $ intersperse " " $ map varName [0..n-1]
-                      in "A " ++ vs ++ ". " ++ show t
 
 instance Show Type where
   show t = case t of
@@ -61,6 +58,10 @@ instance Show Type where
     RecType m   -> printRecord show (RecordPrintSpec ", " ":" "," Nothing) m
     TypeVar v   -> varName v
     MetaTypeVar (MetaVar v) -> varName v
+    Forall 0 t -> show t
+    Forall n t -> let vs = concat $ intersperse " " $ map varName [0..n-1]
+                  in "A " ++ vs ++ ". " ++ show t
+
 
 instance Show BaseType where
   show b = case b of
