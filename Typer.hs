@@ -18,12 +18,16 @@ import qualified Syntax as S
 import Syntax (Type (..), SigmaType (..), BaseType (..), MetaVar (..), IdxType)
 
 data TypeErr = UnificationError Type Type
-             | InfiniteType  deriving (Eq)
+             | InfiniteType
+             | CompilerError String  deriving (Eq)
+
+
 
 type Except a = Either TypeErr a
 
 type TypeEnv = [SigmaType]
 type ITypeEnv = [IdxType]
+type TVarEnv = [Type]
 
 type Env = (TypeEnv, ITypeEnv)
 type Constraint = (Type, Type)
@@ -37,10 +41,17 @@ inferTypes rawExpr tenv = do
   let env = (tenv, [])
       ((t, expr), constraints) = runConstrainMonad env (constrain rawExpr)
   subst <- solveAll constraints
-  return $ generalize (applySub subst t) (applySubExpr subst expr)
+  let (t', expr') = generalize (applySub subst t) (applySubExpr subst expr)
+  t'' <- getTypedExprType (tenv, [], []) expr'
+  assertEq t'' t' "Final types don't match"
+  return (t', expr')
 
 runConstrainMonad :: Env -> ConstrainMonad a -> (a, [Constraint])
 runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
+
+assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
+assertEq x y s = if x == y then return () else Left (CompilerError msg)
+  where msg = s ++ show x ++ " != " ++ show y
 
 infixr 1 -->
 infixr 2 ==>
@@ -57,7 +68,7 @@ constrain expr = case expr of
     (tBound, bound') <- constrain bound
     (tVars, p') <- constrainPat p tBound
     (t, body') <- local (updateEnv tVars) (constrain body)
-    return (t, S.Let p' (S.TLam 0 bound') body')
+    return (t, S.Let p' bound' body')
   Lam p body -> do
     a     <- fresh
     (tVars, p') <- constrainPat p a
@@ -68,7 +79,7 @@ constrain expr = case expr of
     (x, arg') <- constrain arg
     y <- fresh
     addConstraint (f, x --> y)
-    return (y, S.App fexpr' (S.TLam 0 arg'))
+    return (y, S.App fexpr' arg')
   For p body -> do
     a <- fresh
     (tVars, p') <- constrainIdxPat p a
@@ -235,9 +246,7 @@ metaTypeVarsExpr expr = case expr of
     expr -> []
   where
     recur = metaTypeVarsExpr
-    metaTypeVarsPat p = case p of
-      S.VarPat t -> metaTypeVars t
-      S.RecPat r -> concat $ map metaTypeVarsPat (toList r)
+    metaTypeVarsPat p = concat $ map metaTypeVars (patLeaves p)
 
 idSubst :: Subst
 idSubst = Map.empty
@@ -250,6 +259,49 @@ solve s (t1, t2) = do
 solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
+getTypedExprType :: (TypeEnv, ITypeEnv, TVarEnv) -> S.Expr -> Except Type
+getTypedExprType env@(tenv, itenv, tvenv) expr = case expr of
+    S.Lit c          -> return $ litType c
+    S.Var v          -> return $ tenv !! v
+    S.Let p bound body -> do bt <- recur bound
+                             assert (getPatType p) bt
+                             getTypedExprType (extendEnv p) body
+    S.Lam p body     -> do b <- getTypedExprType (extendEnv p) body
+                           return $ getPatType p --> b
+    S.App fexpr arg  -> do (ArrType a b) <- recur fexpr
+                           a' <- recur arg
+                           assert a a'
+                           return b
+    S.For p body     -> do b <- getTypedExprType (extendIEnv p) body
+                           return $ getPatType p ==> b
+    S.Get e ie       -> do (TabType a b) <- recur e
+                           let a' = getIdxExprType ie
+                           assert a (getIdxExprType ie)
+                           return b
+    S.RecCon r       -> fmap S.RecType $ sequence $ fmap recur r
+    S.TLam n expr    -> do t <- recur expr
+                           return $ S.Forall n t
+    S.TApp expr ts   -> do S.Forall n t <- recur expr
+                           assert n (length ts)
+                           return $ instantiateType ts t
+  where recur = getTypedExprType env
+        assert x y = assertEq x y (show expr)
+        extendEnv p  = (patLeaves p ++ tenv, itenv, tvenv)
+        extendIEnv p = (tenv, patLeaves p ++ itenv, tvenv)
+        getIdxExprType ie = case ie of
+                              IdxVar v -> itenv !! v
+                              IdxRecCon r -> S.RecType $ fmap getIdxExprType r
+
+patLeaves :: S.Pat -> [Type]
+patLeaves p = case p of
+  S.VarPat t -> [t]
+  S.RecPat r -> concat $ map patLeaves (toList r)
+
+getPatType :: S.Pat -> Type
+getPatType p = case p of
+  S.VarPat t -> t
+  S.RecPat r -> S.RecType $ fmap getPatType r
+
 unitType :: SigmaType
 unitType = RecType emptyRecord
 
@@ -259,6 +311,7 @@ instance Show TypeErr where
       InfiniteType     -> "infinite type"
       UnificationError t1 t2 -> "can't unify " ++ show t1
                                    ++ " with " ++ show t2
+      CompilerError s -> s ++ " This is a bug at our end!"
 
 nonNeg :: Gen Int
 nonNeg = fmap unwrap arbitrary

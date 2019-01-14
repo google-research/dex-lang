@@ -58,7 +58,7 @@ instance Show Type where
     RecType m   -> printRecord show (RecordPrintSpec ", " ":" "," Nothing) m
     TypeVar v   -> varName v
     MetaTypeVar (MetaVar v) -> varName v
-    Forall 0 t -> show t
+    Forall 0 t -> "A . " ++ show t
     Forall n t -> let vs = concat $ intersperse " " $ map varName [0..n-1]
                   in "A " ++ vs ++ ". " ++ show t
 
