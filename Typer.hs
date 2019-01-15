@@ -27,7 +27,8 @@ type Except a = Either TypeErr a
 
 type TypeEnv = [SigmaType]
 type ITypeEnv = [IdxType]
-type TVarEnv = [Type]
+type TVarEnv = Int
+
 
 type Env = (TypeEnv, ITypeEnv)
 type Constraint = (Type, Type)
@@ -42,7 +43,7 @@ inferTypes rawExpr tenv = do
       ((t, expr), constraints) = runConstrainMonad env (constrain rawExpr)
   subst <- solveAll constraints
   let (t', expr') = generalize (applySub subst t) (applySubExpr subst expr)
-  t'' <- getTypedExprType (tenv, [], []) expr'
+  t'' <- getTypedExprType (tenv, [], 0) expr'
   assertEq t'' t' "Final types don't match"
   return (t', expr')
 
@@ -52,6 +53,10 @@ runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerError msg)
   where msg = s ++ show x ++ " != " ++ show y
+
+assert :: Bool -> String -> Except ()
+assert True s = return ()
+assert False s = Left (CompilerError s)
 
 infixr 1 -->
 infixr 2 ==>
@@ -264,33 +269,53 @@ getTypedExprType env@(tenv, itenv, tvenv) expr = case expr of
     S.Lit c          -> return $ litType c
     S.Var v          -> return $ tenv !! v
     S.Let p bound body -> do bt <- recur bound
-                             assert (getPatType p) bt
-                             getTypedExprType (extendEnv p) body
-    S.Lam p body     -> do b <- getTypedExprType (extendEnv p) body
-                           return $ getPatType p --> b
+                             bt' <- getPatType' p
+                             assertEq' bt' bt
+                             recurWithEnv p body
+    S.Lam p body     -> do b <- recurWithEnv p body
+                           a <- getPatType' p
+                           return $ a --> b
     S.App fexpr arg  -> do (ArrType a b) <- recur fexpr
                            a' <- recur arg
-                           assert a a'
+                           assertEq' a a'
                            return b
-    S.For p body     -> do b <- getTypedExprType (extendIEnv p) body
-                           return $ getPatType p ==> b
+    S.For p body     -> do b <- recurWithIEnv p body
+                           a <- getPatType' p
+                           return $ a ==> b
     S.Get e ie       -> do (TabType a b) <- recur e
                            let a' = getIdxExprType ie
-                           assert a (getIdxExprType ie)
+                           assertEq' a (getIdxExprType ie)
                            return b
     S.RecCon r       -> fmap S.RecType $ sequence $ fmap recur r
-    S.TLam n expr    -> do t <- recur expr
+    S.TLam n expr    -> do t <- recurWithTVEnv n expr
                            return $ S.Forall n t
     S.TApp expr ts   -> do S.Forall n t <- recur expr
-                           assert n (length ts)
+                           assertEq' n (length ts)
                            return $ instantiateType ts t
+
   where recur = getTypedExprType env
-        assert x y = assertEq x y (show expr)
-        extendEnv p  = (patLeaves p ++ tenv, itenv, tvenv)
-        extendIEnv p = (tenv, patLeaves p ++ itenv, tvenv)
+        assertEq' x y = assertEq x y (show expr)
+        recurWithEnv   p = getTypedExprType (patLeaves p ++ tenv, itenv, tvenv)
+        recurWithIEnv  p = getTypedExprType (tenv, patLeaves p ++ itenv, tvenv)
+        recurWithTVEnv n = getTypedExprType (tenv, itenv, tvenv + n)
         getIdxExprType ie = case ie of
                               IdxVar v -> itenv !! v
                               IdxRecCon r -> S.RecType $ fmap getIdxExprType r
+        getPatType' p = do let t = getPatType p
+                           assertValidType tvenv t
+                           return t
+
+assertValidType :: TVarEnv -> Type -> Except ()
+assertValidType env t = case t of
+    BaseType _  -> return ()
+    ArrType a b -> recur a >> recur b
+    TabType a b -> recur a >> recur b
+    RecType r   -> sequence (fmap recur r) >> return ()
+    TypeVar v | v < env   -> return ()
+              | otherwise -> err "Type variable not in scope"
+    MetaTypeVar _         -> err "variable not in scope"
+  where err = Left . CompilerError
+        recur = assertValidType env
 
 patLeaves :: S.Pat -> [Type]
 patLeaves p = case p of

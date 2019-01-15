@@ -7,7 +7,7 @@ import qualified Data.Map.Strict as M
 import Record
 
 data Expr = Lit LitVal
-          | Var Int
+          | Var Var
           | Let Pat Expr Expr
           | Lam Pat Expr
           | App Expr Expr
@@ -23,7 +23,7 @@ data LitVal = IntLit  Int
             | StrLit  String
                  deriving (Show, Eq, Ord)
 
-data IdxExpr = IdxVar Int
+data IdxExpr = IdxVar IdxVar
              | IdxRecCon (Record IdxExpr)
                  deriving (Show, Eq, Ord)
 
@@ -35,7 +35,7 @@ data Type = BaseType BaseType
           | ArrType Type Type
           | TabType IdxType Type
           | RecType (Record Type)
-          | TypeVar Int
+          | TypeVar TypeVar
           | MetaTypeVar MetaVar
           | Forall Int Type
               deriving (Eq, Ord)
@@ -43,6 +43,11 @@ data Type = BaseType BaseType
 type IdxType = Type
 type SigmaType = Type
 newtype MetaVar = MetaVar Int  deriving (Eq, Ord, Show)
+
+-- deBruijn indices
+type TypeVar = Int
+type IdxVar = Int
+type Var = Int
 
 data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Ord)
 
