@@ -292,6 +292,13 @@ getTypedExprType env@(tenv, itenv, tvenv) expr = case expr of
     S.TApp expr ts   -> do S.Forall n t <- recur expr
                            assertEq' n (length ts)
                            return $ instantiateType ts t
+    S.Unpack expr    -> recurWithTVEnv 1 expr
+    S.Pack ty expr asty -> case asty of
+                             S.Exists asty' -> do
+                               subty <- recur expr
+                               assertEq' subty (instantiateType [ty] asty)
+                               return asty
+
 
   where recur = getTypedExprType env
         assertEq' x y = assertEq x y (show expr)

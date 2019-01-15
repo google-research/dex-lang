@@ -16,6 +16,8 @@ data Expr = Lit LitVal
           | RecCon (Record Expr)
           | TLam Int Expr
           | TApp Expr [Type]
+          | Unpack Expr
+          | Pack IdxType Expr Type
               deriving (Show, Eq, Ord)
 
 data LitVal = IntLit  Int
@@ -38,6 +40,7 @@ data Type = BaseType BaseType
           | TypeVar TypeVar
           | MetaTypeVar MetaVar
           | Forall Int Type
+          | Exists Type
               deriving (Eq, Ord)
 
 type IdxType = Type
