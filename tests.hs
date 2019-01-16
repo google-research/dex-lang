@@ -156,7 +156,7 @@ testCase s f target = TestCase $ assertEqual ("   input: " ++ s) target (f s)
 
 getParse :: String -> L.Expr
 getParse s = case parseCommand s of
-              Right (EvalExpr p) ->
+              Right (EvalCmd EvalExpr p) ->
                 case lowerExpr p (varEnv initEnv) of
                   Left e -> error $ show e
                   Right e -> e
@@ -173,7 +173,7 @@ gettype s = fmap fst $ inferTypes (getParse s) (typeEnv initEnv)
 getVal :: String -> Val
 getVal s = evalExpr (getTypedExpr s) (valEnv initEnv)
 
-parseTests = TestList [testCase s parseCommand (Right (EvalExpr p))
+parseTests = TestList [testCase s parseCommand (Right (EvalCmd EvalExpr p))
                       | (s,p) <- parseTestCases]
 
 evalTests = TestList [testCase s getVal v

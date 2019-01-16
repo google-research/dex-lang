@@ -1,11 +1,11 @@
 module Parser (VarName, IdxVarName, Expr (..), Pat (..),
-               IdxPat, IdxExpr (..), parseCommand,
-               Command (..)) where
+               IdxPat, IdxExpr (..), parseCommand) where
 import Util
 import Record
 -- import Typer
 import ParseUtil
 import qualified Syntax as S
+import qualified Env as E
 
 import Control.Monad
 import Test.HUnit
@@ -36,19 +36,10 @@ type IdxPat = Pat
 data Pat = VarPat VarName
          | RecPat (Record Pat) deriving (Show, Eq)
 
-data Command = GetType    Expr
-             | GetTyped   Expr
-             | GetParse   Expr
-             | GetLowered Expr
-             | GetLLVM    Expr
-             | EvalJit    Expr
-             | EvalExpr   Expr
-             | EvalDecl   VarName Expr deriving (Show, Eq)
-
-
 type VarName = String
 type IdxVarName = String
 type Decl = (Pat, Expr)
+type Command = (S.TopDecl Expr)
 
 parseCommand :: String -> Either String Command
 parseCommand s = case parse (command <* eof) "" s of
@@ -57,8 +48,9 @@ parseCommand s = case parse (command <* eof) "" s of
 
 command :: Parser Command
 command =   explicitCommand
-        <|> liftM (uncurry EvalDecl) (try topDecl)
-        <|> liftM EvalExpr expr
+        <|> do (v, e) <- try topDecl
+               return $ S.EvalDecl v e
+        <|> liftM (S.EvalCmd S.EvalExpr) expr
         <?> "command"
 
 opNames = ["+", "*", "/", "-", "^"]
@@ -144,16 +136,18 @@ decl = do
 explicitCommand :: Parser Command
 explicitCommand = do
   try $ symbol ":"
-  cmd <- identifier
+  cmdName <- identifier
   e <- expr
-  case cmd of
-    "t" -> return $ GetType e
-    "f" -> return $ GetTyped e
-    "p" -> return $ GetParse e
-    "l" -> return $ GetLowered e
-    "llvm" -> return $ GetLLVM e
-    "jit" -> return $ EvalJit e
-    _   -> fail $ "unrecognized command: " ++ show cmd
+  cmd <- case cmdName of
+           "p"     -> return S.EvalExpr
+           "t"     -> return S.GetType
+           "sysf"  -> return S.GetTyped
+           "parse" -> return S.GetParse
+           "lower" -> return S.GetLowered
+           "llvm"  -> return S.GetLLVM
+           "jit"   -> return S.EvalJit
+           _   -> fail $ "unrecognized command: " ++ show cmdName
+  return $ S.EvalCmd cmd e
 
 maybeNamed :: Parser a -> Parser (Maybe String, a)
 maybeNamed p = do

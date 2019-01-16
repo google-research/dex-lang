@@ -1,6 +1,6 @@
 module Env (Env, FreeEnv (..), Var (..),
             newFreeEnv, emptyEnv, extendEnv, catEnv, isin,
-            (!!), envFromFree) where
+            (!!), envFromFree, updateFreeEnv) where
 
 import Prelude hiding ((!!))
 import qualified Prelude as P
@@ -24,6 +24,9 @@ extendEnv (Env fvs bvs) x = Env fvs (x:bvs)
 
 catEnv :: Env i a -> [a] -> Env i a
 catEnv (Env fvs bvs) xs = Env fvs (xs ++ bvs)
+
+updateFreeEnv :: FreeEnv a -> String -> a -> FreeEnv a
+updateFreeEnv (FreeEnv m) k v = FreeEnv $ M.insert k v m
 
 isin :: Var i -> Env (Var i) a -> Bool
 isin i (Env (FreeEnv fvs) bvs) = case i of

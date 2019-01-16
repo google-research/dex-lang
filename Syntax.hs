@@ -1,6 +1,7 @@
 module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..),
                Type (..), BaseType (..), SigmaType,
-               MetaVar (..), IdxType, LetVar, IdxVar, TypeVar) where
+               MetaVar (..), IdxType, LetVar, IdxVar, TypeVar,
+               TopDecl (..), Command (..)) where
 
 import Data.List (intersperse)
 import qualified Data.Map.Strict as M
@@ -46,6 +47,12 @@ data Type = BaseType BaseType
           | Exists Type
               deriving (Eq, Ord)
 
+data TopDecl expr = EvalDecl String expr
+                  | EvalCmd Command expr   deriving (Show, Eq, Ord)
+
+data Command = EvalExpr | GetType | GetTyped | GetParse | GetLowered
+             | GetLLVM  | EvalJit   deriving (Show, Eq, Ord)
+
 type IdxType = Type
 type SigmaType = Type
 newtype MetaVar = MetaVar Int  deriving (Eq, Ord, Show)
@@ -54,7 +61,7 @@ data LetUniq  = LetUniq  deriving (Show, Eq, Ord); type LetVar  = Var LetUniq
 data IdxUniq  = IdxUniq  deriving (Show, Eq, Ord); type TypeVar = Var TypeUniq
 data TypeUniq = TypeUniq deriving (Show, Eq, Ord); type IdxVar  = Var IdxUniq
 
-data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Ord)
+data BaseType = IntType | BoolType | RealType | StrType  deriving (Eq, Ord)
 
 varName :: Int -> String
 varName n | n < 26    = [['a'..'z'] P.!! n]

@@ -1,4 +1,4 @@
-module Lower (VarName, lowerExpr, Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
+module Lower (VarName, LowerErr, lowerExpr, Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
 
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
