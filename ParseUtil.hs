@@ -13,7 +13,7 @@ lineof :: Parser a -> Parser a
 lineof = (<* (sc >> eol))
 
 sc :: Parser ()
-sc = L.space space empty empty
+sc = L.space space (L.skipLineComment "--") empty
 
 blankLines :: Parser ()
 blankLines = void $ many eol

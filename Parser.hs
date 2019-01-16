@@ -114,9 +114,10 @@ expr = makeExprParser (sc >> term) ops
 
 topDecl :: Parser (VarName, Expr)
 topDecl = do
-  v <- identifier
-  wrap <- idxLhsArgs <|> lamLhsArgs
-  symbol "="
+  (v, wrap) <- try $ do v <- identifier
+                        wrap <- idxLhsArgs <|> lamLhsArgs
+                        symbol "="
+                        return (v, wrap)
   body <- expr
   return (v, wrap body)
 
