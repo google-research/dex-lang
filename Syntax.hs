@@ -1,13 +1,16 @@
 module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..),
                Type (..), BaseType (..), SigmaType,
-               MetaVar (..), IdxType) where
+               MetaVar (..), IdxType, LetVar, IdxVar, TypeVar) where
 
 import Data.List (intersperse)
 import qualified Data.Map.Strict as M
+import qualified Prelude as P
+import Prelude hiding ((!!))
 import Record
+import Env
 
 data Expr = Lit LitVal
-          | Var Var
+          | Var LetVar
           | Let Pat Expr Expr
           | Lam Pat Expr
           | App Expr Expr
@@ -47,15 +50,14 @@ type IdxType = Type
 type SigmaType = Type
 newtype MetaVar = MetaVar Int  deriving (Eq, Ord, Show)
 
--- deBruijn indices
-type TypeVar = Int
-type IdxVar = Int
-type Var = Int
+data LetUniq  = LetUniq  deriving (Show, Eq, Ord); type LetVar  = Var LetUniq
+data IdxUniq  = IdxUniq  deriving (Show, Eq, Ord); type TypeVar = Var TypeUniq
+data TypeUniq = TypeUniq deriving (Show, Eq, Ord); type IdxVar  = Var IdxUniq
 
 data BaseType = IntType | BoolType | RealType | StrType deriving (Eq, Ord)
 
 varName :: Int -> String
-varName n | n < 26    = [['a'..'z'] !! n]
+varName n | n < 26    = [['a'..'z'] P.!! n]
           | otherwise = varName (mod n 26) ++ show (div n 26)
 
 instance Show Type where
@@ -64,7 +66,7 @@ instance Show Type where
     TabType a b -> show a ++ "=>" ++ show b
     BaseType b  -> show b
     RecType m   -> printRecord show (RecordPrintSpec ", " ":" "," Nothing) m
-    TypeVar v   -> varName v
+    TypeVar v   -> show v -- TODO
     MetaTypeVar (MetaVar v) -> varName v
     Forall 0 t -> "A . " ++ show t
     Forall n t -> let vs = concat $ intersperse " " $ map varName [0..n-1]

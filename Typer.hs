@@ -1,6 +1,7 @@
 module Typer (Type (..), TypeErr (..), SigmaType (..), BaseType (..), TypeEnv,
               inferTypes, unitType) where
-
+import Prelude hiding ((!!))
+import qualified Prelude as P
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask)
@@ -15,7 +16,8 @@ import Record
 
 import Lower
 import qualified Syntax as S
-import Syntax (Type (..), SigmaType (..), BaseType (..), MetaVar (..), IdxType)
+import Syntax hiding (Expr (..), Pat (..), IdxPat (..))
+import Env
 
 data TypeErr = UnificationError Type Type
              | InfiniteType
@@ -25,29 +27,29 @@ data TypeErr = UnificationError Type Type
 
 type Except a = Either TypeErr a
 
-type TypeEnv = [SigmaType]
-type ITypeEnv = [IdxType]
-type TVarEnv = Int
+type TypeEnv  = Env LetVar SigmaType
+type ITypeEnv = Env IdxVar IdxType
+type TVarEnv  = Env TypeVar ()
 
-
-type Env = (TypeEnv, ITypeEnv)
+type TypingEnv = (TypeEnv, ITypeEnv)
 type Constraint = (Type, Type)
 type Subst = Map.Map MetaVar Type
-type ConstrainMonad a = ReaderT Env (
+type ConstrainMonad a = ReaderT TypingEnv (
                           WriterT [Constraint] (
                             StateT Int Identity)) a
 
-inferTypes :: Expr -> TypeEnv -> Except (SigmaType, S.Expr)
-inferTypes rawExpr tenv = do
-  let env = (tenv, [])
+inferTypes :: Expr -> FreeEnv SigmaType -> Except (SigmaType, S.Expr)
+inferTypes rawExpr ftenv = do
+  let tenv = envFromFree ftenv
+      env = (tenv, emptyEnv)
       ((t, expr), constraints) = runConstrainMonad env (constrain rawExpr)
   subst <- solveAll constraints
   let (t', expr') = generalize (applySub subst t) (applySubExpr subst expr)
-  t'' <- getTypedExprType (tenv, [], 0) expr'
+  t'' <- relearnType (tenv, emptyEnv, emptyEnv) expr'
   assertEq t'' t' "Final types don't match"
   return (t', expr')
 
-runConstrainMonad :: Env -> ConstrainMonad a -> (a, [Constraint])
+runConstrainMonad :: TypingEnv -> ConstrainMonad a -> (a, [Constraint])
 runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
 
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
@@ -128,26 +130,26 @@ constrainIdxPat = constrainPat
 addConstraint :: Constraint -> ConstrainMonad ()
 addConstraint x = tell [x]
 
-lookupEnv :: Int -> ConstrainMonad (Type, S.Expr -> S.Expr)
+lookupEnv :: LetVar -> ConstrainMonad (Type, S.Expr -> S.Expr)
 lookupEnv i = do (env,_) <- ask
                  case env !! i of
                    Forall n t -> specialize n t
                    t          -> return (t, id)
 
-lookupIEnv :: Int -> ConstrainMonad Type
+lookupIEnv :: IdxVar -> ConstrainMonad Type
 lookupIEnv i = do (_,ienv) <- ask
                   return $ ienv !! i
 
-updateEnv :: [Type] -> Env -> Env
-updateEnv ts (env, ienv) = (ts ++ env, ienv)
+updateEnv :: [Type] -> TypingEnv -> TypingEnv
+updateEnv ts (env, ienv) = (catEnv env ts, ienv)
 
-updateIEnv :: [Type] -> Env -> Env
-updateIEnv t (env, ienv) = (env, t ++ ienv)
+updateIEnv :: [Type] -> TypingEnv -> TypingEnv
+updateIEnv ts (env, ienv) = (env, catEnv ienv ts)
 
 generalize :: Type -> S.Expr -> (SigmaType, S.Expr)
 generalize t e =
   let vs = nub $ metaTypeVars t ++ metaTypeVarsExpr e
-      s = Map.fromList $ zip vs $ map TypeVar [0..]
+      s = Map.fromList $ zip vs $ map (TypeVar . BV) [0..]
       n = (length vs)
   in (Forall n (applySub s t), S.TLam n (applySubExpr s e))
 
@@ -161,7 +163,7 @@ instantiateType env t = case t of
     ArrType a b   -> recur a --> recur b
     TabType a b   -> recur a ==> recur b
     RecType r     -> RecType $ fmap recur r
-    TypeVar v     ->  env !! v
+    TypeVar (BV v) -> env P.!! v
     t -> t
   where recur = instantiateType env
 
@@ -264,8 +266,8 @@ solve s (t1, t2) = do
 solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
-getTypedExprType :: (TypeEnv, ITypeEnv, TVarEnv) -> S.Expr -> Except Type
-getTypedExprType env@(tenv, itenv, tvenv) expr = case expr of
+relearnType :: (TypeEnv, ITypeEnv, TVarEnv) -> S.Expr -> Except Type
+relearnType env@(tenv, itenv, tvenv) expr = case expr of
     S.Lit c          -> return $ litType c
     S.Var v          -> return $ tenv !! v
     S.Let p bound body -> do bt <- recur bound
@@ -300,17 +302,18 @@ getTypedExprType env@(tenv, itenv, tvenv) expr = case expr of
                                return asty
 
 
-  where recur = getTypedExprType env
-        assertEq' x y = assertEq x y (show expr)
-        recurWithEnv   p = getTypedExprType (patLeaves p ++ tenv, itenv, tvenv)
-        recurWithIEnv  p = getTypedExprType (tenv, patLeaves p ++ itenv, tvenv)
-        recurWithTVEnv n = getTypedExprType (tenv, itenv, tvenv + n)
-        getIdxExprType ie = case ie of
-                              IdxVar v -> itenv !! v
-                              IdxRecCon r -> S.RecType $ fmap getIdxExprType r
-        getPatType' p = do let t = getPatType p
-                           assertValidType tvenv t
-                           return t
+  where
+    recur = relearnType env
+    assertEq' x y = assertEq x y (show expr)
+    recurWithEnv   p = relearnType (catEnv tenv (patLeaves p), itenv, tvenv)
+    recurWithIEnv  p = relearnType (tenv, catEnv itenv (patLeaves p), tvenv)
+    recurWithTVEnv n = relearnType (tenv, itenv, catEnv tvenv (replicate n ()))
+    getIdxExprType ie = case ie of
+                          IdxVar v -> itenv !! v
+                          IdxRecCon r -> S.RecType $ fmap getIdxExprType r
+    getPatType' p = do let t = getPatType p
+                       assertValidType tvenv t
+                       return t
 
 assertValidType :: TVarEnv -> Type -> Except ()
 assertValidType env t = case t of
@@ -318,7 +321,7 @@ assertValidType env t = case t of
     ArrType a b -> recur a >> recur b
     TabType a b -> recur a >> recur b
     RecType r   -> sequence (fmap recur r) >> return ()
-    TypeVar v | v < env   -> return ()
+    TypeVar v | v `isin` env   -> return ()
               | otherwise -> err "Type variable not in scope"
     MetaTypeVar _         -> err "variable not in scope"
   where err = Left . CompilerError
@@ -351,7 +354,7 @@ nonNeg = fmap unwrap arbitrary
 
 genLeaf :: Gen Type
 genLeaf = frequency [ (4, fmap BaseType arbitrary)
-                    , (1, fmap TypeVar nonNeg) ]
+                    , (1, fmap (TypeVar . BV) nonNeg) ]
 
 genSimpleType :: Int -> Gen Type
 genSimpleType 0 = genLeaf

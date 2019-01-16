@@ -1,4 +1,4 @@
-module Builtins (initEnv, Env (..), consEnv) where
+module Builtins (initEnv, Env (..)) where
 
 import qualified Data.Map.Strict as M
 
@@ -6,16 +6,18 @@ import Interpreter
 import qualified Syntax as S
 import Typer
 import Lower
+import Env hiding (Env)
 
-data Env = Env { varEnv  :: VarEnv
-               , typeEnv :: TypeEnv
-               , valEnv  :: ValEnv }
+data Env = Env { varEnv  :: FreeEnv ()
+               , typeEnv :: FreeEnv Type
+               , valEnv  :: FreeEnv Val }
 
 initEnv :: Env
-initEnv = Env { varEnv  = map name builtins
-              , typeEnv = map ty builtins
-              , valEnv  = [ Builtin (BuiltinVal numArgs name evalFun) []
-                            | BuiltinSpec name ty numArgs evalFun <- builtins ]}
+initEnv = Env
+  { varEnv  = newFreeEnv [(name b, ()) | b <- builtins]
+  , typeEnv = newFreeEnv [(name b, ty b) | b <- builtins]
+  , valEnv  = newFreeEnv [(name b, Builtin (BuiltinVal numArgs name' evalFun) [])
+                         | b@(BuiltinSpec name' ty numArgs evalFun) <- builtins ]}
 
 builtins = [ binOp "add" (+)
            , binOp "sub" (-)
@@ -31,19 +33,13 @@ builtins = [ binOp "add" (+)
            , BuiltinSpec "iota" iotaType 1 iotaEval
            ]
 
-consEnv :: (String, S.SigmaType, Val) -> Env -> Env
-consEnv (var, ty, val) env =
-  Env { varEnv  = var : varEnv  env
-      , typeEnv = ty  : typeEnv env
-      , valEnv  = val : valEnv  env }
-
 data BuiltinSpec = BuiltinSpec { name    :: String
                                , ty      :: S.SigmaType
                                , numArgs :: Int
                                , evalFun :: [Val] -> Val }
 
-a = TypeVar 0
-b = TypeVar 1
+a = TypeVar (BV 0)
+b = TypeVar (BV 1)
 int = BaseType IntType
 real = BaseType RealType
 

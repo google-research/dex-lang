@@ -27,11 +27,12 @@ import Data.ByteString.Char8 (unpack)
 import qualified Syntax as S
 import qualified Interpreter as I
 import Record
+import qualified Env as E
 
 foreign import ccall "dynamic" haskFun :: FunPtr Int32 -> Int32
 
 type Compiled = L.Module
-type Env = [Val]
+type Env = E.Env S.LetVar Val
 data Val = Operand L.Operand
          | Builtin BuiltinVal [Val]
          | LamVal S.Pat Env S.Expr
@@ -40,9 +41,9 @@ data Val = Operand L.Operand
 type Instr = L.Named L.Instruction
 type BuiltinVal = (Int, [Val] -> L.Instruction)
 
-lowerLLVM :: I.ValEnv -> S.Expr -> L.Module
+lowerLLVM :: E.FreeEnv I.Val -> S.Expr -> L.Module
 lowerLLVM interpEnv e =
-  let env = map fromInterpVal interpEnv
+  let env = fmap fromInterpVal (E.envFromFree interpEnv)
       (finalVal, instrs) = runCompileMonad env (compile e)
   in case finalVal of Operand x -> makeModule instrs x
 
@@ -76,7 +77,7 @@ compile expr = case expr of
                      x <- compile e2
                      case f of
                        LamVal p env body ->
-                         withEnv (valPatMatch p x ++ env) (compile body)
+                         withEnv (E.catEnv env $ valPatMatch p x) (compile body)
                        Builtin b vs -> compileBuiltin b (x:vs)
   S.RecCon r   -> liftM RecVal $ mapM compile r
 
@@ -103,7 +104,7 @@ valPatMatch (S.RecPat p) (RecVal v) = let vs = toList v
                                       in concat $ zipWith valPatMatch ps vs
 
 updateEnv :: [Val] -> Env -> Env
-updateEnv = (++)
+updateEnv = flip E.catEnv
 
 fresh :: CompileMonad L.Name
 fresh = do i <- get
@@ -119,14 +120,14 @@ fromInterpVal v = case v of
   I.IntVal x -> Operand $ L.ConstantOperand $ C.Int 32 (fromIntegral x)
   I.Builtin b vs -> case M.lookup (I.builtinName b) builtins of
                       Just b -> Builtin b (map fromInterpVal vs)
-  I.LamVal p (env, _) body -> LamVal p (map fromInterpVal env) body
+  I.LamVal p (env, _) body -> LamVal p (fmap fromInterpVal env) body
   I.RecVal r -> RecVal $ fmap fromInterpVal r
   x -> error $ "Can't compile value " ++ show x
 
 
-lookupEnv :: Int -> CompileMonad Val
+lookupEnv :: S.LetVar -> CompileMonad Val
 lookupEnv i = do env <- ask
-                 return $ env !! i
+                 return $ env E.!! i
 
 showLLVM :: L.Module -> IO String
 showLLVM m = withContext $ \c ->

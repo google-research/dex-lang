@@ -3,6 +3,9 @@ module Interpreter (evalExpr, valPatMatch, ValEnv,
                     BuiltinVal (..), validTypedVal, evalApp,
                     tabVal) where
 
+import Prelude hiding ((!!))
+import qualified Prelude as P
+
 import Control.Monad
 import Data.Foldable
 import Data.List (sortOn)
@@ -16,6 +19,9 @@ import Syntax
 import Util
 import Typer
 import Record
+import qualified Env as E
+import Env hiding (Env)
+
 
 data Val = Any
          | IntVal Int
@@ -28,12 +34,12 @@ data Val = Any
          | Builtin BuiltinVal [Val]  deriving (Eq, Ord, Show)
 
 type IdxVal = Val
-type IEnv = Int
-type ValEnv = [Val]
+type IEnv   = Int
+type ValEnv = E.Env LetVar Val
 type Env = (ValEnv, IEnv)
 
-evalExpr :: Expr -> ValEnv -> Val
-evalExpr expr env = eval expr (env, 0)
+evalExpr :: Expr -> FreeEnv Val -> Val
+evalExpr expr fenv = eval expr (envFromFree fenv, 0)
 
 eval :: Expr -> Env -> Val
 eval expr env@(venv, d) =
@@ -41,13 +47,13 @@ eval expr env@(venv, d) =
     Lit c          -> composeN d lift $ litVal c
     Var v          -> venv !! v
     Let p bound body -> let x = eval bound env
-                        in eval body (valPatMatch p x ++ venv, d)
+                        in eval body (catEnv venv $ valPatMatch p x, d)
     Lam p body     -> LamVal p env body
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
                       in (tabmap2 d) evalApp f x
     For p body     -> let n = patSize p
-                          venv' = map (tabmap d (composeN n lift)) venv
+                          venv' = fmap (tabmap d (composeN n lift)) venv
                           ans = eval body (venv',d+n)
                       in tabmap d (structureTabVal p . uncurryTabVal n) ans
     Get e ie        ->
@@ -112,8 +118,8 @@ diagWithIdxExpr d ie (TabVal m) =
                            , Just k <- [matchIdxExpr (toList r) ie k2] ]
 
 matchIdxExpr :: [IdxVal] -> IdxExpr -> IdxVal -> Maybe [IdxVal]
-matchIdxExpr idxs (IdxVar v) i = do i' <- tryEq i (idxs !! v)
-                                    return $ update v i' idxs
+matchIdxExpr idxs (IdxVar (BV v)) i = do i' <- tryEq i (idxs P.!! v)
+                                         return $ update v i' idxs
 matchIdxExpr idxs (IdxRecCon vs) (RecVal is) = do
   idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
   foldM mergeIdxs (replicate (length idxs) Any) idxs'
@@ -159,7 +165,8 @@ lift :: Val -> Val
 lift v = tabVal [(Any, v)]
 
 evalApp :: Val -> Val -> Val
-evalApp (LamVal p (venv,ienv) body) x = eval body (valPatMatch p x ++ venv, ienv)
+evalApp (LamVal p (venv, ienv) body) x =
+    eval body (catEnv venv $ valPatMatch p x, ienv)
 evalApp (Builtin builtin vs) x = let args = x:vs
                                  in if length args < builtinNumArgs builtin
                                       then Builtin builtin args

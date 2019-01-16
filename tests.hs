@@ -8,6 +8,7 @@ import Lower hiding (Expr (..), Pat (..))
 import Record
 import Syntax
 import Util
+import Env
 import Typer
 import Interpreter
 import FlatType
@@ -78,8 +79,8 @@ infixr 2 ===>
 (-->) = ArrType
 (===>) = TabType
 int = BaseType IntType
-a = TypeVar 0
-b = TypeVar 1
+a = TypeVar (BV 0)
+b = TypeVar (BV 1)
 
 typeTestCases =
   [ ("1"                     , Forall 0 $ int)

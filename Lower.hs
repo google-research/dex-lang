@@ -1,8 +1,9 @@
-module Lower (VarName, VarEnv, initVarEnv, lowerExpr, lowerPat,
-              Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
+module Lower (VarName, lowerExpr, Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
+
 import Prelude hiding (lookup)
 import qualified Data.Map.Strict as M
 import Util
+import Env hiding (Env)
 import Data.Foldable (toList)
 import Record
 import Control.Monad
@@ -19,11 +20,11 @@ data LowerErr = UnboundVarErr VarName
 
 type VarEnv = [VarName]
 type IdxVarEnv = [IdxVarName]
-type Env = (VarEnv, IdxVarEnv)
+type Env = (FreeEnv (), VarEnv, IdxVarEnv)
 type Lower a = ReaderT Env (Either LowerErr) a
 
 data Expr = Lit S.LitVal
-          | Var Int
+          | Var S.LetVar
           | Let Pat Expr Expr
           | Lam Pat Expr
           | App Expr Expr
@@ -36,18 +37,8 @@ type IdxPat = Pat
 data Pat = VarPat
          | RecPat (Record Pat)  deriving (Show, Eq, Ord)
 
-lowerExpr :: P.Expr -> VarEnv -> Either LowerErr Expr
-lowerExpr expr env = runReaderT (lower expr) (env, [])
-
-lowerPat :: P.Pat -> Either LowerErr (Pat, [VarName])
-lowerPat p = let p' = lowerPat' p
-                 vs = patVars p
-             in case repeated vs of
-               [] -> return (p', vs)
-               vs -> throwError $ RepVarPatternErr p vs
-
-initVarEnv :: VarEnv
-initVarEnv = ["iota", "reduce", "add", "sub", "mul", "div"]
+lowerExpr :: P.Expr -> FreeEnv () -> Either LowerErr Expr
+lowerExpr expr fenv = runReaderT (lower expr) (fenv, [], [])
 
 lower :: P.Expr -> Lower Expr
 lower expr = case expr of
@@ -67,6 +58,12 @@ lower expr = case expr of
   P.Get e ie      -> liftM2 Get (lower e) (lowerIdxExpr ie)
   P.RecCon exprs  -> liftM RecCon $ mapM lower exprs
 
+lowerPat :: P.Pat -> Either LowerErr (Pat, [VarName])
+lowerPat p = let p' = lowerPat' p
+                 vs = patVars p
+             in case repeated vs of
+               [] -> return (p', vs)
+               vs -> throwError $ RepVarPatternErr p vs
 
 lowerPat' :: P.Pat -> Pat
 lowerPat' p = case p of
@@ -87,24 +84,27 @@ patVars p = case p of
   P.RecPat r -> concat $ fmap patVars r
 
 updateEnv :: [VarName] -> Env -> Env
-updateEnv vs (env,ienv) = (vs ++ env,ienv)
+updateEnv vs (fenv, env,ienv) = (fenv, vs ++ env,ienv)
 
 updateIEnv :: [IdxVarName] -> Env -> Env
-updateIEnv is (env,ienv) = (env, is ++ ienv)
+updateIEnv is (fenv, env,ienv) = (fenv, env, is ++ ienv)
 
-lookupEnv :: VarName -> Lower Int
+lookupEnv :: VarName -> Lower S.LetVar
 lookupEnv v = do
-    (env,_) <- ask
+    (FreeEnv fenv, env,_) <- ask
     case lookup v env of
-      Just x -> return x
-      Nothing -> throwError $ UnboundVarErr v
+      Just x -> return (BV x)
+      Nothing -> case M.lookup v fenv of
+                   Just () -> return $ FV v
+                   Nothing -> throwError $ UnboundVarErr v
 
-lookupIEnv :: IdxVarName -> Lower Int
+lookupIEnv :: IdxVarName -> Lower S.IdxVar
 lookupIEnv iv = do
-    (_,ienv) <- ask
+    (_, _, ienv) <- ask
     case lookup iv ienv of
-      Just x -> return x
+      Just x -> return (BV x)
       Nothing -> throwError $ UnboundIdxVarErr iv
+
 
 instance Show LowerErr where
   show e = "Error: " ++
