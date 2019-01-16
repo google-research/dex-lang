@@ -1,5 +1,5 @@
 module Typer (Type (..), TypeErr (..), SigmaType (..), BaseType (..), TypeEnv,
-              inferTypes, unitType) where
+              inferTypes, unitType, typePass) where
 import Prelude hiding ((!!))
 import qualified Prelude as P
 import Control.Monad
@@ -38,11 +38,22 @@ type ConstrainMonad a = ReaderT TypingEnv (
                           WriterT [Constraint] (
                             StateT Int Identity)) a
 
+typePass :: Pass SigmaType Expr (SigmaType, S.Expr)
+typePass = Pass applyPass evalCmd
+  where applyPass expr env =
+            case inferTypes expr env of
+              Left e -> Left $ show e
+              Right (ty, tyexpr) -> Right (ty, (ty, tyexpr))
+        evalCmd cmd ty (ty', tyExpr) = case cmd of
+                                         S.GetType  -> Just $ show ty
+                                         S.GetTyped -> Just $ show tyExpr
+                                         _ -> Nothing
+
 inferTypes :: Expr -> FreeEnv SigmaType -> Except (SigmaType, S.Expr)
 inferTypes rawExpr ftenv = do
-  let tenv = envFromFree ftenv
-      env = (tenv, emptyEnv)
-      ((t, expr), constraints) = runConstrainMonad env (constrain rawExpr)
+  let tenv = envFromFrees builtinEnv ftenv
+      ((t, expr), constraints) =
+          runConstrainMonad (tenv, emptyEnv) (constrain rawExpr)
   subst <- solveAll constraints
   let (t', expr') = generalize (applySub subst t) (applySubExpr subst expr)
   t'' <- relearnType (tenv, emptyEnv, emptyEnv) expr'
@@ -379,3 +390,28 @@ instance Arbitrary BaseType where
 
 instance Arbitrary Type where
   arbitrary = sized genType
+
+builtinEnv :: FreeEnv SigmaType
+builtinEnv = newFreeEnv
+    [ ("add", binOpType)
+    , ("sub", binOpType)
+    , ("mul", binOpType)
+    , ("pow", binOpType)
+    , ("exp", realUnOpType)
+    , ("log", realUnOpType)
+    , ("sqrt", realUnOpType)
+    , ("sin", realUnOpType)
+    , ("cos", realUnOpType)
+    , ("tan", realUnOpType)
+    , ("reduce", reduceType)
+    , ("iota", iotaType)
+    ]
+  where
+    binOpType = int --> int --> int
+    realUnOpType = real --> real
+    reduceType = Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b
+    iotaType = int --> int ==> int
+    a = TypeVar (BV 0)
+    b = TypeVar (BV 1)
+    int = BaseType IntType
+    real = BaseType RealType

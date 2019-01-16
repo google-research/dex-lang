@@ -1,23 +1,33 @@
-module Env (Env, FreeEnv (..), Var (..),
-            newFreeEnv, emptyEnv, extendEnv, catEnv, isin,
-            (!!), envFromFree, updateFreeEnv) where
+module Env (Env, FreeEnv (..), Var (..), VarName,
+            newFreeEnv, emptyEnv, emptyFreeEnv, extendEnv, catEnv, isin,
+            (!!), envFromFree, envFromFrees, updateFreeEnv, freeEnvToList) where
 
 import Prelude hiding ((!!))
 import qualified Prelude as P
 import qualified Data.Map.Strict as M
 
-data FreeEnv a = FreeEnv (M.Map String a)   deriving (Show, Eq, Ord)
+type VarName = String
+data FreeEnv a = FreeEnv (M.Map VarName a)  deriving (Show, Eq, Ord)
 data Env i a = Env (FreeEnv a) [a]          deriving (Show, Eq, Ord)
-data Var i = FV String | BV Int             deriving (Show, Eq, Ord)
+data Var i = FV VarName | BV Int            deriving (Show, Eq, Ord)
 
 newFreeEnv :: [(String, a)] -> FreeEnv a
 newFreeEnv = FreeEnv . M.fromList
 
+freeEnvToList :: FreeEnv a -> [(String, a)]
+freeEnvToList (FreeEnv m) = M.toList m
+
 envFromFree :: FreeEnv a -> Env i a
 envFromFree env = Env env []
 
+envFromFrees :: FreeEnv a -> FreeEnv a -> Env i a
+envFromFrees (FreeEnv m1) (FreeEnv m2) = Env (FreeEnv $ M.union m2 m1) []
+
+emptyFreeEnv :: FreeEnv a
+emptyFreeEnv = newFreeEnv []
+
 emptyEnv :: Env i a
-emptyEnv = envFromFree (newFreeEnv [])
+emptyEnv = envFromFree emptyFreeEnv
 
 extendEnv :: Env i a -> a -> Env i a
 extendEnv (Env fvs bvs) x = Env fvs (x:bvs)
@@ -37,8 +47,14 @@ isin i (Env (FreeEnv fvs) bvs) = case i of
 
 (!!) :: Env (Var i) a -> Var i -> a
 (Env (FreeEnv fvs) bvs) !! i = case i of
-  FV s -> case M.lookup s fvs of Just x -> x
+  FV s -> case M.lookup s fvs of
+            Just x -> x
+            Nothing -> error ("Lookup of " ++ show s ++
+                              " failed! This is a compiler bug")
   BV i -> bvs P.!! i
 
 instance Functor (Env i) where
-  fmap f (Env (FreeEnv m) xs) = Env (FreeEnv (fmap f m)) (map f xs)
+  fmap f (Env fenv xs) = Env (fmap f fenv) (map f xs)
+
+instance Functor FreeEnv where
+  fmap f (FreeEnv m) = FreeEnv (fmap f m)

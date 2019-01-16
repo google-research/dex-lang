@@ -1,7 +1,8 @@
-module Lower (VarName, LowerErr, lowerExpr, Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
+module Lower (lowerPass, LowerErr,
+              lowerExpr, Expr (..), Pat (..), IdxPat, IdxExpr (..)) where
 
 import Prelude hiding (lookup)
-import qualified Data.Map.Strict as M
+import qualified Data.Set as Set
 import Util
 import Env hiding (Env)
 import Data.Foldable (toList)
@@ -12,7 +13,7 @@ import Control.Monad.Reader (ReaderT (..), runReaderT, local, ask)
 import Syntax (IdxExpr (..))
 import qualified Syntax as S
 import qualified Parser as P
-import Parser (VarName, IdxVarName)
+import Parser (IdxVarName)
 
 data LowerErr = UnboundVarErr VarName
               | UnboundIdxVarErr IdxVarName
@@ -20,7 +21,7 @@ data LowerErr = UnboundVarErr VarName
 
 type VarEnv = [VarName]
 type IdxVarEnv = [IdxVarName]
-type Env = (FreeEnv (), VarEnv, IdxVarEnv)
+type Env = (Set.Set VarName, VarEnv, IdxVarEnv)
 type Lower a = ReaderT Env (Either LowerErr) a
 
 data Expr = Lit S.LitVal
@@ -37,8 +38,22 @@ type IdxPat = Pat
 data Pat = VarPat
          | RecPat (Record Pat)  deriving (Show, Eq, Ord)
 
+lowerPass :: S.Pass () P.Expr Expr
+lowerPass = S.Pass applyPass evalCmd
+  where applyPass expr env = case lowerExpr expr env of
+                               Left e -> Left $ show e
+                               Right expr' -> Right ((), expr')
+        evalCmd cmd () expr = case cmd of
+                                S.GetLowered -> Just $ show expr
+                                _ -> Nothing
+
 lowerExpr :: P.Expr -> FreeEnv () -> Either LowerErr Expr
-lowerExpr expr fenv = runReaderT (lower expr) (fenv, [], [])
+lowerExpr expr fenv = runReaderT (lower expr) (freeVarSet, [], [])
+  where freeVarSet = Set.fromList $ map fst (freeEnvToList fenv) ++ builtinVars
+
+builtinVars =
+  ["add", "sub", "mul", "pow", "exp", "log", "sqrt",
+   "sin", "cos", "tan", "reduce", "iota" ]
 
 lower :: P.Expr -> Lower Expr
 lower expr = case expr of
@@ -91,12 +106,12 @@ updateIEnv is (fenv, env,ienv) = (fenv, env, is ++ ienv)
 
 lookupEnv :: VarName -> Lower S.LetVar
 lookupEnv v = do
-    (FreeEnv fenv, env,_) <- ask
+    (freeVars, env,_) <- ask
     case lookup v env of
       Just x -> return (BV x)
-      Nothing -> case M.lookup v fenv of
-                   Just () -> return $ FV v
-                   Nothing -> throwError $ UnboundVarErr v
+      Nothing -> if v `Set.member` freeVars
+                   then return $ FV v
+                   else throwError $ UnboundVarErr v
 
 lookupIEnv :: IdxVarName -> Lower S.IdxVar
 lookupIEnv iv = do
@@ -104,7 +119,6 @@ lookupIEnv iv = do
     case lookup iv ienv of
       Just x -> return (BV x)
       Nothing -> throwError $ UnboundIdxVarErr iv
-
 
 instance Show LowerErr where
   show e = "Error: " ++

@@ -1,4 +1,4 @@
-module FlatType (flattenType, unflattenType, flattenVal, unflattenVal,
+module FlatType (evalPass, flattenType, unflattenType, flattenVal, unflattenVal,
                  showVal, parseVal, PrintSpec, defaultPrintSpec, TabType) where
 
 import Data.List (intercalate, transpose)
@@ -30,6 +30,19 @@ data TabType = TabType TabName Scalars TabType
              | ValPart Scalars
                  deriving (Eq, Show)
 
+-- this is here rather than in Interpreter for as a circular import workaround
+evalPass :: S.Pass I.TypedVal (T.SigmaType, S.Expr) ()
+evalPass = S.Pass applyPass evalCmd
+  where
+    applyPass (t, expr) env = let ans = I.evalExpr expr (fmap stripType env)
+                              in Right (I.TypedVal t ans, ())
+    evalCmd cmd (I.TypedVal t v) () =
+      case cmd of
+        S.EvalExpr -> Just $ case showVal defaultPrintSpec t v of
+                             Left s -> s
+                             Right s -> s
+        _ -> Nothing
+    stripType (I.TypedVal t v) = v
 
 flatLeaf :: a -> FlatTree a
 flatLeaf x = [([], x)]

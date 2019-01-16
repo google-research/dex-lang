@@ -1,7 +1,6 @@
-module Interpreter (evalExpr, valPatMatch, ValEnv,
-                    Val (..), IdxVal, unitVal, TypedVal (..),
-                    BuiltinVal (..), validTypedVal, evalApp,
-                    tabVal) where
+module Interpreter (evalExpr,
+                    Val (..), unitVal, TypedVal (..),
+                    BuiltinVal (..), validTypedVal, evalApp, tabVal) where
 
 import Prelude hiding ((!!))
 import qualified Prelude as P
@@ -22,7 +21,6 @@ import Record
 import qualified Env as E
 import Env hiding (Env)
 
-
 data Val = Any
          | IntVal Int
          | RealVal Float
@@ -39,7 +37,8 @@ type ValEnv = E.Env LetVar Val
 type Env = (ValEnv, IEnv)
 
 evalExpr :: Expr -> FreeEnv Val -> Val
-evalExpr expr fenv = eval expr (envFromFree fenv, 0)
+evalExpr expr fenv = eval expr env
+  where env = (envFromFrees fenv builtinEnv, 0)
 
 eval :: Expr -> Env -> Val
 eval expr env@(venv, d) =
@@ -172,8 +171,8 @@ evalApp (Builtin builtin vs) x = let args = x:vs
                                       then Builtin builtin args
                                       else evalBuiltin builtin (reverse args)
 
-unitVal :: Val
-unitVal = RecVal emptyRecord
+unitVal :: TypedVal
+unitVal = TypedVal unitType (RecVal emptyRecord)
 
 data BuiltinVal = BuiltinVal { builtinNumArgs :: Int
                              , builtinName :: String
@@ -189,7 +188,7 @@ instance Eq BuiltinVal where
 instance Ord BuiltinVal where
   compare (BuiltinVal _ name1 _) (BuiltinVal _ name2 _) = compare name1 name2
 
-data TypedVal = TypedVal Type Val  deriving (Show)
+data TypedVal = TypedVal Type Val  deriving (Show, Eq, Ord)
 
 instance Arbitrary TypedVal where
   arbitrary = do
@@ -232,3 +231,41 @@ validVal t v = case (t,v) of
   _ -> fail t v
   where fail t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
 
+
+builtinEnv :: FreeEnv Val
+builtinEnv = E.newFreeEnv
+  [(name, Builtin (BuiltinVal numArgs name evalFun) [])
+  | (BuiltinSpec name numArgs evalFun) <- builtins ]
+  where
+    builtins = [ binOp "add" (+)
+               , binOp "sub" (-)
+               , binOp "mul" (*)
+               , binOp "pow" (^)
+               , realUnOp "exp" exp
+               , realUnOp "log" log
+               , realUnOp "sqrt" sqrt
+               , realUnOp "sin" sin
+               , realUnOp "cos" cos
+               , realUnOp "tan" tan
+               , BuiltinSpec "reduce" 3 reduceEval
+               , BuiltinSpec "iota"   1 iotaEval
+               ]
+
+data BuiltinSpec = BuiltinSpec { name    :: String
+                               , numArgs :: Int
+                               , evalFun :: [Val] -> Val }
+
+binOp :: String -> (Int -> Int -> Int) -> BuiltinSpec
+binOp name f = BuiltinSpec name 2 f'
+  where
+     f' [IntVal x, IntVal y] = IntVal $ f x y
+
+realUnOp :: String -> (Float -> Float) -> BuiltinSpec
+realUnOp name f = BuiltinSpec name 1 f'
+  where
+     f' [RealVal x] = RealVal $ f x
+
+reduceEval [f, z, TabVal m] = let f' x y = evalApp (evalApp f x) y
+                              in foldr f' z (M.elems m)
+
+iotaEval [IntVal n] = tabVal [(IntVal i, IntVal i) | i <- [0..(n-1)]]

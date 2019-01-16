@@ -1,4 +1,4 @@
-module Parser (VarName, IdxVarName, Expr (..), Pat (..),
+module Parser (IdxVarName, Expr (..), Pat (..),
                IdxPat, IdxExpr (..), parseCommand) where
 import Util
 import Record

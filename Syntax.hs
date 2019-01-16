@@ -1,7 +1,7 @@
 module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..),
                Type (..), BaseType (..), SigmaType,
                MetaVar (..), IdxType, LetVar, IdxVar, TypeVar,
-               TopDecl (..), Command (..)) where
+               TopDecl (..), Command (..), Pass (..)) where
 
 import Data.List (intersperse)
 import qualified Data.Map.Strict as M
@@ -62,6 +62,12 @@ data IdxUniq  = IdxUniq  deriving (Show, Eq, Ord); type TypeVar = Var TypeUniq
 data TypeUniq = TypeUniq deriving (Show, Eq, Ord); type IdxVar  = Var IdxUniq
 
 data BaseType = IntType | BoolType | RealType | StrType  deriving (Eq, Ord)
+
+type Except a = Either String a
+
+data Pass v a b =
+  Pass { applyPass :: a -> FreeEnv v -> Except (v, b)
+       , evalCmd   :: Command -> v -> b -> Maybe String }
 
 varName :: Int -> String
 varName n | n < 26    = [['a'..'z'] P.!! n]
