@@ -1,7 +1,7 @@
 module Syntax (Expr (..), Pat (..), IdxExpr (..), IdxPat, LitVal (..),
-               Type (..), BaseType (..), SigmaType,
+               Type (..), BaseType (..), SigmaType, Source,
                MetaVar (..), IdxType, LetVar, IdxVar, TypeVar,
-               TopDecl (..), Command (..), Pass (..)) where
+               TopDecl (..), DeclInstr (..), Command (..), Pass (..)) where
 
 import Data.List (intersperse)
 import qualified Data.Map.Strict as M
@@ -47,8 +47,10 @@ data Type = BaseType BaseType
           | Exists Type
               deriving (Eq, Ord)
 
-data TopDecl expr = EvalDecl String expr
-                  | EvalCmd Command expr   deriving (Show, Eq, Ord)
+type Source = String
+data TopDecl expr = TopDecl Source (DeclInstr expr)
+data DeclInstr expr = EvalDecl VarName expr
+                    | EvalCmd Command expr   deriving (Show, Eq, Ord)
 
 data Command = EvalExpr | GetType | GetTyped | GetParse | GetLowered
              | GetLLVM  | EvalJit   deriving (Show, Eq, Ord)

@@ -39,20 +39,28 @@ data Pat = VarPat VarName
 type VarName = String
 type IdxVarName = String
 type Decl = (Pat, Expr)
-type Command = (S.TopDecl Expr)
+type Command = (S.DeclInstr Expr)
 
-parseProg :: String -> Either String [Command]
+parseProg :: String -> Either String [S.TopDecl Expr]
 parseProg s = case parse (prog <* eof) "" s of
   Left  e -> Left $ errorBundlePretty e
-  Right p -> Right p
+  Right p -> Right $
+    let sourceLines = lines s
+        showLine n = "L" ++ show n ++ ": " ++ (sourceLines !! (n - 1))
+    in [S.TopDecl (showLine lineNum) cmd | (lineNum, cmd) <- p ]
 
-parseCommand :: String -> Either String Command
+parseCommand :: String -> Either String (S.TopDecl Expr)
 parseCommand s = case parse (command <* eof) "" s of
   Left  e -> Left $ errorBundlePretty e
-  Right p -> Right p
+  Right p -> Right $ S.TopDecl "" p
 
-prog :: Parser [Command]
-prog = emptyLines >> many (command <*emptyLines)
+prog :: Parser [(Int, Command)]
+prog = emptyLines >> many (commandWithPos <*emptyLines)
+
+commandWithPos :: Parser (Int, Command)
+commandWithPos = do SourcePos _ linePos _ <- getSourcePos
+                    cmd <- command
+                    return (unPos linePos, cmd)
 
 command :: Parser Command
 command =   explicitCommand
