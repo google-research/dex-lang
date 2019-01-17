@@ -9,9 +9,8 @@ import Control.Monad.Writer (WriterT, runWriterT, tell)
 import Control.Monad.State (StateT, evalState, put, get)
 import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as Map
-import Data.List (nub, intersperse)
+import Data.List (nub)
 import Data.Foldable (toList)
-import Data.Traversable
 import Record
 
 import Lower

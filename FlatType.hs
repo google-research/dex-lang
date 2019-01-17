@@ -2,7 +2,6 @@ module FlatType (evalPass, flattenType, unflattenType, flattenVal, unflattenVal,
                  showVal, parseVal, PrintSpec, defaultPrintSpec, TabType) where
 
 import Data.List (intercalate, transpose)
-import Data.Void
 import Data.Monoid ((<>))
 import Control.Monad (void)
 import Text.Megaparsec
@@ -16,8 +15,7 @@ import qualified Data.Map.Strict as M
 import qualified Typer as T
 import qualified Syntax as S
 import qualified Interpreter as I
-import Data.List (partition, foldr1, intersperse)
-import Data.Foldable (toList)
+import Data.List (foldr1, intersperse)
 
 type Except a = Either String a
 

@@ -6,8 +6,6 @@ import Prelude hiding ((!!))
 import qualified Prelude as P
 
 import Control.Monad
-import Data.Foldable
-import Data.List (sortOn)
 import Data.Foldable (toList)
 import Test.QuickCheck
 import qualified Data.Map.Strict as M

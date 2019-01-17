@@ -4,3 +4,4 @@ coddle
 tests
 test.db
 *.prof
+test-script.cd

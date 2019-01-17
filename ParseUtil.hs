@@ -1,5 +1,6 @@
 module ParseUtil (lineof, sc, blankLines, stringLiteral, makeIdentifier,
-                  space, int, real, lexeme, symbol, parens, Parser) where
+                  space, int, real, lexeme, symbol, parens, Parser,
+                  emptyLines) where
 
 import Control.Monad (void)
 import Data.Void
@@ -17,6 +18,9 @@ sc = L.space space (L.skipLineComment "--") empty
 
 blankLines :: Parser ()
 blankLines = void $ many eol
+
+emptyLines :: Parser ()
+emptyLines = void $ many (sc >> eol)
 
 stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"')

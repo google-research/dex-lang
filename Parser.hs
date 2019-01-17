@@ -1,5 +1,5 @@
 module Parser (IdxVarName, Expr (..), Pat (..),
-               IdxPat, IdxExpr (..), parseCommand) where
+               IdxPat, IdxExpr (..), parseCommand, parseProg) where
 import Util
 import Record
 -- import Typer
@@ -41,17 +41,25 @@ type IdxVarName = String
 type Decl = (Pat, Expr)
 type Command = (S.TopDecl Expr)
 
+parseProg :: String -> Either String [Command]
+parseProg s = case parse (prog <* eof) "" s of
+  Left  e -> Left $ errorBundlePretty e
+  Right p -> Right p
+
 parseCommand :: String -> Either String Command
 parseCommand s = case parse (command <* eof) "" s of
   Left  e -> Left $ errorBundlePretty e
   Right p -> Right p
+
+prog :: Parser [Command]
+prog = emptyLines >> many (command <*emptyLines)
 
 command :: Parser Command
 command =   explicitCommand
         <|> do (v, e) <- try topDecl
                return $ S.EvalDecl v e
         <|> liftM (S.EvalCmd S.EvalExpr) expr
-        <?> "command"
+        <?> "top-level declaration"
 
 opNames = ["+", "*", "/", "-", "^"]
 resNames = ["for", "lam", "let", "in"]

@@ -5,7 +5,6 @@ import Prelude hiding (lookup)
 import qualified Data.Set as Set
 import Util
 import Env hiding (Env)
-import Data.Foldable (toList)
 import Record
 import Control.Monad
 import Control.Monad.Except
