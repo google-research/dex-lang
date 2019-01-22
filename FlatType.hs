@@ -1,9 +1,10 @@
-module FlatType (evalPass, flattenType, unflattenType, flattenVal, unflattenVal,
-                 showVal, parseVal, PrintSpec, defaultPrintSpec, TabType) where
+module FlatType (exprToVal, cmdToVal, flattenType, unflattenType, flattenVal,
+                 unflattenVal, showVal, parseVal, PrintSpec, defaultPrintSpec,
+                 TabType) where
 
 import Data.List (intercalate, transpose)
 import Data.Monoid ((<>))
-import Control.Monad (void)
+import Control.Monad (void, liftM)
 import Text.Megaparsec
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
@@ -11,36 +12,42 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Record
 import Util
 import ParseUtil
+import Env
 import qualified Data.Map.Strict as M
 import qualified Typer as T
 import qualified Syntax as S
 import qualified Interpreter as I
 import Data.List (foldr1, intersperse)
 
-type Except a = Either String a
-
 type TabName = [RecName]
-data ScalarType = BaseType T.BaseType
+data ScalarType = BaseType S.BaseType
                 | UnitType  deriving (Eq, Show)
 type FlatTree a = [([RecName], a)]
 type Scalars = FlatTree ScalarType
 data TabType = TabType TabName Scalars TabType
              | ValPart Scalars
                  deriving (Eq, Show)
+type TypedExpr = (S.SigmaType, S.Expr)
 
 -- this is here rather than in Interpreter for as a circular import workaround
-evalPass :: S.Pass I.TypedVal (T.SigmaType, S.Expr) ()
-evalPass = S.Pass applyPass evalCmd
-  where
-    applyPass (t, expr) env = let ans = I.evalExpr expr (fmap stripType env)
-                              in Right (I.TypedVal t ans, ())
-    evalCmd cmd (I.TypedVal t v) () =
-      case cmd of
-        S.EvalExpr -> Just $ case showVal defaultPrintSpec t v of
-                             Left s -> s
-                             Right s -> s
-        _ -> Nothing
-    stripType (I.TypedVal t v) = v
+exprToVal :: TypedExpr -> S.FullEnv I.TypedVal () () -> S.Except (I.TypedVal, ())
+exprToVal (t, expr) env =
+    let ans = I.evalExpr expr (fmap stripType (S.lEnv env))
+    in Right (I.TypedVal t ans, ())
+
+cmdToVal :: S.Command TypedExpr -> S.FullEnv I.TypedVal () () -> S.Command ()
+cmdToVal (S.Command cmd (t, expr)) env =
+  case cmd of
+    S.EvalExpr -> let v = I.evalExpr expr (fmap stripType (S.lEnv env))
+                  in case showVal defaultPrintSpec t v of
+                       Left e  -> S.CmdErr e
+                       Right s -> S.CmdResult s
+cmdToVal (S.CmdResult s) _ = S.CmdResult s
+cmdToVal (S.CmdErr e)    _ = S.CmdErr e
+
+stripType :: I.TypedVal -> I.Val
+stripType (I.TypedVal t v) = v
+
 
 flatLeaf :: a -> FlatTree a
 flatLeaf x = [([], x)]
@@ -58,22 +65,22 @@ unFlatTreeRec leafFun nodeFun t = case t of
   xs -> nodeFun . recFromList . mapSnd recurse . unFlatTree $ xs
   where recurse = unFlatTreeRec leafFun nodeFun
 
-checkType :: T.Type -> Except ()
+checkType :: S.Type -> S.Except ()
 checkType t = case t of
-   T.TabType a b -> checkType a >> checkType b
-   T.RecType r -> sequence (fmap checkType r) >> return ()
-   T.BaseType b -> Right ()
-   _ -> Left $ "Can't print value with type " ++ show t
+   S.TabType a b -> checkType a >> checkType b
+   S.RecType r -> sequence (fmap checkType r) >> return ()
+   S.BaseType b -> Right ()
+   _ -> Left $ S.PrintErr $ "Can't print value with type " ++ show t
 
-flattenType :: T.Type -> Except [TabType]
+flattenType :: S.Type -> S.Except [TabType]
 flattenType t = checkType t >> (return $ flattenTypeRec t)
 
-flattenTypeRec :: T.Type -> [TabType]
+flattenTypeRec :: S.Type -> [TabType]
 flattenTypeRec t = case t of
-   T.TabType a b -> let leftKeys = flattenIdxType a
+   S.TabType a b -> let leftKeys = flattenIdxType a
                         rightTabs = flattenTypeRec b
                     in map (TabType [] leftKeys) rightTabs
-   T.RecType r | isEmpty r -> [ValPart (flatLeaf UnitType)]
+   S.RecType r | isEmpty r -> [ValPart (flatLeaf UnitType)]
                | otherwise -> let
                    ts = [(k,t) | (k, ts) <- recToList $ fmap flattenTypeRec r
                                , t <- ts]
@@ -82,33 +89,33 @@ flattenTypeRec t = case t of
                  in case [(k, s) | (k, ValPart s) <- ts] of
                       [] -> nonValTabs
                       vs -> (ValPart $ flatTree vs) : nonValTabs
-   T.BaseType b -> [ValPart (flatLeaf $ BaseType b)]
+   S.BaseType b -> [ValPart (flatLeaf $ BaseType b)]
 
-flattenIdxType :: T.Type -> Scalars
+flattenIdxType :: S.Type -> Scalars
 flattenIdxType t = case t of
-   T.RecType r | isEmpty r -> flatLeaf UnitType
+   S.RecType r | isEmpty r -> flatLeaf UnitType
                | otherwise -> flatTree . recToList $ fmap flattenIdxType r
-   T.BaseType b -> flatLeaf (BaseType b)
+   S.BaseType b -> flatLeaf (BaseType b)
 
-unflattenType :: [TabType] -> T.Type
+unflattenType :: [TabType] -> S.Type
 unflattenType tabs = foldr1 mergeTypes (map unflattenTab tabs)
 
-unflattenTab :: TabType -> T.Type
+unflattenTab :: TabType -> S.Type
 unflattenTab tab = case tab of
     ValPart s -> scalarType s
-    TabType name s rest -> let t = T.TabType (scalarType s) (unflattenTab rest)
-                            in recFromName T.RecType name t
-  where scalarType = unFlatTreeRec scalarTypeToType T.RecType
+    TabType name s rest -> let t = S.TabType (scalarType s) (unflattenTab rest)
+                            in recFromName S.RecType name t
+  where scalarType = unFlatTreeRec scalarTypeToType S.RecType
 
-scalarTypeToType :: ScalarType -> T.Type
-scalarTypeToType s = case s of BaseType b -> T.BaseType b
-                               UnitType   -> T.RecType emptyRecord
+scalarTypeToType :: ScalarType -> S.Type
+scalarTypeToType s = case s of BaseType b -> S.BaseType b
+                               UnitType   -> S.RecType emptyRecord
 
-mergeTypes :: T.Type -> T.Type -> T.Type
-mergeTypes (T.RecType r1) (T.RecType r2) =
-  T.RecType $ recUnionWith mergeTypes r1 r2
-mergeTypes (T.TabType a1 b1) (T.TabType a2 b2) | a1 == a2 =
-  T.TabType a1 (mergeTypes b1 b2)
+mergeTypes :: S.Type -> S.Type -> S.Type
+mergeTypes (S.RecType r1) (S.RecType r2) =
+  S.RecType $ recUnionWith mergeTypes r1 r2
+mergeTypes (S.TabType a1 b1) (S.TabType a2 b2) | a1 == a2 =
+  S.TabType a1 (mergeTypes b1 b2)
 
 ----- flattening vals -----
 
@@ -200,7 +207,7 @@ data PrintSpec = PrintSpec { manualAlign :: Bool }
 
 defaultPrintSpec = PrintSpec True
 
-showVal :: PrintSpec -> S.SigmaType -> I.Val -> Except String
+showVal :: PrintSpec -> S.SigmaType -> I.Val -> S.Except String
 showVal ps (S.Forall _ t) v = do
   tabTypes <- flattenType t
   let tabVals = flattenVal v tabTypes
@@ -257,16 +264,16 @@ printScalar v = case v of
 
 -- ----- parsing -----
 
-parseVal :: String -> Except (T.Type, I.Val)
+parseVal :: String -> S.Except (S.Type, I.Val)
 parseVal s = case parse topP "" s of
-  Left e -> Left (errorBundlePretty e)
+  Left e -> Left $ S.ParseErr $ errorBundlePretty e
   Right tabs -> let (tabTypes, tabVals) = unzip tabs
                 in  Right ( unflattenType tabTypes
                           , unflattenVal tabVals tabTypes)
 
-parseTabType :: String -> Except TabType
+parseTabType :: String -> S.Except TabType
 parseTabType s = case parse tabTypeP "" s of
-  Left e -> Left (errorBundlePretty e)
+  Left e -> Left $ S.ParseErr $ errorBundlePretty e
   Right x -> Right x
 
 topP :: Parser [(TabType, TabVal)]
@@ -309,11 +316,11 @@ maybeNamed p = do
 recordP :: Parser a -> Parser [(RecName, a)]
 recordP p = mixedRecordPosNameList <$> (parens $ maybeNamed p `sepBy1` sc)
 
-baseTypeP :: Parser T.BaseType
-baseTypeP =     (symbol "Int"  >> return T.IntType)
-            <|> (symbol "Bool" >> return T.BoolType)
-            <|> (symbol "Real" >> return T.RealType)
-            <|> (symbol "Str"  >> return T.StrType)
+baseTypeP :: Parser S.BaseType
+baseTypeP =     (symbol "Int"  >> return S.IntType)
+            <|> (symbol "Bool" >> return S.BoolType)
+            <|> (symbol "Real" >> return S.RealType)
+            <|> (symbol "Str"  >> return S.StrType)
 
 tabValP :: TabType -> Parser TabVal
 tabValP tabType = let cols = getColTypes tabType
@@ -332,11 +339,11 @@ rowP (t:ts) = do
 fieldP :: ScalarType -> Parser ScalarVal
 fieldP t = case t of
   BaseType b -> case b of
-    T.IntType -> IntVal <$> int
-    T.BoolType ->     (symbol "True"  >> return (BoolVal True ))
+    S.IntType -> IntVal <$> int
+    S.BoolType ->     (symbol "True"  >> return (BoolVal True ))
                   <|> (symbol "False" >> return (BoolVal False))
-    T.StrType -> StrVal <$> stringLiteral
-    T.RealType -> RealVal <$> real
+    S.StrType -> StrVal <$> stringLiteral
+    S.RealType -> RealVal <$> real
   UnitType -> symbol "()" >> return UnitVal
 
 recNameP :: Parser RecName

@@ -1,23 +1,18 @@
-module Interpreter (evalExpr,
-                    Val (..), unitVal, TypedVal (..),
-                    BuiltinVal (..), validTypedVal, evalApp, tabVal) where
-
-import Prelude hiding ((!!))
-import qualified Prelude as P
+module Interpreter (evalExpr, Val (..), TypedVal (..),
+                    validTypedVal, tabVal) where
 
 import Control.Monad
 import Data.Foldable (toList)
+import Data.Semigroup ((<>))
 import Test.QuickCheck
-import qualified Data.Map.Strict as M
 
-import qualified LLVM.AST as L
+import qualified Data.Map.Strict as M
 
 import Syntax
 import Util
 import Typer
 import Record
-import qualified Env as E
-import Env hiding (Env)
+import Env
 
 data Val = Any
          | IntVal Int
@@ -26,25 +21,25 @@ data Val = Any
          | BoolVal  Bool
          | TabVal (M.Map IdxVal Val)
          | RecVal (Record Val)
-         | LamVal Pat Env Expr
+         | LamVal Pat EvalEnv Expr
          | Builtin BuiltinVal [Val]  deriving (Eq, Ord, Show)
 
 type IdxVal = Val
 type IEnv   = Int
-type ValEnv = E.Env LetVar Val
-type Env = (ValEnv, IEnv)
+type ValEnv = Env Var Val
+type EvalEnv = (ValEnv, IEnv)
 
-evalExpr :: Expr -> FreeEnv Val -> Val
+evalExpr :: Expr -> ValEnv -> Val
 evalExpr expr fenv = eval expr env
-  where env = (envFromFrees fenv builtinEnv, 0)
+  where env = (fenv <> builtinEnv, 0)
 
-eval :: Expr -> Env -> Val
+eval :: Expr -> EvalEnv -> Val
 eval expr env@(venv, d) =
   case expr of
     Lit c          -> composeN d lift $ litVal c
-    Var v          -> venv !! v
+    Var v          -> venv ! v
     Let p bound body -> let x = eval bound env
-                        in eval body (catEnv venv $ valPatMatch p x, d)
+                        in eval body (valPatMatch p x `addBVars` venv , d)
     Lam p body     -> LamVal p env body
     App fexpr arg  -> let f = eval fexpr env
                           x = eval arg env
@@ -89,12 +84,12 @@ curryTabVal n (TabVal m) =
                                               , let (k, r') = unConsRecord r]
   in tabVal [(k, curryTabVal (n-1) (tabVal v)) | (k, v) <- grouped]
 
-structureTabVal :: IdxPat -> Val -> Val
+structureTabVal :: IPat -> Val -> Val
 structureTabVal p (TabVal m) =
   tabVal [(structureIdx p (fromPosRecord r), v)
              | (RecVal r, v) <- M.toList m]
 
-structureIdx :: IdxPat -> [IdxVal] -> IdxVal
+structureIdx :: IPat -> [IdxVal] -> IdxVal
 structureIdx (VarPat _) [k] = k
 structureIdx (RecPat r) idxs =
   let (ks, ps) = unzip $ recToList r
@@ -115,9 +110,9 @@ diagWithIdxExpr d ie (TabVal m) =
                            , Just k <- [matchIdxExpr (toList r) ie k2] ]
 
 matchIdxExpr :: [IdxVal] -> IdxExpr -> IdxVal -> Maybe [IdxVal]
-matchIdxExpr idxs (IdxVar (BV v)) i = do i' <- tryEq i (idxs P.!! v)
-                                         return $ update v i' idxs
-matchIdxExpr idxs (IdxRecCon vs) (RecVal is) = do
+matchIdxExpr idxs (RecLeaf (BV v)) i = do i' <- tryEq i (idxs !! v)
+                                          return $ update v i' idxs
+matchIdxExpr idxs (RecTree vs) (RecVal is) = do
   idxs' <- sequence $ zipWith (matchIdxExpr idxs) (toList vs) (toList is)
   foldM mergeIdxs (replicate (length idxs) Any) idxs'
 
@@ -129,9 +124,8 @@ diag (TabVal m) = tabVal $ [(k,v) | (k1, (TabVal m')) <- M.toList m
                                   , (k2, v ) <- M.toList m'
                                   , Just k <- [tryEq k1 k2] ]
 
-patSize :: IdxPat -> Int
-patSize (VarPat _) = 1
-patSize (RecPat r) = foldr (+) 0 $ fmap patSize r
+patSize :: IPat -> Int
+patSize p = length $ toList p
 
 update :: Int -> a -> [a] -> [a]
 update i x xs = let (prefix, _:rest) = splitAt i xs
@@ -163,14 +157,11 @@ lift v = tabVal [(Any, v)]
 
 evalApp :: Val -> Val -> Val
 evalApp (LamVal p (venv, ienv) body) x =
-    eval body (catEnv venv $ valPatMatch p x, ienv)
+    eval body (valPatMatch p x `addBVars` venv, ienv)
 evalApp (Builtin builtin vs) x = let args = x:vs
                                  in if length args < builtinNumArgs builtin
                                       then Builtin builtin args
                                       else evalBuiltin builtin (reverse args)
-
-unitVal :: TypedVal
-unitVal = TypedVal unitType (RecVal emptyRecord)
 
 data BuiltinVal = BuiltinVal { builtinNumArgs :: Int
                              , builtinName :: String
@@ -230,8 +221,8 @@ validVal t v = case (t,v) of
   where fail t v = Left $ "Couldn't match type " ++ show t ++ " with " ++ show v
 
 
-builtinEnv :: FreeEnv Val
-builtinEnv = E.newFreeEnv
+builtinEnv :: ValEnv
+builtinEnv = newEnv
   [(name, Builtin (BuiltinVal numArgs name evalFun) [])
   | (BuiltinSpec name numArgs evalFun) <- builtins ]
   where

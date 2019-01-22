@@ -1,20 +1,25 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
-             composeN, mapMaybe, lookup, uncons, repeated, shortList) where
+             composeN, mapMaybe, lookup, uncons, repeated, shortList,
+             showErr) where
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
 
+showErr :: Show e => Either e a -> Either String a
+showErr (Left e) = Left (show e)
+showErr (Right x) = Right x
+
 group :: (Ord a) => [(a,b)] -> [(a, [b])]
 group [] = []
-group ((k,v):rem) =
-  let (prefix, suffix) = span ((== k) . fst) rem
+group ((k,v):xs) =
+  let (prefix, suffix) = span ((== k) . fst) xs
       g = v:(map snd prefix)
   in (k, g) : group suffix
 
 ungroup ::  [(a, [b])] -> [(a,b)]
 ungroup [] = []
-ungroup ((k,vs):rem) = (zip (repeat k) vs) ++ ungroup rem
+ungroup ((k,vs):xs) = (zip (repeat k) vs) ++ ungroup xs
 
 unJust :: Maybe a -> a
 unJust (Just x) = x
@@ -53,7 +58,7 @@ mapSnd :: (a -> b) -> [(c, a)] -> [(c, b)]
 mapSnd f zs = [(x, f y) | (x, y) <- zs]
 
 mapMaybe :: (a -> Maybe b) -> [a] -> [b]
-mapMaybe f [] = []
+mapMaybe _ [] = []
 mapMaybe f (x:xs) = let rest = mapMaybe f xs
                     in case f x of
                         Just y  -> y : rest
@@ -74,7 +79,7 @@ repeated = repeatedSorted . sort
 
 repeatedSorted :: Eq a => [a] -> [a]
 repeatedSorted [] = []
-repeatedSorted [x] = []
+repeatedSorted [_] = []
 repeatedSorted (x:y:rest) | x == y = [x] ++ repeatedSorted (dropWhile (== x) rest)
                           | otherwise = repeatedSorted (y:rest)
 

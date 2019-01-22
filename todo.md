@@ -1,6 +1,6 @@
 # current todo
-  * Create explicit type-lambda IR in type inference
-  * Add type annotation syntax to let and lambda with scoped type variables
+  * Make type inference bidirectional
+  * Make a quine eval mode for testing
   * Existentials with explicit pack, unpack and typing rules
   * Simple compiler (strict index comprehensions only)
   * Write prelude, example programs in explicit style

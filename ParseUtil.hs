@@ -1,6 +1,6 @@
 module ParseUtil (lineof, sc, blankLines, stringLiteral, makeIdentifier,
                   space, int, real, lexeme, symbol, parens, Parser,
-                  emptyLines) where
+                  emptyLines, captureSource) where
 
 import Control.Monad (void)
 import Data.Void
@@ -52,3 +52,11 @@ symbol = L.symbol sc
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
+
+captureSource :: Parser a -> Parser (a, String)
+captureSource p = do
+  s <- getInput
+  offset <- getOffset
+  val <- p
+  offset' <- getOffset
+  return (val, take (offset' - offset) s)

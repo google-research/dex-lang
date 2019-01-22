@@ -5,6 +5,7 @@ module Record (Record,  RecName (..), posRecord, nameRecord, emptyRecord,
                RecTree (..), emptyRecTree, arbitraryRecord,
                recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
                RecordPrintSpec (..), mixedRecordPosName,
+               defaultRecPrintSpec, typeRecPrintSpec,
                mixedRecordPosNameList) where
 
 import Util
@@ -15,7 +16,7 @@ import Test.QuickCheck
 import qualified Data.Map.Strict as M
 
 data Record a = Record (M.Map RecName a)  deriving (Eq, Ord)
-data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a  deriving (Eq, Show)
+data RecTree a = RecTree (Record (RecTree a)) | RecLeaf a  deriving (Eq, Show, Ord)
 data RecName = RecPos Int | RecName String  deriving (Eq, Ord)
 
 instance Functor Record where
@@ -112,18 +113,19 @@ unConsRecord r = let v:vs = fromPosRecord r
 
 
 instance Show a => Show (Record a) where
-  show = printRecord show defaultPrintSpec
+  show = printRecord show defaultRecPrintSpec
 
 instance Show RecName where
   show (RecPos i)  = "#" ++ show i
   show (RecName s) = s
 
-data RecordPrintSpec = RecordPrintSpec { recSep :: String
-                                       , kvSep :: String
+data RecordPrintSpec = RecordPrintSpec { kvSep :: String
+                                       , recSep :: String
                                        , trailSep :: String
                                        , order :: Maybe [RecName]}
 
-defaultPrintSpec = RecordPrintSpec "=" "," "" Nothing
+defaultRecPrintSpec = RecordPrintSpec "=" "," "" Nothing
+typeRecPrintSpec    = RecordPrintSpec "::" "," "" Nothing
 
 printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
 printRecord showVal spec (Record m) =

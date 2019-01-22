@@ -9,112 +9,91 @@ import Data.Semigroup ((<>))
 import Data.Maybe (catMaybes)
 import Prelude hiding (lookup, print)
 
-import qualified Parser as P
-import qualified Lower as L
-import qualified FlatType as F
-import qualified Interpreter as I
-import qualified Syntax as S
-import qualified JIT as J
-
 import Syntax
+import Parser
 import Typer
 import Util
-import FlatType (parseVal)
-import Env hiding (Env)
+import Env
+import Interpreter
+import FlatType (exprToVal, cmdToVal, parseVal)
 
-type TopMonad a = InputT IO a
-type Except a = Either String a
-type ProgramSource = String
-type DataSource = String
-data CmdOpts = CmdOpts (Maybe ProgramSource) (Maybe DataSource)
+type Driver a = InputT IO a
+data CmdOpts = CmdOpts { programSource :: Maybe String
+                       , dataSource    :: Maybe String }
 
-type MonadPass v a b = TopDecl a -> FreeEnv v -> TopMonad (v, TopDecl b)
-type MonadPassEnv v a b =    IORef (FreeEnv v) -> TopDecl a
-                          -> TopMonad (Maybe (TopDecl b))
-data Env = Env { varEnv  :: FreeEnv ()
-               , typeEnv :: FreeEnv SigmaType
-               , valEnv  :: FreeEnv I.TypedVal }
+data TopEnv = TopEnv { varEnv :: Vars
+                     , typeEnv :: FullEnv SigmaType IdxType ()
+                     , valEnv  :: FullEnv TypedVal  () () }
 
-withTopMonad :: Pass v a b -> MonadPass v a b
-withTopMonad (Pass applyPass evalCmd) (TopDecl source decl) env = do
-  case decl of
-    EvalDecl v expr -> do
-      (val, expr') <- liftErr source $ applyPass expr env
-      return (val, TopDecl source $ EvalDecl v expr')
-    EvalCmd cmd expr -> do
-      (val, expr') <- liftErr source $ applyPass expr env
-      case evalCmd cmd val expr' of
-        Just s  -> do outputStrLn source
-                      outputStrLn (s ++ "\n")
-                      throwIO Interrupt
-        Nothing -> return (val, TopDecl source $ EvalCmd cmd expr')
+data Pass a b v i t = Pass
+  { lowerExpr ::         a -> FullEnv v i t -> Except (v, b),
+    lowerCmd  :: Command a -> FullEnv v i t -> Command b }
 
-liftErr :: String -> Except a -> TopMonad a
-liftErr s (Left e)  = outputStrLn (s ++ "\n" ++ e ++ "\n") >> throwIO Interrupt
+varPass  = Pass checkBoundVarsExpr checkBoundVarsCmd
+typePass = Pass inferTypesExpr inferTypesCmd
+evalPass = Pass exprToVal cmdToVal
+
+evalSource :: TopEnv -> String -> Driver TopEnv
+evalSource env source = do
+  decls <- liftErr "" $ parseProg source
+  (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env) decls
+  (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
+  (final, valEnv')   <- fullPass (procDecl evalPass) (valEnv env)  typed
+  mapM writeDeclResult final
+  return $ TopEnv varEnv' typeEnv' valEnv'
+  where
+    fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
+                -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
+    fullPass p env decls = do envPtr <- lift $ newIORef env
+                              decls' <- mapM (p envPtr) decls
+                              env' <- lift $ readIORef envPtr
+                              return (decls', env')
+
+    procDecl :: Pass a b v i t -> IORef (FullEnv v i t)
+                -> TopDecl a -> Driver (TopDecl b)
+    procDecl (Pass procExpr procCmd) envPtr (TopDecl source fvs instr) = do
+      env <- lift $ readIORef envPtr
+      case instr of
+        TopAssign v expr ->
+          do (val, expr') <- liftErr source $ procExpr expr env
+             lift $ writeIORef envPtr $ setLEnv (addFVar v val) env
+             return $ TopDecl source fvs $ TopAssign v expr'
+        EvalCmd cmd -> return $ TopDecl source fvs $ EvalCmd (procCmd cmd env)
+
+runRepl :: TopEnv -> Driver ()
+runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
+  where
+    loop :: IORef TopEnv -> Driver ()
+    loop envPtr = do
+      source <- getInputLine ">=> "
+      env <- lift $ readIORef envPtr
+      newEnv <- case source of
+                  Nothing ->  lift exitSuccess
+                  Just s -> evalSource env s
+      lift $ writeIORef envPtr newEnv
+
+writeDeclResult :: TopDecl a -> Driver ()
+writeDeclResult (TopDecl source _ instr) = do
+  case instr of
+    EvalCmd (CmdResult s) -> printWithSource s
+    EvalCmd (CmdErr e)    -> printWithSource (show e)
+    _ -> return ()
+  where printWithSource :: String -> Driver ()
+        printWithSource s = outputStrLn $ source ++ "\n" ++ s ++ "\n"
+
+liftErr :: String -> Except a -> Driver a
+liftErr s (Left e)  = do outputStrLn $ "> " ++ s ++ "\n" ++ show e ++ "\n"
+                         lift exitFailure
 liftErr s (Right x) = return x
 
-repl :: Env -> TopMonad ()
-repl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
-  where
-    loop :: IORef Env -> TopMonad ()
-    loop envPtr = do
-      input <- getInputLine ">=> "
-      decl <- case input of Nothing -> lift $ exitSuccess
-                            Just line -> liftErr "" $ P.parseCommand line
-      env <- lift $ readIORef envPtr
-      ((), lowered) <- withTopMonad L.lowerPass decl    (varEnv  env)
-      (ty, typed)   <- withTopMonad typePass    lowered (typeEnv env)
-      (val, _)      <- withTopMonad F.evalPass  typed   (valEnv  env)
-      case decl of
-        TopDecl _ (EvalDecl v _) -> let newEnv = consEnv (v, ty, val) env
-                                    in lift $ writeIORef envPtr newEnv
-        _ -> return ()
-
-consEnv :: (VarName, SigmaType, I.TypedVal) -> Env -> Env
-consEnv (var, t, val) (Env varEnv typeEnv valEnv) =
-  Env { varEnv  = updateFreeEnv varEnv  var ()
-      , typeEnv = updateFreeEnv typeEnv var t
-      , valEnv  = updateFreeEnv valEnv  var val }
-
-catchErr :: TopMonad a -> TopMonad (Maybe a)
+catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-evalFile :: String -> Env -> TopMonad ()
-evalFile fname env = do
-  source <- lift $ readFile fname
-  decls <- liftErr "" $ P.parseProg source
-  lowerDecls <- fullPass L.lowerPass (varEnv env)  decls
-  typedDecls <- fullPass typePass    (typeEnv env) lowerDecls
-  _          <- fullPass F.evalPass  (valEnv env)  typedDecls
-  return ()
-
-fullPass :: Pass v a b -> FreeEnv v -> [TopDecl a] -> TopMonad [TopDecl b]
-fullPass pass env decls = do
-  envPtr <- lift $ newIORef env
-  newMaybeDecls <- sequence $ map (passWithEnv pass envPtr) decls
-  return $ catMaybes newMaybeDecls
-
-passWithEnv :: Pass v a b -> MonadPassEnv v a b
-passWithEnv pass envPtr declWithSource@(TopDecl source decl) = do
-  env <- lift $ readIORef envPtr
-  ans <- catchErr $ (withTopMonad pass) declWithSource env
-  case decl of
-    EvalDecl v expr -> case ans of
-      Nothing -> lift exitFailure
-      Just (val, decl') -> do lift $ writeIORef envPtr (updateFreeEnv env v val)
-                              return $ Just decl'
-    EvalCmd _ _ -> case ans of
-      Nothing           -> return Nothing
-      Just (val, decl') -> return $ Just decl'
-
-loadData :: String -> IO (I.TypedVal, SigmaType)
-loadData fname = do
-  contents <- readFile fname
-  case parseVal contents of
-    Left e -> do putStrLn "Error loading data"
-                 putStrLn e
-                 exitFailure
-    Right (t,v) -> return (I.TypedVal t v, Forall 0 t)
+updateEnv :: (VarName, SigmaType, TypedVal) -> TopEnv -> TopEnv
+updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
+  TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
+         , typeEnv = setLEnv (addFVar v t)   typeEnv
+         , valEnv  = setLEnv (addFVar v val) valEnv }
 
 opts :: ParserInfo CmdOpts
 opts = info (p <**> helper) mempty
@@ -125,18 +104,28 @@ opts = info (p <**> helper) mempty
                                         <> metavar "DATA"
                                         <> help "Data source (optional)" ))
 
-initEnv = Env emptyFreeEnv emptyFreeEnv emptyFreeEnv
+runMonad :: Driver a -> IO ()
+runMonad d = runInputTBehavior defaultBehavior defaultSettings d >> return ()
 
-runMonad :: TopMonad() -> IO ()
-runMonad = runInputTBehavior defaultBehavior defaultSettings
+initEnv = TopEnv mempty mempty mempty
+
+loadData :: String -> IO (TypedVal, SigmaType)
+loadData fname = do
+  contents <- readFile fname
+  case parseVal contents of
+    Left e -> do putStrLn "Error loading data"
+                 putStrLn (show e)
+                 exitFailure
+    Right (t,v) -> return (TypedVal t v, Forall [] t)
 
 main :: IO ()
 main = do
   CmdOpts fname dbname <- execParser opts
-  (inVal, inTy) <- case dbname of
-                     Just dbname -> loadData dbname
-                     Nothing -> return (I.unitVal, unitType)
-  let envWithData = ("data", inTy, inVal) `consEnv` initEnv
+  envWithData <- case dbname of
+                   Just dbname ->
+                     do (inVal, inTy) <- loadData dbname
+                        return $ ("data", inTy, inVal) `updateEnv` initEnv
+                   Nothing -> return initEnv
   case fname of
-    Just fname -> runMonad $ evalFile fname envWithData
-    Nothing    -> runMonad $ repl envWithData
+    Just fname -> runMonad $ lift (readFile fname) >>= evalSource envWithData
+    Nothing    -> runMonad $ runRepl envWithData
