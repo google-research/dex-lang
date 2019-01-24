@@ -1,6 +1,7 @@
 module Env (Env (..), GVar (..), VarName,  newEnv, addFVar, addBVar, addBVars,
-            envDiff, isin, (!), fVars) where
+            envDiff, isin, (!), fVars, toDeBruijn) where
 
+import Data.List (elemIndex)
 import Data.Semigroup
 import qualified Data.Map.Strict as M
 
@@ -41,6 +42,11 @@ isin i (Env fvs bvs) = case i of
             Nothing -> error ("Lookup of " ++ show s ++
                               " failed! This is a compiler bug")
   BV i -> bvs !! i
+
+toDeBruijn :: [VarName]->  GVar i -> GVar i
+toDeBruijn vs (FV v) = case elemIndex v vs of Just i  -> BV i
+                                              Nothing -> FV v
+toDeBruijn vs (BV i) = BV i
 
 instance Functor (Env i) where
   fmap f (Env fenv xs) = Env (fmap f fenv) (map f xs)

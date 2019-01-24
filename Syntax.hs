@@ -1,8 +1,8 @@
 module Syntax (Expr (..), Type (..), UExpr (..), TopDecl (..), Command (..),
                DeclInstr (..), CmdName (..), GPat (..), Pat, IPat, UPat, UIPat,
                IdxExpr (..), LitVal (..), BaseType (..), MetaVar (..), IType,
-               Var, IVar, TVar, Except, Err (..), SigmaType, IdxType, Vars,
-               FullEnv (..), setLEnv, setIEnv, setTEnv, fvsUExpr,
+               Var, IVar, TVar, Except, Err (..), SigmaType, TauType,
+               IdxType, Vars, FullEnv (..), setLEnv, setIEnv, setTEnv, fvsUExpr,
                (-->), (==>)) where
 import Util
 import Record
@@ -23,6 +23,8 @@ data Expr = Lit LitVal
           | TApp Expr [Type]
           | Unpack Expr
           | Pack IType Expr Type
+
+          | NamedTLam [VarName] Expr
               deriving (Show, Eq, Ord)
 
 data Type = BaseType BaseType
@@ -30,9 +32,12 @@ data Type = BaseType BaseType
           | ArrType Type Type
           | TabType IType Type
           | RecType (Record Type)
-          | Forall [VarName] Type
-          | Exists VarName Type
+          | Forall Int Type
+          | Exists Type
+
           | MetaTypeVar MetaVar
+          | NamedForall [VarName] Type
+          | NamedExists VarName Type
               deriving (Eq, Ord)
 
 data UExpr = ULit LitVal
@@ -59,9 +64,10 @@ infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-type IType    = Type
-type SigmaType  = Type
-type IdxType  = Type
+type IType     = Type
+type SigmaType = Type  -- may have top-level forall
+type TauType   = Type  -- doesn't have any foralls
+type IdxType   = Type
 newtype MetaVar = MetaVar Int  deriving (Eq, Show, Ord)
 
 type IdxExpr = RecTree IVar
@@ -205,8 +211,10 @@ fvsType ty = case ty of
   TabType t1 t2 -> fvsType t1 <> fvsType t2
   RecType r     -> foldMap fvsType r
   Forall _ t    -> fvsType t
-  Exists _ t    -> fvsType t
+  Exists t      -> fvsType t
   MetaTypeVar _ -> mempty
+  NamedForall _ t -> fvsType t
+  NamedExists _ t -> fvsType t
 
 paren :: String -> String
 paren s = "(" ++ s ++ ")"
@@ -233,10 +241,9 @@ showType names depth t = case t of
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
   TabType a b -> paren $ recur a ++ " => " ++ recur b
   RecType r   -> printRecord recur typeRecPrintSpec r
-  Forall vs t -> let n = length vs
-                     vs' = slice depth (depth + n) names
-                 in "A " ++ intercalate " " vs' ++ ". " ++ recurDeeper n t
-  Exists v t  -> "<exists>"
+  Forall n t -> let vs' = slice depth (depth + n) names
+                in "A " ++ intercalate " " vs' ++ ". " ++ recurDeeper n t
+  Exists t  -> "<exists>"
   MetaTypeVar (MetaVar v) -> "mv" ++ show v
   where slice start stop = take (stop - start) . drop start
         recur = showType names depth

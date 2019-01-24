@@ -14,7 +14,6 @@ import Control.Monad.State (StateT, runState, modify)
 import Text.Megaparsec
 import qualified Text.Megaparsec.Char.Lexer as L
 import Test.HUnit
-import Data.List (elemIndex)
 import Data.Foldable (toList)
 
 type UTopDecl = TopDecl UExpr
@@ -218,7 +217,7 @@ forallType = do
   vars <- identifier `sepBy` sc
   symbol "."
   body <- typeExpr
-  return $ Forall vars body
+  return $ NamedForall vars body
 
 existsType :: Parser Type
 existsType = do
@@ -226,7 +225,7 @@ existsType = do
   var <- identifier
   symbol "."
   body <- typeExpr
-  return $ Exists var body
+  return $ NamedExists var body
 
 baseType :: Parser BaseType
 baseType = (try (symbol "Int")  >> return IntType)
@@ -273,14 +272,12 @@ lowerType env ty = case ty of
   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
   TabType t1 t2 -> TabType (recur t1) (recur t2)
   RecType r     -> RecType $ fmap recur r
-  Forall vs t   -> Forall vs $ lowerType (updateTVars vs  env) t
-  Exists v t    -> Exists v  $ lowerType (updateTVars [v] env) t
   MetaTypeVar m -> MetaTypeVar m
+  NamedForall vs t -> Forall (length vs) $ lowerType (updateTVars vs  env) t
+  NamedExists v t  -> Exists             $ lowerType (updateTVars [v] env) t
+  Forall _ _ -> error "Shouldn't see deBruijn Forall in source text"
+  Exists   _ -> error "Shouldn't see deBruijn Exists in source text"
   where recur = lowerType env
-
-toDeBruijn :: [VarName]->  GVar i -> GVar i
-toDeBruijn vs (FV v) = case elemIndex v vs of Just i  -> BV i
-                                              Nothing -> FV v
 
 updateLVars :: UPat -> BoundVars -> BoundVars
 updateLVars pat env = env {lVars = patVars pat ++ lVars env}

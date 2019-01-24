@@ -116,7 +116,7 @@ loadData fname = do
     Left e -> do putStrLn "Error loading data"
                  putStrLn (show e)
                  exitFailure
-    Right (t,v) -> return (TypedVal t v, Forall [] t)
+    Right (t,v) -> return (TypedVal t v, t)
 
 main :: IO ()
 main = do

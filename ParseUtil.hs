@@ -36,7 +36,8 @@ rws :: [String] -- list of reserved words
 rws = ["if","then","else","while","do","skip","true","false","not","and","or"]
 
 space :: Parser ()
-space = void $ takeWhile1P (Just "white space") (`elem` " \t")
+space = void $     takeWhile1P (Just "white space") (`elem` " \t")
+               <|> string "\n "
 
 int :: Parser Int
 int = L.signed (return ()) L.decimal
