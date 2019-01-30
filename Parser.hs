@@ -70,11 +70,8 @@ typedAssignment = do
     else fail $ "Type declaration variable must match assignment variable."
 
 simpleDecl :: Parser (VarName, UExpr)
-simpleDecl = do
-  v <- identifier
-  symbol "="
-  body <- expr
-  return (v, body)
+simpleDecl = do (VarPat (v, _), expr) <- decl
+                return (v, expr)
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops
@@ -211,21 +208,21 @@ typeExpr = makeExprParser (sc >> typeExpr') typeOps
 typeVar :: Parser TVar
 typeVar = liftM FV $ makeIdentifier ["Int", "Real", "Bool", "Str", "A", "E"]
 
-forallType :: Parser Type
-forallType = do
-  try $ symbol "A"
-  vars <- identifier `sepBy` sc
-  symbol "."
-  body <- typeExpr
-  return $ NamedForall vars body
+-- forallType :: Parser Type
+-- forallType = do
+--   try $ symbol "A"
+--   vars <- identifier `sepBy` sc
+--   symbol "."
+--   body <- typeExpr
+--   return $ NamedForall vars body
 
-existsType :: Parser Type
-existsType = do
-  try $ symbol "E"
-  var <- identifier
-  symbol "."
-  body <- typeExpr
-  return $ NamedExists var body
+-- existsType :: Parser Type
+-- existsType = do
+--   try $ symbol "E"
+--   var <- identifier
+--   symbol "."
+--   body <- typeExpr
+--   return $ NamedExists var body
 
 baseType :: Parser BaseType
 baseType = (try (symbol "Int")  >> return IntType)
@@ -234,14 +231,15 @@ baseType = (try (symbol "Int")  >> return IntType)
        <|> (try (symbol "Str")  >> return StrType)
        <?> "base type"
 
-typeOps = [ [InfixR (symbol "=>" >> return TabType)]
-          , [InfixR (symbol "->" >> return ArrType)]]
+-- typeOps = [ [InfixR (symbol "=>" >> return TabType)]
+--           , [InfixR (symbol "->" >> return ArrType)]]
+typeOps = [ [InfixR (symbol "->" >> return ArrType)]]
 
 typeExpr' =   parens typeExpr
           <|> liftM TypeVar typeVar
           <|> liftM BaseType baseType
-          <|> forallType
-          <|> existsType
+          -- <|> forallType
+          -- <|> existsType
           <?> "term"
 
 data BoundVars = BoundVars { lVars :: [VarName]
@@ -270,13 +268,13 @@ lowerType env ty = case ty of
   BaseType b    -> BaseType b
   TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
-  TabType t1 t2 -> TabType (recur t1) (recur t2)
-  RecType r     -> RecType $ fmap recur r
+  -- TabType t1 t2 -> TabType (recur t1) (recur t2)
+  -- RecType r     -> RecType $ fmap recur r
   MetaTypeVar m -> MetaTypeVar m
-  NamedForall vs t -> Forall (length vs) $ lowerType (updateTVars vs  env) t
-  NamedExists v t  -> Exists             $ lowerType (updateTVars [v] env) t
-  Forall _ _ -> error "Shouldn't see deBruijn Forall in source text"
-  Exists   _ -> error "Shouldn't see deBruijn Exists in source text"
+  -- NamedForall vs t -> Forall (length vs) $ lowerType (updateTVars vs  env) t
+  -- NamedExists v t  -> Exists             $ lowerType (updateTVars [v] env) t
+  -- Forall _ _ -> error "Shouldn't see deBruijn Forall in source text"
+  -- Exists   _ -> error "Shouldn't see deBruijn Exists in source text"
   where recur = lowerType env
 
 updateLVars :: UPat -> BoundVars -> BoundVars

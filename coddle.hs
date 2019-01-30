@@ -14,33 +14,39 @@ import Parser
 import Typer
 import Util
 import Env
-import Interpreter
-import FlatType (exprToVal, cmdToVal, parseVal)
+
+-- import Interpreter
+-- import FlatType (exprToVal, cmdToVal, parseVal)
+
+type TypedVal = ()  -- until we get the interpreter back up
 
 type Driver a = InputT IO a
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String }
 
-data TopEnv = TopEnv { varEnv :: Vars
-                     , typeEnv :: FullEnv SigmaType IdxType ()
-                     , valEnv  :: FullEnv TypedVal  () () }
+data TopEnv = TopEnv { varEnv  :: Vars
+                     , typeEnv :: FullEnv SigmaType ISet () ()
+                     , valEnv  :: FullEnv TypedVal  () () () }
 
-data Pass a b v i t = Pass
-  { lowerExpr ::         a -> FullEnv v i t -> Except (v, b),
-    lowerCmd  :: Command a -> FullEnv v i t -> Command b }
+
+data Pass a b v i t s = Pass
+  { lowerExpr ::         a -> FullEnv v i t s -> Except (v, b),
+    lowerCmd  :: Command a -> FullEnv v i t s -> Command b }
 
 varPass  = Pass checkBoundVarsExpr checkBoundVarsCmd
 typePass = Pass inferTypesExpr inferTypesCmd
-evalPass = Pass exprToVal cmdToVal
+-- evalPass = Pass exprToVal cmdToVal
+-- evalPass = Pass undefined undefined -- exprToVal cmdToVal
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
   decls <- liftErr "" $ parseProg source
   (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env) decls
   (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
-  (final, valEnv')   <- fullPass (procDecl evalPass) (valEnv env)  typed
-  mapM writeDeclResult final
-  return $ TopEnv varEnv' typeEnv' valEnv'
+  -- (final, valEnv')   <- fullPass (procDecl evalPass) (valEnv env)  typed
+  -- mapM writeDeclResult final
+  mapM writeDeclResult typed
+  return $ TopEnv varEnv' typeEnv' undefined -- valEnv'
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
@@ -49,7 +55,7 @@ evalSource env source = do
                               env' <- lift $ readIORef envPtr
                               return (decls', env')
 
-    procDecl :: Pass a b v i t -> IORef (FullEnv v i t)
+    procDecl :: Pass a b v i t s -> IORef (FullEnv v i t s)
                 -> TopDecl a -> Driver (TopDecl b)
     procDecl (Pass procExpr procCmd) envPtr (TopDecl source fvs instr) = do
       env <- lift $ readIORef envPtr
@@ -112,11 +118,12 @@ initEnv = TopEnv mempty mempty mempty
 loadData :: String -> IO (TypedVal, SigmaType)
 loadData fname = do
   contents <- readFile fname
-  case parseVal contents of
-    Left e -> do putStrLn "Error loading data"
-                 putStrLn (show e)
-                 exitFailure
-    Right (t,v) -> return (TypedVal t v, t)
+  undefined
+  -- case parseVal contents of
+  --   Left e -> do putStrLn "Error loading data"
+  --                putStrLn (show e)
+  --                exitFailure
+  --   Right (t,v) -> return (TypedVal t v, t)
 
 main :: IO ()
 main = do
