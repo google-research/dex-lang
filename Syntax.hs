@@ -19,31 +19,30 @@ data Expr = Lit LitVal
           | App Expr Expr
           | For IPat Expr
           | Get Expr IdxExpr
-
-          -- | Unpack Expr
+          | Unpack Type Expr Expr
           -- | Pack ISet Expr Type
           -- | NamedTLam [VarName] Expr
           -- | RecCon (Record Expr)
-              deriving (Eq, Ord)
+              deriving (Show, Eq, Ord)
 
 data Type = BaseType BaseType
           | TypeVar TVar
           | ArrType Type Type
           | MetaTypeVar MetaVar
           | TabType ISet Type
+          | Exists Type
 
           -- | RecType (Record Type)
           -- | Forall Int Type
-          -- | Exists Type
           -- | NamedForall [VarName] Type
           -- | NamedExists VarName Type
-              deriving (Eq, Ord)
+              deriving (Show, Eq, Ord)
 
 data ISet = ISet SVar
           | IMetaTypeVar IMetaVar  deriving (Eq, Ord, Show)
 
 data TLamExpr = TLam Int Int Expr     deriving (Eq)
-data SigmaType = Forall Int Type  deriving (Eq)
+data SigmaType = Forall Int Int Type  deriving (Eq)
 
 data UExpr = ULit LitVal
            | UVar Var
@@ -52,6 +51,7 @@ data UExpr = ULit LitVal
            | UApp UExpr UExpr
            | UFor UIPat UExpr
            | UGet UExpr IdxExpr
+           | UUnpack VarName UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
@@ -59,7 +59,7 @@ data UExpr = ULit LitVal
 data LitVal = IntLit  Int
             | RealLit Float
             | StrLit  String
-                 deriving (Show, Eq, Ord)
+                 deriving (Eq, Ord)
 
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
@@ -213,6 +213,8 @@ fvsUExpr expr = case expr of
   UGet e ie      -> fvsUExpr e <> foldMap (fvsVar setIEnv) ie
   URecCon r      -> foldMap fvsUExpr r
   UAnnot e t     -> fvsUExpr e <> fvsType t
+  UUnpack _ e body -> fvsUExpr e <> fvsUExpr body
+
 
 fvsType :: Type -> Vars
 fvsType ty = case ty of
@@ -242,32 +244,65 @@ instance Show BaseType where
     RealType -> "Real"
     StrType  -> "Str"
 
+lVarNames = varNames ['x'..'z']
+iVarNames = varNames ['i'..'k']
+tVarNames = varNames ['a'..'c']
+sVarNames = varNames ['i'..'k']
+
 instance Show SigmaType where
-  show (Forall n t) = showType (varNames ['a'..'c']) n t
-
-instance Show Type where
-  show t = showType (varNames ['a'..'c']) 0 t
-
-instance Show Expr where
-  show e = showExpr (varNames ['x'..'z']) (0, 0, 0, 0) e
+  show (Forall nt ns t) = showType (nt, ns) t
 
 instance Show TLamExpr where
-  show (TLam t s e)  = showExpr (varNames ['x'..'z']) (0, 0, t, s) e
+  show (TLam t s expr) =
+    "LAM "
+    ++ spaceSep (take t tVarNames) ++ " , "
+    ++ spaceSep (take s sVarNames) ++ ": "
+    ++ showExpr (0, 0, t, s) expr
 
-showType :: [VarName] -> Int -> Type -> String
-showType names depth t = case t of
+instance Show LitVal where
+  show (IntLit x ) = show x
+  show (RealLit x) = show x
+  show (StrLit x ) = show x
+
+showType :: (Int, Int) -> Type -> String
+showType env@(depthT, depthS) t = case t of
   BaseType b  -> show b
-  TypeVar v   -> getName names depth v
+  TypeVar v   -> getName tVarNames depthT v
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
-  TabType a b -> show a ++ " => " ++ recur b
-  -- RecType r   -> printRecord recur typeRecPrintSpec r
-  -- Forall n t -> let vs' = slice depth (depth + n) names
-  --               in "A " ++ intercalate " " vs' ++ ". " ++ recurDeeper n t
-  -- Exists t  -> "<exists>"
+  TabType i b -> showISet depthS i ++ "=>" ++ recur b
   MetaTypeVar (MetaVar v) -> "mv" ++ show v
-  where slice start stop = take (stop - start) . drop start
-        recur = showType names depth
+  Exists body -> "E " ++ sVarNames !! depthS ++ ". " ++
+                 showType (depthT, depthS + 1) body
+  -- RecType r   -> printRecord recur typeRecPrintSpec r
+  where recur = showType env
 
+showISet :: Int -> ISet -> String
+showISet depth s = case s of ISet v -> getName sVarNames depth v
+                             IMetaTypeVar v -> "mv" ++ show v
+
+spaceSep :: [String] -> String
+spaceSep = intercalate " "
+
+showExpr :: (Int, Int, Int, Int) -> Expr -> String
+showExpr env@(l,i,t,s) expr = case expr of
+  Lit val      -> show val
+  Var v ts     -> getName lVarNames l v ++
+                  case ts of [] -> ""
+                             _ -> " [" ++ spaceSep (map (showType (t,s)) ts) ++ "]"
+  Let p e1 e2  -> paren $ "let " ++ showPat p ++ " = " ++ recur e1 ++ " in " ++ recurL e2
+  Lam p e      -> paren $ "lam " ++ showPat p ++ ": " ++ recurL e
+  App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
+  For p e      -> paren $ "for " ++ showIPat p ++ ": " ++ recurI e
+  Get e ie     -> recur e ++ "." ++ showIdxExpr ie
+  Unpack ty e1 e2 -> paren $ "unpack {" ++ lVarNames !! l ++ "::" ++ showType (t,s+1) ty
+                             ++ ", " ++ sVarNames !! s
+                             ++ "} = " ++ recur e1 ++ " in " ++ showExpr (l+1,i,t,s+1) e2
+  where recur = showExpr env
+        recurL = showExpr (l+1,i,t,s)
+        recurI = showExpr (1,i+1,t,s)
+        showPat p  = case p of VarPat ty   -> lVarNames !! l ++ "::" ++ showType (t,s) ty
+        showIPat p = case p of VarPat iSet -> iVarNames !! i ++ "::" ++ showISet s iSet
+        showIdxExpr e = case e of RecLeaf v -> getName iVarNames i v
 
 getName :: [VarName] -> Int -> GVar i -> String
 getName names depth v = case v of
@@ -276,21 +311,3 @@ getName names depth v = case v of
           in if i' >= 0
              then names !! i'
              else "<unbound: " ++ show i ++ " >"
-
-showExpr :: [VarName] -> (Int, Int, Int, Int) -> Expr -> String
-showExpr names env@(l,i,t,s) expr = case expr of
-  Var v ts     -> getName' v
-  Let p e1 e2  -> "let " ++ showPat p ++ " = " ++ recur e1 ++ " in " ++ recurL e2
-  Lam p e      -> "lam " ++ showPat p ++ ": " ++ recurL e
-  App e1 e2    -> recur e1 ++ " " ++ recur e2
-  For p e      -> "for " ++ showIPat p ++ ": " ++ recurI e
-  Get e ie     -> recur e ++ "." ++ showIdxExpr ie
-  where recur = paren . showExpr names env
-        recurL = paren . showExpr names (l+1,i,t,s)
-        recurI = paren . showExpr names (1,i+1,t,s)
-        getName' = getName names l
-        showPat p = case p of VarPat ty -> getName' (BV (-1)) ++ "::" ++
-                                           showType (varNames ['a'..'c']) t ty
-        showIPat p = case p of VarPat iSet -> getName' (BV (-1)) ++ "::" ++
-                                              show iSet
-        showIdxExpr e = case e of RecLeaf v -> show v

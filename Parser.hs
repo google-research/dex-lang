@@ -47,7 +47,7 @@ topDeclInstr =   explicitCommand
 
 explicitCommand :: Parser UInstr
 explicitCommand = do
-  try $ symbol ":"
+  symbol ":"
   cmdName <- identifier
   cmd <- case cmdName of
            "p"     -> return EvalExpr
@@ -83,6 +83,7 @@ term =   parenRaw
      <|> letExpr
      <|> lamExpr
      <|> forExpr
+     <|> unpackExpr
      <?> "term"
 
 maybeAnnot :: UExpr -> Parser UExpr
@@ -93,7 +94,7 @@ maybeAnnot e = do
              Just t -> UAnnot e t
 
 typeAnnot :: Parser Type
-typeAnnot = try (symbol "::") >> typeExpr
+typeAnnot = symbol "::" >> typeExpr
 
 parenRaw = do
   elts <- parens $ maybeNamed expr `sepBy` symbol ","
@@ -112,15 +113,25 @@ maybeNamed p = do
 
 letExpr :: Parser UExpr
 letExpr = do
-  try $ symbol "let"
+  symbol "let"
   bindings <- decl `sepBy` symbol ";"
   symbol "in"
   body <- expr
   return $ foldr (uncurry ULet) body bindings
 
+unpackExpr :: Parser UExpr
+unpackExpr = do
+  symbol "unpack"
+  v <- identifier
+  symbol "="
+  bound <- expr
+  symbol "in"
+  body <- expr
+  return $ UUnpack v bound body
+
 lamExpr :: Parser UExpr
 lamExpr = do
-  try $ symbol "lam"
+  symbol "lam"
   ps <- pat `sepBy` sc
   symbol ":"
   body <- expr
@@ -128,7 +139,7 @@ lamExpr = do
 
 forExpr :: Parser UExpr
 forExpr = do
-  try $ symbol "for"
+  symbol "for"
   vs <- some idxPat -- `sepBy` sc
   symbol ":"
   body <- expr
@@ -143,7 +154,7 @@ decl = do
   return (p, wrap body)
 
 idxLhsArgs = do
-  try $ symbol "."
+  symbol "."
   args <- idxPat `sepBy` symbol "."
   return $ \body -> foldr UFor body args
 
@@ -157,7 +168,7 @@ literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
                 <|> fmap StrLit stringLiteral
 
 opNames = ["+", "*", "/", "-", "^"]
-resNames = ["for", "lam", "let", "in"]
+resNames = ["for", "lam", "let", "in", "unpack"]
 
 
 identifier = makeIdentifier resNames
@@ -225,10 +236,10 @@ typeVar = liftM FV $ makeIdentifier ["Int", "Real", "Bool", "Str", "A", "E"]
 --   return $ NamedExists var body
 
 baseType :: Parser BaseType
-baseType = (try (symbol "Int")  >> return IntType)
-       <|> (try (symbol "Real") >> return RealType)
-       <|> (try (symbol "Bool") >> return BoolType)
-       <|> (try (symbol "Str")  >> return StrType)
+baseType = (symbol "Int"  >> return IntType)
+       <|> (symbol "Real" >> return RealType)
+       <|> (symbol "Bool" >> return BoolType)
+       <|> (symbol "Str"  >> return StrType)
        <?> "base type"
 
 -- typeOps = [ [InfixR (symbol "=>" >> return TabType)]
@@ -261,6 +272,8 @@ lower env expr = case expr of
   UGet e ie      -> UGet (recur e) $ fmap (toDeBruijn (iVars env)) ie
   URecCon r      -> URecCon $ fmap recur r
   UAnnot e t     -> UAnnot (recur e) (lowerType env t)
+  UUnpack v e body -> UUnpack v (recur e) $
+                         lower (env {lVars = v : lVars env}) body
   where recur = lower env
 
 lowerType :: BoundVars -> Type -> Type
@@ -311,4 +324,5 @@ checkBoundVarsExpr expr envVars = do
 builtinVars :: Env Var ()
 builtinVars = newEnv [(v, ()) | v <-
   ["add", "sub", "mul", "pow", "exp", "log",
-   "sqrt", "sin", "cos", "tan", "reduce", "iota"] ]
+   "sqrt", "sin", "cos", "tan", "reduce", "iota",
+   "sum"] ]

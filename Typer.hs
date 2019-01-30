@@ -59,7 +59,7 @@ check expr reqTy = case expr of
   ULit c -> do addConstraint (litType c, reqTy)
                return (Lit c)
   UVar v -> do
-    s@(Forall n t) <- asks $ (! v) . lEnv
+    s@(Forall n _ t) <- asks $ (! v) . lEnv
     vs <- replicateM n fresh
     addConstraint (reqTy, instantiateSigmaType s vs)
     return $ Var v vs
@@ -89,6 +89,11 @@ check expr reqTy = case expr of
     constrainIdxExpr idxExpr i
     addConstraint (v, reqTy)
     return $ Get expr' idxExpr
+  UUnpack _ bound body -> do
+    (tBound, bound') <- infer bound
+    tBound' <- unpackExists tBound
+    body' <- local (setLEnv $ addBVars [asSigma tBound']) (check body reqTy)
+    return $ Unpack tBound' bound' body'
   where
     infer :: UExpr -> ConstrainMonad (Type, Expr)
     infer expr = do ty <- fresh
@@ -146,6 +151,13 @@ splitTab t = case t of
           addConstraint (t, i ==> v)
           return (i, v)
 
+unpackExists :: Type -> ConstrainMonad Type
+unpackExists t = case t of
+  Exists body -> return body
+  _ -> do body <- fresh
+          addConstraint (Exists body, t)
+          return body
+
 generalize :: Expr -> TLamExpr
 generalize e =
   let (vs, vsI) = metaTypeVarsExpr e
@@ -154,7 +166,7 @@ generalize e =
   in TLam (length (nub vs)) (length (nub vsI)) (applySubExpr (s1, s2) e)
 
 instantiateSigmaType :: SigmaType -> [Type] -> Type
-instantiateSigmaType (Forall _ t) env = recur t
+instantiateSigmaType (Forall _ _ t) env = recur t
   where recur t = case t of
                     ArrType a b -> recur a --> recur b
                     TypeVar (BV v) | v < length env -> env !! v
@@ -188,6 +200,7 @@ unify t (MetaTypeVar v) = bind v t
 unify (MetaTypeVar v) t = bind v t
 unify (ArrType a b) (ArrType a' b') = unifyPair (a,b) (a', b')
 unify (TabType a b) (TabType a' b') = unifyTab (a,b) (a', b')
+unify (Exists t) (Exists t') = unify t t'
 unify t1 t2 = Left $ UnificationErr t1 t2
 
 unifyPair :: (Type,Type) -> (Type,Type) -> Except Subst
@@ -234,6 +247,7 @@ applySub s@(tySub, setSub) t = case t of
   MetaTypeVar v ->  case M.lookup v tySub of
                      Just t' -> t'
                      Nothing -> t
+  Exists body -> Exists $ recur body
   where recur = applySub s
 
 
@@ -246,6 +260,8 @@ applySubExpr s expr = case expr of
     App fexpr arg  -> App (recur fexpr) (recur arg)
     For p body     -> For (applyISubPat p) (recur body)
     Get e ie       -> Get (recur e) ie
+    Unpack t bound body -> Unpack (applySub s t) (recur bound) (recur body)
+
   where
     recur = applySubExpr s
     applySubPat = fmap (applySub s)
@@ -295,10 +311,10 @@ solveAll :: [Constraint] -> Except Subst
 solveAll = foldM solve idSubst
 
 asSigma :: Type -> SigmaType
-asSigma = Forall 0
+asSigma = Forall 0 0
 
 getSigmaType :: TypingEnv -> TLamExpr -> Except SigmaType
-getSigmaType env (TLam n _ expr) = liftM (Forall n) (getType env' expr)
+getSigmaType env (TLam n i expr) = liftM (Forall n i) (getType env' expr)
   where env' = setTEnv (addBVars (replicate n ())) env
 
 getType :: TypingEnv -> Expr -> Except Type
@@ -322,7 +338,10 @@ getType env expr = case expr of
     Get e ie       -> do (TabType a b) <- recur e
                          assertEq a (getIdxExprType ie) "Type mismatch in 'get'"
                          return b
-
+    Unpack t bound body -> do (Exists bt) <- recur bound
+                              assertValidType (tEnv env) t
+                              assertEq t bt "Type mismatch in 'unpack'"
+                              recurWithEnv (VarPat t) body
   where
     recur = getType env
     recurWithEnv   p = getType $ setLEnv (addBVars (map asSigma $ toList p)) env
@@ -356,7 +375,7 @@ addBuiltins :: TypingEnv -> TypingEnv
 addBuiltins = setLEnv (<> builtinEnv)
 
 builtinEnv :: Env Var SigmaType
-builtinEnv = newEnv $ [(name, asSigma t) | (name, t) <-
+builtinEnv = newEnv $
     [ ("add", binOpType)
     , ("sub", binOpType)
     , ("mul", binOpType)
@@ -367,16 +386,19 @@ builtinEnv = newEnv $ [(name, asSigma t) | (name, t) <-
     , ("sin", realUnOpType)
     , ("cos", realUnOpType)
     , ("tan", realUnOpType)
-    -- , ("reduce", reduceType)
-    -- , ("iota", iotaType)
-    ]]
+    , ("reduce", reduceType)
+    , ("iota", iotaType)
+    , ("sum", sumType)
+    ]
   where
-    binOpType = int --> int --> int
-    realUnOpType = real --> real
-    -- reduceType = Forall 2 $ (b --> b --> b) --> b --> (a ==> b) --> b
-    -- iotaType = int --> int ==> int
+    binOpType    = asSigma $ int --> int --> int
+    realUnOpType = asSigma $ real --> real
+    reduceType = Forall 1 1 $ (a --> a --> a) --> a --> (i ==> a) --> a
+    iotaType = asSigma $ int --> Exists (i ==> int)
+    sumType = Forall 0 1 $ (i ==> int) --> int
     a = TypeVar (BV 0)
     b = TypeVar (BV 1)
+    i = ISet (BV 0)
     int = BaseType IntType
     real = BaseType RealType
 
