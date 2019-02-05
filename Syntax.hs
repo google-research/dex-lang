@@ -3,7 +3,9 @@ module Syntax (Expr (..), Type (..), UExpr (..), TopDecl (..), Command (..),
                IdxExpr (..), LitVal (..), BaseType (..), MetaVar (..), IMetaVar
                (..), Var, IVar, TVar, SVar, ISet (..), Except, Err (..),
                SigmaType, Vars, FullEnv (..), setLEnv, setIEnv, setTEnv,
-               setSEnv, fvsUExpr, (-->), (==>), unitTy) where
+               setSEnv, fvsUExpr, (-->), (==>), unitTy,
+               exprTypes, exprISets, tyISets, tyMetaVars, iSetMetaVars,
+               subTy, subISet, subExprDepth, subTyDepth) where
 
 import Util
 import Record
@@ -11,6 +13,9 @@ import Env
 import Data.Semigroup
 import Data.Traversable
 import Data.List (intercalate)
+
+import Control.Applicative (liftA, liftA2, liftA3)
+import Control.Lens.Traversal (Traversal')
 
 data Expr = Lit LitVal
           | Var Var
@@ -305,8 +310,10 @@ showExpr env@(l,i,t,s) expr = case expr of
   where recur = showExpr env
         recurL = showExpr (l+1,i,t,s)
         recurI = showExpr (l,i+1,t,s)
-        showPat p  = case p of VarPat ty   -> lVarNames !! l ++ "::" ++ showType (t,s) ty
-        showIPat p = case p of VarPat iSet -> iVarNames !! i ++ "::" ++ showISet s iSet
+        showPat p  = case p of VarPat ty   ->
+                                 lVarNames !! l ++ "::" ++ showType (t,s) ty
+        showIPat p = case p of VarPat iSet ->
+                                 iVarNames !! i ++ "::" ++ showISet s iSet
         showIdxExpr e = case e of RecLeaf v -> getName iVarNames i v
 
 getName :: [VarName] -> Int -> GVar i -> String
@@ -316,3 +323,102 @@ getName names depth v = case v of
           in if i' >= 0
              then names !! i'
              else "<unbound: " ++ show i ++ "/" ++ show depth ++ " >"
+
+exprTypes :: Traversal' Expr Type
+exprTypes f expr = case expr of
+  Let p bound body -> liftA3 Let (recurPat p) (recur bound) (recur body)
+  Lam p body       -> liftA2 Lam (recurPat p) (recur body)
+  App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
+  For p body       -> liftA2 For (recurIPat p) (recur body)
+  Get e ie         -> liftA2 Get (recur e) (pure ie)
+  Unpack t bound body -> liftA3 Unpack (f t) (recur bound) (recur body)
+  TLam nt ns expr     -> liftA  (TLam nt ns) (recur expr)
+  TApp expr ts        -> liftA2 TApp (recur expr) (traverse f ts)
+  _ -> pure expr
+  where recur = exprTypes f
+        recurPat  = traverse f
+        recurIPat p = pure p
+
+exprISets :: Traversal' Expr ISet
+exprISets f expr = case expr of
+  Let p bound body -> liftA3 Let (recurPat p) (recur bound) (recur body)
+  Lam p body       -> liftA2 Lam (recurPat p) (recur body)
+  App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
+  For p body       -> liftA2 For (recurIPat p) (recur body)
+  Get e ie         -> liftA2 Get (recur e) (pure ie)
+  Unpack t bound body -> liftA3 Unpack (recurTy t) (recur bound) (recur body)
+  TLam nt ns expr     -> liftA  (TLam nt ns) (recur expr)
+  TApp expr ts        -> liftA2 TApp (recur expr) (traverse recurTy ts)
+  _ -> pure expr
+  where recur = exprISets f
+        recurTy = tyISets f
+        recurPat  = traverse recurTy
+        recurIPat p = traverse f p
+
+tyISets :: Traversal' Type ISet
+tyISets f ty = case ty of
+  ArrType a b     -> liftA2 ArrType (recur a) (recur b)
+  TabType i a     -> liftA2 TabType (f i) (recur a)
+  Forall t s body -> liftA  (Forall t s) (recur body)
+  Exists body     -> liftA  Exists (recur body)
+  _               -> pure ty
+  where recur = tyISets f
+
+tyMetaVars :: Traversal' Type MetaVar
+tyMetaVars f ty = case ty of
+  ArrType a b     -> liftA2 ArrType (recur a) (recur b)
+  MetaTypeVar v   -> liftA MetaTypeVar (f v)
+  TabType i a     -> liftA (TabType i) (recur a)
+  Forall t s body -> liftA  (Forall t s) (recur body)
+  Exists body     -> liftA  Exists (recur body)
+  _               -> pure ty
+  where recur = tyMetaVars f
+
+iSetMetaVars :: Traversal' ISet IMetaVar
+iSetMetaVars f iset = case iset of
+  ISet s -> pure iset
+  IMetaTypeVar m -> liftA IMetaTypeVar (f m)
+
+type MetaVarFun = Int -> Int -> MetaVar -> Maybe Type
+type IMetaVarFun = Int -> Int -> IMetaVar -> Maybe ISet
+
+subTyDepth :: Int -> Int -> MetaVarFun -> IMetaVarFun -> Type -> Type
+subTyDepth tDepth sDepth f fs t = case t of
+  ArrType a b   -> ArrType (recur a) (recur b)
+  TabType a b   -> TabType (subISetDepth tDepth sDepth fs a) (recur b)
+  MetaTypeVar v -> case f tDepth sDepth v of Just t' -> t'
+                                             Nothing -> t
+  Exists body -> Exists (recurWith 0 1 body)
+  Forall t s body -> Forall t s (recurWith t s body)
+  _ -> t
+  where recur = subTyDepth tDepth sDepth f fs
+        recurWith t' s' = subTyDepth (tDepth + t') (sDepth + s') f fs
+
+subTy :: (MetaVar -> Maybe Type) -> Type -> Type
+subTy f t = subTyDepth 0 0 (\_ _ -> f) (\_ _ _ -> Nothing) t
+
+subISetDepth :: Int -> Int -> IMetaVarFun -> ISet -> ISet
+subISetDepth tDepth sDepth f s = case s of
+  ISet _ -> s
+  IMetaTypeVar v -> case f tDepth sDepth v of Just s' -> s'
+                                              Nothing -> s
+
+subISet :: (IMetaVar -> Maybe ISet) -> ISet -> ISet
+subISet f s = subISetDepth 0 0 (\_ _ -> f) s
+
+subExprDepth ::  Int -> Int -> MetaVarFun -> IMetaVarFun -> Expr -> Expr
+subExprDepth tDepth sDepth f fs expr = case expr of
+  Let p bound body -> Let (recurPat p) (recur bound) (recur body)
+  Lam p body       -> Lam (recurPat p) (recur body)
+  App fexpr arg    -> App (recur fexpr) (recur arg)
+  For p body       -> For (recurIPat p) (recur body)
+  Get e ie         -> Get (recur e) ie
+  Unpack t bound body -> Unpack (recurTy t) (recur bound) (recurWith 0 1 body)
+  TLam nt ns expr     -> TLam nt ns (recurWith nt ns expr)
+  TApp expr ts        -> TApp (recur expr) (map recurTy ts)
+  _ -> expr
+  where recur = subExprDepth tDepth sDepth f fs
+        recurWith t' s' = subExprDepth (tDepth + t') (sDepth + s') f fs
+        recurPat  = fmap recurTy
+        recurIPat = fmap $ subISetDepth tDepth sDepth fs
+        recurTy = subTyDepth tDepth sDepth f fs

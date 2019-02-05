@@ -7,10 +7,12 @@ import Control.Monad.Writer hiding ((<>))
 import Control.Monad.State (StateT, evalState, put, get)
 import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as M
-import Data.List (nub)
+import Data.List (nub, elemIndex)
 import Data.Foldable (toList)
 import Data.Semigroup
 import qualified Data.Set as Set
+import Control.Lens.Fold (toListOf)
+import Control.Lens.Setter (over)
 
 import Syntax
 import Env
@@ -49,9 +51,9 @@ inferTypesExpr rawExpr fenv = do
 
 translateExpr :: UExpr -> TypingEnv -> Except Expr
 translateExpr rawExpr env = do
-  let (expr, (Constraints cs _ _)) = runConstrainMonad env (fresh >>= check rawExpr)
-  subst <- solveAll cs
-  return $ generalize $ applySubExpr subst expr
+  let (expr, cs) = runConstrainMonad env (fresh >>= check rawExpr)
+  (subst, Constraints [] [] [], flexVars) <- solvePartial cs
+  return $ generalize flexVars $ applySubExpr subst expr
 
 runConstrainMonad :: TypingEnv -> ConstrainMonad a -> (a, Constraints)
 runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
@@ -74,23 +76,13 @@ check expr reqTy = case expr of
         addConstraint (reqTy, s)
         return $ Var v
   ULet (VarPat _) bound body -> do
-    ((tBound, bound'), Constraints cs tVars _) <- capture (infer bound)
-    let (Right sub) = solveAll cs
-        (freshSub, oldSub) = splitSub tVars sub
-        leakedVars = rhsVars oldSub
-        newConstraints = subAsConstraints oldSub
-        tBound'' = applySub freshSub tBound
-        bound'' = applySubExpr freshSub bound'
-        flexVars = listDiff (listDiff tVars leakedVars)
-                            (M.keys (fst freshSub))
-        s = (M.fromList $ zip flexVars $ map (TypeVar . BV) [0..], M.empty)
-        tBoundGen = Forall (length flexVars) 0 $ applySub s tBound''
-        boundGen  = TLam   (length flexVars) 0 $ applySubExpr s bound''
-
-    tell $ Constraints newConstraints leakedVars []
-    body' <- local (setLEnv $ addBVar tBoundGen) (check body reqTy)
-    return $ Let (VarPat tBoundGen) boundGen body'
-
+    ((boundTy, bound'), constraints) <- capture (infer bound)
+    let (Right (sub, newConstraints, flexVars)) = solvePartial constraints
+    tell newConstraints
+    let boundTyGen = generalizeTy flexVars (applySubTy sub boundTy)
+        boundGen   = generalize   flexVars (applySubExpr sub bound')
+    body' <- local (setLEnv $ addBVar boundTyGen) (check body reqTy)
+    return $ Let (VarPat boundTyGen) boundGen body'
   ULam p body -> do
     (a, b) <- splitFun reqTy
     (tVars, p') <- constrainPat p a
@@ -137,21 +129,64 @@ check expr reqTy = case expr of
       -- RecTree r -> do ts <- mapM constrainIdxExpr r
       --                 return (RecType ts)
 
-splitSub :: [MetaVar] -> Subst -> (Subst, Subst)
-splitSub ks (s, _) =
-  let posSubst = M.fromList $ [(k, v) | k <- ks, (Just v) <- [M.lookup k s]]
-      negSubst = s M.\\ M.fromList (zip ks (repeat ()))
-  in ((posSubst, M.empty), (negSubst, M.empty))
 
-rhsVars :: Subst -> [MetaVar]
-rhsVars (s, _) = nub $ concat $ map (fst . metaTypeVars) (M.elems s)
+-- partially solves enought to discover unconstrained variables
+solvePartial :: Constraints -> Except (Subst, Constraints, ([MetaVar], [IMetaVar]))
+solvePartial (Constraints constraints vs ivs) = do
+  (sub, isub) <- foldM solve idSubst constraints
+  let (freshSub , remSub ) = splitMap  vs sub
+      (freshISub, remISub) = splitMap ivs isub
+      leakedVars = rhsVars remSub
+      leakedIVars = nub $ rhsIVars remISub ++ rhsIVarsTy remSub
+      newConstraints =     map asConstraint  (M.toList remSub)
+                       ++  map asIConstraint (M.toList remISub)
+      flexVars  = ( vs `listDiff` leakedVars ) `listDiff` M.keys freshSub
+      flexIVars = (ivs `listDiff` leakedIVars) `listDiff` M.keys freshISub
+  return ((freshSub, freshISub),
+          Constraints newConstraints leakedVars leakedIVars,
+          (flexVars, flexIVars))
 
-subAsConstraints :: Subst -> [Constraint]
-subAsConstraints (m, _) = map asConstraint (M.toList m)
-  where asConstraint (mv, t) = (MetaTypeVar mv, t)
+  where
+    splitMap :: Ord k => [k] -> M.Map k v -> (M.Map k v, M.Map k v)
+    splitMap ks m = let ks' = Set.fromList ks
+                        pos = M.filterWithKey (\k _ -> k `Set.member` ks') m
+                    in (pos, m M.\\ pos)
 
-listDiff :: Ord a => [a] -> [a] -> [a]
-listDiff xs ys = Set.toList $ Set.difference (Set.fromList xs) (Set.fromList ys)
+    rhsVars :: M.Map MetaVar Type -> [MetaVar]
+    rhsVars s = nub $ concat $ map (toListOf tyMetaVars) (M.elems s)
+
+    rhsIVars :: M.Map IMetaVar ISet -> [IMetaVar]
+    rhsIVars s = nub $ concat $ map (toListOf iSetMetaVars) (M.elems s)
+
+    rhsIVarsTy :: M.Map MetaVar Type -> [IMetaVar]
+    rhsIVarsTy s = nub $ concat $ map (toListOf (tyISets . iSetMetaVars)) (M.elems s)
+
+    listDiff :: Ord a => [a] -> [a] -> [a]
+    listDiff xs ys = Set.toList $ Set.difference (Set.fromList xs) (Set.fromList ys)
+
+    asConstraint (mv, t) = (MetaTypeVar mv, t)
+    asIConstraint (mv, t) = (IMetaTypeVar mv ==> int, t ==> int)
+    int = BaseType IntType
+
+generalize :: ([MetaVar], [IMetaVar]) -> Expr -> Expr
+generalize (vs, ivs) expr = TLam (length vs) (length ivs) body
+  where body = subExprDepth 0 0 sub isub expr
+        sub t s v = case elemIndex v vs of
+                      Just i  -> Just $ TypeVar (BV (t + i))
+                      Nothing -> Nothing
+        isub t s v = case elemIndex v ivs of
+                      Just i  -> Just $ ISet (BV (t + i))
+                      Nothing -> Nothing
+
+generalizeTy :: ([MetaVar], [IMetaVar]) -> Type -> Type
+generalizeTy (vs, ivs) expr = Forall (length vs) (length ivs) body
+  where body = subTyDepth 0 0 sub isub expr
+        sub t s v = case elemIndex v vs of
+                      Just i  -> Just $ TypeVar (BV (t + i))
+                      Nothing -> Nothing
+        isub t s v = case elemIndex v ivs of
+                      Just i  -> Just $ ISet (BV (t + i))
+                      Nothing -> Nothing
 
 litType :: LitVal -> Type
 litType v = BaseType $ case v of
@@ -159,19 +194,9 @@ litType v = BaseType $ case v of
   RealLit _ -> RealType
   StrLit  _ -> StrType
 
-
 constrainPat :: UPat -> Type -> ConstrainMonad ([Type], Pat)
 constrainPat p t = case p of
   VarPat _ -> return ([t], VarPat t)
-  -- RecPat r -> do
-  --   freshRecType <- mapM (\_ -> fresh) r
-  --   addConstraint (t, RecType freshRecType)
-  --   tes <- sequence $ case zipWithRecord constrainPat r freshRecType
-  --                       of Just r' -> r'
-  --   return (concat (map fst (toList tes)), RecPat $ fmap snd tes)
-
--- constrainIdxPat :: UIPat -> Type -> ConstrainMonad ([Type], IPat)
--- constrainIdxPat = constrainPat
 
 addConstraint :: Constraint -> ConstrainMonad ()
 addConstraint x = tell (Constraints [x] [] [])
@@ -205,13 +230,6 @@ unpackExists t = case t of
           addConstraint (Exists body, t)
           return body
 
-generalize :: Expr -> Expr
-generalize e =
-  let (vs, vsI) = metaTypeVarsExpr e
-      s1 = M.fromList $ zip (nub vs)  $ map (TypeVar . BV) [0..]
-      s2 = M.fromList $ zip (nub vsI) $ map (ISet . BV) [0..]
-  in TLam (length (nub vs)) (length (nub vsI)) (applySubExpr (s1, s2) e)
-
 instantiateSigmaType :: SigmaType -> [Type] -> Type
 instantiateSigmaType (Forall _ _ t) env = recur t
   where recur t = case t of
@@ -243,7 +261,7 @@ bind v t | v `occursIn` t = Left InfiniteTypeErr
          | otherwise = Right $ (M.singleton v t, M.empty)
 
 occursIn :: MetaVar -> Type -> Bool
-occursIn v t = v `elem` fst (metaTypeVars t)
+occursIn v t = v `elem` toListOf tyMetaVars t
 
 unify :: Type -> Type -> Except Subst
 unify t1 (TypeVar v) = Left $ UnificationErr t1 (TypeVar v)
@@ -259,13 +277,13 @@ unify t1 t2 = Left $ UnificationErr t1 t2
 unifyPair :: (Type,Type) -> (Type,Type) -> Except Subst
 unifyPair (a,b) (a',b') = do
   sa  <- unify a a'
-  sb <- unify (applySub sa b) (applySub sa b')
+  sb <- unify (applySubTy sa b) (applySubTy sa b')
   return $ sa >>> sb
 
 unifyTab :: (ISet,Type) -> (ISet,Type) -> Except Subst
 unifyTab (a,b) (a',b') = do
   sa <- unifyISet a a'
-  sb <- unify (applySub sa b) (applySub sa b')
+  sb <- unify (applySubTy sa b) (applySubTy sa b')
   return $ sa >>> sb
 
 unifyISet :: ISet -> ISet -> Except Subst
@@ -281,92 +299,33 @@ ibind v s = Right $ (M.empty, M.singleton v s)
 -- invariant: lhs and rhs metavars of substitutions are distinct
 (>>>) :: Subst -> Subst -> Subst
 (>>>) s1@(tySub1, setSub1) s2@(tySub2, setSub2) =
-  let tySub1' = M.map (applySub s2) tySub1
+  let tySub1' = M.map (applySubTy s2) tySub1
       setSub1' = M.map (applySetSub setSub2) setSub1
   in (M.union tySub1' tySub2, M.union setSub1' setSub2)
 
 applySetSub :: M.Map IMetaVar ISet -> ISet -> ISet
-applySetSub sub set = case set of
-  ISet _ -> set
-  IMetaTypeVar v -> case M.lookup v sub of
-                     Just set' -> set'
-                     Nothing   -> set
+applySetSub sub = subISet (subAsFun sub)
 
-applySub :: Subst -> Type -> Type
-applySub s@(tySub, setSub) t = case t of
-  BaseType _    -> t
-  TypeVar _     -> t
-  ArrType a b   -> recur a --> recur b
-  TabType a b   -> applySetSub setSub a ==> recur b
-  MetaTypeVar v ->  case M.lookup v tySub of
-                     Just t' -> t'
-                     Nothing -> t
-  Exists body -> Exists $ recur body
-  Forall t s body -> Forall t s $ recur body
-  where recur = applySub s
-
+applySubTy :: Subst -> Type -> Type
+applySubTy (tySub, setSub) = applyISetSub . applyTySub
+  where applyTySub   = subTy (subAsFun tySub)
+        applyISetSub = over tyISets (subISet (subAsFun setSub))
 
 applySubExpr :: Subst -> Expr -> Expr
-applySubExpr s expr = case expr of
-    Lit _ -> expr
-    Var _ -> expr
-    Let p bound body -> Let (applySubPat p) (recur bound) (recur body)
-    Lam p body     -> Lam (applySubPat p) (recur body)
-    App fexpr arg  -> App (recur fexpr) (recur arg)
-    For p body     -> For (applyISubPat p) (recur body)
-    Get e ie       -> Get (recur e) ie
-    Unpack t bound body -> Unpack (applySub s t) (recur bound) (recur body)
-    TLam nt ns expr -> TLam nt ns (recur expr)
-    TApp expr ts -> TApp (recur expr) (map (applySub s) ts)
+applySubExpr (tySub, setSub) = applyISetSub . applyTySub
+  where applyTySub   = over exprTypes (subTy   (subAsFun tySub))
+        applyISetSub = over exprISets (subISet (subAsFun setSub))
 
-  where
-    recur = applySubExpr s
-    applySubPat = fmap (applySub s)
-    applyISubPat = fmap (applySetSub (snd s))
-
-metaTypeVars :: Type -> ([MetaVar], [IMetaVar])
-metaTypeVars t = case t of
-  ArrType a b -> catPair (metaTypeVars a) (metaTypeVars b)
-  TabType a b -> catPair (iMetaTypeVars a) (metaTypeVars b)
-  MetaTypeVar v   -> ([v], [])
-  _ -> ([], [])
-
-metaTypeVarsExpr :: Expr -> ([MetaVar], [IMetaVar])
-metaTypeVarsExpr expr = case expr of
-    Let p bound body -> metaTypeVarsPat p `catPair` recur bound `catPair` recur body
-    Lam p body       -> metaTypeVarsPat p  `catPair` recur body
-    App fexpr arg    -> recur fexpr `catPair` recur arg
-    For p body       -> metaITypeVarsPat p `catPair` recur body
-    Get e ie         -> recur e
-    TLam _ _ expr    -> recur expr
-    TApp expr ts     -> recur expr `catPair` pairConcat (map metaTypeVars ts)
-    _ -> ([], [])
-  where
-    recur = metaTypeVarsExpr
-    metaTypeVarsPat  p = pairConcat $ map metaTypeVars (toList p)
-    metaITypeVarsPat p = pairConcat $ map iMetaTypeVars (toList p)
-
-iMetaTypeVars :: ISet -> ([MetaVar], [IMetaVar])
-iMetaTypeVars s = ([], case s of ISet _ -> []
-                                 IMetaTypeVar v -> [v])
-
-catPair :: ([a], [b]) -> ([a], [b]) -> ([a], [b])
-catPair (xs, ys) (xs', ys') = (xs ++ xs', ys ++ ys')
-
-pairConcat :: [([a], [b])] -> ([a], [b])
-pairConcat xs = (concat (map fst xs), concat (map snd xs))
-
+subAsFun :: Ord k => M.Map k v -> k -> Maybe v
+subAsFun = flip M.lookup
 
 idSubst :: Subst
 idSubst = (M.empty, M.empty)
 
 solve :: Subst -> Constraint -> Except Subst
 solve s (t1, t2) = do
-  s' <- unify (applySub s t1) (applySub s t2)
+  s' <- unify (applySubTy s t1) (applySubTy s t2)
   return $ s >>> s'
-
-solveAll :: [Constraint] -> Except Subst
-solveAll = foldM solve idSubst
 
 getSigmaType :: TypingEnv -> Expr -> Except SigmaType
 getSigmaType env (TLam n i expr) = liftM (Forall n i) (getType env' expr)
