@@ -1,5 +1,5 @@
 module Env (Env (..), GVar (..), VarName,  newEnv, addFVar, addBVar, addBVars,
-            envDiff, isin, (!), fVars, toDeBruijn) where
+            envDiff, isin, (!), fVars, toDeBruijn, numBound) where
 
 import Data.List (elemIndex)
 import Data.Semigroup
@@ -27,6 +27,9 @@ envDiff (Env fvs1 _) (Env fvs2 _) = Env (M.difference fvs1 fvs2) []
 
 fVars :: Env i a -> [VarName]
 fVars (Env fvs _) = M.keys fvs
+
+numBound :: Env i a -> Int
+numBound (Env _ bvs) = length bvs
 
 isin :: GVar i -> Env (GVar i) a -> Bool
 isin i (Env fvs bvs) = case i of

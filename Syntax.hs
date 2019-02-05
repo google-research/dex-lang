@@ -1,11 +1,10 @@
 module Syntax (Expr (..), Type (..), UExpr (..), TopDecl (..), Command (..),
-               DeclInstr (..), CmdName (..), GPat (..), Pat, IPat, UPat, UIPat,
-               IdxExpr (..), LitVal (..), BaseType (..), MetaVar (..), IMetaVar
-               (..), Var, IVar, TVar, SVar, ISet (..), Except, Err (..),
-               SigmaType, Vars, FullEnv (..), setLEnv, setIEnv, setTEnv,
-               setSEnv, fvsUExpr, (-->), (==>), unitTy,
-               exprTypes, exprISets, tyISets, tyMetaVars, iSetMetaVars,
-               subTy, subISet, subExprDepth, subTyDepth) where
+               DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
+               LitVal (..), BaseType (..), MetaVar (..),
+               Var, TVar, IdxSet, Except, Err (..),
+               SigmaType, Vars, FullEnv (..), setLEnv, setTEnv,
+               fvsUExpr, (-->), (==>), exprTypes, tyMetaVars, subTy,
+               subExprDepth, subTyDepth) where
 
 import Util
 import Record
@@ -19,48 +18,43 @@ import Control.Lens.Traversal (Traversal')
 
 data Expr = Lit LitVal
           | Var Var
-          | Let Pat Expr Expr
-          | Lam Pat Expr
+          | Let Type Expr Expr
+          | Lam Type Expr
           | App Expr Expr
-          | For IPat Expr
+          | For IdxSet Expr
           | Get Expr IdxExpr
           | Unpack Type Expr Expr
-          | TLam Int Int Expr
+          | TLam [Kind] Expr
           | TApp Expr [Type]
-          -- | Pack ISet Expr Type
-          -- | NamedTLam [VarName] Expr
-          -- | RecCon (Record Expr)
               deriving (Eq, Ord)
 
 data Type = BaseType BaseType
           | TypeVar TVar
-          | ArrType Type Type
           | MetaTypeVar MetaVar
-          | TabType ISet Type
-          | Forall Int Int Type
+          | ArrType Type Type
+          | TabType IdxSet Type
+          | Forall [Kind] Type
           | Exists Type
-          -- | RecType (Record Type)
-          -- | Forall Int Type
-          -- | NamedForall [VarName] Type
-          -- | NamedExists VarName Type
               deriving (Eq, Ord)
 
-type SigmaType = Type  -- type constructed with Forall
+data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
-data ISet = ISet SVar
-          | IMetaTypeVar IMetaVar  deriving (Eq, Ord, Show)
+type IdxSet = Type -- Constructed with MetaTypeVar or TypeVar
+type SigmaType = Type  -- Constructed with Forall
 
 data UExpr = ULit LitVal
            | UVar Var
-           | ULet UPat UExpr UExpr
-           | ULam UPat UExpr
+           | ULet VarName UExpr UExpr
+           | ULam VarName UExpr
            | UApp UExpr UExpr
-           | UFor UIPat UExpr
+           | UFor VarName UExpr
            | UGet UExpr IdxExpr
            | UUnpack VarName UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
+
+type IdxExpr = Var
 
 data LitVal = IntLit  Int
             | RealLit Float
@@ -70,45 +64,29 @@ data LitVal = IntLit  Int
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
 
+data MetaVar = MetaVar Kind Int  deriving (Eq, Show, Ord)
+
 infixr 1 -->
 infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-
-newtype MetaVar = MetaVar Int  deriving (Eq, Show, Ord)
-newtype IMetaVar = IMetaVar Int  deriving (Eq, Show, Ord)
-
-unitTy = BaseType IntType -- TODO: use the empty tuple when we reintroduce records
-
-type IdxExpr = RecTree IVar
-
-data GPat a = VarPat a
-            | RecPat (Record (GPat a))  deriving (Show, Eq, Ord)
-
 data LetUniq  = LetUniq  deriving (Show, Eq)
-data IdxUniq  = IdxUniq  deriving (Show, Eq)
 data TypeUniq = TypeUniq deriving (Show, Eq)
-data ISetUniq = ISetUniq deriving (Show, Eq)
-
-type IPat = GPat ISet
-type Pat  = GPat Type
-
-type UBinder = (String, Maybe Type)
-type UIPat = GPat UBinder
-type UPat  = GPat UBinder
 
 type Var  = GVar LetUniq
-type IVar = GVar IdxUniq
 type TVar = GVar TypeUniq
-type SVar = GVar ISetUniq
+data FullEnv v t = FullEnv { lEnv :: Env Var  v
+                           , tEnv :: Env TVar t }
 
-data FullEnv v i t s = FullEnv { lEnv :: Env Var  v
-                               , iEnv :: Env IVar i
-                               , tEnv :: Env TVar t
-                               , sEnv :: Env SVar s }
+-- these should just be lenses
+setLEnv :: (Env Var v -> Env Var v) -> FullEnv v t -> FullEnv v t
+setLEnv update env = env {lEnv = update (lEnv env)}
 
-type Vars = FullEnv () () () ()
+setTEnv :: (Env TVar t -> Env TVar t) -> FullEnv v t -> FullEnv v t
+setTEnv update env = env {tEnv = update (tEnv env)}
+
+type Vars = FullEnv () ()
 
 type Source = String
 data TopDecl expr = TopDecl Source Vars (DeclInstr expr)
@@ -129,13 +107,10 @@ data Err = ParseErr String
          | RepVarPatternErr VarName
          | CompilerErr String
          | PrintErr String
+         | NotImplementedError String
   deriving (Eq)
 
 type Except a = Either Err a
-
-instance Traversable GPat where
-  traverse f (VarPat x) = fmap VarPat $ f x
-  traverse f (RecPat r) = fmap RecPat $ traverse (traverse f) r
 
 instance Traversable TopDecl where
   traverse f (TopDecl s fvs instr) = fmap (TopDecl s fvs) $ traverse f instr
@@ -159,30 +134,12 @@ instance Show Err where
     CompilerErr s -> "Compiler bug! " ++ s
     PrintErr s -> "Print error: " ++ s
 
-instance Semigroup (FullEnv v i t s) where
-  FullEnv x y z w <> FullEnv x' y' z' w' = FullEnv (x<>x') (y<>y') (z<>z') (w<>w')
+instance Semigroup (FullEnv v t) where
+  FullEnv x y <> FullEnv x' y' = FullEnv (x<>x') (y<>y')
 
-instance Monoid (FullEnv v i t s) where
-  mempty = FullEnv mempty mempty mempty mempty
+instance Monoid (FullEnv v t) where
+  mempty = FullEnv mempty mempty
   mappend = (<>)
-
-setLEnv :: (Env Var v -> Env Var v) -> FullEnv v i t s -> FullEnv v i t s
-setLEnv update env = env {lEnv = update (lEnv env)}
-
-setIEnv :: (Env IVar i -> Env IVar i) -> FullEnv v i t s -> FullEnv v i t s
-setIEnv update env = env {iEnv = update (iEnv env)}
-
-setTEnv :: (Env TVar t -> Env TVar t) -> FullEnv v i t s -> FullEnv v i t s
-setTEnv update env = env {tEnv = update (tEnv env)}
-
-setSEnv :: (Env SVar s -> Env SVar s) -> FullEnv v i t s -> FullEnv v i t s
-setSEnv update env = env {sEnv = update (sEnv env)}
-
-instance Functor GPat where
-  fmap = fmapDefault
-
-instance Foldable GPat where
-  foldMap = foldMapDefault
 
 instance Functor TopDecl where
   fmap = fmapDefault
@@ -216,24 +173,17 @@ fvsUExpr expr = case expr of
   ULam _ body    -> fvsUExpr body
   UApp fexpr arg -> fvsUExpr fexpr <> fvsUExpr arg
   UFor _ body    -> fvsUExpr body
-  UGet e ie      -> fvsUExpr e <> foldMap (fvsVar setIEnv) ie
+  UGet e ie      -> fvsUExpr e <> fvsVar setLEnv ie
   URecCon r      -> foldMap fvsUExpr r
   UAnnot e t     -> fvsUExpr e <> fvsType t
   UUnpack _ e body -> fvsUExpr e <> fvsUExpr body
-
 
 fvsType :: Type -> Vars
 fvsType ty = case ty of
   BaseType _    -> mempty
   TypeVar v     -> fvsVar setTEnv v
   ArrType t1 t2 -> fvsType t1 <> fvsType t2
-  -- TabType t1 t2 -> fvsType t1 <> fvsType t2
-  -- RecType r     -> foldMap fvsType r
-  -- Forall _ t    -> fvsType t
-  -- Exists t      -> fvsType t
   MetaTypeVar _ -> mempty
-  -- NamedForall _ t -> fvsType t
-  -- NamedExists _ t -> fvsType t
 
 paren :: String -> String
 paren s = "(" ++ s ++ ")"
@@ -252,9 +202,11 @@ instance Show BaseType where
     StrType  -> "Str"
 
 lVarNames = varNames ['x'..'z']
-iVarNames = varNames ['i'..'k']
 tVarNames = varNames ['a'..'c']
-sVarNames = varNames ['i'..'k']
+
+-- TODO: use these based on kind information
+-- iVarNames = varNames ['i'..'k']
+-- sVarNames = varNames ['i'..'k']
 
 instance Show LitVal where
   show (IntLit x ) = show x
@@ -262,59 +214,50 @@ instance Show LitVal where
   show (StrLit x ) = show x
 
 instance Show Expr where
-  show = showExpr (0, 0, 0, 0)
+  show = showExpr (0, [])
 
 instance Show Type where
-  show = showType (0, 0)
+  show = showType []
 
-showType :: (Int, Int) -> Type -> String
-showType env@(depthT, depthS) t = case t of
+showType :: [Kind] -> Type -> String
+showType env t = case t of
   BaseType b  -> show b
-  TypeVar v   -> getName tVarNames depthT v
+  TypeVar v   -> getName tVarNames depth v
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
-  TabType i b -> showISet depthS i ++ "=>" ++ recur b
-  MetaTypeVar (MetaVar v) -> "mv" ++ show v
-  Forall nt ns t -> showType (nt, ns) t
-  Exists body -> "E " ++ sVarNames !! depthS ++ ". " ++
-                 showType (depthT, depthS + 1) body
-
-  -- RecType r   -> printRecord recur typeRecPrintSpec r
+  TabType a b -> recur a ++ "=>" ++ recur b
+  MetaTypeVar (MetaVar kind v) -> "mv" ++ show v ++ "[" ++ show kind ++ "]"
+  Forall kinds t -> "A " ++ spaceSep (take (length kinds) tVarNames) ++ ". "
+                          ++ showType (kinds ++ env) t
+  Exists body -> "E " ++ tVarNames !! depth ++ ". " ++
+                 showType (IdxSetKind : env) body
   where recur = showType env
-
-showISet :: Int -> ISet -> String
-showISet depth s = case s of ISet v -> getName sVarNames depth v
-                             IMetaTypeVar v -> "mv" ++ show v
+        depth = length env
 
 spaceSep :: [String] -> String
 spaceSep = intercalate " "
 
-showExpr :: (Int, Int, Int, Int) -> Expr -> String
-showExpr env@(l,i,t,s) expr = case expr of
+showExpr :: (Int, [Kind]) -> Expr -> String
+showExpr env@(depth, kinds) expr = case expr of
   Lit val      -> show val
-  Var v        -> getName lVarNames l v
-  Let p e1 e2  -> paren $ "let " ++ showPat p ++ " = " ++ recur e1
-                            ++ " in " ++ recurL e2
-  Lam p e      -> paren $ "lam " ++ showPat p ++ ": " ++ recurL e
+  Var v        -> name v
+  Let t e1 e2  -> paren $    "let " ++ showBinder t ++ " = " ++ recur e1
+                          ++ " in " ++ recurWith e2
+  Lam t e      -> paren $ "lam " ++ showBinder t ++ ": " ++ recurWith e
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
-  For p e      -> paren $ "for " ++ showIPat p ++ ": " ++ recurI e
-  Get e ie     -> recur e ++ "." ++ showIdxExpr ie
-  Unpack ty e1 e2 -> paren $ "unpack {" ++ lVarNames !! l ++ "::"
-                             ++ showType (t,s+1) ty
-                             ++ ", " ++ sVarNames !! s
-                             ++ "} = " ++ recur e1
-                             ++ " in " ++ showExpr (l+1,i,t,s+1) e2
-  TLam t s expr -> "LAM " ++ spaceSep (take t tVarNames) ++ " , "
-                          ++ spaceSep (take s sVarNames) ++ ": "
-                          ++ showExpr (0, 0, t, s) expr
-  TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType (t,s)) ts) ++ "]"
+  For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ recurWith e
+  Get e ie     -> recur e ++ "." ++ name ie
+  -- Unpack ty e1 e2 -> paren $ "unpack {" ++ lVarNames !! l ++ "::"
+  --                            ++ showType (t,s+1) ty
+  --                            ++ ", " ++ sVarNames !! s
+  --                            ++ "} = " ++ recur e1
+  --                            ++ " in " ++ showExpr (l+1,i,t,s+1) e2
+  TLam kinds' expr -> "LAM " ++ spaceSep (take (length kinds') tVarNames) ++ ": "
+                             ++ showExpr (depth, kinds' ++ kinds) expr
+  TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType kinds) ts) ++ "]"
   where recur = showExpr env
-        recurL = showExpr (l+1,i,t,s)
-        recurI = showExpr (l,i+1,t,s)
-        showPat p  = case p of VarPat ty   ->
-                                 lVarNames !! l ++ "::" ++ showType (t,s) ty
-        showIPat p = case p of VarPat iSet ->
-                                 iVarNames !! i ++ "::" ++ showISet s iSet
-        showIdxExpr e = case e of RecLeaf v -> getName iVarNames i v
+        recurWith = showExpr (depth + 1, kinds)
+        showBinder ty = lVarNames !! depth ++ "::" ++ showType kinds ty
+        name = getName lVarNames depth
 
 getName :: [VarName] -> Int -> GVar i -> String
 getName names depth v = case v of
@@ -322,103 +265,59 @@ getName names depth v = case v of
   BV i -> let i' = depth - i - 1
           in if i' >= 0
              then names !! i'
-             else "<unbound: " ++ show i ++ "/" ++ show depth ++ " >"
+             else "<BV " ++ show i ++ ">"
 
 exprTypes :: Traversal' Expr Type
 exprTypes f expr = case expr of
-  Let p bound body -> liftA3 Let (recurPat p) (recur bound) (recur body)
-  Lam p body       -> liftA2 Lam (recurPat p) (recur body)
+  Let t bound body -> liftA3 Let (f t) (recur bound) (recur body)
+  Lam t body       -> liftA2 Lam (f t) (recur body)
   App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-  For p body       -> liftA2 For (recurIPat p) (recur body)
+  For t body       -> liftA2 For (f t) (recur body)
   Get e ie         -> liftA2 Get (recur e) (pure ie)
   Unpack t bound body -> liftA3 Unpack (f t) (recur bound) (recur body)
-  TLam nt ns expr     -> liftA  (TLam nt ns) (recur expr)
+  TLam kinds expr     -> liftA  (TLam kinds) (recur expr)
   TApp expr ts        -> liftA2 TApp (recur expr) (traverse f ts)
   _ -> pure expr
   where recur = exprTypes f
-        recurPat  = traverse f
-        recurIPat p = pure p
-
-exprISets :: Traversal' Expr ISet
-exprISets f expr = case expr of
-  Let p bound body -> liftA3 Let (recurPat p) (recur bound) (recur body)
-  Lam p body       -> liftA2 Lam (recurPat p) (recur body)
-  App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-  For p body       -> liftA2 For (recurIPat p) (recur body)
-  Get e ie         -> liftA2 Get (recur e) (pure ie)
-  Unpack t bound body -> liftA3 Unpack (recurTy t) (recur bound) (recur body)
-  TLam nt ns expr     -> liftA  (TLam nt ns) (recur expr)
-  TApp expr ts        -> liftA2 TApp (recur expr) (traverse recurTy ts)
-  _ -> pure expr
-  where recur = exprISets f
-        recurTy = tyISets f
-        recurPat  = traverse recurTy
-        recurIPat p = traverse f p
-
-tyISets :: Traversal' Type ISet
-tyISets f ty = case ty of
-  ArrType a b     -> liftA2 ArrType (recur a) (recur b)
-  TabType i a     -> liftA2 TabType (f i) (recur a)
-  Forall t s body -> liftA  (Forall t s) (recur body)
-  Exists body     -> liftA  Exists (recur body)
-  _               -> pure ty
-  where recur = tyISets f
 
 tyMetaVars :: Traversal' Type MetaVar
 tyMetaVars f ty = case ty of
   ArrType a b     -> liftA2 ArrType (recur a) (recur b)
   MetaTypeVar v   -> liftA MetaTypeVar (f v)
   TabType i a     -> liftA (TabType i) (recur a)
-  Forall t s body -> liftA  (Forall t s) (recur body)
+  Forall kinds body -> liftA (Forall kinds) (recur body)
   Exists body     -> liftA  Exists (recur body)
   _               -> pure ty
   where recur = tyMetaVars f
 
-iSetMetaVars :: Traversal' ISet IMetaVar
-iSetMetaVars f iset = case iset of
-  ISet s -> pure iset
-  IMetaTypeVar m -> liftA IMetaTypeVar (f m)
+type MetaVarFun = Int -> MetaVar -> Maybe Type
 
-type MetaVarFun = Int -> Int -> MetaVar -> Maybe Type
-type IMetaVarFun = Int -> Int -> IMetaVar -> Maybe ISet
-
-subTyDepth :: Int -> Int -> MetaVarFun -> IMetaVarFun -> Type -> Type
-subTyDepth tDepth sDepth f fs t = case t of
+subTyDepth :: Int -> MetaVarFun -> Type -> Type
+subTyDepth d f t = case t of
   ArrType a b   -> ArrType (recur a) (recur b)
-  TabType a b   -> TabType (subISetDepth tDepth sDepth fs a) (recur b)
-  MetaTypeVar v -> case f tDepth sDepth v of Just t' -> t'
-                                             Nothing -> t
-  Exists body -> Exists (recurWith 0 1 body)
-  Forall t s body -> Forall t s (recurWith t s body)
+  TabType a b   -> TabType (recur a) (recur b)
+  MetaTypeVar v -> case f d v of Just t' -> t'
+                                 Nothing -> t
+  Exists body -> Exists (recurWith 1 body)
+  Forall kinds body -> Forall kinds (recurWith (length kinds) body)
   _ -> t
-  where recur = subTyDepth tDepth sDepth f fs
-        recurWith t' s' = subTyDepth (tDepth + t') (sDepth + s') f fs
+  where recur = subTyDepth d f
+        recurWith d' = subTyDepth (d + d') f
 
 subTy :: (MetaVar -> Maybe Type) -> Type -> Type
-subTy f t = subTyDepth 0 0 (\_ _ -> f) (\_ _ _ -> Nothing) t
+subTy f t = subTyDepth 0 (const f) t
 
-subISetDepth :: Int -> Int -> IMetaVarFun -> ISet -> ISet
-subISetDepth tDepth sDepth f s = case s of
-  ISet _ -> s
-  IMetaTypeVar v -> case f tDepth sDepth v of Just s' -> s'
-                                              Nothing -> s
-
-subISet :: (IMetaVar -> Maybe ISet) -> ISet -> ISet
-subISet f s = subISetDepth 0 0 (\_ _ -> f) s
-
-subExprDepth ::  Int -> Int -> MetaVarFun -> IMetaVarFun -> Expr -> Expr
-subExprDepth tDepth sDepth f fs expr = case expr of
-  Let p bound body -> Let (recurPat p) (recur bound) (recur body)
-  Lam p body       -> Lam (recurPat p) (recur body)
+subExprDepth ::  Int -> MetaVarFun -> Expr -> Expr
+subExprDepth d f expr = case expr of
+  Let t bound body -> Let (recurTy t) (recur bound) (recur body)
+  Lam t body       -> Lam (recurTy t) (recur body)
   App fexpr arg    -> App (recur fexpr) (recur arg)
-  For p body       -> For (recurIPat p) (recur body)
+  For t body       -> For (recurTy t) (recur body)
   Get e ie         -> Get (recur e) ie
-  Unpack t bound body -> Unpack (recurTy t) (recur bound) (recurWith 0 1 body)
-  TLam nt ns expr     -> TLam nt ns (recurWith nt ns expr)
+  Unpack t bound body -> Unpack (recurTy t) (recur bound) (recurWith 1 body)
+  TLam kinds expr     -> TLam kinds (recurWith (length kinds) expr)
   TApp expr ts        -> TApp (recur expr) (map recurTy ts)
   _ -> expr
-  where recur = subExprDepth tDepth sDepth f fs
-        recurWith t' s' = subExprDepth (tDepth + t') (sDepth + s') f fs
-        recurPat  = fmap recurTy
-        recurIPat = fmap $ subISetDepth tDepth sDepth fs
-        recurTy = subTyDepth tDepth sDepth f fs
+  where recur = subExprDepth d f
+        recurWith d' = subExprDepth (d + d') f
+        recurTy = subTyDepth d f

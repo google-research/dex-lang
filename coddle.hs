@@ -25,13 +25,13 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String }
 
 data TopEnv = TopEnv { varEnv  :: Vars
-                     , typeEnv :: FullEnv SigmaType ISet () ()
-                     , valEnv  :: FullEnv TypedVal  () () () }
+                     , typeEnv :: FullEnv Type Kind
+                     , valEnv  :: FullEnv TypedVal ()}
 
 
-data Pass a b v i t s = Pass
-  { lowerExpr ::         a -> FullEnv v i t s -> Except (v, b),
-    lowerCmd  :: Command a -> FullEnv v i t s -> Command b }
+data Pass a b v t = Pass
+  { lowerExpr ::         a -> FullEnv v t -> Except (v, b),
+    lowerCmd  :: Command a -> FullEnv v t -> Command b }
 
 varPass  = Pass checkBoundVarsExpr checkBoundVarsCmd
 typePass = Pass inferTypesExpr inferTypesCmd
@@ -55,7 +55,7 @@ evalSource env source = do
                               env' <- lift $ readIORef envPtr
                               return (decls', env')
 
-    procDecl :: Pass a b v i t s -> IORef (FullEnv v i t s)
+    procDecl :: Pass a b v t -> IORef (FullEnv v t)
                 -> TopDecl a -> Driver (TopDecl b)
     procDecl (Pass procExpr procCmd) envPtr (TopDecl source fvs instr) = do
       env <- lift $ readIORef envPtr
@@ -95,7 +95,7 @@ liftErr s (Right x) = return x
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-updateEnv :: (VarName, SigmaType, TypedVal) -> TopEnv -> TopEnv
+updateEnv :: (VarName, Type, TypedVal) -> TopEnv -> TopEnv
 updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
          , typeEnv = setLEnv (addFVar v t)   typeEnv
@@ -115,7 +115,7 @@ runMonad d = runInputTBehavior defaultBehavior defaultSettings d >> return ()
 
 initEnv = TopEnv mempty mempty mempty
 
-loadData :: String -> IO (TypedVal, SigmaType)
+loadData :: String -> IO (TypedVal, Type)
 loadData fname = do
   contents <- readFile fname
   undefined

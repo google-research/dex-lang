@@ -1,10 +1,20 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
-             showErr) where
+             showErr, listDiff, splitMap) where
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
+import qualified Data.Set as Set
+import qualified Data.Map.Strict as M
+
+splitMap :: Ord k => [k] -> M.Map k v -> (M.Map k v, M.Map k v)
+splitMap ks m = let ks' = Set.fromList ks
+                    pos = M.filterWithKey (\k _ -> k `Set.member` ks') m
+                in (pos, m M.\\ pos)
+
+listDiff :: Ord a => [a] -> [a] -> [a]
+listDiff xs ys = Set.toList $ Set.difference (Set.fromList xs) (Set.fromList ys)
 
 showErr :: Show e => Either e a -> Either String a
 showErr (Left e) = Left (show e)

@@ -70,8 +70,7 @@ typedAssignment = do
     else fail $ "Type declaration variable must match assignment variable."
 
 simpleDecl :: Parser (VarName, UExpr)
-simpleDecl = do (VarPat (v, _), expr) <- decl
-                return (v, expr)
+simpleDecl = decl
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops
@@ -145,7 +144,8 @@ forExpr = do
   body <- expr
   return $ foldr UFor body vs
 
-decl :: Parser (UPat, UExpr)
+-- decl :: Parser (UPat, UExpr)
+decl :: Parser (VarName, UExpr)
 decl = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
@@ -191,27 +191,32 @@ ops = [ [getRule, appRule]
       , [binOpRule "+" "add", binOpRule "-" "sub"]
       ]
 
-idxExpr =   parenIdxExpr
-        <|> liftM (RecLeaf . FV) identifier
+-- idxExpr =   parenIdxExpr
+--         <|> liftM (RecLeaf . FV) identifier
+idxExpr = liftM FV identifier
 
-parenIdxExpr = do
-  elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
-  return $ case elts of
-    [(Nothing, expr)] -> expr
-    elts -> RecTree $ mixedRecord elts
+-- parenIdxExpr = do
+--   elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
+--   return $ case elts of
+--     [(Nothing, expr)] -> expr
+--     elts -> RecTree $ mixedRecord elts
 
 idxPat = pat
 
-pat :: Parser UPat
-pat =   parenPat
-    <|> liftM2 (curry VarPat) identifier (optional typeAnnot)
+-- leaving this for when we reintroduce records
+-- pat :: Parser UPat
+-- pat =   parenPat
+--     <|> liftM2 (curry VarPat) identifier (optional typeAnnot)
 
-parenPat :: Parser UPat
-parenPat = do
-  xs <- parens $ maybeNamed pat `sepBy` symbol ","
-  return $ case xs of
-    [(Nothing, x)] -> x
-    xs -> RecPat $ mixedRecord xs
+pat :: Parser VarName
+pat = identifier
+
+-- parenPat :: Parser UPat
+-- parenPat = do
+--   xs <- parens $ maybeNamed pat `sepBy` symbol ","
+--   return $ case xs of
+--     [(Nothing, x)] -> x
+--     xs -> RecPat $ mixedRecord xs
 
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
@@ -254,53 +259,45 @@ typeExpr' =   parens typeExpr
           <?> "term"
 
 data BoundVars = BoundVars { lVars :: [VarName]
-                           , iVars :: [VarName]
                            , tVars :: [VarName] }
 
 lowerInstr :: UInstr -> UInstr
 lowerInstr = fmap (lower empty)
-  where empty = BoundVars [] [] []
+  where empty = BoundVars [] []
 
 lower :: BoundVars -> UExpr -> UExpr
 lower env expr = case expr of
   ULit c         -> ULit c
   UVar v         -> UVar $ toDeBruijn (lVars env) v
-  ULet p e body  -> ULet p (recur e) $ lower (updateLVars p env) body
-  ULam p body    -> ULam p           $ lower (updateLVars p env) body
+  ULet p e body  -> ULet p (recur e) $ lowerWith p body
+  ULam p body    -> ULam p           $ lowerWith p body
   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
-  UFor p body    -> UFor p           $ lower (updateIVars p env) body
-  UGet e ie      -> UGet (recur e) $ fmap (toDeBruijn (iVars env)) ie
+  UFor p body    -> UFor p           $ lowerWith p body
+  UGet e ie      -> UGet (recur e) $ toDeBruijn (lVars env) ie
   URecCon r      -> URecCon $ fmap recur r
   UAnnot e t     -> UAnnot (recur e) (lowerType env t)
   UUnpack v e body -> UUnpack v (recur e) $
                          lower (env {lVars = v : lVars env}) body
   where recur = lower env
+        lowerWith p expr = lower (updateLVars p env) expr
 
 lowerType :: BoundVars -> Type -> Type
 lowerType env ty = case ty of
   BaseType b    -> BaseType b
   TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
-  -- TabType t1 t2 -> TabType (recur t1) (recur t2)
-  -- RecType r     -> RecType $ fmap recur r
+  TabType t1 t2 -> TabType (recur t1) (recur t2)
   MetaTypeVar m -> MetaTypeVar m
-  -- NamedForall vs t -> Forall (length vs) $ lowerType (updateTVars vs  env) t
-  -- NamedExists v t  -> Exists             $ lowerType (updateTVars [v] env) t
-  -- Forall _ _ -> error "Shouldn't see deBruijn Forall in source text"
-  -- Exists   _ -> error "Shouldn't see deBruijn Exists in source text"
   where recur = lowerType env
 
-updateLVars :: UPat -> BoundVars -> BoundVars
-updateLVars pat env = env {lVars = patVars pat ++ lVars env}
-
-updateIVars :: UPat -> BoundVars -> BoundVars
-updateIVars pat env = env {iVars = patVars pat ++ iVars env}
+updateLVars :: VarName -> BoundVars -> BoundVars
+updateLVars v env = env {lVars = v : lVars env}
 
 updateTVars :: [VarName] -> BoundVars -> BoundVars
 updateTVars vs env = env {tVars = vs ++ tVars env}
 
-patVars :: UPat -> [VarName]
-patVars pat = map fst (toList pat)
+-- patVars :: UPat -> [VarName]
+-- patVars pat = map fst (toList pat)
 
 checkBoundVarsCmd :: Command UExpr -> Vars -> Command UExpr
 checkBoundVarsCmd (Command cmdName expr) envVars =
@@ -313,7 +310,6 @@ checkBoundVarsExpr :: UExpr -> Vars -> Except ((), UExpr)
 checkBoundVarsExpr expr envVars = do
   let freeVars = setLEnv (`envDiff` builtinVars) (fvsUExpr expr)
   checkVars (lEnv freeVars) (lEnv envVars)
-  checkVars (iEnv freeVars) (iEnv envVars)
   checkVars (tEnv freeVars) (tEnv envVars)
   return ((), expr)
   where checkVars :: Env i a -> Env i a -> Except ()
