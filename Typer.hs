@@ -4,7 +4,8 @@ import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
 import Control.Monad.Writer hiding ((<>))
-import Control.Monad.State (StateT, evalState, put, get)
+import Control.Monad.State (StateT, evalStateT, put, get)
+import Control.Monad.Except (throwError)
 import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as M
 import Data.List (nub, elemIndex, (\\))
@@ -23,7 +24,7 @@ type TypingEnv = FullEnv SigmaType Kind
 type Subst = M.Map MetaVar Type
 type ConstrainMonad a = ReaderT TypingEnv (
                           WriterT Constraints (
-                            StateT Int Identity)) a
+                            StateT Int (Either Err))) a
 type Constraint = (Type, Type)
 data Constraints = Constraints [Constraint] [MetaVar]  deriving (Show)
 
@@ -52,12 +53,12 @@ inferTypesExpr rawExpr fenv = do
 
 translateExpr :: UExpr -> TypingEnv -> Except Expr
 translateExpr rawExpr env = do
-  let (expr, cs) = runConstrainMonad env (fresh >>= check rawExpr)
+  (expr, cs) <- runConstrainMonad env (fresh >>= check rawExpr)
   (subst, Constraints [] [], flexVars) <- solvePartial cs
   return $ generalize flexVars $ applySubExpr subst expr
 
-runConstrainMonad :: TypingEnv -> ConstrainMonad a -> (a, Constraints)
-runConstrainMonad env m = evalState (runWriterT (runReaderT m env)) 0
+runConstrainMonad :: TypingEnv -> ConstrainMonad a -> Except (a, Constraints)
+runConstrainMonad env m = evalStateT (runWriterT (runReaderT m env)) 0
 
 capture :: MonadWriter w m => m a -> m (a, w)
 capture m = censor (const mempty) (listen m)
@@ -107,20 +108,25 @@ check expr reqTy = case expr of
     (boundTy, bound', _) <- inferPartial bound
     boundTyBody <- case boundTy of Exists btBody -> return btBody
                                    t -> error $ "Can't unpack " ++ show t
-    MetaTypeVar i <- freshIdx
+    MetaTypeVar i <- freshIdx -- skolem var here would give better error messages
     let updateEnv = setLEnv $ addBVar (instantiateType [MetaTypeVar i] boundTy)
     (body', Constraints cs vs) <- capture $ local updateEnv (check body reqTy)
-    let (Right (sub, newConstraints, flexVars)) = solvePartial $ Constraints cs (i:vs)
-    let i' = case M.lookup i sub of
-               Nothing -> i
-               Just (MetaTypeVar v) -> v
-               t -> error $ "Index variable unified with " ++ show t
-    if i' `elem` flexVars then return ()
-                          else error "Existential variable leaked scope"
+    (sub, newConstraints, flexVars) <- liftExcept $ solvePartial $ Constraints cs (i:vs)
+    i' <- case M.lookup i sub of
+             Nothing -> return i
+             Just (MetaTypeVar v) -> return v
+             t -> throwError $ CompilerErr
+                    ("Index variable unified with " ++ show t)
+    if i' `elem` flexVars
+      then return ()
+      else throwError $ TypeErr "existential variable leaked scope"
     tell newConstraints
     tell $ Constraints [] (flexVars \\ [i'])
     let body'' = bindMetaExpr [i'] (applySubExpr sub body')
     return $ Unpack boundTyBody bound' body''
+
+liftExcept :: Except a -> ConstrainMonad a
+liftExcept = either throwError return
 
 infer :: UExpr -> ConstrainMonad (Type, Expr)
 infer expr = do ty <- fresh
@@ -130,7 +136,7 @@ infer expr = do ty <- fresh
 inferPartial :: UExpr -> ConstrainMonad (Type, Expr, [MetaVar])
 inferPartial expr = do
   ((ty, expr'), constraints) <- capture (infer expr)
-  let (Right (sub, newConstraints, flexVars)) = solvePartial constraints
+  (sub, newConstraints, flexVars) <- liftExcept $ solvePartial constraints
   tell newConstraints
   return (applySubTy sub ty, applySubExpr sub expr', flexVars)
 

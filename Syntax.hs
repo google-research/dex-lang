@@ -102,6 +102,7 @@ data CmdName = EvalExpr | GetType | GetTyped | GetParse
 
 data Err = ParseErr String
          | UnificationErr Type Type
+         | TypeErr String
          | InfiniteTypeErr
          | UnboundVarErr VarName
          | RepVarPatternErr VarName
@@ -128,6 +129,7 @@ instance Show Err where
     ParseErr s -> s
     UnificationErr t1 t2 -> ("Type error: can't unify "
                              ++ show t1 ++ " and " ++ show t2)
+    TypeErr s -> "Type error: " ++ s
     InfiniteTypeErr -> "Infinite type"
     UnboundVarErr v -> "Unbound variable: " ++ show v
     RepVarPatternErr v -> "Repeated variable in pattern: " ++ show v

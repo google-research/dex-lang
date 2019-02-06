@@ -170,11 +170,10 @@ literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
 opNames = ["+", "*", "/", "-", "^"]
 resNames = ["for", "lam", "let", "in", "unpack"]
 
-
 identifier = makeIdentifier resNames
 
 appRule = InfixL (sc
-                  *> notFollowedBy (choice . map symbol $ opNames ++ resNames)
+                  *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
 binOpRule opchar opname = InfixL (symbol opchar >> return (binOpApp opname))
 
