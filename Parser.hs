@@ -40,8 +40,8 @@ topDecl = do
 
 topDeclInstr :: Parser UInstr
 topDeclInstr =   explicitCommand
-             <|> typedAssignment
-             <|> liftM (uncurry TopAssign) simpleDecl
+             -- <|> typedAssignment
+             <|> liftM (uncurry TopAssign) tryDecl
              <|> liftM (EvalCmd . (Command EvalExpr)) expr
              <?> "top-level declaration"
 
@@ -60,17 +60,23 @@ explicitCommand = do
   e <- expr
   return $ EvalCmd (Command cmd e)
 
-typedAssignment :: Parser UInstr
-typedAssignment = do
-  v <- try (identifier <* symbol "::")
-  ty <- typeExpr
-  (v', e) <- simpleDecl
-  if v' == v
-    then return $ TopAssign v (UAnnot e ty)
-    else fail $ "Type declaration variable must match assignment variable."
+-- typedAssignment :: Parser UInstr
+-- typedAssignment = do
+--   v <- try (identifier <* symbol "::")
+--   ty <- typeExpr
+--   (v', e) <- simpleDecl
+--   if v' == v
+--     then return $ TopAssign v (UAnnot e ty)
+--     else fail $ "Type declaration variable must match assignment variable."
 
-simpleDecl :: Parser (VarName, UExpr)
-simpleDecl = decl
+tryDecl :: Parser (VarName, UExpr)
+tryDecl = do
+  (p, wrap) <- try $ do p <- pat
+                        wrap <- idxLhsArgs <|> lamLhsArgs
+                        symbol "="
+                        return (p, wrap)
+  body <- expr
+  return (p, wrap body)
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops

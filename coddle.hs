@@ -103,7 +103,7 @@ writeDeclResult (TopDecl source _ instr) = do
         printWithSource s = outputStrLn $ source ++ "\n" ++ s ++ "\n"
 
 liftErrIO :: Except a -> IO a
-liftErrIO = either (\e -> print e >> exitFailure) return
+liftErrIO = either (\e -> print e >> throwIO Interrupt) return
 
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)

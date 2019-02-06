@@ -50,7 +50,7 @@ jitCmd (Command cmdName expr) env = case cmdName of
     GetLLVM -> case lowerLLVM expr of
                  Left e -> return $ CmdErr e
                  Right m -> liftM CmdResult (showLLVM m)
-    EvalJit -> case lowerLLVM expr of
+    EvalExpr -> case lowerLLVM expr of
                  Left e -> return $ CmdErr e
                  Right m -> liftM CmdResult (evalJit m)
     _ -> return $ Command cmdName ()
