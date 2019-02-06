@@ -7,7 +7,7 @@ import Control.Monad.Writer hiding ((<>))
 import Control.Monad.State (StateT, evalState, put, get)
 import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as M
-import Data.List (nub, elemIndex)
+import Data.List (nub, elemIndex, (\\))
 import Data.Foldable (toList)
 import Data.Semigroup
 import qualified Data.Set as Set
@@ -25,7 +25,7 @@ type ConstrainMonad a = ReaderT TypingEnv (
                           WriterT Constraints (
                             StateT Int Identity)) a
 type Constraint = (Type, Type)
-data Constraints = Constraints [Constraint] [MetaVar]
+data Constraints = Constraints [Constraint] [MetaVar]  deriving (Show)
 
 inferTypesCmd :: Command UExpr -> TypingEnv -> Command Expr
 inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
@@ -103,16 +103,24 @@ check expr reqTy = case expr of
     addConstraint (i, actualISet)
     addConstraint (v, reqTy)
     return $ Get expr' idxExpr
-  UUnpack _ bound body -> undefined --do
-    -- (boundTy, bound', _) <- inferPartial bound
-    -- let updateL = setLEnv $ addBVar (instantiateType [i] boundTy)
-    --     updateS = setSEnv $ addBVar IdxSetKind
-    -- (bodyTy, body', flexVars) <- local (updateL . updateS) (inferPartial body)
-    -- i <- freshIdx
-    -- -- debruijnify body with the index set variable name
-    -- --   does this require having solved the constraints?
-    -- --     yes, at least the constraints in the body
-    -- return $ Unpack tBound' bound' body'
+  UUnpack _ bound body -> do
+    (boundTy, bound', _) <- inferPartial bound
+    boundTyBody <- case boundTy of Exists btBody -> return btBody
+                                   t -> error $ "Can't unpack " ++ show t
+    MetaTypeVar i <- freshIdx
+    let updateEnv = setLEnv $ addBVar (instantiateType [MetaTypeVar i] boundTy)
+    (body', Constraints cs vs) <- capture $ local updateEnv (check body reqTy)
+    let (Right (sub, newConstraints, flexVars)) = solvePartial $ Constraints cs (i:vs)
+    let i' = case M.lookup i sub of
+               Nothing -> i
+               Just (MetaTypeVar v) -> v
+               t -> error $ "Index variable unified with " ++ show t
+    if i' `elem` flexVars then return ()
+                          else error "Existential variable leaked scope"
+    tell newConstraints
+    tell $ Constraints [] (flexVars \\ [i'])
+    let body'' = bindMetaExpr [i'] (applySubExpr sub body')
+    return $ Unpack boundTyBody bound' body''
 
 infer :: UExpr -> ConstrainMonad (Type, Expr)
 infer expr = do ty <- fresh
@@ -140,20 +148,12 @@ solvePartial (Constraints constraints vs) = do
     asConstraint (mv, t) = (MetaTypeVar mv, t)
 
 generalize :: [MetaVar] -> Expr -> Expr
-generalize vs expr = TLam kinds body
+generalize vs expr = TLam kinds (bindMetaExpr vs expr)
   where kinds = [k | MetaVar k _ <- vs]
-        body = subExprDepth 0 sub expr
-        sub d v = case elemIndex v vs of
-                    Just i  -> Just $ TypeVar (BV (d + i))
-                    Nothing -> Nothing
 
 generalizeTy :: [MetaVar] -> Type -> Type
-generalizeTy vs expr = Forall kinds body
+generalizeTy vs ty = Forall kinds (bindMetaTy vs ty)
   where kinds = [k | MetaVar k _ <- vs]
-        body = subTyDepth 0 sub expr
-        sub d v = case elemIndex v vs of
-                    Just i  -> Just $ TypeVar (BV (d + i))
-                    Nothing -> Nothing
 
 litType :: LitVal -> Type
 litType v = BaseType $ case v of
@@ -299,7 +299,7 @@ getType' env expr = case expr of
         Exists t' <- recur bound
         assertValid t
         assertEq t t' "Type mismatch in 'unpack'"
-        let update = setLEnv (addBVar (t, depth)) . setTEnv (addBVar IdxSetKind)
+        let update = setLEnv (addBVar (t, depth+1)) . setTEnv (addBVar IdxSetKind)
         bodyTy <- getType' (update env) body
         let resultTy = instantiateType [dummyTy] (Exists bodyTy)
         assertValid resultTy
@@ -321,8 +321,9 @@ getKind env t = case t of
   TypeVar v   -> return $ env ! v
   ArrType a b -> check TyKind     a >> check TyKind b >> return TyKind
   TabType a b -> check IdxSetKind a >> check TyKind b >> return TyKind
-  MetaTypeVar _ -> Left $ CompilerErr "MetaVar in type"
+  MetaTypeVar v -> Left $ CompilerErr ("MetaVar in type" ++ show v)
   Forall kinds body -> getKind (addBVars kinds env) body
+  Exists       body -> getKind (addBVars [IdxSetKind] env) body
   where recur = getKind env
         check k = checkKind env k
 

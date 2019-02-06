@@ -4,14 +4,14 @@ module Syntax (Expr (..), Type (..), UExpr (..), TopDecl (..), Command (..),
                Var, TVar, IdxSet, Except, Err (..),
                SigmaType, Vars, FullEnv (..), setLEnv, setTEnv,
                fvsUExpr, (-->), (==>), exprTypes, tyMetaVars, subTy,
-               subExprDepth, subTyDepth) where
+               subExprDepth, subTyDepth, bindMetaTy, bindMetaExpr) where
 
 import Util
 import Record
 import Env
 import Data.Semigroup
 import Data.Traversable
-import Data.List (intercalate)
+import Data.List (intercalate, elemIndex)
 
 import Control.Applicative (liftA, liftA2, liftA3)
 import Control.Lens.Traversal (Traversal')
@@ -246,13 +246,16 @@ showExpr env@(depth, kinds) expr = case expr of
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
   For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ recurWith e
   Get e ie     -> recur e ++ "." ++ name ie
-  -- Unpack ty e1 e2 -> paren $ "unpack {" ++ lVarNames !! l ++ "::"
-  --                            ++ showType (t,s+1) ty
-  --                            ++ ", " ++ sVarNames !! s
-  --                            ++ "} = " ++ recur e1
-  --                            ++ " in " ++ showExpr (l+1,i,t,s+1) e2
-  TLam kinds' expr -> "LAM " ++ spaceSep (take (length kinds') tVarNames) ++ ": "
-                             ++ showExpr (depth, kinds' ++ kinds) expr
+  Unpack ty e1 e2 -> paren $ "unpack {" ++ lVarNames !! depth ++ "::"
+                             ++ showType (IdxSetKind:kinds) ty
+                             ++ ", " ++ tVarNames !! (length kinds)
+                             ++ "} = " ++ recur e1
+                             ++ " in " ++ showExpr (depth+1, IdxSetKind:kinds) e2
+  TLam kinds' expr ->
+    "LAM " ++ spaceSep (zipWith (\k v -> v ++ "::" ++ show k)
+                        kinds' tVarNames) ++ ": "
+           ++ showExpr (depth, kinds' ++ kinds) expr
+
   TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType kinds) ts) ++ "]"
   where recur = showExpr env
         recurWith = showExpr (depth + 1, kinds)
@@ -284,7 +287,7 @@ tyMetaVars :: Traversal' Type MetaVar
 tyMetaVars f ty = case ty of
   ArrType a b     -> liftA2 ArrType (recur a) (recur b)
   MetaTypeVar v   -> liftA MetaTypeVar (f v)
-  TabType i a     -> liftA (TabType i) (recur a)
+  TabType a b     -> liftA2 TabType (recur a) (recur b)
   Forall kinds body -> liftA (Forall kinds) (recur body)
   Exists body     -> liftA  Exists (recur body)
   _               -> pure ty
@@ -321,3 +324,15 @@ subExprDepth d f expr = case expr of
   where recur = subExprDepth d f
         recurWith d' = subExprDepth (d + d') f
         recurTy = subTyDepth d f
+
+bindMetaTy :: [MetaVar] -> Type -> Type
+bindMetaTy vs = subTyDepth 0 sub
+  where sub d v = case elemIndex v vs of
+                    Just i  -> Just $ TypeVar (BV (d + i))
+                    Nothing -> Nothing
+
+bindMetaExpr :: [MetaVar] -> Expr -> Expr
+bindMetaExpr vs = subExprDepth 0 sub
+  where sub d v = case elemIndex v vs of
+                    Just i  -> Just $ TypeVar (BV (d + i))
+                    Nothing -> Nothing
