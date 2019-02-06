@@ -1,19 +1,21 @@
 import System.Console.Haskeline
 import System.Exit
-import System.IO hiding (print)
+import System.IO
 import Data.IORef
 import Control.Monad
+import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
 import Options.Applicative
 import Data.Semigroup ((<>))
 import Data.Maybe (catMaybes)
-import Prelude hiding (lookup, print)
+import Prelude hiding (lookup)
 
 import Syntax
 import Parser
 import Typer
 import Util
 import Env
+import JIT
 
 -- import Interpreter
 -- import FlatType (exprToVal, cmdToVal, parseVal)
@@ -28,24 +30,29 @@ data TopEnv = TopEnv { varEnv  :: Vars
                      , typeEnv :: FullEnv Type Kind
                      , valEnv  :: FullEnv TypedVal ()}
 
-
 data Pass a b v t = Pass
-  { lowerExpr ::         a -> FullEnv v t -> Except (v, b),
-    lowerCmd  :: Command a -> FullEnv v t -> Command b }
+  { lowerExpr ::         a -> FullEnv v t -> IO (v, b),
+    lowerCmd  :: Command a -> FullEnv v t -> IO (Command b) }
 
-varPass  = Pass checkBoundVarsExpr checkBoundVarsCmd
-typePass = Pass inferTypesExpr inferTypesCmd
--- evalPass = Pass exprToVal cmdToVal
--- evalPass = Pass undefined undefined -- exprToVal cmdToVal
+
+varPass :: Pass UExpr UExpr () ()
+varPass  = asIOPass checkBoundVarsExpr checkBoundVarsCmd
+
+typePass :: Pass UExpr Expr Type Kind
+typePass = asIOPass inferTypesExpr inferTypesCmd
+
+jitPass :: Pass Expr () () ()
+jitPass  = Pass jitExpr jitCmd
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
-  decls <- liftErr "" $ parseProg source
-  (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env) decls
+  decls <- lift $ liftErrIO $ parseProg source
+  (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env)  decls
   (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
+  (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
   -- (final, valEnv')   <- fullPass (procDecl evalPass) (valEnv env)  typed
   -- mapM writeDeclResult final
-  mapM writeDeclResult typed
+  mapM writeDeclResult jitted
   return $ TopEnv varEnv' typeEnv' undefined -- valEnv'
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
@@ -61,10 +68,12 @@ evalSource env source = do
       env <- lift $ readIORef envPtr
       case instr of
         TopAssign v expr ->
-          do (val, expr') <- liftErr source $ procExpr expr env
+          do (val, expr') <- lift $ procExpr expr env
              lift $ writeIORef envPtr $ setLEnv (addFVar v val) env
              return $ TopDecl source fvs $ TopAssign v expr'
-        EvalCmd cmd -> return $ TopDecl source fvs $ EvalCmd (procCmd cmd env)
+        EvalCmd cmd ->
+          do cmd' <- lift $ procCmd cmd env
+             return $ TopDecl source fvs $ EvalCmd cmd'
 
 runRepl :: TopEnv -> Driver ()
 runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
@@ -78,6 +87,12 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
                   Just s -> evalSource env s
       lift $ writeIORef envPtr newEnv
 
+asIOPass ::            (a -> FullEnv v t -> Except (v, b))
+            -> (Command a -> FullEnv v t -> Command b    ) -> Pass a b v t
+asIOPass procExpr procCmd = Pass procExpr' procCmd'
+  where procExpr' v env   = liftErrIO $ procExpr v env
+        procCmd'  cmd env = return $ procCmd cmd env
+
 writeDeclResult :: TopDecl a -> Driver ()
 writeDeclResult (TopDecl source _ instr) = do
   case instr of
@@ -87,10 +102,8 @@ writeDeclResult (TopDecl source _ instr) = do
   where printWithSource :: String -> Driver ()
         printWithSource s = outputStrLn $ source ++ "\n" ++ s ++ "\n"
 
-liftErr :: String -> Except a -> Driver a
-liftErr s (Left e)  = do outputStrLn $ "> " ++ s ++ "\n" ++ show e ++ "\n"
-                         lift exitFailure
-liftErr s (Right x) = return x
+liftErrIO :: Except a -> IO a
+liftErrIO = either (\e -> print e >> exitFailure) return
 
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)

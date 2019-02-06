@@ -108,7 +108,7 @@ data Err = ParseErr String
          | RepVarPatternErr VarName
          | CompilerErr String
          | PrintErr String
-         | NotImplementedError String
+         | NotImplementedErr String
   deriving (Eq)
 
 type Except a = Either Err a
@@ -134,6 +134,7 @@ instance Show Err where
     UnboundVarErr v -> "Unbound variable: " ++ show v
     RepVarPatternErr v -> "Repeated variable in pattern: " ++ show v
     CompilerErr s -> "Compiler bug! " ++ s
+    NotImplementedErr s -> "Not implemented: " ++ s
     PrintErr s -> "Print error: " ++ s
 
 instance Semigroup (FullEnv v t) where
