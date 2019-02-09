@@ -24,7 +24,7 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String }
 
 data TopEnv = TopEnv { varEnv  :: Vars
-                     , typeEnv :: FullEnv Type Kind
+                     , typeEnv :: FullEnv MType MetaVar
                      , valEnv  :: FullEnv TypedVal ()}
 
 data Pass a b v t = Pass
@@ -35,7 +35,7 @@ data Pass a b v t = Pass
 varPass :: Pass UExpr UExpr () ()
 varPass  = asIOPass checkBoundVarsExpr checkBoundVarsCmd
 
-typePass :: Pass UExpr Expr Type Kind
+typePass :: Pass UExpr Expr MType MetaVar
 typePass = asIOPass inferTypesExpr inferTypesCmd
 
 -- jitPass :: Pass Expr () () ()
@@ -46,11 +46,11 @@ evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
   (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env)  decls
   (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
-
   -- (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
   -- mapM writeDeclResult jitted
 
   mapM writeDeclResult typed
+
   return $ TopEnv varEnv' typeEnv' undefined
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
@@ -106,7 +106,7 @@ liftErrIO = either (\e -> print e >> throwIO Interrupt) return
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-updateEnv :: (VarName, Type, TypedVal) -> TopEnv -> TopEnv
+updateEnv :: (VarName, MType, TypedVal) -> TopEnv -> TopEnv
 updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
          , typeEnv = setLEnv (addFVar v t)   typeEnv
@@ -126,7 +126,7 @@ runMonad d = runInputTBehavior defaultBehavior defaultSettings d >> return ()
 
 initEnv = TopEnv mempty mempty mempty
 
-loadData :: String -> IO (TypedVal, Type)
+loadData :: String -> IO (TypedVal, MType)
 loadData fname = do
   contents <- readFile fname
   undefined

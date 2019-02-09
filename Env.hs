@@ -1,5 +1,5 @@
 module Env (Env (..), GVar (..), VarName,  newEnv, addFVar, addBVar, addBVars,
-            envDiff, isin, (!), fVars, toDeBruijn, numBound) where
+            envDiff, isin, (!), fVars, bVars, toDeBruijn, numBound) where
 
 import Data.List (elemIndex)
 import Data.Semigroup
@@ -28,6 +28,9 @@ envDiff (Env fvs1 _) (Env fvs2 _) = Env (M.difference fvs1 fvs2) []
 fVars :: Env i a -> [VarName]
 fVars (Env fvs _) = M.keys fvs
 
+bVars :: Env i a -> [a]
+bVars (Env _ bvs) = bvs
+
 numBound :: Env i a -> Int
 numBound (Env _ bvs) = length bvs
 
@@ -44,7 +47,9 @@ isin i (Env fvs bvs) = case i of
             Just x -> x
             Nothing -> error ("Lookup of " ++ show s ++
                               " failed! This is a compiler bug")
-  BV i -> bvs !! i
+  BV i -> if i < length(bvs)
+            then bvs !! i
+            else error "Env lookup index too large"
 
 toDeBruijn :: [VarName]->  GVar i -> GVar i
 toDeBruijn vs (FV v) = case elemIndex v vs of Just i  -> BV i

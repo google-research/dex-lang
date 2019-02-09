@@ -292,7 +292,7 @@ lowerType env ty = case ty of
   TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
   TabType t1 t2 -> TabType (recur t1) (recur t2)
-  MetaTypeVar m -> MetaTypeVar m
+  -- MetaTypeVar m -> MetaTypeVar m
   where recur = lowerType env
 
 updateLVars :: VarName -> BoundVars -> BoundVars
