@@ -57,7 +57,7 @@ data UExpr = ULit LitVal
 type IdxExpr = Var
 
 data LitVal = IntLit  Int
-            | RealLit Float
+            | RealLit Double
             | StrLit  String
                  deriving (Eq, Ord)
 

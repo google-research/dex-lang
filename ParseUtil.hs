@@ -42,7 +42,7 @@ space = void $     takeWhile1P (Just "white space") (`elem` " \t")
 int :: Parser Int
 int = L.signed (return ()) L.decimal
 
-real :: Parser Float
+real :: Parser Double
 real = L.signed (return ()) L.float
 
 lexeme :: Parser a -> Parser a

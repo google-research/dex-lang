@@ -1,0 +1,24 @@
+:t lam x: x
+
+:t lam x: sum for i: x.i
+
+:t let flip f x y = f y x in flip
+
+:t lam x: for i j: x.j.i
+
+:t lam f x: f x
+
+:t let id x = x
+   in id (id) (id 1)
+
+:t unpack x = iota 10 in sum x
+
+:t    unpack x = iota 10
+   in unpack y = iota 3
+   in (sum for i: x.i) + (sum for j: y.j)
+
+:t    unpack x = iota 10
+   in unpack y = iota 3
+   in sum for i: x.i + y.i
+
+:t unpack x = iota 10 in x

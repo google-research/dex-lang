@@ -1,0 +1,13 @@
+:t 1 + 2
+
+let double = lam x: x * 2
+ in double 10
+
+
+3 - 2
+
+:llvm unpack x = iota 100
+      in sum x
+
+unpack x = iota 100
+    in sum x

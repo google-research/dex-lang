@@ -1,0 +1,35 @@
+:t lam x: x
+A a. (a -> a)
+
+:t lam x: sum for i: x.i
+A a. (a=>Int -> Int)
+
+:t let flip f x y = f y x in flip
+A a b c. ((c -> (b -> a)) -> (b -> (c -> a)))
+
+:t lam x: for i j: x.j.i
+A a b c. (c=>b=>a -> b=>c=>a)
+
+:t lam f x: f x
+A a b. ((b -> a) -> (b -> a))
+
+:t let id x = x
+   in id (id) (id 1)
+A . Int
+
+:t unpack x = iota 10 in sum x
+A a. Int
+
+:t    unpack x = iota 10
+   in unpack y = iota 3
+   in (sum for i: x.i) + (sum for j: y.j)
+A a b. Int
+
+:t    unpack x = iota 10
+   in unpack y = iota 3
+   in sum for i: x.i + y.i
+Type error: existential variable leaked scope
+
+:t unpack x = iota 10 in x
+Type error: existential variable leaked scope
+

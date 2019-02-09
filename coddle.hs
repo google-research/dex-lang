@@ -15,10 +15,7 @@ import Parser
 import Typer
 import Util
 import Env
-import JIT
-
--- import Interpreter
--- import FlatType (exprToVal, cmdToVal, parseVal)
+-- import JIT
 
 type TypedVal = ()  -- until we get the interpreter back up
 
@@ -41,19 +38,20 @@ varPass  = asIOPass checkBoundVarsExpr checkBoundVarsCmd
 typePass :: Pass UExpr Expr Type Kind
 typePass = asIOPass inferTypesExpr inferTypesCmd
 
-jitPass :: Pass Expr () () ()
-jitPass  = Pass jitExpr jitCmd
+-- jitPass :: Pass Expr () () ()
+-- jitPass  = Pass jitExpr jitCmd
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
   (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env)  decls
   (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
-  (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
-  -- (final, valEnv')   <- fullPass (procDecl evalPass) (valEnv env)  typed
-  -- mapM writeDeclResult final
-  mapM writeDeclResult jitted
-  return $ TopEnv varEnv' typeEnv' undefined -- valEnv'
+
+  -- (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
+  -- mapM writeDeclResult jitted
+
+  mapM writeDeclResult typed
+  return $ TopEnv varEnv' typeEnv' undefined
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
@@ -100,7 +98,7 @@ writeDeclResult (TopDecl source _ instr) = do
     EvalCmd (CmdErr e)    -> printWithSource (show e)
     _ -> return ()
   where printWithSource :: String -> Driver ()
-        printWithSource s = outputStrLn $ source ++ "\n" ++ s ++ "\n"
+        printWithSource s = lift $ putStrLn $ source ++ "\n" ++ s ++ "\n"
 
 liftErrIO :: Except a -> IO a
 liftErrIO = either (\e -> print e >> throwIO Interrupt) return
