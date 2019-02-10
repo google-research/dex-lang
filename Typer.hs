@@ -112,7 +112,7 @@ check expr reqTy = case expr of
     return $ Get expr' idxExpr
   UUnpack _ bound body -> do
     (boundTy, bound', _) <- inferPartial bound
-    Meta i <- freshIdx -- skolem var here would give better error messages
+    Meta i <- hiddenFreshIdx -- skolem var here would give better error messages
     let updateEnv = setLEnv $ addBVar (instantiateType [Meta i] boundTy)
     (body', Constraints cs vs) <- capture $ local updateEnv (check body reqTy)
     (sub, newConstraints, flexVars) <- liftExcept $ solvePartial $
@@ -156,9 +156,11 @@ solvePartial (Constraints constraints vs) = do
     asConstraint (mv, t) = (Meta mv, t)
 
 generalize :: [MetaVar] -> MExpr -> MExpr
+generalize [] expr = expr
 generalize vs expr = TLam (map mvKind vs) (bindMetaExpr vs expr)
 
 generalizeTy :: [MetaVar] -> MType -> MType
+generalizeTy [] ty = ty
 generalizeTy vs ty = Forall (map mvKind vs) (bindMetaTy vs ty)
 
 mvKind :: MetaVar -> Kind
@@ -189,26 +191,6 @@ splitTab t = case t of
           addConstraint (t, i ==> v)
           return (i, v)
 
-instantiateType :: [MType] -> MType -> MType
-instantiateType ts t = case t of
-  Forall kinds body | nt == length kinds -> instantiateBody ts' body
-  Exists       body | nt == 1            -> instantiateBody ts' body
-  where nt = length ts
-        ts' = map Just ts
-
-instantiateBody :: [Maybe MType] -> MType -> MType
-instantiateBody env t = case t of
-  BaseType _  -> t
-  TypeVar (BV v) -> case env !! v of
-                      Just t' -> t'
-                      Nothing -> TypeVar (BV v)
-  ArrType a b -> ArrType (recur a) (recur b)
-  TabType a b -> TabType (recur a) (recur b)
-  Forall kinds body -> let env' = map (const Nothing) kinds ++ env
-                       in Forall kinds $ instantiateBody env' body
-  Meta _ -> t
-  where recur = instantiateBody env
-
 inc :: ConstrainMonad Int
 inc = do i <- get
          put $ i + 1
@@ -222,6 +204,11 @@ freshMeta kind = do i <- inc
 
 fresh = freshMeta TyKind
 freshIdx = freshMeta IdxSetKind
+
+hiddenFreshIdx :: ConstrainMonad MType
+hiddenFreshIdx = do i <- inc
+                    let v = MetaVar IdxSetKind i
+                    return $ Meta v
 
 bind :: MetaVar -> MType -> Except Subst
 bind v t | v `occursIn` t = Left InfiniteTypeErr

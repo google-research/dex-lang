@@ -15,7 +15,7 @@ import Parser
 import Typer
 import Util
 import Env
--- import JIT
+import JIT
 
 type TypedVal = ()  -- until we get the interpreter back up
 
@@ -38,18 +38,18 @@ varPass  = asIOPass checkBoundVarsExpr checkBoundVarsCmd
 typePass :: Pass UExpr Expr MType MetaVar
 typePass = asIOPass inferTypesExpr inferTypesCmd
 
--- jitPass :: Pass Expr () () ()
--- jitPass  = Pass jitExpr jitCmd
+jitPass :: Pass Expr () () ()
+jitPass  = Pass jitExpr jitCmd
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
   (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env)  decls
   (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
-  -- (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
-  -- mapM writeDeclResult jitted
+  (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
+  mapM writeDeclResult jitted
 
-  mapM writeDeclResult typed
+  -- mapM writeDeclResult typed
 
   return $ TopEnv varEnv' typeEnv' undefined
   where

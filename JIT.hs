@@ -25,36 +25,49 @@ import Data.Int
 import Foreign.Ptr hiding (Ptr)
 import Data.ByteString.Char8 (unpack)
 
+import Typer
 import Syntax
 import Env
 
-foreign import ccall "dynamic" haskFun :: FunPtr Int32 -> Int32
+foreign import ccall "dynamic" haskFun :: FunPtr Int64 -> Int64
 
 type Compiled = L.Module
-type JITEnv = FullEnv CompileVal RangeVal
-data CompileVal = Operand L.Operand
-                | Pointer Ptr
-                | Builtin BuiltinFun [CompileVal]
-                | LamVal JITEnv Expr
-                | ExPackage L.Operand CompileVal
+type JitType = GenType NumElems
+type JitEnv = FullEnv CompileVal JitType
 
-data RangeVal = RangeVal L.Operand | NoRange
-
-type CompileApp = [CompileVal] -> CompileM CompileVal
+data CompileVal = ScalarVal BaseType Operand
+                | IdxVal Long
+                | TabVal Table JitType
+                | LamVal  JitEnv Expr
+                | TLamVal JitEnv Expr
+                | BuiltinLam BuiltinFun [JitType] [CompileVal]
+                | ExPackage NumElems CompileVal
 
 type Operand = L.Operand
-newtype Ptr = Ptr Operand
-
-
-data BuiltinFun = BuiltinFun Int CompileApp
-type Instr = L.Named L.Instruction
 type Block = L.BasicBlock
+type Instr = L.Named L.Instruction
+
+data Table = Table CharPtr NumElems Sizes
+data Sizes = ConstSize Int | UniformSize ElemSize | ManySizes CharPtr
+
+newtype CharPtr = CharPtr Operand
+newtype LongPtr = LongPtr Operand
+newtype Long = Long Operand
+
+type NumElems = Long
+type ElemSize = Long
+type Index    = Long
+
+type CompileApp  = [JitType] -> [CompileVal] -> CompileM CompileVal
+data BuiltinFun  = BuiltinFun Int Int CompileApp
+
 data CompileState = CompileState { nameCounter :: Int
                                  , curBlocks :: [Block]
                                  , curInstrs :: [Instr]
+                                 , varDecls  :: [Instr]
                                  , curBlockName :: L.Name }
 
-type CompileM a = ReaderT JITEnv (StateT CompileState (Either Err)) a
+type CompileM a = ReaderT JitEnv (StateT CompileState (Either Err)) a
 
 jitExpr :: Expr -> FullEnv () () -> IO ((), ())
 jitExpr expr env = return ((),())
@@ -102,18 +115,17 @@ makeModule blocks = mod
                           , L.moduleDefinitions = [L.GlobalDefinition fundef] }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
-                                , L.returnType  = intTy
+                                , L.returnType  = longTy
                                 , L.basicBlocks = blocks }
 
-
-runCompileM :: JITEnv -> CompileM a -> Except [Block]
+runCompileM :: JitEnv -> CompileM a -> Except [Block]
 runCompileM env m = do
-  CompileState _ blocks [] _ <- execStateT (runReaderT m env) initState
+  CompileState _ blocks [] [] _ <- execStateT (runReaderT m env) initState
   return $ reverse blocks
-  where initState = CompileState 0 [] [] (L.Name "main_block")
+  where initState = CompileState 0 [] [] [] (L.Name "main_block")
 
-runJitted :: FunPtr a -> Int32
-runJitted fn = haskFun (castFunPtr fn :: FunPtr Int32)
+runJitted :: FunPtr a -> Int64
+runJitted fn = haskFun (castFunPtr fn :: FunPtr Int64)
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
@@ -123,60 +135,84 @@ compileModule expr = compile expr >>= finalReturn
 
 compile :: Expr -> CompileM CompileVal
 compile expr = case expr of
-  Lit x -> return . Operand . L.ConstantOperand . litVal $ x
+  Lit x -> return (litVal x)
   Var v -> asks $ (! v) . lEnv
   Let _ bound body -> do x <- compile bound
                          local (setLEnv $ addBVar x) (compile body)
-  Lam _ body -> do env <- ask
-                   return $ LamVal env body
-  App e1 e2  -> do f <- compile e1
-                   x <- compile e2
-                   case f of
-                     LamVal env body ->
-                       withEnv (setLEnv (addBVar x) env) (compile body)
-                     Builtin b vs -> compileBuiltin b (x:vs)
-  For a body          -> throwError $ NotImplementedErr "for"
-  Get e ie            -> throwError $ NotImplementedErr "get"
-  TLam kinds expr     -> compile expr
-  TApp expr ts        -> compile expr
-  Unpack t bound body -> do
+  Lam a body -> do { env <- ask; return (LamVal env body) }
+  App e1 e2  -> do
+    f <- compile e1
+    x <- compile e2
+    case f of
+      LamVal env body -> withEnv (setLEnv (addBVar x) env) (compile body)
+      BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
+  For a body -> do { t <- compileType a; compileFor t body }
+  Get e ie -> do x <- compile e
+                 IdxVal i <- asks $ (! ie) . lEnv
+                 compileGet x i
+  TLam kinds body -> do { env <- ask; return (TLamVal env body) }
+  TApp e ts -> do
+    f <- compile e
+    ts' <- mapM compileType ts
+    case f of
+      TLamVal env body -> withEnv (setTEnv (addBVars ts') env) (compile body)
+      BuiltinLam builtin [] vs -> compileBuiltin builtin ts' vs
+  Unpack bound body -> do
     ExPackage i x <- compile bound
-    let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (RangeVal i))
+    let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
     local updateEnv (compile body)
 
   where
-    withEnv :: JITEnv -> CompileM a -> CompileM a
-    withEnv env = local (\_ -> env)
+    withEnv :: JitEnv -> CompileM a -> CompileM a
+    withEnv env = local (const env)
 
-compileBuiltin :: BuiltinFun -> [CompileVal] -> CompileM CompileVal
-compileBuiltin b@(BuiltinFun numArgs compileRule) args =
-    if length args < numArgs
-      then return $ Builtin b args
-      else compileRule args
+compileType :: Type -> CompileM JitType
+compileType ty = do env <- asks (bVars . tEnv)
+                    return $ instantiateBody (map Just env) (noLeaves ty)
 
-litVal :: LitVal -> C.Constant
+compileBuiltin :: BuiltinFun -> [JitType] -> [CompileVal] -> CompileM CompileVal
+compileBuiltin b@(BuiltinFun numTypes numArgs compileRule) types args =
+    if length types < numTypes || length args < numArgs
+      then return $ BuiltinLam b types args
+      else compileRule types args
+
+compileFor :: JitType -> Expr -> CompileM CompileVal
+compileFor (Meta n) forBody = do
+  tab@(Table ptr _ _) <- newTable n
+  let body iPtr = do i <- loadCell iPtr
+                     let updateEnv = setLEnv $ addBVar (IdxVal i)
+                     bodyVal <- local updateEnv $ compile forBody
+                     writeTable tab i bodyVal
+  addForILoop n body
+  return $ TabVal (Table ptr n (ConstSize 8)) (BaseType IntType)
+
+compileGet :: CompileVal -> Long -> CompileM CompileVal
+compileGet (TabVal tab elemTy) i = readTable tab i
+
+litVal :: LitVal -> CompileVal
 litVal lit = case lit of
-  IntLit x -> C.Int 32 (fromIntegral x)
-  RealLit x -> C.Float (L.Single x)
+  IntLit  x -> ScalarVal IntType  $ L.ConstantOperand $ C.Int 64 (fromIntegral x)
+  RealLit x -> ScalarVal RealType $ L.ConstantOperand $ C.Float (L.Double x)
 
 -- --- utilities ---
 
-addLoop :: CompileM Operand -> CompileM () -> CompileM ()
-addLoop cond body = do block <- newBlock
-                       body
+addLoop :: CompileM Long -> CompileM a -> CompileM a
+addLoop cond body = do block <- newBlock  -- TODO: handle zero iters case
+                       val <- body
                        c <- cond
                        maybeLoop c block
+                       return val
 
 newBlock :: CompileM L.Name
 newBlock = do next <- freshName
               finishBlock (L.Br next []) next
               return next
 
-maybeLoop :: Operand -> L.Name -> CompileM ()
-maybeLoop c loop = do next <- freshName
-                      finishBlock (L.CondBr c loop next []) next
+maybeLoop :: Long -> L.Name -> CompileM ()
+maybeLoop (Long c) loop = do next <- freshName
+                             finishBlock (L.CondBr c loop next []) next
 
-addForILoop :: Operand -> (Ptr -> CompileM ()) -> CompileM ()
+addForILoop :: Long -> (LongPtr -> CompileM ()) -> CompileM ()
 addForILoop n body = do
   i <- newIntCell 0
   let cond  = loadCell i >>= (`lessThan` n)
@@ -184,18 +220,19 @@ addForILoop n body = do
   addLoop cond body'
   where inc i = updateCell i $ add (litInt 1)
 
-compileSum :: [CompileVal] -> CompileM CompileVal
-compileSum [Pointer ptr] = do
+compileSum :: [JitType] -> [CompileVal] -> CompileM CompileVal
+compileSum [Meta _] [TabVal tab@(Table ptr n sizes) _] = do
   sum <- newIntCell 0
   let body iPtr = do i <- loadCell iPtr
-                     x <- readArray ptr i
-                     updateCell sum (add x)
-  addForILoop (litInt 100) body
-  ans <- loadCell sum
-  return $ Operand ans
+                     ScalarVal _ x <- readTable tab i
+                     updateCell sum (add (Long x))
+  addForILoop n body
+  (Long ans) <- loadCell sum
+  return $ ScalarVal IntType ans
 
+-- TODO: add var decls
 finalReturn :: CompileVal -> CompileM ()
-finalReturn (Operand ret) = finishBlock (L.Ret (Just ret) []) (L.Name "")
+finalReturn (ScalarVal _ ret) = finishBlock (L.Ret (Just ret) []) (L.Name "")
 
 appendInstr :: Instr -> CompileM ()
 appendInstr instr = modify updateState
@@ -208,9 +245,9 @@ freshName = do i <- gets nameCounter
 
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
 finishBlock term newName = do
-  CompileState count blocks instrs oldName <- get
+  CompileState count blocks instrs decls oldName <- get
   let newBlock = L.BasicBlock oldName (reverse instrs) (L.Do term)
-  put $ CompileState count (newBlock:blocks) [] newName
+  put $ CompileState count (newBlock:blocks) [] decls newName
 
 evalInstr :: L.Type -> L.Instruction -> CompileM Operand
 evalInstr ty instr = do
@@ -218,76 +255,86 @@ evalInstr ty instr = do
   appendInstr $ x L.:= instr
   return $ L.LocalReference ty x
 
-litInt :: Int -> Operand
-litInt x = L.ConstantOperand $ C.Int 32 (fromIntegral x)
+litInt :: Int -> Long
+litInt x = Long $ L.ConstantOperand $ C.Int 64 (fromIntegral x)
 
-add :: Operand -> Operand -> CompileM Operand
-add x y = evalInstr intTy $ L.Add False False x y []
+add :: Long -> Long -> CompileM Long
+add (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.Add False False x y []
 
-newIntCell :: Int -> CompileM Ptr
+newIntCell :: Int -> CompileM LongPtr
 newIntCell x = do
-  ptr <- liftM Ptr $ evalInstr intTy $ L.Alloca intTy Nothing 0 [] -- TODO: add to top block!
+  ptr <- liftM LongPtr $ evalInstr longTy $
+           L.Alloca longTy Nothing 0 [] -- TODO: add to top block!
   writeCell ptr (litInt x)
   return ptr
 
-loadCell :: Ptr -> CompileM Operand
-loadCell (Ptr ptr) = evalInstr intTy $ L.Load False ptr Nothing 0 []
+loadCell :: LongPtr -> CompileM Long
+loadCell (LongPtr ptr) =
+  liftM Long $ evalInstr longTy $ L.Load False ptr Nothing 0 []
 
-writeCell :: Ptr -> Operand -> CompileM ()
-writeCell (Ptr ptr) x = appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
+writeCell :: LongPtr -> Long -> CompileM ()
+writeCell (LongPtr ptr) (Long x) =
+  appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
-updateCell :: Ptr -> (Operand -> CompileM Operand) -> CompileM ()
+updateCell :: LongPtr -> (Long -> CompileM Long) -> CompileM ()
 updateCell ptr f = loadCell ptr >>= f >>= writeCell ptr
 
-newArray :: Operand -> CompileM Ptr
-newArray n = liftM Ptr $ evalInstr intPtrTy $ L.Alloca intTy (Just n) 0 []
+newTable :: NumElems -> CompileM Table
+newTable n@(Long op) = do
+  ptr <- evalInstr intPtrTy $ L.Alloca longTy (Just op) 0 []
+  return $ Table (CharPtr ptr) n (ConstSize 8)
 
-readArray :: Ptr -> Operand -> CompileM Operand
-readArray ptr idx = arrayPtr ptr idx >>= loadCell
+readTable :: Table -> Index -> CompileM CompileVal
+readTable t idx = do CharPtr ptr <- arrayPtr t idx
+                     Long ans <- loadCell (LongPtr ptr)
+                     return $ ScalarVal IntType ans
 
-writeArray :: Ptr -> Operand -> Operand -> CompileM ()
-writeArray ptr idx val = arrayPtr ptr idx >>= flip writeCell val
+writeTable :: Table -> Index -> CompileVal -> CompileM ()
+writeTable tab idx val =
+  case val of
+    ScalarVal IntType val' -> do (CharPtr ptr) <- arrayPtr tab idx
+                                 writeCell (LongPtr ptr) (Long val')
 
-arrayPtr :: Ptr -> Operand -> CompileM Ptr
-arrayPtr (Ptr ptr) idx = liftM Ptr $ evalInstr intPtrTy $
-                            L.GetElementPtr False ptr [idx] []
+arrayPtr :: Table -> Index -> CompileM CharPtr
+arrayPtr (Table (CharPtr ptr) _ _ ) (Long idx) =
+  liftM CharPtr $ evalInstr intPtrTy $ L.GetElementPtr False ptr [idx] []
 
-lessThan :: Operand -> Operand -> CompileM Operand
-lessThan x y = evalInstr intTy $ L.ICmp L.SLT x y []
+lessThan :: Long -> Long -> CompileM Long
+lessThan (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.ICmp L.SLT x y []
 
-intTy :: L.Type
-intTy = L.IntegerType 32
-
-intPtrTy :: L.Type
-intPtrTy = L.ptr intTy
+intPtrTy = L.ptr longTy
+longTy = L.IntegerType 64
+realTy = L.FloatingPointType L.DoubleFP
 
 -- --- builtins ---
 
-builtinEnv :: JITEnv
+builtinEnv :: JitEnv
 builtinEnv = FullEnv builtins mempty
 
 builtins :: Env Var CompileVal
 builtins = newEnv
-  [ ("add" , asBuiltin 2 $ compileBinop (\x y -> L.Add False False x y []))
-  , ("mul" , asBuiltin 2 $ compileBinop (\x y -> L.Mul False False x y []))
-  , ("sub" , asBuiltin 2 $ compileBinop (\x y -> L.Sub False False x y []))
-  , ("iota", asBuiltin 1 $ compileIota)
-  , ("sum" , asBuiltin 1 $ compileSum)
+  [ ("add" , asBuiltin 0 2 $ compileBinop (\x y -> L.Add False False x y []))
+  , ("mul" , asBuiltin 0 2 $ compileBinop (\x y -> L.Mul False False x y []))
+  , ("sub" , asBuiltin 0 2 $ compileBinop (\x y -> L.Sub False False x y []))
+  , ("iota", asBuiltin 0 1 $ compileIota)
+  , ("sum" , asBuiltin 1 1 $ compileSum)
   ]
 
-compileIota :: [CompileVal] -> CompileM CompileVal
-compileIota [Operand n] = do
-  ptr <- newArray n
-  let body iPtr = do i <- loadCell iPtr
-                     writeArray ptr i i
+compileIota :: CompileApp
+compileIota [] [ScalarVal b nOp] = do
+  tab@(Table ptr _ _) <- newTable n
+  let body iPtr = do (Long i) <- loadCell iPtr
+                     writeTable tab (Long i) (ScalarVal IntType i)
   addForILoop n body
-  return $ ExPackage (litInt 100) (Pointer ptr)
+  return $ ExPackage n (TabVal tab (BaseType IntType))
+  where n = Long nOp
 
-asBuiltin :: Int -> CompileApp -> CompileVal
-asBuiltin n f = Builtin (BuiltinFun n f) []
+asBuiltin :: Int -> Int -> CompileApp -> CompileVal
+asBuiltin nt nv f = BuiltinLam (BuiltinFun nt nv f) [] []
 
 compileBinop :: (Operand -> Operand -> L.Instruction) -> CompileApp
 compileBinop makeInstr = compile
   where
-    compile :: [CompileVal] -> CompileM CompileVal
-    compile [Operand x, Operand y] = liftM Operand $ evalInstr intTy (makeInstr y x)
+    compile :: CompileApp
+    compile [] [ScalarVal _ x, ScalarVal _ y] = liftM (ScalarVal IntType) $
+        evalInstr longTy (makeInstr y x)

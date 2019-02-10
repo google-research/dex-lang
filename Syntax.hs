@@ -7,7 +7,8 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                Vars, FullEnv (..), setLEnv, setTEnv,
                fvsUExpr, (-->), (==>),
                subTy, subExpr, bindMetaTy, bindMetaExpr,
-               noLeaves, checkNoLeaves, liftExcept, assertEq) where
+               noLeaves, checkNoLeaves, liftExcept, assertEq,
+               instantiateType, instantiateBody) where
 
 import Util
 import Record
@@ -260,7 +261,7 @@ showExpr env@(depth, kinds) expr = case expr of
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
   For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ recurWith e
   Get e ie     -> recur e ++ "." ++ name ie
-  Unpack e1 e2 -> paren $ "unpack {" ++ lVarNames !! depth ++ "::"
+  Unpack e1 e2 -> paren $ "unpack {" ++ lVarNames !! depth
                              ++ ", " ++ tVarNames !! (length kinds)
                              ++ "} = " ++ recur e1
                              ++ " in " ++ showExpr (depth+1, IdxSetKind:kinds) e2
@@ -379,3 +380,23 @@ checkNoLeaves = traverse check
 noLeaves :: Traversable f => f a -> f b
 noLeaves x = case checkNoLeaves x of Right x' -> x'
                                      Left e -> error $ show e
+
+instantiateType :: [GenType a] -> GenType a -> GenType a
+instantiateType ts t = case t of
+  Forall kinds body | nt == length kinds -> instantiateBody ts' body
+  Exists       body | nt == 1            -> instantiateBody ts' body
+  where nt = length ts
+        ts' = map Just ts
+
+instantiateBody :: [Maybe (GenType a)] -> GenType a -> GenType a
+instantiateBody env t = case t of
+  BaseType _  -> t
+  TypeVar (BV v) -> case env !! v of
+                      Just t' -> t'
+                      Nothing -> TypeVar (BV v)
+  ArrType a b -> ArrType (recur a) (recur b)
+  TabType a b -> TabType (recur a) (recur b)
+  Forall kinds body -> let env' = map (const Nothing) kinds ++ env
+                       in Forall kinds $ instantiateBody env' body
+  Meta _ -> t
+  where recur = instantiateBody env

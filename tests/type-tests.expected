@@ -15,15 +15,15 @@ A a b. ((b -> a) -> (b -> a))
 
 :t let id x = x
    in id (id) (id 1)
-A . Int
+Int
 
 :t unpack x = iota 10 in sum x
-A a. Int
+Int
 
 :t    unpack x = iota 10
    in unpack y = iota 3
    in (sum for i: x.i) + (sum for j: y.j)
-A a b. Int
+Int
 
 :t    unpack x = iota 10
    in unpack y = iota 3

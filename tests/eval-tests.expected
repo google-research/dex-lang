@@ -1,12 +1,18 @@
 :p 1 + 2
+3
 
 :p let double = lam x: x * 2
    in double 10
+20
 
 :p unpack x = iota 100 in sum x
+4950
 
 :p unpack x = iota 100 in sum (for i: x.i)
+4950
 
 :p let vdot x y = sum (for i: x.i * y.i)
    in unpack x = iota 3
    in vdot x x
+5
+
