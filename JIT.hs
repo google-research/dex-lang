@@ -16,6 +16,7 @@ import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.IntegerPredicate as L
 import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.CallingConvention as L
 import qualified LLVM.Module as Mod
 import qualified LLVM.Analysis as Mod
 import qualified LLVM.ExecutionEngine as EE
@@ -24,6 +25,7 @@ import LLVM.Internal.Context
 import Data.Int
 import Foreign.Ptr hiding (Ptr)
 import Data.ByteString.Char8 (unpack)
+import Data.ByteString.Short (ShortByteString)
 
 import Typer
 import Syntax
@@ -36,13 +38,14 @@ type JitType = GenType NumElems
 type JitEnv = FullEnv CompileVal JitType
 
 data CompileVal = ScalarVal BaseType Operand
-                | IdxVal Long
+                | IdxVal Index
                 | TabVal Table JitType
                 | LamVal  JitEnv Expr
                 | TLamVal JitEnv Expr
                 | BuiltinLam BuiltinFun [JitType] [CompileVal]
                 | ExPackage NumElems CompileVal
 
+type BString = ShortByteString
 type Operand = L.Operand
 type Block = L.BasicBlock
 type Instr = L.Named L.Instruction
@@ -66,6 +69,8 @@ data CompileState = CompileState { nameCounter :: Int
                                  , curInstrs :: [Instr]
                                  , varDecls  :: [Instr]
                                  , curBlockName :: L.Name }
+
+data ExternFunSpec = ExternFunSpec BString L.Type [L.Type] [BString]
 
 type CompileM a = ReaderT JitEnv (StateT CompileState (Either Err)) a
 
@@ -112,11 +117,30 @@ makeModule :: [Block] -> L.Module
 makeModule blocks = mod
   where
     mod = L.defaultModule { L.moduleName = "test"
-                          , L.moduleDefinitions = [L.GlobalDefinition fundef] }
+                          , L.moduleDefinitions =
+                              [ externDecl doubleFun
+                              , L.GlobalDefinition fundef] }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
                                 , L.returnType  = longTy
                                 , L.basicBlocks = blocks }
+
+externDecl :: ExternFunSpec -> L.Definition
+externDecl (ExternFunSpec fname retTy argTys argNames) =
+  L.GlobalDefinition $ L.functionDefaults {
+    L.name        = L.Name fname
+  , L.parameters  = ([L.Parameter t (L.Name s) []
+                     | (t, s) <- zip argTys argNames], False)
+  , L.returnType  = retTy
+  , L.basicBlocks = []
+  }
+
+-- mallocDecl = L.GlobalDefinition $ L.functionDefaults {
+--     L.name        = L.Name "mallock"
+--   , L.parameters  = ([L.Parameter longTy (L.Name "size") []], False)
+--   , L.returnType  = charPtrTy
+--   , L.basicBlocks = []
+--   }
 
 runCompileM :: JitEnv -> CompileM a -> Except [Block]
 runCompileM env m = do
@@ -186,7 +210,7 @@ compileFor (Meta n) forBody = do
   addForILoop n body
   return $ TabVal (Table ptr n (ConstSize 8)) (BaseType IntType)
 
-compileGet :: CompileVal -> Long -> CompileM CompileVal
+compileGet :: CompileVal -> Index -> CompileM CompileVal
 compileGet (TabVal tab elemTy) i = readTable tab i
 
 litVal :: LitVal -> CompileVal
@@ -261,6 +285,9 @@ litInt x = Long $ L.ConstantOperand $ C.Int 64 (fromIntegral x)
 add :: Long -> Long -> CompileM Long
 add (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.Add False False x y []
 
+mul :: Long -> Long -> CompileM Long
+mul (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.Mul False False x y []
+
 newIntCell :: Int -> CompileM LongPtr
 newIntCell x = do
   ptr <- liftM LongPtr $ evalInstr longTy $
@@ -284,6 +311,9 @@ newTable n@(Long op) = do
   ptr <- evalInstr intPtrTy $ L.Alloca longTy (Just op) 0 []
   return $ Table (CharPtr ptr) n (ConstSize 8)
 
+-- newTable n = do ptr <- malloc n (litInt 8)
+--                 return $ Table ptr n (ConstSize 8)
+
 readTable :: Table -> Index -> CompileM CompileVal
 readTable t idx = do CharPtr ptr <- arrayPtr t idx
                      Long ans <- loadCell (LongPtr ptr)
@@ -299,12 +329,34 @@ arrayPtr :: Table -> Index -> CompileM CharPtr
 arrayPtr (Table (CharPtr ptr) _ _ ) (Long idx) =
   liftM CharPtr $ evalInstr intPtrTy $ L.GetElementPtr False ptr [idx] []
 
+-- malloc :: NumElems -> ElemSize -> CompileM CharPtr
+-- malloc n size = do
+--   -- Long numBytes <- mul n size
+--   let (Long numBytes) = litInt 1000
+--   let instr = L.Call Nothing L.C [] mallocFun [(numBytes ,[])] [] []
+--   ptr <- evalInstr charPtrTy instr
+--   return $ CharPtr ptr
+--   where mallocFun = Right $ L.ConstantOperand $ C.GlobalReference
+--                       mallocTy (L.Name "mallock")
+--         mallocTy = L.ptr $ L.FunctionType charPtrTy [longTy] False
+
 lessThan :: Long -> Long -> CompileM Long
 lessThan (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.ICmp L.SLT x y []
 
+charPtrTy = L.ptr L.VoidType
 intPtrTy = L.ptr longTy
 longTy = L.IntegerType 64
 realTy = L.FloatingPointType L.DoubleFP
+
+funTy :: L.Type -> [L.Type] -> L.Type
+funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
+
+externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
+externCall (ExternFunSpec fname retTy argTys _) args =
+  L.Call Nothing L.C [] fun args' [] []
+  where fun = Right $ L.ConstantOperand $ C.GlobalReference
+                         (funTy longTy [longTy]) (L.Name fname)
+        args' = [(x ,[]) | x <- args]
 
 -- --- builtins ---
 
@@ -318,7 +370,14 @@ builtins = newEnv
   , ("sub" , asBuiltin 0 2 $ compileBinop (\x y -> L.Sub False False x y []))
   , ("iota", asBuiltin 0 1 $ compileIota)
   , ("sum" , asBuiltin 1 1 $ compileSum)
+  , ("doubleit", asBuiltin 0 1 $ compileDoubleit)
   ]
+
+compileDoubleit :: CompileApp
+compileDoubleit [] [ScalarVal IntType x] =
+  liftM (ScalarVal IntType) $ evalInstr longTy (externCall doubleFun [x])
+
+doubleFun = ExternFunSpec "doubleit" longTy [longTy] ["x"]
 
 compileIota :: CompileApp
 compileIota [] [ScalarVal b nOp] = do

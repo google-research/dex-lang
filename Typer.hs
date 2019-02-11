@@ -363,6 +363,7 @@ builtinEnv = newEnv $
     , ("reduce", reduceType)
     , ("iota", iotaType)
     , ("sum", sumType)
+    , ("doubleit", int --> int)
     ]
   where
     binOpType    = int --> int --> int

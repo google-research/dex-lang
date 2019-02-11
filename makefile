@@ -1,5 +1,8 @@
-coddle: *.hs
-	ghc coddle.hs
+coddle: *.hs codlib.so
+	ghc codlib.so coddle.hs
+
+codlib.so: codlib.c
+	gcc -fPIC -shared codlib.c -o codlib.so
 
 tests/%.out: tests/%.cd coddle
 	./coddle $< > $@

@@ -326,4 +326,4 @@ builtinVars :: Env Var ()
 builtinVars = newEnv [(v, ()) | v <-
   ["add", "sub", "mul", "pow", "exp", "log",
    "sqrt", "sin", "cos", "tan", "reduce", "iota",
-   "sum"] ]
+   "sum", "doubleit"] ]

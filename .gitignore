@@ -6,3 +6,4 @@ test.db
 *.prof
 test-script.cd
 *.out
+*.so
