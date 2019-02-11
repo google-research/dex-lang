@@ -49,8 +49,6 @@ evalSource env source = do
   (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
   mapM writeDeclResult jitted
 
-  -- mapM writeDeclResult typed
-
   return $ TopEnv varEnv' typeEnv' undefined
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))

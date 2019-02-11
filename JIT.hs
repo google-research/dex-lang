@@ -21,9 +21,11 @@ import qualified LLVM.Module as Mod
 import qualified LLVM.Analysis as Mod
 import qualified LLVM.ExecutionEngine as EE
 import LLVM.Internal.Context
+import LLVM.Pretty (ppllvm)
 
 import Data.Int
 import Foreign.Ptr hiding (Ptr)
+import qualified Data.Text.Lazy as DT
 import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Short (ShortByteString)
 
@@ -82,6 +84,7 @@ jitCmd (Command cmdName expr) env = case cmdName of
     GetLLVM -> case lowerLLVM expr of
                  Left e -> return $ CmdErr e
                  Right m -> liftM CmdResult (showLLVM m)
+                 -- Right m -> return $ CmdResult (DT.unpack $ ppllvm m)
     EvalExpr -> case lowerLLVM expr of
                  Left e -> return $ CmdErr e
                  Right m -> liftM CmdResult (evalJit m)
@@ -119,6 +122,7 @@ makeModule blocks = mod
     mod = L.defaultModule { L.moduleName = "test"
                           , L.moduleDefinitions =
                               [ externDecl doubleFun
+                              , externDecl mallocFun
                               , L.GlobalDefinition fundef] }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
@@ -134,13 +138,6 @@ externDecl (ExternFunSpec fname retTy argTys argNames) =
   , L.returnType  = retTy
   , L.basicBlocks = []
   }
-
--- mallocDecl = L.GlobalDefinition $ L.functionDefaults {
---     L.name        = L.Name "mallock"
---   , L.parameters  = ([L.Parameter longTy (L.Name "size") []], False)
---   , L.returnType  = charPtrTy
---   , L.basicBlocks = []
---   }
 
 runCompileM :: JitEnv -> CompileM a -> Except [Block]
 runCompileM env m = do
@@ -290,7 +287,7 @@ mul (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.Mul False False x y []
 
 newIntCell :: Int -> CompileM LongPtr
 newIntCell x = do
-  ptr <- liftM LongPtr $ evalInstr longTy $
+  ptr <- liftM LongPtr $ evalInstr intPtrTy $
            L.Alloca longTy Nothing 0 [] -- TODO: add to top block!
   writeCell ptr (litInt x)
   return ptr
@@ -307,12 +304,10 @@ updateCell :: LongPtr -> (Long -> CompileM Long) -> CompileM ()
 updateCell ptr f = loadCell ptr >>= f >>= writeCell ptr
 
 newTable :: NumElems -> CompileM Table
-newTable n@(Long op) = do
-  ptr <- evalInstr intPtrTy $ L.Alloca longTy (Just op) 0 []
+newTable n = do
+  (Long numBytes) <- mul n (litInt 8)
+  ptr <- evalInstr charPtrTy (externCall mallocFun [numBytes])
   return $ Table (CharPtr ptr) n (ConstSize 8)
-
--- newTable n = do ptr <- malloc n (litInt 8)
---                 return $ Table ptr n (ConstSize 8)
 
 readTable :: Table -> Index -> CompileM CompileVal
 readTable t idx = do CharPtr ptr <- arrayPtr t idx
@@ -327,23 +322,13 @@ writeTable tab idx val =
 
 arrayPtr :: Table -> Index -> CompileM CharPtr
 arrayPtr (Table (CharPtr ptr) _ _ ) (Long idx) =
-  liftM CharPtr $ evalInstr intPtrTy $ L.GetElementPtr False ptr [idx] []
-
--- malloc :: NumElems -> ElemSize -> CompileM CharPtr
--- malloc n size = do
---   -- Long numBytes <- mul n size
---   let (Long numBytes) = litInt 1000
---   let instr = L.Call Nothing L.C [] mallocFun [(numBytes ,[])] [] []
---   ptr <- evalInstr charPtrTy instr
---   return $ CharPtr ptr
---   where mallocFun = Right $ L.ConstantOperand $ C.GlobalReference
---                       mallocTy (L.Name "mallock")
---         mallocTy = L.ptr $ L.FunctionType charPtrTy [longTy] False
+  liftM CharPtr $ evalInstr charPtrTy $ L.GetElementPtr False ptr [idx] []
 
 lessThan :: Long -> Long -> CompileM Long
 lessThan (Long x) (Long y) = liftM Long $ evalInstr longTy $ L.ICmp L.SLT x y []
 
-charPtrTy = L.ptr L.VoidType
+-- charPtrTy = L.ptr L.VoidType
+charPtrTy = L.ptr longTy
 intPtrTy = L.ptr longTy
 longTy = L.IntegerType 64
 realTy = L.FloatingPointType L.DoubleFP
@@ -355,8 +340,10 @@ externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
 externCall (ExternFunSpec fname retTy argTys _) args =
   L.Call Nothing L.C [] fun args' [] []
   where fun = Right $ L.ConstantOperand $ C.GlobalReference
-                         (funTy longTy [longTy]) (L.Name fname)
+                         (funTy retTy argTys) (L.Name fname)
         args' = [(x ,[]) | x <- args]
+
+mallocFun = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
 
 -- --- builtins ---
 

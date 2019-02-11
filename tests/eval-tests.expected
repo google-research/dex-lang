@@ -5,14 +5,14 @@
    in double 10
 20
 
-:p unpack x = iota 100 in sum x
-4950
+:p doubleit 3
+6
 
 :p unpack x = iota 100 in sum (for i: x.i)
 4950
 
-:p let vdot x y = sum (for i: x.i * y.i)
+:p let vdot x y = sum (for i: x.i * y.i * 2)
    in unpack x = iota 3
    in vdot x x
-5
+10
 

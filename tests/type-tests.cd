@@ -22,3 +22,8 @@
    in sum for i: x.i + y.i
 
 :t unpack x = iota 10 in x
+
+-- yields 'compiler bug'. Should be a different sort of error
+-- :t unpack x = iota 3
+--    in let y = for i j: x.i * x.i
+--       in sum (for i: sum (y.i))

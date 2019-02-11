@@ -1,9 +1,10 @@
+#include "stdio.h"
 #include "stdlib.h"
 
 long doubleit(long x) {
   return x + x;
 }
 
-void* malloc_cod(long nbytes) {
+long* malloc_cod(long nbytes) {
   return malloc(nbytes);
 }

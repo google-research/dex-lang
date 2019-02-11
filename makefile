@@ -4,11 +4,9 @@ coddle: *.hs codlib.so
 codlib.so: codlib.c
 	gcc -fPIC -shared codlib.c -o codlib.so
 
-tests/%.out: tests/%.cd coddle
-	./coddle $< > $@
-	diff tests/$*.expected $@
+%: tests/%.cd coddle
+	./coddle $< > tests/$*.out
+	diff tests/$*.expected tests/$*.out
 	echo $* OK
 
-test: tests/type-tests.out \
-      tests/eval-tests.out
-	rm $^
+tests: type-tests eval-tests

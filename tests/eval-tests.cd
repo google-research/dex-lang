@@ -3,10 +3,14 @@
 :p let double = lam x: x * 2
    in double 10
 
-:p unpack x = iota 100 in sum x
+:p doubleit 3
 
 :p unpack x = iota 100 in sum (for i: x.i)
 
-:p let vdot x y = sum (for i: x.i * y.i)
+:p let vdot x y = sum (for i: x.i * y.i * 2)
    in unpack x = iota 3
    in vdot x x
+
+-- :p unpack x = iota 3
+--    in let y = for i j: x.i * x.j
+--       in sum (for i: sum (y.i))
