@@ -29,6 +29,8 @@ import qualified Data.Text.Lazy as DT
 import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Short (ShortByteString)
 
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
+
 import Typer
 import Syntax
 import Env
@@ -91,6 +93,13 @@ jitCmd (Command cmdName expr) env = case cmdName of
     EvalExpr -> case lowerLLVM expr of
                  Left e -> return $ CmdErr e
                  Right m -> liftM CmdResult (evalJit m)
+    TimeIt -> case lowerLLVM expr of
+                 Left e -> return $ CmdErr e
+                 Right m -> do
+                   t1 <- getCurrentTime
+                   ans <- evalJit m
+                   t2 <- getCurrentTime
+                   return $ CmdResult (show (t2 `diffUTCTime` t1))
     _ -> return $ Command cmdName ()
 
 jitCmd (CmdResult s) _ = return $ CmdResult s
