@@ -8,7 +8,7 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                fvsUExpr, (-->), (==>),
                subTy, subExpr, bindMetaTy, bindMetaExpr,
                noLeaves, checkNoLeaves, liftExcept, assertEq,
-               instantiateType, instantiateBody) where
+               instantiateType, instantiateBody, joinType) where
 
 import Util
 import Record
@@ -331,6 +331,9 @@ bindMetaTy vs = subTyDepth 0 (deBruijnSub vs)
 bindMetaExpr :: Eq a => [a] -> GenExpr a -> GenExpr a
 bindMetaExpr vs = subExprDepth 0 (deBruijnSub vs)
 
+joinType :: GenType (GenType a) -> GenType a
+joinType = subTy id
+
 subTy :: Sub a b -> GenType a -> GenType b
 subTy f t = subTyDepth 0 (const f) t
 
@@ -385,6 +388,7 @@ instantiateType :: [GenType a] -> GenType a -> GenType a
 instantiateType ts t = case t of
   Forall kinds body | nt == length kinds -> instantiateBody ts' body
   Exists       body | nt == 1            -> instantiateBody ts' body
+  ty -> case ts of [] -> ty
   where nt = length ts
         ts' = map Just ts
 

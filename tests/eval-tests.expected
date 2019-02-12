@@ -16,3 +16,8 @@
    in vdot x x
 10
 
+:p unpack x = iota 3
+   in let y = for i j: x.i * x.j
+      in sum (for i: sum (y.i))
+9
+

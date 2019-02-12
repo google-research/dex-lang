@@ -1,9 +1,10 @@
 module Typer (translateExpr, inferTypesCmd, inferTypesExpr,
-              litType, MetaVar, MType, MExpr) where
+              litType, MetaVar, MType, MExpr, getType, builtinTypeEnv) where
 
 import Control.Monad
 import Control.Monad.Identity
-import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
+import Control.Monad.Reader (ReaderT, runReaderT,
+                             local, ask, asks)
 import Control.Monad.Writer hiding ((<>))
 import Control.Monad.State (StateT, evalStateT, put, get)
 import Control.Monad.Except (throwError)
@@ -19,7 +20,8 @@ import Env
 import Record
 import Util
 
-type TypingEnv = FullEnv MType MetaVar
+type GenEnv a = FullEnv (GenType a) a
+type TypingEnv = GenEnv MetaVar
 type Subst = M.Map MetaVar MType
 type SupplyT = StateT Int
 type ConstrainMonad a = ReaderT TypingEnv (
@@ -166,7 +168,7 @@ generalizeTy vs ty = Forall (map mvKind vs) (bindMetaTy vs ty)
 mvKind :: MetaVar -> Kind
 mvKind (MetaVar k _) = k
 
-litType :: LitVal -> MType
+litType :: LitVal -> GenType a
 litType v = BaseType $ case v of
   IntLit  _ -> IntType
   RealLit _ -> RealType
@@ -263,8 +265,11 @@ idSubst = M.empty
 type CheckM a = ReaderT TypingEnv (StateT Int (Either Err)) a
 
 getAndCheckType' :: TypingEnv -> Expr -> Except Type
-getAndCheckType' env expr =
-  evalStateT (runReaderT (getAndCheckType expr) env) 0 >>= checkNoLeaves
+getAndCheckType' env expr = do
+  ty <- evalStateT (runReaderT (getAndCheckType expr) env) 0 >>= checkNoLeaves
+  ty' <- return (getType env expr) >>= checkNoLeaves
+  assertEq ty ty' "non-checking type getter failed"
+  return ty
 
 getAndCheckType ::  Expr -> CheckM MType
 getAndCheckType expr = case expr of
@@ -319,6 +324,7 @@ getAndCheckType expr = case expr of
     assertEq' :: MType -> MType -> String -> CheckM ()
     assertEq' t1 t2 s = liftExcept $ assertEq t1 t2 s
 
+
 checkTy :: Kind -> Type -> CheckM MType
 checkTy kind t = do
   mvs <- asks (bVars . tEnv)
@@ -345,8 +351,64 @@ checkKind env k t = do
   if k == k' then return ()
              else Left $ CompilerErr $ "Wrong kind. Expected "
                                         ++ show k ++ " got " ++ show k'
+data MetaOrUniq a = MetaV a | UniqV Int
+type GetTypeM a b = ReaderT (GenEnv a) (SupplyT Identity) b
+
+instance Eq (MetaOrUniq a) where
+  (==) (UniqV x) (UniqV y) | y == x = True
+  (==) _ _ = False
+
+mapGenEnv :: (a -> b) -> GenEnv a -> GenEnv b
+mapGenEnv f (FullEnv lenv tenv) = FullEnv (fmap (fmap f) lenv) (fmap f tenv)
+
+getType :: GenEnv a -> Expr -> GenType a
+getType env expr = fmap noUniq $
+  runIdentity $ evalStateT (runReaderT (getType' expr) (mapGenEnv MetaV env)) 0
+  where noUniq :: MetaOrUniq a -> a
+        noUniq x = case x of MetaV v -> v
+
+getType' :: Expr -> GetTypeM (MetaOrUniq a) (GenType (MetaOrUniq a))
+getType' expr = case expr of
+    Lit c        -> return $ litType c
+    Var v        -> lookupLVar v
+    Let t _ body -> do {t' <- asMeta t; recurWith t' body }
+    Lam a body -> do { a' <- asMeta a; liftM (ArrType a') (recurWith a' body) }
+    For a body -> do { a' <- asMeta a; liftM (TabType a') (recurWith a' body) }
+    App e arg  -> do { ArrType a b <- recur e; return b }
+    Get e ie   -> do { TabType a b <- recur e; return b }
+    TLam kinds body -> do uniqVars <- mapM (const fresh) kinds
+                          t <- recurWithT uniqVars body
+                          return $ Forall kinds $ bindMetaTy uniqVars t
+    TApp fexpr ts   -> do Forall _ body <- recur fexpr
+                          ts' <- mapM asMeta ts
+                          return $ instantiateBody (map Just ts') body
+    Unpack bound body -> do
+        Exists t' <- recur bound
+        uniq <- fresh
+        let t'' = instantiateBody [Just (Meta uniq)] t'
+            update = setLEnv (addBVar t'') . setTEnv (addBVar uniq)
+        local update (recur body)
+
+  where
+    recur = getType'
+    recurWith  t   = local (setLEnv (addBVar  t  )) . recur
+    recurWithT mvs = local (setTEnv (addBVars mvs)) . recur
+
+    lookupLVar :: Var -> GetTypeM a (GenType a)
+    lookupLVar v = asks ((! v) . lEnv)
+
+    fresh :: GetTypeM (MetaOrUniq a) (MetaOrUniq a)
+    fresh = do { i <- get; put (i + 1); return (UniqV i) }
+
+    asMeta :: Type -> GetTypeM a (GenType a)
+    asMeta t = do
+      mvs <- asks $ map (Just . Meta) . bVars . tEnv
+      return $ instantiateBody mvs (noLeaves t)
+
 addBuiltins :: TypingEnv -> TypingEnv
 addBuiltins = setLEnv (<> fmap noLeaves builtinEnv)
+
+builtinTypeEnv = builtinEnv
 
 builtinEnv :: Env Var Type
 builtinEnv = newEnv $
