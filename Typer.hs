@@ -426,6 +426,9 @@ builtinEnv = newEnv $
     , ("iota", iotaType)
     , ("sum", sumType)
     , ("doubleit", int --> int)
+    , ("hash", int --> int --> int)
+    , ("rand", int --> real)
+    , ("randint", int --> int --> int)
     ]
   where
     binOpType    = int --> int --> int

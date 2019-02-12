@@ -136,6 +136,9 @@ makeModule blocks = mod
                               [ externDecl doubleFun
                               , externDecl mallocFun
                               , externDecl memcpyFun
+                              , externDecl hashFun
+                              , externDecl randFun
+                              , externDecl randIntFun
                               , L.GlobalDefinition fundef] }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
@@ -424,14 +427,27 @@ builtins = newEnv
   , asBuiltin "sub"  0 2 $ compileBinop (\x y -> L.Sub False False x y [])
   , asBuiltin "iota" 0 1 $ compileIota
   , asBuiltin "sum"  1 1 $ compileSum
-  , asBuiltin "doubleit" 0 1 $ compileDoubleit
+  , asBuiltin "doubleit" 0 1 $ externalMono doubleFun  IntType
+  , asBuiltin "hash"     0 2 $ externalMono hashFun    IntType
+  , asBuiltin "rand"     0 1 $ externalMono randFun    RealType
+  , asBuiltin "randint"  0 2 $ externalMono randIntFun IntType
   ]
+
+externalMono :: ExternFunSpec -> BaseType -> CompileApp
+externalMono f@(ExternFunSpec name retTy _ _) baseTy [] args =
+  liftM (ScalarVal baseTy) $ evalInstr retTy (externCall f args')
+  where args' = reverse $ map asOp args
+        asOp :: CompileVal -> L.Operand
+        asOp (ScalarVal _ op) = op
 
 compileDoubleit :: CompileApp
 compileDoubleit [] [ScalarVal IntType x] =
   liftM (ScalarVal IntType) $ evalInstr longTy (externCall doubleFun [x])
 
-doubleFun = ExternFunSpec "doubleit" longTy [longTy] ["x"]
+doubleFun  = ExternFunSpec "doubleit" longTy [longTy] ["x"]
+randFun    = ExternFunSpec "randunif"  realTy [longTy] ["keypair"]
+randIntFun = ExternFunSpec "randint" longTy [longTy, longTy] ["keypair", "nmax"]
+hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
 
 compileIota :: CompileApp
 compileIota [] [ScalarVal b nOp] = do
