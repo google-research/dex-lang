@@ -17,19 +17,21 @@ A a b. ((b -> a) -> (b -> a))
    in id (id) (id 1)
 Int
 
-:t unpack x = iota 10 in sum x
+:t let x = unpack iota 10
+   in sum x
 Int
 
-:t    unpack x = iota 10
-   in unpack y = iota 3
+:t let x = unpack iota 10;
+       y = unpack iota 3
    in (sum for i: x.i) + (sum for j: y.j)
 Int
 
-:t    unpack x = iota 10
-   in unpack y = iota 3
+:t let x = unpack iota 10;
+       y = unpack iota 3
    in sum for i: x.i + y.i
 Type error: existential variable leaked scope
 
-:t unpack x = iota 10 in x
+:t let x = unpack iota 10
+   in x
 Type error: existential variable leaked scope
 

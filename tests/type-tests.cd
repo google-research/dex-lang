@@ -11,17 +11,19 @@
 :t let id x = x
    in id (id) (id 1)
 
-:t unpack x = iota 10 in sum x
+:t let x = unpack iota 10
+   in sum x
 
-:t    unpack x = iota 10
-   in unpack y = iota 3
+:t let x = unpack iota 10;
+       y = unpack iota 3
    in (sum for i: x.i) + (sum for j: y.j)
 
-:t    unpack x = iota 10
-   in unpack y = iota 3
+:t let x = unpack iota 10;
+       y = unpack iota 3
    in sum for i: x.i + y.i
 
-:t unpack x = iota 10 in x
+:t let x = unpack iota 10
+   in x
 
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3

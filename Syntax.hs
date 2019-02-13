@@ -96,6 +96,7 @@ type Vars = FullEnv () ()
 type Source = String
 data TopDecl expr = TopDecl Source Vars (DeclInstr expr)
 data DeclInstr expr = TopAssign VarName expr
+                    | TopUnpack VarName expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
 
 data Command expr = Command CmdName expr

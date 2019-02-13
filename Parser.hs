@@ -20,6 +20,9 @@ type UTopDecl = TopDecl UExpr
 type UInstr = DeclInstr UExpr
 type Prog = [UTopDecl]
 
+data Decl = AssignDecl VarName UExpr
+          | UnpackDecl VarName UExpr
+
 parseProg :: String -> Except Prog
 parseProg = parseit prog
 
@@ -86,10 +89,9 @@ term :: Parser UExpr
 term =   parenRaw
      <|> liftM (UVar . FV) identifier
      <|> liftM ULit literal
-     <|> letExpr
+     <|> declExpr
      <|> lamExpr
      <|> forExpr
-     <|> unpackExpr
      <?> "term"
 
 maybeAnnot :: UExpr -> Parser UExpr
@@ -117,23 +119,17 @@ maybeNamed p = do
   x <- p
   return (v, x)
 
-letExpr :: Parser UExpr
-letExpr = do
+declExpr :: Parser UExpr
+declExpr = do
   symbol "let"
-  bindings <- decl `sepBy` symbol ";"
+  bindings <- (unpackDecl <|> assignDecl) `sepBy` symbol ";"
   symbol "in"
   body <- expr
-  return $ foldr (uncurry ULet) body bindings
-
-unpackExpr :: Parser UExpr
-unpackExpr = do
-  symbol "unpack"
-  v <- identifier
-  symbol "="
-  bound <- expr
-  symbol "in"
-  body <- expr
-  return $ UUnpack v bound body
+  return $ foldr unpackBinding body bindings
+  where unpackBinding :: Decl -> UExpr -> UExpr
+        unpackBinding decl body = case decl of
+          AssignDecl v binding -> ULet    v binding body
+          UnpackDecl v binding -> UUnpack v binding body
 
 lamExpr :: Parser UExpr
 lamExpr = do
@@ -152,13 +148,20 @@ forExpr = do
   return $ foldr UFor body vs
 
 -- decl :: Parser (UPat, UExpr)
-decl :: Parser (VarName, UExpr)
-decl = do
+unpackDecl :: Parser Decl
+unpackDecl = do
+  v <- try (identifier <* symbol "=" <* symbol "unpack")
+  body <- expr
+  return $ UnpackDecl v body
+
+assignDecl :: Parser Decl
+assignDecl = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
+  unpack <- optional (symbol "unpack")
   body <- expr
-  return (p, wrap body)
+  return $ AssignDecl p (wrap body)
 
 idxLhsArgs = do
   symbol "."
