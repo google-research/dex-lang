@@ -25,6 +25,10 @@
 :t let x = unpack iota 10
    in x
 
+x = unpack iota 10
+
+:t x
+
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3
 --    in let y = for i j: x.i * x.i

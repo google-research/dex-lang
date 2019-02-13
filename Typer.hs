@@ -1,4 +1,4 @@
-module Typer (translateExpr, inferTypesCmd, inferTypesExpr,
+module Typer (typePass, translateExpr, inferTypesCmd, inferTypesExpr,
               litType, MetaVar, MType, MExpr, getType, builtinTypeEnv) where
 
 import Control.Monad
@@ -21,7 +21,7 @@ import Record
 import Util
 
 type GenEnv a = FullEnv (GenType a) a
-type TypingEnv = GenEnv MetaVar
+type TypingEnv = FullEnv MType ()
 type Subst = M.Map MetaVar MType
 type SupplyT = StateT Int
 type ConstrainMonad a = ReaderT TypingEnv (
@@ -36,7 +36,13 @@ type MType   = GenType   MetaVar
 type MExpr   = GenExpr   MetaVar
 type MIdxSet = GenIdxSet MetaVar
 
-inferTypesCmd :: Command UExpr -> TypingEnv -> Command Expr
+typePass :: Pass UExpr Expr Type ()
+typePass = Pass
+  { lowerExpr   = \expr env   -> liftErrIO $ inferTypesExpr expr env
+  , lowerUnpack = \v expr env -> liftErrIO $ inferTypesUnpack v expr env
+  , lowerCmd    = \cmd  env   -> return $ inferTypesCmd cmd env }
+
+inferTypesCmd :: Command UExpr -> FullEnv Type () -> Command Expr
 inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
     GetParse -> CmdResult (show expr)
     _ -> case translateExpr expr env of
@@ -52,12 +58,20 @@ inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
 inferTypesCmd (CmdResult s) _ = CmdResult s
 inferTypesCmd (CmdErr e)    _ = CmdErr e
 
-inferTypesExpr :: UExpr -> TypingEnv -> Except (MType, Expr)
+inferTypesExpr :: UExpr -> FullEnv Type () -> Except (Type, Expr)
 inferTypesExpr rawExpr fenv = do
   let env = addBuiltins fenv
   expr <- translateExpr rawExpr env
   ty <- getAndCheckType' env expr
   return (noLeaves ty, expr)
+
+inferTypesUnpack :: VarName -> UExpr -> FullEnv Type () -> Except (Type, (), Expr)
+inferTypesUnpack v expr env = do
+  (ty, expr') <- inferTypesExpr expr env
+  ty' <- case ty of
+    Exists body -> return $ instantiateBody [Just (TypeVar (FV v))] body
+    _ -> throwError $ TypeErr $ "Can't unpack type: " ++ show ty
+  return (ty', (), expr')
 
 translateExpr :: UExpr -> TypingEnv -> Except Expr
 translateExpr rawExpr env = do
@@ -262,14 +276,15 @@ subAsFun m v = case M.lookup v m of Just t -> t
 idSubst :: Subst
 idSubst = M.empty
 
-type CheckM a = ReaderT TypingEnv (StateT Int (Either Err)) a
+type CheckM a = ReaderT (FullEnv MType MetaVar) (StateT Int (Either Err)) a
 
 getAndCheckType' :: TypingEnv -> Expr -> Except Type
 getAndCheckType' env expr = do
-  ty <- evalStateT (runReaderT (getAndCheckType expr) env) 0 >>= checkNoLeaves
-  ty' <- return (getType env expr) >>= checkNoLeaves
+  ty <- evalStateT (runReaderT (getAndCheckType expr) env') 0 >>= checkNoLeaves
+  ty' <- return (getType env' expr) >>= checkNoLeaves
   assertEq ty ty' "non-checking type getter failed"
   return ty
+  where env' = FullEnv (lEnv env) mempty
 
 getAndCheckType ::  Expr -> CheckM MType
 getAndCheckType expr = case expr of
@@ -330,7 +345,7 @@ checkTy kind t = do
   mvs <- asks (bVars . tEnv)
   mt <- liftExcept $ checkNoLeaves t
   let t' = instantiateBody (map (Just . Meta) mvs) (noLeaves t)
-  liftExcept $ checkKind mempty kind t'
+  liftExcept $ checkKind mempty kind t'  -- TODO: add 'IdxSetKind' for freevars
   return t'
 
 getKind :: Env TVar Kind -> MType -> Except Kind
@@ -405,8 +420,8 @@ getType' expr = case expr of
       mvs <- asks $ map (Just . Meta) . bVars . tEnv
       return $ instantiateBody mvs (noLeaves t)
 
-addBuiltins :: TypingEnv -> TypingEnv
-addBuiltins = setLEnv (<> fmap noLeaves builtinEnv)
+addBuiltins :: FullEnv Type () -> TypingEnv
+addBuiltins env = FullEnv (fmap noLeaves $ lEnv env <> builtinEnv) (tEnv env)
 
 builtinTypeEnv = builtinEnv
 

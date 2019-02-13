@@ -24,29 +24,15 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String }
 
 data TopEnv = TopEnv { varEnv  :: Vars
-                     , typeEnv :: FullEnv MType MetaVar
+                     , typeEnv :: FullEnv Type ()
                      , valEnv  :: FullEnv TypedVal ()}
-
-data Pass a b v t = Pass
-  { lowerExpr ::         a -> FullEnv v t -> IO (v, b),
-    lowerCmd  :: Command a -> FullEnv v t -> IO (Command b) }
-
-
-varPass :: Pass UExpr UExpr () ()
-varPass  = asIOPass checkBoundVarsExpr checkBoundVarsCmd
-
-typePass :: Pass UExpr Expr MType MetaVar
-typePass = asIOPass inferTypesExpr inferTypesCmd
-
-jitPass :: Pass Expr () () ()
-jitPass  = Pass jitExpr jitCmd
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
-  (checked, varEnv') <- fullPass (procDecl varPass)  (varEnv env)  decls
-  (typed, typeEnv')  <- fullPass (procDecl typePass) (typeEnv env) checked
-  (jitted, _)        <- fullPass (procDecl jitPass)  (varEnv env)  typed
+  (checked, varEnv') <- fullPass (procDecl boundVarPass)  (varEnv env)  decls
+  (typed, typeEnv')  <- fullPass (procDecl typePass)      (typeEnv env) checked
+  (jitted, _)        <- fullPass (procDecl jitPass)       (varEnv env)  typed
   mapM writeDeclResult jitted
 
   return $ TopEnv varEnv' typeEnv' undefined
@@ -60,15 +46,20 @@ evalSource env source = do
 
     procDecl :: Pass a b v t -> IORef (FullEnv v t)
                 -> TopDecl a -> Driver (TopDecl b)
-    procDecl (Pass procExpr procCmd) envPtr (TopDecl source fvs instr) = do
+    procDecl pass envPtr (TopDecl source fvs instr) = do
       env <- lift $ readIORef envPtr
       case instr of
         TopAssign v expr ->
-          do (val, expr') <- lift $ procExpr expr env
+          do (val, expr') <- lift $ (lowerExpr pass) expr env
              lift $ writeIORef envPtr $ setLEnv (addFVar v val) env
              return $ TopDecl source fvs $ TopAssign v expr'
+        TopUnpack v expr ->
+          do (val, ty, expr') <- lift $ (lowerUnpack pass) v expr env
+             lift $ writeIORef envPtr $ setLEnv (addFVar v val)
+                                      . setTEnv (addFVar v ty) $ env
+             return $ TopDecl source fvs $ TopUnpack v expr'
         EvalCmd cmd ->
-          do cmd' <- lift $ procCmd cmd env
+          do cmd' <- lift $ (lowerCmd pass) cmd env
              return $ TopDecl source fvs $ EvalCmd cmd'
 
 runRepl :: TopEnv -> Driver ()
@@ -83,12 +74,6 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
                   Just s -> evalSource env s
       lift $ writeIORef envPtr newEnv
 
-asIOPass ::            (a -> FullEnv v t -> Except (v, b))
-            -> (Command a -> FullEnv v t -> Command b    ) -> Pass a b v t
-asIOPass procExpr procCmd = Pass procExpr' procCmd'
-  where procExpr' v env   = liftErrIO $ procExpr v env
-        procCmd'  cmd env = return $ procCmd cmd env
-
 writeDeclResult :: TopDecl a -> Driver ()
 writeDeclResult (TopDecl source _ instr) = do
   case instr of
@@ -98,13 +83,10 @@ writeDeclResult (TopDecl source _ instr) = do
   where printWithSource :: String -> Driver ()
         printWithSource s = lift $ putStrLn $ source ++ "\n" ++ s ++ "\n"
 
-liftErrIO :: Except a -> IO a
-liftErrIO = either (\e -> print e >> throwIO Interrupt) return
-
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-updateEnv :: (VarName, MType, TypedVal) -> TopEnv -> TopEnv
+updateEnv :: (VarName, Type, TypedVal) -> TopEnv -> TopEnv
 updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
          , typeEnv = setLEnv (addFVar v t)   typeEnv
@@ -138,9 +120,9 @@ main :: IO ()
 main = do
   CmdOpts fname dbname <- execParser opts
   envWithData <- case dbname of
-                   Just dbname ->
-                     do (inVal, inTy) <- loadData dbname
-                        return $ ("data", inTy, inVal) `updateEnv` initEnv
+                   Just dbname -> undefined
+                     -- do (inVal, inTy) <- loadData dbname
+                     --    return $ ("data", inTy, inVal) `updateEnv` initEnv
                    Nothing -> return initEnv
   case fname of
     Just fname -> runMonad $ lift (readFile fname) >>= evalSource envWithData

@@ -35,3 +35,6 @@ Type error: existential variable leaked scope
    in x
 Type error: existential variable leaked scope
 
+:t x
+x=>Int
+

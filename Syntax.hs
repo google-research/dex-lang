@@ -5,9 +5,9 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                LitVal (..), BaseType (..),
                Var, TVar, Except, Err (..),
                Vars, FullEnv (..), setLEnv, setTEnv,
-               fvsUExpr, (-->), (==>),
+               fvsUExpr, (-->), (==>), Pass (..),
                subTy, subExpr, bindMetaTy, bindMetaExpr,
-               noLeaves, checkNoLeaves, liftExcept, assertEq,
+               noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
                instantiateType, instantiateBody, joinType) where
 
 import Util
@@ -17,6 +17,7 @@ import Data.Semigroup
 import Data.Traversable
 import Data.List (intercalate, elemIndex)
 
+import System.Console.Haskeline (throwIO, Interrupt (..))
 import Control.Monad.Except (MonadError, throwError)
 import Control.Applicative (liftA, liftA2, liftA3)
 
@@ -84,6 +85,11 @@ type TVar = GVar TypeUniq
 data FullEnv v t = FullEnv { lEnv :: Env Var  v
                            , tEnv :: Env TVar t }
 
+data Pass a b v t = Pass
+  { lowerExpr   ::            a -> FullEnv v t -> IO (v, b),
+    lowerUnpack :: VarName -> a -> FullEnv v t -> IO (v, t, b),
+    lowerCmd    ::    Command a -> FullEnv v t -> IO (Command b) }
+
 -- these should just be lenses
 setLEnv :: (Env Var v -> Env Var v) -> FullEnv v t -> FullEnv v t
 setLEnv update env = env {lEnv = update (lEnv env)}
@@ -122,6 +128,9 @@ type Except a = Either Err a
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
 
+liftErrIO :: Except a -> IO a
+liftErrIO = either (\e -> print e >> throwIO Interrupt) return
+
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)
   where msg = s ++ ": " ++ show x ++ " != " ++ show y
@@ -131,6 +140,7 @@ instance Traversable TopDecl where
 
 instance Traversable DeclInstr where
   traverse f (TopAssign v expr) = fmap (TopAssign v) (f expr)
+  traverse f (TopUnpack v expr) = fmap (TopUnpack v) (f expr)
   traverse f (EvalCmd cmd) = fmap EvalCmd $ traverse f cmd
 
 instance Traversable Command where

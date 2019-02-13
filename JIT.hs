@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module JIT (lowerLLVM, showLLVM, evalJit, Compiled, jitExpr, jitCmd) where
+module JIT (jitPass) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
@@ -81,8 +81,14 @@ data ExternFunSpec = ExternFunSpec BString L.Type [L.Type] [BString]
 
 type CompileM a = ReaderT JitEnv (StateT CompileState (Either Err)) a
 
+jitPass :: Pass Expr () () ()
+jitPass  = Pass jitExpr jitUnpack jitCmd
+
 jitExpr :: Expr -> FullEnv () () -> IO ((), ())
 jitExpr expr env = return ((),())
+
+jitUnpack :: VarName -> Expr -> FullEnv () () -> IO ((), (), ())
+jitUnpack _ expr env = return ((),(),())
 
 jitCmd :: Command Expr -> FullEnv () () -> IO (Command ())
 jitCmd (Command cmdName expr) env = case cmdName of

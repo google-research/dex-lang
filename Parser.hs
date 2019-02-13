@@ -1,4 +1,4 @@
-module Parser (parseProg, checkBoundVarsCmd, checkBoundVarsExpr) where
+module Parser (parseProg, boundVarPass) where
 
 import Util
 import Record
@@ -44,7 +44,8 @@ topDecl = do
 topDeclInstr :: Parser UInstr
 topDeclInstr =   explicitCommand
              -- <|> typedAssignment
-             <|> liftM (uncurry TopAssign) tryDecl
+             <|> liftM (uncurry TopUnpack) tryUnpackDecl
+             <|> liftM (uncurry TopAssign) tryAssignDecl
              <|> liftM (EvalCmd . (Command EvalExpr)) expr
              <?> "top-level declaration"
 
@@ -73,8 +74,14 @@ explicitCommand = do
 --     then return $ TopAssign v (UAnnot e ty)
 --     else fail $ "Type declaration variable must match assignment variable."
 
-tryDecl :: Parser (VarName, UExpr)
-tryDecl = do
+tryUnpackDecl :: Parser (VarName, UExpr)
+tryUnpackDecl = do
+  v <- try (identifier <* symbol "=" <* symbol "unpack")
+  body <- expr
+  return (v, body)
+
+tryAssignDecl :: Parser (VarName, UExpr)
+tryAssignDecl = do
   (p, wrap) <- try $ do p <- pat
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
@@ -305,22 +312,27 @@ updateLVars v env = env {lVars = v : lVars env}
 updateTVars :: [VarName] -> BoundVars -> BoundVars
 updateTVars vs env = env {tVars = vs ++ tVars env}
 
--- patVars :: UPat -> [VarName]
--- patVars pat = map fst (toList pat)
+boundVarPass :: Pass UExpr UExpr () ()
+boundVarPass = Pass
+  { lowerExpr   = \expr env -> do liftErrIO $ checkBoundVarsExpr expr env
+                                  return ((), expr)
+  , lowerUnpack = \_ expr env -> do liftErrIO $ checkBoundVarsExpr expr env
+                                    return ((), (), expr)
+  , lowerCmd    = \cmd  env -> return $ checkBoundVarsCmd cmd env }
 
 checkBoundVarsCmd :: Command UExpr -> Vars -> Command UExpr
-checkBoundVarsCmd (Command cmdName expr) envVars =
+checkBoundVarsCmd cmd@(Command cmdName expr) envVars =
   case checkBoundVarsExpr expr envVars of
-    Left err         -> CmdErr err
-    Right ((), expr) -> Command cmdName expr
+    Left err -> CmdErr err
+    Right () -> cmd
 checkBoundVarsCmd x _ = x
 
-checkBoundVarsExpr :: UExpr -> Vars -> Except ((), UExpr)
+checkBoundVarsExpr :: UExpr -> Vars -> Except ()
 checkBoundVarsExpr expr envVars = do
   let freeVars = setLEnv (`envDiff` builtinVars) (fvsUExpr expr)
   checkVars (lEnv freeVars) (lEnv envVars)
   checkVars (tEnv freeVars) (tEnv envVars)
-  return ((), expr)
+  return ()
   where checkVars :: Env i a -> Env i a -> Except ()
         checkVars e1 e2 = case fVars (e1 `envDiff` e2) of
                             v:_ -> Left $ UnboundVarErr v
