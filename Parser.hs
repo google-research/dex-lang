@@ -38,7 +38,7 @@ topDecl :: Parser UTopDecl
 topDecl = do
   (instr, source) <- captureSource topDeclInstr
   let instr' = lowerInstr instr
-      freeVars = setLEnv (`envDiff` builtinVars) $ foldMap fvsUExpr instr
+      freeVars = foldMap fvsUExpr instr
   return $ TopDecl source freeVars instr'
 
 topDeclInstr :: Parser UInstr
@@ -94,12 +94,13 @@ expr = makeExprParser (sc >> term >>= maybeAnnot) ops
 
 term :: Parser UExpr
 term =   parenRaw
-     <|> liftM (UVar . FV) identifier
+     <|> varExpr
      <|> liftM ULit literal
      <|> declExpr
      <|> lamExpr
      <|> forExpr
      <?> "term"
+
 
 maybeAnnot :: UExpr -> Parser UExpr
 maybeAnnot e = do
@@ -125,6 +126,13 @@ maybeNamed p = do
        return v
   x <- p
   return (v, x)
+
+varExpr :: Parser UExpr
+varExpr = do
+  s <- identifier
+  return $ case strToBuiltin s of
+    Just b -> UBuiltin b
+    Nothing -> UVar (FV s)
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -192,19 +200,17 @@ identifier = makeIdentifier resNames
 appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
-binOpRule opchar opname = InfixL (symbol opchar >> return (binOpApp opname))
-
-binOpApp :: String -> UExpr -> UExpr -> UExpr
-binOpApp s e1 e2 = UApp (UApp (UVar (FV s)) e1) e2
+binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
+  where binOpApp e1 e2 = UApp (UApp (UBuiltin builtin) e1) e2
 
 getRule = Postfix $ do
   vs  <- many $ symbol "." >> idxExpr
   return $ \body -> foldr (flip UGet) body (reverse vs)
 
 ops = [ [getRule, appRule]
-      , [binOpRule "^" "pow"]
-      , [binOpRule "*" "mul", binOpRule "/" "div"]
-      , [binOpRule "+" "add", binOpRule "-" "sub"]
+      , [binOpRule "^" Pow]
+      , [binOpRule "*" Mul]  -- binOpRule "/" Div]
+      , [binOpRule "+" Add, binOpRule "-" Sub]
       ]
 
 -- idxExpr =   parenIdxExpr
@@ -285,6 +291,7 @@ lower :: BoundVars -> UExpr -> UExpr
 lower env expr = case expr of
   ULit c         -> ULit c
   UVar v         -> UVar $ toDeBruijn (lVars env) v
+  UBuiltin b     -> UBuiltin b
   ULet p e body  -> ULet p (recur e) $ lowerWith p body
   ULam p body    -> ULam p           $ lowerWith p body
   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
@@ -329,17 +336,11 @@ checkBoundVarsCmd x _ = x
 
 checkBoundVarsExpr :: UExpr -> Vars -> Except ()
 checkBoundVarsExpr expr envVars = do
-  let freeVars = setLEnv (`envDiff` builtinVars) (fvsUExpr expr)
-  checkVars (lEnv freeVars) (lEnv envVars)
-  checkVars (tEnv freeVars) (tEnv envVars)
+  let freeVars = fvsUExpr expr
+  lEnv envVars `contains` lEnv freeVars
+  tEnv envVars `contains` tEnv freeVars
   return ()
-  where checkVars :: Env i a -> Env i a -> Except ()
-        checkVars e1 e2 = case fVars (e1 `envDiff` e2) of
+  where contains :: Env i a -> Env i a -> Except ()
+        contains e1 e2 = case fVars (e2 `envDiff` e1) of
                             v:_ -> Left $ UnboundVarErr v
                             [] -> Right ()
-
-builtinVars :: Env Var ()
-builtinVars = newEnv [(v, ()) | v <-
-  ["add", "sub", "mul", "pow", "exp", "log",
-   "sqrt", "sin", "cos", "tan", "reduce", "iota",
-   "sum", "doubleit", "hash", "rand", "randint"]]

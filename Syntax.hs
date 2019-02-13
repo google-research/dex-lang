@@ -1,11 +1,11 @@
 module Syntax (GenExpr (..), GenType (..), GenIdxSet,
-               Expr, Type, IdxSet,
+               Expr, Type, IdxSet, Builtin (..),
                UExpr (..), TopDecl (..), Command (..),
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..),
                Var, TVar, Except, Err (..),
                Vars, FullEnv (..), setLEnv, setTEnv,
-               fvsUExpr, (-->), (==>), Pass (..),
+               fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
                subTy, subExpr, bindMetaTy, bindMetaExpr,
                noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
                instantiateType, instantiateBody, joinType) where
@@ -16,6 +16,7 @@ import Env
 import Data.Semigroup
 import Data.Traversable
 import Data.List (intercalate, elemIndex)
+import qualified Data.Map as M
 
 import System.Console.Haskeline (throwIO, Interrupt (..))
 import Control.Monad.Except (MonadError, throwError)
@@ -23,6 +24,7 @@ import Control.Applicative (liftA, liftA2, liftA3)
 
 data GenExpr a = Lit LitVal
                | Var Var
+               | Builtin Builtin
                | Let (GenType a) (GenExpr a) (GenExpr a)
                | Lam (GenType a) (GenExpr a)
                | App (GenExpr a) (GenExpr a)
@@ -52,6 +54,7 @@ data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
 data UExpr = ULit LitVal
            | UVar Var
+           | UBuiltin Builtin
            | ULet VarName UExpr UExpr
            | ULam VarName UExpr
            | UApp UExpr UExpr
@@ -71,6 +74,19 @@ data LitVal = IntLit  Int
 
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
+
+data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
+             | Sin | Cos | Tan | Reduce | Iota | Sum' | Doubleit
+             | Hash | Rand | Randint  deriving (Eq, Ord, Show)
+
+builtinNames = M.fromList [
+  ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
+  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
+  ("reduce", Reduce), ("iota", Iota), ("sum", Sum'), ("doubleit", Doubleit),
+  ("hash", Hash), ("rand", Rand), ("randint", Randint)]
+
+strToBuiltin :: String -> Maybe Builtin
+strToBuiltin name = M.lookup name builtinNames
 
 infixr 1 -->
 infixr 2 ==>
@@ -195,6 +211,7 @@ fvsUExpr :: UExpr -> Vars
 fvsUExpr expr = case expr of
   ULit _         -> mempty
   UVar v         -> fvsVar setLEnv v
+  UBuiltin _     -> mempty
   ULet _ e body  -> fvsUExpr e <> fvsUExpr body
   ULam _ body    -> fvsUExpr body
   UApp fexpr arg -> fvsUExpr fexpr <> fvsUExpr arg
@@ -305,6 +322,7 @@ instance Traversable GenExpr where
   traverse f expr = case expr of
     Lit c -> pure $ Lit c
     Var v -> pure $ Var v
+    Builtin b -> pure $ Builtin b
     Let t bound body  -> liftA3 Let (recurTy t) (recur bound) (recur body)
     Lam t body        -> liftA2 Lam (recurTy t) (recur body)
     App fexpr arg     -> liftA2 App (recur fexpr) (recur arg)
@@ -374,6 +392,7 @@ subExprDepth ::  Int -> (Int -> Sub a b) -> GenExpr a -> GenExpr b
 subExprDepth d f expr = case expr of
   Lit c -> Lit c
   Var v -> Var v
+  Builtin b -> Builtin b
   Let t bound body -> Let (recurTy t) (recur bound) (recur body)
   Lam t body       -> Lam (recurTy t) (recur body)
   App fexpr arg    -> App (recur fexpr) (recur arg)

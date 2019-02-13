@@ -10,3 +10,7 @@ codlib.so: codlib.c
 	echo $* OK
 
 tests: type-tests eval-tests
+
+clean:
+	rm *.hi *.o *.so
+

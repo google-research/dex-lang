@@ -1,5 +1,5 @@
 module Typer (typePass, translateExpr, inferTypesCmd, inferTypesExpr,
-              litType, MetaVar, MType, MExpr, getType, builtinTypeEnv) where
+              litType, MetaVar, MType, MExpr, getType, builtinType) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -53,14 +53,14 @@ inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
                      Right t ->  CmdResult $ show t
         GetTyped -> CmdResult $ show expr'
         _ -> Command cmdName expr'
-  where env = addBuiltins ftenv
+  where env = asTypingEnv ftenv
 
 inferTypesCmd (CmdResult s) _ = CmdResult s
 inferTypesCmd (CmdErr e)    _ = CmdErr e
 
 inferTypesExpr :: UExpr -> FullEnv Type () -> Except (Type, Expr)
 inferTypesExpr rawExpr fenv = do
-  let env = addBuiltins fenv
+  let env = asTypingEnv fenv
   expr <- translateExpr rawExpr env
   ty <- getAndCheckType' env expr
   return (noLeaves ty, expr)
@@ -72,6 +72,9 @@ inferTypesUnpack v expr env = do
     Exists body -> return $ instantiateBody [Just (TypeVar (FV v))] body
     _ -> throwError $ TypeErr $ "Can't unpack type: " ++ show ty
   return (ty', (), expr')
+
+asTypingEnv :: FullEnv Type () -> TypingEnv
+asTypingEnv env = FullEnv (fmap noLeaves $ lEnv env) (tEnv env)
 
 translateExpr :: UExpr -> TypingEnv -> Except Expr
 translateExpr rawExpr env = do
@@ -89,16 +92,9 @@ check :: UExpr -> MType -> ConstrainMonad MExpr
 check expr reqTy = case expr of
   ULit c -> do addConstraint (litType c, reqTy)
                return (Lit c)
-  UVar v -> do
-    s <- asks $ (! v) . lEnv
-    case s of
-      Forall kinds t -> do
-        vs <- mapM (const fresh) kinds
-        addConstraint (reqTy, instantiateType vs s)
-        return $ TApp (Var v) vs
-      _ -> do
-        addConstraint (reqTy, s)
-        return $ Var v
+  UVar v -> do ty <- asks $ (! v) . lEnv
+               instantiate ty reqTy (Var v)
+  UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
   ULet _ bound body -> do
     (boundTy, bound', flexVars) <- inferPartial bound
     let boundTyGen = generalizeTy flexVars boundTy
@@ -145,6 +141,18 @@ check expr reqTy = case expr of
     tell $ Constraints [] (flexVars \\ [i'])
     let body'' = bindMetaExpr [i'] (applySubExpr sub body')
     return $ Unpack bound' body''
+
+
+instantiate :: MType -> MType -> MExpr -> ConstrainMonad MExpr
+instantiate ty reqTy expr =
+  case ty of
+    Forall kinds t -> do
+      vs <- mapM (const fresh) kinds
+      addConstraint (reqTy, instantiateType vs ty)
+      return $ TApp expr vs
+    _ -> do
+      addConstraint (reqTy, ty)
+      return $ expr
 
 infer :: UExpr -> ConstrainMonad (MType, MExpr)
 infer expr = do ty <- fresh
@@ -290,6 +298,7 @@ getAndCheckType ::  Expr -> CheckM MType
 getAndCheckType expr = case expr of
     Lit c          -> return $ litType c
     Var v          -> lookupLVar v
+    Builtin b      -> return (builtinType b)
     Let t bound body -> do t' <- checkTy TyKind t
                            t'' <- recur bound
                            assertEq' t'' t' "Type mismatch in 'let'"
@@ -386,6 +395,7 @@ getType' :: Expr -> GetTypeM (MetaOrUniq a) (GenType (MetaOrUniq a))
 getType' expr = case expr of
     Lit c        -> return $ litType c
     Var v        -> lookupLVar v
+    Builtin b    -> return $ builtinType b
     Let t _ body -> do {t' <- asMeta t; recurWith t' body }
     Lam a body -> do { a' <- asMeta a; liftM (ArrType a') (recurWith a' body) }
     For a body -> do { a' <- asMeta a; liftM (TabType a') (recurWith a' body) }
@@ -420,31 +430,25 @@ getType' expr = case expr of
       mvs <- asks $ map (Just . Meta) . bVars . tEnv
       return $ instantiateBody mvs (noLeaves t)
 
-addBuiltins :: FullEnv Type () -> TypingEnv
-addBuiltins env = FullEnv (fmap noLeaves $ lEnv env <> builtinEnv) (tEnv env)
-
-builtinTypeEnv = builtinEnv
-
-builtinEnv :: Env Var Type
-builtinEnv = newEnv $
-    [ ("add", binOpType)
-    , ("sub", binOpType)
-    , ("mul", binOpType)
-    , ("pow", binOpType)
-    , ("exp", realUnOpType)
-    , ("log", realUnOpType)
-    , ("sqrt", realUnOpType)
-    , ("sin", realUnOpType)
-    , ("cos", realUnOpType)
-    , ("tan", realUnOpType)
-    , ("reduce", reduceType)
-    , ("iota", iotaType)
-    , ("sum", sumType)
-    , ("doubleit", int --> int)
-    , ("hash", int --> int --> int)
-    , ("rand", int --> real)
-    , ("randint", int --> int --> int)
-    ]
+builtinType :: Builtin -> GenType a
+builtinType builtin = case builtin of
+  Add      -> binOpType
+  Sub      -> binOpType
+  Mul      -> binOpType
+  Pow      -> binOpType
+  Exp      -> realUnOpType
+  Log      -> realUnOpType
+  Sqrt     -> realUnOpType
+  Sin      -> realUnOpType
+  Cos      -> realUnOpType
+  Tan      -> realUnOpType
+  Reduce   -> reduceType
+  Iota     -> iotaType
+  Sum'     -> sumType
+  Doubleit -> int --> int
+  Hash     -> int --> int --> int
+  Rand     -> int --> real
+  Randint  -> int --> int --> int
   where
     binOpType    = int --> int --> int
     realUnOpType = real --> real

@@ -49,7 +49,7 @@ data CompileVal = ScalarVal BaseType Operand
                 | TabVal Table
                 | LamVal   Type  JitEnv Expr
                 | TLamVal [Kind] JitEnv Expr
-                | BuiltinLam BuiltinFun [JitType] [CompileVal]
+                | BuiltinLam Builtin [JitType] [CompileVal]
                 | ExPackage NumElems CompileVal
 
 type BString = ShortByteString
@@ -69,7 +69,7 @@ type ElemSize = Long
 type Index    = Long
 
 type CompileApp  = [JitType] -> [CompileVal] -> CompileM CompileVal
-data BuiltinFun  = BuiltinFun Int Int CompileApp JitType
+data BuiltinSpec = BuiltinSpec Int Int CompileApp
 
 data CompileState = CompileState { nameCounter :: Int
                                  , curBlocks :: [Block]
@@ -113,7 +113,7 @@ jitCmd (CmdErr e)    _ = return $ CmdErr e
 
 lowerLLVM :: Expr -> Except L.Module
 lowerLLVM expr = do
-  blocks <- runCompileM builtinEnv (compileModule expr)
+  blocks <- runCompileM mempty (compileModule expr)
   return (makeModule blocks)
 
 showLLVM :: L.Module -> IO String
@@ -180,6 +180,7 @@ compile :: Expr -> CompileM CompileVal
 compile expr = case expr of
   Lit x -> return (litVal x)
   Var v -> asks $ (! v) . lEnv
+  Builtin b -> return $ BuiltinLam b [] []
   Let _ bound body -> do x <- compile bound
                          local (setLEnv $ addBVar x) (compile body)
   Lam a body -> do { env <- ask; return (LamVal a env body) }
@@ -226,8 +227,8 @@ typeOf val = case val of
   TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
   LamVal a env expr      -> exprType env (Lam a expr)
   TLamVal kinds env expr -> exprType env (TLam kinds expr)
-  BuiltinLam (BuiltinFun nt nv _ ty) ts vs ->
-    composeN (length vs) arrRHS $ instantiateType ts ty
+  BuiltinLam b ts vs ->
+    composeN (length vs) arrRHS $ instantiateType ts (builtinType b)
   where arrRHS :: JitType -> JitType
         arrRHS (ArrType _ ty) = ty
 
@@ -236,11 +237,12 @@ compileType :: Type -> CompileM JitType
 compileType ty = do env <- asks (bVars . tEnv)
                     return $ instantiateBody (map Just env) (noLeaves ty)
 
-compileBuiltin :: BuiltinFun -> [JitType] -> [CompileVal] -> CompileM CompileVal
-compileBuiltin b@(BuiltinFun numTypes numArgs compileRule _) types args =
-    if length types < numTypes || length args < numArgs
-      then return $ BuiltinLam b types args
-      else compileRule types args
+compileBuiltin :: Builtin -> [JitType] -> [CompileVal] -> CompileM CompileVal
+compileBuiltin b types args =
+  if length types < numTypes || length args < numArgs
+    then return $ BuiltinLam b types args
+    else compileApp types args
+  where BuiltinSpec numTypes numArgs compileApp = builtinSpec b
 
 compileFor :: NumElems -> JitType -> Expr -> CompileM CompileVal
 compileFor n bodyTy forBody = do
@@ -423,21 +425,17 @@ memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
 
 -- --- builtins ---
 
-builtinEnv :: JitEnv
-builtinEnv = FullEnv builtins mempty
-
-builtins :: Env Var CompileVal
-builtins = newEnv
-  [ asBuiltin "add"  0 2 $ compileBinop (\x y -> L.Add False False x y [])
-  , asBuiltin "mul"  0 2 $ compileBinop (\x y -> L.Mul False False x y [])
-  , asBuiltin "sub"  0 2 $ compileBinop (\x y -> L.Sub False False x y [])
-  , asBuiltin "iota" 0 1 $ compileIota
-  , asBuiltin "sum"  1 1 $ compileSum
-  , asBuiltin "doubleit" 0 1 $ externalMono doubleFun  IntType
-  , asBuiltin "hash"     0 2 $ externalMono hashFun    IntType
-  , asBuiltin "rand"     0 1 $ externalMono randFun    RealType
-  , asBuiltin "randint"  0 2 $ externalMono randIntFun IntType
-  ]
+builtinSpec :: Builtin -> BuiltinSpec
+builtinSpec b = case b of
+  Add      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Add False False x y [])
+  Mul      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Mul False False x y [])
+  Sub      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Sub False False x y [])
+  Iota     -> BuiltinSpec 0 1 $ compileIota
+  Sum'     -> BuiltinSpec 1 1 $ compileSum
+  Doubleit -> BuiltinSpec 0 1 $ externalMono doubleFun  IntType
+  Hash     -> BuiltinSpec 0 2 $ externalMono hashFun    IntType
+  Rand     -> BuiltinSpec 0 1 $ externalMono randFun    RealType
+  Randint  -> BuiltinSpec 0 2 $ externalMono randIntFun IntType
 
 externalMono :: ExternFunSpec -> BaseType -> CompileApp
 externalMono f@(ExternFunSpec name retTy _ _) baseTy [] args =
@@ -463,11 +461,6 @@ compileIota [] [ScalarVal b nOp] = do
   addForILoop n body
   return $ ExPackage n (TabVal tab)
   where n = Long nOp
-
-asBuiltin :: VarName -> Int -> Int -> CompileApp -> (VarName, CompileVal)
-asBuiltin name nt nv f = (name, BuiltinLam b [] [])
-  where b = BuiltinFun nt nv f ty
-        ty = noLeaves $ builtinTypeEnv ! (FV name)
 
 compileBinop :: (Operand -> Operand -> L.Instruction) -> CompileApp
 compileBinop makeInstr = compile
