@@ -25,14 +25,14 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 data TopEnv = TopEnv { varEnv  :: Vars
                      , typeEnv :: FullEnv Type ()
-                     , valEnv  :: FullEnv TypedVal ()}
+                     , valEnv  :: FullEnv PersistVal PersistType}
 
 evalSource :: TopEnv -> String -> Driver TopEnv
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
-  (checked, varEnv') <- fullPass (procDecl boundVarPass)  (varEnv env)  decls
-  (typed, typeEnv')  <- fullPass (procDecl typePass)      (typeEnv env) checked
-  (jitted, _)        <- fullPass (procDecl jitPass)       (varEnv env)  typed
+  (checked, varEnv' ) <- fullPass (procDecl boundVarPass)  (varEnv  env) decls
+  (typed  , typeEnv') <- fullPass (procDecl typePass)      (typeEnv env) checked
+  (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) typed
   mapM writeDeclResult jitted
 
   return $ TopEnv varEnv' typeEnv' undefined
@@ -86,7 +86,7 @@ writeDeclResult (TopDecl source _ instr) = do
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-updateEnv :: (VarName, Type, TypedVal) -> TopEnv -> TopEnv
+updateEnv :: (VarName, Type, PersistVal) -> TopEnv -> TopEnv
 updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
          , typeEnv = setLEnv (addFVar v t)   typeEnv

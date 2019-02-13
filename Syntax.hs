@@ -6,7 +6,7 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                Var, TVar, Except, Err (..),
                Vars, FullEnv (..), setLEnv, setTEnv,
                fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
-               subTy, subExpr, bindMetaTy, bindMetaExpr,
+               subTy, subExpr, bindMetaTy, bindMetaExpr, raiseIOExcept,
                noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
                instantiateType, instantiateBody, joinType) where
 
@@ -99,7 +99,7 @@ data TypeUniq = TypeUniq deriving (Show, Eq)
 type Var  = GVar LetUniq
 type TVar = GVar TypeUniq
 data FullEnv v t = FullEnv { lEnv :: Env Var  v
-                           , tEnv :: Env TVar t }
+                           , tEnv :: Env TVar t }  deriving (Show, Eq)
 
 data Pass a b v t = Pass
   { lowerExpr   ::            a -> FullEnv v t -> IO (v, b),
@@ -145,7 +145,10 @@ liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
 
 liftErrIO :: Except a -> IO a
-liftErrIO = either (\e -> print e >> throwIO Interrupt) return
+liftErrIO = either raiseIOExcept return
+
+raiseIOExcept :: Err -> IO a
+raiseIOExcept e =print e >> throwIO Interrupt
 
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)
@@ -283,6 +286,7 @@ showExpr :: Show a => (Int, [Kind]) -> GenExpr a -> String
 showExpr env@(depth, kinds) expr = case expr of
   Lit val      -> show val
   Var v        -> name v
+  Builtin b    -> show b
   Let t e1 e2  -> paren $    "let " ++ showBinder t ++ " = " ++ recur e1
                           ++ " in " ++ recurWith e2
   Lam t e      -> paren $ "lam " ++ showBinder t ++ ": " ++ recurWith e
@@ -427,7 +431,8 @@ instantiateBody env t = case t of
   BaseType _  -> t
   TypeVar (BV v) -> case env !! v of
                       Just t' -> t'
-                      Nothing -> TypeVar (BV v)
+                      Nothing -> t
+  TypeVar (FV v) -> t
   ArrType a b -> ArrType (recur a) (recur b)
   TabType a b -> TabType (recur a) (recur b)
   Forall kinds body -> let env' = map (const Nothing) kinds ++ env

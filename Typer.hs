@@ -36,6 +36,7 @@ type MType   = GenType   MetaVar
 type MExpr   = GenExpr   MetaVar
 type MIdxSet = GenIdxSet MetaVar
 
+
 typePass :: Pass UExpr Expr Type ()
 typePass = Pass
   { lowerExpr   = \expr env   -> liftErrIO $ inferTypesExpr expr env
@@ -50,7 +51,7 @@ inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
       Right expr' -> case cmdName of
         GetType -> case getAndCheckType' env expr' of
                      Left e -> CmdErr e
-                     Right t ->  CmdResult $ show t
+                     Right t -> CmdResult $ show t
         GetTyped -> CmdResult $ show expr'
         _ -> Command cmdName expr'
   where env = asTypingEnv ftenv
@@ -242,8 +243,8 @@ occursIn :: MetaVar -> MType -> Bool
 occursIn v t = v `elem` toList t
 
 unify :: MType -> MType -> Except Subst
-unify t1 (TypeVar v) = unifyErr t1 (TypeVar v)
-unify (TypeVar v) t2 = unifyErr t2 (TypeVar v)
+unify t1 t2@(TypeVar (BV v)) = unifyErr t1 t2
+unify t1@(TypeVar (BV v)) t2 = unifyErr t2 t1
 unify t1 t2 | t1 == t2 = return idSubst
 unify t (Meta v) = bind v t
 unify (Meta v) t = bind v t
@@ -361,7 +362,8 @@ getKind :: Env TVar Kind -> MType -> Except Kind
 getKind env t = case t of
   Meta (MetaVar k _) -> Right k
   BaseType _  -> return TyKind
-  TypeVar v   -> return $ env ! v
+  TypeVar v -> return $ case v of BV _ -> env ! v
+                                  FV _ -> IdxSetKind
   ArrType a b -> check TyKind     a >> check TyKind b >> return TyKind
   TabType a b -> check IdxSetKind a >> check TyKind b >> return TyKind
   Forall kinds body -> getKind (addBVars kinds        env) body

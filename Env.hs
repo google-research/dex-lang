@@ -5,7 +5,6 @@ import Data.List (elemIndex)
 import Data.Semigroup
 import qualified Data.Map.Strict as M
 
-
 type VarName = String
 data Env i a = Env (M.Map VarName a) [a]  deriving (Show, Eq, Ord)
 data GVar i = FV VarName | BV Int       deriving (Show, Eq, Ord)
@@ -46,6 +45,7 @@ isin i (Env fvs bvs) = case i of
   FV s -> case M.lookup s fvs of
             Just x -> x
             Nothing -> error ("Lookup of " ++ show s ++
+                              " in env " ++ show (M.keys fvs) ++
                               " failed! This is a compiler bug")
   BV i -> if i < length(bvs)
             then bvs !! i
