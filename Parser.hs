@@ -61,6 +61,7 @@ explicitCommand = do
            "llvm"  -> return GetLLVM
            "jit"   -> return EvalJit
            "time"  -> return TimeIt
+           "persist" -> return ShowPersistVal
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
   return $ EvalCmd (Command cmd e)

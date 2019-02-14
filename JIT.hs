@@ -61,7 +61,7 @@ data JitVal w = ScalarVal BaseType w
               | ExPackage w (JitVal w)  deriving (Show)
 
 data PWord = PScalar BaseType Word64
-           | PPtr    BaseType (F.Ptr ())
+           | PPtr    BaseType (F.Ptr ())  deriving (Show)
 
 type CompileVal  = JitVal  Operand
 type CompileType = JitType Operand
@@ -105,43 +105,39 @@ jitPass :: Pass Expr () PersistVal PersistType
 jitPass = Pass jitExpr jitUnpack jitCmd
 
 jitExpr :: Expr -> PersistEnv -> IO (PersistVal, ())
-jitExpr expr env = case lowerLLVM (compileEnv env) expr of
-   Left e -> raiseIOExcept (CompilerErr "LLVM generation failed")
-   Right (v, m) -> do val <- evalJit v m
+jitExpr expr env = do let (v, m) = lower expr env
+                      val <- uncurry evalJit (lower expr env)
                       return (val, ())
 
 jitUnpack :: VarName -> Expr -> PersistEnv -> IO (PersistVal, PersistType, ())
-jitUnpack _ expr env = case lowerLLVM (compileEnv env) expr of
-   Left e -> raiseIOExcept (CompilerErr "LLVM generation failed")
-   Right (v, m) -> do ExPackage i val <- evalJit v m
-                      return (val, Meta i, ())
+jitUnpack _ expr env = do let (v, m) = lower expr env
+                          ExPackage i val <- uncurry evalJit (lower expr env)
+                          return (val, Meta i, ())
 
 jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
-jitCmd (Command cmdName expr) env = case cmdName of
-    GetLLVM -> case lowerLLVM (compileEnv env) expr of
-                 Left e -> return $ CmdErr e
-                 Right (_, m) -> liftM CmdResult (showLLVM m)
-                 -- Right m -> return $ CmdResult
-    EvalExpr -> case lowerLLVM (compileEnv env) expr of
-                 Left e -> return $ CmdErr e
-                 Right (v, m) -> do val <- evalJit v m
-                                    valStr <- printPersistVal val
-                                    return $ CmdResult valStr
-    -- TimeIt -> case lowerLLVM expr of
-    --              Left e -> return $ CmdErr e
-    --              Right m -> do
-    --                t1 <- getCurrentTime
-    --                ans <- evalJit m
-    --                t2 <- getCurrentTime
-    --                return $ CmdResult (show (t2 `diffUTCTime` t1))
+jitCmd (Command cmdName expr) env =
+  case cmdName of
+    GetLLVM ->  liftM CmdResult $ showLLVM m
+    EvalExpr -> do val <- evalJit v m
+                   liftM CmdResult $ printPersistVal val
+    ShowPersistVal -> do val <- evalJit v m
+                         return $ CmdResult (show val)
+    TimeIt -> do t1 <- getCurrentTime
+                 ans <- evalJit v m
+                 t2 <- getCurrentTime
+                 return $ CmdResult $ show (t2 `diffUTCTime` t1)
     _ -> return $ Command cmdName ()
+   where
+     (v, m) = lower expr env
+
 jitCmd (CmdResult s) _ = return $ CmdResult s
 jitCmd (CmdErr e)    _ = return $ CmdErr e
 
-
-
-compileEnv :: PersistEnv -> CompileEnv
-compileEnv = runIdentity . traverseJitEnv (Identity . pWordToOperand)
+lower :: Expr -> PersistEnv -> (CompileVal, L.Module)
+lower expr env = (val, mod)
+  where
+    compileEnv = runIdentity (traverseJitEnv (Identity . pWordToOperand) env)
+    (Right (val, mod)) = lowerLLVM compileEnv expr
 
 pWordToOperand :: PWord -> Operand
 pWordToOperand x = case x of
@@ -198,6 +194,8 @@ opBaseType op = case op of
   Op.LocalReference  (L.PointerType (L.IntegerType _) _) _ -> IntType
   Op.LocalReference  (L.IntegerType _) _ -> IntType
   Op.ConstantOperand (C.Int _ _)         -> IntType
+  Op.ConstantOperand (C.IntToPtr _ _)    -> IntType
+  _ -> error $ "Can't find type of " ++ show op
 
 makeModule :: [Block] -> L.Module
 makeModule blocks = mod
@@ -508,7 +506,7 @@ memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
 printPersistVal :: PersistVal -> IO String
 printPersistVal (ScalarVal b x) = case x of
   PScalar _ x   -> return $ show x
-  PPtr    _ ptr -> undefined
+printPersistVal val = return $ "<value>"
 
 -- --- builtins ---
 
@@ -571,9 +569,10 @@ instance Traversable JitVal where
                <*> f n
                <*> liftA ConstSize (f size)
                <*> traverse f valTy )
-    LamVal ty env expr -> liftA (\e -> LamVal ty e expr) (traverseJitEnv f env)
-    -- TLamVal [Kind] (JitEnv w) Expr
-    -- BuiltinLam Builtin [JitType w] [JitVal w]
+    LamVal  ty    env expr -> liftA (\e -> LamVal  ty    e expr) (traverseJitEnv f env)
+    TLamVal kinds env expr -> liftA (\e -> TLamVal kinds e expr) (traverseJitEnv f env)
+    BuiltinLam b tys vals -> liftA2 (BuiltinLam b) (traverse (traverse f) tys)
+                                                   (traverse (traverse f) vals)
     ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
 
 traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)

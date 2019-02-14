@@ -29,3 +29,5 @@ x = unpack iota 20
 f = lam y: sum x + y
 
 :p f 3
+
+:p x

@@ -126,7 +126,7 @@ data Command expr = Command CmdName expr
                   | CmdErr Err  deriving (Show, Eq)
 
 data CmdName = EvalExpr | GetType | GetTyped | GetParse
-             | GetLLVM  | EvalJit | TimeIt  deriving  (Show, Eq)
+             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal deriving  (Show, Eq)
 
 data Err = ParseErr String
          | UnificationErr String String
