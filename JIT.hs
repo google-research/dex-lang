@@ -7,13 +7,16 @@ import Control.Monad.Except (throwError)
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
 import Control.Monad.State (StateT, runStateT, put, get, gets, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
+import Data.IORef
 
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.Traversable
+import Data.Functor.Identity
 
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Type as L
+import qualified LLVM.AST.Operand as Op
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.IntegerPredicate as L
@@ -27,6 +30,9 @@ import LLVM.Pretty (ppllvm)
 
 import Data.Int
 import Foreign.Ptr hiding (Ptr)
+import Foreign.Storable
+
+import qualified Foreign.Ptr as F
 import qualified Data.Text.Lazy as DT
 import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Short (ShortByteString)
@@ -39,9 +45,8 @@ import Syntax
 import Env
 import Util
 
-import Debug.Trace
-
-foreign import ccall "dynamic" haskFun :: FunPtr Int64 -> Int64
+foreign import ccall "dynamic"
+  haskFun :: FunPtr (IO (F.Ptr ())) -> IO (F.Ptr ())
 
 type Compiled = L.Module
 type JitType w = GenType w
@@ -53,19 +58,22 @@ data JitVal w = ScalarVal BaseType w
               | LamVal  Type  (JitEnv w) Expr
               | TLamVal [Kind] (JitEnv w) Expr
               | BuiltinLam Builtin [JitType w] [JitVal w]
-              | ExPackage w (JitVal w)
+              | ExPackage w (JitVal w)  deriving (Show)
+
+data PWord = PScalar BaseType Word64
+           | PPtr    BaseType (F.Ptr ())
 
 type CompileVal  = JitVal  Operand
 type CompileType = JitType Operand
 type CompileEnv  = JitEnv  Operand
 
-type PersistVal  = JitVal  Word64
-type PersistType = JitType Word64
-type PersistEnv  = JitEnv  Word64
+type PersistVal  = JitVal  PWord
+type PersistType = JitType PWord
+type PersistEnv  = JitEnv  PWord
 
-data Table w = Table (Ptr w) w (Sizes w) (JitType w)
-data Sizes w = ConstSize w | ManySizes (Ptr w)
-data Ptr w = Ptr w
+data Table w = Table (Ptr w) w (Sizes w) (JitType w)    deriving (Show)
+data Sizes w = ConstSize w | ManySizes (Ptr w)          deriving (Show)
+data Ptr w = Ptr w                                      deriving (Show)
 
 type CTable = Table Operand
 type CSizes = Sizes Operand
@@ -97,30 +105,28 @@ jitPass :: Pass Expr () PersistVal PersistType
 jitPass = Pass jitExpr jitUnpack jitCmd
 
 jitExpr :: Expr -> PersistEnv -> IO (PersistVal, ())
-jitExpr expr env = case lowerLLVM compileEnv expr of
+jitExpr expr env = case lowerLLVM (compileEnv env) expr of
    Left e -> raiseIOExcept (CompilerErr "LLVM generation failed")
    Right (v, m) -> do val <- evalJit v m
                       return (val, ())
-  where
-    compileEnv = FullEnv (fmap (fmap wordToOperand) $ lEnv env)
-                         (fmap (fmap wordToOperand) $ tEnv env)
-
 
 jitUnpack :: VarName -> Expr -> PersistEnv -> IO (PersistVal, PersistType, ())
-jitUnpack _ expr env = undefined
+jitUnpack _ expr env = case lowerLLVM (compileEnv env) expr of
+   Left e -> raiseIOExcept (CompilerErr "LLVM generation failed")
+   Right (v, m) -> do ExPackage i val <- evalJit v m
+                      return (val, Meta i, ())
 
 jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
 jitCmd (Command cmdName expr) env = case cmdName of
-    GetLLVM -> case lowerLLVM compileEnv expr of
+    GetLLVM -> case lowerLLVM (compileEnv env) expr of
                  Left e -> return $ CmdErr e
                  Right (_, m) -> liftM CmdResult (showLLVM m)
                  -- Right m -> return $ CmdResult
-    EvalExpr -> case lowerLLVM compileEnv expr of
+    EvalExpr -> case lowerLLVM (compileEnv env) expr of
                  Left e -> return $ CmdErr e
                  Right (v, m) -> do val <- evalJit v m
                                     valStr <- printPersistVal val
                                     return $ CmdResult valStr
-
     -- TimeIt -> case lowerLLVM expr of
     --              Left e -> return $ CmdErr e
     --              Right m -> do
@@ -129,19 +135,20 @@ jitCmd (Command cmdName expr) env = case cmdName of
     --                t2 <- getCurrentTime
     --                return $ CmdResult (show (t2 `diffUTCTime` t1))
     _ -> return $ Command cmdName ()
-  where
-    compileEnv = FullEnv (fmap (fmap wordToOperand) $ lEnv env)
-                         (fmap (fmap wordToOperand) $ tEnv env)
-
-
 jitCmd (CmdResult s) _ = return $ CmdResult s
 jitCmd (CmdErr e)    _ = return $ CmdErr e
 
-wordToOperand :: Word64 -> Operand
-wordToOperand x = litInt (fromIntegral x)
 
-operandToWord :: Operand -> Word64
-operandToWord = undefined
+
+compileEnv :: PersistEnv -> CompileEnv
+compileEnv = runIdentity . traverseJitEnv (Identity . pWordToOperand)
+
+pWordToOperand :: PWord -> Operand
+pWordToOperand x = case x of
+  PScalar _ x   -> litInt (fromIntegral x) -- TODO: don't assume it's an int
+  PPtr    _ ptr -> let ptrAsInt = fromIntegral (ptrToWordPtr ptr)
+                       ptrConst = C.IntToPtr (C.Int 64 ptrAsInt) intPtrTy
+                   in L.ConstantOperand ptrConst
 
 lowerLLVM :: CompileEnv -> Expr -> Except (CompileVal, L.Module)
 lowerLLVM env expr = do
@@ -161,10 +168,36 @@ evalJit v m =
         EE.withModuleInEngine ee m $ \eee -> do
           fn <- EE.getFunction eee (L.Name "thefun")
           case fn of
-            Just fn -> do let x = runJitted fn
-                          putStr $ show x `seq` ""  -- segfaults without this
-                          return $ ScalarVal IntType (fromIntegral x)
+            Just fn -> do xPtr <- runJitted fn
+                          createPersistVal v xPtr
 
+createPersistVal :: CompileVal -> F.Ptr () -> IO PersistVal
+createPersistVal v ptr = do
+  ptrRef <- newIORef ptr
+  traverse (getNext ptrRef) v
+
+getNext :: IORef (F.Ptr ()) -> Operand -> IO PWord
+getNext ref op = do
+  ptr <- readIORef ref
+  val <- peek (castPtr ptr :: F.Ptr Word64)
+  let b = opBaseType op
+  writeIORef ref (plusPtr ptr 8)
+  return $ if opIsPtr op
+                then PPtr    b (wordPtrToPtr (fromIntegral val))
+                else PScalar b val
+
+opIsPtr :: Operand -> Bool
+opIsPtr op = case op of
+  Op.LocalReference  (L.PointerType _ _) _ -> True
+  Op.LocalReference  (L.IntegerType _  ) _ -> False
+  Op.ConstantOperand (C.Int _ _)           -> False
+  Op.ConstantOperand (C.IntToPtr _ _)      -> True
+
+opBaseType :: Operand -> BaseType
+opBaseType op = case op of
+  Op.LocalReference  (L.PointerType (L.IntegerType _) _) _ -> IntType
+  Op.LocalReference  (L.IntegerType _) _ -> IntType
+  Op.ConstantOperand (C.Int _ _)         -> IntType
 
 makeModule :: [Block] -> L.Module
 makeModule blocks = mod
@@ -199,8 +232,8 @@ runCompileM env m = do
   return $ (val, reverse blocks)
   where initState = CompileState 0 [] [] [] (L.Name "main_block")
 
-runJitted :: FunPtr a -> Int64
-runJitted fn = haskFun (castFunPtr fn :: FunPtr Int64)
+runJitted :: FunPtr a -> IO (F.Ptr ())
+runJitted fn = haskFun (castFunPtr fn :: FunPtr (IO (F.Ptr ())))
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
@@ -267,6 +300,7 @@ typeOf val = case val of
         arrRHS (ArrType _ ty) = ty
 
 
+-- TODO: evaluate free vars here too
 compileType :: Type -> CompileM CompileType
 compileType ty = do env <- asks (bVars . tEnv)
                     return $ instantiateBody (map Just env) (noLeaves ty)
@@ -324,7 +358,8 @@ addForILoop n body = do
   where inc i = updateCell i $ add (litInt 1)
 
 compileSum :: [CompileType] -> [CompileVal] -> CompileM CompileVal
-compileSum [Meta _] [TabVal tab@(Table ptr n sizes _)] = do
+-- compileSum [Meta _] [TabVal tab@(Table ptr n sizes _)] = do
+compileSum [_] [TabVal tab@(Table ptr n sizes _)] = do
   sum <- newIntCell 0
   let body iPtr = do i <- loadCell iPtr
                      ScalarVal _ x <- readTable tab i
@@ -335,7 +370,18 @@ compileSum [Meta _] [TabVal tab@(Table ptr n sizes _)] = do
 
 -- TODO: add var decls
 finalReturn :: CompileVal -> CompileM ()
-finalReturn (ScalarVal _ ret) = finishBlock (L.Ret (Just ret) []) (L.Name "")
+finalReturn val = do
+  let components = toList val
+      numBytes = 8 * length components
+  voidPtr <- evalInstr charPtrTy (externCall mallocFun [litInt numBytes])
+  outPtr <- evalInstr intPtrTy $ L.BitCast voidPtr intPtrTy []
+  sequence $ zipWith (writeComponent outPtr) components [0..]
+  finishBlock (L.Ret (Just outPtr) []) (L.Name "")
+
+writeComponent :: Operand -> Operand -> Int -> CompileM ()
+writeComponent ptr x i = do
+  ptr' <- evalInstr intPtrTy $ L.GetElementPtr False ptr [litInt i] []
+  writeCell (Ptr ptr') x
 
 appendInstr :: Instr -> CompileM ()
 appendInstr instr = modify updateState
@@ -460,7 +506,9 @@ memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
 -- --- printing ---
 
 printPersistVal :: PersistVal -> IO String
-printPersistVal (ScalarVal _ x) = return $ show x
+printPersistVal (ScalarVal b x) = case x of
+  PScalar _ x   -> return $ show x
+  PPtr    _ ptr -> undefined
 
 -- --- builtins ---
 
@@ -487,9 +535,9 @@ compileDoubleit :: CompileApp
 compileDoubleit [] [ScalarVal IntType x] =
   liftM (ScalarVal IntType) $ evalInstr longTy (externCall doubleFun [x])
 
-doubleFun  = ExternFunSpec "doubleit" longTy [longTy] ["x"]
-randFun    = ExternFunSpec "randunif"  realTy [longTy] ["keypair"]
-randIntFun = ExternFunSpec "randint" longTy [longTy, longTy] ["keypair", "nmax"]
+doubleFun  = ExternFunSpec "doubleit"      longTy [longTy] ["x"]
+randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
+randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
 hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
 
 compileIota :: CompileApp
@@ -517,4 +565,17 @@ instance Foldable JitVal where
 instance Traversable JitVal where
   traverse f val = case val of
     ScalarVal ty x -> liftA (ScalarVal ty) (f x)
+    IdxVal size idx -> liftA2 IdxVal (f size) (f idx)
+    TabVal (Table (Ptr p) n (ConstSize size) valTy) -> liftA TabVal $
+        (Table <$> liftA Ptr (f p)
+               <*> f n
+               <*> liftA ConstSize (f size)
+               <*> traverse f valTy )
+    LamVal ty env expr -> liftA (\e -> LamVal ty e expr) (traverseJitEnv f env)
+    -- TLamVal [Kind] (JitEnv w) Expr
+    -- BuiltinLam Builtin [JitType w] [JitVal w]
+    ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
 
+traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
+traverseJitEnv f env = liftA2 FullEnv (traverse (traverse f) $ lEnv env)
+                                      (traverse (traverse f) $ tEnv env)

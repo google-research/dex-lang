@@ -3,7 +3,9 @@ module Env (Env (..), GVar (..), VarName,  newEnv, addFVar, addBVar, addBVars,
 
 import Data.List (elemIndex)
 import Data.Semigroup
+import Data.Traversable
 import qualified Data.Map.Strict as M
+import Control.Applicative (liftA, liftA2, liftA3)
 
 type VarName = String
 data Env i a = Env (M.Map VarName a) [a]  deriving (Show, Eq, Ord)
@@ -57,7 +59,13 @@ toDeBruijn vs (FV v) = case elemIndex v vs of Just i  -> BV i
 toDeBruijn vs (BV i) = BV i
 
 instance Functor (Env i) where
-  fmap f (Env fenv xs) = Env (fmap f fenv) (map f xs)
+  fmap = fmapDefault
+
+instance Foldable (Env i) where
+  foldMap = foldMapDefault
+
+instance Traversable (Env i) where
+  traverse f (Env fenv xs) = liftA2 Env (traverse f fenv) (traverse f xs)
 
 instance Semigroup (Env i a) where
   Env m1 xs1 <> Env m2 xs2 = Env (m1 <> m2) (xs1 <> xs2)

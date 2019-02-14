@@ -27,7 +27,7 @@
 
 x = unpack iota 10
 
-:t let y = sum x in y
+:t x
 
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3

@@ -23,7 +23,7 @@
 9
 
 :p hash 1 3
--5993311770495549972
+12453432303214001644
 
 :p randint (hash 0 0) 10
 8
@@ -32,4 +32,7 @@
        key = hash 0
    in sum (for i: randint (key x.i) 10)
 45212
+
+:p f 3
+193
 
