@@ -11,6 +11,7 @@ import Data.IORef
 
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
+import Data.List (intercalate, transpose)
 import Data.Traversable
 import Data.Functor.Identity
 
@@ -501,13 +502,6 @@ memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
                [charPtrTy, charPtrTy, longTy]
                ["dest", "src", "nbytes"]
 
--- --- printing ---
-
-printPersistVal :: PersistVal -> IO String
-printPersistVal (ScalarVal b x) = case x of
-  PScalar _ x   -> return $ show x
-printPersistVal val = return $ "<value>"
-
 -- --- builtins ---
 
 builtinSpec :: Builtin -> BuiltinSpec
@@ -553,6 +547,51 @@ compileBinop makeInstr = compile
     compile [] [ScalarVal _ x, ScalarVal _ y] = liftM (ScalarVal IntType) $
         evalInstr longTy (makeInstr y x)
 
+-- --- printing ---
+
+data RectTable a = RectTable [Int] [a]  deriving (Show)
+data PrintSpec = PrintSpec { manualAlign :: Bool }
+defaultPrintSpec = PrintSpec True
+
+printPersistVal :: PersistVal -> IO String
+printPersistVal (ScalarVal b x) = case x of
+  PScalar _ x   -> return $ show x
+printPersistVal (TabVal tab) = do
+  rTab <- makeRectTable tab
+  return $ showRectTable rTab
+
+makeRectTable :: Table PWord -> IO (RectTable Int64)
+makeRectTable (Table (Ptr (PPtr IntType voidPtr))
+              (PScalar IntType numElems) elemSize valTy) = do
+  vect <- mapM (peekElemOff ptr) [0.. (product shape - 1)]
+  return $ RectTable shape vect
+  where shape = fromIntegral numElems : shapeOf valTy
+        ptr = castPtr voidPtr :: F.Ptr Int64
+
+shapeOf :: PersistType -> [Int]
+shapeOf ty = case ty of
+  TabType (Meta (PScalar IntType size)) val -> fromIntegral size : shapeOf val
+  BaseType _ -> []
+
+idxProduct :: [Int] -> [[Int]]
+idxProduct [] = [[]]
+idxProduct (dim:shape) = [i:idxs | i <- [0 .. dim-1], idxs <- idxProduct shape]
+
+showRectTable :: Show a => RectTable a -> String
+showRectTable (RectTable shape vect) = alignCells rows
+  where rows = [ (map show idxs) ++ [show val]
+               | (idxs, val) <- zip (idxProduct shape) vect]
+
+alignCells :: [[String]] -> String
+alignCells rows = unlines $ if manualAlign defaultPrintSpec
+  then let colLengths = map maxLength (transpose rows)
+           rows' = map padRow rows
+           padRow = zipWith (padLeft ' ') colLengths
+       in map (intercalate " ") rows'
+  else map (intercalate "\t") rows
+
+maxLength :: [String] -> Int
+maxLength = foldr (\x y -> max (length x) y) 0
 
 instance Functor JitVal where
   fmap = fmapDefault

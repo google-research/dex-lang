@@ -24,7 +24,7 @@
        key = hash 0
    in sum (for i: randint (key x.i) 10)
 
-x = unpack iota 20
+x = unpack iota 7
 
 f = lam y: sum x + y
 
