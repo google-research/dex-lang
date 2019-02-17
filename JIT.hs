@@ -27,7 +27,7 @@ import qualified LLVM.Module as Mod
 import qualified LLVM.Analysis as Mod
 import qualified LLVM.ExecutionEngine as EE
 import LLVM.Internal.Context
-import LLVM.Pretty (ppllvm)
+-- import LLVM.Pretty (ppllvm)
 
 import Data.Int
 import Foreign.Ptr hiding (Ptr)

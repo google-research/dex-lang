@@ -1,0 +1,21 @@
+
+body {
+    margin-top: 1em;
+    margin-bottom: 4em;
+    margin-left: auto;
+    margin-right: auto;
+    padding-top: 1em;
+    padding-bottom: 1em;
+    padding-right: 1em;
+    padding-left: 1em;
+    max-width: 50em;
+    font-family: Helvetica, sans-serif;
+    font-size: 100%;
+    line-height: 120%;
+    color: #333;
+}
+
+.command {
+    padding-left: 1em;
+    padding-right: 1em;
+}

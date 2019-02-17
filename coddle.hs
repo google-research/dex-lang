@@ -2,6 +2,8 @@ import System.Console.Haskeline
 import System.Exit
 import System.IO
 import Data.IORef
+import Control.Concurrent
+import Control.Concurrent.Chan
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
@@ -16,25 +18,26 @@ import Typer
 import Util
 import Env
 import JIT
+import WebOutput
 
 type TypedVal = ()  -- until we get the interpreter back up
 
 type Driver a = InputT IO a
 data CmdOpts = CmdOpts { programSource :: Maybe String
-                       , dataSource    :: Maybe String }
+                       , dataSource    :: Maybe String
+                       , webOutput     :: Bool}
 
 data TopEnv = TopEnv { varEnv  :: Vars
                      , typeEnv :: FullEnv Type ()
                      , valEnv  :: FullEnv PersistVal PersistType}
 
-evalSource :: TopEnv -> String -> Driver TopEnv
+evalSource :: TopEnv -> String -> Driver (TopEnv, [TopDecl ()])
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
   (checked, varEnv' ) <- fullPass (procDecl boundVarPass)  (varEnv  env) decls
   (typed  , typeEnv') <- fullPass (procDecl typePass)      (typeEnv env) checked
   (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) typed
-  mapM writeDeclResult jitted
-  return $ TopEnv varEnv' typeEnv' valEnv'
+  return (TopEnv varEnv' typeEnv' valEnv', jitted)
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
@@ -61,6 +64,37 @@ evalSource env source = do
           do cmd' <- lift $ (lowerCmd pass) cmd env
              return $ TopDecl source fvs $ EvalCmd cmd'
 
+evalWeb :: String -> IO ()
+evalWeb fname = do
+  triggerChan <- onMod fname
+  dataReady <- newChan
+  initOutput <- evalFile
+  ref <- newIORef initOutput
+  let evalLoop :: IO ()
+      evalLoop = do readChan triggerChan
+                    evalFile >>= writeIORef ref
+                    writeChan dataReady ()
+  forkIO (forever evalLoop)
+  serveOutput dataReady ref
+
+  where evalFile :: IO String
+        evalFile = do
+          source <- readFile fname
+          (_, decls) <- runMonad $ evalSource initEnv source
+          return $ concat $ map (asHTML . showDeclResult) decls
+
+asHTML :: String -> String
+asHTML s =    "<div class=\"command\"><pre><code>\n"
+           ++ s
+           ++ "</code></pre></div>\n"
+
+evalScript :: String -> Driver ()
+evalScript fname = do
+  source <- lift (readFile fname)
+  (_, decls) <- evalSource initEnv source
+  lift $ putStr $ concat (map showDeclResult decls)
+  return ()
+
 runRepl :: TopEnv -> Driver ()
 runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
   where
@@ -68,19 +102,19 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
     loop envPtr = do
       source <- getInputLine ">=> "
       env <- lift $ readIORef envPtr
-      newEnv <- case source of
+      (newEnv, decls) <- case source of
                   Nothing ->  lift exitSuccess
                   Just s -> evalSource env s
+      lift $ putStr $ concat (map showDeclResult decls)
       lift $ writeIORef envPtr newEnv
 
-writeDeclResult :: TopDecl a -> Driver ()
-writeDeclResult (TopDecl source _ instr) = do
+showDeclResult :: TopDecl a -> String
+showDeclResult (TopDecl source _ instr) = do
   case instr of
-    EvalCmd (CmdResult s) -> printWithSource s
-    EvalCmd (CmdErr e)    -> printWithSource (show e)
-    _ -> return ()
-  where printWithSource :: String -> Driver ()
-        printWithSource s = lift $ putStrLn $ source ++ "\n" ++ s ++ "\n"
+    EvalCmd (CmdResult s) -> withSource s
+    EvalCmd (CmdErr e)    -> withSource (show e)
+    _ -> ""
+  where withSource s = source ++ "\n" ++ s ++ "\n\n"
 
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
@@ -99,9 +133,11 @@ opts = info (p <**> helper) mempty
             <*> (optional $ strOption (    long "data"
                                         <> metavar "DATA"
                                         <> help "Data source (optional)" ))
+            <*> switch (    long "web"
+                         <> help "Whether to use web output instead of stdout" )
 
-runMonad :: Driver a -> IO ()
-runMonad d = runInputTBehavior defaultBehavior defaultSettings d >> return ()
+runMonad :: Driver a -> IO a
+runMonad d = runInputTBehavior defaultBehavior defaultSettings d
 
 initEnv = TopEnv mempty mempty mempty
 
@@ -117,12 +153,15 @@ loadData fname = do
 
 main :: IO ()
 main = do
-  CmdOpts fname dbname <- execParser opts
+  CmdOpts fname dbname web <- execParser opts
   envWithData <- case dbname of
                    Just dbname -> undefined
                      -- do (inVal, inTy) <- loadData dbname
                      --    return $ ("data", inTy, inVal) `updateEnv` initEnv
                    Nothing -> return initEnv
   case fname of
-    Just fname -> runMonad $ lift (readFile fname) >>= evalSource envWithData
+    Just fname -> if web
+      then evalWeb fname
+      else runMonad $ evalScript fname
+
     Nothing    -> runMonad $ runRepl envWithData
