@@ -118,18 +118,21 @@ jitUnpack _ expr env = do let (v, m) = lower expr env
 jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
 jitCmd (Command cmdName expr) env =
   case cmdName of
-    GetLLVM ->  liftM CmdResult $ showLLVM m
+    GetLLVM ->  liftM textResult $ showLLVM m
     EvalExpr -> do val <- evalJit v m
-                   liftM CmdResult $ printPersistVal val
+                   liftM textResult $ printPersistVal val
     ShowPersistVal -> do val <- evalJit v m
-                         return $ CmdResult (show val)
+                         return $ textResult (show val)
     TimeIt -> do t1 <- getCurrentTime
                  ans <- evalJit v m
                  t2 <- getCurrentTime
-                 return $ CmdResult $ show (t2 `diffUTCTime` t1)
+                 return $ textResult $ show (t2 `diffUTCTime` t1)
+    Plot -> do val <- evalJit v m
+               return $ CmdResult $ PlotOut $ makePlot val
     _ -> return $ Command cmdName ()
    where
      (v, m) = lower expr env
+     textResult = CmdResult . TextOut
 
 jitCmd (CmdResult s) _ = return $ CmdResult s
 jitCmd (CmdErr e)    _ = return $ CmdErr e
@@ -617,3 +620,7 @@ instance Traversable JitVal where
 traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
 traverseJitEnv f env = liftA2 FullEnv (traverse (traverse f) $ lEnv env)
                                       (traverse (traverse f) $ tEnv env)
+
+
+makePlot :: PersistVal -> Bool
+makePlot (ScalarVal IntType (PScalar IntType x)) = x > 10

@@ -1,6 +1,6 @@
 module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                Expr, Type, IdxSet, Builtin (..),
-               UExpr (..), TopDecl (..), Command (..),
+               UExpr (..), TopDecl (..), Command (..), CommandOutput (..),
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..),
                Var, TVar, Except, Err (..),
@@ -121,12 +121,16 @@ data DeclInstr expr = TopAssign VarName expr
                     | TopUnpack VarName expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
 
+data CommandOutput = TextOut String | PlotOut Bool  deriving (Show, Eq)
+
 data Command expr = Command CmdName expr
-                  | CmdResult String
+                  | CmdResult CommandOutput
                   | CmdErr Err  deriving (Show, Eq)
 
 data CmdName = EvalExpr | GetType | GetTyped | GetParse
-             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal deriving  (Show, Eq)
+             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal | Plot
+               deriving  (Show, Eq)
+
 
 data Err = ParseErr String
          | UnificationErr String String

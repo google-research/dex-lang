@@ -77,16 +77,11 @@ evalWeb fname = do
   forkIO (forever evalLoop)
   serveOutput dataReady ref
 
-  where evalFile :: IO String
+  where evalFile :: IO [TopDecl ()]
         evalFile = do
           source <- readFile fname
           (_, decls) <- runMonad $ evalSource initEnv source
-          return $ concat $ map (asHTML . showDeclResult) decls
-
-asHTML :: String -> String
-asHTML s =    "<div class=\"command\"><pre><code>\n"
-           ++ s
-           ++ "</code></pre></div>\n"
+          return decls
 
 evalScript :: String -> Driver ()
 evalScript fname = do
@@ -111,7 +106,9 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
 showDeclResult :: TopDecl a -> String
 showDeclResult (TopDecl source _ instr) = do
   case instr of
-    EvalCmd (CmdResult s) -> withSource s
+    EvalCmd (CmdResult r) -> withSource $ case r of
+                                            TextOut s -> s
+                                            PlotOut p -> "<plot>"
     EvalCmd (CmdErr e)    -> withSource (show e)
     _ -> ""
   where withSource s = source ++ "\n" ++ s ++ "\n\n"

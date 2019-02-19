@@ -8,16 +8,10 @@
 
 <body>
 
-<div id="main-output"><p>
-
-</div>
-
-<script>
-  var source = new EventSource("/getnext");
-  source.onmessage = function(event) {
-      document.getElementById("main-output").innerHTML = event.data;};
-</script>
-
+<div id="main-output"></div>
 
 </body>
+
+<script src="/dynamic.js"></script>
+
 </html>

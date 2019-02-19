@@ -45,14 +45,14 @@ typePass = Pass
 
 inferTypesCmd :: Command UExpr -> FullEnv Type () -> Command Expr
 inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
-    GetParse -> CmdResult (show expr)
+    GetParse -> CmdResult $ TextOut  (show expr)
     _ -> case translateExpr expr env of
       Left e -> CmdErr e
       Right expr' -> case cmdName of
         GetType -> case getAndCheckType' env expr' of
                      Left e -> CmdErr e
-                     Right t -> CmdResult $ show t
-        GetTyped -> CmdResult $ show expr'
+                     Right t -> CmdResult $ TextOut  $ show t
+        GetTyped -> CmdResult $ TextOut  $ show expr'
         _ -> Command cmdName expr'
   where env = asTypingEnv ftenv
 

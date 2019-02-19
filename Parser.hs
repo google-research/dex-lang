@@ -62,6 +62,7 @@ explicitCommand = do
            "jit"   -> return EvalJit
            "time"  -> return TimeIt
            "persist" -> return ShowPersistVal
+           "plot"   -> return Plot
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
   return $ EvalCmd (Command cmd e)

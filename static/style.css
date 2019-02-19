@@ -1,21 +1,45 @@
 
 body {
-    margin-top: 1em;
-    margin-bottom: 4em;
-    margin-left: auto;
-    margin-right: auto;
-    padding-top: 1em;
-    padding-bottom: 1em;
-    padding-right: 1em;
-    padding-left: 1em;
-    max-width: 50em;
-    font-family: Helvetica, sans-serif;
-    font-size: 100%;
-    line-height: 120%;
-    color: #333;
+  margin: 1em auto 4em auto;
+  padding: 1em 1em 1em 1em;
+  max-width: 50em;
+  font-family: Helvetica, sans-serif;
+  font-size: 100%;
+  line-height: 120%;
+  color: #333;
 }
 
 .command {
-    padding-left: 1em;
-    padding-right: 1em;
+  padding-left: 1em;
+  padding-right: 1em;
+}
+
+
+.decl-cell {
+  /* display: none; */
+  margin: 0em 0em;
+  padding: 0em 1em;
+}
+
+.output-cell {
+  margin: 1em 0em;
+  padding: 1em 1em;
+}
+
+.err-cell {
+  margin: 1em 0em;
+  padding: 1em 1em;
+  background-color: #FAAFBA;
+}
+
+.source {
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
+.result-text {
+  display: block;
+  font-family: monospace;
+  white-space: pre;
 }
