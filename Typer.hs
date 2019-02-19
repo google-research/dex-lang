@@ -45,7 +45,7 @@ typePass = Pass
 
 inferTypesCmd :: Command UExpr -> FullEnv Type () -> Command Expr
 inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
-    GetParse -> CmdResult $ TextOut  (show expr)
+    GetParse -> CmdResult $ TextOut (show expr)
     _ -> case translateExpr expr env of
       Left e -> CmdErr e
       Right expr' -> case cmdName of
@@ -53,6 +53,10 @@ inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
                      Left e -> CmdErr e
                      Right t -> CmdResult $ TextOut  $ show t
         GetTyped -> CmdResult $ TextOut  $ show expr'
+        Plot -> case getType ftenv expr' of
+                  TabType _ (BaseType IntType) -> Command Plot expr'
+                  ty -> CmdErr $ TypeErr $
+                      "Plot data must have form i=>Int. Got: " ++ show ty
         _ -> Command cmdName expr'
   where env = asTypingEnv ftenv
 

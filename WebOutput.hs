@@ -88,5 +88,5 @@ instance ToJSON (DeclInstr a) where
     _                       -> object [ "source_only" .= toJSON ()  ]
 
 instance ToJSON CommandOutput where
-  toJSON (TextOut s) = toJSON s
-  toJSON (PlotOut _) = toJSON ("this is a plot" :: String)
+  toJSON (TextOut s) = object ["text" .= s]
+  toJSON (PlotOut xs ys) = object ["plot" .= object ["x" .= xs, "y" .= ys]]

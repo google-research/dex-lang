@@ -8,7 +8,7 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
                subTy, subExpr, bindMetaTy, bindMetaExpr, raiseIOExcept,
                noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
-               instantiateType, instantiateBody, joinType) where
+               instantiateType, instantiateBody, instantiateBodyFVs, joinType) where
 
 import Util
 import Record
@@ -121,7 +121,8 @@ data DeclInstr expr = TopAssign VarName expr
                     | TopUnpack VarName expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
 
-data CommandOutput = TextOut String | PlotOut Bool  deriving (Show, Eq)
+data CommandOutput = TextOut String | PlotOut [Float] [Float]
+                       deriving (Show, Eq)
 
 data Command expr = Command CmdName expr
                   | CmdResult CommandOutput
@@ -429,6 +430,18 @@ instantiateType ts t = case t of
   ty -> case ts of [] -> ty
   where nt = length ts
         ts' = map Just ts
+
+instantiateBodyFVs :: Env TVar (Maybe (GenType a)) -> GenType a -> GenType a
+instantiateBodyFVs env@(Env fvs bvs) t = case t of
+  BaseType _  -> t
+  TypeVar v -> case env ! v of Just t' -> t'
+                               Nothing -> t
+  ArrType a b -> ArrType (recur a) (recur b)
+  TabType a b -> TabType (recur a) (recur b)
+  Forall kinds body -> let env' = Env fvs (map (const Nothing) kinds ++ bvs)
+                       in Forall kinds $ instantiateBodyFVs env' body
+  Meta _ -> t
+  where recur = instantiateBodyFVs env
 
 instantiateBody :: [Maybe (GenType a)] -> GenType a -> GenType a
 instantiateBody env t = case t of

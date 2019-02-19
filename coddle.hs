@@ -106,9 +106,8 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
 showDeclResult :: TopDecl a -> String
 showDeclResult (TopDecl source _ instr) = do
   case instr of
-    EvalCmd (CmdResult r) -> withSource $ case r of
-                                            TextOut s -> s
-                                            PlotOut p -> "<plot>"
+    EvalCmd (CmdResult r) -> withSource $ case r of TextOut s -> s
+                                                    PlotOut _ _ -> "<plot>"
     EvalCmd (CmdErr e)    -> withSource (show e)
     _ -> ""
   where withSource s = source ++ "\n" ++ s ++ "\n\n"

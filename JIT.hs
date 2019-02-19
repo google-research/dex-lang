@@ -128,7 +128,8 @@ jitCmd (Command cmdName expr) env =
                  t2 <- getCurrentTime
                  return $ textResult $ show (t2 `diffUTCTime` t1)
     Plot -> do val <- evalJit v m
-               return $ CmdResult $ PlotOut $ makePlot val
+               (xs, ys) <- makePlot val
+               return $ CmdResult $ PlotOut xs ys
     _ -> return $ Command cmdName ()
    where
      (v, m) = lower expr env
@@ -301,11 +302,9 @@ typeOf val = case val of
   where arrRHS :: CompileType -> CompileType
         arrRHS (ArrType _ ty) = ty
 
-
--- TODO: evaluate free vars here too
 compileType :: Type -> CompileM CompileType
-compileType ty = do env <- asks (bVars . tEnv)
-                    return $ instantiateBody (map Just env) (noLeaves ty)
+compileType ty = do env <- asks tEnv
+                    return $ instantiateBodyFVs (fmap Just env) (noLeaves ty)
 
 compileBuiltin :: Builtin -> [CompileType] -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b types args =
@@ -621,6 +620,10 @@ traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
 traverseJitEnv f env = liftA2 FullEnv (traverse (traverse f) $ lEnv env)
                                       (traverse (traverse f) $ tEnv env)
 
-
-makePlot :: PersistVal -> Bool
-makePlot (ScalarVal IntType (PScalar IntType x)) = x > 10
+makePlot :: PersistVal -> IO ([Float], [Float])
+makePlot (TabVal (Table (Ptr (PPtr IntType voidPtr)) (PScalar IntType n) _ _ )) = do
+  let idxs  = [0.. (fromIntegral n - 1)]
+  vect <- mapM (peekElemOff ptr) idxs
+  return (map fromIntegral idxs,
+          map fromIntegral vect)
+  where ptr = castPtr voidPtr :: F.Ptr Int64
