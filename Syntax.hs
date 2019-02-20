@@ -76,13 +76,13 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Reduce | Iota | Sum' | Doubleit
+             | Sin | Cos | Tan | Fold | Iota | Doubleit
              | Hash | Rand | Randint  deriving (Eq, Ord, Show)
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("reduce", Reduce), ("iota", Iota), ("sum", Sum'), ("doubleit", Doubleit),
+  ("fold", Fold), ("iota", Iota), ("doubleit", Doubleit),
   ("hash", Hash), ("rand", Rand), ("randint", Randint)]
 
 strToBuiltin :: String -> Maybe Builtin

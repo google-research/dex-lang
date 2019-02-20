@@ -157,7 +157,7 @@ instantiate :: MType -> MType -> MExpr -> ConstrainMonad MExpr
 instantiate ty reqTy expr =
   case ty of
     Forall kinds t -> do
-      vs <- mapM (const fresh) kinds
+      vs <- mapM freshMeta kinds
       addConstraint (reqTy, instantiateType vs ty)
       return $ TApp expr vs
     _ -> do
@@ -251,6 +251,7 @@ bind v t | v `occursIn` t = Left InfiniteTypeErr
 occursIn :: MetaVar -> MType -> Bool
 occursIn v t = v `elem` toList t
 
+-- TODO: check kinds
 unify :: MType -> MType -> Except Subst
 unify t1 t2@(TypeVar (BV v)) = unifyErr t1 t2
 unify t1@(TypeVar (BV v)) t2 = unifyErr t2 t1
@@ -453,9 +454,8 @@ builtinType builtin = case builtin of
   Sin      -> realUnOpType
   Cos      -> realUnOpType
   Tan      -> realUnOpType
-  Reduce   -> reduceType
+  Fold     -> foldType
   Iota     -> iotaType
-  Sum'     -> sumType
   Doubleit -> int --> int
   Hash     -> int --> int --> int
   Rand     -> int --> real
@@ -463,14 +463,14 @@ builtinType builtin = case builtin of
   where
     binOpType    = int --> int --> int
     realUnOpType = real --> real
-    reduceType = Forall [TyKind, IdxSetKind] $
-                   (a --> a --> a) --> a --> (j ==> a) --> a
+    foldType = Forall [TyKind, TyKind, IdxSetKind] $
+                   (a --> a --> b) --> b --> (k ==> a) --> b
     iotaType = int --> Exists (i ==> int)
-    sumType = Forall [IdxSetKind] $ (i ==> int) --> int
     a = TypeVar (BV 0)
     b = TypeVar (BV 1)
     i = TypeVar (BV 0)
     j = TypeVar (BV 1)
+    k = TypeVar (BV 2)
     int = BaseType IntType
     real = BaseType RealType
 

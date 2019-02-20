@@ -1,3 +1,5 @@
+sum = fold add 0
+
 :p 1 + 2
 
 :p let double = lam x: x * 2
@@ -31,3 +33,11 @@ f = lam y: sum x + y
 :p f 3
 
 :p x
+
+:p fold (lam x y: x + y) 0 x
+
+:p 10 - 6
+
+-- TODO: fix signed ints
+:p 6 - 10
+
