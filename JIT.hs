@@ -44,6 +44,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Typer
 import Syntax
 import Env
+import Record
 import Util
 
 foreign import ccall "dynamic"
@@ -56,7 +57,8 @@ type JitEnv w = FullEnv (JitVal w) (JitType w)
 data JitVal w = ScalarVal BaseType w
               | IdxVal w w
               | TabVal (Table w)
-              | LamVal  Type  (JitEnv w) Expr
+              | LamVal (RecTree Type)  (JitEnv w) Expr
+              | RecVal (Record (JitVal w))
               | TLamVal [Kind] (JitEnv w) Expr
               | BuiltinLam Builtin [JitType w] [JitVal w]
               | ExPackage w (JitVal w)  deriving (Show)
@@ -256,7 +258,8 @@ compile expr = case expr of
   Builtin b -> return $ BuiltinLam b [] []
   Let _ bound body -> do x <- compile bound
                          local (setLEnv $ addBVar x) (compile body)
-  Lam a body -> do { env <- ask; return (LamVal a env body) }
+  Lam p body -> do env <- ask
+                   return (LamVal p env body)
   App e1 e2  -> do f <- compile e1
                    x <- compile e2
                    compileApp f x
@@ -266,6 +269,7 @@ compile expr = case expr of
   Get e ie -> do x <- compile e
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
+  RecCon r -> liftM RecVal (traverse compile r)
   TLam kinds body -> do { env <- ask; return (TLamVal kinds env body) }
   TApp e ts -> do
     f <- compile e
@@ -295,7 +299,7 @@ typeOf val = case val of
   ScalarVal b _ -> BaseType b
   IdxVal n _ -> Meta n
   TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
-  LamVal a env expr      -> exprType env (Lam a expr)
+  LamVal p env expr      -> exprType env (Lam p expr)
   TLamVal kinds env expr -> exprType env (TLam kinds expr)
   BuiltinLam b ts vs ->
     composeN (length vs) arrRHS $ instantiateType ts (builtinType b)
@@ -304,8 +308,12 @@ typeOf val = case val of
 
 compileApp :: CompileVal -> CompileVal -> CompileM CompileVal
 compileApp f x = case f of
-  LamVal _ env body -> withEnv (setLEnv (addBVar x) env) (compile body)
+  LamVal p env body -> withEnv (setLEnv (addBVars (bindPat p x)) env) (compile body)
   BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
+
+bindPat :: RecTree a -> CompileVal -> [CompileVal]
+bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r')
+bindPat (RecLeaf l) x = [x]
 
 compileType :: Type -> CompileM CompileType
 compileType ty = do env <- asks tEnv
@@ -416,10 +424,13 @@ litInt :: Int -> Long
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
 
 add :: Long -> Long -> CompileM Long
-add (x) (y) = evalInstr longTy $ L.Add False False x y []
+add x y = evalInstr longTy $ L.Add False False x y []
+
+sumLongs :: [Long] -> CompileM Long
+sumLongs xs = foldM add (litInt 0) xs
 
 mul :: Long -> Long -> CompileM Long
-mul (x) (y) = evalInstr longTy $ L.Mul False False x y []
+mul x y = evalInstr longTy $ L.Mul False False x y []
 
 newIntCell :: Int -> CompileM CPtr
 newIntCell x = do
@@ -480,6 +491,7 @@ getNumScalars ty = case ty of
   BaseType _ -> return $ litInt 1
   TabType (Meta i) valTy -> do n <- getNumScalars valTy
                                mul i n
+  RecType r -> mapM getNumScalars (toList r) >>= sumLongs
   _ -> error $ show ty
 
 readTable :: CTable -> Index -> CompileM CompileVal
@@ -496,8 +508,7 @@ writeTable :: CTable -> Index -> CompileVal -> CompileM ()
 writeTable tab idx val = do
   (Ptr dest) <- arrayPtr tab idx
   case val of
-    ScalarVal IntType val' ->
-      writeCell (Ptr dest) (val')
+    ScalarVal IntType val' -> writeCell (Ptr dest) (val')
     TabVal (Table (Ptr src) n (ConstSize numScalars) ty) -> do
       let (scalarSize, _) = baseTypeInfo ty
       elemSize <- mul (litInt scalarSize) numScalars

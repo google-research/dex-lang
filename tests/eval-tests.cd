@@ -1,3 +1,6 @@
+:llvm let x = unpack iota 100
+   in sum (for i: x.i)
+
 sum = fold add 0
 
 :p 1 + 2
@@ -41,3 +44,8 @@ f = lam y: sum x + y
 -- TODO: fix signed ints
 :p 6 - 10
 
+:p (lam (x, y): x + y) (1, 2)
+
+-- :p let f (x, y) = x + 2 * y;
+--        z.i = (x.i, x.i * x.i)
+--    in sum (for i: f z.i)

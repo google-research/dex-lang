@@ -1,3 +1,7 @@
+:llvm let x = unpack iota 100
+   in sum (for i: x.i)
+Unbound variable: "sum"
+
 :p 1 + 2
 3
 
@@ -54,4 +58,7 @@
 
 :p 6 - 10
 18446744073709551612
+
+:p (lam (x, y): x + y) (1, 2)
+3
 

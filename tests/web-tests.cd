@@ -1,10 +1,13 @@
+sum = fold add 0
+
+
 x = unpack iota 7
 y = unpack iota 10
 
 :plotmat for i j: hash (hash 1 x.i)  y.j
 
 
-:plot for i: hash 2 x.i
+:plot for i: hash 1 x.i
 
 :p 1 + 200
 

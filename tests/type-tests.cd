@@ -31,6 +31,12 @@ x = unpack iota 10
 
 :t x
 
+:t (lam (x, y): x + y) (1, 2)
+
+:t let f (x, y) = x + 2 * y;
+       z.i = (x.i, x.i * x.i)
+   in sum (for i: f z.i)
+
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3
 --    in let y = for i j: x.i * x.i
