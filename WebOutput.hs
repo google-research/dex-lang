@@ -90,3 +90,5 @@ instance ToJSON (DeclInstr a) where
 instance ToJSON CommandOutput where
   toJSON (TextOut s) = object ["text" .= s]
   toJSON (PlotOut xs ys) = object ["plot" .= object ["x" .= xs, "y" .= ys]]
+  toJSON (PlotMatOut zs) = object ["plot" .= object ["z" .= zs,
+                                                     "type" .= ("heatmap"::String)]]

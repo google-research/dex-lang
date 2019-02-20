@@ -63,6 +63,7 @@ explicitCommand = do
            "time"  -> return TimeIt
            "persist" -> return ShowPersistVal
            "plot"   -> return Plot
+           "plotmat" -> return PlotMat
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
   return $ EvalCmd (Command cmd e)

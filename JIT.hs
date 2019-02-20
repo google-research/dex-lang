@@ -130,6 +130,9 @@ jitCmd (Command cmdName expr) env =
     Plot -> do val <- evalJit v m
                (xs, ys) <- makePlot val
                return $ CmdResult $ PlotOut xs ys
+    PlotMat -> do val <- evalJit v m
+                  zs <- makePlotMat val
+                  return $ CmdResult $ PlotMatOut zs
     _ -> return $ Command cmdName ()
    where
      (v, m) = lower expr env
@@ -453,6 +456,7 @@ getNumScalars ty = case ty of
   BaseType _ -> return $ litInt 1
   TabType (Meta i) valTy -> do n <- getNumScalars valTy
                                mul i n
+  _ -> error $ show ty
 
 readTable :: CTable -> Index -> CompileM CompileVal
 readTable tab@(Table _ _ _ valTy) idx = do
@@ -627,3 +631,18 @@ makePlot (TabVal (Table (Ptr (PPtr IntType voidPtr)) (PScalar IntType n) _ _ )) 
   return (map fromIntegral idxs,
           map fromIntegral vect)
   where ptr = castPtr voidPtr :: F.Ptr Int64
+
+makePlotMat :: PersistVal -> IO [[Float]]
+makePlotMat (TabVal (Table (Ptr (PPtr IntType voidPtr))
+                         (PScalar IntType numRows) _ valTy)) = do
+  let [numCols] = shapeOf valTy
+  vect <- mapM (peekElemOff ptr) [0.. (numRows' * numCols - 1)]
+  return $ reshape numRows' numCols $ (map fromIntegral vect :: [Float])
+  where shape = numRows' : shapeOf valTy
+        ptr = castPtr voidPtr :: F.Ptr Int64
+        numRows' = fromIntegral numRows :: Int
+
+reshape :: Int -> Int -> [a] -> [[a]]
+reshape 0 _ [] = []
+reshape r c xs = let (row, rest) = splitAt c xs
+                 in row : reshape (r-1) c rest

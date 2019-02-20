@@ -1,6 +1,4 @@
 
-
-
 function new_output_cell(output) {
     console.log(output);
     var body = document.getElementById("main-output");
@@ -15,10 +13,10 @@ function new_output_cell(output) {
         add_node(cell, "source", source);
         result = instr["result"];
         if ("text" in result) {
-          add_node(cell, "result-text", result["text"]);
+            add_node(cell, "result-text", result["text"]);
         } else if ("plot" in result) {
-          plot_div = add_node(cell, "plot-output", "");
-          Plotly.plot(plot_div, [result["plot"]]);
+            plot_div = add_node(cell, "plot-output", "");
+            Plotly.plot(plot_div, [result["plot"]]);
         }
     } else if ("error" in instr) {
         var cell = add_node(body, "err-cell", "");

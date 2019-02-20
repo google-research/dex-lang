@@ -121,7 +121,9 @@ data DeclInstr expr = TopAssign VarName expr
                     | TopUnpack VarName expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
 
-data CommandOutput = TextOut String | PlotOut [Float] [Float]
+data CommandOutput = TextOut String
+                   | PlotOut [Float] [Float]
+                   | PlotMatOut [[Float]]
                        deriving (Show, Eq)
 
 data Command expr = Command CmdName expr
@@ -129,7 +131,8 @@ data Command expr = Command CmdName expr
                   | CmdErr Err  deriving (Show, Eq)
 
 data CmdName = EvalExpr | GetType | GetTyped | GetParse
-             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal | Plot
+             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal
+             | Plot | PlotMat
                deriving  (Show, Eq)
 
 

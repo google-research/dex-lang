@@ -1,4 +1,8 @@
-x = unpack iota 70
+x = unpack iota 7
+y = unpack iota 10
+
+:plotmat for i j: hash (hash 1 x.i)  y.j
+
 
 :plot for i: hash 2 x.i
 

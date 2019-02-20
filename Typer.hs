@@ -57,6 +57,11 @@ inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
                   TabType _ (BaseType IntType) -> Command Plot expr'
                   ty -> CmdErr $ TypeErr $
                       "Plot data must have form i=>Int. Got: " ++ show ty
+        PlotMat ->
+          case getType ftenv expr' of
+                 TabType _ (TabType _ (BaseType IntType)) -> Command PlotMat expr'
+                 ty -> CmdErr $ TypeErr $
+                        "Plotmat data must have form i=>j=>Int. Got: " ++ show ty
         _ -> Command cmdName expr'
   where env = asTypingEnv ftenv
 
@@ -433,8 +438,8 @@ getType' expr = case expr of
 
     asMeta :: Type -> GetTypeM a (GenType a)
     asMeta t = do
-      mvs <- asks $ map (Just . Meta) . bVars . tEnv
-      return $ instantiateBody mvs (noLeaves t)
+      mvs <- asks $ fmap (Just . Meta) . tEnv
+      return $ instantiateBodyFVs mvs (noLeaves t)
 
 builtinType :: Builtin -> GenType a
 builtinType builtin = case builtin of
