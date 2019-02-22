@@ -2,7 +2,7 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                Expr, Type, IdxSet, Builtin (..),
                UExpr (..), TopDecl (..), Command (..), CommandOutput (..),
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
-               LitVal (..), BaseType (..),
+               LitVal (..), BaseType (..), Pat, UPat,
                Var, TVar, Except, Err (..),
                Vars, FullEnv (..), setLEnv, setTEnv,
                fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
@@ -26,13 +26,14 @@ data GenExpr a = Lit LitVal
                | Var Var
                | Builtin Builtin
                | Let (GenType a) (GenExpr a) (GenExpr a)
-               | Lam (GenType a) (GenExpr a)
+               | Lam (Pat a) (GenExpr a)
                | App (GenExpr a) (GenExpr a)
                | For (GenIdxSet a) (GenExpr a)
                | Get (GenExpr a) IdxExpr
                | Unpack (GenExpr a) (GenExpr a)
                | TLam [Kind] (GenExpr a)
                | TApp (GenExpr a) [(GenType a)]
+               | RecCon (Record (GenExpr a))
                    deriving (Eq, Ord)
 
 data GenType a = Meta a
@@ -40,6 +41,7 @@ data GenType a = Meta a
                | TypeVar TVar
                | ArrType (GenType a) (GenType a)
                | TabType (GenIdxSet a) (GenType a)
+               | RecType (Record (GenType a))
                | Forall [Kind] (GenType a)
                | Exists (GenType a)
                   deriving (Eq, Ord)
@@ -56,7 +58,7 @@ data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
            | ULet VarName UExpr UExpr
-           | ULam VarName UExpr
+           | ULam UPat UExpr
            | UApp UExpr UExpr
            | UFor VarName UExpr
            | UGet UExpr IdxExpr
@@ -76,13 +78,16 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Reduce | Iota | Sum' | Doubleit
+             | Sin | Cos | Tan | Fold | Iota | Doubleit
              | Hash | Rand | Randint  deriving (Eq, Ord, Show)
+
+type UPat  = RecTree VarName
+type Pat a = RecTree (GenType a)
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("reduce", Reduce), ("iota", Iota), ("sum", Sum'), ("doubleit", Doubleit),
+  ("fold", Fold), ("iota", Iota), ("doubleit", Doubleit),
   ("hash", Hash), ("rand", Rand), ("randint", Randint)]
 
 strToBuiltin :: String -> Maybe Builtin
@@ -280,6 +285,7 @@ showType env t = case t of
   TypeVar v   -> getName tVarNames depth v
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
   TabType a b -> recur a ++ "=>" ++ recur b
+  RecType r   -> printRecord recur typeRecPrintSpec r
   Forall kinds t -> "A " ++ spaceSep (take (length kinds) tVarNames) ++ ". "
                           ++ showType (kinds ++ env) t
   Exists body -> "E " ++ tVarNames !! depth ++ ". " ++
@@ -297,7 +303,7 @@ showExpr env@(depth, kinds) expr = case expr of
   Builtin b    -> show b
   Let t e1 e2  -> paren $    "let " ++ showBinder t ++ " = " ++ recur e1
                           ++ " in " ++ recurWith e2
-  Lam t e      -> paren $ "lam " ++ showBinder t ++ ": " ++ recurWith e
+  Lam p e      -> paren $ "lam " ++ printRecTree showBinder p ++ ": " ++ recurWith e
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
   For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ recurWith e
   Get e ie     -> recur e ++ "." ++ name ie
@@ -336,10 +342,11 @@ instance Traversable GenExpr where
     Var v -> pure $ Var v
     Builtin b -> pure $ Builtin b
     Let t bound body  -> liftA3 Let (recurTy t) (recur bound) (recur body)
-    Lam t body        -> liftA2 Lam (recurTy t) (recur body)
+    Lam p body        -> liftA2 Lam (traverse recurTy p) (recur body)
     App fexpr arg     -> liftA2 App (recur fexpr) (recur arg)
     For t body        -> liftA2 For (recurTy t) (recur body)
     Get e ie          -> liftA2 Get (recur e) (pure ie)
+    RecCon r          -> liftA  RecCon (traverse recur r)
     Unpack bound body -> liftA2 Unpack (recur bound) (recur body)
     TLam kinds expr   -> liftA  (TLam kinds) (recur expr)
     TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
@@ -359,6 +366,7 @@ instance Traversable GenType where
     TypeVar v         -> pure $ TypeVar v
     ArrType a b       -> liftA2 ArrType (recur a) (recur b)
     TabType a b       -> liftA2 TabType (recur a) (recur b)
+    RecType r         -> liftA  RecType (traverse recur r)
     Forall kinds body -> liftA  (Forall kinds) (recur body)
     Exists body       -> liftA  Exists (recur body)
     where recur = traverse f
@@ -395,6 +403,7 @@ subTyDepth d f t = case t of
   TypeVar  v    -> TypeVar v
   ArrType a b   -> ArrType (recur a) (recur b)
   TabType a b   -> TabType (recur a) (recur b)
+  RecType r     -> RecType (fmap recur r)
   Exists body -> Exists (recurWith 1 body)
   Forall kinds body -> Forall kinds (recurWith (length kinds) body)
   where recur = subTyDepth d f
@@ -406,10 +415,11 @@ subExprDepth d f expr = case expr of
   Var v -> Var v
   Builtin b -> Builtin b
   Let t bound body -> Let (recurTy t) (recur bound) (recur body)
-  Lam t body       -> Lam (recurTy t) (recur body)
+  Lam p body       -> Lam (fmap recurTy p) (recur body)
   App fexpr arg    -> App (recur fexpr) (recur arg)
   For t body       -> For (recurTy t) (recur body)
   Get e ie         -> Get (recur e) ie
+  RecCon r         -> RecCon (fmap recur r)
   Unpack bound body -> Unpack (recur bound) (recurWith 1 body)
   TLam kinds expr     -> TLam kinds (recurWith (length kinds) expr)
   TApp expr ts        -> TApp (recur expr) (map recurTy ts)
@@ -455,6 +465,7 @@ instantiateBody env t = case t of
   TypeVar (FV v) -> t
   ArrType a b -> ArrType (recur a) (recur b)
   TabType a b -> TabType (recur a) (recur b)
+  RecType r   -> RecType (fmap recur r)
   Forall kinds body -> let env' = map (const Nothing) kinds ++ env
                        in Forall kinds $ instantiateBody env' body
   Meta _ -> t

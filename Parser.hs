@@ -85,7 +85,7 @@ tryUnpackDecl = do
 
 tryAssignDecl :: Parser (VarName, UExpr)
 tryAssignDecl = do
-  (p, wrap) <- try $ do p <- pat
+  (p, wrap) <- try $ do p <- identifier
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
                         return (p, wrap)
@@ -174,7 +174,7 @@ unpackDecl = do
 
 assignDecl :: Parser Decl
 assignDecl = do
-  p <- pat
+  p <- identifier
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   unpack <- optional (symbol "unpack")
@@ -226,22 +226,18 @@ idxExpr = liftM FV identifier
 --     [(Nothing, expr)] -> expr
 --     elts -> RecTree $ mixedRecord elts
 
-idxPat = pat
+idxPat = identifier
 
--- leaving this for when we reintroduce records
--- pat :: Parser UPat
--- pat =   parenPat
---     <|> liftM2 (curry VarPat) identifier (optional typeAnnot)
+pat :: Parser UPat
+pat =   parenPat
+    <|> liftM RecLeaf identifier -- (optional typeAnnot)
 
-pat :: Parser VarName
-pat = identifier
-
--- parenPat :: Parser UPat
--- parenPat = do
---   xs <- parens $ maybeNamed pat `sepBy` symbol ","
---   return $ case xs of
---     [(Nothing, x)] -> x
---     xs -> RecPat $ mixedRecord xs
+parenPat :: Parser UPat
+parenPat = do
+  xs <- parens $ maybeNamed pat `sepBy` symbol ","
+  return $ case xs of
+    [(Nothing, x)] -> x
+    xs -> RecTree $ mixedRecord xs
 
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
@@ -296,7 +292,7 @@ lower env expr = case expr of
   UVar v         -> UVar $ toDeBruijn (lVars env) v
   UBuiltin b     -> UBuiltin b
   ULet p e body  -> ULet p (recur e) $ lowerWith p body
-  ULam p body    -> ULam p           $ lowerWith p body
+  ULam p body    -> ULam p           $ lowerWithMany p body
   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
   UFor p body    -> UFor p           $ lowerWith p body
   UGet e ie      -> UGet (recur e) $ toDeBruijn (lVars env) ie
@@ -305,7 +301,14 @@ lower env expr = case expr of
   UUnpack v e body -> UUnpack v (recur e) $
                          lower (env {lVars = v : lVars env}) body
   where recur = lower env
-        lowerWith p expr = lower (updateLVars p env) expr
+        lowerWith p expr = lower (updateLVar p env) expr
+        lowerWithMany p expr = lower (updateLVars (toList p) env) expr
+
+        updateLVar :: VarName -> BoundVars -> BoundVars
+        updateLVar v env = env {lVars = v : lVars env}
+
+        updateLVars :: [VarName] -> BoundVars -> BoundVars
+        updateLVars vs env = env {lVars = vs ++ lVars env}
 
 lowerType :: BoundVars -> Type -> Type
 lowerType env ty = case ty of
@@ -315,9 +318,6 @@ lowerType env ty = case ty of
   TabType t1 t2 -> TabType (recur t1) (recur t2)
   -- MetaTypeVar m -> MetaTypeVar m
   where recur = lowerType env
-
-updateLVars :: VarName -> BoundVars -> BoundVars
-updateLVars v env = env {lVars = v : lVars env}
 
 updateTVars :: [VarName] -> BoundVars -> BoundVars
 updateTVars vs env = env {tVars = vs ++ tVars env}

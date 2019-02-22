@@ -6,7 +6,7 @@ module Record (Record,  RecName (..), posRecord, nameRecord, emptyRecord,
                recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
                RecordPrintSpec (..), mixedRecordPosName,
                defaultRecPrintSpec, typeRecPrintSpec,
-               mixedRecordPosNameList) where
+               mixedRecordPosNameList, printRecTree) where
 
 import Util
 import Control.Monad
@@ -141,6 +141,11 @@ printRecord showVal spec (Record m) =
                       Just ks -> [(k, unJust (M.lookup k m)) | k <- ks]
         xs = map showKV $ zip [0..] kvOrdered
         trail = if length (M.keys m) == 1 then trailSep spec else ""
+
+printRecTree :: (a -> String) -> RecTree a -> String
+printRecTree printLeaf tree = case tree of
+  RecTree r -> printRecord (printRecTree printLeaf) defaultRecPrintSpec r
+  RecLeaf l -> printLeaf l
 
 arbitraryName :: Gen String
 arbitraryName = liftM2 (:) arbLower (shortList 2 arbValid)

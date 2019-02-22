@@ -111,10 +111,11 @@ check expr reqTy = case expr of
         boundGen   = generalize   flexVars bound'
     body' <- local (setLEnv $ addBVar boundTyGen) (check body reqTy)
     return $ Let boundTyGen boundGen body'
-  ULam _ body -> do
+  ULam p body -> do
     (a, b) <- splitFun reqTy
-    body' <- local (setLEnv $ addBVar a) (check body b)
-    return $ Lam a body'
+    a' <- recTy p a
+    body' <- local (setLEnv $ addBVars (toList a')) (check body b)
+    return $ Lam a' body'
   UApp fexpr arg -> do
     (f, fexpr') <- infer fexpr
     (a, b) <- splitFun f
@@ -125,6 +126,9 @@ check expr reqTy = case expr of
     (i, v) <- splitTab reqTy
     body' <- local (setLEnv $ addBVar i) (check body v)
     return $ For i body'
+  URecCon r -> do tyExpr <- traverse infer r
+                  addConstraint (reqTy, RecType (fmap fst tyExpr))
+                  return $ RecCon (fmap snd tyExpr)
   UGet expr idxExpr -> do
     (tabTy, expr') <- infer expr
     (i, v) <- splitTab tabTy
@@ -152,12 +156,21 @@ check expr reqTy = case expr of
     let body'' = bindMetaExpr [i'] (applySubExpr sub body')
     return $ Unpack bound' body''
 
+recTy :: UPat -> MType -> ConstrainMonad (RecTree MType)
+recTy pat ty = do tree <- traverse (const fresh) pat
+                  addConstraint (recTreeAsType tree, ty)
+                  return tree
+
+recTreeAsType :: RecTree (GenType a) -> GenType a
+recTreeAsType (RecTree r) = RecType (fmap recTreeAsType r)
+recTreeAsType (RecLeaf t) = t
+
 
 instantiate :: MType -> MType -> MExpr -> ConstrainMonad MExpr
 instantiate ty reqTy expr =
   case ty of
     Forall kinds t -> do
-      vs <- mapM (const fresh) kinds
+      vs <- mapM freshMeta kinds
       addConstraint (reqTy, instantiateType vs ty)
       return $ TApp expr vs
     _ -> do
@@ -251,6 +264,7 @@ bind v t | v `occursIn` t = Left InfiniteTypeErr
 occursIn :: MetaVar -> MType -> Bool
 occursIn v t = v `elem` toList t
 
+-- TODO: check kinds
 unify :: MType -> MType -> Except Subst
 unify t1 t2@(TypeVar (BV v)) = unifyErr t1 t2
 unify t1@(TypeVar (BV v)) t2 = unifyErr t2 t1
@@ -313,9 +327,9 @@ getAndCheckType expr = case expr of
                            t'' <- recur bound
                            assertEq' t'' t' "Type mismatch in 'let'"
                            recurWith t' body
-    Lam a body     -> do a' <- checkTy TyKind a
-                         b <- recurWith a' body
-                         return $ ArrType a' b
+    Lam a body     -> do a' <- traverse (checkTy TyKind) a
+                         b <- recurWithMany (toList a') body
+                         return $ ArrType (recTreeAsType a') b
     App fexpr arg  -> do ArrType a b <- recur fexpr
                          a' <- recur arg
                          assertEq' a a' "Type mismatch in 'app'"
@@ -323,6 +337,7 @@ getAndCheckType expr = case expr of
     For a body     -> do a' <- checkTy IdxSetKind a
                          b <- recurWith a' body -- TODO check and convert a
                          return $ TabType a' b
+    RecCon r       -> liftM RecType (traverse recur r)
     Get e ie       -> do TabType a b <- recur e
                          ieTy <- lookupLVar ie
                          assertEq' a ieTy "Type mismatch in 'get'"
@@ -342,8 +357,9 @@ getAndCheckType expr = case expr of
 
   where
     recur = getAndCheckType
-    recurWith  t   = local (setLEnv (addBVar  t  )) . recur
-    recurWithT mvs = local (setTEnv (addBVars mvs)) . recur
+    recurWith  t     = local (setLEnv (addBVar  t  )) . recur
+    recurWithMany ts = local (setLEnv (addBVars ts )) . recur
+    recurWithT mvs   = local (setTEnv (addBVars mvs)) . recur
 
     freshMeta :: Kind -> CheckM MetaVar
     freshMeta kind = do i <- get
@@ -375,6 +391,7 @@ getKind env t = case t of
                                   FV _ -> IdxSetKind
   ArrType a b -> check TyKind     a >> check TyKind b >> return TyKind
   TabType a b -> check IdxSetKind a >> check TyKind b >> return TyKind
+  RecType r   -> return TyKind -- TODO actually check this
   Forall kinds body -> getKind (addBVars kinds        env) body
   Exists       body -> getKind (addBVars [IdxSetKind] env) body
   where recur = getKind env
@@ -408,10 +425,12 @@ getType' expr = case expr of
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
     Let t _ body -> do {t' <- asMeta t; recurWith t' body }
-    Lam a body -> do { a' <- asMeta a; liftM (ArrType a') (recurWith a' body) }
+    Lam p body -> do a' <- liftM recTreeAsType $ traverse asMeta p
+                     liftM (ArrType a') (recurWith a' body)
     For a body -> do { a' <- asMeta a; liftM (TabType a') (recurWith a' body) }
     App e arg  -> do { ArrType a b <- recur e; return b }
     Get e ie   -> do { TabType a b <- recur e; return b }
+    RecCon r   -> liftM RecType $ traverse recur r
     TLam kinds body -> do uniqVars <- mapM (const fresh) kinds
                           t <- recurWithT uniqVars body
                           return $ Forall kinds $ bindMetaTy uniqVars t
@@ -453,9 +472,8 @@ builtinType builtin = case builtin of
   Sin      -> realUnOpType
   Cos      -> realUnOpType
   Tan      -> realUnOpType
-  Reduce   -> reduceType
+  Fold     -> foldType
   Iota     -> iotaType
-  Sum'     -> sumType
   Doubleit -> int --> int
   Hash     -> int --> int --> int
   Rand     -> int --> real
@@ -463,14 +481,14 @@ builtinType builtin = case builtin of
   where
     binOpType    = int --> int --> int
     realUnOpType = real --> real
-    reduceType = Forall [TyKind, IdxSetKind] $
-                   (a --> a --> a) --> a --> (j ==> a) --> a
+    foldType = Forall [TyKind, TyKind, IdxSetKind] $
+                   (a --> a --> b) --> b --> (k ==> a) --> b
     iotaType = int --> Exists (i ==> int)
-    sumType = Forall [IdxSetKind] $ (i ==> int) --> int
     a = TypeVar (BV 0)
     b = TypeVar (BV 1)
     i = TypeVar (BV 0)
     j = TypeVar (BV 1)
+    k = TypeVar (BV 2)
     int = BaseType IntType
     real = BaseType RealType
 

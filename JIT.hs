@@ -44,6 +44,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Typer
 import Syntax
 import Env
+import Record
 import Util
 
 foreign import ccall "dynamic"
@@ -56,7 +57,8 @@ type JitEnv w = FullEnv (JitVal w) (JitType w)
 data JitVal w = ScalarVal BaseType w
               | IdxVal w w
               | TabVal (Table w)
-              | LamVal  Type  (JitEnv w) Expr
+              | LamVal (RecTree Type)  (JitEnv w) Expr
+              | RecVal (Record (JitVal w))
               | TLamVal [Kind] (JitEnv w) Expr
               | BuiltinLam Builtin [JitType w] [JitVal w]
               | ExPackage w (JitVal w)  deriving (Show)
@@ -256,19 +258,18 @@ compile expr = case expr of
   Builtin b -> return $ BuiltinLam b [] []
   Let _ bound body -> do x <- compile bound
                          local (setLEnv $ addBVar x) (compile body)
-  Lam a body -> do { env <- ask; return (LamVal a env body) }
-  App e1 e2  -> do
-    f <- compile e1
-    x <- compile e2
-    case f of
-      LamVal _ env body -> withEnv (setLEnv (addBVar x) env) (compile body)
-      BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
+  Lam p body -> do env <- ask
+                   return (LamVal p env body)
+  App e1 e2  -> do f <- compile e1
+                   x <- compile e2
+                   compileApp f x
   For a body -> do (Meta n) <- compileType a
                    TabType _ bodyTy <- getType expr
                    compileFor n bodyTy body
   Get e ie -> do x <- compile e
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
+  RecCon r -> liftM RecVal (traverse compile r)
   TLam kinds body -> do { env <- ask; return (TLamVal kinds env body) }
   TApp e ts -> do
     f <- compile e
@@ -282,11 +283,11 @@ compile expr = case expr of
     local updateEnv (compile body)
 
   where
-    withEnv :: CompileEnv -> CompileM a -> CompileM a
-    withEnv env = local (const env)
-
     getType :: Expr -> CompileM CompileType
     getType expr = do { env <- ask; return (exprType env expr) }
+
+withEnv :: CompileEnv -> CompileM a -> CompileM a
+withEnv env = local (const env)
 
 exprType :: CompileEnv -> Expr -> CompileType
 exprType (FullEnv lenv tenv) expr = joinType $ getType env' expr
@@ -298,12 +299,21 @@ typeOf val = case val of
   ScalarVal b _ -> BaseType b
   IdxVal n _ -> Meta n
   TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
-  LamVal a env expr      -> exprType env (Lam a expr)
+  LamVal p env expr      -> exprType env (Lam p expr)
   TLamVal kinds env expr -> exprType env (TLam kinds expr)
   BuiltinLam b ts vs ->
     composeN (length vs) arrRHS $ instantiateType ts (builtinType b)
   where arrRHS :: CompileType -> CompileType
         arrRHS (ArrType _ ty) = ty
+
+compileApp :: CompileVal -> CompileVal -> CompileM CompileVal
+compileApp f x = case f of
+  LamVal p env body -> withEnv (setLEnv (addBVars (bindPat p x)) env) (compile body)
+  BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
+
+bindPat :: RecTree a -> CompileVal -> [CompileVal]
+bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r')
+bindPat (RecLeaf l) x = [x]
 
 compileType :: Type -> CompileM CompileType
 compileType ty = do env <- asks tEnv
@@ -313,7 +323,7 @@ compileBuiltin :: Builtin -> [CompileType] -> [CompileVal] -> CompileM CompileVa
 compileBuiltin b types args =
   if length types < numTypes || length args < numArgs
     then return $ BuiltinLam b types args
-    else compileApp types args
+    else compileApp (reverse types) (reverse args)
   where BuiltinSpec numTypes numArgs compileApp = builtinSpec b
 
 compileFor :: NumElems -> CompileType -> Expr -> CompileM CompileVal
@@ -361,16 +371,18 @@ addForILoop n body = do
   addLoop cond body'
   where inc i = updateCell i $ add (litInt 1)
 
-compileSum :: [CompileType] -> [CompileVal] -> CompileM CompileVal
--- compileSum [Meta _] [TabVal tab@(Table ptr n sizes _)] = do
-compileSum [_] [TabVal tab@(Table ptr n sizes _)] = do
-  sum <- newIntCell 0
+compileBinApp :: CompileVal -> CompileVal -> (CompileVal -> CompileM CompileVal)
+compileBinApp f x y = do f' <- compileApp f x
+                         compileApp f' y
+
+compileFold :: [CompileType] -> [CompileVal] -> CompileM CompileVal
+compileFold _ [fVal, init, TabVal tab@(Table ptr n sizes valTy)] = do
+  mutVal <- newGenCell init
   let body iPtr = do i <- loadCell iPtr
-                     ScalarVal _ x <- readTable tab i
-                     updateCell sum (add x)
+                     next <-readTable tab i
+                     updateGenCell mutVal (compileBinApp fVal next)
   addForILoop n body
-  ans <- loadCell sum
-  return $ ScalarVal IntType ans
+  loadGenCell mutVal
 
 -- TODO: add var decls
 finalReturn :: CompileVal -> CompileM ()
@@ -412,10 +424,13 @@ litInt :: Int -> Long
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
 
 add :: Long -> Long -> CompileM Long
-add (x) (y) = evalInstr longTy $ L.Add False False x y []
+add x y = evalInstr longTy $ L.Add False False x y []
+
+sumLongs :: [Long] -> CompileM Long
+sumLongs xs = foldM add (litInt 0) xs
 
 mul :: Long -> Long -> CompileM Long
-mul (x) (y) = evalInstr longTy $ L.Mul False False x y []
+mul x y = evalInstr longTy $ L.Mul False False x y []
 
 newIntCell :: Int -> CompileM CPtr
 newIntCell x = do
@@ -429,11 +444,31 @@ loadCell (Ptr ptr) =
   evalInstr longTy $ L.Load False ptr Nothing 0 []
 
 writeCell :: CPtr -> Long -> CompileM ()
-writeCell (Ptr ptr) (x) =
+writeCell (Ptr ptr) x =
   appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 updateCell :: CPtr -> (Long -> CompileM Long) -> CompileM ()
 updateCell ptr f = loadCell ptr >>= f >>= writeCell ptr
+
+
+newGenCell :: CompileVal -> CompileM CPtr
+newGenCell (ScalarVal IntType x)  = do
+  ptr <- liftM Ptr $ evalInstr intPtrTy $
+           L.Alloca longTy Nothing 0 [] -- TODO: add to top block!
+  writeGenCell ptr (ScalarVal IntType x)
+  return ptr
+
+loadGenCell :: CPtr -> CompileM CompileVal
+loadGenCell (Ptr ptr) =
+  liftM (ScalarVal IntType) $ evalInstr longTy $ L.Load False ptr Nothing 0 []
+
+writeGenCell :: CPtr -> CompileVal -> CompileM ()
+writeGenCell (Ptr ptr) (ScalarVal IntType x) =
+  appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
+
+updateGenCell :: CPtr -> (CompileVal -> CompileM CompileVal) -> CompileM ()
+updateGenCell ptr f = loadGenCell ptr >>= f >>= writeGenCell ptr
+
 
 newTable :: CompileType -> NumElems -> CompileM CTable
 newTable ty n = do
@@ -456,6 +491,7 @@ getNumScalars ty = case ty of
   BaseType _ -> return $ litInt 1
   TabType (Meta i) valTy -> do n <- getNumScalars valTy
                                mul i n
+  RecType r -> mapM getNumScalars (toList r) >>= sumLongs
   _ -> error $ show ty
 
 readTable :: CTable -> Index -> CompileM CompileVal
@@ -472,8 +508,7 @@ writeTable :: CTable -> Index -> CompileVal -> CompileM ()
 writeTable tab idx val = do
   (Ptr dest) <- arrayPtr tab idx
   case val of
-    ScalarVal IntType val' ->
-      writeCell (Ptr dest) (val')
+    ScalarVal IntType val' -> writeCell (Ptr dest) (val')
     TabVal (Table (Ptr src) n (ConstSize numScalars) ty) -> do
       let (scalarSize, _) = baseTypeInfo ty
       elemSize <- mul (litInt scalarSize) numScalars
@@ -516,7 +551,7 @@ builtinSpec b = case b of
   Mul      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Mul False False x y [])
   Sub      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Sub False False x y [])
   Iota     -> BuiltinSpec 0 1 $ compileIota
-  Sum'     -> BuiltinSpec 1 1 $ compileSum
+  Fold     -> BuiltinSpec 3 3 $ compileFold
   Doubleit -> BuiltinSpec 0 1 $ externalMono doubleFun  IntType
   Hash     -> BuiltinSpec 0 2 $ externalMono hashFun    IntType
   Rand     -> BuiltinSpec 0 1 $ externalMono randFun    RealType
@@ -525,7 +560,7 @@ builtinSpec b = case b of
 externalMono :: ExternFunSpec -> BaseType -> CompileApp
 externalMono f@(ExternFunSpec name retTy _ _) baseTy [] args =
   liftM (ScalarVal baseTy) $ evalInstr retTy (externCall f args')
-  where args' = reverse $ map asOp args
+  where args' = map asOp args
         asOp :: CompileVal -> L.Operand
         asOp (ScalarVal _ op) = op
 
@@ -551,7 +586,7 @@ compileBinop makeInstr = compile
   where
     compile :: CompileApp
     compile [] [ScalarVal _ x, ScalarVal _ y] = liftM (ScalarVal IntType) $
-        evalInstr longTy (makeInstr y x)
+        evalInstr longTy (makeInstr x y)
 
 -- --- printing ---
 

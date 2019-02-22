@@ -38,3 +38,11 @@ Type error: existential variable leaked scope
 :t x
 x=>Int
 
+:t (lam (x, y): x + y) (1, 2)
+Int
+
+:t let f (x, y) = x + 2 * y;
+       z.i = (x.i, x.i * x.i)
+   in sum (for i: f z.i)
+Int
+
