@@ -6,48 +6,46 @@
 
 \begin{document}
 
-\begin{align*}
-\text{term variables}&       \quad x &
-\text{index variables}&      \quad i  \\
-\text{type variables}&       \quad a &
-\text{index set variables}&  \quad n &
-\text{literals} & \quad l
-\end{align*}
-
 \vspace{-0.5cm}
 
 \begin{align*}
 \text{Terms } \quad t ::=
  & \quad l  \quadbar x \quadbar i
-      && \text{Literal/variable/index variable} \\
-|& \quad \texttt{let } x \annot{\tau} = t_1 \texttt{ in } t_2
+      && \text{Literal / variable / index variable} \\
+|& \quad \texttt{let } x \annot{\tau} = t \texttt{ in } t
         && \text{Let expression} \\
 |& \quad \texttt{lam } x \annot{\tau} \, \texttt {.} \,\, t
-   \quadbar  t_1 \,\, t_2
+   \quadbar  t \,\, t
     && \text{Lambda abstraction / application} \\
 |& \quad \texttt{tlam } a \, . \,\, t
    \quadbar t \,\, \tau
     && \text{Type-lambda abstraction / application} \\
-|& \quad \texttt{for } i \annot{\iota} \, \texttt {.} \,\, t
+|& \quad \texttt{for } i \annot{n} \, \texttt {.} \,\, t
    \quadbar t.i
     && \text{Index comprehension / indexing} \\
-|& \quad \texttt{pack } t, \tau_1 \texttt{ :: } \exists n. \,\,\, \tau_2
+|& \quad \texttt{pack } t, \tau \texttt{ :: } \exists n. \,\,\, \tau
        && \text{Existential packing} \\
-|& \quad \texttt{let } x, n = \texttt{unpack } t_1 \texttt{ in } t_2
+|& \quad \texttt{let } x, n = \texttt{unpack } t \texttt{ in } t
        && \text{Existential unpacking}
 \\ \\
 \text{Types} \quad \tau ::=
- & \quad \texttt{Int } | \texttt{ Real} \quadbar a  && \text{Base type and type variable} \\
-|& \quad \tau_1 \texttt{ -> } \tau_2
-   \quadbar \iota  \texttt{ => } \tau  && \text{Arrow type and table type} \\
+ & \quad \texttt{Int } | \texttt{ Real} \quadbar a
+      && \text{Base types and type variable} \\
+|& \quad \tau   \texttt{ -> } \tau  && \text{Arrow type} \\
 |& \quad \forall a. \,\,\, \tau
    \quadbar \forall n. \,\,\, \tau
-   \quadbar \exists n. \,\,\, \tau
-    && \text{Universal/existential quantification}
-\\ \\
-\text{Index sets} \quad
-\iota ::=
- & \quad n && \text{Index set variable}
+    && \text{Universal quantification} \\
+|& \quad n  \texttt{ => } \tau  && \text{Table type} \\
+|& \quad \exists n. \,\,\, \tau
+    && \text{Existential quantification}
+\end{align*}
+%
+\begin{align*}
+\text{Term variables}&       \quad x &
+\text{Index variables}&      \quad i  \\
+\text{Type variables}&       \quad a &
+\text{Index set variables}&  \quad n &
+\text{Literals} & \quad l
 \end{align*}
 
 \end{document}

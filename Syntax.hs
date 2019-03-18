@@ -79,7 +79,22 @@ data BaseType = IntType | BoolType | RealType | StrType
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
              | Sin | Cos | Tan | Fold | Iota | Doubleit
-             | Hash | Rand | Randint  deriving (Eq, Ord, Show)
+             | Hash | Rand | Randint deriving (Eq, Ord, Show)
+
+data ImpProgram = ImpProgram [Statement]
+
+data Statement = VarAlloc VarName BaseType [Size]
+               | VarFree  VarName
+               | Assignment VarName [Index] ImpBuiltin [Size] [ImpOperand]
+               | Loop Index Size [Statement]
+
+data ImpOperand = ImpLit
+                | ImpVar VarName [Index]
+
+type Index = VarName
+data Size = ConstSize Int | KnownSize VarName
+
+type ImpBuiltin = Builtin
 
 type UPat  = RecTree VarName
 type Pat a = RecTree (GenType a)
