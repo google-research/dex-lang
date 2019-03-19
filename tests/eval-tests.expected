@@ -62,3 +62,7 @@ Unbound variable: "sum"
 :p (lam (x, y): x + y) (1, 2)
 3
 
+:p let f (x, y) = x y
+   in f (lam x: x, 1)
+1
+

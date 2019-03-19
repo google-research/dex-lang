@@ -20,7 +20,7 @@ type UTopDecl = TopDecl UExpr
 type UInstr = DeclInstr UExpr
 type Prog = [UTopDecl]
 
-data Decl = AssignDecl VarName UExpr
+data Decl = AssignDecl UPat UExpr
           | UnpackDecl VarName UExpr
 
 parseProg :: String -> Except Prog
@@ -146,7 +146,7 @@ declExpr = do
   return $ foldr unpackBinding body bindings
   where unpackBinding :: Decl -> UExpr -> UExpr
         unpackBinding decl body = case decl of
-          AssignDecl v binding -> ULet    v binding body
+          AssignDecl p binding -> ULet    p binding body
           UnpackDecl v binding -> UUnpack v binding body
 
 lamExpr :: Parser UExpr
@@ -174,7 +174,7 @@ unpackDecl = do
 
 assignDecl :: Parser Decl
 assignDecl = do
-  p <- identifier
+  p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   unpack <- optional (symbol "unpack")
@@ -291,7 +291,7 @@ lower env expr = case expr of
   ULit c         -> ULit c
   UVar v         -> UVar $ toDeBruijn (lVars env) v
   UBuiltin b     -> UBuiltin b
-  ULet p e body  -> ULet p (recur e) $ lowerWith p body
+  ULet p e body  -> ULet p (recur e) $ lowerWithMany p body
   ULam p body    -> ULam p           $ lowerWithMany p body
   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
   UFor p body    -> UFor p           $ lowerWith p body

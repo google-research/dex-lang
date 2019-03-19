@@ -46,6 +46,12 @@ f = lam y: sum x + y
 
 :p (lam (x, y): x + y) (1, 2)
 
+:p let f (x, y) = x y
+   in f (lam x: x, 1)
+
+:p let (x,y) = ((1,2),3) in
+       let (x1, x2) = x in x1 + x2 + y
+
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)
 --    in sum (for i: f z.i)

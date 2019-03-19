@@ -14,6 +14,7 @@ import Util
 import Record
 import Env
 import Data.Semigroup
+import Data.Foldable (toList)
 import Data.Traversable
 import Data.List (intercalate, elemIndex)
 import qualified Data.Map as M
@@ -25,7 +26,7 @@ import Control.Applicative (liftA, liftA2, liftA3)
 data GenExpr a = Lit LitVal
                | Var Var
                | Builtin Builtin
-               | Let (GenType a) (GenExpr a) (GenExpr a)
+               | Let (Pat a) (GenExpr a) (GenExpr a)
                | Lam (Pat a) (GenExpr a)
                | App (GenExpr a) (GenExpr a)
                | For (GenIdxSet a) (GenExpr a)
@@ -57,7 +58,7 @@ data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
-           | ULet VarName UExpr UExpr
+           | ULet UPat UExpr UExpr
            | ULam UPat UExpr
            | UApp UExpr UExpr
            | UFor VarName UExpr
@@ -311,17 +312,20 @@ showType env t = case t of
 spaceSep :: [String] -> String
 spaceSep = intercalate " "
 
+-- TODO: fix printing of pattern binders
 showExpr :: Show a => (Int, [Kind]) -> GenExpr a -> String
 showExpr env@(depth, kinds) expr = case expr of
   Lit val      -> show val
   Var v        -> name v
   Builtin b    -> show b
-  Let t e1 e2  -> paren $    "let " ++ showBinder t ++ " = " ++ recur e1
-                          ++ " in " ++ recurWith e2
-  Lam p e      -> paren $ "lam " ++ printRecTree showBinder p ++ ": " ++ recurWith e
+  Let p e1 e2  -> paren $    "let " ++ printPat p ++ " = " ++ recur e1
+                          ++ " in " ++ recurWith (length (toList p)) e2
+  Lam p e      -> paren $ "lam " ++ printPat p ++ ": "
+                                 ++ recurWith (length (toList p)) e
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
-  For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ recurWith e
+  For t e      -> paren $ "for " ++ showBinder depth t ++ ": " ++ recurWith 1 e
   Get e ie     -> recur e ++ "." ++ name ie
+  RecCon r     -> printRecord recur defaultRecPrintSpec r
   Unpack e1 e2 -> paren $ "unpack {" ++ lVarNames !! depth
                              ++ ", " ++ tVarNames !! (length kinds)
                              ++ "} = " ++ recur e1
@@ -333,9 +337,12 @@ showExpr env@(depth, kinds) expr = case expr of
 
   TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType kinds) ts) ++ "]"
   where recur = showExpr env
-        recurWith = showExpr (depth + 1, kinds)
-        showBinder ty = lVarNames !! depth ++ "::" ++ showType kinds ty
+        recurWith n = showExpr (depth + n, kinds)
+        showBinder i ty = lVarNames !! i ++ "::" ++ showType kinds ty
         name = getName lVarNames depth
+        printPat p = let depth' = depth + length (toList p) - 1
+                         show' (i, ty) = showBinder (depth' - i) ty
+                     in printRecTree show' (enumerate p)
 
 getName :: [VarName] -> Int -> GVar i -> String
 getName names depth v = case v of
@@ -356,7 +363,7 @@ instance Traversable GenExpr where
     Lit c -> pure $ Lit c
     Var v -> pure $ Var v
     Builtin b -> pure $ Builtin b
-    Let t bound body  -> liftA3 Let (recurTy t) (recur bound) (recur body)
+    Let p bound body  -> liftA3 Let (traverse recurTy p) (recur bound) (recur body)
     Lam p body        -> liftA2 Lam (traverse recurTy p) (recur body)
     App fexpr arg     -> liftA2 App (recur fexpr) (recur arg)
     For t body        -> liftA2 For (recurTy t) (recur body)
@@ -429,7 +436,7 @@ subExprDepth d f expr = case expr of
   Lit c -> Lit c
   Var v -> Var v
   Builtin b -> Builtin b
-  Let t bound body -> Let (recurTy t) (recur bound) (recur body)
+  Let p bound body -> Let (fmap recurTy p) (recur bound) (recur body)
   Lam p body       -> Lam (fmap recurTy p) (recur body)
   App fexpr arg    -> App (recur fexpr) (recur arg)
   For t body       -> For (recurTy t) (recur body)
@@ -469,6 +476,7 @@ instantiateBodyFVs env@(Env fvs bvs) t = case t of
   Forall kinds body -> let env' = Env fvs (map (const Nothing) kinds ++ bvs)
                        in Forall kinds $ instantiateBodyFVs env' body
   Meta _ -> t
+  RecType r -> RecType (fmap recur r)
   where recur = instantiateBodyFVs env
 
 instantiateBody :: [Maybe (GenType a)] -> GenType a -> GenType a

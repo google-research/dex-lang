@@ -1,12 +1,20 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
-             showErr, listDiff, splitMap) where
+             showErr, listDiff, splitMap, enumerate) where
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
+import Control.Monad.State (State, evalState, put, get)
+
+enumerate :: Traversable f => f a -> f (Int, a)
+enumerate xs = evalState (traverse addCount xs) 0
+  where addCount :: a -> State Int (Int, a)
+        addCount x = do n <- get
+                        put (n + 1)
+                        return (n, x)
 
 splitMap :: Ord k => [k] -> M.Map k v -> (M.Map k v, M.Map k v)
 splitMap ks m = let ks' = Set.fromList ks

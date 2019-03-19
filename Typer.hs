@@ -6,7 +6,7 @@ import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT,
                              local, ask, asks)
 import Control.Monad.Writer hiding ((<>))
-import Control.Monad.State (StateT, evalStateT, put, get)
+import Control.Monad.State (StateT, evalStateT, execStateT, put, get, modify)
 import Control.Monad.Except (throwError)
 import Test.QuickCheck hiding ((==>))
 import qualified Data.Map.Strict as M
@@ -35,6 +35,7 @@ data MetaVar = MetaVar Kind Int  deriving (Eq, Show, Ord)
 type MType   = GenType   MetaVar
 type MExpr   = GenExpr   MetaVar
 type MIdxSet = GenIdxSet MetaVar
+
 
 
 typePass :: Pass UExpr Expr Type ()
@@ -105,12 +106,17 @@ check expr reqTy = case expr of
   UVar v -> do ty <- asks $ (! v) . lEnv
                instantiate ty reqTy (Var v)
   UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
-  ULet _ bound body -> do
+  ULet (RecLeaf _) bound body -> do
     (boundTy, bound', flexVars) <- inferPartial bound
     let boundTyGen = generalizeTy flexVars boundTy
         boundGen   = generalize   flexVars bound'
     body' <- local (setLEnv $ addBVar boundTyGen) (check body reqTy)
-    return $ Let boundTyGen boundGen body'
+    return $ Let (RecLeaf boundTyGen) boundGen body'
+  ULet p bound body -> do
+    (a, bound') <- infer bound
+    a' <- recTy p a
+    body' <- local (setLEnv $ addBVars (toList a')) (check body reqTy)
+    return $ Let a'  bound' body'
   ULam p body -> do
     (a, b) <- splitFun reqTy
     a' <- recTy p a
@@ -192,7 +198,7 @@ inferPartial expr = do
 -- partially solves enought to discover unconstrained variables
 solvePartial :: Constraints -> Except (Subst, Constraints, [MetaVar])
 solvePartial (Constraints constraints vs) = do
-  sub <- foldM solve idSubst constraints
+  sub <- solve constraints
   let (freshSub, remSub) = splitMap  vs sub
       leakedVars = rhsVars remSub
       newConstraints = map asConstraint  (M.toList remSub)
@@ -257,43 +263,46 @@ hiddenFreshIdx = do i <- inc
                     let v = MetaVar IdxSetKind i
                     return $ Meta v
 
-bind :: MetaVar -> MType -> Except Subst
-bind v t | v `occursIn` t = Left InfiniteTypeErr
-         | otherwise = Right $ M.singleton v t
+-- TODO: unification scheme is at least quadratic. Replace with some 'zonking'
+
+-- invariant: lhs and rhs metavars of substitution is distinct
+bind :: MetaVar -> MType -> UnifyM ()
+bind v t | v `occursIn` t = throwError InfiniteTypeErr
+         | otherwise = modify $ M.insert v t . M.map (subTy update)
+  where update v' = if v == v' then t else Meta v'
 
 occursIn :: MetaVar -> MType -> Bool
 occursIn v t = v `elem` toList t
 
+type UnifyM a = StateT Subst (Either Err) a
+
 -- TODO: check kinds
-unify :: MType -> MType -> Except Subst
-unify t1 t2@(TypeVar (BV v)) = unifyErr t1 t2
-unify t1@(TypeVar (BV v)) t2 = unifyErr t2 t1
-unify t1 t2 | t1 == t2 = return idSubst
-unify t (Meta v) = bind v t
-unify (Meta v) t = bind v t
-unify (ArrType a b) (ArrType a' b') = unifyPair (a,b) (a', b')
-unify (TabType a b) (TabType a' b') = unifyPair (a,b) (a', b')
-unify (Exists t) (Exists t') = unify t t'
-unify t1 t2 = unifyErr t1 t2
+unify :: MType -> MType -> UnifyM ()
+unify t1 t2 = do sub <- get
+                 unify' (applySubTy sub t1) (applySubTy sub t2)
 
-unifyErr :: MType -> MType -> Except a
-unifyErr t1 t2 = Left $ UnificationErr (show t1) (show t2)
+unify' :: MType -> MType -> UnifyM ()
+unify' t1 t2@(TypeVar (BV v)) = unifyErr t1 t2
+unify' t1@(TypeVar (BV v)) t2 = unifyErr t2 t1
+unify' t1 t2 | t1 == t2 = return ()
+unify' t (Meta v) = bind v t
+unify' (Meta v) t = bind v t
+unify' (ArrType a b) (ArrType a' b') = unify a a' >> unify b b'
+unify' (TabType a b) (TabType a' b') = unify a a' >> unify b b'
+unify' (Exists t) (Exists t') = unify t t'
+unify' (RecType r) (RecType r') = unifyRec r r'
+unify' t1 t2 = unifyErr t1 t2
 
-unifyPair :: (MType,MType) -> (MType,MType) -> Except Subst
-unifyPair (a,b) (a',b') = do
-  sa  <- unify a a'
-  sb <- unify (applySubTy sa b) (applySubTy sa b')
-  return $ sa >>> sb
+unifyRec :: Record MType -> Record MType -> UnifyM ()
+unifyRec r r' = case zipWithRecord unify r r' of
+                  Nothing -> unifyErr (RecType r) (RecType r')
+                  Just unifiers -> sequence unifiers >> return ()
 
--- invariant: lhs and rhs metavars of substitutions are distinct
-(>>>) :: Subst -> Subst -> Subst
-(>>>) s1 s2 = let s1' = M.map (applySubTy s2) s1
-              in M.union s1' s2
+unifyErr :: MType -> MType -> UnifyM a
+unifyErr t1 t2 = throwError $ UnificationErr (show t1) (show t2)
 
-solve :: Subst -> Constraint -> Except Subst
-solve s (t1, t2) = do
-  s' <- unify (applySubTy s t1) (applySubTy s t2)
-  return $ s >>> s'
+solve :: [Constraint] -> Except Subst
+solve constraints = execStateT (mapM (uncurry unify) constraints) M.empty
 
 applySubTy :: Subst -> MType -> MType
 applySubTy = subTy . subAsFun
@@ -304,9 +313,6 @@ applySubExpr = subExpr . subAsFun
 subAsFun :: Subst -> MetaVar -> MType
 subAsFun m v = case M.lookup v m of Just t -> t
                                     Nothing -> Meta v
-
-idSubst :: Subst
-idSubst = M.empty
 
 type CheckM a = ReaderT (FullEnv MType MetaVar) (StateT Int (Either Err)) a
 
@@ -323,10 +329,10 @@ getAndCheckType expr = case expr of
     Lit c          -> return $ litType c
     Var v          -> lookupLVar v
     Builtin b      -> return (builtinType b)
-    Let t bound body -> do t' <- checkTy TyKind t
+    Let t bound body -> do t' <- traverse (checkTy TyKind) t
                            t'' <- recur bound
-                           assertEq' t'' t' "Type mismatch in 'let'"
-                           recurWith t' body
+                           assertEq' t'' (recTreeAsType t') "Type mismatch in 'let'"
+                           recurWithMany (toList t') body
     Lam a body     -> do a' <- traverse (checkTy TyKind) a
                          b <- recurWithMany (toList a') body
                          return $ ArrType (recTreeAsType a') b
@@ -424,9 +430,11 @@ getType' expr = case expr of
     Lit c        -> return $ litType c
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
-    Let t _ body -> do {t' <- asMeta t; recurWith t' body }
-    Lam p body -> do a' <- liftM recTreeAsType $ traverse asMeta p
-                     liftM (ArrType a') (recurWith a' body)
+    Let p _ body -> do p' <- traverse asMeta p
+                       recurWithMany (toList p') body
+    Lam p body -> do p' <- traverse asMeta p
+                     let a' = recTreeAsType p'
+                     liftM (ArrType a') (recurWithMany (toList p') body)
     For a body -> do { a' <- asMeta a; liftM (TabType a') (recurWith a' body) }
     App e arg  -> do { ArrType a b <- recur e; return b }
     Get e ie   -> do { TabType a b <- recur e; return b }
@@ -446,8 +454,9 @@ getType' expr = case expr of
 
   where
     recur = getType'
-    recurWith  t   = local (setLEnv (addBVar  t  )) . recur
-    recurWithT mvs = local (setTEnv (addBVars mvs)) . recur
+    recurWith     t  = local (setLEnv (addBVar  t  )) . recur
+    recurWithMany ts = local (setLEnv (addBVars ts )) . recur
+    recurWithT   mvs = local (setTEnv (addBVars mvs)) . recur
 
     lookupLVar :: Var -> GetTypeM a (GenType a)
     lookupLVar v = asks ((! v) . lEnv)

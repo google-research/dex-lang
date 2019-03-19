@@ -256,8 +256,8 @@ compile expr = case expr of
   Lit x -> return (litVal x)
   Var v -> asks $ (! v) . lEnv
   Builtin b -> return $ BuiltinLam b [] []
-  Let _ bound body -> do x <- compile bound
-                         local (setLEnv $ addBVar x) (compile body)
+  Let p bound body -> do x <- compile bound
+                         local (setLEnv $ addBVars (bindPat p x)) (compile body)
   Lam p body -> do env <- ask
                    return (LamVal p env body)
   App e1 e2  -> do f <- compile e1
