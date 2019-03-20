@@ -57,9 +57,7 @@ type JitEnv w = FullEnv (JitVal w) (JitType w)
 data JitVal w = ScalarVal BaseType w
               | IdxVal w w
               | TabVal (Table w)
-              | LamVal (RecTree Type)  (JitEnv w) Expr
               | RecVal (Record (JitVal w))
-              | TLamVal [Kind] (JitEnv w) Expr
               | BuiltinLam Builtin [JitType w] [JitVal w]
               | ExPackage w (JitVal w)  deriving (Show)
 
@@ -258,11 +256,9 @@ compile expr = case expr of
   Builtin b -> return $ BuiltinLam b [] []
   Let p bound body -> do x <- compile bound
                          local (setLEnv $ addBVars (bindPat p x)) (compile body)
-  Lam p body -> do env <- ask
-                   return (LamVal p env body)
-  App e1 e2  -> do f <- compile e1
+  App e1 e2  -> do (BuiltinLam builtin ts vs) <- compile e1
                    x <- compile e2
-                   compileApp f x
+                   compileBuiltin builtin ts (x:vs)
   For a body -> do (Meta n) <- compileType a
                    TabType _ bodyTy <- getType expr
                    compileFor n bodyTy body
@@ -270,13 +266,10 @@ compile expr = case expr of
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
   RecCon r -> liftM RecVal (traverse compile r)
-  TLam kinds body -> do { env <- ask; return (TLamVal kinds env body) }
   TApp e ts -> do
-    f <- compile e
+    (BuiltinLam builtin [] vs) <- compile e
     ts' <- mapM compileType ts
-    case f of
-      TLamVal _ env body -> withEnv (setTEnv (addBVars ts') env) (compile body)
-      BuiltinLam builtin [] vs -> compileBuiltin builtin ts' vs
+    compileBuiltin builtin ts' vs
   Unpack bound body -> do
     ExPackage i x <- compile bound
     let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
@@ -299,8 +292,6 @@ typeOf val = case val of
   ScalarVal b _ -> BaseType b
   IdxVal n _ -> Meta n
   TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
-  LamVal p env expr      -> exprType env (Lam p expr)
-  TLamVal kinds env expr -> exprType env (TLam kinds expr)
   BuiltinLam b ts vs ->
     composeN (length vs) arrRHS $ instantiateType ts (builtinType b)
   where arrRHS :: CompileType -> CompileType
@@ -308,7 +299,6 @@ typeOf val = case val of
 
 compileApp :: CompileVal -> CompileVal -> CompileM CompileVal
 compileApp f x = case f of
-  LamVal p env body -> withEnv (setLEnv (addBVars (bindPat p x)) env) (compile body)
   BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
 
 bindPat :: RecTree a -> CompileVal -> [CompileVal]
@@ -649,8 +639,7 @@ instance Traversable JitVal where
                <*> f n
                <*> liftA ConstSize (f size)
                <*> traverse f valTy )
-    LamVal  ty    env expr -> liftA (\e -> LamVal  ty    e expr) (traverseJitEnv f env)
-    TLamVal kinds env expr -> liftA (\e -> TLamVal kinds e expr) (traverseJitEnv f env)
+    RecVal r -> liftA RecVal $ traverse (traverse f) r
     BuiltinLam b tys vals -> liftA2 (BuiltinLam b) (traverse (traverse f) tys)
                                                    (traverse (traverse f) vals)
     ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)

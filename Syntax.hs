@@ -151,7 +151,7 @@ data Command expr = Command CmdName expr
                   | CmdResult CommandOutput
                   | CmdErr Err  deriving (Show, Eq)
 
-data CmdName = EvalExpr | GetType | GetTyped | GetParse
+data CmdName = EvalExpr | GetType | GetTyped | GetParse | DeFunc
              | GetLLVM  | EvalJit | TimeIt | ShowPersistVal
              | Plot | PlotMat
                deriving  (Show, Eq)

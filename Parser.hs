@@ -59,6 +59,7 @@ explicitCommand = do
            "sysf"  -> return GetTyped
            "parse" -> return GetParse
            "llvm"  -> return GetLLVM
+           "defunc"-> return DeFunc
            "jit"   -> return EvalJit
            "time"  -> return TimeIt
            "persist" -> return ShowPersistVal

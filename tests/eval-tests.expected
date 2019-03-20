@@ -50,9 +50,6 @@ Unbound variable: "sum"
 6 6
 
 
-:p fold (lam x y: x + y) 0 x
-21
-
 :p 10 - 6
 4
 
@@ -65,4 +62,8 @@ Unbound variable: "sum"
 :p let f (x, y) = x y
    in f (lam x: x, 1)
 1
+
+:p let (x,y) = ((1,2),3) in
+       let (x1, x2) = x in x1 + x2 + y
+6
 

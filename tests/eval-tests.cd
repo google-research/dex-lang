@@ -37,7 +37,9 @@ f = lam y: sum x + y
 
 :p x
 
-:p fold (lam x y: x + y) 0 x
+-- TODO: figure out defunctionalized builtins and re-enable
+-- :defunc fold (lam x y: x + y) 0 x
+-- :p fold (lam x y: x + y) 0 x
 
 :p 10 - 6
 

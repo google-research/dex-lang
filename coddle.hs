@@ -18,6 +18,7 @@ import Typer
 import Util
 import Env
 import JIT
+import DeFunc
 import WebOutput
 
 type TypedVal = ()  -- until we get the interpreter back up
@@ -27,17 +28,21 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String
                        , webOutput     :: Bool}
 
-data TopEnv = TopEnv { varEnv  :: Vars
-                     , typeEnv :: FullEnv Type ()
-                     , valEnv  :: FullEnv PersistVal PersistType}
+data TopEnv = TopEnv { varEnv :: Vars
+                     , typeEnv   :: FullEnv Type ()
+                     , deFuncEnv :: FullEnv DFVal ()
+                     , valEnv    :: FullEnv PersistVal PersistType}
+
+initEnv = TopEnv mempty mempty mempty mempty
 
 evalSource :: TopEnv -> String -> Driver (TopEnv, [TopDecl ()])
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
   (checked, varEnv' ) <- fullPass (procDecl boundVarPass)  (varEnv  env) decls
   (typed  , typeEnv') <- fullPass (procDecl typePass)      (typeEnv env) checked
-  (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) typed
-  return (TopEnv varEnv' typeEnv' valEnv', jitted)
+  (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass)    (deFuncEnv env) typed
+  (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) defunc
+  return (TopEnv varEnv' typeEnv' dfEnv' valEnv', jitted)
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
@@ -115,11 +120,11 @@ showDeclResult (TopDecl source _ instr) = do
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
 
-updateEnv :: (VarName, Type, PersistVal) -> TopEnv -> TopEnv
-updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
-  TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
-         , typeEnv = setLEnv (addFVar v t)   typeEnv
-         , valEnv  = setLEnv (addFVar v val) valEnv }
+-- updateEnv :: (VarName, Type, PersistVal) -> TopEnv -> TopEnv
+-- updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
+--   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
+--          , typeEnv = setLEnv (addFVar v t)   typeEnv
+--          , valEnv  = setLEnv (addFVar v val) valEnv }
 
 opts :: ParserInfo CmdOpts
 opts = info (p <**> helper) mempty
@@ -134,8 +139,6 @@ opts = info (p <**> helper) mempty
 
 runMonad :: Driver a -> IO a
 runMonad d = runInputTBehavior defaultBehavior defaultSettings d
-
-initEnv = TopEnv mempty mempty mempty
 
 loadData :: String -> IO (TypedVal, MType)
 loadData fname = do
