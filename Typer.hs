@@ -1,5 +1,6 @@
 module Typer (typePass, translateExpr, inferTypesCmd, inferTypesExpr,
-              litType, MetaVar, MType, MExpr, getType, builtinType) where
+              litType, MetaVar, MType, MExpr, getType, builtinType,
+              checkSysF) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -44,13 +45,16 @@ typePass = Pass
   , lowerUnpack = \v expr env -> liftErrIO $ inferTypesUnpack v expr env
   , lowerCmd    = \cmd  env   -> return $ inferTypesCmd cmd env }
 
+checkSysF :: FullEnv Type () -> Expr -> Except Type
+checkSysF env expr = getAndCheckType (asTypingEnv env) expr
+
 inferTypesCmd :: Command UExpr -> FullEnv Type () -> Command Expr
 inferTypesCmd (Command cmdName expr) ftenv = case cmdName of
     GetParse -> CmdResult $ TextOut (show expr)
     _ -> case translateExpr expr env of
       Left e -> CmdErr e
       Right expr' -> case cmdName of
-        GetType -> case getAndCheckType' env expr' of
+        GetType -> case getAndCheckType env expr' of
                      Left e -> CmdErr e
                      Right t -> CmdResult $ TextOut  $ show t
         GetTyped -> CmdResult $ TextOut  $ show expr'
@@ -73,7 +77,7 @@ inferTypesExpr :: UExpr -> FullEnv Type () -> Except (Type, Expr)
 inferTypesExpr rawExpr fenv = do
   let env = asTypingEnv fenv
   expr <- translateExpr rawExpr env
-  ty <- getAndCheckType' env expr
+  ty <- getAndCheckType env expr
   return (noLeaves ty, expr)
 
 inferTypesUnpack :: VarName -> UExpr -> FullEnv Type () -> Except (Type, (), Expr)
@@ -143,9 +147,9 @@ check expr reqTy = case expr of
     addConstraint (v, reqTy)
     return $ Get expr' idxExpr
   UUnpack _ bound body -> do
-    (boundTy, bound', _) <- inferPartial bound
+    (Exists boundTy, bound', _) <- inferPartial bound
     Meta i <- hiddenFreshIdx -- skolem var here would give better error messages
-    let updateEnv = setLEnv $ addBVar (instantiateType [Meta i] boundTy)
+    let updateEnv = setLEnv $ addBVar (instantiateType [Meta i] (Exists boundTy))
     (body', Constraints cs vs) <- capture $ local updateEnv (check body reqTy)
     (sub, newConstraints, flexVars) <- liftExcept $ solvePartial $
                                          Constraints cs (i:vs)
@@ -160,7 +164,8 @@ check expr reqTy = case expr of
     tell newConstraints
     tell $ Constraints [] (flexVars \\ [i'])
     let body'' = bindMetaExpr [i'] (applySubExpr sub body')
-    return $ Unpack bound' body''
+        boundTy' = applySubTy sub boundTy
+    return $ Unpack boundTy' bound' body''
 
 recTy :: UPat -> MType -> ConstrainMonad (RecTree MType)
 recTy pat ty = do tree <- traverse (const fresh) pat
@@ -316,16 +321,16 @@ subAsFun m v = case M.lookup v m of Just t -> t
 
 type CheckM a = ReaderT (FullEnv MType MetaVar) (StateT Int (Either Err)) a
 
-getAndCheckType' :: TypingEnv -> Expr -> Except Type
-getAndCheckType' env expr = do
-  ty <- evalStateT (runReaderT (getAndCheckType expr) env') 0 >>= checkNoLeaves
+getAndCheckType :: TypingEnv -> Expr -> Except Type
+getAndCheckType env expr = do
+  ty <- evalStateT (runReaderT (getAndCheckType' expr) env') 0 >>= checkNoLeaves
   ty' <- return (getType env' expr) >>= checkNoLeaves
   assertEq ty ty' "non-checking type getter failed"
   return ty
   where env' = FullEnv (lEnv env) mempty
 
-getAndCheckType ::  Expr -> CheckM MType
-getAndCheckType expr = case expr of
+getAndCheckType' ::  Expr -> CheckM MType
+getAndCheckType' expr = case expr of
     Lit c          -> return $ litType c
     Var v          -> lookupLVar v
     Builtin b      -> return (builtinType b)
@@ -354,15 +359,17 @@ getAndCheckType expr = case expr of
     TApp fexpr ts   -> do Forall kinds body <- recur fexpr
                           ts' <- zipWithM checkTy kinds ts
                           return $ instantiateBody (map Just ts') body
-    Unpack bound body -> do
+    Unpack tyReq bound body -> do
         Exists t' <- recur bound
+        tyReq' <- checkTy TyKind (Exists tyReq)
+        assertEq' (Exists t') tyReq' "Type mismatch in 'unpack'"
         mv <- freshMeta IdxSetKind
         let t'' = instantiateBody [Just (Meta mv)] t'
         let update = setLEnv (addBVar t'') . setTEnv (addBVar mv)
         local update (recur body)
 
   where
-    recur = getAndCheckType
+    recur = getAndCheckType'
     recurWith  t     = local (setLEnv (addBVar  t  )) . recur
     recurWithMany ts = local (setLEnv (addBVars ts )) . recur
     recurWithT mvs   = local (setTEnv (addBVars mvs)) . recur
@@ -445,12 +452,12 @@ getType' expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           ts' <- mapM asMeta ts
                           return $ instantiateBody (map Just ts') body
-    Unpack bound body -> do
-        Exists t' <- recur bound
+    Unpack t bound body -> do
         uniq <- fresh
-        let t'' = instantiateBody [Just (Meta uniq)] t'
-            update = setLEnv (addBVar t'') . setTEnv (addBVar uniq)
-        local update (recur body)
+        let updateT = setTEnv (addBVar uniq)
+        t' <- local updateT (asMeta t)
+        let updateL = setLEnv (addBVar t')
+        local (updateL . updateT) (recur body)
 
   where
     recur = getType'

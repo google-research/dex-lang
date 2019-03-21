@@ -30,7 +30,7 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 data TopEnv = TopEnv { varEnv :: Vars
                      , typeEnv   :: FullEnv Type ()
-                     , deFuncEnv :: FullEnv DFVal ()
+                     , deFuncEnv :: FullEnv (DFVal, Type) ()
                      , valEnv    :: FullEnv PersistVal PersistType}
 
 initEnv = TopEnv mempty mempty mempty mempty
@@ -38,9 +38,9 @@ initEnv = TopEnv mempty mempty mempty mempty
 evalSource :: TopEnv -> String -> Driver (TopEnv, [TopDecl ()])
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
-  (checked, varEnv' ) <- fullPass (procDecl boundVarPass)  (varEnv  env) decls
-  (typed  , typeEnv') <- fullPass (procDecl typePass)      (typeEnv env) checked
-  (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass)    (deFuncEnv env) typed
+  (checked, varEnv' ) <- fullPass (procDecl boundVarPass) (varEnv  env) decls
+  (typed  , typeEnv') <- fullPass (procDecl typePass)     (typeEnv env) checked
+  (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass)   (deFuncEnv env) typed
   (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) defunc
   return (TopEnv varEnv' typeEnv' dfEnv' valEnv', jitted)
   where

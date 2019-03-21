@@ -270,7 +270,7 @@ compile expr = case expr of
     (BuiltinLam builtin [] vs) <- compile e
     ts' <- mapM compileType ts
     compileBuiltin builtin ts' vs
-  Unpack bound body -> do
+  Unpack _ bound body -> do
     ExPackage i x <- compile bound
     let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
     local updateEnv (compile body)

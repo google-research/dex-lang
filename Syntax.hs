@@ -31,7 +31,7 @@ data GenExpr a = Lit LitVal
                | App (GenExpr a) (GenExpr a)
                | For (GenIdxSet a) (GenExpr a)
                | Get (GenExpr a) IdxExpr
-               | Unpack (GenExpr a) (GenExpr a)
+               | Unpack (GenType a) (GenExpr a) (GenExpr a)
                | TLam [Kind] (GenExpr a)
                | TApp (GenExpr a) [(GenType a)]
                | RecCon (Record (GenExpr a))
@@ -296,7 +296,7 @@ instance Show a => Show (GenType a) where
 
 showType :: Show a => [Kind] -> GenType a -> String
 showType env t = case t of
-  Meta v -> show v
+  Meta v -> "Meta-" ++ show v
   BaseType b  -> show b
   TypeVar v   -> getName tVarNames depth v
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
@@ -323,10 +323,10 @@ showExpr env@(depth, kinds) expr = case expr of
   Lam p e      -> paren $ "lam " ++ printPat p ++ ": "
                                  ++ recurWith (length (toList p)) e
   App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
-  For t e      -> paren $ "for " ++ showBinder depth t ++ ": " ++ recurWith 1 e
+  For t e      -> paren $ "for " ++ showBinder depth kinds t ++ ": " ++ recurWith 1 e
   Get e ie     -> recur e ++ "." ++ name ie
   RecCon r     -> printRecord recur defaultRecPrintSpec r
-  Unpack e1 e2 -> paren $ "unpack {" ++ lVarNames !! depth
+  Unpack t e1 e2 -> paren $ "unpack {" ++ showBinder depth (IdxSetKind:kinds) t
                              ++ ", " ++ tVarNames !! (length kinds)
                              ++ "} = " ++ recur e1
                              ++ " in " ++ showExpr (depth+1, IdxSetKind:kinds) e2
@@ -338,10 +338,10 @@ showExpr env@(depth, kinds) expr = case expr of
   TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType kinds) ts) ++ "]"
   where recur = showExpr env
         recurWith n = showExpr (depth + n, kinds)
-        showBinder i ty = lVarNames !! i ++ "::" ++ showType kinds ty
+        showBinder i kinds ty = lVarNames !! i ++ "::" ++ showType kinds ty
         name = getName lVarNames depth
         printPat p = let depth' = depth + length (toList p) - 1
-                         show' (i, ty) = showBinder (depth' - i) ty
+                         show' (i, ty) = showBinder (depth' - i) kinds ty
                      in printRecTree show' (enumerate p)
 
 getName :: [VarName] -> Int -> GVar i -> String
@@ -369,7 +369,7 @@ instance Traversable GenExpr where
     For t body        -> liftA2 For (recurTy t) (recur body)
     Get e ie          -> liftA2 Get (recur e) (pure ie)
     RecCon r          -> liftA  RecCon (traverse recur r)
-    Unpack bound body -> liftA2 Unpack (recur bound) (recur body)
+    Unpack t bound body -> liftA3 Unpack (recurTy t) (recur bound) (recur body)
     TLam kinds expr   -> liftA  (TLam kinds) (recur expr)
     TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur = traverse f
@@ -442,19 +442,20 @@ subExprDepth d f expr = case expr of
   For t body       -> For (recurTy t) (recur body)
   Get e ie         -> Get (recur e) ie
   RecCon r         -> RecCon (fmap recur r)
-  Unpack bound body -> Unpack (recur bound) (recurWith 1 body)
+  Unpack t bound body -> Unpack (recurTyWith 1 t) (recur bound) (recurWith 1 body)
   TLam kinds expr     -> TLam kinds (recurWith (length kinds) expr)
   TApp expr ts        -> TApp (recur expr) (map recurTy ts)
 
   where recur = subExprDepth d f
         recurWith d' = subExprDepth (d + d') f
         recurTy = subTyDepth d f
+        recurTyWith d' = subTyDepth (d + d') f
 
-checkNoLeaves :: Traversable f => f a -> Except (f b)
-checkNoLeaves = traverse check
-  where check _ = Left $ CompilerErr "Found metavariable"
+checkNoLeaves :: (Show (f a), Traversable f) => f a -> Except (f b)
+checkNoLeaves x = traverse check x
+  where check _ = Left $ CompilerErr ("Found metavariable: " ++ show x)
 
-noLeaves :: Traversable f => f a -> f b
+noLeaves :: (Show (f a), Traversable f) => f a -> f b
 noLeaves x = case checkNoLeaves x of Right x' -> x'
                                      Left e -> error $ show e
 
@@ -475,6 +476,8 @@ instantiateBodyFVs env@(Env fvs bvs) t = case t of
   TabType a b -> TabType (recur a) (recur b)
   Forall kinds body -> let env' = Env fvs (map (const Nothing) kinds ++ bvs)
                        in Forall kinds $ instantiateBodyFVs env' body
+  Exists body -> let env' = Env fvs (Nothing : bvs)
+                 in Exists $ instantiateBodyFVs env' body
   Meta _ -> t
   RecType r -> RecType (fmap recur r)
   where recur = instantiateBodyFVs env
@@ -491,5 +494,7 @@ instantiateBody env t = case t of
   RecType r   -> RecType (fmap recur r)
   Forall kinds body -> let env' = map (const Nothing) kinds ++ env
                        in Forall kinds $ instantiateBody env' body
+  Exists body -> let env' = Nothing : env
+                 in Exists $ instantiateBody env' body
   Meta _ -> t
   where recur = instantiateBody env
