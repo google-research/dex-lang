@@ -4,7 +4,7 @@ module Syntax (GenExpr (..), GenType (..), GenIdxSet,
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat,
                Var, TVar, Except, Err (..),
-               Vars, FullEnv (..), setLEnv, setTEnv,
+               Vars, FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
                subTy, subExpr, bindMetaTy, bindMetaExpr, raiseIOExcept,
                noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
@@ -35,6 +35,7 @@ data GenExpr a = Lit LitVal
                | TLam [Kind] (GenExpr a)
                | TApp (GenExpr a) [(GenType a)]
                | RecCon (Record (GenExpr a))
+               | BuiltinApp Builtin [GenType a] [GenExpr a]
                    deriving (Eq, Ord)
 
 data GenType a = Meta a
@@ -79,8 +80,10 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord)
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Fold | Iota | Doubleit
-             | Hash | Rand | Randint deriving (Eq, Ord, Show)
+             | Sin | Cos | Tan | Iota | Doubleit
+             | Hash | Rand | Randint
+             | Fold | FoldDeFunc
+               deriving (Eq, Ord, Show)
 
 data ImpProgram = ImpProgram [Statement]
 
@@ -105,6 +108,21 @@ builtinNames = M.fromList [
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota), ("doubleit", Doubleit),
   ("hash", Hash), ("rand", Rand), ("randint", Randint)]
+
+arity :: Builtin -> (Int, Int)
+arity b = case b of
+  Add      -> (0, 2)
+  Mul      -> (0, 2)
+  Sub      -> (0, 2)
+  Iota     -> (0, 1)
+  Fold     -> (3, 3)
+  Doubleit -> (0, 1)
+  Hash     -> (0, 2)
+  Rand     -> (0, 1)
+  Randint  -> (0, 2)
+
+numArgs   = snd . arity
+numTyArgs = fst . arity
 
 strToBuiltin :: String -> Maybe Builtin
 strToBuiltin name = M.lookup name builtinNames
@@ -133,7 +151,6 @@ setLEnv update env = env {lEnv = update (lEnv env)}
 
 setTEnv :: (Env TVar t -> Env TVar t) -> FullEnv v t -> FullEnv v t
 setTEnv update env = env {tEnv = update (tEnv env)}
-
 type Vars = FullEnv () ()
 
 type Source = String
@@ -326,6 +343,8 @@ showExpr env@(depth, kinds) expr = case expr of
   For t e      -> paren $ "for " ++ showBinder depth kinds t ++ ": " ++ recurWith 1 e
   Get e ie     -> recur e ++ "." ++ name ie
   RecCon r     -> printRecord recur defaultRecPrintSpec r
+  BuiltinApp b ts exprs -> paren $ show b ++ "[" ++ showTypes ts ++ "]"
+                                         ++ paren (spaceSep (map recur exprs))
   Unpack t e1 e2 -> paren $ "unpack {" ++ showBinder depth (IdxSetKind:kinds) t
                              ++ ", " ++ tVarNames !! (length kinds)
                              ++ "} = " ++ recur e1
@@ -335,8 +354,9 @@ showExpr env@(depth, kinds) expr = case expr of
                         kinds' tVarNames) ++ ": "
            ++ showExpr (depth, kinds' ++ kinds) expr
 
-  TApp expr ts -> recur expr ++ "[" ++ spaceSep (map (showType kinds) ts) ++ "]"
+  TApp expr ts -> recur expr ++ "[" ++ showTypes ts ++ "]"
   where recur = showExpr env
+        showTypes ts = spaceSep (map (showType kinds) ts)
         recurWith n = showExpr (depth + n, kinds)
         showBinder i kinds ty = lVarNames !! i ++ "::" ++ showType kinds ty
         name = getName lVarNames depth
@@ -372,6 +392,7 @@ instance Traversable GenExpr where
     Unpack t bound body -> liftA3 Unpack (recurTy t) (recur bound) (recur body)
     TLam kinds expr   -> liftA  (TLam kinds) (recur expr)
     TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
+    BuiltinApp b ts v -> liftA2 (BuiltinApp b) (traverse recurTy ts) (traverse recur v)
     where recur = traverse f
           recurTy = traverse f
 

@@ -58,7 +58,6 @@ data JitVal w = ScalarVal BaseType w
               | IdxVal w w
               | TabVal (Table w)
               | RecVal (Record (JitVal w))
-              | BuiltinLam Builtin [JitType w] [JitVal w]
               | ExPackage w (JitVal w)  deriving (Show)
 
 data PWord = PScalar BaseType Word64
@@ -90,7 +89,6 @@ type Index    = Operand
 type NumElems = Operand
 
 type CompileApp  = [CompileType] -> [CompileVal] -> CompileM CompileVal
-data BuiltinSpec = BuiltinSpec Int Int CompileApp
 
 data CompileState = CompileState { nameCounter :: Int
                                  , curBlocks :: [Block]
@@ -253,12 +251,8 @@ compile :: Expr -> CompileM CompileVal
 compile expr = case expr of
   Lit x -> return (litVal x)
   Var v -> asks $ (! v) . lEnv
-  Builtin b -> return $ BuiltinLam b [] []
   Let p bound body -> do x <- compile bound
                          local (setLEnv $ addBVars (bindPat p x)) (compile body)
-  App e1 e2  -> do (BuiltinLam builtin ts vs) <- compile e1
-                   x <- compile e2
-                   compileBuiltin builtin ts (x:vs)
   For a body -> do (Meta n) <- compileType a
                    TabType _ bodyTy <- getType expr
                    compileFor n bodyTy body
@@ -266,15 +260,12 @@ compile expr = case expr of
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
   RecCon r -> liftM RecVal (traverse compile r)
-  TApp e ts -> do
-    (BuiltinLam builtin [] vs) <- compile e
-    ts' <- mapM compileType ts
-    compileBuiltin builtin ts' vs
   Unpack _ bound body -> do
     ExPackage i x <- compile bound
     let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
     local updateEnv (compile body)
-
+  BuiltinApp b ts args -> do ts' <- traverse compileType ts
+                             compileBuiltin b ts' args
   where
     getType :: Expr -> CompileM CompileType
     getType expr = do { env <- ask; return (exprType env expr) }
@@ -292,14 +283,6 @@ typeOf val = case val of
   ScalarVal b _ -> BaseType b
   IdxVal n _ -> Meta n
   TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
-  BuiltinLam b ts vs ->
-    composeN (length vs) arrRHS $ instantiateType ts (builtinType b)
-  where arrRHS :: CompileType -> CompileType
-        arrRHS (ArrType _ ty) = ty
-
-compileApp :: CompileVal -> CompileVal -> CompileM CompileVal
-compileApp f x = case f of
-  BuiltinLam builtin ts vs -> compileBuiltin builtin ts (x:vs)
 
 bindPat :: RecTree a -> CompileVal -> [CompileVal]
 bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r')
@@ -308,13 +291,6 @@ bindPat (RecLeaf l) x = [x]
 compileType :: Type -> CompileM CompileType
 compileType ty = do env <- asks tEnv
                     return $ instantiateBodyFVs (fmap Just env) (noLeaves ty)
-
-compileBuiltin :: Builtin -> [CompileType] -> [CompileVal] -> CompileM CompileVal
-compileBuiltin b types args =
-  if length types < numTypes || length args < numArgs
-    then return $ BuiltinLam b types args
-    else compileApp (reverse types) (reverse args)
-  where BuiltinSpec numTypes numArgs compileApp = builtinSpec b
 
 compileFor :: NumElems -> CompileType -> Expr -> CompileM CompileVal
 compileFor n bodyTy forBody = do
@@ -361,18 +337,41 @@ addForILoop n body = do
   addLoop cond body'
   where inc i = updateCell i $ add (litInt 1)
 
+unpackConsTuple :: Int -> CompileVal -> [CompileVal]
+unpackConsTuple 0 _ = []
+unpackConsTuple n (RecVal r) = head : unpackConsTuple (n-1) tail
+  where [head, tail] = fromPosRecord r
+
+compileBuiltin :: Builtin -> [CompileType] -> [Expr] -> CompileM CompileVal
+compileBuiltin Fold ts [f, arg] = error "fold"
+compileBuiltin b ts [arg] = do
+  arg <- compile arg
+  (builtinRule b) ts $ unpackConsTuple (numArgs b) arg
+
+builtinRule :: Builtin -> CompileApp
+builtinRule b = case b of
+  Add      -> compileBinop (\x y -> L.Add False False x y [])
+  Mul      -> compileBinop (\x y -> L.Mul False False x y [])
+  Sub      -> compileBinop (\x y -> L.Sub False False x y [])
+  Iota     -> compileIota
+  Fold     -> compileFold
+  Doubleit -> externalMono doubleFun  IntType
+  Hash     -> externalMono hashFun    IntType
+  Rand     -> externalMono randFun    RealType
+  Randint  -> externalMono randIntFun IntType
+
 compileBinApp :: CompileVal -> CompileVal -> (CompileVal -> CompileM CompileVal)
-compileBinApp f x y = do f' <- compileApp f x
-                         compileApp f' y
+compileBinApp f x y = undefined --do f' <- compileApp f x
+--                         compileApp f' y
 
 compileFold :: [CompileType] -> [CompileVal] -> CompileM CompileVal
-compileFold _ [fVal, init, TabVal tab@(Table ptr n sizes valTy)] = do
-  mutVal <- newGenCell init
-  let body iPtr = do i <- loadCell iPtr
-                     next <-readTable tab i
-                     updateGenCell mutVal (compileBinApp fVal next)
-  addForILoop n body
-  loadGenCell mutVal
+compileFold _ [fVal, init, TabVal tab@(Table ptr n sizes valTy)] = undefined --do
+  -- mutVal <- newGenCell init
+  -- let body iPtr = do i <- loadCell iPtr
+  --                    next <-readTable tab i
+  --                    updateGenCell mutVal (compileBinApp fVal next)
+  -- addForILoop n body
+  -- loadGenCell mutVal
 
 -- TODO: add var decls
 finalReturn :: CompileVal -> CompileM ()
@@ -535,18 +534,6 @@ memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
 
 -- --- builtins ---
 
-builtinSpec :: Builtin -> BuiltinSpec
-builtinSpec b = case b of
-  Add      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Add False False x y [])
-  Mul      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Mul False False x y [])
-  Sub      -> BuiltinSpec 0 2 $ compileBinop (\x y -> L.Sub False False x y [])
-  Iota     -> BuiltinSpec 0 1 $ compileIota
-  Fold     -> BuiltinSpec 3 3 $ compileFold
-  Doubleit -> BuiltinSpec 0 1 $ externalMono doubleFun  IntType
-  Hash     -> BuiltinSpec 0 2 $ externalMono hashFun    IntType
-  Rand     -> BuiltinSpec 0 1 $ externalMono randFun    RealType
-  Randint  -> BuiltinSpec 0 2 $ externalMono randIntFun IntType
-
 externalMono :: ExternFunSpec -> BaseType -> CompileApp
 externalMono f@(ExternFunSpec name retTy _ _) baseTy [] args =
   liftM (ScalarVal baseTy) $ evalInstr retTy (externCall f args')
@@ -640,8 +627,6 @@ instance Traversable JitVal where
                <*> liftA ConstSize (f size)
                <*> traverse f valTy )
     RecVal r -> liftA RecVal $ traverse (traverse f) r
-    BuiltinLam b tys vals -> liftA2 (BuiltinLam b) (traverse (traverse f) tys)
-                                                   (traverse (traverse f) vals)
     ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
 
 traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)

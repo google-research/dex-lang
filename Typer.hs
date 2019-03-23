@@ -359,6 +359,14 @@ getAndCheckType' expr = case expr of
     TApp fexpr ts   -> do Forall kinds body <- recur fexpr
                           ts' <- zipWithM checkTy kinds ts
                           return $ instantiateBody (map Just ts') body
+    BuiltinApp FoldDeFunc ts expr -> error "fold"
+    BuiltinApp b ts [expr] -> case builtinType b of
+        Forall kinds body -> error "not implemented"
+        t -> do t' <- checkTy TyKind t
+                let (a, out) = deFuncType (numArgs b) t'
+                a' <- recur expr
+                assertEq' a a' "Type mismatch in BuiltinApp"
+                return out
     Unpack tyReq bound body -> do
         Exists t' <- recur bound
         tyReq' <- checkTy TyKind (Exists tyReq)
@@ -387,6 +395,20 @@ getAndCheckType' expr = case expr of
     assertEq' :: MType -> MType -> String -> CheckM ()
     assertEq' t1 t2 s = liftExcept $ assertEq t1 t2 s
 
+naryComponents :: Int -> GenType a -> ([GenType a], GenType a)
+naryComponents 0 ty = ([], ty)
+naryComponents n (ArrType a rhs) = let (args, result) = naryComponents (n-1) rhs
+                                   in (a:args, result)
+
+nestedPairs :: [GenType a] -> GenType a
+nestedPairs [] = unitTy
+nestedPairs (x:xs) = RecType $ posRecord [x, nestedPairs xs]
+
+unitTy = RecType $ posRecord []
+
+deFuncType :: Int -> GenType a -> (GenType a, GenType a)
+deFuncType n t = let (args, result) = naryComponents n t
+                 in (nestedPairs (reverse args), result)
 
 checkTy :: Kind -> Type -> CheckM MType
 checkTy kind t = do
@@ -452,6 +474,11 @@ getType' expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           ts' <- mapM asMeta ts
                           return $ instantiateBody (map Just ts') body
+    BuiltinApp FoldDeFunc ts expr -> error "fold"
+    BuiltinApp b _ _ -> case builtinType b of
+      Forall kinds body -> error "not implemented"
+      t -> do t' <- asMeta t
+              return $ snd $ naryComponents (numArgs b) t'
     Unpack t bound body -> do
         uniq <- fresh
         let updateT = setTEnv (addBVar uniq)
@@ -498,7 +525,7 @@ builtinType builtin = case builtin of
     binOpType    = int --> int --> int
     realUnOpType = real --> real
     foldType = Forall [TyKind, TyKind, IdxSetKind] $
-                   (a --> a --> b) --> b --> (k ==> a) --> b
+                   (b --> a --> b) --> b --> (k ==> a) --> b
     iotaType = int --> Exists (i ==> int)
     a = TypeVar (BV 0)
     b = TypeVar (BV 1)

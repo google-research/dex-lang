@@ -6,7 +6,8 @@ module Record (Record,  RecName (..), posRecord, nameRecord, emptyRecord,
                recTreePaths, recTreeLeaves, recFromName, isEmpty, printRecord,
                RecordPrintSpec (..), mixedRecordPosName,
                defaultRecPrintSpec, typeRecPrintSpec,
-               mixedRecordPosNameList, printRecTree) where
+               mixedRecordPosNameList, printRecTree,
+               recZipWith, recTreeZip) where
 
 import Util
 import Control.Monad
@@ -102,6 +103,12 @@ zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Record m) (Record m')
     | M.keys m == M.keys m' = Just . Record $ M.intersectionWith f m m'
     | otherwise = Nothing
+
+recZipWith f r r' = unJust (zipWithRecord f r r')
+
+recTreeZip :: RecTree a -> RecTree b -> RecTree (a,b)
+recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
+recTreeZip (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
 
 consRecord :: a -> Record a -> Record a
 consRecord v r = let vs = fromPosRecord r
