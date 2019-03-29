@@ -34,7 +34,6 @@ import Foreign.Ptr hiding (Ptr)
 import Foreign.Storable
 
 import qualified Foreign.Ptr as F
-import qualified Data.Text.Lazy as DT
 import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Short (ShortByteString)
 import Data.Word (Word64 (..))

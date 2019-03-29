@@ -7,3 +7,4 @@ test.db
 test-script.cd
 *.out
 *.so
+.stack-work
