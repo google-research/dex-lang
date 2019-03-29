@@ -1,14 +1,13 @@
-module Syntax (GenExpr (..), GenType (..), GenIdxSet,
-               Expr, Type, IdxSet, Builtin (..),
+module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                UExpr (..), TopDecl (..), Command (..), CommandOutput (..),
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
-               LitVal (..), BaseType (..), Pat, UPat,
-               Var, TVar, Except, Err (..),
+               LitVal (..), BaseType (..), Pat, UPat, Var, TVar, Except, Err (..),
                Vars, FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
-               fvsUExpr, (-->), (==>), Pass (..), strToBuiltin,
-               subTy, subExpr, bindMetaTy, bindMetaExpr, raiseIOExcept,
-               noLeaves, checkNoLeaves, liftExcept, liftErrIO, assertEq,
-               instantiateType, instantiateBody, instantiateBodyFVs, joinType) where
+               (-->), (==>), Pass (..), strToBuiltin,
+               raiseIOExcept, liftExcept, liftErrIO, assertEq, ignoreExcept,
+               instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
+               fvsUExpr, freeTyVars,
+              ) where
 
 import Util
 import Record
@@ -16,43 +15,40 @@ import Env
 import Data.Semigroup
 import Data.Foldable (toList)
 import Data.Traversable
-import Data.List (intercalate, elemIndex)
+import Data.List (intercalate, elemIndex, nub)
 import qualified Data.Map as M
 
 import System.Console.Haskeline (throwIO, Interrupt (..))
+import Data.Functor.Identity (Identity, runIdentity)
 import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 
-data GenExpr a = Lit LitVal
-               | Var Var
-               | Builtin Builtin
-               | Let (Pat a) (GenExpr a) (GenExpr a)
-               | Lam (Pat a) (GenExpr a)
-               | App (GenExpr a) (GenExpr a)
-               | For (GenIdxSet a) (GenExpr a)
-               | Get (GenExpr a) IdxExpr
-               | Unpack (GenType a) (GenExpr a) (GenExpr a)
-               | TLam [Kind] (GenExpr a)
-               | TApp (GenExpr a) [(GenType a)]
-               | RecCon (Record (GenExpr a))
-               | BuiltinApp Builtin [GenType a] [GenExpr a]
-                   deriving (Eq, Ord)
+data Expr = Lit LitVal
+          | Var Var
+          | Builtin Builtin
+          | Let Pat Expr Expr
+          | Lam Pat Expr
+          | App Expr Expr
+          | For IdxSet Expr
+          | Get Expr IdxExpr
+          | Unpack Type Expr Expr
+          | TLam [Kind] Expr
+          | TApp Expr [Type]
+          | RecCon (Record Expr)
+          | BuiltinApp Builtin [Type] [Expr]
+              deriving (Eq, Ord)
 
-data GenType a = Meta a
-               | BaseType BaseType
-               | TypeVar TVar
-               | ArrType (GenType a) (GenType a)
-               | TabType (GenIdxSet a) (GenType a)
-               | RecType (Record (GenType a))
-               | Forall [Kind] (GenType a)
-               | Exists (GenType a)
-                  deriving (Eq, Ord)
+data Type = BaseType BaseType
+          | TypeVar TVar
+          | ArrType Type Type
+          | TabType IdxSet Type
+          | RecType (Record Type)
+          | Forall [Kind] Type
+          | Exists Type
+             deriving (Eq, Ord)
 
-type GenIdxSet a = GenType a -- Constructed with Meta or TypeVar
-
-type Type   = GenType   ()
-type Expr   = GenExpr   ()
-type IdxSet = GenIdxSet ()
+type IdxSet = Type
 
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
@@ -100,8 +96,8 @@ data Size = ConstSize Int | KnownSize VarName
 
 type ImpBuiltin = Builtin
 
-type UPat  = RecTree VarName
-type Pat a = RecTree (GenType a)
+type UPat = RecTree VarName
+type Pat  = RecTree Type
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
@@ -146,10 +142,10 @@ data Pass a b v t = Pass
     lowerCmd    ::    Command a -> FullEnv v t -> IO (Command b) }
 
 -- these should just be lenses
-setLEnv :: (Env Var v -> Env Var v) -> FullEnv v t -> FullEnv v t
+setLEnv :: (Env Var a -> Env Var b) -> FullEnv a t -> FullEnv b t
 setLEnv update env = env {lEnv = update (lEnv env)}
 
-setTEnv :: (Env TVar t -> Env TVar t) -> FullEnv v t -> FullEnv v t
+setTEnv :: (Env TVar a -> Env TVar b) -> FullEnv v a -> FullEnv v b
 setTEnv update env = env {tEnv = update (tEnv env)}
 type Vars = FullEnv () ()
 
@@ -199,6 +195,10 @@ raiseIOExcept e =print e >> throwIO Interrupt
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)
   where msg = s ++ ": " ++ show x ++ " != " ++ show y
+
+ignoreExcept :: Except a -> a
+ignoreExcept (Left e) = error $ show e
+ignoreExcept (Right x) = x
 
 instance Traversable TopDecl where
   traverse f (TopDecl s fvs instr) = fmap (TopDecl s fvs) $ traverse f instr
@@ -267,20 +267,13 @@ fvsUExpr expr = case expr of
   UFor _ body    -> fvsUExpr body
   UGet e ie      -> fvsUExpr e <> fvsVar setLEnv ie
   URecCon r      -> foldMap fvsUExpr r
-  UAnnot e t     -> fvsUExpr e <> fvsType t
+  -- UAnnot e t     -> fvsUExpr e <> fvsType t
   UUnpack _ e body -> fvsUExpr e <> fvsUExpr body
-
-fvsType :: Type -> Vars
-fvsType ty = case ty of
-  BaseType _    -> mempty
-  TypeVar v     -> fvsVar setTEnv v
-  ArrType t1 t2 -> fvsType t1 <> fvsType t2
-  Meta _ -> mempty
 
 paren :: String -> String
 paren s = "(" ++ s ++ ")"
 
-varNames :: [Char] -> [VarName]
+varNames :: [Char] -> [String]
 varNames prefixes = map ithName [0..]
   where n = length prefixes
         ithName i | i < n     = [prefixes !! i]
@@ -305,15 +298,14 @@ instance Show LitVal where
   show (RealLit x) = show x
   show (StrLit x ) = show x
 
-instance Show a => Show (GenExpr a) where
+instance Show Expr where
   show = showExpr (0, [])
 
-instance Show a => Show (GenType a) where
+instance Show Type where
   show = showType []
 
-showType :: Show a => [Kind] -> GenType a -> String
+showType :: [Kind] -> Type -> String
 showType env t = case t of
-  Meta v -> "Meta-" ++ show v
   BaseType b  -> show b
   TypeVar v   -> getName tVarNames depth v
   ArrType a b -> paren $ recur a ++ " -> " ++ recur b
@@ -330,7 +322,7 @@ spaceSep :: [String] -> String
 spaceSep = intercalate " "
 
 -- TODO: fix printing of pattern binders
-showExpr :: Show a => (Int, [Kind]) -> GenExpr a -> String
+showExpr :: (Int, [Kind]) -> Expr -> String
 showExpr env@(depth, kinds) expr = case expr of
   Lit val      -> show val
   Var v        -> name v
@@ -364,158 +356,77 @@ showExpr env@(depth, kinds) expr = case expr of
                          show' (i, ty) = showBinder (depth' - i) kinds ty
                      in printRecTree show' (enumerate p)
 
-getName :: [VarName] -> Int -> GVar i -> String
+getName :: [String] -> Int -> GVar i -> String
 getName names depth v = case v of
-  FV name -> name
+  FV (NamedVar name) -> name
+  FV (TempVar i) -> "<tmp-" ++ show i ++ ">"
   BV i -> let i' = depth - i - 1
           in if i' >= 0
              then names !! i'
              else "<BV " ++ show i ++ ">"
 
-instance Functor GenExpr where
-  fmap = fmapDefault
+type TempVar = Int
 
-instance Foldable GenExpr where
-  foldMap = foldMapDefault
+freeTyVars :: HasTypeVars a => a -> [VarName]
+freeTyVars x = nub $ execState (subAtDepth 0 collectVars x) []
+  where collectVars :: Int -> TVar -> State [VarName] Type
+        collectVars _ v = do case v of BV _ -> return ()
+                                       FV v' -> modify (v':)
+                             return (TypeVar v)
 
-instance Traversable GenExpr where
-  traverse f expr = case expr of
-    Lit c -> pure $ Lit c
-    Var v -> pure $ Var v
-    Builtin b -> pure $ Builtin b
-    Let p bound body  -> liftA3 Let (traverse recurTy p) (recur bound) (recur body)
-    Lam p body        -> liftA2 Lam (traverse recurTy p) (recur body)
-    App fexpr arg     -> liftA2 App (recur fexpr) (recur arg)
-    For t body        -> liftA2 For (recurTy t) (recur body)
-    Get e ie          -> liftA2 Get (recur e) (pure ie)
-    RecCon r          -> liftA  RecCon (traverse recur r)
-    Unpack t bound body -> liftA3 Unpack (recurTy t) (recur bound) (recur body)
-    TLam kinds expr   -> liftA  (TLam kinds) (recur expr)
-    TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
-    BuiltinApp b ts v -> liftA2 (BuiltinApp b) (traverse recurTy ts) (traverse recur v)
-    where recur = traverse f
-          recurTy = traverse f
+instantiateTVs :: HasTypeVars a => [Type] -> a -> a
+instantiateTVs vs x = runIdentity $ subAtDepth 0 sub x
+  where sub depth v = return $ case v of
+                        BV i | i >= 0 -> vs !! i
+                        _ -> TypeVar v
 
-instance Functor GenType where
-  fmap = fmapDefault
+abstractTVs :: HasTypeVars a => [VarName] -> a -> a
+abstractTVs vs x = runIdentity $ subAtDepth 0 sub x
+  where sub depth v = return $ TypeVar $ case v of
+                        BV _  -> v
+                        FV v' -> case elemIndex v' vs of
+                                   Nothing -> v
+                                   Just i  -> BV (depth + i)
 
-instance Foldable GenType where
-  foldMap = foldMapDefault
+subFreeTVs :: (HasTypeVars a, Applicative f) => (VarName -> f Type) -> a -> f a
+subFreeTVs f expr = subAtDepth 0 f' expr
+  where f' _ v = case v of BV _  -> pure (TypeVar v)
+                           FV v' -> f v'
 
-instance Traversable GenType where
-  traverse f ty = case ty of
-    Meta v            -> liftA Meta (f v)
-    BaseType b        -> pure $ BaseType b
-    TypeVar v         -> pure $ TypeVar v
-    ArrType a b       -> liftA2 ArrType (recur a) (recur b)
-    TabType a b       -> liftA2 TabType (recur a) (recur b)
-    RecType r         -> liftA  RecType (traverse recur r)
-    Forall kinds body -> liftA  (Forall kinds) (recur body)
-    Exists body       -> liftA  Exists (recur body)
-    where recur = traverse f
+class HasTypeVars a where
+  subAtDepth :: Applicative f => Int -> (Int -> TVar -> f Type) -> a -> f a
 
-bindMetaTy :: Eq a => [a] -> GenType a -> GenType a
-bindMetaTy vs = subTyDepth 0 (deBruijnSub vs)
-  where sub d v = case elemIndex v vs of
-                    Just i  -> TypeVar (BV (d + i))
-                    Nothing -> Meta v
+instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
+  subAtDepth d f (x, y) = liftA2 (,) (subAtDepth d f x) (subAtDepth d f y)
 
-bindMetaExpr :: Eq a => [a] -> GenExpr a -> GenExpr a
-bindMetaExpr vs = subExprDepth 0 (deBruijnSub vs)
+instance HasTypeVars Type where
+  subAtDepth d f ty = case ty of
+      BaseType b    -> pure ty
+      TypeVar v     -> f d v
+      ArrType a b   -> liftA2 ArrType (recur a) (recur b)
+      TabType a b   -> liftA2 TabType (recur a) (recur b)
+      RecType r     -> liftA RecType (traverse recur r)
+      Exists body   -> liftA Exists (recurWith 1 body)
+      Forall kinds body -> liftA (Forall kinds) (recurWith (length kinds) body)
+    where recur = subAtDepth d f
+          recurWith d' = subAtDepth (d + d') f
 
-joinType :: GenType (GenType a) -> GenType a
-joinType = subTy id
-
-subTy :: Sub a b -> GenType a -> GenType b
-subTy f t = subTyDepth 0 (const f) t
-
-subExpr :: Sub a b -> GenExpr a -> GenExpr b
-subExpr f t = subExprDepth 0 (const f) t
-
-type Sub a b = a -> GenType b
-
-deBruijnSub :: Eq a => [a] -> (Int -> Sub a a)
-deBruijnSub vs d v = case elemIndex v vs of
-                       Just i  -> TypeVar (BV (d + i))
-                       Nothing -> Meta v
-
-subTyDepth :: Int -> (Int -> Sub a b) -> GenType a -> GenType b
-subTyDepth d f t = case t of
-  Meta v        -> f d v
-  BaseType b    -> BaseType b
-  TypeVar  v    -> TypeVar v
-  ArrType a b   -> ArrType (recur a) (recur b)
-  TabType a b   -> TabType (recur a) (recur b)
-  RecType r     -> RecType (fmap recur r)
-  Exists body -> Exists (recurWith 1 body)
-  Forall kinds body -> Forall kinds (recurWith (length kinds) body)
-  where recur = subTyDepth d f
-        recurWith d' = subTyDepth (d + d') f
-
-subExprDepth ::  Int -> (Int -> Sub a b) -> GenExpr a -> GenExpr b
-subExprDepth d f expr = case expr of
-  Lit c -> Lit c
-  Var v -> Var v
-  Builtin b -> Builtin b
-  Let p bound body -> Let (fmap recurTy p) (recur bound) (recur body)
-  Lam p body       -> Lam (fmap recurTy p) (recur body)
-  App fexpr arg    -> App (recur fexpr) (recur arg)
-  For t body       -> For (recurTy t) (recur body)
-  Get e ie         -> Get (recur e) ie
-  RecCon r         -> RecCon (fmap recur r)
-  Unpack t bound body -> Unpack (recurTyWith 1 t) (recur bound) (recurWith 1 body)
-  TLam kinds expr     -> TLam kinds (recurWith (length kinds) expr)
-  TApp expr ts        -> TApp (recur expr) (map recurTy ts)
-
-  where recur = subExprDepth d f
-        recurWith d' = subExprDepth (d + d') f
-        recurTy = subTyDepth d f
-        recurTyWith d' = subTyDepth (d + d') f
-
-checkNoLeaves :: (Show (f a), Traversable f) => f a -> Except (f b)
-checkNoLeaves x = traverse check x
-  where check _ = Left $ CompilerErr ("Found metavariable: " ++ show x)
-
-noLeaves :: (Show (f a), Traversable f) => f a -> f b
-noLeaves x = case checkNoLeaves x of Right x' -> x'
-                                     Left e -> error $ show e
-
-instantiateType :: [GenType a] -> GenType a -> GenType a
-instantiateType ts t = case t of
-  Forall kinds body | nt == length kinds -> instantiateBody ts' body
-  Exists       body | nt == 1            -> instantiateBody ts' body
-  ty -> case ts of [] -> ty
-  where nt = length ts
-        ts' = map Just ts
-
-instantiateBodyFVs :: Env TVar (Maybe (GenType a)) -> GenType a -> GenType a
-instantiateBodyFVs env@(Env fvs bvs) t = case t of
-  BaseType _  -> t
-  TypeVar v -> case env ! v of Just t' -> t'
-                               Nothing -> t
-  ArrType a b -> ArrType (recur a) (recur b)
-  TabType a b -> TabType (recur a) (recur b)
-  Forall kinds body -> let env' = Env fvs (map (const Nothing) kinds ++ bvs)
-                       in Forall kinds $ instantiateBodyFVs env' body
-  Exists body -> let env' = Env fvs (Nothing : bvs)
-                 in Exists $ instantiateBodyFVs env' body
-  Meta _ -> t
-  RecType r -> RecType (fmap recur r)
-  where recur = instantiateBodyFVs env
-
-instantiateBody :: [Maybe (GenType a)] -> GenType a -> GenType a
-instantiateBody env t = case t of
-  BaseType _  -> t
-  TypeVar (BV v) -> case env !! v of
-                      Just t' -> t'
-                      Nothing -> t
-  TypeVar (FV v) -> t
-  ArrType a b -> ArrType (recur a) (recur b)
-  TabType a b -> TabType (recur a) (recur b)
-  RecType r   -> RecType (fmap recur r)
-  Forall kinds body -> let env' = map (const Nothing) kinds ++ env
-                       in Forall kinds $ instantiateBody env' body
-  Exists body -> let env' = Nothing : env
-                 in Exists $ instantiateBody env' body
-  Meta _ -> t
-  where recur = instantiateBody env
+instance HasTypeVars Expr where
+  subAtDepth d f expr = case expr of
+      Lit c -> pure $ Lit c
+      Var v -> pure $ Var v
+      Builtin b -> pure $ Builtin b
+      Let p bound body -> liftA3 Let (traverse recurTy p) (recur bound) (recur body)
+      Lam p body       -> liftA2 Lam (traverse recurTy p) (recur body)
+      App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
+      For t body       -> liftA2 For (recurTy t) (recur body)
+      Get e ie         -> liftA2 Get (recur e) (pure ie)
+      RecCon r         -> liftA  RecCon (traverse recur r)
+      Unpack t bound body -> liftA3 Unpack (recurWithTy 1 t) (recur bound) (recurWith 1 body)
+      TLam kinds expr   -> liftA  (TLam kinds) (recurWith (length kinds) expr)
+      TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
+      BuiltinApp b ts v -> liftA2 (BuiltinApp b) (traverse recurTy ts) (traverse recur v)
+    where recur   = subAtDepth d f
+          recurTy = subAtDepth d f
+          recurWith   d' = subAtDepth (d + d') f
+          recurWithTy d' = subAtDepth (d + d') f

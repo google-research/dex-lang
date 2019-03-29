@@ -14,10 +14,11 @@ import Prelude hiding (lookup)
 
 import Syntax
 import Parser
-import Typer
+import Type
 import Util
 import Env
 import JIT
+import Inference
 import DeFunc
 import WebOutput
 
@@ -140,7 +141,7 @@ opts = info (p <**> helper) mempty
 runMonad :: Driver a -> IO a
 runMonad d = runInputTBehavior defaultBehavior defaultSettings d
 
-loadData :: String -> IO (TypedVal, MType)
+loadData :: String -> IO (TypedVal, Type)
 loadData fname = do
   contents <- readFile fname
   undefined

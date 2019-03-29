@@ -41,7 +41,7 @@ import Data.Word (Word64 (..))
 
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
-import Typer
+import Type
 import Syntax
 import Env
 import Record
@@ -51,8 +51,9 @@ foreign import ccall "dynamic"
   haskFun :: FunPtr (IO (F.Ptr ())) -> IO (F.Ptr ())
 
 type Compiled = L.Module
-type JitType w = GenType w
 type JitEnv w = FullEnv (JitVal w) (JitType w)
+
+data JitType w = JitType Type [w]  deriving (Show)
 
 data JitVal w = ScalarVal BaseType w
               | IdxVal w w
@@ -71,9 +72,9 @@ type PersistVal  = JitVal  PWord
 type PersistType = JitType PWord
 type PersistEnv  = JitEnv  PWord
 
-data Table w = Table (Ptr w) w (Sizes w) (JitType w)    deriving (Show)
-data Sizes w = ConstSize w | ManySizes (Ptr w)          deriving (Show)
-data Ptr w = Ptr w                                      deriving (Show)
+data Table w = Table (Ptr w) w (Sizes w) (JitType w) deriving (Show)
+data Sizes w = ConstSize w | ManySizes (Ptr w)       deriving (Show)
+data Ptr w = Ptr w                                   deriving (Show)
 
 type CTable = Table Operand
 type CSizes = Sizes Operand
@@ -109,9 +110,9 @@ jitExpr expr env = do let (v, m) = lower expr env
                       return (val, ())
 
 jitUnpack :: VarName -> Expr -> PersistEnv -> IO (PersistVal, PersistType, ())
-jitUnpack _ expr env = do let (v, m) = lower expr env
-                          ExPackage i val <- uncurry evalJit (lower expr env)
-                          return (val, Meta i, ())
+jitUnpack _ expr env = undefined -- do let (v, m) = lower expr env
+                          -- ExPackage i val <- uncurry evalJit (lower expr env)
+                          -- return (val, Meta i, ())
 
 jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
 jitCmd (Command cmdName expr) env =
@@ -253,44 +254,43 @@ compile expr = case expr of
   Var v -> asks $ (! v) . lEnv
   Let p bound body -> do x <- compile bound
                          local (setLEnv $ addBVars (bindPat p x)) (compile body)
-  For a body -> do (Meta n) <- compileType a
-                   TabType _ bodyTy <- getType expr
-                   compileFor n bodyTy body
+  -- For a body -> do (Meta n) <- compileType a
+  --                  -- TabType _ bodyTy <- exprType expr
+  --                  -- compileFor n bodyTy body
   Get e ie -> do x <- compile e
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
   RecCon r -> liftM RecVal (traverse compile r)
-  Unpack _ bound body -> do
-    ExPackage i x <- compile bound
-    let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
-    local updateEnv (compile body)
+  -- Unpack _ bound body -> do
+  --   ExPackage i x <- compile bound
+  --   let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
+  --   local updateEnv (compile body)
   BuiltinApp b ts args -> do ts' <- traverse compileType ts
                              compileBuiltin b ts' args
-  where
-    getType :: Expr -> CompileM CompileType
-    getType expr = do { env <- ask; return (exprType env expr) }
 
 withEnv :: CompileEnv -> CompileM a -> CompileM a
 withEnv env = local (const env)
 
-exprType :: CompileEnv -> Expr -> CompileType
-exprType (FullEnv lenv tenv) expr = joinType $ getType env' expr
-  where lenv' = fmap (fmap Meta . typeOf) lenv
-        env' = FullEnv lenv' tenv
+exprType :: Expr -> CompileM CompileType
+exprType expr = undefined -- do { env <- ask; return (exprType env expr) }
+
+-- exprType :: CompileEnv -> Expr -> CompileType
+-- exprType (FullEnv lenv tenv) expr = joinType $ getType lenv expr
+--   where lenv' = fmap (fmap Meta . typeOf) lenv
 
 typeOf :: CompileVal -> CompileType
-typeOf val = case val of
-  ScalarVal b _ -> BaseType b
-  IdxVal n _ -> Meta n
-  TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
+typeOf val = undefined -- case val of
+  -- ScalarVal b _ -> BaseType b
+  -- -- IdxVal n _ -> Meta n
+  -- TabVal (Table _ n _ valTy) -> TabType (Meta n) valTy
 
 bindPat :: RecTree a -> CompileVal -> [CompileVal]
 bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r')
 bindPat (RecLeaf l) x = [x]
 
 compileType :: Type -> CompileM CompileType
-compileType ty = do env <- asks tEnv
-                    return $ instantiateBodyFVs (fmap Just env) (noLeaves ty)
+compileType ty = undefined -- do env <- asks tEnv
+                    -- return $ instantiateBodyFVs (fmap Just env) ty
 
 compileFor :: NumElems -> CompileType -> Expr -> CompileM CompileVal
 compileFor n bodyTy forBody = do
@@ -470,28 +470,28 @@ newTable ty n = do
   return $ Table (Ptr ptr) n (ConstSize numScalars) ty
 
 baseTypeInfo :: CompileType -> (Int, L.Type)
-baseTypeInfo ty = case ty of
-  BaseType b -> case b of IntType  -> (8, longTy)
-                          RealType -> (8, realTy)
-  TabType _ valTy -> baseTypeInfo valTy
+baseTypeInfo ty = undefined -- case ty of
+  -- BaseType b -> case b of IntType  -> (8, longTy)
+  --                         RealType -> (8, realTy)
+  -- TabType _ valTy -> baseTypeInfo valTy
 
 getNumScalars :: CompileType -> CompileM Long
-getNumScalars ty = case ty of
-  BaseType _ -> return $ litInt 1
-  TabType (Meta i) valTy -> do n <- getNumScalars valTy
-                               mul i n
-  RecType r -> mapM getNumScalars (toList r) >>= sumLongs
-  _ -> error $ show ty
+getNumScalars ty = undefined -- case ty of
+  -- BaseType _ -> return $ litInt 1
+  -- TabType (Meta i) valTy -> do n <- getNumScalars valTy
+  --                              mul i n
+  -- RecType r -> mapM getNumScalars (toList r) >>= sumLongs
+  -- _ -> error $ show ty
 
 readTable :: CTable -> Index -> CompileM CompileVal
-readTable tab@(Table _ _ _ valTy) idx = do
-  ptr <- arrayPtr tab idx
-  case valTy of
-    BaseType IntType -> do ans <- loadCell ptr
-                           return $ ScalarVal IntType ans
-    TabType (Meta n) valTy' -> do
-      numScalars <- getNumScalars valTy'
-      return $ TabVal (Table ptr n (ConstSize numScalars) valTy')
+readTable tab@(Table _ _ _ valTy) idx = undefined --do
+  -- ptr <- arrayPtr tab idx
+  -- case valTy of
+  --   BaseType IntType -> do ans <- loadCell ptr
+  --                          return $ ScalarVal IntType ans
+  --   TabType (Meta n) valTy' -> do
+  --     numScalars <- getNumScalars valTy'
+  --     return $ TabVal (Table ptr n (ConstSize numScalars) valTy')
 
 writeTable :: CTable -> Index -> CompileVal -> CompileM ()
 writeTable tab idx val = do
@@ -551,12 +551,12 @@ randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "
 hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
 
 compileIota :: CompileApp
-compileIota [] [ScalarVal b n] = do
-  tab@(Table ptr _ _ _) <- newTable (BaseType IntType) n
-  let body iPtr = do (i) <- loadCell iPtr
-                     writeTable tab i (ScalarVal IntType i)
-  addForILoop n body
-  return $ ExPackage n (TabVal tab)
+compileIota [] [ScalarVal b n] = undefined -- do
+  -- tab@(Table ptr _ _ _) <- newTable (BaseType IntType) n
+  -- let body iPtr = do (i) <- loadCell iPtr
+  --                    writeTable tab i (ScalarVal IntType i)
+  -- addForILoop n body
+  -- return $ ExPackage n (TabVal tab)
 
 compileBinop :: (Operand -> Operand -> L.Instruction) -> CompileApp
 compileBinop makeInstr = compile
@@ -587,9 +587,9 @@ makeRectTable (Table (Ptr (PPtr IntType voidPtr))
         ptr = castPtr voidPtr :: F.Ptr Int64
 
 shapeOf :: PersistType -> [Int]
-shapeOf ty = case ty of
-  TabType (Meta (PScalar IntType size)) val -> fromIntegral size : shapeOf val
-  BaseType _ -> []
+shapeOf ty = undefined -- case ty of
+  -- TabType (Meta (PScalar IntType size)) val -> fromIntegral size : shapeOf val
+  -- BaseType _ -> []
 
 idxProduct :: [Int] -> [[Int]]
 idxProduct [] = [[]]
@@ -621,17 +621,17 @@ instance Traversable JitVal where
   traverse f val = case val of
     ScalarVal ty x -> liftA (ScalarVal ty) (f x)
     IdxVal size idx -> liftA2 IdxVal (f size) (f idx)
-    TabVal (Table (Ptr p) n (ConstSize size) valTy) -> liftA TabVal $
-        (Table <$> liftA Ptr (f p)
-               <*> f n
-               <*> liftA ConstSize (f size)
-               <*> traverse f valTy )
+    -- TabVal (Table (Ptr p) n (ConstSize size) valTy) -> liftA TabVal $
+    --     (Table <$> liftA Ptr (f p)
+    --            <*> f n
+    --            <*> liftA ConstSize (f size)
+    --            <*> traverse f valTy )
     RecVal r -> liftA RecVal $ traverse (traverse f) r
     ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
 
 traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
-traverseJitEnv f env = liftA2 FullEnv (traverse (traverse f) $ lEnv env)
-                                      (traverse (traverse f) $ tEnv env)
+traverseJitEnv f env = undefined -- liftA2 FullEnv (traverse (traverse f) $ lEnv env)
+                                      -- (traverse (traverse f) $ tEnv env)
 
 makePlot :: PersistVal -> IO ([Float], [Float])
 makePlot (TabVal (Table (Ptr (PPtr IntType voidPtr)) (PScalar IntType n) _ _ )) = do

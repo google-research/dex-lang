@@ -4,27 +4,27 @@ import Syntax
 import Env
 import Record
 import Util
-import Typer
+import Type
 
 import Data.Foldable (toList)
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
 import Control.Monad.State (State, evalState, put, get)
 
-type TopDFEnv = FullEnv (DFVal, Type) ()
-type Uniq = Int
-type DFType   = GenType Uniq
-type DFExpr   = GenExpr Uniq
-type DFPat    = Pat  Uniq
+type TopDFEnv = FullEnv TypedDFVal ()
+type DFEnv    = FullEnv TypedDFVal Type
 
-type DFEnv = FullEnv TypedDFVal DFType
-type TypedDFVal = (DFVal, DFType)
+type TempVar = Int
+
+type TypedDFVal = (DFVal, Type)
 
 data DFVal = DFNil
-           | LamVal (Pat ()) DFEnv Expr
+           | LamVal Pat DFEnv Expr
            | TLamVal DFEnv Expr
-           | BuiltinLam Builtin [DFType] [DFVal]
+           | BuiltinLam Builtin [Type] [DFVal]
            | RecVal (Record DFVal)  deriving (Show)
+
+type DeFuncM a = ReaderT DFEnv (State Int) a
 
 deFuncPass :: Pass Expr Expr (DFVal, Type) ()
 deFuncPass = Pass
@@ -46,27 +46,22 @@ deFuncUnpack _ expr env = do (valTy, expr') <- deFuncExprTop env expr
                              return (valTy, (), expr')
 
 localEnv :: TopDFEnv -> DFEnv
-localEnv (FullEnv lenv tenv) = FullEnv lenv' tenv'
-  where lenv' = fmap (\(v,t) -> (v, noLeaves t)) lenv
-        tenv' = fmap (TypeVar . FV) (asIDMap tenv)
+localEnv (FullEnv lenv tenv) = FullEnv lenv mempty
 
 unitLit = RecCon emptyRecord
 
--- TODO: put in an except monad. Since we throw out the type, we're not even checking this
 deFuncExprTop :: TopDFEnv -> Expr -> Except ((DFVal, Type), Expr)
 deFuncExprTop env expr = do
-  ty <- checkSysF (asTypingEnv dfEnv) (noLeaves expr')
-  return ((val, ty), noLeaves expr')
-  where (val, expr') = evalState (runReaderT (deFuncExpr expr) dfEnv) 0
-        dfEnv = localEnv env
+  let (val, expr') = evalDeFuncM (localEnv env) (deFuncExpr expr)
+      ty' = deFuncType val (getType typingEnv expr')
+  checkExpr typingEnv expr' ty'
+  return ((val, ty'), expr')
+  where typingEnv = setLEnv (fmap snd) env
 
-asTypingEnv :: DFEnv -> FullEnv Type ()
-asTypingEnv (FullEnv lenv tenv) = FullEnv (fmap (noLeaves . snd) lenv)
-                                          (fmap (const ()) tenv)
+evalDeFuncM :: DFEnv -> DeFuncM a -> a
+evalDeFuncM env m = evalState (runReaderT m env) 0
 
-type DeFuncM a = ReaderT DFEnv (State Int) a
-
-deFuncExpr :: Expr -> DeFuncM (DFVal, DFExpr)
+deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
 deFuncExpr expr = case expr of
   Var v     -> do val <- asks $ fst . (! v) . lEnv
                   return (val, Var v)
@@ -105,27 +100,32 @@ deFuncExpr expr = case expr of
           (ans, body') <- local (const env') (deFuncExpr body)
           return (ans, Let (envPat env) fexpr' body')
   Unpack t bound body -> do
-    -- (val, bound') <- recur bound
     (val, bound') <- recur bound
-    i <- inc
-    let updateT = setTEnv (addBVar (Meta i))
+    v <- fresh
+    let updateT = setTEnv (addBVar (TypeVar (FV v)))
     t' <- local updateT (evalType (Exists t))
     let updateL = setLEnv (addBVar (val, t'))
     (ans, body') <- local (updateL . updateT) (deFuncExpr body)
-    let body'' = bindMetaExpr [i] body'
-        t'' = bindMetaTy [i] t'
+    let body'' = abstractTVs [v] body'
+        t''    = abstractTVs [v] t'
     return (ans, Unpack t'' bound' body'')
 
   where recur = deFuncExpr
         envBVars env = let n = length (bVars (lEnv env))
                        in RecCon $ posRecord $ map var [0..n - 1]
 
-bindPat :: Pat () -> DFVal -> DeFuncM (DFPat, [TypedDFVal])
+
+evalType :: Type -> DeFuncM Type
+evalType ty =
+  do env <- ask
+     return $ instantiateTVs (bVars (tEnv env)) ty
+
+bindPat :: Pat -> DFVal -> DeFuncM (Pat, [TypedDFVal])
 bindPat pat val = do
   tree <- traverse processLeaf (zipPatVal pat val)
   return (fmap snd tree, toList tree)
 
-  where processLeaf :: (Type, DFVal) -> DeFuncM (DFVal, DFType)
+  where processLeaf :: (Type, DFVal) -> DeFuncM (DFVal, Type)
         processLeaf (t, v) = do t' <- evalType t
                                 return (v, deFuncType v t')
 
@@ -134,19 +134,19 @@ zipPatVal :: RecTree a -> DFVal -> RecTree (a, DFVal)
 zipPatVal (RecTree r) (RecVal r') = RecTree (recZipWith zipPatVal r r')
 zipPatVal (RecLeaf x) x' = RecLeaf (x, x')
 
-deFuncType :: DFVal -> DFType -> DFType
+deFuncType :: DFVal -> Type -> Type
 deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
 deFuncType DFNil t = t
 deFuncType (LamVal p env _) _ = RecType $ posRecord (envTypes env)
 deFuncType (TLamVal env _)  _ = RecType $ posRecord (envTypes env)
 deFuncType (BuiltinLam b ts exprs) _ = error "not implemented"
 
-getExprType :: DFExpr -> DeFuncM DFType
+getExprType :: Expr -> DeFuncM Type
 getExprType expr = undefined -- do
   -- lenv <- asks lEnv
   -- return $ getType (FullEnv (fmap snd lenv) mempty) expr
 
-consTypeToList :: Int -> GenType a -> [GenType a]
+consTypeToList :: Int -> Type -> [Type]
 consTypeToList 0 _ = []
 consTypeToList n (RecType r) = let [head, tail] = fromPosRecord r
                                in head : consTypeToList (n-1) tail
@@ -158,7 +158,7 @@ rhsPair x y = RecCon  (posRecord [x, y])
 envTypes = map snd . bVars . lEnv
 envPat = posPat . map RecLeaf . envTypes
 
-deFuncApp :: (DFVal, DFExpr) -> (DFVal, DFExpr) -> DeFuncM (DFVal, DFExpr)
+deFuncApp :: (DFVal, Expr) -> (DFVal, Expr) -> DeFuncM (DFVal, Expr)
 deFuncApp (fVal, fexpr') (argVal, arg') =
   case fVal of
     BuiltinLam b ts vs ->
@@ -172,39 +172,31 @@ deFuncApp (fVal, fexpr') (argVal, arg') =
                        (rhsPair arg' fexpr')
                        body')
 
-deFuncBuiltin :: DFVal -> DFExpr -> DeFuncM (DFVal, DFExpr)
+deFuncBuiltin :: DFVal -> Expr -> DeFuncM (DFVal, Expr)
 deFuncBuiltin val@(BuiltinLam b ts argVals) args =
   if length ts < numTyArgs b || length argVals < numArgs b
     then return (val, args)
     else case b of Fold -> deFuncFold ts argVals args
                    _    -> return (DFNil, BuiltinApp b ts [args])
 
-deFuncFold :: [DFType] -> [DFVal] -> DFExpr -> DeFuncM (DFVal, DFExpr)
+deFuncFold :: [Type] -> [DFVal] -> Expr -> DeFuncM (DFVal, Expr)
 deFuncFold ts [f, init, xs] args = do
   [fTy, initTy, TabType _ xsTy] <- builtinArgTypes 3 args
   (ans, lamExpr) <- canonicalLamExpr (f, fTy) [(init, initTy), (xs, xsTy)]
   return (ans, BuiltinApp FoldDeFunc ts [lamExpr, args])
 
-builtinArgTypes :: Int -> DFExpr -> DeFuncM [DFType]
+builtinArgTypes :: Int -> Expr -> DeFuncM [Type]
 builtinArgTypes n expr = do ty <- getExprType expr
                             return $ reverse $ consTypeToList n ty
 
-canonicalLamExpr :: (TypedDFVal) -> [TypedDFVal] -> DeFuncM (DFVal, DFExpr)
+canonicalLamExpr :: (TypedDFVal) -> [TypedDFVal] -> DeFuncM (DFVal, Expr)
 canonicalLamExpr (fval, fType) xsTyped = do
   let (xs, xsTypes) = unzip xsTyped
   (ans, body) <- foldM deFuncApp (fval, var 0) (zip xs (map var [1..]))
   let pat = posPat $ map RecLeaf (fType:xsTypes)
   return (ans, Lam pat body)
 
-inc :: DeFuncM Int
-inc = do i <- get
-         put $ i + 1
-         return i
-
-evalType :: Type -> DeFuncM DFType
-evalType ty =
-  do env <- ask
-     return $ instantiateBodyFVs (fmap Just (tEnv env)) (noLeaves ty)
-
-asIDMap :: Env i a -> Env i VarName
-asIDMap env = newEnv [(v,v) | v <- fVars env]
+fresh :: DeFuncM VarName
+fresh = do i <- get
+           put $ i + 1
+           return (TempVar i)

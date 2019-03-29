@@ -1,4 +1,5 @@
-module Env (Env (..), GVar (..), VarName,  newEnv, addFVar, addBVar, addBVars,
+module Env (Env (..), GVar (..), VarName (..),
+            newEnv, addFVar, addBVar, addBVars,
             envDiff, isin, (!), fVars, bVars, toDeBruijn, numBound) where
 
 import Data.List (elemIndex)
@@ -7,14 +8,18 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA, liftA2, liftA3)
 
-type VarName = String
 data Env i a = Env (M.Map VarName a) [a]  deriving (Show, Eq, Ord)
-data GVar i = FV VarName | BV Int       deriving (Show, Eq, Ord)
+data GVar i = FV VarName
+            | BV Int
+               deriving (Show, Eq, Ord)
 
-newEnv :: [(String, a)] -> Env i a
+data VarName = TempVar Int
+             | NamedVar String  deriving (Show, Eq, Ord)
+
+newEnv :: [(VarName, a)] -> Env i a
 newEnv xs = Env (M.fromList xs) []
 
-addFVar :: String -> a -> Env i a -> Env i a
+addFVar :: VarName -> a -> Env i a -> Env i a
 addFVar k v (Env fvs bvs)= Env (M.insert k v fvs) bvs
 
 addBVar :: a -> Env i a -> Env i a

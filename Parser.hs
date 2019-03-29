@@ -80,13 +80,13 @@ explicitCommand = do
 
 tryUnpackDecl :: Parser (VarName, UExpr)
 tryUnpackDecl = do
-  v <- try (identifier <* symbol "=" <* symbol "unpack")
+  v <- try (varName <* symbol "=" <* symbol "unpack")
   body <- expr
   return (v, body)
 
 tryAssignDecl :: Parser (VarName, UExpr)
 tryAssignDecl = do
-  (p, wrap) <- try $ do p <- identifier
+  (p, wrap) <- try $ do p <- varName
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
                         return (p, wrap)
@@ -136,7 +136,7 @@ varExpr = do
   s <- identifier
   return $ case strToBuiltin s of
     Just b -> UBuiltin b
-    Nothing -> UVar (FV s)
+    Nothing -> UVar (FV (NamedVar s))
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -169,7 +169,7 @@ forExpr = do
 -- decl :: Parser (UPat, UExpr)
 unpackDecl :: Parser Decl
 unpackDecl = do
-  v <- try (identifier <* symbol "=" <* symbol "unpack")
+  v <- try (varName <* symbol "=" <* symbol "unpack")
   body <- expr
   return $ UnpackDecl v body
 
@@ -201,6 +201,9 @@ resNames = ["for", "lam", "let", "in", "unpack"]
 
 identifier = makeIdentifier resNames
 
+varName = liftM NamedVar identifier
+
+
 appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
@@ -219,7 +222,7 @@ ops = [ [getRule, appRule]
 
 -- idxExpr =   parenIdxExpr
 --         <|> liftM (RecLeaf . FV) identifier
-idxExpr = liftM FV identifier
+idxExpr = liftM FV varName
 
 -- parenIdxExpr = do
 --   elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
@@ -227,11 +230,12 @@ idxExpr = liftM FV identifier
 --     [(Nothing, expr)] -> expr
 --     elts -> RecTree $ mixedRecord elts
 
-idxPat = identifier
+idxPat :: Parser VarName
+idxPat = liftM NamedVar identifier
 
 pat :: Parser UPat
 pat =   parenPat
-    <|> liftM RecLeaf identifier -- (optional typeAnnot)
+    <|> liftM RecLeaf varName -- (optional typeAnnot)
 
 parenPat :: Parser UPat
 parenPat = do
@@ -244,7 +248,8 @@ typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
 
 typeVar :: Parser TVar
-typeVar = liftM FV $ makeIdentifier ["Int", "Real", "Bool", "Str", "A", "E"]
+typeVar = liftM (FV . NamedVar) $ makeIdentifier
+            ["Int", "Real", "Bool", "Str", "A", "E"]
 
 -- forallType :: Parser Type
 -- forallType = do
