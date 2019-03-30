@@ -32,7 +32,7 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 data TopEnv = TopEnv { varEnv :: Vars
                      , typeEnv   :: FullEnv Type ()
                      , deFuncEnv :: FullEnv (DFVal, Type) ()
-                     , valEnv    :: FullEnv PersistVal PersistType}
+                     , valEnv    :: FullEnv PersistVal PWord}
 
 initEnv = TopEnv mempty mempty mempty mempty
 

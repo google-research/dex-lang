@@ -14,9 +14,6 @@ import Record
 import Util
 import Type
 
-import Debug.Trace
-
-
 type TypingEnv = FullEnv Type Kind
 type TempVar = Int
 type TempEnv = M.Map TempVar Kind

@@ -56,7 +56,7 @@ getType' check expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           ts' <- mapM subTyBVs ts
                           return $ instantiateTVs ts' body
-    BuiltinApp FoldDeFunc ts expr -> error "fold"
+    BuiltinApp FoldDeFunc ts expr -> return $ BaseType IntType -- TODO!
     BuiltinApp b _ [arg] -> case builtinType b of
       Forall _ body -> error "not implemented"
       t -> do t' <- subTyBVs t

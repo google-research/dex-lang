@@ -377,7 +377,7 @@ freeTyVars x = nub $ execState (subAtDepth 0 collectVars x) []
 instantiateTVs :: HasTypeVars a => [Type] -> a -> a
 instantiateTVs vs x = runIdentity $ subAtDepth 0 sub x
   where sub depth v = return $ case v of
-                        BV i | i >= 0 -> vs !! i
+                        BV i | i >= depth -> vs !! i
                         _ -> TypeVar v
 
 abstractTVs :: HasTypeVars a => [VarName] -> a -> a

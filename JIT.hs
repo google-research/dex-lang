@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module JIT (jitPass, PersistVal, PersistType) where
+module JIT (jitPass, PersistVal, PersistType, PWord) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
@@ -50,9 +50,9 @@ foreign import ccall "dynamic"
   haskFun :: FunPtr (IO (F.Ptr ())) -> IO (F.Ptr ())
 
 type Compiled = L.Module
-type JitEnv w = FullEnv (JitVal w) (JitType w)
+type JitEnv w = FullEnv (JitVal w) w
 
-data JitType w = JitType Type [w]  deriving (Show)
+data JitType w = JitType [w] Type deriving (Show)
 
 data JitVal w = ScalarVal BaseType w
               | IdxVal w w
@@ -100,18 +100,18 @@ data ExternFunSpec = ExternFunSpec BString L.Type [L.Type] [BString]
 
 type CompileM a = ReaderT CompileEnv (StateT CompileState (Either Err)) a
 
-jitPass :: Pass Expr () PersistVal PersistType
+jitPass :: Pass Expr () PersistVal PWord
 jitPass = Pass jitExpr jitUnpack jitCmd
 
 jitExpr :: Expr -> PersistEnv -> IO (PersistVal, ())
-jitExpr expr env = do let (v, m) = lower expr env
+jitExpr expr env = do let (_, m) = lower expr env
                       val <- uncurry evalJit (lower expr env)
                       return (val, ())
 
-jitUnpack :: VarName -> Expr -> PersistEnv -> IO (PersistVal, PersistType, ())
-jitUnpack _ expr env = undefined -- do let (v, m) = lower expr env
-                          -- ExPackage i val <- uncurry evalJit (lower expr env)
-                          -- return (val, Meta i, ())
+jitUnpack :: VarName -> Expr -> PersistEnv -> IO (PersistVal, PWord, ())
+jitUnpack _ expr env = do let (_, m) = lower expr env
+                          ExPackage i val <- uncurry evalJit (lower expr env)
+                          return (val, i, ())
 
 jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
 jitCmd (Command cmdName expr) env =
@@ -253,17 +253,17 @@ compile expr = case expr of
   Var v -> asks $ (! v) . lEnv
   Let p bound body -> do x <- compile bound
                          local (setLEnv $ addBVars (bindPat p x)) (compile body)
-  -- For a body -> do (Meta n) <- compileType a
-  --                  -- TabType _ bodyTy <- exprType expr
-  --                  -- compileFor n bodyTy body
+  For a body -> do JitType [n] (TypeVar (BV 0)) <- compileType a
+                   JitType ns (TabType _ bodyTy) <- exprType expr
+                   compileFor n (JitType ns bodyTy) body
   Get e ie -> do x <- compile e
                  IdxVal _ i <- asks $ (! ie) . lEnv
                  compileGet x i
   RecCon r -> liftM RecVal (traverse compile r)
-  -- Unpack _ bound body -> do
-  --   ExPackage i x <- compile bound
-  --   let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar (Meta i))
-  --   local updateEnv (compile body)
+  Unpack _ bound body -> do
+    ExPackage i x <- compile bound
+    let updateEnv = setLEnv (addBVar x) . setTEnv (addBVar i)
+    local updateEnv (compile body)
   BuiltinApp b ts args -> do ts' <- traverse compileType ts
                              compileBuiltin b ts' args
 
@@ -288,8 +288,8 @@ bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r'
 bindPat (RecLeaf l) x = [x]
 
 compileType :: Type -> CompileM CompileType
-compileType ty = undefined -- do env <- asks tEnv
-                    -- return $ instantiateBodyFVs (fmap Just env) ty
+compileType ty = do bvs <- asks (bVars . tEnv)
+                    return (JitType bvs ty)
 
 compileFor :: NumElems -> CompileType -> Expr -> CompileM CompileVal
 compileFor n bodyTy forBody = do
@@ -341,11 +341,28 @@ unpackConsTuple 0 _ = []
 unpackConsTuple n (RecVal r) = head : unpackConsTuple (n-1) tail
   where [head, tail] = fromPosRecord r
 
+asConsTuple :: [JitVal a] -> JitVal a
+asConsTuple []     = RecVal (posRecord [])
+asConsTuple (x:xs) = RecVal (posRecord [x , asConsTuple xs])
+
 compileBuiltin :: Builtin -> [CompileType] -> [Expr] -> CompileM CompileVal
-compileBuiltin Fold ts [f, arg] = error "fold"
 compileBuiltin b ts [arg] = do
   arg <- compile arg
   (builtinRule b) ts $ unpackConsTuple (numArgs b) arg
+compileBuiltin FoldDeFunc ts [Lam p body, arg] = do
+  arg <- compile arg
+  let [TabVal tab@(Table ptr n sizes valTy), init, env] = unpackConsTuple 3 arg
+  mutVal <- newGenCell init
+  let body iPtr = do i <- loadCell iPtr
+                     next <-readTable tab i
+                     carry <- loadGenCell mutVal
+                     carry' <- compileApp $ asConsTuple [env, next, carry]
+                     writeGenCell mutVal carry'
+  addForILoop n body
+  loadGenCell mutVal
+
+  where compileApp :: CompileVal -> CompileM CompileVal
+        compileApp x = local (setLEnv $ addBVars (bindPat p x)) (compile body)
 
 builtinRule :: Builtin -> CompileApp
 builtinRule b = case b of
@@ -353,24 +370,10 @@ builtinRule b = case b of
   Mul      -> compileBinop (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop (\x y -> L.Sub False False x y [])
   Iota     -> compileIota
-  Fold     -> compileFold
   Doubleit -> externalMono doubleFun  IntType
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
-
-compileBinApp :: CompileVal -> CompileVal -> (CompileVal -> CompileM CompileVal)
-compileBinApp f x y = undefined --do f' <- compileApp f x
---                         compileApp f' y
-
-compileFold :: [CompileType] -> [CompileVal] -> CompileM CompileVal
-compileFold _ [fVal, init, TabVal tab@(Table ptr n sizes valTy)] = undefined --do
-  -- mutVal <- newGenCell init
-  -- let body iPtr = do i <- loadCell iPtr
-  --                    next <-readTable tab i
-  --                    updateGenCell mutVal (compileBinApp fVal next)
-  -- addForILoop n body
-  -- loadGenCell mutVal
 
 -- TODO: add var decls
 finalReturn :: CompileVal -> CompileM ()
@@ -469,28 +472,28 @@ newTable ty n = do
   return $ Table (Ptr ptr) n (ConstSize numScalars) ty
 
 baseTypeInfo :: CompileType -> (Int, L.Type)
-baseTypeInfo ty = undefined -- case ty of
-  -- BaseType b -> case b of IntType  -> (8, longTy)
-  --                         RealType -> (8, realTy)
-  -- TabType _ valTy -> baseTypeInfo valTy
+baseTypeInfo (JitType ns ty) = case ty of
+  BaseType b -> case b of IntType  -> (8, longTy)
+                          RealType -> (8, realTy)
+  TabType _ valTy -> baseTypeInfo (JitType ns valTy)
 
 getNumScalars :: CompileType -> CompileM Long
-getNumScalars ty = undefined -- case ty of
-  -- BaseType _ -> return $ litInt 1
-  -- TabType (Meta i) valTy -> do n <- getNumScalars valTy
-  --                              mul i n
-  -- RecType r -> mapM getNumScalars (toList r) >>= sumLongs
-  -- _ -> error $ show ty
+getNumScalars (JitType ns ty) = case ty of
+  BaseType _ -> return $ litInt 1
+  TabType (TypeVar (BV i)) valTy -> do n <- getNumScalars (JitType ns valTy)
+                                       mul (ns !! i) n
+  RecType r -> mapM getNumScalars (map (JitType ns) (toList r)) >>= sumLongs
+  _ -> error $ show ty
 
 readTable :: CTable -> Index -> CompileM CompileVal
-readTable tab@(Table _ _ _ valTy) idx = undefined --do
-  -- ptr <- arrayPtr tab idx
-  -- case valTy of
-  --   BaseType IntType -> do ans <- loadCell ptr
-  --                          return $ ScalarVal IntType ans
-  --   TabType (Meta n) valTy' -> do
-  --     numScalars <- getNumScalars valTy'
-  --     return $ TabVal (Table ptr n (ConstSize numScalars) valTy')
+readTable tab@(Table _ _ _ (JitType ns valTy)) idx = do
+  ptr <- arrayPtr tab idx
+  case valTy of
+    BaseType IntType -> do ans <- loadCell ptr
+                           return $ ScalarVal IntType ans
+    TabType (TypeVar (BV i)) valTy' -> do
+      numScalars <- getNumScalars (JitType ns valTy')
+      return $ TabVal (Table ptr (ns!!i) (ConstSize numScalars) (JitType ns valTy'))
 
 writeTable :: CTable -> Index -> CompileVal -> CompileM ()
 writeTable tab idx val = do
@@ -550,19 +553,16 @@ randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "
 hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
 
 compileIota :: CompileApp
-compileIota [] [ScalarVal b n] = undefined -- do
-  -- tab@(Table ptr _ _ _) <- newTable (BaseType IntType) n
-  -- let body iPtr = do (i) <- loadCell iPtr
-  --                    writeTable tab i (ScalarVal IntType i)
-  -- addForILoop n body
-  -- return $ ExPackage n (TabVal tab)
+compileIota [] [ScalarVal b n] = do
+  tab@(Table ptr _ _ _) <- newTable (JitType [] (BaseType IntType)) n
+  let body iPtr = do (i) <- loadCell iPtr
+                     writeTable tab i (ScalarVal IntType i)
+  addForILoop n body
+  return $ ExPackage n (TabVal tab)
 
 compileBinop :: (Operand -> Operand -> L.Instruction) -> CompileApp
-compileBinop makeInstr = compile
-  where
-    compile :: CompileApp
-    compile [] [ScalarVal _ x, ScalarVal _ y] = liftM (ScalarVal IntType) $
-        evalInstr longTy (makeInstr x y)
+compileBinop makeInstr [] [ScalarVal _ x, ScalarVal _ y] =
+  liftM (ScalarVal IntType) $ evalInstr longTy (makeInstr x y)
 
 -- --- printing ---
 
@@ -620,17 +620,26 @@ instance Traversable JitVal where
   traverse f val = case val of
     ScalarVal ty x -> liftA (ScalarVal ty) (f x)
     IdxVal size idx -> liftA2 IdxVal (f size) (f idx)
-    -- TabVal (Table (Ptr p) n (ConstSize size) valTy) -> liftA TabVal $
-    --     (Table <$> liftA Ptr (f p)
-    --            <*> f n
-    --            <*> liftA ConstSize (f size)
-    --            <*> traverse f valTy )
+    TabVal (Table (Ptr p) n (ConstSize size) jTy) -> liftA TabVal $
+        (Table <$> liftA Ptr (f p)
+               <*> f n
+               <*> liftA ConstSize (f size)
+               <*> traverse f jTy )
     RecVal r -> liftA RecVal $ traverse (traverse f) r
     ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
 
+instance Functor JitType where
+  fmap = fmapDefault
+
+instance Foldable JitType where
+  foldMap = foldMapDefault
+
+instance Traversable JitType where
+  traverse f (JitType ns ty) = liftA (flip JitType ty) (traverse f ns)
+
 traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
-traverseJitEnv f env = undefined -- liftA2 FullEnv (traverse (traverse f) $ lEnv env)
-                                      -- (traverse (traverse f) $ tEnv env)
+traverseJitEnv f env = liftA2 FullEnv (traverse (traverse f) $ lEnv env)
+                                      (traverse f $ tEnv env)
 
 makePlot :: PersistVal -> IO ([Float], [Float])
 makePlot (TabVal (Table (Ptr (PPtr IntType voidPtr)) (PScalar IntType n) _ _ )) = do

@@ -26,6 +26,7 @@ data DFVal = DFNil
 
 type DeFuncM a = ReaderT DFEnv (State Int) a
 
+
 deFuncPass :: Pass Expr Expr (DFVal, Type) ()
 deFuncPass = Pass
   { lowerExpr   = \expr env   -> liftErrIO $ deFuncExprTop env expr
@@ -103,7 +104,7 @@ deFuncExpr expr = case expr of
     (val, bound') <- recur bound
     v <- fresh
     let updateT = setTEnv (addBVar (TypeVar (FV v)))
-    t' <- local updateT (evalType (Exists t))
+    Exists t' <- local updateT (evalType (Exists t))
     let updateL = setLEnv (addBVar (val, t'))
     (ans, body') <- local (updateL . updateT) (deFuncExpr body)
     let body'' = abstractTVs [v] body'
@@ -142,9 +143,9 @@ deFuncType (TLamVal env _)  _ = RecType $ posRecord (envTypes env)
 deFuncType (BuiltinLam b ts exprs) _ = error "not implemented"
 
 getExprType :: Expr -> DeFuncM Type
-getExprType expr = undefined -- do
-  -- lenv <- asks lEnv
-  -- return $ getType (FullEnv (fmap snd lenv) mempty) expr
+getExprType expr = do
+  lenv <- asks lEnv
+  return $ getType (FullEnv (fmap snd lenv) mempty) expr
 
 consTypeToList :: Int -> Type -> [Type]
 consTypeToList 0 _ = []
@@ -171,12 +172,14 @@ deFuncApp (fVal, fexpr') (argVal, arg') =
       return (ans, Let (lhsPair p' (envPat env))
                        (rhsPair arg' fexpr')
                        body')
+    _ -> do env <- ask
+            error $ "Unexpected dfval: " ++ show fVal ++ show env
 
 deFuncBuiltin :: DFVal -> Expr -> DeFuncM (DFVal, Expr)
 deFuncBuiltin val@(BuiltinLam b ts argVals) args =
   if length ts < numTyArgs b || length argVals < numArgs b
     then return (val, args)
-    else case b of Fold -> deFuncFold ts argVals args
+    else case b of Fold -> deFuncFold ts (reverse argVals) args
                    _    -> return (DFNil, BuiltinApp b ts [args])
 
 deFuncFold :: [Type] -> [DFVal] -> Expr -> DeFuncM (DFVal, Expr)
@@ -189,10 +192,12 @@ builtinArgTypes :: Int -> Expr -> DeFuncM [Type]
 builtinArgTypes n expr = do ty <- getExprType expr
                             return $ reverse $ consTypeToList n ty
 
-canonicalLamExpr :: (TypedDFVal) -> [TypedDFVal] -> DeFuncM (DFVal, Expr)
-canonicalLamExpr (fval, fType) xsTyped = do
+canonicalLamExpr :: TypedDFVal -> [TypedDFVal] -> DeFuncM (DFVal, Expr)
+canonicalLamExpr fTyped@(fval, fType) xsTyped = do
   let (xs, xsTypes) = unzip xsTyped
-  (ans, body) <- foldM deFuncApp (fval, var 0) (zip xs (map var [1..]))
+      update = setLEnv (addBVars (fTyped:xsTyped))
+  -- TODO: this will break if there are any bound vars in fval or xs
+  (ans, body) <- local update $ foldM deFuncApp (fval, var 0) (zip xs (map var [1..]))
   let pat = posPat $ map RecLeaf (fType:xsTypes)
   return (ans, Lam pat body)
 
