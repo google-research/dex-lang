@@ -338,12 +338,11 @@ addForILoop n body = do
 
 unpackConsTuple :: Int -> CompileVal -> [CompileVal]
 unpackConsTuple 0 _ = []
-unpackConsTuple n (RecVal r) = head : unpackConsTuple (n-1) tail
-  where [head, tail] = fromPosRecord r
+unpackConsTuple n (RecVal (Tup [head, tail])) = head : unpackConsTuple (n-1) tail
 
 asConsTuple :: [JitVal a] -> JitVal a
-asConsTuple []     = RecVal (posRecord [])
-asConsTuple (x:xs) = RecVal (posRecord [x , asConsTuple xs])
+asConsTuple []     = RecVal (Tup [])
+asConsTuple (x:xs) = RecVal (Tup [x , asConsTuple xs])
 
 compileBuiltin :: Builtin -> [CompileType] -> [Expr] -> CompileM CompileVal
 compileBuiltin b ts [arg] = do

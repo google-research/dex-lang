@@ -117,19 +117,19 @@ typeAnnot :: Parser Type
 typeAnnot = symbol "::" >> typeExpr
 
 parenRaw = do
-  elts <- parens $ maybeNamed expr `sepBy` symbol ","
+  elts <- parens $ expr `sepBy` symbol ","
   return $ case elts of
-    [(Nothing, expr)] -> expr
-    elts -> URecCon $ mixedRecord elts
+    [expr] -> expr
+    elts -> URecCon $ Tup elts
 
-maybeNamed :: Parser a -> Parser (Maybe String, a)
-maybeNamed p = do
-  v <- optional $ try $
-    do v <- identifier
-       symbol "="
-       return v
-  x <- p
-  return (v, x)
+-- maybeNamed :: Parser a -> Parser (Maybe String, a)
+-- maybeNamed p = do
+--   v <- optional $ try $
+--     do v <- identifier
+--        symbol "="
+--        return v
+--   x <- p
+--   return (v, x)
 
 varExpr :: Parser UExpr
 varExpr = do
@@ -239,10 +239,10 @@ pat =   parenPat
 
 parenPat :: Parser UPat
 parenPat = do
-  xs <- parens $ maybeNamed pat `sepBy` symbol ","
+  xs <- parens $ pat `sepBy` symbol ","
   return $ case xs of
-    [(Nothing, x)] -> x
-    xs -> RecTree $ mixedRecord xs
+    [x] -> x
+    xs -> RecTree $ Tup xs
 
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps

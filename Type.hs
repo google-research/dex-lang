@@ -137,9 +137,9 @@ builtinType builtin = case builtin of
 
 nestedPairs :: [Type] -> Type
 nestedPairs [] = unitTy
-nestedPairs (x:xs) = RecType $ posRecord [x, nestedPairs xs]
+nestedPairs (x:xs) = RecType $ Tup [x, nestedPairs xs]
 
-unitTy = RecType $ posRecord []
+unitTy = RecType $ Tup []
 
 deFuncType :: Int -> Type -> (Type, Type)
 deFuncType n t = let (args, result) = naryComponents n t

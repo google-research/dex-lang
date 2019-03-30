@@ -49,7 +49,7 @@ deFuncUnpack _ expr env = do (valTy, expr') <- deFuncExprTop env expr
 localEnv :: TopDFEnv -> DFEnv
 localEnv (FullEnv lenv tenv) = FullEnv lenv mempty
 
-unitLit = RecCon emptyRecord
+unitLit = RecCon (Tup [])
 
 deFuncExprTop :: TopDFEnv -> Expr -> Except ((DFVal, Type), Expr)
 deFuncExprTop env expr = do
@@ -113,7 +113,7 @@ deFuncExpr expr = case expr of
 
   where recur = deFuncExpr
         envBVars env = let n = length (bVars (lEnv env))
-                       in RecCon $ posRecord $ map var [0..n - 1]
+                       in RecCon $ Tup $ map var [0..n - 1]
 
 
 evalType :: Type -> DeFuncM Type
@@ -138,8 +138,8 @@ zipPatVal (RecLeaf x) x' = RecLeaf (x, x')
 deFuncType :: DFVal -> Type -> Type
 deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
 deFuncType DFNil t = t
-deFuncType (LamVal p env _) _ = RecType $ posRecord (envTypes env)
-deFuncType (TLamVal env _)  _ = RecType $ posRecord (envTypes env)
+deFuncType (LamVal p env _) _ = RecType $ Tup (envTypes env)
+deFuncType (TLamVal env _)  _ = RecType $ Tup (envTypes env)
 deFuncType (BuiltinLam b ts exprs) _ = error "not implemented"
 
 getExprType :: Expr -> DeFuncM Type
@@ -149,13 +149,12 @@ getExprType expr = do
 
 consTypeToList :: Int -> Type -> [Type]
 consTypeToList 0 _ = []
-consTypeToList n (RecType r) = let [head, tail] = fromPosRecord r
-                               in head : consTypeToList (n-1) tail
+consTypeToList n (RecType (Tup [head, tail])) = head : consTypeToList (n-1) tail
 
 var i = Var (BV i)
-posPat = RecTree . posRecord
+posPat = RecTree . Tup
 lhsPair x y = posPat [x, y]
-rhsPair x y = RecCon  (posRecord [x, y])
+rhsPair x y = RecCon (Tup [x, y])
 envTypes = map snd . bVars . lEnv
 envPat = posPat . map RecLeaf . envTypes
 
