@@ -77,8 +77,8 @@ instance ToJSON Message where
                                                  "contents" .= toJSON contents]]
 
 instance ToJSON (TopDecl a) where
-  toJSON (TopDecl source _ instr) = object [ "source" .= toJSON source
-                                           , "instr"  .= toJSON instr ]
+  toJSON (TopDecl source instr) = object [ "source" .= toJSON source
+                                         , "instr"  .= toJSON instr ]
 
 instance ToJSON (DeclInstr a) where
   toJSON instr = case instr of

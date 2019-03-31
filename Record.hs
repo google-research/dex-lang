@@ -4,7 +4,6 @@ module Record (Record (..), RecTree (..), recUnionWith,
                typeRecPrintSpec, recZipWith, recTreeZip) where
 
 import Util
-import Control.Monad
 import Data.List (intercalate)
 import Data.Traversable
 import qualified Data.Map.Strict as M

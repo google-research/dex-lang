@@ -1,8 +1,8 @@
-module Type (checkExpr, getType, litType, builtinType, recTreeAsType) where
+module Type (TypeEnv, checkExpr, getType, litType, builtinType, patType) where
 
 import Control.Monad
+import Control.Monad.Except (throwError)
 import Control.Monad.Reader
-import Control.Monad.State
 import Data.Foldable (toList)
 
 import Syntax
@@ -10,39 +10,33 @@ import Env
 import Record
 import Util
 
-type TempVar = Int
-type TypeEnv = FullEnv Type VarName
-type TypeM a = ReaderT TypeEnv (StateT TempVar (Either Err)) a
+type TypeEnv = FullEnv Type Kind
+type TypeM a = ReaderT TypeEnv (Either Err) a
 
--- TODO: avoid temp namespace collisions with tag
-getType :: FullEnv Type a -> Expr -> Type
+getType :: TypeEnv -> Expr -> Type
 getType env expr =
-  ignoreExcept $ evalTypeM (asTypeEnv env) $ getType' False expr
+  ignoreExcept $ evalTypeM env$ getType' False expr
 
-checkExpr :: FullEnv Type a -> Expr -> Type -> Except ()
+checkExpr :: TypeEnv -> Expr -> Type -> Except ()
 checkExpr env expr reqTy = do
-  ty <- evalTypeM (asTypeEnv env) (getType' True expr)
+  ty <- evalTypeM env (getType' True expr)
   assertEq reqTy ty ("Unexpected type of expression " ++ show expr)
 
 evalTypeM ::  TypeEnv -> TypeM a -> Except a
-evalTypeM env m = evalStateT (runReaderT m env) 0
-
-asTypeEnv :: FullEnv Type a -> TypeEnv
-asTypeEnv (FullEnv lenv tenv) = FullEnv lenv mempty
-
+evalTypeM env m = runReaderT m env
 
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c        -> return $ litType c
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
-    Let p bound body -> do p' <- traverse subTyBVs p
-                           checkEq (recTreeAsType p') (recur bound)
-                           recurWith (toList p') body
-    Lam p body -> do p' <- traverse subTyBVs p
-                     let a' = recTreeAsType p'
-                     liftM (ArrType a') (recurWith (toList p') body)
-    For a body -> do { a' <- subTyBVs a; liftM (TabType a') (recurWith [a'] body) }
+    Let p bound body -> do checkTy (patType p)
+                           checkEq (patType p) (recur bound)
+                           recurWith p body
+    Lam p body -> do checkTy (patType p)
+                     liftM (ArrType (patType p)) (recurWith p body)
+    For i body -> do checkTy (snd i)
+                     liftM (TabType (snd i)) (recurWith [i] body)
     App e arg  -> do ArrType a b <- recur e
                      checkEq a (recur arg)
                      return b
@@ -50,25 +44,23 @@ getType' check expr = case expr of
                      checkEq a (recur (Var ie))
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
-    TLam kinds body -> do vs <- mapM (const fresh) kinds
-                          t <- recurWithT vs body
-                          return $ Forall kinds $ abstractTVs vs t
+    TLam vks body -> do t <- recurWithT vks body
+                        let (vs, kinds) = unzip vks
+                        return $ Forall kinds (abstractTVs vs t)
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
-                          ts' <- mapM subTyBVs ts
-                          return $ instantiateTVs ts' body
-    BuiltinApp FoldDeFunc ts expr -> return $ BaseType IntType -- TODO!
-    BuiltinApp b _ [arg] -> case builtinType b of
+                          mapM checkTy ts
+                          return $ instantiateTVs ts body
+    -- BuiltinApp FoldDeFunc ts expr -> return $ BaseType IntType -- TODO!
+    BuiltinApp b ts arg -> case builtinType b of
       Forall _ body -> error "not implemented"
-      t -> do t' <- subTyBVs t
-              let (a, out) = deFuncType (numArgs b) t'
+      t -> do let (a, out) = deFuncType (numArgs b) t
               checkEq a (recur arg)
               return out
-    Unpack t bound body -> do
-        v <- fresh
-        let updateT = setTEnv (addBVar v)
-        t' <- local updateT (subTyBVs t)
-        let updateL = setLEnv (addBVar t')
-        local (updateL . updateT) (recur body)
+    Unpack v tv bound body -> do
+        checkNoShadow tv
+        let updateTEnv = setTEnv (addLocal (tv, IdxSetKind))
+        local updateTEnv (checkTy (snd v))
+        local (setLEnv (addLocal v) . updateTEnv) (recur body)
 
   where
     checkEq :: Type -> TypeM Type -> TypeM ()
@@ -77,25 +69,25 @@ getType' check expr = case expr of
                        liftExcept $ assertEq ty ty' "Unexpected type"
                else return ()
 
+    checkTy :: Type -> TypeM ()
+    checkTy ty = return () -- TODO: check kind and unbound type vars
+
     recur = getType' check
-    recurWith  ts = local (setLEnv (addBVars ts)) . recur
-    recurWithT vs = local (setTEnv (addBVars vs)) . recur
+    recurWith  vs = local (setLEnv (addLocals vs)) . recur
+    recurWithT vs = local (setTEnv (addLocals vs)) . recur
+
+    checkNoShadow :: Var -> TypeM ()
+    checkNoShadow v = do
+      tenv <- asks tEnv
+      if v `isin` tenv then throwError $ CompilerErr $ show v ++ " shadowed"
+                       else return ()
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
 
-    subTyBVs :: Type -> TypeM Type
-    subTyBVs ty = do bvNames <- asks (bVars . tEnv)
-                     return $ instantiateTVs (map (TypeVar . FV) bvNames) ty
-
-    fresh :: TypeM VarName
-    fresh = do i <- get
-               put (i + 1)
-               return (TempVar i)
-
-recTreeAsType :: RecTree Type -> Type
-recTreeAsType (RecTree r) = RecType (fmap recTreeAsType r)
-recTreeAsType (RecLeaf t) = t
+patType :: RecTree (a, Type) -> Type
+patType (RecTree r) = RecType (fmap patType r)
+patType (RecLeaf (_, t)) = t
 
 litType :: LitVal -> Type
 litType v = BaseType $ case v of
@@ -127,23 +119,23 @@ builtinType builtin = case builtin of
     foldType = Forall [TyKind, TyKind, IdxSetKind] $
                    (b --> a --> b) --> b --> (k ==> a) --> b
     iotaType = int --> Exists (i ==> int)
-    a = TypeVar (BV 0)
-    b = TypeVar (BV 1)
-    i = TypeVar (BV 0)
-    j = TypeVar (BV 1)
-    k = TypeVar (BV 2)
+    a = TypeVar (BoundVar 0)
+    b = TypeVar (BoundVar 1)
+    i = TypeVar (BoundVar 0)
+    j = TypeVar (BoundVar 1)
+    k = TypeVar (BoundVar 2)
     int = BaseType IntType
     real = BaseType RealType
 
 nestedPairs :: [Type] -> Type
-nestedPairs [] = unitTy
-nestedPairs (x:xs) = RecType $ Tup [x, nestedPairs xs]
+nestedPairs = recur . reverse
+  where recur []     = RecType (Tup [])
+        recur (x:xs) = RecType (Tup [recur xs, x])
 
-unitTy = RecType $ Tup []
 
 deFuncType :: Int -> Type -> (Type, Type)
 deFuncType n t = let (args, result) = naryComponents n t
-                 in (nestedPairs (reverse args), result)
+                 in (nestedPairs args, result)
 
 naryComponents :: Int -> Type -> ([Type], Type)
 naryComponents 0 ty = ([], ty)

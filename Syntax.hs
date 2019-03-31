@@ -1,12 +1,13 @@
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                UExpr (..), TopDecl (..), Command (..), CommandOutput (..),
                DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
-               LitVal (..), BaseType (..), Pat, UPat, Var, TVar, Except, Err (..),
-               Vars, FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
+               LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
+               Except, Err (..),
+               FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                (-->), (==>), Pass (..), strToBuiltin,
                raiseIOExcept, liftExcept, liftErrIO, assertEq, ignoreExcept,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               fvsUExpr, freeTyVars,
+               freeTyVars, maybeSub
               ) where
 
 import Util
@@ -30,23 +31,28 @@ data Expr = Lit LitVal
           | Let Pat Expr Expr
           | Lam Pat Expr
           | App Expr Expr
-          | For IdxSet Expr
+          | For Binder Expr
           | Get Expr IdxExpr
-          | Unpack Type Expr Expr
-          | TLam [Kind] Expr
+          | Unpack Binder Var Expr Expr
+          | TLam [TBinder] Expr
           | TApp Expr [Type]
           | RecCon (Record Expr)
-          | BuiltinApp Builtin [Type] [Expr]
-              deriving (Eq, Ord)
+          | BuiltinApp Builtin [Type] Expr
+              deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
-          | TypeVar TVar
+          | TypeVar Var
           | ArrType Type Type
           | TabType IdxSet Type
           | RecType (Record Type)
           | Forall [Kind] Type
           | Exists Type
-             deriving (Eq, Ord)
+             deriving (Eq, Ord, Show)
+
+type Binder = (Var, Type)
+type TBinder = (Var, Kind)
+
+type Pat  = RecTree Binder
 
 type IdxSet = Type
 
@@ -58,12 +64,14 @@ data UExpr = ULit LitVal
            | ULet UPat UExpr UExpr
            | ULam UPat UExpr
            | UApp UExpr UExpr
-           | UFor VarName UExpr
+           | UFor Var UExpr
            | UGet UExpr IdxExpr
-           | UUnpack VarName UExpr UExpr
+           | UUnpack Var UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
+
+type UPat = RecTree Var
 
 type IdxExpr = Var
 
@@ -78,7 +86,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
              | Sin | Cos | Tan | Iota | Doubleit
              | Hash | Rand | Randint
-             | Fold | FoldDeFunc
+             | Fold | FoldDeFunc Pat Expr
                deriving (Eq, Ord, Show)
 
 data ImpProgram = ImpProgram [Statement]
@@ -95,9 +103,6 @@ type Index = VarName
 data Size = ConstSize Int | KnownSize VarName
 
 type ImpBuiltin = Builtin
-
-type UPat = RecTree VarName
-type Pat  = RecTree Type
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
@@ -128,13 +133,8 @@ infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-data LetUniq  = LetUniq  deriving (Show, Eq)
-data TypeUniq = TypeUniq deriving (Show, Eq)
-
-type Var  = GVar LetUniq
-type TVar = GVar TypeUniq
-data FullEnv v t = FullEnv { lEnv :: Env Var  v
-                           , tEnv :: Env TVar t }  deriving (Show, Eq)
+data FullEnv v t = FullEnv { lEnv :: Env v
+                           , tEnv :: Env t }  deriving (Show, Eq)
 
 data Pass a b v t = Pass
   { lowerExpr   ::            a -> FullEnv v t -> IO (v, b),
@@ -142,15 +142,14 @@ data Pass a b v t = Pass
     lowerCmd    ::    Command a -> FullEnv v t -> IO (Command b) }
 
 -- these should just be lenses
-setLEnv :: (Env Var a -> Env Var b) -> FullEnv a t -> FullEnv b t
+setLEnv :: (Env a -> Env b) -> FullEnv a t -> FullEnv b t
 setLEnv update env = env {lEnv = update (lEnv env)}
 
-setTEnv :: (Env TVar a -> Env TVar b) -> FullEnv v a -> FullEnv v b
+setTEnv :: (Env a -> Env b) -> FullEnv v a -> FullEnv v b
 setTEnv update env = env {tEnv = update (tEnv env)}
-type Vars = FullEnv () ()
 
 type Source = String
-data TopDecl expr = TopDecl Source Vars (DeclInstr expr)
+data TopDecl expr = TopDecl Source (DeclInstr expr)
 data DeclInstr expr = TopAssign VarName expr
                     | TopUnpack VarName expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
@@ -201,7 +200,7 @@ ignoreExcept (Left e) = error $ show e
 ignoreExcept (Right x) = x
 
 instance Traversable TopDecl where
-  traverse f (TopDecl s fvs instr) = fmap (TopDecl s fvs) $ traverse f instr
+  traverse f (TopDecl s instr) = fmap (TopDecl s) $ traverse f instr
 
 instance Traversable DeclInstr where
   traverse f (TopAssign v expr) = fmap (TopAssign v) (f expr)
@@ -250,26 +249,6 @@ instance Functor Command where
 instance Foldable Command where
   foldMap = foldMapDefault
 
-type Updater i = (Env (GVar i) () -> Env (GVar i) ()) -> Vars -> Vars
-
-fvsVar :: Updater i -> GVar i -> Vars
-fvsVar updater v = case v of FV name -> updater (addFVar name ()) mempty
-                             BV _ -> mempty
-
-fvsUExpr :: UExpr -> Vars
-fvsUExpr expr = case expr of
-  ULit _         -> mempty
-  UVar v         -> fvsVar setLEnv v
-  UBuiltin _     -> mempty
-  ULet _ e body  -> fvsUExpr e <> fvsUExpr body
-  ULam _ body    -> fvsUExpr body
-  UApp fexpr arg -> fvsUExpr fexpr <> fvsUExpr arg
-  UFor _ body    -> fvsUExpr body
-  UGet e ie      -> fvsUExpr e <> fvsVar setLEnv ie
-  URecCon r      -> foldMap fvsUExpr r
-  -- UAnnot e t     -> fvsUExpr e <> fvsType t
-  UUnpack _ e body -> fvsUExpr e <> fvsUExpr body
-
 paren :: String -> String
 paren s = "(" ++ s ++ ")"
 
@@ -298,135 +277,150 @@ instance Show LitVal where
   show (RealLit x) = show x
   show (StrLit x ) = show x
 
-instance Show Expr where
-  show = showExpr (0, [])
+-- instance Show Expr where
+--   show = showExpr (0, [])
 
-instance Show Type where
-  show = showType []
+-- instance Show Type where
+--   show = showType []
 
-showType :: [Kind] -> Type -> String
-showType env t = case t of
-  BaseType b  -> show b
-  TypeVar v   -> getName tVarNames depth v
-  ArrType a b -> paren $ recur a ++ " -> " ++ recur b
-  TabType a b -> recur a ++ "=>" ++ recur b
-  RecType r   -> printRecord recur typeRecPrintSpec r
-  Forall kinds t -> "A " ++ spaceSep (take (length kinds) tVarNames) ++ ". "
-                          ++ showType (kinds ++ env) t
-  Exists body -> "E " ++ tVarNames !! depth ++ ". " ++
-                 showType (IdxSetKind : env) body
-  where recur = showType env
-        depth = length env
+-- showType :: [Kind] -> Type -> String
+-- showType env t = undefined -- case t of
+  -- BaseType b  -> show b
+  -- TypeVar v   -> getName tVarNames depth v
+  -- ArrType a b -> paren $ recur a ++ " -> " ++ recur b
+  -- TabType a b -> recur a ++ "=>" ++ recur b
+  -- RecType r   -> printRecord recur typeRecPrintSpec r
+  -- Forall kinds t -> "A " ++ spaceSep (take (length kinds) tVarNames) ++ ". "
+  --                         ++ showType (kinds ++ env) t
+  -- Exists body -> "E " ++ tVarNames !! depth ++ ". " ++
+  --                showType (IdxSetKind : env) body
+  -- where recur = showType env
+  --       depth = length env
 
 spaceSep :: [String] -> String
 spaceSep = intercalate " "
 
 -- TODO: fix printing of pattern binders
-showExpr :: (Int, [Kind]) -> Expr -> String
-showExpr env@(depth, kinds) expr = case expr of
-  Lit val      -> show val
-  Var v        -> name v
-  Builtin b    -> show b
-  Let p e1 e2  -> paren $    "let " ++ printPat p ++ " = " ++ recur e1
-                          ++ " in " ++ recurWith (length (toList p)) e2
-  Lam p e      -> paren $ "lam " ++ printPat p ++ ": "
-                                 ++ recurWith (length (toList p)) e
-  App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
-  For t e      -> paren $ "for " ++ showBinder depth kinds t ++ ": " ++ recurWith 1 e
-  Get e ie     -> recur e ++ "." ++ name ie
-  RecCon r     -> printRecord recur defaultRecPrintSpec r
-  BuiltinApp b ts exprs -> paren $ show b ++ "[" ++ showTypes ts ++ "]"
-                                         ++ paren (spaceSep (map recur exprs))
-  Unpack t e1 e2 -> paren $ "unpack {" ++ showBinder depth (IdxSetKind:kinds) t
-                             ++ ", " ++ tVarNames !! (length kinds)
-                             ++ "} = " ++ recur e1
-                             ++ " in " ++ showExpr (depth+1, IdxSetKind:kinds) e2
-  TLam kinds' expr ->
-    "LAM " ++ spaceSep (zipWith (\k v -> v ++ "::" ++ show k)
-                        kinds' tVarNames) ++ ": "
-           ++ showExpr (depth, kinds' ++ kinds) expr
+-- showExpr :: (Int, [Kind]) -> Expr -> String
+-- showExpr env@(depth, kinds) expr = undefined -- case expr of
+  -- Lit val      -> show val
+  -- Var v        -> name v
+  -- Builtin b    -> show b
+  -- Let p e1 e2  -> paren $    "let " ++ printPat p ++ " = " ++ recur e1
+  --                         ++ " in " ++ recurWith (length (toList p)) e2
+  -- Lam p e      -> paren $ "lam " ++ printPat p ++ ": "
+  --                                ++ recurWith (length (toList p)) e
+  -- App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
+  -- For t e      -> paren $ "for " ++ showBinder depth kinds t ++ ": " ++ recurWith 1 e
+  -- Get e ie     -> recur e ++ "." ++ name ie
+  -- RecCon r     -> printRecord recur defaultRecPrintSpec r
+  -- BuiltinApp b ts exprs -> paren $ show b ++ "[" ++ showTypes ts ++ "]"
+  --                                        ++ paren (spaceSep (map recur exprs))
+  -- Unpack _ t e1 e2 -> paren $ "unpack {"
+  --                            ++ showBinder depth kinds t
+  --                            ++ ", " ++ tVarNames !! (length kinds)
+  --                            ++ "} = " ++ recur e1
+  --                            ++ " in " ++ showExpr (depth+1, kinds) e2
+  -- TLam kinds' expr ->
+  --   "LAM " ++ spaceSep (zipWith (\k v -> v ++ "::" ++ show k)
+  --                       kinds' tVarNames) ++ ": "
+  --          ++ showExpr (depth, kinds' ++ kinds) expr
 
-  TApp expr ts -> recur expr ++ "[" ++ showTypes ts ++ "]"
-  where recur = showExpr env
-        showTypes ts = spaceSep (map (showType kinds) ts)
-        recurWith n = showExpr (depth + n, kinds)
-        showBinder i kinds ty = lVarNames !! i ++ "::" ++ showType kinds ty
-        name = getName lVarNames depth
-        printPat p = let depth' = depth + length (toList p) - 1
-                         show' (i, ty) = showBinder (depth' - i) kinds ty
-                     in printRecTree show' (enumerate p)
+  -- TApp expr ts -> recur expr ++ "[" ++ showTypes ts ++ "]"
+  -- where recur = showExpr env
+  --       showTypes ts = spaceSep (map (showType kinds) ts)
+  --       recurWith n = showExpr (depth + n, kinds)
+  --       showBinder i kinds ty = lVarNames !! i ++ "::" ++ showType kinds ty
+  --       name = getName lVarNames depth
+  --       printPat p = let depth' = depth + length (toList p) - 1
+  --                        show' (i, ty) = showBinder (depth' - i) kinds ty
+  --                    in printRecTree show' (enumerate p)
 
-getName :: [String] -> Int -> GVar i -> String
-getName names depth v = case v of
-  FV (NamedVar name) -> name
-  FV (TempVar i) -> "<tmp-" ++ show i ++ ">"
-  BV i -> let i' = depth - i - 1
-          in if i' >= 0
-             then names !! i'
-             else "<BV " ++ show i ++ ">"
+-- getName :: [String] -> Int -> GVar i -> String
+-- getName names depth v = case v of
+--   FV (NamedVar name) -> name
+--   FV (TempVar i) -> "<tmp-" ++ show i ++ ">"
+--   BV i -> let i' = depth - i - 1
+--           in if i' >= 0
+--              then names !! i'
+--              else "<BV " ++ show i ++ ">"
 
-type TempVar = Int
-
-freeTyVars :: HasTypeVars a => a -> [VarName]
-freeTyVars x = nub $ execState (subAtDepth 0 collectVars x) []
-  where collectVars :: Int -> TVar -> State [VarName] Type
-        collectVars _ v = do case v of BV _ -> return ()
-                                       FV v' -> modify (v':)
-                             return (TypeVar v)
-
-instantiateTVs :: HasTypeVars a => [Type] -> a -> a
-instantiateTVs vs x = runIdentity $ subAtDepth 0 sub x
-  where sub depth v = return $ case v of
-                        BV i | i >= depth -> vs !! i
+instantiateTVs :: [Type] -> Type -> Type
+instantiateTVs vs x = subAtDepth 0 sub x
+  where sub depth v = case v of
+                        BoundVar i | i >= depth -> vs !! i
                         _ -> TypeVar v
 
-abstractTVs :: HasTypeVars a => [VarName] -> a -> a
-abstractTVs vs x = runIdentity $ subAtDepth 0 sub x
-  where sub depth v = return $ TypeVar $ case v of
-                        BV _  -> v
-                        FV v' -> case elemIndex v' vs of
-                                   Nothing -> v
-                                   Just i  -> BV (depth + i)
+abstractTVs :: [Var] -> Type -> Type
+abstractTVs vs x = subAtDepth 0 sub x
+  where sub depth v = TypeVar $ case elemIndex v vs of
+                                  Nothing -> v
+                                  Just i  -> BoundVar (depth + i)
 
-subFreeTVs :: (HasTypeVars a, Applicative f) => (VarName -> f Type) -> a -> f a
-subFreeTVs f expr = subAtDepth 0 f' expr
-  where f' _ v = case v of BV _  -> pure (TypeVar v)
-                           FV v' -> f v'
+subAtDepth :: Int -> (Int -> Var -> Type) -> Type -> Type
+subAtDepth d f ty = case ty of
+    BaseType b    -> ty
+    TypeVar v     -> f d v
+    ArrType a b   -> ArrType (recur a) (recur b)
+    TabType a b   -> TabType (recur a) (recur b)
+    RecType r     -> RecType (fmap recur r)
+    Exists body   -> Exists (recurWith 1 body)
+    Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
+  where recur        = subAtDepth d f
+        recurWith d' = subAtDepth (d + d') f
+
+freeTyVars :: HasTypeVars a => a -> [Var]
+freeTyVars x = execState (subFreeTVs collectVars x) []
+  where collectVars :: Var -> State [Var] Type
+        collectVars v = modify (v :) >> return (TypeVar v)
+
+maybeSub :: (Var -> Maybe Type) -> Type -> Type
+maybeSub f ty = runIdentity $ subFreeTVs (return . sub) ty
+  where sub v = case f v of Just t -> t
+                            Nothing -> TypeVar v
+
+subFreeTVs :: (HasTypeVars a,  Applicative f) => (Var -> f Type) -> a -> f a
+subFreeTVs = subFreeTVsBVs []
 
 class HasTypeVars a where
-  subAtDepth :: Applicative f => Int -> (Int -> TVar -> f Type) -> a -> f a
+  subFreeTVsBVs :: Applicative f => [Var] -> (Var -> f Type) -> a -> f a
 
 instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
-  subAtDepth d f (x, y) = liftA2 (,) (subAtDepth d f x) (subAtDepth d f y)
+  subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)
+                                          (subFreeTVsBVs bvs f y)
 
 instance HasTypeVars Type where
-  subAtDepth d f ty = case ty of
+  subFreeTVsBVs bvs f ty = case ty of
       BaseType b    -> pure ty
-      TypeVar v     -> f d v
+      TypeVar (BoundVar _) -> pure ty
+      TypeVar v | v `elem` bvs -> pure ty
+                | otherwise    -> f v
       ArrType a b   -> liftA2 ArrType (recur a) (recur b)
       TabType a b   -> liftA2 TabType (recur a) (recur b)
       RecType r     -> liftA RecType (traverse recur r)
-      Exists body   -> liftA Exists (recurWith 1 body)
-      Forall kinds body -> liftA (Forall kinds) (recurWith (length kinds) body)
-    where recur = subAtDepth d f
-          recurWith d' = subAtDepth (d + d') f
+      Exists body   -> liftA Exists (recur body)
+      Forall kinds body -> liftA (Forall kinds) (recur body)
+    where recur = subFreeTVsBVs bvs f
 
 instance HasTypeVars Expr where
-  subAtDepth d f expr = case expr of
+  subFreeTVsBVs bvs f expr = case expr of
       Lit c -> pure $ Lit c
       Var v -> pure $ Var v
       Builtin b -> pure $ Builtin b
-      Let p bound body -> liftA3 Let (traverse recurTy p) (recur bound) (recur body)
-      Lam p body       -> liftA2 Lam (traverse recurTy p) (recur body)
+      Let p bound body -> liftA3 Let (traverse recurB p) (recur bound) (recur body)
+      Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-      For t body       -> liftA2 For (recurTy t) (recur body)
+      For b body       -> liftA2 For (recurB b) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
-      Unpack t bound body -> liftA3 Unpack (recurWithTy 1 t) (recur bound) (recurWith 1 body)
-      TLam kinds expr   -> liftA  (TLam kinds) (recurWith (length kinds) expr)
+      Unpack b tv bound body -> liftA3 (\x y z -> Unpack x tv y z)
+               (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
+      TLam bs expr      -> liftA  (TLam bs) (recurWith (map fst bs) expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
-      BuiltinApp b ts v -> liftA2 (BuiltinApp b) (traverse recurTy ts) (traverse recur v)
-    where recur   = subAtDepth d f
-          recurTy = subAtDepth d f
-          recurWith   d' = subAtDepth (d + d') f
-          recurWithTy d' = subAtDepth (d + d') f
+      BuiltinApp b ts arg -> liftA2 (BuiltinApp b) (traverse recurTy ts) (recur arg)
+    where recur   = subFreeTVsBVs bvs f
+          recurTy = subFreeTVsBVs bvs f
+          recurB (v,ty) = liftA ((,) v) (recurTy ty)
+          recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
+          recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
+          recurWithB  vs (v,ty) = liftA ((,) v) (recurWithTy vs ty)

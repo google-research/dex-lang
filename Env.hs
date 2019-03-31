@@ -1,6 +1,9 @@
-module Env (Env (..), GVar (..), VarName (..),
-            newEnv, addFVar, addBVar, addBVars,
-            envDiff, isin, (!), fVars, bVars, toDeBruijn, numBound) where
+module Env (Env (..), Var (..), VarName, TempVar, envLookup,
+            newEnv, addLocal, addLocals, addTop, isin, (!), locals) where
+
+-- module Env (Env (..), GVar (..), VarName (..), ExVar,
+--             newEnv, addFVar, addBVar, addBVars,
+--             envDiff, isin, (!), fVars, bVars, toDeBruijn, numBound) where
 
 import Data.List (elemIndex)
 import Data.Semigroup
@@ -8,73 +11,61 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA, liftA2, liftA3)
 
-data Env i a = Env (M.Map VarName a) [a]  deriving (Show, Eq, Ord)
-data GVar i = FV VarName
-            | BV Int
-               deriving (Show, Eq, Ord)
+data Env a = Env (M.Map VarName a) (M.Map Var a)
+                    deriving (Show, Eq, Ord)
 
-data VarName = TempVar Int
-             | NamedVar String  deriving (Show, Eq, Ord)
+type TempVar = Int
+type VarName = String
+data Var = TempVar TempVar
+         | NamedVar VarName
+         | BoundVar Int    deriving (Show, Eq, Ord)
 
-newEnv :: [(VarName, a)] -> Env i a
-newEnv xs = Env (M.fromList xs) []
+newEnv :: [(VarName, a)] -> Env a
+newEnv xs = undefined -- Env (M.fromList xs) []
 
-addFVar :: VarName -> a -> Env i a -> Env i a
-addFVar k v (Env fvs bvs)= Env (M.insert k v fvs) bvs
+addTop :: String -> a -> Env a -> Env a
+addTop v x (Env top local) = Env (M.insert v x top) local
 
-addBVar :: a -> Env i a -> Env i a
-addBVar x (Env fvs bvs) = Env fvs (x:bvs)
+locals :: Env a -> [(Var, a)]
+locals (Env _ local) = M.toAscList local
 
-addBVars :: [a] -> Env i a -> Env i a
-addBVars = flip $ foldr addBVar
+addLocal :: (Var, a) -> Env a -> Env a
+addLocal (v, x) (Env top local) = Env top (M.insert v x local)
 
-envDiff ::Env i a -> Env i b -> Env i a
-envDiff (Env fvs1 _) (Env fvs2 _) = Env (M.difference fvs1 fvs2) []
+addLocals :: Traversable f => f (Var, a) -> Env a -> Env a
+addLocals xs (Env top local) = Env top local'
+  where local' = foldr (uncurry M.insert) local xs
 
-fVars :: Env i a -> [VarName]
-fVars (Env fvs _) = M.keys fvs
+envLookup :: Env a -> Var -> Maybe a
+envLookup (Env top local) v =
+  case M.lookup v local of
+    Just x -> Just x
+    Nothing -> case v of
+                 NamedVar s -> M.lookup s top
+                 _ -> Nothing
 
-bVars :: Env i a -> [a]
-bVars (Env _ bvs) = bvs
+isin :: Var -> Env a -> Bool
+isin v env = case envLookup env v of Just _  -> True
+                                     Nothing -> False
 
-numBound :: Env i a -> Int
-numBound (Env _ bvs) = length bvs
+(!) :: Env a -> Var -> a
+env ! v = case envLookup env v of
+  Just x -> x
+  Nothing -> error ("Lookup of " ++ show v ++ " failed! This is a compiler bug")
 
-isin :: GVar i -> Env (GVar i) a -> Bool
-isin i (Env fvs bvs) = case i of
-  FV s -> case M.lookup s fvs of
-            Just _  -> True
-            Nothing -> False
-  BV i -> i < length bvs
-
-(!) :: Env (GVar i) a -> GVar i -> a
-(Env fvs bvs) ! i = case i of
-  FV s -> case M.lookup s fvs of
-            Just x -> x
-            Nothing -> error ("Lookup of " ++ show s ++
-                              " in env " ++ show (M.keys fvs) ++
-                              " failed! This is a compiler bug")
-  BV i -> if i < length(bvs)
-            then bvs !! i
-            else error "Env lookup index too large"
-
-toDeBruijn :: [VarName]->  GVar i -> GVar i
-toDeBruijn vs (FV v) = case elemIndex v vs of Just i  -> BV i
-                                              Nothing -> FV v
-toDeBruijn vs (BV i) = BV i
-
-instance Functor (Env i) where
+instance Functor (Env) where
   fmap = fmapDefault
 
-instance Foldable (Env i) where
+instance Foldable (Env) where
   foldMap = foldMapDefault
 
-instance Traversable (Env i) where
+instance Traversable (Env) where
   traverse f (Env fenv xs) = liftA2 Env (traverse f fenv) (traverse f xs)
 
-instance Semigroup (Env i a) where
-  Env m1 xs1 <> Env m2 xs2 = Env (m1 <> m2) (xs1 <> xs2)
 
-instance Monoid (Env i a) where
-  mempty = Env mempty []
+instance Semigroup (Env a) where
+  Env m1 m2 <> Env m1' m2' = Env (m1 <> m1') (m2 <> m2')
+
+instance Monoid (Env a) where
+  mempty = Env mempty mempty
   mappend = (<>)

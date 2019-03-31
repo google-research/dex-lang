@@ -29,21 +29,19 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String
                        , webOutput     :: Bool}
 
-data TopEnv = TopEnv { varEnv :: Vars
-                     , typeEnv   :: FullEnv Type ()
-                     , deFuncEnv :: FullEnv (DFVal, Type) ()
-                     , valEnv    :: FullEnv PersistVal PWord}
+data TopEnv = TopEnv { typeEnv   :: FullEnv Type Kind
+                     , deFuncEnv :: FullEnv (DFVal, Type) (Maybe Type)
+                     , valEnv    :: FullEnv (PersistVal, Type) PWord}
 
-initEnv = TopEnv mempty mempty mempty mempty
+initEnv = TopEnv mempty mempty mempty
 
 evalSource :: TopEnv -> String -> Driver (TopEnv, [TopDecl ()])
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
-  (checked, varEnv' ) <- fullPass (procDecl boundVarPass) (varEnv  env) decls
-  (typed  , typeEnv') <- fullPass (procDecl typePass)     (typeEnv env) checked
+  (typed  , typeEnv') <- fullPass (procDecl typePass)     (typeEnv   env) decls
   (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass)   (deFuncEnv env) typed
-  (jitted , valEnv' ) <- fullPass (procDecl jitPass)       (valEnv  env) defunc
-  return (TopEnv varEnv' typeEnv' dfEnv' valEnv', jitted)
+  (jitted , valEnv' ) <- fullPass (procDecl jitPass)      (valEnv    env) defunc
+  return (TopEnv typeEnv' dfEnv' valEnv', jitted)
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)
@@ -54,21 +52,21 @@ evalSource env source = do
 
     procDecl :: Pass a b v t -> IORef (FullEnv v t)
                 -> TopDecl a -> Driver (TopDecl b)
-    procDecl pass envPtr (TopDecl source fvs instr) = do
+    procDecl pass envPtr (TopDecl source instr) = do
       env <- lift $ readIORef envPtr
       case instr of
         TopAssign v expr ->
           do (val, expr') <- lift $ (lowerExpr pass) expr env
-             lift $ writeIORef envPtr $ setLEnv (addFVar v val) env
-             return $ TopDecl source fvs $ TopAssign v expr'
+             lift $ writeIORef envPtr $ setLEnv (addTop v val) env
+             return $ TopDecl source $ TopAssign v expr'
         TopUnpack v expr ->
           do (val, ty, expr') <- lift $ (lowerUnpack pass) v expr env
-             lift $ writeIORef envPtr $ setLEnv (addFVar v val)
-                                      . setTEnv (addFVar v ty) $ env
-             return $ TopDecl source fvs $ TopUnpack v expr'
+             lift $ writeIORef envPtr $ setLEnv (addTop v val)
+                                      . setTEnv (addTop v ty) $ env
+             return $ TopDecl source $ TopUnpack v expr'
         EvalCmd cmd ->
           do cmd' <- lift $ (lowerCmd pass) cmd env
-             return $ TopDecl source fvs $ EvalCmd cmd'
+             return $ TopDecl source $ EvalCmd cmd'
 
 evalWeb :: String -> IO ()
 evalWeb fname = do
@@ -110,7 +108,7 @@ runRepl initEnv = lift (newIORef initEnv) >>= forever . catchErr . loop
       lift $ writeIORef envPtr newEnv
 
 showDeclResult :: TopDecl a -> String
-showDeclResult (TopDecl source _ instr) = do
+showDeclResult (TopDecl source instr) = do
   case instr of
     EvalCmd (CmdResult r) -> withSource $ case r of TextOut s -> s
                                                     PlotOut _ _ -> "<plot>"
@@ -120,12 +118,6 @@ showDeclResult (TopDecl source _ instr) = do
 
 catchErr :: Driver a -> Driver (Maybe a)
 catchErr m = handleInterrupt (return Nothing) (fmap Just m)
-
--- updateEnv :: (VarName, Type, PersistVal) -> TopEnv -> TopEnv
--- updateEnv (v, t, val) (TopEnv varEnv typeEnv valEnv) =
---   TopEnv { varEnv  = setLEnv (addFVar v ())  varEnv
---          , typeEnv = setLEnv (addFVar v t)   typeEnv
---          , valEnv  = setLEnv (addFVar v val) valEnv }
 
 opts :: ParserInfo CmdOpts
 opts = info (p <**> helper) mempty

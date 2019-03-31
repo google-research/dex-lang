@@ -1,4 +1,4 @@
-module Parser (parseProg, boundVarPass) where
+module Parser (parseProg) where
 
 import Util
 import Record
@@ -21,7 +21,7 @@ type UInstr = DeclInstr UExpr
 type Prog = [UTopDecl]
 
 data Decl = AssignDecl UPat UExpr
-          | UnpackDecl VarName UExpr
+          | UnpackDecl Var UExpr
 
 parseProg :: String -> Except Prog
 parseProg = parseit prog
@@ -37,9 +37,7 @@ prog = emptyLines >> many (topDecl <*emptyLines)
 topDecl :: Parser UTopDecl
 topDecl = do
   (instr, source) <- captureSource topDeclInstr
-  let instr' = lowerInstr instr
-      freeVars = foldMap fvsUExpr instr
-  return $ TopDecl source freeVars instr'
+  return $ TopDecl source instr
 
 topDeclInstr :: Parser UInstr
 topDeclInstr =   explicitCommand
@@ -80,18 +78,18 @@ explicitCommand = do
 
 tryUnpackDecl :: Parser (VarName, UExpr)
 tryUnpackDecl = do
-  v <- try (varName <* symbol "=" <* symbol "unpack")
+  (NamedVar v) <- try (varName <* symbol "=" <* symbol "unpack")
   body <- expr
   return (v, body)
 
 tryAssignDecl :: Parser (VarName, UExpr)
 tryAssignDecl = do
-  (p, wrap) <- try $ do p <- varName
-                        wrap <- idxLhsArgs <|> lamLhsArgs
-                        symbol "="
-                        return (p, wrap)
+  (NamedVar v, wrap) <- try $ do p <- varName
+                                 wrap <- idxLhsArgs <|> lamLhsArgs
+                                 symbol "="
+                                 return (p, wrap)
   body <- expr
-  return (p, wrap body)
+  return (v, wrap body)
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops
@@ -136,7 +134,7 @@ varExpr = do
   s <- identifier
   return $ case strToBuiltin s of
     Just b -> UBuiltin b
-    Nothing -> UVar (FV (NamedVar s))
+    Nothing -> UVar (NamedVar s)
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -202,7 +200,7 @@ resNames = ["for", "lam", "let", "in", "unpack"]
 identifier = makeIdentifier resNames
 
 varName = liftM NamedVar identifier
-
+idxExpr = varName
 
 appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
@@ -222,7 +220,6 @@ ops = [ [getRule, appRule]
 
 -- idxExpr =   parenIdxExpr
 --         <|> liftM (RecLeaf . FV) identifier
-idxExpr = liftM FV varName
 
 -- parenIdxExpr = do
 --   elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
@@ -230,7 +227,7 @@ idxExpr = liftM FV varName
 --     [(Nothing, expr)] -> expr
 --     elts -> RecTree $ mixedRecord elts
 
-idxPat :: Parser VarName
+idxPat :: Parser Var
 idxPat = liftM NamedVar identifier
 
 pat :: Parser UPat
@@ -247,8 +244,8 @@ parenPat = do
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
 
-typeVar :: Parser TVar
-typeVar = liftM (FV . NamedVar) $ makeIdentifier
+var :: Parser Var
+var = liftM NamedVar $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 -- forallType :: Parser Type
@@ -279,77 +276,77 @@ baseType = (symbol "Int"  >> return IntType)
 typeOps = [ [InfixR (symbol "->" >> return ArrType)]]
 
 typeExpr' =   parens typeExpr
-          <|> liftM TypeVar typeVar
+          <|> liftM TypeVar varName
           <|> liftM BaseType baseType
           -- <|> forallType
           -- <|> existsType
           <?> "term"
 
-data BoundVars = BoundVars { lVars :: [VarName]
-                           , tVars :: [VarName] }
+-- data BoundVars = BoundVars { lVars :: [Var]
+--                            , tVars :: [Var] }
 
-lowerInstr :: UInstr -> UInstr
-lowerInstr = fmap (lower empty)
-  where empty = BoundVars [] []
+-- lowerInstr :: UInstr -> UInstr
+-- lowerInstr = fmap (lower empty)
+--   where empty = BoundVars [] []
 
-lower :: BoundVars -> UExpr -> UExpr
-lower env expr = case expr of
-  ULit c         -> ULit c
-  UVar v         -> UVar $ toDeBruijn (lVars env) v
-  UBuiltin b     -> UBuiltin b
-  ULet p e body  -> ULet p (recur e) $ lowerWithMany p body
-  ULam p body    -> ULam p           $ lowerWithMany p body
-  UApp fexpr arg -> UApp (recur fexpr) (recur arg)
-  UFor p body    -> UFor p           $ lowerWith p body
-  UGet e ie      -> UGet (recur e) $ toDeBruijn (lVars env) ie
-  URecCon r      -> URecCon $ fmap recur r
-  UAnnot e t     -> UAnnot (recur e) (lowerType env t)
-  UUnpack v e body -> UUnpack v (recur e) $
-                         lower (env {lVars = v : lVars env}) body
-  where recur = lower env
-        lowerWith p expr = lower (updateLVar p env) expr
-        lowerWithMany p expr = lower (updateLVars (toList p) env) expr
+-- lower :: BoundVars -> UExpr -> UExpr
+-- lower env expr = case expr of
+--   ULit c         -> ULit c
+--   UVar v         -> UVar $ toDeBruijn (lVars env) v
+--   UBuiltin b     -> UBuiltin b
+--   ULet p e body  -> ULet p (recur e) $ lowerWithMany p body
+--   ULam p body    -> ULam p           $ lowerWithMany p body
+--   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
+--   UFor p body    -> UFor p           $ lowerWith p body
+--   UGet e ie      -> UGet (recur e) $ toDeBruijn (lVars env) ie
+--   URecCon r      -> URecCon $ fmap recur r
+--   UAnnot e t     -> UAnnot (recur e) (lowerType env t)
+--   UUnpack v e body -> UUnpack v (recur e) $
+--                          lower (env {lVars = v : lVars env}) body
+--   where recur = lower env
+--         lowerWith p expr = lower (updateLVar p env) expr
+--         lowerWithMany p expr = lower (updateLVars (toList p) env) expr
 
-        updateLVar :: VarName -> BoundVars -> BoundVars
-        updateLVar v env = env {lVars = v : lVars env}
+--         updateLVar :: Var -> BoundVars -> BoundVars
+--         updateLVar v env = env {lVars = v : lVars env}
 
-        updateLVars :: [VarName] -> BoundVars -> BoundVars
-        updateLVars vs env = env {lVars = vs ++ lVars env}
+--         updateLVars :: [Var] -> BoundVars -> BoundVars
+--         updateLVars vs env = env {lVars = vs ++ lVars env}
 
-lowerType :: BoundVars -> Type -> Type
-lowerType env ty = case ty of
-  BaseType b    -> BaseType b
-  TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
-  ArrType t1 t2 -> ArrType (recur t1) (recur t2)
-  TabType t1 t2 -> TabType (recur t1) (recur t2)
-  -- MetaTypeVar m -> MetaTypeVar m
-  where recur = lowerType env
+-- lowerType :: BoundVars -> Type -> Type
+-- lowerType env ty = case ty of
+--   BaseType b    -> BaseType b
+--   TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
+--   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
+--   TabType t1 t2 -> TabType (recur t1) (recur t2)
+--   -- MetaTypeVar m -> MetaTypeVar m
+--   where recur = lowerType env
 
-updateTVars :: [VarName] -> BoundVars -> BoundVars
-updateTVars vs env = env {tVars = vs ++ tVars env}
+-- updateTVars :: [Var] -> BoundVars -> BoundVars
+-- updateTVars vs env = env {tVars = vs ++ tVars env}
 
-boundVarPass :: Pass UExpr UExpr () ()
-boundVarPass = Pass
-  { lowerExpr   = \expr env -> do liftErrIO $ checkBoundVarsExpr expr env
-                                  return ((), expr)
-  , lowerUnpack = \_ expr env -> do liftErrIO $ checkBoundVarsExpr expr env
-                                    return ((), (), expr)
-  , lowerCmd    = \cmd  env -> return $ checkBoundVarsCmd cmd env }
+-- -- boundVarPass :: Pass UExpr UExpr () ()
+-- -- boundVarPass = Pass
+-- --   { lowerExpr   = \expr env -> do liftErrIO $ checkBoundVarsExpr expr env
+-- --                                   return ((), expr)
+-- --   , lowerUnpack = \_ expr env -> do liftErrIO $ checkBoundVarsExpr expr env
+-- --                                     return ((), (), expr)
+-- --   , lowerCmd    = \cmd  env -> return $ checkBoundVarsCmd cmd env }
 
-checkBoundVarsCmd :: Command UExpr -> Vars -> Command UExpr
-checkBoundVarsCmd cmd@(Command cmdName expr) envVars =
-  case checkBoundVarsExpr expr envVars of
-    Left err -> CmdErr err
-    Right () -> cmd
-checkBoundVarsCmd x _ = x
+-- checkBoundVarsCmd :: Command UExpr -> Vars -> Command UExpr
+-- checkBoundVarsCmd cmd@(Command cmdName expr) envVars =
+--   case checkBoundVarsExpr expr envVars of
+--     Left err -> CmdErr err
+--     Right () -> cmd
+-- checkBoundVarsCmd x _ = x
 
-checkBoundVarsExpr :: UExpr -> Vars -> Except ()
-checkBoundVarsExpr expr envVars = do
-  let freeVars = fvsUExpr expr
-  lEnv envVars `contains` lEnv freeVars
-  tEnv envVars `contains` tEnv freeVars
-  return ()
-  where contains :: Env i a -> Env i a -> Except ()
-        contains e1 e2 = case fVars (e2 `envDiff` e1) of
-                            v:_ -> Left $ UnboundVarErr v
-                            [] -> Right ()
+-- checkBoundVarsExpr :: UExpr -> Vars -> Except ()
+-- checkBoundVarsExpr expr envVars = do
+--   let freeVars = fvsUExpr expr
+--   lEnv envVars `contains` lEnv freeVars
+--   tEnv envVars `contains` tEnv freeVars
+--   return ()
+--   where contains :: Env i a -> Env i a -> Except ()
+--         contains e1 e2 = case fVars (e2 `envDiff` e1) of
+--                             v:_ -> Left $ UnboundVarErr v
+--                             [] -> Right ()
