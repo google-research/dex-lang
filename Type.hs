@@ -1,4 +1,5 @@
-module Type (TypeEnv, checkExpr, getType, litType, builtinType, patType) where
+module Type (TypeEnv, checkExpr, getType, litType,
+             patType, builtinType, builtinNaryTy) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
@@ -131,6 +132,10 @@ nestedPairs :: [Type] -> Type
 nestedPairs = recur . reverse
   where recur []     = RecType (Tup [])
         recur (x:xs) = RecType (Tup [recur xs, x])
+
+
+builtinNaryTy :: Builtin -> ([Type], Type)
+builtinNaryTy b = naryComponents (numArgs b) (builtinType b)
 
 
 deFuncType :: Int -> Type -> (Type, Type)

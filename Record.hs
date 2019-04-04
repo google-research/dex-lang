@@ -39,15 +39,15 @@ recUnionWith :: (a -> a -> a) -> Record a -> Record a -> Record a
 recUnionWith = undefined -- f (Record m1) (Record m2) = Record $ M.unionWith f m1 m2
 
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
-zipWithRecord = undefined -- f (Record m) (Record m')
-    -- | M.keys m == M.keys m' = Just . Record $ M.intersectionWith f m m'
-    -- | otherwise = Nothing
+zipWithRecord f (Rec m) (Rec m') | M.keys m == M.keys m' =  Just $ Rec $ M.intersectionWith f m m'
+zipWithRecord f (Tup xs) (Tup xs') | length xs == length xs' = Just $ Tup $ zipWith f xs xs'
+zipWithRecord _ _ _ = Nothing
 
 recZipWith f r r' = unJust (zipWithRecord f r r')
 
-recTreeZip :: RecTree a -> RecTree b -> RecTree (a,b)
+recTreeZip :: RecTree a -> RecTree b -> RecTree (a, RecTree b)
 recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
-recTreeZip (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
+recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
 
 instance Show a => Show (Record a) where
   show = printRecord show defaultRecPrintSpec

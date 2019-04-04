@@ -17,6 +17,7 @@ import Parser
 import Type
 import Util
 import Env
+import Imp
 import JIT
 import Inference
 import DeFunc
@@ -29,19 +30,21 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , dataSource    :: Maybe String
                        , webOutput     :: Bool}
 
-data TopEnv = TopEnv { typeEnv   :: FullEnv Type Kind
-                     , deFuncEnv :: FullEnv (DFVal, Type) (Maybe Type)
-                     , valEnv    :: FullEnv (PersistVal, Type) PWord}
+data TopEnv = TopEnv { typeEnv   :: TypeEnv
+                     , deFuncEnv :: DFEnv
+                     , impEnv    :: ImpEnv
+                     , valEnv    :: PersistEnv}
 
-initEnv = TopEnv mempty mempty mempty
+initEnv = TopEnv mempty mempty mempty mempty
 
 evalSource :: TopEnv -> String -> Driver (TopEnv, [TopDecl ()])
 evalSource env source = do
   decls <- lift $ liftErrIO $ parseProg source
-  (typed  , typeEnv') <- fullPass (procDecl typePass)     (typeEnv   env) decls
-  (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass)   (deFuncEnv env) typed
-  (jitted , valEnv' ) <- fullPass (procDecl jitPass)      (valEnv    env) defunc
-  return (TopEnv typeEnv' dfEnv' valEnv', jitted)
+  (typed  , typeEnv') <- fullPass (procDecl typePass)   (typeEnv   env) decls
+  (defunc , dfEnv'  ) <- fullPass (procDecl deFuncPass) (deFuncEnv env) typed
+  (imp    , impEnv' ) <- fullPass (procDecl impPass)    (impEnv    env) defunc
+  (jitted , valEnv' ) <- fullPass (procDecl jitPass)    (valEnv    env) imp
+  return (TopEnv typeEnv' dfEnv' impEnv' valEnv', jitted)
   where
     fullPass :: (IORef env -> TopDecl a -> Driver (TopDecl b))
                 -> env -> [TopDecl a] -> Driver ([TopDecl b], env)

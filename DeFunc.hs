@@ -1,4 +1,4 @@
-module DeFunc (deFuncPass, DFVal (..), TypedDFVal) where
+module DeFunc (deFuncPass, DFVal (..), TypedDFVal, DFEnv) where
 
 import Syntax
 import Env

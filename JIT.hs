@@ -1,13 +1,18 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module JIT (jitPass, PersistVal, PWord) where
+module JIT (jitPass, PersistVal, PWord, PersistEnv) where
+
+import LLVM.AST hiding (Add)
+import qualified LLVM.AST as L
+import qualified LLVM.AST.Global as L
+import qualified LLVM.AST.CallingConvention as L
+import qualified LLVM.AST.Type as L
+import qualified LLVM.AST.Float as L
+import qualified LLVM.AST.Constant as C
 
 import Control.Monad
 import Control.Monad.Except (throwError)
-import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
-import Control.Monad.State (StateT, runStateT, put, get, gets, modify)
-import Control.Applicative (liftA, liftA2, liftA3)
-import Data.IORef
+import Control.Monad.State
 
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
@@ -15,211 +20,255 @@ import Data.List (intercalate, transpose)
 import Data.Traversable
 import Data.Functor.Identity
 
-import qualified LLVM.AST as L
-import qualified LLVM.AST.Type as L
-import qualified LLVM.AST.Operand as Op
-import qualified LLVM.AST.Global as L
-import qualified LLVM.AST.Float as L
-import qualified LLVM.AST.IntegerPredicate as L
-import qualified LLVM.AST.Constant as C
-import qualified LLVM.AST.CallingConvention as L
-import qualified LLVM.Module as Mod
-import qualified LLVM.Analysis as Mod
-import qualified LLVM.ExecutionEngine as EE
-import LLVM.Internal.Context
--- import LLVM.Pretty (ppllvm)
-
-import Data.Int
-import Foreign.Ptr hiding (Ptr)
-import Foreign.Storable
-
 import qualified Foreign.Ptr as F
-import Data.ByteString.Char8 (unpack)
 import Data.ByteString.Short (ShortByteString)
 import Data.Word (Word64 (..))
 
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import Debug.Trace
+
+-- import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Type
 import Syntax
 import Env
 import Record
 import Util
+import Imp
+import LLVMExec
 
-foreign import ccall "dynamic"
-  haskFun :: FunPtr (IO (F.Ptr ())) -> IO (F.Ptr ())
+type PersistEnv = FullEnv [PersistVal] PWord
+data CompileState = CompileState { nameCounter :: Int
+                                 , curBlocks   :: [BasicBlock]
+                                 , curInstrs   :: [NInstr]
+                                 , scalarDecls :: [NInstr]
+                                 , blockName :: L.Name
+                                 , impVarEnv :: M.Map Var CompileVal
+                                 }
 
-type Compiled = L.Module
-type JitEnv w = FullEnv (JitVal w, Type) w
+type CompileM a = StateT CompileState (Either Err) a
 
-data JitVal w = ScalarVal BaseType w
-              | IdxVal w w
-              | TabVal (Table w)
-              | RecVal (Record (JitVal w))
-              | ExPackage w (JitVal w)  deriving (Show)
+data CompiledProg = CompiledProg [CompileVal] Module
+data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
+
+data JitVal w = JitVal w BaseType [w]
+data Cell = Cell Operand L.Type  -- | ReadOnly Operand
+
+type CompileVal  = JitVal Cell
+type PersistVal  = JitVal PWord
 
 data PWord = PScalar BaseType Word64
            | PPtr    BaseType (F.Ptr ())  deriving (Show)
 
-type CompileVal  = JitVal  Operand
-type CompileEnv  = JitEnv  Operand
+type NInstr = Named Instruction
 
-type PersistVal  = JitVal  PWord
-type PersistEnv  = JitEnv  PWord
+jitPass :: Pass ImpProgram () [PersistVal] PWord
+jitPass = Pass jitExpr undefined jitCmd
 
-data Table w = Table (Ptr w) w (Sizes w) Type   deriving (Show)
-data Sizes w = ConstSize w | ManySizes (Ptr w)  deriving (Show)
-data Ptr w = Ptr w                              deriving (Show)
+jitExpr :: ImpProgram -> PersistEnv -> IO ([PersistVal], ())
+jitExpr expr env = undefined -- do let (_, m) = lower expr env
+                      -- val <- uncurry evalJit (lower expr env)
+                      -- return ((val, ty), ())
 
-type CTable = Table Operand
-type CSizes = Sizes Operand
-type CPtr   = Ptr Operand
-
-type BString = ShortByteString
-type Operand = L.Operand
-type Block = L.BasicBlock
-type Instr = L.Named L.Instruction
-
-type Long     = Operand
-type Index    = Operand
-type NumElems = Operand
-
-type CompileApp  = [Type] -> [CompileVal] -> CompileM CompileVal
-
-data CompileState = CompileState { nameCounter :: Int
-                                 , curBlocks :: [Block]
-                                 , curInstrs :: [Instr]
-                                 , varDecls  :: [Instr]
-                                 , curBlockName :: L.Name }
-
-data ExternFunSpec = ExternFunSpec BString L.Type [L.Type] [BString]
-
-type CompileM a = ReaderT CompileEnv (StateT CompileState (Either Err)) a
-
-jitPass :: Pass Expr () (PersistVal, Type) PWord
-jitPass = Pass jitExpr jitUnpack jitCmd
-
-jitExpr :: Expr -> PersistEnv -> IO ((PersistVal, Type), ())
-jitExpr expr env = do let (_, m) = lower expr env
-                          ty = getType (asTypeEnv env) expr
-                      val <- uncurry evalJit (lower expr env)
-                      return ((val, ty), ())
-
-jitUnpack :: VarName -> Expr -> PersistEnv
-               -> IO ((PersistVal, Type), PWord, ())
-jitUnpack v expr env = do
-  let (_, m) = lower expr env
-      ty = case getType (asTypeEnv env) expr of
-             Exists body -> instantiateTVs [TypeVar (NamedVar v)] body
-  ExPackage i val <- uncurry evalJit (lower expr env)
-  return ((val, ty), i, ())
-
-jitCmd :: Command Expr -> PersistEnv -> IO (Command ())
-jitCmd (Command cmdName expr) env =
-  case cmdName of
-    GetLLVM ->  liftM textResult $ showLLVM m
-    EvalExpr -> do val <- evalJit v m
-                   liftM textResult $ printPersistVal val
-    ShowPersistVal -> do val <- evalJit v m
-                         return $ textResult (show val)
-    TimeIt -> do t1 <- getCurrentTime
-                 ans <- evalJit v m
-                 t2 <- getCurrentTime
-                 return $ textResult $ show (t2 `diffUTCTime` t1)
-    Plot -> do val <- evalJit v m
-               (xs, ys) <- makePlot val
-               return $ CmdResult $ PlotOut xs ys
-    PlotMat -> do val <- evalJit v m
-                  zs <- makePlotMat val
-                  return $ CmdResult $ PlotMatOut zs
-    _ -> return $ Command cmdName ()
-   where
-     (v, m) = lower expr env
-     textResult = CmdResult . TextOut
-
+jitCmd :: Command ImpProgram -> PersistEnv -> IO (Command ())
 jitCmd (CmdResult s) _ = return $ CmdResult s
 jitCmd (CmdErr e)    _ = return $ CmdErr e
-
-lower :: Expr -> PersistEnv -> (CompileVal, L.Module)
-lower expr env = (val, mod)
+jitCmd (Command cmdName prog) env =
+  case cmdName of
+    GetLLVM -> liftM textResult $ showLLVM m
+    EvalExpr -> do rawVals <- evalJit (length vs) m
+                   return $ textResult $ show rawVals
+    -- ShowPersistVal -> do val <- evalJit v m
+    --                      return $ textResult (show val)
+    -- TimeIt -> do t1 <- getCurrentTime
+    --              ans <- evalJit v m
+    --              t2 <- getCurrentTime
+    --              return $ textResult $ show (t2 `diffUTCTime` t1)
+    -- Plot -> do val <- evalJit v m
+    --            (xs, ys) <- makePlot val
+    --            return $ CmdResult $ PlotOut xs ys
+    -- PlotMat -> do val <- evalJit v m
+    --               zs <- makePlotMat val
+    --               return $ CmdResult $ PlotMatOut zs
+    _ -> return $ Command cmdName ()
   where
-    compileEnv = runIdentity (traverseJitEnv (Identity . pWordToOperand) env)
-    (Right (val, mod)) = lowerLLVM compileEnv expr
+     CompiledProg vs m = toLLVM prog env
+     textResult = CmdResult . TextOut
 
-pWordToOperand :: PWord -> Operand
-pWordToOperand x = case x of
-  PScalar _ x   -> litInt (fromIntegral x) -- TODO: don't assume it's an int
-  PPtr    _ ptr -> let ptrAsInt = fromIntegral (ptrToWordPtr ptr)
-                       ptrConst = C.IntToPtr (C.Int 64 ptrAsInt) intPtrTy
-                   in L.ConstantOperand ptrConst
+-- printPersistVal :: PersistVal -> IO String
+-- printPersistVal (JitVal x _ _ ) = return $ show x
 
-lowerLLVM :: CompileEnv -> Expr -> Except (CompileVal, L.Module)
-lowerLLVM env expr = do
-  (val, blocks) <- runCompileM env (compileModule expr)
-  return (val, makeModule blocks)
+toLLVM :: ImpProgram -> env_type -> CompiledProg
+toLLVM prog _ = ignoreExcept $ evalStateT (compileProg prog) initState
+  where initState = CompileState 0 [] [] [] "start_block" mempty
 
-showLLVM :: L.Module -> IO String
-showLLVM m = withContext $ \c ->
-               Mod.withModuleFromAST c m $ \m ->
-                 fmap unpack $ Mod.moduleLLVMAssembly m
+compileProg :: ImpProgram -> CompileM CompiledProg
+compileProg (ImpProgram statements outVars) = do
+  mapM compileStatement statements
+  vals <- mapM lookupImpVar outVars
+  finalReturn vals
+  decls <- gets scalarDecls
+  blocks <- gets curBlocks
+  return $ CompiledProg vals (makeModule decls blocks)
 
-evalJit :: CompileVal -> L.Module -> IO PersistVal
-evalJit v m =
-  withContext $ \c ->
-    Mod.withModuleFromAST c m $ \m -> do
-      jit c $ \ee ->
-        EE.withModuleInEngine ee m $ \eee -> do
-          fn <- EE.getFunction eee (L.Name "thefun")
-          case fn of
-            Just fn -> do xPtr <- runJitted fn
-                          createPersistVal v xPtr
+compileStatement :: Statement -> CompileM ()
+compileStatement statement = case statement of
+  Alloc v ty shape -> case shape of
+                        [] -> do lv <- alloca ty
+                                 addImpVar v (JitVal lv ty [])
+                        _ -> do shape' <- traverse lookupSize shape
+                                lv <- malloc ty shape'
+                                addImpVar v (JitVal lv ty shape')
+  Copy dest sourceOpnd -> do
+    case sourceOpnd of
+      ImpLit val -> writeLocScalar dest (litVal val)
+      ReadOpnd source -> copy dest source
 
-createPersistVal :: CompileVal -> F.Ptr () -> IO PersistVal
-createPersistVal v ptr = do
-  ptrRef <- newIORef ptr
-  traverse (getNext ptrRef) v
+  Assignment locs b args -> compileBuiltin locs b args
+  -- Loop Index Size [Statement]  deriving (Show)
 
-getNext :: IORef (F.Ptr ()) -> Operand -> IO PWord
-getNext ref op = do
-  ptr <- readIORef ref
-  val <- peek (castPtr ptr :: F.Ptr Word64)
-  let b = opBaseType op
-  writeIORef ref (plusPtr ptr 8)
-  return $ if opIsPtr op
-                then PPtr    b (wordPtrToPtr (fromIntegral val))
-                else PScalar b val
+finalReturn :: [CompileVal] -> CompileM ()
+finalReturn vals = do
+  voidPtr <- evalInstr charPtrTy (externCall mallocFun [litInt numBytes])
+  outPtr <- evalInstr intPtrTy $ L.BitCast voidPtr intPtrTy []
+  sequence $ zipWith (writeComponent outPtr) vals [0..]
+  finishBlock (L.Ret (Just outPtr) []) (L.Name "")
+  where numBytes = 8 * length vals
+        writeComponent :: Operand -> CompileVal -> Int -> CompileM ()
+        writeComponent ptr (JitVal cell _ []) i = do
+          x <- readCell cell
+          ptr' <- evalInstr intPtrTy $ L.GetElementPtr False ptr [litInt i] []
+          store ptr' x
 
-opIsPtr :: Operand -> Bool
-opIsPtr op = case op of
-  Op.LocalReference  (L.PointerType _ _) _ -> True
-  Op.LocalReference  (L.IntegerType _  ) _ -> False
-  Op.ConstantOperand (C.Int _ _)           -> False
-  Op.ConstantOperand (C.IntToPtr _ _)      -> True
+finishBlock :: L.Terminator -> L.Name -> CompileM ()
+finishBlock term newName = do
+  oldName <- gets blockName
+  instrs  <- gets curInstrs
+  let newBlock = L.BasicBlock oldName (reverse instrs) (L.Do term)
+  modify $ setCurBlocks (newBlock:)
+         . setCurInstrs (const [])
+         . setBlockName (const newName)
 
-opBaseType :: Operand -> BaseType
-opBaseType op = case op of
-  Op.LocalReference  (L.PointerType (L.IntegerType _) _) _ -> IntType
-  Op.LocalReference  (L.IntegerType _) _ -> IntType
-  Op.ConstantOperand (C.Int _ _)         -> IntType
-  Op.ConstantOperand (C.IntToPtr _ _)    -> IntType
-  _ -> error $ "Can't find type of " ++ show op
+freshName :: CompileM L.Name
+freshName = do i <- gets nameCounter
+               modify (\state -> state {nameCounter = i + 1})
+               return $ L.UnName (fromIntegral i)
 
-makeModule :: [Block] -> L.Module
-makeModule blocks = mod
+locPtr :: Loc -> CompileM Operand
+locPtr = undefined
+
+readLocScalar :: Loc -> CompileM Operand
+readLocScalar = undefined
+
+writeLocScalar :: Loc -> Operand -> CompileM ()
+writeLocScalar (Loc v []) x = do JitVal cell _ [] <- lookupImpVar v
+                                 writeCell cell x
+
+readCell :: Cell -> CompileM Operand
+readCell (Cell ptr ty) = load ptr ty
+
+writeCell :: Cell -> Operand -> CompileM ()
+writeCell (Cell ptr _) x = store ptr x
+
+litVal :: LitVal -> Operand
+litVal lit = case lit of
+  IntLit  x -> L.ConstantOperand $ C.Int 64 (fromIntegral x)
+  RealLit x -> L.ConstantOperand $ C.Float (L.Double x)
+
+litInt :: Int -> Operand
+litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
+
+copy :: Loc -> Loc -> CompileM ()
+copy = undefined
+
+store :: Operand -> Operand -> CompileM ()
+store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
+
+load :: Operand -> L.Type -> CompileM Operand
+load ptr ty = evalInstr ty $ L.Load False ptr Nothing 0 []
+
+evalInstr :: L.Type -> Instruction -> CompileM Operand
+evalInstr ty instr = do v <- freshName
+                        addInstr $ v L.:= instr
+                        return $ L.LocalReference ty v
+
+alloca :: BaseType -> CompileM Cell
+alloca ty = do v <- freshName
+               modify $ setScalarDecls ((v L.:= instr):)
+               return $ Cell (L.LocalReference (L.ptr lTy) v) lTy
+  where lTy = scalarTy ty
+        instr = L.Alloca lTy Nothing 0 []
+
+malloc :: BaseType -> [Cell] -> CompileM Cell
+malloc = undefined
+
+addImpVar :: Var -> CompileVal -> CompileM ()
+addImpVar v val = modify $ setImpVarEnv (M.insert v val)
+
+addInstr :: Named Instruction -> CompileM ()
+addInstr instr = modify $ setCurInstrs (instr:)
+
+lookupImpVar :: Var -> CompileM CompileVal
+lookupImpVar v = gets $ unJust . M.lookup v . impVarEnv
+
+lookupSize :: Size -> CompileM Cell
+lookupSize = undefined
+
+compileBuiltin :: [Loc] -> Builtin -> [Opnd] -> CompileM ()
+compileBuiltin [Loc dest []] Add [ReadOpnd (Loc x []), ReadOpnd (Loc y [])] = do
+  JitVal dest' _ [] <- lookupImpVar dest
+  JitVal x' _ [] <- lookupImpVar x
+  JitVal y' _ [] <- lookupImpVar y
+  x'' <- readCell x'
+  y'' <- readCell y'
+  let instr = L.Add False False x'' y'' []
+  v <- freshName
+  addInstr (v L.:= instr)
+  writeCell dest' (L.LocalReference longTy v)
+
+scalarTy :: BaseType -> L.Type
+scalarTy ty = case ty of IntType  -> longTy
+                         RealType -> realTy
+
+doubleFun  = ExternFunSpec "doubleit"      longTy [longTy] ["x"]
+randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
+randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
+hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
+mallocFun  = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
+memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
+                                                   ["dest", "src", "nbytes"]
+
+
+charPtrTy = L.ptr (L.IntegerType 8)
+intPtrTy = L.ptr longTy
+longTy = L.IntegerType 64
+realTy = L.FloatingPointType L.DoubleFP
+
+funTy :: L.Type -> [L.Type] -> L.Type
+funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
+
+makeModule :: [NInstr] -> [BasicBlock] -> Module
+makeModule decls (fstBlock:blocks) = mod
   where
+    L.BasicBlock name instrs term = fstBlock
+    fstBlock' = L.BasicBlock name (decls ++ instrs) term
     mod = L.defaultModule { L.moduleName = "test"
                           , L.moduleDefinitions =
-                              [ externDecl doubleFun
-                              , externDecl mallocFun
-                              , externDecl memcpyFun
-                              , externDecl hashFun
-                              , externDecl randFun
-                              , externDecl randIntFun
-                              , L.GlobalDefinition fundef] }
+                                L.GlobalDefinition fundef
+                              : map externDecl
+                                  [doubleFun, mallocFun, memcpyFun,
+                                   hashFun, randFun, randIntFun]
+                          }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
                                 , L.returnType  = longTy
-                                , L.basicBlocks = blocks }
+                                , L.basicBlocks = (fstBlock':blocks) }
+
+externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
+externCall (ExternFunSpec fname retTy argTys _) args =
+  L.Call Nothing L.C [] fun args' [] []
+  where fun = Right $ L.ConstantOperand $ C.GlobalReference
+                         (funTy retTy argTys) (L.Name fname)
+        args' = [(x ,[]) | x <- args]
 
 externDecl :: ExternFunSpec -> L.Definition
 externDecl (ExternFunSpec fname retTy argTys argNames) =
@@ -231,424 +280,8 @@ externDecl (ExternFunSpec fname retTy argTys argNames) =
   , L.basicBlocks = []
   }
 
-runCompileM :: CompileEnv -> CompileM a -> Except (a, [Block])
-runCompileM env m = do
-  (val, CompileState _ blocks [] [] _) <- runStateT (runReaderT m env) initState
-  return $ (val, reverse blocks)
-  where initState = CompileState 0 [] [] [] (L.Name "main_block")
-
-runJitted :: FunPtr a -> IO (F.Ptr ())
-runJitted fn = haskFun (castFunPtr fn :: FunPtr (IO (F.Ptr ())))
-
-jit :: Context -> (EE.MCJIT -> IO a) -> IO a
-jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
-
-compileModule :: Expr -> CompileM CompileVal
-compileModule expr = do val <- compile expr
-                        finalReturn val
-                        return val
-
-compile :: Expr -> CompileM CompileVal
-compile expr = case expr of
-  Lit x -> return (litVal x)
-  Var v -> asks $ fst . (! v) . lEnv
-  Let p bound body -> do x <- compile bound
-                         local (setLEnv $ addLocals (bindPat p x)) (compile body)
-  For a body -> do let (v, TypeVar n) = a
-                   (TabType _ bodyTy) <- exprType expr
-                   compileFor v n bodyTy body
-  Get e ie -> do x <- compile e
-                 IdxVal _ i <- asks $ fst . (! ie) . lEnv
-                 compileGet x i
-  RecCon r -> liftM RecVal (traverse compile r)
-  -- Unpack ty bound body -> do
-  --   ExPackage i x <- compile bound
-  --   isets <- asks (bVars . tEnv)
-  --   let updateEnv = setLEnv (addBVar (x, JitType isets ty)) . setTEnv (addBVar i)
-  --   local updateEnv (compile body)
-  BuiltinApp b ts args -> compileBuiltin b ts args
-
-withEnv :: CompileEnv -> CompileM a -> CompileM a
-withEnv env = local (const env)
-
-exprType :: Expr -> CompileM Type
-exprType expr = undefined -- do
-  -- env <- asks asTypeEnv
-  -- isets <- asks (bVars . tEnv)
-  -- return $ JitType isets $ getType env expr
-
-asTypeEnv :: FullEnv (JitVal w, Type) w -> FullEnv Type Kind
-asTypeEnv (FullEnv lenv tenv) = FullEnv (fmap snd lenv)
-                                        (fmap (const IdxSetKind) tenv)
-
-bindPat :: Pat -> CompileVal -> [(Var, (CompileVal, Type))]
-bindPat = undefined
--- bindPat (RecTree r) (RecVal r') = concat $ zipWith bindPat (toList r) (toList r')
--- bindPat (RecLeaf l) x = [x]
-
-compileFor :: Var -> Var -> Type -> Expr -> CompileM CompileVal
-compileFor v n bodyTy forBody = do
-  n' <- asks $ (!n) . tEnv
-  tab <- newTable bodyTy n'
-  let body iPtr = do i <- loadCell iPtr
-                     let updateEnv = setLEnv $ addLocal (v, (IdxVal n' i, TypeVar n))
-                     bodyVal <- local updateEnv $ compile forBody
-                     writeTable tab i bodyVal
-  addForILoop n' body
-  return $ TabVal tab
-
-
-compileGet :: CompileVal -> Index -> CompileM CompileVal
-compileGet (TabVal tab) i = readTable tab i
-
-litVal :: LitVal -> CompileVal
-litVal lit = case lit of
-  IntLit  x -> ScalarVal IntType  $ L.ConstantOperand $ C.Int 64 (fromIntegral x)
-  RealLit x -> ScalarVal RealType $ L.ConstantOperand $ C.Float (L.Double x)
-
--- --- utilities ---
-
-addLoop :: CompileM Long -> CompileM a -> CompileM a
-addLoop cond body = do block <- newBlock  -- TODO: handle zero iters case
-                       val <- body
-                       c <- cond
-                       maybeLoop c block
-                       return val
-
-newBlock :: CompileM L.Name
-newBlock = do next <- freshName
-              finishBlock (L.Br next []) next
-              return next
-
-maybeLoop :: Long -> L.Name -> CompileM ()
-maybeLoop c loop = do next <- freshName
-                      finishBlock (L.CondBr c loop next []) next
-
-addForILoop :: Long -> (CPtr -> CompileM a) -> CompileM a
-addForILoop n body = do
-  i <- newIntCell 0
-  let cond  = loadCell i >>= (`lessThan` n)
-      body' = body i <* inc i
-  addLoop cond body'
-  where inc i = updateCell i $ add (litInt 1)
-
-unpackConsTuple :: Int -> CompileVal -> [CompileVal]
-unpackConsTuple n v = reverse $ recur n v
-  where recur 0 _ = []
-        recur n (RecVal (Tup [xs, x])) = x : recur (n-1) xs
-
-asConsTuple :: [JitVal a] -> JitVal a
-asConsTuple = recur . reverse
-  where recur []     = RecVal (Tup [])
-        recur (x:xs) = RecVal (Tup [recur xs, x])
-
-compileBuiltin :: Builtin -> [Type] -> Expr -> CompileM CompileVal
-compileBuiltin b ts arg = do
-  arg <- compile arg
-  (builtinRule b) ts $ unpackConsTuple (numArgs b) arg
--- compileBuiltin FoldDeFunc ts [Lam p lamBody, arg] = do
---   arg <- compile arg
---   let [env, init, TabVal tab@(Table ptr n sizes valTy)] = unpackConsTuple 3 arg
---   mutVal <- newGenCell init
---   let body iPtr = do i <- loadCell iPtr
---                      next <-readTable tab i
---                      carry <- loadGenCell mutVal
---                      carry' <- compileApp $ RecVal $ Tup [env, next, carry]
---                      writeGenCell mutVal carry'
---   addForILoop n body
---   loadGenCell mutVal
-
-  -- where compileApp :: CompileVal -> CompileM CompileVal
-  --       compileApp x = local (setLEnv $ addBVars (bindPat p x)) (compile lamBody)
-
-builtinRule :: Builtin -> CompileApp
-builtinRule b = case b of
-  Add      -> compileBinop (\x y -> L.Add False False x y [])
-  Mul      -> compileBinop (\x y -> L.Mul False False x y [])
-  Sub      -> compileBinop (\x y -> L.Sub False False x y [])
-  Iota     -> compileIota
-  Doubleit -> externalMono doubleFun  IntType
-  Hash     -> externalMono hashFun    IntType
-  Rand     -> externalMono randFun    RealType
-  Randint  -> externalMono randIntFun IntType
-
--- TODO: add var decls
-finalReturn :: CompileVal -> CompileM ()
-finalReturn val = do
-  let components = toList val
-      numBytes = 8 * length components
-  voidPtr <- evalInstr charPtrTy (externCall mallocFun [litInt numBytes])
-  outPtr <- evalInstr intPtrTy $ L.BitCast voidPtr intPtrTy []
-  sequence $ zipWith (writeComponent outPtr) components [0..]
-  finishBlock (L.Ret (Just outPtr) []) (L.Name "")
-
-writeComponent :: Operand -> Operand -> Int -> CompileM ()
-writeComponent ptr x i = do
-  ptr' <- evalInstr intPtrTy $ L.GetElementPtr False ptr [litInt i] []
-  writeCell (Ptr ptr') x
-
-appendInstr :: Instr -> CompileM ()
-appendInstr instr = modify updateState
-  where updateState state = state {curInstrs = instr : curInstrs state}
-
-freshName :: CompileM L.Name
-freshName = do i <- gets nameCounter
-               modify (\state -> state {nameCounter = i + 1})
-               return $ L.UnName (fromIntegral i)
-
-finishBlock :: L.Terminator -> L.Name -> CompileM ()
-finishBlock term newName = do
-  CompileState count blocks instrs decls oldName <- get
-  let newBlock = L.BasicBlock oldName (reverse instrs) (L.Do term)
-  put $ CompileState count (newBlock:blocks) [] decls newName
-
-evalInstr :: L.Type -> L.Instruction -> CompileM Operand
-evalInstr ty instr = do
-  x <- freshName
-  appendInstr $ x L.:= instr
-  return $ L.LocalReference ty x
-
-litInt :: Int -> Long
-litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
-
-add :: Long -> Long -> CompileM Long
-add x y = evalInstr longTy $ L.Add False False x y []
-
-sumLongs :: [Long] -> CompileM Long
-sumLongs xs = foldM add (litInt 0) xs
-
-mul :: Long -> Long -> CompileM Long
-mul x y = evalInstr longTy $ L.Mul False False x y []
-
-newIntCell :: Int -> CompileM CPtr
-newIntCell x = do
-  ptr <- liftM Ptr $ evalInstr intPtrTy $
-           L.Alloca longTy Nothing 0 [] -- TODO: add to top block!
-  writeCell ptr (litInt x)
-  return ptr
-
-loadCell :: CPtr -> CompileM Long
-loadCell (Ptr ptr) =
-  evalInstr longTy $ L.Load False ptr Nothing 0 []
-
-writeCell :: CPtr -> Long -> CompileM ()
-writeCell (Ptr ptr) x =
-  appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
-
-updateCell :: CPtr -> (Long -> CompileM Long) -> CompileM ()
-updateCell ptr f = loadCell ptr >>= f >>= writeCell ptr
-
-
-newGenCell :: CompileVal -> CompileM CPtr
-newGenCell (ScalarVal IntType x)  = do
-  ptr <- liftM Ptr $ evalInstr intPtrTy $
-           L.Alloca longTy Nothing 0 [] -- TODO: add to top block!
-  writeGenCell ptr (ScalarVal IntType x)
-  return ptr
-
-loadGenCell :: CPtr -> CompileM CompileVal
-loadGenCell (Ptr ptr) =
-  liftM (ScalarVal IntType) $ evalInstr longTy $ L.Load False ptr Nothing 0 []
-
-writeGenCell :: CPtr -> CompileVal -> CompileM ()
-writeGenCell (Ptr ptr) (ScalarVal IntType x) =
-  appendInstr $ L.Do $ L.Store False ptr x Nothing 0 []
-
-updateGenCell :: CPtr -> (CompileVal -> CompileM CompileVal) -> CompileM ()
-updateGenCell ptr f = loadGenCell ptr >>= f >>= writeGenCell ptr
-
-
-newTable :: Type -> NumElems -> CompileM CTable
-newTable ty n = do
-  let (scalarSize, scalarTy) = baseTypeInfo ty
-  numScalars <- getNumScalars ty
-  elemSize <- mul (litInt scalarSize) numScalars
-  (numBytes) <- mul n elemSize
-  voidPtr <- evalInstr charPtrTy (externCall mallocFun [numBytes])
-  ptr <- evalInstr (L.ptr scalarTy) $ L.BitCast voidPtr (L.ptr scalarTy) []
-  return $ Table (Ptr ptr) n (ConstSize numScalars) ty
-
-baseTypeInfo :: Type -> (Int, L.Type)
-baseTypeInfo ty = case ty of
-  BaseType b -> case b of IntType  -> (8, longTy)
-                          RealType -> (8, realTy)
-  TabType _ valTy -> baseTypeInfo valTy
-
-getNumScalars :: Type -> CompileM Long
-getNumScalars ty = case ty of
-  BaseType _ -> return $ litInt 1
-  -- TabType (TypeVar (BV i)) valTy -> do n <- getNumScalars (JitType ns valTy)
-  --                                      mul (ns !! i) n
-  RecType r -> mapM getNumScalars (toList r) >>= sumLongs
-  _ -> error $ show ty
-
-readTable :: CTable -> Index -> CompileM CompileVal
-readTable tab@(Table _ _ _ valTy) idx = do
-  ptr <- arrayPtr tab idx
-  case valTy of
-    BaseType IntType -> do ans <- loadCell ptr
-                           return $ ScalarVal IntType ans
-    -- TabType (TypeVar (BV i)) valTy' -> do
-    --   numScalars <- getNumScalars valTy'
-    --   return $ TabVal (Table ptr (ns!!i) (ConstSize numScalars) valTy')
-
-writeTable :: CTable -> Index -> CompileVal -> CompileM ()
-writeTable tab idx val = do
-  (Ptr dest) <- arrayPtr tab idx
-  case val of
-    ScalarVal IntType val' -> writeCell (Ptr dest) (val')
-    TabVal (Table (Ptr src) n (ConstSize numScalars) ty) -> do
-      let (scalarSize, _) = baseTypeInfo ty
-      elemSize <- mul (litInt scalarSize) numScalars
-      numBytes <- mul n elemSize
-      appendInstr $ L.Do (externCall memcpyFun [dest, src, numBytes])
-
-arrayPtr :: CTable -> Index -> CompileM CPtr
-arrayPtr (Table (Ptr ptr) _ (ConstSize size) _) idx = do
-  (offset) <- mul size idx
-  liftM Ptr $ evalInstr charPtrTy $ L.GetElementPtr False ptr [offset] []
-
-lessThan :: Long -> Long -> CompileM Long
-lessThan (x) (y) = evalInstr longTy $ L.ICmp L.SLT x y []
-
-charPtrTy = L.ptr (L.IntegerType 8)
-intPtrTy = L.ptr longTy
-longTy = L.IntegerType 64
-realTy = L.FloatingPointType L.DoubleFP
-
-funTy :: L.Type -> [L.Type] -> L.Type
-funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
-
-externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys _) args =
-  L.Call Nothing L.C [] fun args' [] []
-  where fun = Right $ L.ConstantOperand $ C.GlobalReference
-                         (funTy retTy argTys) (L.Name fname)
-        args' = [(x ,[]) | x <- args]
-
-mallocFun = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
-memcpyFun = ExternFunSpec "memcpy_cod" L.VoidType
-               [charPtrTy, charPtrTy, longTy]
-               ["dest", "src", "nbytes"]
-
--- --- builtins ---
-
-externalMono :: ExternFunSpec -> BaseType -> CompileApp
-externalMono f@(ExternFunSpec name retTy _ _) baseTy [] args =
-  liftM (ScalarVal baseTy) $ evalInstr retTy (externCall f args')
-  where args' = map asOp args
-        asOp :: CompileVal -> L.Operand
-        asOp (ScalarVal _ op) = op
-
-compileDoubleit :: CompileApp
-compileDoubleit [] [ScalarVal IntType x] =
-  liftM (ScalarVal IntType) $ evalInstr longTy (externCall doubleFun [x])
-
-doubleFun  = ExternFunSpec "doubleit"      longTy [longTy] ["x"]
-randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
-randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
-hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
-
-compileIota :: CompileApp
-compileIota [] [ScalarVal b n] = do
-  tab@(Table ptr _ _ _) <- newTable (BaseType IntType) n
-  let body iPtr = do (i) <- loadCell iPtr
-                     writeTable tab i (ScalarVal IntType i)
-  addForILoop n body
-  return $ ExPackage n (TabVal tab)
-
-compileBinop :: (Operand -> Operand -> L.Instruction) -> CompileApp
-compileBinop makeInstr [] [ScalarVal _ x, ScalarVal _ y] =
-  liftM (ScalarVal IntType) $ evalInstr longTy (makeInstr x y)
-
--- --- printing ---
-
-data RectTable a = RectTable [Int] [a]  deriving (Show)
-data PrintSpec = PrintSpec { manualAlign :: Bool }
-defaultPrintSpec = PrintSpec True
-
-printPersistVal :: PersistVal -> IO String
-printPersistVal (ScalarVal b x) = case x of
-  PScalar _ x   -> return $ show x
-printPersistVal (TabVal tab) = do
-  rTab <- makeRectTable tab
-  return $ showRectTable rTab
-
-makeRectTable :: Table PWord -> IO (RectTable Int64)
-makeRectTable (Table (Ptr (PPtr IntType voidPtr))
-              (PScalar IntType numElems) elemSize valTy) = do
-  vect <- mapM (peekElemOff ptr) [0.. (product shape - 1)]
-  return $ RectTable shape vect
-  where shape = fromIntegral numElems : shapeOf valTy
-        ptr = castPtr voidPtr :: F.Ptr Int64
-
-shapeOf :: Type -> [Int]
-shapeOf ty = undefined -- case ty of
-  -- TabType (Meta (PScalar IntType size)) val -> fromIntegral size : shapeOf val
-  -- BaseType _ -> []
-
-idxProduct :: [Int] -> [[Int]]
-idxProduct [] = [[]]
-idxProduct (dim:shape) = [i:idxs | i <- [0 .. dim-1], idxs <- idxProduct shape]
-
-showRectTable :: Show a => RectTable a -> String
-showRectTable (RectTable shape vect) = alignCells rows
-  where rows = [ (map show idxs) ++ [show val]
-               | (idxs, val) <- zip (idxProduct shape) vect]
-
-alignCells :: [[String]] -> String
-alignCells rows = unlines $ if manualAlign defaultPrintSpec
-  then let colLengths = map maxLength (transpose rows)
-           rows' = map padRow rows
-           padRow = zipWith (padLeft ' ') colLengths
-       in map (intercalate " ") rows'
-  else map (intercalate "\t") rows
-
-maxLength :: [String] -> Int
-maxLength = foldr (\x y -> max (length x) y) 0
-
-instance Functor JitVal where
-  fmap = fmapDefault
-
-instance Foldable JitVal where
-  foldMap = foldMapDefault
-
-instance Traversable JitVal where
-  traverse f val = case val of
-    ScalarVal ty x -> liftA (ScalarVal ty) (f x)
-    IdxVal size idx -> liftA2 IdxVal (f size) (f idx)
-    TabVal (Table (Ptr p) n (ConstSize size) ty) -> liftA TabVal $
-        (Table <$> liftA Ptr (f p)
-               <*> f n
-               <*> liftA ConstSize (f size)
-               <*> pure ty )
-    RecVal r -> liftA RecVal $ traverse (traverse f) r
-    ExPackage size val -> liftA2 ExPackage (f size) (traverse f val)
-
-traverseJitEnv :: Applicative f => (a -> f b) -> JitEnv a -> f (JitEnv b)
-traverseJitEnv f env =
-  liftA2 FullEnv (traverse (\(v,t) -> liftA2 (,) (traverse f v) (pure t)) $ lEnv env)
-                 (traverse f $ tEnv env)
-
-makePlot :: PersistVal -> IO ([Float], [Float])
-makePlot (TabVal (Table (Ptr (PPtr IntType voidPtr)) (PScalar IntType n) _ _ )) = do
-  let idxs  = [0.. (fromIntegral n - 1)]
-  vect <- mapM (peekElemOff ptr) idxs
-  return (map fromIntegral idxs,
-          map fromIntegral vect)
-  where ptr = castPtr voidPtr :: F.Ptr Int64
-
-makePlotMat :: PersistVal -> IO [[Float]]
-makePlotMat (TabVal (Table (Ptr (PPtr IntType voidPtr))
-                         (PScalar IntType numRows) _ valTy)) = do
-  let [numCols] = shapeOf valTy
-  vect <- mapM (peekElemOff ptr) [0.. (numRows' * numCols - 1)]
-  return $ reshape numRows' numCols $ (map fromIntegral vect :: [Float])
-  where shape = numRows' : shapeOf valTy
-        ptr = castPtr voidPtr :: F.Ptr Int64
-        numRows' = fromIntegral numRows :: Int
-
-reshape :: Int -> Int -> [a] -> [[a]]
-reshape 0 _ [] = []
-reshape r c xs = let (row, rest) = splitAt c xs
-                 in row : reshape (r-1) c rest
+setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
+setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
+setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
+setImpVarEnv   update state = state { impVarEnv   = update (impVarEnv   state) }
+setBlockName   update state = state { blockName   = update (blockName   state) }

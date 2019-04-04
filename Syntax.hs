@@ -7,7 +7,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                (-->), (==>), Pass (..), strToBuiltin,
                raiseIOExcept, liftExcept, liftErrIO, assertEq, ignoreExcept,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub
+               freeTyVars, maybeSub,
+               -- ImpProgram, Statement (..), ImpOpd (..), Index, Size, ImpBuiltin
               ) where
 
 import Util
@@ -89,21 +90,6 @@ data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
              | Fold | FoldDeFunc Pat Expr
                deriving (Eq, Ord, Show)
 
-data ImpProgram = ImpProgram [Statement]
-
-data Statement = VarAlloc VarName BaseType [Size]
-               | VarFree  VarName
-               | Assignment VarName [Index] ImpBuiltin [Size] [ImpOperand]
-               | Loop Index Size [Statement]
-
-data ImpOperand = ImpLit
-                | ImpVar VarName [Index]
-
-type Index = VarName
-data Size = ConstSize Int | KnownSize VarName
-
-type ImpBuiltin = Builtin
-
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
@@ -165,6 +151,7 @@ data Command expr = Command CmdName expr
 
 data CmdName = EvalExpr | GetType | GetTyped | GetParse | DeFunc
              | GetLLVM  | EvalJit | TimeIt | ShowPersistVal
+             | Imp
              | Plot | PlotMat
                deriving  (Show, Eq)
 

@@ -233,7 +233,7 @@ unify t1 t2 = do
     (RecType r, RecType r')      ->
       case zipWithRecord unify r r' of
              Nothing -> unifyErr
-             Just unifiers -> sequence unifiers >> return ()
+             Just unifiers -> void $ sequence unifiers
     _ -> unifyErr
 
 occursIn :: TempVar -> Type -> Bool

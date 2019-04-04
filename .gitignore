@@ -8,3 +8,4 @@ test-script.cd
 *.out
 *.so
 .stack-work
+garbage.hs

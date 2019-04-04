@@ -1,8 +1,9 @@
 module Imp (impPass, Locs (..), TypedLocs, Size, ImpEnv,
-            Statement (..), ImpProgram (..)) where
+            Statement (..), ImpProgram (..), Opnd (..), Loc (..)) where
 
 import Control.Monad.Reader
 import Control.Monad.State
+import Data.Foldable (toList)
 
 import Syntax
 import Env
@@ -14,12 +15,12 @@ data ImpProgram = ImpProgram [Statement] [Var] deriving (Show)
 
 data Statement = Alloc Var BaseType [Size] -- most-significant last
                | Assignment [Loc] Builtin [Opnd]
-               | Move Loc Opnd
+               | Copy Loc Opnd
                | Loop Index Size [Statement]  deriving (Show)
 
-type Loc = (Var, [Index]) -- most-significant last
+data Loc = Loc Var [Index]  deriving (Show) -- most-significant last
 data Opnd = ReadOpnd Loc | ImpLit LitVal  deriving (Show)
-data Size = FixedSize Opnd | UnknownSize  deriving (Show)
+type Size = Opnd
 type Index = Var
 
 type ImpM a = ReaderT ImpEnv (StateT ImpState (Either Err)) a
@@ -50,15 +51,17 @@ impUnpack _ expr env = do (locs, prog) <- impExprTop env expr
                           return (locs, undefined, prog)
 
 impExprTop :: ImpEnv -> Expr -> Except (TypedLocs, ImpProgram)
-impExprTop env expr = do ((val, ty), ImpState _ [statements]) <- evalImp (toImpType expr)
-                         return ((val, ty), ImpProgram statements [])  -- TODO: add output vars
+impExprTop env expr = do
+  ((val, ty), ImpState _ [statements]) <- evalImpM (toImpType expr)
+  let outVars = map (\(Loc v []) -> v) (toList val)
+  return ((val, ty), ImpProgram (reverse statements) outVars)
   where tempStart = startFresh env
-        evalImp m = runStateT (runReaderT m env) (ImpState tempStart [[]])
+        evalImpM m = runStateT (runReaderT m env) (ImpState tempStart [[]])
 
 toImp :: Locs -> Expr -> ImpM ()
 toImp dests expr = case expr of
   Lit x -> do let RecLeaf dest = dests
-              add $ Move dest (ImpLit x)
+              add $ Copy dest (ImpLit x)
   Var v -> do sources <- asks $ fst . (! v) . lEnv
               move sources dests
   BuiltinApp b ts args -> do args' <- toImpNoDest args
@@ -68,7 +71,7 @@ toImp dests expr = case expr of
                          local update (toImp dests body)
   For b body -> toImpFor dests b body
   Get e ie -> do x <- toImpNoDest e
-                 (RecLeaf (i, [])) <- asks $ fst . (! ie) . lEnv
+                 (RecLeaf (Loc i [])) <- asks $ fst . (! ie) . lEnv
                  move (lookupIdx i x) dests
   RecCon r -> do let RecTree r' = dests
                  void $ sequence $ recZipWith toImp r' r
@@ -96,7 +99,7 @@ toImpBuiltin b (RecLeaf dest) ts args = do
 toImpFor :: Locs -> Binder -> Expr -> ImpM ()
 toImpFor dests (v, TypeVar n) body = do
   idx <- fresh
-  let updateEnv = setLEnv $ addLocal (v, (RecLeaf (idx, []), TypeVar n))
+  let updateEnv = setLEnv $ addLocal (v, (RecLeaf (Loc idx []), TypeVar n))
       addBody = local updateEnv $  toImp (lookupIdx idx dests) body
   startBlock
   addBody
@@ -106,11 +109,11 @@ toImpFor dests (v, TypeVar n) body = do
 
 lookupIdx :: Index -> Locs -> Locs
 lookupIdx idx locs = fmap lookup locs
-  where lookup (v, idxs) = (v, idx:idxs)
+  where lookup (Loc v idxs) = (Loc v (idx:idxs))
 
 move :: Locs -> Locs -> ImpM ()
 move source dest = void $ traverse moveLeaf $ recTreeZip source dest
-  where moveLeaf (s, RecLeaf d) = add $ Move d (ReadOpnd s)
+  where moveLeaf (s, RecLeaf d) = add $ Copy d (ReadOpnd s)
 
 startBlock :: ImpM ()
 startBlock = modify $ setBlocks ([]:)
@@ -129,15 +132,15 @@ alloc :: [Size] -> Type -> ImpM Locs
 alloc sizes ty = case ty of
   BaseType b -> do v <- fresh
                    add $ Alloc v b sizes
-                   return $ RecLeaf (v, [])
+                   return $ RecLeaf (Loc v [])
   TabType (TypeVar n) valTy -> do size <- asks $ (! n) . tEnv
                                   alloc (size:sizes) valTy
   RecType r -> liftM RecTree $ traverse (alloc sizes) r
   Exists t -> error "Can't do existentials yet"
 
 add :: Statement -> ImpM ()
-add s = do curBlock <- gets (head . blocks)
-           modify $ setBlocks ((s:curBlock):)
+add s = do curBlock:rest <- gets blocks
+           modify $ setBlocks (const $ (s:curBlock):rest)
 
 
 bindPat :: Pat -> Locs -> RecTree (Var, TypedLocs)
@@ -159,4 +162,4 @@ setBlocks update state = state { blocks = update (blocks state) }
 -- figure out the max tempvar in the environment.
 -- should probably come up with a better scheme for unique variable names.
 startFresh :: ImpEnv -> Int
-startFresh = undefined
+startFresh _ = 0
