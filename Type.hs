@@ -14,9 +14,9 @@ import Util
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
-getType :: TypeEnv -> Expr -> Type
-getType env expr =
-  ignoreExcept $ evalTypeM env$ getType' False expr
+getType :: FullEnv Type a -> Expr -> Type
+getType (FullEnv lenv _) expr =
+  ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
 
 checkExpr :: TypeEnv -> Expr -> Type -> Except ()
 checkExpr env expr reqTy = do
@@ -28,7 +28,7 @@ evalTypeM env m = runReaderT m env
 
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
-    Lit c        -> return $ litType c
+    Lit c        -> return $ BaseType (litType c)
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
     Let p bound body -> do checkTy (patType p)
@@ -90,8 +90,8 @@ patType :: RecTree (a, Type) -> Type
 patType (RecTree r) = RecType (fmap patType r)
 patType (RecLeaf (_, t)) = t
 
-litType :: LitVal -> Type
-litType v = BaseType $ case v of
+litType :: LitVal -> BaseType
+litType v = case v of
   IntLit  _ -> IntType
   RealLit _ -> RealType
   StrLit  _ -> StrType

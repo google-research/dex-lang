@@ -81,7 +81,7 @@ infer expr = do ty <- freshVar TyKind
 
 check :: UExpr -> Type -> InferM Expr
 check expr reqTy = case expr of
-  ULit c -> do unify (litType c) reqTy
+  ULit c -> do unify (BaseType (litType c)) reqTy
                return (Lit c)
   UVar v -> do ty <- asks $ (! v) . lEnv
                instantiate ty reqTy (Var v)

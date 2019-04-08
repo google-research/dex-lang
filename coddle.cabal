@@ -7,8 +7,8 @@ cabal-version:       >=1.10
 
 executable coddle
   main-is:             coddle.hs
-  other-modules:       Record, Env, Syntax, Type, Inference, JIT, Env,
-                       DeFunc, ParseUtil, Parser, Util, WebOutput
+  other-modules:       Record, Env, Syntax, Type, Inference, Env, JIT, LLVMExec,
+                       DeFunc, ParseUtil, Parser, Util, WebOutput, Imp
   other-extensions:    OverloadedStrings
   build-depends:       base, containers, mtl, QuickCheck, binary, bytestring, HUnit,
                        haskeline, time, tf-random,

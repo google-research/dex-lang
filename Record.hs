@@ -1,7 +1,10 @@
 module Record (Record (..), RecTree (..), recUnionWith,
                zipWithRecord, printRecord, printRecTree,
                RecordPrintSpec (..), defaultRecPrintSpec,
-               typeRecPrintSpec, recZipWith, recTreeZip) where
+               typeRecPrintSpec, recZipWith, recTreeZip, recTreeZipEq,
+               recNameVals, recLookup, RecIdx (..), RecTreeIdx,
+              ) where
+
 
 import Util
 import Data.List (intercalate)
@@ -13,6 +16,9 @@ data Record a = Rec (M.Map String a)
 
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
+
+data RecIdx = RecIdx String | TupIdx Int  deriving (Eq, Show, Ord)
+type RecTreeIdx = [RecIdx]
 
 instance Functor Record where
   fmap = fmapDefault
@@ -49,6 +55,11 @@ recTreeZip :: RecTree a -> RecTree b -> RecTree (a, RecTree b)
 recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
 recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
 
+recTreeZipEq :: RecTree a -> RecTree b -> RecTree (a, b)
+recTreeZipEq (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZipEq r r'
+recTreeZipEq (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
+
+
 instance Show a => Show (Record a) where
   show = printRecord show defaultRecPrintSpec
 
@@ -75,3 +86,9 @@ printRecTree printLeaf tree = case tree of
 
 paren :: String -> String
 paren s = "(" ++ s ++ ")"
+
+recNameVals :: Record a -> [(RecIdx, a)]
+recNameVals = undefined
+
+recLookup :: RecIdx -> Record a -> a
+recLookup = undefined
