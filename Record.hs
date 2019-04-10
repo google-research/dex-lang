@@ -3,6 +3,7 @@ module Record (Record (..), RecTree (..), recUnionWith,
                RecordPrintSpec (..), defaultRecPrintSpec,
                typeRecPrintSpec, recZipWith, recTreeZip, recTreeZipEq,
                recNameVals, recLookup, RecIdx (..), RecTreeIdx,
+               recTreeJoin, unLeaf
               ) where
 
 
@@ -55,10 +56,16 @@ recTreeZip :: RecTree a -> RecTree b -> RecTree (a, RecTree b)
 recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
 recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
 
+recTreeJoin :: RecTree (RecTree a) -> RecTree a
+recTreeJoin (RecLeaf t) = t
+recTreeJoin (RecTree r) = RecTree $ fmap recTreeJoin r
+
 recTreeZipEq :: RecTree a -> RecTree b -> RecTree (a, b)
 recTreeZipEq (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZipEq r r'
 recTreeZipEq (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
 
+unLeaf :: RecTree a -> a
+unLeaf (RecLeaf x) = x
 
 instance Show a => Show (Record a) where
   show = printRecord show defaultRecPrintSpec
@@ -72,7 +79,6 @@ defaultRecPrintSpec = RecordPrintSpec "=" "," "" Nothing
 typeRecPrintSpec    = RecordPrintSpec "::" "," "" Nothing
 
 printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
-printRecord showVal spec (Tup [x]) = error "singleton tuple"
 printRecord showVal spec r = paren $ intercalate (recSep spec) elts
   where showKV (k,v) = k ++ kvSep spec ++ showVal v
         elts = case r of

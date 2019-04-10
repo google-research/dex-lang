@@ -18,7 +18,7 @@ type TempVar = Int
 type VarName = String
 data Var = TempVar TempVar
          | NamedVar VarName
-         | BoundVar Int    deriving (Show, Eq, Ord)
+         | BoundVar Int    deriving (Eq, Ord)
 
 newEnv :: [(VarName, a)] -> Env a
 newEnv xs = undefined -- Env (M.fromList xs) []
@@ -69,3 +69,9 @@ instance Semigroup (Env a) where
 instance Monoid (Env a) where
   mempty = Env mempty mempty
   mappend = (<>)
+
+instance Show Var where
+  show v = case v of
+    TempVar n -> "#" ++ show n
+    NamedVar name -> name
+    BoundVar n -> "BV" ++ show n

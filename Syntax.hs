@@ -39,7 +39,7 @@ data Expr = Lit LitVal
           | TApp Expr [Type]
           | RecCon (Record Expr)
           | BuiltinApp Builtin [Type] Expr
-              deriving (Eq, Ord, Show)
+              deriving (Eq, Ord)
 
 data Type = BaseType BaseType
           | TypeVar Var
@@ -48,7 +48,7 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | Forall [Kind] Type
           | Exists Type
-             deriving (Eq, Ord, Show)
+             deriving (Eq, Ord)
 
 type Binder = (Var, Type)
 type TBinder = (Var, Kind)
@@ -245,6 +245,9 @@ varNames prefixes = map ithName [0..]
         ithName i | i < n     = [prefixes !! i]
                   | otherwise = ithName (mod i n) ++ show (div i n)
 
+lVarNames = varNames ['x'..'z']
+tVarNames = varNames ['a'..'c']
+
 instance Show BaseType where
   show t = case t of
     IntType  -> "Int"
@@ -252,85 +255,56 @@ instance Show BaseType where
     RealType -> "Real"
     StrType  -> "Str"
 
-lVarNames = varNames ['x'..'z']
-tVarNames = varNames ['a'..'c']
-
--- TODO: use these based on kind information
--- iVarNames = varNames ['i'..'k']
--- sVarNames = varNames ['i'..'k']
-
 instance Show LitVal where
   show (IntLit x ) = show x
   show (RealLit x) = show x
   show (StrLit x ) = show x
 
--- instance Show Expr where
---   show = showExpr (0, [])
+instance Show Expr where
+  show expr = case expr of
+    Lit val      -> show val
+    Var v        -> show v
+    Builtin b    -> show b
+    Let p e1 e2  -> paren $ "let " ++ showPat p ++ " = " ++ show e1
+                         ++ " in " ++ show e2
+    Lam p e      -> paren $ "lam " ++ showPat p ++ ": "
+                                   ++ show e
+    App e1 e2    -> paren $ show e1 ++ " " ++ show e2
+    For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ show e
+    Get e ie     -> show e ++ "." ++ show ie
+    RecCon r     -> printRecord show defaultRecPrintSpec r
+    BuiltinApp b ts expr -> paren $ showBuiltin b ++  "[" ++ showTypes ts ++ "] "
+                                   ++ show expr
+    Unpack v i e1 e2 -> paren $ "unpack {" ++ showBinder v
+                         ++ ", " ++ show i ++ "} = " ++ show e1
+      ++ " in " ++ show e2
+    TLam binders expr ->
+      "LAM " ++ spaceSep [show v ++ "::" ++ show k | (v,k) <- binders] ++ ": "
+             ++ show expr
+    TApp expr ts -> show expr ++ "[" ++ showTypes ts ++ "]"
+    where
+       showPat p = printRecTree showBinder p
+       showTypes ts = spaceSep (map show ts)
+       showBuiltin b = case b of
+         FoldDeFunc p expr -> "FoldDeFunc " ++ showPat p ++
+                              "[" ++ show expr ++ "]"
+         _ -> show b
 
--- instance Show Type where
---   show = showType []
+showBinder :: Binder -> String
+showBinder (v, t) = show v ++ "::" ++ show t
 
--- showType :: [Kind] -> Type -> String
--- showType env t = undefined -- case t of
-  -- BaseType b  -> show b
-  -- TypeVar v   -> getName tVarNames depth v
-  -- ArrType a b -> paren $ recur a ++ " -> " ++ recur b
-  -- TabType a b -> recur a ++ "=>" ++ recur b
-  -- RecType r   -> printRecord recur typeRecPrintSpec r
-  -- Forall kinds t -> "A " ++ spaceSep (take (length kinds) tVarNames) ++ ". "
-  --                         ++ showType (kinds ++ env) t
-  -- Exists body -> "E " ++ tVarNames !! depth ++ ". " ++
-  --                showType (IdxSetKind : env) body
-  -- where recur = showType env
-  --       depth = length env
+instance Show Type where
+  show t = case t of
+    BaseType b  -> show b
+    TypeVar v   -> show v
+    ArrType a b -> paren $ show a ++ " -> " ++ show b
+    TabType a b -> show a ++ "=>" ++ show b
+    RecType r   -> printRecord show typeRecPrintSpec r
+    Forall kinds t -> "A " ++ show kinds ++ "." ++ show t
+    Exists body -> "E " ++ show body
 
 spaceSep :: [String] -> String
 spaceSep = intercalate " "
-
--- TODO: fix printing of pattern binders
--- showExpr :: (Int, [Kind]) -> Expr -> String
--- showExpr env@(depth, kinds) expr = undefined -- case expr of
-  -- Lit val      -> show val
-  -- Var v        -> name v
-  -- Builtin b    -> show b
-  -- Let p e1 e2  -> paren $    "let " ++ printPat p ++ " = " ++ recur e1
-  --                         ++ " in " ++ recurWith (length (toList p)) e2
-  -- Lam p e      -> paren $ "lam " ++ printPat p ++ ": "
-  --                                ++ recurWith (length (toList p)) e
-  -- App e1 e2    -> paren $ recur e1 ++ " " ++ recur e2
-  -- For t e      -> paren $ "for " ++ showBinder depth kinds t ++ ": " ++ recurWith 1 e
-  -- Get e ie     -> recur e ++ "." ++ name ie
-  -- RecCon r     -> printRecord recur defaultRecPrintSpec r
-  -- BuiltinApp b ts exprs -> paren $ show b ++ "[" ++ showTypes ts ++ "]"
-  --                                        ++ paren (spaceSep (map recur exprs))
-  -- Unpack _ t e1 e2 -> paren $ "unpack {"
-  --                            ++ showBinder depth kinds t
-  --                            ++ ", " ++ tVarNames !! (length kinds)
-  --                            ++ "} = " ++ recur e1
-  --                            ++ " in " ++ showExpr (depth+1, kinds) e2
-  -- TLam kinds' expr ->
-  --   "LAM " ++ spaceSep (zipWith (\k v -> v ++ "::" ++ show k)
-  --                       kinds' tVarNames) ++ ": "
-  --          ++ showExpr (depth, kinds' ++ kinds) expr
-
-  -- TApp expr ts -> recur expr ++ "[" ++ showTypes ts ++ "]"
-  -- where recur = showExpr env
-  --       showTypes ts = spaceSep (map (showType kinds) ts)
-  --       recurWith n = showExpr (depth + n, kinds)
-  --       showBinder i kinds ty = lVarNames !! i ++ "::" ++ showType kinds ty
-  --       name = getName lVarNames depth
-  --       printPat p = let depth' = depth + length (toList p) - 1
-  --                        show' (i, ty) = showBinder (depth' - i) kinds ty
-  --                    in printRecTree show' (enumerate p)
-
--- getName :: [String] -> Int -> GVar i -> String
--- getName names depth v = case v of
---   FV (NamedVar name) -> name
---   FV (TempVar i) -> "<tmp-" ++ show i ++ ">"
---   BV i -> let i' = depth - i - 1
---           in if i' >= 0
---              then names !! i'
---              else "<BV " ++ show i ++ ">"
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x

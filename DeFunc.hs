@@ -174,7 +174,7 @@ deFuncBuiltin val@(BuiltinLam b ts argVals) args =
 deFuncFold :: [Type] -> [DFVal] -> Expr -> DeFuncM (DFVal, Expr)
 deFuncFold ts [f, init, xs] args = do
   [fTy, initTy, TabType _ xsTy] <- builtinArgTypes 3 args
-  (ans, Lam p body) <- canonicalLamExpr (f, fTy) [(init, initTy), (xs, xsTy)]
+  (ans, p, body) <- canonicalLamExpr (f, fTy) [(init, initTy), (xs, xsTy)]
   return (ans, BuiltinApp (FoldDeFunc p body) ts args)
 
 builtinArgTypes :: Int -> Expr -> DeFuncM [Type]
@@ -183,11 +183,14 @@ builtinArgTypes n expr = do ty <- getExprType expr
 
 -- hard to see how we can avoid needing fresh variables here for the lambda args
 -- maybe pick fresh vars based on what's in the expression already?
-canonicalLamExpr :: TypedDFVal -> [TypedDFVal] -> DeFuncM (DFVal, Expr)
-canonicalLamExpr fTyped@(fval, fType) xsTyped = undefined --do
-  -- let (xs, xsTypes) = unzip xsTyped
-  --     update = setLEnv (addBVars (fTyped:xsTyped))
-  -- -- TODO: this will break if there are any bound vars in fval or xs
-  -- (ans, body) <- local update $ foldM deFuncApp (fval, var 0) (zip xs (map var [1..]))
-  -- let pat = posPat $ map RecLeaf (fType:xsTypes)
-  -- return (ans, Lam pat body)
+canonicalLamExpr :: TypedDFVal -> [TypedDFVal] -> DeFuncM (DFVal, Pat, Expr)
+canonicalLamExpr fTyped@(fval, fType) xsTyped = do
+  let (xs, xsTypes) = unzip xsTyped
+      update = setLEnv (addLocals $ zip freshVars (fTyped:xsTyped))
+  let (fExpr:xsExprs) = map Var freshVars
+  (ans, body) <- local update $ foldM deFuncApp (fval, fExpr) (zip xs xsExprs)
+  let pat = posPat $ map RecLeaf $ zip freshVars (fType:xsTypes)
+  return (ans, pat, body)
+ -- TODO: use actual fresh vars or figure out how to avoid them
+  where freshVars :: [Var]
+        freshVars = [NamedVar ("arg" ++ show i) | i <- [1..]]
