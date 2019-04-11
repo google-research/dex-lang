@@ -33,12 +33,14 @@ import Util
 import Imp
 import LLVMExec
 
+import Debug.Trace
+
 
 -- TODO: figure out whether we actually need type everywhere here
-data Ptr w = Ptr w L.Type
+data Ptr w = Ptr w L.Type  deriving (Show)
 
 data JitVal w = ScalarVal w L.Type
-              | ArrayVal (Ptr w) [w]
+              | ArrayVal (Ptr w) [w]  deriving (Show)
 data Cell = Cell (Ptr Operand) [Operand]
 type CompileVal  = JitVal Operand
 type PersistVal  = JitVal PWord
@@ -128,8 +130,12 @@ compileExpr expr = case expr of
                   _ -> return $ ArrayVal ptr shape
   IGet v i -> do ArrayVal ptr (_:shape) <- compileExpr v
                  ScalarVal i' _ <- lookupIVar i
-                 ptr' <- indexPtr ptr shape i'
-                 return $ ArrayVal ptr' shape
+                 ptr'@(Ptr _ ty) <- indexPtr ptr shape i'
+                 case shape of
+                   [] -> do x <- load ptr'
+                            return $ ScalarVal x ty
+                   _  -> return $ ArrayVal ptr' shape
+
   IBuiltinApp b exprs -> do vals <- mapM compileExpr exprs
                             compileBuiltin b vals
 

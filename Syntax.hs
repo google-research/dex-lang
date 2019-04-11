@@ -5,7 +5,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                Except, Err (..),
                FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                (-->), (==>), Pass (..), strToBuiltin,
-               raiseIOExcept, liftExcept, liftErrIO, assertEq, ignoreExcept,
+               liftExcept, assertEq, ignoreExcept,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub,
                Size, IVar (..), CellVar (..), Statement (..),
@@ -21,15 +21,10 @@ import Data.Traversable
 import Data.List (intercalate, elemIndex, nub)
 import qualified Data.Map as M
 
-import Data.Text.Prettyprint.Doc
-
-
-import System.Console.Haskeline (throwIO, Interrupt (..))
 import Data.Functor.Identity (Identity, runIdentity)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
-
 
 
 data Expr = Lit LitVal
@@ -109,9 +104,9 @@ data IExpr = ILit LitVal
            | IRead CellVar  -- value semantics - no aliasing
            | IGet IExpr Index
            | IBuiltinApp Builtin [IExpr]
-               deriving (Show)
+               deriving (Show, Eq)
 
-data IType = IType BaseType [Size]  deriving (Show)
+data IType = IType BaseType [Size]  deriving (Show, Eq)
 
 data IVar = ILetVar Var RecTreeIdx
           | IFresh Int
@@ -204,12 +199,6 @@ type Except a = Either Err a
 
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
-
-liftErrIO :: Except a -> IO a
-liftErrIO = either raiseIOExcept return
-
-raiseIOExcept :: Err -> IO a
-raiseIOExcept e =print e >> throwIO Interrupt
 
 assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)

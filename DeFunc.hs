@@ -5,6 +5,7 @@ import Env
 import Record
 import Util
 import Type
+import PPrint
 
 import Data.Foldable (toList)
 import Control.Monad
@@ -32,7 +33,7 @@ deFuncCmd :: Command Expr -> DFEnv -> Command Expr
 deFuncCmd (Command cmdName expr) env = case deFuncExprTop env expr of
   Left e -> CmdErr e
   Right (_, expr') -> case cmdName of
-                        DeFunc -> CmdResult $ TextOut $ show expr'
+                        DeFunc -> CmdResult $ TextOut $ pprint expr'
                         _ -> Command cmdName expr'
 deFuncCmd (CmdResult s) _ = CmdResult s
 deFuncCmd (CmdErr e)    _ = CmdErr e

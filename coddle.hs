@@ -13,6 +13,7 @@ import Data.Maybe (catMaybes)
 import Prelude hiding (lookup)
 
 import Syntax
+import PPrint
 import Parser
 import Type
 import Util
@@ -115,7 +116,7 @@ showDeclResult (TopDecl source instr) = do
   case instr of
     EvalCmd (CmdResult r) -> withSource $ case r of TextOut s -> s
                                                     PlotOut _ _ -> "<plot>"
-    EvalCmd (CmdErr e)    -> withSource (show e)
+    EvalCmd (CmdErr e)    -> withSource (pprint e)
     _ -> ""
   where withSource s = source ++ "\n" ++ s ++ "\n\n"
 
