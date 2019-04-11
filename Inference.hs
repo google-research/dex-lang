@@ -13,6 +13,7 @@ import Env
 import Record
 import Util
 import Type
+import PPrint
 
 type Subst   = M.Map TempVar Type
 type TempEnv = M.Map TempVar Kind
@@ -38,8 +39,8 @@ inferTypesCmd (Command cmdName expr) env = case cmdName of
     _ -> case translateExpr expr env of
       Left e -> CmdErr e
       Right (ty, expr') -> case cmdName of
-        GetType ->  CmdResult $ TextOut  $ show ty
-        GetTyped -> CmdResult $ TextOut  $ show expr'
+        GetType ->  CmdResult $ TextOut  $ pprint ty
+        GetTyped -> CmdResult $ TextOut  $ pprint expr'
         -- Plot -> case getType (lEnv ftenv) expr' of
         --           TabType _ (BaseType IntType) -> Command Plot expr'
         --           ty -> CmdErr $ TypeErr $

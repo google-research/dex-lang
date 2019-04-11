@@ -1,10 +1,6 @@
 module Env (Env (..), Var (..), VarName, TempVar, envLookup,
             newEnv, addLocal, addLocals, addTop, isin, (!), locals) where
 
--- module Env (Env (..), GVar (..), VarName (..), ExVar,
---             newEnv, addFVar, addBVar, addBVars,
---             envDiff, isin, (!), fVars, bVars, toDeBruijn, numBound) where
-
 import Data.List (elemIndex)
 import Data.Semigroup
 import Data.Traversable
@@ -18,7 +14,7 @@ type TempVar = Int
 type VarName = String
 data Var = TempVar TempVar
          | NamedVar VarName
-         | BoundVar Int    deriving (Eq, Ord)
+         | BoundVar Int    deriving (Show, Eq, Ord)
 
 newEnv :: [(VarName, a)] -> Env a
 newEnv xs = undefined -- Env (M.fromList xs) []
@@ -69,9 +65,3 @@ instance Semigroup (Env a) where
 instance Monoid (Env a) where
   mempty = Env mempty mempty
   mappend = (<>)
-
-instance Show Var where
-  show v = case v of
-    TempVar n -> "#" ++ show n
-    NamedVar name -> name
-    BoundVar n -> "BV" ++ show n

@@ -8,7 +8,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                raiseIOExcept, liftExcept, liftErrIO, assertEq, ignoreExcept,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub,
-               -- ImpProgram, Statement (..), ImpOpd (..), Index, Size, ImpBuiltin
+               Size, IVar (..), CellVar (..), Statement (..),
+               ImpProgram (..), IExpr (..), IType (..)
               ) where
 
 import Util
@@ -20,11 +21,16 @@ import Data.Traversable
 import Data.List (intercalate, elemIndex, nub)
 import qualified Data.Map as M
 
+import Data.Text.Prettyprint.Doc
+
+
 import System.Console.Haskeline (throwIO, Interrupt (..))
 import Data.Functor.Identity (Identity, runIdentity)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
+
+
 
 data Expr = Lit LitVal
           | Var Var
@@ -39,7 +45,7 @@ data Expr = Lit LitVal
           | TApp Expr [Type]
           | RecCon (Record Expr)
           | BuiltinApp Builtin [Type] Expr
-              deriving (Eq, Ord)
+              deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
           | TypeVar Var
@@ -48,7 +54,7 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | Forall [Kind] Type
           | Exists Type
-             deriving (Eq, Ord)
+             deriving (Eq, Ord, Show)
 
 type Binder = (Var, Type)
 type TBinder = (Var, Kind)
@@ -79,16 +85,43 @@ type IdxExpr = Var
 data LitVal = IntLit  Int
             | RealLit Double
             | StrLit  String
-                 deriving (Eq, Ord)
+                 deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
-                   deriving (Eq, Ord)
+                   deriving (Eq, Ord, Show)
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
              | Sin | Cos | Tan | Iota | Doubleit
              | Hash | Rand | Randint
              | Fold | FoldDeFunc Pat Expr
                deriving (Eq, Ord, Show)
+
+
+data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
+data Statement = Update CellVar [Index] IExpr
+               | ImpLet (IVar, IType) IExpr
+               | Loop Index Size [Statement]
+               | Alloc CellVar IType -- mutable
+                   deriving (Show)
+
+data IExpr = ILit LitVal
+           | IVar IVar
+           | IRead CellVar  -- value semantics - no aliasing
+           | IGet IExpr Index
+           | IBuiltinApp Builtin [IExpr]
+               deriving (Show)
+
+data IType = IType BaseType [Size]  deriving (Show)
+
+data IVar = ILetVar Var RecTreeIdx
+          | IFresh Int
+          | IIdxSetVar Var  deriving (Show, Ord, Eq)
+
+newtype CellVar = CellVar Int  deriving (Show, Ord, Eq)
+
+type Size = IVar
+type Index = IVar
+
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
@@ -165,7 +198,7 @@ data Err = ParseErr String
          | CompilerErr String
          | PrintErr String
          | NotImplementedErr String
-  deriving (Eq)
+  deriving (Eq, Show)
 
 type Except a = Either Err a
 
@@ -198,19 +231,6 @@ instance Traversable Command where
   traverse f (Command cmd expr) = fmap (Command cmd) (f expr)
   traverse f (CmdResult s) = pure $ CmdResult s
 
-instance Show Err where
-  show e = case e of
-    ParseErr s -> s
-    UnificationErr t1 t2 -> ("Type error: can't unify "
-                             ++ t1 ++ " and " ++ t2)
-    TypeErr s -> "Type error: " ++ s
-    InfiniteTypeErr -> "Infinite type"
-    UnboundVarErr v -> "Unbound variable: " ++ show v
-    RepVarPatternErr v -> "Repeated variable in pattern: " ++ show v
-    CompilerErr s -> "Compiler bug! " ++ s
-    NotImplementedErr s -> "Not implemented: " ++ s
-    PrintErr s -> "Print error: " ++ s
-
 instance Semigroup (FullEnv v t) where
   FullEnv x y <> FullEnv x' y' = FullEnv (x<>x') (y<>y')
 
@@ -235,76 +255,6 @@ instance Functor Command where
 
 instance Foldable Command where
   foldMap = foldMapDefault
-
-paren :: String -> String
-paren s = "(" ++ s ++ ")"
-
-varNames :: [Char] -> [String]
-varNames prefixes = map ithName [0..]
-  where n = length prefixes
-        ithName i | i < n     = [prefixes !! i]
-                  | otherwise = ithName (mod i n) ++ show (div i n)
-
-lVarNames = varNames ['x'..'z']
-tVarNames = varNames ['a'..'c']
-
-instance Show BaseType where
-  show t = case t of
-    IntType  -> "Int"
-    BoolType -> "Bool"
-    RealType -> "Real"
-    StrType  -> "Str"
-
-instance Show LitVal where
-  show (IntLit x ) = show x
-  show (RealLit x) = show x
-  show (StrLit x ) = show x
-
-instance Show Expr where
-  show expr = case expr of
-    Lit val      -> show val
-    Var v        -> show v
-    Builtin b    -> show b
-    Let p e1 e2  -> paren $ "let " ++ showPat p ++ " = " ++ show e1
-                         ++ " in " ++ show e2
-    Lam p e      -> paren $ "lam " ++ showPat p ++ ": "
-                                   ++ show e
-    App e1 e2    -> paren $ show e1 ++ " " ++ show e2
-    For t e      -> paren $ "for " ++ showBinder t ++ ": " ++ show e
-    Get e ie     -> show e ++ "." ++ show ie
-    RecCon r     -> printRecord show defaultRecPrintSpec r
-    BuiltinApp b ts expr -> paren $ showBuiltin b ++  "[" ++ showTypes ts ++ "] "
-                                   ++ show expr
-    Unpack v i e1 e2 -> paren $ "unpack {" ++ showBinder v
-                         ++ ", " ++ show i ++ "} = " ++ show e1
-      ++ " in " ++ show e2
-    TLam binders expr ->
-      "LAM " ++ spaceSep [show v ++ "::" ++ show k | (v,k) <- binders] ++ ": "
-             ++ show expr
-    TApp expr ts -> show expr ++ "[" ++ showTypes ts ++ "]"
-    where
-       showPat p = printRecTree showBinder p
-       showTypes ts = spaceSep (map show ts)
-       showBuiltin b = case b of
-         FoldDeFunc p expr -> "FoldDeFunc " ++ showPat p ++
-                              "[" ++ show expr ++ "]"
-         _ -> show b
-
-showBinder :: Binder -> String
-showBinder (v, t) = show v ++ "::" ++ show t
-
-instance Show Type where
-  show t = case t of
-    BaseType b  -> show b
-    TypeVar v   -> show v
-    ArrType a b -> paren $ show a ++ " -> " ++ show b
-    TabType a b -> show a ++ "=>" ++ show b
-    RecType r   -> printRecord show typeRecPrintSpec r
-    Forall kinds t -> "A " ++ show kinds ++ "." ++ show t
-    Exists body -> "E " ++ show body
-
-spaceSep :: [String] -> String
-spaceSep = intercalate " "
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
@@ -385,3 +335,4 @@ instance HasTypeVars Expr where
           recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithB  vs (v,ty) = liftA ((,) v) (recurWithTy vs ty)
+

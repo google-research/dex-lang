@@ -1,5 +1,4 @@
-module Imp (impPass, Size, ImpEnv, IVar, CellVar,
-            Statement (..), ImpProgram (..), IExpr (..), IType (..)) where
+module Imp (impPass,ImpEnv) where
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -10,31 +9,7 @@ import Env
 import Record
 import Util
 import Type
-
-data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
-data Statement = Update CellVar [Index] IExpr
-               | ImpLet (IVar, IType) IExpr
-               | Loop Index Size [Statement]
-               | Alloc CellVar IType -- mutable
-                   deriving (Show)
-
-data IExpr = ILit LitVal
-           | IVar IVar
-           | IRead CellVar  -- value semantics - no aliasing
-           | IGet IExpr Index
-           | IBuiltinApp Builtin [IExpr]
-               deriving (Show)
-
-data IType = IType BaseType [Size]  deriving (Show)
-
-data IVar = ILetVar Var RecTreeIdx
-          | IFresh Int
-          | IIdxSetVar Var  deriving (Show, Ord, Eq)
-
-newtype CellVar = CellVar Int  deriving (Show, Ord, Eq)
-
-type Size = IVar
-type Index = IVar
+import PPrint
 
 type ImpM a = ReaderT ImpEnv (StateT ImpState (Either Err)) a
 type ImpEnv = FullEnv Type ()
@@ -52,7 +27,7 @@ impCmd :: Command Expr -> ImpEnv -> Command ImpProgram
 impCmd (Command cmdName expr) env = case impExprTop env expr of
   Left e -> CmdErr e
   Right (_, prog) -> case cmdName of
-                        Imp -> CmdResult $ TextOut $ show prog
+                        Imp -> CmdResult $ TextOut $ pprint prog
                         _ -> Command cmdName prog
 impCmd (CmdResult s) _ = CmdResult s
 impCmd (CmdErr e)    _ = CmdErr e

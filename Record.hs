@@ -1,7 +1,5 @@
 module Record (Record (..), RecTree (..), recUnionWith,
-               zipWithRecord, printRecord, printRecTree,
-               RecordPrintSpec (..), defaultRecPrintSpec,
-               typeRecPrintSpec, recZipWith, recTreeZip, recTreeZipEq,
+               zipWithRecord, recZipWith, recTreeZip, recTreeZipEq,
                recNameVals, recLookup, RecIdx (..), RecTreeIdx,
                recTreeJoin, unLeaf
               ) where
@@ -13,7 +11,7 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 
 data Record a = Rec (M.Map String a)
-              | Tup [a] deriving (Eq, Ord)
+              | Tup [a] deriving (Eq, Ord, Show)
 
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
@@ -66,32 +64,6 @@ recTreeZipEq (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
 
 unLeaf :: RecTree a -> a
 unLeaf (RecLeaf x) = x
-
-instance Show a => Show (Record a) where
-  show = printRecord show defaultRecPrintSpec
-
-data RecordPrintSpec = RecordPrintSpec { kvSep :: String
-                                       , recSep :: String
-                                       , trailSep :: String
-                                       , order :: Maybe [String]}
-
-defaultRecPrintSpec = RecordPrintSpec "=" "," "" Nothing
-typeRecPrintSpec    = RecordPrintSpec "::" "," "" Nothing
-
-printRecord :: (a -> String) -> RecordPrintSpec -> Record a -> String
-printRecord showVal spec r = paren $ intercalate (recSep spec) elts
-  where showKV (k,v) = k ++ kvSep spec ++ showVal v
-        elts = case r of
-                 Rec m  -> map showKV (M.toList m)
-                 Tup xs -> map showVal xs
-
-printRecTree :: (a -> String) -> RecTree a -> String
-printRecTree printLeaf tree = case tree of
-  RecTree r -> printRecord (printRecTree printLeaf) defaultRecPrintSpec r
-  RecLeaf l -> printLeaf l
-
-paren :: String -> String
-paren s = "(" ++ s ++ ")"
 
 recNameVals :: Record a -> [(RecIdx, a)]
 recNameVals = undefined
