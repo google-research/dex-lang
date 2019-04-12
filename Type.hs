@@ -10,6 +10,7 @@ import Syntax
 import Env
 import Record
 import Util
+import Pass
 
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a

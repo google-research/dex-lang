@@ -31,6 +31,8 @@ import Env
 import Record
 import Util
 import Imp
+import Pass
+
 import LLVMExec
 
 import Debug.Trace
@@ -49,8 +51,7 @@ data CompileState = CompileState { nameCounter :: Int
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
-                                 , impVarEnv  :: M.Map IVar CompileVal
-                                 , impCellEnv :: M.Map CellVar Cell
+                                 , impVarEnv  :: M.Map Var (Either CompileVal Cell)
                                  }
 
 type CompileM a = StateT CompileState (Either Err) a
@@ -90,7 +91,7 @@ jitCmd (Command cmdName prog) env =
 
 toLLVM :: ImpProgram -> env_type -> CompiledProg
 toLLVM prog _ = ignoreExcept $ evalStateT (compileProg prog) initState
-  where initState = CompileState 0 [] [] [] "start_block" mempty mempty
+  where initState = CompileState 0 [] [] [] "start_block" mempty
 
 compileProg :: ImpProgram -> CompileM CompiledProg
 compileProg (ImpProgram statements outExprs) = do
@@ -98,38 +99,39 @@ compileProg (ImpProgram statements outExprs) = do
   vals <- mapM compileExpr outExprs
   finalReturn vals
   decls <- gets scalarDecls
-  blocks <- gets curBlocks
+  blocks <- gets (reverse . curBlocks)
   return $ CompiledProg vals (makeModule decls blocks)
 
 compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
   Update v idxs expr -> do val <- compileExpr expr
-                           cell <- lookupImpCell v
-                           idxs' <- mapM lookupImpVar idxs
+                           cell <- lookupCellVar v
+                           idxs' <- mapM lookupValVar idxs
                            cell' <- idxCell cell idxs'
                            writeCell cell' val
   ImpLet (v, _) expr -> do val <- compileExpr expr
-                           modify $ setImpVarEnv (M.insert v val)
+                           modify $ setImpVarEnv (M.insert v (Left val))
   Alloc v (IType b shape) -> do
-    shape' <- mapM lookupIVar shape
+    shape' <- mapM lookupValVar shape
     cell <- case shape' of [] -> alloca b
                            _ -> malloc b shape'
-    modify $ setImpCellEnv (M.insert v cell)
+    modify $ setImpVarEnv (M.insert v (Right cell))
 
-  Loop i n body -> do n' <- lookupImpVar n
+  Loop i n body -> do n' <- lookupValVar n
                       compileLoop i n' body
+  where unleft (Left x) = x
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of
   ILit v -> return $ ScalarVal (litVal v) (scalarTy (litType v))
-  IVar v -> lookupIVar v
-  IRead v -> do Cell ptr@(Ptr _ ty) shape <- lookupImpCell v
-                case shape of
-                  [] -> do op <- load ptr
-                           return $ ScalarVal op ty
-                  _ -> return $ ArrayVal ptr shape
+  IVar v -> do x <- lookupImpVar v
+               case x of
+                 Left val -> return val
+                 Right (Cell ptr@(Ptr _ ty) shape) -> case shape of
+                    [] -> do { op <- load ptr; return $ ScalarVal op ty }
+                    _ -> return $ ArrayVal ptr shape
   IGet v i -> do ArrayVal ptr (_:shape) <- compileExpr v
-                 ScalarVal i' _ <- lookupIVar i
+                 ScalarVal i' _ <- lookupValVar i
                  ptr'@(Ptr _ ty) <- indexPtr ptr shape i'
                  case shape of
                    [] -> do x <- load ptr'
@@ -139,8 +141,14 @@ compileExpr expr = case expr of
   IBuiltinApp b exprs -> do vals <- mapM compileExpr exprs
                             compileBuiltin b vals
 
-lookupIVar :: IVar -> CompileM CompileVal
-lookupIVar v = gets $ unJust . M.lookup v . impVarEnv
+lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
+lookupImpVar v = gets $ unJust . M.lookup v . impVarEnv
+
+lookupValVar :: Var -> CompileM CompileVal
+lookupValVar v = do { Left val <- lookupImpVar v; return val }
+
+lookupCellVar :: Var -> CompileM Cell
+lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }
 
 indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
 indexPtr (Ptr ptr ty) shape i = do
@@ -170,7 +178,7 @@ finishBlock term newName = do
          . setCurInstrs (const [])
          . setBlockName (const newName)
 
-compileLoop :: IVar -> CompileVal -> [Statement] -> CompileM ()
+compileLoop :: Var -> CompileVal -> [Statement] -> CompileM ()
 compileLoop iVar (ScalarVal n _) body = do
   loopBlock <- freshName
   nextBlock <- freshName
@@ -179,7 +187,7 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  modify $ setImpVarEnv $ M.insert iVar (ScalarVal iVal longTy) -- shadows...
+  modify $ setImpVarEnv $ M.insert iVar (Left $ ScalarVal iVal longTy) -- shadows...
   mapM compileStatement body
   iValInc <- add iVal (litInt 1)
   store i iValInc
@@ -336,15 +344,9 @@ externDecl (ExternFunSpec fname retTy argTys argNames) =
   , L.basicBlocks = []
   }
 
-lookupImpVar :: IVar -> CompileM CompileVal
-lookupImpVar v = gets $ unJust . M.lookup v . impVarEnv
-
-lookupImpCell :: CellVar -> CompileM Cell
-lookupImpCell v = gets $ unJust . M.lookup v . impCellEnv
 
 setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
 setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
 setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
 setImpVarEnv   update state = state { impVarEnv   = update (impVarEnv   state) }
-setImpCellEnv  update state = state { impCellEnv  = update (impCellEnv  state) }
 setBlockName   update state = state { blockName   = update (blockName   state) }

@@ -14,17 +14,15 @@ import Record
 import Util
 import Type
 import PPrint
+import Fresh
+import Pass
 
-type Subst   = M.Map TempVar Type
-type TempEnv = M.Map TempVar Kind
-data InferState = InferState { freshCounter :: Int
-                             , tempEnv :: TempEnv
+type Subst   = M.Map Var Type
+type TempEnv = M.Map Var Kind
+data InferState = InferState { tempEnv :: TempEnv
                              , subst :: Subst }
 
-type InferM a = ReaderT TypeEnv (
-                  StateT InferState (
-                    Either Err)) a
-
+type InferM a = MonadPass TypeEnv InferState a
 type Constraint = (Type, Type)
 
 typePass :: Pass UExpr Expr Type Kind
@@ -56,8 +54,9 @@ inferTypesCmd (CmdErr e)    _ = CmdErr e
 
 -- TODO: check integrity as well
 translateExpr :: UExpr -> TypeEnv -> Except (Type, Expr)
-translateExpr rawExpr (FullEnv lenv tenv) = evalInferM env (inferTop rawExpr)
+translateExpr rawExpr (FullEnv lenv tenv) = evalPass (inferTop rawExpr) env initState
   where env = FullEnv lenv $ fmap (const IdxSetKind) tenv
+        initState = InferState mempty mempty
 
 inferTypesUnpack :: VarName -> UExpr -> TypeEnv -> Except (Type, Kind, Expr)
 inferTypesUnpack v expr env = do
@@ -66,11 +65,6 @@ inferTypesUnpack v expr env = do
     Exists body -> return $ instantiateTVs [TypeVar (NamedVar v)] body
     _ -> throwError $ TypeErr $ "Can't unpack type: " ++ show ty
   return (ty', IdxSetKind, expr')
-
-
-evalInferM :: TypeEnv -> InferM a -> Except a
-evalInferM env m = evalStateT (runReaderT m env) initState
-  where initState = InferState 0 mempty mempty
 
 inferTop :: UExpr -> InferM (Type, Expr)
 inferTop rawExpr = infer rawExpr >>= uncurry generalize
@@ -130,11 +124,11 @@ check expr reqTy = case expr of
                                _ -> throwError $ TypeErr $ show maybeEx
     body' <- recurWith [(v, boundTy)] body reqTy
     idxTy' <- zonk idxTy
-    tv <- case idxTy' of TypeVar (TempVar tv) -> return tv
+    tv <- case idxTy' of TypeVar tv -> return tv
                          _ -> leakErr
     tvs <- tempVarsEnv
     if tv `elem` tvs then leakErr else return ()
-    return $ Unpack (v, boundTy) (TempVar tv) bound' body'
+    return $ Unpack (v, boundTy) tv bound' body'
   where
     leakErr = throwError $ TypeErr "existential variable leaked"
     recurWith p expr ty = local (setLEnv $ addLocals p) (check expr ty)
@@ -162,10 +156,9 @@ splitTab t = case t of
           return (i, v)
 
 freshVar :: Kind -> InferM Type
-freshVar kind = do i <- gets freshCounter
-                   modify $ \s -> s { freshCounter = i + 1 }
-                   modify $ setTempEnv $ M.insert i kind
-                   return (TypeVar (TempVar i))
+freshVar kind = do v <- fresh
+                   modify $ setTempEnv $ M.insert v kind
+                   return (TypeVar v)
 
 freshTy  = freshVar TyKind
 freshIdx = freshVar IdxSetKind
@@ -178,28 +171,26 @@ generalize ty expr = do
   case flexVars of
     [] -> return (ty', expr')
     _  -> do kinds <- mapM getKind flexVars
-             let flexVars' = map TempVar flexVars
-             return (Forall kinds $ abstractTVs flexVars' ty',
-                     TLam (zip flexVars' kinds) expr')
+             return (Forall kinds $ abstractTVs flexVars ty',
+                     TLam (zip flexVars kinds) expr')
   where
-    getKind :: TempVar -> InferM Kind
+    getKind :: Var -> InferM Kind
     getKind v = gets $ unJust . M.lookup v . tempEnv
 
-getFlexVars :: Type -> Expr -> InferM [TempVar]
+getFlexVars :: Type -> Expr -> InferM [Var]
 getFlexVars ty expr = do
   tyVars   <- tempVars ty
   exprVars <- tempVars expr
   envVars  <- tempVarsEnv
   return $ nub $ (tyVars ++ exprVars) \\ envVars
 
-tempVarsEnv :: InferM [TempVar]
+tempVarsEnv :: InferM [Var]
 tempVarsEnv = do Env _ locals <- asks $ lEnv
                  vs <- mapM tempVars (M.elems locals)
                  return (concat vs)
 
-tempVars :: HasTypeVars a => a -> InferM [TempVar]
-tempVars x = liftM (filterTVs . freeTyVars) (zonk x)
-  where filterTVs vs = [v | TempVar v <- vs]
+tempVars :: HasTypeVars a => a -> InferM [Var]
+tempVars x = liftM freeTyVars (zonk x)
 
 instantiate :: Type -> Type -> Expr -> InferM Expr
 instantiate ty reqTy expr = do
@@ -213,7 +204,7 @@ instantiate ty reqTy expr = do
       unify reqTy ty'
       return expr
 
-bind :: TempVar -> Type -> InferM ()
+bind :: Var -> Type -> InferM ()
 bind v t | v `occursIn` t = error $ show (v, t)  -- throwError InfiniteTypeErr
          | otherwise = do modify $ setSubst $ M.insert v t
                           modify $ setTempEnv $ M.delete v
@@ -226,8 +217,8 @@ unify t1 t2 = do
   let unifyErr = throwError $ UnificationErr (show t1') (show t2')
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
-    (t, TypeVar (TempVar v))     -> bind v t
-    (TypeVar (TempVar v), t)     -> bind v t
+    (t, TypeVar v)               -> bind v t
+    (TypeVar v, t)               -> bind v t
     (ArrType a b, ArrType a' b') -> unify a a' >> unify b b'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
     (Exists t, Exists t')        -> unify t t'
@@ -237,20 +228,19 @@ unify t1 t2 = do
              Just unifiers -> void $ sequence unifiers
     _ -> unifyErr
 
-occursIn :: TempVar -> Type -> Bool
-occursIn v t = TempVar v `elem` freeTyVars t
+occursIn :: Var -> Type -> Bool
+occursIn v t = v `elem` freeTyVars t
 
 zonk :: HasTypeVars a => a -> InferM a
 zonk x = subFreeTVs lookupVar x
 
 lookupVar :: Var -> InferM Type
-lookupVar (TempVar v) = do
+lookupVar v = do
   mty <- gets $ M.lookup v . subst
-  case mty of Nothing -> return $ TypeVar (TempVar v)
+  case mty of Nothing -> return $ TypeVar v
               Just ty -> do ty' <- zonk ty
                             modify $ setSubst (M.insert v ty')
                             return ty'
-lookupVar v = return (TypeVar v)
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState
 setSubst update state = state { subst = update (subst state) }

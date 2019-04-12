@@ -12,14 +12,15 @@ import Record
 import Util
 import Type
 import PPrint
+import Pass
+import Fresh
 
-type ImpM a = ReaderT ImpEnv (StateT ImpState (Either Err)) a
+type ImpM a = MonadPass ImpEnv ImpState a
 type ImpEnv = FullEnv Type ()
-data ImpState = ImpState { freshState :: Int
-                         , blocks :: [[Statement]]
-                         , impVarEnv  :: M.Map IVar IType
-                         , impCellEnv :: M.Map CellVar IType
-                         }
+data ImpState = ImpState { blocks :: [[Statement]]
+                         , impEnv :: M.Map Var VarType }
+type IsMutable = Bool
+type VarType = (IsMutable, IType)
 
 impPass :: Pass Expr ImpProgram Type ()
 impPass = Pass
@@ -40,30 +41,27 @@ impUnpack :: VarName -> Expr -> ImpEnv -> Except (Type, (), ImpProgram)
 impUnpack _ expr env = do (locs, prog) <- impExprTop env expr
                           return (locs, undefined, prog)
 
+initState :: ImpState
+initState = ImpState [[]] mempty
 
 checkImpProg :: ImpProgram -> Except ()
-checkImpProg prog = case evalImpM (void $ impProgType prog) of
+checkImpProg prog = case evalPass (void $ impProgType prog) mempty initState of
                       Left (CompilerErr e) -> Left $ CompilerErr $
                                                 "\n" ++ pprint prog ++ "\n" ++ e
                       Right ans -> Right ans
-  where evalImpM m = evalStateT (runReaderT m mempty) initImpState
-
-initImpState :: ImpState
-initImpState = ImpState 0 [[]] mempty mempty
 
 impExprTop :: ImpEnv -> Expr -> Except (Type, ImpProgram)
 impExprTop env expr = do
-  (iexpr, ImpState _ [statements] _ _) <- evalImpM (toImp expr)
+  (iexpr, ImpState [statements] _ ) <- runPass (toImp expr) env initState
   let prog = ImpProgram (reverse statements) (toList iexpr)
   checkImpProg prog
   return (getType env expr, prog)
-  where evalImpM m = runStateT (runReaderT m env) initImpState
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
   Lit x -> return $ RecLeaf (ILit x)
   Var v -> do ty <- exprType expr
-              return $ fmap (IVar . ILetVar v . fst) (flatType ty)
+              return $ fmap (IVar . const v) (flatType ty)  -- TODO: add fields to name
   BuiltinApp b ts args -> do
     args' <- toImp args
     case b of
@@ -78,12 +76,12 @@ toImp expr = case expr of
     return ans
   Get x i -> do xs <- toImp x
                 return $ fmap get xs
-                where get x = IGet x (ILetVar i [])
+                where get x = IGet x i
   For i body -> toImpFor i body
   RecCon r -> liftM RecTree $ traverse toImp r
   Unpack b i bound body -> do
     RecTree (Tup [RecLeaf iset, x]) <- toImp bound
-    addLet (IIdxSetVar i, IType IntType []) iset
+    addLet (i, IType IntType []) iset
     letBind b x
     let updateEnv = setTEnv (addLocal (i, ())) . setLEnv (addLocal b)
     local updateEnv (toImp body)
@@ -92,72 +90,68 @@ toImp expr = case expr of
 toImpFor :: Binder -> Expr -> ImpM (RecTree IExpr)
 toImpFor b@(i, TypeVar n) body = do
   bodyTy <- exprType body
-  let cellTypes = fmap (addIdx n' . snd) (flatType bodyTy)
+  let cellTypes = fmap (addIdx n . snd) (flatType bodyTy)
   cells <- traverse newCell cellTypes
   startBlock
   results <- local (setLEnv $ addLocal b) (toImp body)
-  traverse (\(v,x) -> add $ Update v [i'] x) (recTreeZipEq cells results)
+  traverse (\(v,x) -> add $ Update v [i] x) (recTreeZipEq cells results)
   block <- endBlock
-  add $ Loop i' n' block
-  return $ fmap IRead cells
-  where i' = ILetVar i []
-        n' = IIdxSetVar n
+  add $ Loop i n block
+  return $ fmap IVar cells
 
 impIota :: RecTree IExpr -> ImpM (RecTree IExpr)
 impIota args = do
   n' <- newVar n
   out <- newCell (IType IntType [n'])
-  i <- freshVar
+  i <- fresh
   add $ Loop i n' [Update out [i] (IVar i)]
-  return $ RecTree $ Tup [RecLeaf (IVar n'), RecLeaf (IRead out)]
+  return $ RecTree $ Tup [RecLeaf (IVar n'), RecLeaf (IVar out)]
   where [RecLeaf n] = unpackConsTuple 1 args
 
 impFold :: [Type] -> Pat -> Expr -> RecTree IExpr -> ImpM (RecTree IExpr)
 impFold ts p body args = do
-  i <- freshVar
+  i <- fresh
   accumCells <- traverse (newCell . snd) (flatType accumTy)
   xs' <- traverse newVar xs
   letBind envBinder env
   block <- do
     startBlock
-    letBind accumBinder $ fmap IRead accumCells
+    letBind accumBinder $ fmap IVar accumCells
     letBind xBinder $ fmap (\x -> IGet (IVar x) i) xs'
     newVals <- local (setLEnv $ addLocals p) (toImp body)
     traverse (uncurry writeCell) $ recTreeZipEq accumCells newVals
     endBlock
-  add $ Loop i n' block
-  return $ fmap IRead accumCells
+  add $ Loop i n block
+  return $ fmap IVar accumCells
   where RecTree (Tup (binders)) = p
         [envBinder, accumBinder@(_, accumTy), xBinder] = map unLeaf binders
         [env, init, xs] = unpackConsTuple 3 args
         [_, _, TypeVar n] = ts
-        n' = IIdxSetVar n
 
 letBind :: Binder -> RecTree IExpr -> ImpM ()
 letBind binder@(v,ty) exprs = void $ traverse (uncurry addLet) $ zipped
   where zipped = recTreeZipEq (flatBinding binder) exprs
 
-newVar :: IExpr -> ImpM IVar
-newVar (IVar v) = return v  -- decluttering
+newVar :: IExpr -> ImpM Var
 newVar expr = do t <- impExprType expr
-                 v <- freshVar
+                 v <- fresh
                  addLet (v, t) expr
                  return v
 
-addLet :: (IVar, IType) -> IExpr -> ImpM ()
-addLet (v, ty) expr = do modify $ setImpVarEnv $ M.insert v ty
+addLet :: (Var, IType) -> IExpr -> ImpM ()
+addLet (v, ty) expr = do modify $ setEnv $ M.insert v (False, ty)
                          add $ ImpLet (v, ty) expr
 
-writeCell :: CellVar -> IExpr -> ImpM ()
+writeCell :: Var -> IExpr -> ImpM ()
 writeCell v val = add $ Update v [] val
 
-newCell :: IType -> ImpM CellVar
-newCell ty = do v <- freshCellVar
+newCell :: IType -> ImpM Var
+newCell ty = do v <- fresh
                 add $ Alloc v ty
                 return v
 
-flatBinding :: (Var, Type) -> RecTree (IVar, IType)
-flatBinding (v, ty) = fmap (\(idx, ty) -> (ILetVar v idx, ty)) (flatType ty)
+flatBinding :: (Var, Type) -> RecTree (Var, IType)
+flatBinding (v, ty) = undefined -- fmap (\(idx, ty) -> (ILetVar v idx, ty)) (flatType ty)
 
 addIdx :: Size -> IType -> IType
 addIdx = undefined
@@ -167,7 +161,7 @@ flatType ty = case ty of
   BaseType b -> RecLeaf ([], IType b [])
   RecType r -> RecTree $ fmap flatType r -- TODO: get indices from record
   TabType (TypeVar n) valTy -> fmap f (flatType valTy)
-    where f (idx, IType b shape) = (idx, IType b (IIdxSetVar n : shape))
+    where f (idx, IType b shape) = (idx, IType b (n : shape))
 
 
 exprType :: Expr -> ImpM Type
@@ -182,16 +176,6 @@ endBlock = do cur:rest <- gets blocks
               modify $ setBlocks (const rest)
               return (reverse cur)
 
-freshCellVar :: ImpM CellVar
-freshCellVar = do i <- gets freshState
-                  modify $ setFresh (+ 1)
-                  return (CellVar i)
-
-freshVar :: ImpM IVar
-freshVar = do i <- gets freshState
-              modify $ setFresh (+ 1)
-              return (IFresh i)
-
 add :: Statement -> ImpM ()
 add s = do curBlock:rest <- gets blocks
            modify $ setBlocks (const $ (s:curBlock):rest)
@@ -203,17 +187,14 @@ unpackConsTuple n v = reverse $ recur n v
         recur _ _ = error $ show v ++ "  " ++ show n
 
 setBlocks update state = state { blocks = update (blocks state) }
-setFresh  update state = state { freshState = update (freshState state) }
-setImpVarEnv   update state = state { impVarEnv   = update (impVarEnv   state) }
-setImpCellEnv  update state = state { impCellEnv  = update (impCellEnv  state) }
+setEnv    update state = state { impEnv = update (impEnv state) }
 
 -- === type checking imp programs ===
 
 impExprType :: IExpr -> ImpM IType
 impExprType expr = case expr of
   ILit val -> return $ IType (litType val) []
-  IVar  v -> lookupIVar v
-  IRead v -> lookupCellVar v
+  IVar  v -> liftM snd (lookupVar v)
   IGet e i -> do IType b (_:shape) <- impExprType e
                  checkIsInt i
                  return $ IType b shape
@@ -234,37 +215,33 @@ impProgType (ImpProgram statements exprs) = do
   mapM checkStatementTy statements
   mapM impExprType exprs
 
-lookupIVar :: IVar -> ImpM IType
-lookupIVar v = do x <- gets $ M.lookup v . impVarEnv
-                  case x of Nothing -> throw $ "Unbound variable" ++ pprint v
-                            Just x' -> return x'
-
-lookupCellVar :: CellVar -> ImpM IType
-lookupCellVar v = do x <- gets $ M.lookup v . impCellEnv
-                     case x of Nothing -> throw $ "Unbound cell variable" ++ pprint v
-                               Just x' -> return x'
+lookupVar :: Var -> ImpM VarType
+lookupVar v = do x <- gets $ M.lookup v . impEnv
+                 case x of Nothing -> throw $ "Unbound variable" ++ pprint v
+                           Just x' -> return x'
 
 checkStatementTy :: Statement -> ImpM ()
 checkStatementTy statement = case statement of
-  Update v idxs expr -> do IType b  shape  <- lookupCellVar v
+  Update v idxs expr -> do (mut, IType b  shape ) <- lookupVar v
                            IType b' shape' <- impExprType expr
+                           throwIf (not mut) $ err "Updating immutable variable"
                            throwIf (b /= b') $ err "Base type mismatch"
                            throwIf (drop (length idxs) shape /= shape') $
                                     err "Dimension mismatch"
   ImpLet b@(v,ty) expr -> do ty' <- impExprType expr
                              -- doesn't work without alias checking for sizes
                              -- throwIf (ty' /= ty) $ err "Type doesn't match binder"
-                             modify $ setImpVarEnv $ M.insert v ty
-  Loop i size block -> do modify $ setImpVarEnv $ M.insert i (IType IntType [])
+                             modify $ setEnv $ M.insert v (False, ty)
+  Loop i size block -> do modify $ setEnv $ M.insert i (False, IType IntType [])
                           checkIsInt size
                           void $ mapM checkStatementTy block
   Alloc v ty@(IType b shape) -> do void $ mapM checkIsInt shape
-                                   modify $ setImpCellEnv $ M.insert v ty
+                                   modify $ setEnv $ M.insert v (True, ty)
   where err s = s ++ " " ++ pprint statement
 
 -- TODO: add Except to ImpM for more helpful error reporting
-checkIsInt :: IVar -> ImpM ()
-checkIsInt v = do ty <- lookupIVar v
+checkIsInt :: Var -> ImpM ()
+checkIsInt v = do (_, ty) <- lookupVar v
                   throwIf (ty /= IType IntType []) $ "Not a valid size" ++ pprint ty
 
 throw :: String -> ImpM a

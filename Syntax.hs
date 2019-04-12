@@ -5,10 +5,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                Except, Err (..),
                FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                (-->), (==>), Pass (..), strToBuiltin,
-               liftExcept, assertEq, ignoreExcept,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub,
-               Size, IVar (..), CellVar (..), Statement (..),
+               freeTyVars, maybeSub, Size, Statement (..),
                ImpProgram (..), IExpr (..), IType (..)
               ) where
 
@@ -93,30 +91,21 @@ data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
 
 
 data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
-data Statement = Update CellVar [Index] IExpr
-               | ImpLet (IVar, IType) IExpr
+data Statement = Update Var [Index] IExpr
+               | ImpLet (Var, IType) IExpr
                | Loop Index Size [Statement]
-               | Alloc CellVar IType -- mutable
+               | Alloc Var IType -- mutable
                    deriving (Show)
 
 data IExpr = ILit LitVal
-           | IVar IVar
-           | IRead CellVar  -- value semantics - no aliasing
+           | IVar  Var
            | IGet IExpr Index
            | IBuiltinApp Builtin [IExpr]
                deriving (Show, Eq)
 
 data IType = IType BaseType [Size]  deriving (Show, Eq)
-
-data IVar = ILetVar Var RecTreeIdx
-          | IFresh Int
-          | IIdxSetVar Var  deriving (Show, Ord, Eq)
-
-newtype CellVar = CellVar Int  deriving (Show, Ord, Eq)
-
-type Size = IVar
-type Index = IVar
-
+type Size = Var
+type Index = Var
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
@@ -196,17 +185,6 @@ data Err = ParseErr String
   deriving (Eq, Show)
 
 type Except a = Either Err a
-
-liftExcept :: (MonadError e m) => Either e a -> m a
-liftExcept = either throwError return
-
-assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
-assertEq x y s = if x == y then return () else Left (CompilerErr msg)
-  where msg = s ++ ": " ++ show x ++ " != " ++ show y
-
-ignoreExcept :: Except a -> a
-ignoreExcept (Left e) = error $ show e
-ignoreExcept (Right x) = x
 
 instance Traversable TopDecl where
   traverse f (TopDecl s instr) = fmap (TopDecl s) $ traverse f instr

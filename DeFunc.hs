@@ -5,6 +5,8 @@ import Env
 import Record
 import Util
 import Type
+import Fresh
+import Pass
 import PPrint
 
 import Data.Foldable (toList)
@@ -21,7 +23,7 @@ data DFVal = DFNil
            | BuiltinLam Builtin [Type] [DFVal]
            | RecVal (Record DFVal)  deriving (Show)
 
-type DeFuncM a = Reader DFEnv a
+type DeFuncM a = MonadPass DFEnv () a
 
 deFuncPass :: Pass Expr Expr (DFVal, Type) (Maybe Type)
 deFuncPass = Pass
@@ -47,14 +49,11 @@ localEnv (FullEnv lenv tenv) = FullEnv lenv mempty
 
 deFuncExprTop :: DFEnv -> Expr -> Except (TypedDFVal, Expr)
 deFuncExprTop env expr = do
-  let (val, expr') = evalDeFuncM env (deFuncExpr expr)
-      ty = getType typingEnv expr
+  (val, expr') <- evalPass (deFuncExpr expr) env ()
+  let ty = getType typingEnv expr
   checkExpr typingEnv expr' (deFuncType val ty)
   return ((val, ty), expr')
   where typingEnv = setTEnv (fmap (const IdxSetKind)) $ setLEnv (fmap snd) env
-
-evalDeFuncM :: DFEnv -> DeFuncM a -> a
-evalDeFuncM env m = runReader m env
 
 deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
 deFuncExpr expr = case expr of

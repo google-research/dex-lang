@@ -127,18 +127,9 @@ instance Pretty Statement where
                                nest 4 (hardline <> vcat (map p block))
   pretty (Alloc v ty) = "cell" <+> p (binder (v,ty))
 
-instance Pretty CellVar where
-  pretty (CellVar n) = "c" <> p n
-
-instance Pretty IVar where
-  pretty (ILetVar v idxs) = p v <> cat (punctuate "~" (map p idxs))
-  pretty (IFresh n) = "v" <> p n
-  pretty (IIdxSetVar v) = p v
-
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar v) = p v
-  pretty (IRead v) = p v
   pretty (IGet expr idx) = p expr <> "." <> p idx
   pretty (IBuiltinApp b exprs) = parens $ p b <+> hsep (map p exprs)
 
