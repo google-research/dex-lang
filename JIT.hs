@@ -154,7 +154,7 @@ lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }
 
 indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
 indexPtr (Ptr ptr ty) shape i = do
-  stride <- foldM mul (litInt 8) shape
+  stride <- foldM mul (litInt 1) shape
   n <- mul stride i
   ptr' <- evalInstr "ptr" (L.ptr ty) $ L.GetElementPtr False ptr [n] []
   return (Ptr ptr' ty)
@@ -203,7 +203,7 @@ freshName s = do name <- fresh s
 idxCell :: Cell -> [CompileVal] -> CompileM Cell
 idxCell cell [] = return cell
 idxCell (Cell ptr (_:shape)) (i:idxs) = do
-  size <- numBytes shape
+  size <- sizeOf shape
   step <- mul size (scalarOp i)
   ptr' <- addPtr ptr step
   idxCell (Cell ptr' shape) idxs
@@ -255,15 +255,16 @@ alloca ty s = do v <- freshName s
 
 malloc :: BaseType -> [CompileVal] -> String -> CompileM Cell
 malloc ty shape s = do
-    n <- numBytes shape'
+    size <- sizeOf shape'
+    n <- mul (litInt 8) size
     voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [n])
     ptr <- evalInstr s (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
     return $ Cell (Ptr ptr ty') shape'
   where shape' = map scalarOp shape
         ty' = scalarTy ty
 
-numBytes :: [Operand] -> CompileM Operand
-numBytes shape = foldM mul (litInt 8) shape
+sizeOf :: [Operand] -> CompileM Operand
+sizeOf shape = foldM mul (litInt 1) shape
 
 mul :: Operand -> Operand -> CompileM Operand
 mul x y = evalInstr "mul" longTy $ L.Mul False False x y []

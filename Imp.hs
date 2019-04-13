@@ -116,12 +116,14 @@ impFold ts p body args = do
   accumCells <- traverse (newCell . snd) (flatType accumTy)
   xs' <- traverse newVar xs
   letBind envBinder env
+  let writeCells val = traverse (uncurry writeCell) $ recTreeZipEq accumCells val
+  writeCells init
   block <- do
     startBlock
     letBind accumBinder $ fmap IVar accumCells
     letBind xBinder $ fmap (\x -> IGet (IVar x) i) xs'
     newVals <- local (setLEnv $ addLocals p) (toImp body)
-    traverse (uncurry writeCell) $ recTreeZipEq accumCells newVals
+    writeCells newVals
     endBlock
   add $ Loop i n block
   return $ fmap IVar accumCells

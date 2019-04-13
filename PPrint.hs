@@ -52,6 +52,7 @@ instance Pretty BaseType where
     RealType -> "Real"
     StrType  -> "Str"
 
+-- TODO: this needs to be injective but it's probably not currently
 instance Pretty Var where
   pretty VarRoot = ""
   pretty (Qual var name n) = prefix <> p name <> suffix
