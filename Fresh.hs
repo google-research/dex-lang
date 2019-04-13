@@ -20,16 +20,16 @@ data Var = VarRoot
 
 type FreshState = (Var, M.Map VarName Int)
 newtype FreshT m a = FreshT (StateT FreshState m a)
-    deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
 
 class Monad m => MonadFresh m where
-    fresh :: VarName -> m Var
+  fresh :: VarName -> m Var
 
 instance Monad m => MonadFresh (FreshT m) where
-    fresh s = FreshT $ do stem <- gets $ fst
-                          c <- gets $ getCount s . snd
-                          modify $ updateSnd (M.insert s (c+1))
-                          return $ Qual stem s c
+  fresh s = FreshT $ do stem <- gets $ fst
+                        c <- gets $ getCount s . snd
+                        modify $ updateSnd (M.insert s (c+1))
+                        return $ Qual stem s c
 
 instance MonadFresh m => MonadFresh (StateT s m) where
   fresh s = lift $ fresh s
@@ -38,8 +38,8 @@ instance MonadFresh m => MonadFresh (ReaderT r m) where
   fresh s = lift $ fresh s
 
 instance MonadError e m => MonadError e (FreshT m) where
-    throwError = lift . throwError
-    catchError = undefined
+  throwError = lift . throwError
+  catchError = undefined
 
 runFreshT :: Monad m => FreshT m a -> Var -> m a
 runFreshT (FreshT s) stem = evalStateT s (stem, mempty)

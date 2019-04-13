@@ -106,17 +106,13 @@ subTy ty = do { tenv <- asks tEnv; return $ maybeSub (tenv !) ty }
 
 bindPat :: Pat -> DFVal -> DeFuncM (Pat, RecTree (Var, TypedDFVal))
 bindPat pat val = do
-  zipped <- traverse deFuncBinder (zipPatVal pat val)
+  zipped <- traverse deFuncBinder (recTreeZip pat val)
   return (fmap fst zipped, fmap snd zipped)
 
 deFuncBinder :: (Binder, DFVal) -> DeFuncM (Binder, (Var, TypedDFVal))
 deFuncBinder ((v, ty), val) = do ty' <- subTy ty
                                  return ( (v, deFuncType val ty)
                                         , (v, (val, ty)) )
-
-zipPatVal :: RecTree a -> DFVal -> RecTree (a, DFVal)
-zipPatVal (RecTree r) (RecVal r') = RecTree (recZipWith zipPatVal r r')
-zipPatVal (RecLeaf x) x' = RecLeaf (x, x')
 
 deFuncType :: DFVal -> Type -> Type
 deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
@@ -191,3 +187,7 @@ canonicalLamExpr fTyped@(fval, fType) xsTyped = do
       (fExpr:xsExprs) = map (Var . fst) bindings
   (ans, body) <- local update $ foldM deFuncApp (fval, fExpr) (zip xs xsExprs)
   return (ans, pat, body)
+
+instance RecTreeZip DFVal where
+  recTreeZip (RecTree r) (RecVal r') = RecTree (recZipWith recTreeZip r r')
+  recTreeZip (RecLeaf x) x' = RecLeaf (x, x')

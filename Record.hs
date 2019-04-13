@@ -1,7 +1,7 @@
 module Record (Record (..), RecTree (..), recUnionWith,
-               zipWithRecord, recZipWith, recTreeZip, recTreeZipEq,
+               zipWithRecord, recZipWith, recTreeZipEq,
                recNameVals, recLookup, RecIdx (..), RecTreeIdx,
-               recTreeJoin, unLeaf
+               recTreeJoin, unLeaf, RecTreeZip (..)
               ) where
 
 
@@ -50,17 +50,13 @@ zipWithRecord _ _ _ = Nothing
 
 recZipWith f r r' = unJust (zipWithRecord f r r')
 
-recTreeZip :: RecTree a -> RecTree b -> RecTree (a, RecTree b)
-recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
-recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
-
 recTreeJoin :: RecTree (RecTree a) -> RecTree a
 recTreeJoin (RecLeaf t) = t
 recTreeJoin (RecTree r) = RecTree $ fmap recTreeJoin r
 
 recTreeZipEq :: RecTree a -> RecTree b -> RecTree (a, b)
-recTreeZipEq (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZipEq r r'
-recTreeZipEq (RecLeaf x) (RecLeaf x') = RecLeaf (x, x')
+recTreeZipEq t t' = fmap (appSnd unLeaf) (recTreeZip t t')
+  where appSnd f (x, y) = (x, f y)
 
 unLeaf :: RecTree a -> a
 unLeaf (RecLeaf x) = x
@@ -70,3 +66,10 @@ recNameVals = undefined
 
 recLookup :: RecIdx -> Record a -> a
 recLookup = undefined
+
+class RecTreeZip tree where
+  recTreeZip :: RecTree a -> tree -> RecTree (a, tree)
+
+instance RecTreeZip (RecTree a) where
+  recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
+  recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
