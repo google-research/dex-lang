@@ -11,6 +11,7 @@ import Env
 import Record
 import Util
 import Pass
+import Fresh
 
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a

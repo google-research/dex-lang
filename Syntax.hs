@@ -13,6 +13,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
 import Util
 import Record
 import Env
+import Fresh
+
 import Data.Semigroup
 import Data.Foldable (toList)
 import Data.Traversable
@@ -140,9 +142,9 @@ data FullEnv v t = FullEnv { lEnv :: Env v
                            , tEnv :: Env t }  deriving (Show, Eq)
 
 data Pass a b v t = Pass
-  { lowerExpr   ::            a -> FullEnv v t -> IO (v, b),
-    lowerUnpack :: VarName -> a -> FullEnv v t -> IO (v, t, b),
-    lowerCmd    ::    Command a -> FullEnv v t -> IO (Command b) }
+  { lowerExpr   ::         a -> FullEnv v t -> IO (v, b),
+    lowerUnpack ::  Var -> a -> FullEnv v t -> IO (v, t, b),
+    lowerCmd    :: Command a -> FullEnv v t -> IO (Command b) }
 
 -- these should just be lenses
 setLEnv :: (Env a -> Env b) -> FullEnv a t -> FullEnv b t
@@ -153,8 +155,8 @@ setTEnv update env = env {tEnv = update (tEnv env)}
 
 type Source = String
 data TopDecl expr = TopDecl Source (DeclInstr expr)
-data DeclInstr expr = TopAssign VarName expr
-                    | TopUnpack VarName expr
+data DeclInstr expr = TopAssign Var expr
+                    | TopUnpack Var expr
                     | EvalCmd (Command expr)  deriving (Show, Eq)
 
 data CommandOutput = TextOut String
@@ -177,8 +179,8 @@ data Err = ParseErr String
          | UnificationErr String String
          | TypeErr String
          | InfiniteTypeErr
-         | UnboundVarErr VarName
-         | RepVarPatternErr VarName
+         | UnboundVarErr Var
+         | RepVarPatternErr Var
          | CompilerErr String
          | PrintErr String
          | NotImplementedErr String

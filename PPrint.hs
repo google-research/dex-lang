@@ -11,10 +11,10 @@ import System.Console.Haskeline (throwIO, Interrupt (..))
 import Syntax
 import Env
 import Record
+import Fresh
 
 pprint :: Pretty a => a -> String
-pprint x = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $
-             indent 2 (pretty x)
+pprint x = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ (pretty x)
 
 p :: Pretty a => a -> Doc ann
 p = pretty
@@ -53,10 +53,13 @@ instance Pretty BaseType where
     StrType  -> "Str"
 
 instance Pretty Var where
-  pretty v = case v of
-    TempVar n -> "t" <> p n
-    NamedVar name -> p name
-    BoundVar n -> "BV" <> p n
+  pretty VarRoot = ""
+  pretty (Qual var name n) = prefix <> p name <> suffix
+    where prefix = case var of VarRoot -> ""
+                               _       -> p var <> "_"
+          suffix = case n of 0 -> ""
+                             _ -> "_" <> p n
+  pretty (BoundVar n) = "<BV" <> p n <> ">"
 
 instance Pretty LitVal where
   pretty (IntLit x ) = p x

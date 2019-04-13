@@ -37,7 +37,7 @@ impCmd (Command cmdName expr) env = case impExprTop env expr of
 impCmd (CmdResult s) _ = CmdResult s
 impCmd (CmdErr e)    _ = CmdErr e
 
-impUnpack :: VarName -> Expr -> ImpEnv -> Except (Type, (), ImpProgram)
+impUnpack :: Var -> Expr -> ImpEnv -> Except (Type, (), ImpProgram)
 impUnpack _ expr env = do (locs, prog) <- impExprTop env expr
                           return (locs, undefined, prog)
 
@@ -45,15 +45,17 @@ initState :: ImpState
 initState = ImpState [[]] mempty
 
 checkImpProg :: ImpProgram -> Except ()
-checkImpProg prog = case evalPass (void $ impProgType prog) mempty initState of
-                      Left (CompilerErr e) -> Left $ CompilerErr $
-                                                "\n" ++ pprint prog ++ "\n" ++ e
-                      Right ans -> Right ans
+checkImpProg prog =
+  case evalPass mempty initState (rawVar "!") (void $ impProgType prog) of
+    Left (CompilerErr e) -> Left $ CompilerErr $
+                              "\n" ++ pprint prog ++ "\n" ++ e
+    Right ans -> Right ans
 
 impExprTop :: ImpEnv -> Expr -> Except (Type, ImpProgram)
 impExprTop env expr = do
-  (iexpr, ImpState [statements] _ ) <- runPass (toImp expr) env initState
-  let prog = ImpProgram (reverse statements) (toList iexpr)
+  (iexpr, state) <- runPass env initState (rawVar "imp") (toImp expr)
+  let ImpState [statements] _ = state
+      prog = ImpProgram (reverse statements) (toList iexpr)
   checkImpProg prog
   return (getType env expr, prog)
 
@@ -103,14 +105,14 @@ impIota :: RecTree IExpr -> ImpM (RecTree IExpr)
 impIota args = do
   n' <- newVar n
   out <- newCell (IType IntType [n'])
-  i <- fresh
+  i <- fresh "iIota"
   add $ Loop i n' [Update out [i] (IVar i)]
   return $ RecTree $ Tup [RecLeaf (IVar n'), RecLeaf (IVar out)]
   where [RecLeaf n] = unpackConsTuple 1 args
 
 impFold :: [Type] -> Pat -> Expr -> RecTree IExpr -> ImpM (RecTree IExpr)
 impFold ts p body args = do
-  i <- fresh
+  i <- fresh "iFold"
   accumCells <- traverse (newCell . snd) (flatType accumTy)
   xs' <- traverse newVar xs
   letBind envBinder env
@@ -134,7 +136,7 @@ letBind binder@(v,ty) exprs = void $ traverse (uncurry addLet) $ zipped
 
 newVar :: IExpr -> ImpM Var
 newVar expr = do t <- impExprType expr
-                 v <- fresh
+                 v <- fresh "var"
                  addLet (v, t) expr
                  return v
 
@@ -146,12 +148,15 @@ writeCell :: Var -> IExpr -> ImpM ()
 writeCell v val = add $ Update v [] val
 
 newCell :: IType -> ImpM Var
-newCell ty = do v <- fresh
+newCell ty = do v <- fresh "cell"
                 add $ Alloc v ty
                 return v
 
 flatBinding :: (Var, Type) -> RecTree (Var, IType)
-flatBinding (v, ty) = undefined -- fmap (\(idx, ty) -> (ILetVar v idx, ty)) (flatType ty)
+flatBinding (var, ty) = fmap (\(i,t) -> (qualify var i, t)) (flatType ty)
+
+qualify :: Var -> [RecIdx] -> Var
+qualify var idx = foldr (\i v -> Qual v (pprint i) 0) var idx
 
 addIdx :: Size -> IType -> IType
 addIdx = undefined

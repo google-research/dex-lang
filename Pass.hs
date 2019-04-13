@@ -13,14 +13,11 @@ type MonadPass env state a = ReaderT env (
                                  FreshT (
                                    Either Err))) a
 
-runPass :: MonadPass env state a -> env -> state -> Except (a, state)
-runPass m env state = runFreshT $ runStateT (runReaderT m env) state
+runPass :: env -> state -> Var -> MonadPass env state a -> Except (a, state)
+runPass env state stem m = runFreshT (runStateT (runReaderT m env) state) stem
 
-evalPass :: MonadPass env state a -> env -> state -> Except a
-evalPass m env state = runFreshT $ evalStateT (runReaderT m env) state
-
-execPass :: MonadPass env state a -> env -> state -> Except state
-execPass m env state = runFreshT $ execStateT (runReaderT m env) state
+evalPass env state stem = liftM fst . runPass env state stem
+execPass env state stem = liftM snd . runPass env state stem
 
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return

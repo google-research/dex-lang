@@ -40,7 +40,7 @@ deFuncCmd (Command cmdName expr) env = case deFuncExprTop env expr of
 deFuncCmd (CmdResult s) _ = CmdResult s
 deFuncCmd (CmdErr e)    _ = CmdErr e
 
-deFuncUnpack :: VarName -> Expr -> DFEnv -> Except (TypedDFVal, Maybe Type, Expr)
+deFuncUnpack :: Var -> Expr -> DFEnv -> Except (TypedDFVal, Maybe Type, Expr)
 deFuncUnpack _ expr env = do (valTy, expr') <- deFuncExprTop env expr
                              return (valTy, Nothing, expr')
 
@@ -49,7 +49,7 @@ localEnv (FullEnv lenv tenv) = FullEnv lenv mempty
 
 deFuncExprTop :: DFEnv -> Expr -> Except (TypedDFVal, Expr)
 deFuncExprTop env expr = do
-  (val, expr') <- evalPass (deFuncExpr expr) env ()
+  (val, expr') <- evalPass env () (rawVar "defunc") (deFuncExpr expr)
   let ty = getType typingEnv expr
   checkExpr typingEnv expr' (deFuncType val ty)
   return ((val, ty), expr')
@@ -181,16 +181,13 @@ builtinArgTypes :: Int -> Expr -> DeFuncM [Type]
 builtinArgTypes n expr = do ty <- getExprType expr
                             return $ consTypeToList n ty
 
--- hard to see how we can avoid needing fresh variables here for the lambda args
--- maybe pick fresh vars based on what's in the expression already?
 canonicalLamExpr :: TypedDFVal -> [TypedDFVal] -> DeFuncM (DFVal, Pat, Expr)
 canonicalLamExpr fTyped@(fval, fType) xsTyped = do
   let (xs, xsTypes) = unzip xsTyped
-      update = setLEnv (addLocals $ zip freshVars (fTyped:xsTyped))
-  let (fExpr:xsExprs) = map Var freshVars
+  freshVars <- mapM (const $ fresh "arg") (fTyped:xsTyped)
+  let bindings = zip freshVars (fTyped:xsTyped)
+      pat = posPat $ map RecLeaf $ zip freshVars (fType:xsTypes)
+      update = setLEnv (addLocals $ bindings)
+      (fExpr:xsExprs) = map (Var . fst) bindings
   (ans, body) <- local update $ foldM deFuncApp (fval, fExpr) (zip xs xsExprs)
-  let pat = posPat $ map RecLeaf $ zip freshVars (fType:xsTypes)
   return (ans, pat, body)
- -- TODO: use actual fresh vars or figure out how to avoid them
-  where freshVars :: [Var]
-        freshVars = [NamedVar ("arg" ++ show i) | i <- [1..]]

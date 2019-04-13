@@ -54,15 +54,16 @@ inferTypesCmd (CmdErr e)    _ = CmdErr e
 
 -- TODO: check integrity as well
 translateExpr :: UExpr -> TypeEnv -> Except (Type, Expr)
-translateExpr rawExpr (FullEnv lenv tenv) = evalPass (inferTop rawExpr) env initState
+translateExpr rawExpr (FullEnv lenv tenv) = eval (inferTop rawExpr)
   where env = FullEnv lenv $ fmap (const IdxSetKind) tenv
         initState = InferState mempty mempty
+        eval = evalPass env initState (rawVar "infer")
 
-inferTypesUnpack :: VarName -> UExpr -> TypeEnv -> Except (Type, Kind, Expr)
+inferTypesUnpack :: Var -> UExpr -> TypeEnv -> Except (Type, Kind, Expr)
 inferTypesUnpack v expr env = do
   (ty, expr') <- translateExpr expr env
   ty' <- case ty of
-    Exists body -> return $ instantiateTVs [TypeVar (NamedVar v)] body
+    Exists body -> return $ instantiateTVs [TypeVar v] body
     _ -> throwError $ TypeErr $ "Can't unpack type: " ++ show ty
   return (ty', IdxSetKind, expr')
 
@@ -156,7 +157,7 @@ splitTab t = case t of
           return (i, v)
 
 freshVar :: Kind -> InferM Type
-freshVar kind = do v <- fresh
+freshVar kind = do v <- fresh $ pprint kind
                    modify $ setTempEnv $ M.insert v kind
                    return (TypeVar v)
 

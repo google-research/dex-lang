@@ -22,7 +22,8 @@ import Data.Traversable
 import Data.Functor.Identity
 
 import qualified Foreign.Ptr as F
-import Data.ByteString.Short (ShortByteString)
+import Data.ByteString.Short (ShortByteString, toShort)
+import Data.ByteString.Char8 (pack)
 import Data.Word (Word64 (..))
 
 import Type
@@ -32,6 +33,8 @@ import Record
 import Util
 import Imp
 import Pass
+import Fresh
+import PPrint
 
 import LLVMExec
 
@@ -46,15 +49,14 @@ data JitVal w = ScalarVal w L.Type
 data Cell = Cell (Ptr Operand) [Operand]
 type CompileVal  = JitVal Operand
 type PersistVal  = JitVal PWord
-data CompileState = CompileState { nameCounter :: Int
-                                 , curBlocks   :: [BasicBlock]
+data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
                                  , impVarEnv  :: M.Map Var (Either CompileVal Cell)
                                  }
 
-type CompileM a = StateT CompileState (Either Err) a
+type CompileM a = MonadPass () CompileState a
 data CompiledProg = CompiledProg [CompileVal] Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
 
@@ -90,8 +92,8 @@ jitCmd (Command cmdName prog) env =
 -- printPersistVal (JitVal x _ _ ) = return $ show x
 
 toLLVM :: ImpProgram -> env_type -> CompiledProg
-toLLVM prog _ = ignoreExcept $ evalStateT (compileProg prog) initState
-  where initState = CompileState 0 [] [] [] "start_block" mempty
+toLLVM prog _ = ignoreExcept $ evalPass () initState VarRoot (compileProg prog)
+  where initState = CompileState [] [] [] "start_block" mempty
 
 compileProg :: ImpProgram -> CompileM CompiledProg
 compileProg (ImpProgram statements outExprs) = do
@@ -113,8 +115,8 @@ compileStatement statement = case statement of
                            modify $ setImpVarEnv (M.insert v (Left val))
   Alloc v (IType b shape) -> do
     shape' <- mapM lookupValVar shape
-    cell <- case shape' of [] -> alloca b
-                           _ -> malloc b shape'
+    cell <- case shape' of [] -> alloca b (pprint v)
+                           _ -> malloc b shape' (pprint v)
     modify $ setImpVarEnv (M.insert v (Right cell))
 
   Loop i n body -> do n' <- lookupValVar n
@@ -154,13 +156,13 @@ indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
 indexPtr (Ptr ptr ty) shape i = do
   stride <- foldM mul (litInt 8) shape
   n <- mul stride i
-  ptr' <- evalInstr (L.ptr ty) $ L.GetElementPtr False ptr [n] []
+  ptr' <- evalInstr "ptr" (L.ptr ty) $ L.GetElementPtr False ptr [n] []
   return (Ptr ptr' ty)
 
 finalReturn :: [CompileVal] -> CompileM ()
 finalReturn vals = do
-  voidPtr <- evalInstr charPtrTy (externCall mallocFun [litInt numBytes])
-  outPtr <- evalInstr intPtrTy $ L.BitCast voidPtr intPtrTy []
+  voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [litInt numBytes])
+  outPtr <- evalInstr "out" intPtrTy $ L.BitCast voidPtr intPtrTy []
   sequence $ zipWith (writeComponent (Ptr outPtr longTy)) vals [0..]
   finishBlock (L.Ret (Just outPtr) []) (L.Name "")
   where numBytes = 8 * length vals
@@ -180,9 +182,9 @@ finishBlock term newName = do
 
 compileLoop :: Var -> CompileVal -> [Statement] -> CompileM ()
 compileLoop iVar (ScalarVal n _) body = do
-  loopBlock <- freshName
-  nextBlock <- freshName
-  Cell i [] <- alloca IntType
+  loopBlock <- freshName "loop"
+  nextBlock <- freshName "cont"
+  Cell i [] <- alloca IntType "i"
   store i (litInt 0)
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
@@ -194,10 +196,9 @@ compileLoop iVar (ScalarVal n _) body = do
   loopCond <- iValInc `lessThan` n
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
-freshName :: CompileM L.Name
-freshName = do i <- gets nameCounter
-               modify (\state -> state {nameCounter = i + 1})
-               return $ L.UnName (fromIntegral i)
+freshName :: String -> CompileM L.Name
+freshName s = do name <- fresh s
+                 return $ Name (toShort (pack (pprint name)))
 
 idxCell :: Cell -> [CompileVal] -> CompileM Cell
 idxCell cell [] = return cell
@@ -227,36 +228,36 @@ store :: Ptr Operand -> Operand -> CompileM ()
 store (Ptr ptr _) x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 load :: Ptr Operand -> CompileM Operand
-load (Ptr ptr ty) = evalInstr ty $ L.Load False ptr Nothing 0 []
+load (Ptr ptr ty) = evalInstr "" ty $ L.Load False ptr Nothing 0 []
 
 lessThan :: Long -> Long -> CompileM Long
-lessThan x y = evalInstr longTy $ L.ICmp L.SLT x y []
+lessThan x y = evalInstr "lt" longTy $ L.ICmp L.SLT x y []
 
 add :: Long -> Long -> CompileM Long
-add x y = evalInstr longTy $ L.Add False False x y []
+add x y = evalInstr "add" longTy $ L.Add False False x y []
 
-evalInstr :: L.Type -> Instruction -> CompileM Operand
-evalInstr ty instr = do v <- freshName
-                        addInstr $ v L.:= instr
-                        return $ L.LocalReference ty v
+evalInstr :: String -> L.Type -> Instruction -> CompileM Operand
+evalInstr s ty instr = do v <- freshName s
+                          addInstr $ v L.:= instr
+                          return $ L.LocalReference ty v
 
 addPtr :: Ptr Operand -> Long -> CompileM (Ptr Operand)
-addPtr (Ptr ptr ty) i = do ptr' <- evalInstr (L.ptr ty) instr
+addPtr (Ptr ptr ty) i = do ptr' <- evalInstr "ptr" (L.ptr ty) instr
                            return $ Ptr ptr' ty
   where instr = L.GetElementPtr False ptr [i] []
 
-alloca :: BaseType -> CompileM Cell
-alloca ty = do v <- freshName
-               modify $ setScalarDecls ((v L.:= instr):)
-               return $ Cell (Ptr (L.LocalReference (L.ptr ty') v) ty') []
+alloca :: BaseType -> String -> CompileM Cell
+alloca ty s = do v <- freshName s
+                 modify $ setScalarDecls ((v L.:= instr):)
+                 return $ Cell (Ptr (L.LocalReference (L.ptr ty') v) ty') []
   where ty' = scalarTy ty
         instr = L.Alloca ty' Nothing 0 []
 
-malloc :: BaseType -> [CompileVal] -> CompileM Cell
-malloc ty shape = do
+malloc :: BaseType -> [CompileVal] -> String -> CompileM Cell
+malloc ty shape s = do
     n <- numBytes shape'
-    voidPtr <- evalInstr charPtrTy (externCall mallocFun [n])
-    ptr <- evalInstr (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
+    voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [n])
+    ptr <- evalInstr s (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
     return $ Cell (Ptr ptr ty') shape'
   where shape' = map scalarOp shape
         ty' = scalarTy ty
@@ -265,7 +266,7 @@ numBytes :: [Operand] -> CompileM Operand
 numBytes shape = foldM mul (litInt 8) shape
 
 mul :: Operand -> Operand -> CompileM Operand
-mul x y = evalInstr longTy $ L.Mul False False x y []
+mul x y = evalInstr "mul" longTy $ L.Mul False False x y []
 
 scalarOp :: CompileVal -> Operand
 scalarOp (ScalarVal op _) = op
@@ -281,7 +282,7 @@ compileBinop ::    L.Type -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileBinop ty makeInstr [ScalarVal x _, ScalarVal y _] =
-  liftM (flip ScalarVal ty) $ evalInstr ty (makeInstr x y)
+  liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x y)
 
 compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b = case b of

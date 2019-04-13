@@ -4,6 +4,7 @@ import Util
 import Record
 import ParseUtil
 import Syntax
+import Fresh
 import Env
 
 import Control.Monad
@@ -77,18 +78,18 @@ explicitCommand = do
 --     then return $ TopAssign v (UAnnot e ty)
 --     else fail $ "Type declaration variable must match assignment variable."
 
-tryUnpackDecl :: Parser (VarName, UExpr)
+tryUnpackDecl :: Parser (Var, UExpr)
 tryUnpackDecl = do
-  (NamedVar v) <- try (varName <* symbol "=" <* symbol "unpack")
+  v <- try (varName <* symbol "=" <* symbol "unpack")
   body <- expr
   return (v, body)
 
-tryAssignDecl :: Parser (VarName, UExpr)
+tryAssignDecl :: Parser (Var, UExpr)
 tryAssignDecl = do
-  (NamedVar v, wrap) <- try $ do p <- varName
-                                 wrap <- idxLhsArgs <|> lamLhsArgs
-                                 symbol "="
-                                 return (p, wrap)
+  (v, wrap) <- try $ do p <- varName
+                        wrap <- idxLhsArgs <|> lamLhsArgs
+                        symbol "="
+                        return (p, wrap)
   body <- expr
   return (v, wrap body)
 
@@ -135,7 +136,7 @@ varExpr = do
   s <- identifier
   return $ case strToBuiltin s of
     Just b -> UBuiltin b
-    Nothing -> UVar (NamedVar s)
+    Nothing -> UVar (rawVar s)
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -200,7 +201,7 @@ resNames = ["for", "lam", "let", "in", "unpack"]
 
 identifier = makeIdentifier resNames
 
-varName = liftM NamedVar identifier
+varName = liftM rawVar identifier
 idxExpr = varName
 
 appRule = InfixL (sc
@@ -229,7 +230,7 @@ ops = [ [getRule, appRule]
 --     elts -> RecTree $ mixedRecord elts
 
 idxPat :: Parser Var
-idxPat = liftM NamedVar identifier
+idxPat = liftM rawVar identifier
 
 pat :: Parser UPat
 pat =   parenPat
@@ -246,7 +247,7 @@ typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
 
 var :: Parser Var
-var = liftM NamedVar $ makeIdentifier
+var = liftM rawVar $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 -- forallType :: Parser Type

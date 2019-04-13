@@ -1,25 +1,19 @@
-module Env (Env (..), Var (..), VarName, TempVar, envLookup,
-            newEnv, addLocal, addLocals, addTop, isin, (!), locals) where
+module Env (Env (..), envLookup, newEnv, addLocal, addLocals, addTop,
+            isin, (!), locals) where
 
 import Data.List (elemIndex)
 import Data.Semigroup
 import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA, liftA2, liftA3)
+import Fresh
 
-data Env a = Env (M.Map VarName a) (M.Map Var a)
-                    deriving (Show, Eq, Ord)
+data Env a = Env (M.Map Var a) (M.Map Var a) deriving (Show, Eq, Ord)
 
-type TempVar = Int
-type VarName = String
-data Var = TempVar TempVar
-         | NamedVar VarName
-         | BoundVar Int    deriving (Show, Eq, Ord)
+newEnv :: [(Var, a)] -> Env a
+newEnv xs = Env (M.fromList xs) mempty
 
-newEnv :: [(VarName, a)] -> Env a
-newEnv xs = undefined -- Env (M.fromList xs) []
-
-addTop :: String -> a -> Env a -> Env a
+addTop :: Var -> a -> Env a -> Env a
 addTop v x (Env top local) = Env (M.insert v x top) local
 
 locals :: Env a -> [(Var, a)]
@@ -36,9 +30,7 @@ envLookup :: Env a -> Var -> Maybe a
 envLookup (Env top local) v =
   case M.lookup v local of
     Just x -> Just x
-    Nothing -> case v of
-                 NamedVar s -> M.lookup s top
-                 _ -> Nothing
+    Nothing -> M.lookup v top
 
 isin :: Var -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
