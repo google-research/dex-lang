@@ -1,7 +1,8 @@
-module Imp (impPass,ImpEnv) where
+module Imp (impPass) where
 
 import Control.Monad.Reader
 import Control.Monad.State
+import Control.Monad.Writer (tell)
 import Control.Monad.Except (throwError)
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as M
@@ -15,49 +16,56 @@ import PPrint
 import Pass
 import Fresh
 
-type ImpM a = MonadPass ImpEnv ImpState a
-type ImpEnv = FullEnv Type ()
+type ImpM a = MonadPass PreEnv ImpState a
+type ImpMTop a = TopMonadPass (ImpEnv,PreEnv) a
+
+type ImpEnv = M.Map Var VarType
+type PreEnv = FullEnv Type ()
+
 data ImpState = ImpState { blocks :: [[Statement]]
-                         , impEnv :: M.Map Var VarType }
+                         , impEnv :: ImpEnv }
 type IsMutable = Bool
 type VarType = (IsMutable, IType)
 
-impPass :: Pass Expr ImpProgram Type ()
-impPass = Pass
-  { lowerExpr   = \expr env   -> liftErrIO $ impExprTop env expr
-  , lowerUnpack = \v expr env -> liftErrIO $ impUnpack v expr env
-  , lowerCmd    = \cmd  env   -> return $ impCmd cmd env }
+impPass :: Decl -> ImpMTop ImpDecl
+impPass decl = case decl of
+  TopLet b expr -> do
+    prog <- impExprTop expr
+    let b' = toList (flatBinding b)
+    put $ ( M.fromList (map addImmutFlag b')
+          , newFullEnv [b] [])
+    return $ ImpTopLet b' prog
+  TopUnpack b iv expr -> do
+    prog <- impExprTop expr
+    let b' = (iv, IType IntType []) : toList (flatBinding b)
+    put $ ( M.fromList (map addImmutFlag b')
+          , newFullEnv [b] [(iv,())])
+    return $ ImpTopLet b' prog
+  EvalCmd NoOp -> put mempty >> return (ImpEvalCmd NoOp)
+  EvalCmd (Command cmd expr) -> do
+    prog <- impExprTop expr
+    put mempty
+    case cmd of Passes -> tell [pprint prog]
+                _ -> return ()
+    return $ ImpEvalCmd (Command cmd prog)
 
-impCmd :: Command Expr -> ImpEnv -> Command ImpProgram
-impCmd (Command cmdName expr) env = case impExprTop env expr of
-  Left e -> CmdErr e
-  Right (_, prog) -> case cmdName of
-                        Imp -> CmdResult $ TextOut $ pprint prog
-                        _ -> Command cmdName prog
-impCmd (CmdResult s) _ = CmdResult s
-impCmd (CmdErr e)    _ = CmdErr e
+  where addImmutFlag (v,ty) = (v,(False,ty))
 
-impUnpack :: Var -> Expr -> ImpEnv -> Except (Type, (), ImpProgram)
-impUnpack _ expr env = do (locs, prog) <- impExprTop env expr
-                          return (locs, undefined, prog)
+impExprTop :: Expr -> ImpMTop ImpProgram
+impExprTop expr = do
+  (env, preEnv) <- get
+  (iexpr, state) <- liftExcept $ runPass preEnv (ImpState [[]] env) VarRoot (toImp expr)
+  let ImpState [statements] _ = state
+      prog = ImpProgram (reverse statements) (toList iexpr)
+  liftExcept $ checkImpProg env prog
+  return prog
 
-initState :: ImpState
-initState = ImpState [[]] mempty
-
-checkImpProg :: ImpProgram -> Except ()
-checkImpProg prog =
-  case evalPass mempty initState (rawVar "!") (void $ impProgType prog) of
+checkImpProg :: ImpEnv -> ImpProgram -> Except ()
+checkImpProg env prog =
+  case evalPass mempty (ImpState [[]] env) (rawVar "!") (void $ impProgType prog) of
     Left (CompilerErr e) -> Left $ CompilerErr $
                               "\n" ++ pprint prog ++ "\n" ++ e
     Right ans -> Right ans
-
-impExprTop :: ImpEnv -> Expr -> Except (Type, ImpProgram)
-impExprTop env expr = do
-  (iexpr, state) <- runPass env initState (rawVar "imp") (toImp expr)
-  let ImpState [statements] _ = state
-      prog = ImpProgram (reverse statements) (toList iexpr)
-  checkImpProg prog
-  return (getType env expr, prog)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -71,7 +79,6 @@ toImp expr = case expr of
       FoldDeFunc p body -> impFold ts p body args'
       _ -> return $ RecLeaf $ IBuiltinApp b (toList args')
   Let p bound body -> do -- TODO: beware of shadows
-    env <- ask
     bound' <- toImp bound
     traverse (uncurry letBind) (recTreeZip p bound')
     ans <- local (setLEnv $ addLocals p) (toImp body)

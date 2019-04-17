@@ -22,7 +22,7 @@ import System.INotify
 
 type FileName = String
 
-type CellContents = TopDecl ()
+type CellContents = Decl
 type EvalState = IORef [CellContents]
 data Message = FreshPage [CellContents]
              | SetContents Int CellContents  -- not used yet

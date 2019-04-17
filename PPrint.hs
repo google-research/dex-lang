@@ -1,12 +1,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module PPrint (pprint, raiseIOExcept, liftErrIO) where
+module PPrint (pprint) where
 
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import qualified Data.Map.Strict as M
-import System.Console.Haskeline (throwIO, Interrupt (..))
 
 import Syntax
 import Env
@@ -147,9 +146,3 @@ instance Pretty RecIdx where
 instance Pretty ImpProgram where
   pretty (ImpProgram block exprs) = vcat (map p block) <>
                                       nest 2 (hardline <> (vcat (map p exprs)))
-
-raiseIOExcept :: Err -> IO a
-raiseIOExcept e = putStrLn (pprint e) >> throwIO Interrupt
-
-liftErrIO :: Except a -> IO a
-liftErrIO = either raiseIOExcept return

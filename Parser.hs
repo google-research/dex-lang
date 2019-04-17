@@ -17,12 +17,10 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Test.HUnit
 import Data.Foldable (toList)
 
-type UTopDecl = TopDecl UExpr
-type UInstr = DeclInstr UExpr
-type Prog = [UTopDecl]
+type Prog = [(String, UDecl)]
 
-data Decl = AssignDecl UPat UExpr
-          | UnpackDecl Var UExpr
+data LocalDecl = AssignDecl UPat UExpr
+               | UnpackDecl Var UExpr
 
 parseProg :: String -> Except Prog
 parseProg = parseit prog
@@ -35,41 +33,35 @@ parseit p s = case parse (p <* eof) "" s of
 prog :: Parser Prog
 prog = emptyLines >> many (topDecl <*emptyLines)
 
-topDecl :: Parser UTopDecl
+topDecl :: Parser (String, UDecl)
 topDecl = do
   (instr, source) <- captureSource topDeclInstr
-  return $ TopDecl source instr
+  return (source, instr)
 
-topDeclInstr :: Parser UInstr
+topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand
              -- <|> typedAssignment
-             <|> liftM (uncurry TopUnpack) tryUnpackDecl
-             <|> liftM (uncurry TopAssign) tryAssignDecl
-             <|> liftM (EvalCmd . (Command EvalExpr)) expr
+             <|> liftM (uncurry UTopUnpack) tryUnpackDecl
+             <|> liftM (uncurry UTopLet   ) tryAssignDecl
+             <|> liftM (UEvalCmd . Command EvalExpr) expr
              <?> "top-level declaration"
 
-explicitCommand :: Parser UInstr
+explicitCommand :: Parser UDecl
 explicitCommand = do
   symbol ":"
   cmdName <- identifier
   cmd <- case cmdName of
-           "p"     -> return EvalExpr
-           "t"     -> return GetType
-           "sysf"  -> return GetTyped
-           "parse" -> return GetParse
-           "llvm"  -> return GetLLVM
-           "imp"   -> return Imp
-           "defunc"-> return DeFunc
-           "jit"   -> return EvalJit
-           "time"  -> return TimeIt
-           "persist" -> return ShowPersistVal
-           "plot"   -> return Plot
+           "p"       -> return EvalExpr
+           "t"       -> return GetType
+           "passes"  -> return Passes
+           "time"    -> return TimeIt
+           "plot"    -> return Plot
            "plotmat" -> return PlotMat
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
-  return $ EvalCmd (Command cmd e)
+  return $ UEvalCmd (Command cmd e)
 
--- typedAssignment :: Parser UInstr
+-- typedAssignment :: Parser UDecl
 -- typedAssignment = do
 --   v <- try (identifier <* symbol "::")
 --   ty <- typeExpr
@@ -145,7 +137,7 @@ declExpr = do
   symbol "in"
   body <- expr
   return $ foldr unpackBinding body bindings
-  where unpackBinding :: Decl -> UExpr -> UExpr
+  where unpackBinding :: LocalDecl -> UExpr -> UExpr
         unpackBinding decl body = case decl of
           AssignDecl p binding -> ULet    p binding body
           UnpackDecl v binding -> UUnpack v binding body
@@ -167,13 +159,13 @@ forExpr = do
   return $ foldr UFor body vs
 
 -- decl :: Parser (UPat, UExpr)
-unpackDecl :: Parser Decl
+unpackDecl :: Parser LocalDecl
 unpackDecl = do
   v <- try (varName <* symbol "=" <* symbol "unpack")
   body <- expr
   return $ UnpackDecl v body
 
-assignDecl :: Parser Decl
+assignDecl :: Parser LocalDecl
 assignDecl = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
@@ -287,7 +279,7 @@ typeExpr' =   parens typeExpr
 -- data BoundVars = BoundVars { lVars :: [Var]
 --                            , tVars :: [Var] }
 
--- lowerInstr :: UInstr -> UInstr
+-- lowerInstr :: UDecl -> UDecl
 -- lowerInstr = fmap (lower empty)
 --   where empty = BoundVars [] []
 

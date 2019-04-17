@@ -1,4 +1,4 @@
-module Type (TypeEnv, checkExpr, getType, litType,
+module Type (TypeEnv, checkExpr, getType, litType, unpackExists,
              patType, builtinType, builtinNaryTy) where
 
 import Control.Monad
@@ -20,10 +20,8 @@ getType :: FullEnv Type a -> Expr -> Type
 getType (FullEnv lenv _) expr =
   ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
 
-checkExpr :: TypeEnv -> Expr -> Type -> Except ()
-checkExpr env expr reqTy = do
-  ty <- evalTypeM env (getType' True expr)
-  assertEq reqTy ty ("Unexpected type of expression " ++ show expr)
+checkExpr :: TypeEnv -> Expr -> Except Type
+checkExpr env expr = evalTypeM env (getType' True expr)
 
 evalTypeM ::  TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env
@@ -87,6 +85,10 @@ getType' check expr = case expr of
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
+
+unpackExists :: Type -> Var -> Except Type
+unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
+unpackExists ty _ = throwError $ TypeErr $ "Can't unpack type: " ++ show ty
 
 patType :: RecTree (a, Type) -> Type
 patType (RecTree r) = RecType (fmap patType r)

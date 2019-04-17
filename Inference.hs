@@ -1,8 +1,9 @@
-module Inference (typePass, translateExpr) where
+module Inference (typePass) where
 
 import Control.Monad
 import Control.Monad.Reader (ReaderT, runReaderT, local, asks)
-import Control.Monad.State (StateT, evalStateT, gets, modify)
+import Control.Monad.Writer (tell)
+import Control.Monad.State (StateT, evalStateT, gets, put, modify)
 import Control.Monad.Except (throwError)
 import qualified Data.Map.Strict as M
 import Data.List (nub, (\\))
@@ -25,47 +26,29 @@ data InferState = InferState { tempEnv :: TempEnv
 type InferM a = MonadPass TypeEnv InferState a
 type Constraint = (Type, Type)
 
-typePass :: Pass UExpr Expr Type Kind
-typePass = Pass
-  { lowerExpr   = \expr env   -> liftErrIO $ translateExpr expr env
-  , lowerUnpack = \v expr env -> liftErrIO $ inferTypesUnpack v expr env
-  , lowerCmd    = \cmd  env   -> return $ inferTypesCmd cmd env }
+typePass :: UDecl -> TopMonadPass TypeEnv Decl
+typePass decl = case decl of
+  UTopLet v expr -> do
+    (ty, expr') <- translate expr
+    put $ newFullEnv [(v,ty)] []
+    return $ TopLet (v,ty) expr'
+  UTopUnpack v expr -> do
+    (ty, expr') <- translate expr
+    put $ newFullEnv [(v,ty)] [(v,IdxSetKind)]
+    ty' <- liftExcept $ unpackExists ty v
+    return $ TopUnpack (v,ty') v expr'
+  UEvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
+  UEvalCmd (Command cmd expr) -> do
+    (ty, expr') <- translate expr
+    put mempty
+    case cmd of
+      GetType -> do tell [pprint ty]
+                    return $ EvalCmd NoOp
+      Passes  -> do tell [pprint expr']
+                    return $ EvalCmd (Command cmd expr')
+      _ -> return $ EvalCmd (Command cmd expr')
 
-inferTypesCmd :: Command UExpr -> TypeEnv -> Command Expr
-inferTypesCmd (Command cmdName expr) env = case cmdName of
-    GetParse -> CmdResult $ TextOut (show expr)
-    _ -> case translateExpr expr env of
-      Left e -> CmdErr e
-      Right (ty, expr') -> case cmdName of
-        GetType ->  CmdResult $ TextOut  $ pprint ty
-        GetTyped -> CmdResult $ TextOut  $ pprint expr'
-        -- Plot -> case getType (lEnv ftenv) expr' of
-        --           TabType _ (BaseType IntType) -> Command Plot expr'
-        --           ty -> CmdErr $ TypeErr $
-        --               "Plot data must have form i=>Int. Got: " ++ show ty
-        -- PlotMat ->
-        --   case getType (lEnv ftenv) expr' of
-        --          TabType _ (TabType _ (BaseType IntType)) -> Command PlotMat expr'
-        --          ty -> CmdErr $ TypeErr $
-        --                 "Plotmat data must have form i=>j=>Int. Got: " ++ show ty
-        _ -> Command cmdName expr'
-inferTypesCmd (CmdResult s) _ = CmdResult s
-inferTypesCmd (CmdErr e)    _ = CmdErr e
-
--- TODO: check integrity as well
-translateExpr :: UExpr -> TypeEnv -> Except (Type, Expr)
-translateExpr rawExpr (FullEnv lenv tenv) = eval (inferTop rawExpr)
-  where env = FullEnv lenv $ fmap (const IdxSetKind) tenv
-        initState = InferState mempty mempty
-        eval = evalPass env initState (rawVar "infer")
-
-inferTypesUnpack :: Var -> UExpr -> TypeEnv -> Except (Type, Kind, Expr)
-inferTypesUnpack v expr env = do
-  (ty, expr') <- translateExpr expr env
-  ty' <- case ty of
-    Exists body -> return $ instantiateTVs [TypeVar v] body
-    _ -> throwError $ TypeErr $ "Can't unpack type: " ++ show ty
-  return (ty', IdxSetKind, expr')
+  where translate expr = liftTopPass (InferState mempty mempty) (inferTop expr)
 
 inferTop :: UExpr -> InferM (Type, Expr)
 inferTop rawExpr = infer rawExpr >>= uncurry generalize

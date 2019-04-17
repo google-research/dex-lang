@@ -1,4 +1,4 @@
-module DeFunc (deFuncPass, DFVal (..), TypedDFVal, DFEnv) where
+module DeFunc (deFuncPass) where
 
 import Syntax
 import Env
@@ -11,11 +11,13 @@ import PPrint
 
 import Data.Foldable (toList)
 import Control.Monad
+import Control.Monad.State (put, gets)
+import Control.Monad.Writer (tell)
 import Control.Monad.Reader (Reader, runReader, local, ask, asks)
 
-type DFEnv    = FullEnv TypedDFVal (Maybe Type)
+type DFEnv = FullEnv TypedDFVal (Maybe Type)
 
-type TypedDFVal = (DFVal, Type)
+type TypedDFVal = (DFVal, Type) -- type is post-defunctionalization
 
 data DFVal = DFNil
            | LamVal Pat DFEnv Expr
@@ -25,35 +27,35 @@ data DFVal = DFNil
 
 type DeFuncM a = MonadPass DFEnv () a
 
-deFuncPass :: Pass Expr Expr (DFVal, Type) (Maybe Type)
-deFuncPass = Pass
-  { lowerExpr   = \expr env   -> liftErrIO $ deFuncExprTop env expr
-  , lowerUnpack = \v expr env -> liftErrIO $ deFuncUnpack v expr env
-  , lowerCmd    = \cmd  env   -> return $ deFuncCmd cmd env }
+deFuncPass :: Decl -> TopMonadPass DFEnv Decl
+deFuncPass decl = case decl of
+  TopLet (v,_) expr -> do
+    ((val,ty), expr') <- deFuncTop expr
+    put $ newFullEnv [(v, (val,ty))] []
+    return $ TopLet (v, ty) expr'
+  TopUnpack (v,_) iv expr -> do
+    ((val,ty), expr') <- deFuncTop expr
+    put $ newFullEnv [(v, (val,ty))] [(iv,Nothing)]
+    ty' <- liftExcept $ unpackExists ty iv
+    return $ TopUnpack (v, ty') iv expr'
+  EvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
+  EvalCmd (Command cmd expr) -> do
+    ((val,ty), expr') <- deFuncTop expr
+    put mempty
+    case cmd of Passes  -> do tell [pprint expr']
+                _ -> return ()
+    return $ EvalCmd (Command cmd expr')
 
-deFuncCmd :: Command Expr -> DFEnv -> Command Expr
-deFuncCmd (Command cmdName expr) env = case deFuncExprTop env expr of
-  Left e -> CmdErr e
-  Right (_, expr') -> case cmdName of
-                        DeFunc -> CmdResult $ TextOut $ pprint expr'
-                        _ -> Command cmdName expr'
-deFuncCmd (CmdResult s) _ = CmdResult s
-deFuncCmd (CmdErr e)    _ = CmdErr e
+  where
+    deFuncTop :: Expr -> TopMonadPass DFEnv (TypedDFVal, Expr)
+    deFuncTop expr = do
+      (val, expr') <- liftTopPass () (deFuncExpr expr)
+      typingEnv <- gets $ asTypingEnv
+      ty <- liftExcept $ checkExpr typingEnv expr'
+      return ((val, ty), expr')
 
-deFuncUnpack :: Var -> Expr -> DFEnv -> Except (TypedDFVal, Maybe Type, Expr)
-deFuncUnpack _ expr env = do (valTy, expr') <- deFuncExprTop env expr
-                             return (valTy, Nothing, expr')
-
-localEnv :: DFEnv -> DFEnv
-localEnv (FullEnv lenv tenv) = FullEnv lenv mempty
-
-deFuncExprTop :: DFEnv -> Expr -> Except (TypedDFVal, Expr)
-deFuncExprTop env expr = do
-  (val, expr') <- evalPass env () (rawVar "defunc") (deFuncExpr expr)
-  let ty = getType typingEnv expr
-  checkExpr typingEnv expr' (deFuncType val ty)
-  return ((val, ty), expr')
-  where typingEnv = setTEnv (fmap (const IdxSetKind)) $ setLEnv (fmap snd) env
+asTypingEnv :: DFEnv -> TypeEnv
+asTypingEnv = setTEnv (fmap (const IdxSetKind)) . setLEnv (fmap snd)
 
 deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
 deFuncExpr expr = case expr of
@@ -123,8 +125,8 @@ deFuncType (BuiltinLam b ts exprs) _ = error "not implemented"
 
 getExprType :: Expr -> DeFuncM Type
 getExprType expr = do
-  lenv <- asks lEnv
-  return $ getType (FullEnv (fmap snd lenv) mempty) expr
+  env <- asks asTypingEnv
+  return $ getType env expr
 
 consTypeToList :: Int -> Type -> [Type]
 consTypeToList n t = reverse $ recur n t

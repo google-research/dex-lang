@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module JIT (jitPass, PersistVal, PWord, PersistEnv) where
+module JIT (jitPass) where
 
 import LLVM.AST hiding (Add, Mul, Sub)
 import qualified LLVM.AST as L
@@ -14,6 +14,7 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.State
+import Control.Monad.Writer (tell)
 
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
@@ -38,62 +39,72 @@ import PPrint
 
 import LLVMExec
 
-import Debug.Trace
-
-
 -- TODO: figure out whether we actually need type everywhere here
 data Ptr w = Ptr w L.Type  deriving (Show)
 
 data JitVal w = ScalarVal w L.Type
               | ArrayVal (Ptr w) [w]  deriving (Show)
+
+
 data Cell = Cell (Ptr Operand) [Operand]
 type CompileVal  = JitVal Operand
-type PersistVal  = JitVal PWord
+type PersistVal  = JitVal Word64
+type PersistEnv = M.Map Var PersistVal
+type ImpVarEnv = M.Map Var (Either CompileVal Cell)
+
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
-                                 , impVarEnv  :: M.Map Var (Either CompileVal Cell)
+                                 , impVarEnv  :: ImpVarEnv
                                  }
 
 type CompileM a = MonadPass () CompileState a
 data CompiledProg = CompiledProg [CompileVal] Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
 
-data PWord = PScalar BaseType Word64
-           | PPtr    BaseType (F.Ptr ())  deriving (Show)
-type PersistEnv = FullEnv [PersistVal] PWord
 type Long = Operand
-
 type NInstr = Named Instruction
 
-jitPass :: Pass ImpProgram () [PersistVal] PWord
-jitPass = Pass jitExpr undefined jitCmd
+jitPass :: ImpDecl -> TopMonadPass PersistEnv ()
+jitPass decl = case decl of
+  ImpTopLet bs prog -> do vals <- evalProg prog
+                          put $ M.fromList $ zip (map fst bs) vals
+  ImpEvalCmd NoOp -> return ()
+  ImpEvalCmd (Command cmd prog) -> case cmd of
+    Passes -> do CompiledProg vs m <- toLLVM prog
+                 llvm <- liftIO (showLLVM m)
+                 tell [llvm]
+    EvalExpr -> do vals <- evalProg prog
+                   tell $ map show vals
+    _ -> return ()
 
-jitExpr :: ImpProgram -> PersistEnv -> IO ([PersistVal], ())
-jitExpr prog env = undefined -- do let compiled = toLLVM prog env
-                      -- val <- uncurry evalJit (lower expr env)
-                      -- return ((val, ty), ())
+evalProg :: ImpProgram -> TopMonadPass PersistEnv [PersistVal]
+evalProg prog = do
+  CompiledProg outvals mod <- toLLVM prog
+  outWords <- liftIO $ evalJit (length outvals) mod
+  return $ asPersistVals outWords outvals
 
-jitCmd :: Command ImpProgram -> PersistEnv -> IO (Command ())
-jitCmd (CmdResult s) _ = return $ CmdResult s
-jitCmd (CmdErr e)    _ = return $ CmdErr e
-jitCmd (Command cmdName prog) env =
-  case cmdName of
-    GetLLVM -> liftM textResult $ showLLVM m
-    EvalExpr -> do rawVals <- evalJit (length vs) m
-                   return $ textResult $ show rawVals
-    _ -> return $ Command cmdName ()
-  where
-     CompiledProg vs m = toLLVM prog env
-     textResult = CmdResult . TextOut
+toLLVM :: ImpProgram -> TopMonadPass PersistEnv CompiledProg
+toLLVM prog = do
+  env <- gets $ fmap (Left . asCompileVal)
+  let initState = CompileState [] [] [] "start_block" env
+  liftExcept $ evalPass () initState VarRoot (compileProg prog)
 
--- printPersistVal :: PersistVal -> IO String
--- printPersistVal (JitVal x _ _ ) = return $ show x
+asCompileVal :: PersistVal -> CompileVal
+asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
+asCompileVal (ArrayVal (Ptr ptr ty) shape) = ArrayVal (Ptr ptr' ty) shape'
+  where ptr' = L.ConstantOperand $ C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr ty)
+        shape' = map (constOperand IntType) shape
 
-toLLVM :: ImpProgram -> env_type -> CompiledProg
-toLLVM prog _ = ignoreExcept $ evalPass () initState VarRoot (compileProg prog)
-  where initState = CompileState [] [] [] "start_block" mempty
+asPersistVals :: [Word64] -> [CompileVal] -> [PersistVal]
+asPersistVals [] [] = []
+asPersistVals (word:words) (val:vals) = case val of
+  ScalarVal _ ty -> ScalarVal word ty : asPersistVals words vals
+
+constOperand :: BaseType -> Word64 -> Operand
+constOperand IntType  x = litInt (fromIntegral x)
+constOperand RealType x = error "floating point not yet implemented"
 
 compileProg :: ImpProgram -> CompileM CompiledProg
 compileProg (ImpProgram statements outExprs) = do
@@ -278,6 +289,11 @@ addInstr instr = modify $ setCurInstrs (instr:)
 scalarTy :: BaseType -> L.Type
 scalarTy ty = case ty of IntType  -> longTy
                          RealType -> realTy
+
+baseTy :: L.Type -> BaseType
+baseTy ty = case ty of
+  L.IntegerType 64 -> IntType
+  L.FloatingPointType L.DoubleFP -> RealType
 
 compileBinop ::    L.Type -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]

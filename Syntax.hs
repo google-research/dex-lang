@@ -1,13 +1,13 @@
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
-               UExpr (..), TopDecl (..), Command (..), CommandOutput (..),
-               DeclInstr (..), CmdName (..), IdxExpr, Kind (..),
+               UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
+               CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
                Except, Err (..),
                FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
-               (-->), (==>), Pass (..), strToBuiltin,
+               (-->), (==>), strToBuiltin, newFullEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..),
-               ImpProgram (..), IExpr (..), IType (..)
+               ImpProgram (..), IExpr (..), IType (..),
               ) where
 
 import Util
@@ -26,6 +26,7 @@ import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 
+-- === core system-F-like IR ===
 
 data Expr = Lit LitVal
           | Var Var
@@ -51,14 +52,43 @@ data Type = BaseType BaseType
           | Exists Type
              deriving (Eq, Ord, Show)
 
+data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
+
+data Decl = TopLet    Binder     Expr
+          | TopUnpack Binder Var Expr
+          | EvalCmd (Command Expr)
+
+data Command expr = Command CmdName expr | NoOp
+
 type Binder = (Var, Type)
 type TBinder = (Var, Kind)
-
 type Pat  = RecTree Binder
-
 type IdxSet = Type
+type IdxExpr = Var
 
-data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
+data LitVal = IntLit  Int
+            | RealLit Double
+            | StrLit  String
+                deriving (Eq, Ord, Show)
+
+data BaseType = IntType | BoolType | RealType | StrType
+                   deriving (Eq, Ord, Show)
+
+data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
+             | Sin | Cos | Tan | Iota | Doubleit
+             | Hash | Rand | Randint
+             | Fold | FoldDeFunc Pat Expr
+                deriving (Eq, Ord, Show)
+
+data CmdName = GetType | Passes | TimeIt
+             | EvalExpr | Plot | PlotMat
+                deriving  (Show, Eq)
+
+type Result = String
+
+-- TOOD: add a callback to reconstruct one semantic domain from another
+-- data Command expr val = Command CmdName expr (val -> Result) | NoOp
+-- === untyped AST ===
 
 data UExpr = ULit LitVal
            | UVar Var
@@ -73,24 +103,13 @@ data UExpr = ULit LitVal
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
+data UDecl = UTopLet    Var UExpr
+           | UTopUnpack Var UExpr
+           | UEvalCmd (Command UExpr)
+
 type UPat = RecTree Var
 
-type IdxExpr = Var
-
-data LitVal = IntLit  Int
-            | RealLit Double
-            | StrLit  String
-                 deriving (Eq, Ord, Show)
-
-data BaseType = IntType | BoolType | RealType | StrType
-                   deriving (Eq, Ord, Show)
-
-data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Iota | Doubleit
-             | Hash | Rand | Randint
-             | Fold | FoldDeFunc Pat Expr
-               deriving (Eq, Ord, Show)
-
+-- === imperative IR ===
 
 data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
 data Statement = Update Var [Index] IExpr
@@ -105,9 +124,29 @@ data IExpr = ILit LitVal
            | IBuiltinApp Builtin [IExpr]
                deriving (Show, Eq)
 
+data ImpDecl = ImpTopLet [(Var, IType)] ImpProgram
+             | ImpEvalCmd (Command ImpProgram)
+
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
+
+-- === shared data types ===
+
+data Err = ParseErr String
+         | UnificationErr String String
+         | TypeErr String
+         | InfiniteTypeErr
+         | UnboundVarErr Var
+         | RepVarPatternErr Var
+         | CompilerErr String
+         | PrintErr String
+         | NotImplementedErr String
+  deriving (Eq, Show)
+
+type Except a = Either Err a
+
+-- === misc ===
 
 builtinNames = M.fromList [
   ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
@@ -141,10 +180,9 @@ infixr 2 ==>
 data FullEnv v t = FullEnv { lEnv :: Env v
                            , tEnv :: Env t }  deriving (Show, Eq)
 
-data Pass a b v t = Pass
-  { lowerExpr   ::         a -> FullEnv v t -> IO (v, b),
-    lowerUnpack ::  Var -> a -> FullEnv v t -> IO (v, t, b),
-    lowerCmd    :: Command a -> FullEnv v t -> IO (Command b) }
+newFullEnv :: [(Var, a)] -> [(Var, b)] -> FullEnv a b
+newFullEnv lvars tvars = FullEnv (addLocals lvars mempty)
+                                 (addLocals tvars mempty)
 
 -- these should just be lenses
 setLEnv :: (Env a -> Env b) -> FullEnv a t -> FullEnv b t
@@ -153,77 +191,12 @@ setLEnv update env = env {lEnv = update (lEnv env)}
 setTEnv :: (Env a -> Env b) -> FullEnv v a -> FullEnv v b
 setTEnv update env = env {tEnv = update (tEnv env)}
 
-type Source = String
-data TopDecl expr = TopDecl Source (DeclInstr expr)
-data DeclInstr expr = TopAssign Var expr
-                    | TopUnpack Var expr
-                    | EvalCmd (Command expr)  deriving (Show, Eq)
-
-data CommandOutput = TextOut String
-                   | PlotOut [Float] [Float]
-                   | PlotMatOut [[Float]]
-                       deriving (Show, Eq)
-
-data Command expr = Command CmdName expr
-                  | CmdResult CommandOutput
-                  | CmdErr Err  deriving (Show, Eq)
-
-data CmdName = EvalExpr | GetType | GetTyped | GetParse | DeFunc
-             | GetLLVM  | EvalJit | TimeIt | ShowPersistVal
-             | Imp
-             | Plot | PlotMat
-               deriving  (Show, Eq)
-
-
-data Err = ParseErr String
-         | UnificationErr String String
-         | TypeErr String
-         | InfiniteTypeErr
-         | UnboundVarErr Var
-         | RepVarPatternErr Var
-         | CompilerErr String
-         | PrintErr String
-         | NotImplementedErr String
-  deriving (Eq, Show)
-
-type Except a = Either Err a
-
-instance Traversable TopDecl where
-  traverse f (TopDecl s instr) = fmap (TopDecl s) $ traverse f instr
-
-instance Traversable DeclInstr where
-  traverse f (TopAssign v expr) = fmap (TopAssign v) (f expr)
-  traverse f (TopUnpack v expr) = fmap (TopUnpack v) (f expr)
-  traverse f (EvalCmd cmd) = fmap EvalCmd $ traverse f cmd
-
-instance Traversable Command where
-  traverse f (Command cmd expr) = fmap (Command cmd) (f expr)
-  traverse f (CmdResult s) = pure $ CmdResult s
-
 instance Semigroup (FullEnv v t) where
   FullEnv x y <> FullEnv x' y' = FullEnv (x<>x') (y<>y')
 
 instance Monoid (FullEnv v t) where
   mempty = FullEnv mempty mempty
   mappend = (<>)
-
-instance Functor TopDecl where
-  fmap = fmapDefault
-
-instance Foldable TopDecl where
-  foldMap = foldMapDefault
-
-instance Functor DeclInstr where
-  fmap = fmapDefault
-
-instance Foldable DeclInstr where
-  foldMap = foldMapDefault
-
-instance Functor Command where
-  fmap = fmapDefault
-
-instance Foldable Command where
-  foldMap = foldMapDefault
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
