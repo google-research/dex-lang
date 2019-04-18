@@ -5,7 +5,6 @@ import Control.Monad.Reader (ReaderT, runReaderT, local, asks)
 import Control.Monad.Writer (tell)
 import Control.Monad.State (StateT, evalStateT, gets, put, modify)
 import Control.Monad.Except (throwError)
-import qualified Data.Map.Strict as M
 import Data.List (nub, (\\))
 import Data.Foldable (toList)
 
@@ -18,8 +17,8 @@ import PPrint
 import Fresh
 import Pass
 
-type Subst   = M.Map Var Type
-type TempEnv = M.Map Var Kind
+type Subst   = Env Type
+type TempEnv = Env Kind
 data InferState = InferState { tempEnv :: TempEnv
                              , subst :: Subst }
 
@@ -34,8 +33,8 @@ typePass decl = case decl of
     return $ TopLet (v,ty) expr'
   UTopUnpack v expr -> do
     (ty, expr') <- translate expr
-    put $ newFullEnv [(v,ty)] [(v,IdxSetKind)]
     ty' <- liftExcept $ unpackExists ty v
+    put $ newFullEnv [(v,ty')] [(v,IdxSetKind)]
     return $ TopUnpack (v,ty') v expr'
   UEvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -44,7 +43,7 @@ typePass decl = case decl of
     case cmd of
       GetType -> do tell [pprint ty]
                     return $ EvalCmd NoOp
-      Passes  -> do tell [pprint expr']
+      Passes  -> do tell ["\nSystem F\n" ++ pprint expr']
                     return $ EvalCmd (Command cmd expr')
       _ -> return $ EvalCmd (Command cmd expr')
 
@@ -105,7 +104,7 @@ check expr reqTy = case expr of
     (maybeEx, bound') <- infer bound >>= zonk
     idxTy <- freshIdx
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [idxTy] t
-                               _ -> throwError $ TypeErr $ show maybeEx
+                               _ -> throwError $ TypeErr $ pprint maybeEx
     body' <- recurWith [(v, boundTy)] body reqTy
     idxTy' <- zonk idxTy
     tv <- case idxTy' of TypeVar tv -> return tv
@@ -115,7 +114,7 @@ check expr reqTy = case expr of
     return $ Unpack (v, boundTy) tv bound' body'
   where
     leakErr = throwError $ TypeErr "existential variable leaked"
-    recurWith p expr ty = local (setLEnv $ addLocals p) (check expr ty)
+    recurWith p expr ty = local (setLEnv $ addVs p) (check expr ty)
 
 checkPat :: UPat -> Type -> InferM Pat
 checkPat pat ty = do tree <- traverse addFresh pat
@@ -141,7 +140,7 @@ splitTab t = case t of
 
 freshVar :: Kind -> InferM Type
 freshVar kind = do v <- fresh $ pprint kind
-                   modify $ setTempEnv $ M.insert v kind
+                   modify $ setTempEnv $ addV (v, kind)
                    return (TypeVar v)
 
 freshTy  = freshVar TyKind
@@ -159,7 +158,7 @@ generalize ty expr = do
                      TLam (zip flexVars kinds) expr')
   where
     getKind :: Var -> InferM Kind
-    getKind v = gets $ unJust . M.lookup v . tempEnv
+    getKind v = gets $ (! v) . tempEnv
 
 getFlexVars :: Type -> Expr -> InferM [Var]
 getFlexVars ty expr = do
@@ -169,9 +168,10 @@ getFlexVars ty expr = do
   return $ nub $ (tyVars ++ exprVars) \\ envVars
 
 tempVarsEnv :: InferM [Var]
-tempVarsEnv = do Env _ locals <- asks $ lEnv
-                 vs <- mapM tempVars (M.elems locals)
-                 return (concat vs)
+tempVarsEnv = do envTypes <- asks $ toList . lEnv
+                 vs <- mapM tempVars envTypes
+                 vs' <- asks $ envVars . tEnv
+                 return (concat vs ++ vs')
 
 tempVars :: HasTypeVars a => a -> InferM [Var]
 tempVars x = liftM freeTyVars (zonk x)
@@ -189,16 +189,16 @@ instantiate ty reqTy expr = do
       return expr
 
 bind :: Var -> Type -> InferM ()
-bind v t | v `occursIn` t = error $ show (v, t)  -- throwError InfiniteTypeErr
-         | otherwise = do modify $ setSubst $ M.insert v t
-                          modify $ setTempEnv $ M.delete v
+bind v t | v `occursIn` t = error $ pprint (v, t)  -- throwError InfiniteTypeErr
+         | otherwise = do modify $ setSubst $ addV (v, t)
+                          modify $ setTempEnv $ envDelete v
 
 -- TODO: check kinds
 unify :: Type -> Type -> InferM ()
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  let unifyErr = throwError $ UnificationErr (show t1') (show t2')
+  let unifyErr = throwError $ UnificationErr t1' t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
     (t, TypeVar v)               -> bind v t
@@ -220,10 +220,10 @@ zonk x = subFreeTVs lookupVar x
 
 lookupVar :: Var -> InferM Type
 lookupVar v = do
-  mty <- gets $ M.lookup v . subst
+  mty <- gets $ flip envLookup v . subst
   case mty of Nothing -> return $ TypeVar v
               Just ty -> do ty' <- zonk ty
-                            modify $ setSubst (M.insert v ty')
+                            modify $ setSubst (addV (v, ty'))
                             return ty'
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState

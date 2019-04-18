@@ -17,7 +17,6 @@ import Control.Monad.State
 import Control.Monad.Writer (tell)
 import Control.Applicative (liftA, liftA2)
 
-import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
 import Data.List (intercalate, transpose)
 import Data.Traversable
@@ -50,8 +49,8 @@ data JitVal w = ScalarVal w L.Type
 data Cell = Cell (Ptr Operand) [Operand]
 type CompileVal  = JitVal Operand
 type PersistVal  = JitVal Word64
-type PersistEnv = M.Map Var PersistVal
-type ImpVarEnv = M.Map Var (Either CompileVal Cell)
+type PersistEnv = Env PersistVal
+type ImpVarEnv = Env (Either CompileVal Cell)
 
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
@@ -70,12 +69,12 @@ type NInstr = Named Instruction
 jitPass :: ImpDecl -> TopMonadPass PersistEnv ()
 jitPass decl = case decl of
   ImpTopLet bs prog -> do vals <- evalProg prog
-                          put $ M.fromList $ zip (map fst bs) vals
+                          put $ newEnv $ zip (map fst bs) vals
   ImpEvalCmd _ NoOp -> return ()
   ImpEvalCmd ty (Command cmd prog) -> case cmd of
     Passes -> do CompiledProg vs m <- toLLVM prog
                  llvm <- liftIO $ showLLVM m
-                 tell [llvm]
+                 tell ["\n\nLLVM\n" ++ llvm]
     EvalExpr -> do vals <- evalProg prog
                    vecs <- liftIO $ mapM asVec vals
                    tell [pprint (restructureVal ty vecs)]
@@ -111,7 +110,7 @@ restructureVal ty vecs = Value ty $ restructure vecs (typeLeaves ty)
     typeLeaves ty = case ty of BaseType b -> RecLeaf ()
                                TabType _ valTy -> typeLeaves valTy
                                RecType r -> RecTree $ fmap typeLeaves r
-                               _ -> error $ "can't show " ++ show ty
+                               _ -> error $ "can't show " ++ pprint ty
 
 asVec :: PersistVal -> IO Vec
 asVec v = case v of
@@ -142,12 +141,12 @@ compileStatement statement = case statement of
                            cell' <- idxCell cell idxs'
                            writeCell cell' val
   ImpLet (v, _) expr -> do val <- compileExpr expr
-                           modify $ setImpVarEnv (M.insert v (Left val))
+                           modify $ setImpVarEnv (addV (v, (Left val)))
   Alloc v (IType b shape) -> do
     shape' <- mapM lookupValVar shape
     cell <- case shape' of [] -> alloca b (pprint v)
                            _ -> malloc b shape' (pprint v)
-    modify $ setImpVarEnv (M.insert v (Right cell))
+    modify $ setImpVarEnv (addV (v, (Right cell)))
 
   Loop i n body -> do n' <- lookupValVar n
                       compileLoop i n' body
@@ -174,7 +173,7 @@ compileExpr expr = case expr of
                             compileBuiltin b vals
 
 lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
-lookupImpVar v = gets $ unJust . M.lookup v . impVarEnv
+lookupImpVar v = gets $ (! v) . impVarEnv
 
 lookupValVar :: Var -> CompileM CompileVal
 lookupValVar v = do { Left val <- lookupImpVar v; return val }
@@ -218,7 +217,7 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  modify $ setImpVarEnv $ M.insert iVar (Left $ ScalarVal iVal longTy) -- shadows...
+  modify $ setImpVarEnv $ addV (iVar, (Left $ ScalarVal iVal longTy)) -- shadows...
   mapM compileStatement body
   iValInc <- add iVal (litInt 1)
   store i iValInc
@@ -324,7 +323,7 @@ compileBuiltin b = case b of
   Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
   Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
-  _ -> error (show b)
+  _ -> error $ pprint b
   -- Doubleit -> externalMono doubleFun  IntType
   -- Hash     -> externalMono hashFun    IntType
   -- Rand     -> externalMono randFun    RealType

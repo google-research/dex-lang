@@ -78,7 +78,7 @@ instance Pretty Expr where
     For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
-    BuiltinApp b ts expr -> parens $ p b <+>  "[" <+> p ts <+> "]" <+> p expr
+    BuiltinApp b ts expr -> parens $ p b <+> p ts <+> p expr
     Unpack v i e1 e2 ->
       align $ parens $ "{" <> p (binder v) <> "," <+> p i <> "} = unpack"
                                     <+> p e1 <> line <>

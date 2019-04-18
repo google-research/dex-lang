@@ -23,7 +23,7 @@ data DFVal = DFNil
            | LamVal Pat DFEnv Expr
            | TLamVal [TBinder] DFEnv Expr
            | BuiltinLam Builtin [Type] [DFVal]
-           | RecVal (Record DFVal)  deriving (Show)
+           | RecVal (Record DFVal)
 
 type DeFuncM a = MonadPass DFEnv () a
 
@@ -35,14 +35,14 @@ deFuncPass decl = case decl of
     return $ TopLet (v, ty) expr'
   TopUnpack (v,_) iv expr -> do
     ((val,ty), expr') <- deFuncTop expr
-    put $ newFullEnv [(v, (val,ty))] [(iv,Nothing)]
     ty' <- liftExcept $ unpackExists ty iv
+    put $ newFullEnv [(v, (val,ty'))] [(iv,Nothing)]
     return $ TopUnpack (v, ty') iv expr'
   EvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     ((val,ty), expr') <- deFuncTop expr
     put mempty
-    case cmd of Passes  -> do tell [pprint expr']
+    case cmd of Passes  -> do tell ["\n\nDefunctionalized\n" ++ pprint expr']
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
 
@@ -88,19 +88,19 @@ deFuncExpr expr = case expr of
     case tLamVal of
       BuiltinLam b [] [] -> deFuncBuiltin (BuiltinLam b ts' []) unitLit
       TLamVal bs env body -> do
-          let env' = setTEnv (addLocals (zip (map fst bs) (map Just ts'))) env
+          let env' = setTEnv (addVs (zip (map fst bs) (map Just ts'))) env
           (ans, body') <- local (const env') (deFuncExpr body)
           return (ans, Let (envPat env) fexpr' body')
   Unpack b tv bound body -> do
     (val, bound') <- recur bound
-    let updateT = setTEnv (addLocal (tv, Nothing))
+    let updateT = setTEnv (addV (tv, Nothing))
     (b', valTy) <- local updateT (deFuncBinder (b,val))
-    let updateL = setLEnv (addLocal valTy)
+    let updateL = setLEnv (addV valTy)
     (ans, body') <- local (updateL . updateT) (deFuncExpr body)
     return (ans, Unpack b' tv bound' body')
 
   where recur = deFuncExpr
-        recurWith  xs = local (setLEnv $ addLocals xs) . deFuncExpr
+        recurWith  xs = local (setLEnv $ addVs xs) . deFuncExpr
         unitLit = RecCon (Tup [])
 
 subTy :: Type -> DeFuncM Type
@@ -138,13 +138,13 @@ lhsPair x y = posPat [x, y]
 rhsPair x y = RecCon (Tup [x, y])
 
 envTypes :: DFEnv -> [Type]
-envTypes env = [ty | (_,(_,ty)) <- locals (lEnv env)]
+envTypes env = map snd $ toList (lEnv env)
 
 envPat :: DFEnv -> Pat
-envPat env = RecTree $ Tup [RecLeaf (v,ty) | (v,(_,ty)) <- locals (lEnv env)]
+envPat env = RecTree $ Tup [RecLeaf (v,ty) | (v,(_,ty)) <- envPairs (lEnv env)]
 
 envTupCon :: DFEnv -> Expr
-envTupCon env = RecCon $ Tup [Var v | (v,(_,_)) <- locals (lEnv env)]
+envTupCon env = RecCon $ Tup (map Var $ envVars (lEnv env))
 
 deFuncApp :: (DFVal, Expr) -> (DFVal, Expr) -> DeFuncM (DFVal, Expr)
 deFuncApp (fVal, fexpr) (argVal, arg') =
@@ -154,13 +154,11 @@ deFuncApp (fVal, fexpr) (argVal, arg') =
       in deFuncBuiltin fVal' (rhsPair fexpr arg')
     LamVal p env body -> do
       (p', argVals) <- local (const env) (bindPat p argVal)
-      let env' = setLEnv (addLocals argVals) env
+      let env' = setLEnv (addVs argVals) env
       (ans, body') <- local (const env') (deFuncExpr body)
       return (ans, Let (lhsPair p' (envPat env))
                        (rhsPair arg' fexpr)
                        body')
-    _ -> do env <- ask
-            error $ "Unexpected dfval: " ++ show fVal ++ show env
 
 deFuncBuiltin :: DFVal -> Expr -> DeFuncM (DFVal, Expr)
 deFuncBuiltin val@(BuiltinLam b ts argVals) args =
@@ -185,7 +183,7 @@ canonicalLamExpr fTyped@(fval, fType) xsTyped = do
   freshVars <- mapM (const $ fresh "arg") (fTyped:xsTyped)
   let bindings = zip freshVars (fTyped:xsTyped)
       pat = posPat $ map RecLeaf $ zip freshVars (fType:xsTypes)
-      update = setLEnv (addLocals $ bindings)
+      update = setLEnv (addVs $ bindings)
       (fExpr:xsExprs) = map (Var . fst) bindings
   (ans, body) <- local update $ foldM deFuncApp (fval, fExpr) (zip xs xsExprs)
   return (ans, pat, body)

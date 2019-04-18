@@ -6,9 +6,11 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Fresh
+import PPrint
 
 type Pass a b env = a -> TopMonadPass env b
 
@@ -38,10 +40,10 @@ execPass env state stem = liftM snd . runPass env state stem
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
 
-assertEq :: (Show a, Eq a) => a -> a -> String -> Except ()
+assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)
-  where msg = s ++ ": " ++ show x ++ " != " ++ show y
+  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
 
 ignoreExcept :: Except a -> a
-ignoreExcept (Left e) = error $ show e
+ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x

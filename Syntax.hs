@@ -138,7 +138,7 @@ type Index = Var
 -- === shared data types ===
 
 data Err = ParseErr String
-         | UnificationErr String String
+         | UnificationErr Type Type
          | TypeErr String
          | InfiniteTypeErr
          | UnboundVarErr Var
@@ -185,8 +185,7 @@ data FullEnv v t = FullEnv { lEnv :: Env v
                            , tEnv :: Env t }  deriving (Show, Eq)
 
 newFullEnv :: [(Var, a)] -> [(Var, b)] -> FullEnv a b
-newFullEnv lvars tvars = FullEnv (addLocals lvars mempty)
-                                 (addLocals tvars mempty)
+newFullEnv lvars tvars = FullEnv (newEnv lvars) (newEnv tvars)
 
 -- these should just be lenses
 setLEnv :: (Env a -> Env b) -> FullEnv a t -> FullEnv b t

@@ -12,6 +12,7 @@ import Record
 import Util
 import Pass
 import Fresh
+import PPrint
 
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
@@ -59,9 +60,9 @@ getType' check expr = case expr of
               return out
     Unpack v tv bound body -> do
         checkNoShadow tv
-        let updateTEnv = setTEnv (addLocal (tv, IdxSetKind))
+        let updateTEnv = setTEnv (addV (tv, IdxSetKind))
         local updateTEnv (checkTy (snd v))
-        local (setLEnv (addLocal v) . updateTEnv) (recur body)
+        local (setLEnv (addV v) . updateTEnv) (recur body)
 
   where
     checkEq :: Type -> TypeM Type -> TypeM ()
@@ -74,8 +75,8 @@ getType' check expr = case expr of
     checkTy ty = return () -- TODO: check kind and unbound type vars
 
     recur = getType' check
-    recurWith  vs = local (setLEnv (addLocals vs)) . recur
-    recurWithT vs = local (setTEnv (addLocals vs)) . recur
+    recurWith  vs = local (setLEnv (addVs vs)) . recur
+    recurWithT vs = local (setTEnv (addVs vs)) . recur
 
     checkNoShadow :: Var -> TypeM ()
     checkNoShadow v = do
@@ -88,7 +89,7 @@ getType' check expr = case expr of
 
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
-unpackExists ty _ = throwError $ TypeErr $ "Can't unpack type: " ++ show ty
+unpackExists ty _ = throwError $ TypeErr $ "Can't unpack type: " ++ pprint ty
 
 patType :: RecTree (a, Type) -> Type
 patType (RecTree r) = RecType (fmap patType r)

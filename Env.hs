@@ -1,36 +1,35 @@
-module Env (Env (..), envLookup, newEnv, addLocal, addLocals, addTop,
-            isin, (!), locals) where
+module Env (Env, envLookup, newEnv, addV, addVs, isin,
+            envVars, envPairs, envDelete, (!)) where
 
-import Data.List (elemIndex)
 import Data.Semigroup
 import Data.Traversable
 import qualified Data.Map.Strict as M
-import Control.Applicative (liftA, liftA2, liftA3)
+import Control.Applicative (liftA)
 import Fresh
 
-data Env a = Env (M.Map Var a) (M.Map Var a) deriving (Show, Eq, Ord)
+newtype Env a = Env (M.Map Var a)  deriving (Show, Eq, Ord)
 
 newEnv :: [(Var, a)] -> Env a
-newEnv xs = Env (M.fromList xs) mempty
+newEnv xs = Env (M.fromList xs)
 
-addTop :: Var -> a -> Env a -> Env a
-addTop v x (Env top local) = Env (M.insert v x top) local
+addV :: (Var, a) -> Env a -> Env a
+addV (v, x) (Env m) = Env (M.insert v x m)
 
-locals :: Env a -> [(Var, a)]
-locals (Env _ local) = M.toAscList local
-
-addLocal :: (Var, a) -> Env a -> Env a
-addLocal (v, x) (Env top local) = Env top (M.insert v x local)
-
-addLocals :: Traversable f => f (Var, a) -> Env a -> Env a
-addLocals xs (Env top local) = Env top local'
-  where local' = foldr (uncurry M.insert) local xs
+addVs :: Traversable f => f (Var, a) -> Env a -> Env a
+addVs xs (Env m) = Env m'
+  where m' = foldr (uncurry M.insert) m xs
 
 envLookup :: Env a -> Var -> Maybe a
-envLookup (Env top local) v =
-  case M.lookup v local of
-    Just x -> Just x
-    Nothing -> M.lookup v top
+envLookup (Env m) v = M.lookup v m
+
+envVars :: Env a -> [Var]
+envVars (Env m) = M.keys m
+
+envPairs :: Env a -> [(Var, a)]
+envPairs (Env m) = M.toAscList m
+
+envDelete :: Var -> Env a -> Env a
+envDelete v (Env m) = Env (M.delete v m)
 
 isin :: Var -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
@@ -48,12 +47,12 @@ instance Foldable (Env) where
   foldMap = foldMapDefault
 
 instance Traversable (Env) where
-  traverse f (Env fenv xs) = liftA2 Env (traverse f fenv) (traverse f xs)
+  traverse f (Env m) = liftA Env (traverse f m)
 
 
 instance Semigroup (Env a) where
-  Env m1 m2 <> Env m1' m2' = Env (m1 <> m1') (m2 <> m2')
+  Env m <> Env m' = Env (m <> m')
 
 instance Monoid (Env a) where
-  mempty = Env mempty mempty
+  mempty = Env mempty
   mappend = (<>)
