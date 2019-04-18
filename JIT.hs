@@ -23,8 +23,8 @@ import Data.Traversable
 import Data.Functor.Identity
 
 import qualified Foreign.Ptr as F
-import Data.ByteString.Short (ShortByteString, toShort)
-import Data.ByteString.Char8 (pack)
+import Data.ByteString.Short (ShortByteString, toShort, fromShort)
+import Data.ByteString.Char8 (pack, unpack)
 import Data.Word (Word64 (..))
 
 import Type
@@ -321,16 +321,22 @@ compileBinop ::    L.Type -> (Operand -> Operand -> L.Instruction)
 compileBinop ty makeInstr [ScalarVal x _, ScalarVal y _] =
   liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x y)
 
+externalMono :: ExternFunSpec -> BaseType -> [CompileVal] -> CompileM CompileVal
+externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
+  ans <- evalInstr name' retTy $ externCall f (map scalarOp args)
+  return $ ScalarVal ans (scalarTy baseTy)
+  where name' = unpack (fromShort name)
+
 compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b = case b of
   Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
   Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
+  Doubleit -> externalMono doubleFun  IntType
+  Hash     -> externalMono hashFun    IntType
+  Rand     -> externalMono randFun    RealType
+  Randint  -> externalMono randIntFun IntType
   _ -> error $ pprint b
-  -- Doubleit -> externalMono doubleFun  IntType
-  -- Hash     -> externalMono hashFun    IntType
-  -- Rand     -> externalMono randFun    RealType
-  -- Randint  -> externalMono randIntFun IntType
 
 doubleFun  = ExternFunSpec "doubleit"      longTy [longTy] ["x"]
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]

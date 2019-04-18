@@ -121,7 +121,8 @@ deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
 deFuncType DFNil t = t
 deFuncType (LamVal p env _) _   = RecType $ Tup (envTypes env)
 deFuncType (TLamVal _ env _)  _ = RecType $ Tup (envTypes env)
-deFuncType (BuiltinLam b ts exprs) _ = error "not implemented"
+deFuncType (BuiltinLam b ts vals) _ = nestedPairs $ take (length vals) args
+                                        where args = fst (builtinNaryTy b)
 
 getExprType :: Expr -> DeFuncM Type
 getExprType expr = do

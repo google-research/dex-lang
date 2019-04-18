@@ -1,5 +1,5 @@
 module Type (TypeEnv, checkExpr, getType, litType, unpackExists,
-             patType, builtinType, builtinNaryTy) where
+             patType, builtinType, builtinNaryTy, nestedPairs) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
