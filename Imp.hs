@@ -254,7 +254,8 @@ checkStatementTy statement = case statement of
 -- TODO: add Except to ImpM for more helpful error reporting
 checkIsInt :: Var -> ImpM ()
 checkIsInt v = do (_, ty) <- lookupVar v
-                  throwIf (ty /= IType IntType []) $ "Not a valid size " ++ pprint ty
+                  throwIf (ty /= IType IntType []) $
+                    "Not a valid size " ++ pprint ty
 
 throw :: String -> ImpM a
 throw s = throwError (CompilerErr s)

@@ -34,8 +34,9 @@ typePass decl = case decl of
   UTopUnpack v expr -> do
     (ty, expr') <- translate expr
     ty' <- liftExcept $ unpackExists ty v
-    put $ newFullEnv [(v,ty')] [(v,IdxSetKind)]
-    return $ TopUnpack (v,ty') v expr'
+    let iv = Qual v "idx" 0 -- TODO: sort out variables properly
+    put $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
+    return $ TopUnpack (v,ty') iv expr'
   UEvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     (ty, expr') <- translate expr
@@ -109,9 +110,12 @@ check expr reqTy = case expr of
     idxTy' <- zonk idxTy
     tv <- case idxTy' of TypeVar tv -> return tv
                          _ -> leakErr
-    tvs <- tempVarsEnv
-    if tv `elem` tvs then leakErr else return ()
+    tvsEnv <- tempVarsEnv
+    tvsReqTy <- tempVars reqTy
+    if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
     return $ Unpack (v, boundTy) tv bound' body'
+
+
   where
     leakErr = throwError $ TypeErr "existential variable leaked"
     recurWith p expr ty = local (setLEnv $ addVs p) (check expr ty)
