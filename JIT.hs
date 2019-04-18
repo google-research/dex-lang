@@ -242,7 +242,10 @@ readCell (Cell ptr@(Ptr _ ty) []) = do x <- load ptr
 
 writeCell :: Cell -> CompileVal -> CompileM ()
 writeCell (Cell ptr []) (ScalarVal x _) = store ptr x
-
+writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) shape') = do
+  numScalars <- sizeOf shape
+  numBytes <- mul (litInt 8) numScalars
+  addInstr $ L.Do (externCall memcpyFun [dest, src, numBytes])
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of

@@ -36,7 +36,7 @@ impPass decl = case decl of
     return $ ImpTopLet b' prog
   TopUnpack b iv expr -> do
     prog <- impExprTop expr
-    let b' = (iv, IType IntType []) : toList (flatBinding b)
+    let b' = (iv, intTy) : toList (flatBinding b)
     put $ ( newEnv (map addImmutFlag b')
           , newFullEnv [b] [(iv,())])
     return $ ImpTopLet b' prog
@@ -91,7 +91,7 @@ toImp expr = case expr of
   RecCon r -> liftM RecTree $ traverse toImp r
   Unpack b i bound body -> do
     RecTree (Tup [RecLeaf iset, x]) <- toImp bound
-    addLet (i, IType IntType []) iset
+    addLet (i, intTy) iset
     letBind b x
     let updateEnv = setTEnv (addV (i, ())) . setLEnv (addV b)
     local updateEnv (toImp body)
@@ -102,6 +102,7 @@ toImpFor b@(i, TypeVar n) body = do
   bodyTy <- exprType body
   let cellTypes = fmap (addIdx n . snd) (flatType bodyTy)
   cells <- traverse newCell cellTypes
+  modify $ setEnv $ addV (i, (False, intTy))
   startBlock
   results <- local (setLEnv $ addV b) (toImp body)
   traverse (\(v,x) -> add $ Update v [i] x) (recTreeZipEq cells results)
@@ -245,7 +246,7 @@ checkStatementTy statement = case statement of
                              -- doesn't work without alias checking for sizes
                              -- throwIf (ty' /= ty) $ err "Type doesn't match binder"
                              modify $ setEnv $ addV (v, (False, ty))
-  Loop i size block -> do modify $ setEnv $ addV (i, (False, IType IntType []))
+  Loop i size block -> do modify $ setEnv $ addV (i, (False, intTy))
                           checkIsInt size
                           void $ mapM checkStatementTy block
   Alloc v ty@(IType b shape) -> do void $ mapM checkIsInt shape
@@ -255,8 +256,11 @@ checkStatementTy statement = case statement of
 -- TODO: add Except to ImpM for more helpful error reporting
 checkIsInt :: Var -> ImpM ()
 checkIsInt v = do (_, ty) <- lookupVar v
-                  throwIf (ty /= IType IntType []) $
+                  throwIf (ty /= intTy) $
                     "Not a valid size " ++ pprint ty
+
+intTy :: IType
+intTy = IType IntType []
 
 throw :: String -> ImpM a
 throw s = throwError (CompilerErr s)
