@@ -16,8 +16,8 @@ addV :: (Var, a) -> Env a -> Env a
 addV (v, x) (Env m) = Env (M.insert v x m)
 
 addVs :: Traversable f => f (Var, a) -> Env a -> Env a
-addVs xs (Env m) = Env m'
-  where m' = foldr (uncurry M.insert) m xs
+addVs xs (Env m) = Env m' -- use foldl to traverse patterns left-to-right
+  where m' = foldl (flip $ uncurry M.insert) m xs
 
 envLookup :: Env a -> Var -> Maybe a
 envLookup (Env m) v = M.lookup v m

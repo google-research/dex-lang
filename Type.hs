@@ -33,20 +33,21 @@ evalTypeM env m = runReaderT m env
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
-    Var v        -> lookupLVar v
+    Var v        -> do env <- ask
+                       lookupLVar v
     Builtin b    -> return $ builtinType b
     Let p bound body -> do checkTy (patType p)
-                           checkEq (patType p) (recur bound)
+                           checkEq "Let" (patType p) (recur bound)
                            recurWith p body
     Lam p body -> do checkTy (patType p)
                      liftM (ArrType (patType p)) (recurWith p body)
     For i body -> do checkTy (snd i)
                      liftM (TabType (snd i)) (recurWith [i] body)
     App e arg  -> do ArrType a b <- recur e
-                     checkEq a (recur arg)
+                     checkEq "App" a (recur arg)
                      return b
     Get e ie   -> do TabType a b <- recur e
-                     checkEq a (recur (Var ie))
+                     checkEq "Get" a (recur (Var ie))
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
     TLam vks body -> do t <- recurWithT vks body
@@ -59,7 +60,7 @@ getType' check expr = case expr of
     BuiltinApp b ts arg -> case builtinType b of
       Forall _ body -> error "not implemented"
       t -> do let (a, out) = deFuncType (numArgs b) t
-              checkEq a (recur arg)
+              checkEq "BuiltinApp" a (recur arg)
               return out
     Unpack v tv bound body -> do
         checkNoShadow tv
@@ -68,15 +69,14 @@ getType' check expr = case expr of
         local (setLEnv (addV v) . updateTEnv) (recur body)
 
   where
-    checkEq :: Type -> TypeM Type -> TypeM ()
-    checkEq ty getTy =
+    checkEq :: String -> Type -> TypeM Type -> TypeM ()
+    checkEq s ty getTy =
       if check then do ty' <- getTy
-                       liftExcept $ assertEq ty ty' "Unexpected type"
+                       liftExcept $ assertEq ty ty' ("Unexpected type in " ++ s)
                else return ()
 
     checkTy :: Type -> TypeM ()
     checkTy ty = return () -- TODO: check kind and unbound type vars
-
     recur = getType' check
     recurWith  vs = local (setLEnv (addVs vs)) . recur
     recurWithT vs = local (setTEnv (addVs vs)) . recur

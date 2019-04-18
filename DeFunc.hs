@@ -156,8 +156,8 @@ deFuncApp (fVal, fexpr) (argVal, arg') =
       (p', argVals) <- local (const env) (bindPat p argVal)
       let env' = setLEnv (addVs argVals) env
       (ans, body') <- local (const env') (deFuncExpr body)
-      return (ans, Let (lhsPair p' (envPat env))
-                       (rhsPair arg' fexpr)
+      return (ans, Let (lhsPair (envPat env) p')
+                       (rhsPair fexpr arg')
                        body')
 
 deFuncBuiltin :: DFVal -> Expr -> DeFuncM (DFVal, Expr)
