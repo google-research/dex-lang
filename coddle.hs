@@ -1,4 +1,3 @@
-import System.Exit
 import System.IO
 import Data.IORef
 import Control.Concurrent
@@ -41,20 +40,17 @@ fullPass :: Monoid env => (a -> TopMonadPass env b)
 fullPass f decls = evalStateT (mapM procDecl decls) mempty
   where procDecl (s,x) = do
           env <- get
-          result <- liftIO $ runTopMonadPass env (f x)
-          ((x', env'), s') <- liftIO $ liftExceptIO result
+          (result, s') <- liftIO $ runTopMonadPass env (f x)
+          let s'' = s <> s'
+          (x', env') <- liftExceptIO $ addErrMsg (concat s'') result
           put $ env <> env'
-          return (s <> s', x')
+          return (s'', x')
 
 evalWeb :: String -> IO ()
 evalWeb fname = undefined
 
 evalRepl :: IO ()
 evalRepl = undefined
-
-liftExceptIO :: Except a -> IO a
-liftExceptIO (Left e) = die (pprint e)
-liftExceptIO (Right x) = return x
 
 opts :: ParserInfo CmdOpts
 opts = info (p <**> helper) mempty

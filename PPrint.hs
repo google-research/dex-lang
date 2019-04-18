@@ -85,7 +85,7 @@ instance Pretty Expr where
                        "in" <+> p e2
     TLam binders expr -> "Lam" <+> hcat (map (p . binder) binders) <> ":"
                                <+> align (p expr)
-    TApp expr ts -> p expr <+> "[" <+> p ts <+> "]"
+    TApp expr ts -> p expr <> p ts
     where pPat pat = p $ fmap binder pat
 
 data BinderWrap v t = BinderWrap v t

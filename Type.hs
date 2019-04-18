@@ -22,7 +22,10 @@ getType (FullEnv lenv _) expr =
   ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
 
 checkExpr :: TypeEnv -> Expr -> Except Type
-checkExpr env expr = evalTypeM env (getType' True expr)
+checkExpr env expr =
+  case evalTypeM env (getType' True expr) of
+    Left e -> Left $ CompilerErr $ pprint e ++ "\nExpression:\n" ++ pprint expr
+    Right x -> Right x
 
 evalTypeM ::  TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env

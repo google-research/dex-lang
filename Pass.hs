@@ -1,7 +1,10 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Pass (MonadPass, TopMonadPass, runPass, liftTopPass,
              evalPass, execPass, liftExcept, assertEq, ignoreExcept,
-             runTopMonadPass) where
+             runTopMonadPass, addErrMsg, liftExceptIO) where
 
+import System.Exit
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -19,13 +22,15 @@ type MonadPass env state a = ReaderT env (
                                  FreshT (
                                    Either Err))) a
 
+-- TODO: change order of except and writer so we can see what was written before error
+
 -- TODO: use IO exceptions rather than (Either Err)
 -- TODO: consider 'Except' on b only so we can propagate declared types on error
 -- I keep vacillating on whether to use state or reader-writer for env
-type TopMonadPass env a = StateT env (WriterT [String] (ExceptT Err IO)) a
+type TopMonadPass env a = StateT env (ExceptT Err (WriterT [String] IO)) a
 
-runTopMonadPass :: env -> TopMonadPass env a -> IO (Except ((a, env), [String]))
-runTopMonadPass env m = runExceptT $ runWriterT (runStateT m env)
+runTopMonadPass :: env -> TopMonadPass env a -> IO (Except (a, env), [String])
+runTopMonadPass env m = runWriterT $ runExceptT $ runStateT m env
 
 liftTopPass :: state -> MonadPass env state a -> TopMonadPass env a
 liftTopPass state m = do env <- get
@@ -40,6 +45,11 @@ execPass env state stem = liftM snd . runPass env state stem
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
 
+-- TODO: simplify Err so we can easily add extra information
+addErrMsg :: MonadError Err m => String -> m a -> m a
+addErrMsg s m = catchError m (handler s)
+  where handler s e = throwError $ CompilerErr $ pprint e ++ "\n" ++ s
+
 assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return () else Left (CompilerErr msg)
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
@@ -47,3 +57,7 @@ assertEq x y s = if x == y then return () else Left (CompilerErr msg)
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
+
+liftExceptIO :: MonadIO m => Except a -> m a
+liftExceptIO (Left e) = liftIO $ die (pprint e)
+liftExceptIO (Right x) = return x

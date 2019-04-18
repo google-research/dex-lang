@@ -159,6 +159,7 @@ writeCell v val = add $ Update v [] val
 
 newCell :: IType -> ImpM Var
 newCell ty = do v <- fresh "cell"
+                modify $ setEnv $ addV (v, (True, ty))
                 add $ Alloc v ty
                 return v
 

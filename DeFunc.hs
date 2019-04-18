@@ -73,9 +73,9 @@ deFuncExpr expr = case expr of
   App fexpr arg -> do fexpr' <- recur fexpr
                       arg'   <- recur arg
                       deFuncApp fexpr' arg'
-  For a body -> do let (v, ty) = a
-                   (ans, body') <- recurWith [(v, (DFNil, ty))] body
-                   return (ans, For a body')
+  For (v,ty) body -> do ty' <- subTy ty
+                        (ans, body') <- recurWith [(v, (DFNil, ty'))] body
+                        return (ans, For (v,ty') body')
   Get e ie -> do (ans, e') <- recur e
                  return (ans, Get e' ie)
   RecCon r -> do r' <- traverse recur r
@@ -113,8 +113,8 @@ bindPat pat val = do
 
 deFuncBinder :: (Binder, DFVal) -> DeFuncM (Binder, (Var, TypedDFVal))
 deFuncBinder ((v, ty), val) = do ty' <- subTy ty
-                                 return ( (v, deFuncType val ty)
-                                        , (v, (val, ty)) )
+                                 return ( (v, deFuncType val ty')
+                                        , (v, (val, ty')) )
 
 deFuncType :: DFVal -> Type -> Type
 deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
