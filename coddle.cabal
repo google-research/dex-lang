@@ -8,17 +8,12 @@ cabal-version:       >=1.10
 executable coddle
   main-is:             coddle.hs
   other-modules:       Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       DeFunc, ParseUtil, Parser, Util, WebOutput, Imp, PPrint,
-                       Fresh, Pass
+                       DeFunc, ParseUtil, Parser, Util, Imp, PPrint, Fresh, Pass
   other-extensions:    OverloadedStrings
   build-depends:       base, containers, mtl, QuickCheck, binary, bytestring, HUnit,
-                       haskeline, time, tf-random,
-                       llvm-hs-pure ==6.*,
-                       llvm-hs ==6.*,
-                       hinotify, aeson, megaparsec, warp,
-                       optparse-applicative, wai, parser-combinators, http-types,
-                       prettyprinter, text
-
+                       time, tf-random, llvm-hs-pure ==6.*, llvm-hs ==6.*,
+                       hinotify, aeson, megaparsec, warp, optparse-applicative,
+                       wai, parser-combinators, http-types, prettyprinter, text
 
   default-language:    Haskell2010
 

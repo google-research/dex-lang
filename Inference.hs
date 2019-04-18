@@ -33,8 +33,8 @@ typePass decl = case decl of
     return $ TopLet (v,ty) expr'
   UTopUnpack v expr -> do
     (ty, expr') <- translate expr
-    ty' <- liftExcept $ unpackExists ty v
     let iv = Qual v "idx" 0 -- TODO: sort out variables properly
+    ty' <- liftExcept $ unpackExists ty iv
     put $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
     return $ TopUnpack (v,ty') iv expr'
   UEvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
@@ -176,13 +176,12 @@ getFlexVars ty expr = do
   tyVars   <- tempVars ty
   exprVars <- tempVars expr
   envVars  <- tempVarsEnv
-  return $ nub $ (tyVars ++ exprVars) \\ envVars
+  return $ nub (tyVars ++ exprVars) \\ envVars
 
 tempVarsEnv :: InferM [Var]
 tempVarsEnv = do envTypes <- asks $ toList . lEnv
                  vs <- mapM tempVars envTypes
-                 vs' <- asks $ envVars . tEnv
-                 return (concat vs ++ vs')
+                 return (concat vs)
 
 tempVars :: HasTypeVars a => a -> InferM [Var]
 tempVars x = liftM freeTyVars (zonk x)

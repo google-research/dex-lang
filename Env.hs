@@ -38,7 +38,8 @@ isin v env = case envLookup env v of Just _  -> True
 (!) :: Env a -> Var -> a
 env ! v = case envLookup env v of
   Just x -> x
-  Nothing -> error $ "Lookup of " ++ show v ++ " failed"
+  Nothing -> error $ "Lookup of " ++ show v
+                       ++ " in " ++ show (envVars env) ++ " failed"
 
 instance Functor (Env) where
   fmap = fmapDefault
