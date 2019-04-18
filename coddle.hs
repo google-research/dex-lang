@@ -31,18 +31,20 @@ evalScript fname = do
              >>= fullPass deFuncPass
              >>= fullPass impPass
              >>= fullPass jitPass
-  void $ mapM putStrLn (map fst output)
+  void $ mapM (putStrLn . formatOut . fst) output
+  where formatOut outs = case outs of [_] -> ""
+                                      _ -> concat outs ++ "\n"
 
 fullPass :: Monoid env => (a -> TopMonadPass env b)
-                       -> [(String, a)]
-                       -> IO [(String, b)]
+                       -> [([String], a)]
+                       -> IO [([String], b)]
 fullPass f decls = evalStateT (mapM procDecl decls) mempty
   where procDecl (s,x) = do
           env <- get
           result <- liftIO $ runTopMonadPass env (f x)
           ((x', env'), s') <- liftIO $ liftExceptIO result
           put $ env <> env'
-          return (s ++ "\n" ++ concat s', x')
+          return (s <> s', x')
 
 evalWeb :: String -> IO ()
 evalWeb fname = undefined

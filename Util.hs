@@ -1,7 +1,7 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
-             showErr, listDiff, splitMap, enumerate) where
+             showErr, listDiff, splitMap, enumerate, restructure) where
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
@@ -111,3 +111,10 @@ splitOn f s = let (prefix, suffix) = break f s
               in case suffix of
                    [] -> [prefix]
                    x:xs -> prefix : splitOn f xs
+
+restructure :: Traversable f => [a] -> f b -> f a
+restructure xs structure = evalState (traverse procLeaf structure) xs
+  where procLeaf :: b -> State [a] a
+        procLeaf _ = do (x:xs) <- get
+                        put xs
+                        return x

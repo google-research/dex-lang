@@ -6,8 +6,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                (-->), (==>), strToBuiltin, newFullEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub, Size, Statement (..),
-               ImpProgram (..), IExpr (..), IType (..),
+               freeTyVars, maybeSub, Size, Statement (..), unitTy,
+               ImpProgram (..), IExpr (..), IType (..), Value (..), Vec (..)
               ) where
 
 import Util
@@ -50,6 +50,7 @@ data Type = BaseType BaseType
           | RecType (Record Type)
           | Forall [Kind] Type
           | Exists Type
+          | IdxSetLit IdxSetVal
              deriving (Eq, Ord, Show)
 
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
@@ -65,6 +66,7 @@ type TBinder = (Var, Kind)
 type Pat  = RecTree Binder
 type IdxSet = Type
 type IdxExpr = Var
+type IdxSetVal = Int
 
 data LitVal = IntLit  Int
             | RealLit Double
@@ -84,10 +86,12 @@ data CmdName = GetType | Passes | TimeIt
              | EvalExpr | Plot | PlotMat
                 deriving  (Show, Eq)
 
-type Result = String
 
--- TOOD: add a callback to reconstruct one semantic domain from another
--- data Command expr val = Command CmdName expr (val -> Result) | NoOp
+data Value = Value Type (RecTree Vec)  deriving (Show)
+data Vec = IntVec [Int] | RealVec [Float]  deriving (Show)
+
+unitTy = RecType (Tup [])
+
 -- === untyped AST ===
 
 data UExpr = ULit LitVal
@@ -125,7 +129,7 @@ data IExpr = ILit LitVal
                deriving (Show, Eq)
 
 data ImpDecl = ImpTopLet [(Var, IType)] ImpProgram
-             | ImpEvalCmd (Command ImpProgram)
+             | ImpEvalCmd Type (Command ImpProgram)
 
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var

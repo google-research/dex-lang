@@ -41,13 +41,15 @@ impPass decl = case decl of
     put $ ( M.fromList (map addImmutFlag b')
           , newFullEnv [b] [(iv,())])
     return $ ImpTopLet b' prog
-  EvalCmd NoOp -> put mempty >> return (ImpEvalCmd NoOp)
+  EvalCmd NoOp -> put mempty >> return (ImpEvalCmd unitTy NoOp)
   EvalCmd (Command cmd expr) -> do
     prog <- impExprTop expr
+    env <- gets snd
+    let ty = getType env expr
     put mempty
     case cmd of Passes -> tell [pprint prog]
                 _ -> return ()
-    return $ ImpEvalCmd (Command cmd prog)
+    return $ ImpEvalCmd ty (Command cmd prog)
 
   where addImmutFlag (v,ty) = (v,(False,ty))
 

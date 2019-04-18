@@ -2,7 +2,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Add, Mul, Sub)
+import LLVM.AST hiding (Type, Add, Mul, Sub)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -15,6 +15,7 @@ import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.State
 import Control.Monad.Writer (tell)
+import Control.Applicative (liftA, liftA2)
 
 import qualified Data.Map.Strict as M
 import Data.Foldable (toList)
@@ -70,19 +71,20 @@ jitPass :: ImpDecl -> TopMonadPass PersistEnv ()
 jitPass decl = case decl of
   ImpTopLet bs prog -> do vals <- evalProg prog
                           put $ M.fromList $ zip (map fst bs) vals
-  ImpEvalCmd NoOp -> return ()
-  ImpEvalCmd (Command cmd prog) -> case cmd of
+  ImpEvalCmd _ NoOp -> return ()
+  ImpEvalCmd ty (Command cmd prog) -> case cmd of
     Passes -> do CompiledProg vs m <- toLLVM prog
-                 llvm <- liftIO (showLLVM m)
+                 llvm <- liftIO $ showLLVM m
                  tell [llvm]
     EvalExpr -> do vals <- evalProg prog
-                   tell $ map show vals
+                   vecs <- liftIO $ mapM asVec vals
+                   tell [pprint (restructureVal ty vecs)]
     _ -> return ()
 
 evalProg :: ImpProgram -> TopMonadPass PersistEnv [PersistVal]
 evalProg prog = do
   CompiledProg outvals mod <- toLLVM prog
-  outWords <- liftIO $ evalJit (length outvals) mod
+  outWords <- liftIO $ evalJit (length (JitVals outvals)) mod
   return $ asPersistVals outWords outvals
 
 toLLVM :: ImpProgram -> TopMonadPass PersistEnv CompiledProg
@@ -98,9 +100,26 @@ asCompileVal (ArrayVal (Ptr ptr ty) shape) = ArrayVal (Ptr ptr' ty) shape'
         shape' = map (constOperand IntType) shape
 
 asPersistVals :: [Word64] -> [CompileVal] -> [PersistVal]
-asPersistVals [] [] = []
-asPersistVals (word:words) (val:vals) = case val of
-  ScalarVal _ ty -> ScalarVal word ty : asPersistVals words vals
+asPersistVals words vals = case restructure words (JitVals vals) of
+                                  JitVals vals' -> vals'
+
+-- TODO: concretize type with actual index set
+restructureVal :: Type -> [Vec] -> Value
+restructureVal ty vecs = Value ty $ restructure vecs (typeLeaves ty)
+  where
+    typeLeaves :: Type -> RecTree ()
+    typeLeaves ty = case ty of BaseType b -> RecLeaf ()
+                               TabType _ valTy -> typeLeaves valTy
+                               RecType r -> RecTree $ fmap typeLeaves r
+                               _ -> error $ "can't show " ++ show ty
+
+asVec :: PersistVal -> IO Vec
+asVec v = case v of
+  ScalarVal x ty ->  return $ cast (baseTy ty) [x]
+  ArrayVal (Ptr ptr ty) shape -> do let size = fromIntegral $ foldr (*) 1 shape
+                                    words <- readPtrs size (wordAsPtr ptr)
+                                    return $ cast (baseTy ty) words
+  where cast IntType xs = IntVec $ map fromIntegral xs
 
 constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
@@ -174,13 +193,12 @@ finalReturn :: [CompileVal] -> CompileM ()
 finalReturn vals = do
   voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [litInt numBytes])
   outPtr <- evalInstr "out" intPtrTy $ L.BitCast voidPtr intPtrTy []
-  sequence $ zipWith (writeComponent (Ptr outPtr longTy)) vals [0..]
+  foldM writeVal (Ptr outPtr longTy) (JitVals vals)
   finishBlock (L.Ret (Just outPtr) []) (L.Name "")
   where numBytes = 8 * length vals
-        writeComponent :: Ptr Operand -> CompileVal -> Int -> CompileM ()
-        writeComponent ptr val i = case val of
-          ScalarVal x _ -> do ptr' <- addPtr ptr (litInt i)
-                              store ptr' x
+        writeVal :: Ptr Operand -> Operand -> CompileM (Ptr Operand)
+        writeVal ptr x = store ptr x >> addPtr ptr (litInt 1)
+
 
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
 finishBlock term newName = do
@@ -362,9 +380,32 @@ externDecl (ExternFunSpec fname retTy argTys argNames) =
   , L.basicBlocks = []
   }
 
-
 setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
 setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
 setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
 setImpVarEnv   update state = state { impVarEnv   = update (impVarEnv   state) }
 setBlockName   update state = state { blockName   = update (blockName   state) }
+
+instance Functor JitVal where
+  fmap = fmapDefault
+
+instance Foldable JitVal where
+  foldMap = foldMapDefault
+
+instance Traversable JitVal where
+  traverse f val = case val of
+    ScalarVal x ty -> liftA (\x' -> ScalarVal x' ty) (f x)
+    ArrayVal (Ptr ptr ty) shape ->
+      liftA2 newVal (f ptr) (traverse f shape)
+      where newVal ptr' shape' = ArrayVal (Ptr ptr' ty) shape'
+
+instance Functor JitVals where
+  fmap = fmapDefault
+
+instance Foldable JitVals where
+  foldMap = foldMapDefault
+
+instance Traversable JitVals where
+  traverse f (JitVals vals) = liftA JitVals $ traverse (traverse f) vals
+
+newtype JitVals w = JitVals [JitVal w]

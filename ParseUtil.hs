@@ -60,4 +60,4 @@ captureSource p = do
   offset <- getOffset
   val <- p
   offset' <- getOffset
-  return (val, take (offset' - offset) s)
+  return (val, take (offset' - offset) s ++ "\n")

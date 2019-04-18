@@ -17,7 +17,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 import Test.HUnit
 import Data.Foldable (toList)
 
-type Prog = [(String, UDecl)]
+type Prog = [([String], UDecl)]
 
 data LocalDecl = AssignDecl UPat UExpr
                | UnpackDecl Var UExpr
@@ -33,10 +33,10 @@ parseit p s = case parse (p <* eof) "" s of
 prog :: Parser Prog
 prog = emptyLines >> many (topDecl <*emptyLines)
 
-topDecl :: Parser (String, UDecl)
+topDecl :: Parser ([String], UDecl)
 topDecl = do
   (instr, source) <- captureSource topDeclInstr
-  return (source, instr)
+  return ([source], instr)
 
 topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand

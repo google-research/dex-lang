@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (showLLVM, evalJit) where
+module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr) where
 
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
@@ -44,6 +44,9 @@ showLLVM m = withContext $ \c ->
 readPtrs :: Int -> Ptr Word64 -> IO [Word64]
 readPtrs n ptr = mapM readAt [0..n-1]
   where readAt i = peek $ ptr `plusPtr` (8 * i)
+
+wordAsPtr :: Word64 -> Ptr a
+wordAsPtr x = castPtr $ wordPtrToPtr $ fromIntegral x
 
 -- createPersistVal :: [CompileVal] -> Ptr () -> IO [PersistVal]
 -- createPersistVal v ptr = undefined -- do
