@@ -27,8 +27,8 @@ parseProg = parseit prog
 
 parseit :: Parser a -> String -> Except a
 parseit p s = case parse (p <* eof) "" s of
-                Left e -> Left $ ParseErr (errorBundlePretty e)
-                Right x -> Right x
+                Left e -> throw ParseErr (errorBundlePretty e)
+                Right x -> return x
 
 prog :: Parser Prog
 prog = emptyLines >> many (topDecl <*emptyLines)

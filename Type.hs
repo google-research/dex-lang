@@ -22,10 +22,8 @@ getType (FullEnv lenv _) expr =
   ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
 
 checkExpr :: TypeEnv -> Expr -> Except Type
-checkExpr env expr =
-  case evalTypeM env (getType' True expr) of
-    Left e -> Left $ CompilerErr $ pprint e ++ "\nExpression:\n" ++ pprint expr
-    Right x -> Right x
+checkExpr env expr = addErrMsg msg $ evalTypeM env (getType' True expr)
+  where msg = "\nExpression:\n" ++ pprint expr
 
 evalTypeM ::  TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env
@@ -84,7 +82,7 @@ getType' check expr = case expr of
     checkNoShadow :: Var -> TypeM ()
     checkNoShadow v = do
       tenv <- asks tEnv
-      if v `isin` tenv then throwError $ CompilerErr $ show v ++ " shadowed"
+      if v `isin` tenv then throw CompilerErr $ show v ++ " shadowed"
                        else return ()
 
     lookupLVar :: Var -> TypeM Type
@@ -92,7 +90,7 @@ getType' check expr = case expr of
 
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
-unpackExists ty _ = throwError $ TypeErr $ "Can't unpack type: " ++ pprint ty
+unpackExists ty _ = throw TypeErr $ "Can't unpack " ++ pprint ty
 
 patType :: RecTree (a, Type) -> Type
 patType (RecTree r) = RecType (fmap patType r)

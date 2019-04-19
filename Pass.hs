@@ -48,10 +48,11 @@ liftExcept = either throwError return
 -- TODO: simplify Err so we can easily add extra information
 addErrMsg :: MonadError Err m => String -> m a -> m a
 addErrMsg s m = catchError m (handler s)
-  where handler s e = throwError $ CompilerErr $ pprint e ++ "\n" ++ s
+  where handler s (Err e s') = throw e (s' ++ "\n" ++ s)
 
 assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
-assertEq x y s = if x == y then return () else Left (CompilerErr msg)
+assertEq x y s = if x == y then return ()
+                           else throw CompilerErr msg
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
 
 ignoreExcept :: Except a -> a

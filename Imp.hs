@@ -62,11 +62,10 @@ impExprTop expr = do
   return prog
 
 checkImpProg :: ImpEnv -> ImpProgram -> Except ()
-checkImpProg env prog =
-  case evalPass mempty (ImpState [[]] env) (rawVar "!") (void $ impProgType prog) of
-    Left (CompilerErr e) -> Left $ CompilerErr $
-                              "\n" ++ pprint prog ++ "\n" ++ e
-    Right ans -> Right ans
+checkImpProg env prog = addErrMsg msg $
+                            evalPass mempty (ImpState [[]] env) (rawVar "!") $
+                                void $ impProgType prog
+  where msg = "\nProgram:\n" ++ pprint prog
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -223,7 +222,8 @@ impExprType expr = case expr of
 
   where checkScalarTy :: Type -> IType -> ImpM ()
         checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
-        checkScalarTy ty ity = throw $ "Wrong types. Expected:" ++ pprint ty
+        checkScalarTy ty ity = throw CompilerErr $
+                                       "Wrong types. Expected:" ++ pprint ty
                                                      ++ " Got " ++ pprint ity
 
 impProgType :: ImpProgram -> ImpM [IType]
@@ -262,9 +262,6 @@ checkIsInt v = do (_, ty) <- lookupVar v
 intTy :: IType
 intTy = IType IntType []
 
-throw :: String -> ImpM a
-throw s = throwError (CompilerErr s)
-
 throwIf :: Bool -> String -> ImpM ()
-throwIf True = throw
+throwIf True = throw CompilerErr
 throwIf False = const (return ())

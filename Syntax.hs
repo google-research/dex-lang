@@ -1,8 +1,10 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
                CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
-               Except, Err (..),
+               Except, Err (..), ErrType (..), throw,
                FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
                (-->), (==>), strToBuiltin, newFullEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -137,18 +139,18 @@ type Index = Var
 
 -- === shared data types ===
 
-data Err = ParseErr String
-         | UnificationErr Type Type
-         | TypeErr String
-         | InfiniteTypeErr
-         | UnboundVarErr Var
-         | RepVarPatternErr Var
-         | CompilerErr String
-         | PrintErr String
-         | NotImplementedErr String
-  deriving (Eq, Show)
+data Err = Err ErrType String
+data ErrType = ParseErr
+             | TypeErr
+             | UnboundVarErr
+             | CompilerErr
+             | NotImplementedErr
+             | OtherErr
 
 type Except a = Either Err a
+
+throw :: MonadError Err m => ErrType -> String -> m a
+throw e s = throwError $ Err e s
 
 -- === misc ===
 

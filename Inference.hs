@@ -4,7 +4,6 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer (tell)
 import Control.Monad.State
-import Control.Monad.Except (throwError)
 import Data.List (nub, (\\))
 import Data.Foldable (toList)
 
@@ -69,7 +68,9 @@ check :: UExpr -> Type -> InferM Expr
 check expr reqTy = case expr of
   ULit c -> do unify (BaseType (litType c)) reqTy
                return (Lit c)
-  UVar v -> do ty <- asks $ (! v) . lEnv
+  UVar v -> do maybeTy <- asks $ (flip envLookup v) . lEnv
+               ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
+                                     Just ty -> return ty
                instantiate ty reqTy (Var v)
   UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
   ULet (RecLeaf v) bound body -> do
@@ -112,7 +113,7 @@ check expr reqTy = case expr of
     (maybeEx, bound') <- infer bound >>= zonk
     idxTy <- freshIdx
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [idxTy] t
-                               _ -> throwError $ TypeErr $ pprint maybeEx
+                               _ -> throw TypeErr (pprint maybeEx)
     body' <- recurWith [(v, boundTy)] body reqTy
     idxTy' <- zonk idxTy
     tv <- case idxTy' of TypeVar tv -> return tv
@@ -124,7 +125,7 @@ check expr reqTy = case expr of
 
 
   where
-    leakErr = throwError $ TypeErr "existential variable leaked"
+    leakErr = throw TypeErr "existential variable leaked"
     recurWith p expr ty = local (setLEnv $ addVs p) (check expr ty)
 
 checkPat :: UPat -> Type -> InferM Pat
@@ -199,7 +200,7 @@ instantiate ty reqTy expr = do
       return expr
 
 bind :: Var -> Type -> InferM ()
-bind v t | v `occursIn` t = error $ pprint (v, t)  -- throwError InfiniteTypeErr
+bind v t | v `occursIn` t = throw TypeErr (pprint (v, t))
          | otherwise = do modify $ setSubst $ addV (v, t)
                           modify $ setTempEnv $ envDelete v
 
@@ -208,7 +209,8 @@ unify :: Type -> Type -> InferM ()
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  let unifyErr = throwError $ UnificationErr t1' t2'
+  let unifyErr = throw TypeErr $
+                   "can't unify " ++ pprint t1' ++ " and " ++ pprint t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
     (t, TypeVar v)               -> bind v t
@@ -221,6 +223,7 @@ unify t1 t2 = do
              Nothing -> unifyErr
              Just unifiers -> void $ sequence unifiers
     _ -> unifyErr
+
 
 occursIn :: Var -> Type -> Bool
 occursIn v t = v `elem` freeTyVars t

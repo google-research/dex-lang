@@ -19,16 +19,16 @@ p :: Pretty a => a -> Doc ann
 p = pretty
 
 instance Pretty Err where
+  pretty (Err e s) = p e <+> p s
+
+instance Pretty ErrType where
   pretty e = case e of
-    ParseErr s           -> p s
-    UnificationErr t1 t2 -> "Can't unify" <+> p t1 <+> "and" <+> p t2
-    TypeErr s            -> "Type error:" <+> p s
-    InfiniteTypeErr      -> "Infinite type"
-    UnboundVarErr v      -> "Unbound variable:" <+> p v
-    RepVarPatternErr v   -> "Repeated variable in pattern:" <+> p v
-    CompilerErr s        -> "Compiler bug!" <+> p s
-    NotImplementedErr s  -> "Not implemented:"<+> p s
-    PrintErr s           -> "Print error:" <+> p s
+    ParseErr          -> "Parse error:"
+    TypeErr           -> "Type error:"
+    CompilerErr       -> "Compiler bug!"
+    UnboundVarErr     -> "Variable not in scope:"
+    NotImplementedErr -> "Not implemented:"
+    OtherErr          -> "Error:"
 
 instance Pretty Type where
   pretty t = case t of
