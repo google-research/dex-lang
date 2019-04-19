@@ -145,6 +145,7 @@ instance Pretty RecIdx where
 
 instance Pretty ImpProgram where
   pretty (ImpProgram block exprs) = vcat (map p block) <>
+                                      hardline <> "return" <>
                                       nest 2 (hardline <> (vcat (map p exprs)))
 
 instance Pretty Value where

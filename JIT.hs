@@ -194,7 +194,7 @@ finalReturn vals = do
   outPtr <- evalInstr "out" intPtrTy $ L.BitCast voidPtr intPtrTy []
   foldM writeVal (Ptr outPtr longTy) (JitVals vals)
   finishBlock (L.Ret (Just outPtr) []) (L.Name "")
-  where numBytes = 8 * length vals
+  where numBytes = 8 * (length (JitVals vals))
         writeVal :: Ptr Operand -> Operand -> CompileM (Ptr Operand)
         writeVal ptr x = store ptr x >> addPtr ptr (litInt 1)
 
