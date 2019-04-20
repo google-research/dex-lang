@@ -24,8 +24,9 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 evalScript :: String -> IO ()
 evalScript fname = do
+  prelude <- readFile "prelude.cod"
   source <- readFile fname
-  prog <- liftExceptIO $ parseProg source
+  prog <- liftExceptIO $ parseProg (prelude ++ source)
   output <-      fullPass typePass prog
              >>= fullPass deFuncPass
              >>= fullPass impPass

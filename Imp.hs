@@ -72,17 +72,14 @@ toImp expr = case expr of
   Lit x -> return $ RecLeaf (ILit x)
   Var v -> do ty <- exprType expr
               return $ fmap (IVar . const v) (flatType ty)  -- TODO: add fields to name
-  BuiltinApp b ts args -> do
-    args' <- toImp args
-    case b of
-      Iota -> impIota args'
-      FoldDeFunc p body -> impFold ts p body args'
-      _ -> return $ RecLeaf $ IBuiltinApp b (toList args')
+  App (Builtin Iota) n -> toImp n >>= impIota
+  App (TApp (Builtin Fold) ts) args -> impFold ts args
+  App (Builtin b) args -> do args' <- toImp args
+                             return $ RecLeaf $ IBuiltinApp b (toList args')
   Let p bound body -> do -- TODO: beware of shadows
     bound' <- toImp bound
     traverse (uncurry letBind) (recTreeZip p bound')
-    ans <- local (setLEnv $ addVs p) (toImp body)
-    return ans
+    local (setLEnv $ addVs p) (toImp body)
   Get x i -> do xs <- toImp x
                 return $ fmap get xs
                 where get x = IGet x i
@@ -94,6 +91,7 @@ toImp expr = case expr of
     letBind b x
     let updateEnv = setTEnv (addV (i, ())) . setLEnv (addV b)
     local updateEnv (toImp body)
+  _ -> error $ "Can't lower to imp:\n" ++ pprint expr
 
 -- TODO: make a destination-passing version to avoid unnecessary intermediates
 toImpFor :: Binder -> Expr -> ImpM (RecTree IExpr)
@@ -110,22 +108,21 @@ toImpFor b@(i, TypeVar n) body = do
   return $ fmap IVar cells
 
 impIota :: RecTree IExpr -> ImpM (RecTree IExpr)
-impIota args = do
+impIota (RecLeaf n) = do
   n' <- newVar n
   out <- newCell (IType IntType [n'])
   i <- fresh "iIota"
   add $ Loop i n' [Update out [i] (IVar i)]
   return $ RecTree $ Tup [RecLeaf (IVar n'), RecLeaf (IVar out)]
-  where [RecLeaf n] = unpackConsTuple 1 args
 
-impFold :: [Type] -> Pat -> Expr -> RecTree IExpr -> ImpM (RecTree IExpr)
-impFold ts p body args = do
+impFold :: [Type] -> Expr -> ImpM (RecTree IExpr)
+impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
+  x0' <- toImp x0
+  xs' <- toImp xs >>= traverse newVar
   i <- fresh "iFold"
   accumCells <- traverse (newCell . snd) (flatType accumTy)
-  xs' <- traverse newVar xs
-  letBind envBinder env
   let writeCells val = traverse (uncurry writeCell) $ recTreeZipEq accumCells val
-  writeCells init
+  writeCells x0'
   block <- do
     startBlock
     letBind accumBinder $ fmap IVar accumCells
@@ -135,10 +132,8 @@ impFold ts p body args = do
     endBlock
   add $ Loop i n block
   return $ fmap IVar accumCells
-  where RecTree (Tup (binders)) = p
-        [envBinder, accumBinder@(_, accumTy), xBinder] = map unLeaf binders
-        [env, init, xs] = unpackConsTuple 3 args
-        [_, _, TypeVar n] = ts
+  where RecTree (Tup binders) = p
+        [accumBinder@(_, accumTy), xBinder] = map unLeaf binders
 
 letBind :: Binder -> RecTree IExpr -> ImpM ()
 letBind binder@(v,ty) exprs = void $ traverse (uncurry addLet) $ zipped
@@ -196,11 +191,6 @@ add :: Statement -> ImpM ()
 add s = do curBlock:rest <- gets blocks
            modify $ setBlocks (const $ (s:curBlock):rest)
 
-unpackConsTuple :: Int -> RecTree a -> [RecTree a]
-unpackConsTuple n v = reverse $ recur n v
-  where recur 0 (RecTree (Tup [])) = []
-        recur n (RecTree (Tup [xs, x])) = x : recur (n-1) xs
-
 setBlocks update state = state { blocks = update (blocks state) }
 setEnv    update state = state { impEnv = update (impEnv state) }
 
@@ -215,10 +205,9 @@ impExprType expr = case expr of
                  return $ IType b shape
   IBuiltinApp b args -> do -- scalar builtins only
     argTys <- mapM impExprType args
-    let (argTyNeeded, outTy) = builtinNaryTy b
+    let ArrType (RecType (Tup argTyNeeded)) (BaseType out) = builtinType b
     zipWithM checkScalarTy argTyNeeded argTys
-    case outTy of
-      BaseType b -> return $ IType b []
+    return $ IType out []
 
   where checkScalarTy :: Type -> IType -> ImpM ()
         checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()

@@ -13,7 +13,10 @@ import Record
 import Fresh
 
 pprint :: Pretty a => a -> String
-pprint x = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ (pretty x)
+pprint x = asStr (pretty x)
+
+asStr :: Doc ann -> String
+asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
 
 p :: Pretty a => a -> Doc ann
 p = pretty
@@ -31,14 +34,22 @@ instance Pretty ErrType where
     OtherErr          -> "Error:"
 
 instance Pretty Type where
-  pretty t = case t of
-    BaseType b  -> p b
-    TypeVar v   -> p v
-    ArrType a b -> parens $ p a <+> "->" <+> p b
-    TabType a b -> p a <> "=>" <> p b
-    RecType r   -> p r
-    Forall kinds t -> "A" <> p kinds <> "." <+> p t
-    Exists body -> "E" <+> p body
+  pretty t = prettyTyDepth 0 t
+
+prettyTyDepth :: Int -> Type -> Doc ann
+prettyTyDepth d t = case t of
+  BaseType b  -> p b
+  TypeVar (BoundVar i) -> p (tvars i)
+  TypeVar v   -> p v
+  ArrType a b -> parens $ recur a <+> "->" <+> recur b
+  TabType a b -> recur a <> "=>" <> recur b
+  RecType r   -> p $ fmap (asStr . recur) r
+  Forall kinds t -> let n = length kinds
+                    in "A" <> p (map tvars [-n..(-1)]) <> "." <+> recurWith n t
+  Exists body -> "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
+  where recur = prettyTyDepth d
+        recurWith n = prettyTyDepth (d + n)
+        tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds
 
 instance Pretty Kind where
   pretty IdxSetKind = "I"
@@ -78,7 +89,6 @@ instance Pretty Expr where
     For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
-    BuiltinApp b ts expr -> parens $ p b <+> p ts <+> p expr
     Unpack v i e1 e2 ->
       align $ parens $ "{" <> p (binder v) <> "," <+> p i <> "} = unpack"
                                     <+> p e1 <> line <>
@@ -95,7 +105,7 @@ instance (Pretty v, Pretty t) => Pretty (BinderWrap v t) where
   pretty (BinderWrap v t) = p v <> "::" <> p t
 
 instance Pretty a => Pretty (Record a) where
-  pretty r = tupled $ case r of
+  pretty r = align $ tupled $ case r of
                         Rec m  -> [p k <> "=" <> p v | (k,v) <- M.toList m]
                         Tup xs -> map p xs -- TODO: add trailing comma to singleton tuple
 
@@ -116,12 +126,10 @@ instance Pretty Builtin where
     Cos      -> "cos"
     Tan      -> "tan"
     Iota     -> "iota"
-    Doubleit -> "doubleit"
     Hash     -> "hash"
     Rand     -> "rand"
     Randint  -> "randint"
     Fold     -> "fold"
-    FoldDeFunc _ _ -> "folddefunc"
 
 instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr

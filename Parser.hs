@@ -16,6 +16,7 @@ import Text.Megaparsec
 import qualified Text.Megaparsec.Char.Lexer as L
 import Test.HUnit
 import Data.Foldable (toList)
+import qualified Data.Map as M
 
 type Prog = [([String], UDecl)]
 
@@ -95,6 +96,7 @@ term =   parenRaw
      <|> declExpr
      <|> lamExpr
      <|> forExpr
+     <|> builtinExpr
      <?> "term"
 
 
@@ -124,11 +126,15 @@ parenRaw = do
 --   return (v, x)
 
 varExpr :: Parser UExpr
-varExpr = do
+varExpr = liftM (UVar . rawVar) identifier
+
+builtinExpr :: Parser UExpr
+builtinExpr = do
+  symbol "%"
   s <- identifier
-  return $ case strToBuiltin s of
-    Just b -> UBuiltin b
-    Nothing -> UVar (rawVar s)
+  case strToBuiltin s of
+    Just b -> return $ UBuiltin b
+    Nothing -> fail $ "Unexpected builtin: " ++ s
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -200,7 +206,7 @@ appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
-  where binOpApp e1 e2 = UApp (UApp (UBuiltin builtin) e1) e2
+  where binOpApp e1 e2 = UApp (UBuiltin builtin) (URecCon (Tup [e1, e2]))
 
 getRule = Postfix $ do
   vs  <- many $ symbol "." >> idxExpr
@@ -241,6 +247,15 @@ typeExpr = makeExprParser (sc >> typeExpr') typeOps
 var :: Parser Var
 var = liftM rawVar $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
+
+builtinNames = M.fromList [
+  ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
+  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
+  ("fold", Fold), ("iota", Iota),
+  ("hash", Hash), ("rand", Rand), ("randint", Randint) ]
+
+strToBuiltin :: String -> Maybe Builtin
+strToBuiltin name = M.lookup name builtinNames
 
 -- forallType :: Parser Type
 -- forallType = do

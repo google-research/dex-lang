@@ -27,7 +27,7 @@ stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
 
 makeIdentifier :: [String] -> Parser String
 makeIdentifier reserved = lexeme . try $ do
-  w <- (:) <$> letterChar <*> many alphaNumChar
+  w <- (:) <$> lowerChar <*> many alphaNumChar
   if w `elem` reserved
     then fail $ show w ++ " is a reserved word"
     else return w

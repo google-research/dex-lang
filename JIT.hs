@@ -332,13 +332,11 @@ compileBuiltin b = case b of
   Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
   Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
-  Doubleit -> externalMono doubleFun  IntType
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
   _ -> error $ pprint b
 
-doubleFun  = ExternFunSpec "doubleit"      longTy [longTy] ["x"]
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
 randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
 hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
@@ -363,7 +361,7 @@ makeModule decls (fstBlock:blocks) = mod
                           , L.moduleDefinitions =
                                 L.GlobalDefinition fundef
                               : map externDecl
-                                  [doubleFun, mallocFun, memcpyFun,
+                                  [mallocFun, memcpyFun,
                                    hashFun, randFun, randIntFun]
                           }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"

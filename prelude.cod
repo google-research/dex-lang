@@ -1,0 +1,12 @@
+-- curried builtins
+add x y = %add (x, y)
+
+sub x y = %sub (x, y)
+mul x y = %mul (x, y)
+pow x y = %pow (x, y)
+exp x = %exp x
+hash x y = %hash (x, y)
+iota n = %iota n
+fold f x0 xs = %fold (lam (x, y): f x y, x0, xs)
+
+sum = fold add 0

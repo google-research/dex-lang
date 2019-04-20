@@ -5,8 +5,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw,
-               FullEnv (..), setLEnv, setTEnv, arity, numArgs, numTyArgs,
-               (-->), (==>), strToBuiltin, newFullEnv,
+               FullEnv (..), setLEnv, setTEnv,
+               (-->), (==>), newFullEnv, freeLVars,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProgram (..), IExpr (..), IType (..), Value (..), Vec (..)
@@ -21,7 +21,6 @@ import Data.Semigroup
 import Data.Foldable (toList)
 import Data.Traversable
 import Data.List (intercalate, elemIndex, nub)
-import qualified Data.Map as M
 
 import Data.Functor.Identity (Identity, runIdentity)
 import Control.Monad.Except (MonadError, throwError)
@@ -42,7 +41,6 @@ data Expr = Lit LitVal
           | TLam [TBinder] Expr
           | TApp Expr [Type]
           | RecCon (Record Expr)
-          | BuiltinApp Builtin [Type] Expr
               deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
@@ -79,9 +77,8 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
 
 data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Iota | Doubleit
-             | Hash | Rand | Randint
-             | Fold | FoldDeFunc Pat Expr
+             | Sin | Cos | Tan | Hash | Rand | Randint
+             | Iota| Fold
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | TimeIt
@@ -153,30 +150,6 @@ throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e s
 
 -- === misc ===
-
-builtinNames = M.fromList [
-  ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
-  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("fold", Fold), ("iota", Iota), ("doubleit", Doubleit),
-  ("hash", Hash), ("rand", Rand), ("randint", Randint)]
-
-arity :: Builtin -> (Int, Int)
-arity b = case b of
-  Add      -> (0, 2)
-  Mul      -> (0, 2)
-  Sub      -> (0, 2)
-  Iota     -> (0, 1)
-  Fold     -> (3, 3)
-  Doubleit -> (0, 1)
-  Hash     -> (0, 2)
-  Rand     -> (0, 1)
-  Randint  -> (0, 2)
-
-numArgs   = snd . arity
-numTyArgs = fst . arity
-
-strToBuiltin :: String -> Maybe Builtin
-strToBuiltin name = M.lookup name builtinNames
 
 infixr 1 -->
 infixr 2 ==>
@@ -275,7 +248,6 @@ instance HasTypeVars Expr where
                (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
       TLam bs expr      -> liftA  (TLam bs) (recurWith (map fst bs) expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
-      BuiltinApp b ts arg -> liftA2 (BuiltinApp b) (traverse recurTy ts) (recur arg)
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
           recurB (v,ty) = liftA ((,) v) (recurTy ty)
@@ -283,3 +255,24 @@ instance HasTypeVars Expr where
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithB  vs (v,ty) = liftA ((,) v) (recurWithTy vs ty)
 
+
+freeLVars :: Expr -> [Var]
+freeLVars = freeLVarsEnv mempty
+
+freeLVarsEnv :: Env Type -> Expr -> [Var]
+freeLVarsEnv env expr = case expr of
+  Lit _ -> []
+  Var v -> [v]
+  Builtin _ -> []
+  Let p bound body -> recur bound ++ recurWith p body
+  Lam p body       -> recurWith p body
+  App fexpr arg    -> recur fexpr ++ recur arg
+  For b body       -> recurWith [b] body
+  Get e ie         -> recur e ++ [ie]
+  RecCon r         -> concat $ toList $ fmap recur r
+  Unpack b _ bound body -> recur bound ++ recurWith [b] body
+  TLam _ expr      -> recur expr
+  TApp expr _      -> recur expr
+
+  where recur = freeLVarsEnv env
+        recurWith b = freeLVarsEnv (addVs b env)

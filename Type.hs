@@ -1,5 +1,5 @@
 module Type (TypeEnv, checkExpr, getType, litType, unpackExists,
-             patType, builtinType, builtinNaryTy, nestedPairs) where
+             patType, builtinType, nestedPairs) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
@@ -54,12 +54,6 @@ getType' check expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
-    BuiltinApp (FoldDeFunc p expr) ts arg -> return $ BaseType IntType -- TODO!
-    BuiltinApp b ts arg -> case builtinType b of
-      Forall _ body -> error "not implemented"
-      t -> do let (a, out) = deFuncType (numArgs b) t
-              checkEq "BuiltinApp" a (recur arg)
-              return out
     Unpack v tv bound body -> do
         checkNoShadow tv
         let updateTEnv = setTEnv (addV (tv, IdxSetKind))
@@ -116,39 +110,24 @@ builtinType builtin = case builtin of
   Tan      -> realUnOpType
   Fold     -> foldType
   Iota     -> iotaType
-  Doubleit -> int --> int
-  Hash     -> int --> int --> int
+  Hash     -> tup [int, int] --> int
+  Randint  -> tup [int, int] --> int
   Rand     -> int --> real
-  Randint  -> int --> int --> int
   where
-    binOpType    = int --> int --> int
+    binOpType    = tup [int, int] --> int
     realUnOpType = real --> real
-    foldType = Forall [TyKind, TyKind, IdxSetKind] $
-                   (b --> a --> b) --> b --> (k ==> a) --> b
     iotaType = int --> Exists (i ==> int)
+    i = TypeVar (BoundVar 0)
+    foldType = Forall [TyKind, TyKind, IdxSetKind] $
+                 tup [tup [b,a] --> b, b, k==>a] --> b
     a = TypeVar (BoundVar 0)
     b = TypeVar (BoundVar 1)
-    i = TypeVar (BoundVar 0)
-    j = TypeVar (BoundVar 1)
     k = TypeVar (BoundVar 2)
-    int = BaseType IntType
+    int  = BaseType IntType
     real = BaseType RealType
+    tup xs = RecType (Tup xs)
 
 nestedPairs :: [Type] -> Type
 nestedPairs = recur . reverse
   where recur []     = RecType (Tup [])
         recur (x:xs) = RecType (Tup [recur xs, x])
-
-
-builtinNaryTy :: Builtin -> ([Type], Type)
-builtinNaryTy b = naryComponents (numArgs b) (builtinType b)
-
-
-deFuncType :: Int -> Type -> (Type, Type)
-deFuncType n t = let (args, result) = naryComponents n t
-                 in (nestedPairs args, result)
-
-naryComponents :: Int -> Type -> ([Type], Type)
-naryComponents 0 ty = ([], ty)
-naryComponents n (ArrType a rhs) = let (args, result) = naryComponents (n-1) rhs
-                                   in (a:args, result)

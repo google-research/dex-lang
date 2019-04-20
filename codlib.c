@@ -3,10 +3,6 @@
 #include "stdlib.h"
 #include "string.h"
 
-long doubleit(long x) {
-  return x + x;
-}
-
 char* malloc_cod(long nbytes) {
   return malloc(nbytes);
 }
