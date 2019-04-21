@@ -11,6 +11,7 @@ import Data.Semigroup ((<>))
 import Syntax
 import PPrint
 import Pass
+import Type
 
 import Parser
 import Inference
@@ -27,18 +28,23 @@ evalScript fname = do
   prelude <- readFile "prelude.cod"
   source <- readFile fname
   prog <- liftExceptIO $ parseProg (prelude ++ source)
-  output <-      fullPass typePass prog
-             >>= fullPass deFuncPass
-             >>= fullPass impPass
-             >>= fullPass jitPass
+  output <- do
+    typed  <- pass typePass   prog
+    _      <- pass checkTyped typed
+    deFunc <- pass deFuncPass typed
+    _      <- pass checkTyped deFunc
+    imp    <- pass impPass    deFunc
+    _      <- pass checkImp   imp
+    ans    <- pass jitPass    imp
+    return ans
   void $ mapM (putStrLn . formatOut . fst) output
   where formatOut outs = case outs of [_] -> ""
                                       _ -> concat outs ++ "\n"
 
-fullPass :: Monoid env => (a -> TopMonadPass env b)
-                       -> [([String], a)]
-                       -> IO [([String], b)]
-fullPass f decls = evalStateT (mapM procDecl decls) mempty
+pass :: Monoid env => (a -> TopMonadPass env b)
+                   -> [([String], a)]
+                   -> IO [([String], b)]
+pass f decls = evalStateT (mapM procDecl decls) mempty
   where procDecl (s,x) = do
           env <- get
           (result, s') <- liftIO $ runTopMonadPass env (f x)
