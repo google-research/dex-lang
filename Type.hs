@@ -1,9 +1,10 @@
-module Type (TypeEnv, checkExpr, getType, litType, unpackExists,
-             patType, builtinType, nestedPairs) where
+module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
+             patType, builtinType) where
 
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.Reader
+import Control.Monad.State
 import Data.Foldable (toList)
 
 import Syntax
@@ -17,15 +18,29 @@ import PPrint
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
+checkTyped :: Decl -> TopMonadPass TypeEnv ()
+checkTyped decl = case decl of
+  TopLet (v,ty) expr -> do
+    ty' <- check expr
+    liftExcept $ assertEq ty ty' ""
+    put $ newFullEnv [(v,ty)] []
+  TopUnpack (v,ty) iv expr -> do
+    exTy <- check expr
+    ty' <- liftExcept $ unpackExists exTy iv
+    liftExcept $ assertEq ty ty' ""
+    put $ newFullEnv [(v,ty)] [(iv, IdxSetKind)]
+  EvalCmd NoOp -> put mempty >> return ()
+  EvalCmd (Command cmd expr) -> check expr >> put mempty
+  where
+    check :: Expr -> TopMonadPass TypeEnv Type
+    check expr = do env <- get
+                    liftExcept $ evalTypeM env (getType' True expr)
+
 getType :: FullEnv Type a -> Expr -> Type
 getType (FullEnv lenv _) expr =
   ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
 
-checkExpr :: TypeEnv -> Expr -> Except Type
-checkExpr env expr = addErrMsg msg $ evalTypeM env (getType' True expr)
-  where msg = "\nExpression:\n" ++ pprint expr
-
-evalTypeM ::  TypeEnv -> TypeM a -> Except a
+evalTypeM :: TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env
 
 getType' :: Bool -> Expr -> TypeM Type
@@ -126,8 +141,3 @@ builtinType builtin = case builtin of
     int  = BaseType IntType
     real = BaseType RealType
     tup xs = RecType (Tup xs)
-
-nestedPairs :: [Type] -> Type
-nestedPairs = recur . reverse
-  where recur []     = RecType (Tup [])
-        recur (x:xs) = RecType (Tup [recur xs, x])

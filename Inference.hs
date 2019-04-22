@@ -49,15 +49,8 @@ typePass decl = case decl of
 
   where translate expr = liftTopPass (InferState mempty mempty) (inferTop expr)
 
-
 inferTop :: UExpr -> InferM (Type, Expr)
-inferTop rawExpr = do
-  env <- ask
-  (ty, expr) <- infer rawExpr
-  (ty', expr') <- generalize ty expr
-  ty'' <- liftExcept $ checkExpr env expr'
-  liftExcept $ assertEq ty' ty'' "Unexpected type at top level"
-  return (ty', expr')
+inferTop rawExpr = do infer rawExpr >>= uncurry generalize
 
 infer :: UExpr -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind

@@ -17,7 +17,9 @@ import Control.Monad.Reader (Reader, runReader, local, ask, asks)
 
 type DFEnv = FullEnv TypedDFVal (Maybe Type)
 
-type TypedDFVal = (DFVal, Type) -- type is post-defunctionalization
+-- type is post-defunctionalization (TODO: change that. tracking pre-types
+-- is simpler and we can get easily derive the post-type)
+type TypedDFVal = (DFVal, Type)
 
 data DFVal = DFNil
            | LamVal Pat DFEnv Expr
@@ -28,33 +30,27 @@ type DeFuncM a = MonadPass DFEnv () a
 
 deFuncPass :: Decl -> TopMonadPass DFEnv Decl
 deFuncPass decl = case decl of
-  TopLet (v,_) expr -> do
-    ((val,ty), expr') <- deFuncTop expr
-    put $ newFullEnv [(v, (val,ty))] []
-    return $ TopLet (v, ty) expr'
-  TopUnpack (v,_) iv expr -> do
-    ((val,ty), expr') <- deFuncTop expr
-    ty' <- liftExcept $ unpackExists ty iv
+  TopLet (v,ty) expr -> do
+    (val, expr') <- deFuncTop expr
+    let ty' = deFuncType val ty
+    put $ newFullEnv [(v, (val,ty'))] []
+    return $ TopLet (v, ty') expr'
+  TopUnpack (v,ty) iv expr -> do
+    (val, expr') <- deFuncTop expr
+    let ty' = deFuncType val ty
     put $ newFullEnv [(v, (val,ty'))] [(iv,Nothing)]
     return $ TopUnpack (v, ty') iv expr'
   EvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    ((val,ty), expr') <- deFuncTop expr
+    (val, expr') <- deFuncTop expr
     put mempty
     case cmd of Passes  -> do tell ["\n\nDefunctionalized\n" ++ pprint expr']
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
 
   where
-    deFuncTop :: Expr -> TopMonadPass DFEnv (TypedDFVal, Expr)
-    deFuncTop expr = do
-      (val, expr') <- liftTopPass () (deFuncExpr expr)
-      typingEnv <- gets $ asTypingEnv
-      ty <- liftExcept $ checkExpr typingEnv expr'
-      return ((val, ty), expr')
-
-asTypingEnv :: DFEnv -> TypeEnv
-asTypingEnv = setTEnv (fmap (const IdxSetKind)) . setLEnv (fmap snd)
+    deFuncTop :: Expr -> TopMonadPass DFEnv (DFVal, Expr)
+    deFuncTop expr = liftTopPass () (deFuncExpr expr)
 
 deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
 deFuncExpr expr = case expr of

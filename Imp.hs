@@ -1,4 +1,4 @@
-module Imp (impPass) where
+module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
 import Control.Monad.State
@@ -16,56 +16,41 @@ import Pass
 import Fresh
 
 type ImpM a = MonadPass PreEnv ImpState a
-type ImpMTop a = TopMonadPass (ImpEnv,PreEnv) a
+type ImpMTop a = TopMonadPass PreEnv a
 
-type ImpEnv = Env VarType
 type PreEnv = FullEnv Type ()
 
-data ImpState = ImpState { blocks :: [[Statement]]
-                         , impEnv :: ImpEnv }
-type IsMutable = Bool
-type VarType = (IsMutable, IType)
+data ImpState = ImpState { blocks :: [[Statement]] }
 
 impPass :: Decl -> ImpMTop ImpDecl
 impPass decl = case decl of
   TopLet b expr -> do
     prog <- impExprTop expr
     let b' = toList (flatBinding b)
-    put $ ( newEnv (map addImmutFlag b')
-          , newFullEnv [b] [])
+    put $ newFullEnv [b] []
     return $ ImpTopLet b' prog
   TopUnpack b iv expr -> do
     prog <- impExprTop expr
+    put $ newFullEnv [b] [(iv,())]
     let b' = (iv, intTy) : toList (flatBinding b)
-    put $ ( newEnv (map addImmutFlag b')
-          , newFullEnv [b] [(iv,())])
     return $ ImpTopLet b' prog
   EvalCmd NoOp -> put mempty >> return (ImpEvalCmd unitTy NoOp)
   EvalCmd (Command cmd expr) -> do
     prog <- impExprTop expr
-    env <- gets snd
+    env <- get
     let ty = getType env expr
     put mempty
     case cmd of Passes -> tell ["\n\nImp\n" ++ pprint prog]
                 _ -> return ()
     return $ ImpEvalCmd ty (Command cmd prog)
 
-  where addImmutFlag (v,ty) = (v,(False,ty))
-
 impExprTop :: Expr -> ImpMTop ImpProgram
 impExprTop expr = do
-  (env, preEnv) <- get
-  (iexpr, state) <- liftExcept $ runPass preEnv (ImpState [[]] env) VarRoot (toImp expr)
-  let ImpState [statements] _ = state
+  env <- get
+  (iexpr, state) <- liftExcept $ runPass env (ImpState [[]]) VarRoot (toImp expr)
+  let ImpState [statements] = state
       prog = ImpProgram (reverse statements) (toList iexpr)
-  liftExcept $ checkImpProg env prog
   return prog
-
-checkImpProg :: ImpEnv -> ImpProgram -> Except ()
-checkImpProg env prog = addErrMsg msg $
-                            evalPass mempty (ImpState [[]] env) (rawVar "!") $
-                                void $ impProgType prog
-  where msg = "\nProgram:\n" ++ pprint prog
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -99,7 +84,6 @@ toImpFor b@(i, TypeVar n) body = do
   bodyTy <- exprType body
   let cellTypes = fmap (addIdx n . snd) (flatType bodyTy)
   cells <- traverse newCell cellTypes
-  modify $ setEnv $ addV (i, (False, intTy))
   startBlock
   results <- local (setLEnv $ addV b) (toImp body)
   traverse (\(v,x) -> add $ Update v [i] x) (recTreeZipEq cells results)
@@ -109,7 +93,7 @@ toImpFor b@(i, TypeVar n) body = do
 
 impIota :: RecTree IExpr -> ImpM (RecTree IExpr)
 impIota (RecLeaf n) = do
-  n' <- newVar n
+  n' <- newVar n intTy
   out <- newCell (IType IntType [n'])
   i <- fresh "iIota"
   add $ Loop i n' [Update out [i] (IVar i)]
@@ -118,7 +102,7 @@ impIota (RecLeaf n) = do
 impFold :: [Type] -> Expr -> ImpM (RecTree IExpr)
 impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
   x0' <- toImp x0
-  xs' <- toImp xs >>= traverse newVar
+  xs' <- toImpNewVar xs
   i <- fresh "iFold"
   accumCells <- traverse (newCell . snd) (flatType accumTy)
   let writeCells val = traverse (uncurry writeCell) $ recTreeZipEq accumCells val
@@ -135,26 +119,29 @@ impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
   where RecTree (Tup binders) = p
         [accumBinder@(_, accumTy), xBinder] = map unLeaf binders
 
+toImpNewVar :: Expr -> ImpM (RecTree Var)
+toImpNewVar expr = do
+  ty <- exprType expr
+  vals <- toImp expr
+  traverse (uncurry newVar) $ recTreeZipEq vals (fmap snd (flatType ty))
+
 letBind :: Binder -> RecTree IExpr -> ImpM ()
 letBind binder@(v,ty) exprs = void $ traverse (uncurry addLet) $ zipped
   where zipped = recTreeZipEq (flatBinding binder) exprs
 
-newVar :: IExpr -> ImpM Var
-newVar expr = do t <- impExprType expr
-                 v <- fresh "var"
-                 addLet (v, t) expr
-                 return v
+newVar :: IExpr -> IType -> ImpM Var
+newVar expr t = do v <- fresh "var"
+                   addLet (v, t) expr
+                   return v
 
 addLet :: (Var, IType) -> IExpr -> ImpM ()
-addLet (v, ty) expr = do modify $ setEnv $ addV (v, (False, ty))
-                         add $ ImpLet (v, ty) expr
+addLet (v, ty) expr = add $ ImpLet (v, ty) expr
 
 writeCell :: Var -> IExpr -> ImpM ()
 writeCell v val = add $ Update v [] val
 
 newCell :: IType -> ImpM Var
 newCell ty = do v <- fresh "cell"
-                modify $ setEnv $ addV (v, (True, ty))
                 add $ Alloc v ty
                 return v
 
@@ -174,6 +161,8 @@ flatType ty = case ty of
   TabType (TypeVar n) valTy -> fmap f (flatType valTy)
     where f (idx, IType b shape) = (idx, IType b (n : shape))
 
+intTy :: IType
+intTy = IType IntType []
 
 exprType :: Expr -> ImpM Type
 exprType expr = do env <- ask
@@ -192,14 +181,64 @@ add s = do curBlock:rest <- gets blocks
            modify $ setBlocks (const $ (s:curBlock):rest)
 
 setBlocks update state = state { blocks = update (blocks state) }
-setEnv    update state = state { impEnv = update (impEnv state) }
+
 
 -- === type checking imp programs ===
 
-impExprType :: IExpr -> ImpM IType
+type ImpCheckM a = MonadPass () (Env VarType) a
+type IsMutable = Bool
+type VarType = (IsMutable, IType)
+
+checkImp :: ImpDecl -> TopMonadPass (Env IType) ()
+checkImp decl = case decl of
+  ImpTopLet binders prog -> do
+    ty <- check prog
+    liftExcept $ assertEq ty (map snd binders) ""
+    put $ newEnv binders
+  ImpEvalCmd _ NoOp -> return ()
+  ImpEvalCmd _ (Command cmd prog) -> check prog >> put mempty
+  where
+    check :: ImpProgram -> TopMonadPass (Env IType) [IType]
+    check prog = do env <- gets $ fmap (\t->(False,t))
+                    liftExcept $ evalPass () env VarRoot (impProgType prog)
+
+impProgType :: ImpProgram -> ImpCheckM [IType]
+impProgType (ImpProgram statements exprs) = do
+  mapM checkStatementTy statements
+  mapM impExprType exprs
+
+lookupVar :: Var -> ImpCheckM VarType
+lookupVar v = gets $ (! v)
+
+checkStatementTy :: Statement -> ImpCheckM ()
+checkStatementTy statement = case statement of
+  Update v idxs expr -> do (mut, IType b shape ) <- gets $ (! v)
+                           IType b' shape' <- impExprType expr
+                           throwIf (not mut) $ "Updating immutable variable"
+                           throwIf (b /= b') $ "Base type mismatch"
+                           throwIf (drop (length idxs) shape /= shape') $
+                                    "Dimension mismatch"
+  ImpLet b@(v,ty) expr -> do ty' <- impExprType expr
+                             -- doesn't work without alias checking for sizes
+                             -- throwIf (ty' /= ty) $ "Type doesn't match binder"
+                             addVar v (False, ty)
+  Loop i size block -> do addVar i (False, intTy)
+                          checkIsInt size
+                          void $ mapM checkStatementTy block
+  Alloc v ty@(IType b shape) -> do void $ mapM checkIsInt shape
+                                   addVar v (True, ty)
+
+addVar :: Var -> VarType -> ImpCheckM ()
+addVar v ty = do
+  env <- get
+  -- TODO: re-enable once fixed
+  -- throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
+  modify $ addV (v, ty)
+
+impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of
   ILit val -> return $ IType (litType val) []
-  IVar  v -> liftM snd (lookupVar v)
+  IVar  v -> gets $ snd . (! v)
   IGet e i -> do IType b (_:shape) <- impExprType e
                  checkIsInt i
                  return $ IType b shape
@@ -209,48 +248,17 @@ impExprType expr = case expr of
     zipWithM checkScalarTy argTyNeeded argTys
     return $ IType out []
 
-  where checkScalarTy :: Type -> IType -> ImpM ()
+  where checkScalarTy :: Type -> IType -> ImpCheckM ()
         checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
         checkScalarTy ty ity = throw CompilerErr $
                                        "Wrong types. Expected:" ++ pprint ty
                                                      ++ " Got " ++ pprint ity
 
-impProgType :: ImpProgram -> ImpM [IType]
-impProgType (ImpProgram statements exprs) = do
-  mapM checkStatementTy statements
-  mapM impExprType exprs
-
-lookupVar :: Var -> ImpM VarType
-lookupVar v = gets $ (! v) . impEnv
-
-checkStatementTy :: Statement -> ImpM ()
-checkStatementTy statement = case statement of
-  Update v idxs expr -> do (mut, IType b  shape ) <- lookupVar v
-                           IType b' shape' <- impExprType expr
-                           throwIf (not mut) $ err "Updating immutable variable"
-                           throwIf (b /= b') $ err "Base type mismatch"
-                           throwIf (drop (length idxs) shape /= shape') $
-                                    err "Dimension mismatch"
-  ImpLet b@(v,ty) expr -> do ty' <- impExprType expr
-                             -- doesn't work without alias checking for sizes
-                             -- throwIf (ty' /= ty) $ err "Type doesn't match binder"
-                             modify $ setEnv $ addV (v, (False, ty))
-  Loop i size block -> do modify $ setEnv $ addV (i, (False, intTy))
-                          checkIsInt size
-                          void $ mapM checkStatementTy block
-  Alloc v ty@(IType b shape) -> do void $ mapM checkIsInt shape
-                                   modify $ setEnv $ addV (v, (True, ty))
-  where err s = s ++ " " ++ pprint statement
-
--- TODO: add Except to ImpM for more helpful error reporting
-checkIsInt :: Var -> ImpM ()
+checkIsInt :: Var -> ImpCheckM ()
 checkIsInt v = do (_, ty) <- lookupVar v
                   throwIf (ty /= intTy) $
                     "Not a valid size " ++ pprint ty
 
-intTy :: IType
-intTy = IType IntType []
-
-throwIf :: Bool -> String -> ImpM ()
+throwIf :: Bool -> String -> ImpCheckM ()
 throwIf True = throw CompilerErr
 throwIf False = const (return ())
