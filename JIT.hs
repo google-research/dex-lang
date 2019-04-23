@@ -90,7 +90,7 @@ toLLVM :: ImpProgram -> TopMonadPass PersistEnv CompiledProg
 toLLVM prog = do
   env <- gets $ fmap (Left . asCompileVal)
   let initState = CompileState [] [] [] "start_block" env
-  liftExcept $ evalPass () initState VarRoot (compileProg prog)
+  liftExcept $ evalPass () initState nameRoot (compileProg prog)
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
@@ -144,8 +144,8 @@ compileStatement statement = case statement of
                            modify $ setImpVarEnv (addV (v, (Left val)))
   Alloc v (IType b shape) -> do
     shape' <- mapM lookupValVar shape
-    cell <- case shape' of [] -> alloca b (pprint v)
-                           _ -> malloc b shape' (pprint v)
+    cell <- case shape' of [] -> alloca b (topTag v)
+                           _ -> malloc b shape' (topTag v)
     modify $ setImpVarEnv (addV (v, (Right cell)))
 
   Loop i n body -> do n' <- lookupValVar n

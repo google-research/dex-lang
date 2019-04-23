@@ -126,7 +126,7 @@ parenRaw = do
 --   return (v, x)
 
 varExpr :: Parser UExpr
-varExpr = liftM (UVar . rawVar) identifier
+varExpr = liftM (UVar . rawName) identifier
 
 builtinExpr :: Parser UExpr
 builtinExpr = do
@@ -199,7 +199,7 @@ resNames = ["for", "lam", "let", "in", "unpack"]
 
 identifier = makeIdentifier resNames
 
-varName = liftM rawVar identifier
+varName = liftM rawName identifier
 idxExpr = varName
 
 appRule = InfixL (sc
@@ -228,7 +228,7 @@ ops = [ [getRule, appRule]
 --     elts -> RecTree $ mixedRecord elts
 
 idxPat :: Parser Var
-idxPat = liftM rawVar identifier
+idxPat = liftM rawName identifier
 
 pat :: Parser UPat
 pat =   parenPat
@@ -245,7 +245,7 @@ typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
 
 var :: Parser Var
-var = liftM rawVar $ makeIdentifier
+var = liftM rawName $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 builtinNames = M.fromList [

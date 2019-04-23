@@ -39,8 +39,8 @@ instance Pretty Type where
 prettyTyDepth :: Int -> Type -> Doc ann
 prettyTyDepth d t = case t of
   BaseType b  -> p b
-  TypeVar (BoundVar i) -> p (tvars i)
   TypeVar v   -> p v
+  BoundTVar n -> p (tvars n)
   ArrType a b -> parens $ recur a <+> "->" <+> recur b
   TabType a b -> recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
@@ -52,7 +52,7 @@ prettyTyDepth d t = case t of
         tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds
 
 instance Pretty Kind where
-  pretty IdxSetKind = "I"
+  pretty IdxSetKind = "R"
   pretty TyKind = "T"
 
 instance Pretty BaseType where
@@ -61,16 +61,6 @@ instance Pretty BaseType where
     BoolType -> "Bool"
     RealType -> "Real"
     StrType  -> "Str"
-
--- TODO: this needs to be injective but it's probably not currently
-instance Pretty Var where
-  pretty VarRoot = ""
-  pretty (Qual var name n) = prefix <> p name <> suffix
-    where prefix = case var of VarRoot -> ""
-                               _       -> p var <> "_"
-          suffix = case n of 0 -> ""
-                             _ -> "_" <> p n
-  pretty (BoundVar n) = "<BV" <> p n <> ">"
 
 instance Pretty LitVal where
   pretty (IntLit x ) = p x
@@ -146,10 +136,6 @@ instance Pretty IExpr where
 
 instance Pretty IType where
   pretty (IType ty shape) = p ty <> p shape
-
-instance Pretty RecIdx where
-  pretty (RecIdx s) = p s
-  pretty (TupIdx n) = p n
 
 instance Pretty ImpProgram where
   pretty (ImpProgram block exprs) = vcat (map p block) <>

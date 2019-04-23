@@ -19,6 +19,8 @@ import DeFunc
 import Imp
 import JIT
 
+import Debug.Trace
+
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}

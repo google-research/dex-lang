@@ -34,7 +34,7 @@ runTopMonadPass env m = runWriterT $ runExceptT $ runStateT m env
 
 liftTopPass :: state -> MonadPass env state a -> TopMonadPass env a
 liftTopPass state m = do env <- get
-                         liftExcept $ evalPass env state VarRoot m -- TODO: plumb through var stems
+                         liftExcept $ evalPass env state nameRoot m
 
 runPass :: env -> state -> Var -> MonadPass env state a -> Except (a, state)
 runPass env state stem m = runFreshT (runStateT (runReaderT m env) state) stem

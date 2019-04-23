@@ -32,7 +32,7 @@ typePass decl = case decl of
     return $ TopLet (v,ty) expr'
   UTopUnpack v expr -> do
     (ty, expr') <- translate expr
-    let iv = Qual v "idx" 0 -- TODO: sort out variables properly
+    let iv = rawName "idx" -- TODO: sort out variables properly
     ty' <- liftExcept $ unpackExists ty iv
     put $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
     return $ TopUnpack (v,ty') iv expr'
@@ -50,7 +50,7 @@ typePass decl = case decl of
   where translate expr = liftTopPass (InferState mempty mempty) (inferTop expr)
 
 inferTop :: UExpr -> InferM (Type, Expr)
-inferTop rawExpr = do infer rawExpr >>= uncurry generalize
+inferTop expr = do infer expr >>= uncurry generalize
 
 infer :: UExpr -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind
@@ -104,13 +104,11 @@ check expr reqTy = case expr of
     return $ Get expr' idxExpr
   UUnpack v bound body -> do
     (maybeEx, bound') <- infer bound >>= zonk
-    idxTy <- freshIdx
-    boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [idxTy] t
+    tv <- fresh $ "r"
+    boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
-    body' <- recurWith [(v, boundTy)] body reqTy
-    idxTy' <- zonk idxTy
-    tv <- case idxTy' of TypeVar tv -> return tv
-                         _ -> leakErr
+    body' <- local (  setLEnv (addV (v, boundTy))
+                    . setTEnv (addV (tv, IdxSetKind))) (check body reqTy)
     tvsEnv <- tempVarsEnv
     tvsReqTy <- tempVars reqTy
     if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
@@ -202,12 +200,13 @@ unify :: Type -> Type -> InferM ()
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
+  tenv <- asks tEnv
   let unifyErr = throw TypeErr $
                    "can't unify " ++ pprint t1' ++ " and " ++ pprint t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
-    (t, TypeVar v)               -> bind v t
-    (TypeVar v, t)               -> bind v t
+    (t, TypeVar v) | not (v `isin` tenv) -> bind v t
+    (TypeVar v, t) | not (v `isin` tenv) -> bind v t
     (ArrType a b, ArrType a' b') -> unify a a' >> unify b b'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
     (Exists t, Exists t')        -> unify t t'

@@ -132,12 +132,12 @@ builtinType builtin = case builtin of
     binOpType    = tup [int, int] --> int
     realUnOpType = real --> real
     iotaType = int --> Exists (i ==> int)
-    i = TypeVar (BoundVar 0)
+    i = BoundTVar 0
     foldType = Forall [TyKind, TyKind, IdxSetKind] $
                  tup [tup [b,a] --> b, b, k==>a] --> b
-    a = TypeVar (BoundVar 0)
-    b = TypeVar (BoundVar 1)
-    k = TypeVar (BoundVar 2)
+    a = BoundTVar 0
+    b = BoundTVar 1
+    k = BoundTVar 2
     int  = BaseType IntType
     real = BaseType RealType
     tup xs = RecType (Tup xs)

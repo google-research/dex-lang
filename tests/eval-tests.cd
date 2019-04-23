@@ -1,14 +1,10 @@
-:llvm let x = unpack iota 100
-   in sum (for i: x.i)
-
-sum = fold add 0
+:p let x = unpack iota 100
+   in sum x
 
 :p 1 + 2
 
 :p let double = lam x: x * 2
    in double 10
-
-:p doubleit 3
 
 :p let x = unpack iota 100
    in sum (for i: x.i)
@@ -23,11 +19,11 @@ sum = fold add 0
 
 :p hash 1 3
 
-:p randint (hash 0 0) 10
+-- :p randint (hash 0 0) 10
 
-:p let x = unpack iota 10000;
-       key = hash 0
-   in sum (for i: randint (key x.i) 10)
+-- :p let x = unpack iota 10000;
+--        key = hash 0
+--    in sum (for i: randint (key x.i) 10)
 
 x = unpack iota 7
 
@@ -37,13 +33,8 @@ f = lam y: sum x + y
 
 :p x
 
--- TODO: figure out defunctionalized builtins and re-enable
--- :defunc fold (lam x y: x + y) 0 x
--- :p fold (lam x y: x + y) 0 x
+:p fold (lam x y: x + y) 0 x
 
-:p 10 - 6
-
--- TODO: fix signed ints
 :p 6 - 10
 
 :p (lam (x, y): x + y) (1, 2)
@@ -53,6 +44,9 @@ f = lam y: sum x + y
 
 :p let (x,y) = ((1,2),3) in
        let (x1, x2) = x in x1 + x2 + y
+
+:p let x = (1,2) in
+   let (y,z) = x in y + z
 
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)

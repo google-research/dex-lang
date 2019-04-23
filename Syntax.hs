@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
+module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
                CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
@@ -9,7 +9,8 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..),
                (-->), (==>), newFullEnv, freeLVars,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
-               ImpProgram (..), IExpr (..), IType (..), Value (..), Vec (..)
+               ImpProgram (..), IExpr (..), IType (..), IBinder,
+               Value (..), Vec (..)
               ) where
 
 import Util
@@ -51,7 +52,10 @@ data Type = BaseType BaseType
           | Forall [Kind] Type
           | Exists Type
           | IdxSetLit IdxSetVal
+          | BoundTVar Int
              deriving (Eq, Ord, Show)
+
+type Var = Name
 
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
@@ -116,7 +120,7 @@ type UPat = RecTree Var
 
 data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
 data Statement = Update Var [Index] IExpr
-               | ImpLet (Var, IType) IExpr
+               | ImpLet IBinder IExpr
                | Loop Index Size [Statement]
                | Alloc Var IType -- mutable
                    deriving (Show)
@@ -127,9 +131,10 @@ data IExpr = ILit LitVal
            | IBuiltinApp Builtin [IExpr]
                deriving (Show, Eq)
 
-data ImpDecl = ImpTopLet [(Var, IType)] ImpProgram
+data ImpDecl = ImpTopLet [IBinder] ImpProgram
              | ImpEvalCmd Type (Command ImpProgram)
 
+type IBinder = (Var, IType)
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
@@ -178,25 +183,29 @@ instance Monoid (FullEnv v t) where
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
-  where sub depth v = case v of
-                        BoundVar i | i >= depth -> vs !! i
-                        _ -> TypeVar v
+  where sub depth tvar = case tvar of
+                        Left v -> TypeVar v
+                        Right i | i >= depth -> vs !! i
+                                | otherwise -> BoundTVar i
 
 abstractTVs :: [Var] -> Type -> Type
 abstractTVs vs x = subAtDepth 0 sub x
-  where sub depth v = TypeVar $ case elemIndex v vs of
-                                  Nothing -> v
-                                  Just i  -> BoundVar (depth + i)
+  where sub depth tvar = case tvar of
+                           Left v -> case elemIndex v vs of
+                                       Nothing -> TypeVar v
+                                       Just i  -> BoundTVar (depth + i)
+                           Right i -> BoundTVar i
 
-subAtDepth :: Int -> (Int -> Var -> Type) -> Type -> Type
+subAtDepth :: Int -> (Int -> Either Var Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType b    -> ty
-    TypeVar v     -> f d v
+    TypeVar v     -> f d (Left v)
     ArrType a b   -> ArrType (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
     Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
+    BoundTVar n   -> f d (Right n)
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
 
@@ -223,7 +232,6 @@ instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
 instance HasTypeVars Type where
   subFreeTVsBVs bvs f ty = case ty of
       BaseType b    -> pure ty
-      TypeVar (BoundVar _) -> pure ty
       TypeVar v | v `elem` bvs -> pure ty
                 | otherwise    -> f v
       ArrType a b   -> liftA2 ArrType (recur a) (recur b)
@@ -231,6 +239,7 @@ instance HasTypeVars Type where
       RecType r     -> liftA RecType (traverse recur r)
       Exists body   -> liftA Exists (recur body)
       Forall kinds body -> liftA (Forall kinds) (recur body)
+      BoundTVar n -> pure ty
     where recur = subFreeTVsBVs bvs f
 
 instance HasTypeVars Expr where

@@ -1,10 +1,11 @@
 module Record (Record (..), RecTree (..), recUnionWith,
                zipWithRecord, recZipWith, recTreeZipEq,
-               recNameVals, recLookup, RecIdx (..), RecTreeIdx,
-               recTreeJoin, unLeaf, RecTreeZip (..)
+               recLookup, recNameVals,
+               recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
               ) where
 
 
+import Fresh
 import Util
 import Data.List (intercalate)
 import Data.Traversable
@@ -15,9 +16,6 @@ data Record a = Rec (M.Map String a)
 
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
-
-data RecIdx = RecIdx String | TupIdx Int  deriving (Eq, Show, Ord)
-type RecTreeIdx = [RecIdx]
 
 instance Functor Record where
   fmap = fmapDefault
@@ -61,10 +59,17 @@ recTreeZipEq t t' = fmap (appSnd unLeaf) (recTreeZip t t')
 unLeaf :: RecTree a -> a
 unLeaf (RecLeaf x) = x
 
-recNameVals :: Record a -> [(RecIdx, a)]
-recNameVals = undefined
+recNameVals :: Record a -> Record (Name, a)
+recNameVals (Tup xs) = Tup [(rawName (show i), x) | (i,x) <- zip [0..] xs]
 
-recLookup :: RecIdx -> Record a -> a
+recTreeNamed :: RecTree a -> RecTree (Name, a)
+recTreeNamed (RecLeaf x) = RecLeaf (nameRoot, x)
+recTreeNamed (RecTree r) = RecTree $ fmap (\(name, val) -> addName name (recTreeNamed val))
+                                       (recNameVals r)
+  where addName :: Name -> RecTree (Name, a) -> RecTree (Name, a)
+        addName name tree = fmap (\(n,x) -> (catNames name n, x)) tree
+
+recLookup :: Name -> Record a -> a
 recLookup = undefined
 
 class RecTreeZip tree where

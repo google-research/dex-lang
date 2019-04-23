@@ -132,7 +132,7 @@ envPat env = case envPairs (lEnv env) of
   pairs -> Just $ RecTree $ Tup [RecLeaf (v,ty) | (v,(_,ty)) <- pairs]
 
 envTupCon :: DFEnv -> Expr
-envTupCon env = RecCon $ Tup (map Var $ envVars (lEnv env))
+envTupCon env = RecCon $ Tup (map Var $ envNames (lEnv env))
 
 deFuncApp :: (DFVal, Expr) -> (DFVal, Expr) -> DeFuncM (DFVal, Expr)
 deFuncApp (LamVal p env body, fexpr) (argVal, arg') = do
