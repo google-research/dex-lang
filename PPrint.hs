@@ -32,6 +32,7 @@ instance Pretty ErrType where
     UnboundVarErr     -> "Variable not in scope:"
     NotImplementedErr -> "Not implemented:"
     OtherErr          -> "Error:"
+    UpstreamErr       -> "Upstream failure"
 
 instance Pretty Type where
   pretty t = prettyTyDepth 0 t
@@ -148,3 +149,8 @@ instance Pretty Value where
 instance Pretty Vec where
   pretty (IntVec  xs) = p xs
   pretty (RealVec xs) = p xs
+
+
+instance Pretty Result where
+  pretty r = case r of TextOut s -> pretty s
+                       Failed e  -> pretty e

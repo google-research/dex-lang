@@ -10,7 +10,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProgram (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..)
+               Value (..), Vec (..), Result (..), freeVars, lhsVars
               ) where
 
 import Util
@@ -23,8 +23,10 @@ import Data.Foldable (toList)
 import Data.Traversable
 import Data.List (intercalate, elemIndex, nub)
 
+import Data.Foldable (fold)
 import Data.Functor.Identity (Identity, runIdentity)
 import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 
@@ -139,7 +141,11 @@ data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
 
--- === shared data types ===
+-- === outputs ===
+
+data Result = NoResult
+            | TextOut String
+            | Failed Err
 
 data Err = Err ErrType String
 data ErrType = ParseErr
@@ -147,12 +153,22 @@ data ErrType = ParseErr
              | UnboundVarErr
              | CompilerErr
              | NotImplementedErr
+             | UpstreamErr
              | OtherErr
 
 type Except a = Either Err a
 
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e s
+
+instance Semigroup Result where
+  NoResult <> x = x
+  x <> NoResult = x
+  TextOut s1 <> TextOut s2 = TextOut (s1 <> s2)
+  TextOut s1 <> Failed (Err e s2) = Failed (Err e (s1 <> s2))
+
+instance Monoid Result where
+  mempty = NoResult
 
 -- === misc ===
 
@@ -285,3 +301,36 @@ freeLVarsEnv env expr = case expr of
 
   where recur = freeLVarsEnv env
         recurWith b = freeLVarsEnv (addVs b env)
+
+freeVars :: UDecl -> [Var]
+freeVars decl = case decl of
+  UTopLet    _ expr -> freeVarsUExpr' expr
+  UTopUnpack _ expr -> freeVarsUExpr' expr
+  UEvalCmd (Command _ expr) -> freeVarsUExpr' expr
+  UEvalCmd NoOp -> []
+
+freeVarsUExpr' :: UExpr -> [Var]
+freeVarsUExpr' expr = nub $ runReader (freeVarsUExpr expr) mempty
+
+freeVarsUExpr :: UExpr -> Reader (Env ()) [Var]
+freeVarsUExpr expr = case expr of
+  ULit _         -> return []
+  UVar v         -> do isbound <- asks $ isin v
+                       return $ if isbound then [] else [v]
+  UBuiltin _     -> return []
+  ULet p e body  -> liftM2 (<>) (recur e) (recurWith p body)
+  ULam p body    -> recurWith p body
+  UApp fexpr arg -> liftM2 (<>) (recur fexpr) (recur arg)
+  UFor v body    -> recurWith [v] body
+  UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
+  URecCon r      -> liftM fold (traverse recur r)
+  UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [v] body)
+  where
+    recur = freeVarsUExpr
+    recurWith p expr = local (addVs (fmap (\v -> (v,())) p)) (recur expr)
+
+lhsVars :: UDecl -> [Var]
+lhsVars decl = case decl of
+  UTopLet    v _ -> [v]
+  UTopUnpack v _ -> [v]
+  UEvalCmd     _ -> []

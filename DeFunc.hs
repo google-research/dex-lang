@@ -28,7 +28,7 @@ data DFVal = DFNil
 
 type DeFuncM a = MonadPass DFEnv () a
 
-deFuncPass :: Decl -> TopMonadPass DFEnv Decl
+deFuncPass :: Pass DFEnv Decl Decl
 deFuncPass decl = case decl of
   TopLet (v,ty) expr -> do
     (val, expr') <- deFuncTop expr

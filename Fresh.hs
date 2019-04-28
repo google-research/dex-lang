@@ -6,7 +6,7 @@
 -- those last three are all needed for monaderror
 
 module Fresh (Name, Tag, Stem, fresh, freshLike, FreshT, runFreshT,
-              rawName, nameRoot, topTag, catNames, rawQualify) where
+              rawName, rawNames, nameRoot, topTag, catNames, rawQualify) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -32,6 +32,9 @@ freshLike name = fresh (topTag name)
 
 rawName :: Tag -> Name
 rawName s = Name [(s, 0)]
+
+rawNames :: Tag -> [Name]
+rawNames s = [Name [(s, i)] | i <- [0..]]
 
 rawQualify :: Tag -> Name -> Name
 rawQualify tag (Name names) = Name ((tag,0):names)

@@ -54,10 +54,10 @@ symbol = L.symbol sc
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
 
-captureSource :: Parser a -> Parser (a, String)
+captureSource :: Parser a -> Parser (String, a)
 captureSource p = do
   s <- getInput
   offset <- getOffset
   val <- p
   offset' <- getOffset
-  return (val, take (offset' - offset) s ++ "\n")
+  return (take (offset' - offset) s ++ "\n", val)

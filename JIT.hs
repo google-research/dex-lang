@@ -66,7 +66,7 @@ data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteStr
 type Long = Operand
 type NInstr = Named Instruction
 
-jitPass :: ImpDecl -> TopMonadPass PersistEnv ()
+jitPass :: Pass PersistEnv ImpDecl ()
 jitPass decl = case decl of
   ImpTopLet bs prog -> do vals <- evalProg prog
                           put $ newEnv $ zip (map fst bs) vals

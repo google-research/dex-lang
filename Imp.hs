@@ -24,7 +24,7 @@ type ImpEnv = FullEnv (Type, RecTree Name) Name
 
 data ImpState = ImpState { blocks :: [[Statement]] }
 
-impPass :: Decl -> ImpMTop ImpDecl
+impPass :: Pass ImpEnv Decl ImpDecl
 impPass decl = case decl of
   TopLet (v,ty) expr -> do
     prog <- impExprTop expr
@@ -211,8 +211,8 @@ type ImpCheckM a = MonadPass () (Env VarType) a
 type IsMutable = Bool
 type VarType = (IsMutable, IType)
 
-checkImp :: ImpDecl -> TopMonadPass (Env IType) ()
-checkImp decl = case decl of
+checkImp :: Pass (Env IType) ImpDecl ImpDecl
+checkImp decl = decl <$ case decl of
   ImpTopLet binders prog -> do
     ty <- check prog
     -- doesn't work without alias checking for sizes

@@ -18,8 +18,8 @@ import PPrint
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
-checkTyped :: Decl -> TopMonadPass TypeEnv ()
-checkTyped decl = case decl of
+checkTyped :: Pass TypeEnv Decl Decl
+checkTyped decl = decl <$ case decl of
   TopLet (v,ty) expr -> do
     ty' <- check expr
     liftExcept $ assertEq ty ty' ""

@@ -1,4 +1,4 @@
-module Parser (parseProg) where
+module Parser (parseProg, parseTopDecl, Prog) where
 
 import Util
 import Record
@@ -18,13 +18,16 @@ import Test.HUnit
 import Data.Foldable (toList)
 import qualified Data.Map as M
 
-type Prog = [([String], UDecl)]
+type Prog = [(String, UDecl)]
 
 data LocalDecl = AssignDecl UPat UExpr
                | UnpackDecl Var UExpr
 
 parseProg :: String -> Except Prog
 parseProg = parseit prog
+
+parseTopDecl :: String -> Except UDecl
+parseTopDecl = parseit topDeclInstr
 
 parseit :: Parser a -> String -> Except a
 parseit p s = case parse (p <* eof) "" s of
@@ -34,10 +37,8 @@ parseit p s = case parse (p <* eof) "" s of
 prog :: Parser Prog
 prog = emptyLines >> many (topDecl <*emptyLines)
 
-topDecl :: Parser ([String], UDecl)
-topDecl = do
-  (instr, source) <- captureSource topDeclInstr
-  return ([source], instr)
+topDecl :: Parser (String, UDecl)
+topDecl = captureSource topDeclInstr
 
 topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand
