@@ -14,7 +14,8 @@ executable coddle
   build-depends:       base, containers, mtl, QuickCheck, binary, bytestring, HUnit,
                        time, tf-random, llvm-hs-pure ==6.*, llvm-hs ==6.*,
                        hinotify, aeson, megaparsec, warp, optparse-applicative,
-                       wai, parser-combinators, http-types, prettyprinter, text
+                       wai, parser-combinators, http-types, prettyprinter, text,
+                       haskeline
 
   default-language:    Haskell2010
 

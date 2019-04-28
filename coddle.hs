@@ -1,3 +1,4 @@
+import System.Console.Haskeline
 import System.IO
 import System.Exit
 import Data.IORef
@@ -56,22 +57,22 @@ evalPrint s text decl = do
   result <- evalDecl s decl
   case result of
     NoResult -> return ()
-    _ -> putStrLn text >> putStrLn (pprint result)
+    _ -> putStr text >> putStrLn (pprint result)
 
 evalRepl :: IO ()
 evalRepl = do
   evalState <- startEval fullPass
   evalPrelude evalState
-  forever $ replLoop evalState
+  runInputT defaultSettings $ forever (replLoop evalState)
 
-replLoop :: EvalState -> IO ()
+replLoop :: EvalState -> InputT IO ()
 replLoop evalState = do
-  source <- putStr ">=> " >> hFlush stdout >> getLine
+  source <- getInputLine ">=> "
   case source of
-    "" -> exitSuccess
-    _  -> case parseTopDecl source of
-            Left err -> putStrLn (pprint err)
-            Right decl -> evalPrint evalState "" decl
+    Nothing -> lift exitSuccess
+    Just s -> case parseTopDecl s of
+                Left err -> outputStrLn (pprint err)
+                Right decl -> lift $ evalPrint evalState "" decl
 
 evalWeb :: String -> IO ()
 evalWeb fname = undefined
