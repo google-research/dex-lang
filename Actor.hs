@@ -15,11 +15,11 @@ import qualified Data.Map.Strict as M
 
 import Control.Concurrent
 
-type ErrMsg = ThreadId
+type ErrMsg = UProc
 data CanTrap = Trap | NoTrap
-data Msg a = ErrMsg ErrMsg | NormalMsg a
+data Msg a = ErrMsg ErrMsg | NormalMsg UProc a
 data Proc m = Proc CanTrap ThreadId (Chan (Msg m))
-data UProc where UProc :: Proc m -> UProc -- hides message type
+data UProc where UProc :: Proc m -> UProc
 data ActorConfig m = ActorConfig { selfProc :: Proc m
                                  , links    :: IORef [UProc] }
 
@@ -42,15 +42,15 @@ spawnIO canTrap links body = do
   linksRef <- newIORef links
   chan <- newChan
   id <- forkIO $ do id <- myThreadId
-                    runActor body (ActorConfig (Proc canTrap id chan) linksRef)
-                      `onException` (readIORef linksRef >>= mapM (cleanup id))
+                    let self = Proc canTrap id chan
+                    runActor body (ActorConfig self linksRef)
+                      `onException`
+                         (readIORef linksRef >>= mapM (cleanup (UProc self)))
   return $ Proc canTrap id chan
 
 cleanup :: ErrMsg -> UProc -> IO ()
 cleanup err (UProc (Proc NoTrap pid _)) = undefined
-cleanup err (UProc (Proc Trap  _ chan)) = do
-  putStrLn "cleaning up"
-  writeChan chan (ErrMsg err)
+cleanup err (UProc (Proc Trap  _ chan)) = writeChan chan (ErrMsg err)
 
 kill :: UProc -> Actor m ()
 kill = undefined
@@ -74,16 +74,17 @@ getSelf :: Actor m (Proc m)
 getSelf = Actor (asks selfProc)
 
 send :: Proc m -> m -> Actor m' ()
-send p x = liftIO $ writeChan (procChan p) (NormalMsg x)
+send p x = do self <- getSelf
+              liftIO $ writeChan (procChan p) (NormalMsg (UProc self) x)
 
-receiveAny :: (m -> Actor m a) -> (ErrMsg -> Actor m a) -> Actor m a
+receiveAny :: (UProc -> m -> Actor m a) -> (ErrMsg -> Actor m a) -> Actor m a
 receiveAny f onErr = do
   Proc _ _ chan <- getSelf
   msg <- liftIO $ readChan chan
   case msg of ErrMsg e -> onErr e
-              NormalMsg msg -> f msg
+              NormalMsg p msg -> f p msg
 
-receive :: (m -> Actor m a) -> Actor m a
+receive :: (UProc -> m -> Actor m a) -> Actor m a
 receive f = receiveAny f (\_ -> error "Can't handle error messages here")
 
 -- intend to pair this with receive to filter out messages
@@ -95,3 +96,13 @@ procId (Proc _ id _) = id
 
 procChan :: Proc m -> Chan (Msg m)
 procChan (Proc _ _ chan) = chan
+
+
+instance Show UProc where
+  show (UProc (Proc _ pid _)) = show pid
+
+instance Eq UProc where
+  UProc (Proc _ pid1 _) == UProc (Proc _ pid2 _) = pid1 == pid2
+
+instance Ord UProc where
+  compare (UProc (Proc _ pid1 _)) (UProc (Proc _ pid2 _)) = compare pid1 pid2

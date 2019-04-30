@@ -24,8 +24,7 @@ inputDriver server = do
 
 outputDriver :: Actor String ()
 outputDriver = do
-  receive $ \msg ->
-    liftIO $ putStrLn msg
+  receive $ \_ msg -> liftIO $ putStrLn msg
   outputDriver
 
 serverProc :: Server ()
@@ -36,7 +35,7 @@ serverProc = do
   mainServerLoop client mempty
 
 storeProc :: Proc ServerMsg -> Val -> Actor () ()
-storeProc server val = receive $ \_ -> do
+storeProc server val = receive $ \_ _ -> do
   if length val > 5 then error "oops!"
                     else server `send` (Left val) >> loop
   where loop = storeProc server val
@@ -44,7 +43,7 @@ storeProc server val = receive $ \_ -> do
 mainServerLoop :: Proc String -> M.Map Key (Proc ()) -> Server ()
 mainServerLoop client stores = receiveAny handleMsg handleErr
   where
-    handleMsg msg = case msg of
+    handleMsg _ msg = case msg of
       Left val -> send client val >> loop
       Right req -> case req of
         Write key val -> do
