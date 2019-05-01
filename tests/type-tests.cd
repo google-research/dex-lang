@@ -1,5 +1,3 @@
-sum = fold add 0
-
 :t lam x: x
 
 :t lam x: sum for i: x.i
