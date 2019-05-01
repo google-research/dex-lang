@@ -1,3 +1,5 @@
+# Set shell to bash to resolve symbolic links when looking up
+# executables, to support user-account installation of stack.
 SHELL=/bin/bash
 
 %.so: %.c
