@@ -10,7 +10,7 @@ update-%:
 
 run-%: tests/%.cd
 	stack exec coddle $< > tests/$*.out
-	diff tests/$*.expected tests/$*.out
+	diff -u tests/$*.expected tests/$*.out
 	echo $* OK
 
 all-tests: run-type-tests run-eval-tests
