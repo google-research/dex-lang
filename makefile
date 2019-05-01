@@ -16,8 +16,4 @@ all-tests: run-type-tests run-eval-tests
 all-update-tests: update-type-tests update-eval-tests
 
 clean:
-	rm *.hi *.o *.so
-
-hs-packages:
-	cabal install lens QuickCheck tf-random llvm-hs lens hinotify \
-	aeson megaparsec warp optparse-applicative
+	rm cbits/*.so
