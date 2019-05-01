@@ -7,7 +7,7 @@ Setup
   (These are already present on a typical workstation)
   sudo apt-get install g++ libstdc++-7-dev
 - Build the C extension
-  make codlib.so
+  make cbits/libcod.so
 
 Workflow
 ========
@@ -16,8 +16,8 @@ Workflow
   stack build
   
 - Repl is broken, but you can run it with
-  LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH stack exec coddle
+  stack exec coddle
 
 - To run a file
   echo ":p 1+1" > script.cod
-  LD_LIBRARY_PATH=.:$LD_LIBRARY_PATH stack exec coddle script.cod
+  stack exec coddle script.cod

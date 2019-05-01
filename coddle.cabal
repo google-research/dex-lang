@@ -20,4 +20,4 @@ executable coddle
   default-language:    Haskell2010
 
   -- this is clearly a hack. Can't figure out where else to put it
-  ghc-options:         codlib.so
+  ghc-options:         cbits/libcod.so

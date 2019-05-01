@@ -1,14 +1,13 @@
-coddle: *.hs codlib.so
-	ghc codlib.so coddle.hs
+SHELL=/bin/bash
 
-codlib.so: codlib.c
-	gcc -fPIC -shared codlib.c -o codlib.so
+%.so: %.c
+	gcc -fPIC -shared $^ -o $@
 
 update-%:
 	./coddle tests/$*.cd > tests/$*.expected
 
-run-%: tests/%.cd coddle
-	./coddle $< > tests/$*.out
+run-%: tests/%.cd
+	stack exec coddle $< > tests/$*.out
 	diff tests/$*.expected tests/$*.out
 	echo $* OK
 
