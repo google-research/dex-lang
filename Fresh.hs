@@ -10,7 +10,7 @@ module Fresh (Name, Tag, Stem, fresh, freshLike, FreshT, runFreshT,
 
 import Control.Monad
 import Control.Monad.Identity
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M

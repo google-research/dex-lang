@@ -4,11 +4,10 @@
 module Pass (MonadPass, TopMonadPass, runPass, liftTopPass,
              evalPass, execPass, liftExcept, assertEq, ignoreExcept,
              runTopMonadPass, addErrMsg, liftExceptIO,
-             EvalState, MultiPass (..), Pass, Result (..),
-             startEval, evalDecl, evalDeclAsync, (>+>)) where
+             Pass, Result (..), evalDecl, (>+>)) where
 
 import System.Exit
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
@@ -25,72 +24,29 @@ import ConcurrentUtil
 
 type MutEnv a = MutMap Name (Maybe a)
 type ResultSink = Packet Result -> IO ()
-type Pass env a b = a -> TopMonadPass env b
 
-data EvalState = EvalState (MVar ([Name], M.Map Var Name))
-                           (MultiPassState UDecl ())
-
-data MultiPass a b where
-  NilPass :: MultiPass a a
-  AddPass :: Monoid env => MultiPass a b -> Pass env b c -> MultiPass a c
-
-infixl 1 >+>
-(>+>) :: Monoid env => MultiPass a b -> Pass env b c -> MultiPass a c
-(>+>) = AddPass
-
-data MultiPassState a b where
-  SNilPass :: MultiPassState a a
-  SAddPass :: Monoid env =>
-    MultiPassState a b -> MutEnv env -> Pass env b c -> MultiPassState a c
-
-startEval :: MultiPass UDecl () -> IO EvalState
-startEval x = liftM2 EvalState (newMVar (rawNames "top", mempty))
-                               (initializeState x)
-
-evalDecl :: EvalState -> UDecl -> IO Result
-evalDecl state decl = do chan <- newChan
-                         evalDeclAsync state decl (writeChan chan)
-                         liftM mconcat (pipeReadAll chan)
-
-evalDeclAsync :: EvalState -> UDecl -> ResultSink -> IO Name
-evalDeclAsync (EvalState statePtr pass) decl write = do
-  (name:names, parentMap) <- takeMVar statePtr
-  let newMap  = parentMap <> M.fromList (zip (lhsVars decl) (repeat name))
-      parents = catMaybes $ map (flip M.lookup parentMap) (freeVars decl)
-  putMVar statePtr (names, newMap)
-  forkIO $ do evalMultiPass write name parents decl pass
-              write EOM
-  return name
-
--- TODO: this is horrible. figure out a good monad
-evalMultiPass :: ResultSink -> Name -> [Name] -> a
-                   -> MultiPassState a b -> IO (Maybe b)
-evalMultiPass write _ _ x SNilPass = return (Just x)
-evalMultiPass write name parents x (SAddPass mpass envs pass) = do
-  maybeY <- evalMultiPass write name parents x mpass
-  case maybeY of
-    Nothing -> noEnvUpdate >> return Nothing
-    Just y -> do
-      env <- liftM (mconcat . catMaybes) $ mapM (readMutMap envs) parents
-      (ans, output) <- runTopMonadPass env (pass y)
-      write $ Msg $ TextOut (concat output)
-      case ans of
-        Left e -> do write (Msg (Failed e))
-                     noEnvUpdate
-                     return Nothing
-        Right (ans', env'') -> do writeMutMap name (Just (env'' <> env)) envs
-                                  return (Just ans')
-  where
-    noEnvUpdate = writeMutMap name Nothing envs
-
-initializeState :: MultiPass a b -> IO (MultiPassState a b)
-initializeState x = case x of
-  NilPass -> return SNilPass
-  AddPass xs x -> liftM3 SAddPass (initializeState xs) newMutMap (return x)
+evalDecl :: Monoid env => Pass env a () -> a -> StateT env IO Result
+evalDecl pass x = do
+  env <- get
+  (ans, output) <- liftIO $ runTopMonadPass env (pass x)
+  let output' = TextOut (concat output)
+  case ans of
+    Left e -> return $ output' <> Failed e
+    Right (_, env') -> do put $ env' <> env
+                          return $ output'
 
 -- === top-level pass (IO because of LLVM JIT API) ===
 
 type TopMonadPass env a = StateT env (ExceptT Err (WriterT [String] IO)) a
+type Pass env a b = a -> TopMonadPass env b
+
+infixl 1 >+>
+(>+>) :: Pass env1 a b -> Pass env2 b c -> Pass (env1, env2) a c
+(>+>) f1 f2 x = do (env1, env2) <- get
+                   (y, env1') <- lift $ runStateT (f1 x) env1
+                   (z, env2') <- lift $ runStateT (f2 y) env2
+                   put (env1', env2')
+                   return z
 
 runTopMonadPass :: env -> TopMonadPass env a -> IO (Except (a, env), [String])
 runTopMonadPass env m = runWriterT $ runExceptT $ runStateT m env

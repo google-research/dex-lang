@@ -7,6 +7,7 @@ import Control.Concurrent.Chan
 import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
+import Control.Monad.Reader
 import Options.Applicative
 import Data.Semigroup ((<>))
 import qualified Data.Map.Strict as M
@@ -31,51 +32,53 @@ data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}
 
-fullPass :: MultiPass UDecl ()
-fullPass = NilPass
-   >+> typePass   >+> checkTyped
-   >+> deFuncPass >+> checkTyped
-   >+> impPass    >+> checkImp
-   >+> jitPass
+fullPass = typePass   >+> checkTyped
+       >+> deFuncPass >+> checkTyped
+       >+> impPass    >+> checkImp
+       >+> jitPass
 
-evalPrelude :: EvalState -> IO ()
-evalPrelude evalState = do
-  source <- readFile "prelude.cod"
-  prog <- liftExceptIO (parseProg source)
-  mapM_ (evalDecl evalState) (map snd prog)
+parseFile :: MonadIO m => String -> m [(String, UDecl)]
+parseFile fname = do
+  source <- liftIO $ readFile fname
+  liftExceptIO (parseProg source)
 
-evalScript :: String -> IO ()
-evalScript fname = do
-  evalState <- startEval fullPass
-  evalPrelude evalState
-  source <- readFile fname
-  prog <- liftExceptIO (parseProg source)
-  mapM_ (uncurry $ evalPrint evalState) prog
+evalPrelude :: Monoid env => Pass env UDecl () -> StateT env IO ()
+evalPrelude pass = do
+  prog <- parseFile "prelude.cod"
+  mapM_ (evalDecl pass) (map snd prog)
 
-evalPrint :: EvalState -> String -> UDecl -> IO ()
-evalPrint s text decl = do
-  result <- evalDecl s decl
+evalScript :: Monoid env => Pass env UDecl () -> String -> StateT env IO ()
+evalScript pass fname = do
+  evalPrelude pass
+  prog <- parseFile fname
+  mapM_ (uncurry $ evalPrint pass) prog
+
+evalPrint :: Monoid env => Pass env UDecl () -> String -> UDecl -> StateT env IO ()
+evalPrint pass text decl = do
+  result <- evalDecl pass decl
   case result of
     NoResult -> return ()
-    _ -> putStr text >> putStrLn (pprint result)
+    _ -> liftIO $ putStr text >> putStrLn (pprint result)
 
-evalRepl :: IO ()
-evalRepl = do
-  evalState <- startEval fullPass
-  evalPrelude evalState
-  runInputT defaultSettings $ forever (replLoop evalState)
+evalRepl :: Monoid env => Pass env UDecl () -> StateT env IO ()
+evalRepl pass = do
+  evalPrelude pass
+  runInputT defaultSettings $ forever (replLoop pass)
 
-replLoop :: EvalState -> InputT IO ()
-replLoop evalState = do
+replLoop :: Monoid env => Pass env UDecl () -> InputT (StateT env IO) ()
+replLoop pass = do
   source <- getInputLine ">=> "
   case source of
-    Nothing -> lift exitSuccess
+    Nothing -> liftIO exitSuccess
     Just s -> case parseTopDecl s of
                 Left err -> outputStrLn (pprint err)
-                Right decl -> lift $ evalPrint evalState "" decl
+                Right decl -> lift $ evalPrint pass "" decl
 
 evalWeb :: String -> IO ()
 evalWeb fname = undefined
+
+runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
+runEnv m = evalStateT m mempty
 
 opts :: ParserInfo CmdOpts
 opts = info (p <**> helper) mempty
@@ -97,6 +100,6 @@ main :: IO ()
 main = do
   evalMode <- parseOpts
   case evalMode of
-    ReplMode         -> evalRepl
-    ScriptMode fname -> evalScript fname
-    WebMode    fname -> evalWeb fname
+    ReplMode         -> runEnv $ evalRepl   fullPass
+    ScriptMode fname -> runEnv $ evalScript fullPass fname
+    -- WebMode    fname -> evalWeb fname
