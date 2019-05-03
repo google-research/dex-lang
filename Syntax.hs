@@ -93,7 +93,7 @@ data CmdName = GetType | Passes | TimeIt
 
 
 data Value = Value Type (RecTree Vec)  deriving (Show)
-data Vec = IntVec [Int] | RealVec [Float]  deriving (Show)
+data Vec = IntVec [Int] | RealVec [Double]  deriving (Show)
 
 unitTy = RecType (Tup [])
 

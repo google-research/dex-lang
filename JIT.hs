@@ -27,6 +27,8 @@ import Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import Data.ByteString.Char8 (pack, unpack)
 import Data.Word (Word64 (..))
 
+import Data.Binary.IEEE754 (wordToDouble)
+
 import Type
 import Syntax
 import Env
@@ -119,6 +121,13 @@ asVec v = case v of
                                     words <- readPtrs size (wordAsPtr ptr)
                                     return $ cast (baseTy ty) words
   where cast IntType xs = IntVec $ map fromIntegral xs
+        cast RealType xs = RealVec $ map interpret_ieee_64 xs
+
+-- From the data-binary-ieee754 package; is there a more standard way
+-- to do this?  This is also janky because we are just assuming that
+-- LLVM stores its floats in the ieee format.
+interpret_ieee_64 :: Word64 -> Double
+interpret_ieee_64 = wordToDouble
 
 constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)

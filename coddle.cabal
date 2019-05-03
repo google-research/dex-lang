@@ -15,7 +15,7 @@ executable coddle
                        time, tf-random, llvm-hs-pure ==6.*, llvm-hs ==6.*,
                        hinotify, aeson, megaparsec, warp, optparse-applicative,
                        wai, parser-combinators, http-types, prettyprinter, text,
-                       haskeline
+                       haskeline, data-binary-ieee754
 
   default-language:    Haskell2010
 
