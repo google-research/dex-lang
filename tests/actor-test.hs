@@ -8,7 +8,7 @@ type Key = String
 type Val = String
 type StoreID = Int
 type ServerMsg = Either Val ClientToServer
-type Server a = Actor ServerMsg a
+type Server a = StateT (M.Map Key (Proc ())) (Actor ServerMsg) a
 
 data ClientToServer = Write Key Val | Read Key
 
@@ -32,7 +32,7 @@ serverProc = do
   self <- getSelf
   input  <- spawn NoTrap (inputDriver self)
   client <- spawn NoTrap outputDriver
-  mainServerLoop client mempty
+  forever $ mainServerLoop client
 
 storeProc :: Proc ServerMsg -> Val -> Actor () ()
 storeProc server val = receive $ \_ _ -> do
@@ -40,27 +40,24 @@ storeProc server val = receive $ \_ _ -> do
                     else server `send` (Left val) >> loop
   where loop = storeProc server val
 
-mainServerLoop :: Proc String -> M.Map Key (Proc ()) -> Server ()
-mainServerLoop client stores = receiveAny handleMsg handleErr
+mainServerLoop :: Proc String -> Server ()
+mainServerLoop client = receiveAny handleMsg handleErr
   where
+    handleMsg :: UProc -> ServerMsg -> Server ()
     handleMsg _ msg = case msg of
-      Left val -> send client val >> loop
+      Left val -> send client val
       Right req -> case req of
         Write key val -> do
           self <- getSelf
           store <- spawnLink NoTrap (storeProc self val)
-          loopWith $ M.insert key store stores
+          modify $ M.insert key store
         Read key -> do
-          do case (M.lookup key stores) of
-               Nothing -> sorry key
-               Just store -> store `send` ()
-             loop
-    handleErr err = do client `send` ("Store " ++ show err ++ " down")
-                       loop
-    loop     = mainServerLoop client stores
-    loopWith = mainServerLoop client
-    sorry key = client `send` ("Store " ++ key ++ " doesn't exist")
+          ans <- gets (M.lookup key)
+          case ans of Nothing -> sorry key
+                      Just store -> store `send` ()
+    handleErr err = client `send` ("Store " ++ show err ++ " down")
+    sorry key     = client `send` ("Store " ++ key ++ " doesn't exist")
 
 
 main :: IO ()
-main = runMainActor Trap serverProc
+main = runMainActor Trap (evalStateT serverProc mempty)

@@ -1,5 +1,9 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FunctionalDependencies #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Actor (Actor, Proc, UProc, CanTrap (..),
               runMainActor, spawn, spawnLink, send,
@@ -21,11 +25,21 @@ data Msg a = ErrMsg ErrMsg | NormalMsg UProc a
 data Proc m = Proc CanTrap ThreadId (Chan (Msg m))
 data UProc where UProc :: Proc m -> UProc
 data ActorConfig m = ActorConfig { selfProc :: Proc m
-                                 , links    :: IORef [UProc] }
+                                 , linksPtr :: IORef [UProc] }
 
 -- TODO: implement monadstate etc
 newtype Actor m a = Actor (ReaderT (ActorConfig m) IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
+
+class (MonadIO m, Monad m) => MonadActor msg m | m -> msg where
+  actorCfg :: m (ActorConfig msg)
+
+instance MonadActor msg (Actor msg) where
+  actorCfg = Actor ask
+
+instance MonadActor msg m => MonadActor msg (StateT s m) where
+  actorCfg = lift actorCfg
+
 
 runMainActor :: CanTrap -> Actor m () -> IO ()
 runMainActor canTrap body = do
@@ -55,36 +69,35 @@ cleanup err (UProc (Proc Trap  _ chan)) = writeChan chan (ErrMsg err)
 kill :: UProc -> Actor m ()
 kill = undefined
 
-spawn :: CanTrap -> Actor m () -> Actor m' (Proc m)
+spawn :: MonadActor msg m => CanTrap -> Actor msg' () -> m (Proc msg')
 spawn canTrap body = liftIO $ spawnIO canTrap [] body
 
-spawnLink :: CanTrap -> Actor m () -> Actor m' (Proc m)
-spawnLink canTrap body = Actor $ do
-  linksPtr <- asks links
-  self <- asks selfProc
+spawnLink :: MonadActor msg m => CanTrap -> Actor msg' () -> m (Proc msg')
+spawnLink canTrap body = do
+  cfg <- actorCfg
   liftIO $ do
-    links <- readIORef linksPtr
-    child <- spawnIO canTrap [UProc self] body
+    links <- readIORef (linksPtr cfg)
+    child <- spawnIO canTrap [UProc (selfProc cfg)] body
     -- potential bug if we get killed right here, before we've linked the child.
     -- 'mask' from Control.Exception might be a solution
-    writeIORef linksPtr (UProc child : links)
+    writeIORef (linksPtr cfg) (UProc child : links)
     return child
 
-getSelf :: Actor m (Proc m)
-getSelf = Actor (asks selfProc)
+getSelf :: MonadActor msg m => m (Proc msg)
+getSelf = actorCfg >>= return . selfProc
 
-send :: Proc m -> m -> Actor m' ()
+send :: MonadActor msg m => Proc msg' -> msg' -> m ()
 send p x = do self <- getSelf
               liftIO $ writeChan (procChan p) (NormalMsg (UProc self) x)
 
-receiveAny :: (UProc -> m -> Actor m a) -> (ErrMsg -> Actor m a) -> Actor m a
+receiveAny :: MonadActor msg m => (UProc -> msg -> m a) -> (ErrMsg -> m a) -> m a
 receiveAny f onErr = do
   Proc _ _ chan <- getSelf
   msg <- liftIO $ readChan chan
   case msg of ErrMsg e -> onErr e
               NormalMsg p msg -> f p msg
 
-receive :: (UProc -> m -> Actor m a) -> Actor m a
+receive :: MonadActor msg m => (UProc -> msg -> m a) -> m a
 receive f = receiveAny f (\_ -> error "Can't handle error messages here")
 
 -- intend to pair this with receive to filter out messages
