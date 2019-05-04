@@ -69,6 +69,7 @@ deFuncExpr expr = case expr of
   App fexpr arg -> do fexpr' <- recur fexpr
                       arg'   <- recur arg
                       deFuncApp fexpr' arg'
+  Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For (v,ty) body -> do ty' <- subTy ty
                         (ans, body') <- recurWith [(v, (DFNil, ty'))] body
                         return (ans, For (v,ty') body')

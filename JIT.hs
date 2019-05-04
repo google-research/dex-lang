@@ -159,7 +159,6 @@ compileStatement statement = case statement of
 
   Loop i n body -> do n' <- lookupValVar n
                       compileLoop i n' body
-  where unleft (Left x) = x
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of
