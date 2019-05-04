@@ -113,6 +113,8 @@ check expr reqTy = case expr of
   URecCon r -> do tyExpr <- traverse infer r
                   unify reqTy (RecType (fmap fst tyExpr))
                   return $ RecCon (fmap snd tyExpr)
+  UAnnot e annTy -> do unify annTy reqTy
+                       check e reqTy
 
   where
     leakErr = throw TypeErr "existential variable leaked"

@@ -47,3 +47,9 @@ Int
        z.i = (x.i, x.i * x.i)
    in sum (for i: f z.i)
 Int
+
+:t 1 :: Int
+Int
+
+:t 1.0 :: Int
+Type error: can't unify Real and Int

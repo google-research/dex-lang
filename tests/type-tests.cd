@@ -39,3 +39,7 @@ x = unpack iota 10
 -- :t unpack x = iota 3
 --    in let y = for i j: x.i * x.i
 --       in sum (for i: sum (y.i))
+
+:t 1 :: Int
+
+:t 1.0 :: Int
