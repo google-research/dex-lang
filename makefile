@@ -10,7 +10,8 @@ update-%:
 
 run-%: tests/%.cd
 	stack exec coddle $< > tests/$*.out
-	diff -u tests/$*.expected tests/$*.out
+	diff -u <(grep -vE '^$$' tests/$*.expected) \
+	        <(grep -vE '^$$' tests/$*.out)
 	echo $* OK
 
 all-tests: run-type-tests run-eval-tests

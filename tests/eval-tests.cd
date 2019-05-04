@@ -1,6 +1,3 @@
-:p let x = unpack iota 100
-   in sum x
-
 :p 1 + 2
 
 :p let double = lam x: x * 2
@@ -16,8 +13,6 @@
 :p let x = unpack iota 3;
        y = for i j: x.i * x.j
    in sum (for i: sum (y.i))
-
-:p hash 1 3
 
 -- :p randint (hash 0 0) 10
 
