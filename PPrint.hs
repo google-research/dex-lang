@@ -48,8 +48,10 @@ prettyTyDepth d t = case t of
   ArrType a b -> parens $ recur a <+> "->" <+> recur b
   TabType a b -> recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
-  Forall kinds t -> let n = length kinds
-                    in "A" <> p (map tvars [-n..(-1)]) <> "." <+> recurWith n t
+  Forall kinds t -> header <+> recurWith n t
+                    where n = length kinds
+                          header = "A" <+> hsep boundvars <> "."
+                          boundvars = map (p . tvars) [-n..(-1)]
   Exists body -> "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> "0.." <> p i
   where recur = prettyTyDepth d
