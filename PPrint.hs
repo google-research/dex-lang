@@ -22,10 +22,13 @@ p :: Pretty a => a -> Doc ann
 p = pretty
 
 instance Pretty Err where
-  pretty (Err e s) = p e <+> p s
+  pretty (Err items) = vcat $ map (\(e, s) -> p e <+> p s) items
 
 instance Pretty ErrType where
   pretty e = case e of
+    -- NoErr tags a chunk of output that was promoted into the Err ADT
+    -- by appending Results.
+    NoErr             -> ""
     ParseErr          -> "Parse error:"
     TypeErr           -> "Type error:"
     CompilerErr       -> "Compiler bug!"

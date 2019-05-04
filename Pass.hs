@@ -3,7 +3,7 @@
 
 module Pass (MonadPass, TopMonadPass, runPass, liftTopPass,
              evalPass, execPass, liftExcept, assertEq, ignoreExcept,
-             runTopMonadPass, addErrMsg, liftExceptIO,
+             runTopMonadPass, liftExceptIO,
              Pass, Result (..), evalDecl, (>+>)) where
 
 import System.Exit
@@ -70,11 +70,6 @@ execPass env state stem = liftM snd . runPass env state stem
 
 liftExcept :: (MonadError e m) => Either e a -> m a
 liftExcept = either throwError return
-
--- TODO: simplify Err so we can easily add extra information
-addErrMsg :: MonadError Err m => String -> m a -> m a
-addErrMsg s m = catchError m (handler s)
-  where handler s (Err e s') = throw e (s' ++ "\n" ++ s)
 
 assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return ()

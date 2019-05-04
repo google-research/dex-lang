@@ -1,10 +1,11 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
                CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
-               Except, Err (..), ErrType (..), throw,
+               Except, Err (..), ErrType (..), err, throw,
                FullEnv (..), setLEnv, setTEnv,
                (-->), (==>), newFullEnv, freeLVars,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -147,25 +148,40 @@ data Result = NoResult
             | TextOut String
             | Failed Err
 
-data Err = Err ErrType String
-data ErrType = ParseErr
+newtype Err = Err [(ErrType, String)]
+  deriving (Eq, Ord, Show, Semigroup, Monoid)
+
+data ErrType = NoErr
+             | ParseErr
              | TypeErr
              | UnboundVarErr
              | CompilerErr
              | NotImplementedErr
              | UpstreamErr
              | OtherErr
+  deriving (Eq, Ord, Show)
+
+err :: ErrType -> String -> Err
+err ty str = Err [(ty, str)]
 
 type Except a = Either Err a
 
 throw :: MonadError Err m => ErrType -> String -> m a
-throw e s = throwError $ Err e s
+throw e s = throwError $ err e s
 
+-- TODO This instance isn't quite associative, because
+-- TextOut s1 <> (TextOut s2 <> Failed e) will have
+-- more NoErr tokens than
+-- (TextOut s1 <> TextOut s2) <> Failed e
+-- One fix is to override the derived Semigroup instance
+-- for Err to collapse adjacent NoErr tuples
 instance Semigroup Result where
   NoResult <> x = x
   x <> NoResult = x
   TextOut s1 <> TextOut s2 = TextOut (s1 <> s2)
-  TextOut s1 <> Failed (Err e s2) = Failed (Err e (s1 <> s2))
+  TextOut s1 <> Failed e2 = Failed $ (err NoErr s1) <> e2
+  Failed e1 <> TextOut s2 = Failed $ e1 <> (err NoErr s2)
+  Failed e1 <> Failed e2 = Failed $ e1 <> e2
 
 instance Monoid Result where
   mempty = NoResult
