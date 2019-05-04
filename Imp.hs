@@ -267,11 +267,16 @@ impExprType expr = case expr of
                  return $ IType b shape
   IBuiltinApp b args -> do -- scalar builtins only
     argTys <- mapM impExprType args
-    let ArrType (RecType (Tup argTyNeeded)) (BaseType out) = builtinType b
-    zipWithM checkScalarTy argTyNeeded argTys
+    let ArrType inTy (BaseType out) = builtinType b
+    checkArgTys inTy argTys
     return $ IType out []
 
-  where checkScalarTy :: Type -> IType -> ImpCheckM ()
+  where checkArgTys :: Type -> [IType] -> ImpCheckM ()
+        checkArgTys (RecType (Tup argTyNeeded)) argTys =
+          -- TODO This zipWith silently drops arity errors :(
+          zipWithM_ checkScalarTy argTyNeeded argTys
+        checkArgTys b@(BaseType _) [argTy] = checkScalarTy b argTy
+        checkScalarTy :: Type -> IType -> ImpCheckM ()
         checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
         checkScalarTy ty ity = throw CompilerErr $
                                        "Wrong types. Expected:" ++ pprint ty
