@@ -343,7 +343,7 @@ compileBuiltin b = case b of
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
-  _ -> error $ pprint b
+  _ -> error $ "Unrecognized builtin: " ++ pprint b
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
 randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
