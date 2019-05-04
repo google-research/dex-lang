@@ -92,9 +92,6 @@ check expr reqTy = case expr of
     (i, elemTy) <- splitTab reqTy
     body' <- recurWith [(v, i)] body elemTy
     return $ For (v, i) body'
-  URecCon r -> do tyExpr <- traverse infer r
-                  unify reqTy (RecType (fmap fst tyExpr))
-                  return $ RecCon (fmap snd tyExpr)
   UGet tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab tabTy
@@ -113,7 +110,9 @@ check expr reqTy = case expr of
     tvsReqTy <- tempVars reqTy
     if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
     return $ Unpack (v, boundTy) tv bound' body'
-
+  URecCon r -> do tyExpr <- traverse infer r
+                  unify reqTy (RecType (fmap fst tyExpr))
+                  return $ RecCon (fmap snd tyExpr)
 
   where
     leakErr = throw TypeErr "existential variable leaked"
