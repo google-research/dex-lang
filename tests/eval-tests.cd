@@ -58,3 +58,11 @@ f = lam y: sum x + y
 :p cos 0.0
 
 :p tan 1.57079
+
+:p fadd 1.0 2.0
+
+:p fsub 1.0 2.0
+
+:p fmul 3.0 2.0
+
+:p fdiv 3.0 2.0

@@ -113,10 +113,14 @@ litType v = case v of
 
 builtinType :: Builtin -> Type
 builtinType builtin = case builtin of
-  Add      -> binOpType
-  Sub      -> binOpType
-  Mul      -> binOpType
-  Pow      -> binOpType
+  Add      -> ibinOpType
+  Sub      -> ibinOpType
+  Mul      -> ibinOpType
+  Pow      -> ibinOpType
+  FAdd     -> fbinOpType
+  FSub     -> fbinOpType
+  FMul     -> fbinOpType
+  FDiv     -> fbinOpType
   Exp      -> realUnOpType
   Log      -> realUnOpType
   Sqrt     -> realUnOpType
@@ -129,7 +133,8 @@ builtinType builtin = case builtin of
   Randint  -> tup [int, int] --> int
   Rand     -> int --> real
   where
-    binOpType    = tup [int, int] --> int
+    ibinOpType    = tup [int, int] --> int
+    fbinOpType    = tup [real, real] --> real
     realUnOpType = real --> real
     iotaType = int --> Exists (i ==> int)
     i = BoundTVar 0

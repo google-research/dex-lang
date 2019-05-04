@@ -83,9 +83,10 @@ data LitVal = IntLit  Int
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
 
-data Builtin = Add | Sub | Mul | Pow | Exp | Log | Sqrt
-             | Sin | Cos | Tan | Hash | Rand | Randint
-             | Iota| Fold
+data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
+             | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
+             | Hash | Rand | Randint
+             | Iota | Fold
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | TimeIt

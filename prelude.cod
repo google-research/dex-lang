@@ -1,8 +1,10 @@
--- curried builtins
-add x y = %add (x, y)
-
-sub x y = %sub (x, y)
-mul x y = %mul (x, y)
+iadd x y = %add (x, y)
+isub x y = %sub (x, y)
+imul x y = %mul (x, y)
+fadd x y = %fadd (x, y)
+fsub x y = %fsub (x, y)
+fmul x y = %fmul (x, y)
+fdiv x y = %fdiv (x, y)
 pow x y = %pow (x, y)
 exp x = %exp x
 log x = %log x
@@ -14,4 +16,4 @@ hash x y = %hash (x, y)
 iota n = %iota n
 fold f x0 xs = %fold (lam (x, y): f x y, x0, xs)
 
-sum = fold add 0
+sum = fold iadd 0

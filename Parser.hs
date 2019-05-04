@@ -250,7 +250,8 @@ var = liftM rawName $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 builtinNames = M.fromList [
-  ("add", Add), ("sub", Sub), ("mul", Mul), ("pow", Pow), ("exp", Exp),
+  ("add", Add), ("sub", Sub), ("mul", Mul), ("fadd", FAdd), ("fsub", FSub),
+  ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota),
   ("hash", Hash), ("rand", Rand), ("randint", Randint) ]

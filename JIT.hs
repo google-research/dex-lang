@@ -2,7 +2,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Type, Add, Mul, Sub)
+import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -338,8 +338,12 @@ externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
 compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b = case b of
   Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
-  Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
+  Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
+  FAdd     -> compileBinop realTy (\x y -> L.FAdd noFastMathFlags x y [])
+  FSub     -> compileBinop realTy (\x y -> L.FSub noFastMathFlags x y [])
+  FMul     -> compileBinop realTy (\x y -> L.FMul noFastMathFlags x y [])
+  FDiv     -> compileBinop realTy (\x y -> L.FDiv noFastMathFlags x y [])
   Exp      -> externalMono expFun     RealType
   Log      -> externalMono logFun     RealType
   Sqrt     -> externalMono sqrtFun    RealType
