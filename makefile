@@ -5,8 +5,8 @@ SHELL=/bin/bash
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
 
-update-%:
-	./coddle tests/$*.cd > tests/$*.expected
+update-%: tests/%.cd
+	stack exec coddle $< > tests/$*.expected
 
 run-%: tests/%.cd
 	stack exec coddle $< > tests/$*.out

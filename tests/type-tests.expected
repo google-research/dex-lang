@@ -5,13 +5,13 @@ A a. (a -> a)
 A a. (a=>Int -> Int)
 
 :t let flip f x y = f y x in flip
-A a b c. ((c -> (b -> a)) -> (b -> (c -> a)))
+A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
 :t lam x: for i j: x.j.i
-A a b c. (c=>b=>a -> b=>c=>a)
+A c b a. (b=>a=>c -> a=>b=>c)
 
 :t lam f x: f x
-A a b. ((b -> a) -> (b -> a))
+A b a. ((a -> b) -> (a -> b))
 
 :t let id x = x
    in id (id) (id 1)
@@ -29,14 +29,16 @@ Int
 :t let x = unpack iota 10;
        y = unpack iota 3
    in sum for i: x.i + y.i
-Type error: existential variable leaked scope
+Type error: can't unify r_1 and r
 
 :t let x = unpack iota 10
    in x
-Type error: existential variable leaked scope
+Type error: existential variable leaked
+
+x = unpack iota 10
 
 :t x
-x=>Int
+idx=>Int
 
 :t (lam (x, y): x + y) (1, 2)
 Int
@@ -45,4 +47,3 @@ Int
        z.i = (x.i, x.i * x.i)
    in sum (for i: f z.i)
 Int
-
