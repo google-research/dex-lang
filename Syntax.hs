@@ -230,13 +230,14 @@ abstractTVs vs x = subAtDepth 0 sub x
 
 subAtDepth :: Int -> (Int -> Either Var Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
-    BaseType b    -> ty
+    BaseType _    -> ty
     TypeVar v     -> f d (Left v)
     ArrType a b   -> ArrType (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
     Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
+    IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
@@ -263,7 +264,7 @@ instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
 
 instance HasTypeVars Type where
   subFreeTVsBVs bvs f ty = case ty of
-      BaseType b    -> pure ty
+      BaseType _    -> pure ty
       TypeVar v | v `elem` bvs -> pure ty
                 | otherwise    -> f v
       ArrType a b   -> liftA2 ArrType (recur a) (recur b)
@@ -271,7 +272,8 @@ instance HasTypeVars Type where
       RecType r     -> liftA RecType (traverse recur r)
       Exists body   -> liftA Exists (recur body)
       Forall kinds body -> liftA (Forall kinds) (recur body)
-      BoundTVar n -> pure ty
+      IdxSetLit _   -> pure ty
+      BoundTVar _   -> pure ty
     where recur = subFreeTVsBVs bvs f
 
 instance HasTypeVars Expr where
@@ -341,6 +343,7 @@ freeVarsUExpr expr = case expr of
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
   UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [v] body)
+  UAnnot e ty    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
     recurWith p expr = local (addVs (fmap (\v -> (v,())) p)) (recur expr)

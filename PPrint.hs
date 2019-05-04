@@ -51,6 +51,7 @@ prettyTyDepth d t = case t of
   Forall kinds t -> let n = length kinds
                     in "A" <> p (map tvars [-n..(-1)]) <> "." <+> recurWith n t
   Exists body -> "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
+  IdxSetLit i -> "0.." <> p i
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
         tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds
@@ -157,3 +158,4 @@ instance Pretty Vec where
 instance Pretty Result where
   pretty r = case r of TextOut s -> pretty s
                        Failed e  -> pretty e
+                       NoResult  -> ""
