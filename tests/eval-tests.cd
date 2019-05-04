@@ -46,3 +46,15 @@ f = lam y: sum x + y
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)
 --    in sum (for i: f z.i)
+
+:p exp 1.0
+
+:p log 1.0
+
+:p sqrt 2.0
+
+:p sin 3.14159
+
+:p cos 0.0
+
+:p tan 1.57079

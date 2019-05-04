@@ -340,10 +340,17 @@ compileBuiltin b = case b of
   Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
   Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
   Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
+  Exp      -> externalMono expFun     RealType
+  Log      -> externalMono logFun     RealType
+  Sqrt     -> externalMono sqrtFun    RealType
+  Sin      -> externalMono sinFun     RealType
+  Cos      -> externalMono cosFun     RealType
+  Tan      -> externalMono tanFun     RealType
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
-  _ -> error $ "Unrecognized builtin: " ++ pprint b
+  Iota     -> error "Iota should have been lowered away by now."
+  Fold     -> error "Fold should have been lowered away by now."
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
 randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
@@ -351,6 +358,13 @@ hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "
 mallocFun  = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
 memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
                                                    ["dest", "src", "nbytes"]
+
+expFun     = ExternFunSpec "exp"           realTy [realTy] ["x"]
+logFun     = ExternFunSpec "log"           realTy [realTy] ["x"]
+sqrtFun    = ExternFunSpec "sqrt"          realTy [realTy] ["x"]
+sinFun     = ExternFunSpec "sin"           realTy [realTy] ["x"]
+cosFun     = ExternFunSpec "cos"           realTy [realTy] ["x"]
+tanFun     = ExternFunSpec "tan"           realTy [realTy] ["x"]
 
 charPtrTy = L.ptr (L.IntegerType 8)
 intPtrTy = L.ptr longTy
@@ -370,7 +384,9 @@ makeModule decls (fstBlock:blocks) = mod
                                 L.GlobalDefinition fundef
                               : map externDecl
                                   [mallocFun, memcpyFun,
-                                   hashFun, randFun, randIntFun]
+                                   hashFun, randFun, randIntFun,
+                                   expFun, logFun, sqrtFun,
+                                   sinFun, cosFun, tanFun]
                           }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
