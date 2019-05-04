@@ -41,6 +41,7 @@ rawQualify tag (Name names) = Name ((tag,0):names)
 
 topTag :: Name -> Tag
 topTag (Name ((tag,_):_)) = tag
+topTag (Name []) = error "whoops! [topTag]"
 
 nameRoot = Name []
 

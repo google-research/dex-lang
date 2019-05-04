@@ -58,9 +58,11 @@ recTreeZipEq t t' = fmap (appSnd unLeaf) (recTreeZip t t')
 
 unLeaf :: RecTree a -> a
 unLeaf (RecLeaf x) = x
+unLeaf (RecTree _) = error "whoops! [unLeaf]"
 
 recNameVals :: Record a -> Record (Name, a)
 recNameVals (Tup xs) = Tup [(rawName (show i), x) | (i,x) <- zip [0..] xs]
+recNameVals (Rec m) = Rec $ M.mapWithKey (\field x -> (rawName field, x)) m
 
 recTreeNamed :: RecTree a -> RecTree (Name, a)
 recTreeNamed (RecLeaf x) = RecLeaf (nameRoot, x)
@@ -78,3 +80,5 @@ class RecTreeZip tree where
 instance RecTreeZip (RecTree a) where
   recTreeZip (RecTree r) (RecTree r') = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
+  recTreeZip (RecTree _) (RecLeaf _) = error "whoops! [recTreeZip]"
+    -- Symmetric alternative: recTreeZip x (RecLeaf x') = RecLeaf (x, x')

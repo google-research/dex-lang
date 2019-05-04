@@ -29,6 +29,7 @@ evalJit numOutputs mod =
           case fn of
             Just fn -> do xPtr <- runJitted fn
                           readPtrs numOutputs xPtr
+            Nothing -> error "Failed to fetch \"thefun\" from LLVM"
   where
     jit :: Context -> (EE.MCJIT -> IO a) -> IO a
     jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing

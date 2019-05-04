@@ -41,10 +41,11 @@ ungroup ((k,vs):xs) = (zip (repeat k) vs) ++ ungroup xs
 
 unJust :: Maybe a -> a
 unJust (Just x) = x
-unJust Nothing = error "whoops!"
+unJust Nothing = error "whoops! [unJust]"
 
 uncons :: [a] -> (a, [a])
 uncons (x:xs) = (x, xs)
+uncons [] = error "whoops! [uncons]"
 
 pad :: a -> Int -> [a] -> [a]
 pad v n xs = xs ++ replicate (n - length(xs)) v
@@ -54,11 +55,13 @@ padLeft v n xs = replicate (n - length(xs)) v ++ xs
 
 delIdx :: Int -> [a] -> [a]
 delIdx i xs = case splitAt i xs of
-  (prefix, x:suffix) -> prefix ++ suffix
+  (prefix, _:suffix) -> prefix ++ suffix
+  (prefix, []) -> prefix -- Already not there
 
 replaceIdx :: Int -> a -> [a] -> [a]
 replaceIdx i x xs = case splitAt i xs of
   (prefix, _:suffix) -> prefix ++ (x:suffix)
+  (prefix, []) -> prefix ++ [x]
 
 insertIdx :: Int -> a -> [a] -> [a]
 insertIdx i x xs = case splitAt i xs of
@@ -68,6 +71,8 @@ mvIdx :: Int -> Int -> [a] -> [a]
 mvIdx i j xs | j == i = xs
              | j < i = let x = xs!!i
                        in insertIdx j x . delIdx i $ xs
+             | otherwise = let x = xs!!i
+                           in  delIdx i . insertIdx j x $ xs
 
 mapFst :: (a -> b) -> [(a, c)] -> [(b, c)]
 mapFst f zs = [(f x, y) | (x, y) <- zs]
