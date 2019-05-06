@@ -113,6 +113,11 @@ check expr reqTy = case expr of
   URecCon r -> do tyExpr <- traverse infer r
                   unify reqTy (RecType (fmap fst tyExpr))
                   return $ RecCon (fmap snd tyExpr)
+  -- This won't work for quantified annotations, because unifying such
+  -- types is difficult, and Hindley-Milner assumes that quantifiers
+  -- are only introduced at let binders.  Ergo, it may be necessary to
+  -- treat quantified annotations specially (when there are parsing
+  -- rules for them and so on).
   UAnnot e annTy -> do unify annTy reqTy
                        check e reqTy
 
