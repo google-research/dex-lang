@@ -1,13 +1,21 @@
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
-             showErr, listDiff, splitMap, enumerate, restructure) where
+             showErr, listDiff, splitMap, enumerate, restructure,
+             onSnd, onFst) where
+
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State (State, evalState, put, get)
+
+onFst :: (a -> b) -> (a, c) -> (b, c)
+onFst f (x, y) = (f x, y)
+
+onSnd :: (a -> b) -> (c, a) -> (c, b)
+onSnd f (x, y) = (x, f y)
 
 enumerate :: Traversable f => f a -> f (Int, a)
 enumerate xs = evalState (traverse addCount xs) 0

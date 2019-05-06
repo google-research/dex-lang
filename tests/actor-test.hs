@@ -60,4 +60,4 @@ mainServerLoop client = receiveAny handleMsg handleErr
 
 
 main :: IO ()
-main = runMainActor Trap (evalStateT serverProc mempty)
+main = runActor Trap (evalStateT serverProc mempty)

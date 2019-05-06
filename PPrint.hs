@@ -160,8 +160,13 @@ instance Pretty Vec where
   pretty (IntVec  xs) = p xs
   pretty (RealVec xs) = p xs
 
+instance Pretty EvalStatus where
+  pretty Complete = ""
+  pretty (Failed err) = p err
+
+instance Pretty a => Pretty (SetOnce a) where
+  pretty NotSet = ""
+  pretty (Set a) = p a
 
 instance Pretty Result where
-  pretty r = case r of TextOut s -> pretty s
-                       Failed e  -> pretty e
-                       NoResult  -> ""
+  pretty (Result x y z) = p x <> p y <> p z

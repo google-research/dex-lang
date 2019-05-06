@@ -24,6 +24,7 @@ import Imp
 import JIT
 import Fresh
 import ConcurrentUtil
+import WebOutput
 
 type DeclKey = Int
 type Keyed a = (DeclKey, a)
@@ -45,7 +46,7 @@ parseFile fname = do
 evalPrelude :: Monoid env => Pass env UDecl () -> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
-  mapM_ (evalDecl pass) (map snd prog)
+  mapM_ (evalDecl . pass . snd) prog
 
 evalScript :: Monoid env => Pass env UDecl () -> String -> StateT env IO ()
 evalScript pass fname = do
@@ -55,10 +56,8 @@ evalScript pass fname = do
 
 evalPrint :: Monoid env => Pass env UDecl () -> String -> UDecl -> StateT env IO ()
 evalPrint pass text decl = do
-  result <- evalDecl pass decl
-  case result of
-    NoResult -> return ()
-    _ -> liftIO $ putStr text >> putStrLn (pprint result)
+  result <- evalDecl (pass decl)
+  liftIO $ putStrLn $ pprint (resultSource text <> result)
 
 evalRepl :: Monoid env => Pass env UDecl () -> StateT env IO ()
 evalRepl pass = do
@@ -75,7 +74,9 @@ replLoop pass = do
                 Right decl -> lift $ evalPrint pass "" decl
 
 evalWeb :: String -> IO ()
-evalWeb fname = undefined
+evalWeb fname = do
+  env <- execStateT (evalPrelude fullPass) mempty
+  runWeb fname fullPass env
 
 runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
 runEnv m = evalStateT m mempty
@@ -102,4 +103,4 @@ main = do
   case evalMode of
     ReplMode         -> runEnv $ evalRepl   fullPass
     ScriptMode fname -> runEnv $ evalScript fullPass fname
-    -- WebMode    fname -> evalWeb fname
+    WebMode    fname -> evalWeb fname

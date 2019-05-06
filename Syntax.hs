@@ -11,7 +11,9 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProgram (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result (..), freeVars, lhsVars
+               Value (..), Vec (..), Result (..), freeVars, lhsVars,
+               Nullable (..), SetOnce (..), EvalStatus (..), MonMap (..),
+               resultSource, resultText, resultErr, resultComplete
               ) where
 
 import Util
@@ -23,6 +25,7 @@ import Data.Semigroup
 import Data.Foldable (toList)
 import Data.Traversable
 import Data.List (intercalate, elemIndex, nub)
+import qualified Data.Map.Strict as M
 
 import Data.Foldable (fold)
 import Data.Functor.Identity (Identity, runIdentity)
@@ -143,11 +146,44 @@ data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
 
+-- === some handy monoids ===
+
+data Nullable a = Valid a | Null
+data SetOnce a = Set a | NotSet
+newtype MonMap k v = MonMap (M.Map k v)
+
+instance Semigroup (SetOnce a) where
+  NotSet <> x = x
+  Set x <> _  = Set x
+
+instance Monoid (SetOnce a) where
+  mempty = NotSet
+
+instance Semigroup a => Semigroup (Nullable a) where
+  Null <> _ = Null
+  _ <> Null = Null
+  Valid x <> Valid y = Valid (x <> y)
+
+instance Monoid a => Monoid (Nullable a) where
+  mempty = Valid mempty
+
+instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
+  MonMap m <> MonMap m' = MonMap $ M.unionWith (<>) m m'
+
+instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
+  mempty = MonMap mempty
+
 -- === outputs ===
 
-data Result = NoResult
-            | TextOut String
-            | Failed Err
+data EvalStatus = Complete | Failed Err
+type Source = String
+type Output = String
+data Result = Result (SetOnce Source) (SetOnce EvalStatus) Output
+
+resultSource s = Result (Set s) mempty mempty
+resultText   s = Result mempty mempty s
+resultErr    e = Result mempty (Set (Failed e)) mempty
+resultComplete = Result mempty (Set Complete)   mempty
 
 newtype Err = Err [(ErrType, String)]
   deriving (Eq, Ord, Show, Semigroup, Monoid)
@@ -177,15 +213,10 @@ throw e s = throwError $ err e s
 -- One fix is to override the derived Semigroup instance
 -- for Err to collapse adjacent NoErr tuples
 instance Semigroup Result where
-  NoResult <> x = x
-  x <> NoResult = x
-  TextOut s1 <> TextOut s2 = TextOut (s1 <> s2)
-  TextOut s1 <> Failed e2 = Failed $ (err NoErr s1) <> e2
-  Failed e1 <> TextOut s2 = Failed $ e1 <> (err NoErr s2)
-  Failed e1 <> Failed e2 = Failed $ e1 <> e2
+  Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')
 
 instance Monoid Result where
-  mempty = NoResult
+  mempty = Result mempty mempty mempty
 
 -- === misc ===
 

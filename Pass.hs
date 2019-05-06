@@ -9,12 +9,13 @@ module Pass (MonadPass, TopMonadPass, runPass, liftTopPass,
 import System.Exit
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad.Writer hiding ((<>))
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 import Data.Maybe (catMaybes)
 import Data.Semigroup ((<>))
+import Data.Monoid
 import Control.Concurrent
 
 import Syntax
@@ -25,15 +26,15 @@ import ConcurrentUtil
 type MutEnv a = MutMap Name (Maybe a)
 type ResultSink = Packet Result -> IO ()
 
-evalDecl :: Monoid env => Pass env a () -> a -> StateT env IO Result
-evalDecl pass x = do
+evalDecl :: Monoid env => TopMonadPass env () -> StateT env IO Result
+evalDecl pass = do
   env <- get
-  (ans, output) <- liftIO $ runTopMonadPass env (pass x)
-  let output' = TextOut (concat output)
+  (ans, output) <- liftIO $ runTopMonadPass env pass
+  let output' = resultText (concat output)
   case ans of
-    Left e -> return $ output' <> Failed e
+    Left e -> return $ output' <> resultErr e
     Right (_, env') -> do put $ env' <> env
-                          return $ output'
+                          return $ output' <> resultComplete
 
 -- === top-level pass (IO because of LLVM JIT API) ===
 

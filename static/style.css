@@ -21,9 +21,16 @@ body {
   padding: 0em 1em;
 }
 
-.output-cell {
+.pending-cell {
   margin: 1em 0em;
   padding: 1em 1em;
+  background-color: #00FFFF;
+}
+
+.complete-cell {
+  margin: 1em 0em;
+  padding: 1em 1em;
+  background-color: #FFFFFF;
 }
 
 .err-cell {
