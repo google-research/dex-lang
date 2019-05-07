@@ -8,7 +8,7 @@ module Actor (Actor, Proc, PChan, CanTrap (..), Msg (..),
               runActor, spawn, spawnLink, send,
               receive, receiveF, receiveErr, receiveErrF,
               myChan, subChan, sendFromIO, ServerMsg (..),
-              logServer, writeOnceServer, ReqChan) where
+              logServer, ReqChan) where
 
 import Control.Monad
 import Control.Monad.State.Strict
@@ -118,7 +118,7 @@ newBackChan = liftM2 BackChan (newIORef []) (newChan)
 readBackChan :: BackChan a -> IO a
 readBackChan (BackChan ptr chan) = do xs <- readIORef ptr
                                       case xs of []     -> readChan chan
-                                                 x:rest -> do writeIORef ptr xs
+                                                 x:rest -> do writeIORef ptr rest
                                                               return x
 
 pushBackChan :: BackChan a -> [a] -> IO ()
@@ -158,9 +158,5 @@ logServer = flip evalStateT (mempty, []) $ forever $ do
       modify $ onFst (<> x)
       subscribers <- gets snd
       mapM_ (flip send x) subscribers
-
--- receives input once, then serves that value forever
-writeOnceServer :: Actor (ServerMsg a) ()
-writeOnceServer = undefined
 
 -- TODO: state machine?
