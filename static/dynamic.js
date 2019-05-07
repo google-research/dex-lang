@@ -3,7 +3,6 @@
 var cells = {};
 
 function append_result(key, result) {
-    console.log(result);
     if (key in cells) {
         var cell = cells[key];
     } else {
@@ -68,11 +67,23 @@ function add_node(parent, classname) {
     return newnode;
 }
 
-
 var source = new EventSource("/getnext");
 source.onmessage = function(event) {
     var results = JSON.parse(event.data);
-    for (var i = 0; i < results.length; i++) {
-        append_result(results[i][0], results[i][1].val);
+    console.log(results);
+    var order    = results[0];
+    var contents = results[1];
+    console.log(results);
+    for (var i = 0; i < contents.length; i++) {
+        append_result(contents[i][0], contents[i][1]);
+    }
+    // TODO: keys may appear twice, but they'll only show up once (html doesn't
+    // allow repeated nodes). We need to make copies and keep them in sync.
+    if (order != null) {
+        var body = document.getElementById("main-output");
+        body.innerHTML = "";
+        for (var i = 0; i < order.val.length; i++) {
+            body.appendChild(cells[order.val[i]].cell);
+        }
     }
 };

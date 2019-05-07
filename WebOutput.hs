@@ -11,6 +11,8 @@ import Data.Function (fix)
 import Data.Binary.Builder (fromByteString, Builder)
 import Data.IORef
 import Data.Monoid ((<>))
+import Data.List (nub)
+import Data.Maybe (catMaybes, fromJust)
 import qualified Data.Map.Strict as M
 
 import Network.Wai
@@ -27,10 +29,11 @@ import Actor
 import Pass
 import Parser
 import PPrint
+import Fresh
 
 type FileName = String
 type Key = Int
-type ResultSet = MonMap Key (Nullable Result)
+type ResultSet = (SetVal [Key], MonMap Key Result)
 
 runWeb :: Monoid env => FileName -> Pass env UDecl () -> env -> IO ()
 runWeb fname pass env = runActor $ do
@@ -70,14 +73,22 @@ webServer resultsRequest = do
 
 -- === main driver ===
 
+type Source = String
+type DriverM env a = StateT (DriverState env) (Actor DriverMsg) a
 data DriverMsg = NewProg String
-data DriverState = DriverState
-  { foo :: ()
+data DriverState env = DriverState
+  { freshState :: Int
+  , declCache :: M.Map (String, [Key]) Key
+  , varMap    :: M.Map Name Key
+  , workers   :: M.Map Key (Proc, ReqChan env)
   }
 
-initDriverState :: DriverState
-initDriverState = DriverState ()
+setDeclCache update state = state { declCache = update (declCache state) }
+setVarMap    update state = state { varMap    = update (varMap    state) }
+setWorkers   update state = state { workers   = update (workers   state) }
 
+initDriverState :: DriverState env
+initDriverState = DriverState 0 mempty mempty mempty
 
 mainDriver :: Monoid env => Pass env UDecl () -> env -> String
                 -> PChan ResultSet -> Actor DriverMsg ()
@@ -89,14 +100,40 @@ mainDriver pass env fname resultChan = flip evalStateT initDriverState $ do
     prog <- case parseProg source of
       Left e     -> error "need to handle this case"
       Right prog -> return prog
-    let monmap = MonMap $ M.fromList (zip [0..] (map (Valid . resultSource . fst) prog))
-    resultChan `send` monmap
-    mapM_ spawnWorker (zip [0..] prog)
+    modify $ setVarMap (const mempty)
+    keys <- mapM processDecl prog
+    resultChan `send` updateOrder keys
   where
-    singleton k r = MonMap $ M.singleton k (Valid r)
-    spawnWorker (k, (_, decl)) =
-      spawn NoTrap $ worker env (pass decl) (subChan (singleton k) resultChan) []
+    processDecl (source, decl) = do
+      state <- get
+      let parents = nub $ catMaybes $ lookupKeys (freeVars decl) (varMap state)
+      key <- case M.lookup (source, parents) (declCache state) of
+        Just key -> return key
+        Nothing -> do
+          key <- freshKey
+          modify $ setDeclCache $ M.insert (source, parents) key
+          parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
+          let resChan = subChan (singletonResult key) resultChan
+          resChan `send` resultSource source
+          (p, wChan) <- spawn NoTrap $ worker env (pass decl) resChan parentChans
+          modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
+          return key
+      modify $ setVarMap $ (<> M.fromList [(v, key) | v <- lhsVars decl])
+      return key
 
+    freshKey :: DriverM env Key
+    freshKey = do n <- gets freshState
+                  modify $ \s -> s {freshState = n + 1}
+                  return n
+
+lookupKeys :: Ord k => [k] -> M.Map k v -> [Maybe v]
+lookupKeys ks m = map (flip M.lookup m) ks
+
+singletonResult :: Key -> Result -> ResultSet
+singletonResult k r = (mempty, MonMap (M.singleton k r))
+
+updateOrder :: [Key] -> ResultSet
+updateOrder ks = (Set ks, mempty)
 
 data WorkerMsg a = EnvResponse a
                  | JobDone a
@@ -146,7 +183,7 @@ instance ToJSON EvalStatus where
   toJSON Complete   = object ["complete" .= A.Null]
   toJSON (Failed e) = object ["failed"   .= toJSON (pprint e)]
 
-instance ToJSON a => ToJSON (SetOnce a) where
+instance ToJSON a => ToJSON (SetVal a) where
   toJSON (Set x) = object ["val" .= toJSON x]
   toJSON NotSet  = A.Null
 

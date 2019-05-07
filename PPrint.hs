@@ -164,7 +164,7 @@ instance Pretty EvalStatus where
   pretty Complete = ""
   pretty (Failed err) = p err
 
-instance Pretty a => Pretty (SetOnce a) where
+instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 

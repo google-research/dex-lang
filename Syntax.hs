@@ -12,7 +12,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProgram (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars, lhsVars,
-               Nullable (..), SetOnce (..), EvalStatus (..), MonMap (..),
+               Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete
               ) where
 
@@ -149,14 +149,14 @@ type Index = Var
 -- === some handy monoids ===
 
 data Nullable a = Valid a | Null
-data SetOnce a = Set a | NotSet
+data SetVal a = Set a | NotSet
 newtype MonMap k v = MonMap (M.Map k v)
 
-instance Semigroup (SetOnce a) where
-  NotSet <> x = x
-  Set x <> _  = Set x
+instance Semigroup (SetVal a) where
+  x <> NotSet = x
+  _ <> Set x  = Set x
 
-instance Monoid (SetOnce a) where
+instance Monoid (SetVal a) where
   mempty = NotSet
 
 instance Semigroup a => Semigroup (Nullable a) where
@@ -178,7 +178,7 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 data EvalStatus = Complete | Failed Err
 type Source = String
 type Output = String
-data Result = Result (SetOnce Source) (SetOnce EvalStatus) Output
+data Result = Result (SetVal Source) (SetVal EvalStatus) Output
 
 resultSource s = Result (Set s) mempty mempty
 resultText   s = Result mempty mempty s
@@ -206,12 +206,6 @@ type Except a = Either Err a
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ err e s
 
--- TODO This instance isn't quite associative, because
--- TextOut s1 <> (TextOut s2 <> Failed e) will have
--- more NoErr tokens than
--- (TextOut s1 <> TextOut s2) <> Failed e
--- One fix is to override the derived Semigroup instance
--- for Err to collapse adjacent NoErr tuples
 instance Semigroup Result where
   Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')
 
