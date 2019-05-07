@@ -52,8 +52,7 @@ function append_result(key, result) {
 };
 
 function new_cell() {
-    var body = document.getElementById("main-output");
-    var cell = add_node(body, "pending-cell");
+    var cell = add_node(null, "pending-cell");
     var source = add_node(cell, "source");
     var output = add_node(cell, "result-text");
     return {"cell" : cell, "source" : source, "output" : output }
@@ -63,7 +62,7 @@ function new_cell() {
 function add_node(parent, classname) {
     var newnode = document.createElement("div");
     newnode.className = classname;
-    parent.appendChild(newnode);
+    if (parent != null) parent.appendChild(newnode);
     return newnode;
 }
 
