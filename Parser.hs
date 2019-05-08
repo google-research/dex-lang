@@ -18,13 +18,13 @@ import Test.HUnit
 import Data.Foldable (toList)
 import qualified Data.Map as M
 
-type Prog = [(String, UDecl)]
+type Prog = [(String, Except UDecl)]
 
 data LocalDecl = AssignDecl UPat UExpr
                | UnpackDecl Var UExpr
 
-parseProg :: String -> Except Prog
-parseProg = parseit prog
+parseProg :: String -> Prog
+parseProg s = map (\s -> (s, parseTopDecl s)) $ topDeclSources s
 
 parseTopDecl :: String -> Except UDecl
 parseTopDecl = parseit topDeclInstr
@@ -34,11 +34,18 @@ parseit p s = case parse (p <* eof) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
 
-prog :: Parser Prog
-prog = emptyLines >> many (topDecl <*emptyLines)
-
 topDecl :: Parser (String, UDecl)
 topDecl = captureSource topDeclInstr
+
+topDeclSources :: String -> [String]
+topDeclSources s = map concat $ groupLines $ filter (not . null) $ lines s
+  where
+    groupLines :: [String] -> [[String]]
+    groupLines [] = []
+    groupLines [x] = [[x]]
+    groupLines (x:y:rest) = if y!!0 == ' ' then (x:g):gs
+                                           else [x]:g:gs
+      where g:gs = groupLines (y:rest)
 
 topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand

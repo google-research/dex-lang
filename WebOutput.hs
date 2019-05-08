@@ -92,19 +92,20 @@ initDriverState = DriverState 0 mempty mempty mempty
 
 mainDriver :: Monoid env => Pass env UDecl () -> env -> String
                 -> PChan ResultSet -> Actor DriverMsg ()
-mainDriver pass env fname resultChan = flip evalStateT initDriverState $ do
+mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
   chan <- myChan
   liftIO $ inotifyMe fname (subChan NewProg chan)
   forever $ do
     NewProg source <- receive
-    prog <- case parseProg source of
-      Left e     -> error "need to handle this case"
-      Right prog -> return prog
     modify $ setVarMap (const mempty)
-    keys <- mapM processDecl prog
-    resultChan `send` updateOrder keys
+    keys <- mapM processDecl (parseProg source)
+    resultSetChan `send` updateOrder keys
   where
-    processDecl (source, decl) = do
+    processDecl (source, Left e) = do
+      key <- freshKey
+      resultChan key `send` (resultSource source <> resultErr e)
+      return key
+    processDecl (source, Right decl) = do
       state <- get
       let parents = nub $ catMaybes $ lookupKeys (freeVars decl) (varMap state)
       key <- case M.lookup (source, parents) (declCache state) of
@@ -113,13 +114,15 @@ mainDriver pass env fname resultChan = flip evalStateT initDriverState $ do
           key <- freshKey
           modify $ setDeclCache $ M.insert (source, parents) key
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
-          let resChan = subChan (singletonResult key) resultChan
-          resChan `send` resultSource source
-          (p, wChan) <- spawn NoTrap $ worker env (pass decl) resChan parentChans
+          resultChan key `send` resultSource source
+          (p, wChan) <- spawn NoTrap $
+                          worker env (pass decl) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
       modify $ setVarMap $ (<> M.fromList [(v, key) | v <- lhsVars decl])
       return key
+
+    resultChan key = subChan (singletonResult key) resultSetChan
 
     freshKey :: DriverM env Key
     freshKey = do n <- gets freshState

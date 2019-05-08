@@ -38,15 +38,16 @@ fullPass = typePass   >+> checkTyped
        >+> impPass    >+> checkImp
        >+> jitPass
 
-parseFile :: MonadIO m => String -> m [(String, UDecl)]
+parseFile :: MonadIO m => String -> m [(String, Except UDecl)]
 parseFile fname = do
   source <- liftIO $ readFile fname
-  liftExceptIO (parseProg source)
+  return $ parseProg source
 
 evalPrelude :: Monoid env => Pass env UDecl () -> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
-  mapM_ (evalDecl . pass . snd) prog
+  decls <- liftExceptIO $ mapM snd prog
+  mapM_ (evalDecl . pass) decls
 
 evalScript :: Monoid env => Pass env UDecl () -> String -> StateT env IO ()
 evalScript pass fname = do
@@ -54,9 +55,11 @@ evalScript pass fname = do
   prog <- parseFile fname
   mapM_ (uncurry $ evalPrint pass) prog
 
-evalPrint :: Monoid env => Pass env UDecl () -> String -> UDecl -> StateT env IO ()
+evalPrint :: Monoid env =>
+               Pass env UDecl () -> String -> Except UDecl -> StateT env IO ()
 evalPrint pass text decl = do
-  result <- evalDecl (pass decl)
+  decl' <- liftExceptIO decl
+  result <- evalDecl (pass decl')
   liftIO $ putStrLn $ pprint (resultSource text <> result)
 
 evalRepl :: Monoid env => Pass env UDecl () -> StateT env IO ()
@@ -69,9 +72,7 @@ replLoop pass = do
   source <- getInputLine ">=> "
   case source of
     Nothing -> liftIO exitSuccess
-    Just s -> case parseTopDecl s of
-                Left err -> outputStrLn (pprint err)
-                Right decl -> lift $ evalPrint pass "" decl
+    Just s -> lift $ evalPrint pass "" (parseTopDecl s)
 
 evalWeb :: String -> IO ()
 evalWeb fname = do
