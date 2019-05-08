@@ -115,7 +115,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
           modify $ setDeclCache $ M.insert (source, parents) key
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
           resultChan key `send` resultSource source
-          (p, wChan) <- spawn NoTrap $
+          (p, wChan) <- spawn Trap $
                           worker env (pass decl) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
@@ -151,17 +151,19 @@ worker initEnv pass resultChan parentChans = do
   mapM (flip send (subChan EnvResponse workerChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  (pid, _) <- spawn NoTrap $ do
+  (pid, _) <- spawnLink NoTrap $ do
                 (result, env') <- liftIO $ runStateT (evalDecl pass) env
                 send resultChan result
                 send workerChan (JobDone env')
   -- TODO: handle error messages from worker process
-  env' <- receiveF fDone
-  forever $ do responseChan <- receiveF fReq
-               send responseChan env'
+  env' <- join $ receiveErrF $ \msg -> case msg of
+    NormalMsg (JobDone x) -> Just (return x)
+    ErrMsg _ s -> Just $ do resultChan `send` resultErr (err CompilerErr s)
+                            return env
+    _ -> Nothing
+  forever $ receiveF fReq >>= (`send` env')
   where
     fResponse msg = case msg of EnvResponse x -> Just x; _ -> Nothing
-    fDone     msg = case msg of JobDone     x -> Just x; _ -> Nothing
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
 -- sends file contents to subscribers whenever file is modified

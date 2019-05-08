@@ -26,7 +26,7 @@ import Control.Concurrent
 data Msg a = ErrMsg Proc String | NormalMsg a
 data CanTrap = Trap | NoTrap  deriving (Show, Ord, Eq)
 newtype PChan a = PChan { sendPChan :: a -> IO () }
-data Proc = Proc CanTrap ThreadId  deriving (Show, Ord, Eq)
+data Proc = Proc CanTrap ThreadId (PChan (Proc, String)) -- TODO: Ord instance
 data BackChan a = BackChan (IORef [a]) (Chan a)
 data ActorConfig m = ActorConfig { selfProc  :: Proc
                                  , selfChan  :: BackChan (Msg m)
@@ -40,7 +40,7 @@ runActor (Actor m) = do
   linksRef   <- newIORef []
   chan <- newBackChan
   id <- myThreadId
-  let p = (Proc Trap id)
+  let p = (Proc Trap id (asErrPChan chan))
   runReaderT m (ActorConfig p chan linksRef)
 
 subChan :: (a -> b) -> PChan b -> PChan a
@@ -68,17 +68,22 @@ spawnIO canTrap links (Actor m) = do
   linksRef   <- newIORef links
   chan <- newBackChan
   id <- forkIO $ do id <- myThreadId
-                    let self = Proc canTrap id
+                    let self = Proc canTrap id (asErrPChan chan)
                     runReaderT m (ActorConfig self chan linksRef)
-                      `onException`
-                         (readIORef linksRef >>= mapM (cleanup self))
-  return (Proc canTrap id, asPChan chan)
+                     `catch` (\e ->
+                       do linked <- readIORef linksRef
+                          mapM_ (cleanup (show (e::SomeException)) self) linked)
+  return (Proc canTrap id (asErrPChan chan), asPChan chan)
   where
-   cleanup :: Proc -> Proc -> IO ()
-   cleanup = error "cleanup not yet implemented"
+   cleanup :: String -> Proc -> Proc -> IO ()
+   cleanup s failed (Proc Trap   _ errChan) = sendFromIO errChan (failed, s)
+   cleanup s failed (Proc NoTrap linked  _) = void $ forkIO $ killThread linked
 
 asPChan :: BackChan (Msg a) -> PChan a
 asPChan (BackChan _ chan) = PChan (writeChan chan . NormalMsg)
+
+asErrPChan :: BackChan (Msg a) -> PChan (Proc, String)
+asErrPChan (BackChan _ chan) = PChan (writeChan chan . uncurry ErrMsg)
 
 send :: MonadActor msg' m => PChan msg -> msg -> m ()
 send p x = liftIO (sendFromIO p x)
