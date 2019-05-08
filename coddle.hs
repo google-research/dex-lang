@@ -10,6 +10,7 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Options.Applicative
 import Data.Semigroup ((<>))
+import Data.Text.Prettyprint.Doc
 import qualified Data.Map.Strict as M
 
 import Syntax
@@ -53,14 +54,13 @@ evalScript :: Monoid env => Pass env UDecl () -> String -> StateT env IO ()
 evalScript pass fname = do
   evalPrelude pass
   prog <- parseFile fname
-  mapM_ (uncurry $ evalPrint pass) prog
-
-evalPrint :: Monoid env =>
-               Pass env UDecl () -> String -> Except UDecl -> StateT env IO ()
-evalPrint pass text decl = do
-  decl' <- liftExceptIO decl
-  result <- evalDecl (pass decl')
-  liftIO $ putStrLn $ pprint (resultSource text <> result)
+  mapM_ evalPrint prog
+  where
+    evalPrint (text, decl) = do
+      printIt "" (resultSource text)
+      case decl of
+        Left e -> printIt "> " e
+        Right decl' -> evalDecl (pass decl') >>= printIt "> "
 
 evalRepl :: Monoid env => Pass env UDecl () -> StateT env IO ()
 evalRepl pass = do
@@ -72,12 +72,18 @@ replLoop pass = do
   source <- getInputLine ">=> "
   case source of
     Nothing -> liftIO exitSuccess
-    Just s -> lift $ evalPrint pass "" (parseTopDecl s)
+    Just s -> lift $ case (parseTopDecl s) of
+                       Left e -> printIt "" e
+                       Right decl' -> evalDecl (pass decl') >>= printIt ""
 
 evalWeb :: String -> IO ()
 evalWeb fname = do
   env <- execStateT (evalPrelude fullPass) mempty
   runWeb fname fullPass env
+
+printIt :: (Pretty a, MonadIO m) => String -> a -> m ()
+printIt prefix x = liftIO $ putStrLn $ unlines
+                      [prefix ++ s | s <- lines (pprint x)]
 
 runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
 runEnv m = evalStateT m mempty

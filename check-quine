@@ -1,0 +1,6 @@
+#!/bin/bash
+
+tmp=$(mktemp)
+diff --left-column -y --color=always $1 <(${@:2} $1) > $tmp \
+    && echo OK || cat $tmp
+rm $tmp

@@ -8,14 +8,16 @@ import Fresh
 import Env
 
 import Control.Monad
+import Data.Void
 import Control.Monad.Combinators.Expr
 import Control.Monad.Identity
 import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
 import Control.Monad.State (StateT, runState, modify)
 import Text.Megaparsec
+import qualified Text.Parsec as P
 import qualified Text.Megaparsec.Char.Lexer as L
-import Test.HUnit
 import Data.Foldable (toList)
+import Data.List (isPrefixOf)
 import qualified Data.Map as M
 
 type Prog = [(String, Except UDecl)]
@@ -24,28 +26,15 @@ data LocalDecl = AssignDecl UPat UExpr
                | UnpackDecl Var UExpr
 
 parseProg :: String -> Prog
-parseProg s = map (\s -> (s, parseTopDecl s)) $ topDeclSources s
+parseProg source = map (\s -> (s, parseTopDecl s)) (splitDecls source)
 
 parseTopDecl :: String -> Except UDecl
-parseTopDecl = parseit topDeclInstr
+parseTopDecl = parseit (emptyLines >> topDeclInstr <* emptyLines)
 
 parseit :: Parser a -> String -> Except a
 parseit p s = case parse (p <* eof) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
-
-topDecl :: Parser (String, UDecl)
-topDecl = captureSource topDeclInstr
-
-topDeclSources :: String -> [String]
-topDeclSources s = map concat $ groupLines $ filter (not . null) $ lines s
-  where
-    groupLines :: [String] -> [[String]]
-    groupLines [] = []
-    groupLines [x] = [[x]]
-    groupLines (x:y:rest) = if y!!0 == ' ' then (x:g):gs
-                                           else [x]:g:gs
-      where g:gs = groupLines (y:rest)
 
 topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand
@@ -299,6 +288,35 @@ typeExpr' =   parens typeExpr
           -- <|> forallType
           -- <|> existsType
           <?> "term"
+
+type LineParser = P.Parsec [String] ()
+
+splitDecls :: String -> [String]
+splitDecls s = parsecParse (blanks >> P.many topDeclString) $ lines s
+
+parsecParse :: LineParser a -> [String] -> a
+parsecParse p s = case P.parse (p <* P.eof) "" s of
+                    Left e -> error (show e)
+                    Right x -> x
+
+lineMatch :: (String -> Bool) -> LineParser String
+lineMatch test = P.tokenPrim show nextPos toMaybe
+  where nextPos pos _ _ = P.incSourceColumn pos 1
+        toMaybe x = if test x then Just x
+                              else Nothing
+
+topDeclString :: LineParser String
+topDeclString = do comments <- P.many (commentLine <* blanks)
+                   fstLine  <- lineMatch (const True)
+                   rest     <- P.many continuedLine <* blanks
+                   return $ unlines $ comments ++ (fstLine : rest)
+  where
+    commentLine   = lineMatch ("--" `isPrefixOf`)
+    continuedLine = lineMatch (" "  `isPrefixOf`)
+
+blanks :: LineParser ()
+blanks = void $ P.many $ lineMatch (\line -> null line || ">" `isPrefixOf` line)
+
 
 -- data BoundVars = BoundVars { lVars :: [Var]
 --                            , tVars :: [Var] }

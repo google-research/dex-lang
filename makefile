@@ -5,18 +5,18 @@ SHELL=/bin/bash
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
 
-update-%: tests/%.cd
-	stack exec coddle $< > tests/$*.expected
-
 run-%: tests/%.cd
-	stack exec coddle $< > tests/$*.out
-	diff -u <(grep -vE '^$$' tests/$*.expected) \
-	        <(grep -vE '^$$' tests/$*.out)
-	echo $* OK
+	./check-quine $^ stack exec coddle
 
-all-tests: run-type-tests run-eval-tests
+update-%: tests/%.cd
+	stack exec coddle $^ > $^.tmp
+	mv $^.tmp $^
 
-all-update-tests: update-type-tests update-eval-tests
+all-tests: run-type-tests \
+           run-eval-tests
+
+all-update-tests :: update-type-tests \
+                    update-eval-tests
 
 clean:
 	rm cbits/*.so
