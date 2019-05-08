@@ -132,6 +132,7 @@ builtinType builtin = case builtin of
   Hash     -> tup [int, int] --> int
   Randint  -> tup [int, int] --> int
   Rand     -> int --> real
+  IntToReal -> int --> real
   where
     ibinOpType    = tup [int, int] --> int
     fbinOpType    = tup [real, real] --> real

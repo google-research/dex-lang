@@ -4,7 +4,7 @@
 
 :t lam x: sum for i: x.i
 
-> A a. (a=>Int -> Int)
+> A a. (a=>Real -> Real)
 
 :t let flip f x y = f y x in flip
 
@@ -24,15 +24,15 @@
 > Int
 
 :t let x = unpack iota 10
-   in sum x
+   in isum x
 
 > Int
 
 :t let x = unpack iota 10;
        y = unpack iota 3
-   in (sum for i: x.i) + (sum for j: y.j)
+   in real (isum for i: x.i) + real (isum for j: y.j)
 
-> Int
+> Real
 
 :t let x = unpack iota 10;
        y = unpack iota 3
@@ -48,19 +48,22 @@
 x = unpack iota 10
 
 
+xr = map real x
+
+
 :t x
 
 > idx=>Int
 
-:t (lam (x, y): x + y) (1, 2)
+:t (lam (x, y): x + y) (1.0, 2.0)
 
-> Int
+> Real
 
-:t let f (x, y) = x + 2 * y;
-       z.i = (x.i, x.i * x.i)
+:t let f (x, y) = x + 2.0 * y;
+       z.i = (xr.i, xr.i * xr.i)
    in sum (for i: f z.i)
 
-> Int
+> Real
 
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3

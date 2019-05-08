@@ -1,28 +1,30 @@
-:p 1 + 2
+:p 1.0 + 2.0
 
-> [3]
+> [3.0]
 
-:p let double = lam x: x * 2
-   in double 10
+:p let double = lam x: x * 2.0
+   in double 10.0
 
-> [20]
+> [20.0]
 
 :p let x = unpack iota 100
-   in sum (for i: x.i)
+   in isum (for i: x.i)
 
 > [4950]
 
-:p let vdot x y = sum (for i: x.i * y.i * 2);
-       x = unpack iota 3
-   in vdot x x
+:p let vdot x y = sum (for i: x.i * y.i * 2.0);
+       x = unpack iota 3;
+       y = map real x
+   in vdot y y
 
-> [10]
+> [10.0]
 
 :p let x = unpack iota 3;
-       y = for i j: x.i * x.j
-   in sum (for i: sum (y.i))
+       y = map real x;
+       z = for i j: y.i * y.j
+   in sum (for i: sum (z.i))
 
-> [18]
+> [9.0]
 
 -- :p randint (hash 0 0) 10
 -- :p let x = unpack iota 10000;
@@ -31,43 +33,43 @@
 x = unpack iota 7
 
 
-f = lam y: sum x + y
+f = lam y: sum (map real x) + y
 
 
-:p f 3
+:p f 3.0
 
-> [24]
+> [24.0]
 
 :p x
 
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold (lam x y: x + y) 0 x
+:p fold (lam x y: iadd x y) 0 x
 
 > [21]
 
-:p 6 - 10
+:p 6.0 - 10.0
 
-> [-4]
+> [-4.0]
 
-:p (lam (x, y): x + y) (1, 2)
+:p (lam (x, y): x + y) (1.0, 2.0)
 
-> [3]
+> [3.0]
 
 :p let f (x, y) = x y
    in f (lam x: x, 1)
 
 > [1]
 
-:p let (x,y) = ((1,2),3) in
+:p let (x,y) = ((1.0,2.0),3.0) in
        let (x1, x2) = x in x1 + x2 + y
 
-> [6]
+> [6.0]
 
-:p let x = (1,2) in
+:p let x = (1.0,2.0) in
    let (y,z) = x in y + z
 
-> [3]
+> [3.0]
 
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)

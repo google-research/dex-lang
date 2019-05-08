@@ -211,8 +211,8 @@ getRule = Postfix $ do
 
 ops = [ [getRule, appRule]
       , [binOpRule "^" Pow]
-      , [binOpRule "*" Mul]  -- binOpRule "/" Div]
-      , [binOpRule "+" Add, binOpRule "-" Sub]
+      , [binOpRule "*" FMul]  -- binOpRule "/" Div]
+      , [binOpRule "+" FAdd, binOpRule "-" FSub]
       ]
 
 -- idxExpr =   parenIdxExpr
@@ -246,10 +246,10 @@ var = liftM rawName $ makeIdentifier
             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 builtinNames = M.fromList [
-  ("add", Add), ("sub", Sub), ("mul", Mul), ("fadd", FAdd), ("fsub", FSub),
+  ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),
   ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("fold", Fold), ("iota", Iota),
+  ("fold", Fold), ("iota", Iota), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint) ]
 
 strToBuiltin :: String -> Maybe Builtin

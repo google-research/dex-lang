@@ -323,11 +323,17 @@ baseTy ty = case ty of
   L.IntegerType 64 -> IntType
   L.FloatingPointType L.DoubleFP -> RealType
 
-compileBinop ::    L.Type -> (Operand -> Operand -> L.Instruction)
+compileBinop :: L.Type -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileBinop ty makeInstr [ScalarVal x _, ScalarVal y _] =
   liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x y)
+
+compileUnop :: L.Type -> (Operand -> L.Instruction)
+                -> [CompileVal]
+                -> CompileM CompileVal
+compileUnop ty makeInstr [ScalarVal x _] =
+  liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x)
 
 externalMono :: ExternFunSpec -> BaseType -> [CompileVal] -> CompileM CompileVal
 externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
@@ -353,8 +359,10 @@ compileBuiltin b = case b of
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
+  IntToReal -> compileUnop realTy (\x -> L.SIToFP x realTy [])
   Iota     -> error "Iota should have been lowered away by now."
   Fold     -> error "Fold should have been lowered away by now."
+
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
 randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]

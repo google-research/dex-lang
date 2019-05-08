@@ -131,6 +131,7 @@ instance Pretty Builtin where
     Rand     -> "rand"
     Randint  -> "randint"
     Fold     -> "fold"
+    IntToReal -> "real"
 
 instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr

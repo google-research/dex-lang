@@ -1,6 +1,6 @@
-iadd x y = %add (x, y)
-isub x y = %sub (x, y)
-imul x y = %mul (x, y)
+iadd x y = %iadd (x, y)
+isub x y = %isub (x, y)
+imul x y = %imul (x, y)
 fadd x y = %fadd (x, y)
 fsub x y = %fsub (x, y)
 fmul x y = %fmul (x, y)
@@ -15,5 +15,8 @@ tan x = %tan x
 hash x y = %hash (x, y)
 iota n = %iota n
 fold f x0 xs = %fold (lam (x, y): f x y, x0, xs)
-
-sum = fold iadd 0
+rand x = %rand x
+sum  = fold fadd 0.0
+isum = fold iadd 0
+map f x = for i: f x.i
+real x = %inttoreal x
