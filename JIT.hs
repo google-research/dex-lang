@@ -21,6 +21,7 @@ import Data.Foldable (toList)
 import Data.List (intercalate, transpose)
 import Data.Traversable
 import Data.Functor.Identity
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import qualified Foreign.Ptr as F
 import Data.ByteString.Short (ShortByteString, toShort, fromShort)
@@ -80,6 +81,10 @@ jitPass decl = case decl of
     EvalExpr -> do vals <- evalProg prog
                    vecs <- liftIO $ mapM asVec vals
                    tell [pprint (restructureVal ty vecs)]
+    TimeIt -> do t1 <- liftIO getCurrentTime
+                 evalProg prog
+                 t2 <- liftIO getCurrentTime
+                 tell $ [show (t2 `diffUTCTime` t1)]
     _ -> return ()
 
 evalProg :: ImpProgram -> TopMonadPass PersistEnv [PersistVal]

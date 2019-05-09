@@ -1,0 +1,14 @@
+matmul x y = for i k: sum (for j: x.i.j * y.j.k)
+
+
+xs = unpack iota 500
+
+
+mat = for i j: rand (hash 0 (hash xs.i xs.j))
+
+
+-- this is not fast! about 1000X slower than numpy...
+:time matmul mat mat
+
+> 0.840014221s
+
