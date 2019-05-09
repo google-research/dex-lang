@@ -11,7 +11,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProgram (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result (..), freeVars, lhsVars,
+               Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete
               ) where

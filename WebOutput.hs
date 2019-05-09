@@ -144,15 +144,12 @@ worker :: Monoid env => env -> TopPass env ()
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()
 worker initEnv pass resultChan parentChans = do
-  workerChan <- myChan
-  mapM (flip send (subChan EnvResponse workerChan)) parentChans
+  selfChan <- myChan
+  mapM (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  (pid, _) <- spawnLink NoTrap $ do
-                (result, env') <- liftIO $ runStateT (evalDecl pass) env
-                send resultChan result
-                send workerChan (JobDone env')
-  -- TODO: handle error messages from worker process
+  (pid, _) <- spawnLink NoTrap $
+                execPass env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do resultChan `send` resultErr (err CompilerErr s)
@@ -162,6 +159,16 @@ worker initEnv pass resultChan parentChans = do
   where
     fResponse msg = case msg of EnvResponse x -> Just x; _ -> Nothing
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
+
+execPass :: Monoid env =>
+              env -> TopPass env () -> PChan env -> PChan Result -> Actor msg ()
+execPass env pass envChan resultChan = do
+  (ans, (env', out)) <- liftIO $ runTopPass env pass
+  resultChan `send` resultText out
+  envChan    `send` (env <> env')
+  -- TODO: consider just throwing IO error and letting the supervisor catch it
+  resultChan `send` case ans of Left e   -> resultErr e
+                                Right () -> resultComplete
 
 -- sends file contents to subscribers whenever file is modified
 inotifyMe :: String -> PChan String -> IO ()

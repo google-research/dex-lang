@@ -13,6 +13,7 @@ import qualified LLVM.AST.IntegerPredicate as L
 
 import Control.Monad
 import Control.Monad.State
+import Control.Monad.Except (liftEither)
 import Control.Monad.Writer (tell)
 import Control.Applicative (liftA, liftA2)
 
@@ -66,19 +67,19 @@ type NInstr = Named Instruction
 jitPass :: ImpDecl -> TopPass PersistEnv ()
 jitPass decl = case decl of
   ImpTopLet bs prog -> do vals <- evalProg prog
-                          put $ newEnv $ zip (map fst bs) vals
+                          putEnv $ newEnv $ zip (map fst bs) vals
   ImpEvalCmd _ NoOp -> return ()
   ImpEvalCmd ty (Command cmd prog) -> case cmd of
     Passes -> do CompiledProg vs m <- toLLVM prog
                  llvm <- liftIO $ showLLVM m
-                 tell ["\n\nLLVM\n" ++ llvm]
+                 writeOut $ "\n\nLLVM\n" ++ llvm
     EvalExpr -> do vals <- evalProg prog
                    vecs <- liftIO $ mapM asVec vals
-                   tell [pprint (restructureVal ty vecs)]
+                   writeOut $ pprint (restructureVal ty vecs)
     TimeIt -> do t1 <- liftIO getCurrentTime
                  evalProg prog
                  t2 <- liftIO getCurrentTime
-                 tell $ [show (t2 `diffUTCTime` t1)]
+                 writeOut $ show (t2 `diffUTCTime` t1)
     _ -> return ()
 
 evalProg :: ImpProgram -> TopPass PersistEnv [PersistVal]
@@ -89,9 +90,10 @@ evalProg prog = do
 
 toLLVM :: ImpProgram -> TopPass PersistEnv CompiledProg
 toLLVM prog = do
-  env <- gets $ fmap (Left . asCompileVal)
-  let initState = CompileState [] [] [] "start_block" env
-  liftExcept $ evalPass () initState nameRoot (compileProg prog)
+  env <- getEnv
+  let env' = fmap (Left . asCompileVal) env
+  let initState = CompileState [] [] [] "start_block" env'
+  liftEither $ evalPass () initState nameRoot (compileProg prog)
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty

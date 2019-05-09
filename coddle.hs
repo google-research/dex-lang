@@ -3,6 +3,7 @@ import System.IO
 import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
+import Control.Monad.Except (liftEither)
 import Options.Applicative
 import Data.Semigroup ((<>))
 import Data.Text.Prettyprint.Doc
@@ -38,8 +39,7 @@ parseFile fname = do
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
-  decls <- liftExceptIO $ mapM snd prog
-  mapM_ (evalDecl . pass) decls
+  mapM_ (evalDecl . pass . ignoreExcept . snd) prog
 
 evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
@@ -63,14 +63,23 @@ replLoop pass = do
   source <- getInputLine ">=> "
   case source of
     Nothing -> liftIO exitSuccess
-    Just s -> lift $ case (parseTopDecl s) of
-                       Left e -> printIt "" e
-                       Right decl' -> evalDecl (pass decl') >>= printIt ""
+    Just s -> case (parseTopDecl s) of
+                Left e -> printIt "" e
+                Right decl' -> lift $ evalDecl (pass decl') >>= printIt ""
 
 evalWeb :: String -> IO ()
 evalWeb fname = do
   env <- execStateT (evalPrelude fullPass) mempty
   runWeb fname fullPass env
+
+evalDecl :: Monoid env => TopPass env () -> StateT env IO Result
+evalDecl pass = do
+  env <- get
+  (ans, (env', output)) <- liftIO $ runTopPass env pass
+  modify $ (<> env')
+  return $    resultText output
+           <> case ans of Left e   -> resultErr e
+                          Right () -> resultComplete
 
 printIt :: (Pretty a, MonadIO m) => String -> a -> m ()
 printIt prefix x = liftIO $ putStrLn $ unlines

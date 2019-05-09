@@ -5,7 +5,7 @@ module Imp (impPass, checkImp) where
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Writer (tell)
-import Control.Monad.Except (throwError)
+import Control.Monad.Except (liftEither)
 import Data.Foldable (toList)
 
 import Syntax
@@ -17,10 +17,7 @@ import Pass
 import Fresh
 
 type ImpM a = Pass ImpEnv ImpState a
-type ImpMTop a = TopPass ImpEnv a
-
 type ImpEnv = FullEnv (Type, RecTree Name) Name
-
 data ImpState = ImpState { blocks :: [[Statement]] }
 
 impPass :: Decl -> TopPass ImpEnv ImpDecl
@@ -29,30 +26,29 @@ impPass decl = case decl of
     prog <- impExprTop expr
     let binders = fmap (\(v', ty') -> (catNames v v', ty'))
                     $ recTreeNamed (flatType' ty)
-    put $ newFullEnv [(v, (ty, fmap fst binders))]  []
+    putEnv $ newFullEnv [(v, (ty, fmap fst binders))]  []
     return $ ImpTopLet (toList binders) prog
   TopUnpack (v,ty) iv expr -> do
     prog <- impExprTop expr
     let binders = fmap (\(v', ty') -> (catNames v v', ty'))
                     $ recTreeNamed (flatType' ty)
-    put $ newFullEnv [(v, (ty, (fmap fst binders)))] [(iv,iv)]
+    putEnv $ newFullEnv [(v, (ty, (fmap fst binders)))] [(iv,iv)]
     let b' = (iv, intTy) : toList binders
     return $ ImpTopLet b' prog
 
-  EvalCmd NoOp -> put mempty >> return (ImpEvalCmd unitTy NoOp)
+  EvalCmd NoOp -> return (ImpEvalCmd unitTy NoOp)
   EvalCmd (Command cmd expr) -> do
     prog <- impExprTop expr
-    env <- gets (setLEnv (fmap fst))
-    let ty = getType env expr
-    put mempty
-    case cmd of Passes -> tell ["\n\nImp\n" ++ pprint prog]
+    env <- getEnv
+    let ty = getType (setLEnv (fmap fst) env) expr
+    case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd ty (Command cmd prog)
 
-impExprTop :: Expr -> ImpMTop ImpProgram
+impExprTop :: Expr -> TopPass ImpEnv ImpProgram
 impExprTop expr = do
-  env <- get
-  (iexpr, state) <- liftExcept $ runPass env (ImpState [[]]) nameRoot (toImp expr)
+  env <- getEnv
+  (iexpr, state) <- liftEither $ runPass env (ImpState [[]]) nameRoot (toImp expr)
   let ImpState [statements] = state
       prog = ImpProgram (reverse statements) (toList iexpr)
   return prog
@@ -215,14 +211,15 @@ checkImp decl = decl <$ case decl of
   ImpTopLet binders prog -> do
     ty <- check prog
     -- doesn't work without alias checking for sizes
-    -- liftExcept $ assertEq ty (map snd binders) ""
-    put $ newEnv binders
+    -- liftEither $ assertEq ty (map snd binders) ""
+    putEnv $ newEnv binders
   ImpEvalCmd _ NoOp -> return ()
-  ImpEvalCmd _ (Command cmd prog) -> check prog >> put mempty
+  ImpEvalCmd _ (Command cmd prog) -> void $ check prog
   where
     check :: ImpProgram -> TopPass (Env IType) [IType]
-    check prog = do env <- gets $ fmap (\t->(False,t))
-                    liftExcept $ evalPass () env nameRoot (impProgType prog)
+    check prog = do env <- getEnv
+                    let env' = fmap (\t->(False,t)) env
+                    liftEither $ evalPass () env' nameRoot (impProgType prog)
 
 impProgType :: ImpProgram -> ImpCheckM [IType]
 impProgType (ImpProgram statements exprs) = do

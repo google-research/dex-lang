@@ -8,8 +8,6 @@ import PPrint
 
 import Data.Foldable (toList)
 import Control.Monad
-import Control.Monad.State (put)
-import Control.Monad.Writer (tell)
 import Control.Monad.Reader (local, asks)
 
 type DFEnv = FullEnv TypedDFVal (Maybe Type)
@@ -30,18 +28,17 @@ deFuncPass decl = case decl of
   TopLet (v,ty) expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType val ty
-    put $ newFullEnv [(v, (val,ty'))] []
+    putEnv $ newFullEnv [(v, (val,ty'))] []
     return $ TopLet (v, ty') expr'
   TopUnpack (v,ty) iv expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType val ty
-    put $ newFullEnv [(v, (val,ty'))] [(iv,Nothing)]
+    putEnv $ newFullEnv [(v, (val,ty'))] [(iv,Nothing)]
     return $ TopUnpack (v, ty') iv expr'
-  EvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
+  EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (_, expr') <- deFuncTop expr
-    put mempty
-    case cmd of Passes  -> do tell ["\n\nDefunctionalized\n" ++ pprint expr']
+    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr'
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
 

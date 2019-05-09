@@ -2,7 +2,7 @@ module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              patType, builtinType) where
 
 import Control.Monad
-import Control.Monad.Except (throwError)
+import Control.Monad.Except (liftEither)
 import Control.Monad.Reader
 import Control.Monad.State
 
@@ -19,19 +19,19 @@ checkTyped :: Decl -> TopPass TypeEnv Decl
 checkTyped decl = decl <$ case decl of
   TopLet (v,ty) expr -> do
     ty' <- check expr
-    liftExcept $ assertEq ty ty' ""
-    put $ newFullEnv [(v,ty)] []
+    liftEither $ assertEq ty ty' ""
+    putEnv $ newFullEnv [(v,ty)] []
   TopUnpack (v,ty) iv expr -> do
     exTy <- check expr
-    ty' <- liftExcept $ unpackExists exTy iv
-    liftExcept $ assertEq ty ty' ""
-    put $ newFullEnv [(v,ty)] [(iv, IdxSetKind)]
-  EvalCmd NoOp -> put mempty >> return ()
-  EvalCmd (Command cmd expr) -> check expr >> put mempty
+    ty' <- liftEither $ unpackExists exTy iv
+    liftEither $ assertEq ty ty' ""
+    putEnv $ newFullEnv [(v,ty)] [(iv, IdxSetKind)]
+  EvalCmd NoOp -> return ()
+  EvalCmd (Command cmd expr) -> void $ check expr
   where
     check :: Expr -> TopPass TypeEnv Type
-    check expr = do env <- get
-                    liftExcept $ evalTypeM env (getType' True expr)
+    check expr = do env <- getEnv
+                    liftEither $ evalTypeM env (getType' True expr)
 
 getType :: FullEnv Type a -> Expr -> Type
 getType (FullEnv lenv _) expr =
@@ -75,7 +75,7 @@ getType' check expr = case expr of
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
     checkEq s ty getTy =
       if check then do ty' <- getTy
-                       liftExcept $ assertEq ty ty' ("Unexpected type in " ++ s)
+                       liftEither $ assertEq ty ty' ("Unexpected type in " ++ s)
                else return ()
 
     checkTy :: Type -> TypeM ()

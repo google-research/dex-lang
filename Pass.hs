@@ -1,9 +1,9 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Pass (Pass, TopPass, runPass, liftTopPass,
-             evalPass, execPass, liftExcept, assertEq, ignoreExcept,
-             runTopPass, liftExceptIO,
-             Result (..), evalDecl, (>+>)) where
+module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
+             ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
+             (>+>)) where
 
 import System.Exit
 import Control.Monad.State.Strict
@@ -16,36 +16,46 @@ import Syntax
 import Fresh
 import PPrint
 
-evalDecl :: Monoid env => TopPass env () -> StateT env IO Result
-evalDecl pass = do
-  env <- get
-  (ans, output) <- liftIO $ runTopPass env pass
-  let output' = resultText (concat output)
-  case ans of
-    Left e -> return $ output' <> resultErr e
-    Right (_, env') -> do put $ env' <> env
-                          return $ output' <> resultComplete
+-- === top-level pass ===
 
--- === top-level pass (IO because of LLVM JIT API) ===
+newtype TopPass env a = TopPass (ReaderT env
+                                   (ExceptT Err
+                                      (WriterT (env, Output) IO)) a)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadError Err)
 
-type TopPass env a = StateT env (ExceptT Err (WriterT [String] IO)) a
+getEnv :: Monoid env => TopPass env env
+getEnv = TopPass ask
+
+putEnv :: Monoid env => env -> TopPass env ()
+putEnv env = TopPass $ tell (env, mempty)
+
+writeOut :: Monoid env => Output -> TopPass env ()
+writeOut output = TopPass $ tell (mempty, output)
+
+runTopPass :: env -> TopPass env a -> IO (Except a, (env, Output))
+runTopPass env (TopPass m) = runWriterT $ runExceptT $ runReaderT m env
+
+liftTopPass :: Monoid env => state -> Pass env state a -> TopPass env a
+liftTopPass state m = do env <- getEnv
+                         liftEither $ evalPass env state nameRoot m
 
 infixl 1 >+>
-(>+>) :: (a -> TopPass env1 b)
+(>+>) :: (Monoid env1, Monoid env2)
+      => (a -> TopPass env1 b)
       -> (b -> TopPass env2 c)
       -> (a -> TopPass (env1, env2) c)
-(>+>) f1 f2 x = do (env1, env2) <- get
-                   (y, env1') <- lift $ runStateT (f1 x) env1
-                   (z, env2') <- lift $ runStateT (f2 y) env2
-                   put (env1', env2')
+(>+>) f1 f2 x = do (env1, env2) <- getEnv
+                   (y, env1') <- liftEnv env1 (f1 x)
+                   (z, env2') <- liftEnv env2 (f2 y)
+                   putEnv (env1', env2')
                    return z
-
-runTopPass :: env -> TopPass env a -> IO (Except (a, env), [String])
-runTopPass env m = runWriterT $ runExceptT $ runStateT m env
-
-liftTopPass :: state -> Pass env state a -> TopPass env a
-liftTopPass state m = do env <- get
-                         liftExcept $ evalPass env state nameRoot m
+  where
+    liftEnv :: (Monoid env, Monoid env') =>
+                  env -> TopPass env a -> TopPass env' (a, env)
+    liftEnv env m = do (x, (env', out)) <- liftIO $ runTopPass env m
+                       writeOut out
+                       x' <- liftEither x
+                       return (x', env')
 
 -- === common monad structure for pure passes ===
 
@@ -58,10 +68,6 @@ runPass :: env -> state -> Var -> Pass env state a -> Except (a, state)
 runPass env state stem m = runFreshT (runStateT (runReaderT m env) state) stem
 
 evalPass env state stem = liftM fst . runPass env state stem
-execPass env state stem = liftM snd . runPass env state stem
-
-liftExcept :: (MonadError e m) => Either e a -> m a
-liftExcept = either throwError return
 
 assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
 assertEq x y s = if x == y then return ()
@@ -71,7 +77,3 @@ assertEq x y s = if x == y then return ()
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
-
-liftExceptIO :: MonadIO m => Except a -> m a
-liftExceptIO (Left e) = liftIO $ die (pprint e)
-liftExceptIO (Right x) = return x

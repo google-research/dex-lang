@@ -2,7 +2,7 @@ module Inference (typePass) where
 
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Writer (tell)
+import Control.Monad.Except (liftEither)
 import Control.Monad.State
 import Data.List (nub, (\\))
 import Data.Foldable (toList)
@@ -27,22 +27,21 @@ typePass :: UDecl -> TopPass TypeEnv Decl
 typePass decl = case decl of
   UTopLet v expr -> do
     (ty, expr') <- translate expr
-    put $ newFullEnv [(v,ty)] []
+    putEnv $ newFullEnv [(v,ty)] []
     return $ TopLet (v,ty) expr'
   UTopUnpack v expr -> do
     (ty, expr') <- translate expr
     let iv = rawName "idx" -- TODO: sort out variables properly
-    ty' <- liftExcept $ unpackExists ty iv
-    put $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
+    ty' <- liftEither $ unpackExists ty iv
+    putEnv $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
     return $ TopUnpack (v,ty') iv expr'
-  UEvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
+  UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     (ty, expr') <- translate expr
-    put mempty
     case cmd of
-      GetType -> do tell [pprint ty]
+      GetType -> do writeOut (pprint ty)
                     return $ EvalCmd NoOp
-      Passes  -> do tell ["\nSystem F\n" ++ pprint expr']
+      Passes  -> do writeOut ("\nSystem F\n" ++ pprint expr')
                     return $ EvalCmd (Command cmd expr')
       _ -> return $ EvalCmd (Command cmd expr')
 
