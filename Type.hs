@@ -18,7 +18,7 @@ import PPrint
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
-checkTyped :: Pass TypeEnv Decl Decl
+checkTyped :: Decl -> TopPass TypeEnv Decl
 checkTyped decl = decl <$ case decl of
   TopLet (v,ty) expr -> do
     ty' <- check expr
@@ -32,7 +32,7 @@ checkTyped decl = decl <$ case decl of
   EvalCmd NoOp -> put mempty >> return ()
   EvalCmd (Command cmd expr) -> check expr >> put mempty
   where
-    check :: Expr -> TopMonadPass TypeEnv Type
+    check :: Expr -> TopPass TypeEnv Type
     check expr = do env <- get
                     liftExcept $ evalTypeM env (getType' True expr)
 

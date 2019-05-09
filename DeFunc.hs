@@ -26,9 +26,9 @@ data DFVal = DFNil
            | TLamVal [TBinder] DFEnv Expr
            | RecVal (Record DFVal)
 
-type DeFuncM a = MonadPass DFEnv () a
+type DeFuncM a = Pass DFEnv () a
 
-deFuncPass :: Pass DFEnv Decl Decl
+deFuncPass :: Decl -> TopPass DFEnv Decl
 deFuncPass decl = case decl of
   TopLet (v,ty) expr -> do
     (val, expr') <- deFuncTop expr
@@ -49,7 +49,7 @@ deFuncPass decl = case decl of
     return $ EvalCmd (Command cmd expr')
 
   where
-    deFuncTop :: Expr -> TopMonadPass DFEnv (DFVal, Expr)
+    deFuncTop :: Expr -> TopPass DFEnv (DFVal, Expr)
     deFuncTop expr = liftTopPass () (deFuncExpr expr)
 
 deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)

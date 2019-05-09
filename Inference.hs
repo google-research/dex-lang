@@ -21,10 +21,10 @@ type TempEnv = Env Kind
 data InferState = InferState { tempEnv :: TempEnv
                              , subst :: Subst }
 
-type InferM a = MonadPass TypeEnv InferState a
+type InferM a = Pass TypeEnv InferState a
 type Constraint = (Type, Type)
 
-typePass :: Pass TypeEnv UDecl Decl
+typePass :: UDecl -> TopPass TypeEnv Decl
 typePass decl = case decl of
   UTopLet v expr -> do
     (ty, expr') <- translate expr

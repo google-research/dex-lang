@@ -1,10 +1,9 @@
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE FlexibleContexts #-}
 
-module Pass (MonadPass, TopMonadPass, runPass, liftTopPass,
+module Pass (Pass, TopPass, runPass, liftTopPass,
              evalPass, execPass, liftExcept, assertEq, ignoreExcept,
-             runTopMonadPass, liftExceptIO,
-             Pass, Result (..), evalDecl, (>+>)) where
+             runTopPass, liftExceptIO,
+             Result (..), evalDecl, (>+>)) where
 
 import System.Exit
 import Control.Monad.State.Strict
@@ -26,10 +25,10 @@ import ConcurrentUtil
 type MutEnv a = MutMap Name (Maybe a)
 type ResultSink = Packet Result -> IO ()
 
-evalDecl :: Monoid env => TopMonadPass env () -> StateT env IO Result
+evalDecl :: Monoid env => TopPass env () -> StateT env IO Result
 evalDecl pass = do
   env <- get
-  (ans, output) <- liftIO $ runTopMonadPass env pass
+  (ans, output) <- liftIO $ runTopPass env pass
   let output' = resultText (concat output)
   case ans of
     Left e -> return $ output' <> resultErr e
@@ -38,32 +37,33 @@ evalDecl pass = do
 
 -- === top-level pass (IO because of LLVM JIT API) ===
 
-type TopMonadPass env a = StateT env (ExceptT Err (WriterT [String] IO)) a
-type Pass env a b = a -> TopMonadPass env b
+type TopPass env a = StateT env (ExceptT Err (WriterT [String] IO)) a
 
 infixl 1 >+>
-(>+>) :: Pass env1 a b -> Pass env2 b c -> Pass (env1, env2) a c
+(>+>) :: (a -> TopPass env1 b)
+      -> (b -> TopPass env2 c)
+      -> (a -> TopPass (env1, env2) c)
 (>+>) f1 f2 x = do (env1, env2) <- get
                    (y, env1') <- lift $ runStateT (f1 x) env1
                    (z, env2') <- lift $ runStateT (f2 y) env2
                    put (env1', env2')
                    return z
 
-runTopMonadPass :: env -> TopMonadPass env a -> IO (Except (a, env), [String])
-runTopMonadPass env m = runWriterT $ runExceptT $ runStateT m env
+runTopPass :: env -> TopPass env a -> IO (Except (a, env), [String])
+runTopPass env m = runWriterT $ runExceptT $ runStateT m env
 
-liftTopPass :: state -> MonadPass env state a -> TopMonadPass env a
+liftTopPass :: state -> Pass env state a -> TopPass env a
 liftTopPass state m = do env <- get
                          liftExcept $ evalPass env state nameRoot m
 
 -- === common monad structure for pure passes ===
 
-type MonadPass env state a = ReaderT env (
+type Pass env state a = ReaderT env (
                                StateT state (
                                  FreshT (
                                    Either Err))) a
 
-runPass :: env -> state -> Var -> MonadPass env state a -> Except (a, state)
+runPass :: env -> state -> Var -> Pass env state a -> Except (a, state)
 runPass env state stem m = runFreshT (runStateT (runReaderT m env) state) stem
 
 evalPass env state stem = liftM fst . runPass env state stem

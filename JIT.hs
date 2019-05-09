@@ -62,14 +62,14 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , impVarEnv  :: ImpVarEnv
                                  }
 
-type CompileM a = MonadPass () CompileState a
+type CompileM a = Pass () CompileState a
 data CompiledProg = CompiledProg [CompileVal] Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
 
 type Long = Operand
 type NInstr = Named Instruction
 
-jitPass :: Pass PersistEnv ImpDecl ()
+jitPass :: ImpDecl -> TopPass PersistEnv ()
 jitPass decl = case decl of
   ImpTopLet bs prog -> do vals <- evalProg prog
                           put $ newEnv $ zip (map fst bs) vals
@@ -87,13 +87,13 @@ jitPass decl = case decl of
                  tell $ [show (t2 `diffUTCTime` t1)]
     _ -> return ()
 
-evalProg :: ImpProgram -> TopMonadPass PersistEnv [PersistVal]
+evalProg :: ImpProgram -> TopPass PersistEnv [PersistVal]
 evalProg prog = do
   CompiledProg outvals mod <- toLLVM prog
   outWords <- liftIO $ evalJit (length (JitVals outvals)) mod
   return $ asPersistVals outWords outvals
 
-toLLVM :: ImpProgram -> TopMonadPass PersistEnv CompiledProg
+toLLVM :: ImpProgram -> TopPass PersistEnv CompiledProg
 toLLVM prog = do
   env <- gets $ fmap (Left . asCompileVal)
   let initState = CompileState [] [] [] "start_block" env

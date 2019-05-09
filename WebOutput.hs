@@ -34,8 +34,9 @@ import Fresh
 type FileName = String
 type Key = Int
 type ResultSet = (SetVal [Key], MonMap Key Result)
+type FullPass env = UDecl -> TopPass env ()
 
-runWeb :: Monoid env => FileName -> Pass env UDecl () -> env -> IO ()
+runWeb :: Monoid env => FileName -> FullPass env -> env -> IO ()
 runWeb fname pass env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
   spawn Trap $ mainDriver pass env fname (subChan Push resultsChan)
@@ -90,7 +91,7 @@ setWorkers   update state = state { workers   = update (workers   state) }
 initDriverState :: DriverState env
 initDriverState = DriverState 0 mempty mempty mempty
 
-mainDriver :: Monoid env => Pass env UDecl () -> env -> String
+mainDriver :: Monoid env => FullPass env -> env -> String
                 -> PChan ResultSet -> Actor DriverMsg ()
 mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
   chan <- myChan
@@ -142,7 +143,7 @@ data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: Monoid env => env -> TopMonadPass env ()
+worker :: Monoid env => env -> TopPass env ()
             -> PChan Result
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()

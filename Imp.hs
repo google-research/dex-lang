@@ -17,14 +17,14 @@ import PPrint
 import Pass
 import Fresh
 
-type ImpM a = MonadPass ImpEnv ImpState a
-type ImpMTop a = TopMonadPass ImpEnv a
+type ImpM a = Pass ImpEnv ImpState a
+type ImpMTop a = TopPass ImpEnv a
 
 type ImpEnv = FullEnv (Type, RecTree Name) Name
 
 data ImpState = ImpState { blocks :: [[Statement]] }
 
-impPass :: Pass ImpEnv Decl ImpDecl
+impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
   TopLet (v,ty) expr -> do
     prog <- impExprTop expr
@@ -207,11 +207,11 @@ setBlocks update state = state { blocks = update (blocks state) }
 
 -- === type checking imp programs ===
 
-type ImpCheckM a = MonadPass () (Env VarType) a
+type ImpCheckM a = Pass () (Env VarType) a
 type IsMutable = Bool
 type VarType = (IsMutable, IType)
 
-checkImp :: Pass (Env IType) ImpDecl ImpDecl
+checkImp :: ImpDecl -> TopPass (Env IType) ImpDecl
 checkImp decl = decl <$ case decl of
   ImpTopLet binders prog -> do
     ty <- check prog
@@ -221,7 +221,7 @@ checkImp decl = decl <$ case decl of
   ImpEvalCmd _ NoOp -> return ()
   ImpEvalCmd _ (Command cmd prog) -> check prog >> put mempty
   where
-    check :: ImpProgram -> TopMonadPass (Env IType) [IType]
+    check :: ImpProgram -> TopPass (Env IType) [IType]
     check prog = do env <- gets $ fmap (\t->(False,t))
                     liftExcept $ evalPass () env nameRoot (impProgType prog)
 

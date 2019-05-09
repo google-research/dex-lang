@@ -29,7 +29,7 @@ import WebOutput
 
 type DeclKey = Int
 type Keyed a = (DeclKey, a)
-
+type FullPass env = UDecl -> TopPass env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}
@@ -44,13 +44,13 @@ parseFile fname = do
   source <- liftIO $ readFile fname
   return $ parseProg source
 
-evalPrelude :: Monoid env => Pass env UDecl () -> StateT env IO ()
+evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
   decls <- liftExceptIO $ mapM snd prog
   mapM_ (evalDecl . pass) decls
 
-evalScript :: Monoid env => Pass env UDecl () -> String -> StateT env IO ()
+evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
   evalPrelude pass
   prog <- parseFile fname
@@ -62,12 +62,12 @@ evalScript pass fname = do
         Left e -> printIt "> " e
         Right decl' -> evalDecl (pass decl') >>= printIt "> "
 
-evalRepl :: Monoid env => Pass env UDecl () -> StateT env IO ()
+evalRepl :: Monoid env => FullPass env-> StateT env IO ()
 evalRepl pass = do
   evalPrelude pass
   runInputT defaultSettings $ forever (replLoop pass)
 
-replLoop :: Monoid env => Pass env UDecl () -> InputT (StateT env IO) ()
+replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
   source <- getInputLine ">=> "
   case source of
