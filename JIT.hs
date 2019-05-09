@@ -12,21 +12,16 @@ import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as L
 
 import Control.Monad
-import Control.Monad.Except (throwError)
 import Control.Monad.State
 import Control.Monad.Writer (tell)
 import Control.Applicative (liftA, liftA2)
 
-import Data.Foldable (toList)
-import Data.List (intercalate, transpose)
 import Data.Traversable
-import Data.Functor.Identity
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
-import qualified Foreign.Ptr as F
 import Data.ByteString.Short (ShortByteString, toShort, fromShort)
 import Data.ByteString.Char8 (pack, unpack)
-import Data.Word (Word64 (..))
+import Data.Word (Word64)
 
 import Data.Binary.IEEE754 (wordToDouble)
 
@@ -35,7 +30,6 @@ import Syntax
 import Env
 import Record
 import Util
-import Imp
 import Pass
 import Fresh
 import PPrint

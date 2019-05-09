@@ -3,17 +3,14 @@ module DeFunc (deFuncPass) where
 import Syntax
 import Env
 import Record
-import Util
-import Type
-import Fresh
 import Pass
 import PPrint
 
 import Data.Foldable (toList)
 import Control.Monad
-import Control.Monad.State (put, gets)
+import Control.Monad.State (put)
 import Control.Monad.Writer (tell)
-import Control.Monad.Reader (Reader, runReader, local, ask, asks)
+import Control.Monad.Reader (local, asks)
 
 type DFEnv = FullEnv TypedDFVal (Maybe Type)
 
@@ -42,7 +39,7 @@ deFuncPass decl = case decl of
     return $ TopUnpack (v, ty') iv expr'
   EvalCmd NoOp -> put mempty >> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (val, expr') <- deFuncTop expr
+    (_, expr') <- deFuncTop expr
     put mempty
     case cmd of Passes  -> do tell ["\n\nDefunctionalized\n" ++ pprint expr']
                 _ -> return ()

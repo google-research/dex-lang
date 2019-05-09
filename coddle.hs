@@ -1,17 +1,11 @@
 import System.Console.Haskeline
 import System.IO
 import System.Exit
-import Data.IORef
-import Control.Concurrent
-import Control.Concurrent.Chan
 import Control.Monad
-import Control.Monad.Except (throwError)
 import Control.Monad.State.Strict
-import Control.Monad.Reader
 import Options.Applicative
 import Data.Semigroup ((<>))
 import Data.Text.Prettyprint.Doc
-import qualified Data.Map.Strict as M
 
 import Syntax
 import PPrint
@@ -23,12 +17,9 @@ import Inference
 import DeFunc
 import Imp
 import JIT
-import Fresh
-import ConcurrentUtil
 import WebOutput
 
 type DeclKey = Int
-type Keyed a = (DeclKey, a)
 type FullPass env = UDecl -> TopPass env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String

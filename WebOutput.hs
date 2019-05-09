@@ -2,14 +2,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 module WebOutput (runWeb) where
 
-import Control.Concurrent.Chan
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.State.Strict
 
-import Data.Function (fix)
 import Data.Binary.Builder (fromByteString, Builder)
-import Data.IORef
 import Data.Monoid ((<>))
 import Data.List (nub)
 import Data.Maybe (catMaybes, fromJust)
@@ -19,7 +16,7 @@ import Network.Wai
 import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (status200)
 import Data.ByteString.Char8 (pack)
-import Data.ByteString.Lazy (ByteString, toStrict)
+import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null)
 import qualified Data.Aeson as A
 import System.INotify
@@ -58,7 +55,7 @@ webServer resultsRequest = do
         ["getnext"]    -> respond $ responseStream status200
                              [ ("Content-Type", "text/event-stream")
                              , ("Cache-Control", "no-cache")] resultStream
-        path -> error $ "Unexpected request: " ++ (show $ pathInfo request)
+        path -> error $ "Unexpected request: " ++ (show path)
       where
         respondWith fname ctype = respond $ responseFile status200
                                    [("Content-Type", ctype)] fname Nothing
@@ -74,7 +71,6 @@ webServer resultsRequest = do
 
 -- === main driver ===
 
-type Source = String
 type DriverM env a = StateT (DriverState env) (Actor DriverMsg) a
 data DriverMsg = NewProg String
 data DriverState env = DriverState

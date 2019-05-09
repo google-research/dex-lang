@@ -11,7 +11,6 @@ import Data.Foldable (toList)
 import Syntax
 import Env
 import Record
-import Util
 import Type
 import PPrint
 import Pass

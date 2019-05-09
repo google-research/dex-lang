@@ -11,9 +11,8 @@ import LLVM.Internal.Context
 import Foreign.Ptr
 import Foreign.Storable
 
-import Data.Word (Word64 (..))
+import Data.Word (Word64)
 import Data.ByteString.Char8 (unpack)
-import Data.IORef
 
 foreign import ccall "dynamic"
   haskFun :: FunPtr (IO (Ptr Word64)) -> IO (Ptr Word64)

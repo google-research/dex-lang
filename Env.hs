@@ -1,7 +1,6 @@
 module Env (Env, envLookup, newEnv, addV, addVs, isin,
             envNames, envPairs, envDelete, envSubset, (!)) where
 
-import Data.Semigroup
 import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)

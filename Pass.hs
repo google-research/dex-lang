@@ -10,20 +10,11 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer hiding ((<>))
 import Control.Monad.Except hiding (Except)
-import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
-import Data.Maybe (catMaybes)
-import Data.Semigroup ((<>))
-import Data.Monoid
-import Control.Concurrent
 
 import Syntax
 import Fresh
 import PPrint
-import ConcurrentUtil
-
-type MutEnv a = MutMap Name (Maybe a)
-type ResultSink = Packet Result -> IO ()
 
 evalDecl :: Monoid env => TopPass env () -> StateT env IO Result
 evalDecl pass = do

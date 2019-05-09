@@ -32,9 +32,6 @@ makeIdentifier reserved = lexeme . try $ do
     then fail $ show w ++ " is a reserved word"
     else return w
 
-rws :: [String] -- list of reserved words
-rws = ["if","then","else","while","do","skip","true","false","not","and","or"]
-
 space :: Parser ()
 space = void $     takeWhile1P (Just "white space") (`elem` " \t")
                <|> string "\n "

@@ -13,11 +13,9 @@ module Actor (Actor, Proc, PChan, CanTrap (..), Msg (..),
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Identity
 import Control.Exception
 import Data.IORef
 import Data.Monoid ((<>))
-import qualified Data.Map.Strict as M
 
 import Util
 

@@ -16,19 +16,16 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                resultSource, resultText, resultErr, resultComplete
               ) where
 
-import Util
 import Record
 import Env
 import Fresh
 
-import Data.Semigroup
 import Data.Foldable (toList)
-import Data.Traversable
-import Data.List (intercalate, elemIndex, nub)
+import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
 
 import Data.Foldable (fold)
-import Data.Functor.Identity (Identity, runIdentity)
+import Data.Functor.Identity (runIdentity)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)

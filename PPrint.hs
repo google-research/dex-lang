@@ -8,9 +8,7 @@ import Data.Text (unpack)
 import qualified Data.Map.Strict as M
 
 import Syntax
-import Env
 import Record
-import Fresh
 
 pprint :: Pretty a => a -> String
 pprint x = asStr (pretty x)

@@ -5,14 +5,11 @@ import Control.Monad
 import Control.Monad.Except (throwError)
 import Control.Monad.Reader
 import Control.Monad.State
-import Data.Foldable (toList)
 
 import Syntax
 import Env
 import Record
-import Util
 import Pass
-import Fresh
 import PPrint
 
 type TypeEnv = FullEnv Type Kind
@@ -46,8 +43,7 @@ evalTypeM env m = runReaderT m env
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
-    Var v        -> do env <- ask
-                       lookupLVar v
+    Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
     Let p bound body -> do checkTy (patType p)
                            checkEq "Let" (patType p) (recur bound)
