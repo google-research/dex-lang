@@ -20,7 +20,7 @@ p :: Pretty a => a -> Doc ann
 p = pretty
 
 instance Pretty Err where
-  pretty (Err items) = vcat $ map (\(e, s) -> p e <+> p s) items
+  pretty (Err e s) = p e <+> p s
 
 instance Pretty ErrType where
   pretty e = case e of

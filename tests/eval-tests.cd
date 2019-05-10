@@ -30,21 +30,21 @@
 -- :p let x = unpack iota 10000;
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
-x = unpack iota 7
+arr = unpack iota 7
 
 
-f = lam y: sum (map real x) + y
+fun = lam y: sum (map real arr) + y
 
 
-:p f 3.0
+:p fun 3.0
 
 > [24.0]
 
-:p x
+:p arr
 
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold (lam x y: iadd x y) 0 x
+:p fold (lam x y: iadd x y) 0 arr
 
 > [21]
 

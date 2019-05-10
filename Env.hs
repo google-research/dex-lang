@@ -1,4 +1,4 @@
-module Env (Env, envLookup, newEnv, addV, addVs, isin,
+module Env (Env, envLookup, newEnv, addV, addVs, isin, updateV,
             envNames, envPairs, envDelete, envSubset, (!)) where
 
 import Data.Traversable
@@ -15,11 +15,17 @@ newEnv :: Traversable f => f (Name, a) -> Env a
 newEnv xs = Env (M.fromList (toList xs))
 
 addV :: (Name, a) -> Env a -> Env a
-addV (v, x) (Env m) = Env (M.insert v x m)
+addV (v, x) env@(Env m) = if v `isin` env
+                            then error $ "Var already in env:" ++ show v
+                            else Env (M.insert v x m)
+
+updateV :: (Name, a) -> Env a -> Env a
+updateV (v, x) env@(Env m) = if v `isin` env
+                               then Env (M.insert v x m)
+                               else error $ "Var not in env:" ++ show v
 
 addVs :: Traversable f => f (Name, a) -> Env a -> Env a
-addVs xs (Env m) = Env m' -- use foldl to traverse patterns left-to-right
-  where m' = foldl (flip $ uncurry M.insert) m xs
+addVs xs env = foldr addV env xs
 
 envLookup :: Env a -> Name -> Maybe a
 envLookup (Env m) v = M.lookup v m

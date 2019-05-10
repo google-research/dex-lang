@@ -45,13 +45,13 @@
 
 > Type error: existential variable leaked
 
-x = unpack iota 10
+arr = unpack iota 10
 
 
-xr = map real x
+xr = map real arr
 
 
-:t x
+:t arr
 
 > idx=>Int
 

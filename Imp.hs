@@ -250,8 +250,7 @@ checkStatementTy statement = case statement of
 addVar :: Var -> VarType -> ImpCheckM ()
 addVar v ty = do
   env <- get
-  -- TODO: re-enable once fixed
-  -- throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
+  throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
   modify $ addV (v, ty)
 
 impExprType :: IExpr -> ImpCheckM IType

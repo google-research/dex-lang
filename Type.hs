@@ -30,8 +30,9 @@ checkTyped decl = decl <$ case decl of
   EvalCmd (Command cmd expr) -> void $ check expr
   where
     check :: Expr -> TopPass TypeEnv Type
-    check expr = do env <- getEnv
-                    liftEither $ evalTypeM env (getType' True expr)
+    check expr = do
+      env <- getEnv
+      liftEither $ addContext (pprint expr) $ evalTypeM env (getType' True expr)
 
 getType :: FullEnv Type a -> Expr -> Type
 getType (FullEnv lenv _) expr =
@@ -46,11 +47,14 @@ getType' check expr = case expr of
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
     Let p bound body -> do checkTy (patType p)
+                           mapM (checkShadowL . fst) p
                            checkEq "Let" (patType p) (recur bound)
                            recurWith p body
     Lam p body -> do checkTy (patType p)
+                     mapM (checkShadowL . fst) p
                      liftM (ArrType (patType p)) (recurWith p body)
     For i body -> do checkTy (snd i)
+                     checkShadowL (fst i)
                      liftM (TabType (snd i)) (recurWith [i] body)
     App e arg  -> do ArrType a b <- recur e
                      checkEq "App" a (recur arg)
@@ -61,12 +65,13 @@ getType' check expr = case expr of
     RecCon r   -> liftM RecType $ traverse recur r
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip vks
+                        mapM checkShadowT vs
                         return $ Forall kinds (abstractTVs vs t)
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
     Unpack v tv bound body -> do
-        checkNoShadow tv
+        checkShadowT tv
         let updateTEnv = setTEnv (addV (tv, IdxSetKind))
         local updateTEnv (checkTy (snd v))
         local (setLEnv (addV v) . updateTEnv) (recur body)
@@ -84,11 +89,14 @@ getType' check expr = case expr of
     recurWith  vs = local (setLEnv (addVs vs)) . recur
     recurWithT vs = local (setTEnv (addVs vs)) . recur
 
-    checkNoShadow :: Var -> TypeM ()
-    checkNoShadow v = do
-      tenv <- asks tEnv
-      if v `isin` tenv then throw CompilerErr $ show v ++ " shadowed"
-                       else return ()
+    checkShadowL = checkShadow (asks lEnv)
+    checkShadowT = checkShadow (asks tEnv)
+
+    checkShadow :: TypeM (Env a) -> Var -> TypeM ()
+    checkShadow getEnv v = do
+      env <- getEnv
+      if v `isin` env then throw CompilerErr $ pprint v ++ " shadowed"
+                      else return ()
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)

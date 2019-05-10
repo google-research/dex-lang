@@ -5,7 +5,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
                CmdName (..), IdxExpr, Kind (..),
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
-               Except, Err (..), ErrType (..), err, throw,
+               Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), setLEnv, setTEnv,
                (-->), (==>), newFullEnv, freeLVars,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -182,8 +182,7 @@ resultText   s = Result mempty mempty s
 resultErr    e = Result mempty (Set (Failed e)) mempty
 resultComplete = Result mempty (Set Complete)   mempty
 
-newtype Err = Err [(ErrType, String)]
-  deriving (Eq, Ord, Show, Semigroup, Monoid)
+data Err = Err ErrType String  deriving (Show)
 
 data ErrType = NoErr
              | ParseErr
@@ -193,15 +192,17 @@ data ErrType = NoErr
              | NotImplementedErr
              | UpstreamErr
              | OtherErr
-  deriving (Eq, Ord, Show)
-
-err :: ErrType -> String -> Err
-err ty str = Err [(ty, str)]
+  deriving (Show)
 
 type Except a = Either Err a
 
 throw :: MonadError Err m => ErrType -> String -> m a
-throw e s = throwError $ err e s
+throw e s = throwError $ Err e s
+
+addContext :: String -> Except a -> Except a
+addContext s err =
+  case err of Left (Err e s') -> Left $ Err e (s' ++ "\ncontext:\n" ++ s)
+              Right x -> Right x
 
 instance Semigroup Result where
   Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')

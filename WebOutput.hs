@@ -152,7 +152,7 @@ worker initEnv pass resultChan parentChans = do
                 execPass env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
-    ErrMsg _ s -> Just $ do resultChan `send` resultErr (err CompilerErr s)
+    ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr s)
                             return env
     _ -> Nothing
   forever $ receiveF fReq >>= (`send` env')

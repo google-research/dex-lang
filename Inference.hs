@@ -232,7 +232,7 @@ lookupVar v = do
   mty <- gets $ flip envLookup v . subst
   case mty of Nothing -> return $ TypeVar v
               Just ty -> do ty' <- zonk ty
-                            modify $ setSubst (addV (v, ty'))
+                            modify $ setSubst (updateV (v, ty'))
                             return ty'
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState
