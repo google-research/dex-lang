@@ -18,22 +18,28 @@ import PPrint
 
 -- === top-level pass ===
 
-newtype TopPass env a = TopPass (ReaderT env
+type OutChan = Output -> IO ()
+newtype TopPass env a = TopPass (ReaderT (env, OutChan)
                                    (ExceptT Err
-                                      (WriterT (env, Output) IO)) a)
+                                      (WriterT env IO)) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadError Err)
 
 getEnv :: Monoid env => TopPass env env
-getEnv = TopPass ask
+getEnv = TopPass $ asks fst
 
 putEnv :: Monoid env => env -> TopPass env ()
-putEnv env = TopPass $ tell (env, mempty)
+putEnv env = TopPass $ tell env
 
 writeOut :: Monoid env => Output -> TopPass env ()
-writeOut output = TopPass $ tell (mempty, output)
+writeOut output = do chanWrite <- getOutChan
+                     liftIO $ chanWrite output
 
-runTopPass :: env -> TopPass env a -> IO (Except a, (env, Output))
-runTopPass env (TopPass m) = runWriterT $ runExceptT $ runReaderT m env
+getOutChan :: Monoid env => TopPass env OutChan
+getOutChan = TopPass $ asks snd
+
+runTopPass :: OutChan -> env -> TopPass env a -> IO (Except a, env)
+runTopPass chan env (TopPass m) =
+  runWriterT $ runExceptT $ runReaderT m (env, chan)
 
 liftTopPass :: Monoid env => state -> Pass env state a -> TopPass env a
 liftTopPass state m = do env <- getEnv
@@ -52,8 +58,8 @@ infixl 1 >+>
   where
     liftEnv :: (Monoid env, Monoid env') =>
                   env -> TopPass env a -> TopPass env' (a, env)
-    liftEnv env m = do (x, (env', out)) <- liftIO $ runTopPass env m
-                       writeOut out
+    liftEnv env m = do chan <- getOutChan
+                       (x, env') <- liftIO $ runTopPass chan env m
                        x' <- liftEither x
                        return (x', env')
 

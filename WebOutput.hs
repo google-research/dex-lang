@@ -163,12 +163,14 @@ worker initEnv pass resultChan parentChans = do
 execPass :: Monoid env =>
               env -> TopPass env () -> PChan env -> PChan Result -> Actor msg ()
 execPass env pass envChan resultChan = do
-  (ans, (env', out)) <- liftIO $ runTopPass env pass
-  resultChan `send` resultText out
+  (ans, env') <- liftIO $ runTopPass outChan env pass
   envChan    `send` (env <> env')
   -- TODO: consider just throwing IO error and letting the supervisor catch it
   resultChan `send` case ans of Left e   -> resultErr e
                                 Right () -> resultComplete
+  where
+    outChan :: Output -> IO ()
+    outChan x = sendFromIO resultChan (resultText x)
 
 -- sends file contents to subscribers whenever file is modified
 inotifyMe :: String -> PChan String -> IO ()
