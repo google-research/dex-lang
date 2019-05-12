@@ -1,8 +1,8 @@
-:t lam x: x
+:t lam x. x
 
 > A a. (a -> a)
 
-:t lam x: sum for i: x.i
+:t lam x. sum for i: x.i
 
 > A a. (a=>Real -> Real)
 
@@ -10,11 +10,11 @@
 
 > A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
-:t lam x: for i j: x.j.i
+:t lam x. for i j: x.j.i
 
 > A c b a. (b=>a=>c -> a=>b=>c)
 
-:t lam f x: f x
+:t lam f x. f x
 
 > A b a. ((a -> b) -> (a -> b))
 
@@ -55,7 +55,7 @@ xr = map real x
 
 > idx=>Int
 
-:t (lam (x, y): x + y) (1.0, 2.0)
+:t (lam (x, y). x + y) (1.0, 2.0)
 
 > Real
 

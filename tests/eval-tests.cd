@@ -2,7 +2,7 @@
 
 > [3.0]
 
-:p let double = lam x: x * 2.0
+:p let double = lam x. x * 2.0
    in double 10.0
 
 > [20.0]
@@ -33,7 +33,7 @@
 x = unpack iota 7
 
 
-f = lam y: sum (map real x) + y
+f = lam y. sum (map real x) + y
 
 
 :p f 3.0
@@ -44,7 +44,7 @@ f = lam y: sum (map real x) + y
 
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold (lam x y: iadd x y) 0 x
+:p fold (lam x y. iadd x y) 0 x
 
 > [21]
 
@@ -52,12 +52,12 @@ f = lam y: sum (map real x) + y
 
 > [-4.0]
 
-:p (lam (x, y): x + y) (1.0, 2.0)
+:p (lam (x, y). x + y) (1.0, 2.0)
 
 > [3.0]
 
 :p let f (x, y) = x y
-   in f (lam x: x, 1)
+   in f (lam x. x, 1)
 
 > [1]
 

@@ -79,7 +79,7 @@ instance Pretty Expr where
     Builtin b    -> p b
     Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ pPat pat <+> "=" <> line <> p e1) <> line <>
                                        "in" <+> p e2
-    Lam pat e    -> parens $ align $ group $ "lam" <+> pPat pat <+> ":" <> line <> align (p e)
+    Lam pat e    -> parens $ align $ group $ "lam" <+> pPat pat <+> "." <> line <> align (p e)
     App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
     For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
