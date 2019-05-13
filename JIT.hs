@@ -32,7 +32,7 @@ import Env
 import Record
 import Util
 import Pass
-import Fresh
+import Fresh hiding (Name)
 import PPrint
 
 import LLVMExec

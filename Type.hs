@@ -92,6 +92,7 @@ getType' check expr = case expr of
     checkShadowL = checkShadow (asks lEnv)
     checkShadowT = checkShadow (asks tEnv)
 
+    -- TODO: using mapM doesn't check that pattern vars don't shadow each other
     checkShadow :: TypeM (Env a) -> Var -> TypeM ()
     checkShadow getEnv v = do
       env <- getEnv

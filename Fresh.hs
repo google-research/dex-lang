@@ -5,7 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- those last three are all needed for monaderror
 
-module Fresh (Name, Tag, Stem, fresh, freshLike, FreshT, runFreshT,
+module Fresh (Name (..), Tag, Stem, fresh, freshLike, FreshT, runFreshT,
               rawName, rawNames, nameRoot, topTag, catNames, rawQualify) where
 
 import Control.Monad

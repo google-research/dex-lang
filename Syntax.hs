@@ -329,7 +329,7 @@ freeLVars = freeLVarsEnv mempty
 freeLVarsEnv :: Env Type -> Expr -> [Var]
 freeLVarsEnv env expr = case expr of
   Lit _ -> []
-  Var v -> [v]
+  Var v -> if v `isin` env then [] else [v]
   Builtin _ -> []
   Let p bound body -> recur bound ++ recurWith p body
   Lam p body       -> recurWith p body

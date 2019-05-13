@@ -11,7 +11,7 @@ y = unpack iota 10
 
 :p 1 + 200
 
-:p let double = lam x: x * 2
+:p let double = lam x. x * 2
    in double 10
 
 :p 1 1
@@ -37,7 +37,7 @@ y = unpack iota 10
        key = hash 0
    in sum (for i: randint (key x.i) 10)
 
-f = lam y: sum x + y
+f = lam y. sum x + y
 
 :plot 1
 

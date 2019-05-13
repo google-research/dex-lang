@@ -148,7 +148,7 @@ lamExpr :: Parser UExpr
 lamExpr = do
   symbol "lam"
   ps <- pat `sepBy` sc
-  symbol ":"
+  symbol "."
   body <- expr
   return $ foldr ULam body ps
 
