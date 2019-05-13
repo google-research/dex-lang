@@ -26,12 +26,12 @@ deFuncPass decl = case decl of
   TopLet (v,ty) expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
-    putEnv (newFullEnv [(v, (ty', val))] [], newScope v)
+    putEnv (FullEnv (v @> (ty', val)) mempty, newScope v)
     return $ TopLet (v, ty') expr'
   TopUnpack (v,ty) iv expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
-    putEnv (newFullEnv [(v, (ty',val))] [], newScope v)
+    putEnv (FullEnv (v @> (ty',val)) mempty, newScope v)
     return $ TopUnpack (v, ty') iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -124,7 +124,7 @@ bindVar :: Binder -> DFVal -> DeFuncM (Binder, DFCtx)
 bindVar (v, ty) x = do ty' <- subTy ty
                        (v', newScope) <- asks $ rename v . snd
                        return ((v', deFuncType ty' x),
-                               (FullEnv (newEnv [(v, (ty', x))]) mempty, newScope))
+                               (FullEnv (v @> (ty', x)) mempty, newScope))
 
 bindPat :: Pat -> DFVal -> DeFuncM (Pat, DFCtx)
 bindPat pat x = do zipped <- traverse (uncurry bindVar) (recTreeZip pat x)
@@ -175,7 +175,7 @@ rename :: Var -> FreshScope -> (Var, FreshScope)
 rename v@(Name [(tag, _)]) (FreshScope _ vars) = (v', scopeDiff)
   where n = M.findWithDefault 0 tag vars
         v' = Name [(tag, n)]
-        scopeDiff = FreshScope (newEnv [(v, v')]) (M.singleton tag (n+1))
+        scopeDiff = FreshScope (v @> v') (M.singleton tag (n+1))
 
 getRenamed :: Var -> FreshScope -> Var
 getRenamed v scope = case envLookup (varSubst scope) v of

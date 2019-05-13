@@ -1,5 +1,5 @@
 module Env (Env, envLookup, newEnv, addV, addVs, isin, updateV,
-            envNames, envPairs, envDelete, envSubset, (!)) where
+            envNames, envPairs, envDelete, envSubset, (!), (@>)) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -51,6 +51,11 @@ env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show v
                        ++ " in " ++ show (envNames env) ++ " failed"
+
+infixr 7 @>
+
+(@>) :: Name -> a -> Env a
+k @> v = Env $ M.singleton k v
 
 instance Functor (Env) where
   fmap = fmapDefault

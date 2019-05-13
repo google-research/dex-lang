@@ -127,7 +127,8 @@ data Statement = Update Var [Index] IExpr
                | ImpLet IBinder IExpr
                | Loop Index Size [Statement]
                | Alloc Var IType -- mutable
-                   deriving (Show)
+               | Free Var
+               deriving (Show)
 
 data IExpr = ILit LitVal
            | IVar  Var
