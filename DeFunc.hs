@@ -112,12 +112,10 @@ envTupCon env = do
 
 subTy :: Type -> DeFuncM Type
 subTy ty = do tenv  <- asks $ tEnv . fst
-              subst <- asks $ varSubst . snd
+              scope <- asks $ snd
               let f v = Just $ case envLookup tenv v of
                           Just ty -> ty
-                          Nothing ->
-                            if v `isin` subst then TypeVar (subst ! v)
-                                              else TypeVar v
+                          Nothing -> TypeVar (getRenamed v scope)
               return $ maybeSub f ty
 
 bindVar :: Binder -> DFVal -> DeFuncM (Binder, DFCtx)
@@ -165,34 +163,3 @@ deFuncFold ts (RecCon (Tup [Lam p body, x0, xs])) = do
 instance RecTreeZip DFVal where
   recTreeZip (RecTree r) (RecVal r') = RecTree (recZipWith recTreeZip r r')
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
-
--- Fresh var management - should eventually split into separate module
-
-extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
-extendWith env m = local (env <>) m
-
-rename :: Var -> FreshScope -> (Var, FreshScope)
-rename v@(Name [(tag, _)]) (FreshScope _ vars) = (v', scopeDiff)
-  where n = M.findWithDefault 0 tag vars
-        v' = Name [(tag, n)]
-        scopeDiff = FreshScope (v @> v') (M.singleton tag (n+1))
-
-getRenamed :: Var -> FreshScope -> Var
-getRenamed v scope = case envLookup (varSubst scope) v of
-                       Just v' -> v'
-                       Nothing -> v
-
-newScope :: Var -> FreshScope
-newScope (Name [(tag, i)]) = FreshScope mempty (M.singleton tag (i+1))
-
-data FreshScope = FreshScope
-  { varSubst    :: Env Var
-  , varsInScope :: M.Map Tag Int }  deriving (Show)
-
-instance Semigroup FreshScope where
-  (FreshScope a b) <> (FreshScope a' b') =
-    FreshScope (a<>a') (M.unionWith max b b')
-
-instance Monoid FreshScope where
-  mempty = FreshScope mempty mempty
-  mappend = (<>)

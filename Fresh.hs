@@ -6,7 +6,8 @@
 -- those last three are all needed for monaderror
 
 module Fresh (Name (..), Tag, Stem, fresh, freshLike, FreshT, runFreshT,
-              rawName, rawNames, nameRoot, topTag, catNames, rawQualify) where
+              rawName, rawNames, nameRoot, topTag, catNames, rawQualify,
+              newScope, rename, getRenamed, FreshScope) where
 
 import Control.Monad
 import Control.Monad.Identity
@@ -91,3 +92,31 @@ instance MonadFresh m => MonadFresh (ReaderT r m) where
 instance MonadError e m => MonadError e (FreshT m) where
   throwError = lift . throwError
   catchError = undefined
+
+-- === reader monad version of fresh var generation ===
+
+rename :: Name -> FreshScope -> (Name, FreshScope)
+rename v@(Name [(tag, _)]) (FreshScope _ vars) = (v', scopeDiff)
+  where n = M.findWithDefault 0 tag vars
+        v' = Name [(tag, n)]
+        scopeDiff = FreshScope (M.singleton v v') (M.singleton tag (n+1))
+
+getRenamed :: Name -> FreshScope -> Name
+getRenamed v scope = case M.lookup v (varSubst scope) of
+                       Just v' -> v'
+                       Nothing -> v
+
+newScope :: Name -> FreshScope
+newScope (Name [(tag, i)]) = FreshScope mempty (M.singleton tag (i+1))
+
+data FreshScope = FreshScope
+  { varSubst    :: M.Map Name Name
+  , varsInScope :: M.Map Tag Int }  deriving (Show)
+
+instance Semigroup FreshScope where
+  (FreshScope a b) <> (FreshScope a' b') =
+    FreshScope (a<>a') (M.unionWith max b b')
+
+instance Monoid FreshScope where
+  mempty = FreshScope mempty mempty
+  mappend = (<>)
