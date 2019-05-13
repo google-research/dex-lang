@@ -291,7 +291,9 @@ typeExpr' =   parens typeExpr
 type LineParser = P.Parsec [String] ()
 
 splitDecls :: String -> [String]
-splitDecls s = parsecParse (blanks >> P.many topDeclString) $ lines s
+splitDecls s = parsecParse (   blanks
+                            >> P.many (P.try topDeclString)
+                            <* commentsOrBlanks) $ lines s
 
 parsecParse :: LineParser a -> [String] -> a
 parsecParse p s = case P.parse (p <* P.eof) "" s of
@@ -310,12 +312,19 @@ topDeclString = do comments <- P.many (commentLine <* blanks)
                    rest     <- P.many continuedLine <* blanks
                    return $ unlines $ comments ++ (fstLine : rest)
   where
-    commentLine   = lineMatch ("--" `isPrefixOf`)
     continuedLine = lineMatch (" "  `isPrefixOf`)
 
-blanks :: LineParser ()
-blanks = void $ P.many $ lineMatch (\line -> null line || ">" `isPrefixOf` line)
+commentLine :: LineParser String
+commentLine = lineMatch ("--" `isPrefixOf`)
 
+commentsOrBlanks :: LineParser ()
+commentsOrBlanks = void $ P.many (void commentLine <|> blankLine)
+
+blankLine :: LineParser ()
+blankLine = void $ lineMatch (\line -> null line || ">" `isPrefixOf` line)
+
+blanks :: LineParser ()
+blanks = void $ P.many blankLine
 
 -- data BoundVars = BoundVars { lVars :: [Var]
 --                            , tVars :: [Var] }

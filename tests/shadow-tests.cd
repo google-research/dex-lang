@@ -10,5 +10,11 @@ x = 50
 :p let x = 100 in (let x = 200) in x
 > [200]
 
+arr = 10
+
+-- second use should be an error
+arr = 20
+
+:p 1
 
 -- trailing comment shouldn't cause an error
