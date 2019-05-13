@@ -66,7 +66,8 @@ toImp expr = case expr of
     envUpdates <- traverse (uncurry letBind) (recTreeZip p bound')
     local (setLEnv $ addVs envUpdates) (toImp body)
   Get x i -> do xs <- toImp x
-                return $ fmap get xs
+                RecLeaf i' <- asks $ snd . (!i) . lEnv
+                return $ fmap (\x -> IGet x i') xs
                 where get x = IGet x i
   For i body -> toImpFor i body
   RecCon r -> liftM RecTree $ traverse toImp r
