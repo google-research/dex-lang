@@ -13,10 +13,8 @@ update-%: tests/%.cd
 	mv $^.tmp $^
 
 all-tests: run-type-tests \
-           run-eval-tests
-
-all-update-tests :: update-type-tests \
-                    update-eval-tests
+           run-eval-tests \
+           run-shadow-tests
 
 clean:
 	rm cbits/*.so

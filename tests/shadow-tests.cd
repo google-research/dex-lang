@@ -1,0 +1,14 @@
+
+-- repeated vars in patterns not allowed
+:p let (x, x) = (1, 1) in x
+
+:p let f (x, x) = x in f (1, 1)
+
+-- shouldn't cause error even though it shadows x elsewhere
+x = 50
+
+:p let x = 100 in (let x = 200) in x
+> [200]
+
+
+-- trailing comment shouldn't cause an error
