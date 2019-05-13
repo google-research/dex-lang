@@ -18,5 +18,5 @@ fold f x0 xs = %fold (lam (x, y). f x y, x0, xs)
 rand x = %rand x
 sum  = fold fadd 0.0
 isum = fold iadd 0
-map f x = for i: f x.i
+map f x = for i. f x.i
 real x = %inttoreal x

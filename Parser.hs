@@ -156,7 +156,7 @@ forExpr :: Parser UExpr
 forExpr = do
   symbol "for"
   vs <- some idxPat -- `sepBy` sc
-  symbol ":"
+  symbol "."
   body <- expr
   return $ foldr UFor body vs
 

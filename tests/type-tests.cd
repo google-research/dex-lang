@@ -2,7 +2,7 @@
 
 > A a. (a -> a)
 
-:t lam x. sum for i: x.i
+:t lam x. sum for i. x.i
 
 > A a. (a=>Real -> Real)
 
@@ -10,7 +10,7 @@
 
 > A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
-:t lam x. for i j: x.j.i
+:t lam x. for i j. x.j.i
 
 > A c b a. (b=>a=>c -> a=>b=>c)
 
@@ -30,13 +30,13 @@
 
 :t let x = unpack iota 10;
        y = unpack iota 3
-   in real (isum for i: x.i) + real (isum for j: y.j)
+   in real (isum for i. x.i) + real (isum for j. y.j)
 
 > Real
 
 :t let x = unpack iota 10;
        y = unpack iota 3
-   in sum for i: x.i + y.i
+   in sum for i. x.i + y.i
 
 > Type error: can't unify r_1 and r
 
@@ -61,14 +61,14 @@ xr = map real arr
 
 :t let f (x, y) = x + 2.0 * y;
        z.i = (xr.i, xr.i * xr.i)
-   in sum (for i: f z.i)
+   in sum (for i. f z.i)
 
 > Real
 
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3
---    in let y = for i j: x.i * x.i
---       in sum (for i: sum (y.i))
+--    in let y = for i j. x.i * x.i
+--       in sum (for i. sum (y.i))
 :t 1 :: Int
 
 > Int

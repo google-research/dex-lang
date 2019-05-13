@@ -8,11 +8,11 @@
 > [20.0]
 
 :p let x = unpack iota 100
-   in isum (for i: x.i)
+   in isum (for i. x.i)
 
 > [4950]
 
-:p let vdot x y = sum (for i: x.i * y.i * 2.0);
+:p let vdot x y = sum (for i. x.i * y.i * 2.0);
        x = unpack iota 3;
        y = map real x
    in vdot y y
@@ -21,8 +21,8 @@
 
 :p let x = unpack iota 3;
        y = map real x;
-       z = for i j: y.i * y.j
-   in sum (for i: sum (z.i))
+       z = for i j. y.i * y.j
+   in sum (for i. sum (z.i))
 
 > [9.0]
 
@@ -72,7 +72,7 @@ fun = lam y. sum (map real arr) + y
 
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)
---    in sum (for i: f z.i)
+--    in sum (for i. f z.i)
 :p exp 1.0
 
 > [2.718281828459045]
