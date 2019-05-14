@@ -31,7 +31,7 @@ instance Pretty ErrType where
     TypeErr           -> "Type error:"
     CompilerErr       -> "Compiler bug!"
     UnboundVarErr     -> "Variable not in scope:"
-    RepeatedVarErr    -> "Repeated variables in pattern:"
+    RepeatedVarErr    -> "Variable redefined:"
     NotImplementedErr -> "Not implemented:"
     OtherErr          -> "Error:"
     UpstreamErr       -> "Upstream failure"

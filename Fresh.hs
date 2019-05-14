@@ -7,7 +7,7 @@
 
 module Fresh (Name (..), Tag, fresh, freshLike, FreshT, runFreshT, runFresh,
               rawName, nameTag, newScope, rename, getRenamed, newSubst,
-              FreshSubst, FreshScope) where
+              FreshSubst, FreshScope, isFresh) where
 
 import Control.Monad.Identity
 import Control.Monad.State.Strict
@@ -93,6 +93,10 @@ getRenamed v (FreshSubst _ subst) = M.findWithDefault v v subst
 
 newSubst :: Name -> FreshSubst
 newSubst name = FreshSubst (newScope name) mempty
+
+isFresh :: Name -> FreshSubst -> Bool
+isFresh (Name tag n) (FreshSubst (FreshScope m) _) = n >= n'
+  where n' = M.findWithDefault 0 tag m
 
 instance Semigroup FreshSubst where
   (FreshSubst a b) <> (FreshSubst a' b') = FreshSubst (a<>a') (b<>b')

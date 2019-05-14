@@ -13,9 +13,11 @@ type DeShadowM a = Pass FreshSubst () a
 
 deShadowPass :: UDecl -> TopPass FreshSubst UDecl
 deShadowPass decl = case decl of
-  UTopLet v expr -> do putEnv (newSubst v)
+  UTopLet v expr -> do checkTopShadow v
+                       putEnv (newSubst v)
                        liftM (UTopLet v) $ deShadowTop expr
-  UTopUnpack v expr -> do putEnv (newSubst v)
+  UTopUnpack v expr -> do checkTopShadow v
+                          putEnv (newSubst v)
                           liftM (UTopUnpack v) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -26,6 +28,12 @@ deShadowPass decl = case decl of
   where
     deShadowTop :: UExpr -> TopPass FreshSubst UExpr
     deShadowTop expr = liftTopPass () mempty (deShadowExpr expr)
+
+checkTopShadow :: Var -> TopPass FreshSubst ()
+checkTopShadow v = do
+  subst <- getEnv
+  if isFresh v subst then return ()
+                     else throw RepeatedVarErr (pprint v)
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
