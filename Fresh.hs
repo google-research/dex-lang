@@ -5,81 +5,60 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- those last three are all needed for monaderror
 
-module Fresh (Name (..), Tag, Stem, fresh, freshLike,
-              FreshT, runFreshT, runFresh,
-              rawName, rawNames, nameRoot, topTag, catNames, rawQualify,
-              newScope, rename, getRenamed, FreshScope,
-              EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
+module Fresh (Name (..), Tag, fresh, freshLike, FreshT, runFreshT, runFresh,
+              rawName, nameTag, newScope, rename, getRenamed, newSubst,
+              FreshSubst, FreshScope) where
 
-import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
-newtype Name = Name [(Tag, Int)] deriving (Show, Ord, Eq)
-type Stem = Name
+data Name = Name Tag Int  deriving (Show, Ord, Eq)
 type Tag = String
 
-type FreshState = (Stem, M.Map Tag Int)
+newtype FreshScope = FreshScope (M.Map Tag Int)
 
-newtype FreshT m a = FreshT (StateT FreshState m a)
+newtype FreshT m a = FreshT (StateT FreshScope m a)
   deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
 
 type Fresh a = FreshT Identity a
 
-freshLike :: MonadFresh m => Name -> m Name
-freshLike name = fresh (topTag name)
-
 rawName :: Tag -> Name
-rawName s = Name [(s, 0)]
+rawName s = Name s 0
 
-rawNames :: Tag -> [Name]
-rawNames s = [Name [(s, i)] | i <- [0..]]
+nameTag :: Name -> Tag
+nameTag (Name tag _) = tag
 
-rawQualify :: Tag -> Name -> Name
-rawQualify tag (Name names) = Name ((tag,0):names)
+newScope :: Name -> FreshScope
+newScope (Name tag i) = FreshScope (M.singleton tag (i+1))
 
-topTag :: Name -> Tag
-topTag (Name ((tag,_):_)) = tag
-topTag (Name []) = error "whoops! [topTag]"
-
-nameRoot = Name []
-
-catNames :: Name -> Name -> Name
-catNames (Name n1) (Name n2) = Name (n1 ++ n2)
+genFresh :: Tag -> FreshScope -> Name
+genFresh tag (FreshScope m) = Name tag (M.findWithDefault 0 tag m)
 
 class Monad m => MonadFresh m where
   fresh :: Tag -> m Name
 
 instance Monad m => MonadFresh (FreshT m) where
-  fresh tag = FreshT $ do Name stem <- gets fst
-                          count <- gets $ getCount tag . snd
-                          modify $ updateSnd (M.insert tag (count + 1))
-                          return $ Name $ (tag, count) : stem
+  fresh tag = FreshT $ do name <- gets (genFresh tag)
+                          modify (newScope name <>)
+                          return name
 
-runFreshT :: Monad m => FreshT m a -> Stem -> m a
-runFreshT (FreshT s) stem = evalStateT s (stem, mempty)
+freshLike :: MonadFresh m => Name -> m Name
+freshLike = fresh . nameTag
 
-runFresh :: Fresh a -> Stem -> a
-runFresh m stem = runIdentity $ runFreshT m stem
+runFreshT :: Monad m => FreshT m a -> FreshScope -> m a
+runFreshT (FreshT s) scope = evalStateT s scope
 
-getCount :: Ord k => k -> M.Map k Int -> Int
-getCount k m = case M.lookup k m of Just n -> n
-                                    Nothing -> 0
-
-updateSnd :: (b -> c) -> (a, b) -> (a, c)
-updateSnd f (x, y) = (x, f y)
+runFresh :: Fresh a -> FreshScope -> a
+runFresh m scope = runIdentity $ runFreshT m scope
 
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
-  pretty (Name xs) = mconcat $ punctuate "_" (map prettyComponents xs)
-    where prettyComponents :: (Tag, Int) -> Doc ann
-          prettyComponents (tag, n) = pretty tag <> suffix
+  pretty (Name tag n) = pretty tag <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n
 
@@ -93,47 +72,31 @@ instance MonadError e m => MonadError e (FreshT m) where
   throwError = lift . throwError
   catchError = undefined
 
--- === reader monad version of fresh var generation ===
-
-rename :: Name -> FreshScope -> (Name, FreshScope)
-rename v@(Name [(tag, _)]) (FreshScope _ vars) = (v', scopeDiff)
-  where n = M.findWithDefault 0 tag vars
-        v' = Name [(tag, n)]
-        scopeDiff = FreshScope (M.singleton v v') (M.singleton tag (n+1))
-
-getRenamed :: Name -> FreshScope -> Name
-getRenamed v scope = case M.lookup v (varSubst scope) of
-                       Just v' -> v'
-                       Nothing -> v
-
-newScope :: Name -> FreshScope
-newScope (Name [(tag, i)]) = FreshScope mempty (M.singleton tag (i+1))
-
-data FreshScope = FreshScope
-  { varSubst    :: M.Map Name Name
-  , varsInScope :: M.Map Tag Int }  deriving (Show)
-
 instance Semigroup FreshScope where
-  (FreshScope a b) <> (FreshScope a' b') =
-    FreshScope (a<>a') (M.unionWith max b b')
+  (FreshScope m) <> (FreshScope m') = FreshScope (M.unionWith max m m')
 
 instance Monoid FreshScope where
-  mempty = FreshScope mempty mempty
+  mempty = FreshScope mempty
   mappend = (<>)
 
--- monad for doing things in a monoidal environment
--- TODO: consider making an mtl-style typeclass
-newtype EnvM env a = EnvM (StateT env (Writer env) a)
-  deriving (Functor, Applicative, Monad)
+-- === reader monad version of fresh var generation ===
 
-addEnv :: Monoid env => env -> EnvM env ()
-addEnv x = EnvM $ modify (x <>) >> tell x
+data FreshSubst = FreshSubst FreshScope (M.Map Name Name)
 
-askEnv :: Monoid env => EnvM env env
-askEnv = EnvM get
+rename :: Name -> FreshSubst -> (Name, FreshSubst)
+rename v (FreshSubst scope _) =
+  (v', FreshSubst (newScope v') (M.singleton v v'))
+  where v' = genFresh (nameTag v) scope
 
-runEnvM :: Monoid env => EnvM env a -> env -> (a, env)
-runEnvM (EnvM m) env = runWriter $ evalStateT m env
+getRenamed :: Name -> FreshSubst -> Name
+getRenamed v (FreshSubst _ subst) = M.findWithDefault v v subst
 
-liftEnvM :: (Monoid env, MonadReader env m) => EnvM env a -> m (a, env)
-liftEnvM m = liftM (runEnvM m) ask
+newSubst :: Name -> FreshSubst
+newSubst name = FreshSubst (newScope name) mempty
+
+instance Semigroup FreshSubst where
+  (FreshSubst a b) <> (FreshSubst a' b') = FreshSubst (a<>a') (b<>b')
+
+instance Monoid FreshSubst where
+  mempty = FreshSubst mempty mempty
+  mappend = (<>)

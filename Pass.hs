@@ -3,7 +3,8 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), extendWith) where
+             (>+>), extendWith,
+             EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -40,9 +41,10 @@ runTopPass :: OutChan -> env -> TopPass env a -> IO (Except a, env)
 runTopPass chan env (TopPass m) =
   runWriterT $ runExceptT $ runReaderT m (env, chan)
 
-liftTopPass :: Monoid env => state -> Pass env state a -> TopPass env a
-liftTopPass state m = do env <- getEnv
-                         liftEither $ evalPass env state nameRoot m
+liftTopPass :: Monoid env =>
+                 state -> FreshScope -> Pass env state a -> TopPass env a
+liftTopPass state scope m = do env <- getEnv
+                               liftEither $ evalPass env state scope m
 
 infixl 1 >+>
 (>+>) :: (Monoid env1, Monoid env2)
@@ -69,8 +71,8 @@ type Pass env state a = ReaderT env (
                                  FreshT (
                                    Either Err))) a
 
-runPass :: env -> state -> Var -> Pass env state a -> Except (a, state)
-runPass env state stem m = runFreshT (runStateT (runReaderT m env) state) stem
+runPass :: env -> state -> FreshScope -> Pass env state a -> Except (a, state)
+runPass env state scope m = runFreshT (runStateT (runReaderT m env) state) scope
 
 evalPass env state stem = liftM fst . runPass env state stem
 
@@ -85,3 +87,20 @@ ignoreExcept (Right x) = x
 
 extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
 extendWith env m = local (env <>) m
+
+-- monad for doing things in a monoidal environment
+-- TODO: consider making an mtl-style typeclass
+newtype EnvM env a = EnvM (StateT env (Writer env) a)
+  deriving (Functor, Applicative, Monad)
+
+addEnv :: Monoid env => env -> EnvM env ()
+addEnv x = EnvM $ modify (x <>) >> tell x
+
+askEnv :: Monoid env => EnvM env env
+askEnv = EnvM get
+
+runEnvM :: Monoid env => EnvM env a -> env -> (a, env)
+runEnvM (EnvM m) env = runWriter $ evalStateT m env
+
+liftEnvM :: (Monoid env, MonadReader env m) => EnvM env a -> m (a, env)
+liftEnvM m = liftM (runEnvM m) ask

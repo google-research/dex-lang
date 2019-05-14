@@ -45,7 +45,7 @@ typePass decl = case decl of
                     return $ EvalCmd (Command cmd expr')
       _ -> return $ EvalCmd (Command cmd expr')
 
-  where translate expr = liftTopPass (InferState mempty mempty) (inferTop expr)
+  where translate expr = liftTopPass (InferState mempty mempty) mempty (inferTop expr)
 
 inferTop :: UExpr -> InferM (Type, Expr)
 inferTop expr = do infer expr >>= uncurry generalize

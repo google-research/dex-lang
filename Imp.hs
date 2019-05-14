@@ -6,6 +6,7 @@ import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except (liftEither)
 import Data.Foldable (toList)
+import Data.List (intercalate)
 
 import Syntax
 import Env
@@ -23,18 +24,15 @@ impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
   TopLet (v,ty) expr -> do
     prog <- impExprTop expr
-    let binders = fmap (\(v', ty') -> (catNames v v', ty'))
-                    $ recTreeNamed (flatType' ty)
-    putEnv $ newFullEnv [(v, (ty, fmap fst binders))]  []
+    let binders = impBinder v (flatType' ty)
+    putEnv $ FullEnv (v@>(ty, fmap fst binders)) mempty
     return $ ImpTopLet (toList binders) prog
   TopUnpack (v,ty) iv expr -> do
     prog <- impExprTop expr
-    let binders = fmap (\(v', ty') -> (catNames v v', ty'))
-                    $ recTreeNamed (flatType' ty)
-    putEnv $ newFullEnv [(v, (ty, (fmap fst binders)))] [(iv,iv)]
+    let binders = impBinder v (flatType' ty)
+    putEnv $ FullEnv (v@>(ty, fmap fst binders)) (iv@>iv)
     let b' = (iv, intTy) : toList binders
     return $ ImpTopLet b' prog
-
   EvalCmd NoOp -> return (ImpEvalCmd unitTy NoOp)
   EvalCmd (Command cmd expr) -> do
     prog <- impExprTop expr
@@ -44,13 +42,23 @@ impPass decl = case decl of
                 _ -> return ()
     return $ ImpEvalCmd ty (Command cmd prog)
 
+impBinder :: Name -> RecTree a -> RecTree (Name, a)
+impBinder v tree = fmap (onFst newName) (recTreeNamed tree)
+   where
+     newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
+     onFst f (x,y) = (f x, y)
+
 impExprTop :: Expr -> TopPass ImpEnv ImpProgram
 impExprTop expr = do
   env <- getEnv
-  (iexpr, state) <- liftEither $ runPass env (ImpState [[]]) nameRoot (toImp expr)
+  (iexpr, state) <- liftEither $
+                      runPass env (ImpState [[]]) (envToScope env) (toImp expr)
   let ImpState [statements] = state
-      prog = ImpProgram (reverse statements) (toList iexpr)
-  return prog
+  return $ ImpProgram (reverse statements) (toList iexpr)
+
+envToScope :: ImpEnv -> FreshScope
+envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
+  where lNames = concat $ map (toList . snd) (toList lenv)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -220,7 +228,7 @@ checkImp decl = decl <$ case decl of
     check prog = do env <- getEnv
                     let env' = fmap (\t->(False,t)) env
                     liftEither $ addContext (pprint prog) $
-                      evalPass () env' nameRoot (impProgType prog)
+                      evalPass () env' mempty (impProgType prog)
 
 impProgType :: ImpProgram -> ImpCheckM [IType]
 impProgType (ImpProgram statements exprs) = do

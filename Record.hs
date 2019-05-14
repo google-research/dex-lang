@@ -1,6 +1,6 @@
 module Record (Record (..), RecTree (..), recUnionWith,
                zipWithRecord, recZipWith, recTreeZipEq,
- recLookup, recNameVals,
+               recLookup, recNameVals, RecField (..),
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
               ) where
 
@@ -15,6 +15,8 @@ data Record a = Rec (M.Map String a)
 
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
+
+data RecField = RecName String | RecPos Int  deriving (Show)
 
 instance Functor Record where
   fmap = fmapDefault
@@ -59,16 +61,15 @@ unLeaf :: RecTree a -> a
 unLeaf (RecLeaf x) = x
 unLeaf (RecTree _) = error "whoops! [unLeaf]"
 
-recNameVals :: Record a -> Record (Name, a)
-recNameVals (Tup xs) = Tup [(rawName (show i), x) | (i,x) <- zip [0..] xs]
-recNameVals (Rec m) = Rec $ M.mapWithKey (\field x -> (rawName field, x)) m
+recNameVals :: Record a -> Record (RecField, a)
+recNameVals (Tup xs) = Tup [(RecPos i, x) | (i,x) <- zip [0..] xs]
+recNameVals (Rec m) = Rec $ M.mapWithKey (\field x -> (RecName field, x)) m
 
-recTreeNamed :: RecTree a -> RecTree (Name, a)
-recTreeNamed (RecLeaf x) = RecLeaf (nameRoot, x)
-recTreeNamed (RecTree r) = RecTree $ fmap (\(name, val) -> addName name (recTreeNamed val))
-                                       (recNameVals r)
-  where addName :: Name -> RecTree (Name, a) -> RecTree (Name, a)
-        addName name tree = fmap (\(n,x) -> (catNames name n, x)) tree
+recTreeNamed :: RecTree a -> RecTree ([RecField], a)
+recTreeNamed (RecLeaf x) = RecLeaf ([], x)
+recTreeNamed (RecTree r) = RecTree $
+  fmap (\(name, val) -> addRecField name (recTreeNamed val)) (recNameVals r)
+  where addRecField name tree = fmap (\(n,x) -> (name:n, x)) tree
 
 recLookup :: Name -> Record a -> a
 recLookup = undefined

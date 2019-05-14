@@ -9,13 +9,13 @@ import Util (repeated)
 import Data.Foldable
 import Control.Monad.Reader
 
-type DeShadowM a = Pass FreshScope () a
+type DeShadowM a = Pass FreshSubst () a
 
-deShadowPass :: UDecl -> TopPass FreshScope UDecl
+deShadowPass :: UDecl -> TopPass FreshSubst UDecl
 deShadowPass decl = case decl of
-  UTopLet v expr -> do putEnv (newScope v)
+  UTopLet v expr -> do putEnv (newSubst v)
                        liftM (UTopLet v) $ deShadowTop expr
-  UTopUnpack v expr -> do putEnv (newScope v)
+  UTopUnpack v expr -> do putEnv (newSubst v)
                           liftM (UTopUnpack v) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -24,8 +24,8 @@ deShadowPass decl = case decl of
                 _ -> return ()
     return $ UEvalCmd (Command cmd expr')
   where
-    deShadowTop :: UExpr -> TopPass FreshScope UExpr
-    deShadowTop expr = liftTopPass () (deShadowExpr expr)
+    deShadowTop :: UExpr -> TopPass FreshSubst UExpr
+    deShadowTop expr = liftTopPass () mempty (deShadowExpr expr)
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
@@ -57,7 +57,7 @@ deShadowExpr expr = case expr of
   UAnnot body ty -> liftM (flip UAnnot ty) (recur body)
   where recur = deShadowExpr
 
-freshen :: Traversable f => f Var -> DeShadowM (f Var, FreshScope)
+freshen :: Traversable f => f Var -> DeShadowM (f Var, FreshSubst)
 freshen p = do checkRepeats p
                scope <- ask
                let zipped = fmap (flip rename scope) p

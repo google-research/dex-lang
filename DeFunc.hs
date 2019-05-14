@@ -15,8 +15,8 @@ data DFVal = DFNil
            | TLamVal [TBinder] DFEnv Expr
            | RecVal (Record DFVal)
 
-type DFCtx = (DFEnv, FreshScope)
-type DeFuncM a = Pass (DFEnv,  FreshScope) () a
+type DFCtx = (DFEnv, FreshSubst)
+type DeFuncM a = Pass (DFEnv,  FreshSubst) () a
 type DFEnv = FullEnv (Type, DFVal) Type
 
 -- TODO: top-level freshness
@@ -25,12 +25,12 @@ deFuncPass decl = case decl of
   TopLet (v,ty) expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
-    putEnv (FullEnv (v @> (ty', val)) mempty, newScope v)
+    putEnv (FullEnv (v @> (ty', val)) mempty, newSubst v)
     return $ TopLet (v, ty') expr'
   TopUnpack (v,ty) iv expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
-    putEnv (FullEnv (v @> (ty',val)) mempty, newScope v)
+    putEnv (FullEnv (v @> (ty',val)) mempty, newSubst v)
     return $ TopUnpack (v, ty') iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -40,7 +40,7 @@ deFuncPass decl = case decl of
     return $ EvalCmd (Command cmd expr')
   where
     deFuncTop :: Expr -> TopPass DFCtx (DFVal, Expr)
-    deFuncTop expr = liftTopPass () (deFuncExpr expr)
+    deFuncTop expr = liftTopPass () mempty (deFuncExpr expr)
 
 deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
 deFuncExpr expr = case expr of

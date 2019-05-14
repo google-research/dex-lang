@@ -92,7 +92,7 @@ toLLVM prog = do
   env <- getEnv
   let env' = fmap (Left . asCompileVal) env
   let initState = CompileState [] [] [] "start_block" env'
-  liftEither $ evalPass () initState nameRoot (compileProg prog)
+  liftEither $ evalPass () initState mempty (compileProg prog)
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
@@ -153,8 +153,8 @@ compileStatement statement = case statement of
                            modify $ setImpVarEnv (addV (v, (Left val)))
   Alloc v (IType b shape) -> do
     shape' <- mapM lookupValVar shape
-    cell <- case shape' of [] -> alloca b (topTag v)
-                           _ -> malloc b shape' (topTag v)
+    cell <- case shape' of [] -> alloca b (nameTag v)
+                           _ -> malloc b shape' (nameTag v)
     modify $ setImpVarEnv (addV (v, (Right cell)))
 
   Loop i n body -> do n' <- lookupValVar n

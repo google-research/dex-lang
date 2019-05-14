@@ -12,13 +12,15 @@
 x = 50
 
 :p let x = 100 in (let x = 200 in x)
+
 > [200]
 
 arr = 10
 
--- second definition should be an error
+
 arr = 20
+> second definition should be an error
 
 :p arr
 
--- trailing comment shouldn't cause an error
+> [10]

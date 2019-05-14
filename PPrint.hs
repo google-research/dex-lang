@@ -109,6 +109,10 @@ instance Pretty a => Pretty (RecTree a) where
   pretty (RecTree r) = p r
   pretty (RecLeaf x) = p x
 
+instance Pretty (RecField) where
+  pretty (RecName name) = p name
+  pretty (RecPos n)     = p n
+
 instance Pretty Builtin where
   pretty b = case b of
     Add      -> "+"
