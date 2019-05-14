@@ -44,8 +44,7 @@ runActor (Actor m) = do
 subChan :: (a -> b) -> PChan b -> PChan a
 subChan f chan = PChan (sendPChan chan . f)
 
-kill :: Proc -> Actor m ()
-kill = undefined
+-- TODO: kill :: Proc -> Actor m ()
 
 spawn :: MonadActor msg m => CanTrap -> Actor msg' () -> m (Proc, PChan msg')
 spawn canTrap body = liftIO $ spawnIO canTrap [] body
@@ -75,7 +74,7 @@ spawnIO canTrap links (Actor m) = do
   where
    cleanup :: String -> Proc -> Proc -> IO ()
    cleanup s failed (Proc Trap   _ errChan) = sendFromIO errChan (failed, s)
-   cleanup s failed (Proc NoTrap linked  _) = void $ forkIO $ killThread linked
+   cleanup _ _      (Proc NoTrap linked  _) = void $ forkIO $ killThread linked
 
 asPChan :: BackChan (Msg a) -> PChan a
 asPChan (BackChan _ chan) = PChan (writeChan chan . NormalMsg)
@@ -125,8 +124,8 @@ readBackChan (BackChan ptr chan) = do xs <- readIORef ptr
                                                               return x
 
 pushBackChan :: BackChan a -> [a] -> IO ()
-pushBackChan (BackChan ptr chan) xs = do xs' <- readIORef ptr
-                                         writeIORef ptr (xs ++ xs')
+pushBackChan (BackChan ptr _) xs = do xs' <- readIORef ptr
+                                      writeIORef ptr (xs ++ xs')
 
 class (MonadIO m, Monad m) => MonadActor msg m | m -> msg where
   actorCfg :: m (ActorConfig msg)

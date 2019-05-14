@@ -154,7 +154,7 @@ instance Pretty ImpProgram where
                                       nest 2 (hardline <> (vcat (map p exprs)))
 
 instance Pretty Value where
-  pretty (Value ty vecs) = p vecs
+  pretty (Value _ vecs) = p vecs
 
 instance Pretty Vec where
   pretty (IntVec  xs) = p xs

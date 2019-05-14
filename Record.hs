@@ -1,13 +1,12 @@
 module Record (Record (..), RecTree (..), recUnionWith,
                zipWithRecord, recZipWith, recTreeZipEq,
-               recLookup, recNameVals,
+ recLookup, recNameVals,
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
               ) where
 
 
 import Fresh
 import Util
-import Data.List (intercalate)
 import Data.Traversable
 import qualified Data.Map.Strict as M
 

@@ -4,7 +4,6 @@ module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
 import Control.Monad.State
-import Control.Monad.Writer (tell)
 import Control.Monad.Except (liftEither)
 import Data.Foldable (toList)
 
@@ -94,7 +93,7 @@ flatBinding (v, ty) = do ty' <- flatType ty
 
 -- TODO: make a destination-passing version to avoid unnecessary intermediates
 toImpFor :: Binder -> Expr -> ImpM (RecTree IExpr)
-toImpFor b@(i, TypeVar n) body = do
+toImpFor (i, TypeVar n) body = do
   i' <- freshLike i
   bodyTy <- exprType body >>= flatType
   let cellTypes = fmap (addIdx n) bodyTy
@@ -210,12 +209,12 @@ type VarType = (IsMutable, IType)
 checkImp :: ImpDecl -> TopPass (Env IType) ImpDecl
 checkImp decl = decl <$ case decl of
   ImpTopLet binders prog -> do
-    ty <- check prog
+    _ <- check prog
     -- doesn't work without alias checking for sizes
     -- liftEither $ assertEq ty (map snd binders) ""
     putEnv $ newEnv binders
   ImpEvalCmd _ NoOp -> return ()
-  ImpEvalCmd _ (Command cmd prog) -> void $ check prog
+  ImpEvalCmd _ (Command _ prog) -> void $ check prog
   where
     check :: ImpProgram -> TopPass (Env IType) [IType]
     check prog = do env <- getEnv
@@ -239,14 +238,14 @@ checkStatementTy statement = case statement of
                            throwIf (b /= b') $ "Base type mismatch"
                            throwIf (drop (length idxs) shape /= shape') $
                                     "Dimension mismatch"
-  ImpLet b@(v,ty) expr -> do ty' <- impExprType expr
-                             -- doesn't work without alias checking for sizes
-                             -- throwIf (ty' /= ty) $ "Type doesn't match binder"
-                             addVar v (False, ty)
+  ImpLet (v,ty) expr -> do _ <- impExprType expr
+                           -- doesn't work without alias checking for sizes
+                           -- throwIf (ty' /= ty) $ "Type doesn't match binder"
+                           addVar v (False, ty)
   Loop i size block -> do addVar i (False, intTy)
                           checkIsInt size
                           void $ mapM checkStatementTy block
-  Alloc v ty@(IType b shape) -> do void $ mapM checkIsInt shape
+  Alloc v ty@(IType _ shape) -> do void $ mapM checkIsInt shape
                                    addVar v (True, ty)
 
 addVar :: Var -> VarType -> ImpCheckM ()

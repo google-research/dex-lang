@@ -4,7 +4,6 @@ module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr) where
 
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
-import qualified LLVM.Analysis as Mod
 import qualified LLVM.ExecutionEngine as EE
 import LLVM.Internal.Context
 

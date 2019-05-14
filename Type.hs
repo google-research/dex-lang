@@ -4,7 +4,6 @@ module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
 import Control.Monad
 import Control.Monad.Except (liftEither)
 import Control.Monad.Reader
-import Control.Monad.State
 
 import Syntax
 import Env
@@ -27,7 +26,7 @@ checkTyped decl = decl <$ case decl of
     liftEither $ assertEq ty ty' ""
     putEnv $ newFullEnv [(v,ty)] [(iv, IdxSetKind)]
   EvalCmd NoOp -> return ()
-  EvalCmd (Command cmd expr) -> void $ check expr
+  EvalCmd (Command _ expr) -> void $ check expr
   where
     check :: Expr -> TopPass TypeEnv Type
     check expr = do
@@ -70,7 +69,7 @@ getType' check expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
-    Unpack v tv bound body -> do
+    Unpack v tv _ body -> do  -- TODO: check bound expression!
         checkShadowT tv
         let updateTEnv = setTEnv (addV (tv, IdxSetKind))
         local updateTEnv (checkTy (snd v))
@@ -84,7 +83,7 @@ getType' check expr = case expr of
                else return ()
 
     checkTy :: Type -> TypeM ()
-    checkTy ty = return () -- TODO: check kind and unbound type vars
+    checkTy _ = return () -- TODO: check kind and unbound type vars
     recur = getType' check
     recurWith  vs = local (setLEnv (addVs vs)) . recur
     recurWithT vs = local (setTEnv (addVs vs)) . recur

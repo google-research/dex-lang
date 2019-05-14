@@ -14,7 +14,6 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.State
 import Control.Monad.Except (liftEither)
-import Control.Monad.Writer (tell)
 import Control.Applicative (liftA, liftA2)
 
 import Data.Traversable
@@ -70,7 +69,7 @@ jitPass decl = case decl of
                           putEnv $ newEnv $ zip (map fst bs) vals
   ImpEvalCmd _ NoOp -> return ()
   ImpEvalCmd ty (Command cmd prog) -> case cmd of
-    Passes -> do CompiledProg vs m <- toLLVM prog
+    Passes -> do CompiledProg _ m <- toLLVM prog
                  llvm <- liftIO $ showLLVM m
                  writeOut $ "\n\nLLVM\n" ++ llvm
     EvalExpr -> do vals <- evalProg prog
@@ -110,7 +109,7 @@ restructureVal :: Type -> [Vec] -> Value
 restructureVal ty vecs = Value ty $ restructure vecs (typeLeaves ty)
   where
     typeLeaves :: Type -> RecTree ()
-    typeLeaves ty = case ty of BaseType b -> RecLeaf ()
+    typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
                                TabType _ valTy -> typeLeaves valTy
                                RecType r -> RecTree $ fmap typeLeaves r
                                _ -> error $ "can't show " ++ pprint ty
@@ -132,7 +131,7 @@ interpret_ieee_64 = wordToDouble
 
 constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
-constOperand RealType x = error "floating point not yet implemented"
+constOperand RealType _ = error "floating point not yet implemented"
 
 compileProg :: ImpProgram -> CompileM CompiledProg
 compileProg (ImpProgram statements outExprs) = do
@@ -245,13 +244,13 @@ idxCell (Cell ptr (_:shape)) (i:idxs) = do
   ptr' <- addPtr ptr step
   idxCell (Cell ptr' shape) idxs
 
-readCell :: Cell -> CompileM CompileVal
-readCell (Cell ptr@(Ptr _ ty) []) = do x <- load ptr
-                                       return $ ScalarVal x ty
+-- readCell :: Cell -> CompileM CompileVal
+-- readCell (Cell ptr@(Ptr _ ty) []) = do x <- load ptr
+--                                        return $ ScalarVal x ty
 
 writeCell :: Cell -> CompileVal -> CompileM ()
 writeCell (Cell ptr []) (ScalarVal x _) = store ptr x
-writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) shape') = do
+writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) _) = do
   numScalars <- sizeOf shape
   numBytes <- mul (litInt 8) numScalars
   addInstr $ L.Do (externCall memcpyFun [dest, src, numBytes])

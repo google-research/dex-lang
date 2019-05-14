@@ -1,23 +1,16 @@
 module Parser (parseProg, parseTopDecl, Prog) where
 
+import Control.Monad
+import Control.Monad.Combinators.Expr
+import Text.Megaparsec
+import qualified Text.Parsec as P
+import Data.List (isPrefixOf)
+import qualified Data.Map as M
+
 import Record
 import ParseUtil
 import Syntax
 import Fresh
-import Env
-
-import Control.Monad
-import Data.Void
-import Control.Monad.Combinators.Expr
-import Control.Monad.Identity
-import Control.Monad.Reader (ReaderT, runReaderT, local, ask, asks)
-import Control.Monad.State (StateT, runState, modify)
-import Text.Megaparsec
-import qualified Text.Parsec as P
-import qualified Text.Megaparsec.Char.Lexer as L
-import Data.Foldable (toList)
-import Data.List (isPrefixOf)
-import qualified Data.Map as M
 
 type Prog = [(String, Except UDecl)]
 
@@ -172,7 +165,6 @@ assignDecl = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
-  unpack <- optional (symbol "unpack")
   body <- expr
   return $ AssignDecl p (wrap body)
 
@@ -240,9 +232,9 @@ parenPat = do
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
 
-var :: Parser Var
-var = liftM rawName $ makeIdentifier
-            ["Int", "Real", "Bool", "Str", "A", "E"]
+-- var :: Parser Var
+-- var = liftM rawName $ makeIdentifier
+--             ["Int", "Real", "Bool", "Str", "A", "E"]
 
 builtinNames = M.fromList [
   ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),

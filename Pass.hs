@@ -5,7 +5,6 @@ module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
              (>+>), extendWith) where
 
-import System.Exit
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer hiding ((<>))

@@ -369,7 +369,7 @@ freeVarsUExpr expr = case expr of
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
   UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [v] body)
-  UAnnot e ty    -> recur e  -- Annotation is irrelevant for free term variables
+  UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
     recurWith p expr = local (addVs (fmap (\v -> (v,())) p)) (recur expr)

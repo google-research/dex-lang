@@ -1,9 +1,7 @@
 import System.Console.Haskeline
-import System.IO
 import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
-import Control.Monad.Except (liftEither)
 import Options.Applicative
 import Data.Semigroup ((<>))
 import Data.Text.Prettyprint.Doc
@@ -21,7 +19,6 @@ import Imp
 import JIT
 import WebOutput
 
-type DeclKey = Int
 type ResultChan = Result -> IO ()
 type FullPass env = UDecl -> TopPass env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
@@ -102,11 +99,11 @@ opts = info (p <**> helper) mempty
 
 parseOpts :: IO EvalMode
 parseOpts = do
-  CmdOpts file web <- execParser opts
-  return $ case file of
+  opts <- execParser opts
+  return $ case programSource opts of
     Nothing -> ReplMode
-    Just fname -> if web then WebMode    fname
-                         else ScriptMode fname
+    Just fname -> if webOutput opts then WebMode    fname
+                                    else ScriptMode fname
 
 main :: IO ()
 main = do

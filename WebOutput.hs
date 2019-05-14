@@ -148,8 +148,7 @@ worker initEnv pass resultChan parentChans = do
   mapM (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  (pid, _) <- spawnLink NoTrap $
-                execPass env pass (subChan JobDone selfChan) resultChan
+  spawnLink NoTrap $ execPass env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr s)

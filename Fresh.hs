@@ -5,7 +5,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- those last three are all needed for monaderror
 
-module Fresh (Name (..), Tag, Stem, fresh, freshLike, FreshT, runFreshT,
+module Fresh (Name (..), Tag, Stem, fresh, freshLike,
+              FreshT, runFreshT, runFresh,
               rawName, rawNames, nameRoot, topTag, catNames, rawQualify,
               newScope, rename, getRenamed, FreshScope,
               EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
@@ -47,9 +48,6 @@ topTag (Name ((tag,_):_)) = tag
 topTag (Name []) = error "whoops! [topTag]"
 
 nameRoot = Name []
-
-freshNames :: Stem -> [Tag] -> [Name]
-freshNames stem tags = runFresh (mapM fresh tags) stem
 
 catNames :: Name -> Name -> Name
 catNames (Name n1) (Name n2) = Name (n1 ++ n2)

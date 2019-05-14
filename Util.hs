@@ -123,7 +123,7 @@ splitOn :: (a -> Bool) -> [a] -> [[a]]
 splitOn f s = let (prefix, suffix) = break f s
               in case suffix of
                    [] -> [prefix]
-                   x:xs -> prefix : splitOn f xs
+                   _:xs -> prefix : splitOn f xs
 
 restructure :: Traversable f => [a] -> f b -> f a
 restructure xs structure = evalState (traverse procLeaf structure) xs
