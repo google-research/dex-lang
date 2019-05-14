@@ -14,6 +14,7 @@ import Pass
 import Type
 
 import Parser
+import DeShadow
 import Inference
 import DeFunc
 import Imp
@@ -27,7 +28,8 @@ data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}
 
-fullPass = typePass   >+> checkTyped
+fullPass = deShadowPass
+       >+> typePass   >+> checkTyped
        >+> deFuncPass >+> checkTyped
        >+> impPass    >+> checkImp
        >+> jitPass

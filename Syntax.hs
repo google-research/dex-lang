@@ -189,6 +189,7 @@ data ErrType = NoErr
              | ParseErr
              | TypeErr
              | UnboundVarErr
+             | RepeatedVarErr
              | CompilerErr
              | NotImplementedErr
              | UpstreamErr

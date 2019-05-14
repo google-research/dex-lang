@@ -2,19 +2,23 @@
 -- repeated vars in patterns not allowed
 :p let (x, x) = (1, 1) in x
 
+> Repeated variables in pattern: [x]
+
 :p let f (x, x) = x in f (1, 1)
+
+> Repeated variables in pattern: [x]
 
 -- shouldn't cause error even though it shadows x elsewhere
 x = 50
 
-:p let x = 100 in (let x = 200) in x
+:p let x = 100 in (let x = 200 in x)
 > [200]
 
 arr = 10
 
--- second use should be an error
+-- second definition should be an error
 arr = 20
 
-:p 1
+:p arr
 
 -- trailing comment shouldn't cause an error
