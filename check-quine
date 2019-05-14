@@ -1,6 +1,14 @@
 #!/bin/bash
 
-tmp=$(mktemp)
-diff --left-column -B -y --color=always $1 <(${@:2} $1) > $tmp \
-    && echo OK || cat $tmp
-rm $tmp
+tmpout=$(mktemp)
+tmpdiff=$(mktemp)
+
+if ${@:2} $1 > $tmpout ; then
+    diff --left-column -B -y --color=always $1 $tmpout > $tmpdiff \
+       && echo OK || cat $tmpdiff
+else
+    cat $tmpout
+fi
+
+rm $tmpout
+rm $tmpdiff
