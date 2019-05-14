@@ -220,7 +220,8 @@ checkImp decl = decl <$ case decl of
     check :: ImpProgram -> TopPass (Env IType) [IType]
     check prog = do env <- getEnv
                     let env' = fmap (\t->(False,t)) env
-                    liftEither $ evalPass () env' nameRoot (impProgType prog)
+                    liftEither $ addContext (pprint prog) $
+                      evalPass () env' nameRoot (impProgType prog)
 
 impProgType :: ImpProgram -> ImpCheckM [IType]
 impProgType (ImpProgram statements exprs) = do
