@@ -1,8 +1,6 @@
 module DeShadow (deShadowPass) where
 
 import Syntax
-import Env
-import Record
 import Pass
 import Fresh
 import PPrint
@@ -10,7 +8,6 @@ import Util (repeated)
 
 import Data.Foldable
 import Control.Monad.Reader
-import qualified Data.Map.Strict as M
 
 type DeShadowM a = Pass FreshScope () a
 
@@ -57,7 +54,7 @@ deShadowExpr expr = case expr of
     return $ UUnpack b' bound' body'
   URecCon r -> liftM URecCon $ traverse recur r
   -- TODO: deshadow type as well when we add scoped type vars
-  UAnnot expr ty -> liftM (flip UAnnot ty) (recur expr)
+  UAnnot body ty -> liftM (flip UAnnot ty) (recur body)
   where recur = deShadowExpr
 
 freshen :: Traversable f => f Var -> DeShadowM (f Var, FreshScope)
@@ -68,5 +65,5 @@ freshen p = do checkRepeats p
 
 checkRepeats :: Foldable f => f Var -> DeShadowM ()
 checkRepeats xs = case repeated (toList xs) of
-                    [] -> return ()
-                    xs -> throw RepeatedVarErr (pprint xs)
+                    []  -> return ()
+                    xs' -> throw RepeatedVarErr (pprint xs')

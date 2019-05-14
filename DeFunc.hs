@@ -9,7 +9,6 @@ import Fresh
 
 import Data.Foldable
 import Control.Monad.Reader
-import qualified Data.Map.Strict as M
 
 data DFVal = DFNil
            | LamVal Pat DFEnv Expr
@@ -111,29 +110,34 @@ envTupCon env = do
   return $ RecCon $ Tup vs
 
 subTy :: Type -> DeFuncM Type
-subTy ty = do tenv  <- asks $ tEnv . fst
-              scope <- asks $ snd
-              let f v = Just $ case envLookup tenv v of
-                          Just ty -> ty
-                          Nothing -> TypeVar (getRenamed v scope)
-              return $ maybeSub f ty
+subTy ty = do env <- ask
+              return $ subTy' env ty
 
-bindVar :: Binder -> DFVal -> DeFuncM (Binder, DFCtx)
-bindVar (v, ty) x = do ty' <- subTy ty
-                       (v', newScope) <- asks $ rename v . snd
-                       return ((v', deFuncType ty' x),
-                               (FullEnv (v @> (ty', x)) mempty, newScope))
+subTy' :: DFCtx -> Type -> Type
+subTy' ctx ty = maybeSub f ty
+  where f v = Just $ case envLookup (tEnv (fst ctx)) v of
+                       Just ty' -> ty'
+                       Nothing  -> TypeVar (getRenamed v (snd ctx))
+
+deFuncBinder :: Binder -> DFVal -> EnvM DFCtx Binder
+deFuncBinder (v, ty) x = do env <- askEnv
+                            let ty' = subTy' env ty
+                                (v', scope) = rename v (snd env)
+                            addEnv (FullEnv (v @> (ty', x)) mempty, scope)
+                            return (v', deFuncType ty' x)
+
 
 bindPat :: Pat -> DFVal -> DeFuncM (Pat, DFCtx)
-bindPat pat x = do zipped <- traverse (uncurry bindVar) (recTreeZip pat x)
-                   return (fmap fst zipped, fold (fmap snd zipped))
+bindPat pat xs = liftEnvM $ traverse (uncurry deFuncBinder) (recTreeZip pat xs)
+
+bindVar :: Binder -> DFVal -> DeFuncM (Binder, DFCtx)
+bindVar b x = liftEnvM $ deFuncBinder b x
 
 bindEnv :: DFEnv -> DeFuncM (Pat, DFCtx)
 bindEnv env = do
-  zipped <- traverse (uncurry bindVar) (map reassoc $ envPairs (lEnv env))
-  return (asTree (map fst zipped), fold (fmap snd zipped) <> tyCtx)
-  where reassoc (v,(ty,val)) = ((v,ty),val)
-        asTree xs = RecTree (Tup (map RecLeaf xs))
+  (bs', env') <- liftEnvM $ traverse (uncurry deFuncBinder) bs
+  return (posPat (map RecLeaf bs'), env' <> tyCtx)
+  where bs = [((v,ty),val) | (v,(ty,val)) <- envPairs (lEnv env)]
         tyCtx = (FullEnv mempty (tEnv env), mempty)
 
 deFuncType :: Type -> DFVal -> Type

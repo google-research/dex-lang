@@ -7,12 +7,14 @@
 
 module Fresh (Name (..), Tag, Stem, fresh, freshLike, FreshT, runFreshT,
               rawName, rawNames, nameRoot, topTag, catNames, rawQualify,
-              newScope, rename, getRenamed, FreshScope) where
+              newScope, rename, getRenamed, FreshScope,
+              EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
 
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
@@ -120,3 +122,20 @@ instance Semigroup FreshScope where
 instance Monoid FreshScope where
   mempty = FreshScope mempty mempty
   mappend = (<>)
+
+-- monad for doing things in a monoidal environment
+-- TODO: consider making an mtl-style typeclass
+newtype EnvM env a = EnvM (StateT env (Writer env) a)
+  deriving (Functor, Applicative, Monad)
+
+addEnv :: Monoid env => env -> EnvM env ()
+addEnv x = EnvM $ modify (x <>) >> tell x
+
+askEnv :: Monoid env => EnvM env env
+askEnv = EnvM get
+
+runEnvM :: Monoid env => EnvM env a -> env -> (a, env)
+runEnvM (EnvM m) env = runWriter $ evalStateT m env
+
+liftEnvM :: (Monoid env, MonadReader env m) => EnvM env a -> m (a, env)
+liftEnvM m = liftM (runEnvM m) ask
