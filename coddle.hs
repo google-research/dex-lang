@@ -39,9 +39,11 @@ parseFile fname = do
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
-  mapM_ (evalDecl devnull . pass . ignoreExcept . snd) prog
-  where devnull :: ResultChan
-        devnull _ = return ()
+  mapM_ (evalDecl printErr . pass . ignoreExcept . snd) prog
+  where
+    printErr (Result _ status _ ) = case status of
+      Set (Failed e) -> putStrLn $ pprint e
+      _ -> return ()
 
 evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
