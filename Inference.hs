@@ -25,11 +25,11 @@ type Constraint = (Type, Type)
 
 typePass :: UDecl -> TopPass TypeEnv Decl
 typePass decl = case decl of
-  UTopLet v expr -> do
+  UTopLet (v,_) expr -> do
     (ty, expr') <- translate expr
     putEnv $ newFullEnv [(v,ty)] []
     return $ TopLet (v,ty) expr'
-  UTopUnpack v expr -> do
+  UTopUnpack (v,_) expr -> do
     (ty, expr') <- translate expr
     let iv = rawName "idx" -- TODO: sort out variables properly
     ty' <- liftEither $ unpackExists ty iv
@@ -59,12 +59,13 @@ check :: UExpr -> Type -> InferM Expr
 check expr reqTy = case expr of
   ULit c -> do unify (BaseType (litType c)) reqTy
                return (Lit c)
-  UVar v -> do maybeTy <- asks $ (flip envLookup v) . lEnv
-               ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
-                                     Just ty -> return ty
-               instantiate ty reqTy (Var v)
+  UVar v -> do
+    maybeTy <- asks $ (flip envLookup v) . lEnv
+    ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
+                          Just ty -> return ty
+    instantiate ty reqTy (Var v)
   UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
-  ULet (RecLeaf v) bound body -> do
+  ULet (RecLeaf (v,_)) bound body -> do
     (ty', bound') <- infer bound
     (forallTy, tLam) <- generalize ty' bound'
     let p = RecLeaf (v, forallTy)
@@ -86,7 +87,7 @@ check expr reqTy = case expr of
     arg' <- check arg a
     unify b reqTy
     return $ App fexpr' arg'
-  UFor v body -> do
+  UFor (v,_) body -> do
     (i, elemTy) <- splitTab reqTy
     body' <- recurWith [(v, i)] body elemTy
     return $ For (v, i) body'
@@ -127,7 +128,7 @@ checkPat :: UPat -> Type -> InferM Pat
 checkPat pat ty = do tree <- traverse addFresh pat
                      unify (patType tree) ty
                      return tree
-  where addFresh v = do { t <- freshTy; return (v,t) }
+  where addFresh (v,_) = do { t <- freshTy; return (v,t) }
 
 splitFun :: Type -> InferM Constraint
 splitFun f = case f of

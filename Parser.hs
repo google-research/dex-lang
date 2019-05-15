@@ -3,8 +3,10 @@ module Parser (parseProg, parseTopDecl, Prog) where
 import Control.Monad
 import Control.Monad.Combinators.Expr
 import Text.Megaparsec
+import Text.Megaparsec.Char
 import qualified Text.Parsec as P
 import Data.List (isPrefixOf)
+import Data.Either (isRight)
 import qualified Data.Map as M
 
 import Record
@@ -30,9 +32,9 @@ parseit p s = case parse (p <* eof) "" s of
 
 topDeclInstr :: Parser UDecl
 topDeclInstr =   explicitCommand
-             -- <|> typedAssignment
-             <|> liftM (uncurry UTopUnpack) tryUnpackDecl
-             <|> liftM (uncurry UTopLet   ) tryAssignDecl
+             <|> typedTopLet
+             <|> topUnpack
+             <|> topLet
              <|> liftM (UEvalCmd . Command EvalExpr) expr
              <?> "top-level declaration"
 
@@ -51,29 +53,30 @@ explicitCommand = do
   e <- expr
   return $ UEvalCmd (Command cmd e)
 
--- typedAssignment :: Parser UDecl
--- typedAssignment = do
---   v <- try (identifier <* symbol "::")
---   ty <- typeExpr
---   (v', e) <- simpleDecl
---   if v' == v
---     then return $ TopAssign v (UAnnot e ty)
---     else fail $ "Type declaration variable must match assignment variable."
+typedTopLet :: Parser UDecl
+typedTopLet = do
+  v <- try (varName <* symbol "::")
+  ty <- typeExpr <* eol
+  UTopLet (v', b) e <- topLet
+  if v' /= v
+    then fail "Type declaration variable must match assignment variable."
+    else case b of Just _ -> fail "Conflicting type annotations"
+                   Nothing -> return $ UTopLet (v, Just ty) e
 
-tryUnpackDecl :: Parser (Var, UExpr)
-tryUnpackDecl = do
-  v <- try (varName <* symbol "=" <* symbol "unpack")
+topUnpack :: Parser UDecl
+topUnpack = do
+  b <- try (binder <* symbol "=" <* symbol "unpack")
   body <- expr
-  return (v, body)
+  return $ UTopUnpack b body
 
-tryAssignDecl :: Parser (Var, UExpr)
-tryAssignDecl = do
-  (v, wrap) <- try $ do p <- varName
+topLet :: Parser UDecl
+topLet = do
+  (b, wrap) <- try $ do b <- binder
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
-                        return (p, wrap)
+                        return (b, wrap)
   body <- expr
-  return (v, wrap body)
+  return $ UTopLet b (wrap body)
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops
@@ -87,7 +90,6 @@ term =   parenRaw
      <|> forExpr
      <|> builtinExpr
      <?> "term"
-
 
 maybeAnnot :: UExpr -> Parser UExpr
 maybeAnnot e = do
@@ -187,9 +189,6 @@ resNames = ["for", "lam", "let", "in", "unpack"]
 
 identifier = makeIdentifier resNames
 
-varName = liftM rawName identifier
-idxExpr = varName
-
 appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
@@ -215,12 +214,17 @@ ops = [ [getRule, appRule]
 --     [(Nothing, expr)] -> expr
 --     elts -> RecTree $ mixedRecord elts
 
-idxPat :: Parser Var
-idxPat = liftM rawName identifier
+varName = liftM rawName identifier
+idxExpr = varName
+
+binder :: Parser UBinder
+binder = liftM2 (,) varName (optional typeAnnot)
+
+idxPat = binder
 
 pat :: Parser UPat
 pat =   parenPat
-    <|> liftM RecLeaf varName -- (optional typeAnnot)
+    <|> liftM RecLeaf binder
 
 parenPat :: Parser UPat
 parenPat = do
@@ -269,16 +273,15 @@ baseType = (symbol "Int"  >> return IntType)
        <|> (symbol "Str"  >> return StrType)
        <?> "base type"
 
--- typeOps = [ [InfixR (symbol "=>" >> return TabType)]
---           , [InfixR (symbol "->" >> return ArrType)]]
-typeOps = [ [InfixR (symbol "->" >> return ArrType)]]
+typeOps = [ [InfixR (symbol "=>" >> return TabType)]
+          , [InfixR (symbol "->" >> return ArrType)]]
 
 typeExpr' =   parens typeExpr
           <|> liftM TypeVar varName
           <|> liftM BaseType baseType
           -- <|> forallType
           -- <|> existsType
-          <?> "term"
+          <?> "type"
 
 type LineParser = P.Parsec [String] ()
 
@@ -300,10 +303,12 @@ lineMatch test = P.tokenPrim show nextPos toMaybe
 
 topDeclString :: LineParser String
 topDeclString = do comments <- P.many (commentLine <* blanks)
+                   annLines <- P.many annotLine
                    fstLine  <- lineMatch (const True)
                    rest     <- P.many continuedLine <* blanks
-                   return $ unlines $ comments ++ (fstLine : rest)
+                   return $ unlines $ comments ++ annLines ++ (fstLine : rest)
   where
+    annotLine = lineMatch $ isRight . parse (identifier >> symbol "::") ""
     continuedLine = lineMatch (" "  `isPrefixOf`)
 
 commentLine :: LineParser String

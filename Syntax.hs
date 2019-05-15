@@ -3,7 +3,7 @@
 
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
-               CmdName (..), IdxExpr, Kind (..),
+               CmdName (..), IdxExpr, Kind (..), UBinder,
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), setLEnv, setTEnv,
@@ -31,7 +31,7 @@ import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 
--- === core system-F-like IR ===
+-- === core IR ===
 
 data Expr = Lit LitVal
           | Var Var
@@ -101,24 +101,26 @@ unitTy = RecType (Tup [])
 
 -- === untyped AST ===
 
+-- TODO: consider combining Expr and UExpr, parameterized by binder type
 data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
            | ULet UPat UExpr UExpr
            | ULam UPat UExpr
            | UApp UExpr UExpr
-           | UFor Var UExpr
+           | UFor UBinder UExpr
            | UGet UExpr IdxExpr
            | UUnpack Var UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
-data UDecl = UTopLet    Var UExpr
-           | UTopUnpack Var UExpr
+type UBinder = (Var, Maybe Type)
+data UDecl = UTopLet    UBinder UExpr
+           | UTopUnpack UBinder UExpr
            | UEvalCmd (Command UExpr)
 
-type UPat = RecTree Var
+type UPat = RecTree UBinder
 
 -- === imperative IR ===
 
@@ -356,7 +358,7 @@ freeVars decl = case decl of
 freeVarsUExpr' :: UExpr -> [Var]
 freeVarsUExpr' expr = nub $ runReader (freeVarsUExpr expr) mempty
 
-freeVarsUExpr :: UExpr -> Reader (Env ()) [Var]
+freeVarsUExpr :: UExpr -> Reader (Env (Maybe Type)) [Var]
 freeVarsUExpr expr = case expr of
   ULit _         -> return []
   UVar v         -> do isbound <- asks $ isin v
@@ -368,14 +370,14 @@ freeVarsUExpr expr = case expr of
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
-  UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [v] body)
+  UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [(v, Nothing)] body)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
-    recurWith p expr = local (addVs (fmap (\v -> (v,())) p)) (recur expr)
+    recurWith p expr = local (addVs p) (recur expr)
 
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    v _ -> [v]
-  UTopUnpack v _ -> [v]
-  UEvalCmd     _ -> []
+  UTopLet    (v,_) _ -> [v]
+  UTopUnpack (v,_) _ -> [v]
+  UEvalCmd _ -> []
