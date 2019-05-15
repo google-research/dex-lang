@@ -68,17 +68,10 @@ check expr reqTy = case expr of
                           Just ty -> return ty
     instantiate ty reqTy (Var v)
   UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
-  ULet (RecLeaf (v, Nothing)) bound body -> do
-    (ty', bound') <- infer bound
-    (forallTy, tLam) <- generalize ty' bound'
-    let p = RecLeaf (v, forallTy)
-    body' <- recurWith p body reqTy
-    return $ Let p tLam body'
   ULet p bound body -> do
-    (patTy, p') <- inferPat p
-    bound' <- check bound patTy
+    (p', bound') <- inferLetBinding p bound
     body' <- recurWith p' body reqTy
-    return $ Let p'  bound' body'
+    return $ Let p' bound' body'
   ULam p body -> do
     (a, b) <- splitFun reqTy
     p' <- checkPat p a
@@ -137,6 +130,22 @@ inferPat pat = do tree <- traverse addFresh pat
                   return (patType tree, tree)
   where addFresh (v, Nothing) = do { ty <- freshTy; return (v, ty) }
         addFresh (v, Just ty) = return (v, ty)
+
+inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
+inferLetBinding pat expr = case pat of
+  RecLeaf (v, Nothing) -> do
+    (ty', expr') <- infer expr
+    (forallTy, tLam) <- generalize ty' expr'
+    return (RecLeaf (v, forallTy), tLam)
+  RecLeaf (v, Just sigmaTy@(Forall kinds tyBody)) -> do
+    skolVars <- mapM (fresh . pprint) kinds
+    let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
+    expr' <- local (setTEnv (addVs (zip skolVars kinds))) (check expr exprTy)
+    return (RecLeaf (v, sigmaTy), TLam (zip skolVars kinds) expr')
+  p -> do
+    (patTy, p') <- inferPat p
+    expr' <- check expr patTy
+    return (p', expr')
 
 splitFun :: Type -> InferM Constraint
 splitFun f = case f of
