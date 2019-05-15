@@ -7,12 +7,14 @@ import Text.Megaparsec.Char
 import qualified Text.Parsec as P
 import Data.List (isPrefixOf)
 import Data.Either (isRight)
-import qualified Data.Map as M
+import qualified Data.Map.Strict as M
 
 import Record
 import ParseUtil
 import Syntax
 import Fresh
+import Inference
+import PPrint
 
 type Prog = [(String, Except UDecl)]
 
@@ -250,21 +252,23 @@ builtinNames = M.fromList [
 strToBuiltin :: String -> Maybe Builtin
 strToBuiltin name = M.lookup name builtinNames
 
--- forallType :: Parser Type
--- forallType = do
---   try $ symbol "A"
---   vars <- identifier `sepBy` sc
---   symbol "."
---   body <- typeExpr
---   return $ NamedForall vars body
+forallType :: Parser Type
+forallType = do
+  try $ symbol "A"
+  vs <- varName `sepBy` sc
+  symbol "."
+  body <- typeExpr
+  case inferKinds vs body of
+    Left e -> fail $ pprint e
+    Right kinds -> return $ Forall kinds (abstractTVs vs body)
 
--- existsType :: Parser Type
--- existsType = do
---   try $ symbol "E"
---   var <- identifier
---   symbol "."
---   body <- typeExpr
---   return $ NamedExists var body
+existsType :: Parser Type
+existsType = do
+  try $ symbol "E"
+  v <- varName
+  symbol "."
+  body <- typeExpr
+  return $ Exists (abstractTVs [v] body)
 
 baseType :: Parser BaseType
 baseType = (symbol "Int"  >> return IntType)
@@ -279,8 +283,8 @@ typeOps = [ [InfixR (symbol "=>" >> return TabType)]
 typeExpr' =   parens typeExpr
           <|> liftM TypeVar varName
           <|> liftM BaseType baseType
-          -- <|> forallType
-          -- <|> existsType
+          <|> forallType
+          <|> existsType
           <?> "type"
 
 type LineParser = P.Parsec [String] ()

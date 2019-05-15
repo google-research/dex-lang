@@ -1,0 +1,6 @@
+
+f :: A a b. a -> a
+f x = x
+
+y :: A a. a => a
+y = 1

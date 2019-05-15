@@ -1,11 +1,13 @@
-module Inference (typePass) where
+module Inference (typePass, inferKinds) where
 
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
+import Control.Monad.Writer
 import Control.Monad.State
 import Data.List (nub, (\\))
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as M
 
 import Syntax
 import Env
@@ -14,6 +16,7 @@ import Type
 import PPrint
 import Fresh
 import Pass
+import Util (onSnd)
 
 type Subst   = Env Type
 type TempEnv = Env Kind
@@ -241,3 +244,31 @@ setSubst update state = state { subst = update (subst state) }
 
 setTempEnv :: (TempEnv -> TempEnv) -> InferState -> InferState
 setTempEnv update state = state { tempEnv = update (tempEnv state) }
+
+inferKinds :: [Var] -> Type -> Except [Kind]
+inferKinds vs ty = do
+  let kinds = execWriter (collectKinds TyKind ty)
+  m <- case fromUnambiguousList kinds of
+    Nothing -> throw TypeErr $ "Conflicting kinds for " ++ pprint vs
+    Just m -> return m
+  let lookupKind v = case M.lookup v m of
+        Nothing   -> Left $ Err TypeErr $ "Ambiguous kind for " ++ pprint v
+        Just kind -> Right kind
+  mapM lookupKind vs
+
+fromUnambiguousList :: (Ord k, Eq a) => [(k, a)] -> Maybe (M.Map k a)
+fromUnambiguousList xs = sequence $ M.fromListWith checkEq (map (onSnd Just) xs)
+  where checkEq (Just v) (Just v') | v == v' = Just v
+                                   | otherwise = Nothing
+
+collectKinds :: Kind -> Type -> Writer [(Var, Kind)] ()
+collectKinds kind ty = case ty of
+  BaseType _    -> return ()
+  TypeVar v     -> tell [(v, kind)]
+  ArrType a b   -> recur kind       a >> recur kind b
+  TabType a b   -> recur IdxSetKind a >> recur kind b
+  Forall _ body -> recur kind body
+  Exists body   -> recur kind body
+  IdxSetLit _   -> return ()
+  BoundTVar _   -> return ()
+  where recur = collectKinds
