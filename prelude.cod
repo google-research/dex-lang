@@ -1,22 +1,65 @@
+iadd :: Int -> Int -> Int
 iadd x y = %iadd (x, y)
+
+isub :: Int -> Int -> Int
 isub x y = %isub (x, y)
+
+imul :: Int -> Int -> Int
 imul x y = %imul (x, y)
+
+fadd :: Real -> Real -> Real
 fadd x y = %fadd (x, y)
+
+fsub :: Real -> Real -> Real
 fsub x y = %fsub (x, y)
+
+fmul :: Real -> Real -> Real
 fmul x y = %fmul (x, y)
+
+fdiv :: Real -> Real -> Real
 fdiv x y = %fdiv (x, y)
+
+pow :: Int -> Int -> Int
 pow x y = %pow (x, y)
+
+exp :: Real -> Real
 exp x = %exp x
+
+log :: Real -> Real
 log x = %log x
+
+sqrt :: Real -> Real
 sqrt x = %sqrt x
+
+sin :: Real -> Real
 sin x = %sin x
+
+cos :: Real -> Real
 cos x = %cos x
+
+tan :: Real -> Real
 tan x = %tan x
+
+hash :: Int -> Int -> Int
 hash x y = %hash (x, y)
+
+iota :: Int -> E i. i => Int
 iota n = %iota n
-fold f x0 xs = %fold (lam (x, y). f x y, x0, xs)
-rand x = %rand x
-sum  = fold fadd 0.0
-isum = fold iadd 0
-map f x = for i. f x.i
+
+real :: Int -> Real
 real x = %inttoreal x
+
+fold :: A i a b. (b -> a -> b) -> b -> i=>a -> b
+fold f x0 xs = %fold (lam (x, y). f x y, x0, xs)
+
+rand :: Int -> Real
+rand x = %rand x
+
+sum :: A i. i=>Real -> Real
+sum  = fold fadd 0.0
+
+isum :: A i. i=>Int -> Int
+isum = fold iadd 0
+
+map :: A i a b. (a -> b) -> i=>a -> i=>b
+map f x = for i. f x.i
