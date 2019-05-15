@@ -17,9 +17,11 @@
 
 (define-derived-mode coddle-mode fundamental-mode "coddle"
   (setq font-lock-defaults '(coddle-highlights))
+  (setq-local comment-start "--")
+  (setq-local comment-end "")
   (setq-local syntax-propertize-function
               (syntax-propertize-rules (".>\\( +\\)" (1 "."))))
-   (set-syntax-table coddle-mode-syntax-table))
+  (set-syntax-table coddle-mode-syntax-table))
 
 (add-to-list 'auto-mode-alist '("\\.cd\\'"  . coddle-mode))
 (add-to-list 'auto-mode-alist '("\\.cod\\'" . coddle-mode))
