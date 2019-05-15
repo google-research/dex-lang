@@ -131,7 +131,8 @@ checkPat :: UPat -> Type -> InferM Pat
 checkPat pat ty = do tree <- traverse addFresh pat
                      unify (patType tree) ty
                      return tree
-  where addFresh (v,_) = do { t <- freshTy; return (v,t) }
+  where addFresh (v, Nothing) = do { ty <- freshTy; return (v, ty) }
+        addFresh (v, Just ty) = return (v, ty)
 
 splitFun :: Type -> InferM Constraint
 splitFun f = case f of

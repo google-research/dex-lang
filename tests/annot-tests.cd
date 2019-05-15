@@ -1,10 +1,33 @@
-
 f :: A a b. a -> a
 f x = x
+
+> Parse error: 1:19:
+>   |
+> 1 | f :: A a b. a -> a
+>   |                   ^
+> Type error: Ambiguous kind for b
 
 y :: A a. a => a
 y = 1
 
+> Parse error: 1:17:
+>   |
+> 1 | y :: A a. a => a
+>   |                 ^
+> Type error: Conflicting kinds for [a]
+
 :t let g :: A a. a -> a ;
        g x = x
     in g
+
+> A a. (a -> a)
+
+
+:t let f x::Int = x in f 1
+
+> Int
+
+
+:t let f x::Real = x in f 1
+
+> Type error: can't unify Int and Real
