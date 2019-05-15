@@ -1,4 +1,5 @@
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
@@ -326,6 +327,9 @@ instance HasTypeVars Expr where
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithB  vs (v,ty) = liftA ((,) v) (recurWithTy vs ty)
 
+instance HasTypeVars (RecTree (Var, Type)) where
+  subFreeTVsBVs bvs f tree = traverse f' tree
+    where f' (v, ty) = liftA ((,) v) (subFreeTVsBVs bvs f ty)
 
 freeLVars :: Expr -> [Var]
 freeLVars = freeLVarsEnv mempty

@@ -28,19 +28,19 @@ type Constraint = (Type, Type)
 
 typePass :: UDecl -> TopPass TypeEnv Decl
 typePass decl = case decl of
-  UTopLet (v,_) expr -> do
-    (ty, expr') <- translate expr
-    putEnv $ newFullEnv [(v,ty)] []
-    return $ TopLet (v,ty) expr'
+  UTopLet b expr -> do
+    (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
+    putEnv $ newFullEnv [b'] []
+    return $ TopLet b' expr'
   UTopUnpack (v,_) expr -> do
-    (ty, expr') <- translate expr
+    (ty, expr') <- liftTop (infer expr)
     let iv = rawName "idx" -- TODO: sort out variables properly
     ty' <- liftEither $ unpackExists ty iv
     putEnv $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
     return $ TopUnpack (v,ty') iv expr'
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
-    (ty, expr') <- translate expr
+    (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
     case cmd of
       GetType -> do writeOut (pprint ty)
                     return $ EvalCmd NoOp
@@ -48,10 +48,8 @@ typePass decl = case decl of
                     return $ EvalCmd (Command cmd expr')
       _ -> return $ EvalCmd (Command cmd expr')
 
-  where translate expr = liftTopPass (InferState mempty mempty) mempty (inferTop expr)
-
-inferTop :: UExpr -> InferM (Type, Expr)
-inferTop expr = do infer expr >>= uncurry generalize
+liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
+liftTop m  = liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
 
 infer :: UExpr -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind

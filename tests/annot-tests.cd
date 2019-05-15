@@ -36,8 +36,23 @@ y = 1
        g x = x
     in g
 
-> A a. (a -> Int) -> (a -> Int)
+> A a. ((a -> Int) -> (a -> Int))
 
 :t let g :: A a. a -> a ;
        g x = iadd x x
     in g
+
+> Type error: can't unify Int and T_1
+
+h :: A a b. (a -> b) -> (a -> b)
+h x = x
+
+-- TODO: binders are flipped.. is this a bug or just a debruijn thing?
+:t h
+
+> A b a. ((a -> b) -> (a -> b))
+
+fun :: A a. a -> a
+fun x = sin x
+
+> Type error: can't unify Real and T
