@@ -4,3 +4,7 @@ f x = x
 
 y :: A a. a => a
 y = 1
+
+:t let g :: A a. a -> a ;
+       g x = x
+    in g

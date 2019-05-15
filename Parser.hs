@@ -132,7 +132,7 @@ builtinExpr = do
 declExpr :: Parser UExpr
 declExpr = do
   symbol "let"
-  bindings <- (unpackDecl <|> assignDecl) `sepBy` symbol ";"
+  bindings <- (unpackDecl <|> typedLocalLet <|> localLet) `sepBy` symbol ";"
   symbol "in"
   body <- expr
   return $ foldr unpackBinding body bindings
@@ -164,8 +164,21 @@ unpackDecl = do
   body <- expr
   return $ UnpackDecl v body
 
-assignDecl :: Parser LocalDecl
-assignDecl = do
+typedLocalLet :: Parser LocalDecl
+typedLocalLet = do
+  v <- try (varName <* symbol "::")
+  ty <- typeExpr <* symbol ";"
+  v' <- varName
+  if v' /= v
+    then fail "Type declaration variable must match assignment variable."
+    else return ()
+  wrap <- idxLhsArgs <|> lamLhsArgs
+  symbol "="
+  body <- expr
+  return $ AssignDecl (RecLeaf (v, Just ty)) (wrap body)
+
+localLet :: Parser LocalDecl
+localLet = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
