@@ -19,7 +19,7 @@ import PPrint
 type Prog = [(String, Except UDecl)]
 
 data LocalDecl = AssignDecl UPat UExpr
-               | UnpackDecl Var UExpr
+               | UnpackDecl UBinder Var UExpr
 
 parseProg :: String -> Prog
 parseProg source = map (\s -> (s, parseTopDecl s)) (splitDecls source)
@@ -67,9 +67,17 @@ typedTopLet = do
 
 topUnpack :: Parser UDecl
 topUnpack = do
-  b <- try (binder <* symbol "=" <* symbol "unpack")
+  (b, tv) <- try unpackBinder
   body <- expr
-  return $ UTopUnpack b body
+  return $ UTopUnpack b tv body
+
+unpackBinder :: Parser (UBinder, Var)
+unpackBinder = do
+  b <- binder
+  symbol ","
+  tv <- varName
+  symbol "=" >> symbol "unpack"
+  return (b, tv)
 
 topLet :: Parser UDecl
 topLet = do
@@ -139,7 +147,7 @@ declExpr = do
   where unpackBinding :: LocalDecl -> UExpr -> UExpr
         unpackBinding decl body = case decl of
           AssignDecl p binding -> ULet    p binding body
-          UnpackDecl v binding -> UUnpack v binding body
+          UnpackDecl b v binding -> UUnpack b v binding body
 
 lamExpr :: Parser UExpr
 lamExpr = do
@@ -160,9 +168,9 @@ forExpr = do
 -- decl :: Parser (UPat, UExpr)
 unpackDecl :: Parser LocalDecl
 unpackDecl = do
-  v <- try (varName <* symbol "=" <* symbol "unpack")
+  (b, tv) <- try unpackBinder
   body <- expr
-  return $ UnpackDecl v body
+  return $ UnpackDecl b tv body
 
 typedLocalLet :: Parser LocalDecl
 typedLocalLet = do

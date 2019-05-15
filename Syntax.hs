@@ -111,14 +111,14 @@ data UExpr = ULit LitVal
            | UApp UExpr UExpr
            | UFor UBinder UExpr
            | UGet UExpr IdxExpr
-           | UUnpack Var UExpr UExpr
+           | UUnpack UBinder Var UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
 type UBinder = (Var, Maybe Type)
 data UDecl = UTopLet    UBinder UExpr
-           | UTopUnpack UBinder UExpr
+           | UTopUnpack UBinder Var UExpr
            | UEvalCmd (Command UExpr)
 
 type UPat = RecTree UBinder
@@ -352,10 +352,12 @@ freeLVarsEnv env expr = case expr of
   where recur = freeLVarsEnv env
         recurWith b = freeLVarsEnv (addVs b env)
 
+-- TODO: include type variables, since they're now lexcially scoped
+
 freeVars :: UDecl -> [Var]
 freeVars decl = case decl of
   UTopLet    _ expr -> freeVarsUExpr' expr
-  UTopUnpack _ expr -> freeVarsUExpr' expr
+  UTopUnpack _ _ expr -> freeVarsUExpr' expr
   UEvalCmd (Command _ expr) -> freeVarsUExpr' expr
   UEvalCmd NoOp -> []
 
@@ -374,7 +376,7 @@ freeVarsUExpr expr = case expr of
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
-  UUnpack v e body -> liftM2 (<>) (recur e) (recurWith [(v, Nothing)] body)
+  UUnpack (v,_) _ e body -> liftM2 (<>) (recur e) (recurWith [(v, Nothing)] body)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
@@ -383,5 +385,5 @@ freeVarsUExpr expr = case expr of
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
   UTopLet    (v,_) _ -> [v]
-  UTopUnpack (v,_) _ -> [v]
+  UTopUnpack (v,_) _ _ -> [v]
   UEvalCmd _ -> []

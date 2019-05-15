@@ -7,19 +7,19 @@
 
 > [20.0]
 
-:p let x = unpack iota 100
+:p let x, nx = unpack iota 100
    in isum (for i. x.i)
 
 > [4950]
 
 :p let vdot x y = sum (for i. x.i * y.i * 2.0);
-       x = unpack iota 3;
+       x, nx = unpack iota 3;
        y = map real x
    in vdot y y
 
 > [10.0]
 
-:p let x = unpack iota 3;
+:p let x, nx = unpack iota 3;
        y = map real x;
        z = for i j. y.i * y.j
    in sum (for i. sum (z.i))
@@ -30,7 +30,7 @@
 -- :p let x = unpack iota 10000;
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
-arr = unpack iota 7
+arr, nArr = unpack iota 7
 
 
 fun = lam y. sum (map real arr) + y

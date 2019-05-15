@@ -11,14 +11,16 @@ import Control.Monad.Reader
 
 type DeShadowM a = Pass FreshSubst () a
 
+-- TODO: deshadow lexically scoped type variables
+
 deShadowPass :: UDecl -> TopPass FreshSubst UDecl
 deShadowPass decl = case decl of
   UTopLet b expr -> do checkTopShadow b
                        putEnv (newSubst (fst b))
                        liftM (UTopLet b) $ deShadowTop expr
-  UTopUnpack b expr -> do checkTopShadow b
-                          putEnv (newSubst (fst b))
-                          liftM (UTopUnpack b) $ deShadowTop expr
+  UTopUnpack b tv expr -> do checkTopShadow b
+                             putEnv (newSubst (fst b))
+                             liftM (UTopUnpack b tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -55,11 +57,11 @@ deShadowExpr expr = case expr of
     body' <- extendWith scope (recur body)
     return $ UFor b' body'
   UGet e v -> liftM2 UGet (recur e) (asks (getRenamed v))
-  UUnpack v bound body -> do
+  UUnpack (v,ty) tv bound body -> do
     bound' <- recur bound
     ([(v',_)], scope) <- freshen [(v,Nothing)]
     body' <- extendWith scope (recur body)
-    return $ UUnpack v' bound' body'
+    return $ UUnpack (v',ty) tv bound' body'
   URecCon r -> liftM URecCon $ traverse recur r
   -- TODO: deshadow type as well when we add scoped type vars
   UAnnot body ty -> liftM (flip UAnnot ty) (recur body)

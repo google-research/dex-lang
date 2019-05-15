@@ -32,12 +32,11 @@ typePass decl = case decl of
     (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
     putEnv $ newFullEnv [b'] []
     return $ TopLet b' expr'
-  UTopUnpack (v,_) expr -> do
+  UTopUnpack (v,_) tv expr -> do
     (ty, expr') <- liftTop (infer expr)
-    let iv = rawName "idx" -- TODO: sort out variables properly
-    ty' <- liftEither $ unpackExists ty iv
-    putEnv $ newFullEnv [(v,ty')] [(iv, IdxSetKind)]
-    return $ TopUnpack (v,ty') iv expr'
+    ty' <- liftEither $ unpackExists ty tv
+    putEnv $ FullEnv (v@>ty') (tv@>IdxSetKind)
+    return $ TopUnpack (v,ty') tv expr'
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
@@ -92,9 +91,8 @@ check expr reqTy = case expr of
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
-  UUnpack v bound body -> do
+  UUnpack (v, Nothing) tv bound body -> do
     (maybeEx, bound') <- infer bound >>= zonk
-    tv <- fresh $ "r"
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
     body' <- local (  setLEnv (addV (v, boundTy))
