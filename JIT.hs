@@ -157,6 +157,7 @@ compileStatement statement = case statement of
 
   Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
+  Free v -> return () -- TODO!
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of

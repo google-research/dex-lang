@@ -18,7 +18,8 @@ import Fresh
 
 type ImpM a = Pass ImpEnv ImpState a
 type ImpEnv = FullEnv (Type, RecTree Name) Name
-data ImpState = ImpState { blocks :: [[Statement]] }
+data ImpState = ImpState { blocks :: [[Statement]]
+                         , cellsInScope :: [Var] }
 
 impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
@@ -52,8 +53,8 @@ impExprTop :: Expr -> TopPass ImpEnv ImpProgram
 impExprTop expr = do
   env <- getEnv
   (iexpr, state) <- liftEither $
-                      runPass env (ImpState [[]]) (envToScope env) (toImp expr)
-  let ImpState [statements] = state
+            runPass env (ImpState [[]] []) (envToScope env) (toImp expr)
+  let ImpState [statements] _ = state
   return $ ImpProgram (reverse statements) (toList iexpr)
 
 envToScope :: ImpEnv -> FreshScope
@@ -69,8 +70,9 @@ toImp expr = case expr of
   App (Builtin b) args -> do args' <- toImp args
                              return $ RecLeaf $ IBuiltinApp b (toList args')
   Let p bound body -> do
-    bound' <- toImp bound
+    (bound', cells) <- collectAllocs $ toImp bound
     envUpdates <- traverse (uncurry letBind) (recTreeZip p bound')
+    freeCells cells
     local (setLEnv $ addVs envUpdates) (toImp body)
   Get x i -> do xs <- toImp x
                 RecLeaf i' <- asks $ snd . (!i) . lEnv
@@ -157,7 +159,7 @@ newVar expr t = do v <- fresh "var"
                    return v
 
 addLet :: (Var, IType) -> IExpr -> ImpM ()
-addLet (v, ty) expr = do add $ Alloc v ty
+addLet (v, ty) expr = do addAlloc v ty
                          add $ Update v [] expr
 
 writeCell :: Var -> IExpr -> ImpM ()
@@ -165,8 +167,11 @@ writeCell v val = add $ Update v [] val
 
 newCell :: IType -> ImpM Var
 newCell ty = do v <- fresh "cell"
-                add $ Alloc v ty
+                addAlloc v ty
                 return v
+
+freeCells :: [Var] -> ImpM ()
+freeCells = mapM_ (add . Free)
 
 flatType :: Type -> ImpM (RecTree IType)
 flatType ty = case ty of
@@ -206,8 +211,19 @@ add :: Statement -> ImpM ()
 add s = do curBlock:rest <- gets blocks
            modify $ setBlocks (const $ (s:curBlock):rest)
 
-setBlocks update state = state { blocks = update (blocks state) }
+addAlloc :: Var -> IType -> ImpM ()
+addAlloc v ty = do add $ Alloc v ty
+                   modify $ setCellsInScope (v:)
 
+collectAllocs :: ImpM a -> ImpM (a, [Var])
+collectAllocs m = do prev <- gets cellsInScope
+                     ans <- m
+                     new <- gets cellsInScope
+                     modify $ setCellsInScope (const prev)
+                     return (ans, new)
+
+setBlocks update state = state { blocks = update (blocks state) }
+setCellsInScope update state = state {cellsInScope = update (cellsInScope state)}
 
 -- === type checking imp programs ===
 
@@ -249,6 +265,7 @@ checkStatementTy statement = case statement of
                           void $ mapM checkStatementTy block
   Alloc v ty@(IType _ shape) -> do void $ mapM checkIsInt shape
                                    addVar v ty
+  Free _ -> return () -- TODO (will be easier if we make scopes explicit)
 
 addVar :: Var -> IType -> ImpCheckM ()
 addVar v ty = do
