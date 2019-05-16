@@ -80,10 +80,12 @@ check expr reqTy = case expr of
     arg' <- check arg a
     unify b reqTy
     return $ App fexpr' arg'
-  UFor (v, Nothing) body -> do
+  UFor b body -> do
     (i, elemTy) <- splitTab reqTy
-    body' <- recurWith [(v, i)] body elemTy
-    return $ For (v, i) body'
+    b'@(_,i') <- inferBinder b
+    unify i' i
+    body' <- recurWith [b'] body elemTy
+    return $ For b' body'
   UGet tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab tabTy
@@ -122,10 +124,12 @@ checkPat p ty = do (ty', p') <- inferPat p
                    return p'
 
 inferPat :: UPat -> InferM (Type, Pat)
-inferPat pat = do tree <- traverse addFresh pat
+inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
-  where addFresh (v, Nothing) = do { ty <- freshTy; return (v, ty) }
-        addFresh (v, Just ty) = return (v, ty)
+
+inferBinder :: UBinder -> InferM Binder
+inferBinder (v, Nothing) = do { ty <- freshTy; return (v, ty) }
+inferBinder (v, Just ty) = return (v, ty)
 
 inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
 inferLetBinding pat expr = case pat of

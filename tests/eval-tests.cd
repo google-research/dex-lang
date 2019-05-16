@@ -32,6 +32,9 @@
 --    in sum (for i: randint (key x.i) 10)
 arr, nArr = unpack iota 7
 
+:p isum for i::nArr. 1
+
+> [7]
 
 fun = lam y. sum (map real arr) + y
 
