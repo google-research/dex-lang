@@ -110,8 +110,9 @@ toImpFor (i, TypeVar n) body = do
   cells <- traverse newCell cellTypes
   startBlock
   let updateEnv = setLEnv $ addV $ (i, (TypeVar n, RecLeaf i'))
-  results <- local updateEnv (toImp body)
+  (results, newCells) <- collectAllocs $ local updateEnv (toImp body)
   traverse (\(v,x) -> add $ Update v [i'] x) (recTreeZipEq cells results)
+  freeCells newCells
   block <- endBlock
   add $ Loop i' n block
   return $ fmap IVar cells
