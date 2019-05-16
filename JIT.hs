@@ -146,18 +146,16 @@ compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
   Update v idxs expr -> do val <- compileExpr expr
                            cell <- lookupCellVar v
-                           idxs' <- mapM lookupValVar idxs
+                           idxs' <- mapM lookupScalar idxs
                            cell' <- idxCell cell idxs'
                            writeCell cell' val
-  ImpLet (v, _) expr -> do val <- compileExpr expr
-                           modify $ setImpVarEnv (addV (v, (Left val)))
   Alloc v (IType b shape) -> do
-    shape' <- mapM lookupValVar shape
+    shape' <- mapM lookupScalar shape
     cell <- case shape' of [] -> alloca b (nameTag v)
                            _ -> malloc b shape' (nameTag v)
     modify $ setImpVarEnv (addV (v, (Right cell)))
 
-  Loop i n body -> do n' <- lookupValVar n
+  Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
 
 compileExpr :: IExpr -> CompileM CompileVal
@@ -166,11 +164,11 @@ compileExpr expr = case expr of
   IVar v -> do x <- lookupImpVar v
                case x of
                  Left val -> return val
-                 Right (Cell ptr@(Ptr _ ty) shape) -> case shape of
-                    [] -> do { op <- load ptr; return $ ScalarVal op ty }
-                    _ -> return $ ArrayVal ptr shape
+                 Right cell@(Cell ptr shape) -> case shape of
+                    [] -> readScalarCell cell
+                    _  -> return $ ArrayVal ptr shape
   IGet v i -> do ArrayVal ptr (_:shape) <- compileExpr v
-                 ScalarVal i' _ <- lookupValVar i
+                 ScalarVal i' _ <- lookupScalar i
                  ptr'@(Ptr _ ty) <- indexPtr ptr shape i'
                  case shape of
                    [] -> do x <- load ptr'
@@ -183,8 +181,14 @@ compileExpr expr = case expr of
 lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
 lookupImpVar v = gets $ (! v) . impVarEnv
 
-lookupValVar :: Var -> CompileM CompileVal
-lookupValVar v = do { Left val <- lookupImpVar v; return val }
+readScalarCell :: Cell -> CompileM CompileVal
+readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
+                                             return $ ScalarVal op ty
+
+lookupScalar :: Var -> CompileM CompileVal
+lookupScalar v = do x <- lookupImpVar v
+                    case x of Left val -> return val
+                              Right cell -> readScalarCell cell
 
 lookupCellVar :: Var -> CompileM Cell
 lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }

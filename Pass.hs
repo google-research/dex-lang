@@ -3,7 +3,7 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), extendWith,
+             (>+>), extendWith, throwIf,
              EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
 
 import Control.Monad.State.Strict
@@ -76,10 +76,14 @@ runPass env state scope m = runFreshT (runStateT (runReaderT m env) state) scope
 
 evalPass env state stem = liftM fst . runPass env state stem
 
-assertEq :: (Pretty a, Eq a) => a -> a -> String -> Except ()
+assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
+
+throwIf :: MonadError Err m => Bool -> String -> m ()
+throwIf True  s = throw CompilerErr s
+throwIf False _ = return ()
 
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e

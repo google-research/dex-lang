@@ -18,12 +18,12 @@ checkTyped :: Decl -> TopPass TypeEnv Decl
 checkTyped decl = decl <$ case decl of
   TopLet (v,ty) expr -> do
     ty' <- check expr
-    liftEither $ assertEq ty ty' ""
+    assertEq ty ty' ""
     putEnv $ newFullEnv [(v,ty)] []
   TopUnpack (v,ty) iv expr -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
-    liftEither $ assertEq ty ty' ""
+    assertEq ty ty' ""
     putEnv $ newFullEnv [(v,ty)] [(iv, IdxSetKind)]
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
@@ -79,7 +79,7 @@ getType' check expr = case expr of
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
     checkEq s ty getTy =
       if check then do ty' <- getTy
-                       liftEither $ assertEq ty ty' ("Unexpected type in " ++ s)
+                       assertEq ty ty' ("Unexpected type in " ++ s)
                else return ()
 
     checkTy :: Type -> TypeM ()

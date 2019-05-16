@@ -157,7 +157,8 @@ newVar expr t = do v <- fresh "var"
                    return v
 
 addLet :: (Var, IType) -> IExpr -> ImpM ()
-addLet (v, ty) expr = add $ ImpLet (v, ty) expr
+addLet (v, ty) expr = do add $ Alloc v ty
+                         add $ Update v [] expr
 
 writeCell :: Var -> IExpr -> ImpM ()
 writeCell v val = add $ Update v [] val
@@ -210,9 +211,7 @@ setBlocks update state = state { blocks = update (blocks state) }
 
 -- === type checking imp programs ===
 
-type ImpCheckM a = Pass () (Env VarType) a
-type IsMutable = Bool
-type VarType = (IsMutable, IType)
+type ImpCheckM a = Pass () (Env IType) a
 
 checkImp :: ImpDecl -> TopPass (Env IType) ImpDecl
 checkImp decl = decl <$ case decl of
@@ -226,37 +225,32 @@ checkImp decl = decl <$ case decl of
   where
     check :: ImpProgram -> TopPass (Env IType) [IType]
     check prog = do env <- getEnv
-                    let env' = fmap (\t->(False,t)) env
                     liftEither $ addContext (pprint prog) $
-                      evalPass () env' mempty (impProgType prog)
+                      evalPass () env mempty (impProgType prog)
 
 impProgType :: ImpProgram -> ImpCheckM [IType]
 impProgType (ImpProgram statements exprs) = do
   mapM checkStatementTy statements
   mapM impExprType exprs
 
-lookupVar :: Var -> ImpCheckM VarType
+lookupVar :: Var -> ImpCheckM IType
 lookupVar v = gets $ (! v)
 
 checkStatementTy :: Statement -> ImpCheckM ()
 checkStatementTy statement = case statement of
-  Update v idxs expr -> do (mut, IType b shape ) <- gets $ (! v)
-                           IType b' shape' <- impExprType expr
-                           throwIf (not mut) $ "Updating immutable variable"
-                           throwIf (b /= b') $ "Base type mismatch"
-                           throwIf (drop (length idxs) shape /= shape') $
-                                    "Dimension mismatch"
-  ImpLet (v,ty) expr -> do _ <- impExprType expr
-                           -- doesn't work without alias checking for sizes
-                           -- throwIf (ty' /= ty) $ "Type doesn't match binder"
-                           addVar v (False, ty)
-  Loop i size block -> do addVar i (False, intTy)
+  Update v _ expr -> do
+    IType b  _ <- gets $ (! v)
+    IType b' _ <- impExprType expr
+    assertEq b b' "Base type mismatch"
+    -- can't do this check unless we track assignments a bit
+    -- assertEq (drop (length idxs) shape) shape' "Dimension mismatch"
+  Loop i size block -> do addVar i intTy
                           checkIsInt size
                           void $ mapM checkStatementTy block
   Alloc v ty@(IType _ shape) -> do void $ mapM checkIsInt shape
-                                   addVar v (True, ty)
+                                   addVar v ty
 
-addVar :: Var -> VarType -> ImpCheckM ()
+addVar :: Var -> IType -> ImpCheckM ()
 addVar v ty = do
   env <- get
   throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
@@ -265,7 +259,7 @@ addVar v ty = do
 impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of
   ILit val -> return $ IType (litType val) []
-  IVar  v -> gets $ snd . (! v)
+  IVar  v -> gets $ (! v)
   IGet e i -> do IType b (_:shape) <- impExprType e
                  checkIsInt i
                  return $ IType b shape
@@ -287,10 +281,5 @@ impExprType expr = case expr of
                                                      ++ " Got " ++ pprint ity
 
 checkIsInt :: Var -> ImpCheckM ()
-checkIsInt v = do (_, ty) <- lookupVar v
-                  throwIf (ty /= intTy) $
-                    "Not a valid size " ++ pprint ty
-
-throwIf :: Bool -> String -> ImpCheckM ()
-throwIf True = throw CompilerErr
-throwIf False = const (return ())
+checkIsInt v = do ty <- lookupVar v
+                  assertEq ty intTy "Not a valid size"

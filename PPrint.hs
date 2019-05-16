@@ -138,10 +138,9 @@ instance Pretty Builtin where
 
 instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
-  pretty (ImpLet b expr) = p (binder b) <+> "=" <+> p expr
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> vcat (map p block))
-  pretty (Alloc v ty) = "cell" <+> p (binder (v,ty))
+  pretty (Alloc v ty) = p (binder (v,ty))
 
 instance Pretty IExpr where
   pretty (ILit v) = p v

@@ -127,7 +127,6 @@ type UPat = RecTree UBinder
 
 data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
 data Statement = Update Var [Index] IExpr
-               | ImpLet IBinder IExpr
                | Loop Index Size [Statement]
                | Alloc Var IType -- mutable
                | Free Var
