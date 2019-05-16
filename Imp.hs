@@ -217,6 +217,7 @@ addAlloc v ty = do add $ Alloc v ty
 
 collectAllocs :: ImpM a -> ImpM (a, [Var])
 collectAllocs m = do prev <- gets cellsInScope
+                     modify $ setCellsInScope (const [])
                      ans <- m
                      new <- gets cellsInScope
                      modify $ setCellsInScope (const prev)

@@ -157,7 +157,9 @@ compileStatement statement = case statement of
 
   Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
-  Free v -> return () -- TODO!
+  Free v -> do (Cell (Ptr ptr _) shape) <- lookupCellVar v
+               case shape of [] -> return ()
+                             _  -> addInstr $ L.Do (externCall freeFun [ptr])
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of
@@ -373,6 +375,7 @@ randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
 randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
 hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
 mallocFun  = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
+freeFun    = ExternFunSpec "free_cod" charPtrTy [charPtrTy] ["ptr"]
 memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
                                                    ["dest", "src", "nbytes"]
 
@@ -400,7 +403,7 @@ makeModule decls (fstBlock:blocks) = mod
                           , L.moduleDefinitions =
                                 L.GlobalDefinition fundef
                               : map externDecl
-                                  [mallocFun, memcpyFun,
+                                  [mallocFun, freeFun, memcpyFun,
                                    hashFun, randFun, randIntFun,
                                    expFun, logFun, sqrtFun,
                                    sinFun, cosFun, tanFun]

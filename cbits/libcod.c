@@ -7,6 +7,10 @@ char* malloc_cod(long nbytes) {
   return malloc(nbytes);
 }
 
+char* free_cod(char* ptr) {
+  free(ptr);
+}
+
 void memcpy_cod(char* dest, const char* src, long nbytes) {
   memcpy(dest, src, nbytes);
 }

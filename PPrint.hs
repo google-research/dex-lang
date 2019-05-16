@@ -141,6 +141,7 @@ instance Pretty Statement where
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> vcat (map p block))
   pretty (Alloc v ty) = p (binder (v,ty))
+  pretty (Free v) = "free" <+> p v
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
