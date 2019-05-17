@@ -139,7 +139,7 @@ instance Pretty Builtin where
 instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
-                               nest 4 (hardline <> vcat (map p block))
+                               nest 4 (hardline <> p block)
   pretty (Alloc v ty) = p (binder (v,ty))
   pretty (Free v) = "free" <+> p v
 
@@ -152,10 +152,8 @@ instance Pretty IExpr where
 instance Pretty IType where
   pretty (IType ty shape) = p ty <> p shape
 
-instance Pretty ImpProgram where
-  pretty (ImpProgram block exprs) = vcat (map p block) <>
-                                      hardline <> "return" <>
-                                      nest 2 (hardline <> (vcat (map p exprs)))
+instance Pretty ImpProg where
+  pretty (ImpProg block) = vcat (map p block)
 
 instance Pretty Value where
   pretty (Value _ vecs) = p vecs

@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr) where
+module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr, ptrAsWord,
+                 mallocBytes) where
 
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
@@ -9,31 +10,31 @@ import LLVM.Internal.Context
 
 import Foreign.Ptr
 import Foreign.Storable
+import Foreign.Marshal.Alloc (mallocBytes)
 
 import Data.Word (Word64)
 import Data.ByteString.Char8 (unpack)
 
 foreign import ccall "dynamic"
-  haskFun :: FunPtr (IO (Ptr Word64)) -> IO (Ptr Word64)
+  haskFun :: FunPtr (IO ()) -> IO ()
 
 
-evalJit :: Int -> L.Module -> IO [Word64]
-evalJit numOutputs mod =
+evalJit :: L.Module -> IO ()
+evalJit mod =
   withContext $ \c ->
     Mod.withModuleFromAST c mod $ \m -> do
       jit c $ \ee ->
         EE.withModuleInEngine ee m $ \eee -> do
           fn <- EE.getFunction eee (L.Name "thefun")
           case fn of
-            Just fn -> do xPtr <- runJitted fn
-                          readPtrs numOutputs xPtr
+            Just fn -> runJitted fn
             Nothing -> error "Failed to fetch \"thefun\" from LLVM"
   where
     jit :: Context -> (EE.MCJIT -> IO a) -> IO a
     jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
 
-    runJitted :: FunPtr a -> IO (Ptr Word64)
-    runJitted fn = haskFun (castFunPtr fn :: FunPtr (IO (Ptr Word64)))
+runJitted :: FunPtr a -> IO ()
+runJitted fn = haskFun (castFunPtr fn :: FunPtr (IO ()))
 
 showLLVM :: L.Module -> IO String
 showLLVM m = withContext $ \c ->
@@ -45,7 +46,10 @@ readPtrs n ptr = mapM readAt [0..n-1]
   where readAt i = peek $ ptr `plusPtr` (8 * i)
 
 wordAsPtr :: Word64 -> Ptr a
-wordAsPtr x = castPtr $ wordPtrToPtr $ fromIntegral x
+wordAsPtr x = wordPtrToPtr $ fromIntegral x
+
+ptrAsWord :: Ptr a -> Word64
+ptrAsWord ptr = fromIntegral $ ptrToWordPtr ptr
 
 -- createPersistVal :: [CompileVal] -> Ptr () -> IO [PersistVal]
 -- createPersistVal v ptr = undefined -- do

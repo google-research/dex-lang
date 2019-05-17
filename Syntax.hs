@@ -11,7 +11,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                (-->), (==>), newFullEnv, freeLVars,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
-               ImpProgram (..), IExpr (..), IType (..), IBinder,
+               ImpProg (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete
@@ -125,7 +125,7 @@ type UPat = RecTree UBinder
 
 -- === imperative IR ===
 
-data ImpProgram = ImpProgram [Statement] [IExpr] deriving (Show)
+newtype ImpProg = ImpProg [Statement] deriving (Show)
 data Statement = Update Var [Index] IExpr
                | Loop Index Size [Statement]
                | Alloc Var IType -- mutable
@@ -138,8 +138,8 @@ data IExpr = ILit LitVal
            | IBuiltinApp Builtin [IExpr]
                deriving (Show, Eq)
 
-data ImpDecl = ImpTopLet [IBinder] ImpProgram
-             | ImpEvalCmd Type (Command ImpProgram)
+data ImpDecl = ImpTopLet [IBinder] ImpProg
+             | ImpEvalCmd Type [IBinder] (Command ImpProg)
 
 type IBinder = (Var, IType)
 data IType = IType BaseType [Size]  deriving (Show, Eq)

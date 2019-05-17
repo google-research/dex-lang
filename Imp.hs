@@ -24,24 +24,25 @@ data ImpState = ImpState { blocks :: [[Statement]]
 impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
   TopLet (v,ty) expr -> do
-    prog <- impExprTop expr
     let binders = impBinder v (flatType' ty)
+    prog <- impExprTop (fmap fst binders) expr
     putEnv $ FullEnv (v@>(ty, fmap fst binders)) mempty
     return $ ImpTopLet (toList binders) prog
   TopUnpack (v,ty) iv expr -> do
-    prog <- impExprTop expr
-    let binders = impBinder v (flatType' ty)
+    let binders = RecTree $ Tup [ RecLeaf (iv, intTy)
+                                , impBinder v (flatType' ty)]
+    prog <- impExprTop (fmap fst binders) expr
     putEnv $ FullEnv (v@>(ty, fmap fst binders)) (iv@>iv)
-    let b' = (iv, intTy) : toList binders
-    return $ ImpTopLet b' prog
-  EvalCmd NoOp -> return (ImpEvalCmd unitTy NoOp)
+    return $ ImpTopLet (toList binders) prog
+  EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
-    prog <- impExprTop expr
     env <- getEnv
     let ty = getType (setLEnv (fmap fst) env) expr
+    let binders = impBinder (rawName "%imptmp") (flatType' ty)
+    prog <- impExprTop (fmap fst binders) expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
-    return $ ImpEvalCmd ty (Command cmd prog)
+    return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
 
 impBinder :: Name -> RecTree a -> RecTree (Name, a)
 impBinder v tree = fmap (onFst newName) (recTreeNamed tree)
@@ -49,17 +50,22 @@ impBinder v tree = fmap (onFst newName) (recTreeNamed tree)
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
 
-impExprTop :: Expr -> TopPass ImpEnv ImpProgram
-impExprTop expr = do
+impExprTop :: RecTree Var -> Expr -> TopPass ImpEnv ImpProg
+impExprTop dest expr = do
   env <- getEnv
-  (iexpr, state) <- liftEither $
-            runPass env (ImpState [[]] []) (envToScope env) (toImp expr)
+  ((), state) <- liftEither $ runPass env (ImpState [[]] [])
+                          (envToScope env) (toImpDest dest expr)
   let ImpState [statements] _ = state
-  return $ ImpProgram (reverse statements) (toList iexpr)
+  return $ ImpProg (reverse statements)
 
 envToScope :: ImpEnv -> FreshScope
 envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
   where lNames = concat $ map (toList . snd) (toList lenv)
+
+toImpDest :: RecTree Var -> Expr -> ImpM ()
+toImpDest dest expr = do
+  out <- toImp expr
+  void $ traverse (\(v, e) -> add (Update v [] e)) (recTreeZipEq dest out)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -234,22 +240,21 @@ type ImpCheckM a = Pass () (Env IType) a
 checkImp :: ImpDecl -> TopPass (Env IType) ImpDecl
 checkImp decl = decl <$ case decl of
   ImpTopLet binders prog -> do
-    _ <- check prog
+    check binders prog
     -- doesn't work without alias checking for sizes
     -- liftEither $ assertEq ty (map snd binders) ""
     putEnv $ newEnv binders
-  ImpEvalCmd _ NoOp -> return ()
-  ImpEvalCmd _ (Command _ prog) -> void $ check prog
+  ImpEvalCmd _ _ NoOp -> return ()
+  ImpEvalCmd _ bs (Command _ prog) -> void $ check bs prog
   where
-    check :: ImpProgram -> TopPass (Env IType) [IType]
-    check prog = do env <- getEnv
-                    liftEither $ addContext (pprint prog) $
-                      evalPass () env mempty (impProgType prog)
+    check :: [IBinder] -> ImpProg -> TopPass (Env IType) ()
+    check bs prog = do
+      env <- getEnv
+      liftEither $ addContext (pprint prog) $
+          evalPass () (newEnv bs <> env) mempty (impProgType prog)
 
-impProgType :: ImpProgram -> ImpCheckM [IType]
-impProgType (ImpProgram statements exprs) = do
-  mapM checkStatementTy statements
-  mapM impExprType exprs
+impProgType :: ImpProg -> ImpCheckM ()
+impProgType (ImpProg statements) = mapM_ checkStatementTy statements
 
 lookupVar :: Var -> ImpCheckM IType
 lookupVar v = gets $ (! v)

@@ -42,8 +42,10 @@ data Ptr w = Ptr w L.Type  deriving (Show)
 data JitVal w = ScalarVal w L.Type
               | ArrayVal (Ptr w) [w]  deriving (Show)
 
+data GenCell w = Cell (Ptr w) [w]
+type Cell        = GenCell Operand
+type PersistCell = GenCell Word64
 
-data Cell = Cell (Ptr Operand) [Operand]
 type CompileVal  = JitVal Operand
 type PersistVal  = JitVal Word64
 type PersistEnv = Env PersistVal
@@ -57,7 +59,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  }
 
 type CompileM a = Pass () CompileState a
-data CompiledProg = CompiledProg [CompileVal] Module
+data CompiledProg = CompiledProg Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
 
 type Long = Operand
@@ -65,44 +67,66 @@ type NInstr = Named Instruction
 
 jitPass :: ImpDecl -> TopPass PersistEnv ()
 jitPass decl = case decl of
-  ImpTopLet bs prog -> do vals <- evalProg prog
+  ImpTopLet bs prog -> do vals <- evalProg bs prog
                           putEnv $ newEnv $ zip (map fst bs) vals
-  ImpEvalCmd _ NoOp -> return ()
-  ImpEvalCmd ty (Command cmd prog) -> case cmd of
-    Passes -> do CompiledProg _ m <- toLLVM prog
+  ImpEvalCmd _ _ NoOp -> return ()
+  ImpEvalCmd ty bs (Command cmd prog) -> case cmd of
+    Passes -> do (_, CompiledProg m) <- toLLVM bs prog
                  llvm <- liftIO $ showLLVM m
                  writeOut $ "\n\nLLVM\n" ++ llvm
-    EvalExpr -> do vals <- evalProg prog
+    EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
                    writeOut $ pprint (restructureVal ty vecs)
     TimeIt -> do t1 <- liftIO getCurrentTime
-                 evalProg prog
+                 evalProg bs prog
                  t2 <- liftIO getCurrentTime
                  writeOut $ show (t2 `diffUTCTime` t1)
     _ -> return ()
 
-evalProg :: ImpProgram -> TopPass PersistEnv [PersistVal]
-evalProg prog = do
-  CompiledProg outvals mod <- toLLVM prog
-  outWords <- liftIO $ evalJit (length (JitVals outvals)) mod
-  return $ asPersistVals outWords outvals
+evalProg :: [IBinder] -> ImpProg -> TopPass PersistEnv [PersistVal]
+evalProg bs prog = do
+  (cells, CompiledProg mod) <- toLLVM bs prog
+  liftIO $ evalJit mod
+  liftIO $ mapM readPersistCell cells
 
-toLLVM :: ImpProgram -> TopPass PersistEnv CompiledProg
-toLLVM prog = do
+-- This doesn't work with types derived from existentials, because the
+-- existentially quantified variable isn't in scope yet
+makeDestCell :: PersistEnv -> IBinder -> IO (Var, PersistCell)
+makeDestCell env (v, IType ty shape)  = do
+  ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
+  return (v, (Cell (Ptr ptr ty') shape'))
+  where shape' = map (scalarVal . (env !)) shape
+        ty' = scalarTy ty
+
+-- TODO: pass destinations as args rather than baking pointers into LLVM
+toLLVM :: [IBinder] -> ImpProg -> TopPass PersistEnv ([PersistCell], CompiledProg)
+toLLVM bs prog = do
   env <- getEnv
-  let env' = fmap (Left . asCompileVal) env
+  destCells <- liftIO $ mapM (makeDestCell env) bs
+  let env' =    fmap (Left  . asCompileVal) env
+             <> fmap (Right . asCompileCell) (newEnv destCells)
   let initState = CompileState [] [] [] "start_block" env'
-  liftEither $ evalPass () initState mempty (compileProg prog)
+  prog <- liftEither $ evalPass () initState mempty (compileProg prog)
+  return (map snd destCells, prog)
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
-asCompileVal (ArrayVal (Ptr ptr ty) shape) = ArrayVal (Ptr ptr' ty) shape'
-  where ptr' = L.ConstantOperand $ C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr ty)
-        shape' = map (constOperand IntType) shape
+asCompileVal (ArrayVal ptr shape) = ArrayVal (ptrLiteral ptr) shape'
+  where shape' = map (constOperand IntType) shape
 
-asPersistVals :: [Word64] -> [CompileVal] -> [PersistVal]
-asPersistVals words vals = case restructure words (JitVals vals) of
-                                  JitVals vals' -> vals'
+asCompileCell :: PersistCell -> Cell
+asCompileCell (Cell ptr shape) = Cell (ptrLiteral ptr) shape'
+  where shape' = map (constOperand IntType) shape
+
+ptrLiteral :: Ptr Word64 -> Ptr Operand
+ptrLiteral (Ptr ptr ty) = Ptr ptr' ty
+  where ptr' = L.ConstantOperand $
+                   C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr ty)
+
+readPersistCell :: PersistCell -> IO PersistVal
+readPersistCell (Cell (Ptr ptr ty) []) = do [word] <- readPtrs 1 (wordAsPtr ptr)
+                                            return $ ScalarVal word ty
+readPersistCell (Cell p shape) = return $ ArrayVal p shape
 
 -- TODO: concretize type with actual index set
 restructureVal :: Type -> [Vec] -> Value
@@ -133,14 +157,13 @@ constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
 constOperand RealType _ = error "floating point not yet implemented"
 
-compileProg :: ImpProgram -> CompileM CompiledProg
-compileProg (ImpProgram statements outExprs) = do
+compileProg :: ImpProg -> CompileM CompiledProg
+compileProg (ImpProg statements) = do
   mapM compileStatement statements
-  vals <- mapM compileExpr outExprs
-  finalReturn vals
+  finishBlock (L.Ret Nothing []) (L.Name "")
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
-  return $ CompiledProg vals (makeModule decls blocks)
+  return $ CompiledProg (makeModule decls blocks)
 
 compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
@@ -203,17 +226,6 @@ indexPtr (Ptr ptr ty) shape i = do
   ptr' <- evalInstr "ptr" (L.ptr ty) $ L.GetElementPtr False ptr [n] []
   return (Ptr ptr' ty)
 
-finalReturn :: [CompileVal] -> CompileM ()
-finalReturn vals = do
-  voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [litInt numBytes])
-  outPtr <- evalInstr "out" intPtrTy $ L.BitCast voidPtr intPtrTy []
-  foldM writeVal (Ptr outPtr longTy) (JitVals vals)
-  finishBlock (L.Ret (Just outPtr) []) (L.Name "")
-  where numBytes = 8 * (length (JitVals vals))
-        writeVal :: Ptr Operand -> Operand -> CompileM (Ptr Operand)
-        writeVal ptr x = store ptr x >> addPtr ptr (litInt 1)
-
-
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
 finishBlock term newName = do
   oldName <- gets blockName
@@ -247,7 +259,7 @@ idxCell :: Cell -> [CompileVal] -> CompileM Cell
 idxCell cell [] = return cell
 idxCell (Cell ptr (_:shape)) (i:idxs) = do
   size <- sizeOf shape
-  step <- mul size (scalarOp i)
+  step <- mul size (scalarVal i)
   ptr' <- addPtr ptr step
   idxCell (Cell ptr' shape) idxs
 
@@ -306,7 +318,7 @@ malloc ty shape s = do
     voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [n])
     ptr <- evalInstr s (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
     return $ Cell (Ptr ptr ty') shape'
-  where shape' = map scalarOp shape
+  where shape' = map scalarVal shape
         ty' = scalarTy ty
 
 sizeOf :: [Operand] -> CompileM Operand
@@ -315,8 +327,8 @@ sizeOf shape = foldM mul (litInt 1) shape
 mul :: Operand -> Operand -> CompileM Operand
 mul x y = evalInstr "mul" longTy $ L.Mul False False x y []
 
-scalarOp :: CompileVal -> Operand
-scalarOp (ScalarVal op _) = op
+scalarVal :: JitVal a -> a
+scalarVal (ScalarVal x _) = x
 
 addInstr :: Named Instruction -> CompileM ()
 addInstr instr = modify $ setCurInstrs (instr:)
@@ -344,7 +356,7 @@ compileUnop ty makeInstr [ScalarVal x _] =
 
 externalMono :: ExternFunSpec -> BaseType -> [CompileVal] -> CompileM CompileVal
 externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
-  ans <- evalInstr name' retTy $ externCall f (map scalarOp args)
+  ans <- evalInstr name' retTy $ externCall f (map scalarVal args)
   return $ ScalarVal ans (scalarTy baseTy)
   where name' = unpack (fromShort name)
 
@@ -387,7 +399,6 @@ cosFun     = ExternFunSpec "cos"           realTy [realTy] ["x"]
 tanFun     = ExternFunSpec "tan"           realTy [realTy] ["x"]
 
 charPtrTy = L.ptr (L.IntegerType 8)
-intPtrTy = L.ptr longTy
 longTy = L.IntegerType 64
 realTy = L.FloatingPointType L.DoubleFP
 
@@ -410,7 +421,7 @@ makeModule decls (fstBlock:blocks) = mod
                           }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
-                                , L.returnType  = longTy
+                                , L.returnType  = L.VoidType
                                 , L.basicBlocks = (fstBlock':blocks) }
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
