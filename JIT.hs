@@ -155,7 +155,7 @@ interpret_ieee_64 = wordToDouble
 
 constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
-constOperand RealType _ = error "floating point not yet implemented"
+constOperand RealType x = litReal (interpret_ieee_64 x)
 
 compileProg :: ImpProg -> CompileM CompiledProg
 compileProg (ImpProg statements) = do
@@ -281,6 +281,9 @@ litVal lit = case lit of
 
 litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
+
+litReal :: Double -> Operand
+litReal x = L.ConstantOperand $ C.Float $ L.Double x
 
 store :: Ptr Operand -> Operand -> CompileM ()
 store (Ptr ptr _) x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []

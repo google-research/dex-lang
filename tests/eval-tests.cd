@@ -120,3 +120,8 @@ fun = lam y. sum (map real arr) + y
 
 > [1.5]
 
+s = 1.0
+
+:p s
+
+> [1.0]
