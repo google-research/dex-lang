@@ -43,8 +43,11 @@ tan x = %tan x
 hash :: Int -> Int -> Int
 hash x y = %hash (x, y)
 
-iota :: Int -> E i. i => Int
-iota n = %iota n
+iota :: A i. i=>Int
+iota = %iota
+
+-- range :: Int -> E i. i=>()
+range n = %range n
 
 real :: Int -> Real
 real x = %inttoreal x

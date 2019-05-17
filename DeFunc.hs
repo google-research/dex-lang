@@ -58,6 +58,8 @@ deFuncExpr expr = case expr of
   App (Builtin b) arg -> do (_, arg') <- recur arg
                             return (DFNil, App (Builtin b) arg')
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
+  TApp (Builtin Iota) [n] -> do n' <- subTy n
+                                return $ (DFNil, TApp (Builtin Iota) [n'])
   App fexpr arg -> deFuncApp fexpr arg
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> do (b', ctx) <- bindVar b DFNil

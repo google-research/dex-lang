@@ -130,6 +130,7 @@ instance Pretty Builtin where
     Cos      -> "%cos"
     Tan      -> "%tan"
     Iota     -> "%iota"
+    Range    -> "%range"
     Hash     -> "%hash"
     Rand     -> "%rand"
     Randint  -> "%randint"

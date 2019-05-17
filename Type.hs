@@ -132,7 +132,8 @@ builtinType builtin = case builtin of
   Cos      -> realUnOpType
   Tan      -> realUnOpType
   Fold     -> foldType
-  Iota     -> iotaType
+  Iota     -> Forall [IdxSetKind] (a ==> int)
+  Range    -> int --> Exists (i ==> unitTy)
   Hash     -> tup [int, int] --> int
   Randint  -> tup [int, int] --> int
   Rand     -> int --> real
@@ -141,7 +142,6 @@ builtinType builtin = case builtin of
     ibinOpType    = tup [int, int] --> int
     fbinOpType    = tup [real, real] --> real
     realUnOpType = real --> real
-    iotaType = int --> Exists (i ==> int)
     i = BoundTVar 0
     foldType = Forall [TyKind, TyKind, IdxSetKind] $
                  tup [tup [b,a] --> b, b, k==>a] --> b

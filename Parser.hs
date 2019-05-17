@@ -267,7 +267,7 @@ builtinNames = M.fromList [
   ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),
   ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("fold", Fold), ("iota", Iota), ("inttoreal", IntToReal),
+  ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint) ]
 
 strToBuiltin :: String -> Maybe Builtin

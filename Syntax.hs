@@ -87,7 +87,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
-             | Iota | Fold
+             | Iota | Range | Fold
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | TimeIt

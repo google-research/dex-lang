@@ -71,7 +71,8 @@ toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
   Lit x -> return $ RecLeaf (ILit x)
   Var v -> asks $ fmap IVar . snd . (!v) . lEnv
-  App (Builtin Iota) n -> toImp n >>= impIota
+  TApp (Builtin Iota) n -> impIota  n
+  App (Builtin Range) n -> toImp n >>= impRange
   App (TApp (Builtin Fold) ts) args -> impFold ts args
   App (Builtin b) args -> do args' <- toImp args
                              return $ RecLeaf $ IBuiltinApp b (toList args')
@@ -123,13 +124,18 @@ toImpFor (i, TypeVar n) body = do
   add $ Loop i' n block
   return $ fmap IVar cells
 
-impIota :: RecTree IExpr -> ImpM (RecTree IExpr)
-impIota (RecLeaf n) = do
-  n' <- newVar n intTy
+impIota :: [Type] -> ImpM (RecTree IExpr)
+impIota [TypeVar n] = do
+  n' <- asks $ (!n) . tEnv
   out <- newCell (IType IntType [n'])
   i <- fresh "iIota"
   add $ Loop i n' [Update out [i] (IVar i)]
-  return $ RecTree $ Tup [RecLeaf (IVar n'), RecLeaf (IVar out)]
+  return $ RecLeaf (IVar out)
+
+impRange :: RecTree IExpr -> ImpM (RecTree IExpr)
+impRange (RecLeaf n) = do
+  n' <- newVar n intTy
+  return $ RecTree $ Tup [RecLeaf (IVar n'), RecTree (Tup [])]
 
 impFold :: [Type] -> Expr -> ImpM (RecTree IExpr)
 impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do

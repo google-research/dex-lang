@@ -23,30 +23,36 @@
 
 > Int
 
-:t let x, n = unpack iota 10
+:t let u1, n = unpack range 10;
+       x = iota :: n=>Int
    in isum x
 
 > Int
 
-:t let x, nx = unpack iota 10;
-       y, ny = unpack iota 3
+:t let u1, nx = unpack range 10;
+       u2, ny = unpack range 3;
+       x = iota :: nx=>Int;
+       y = iota :: ny=>Int
    in real (isum for i. x.i) + real (isum for j. y.j)
 
 > Real
 
-:t let x, nx = unpack iota 10;
-       y, ny = unpack iota 3
-   in sum for i. x.i + y.i
+:t let u1, nx = unpack range 10;
+       u2, ny = unpack range 3;
+       x = iota :: nx=>Int;
+       y = iota :: ny=>Int
+    in sum for i. x.i + y.i
 
 > Type error: can't unify ny and nx
 
-:t let x, nx = unpack iota 10
-   in x
+:t let u1, nx = unpack range 10
+   in iota :: nx=>Int
 
 > Type error: existential variable leaked
 
-arr, arrN = unpack iota 10
+u1, arrN = unpack range 10
 
+arr = iota :: arrN => Int
 
 xr = map real arr
 
