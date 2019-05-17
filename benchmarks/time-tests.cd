@@ -1,6 +1,9 @@
 
 matmul x y = for i k. sum (for j. x.i.j * y.j.k)
 
+matmul2 x y = for i k. sum (for j. x.i.j * y.k.j)
+
+
 xs, nx = unpack iota 500
 
 
@@ -11,3 +14,5 @@ mat = for i j. rand (hash 0 (hash xs.i xs.j))
 :time matmul mat mat
 
 > 0.621052732s
+
+
