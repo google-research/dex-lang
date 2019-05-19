@@ -76,23 +76,23 @@ instance Pretty LitVal where
 instance Pretty Expr where
   pretty expr = case expr of
     Lit val      -> p val
-    Var v        -> p v
-    Builtin b    -> p b
-    Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ pPat pat <+> "=" <> line <> p e1) <> line <>
-                                       "in" <+> p e2
-    Lam pat e    -> parens $ align $ group $ "lam" <+> pPat pat <+> "." <> line <> align (p e)
-    App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
-    For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
-    Get e ie     -> p e <> "." <> p ie
-    RecCon r     -> p r
-    Unpack v i e1 e2 ->
-      align $ parens $ "{" <> p (binder v) <> "," <+> p i <> "} = unpack"
-                                    <+> p e1 <> line <>
-                       "in" <+> p e2
-    TLam binders expr -> "Lam" <+> hcat (map (p . binder) binders) <> ":"
-                               <+> align (p expr)
-    TApp expr ts -> p expr <> p ts
-    where pPat pat = p $ fmap binder pat
+    -- Var v        -> p v
+    -- Builtin b    -> p b
+    -- Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ pPat pat <+> "=" <> line <> p e1) <> line <>
+    --                                    "in" <+> p e2
+    -- Lam pat e    -> parens $ align $ group $ "lam" <+> pPat pat <+> "." <> line <> align (p e)
+    -- App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
+    -- For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
+    -- Get e ie     -> p e <> "." <> p ie
+    -- RecCon r     -> p r
+    -- Unpack v i e1 e2 ->
+    --   align $ parens $ "{" <> p (binder v) <> "," <+> p i <> "} = unpack"
+    --                                 <+> p e1 <> line <>
+    --                    "in" <+> p e2
+    -- TLam binders expr -> "Lam" <+> hcat (map (p . binder) binders) <> ":"
+    --                            <+> align (p expr)
+    -- TApp expr ts -> p expr <> p ts
+    -- where pPat pat = p $ fmap binder pat
 
 data BinderWrap v t = BinderWrap v t
 binder = uncurry BinderWrap

@@ -7,8 +7,7 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                CmdName (..), IdxExpr, Kind (..), UBinder,
                LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
-               FullEnv (..), setLEnv, setTEnv,
-               (-->), (==>), newFullEnv, freeLVars,
+               FullEnv (..), (-->), (==>), freeLVars, asLEnv, asTEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, Statement (..), unitTy,
                ImpProg (..), IExpr (..), IType (..), IBinder,
@@ -60,7 +59,7 @@ data Type = BaseType BaseType
              deriving (Eq, Ord, Show)
 
 type Var = Name
-
+type Binder = GenBinder Type
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
 data Decl = TopLet    Binder     Expr
@@ -69,8 +68,7 @@ data Decl = TopLet    Binder     Expr
 
 data Command expr = Command CmdName expr | NoOp
 
-type Binder = (Var, Type)
-type TBinder = (Var, Kind)
+type TBinder = GenBinder Kind
 type Pat  = RecTree Binder
 type IdxSet = Type
 type IdxExpr = Var
@@ -116,7 +114,7 @@ data UExpr = ULit LitVal
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
-type UBinder = (Var, Maybe Type)
+type UBinder = GenBinder (Maybe Type)
 data UDecl = UTopLet    UBinder UExpr
            | UTopUnpack UBinder Var UExpr
            | UEvalCmd (Command UExpr)
@@ -141,7 +139,7 @@ data IExpr = ILit LitVal
 data ImpDecl = ImpTopLet [IBinder] ImpProg
              | ImpEvalCmd Type [IBinder] (Command ImpProg)
 
-type IBinder = (Var, IType)
+type IBinder = GenBinder IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
@@ -224,15 +222,12 @@ infixr 2 ==>
 data FullEnv v t = FullEnv { lEnv :: Env v
                            , tEnv :: Env t }  deriving (Show, Eq)
 
-newFullEnv :: [(Var, a)] -> [(Var, b)] -> FullEnv a b
-newFullEnv lvars tvars = FullEnv (newEnv lvars) (newEnv tvars)
+asLEnv :: Env a -> FullEnv a b
+asLEnv env = FullEnv env mempty
 
--- these should just be lenses
-setLEnv :: (Env a -> Env b) -> FullEnv a t -> FullEnv b t
-setLEnv update env = env {lEnv = update (lEnv env)}
+asTEnv :: Env b -> FullEnv a b
+asTEnv env = FullEnv mempty env
 
-setTEnv :: (Env a -> Env b) -> FullEnv v a -> FullEnv v b
-setTEnv update env = env {tEnv = update (tEnv env)}
 
 instance Semigroup (FullEnv v t) where
   FullEnv x y <> FullEnv x' y' = FullEnv (x<>x') (y<>y')
@@ -317,18 +312,18 @@ instance HasTypeVars Expr where
       RecCon r         -> liftA  RecCon (traverse recur r)
       Unpack b tv bound body -> liftA3 (\x y z -> Unpack x tv y z)
                (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
-      TLam bs expr      -> liftA  (TLam bs) (recurWith (map fst bs) expr)
+      TLam bs expr      -> liftA  (TLam bs) (recurWith (foldMap binderVars bs) expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
-          recurB (v,ty) = liftA ((,) v) (recurTy ty)
+          recurB (Bind v ty) = liftA (Bind v) (recurTy ty)
           recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithB  vs (v,ty) = liftA ((,) v) (recurWithTy vs ty)
+          recurWithB  vs (Bind v ty) = liftA (Bind v) (recurWithTy vs ty)
 
-instance HasTypeVars (RecTree (Var, Type)) where
+instance HasTypeVars (RecTree Binder) where
   subFreeTVsBVs bvs f tree = traverse f' tree
-    where f' (v, ty) = liftA ((,) v) (subFreeTVsBVs bvs f ty)
+    where f' (Bind v ty) = liftA (Bind v) (subFreeTVsBVs bvs f ty)
 
 freeLVars :: Expr -> [Var]
 freeLVars = freeLVarsEnv mempty
@@ -349,7 +344,7 @@ freeLVarsEnv env expr = case expr of
   TApp expr _      -> recur expr
 
   where recur = freeLVarsEnv env
-        recurWith b = freeLVarsEnv (addVs b env)
+        recurWith bs = freeLVarsEnv (bindFold bs <> env)
 
 -- TODO: include type variables, since they're now lexcially scoped
 
@@ -375,14 +370,16 @@ freeVarsUExpr expr = case expr of
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
-  UUnpack (v,_) _ e body -> liftM2 (<>) (recur e) (recurWith [(v, Nothing)] body)
+  UUnpack (Bind v _) _ e body -> liftM2 (<>) (recur e)
+                                   (recurWith [Bind v Nothing] body)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
-    recurWith p expr = local (addVs p) (recur expr)
+    recurWith p expr = local (bindFold p <>) (recur expr)
 
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    (v,_) _ -> [v]
-  UTopUnpack (v,_) _ _ -> [v]
+  UTopLet    (Bind v _) _ -> [v]
+  UTopUnpack (Bind v _) _ _ -> [v]
   UEvalCmd _ -> []
+

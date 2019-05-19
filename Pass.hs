@@ -3,7 +3,7 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), extendWith, throwIf,
+             (>+>), throwIf,
              EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
 
 import Control.Monad.State.Strict
@@ -88,9 +88,6 @@ throwIf False _ = return ()
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
-
-extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
-extendWith env m = local (env <>) m
 
 -- monad for doing things in a monoidal environment
 -- TODO: consider making an mtl-style typeclass

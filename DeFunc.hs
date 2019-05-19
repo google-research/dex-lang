@@ -22,16 +22,16 @@ type DFEnv = FullEnv (Type, DFVal) Type
 -- TODO: top-level freshness
 deFuncPass :: Decl -> TopPass DFCtx Decl
 deFuncPass decl = case decl of
-  TopLet (v,ty) expr -> do
+  TopLet (Bind v ty) expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
     putEnv (FullEnv (v @> (ty', val)) mempty, newSubst v)
-    return $ TopLet (v, ty') expr'
-  TopUnpack (v,ty) iv expr -> do
+    return $ TopLet (Bind v ty') expr'
+  TopUnpack (Bind v ty) iv expr -> do
     (val, expr') <- deFuncTop expr
     let ty' = deFuncType ty val
     putEnv (FullEnv (v @> (ty',val)) mempty, newSubst v)
-    return $ TopUnpack (v, ty') iv expr'
+    return $ TopUnpack (Bind v ty') iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (_, expr') <- deFuncTop expr
@@ -77,8 +77,8 @@ deFuncExpr expr = case expr of
     (TLamVal bs env body, fexpr') <- recur fexpr
     ts' <- mapM subTy ts
     (ep, envCtx) <- bindEnv env
-    let tyCtx = (FullEnv mempty (newEnv (zip (map fst bs) ts')), mempty)
-    extendWith (tyCtx <> envCtx) $ do
+    let tyEnv = asTEnv $ bindFold [Bind v t | (Bind v _, t) <- zip bs ts']
+    extendWith ((tyEnv, mempty) <> envCtx) $ do
       (ans, body') <- recur body
       return (ans, Let ep fexpr' body')
   Unpack b tv bound body -> do
@@ -103,7 +103,8 @@ deFuncApp fexpr arg = do
                      (rhsPair fexpr' arg') body')
 
 capturedEnv :: Expr -> FullEnv a b -> FullEnv a b
-capturedEnv expr env = setLEnv (envSubset (freeLVars expr)) env
+capturedEnv expr (FullEnv lenv tenv) = FullEnv lenv' tenv
+  where lenv' = envSubset (freeLVars expr) lenv
 
 envTupCon :: DFEnv -> DeFuncM Expr
 envTupCon env = do
@@ -122,11 +123,11 @@ subTy' ctx ty = maybeSub f ty
                        Nothing  -> TypeVar (getRenamed v (snd ctx))
 
 deFuncBinder :: Binder -> DFVal -> EnvM DFCtx Binder
-deFuncBinder (v, ty) x = do env <- askEnv
-                            let ty' = subTy' env ty
-                                (v', scope) = rename v (snd env)
-                            addEnv (FullEnv (v @> (ty', x)) mempty, scope)
-                            return (v', deFuncType ty' x)
+deFuncBinder (Bind v ty) x = do env <- askEnv
+                                let ty' = subTy' env ty
+                                    (v', scope) = rename v (snd env)
+                                addEnv (FullEnv (v @> (ty', x)) mempty, scope)
+                                return $ Bind v' (deFuncType ty' x)
 
 
 bindPat :: Pat -> DFVal -> DeFuncM (Pat, DFCtx)
@@ -139,8 +140,9 @@ bindEnv :: DFEnv -> DeFuncM (Pat, DFCtx)
 bindEnv env = do
   (bs', env') <- liftEnvM $ traverse (uncurry deFuncBinder) bs
   return (posPat (map RecLeaf bs'), env' <> tyCtx)
-  where bs = [((v,ty),val) | (v,(ty,val)) <- envPairs (lEnv env)]
+  where bs = [(Bind v ty, val) | Bind v (ty, val) <- envPairs (lEnv env)]
         tyCtx = (FullEnv mempty (tEnv env), mempty)
+
 
 deFuncType :: Type -> DFVal -> Type
 deFuncType (RecType r) (RecVal r') = RecType $ recZipWith deFuncType r r'

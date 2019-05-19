@@ -30,13 +30,13 @@ typePass :: UDecl -> TopPass TypeEnv Decl
 typePass decl = case decl of
   UTopLet b expr -> do
     (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
-    putEnv $ newFullEnv [b'] []
+    putEnv $ asLEnv (bind b')
     return $ TopLet b' expr'
-  UTopUnpack (v,_) tv expr -> do
+  UTopUnpack (Bind v _) tv expr -> do
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
     putEnv $ FullEnv (v@>ty') (tv@>IdxSetKind)
-    return $ TopUnpack (v,ty') tv expr'
+    return $ TopUnpack (Bind v ty') tv expr'
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
@@ -82,7 +82,7 @@ check expr reqTy = case expr of
     return $ App fexpr' arg'
   UFor b body -> do
     (i, elemTy) <- splitTab reqTy
-    b'@(_,i') <- inferBinder b
+    b'@(Bind _ i') <- inferBinder b
     unify i' i
     body' <- recurWith [b'] body elemTy
     return $ For b' body'
@@ -93,16 +93,16 @@ check expr reqTy = case expr of
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
-  UUnpack (v, Nothing) tv bound body -> do
+  UUnpack (Bind v Nothing) tv bound body -> do
     (maybeEx, bound') <- infer bound >>= zonk
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
-    body' <- local (  setLEnv (addV (v, boundTy))
-                    . setTEnv (addV (tv, IdxSetKind))) (check body reqTy)
+    let ext = FullEnv (v @> boundTy) (tv @> IdxSetKind)
+    body' <- extendWith ext $ check body reqTy
     tvsEnv <- tempVarsEnv
     tvsReqTy <- tempVars reqTy
     if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-    return $ Unpack (v, boundTy) tv bound' body'
+    return $ Unpack (Bind v boundTy) tv bound' body'
   URecCon r -> do tyExpr <- traverse infer r
                   unify reqTy (RecType (fmap fst tyExpr))
                   return $ RecCon (fmap snd tyExpr)
@@ -116,7 +116,7 @@ check expr reqTy = case expr of
 
   where
     leakErr = throw TypeErr "existential variable leaked"
-    recurWith p expr ty = local (setLEnv $ addVs p) (check expr ty)
+    recurWith p expr ty = extendWith (asLEnv (bindFold p)) (check expr ty)
 
 checkPat :: UPat -> Type -> InferM Pat
 checkPat p ty = do (ty', p') <- inferPat p
@@ -128,20 +128,22 @@ inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
 
 inferBinder :: UBinder -> InferM Binder
-inferBinder (v, Nothing) = do { ty <- freshTy; return (v, ty) }
-inferBinder (v, Just ty) = return (v, ty)
+inferBinder (Bind v Nothing) = do { ty <- freshTy; return (Bind v ty) }
+inferBinder (Bind v (Just ty)) = return $ Bind v ty
 
 inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
 inferLetBinding pat expr = case pat of
-  RecLeaf (v, Nothing) -> do
+  RecLeaf (Bind v Nothing) -> do
     (ty', expr') <- infer expr
     (forallTy, tLam) <- generalize ty' expr'
-    return (RecLeaf (v, forallTy), tLam)
-  RecLeaf (v, Just sigmaTy@(Forall kinds tyBody)) -> do
+    return (RecLeaf (Bind v forallTy), tLam)
+  RecLeaf (Bind v (Just sigmaTy@(Forall kinds tyBody))) -> do
     skolVars <- mapM (fresh . pprint) kinds
     let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-    expr' <- local (setTEnv (addVs (zip skolVars kinds))) (check expr exprTy)
-    return (RecLeaf (v, sigmaTy), TLam (zip skolVars kinds) expr')
+        ext = asTEnv (bindFold (zipWith Bind skolVars kinds))
+    expr' <- extendWith ext $ check expr exprTy
+    return (RecLeaf (Bind v sigmaTy),
+            TLam (zipWith Bind skolVars kinds) expr')
   p -> do
     (patTy, p') <- inferPat p
     expr' <- check expr patTy
@@ -165,7 +167,7 @@ splitTab t = case t of
 
 freshVar :: Kind -> InferM Type
 freshVar kind = do v <- fresh $ pprint kind
-                   modify $ setTempEnv $ addV (v, kind)
+                   modify $ setTempEnv (v @> kind <>)
                    return (TypeVar v)
 
 freshTy  = freshVar TyKind
@@ -180,7 +182,7 @@ generalize ty expr = do
     [] -> return (ty', expr')
     _  -> do kinds <- mapM getKind flexVars
              return (Forall kinds $ abstractTVs flexVars ty',
-                     TLam (zip flexVars kinds) expr')
+                     TLam (zipWith Bind flexVars kinds) expr')
   where
     getKind :: Var -> InferM Kind
     getKind v = gets $ (! v) . tempEnv
@@ -212,10 +214,10 @@ instantiate ty reqTy expr = do
       unify reqTy ty'
       return expr
 
-bind :: Var -> Type -> InferM ()
-bind v t | v `occursIn` t = throw TypeErr (pprint (v, t))
-         | otherwise = do modify $ setSubst $ addV (v, t)
-                          modify $ setTempEnv $ envDelete v
+bindMVar:: Var -> Type -> InferM ()
+bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
+             | otherwise = do modify $ setSubst $ (v @> t <>)
+                              modify $ setTempEnv $ envDelete v
 
 -- TODO: check kinds
 unify :: Type -> Type -> InferM ()
@@ -227,8 +229,8 @@ unify t1 t2 = do
                    "can't unify " ++ pprint t1' ++ " and " ++ pprint t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
-    (t, TypeVar v) | not (v `isin` tenv) -> bind v t
-    (TypeVar v, t) | not (v `isin` tenv) -> bind v t
+    (t, TypeVar v) | not (v `isin` tenv) -> bindMVar v t
+    (TypeVar v, t) | not (v `isin` tenv) -> bindMVar v t
     (ArrType a b, ArrType a' b') -> unify a a' >> unify b b'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
     (Exists t, Exists t')        -> unify t t'
@@ -250,7 +252,7 @@ lookupVar v = do
   mty <- gets $ flip envLookup v . subst
   case mty of Nothing -> return $ TypeVar v
               Just ty -> do ty' <- zonk ty
-                            modify $ setSubst (updateV (v, ty'))
+                            modify $ setSubst (v @> ty' <>)
                             return ty'
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState

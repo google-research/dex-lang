@@ -1,5 +1,6 @@
 module DeShadow (deShadowPass) where
 
+import Env
 import Syntax
 import Pass
 import Fresh
@@ -16,10 +17,10 @@ type DeShadowM a = Pass FreshSubst () a
 deShadowPass :: UDecl -> TopPass FreshSubst UDecl
 deShadowPass decl = case decl of
   UTopLet b expr -> do checkTopShadow b
-                       putEnv (newSubst (fst b))
+                       putEnv (foldMap newSubst (binderVars b))
                        liftM (UTopLet b) $ deShadowTop expr
   UTopUnpack b tv expr -> do checkTopShadow b
-                             putEnv (newSubst (fst b))
+                             putEnv (foldMap newSubst (binderVars b))
                              liftM (UTopUnpack b tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -32,7 +33,7 @@ deShadowPass decl = case decl of
     deShadowTop expr = liftTopPass () mempty (deShadowExpr expr)
 
 checkTopShadow :: UBinder -> TopPass FreshSubst ()
-checkTopShadow (v,_) = do
+checkTopShadow (Bind v _) = do
   subst <- getEnv
   if isFresh v subst then return ()
                      else throw RepeatedVarErr (pprint v)
@@ -57,11 +58,11 @@ deShadowExpr expr = case expr of
     body' <- extendWith scope (recur body)
     return $ UFor b' body'
   UGet e v -> liftM2 UGet (recur e) (asks (getRenamed v))
-  UUnpack (v,ty) tv bound body -> do
+  UUnpack (Bind v ty) tv bound body -> do
     bound' <- recur bound
-    ([(v',_)], scope) <- freshen [(v,Nothing)]
+    ([Bind v' _], scope) <- freshen [Bind v Nothing]
     body' <- extendWith scope (recur body)
-    return $ UUnpack (v',ty) tv bound' body'
+    return $ UUnpack (Bind v' ty) tv bound' body'
   URecCon r -> liftM URecCon $ traverse recur r
   -- TODO: deshadow type as well when we add scoped type vars
   UAnnot body ty -> liftM (flip UAnnot ty) (recur body)
@@ -70,12 +71,13 @@ deShadowExpr expr = case expr of
 freshen :: Traversable f => f UBinder -> DeShadowM (f UBinder, FreshSubst)
 freshen p = do checkRepeats p
                scope <- ask
-               let f (v, ann) = let (v', scope') = rename v scope
-                                in ((v', ann), scope')
+               let f (Bind v ann) = let (v', scope') = rename v scope
+                                    in (Bind v' ann, scope')
                let zipped = fmap f p
                return (fmap fst zipped, fold (fmap snd zipped))
 
 checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
-checkRepeats bs = case repeated (map fst (toList bs)) of
+checkRepeats bs = case repeated (foldMap binderVars bs) of
                     [] -> return ()
                     xs -> throw RepeatedVarErr (pprint xs)
+

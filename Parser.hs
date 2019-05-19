@@ -9,6 +9,7 @@ import Data.List (isPrefixOf)
 import Data.Either (isRight)
 import qualified Data.Map.Strict as M
 
+import Env
 import Record
 import ParseUtil
 import Syntax
@@ -59,11 +60,11 @@ typedTopLet :: Parser UDecl
 typedTopLet = do
   v <- try (varName <* symbol "::")
   ty <- typeExpr <* eol
-  UTopLet (v', b) e <- topLet
+  UTopLet (Bind v' b) e <- topLet
   if v' /= v
     then fail "Type declaration variable must match assignment variable."
     else case b of Just _ -> fail "Conflicting type annotations"
-                   Nothing -> return $ UTopLet (v, Just ty) e
+                   Nothing -> return $ UTopLet (Bind v (Just ty)) e
 
 topUnpack :: Parser UDecl
 topUnpack = do
@@ -183,7 +184,7 @@ typedLocalLet = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl (RecLeaf (v, Just ty)) (wrap body)
+  return $ AssignDecl (RecLeaf (Bind v (Just ty))) (wrap body)
 
 localLet :: Parser LocalDecl
 localLet = do
@@ -241,7 +242,7 @@ varName = liftM rawName identifier
 idxExpr = varName
 
 binder :: Parser UBinder
-binder = liftM2 (,) varName (optional typeAnnot)
+binder = liftM2 Bind varName (optional typeAnnot)
 
 idxPat = binder
 

@@ -67,8 +67,9 @@ type NInstr = Named Instruction
 
 jitPass :: ImpDecl -> TopPass PersistEnv ()
 jitPass decl = case decl of
-  ImpTopLet bs prog -> do vals <- evalProg bs prog
-                          putEnv $ newEnv $ zip (map fst bs) vals
+  ImpTopLet bs prog -> do
+    vals <- evalProg bs prog
+    putEnv $ bindFold $ zipWith replaceAnnot bs vals
   ImpEvalCmd _ _ NoOp -> return ()
   ImpEvalCmd ty bs (Command cmd prog) -> case cmd of
     Passes -> do (_, CompiledProg m) <- toLLVM bs prog
@@ -91,10 +92,10 @@ evalProg bs prog = do
 
 -- This doesn't work with types derived from existentials, because the
 -- existentially quantified variable isn't in scope yet
-makeDestCell :: PersistEnv -> IBinder -> IO (Var, PersistCell)
-makeDestCell env (v, IType ty shape)  = do
+makeDestCell :: PersistEnv -> IBinder -> IO (GenBinder PersistCell)
+makeDestCell env (Bind v (IType ty shape))  = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
-  return (v, (Cell (Ptr ptr ty') shape'))
+  return $ Bind v (Cell (Ptr ptr ty') shape')
   where shape' = map (scalarVal . (env !)) shape
         ty' = scalarTy ty
 
@@ -104,10 +105,10 @@ toLLVM bs prog = do
   env <- getEnv
   destCells <- liftIO $ mapM (makeDestCell env) bs
   let env' =    fmap (Left  . asCompileVal) env
-             <> fmap (Right . asCompileCell) (newEnv destCells)
+             <> fmap (Right . asCompileCell) (bindFold destCells)
   let initState = CompileState [] [] [] "start_block" env'
   prog <- liftEither $ evalPass () initState mempty (compileProg prog)
-  return (map snd destCells, prog)
+  return (map binderVal destCells, prog)
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
@@ -176,7 +177,7 @@ compileStatement statement = case statement of
     shape' <- mapM lookupScalar shape
     cell <- case shape' of [] -> alloca b (nameTag v)
                            _ -> malloc b shape' (nameTag v)
-    modify $ setImpVarEnv (addV (v, (Right cell)))
+    modify $ setImpVarEnv (bind (Bind v (Right cell)) <>)
 
   Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
@@ -244,7 +245,7 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  modify $ setImpVarEnv $ addV (iVar, (Left $ ScalarVal iVal longTy)) -- shadows...
+  modify $ setImpVarEnv (bind (Bind iVar (Left $ ScalarVal iVal longTy)) <>)
   mapM compileStatement body
   iValInc <- add iVal (litInt 1)
   store i iValInc

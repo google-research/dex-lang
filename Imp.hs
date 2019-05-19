@@ -23,34 +23,34 @@ data ImpState = ImpState { blocks :: [[Statement]]
 
 impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
-  TopLet (v,ty) expr -> do
+  TopLet (Bind v ty) expr -> do
     let binders = impBinder v (flatType' ty)
-    prog <- impExprTop (fmap fst binders) expr
-    putEnv $ FullEnv (v@>(ty, fmap fst binders)) mempty
+    prog <- impExprTop binders expr
+    putEnv $ asLEnv $ v@>(ty, fmap binderVar binders)
     return $ ImpTopLet (toList binders) prog
-  TopUnpack (v,ty) iv expr -> do
-    let binders = RecTree $ Tup [ RecLeaf (iv, intTy)
+  TopUnpack (Bind v ty) iv expr -> do
+    let binders = RecTree $ Tup [ RecLeaf (Bind iv intTy)
                                 , impBinder v (flatType' ty)]
-    prog <- impExprTop (fmap fst binders) expr
-    putEnv $ FullEnv (v@>(ty, fmap fst binders)) (iv@>iv)
+    prog <- impExprTop binders expr
+    putEnv $ FullEnv (v@>(ty, fmap binderVar binders)) (iv@>iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
-    env <- getEnv
-    let ty = getType (setLEnv (fmap fst) env) expr
+    FullEnv lenv tenv <- getEnv
+    let ty = getType (FullEnv (fmap fst lenv) tenv) expr
     let binders = impBinder (rawName "%imptmp") (flatType' ty)
-    prog <- impExprTop (fmap fst binders) expr
+    prog <- impExprTop binders expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
 
-impBinder :: Name -> RecTree a -> RecTree (Name, a)
-impBinder v tree = fmap (onFst newName) (recTreeNamed tree)
+impBinder :: Name -> RecTree IType -> RecTree IBinder
+impBinder v tree = fmap (uncurry Bind . onFst newName) (recTreeNamed tree)
    where
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
 
-impExprTop :: RecTree Var -> Expr -> TopPass ImpEnv ImpProg
+impExprTop :: RecTree IBinder -> Expr -> TopPass ImpEnv ImpProg
 impExprTop dest expr = do
   env <- getEnv
   ((), state) <- liftEither $ runPass env (ImpState [[]] [])
@@ -62,10 +62,11 @@ envToScope :: ImpEnv -> FreshScope
 envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
   where lNames = concat $ map (toList . snd) (toList lenv)
 
-toImpDest :: RecTree Var -> Expr -> ImpM ()
+toImpDest :: RecTree IBinder -> Expr -> ImpM ()
 toImpDest dest expr = do
   out <- toImp expr
-  void $ traverse (\(v, e) -> add (Update v [] e)) (recTreeZipEq dest out)
+  void $ traverse update (recTreeZipEq dest out)
+  where update (Bind v _, e) = add (Update v [] e)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -78,9 +79,9 @@ toImp expr = case expr of
                              return $ RecLeaf $ IBuiltinApp b (toList args')
   Let p bound body -> do
     (bound', cells) <- collectAllocs $ toImp bound
-    envUpdates <- traverse (uncurry letBind) (recTreeZip p bound')
+    bindings <- traverse (uncurry letBind) (recTreeZip p bound')
     freeCells cells
-    local (setLEnv $ addVs envUpdates) (toImp body)
+    extendWith (asLEnv (bindFold bindings)) (toImp body)
   Get x i -> do xs <- toImp x
                 RecLeaf i' <- asks $ snd . (!i) . lEnv
                 return $ fmap (\x -> IGet x i') xs
@@ -90,34 +91,34 @@ toImp expr = case expr of
   Unpack b n bound body -> do
     RecTree (Tup [RecLeaf iset, x]) <- toImp bound
     n' <- freshLike n
-    addLet (n', intTy) iset
-    envUpdate <- local (setTEnv (addV (n, n'))) (letBind b x)
-    let updateEnv = setTEnv (addV (n, n')) . setLEnv (addV envUpdate)
-    local updateEnv (toImp body)
+    addLet (Bind n' intTy) iset
+    extendWith (asTEnv (n @> n')) $ do
+      bindings <- letBind b x
+      extendWith (asLEnv (bind bindings)) (toImp body)
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
 
-letBind :: Binder -> RecTree IExpr -> ImpM (Var, (Type, RecTree Name))
-letBind binder@(v,ty) exprs = do
+letBind :: Binder -> RecTree IExpr -> ImpM (GenBinder (Type, RecTree Name))
+letBind binder@(Bind v ty) exprs = do
   impBinders <- flatBinding binder
   traverse (uncurry addLet) $ recTreeZipEq impBinders exprs
-  return (v, (ty, fmap fst impBinders))
+  return $ Bind v (ty, fmap binderVar impBinders)
 
-flatBinding :: (Var, Type) -> ImpM (RecTree (Var, IType))
-flatBinding (v, ty) = do ty' <- flatType ty
-                         traverse freshBinder ty'
+flatBinding :: Binder -> ImpM (RecTree IBinder)
+flatBinding (Bind v ty) = do ty' <- flatType ty
+                             traverse freshBinder ty'
   where freshBinder t = do v' <- freshLike v
-                           return (v', t)
+                           return (Bind v' t)
 
 -- TODO: make a destination-passing version to avoid unnecessary intermediates
 toImpFor :: Binder -> Expr -> ImpM (RecTree IExpr)
-toImpFor (i, TypeVar n) body = do
+toImpFor (Bind i (TypeVar n)) body = do
   i' <- freshLike i
   bodyTy <- exprType body >>= flatType
   let cellTypes = fmap (addIdx n) bodyTy
   cells <- traverse newCell cellTypes
   startBlock
-  let updateEnv = setLEnv $ addV $ (i, (TypeVar n, RecLeaf i'))
-  (results, newCells) <- collectAllocs $ local updateEnv (toImp body)
+  let bindings = asLEnv $ bind $ Bind i (TypeVar n, RecLeaf i')
+  (results, newCells) <- collectAllocs $ extendWith bindings (toImp body)
   traverse (\(v,x) -> add $ Update v [i'] x) (recTreeZipEq cells results)
   freeCells newCells
   block <- endBlock
@@ -151,13 +152,13 @@ impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
     startBlock
     updateAccum <- letBind accumBinder $ fmap IVar accumCells
     updateX <- letBind xBinder $ fmap (\x -> IGet (IVar x) i) xs'
-    newVals <- local (setLEnv $ addV updateAccum . addV updateX) (toImp body)
+    newVals <- extendWith (asLEnv (bind updateAccum <> bind updateX)) (toImp body)
     writeCells newVals
     endBlock
   add $ Loop i n' block
   return $ fmap IVar accumCells
   where RecTree (Tup binders) = p
-        [accumBinder@(_, accumTy), xBinder] = map unLeaf binders
+        [accumBinder@(Bind _ accumTy), xBinder] = map unLeaf binders
 
 toImpNewVar :: Expr -> ImpM (RecTree Var)
 toImpNewVar expr = do
@@ -168,12 +169,12 @@ toImpNewVar expr = do
 
 newVar :: IExpr -> IType -> ImpM Var
 newVar expr t = do v <- fresh "var"
-                   addLet (v, t) expr
+                   addLet (Bind v t) expr
                    return v
 
-addLet :: (Var, IType) -> IExpr -> ImpM ()
-addLet (v, ty) expr = do addAlloc v ty
-                         add $ Update v [] expr
+addLet :: IBinder -> IExpr -> ImpM ()
+addLet (Bind v ty) expr = do addAlloc v ty
+                             add $ Update v [] expr
 
 writeCell :: Var -> IExpr -> ImpM ()
 writeCell v val = add $ Update v [] val
@@ -209,8 +210,8 @@ intTy :: IType
 intTy = IType IntType []
 
 exprType ::Expr -> ImpM Type
-exprType expr = do env <- asks (setLEnv (fmap fst))
-                   return $ getType env expr
+exprType expr = do FullEnv lenv tenv <- ask
+                   return $ getType (FullEnv (fmap fst lenv) tenv) expr
 
 startBlock :: ImpM ()
 startBlock = modify $ setBlocks ([]:)
@@ -249,7 +250,7 @@ checkImp decl = decl <$ case decl of
     check binders prog
     -- doesn't work without alias checking for sizes
     -- liftEither $ assertEq ty (map snd binders) ""
-    putEnv $ newEnv binders
+    putEnv $ bindFold binders
   ImpEvalCmd _ _ NoOp -> return ()
   ImpEvalCmd _ bs (Command _ prog) -> void $ check bs prog
   where
@@ -257,7 +258,7 @@ checkImp decl = decl <$ case decl of
     check bs prog = do
       env <- getEnv
       liftEither $ addContext (pprint prog) $
-          evalPass () (newEnv bs <> env) mempty (impProgType prog)
+          evalPass () (bindFold bs <> env) mempty (impProgType prog)
 
 impProgType :: ImpProg -> ImpCheckM ()
 impProgType (ImpProg statements) = mapM_ checkStatementTy statements
@@ -284,7 +285,7 @@ addVar :: Var -> IType -> ImpCheckM ()
 addVar v ty = do
   env <- get
   throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
-  modify $ addV (v, ty)
+  modify (bind (Bind v ty) <>)
 
 impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of
