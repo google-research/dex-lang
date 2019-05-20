@@ -7,6 +7,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import qualified Data.Map.Strict as M
 
+import Env
 import Syntax
 import Record
 
@@ -76,29 +77,25 @@ instance Pretty LitVal where
 instance Pretty Expr where
   pretty expr = case expr of
     Lit val      -> p val
-    -- Var v        -> p v
-    -- Builtin b    -> p b
-    -- Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ pPat pat <+> "=" <> line <> p e1) <> line <>
-    --                                    "in" <+> p e2
-    -- Lam pat e    -> parens $ align $ group $ "lam" <+> pPat pat <+> "." <> line <> align (p e)
-    -- App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
-    -- For t e      -> parens $ "for " <+> p (binder t) <+> ":" <+> align (p e)
-    -- Get e ie     -> p e <> "." <> p ie
-    -- RecCon r     -> p r
-    -- Unpack v i e1 e2 ->
-    --   align $ parens $ "{" <> p (binder v) <> "," <+> p i <> "} = unpack"
-    --                                 <+> p e1 <> line <>
-    --                    "in" <+> p e2
-    -- TLam binders expr -> "Lam" <+> hcat (map (p . binder) binders) <> ":"
-    --                            <+> align (p expr)
-    -- TApp expr ts -> p expr <> p ts
-    -- where pPat pat = p $ fmap binder pat
+    Var v        -> p v
+    Builtin b    -> p b
+    Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ p pat <+> "=" <> line <> p e1) <> line <>
+                                       "in" <+> p e2
+    Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
+    App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
+    For b e      -> parens $ "for " <+> p b <+> ":" <+> align (p e)
+    Get e ie     -> p e <> "." <> p ie
+    RecCon r     -> p r
+    Unpack b i e1 e2 ->
+      align $ parens $ "{" <> p b <> "," <+> p i <> "} = unpack"
+                                    <+> p e1 <> line <>
+                       "in" <+> p e2
+    TLam binders expr -> "Lam" <+> p binders <> ":"
+                               <+> align (p expr)
+    TApp expr ts -> p expr <> p ts
 
-data BinderWrap v t = BinderWrap v t
-binder = uncurry BinderWrap
-
-instance (Pretty v, Pretty t) => Pretty (BinderWrap v t) where
-  pretty (BinderWrap v t) = p v <> "::" <> p t
+instance Pretty a => Pretty (GenBinder a) where
+  pretty (Bind v x) = p v <> "::" <> p x
 
 instance Pretty a => Pretty (Record a) where
   pretty r = align $ tupled $ case r of
@@ -141,7 +138,7 @@ instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
-  pretty (Alloc v ty) = p (binder (v,ty))
+  pretty (Alloc v ty) = p (Bind v ty)
   pretty (Free v) = "free" <+> p v
 
 instance Pretty IExpr where
