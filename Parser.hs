@@ -64,7 +64,7 @@ typedTopLet = do
   if v' /= v
     then fail "Type declaration variable must match assignment variable."
     else case b of Just _ -> fail "Conflicting type annotations"
-                   Nothing -> return $ UTopLet (Bind v (Just ty)) e
+                   Nothing -> return $ UTopLet (v %> Just ty) e
 
 topUnpack :: Parser UDecl
 topUnpack = do
@@ -242,7 +242,8 @@ varName = liftM rawName identifier
 idxExpr = varName
 
 binder :: Parser UBinder
-binder = liftM2 (%>) varName (optional typeAnnot)
+binder =     (symbol "_" >> liftM Ignore (optional typeAnnot))
+         <|> liftM2 Bind varName (optional typeAnnot)
 
 idxPat = binder
 

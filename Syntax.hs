@@ -139,7 +139,7 @@ data IExpr = ILit LitVal
 data ImpDecl = ImpTopLet [IBinder] ImpProg
              | ImpEvalCmd Type [IBinder] (Command ImpProg)
 
-type IBinder = GenBinder IType  -- no 'ignore' constructor
+type IBinder = GenBinder IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var

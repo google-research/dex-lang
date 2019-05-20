@@ -146,7 +146,7 @@ inferLetBinding pat expr = case pat of
       let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
       expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
       return (RecLeaf (replaceAnnot b sigmaTy), TLam skolBinders expr')
-    Just tauTy -> ansNoGeneralization
+    _ -> ansNoGeneralization
   _ -> ansNoGeneralization
   where
     ansNoGeneralization = do
@@ -202,7 +202,8 @@ getFlexVars ty expr = do
 tempVarsEnv :: InferM [Var]
 tempVarsEnv = do envTypes <- asks $ toList . lEnv
                  vs <- mapM tempVars envTypes
-                 return (concat vs)
+                 vs' <- asks $ envNames . tEnv
+                 return $ vs' ++ (concat vs)
 
 tempVars :: HasTypeVars a => a -> InferM [Var]
 tempVars x = liftM freeTyVars (zonk x)

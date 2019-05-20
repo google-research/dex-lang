@@ -7,21 +7,21 @@
 
 > [20.0]
 
-:p let u, nx = unpack range 100;
+:p let _, nx = unpack range 100;
        x = iota ::nx=>Int
    in isum (for i. x.i)
 
 > [4950]
 
 :p let vdot x y = sum (for i. x.i * y.i * 2.0);
-       u, nx = unpack range 3;
+       _, nx = unpack range 3;
        x = iota :: nx=>Int;
        y = map real x
    in vdot y y
 
 > [10.0]
 
-:p let u, nx = unpack range 3;
+:p let _, nx = unpack range 3;
        x = iota :: nx => Int;
        y = map real x;
        z = for i j. y.i * y.j
@@ -33,7 +33,7 @@
 -- :p let x = unpack range 10000;
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
-u, nArr = unpack range 7
+_, nArr = unpack range 7
 arr = iota :: nArr=>Int
 
 :p isum for i::nArr. 1

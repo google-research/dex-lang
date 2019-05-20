@@ -1,14 +1,13 @@
 module DeShadow (deShadowPass) where
 
+import Control.Monad.Reader
+
 import Env
 import Syntax
 import Pass
 import Fresh
 import PPrint
 import Util (repeated)
-
-import Data.Foldable
-import Control.Monad.Reader
 
 type DeShadowM a = Pass FreshSubst () a
 

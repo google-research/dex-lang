@@ -5,7 +5,8 @@ module Imp (impPass, checkImp) where
 import Control.Monad.Reader
 import Control.Monad.State
 import Control.Monad.Except (liftEither)
-import Data.Foldable (toList)
+import Data.Foldable (fold, toList)
+import Data.Maybe (fromJust)
 import Data.List (intercalate)
 
 import Syntax
@@ -17,7 +18,8 @@ import Pass
 import Fresh
 
 type ImpM a = Pass ImpEnv ImpState a
-type ImpEnv = FullEnv (Type, RecTree Name) Name
+type ImpVal = RecTree Name
+type ImpEnv = FullEnv (Type, ImpVal) Name
 data ImpState = ImpState { blocks :: [[Statement]]
                          , cellsInScope :: [Var] }
 
@@ -26,12 +28,12 @@ impPass decl = case decl of
   TopLet b expr -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
-    putEnv $ asLEnv $ bindWith b (fmap binderVar binders)
+    putEnv $ asLEnv $ bindWith b (fmap (fromJust . binderVar) binders)
     return $ ImpTopLet (toList binders) prog
   TopUnpack b iv expr -> do
     let binders = RecTree $ Tup [ RecLeaf (iv %> intTy), impBinders b]
     prog <- impExprTop binders expr
-    putEnv $ FullEnv (bindWith b (fmap binderVar binders)) (iv@>iv)
+    putEnv $ FullEnv (bindWith b (fmap (fromJust . binderVar) binders)) (iv@>iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -43,10 +45,12 @@ impPass decl = case decl of
                 _ -> return ()
     return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
 
+-- TODO: handle underscore binders
 impBinders :: Binder -> RecTree IBinder
-impBinders b@(Bind v _) = fmap (uncurry Bind . onFst newName) (recTreeNamed itypes)
+impBinders (Ignore ty) = fmap Ignore (flatType' ty)
+impBinders (Bind v ty) = fmap (uncurry (%>) . onFst newName) (recTreeNamed itypes)
    where
-     itypes = flatType' (binderAnn b)
+     itypes = flatType' ty
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
 
@@ -66,7 +70,9 @@ toImpDest :: RecTree IBinder -> Expr -> ImpM ()
 toImpDest dest expr = do
   out <- toImp expr
   void $ traverse update (recTreeZipEq dest out)
-  where update (b, e) = add (Update (binderVar b) [] e)
+  where update (b, e) = case binderVar b of
+                          Nothing -> return ()
+                          Just v -> add (Update v [] e)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -81,7 +87,7 @@ toImp expr = case expr of
     (bound', cells) <- collectAllocs $ toImp bound
     bindings <- traverse (uncurry letBind) (recTreeZip p bound')
     freeCells cells
-    extendWith (asLEnv (bindFold bindings)) (toImp body)
+    extendWith (asLEnv (fold bindings)) (toImp body)
   Get x i -> do xs <- toImp x
                 RecLeaf i' <- asks $ snd . (!i) . lEnv
                 return $ fmap (\x -> IGet x i') xs
@@ -91,23 +97,24 @@ toImp expr = case expr of
   Unpack b n bound body -> do
     RecTree (Tup [RecLeaf iset, x]) <- toImp bound
     n' <- freshLike n
-    addLet (Bind n' intTy) iset
+    addLet (n' %> intTy) iset
     extendWith (asTEnv (n @> n')) $ do
       bindings <- letBind b x
-      extendWith (asLEnv (bind bindings)) (toImp body)
+      extendWith (asLEnv bindings) (toImp body)
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
 
-letBind :: Binder -> RecTree IExpr -> ImpM (GenBinder (Type, RecTree Name))
-letBind binder@(Bind v ty) exprs = do
+letBind :: Binder -> RecTree IExpr -> ImpM (Env (Type, ImpVal))
+letBind binder exprs = do
   impBinders <- flatBinding binder
   traverse (uncurry addLet) $ recTreeZipEq impBinders exprs
-  return $ Bind v (ty, fmap binderVar impBinders)
+  return $ bindWith binder (fmap (fromJust . binderVar) impBinders)
 
 flatBinding :: Binder -> ImpM (RecTree IBinder)
+flatBinding (Ignore ty) = liftM (fmap Ignore) (flatType ty)
 flatBinding (Bind v ty) = do ty' <- flatType ty
                              traverse freshBinder ty'
   where freshBinder t = do v' <- freshLike v
-                           return (Bind v' t)
+                           return (v' %> t)
 
 -- TODO: make a destination-passing version to avoid unnecessary intermediates
 toImpFor :: Binder -> Expr -> ImpM (RecTree IExpr)
@@ -117,7 +124,7 @@ toImpFor (Bind i (TypeVar n)) body = do
   let cellTypes = fmap (addIdx n) bodyTy
   cells <- traverse newCell cellTypes
   startBlock
-  let bindings = asLEnv $ bind $ Bind i (TypeVar n, RecLeaf i')
+  let bindings = asLEnv $ i @> (TypeVar n, RecLeaf i')
   (results, newCells) <- collectAllocs $ extendWith bindings (toImp body)
   traverse (\(v,x) -> add $ Update v [i'] x) (recTreeZipEq cells results)
   freeCells newCells
@@ -152,7 +159,7 @@ impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
     startBlock
     updateAccum <- letBind accumBinder $ fmap IVar accumCells
     updateX <- letBind xBinder $ fmap (\x -> IGet (IVar x) i) xs'
-    newVals <- extendWith (asLEnv (bind updateAccum <> bind updateX)) (toImp body)
+    newVals <- extendWith (asLEnv (updateAccum <> updateX)) (toImp body)
     writeCells newVals
     endBlock
   add $ Loop i n' block
@@ -174,6 +181,7 @@ newVar expr t = do v <- fresh "var"
                    return v
 
 addLet :: IBinder -> IExpr -> ImpM ()
+addLet (Ignore _) _ = return ()
 addLet (Bind v ty) expr = do addAlloc v ty
                              add $ Update v [] expr
 

@@ -15,7 +15,8 @@ import Util
 import Fresh
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
-data GenBinder a = Bind Name a  deriving (Show, Eq, Ord)
+data GenBinder a = Bind Name a
+                 | Ignore a  deriving (Show, Eq, Ord)
 
 infixr 7 %>
 
@@ -55,18 +56,22 @@ k @> v = Env $ M.singleton k v
 -- return a list to allow for underscore binders
 binderVars :: GenBinder a -> [Name]
 binderVars (Bind v _) = [v]
+binderVars (Ignore _) = []
 
-binderVar :: GenBinder a -> Name
-binderVar (Bind v _) = v
+binderVar :: GenBinder a -> Maybe Name
+binderVar (Bind v _) = Just v
+binderVar (Ignore _) = Nothing
 
 binderAnn :: GenBinder a -> a
 binderAnn (Bind _ x) = x
+binderAnn (Ignore x) = x
 
 bind :: GenBinder a -> Env a
 bind (Bind v x) = v @> x
+bind (Ignore _) = mempty
 
 bindWith :: GenBinder a -> b -> Env (a, b)
-bindWith (Bind v x) y = bind (Bind v (x, y))
+bindWith b y = bind $ fmap (\x -> (x,y)) b
 
 bindFold :: Foldable f => f (GenBinder a) -> Env a
 bindFold bs = foldMap bind bs
@@ -79,16 +84,18 @@ replaceAnnot b y = fmap (const y) b
 
 -- TODO: make reader monad version of fresh, so this can work like 'extendWith'
 freshenBinder :: FreshSubst -> GenBinder a -> (GenBinder a, FreshSubst)
-freshenBinder subst (Bind v x) = let (v', subst') = rename v subst
-                                 in (Bind v' x, subst')
+freshenBinder subst b = runEnvM (freshenM b) subst
 
 freshenBinders :: Traversable f =>
                  FreshSubst -> f (GenBinder a) -> (f (GenBinder a), FreshSubst)
-freshenBinders subst bs = runEnvM (traverse f bs) subst
-  where f (Bind v x) = do subst <- askEnv
-                          let (v', subst') = rename v subst
-                          addEnv subst'
-                          return $ Bind v' x
+freshenBinders subst bs = runEnvM (traverse freshenM bs) subst
+
+freshenM :: GenBinder a -> EnvM FreshSubst (GenBinder a)
+freshenM b@(Ignore _) = return b
+freshenM (Bind v x) = do subst <- askEnv
+                         let (v', subst') = rename v subst
+                         addEnv subst'
+                         return $ Bind v' x
 
 extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
 extendWith env m = local (env <>) m
@@ -114,7 +121,8 @@ instance Pretty a => Pretty (Env a) where
   pretty (Env m) = pretty (M.toAscList m)
 
 instance Pretty a => Pretty (GenBinder a) where
-  pretty (Bind v x) = pretty v <> "::" <> pretty x
+  pretty (Bind v x) = pretty v   <> "::" <> pretty x
+  pretty (Ignore x) = "_ ::" <> pretty x
 
 instance Functor GenBinder where
   fmap = fmapDefault
@@ -124,3 +132,4 @@ instance Foldable GenBinder where
 
 instance Traversable GenBinder where
   traverse f (Bind v x) = fmap (Bind v) (f x)
+  traverse f (Ignore x) = fmap Ignore   (f x)
