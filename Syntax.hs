@@ -139,7 +139,7 @@ data IExpr = ILit LitVal
 data ImpDecl = ImpTopLet [IBinder] ImpProg
              | ImpEvalCmd Type [IBinder] (Command ImpProg)
 
-type IBinder = GenBinder IType
+type IBinder = GenBinder IType  -- no 'ignore' constructor
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var
@@ -316,14 +316,14 @@ instance HasTypeVars Expr where
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
-          recurB (Bind v ty) = liftA (Bind v) (recurTy ty)
+          recurB b = traverse recurTy b
           recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithB  vs (Bind v ty) = liftA (Bind v) (recurWithTy vs ty)
+          recurWithB  vs b = traverse (recurWithTy vs) b
 
 instance HasTypeVars (RecTree Binder) where
   subFreeTVsBVs bvs f tree = traverse f' tree
-    where f' (Bind v ty) = liftA (Bind v) (subFreeTVsBVs bvs f ty)
+    where f' b = traverse (subFreeTVsBVs bvs f) b
 
 freeLVars :: Expr -> [Var]
 freeLVars = freeLVarsEnv mempty
@@ -370,8 +370,7 @@ freeVarsUExpr expr = case expr of
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
-  UUnpack (Bind v _) _ e body -> liftM2 (<>) (recur e)
-                                   (recurWith [Bind v Nothing] body)
+  UUnpack b _ e body -> liftM2 (<>) (recur e) (recurWith [b] body)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
@@ -379,7 +378,6 @@ freeVarsUExpr expr = case expr of
 
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    (Bind v _) _ -> [v]
-  UTopUnpack (Bind v _) _ _ -> [v]
+  UTopLet    b _   -> binderVars b
+  UTopUnpack b _ _ -> binderVars b
   UEvalCmd _ -> []
-

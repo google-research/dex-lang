@@ -16,15 +16,15 @@ type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkTyped :: Decl -> TopPass TypeEnv Decl
 checkTyped decl = decl <$ case decl of
-  TopLet b@(Bind _ ty) expr -> do
+  TopLet b expr -> do
     ty' <- check expr
-    assertEq ty ty' ""
+    assertEq (binderAnn b) ty' ""
     putEnv $ asLEnv (bind b)
-  TopUnpack b@(Bind _ ty) iv expr -> do
+  TopUnpack b iv expr -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
-    assertEq ty ty' ""
-    putEnv $ FullEnv (bind b) (bind $ Bind iv IdxSetKind)
+    assertEq (binderAnn b) ty' ""
+    putEnv $ FullEnv (bind b) (iv @> IdxSetKind)
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
   where
@@ -52,9 +52,9 @@ getType' check expr = case expr of
     Lam p body -> do checkTy (patType p)
                      checkShadows p
                      liftM (ArrType (patType p)) (recurWith p body)
-    For i body -> do checkTy (binderVal i)
+    For i body -> do checkTy (binderAnn i)
                      checkShadows [i]
-                     liftM (TabType (binderVal i)) (recurWith [i] body)
+                     liftM (TabType (binderAnn i)) (recurWith [i] body)
     App e arg  -> do ArrType a b <- recur e
                      checkEq "App" a (recur arg)
                      return b
@@ -70,11 +70,11 @@ getType' check expr = case expr of
                           mapM checkTy ts
                           return $ instantiateTVs ts body
     Unpack b tv _ body -> do  -- TODO: check bound expression!
-      let tb = Bind tv IdxSetKind
+      let tb = tv %> IdxSetKind
       checkShadows [b]
       checkShadows [tb]
       extendWith (asTEnv (bind tb)) $ do
-        checkTy (binderVal b)
+        checkTy (binderAnn b)
         extendWith (asLEnv (bind b)) (recur body)
 
   where
@@ -110,7 +110,7 @@ unpackExists ty _ = throw TypeErr $ "Can't unpack " ++ pprint ty
 
 patType :: RecTree Binder -> Type
 patType (RecTree r) = RecType (fmap patType r)
-patType (RecLeaf (Bind _ t)) = t
+patType (RecLeaf b) = binderAnn b
 
 litType :: LitVal -> BaseType
 litType v = case v of

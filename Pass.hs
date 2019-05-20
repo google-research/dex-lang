@@ -3,8 +3,7 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), throwIf,
-             EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
+             (>+>), throwIf) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -88,20 +87,3 @@ throwIf False _ = return ()
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
-
--- monad for doing things in a monoidal environment
--- TODO: consider making an mtl-style typeclass
-newtype EnvM env a = EnvM (StateT env (Writer env) a)
-  deriving (Functor, Applicative, Monad)
-
-addEnv :: Monoid env => env -> EnvM env ()
-addEnv x = EnvM $ modify (x <>) >> tell x
-
-askEnv :: Monoid env => EnvM env env
-askEnv = EnvM get
-
-runEnvM :: Monoid env => EnvM env a -> env -> (a, env)
-runEnvM (EnvM m) env = runWriter $ evalStateT m env
-
-liftEnvM :: (Monoid env, MonadReader env m) => EnvM env a -> m (a, env)
-liftEnvM m = liftM (runEnvM m) ask

@@ -184,7 +184,7 @@ typedLocalLet = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl (RecLeaf (Bind v (Just ty))) (wrap body)
+  return $ AssignDecl (RecLeaf (v %> Just ty)) (wrap body)
 
 localLet :: Parser LocalDecl
 localLet = do
@@ -242,7 +242,7 @@ varName = liftM rawName identifier
 idxExpr = varName
 
 binder :: Parser UBinder
-binder = liftM2 Bind varName (optional typeAnnot)
+binder = liftM2 (%>) varName (optional typeAnnot)
 
 idxPat = binder
 

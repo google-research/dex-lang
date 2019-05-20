@@ -32,11 +32,12 @@ typePass decl = case decl of
     (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
     putEnv $ asLEnv (bind b')
     return $ TopLet b' expr'
-  UTopUnpack (Bind v _) tv expr -> do
+  UTopUnpack b tv expr -> do
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
-    putEnv $ FullEnv (v@>ty') (tv@>IdxSetKind)
-    return $ TopUnpack (Bind v ty') tv expr'
+    let b' = fmap (const ty') b -- TODO: actually check the annotated type
+    putEnv $ FullEnv (bind b') (tv@>IdxSetKind)
+    return $ TopUnpack b' tv expr'
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
@@ -82,8 +83,8 @@ check expr reqTy = case expr of
     return $ App fexpr' arg'
   UFor b body -> do
     (i, elemTy) <- splitTab reqTy
-    b'@(Bind _ i') <- inferBinder b
-    unify i' i
+    b' <- inferBinder b
+    unify (binderAnn b') i
     body' <- recurWith [b'] body elemTy
     return $ For b' body'
   UGet tabExpr idxExpr -> do
@@ -93,16 +94,16 @@ check expr reqTy = case expr of
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
-  UUnpack (Bind v Nothing) tv bound body -> do
+  UUnpack b tv bound body -> do
     (maybeEx, bound') <- infer bound >>= zonk
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
-    let ext = FullEnv (v @> boundTy) (tv @> IdxSetKind)
-    body' <- extendWith ext $ check body reqTy
+    let b' = replaceAnnot b boundTy
+    body' <- extendWith (FullEnv (bind b') (tv@>IdxSetKind)) (check body reqTy)
     tvsEnv <- tempVarsEnv
     tvsReqTy <- tempVars reqTy
     if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-    return $ Unpack (Bind v boundTy) tv bound' body'
+    return $ Unpack b' tv bound' body'
   URecCon r -> do tyExpr <- traverse infer r
                   unify reqTy (RecType (fmap fst tyExpr))
                   return $ RecCon (fmap snd tyExpr)
@@ -128,26 +129,30 @@ inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
 
 inferBinder :: UBinder -> InferM Binder
-inferBinder (Bind v Nothing) = do { ty <- freshTy; return (Bind v ty) }
-inferBinder (Bind v (Just ty)) = return $ Bind v ty
+inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
+                                           Nothing -> freshTy
+                                           Just ty -> return ty
 
 inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
 inferLetBinding pat expr = case pat of
-  RecLeaf (Bind v Nothing) -> do
-    (ty', expr') <- infer expr
-    (forallTy, tLam) <- generalize ty' expr'
-    return (RecLeaf (Bind v forallTy), tLam)
-  RecLeaf (Bind v (Just sigmaTy@(Forall kinds tyBody))) -> do
-    skolVars <- mapM (fresh . pprint) kinds
-    let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-        ext = asTEnv (bindFold (zipWith Bind skolVars kinds))
-    expr' <- extendWith ext $ check expr exprTy
-    return (RecLeaf (Bind v sigmaTy),
-            TLam (zipWith Bind skolVars kinds) expr')
-  p -> do
-    (patTy, p') <- inferPat p
-    expr' <- check expr patTy
-    return (p', expr')
+  RecLeaf b -> case binderAnn b of
+    Nothing -> do
+      (ty', expr') <- infer expr
+      (forallTy, tLam) <- generalize ty' expr'
+      return (RecLeaf (replaceAnnot b forallTy), tLam)
+    Just sigmaTy@(Forall kinds tyBody) -> do
+      skolVars <- mapM (fresh . pprint) kinds
+      let skolBinders = zipWith (%>) skolVars kinds
+      let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
+      expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
+      return (RecLeaf (replaceAnnot b sigmaTy), TLam skolBinders expr')
+    Just tauTy -> ansNoGeneralization
+  _ -> ansNoGeneralization
+  where
+    ansNoGeneralization = do
+      (patTy, p') <- inferPat pat
+      expr' <- check expr patTy
+      return (p', expr')
 
 splitFun :: Type -> InferM Constraint
 splitFun f = case f of
@@ -182,7 +187,7 @@ generalize ty expr = do
     [] -> return (ty', expr')
     _  -> do kinds <- mapM getKind flexVars
              return (Forall kinds $ abstractTVs flexVars ty',
-                     TLam (zipWith Bind flexVars kinds) expr')
+                     TLam (zipWith (%>) flexVars kinds) expr')
   where
     getKind :: Var -> InferM Kind
     getKind v = gets $ (! v) . tempEnv

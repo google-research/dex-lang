@@ -91,8 +91,8 @@ rename v (FreshSubst scope _) =
 getRenamed :: Name -> FreshSubst -> Name
 getRenamed v (FreshSubst _ subst) = M.findWithDefault v v subst
 
-newSubst :: Name -> FreshSubst
-newSubst name = FreshSubst (newScope name) mempty
+newSubst :: [Name] -> FreshSubst
+newSubst names = FreshSubst (foldMap newScope names) mempty
 
 isFresh :: Name -> FreshSubst -> Bool
 isFresh (Name tag n) (FreshSubst (FreshScope m) _) = n >= n'

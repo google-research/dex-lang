@@ -94,9 +94,6 @@ instance Pretty Expr where
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
 
-instance Pretty a => Pretty (GenBinder a) where
-  pretty (Bind v x) = p v <> "::" <> p x
-
 instance Pretty a => Pretty (Record a) where
   pretty r = align $ tupled $ case r of
                         Rec m  -> [p k <> "=" <> p v | (k,v) <- M.toList m]
@@ -138,7 +135,7 @@ instance Pretty Statement where
   pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
-  pretty (Alloc v ty) = p (Bind v ty)
+  pretty (Alloc v ty) = p (v %> ty)
   pretty (Free v) = "free" <+> p v
 
 instance Pretty IExpr where

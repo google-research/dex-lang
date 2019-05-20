@@ -23,30 +23,30 @@ data ImpState = ImpState { blocks :: [[Statement]]
 
 impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
-  TopLet (Bind v ty) expr -> do
-    let binders = impBinder v (flatType' ty)
+  TopLet b expr -> do
+    let binders = impBinders b
     prog <- impExprTop binders expr
-    putEnv $ asLEnv $ v@>(ty, fmap binderVar binders)
+    putEnv $ asLEnv $ bindWith b (fmap binderVar binders)
     return $ ImpTopLet (toList binders) prog
-  TopUnpack (Bind v ty) iv expr -> do
-    let binders = RecTree $ Tup [ RecLeaf (Bind iv intTy)
-                                , impBinder v (flatType' ty)]
+  TopUnpack b iv expr -> do
+    let binders = RecTree $ Tup [ RecLeaf (iv %> intTy), impBinders b]
     prog <- impExprTop binders expr
-    putEnv $ FullEnv (v@>(ty, fmap binderVar binders)) (iv@>iv)
+    putEnv $ FullEnv (bindWith b (fmap binderVar binders)) (iv@>iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
     FullEnv lenv tenv <- getEnv
     let ty = getType (FullEnv (fmap fst lenv) tenv) expr
-    let binders = impBinder (rawName "%imptmp") (flatType' ty)
+    let binders = impBinders (rawName "%imptmp" %> ty)
     prog <- impExprTop binders expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
 
-impBinder :: Name -> RecTree IType -> RecTree IBinder
-impBinder v tree = fmap (uncurry Bind . onFst newName) (recTreeNamed tree)
+impBinders :: Binder -> RecTree IBinder
+impBinders b@(Bind v _) = fmap (uncurry Bind . onFst newName) (recTreeNamed itypes)
    where
+     itypes = flatType' (binderAnn b)
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
 
@@ -66,7 +66,7 @@ toImpDest :: RecTree IBinder -> Expr -> ImpM ()
 toImpDest dest expr = do
   out <- toImp expr
   void $ traverse update (recTreeZipEq dest out)
-  where update (Bind v _, e) = add (Update v [] e)
+  where update (b, e) = add (Update (binderVar b) [] e)
 
 toImp :: Expr -> ImpM (RecTree IExpr)
 toImp expr = case expr of
@@ -158,7 +158,8 @@ impFold [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
   add $ Loop i n' block
   return $ fmap IVar accumCells
   where RecTree (Tup binders) = p
-        [accumBinder@(Bind _ accumTy), xBinder] = map unLeaf binders
+        [accumBinder, xBinder] = map unLeaf binders
+        accumTy = binderAnn accumBinder
 
 toImpNewVar :: Expr -> ImpM (RecTree Var)
 toImpNewVar expr = do
@@ -169,7 +170,7 @@ toImpNewVar expr = do
 
 newVar :: IExpr -> IType -> ImpM Var
 newVar expr t = do v <- fresh "var"
-                   addLet (Bind v t) expr
+                   addLet (v %> t) expr
                    return v
 
 addLet :: IBinder -> IExpr -> ImpM ()
@@ -285,7 +286,7 @@ addVar :: Var -> IType -> ImpCheckM ()
 addVar v ty = do
   env <- get
   throwIf (v `isin` env) $ "Variable " ++ pprint v ++ " already defined"
-  modify (bind (Bind v ty) <>)
+  modify (v @> ty <>)
 
 impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of

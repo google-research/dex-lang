@@ -1,15 +1,38 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst) where
+             onSnd, onFst,
+             EnvM, runEnvM, addEnv, askEnv, liftEnvM) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
 import Test.QuickCheck
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
-import Control.Monad.State (State, evalState, put, get)
+import Control.Monad
+import Control.Monad.State.Strict
+import Control.Monad.Reader
+import Control.Monad.Writer
+
+-- monad for doing things in a monoidal environment
+-- TODO: consider making an mtl-style typeclass
+newtype EnvM env a = EnvM (StateT env (Writer env) a)
+  deriving (Functor, Applicative, Monad)
+
+addEnv :: Monoid env => env -> EnvM env ()
+addEnv x = EnvM $ modify (x <>) >> tell x
+
+askEnv :: Monoid env => EnvM env env
+askEnv = EnvM get
+
+runEnvM :: Monoid env => EnvM env a -> env -> (a, env)
+runEnvM (EnvM m) env = runWriter $ evalStateT m env
+
+liftEnvM :: (Monoid env, MonadReader env m) => EnvM env a -> m (a, env)
+liftEnvM m = liftM (runEnvM m) ask
 
 onFst :: (a -> b) -> (a, c) -> (b, c)
 onFst f (x, y) = (f x, y)

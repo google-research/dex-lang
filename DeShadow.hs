@@ -17,10 +17,10 @@ type DeShadowM a = Pass FreshSubst () a
 deShadowPass :: UDecl -> TopPass FreshSubst UDecl
 deShadowPass decl = case decl of
   UTopLet b expr -> do checkTopShadow b
-                       putEnv (foldMap newSubst (binderVars b))
+                       putEnv (newSubst (binderVars b))
                        liftM (UTopLet b) $ deShadowTop expr
   UTopUnpack b tv expr -> do checkTopShadow b
-                             putEnv (foldMap newSubst (binderVars b))
+                             putEnv (newSubst (binderVars b))
                              liftM (UTopUnpack b tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -33,10 +33,12 @@ deShadowPass decl = case decl of
     deShadowTop expr = liftTopPass () mempty (deShadowExpr expr)
 
 checkTopShadow :: UBinder -> TopPass FreshSubst ()
-checkTopShadow (Bind v _) = do
+checkTopShadow b = do
   subst <- getEnv
-  if isFresh v subst then return ()
-                     else throw RepeatedVarErr (pprint v)
+  case binderVars b of
+    [] -> return ()
+    [v] | isFresh v subst -> return ()
+        | otherwise -> throw RepeatedVarErr (pprint v)
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
@@ -58,11 +60,11 @@ deShadowExpr expr = case expr of
     body' <- extendWith scope (recur body)
     return $ UFor b' body'
   UGet e v -> liftM2 UGet (recur e) (asks (getRenamed v))
-  UUnpack (Bind v ty) tv bound body -> do
+  UUnpack b tv bound body -> do
     bound' <- recur bound
-    ([Bind v' _], scope) <- freshen [Bind v Nothing]
+    ([b'], scope) <- freshen [b]
     body' <- extendWith scope (recur body)
-    return $ UUnpack (Bind v' ty) tv bound' body'
+    return $ UUnpack b' tv bound' body'
   URecCon r -> liftM URecCon $ traverse recur r
   -- TODO: deshadow type as well when we add scoped type vars
   UAnnot body ty -> liftM (flip UAnnot ty) (recur body)
@@ -71,10 +73,7 @@ deShadowExpr expr = case expr of
 freshen :: Traversable f => f UBinder -> DeShadowM (f UBinder, FreshSubst)
 freshen p = do checkRepeats p
                scope <- ask
-               let f (Bind v ann) = let (v', scope') = rename v scope
-                                    in (Bind v' ann, scope')
-               let zipped = fmap f p
-               return (fmap fst zipped, fold (fmap snd zipped))
+               return $ freshenBinders scope p
 
 checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
 checkRepeats bs = case repeated (foldMap binderVars bs) of
