@@ -31,7 +31,7 @@ import Env
 import Record
 import Util
 import Pass
-import Fresh hiding (Name)
+import Fresh hiding (Name, freshName)
 import PPrint
 
 import LLVMExec

@@ -1,6 +1,7 @@
 module DeShadow (deShadowPass) where
 
 import Control.Monad.Reader
+import Control.Monad.Except hiding (Except)
 
 import Env
 import Syntax
@@ -9,18 +10,20 @@ import Fresh
 import PPrint
 import Util (repeated)
 
-type DeShadowM a = Pass FreshSubst () a
+type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
+type DeShadowEnv = FullEnv Var Var
 
--- TODO: deshadow lexically scoped type variables
-
-deShadowPass :: UDecl -> TopPass FreshSubst UDecl
+deShadowPass :: UDecl -> TopPass FreshScope UDecl
 deShadowPass decl = case decl of
-  UTopLet b expr -> do checkTopShadow b
-                       putEnv (newSubst (binderVars b))
-                       liftM (UTopLet b) $ deShadowTop expr
-  UTopUnpack b tv expr -> do checkTopShadow b
-                             putEnv (newSubst (binderVars b))
-                             liftM (UTopUnpack b tv) $ deShadowTop expr
+  UTopLet b expr -> do
+    mapM checkTopShadow (binderVars b)
+    putEnv (foldMap newScope (binderVars b))
+    liftM (UTopLet b) $ deShadowTop expr
+  UTopUnpack b tv expr -> do
+    mapM checkTopShadow (binderVars b)
+    checkTopShadow tv
+    putEnv (foldMap newScope (binderVars b))
+    liftM (UTopUnpack b tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (UEvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -28,54 +31,67 @@ deShadowPass decl = case decl of
                 _ -> return ()
     return $ UEvalCmd (Command cmd expr')
   where
-    deShadowTop :: UExpr -> TopPass FreshSubst UExpr
-    deShadowTop expr = liftTopPass () mempty (deShadowExpr expr)
+    deShadowTop :: UExpr -> TopPass FreshScope UExpr
+    deShadowTop expr = do
+      scope <- getEnv
+      liftEither $ runFreshRT (runReaderT (deShadowExpr expr) mempty) scope
 
-checkTopShadow :: UBinder -> TopPass FreshSubst ()
-checkTopShadow b = do
-  subst <- getEnv
-  case binderVars b of
-    [] -> return ()
-    [v] | isFresh v subst -> return ()
-        | otherwise -> throw RepeatedVarErr (pprint v)
+checkTopShadow :: Var -> TopPass FreshScope ()
+checkTopShadow v = do
+  scope <- getEnv
+  if isFresh v scope then return ()
+                     else throw RepeatedVarErr (pprint v)
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
   ULit x -> return (ULit x)
-  UVar v -> liftM UVar $ asks (getRenamed v)
+  UVar v -> liftM UVar (getLVar v)
   UBuiltin b -> return (UBuiltin b)
   ULet p bound body -> do
     bound' <- recur bound
-    (p', scope) <- freshen p
-    body' <- extendWith scope (recur body)
-    return $ ULet p' bound' body'
+    deShadowPat p $ \p' -> do
+      body' <- recur body
+      return $ ULet p' bound' body'
   ULam p body -> do
-    (p', scope) <- freshen p
-    body' <- extendWith scope (recur body)
-    return $ ULam p' body'
+    deShadowPat p $ \p' -> do
+      body' <- recur body
+      return $ ULam p' body'
   UApp fexpr arg -> liftM2 UApp (recur fexpr) (recur arg)
   UFor b body -> do
-    ([b'], scope) <- freshen [b]
-    body' <- extendWith scope (recur body)
-    return $ UFor b' body'
-  UGet e v -> liftM2 UGet (recur e) (asks (getRenamed v))
+    deShadowPat [b] $ \[b'] -> do
+      body' <- recur body
+      return $ UFor b' body'
+  UGet e v -> liftM2 UGet (recur e) (getLVar v)
   UUnpack b tv bound body -> do
     bound' <- recur bound
-    ([b'], scope) <- freshen [b]
-    body' <- extendWith scope (recur body)
-    return $ UUnpack b' tv bound' body'
+    freshName tv $ \tv' ->
+      extendWith (asTEnv (tv @> tv')) $
+        deShadowPat [b] $ \[b'] -> do
+          body' <- recur body
+          return $ UUnpack b' tv' bound' body'
   URecCon r -> liftM URecCon $ traverse recur r
-  -- TODO: deshadow type as well when we add scoped type vars
-  UAnnot body ty -> liftM (flip UAnnot ty) (recur body)
+  UAnnot body ty -> liftM2 UAnnot (recur body) (deShadowType ty)
   where recur = deShadowExpr
+        getLVar :: Var -> DeShadowM Var
+        getLVar v = asks $ lookupSubst v . lEnv
+        deShadowAnnot b = fmap (fmap deShadowType) b
 
-freshen :: Traversable f => f UBinder -> DeShadowM (f UBinder, FreshSubst)
-freshen p = do checkRepeats p
-               scope <- ask
-               return $ freshenBinders scope p
+deShadowPat :: Traversable f =>
+               f UBinder -> (f UBinder -> DeShadowM a) -> DeShadowM a
+deShadowPat pat cont = do
+  checkRepeats pat
+  pat' <- traverse (traverse (traverse deShadowType)) pat
+  freshenBinders pat' $ \subst pat'' ->
+    extendWith (asLEnv subst) $
+      cont pat''
+
+deShadowType :: Type -> DeShadowM Type
+deShadowType ty = do
+  subst <- asks $ tEnv
+  let sub v = Just (TypeVar (lookupSubst v subst))
+  return $ maybeSub sub ty
 
 checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
 checkRepeats bs = case repeated (foldMap binderVars bs) of
                     [] -> return ()
                     xs -> throw RepeatedVarErr (pprint xs)
-
