@@ -13,6 +13,7 @@ import qualified LLVM.AST.IntegerPredicate as L
 
 import Control.Monad
 import Control.Monad.State
+import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Applicative (liftA, liftA2)
 
@@ -55,10 +56,9 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
-                                 , impVarEnv  :: ImpVarEnv
                                  }
 
-type CompileM a = Pass () CompileState a
+type CompileM a = Pass ImpVarEnv CompileState a
 data CompiledProg = CompiledProg Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
 
@@ -106,8 +106,8 @@ toLLVM bs prog = do
   destCells <- liftIO $ mapM (makeDestCell env) bs
   let env' =    fmap (Left  . asCompileVal) env
              <> fmap (Right . asCompileCell) (bindFold destCells)
-  let initState = CompileState [] [] [] "start_block" env'
-  prog <- liftEither $ evalPass () initState mempty (compileProg prog)
+  let initState = CompileState [] [] [] "start_block"
+  prog <- liftEither $ evalPass env' initState mempty (compileTopProg prog)
   return (map binderAnn destCells, prog)
 
 asCompileVal :: PersistVal -> CompileVal
@@ -158,13 +158,16 @@ constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
 constOperand RealType x = litReal (interpret_ieee_64 x)
 
-compileProg :: ImpProg -> CompileM CompiledProg
-compileProg (ImpProg statements) = do
-  mapM compileStatement statements
+compileTopProg :: ImpProg -> CompileM CompiledProg
+compileTopProg prog = do
+  compileProg prog
   finishBlock (L.Ret Nothing []) (L.Name "")
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
   return $ CompiledProg (makeModule decls blocks)
+
+compileProg :: ImpProg -> CompileM ()
+compileProg (ImpProg statements) = mapM_ compileStatement statements
 
 compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
@@ -173,17 +176,13 @@ compileStatement statement = case statement of
                            idxs' <- mapM lookupScalar idxs
                            cell' <- idxCell cell idxs'
                            writeCell cell' val
-  Alloc v (IType b shape) -> do
+  Alloc (Bind v (IType b shape)) body -> do
     shape' <- mapM lookupScalar shape
-    cell <- case shape' of [] -> alloca b (nameTag v)
-                           _ -> malloc b shape' (nameTag v)
-    modify $ setImpVarEnv (v @> Right cell <>)
-
+    cell <- allocate b shape' (nameTag v)
+    extendWith (v @> Right cell) (compileProg body)
+    free cell
   Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
-  Free v -> do (Cell (Ptr ptr _) shape) <- lookupCellVar v
-               case shape of [] -> return ()
-                             _  -> addInstr $ L.Do (externCall freeFun [ptr])
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of
@@ -206,7 +205,7 @@ compileExpr expr = case expr of
                             compileBuiltin b vals
 
 lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
-lookupImpVar v = gets $ (! v) . impVarEnv
+lookupImpVar v = asks (! v)
 
 readScalarCell :: Cell -> CompileM CompileVal
 readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
@@ -236,7 +235,7 @@ finishBlock term newName = do
          . setCurInstrs (const [])
          . setBlockName (const newName)
 
-compileLoop :: Var -> CompileVal -> [Statement] -> CompileM ()
+compileLoop :: Var -> CompileVal -> ImpProg -> CompileM ()
 compileLoop iVar (ScalarVal n _) body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"
@@ -245,8 +244,8 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  modify $ setImpVarEnv (iVar @> (Left $ ScalarVal iVal longTy) <>)
-  mapM compileStatement body
+  extendWith (iVar @> (Left $ ScalarVal iVal longTy)) $
+    compileProg body
   iValInc <- add iVal (litInt 1)
   store i iValInc
   loopCond <- iValInc `lessThan` n
@@ -263,10 +262,6 @@ idxCell (Cell ptr (_:shape)) (i:idxs) = do
   step <- mul size (scalarVal i)
   ptr' <- addPtr ptr step
   idxCell (Cell ptr' shape) idxs
-
--- readCell :: Cell -> CompileM CompileVal
--- readCell (Cell ptr@(Ptr _ ty) []) = do x <- load ptr
---                                        return $ ScalarVal x ty
 
 writeCell :: Cell -> CompileVal -> CompileM ()
 writeCell (Cell ptr []) (ScalarVal x _) = store ptr x
@@ -324,6 +319,15 @@ malloc ty shape s = do
     return $ Cell (Ptr ptr ty') shape'
   where shape' = map scalarVal shape
         ty' = scalarTy ty
+
+allocate :: BaseType -> [CompileVal] -> String -> CompileM Cell
+allocate b shape s = case shape of [] -> alloca b s
+                                   _ -> malloc b shape s
+
+free :: Cell -> CompileM ()
+free (Cell (Ptr ptr _) shape) =
+  case shape of [] -> return ()
+                _  -> addInstr $ L.Do (externCall freeFun [ptr])
 
 sizeOf :: [Operand] -> CompileM Operand
 sizeOf shape = foldM mul (litInt 1) shape
@@ -448,7 +452,6 @@ externDecl (ExternFunSpec fname retTy argTys argNames) =
 setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
 setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
 setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
-setImpVarEnv   update state = state { impVarEnv   = update (impVarEnv   state) }
 setBlockName   update state = state { blockName   = update (blockName   state) }
 
 instance Functor JitVal where

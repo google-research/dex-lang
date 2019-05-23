@@ -9,11 +9,11 @@ module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
                Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), (-->), (==>), freeLVars, asLEnv, asTEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub, Size, Statement (..), unitTy,
-               ImpProg (..), IExpr (..), IType (..), IBinder,
+               freeTyVars, maybeSub, Size, unitTy,
+               ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
-               resultSource, resultText, resultErr, resultComplete
+               resultSource, resultText, resultErr, resultComplete, Index
               ) where
 
 import Record
@@ -123,12 +123,12 @@ type UPat = RecTree UBinder
 
 -- === imperative IR ===
 
-newtype ImpProg = ImpProg [Statement] deriving (Show)
-data Statement = Update Var [Index] IExpr
-               | Loop Index Size [Statement]
-               | Alloc Var IType -- mutable
-               | Free Var
-               deriving (Show)
+newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
+
+data Statement = Alloc IBinder ImpProg
+               | Update Var [Index] IExpr
+               | Loop Index Size ImpProg
+                   deriving (Show)
 
 data IExpr = ILit LitVal
            | IVar  Var

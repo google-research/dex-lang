@@ -7,7 +7,6 @@ import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import qualified Data.Map.Strict as M
 
-import Env
 import Syntax
 import Record
 
@@ -131,13 +130,6 @@ instance Pretty Builtin where
     Fold     -> "%fold"
     IntToReal -> "%real"
 
-instance Pretty Statement where
-  pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
-  pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
-                               nest 4 (hardline <> p block)
-  pretty (Alloc v ty) = p (v %> ty)
-  pretty (Free v) = "free" <+> p v
-
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar v) = p v
@@ -149,6 +141,12 @@ instance Pretty IType where
 
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map p block)
+
+instance Pretty Statement where
+  pretty (Alloc b body) = p b <> braces (hardline <> p body)
+  pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
+  pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
+                               nest 4 (hardline <> p block)
 
 instance Pretty Value where
   pretty (Value _ vecs) = p vecs

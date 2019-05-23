@@ -4,8 +4,9 @@ matmul x y = for i k. sum (for j. x.i.j * y.j.k)
 matmul2 x y = for i k. sum (for j. x.i.j * y.k.j)
 
 
-xs, nx = unpack iota 500
+_, nx = unpack range 5
 
+xs = iota :: nx=>Int
 
 mat = for i j. rand (hash 0 (hash xs.i xs.j))
 
@@ -15,4 +16,5 @@ mat = for i j. rand (hash 0 (hash xs.i xs.j))
 
 > 0.621052732s
 
+:passes matmul mat mat
 
