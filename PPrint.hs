@@ -129,12 +129,12 @@ instance Pretty Builtin where
     Randint  -> "%randint"
     Fold     -> "%fold"
     IntToReal -> "%real"
+    Copy     -> "%copy"
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar v) = p v
   pretty (IGet expr idx) = p expr <> "." <> p idx
-  pretty (IBuiltinApp b exprs) = parens $ p b <+> hsep (map p exprs)
 
 instance Pretty IType where
   pretty (IType ty shape) = p ty <> p shape
@@ -144,7 +144,7 @@ instance Pretty ImpProg where
 
 instance Pretty Statement where
   pretty (Alloc b body) = p b <> braces (hardline <> p body)
-  pretty (Update v idxs expr) = p v <> p idxs <+> ":=" <+> p expr
+  pretty (Update v idxs b exprs) = p v <> p idxs <+> ":=" <+> p b <+> hsep (map p exprs)
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 

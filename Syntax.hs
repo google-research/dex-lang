@@ -85,7 +85,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
-             | Iota | Range | Fold
+             | Iota | Range | Fold | Copy
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | TimeIt
@@ -126,14 +126,13 @@ type UPat = RecTree UBinder
 newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
 
 data Statement = Alloc IBinder ImpProg
-               | Update Var [Index] IExpr
+               | Update Var [Index] Builtin [IExpr]
                | Loop Index Size ImpProg
                    deriving (Show)
 
 data IExpr = ILit LitVal
            | IVar  Var
            | IGet IExpr Index
-           | IBuiltinApp Builtin [IExpr]
                deriving (Show, Eq)
 
 data ImpDecl = ImpTopLet [IBinder] ImpProg

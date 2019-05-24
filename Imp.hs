@@ -17,21 +17,20 @@ import Pass
 import Fresh
 
 type ImpM a = Pass ImpEnv () a
-type ImpVal = RecTree Name
+type ImpVal = RecTree IExpr
 type ImpEnv = FullEnv (Type, ImpVal) Name
-type Dest = (Var, [Index])
 
 impPass :: Decl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
   TopLet b expr -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
-    putEnv $ asLEnv $ bindWith b (fmap (fromJust . binderVar) binders)
+    putEnv $ asLEnv $ bindWith b (fmap (IVar . fromJust . binderVar) binders)
     return $ ImpTopLet (toList binders) prog
   TopUnpack b iv expr -> do
     let binders = RecTree $ Tup [ RecLeaf (iv %> intTy), impBinders b]
     prog <- impExprTop binders expr
-    putEnv $ FullEnv (bindWith b (fmap (fromJust . binderVar) binders)) (iv@>iv)
+    putEnv $ FullEnv (bindWith b (fmap (IVar . fromJust . binderVar) binders)) (iv@>iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -55,123 +54,116 @@ impBinders (Bind v ty) = fmap (uncurry (%>) . onFst newName) (recTreeNamed itype
 impExprTop :: RecTree IBinder -> Expr -> TopPass ImpEnv ImpProg
 impExprTop dest expr = do
   env <- getEnv
-  let dest' = fmap (\(Bind v _) -> (v, [])) dest -- TODO: handle underscores
-  liftEither $ evalPass env () (envToScope env) (toImpDest dest' expr)
+  let dest' = fmap asBuffer dest -- TODO: handle underscores
+  liftEither $ evalPass env () (envToScope env) (toImp expr dest')
 
 envToScope :: ImpEnv -> FreshScope
 envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
-  where lNames = concat $ map (toList . snd) (toList lenv)
+  where lNames = map getVar $ concat $ map (toList . snd) (toList lenv)
+        getVar (IVar v) = v
 
-toImpDest :: RecTree Dest -> Expr -> ImpM ImpProg
-toImpDest dest expr = case expr of
+toImp :: Expr -> RecTree Dest -> ImpM ImpProg
+toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
-  Var v -> liftM write $ asks $ fmap IVar . snd . (!v) . lEnv
-  TApp (Builtin Iota) n -> impIota dest n
-  App (Builtin Range) n -> toImpExpr n $ \n' ->
-                             return $ write $ RecTree $ Tup [n', unitCon]
-  App (TApp (Builtin Fold) ts) args -> impFold dest ts args
-  App (Builtin b) args ->
-    toImpExpr args $ \args' ->
-      return $ write $ RecLeaf $ IBuiltinApp b (toList args')
+  Var v -> do exprs <- asks $ snd . (!v) . lEnv
+              return $ write exprs
+  TApp (Builtin Iota) n -> impIota dests n
+  App (Builtin Range) n -> let (RecTree (Tup [nDest, _])) = dests
+                           in toImp n nDest
+  App (TApp (Builtin Fold) ts) args -> impFold dests ts args
+  App (Builtin b) args -> do
+    let (RecLeaf dest) = dests
+    materialize args $ \args' ->
+      return $ writeBuiltin b dest (map IVar (toList args'))
   Let p bound body ->
-    toImpExpr bound $ \bound' ->
-      letBind p bound' $
-        toImpDest dest body
-  Get x i -> do
-    RecLeaf i' <- asks $ snd . (!i) . lEnv
-    toImpExpr x $ \xs ->
-      return $ write $ fmap (flip IGet i') xs
-  For i body -> toImpFor dest i body
-  RecCon r -> liftM fold $ sequence $ recZipWith toImpDest dests r
-                where RecTree dests = dest
+    materialize bound $ \bound' ->
+      bindPat p (fmap IVar bound') $
+        toImp body dests
+  Get x i -> do RecLeaf (IVar i') <- asks $ snd . (!i) . lEnv
+                toImp x $ fmap (indexSource i') dests
+  For i body -> toImpFor dests i body
+  RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
+                where RecTree dests' = dests
   Unpack b n bound body -> do
-    toImpExpr bound $ \(RecTree (Tup [RecLeaf iset, x])) -> do
-      n' <- freshLike n
-      body' <- extendWith (asTEnv (n @> n')) $
-                 letBind (RecLeaf b) x $
-                   toImpDest dest body
-      return $ makeLet (n' %> intTy) iset body'
+    materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
+      extendWith (asTEnv (n @> n')) $
+        bindPat (RecLeaf b) (fmap IVar x) $
+          toImp body dests
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
-  where write = writeExprs dest
+  where write = writeExprs dests
         unitCon = RecTree $ Tup []
 
-toImpExpr :: Expr -> (RecTree IExpr -> ImpM ImpProg) -> ImpM ImpProg
-toImpExpr expr cont = do
+materialize :: Expr -> (RecTree Name -> ImpM ImpProg) -> ImpM ImpProg
+materialize expr body = do
   ty <- exprType expr >>= flatType
-  bs <- traverse (freshBinder "tmp") ty
-  let dests = fmap asDest bs
-  prog <- toImpDest dests expr
-  prog' <- cont $ fmap (IVar . fst) dests
-  return $ makeAllocs bs $ prog <> prog'
-  -- TODO: think about fresh variable and env contexts!
+  names <- traverse (const (fresh "tmp")) ty
+  let binders = fmap (uncurry (%>)) (recTreeZipEq names ty)
+      dest = fmap (\v -> Buffer v [] []) names
+  writerProg <- toImp expr dest
+  readerProg <- body names
+  return $ foldr allocProg (writerProg <> readerProg) binders
+  where allocProg binder scoped = asProg $ Alloc binder scoped
 
-asDest :: IBinder -> Dest
-asDest (Bind v _) = (v, [])
+bindPat :: Pat -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
+bindPat pat exprs body = extendWith (asLEnv $ bindRecZip pat exprs) body
 
-freshBinder :: String -> IType -> ImpM IBinder
-freshBinder s ty = do v <- fresh s
-                      return (v %> ty)
+loop :: Name -> (Name -> ImpM ImpProg) -> ImpM ImpProg
+loop n body = do i <- fresh "i"
+                 body' <- body i
+                 return $ asProg $ Loop i n body'
+
+-- Destination indices, then source indices
+data Dest = Buffer Var [Index] [Index]  deriving Show
+
+asBuffer :: IBinder -> Dest
+asBuffer (Bind v _) = Buffer v [] []
+
+indexSource :: Index -> Dest -> Dest
+indexSource i (Buffer v destIdxs srcIdxs) = Buffer v destIdxs (i:srcIdxs)
+
+indexDest :: Index -> Dest -> Dest
+indexDest i (Buffer v destIdxs srcIdxs) = Buffer v (i:destIdxs) srcIdxs
 
 writeExprs :: RecTree Dest -> RecTree IExpr -> ImpProg
-writeExprs dests exprs = ImpProg $ toList $
-                           fmap (uncurry writeExpr) (recTreeZipEq dests exprs)
+writeExprs dests exprs = fold $ fmap (uncurry writeExpr) (recTreeZipEq dests exprs)
 
-writeExpr :: Dest -> IExpr -> Statement
-writeExpr (name, idxs) expr = Update name idxs expr
+writeExpr :: Dest -> IExpr -> ImpProg
+writeExpr (Buffer name destIdxs srcIdxs) expr =
+  asProg $ Update name destIdxs Copy [expr']
+  where expr' = foldr (flip IGet) expr srcIdxs
 
-letBind :: Pat -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
-letBind pat exprs cont = do
-  impBinders <- liftM recTreeJoin $ traverse flatBinding pat
-  let vs = fmap (fromJust . binderVar) impBinders
-  extendWith (asLEnv $ bindRecZip pat vs) $ do
-    prog <- cont
-    return $ foldr (uncurry makeLet) prog (recTreeZipEq impBinders exprs)
-
-flatBinding :: Binder -> ImpM (RecTree IBinder)
-flatBinding (Ignore ty) = liftM (fmap Ignore) (flatType ty)
-flatBinding (Bind v ty) = do ty' <- flatType ty
-                             traverse freshBinder ty'
-  where freshBinder t = do v' <- freshLike v
-                           return (v' %> t)
-
-makeLet :: IBinder -> IExpr -> ImpProg -> ImpProg
-makeLet b@(Bind v _) expr body = ImpProg [Alloc b
-                                           (ImpProg [Update v [] expr] <> body)]
-
-makeAllocs :: Foldable f => f IBinder -> ImpProg -> ImpProg
-makeAllocs bs prog = foldr (\b p -> asProg (Alloc b p)) prog bs
+writeBuiltin :: Builtin -> Dest -> [IExpr] -> ImpProg
+writeBuiltin b (Buffer name destIdxs []) exprs =
+  asProg $ Update name destIdxs b exprs
 
 toImpFor :: RecTree Dest -> Binder -> Expr -> ImpM ImpProg
 toImpFor dest (Bind i (TypeVar n)) body = do
-  i' <- freshLike i
-  let dest' = fmap (\(v, idxs) -> (v, i':idxs)) dest
-  body' <- extendWith (asLEnv $ i @> (TypeVar n, RecLeaf i')) $
-             toImpDest dest' body
-  return $ asProg $ Loop i' n body'
-
-impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
-impIota (RecLeaf (outVar, outIdxs)) [TypeVar n] = do
   n' <- asks $ (!n) . tEnv
-  i <- fresh "iIota"
-  return $ asProg $ Loop i n' $ asProg $ Update outVar (i:outIdxs) (IVar i)
+  loop n' $ \i' -> do
+    extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
+      toImp body (fmap (indexDest i') dest)
 
-impFold :: (RecTree Dest) -> [Type] -> Expr -> ImpM ImpProg
+-- TODO: handle source indices
+impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
+impIota (RecLeaf (Buffer outVar destIdxs [])) [TypeVar n] = do
+  n' <- asks $ (!n) . tEnv
+  loop n' $ \i ->
+    return $ asProg $ Update outVar (i:destIdxs) Copy [IVar i]
+
+impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
 impFold dest [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
   n' <- asks $ (!n) . tEnv
-  toImpExpr x0 $ \x0' ->
-    toImpExpr xs $ \xs' -> do
-      let destExprs = fmap destAsExpr dest
-      i <- fresh "iFold"
-      body' <- letBind accumBinder destExprs $
-                 letBind xBinder (fmap (flip IGet i) xs') $
-                   toImpDest dest body
-      return $ writeExprs dest x0' <> asProg (Loop i n' body')
-  where RecTree (Tup [accumBinder, xBinder]) = p
-        accumTy = binderAnn (unLeaf accumBinder)
-
--- TODO: likely bug. haven't thought about whether we need foldr or foldl
-destAsExpr :: Dest -> IExpr
-destAsExpr (v, idxs) = foldr (flip IGet) (IVar v) idxs
+  materialize x0 $ \accum ->
+    materialize xs $ \xs' -> do
+      loop' <- loop n' $ \i ->
+                 bindPat accumBinder (fmap IVar accum) $
+                   bindPat xBinder (fmap (flip IGet i . IVar) xs') $
+                     toImp body (fmap asBuffer accum)
+      return $ loop' <> writeExprs dest (fmap IVar accum)
+  where
+    asBuffer :: Name -> Dest
+    asBuffer v = Buffer v [] []
+    RecTree (Tup [accumBinder, xBinder]) = p
 
 asProg :: Statement -> ImpProg
 asProg statement = ImpProg [statement]
@@ -232,24 +224,27 @@ lookupVar v = asks $ (! v)
 checkStatement :: Statement -> ImpCheckM ()
 checkStatement statement = case statement of
   Alloc b body -> do
-    checkTypeValid (binderAnn b)
     env <- ask
     if fromJust (binderVar b) `isin` env then throw CompilerErr "Shadows!"
                                          else return ()
     extendWith (bind b) (checkProg body)
-  Update v idxs expr -> do
+  Update v idxs Copy [expr] -> do
     mapM_ checkIsInt idxs
     IType b  shape  <- asks $ (! v)
     IType b' shape' <- impExprType expr
-    assertEq b b' "Base type mismatch"
+    assertEq b b' "Base type mismatch in copy"
     assertEq (drop (length idxs) shape) shape' "Dimension mismatch"
+  Update v idxs builtin args -> do -- scalar builtins only
+    argTys <- mapM impExprType args
+    let ArrType inTy (BaseType b) = builtinType builtin
+    checkArgTys inTy argTys
+    IType b' shape  <- asks $ (! v)
+    case drop (length idxs) shape of
+      [] -> assertEq b b' "Base type mismatch in builtin application"
+      _  -> throw CompilerErr "Writing to non-scalar buffer"
   Loop i size block -> extendWith (i @> intTy) $ do
                           checkIsInt size
                           checkProg block
-
-checkTypeValid :: IType -> ImpCheckM ()
-checkTypeValid _ = return () -- TODO
-
 
 impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of
@@ -258,22 +253,17 @@ impExprType expr = case expr of
   IGet e i -> do IType b (_:shape) <- impExprType e
                  checkIsInt i
                  return $ IType b shape
-  IBuiltinApp b args -> do -- scalar builtins only
-    argTys <- mapM impExprType args
-    let ArrType inTy (BaseType out) = builtinType b
-    checkArgTys inTy argTys
-    return $ IType out []
 
-  where checkArgTys :: Type -> [IType] -> ImpCheckM ()
-        checkArgTys (RecType (Tup argTyNeeded)) argTys =
-          -- TODO This zipWith silently drops arity errors :(
-          zipWithM_ checkScalarTy argTyNeeded argTys
-        checkArgTys b@(BaseType _) [argTy] = checkScalarTy b argTy
-        checkScalarTy :: Type -> IType -> ImpCheckM ()
-        checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
-        checkScalarTy ty ity = throw CompilerErr $
-                                       "Wrong types. Expected:" ++ pprint ty
-                                                     ++ " Got " ++ pprint ity
+checkArgTys :: Type -> [IType] -> ImpCheckM ()
+checkArgTys (RecType (Tup argTyNeeded)) argTys =
+  -- TODO This zipWith silently drops arity errors :(
+    zipWithM_ checkScalarTy argTyNeeded argTys
+checkArgTys b@(BaseType _) [argTy] = checkScalarTy b argTy
+
+checkScalarTy :: Type -> IType -> ImpCheckM ()
+checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
+checkScalarTy ty ity = throw CompilerErr $ "Wrong types. Expected:" ++ pprint ty
+                                                         ++ " Got " ++ pprint ity
 
 checkIsInt :: Var -> ImpCheckM ()
 checkIsInt v = do ty <- lookupVar v

@@ -171,11 +171,14 @@ compileProg (ImpProg statements) = mapM_ compileStatement statements
 
 compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
-  Update v idxs expr -> do val <- compileExpr expr
-                           cell <- lookupCellVar v
-                           idxs' <- mapM lookupScalar idxs
-                           cell' <- idxCell cell idxs'
-                           writeCell cell' val
+  Update v idxs b exprs -> do
+    vals <- mapM compileExpr exprs
+    cell <- lookupCellVar v
+    idxs' <- mapM lookupScalar idxs
+    cell' <- idxCell cell idxs'
+    outVal <- case b of Copy -> let [val] = vals in return val
+                        _ -> compileBuiltin b vals
+    writeCell cell' outVal
   Alloc (Bind v (IType b shape)) body -> do
     shape' <- mapM lookupScalar shape
     cell <- allocate b shape' (nameTag v)
@@ -200,9 +203,6 @@ compileExpr expr = case expr of
                    [] -> do x <- load ptr'
                             return $ ScalarVal x ty
                    _  -> return $ ArrayVal ptr' shape
-
-  IBuiltinApp b exprs -> do vals <- mapM compileExpr exprs
-                            compileBuiltin b vals
 
 lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
 lookupImpVar v = asks (! v)
