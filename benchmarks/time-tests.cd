@@ -8,11 +8,8 @@ matmul2 xs ys = for i k. fold (for j. lam c. c + x.i.k * y.j.k) 0.0
 
 _, nx = unpack range 500
 
-zs :: nx=>Int
-zs = iota
-
 mat :: nx=>nx=>Real
-mat = for i j. rand (hash 0 (hash zs.i zs.j))
+mat = for i j. rand (hash 0 (hash iota.i iota.j))
 
 -- this is not fast! about 1000X slower than numpy...
 :time matmul mat mat

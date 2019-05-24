@@ -143,12 +143,13 @@ toImpFor dest (Bind i (TypeVar n)) body = do
     extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
       toImp body (fmap (indexDest i') dest)
 
--- TODO: handle source indices
 impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
-impIota (RecLeaf (Buffer outVar destIdxs [])) [TypeVar n] = do
-  n' <- asks $ (!n) . tEnv
-  loop n' $ \i ->
-    return $ asProg $ Update outVar (i:destIdxs) Copy [IVar i]
+impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
+  case srcIdxs of
+    [] -> do n' <- asks $ (!n) . tEnv
+             loop n' $ \i ->
+                return $ asProg $ Update outVar (i:destIdxs) Copy [IVar i]
+    [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
 impFold dest [_, TypeVar n] (RecCon (Tup [For b (Lam p body), x])) = do
