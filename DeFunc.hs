@@ -15,10 +15,11 @@ data DFVal = DFNil
            | LamVal Pat DFEnv Expr
            | TLamVal [TBinder] DFEnv Expr
            | RecVal (Record DFVal)
+           | TabVal Type DFVal  deriving Show
 
 data DFEnv = DFEnv { dfLEnv  :: Env (Type, DFVal)
                    , dfSubst :: Env Var
-                   , dfTEnv  :: Env Type }
+                   , dfTEnv  :: Env Type }  deriving Show
 
 type DeFuncM a = ReaderT DFEnv (FreshRT (Either Err)) a
 
@@ -61,11 +62,11 @@ deFuncExpr expr = case expr of
                            return (ans, Let p' bound' body')
   Lam p body -> do env <- asks $ capturedEnv expr
                    return (LamVal p env body, envTupCon env)
+  App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (Builtin b) arg -> do (_, arg') <- recur arg
                             return (DFNil, App (Builtin b) arg')
-  App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   TApp (Builtin Iota) [n] -> do n' <- subTy n
-                                return $ (DFNil, TApp (Builtin Iota) [n'])
+                                return $ (TabVal n' DFNil, TApp (Builtin Iota) [n'])
   App fexpr arg -> do
     (LamVal p env body, fexpr') <- recur fexpr
     (x, arg') <- recur arg
@@ -76,10 +77,16 @@ deFuncExpr expr = case expr of
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> bindVar b DFNil $ \b' -> do
                   (ans, body') <- recur body
-                  return (ans, For b' body')
-  Get e ie -> do (ans, e') <- recur e
-                 ie' <- asks $ lookupSubst ie . dfSubst
-                 return (ans, Get e' ie')
+                  return (TabVal (binderAnn b') ans, For b' body')
+  Get e ie -> do (val, e') <- recur e
+                 case val of
+                   TabVal _ ans -> do
+                     ie' <- asks $ lookupSubst ie . dfSubst
+                     return (ans, Get e' ie')
+                   v -> error $ show v
+  -- Get e ie -> do (TabVal _ ans, e') <- recur e
+  --                ie' <- asks $ lookupSubst ie . dfSubst
+  --                return (ans, Get e' ie')
   RecCon r -> do r' <- traverse recur r
                  return (RecVal (fmap fst r'), RecCon (fmap snd r'))
   TLam b body -> do env <- asks $ capturedEnv expr
@@ -145,6 +152,8 @@ deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
 deFuncType DFNil t = t
 deFuncType (LamVal  _ env _) _ = RecType $ Tup (envTypes env)
 deFuncType (TLamVal _ env _) _ = RecType $ Tup (envTypes env)
+deFuncType (TabVal n val) (TabType _ ty) = TabType n (deFuncType val ty)
+
 
 envTypes :: DFEnv -> [Type]
 envTypes env = map (\(ty, val) -> deFuncType val ty) $ toList (dfLEnv env)
@@ -155,14 +164,14 @@ rhsPair x y = RecCon (Tup [x, y])
 
 -- TODO: check/fail higher order case
 deFuncFold :: [Type] -> Expr -> DeFuncM (DFVal, Expr)
-deFuncFold ts (RecCon (Tup [Lam p body, x0, xs])) = do
+deFuncFold ts (RecCon (Tup [For b (Lam p body), x])) = do
   ts' <- traverse subTy ts
-  (x0Val, x0') <- deFuncExpr x0
-  (xsVal, xs') <- deFuncExpr xs
-  bindPat p (RecVal (Tup [x0Val, xsVal])) $ \p' -> do
-    (ans, body') <- deFuncExpr body
-    return (ans, App (TApp (Builtin Fold) ts')
-                     (RecCon (Tup [Lam p' body', x0', xs'])))
+  (xVal, x') <- deFuncExpr x
+  bindVar b DFNil $ \b' ->
+    bindPat p xVal $ \p' -> do
+      (ans, body') <- deFuncExpr body
+      return (ans, App (TApp (Builtin Fold) ts')
+                       (RecCon (Tup [For b' (Lam p' body'), x'])))
 
 instance RecTreeZip DFVal where
   recTreeZip (RecTree r) (RecVal r') = RecTree (recZipWith recTreeZip r r')

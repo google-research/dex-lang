@@ -52,17 +52,18 @@ range n = %range n
 real :: Int -> Real
 real x = %inttoreal x
 
-fold :: A i a b. (b -> a -> b) -> b -> i=>a -> b
-fold f x0 xs = %fold (lam (x, y). f x y, x0, for i. xs.i)
+fold :: A i a. i=>(a->a) -> a -> a
+fold fs x = %fold (for i. lam x. fs.i x, x)
 
 rand :: Int -> Real
 rand x = %rand x
 
+-- TODO: automatically hoist the xs.i
 sum :: A i. i=>Real -> Real
-sum  = fold fadd 0.0
+sum xs = fold (for i. let x = xs.i in lam c. c + x) 0.0
 
 isum :: A i. i=>Int -> Int
-isum = fold iadd 0
+isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 
 map :: A i a b. (a -> b) -> i=>a -> i=>b
 map f x = for i. f x.i

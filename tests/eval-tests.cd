@@ -50,7 +50,7 @@ fun = lam y. sum (map real arr) + y
 
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold (lam x y. iadd x y) 0 arr
+:p fold (for i. iadd arr.i) 0
 
 > [21]
 

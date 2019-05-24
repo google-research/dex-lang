@@ -146,10 +146,11 @@ builtinType builtin = case builtin of
     fbinOpType    = tup [real, real] --> real
     realUnOpType = real --> real
     i = BoundTVar 0
-    foldType = Forall [TyKind, TyKind, IdxSetKind] $
-                 tup [tup [b,a] --> b, b, k==>a] --> b
+    foldType = Forall [TyKind, IdxSetKind] $
+                 tup [j ==> (a --> a), a] --> a
     a = BoundTVar 0
     b = BoundTVar 1
+    j = BoundTVar 1
     k = BoundTVar 2
     int  = BaseType IntType
     real = BaseType RealType
