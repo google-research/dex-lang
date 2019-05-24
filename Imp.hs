@@ -175,6 +175,7 @@ flatType ty = case ty of
   TabType (TypeVar n) valTy -> do n' <- asks $ (!n) . tEnv
                                   valTy' <- flatType valTy
                                   return $ fmap (addIdx n') valTy'
+  TypeVar _ -> return $ RecLeaf intTy
   -- TODO: fix this (only works for range)
   Exists _ -> return (RecTree (Tup [RecLeaf intTy, RecTree (Tup [])]))
   _ -> error $ "Can't flatten type: " ++ show ty
