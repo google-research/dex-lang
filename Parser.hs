@@ -303,12 +303,19 @@ baseType = (symbol "Int"  >> return IntType)
 typeOps = [ [InfixR (symbol "=>" >> return TabType)]
           , [InfixR (symbol "->" >> return ArrType)]]
 
-typeExpr' =   parens typeExpr
+typeExpr' =   parenTy
           <|> liftM TypeVar varName
           <|> liftM BaseType baseType
           <|> forallType
           <|> existsType
           <?> "type"
+
+parenTy :: Parser Type
+parenTy = do
+  elts <- parens $ typeExpr `sepBy` symbol ","
+  return $ case elts of
+    [ty] -> ty
+    _ -> RecType $ Tup elts
 
 type LineParser = P.Parsec [String] ()
 

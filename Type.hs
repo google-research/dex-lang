@@ -136,7 +136,7 @@ builtinType builtin = case builtin of
   Tan      -> realUnOpType
   Fold     -> foldType
   Iota     -> Forall [IdxSetKind] (a ==> int)
-  Range    -> int --> Exists (i ==> unitTy)
+  Range    -> int --> Exists unitTy
   Hash     -> tup [int, int] --> int
   Randint  -> tup [int, int] --> int
   Rand     -> int --> real

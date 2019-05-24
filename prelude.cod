@@ -46,7 +46,7 @@ hash x y = %hash (x, y)
 iota :: A i. i=>Int
 iota = %iota
 
--- range :: Int -> E i. i=>()
+range :: Int -> E i. ()
 range n = %range n
 
 real :: Int -> Real
