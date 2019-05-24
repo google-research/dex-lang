@@ -151,19 +151,21 @@ impIota (RecLeaf (Buffer outVar destIdxs [])) [TypeVar n] = do
     return $ asProg $ Update outVar (i:destIdxs) Copy [IVar i]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
-impFold dest [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, xs])) = do
+impFold dest [_, _, TypeVar n] (RecCon (Tup [Lam p body, x0, For b x])) = do
   n' <- asks $ (!n) . tEnv
-  materialize x0 $ \accum ->
-    materialize xs $ \xs' -> do
-      loop' <- loop n' $ \i ->
+  materialize x0 $ \accum -> do
+    loop' <- loop n' $ \i' ->
+               extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
                  bindPat accumBinder (fmap IVar accum) $
-                   bindPat xBinder (fmap (flip IGet i . IVar) xs') $
-                     toImp body (fmap asBuffer accum)
-      return $ loop' <> writeExprs dest (fmap IVar accum)
+                   materialize x $ \x' ->
+                     bindPat xBinder (fmap IVar x') $
+                       toImp body (fmap asBuffer accum)
+    return $ loop' <> writeExprs dest (fmap IVar accum)
   where
+    RecTree (Tup [accumBinder, xBinder]) = p
+    Bind i _ = b
     asBuffer :: Name -> Dest
     asBuffer v = Buffer v [] []
-    RecTree (Tup [accumBinder, xBinder]) = p
 
 asProg :: Statement -> ImpProg
 asProg statement = ImpProg [statement]
