@@ -12,8 +12,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 
 data DFVal = DFNil
-           | LamVal Pat DFEnv Expr
-           | TLamVal [TBinder] DFEnv Expr
+           | Thunk DFEnv Expr
            | RecVal (Record DFVal)
            | TabVal Type DFVal  deriving Show
 
@@ -60,15 +59,14 @@ deFuncExpr expr = case expr of
                          bindPat p x $ \p' -> do
                            (ans, body') <- recur body
                            return (ans, Let p' bound' body')
-  Lam p body -> do env <- asks $ capturedEnv expr
-                   return (LamVal p env body, envTupCon env)
+  Lam _ _ -> makeThunk expr
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (Builtin b) arg -> do (_, arg') <- recur arg
                             return (DFNil, App (Builtin b) arg')
   TApp (Builtin Iota) [n] -> do n' <- subTy n
                                 return $ (TabVal n' DFNil, TApp (Builtin Iota) [n'])
   App fexpr arg -> do
-    (LamVal p env body, fexpr') <- recur fexpr
+    (Thunk env (Lam p body), fexpr') <- recur fexpr
     (x, arg') <- recur arg
     bindEnv env $ \envPat -> do
       bindPat p x $ \p' -> do
@@ -89,10 +87,9 @@ deFuncExpr expr = case expr of
   --                return (ans, Get e' ie')
   RecCon r -> do r' <- traverse recur r
                  return (RecVal (fmap fst r'), RecCon (fmap snd r'))
-  TLam b body -> do env <- asks $ capturedEnv expr
-                    return (TLamVal b env body, envTupCon env)
+  TLam _ _ -> makeThunk expr
   TApp fexpr ts -> do
-    (TLamVal bs env body, fexpr') <- recur fexpr
+    (Thunk env (TLam bs body), fexpr') <- recur fexpr
     ts' <- mapM subTy ts
     bindEnv env $ \ep -> do
       extendWith (asDFTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
@@ -107,6 +104,10 @@ deFuncExpr expr = case expr of
           return (ans, Unpack b' tv' bound' body')
 
   where recur = deFuncExpr
+
+makeThunk :: Expr -> DeFuncM (DFVal, Expr)
+makeThunk expr = do env <- asks $ capturedEnv expr
+                    return (Thunk env expr, envTupCon env)
 
 bindPat :: Pat -> DFVal -> (Pat -> DeFuncM a) -> DeFuncM a
 bindPat pat xs cont = do
@@ -150,8 +151,7 @@ subTy ty = do env <- asks dfTEnv
 deFuncType :: DFVal -> Type -> Type
 deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
 deFuncType DFNil t = t
-deFuncType (LamVal  _ env _) _ = RecType $ Tup (envTypes env)
-deFuncType (TLamVal _ env _) _ = RecType $ Tup (envTypes env)
+deFuncType (Thunk env _) _ = RecType $ Tup (envTypes env)
 deFuncType (TabVal n val) (TabType _ ty) = TabType n (deFuncType val ty)
 
 
