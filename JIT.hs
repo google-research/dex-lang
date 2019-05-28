@@ -43,9 +43,9 @@ data Ptr w = Ptr w L.Type  deriving (Show)
 data JitVal w = ScalarVal w L.Type
               | ArrayVal (Ptr w) [w]  deriving (Show)
 
-data GenCell w = Cell (Ptr w) [w]
-type Cell        = GenCell Operand
-type PersistCell = GenCell Word64
+data PCell w = Cell (Ptr w) [w]
+type Cell        = PCell Operand
+type PersistCell = PCell Word64
 
 type CompileVal  = JitVal Operand
 type PersistVal  = JitVal Word64
@@ -92,7 +92,7 @@ evalProg bs prog = do
 
 -- This doesn't work with types derived from existentials, because the
 -- existentially quantified variable isn't in scope yet
-makeDestCell :: PersistEnv -> IBinder -> IO (GenBinder PersistCell)
+makeDestCell :: PersistEnv -> IBinder -> IO (PBinder PersistCell)
 makeDestCell env (Bind v (IType ty shape)) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
   return $ Bind v (Cell (Ptr ptr ty') shape')

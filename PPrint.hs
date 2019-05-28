@@ -73,7 +73,7 @@ instance Pretty LitVal where
   pretty (RealLit x) = p x
   pretty (StrLit x ) = p x
 
-instance Pretty Expr where
+instance Pretty b => Pretty (PExpr b) where
   pretty expr = case expr of
     Lit val      -> p val
     Var v        -> p v

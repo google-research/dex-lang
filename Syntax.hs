@@ -2,10 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Syntax (Expr (..), Type (..), IdxSet, Builtin (..), Var,
+module Syntax (PExpr (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
                CmdName (..), IdxExpr, Kind (..), UBinder,
-               LitVal (..), BaseType (..), Pat, UPat, Binder, TBinder,
+               LitVal (..), BaseType (..), PPat, Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), (-->), (==>), freeLVars, asLEnv, asTEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -33,18 +33,18 @@ import Control.Applicative (liftA, liftA2, liftA3)
 
 -- === core IR ===
 
-data Expr = Lit LitVal
+data PExpr b = Lit LitVal
           | Var Var
           | Builtin Builtin
-          | Let Pat Expr Expr
-          | Lam Pat Expr
-          | App Expr Expr
-          | For Binder Expr
-          | Get Expr IdxExpr
-          | Unpack Binder Var Expr Expr
-          | TLam [TBinder] Expr
-          | TApp Expr [Type]
-          | RecCon (Record Expr)
+          | Let (PPat b) (PExpr b) (PExpr b)
+          | Lam (PPat b) (PExpr b)
+          | App (PExpr b) (PExpr b)
+          | For (PBinder b) (PExpr b)
+          | Get (PExpr b) IdxExpr
+          | Unpack (PBinder b) Var (PExpr b) (PExpr b)
+          | TLam [TBinder] (PExpr b)
+          | TApp (PExpr b) [Type]
+          | RecCon (Record (PExpr b))
               deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
@@ -58,8 +58,11 @@ data Type = BaseType BaseType
           | BoundTVar Int
              deriving (Eq, Ord, Show)
 
+type Expr   = PExpr   Type
+type Pat    = PPat    Type
+type Binder = PBinder Type
+
 type Var = Name
-type Binder = GenBinder Type
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
 data Decl = TopLet    Binder     Expr
@@ -68,8 +71,8 @@ data Decl = TopLet    Binder     Expr
 
 data Command expr = Command CmdName expr | NoOp
 
-type TBinder = GenBinder Kind
-type Pat  = RecTree Binder
+type TBinder = PBinder Kind
+type PPat b = RecTree (PBinder b)
 type IdxSet = Type
 type IdxExpr = Var
 type IdxSetVal = Int
@@ -114,7 +117,7 @@ data UExpr = ULit LitVal
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
-type UBinder = GenBinder (Maybe Type)
+type UBinder = PBinder (Maybe Type)
 data UDecl = UTopLet    UBinder UExpr
            | UTopUnpack UBinder Var UExpr
            | UEvalCmd (Command UExpr)
@@ -138,7 +141,7 @@ data IExpr = ILit LitVal
 data ImpDecl = ImpTopLet [IBinder] ImpProg
              | ImpEvalCmd Type [IBinder] (Command ImpProg)
 
-type IBinder = GenBinder IType
+type IBinder = PBinder IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size = Var
 type Index = Var

@@ -93,7 +93,7 @@ getType' check expr = case expr of
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
 
-checkShadows :: Traversable f => f (GenBinder a) -> TypeM ()
+checkShadows :: Traversable f => f (PBinder a) -> TypeM ()
 checkShadows bs = mapM_ (traverse checkShadow . binderVars) bs
 
 -- TODO: using mapM doesn't check that pattern vars don't shadow each other
