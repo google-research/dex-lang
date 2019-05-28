@@ -25,21 +25,22 @@ data InferState = InferState { tempEnv :: TempEnv
 
 type InferM a = Pass TypeEnv InferState a
 type Constraint = (Type, Type)
+type UAnnot = Maybe Type
 
-typePass :: UDecl -> TopPass TypeEnv Decl
+typePass :: PDecl UAnnot -> TopPass TypeEnv Decl
 typePass decl = case decl of
-  UTopLet b expr -> do
+  TopLet b expr -> do
     (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
     putEnv $ asLEnv (bind b')
     return $ TopLet b' expr'
-  UTopUnpack b tv expr -> do
+  TopUnpack b tv expr -> do
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
     let b' = fmap (const ty') b -- TODO: actually check the annotated type
     putEnv $ FullEnv (bind b') (tv@>IdxSetKind)
     return $ TopUnpack b' tv expr'
-  UEvalCmd NoOp -> return (EvalCmd NoOp)
-  UEvalCmd (Command cmd expr) -> do
+  EvalCmd NoOp -> return (EvalCmd NoOp)
+  EvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
     case cmd of
       GetType -> do writeOut (pprint ty)
@@ -51,50 +52,51 @@ typePass decl = case decl of
 liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
 liftTop m  = liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
 
-infer :: UExpr -> InferM (Type, Expr)
+infer :: PExpr UAnnot -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind
                 expr' <- check expr ty
                 return (ty, expr')
 
-check :: UExpr -> Type -> InferM Expr
+check :: PExpr UAnnot -> Type -> InferM Expr
 check expr reqTy = case expr of
-  ULit c -> do unify (BaseType (litType c)) reqTy
-               return (Lit c)
-  UVar v -> do
+  Lit c -> do
+    unify (BaseType (litType c)) reqTy
+    return (Lit c)
+  Var v -> do
     maybeTy <- asks $ (flip envLookup v) . lEnv
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
                           Just ty -> return ty
     instantiate ty reqTy (Var v)
-  UBuiltin b -> instantiate (builtinType b) reqTy (Builtin b)
-  ULet p bound body -> do
+  Builtin b -> instantiate (builtinType b) reqTy (Builtin b)
+  Let p bound body -> do
     (p', bound') <- inferLetBinding p bound
     body' <- recurWith p' body reqTy
     return $ Let p' bound' body'
-  ULam p body -> do
+  Lam p body -> do
     (a, b) <- splitFun reqTy
     p' <- checkPat p a
     body' <- recurWith p' body b
     return $ Lam p' body'
-  UApp fexpr arg -> do
+  App fexpr arg -> do
     (f, fexpr') <- infer fexpr
     (a, b) <- splitFun f
     arg' <- check arg a
     unify b reqTy
     return $ App fexpr' arg'
-  UFor b body -> do
+  For b body -> do
     (i, elemTy) <- splitTab reqTy
     b' <- inferBinder b
     unify (binderAnn b') i
     body' <- recurWith [b'] body elemTy
     return $ For b' body'
-  UGet tabExpr idxExpr -> do
+  Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab tabTy
     actualISet <- asks $ (! idxExpr) . lEnv
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
-  UUnpack b tv bound body -> do
+  Unpack b tv bound body -> do
     (maybeEx, bound') <- infer bound >>= zonk
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
@@ -104,36 +106,38 @@ check expr reqTy = case expr of
     tvsReqTy <- tempVars reqTy
     if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
     return $ Unpack b' tv bound' body'
-  URecCon r -> do tyExpr <- traverse infer r
-                  unify reqTy (RecType (fmap fst tyExpr))
-                  return $ RecCon (fmap snd tyExpr)
+  RecCon r -> do
+    tyExpr <- traverse infer r
+    unify reqTy (RecType (fmap fst tyExpr))
+    return $ RecCon (fmap snd tyExpr)
   -- This won't work for quantified annotations, because unifying such
   -- types is difficult, and Hindley-Milner assumes that quantifiers
   -- are only introduced at let binders.  Ergo, it may be necessary to
   -- treat quantified annotations specially (when there are parsing
   -- rules for them and so on).
-  UAnnot e annTy -> do unify annTy reqTy
-                       check e reqTy
+  Annot e annTy -> do
+    unify annTy reqTy
+    check e reqTy
 
   where
     leakErr = throw TypeErr "existential variable leaked"
     recurWith p expr ty = extendWith (asLEnv (bindFold p)) (check expr ty)
 
-checkPat :: UPat -> Type -> InferM Pat
+checkPat :: PPat UAnnot -> Type -> InferM Pat
 checkPat p ty = do (ty', p') <- inferPat p
                    unify ty ty'
                    return p'
 
-inferPat :: UPat -> InferM (Type, Pat)
+inferPat :: PPat UAnnot -> InferM (Type, Pat)
 inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
 
-inferBinder :: UBinder -> InferM Binder
+inferBinder :: PBinder UAnnot -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
                                            Nothing -> freshTy
                                            Just ty -> return ty
 
-inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
+inferLetBinding :: PPat UAnnot -> PExpr UAnnot -> InferM (Pat, Expr)
 inferLetBinding pat expr = case pat of
   RecLeaf b -> case binderAnn b of
     Nothing -> do

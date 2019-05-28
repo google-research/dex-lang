@@ -3,7 +3,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (PExpr (..), Expr, Type (..), IdxSet, Builtin (..), Var,
-               UExpr (..), UDecl (..), ImpDecl (..), Decl (..), Command (..),
+               UExpr (..), UDecl (..), ImpDecl (..), PDecl (..), Decl, Command (..),
                CmdName (..), IdxExpr, Kind (..), UBinder,
                LitVal (..), BaseType (..), PPat, Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
@@ -45,7 +45,8 @@ data PExpr b = Lit LitVal
           | TLam [TBinder] (PExpr b)
           | TApp (PExpr b) [Type]
           | RecCon (Record (PExpr b))
-              deriving (Eq, Ord, Show)
+          | Annot (PExpr b) Type
+             deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
           | TypeVar Var
@@ -61,13 +62,14 @@ data Type = BaseType BaseType
 type Expr   = PExpr   Type
 type Pat    = PPat    Type
 type Binder = PBinder Type
+type Decl   = PDecl   Type
 
 type Var = Name
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
-data Decl = TopLet    Binder     Expr
-          | TopUnpack Binder Var Expr
-          | EvalCmd (Command Expr)
+data PDecl b = TopLet    (PBinder b)     (PExpr b)
+             | TopUnpack (PBinder b) Var (PExpr b)
+             | EvalCmd (Command (PExpr b))
 
 data Command expr = Command CmdName expr | NoOp
 
@@ -101,9 +103,8 @@ data Vec = IntVec [Int] | RealVec [Double]  deriving (Show)
 
 unitTy = RecType (Tup [])
 
--- === untyped AST ===
+-- === source AST ===
 
--- TODO: consider combining Expr and UExpr, parameterized by binder type
 data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
