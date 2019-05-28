@@ -4,6 +4,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 
 import Env
+import Record
 import Syntax
 import Pass
 import Fresh
@@ -50,26 +51,22 @@ deShadowExpr expr = case expr of
   UBuiltin b -> return (Builtin b)
   ULet p bound body -> do
     bound' <- recur bound
-    deShadowPat p $ \p' -> do
-      body' <- recur body
-      return $ Let p' bound' body'
+    (body', b) <- deShadowPat p (recur body)
+    return $ Let b bound' body'
   ULam p body -> do
-    deShadowPat p $ \p' -> do
-      body' <- recur body
-      return $ Lam p' body'
+    (body', b) <- deShadowPat p (recur body)
+    return $ Lam b body'
   UApp fexpr arg -> liftM2 App (recur fexpr) (recur arg)
   UFor b body -> do
-    deShadowPat [b] $ \[b'] -> do
-      body' <- recur body
-      return $ For b' body'
+    (body', b') <- deShadowPat (RecLeaf b) (recur body)
+    return $ For b' body'
   UGet e v -> liftM2 Get (recur e) (getLVar v)
   UUnpack b tv bound body -> do
     bound' <- recur bound
     freshName tv $ \tv' ->
-      extendWith (asTEnv (tv @> tv')) $
-        deShadowPat [b] $ \[b'] -> do
-          body' <- recur body
-          return $ Unpack b' tv' bound' body'
+      extendWith (asTEnv (tv @> tv')) $ do
+        (body', b') <- deShadowPat (RecLeaf b) (recur body)
+        return $ Unpack b' tv' bound' body'
   URecCon r -> liftM RecCon $ traverse recur r
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   where recur = deShadowExpr
@@ -77,14 +74,22 @@ deShadowExpr expr = case expr of
         getLVar v = asks $ lookupSubst v . lEnv
         deShadowAnnot b = fmap (fmap deShadowType) b
 
-deShadowPat :: Traversable f =>
-               f UBinder -> (f UBinder -> DeShadowM a) -> DeShadowM a
+deShadowPat :: RecTree (PBinder Ann) -> DeShadowM (PExpr Ann)
+            -> DeShadowM (PExpr Ann, PBinder Ann)
 deShadowPat pat cont = do
   checkRepeats pat
   pat' <- traverse (traverse (traverse deShadowType)) pat
   freshenBinders pat' $ \subst pat'' ->
     extendWith (asLEnv subst) $
-      cont pat''
+      case pat'' of
+        RecLeaf b -> do expr <- cont
+                        return (expr, b)
+        p -> freshName (rawName "pat") $ \v -> do
+               expr <- cont
+               let b = v %> Nothing
+                   recGet fields = foldr (flip RecGet) (Var v) fields
+                   addLet (fields, b') expr' = Let b' (recGet fields) expr'
+               return (foldr addLet expr (recTreeNamed p), b)
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do

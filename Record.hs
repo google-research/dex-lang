@@ -1,11 +1,10 @@
 module Record (Record (..), RecTree (..), recUnionWith,
                zipWithRecord, recZipWith, recTreeZipEq,
-               recLookup, recNameVals, RecField (..),
+               recGet, recNameVals, RecField (..),
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
               ) where
 
 
-import Fresh
 import Util
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -16,7 +15,7 @@ data Record a = Rec (M.Map String a)
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
 
-data RecField = RecName String | RecPos Int  deriving (Show)
+data RecField = RecName String | RecPos Int  deriving (Eq, Ord, Show)
 
 instance Functor Record where
   fmap = fmapDefault
@@ -71,8 +70,8 @@ recTreeNamed (RecTree r) = RecTree $
   fmap (\(name, val) -> addRecField name (recTreeNamed val)) (recNameVals r)
   where addRecField name tree = fmap (\(n,x) -> (name:n, x)) tree
 
-recLookup :: Name -> Record a -> a
-recLookup = undefined
+recGet :: Record a -> RecField -> a
+recGet = undefined
 
 class RecTreeZip tree where
   recTreeZip :: RecTree a -> tree -> RecTree (a, tree)

@@ -7,6 +7,7 @@ import Control.Monad.Writer
 import Control.Monad.State
 import Data.List (nub, (\\))
 import Data.Foldable (toList)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 
 import Syntax
@@ -30,7 +31,7 @@ type UAnnot = Maybe Type
 typePass :: PDecl UAnnot -> TopPass TypeEnv Decl
 typePass decl = case decl of
   TopLet b expr -> do
-    (RecLeaf b', expr') <- liftTop $ inferLetBinding (RecLeaf b) expr
+    (b', expr') <- liftTop $ inferLetBinding b expr
     putEnv $ asLEnv (bind b')
     return $ TopLet b' expr'
   TopUnpack b tv expr -> do
@@ -68,15 +69,15 @@ check expr reqTy = case expr of
                           Just ty -> return ty
     instantiate ty reqTy (Var v)
   Builtin b -> instantiate (builtinType b) reqTy (Builtin b)
-  Let p bound body -> do
-    (p', bound') <- inferLetBinding p bound
-    body' <- recurWith p' body reqTy
-    return $ Let p' bound' body'
-  Lam p body -> do
-    (a, b) <- splitFun reqTy
-    p' <- checkPat p a
-    body' <- recurWith p' body b
-    return $ Lam p' body'
+  Let b bound body -> do
+    (b', bound') <- inferLetBinding b bound
+    body' <- recurWith b' body reqTy
+    return $ Let b' bound' body'
+  Lam b body -> do
+    (a, bTy) <- splitFun reqTy
+    b' <- checkBinder b a
+    body' <- recurWith b' body bTy
+    return $ Lam b' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
     (a, b) <- splitFun f
@@ -87,7 +88,7 @@ check expr reqTy = case expr of
     (i, elemTy) <- splitTab reqTy
     b' <- inferBinder b
     unify (binderAnn b') i
-    body' <- recurWith [b'] body elemTy
+    body' <- recurWith b' body elemTy
     return $ For b' body'
   Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
@@ -121,42 +122,34 @@ check expr reqTy = case expr of
 
   where
     leakErr = throw TypeErr "existential variable leaked"
-    recurWith p expr ty = extendWith (asLEnv (bindFold p)) (check expr ty)
+    recurWith b expr ty = extendWith (asLEnv (bind b)) (check expr ty)
 
-checkPat :: PPat UAnnot -> Type -> InferM Pat
-checkPat p ty = do (ty', p') <- inferPat p
-                   unify ty ty'
-                   return p'
-
-inferPat :: PPat UAnnot -> InferM (Type, Pat)
-inferPat pat = do tree <- traverse inferBinder pat
-                  return (patType tree, tree)
+checkBinder :: PBinder UAnnot -> Type -> InferM Binder
+checkBinder b ty = do
+  b' <- inferBinder b
+  unify ty (binderAnn b')
+  return b'
 
 inferBinder :: PBinder UAnnot -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
                                            Nothing -> freshTy
                                            Just ty -> return ty
 
-inferLetBinding :: PPat UAnnot -> PExpr UAnnot -> InferM (Pat, Expr)
-inferLetBinding pat expr = case pat of
-  RecLeaf b -> case binderAnn b of
-    Nothing -> do
-      (ty', expr') <- infer expr
-      (forallTy, tLam) <- generalize ty' expr'
-      return (RecLeaf (replaceAnnot b forallTy), tLam)
-    Just sigmaTy@(Forall kinds tyBody) -> do
-      skolVars <- mapM (fresh . pprint) kinds
-      let skolBinders = zipWith (%>) skolVars kinds
-      let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-      expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
-      return (RecLeaf (replaceAnnot b sigmaTy), TLam skolBinders expr')
-    _ -> ansNoGeneralization
-  _ -> ansNoGeneralization
-  where
-    ansNoGeneralization = do
-      (patTy, p') <- inferPat pat
-      expr' <- check expr patTy
-      return (p', expr')
+inferLetBinding :: PBinder UAnnot -> PExpr UAnnot -> InferM (Binder, Expr)
+inferLetBinding b expr = case binderAnn b of
+  Nothing -> do
+    (ty', expr') <- infer expr
+    (forallTy, tLam) <- generalize ty' expr'
+    return (replaceAnnot b forallTy, tLam)
+  Just sigmaTy@(Forall kinds tyBody) -> do
+    skolVars <- mapM (fresh . pprint) kinds
+    let skolBinders = zipWith (%>) skolVars kinds
+    let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
+    expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
+    return (replaceAnnot b sigmaTy, TLam skolBinders expr')
+  Just ty -> do
+    expr' <- check expr ty
+    return (fmap fromJust b, expr')
 
 splitFun :: Type -> InferM Constraint
 splitFun f = case f of

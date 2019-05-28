@@ -36,8 +36,8 @@ import Control.Applicative (liftA, liftA2, liftA3)
 data PExpr b = Lit LitVal
           | Var Var
           | Builtin Builtin
-          | Let (PPat b) (PExpr b) (PExpr b)
-          | Lam (PPat b) (PExpr b)
+          | Let (PBinder b) (PExpr b) (PExpr b)
+          | Lam (PBinder b) (PExpr b)
           | App (PExpr b) (PExpr b)
           | For (PBinder b) (PExpr b)
           | Get (PExpr b) IdxExpr
@@ -45,6 +45,7 @@ data PExpr b = Lit LitVal
           | TLam [TBinder] (PExpr b)
           | TApp (PExpr b) [Type]
           | RecCon (Record (PExpr b))
+          | RecGet (PExpr b) RecField  -- TODO: include `Record ()`
           | Annot (PExpr b) Type
              deriving (Eq, Ord, Show)
 
@@ -307,8 +308,8 @@ instance HasTypeVars Expr where
       Lit c -> pure $ Lit c
       Var v -> pure $ Var v
       Builtin b -> pure $ Builtin b
-      Let p bound body -> liftA3 Let (traverse recurB p) (recur bound) (recur body)
-      Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
+      Let b bound body -> liftA3 Let (recurB b) (recur bound) (recur body)
+      Lam b body       -> liftA2 Lam (recurB b) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
       For b body       -> liftA2 For (recurB b) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
@@ -324,9 +325,8 @@ instance HasTypeVars Expr where
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithB  vs b = traverse (recurWithTy vs) b
 
-instance HasTypeVars (RecTree Binder) where
-  subFreeTVsBVs bvs f tree = traverse f' tree
-    where f' b = traverse (subFreeTVsBVs bvs f) b
+instance HasTypeVars Binder where
+  subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
 
 freeLVars :: Expr -> [Var]
 freeLVars = freeLVarsEnv mempty
@@ -336,18 +336,18 @@ freeLVarsEnv env expr = case expr of
   Lit _ -> []
   Var v -> if v `isin` env then [] else [v]
   Builtin _ -> []
-  Let p bound body -> recur bound ++ recurWith p body
-  Lam p body       -> recurWith p body
+  Let b bound body -> recur bound ++ recurWith b body
+  Lam b body       -> recurWith b body
   App fexpr arg    -> recur fexpr ++ recur arg
-  For b body       -> recurWith [b] body
+  For b body       -> recurWith b body
   Get e ie         -> recur e ++ [ie]
   RecCon r         -> concat $ toList $ fmap recur r
-  Unpack b _ bound body -> recur bound ++ recurWith [b] body
+  Unpack b _ bound body -> recur bound ++ recurWith b body
   TLam _ expr      -> recur expr
   TApp expr _      -> recur expr
 
   where recur = freeLVarsEnv env
-        recurWith bs = freeLVarsEnv (bindFold bs <> env)
+        recurWith b = freeLVarsEnv (bind b <> env)
 
 -- TODO: include type variables, since they're now lexcially scoped
 

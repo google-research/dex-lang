@@ -1,5 +1,5 @@
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
-             patType, builtinType) where
+             builtinType) where
 
 import Control.Monad
 import Control.Monad.Except (liftEither)
@@ -45,16 +45,16 @@ getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
-    Let p bound body -> do checkTy (patType p)
-                           checkShadows p
-                           checkEq "Let" (patType p) (recur bound)
-                           recurWith p body
-    Lam p body -> do checkTy (patType p)
-                     checkShadows p
-                     liftM (ArrType (patType p)) (recurWith p body)
+    Let b bound body -> do checkTy (binderAnn b)
+                           checkShadow b
+                           checkEq "Let" (binderAnn b) (recur bound)
+                           recurWith b body
+    Lam b body -> do checkTy (binderAnn b)
+                     checkShadow b
+                     liftM (ArrType (binderAnn b)) (recurWith b body)
     For i body -> do checkTy (binderAnn i)
-                     checkShadows [i]
-                     liftM (TabType (binderAnn i)) (recurWith [i] body)
+                     checkShadow i
+                     liftM (TabType (binderAnn i)) (recurWith i body)
     App e arg  -> do ArrType a b <- recur e
                      checkEq "App" a (recur arg)
                      return b
@@ -64,15 +64,15 @@ getType' check expr = case expr of
     RecCon r   -> liftM RecType $ traverse recur r
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip [(v, k) | Bind v k <- vks]
-                        checkShadows vks
+                        mapM_ checkShadow vks
                         return $ Forall kinds (abstractTVs vs t)
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
     Unpack b tv _ body -> do  -- TODO: check bound expression!
       let tb = tv %> IdxSetKind
-      checkShadows [b]
-      checkShadows [tb]
+      checkShadow b
+      checkShadow tb
       extendWith (asTEnv (bind tb)) $ do
         checkTy (binderAnn b)
         extendWith (asLEnv (bind b)) (recur body)
@@ -87,30 +87,25 @@ getType' check expr = case expr of
     checkTy :: Type -> TypeM ()
     checkTy _ = return () -- TODO: check kind and unbound type vars
     recur = getType' check
-    recurWith  bs = extendWith (asLEnv (bindFold bs)) . recur
+    recurWith  b  = extendWith (asLEnv (bind b)) . recur
     recurWithT bs = extendWith (asTEnv (bindFold bs)) . recur
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
 
-checkShadows :: Traversable f => f (PBinder a) -> TypeM ()
-checkShadows bs = mapM_ (traverse checkShadow . binderVars) bs
-
--- TODO: using mapM doesn't check that pattern vars don't shadow each other
-checkShadow :: Var -> TypeM ()
-checkShadow v = do
-    env <- ask
-    if v `isin` lEnv env || v `isin` tEnv env
-      then throw CompilerErr $ pprint v ++ " shadowed"
-      else return ()
+checkShadow :: PBinder a -> TypeM ()
+checkShadow b = void $ traverse checkShadowVar (binderVars b)
+  where
+    checkShadowVar :: Var -> TypeM ()
+    checkShadowVar v = do
+      env <- ask
+      if v `isin` lEnv env || v `isin` tEnv env
+        then throw CompilerErr $ pprint v ++ " shadowed"
+        else return ()
 
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
 unpackExists ty _ = throw TypeErr $ "Can't unpack " ++ pprint ty
-
-patType :: RecTree Binder -> Type
-patType (RecTree r) = RecType (fmap patType r)
-patType (RecLeaf b) = binderAnn b
 
 litType :: LitVal -> BaseType
 litType v = case v of

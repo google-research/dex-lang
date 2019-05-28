@@ -75,19 +75,22 @@ toImp expr dests = case expr of
     let (RecLeaf dest) = dests
     materialize args $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
-  Let p bound body ->
+  Let b bound body ->
     materialize bound $ \bound' ->
-      bindPat p (fmap IVar bound') $
+      bindVal b (fmap IVar bound') $
         toImp body dests
   Get x i -> do RecLeaf (IVar i') <- asks $ snd . (!i) . lEnv
                 toImp x $ fmap (indexSource i') dests
+
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
                 where RecTree dests' = dests
+  RecGet e field -> materialize e $ \(RecTree r) ->
+                      return $ write $ fmap IVar $ recGet r field
   Unpack b n bound body -> do
     materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
       extendWith (asTEnv (n @> n')) $
-        bindPat (RecLeaf b) (fmap IVar x) $
+        bindVal b (fmap IVar x) $
           toImp body dests
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
   where write = writeExprs dests
@@ -104,8 +107,8 @@ materialize expr body = do
   return $ foldr allocProg (writerProg <> readerProg) binders
   where allocProg binder scoped = asProg $ Alloc binder scoped
 
-bindPat :: Pat -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
-bindPat pat exprs body = extendWith (asLEnv $ bindRecZip pat exprs) body
+bindVal :: Binder -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
+bindVal b val body = extendWith (asLEnv $ bindWith b val) body
 
 loop :: Name -> (Name -> ImpM ImpProg) -> ImpM ImpProg
 loop n body = do i <- fresh "i"
@@ -152,16 +155,15 @@ impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
     [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
-impFold dest [_, TypeVar n] (RecCon (Tup [For b (Lam p body), x])) = do
+impFold dest [_, TypeVar n] (RecCon (Tup [For (Bind i _) (Lam b body), x])) = do
   n' <- asks $ (!n) . tEnv
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
                extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
-                 bindPat p (fmap IVar accum) $
+                 bindVal b (fmap IVar accum) $
                    toImp body (fmap asBuffer accum)
     return $ loop' <> writeExprs dest (fmap IVar accum)
   where
-    Bind i _ = b
     asBuffer :: Name -> Dest
     asBuffer v = Buffer v [] []
 
