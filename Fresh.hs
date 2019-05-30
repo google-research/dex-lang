@@ -11,6 +11,7 @@ module Fresh (Name (..), Tag, fresh, freshLike, FreshT, runFreshT, rawName,
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
@@ -77,6 +78,9 @@ instance MonadFresh m => MonadFresh (StateT s m) where
   fresh s = lift $ fresh s
 
 instance MonadFresh m => MonadFresh (ReaderT r m) where
+  fresh s = lift $ fresh s
+
+instance (Monoid w, MonadFresh m) => MonadFresh (WriterT w m) where
   fresh s = lift $ fresh s
 
 instance MonadError e m => MonadError e (FreshT m) where

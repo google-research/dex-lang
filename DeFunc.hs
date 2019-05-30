@@ -9,166 +9,152 @@ import Fresh
 
 import Data.Foldable
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 
-data DFVal = DFNil
-           | Thunk DFEnv Expr
+data DFVal = ExprVal Expr
+           | Thunk DFEnv Expr  -- Expr must be Lam, TLam or to-be-inlined For
            | RecVal (Record DFVal)
-           | TabVal Type DFVal  deriving Show
+               deriving Show
 
-data DFEnv = DFEnv { dfLEnv  :: Env (Type, DFVal)
-                   , dfSubst :: Env Var
-                   , dfTEnv  :: Env Type }  deriving Show
-
-type DeFuncM a = ReaderT DFEnv (FreshRT (Either Err)) a
+type DFEnv = FullEnv (Type, DFVal) Type
+type DeFuncM a = WriterT [Decl] (ReaderT DFEnv (FreshT (Either Err))) a
 
 deFuncPass :: TopDecl -> TopPass (DFEnv, FreshScope) TopDecl
 deFuncPass decl = case decl of
   TopLet b expr -> do
-    (val, expr') <- deFuncTop expr
-    let b' = fmap (deFuncType val) b
-    putEnv $ outEnv b' val
-    return $ TopLet b' expr'
-  TopUnpack b iv expr -> do
-    (val, expr') <- deFuncTop expr
-    let b' = fmap (deFuncType val) b
-    putEnv $   outEnv b' val
-            <> (asDFTEnv (iv @> TypeVar iv), newScope iv)
-    return $ TopUnpack b' iv expr'
+    expr' <- deFuncTop expr
+    putEnv $ outEnv b (ExprVal expr')
+    return $ TopLet b expr'
+  -- TopUnpack b iv expr -> do
+  --   (val, expr') <- deFuncTop expr
+  --   let b' = fmap (deFuncType val) b
+  --   putEnv $   outEnv b' val
+  --           <> (asDFTEnv (iv @> TypeVar iv), newScope iv)
+  --   return $ TopUnpack b' iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (_, expr') <- deFuncTop expr
+    expr' <- deFuncTop expr
     case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr'
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
-  where
-    deFuncTop :: Expr -> TopPass (DFEnv, FreshScope) (DFVal, Expr)
-    deFuncTop expr = do
-      (env, scope) <- getEnv
-      liftEither $ runFreshRT (runReaderT (deFuncExpr expr) env) scope
-    outEnv :: Binder -> DFVal -> (DFEnv, FreshScope)
-    outEnv b x = (asDFLEnv (bindWith b x), foldMap newScope (binderVars b))
 
-deFuncExpr :: Expr -> DeFuncM (DFVal, Expr)
+deFuncTop :: Expr -> TopPass (DFEnv, FreshScope) Expr
+deFuncTop expr = do
+  (env, scope) <- getEnv
+  (outVal, decls) <- liftEither $ runFreshT (runReaderT
+                       (runWriterT (deFuncExpr expr)) env) scope
+  case outVal of
+    ExprVal outExpr -> return $ Decls decls outExpr
+    _ -> error "not implemented yet"
+
+outEnv :: Binder -> DFVal -> (DFEnv, FreshScope)
+outEnv b x = (asLEnv (bindWith b x), foldMap newScope (binderVars b))
+
+deFuncExpr :: Expr -> DeFuncM DFVal
 deFuncExpr expr = case expr of
-  Var v -> do val <- asks $ snd . (!v) . dfLEnv
-              var <- asks $ Var . lookupSubst v . dfSubst
-              return (val, var)
-  Lit l -> return (DFNil, Lit l)
+  Var v -> asks $ snd . (!v) . lEnv
+  Lit l -> return $ ExprVal (Lit l)
   Decls decls body -> foldr deFuncDecl (recur body) decls
   Lam _ _ -> makeThunk expr
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
-  App (Builtin b) arg -> do (_, arg') <- recur arg
-                            return (DFNil, App (Builtin b) arg')
-  TApp (Builtin Iota) [n] -> do n' <- subTy n
-                                return $ (TabVal n' DFNil, TApp (Builtin Iota) [n'])
+  App (Builtin b) arg -> do
+    arg' <- recur arg
+    return $ ExprVal $ App (Builtin b) (fromExprVal arg')
+  TApp (Builtin Iota) [n] -> do
+    n' <- subTy n
+    return $ ExprVal $ TApp (Builtin Iota) [n']
   App fexpr arg -> do
-    (Thunk env (Lam b body), fexpr') <- recur fexpr
-    (x, arg') <- recur arg
-    bindVal b x $ \b' -> do
-      (ans, body') <- bindEnv env fexpr' (recur body)
-      return (ans, Decls [Let b' arg'] body')
+    Thunk env (Lam b@(Bind v ty) body) <- recur fexpr
+    arg' <- recur arg
+    bindVal b arg' $ extendWith env $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
-  For b body -> bindVal b DFNil $ \b' -> do
-                  (ans, body') <- recur body
-                  return (TabVal (binderAnn b') ans, For b' body')
-  Get e ie -> do (val, e') <- recur e
-                 case val of
-                   TabVal _ ans -> do
-                     ie' <- asks $ lookupSubst ie . dfSubst
-                     return (ans, Get e' ie')
-                   v -> error $ show v
-  RecCon r -> do r' <- traverse recur r
-                 return (RecVal (fmap fst r'), RecCon (fmap snd r'))
-  RecGet e field -> do (RecVal val, e') <- recur e
-                       return (recGet val field, RecGet e' field)
+  -- For b body -> bindVal b DFNil $ \b' -> do
+  --                 (ans, body') <- recur body
+  --                 return (TabVal (binderAnn b') ans, For b' body')
+  -- Get e ie -> do (val, e') <- recur e
+  --                case val of
+  --                  TabVal _ ans -> do
+  --                    ie' <- asks $ lookupSubst ie . dfSubst
+  --                    return (ans, Get e' ie')
+  --                  v -> error $ show v
+  RecCon r -> liftM RecVal $ traverse recur r
+  RecGet e field -> do RecVal val <- recur e
+                       return $ recGet val field
   TLam _ _ -> makeThunk expr
   TApp fexpr ts -> do
-    (Thunk env (TLam bs body), fexpr') <- recur fexpr
+    Thunk env (TLam bs body) <- recur fexpr
     ts' <- mapM subTy ts
-    bindEnv env fexpr' $ do
-      extendWith (asDFTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
-        (ans, body') <- recur body
-        return (ans, body')
-
+    extendWith env $ do
+      extendWith (asTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
+        recur body
   where recur = deFuncExpr
 
-deFuncDecl :: Decl -> DeFuncM (DFVal, Expr) -> DeFuncM (DFVal, Expr)
+deFuncDecl :: Decl -> DeFuncM DFVal -> DeFuncM DFVal
 deFuncDecl decl cont = case decl of
   Let b bound -> do
-    (x,  bound') <- deFuncExpr bound
-    bindVal b x $ \b' -> do
-      (ans, body') <- cont
-      return (ans, wrapDecl (Let b' bound') body')
-  Unpack b tv bound -> do
-    (val, bound') <- deFuncExpr bound
-    freshName tv $ \tv' ->
-      extendWith (asDFTEnv $ tv @> TypeVar tv') $
-        bindVal b val $ \b' -> do
-          (ans, body') <- cont
-          return (ans, wrapDecl (Unpack b' tv' bound') body')
+    x <- deFuncExpr bound
+    bindVal b x $ cont
+  Unpack (Bind v ty) tv bound -> do
+    ExprVal bound' <- deFuncExpr bound
+    tv' <- freshLike tv
+    extendWith (asTEnv $ tv @> TypeVar tv') $ do
+      v' <- freshLike v
+      ty' <- subTy ty
+      extendWith (asLEnv (v @> (ty', ExprVal (Var v')))) $ do
+        tell [Unpack (v'%>ty') tv' bound']
+        cont
 
-makeThunk :: Expr -> DeFuncM (DFVal, Expr)
-makeThunk expr = do env <- asks $ capturedEnv expr
-                    return (Thunk env expr, envTupCon env)
+bindVal :: Binder -> DFVal -> DeFuncM a -> DeFuncM a
+bindVal (Bind v ty) val cont = do
+  ty' <- subTy ty
+  val' <- atomize v ty' val
+  extendWith (asLEnv (v @> (ty', val'))) $ cont
 
-bindVal :: Binder -> DFVal -> (Binder -> DeFuncM a) -> DeFuncM a
-bindVal b x cont = do
-  b' <- traverse subTy b
-  freshenBinder b' $ \subst b'' -> do
-    extendWith (asDFLEnv (bindWith b' x) <> asDFSubst subst) $
-      cont $ fmap (deFuncType x) b''
+atomize :: Name -> Type -> DFVal -> DeFuncM DFVal
+atomize nameHint ty val = case val of
+  Thunk _ _ -> return val
+  RecVal rVal -> do let (RecType rTy) = ty
+                    rVal' <- sequence $ recZipWith (atomize nameHint) rTy rVal
+                    return (RecVal rVal')
+  ExprVal expr -> if inlinable expr then return val
+                                    else materialize expr
+  where
+    materialize :: Expr -> DeFuncM DFVal
+    materialize expr = do
+      v <- freshLike nameHint
+      tell [Let (v %> ty) expr]
+      return $ ExprVal (Var v)
 
-bindEnv :: DFEnv -> Expr -> DeFuncM (a, Expr) -> DeFuncM (a, Expr)
-bindEnv env envExpr body = undefined
 
-capturedEnv :: Expr -> DFEnv -> DFEnv
-capturedEnv expr (DFEnv lenv subst tenv) = DFEnv lenv' subst' tenv
-  where vs = freeLVars expr
-        lenv'  = envSubset vs lenv
-        subst' = envSubset vs subst
+-- TODO: add more context information
+inlinable :: Expr -> Bool
+inlinable expr = case expr of
+  Lit _ -> True
+  Var _ -> True
+  _     -> False
 
-envTupCon :: DFEnv -> Expr
-envTupCon env = RecCon $ Tup exprs
-  where vs = envNames (dfLEnv env)
-        exprs = map (Var . flip lookupSubst (dfSubst env)) vs
+fromExprVal :: DFVal -> Expr
+fromExprVal (ExprVal expr) = expr
+fromExprVal (RecVal r)  = RecCon $ fmap fromExprVal r
+fromExprVal (Thunk _ _) = error "Unevaluated expression"
+
+makeThunk :: Expr -> DeFuncM DFVal
+makeThunk expr = do FullEnv lenv tenv <- ask
+                    let lenv' = envSubset (freeLVars expr) lenv
+                    return $ Thunk (FullEnv lenv' tenv) expr
 
 subTy :: Type -> DeFuncM Type
-subTy ty = do env <- asks dfTEnv
+subTy ty = do env <- asks tEnv
               return $ maybeSub (Just . (env!)) ty
 
-deFuncType :: DFVal -> Type -> Type
-deFuncType (RecVal r) (RecType r') = RecType $ recZipWith deFuncType r r'
-deFuncType DFNil t = t
-deFuncType (Thunk env _) _ = RecType $ Tup (envTypes env)
-deFuncType (TabVal n val) (TabType _ ty) = TabType n (deFuncType val ty)
-
-
-envTypes :: DFEnv -> [Type]
-envTypes env = map (\(ty, val) -> deFuncType val ty) $ toList (dfLEnv env)
-
 -- TODO: check/fail higher order case
-deFuncFold :: [Type] -> Expr -> DeFuncM (DFVal, Expr)
-deFuncFold ts (RecCon (Tup [For b (Lam p body), x])) = do
-  ts' <- traverse subTy ts
-  (xVal, x') <- deFuncExpr x
-  bindVal b DFNil $ \b' ->
-    bindVal p xVal $ \p' -> do
-      (ans, body') <- deFuncExpr body
-      return (ans, App (TApp (Builtin Fold) ts')
-                       (RecCon (Tup [For b' (Lam p' body'), x'])))
-
-instance RecTreeZip DFVal where
-  recTreeZip (RecTree r) (RecVal r') = RecTree (recZipWith recTreeZip r r')
-  recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
-
-asDFLEnv  env = DFEnv env    mempty mempty
-asDFSubst env = DFEnv mempty env    mempty
-asDFTEnv  env = DFEnv mempty mempty env
-
-instance Semigroup DFEnv where
-  DFEnv x y z <> DFEnv x' y' z' = DFEnv (x<>x') (y<>y') (z<>z')
-
-instance Monoid DFEnv where
-  mempty = DFEnv mempty mempty mempty
-  mappend = (<>)
+deFuncFold :: [Type] -> Expr -> DeFuncM DFVal
+deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = undefined -- do
+  -- ts' <- traverse subTy ts
+  -- xVal <- deFuncExpr x
+  -- bindVal b DFNil $ \b' ->
+  --   bindVal xb xVal $ \p' -> do
+  --     (ans, body') <- deFuncExpr body
+  --     return (ans, App (TApp (Builtin Fold) ts')
+  --                      (RecCon (Tup [For b' (Lam p' body'), x'])))

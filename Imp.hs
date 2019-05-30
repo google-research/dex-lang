@@ -78,7 +78,6 @@ toImp expr dests = case expr of
   Decls decls body -> foldr toImpDecl (toImp body dests) decls
   Get x i -> do RecLeaf (IVar i') <- asks $ snd . (!i) . lEnv
                 toImp x $ fmap (indexSource i') dests
-
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
                 where RecTree dests' = dests

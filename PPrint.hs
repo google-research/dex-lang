@@ -79,9 +79,9 @@ instance Pretty b => Pretty (ExprP b) where
     Var v        -> p v
     Builtin b    -> p b
     Decls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
-                                      <> "in" <+> p body
+                                      <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
-    App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
+    App e1 e2    -> align $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
@@ -90,7 +90,7 @@ instance Pretty b => Pretty (ExprP b) where
     TApp expr ts -> p expr <> p ts
 
 instance Pretty b => Pretty (DeclP b) where
-  pretty (Let b expr) = p b <+> "=" <> line <> p expr
+  pretty (Let b expr) = p b <+> "=" <+> p expr
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty Builtin where
