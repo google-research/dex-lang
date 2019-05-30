@@ -97,11 +97,15 @@ check expr reqTy = case expr of
     tyExpr <- traverse infer r
     unify reqTy (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
+  RecGet e field -> do
+    (ty, e') <- infer e
+    r <- splitRec (otherFields field) ty
+    unify reqTy (recGet r field) -- TODO: throw graceful error on bad field
+    return $ RecGet e' field
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     unify annTy reqTy
     check e reqTy
-
   where
     checkDecl :: DeclP UAnnot -> InferM Expr -> InferM Expr
     checkDecl decl cont = case decl of
@@ -166,6 +170,13 @@ splitTab t = case t of
           v <- freshTy
           unify t (i ==> v)
           return (i, v)
+
+splitRec :: Record () -> Type -> InferM (Record Type)
+splitRec r ty = case ty of
+  RecType r' -> return r'  -- TODO: check it matches r
+  _ -> do r' <- traverse (const freshTy) r
+          unify ty (RecType r')
+          return r'
 
 freshVar :: Kind -> InferM Type
 freshVar kind = do v <- fresh $ pprint kind

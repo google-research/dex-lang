@@ -59,6 +59,8 @@ getType' check expr = case expr of
                      checkEq "Get" a (recur (Var ie))
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
+    RecGet e field -> do RecType r <- recur e
+                         return $ recGet r field
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip [(v, k) | Bind v k <- vks]
                         mapM_ checkShadow vks

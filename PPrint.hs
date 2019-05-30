@@ -93,19 +93,6 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <> line <> p expr
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
-instance Pretty a => Pretty (Record a) where
-  pretty r = align $ tupled $ case r of
-                        Rec m  -> [p k <> "=" <> p v | (k,v) <- M.toList m]
-                        Tup xs -> map p xs -- TODO: add trailing comma to singleton tuple
-
-instance Pretty a => Pretty (RecTree a) where
-  pretty (RecTree r) = p r
-  pretty (RecLeaf x) = p x
-
-instance Pretty (RecField) where
-  pretty (RecName name) = p name
-  pretty (RecPos n)     = p n
-
 instance Pretty Builtin where
   pretty b = case b of
     Add      -> "+"

@@ -1,6 +1,8 @@
-module Record (Record (..), RecTree (..), recUnionWith,
+{-# LANGUAGE OverloadedStrings #-}
+
+module Record (Record (..), RecTree (..),
                zipWithRecord, recZipWith, recTreeZipEq,
-               recGet, recNameVals, RecField (..),
+               recGet, otherFields, recNameVals, RecField,
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
               ) where
 
@@ -8,6 +10,8 @@ module Record (Record (..), RecTree (..), recUnionWith,
 import Util
 import Data.Traversable
 import qualified Data.Map.Strict as M
+import Data.Maybe (fromJust)
+import Data.Text.Prettyprint.Doc
 
 data Record a = Rec (M.Map String a)
               | Tup [a] deriving (Eq, Ord, Show)
@@ -15,7 +19,8 @@ data Record a = Rec (M.Map String a)
 data RecTree a = RecTree (Record (RecTree a))
                | RecLeaf a  deriving (Eq, Show, Ord)
 
-data RecField = RecName String | RecPos Int  deriving (Eq, Ord, Show)
+data RecField = RecField (Record ()) RecFieldName  deriving (Eq, Ord, Show)
+data RecFieldName = RecName String | RecPos Int  deriving (Eq, Ord, Show)
 
 instance Functor Record where
   fmap = fmapDefault
@@ -38,9 +43,6 @@ instance Traversable RecTree where
     RecTree r -> fmap RecTree $ traverse (traverse f) r
     RecLeaf x -> fmap RecLeaf $ f x
 
-recUnionWith :: (a -> a -> a) -> Record a -> Record a -> Record a
-recUnionWith = undefined -- f (Record m1) (Record m2) = Record $ M.unionWith f m1 m2
-
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Rec m) (Rec m') | M.keys m == M.keys m' =  Just $ Rec $ M.intersectionWith f m m'
 zipWithRecord f (Tup xs) (Tup xs') | length xs == length xs' = Just $ Tup $ zipWith f xs xs'
@@ -61,8 +63,10 @@ unLeaf (RecLeaf x) = x
 unLeaf (RecTree _) = error "whoops! [unLeaf]"
 
 recNameVals :: Record a -> Record (RecField, a)
-recNameVals (Tup xs) = Tup [(RecPos i, x) | (i,x) <- zip [0..] xs]
-recNameVals (Rec m) = Rec $ M.mapWithKey (\field x -> (RecName field, x)) m
+recNameVals r = case r of
+  Tup xs -> Tup [(RecField example (RecPos i), x) | (i,x) <- zip [0..] xs]
+  Rec m  -> Rec $ M.mapWithKey (\field x -> (RecField example (RecName field), x)) m
+  where example = fmap (const ()) r
 
 recTreeNamed :: RecTree a -> RecTree ([RecField], a)
 recTreeNamed (RecLeaf x) = RecLeaf ([], x)
@@ -70,8 +74,13 @@ recTreeNamed (RecTree r) = RecTree $
   fmap (\(name, val) -> addRecField name (recTreeNamed val)) (recNameVals r)
   where addRecField name tree = fmap (\(n,x) -> (name:n, x)) tree
 
+-- TODO: make a `Maybe a` version
 recGet :: Record a -> RecField -> a
-recGet = undefined
+recGet (Rec m)  (RecField _ (RecName s)) = fromJust $ M.lookup s m
+recGet (Tup xs) (RecField _ (RecPos i )) = xs !! i
+
+otherFields :: RecField -> Record ()
+otherFields (RecField r _) = r
 
 class RecTreeZip tree where
   recTreeZip :: RecTree a -> tree -> RecTree (a, tree)
@@ -81,3 +90,17 @@ instance RecTreeZip (RecTree a) where
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) (RecLeaf _) = error "whoops! [recTreeZip]"
     -- Symmetric alternative: recTreeZip x (RecLeaf x') = RecLeaf (x, x')
+
+instance Pretty a => Pretty (Record a) where
+  pretty r = align $ tupled $ case r of
+               Rec m  -> [pretty k <> "=" <> pretty v | (k,v) <- M.toList m]
+               Tup xs -> map pretty xs -- TODO: add trailing comma to singleton tuple
+
+instance Pretty a => Pretty (RecTree a) where
+  pretty (RecTree r) = pretty r
+  pretty (RecLeaf x) = pretty x
+
+instance Pretty (RecField) where
+  pretty (RecField _ fieldname) = case fieldname of
+    RecName name -> pretty name
+    RecPos n     -> pretty n
