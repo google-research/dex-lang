@@ -78,20 +78,20 @@ instance Pretty b => Pretty (ExprP b) where
     Lit val      -> p val
     Var v        -> p v
     Builtin b    -> p b
-    Let pat e1 e2  -> parens $ align $ "let" <+> (group $ align $ p pat <+> "=" <> line <> p e1) <> line <>
-                                       "in" <+> p e2
+    Decls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
+                                      <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> parens $ align $ group $ p e1 <> line <> p e2
     For b e      -> parens $ "for " <+> p b <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
-    Unpack b i e1 e2 ->
-      align $ parens $ "{" <> p b <> "," <+> p i <> "} = unpack"
-                                    <+> p e1 <> line <>
-                       "in" <+> p e2
     TLam binders expr -> "Lam" <+> p binders <> ":"
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
+
+instance Pretty b => Pretty (DeclP b) where
+  pretty (Let b expr) = p b <+> "=" <> line <> p expr
+  pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty a => Pretty (Record a) where
   pretty r = align $ tupled $ case r of

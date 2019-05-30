@@ -22,7 +22,7 @@ data DFEnv = DFEnv { dfLEnv  :: Env (Type, DFVal)
 
 type DeFuncM a = ReaderT DFEnv (FreshRT (Either Err)) a
 
-deFuncPass :: Decl -> TopPass (DFEnv, FreshScope) Decl
+deFuncPass :: TopDecl -> TopPass (DFEnv, FreshScope) TopDecl
 deFuncPass decl = case decl of
   TopLet b expr -> do
     (val, expr') <- deFuncTop expr
@@ -55,10 +55,7 @@ deFuncExpr expr = case expr of
               var <- asks $ Var . lookupSubst v . dfSubst
               return (val, var)
   Lit l -> return (DFNil, Lit l)
-  Let b bound body -> do (x,  bound') <- recur bound
-                         bindVal b x $ \b' -> do
-                           (ans, body') <- recur body
-                           return (ans, Let b' bound' body')
+  Decls decls body -> foldr deFuncDecl (recur body) decls
   Lam _ _ -> makeThunk expr
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (Builtin b) arg -> do (_, arg') <- recur arg
@@ -70,7 +67,7 @@ deFuncExpr expr = case expr of
     (x, arg') <- recur arg
     bindVal b x $ \b' -> do
       (ans, body') <- bindEnv env fexpr' (recur body)
-      return (ans, Let b' arg' body')
+      return (ans, Decls [Let b' arg'] body')
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> bindVal b DFNil $ \b' -> do
                   (ans, body') <- recur body
@@ -93,15 +90,23 @@ deFuncExpr expr = case expr of
       extendWith (asDFTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
         (ans, body') <- recur body
         return (ans, body')
-  Unpack b tv bound body -> do
-    (val, bound') <- recur bound
+
+  where recur = deFuncExpr
+
+deFuncDecl :: Decl -> DeFuncM (DFVal, Expr) -> DeFuncM (DFVal, Expr)
+deFuncDecl decl cont = case decl of
+  Let b bound -> do
+    (x,  bound') <- deFuncExpr bound
+    bindVal b x $ \b' -> do
+      (ans, body') <- cont
+      return (ans, wrapDecl (Let b' bound') body')
+  Unpack b tv bound -> do
+    (val, bound') <- deFuncExpr bound
     freshName tv $ \tv' ->
       extendWith (asDFTEnv $ tv @> TypeVar tv') $
         bindVal b val $ \b' -> do
-          (ans, body') <- recur body
-          return (ans, Unpack b' tv' bound' body')
-
-  where recur = deFuncExpr
+          (ans, body') <- cont
+          return (ans, wrapDecl (Unpack b' tv' bound') body')
 
 makeThunk :: Expr -> DeFuncM (DFVal, Expr)
 makeThunk expr = do env <- asks $ capturedEnv expr

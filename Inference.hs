@@ -25,10 +25,9 @@ data InferState = InferState { tempEnv :: TempEnv
                              , subst :: Subst }
 
 type InferM a = Pass TypeEnv InferState a
-type Constraint = (Type, Type)
 type UAnnot = Maybe Type
 
-typePass :: DeclP UAnnot -> TopPass TypeEnv Decl
+typePass :: TopDeclP UAnnot -> TopPass TypeEnv TopDecl
 typePass decl = case decl of
   TopLet b expr -> do
     (b', expr') <- liftTop $ inferLetBinding b expr
@@ -69,10 +68,7 @@ check expr reqTy = case expr of
                           Just ty -> return ty
     instantiate ty reqTy (Var v)
   Builtin b -> instantiate (builtinType b) reqTy (Builtin b)
-  Let b bound body -> do
-    (b', bound') <- inferLetBinding b bound
-    body' <- recurWith b' body reqTy
-    return $ Let b' bound' body'
+  Decls decls body -> foldr checkDecl (check body reqTy) decls
   Lam b body -> do
     (a, bTy) <- splitFun reqTy
     b' <- checkBinder b a
@@ -97,30 +93,34 @@ check expr reqTy = case expr of
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
-  Unpack b tv bound body -> do
-    (maybeEx, bound') <- infer bound >>= zonk
-    boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
-                               _ -> throw TypeErr (pprint maybeEx)
-    let b' = replaceAnnot b boundTy
-    body' <- extendWith (FullEnv (bind b') (tv@>IdxSetKind)) (check body reqTy)
-    tvsEnv <- tempVarsEnv
-    tvsReqTy <- tempVars reqTy
-    if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-    return $ Unpack b' tv bound' body'
   RecCon r -> do
     tyExpr <- traverse infer r
     unify reqTy (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
-  -- This won't work for quantified annotations, because unifying such
-  -- types is difficult, and Hindley-Milner assumes that quantifiers
-  -- are only introduced at let binders.  Ergo, it may be necessary to
-  -- treat quantified annotations specially (when there are parsing
-  -- rules for them and so on).
   Annot e annTy -> do
+    -- TODO: check that the annotation is a monotype
     unify annTy reqTy
     check e reqTy
 
   where
+    checkDecl :: DeclP UAnnot -> InferM Expr -> InferM Expr
+    checkDecl decl cont = case decl of
+      Let b bound -> do
+        (b', bound') <- inferLetBinding b bound
+        extendWith (asLEnv (bind b')) $ do
+          body' <- cont
+          return $ wrapDecl (Let b' bound') body'
+      Unpack b tv bound -> do
+        (maybeEx, bound') <- infer bound >>= zonk
+        boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
+                                   _ -> throw TypeErr (pprint maybeEx)
+        let b' = replaceAnnot b boundTy
+        body' <- extendWith (FullEnv (bind b') (tv@>IdxSetKind)) cont
+        tvsEnv <- tempVarsEnv
+        tvsReqTy <- tempVars reqTy
+        if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
+        return $ wrapDecl (Unpack b' tv bound') body'
+
     leakErr = throw TypeErr "existential variable leaked"
     recurWith b expr ty = extendWith (asLEnv (bind b)) (check expr ty)
 
@@ -151,7 +151,7 @@ inferLetBinding b expr = case binderAnn b of
     expr' <- check expr ty
     return (fmap fromJust b, expr')
 
-splitFun :: Type -> InferM Constraint
+splitFun :: Type -> InferM (Type, Type)
 splitFun f = case f of
   ArrType a b -> return (a, b)
   _ -> do a <- freshTy

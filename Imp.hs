@@ -20,7 +20,7 @@ type ImpM a = Pass ImpEnv () a
 type ImpVal = RecTree IExpr
 type ImpEnv = FullEnv (Type, ImpVal) Name
 
-impPass :: Decl -> TopPass ImpEnv ImpDecl
+impPass :: TopDecl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
   TopLet b expr -> do
     let binders = impBinders b
@@ -75,10 +75,7 @@ toImp expr dests = case expr of
     let (RecLeaf dest) = dests
     materialize args $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
-  Let b bound body ->
-    materialize bound $ \bound' ->
-      bindVal b (fmap IVar bound') $
-        toImp body dests
+  Decls decls body -> foldr toImpDecl (toImp body dests) decls
   Get x i -> do RecLeaf (IVar i') <- asks $ snd . (!i) . lEnv
                 toImp x $ fmap (indexSource i') dests
 
@@ -87,14 +84,21 @@ toImp expr dests = case expr of
                 where RecTree dests' = dests
   RecGet e field -> materialize e $ \(RecTree r) ->
                       return $ write $ fmap IVar $ recGet r field
-  Unpack b n bound body -> do
-    materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
-      extendWith (asTEnv (n @> n')) $
-        bindVal b (fmap IVar x) $
-          toImp body dests
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
   where write = writeExprs dests
         unitCon = RecTree $ Tup []
+
+toImpDecl :: Decl -> ImpM ImpProg -> ImpM ImpProg
+toImpDecl decl cont = case decl of
+  Let b bound ->
+    materialize bound $ \bound' ->
+      bindVal b (fmap IVar bound') $
+        cont
+  Unpack b n bound -> do
+    materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
+      extendWith (asTEnv (n @> n')) $
+        bindVal b (fmap IVar x) $
+          cont
 
 materialize :: Expr -> (RecTree Name -> ImpM ImpProg) -> ImpM ImpProg
 materialize expr body = do

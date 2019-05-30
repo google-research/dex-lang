@@ -15,7 +15,7 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowEnv = FullEnv Var Var
 type Ann = Maybe Type
 
-deShadowPass :: UDecl -> TopPass FreshScope (DeclP Ann)
+deShadowPass :: UDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
   UTopLet b expr -> do
     mapM checkTopShadow (binderVars b)
@@ -52,7 +52,7 @@ deShadowExpr expr = case expr of
   ULet p bound body -> do
     bound' <- recur bound
     (body', b) <- deShadowPat p (recur body)
-    return $ Let b bound' body'
+    return $ Decls [Let b bound'] body'
   ULam p body -> do
     (body', b) <- deShadowPat p (recur body)
     return $ Lam b body'
@@ -66,7 +66,7 @@ deShadowExpr expr = case expr of
     freshName tv $ \tv' ->
       extendWith (asTEnv (tv @> tv')) $ do
         (body', b') <- deShadowPat (RecLeaf b) (recur body)
-        return $ Unpack b' tv' bound' body'
+        return $ Decls [Unpack b' tv' bound'] body'
   URecCon r -> liftM RecCon $ traverse recur r
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   where recur = deShadowExpr
@@ -88,7 +88,7 @@ deShadowPat pat cont = do
                expr <- cont
                let b = v %> Nothing
                    recGet fields = foldr (flip RecGet) (Var v) fields
-                   addLet (fields, b') expr' = Let b' (recGet fields) expr'
+                   addLet (fields, b') expr' = Decls [Let b' (recGet fields)] expr'
                return (foldr addLet expr (recTreeNamed p), b)
 
 deShadowType :: Type -> DeShadowM Type

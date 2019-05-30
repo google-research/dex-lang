@@ -14,7 +14,7 @@ import PPrint
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
-checkTyped :: Decl -> TopPass TypeEnv Decl
+checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
 checkTyped decl = decl <$ case decl of
   TopLet b expr -> do
     ty' <- check expr
@@ -45,10 +45,7 @@ getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
     Var v        -> lookupLVar v
     Builtin b    -> return $ builtinType b
-    Let b bound body -> do checkTy (binderAnn b)
-                           checkShadow b
-                           checkEq "Let" (binderAnn b) (recur bound)
-                           recurWith b body
+    Decls decls body -> foldr getTypeDecl (recur body) decls
     Lam b body -> do checkTy (binderAnn b)
                      checkShadow b
                      liftM (ArrType (binderAnn b)) (recurWith b body)
@@ -69,29 +66,39 @@ getType' check expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
-    Unpack b tv _ body -> do  -- TODO: check bound expression!
-      let tb = tv %> IdxSetKind
-      checkShadow b
-      checkShadow tb
-      extendWith (asTEnv (bind tb)) $ do
-        checkTy (binderAnn b)
-        extendWith (asLEnv (bind b)) (recur body)
-
   where
+    getTypeDecl :: Decl -> TypeM a -> TypeM a
+    getTypeDecl decl cont = case decl of
+     Let b expr -> do
+       checkTy (binderAnn b)
+       checkShadow b
+       checkEq "Let" (binderAnn b) (recur expr)
+       extendWith (asLEnv (bind b)) cont
+     Unpack b tv _ -> do  -- TODO: check bound expression!
+       -- TODO: check leaks
+       let tb = tv %> IdxSetKind
+       checkShadow b
+       checkShadow tb
+       extendWith (asTEnv (bind tb)) $ do
+         checkTy (binderAnn b)
+         extendWith (asLEnv (bind b)) cont
+
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
     checkEq s ty getTy =
       if check then do ty' <- getTy
                        assertEq ty ty' ("Unexpected type in " ++ s)
                else return ()
 
-    checkTy :: Type -> TypeM ()
-    checkTy _ = return () -- TODO: check kind and unbound type vars
     recur = getType' check
     recurWith  b  = extendWith (asLEnv (bind b)) . recur
     recurWithT bs = extendWith (asTEnv (bindFold bs)) . recur
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
+
+    checkTy :: Type -> TypeM ()
+    checkTy _ = return () -- TODO: check kind and unbound type vars
+
 
 checkShadow :: BinderP a -> TypeM ()
 checkShadow b = void $ traverse checkShadowVar (binderVars b)

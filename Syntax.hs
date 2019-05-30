@@ -3,7 +3,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
-               UExpr (..), UDecl (..), ImpDecl (..), DeclP (..), Decl, Command (..),
+               UExpr (..), UDecl (..), ImpDecl (..), TopDeclP (..), DeclP (..),
+               Decl, TopDecl, Command (..),
                CmdName (..), IdxExpr, Kind (..), UBinder,
                LitVal (..), BaseType (..), PatP, Pat, UPat, Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
@@ -13,7 +14,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
-               resultSource, resultText, resultErr, resultComplete, Index
+               resultSource, resultText, resultErr, resultComplete, Index,
+               wrapDecl
               ) where
 
 import Record
@@ -36,12 +38,11 @@ import Control.Applicative (liftA, liftA2, liftA3)
 data ExprP b = Lit LitVal
           | Var Var
           | Builtin Builtin
-          | Let (BinderP b) (ExprP b) (ExprP b)
+          | Decls [DeclP b] (ExprP b)
           | Lam (BinderP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (BinderP b) (ExprP b)
           | Get (ExprP b) IdxExpr
-          | Unpack (BinderP b) Var (ExprP b) (ExprP b)
           | TLam [TBinder] (ExprP b)
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
@@ -60,17 +61,23 @@ data Type = BaseType BaseType
           | BoundTVar Int
              deriving (Eq, Ord, Show)
 
-type Expr   = ExprP   Type
-type Pat    = PatP    Type
-type Binder = BinderP Type
-type Decl   = DeclP   Type
+type Expr    = ExprP    Type
+type Pat     = PatP     Type
+type Binder  = BinderP  Type
+type Decl    = DeclP    Type
+type TopDecl = TopDeclP Type
 
 type Var = Name
 data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
 
-data DeclP b = TopLet    (BinderP b)     (ExprP b)
-             | TopUnpack (BinderP b) Var (ExprP b)
-             | EvalCmd (Command (ExprP b))
+data DeclP b = Let    (BinderP b)     (ExprP b)
+             | Unpack (BinderP b) Var (ExprP b)
+               deriving (Eq, Ord, Show)
+
+-- TODO: just use Decl
+data TopDeclP b = TopLet    (BinderP b)     (ExprP b)
+                | TopUnpack (BinderP b) Var (ExprP b)
+                | EvalCmd (Command (ExprP b))
 
 data Command expr = Command CmdName expr | NoOp
 
@@ -308,14 +315,21 @@ instance HasTypeVars Expr where
       Lit c -> pure $ Lit c
       Var v -> pure $ Var v
       Builtin b -> pure $ Builtin b
-      Let b bound body -> liftA3 Let (recurB b) (recur bound) (recur body)
+      Decls [] final -> recur final
+      Decls (decl:decls) final -> case decl of
+        Let b bound ->
+          liftA3 (\b' bound' body' -> wrapDecl (Let b' bound') body')
+                 (recurB b) (recur bound) (recur body)
+        Unpack b tv bound ->
+          liftA3 (\b' bound' body' -> wrapDecl (Unpack b' tv bound') body')
+                 (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
+        where body = Decls decls final
       Lam b body       -> liftA2 Lam (recurB b) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
       For b body       -> liftA2 For (recurB b) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
-      Unpack b tv bound body -> liftA3 (\x y z -> Unpack x tv y z)
-               (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
+      RecGet e field   -> liftA (flip RecGet field) (recur e)
       TLam bs expr      -> liftA  (TLam bs) (recurWith (foldMap binderVars bs) expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur   = subFreeTVsBVs bvs f
@@ -336,13 +350,17 @@ freeLVarsEnv env expr = case expr of
   Lit _ -> []
   Var v -> if v `isin` env then [] else [v]
   Builtin _ -> []
-  Let b bound body -> recur bound ++ recurWith b body
+  Decls [] body -> recur body
+  Decls (decl:decls) final -> case decl of
+    Let    b   bound -> recur bound ++ recurWith b body
+    Unpack b _ bound -> recur bound ++ recurWith b body
+    where body = Decls decls final
   Lam b body       -> recurWith b body
   App fexpr arg    -> recur fexpr ++ recur arg
   For b body       -> recurWith b body
   Get e ie         -> recur e ++ [ie]
   RecCon r         -> concat $ toList $ fmap recur r
-  Unpack b _ bound body -> recur bound ++ recurWith b body
+  RecGet e _       -> recur e
   TLam _ expr      -> recur expr
   TApp expr _      -> recur expr
 
@@ -384,3 +402,8 @@ lhsVars decl = case decl of
   UTopLet    b _   -> binderVars b
   UTopUnpack b _ _ -> binderVars b
   UEvalCmd _ -> []
+
+wrapDecl :: DeclP b -> ExprP b -> ExprP b
+wrapDecl decl expr = case expr of
+  Decls decls body -> Decls (decl:decls) body
+  _ -> Decls [decl] expr
