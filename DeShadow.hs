@@ -15,7 +15,7 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowEnv = FullEnv Var Var
 type Ann = Maybe Type
 
-deShadowPass :: UDecl -> TopPass FreshScope (PDecl Ann)
+deShadowPass :: UDecl -> TopPass FreshScope (DeclP Ann)
 deShadowPass decl = case decl of
   UTopLet b expr -> do
     mapM checkTopShadow (binderVars b)
@@ -33,7 +33,7 @@ deShadowPass decl = case decl of
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
   where
-    deShadowTop :: UExpr -> TopPass FreshScope (PExpr Ann)
+    deShadowTop :: UExpr -> TopPass FreshScope (ExprP Ann)
     deShadowTop expr = do
       scope <- getEnv
       liftEither $ runFreshRT (runReaderT (deShadowExpr expr) mempty) scope
@@ -44,7 +44,7 @@ checkTopShadow v = do
   if isFresh v scope then return ()
                      else throw RepeatedVarErr (pprint v)
 
-deShadowExpr :: UExpr -> DeShadowM (PExpr Ann)
+deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
   ULit x -> return (Lit x)
   UVar v -> liftM Var (getLVar v)
@@ -74,8 +74,8 @@ deShadowExpr expr = case expr of
         getLVar v = asks $ lookupSubst v . lEnv
         deShadowAnnot b = fmap (fmap deShadowType) b
 
-deShadowPat :: RecTree (PBinder Ann) -> DeShadowM (PExpr Ann)
-            -> DeShadowM (PExpr Ann, PBinder Ann)
+deShadowPat :: RecTree (BinderP Ann) -> DeShadowM (ExprP Ann)
+            -> DeShadowM (ExprP Ann, BinderP Ann)
 deShadowPat pat cont = do
   checkRepeats pat
   pat' <- traverse (traverse (traverse deShadowType)) pat

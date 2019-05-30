@@ -92,7 +92,7 @@ evalProg bs prog = do
 
 -- This doesn't work with types derived from existentials, because the
 -- existentially quantified variable isn't in scope yet
-makeDestCell :: PersistEnv -> IBinder -> IO (PBinder PersistCell)
+makeDestCell :: PersistEnv -> IBinder -> IO (BinderP PersistCell)
 makeDestCell env (Bind v (IType ty shape)) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
   return $ Bind v (Cell (Ptr ptr ty') shape')

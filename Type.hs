@@ -93,7 +93,7 @@ getType' check expr = case expr of
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)
 
-checkShadow :: PBinder a -> TypeM ()
+checkShadow :: BinderP a -> TypeM ()
 checkShadow b = void $ traverse checkShadowVar (binderVars b)
   where
     checkShadowVar :: Var -> TypeM ()

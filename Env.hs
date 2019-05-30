@@ -1,7 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Env (Env, envLookup, isin, envNames, envPairs, envDelete,
-            envSubset, (!), (%>), (@>), PBinder (..), bind, bindFold,
+            envSubset, (!), (%>), (@>), BinderP (..), bind, bindFold,
             bindWith, binderVars, binderVar, binderAnn, extendWith,
             freshenBinder, freshenBinders, addAnnot, replaceAnnot,
             bindRecZip, lookupSubst) where
@@ -17,12 +17,12 @@ import Fresh
 import Record
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
-data PBinder a = Bind Name a
+data BinderP a = Bind Name a
                  | Ignore a  deriving (Show, Eq, Ord)
 
 infixr 7 %>
 
-(%>) :: Name -> a -> PBinder a
+(%>) :: Name -> a -> BinderP a
 name %> annot = Bind name annot
 
 envLookup :: Env a -> Name -> Maybe a
@@ -59,56 +59,56 @@ infixr 7 @>
 k @> v = Env $ M.singleton k v
 
 -- return a list to allow for underscore binders
-binderVars :: PBinder a -> [Name]
+binderVars :: BinderP a -> [Name]
 binderVars (Bind v _) = [v]
 binderVars (Ignore _) = []
 
-binderVar :: PBinder a -> Maybe Name
+binderVar :: BinderP a -> Maybe Name
 binderVar (Bind v _) = Just v
 binderVar (Ignore _) = Nothing
 
-binderAnn :: PBinder a -> a
+binderAnn :: BinderP a -> a
 binderAnn (Bind _ x) = x
 binderAnn (Ignore x) = x
 
-bind :: PBinder a -> Env a
+bind :: BinderP a -> Env a
 bind (Bind v x) = v @> x
 bind (Ignore _) = mempty
 
-bindWith :: PBinder a -> b -> Env (a, b)
+bindWith :: BinderP a -> b -> Env (a, b)
 bindWith b y = bind $ fmap (\x -> (x,y)) b
 
-bindFold :: Foldable f => f (PBinder a) -> Env a
+bindFold :: Foldable f => f (BinderP a) -> Env a
 bindFold bs = foldMap bind bs
 
-bindRecZip :: RecTreeZip t => RecTree (PBinder a) -> t -> Env (a, t)
+bindRecZip :: RecTreeZip t => RecTree (BinderP a) -> t -> Env (a, t)
 bindRecZip bs t = foldMap (uncurry bindWith) (recTreeZip bs t)
 
-addAnnot :: PBinder a -> b -> PBinder (a, b)
+addAnnot :: BinderP a -> b -> BinderP (a, b)
 addAnnot b y = fmap (\x -> (x, y)) b
 
-replaceAnnot :: PBinder a -> b -> PBinder b
+replaceAnnot :: BinderP a -> b -> BinderP b
 replaceAnnot b y = fmap (const y) b
 
 extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
 extendWith env m = local (env <>) m
 
 freshenBinder :: MonadFreshR m =>
-                 PBinder a -> (Env Name -> PBinder a -> m b) -> m b
+                 BinderP a -> (Env Name -> BinderP a -> m b) -> m b
 freshenBinder b cont = do
   scope <- askFresh
   let (b', (scope', subst)) = runEnvM (freshenBinderEnvM b) (scope, mempty)
   localFresh (scope' <>) (cont subst b')
 
 freshenBinders :: (Traversable f, MonadFreshR m) =>
-                 f (PBinder a) -> (Env Name -> f (PBinder a) -> m b) -> m b
+                 f (BinderP a) -> (Env Name -> f (BinderP a) -> m b) -> m b
 freshenBinders pat cont = do
   scope <- askFresh
   let (pat', (scope', subst)) =
         runEnvM (traverse freshenBinderEnvM pat) (scope, mempty)
   localFresh (scope' <>) (cont subst pat')
 
-freshenBinderEnvM :: PBinder a -> EnvM (FreshScope, Env Name) (PBinder a)
+freshenBinderEnvM :: BinderP a -> EnvM (FreshScope, Env Name) (BinderP a)
 freshenBinderEnvM (Ignore x) = return (Ignore x)
 freshenBinderEnvM (Bind v x) = do
   (scope, _) <- askEnv
@@ -136,16 +136,16 @@ instance Monoid (Env a) where
 instance Pretty a => Pretty (Env a) where
   pretty (Env m) = pretty (M.toAscList m)
 
-instance Pretty a => Pretty (PBinder a) where
+instance Pretty a => Pretty (BinderP a) where
   pretty (Bind v x) = pretty v   <> "::" <> pretty x
   pretty (Ignore x) = "_ ::" <> pretty x
 
-instance Functor PBinder where
+instance Functor BinderP where
   fmap = fmapDefault
 
-instance Foldable PBinder where
+instance Foldable BinderP where
   foldMap = foldMapDefault
 
-instance Traversable PBinder where
+instance Traversable BinderP where
   traverse f (Bind v x) = fmap (Bind v) (f x)
   traverse f (Ignore x) = fmap Ignore   (f x)

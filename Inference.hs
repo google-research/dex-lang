@@ -28,7 +28,7 @@ type InferM a = Pass TypeEnv InferState a
 type Constraint = (Type, Type)
 type UAnnot = Maybe Type
 
-typePass :: PDecl UAnnot -> TopPass TypeEnv Decl
+typePass :: DeclP UAnnot -> TopPass TypeEnv Decl
 typePass decl = case decl of
   TopLet b expr -> do
     (b', expr') <- liftTop $ inferLetBinding b expr
@@ -53,12 +53,12 @@ typePass decl = case decl of
 liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
 liftTop m  = liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
 
-infer :: PExpr UAnnot -> InferM (Type, Expr)
+infer :: ExprP UAnnot -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind
                 expr' <- check expr ty
                 return (ty, expr')
 
-check :: PExpr UAnnot -> Type -> InferM Expr
+check :: ExprP UAnnot -> Type -> InferM Expr
 check expr reqTy = case expr of
   Lit c -> do
     unify (BaseType (litType c)) reqTy
@@ -124,18 +124,18 @@ check expr reqTy = case expr of
     leakErr = throw TypeErr "existential variable leaked"
     recurWith b expr ty = extendWith (asLEnv (bind b)) (check expr ty)
 
-checkBinder :: PBinder UAnnot -> Type -> InferM Binder
+checkBinder :: BinderP UAnnot -> Type -> InferM Binder
 checkBinder b ty = do
   b' <- inferBinder b
   unify ty (binderAnn b')
   return b'
 
-inferBinder :: PBinder UAnnot -> InferM Binder
+inferBinder :: BinderP UAnnot -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
                                            Nothing -> freshTy
                                            Just ty -> return ty
 
-inferLetBinding :: PBinder UAnnot -> PExpr UAnnot -> InferM (Binder, Expr)
+inferLetBinding :: BinderP UAnnot -> ExprP UAnnot -> InferM (Binder, Expr)
 inferLetBinding b expr = case binderAnn b of
   Nothing -> do
     (ty', expr') <- infer expr
