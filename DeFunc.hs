@@ -6,6 +6,7 @@ import Record
 import Pass
 import PPrint
 import Fresh
+import Type
 
 import Data.Foldable
 import Control.Monad.Reader
@@ -18,14 +19,18 @@ data DFVal = ExprVal Expr
                deriving Show
 
 type DFEnv = FullEnv (Type, DFVal) Type
+type TopEnv = (DFEnv, (Env Type, FreshScope))
 type DeFuncM a = WriterT [Decl] (ReaderT DFEnv (FreshT (Either Err))) a
 
-deFuncPass :: TopDecl -> TopPass (DFEnv, FreshScope) TopDecl
+-- TODO: roll outvar type env and fresh scope into one, in some RW monad
+deFuncPass :: TopDecl -> TopPass TopEnv TopDecl
 deFuncPass decl = case decl of
-  TopLet b expr -> do
-    expr' <- deFuncTop expr
-    putEnv $ outEnv b (ExprVal expr')
-    return $ TopLet b expr'
+  TopLet b@(Bind v ty) expr -> do -- TODO: type might change!
+    (expr', buildVal) <- deFuncTop expr
+    env <- getEnv
+    let ty' = getType (asLEnv (fst (snd env))) expr'
+    putEnv $ outEnv (v %> ty') (buildVal (Var v))
+    return $ TopLet (v %> ty') expr'
   -- TopUnpack b iv expr -> do
   --   (val, expr') <- deFuncTop expr
   --   let b' = fmap (deFuncType val) b
@@ -34,22 +39,20 @@ deFuncPass decl = case decl of
   --   return $ TopUnpack b' iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    expr' <- deFuncTop expr
+    (expr', _) <- deFuncTop expr
     case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr'
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
 
-deFuncTop :: Expr -> TopPass (DFEnv, FreshScope) Expr
+deFuncTop :: Expr -> TopPass TopEnv (Expr, Expr -> DFVal)
 deFuncTop expr = do
-  (env, scope) <- getEnv
-  (outVal, decls) <- liftEither $ runFreshT (runReaderT
-                       (runWriterT (deFuncExpr expr)) env) scope
-  case outVal of
-    ExprVal outExpr -> return $ Decls decls outExpr
-    _ -> error "not implemented yet"
+  (env, (_, scope)) <- getEnv
+  (outVal, decls) <- liftEither $ flip runFreshT scope $ flip runReaderT env $
+                       runWriterT $ deFuncExpr expr
+  return $ captureScope decls outVal
 
-outEnv :: Binder -> DFVal -> (DFEnv, FreshScope)
-outEnv b x = (asLEnv (bindWith b x), foldMap newScope (binderVars b))
+outEnv :: Binder -> DFVal -> TopEnv
+outEnv b x = (asLEnv (bindWith b x), (bind b, foldMap newScope (binderVars b)))
 
 deFuncExpr :: Expr -> DeFuncM DFVal
 deFuncExpr expr = case expr of
@@ -65,7 +68,7 @@ deFuncExpr expr = case expr of
     n' <- subTy n
     return $ ExprVal $ TApp (Builtin Iota) [n']
   App fexpr arg -> do
-    Thunk env (Lam b@(Bind v ty) body) <- recur fexpr
+    Thunk env (Lam b body) <- recur fexpr
     arg' <- recur arg
     bindVal b arg' $ extendWith env $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
@@ -104,6 +107,43 @@ deFuncDecl decl cont = case decl of
       extendWith (asLEnv (v @> (ty', ExprVal (Var v')))) $ do
         tell [Unpack (v'%>ty') tv' bound']
         cont
+
+captureScope :: [Decl] -> DFVal -> (Expr, Expr -> DFVal)
+captureScope decls (ExprVal expr) = (Decls decls expr, ExprVal)
+captureScope decls (RecVal r) = (RecCon (fmap fst zipped), buildVal)
+  where
+    zipped = fmap (captureScope decls) r
+    builders = fmap snd zipped
+    buildVal newVal = RecVal $ fmap (\(k,f) -> f (RecGet newVal k))
+                                    (recNameVals builders)
+captureScope decls val = (Decls decls $ RecCon (fmap Var vs), buildVal)
+  where
+    vsBound = concat $ map getBoundLVar decls
+    getBoundLVar decl = case decl of Let b _ -> binderVars b
+                                     Unpack b _ _ -> binderVars b
+    vs = Tup $ envNames $ envSubset vsBound $ freeOutVars val
+    buildVal newVal = subOutVars sub val
+      where sub = fold $ fmap (\(k,v) -> v@>(RecGet newVal k)) (recNameVals vs)
+
+subOutVars :: Env Expr -> DFVal -> DFVal
+subOutVars subst val = case val of
+  ExprVal expr -> ExprVal $ subAtomicExpr subst expr
+  Thunk (FullEnv lenv tenv) expr -> Thunk (FullEnv lenv' tenv) expr
+    where lenv' = fmap (\(ty,val) -> (ty, subOutVars subst val)) lenv
+  RecVal r -> RecVal $ fmap (subOutVars subst) r
+
+freeOutVars :: DFVal -> Env ()
+freeOutVars val = case val of
+  ExprVal expr -> foldMap (@>()) $ freeLVars expr
+  Thunk env _ -> foldMap (freeOutVars . snd) (lEnv env)
+  RecVal r -> foldMap freeOutVars r
+
+subAtomicExpr :: Env Expr -> Expr -> Expr
+subAtomicExpr subst expr = case expr of
+  Lit _ -> expr
+  Var v -> case envLookup subst v of Just expr' -> expr'
+                                     Nothing    -> expr
+  _ -> error $ "Is this atomic? " ++ pprint subst
 
 bindVal :: Binder -> DFVal -> DeFuncM a -> DeFuncM a
 bindVal (Bind v ty) val cont = do
