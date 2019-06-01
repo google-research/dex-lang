@@ -85,6 +85,7 @@ instance Pretty b => Pretty (ExprP b) where
     For b e      -> parens $ "for " <+> p b <+> ":" <+> align (p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
+    RecGet e field -> p e <> "~" <> p field
     TLam binders expr -> "Lam" <+> p binders <> ":"
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
@@ -95,9 +96,9 @@ instance Pretty b => Pretty (DeclP b) where
 
 instance Pretty Builtin where
   pretty b = case b of
-    Add      -> "+"
-    Sub      -> "-"
-    Mul      -> "*"
+    Add      -> "%iadd"
+    Sub      -> "%isub"
+    Mul      -> "%imul"
     FAdd     -> "%fadd"
     FSub     -> "%fsub"
     FMul     -> "%fmul"

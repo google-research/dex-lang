@@ -72,7 +72,10 @@ deFuncExpr expr = case expr of
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
-    materialize (rawName "tmp") (builtinOutTy b) $ App (Builtin b) (fromAExpr arg')
+    let expr' = App (Builtin b) (fromAExpr arg')
+    if trivialBuiltin b
+      then return (AExpr expr')
+      else materialize (rawName "tmp") (builtinOutTy b) expr'
   TApp (Builtin Iota) [n] -> do
     n' <- subTy n
     return $ AExpr $ TApp (Builtin Iota) [n']
@@ -94,7 +97,7 @@ deFuncExpr expr = case expr of
     e' <- recur e
     AExpr (Var ie') <- askLEnv ie
     case e' of
-      AExpr tabExpr -> return $ AExpr $ Get tabExpr ie -- TODO: optimize `for` case
+      AExpr tabExpr -> return $ AExpr $ Get tabExpr ie' -- TODO: optimize `for` case
       AFor b body -> do
         local (const mempty) $
           extendWith (asLEnv (bindWith b (AExpr (Var ie')))) $
@@ -230,7 +233,7 @@ makeThunk expr = do FullEnv lenv tenv <- ask
 
 subTy :: Type -> DeFuncM Type
 subTy ty = do env <- asks tEnv
-              return $ maybeSub (Just . (env!)) ty
+              return $ maybeSub (envLookup env) ty
 
 builtinOutTy :: Builtin -> Type
 builtinOutTy b = case builtinType b of ArrType _ ty -> ty
@@ -243,9 +246,9 @@ deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
       (AExpr body', decls) <- lift $ runWriterT $ deFuncExpr body
-      return $ AExpr $
-        App (TApp (Builtin Fold) ts')
-            (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
+      let outExpr = App (TApp (Builtin Fold) ts')
+                     (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
+      materialize (rawName "fold_out") (ts'!!0) outExpr
 
 refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
 refreshBinder (Bind v ty) cont = do
@@ -259,3 +262,10 @@ askLEnv v = do tyVal <- asks $ flip envLookup v . lEnv
                return $ case tyVal of
                  Just (_, atom) -> atom
                  Nothing -> AExpr (Var v)
+
+trivialBuiltin :: Builtin -> Bool
+trivialBuiltin b = case b of
+  Iota -> True
+  Range -> True
+  IntToReal -> True
+  _ -> False
