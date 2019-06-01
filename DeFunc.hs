@@ -39,10 +39,12 @@ deFuncPass decl = case decl of
     return $ TopUnpack b iv expr'
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (expr', _, _) <- deFuncTop expr
-    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr'
+    (expr', ty, buildVal) <- deFuncTop expr
+    let v = rawName "cmd_out"
+        expr'' = Decls [Let (v %> ty) expr'] (fromAExpr (buildVal (Var v)))
+    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr''
                 _ -> return ()
-    return $ EvalCmd (Command cmd expr')
+    return $ EvalCmd (Command cmd expr'')
 
 deFuncTop :: Expr -> TopPass TopEnv (Expr, Type, Expr -> Atom)
 deFuncTop expr = do
