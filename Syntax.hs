@@ -46,7 +46,7 @@ data ExprP b = Lit LitVal
           | TLam [TBinder] (ExprP b)
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
-          | RecGet (ExprP b) RecField  -- TODO: include `Record ()`
+          | RecGet (ExprP b) RecField
           | Annot (ExprP b) Type
              deriving (Eq, Ord, Show)
 

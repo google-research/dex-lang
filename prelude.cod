@@ -66,4 +66,4 @@ isum :: A i. i=>Int -> Int
 isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 
 map :: A i a b. (a -> b) -> i=>a -> i=>b
-map f x = for i. f x.i
+map f xs = for i. f xs.i
