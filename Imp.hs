@@ -63,6 +63,7 @@ envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
         getVar (IVar v) = v
 
 toImp :: Expr -> RecTree Dest -> ImpM ImpProg
+toImp _ (RecLeaf IgnoreIt) = return $ ImpProg []
 toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
   Var v -> do exprs <- asks $ snd . (!v) . lEnv
@@ -81,8 +82,9 @@ toImp expr dests = case expr of
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
                 where RecTree dests' = dests
-  RecGet e field -> materialize e $ \(RecTree r) ->
-                      return $ write $ fmap IVar $ recGet r field
+  RecGet e field -> toImp e dests'
+    where dests' = RecTree $ recUpdate field dests $
+                     fmap (const (RecLeaf IgnoreIt)) (otherFields field)
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
   where write = writeExprs dests
         unitCon = RecTree $ Tup []
@@ -119,7 +121,9 @@ loop n body = do i <- fresh "i"
                  return $ asProg $ Loop i n body'
 
 -- Destination indices, then source indices
-data Dest = Buffer Var [Index] [Index]  deriving Show
+data Dest = Buffer Var [Index] [Index]
+          | IgnoreIt
+             deriving Show
 
 asBuffer :: IBinder -> Dest
 asBuffer (Bind v _) = Buffer v [] []

@@ -5,10 +5,7 @@ module PPrint (pprint) where
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
-import qualified Data.Map.Strict as M
-
 import Syntax
-import Record
 
 pprint :: Pretty a => a -> String
 pprint x = asStr (pretty x)

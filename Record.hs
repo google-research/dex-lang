@@ -3,7 +3,8 @@
 module Record (Record (..), RecTree (..),
                zipWithRecord, recZipWith, recTreeZipEq,
                recGet, otherFields, recNameVals, RecField,
-               recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed
+               recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed,
+               recUpdate
               ) where
 
 
@@ -81,6 +82,12 @@ recGet (Tup xs) (RecField r (RecPos i )) =
   if i < length xs
    then xs !! i
    else error $ "Record error " ++ show r ++ " " ++ show i
+
+recUpdate :: RecField -> a -> Record a -> Record a
+recUpdate (RecField _ (RecName k)) v (Rec m)  = Rec $ M.insert k v m
+recUpdate (RecField _ (RecPos i))  v (Tup xs) = Tup $ prefix ++ (v : suffix)
+  where prefix = take i xs
+        (_:suffix) = drop i xs
 
 otherFields :: RecField -> Record ()
 otherFields (RecField r _) = r
