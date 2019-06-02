@@ -11,7 +11,6 @@ _, nx = unpack range 1000
 mat :: nx=>nx=>Real
 mat = for i j. rand (hash 0 (hash iota.i iota.j))
 
--- this is not fast! about 1000X slower than numpy...
 :time matmul2 mat mat
 
 > 0.804174504s

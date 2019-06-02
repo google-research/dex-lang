@@ -49,6 +49,7 @@ explicitCommand = do
            "p"       -> return EvalExpr
            "t"       -> return GetType
            "passes"  -> return Passes
+           "llvm"    -> return LLVM
            "time"    -> return TimeIt
            "plot"    -> return Plot
            "plotmat" -> return PlotMat

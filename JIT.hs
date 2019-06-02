@@ -72,9 +72,9 @@ jitPass decl = case decl of
     putEnv $ bindFold $ zipWith replaceAnnot bs vals
   ImpEvalCmd _ _ NoOp -> return ()
   ImpEvalCmd ty bs (Command cmd prog) -> case cmd of
-    Passes -> do (_, CompiledProg m) <- toLLVM bs prog
-                 llvm <- liftIO $ showLLVM m
-                 writeOut $ "\n\nLLVM\n" ++ llvm
+    LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
+               llvm <- liftIO $ showLLVM m
+               writeOut llvm
     EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
                    writeOut $ pprint (restructureVal ty vecs)
