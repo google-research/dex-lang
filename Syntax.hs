@@ -101,7 +101,7 @@ data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Iota | Range | Fold | Copy
                 deriving (Eq, Ord, Show)
 
-data CmdName = GetType | Passes | LLVM | TimeIt
+data CmdName = GetType | Passes | LLVM | Asm | TimeIt
              | EvalExpr | Plot | PlotMat
                 deriving  (Show, Eq)
 

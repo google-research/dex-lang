@@ -1,13 +1,14 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr, ptrAsWord,
-                 mallocBytes) where
+                 mallocBytes, showAsm) where
 
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
 import qualified LLVM.PassManager as P
 import qualified LLVM.ExecutionEngine as EE
-import LLVM.Internal.Context
+import qualified LLVM.Target as T
+import LLVM.Context 
 
 import Foreign.Ptr
 import Foreign.Storable
@@ -52,6 +53,14 @@ showLLVM m =
   where
     showModule :: Mod.Module -> IO String
     showModule m = liftM unpack $ Mod.moduleLLVMAssembly m
+
+showAsm :: L.Module -> IO String
+showAsm m =
+  withContext $ \c ->
+    Mod.withModuleFromAST c m $ \m -> do
+      runPasses m
+      T.withHostTargetMachine $ \t ->
+        liftM unpack $ Mod.moduleTargetAssembly t m
 
 readPtrs :: Int -> Ptr Word64 -> IO [Word64]
 readPtrs n ptr = mapM readAt [0..n-1]

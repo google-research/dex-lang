@@ -75,6 +75,9 @@ jitPass decl = case decl of
     LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
                llvm <- liftIO $ showLLVM m
                writeOut llvm
+    Asm -> do (_, CompiledProg m) <- toLLVM bs prog
+              asm <- liftIO $ showAsm m
+              writeOut asm
     EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
                    writeOut $ pprint (restructureVal ty vecs)

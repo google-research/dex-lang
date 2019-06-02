@@ -50,6 +50,7 @@ explicitCommand = do
            "t"       -> return GetType
            "passes"  -> return Passes
            "llvm"    -> return LLVM
+           "asm"     -> return Asm
            "time"    -> return TimeIt
            "plot"    -> return Plot
            "plotmat" -> return PlotMat
