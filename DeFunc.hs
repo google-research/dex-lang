@@ -13,7 +13,6 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 
-
 -- TODO: consider making this just Expr with the thunk case as an annotation
 data Atom = AExpr Expr
           | ARecCon (Record Atom)
@@ -41,7 +40,7 @@ deFuncPass decl = case decl of
   EvalCmd (Command cmd expr) -> do
     (expr', ty, buildVal) <- deFuncTop expr
     let v = rawName "cmd_out"
-        expr'' = Decls [Let (v %> ty) expr'] (fromAExpr (buildVal (Var v)))
+        expr'' = Decls [Let (v %> ty) expr'] (forceAtom (buildVal (Var v)))
     case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr''
                 _ -> return ()
     return $ EvalCmd (Command cmd expr'')
@@ -72,7 +71,7 @@ deFuncExpr expr = case expr of
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
-    let expr' = App (Builtin b) (fromAExpr arg')
+    let expr' = App (Builtin b) (forceAtom arg')
     if trivialBuiltin b
       then return (AExpr expr')
       else materialize (rawName "tmp") (builtinOutTy b) expr'
@@ -121,7 +120,10 @@ applySubstAtom :: Atom -> DeFuncM Atom
 applySubstAtom atom = case atom of
   AExpr expr -> deFuncExpr expr
   ARecCon r -> liftM ARecCon $ traverse applySubstAtom r
-  -- AFor Binder Atom
+  AFor b atom -> do
+    refreshBinder b $ \b' -> do
+      atom' <- applySubstAtom atom
+      return $ AFor b' atom'
   Thunk (FullEnv lenv tenv) expr -> do
     lenv' <- traverse (\(ty,a) -> liftM ((,) ty) (applySubstAtom a)) lenv
     tenv' <- traverse subTy tenv
@@ -177,6 +179,7 @@ subOutVars subst val = case val of
   AExpr expr -> AExpr $ subAtomicExpr subst expr
   Thunk (FullEnv lenv tenv) expr -> Thunk (FullEnv lenv' tenv) expr
     where lenv' = fmap (\(ty,val) -> (ty, subOutVars subst val)) lenv
+  AFor b atom -> AFor b (subOutVars subst atom) -- TODO: need to freshen binder
   ARecCon r -> ARecCon $ fmap (subOutVars subst) r
 
 freeOutVars :: Atom -> Env ()
@@ -186,12 +189,16 @@ freeOutVars val = case val of
   ARecCon r -> foldMap freeOutVars r
   AFor _ atom -> freeOutVars atom  -- TODO: don't include bound var
 
+-- TODO: do this whole thing properly, including capture avoidance
 subAtomicExpr :: Env Expr -> Expr -> Expr
 subAtomicExpr subst expr = case expr of
   Lit _ -> expr
   Var v -> case envLookup subst v of Just expr' -> expr'
                                      Nothing    -> expr
-  _ -> expr  -- TODO!: handle other cases (and decide what's allowed)
+  Get e ie -> Get (recur e) (case recur (Var ie) of Var ie' -> ie')
+  RecGet e field -> RecGet (recur e) field
+  _ -> expr -- TODO!: handle other cases (and decide what's allowed)
+  where recur = subAtomicExpr subst
 
 bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
 bindVal (Bind v ty) val cont = do
@@ -221,10 +228,11 @@ materialize nameHint ty expr = do
 --   Var _ -> True
 --   _     -> False
 
-fromAExpr :: Atom -> Expr
-fromAExpr (AExpr expr) = expr
-fromAExpr (ARecCon r)  = RecCon $ fmap fromAExpr r
-fromAExpr (Thunk _ _) = error "Unevaluated expression"
+forceAtom :: Atom -> Expr
+forceAtom (AExpr expr) = expr
+forceAtom (ARecCon r)  = RecCon $ fmap forceAtom r
+forceAtom (AFor b atom) = For b (forceAtom atom)
+forceAtom (Thunk _ _) = error "Unevaluated expression"
 
 makeThunk :: Expr -> DeFuncM Atom
 makeThunk expr = do FullEnv lenv tenv <- ask

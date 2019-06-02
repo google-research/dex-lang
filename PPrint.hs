@@ -82,7 +82,7 @@ instance Pretty b => Pretty (ExprP b) where
                                       <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ group $ p e1 <+> p e2
-    For b e      -> parens $ "for " <+> p b <+> ":" <+> align (p e)
+    For b e      -> parens $ "for " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
     RecGet e field -> p e <> "~" <> p field

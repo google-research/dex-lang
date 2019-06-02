@@ -77,7 +77,10 @@ recTreeNamed (RecTree r) = RecTree $
 -- TODO: make a `Maybe a` version
 recGet :: Record a -> RecField -> a
 recGet (Rec m)  (RecField _ (RecName s)) = fromJust $ M.lookup s m
-recGet (Tup xs) (RecField _ (RecPos i )) = xs !! i
+recGet (Tup xs) (RecField r (RecPos i )) =
+  if i < length xs
+   then xs !! i
+   else error $ "Record error " ++ show r ++ " " ++ show i
 
 otherFields :: RecField -> Record ()
 otherFields (RecField r _) = r
