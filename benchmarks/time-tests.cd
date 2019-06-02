@@ -3,16 +3,16 @@ matmul :: A i j k. i=>j=>Real -> j=>k=>Real -> i=>k=>Real
 matmul x y = for i k. sum (for j. x.i.j * y.j.k)
 
 matmul2 :: A i j k. i=>j=>Real -> j=>k=>Real -> i=>k=>Real
-matmul2 xs ys = for i k. fold (for j. lam c. c + x.i.k * y.j.k) 0.0
+matmul2 xs ys = for i k. fold (for j. lam c. c + xs.i.j * ys.j.k) 0.0
 
 
-_, nx = unpack range 500
+_, nx = unpack range 1000
 
 mat :: nx=>nx=>Real
 mat = for i j. rand (hash 0 (hash iota.i iota.j))
 
 -- this is not fast! about 1000X slower than numpy...
-:time matmul mat mat
+:time matmul2 mat mat
 
--- > 0.621052732s
+> 0.804174504s
 
