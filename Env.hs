@@ -2,9 +2,8 @@
 
 module Env (Env, envLookup, isin, envNames, envPairs, envDelete,
             envSubset, (!), (@>), BinderP (..), bind, bindFold,
-            bindWith, extendWith, freshenBinder, freshenBinders,
-            binderAnn, binderVar, addAnnot, replaceAnnot, bindRecZip,
-            lookupSubst) where
+            bindWith, extendWith, binderAnn, binderVar, addAnnot,
+            freshenBinder, replaceAnnot, bindRecZip, lookupSubst) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -12,7 +11,6 @@ import Control.Applicative (liftA)
 import Control.Monad.Reader
 import Data.Text.Prettyprint.Doc
 
-import Util
 import Fresh
 import Record
 
@@ -84,25 +82,8 @@ extendWith env m = local (env <>) m
 
 freshenBinder :: MonadFreshR m =>
                  BinderP a -> (Env Name -> BinderP a -> m b) -> m b
-freshenBinder b cont = do
-  scope <- askFresh
-  let (b', (scope', subst)) = runEnvM (freshenBinderEnvM b) (scope, mempty)
-  localFresh (scope' <>) (cont subst b')
-
-freshenBinders :: (Traversable f, MonadFreshR m) =>
-                 f (BinderP a) -> (Env Name -> f (BinderP a) -> m b) -> m b
-freshenBinders pat cont = do
-  scope <- askFresh
-  let (pat', (scope', subst)) =
-        runEnvM (traverse freshenBinderEnvM pat) (scope, mempty)
-  localFresh (scope' <>) (cont subst pat')
-
-freshenBinderEnvM :: BinderP a -> EnvM (FreshScope, Env Name) (BinderP a)
-freshenBinderEnvM (v :> x) = do
-  (scope, _) <- askEnv
-  let v' = rename v scope
-  addEnv (newScope v', v@>v')
-  return (v' :> x)
+freshenBinder (v :> ann) cont = freshName v $ \v' ->
+                                  cont (v @> v') (v' :> ann)
 
 instance Functor Env where
   fmap = fmapDefault
