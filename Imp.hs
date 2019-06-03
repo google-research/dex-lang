@@ -25,27 +25,25 @@ impPass decl = case decl of
   TopLet b expr -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
-    putEnv $ asLEnv $ bindWith b (fmap (IVar . fromJust . binderVar) binders)
+    putEnv $ asLEnv $ bindWith b (fmap (IVar . binderVar) binders)
     return $ ImpTopLet (toList binders) prog
   TopUnpack b iv expr -> do
-    let binders = RecTree $ Tup [ RecLeaf (iv %> intTy), impBinders b]
+    let binders = RecTree $ Tup [ RecLeaf (iv :> intTy), impBinders b]
     prog <- impExprTop binders expr
-    putEnv $ FullEnv (bindWith b (fmap (IVar . fromJust . binderVar) binders)) (iv@>iv)
+    putEnv $ FullEnv (bindWith b (fmap (IVar . binderVar) binders)) (iv@>iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
     FullEnv lenv tenv <- getEnv
     let ty = getType (FullEnv (fmap fst lenv) tenv) expr
-    let binders = impBinders (rawName "%imptmp" %> ty)
+    let binders = impBinders (rawName "%imptmp" :> ty)
     prog <- impExprTop binders expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
 
--- TODO: handle underscore binders
 impBinders :: Binder -> RecTree IBinder
-impBinders (Ignore ty) = fmap Ignore (flatType' ty)
-impBinders (Bind v ty) = fmap (uncurry (%>) . onFst newName) (recTreeNamed itypes)
+impBinders (v :> ty) = fmap (uncurry (:>) . onFst newName) (recTreeNamed itypes)
    where
      itypes = flatType' ty
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
@@ -105,7 +103,7 @@ materialize :: Expr -> (RecTree Name -> ImpM ImpProg) -> ImpM ImpProg
 materialize expr body = do
   ty <- exprType expr >>= flatType
   names <- traverse (const (fresh "tmp")) ty
-  let binders = fmap (uncurry (%>)) (recTreeZipEq names ty)
+  let binders = fmap (uncurry (:>)) (recTreeZipEq names ty)
       dest = fmap (\v -> Buffer v [] []) names
   writerProg <- toImp expr dest
   readerProg <- body names
@@ -126,7 +124,7 @@ data Dest = Buffer Var [Index] [Index]
              deriving Show
 
 asBuffer :: IBinder -> Dest
-asBuffer (Bind v _) = Buffer v [] []
+asBuffer (v :> _) = Buffer v [] []
 
 indexSource :: Index -> Dest -> Dest
 indexSource i (Buffer v destIdxs srcIdxs) = Buffer v destIdxs (i:srcIdxs)
@@ -147,7 +145,7 @@ writeBuiltin b (Buffer name destIdxs []) exprs =
   asProg $ Update name destIdxs b exprs
 
 toImpFor :: RecTree Dest -> Binder -> Expr -> ImpM ImpProg
-toImpFor dest (Bind i (TypeVar n)) body = do
+toImpFor dest (i :> TypeVar n) body = do
   n' <- asks $ (!n) . tEnv
   loop n' $ \i' -> do
     extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
@@ -162,7 +160,7 @@ impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
     [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
-impFold dest [_, TypeVar n] (RecCon (Tup [For (Bind i _) (Lam b body), x])) = do
+impFold dest [_, TypeVar n] (RecCon (Tup [For (i :> _) (Lam b body), x])) = do
   n' <- asks $ (!n) . tEnv
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
@@ -235,8 +233,8 @@ checkStatement :: Statement -> ImpCheckM ()
 checkStatement statement = case statement of
   Alloc b body -> do
     env <- ask
-    if fromJust (binderVar b) `isin` env then throw CompilerErr "Shadows!"
-                                         else return ()
+    if binderVar b `isin` env then throw CompilerErr "Shadows!"
+                              else return ()
     extendWith (bind b) (checkProg body)
   Update v idxs Copy [expr] -> do
     mapM_ checkIsInt idxs

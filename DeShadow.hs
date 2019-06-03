@@ -19,15 +19,15 @@ deShadowPass :: UDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
   UTopLet IgnoreBind _ -> error "todo"
   UTopLet (UBind b) expr -> do
-    mapM checkTopShadow (binderVars b)
-    putEnv (foldMap newScope (binderVars b))
+    checkTopShadow (binderVar b)
+    putEnv (newScope (binderVar b))
     liftM (TopLet b) $ deShadowTop expr
   UTopUnpack b tv expr -> do
     mapM checkTopShadow (uBinderVars b)
     checkTopShadow tv
     let b' = case b of UBind b' -> b'
-                       IgnoreBind -> rawName ("__" ++ nameTag tv) %> Nothing
-    putEnv (foldMap newScope (binderVars b'))
+                       IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
+    putEnv (newScope (binderVar b'))
     liftM (TopUnpack b' tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -49,7 +49,7 @@ checkTopShadow v = do
                      else throw RepeatedVarErr (pprint v)
 
 uBinderVars :: UBinder -> [Var]
-uBinderVars (UBind (Bind v _)) = [v]
+uBinderVars (UBind (v :> _)) = [v]
 uBinderVars IgnoreBind = []
 
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
@@ -95,7 +95,7 @@ deShadowPat pat cont = do
           return (expr, b')
     p -> freshName (rawName "pat") $ \v -> do
            expr <- foldr (patGetter v) cont (recTreeNamed p)
-           return (expr, v %> Nothing)
+           return (expr, v :> Nothing)
 
 patGetter :: Var -> ([RecField], UBinder)
                     -> DeShadowM (ExprP Ann) -> DeShadowM (ExprP Ann)

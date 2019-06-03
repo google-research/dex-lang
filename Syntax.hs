@@ -329,7 +329,7 @@ instance HasTypeVars Expr where
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
       RecGet e field   -> liftA (flip RecGet field) (recur e)
-      TLam bs expr      -> liftA  (TLam bs) (recurWith (foldMap binderVars bs) expr)
+      TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
@@ -400,8 +400,8 @@ freeVarsUExpr expr = case expr of
 
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    (UBind b) _   -> binderVars b
-  UTopUnpack (UBind b) _ _ -> binderVars b
+  UTopLet    (UBind (v:>_)) _   -> [v]
+  UTopUnpack (UBind (v:>_)) _ _ -> [v]
   _ -> []
 
 wrapDecl :: DeclP b -> ExprP b -> ExprP b

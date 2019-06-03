@@ -27,10 +27,10 @@ type DeFuncM a = WriterT [Decl] (ReaderT DFEnv (FreshT (Either Err))) a
 -- TODO: roll outvar type env and fresh scope into one, in some RW monad
 deFuncPass :: TopDecl -> TopPass TopEnv TopDecl
 deFuncPass decl = case decl of
-  TopLet (Bind v _) expr -> do -- TODO: type might change!
+  TopLet (v :> _) expr -> do -- TODO: type might change!
     (expr', ty, buildVal) <- deFuncTop expr
-    putEnv $ outEnv (v %> ty) (buildVal (Var v))
-    return $ TopLet (v %> ty) expr'
+    putEnv $ outEnv (v :> ty) (buildVal (Var v))
+    return $ TopLet (v :> ty) expr'
   TopUnpack b iv expr -> do
     expr' <- deFuncTopUnpack expr
     putEnv $ outEnv b (AExpr (Var (rawName "bug")))
@@ -40,7 +40,7 @@ deFuncPass decl = case decl of
   EvalCmd (Command cmd expr) -> do
     (expr', ty, buildVal) <- deFuncTop expr
     let v = rawName "cmd_out"
-        expr'' = Decls [Let (v %> ty) expr'] (forceAtom (buildVal (Var v)))
+        expr'' = Decls [Let (v :> ty) expr'] (forceAtom (buildVal (Var v)))
     case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr''
                 _ -> return ()
     return $ EvalCmd (Command cmd expr'')
@@ -60,7 +60,7 @@ deFuncTopUnpack expr = do
   return $ Decls decls outVal
 
 outEnv :: Binder -> Atom -> TopEnv
-outEnv b x = (asLEnv (bindWith b x), (bind b, foldMap newScope (binderVars b)))
+outEnv b x = (asLEnv (bindWith b x), (bind b, newScope (binderVar b)))
 
 deFuncExpr :: Expr -> DeFuncM Atom
 deFuncExpr expr = case expr of
@@ -83,14 +83,14 @@ deFuncExpr expr = case expr of
     arg' <- recur arg
     bindVal b arg' $ extendWith env $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
-  For (Bind v ty) body -> do
+  For (v :> ty) body -> do
     ty' <- subTy ty
     v' <- freshLike v
     extendWith (asLEnv (v @> (ty', (AExpr (Var v'))))) $ do
        (body', bodyTy, atomBuilder) <- deFuncScoped body
        outVar <- freshLike (rawName "tab")
-       let b' = (v'%>ty')
-       tell [Let (outVar %> (TabType ty' bodyTy)) (For b' body')]
+       let b' = (v':>ty')
+       tell [Let (outVar :> (TabType ty' bodyTy)) (For b' body')]
        return $ AFor b' (atomBuilder (Get (Var outVar) v'))
   Get e ie -> do
     e' <- recur e
@@ -134,23 +134,15 @@ deFuncDecl decl cont = case decl of
   Let b bound -> do
     x <- deFuncExpr bound
     bindVal b x $ cont
-  Unpack (Bind v ty) tv bound -> do
+  Unpack (v :> ty) tv bound -> do
     AExpr bound' <- deFuncExpr bound
     tv' <- freshLike tv
     extendWith (asTEnv $ tv @> TypeVar tv') $ do
       v' <- freshLike v
       ty' <- subTy ty
       extendWith (asLEnv (v @> (ty', AExpr (Var v')))) $ do
-        tell [Unpack (v'%>ty') tv' bound']
+        tell [Unpack (v':>ty') tv' bound']
         cont
-  -- TODO: this underscore option really isn't helping. Get rid of it
-  Unpack (Ignore ty) tv bound -> do
-    AExpr bound' <- deFuncExpr bound
-    tv' <- freshLike tv
-    extendWith (asTEnv $ tv @> TypeVar tv') $ do
-      ty' <- subTy ty
-      tell [Unpack (Ignore ty') tv' bound']
-      cont
 
 -- writes nothing
 deFuncScoped :: Expr -> DeFuncM (Expr, Type, Expr -> Atom)
@@ -161,9 +153,9 @@ deFuncScoped expr = do
 deFuncScope :: [Decl] -> Atom -> (Expr, Type, Expr -> Atom)
 deFuncScope decls atom = (Decls decls $ RecCon (fmap Var (Tup vs)), ty, buildVal)
   where
-    vsBound = concat $ map getBoundLVar decls
-    getBoundLVar decl = case decl of Let b _ -> binderVars b
-                                     Unpack b _ _ -> binderVars b
+    vsBound = map getBoundLVar decls
+    getBoundLVar decl = case decl of Let b _ -> binderVar b
+                                     Unpack b _ _ -> binderVar b
     vs = envNames $ envSubset vsBound $ freeOutVars atom
     ty = RecType $ Tup $ map (env!) vs
       where env = bindFold $ map declBinder decls
@@ -201,7 +193,7 @@ subAtomicExpr subst expr = case expr of
   where recur = subAtomicExpr subst
 
 bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
-bindVal (Bind v ty) val cont = do
+bindVal (v :> ty) val cont = do
   ty' <- subTy ty
   extendWith (asLEnv (v @> (ty', val))) $ cont
 
@@ -218,7 +210,7 @@ bindVal (Bind v ty) val cont = do
 materialize :: Name -> Type -> Expr -> DeFuncM Atom
 materialize nameHint ty expr = do
   v <- freshLike nameHint
-  tell [Let (v %> ty) expr]
+  tell [Let (v :> ty) expr]
   return $ AExpr (Var v)
 
 -- -- TODO: add more context information
@@ -259,10 +251,10 @@ deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
       materialize (rawName "fold_out") (ts'!!0) outExpr
 
 refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
-refreshBinder (Bind v ty) cont = do
+refreshBinder (v :> ty) cont = do
   v' <- freshLike v
   ty' <- subTy ty
-  let b' = v' %> ty'
+  let b' = v' :> ty'
   extendWith (asLEnv (v @> (ty', AExpr (Var v')))) (cont b')
 
 askLEnv :: Var -> DeFuncM Atom

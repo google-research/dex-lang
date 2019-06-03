@@ -62,11 +62,11 @@ typedTopLet :: Parser UDecl
 typedTopLet = do
   v <- try (varName <* symbol "::")
   ty <- typeExpr <* eol
-  UTopLet (UBind (Bind v' b)) e <- topLet
+  UTopLet (UBind (v' :> b)) e <- topLet
   if v' /= v
     then fail "Type declaration variable must match assignment variable."
     else case b of Just _ -> fail "Conflicting type annotations"
-                   Nothing -> return $ UTopLet (UBind (v %> Just ty)) e
+                   Nothing -> return $ UTopLet (UBind (v :> Just ty)) e
 
 topUnpack :: Parser UDecl
 topUnpack = do
@@ -186,7 +186,7 @@ typedLocalLet = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl (RecLeaf (UBind (v %> Just ty))) (wrap body)
+  return $ AssignDecl (RecLeaf (UBind (v :> Just ty))) (wrap body)
 
 localLet :: Parser LocalDecl
 localLet = do
@@ -245,7 +245,7 @@ idxExpr = varName
 
 binder :: Parser UBinder
 binder =     (symbol "_" >> return IgnoreBind)
-         <|> (liftM UBind $ liftM2 Bind varName (optional typeAnnot))
+         <|> (liftM UBind $ liftM2 (:>) varName (optional typeAnnot))
 
 idxPat = binder
 

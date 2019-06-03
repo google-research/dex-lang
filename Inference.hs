@@ -147,7 +147,7 @@ inferLetBinding b expr = case binderAnn b of
     return (replaceAnnot b forallTy, tLam)
   Just sigmaTy@(Forall kinds tyBody) -> do
     skolVars <- mapM (fresh . pprint) kinds
-    let skolBinders = zipWith (%>) skolVars kinds
+    let skolBinders = zipWith (:>) skolVars kinds
     let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
     expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
     return (replaceAnnot b sigmaTy, TLam skolBinders expr')
@@ -195,7 +195,7 @@ generalize ty expr = do
     [] -> return (ty', expr')
     _  -> do kinds <- mapM getKind flexVars
              return (Forall kinds $ abstractTVs flexVars ty',
-                     TLam (zipWith (%>) flexVars kinds) expr')
+                     TLam (zipWith (:>) flexVars kinds) expr')
   where
     getKind :: Var -> InferM Kind
     getKind v = gets $ (! v) . tempEnv

@@ -62,7 +62,7 @@ getType' check expr = case expr of
     RecGet e field -> do RecType r <- recur e
                          return $ recGet r field
     TLam vks body -> do t <- recurWithT vks body
-                        let (vs, kinds) = unzip [(v, k) | Bind v k <- vks]
+                        let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
                         mapM_ checkShadow vks
                         return $ Forall kinds (abstractTVs vs t)
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
@@ -78,7 +78,7 @@ getType' check expr = case expr of
        extendWith (asLEnv (bind b)) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
-       let tb = tv %> IdxSetKind
+       let tb = tv :> IdxSetKind
        checkShadow b
        checkShadow tb
        extendWith (asTEnv (bind tb)) $ do
@@ -101,16 +101,12 @@ getType' check expr = case expr of
     checkTy :: Type -> TypeM ()
     checkTy _ = return () -- TODO: check kind and unbound type vars
 
-
 checkShadow :: BinderP a -> TypeM ()
-checkShadow b = void $ traverse checkShadowVar (binderVars b)
-  where
-    checkShadowVar :: Var -> TypeM ()
-    checkShadowVar v = do
-      env <- ask
-      if v `isin` lEnv env || v `isin` tEnv env
-        then throw CompilerErr $ pprint v ++ " shadowed"
-        else return ()
+checkShadow (v :> _) = do
+  env <- ask
+  if v `isin` lEnv env || v `isin` tEnv env
+    then throw CompilerErr $ pprint v ++ " shadowed"
+    else return ()
 
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body

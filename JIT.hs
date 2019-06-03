@@ -96,9 +96,9 @@ evalProg bs prog = do
 -- This doesn't work with types derived from existentials, because the
 -- existentially quantified variable isn't in scope yet
 makeDestCell :: PersistEnv -> IBinder -> IO (BinderP PersistCell)
-makeDestCell env (Bind v (IType ty shape)) = do
+makeDestCell env (v :> IType ty shape) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
-  return $ Bind v (Cell (Ptr ptr ty') shape')
+  return $ v :> Cell (Ptr ptr ty') shape'
   where shape' = map (scalarVal . (env !)) shape
         ty' = scalarTy ty
 
@@ -182,7 +182,7 @@ compileStatement statement = case statement of
     outVal <- case b of Copy -> let [val] = vals in return val
                         _ -> compileBuiltin b vals
     writeCell cell' outVal
-  Alloc (Bind v (IType b shape)) body -> do
+  Alloc (v :> IType b shape) body -> do
     shape' <- mapM lookupScalar shape
     cell <- allocate b shape' (nameTag v)
     extendWith (v @> Right cell) (compileProg body)
