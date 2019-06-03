@@ -21,14 +21,14 @@ deShadowPass decl = case decl of
   UTopLet (UBind b) expr -> do
     checkTopShadow (binderVar b)
     putEnv (newScope (binderVar b))
-    liftM (TopLet b) $ deShadowTop expr
+    liftM TopDecl $ liftM (Let b) $ deShadowTop expr
   UTopUnpack b tv expr -> do
     mapM checkTopShadow (uBinderVars b)
     checkTopShadow tv
     let b' = case b of UBind b' -> b'
                        IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
     putEnv (newScope (binderVar b'))
-    liftM (TopUnpack b' tv) $ deShadowTop expr
+    liftM TopDecl $ liftM (Unpack b' tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr

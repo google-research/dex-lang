@@ -16,11 +16,11 @@ type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
 checkTyped decl = decl <$ case decl of
-  TopLet b expr -> do
+  TopDecl (Let b expr) -> do
     ty' <- check expr
     assertEq (binderAnn b) ty' ""
     putEnv $ asLEnv (bind b)
-  TopUnpack b iv expr -> do
+  TopDecl (Unpack b iv expr) -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
     assertEq (binderAnn b) ty' ""

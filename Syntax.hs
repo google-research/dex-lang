@@ -74,8 +74,7 @@ data DeclP b = Let    (BinderP b)     (ExprP b)
                deriving (Eq, Ord, Show)
 
 -- TODO: just use Decl
-data TopDeclP b = TopLet    (BinderP b)     (ExprP b)
-                | TopUnpack (BinderP b) Var (ExprP b)
+data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))
 
 data Command expr = Command CmdName expr | NoOp

@@ -28,17 +28,17 @@ type InferM a = Pass TypeEnv InferState a
 type UAnnot = Maybe Type
 
 typePass :: TopDeclP UAnnot -> TopPass TypeEnv TopDecl
-typePass decl = case decl of
-  TopLet b expr -> do
+typePass tdecl = case tdecl of
+  TopDecl (Let b expr) -> do
     (b', expr') <- liftTop $ inferLetBinding b expr
     putEnv $ asLEnv (bind b')
-    return $ TopLet b' expr'
-  TopUnpack b tv expr -> do
+    return $ TopDecl (Let b' expr')
+  TopDecl (Unpack b tv expr) -> do
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
     let b' = fmap (const ty') b -- TODO: actually check the annotated type
     putEnv $ FullEnv (bind b') (tv@>IdxSetKind)
-    return $ TopUnpack b' tv expr'
+    return $ TopDecl (Unpack b' tv expr')
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize

@@ -5,7 +5,6 @@ module Imp (impPass, checkImp) where
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Data.Foldable (fold, toList)
-import Data.Maybe (fromJust)
 import Data.List (intercalate)
 
 import Syntax
@@ -22,12 +21,12 @@ type ImpEnv = FullEnv (Type, ImpVal) Name
 
 impPass :: TopDecl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
-  TopLet b expr -> do
+  TopDecl (Let b expr) -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
     putEnv $ asLEnv $ bindWith b (fmap (IVar . binderVar) binders)
     return $ ImpTopLet (toList binders) prog
-  TopUnpack b iv expr -> do
+  TopDecl (Unpack b iv expr) -> do
     let binders = RecTree $ Tup [ RecLeaf (iv :> intTy), impBinders b]
     prog <- impExprTop binders expr
     putEnv $ FullEnv (bindWith b (fmap (IVar . binderVar) binders)) (iv@>iv)

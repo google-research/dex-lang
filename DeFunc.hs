@@ -27,15 +27,15 @@ type DeFuncM a = WriterT [Decl] (ReaderT DFEnv (FreshT (Either Err))) a
 -- TODO: roll outvar type env and fresh scope into one, in some RW monad
 deFuncPass :: TopDecl -> TopPass TopEnv TopDecl
 deFuncPass decl = case decl of
-  TopLet (v :> _) expr -> do -- TODO: type might change!
+  TopDecl (Let (v :> _) expr) -> do
     (expr', ty, buildVal) <- deFuncTop expr
     putEnv $ outEnv (v :> ty) (buildVal (Var v))
-    return $ TopLet (v :> ty) expr'
-  TopUnpack b iv expr -> do
+    return $ TopDecl (Let (v :> ty) expr')
+  TopDecl (Unpack b iv expr) -> do
     expr' <- deFuncTopUnpack expr
     putEnv $ outEnv b (AExpr (Var (rawName "bug")))
               <> (asTEnv (iv @> TypeVar iv), (mempty, newScope iv))
-    return $ TopUnpack b iv expr'
+    return $ TopDecl (Unpack b iv expr')
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (expr', ty, buildVal) <- deFuncTop expr
@@ -212,13 +212,6 @@ materialize nameHint ty expr = do
   v <- freshLike nameHint
   tell [Let (v :> ty) expr]
   return $ AExpr (Var v)
-
--- -- TODO: add more context information
--- inlinable :: Expr -> Bool
--- inlinable expr = case expr of
---   Lit _ -> True
---   Var _ -> True
---   _     -> False
 
 forceAtom :: Atom -> Expr
 forceAtom (AExpr expr) = expr
