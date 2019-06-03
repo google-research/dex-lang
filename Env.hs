@@ -2,13 +2,12 @@
 
 module Env (Env, envLookup, isin, envNames, envPairs, envDelete,
             envSubset, (!), (@>), BinderP (..), bind, bindFold,
-            bindWith, extendWith, binderAnn, binderVar, addAnnot,
+            bindWith, binderAnn, binderVar, addAnnot,
             freshenBinder, replaceAnnot, bindRecZip, lookupSubst) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
-import Control.Monad.Reader
 import Data.Text.Prettyprint.Doc
 
 import Fresh
@@ -77,9 +76,6 @@ addAnnot b y = fmap (\x -> (x, y)) b
 replaceAnnot :: BinderP a -> b -> BinderP b
 replaceAnnot b y = fmap (const y) b
 
-extendWith :: (MonadReader env m, Monoid env) => env -> m a -> m a
-extendWith env m = local (env <>) m
-
 freshenBinder :: MonadFreshR m =>
                  BinderP a -> (Env Name -> BinderP a -> m b) -> m b
 freshenBinder (v :> ann) cont = freshName v $ \v' ->
@@ -95,8 +91,9 @@ instance Traversable Env where
   traverse f (Env m) = liftA Env (traverse f m)
 
 
+-- Note: Env is right-biased, so that we extend envs on the right
 instance Semigroup (Env a) where
-  Env m <> Env m' = Env (m <> m')
+  Env m <> Env m' = Env (m' <> m)
 
 instance Monoid (Env a) where
   mempty = Env mempty

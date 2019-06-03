@@ -10,6 +10,7 @@ import Pass
 import Fresh
 import PPrint
 import Util (repeated)
+import Cat
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowEnv = FullEnv Var Var
@@ -72,7 +73,7 @@ deShadowExpr expr = case expr of
   UUnpack b tv bound body -> do
     bound' <- recur bound
     freshName tv $ \tv' ->
-      extendWith (asTEnv (tv @> tv')) $ do
+      extendR (asTEnv (tv @> tv')) $ do
         (body', b') <- deShadowPat (RecLeaf b) (recur body)
         return $ Decls [Unpack b' tv' bound'] body'
   URecCon r -> liftM RecCon $ traverse recur r
@@ -90,7 +91,7 @@ deShadowPat pat cont = do
   case pat' of
     RecLeaf (UBind b) ->
       freshenBinder b $ \subst b' ->
-        extendWith (asLEnv subst) $ do
+        extendR (asLEnv subst) $ do
           expr <- cont
           return (expr, b')
     p -> freshName (rawName "pat") $ \v -> do
@@ -102,7 +103,7 @@ patGetter :: Var -> ([RecField], UBinder)
 patGetter _ (_, IgnoreBind) cont = cont
 patGetter patName (fields, (UBind b)) cont =
   freshenBinder b $ \subst b' ->
-    extendWith (asLEnv subst) $ do
+    extendR (asLEnv subst) $ do
       expr' <- cont
       return $ Decls [Let b' getExpr] expr'
   where

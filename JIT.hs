@@ -34,6 +34,7 @@ import Util
 import Pass
 import Fresh hiding (Name, freshName)
 import PPrint
+import Cat
 
 import LLVMExec
 
@@ -185,7 +186,7 @@ compileStatement statement = case statement of
   Alloc (v :> IType b shape) body -> do
     shape' <- mapM lookupScalar shape
     cell <- allocate b shape' (nameTag v)
-    extendWith (v @> Right cell) (compileProg body)
+    extendR (v @> Right cell) (compileProg body)
     free cell
   Loop i n body -> do n' <- lookupScalar n
                       compileLoop i n' body
@@ -247,7 +248,7 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  extendWith (iVar @> (Left $ ScalarVal iVal longTy)) $
+  extendR (iVar @> (Left $ ScalarVal iVal longTy)) $
     compileProg body
   iValInc <- add iVal (litInt 1)
   store i iValInc

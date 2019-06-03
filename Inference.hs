@@ -18,6 +18,7 @@ import PPrint
 import Fresh
 import Pass
 import Util (onSnd)
+import Cat
 
 type Subst   = Env Type
 type TempEnv = Env Kind
@@ -111,7 +112,7 @@ check expr reqTy = case expr of
     checkDecl decl cont = case decl of
       Let b bound -> do
         (b', bound') <- inferLetBinding b bound
-        extendWith (asLEnv (bind b')) $ do
+        extendR (asLEnv (bind b')) $ do
           body' <- cont
           return $ wrapDecl (Let b' bound') body'
       Unpack b tv bound -> do
@@ -119,14 +120,14 @@ check expr reqTy = case expr of
         boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                    _ -> throw TypeErr (pprint maybeEx)
         let b' = replaceAnnot b boundTy
-        body' <- extendWith (FullEnv (bind b') (tv@>IdxSetKind)) cont
+        body' <- extendR (FullEnv (bind b') (tv@>IdxSetKind)) cont
         tvsEnv <- tempVarsEnv
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
         return $ wrapDecl (Unpack b' tv bound') body'
 
     leakErr = throw TypeErr "existential variable leaked"
-    recurWith b expr ty = extendWith (asLEnv (bind b)) (check expr ty)
+    recurWith b expr ty = extendR (asLEnv (bind b)) (check expr ty)
 
 checkBinder :: BinderP UAnnot -> Type -> InferM Binder
 checkBinder b ty = do
@@ -149,7 +150,7 @@ inferLetBinding b expr = case binderAnn b of
     skolVars <- mapM (fresh . pprint) kinds
     let skolBinders = zipWith (:>) skolVars kinds
     let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-    expr' <- extendWith (asTEnv (bindFold skolBinders)) (check expr exprTy)
+    expr' <- extendR (asTEnv (bindFold skolBinders)) (check expr exprTy)
     return (replaceAnnot b sigmaTy, TLam skolBinders expr')
   Just ty -> do
     expr' <- check expr ty
@@ -180,7 +181,7 @@ splitRec r ty = case ty of
 
 freshVar :: Kind -> InferM Type
 freshVar kind = do v <- fresh $ pprint kind
-                   modify $ setTempEnv (v @> kind <>)
+                   modify $ setTempEnv (<> v @> kind)
                    return (TypeVar v)
 
 freshTy  = freshVar TyKind
@@ -230,7 +231,7 @@ instantiate ty reqTy expr = do
 
 bindMVar:: Var -> Type -> InferM ()
 bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
-             | otherwise = do modify $ setSubst $ (v @> t <>)
+             | otherwise = do modify $ setSubst $ (<> v @> t)
                               modify $ setTempEnv $ envDelete v
 
 -- TODO: check kinds
@@ -266,7 +267,7 @@ lookupVar v = do
   mty <- gets $ flip envLookup v . subst
   case mty of Nothing -> return $ TypeVar v
               Just ty -> do ty' <- zonk ty
-                            modify $ setSubst (v @> ty' <>)
+                            modify $ setSubst (<> v @> ty')
                             return ty'
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState

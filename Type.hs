@@ -10,6 +10,7 @@ import Env
 import Record
 import Pass
 import PPrint
+import Cat
 
 type TypeEnv = FullEnv Type Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
@@ -75,15 +76,15 @@ getType' check expr = case expr of
        checkTy (binderAnn b)
        checkShadow b
        checkEq "Let" (binderAnn b) (recur expr)
-       extendWith (asLEnv (bind b)) cont
+       extendR (asLEnv (bind b)) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
        let tb = tv :> IdxSetKind
        checkShadow b
        checkShadow tb
-       extendWith (asTEnv (bind tb)) $ do
+       extendR (asTEnv (bind tb)) $ do
          checkTy (binderAnn b)
-         extendWith (asLEnv (bind b)) cont
+         extendR (asLEnv (bind b)) cont
 
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
     checkEq s ty getTy =
@@ -92,8 +93,8 @@ getType' check expr = case expr of
                else return ()
 
     recur = getType' check
-    recurWith  b  = extendWith (asLEnv (bind b)) . recur
-    recurWithT bs = extendWith (asTEnv (bindFold bs)) . recur
+    recurWith  b  = extendR (asLEnv (bind b)) . recur
+    recurWithT bs = extendR (asTEnv (bindFold bs)) . recur
 
     lookupLVar :: Var -> TypeM Type
     lookupLVar v = asks ((! v) . lEnv)

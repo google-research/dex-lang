@@ -7,6 +7,7 @@ import Pass
 import PPrint
 import Fresh
 import Type
+import Cat
 
 import Data.Foldable
 import Control.Monad.Reader
@@ -81,12 +82,12 @@ deFuncExpr expr = case expr of
   App fexpr arg -> do
     Thunk env (Lam b body) <- recur fexpr
     arg' <- recur arg
-    bindVal b arg' $ extendWith env $ recur body
+    bindVal b arg' $ extendR env $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For (v :> ty) body -> do
     ty' <- subTy ty
     v' <- freshLike v
-    extendWith (asLEnv (v @> (ty', (AExpr (Var v'))))) $ do
+    extendR (asLEnv (v @> (ty', (AExpr (Var v'))))) $ do
        (body', bodyTy, atomBuilder) <- deFuncScoped body
        outVar <- freshLike (rawName "tab")
        let b' = (v':>ty')
@@ -99,7 +100,7 @@ deFuncExpr expr = case expr of
       AExpr tabExpr -> return $ AExpr $ Get tabExpr ie' -- TODO: optimize `for` case
       AFor b body -> do
         local (const mempty) $
-          extendWith (asLEnv (bindWith b (AExpr (Var ie')))) $
+          extendR (asLEnv (bindWith b (AExpr (Var ie')))) $
             applySubstAtom body
   RecCon r -> liftM ARecCon $ traverse recur r
   RecGet e field -> do
@@ -111,8 +112,8 @@ deFuncExpr expr = case expr of
   TApp fexpr ts -> do
     Thunk env (TLam bs body) <- recur fexpr
     ts' <- mapM subTy ts
-    extendWith env $ do
-      extendWith (asTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
+    extendR env $ do
+      extendR (asTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
         recur body
   where recur = deFuncExpr
 
@@ -137,10 +138,10 @@ deFuncDecl decl cont = case decl of
   Unpack (v :> ty) tv bound -> do
     AExpr bound' <- deFuncExpr bound
     tv' <- freshLike tv
-    extendWith (asTEnv $ tv @> TypeVar tv') $ do
+    extendR (asTEnv $ tv @> TypeVar tv') $ do
       v' <- freshLike v
       ty' <- subTy ty
-      extendWith (asLEnv (v @> (ty', AExpr (Var v')))) $ do
+      extendR (asLEnv (v @> (ty', AExpr (Var v')))) $ do
         tell [Unpack (v':>ty') tv' bound']
         cont
 
@@ -195,7 +196,7 @@ subAtomicExpr subst expr = case expr of
 bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
 bindVal (v :> ty) val cont = do
   ty' <- subTy ty
-  extendWith (asLEnv (v @> (ty', val))) $ cont
+  extendR (asLEnv (v @> (ty', val))) $ cont
 
 -- atomize :: Name -> Type -> Atom -> DeFuncM Atom
 -- atomize nameHint ty val = case val of
@@ -248,7 +249,7 @@ refreshBinder (v :> ty) cont = do
   v' <- freshLike v
   ty' <- subTy ty
   let b' = v' :> ty'
-  extendWith (asLEnv (v @> (ty', AExpr (Var v')))) (cont b')
+  extendR (asLEnv (v @> (ty', AExpr (Var v')))) (cont b')
 
 askLEnv :: Var -> DeFuncM Atom
 askLEnv v = do tyVal <- asks $ flip envLookup v . lEnv

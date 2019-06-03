@@ -14,6 +14,7 @@ import Type
 import PPrint
 import Pass
 import Fresh
+import Cat
 
 type ImpM a = Pass ImpEnv () a
 type ImpVal = RecTree IExpr
@@ -94,7 +95,7 @@ toImpDecl decl cont = case decl of
         cont
   Unpack b n bound -> do
     materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
-      extendWith (asTEnv (n @> n')) $
+      extendR (asTEnv (n @> n')) $
         bindVal b (fmap IVar x) $
           cont
 
@@ -110,7 +111,7 @@ materialize expr body = do
   where allocProg binder scoped = asProg $ Alloc binder scoped
 
 bindVal :: Binder -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
-bindVal b val body = extendWith (asLEnv $ bindWith b val) body
+bindVal b val body = extendR (asLEnv $ bindWith b val) body
 
 loop :: Name -> (Name -> ImpM ImpProg) -> ImpM ImpProg
 loop n body = do i <- fresh "i"
@@ -147,7 +148,7 @@ toImpFor :: RecTree Dest -> Binder -> Expr -> ImpM ImpProg
 toImpFor dest (i :> TypeVar n) body = do
   n' <- asks $ (!n) . tEnv
   loop n' $ \i' -> do
-    extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
+    extendR (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
       toImp body (fmap (indexDest i') dest)
 
 impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
@@ -163,7 +164,7 @@ impFold dest [_, TypeVar n] (RecCon (Tup [For (i :> _) (Lam b body), x])) = do
   n' <- asks $ (!n) . tEnv
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
-               extendWith (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
+               extendR (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
                  bindVal b (fmap IVar accum) $
                    toImp body (fmap asBuffer accum)
     return $ loop' <> writeExprs dest (fmap IVar accum)
@@ -220,7 +221,7 @@ checkImp decl = decl <$ case decl of
     check bs prog = do
       env <- getEnv
       liftEither $ addContext (pprint prog) $
-          evalPass (bindFold bs <> env) () mempty (checkProg prog)
+          evalPass (env <> bindFold bs) () mempty (checkProg prog)
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements
@@ -234,7 +235,7 @@ checkStatement statement = case statement of
     env <- ask
     if binderVar b `isin` env then throw CompilerErr "Shadows!"
                               else return ()
-    extendWith (bind b) (checkProg body)
+    extendR (bind b) (checkProg body)
   Update v idxs Copy [expr] -> do
     mapM_ checkIsInt idxs
     IType b  shape  <- asks $ (! v)
@@ -249,7 +250,7 @@ checkStatement statement = case statement of
     case drop (length idxs) shape of
       [] -> assertEq b b' "Base type mismatch in builtin application"
       _  -> throw CompilerErr "Writing to non-scalar buffer"
-  Loop i size block -> extendWith (i @> intTy) $ do
+  Loop i size block -> extendR (i @> intTy) $ do
                           checkIsInt size
                           checkProg block
 
