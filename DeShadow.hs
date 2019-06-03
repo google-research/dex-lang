@@ -19,16 +19,16 @@ type Ann = Maybe Type
 deShadowPass :: UDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
   UTopLet IgnoreBind _ -> error "todo"
-  UTopLet (UBind b) expr -> do
-    checkTopShadow (binderVar b)
-    putEnv (newScope (binderVar b))
+  UTopLet (UBind b@(v:>_)) expr -> do
+    checkTopShadow v
+    putEnv (v@>())
     liftM TopDecl $ liftM (Let b) $ deShadowTop expr
   UTopUnpack b tv expr -> do
-    mapM checkTopShadow (uBinderVars b)
     checkTopShadow tv
-    let b' = case b of UBind b' -> b'
-                       IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
-    putEnv (newScope (binderVar b'))
+    let b'@(v:>_) = case b of UBind b' -> b'
+                              IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
+    checkTopShadow v
+    putEnv $ (v@>() <> tv@>())
     liftM TopDecl $ liftM (Unpack b' tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
@@ -46,12 +46,8 @@ checkTopShadow :: Var -> TopPass FreshScope ()
 checkTopShadow (Name "_" _) = return ()
 checkTopShadow v = do
   scope <- getEnv
-  if isFresh v scope then return ()
-                     else throw RepeatedVarErr (pprint v)
-
-uBinderVars :: UBinder -> [Var]
-uBinderVars (UBind (v :> _)) = [v]
-uBinderVars IgnoreBind = []
+  if v `isin` scope then throw RepeatedVarErr (pprint v)
+                    else return ()
 
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
@@ -123,3 +119,7 @@ checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
 checkRepeats bs = case repeated (foldMap uBinderVars bs) of
                     [] -> return ()
                     xs -> throw RepeatedVarErr (pprint xs)
+
+uBinderVars :: UBinder -> [Var]
+uBinderVars (UBind (v :> _)) = [v]
+uBinderVars IgnoreBind = []

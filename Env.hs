@@ -1,22 +1,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module Env (Env, envLookup, isin, envNames, envPairs, envDelete,
-            envSubset, (!), (@>), BinderP (..), bind, bindFold,
+module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
+            envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot,
-            freshenBinder, replaceAnnot, bindRecZip, lookupSubst) where
+            replaceAnnot, bindRecZip, lookupSubst) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
 
-import Fresh
 import Record
 
 infixr 7 :>
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
+data Name = Name Tag Int  deriving (Show, Ord, Eq)
+type Tag = String
 data BinderP a = (:>) Name a  deriving (Show, Eq, Ord)
 
 envLookup :: Env a -> Name -> Maybe a
@@ -76,11 +77,6 @@ addAnnot b y = fmap (\x -> (x, y)) b
 replaceAnnot :: BinderP a -> b -> BinderP b
 replaceAnnot b y = fmap (const y) b
 
-freshenBinder :: MonadFreshR m =>
-                 BinderP a -> (Env Name -> BinderP a -> m b) -> m b
-freshenBinder (v :> ann) cont = freshName v $ \v' ->
-                                  cont (v @> v') (v' :> ann)
-
 instance Functor Env where
   fmap = fmapDefault
 
@@ -113,3 +109,10 @@ instance Foldable BinderP where
 
 instance Traversable BinderP where
   traverse f (v :> x) = fmap (v:>) (f x)
+
+-- TODO: this needs to be injective but it's currently not
+-- (needs to figure out acceptable tag strings)
+instance Pretty Name where
+  pretty (Name tag n) = pretty tag <> suffix
+            where suffix = case n of 0 -> ""
+                                     _ -> "_" <> pretty n

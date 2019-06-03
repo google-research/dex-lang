@@ -56,7 +56,7 @@ impExprTop dest expr = do
   liftEither $ evalPass env () (envToScope env) (toImp expr dest')
 
 envToScope :: ImpEnv -> FreshScope
-envToScope (FullEnv lenv tenv) = foldMap newScope (lNames <> toList tenv)
+envToScope (FullEnv lenv tenv) = foldMap (@>()) (lNames <> toList tenv)
   where lNames = map getVar $ concat $ map (toList . snd) (toList lenv)
         getVar (IVar v) = v
 

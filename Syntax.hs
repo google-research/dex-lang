@@ -20,7 +20,6 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
 
 import Record
 import Env
-import Fresh
 
 import Data.Foldable (toList)
 import Data.List (elemIndex, nub)

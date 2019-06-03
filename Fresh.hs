@@ -5,21 +5,21 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- those last three are all needed for monaderror
 
-module Fresh (Name (..), Tag, fresh, freshLike, FreshT, runFreshT, rawName,
-              nameTag, newScope, rename, FreshScope, isFresh, runFreshRT,
-              FreshRT, MonadFreshR, freshName, askFresh, localFresh) where
+module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
+              nameTag, rename, FreshScope, runFreshRT,
+              FreshRT, MonadFreshR, freshName, askFresh, localFresh,
+              freshenBinder) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
-import Data.Text.Prettyprint.Doc
 
-data Name = Name Tag Int  deriving (Show, Ord, Eq)
-type Tag = String
+import Env
 
-newtype FreshScope = FreshScope (M.Map Tag Int)  deriving (Show)
+type FreshScope = Env ()
+
 
 rawName :: Tag -> Name
 rawName s = Name s 0
@@ -27,33 +27,20 @@ rawName s = Name s 0
 nameTag :: Name -> Tag
 nameTag (Name tag _) = tag
 
-newScope :: Name -> FreshScope
-newScope (Name tag i) = FreshScope (M.singleton tag (i+1))
-
 genFresh :: Tag -> FreshScope -> Name
-genFresh tag (FreshScope m) = Name tag (M.findWithDefault 0 tag m)
+genFresh tag (Env m) = Name tag nextNum
+  where
+    nextNum = case M.lookupLT (Name tag bigInt) m of
+                Nothing -> 0
+                Just (Name tag' i, ())
+                  | tag' /= tag -> 0
+                  | i < bigInt  -> i + 1
+                  | otherwise   -> error "Ran out of numbers!"
+    bigInt = 10^9 :: Int  -- TODO: consider a real sentinel value
 
 rename :: Name -> FreshScope -> Name
-rename v scope | isFresh v scope = v
-               | otherwise = genFresh (nameTag v) scope
-
-isFresh :: Name -> FreshScope -> Bool
-isFresh (Name tag n) (FreshScope m) = n >= n'
-  where n' = M.findWithDefault 0 tag m
-
--- TODO: this needs to be injective but it's currently not
--- (needs to figure out acceptable tag strings)
-instance Pretty Name where
-  pretty (Name tag n) = pretty tag <> suffix
-            where suffix = case n of 0 -> ""
-                                     _ -> "_" <> pretty n
-
-instance Semigroup FreshScope where
-  (FreshScope m) <> (FreshScope m') = FreshScope (M.unionWith max m m')
-
-instance Monoid FreshScope where
-  mempty = FreshScope mempty
-  mappend = (<>)
+rename v scope | v `isin` scope = genFresh (nameTag v) scope
+               | otherwise = v
 
 -- === state monad version of fresh var generation ===
 
@@ -65,7 +52,7 @@ class Monad m => MonadFresh m where
 
 instance Monad m => MonadFresh (FreshT m) where
   fresh tag = FreshT $ do name <- gets (genFresh tag)
-                          modify (newScope name <>)
+                          modify (<> name @> ())
                           return name
 
 freshLike :: MonadFresh m => Name -> m Name
@@ -99,7 +86,12 @@ freshName :: MonadFreshR m => Name -> (Name -> m a) -> m a
 freshName v cont = do
   scope <- askFresh
   let v' = rename v scope
-  localFresh (newScope v' <>) (cont v')
+  localFresh (<> v' @> ()) (cont v')
+
+freshenBinder :: MonadFreshR m =>
+                 BinderP a -> (Env Name -> BinderP a -> m b) -> m b
+freshenBinder (v :> ann) cont = freshName v $ \v' ->
+                                  cont (v @> v') (v' :> ann)
 
 class Monad m => MonadFreshR m where
   askFresh :: m FreshScope

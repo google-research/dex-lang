@@ -35,7 +35,7 @@ deFuncPass decl = case decl of
   TopDecl (Unpack b iv expr) -> do
     expr' <- deFuncTopUnpack expr
     putEnv $ outEnv b (AExpr (Var (rawName "bug")))
-              <> (asTEnv (iv @> TypeVar iv), (mempty, newScope iv))
+              <> (asTEnv (iv @> TypeVar iv), (mempty, iv @> ()))
     return $ TopDecl (Unpack b iv expr')
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -61,7 +61,7 @@ deFuncTopUnpack expr = do
   return $ Decls decls outVal
 
 outEnv :: Binder -> Atom -> TopEnv
-outEnv b x = (asLEnv (bindWith b x), (bind b, newScope (binderVar b)))
+outEnv b@(v:>_) x = (asLEnv (bindWith b x), (bind b, v @> ()))
 
 deFuncExpr :: Expr -> DeFuncM Atom
 deFuncExpr expr = case expr of

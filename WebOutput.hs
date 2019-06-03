@@ -26,7 +26,7 @@ import Actor
 import Pass
 import Parser
 import PPrint
-import Fresh
+import Env
 
 type FileName = String
 type Key = Int

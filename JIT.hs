@@ -28,11 +28,11 @@ import Data.Binary.IEEE754 (wordToDouble)
 
 import Type
 import Syntax
-import Env
+import Env hiding (Name)
 import Record
 import Util
 import Pass
-import Fresh hiding (Name, freshName)
+import Fresh hiding (freshName)
 import PPrint
 import Cat
 
