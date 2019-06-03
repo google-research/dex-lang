@@ -31,7 +31,7 @@ import Env
 type FileName = String
 type Key = Int
 type ResultSet = (SetVal [Key], MonMap Key Result)
-type FullPass env = UDecl -> TopPass env ()
+type FullPass env = UTopDecl -> TopPass env ()
 
 runWeb :: Monoid env => FileName -> FullPass env -> env -> IO ()
 runWeb fname pass env = runActor $ do

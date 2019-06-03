@@ -20,7 +20,7 @@ import JIT
 import WebOutput
 
 type ResultChan = Result -> IO ()
-type FullPass env = UDecl -> TopPass env ()
+type FullPass env = UTopDecl -> TopPass env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}
@@ -31,7 +31,7 @@ fullPass = deShadowPass
        >+> impPass    >+> checkImp
        >+> jitPass
 
-parseFile :: MonadIO m => String -> m [(String, Except UDecl)]
+parseFile :: MonadIO m => String -> m [(String, Except UTopDecl)]
 parseFile fname = do
   source <- liftIO $ readFile fname
   return $ parseProg source

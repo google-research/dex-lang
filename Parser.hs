@@ -17,15 +17,12 @@ import Fresh
 import Inference
 import PPrint
 
-type Prog = [(String, Except UDecl)]
-
-data LocalDecl = AssignDecl Pat UExpr
-               | UnpackDecl UBinder Var UExpr
+type Prog = [(String, Except UTopDecl)]
 
 parseProg :: String -> Prog
 parseProg source = map (\s -> (s, parseTopDecl s)) (splitDecls source)
 
-parseTopDecl :: String -> Except UDecl
+parseTopDecl :: String -> Except UTopDecl
 parseTopDecl = parseit (emptyLines >> topDeclInstr <* emptyLines)
 
 parseit :: Parser a -> String -> Except a
@@ -33,15 +30,15 @@ parseit p s = case parse (p <* eof) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
 
-topDeclInstr :: Parser UDecl
+topDeclInstr :: Parser UTopDecl
 topDeclInstr =   explicitCommand
-             <|> typedTopLet
-             <|> topUnpack
-             <|> topLet
+             <|> liftM UTopDecl typedTopLet
+             <|> liftM UTopDecl topUnpack
+             <|> liftM UTopDecl topLet
              <|> liftM (UEvalCmd . Command EvalExpr) expr
              <?> "top-level declaration"
 
-explicitCommand :: Parser UDecl
+explicitCommand :: Parser UTopDecl
 explicitCommand = do
   symbol ":"
   cmdName <- identifier
@@ -62,17 +59,21 @@ typedTopLet :: Parser UDecl
 typedTopLet = do
   v <- try (varName <* symbol "::")
   ty <- typeExpr <* eol
-  UTopLet (UBind (v' :> b)) e <- topLet
-  if v' /= v
-    then fail "Type declaration variable must match assignment variable."
-    else case b of Just _ -> fail "Conflicting type annotations"
-                   Nothing -> return $ UTopLet (UBind (v :> Just ty)) e
+  ULet p e <- topLet
+  case p of
+    RecTree _ -> fail "Can't annotate top-level pattern-match"
+    RecLeaf (UBind (v' :> b)) ->
+     if v' /= v
+       then fail "Type declaration variable must match assignment variable."
+       else case b of
+              Just _ -> fail "Conflicting type annotations"
+              Nothing -> return $ ULet (RecLeaf (UBind (v :> Just ty))) e
 
 topUnpack :: Parser UDecl
 topUnpack = do
   (b, tv) <- try unpackBinder
   body <- expr
-  return $ UTopUnpack b tv body
+  return $ UUnpack b tv body
 
 unpackBinder :: Parser (UBinder, Var)
 unpackBinder = do
@@ -84,12 +85,12 @@ unpackBinder = do
 
 topLet :: Parser UDecl
 topLet = do
-  (b, wrap) <- try $ do b <- binder
+  (p, wrap) <- try $ do p <- pat
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
-                        return (b, wrap)
+                        return (p, wrap)
   body <- expr
-  return $ UTopLet b (wrap body)
+  return $ ULet p (wrap body)
 
 expr :: Parser UExpr
 expr = makeExprParser (sc >> term >>= maybeAnnot) ops
@@ -143,14 +144,10 @@ builtinExpr = do
 declExpr :: Parser UExpr
 declExpr = do
   symbol "let"
-  bindings <- (unpackDecl <|> typedLocalLet <|> localLet) `sepBy` symbol ";"
+  decls <- (unpackDecl <|> typedLocalLet <|> localLet) `sepBy` symbol ";"
   symbol "in"
   body <- expr
-  return $ foldr unpackBinding body bindings
-  where unpackBinding :: LocalDecl -> UExpr -> UExpr
-        unpackBinding decl body = case decl of
-          AssignDecl p binding -> ULet    p binding body
-          UnpackDecl b v binding -> UUnpack b v binding body
+  return $ UDecls decls body
 
 lamExpr :: Parser UExpr
 lamExpr = do
@@ -169,13 +166,13 @@ forExpr = do
   return $ foldr UFor body vs
 
 -- decl :: Parser (Pat, UExpr)
-unpackDecl :: Parser LocalDecl
+unpackDecl :: Parser UDecl
 unpackDecl = do
   (b, tv) <- try unpackBinder
   body <- expr
-  return $ UnpackDecl b tv body
+  return $ UUnpack b tv body
 
-typedLocalLet :: Parser LocalDecl
+typedLocalLet :: Parser UDecl
 typedLocalLet = do
   v <- try (varName <* symbol "::")
   ty <- typeExpr <* symbol ";"
@@ -186,15 +183,15 @@ typedLocalLet = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl (RecLeaf (UBind (v :> Just ty))) (wrap body)
+  return $ ULet (RecLeaf (UBind (v :> Just ty))) (wrap body)
 
-localLet :: Parser LocalDecl
+localLet :: Parser UDecl
 localLet = do
   p <- pat
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl p (wrap body)
+  return $ ULet p (wrap body)
 
 idxLhsArgs = do
   symbol "."

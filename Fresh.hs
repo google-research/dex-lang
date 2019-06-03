@@ -27,12 +27,12 @@ rawName s = Name s 0
 nameTag :: Name -> Tag
 nameTag (Name tag _) = tag
 
-genFresh :: Tag -> FreshScope -> Name
+genFresh :: Tag -> Env a -> Name
 genFresh tag (Env m) = Name tag nextNum
   where
     nextNum = case M.lookupLT (Name tag bigInt) m of
                 Nothing -> 0
-                Just (Name tag' i, ())
+                Just (Name tag' i, _)
                   | tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"

@@ -3,8 +3,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
-               UExpr (..), UDecl (..), ImpDecl (..), TopDeclP (..), DeclP (..),
-               Decl, TopDecl, Command (..), Pat,
+               UExpr (..), UTopDecl (..), UDecl (..), ImpDecl (..), TopDeclP (..),
+               DeclP (..), Decl, TopDecl, Command (..), Pat,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
@@ -112,21 +112,21 @@ unitTy = RecType (Tup [])
 data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
-           | ULet Pat UExpr UExpr
+           | UDecls [UDecl] UExpr
            | ULam Pat UExpr
            | UApp UExpr UExpr
            | UFor UBinder UExpr
            | UGet UExpr IdxExpr
-           | UUnpack UBinder Var UExpr UExpr
            | URecCon (Record UExpr)
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
 data UBinder = UBind (BinderP (Maybe Type)) | IgnoreBind  deriving (Show, Eq)
+data UDecl = ULet Pat UExpr
+           | UUnpack UBinder Var UExpr  deriving (Show, Eq)
 
-data UDecl = UTopLet    UBinder UExpr
-           | UTopUnpack UBinder Var UExpr
-           | UEvalCmd (Command UExpr)
+data UTopDecl = UTopDecl UDecl
+              | UEvalCmd (Command UExpr)
 
 type Pat = RecTree UBinder
 
@@ -366,10 +366,10 @@ freeLVarsEnv env expr = case expr of
 
 -- TODO: include type variables, since they're now lexcially scoped
 
-freeVars :: UDecl -> [Var]
+freeVars :: UTopDecl -> [Var]
 freeVars decl = case decl of
-  UTopLet    _ expr -> freeVarsUExpr' expr
-  UTopUnpack _ _ expr -> freeVarsUExpr' expr
+  UTopDecl (ULet    _   expr) -> freeVarsUExpr' expr
+  UTopDecl (UUnpack _ _ expr) -> freeVarsUExpr' expr
   UEvalCmd (Command _ expr) -> freeVarsUExpr' expr
   UEvalCmd NoOp -> []
 
@@ -382,13 +382,16 @@ freeVarsUExpr expr = case expr of
   UVar v         -> do isbound <- asks $ isin v
                        return $ if isbound then [] else [v]
   UBuiltin _     -> return []
-  ULet p e body  -> liftM2 (<>) (recur e) (recurWith p body)
+  UDecls [] body -> recur body
+  UDecls (decl:decls) final -> case decl of
+    ULet    p   e -> liftM2 (<>) (recur e) (recurWith p body)
+    UUnpack b _ e -> liftM2 (<>) (recur e) (recurWith [b] body)
+    where body = UDecls decls final
   ULam p body    -> recurWith p body
   UApp fexpr arg -> liftM2 (<>) (recur fexpr) (recur arg)
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
   URecCon r      -> liftM fold (traverse recur r)
-  UUnpack b _ e body -> liftM2 (<>) (recur e) (recurWith [b] body)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
@@ -396,10 +399,10 @@ freeVarsUExpr expr = case expr of
     ubind b = case b of UBind b' -> bind b'
                         IgnoreBind -> mempty
 
-lhsVars :: UDecl -> [Var]
+lhsVars :: UTopDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    (UBind (v:>_)) _   -> [v]
-  UTopUnpack (UBind (v:>_)) _ _ -> [v]
+  UTopDecl (ULet (RecLeaf (UBind (v:>_))) _ ) -> [v]
+  UTopDecl (UUnpack       (UBind (v:>_)) _ _) -> [v]
   _ -> []
 
 wrapDecl :: DeclP b -> ExprP b -> ExprP b

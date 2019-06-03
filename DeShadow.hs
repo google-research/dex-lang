@@ -16,14 +16,14 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowEnv = FullEnv Var Var
 type Ann = Maybe Type
 
-deShadowPass :: UDecl -> TopPass FreshScope (TopDeclP Ann)
+deShadowPass :: UTopDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
-  UTopLet IgnoreBind _ -> error "todo"
-  UTopLet (UBind b@(v:>_)) expr -> do
+  UTopDecl (ULet (RecLeaf IgnoreBind) _) -> error "todo"
+  UTopDecl (ULet (RecLeaf (UBind b@(v:>_))) expr) -> do
     checkTopShadow v
     putEnv (v@>())
     liftM TopDecl $ liftM (Let b) $ deShadowTop expr
-  UTopUnpack b tv expr -> do
+  UTopDecl (UUnpack b tv expr) -> do
     checkTopShadow tv
     let b'@(v:>_) = case b of UBind b' -> b'
                               IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
@@ -54,10 +54,19 @@ deShadowExpr expr = case expr of
   ULit x -> return (Lit x)
   UVar v -> liftM Var (getLVar v)
   UBuiltin b -> return (Builtin b)
-  ULet p bound body -> do
-    bound' <- recur bound
-    (body', b) <- deShadowPat p (recur body)
-    return $ Decls [Let b bound'] body'
+  UDecls [] body -> recur body
+  UDecls (decl:decls) final -> case decl of
+    ULet p bound -> do
+      bound' <- recur bound
+      (body', b) <- deShadowPat p (recur body)
+      return $ Decls [Let b bound'] body'
+    UUnpack b tv bound -> do
+      bound' <- recur bound
+      freshName tv $ \tv' ->
+        extendR (asTEnv (tv @> tv')) $ do
+          (body', b') <- deShadowPat (RecLeaf b) (recur body)
+          return $ Decls [Unpack b' tv' bound'] body'
+    where body = UDecls decls final
   ULam p body -> do
     (body', b) <- deShadowPat p (recur body)
     return $ Lam b body'
@@ -66,12 +75,6 @@ deShadowExpr expr = case expr of
     (body', b') <- deShadowPat (RecLeaf b) (recur body)
     return $ For b' body'
   UGet e v -> liftM2 Get (recur e) (getLVar v)
-  UUnpack b tv bound body -> do
-    bound' <- recur bound
-    freshName tv $ \tv' ->
-      extendR (asTEnv (tv @> tv')) $ do
-        (body', b') <- deShadowPat (RecLeaf b) (recur body)
-        return $ Decls [Unpack b' tv' bound'] body'
   URecCon r -> liftM RecCon $ traverse recur r
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   where recur = deShadowExpr
