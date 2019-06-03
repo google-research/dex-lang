@@ -17,15 +17,18 @@ type Ann = Maybe Type
 
 deShadowPass :: UDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
-  UTopLet b expr -> do
+  UTopLet IgnoreBind _ -> error "todo"
+  UTopLet (UBind b) expr -> do
     mapM checkTopShadow (binderVars b)
     putEnv (foldMap newScope (binderVars b))
     liftM (TopLet b) $ deShadowTop expr
   UTopUnpack b tv expr -> do
-    mapM checkTopShadow (binderVars b)
+    mapM checkTopShadow (uBinderVars b)
     checkTopShadow tv
-    putEnv (foldMap newScope (binderVars b))
-    liftM (TopUnpack b tv) $ deShadowTop expr
+    let b' = case b of UBind b' -> b'
+                       IgnoreBind -> rawName ("__" ++ nameTag tv) %> Nothing
+    putEnv (foldMap newScope (binderVars b'))
+    liftM (TopUnpack b' tv) $ deShadowTop expr
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -39,10 +42,15 @@ deShadowPass decl = case decl of
       liftEither $ runFreshRT (runReaderT (deShadowExpr expr) mempty) scope
 
 checkTopShadow :: Var -> TopPass FreshScope ()
+checkTopShadow (Name "_" _) = return ()
 checkTopShadow v = do
   scope <- getEnv
   if isFresh v scope then return ()
                      else throw RepeatedVarErr (pprint v)
+
+uBinderVars :: UBinder -> [Var]
+uBinderVars (UBind (Bind v _)) = [v]
+uBinderVars IgnoreBind = []
 
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
@@ -74,22 +82,31 @@ deShadowExpr expr = case expr of
         getLVar v = asks $ lookupSubst v . lEnv
         deShadowAnnot b = fmap (fmap deShadowType) b
 
-deShadowPat :: RecTree (BinderP Ann) -> DeShadowM (ExprP Ann)
+deShadowPat :: RecTree UBinder -> DeShadowM (ExprP Ann)
             -> DeShadowM (ExprP Ann, BinderP Ann)
 deShadowPat pat cont = do
   checkRepeats pat
-  pat' <- traverse (traverse (traverse deShadowType)) pat
-  freshenBinders pat' $ \subst pat'' ->
-    extendWith (asLEnv subst) $
-      case pat'' of
-        RecLeaf b -> do expr <- cont
-                        return (expr, b)
-        p -> freshName (rawName "pat") $ \v -> do
-               expr <- cont
-               let b = v %> Nothing
-                   recGet fields = foldr (flip RecGet) (Var v) fields
-                   addLet (fields, b') expr' = Decls [Let b' (recGet fields)] expr'
-               return (foldr addLet expr (recTreeNamed p), b)
+  pat' <- traverse deShadowBinderAnn pat
+  case pat' of
+    RecLeaf (UBind b) ->
+      freshenBinder b $ \subst b' ->
+        extendWith (asLEnv subst) $ do
+          expr <- cont
+          return (expr, b')
+    p -> freshName (rawName "pat") $ \v -> do
+           expr <- foldr (patGetter v) cont (recTreeNamed p)
+           return (expr, v %> Nothing)
+
+patGetter :: Var -> ([RecField], UBinder)
+                    -> DeShadowM (ExprP Ann) -> DeShadowM (ExprP Ann)
+patGetter _ (_, IgnoreBind) cont = cont
+patGetter patName (fields, (UBind b)) cont =
+  freshenBinder b $ \subst b' ->
+    extendWith (asLEnv subst) $ do
+      expr' <- cont
+      return $ Decls [Let b' getExpr] expr'
+  where
+    getExpr = foldr (flip RecGet) (Var patName) fields
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
@@ -97,7 +114,11 @@ deShadowType ty = do
   let sub v = Just (TypeVar (lookupSubst v subst))
   return $ maybeSub sub ty
 
+deShadowBinderAnn :: UBinder -> DeShadowM UBinder
+deShadowBinderAnn IgnoreBind = return IgnoreBind
+deShadowBinderAnn (UBind b) = liftM UBind $ traverse (traverse deShadowType) b
+
 checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
-checkRepeats bs = case repeated (foldMap binderVars bs) of
+checkRepeats bs = case repeated (foldMap uBinderVars bs) of
                     [] -> return ()
                     xs -> throw RepeatedVarErr (pprint xs)

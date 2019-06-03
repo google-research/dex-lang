@@ -19,7 +19,7 @@ import PPrint
 
 type Prog = [(String, Except UDecl)]
 
-data LocalDecl = AssignDecl UPat UExpr
+data LocalDecl = AssignDecl Pat UExpr
                | UnpackDecl UBinder Var UExpr
 
 parseProg :: String -> Prog
@@ -62,11 +62,11 @@ typedTopLet :: Parser UDecl
 typedTopLet = do
   v <- try (varName <* symbol "::")
   ty <- typeExpr <* eol
-  UTopLet (Bind v' b) e <- topLet
+  UTopLet (UBind (Bind v' b)) e <- topLet
   if v' /= v
     then fail "Type declaration variable must match assignment variable."
     else case b of Just _ -> fail "Conflicting type annotations"
-                   Nothing -> return $ UTopLet (v %> Just ty) e
+                   Nothing -> return $ UTopLet (UBind (v %> Just ty)) e
 
 topUnpack :: Parser UDecl
 topUnpack = do
@@ -168,7 +168,7 @@ forExpr = do
   body <- expr
   return $ foldr UFor body vs
 
--- decl :: Parser (UPat, UExpr)
+-- decl :: Parser (Pat, UExpr)
 unpackDecl :: Parser LocalDecl
 unpackDecl = do
   (b, tv) <- try unpackBinder
@@ -186,7 +186,7 @@ typedLocalLet = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ AssignDecl (RecLeaf (v %> Just ty)) (wrap body)
+  return $ AssignDecl (RecLeaf (UBind (v %> Just ty))) (wrap body)
 
 localLet :: Parser LocalDecl
 localLet = do
@@ -244,16 +244,16 @@ varName = liftM rawName identifier
 idxExpr = varName
 
 binder :: Parser UBinder
-binder =     (symbol "_" >> liftM Ignore (optional typeAnnot))
-         <|> liftM2 Bind varName (optional typeAnnot)
+binder =     (symbol "_" >> return IgnoreBind)
+         <|> (liftM UBind $ liftM2 Bind varName (optional typeAnnot))
 
 idxPat = binder
 
-pat :: Parser UPat
+pat :: Parser Pat
 pat =   parenPat
     <|> liftM RecLeaf binder
 
-parenPat :: Parser UPat
+parenPat :: Parser Pat
 parenPat = do
   xs <- parens $ pat `sepBy` symbol ","
   return $ case xs of

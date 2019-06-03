@@ -4,9 +4,9 @@
 
 module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UDecl (..), ImpDecl (..), TopDeclP (..), DeclP (..),
-               Decl, TopDecl, Command (..),
-               CmdName (..), IdxExpr, Kind (..), UBinder,
-               LitVal (..), BaseType (..), PatP, Pat, UPat, Binder, TBinder,
+               Decl, TopDecl, Command (..), Pat,
+               CmdName (..), IdxExpr, Kind (..), UBinder (..),
+               LitVal (..), BaseType (..), Binder, TBinder,
                Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), (-->), (==>), freeLVars, asLEnv, asTEnv,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -62,7 +62,6 @@ data Type = BaseType BaseType
              deriving (Eq, Ord, Show)
 
 type Expr    = ExprP    Type
-type Pat     = PatP     Type
 type Binder  = BinderP  Type
 type Decl    = DeclP    Type
 type TopDecl = TopDeclP Type
@@ -82,7 +81,6 @@ data TopDeclP b = TopLet    (BinderP b)     (ExprP b)
 data Command expr = Command CmdName expr | NoOp
 
 type TBinder = BinderP Kind
-type PatP b = RecTree (BinderP b)
 type IdxSet = Type
 type IdxExpr = Var
 type IdxSetVal = Int
@@ -116,8 +114,8 @@ unitTy = RecType (Tup [])
 data UExpr = ULit LitVal
            | UVar Var
            | UBuiltin Builtin
-           | ULet UPat UExpr UExpr
-           | ULam UPat UExpr
+           | ULet Pat UExpr UExpr
+           | ULam Pat UExpr
            | UApp UExpr UExpr
            | UFor UBinder UExpr
            | UGet UExpr IdxExpr
@@ -126,12 +124,13 @@ data UExpr = ULit LitVal
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
-type UBinder = BinderP (Maybe Type)
+data UBinder = UBind (BinderP (Maybe Type)) | IgnoreBind  deriving (Show, Eq)
+
 data UDecl = UTopLet    UBinder UExpr
            | UTopUnpack UBinder Var UExpr
            | UEvalCmd (Command UExpr)
 
-type UPat = RecTree UBinder
+type Pat = RecTree UBinder
 
 -- === imperative IR ===
 
@@ -395,13 +394,15 @@ freeVarsUExpr expr = case expr of
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
     recur = freeVarsUExpr
-    recurWith p expr = local (bindFold p <>) (recur expr)
+    recurWith p expr = local (foldMap ubind p <>) (recur expr)
+    ubind b = case b of UBind b' -> bind b'
+                        IgnoreBind -> mempty
 
 lhsVars :: UDecl -> [Var]
 lhsVars decl = case decl of
-  UTopLet    b _   -> binderVars b
-  UTopUnpack b _ _ -> binderVars b
-  UEvalCmd _ -> []
+  UTopLet    (UBind b) _   -> binderVars b
+  UTopUnpack (UBind b) _ _ -> binderVars b
+  _ -> []
 
 wrapDecl :: DeclP b -> ExprP b -> ExprP b
 wrapDecl decl expr = case expr of

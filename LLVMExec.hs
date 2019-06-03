@@ -8,7 +8,7 @@ import qualified LLVM.Module as Mod
 import qualified LLVM.PassManager as P
 import qualified LLVM.ExecutionEngine as EE
 import qualified LLVM.Target as T
-import LLVM.Context 
+import LLVM.Context
 
 import Foreign.Ptr
 import Foreign.Storable

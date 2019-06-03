@@ -17,6 +17,9 @@ x = 50
 
 arr = 10
 
+-- TODO: enable when we handle this case
+-- _ = 10
+-- _ = 10 -- underscore shadows allowed
 
 arr = 20
 > Variable redefined: arr
