@@ -53,7 +53,7 @@ real :: Int -> Real
 real x = %inttoreal x
 
 fold :: A i a. i=>(a->a) -> a -> a
-fold fs x = %fold (for i. lam x. fs.i x, x)
+fold fs x0 = %fold (for i. lam x. fs.i x, x0)
 
 rand :: Int -> Real
 rand x = %rand x

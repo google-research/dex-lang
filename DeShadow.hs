@@ -12,7 +12,6 @@ import Syntax
 import Pass
 import Fresh
 import PPrint
-import Util (repeated)
 import Cat
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
@@ -24,18 +23,8 @@ type Ann = Maybe Type
 
 deShadowPass :: UTopDecl -> TopPass FreshScope (TopDeclP Ann)
 deShadowPass decl = case decl of
-  UTopDecl (ULet (RecLeaf IgnoreBind) _) -> error "todo"
-  UTopDecl (ULet (RecLeaf (UBind b@(v:>_))) expr) -> do
-    checkTopShadow v
-    putEnv (v@>())
-    liftM TopDecl $ liftM (Let b) $ deShadowTop expr
-  UTopDecl (UUnpack b tv expr) -> do
-    checkTopShadow tv
-    let b'@(v:>_) = case b of UBind b' -> b'
-                              IgnoreBind -> rawName ("__" ++ nameTag tv) :> Nothing
-    checkTopShadow v
-    putEnv $ (v@>() <> tv@>())
-    liftM TopDecl $ liftM (Unpack b' tv) $ deShadowTop expr
+  UTopDecl decl -> do ((), [decl']) <- catToTop $ deShadowDecl decl
+                      return $ TopDecl decl'
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -47,13 +36,6 @@ deShadowPass decl = case decl of
     deShadowTop expr = do
       scope <- getEnv
       liftEither $ runFreshRT (runReaderT (deShadowExpr expr) mempty) scope
-
-checkTopShadow :: Var -> TopPass FreshScope ()
-checkTopShadow (Name "_" _) = return ()
-checkTopShadow v = do
-  scope <- getEnv
-  if v `isin` scope then throw RepeatedVarErr (pprint v)
-                    else return ()
 
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
@@ -95,7 +77,6 @@ deShadowDecl (UUnpack b tv bound) = do
 
 deShadowPat :: RecTree UBinder -> DeShadowCat (BinderP Ann)
 deShadowPat pat = do
-  toCat $ checkRepeats pat
   case pat of
     RecLeaf (UBind b) -> do
       b' <- freshBinder b
@@ -106,11 +87,6 @@ deShadowPat pat = do
       traverse (getPatElt v) (recTreeNamed p)
       return (v:>Nothing)
 
-checkRepeats :: (MonadError Err m, Foldable f) => f UBinder -> m ()
-checkRepeats bs = case repeated (foldMap uBinderVars bs) of
-                    [] -> return ()
-                    xs -> throw RepeatedVarErr (pprint xs)
-
 getPatElt :: Var -> ([RecField], UBinder) -> DeShadowCat ()
 getPatElt _ (_, IgnoreBind) = return ()
 getPatElt v (fields, (UBind b)) = do
@@ -119,6 +95,9 @@ getPatElt v (fields, (UBind b)) = do
 
 freshBinder :: BinderP Ann -> DeShadowCat (BinderP Ann)
 freshBinder (v :> ty) = do
+  shadowed <- looks $ (v `isin`) . snd
+  if shadowed then throw RepeatedVarErr (pprint v)
+              else return ()
   ty' <- toCat $ traverse deShadowType ty
   v' <- looks $ rename v . snd
   extend (asLEnv (v@>v'), v'@>())
@@ -129,10 +108,6 @@ deShadowType ty = do
   subst <- asks $ tEnv
   let sub v = Just (TypeVar (lookupSubst v subst))
   return $ maybeSub sub ty
-
-uBinderVars :: UBinder -> [Var]
-uBinderVars (UBind (v :> _)) = [v]
-uBinderVars IgnoreBind = []
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do
@@ -146,3 +121,10 @@ withCat m cont = do
   ((ans, decls), (env', scope')) <- liftEither $
                                       flip runCatT (env, scope) $ runWriterT m
   extendR env' $ localFresh (<> scope') $ cont ans decls
+
+catToTop :: DeShadowCat a -> TopPass FreshScope (a, [DeclP Ann])
+catToTop m = do
+  scope <- getEnv
+  (ans, (_, scope')) <- liftEither $ flip runCatT (mempty, scope) $ runWriterT m
+  putEnv scope'
+  return ans

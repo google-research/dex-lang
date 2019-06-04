@@ -2,18 +2,19 @@
 -- repeated vars in patterns not allowed
 :p let (x, x) = (1, 1) in x
 
-> Variable redefined: [x]
+> Variable redefined: x
 
 :p let f (x, x) = x in f (1, 1)
 
-> Variable redefined: [x]
+> Variable redefined: x
 
--- shouldn't cause error even though it shadows x elsewhere
-x = 50
+-- TODO: re-enable if we choose to allow non-peer shadowing
+-- -- shouldn't cause error even though it shadows x elsewhere
+-- x = 50
 
-:p let x = 100 in (let x = 200 in x)
+-- :p let x = 100 in (let x = 200 in x)
 
-> [200]
+-- > [200]
 
 arr = 10
 
