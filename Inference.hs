@@ -114,7 +114,7 @@ check expr reqTy = case expr of
         (b', bound') <- inferLetBinding b bound
         extendR (asLEnv (bind b')) $ do
           body' <- cont
-          return $ wrapDecl (Let b' bound') body'
+          return $ wrapDecls [Let b' bound'] body'
       Unpack b tv bound -> do
         (maybeEx, bound') <- infer bound >>= zonk
         boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
@@ -124,7 +124,7 @@ check expr reqTy = case expr of
         tvsEnv <- tempVarsEnv
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-        return $ wrapDecl (Unpack b' tv bound') body'
+        return $ wrapDecls [Unpack b' tv bound'] body'
 
     leakErr = throw TypeErr "existential variable leaked"
     recurWith b expr ty = extendR (asLEnv (bind b)) (check expr ty)

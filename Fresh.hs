@@ -6,7 +6,7 @@
 -- those last three are all needed for monaderror
 
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
-              nameTag, rename, FreshScope, runFreshRT,
+              nameTag, rename, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh,
               freshenBinder) where
 

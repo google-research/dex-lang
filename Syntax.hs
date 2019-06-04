@@ -15,7 +15,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete, Index,
-               wrapDecl
+               wrapDecls
               ) where
 
 import Record
@@ -315,10 +315,10 @@ instance HasTypeVars Expr where
       Decls [] final -> recur final
       Decls (decl:decls) final -> case decl of
         Let b bound ->
-          liftA3 (\b' bound' body' -> wrapDecl (Let b' bound') body')
+          liftA3 (\b' bound' body' -> wrapDecls [Let b' bound'] body')
                  (recurB b) (recur bound) (recur body)
         Unpack b tv bound ->
-          liftA3 (\b' bound' body' -> wrapDecl (Unpack b' tv bound') body')
+          liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
                  (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
         where body = Decls decls final
       Lam b body       -> liftA2 Lam (recurB b) (recur body)
@@ -405,7 +405,8 @@ lhsVars decl = case decl of
   UTopDecl (UUnpack       (UBind (v:>_)) _ _) -> [v]
   _ -> []
 
-wrapDecl :: DeclP b -> ExprP b -> ExprP b
-wrapDecl decl expr = case expr of
-  Decls decls body -> Decls (decl:decls) body
-  _ -> Decls [decl] expr
+wrapDecls :: [DeclP b] -> ExprP b -> ExprP b
+wrapDecls [] expr = expr
+wrapDecls decls expr = case expr of
+  Decls decls' body -> Decls (decls ++ decls') body
+  _ -> Decls decls expr

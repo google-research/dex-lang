@@ -1,6 +1,9 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module DeShadow (deShadowPass) where
 
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 
 import Env
@@ -13,6 +16,9 @@ import Util (repeated)
 import Cat
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
+type DeShadowCat a = WriterT [DeclP Ann]
+                       (CatT (DeShadowEnv, FreshScope)
+                          (Either Err)) a
 type DeShadowEnv = FullEnv Var Var
 type Ann = Maybe Type
 
@@ -54,26 +60,19 @@ deShadowExpr expr = case expr of
   ULit x -> return (Lit x)
   UVar v -> liftM Var (getLVar v)
   UBuiltin b -> return (Builtin b)
-  UDecls [] body -> recur body
-  UDecls (decl:decls) final -> case decl of
-    ULet p bound -> do
-      bound' <- recur bound
-      (body', b) <- deShadowPat p (recur body)
-      return $ Decls [Let b bound'] body'
-    UUnpack b tv bound -> do
-      bound' <- recur bound
-      freshName tv $ \tv' ->
-        extendR (asTEnv (tv @> tv')) $ do
-          (body', b') <- deShadowPat (RecLeaf b) (recur body)
-          return $ Decls [Unpack b' tv' bound'] body'
-    where body = UDecls decls final
-  ULam p body -> do
-    (body', b) <- deShadowPat p (recur body)
-    return $ Lam b body'
+  UDecls decls body ->
+    withCat (mapM_ deShadowDecl decls) $ \() decls' -> do
+      body' <- recur body
+      return $ Decls decls' body'
+  ULam p body ->
+    withCat (deShadowPat p) $ \b decls -> do
+      body' <- recur body
+      return $ Lam b $ wrapDecls decls body'
   UApp fexpr arg -> liftM2 App (recur fexpr) (recur arg)
-  UFor b body -> do
-    (body', b') <- deShadowPat (RecLeaf b) (recur body)
-    return $ For b' body'
+  UFor b body ->
+    withCat (deShadowPat (RecLeaf b)) $ \b' decls -> do
+      body' <- recur body
+      return $ For b' $ wrapDecls decls body'
   UGet e v -> liftM2 Get (recur e) (getLVar v)
   URecCon r -> liftM RecCon $ traverse recur r
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
@@ -82,31 +81,48 @@ deShadowExpr expr = case expr of
         getLVar v = asks $ lookupSubst v . lEnv
         deShadowAnnot b = fmap (fmap deShadowType) b
 
-deShadowPat :: RecTree UBinder -> DeShadowM (ExprP Ann)
-            -> DeShadowM (ExprP Ann, BinderP Ann)
-deShadowPat pat cont = do
-  checkRepeats pat
-  pat' <- traverse deShadowBinderAnn pat
-  case pat' of
-    RecLeaf (UBind b) ->
-      freshenBinder b $ \subst b' ->
-        extendR (asLEnv subst) $ do
-          expr <- cont
-          return (expr, b')
-    p -> freshName (rawName "pat") $ \v -> do
-           expr <- foldr (patGetter v) cont (recTreeNamed p)
-           return (expr, v :> Nothing)
+deShadowDecl :: UDecl -> DeShadowCat ()
+deShadowDecl (ULet p bound) = do
+  bound' <- toCat $ deShadowExpr bound
+  (b, decls) <- captureW $ deShadowPat p
+  tell $ Let b bound' : decls
+deShadowDecl (UUnpack b tv bound) = do
+  bound' <- toCat $ deShadowExpr bound
+  tv' <- looks $ rename tv . snd
+  extend (asTEnv (tv @> tv'), tv'@>())
+  (b', decls) <- captureW $ deShadowPat (RecLeaf b)
+  tell $ Unpack b' tv' bound' : decls
 
-patGetter :: Var -> ([RecField], UBinder)
-                    -> DeShadowM (ExprP Ann) -> DeShadowM (ExprP Ann)
-patGetter _ (_, IgnoreBind) cont = cont
-patGetter patName (fields, (UBind b)) cont =
-  freshenBinder b $ \subst b' ->
-    extendR (asLEnv subst) $ do
-      expr' <- cont
-      return $ Decls [Let b' getExpr] expr'
-  where
-    getExpr = foldr (flip RecGet) (Var patName) fields
+deShadowPat :: RecTree UBinder -> DeShadowCat (BinderP Ann)
+deShadowPat pat = do
+  toCat $ checkRepeats pat
+  case pat of
+    RecLeaf (UBind b) -> do
+      b' <- freshBinder b
+      return b'
+    p -> do
+      v <- looks $ genFresh "pat" . snd
+      extend $ asSnd (v@>())
+      traverse (getPatElt v) (recTreeNamed p)
+      return (v:>Nothing)
+
+checkRepeats :: (MonadError Err m, Foldable f) => f UBinder -> m ()
+checkRepeats bs = case repeated (foldMap uBinderVars bs) of
+                    [] -> return ()
+                    xs -> throw RepeatedVarErr (pprint xs)
+
+getPatElt :: Var -> ([RecField], UBinder) -> DeShadowCat ()
+getPatElt _ (_, IgnoreBind) = return ()
+getPatElt v (fields, (UBind b)) = do
+  b' <- freshBinder b
+  tell $ [Let b' $ foldr (flip RecGet) (Var v) fields]
+
+freshBinder :: BinderP Ann -> DeShadowCat (BinderP Ann)
+freshBinder (v :> ty) = do
+  ty' <- toCat $ traverse deShadowType ty
+  v' <- looks $ rename v . snd
+  extend (asLEnv (v@>v'), v'@>())
+  return (v' :> ty')
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
@@ -114,15 +130,19 @@ deShadowType ty = do
   let sub v = Just (TypeVar (lookupSubst v subst))
   return $ maybeSub sub ty
 
-deShadowBinderAnn :: UBinder -> DeShadowM UBinder
-deShadowBinderAnn IgnoreBind = return IgnoreBind
-deShadowBinderAnn (UBind b) = liftM UBind $ traverse (traverse deShadowType) b
-
-checkRepeats :: Foldable f => f UBinder -> DeShadowM ()
-checkRepeats bs = case repeated (foldMap uBinderVars bs) of
-                    [] -> return ()
-                    xs -> throw RepeatedVarErr (pprint xs)
-
 uBinderVars :: UBinder -> [Var]
 uBinderVars (UBind (v :> _)) = [v]
 uBinderVars IgnoreBind = []
+
+toCat :: DeShadowM a -> DeShadowCat a
+toCat m = do
+  (env, scope) <- look
+  liftEither $ flip runFreshRT scope $ flip runReaderT env $ m
+
+withCat :: DeShadowCat a -> (a -> [DeclP Ann] -> DeShadowM b) -> DeShadowM b
+withCat m cont = do
+  env <- ask
+  scope <- askFresh
+  ((ans, decls), (env', scope')) <- liftEither $
+                                      flip runCatT (env, scope) $ runWriterT m
+  extendR env' $ localFresh (<> scope') $ cont ans decls

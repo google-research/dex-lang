@@ -4,8 +4,8 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Cat (CatT, MonadCat, runCatT, looks, extendLocal,
-            extendR, asFst, asSnd) where
+module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
+            extendR, captureW, asFst, asSnd) where
 
 -- Monad for tracking monoidal state
 
@@ -37,17 +37,17 @@ instance (Monoid env, Monad m) => MonadCat env (CatT env m) where
 
 instance MonadCat env m => MonadCat env (StateT s m) where
   look = lift look
-  extend = undefined
+  extend x = lift $ extend x
   scoped = undefined
 
 instance MonadCat env m => MonadCat env (ReaderT r m) where
   look = lift look
-  extend = undefined
+  extend x = lift $ extend x
   scoped = undefined
 
 instance (Monoid w, MonadCat env m) => MonadCat env (WriterT w m) where
   look = lift look
-  extend = undefined
+  extend x = lift $ extend x
   scoped = undefined
 
 instance MonadError e m => MonadError e (CatT env m) where
@@ -75,3 +75,6 @@ asFst x = (x, mempty)
 
 asSnd :: Monoid a => b -> (a, b)
 asSnd y = (mempty, y)
+
+captureW :: MonadWriter w m => m a -> m (a, w)
+captureW m = censor (const mempty) (listen m)
