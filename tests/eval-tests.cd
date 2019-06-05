@@ -28,7 +28,7 @@
        z.i.j = real x.i * real y.j
    in sum (for i. sum z.i)
 
-> [9.0]
+> [18.0]
 
 -- :p randint (hash 0 0) 10
 -- :p let x = unpack range 10000;

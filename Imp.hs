@@ -119,6 +119,7 @@ loop n body = do i <- fresh "i"
                  return $ asProg $ Loop i n body'
 
 -- Destination indices, then source indices
+
 data Dest = Buffer Var [Index] [Index]
           | IgnoreIt
              deriving Show
@@ -127,10 +128,10 @@ asBuffer :: IBinder -> Dest
 asBuffer (v :> _) = Buffer v [] []
 
 indexSource :: Index -> Dest -> Dest
-indexSource i (Buffer v destIdxs srcIdxs) = Buffer v destIdxs (i:srcIdxs)
+indexSource i (Buffer v destIdxs srcIdxs) = Buffer v destIdxs (i : srcIdxs)
 
 indexDest :: Index -> Dest -> Dest
-indexDest i (Buffer v destIdxs srcIdxs) = Buffer v (i:destIdxs) srcIdxs
+indexDest i (Buffer v destIdxs srcIdxs) = Buffer v (destIdxs `snoc` i) srcIdxs
 
 writeExprs :: RecTree Dest -> RecTree IExpr -> ImpProg
 writeExprs dests exprs = fold $ fmap (uncurry writeExpr) (recTreeZipEq dests exprs)
@@ -138,7 +139,7 @@ writeExprs dests exprs = fold $ fmap (uncurry writeExpr) (recTreeZipEq dests exp
 writeExpr :: Dest -> IExpr -> ImpProg
 writeExpr (Buffer name destIdxs srcIdxs) expr =
   asProg $ Update name destIdxs Copy [expr']
-  where expr' = foldr (flip IGet) expr srcIdxs
+  where expr' = foldl IGet expr srcIdxs
 
 writeBuiltin :: Builtin -> Dest -> [IExpr] -> ImpProg
 writeBuiltin b (Buffer name destIdxs []) exprs =
@@ -156,7 +157,7 @@ impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
   case srcIdxs of
     [] -> do n' <- asks $ (!n) . tEnv
              loop n' $ \i ->
-                return $ asProg $ Update outVar (i:destIdxs) Copy [IVar i]
+                return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [IVar i]
     [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
@@ -276,3 +277,7 @@ checkScalarTy ty ity = throw CompilerErr $ "Wrong types. Expected:" ++ pprint ty
 checkIsInt :: Var -> ImpCheckM ()
 checkIsInt v = do ty <- lookupVar v
                   assertEq ty intTy "Not a valid size"
+
+snoc :: [a] -> a -> [a]
+snoc xs x = reverse $ x : reverse xs
+
