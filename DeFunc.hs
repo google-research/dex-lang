@@ -11,7 +11,6 @@ import Cat
 
 import Data.Foldable
 import Control.Monad.Reader
-import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 
 -- TODO: consider making this just Expr with the thunk case as an annotation
@@ -21,61 +20,58 @@ data Atom = AExpr Expr
           | Thunk DFEnv Expr  -- Lam | TLam | For
              deriving Show
 
-type DFEnv = FullEnv (Type, Atom) Type
-type TopEnv = (DFEnv, (Env Type, FreshScope))
-type DeFuncM a = WriterT [Decl] (ReaderT DFEnv (FreshT (Either Err))) a
+type DFEnv = FullEnv Atom Type
+type TopEnv = (DFEnv, FullEnv Type ())
 
--- TODO: roll outvar type env and fresh scope into one, in some RW monad
+type OutDecls = ([Decl], FullEnv Type ())
+type DeFuncCat a = CatT (DFEnv, OutDecls) (Either Err) a
+type DeFuncM a = ReaderT DFEnv (CatT OutDecls (Either Err)) a
+
 deFuncPass :: TopDecl -> TopPass TopEnv TopDecl
-deFuncPass decl = case decl of
-  TopDecl (Let (v :> _) expr) -> do
-    (expr', ty, buildVal) <- deFuncTop expr
-    putEnv $ outEnv (v :> ty) (buildVal (Var v))
-    return $ TopDecl (Let (v :> ty) expr')
-  TopDecl (Unpack b iv expr) -> do
-    expr' <- deFuncTopUnpack expr
-    putEnv $ outEnv b (AExpr (Var (rawName "bug")))
-              <> (asTEnv (iv @> TypeVar iv), (mempty, iv @> ()))
-    return $ TopDecl (Unpack b iv expr')
+deFuncPass topDecl = case topDecl of
+  TopDecl decl -> do ((decl, env), []) <- asTopPass $ toCat $ deFuncDeclTop decl
+                     putEnv env
+                     return $ TopDecl decl
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (expr', ty, buildVal) <- deFuncTop expr
-    let v = rawName "cmd_out"
-        expr'' = Decls [Let (v :> ty) expr'] (forceAtom (buildVal (Var v)))
-    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr''
+    (atom, decls) <- asTopPass $ toCat $ deFuncExpr expr
+    let expr = Decls decls (forceAtom atom)
+    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr
                 _ -> return ()
-    return $ EvalCmd (Command cmd expr'')
+    return $ EvalCmd (Command cmd expr)
 
-deFuncTop :: Expr -> TopPass TopEnv (Expr, Type, Expr -> Atom)
-deFuncTop expr = do
-  (env, (_, scope)) <- getEnv
-  (outVal, decls) <- liftEither $ flip runFreshT scope $ flip runReaderT env $
-                       runWriterT $ deFuncExpr expr
-  return $ deFuncScope decls outVal
+deFuncDeclTop :: Decl -> DeFuncM (Decl, TopEnv)
+deFuncDeclTop (Let (v:>_) bound) = do
+  (bound', atomBuilder) <- deFuncScoped bound
+  ty <- exprType bound'
+  return (Let (v:>ty) bound', (asLEnv $ v @> atomBuilder (Var v),
+                               asLEnv $ v @> ty))
+deFuncDeclTop (Unpack b tv bound) = do
+  (AExpr bound', (decls,_)) <- scoped $ deFuncExpr bound
+  return (Unpack b tv (Decls decls bound'),
+          (asTEnv $ tv @> TypeVar tv, (asTEnv $ tv @>())))
 
-deFuncTopUnpack :: Expr -> TopPass TopEnv Expr
-deFuncTopUnpack expr = do
-  (env, (_, scope)) <- getEnv
-  (AExpr outVal, decls) <- liftEither $ flip runFreshT scope $ flip runReaderT env $
-                       runWriterT $ deFuncExpr expr
-  return $ Decls decls outVal
-
-outEnv :: Binder -> Atom -> TopEnv
-outEnv b@(v:>_) x = (asLEnv (bindWith b x), (bind b, v @> ()))
+asTopPass :: DeFuncCat a -> TopPass TopEnv (a, [Decl])
+asTopPass m = do
+  (env, scope) <- getEnv
+  (ans, (env', (decls, scope'))) <- liftEither $
+                                      flip runCatT (env, (mempty, scope)) $ m
+  putEnv $ (env', scope')
+  return (ans, decls)
 
 deFuncExpr :: Expr -> DeFuncM Atom
 deFuncExpr expr = case expr of
   Var v -> askLEnv v
   Lit l -> return $ AExpr (Lit l)
-  Decls decls body -> foldr deFuncDecl (recur body) decls
+  Decls decls body -> withCat (mapM_ deFuncDecl decls) $ \() -> recur body
   Lam _ _ -> makeThunk expr
-  App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
+  App (TApp (Builtin Fold) ts) arg -> liftM AExpr $ deFuncFold ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
     let expr' = App (Builtin b) (forceAtom arg')
     if trivialBuiltin b
       then return (AExpr expr')
-      else materialize (rawName "tmp") (builtinOutTy b) expr'
+      else liftM AExpr $ materialize (rawName "tmp") expr'
   TApp (Builtin Iota) [n] -> do
     n' <- subTy n
     return $ AExpr $ TApp (Builtin Iota) [n']
@@ -84,23 +80,21 @@ deFuncExpr expr = case expr of
     arg' <- recur arg
     bindVal b arg' $ extendR env $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
-  For (v :> ty) body -> do
-    ty' <- subTy ty
-    v' <- freshLike v
-    extendR (asLEnv (v @> (ty', (AExpr (Var v'))))) $ do
-       (body', bodyTy, atomBuilder) <- deFuncScoped body
-       outVar <- freshLike (rawName "tab")
-       let b' = (v':>ty')
-       tell [Let (outVar :> (TabType ty' bodyTy)) (For b' body')]
-       return $ AFor b' (atomBuilder (Get (Var outVar) v'))
+  For b body -> do
+    (expr', atomBuilder) <- refreshBinder b $ \b' -> do
+                              (body', builder) <- deFuncScoped body
+                              return (For b' body', builder)
+    b'@(i':>_) <- traverse subTy b
+    tab <- materialize (rawName "tab") expr'
+    return $ AFor b' (atomBuilder (Get tab i'))
   Get e ie -> do
     e' <- recur e
     AExpr (Var ie') <- askLEnv ie
     case e' of
       AExpr tabExpr -> return $ AExpr $ Get tabExpr ie' -- TODO: optimize `for` case
-      AFor b body -> do
+      AFor (i:>_) body -> do
         local (const mempty) $
-          extendR (asLEnv (bindWith b (AExpr (Var ie')))) $
+          extendR (asLEnv (i @> AExpr (Var ie'))) $
             applySubstAtom body
   RecCon r -> liftM ARecCon $ traverse recur r
   RecGet e field -> do
@@ -117,6 +111,14 @@ deFuncExpr expr = case expr of
         recur body
   where recur = deFuncExpr
 
+refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
+refreshBinder (v:>ty) cont = do
+  ty' <- subTy ty
+  v' <- looks $ rename v . lEnv . snd
+  extendR (asLEnv (v @> AExpr (Var v'))) $ do
+    extendLocal (asSnd $ asLEnv $ v'@>ty') $ do
+      cont (v':>ty')
+
 applySubstAtom :: Atom -> DeFuncM Atom
 applySubstAtom atom = case atom of
   AExpr expr -> deFuncExpr expr
@@ -126,59 +128,50 @@ applySubstAtom atom = case atom of
       atom' <- applySubstAtom atom
       return $ AFor b' atom'
   Thunk (FullEnv lenv tenv) expr -> do
-    lenv' <- traverse (\(ty,a) -> liftM ((,) ty) (applySubstAtom a)) lenv
+    lenv' <- traverse applySubstAtom lenv
     tenv' <- traverse subTy tenv
     return $ Thunk (FullEnv lenv' tenv') expr
 
-deFuncDecl :: Decl -> DeFuncM Atom -> DeFuncM Atom
-deFuncDecl decl cont = case decl of
-  Let b bound -> do
-    x <- deFuncExpr bound
-    bindVal b x $ cont
-  Unpack (v :> ty) tv bound -> do
-    AExpr bound' <- deFuncExpr bound
-    tv' <- freshLike tv
-    extendR (asTEnv $ tv @> TypeVar tv') $ do
-      v' <- freshLike v
-      ty' <- subTy ty
-      extendR (asLEnv (v @> (ty', AExpr (Var v')))) $ do
-        tell [Unpack (v':>ty') tv' bound']
-        cont
+-- Should we scope RHS of local lets? It's currently the only local/top diff
+deFuncDecl :: Decl -> DeFuncCat ()
+deFuncDecl (Let (v:>_) bound) = do
+  x <- toCat $ deFuncExpr bound
+  extend $ asFst $ asLEnv $ v @> x
+deFuncDecl (Unpack (v:>ty) tv bound) = do
+  AExpr bound' <- toCat $ deFuncExpr bound
+  tv' <- looks $ rename tv . tEnv . snd . snd
+  extend (asTEnv $ tv@>TypeVar tv', ([], asTEnv (tv'@>())))
+  ty' <- toCat $ subTy ty
+  v' <- looks $ rename v . lEnv . snd . snd
+  extend $ (asLEnv $ v @> AExpr (Var v'),
+            ([Unpack (v':>ty') tv' bound'], asLEnv (v'@>ty')))
 
 -- writes nothing
-deFuncScoped :: Expr -> DeFuncM (Expr, Type, Expr -> Atom)
+deFuncScoped :: Expr -> DeFuncM (Expr, Expr -> Atom)
 deFuncScoped expr = do
-  (atom, decls) <- lift $ runWriterT (deFuncExpr expr)
-  return $ deFuncScope decls atom
+  (atom, (decls, outScope)) <- scoped $ deFuncExpr expr
+  let (expr, builder) = saveScope (lEnv outScope) atom
+  return (Decls decls expr, builder)
 
-deFuncScope :: [Decl] -> Atom -> (Expr, Type, Expr -> Atom)
-deFuncScope decls atom = (Decls decls $ RecCon (fmap Var (Tup vs)), ty, buildVal)
+saveScope :: Env a -> Atom -> (Expr, Expr -> Atom)
+saveScope localEnv atom = (RecCon (fmap Var (Tup vs)), buildVal)
   where
-    vsBound = map getBoundLVar decls
-    getBoundLVar decl = case decl of Let b _ -> binderVar b
-                                     Unpack b _ _ -> binderVar b
-    vs = envNames $ envSubset vsBound $ freeOutVars atom
-    ty = RecType $ Tup $ map (env!) vs
-      where env = bindFold $ map declBinder decls
+    vs = envNames $ envSubset (envNames (freeOutVars atom)) localEnv
     buildVal new = subOutVars sub atom
       where sub = fold $ fmap (\(k,v) -> v@>(RecGet new k)) (recNameVals (Tup vs))
-
-declBinder :: Decl -> Binder
-declBinder (Let b _) = b
-declBinder (Unpack b _ _) = b
 
 subOutVars :: Env Expr -> Atom -> Atom
 subOutVars subst val = case val of
   AExpr expr -> AExpr $ subAtomicExpr subst expr
   Thunk (FullEnv lenv tenv) expr -> Thunk (FullEnv lenv' tenv) expr
-    where lenv' = fmap (\(ty,val) -> (ty, subOutVars subst val)) lenv
+    where lenv' = fmap (subOutVars subst) lenv
   AFor b atom -> AFor b (subOutVars subst atom) -- TODO: need to freshen binder
   ARecCon r -> ARecCon $ fmap (subOutVars subst) r
 
 freeOutVars :: Atom -> Env ()
 freeOutVars val = case val of
   AExpr expr -> foldMap (@>()) $ freeLVars expr
-  Thunk env _ -> foldMap (freeOutVars . snd) (lEnv env)
+  Thunk env _ -> foldMap freeOutVars (lEnv env)
   ARecCon r -> foldMap freeOutVars r
   AFor _ atom -> freeOutVars atom  -- TODO: don't include bound var
 
@@ -194,31 +187,24 @@ subAtomicExpr subst expr = case expr of
   where recur = subAtomicExpr subst
 
 bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
-bindVal (v :> ty) val cont = do
-  ty' <- subTy ty
-  extendR (asLEnv (v @> (ty', val))) $ cont
+bindVal (v:>_) val cont = extendR (asLEnv (v @> val)) $ cont
 
--- atomize :: Name -> Type -> Atom -> DeFuncM Atom
--- atomize nameHint ty val = case val of
---   Thunk _ _ -> return val
---   ARecCon rVal -> do
---     let (RecType rTy) = ty
---     rVal' <- sequence $ recZipWith (atomize nameHint) rTy rVal
---     return (ARecCon rVal')
---   AExpr expr -> if inlinable expr then return val
---                                     else materialize nameHint ty expr
-
-materialize :: Name -> Type -> Expr -> DeFuncM Atom
-materialize nameHint ty expr = do
-  v <- freshLike nameHint
-  tell [Let (v :> ty) expr]
-  return $ AExpr (Var v)
+materialize :: Name -> Expr -> DeFuncM Expr
+materialize nameHint expr = do
+  v <- looks $ rename nameHint . lEnv . snd
+  ty <- exprType expr
+  extend ([Let (v :> ty) expr], asLEnv (v@>ty))
+  return $ Var v
 
 forceAtom :: Atom -> Expr
 forceAtom (AExpr expr) = expr
 forceAtom (ARecCon r)  = RecCon $ fmap forceAtom r
 forceAtom (AFor b atom) = For b (forceAtom atom)
 forceAtom (Thunk _ _) = error "Unevaluated expression"
+
+exprType :: Expr -> DeFuncM Type
+exprType expr = do env <- looks $ snd
+                   return $ getType env expr
 
 makeThunk :: Expr -> DeFuncM Atom
 makeThunk expr = do FullEnv lenv tenv <- ask
@@ -229,32 +215,22 @@ subTy :: Type -> DeFuncM Type
 subTy ty = do env <- asks tEnv
               return $ maybeSub (envLookup env) ty
 
-builtinOutTy :: Builtin -> Type
-builtinOutTy b = case builtinType b of ArrType _ ty -> ty
-
 -- TODO: check/fail higher order case
-deFuncFold :: [Type] -> Expr -> DeFuncM Atom
+deFuncFold :: [Type] -> Expr -> DeFuncM Expr
 deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
   ts' <- traverse subTy ts
   AExpr x' <- deFuncExpr x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
-      (AExpr body', decls) <- lift $ runWriterT $ deFuncExpr body
+      (AExpr body', (decls, _)) <- scoped $ deFuncExpr body
       let outExpr = App (TApp (Builtin Fold) ts')
                      (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
-      materialize (rawName "fold_out") (ts'!!0) outExpr
-
-refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
-refreshBinder (v :> ty) cont = do
-  v' <- freshLike v
-  ty' <- subTy ty
-  let b' = v' :> ty'
-  extendR (asLEnv (v @> (ty', AExpr (Var v')))) (cont b')
+      materialize (rawName "fold_out") outExpr
 
 askLEnv :: Var -> DeFuncM Atom
 askLEnv v = do tyVal <- asks $ flip envLookup v . lEnv
                return $ case tyVal of
-                 Just (_, atom) -> atom
+                 Just atom -> atom
                  Nothing -> AExpr (Var v)
 
 trivialBuiltin :: Builtin -> Bool
@@ -263,3 +239,18 @@ trivialBuiltin b = case b of
   Range -> True
   IntToReal -> True
   _ -> False
+
+toCat :: DeFuncM a -> DeFuncCat a
+toCat m = do
+  (env, decls) <- look
+  (ans, decls') <- liftEither $ runCatT (runReaderT m env) decls
+  extend (mempty, decls')
+  return ans
+
+withCat :: DeFuncCat a -> (a -> DeFuncM b) -> DeFuncM b
+withCat m cont = do
+  env <- ask
+  decls <- look
+  (ans, (env', decls')) <- liftEither $ runCatT m (env, decls)
+  extend decls'
+  extendR env' $ cont ans

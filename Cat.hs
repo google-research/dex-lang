@@ -38,12 +38,13 @@ instance (Monoid env, Monad m) => MonadCat env (CatT env m) where
 instance MonadCat env m => MonadCat env (StateT s m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = undefined
+  scoped = undefined -- is this even possible?
 
 instance MonadCat env m => MonadCat env (ReaderT r m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = undefined
+  scoped m = do r <- ask
+                lift $ scoped $ runReaderT m r
 
 instance (Monoid w, MonadCat env m) => MonadCat env (WriterT w m) where
   look = lift look

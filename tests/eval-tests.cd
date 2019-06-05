@@ -22,10 +22,11 @@
 > [10.0]
 
 :p let _, nx = unpack range 3;
+       _, ny = unpack range 4;
        x = iota :: nx => Int;
-       y = map real x;
-       z = for i j. y.i * y.j
-   in sum (for i. sum (z.i))
+       y = iota :: ny => Int;
+       z.i.j = real x.i * real y.j
+   in sum (for i. sum z.i)
 
 > [9.0]
 

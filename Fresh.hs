@@ -20,7 +20,6 @@ import Env
 
 type FreshScope = Env ()
 
-
 rawName :: Tag -> Name
 rawName s = Name s 0
 
@@ -38,7 +37,7 @@ genFresh tag (Env m) = Name tag nextNum
                   | otherwise   -> error "Ran out of numbers!"
     bigInt = 10^9 :: Int  -- TODO: consider a real sentinel value
 
-rename :: Name -> FreshScope -> Name
+rename :: Name -> Env a -> Name
 rename v scope | v `isin` scope = genFresh (nameTag v) scope
                | otherwise = v
 
