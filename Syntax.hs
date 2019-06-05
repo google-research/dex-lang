@@ -15,19 +15,20 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete, Index,
-               wrapDecls
+               wrapDecls, subExpr, Subst
               ) where
 
+import Fresh
 import Record
 import Env
 
-import Data.Foldable (toList)
 import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
 
 import Data.Foldable (fold)
 import Data.Functor.Identity (runIdentity)
 import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Writer
 import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
@@ -339,31 +340,29 @@ instance HasTypeVars Expr where
 instance HasTypeVars Binder where
   subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
 
-freeLVars :: Expr -> [Var]
-freeLVars = freeLVarsEnv mempty
+freeLVars :: Expr -> Env ()
+freeLVars expr = snd $ runWriter (freeLVarsW expr)
 
-freeLVarsEnv :: Env Type -> Expr -> [Var]
-freeLVarsEnv env expr = case expr of
-  Lit _ -> []
-  Var v -> if v `isin` env then [] else [v]
-  Builtin _ -> []
+freeLVarsW :: Expr -> Writer (Env ()) ()
+freeLVarsW expr = case expr of
+  Var v     -> tell (v @> ())
+  Lit     _ -> return ()
+  Builtin _ -> return ()
   Decls [] body -> recur body
   Decls (decl:decls) final -> case decl of
-    Let    b   bound -> recur bound ++ recurWith b body
-    Unpack b _ bound -> recur bound ++ recurWith b body
+    Let    b   bound -> recur bound >> unfree b body
+    Unpack b _ bound -> recur bound >> unfree b body
     where body = Decls decls final
-  Lam b body       -> recurWith b body
-  App fexpr arg    -> recur fexpr ++ recur arg
-  For b body       -> recurWith b body
-  Get e ie         -> recur e ++ [ie]
-  RecCon r         -> concat $ toList $ fmap recur r
+  Lam b body       -> unfree b body
+  App fexpr arg    -> recur fexpr >> recur arg
+  For b body       -> unfree b body
+  Get e ie         -> recur e >> tell (ie @> ())
+  RecCon r         -> mapM_ recur r
   RecGet e _       -> recur e
   TLam _ expr      -> recur expr
   TApp expr _      -> recur expr
-
-  where recur = freeLVarsEnv env
-        recurWith b = freeLVarsEnv (bind b <> env)
-
+  where recur = freeLVarsW
+        unfree (v:>_) expr = censor (envDelete v) (recur expr)
 -- TODO: include type variables, since they're now lexcially scoped
 
 freeVars :: UTopDecl -> [Var]
@@ -410,3 +409,66 @@ wrapDecls [] expr = expr
 wrapDecls decls expr = case expr of
   Decls decls' body -> Decls (decls ++ decls') body
   _ -> Decls decls expr
+
+type Subst = FullEnv Expr Type
+type Scope = FullEnv () () -- TODO: roll lenv and tenv into one
+
+subExpr :: Subst -> Scope -> Expr -> Expr
+subExpr sub scope expr = runReader (subExprR expr) (sub, scope)
+
+subExprR :: Expr -> Reader (Subst, Scope) Expr
+subExprR expr = case expr of
+  Var v     -> lookup v
+  Lit     _ -> return expr
+  Builtin _ -> return expr
+  Decls [] body -> recur body
+  Decls (decl:decls) final -> case decl of
+    Let b bound -> do
+      bound' <- recur bound
+      refreshBinder b $ \b' -> do
+        body' <- recur body
+        return $ wrapDecls [Let b' bound'] body'
+    Unpack b tv bound -> do  -- TODO: freshen tv
+      bound' <- recur bound
+      refreshBinder b $ \b' -> do
+        body' <- recur body
+        return $ wrapDecls [Unpack b' tv bound'] body'
+    where body = Decls decls final
+  Lam b body -> refreshBinder b $ \b' -> do
+                   body' <- recur body
+                   return $ Lam b' body'
+  App fexpr arg -> liftM2 App (recur fexpr) (recur arg)
+  For b body -> refreshBinder b $ \b' -> do
+                  body' <- recur body
+                  return $ For b' body'
+  Get e ie -> do e' <- recur e
+                 Var ie' <- lookup ie
+                 return $ Get e' ie'
+  RecCon r -> liftM RecCon $ traverse recur r
+  RecGet e field -> liftM (flip RecGet field) (recur e)
+  TLam ts expr -> liftM (TLam ts) (recur expr) -- TODO: refresh type vars
+
+  TApp expr ts -> liftM2 TApp (recur expr) (traverse subTy ts)
+  where
+    recur = subExprR
+    lookup v = do mval <- asks $ flip envLookup v . lEnv . fst
+                  return $ case mval of Nothing -> Var v
+                                        Just e -> e
+subTy :: Type -> Reader (Subst, Scope) Type
+subTy ty = do env <- asks $ tEnv . fst
+              return $ maybeSub (envLookup env) ty
+
+refreshBinder :: Binder -> (Binder -> Reader (Subst, Scope) a)
+                                   -> Reader (Subst, Scope) a
+refreshBinder (v:>ty) cont = do
+  ty' <- subTy ty
+  v' <- asks $ rename v . lEnv . snd
+  local (<> (asLEnv (v @> Var v'), asLEnv (v'@>()))) $
+    cont (v':>ty')
+
+refreshTBinder :: TBinder -> (TBinder -> Reader (Subst, Scope) a)
+                                      -> Reader (Subst, Scope) a
+refreshTBinder (v:>k) cont = do
+  v' <- asks $ rename v . tEnv . snd
+  local (<> (asTEnv (v @> TypeVar v'), asTEnv (v'@>()))) $
+    cont (v':>k)

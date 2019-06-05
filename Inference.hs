@@ -10,7 +10,7 @@ import Data.Foldable (toList)
 import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 
-import Syntax
+import Syntax hiding (Subst)
 import Env
 import Record
 import Type
