@@ -145,8 +145,11 @@ materialize :: Name -> Expr -> DeFuncM Expr
 materialize nameHint expr = do
   v <- looks $ rename nameHint . lEnv . snd
   ty <- exprType expr
-  extend ([Let (v :> ty) expr], asLEnv (v@>ty))
-  return $ Var v
+  case singletonType ty of
+    Just expr' -> return expr'
+    Nothing -> do
+      extend ([Let (v :> ty) expr], asLEnv (v@>ty))
+      return $ Var v
 
 exprType :: Expr -> DeFuncM Type
 exprType expr = do env <- looks $ snd
@@ -180,6 +183,14 @@ trivialBuiltin b = case b of
   Range -> True
   IntToReal -> True
   _ -> False
+
+singletonType :: Type -> Maybe Expr
+singletonType ty = case ty of
+  RecType (Tup []) -> return $ RecCon (Tup [])
+  RecType r -> liftM RecCon $ traverse singletonType r
+  TabType n v -> liftM (For (rawName "i" :> n)) $ singletonType v
+  _ -> Nothing
+
 
 toCat :: DeFuncM a -> DeFuncCat a
 toCat m = do
