@@ -2,7 +2,7 @@
 
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
-            bindWith, binderAnn, binderVar, addAnnot,
+            bindWith, binderAnn, binderVar, addAnnot, envIntersect,
             replaceAnnot, bindRecZip, lookupSubst) where
 
 import Data.Traversable
@@ -37,6 +37,9 @@ envDelete v (Env m) = Env (M.delete v m)
 
 envSubset :: [Name] -> Env a -> Env a
 envSubset vs (Env m) = Env $ M.intersection m (M.fromList [(v,()) | v <- vs])
+
+envIntersect :: Env a -> Env b -> Env b
+envIntersect (Env m) (Env m') = Env $ M.intersection m' m
 
 isin :: Name -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True

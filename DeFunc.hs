@@ -132,10 +132,13 @@ deFuncScoped expr = do
   return (Decls decls expr, builder)
 
 saveScope :: Env a -> Atom -> (Expr, Expr -> Atom)
-saveScope localEnv atom = (RecCon (fmap Var (Tup vs)), buildVal)
+saveScope localEnv atom =
+  case envNames $ envIntersect (freeLVars atom) localEnv of
+    [v] -> (Var v, buildVal v)
+    vs  -> (RecCon (fmap Var (Tup vs)), buildValTup vs)
   where
-    vs = envNames $ envSubset (envNames (freeLVars atom)) localEnv
-    buildVal new = subExpr (asLEnv sub) mempty atom
+    buildVal    v  new = subExpr (asLEnv $ v @> new) mempty atom
+    buildValTup vs new = subExpr (asLEnv sub       ) mempty atom
       where sub = fold $ fmap (\(k,v) -> v@>(RecGet new k)) (recNameVals (Tup vs))
 
 bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
