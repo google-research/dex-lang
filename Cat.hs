@@ -62,8 +62,13 @@ runCatT (CatT m) initEnv = do
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look
 
+-- wrong...
 extendLocal :: (Monoid env, MonadCat env m) => env -> m a -> m a
-extendLocal x m = liftM fst $ scoped $ (extend x >> m)
+extendLocal x m = do
+  ((ans, env), _) <- scoped $ do extend x
+                                 scoped m
+  extend env
+  return ans
 
 -- Not part of the cat monad, but related utils for monoidal envs
 
