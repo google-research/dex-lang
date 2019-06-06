@@ -13,9 +13,10 @@ import Data.Foldable
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 
-type TopEnv = (Subst, FullEnv Type ())
+type Scope = FullEnv Type ()
+type TopEnv = (Subst, Scope)
 type Atom = Expr
-type OutDecls = ([Decl], FullEnv Type ())
+type OutDecls = ([Decl], Scope)
 type DeFuncCat a = CatT (Subst, OutDecls) (Either Err) a
 type DeFuncM a = ReaderT Subst (CatT OutDecls (Either Err)) a
 
@@ -36,12 +37,12 @@ deFuncDeclTop :: Decl -> DeFuncM (Decl, TopEnv)
 deFuncDeclTop (Let (v:>_) bound) = do
   (bound', atomBuilder) <- deFuncScoped bound
   ty <- exprType bound'
-  return (Let (v:>ty) bound', (asLEnv $ v @> atomBuilder (Var v),
-                               asLEnv $ v @> ty))
+  scope <- looks snd
+  return (Let (v:>ty) bound', (v @> L (atomBuilder (Var v) scope), v @> L ty))
 deFuncDeclTop (Unpack b tv bound) = do
   (bound', (decls,_)) <- scoped $ deFuncExpr bound
   return (Unpack b tv (Decls decls bound'),
-          (asTEnv $ tv @> TypeVar tv, (asTEnv $ tv @>())))
+          (tv @> T (TypeVar tv), (tv @> T ())))
 
 asTopPass :: DeFuncCat a -> TopPass TopEnv (a, [Decl])
 asTopPass m = do
@@ -68,23 +69,26 @@ deFuncExpr expr = case expr of
     n' <- subTy n
     return $ TApp (Builtin Iota) [n']
   App fexpr arg -> do
-    Lam b body <- recur fexpr
+    Lam (v:>_) body <- recur fexpr
     arg' <- recur arg
-    dropSubst $ bindVal b arg' $ recur body
+    dropSubst $
+      extendR (v @> L arg') $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> do
     (expr', atomBuilder, b'@(i':>_)) <- refreshBinder b $ \b' -> do
                                           (body', builder) <- deFuncScoped body
                                           return (For b' body', builder, b')
     tab <- materialize (rawName "tab") expr'
-    return $ For b' (atomBuilder (Get tab i'))
+    scope <- looks snd
+    let built = atomBuilder (Get tab i') (scope <> lbind b')
+    return $ For b' built
   Get e ie -> do
     e' <- recur e
     Var ie' <- askLEnv ie
     case e' of
       For (i:>_) body -> do
         dropSubst $
-          extendR (asLEnv (i @> Var ie')) $
+          extendR (i @> L (Var ie')) $
             applySub body
       tabExpr -> return $ Get tabExpr ie'
   RecCon r -> liftM RecCon $ traverse recur r
@@ -98,60 +102,56 @@ deFuncExpr expr = case expr of
     TLam bs body <- recur fexpr
     ts' <- mapM subTy ts
     dropSubst $ do
-      extendR (asTEnv $ bindFold $ zipWith replaceAnnot bs ts') $ do
+      extendR (bindFold $ zipWith replaceAnnot bs (map T ts')) $ do
         recur body
   where recur = deFuncExpr
 
 refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
 refreshBinder (v:>ty) cont = do
   ty' <- subTy ty
-  v' <- looks $ rename v . lEnv . snd
-  extendR (asLEnv (v @> Var v')) $ do
-    extendLocal (asSnd $ asLEnv $ v'@>ty') $ do
+  v' <- looks $ rename v . snd
+  extendR (v @> L (Var v')) $ do
+    extendLocal (asSnd $ v' @> L ty') $ do
       cont (v':>ty')
 
 -- Should we scope RHS of local lets? It's currently the only local/top diff
 deFuncDecl :: Decl -> DeFuncCat ()
 deFuncDecl (Let (v:>_) bound) = do
   x <- toCat $ deFuncExpr bound
-  extend $ asFst $ asLEnv $ v @> x
+  extend $ asFst $ v @> L x
 deFuncDecl (Unpack (v:>ty) tv bound) = do
   bound' <- toCat $ deFuncExpr bound
-  tv' <- looks $ rename tv . tEnv . snd . snd
-  extend (asTEnv $ tv@>TypeVar tv', ([], asTEnv (tv'@>())))
+  tv' <- looks $ rename tv . snd . snd
+  extend (tv @> T (TypeVar tv'), ([], tv'@> T ()))
   ty' <- toCat $ subTy ty
-  v' <- looks $ rename v . lEnv . snd . snd
-  extend $ (asLEnv $ v @> Var v',
-            ([Unpack (v':>ty') tv' bound'], asLEnv (v'@>ty')))
+  v' <- looks $ rename v . snd . snd
+  extend $ (v @> L (Var v'), ([Unpack (v':>ty') tv' bound'], v'@> L ty'))
 
 -- writes nothing
-deFuncScoped :: Expr -> DeFuncM (Expr, Expr -> Atom)
+deFuncScoped :: Expr -> DeFuncM (Expr, Expr -> Scope -> Atom)
 deFuncScoped expr = do
   (atom, (decls, outScope)) <- scoped $ deFuncExpr expr
-  let (expr, builder) = saveScope (lEnv outScope) atom
+  let (expr, builder) = saveScope outScope atom
   return (Decls decls expr, builder)
 
-saveScope :: Env a -> Atom -> (Expr, Expr -> Atom)
+saveScope :: Env a -> Atom -> (Expr, Expr -> Scope -> Atom)
 saveScope localEnv atom =
   case envNames $ envIntersect (freeLVars atom) localEnv of
     [v] -> (Var v, buildVal v)
     vs  -> (RecCon (fmap Var (Tup vs)), buildValTup vs)
   where
-    buildVal    v  new = subExpr (asLEnv $ v @> new) mempty atom
-    buildValTup vs new = subExpr (asLEnv sub       ) mempty atom
-      where sub = fold $ fmap (\(k,v) -> v@>(RecGet new k)) (recNameVals (Tup vs))
-
-bindVal :: Binder -> Atom -> DeFuncM a -> DeFuncM a
-bindVal (v:>_) val cont = extendR (asLEnv (v @> val)) $ cont
+    buildVal    v  new scope = subExpr (v @> L new) (fmap (const ()) scope) atom
+    buildValTup vs new scope = subExpr sub          (fmap (const ()) scope) atom
+      where sub = fold $ fmap (\(k,v) -> v @> L (RecGet new k)) (recNameVals (Tup vs))
 
 materialize :: Name -> Expr -> DeFuncM Expr
 materialize nameHint expr = do
-  v <- looks $ rename nameHint . lEnv . snd
+  v <- looks $ rename nameHint . snd
   ty <- exprType expr
   case singletonType ty of
     Just expr' -> return expr'
     Nothing -> do
-      extend ([Let (v :> ty) expr], asLEnv (v@>ty))
+      extend ([Let (v :> ty) expr], v @> L ty)
       return $ Var v
 
 exprType :: Expr -> DeFuncM Type
@@ -159,8 +159,8 @@ exprType expr = do env <- looks $ snd
                    return $ getType env expr
 
 subTy :: Type -> DeFuncM Type
-subTy ty = do env <- asks tEnv
-              return $ maybeSub (envLookup env) ty
+subTy ty = do env <- ask
+              return $ maybeSub (fmap fromT . envLookup env) ty
 
 -- TODO: check/fail higher order case
 deFuncFold :: [Type] -> Expr -> DeFuncM Expr
@@ -175,9 +175,9 @@ deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
       materialize (rawName "fold_out") outExpr
 
 askLEnv :: Var -> DeFuncM Atom
-askLEnv v = do tyVal <- asks $ flip envLookup v . lEnv
-               return $ case tyVal of
-                 Just atom -> atom
+askLEnv v = do x <- asks $ flip envLookup v
+               return $ case x of
+                 Just (L atom) -> atom
                  Nothing -> Var v
 
 trivialBuiltin :: Builtin -> Bool
@@ -216,6 +216,14 @@ dropSubst m = local (const mempty) m
 applySub :: Expr -> DeFuncM Expr
 applySub expr = do
   sub <- ask
-  FullEnv lscope tscope <- looks snd
-  let scope' = FullEnv (fmap (const ()) lscope) tscope
-  return $ subExpr sub scope' expr
+  scope <- looks $ fmap (const ()) . snd
+  checkSubScope sub scope  -- TODO: remove this when we care about performance
+  return $ subExpr sub scope expr
+
+checkSubScope :: Subst -> Env () -> DeFuncM ()
+checkSubScope sub scope =
+  if all (`isin` scope) lvars
+    then return ()
+    else throw CompilerErr $ "Free sub vars not in scope:\n" ++
+                    pprint lvars ++ "\n" ++ pprint scope
+  where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]

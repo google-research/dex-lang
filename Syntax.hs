@@ -6,9 +6,9 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                UExpr (..), UTopDecl (..), UDecl (..), ImpDecl (..), TopDeclP (..),
                DeclP (..), Decl, TopDecl, Command (..), Pat,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
-               LitVal (..), BaseType (..), Binder, TBinder,
+               LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), throw, addContext,
-               FullEnv (..), (-->), (==>), freeLVars, asLEnv, asTEnv,
+               FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, unitTy,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
@@ -228,22 +228,15 @@ infixr 2 ==>
 (-->) = ArrType
 (==>) = TabType
 
-data FullEnv v t = FullEnv { lEnv :: Env v
-                           , tEnv :: Env t }  deriving (Show, Eq)
+data LorT a b = L a | T b  deriving (Show, Eq)
 
-asLEnv :: Env a -> FullEnv a b
-asLEnv env = FullEnv env mempty
+fromL :: LorT a b -> a
+fromL (L x) = x
 
-asTEnv :: Env b -> FullEnv a b
-asTEnv env = FullEnv mempty env
+fromT :: LorT a b -> b
+fromT (T x) = x
 
-
-instance Semigroup (FullEnv v t) where
-  FullEnv x y <> FullEnv x' y' = FullEnv (x<>x') (y<>y')
-
-instance Monoid (FullEnv v t) where
-  mempty = FullEnv mempty mempty
-  mappend = (<>)
+type FullEnv v t = Env (LorT v t)
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
@@ -411,7 +404,7 @@ wrapDecls decls expr = case expr of
   _ -> Decls decls expr
 
 type Subst = FullEnv Expr Type
-type Scope = FullEnv () () -- TODO: roll lenv and tenv into one
+type Scope = Env ()
 
 subExpr :: Subst -> Scope -> Expr -> Expr
 subExpr sub scope expr = runReader (subExprR expr) (sub, scope)
@@ -451,24 +444,32 @@ subExprR expr = case expr of
   TApp expr ts -> liftM2 TApp (recur expr) (traverse subTy ts)
   where
     recur = subExprR
-    lookup v = do mval <- asks $ flip envLookup v . lEnv . fst
+
+    lookup :: Name -> Reader (Subst, Scope) Expr
+    lookup v = do mval <- asks $ fmap fromL . flip envLookup v . fst
                   return $ case mval of Nothing -> Var v
                                         Just e -> e
 subTy :: Type -> Reader (Subst, Scope) Type
-subTy ty = do env <- asks $ tEnv . fst
-              return $ maybeSub (envLookup env) ty
+subTy ty = do env <- asks fst
+              return $ maybeSub (fmap fromT . envLookup env) ty
 
 refreshBinder :: Binder -> (Binder -> Reader (Subst, Scope) a)
                                    -> Reader (Subst, Scope) a
 refreshBinder (v:>ty) cont = do
   ty' <- subTy ty
-  v' <- asks $ rename v . lEnv . snd
-  local (<> (asLEnv (v @> Var v'), asLEnv (v'@>()))) $
+  v' <- asks $ rename v . snd
+  local (<> (v @> L (Var v'), v'@>())) $
     cont (v':>ty')
 
 refreshTBinder :: TBinder -> (TBinder -> Reader (Subst, Scope) a)
                                       -> Reader (Subst, Scope) a
 refreshTBinder (v:>k) cont = do
-  v' <- asks $ rename v . tEnv . snd
-  local (<> (asTEnv (v @> TypeVar v'), asTEnv (v'@>()))) $
+  v' <- asks $ rename v . snd
+  local (<> (v @> T (TypeVar v'), v'@>())) $
     cont (v':>k)
+
+lbind :: BinderP a -> FullEnv a b
+lbind (v:>x) = v @> L x
+
+tbind :: BinderP b -> FullEnv a b
+tbind (v:>x) = v @> T x

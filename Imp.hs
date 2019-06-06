@@ -25,17 +25,17 @@ impPass decl = case decl of
   TopDecl (Let b expr) -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
-    putEnv $ asLEnv $ bindWith b (fmap (IVar . binderVar) binders)
+    putEnv $ lbindWith b (fmap (IVar . binderVar) binders)
     return $ ImpTopLet (toList binders) prog
   TopDecl (Unpack b iv expr) -> do
     let binders = RecTree $ Tup [ RecLeaf (iv :> intTy), impBinders b]
     prog <- impExprTop binders expr
-    putEnv $ FullEnv (bindWith b (fmap (IVar . binderVar) binders)) (iv@>iv)
+    putEnv $ lbindWith b (fmap (IVar . binderVar) binders) <> (iv @> T iv)
     return $ ImpTopLet (toList binders) prog
   EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
   EvalCmd (Command cmd expr) -> do
-    FullEnv lenv tenv <- getEnv
-    let ty = getType (FullEnv (fmap fst lenv) tenv) expr
+    env <- getEnv
+    let ty = getType (impEnvToTypeEnv env) expr
     let binders = impBinders (rawName "%imptmp" :> ty)
     prog <- impExprTop binders expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
@@ -53,18 +53,13 @@ impExprTop :: RecTree IBinder -> Expr -> TopPass ImpEnv ImpProg
 impExprTop dest expr = do
   env <- getEnv
   let dest' = fmap asBuffer dest -- TODO: handle underscores
-  liftEither $ evalPass env () (envToScope env) (toImp expr dest')
-
-envToScope :: ImpEnv -> FreshScope
-envToScope (FullEnv lenv tenv) = foldMap (@>()) (lNames <> toList tenv)
-  where lNames = map getVar $ concat $ map (toList . snd) (toList lenv)
-        getVar (IVar v) = v
+  liftEither $ evalPass env () (fmap (const ()) env) (toImp expr dest')
 
 toImp :: Expr -> RecTree Dest -> ImpM ImpProg
 toImp _ (RecLeaf IgnoreIt) = return $ ImpProg []
 toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
-  Var v -> do exprs <- asks $ snd . (!v) . lEnv
+  Var v -> do exprs <- asks $ snd . fromL . (!v)
               return $ write exprs
   TApp (Builtin Iota) n -> impIota dests n
   App (Builtin Range) n -> let (RecTree (Tup [nDest, _])) = dests
@@ -75,7 +70,7 @@ toImp expr dests = case expr of
     materialize args $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
   Decls decls body -> foldr toImpDecl (toImp body dests) decls
-  Get x i -> do RecLeaf (IVar i') <- asks $ snd . (!i) . lEnv
+  Get x i -> do RecLeaf (IVar i') <- asks $ snd . fromL . (!i)
                 toImp x $ fmap (indexSource i') dests
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
@@ -95,7 +90,7 @@ toImpDecl decl cont = case decl of
         cont
   Unpack b n bound -> do
     materialize bound $ \(RecTree (Tup [RecLeaf n', x])) -> do
-      extendR (asTEnv (n @> n')) $
+      extendR (n @> T n') $
         bindVal b (fmap IVar x) $
           cont
 
@@ -111,7 +106,7 @@ materialize expr body = do
   where allocProg binder scoped = asProg $ Alloc binder scoped
 
 bindVal :: Binder -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
-bindVal b val body = extendR (asLEnv $ bindWith b val) body
+bindVal b val body = extendR (lbindWith b val) body
 
 loop :: Name -> (Name -> ImpM ImpProg) -> ImpM ImpProg
 loop n body = do i <- fresh "i"
@@ -147,25 +142,25 @@ writeBuiltin b (Buffer name destIdxs []) exprs =
 
 toImpFor :: RecTree Dest -> Binder -> Expr -> ImpM ImpProg
 toImpFor dest (i :> TypeVar n) body = do
-  n' <- asks $ (!n) . tEnv
+  n' <- asks $ fromT . (!n)
   loop n' $ \i' -> do
-    extendR (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
+    extendR (i @> L (TypeVar n, RecLeaf (IVar i'))) $
       toImp body (fmap (indexDest i') dest)
 
 impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
 impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
   case srcIdxs of
-    [] -> do n' <- asks $ (!n) . tEnv
+    [] -> do n' <- asks $ fromT . (!n)
              loop n' $ \i ->
                 return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [IVar i]
     [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
 impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
 impFold dest [_, TypeVar n] (RecCon (Tup [For (i :> _) (Lam b body), x])) = do
-  n' <- asks $ (!n) . tEnv
+  n' <- asks $ fromT . (!n)
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
-               extendR (asLEnv $ i @> (TypeVar n, RecLeaf (IVar i'))) $
+               extendR (i @> L (TypeVar n, RecLeaf (IVar i'))) $
                  bindVal b (fmap IVar accum) $
                    toImp body (fmap asBuffer accum)
     return $ loop' <> writeExprs dest (fmap IVar accum)
@@ -180,7 +175,7 @@ flatType :: Type -> ImpM (RecTree IType)
 flatType ty = case ty of
   BaseType b -> return $ RecLeaf (IType b [])
   RecType r  -> liftM RecTree (traverse flatType r)
-  TabType (TypeVar n) valTy -> do n' <- asks $ (!n) . tEnv
+  TabType (TypeVar n) valTy -> do n' <- asks $ fromT . (!n)
                                   valTy' <- flatType valTy
                                   return $ fmap (addIdx n') valTy'
   TypeVar _ -> return $ RecLeaf intTy
@@ -203,8 +198,13 @@ intTy :: IType
 intTy = IType IntType []
 
 exprType ::Expr -> ImpM Type
-exprType expr = do FullEnv lenv tenv <- ask
-                   return $ getType (FullEnv (fmap fst lenv) tenv) expr
+exprType expr = do env <- asks impEnvToTypeEnv
+                   return $ getType env expr
+
+impEnvToTypeEnv :: ImpEnv -> FullEnv Type ()
+impEnvToTypeEnv env = fmap f env
+  where f x = case x of L (ty, _) -> L ty
+                        T _       -> T ()
 
 -- === type checking imp programs ===
 
@@ -281,3 +281,5 @@ checkIsInt v = do ty <- lookupVar v
 snoc :: [a] -> a -> [a]
 snoc xs x = reverse $ x : reverse xs
 
+lbindWith :: BinderP a -> b -> FullEnv (a, b) c
+lbindWith (v:>x) y = v @> L (x,y)

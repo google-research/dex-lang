@@ -150,3 +150,7 @@ instance Pretty a => Pretty (SetVal a) where
 
 instance Pretty Result where
   pretty (Result x y z) = p x <> p y <> p z
+
+instance (Pretty a, Pretty b) => Pretty (LorT a b) where
+  pretty (L x) = "L" <+> p x
+  pretty (T x) = "T" <+> p x

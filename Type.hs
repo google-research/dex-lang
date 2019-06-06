@@ -20,12 +20,12 @@ checkTyped decl = decl <$ case decl of
   TopDecl (Let b expr) -> do
     ty' <- check expr
     assertEq (binderAnn b) ty' ""
-    putEnv $ asLEnv (bind b)
+    putEnv $ lbind b
   TopDecl (Unpack b iv expr) -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
     assertEq (binderAnn b) ty' ""
-    putEnv $ FullEnv (bind b) (iv @> IdxSetKind)
+    putEnv $ lbind b <> iv @> T IdxSetKind
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
   where
@@ -35,8 +35,8 @@ checkTyped decl = decl <$ case decl of
       liftEither $ addContext (pprint expr) $ evalTypeM env (getType' True expr)
 
 getType :: FullEnv Type a -> Expr -> Type
-getType (FullEnv lenv _) expr =
-  ignoreExcept $ evalTypeM (FullEnv lenv mempty) $ getType' False expr
+getType env expr =
+  ignoreExcept $ evalTypeM (fmap (L . fromL) env) $ getType' False expr
 
 evalTypeM :: TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env
@@ -76,15 +76,15 @@ getType' check expr = case expr of
        checkTy (binderAnn b)
        checkShadow b
        checkEq "Let" (binderAnn b) (recur expr)
-       extendR (asLEnv (bind b)) cont
+       extendR (lbind b) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
        let tb = tv :> IdxSetKind
        checkShadow b
        checkShadow tb
-       extendR (asTEnv (bind tb)) $ do
+       extendR (tbind tb) $ do
          checkTy (binderAnn b)
-         extendR (asLEnv (bind b)) cont
+         extendR (lbind b) cont
 
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
     checkEq s ty getTy =
@@ -93,11 +93,11 @@ getType' check expr = case expr of
                else return ()
 
     recur = getType' check
-    recurWith  b  = extendR (asLEnv (bind b)) . recur
-    recurWithT bs = extendR (asTEnv (bindFold bs)) . recur
+    recurWith  b  = extendR (lbind b) . recur
+    recurWithT bs = extendR (foldMap tbind bs) . recur
 
     lookupLVar :: Var -> TypeM Type
-    lookupLVar v = asks ((! v) . lEnv)
+    lookupLVar v = asks (fromL . (! v))
 
     checkTy :: Type -> TypeM ()
     checkTy _ = return () -- TODO: check kind and unbound type vars
@@ -105,7 +105,7 @@ getType' check expr = case expr of
 checkShadow :: BinderP a -> TypeM ()
 checkShadow (v :> _) = do
   env <- ask
-  if v `isin` lEnv env || v `isin` tEnv env
+  if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 

@@ -32,13 +32,13 @@ typePass :: TopDeclP UAnnot -> TopPass TypeEnv TopDecl
 typePass tdecl = case tdecl of
   TopDecl (Let b expr) -> do
     (b', expr') <- liftTop $ inferLetBinding b expr
-    putEnv $ asLEnv (bind b')
+    putEnv $ lbind b'
     return $ TopDecl (Let b' expr')
   TopDecl (Unpack b tv expr) -> do
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
     let b' = fmap (const ty') b -- TODO: actually check the annotated type
-    putEnv $ FullEnv (bind b') (tv@>IdxSetKind)
+    putEnv $ lbind b' <> tv @> T IdxSetKind
     return $ TopDecl (Unpack b' tv expr')
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -64,9 +64,9 @@ check expr reqTy = case expr of
     unify (BaseType (litType c)) reqTy
     return (Lit c)
   Var v -> do
-    maybeTy <- asks $ (flip envLookup v) . lEnv
+    maybeTy <- asks $ (flip envLookup v)
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
-                          Just ty -> return ty
+                          Just (L ty) -> return ty
     instantiate ty reqTy (Var v)
   Builtin b -> instantiate (builtinType b) reqTy (Builtin b)
   Decls decls body -> foldr checkDecl (check body reqTy) decls
@@ -90,7 +90,7 @@ check expr reqTy = case expr of
   Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab tabTy
-    actualISet <- asks $ (! idxExpr) . lEnv
+    actualISet <- asks $ fromL . (!idxExpr)
     unify i actualISet
     unify v reqTy
     return $ Get expr' idxExpr
@@ -112,7 +112,7 @@ check expr reqTy = case expr of
     checkDecl decl cont = case decl of
       Let b bound -> do
         (b', bound') <- inferLetBinding b bound
-        extendR (asLEnv (bind b')) $ do
+        extendR (lbind b') $ do
           body' <- cont
           return $ wrapDecls [Let b' bound'] body'
       Unpack b tv bound -> do
@@ -120,14 +120,14 @@ check expr reqTy = case expr of
         boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                    _ -> throw TypeErr (pprint maybeEx)
         let b' = replaceAnnot b boundTy
-        body' <- extendR (FullEnv (bind b') (tv@>IdxSetKind)) cont
+        body' <- extendR (lbind b' <> tv @> T IdxSetKind) cont
         tvsEnv <- tempVarsEnv
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
         return $ wrapDecls [Unpack b' tv bound'] body'
 
     leakErr = throw TypeErr "existential variable leaked"
-    recurWith b expr ty = extendR (asLEnv (bind b)) (check expr ty)
+    recurWith b expr ty = extendR (lbind b) (check expr ty)
 
 checkBinder :: BinderP UAnnot -> Type -> InferM Binder
 checkBinder b ty = do
@@ -150,7 +150,7 @@ inferLetBinding b expr = case binderAnn b of
     skolVars <- mapM (fresh . pprint) kinds
     let skolBinders = zipWith (:>) skolVars kinds
     let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-    expr' <- extendR (asTEnv (bindFold skolBinders)) (check expr exprTy)
+    expr' <- extendR (foldMap tbind skolBinders) (check expr exprTy)
     return (replaceAnnot b sigmaTy, TLam skolBinders expr')
   Just ty -> do
     expr' <- check expr ty
@@ -209,9 +209,9 @@ getFlexVars ty expr = do
   return $ nub (tyVars ++ exprVars) \\ envVars
 
 tempVarsEnv :: InferM [Var]
-tempVarsEnv = do envTypes <- asks $ toList . lEnv
-                 vs <- mapM tempVars envTypes
-                 vs' <- asks $ envNames . tEnv
+tempVarsEnv = do env <- ask
+                 vs <- mapM tempVars [ty | L ty <- toList env]
+                 let vs' = [v | (v, T _) <- envPairs env]
                  return $ vs' ++ (concat vs)
 
 tempVars :: HasTypeVars a => a -> InferM [Var]
@@ -239,13 +239,13 @@ unify :: Type -> Type -> InferM ()
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  tenv <- asks tEnv
+  env <- ask
   let unifyErr = throw TypeErr $
                    "can't unify " ++ pprint t1' ++ " and " ++ pprint t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
-    (t, TypeVar v) | not (v `isin` tenv) -> bindMVar v t
-    (TypeVar v, t) | not (v `isin` tenv) -> bindMVar v t
+    (t, TypeVar v) | not (v `isin` env) -> bindMVar v t
+    (TypeVar v, t) | not (v `isin` env) -> bindMVar v t
     (ArrType a b, ArrType a' b') -> unify a a' >> unify b b'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
     (Exists t, Exists t')        -> unify t t'
