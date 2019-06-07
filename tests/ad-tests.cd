@@ -1,0 +1,9 @@
+
+f = lam x. x * x * x
+
+:p jvp f 1.0 1.0
+
+> [3.0]
+
+-- fails with type-var shadowing bug
+-- :passes jvp (lam x. jvp f x 1.0) 1.0

@@ -113,6 +113,7 @@ instance Pretty Builtin where
     Rand     -> "%rand"
     Randint  -> "%randint"
     Fold     -> "%fold"
+    Deriv    -> "%deriv"
     IntToReal -> "%real"
     Copy     -> "%copy"
 

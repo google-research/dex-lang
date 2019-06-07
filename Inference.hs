@@ -298,6 +298,7 @@ collectKinds kind ty = case ty of
   TypeVar v     -> tell [(v, kind)]
   ArrType a b   -> recur kind       a >> recur kind b
   TabType a b   -> recur IdxSetKind a >> recur kind b
+  RecType r     -> mapM_ (recur kind) r
   Forall _ body -> recur kind body
   Exists body   -> recur kind body
   IdxSetLit _   -> return ()

@@ -87,7 +87,8 @@ type IdxSetVal = Int
 data LitVal = IntLit  Int
             | RealLit Double
             | StrLit  String
-                deriving (Eq, Ord, Show)
+            | Zero -- Type
+               deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
@@ -95,7 +96,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
-             | Iota | Range | Fold | Copy
+             | Iota | Range | Fold | Copy | Deriv
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt

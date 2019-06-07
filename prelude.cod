@@ -1,3 +1,9 @@
+fst :: A a b. (a, b) -> a
+fst (x, y) = x
+
+snd :: A a b. (a, b) -> b
+snd (x, y) = y
+
 iadd :: Int -> Int -> Int
 iadd x y = %iadd (x, y)
 
@@ -67,3 +73,11 @@ isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 
 map :: A i a b. (a -> b) -> i=>a -> i=>b
 map f xs = for i. f xs.i
+
+-- TODO: need a (probably builtin) vector space typeclass
+-- deriv :: (VSpace a, VSpace b) => ...
+deriv :: A a b. (a -> b) -> a -> (b, a -> b)
+deriv f x = %deriv (lam y. f y, x)
+
+jvp :: A a b. (a -> b) -> a -> a -> b
+jvp f x t = snd (deriv f x) t

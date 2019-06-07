@@ -59,6 +59,7 @@ deFuncExpr expr = case expr of
   Decls decls body -> withCat (mapM_ deFuncDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
+  App (TApp (Builtin Deriv) ts) arg -> deFuncDeriv ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
     let expr' = App (Builtin b) arg'
@@ -94,9 +95,7 @@ deFuncExpr expr = case expr of
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> do
     val <- recur e
-    return $ case val of
-      RecCon r -> recGet r field
-      e'       -> RecGet e' field
+    return $ recGetExpr val field
   TLam _ _ -> applySub expr
   TApp fexpr ts -> do
     TLam bs body <- recur fexpr
@@ -105,6 +104,10 @@ deFuncExpr expr = case expr of
       extendR (bindFold $ zipWith replaceAnnot bs (map T ts')) $ do
         recur body
   where recur = deFuncExpr
+
+recGetExpr :: Expr -> RecField -> Expr
+recGetExpr (RecCon r) field = recGet r field
+recGetExpr e          field = RecGet e field
 
 refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
 refreshBinder (v:>ty) cont = do
@@ -174,6 +177,13 @@ deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
                      (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
       materialize (rawName "fold_out") outExpr
 
+deFuncDeriv :: [Type] -> Expr -> DeFuncM Expr
+deFuncDeriv _ (RecCon (Tup [Lam b body, x])) = do
+  x' <- deFuncExpr x
+  refreshBinder b $ \b' -> do
+    (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
+    derivTransform b' (Decls decls bodyOut') x'
+
 askLEnv :: Var -> DeFuncM Atom
 askLEnv v = do x <- asks $ flip envLookup v
                return $ case x of
@@ -193,7 +203,6 @@ singletonType ty = case ty of
   RecType r -> liftM RecCon $ traverse singletonType r
   TabType n v -> liftM (For (rawName "i" :> n)) $ singletonType v
   _ -> Nothing
-
 
 toCat :: DeFuncM a -> DeFuncCat a
 toCat m = do
@@ -227,3 +236,94 @@ checkSubScope sub scope =
     else throw CompilerErr $ "Free sub vars not in scope:\n" ++
                     pprint lvars ++ "\n" ++ pprint scope
   where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]
+
+type DerivM a = ReaderT (Env (Atom, Atom))
+                  (CatT (OutDecls, OutDecls) (Either Err)) a
+
+derivTransform :: Binder -> Expr -> Atom -> DeFuncM Atom
+derivTransform b@(v :> ty) body x = do
+  scope <- looks snd
+  let t = rename (rawName "tangent") scope
+      scope' = scope <> t @> L ty
+  ((x', t'), (xDecls, tDecls)) <-
+                    liftEither $ flip runCatT (asSnd scope', asSnd scope') $
+                      flip runReaderT (v @> (x, Var t)) $ evalDeriv body
+  extend xDecls
+  return $ RecCon $ Tup $ [x', Lam (t:>ty) (Decls (fst tDecls) t')]
+
+evalDeriv :: Expr -> DerivM (Atom, Atom)
+evalDeriv expr = case expr of
+  Var v -> do
+    xt <- asks $ flip envLookup v
+    return $ case xt of
+      Nothing -> (expr, Lit Zero)
+      Just xt' -> xt'
+  Lit _ -> return (expr, Lit Zero)
+  Decls [] body -> evalDeriv body
+  Decls (Let (v:>_) bound:decls) body -> do
+    xt <- evalDeriv bound
+    extendR (v@>xt) (evalDeriv body')
+    where body' = Decls decls body
+  App (Builtin b) arg -> do
+    (x, t) <- evalDeriv arg
+    x' <- writePrimal $ App (Builtin b) x
+    t' <- case t of
+            Lit Zero -> return (Lit Zero)
+            _ -> builtinDeriv b x t
+    return (x', t')
+  For b body -> error "For not implemented yet"
+  RecCon r -> do
+    r' <- traverse evalDeriv r
+    return (RecCon (fmap fst r'), RecCon (fmap snd r'))
+  RecGet e field -> do
+    (x, t) <- evalDeriv e
+    return (recGetExpr x field,
+            recGetExpr t field)
+  _ -> error $ "Suprising expression: " ++ pprint expr
+
+builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
+builtinDeriv b x t = case b of
+  FAdd -> writeAdd t1 t2
+            where (t1, t2) = unpair t
+  FMul -> do
+    t1' <- writeMul x2 t1
+    t2' <- writeMul x1 t2
+    writeAdd t1' t2'
+      where (t1, t2) = unpair t
+            (x1, x2) = unpair x
+  where
+    unpair (RecCon (Tup [x, y])) = (x, y)
+
+writeAdd :: Atom -> Atom -> DerivM Atom
+writeAdd (Lit Zero) y = return y
+writeAdd x (Lit Zero) = return x
+writeAdd x y = writeTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
+
+-- treated as linear in second argument only
+writeMul :: Atom -> Atom -> DerivM Atom
+writeMul _ (Lit Zero) = return $ Lit Zero
+writeMul x y = writeTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
+
+-- TODO: de-dup these a bit. Could just have a single shared scope.
+writePrimal :: Expr -> DerivM Atom
+writePrimal expr = do
+  v <- looks $ rename (rawName "primal") . snd . fst
+  ty <- primalType expr
+  extend ( ([Let (v :> ty) expr], v @> L ty)
+         , ([]                  , v @> L ty)) -- primals stay in scope
+  return $ Var v
+
+writeTangent :: Expr -> DerivM Atom
+writeTangent expr = do
+  v <- looks $ rename (rawName "tangent") . snd . snd
+  ty <- tangentType expr
+  extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
+  return $ Var v
+
+primalType :: Expr -> DerivM Type
+primalType expr = do env <- looks $ snd . fst
+                     return $ getType env expr
+
+tangentType :: Expr -> DerivM Type
+tangentType expr = do env <- looks $ snd . snd
+                      return $ getType env expr
