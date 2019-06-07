@@ -21,6 +21,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
 import Fresh
 import Record
 import Env
+import Cat
 
 import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
@@ -424,9 +425,10 @@ subExprR expr = case expr of
         return $ wrapDecls [Let b' bound'] body'
     Unpack b tv bound -> do  -- TODO: freshen tv
       bound' <- recur bound
-      refreshBinder b $ \b' -> do
-        body' <- recur body
-        return $ wrapDecls [Unpack b' tv bound'] body'
+      refreshTBinders [tv:>IdxSetKind] $ \[tv':>_] ->
+        refreshBinder b $ \b' -> do
+          body' <- recur body
+          return $ wrapDecls [Unpack b' tv' bound'] body'
     where body = Decls decls final
   Lam b body -> refreshBinder b $ \b' -> do
                    body' <- recur body
@@ -440,7 +442,8 @@ subExprR expr = case expr of
                  return $ Get e' ie'
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> liftM (flip RecGet field) (recur e)
-  TLam ts expr -> liftM (TLam ts) (recur expr) -- TODO: refresh type vars
+  TLam ts expr -> refreshTBinders ts $ \ts' ->
+                    liftM (TLam ts') (recur expr) -- TODO: refresh type vars
 
   TApp expr ts -> liftM2 TApp (recur expr) (traverse subTy ts)
   where
@@ -462,12 +465,18 @@ refreshBinder (v:>ty) cont = do
   local (<> (v @> L (Var v'), v'@>())) $
     cont (v':>ty')
 
-refreshTBinder :: TBinder -> (TBinder -> Reader (Subst, Scope) a)
-                                      -> Reader (Subst, Scope) a
-refreshTBinder (v:>k) cont = do
-  v' <- asks $ rename v . snd
-  local (<> (v @> T (TypeVar v'), v'@>())) $
-    cont (v':>k)
+refreshTBinders :: [TBinder] -> ([TBinder] -> Reader (Subst, Scope) a)
+                                           -> Reader (Subst, Scope) a
+refreshTBinders bs cont = do
+  env <- ask
+  let (bs', env') = runCat (traverse freshen bs) env
+  local (<> env') (cont bs')
+  where
+    freshen :: TBinder -> Cat (Subst, Scope) TBinder
+    freshen (v:>k) = do
+      v' <- looks $ rename v . snd
+      extend $ (v @> T (TypeVar v'), v'@>())
+      return (v':>k)
 
 lbind :: BinderP a -> FullEnv a b
 lbind (v:>x) = v @> L x

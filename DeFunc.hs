@@ -134,8 +134,8 @@ deFuncDecl (Unpack (v:>ty) tv bound) = do
 deFuncScoped :: Expr -> DeFuncM (Expr, Expr -> Scope -> Atom)
 deFuncScoped expr = do
   (atom, (decls, outScope)) <- scoped $ deFuncExpr expr
-  let (expr, builder) = saveScope outScope atom
-  return (Decls decls expr, builder)
+  let (expr', builder) = saveScope outScope atom
+  return (Decls decls expr', builder)
 
 saveScope :: Env a -> Atom -> (Expr, Expr -> Scope -> Atom)
 saveScope localEnv atom =

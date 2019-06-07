@@ -5,17 +5,21 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
-            extendR, captureW, asFst, asSnd) where
+            extendR, captureW, asFst, asSnd,
+            Cat, runCat) where
 
 -- Monad for tracking monoidal state
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 
 newtype CatT env m a = CatT (StateT (env, env) m a)
   deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+
+type Cat env a = CatT env Identity a
 
 class (Monoid env, Monad m) => MonadCat env m | m -> env where
   look   :: m env
@@ -59,6 +63,9 @@ runCatT :: (Monoid env, Monad m) => CatT env m a -> env -> m (a, env)
 runCatT (CatT m) initEnv = do
   (ans, (_, newEnv)) <- runStateT m (initEnv, mempty)
   return (ans, newEnv)
+
+runCat :: Monoid env => Cat env a -> env -> (a, env)
+runCat m env = runIdentity $ runCatT m env
 
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look
