@@ -69,6 +69,7 @@ instance Pretty LitVal where
   pretty (IntLit x ) = p x
   pretty (RealLit x) = p x
   pretty (StrLit x ) = p x
+  pretty Zero = "0"
 
 instance Pretty b => Pretty (ExprP b) where
   pretty expr = case expr of
@@ -114,6 +115,7 @@ instance Pretty Builtin where
     Randint  -> "%randint"
     Fold     -> "%fold"
     Deriv    -> "%deriv"
+    Transpose -> "%transpose"
     IntToReal -> "%real"
     Copy     -> "%copy"
 

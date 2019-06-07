@@ -142,7 +142,8 @@ builtinType builtin = case builtin of
   Randint  -> tup [int, int] --> int
   Rand     -> int --> real
   IntToReal -> int --> real
-  Deriv -> Forall [TyKind, TyKind] $ tup [a --> b, a] --> tup [b, a --> b]
+  Deriv     -> Forall [TyKind, TyKind] $ tup [a --> b, a] --> tup [b, a --> b]
+  Transpose -> Forall [TyKind, TyKind] $ tup [a --> b, b] --> a
   where
     ibinOpType    = tup [int, int] --> int
     fbinOpType    = tup [real, real] --> real

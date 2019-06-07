@@ -11,7 +11,9 @@ import Cat
 
 import Data.Foldable
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
+import qualified Data.Map.Strict as M
 
 type Scope = FullEnv Type ()
 type TopEnv = (Subst, Scope)
@@ -60,6 +62,7 @@ deFuncExpr expr = case expr of
   Lam _ _ -> applySub expr
   App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
   App (TApp (Builtin Deriv) ts) arg -> deFuncDeriv ts arg
+  App (TApp (Builtin Transpose) ts) arg -> deFuncTranspose ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
     let expr' = App (Builtin b) arg'
@@ -177,13 +180,6 @@ deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
                      (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
       materialize (rawName "fold_out") outExpr
 
-deFuncDeriv :: [Type] -> Expr -> DeFuncM Expr
-deFuncDeriv _ (RecCon (Tup [Lam b body, x])) = do
-  x' <- deFuncExpr x
-  refreshBinder b $ \b' -> do
-    (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
-    derivTransform b' (Decls decls bodyOut') x'
-
 askLEnv :: Var -> DeFuncM Atom
 askLEnv v = do x <- asks $ flip envLookup v
                return $ case x of
@@ -240,16 +236,33 @@ checkSubScope sub scope =
 type DerivM a = ReaderT (Env (Atom, Atom))
                   (CatT (OutDecls, OutDecls) (Either Err)) a
 
-derivTransform :: Binder -> Expr -> Atom -> DeFuncM Atom
-derivTransform b@(v :> ty) body x = do
-  scope <- looks snd
-  let t = rename (rawName "tangent") scope
-      scope' = scope <> t @> L ty
-  ((x', t'), (xDecls, tDecls)) <-
+type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
+
+deFuncDeriv :: [Type] -> Expr -> DeFuncM Expr
+deFuncDeriv _ (RecCon (Tup [Lam b body, x])) = do
+  x' <- deFuncExpr x
+  refreshBinder b $ \(v:>ty) -> do
+    (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
+    scope <- looks snd
+    let body' = Decls decls bodyOut'
+        t = rename (rawName "tangent") scope
+        scope' = scope <> t @> L ty
+    ((xOut, tOut), (xDecls, tDecls)) <-
                     liftEither $ flip runCatT (asSnd scope', asSnd scope') $
-                      flip runReaderT (v @> (x, Var t)) $ evalDeriv body
-  extend xDecls
-  return $ RecCon $ Tup $ [x', Lam (t:>ty) (Decls (fst tDecls) t')]
+                      flip runReaderT (v @> (x', Var t)) $ evalDeriv body'
+    extend xDecls
+    return $ RecCon $ Tup $ [xOut, Lam (t:>ty) (Decls (fst tDecls) tOut)]
+
+deFuncTranspose :: [Type] -> Expr -> DeFuncM Expr
+deFuncTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
+  ct' <- deFuncExpr ct
+  (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
+  let body' = Decls decls bodyOut'
+  scope <- looks snd
+  (((), ctEnv), ctDecls) <- liftEither $ flip runCatT (asSnd scope) $
+                              runWriterT $ evalTranspose ct' body'
+  extend ctDecls
+  addCTsDeFunc (snd $ ctEnvPop ctEnv v)
 
 evalDeriv :: Expr -> DerivM (Atom, Atom)
 evalDeriv expr = case expr of
@@ -281,6 +294,57 @@ evalDeriv expr = case expr of
             recGetExpr t field)
   _ -> error $ "Suprising expression: " ++ pprint expr
 
+newtype CTEnv = CTEnv (Env [Atom])
+
+instance Semigroup CTEnv where
+  CTEnv env <> CTEnv env' = CTEnv $ envMonoidUnion env env'
+
+instance Monoid CTEnv where
+  mempty = CTEnv mempty
+  mappend = (<>)
+
+ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
+ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
+  where m' = M.delete v m
+        x = M.findWithDefault [] v m
+
+evalTranspose :: Atom -> Expr -> TransposeM ()
+evalTranspose ct expr = case expr of
+  Var v -> tell $ CTEnv $ v @> [ct]
+  Lit _ -> return ()
+  Decls [] body -> evalTranspose ct body
+  Decls (Let (v:>_) bound:decls) final -> do
+    ((), ctEnv) <- lift $ runWriterT $ evalTranspose ct body
+    let (ctEnv', outCTs) = ctEnvPop ctEnv v
+    tell ctEnv'
+    ctV <- addCTs outCTs
+    evalTranspose ctV bound
+    where body = Decls decls final
+  App (Builtin b) arg -> builtinTranspose b ct arg
+  _ -> error $ "Suprising expression in transpose: " ++ pprint expr
+
+addCTsDeFunc :: [Atom] -> DeFuncM Atom
+addCTsDeFunc []  = return $ Lit Zero
+addCTsDeFunc [x] = return x
+addCTsDeFunc (x:xs) = do xs' <- addCTsDeFunc xs
+                         materialize (rawName "sum") $
+                           App (Builtin FAdd) (RecCon (Tup [x, xs']))
+
+addCTs :: [Atom] -> TransposeM Atom
+addCTs []  = return $ Lit Zero
+addCTs [x] = return x
+
+builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
+builtinTranspose b ct arg = case b of
+  FAdd -> do
+    evalTranspose ct t1
+    evalTranspose ct t2
+    where (t1, t2) = unpair arg
+  FMul -> do
+    ct' <- writeCTMul x ct
+    evalTranspose ct' t
+    where (x, t) = unpair arg
+
 builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
 builtinDeriv b x t = case b of
   FAdd -> writeAdd t1 t2
@@ -291,9 +355,23 @@ builtinDeriv b x t = case b of
     writeAdd t1' t2'
       where (t1, t2) = unpair t
             (x1, x2) = unpair x
-  where
-    unpair (RecCon (Tup [x, y])) = (x, y)
 
+writeCoTangent :: Expr -> TransposeM Atom
+writeCoTangent expr = do
+  v <- looks $ rename (rawName "ct") . snd
+  ty <- coTangentType expr
+  extend $ ([Let (v :> ty) expr], v @> L ty)
+  return $ Var v
+
+coTangentType :: Expr -> TransposeM Type
+coTangentType expr = do env <- looks $ snd
+                        return $ getType env expr
+
+unpair :: Atom -> (Atom, Atom)
+unpair (RecCon (Tup [x, y])) = (x, y)
+
+-- TODO: should these ring identities be applied in a separate pass?
+-- We might know more then, like the call sites of the linearized function.
 writeAdd :: Atom -> Atom -> DerivM Atom
 writeAdd (Lit Zero) y = return y
 writeAdd x (Lit Zero) = return x
@@ -304,7 +382,18 @@ writeMul :: Atom -> Atom -> DerivM Atom
 writeMul _ (Lit Zero) = return $ Lit Zero
 writeMul x y = writeTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
 
--- TODO: de-dup these a bit. Could just have a single shared scope.
+--- TODO: should these ring identities be applied in a separate pass?
+-- We might know more then, like the call sites of the linearized function.
+writeCTAdd :: Atom -> Atom -> TransposeM Atom
+writeCTAdd (Lit Zero) y = return y
+writeCTAdd x (Lit Zero) = return x
+writeCTAdd x y = writeCoTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
+
+-- treated as linear in second argument only
+writeCTMul :: Atom -> Atom -> TransposeM Atom
+writeCTMul _ (Lit Zero) = return $ Lit Zero
+writeCTMul x y = writeCoTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
+
 writePrimal :: Expr -> DerivM Atom
 writePrimal expr = do
   v <- looks $ rename (rawName "primal") . snd . fst

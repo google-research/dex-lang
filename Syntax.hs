@@ -88,7 +88,7 @@ type IdxSetVal = Int
 data LitVal = IntLit  Int
             | RealLit Double
             | StrLit  String
-            | Zero -- Type
+            | Zero -- treat this as a type-lambda function (mempty) instead?
                deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
@@ -97,7 +97,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
-             | Iota | Range | Fold | Copy | Deriv
+             | Iota | Range | Fold | Copy | Deriv | Transpose
                 deriving (Eq, Ord, Show)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt

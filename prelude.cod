@@ -81,3 +81,14 @@ deriv f x = %deriv (lam y. f y, x)
 
 jvp :: A a b. (a -> b) -> a -> a -> b
 jvp f x t = snd (deriv f x) t
+
+transpose :: A a b. (a -> b) -> b -> a
+transpose f ct = %transpose (lam t. f t, ct)
+
+vjp :: A a b. (a -> b) -> a -> (b, b -> a)
+vjp f x = let (y, df) = deriv f x
+          in (y, transpose df)
+
+grad :: A a. (a -> Real) -> a -> a
+grad f x = let (_, pullback) = vjp f x
+           in pullback 1.0

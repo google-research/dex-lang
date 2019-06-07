@@ -269,7 +269,8 @@ builtinNames = M.fromList [
   ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
-  ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv)]
+  ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
+  ("transpose", Transpose)]
 
 strToBuiltin :: String -> Maybe Builtin
 strToBuiltin name = M.lookup name builtinNames

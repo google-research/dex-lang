@@ -3,7 +3,8 @@
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot, envIntersect,
-            replaceAnnot, bindRecZip, lookupSubst) where
+            replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion,
+            envLookupDefault) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -23,6 +24,11 @@ data BinderP a = (:>) Name a  deriving (Show, Eq, Ord)
 envLookup :: Env a -> Name -> Maybe a
 envLookup (Env m) v = M.lookup v m
 
+envLookupDefault :: Env a -> Name -> a -> a
+envLookupDefault env v x = case envLookup env v of
+                             Just x' -> x'
+                             Nothing -> x
+
 envNames :: Env a -> [Name]
 envNames (Env m) = M.keys m
 
@@ -40,6 +46,9 @@ envSubset vs (Env m) = Env $ M.intersection m (M.fromList [(v,()) | v <- vs])
 
 envIntersect :: Env a -> Env b -> Env b
 envIntersect (Env m) (Env m') = Env $ M.intersection m' m
+
+envMonoidUnion :: Monoid a => Env a -> Env a -> Env a
+envMonoidUnion (Env m) (Env m') = Env $ M.unionWith (<>) m m'
 
 isin :: Name -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True

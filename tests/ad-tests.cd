@@ -8,3 +8,7 @@ f = lam x. x * x * x
 :p jvp (lam x. jvp f x 1.0) 1.0 1.0
 
 > [6.0]
+
+:p grad f 1.0
+
+
