@@ -262,10 +262,7 @@ deFuncTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
   (((), ctEnv), ctDecls) <- liftEither $ flip runCatT (asSnd scope) $
                               runWriterT $ evalTranspose ct' body'
   extend ctDecls
-  addCTsDeFunc (snd $ ctEnvPop ctEnv v)
-
-zero :: Atom
-zero = Lit (RealLit 0.0)
+  materialize (rawName "ctOut") $ addMany (snd $ ctEnvPop ctEnv v)
 
 evalDeriv :: Expr -> DerivM (Atom, Atom)
 evalDeriv expr = case expr of
@@ -318,21 +315,11 @@ evalTranspose ct expr = case expr of
     ((), ctEnv) <- lift $ runWriterT $ evalTranspose ct body
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
-    ctV <- addCTs outCTs
+    ctV <- writeCoTangent $ addMany outCTs
     evalTranspose ctV bound
     where body = Decls decls final
   App (Builtin b) arg -> builtinTranspose b ct arg
   _ -> error $ "Suprising expression in transpose: " ++ pprint expr
-
-addCTsDeFunc :: [Atom] -> DeFuncM Atom
-addCTsDeFunc []  = return zero
-addCTsDeFunc (x:xs) = do xs' <- addCTsDeFunc xs
-                         materialize (rawName "sum") $
-                           App (Builtin FAdd) (RecCon (Tup [x, xs']))
-
-addCTs :: [Atom] -> TransposeM Atom
-addCTs []  = return zero
-addCTs [x] = return x
 
 builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
 builtinTranspose b ct arg = case b of
@@ -341,9 +328,12 @@ builtinTranspose b ct arg = case b of
     evalTranspose ct t2
     where (t1, t2) = unpair arg
   FMul -> do
-    ct' <- writeCTMul x ct
+    ct' <- writeMul x ct
     evalTranspose ct' t
     where (x, t) = unpair arg
+  where
+    writeAdd x y = writeCoTangent $ add x y
+    writeMul x y = writeCoTangent $ mul x y
 
 builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
 builtinDeriv b x t = case b of
@@ -355,6 +345,9 @@ builtinDeriv b x t = case b of
     writeAdd t1' t2'
       where (t1, t2) = unpair t
             (x1, x2) = unpair x
+  where
+    writeAdd x y = writeTangent (add x y)
+    writeMul x y = writeTangent (mul x y)
 
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
@@ -370,23 +363,18 @@ coTangentType expr = do env <- looks $ snd
 unpair :: Atom -> (Atom, Atom)
 unpair (RecCon (Tup [x, y])) = (x, y)
 
--- TODO: should these ring identities be applied in a separate pass?
--- We might know more then, like the call sites of the linearized function.
-writeAdd :: Atom -> Atom -> DerivM Atom
-writeAdd x y = writeTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
+add :: Expr -> Expr -> Expr
+add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
 
--- treated as linear in second argument only
-writeMul :: Atom -> Atom -> DerivM Atom
-writeMul x y = writeTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
+mul :: Expr -> Expr -> Expr
+mul x y = App (Builtin FMul) (RecCon (Tup [x, y]))
 
---- TODO: should these ring identities be applied in a separate pass?
--- We might know more then, like the call sites of the linearized function.
-writeCTAdd :: Atom -> Atom -> TransposeM Atom
-writeCTAdd x y = writeCoTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
+zero :: Atom
+zero = Lit (RealLit 0.0)
 
--- treated as linear in second argument only
-writeCTMul :: Atom -> Atom -> TransposeM Atom
-writeCTMul x y = writeCoTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
+addMany :: [Expr] -> Expr
+addMany [] = zero
+addMany (x:xs) = App (Builtin FAdd) (RecCon (Tup [x, addMany xs]))
 
 writePrimal :: Expr -> DerivM Atom
 writePrimal expr = do
