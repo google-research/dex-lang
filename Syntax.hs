@@ -88,7 +88,6 @@ type IdxSetVal = Int
 data LitVal = IntLit  Int
             | RealLit Double
             | StrLit  String
-            | Zero -- treat this as a type-lambda function (mempty) instead?
                deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType

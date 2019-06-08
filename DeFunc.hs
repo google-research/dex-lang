@@ -264,14 +264,17 @@ deFuncTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
   extend ctDecls
   addCTsDeFunc (snd $ ctEnvPop ctEnv v)
 
+zero :: Atom
+zero = Lit (RealLit 0.0)
+
 evalDeriv :: Expr -> DerivM (Atom, Atom)
 evalDeriv expr = case expr of
   Var v -> do
     xt <- asks $ flip envLookup v
     return $ case xt of
-      Nothing -> (expr, Lit Zero)
+      Nothing -> (expr, zero)
       Just xt' -> xt'
-  Lit _ -> return (expr, Lit Zero)
+  Lit _ -> return (expr, zero)
   Decls [] body -> evalDeriv body
   Decls (Let (v:>_) bound:decls) body -> do
     xt <- evalDeriv bound
@@ -280,9 +283,7 @@ evalDeriv expr = case expr of
   App (Builtin b) arg -> do
     (x, t) <- evalDeriv arg
     x' <- writePrimal $ App (Builtin b) x
-    t' <- case t of
-            Lit Zero -> return (Lit Zero)
-            _ -> builtinDeriv b x t
+    t' <- builtinDeriv b x t
     return (x', t')
   For b body -> error "For not implemented yet"
   RecCon r -> do
@@ -324,14 +325,13 @@ evalTranspose ct expr = case expr of
   _ -> error $ "Suprising expression in transpose: " ++ pprint expr
 
 addCTsDeFunc :: [Atom] -> DeFuncM Atom
-addCTsDeFunc []  = return $ Lit Zero
-addCTsDeFunc [x] = return x
+addCTsDeFunc []  = return zero
 addCTsDeFunc (x:xs) = do xs' <- addCTsDeFunc xs
                          materialize (rawName "sum") $
                            App (Builtin FAdd) (RecCon (Tup [x, xs']))
 
 addCTs :: [Atom] -> TransposeM Atom
-addCTs []  = return $ Lit Zero
+addCTs []  = return zero
 addCTs [x] = return x
 
 builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
@@ -373,25 +373,19 @@ unpair (RecCon (Tup [x, y])) = (x, y)
 -- TODO: should these ring identities be applied in a separate pass?
 -- We might know more then, like the call sites of the linearized function.
 writeAdd :: Atom -> Atom -> DerivM Atom
-writeAdd (Lit Zero) y = return y
-writeAdd x (Lit Zero) = return x
 writeAdd x y = writeTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
 
 -- treated as linear in second argument only
 writeMul :: Atom -> Atom -> DerivM Atom
-writeMul _ (Lit Zero) = return $ Lit Zero
 writeMul x y = writeTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
 
 --- TODO: should these ring identities be applied in a separate pass?
 -- We might know more then, like the call sites of the linearized function.
 writeCTAdd :: Atom -> Atom -> TransposeM Atom
-writeCTAdd (Lit Zero) y = return y
-writeCTAdd x (Lit Zero) = return x
 writeCTAdd x y = writeCoTangent $ App (Builtin FAdd) (RecCon (Tup [x, y]))
 
 -- treated as linear in second argument only
 writeCTMul :: Atom -> Atom -> TransposeM Atom
-writeCTMul _ (Lit Zero) = return $ Lit Zero
 writeCTMul x y = writeCoTangent $ App (Builtin FMul) (RecCon (Tup [x, y]))
 
 writePrimal :: Expr -> DerivM Atom

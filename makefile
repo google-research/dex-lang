@@ -15,7 +15,9 @@ update-%: tests/%.cd
 all-tests: run-type-tests \
            run-eval-tests \
            run-shadow-tests \
-           run-annot-tests
+           run-annot-tests \
+           run-ad-tests
+
 
 clean:
 	rm cbits/*.so
