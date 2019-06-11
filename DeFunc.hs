@@ -301,7 +301,7 @@ expandDeriv _ (Lam b body) = do
       declsExpr xDecls $
         RecCon $ Tup [xOut, Lam (t:>ty) (declsExpr tDecls tOut)]
 
-evalDeriv :: Expr -> DerivM (Atom, Atom)
+evalDeriv :: Expr -> DerivM (Expr, Expr)
 evalDeriv expr = case expr of
   Var v -> do
     xt <- asks $ flip envLookup v
@@ -311,14 +311,14 @@ evalDeriv expr = case expr of
   Lit _ -> return (expr, zero)
   Decls [] body -> evalDeriv body
   Decls (Let (v:>_) bound:decls) body -> do
-    xt <- evalDeriv bound
-    extendR (v@>xt) (evalDeriv body')
+    (x, t) <- evalDeriv bound
+    x' <- writePrimal  v x
+    t' <- writeTangent v t
+    extendR (v@>(x', t')) (evalDeriv body')
     where body' = Decls decls body
   App (Builtin b) arg -> do
     (x, t) <- evalDeriv arg
-    x' <- writePrimal $ App (Builtin b) x
-    t' <- builtinDeriv b x t
-    return (x', t')
+    builtinDeriv b x t
   For _ _ -> error "For not implemented yet"
   RecCon r -> do
     r' <- traverse evalDeriv r
@@ -329,31 +329,29 @@ evalDeriv expr = case expr of
             recGetExpr t field)
   _ -> error $ "Suprising expression: " ++ pprint expr
 
-builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
+builtinDeriv :: Builtin -> Expr -> Expr -> DerivM (Expr, Expr)
 builtinDeriv b x t = case b of
-  FAdd -> writeAdd t1 t2
-            where (t1, t2) = unpair t
+  FAdd -> return (add x1 x2, add t1 t2)
   FMul -> do
-    t1' <- writeMul x2 t1
-    t2' <- writeMul x1 t2
-    writeAdd t1' t2'
-      where (t1, t2) = unpair t
-            (x1, x2) = unpair x
+    x1' <- writePrimal (rawName "tmp") x1
+    x2' <- writePrimal (rawName "tmp") x2
+    return (mul x1' x2', add (mul x2' t1)
+                             (mul x1' t2))
   where
-    writeAdd x y = writeTangent (add x y)
-    writeMul x y = writeTangent (mul x y)
+    (t1, t2) = unpair t
+    (x1, x2) = unpair x
 
-writePrimal :: Expr -> DerivM Atom
-writePrimal expr = do
-  v <- looks $ rename (rawName "primal") . snd . fst
+writePrimal :: Name -> Expr -> DerivM Atom
+writePrimal name expr = do
+  v <- looks $ rename name . snd . fst
   ty <- primalType expr
   extend ( ([Let (v :> ty) expr], v @> L ty)
          , ([]                  , v @> L ty)) -- primals stay in scope
   return $ Var v
 
-writeTangent :: Expr -> DerivM Atom
-writeTangent expr = do
-  v <- looks $ rename (rawName "tangent") . snd . snd
+writeTangent :: Name -> Expr -> DerivM Atom
+writeTangent name expr = do
+  v <- looks $ rename name . snd . snd
   ty <- tangentType expr
   extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
   return $ Var v
