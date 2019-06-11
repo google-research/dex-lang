@@ -58,11 +58,11 @@ simplify expr = case expr of
   Decls decls body -> withCat (mapM_ simplifyDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
   App (TApp (Builtin Fold) ts) arg -> simplifyFold ts arg
-  App (TApp (Builtin Deriv) ts) arg -> simplifyDeriv ts arg
-  App (TApp (Builtin Transpose) ts) arg -> simplifyTranspose ts arg
+  App (TApp (Builtin Deriv) ts) arg -> expandDeriv ts arg
+  App (TApp (Builtin Transpose) ts) arg -> expandTranspose ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
-    return $ App (Builtin b) arg'
+    return $ simplifyBuiltin b arg'
   TApp (Builtin Iota) [n] -> do
     n' <- subTy n
     return $ TApp (Builtin Iota) [n']
@@ -256,6 +256,27 @@ checkSubScope sub scope =
                     pprint lvars ++ "\n" ++ pprint scope
   where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]
 
+simplifyBuiltin :: Builtin -> Expr -> Expr
+simplifyBuiltin FAdd arg =
+  case (checkZero x, checkZero y) of
+    (Zero, _) -> y
+    (_, Zero) -> x
+    _ -> App (Builtin FAdd) arg
+  where (x, y) = unpair arg
+simplifyBuiltin FMul arg =
+  case (checkZero x, checkZero y) of
+    (Zero, _) -> zero
+    (_, Zero) -> zero
+    _ -> App (Builtin FMul) arg
+  where (x, y) = unpair arg
+simplifyBuiltin b arg = App (Builtin b) arg
+
+data MaybeZero a = Zero | NonZero a
+
+checkZero :: Expr -> MaybeZero Expr
+checkZero (Lit (RealLit 0.0)) = Zero
+checkZero expr = NonZero expr
+
 -- === Autodiff ===
 
 type DerivM a = ReaderT (Env (Atom, Atom))
@@ -263,8 +284,8 @@ type DerivM a = ReaderT (Env (Atom, Atom))
 
 type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
 
-simplifyDeriv :: [Type] -> Expr -> SimplifyM Expr
-simplifyDeriv _ (RecCon (Tup [Lam b body, x])) = do
+expandDeriv :: [Type] -> Expr -> SimplifyM Expr
+expandDeriv _ (RecCon (Tup [Lam b body, x])) = do
   x' <- simplify x
   refreshBinder b $ \(v:>ty) -> do
     (bodyOut', (decls, _)) <- scoped $ simplify body
@@ -278,14 +299,15 @@ simplifyDeriv _ (RecCon (Tup [Lam b body, x])) = do
     extend xDecls
     return $ RecCon $ Tup $ [xOut, Lam (t:>ty) (Decls (fst tDecls) tOut)]
 
-simplifyTranspose :: [Type] -> Expr -> SimplifyM Expr
-simplifyTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
+expandTranspose :: [Type] -> Expr -> SimplifyM Expr
+expandTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
   ct' <- simplify ct
   (bodyOut', (decls, _)) <- scoped $ simplify body
   let body' = Decls decls bodyOut'
   scope <- looks snd
   (((), ctEnv), ctDecls) <- liftEither $ flip runCatT (asSnd scope) $
-                              runWriterT $ evalTranspose ct' body'
+                              runWritert $ evalTranspose ct' body'
+
   extend ctDecls
   return $ addMany (snd $ ctEnvPop ctEnv v)
 
@@ -342,7 +364,7 @@ evalTranspose ct expr = case expr of
     tell ctEnv'
     ctV <- writeCoTangent $ addMany outCTs
     evalTranspose ctV bound
-    where body = Decls decls final
+    where body = declsExpr decls final
   App (Builtin b) arg -> builtinTranspose b ct arg
   _ -> error $ "Suprising expression in transpose: " ++ pprint expr
 
