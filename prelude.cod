@@ -77,13 +77,13 @@ map f xs = for i. f xs.i
 -- TODO: need a (probably builtin) vector space typeclass
 -- deriv :: (VSpace a, VSpace b) => ...
 deriv :: A a b. (a -> b) -> a -> (b, a -> b)
-deriv f x = %deriv (lam y. f y, x)
+deriv f = %deriv lam x. f x
 
 jvp :: A a b. (a -> b) -> a -> a -> b
 jvp f x t = snd (deriv f x) t
 
 transpose :: A a b. (a -> b) -> b -> a
-transpose f ct = %transpose (lam t. f t, ct)
+transpose f = %transpose lam t. f t
 
 vjp :: A a b. (a -> b) -> a -> (b, b -> a)
 vjp f x = let (y, df) = deriv f x

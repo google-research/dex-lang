@@ -74,8 +74,8 @@ simplify expr = case expr of
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> do
     refreshBinder b $ \b' -> do
-      (body', (decls, _)) <- scoped $ recur body
-      return $ For b' (declsExpr decls body')
+      body' <- simplifyScoped body
+      return $ For b' body'
   Get e ie -> do
     e' <- recur e
     Var ie' <- askLEnv ie
@@ -99,15 +99,20 @@ simplify expr = case expr of
   where
     recur = simplify
 
+simplifyScoped :: Expr -> SimplifyM Expr
+simplifyScoped expr = do
+  (body, (decls, _)) <- scoped $ simplify expr
+  return (declsExpr decls body)
+
 inlineDecls :: Expr -> SimplifyM Expr
 inlineDecls (Decls decls final) = extend (asFst decls) >> return final
 inlineDecls expr = return expr
 
 simplifyDecl :: Decl -> SimplifyCat ()
 simplifyDecl (Let (v:>_) bound) = do
-  (bound', (decls, _)) <- toCat $ scoped $ simplify bound
+  bound' <- toCat $ simplifyScoped bound
   curScope <- looks $ snd . snd
-  case decompose curScope (declsExpr decls bound') of
+  case decompose curScope bound' of
     Defer expr -> extend $ asFst $ v @> L expr
     Split expr builder -> do
        ty <- toCat $ exprType expr  -- TODO: use optional types and infer later
@@ -206,9 +211,9 @@ simplifyFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
   x' <- simplify x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
-      (body', (decls, _)) <- scoped $ simplify body
+      body' <- simplifyScoped body
       return $ App (TApp (Builtin Fold) ts')
-                   (RecCon (Tup [For ib' (Lam xb' (declsExpr decls body')), x']))
+                   (RecCon (Tup [For ib' (Lam xb' body'), x']))
 
 askLEnv :: Var -> SimplifyM Atom
 askLEnv v = do x <- asks $ flip envLookup v
@@ -277,39 +282,24 @@ checkZero :: Expr -> MaybeZero Expr
 checkZero (Lit (RealLit 0.0)) = Zero
 checkZero expr = NonZero expr
 
--- === Autodiff ===
+-- === Forward differentiation ===
 
 type DerivM a = ReaderT (Env (Atom, Atom))
                   (CatT (OutDecls, OutDecls) (Either Err)) a
 
-type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
-
 expandDeriv :: [Type] -> Expr -> SimplifyM Expr
-expandDeriv _ (RecCon (Tup [Lam b body, x])) = do
-  x' <- simplify x
+expandDeriv _ (Lam b body) = do
   refreshBinder b $ \(v:>ty) -> do
-    (bodyOut', (decls, _)) <- scoped $ simplify body
+    body' <- simplifyScoped body
     scope <- looks snd
-    let body' = Decls decls bodyOut'
-        t = rename (rawName "tangent") scope
-        scope' = scope <> t @> L ty
-    ((xOut, tOut), (xDecls, tDecls)) <-
+    let t = rename (rawName "tangent") scope
+        scope' = scope <> v @> L ty <> t @> L ty
+    ((xOut, tOut), ((xDecls, _), (tDecls, _))) <-
                     liftEither $ flip runCatT (asSnd scope', asSnd scope') $
-                      flip runReaderT (v @> (x', Var t)) $ evalDeriv body'
-    extend xDecls
-    return $ RecCon $ Tup $ [xOut, Lam (t:>ty) (Decls (fst tDecls) tOut)]
-
-expandTranspose :: [Type] -> Expr -> SimplifyM Expr
-expandTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
-  ct' <- simplify ct
-  (bodyOut', (decls, _)) <- scoped $ simplify body
-  let body' = Decls decls bodyOut'
-  scope <- looks snd
-  (((), ctEnv), ctDecls) <- liftEither $ flip runCatT (asSnd scope) $
-                              runWritert $ evalTranspose ct' body'
-
-  extend ctDecls
-  return $ addMany (snd $ ctEnvPop ctEnv v)
+                      flip runReaderT (v @> (Var v, Var t)) $ evalDeriv body'
+    return $ Lam (v:>ty) $
+      declsExpr xDecls $
+        RecCon $ Tup [xOut, Lam (t:>ty) (declsExpr tDecls tOut)]
 
 evalDeriv :: Expr -> DerivM (Atom, Atom)
 evalDeriv expr = case expr of
@@ -339,6 +329,38 @@ evalDeriv expr = case expr of
             recGetExpr t field)
   _ -> error $ "Suprising expression: " ++ pprint expr
 
+builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
+builtinDeriv b x t = case b of
+  FAdd -> writeAdd t1 t2
+            where (t1, t2) = unpair t
+  FMul -> do
+    t1' <- writeMul x2 t1
+    t2' <- writeMul x1 t2
+    writeAdd t1' t2'
+      where (t1, t2) = unpair t
+            (x1, x2) = unpair x
+  where
+    writeAdd x y = writeTangent (add x y)
+    writeMul x y = writeTangent (mul x y)
+
+writePrimal :: Expr -> DerivM Atom
+writePrimal expr = do
+  v <- looks $ rename (rawName "primal") . snd . fst
+  ty <- primalType expr
+  extend ( ([Let (v :> ty) expr], v @> L ty)
+         , ([]                  , v @> L ty)) -- primals stay in scope
+  return $ Var v
+
+writeTangent :: Expr -> DerivM Atom
+writeTangent expr = do
+  v <- looks $ rename (rawName "tangent") . snd . snd
+  ty <- tangentType expr
+  extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
+  return $ Var v
+
+-- === Transposition ===
+
+type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
 newtype CTEnv = CTEnv (Env [Atom])
 
 instance Semigroup CTEnv where
@@ -347,6 +369,17 @@ instance Semigroup CTEnv where
 instance Monoid CTEnv where
   mempty = CTEnv mempty
   mappend = (<>)
+
+expandTranspose :: [Type] -> Expr -> SimplifyM Expr
+expandTranspose _ expr@(Lam (v:>xTy) body) = do
+  body' <- simplifyScoped body
+  scope <- looks snd
+  let ct = rename (rawName "ct") scope
+  ArrType _ ctTy <- applySub expr >>= exprType
+  let scope' = scope <> v @> L xTy <> ct @> L ctTy
+  (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
+                                   runWriterT $ evalTranspose (Var ct) body'
+  return $ Lam (ct:>ctTy) (declsExpr ctDecls (addMany (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
@@ -382,20 +415,6 @@ builtinTranspose b ct arg = case b of
     writeAdd x y = writeCoTangent $ add x y
     writeMul x y = writeCoTangent $ mul x y
 
-builtinDeriv :: Builtin -> Atom -> Atom -> DerivM Atom
-builtinDeriv b x t = case b of
-  FAdd -> writeAdd t1 t2
-            where (t1, t2) = unpair t
-  FMul -> do
-    t1' <- writeMul x2 t1
-    t2' <- writeMul x1 t2
-    writeAdd t1' t2'
-      where (t1, t2) = unpair t
-            (x1, x2) = unpair x
-  where
-    writeAdd x y = writeTangent (add x y)
-    writeMul x y = writeTangent (mul x y)
-
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
   v <- looks $ rename (rawName "ct") . snd
@@ -407,8 +426,7 @@ coTangentType :: Expr -> TransposeM Type
 coTangentType expr = do env <- looks $ snd
                         return $ getType env expr
 
-unpair :: Atom -> (Atom, Atom)
-unpair (RecCon (Tup [x, y])) = (x, y)
+-- === handy constructor wrappers ===
 
 add :: Expr -> Expr -> Expr
 add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
@@ -416,27 +434,15 @@ add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
 mul :: Expr -> Expr -> Expr
 mul x y = App (Builtin FMul) (RecCon (Tup [x, y]))
 
-zero :: Atom
-zero = Lit (RealLit 0.0)
-
 addMany :: [Expr] -> Expr
 addMany [] = zero
 addMany (x:xs) = App (Builtin FAdd) (RecCon (Tup [x, addMany xs]))
 
-writePrimal :: Expr -> DerivM Atom
-writePrimal expr = do
-  v <- looks $ rename (rawName "primal") . snd . fst
-  ty <- primalType expr
-  extend ( ([Let (v :> ty) expr], v @> L ty)
-         , ([]                  , v @> L ty)) -- primals stay in scope
-  return $ Var v
+unpair :: Atom -> (Atom, Atom)
+unpair (RecCon (Tup [x, y])) = (x, y)
 
-writeTangent :: Expr -> DerivM Atom
-writeTangent expr = do
-  v <- looks $ rename (rawName "tangent") . snd . snd
-  ty <- tangentType expr
-  extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
-  return $ Var v
+zero :: Atom
+zero = Lit (RealLit 0.0)
 
 primalType :: Expr -> DerivM Type
 primalType expr = do env <- looks $ snd . fst
@@ -453,4 +459,3 @@ recGetExpr e          field = RecGet e field
 declsExpr :: [Decl] -> Expr -> Expr
 declsExpr [] body = body
 declsExpr decls body = Decls decls body
-
