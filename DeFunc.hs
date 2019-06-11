@@ -270,8 +270,8 @@ simplifyBuiltin FAdd arg =
   where (x, y) = unpair arg
 simplifyBuiltin FMul arg =
   case (checkZero x, checkZero y) of
-    (Zero, _) -> zero
-    (_, Zero) -> zero
+    (Zero, _) -> realZero
+    (_, Zero) -> realZero
     _ -> App (Builtin FMul) arg
   where (x, y) = unpair arg
 simplifyBuiltin b arg = App (Builtin b) arg
@@ -284,7 +284,7 @@ checkZero expr = NonZero expr
 
 -- === Forward differentiation ===
 
-type DerivM a = ReaderT (Env (Atom, Atom))
+type DerivM a = ReaderT (Env (Either Type (Atom, Atom)))
                   (CatT (OutDecls, OutDecls) (Either Err)) a
 
 expandDeriv :: [Type] -> Expr -> SimplifyM Expr
@@ -294,27 +294,32 @@ expandDeriv _ (Lam b body) = do
     scope <- looks snd
     let t = rename (rawName "tangent") scope
         scope' = scope <> v @> L ty <> t @> L ty
+        env = getEnvTypes scope <> v @> Right (Var v, Var t)
     ((xOut, tOut), ((xDecls, _), (tDecls, _))) <-
                     liftEither $ flip runCatT (asSnd scope', asSnd scope') $
-                      flip runReaderT (v @> (Var v, Var t)) $ evalDeriv body'
+                      flip runReaderT env $ evalDeriv body'
     return $ Lam (v:>ty) $
       declsExpr xDecls $
         RecCon $ Tup [xOut, Lam (t:>ty) (declsExpr tDecls tOut)]
+  where
+    getEnvTypes scope = envMapMaybe asType scope
+    asType x = case x of L ty -> Just (Left ty)
+                         T _ -> Nothing
 
 evalDeriv :: Expr -> DerivM (Expr, Expr)
 evalDeriv expr = case expr of
   Var v -> do
-    xt <- asks $ flip envLookup v
+    xt <- asks (!v)
     return $ case xt of
-      Nothing -> (expr, zero)
-      Just xt' -> xt'
-  Lit _ -> return (expr, zero)
+      Left ty -> (expr, zero ty)
+      Right xt' -> xt'
+  Lit c -> return (expr, zero (BaseType (litType c)))
   Decls [] body -> evalDeriv body
   Decls (Let (v:>_) bound:decls) body -> do
     (x, t) <- evalDeriv bound
     x' <- writePrimal  v x
     t' <- writeTangent v t
-    extendR (v@>(x', t')) (evalDeriv body')
+    extendR (v @> Right (x', t')) (evalDeriv body')
     where body' = Decls decls body
   App (Builtin b) arg -> do
     (x, t) <- evalDeriv arg
@@ -393,7 +398,8 @@ expandTranspose [_, ctTy] (Lam (v:>xTy) body) = do
   let scope' = scope <> v @> L xTy' <> ct @> L ctTy'
   (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
                                    runWriterT $ evalTranspose (Var ct) body'
-  return $ Lam (ct:>ctTy') (declsExpr ctDecls (addMany (snd $ ctEnvPop ctEnv v)))
+  return $ Lam (ct:>ctTy')
+               (declsExpr ctDecls (addMany xTy (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
@@ -405,11 +411,11 @@ evalTranspose ct expr = case expr of
   Var v -> tell $ CTEnv $ v @> [ct]
   Lit _ -> return ()
   Decls [] body -> evalTranspose ct body
-  Decls (Let (v:>_) bound:decls) final -> do
+  Decls (Let (v:>ty) bound:decls) final -> do
     ((), ctEnv) <- lift $ runWriterT $ evalTranspose ct body
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
-    evalTranspose (addMany outCTs) bound
+    evalTranspose (addMany ty outCTs) bound
     where body = declsExpr decls final
   App (Builtin b) arg -> builtinTranspose b ct arg
   _ -> error $ "Suprising expression in transpose: " ++ pprint expr
@@ -444,15 +450,29 @@ add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
 mul :: Expr -> Expr -> Expr
 mul x y = App (Builtin FMul) (RecCon (Tup [x, y]))
 
-addMany :: [Expr] -> Expr
-addMany [] = zero
-addMany (x:xs) = App (Builtin FAdd) (RecCon (Tup [x, addMany xs]))
+addMany :: Type -> [Expr] -> Expr
+addMany ty [] = zero ty
+addMany ty (x:xs) = addVect ty x (addMany ty xs)
+
+addVect :: Type -> Expr -> Expr -> Expr
+addVect (BaseType RealType) x y = add x y
 
 unpair :: Atom -> (Atom, Atom)
 unpair (RecCon (Tup [x, y])) = (x, y)
 
-zero :: Atom
-zero = Lit (RealLit 0.0)
+zero :: Type -> Expr
+zero ty = case ty of
+  BaseType RealType -> realZero
+  BaseType _ -> unitCon
+  RecType r -> RecCon $ fmap zero r
+  TabType i a -> For (rawName "i" :> i) (zero a)
+  ArrType _ _ -> error "Should be defunctionalized already"
+
+unitCon :: Expr
+unitCon = RecCon (Tup [])
+
+realZero :: Expr
+realZero = Lit (RealLit 0.0)
 
 primalType :: Expr -> DerivM Type
 primalType expr = do env <- looks $ snd . fst
