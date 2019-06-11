@@ -385,7 +385,7 @@ ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
   where m' = M.delete v m
         x = M.findWithDefault [] v m
 
-evalTranspose :: Atom -> Expr -> TransposeM ()
+evalTranspose :: Expr -> Expr -> TransposeM ()
 evalTranspose ct expr = case expr of
   Var v -> tell $ CTEnv $ v @> [ct]
   Lit _ -> return ()
@@ -394,8 +394,7 @@ evalTranspose ct expr = case expr of
     ((), ctEnv) <- lift $ runWriterT $ evalTranspose ct body
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
-    ctV <- writeCoTangent $ addMany outCTs
-    evalTranspose ctV bound
+    evalTranspose (addMany outCTs) bound
     where body = declsExpr decls final
   App (Builtin b) arg -> builtinTranspose b ct arg
   _ -> error $ "Suprising expression in transpose: " ++ pprint expr
@@ -403,16 +402,13 @@ evalTranspose ct expr = case expr of
 builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
 builtinTranspose b ct arg = case b of
   FAdd -> do
-    evalTranspose ct t1
-    evalTranspose ct t2
+    ct' <- writeCoTangent ct
+    evalTranspose ct' t1
+    evalTranspose ct' t2
     where (t1, t2) = unpair arg
   FMul -> do
-    ct' <- writeMul x ct
-    evalTranspose ct' t
+    evalTranspose (mul x ct) t
     where (x, t) = unpair arg
-  where
-    writeAdd x y = writeCoTangent $ add x y
-    writeMul x y = writeCoTangent $ mul x y
 
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
