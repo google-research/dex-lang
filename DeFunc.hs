@@ -369,15 +369,16 @@ instance Monoid CTEnv where
   mappend = (<>)
 
 expandTranspose :: [Type] -> Expr -> SimplifyM Expr
-expandTranspose _ expr@(Lam (v:>xTy) body) = do
+expandTranspose [_, ctTy] (Lam (v:>xTy) body) = do
+  ctTy' <- subTy ctTy
+  xTy' <- subTy xTy
   body' <- simplifyScoped body
   scope <- looks snd
   let ct = rename (rawName "ct") scope
-  ArrType _ ctTy <- applySub expr >>= exprType
-  let scope' = scope <> v @> L xTy <> ct @> L ctTy
+  let scope' = scope <> v @> L xTy' <> ct @> L ctTy'
   (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
                                    runWriterT $ evalTranspose (Var ct) body'
-  return $ Lam (ct:>ctTy) (declsExpr ctDecls (addMany (snd $ ctEnvPop ctEnv v)))
+  return $ Lam (ct:>ctTy') (declsExpr ctDecls (addMany (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
