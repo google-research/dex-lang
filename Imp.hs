@@ -135,6 +135,7 @@ writeExpr :: Dest -> IExpr -> ImpProg
 writeExpr (Buffer name destIdxs srcIdxs) expr =
   asProg $ Update name destIdxs Copy [expr']
   where expr' = foldl IGet expr srcIdxs
+writeExpr IgnoreIt _ = ImpProg []
 
 writeBuiltin :: Builtin -> Dest -> [IExpr] -> ImpProg
 writeBuiltin b (Buffer name destIdxs []) exprs =

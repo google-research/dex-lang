@@ -19,34 +19,31 @@ type Scope = FullEnv Type ()
 type TopEnv = (Subst, Scope)
 type Atom = Expr
 type OutDecls = ([Decl], Scope)
-type DeFuncCat a = CatT (Subst, OutDecls) (Either Err) a
-type DeFuncM a = ReaderT Subst (CatT OutDecls (Either Err)) a
+
+type SimplifyM a = ReaderT Subst (CatT OutDecls (Either Err)) a
+type SimplifyCat a = CatT (Subst, OutDecls) (Either Err) a
+
+data SplitExpr = Split Expr (Expr -> Expr)
+               | Defer Expr
 
 deFuncPass :: TopDecl -> TopPass TopEnv TopDecl
 deFuncPass topDecl = case topDecl of
-  TopDecl decl -> do ((decl, env), []) <- asTopPass $ toCat $ deFuncDeclTop decl
-                     putEnv env
-                     return $ TopDecl decl
+  TopDecl decl -> do
+    ((), decls) <- asTopPass $ simplifyDecl decl
+    case decls of
+      [] -> return $ dummyDecl
+      [decl'] -> return $ TopDecl decl'
+    where dummyDecl = TopDecl (Let (rawName "_" :> (RecType (Tup [])))
+                        (RecCon (Tup []))) -- TODO: allow multiple decls (or none)
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (atom, decls) <- asTopPass $ toCat $ deFuncExpr expr
-    let expr = Decls decls atom
+    (atom, decls) <- asTopPass $ toCat $ simplify expr
+    let expr = declsExpr decls atom
     case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr
                 _ -> return ()
     return $ EvalCmd (Command cmd expr)
 
-deFuncDeclTop :: Decl -> DeFuncM (Decl, TopEnv)
-deFuncDeclTop (Let (v:>_) bound) = do
-  (bound', atomBuilder) <- deFuncScoped bound
-  ty <- exprType bound'
-  scope <- looks snd
-  return (Let (v:>ty) bound', (v @> L (atomBuilder (Var v) scope), v @> L ty))
-deFuncDeclTop (Unpack b tv bound) = do
-  (bound', (decls,_)) <- scoped $ deFuncExpr bound
-  return (Unpack b tv (Decls decls bound'),
-          (tv @> T (TypeVar tv), (tv @> T ())))
-
-asTopPass :: DeFuncCat a -> TopPass TopEnv (a, [Decl])
+asTopPass :: SimplifyCat a -> TopPass TopEnv (a, [Decl])
 asTopPass m = do
   (env, scope) <- getEnv
   (ans, (env', (decls, scope'))) <- liftEither $
@@ -54,21 +51,18 @@ asTopPass m = do
   putEnv $ (env', scope')
   return (ans, decls)
 
-deFuncExpr :: Expr -> DeFuncM Atom
-deFuncExpr expr = case expr of
+simplify :: Expr -> SimplifyM Expr
+simplify expr = case expr of
   Var v -> askLEnv v
-  Lit l -> return $ Lit l
-  Decls decls body -> withCat (mapM_ deFuncDecl decls) $ \() -> recur body
+  Lit _ -> return expr
+  Decls decls body -> withCat (mapM_ simplifyDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
-  App (TApp (Builtin Fold) ts) arg -> deFuncFold ts arg
-  App (TApp (Builtin Deriv) ts) arg -> deFuncDeriv ts arg
-  App (TApp (Builtin Transpose) ts) arg -> deFuncTranspose ts arg
+  App (TApp (Builtin Fold) ts) arg -> simplifyFold ts arg
+  App (TApp (Builtin Deriv) ts) arg -> simplifyDeriv ts arg
+  App (TApp (Builtin Transpose) ts) arg -> simplifyTranspose ts arg
   App (Builtin b) arg -> do
     arg' <- recur arg
-    let expr' = App (Builtin b) arg'
-    if trivialBuiltin b
-      then return expr'
-      else materialize (rawName "tmp") expr'
+    return $ App (Builtin b) arg'
   TApp (Builtin Iota) [n] -> do
     n' <- subTy n
     return $ TApp (Builtin Iota) [n']
@@ -79,13 +73,9 @@ deFuncExpr expr = case expr of
       extendR (v @> L arg') $ recur body
   Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> do
-    (expr', atomBuilder, b'@(i':>_)) <- refreshBinder b $ \b' -> do
-                                          (body', builder) <- deFuncScoped body
-                                          return (For b' body', builder, b')
-    tab <- materialize (rawName "tab") expr'
-    scope <- looks snd
-    let built = atomBuilder (Get tab i') (scope <> lbind b')
-    return $ For b' built
+    refreshBinder b $ \b' -> do
+      (body', (decls, _)) <- scoped $ recur body
+      return $ For b' (declsExpr decls body')
   Get e ie -> do
     e' <- recur e
     Var ie' <- askLEnv ie
@@ -93,12 +83,12 @@ deFuncExpr expr = case expr of
       For (i:>_) body -> do
         dropSubst $
           extendR (i @> L (Var ie')) $
-            applySub body
-      tabExpr -> return $ Get tabExpr ie'
+            applySub body >>= inlineDecls
+      _ -> return $ Get e' ie'
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> do
-    val <- recur e
-    return $ recGetExpr val field
+    e' <- recur e
+    return $ recGetExpr e' field
   TLam _ _ -> applySub expr
   TApp fexpr ts -> do
     TLam bs body <- recur fexpr
@@ -106,13 +96,94 @@ deFuncExpr expr = case expr of
     dropSubst $ do
       extendR (bindFold $ zipWith replaceAnnot bs (map T ts')) $ do
         recur body
-  where recur = deFuncExpr
+  where
+    recur = simplify
 
-recGetExpr :: Expr -> RecField -> Expr
-recGetExpr (RecCon r) field = recGet r field
-recGetExpr e          field = RecGet e field
+inlineDecls :: Expr -> SimplifyM Expr
+inlineDecls (Decls decls final) = extend (asFst decls) >> return final
+inlineDecls expr = return expr
 
-refreshBinder :: Binder -> (Binder -> DeFuncM a) -> DeFuncM a
+simplifyDecl :: Decl -> SimplifyCat ()
+simplifyDecl (Let (v:>_) bound) = do
+  (bound', (decls, _)) <- toCat $ scoped $ simplify bound
+  curScope <- looks $ snd . snd
+  case decompose curScope (declsExpr decls bound') of
+    Defer expr -> extend $ asFst $ v @> L expr
+    Split expr builder -> do
+       ty <- toCat $ exprType expr  -- TODO: use optional types and infer later
+       v' <- looks $ rename v . snd . snd
+       extend ( v @> L (builder (Var v'))
+              , ([Let (v':>ty) expr], v' @> L ty))
+simplifyDecl (Unpack (v:>ty) tv bound) = do
+  bound' <- toCat $ simplify bound
+  tv' <- looks $ rename tv . snd . snd
+  extend (tv @> T (TypeVar tv'), ([], tv'@> T ()))
+  ty' <- toCat $ subTy ty
+  v' <- looks $ rename v . snd . snd
+  extend $ (v @> L (Var v'), ([Unpack (v':>ty') tv' bound'], v'@> L ty'))
+
+matLocalVars :: Scope -> Expr -> SplitExpr
+matLocalVars destScope expr = case localVars of
+  []  -> Defer expr
+  [v] -> Split (Var v) (buildVal v)
+  vs  -> Split (RecCon (fmap Var (Tup vs))) (buildValTup vs)
+  where
+    localVars = envNames $ envDiff (freeLVars expr) destScope
+    buildVal    v  new = subExpr (v @> L new) (fmap (const ()) destScope) expr
+    buildValTup vs new = subExpr sub          (fmap (const ()) destScope) expr
+      where sub = fold $ fmap (\(k,v) -> v @> L (RecGet new k)) (recNameVals (Tup vs))
+
+decompose :: Scope -> Expr -> SplitExpr
+decompose scope expr = case expr of
+  Var v -> if v `isin` scope then Defer expr
+                             else pureMat expr
+  Lit _ -> Defer expr
+  Decls decls body ->
+    case decompose scope body of
+      Defer body' -> Defer body'
+      Split body' recon -> Split (Decls decls body') recon
+  Lam _ _ -> matLocalVars scope expr
+  App (Builtin b) _ -> if trivialBuiltin b then Defer expr
+                                           else pureMat expr
+  TApp (Builtin b) _ -> if trivialBuiltin b then Defer expr
+                                            else pureMat expr
+  App _ _ -> pureMat expr
+  Builtin _ -> error "Builtin"
+  For b@(i:>_) body ->
+    case decompose scope body of
+      -- could use a FullMat constructor here
+      Split body' recon -> Split (For b body')
+                                 (\e -> For b (recon (Get e i)))  -- need fresh i?
+      Defer body' -> Defer (For b body')
+  Get _ _ -> pureMat expr
+  RecCon r -> if all isDefer splits
+                then Defer expr
+                else Split expr' build
+    where
+      splits = fmap (decompose scope) r
+      splits' = fmap forceSplit splits
+      expr' = RecCon $ fmap fst splits'
+      build e = RecCon $ fmap (\(field, (_, f)) -> f (RecGet e field))
+                              (recNameVals splits')
+  RecGet _ _ -> pureMat expr
+  TLam _ _ -> matLocalVars scope expr
+  TApp _ _ -> error "Shouldn't see TApp here"
+  where
+    recur = simplify
+
+    pureMat :: Expr -> SplitExpr
+    pureMat expr = Split expr id
+
+forceSplit :: SplitExpr -> (Expr, Expr -> Expr)
+forceSplit (Split e f) = (e, f)
+forceSplit (Defer   e) = (RecCon (Tup []), const e)
+
+isDefer :: SplitExpr -> Bool
+isDefer (Split _ _) = False
+isDefer (Defer _) = True
+
+
+refreshBinder :: Binder -> (Binder -> SimplifyM a) -> SimplifyM a
 refreshBinder (v:>ty) cont = do
   ty' <- subTy ty
   v' <- looks $ rename v . snd
@@ -120,67 +191,26 @@ refreshBinder (v:>ty) cont = do
     extendLocal (asSnd $ v' @> L ty') $ do
       cont (v':>ty')
 
--- Should we scope RHS of local lets? It's currently the only local/top diff
-deFuncDecl :: Decl -> DeFuncCat ()
-deFuncDecl (Let (v:>_) bound) = do
-  x <- toCat $ deFuncExpr bound
-  extend $ asFst $ v @> L x
-deFuncDecl (Unpack (v:>ty) tv bound) = do
-  bound' <- toCat $ deFuncExpr bound
-  tv' <- looks $ rename tv . snd . snd
-  extend (tv @> T (TypeVar tv'), ([], tv'@> T ()))
-  ty' <- toCat $ subTy ty
-  v' <- looks $ rename v . snd . snd
-  extend $ (v @> L (Var v'), ([Unpack (v':>ty') tv' bound'], v'@> L ty'))
-
--- writes nothing
-deFuncScoped :: Expr -> DeFuncM (Expr, Expr -> Scope -> Atom)
-deFuncScoped expr = do
-  (atom, (decls, outScope)) <- scoped $ deFuncExpr expr
-  let (expr', builder) = saveScope outScope atom
-  return (Decls decls expr', builder)
-
-saveScope :: Env a -> Atom -> (Expr, Expr -> Scope -> Atom)
-saveScope localEnv atom =
-  case envNames $ envIntersect (freeLVars atom) localEnv of
-    [v] -> (Var v, buildVal v)
-    vs  -> (RecCon (fmap Var (Tup vs)), buildValTup vs)
-  where
-    buildVal    v  new scope = subExpr (v @> L new) (fmap (const ()) scope) atom
-    buildValTup vs new scope = subExpr sub          (fmap (const ()) scope) atom
-      where sub = fold $ fmap (\(k,v) -> v @> L (RecGet new k)) (recNameVals (Tup vs))
-
-materialize :: Name -> Expr -> DeFuncM Expr
-materialize nameHint expr = do
-  v <- looks $ rename nameHint . snd
-  ty <- exprType expr
-  case singletonType ty of
-    Just expr' -> return expr'
-    Nothing -> do
-      extend ([Let (v :> ty) expr], v @> L ty)
-      return $ Var v
-
-exprType :: Expr -> DeFuncM Type
+exprType :: Expr -> SimplifyM Type
 exprType expr = do env <- looks $ snd
                    return $ getType env expr
 
-subTy :: Type -> DeFuncM Type
+subTy :: Type -> SimplifyM Type
 subTy ty = do env <- ask
               return $ maybeSub (fmap fromT . envLookup env) ty
 
 -- TODO: check/fail higher order case
-deFuncFold :: [Type] -> Expr -> DeFuncM Expr
-deFuncFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
+simplifyFold :: [Type] -> Expr -> SimplifyM Expr
+simplifyFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
   ts' <- traverse subTy ts
-  x' <- deFuncExpr x
+  x' <- simplify x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
-      (body', (decls, _)) <- scoped $ deFuncExpr body
-      let outExpr = App (TApp (Builtin Fold) ts')
-                     (RecCon (Tup [For ib' (Lam xb' (Decls decls body')), x']))
-      materialize (rawName "fold_out") outExpr
+      (body', (decls, _)) <- scoped $ simplify body
+      return $ App (TApp (Builtin Fold) ts')
+                   (RecCon (Tup [For ib' (Lam xb' (declsExpr decls body')), x']))
 
-askLEnv :: Var -> DeFuncM Atom
+askLEnv :: Var -> SimplifyM Atom
 askLEnv v = do x <- asks $ flip envLookup v
                return $ case x of
                  Just (L atom) -> atom
@@ -193,21 +223,14 @@ trivialBuiltin b = case b of
   IntToReal -> True
   _ -> False
 
-singletonType :: Type -> Maybe Expr
-singletonType ty = case ty of
-  RecType (Tup []) -> return $ RecCon (Tup [])
-  RecType r -> liftM RecCon $ traverse singletonType r
-  TabType n v -> liftM (For (rawName "i" :> n)) $ singletonType v
-  _ -> Nothing
-
-toCat :: DeFuncM a -> DeFuncCat a
+toCat :: SimplifyM a -> SimplifyCat a
 toCat m = do
   (env, decls) <- look
   (ans, decls') <- liftEither $ runCatT (runReaderT m env) decls
   extend (mempty, decls')
   return ans
 
-withCat :: DeFuncCat a -> (a -> DeFuncM b) -> DeFuncM b
+withCat :: SimplifyCat a -> (a -> SimplifyM b) -> SimplifyM b
 withCat m cont = do
   env <- ask
   decls <- look
@@ -215,17 +238,17 @@ withCat m cont = do
   extend decls'
   extendR env' $ cont ans
 
-dropSubst :: DeFuncM a -> DeFuncM a
+dropSubst :: SimplifyM a -> SimplifyM a
 dropSubst m = local (const mempty) m
 
-applySub :: Expr -> DeFuncM Expr
+applySub :: Expr -> SimplifyM Expr
 applySub expr = do
   sub <- ask
   scope <- looks $ fmap (const ()) . snd
   checkSubScope sub scope  -- TODO: remove this when we care about performance
   return $ subExpr sub scope expr
 
-checkSubScope :: Subst -> Env () -> DeFuncM ()
+checkSubScope :: Subst -> Env () -> SimplifyM ()
 checkSubScope sub scope =
   if all (`isin` scope) lvars
     then return ()
@@ -233,16 +256,18 @@ checkSubScope sub scope =
                     pprint lvars ++ "\n" ++ pprint scope
   where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]
 
+-- === Autodiff ===
+
 type DerivM a = ReaderT (Env (Atom, Atom))
                   (CatT (OutDecls, OutDecls) (Either Err)) a
 
 type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
 
-deFuncDeriv :: [Type] -> Expr -> DeFuncM Expr
-deFuncDeriv _ (RecCon (Tup [Lam b body, x])) = do
-  x' <- deFuncExpr x
+simplifyDeriv :: [Type] -> Expr -> SimplifyM Expr
+simplifyDeriv _ (RecCon (Tup [Lam b body, x])) = do
+  x' <- simplify x
   refreshBinder b $ \(v:>ty) -> do
-    (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
+    (bodyOut', (decls, _)) <- scoped $ simplify body
     scope <- looks snd
     let body' = Decls decls bodyOut'
         t = rename (rawName "tangent") scope
@@ -253,16 +278,16 @@ deFuncDeriv _ (RecCon (Tup [Lam b body, x])) = do
     extend xDecls
     return $ RecCon $ Tup $ [xOut, Lam (t:>ty) (Decls (fst tDecls) tOut)]
 
-deFuncTranspose :: [Type] -> Expr -> DeFuncM Expr
-deFuncTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
-  ct' <- deFuncExpr ct
-  (bodyOut', (decls, _)) <- scoped $ deFuncExpr body
+simplifyTranspose :: [Type] -> Expr -> SimplifyM Expr
+simplifyTranspose _ (RecCon (Tup [Lam (v:>_) body, ct])) = do
+  ct' <- simplify ct
+  (bodyOut', (decls, _)) <- scoped $ simplify body
   let body' = Decls decls bodyOut'
   scope <- looks snd
   (((), ctEnv), ctDecls) <- liftEither $ flip runCatT (asSnd scope) $
                               runWriterT $ evalTranspose ct' body'
   extend ctDecls
-  materialize (rawName "ctOut") $ addMany (snd $ ctEnvPop ctEnv v)
+  return $ addMany (snd $ ctEnvPop ctEnv v)
 
 evalDeriv :: Expr -> DerivM (Atom, Atom)
 evalDeriv expr = case expr of
@@ -282,7 +307,7 @@ evalDeriv expr = case expr of
     x' <- writePrimal $ App (Builtin b) x
     t' <- builtinDeriv b x t
     return (x', t')
-  For b body -> error "For not implemented yet"
+  For _ _ -> error "For not implemented yet"
   RecCon r -> do
     r' <- traverse evalDeriv r
     return (RecCon (fmap fst r'), RecCon (fmap snd r'))
@@ -398,3 +423,12 @@ primalType expr = do env <- looks $ snd . fst
 tangentType :: Expr -> DerivM Type
 tangentType expr = do env <- looks $ snd . snd
                       return $ getType env expr
+
+recGetExpr :: Expr -> RecField -> Expr
+recGetExpr (RecCon r) field = recGet r field
+recGetExpr e          field = RecGet e field
+
+declsExpr :: [Decl] -> Expr -> Expr
+declsExpr [] body = body
+declsExpr decls body = Decls decls body
+

@@ -4,7 +4,7 @@ module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot, envIntersect,
             replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion,
-            envLookupDefault) where
+            envLookupDefault, envDiff) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -46,6 +46,9 @@ envSubset vs (Env m) = Env $ M.intersection m (M.fromList [(v,()) | v <- vs])
 
 envIntersect :: Env a -> Env b -> Env b
 envIntersect (Env m) (Env m') = Env $ M.intersection m' m
+
+envDiff :: Env a -> Env b -> Env a
+envDiff (Env m) (Env m') = Env $ M.difference m m'
 
 envMonoidUnion :: Monoid a => Env a -> Env a -> Env a
 envMonoidUnion (Env m) (Env m') = Env $ M.unionWith (<>) m m'
