@@ -12,3 +12,11 @@ f = lam x. x * x * x
 :p grad f 1.0
 
 > [3.0]
+
+_, nx = unpack range 3
+
+g x = for i::nx. 3.0 * x * x
+
+:p jvp g 2.0 1.0
+
+> [12.0, 12.0, 12.0]

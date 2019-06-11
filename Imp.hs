@@ -124,6 +124,7 @@ asBuffer (v :> _) = Buffer v [] []
 
 indexSource :: Index -> Dest -> Dest
 indexSource i (Buffer v destIdxs srcIdxs) = Buffer v destIdxs (i : srcIdxs)
+indexSource _ IgnoreIt = IgnoreIt
 
 indexDest :: Index -> Dest -> Dest
 indexDest i (Buffer v destIdxs srcIdxs) = Buffer v (destIdxs `snoc` i) srcIdxs

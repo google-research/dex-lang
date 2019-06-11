@@ -319,7 +319,11 @@ evalDeriv expr = case expr of
   App (Builtin b) arg -> do
     (x, t) <- evalDeriv arg
     builtinDeriv b x t
-  For _ _ -> error "For not implemented yet"
+  For b@(i:>_) body -> do
+    (body', builder) <- evalDerivScoped body
+    tab <- writePrimal (rawName "tab") (For b body')
+    let (xBody, tBody) = builder (Get tab i)
+    return (For b xBody, For b tBody)
   RecCon r -> do
     r' <- traverse evalDeriv r
     return (RecCon (fmap fst r'), RecCon (fmap snd r'))
@@ -341,6 +345,17 @@ builtinDeriv b x t = case b of
     (t1, t2) = unpair t
     (x1, x2) = unpair x
 
+evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
+evalDerivScoped expr = do
+  ((xOut, tOut), ((xDecls, _), (tDecls, _))) <- scoped (evalDeriv expr)
+  tScope <- looks $ snd . snd
+  let tExpr = declsExpr tDecls tOut
+      (saved, recon) = forceSplit $
+                         matLocalVars tScope (RecCon (Tup [xOut, tExpr]))
+  return (declsExpr xDecls saved, unpair . recon)
+
+-- TODO: need to have a single shared scope - don't want primal decls reusing
+-- vars already chosen by tangent decls
 writePrimal :: Name -> Expr -> DerivM Atom
 writePrimal name expr = do
   v <- looks $ rename name . snd . fst
