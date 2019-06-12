@@ -378,7 +378,8 @@ writeTangent name expr = do
 
 -- === Transposition ===
 
-type TransposeM a = WriterT CTEnv (CatT OutDecls (Either Err)) a
+type TransposeM a = ReaderT (FullEnv Type ())
+                      (WriterT CTEnv (CatT OutDecls (Either Err))) a
 newtype CTEnv = CTEnv (Env [Atom])
 
 instance Semigroup CTEnv where
@@ -389,17 +390,18 @@ instance Monoid CTEnv where
   mappend = (<>)
 
 expandTranspose :: [Type] -> Expr -> SimplifyM Expr
-expandTranspose [_, ctTy] (Lam (v:>xTy) body) = do
+expandTranspose [_, ctTy] (Lam b body) = do
   ctTy' <- subTy ctTy
-  xTy' <- subTy xTy
-  body' <- simplifyScoped body
-  scope <- looks snd
-  let ct = rename (rawName "ct") scope
-  let scope' = scope <> v @> L xTy' <> ct @> L ctTy'
-  (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
-                                   runWriterT $ evalTranspose (Var ct) body'
-  return $ Lam (ct:>ctTy')
-               (declsExpr ctDecls (addMany xTy (snd $ ctEnvPop ctEnv v)))
+  refreshBinder b $ \(v:>xTy) -> do
+    body' <- simplifyScoped body
+    scope <- looks snd
+    let ct = rename (rawName "ct") scope
+        scope' = scope <> v @> L xTy <> ct @> L ctTy'
+    (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
+                                     runWriterT $ flip runReaderT scope' $
+                                       evalTranspose (Var ct) body'
+    return $ Lam (ct:>ctTy')
+                 (declsExpr ctDecls (addMany xTy (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
@@ -412,7 +414,9 @@ evalTranspose ct expr = case expr of
   Lit _ -> return ()
   Decls [] body -> evalTranspose ct body
   Decls (Let (v:>ty) bound:decls) final -> do
-    ((), ctEnv) <- lift $ runWriterT $ evalTranspose ct body
+    env <- ask
+    ((), ctEnv) <- lift $ lift $ runWriterT $ flip runReaderT (env <> v@>L ty) $
+                     evalTranspose ct body
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
     evalTranspose (addMany ty outCTs) bound
@@ -421,7 +425,11 @@ evalTranspose ct expr = case expr of
     where evalElt (field, val) = evalTranspose (recGetExpr ct field) val
   -- Tranposition of full unpacking of an n-tuple using recget creates an n^2
   -- expression. Should we reconsider unpacking with pattern matching instead?
-  RecGet e field -> undefined -- need type!
+  RecGet e field -> do
+    env <- ask
+    let RecCon zeros = zero (getType env e)
+        ct' = RecCon $ recUpdate field ct zeros
+    evalTranspose ct' e
   App (Builtin b) arg -> builtinTranspose b ct arg
   _ -> error $ "Surprising expression in transpose: " ++ pprint expr
 
@@ -461,6 +469,9 @@ addMany ty (x:xs) = addVect ty x (addMany ty xs)
 
 addVect :: Type -> Expr -> Expr -> Expr
 addVect (BaseType RealType) x y = add x y
+addVect (RecType r) e1 e2 = RecCon $ fmap addElts (recNameVals r)
+  where addElts (field, ty) = addVect ty (recGetExpr e1 field)
+                                         (recGetExpr e2 field)
 
 unpair :: Atom -> (Atom, Atom)
 unpair (RecCon (Tup [x, y])) = (x, y)

@@ -36,7 +36,8 @@ checkTyped decl = decl <$ case decl of
 
 getType :: FullEnv Type a -> Expr -> Type
 getType env expr =
-  ignoreExcept $ evalTypeM (fmap (L . fromL) env) $ getType' False expr
+  ignoreExcept $ addContext (pprint expr) $
+     evalTypeM (fmap (L . fromL) env) $ getType' False expr
 
 evalTypeM :: TypeEnv -> TypeM a -> Except a
 evalTypeM env m = runReaderT m env
@@ -97,7 +98,11 @@ getType' check expr = case expr of
     recurWithT bs = extendR (foldMap tbind bs) . recur
 
     lookupLVar :: Var -> TypeM Type
-    lookupLVar v = asks (fromL . (! v))
+    lookupLVar v = do
+      x <- asks $ flip envLookup v
+      case x of
+        Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+        Just x' -> return $ fromL x'
 
     checkTy :: Type -> TypeM ()
     checkTy _ = return () -- TODO: check kind and unbound type vars
