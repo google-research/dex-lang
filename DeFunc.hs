@@ -336,7 +336,7 @@ evalDeriv expr = case expr of
     (x, t) <- evalDeriv e
     return (recGetExpr x field,
             recGetExpr t field)
-  _ -> error $ "Suprising expression: " ++ pprint expr
+  _ -> error $ "Surprising expression: " ++ pprint expr
 
 builtinDeriv :: Builtin -> Expr -> Expr -> DerivM (Expr, Expr)
 builtinDeriv b x t = case b of
@@ -417,8 +417,13 @@ evalTranspose ct expr = case expr of
     tell ctEnv'
     evalTranspose (addMany ty outCTs) bound
     where body = declsExpr decls final
+  RecCon r -> mapM_ evalElt (recNameVals r)
+    where evalElt (field, val) = evalTranspose (recGetExpr ct field) val
+  -- Tranposition of full unpacking of an n-tuple using recget creates an n^2
+  -- expression. Should we reconsider unpacking with pattern matching instead?
+  RecGet e field -> undefined -- need type!
   App (Builtin b) arg -> builtinTranspose b ct arg
-  _ -> error $ "Suprising expression in transpose: " ++ pprint expr
+  _ -> error $ "Surprising expression in transpose: " ++ pprint expr
 
 builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
 builtinTranspose b ct arg = case b of
