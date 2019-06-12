@@ -53,7 +53,9 @@ instance MonadCat env m => MonadCat env (ReaderT r m) where
 instance (Monoid w, MonadCat env m) => MonadCat env (WriterT w m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = undefined
+  scoped m = do ((x, w), env) <- lift $ scoped $ runWriterT m
+                tell w
+                return (x, env)
 
 instance MonadError e m => MonadError e (CatT env m) where
   throwError = lift . throwError

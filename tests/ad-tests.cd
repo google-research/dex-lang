@@ -26,3 +26,10 @@ g2 (x, y) = x * y
 :p grad g2 (1.0, 2.0)
 
 > ([2.0], [1.0])
+
+xs = for i::nx. real iota.i * 1.0
+
+arrFun c = for i::nx. c
+
+:p let (_, pullback) = vjp arrFun 2.0
+   in pullback xs

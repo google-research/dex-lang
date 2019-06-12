@@ -329,6 +329,8 @@ evalDeriv expr = case expr of
     tab <- writePrimal (rawName "tab") (For b body')
     let (xBody, tBody) = builder (Get tab i)
     return (For b xBody, For b tBody)
+  Get e i -> do (x, t) <- evalDeriv e
+                return (Get x i, Get t i)
   RecCon r -> do
     r' <- traverse evalDeriv r
     return (RecCon (fmap fst r'), RecCon (fmap snd r'))
@@ -421,6 +423,19 @@ evalTranspose ct expr = case expr of
     tell ctEnv'
     evalTranspose (addMany ty outCTs) bound
     where body = declsExpr decls final
+  For (i:>iTy) body -> do
+    env <- ask
+    (((), CTEnv ctEnv), (decls, _)) <- scoped $ lift $ lift $ runWriterT $
+                                         flip runReaderT (env <> i@>L iTy) $
+                                           evalTranspose (Get ct i) body
+    let vs = envNames ctEnv
+        final = [addMany (fromL (env ! v)) (ctEnv ! v) | v <- vs]
+        bodyTy = RecType $ Tup $ map (\v -> fromL (env ! v)) vs
+    summed <- writeCoTangent $
+      sumExpr (TabType iTy bodyTy) $
+        For (i:>iTy) (declsExpr decls (RecCon (Tup final)))
+    flip mapM_ (recNameVals (Tup vs)) $ \(field, v) ->
+      tell $ CTEnv $ v @> [RecGet summed field]
   RecCon r -> mapM_ evalElt (recNameVals r)
     where evalElt (field, val) = evalTranspose (recGetExpr ct field) val
   -- Tranposition of full unpacking of an n-tuple using recget creates an n^2
@@ -462,6 +477,15 @@ add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
 
 mul :: Expr -> Expr -> Expr
 mul x y = App (Builtin FMul) (RecCon (Tup [x, y]))
+
+sumExpr :: Type -> Expr -> Expr
+sumExpr (TabType idxTy ty) tab = foldExpr
+  where
+    i = rawName "iSum"  -- TODO: ensure fresh
+    x = rawName "carry"
+    foldTab = For (i:>idxTy) $ Lam (x:>ty) (addVect ty (Var x) (Get tab i))
+    foldExpr = App (TApp (Builtin Fold) [ty, idxTy]) $
+                 RecCon (Tup [foldTab, zero ty])
 
 addMany :: Type -> [Expr] -> Expr
 addMany ty [] = zero ty
