@@ -74,6 +74,9 @@ isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 map :: A i a b. (a -> b) -> i=>a -> i=>b
 map f xs = for i. f xs.i
 
+-- single :: A i. i -> Real -> i=>Real
+-- single i x = %single (i, x)
+
 -- TODO: need a (probably builtin) vector space typeclass
 -- deriv :: (VSpace a, VSpace b) => ...
 deriv :: A a b. (a -> b) -> a -> (b, a -> b)

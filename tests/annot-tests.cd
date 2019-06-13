@@ -7,14 +7,14 @@ f x = x
 >   |                   ^
 > Type error: Ambiguous kind for b
 
-y :: A a. a => a
-y = 1
-
-> Parse error: 1:17:
->   |
-> 1 | y :: A a. a => a
->   |                 ^
-> Type error: Conflicting kinds for [a]
+-- y :: A a. a => a
+-- y = 1
+--
+-- > Parse error: 1:17:
+-- >   |
+-- > 1 | y :: A a. a => a
+-- >   |                 ^
+-- > Type error: Conflicting kinds for [a]
 
 :t let g :: A a. a -> a ;
        g x = x

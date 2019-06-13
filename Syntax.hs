@@ -15,7 +15,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete, Index,
-               wrapDecls, subExpr, Subst, strToBuiltin,
+               wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind
               ) where
 
 import Fresh
@@ -70,7 +70,11 @@ type Decl    = DeclP    Type
 type TopDecl = TopDeclP Type
 
 type Var = Name
-data Kind = IdxSetKind | TyKind  deriving (Show, Eq, Ord)
+
+-- TODO: figure out how to treat index set kinds
+-- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
+data Kind = TyKind  deriving (Show, Eq, Ord)
+idxSetKind = TyKind
 
 data DeclP b = Let    (BinderP b)     (ExprP b)
              | Unpack (BinderP b) Var (ExprP b)
@@ -99,6 +103,7 @@ data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
              | Iota | Range | Fold | Copy | Deriv | Transpose
+             | Single
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
@@ -107,7 +112,7 @@ builtinNames = M.fromList [
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
-  ("transpose", Transpose), ("copy", Copy)]
+  ("transpose", Transpose), ("copy", Copy), ("single", Single)]
 
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
 
@@ -444,7 +449,7 @@ subExprR expr = case expr of
         return $ wrapDecls [Let b' bound'] body'
     Unpack b tv bound -> do  -- TODO: freshen tv
       bound' <- recur bound
-      refreshTBinders [tv:>IdxSetKind] $ \[tv':>_] ->
+      refreshTBinders [tv:>idxSetKind] $ \[tv':>_] ->
         refreshBinder b $ \b' -> do
           body' <- recur body
           return $ wrapDecls [Unpack b' tv' bound'] body'

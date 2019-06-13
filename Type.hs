@@ -25,7 +25,7 @@ checkTyped decl = decl <$ case decl of
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
     assertEq (binderAnn b) ty' ""
-    putEnv $ lbind b <> iv @> T IdxSetKind
+    putEnv $ lbind b <> iv @> T idxSetKind
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
   where
@@ -85,7 +85,7 @@ getType' check expr = case expr of
        extendR (lbind b) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
-       let tb = tv :> IdxSetKind
+       let tb = tv :> idxSetKind
        checkShadow b
        checkShadow tb
        extendR (tbind tb) $ do
@@ -147,8 +147,8 @@ builtinType builtin = case builtin of
   Sin      -> realUnOpType
   Cos      -> realUnOpType
   Tan      -> realUnOpType
-  Fold     -> BuiltinType [TyKind, IdxSetKind] [j ==> (a --> a), a] a
-  Iota     -> BuiltinType [IdxSetKind] [] (a ==> int)
+  Fold     -> BuiltinType [TyKind, idxSetKind] [j ==> (a --> a), a] a
+  Iota     -> BuiltinType [idxSetKind] [] (a ==> int)
   Range    -> BuiltinType [] [int] (Exists unitTy)
   Hash     -> BuiltinType [] [int, int] int
   Randint  -> BuiltinType [] [int, int] int

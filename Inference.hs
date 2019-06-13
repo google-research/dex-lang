@@ -38,7 +38,7 @@ typePass tdecl = case tdecl of
     (ty, expr') <- liftTop (infer expr)
     ty' <- liftEither $ unpackExists ty tv
     let b' = fmap (const ty') b -- TODO: actually check the annotated type
-    putEnv $ lbind b' <> tv @> T IdxSetKind
+    putEnv $ lbind b' <> tv @> T idxSetKind
     return $ TopDecl (Unpack b' tv expr')
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
@@ -126,7 +126,7 @@ check expr reqTy = case expr of
         boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                    _ -> throw TypeErr (pprint maybeEx)
         let b' = replaceAnnot b boundTy
-        body' <- extendR (lbind b' <> tv @> T IdxSetKind) cont
+        body' <- extendR (lbind b' <> tv @> T idxSetKind) cont
         tvsEnv <- tempVarsEnv
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
@@ -191,7 +191,7 @@ freshVar kind = do v <- fresh $ pprint kind
                    return (TypeVar v)
 
 freshTy  = freshVar TyKind
-freshIdx = freshVar IdxSetKind
+freshIdx = freshVar idxSetKind
 
 generalize :: Type -> Expr -> InferM (Type, Expr)
 generalize ty expr = do
@@ -303,7 +303,7 @@ collectKinds kind ty = case ty of
   BaseType _    -> return ()
   TypeVar v     -> tell [(v, kind)]
   ArrType a b   -> recur kind       a >> recur kind b
-  TabType a b   -> recur IdxSetKind a >> recur kind b
+  TabType a b   -> recur idxSetKind a >> recur kind b
   RecType r     -> mapM_ (recur kind) r
   Forall _ body -> recur kind body
   Exists body   -> recur kind body

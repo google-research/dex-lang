@@ -55,7 +55,7 @@ prettyTyDepth d t = case t of
         tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds
 
 instance Pretty Kind where
-  pretty IdxSetKind = "R"
+--  pretty IdxSetKind = "R"
   pretty TyKind = "T"
 
 instance Pretty BaseType where
