@@ -41,7 +41,7 @@
        _, ny = unpack range 3;
        x = iota :: nx=>Int;
        y = iota :: ny=>Int
-    in sum for i. x.i + y.i
+    in sum for i. iadd x.i y.i
 
 > Type error: can't unify ny and nx
 

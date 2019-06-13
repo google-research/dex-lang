@@ -74,7 +74,8 @@ instance Pretty b => Pretty (ExprP b) where
   pretty expr = case expr of
     Lit val      -> p val
     Var v        -> p v
-    Builtin b    -> p b
+    BuiltinApp b [] xs -> p b <+> hsep (map p xs)
+    BuiltinApp b ts xs -> p b <> brackets (hsep (map p ts)) <+> hsep (map p xs)
     Decls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
                                       <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)

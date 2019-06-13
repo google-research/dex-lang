@@ -1,5 +1,5 @@
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
-             builtinType) where
+             builtinType, BuiltinType (..)) where
 
 import Control.Monad
 import Control.Monad.Except (liftEither)
@@ -46,7 +46,12 @@ getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
     Var v        -> lookupLVar v
-    Builtin b    -> return $ builtinType b
+    BuiltinApp b ts xs -> do
+      mapM checkTy ts
+      let BuiltinType kinds argTys ansTy = builtinType b
+          ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)
+      zipWithM (checkEq "Builtin") argTys' (map recur xs)
+      return ansTy'
     Decls decls body -> foldr getTypeDecl (recur body) decls
     Lam b body -> do checkTy (binderAnn b)
                      checkShadow b
@@ -124,7 +129,9 @@ litType v = case v of
   RealLit _ -> RealType
   StrLit  _ -> StrType
 
-builtinType :: Builtin -> Type
+data BuiltinType = BuiltinType [Kind] [Type] Type
+
+builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
   Add      -> ibinOpType
   Sub      -> ibinOpType
@@ -140,22 +147,20 @@ builtinType builtin = case builtin of
   Sin      -> realUnOpType
   Cos      -> realUnOpType
   Tan      -> realUnOpType
-  Fold     -> foldType
-  Iota     -> Forall [IdxSetKind] (a ==> int)
-  Range    -> int --> Exists unitTy
-  Hash     -> tup [int, int] --> int
-  Randint  -> tup [int, int] --> int
-  Rand     -> int --> real
-  IntToReal -> int --> real
-  Deriv     -> Forall [TyKind, TyKind] $ (a --> b) --> a --> tup [b, a --> b]
-  Transpose -> Forall [TyKind, TyKind] $ (a --> b) --> b --> a
+  Fold     -> BuiltinType [TyKind, IdxSetKind] [j ==> (a --> a), a] a
+  Iota     -> BuiltinType [IdxSetKind] [] (a ==> int)
+  Range    -> BuiltinType [] [int] (Exists unitTy)
+  Hash     -> BuiltinType [] [int, int] int
+  Randint  -> BuiltinType [] [int, int] int
+  Rand     -> BuiltinType [] [int] real
+  IntToReal -> BuiltinType [] [int] real
+  Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> tup [b, a --> b])
+  Transpose -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
   where
-    ibinOpType    = tup [int, int] --> int
-    fbinOpType    = tup [real, real] --> real
-    realUnOpType = real --> real
+    ibinOpType    = BuiltinType [] [int , int ] int
+    fbinOpType    = BuiltinType [] [real, real] real
+    realUnOpType  = BuiltinType [] [real]       real
     i = BoundTVar 0
-    foldType = Forall [TyKind, IdxSetKind] $
-                 tup [j ==> (a --> a), a] --> a
     a = BoundTVar 0
     b = BoundTVar 1
     j = BoundTVar 1

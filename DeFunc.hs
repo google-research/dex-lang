@@ -57,21 +57,19 @@ simplify expr = case expr of
   Lit _ -> return expr
   Decls decls body -> withCat (mapM_ simplifyDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
-  App (TApp (Builtin Fold) ts) arg -> simplifyFold ts arg
-  App (TApp (Builtin Deriv) ts) arg -> expandDeriv ts arg
-  App (TApp (Builtin Transpose) ts) arg -> expandTranspose ts arg
-  App (Builtin b) arg -> do
-    arg' <- recur arg
-    return $ simplifyBuiltin b arg'
-  TApp (Builtin Iota) [n] -> do
-    n' <- subTy n
-    return $ TApp (Builtin Iota) [n']
+  BuiltinApp b ts args -> do
+    ts' <- mapM subTy ts
+    case b of
+      Fold      -> simplifyFold    ts' args
+      Deriv     -> expandDeriv     ts' args
+      Transpose -> expandTranspose ts' args
+      _ -> do args' <- mapM recur args
+              return $ simplifyBuiltin b ts' args'
   App fexpr arg -> do
     Lam (v:>_) body <- recur fexpr
     arg' <- recur arg
     dropSubst $
       extendR (v @> L arg') $ recur body
-  Builtin _ -> error "Cannot defunctionalize raw builtins -- only applications"
   For b body -> do
     refreshBinder b $ \b' -> do
       body' <- simplifyScoped body
@@ -148,12 +146,8 @@ decompose scope expr = case expr of
       Defer body' -> Defer body'
       Split body' recon -> Split (Decls decls body') recon
   Lam _ _ -> matLocalVars scope expr
-  App (Builtin b) _ -> if trivialBuiltin b then Defer expr
-                                           else pureMat expr
-  TApp (Builtin b) _ -> if trivialBuiltin b then Defer expr
-                                            else pureMat expr
+  BuiltinApp b _ _ -> if trivialBuiltin b then Defer expr else pureMat expr
   App _ _ -> pureMat expr
-  Builtin _ -> error "Builtin"
   For b@(i:>_) body ->
     case decompose scope body of
       -- could use a FullMat constructor here
@@ -205,15 +199,13 @@ subTy ty = do env <- ask
               return $ maybeSub (fmap fromT . envLookup env) ty
 
 -- TODO: check/fail higher order case
-simplifyFold :: [Type] -> Expr -> SimplifyM Expr
-simplifyFold ts (RecCon (Tup [For ib (Lam xb body), x])) = do
-  ts' <- traverse subTy ts
+simplifyFold :: [Type] -> [Expr] -> SimplifyM Expr
+simplifyFold ts [For ib (Lam xb body), x] = do
   x' <- simplify x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
       body' <- simplifyScoped body
-      return $ App (TApp (Builtin Fold) ts')
-                   (RecCon (Tup [For ib' (Lam xb' body'), x']))
+      return $ BuiltinApp Fold ts [For ib' (Lam xb' body'), x']
 
 askLEnv :: Var -> SimplifyM Atom
 askLEnv v = do x <- asks $ flip envLookup v
@@ -261,20 +253,18 @@ checkSubScope sub scope =
                     pprint lvars ++ "\n" ++ pprint scope
   where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]
 
-simplifyBuiltin :: Builtin -> Expr -> Expr
-simplifyBuiltin FAdd arg =
+simplifyBuiltin :: Builtin -> [Type] -> [Expr] -> Expr
+simplifyBuiltin FAdd [] [x, y] =
   case (checkZero x, checkZero y) of
     (Zero, _) -> y
     (_, Zero) -> x
-    _ -> App (Builtin FAdd) arg
-  where (x, y) = unpair arg
-simplifyBuiltin FMul arg =
+    _ -> BuiltinApp FAdd [] [x, y]
+simplifyBuiltin FMul [] [x, y] =
   case (checkZero x, checkZero y) of
     (Zero, _) -> realZero
     (_, Zero) -> realZero
-    _ -> App (Builtin FMul) arg
-  where (x, y) = unpair arg
-simplifyBuiltin b arg = App (Builtin b) arg
+    _ -> BuiltinApp FMul [] [x, y]
+simplifyBuiltin b ts xs = BuiltinApp b ts xs
 
 data MaybeZero a = Zero | NonZero a
 
@@ -287,8 +277,8 @@ checkZero expr = NonZero expr
 type DerivM a = ReaderT (Env (Either Type (Atom, Atom)))
                   (CatT (OutDecls, OutDecls) (Either Err)) a
 
-expandDeriv :: [Type] -> Expr -> SimplifyM Expr
-expandDeriv _ (Lam b body) = do
+expandDeriv :: [Type] -> [Expr] -> SimplifyM Expr
+expandDeriv _ [Lam b body] = do
   refreshBinder b $ \(v:>ty) -> do
     body' <- simplifyScoped body
     scope <- looks snd
@@ -321,9 +311,9 @@ evalDeriv expr = case expr of
     t' <- writeTangent v t
     extendR (v @> Right (x', t')) (evalDeriv body')
     where body' = Decls decls body
-  App (Builtin b) arg -> do
-    (x, t) <- evalDeriv arg
-    builtinDeriv b x t
+  BuiltinApp b tys args -> do
+    (xs, ts) <- liftM unzip $ mapM evalDeriv args
+    builtinDeriv b tys xs ts
   For b@(i:>_) body -> do
     (body', builder) <- evalDerivScoped body
     tab <- writePrimal (rawName "tab") (For b body')
@@ -340,17 +330,14 @@ evalDeriv expr = case expr of
             recGetExpr t field)
   _ -> error $ "Surprising expression: " ++ pprint expr
 
-builtinDeriv :: Builtin -> Expr -> Expr -> DerivM (Expr, Expr)
-builtinDeriv b x t = case b of
+builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
+builtinDeriv b _ [x1, x2] [t1, t2] = case b of
   FAdd -> return (add x1 x2, add t1 t2)
   FMul -> do
     x1' <- writePrimal (rawName "tmp") x1
     x2' <- writePrimal (rawName "tmp") x2
     return (mul x1' x2', add (mul x2' t1)
                              (mul x1' t2))
-  where
-    (t1, t2) = unpair t
-    (x1, x2) = unpair x
 
 evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
 evalDerivScoped expr = do
@@ -391,18 +378,17 @@ instance Monoid CTEnv where
   mempty = CTEnv mempty
   mappend = (<>)
 
-expandTranspose :: [Type] -> Expr -> SimplifyM Expr
-expandTranspose [_, ctTy] (Lam b body) = do
-  ctTy' <- subTy ctTy
+expandTranspose :: [Type] -> [Expr] -> SimplifyM Expr
+expandTranspose [_, ctTy] [Lam b body] = do
   refreshBinder b $ \(v:>xTy) -> do
     body' <- simplifyScoped body
     scope <- looks snd
     let ct = rename (rawName "ct") scope
-        scope' = scope <> v @> L xTy <> ct @> L ctTy'
+        scope' = scope <> v @> L xTy <> ct @> L ctTy
     (((), ctEnv), (ctDecls, _)) <- liftEither $ flip runCatT (asSnd scope') $
                                      runWriterT $ flip runReaderT scope' $
                                        evalTranspose (Var ct) body'
-    return $ Lam (ct:>ctTy')
+    return $ Lam (ct:>ctTy)
                  (declsExpr ctDecls (addMany xTy (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
@@ -445,19 +431,15 @@ evalTranspose ct expr = case expr of
     let RecCon zeros = zero (getType env e)
         ct' = RecCon $ recUpdate field ct zeros
     evalTranspose ct' e
-  App (Builtin b) arg -> builtinTranspose b ct arg
+  BuiltinApp b _ args -> builtinTranspose b ct args
   _ -> error $ "Surprising expression in transpose: " ++ pprint expr
 
-builtinTranspose :: Builtin -> Atom -> Expr -> TransposeM ()
-builtinTranspose b ct arg = case b of
-  FAdd -> do
-    ct' <- writeCoTangent ct
-    evalTranspose ct' t1
-    evalTranspose ct' t2
-    where (t1, t2) = unpair arg
-  FMul -> do
-    evalTranspose (mul x ct) t
-    where (x, t) = unpair arg
+builtinTranspose :: Builtin -> Atom -> [Expr] -> TransposeM ()
+builtinTranspose FAdd ct [t1, t2] = do
+  ct' <- writeCoTangent ct
+  evalTranspose ct' t1
+  evalTranspose ct' t2
+builtinTranspose FMul ct [x, t] = evalTranspose (mul x ct) t
 
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
@@ -473,10 +455,10 @@ coTangentType expr = do env <- looks $ snd
 -- === handy constructor wrappers ===
 
 add :: Expr -> Expr -> Expr
-add x y = App (Builtin FAdd) (RecCon (Tup [x, y]))
+add x y = BuiltinApp FAdd [] [x, y]
 
 mul :: Expr -> Expr -> Expr
-mul x y = App (Builtin FMul) (RecCon (Tup [x, y]))
+mul x y = BuiltinApp FMul [] [x, y]
 
 sumExpr :: Type -> Expr -> Expr
 sumExpr (TabType idxTy ty) tab = foldExpr
@@ -484,8 +466,7 @@ sumExpr (TabType idxTy ty) tab = foldExpr
     i = rawName "iSum"  -- TODO: ensure fresh
     x = rawName "carry"
     foldTab = For (i:>idxTy) $ Lam (x:>ty) (addVect ty (Var x) (Get tab i))
-    foldExpr = App (TApp (Builtin Fold) [ty, idxTy]) $
-                 RecCon (Tup [foldTab, zero ty])
+    foldExpr = BuiltinApp Fold [ty, idxTy] [foldTab, zero ty]
 
 addMany :: Type -> [Expr] -> Expr
 addMany ty [] = zero ty

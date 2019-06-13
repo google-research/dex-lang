@@ -33,3 +33,5 @@ arrFun c = for i::nx. c
 
 :p let (_, pullback) = vjp arrFun 2.0
    in pullback xs
+
+> [3.0]

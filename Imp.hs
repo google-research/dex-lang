@@ -61,13 +61,13 @@ toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
   Var v -> do exprs <- asks $ snd . fromL . (!v)
               return $ write exprs
-  TApp (Builtin Iota) n -> impIota dests n
-  App (Builtin Range) n -> let (RecTree (Tup [nDest, _])) = dests
-                           in toImp n nDest
-  App (TApp (Builtin Fold) ts) args -> impFold dests ts args
-  App (Builtin b) args -> do
+  BuiltinApp Iota [n] [] -> impIota dests n
+  BuiltinApp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
+                             in toImp n nDest
+  BuiltinApp Fold ts args -> impFold dests ts args
+  BuiltinApp b [] args -> do
     let (RecLeaf dest) = dests
-    materialize args $ \args' ->
+    materialize (RecCon (Tup args)) $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
   Decls decls body -> foldr toImpDecl (toImp body dests) decls
   Get x i -> do RecLeaf (IVar i') <- asks $ snd . fromL . (!i)
@@ -149,16 +149,16 @@ toImpFor dest (i :> TypeVar n) body = do
     extendR (i @> L (TypeVar n, RecLeaf (IVar i'))) $
       toImp body (fmap (indexDest i') dest)
 
-impIota :: RecTree Dest -> [Type] -> ImpM ImpProg
-impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) [TypeVar n] =
+impIota :: RecTree Dest -> Type -> ImpM ImpProg
+impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) (TypeVar n) =
   case srcIdxs of
     [] -> do n' <- asks $ fromT . (!n)
              loop n' $ \i ->
                 return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [IVar i]
     [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
 
-impFold :: RecTree Dest -> [Type] -> Expr -> ImpM ImpProg
-impFold dest [_, TypeVar n] (RecCon (Tup [For (i :> _) (Lam b body), x])) = do
+impFold :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
+impFold dest [_, TypeVar n] [For (i :> _) (Lam b body), x] = do
   n' <- asks $ fromT . (!n)
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
@@ -247,8 +247,8 @@ checkStatement statement = case statement of
     assertEq (drop (length idxs) shape) shape' "Dimension mismatch"
   Update v idxs builtin args -> do -- scalar builtins only
     argTys <- mapM impExprType args
-    let ArrType inTy (BaseType b) = builtinType builtin
-    checkArgTys inTy argTys
+    let BuiltinType _ inTys (BaseType b) = builtinType builtin
+    zipWithM_ checkScalarTy inTys argTys
     IType b' shape  <- asks $ (! v)
     case drop (length idxs) shape of
       [] -> assertEq b b' "Base type mismatch in builtin application"
@@ -264,12 +264,6 @@ impExprType expr = case expr of
   IGet e i -> do IType b (_:shape) <- impExprType e
                  checkIsInt i
                  return $ IType b shape
-
-checkArgTys :: Type -> [IType] -> ImpCheckM ()
-checkArgTys (RecType (Tup argTyNeeded)) argTys =
-  -- TODO This zipWith silently drops arity errors :(
-    zipWithM_ checkScalarTy argTyNeeded argTys
-checkArgTys b@(BaseType _) [argTy] = checkScalarTy b argTy
 
 checkScalarTy :: Type -> IType -> ImpCheckM ()
 checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()

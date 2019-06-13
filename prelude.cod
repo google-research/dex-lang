@@ -50,7 +50,7 @@ hash :: Int -> Int -> Int
 hash x y = %hash (x, y)
 
 iota :: A i. i=>Int
-iota = %iota
+iota = %iota ()
 
 range :: Int -> E i. ()
 range n = %range n
