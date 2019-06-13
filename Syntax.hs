@@ -15,7 +15,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
                Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
                Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
                resultSource, resultText, resultErr, resultComplete, Index,
-               wrapDecls, subExpr, Subst
+               wrapDecls, subExpr, Subst, strToBuiltin,
               ) where
 
 import Fresh
@@ -27,6 +27,8 @@ import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
 
 import Data.Foldable (fold)
+import Data.Tuple (swap)
+import Data.Maybe (fromJust)
 import Data.Functor.Identity (runIdentity)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.Writer
@@ -97,7 +99,23 @@ data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
              | Iota | Range | Fold | Copy | Deriv | Transpose
-                deriving (Eq, Ord, Show)
+                deriving (Eq, Ord)
+
+builtinNames = M.fromList [
+  ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),
+  ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
+  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
+  ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
+  ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
+  ("transpose", Transpose), ("copy", Copy)]
+
+builtinStrs = M.fromList $ map swap (M.toList builtinNames)
+
+strToBuiltin :: String -> Maybe Builtin
+strToBuiltin name = M.lookup name builtinNames
+
+instance Show Builtin where
+  show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt
              | EvalExpr | Plot | PlotMat

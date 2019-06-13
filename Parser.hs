@@ -7,7 +7,6 @@ import Text.Megaparsec.Char
 import qualified Text.Parsec as P
 import Data.List (isPrefixOf)
 import Data.Either (isRight)
-import qualified Data.Map.Strict as M
 
 import Env
 import Record
@@ -263,17 +262,6 @@ typeExpr = makeExprParser (sc >> typeExpr') typeOps
 -- var :: Parser Var
 -- var = liftM rawName $ makeIdentifier
 --             ["Int", "Real", "Bool", "Str", "A", "E"]
-
-builtinNames = M.fromList [
-  ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),
-  ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
-  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
-  ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
-  ("transpose", Transpose)]
-
-strToBuiltin :: String -> Maybe Builtin
-strToBuiltin name = M.lookup name builtinNames
 
 forallType :: Parser Type
 forallType = do

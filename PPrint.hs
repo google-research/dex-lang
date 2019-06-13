@@ -93,31 +93,7 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty Builtin where
-  pretty b = case b of
-    Add      -> "%iadd"
-    Sub      -> "%isub"
-    Mul      -> "%imul"
-    FAdd     -> "%fadd"
-    FSub     -> "%fsub"
-    FMul     -> "%fmul"
-    FDiv     -> "%fdiv"
-    Pow      -> "%pow"
-    Exp      -> "%exp"
-    Log      -> "%log"
-    Sqrt     -> "%sqrt"
-    Sin      -> "%sin"
-    Cos      -> "%cos"
-    Tan      -> "%tan"
-    Iota     -> "%iota"
-    Range    -> "%range"
-    Hash     -> "%hash"
-    Rand     -> "%rand"
-    Randint  -> "%randint"
-    Fold     -> "%fold"
-    Deriv    -> "%deriv"
-    Transpose -> "%transpose"
-    IntToReal -> "%real"
-    Copy     -> "%copy"
+  pretty b = p (show b)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
