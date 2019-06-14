@@ -137,7 +137,8 @@ expandVSum ty n xs = PrimOp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
     x = rawName "xVS"
     y = rawName "yVS"
     -- Some bug in imp lowering means this doesn't work without the let...
-    body = expandVAdd ty (Var x) (Decls [Let (y:>(TabType n ty)) xs] (Get (Var y) i))
+    body = Decls [Let (y:>(TabType n ty)) xs] $
+             expandVAdd ty (Var x) (Get (Var y) i)
     x0 = expandVZero ty
 
 --- Destination indices, then source indices

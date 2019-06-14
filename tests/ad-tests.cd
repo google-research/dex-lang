@@ -35,3 +35,11 @@ arrFun c = for i::nx. c
    in pullback xs
 
 > [3.0]
+
+:p (transpose vsum  1.5) :: nx=>Real
+
+> [1.5, 1.5, 1.5]
+
+:p jvp vsum xs xs
+
+

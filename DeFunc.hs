@@ -264,6 +264,10 @@ simplifyBuiltin FMul [] [x, y] =
     (Zero, _) -> fzero
     (_, Zero) -> fzero
     _ -> PrimOp FMul [] [x, y]
+simplifyBuiltin VAdd ty [x, y] = case (ty, x, y) of
+  (_, PrimOp VZero _ _, _) -> y
+  (_, _, PrimOp VZero _ _) -> x
+  _ -> PrimOp VAdd ty [x, y]
 simplifyBuiltin b ts xs = PrimOp b ts xs
 
 data MaybeZero a = Zero | NonZero a
@@ -332,13 +336,14 @@ evalDeriv expr = case expr of
   _ -> error $ "Surprising expression: " ++ pprint expr
 
 builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
-builtinDeriv b _ [x1, x2] [t1, t2] = case b of
-  FAdd -> return (fadd x1 x2, fadd t1 t2)
-  FMul -> do
-    x1' <- writePrimal (rawName "tmp") x1
-    x2' <- writePrimal (rawName "tmp") x2
-    return (fmul x1' x2', fadd (fmul x2' t1)
-                               (fmul x1' t2))
+builtinDeriv FAdd _ [x1, x2] [t1, t2] = return (fadd x1 x2, fadd t1 t2)
+builtinDeriv FMul _ [x1, x2] [t1, t2] = do
+  x1' <- writePrimal (rawName "tmp") x1
+  x2' <- writePrimal (rawName "tmp") x2
+  return (fmul x1' x2', fadd (fmul x2' t1)
+                             (fmul x1' t2))
+builtinDeriv VSum [ty, n] [xs] [ts] = return (vsum ty n xs, vsum ty n ts)
+builtinDeriv b _ _ _ = error $ "Fwd derivative not implemented: " ++ pprint b
 
 evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
 evalDerivScoped expr = do
@@ -439,16 +444,20 @@ evalTranspose ct expr = case expr of
     let RecType r = getType env e
         ct' = RecCon $ recUpdate field ct (fmap vzero r)
     evalTranspose ct' e
-  PrimOp b _ args -> builtinTranspose b ct args
+  PrimOp b ts args -> builtinTranspose b ts ct args
   _ -> error $ "Surprising expression in transpose: " ++ pprint expr
 
-builtinTranspose :: Builtin -> Atom -> [Expr] -> TransposeM ()
-builtinTranspose FAdd ct [t1, t2] = do
+builtinTranspose :: Builtin -> [Type] -> Expr -> [Expr] -> TransposeM ()
+builtinTranspose FAdd [] ct [t1, t2] = do
   ct' <- writeCoTangent ct
   evalTranspose ct' t1
   evalTranspose ct' t2
-builtinTranspose FMul ct [x, t] = evalTranspose (fmul x ct) t
-builtinTranspose b _ _ = error $ show b
+builtinTranspose FMul [] ct [x, t] = evalTranspose (fmul x ct) t
+builtinTranspose VSum [_, n] ct [xs] = do
+  ct' <- writeCoTangent ct
+  evalTranspose (For (i:>n) ct') xs
+  where i = rawName "iT"  -- TODO: freshness!
+builtinTranspose b _ _ _ = error $ "Transpose not implemented: " ++ pprint b
 
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
