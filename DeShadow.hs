@@ -45,7 +45,7 @@ deShadowExpr expr = case expr of
     args' <- case arg of
                URecCon (Tup args) -> traverse recur args
                _ -> traverse recur [arg]
-    return (BuiltinApp b [] args')
+    return (PrimOp b [] args')
   UDecls decls body ->
     withCat (mapM_ deShadowDecl decls) $ \() decls' -> do
       body' <- recur body

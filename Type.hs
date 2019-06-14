@@ -46,7 +46,7 @@ getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c        -> return $ BaseType (litType c)
     Var v        -> lookupLVar v
-    BuiltinApp b ts xs -> do
+    PrimOp b ts xs -> do
       mapM checkTy ts
       let BuiltinType kinds argTys ansTy = builtinType b
           ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)

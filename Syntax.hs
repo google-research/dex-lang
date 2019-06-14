@@ -40,7 +40,7 @@ import Control.Applicative (liftA, liftA2, liftA3)
 
 data ExprP b = Lit LitVal
           | Var Var
-          | BuiltinApp Builtin [Type] [ExprP b]
+          | PrimOp Builtin [Type] [ExprP b]
           | Decls [DeclP b] (ExprP b)
           | Lam (BinderP b) (ExprP b)
           | App (ExprP b) (ExprP b)
@@ -331,7 +331,7 @@ instance HasTypeVars Expr where
   subFreeTVsBVs bvs f expr = case expr of
       Lit c -> pure $ Lit c
       Var v -> pure $ Var v
-      BuiltinApp b ts xs -> liftA2 (BuiltinApp b) (traverse recurTy ts)
+      PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
                                                   (traverse recur xs)
       Decls [] final -> recur final
       Decls (decl:decls) final -> case decl of
@@ -367,7 +367,7 @@ freeLVarsW :: Expr -> Writer (Env ()) ()
 freeLVarsW expr = case expr of
   Var v     -> tell (v @> ())
   Lit     _ -> return ()
-  BuiltinApp _ _ xs -> mapM_ recur xs
+  PrimOp _ _ xs -> mapM_ recur xs
   Decls [] body -> recur body
   Decls (decl:decls) final -> case decl of
     Let    b   bound -> recur bound >> unfree b body
@@ -440,7 +440,7 @@ subExprR :: Expr -> Reader (Subst, Scope) Expr
 subExprR expr = case expr of
   Var v     -> lookup v
   Lit     _ -> return expr
-  BuiltinApp b ts xs -> liftM2 (BuiltinApp b) (traverse subTy ts)
+  PrimOp b ts xs -> liftM2 (PrimOp b) (traverse subTy ts)
                                               (traverse recur xs)
   Decls [] body -> recur body
   Decls (decl:decls) final -> case decl of

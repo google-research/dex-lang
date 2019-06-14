@@ -57,7 +57,7 @@ simplify expr = case expr of
   Lit _ -> return expr
   Decls decls body -> withCat (mapM_ simplifyDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
-  BuiltinApp b ts args -> do
+  PrimOp b ts args -> do
     ts' <- mapM subTy ts
     case b of
       Fold      -> simplifyFold    ts' args
@@ -146,7 +146,7 @@ decompose scope expr = case expr of
       Defer body' -> Defer body'
       Split body' recon -> Split (Decls decls body') recon
   Lam _ _ -> matLocalVars scope expr
-  BuiltinApp b _ _ -> if trivialBuiltin b then Defer expr else pureMat expr
+  PrimOp b _ _ -> if trivialBuiltin b then Defer expr else pureMat expr
   App _ _ -> pureMat expr
   For b@(i:>_) body ->
     case decompose scope body of
@@ -204,7 +204,7 @@ simplifyFold ts [For ib (Lam xb body), x] = do
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
       body' <- simplifyScoped body
-      return $ BuiltinApp Fold ts [For ib' (Lam xb' body'), x']
+      return $ PrimOp Fold ts [For ib' (Lam xb' body'), x']
 
 askLEnv :: Var -> SimplifyM Atom
 askLEnv v = do x <- asks $ flip envLookup v
@@ -258,19 +258,19 @@ simplifyBuiltin FAdd [] [x, y] =
   case (checkZero x, checkZero y) of
     (Zero, _) -> y
     (_, Zero) -> x
-    _ -> BuiltinApp FAdd [] [x, y]
+    _ -> PrimOp FAdd [] [x, y]
 simplifyBuiltin FMul [] [x, y] =
   case (checkZero x, checkZero y) of
     (Zero, _) -> fzero
     (_, Zero) -> fzero
-    _ -> BuiltinApp FMul [] [x, y]
-simplifyBuiltin b ts xs = BuiltinApp b ts xs
+    _ -> PrimOp FMul [] [x, y]
+simplifyBuiltin b ts xs = PrimOp b ts xs
 
 data MaybeZero a = Zero | NonZero a
 
 checkZero :: Expr -> MaybeZero Expr
 checkZero (Lit (RealLit 0.0)) = Zero
-checkZero (BuiltinApp VZero _ _ ) = Zero
+checkZero (PrimOp VZero _ _ ) = Zero
 checkZero expr = NonZero expr
 
 -- === Forward differentiation ===
@@ -312,7 +312,7 @@ evalDeriv expr = case expr of
     t' <- writeTangent v t
     extendR (v @> Right (x', t')) (evalDeriv body')
     where body' = Decls decls body
-  BuiltinApp b tys args -> do
+  PrimOp b tys args -> do
     (xs, ts) <- liftM unzip $ mapM evalDeriv args
     builtinDeriv b tys xs ts
   For b@(i:>_) body -> do
@@ -439,7 +439,7 @@ evalTranspose ct expr = case expr of
     let RecType r = getType env e
         ct' = RecCon $ recUpdate field ct (fmap vzero r)
     evalTranspose ct' e
-  BuiltinApp b _ args -> builtinTranspose b ct args
+  PrimOp b _ args -> builtinTranspose b ct args
   _ -> error $ "Surprising expression in transpose: " ++ pprint expr
 
 builtinTranspose :: Builtin -> Atom -> [Expr] -> TransposeM ()
@@ -467,26 +467,26 @@ tangentType expr = do env <- looks $ snd . snd
 
 -- === constructor wrappers with some simplifications built in ===
 
-fadd x y = BuiltinApp FAdd [] [x, y]
-fmul x y = BuiltinApp FMul [] [x, y]
+fadd x y = PrimOp FAdd [] [x, y]
+fmul x y = PrimOp FMul [] [x, y]
 fzero :: Expr
 fzero = Lit (RealLit 0.0)
 
-vzero   ty       = BuiltinApp VZero   [ty] []
-vsingle ty n i x = BuiltinApp VSingle [ty, n] [Var i, x]
-vsum    ty n x   = BuiltinApp VSum    [ty, n] [x]
+vzero   ty       = PrimOp VZero   [ty] []
+vsingle ty n i x = PrimOp VSingle [ty, n] [Var i, x]
+vsum    ty n x   = PrimOp VSum    [ty, n] [x]
 
 vadd :: Type -> Expr -> Expr -> Expr
-vadd _ (BuiltinApp VZero _ _) y = y
-vadd _ x (BuiltinApp VZero _ _) = x
-vadd ty x y = BuiltinApp VAdd [ty] [x, y]
+vadd _ (PrimOp VZero _ _) y = y
+vadd _ x (PrimOp VZero _ _) = x
+vadd ty x y = PrimOp VAdd [ty] [x, y]
 
 vaddMany :: Type -> [Expr] -> Expr
 vaddMany ty xs = foldr (vadd ty) (vzero ty) xs
 
 recGetExpr :: Expr -> RecField -> Expr
 recGetExpr (RecCon r) field = recGet r field
-recGetExpr (BuiltinApp VZero [RecType r] []) field = BuiltinApp VZero [recGet r field] []
+recGetExpr (PrimOp VZero [RecType r] []) field = PrimOp VZero [recGet r field] []
 recGetExpr e          field = RecGet e field
 
 declsExpr :: [Decl] -> Expr -> Expr

@@ -68,13 +68,13 @@ check expr reqTy = case expr of
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
                           Just (L ty) -> return ty
     instantiate ty reqTy (Var v)
-  BuiltinApp b [] args -> do
+  PrimOp b [] args -> do
     let BuiltinType kinds argTys ansTy = builtinType b
     vs <- mapM freshVar kinds
     unify reqTy (instantiateTVs vs ansTy)
     let argTys' = map (instantiateTVs vs) argTys
     args' <- zipWithM check args argTys'
-    return $ BuiltinApp b vs args'
+    return $ PrimOp b vs args'
   Decls decls body -> foldr checkDecl (check body reqTy) decls
   Lam b body -> do
     (a, bTy) <- splitFun reqTy

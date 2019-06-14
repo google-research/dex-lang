@@ -61,14 +61,14 @@ toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
   Var v -> do exprs <- asks $ snd . fromL . (!v)
               return $ write exprs
-  BuiltinApp Iota [n] [] -> impIota dests n
-  BuiltinApp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
+  PrimOp Iota [n] [] -> impIota dests n
+  PrimOp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
                              in toImp n nDest
-  BuiltinApp Fold ts args -> impFold dests ts args
-  BuiltinApp VAdd [ty] [x, y] -> toImp (expandVAdd ty x y) dests
-  BuiltinApp VSum [ty, n] [x] -> toImp (expandVSum ty n x) dests
-  BuiltinApp VZero [ty] []    -> toImp (expandVZero ty) dests
-  BuiltinApp b [] args -> do
+  PrimOp Fold ts args -> impFold dests ts args
+  PrimOp VAdd [ty] [x, y] -> toImp (expandVAdd ty x y) dests
+  PrimOp VSum [ty, n] [x] -> toImp (expandVSum ty n x) dests
+  PrimOp VZero [ty] []    -> toImp (expandVZero ty) dests
+  PrimOp b [] args -> do
     let (RecLeaf dest) = dests
     materialize (RecCon (Tup args)) $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
@@ -119,7 +119,7 @@ loop n body = do i <- fresh "i"
 -- TODO: should probably put these expansions elsewhere
 
 expandVAdd :: Type -> Expr -> Expr -> Expr
-expandVAdd (BaseType RealType) x y = BuiltinApp FAdd [] [x, y]
+expandVAdd (BaseType RealType) x y = PrimOp FAdd [] [x, y]
 expandVAdd (RecType r) x y = RecCon $ fmap addComponents (recNameVals r)
   where
     addComponents (field, ty) = expandVAdd ty (RecGet x field) (RecGet y field)
@@ -131,7 +131,7 @@ expandVZero (RecType r) = RecCon (fmap expandVZero r)
 -- TODO: figure out multi-level primitives and put this in the prelude
 -- (doing this here also misses out on inlining/fusion)
 expandVSum :: Type -> Type -> Expr -> Expr
-expandVSum ty n xs = BuiltinApp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
+expandVSum ty n xs = PrimOp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
  where
     i = rawName "iVS" -- TODO: freshness
     x = rawName "xVS"
