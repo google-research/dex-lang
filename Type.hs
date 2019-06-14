@@ -133,9 +133,9 @@ data BuiltinType = BuiltinType [Kind] [Type] Type
 
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
-  Add      -> ibinOpType
-  Sub      -> ibinOpType
-  Mul      -> ibinOpType
+  IAdd     -> ibinOpType
+  ISub     -> ibinOpType
+  IMul     -> ibinOpType
   Pow      -> ibinOpType
   FAdd     -> fbinOpType
   FSub     -> fbinOpType

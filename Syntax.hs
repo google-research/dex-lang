@@ -99,7 +99,7 @@ data LitVal = IntLit  Int
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
 
-data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
+data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
              | Iota | Range | Fold | Copy | Deriv | Transpose
@@ -107,8 +107,9 @@ data Builtin = Add | Sub | Mul | FAdd | FSub | FMul | FDiv
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
-  ("iadd", Add), ("isub", Sub), ("imul", Mul), ("fadd", FAdd), ("fsub", FSub),
-  ("fmul", FMul), ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
+  ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
+  ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
+  ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),

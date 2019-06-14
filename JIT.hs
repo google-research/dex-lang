@@ -374,9 +374,9 @@ externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
 
 compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b = case b of
-  Add      -> compileBinop longTy (\x y -> L.Add False False x y [])
-  Sub      -> compileBinop longTy (\x y -> L.Sub False False x y [])
-  Mul      -> compileBinop longTy (\x y -> L.Mul False False x y [])
+  IAdd     -> compileBinop longTy (\x y -> L.Add False False x y [])
+  ISub     -> compileBinop longTy (\x y -> L.Sub False False x y [])
+  IMul     -> compileBinop longTy (\x y -> L.Mul False False x y [])
   FAdd     -> compileBinop realTy (\x y -> L.FAdd noFastMathFlags x y [])
   FSub     -> compileBinop realTy (\x y -> L.FSub noFastMathFlags x y [])
   FMul     -> compileBinop realTy (\x y -> L.FMul noFastMathFlags x y [])
