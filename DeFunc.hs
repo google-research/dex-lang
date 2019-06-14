@@ -336,14 +336,22 @@ evalDeriv expr = case expr of
   _ -> error $ "Surprising expression: " ++ pprint expr
 
 builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
-builtinDeriv FAdd _ [x1, x2] [t1, t2] = return (fadd x1 x2, fadd t1 t2)
+builtinDeriv b tys xs ts | isLinear b = return (PrimOp b tys xs,
+                                                PrimOp b tys ts)
 builtinDeriv FMul _ [x1, x2] [t1, t2] = do
   x1' <- writePrimal (rawName "tmp") x1
   x2' <- writePrimal (rawName "tmp") x2
   return (fmul x1' x2', fadd (fmul x2' t1)
                              (fmul x1' t2))
-builtinDeriv VSum [ty, n] [xs] [ts] = return (vsum ty n xs, vsum ty n ts)
 builtinDeriv b _ _ _ = error $ "Fwd derivative not implemented: " ++ pprint b
+
+isLinear :: Builtin -> Bool
+isLinear b = case b of
+  FAdd -> True
+  VSum -> True
+  VZero -> True
+  VAdd -> True
+  _ -> False
 
 evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
 evalDerivScoped expr = do
