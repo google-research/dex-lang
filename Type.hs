@@ -156,6 +156,7 @@ builtinType builtin = case builtin of
   IntToReal -> BuiltinType [] [int] real
   Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> tup [b, a --> b])
   Transpose -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
+  Single -> BuiltinType [idxSetKind] [i, real] (i ==> real)
   where
     ibinOpType    = BuiltinType [] [int , int ] int
     fbinOpType    = BuiltinType [] [real, real] real

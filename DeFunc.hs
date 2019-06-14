@@ -422,6 +422,10 @@ evalTranspose ct expr = case expr of
         For (i:>iTy) (declsExpr decls (RecCon (Tup final)))
     flip mapM_ (recNameVals (Tup vs)) $ \(field, v) ->
       tell $ CTEnv $ v @> [RecGet summed field]
+  Get e i -> do
+    env <- ask
+    let TabType n ty = getType env e
+    evalTranspose (singleton ty n i ct) e
   RecCon r -> mapM_ evalElt (recNameVals r)
     where evalElt (field, val) = evalTranspose (recGetExpr ct field) val
   -- Tranposition of full unpacking of an n-tuple using recget creates an n^2
@@ -440,6 +444,7 @@ builtinTranspose FAdd ct [t1, t2] = do
   evalTranspose ct' t1
   evalTranspose ct' t2
 builtinTranspose FMul ct [x, t] = evalTranspose (mul x ct) t
+builtinTranspose b _ _ = error $ show b
 
 writeCoTangent :: Expr -> TransposeM Atom
 writeCoTangent expr = do
@@ -460,6 +465,9 @@ add x y = BuiltinApp FAdd [] [x, y]
 mul :: Expr -> Expr -> Expr
 mul x y = BuiltinApp FMul [] [x, y]
 
+singleton :: Type -> Type -> Var -> Expr -> Expr
+singleton (BaseType RealType) n i x = BuiltinApp Single [n] [Var i, x]
+
 sumExpr :: Type -> Expr -> Expr
 sumExpr (TabType idxTy ty) tab = foldExpr
   where
@@ -477,6 +485,8 @@ addVect (BaseType RealType) x y = add x y
 addVect (RecType r) e1 e2 = RecCon $ fmap addElts (recNameVals r)
   where addElts (field, ty) = addVect ty (recGetExpr e1 field)
                                          (recGetExpr e2 field)
+addVect (TabType n ty) xs ys = For (i:>n) (addVect ty (Get xs i) (Get ys i))
+  where i = rawName "ii"  -- TODO: freshness!
 
 unpair :: Atom -> (Atom, Atom)
 unpair (RecCon (Tup [x, y])) = (x, y)
