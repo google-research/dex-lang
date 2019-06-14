@@ -65,6 +65,9 @@ toImp expr dests = case expr of
   BuiltinApp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
                              in toImp n nDest
   BuiltinApp Fold ts args -> impFold dests ts args
+  BuiltinApp VAdd [ty] [x, y] -> toImp (expandVAdd ty x y) dests
+  BuiltinApp VSum [ty, n] [x] -> toImp (expandVSum ty n x) dests
+  BuiltinApp VZero [ty] []    -> toImp (expandVZero ty) dests
   BuiltinApp b [] args -> do
     let (RecLeaf dest) = dests
     materialize (RecCon (Tup args)) $ \args' ->
@@ -113,7 +116,31 @@ loop n body = do i <- fresh "i"
                  body' <- body i
                  return $ asProg $ Loop i n body'
 
--- Destination indices, then source indices
+-- TODO: should probably put these expansions elsewhere
+
+expandVAdd :: Type -> Expr -> Expr -> Expr
+expandVAdd (BaseType RealType) x y = BuiltinApp FAdd [] [x, y]
+expandVAdd (RecType r) x y = RecCon $ fmap addComponents (recNameVals r)
+  where
+    addComponents (field, ty) = expandVAdd ty (RecGet x field) (RecGet y field)
+
+expandVZero :: Type -> Expr
+expandVZero (BaseType RealType) = Lit (RealLit 0.0)
+expandVZero (RecType r) = RecCon (fmap expandVZero r)
+
+-- TODO: figure out multi-level primitives and put this in the prelude
+-- (doing this here also misses out on inlining/fusion)
+expandVSum :: Type -> Type -> Expr -> Expr
+expandVSum ty n xs = BuiltinApp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
+ where
+    i = rawName "iVS" -- TODO: freshness
+    x = rawName "xVS"
+    y = rawName "yVS"
+    -- Some bug in imp lowering means this doesn't work without the let...
+    body = expandVAdd ty (Var x) (Decls [Let (y:>(TabType n ty)) xs] (Get (Var y) i))
+    x0 = expandVZero ty
+
+--- Destination indices, then source indices
 
 data Dest = Buffer Var [Index] [Index]
           | IgnoreIt

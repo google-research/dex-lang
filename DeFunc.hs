@@ -181,7 +181,6 @@ isDefer :: SplitExpr -> Bool
 isDefer (Split _ _) = False
 isDefer (Defer _) = True
 
-
 refreshBinder :: Binder -> (Binder -> SimplifyM a) -> SimplifyM a
 refreshBinder (v:>ty) cont = do
   ty' <- subTy ty
@@ -218,6 +217,7 @@ trivialBuiltin b = case b of
   Iota -> True
   Range -> True
   IntToReal -> True
+  VZero -> True
   _ -> False
 
 toCat :: SimplifyM a -> SimplifyCat a
@@ -261,8 +261,8 @@ simplifyBuiltin FAdd [] [x, y] =
     _ -> BuiltinApp FAdd [] [x, y]
 simplifyBuiltin FMul [] [x, y] =
   case (checkZero x, checkZero y) of
-    (Zero, _) -> realZero
-    (_, Zero) -> realZero
+    (Zero, _) -> fzero
+    (_, Zero) -> fzero
     _ -> BuiltinApp FMul [] [x, y]
 simplifyBuiltin b ts xs = BuiltinApp b ts xs
 
@@ -270,6 +270,7 @@ data MaybeZero a = Zero | NonZero a
 
 checkZero :: Expr -> MaybeZero Expr
 checkZero (Lit (RealLit 0.0)) = Zero
+checkZero (BuiltinApp VZero _ _ ) = Zero
 checkZero expr = NonZero expr
 
 -- === Forward differentiation ===
@@ -301,9 +302,9 @@ evalDeriv expr = case expr of
   Var v -> do
     xt <- asks (!v)
     return $ case xt of
-      Left ty -> (expr, zero ty)
+      Left ty -> (expr, vzero ty)
       Right xt' -> xt'
-  Lit c -> return (expr, zero (BaseType (litType c)))
+  Lit c -> return (expr, vzero (BaseType (litType c)))
   Decls [] body -> evalDeriv body
   Decls (Let (v:>_) bound:decls) body -> do
     (x, t) <- evalDeriv bound
@@ -332,12 +333,12 @@ evalDeriv expr = case expr of
 
 builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
 builtinDeriv b _ [x1, x2] [t1, t2] = case b of
-  FAdd -> return (add x1 x2, add t1 t2)
+  FAdd -> return (fadd x1 x2, fadd t1 t2)
   FMul -> do
     x1' <- writePrimal (rawName "tmp") x1
     x2' <- writePrimal (rawName "tmp") x2
-    return (mul x1' x2', add (mul x2' t1)
-                             (mul x1' t2))
+    return (fmul x1' x2', fadd (fmul x2' t1)
+                               (fmul x1' t2))
 
 evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
 evalDerivScoped expr = do
@@ -365,6 +366,10 @@ writeTangent name expr = do
   extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
   return $ Var v
 
+primalType :: Expr -> DerivM Type
+primalType expr = do env <- looks $ snd . fst
+                     return $ getType env expr
+
 -- === Transposition ===
 
 type TransposeM a = ReaderT (FullEnv Type ())
@@ -389,7 +394,7 @@ expandTranspose [_, ctTy] [Lam b body] = do
                                      runWriterT $ flip runReaderT scope' $
                                        evalTranspose (Var ct) body'
     return $ Lam (ct:>ctTy)
-                 (declsExpr ctDecls (addMany xTy (snd $ ctEnvPop ctEnv v)))
+                 (declsExpr ctDecls (vaddMany xTy (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
@@ -407,7 +412,7 @@ evalTranspose ct expr = case expr of
                      evalTranspose ct body
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
-    evalTranspose (addMany ty outCTs) bound
+    evalTranspose (vaddMany ty outCTs) bound
     where body = declsExpr decls final
   For (i:>iTy) body -> do
     env <- ask
@@ -415,25 +420,24 @@ evalTranspose ct expr = case expr of
                                          flip runReaderT (env <> i@>L iTy) $
                                            evalTranspose (Get ct i) body
     let vs = envNames ctEnv
-        final = [addMany (fromL (env ! v)) (ctEnv ! v) | v <- vs]
+        final = [vaddMany (fromL (env ! v)) (ctEnv ! v) | v <- vs]
         bodyTy = RecType $ Tup $ map (\v -> fromL (env ! v)) vs
     summed <- writeCoTangent $
-      sumExpr (TabType iTy bodyTy) $
-        For (i:>iTy) (declsExpr decls (RecCon (Tup final)))
+      vsum bodyTy iTy $ For (i:>iTy) (declsExpr decls (RecCon (Tup final)))
     flip mapM_ (recNameVals (Tup vs)) $ \(field, v) ->
       tell $ CTEnv $ v @> [RecGet summed field]
   Get e i -> do
     env <- ask
     let TabType n ty = getType env e
-    evalTranspose (singleton ty n i ct) e
+    evalTranspose (vsingle ty n i ct) e
   RecCon r -> mapM_ evalElt (recNameVals r)
     where evalElt (field, val) = evalTranspose (recGetExpr ct field) val
   -- Tranposition of full unpacking of an n-tuple using recget creates an n^2
   -- expression. Should we reconsider unpacking with pattern matching instead?
   RecGet e field -> do
     env <- ask
-    let RecCon zeros = zero (getType env e)
-        ct' = RecCon $ recUpdate field ct zeros
+    let RecType r = getType env e
+        ct' = RecCon $ recUpdate field ct (fmap vzero r)
     evalTranspose ct' e
   BuiltinApp b _ args -> builtinTranspose b ct args
   _ -> error $ "Surprising expression in transpose: " ++ pprint expr
@@ -443,7 +447,7 @@ builtinTranspose FAdd ct [t1, t2] = do
   ct' <- writeCoTangent ct
   evalTranspose ct' t1
   evalTranspose ct' t2
-builtinTranspose FMul ct [x, t] = evalTranspose (mul x ct) t
+builtinTranspose FMul ct [x, t] = evalTranspose (fmul x ct) t
 builtinTranspose b _ _ = error $ show b
 
 writeCoTangent :: Expr -> TransposeM Atom
@@ -457,66 +461,37 @@ coTangentType :: Expr -> TransposeM Type
 coTangentType expr = do env <- looks $ snd
                         return $ getType env expr
 
--- === handy constructor wrappers ===
-
-add :: Expr -> Expr -> Expr
-add x y = BuiltinApp FAdd [] [x, y]
-
-mul :: Expr -> Expr -> Expr
-mul x y = BuiltinApp FMul [] [x, y]
-
-singleton :: Type -> Type -> Var -> Expr -> Expr
-singleton (BaseType RealType) n i x = BuiltinApp Single [n] [Var i, x]
-
-sumExpr :: Type -> Expr -> Expr
-sumExpr (TabType idxTy ty) tab = foldExpr
-  where
-    i = rawName "iSum"  -- TODO: ensure fresh
-    x = rawName "carry"
-    foldTab = For (i:>idxTy) $ Lam (x:>ty) (addVect ty (Var x) (Get tab i))
-    foldExpr = BuiltinApp Fold [ty, idxTy] [foldTab, zero ty]
-
-addMany :: Type -> [Expr] -> Expr
-addMany ty [] = zero ty
-addMany ty (x:xs) = addVect ty x (addMany ty xs)
-
-addVect :: Type -> Expr -> Expr -> Expr
-addVect (BaseType RealType) x y = add x y
-addVect (RecType r) e1 e2 = RecCon $ fmap addElts (recNameVals r)
-  where addElts (field, ty) = addVect ty (recGetExpr e1 field)
-                                         (recGetExpr e2 field)
-addVect (TabType n ty) xs ys = For (i:>n) (addVect ty (Get xs i) (Get ys i))
-  where i = rawName "ii"  -- TODO: freshness!
-
-unpair :: Atom -> (Atom, Atom)
-unpair (RecCon (Tup [x, y])) = (x, y)
-
-zero :: Type -> Expr
-zero ty = case ty of
-  BaseType RealType -> realZero
-  BaseType _ -> unitCon
-  RecType r -> RecCon $ fmap zero r
-  TabType i a -> For (rawName "i" :> i) (zero a)
-  ArrType _ _ -> error "Should be defunctionalized already"
-
-unitCon :: Expr
-unitCon = RecCon (Tup [])
-
-realZero :: Expr
-realZero = Lit (RealLit 0.0)
-
-primalType :: Expr -> DerivM Type
-primalType expr = do env <- looks $ snd . fst
-                     return $ getType env expr
-
 tangentType :: Expr -> DerivM Type
 tangentType expr = do env <- looks $ snd . snd
                       return $ getType env expr
 
+-- === constructor wrappers with some simplifications built in ===
+
+fadd x y = BuiltinApp FAdd [] [x, y]
+fmul x y = BuiltinApp FMul [] [x, y]
+fzero :: Expr
+fzero = Lit (RealLit 0.0)
+
+vzero   ty       = BuiltinApp VZero   [ty] []
+vsingle ty n i x = BuiltinApp VSingle [ty, n] [Var i, x]
+vsum    ty n x   = BuiltinApp VSum    [ty, n] [x]
+
+vadd :: Type -> Expr -> Expr -> Expr
+vadd _ (BuiltinApp VZero _ _) y = y
+vadd _ x (BuiltinApp VZero _ _) = x
+vadd ty x y = BuiltinApp VAdd [ty] [x, y]
+
+vaddMany :: Type -> [Expr] -> Expr
+vaddMany ty xs = foldr (vadd ty) (vzero ty) xs
+
 recGetExpr :: Expr -> RecField -> Expr
 recGetExpr (RecCon r) field = recGet r field
+recGetExpr (BuiltinApp VZero [RecType r] []) field = BuiltinApp VZero [recGet r field] []
 recGetExpr e          field = RecGet e field
 
 declsExpr :: [Decl] -> Expr -> Expr
 declsExpr [] body = body
 declsExpr decls body = Decls decls body
+
+unpair :: Expr -> (Expr, Expr)
+unpair (RecCon (Tup [x, y])) = (x, y)

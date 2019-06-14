@@ -103,7 +103,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
              | Iota | Range | Fold | Copy | Deriv | Transpose
-             | Single
+             | VZero | VAdd | VSingle | VSum
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
@@ -113,7 +113,8 @@ builtinNames = M.fromList [
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("fold", Fold), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
-  ("transpose", Transpose), ("copy", Copy), ("single", Single)]
+  ("transpose", Transpose), ("copy", Copy),
+  ("vzero", VZero), ("vadd", VAdd), ("vsingle", VSingle), ("vsum", VSum)]
 
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
 

@@ -64,7 +64,6 @@ fold fs x0 = %fold (for i. lam x. fs.i x, x0)
 rand :: Int -> Real
 rand x = %rand x
 
--- TODO: automatically hoist the xs.i
 sum :: A i. i=>Real -> Real
 sum xs = fold (for i. let x = xs.i in lam c. c + x) 0.0
 
@@ -74,11 +73,21 @@ isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 map :: A i a b. (a -> b) -> i=>a -> i=>b
 map f xs = for i. f xs.i
 
-single :: A i. i -> Real -> i=>Real
-single i x = %single (i, x)
+-- All of the following have implicit vector space typeclass constraints on `a`
+--  and `b`. TODO: make some sort of typeclass system
 
--- TODO: need a (probably builtin) vector space typeclass
--- deriv :: (VSpace a, VSpace b) => ...
+vzero :: A a. a
+vzero = %vzero ()
+
+vadd :: A a. a -> a -> a
+vadd x y = %vadd (x, y)
+
+vsingle :: A i a. i -> a -> i=>a
+vsingle i x = %vsingle (i, x)
+
+vsum :: A i a. i=>a -> a
+vsum xs = %vsum xs
+
 deriv :: A a b. (a -> b) -> a -> (b, a -> b)
 deriv f = %deriv lam x. f x
 
