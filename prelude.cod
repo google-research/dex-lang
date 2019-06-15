@@ -86,7 +86,7 @@ vsingle :: A i a. i -> a -> i=>a
 vsingle i x = %vsingle (i, x)
 
 vsum :: A i a. i=>a -> a
-vsum xs = %vsum xs
+vsum xs = %vsum (for i. xs.i)
 
 deriv :: A a b. (a -> b) -> a -> (b, a -> b)
 deriv f = %deriv lam x. f x

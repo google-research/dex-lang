@@ -464,8 +464,9 @@ subExprR expr = case expr of
                   body' <- recur body
                   return $ For b' body'
   Get e ie -> do e' <- recur e
-                 Var ie' <- lookup ie
-                 return $ Get e' ie'
+                 ie' <- lookup ie
+                 case ie' of Var ie' -> return $ Get e' ie'
+                             _ -> error $ "Unexpected env: " ++ show ie'
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> liftM (flip RecGet field) (recur e)
   TLam ts expr -> refreshTBinders ts $ \ts' ->

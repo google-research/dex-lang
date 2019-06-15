@@ -61,6 +61,7 @@ simplify expr = case expr of
     ts' <- mapM subTy ts
     case b of
       Fold      -> simplifyFold    ts' args
+      VSum      -> simplifyVSum    ts' args
       Deriv     -> expandDeriv     ts' args
       Transpose -> expandTranspose ts' args
       _ -> do args' <- mapM recur args
@@ -206,6 +207,20 @@ simplifyFold ts [For ib (Lam xb body), x] = do
       body' <- simplifyScoped body
       return $ PrimOp Fold ts [For ib' (Lam xb' body'), x']
 
+simplifyVSum :: [Type] -> [Expr] -> SimplifyM Expr
+simplifyVSum [ty, n] [For b body] = do
+  refreshBinder b $ \b' -> do
+    (decls, body') <- liftM fromDeclsExpr $ simplifyScoped body
+    case decls of
+      [] -> do
+        return $ simplifyVSumBody n b' ty body'
+
+simplifyVSumBody :: Type -> Binder -> Type -> Expr -> Expr
+simplifyVSumBody n b (RecType tr) (RecCon xr) =
+  RecCon $ recZipWith (simplifyVSumBody n b) tr xr
+simplifyVSumBody _ b@(i:>_) _ (PrimOp VSingle _ [Var i', x]) | i == i' = For b x
+simplifyVSumBody n b ty body = PrimOp VSum [ty, n] [For b body]
+
 askLEnv :: Var -> SimplifyM Atom
 askLEnv v = do x <- asks $ flip envLookup v
                return $ case x of
@@ -319,8 +334,9 @@ evalDeriv expr = case expr of
   PrimOp b tys args -> do
     (xs, ts) <- liftM unzip $ mapM evalDeriv args
     builtinDeriv b tys xs ts
-  For b@(i:>_) body -> do
-    (body', builder) <- evalDerivScoped body
+  For b@(i:>ty) body -> do
+    let ext = ([], i@>L ty)
+    (body', builder) <- extendLocal (ext, ext) $ evalDerivScoped body
     tab <- writePrimal (rawName "tab") (For b body')
     let (xBody, tBody) = builder (Get tab i)
     return (For b xBody, For b tBody)
@@ -491,7 +507,8 @@ fzero = Lit (RealLit 0.0)
 
 vzero   ty       = PrimOp VZero   [ty] []
 vsingle ty n i x = PrimOp VSingle [ty, n] [Var i, x]
-vsum    ty n x   = PrimOp VSum    [ty, n] [x]
+vsum    ty n x   = PrimOp VSum    [ty, n] [For (i:>n) (Get x i)]
+  where i = rawName "vsumI" -- TODO: freshen
 
 vadd :: Type -> Expr -> Expr -> Expr
 vadd _ (PrimOp VZero _ _) y = y
@@ -509,6 +526,10 @@ recGetExpr e          field = RecGet e field
 declsExpr :: [Decl] -> Expr -> Expr
 declsExpr [] body = body
 declsExpr decls body = Decls decls body
+
+fromDeclsExpr :: Expr -> ([Decl], Expr)
+fromDeclsExpr (Decls decls body) = (decls, body)
+fromDeclsExpr expr = ([], expr)
 
 unpair :: Expr -> (Expr, Expr)
 unpair (RecCon (Tup [x, y])) = (x, y)

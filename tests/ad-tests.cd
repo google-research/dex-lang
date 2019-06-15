@@ -44,3 +44,6 @@ arrFun c = for i::nx. c
 
 > [3.0]
 
+:p transpose (lam x. for i. x.i) xs
+
+> [0.0, 1.0, 2.0]
