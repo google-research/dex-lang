@@ -49,7 +49,7 @@ prettyTyDepth d t = case t of
                           header = "A" <+> hsep boundvars <> "."
                           boundvars = map (p . tvars) [-n..(-1)]
   Exists body -> "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
-  IdxSetLit i -> "0.." <> p i
+  IdxSetLit i -> "{.." <> p i <> "}"
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
         tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds

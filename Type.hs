@@ -68,6 +68,9 @@ getType' check expr = case expr of
     RecCon r   -> liftM RecType $ traverse recur r
     RecGet e field -> do RecType r <- recur e
                          return $ recGet r field
+    TabCon n ty xs -> do
+      mapM_ (checkEq "table" ty . recur) xs
+      return $ TabType (IdxSetLit n) ty
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
                         mapM_ checkShadow vks
@@ -92,11 +95,13 @@ getType' check expr = case expr of
          checkTy (binderAnn b)
          extendR (lbind b) cont
 
+    runCheck :: TypeM () -> TypeM ()
+    runCheck m = if check then m else return ()
+
     checkEq :: String -> Type -> TypeM Type -> TypeM ()
-    checkEq s ty getTy =
-      if check then do ty' <- getTy
-                       assertEq ty ty' ("Unexpected type in " ++ s)
-               else return ()
+    checkEq s ty getTy = runCheck $ do
+      ty' <- getTy
+      assertEq ty ty' ("Unexpected type in " ++ s)
 
     recur = getType' check
     recurWith  b  = extendR (lbind b) . recur

@@ -102,6 +102,7 @@ term =   parenRaw
      <|> lamExpr
      <|> forExpr
      <|> builtinExpr
+     <|> tabCon
      <?> "term"
 
 maybeAnnot :: UExpr -> Parser UExpr
@@ -191,6 +192,11 @@ localLet = do
   symbol "="
   body <- expr
   return $ ULet p (wrap body)
+
+tabCon :: Parser UExpr
+tabCon = do
+  xs <- brackets $ expr `sepBy` symbol ","
+  return $ UTabCon xs
 
 idxLhsArgs = do
   symbol "."

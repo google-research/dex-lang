@@ -109,6 +109,12 @@ check expr reqTy = case expr of
     r <- splitRec (otherFields field) ty
     unify reqTy (recGet r field) -- TODO: throw graceful error on bad field
     return $ RecGet e' field
+  TabCon _ _ xs -> do
+    (n, elemTy) <- splitTab reqTy
+    xs' <- mapM (flip check elemTy) xs
+    let n' = length xs
+    unify n (IdxSetLit n')
+    return $ TabCon n' elemTy xs'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     unify annTy reqTy

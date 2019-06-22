@@ -61,6 +61,7 @@ deShadowExpr expr = case expr of
       return $ For b' $ wrapDecls decls body'
   UGet e v -> liftM2 Get (recur e) (getLVar v)
   URecCon r -> liftM RecCon $ traverse recur r
+  UTabCon xs -> liftM (TabCon 0 unitTy) (mapM recur xs)
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   where recur = deShadowExpr
         getLVar :: Var -> DeShadowM Var

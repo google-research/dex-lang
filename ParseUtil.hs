@@ -1,5 +1,5 @@
 module ParseUtil (lineof, sc, blankLines, stringLiteral, makeIdentifier,
-                  space, int, real, lexeme, symbol, parens, Parser,
+                  space, int, real, lexeme, symbol, parens, brackets, Parser,
                   emptyLines, captureSource) where
 
 import Control.Monad (void)
@@ -50,6 +50,9 @@ symbol = L.symbol sc
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")
+
+brackets :: Parser a -> Parser a
+brackets = between (symbol "[") (symbol "]")
 
 captureSource :: Parser a -> Parser (String, a)
 captureSource p = do

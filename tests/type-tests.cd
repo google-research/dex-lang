@@ -83,3 +83,22 @@ xr = map real arr
 
 > Type error: can't unify Real and Int
 
+:t [1, 2, 3]
+
+> {..3}=>Int
+
+:t []
+
+> A a. {..0}=>a
+
+:t [1, [2]]
+
+> Type error: can't unify Int and T_3=>T_4
+
+:t [[1, 2], [3, 4]]
+
+> {..2}=>{..2}=>Int
+
+:t [[1, 2], [3]]
+
+> Type error: can't unify {..2} and {..1}

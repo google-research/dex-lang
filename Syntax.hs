@@ -50,6 +50,7 @@ data ExprP b = Lit LitVal
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
           | RecGet (ExprP b) RecField
+          | TabCon IdxSetVal Type [ExprP b]
           | Annot (ExprP b) Type
              deriving (Eq, Ord, Show)
 
@@ -94,7 +95,7 @@ type IdxSetVal = Int
 data LitVal = IntLit  Int
             | RealLit Double
             | StrLit  String
-               deriving (Eq, Ord, Show)
+              deriving (Eq, Ord, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
@@ -145,6 +146,7 @@ data UExpr = ULit LitVal
            | UFor UBinder UExpr
            | UGet UExpr IdxExpr
            | URecCon (Record UExpr)
+           | UTabCon [UExpr]
            | UAnnot UExpr Type
                deriving (Show, Eq)
 
@@ -348,6 +350,7 @@ instance HasTypeVars Expr where
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
       RecGet e field   -> liftA (flip RecGet field) (recur e)
+      TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
       TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
     where recur   = subFreeTVsBVs bvs f
