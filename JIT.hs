@@ -100,8 +100,11 @@ makeDestCell :: PersistEnv -> IBinder -> IO (BinderP PersistCell)
 makeDestCell env (v :> IType ty shape) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
   return $ v :> Cell (Ptr ptr ty') shape'
-  where shape' = map (scalarVal . (env !)) shape
-        ty' = scalarTy ty
+  where
+    ty' = scalarTy ty
+    getSize size = case size of IVar v -> scalarVal (env ! v)
+                                ILit (IntLit n) -> fromIntegral n
+    shape' = map getSize shape
 
 -- TODO: pass destinations as args rather than baking pointers into LLVM
 toLLVM :: [IBinder] -> ImpProg -> TopPass PersistEnv ([PersistCell], CompiledProg)
@@ -178,17 +181,17 @@ compileStatement statement = case statement of
   Update v idxs b exprs -> do
     vals <- mapM compileExpr exprs
     cell <- lookupCellVar v
-    idxs' <- mapM lookupScalar idxs
+    idxs' <- mapM compileExpr idxs
     cell' <- idxCell cell idxs'
     outVal <- case b of Copy -> let [val] = vals in return val
                         _ -> compileBuiltin b vals
     writeCell cell' outVal
   Alloc (v :> IType b shape) body -> do
-    shape' <- mapM lookupScalar shape
+    shape' <- mapM compileExpr shape
     cell <- allocate b shape' (nameTag v)
     extendR (v @> Right cell) (compileProg body)
     free cell
-  Loop i n body -> do n' <- lookupScalar n
+  Loop i n body -> do n' <- compileExpr n
                       compileLoop i n' body
 
 compileExpr :: IExpr -> CompileM CompileVal
@@ -201,7 +204,7 @@ compileExpr expr = case expr of
                     [] -> readScalarCell cell
                     _  -> return $ ArrayVal ptr shape
   IGet v i -> do ArrayVal ptr (_:shape) <- compileExpr v
-                 ScalarVal i' _ <- lookupScalar i
+                 ScalarVal i' _ <- compileExpr i
                  ptr'@(Ptr _ ty) <- indexPtr ptr shape i'
                  case shape of
                    [] -> do x <- load ptr'
@@ -214,11 +217,6 @@ lookupImpVar v = asks (! v)
 readScalarCell :: Cell -> CompileM CompileVal
 readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
                                              return $ ScalarVal op ty
-
-lookupScalar :: Var -> CompileM CompileVal
-lookupScalar v = do x <- lookupImpVar v
-                    case x of Left val -> return val
-                              Right cell -> readScalarCell cell
 
 lookupCellVar :: Var -> CompileM Cell
 lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }

@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Syntax (ExprP (..), Expr, Type (..), IdxSet, Builtin (..), Var,
+module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var,
                UExpr (..), UTopDecl (..), UDecl (..), ImpDecl (..), TopDeclP (..),
                DeclP (..), Decl, TopDecl, Command (..), Pat,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
@@ -165,11 +165,11 @@ newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
 
 data Statement = Alloc IBinder ImpProg
                | Update Var [Index] Builtin [IExpr]
-               | Loop Index Size ImpProg
+               | Loop Var Size ImpProg
                    deriving (Show)
 
 data IExpr = ILit LitVal
-           | IVar  Var
+           | IVar Var
            | IGet IExpr Index
                deriving (Show, Eq)
 
@@ -178,8 +178,8 @@ data ImpDecl = ImpTopLet [IBinder] ImpProg
 
 type IBinder = BinderP IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)
-type Size = Var
-type Index = Var
+type Size  = IExpr
+type Index = IExpr
 
 -- === some handy monoids ===
 

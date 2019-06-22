@@ -88,6 +88,7 @@ simplify expr = case expr of
   RecGet e field -> do
     e' <- recur e
     return $ recGetExpr e' field
+  TabCon _ _ _ -> return expr -- Assumes nothing tricky inside (TODO: check/handle)
   TLam _ _ -> applySub expr
   TApp fexpr ts -> do
     TLam bs body <- recur fexpr
@@ -166,8 +167,9 @@ decompose scope expr = case expr of
       build e = RecCon $ fmap (\(field, (_, f)) -> f (RecGet e field))
                               (recNameVals splits')
   RecGet _ _ -> pureMat expr
+  TabCon _ _ _ -> pureMat expr
   TLam _ _ -> matLocalVars scope expr
-  TApp _ _ -> error "Shouldn't see TApp here"
+  _ -> error $ "Can't decompose " ++ pprint expr
   where
     recur = simplify
 

@@ -73,7 +73,7 @@ toImp expr dests = case expr of
     materialize (RecCon (Tup args)) $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
   Decls decls body -> foldr toImpDecl (toImp body dests) decls
-  Get x i -> do RecLeaf (IVar i') <- asks $ snd . fromL . (!i)
+  Get x i -> do RecLeaf i' <- asks $ snd . fromL . (!i)
                 toImp x $ fmap (indexSource i') dests
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
@@ -81,6 +81,7 @@ toImp expr dests = case expr of
   RecGet e field -> toImp e dests'
     where dests' = RecTree $ recUpdate field dests $
                      fmap (const (RecLeaf IgnoreIt)) (otherFields field)
+  TabCon n ty xs -> impTabCon dests n ty xs
   _ -> error $ "Can't lower to imp:\n" ++ pprint expr
   where write = writeExprs dests
         unitCon = RecTree $ Tup []
@@ -111,9 +112,9 @@ materialize expr body = do
 bindVal :: Binder -> RecTree IExpr -> ImpM ImpProg -> ImpM ImpProg
 bindVal b val body = extendR (lbindWith b val) body
 
-loop :: Name -> (Name -> ImpM ImpProg) -> ImpM ImpProg
+loop :: Size -> (Index -> ImpM ImpProg) -> ImpM ImpProg
 loop n body = do i <- fresh "i"
-                 body' <- body i
+                 body' <- body (IVar i)
                  return $ asProg $ Loop i n body'
 
 -- TODO: should probably put these expansions elsewhere
@@ -171,32 +172,41 @@ writeBuiltin b (Buffer name destIdxs []) exprs =
   asProg $ Update name destIdxs b exprs
 
 toImpFor :: RecTree Dest -> Binder -> Expr -> ImpM ImpProg
-toImpFor dest (i :> TypeVar n) body = do
-  n' <- asks $ fromT . (!n)
+toImpFor dest (i :> n) body = do
+  n' <- typeToSize n
   loop n' $ \i' -> do
-    extendR (i @> L (TypeVar n, RecLeaf (IVar i'))) $
+    extendR (i @> L (n, RecLeaf i')) $
       toImp body (fmap (indexDest i') dest)
 
+typeToSize :: Type -> ImpM Size
+typeToSize (TypeVar v) = liftM IVar $ asks $ fromT . (!v)
+typeToSize (IdxSetLit n) = return (ILit (IntLit n))
+typeToSize ty = throw CompilerErr $ "Not a valid size" ++ pprint ty
+
 impIota :: RecTree Dest -> Type -> ImpM ImpProg
-impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) (TypeVar n) =
+impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) n =
   case srcIdxs of
-    [] -> do n' <- asks $ fromT . (!n)
+    [] -> do n' <- typeToSize n
              loop n' $ \i ->
-                return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [IVar i]
-    [srcIdx] -> return $ asProg $ Update outVar destIdxs Copy [IVar srcIdx]
+                return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [i]
+    _ -> return $ asProg $ Update outVar destIdxs Copy srcIdxs
 
 impFold :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
-impFold dest [_, TypeVar n] [For (i :> _) (Lam b body), x] = do
-  n' <- asks $ fromT . (!n)
+impFold dest [_, n] [For (i :> _) (Lam b body), x] = do
+  n' <- typeToSize n
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
-               extendR (i @> L (TypeVar n, RecLeaf (IVar i'))) $
+               extendR (i @> L (n, RecLeaf i')) $
                  bindVal b (fmap IVar accum) $
                    toImp body (fmap asBuffer accum)
     return $ loop' <> writeExprs dest (fmap IVar accum)
   where
     asBuffer :: Name -> Dest
     asBuffer v = Buffer v [] []
+
+impTabCon :: RecTree Dest -> IdxSetVal -> Type -> [Expr] -> ImpM ImpProg
+impTabCon dest _ _ xs = liftM fold $ zipWithM writeElt [0..] xs
+  where writeElt i x = toImp x $ fmap (indexDest (ILit (IntLit i))) dest
 
 asProg :: Statement -> ImpProg
 asProg statement = ImpProg [statement]
@@ -205,9 +215,9 @@ flatType :: Type -> ImpM (RecTree IType)
 flatType ty = case ty of
   BaseType b -> return $ RecLeaf (IType b [])
   RecType r  -> liftM RecTree (traverse flatType r)
-  TabType (TypeVar n) valTy -> do n' <- asks $ fromT . (!n)
-                                  valTy' <- flatType valTy
-                                  return $ fmap (addIdx n') valTy'
+  TabType n valTy -> do n' <- typeToSize n
+                        valTy' <- flatType valTy
+                        return $ fmap (addIdx n') valTy'
   TypeVar _ -> return $ RecLeaf intTy
   -- TODO: fix this (only works for range)
   Exists _ -> return (RecTree (Tup [RecLeaf intTy, RecTree (Tup [])]))
@@ -219,7 +229,10 @@ flatType' :: Type -> RecTree IType
 flatType' ty = case ty of
   BaseType b -> RecLeaf (IType b [])
   RecType r  -> RecTree (fmap flatType' r)
-  TabType (TypeVar n) valTy -> fmap (addIdx n) (flatType' valTy)
+  TabType n valTy -> fmap (addIdx n') (flatType' valTy)
+                       where n' = case n of TypeVar v -> IVar v
+                                            IdxSetLit l -> ILit (IntLit l)
+  _ -> error $ "Can't flatten type: " ++ pprint ty
 
 addIdx :: Size -> IType -> IType
 addIdx n (IType ty shape) = IType ty (n : shape)
@@ -268,7 +281,7 @@ checkStatement statement = case statement of
                               else return ()
     extendR (bind b) (checkProg body)
   Update v idxs Copy [expr] -> do
-    mapM_ checkIsInt idxs
+    mapM_ checkInt idxs
     IType b  shape  <- asks $ (! v)
     IType b' shape' <- impExprType expr
     assertEq b b' "Base type mismatch in copy"
@@ -282,7 +295,7 @@ checkStatement statement = case statement of
       [] -> assertEq b b' "Base type mismatch in builtin application"
       _  -> throw CompilerErr "Writing to non-scalar buffer"
   Loop i size block -> extendR (i @> intTy) $ do
-                          checkIsInt size
+                          checkInt size
                           checkProg block
 
 impExprType :: IExpr -> ImpCheckM IType
@@ -290,7 +303,7 @@ impExprType expr = case expr of
   ILit val -> return $ IType (litType val) []
   IVar v   -> asks $ (! v)
   IGet e i -> do IType b (_:shape) <- impExprType e
-                 checkIsInt i
+                 checkInt i
                  return $ IType b shape
 
 checkScalarTy :: Type -> IType -> ImpCheckM ()
@@ -298,9 +311,11 @@ checkScalarTy (BaseType b) (IType b' []) | b == b'= return ()
 checkScalarTy ty ity = throw CompilerErr $ "Wrong types. Expected:" ++ pprint ty
                                                          ++ " Got " ++ pprint ity
 
-checkIsInt :: Var -> ImpCheckM ()
-checkIsInt v = do ty <- lookupVar v
-                  assertEq ty intTy "Not a valid size"
+checkInt :: IExpr -> ImpCheckM ()
+checkInt (IVar v) = do ty <- lookupVar v
+                       assertEq ty intTy "Not a valid int"
+checkInt (ILit (IntLit _)) = return ()
+checkInt expr = throw CompilerErr $ "Not an int: " ++ pprint expr
 
 snoc :: [a] -> a -> [a]
 snoc xs x = reverse $ x : reverse xs
