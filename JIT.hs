@@ -29,8 +29,6 @@ import Data.Binary.IEEE754 (wordToDouble)
 import Type
 import Syntax
 import Env hiding (Name)
-import Record
-import Util
 import Pass
 import Fresh hiding (freshName)
 import PPrint
@@ -72,7 +70,7 @@ jitPass decl = case decl of
     vals <- evalProg bs prog
     putEnv $ bindFold $ zipWith replaceAnnot bs vals
   ImpEvalCmd _ _ NoOp -> return ()
-  ImpEvalCmd ty bs (Command cmd prog) -> case cmd of
+  ImpEvalCmd cont bs (Command cmd prog) -> case cmd of
     LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
                llvm <- liftIO $ showLLVM m
                writeOut llvm
@@ -81,7 +79,7 @@ jitPass decl = case decl of
               writeOut asm
     EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
-                   writeOut $ pprint (restructureVal ty vecs)
+                   writeOut $ pprint $ cont vecs
     TimeIt -> do t1 <- liftIO getCurrentTime
                  evalProg bs prog
                  t2 <- liftIO getCurrentTime
@@ -135,16 +133,6 @@ readPersistCell :: PersistCell -> IO PersistVal
 readPersistCell (Cell (Ptr ptr ty) []) = do [word] <- readPtrs 1 (wordAsPtr ptr)
                                             return $ ScalarVal word ty
 readPersistCell (Cell p shape) = return $ ArrayVal p shape
-
--- TODO: concretize type with actual index set
-restructureVal :: Type -> [Vec] -> Value
-restructureVal ty vecs = Value ty $ restructure vecs (typeLeaves ty)
-  where
-    typeLeaves :: Type -> RecTree ()
-    typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
-                               TabType _ valTy -> typeLeaves valTy
-                               RecType r -> RecTree $ fmap typeLeaves r
-                               _ -> error $ "can't show " ++ pprint ty
 
 asVec :: PersistVal -> IO Vec
 asVec v = case v of

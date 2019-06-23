@@ -12,11 +12,10 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, unitTy,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result (..), freeVars, lhsVars, Output,
-               Nullable (..), SetVal (..), EvalStatus (..), MonMap (..),
-               resultSource, resultText, resultErr, resultComplete, Index,
-               wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind
-              ) where
+               Value (..), Vec (..), Result (..), freeVars,
+               lhsVars, Output, Nullable (..), SetVal (..), EvalStatus (..),
+               MonMap (..), resultSource, resultText, resultErr, resultComplete,
+               Index, wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind) where
 
 import Fresh
 import Record
@@ -174,7 +173,7 @@ data IExpr = ILit LitVal
                deriving (Show, Eq)
 
 data ImpDecl = ImpTopLet [IBinder] ImpProg
-             | ImpEvalCmd Type [IBinder] (Command ImpProg)
+             | ImpEvalCmd ([Vec] -> Value) [IBinder] (Command ImpProg)
 
 type IBinder = BinderP IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)

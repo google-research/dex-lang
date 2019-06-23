@@ -15,6 +15,7 @@ import PPrint
 import Pass
 import Fresh
 import Cat
+import Util
 
 type ImpM a = Pass ImpEnv () a
 type ImpVal = RecTree IExpr
@@ -32,7 +33,7 @@ impPass decl = case decl of
     prog <- impExprTop binders expr
     putEnv $ lbindWith b (fmap (IVar . binderVar) binders) <> (iv @> T iv)
     return $ ImpTopLet (toList binders) prog
-  EvalCmd NoOp -> return (ImpEvalCmd unitTy [] NoOp)
+  EvalCmd NoOp -> return (ImpEvalCmd (const undefined) [] NoOp)
   EvalCmd (Command cmd expr) -> do
     env <- getEnv
     let ty = getType (impEnvToTypeEnv env) expr
@@ -40,7 +41,7 @@ impPass decl = case decl of
     prog <- impExprTop binders expr
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
-    return $ ImpEvalCmd ty (toList binders) (Command cmd prog)
+    return $ ImpEvalCmd (reconstruct ty) (toList binders) (Command cmd prog)
 
 impBinders :: Binder -> RecTree IBinder
 impBinders (v :> ty) = fmap (uncurry (:>) . onFst newName) (recTreeNamed itypes)
@@ -48,6 +49,15 @@ impBinders (v :> ty) = fmap (uncurry (:>) . onFst newName) (recTreeNamed itypes)
      itypes = flatType' ty
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
+
+reconstruct :: Type -> [Vec] -> Value
+reconstruct ty vecs = Value ty $ restructure vecs (typeLeaves ty)
+  where
+    typeLeaves :: Type -> RecTree ()
+    typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
+                               TabType _ valTy -> typeLeaves valTy
+                               RecType r -> RecTree $ fmap typeLeaves r
+                               _ -> error $ "can't show " ++ pprint ty
 
 impExprTop :: RecTree IBinder -> Expr -> TopPass ImpEnv ImpProg
 impExprTop dest expr = do
