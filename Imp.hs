@@ -50,14 +50,21 @@ impBinders (v :> ty) = fmap (uncurry (:>) . onFst newName) (recTreeNamed itypes)
      newName fields = rawName $ intercalate "_" (nameTag v : map pprint fields)
      onFst f (x,y) = (f x, y)
 
-reconstruct :: Type -> [Vec] -> Value
-reconstruct ty vecs = Value ty $ restructure vecs (typeLeaves ty)
+reconstruct :: Type -> Env Int -> [Vec] -> Value
+reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
   where
     typeLeaves :: Type -> RecTree ()
     typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
                                TabType _ valTy -> typeLeaves valTy
                                RecType r -> RecTree $ fmap typeLeaves r
                                _ -> error $ "can't show " ++ pprint ty
+    subty :: Type -> Type
+    subty ty = case ty of
+      BaseType _ -> ty
+      TabType (TypeVar v) valTy -> TabType (IdxSetLit (tenv ! v)) (subty valTy)
+      TabType n valTy -> TabType n (subty valTy)
+      RecType r -> RecType $ fmap subty r
+      _ -> error $ "can't show " ++ pprint ty
 
 impExprTop :: RecTree IBinder -> Expr -> TopPass ImpEnv ImpProg
 impExprTop dest expr = do

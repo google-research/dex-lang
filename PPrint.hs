@@ -5,6 +5,7 @@ module PPrint (pprint) where
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import Record
 import Syntax
 
 pprint :: Pretty a => a -> String
@@ -115,7 +116,25 @@ instance Pretty Statement where
                                nest 4 (hardline <> p block)
 
 instance Pretty Value where
-  pretty (Value _ vecs) = p vecs
+  pretty (Value (BaseType IntType ) (RecLeaf (IntVec  [v]))) = p v
+  pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = p v
+  pretty (Value (RecType r) (RecTree r')) = p (recZipWith Value r r')
+  pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
+
+splitTab :: IdxSet -> Type -> RecTree Vec -> [Value]
+splitTab (IdxSetLit n) ty v = map (Value ty) $ transposeRecTree (fmap splitVec v)
+  where
+    splitVec :: Vec -> [Vec]
+    splitVec (IntVec  xs) = map IntVec  $ chunk (length xs `div` n) xs
+    splitVec (RealVec xs) = map RealVec $ chunk (length xs `div` n) xs
+
+    -- TODO: this is O(N^2)
+    transposeRecTree :: RecTree [a] -> [RecTree a]
+    transposeRecTree tree = [fmap (!!i) tree | i <- [0..n-1]]
+
+    chunk :: Int -> [a] -> [[a]]
+    chunk _ [] = []
+    chunk m xs = take m xs : chunk m (drop m xs)
 
 instance Pretty Vec where
   pretty (IntVec  xs) = p xs

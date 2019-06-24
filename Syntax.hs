@@ -173,7 +173,8 @@ data IExpr = ILit LitVal
                deriving (Show, Eq)
 
 data ImpDecl = ImpTopLet [IBinder] ImpProg
-             | ImpEvalCmd ([Vec] -> Value) [IBinder] (Command ImpProg)
+             | ImpEvalCmd (Env Int -> [Vec] -> Value) [IBinder] (Command ImpProg)
+             --            ^ temporary hack until we do existential packing
 
 type IBinder = BinderP IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)

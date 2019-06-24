@@ -79,7 +79,12 @@ jitPass decl = case decl of
               writeOut asm
     EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
-                   writeOut $ pprint $ cont vecs
+                   env <- getEnv
+                   let tenv = flip envMapMaybe env $ \v ->
+                                case v of
+                                  ScalarVal w _ -> Just (fromIntegral w)
+                                  _ -> Nothing
+                   writeOut $ pprint $ cont tenv vecs
     TimeIt -> do t1 <- liftIO getCurrentTime
                  evalProg bs prog
                  t2 <- liftIO getCurrentTime
