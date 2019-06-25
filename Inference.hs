@@ -98,10 +98,9 @@ check expr reqTy = case expr of
   Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab expr tabTy
-    actualISet <- asks $ fromL . (!idxExpr)
-    unifyCtx (Var idxExpr) i actualISet
+    idxExpr' <- check idxExpr i
     unifyReq v
-    return $ Get expr' idxExpr
+    return $ Get expr' idxExpr'
   RecCon r -> do
     tyExpr <- traverse infer r
     unifyReq (RecType (fmap fst tyExpr))

@@ -77,11 +77,11 @@ simplify expr = case expr of
       return $ For b' body'
   Get e ie -> do
     e' <- recur e
-    Var ie' <- askLEnv ie
+    ie' <- recur ie
     case e' of
       For (i:>_) body -> do
         dropSubst $
-          extendR (i @> L (Var ie')) $
+          extendR (i @> L ie') $
             applySub body >>= inlineDecls
       _ -> return $ Get e' ie'
   RecCon r -> liftM RecCon $ traverse recur r
@@ -154,7 +154,7 @@ decompose scope expr = case expr of
     case decompose scope body of
       -- could use a FullMat constructor here
       Split body' recon -> Split (For b body')
-                                 (\e -> For b (recon (Get e i)))  -- need fresh i?
+                                 (\e -> For b (recon (Get e (Var i))))  -- need fresh i?
       Defer body' -> Defer (For b body')
   Get _ _ -> pureMat expr
   RecCon r -> if all isDefer splits
@@ -340,7 +340,7 @@ evalDeriv expr = case expr of
     let ext = ([], i@>L ty)
     (body', builder) <- extendLocal (ext, ext) $ evalDerivScoped body
     tab <- writePrimal (rawName "tab") (For b body')
-    let (xBody, tBody) = builder (Get tab i)
+    let (xBody, tBody) = builder (Get tab (Var i))
     return (For b xBody, For b tBody)
   Get e i -> do (x, t) <- evalDeriv e
                 return (Get x i, Get t i)
@@ -449,7 +449,7 @@ evalTranspose ct expr = case expr of
     env <- ask
     (((), CTEnv ctEnv), (decls, _)) <- scoped $ lift $ lift $ runWriterT $
                                          flip runReaderT (env <> i@>L iTy) $
-                                           evalTranspose (Get ct i) body
+                                           evalTranspose (Get ct (Var i)) body
     let vs = envNames ctEnv
         final = [vaddMany (fromL (env ! v)) (ctEnv ! v) | v <- vs]
         bodyTy = RecType $ Tup $ map (\v -> fromL (env ! v)) vs
@@ -508,8 +508,8 @@ fzero :: Expr
 fzero = Lit (RealLit 0.0)
 
 vzero   ty       = PrimOp VZero   [ty] []
-vsingle ty n i x = PrimOp VSingle [ty, n] [Var i, x]
-vsum    ty n x   = PrimOp VSum    [ty, n] [For (i:>n) (Get x i)]
+vsingle ty n i x = PrimOp VSingle [ty, n] [i, x]
+vsum    ty n x   = PrimOp VSum    [ty, n] [For (i:>n) (Get x (Var i))]
   where i = rawName "vsumI" -- TODO: freshen
 
 vadd :: Type -> Expr -> Expr -> Expr

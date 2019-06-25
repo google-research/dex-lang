@@ -45,7 +45,7 @@ data ExprP b = Lit LitVal
           | Lam (BinderP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (BinderP b) (ExprP b)
-          | Get (ExprP b) IdxExpr
+          | Get (ExprP b) (ExprP b)
           | TLam [TBinder] (ExprP b)
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
@@ -147,7 +147,7 @@ data UExpr = ULit LitVal
            | ULam Pat UExpr
            | UApp UExpr UExpr
            | UFor UBinder UExpr
-           | UGet UExpr IdxExpr
+           | UGet UExpr UExpr
            | URecCon (Record UExpr)
            | UTabCon [UExpr]
            | UAnnot UExpr Type
@@ -410,7 +410,7 @@ freeLVarsW expr = case expr of
   Lam b body       -> unfree b body
   App fexpr arg    -> recur fexpr >> recur arg
   For b body       -> unfree b body
-  Get e ie         -> recur e >> tell (ie @> ())
+  Get e ie         -> recur e >> recur ie
   RecCon r         -> mapM_ recur r
   RecGet e _       -> recur e
   TLam _ expr      -> recur expr
@@ -443,7 +443,7 @@ freeVarsUExpr expr = case expr of
   ULam p body    -> recurWith p body
   UApp fexpr arg -> liftM2 (<>) (recur fexpr) (recur arg)
   UFor v body    -> recurWith [v] body
-  UGet e ie      -> liftM2 (<>) (recur e) (recur (UVar ie))
+  UGet e ie      -> liftM2 (<>) (recur e) (recur ie)
   URecCon r      -> liftM fold (traverse recur r)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   where
@@ -497,10 +497,7 @@ subExprR expr = case expr of
   For b body -> refreshBinder b $ \b' -> do
                   body' <- recur body
                   return $ For b' body'
-  Get e ie -> do e' <- recur e
-                 ie' <- lookup ie
-                 case ie' of Var ie' -> return $ Get e' ie'
-                             _ -> error $ "Unexpected env: " ++ show ie'
+  Get e ie -> liftM2 Get (recur e) (recur ie)
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> liftM (flip RecGet field) (recur e)
   TLam ts expr -> refreshTBinders ts $ \ts' ->

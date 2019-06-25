@@ -90,8 +90,8 @@ toImp expr dests = case expr of
     materialize (RecCon (Tup args)) $ \args' ->
       return $ writeBuiltin b dest (map IVar (toList args'))
   Decls decls body -> foldr toImpDecl (toImp body dests) decls
-  Get x i -> do RecLeaf i' <- asks $ snd . fromL . (!i)
-                toImp x $ fmap (indexSource i') dests
+  Get x i -> materialize i $ \(RecLeaf i') ->
+               toImp x $ fmap (indexSource (IVar i')) dests
   For i body -> toImpFor dests i body
   RecCon r -> liftM fold $ sequence $ recZipWith toImp r dests'
                 where RecTree dests' = dests
@@ -156,7 +156,7 @@ expandVSum ty n xs = PrimOp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
     y = rawName "yVS"
     -- Some bug in imp lowering means this doesn't work without the let...
     body = Decls [Let (y:>(TabType n ty)) xs] $
-             expandVAdd ty (Var x) (Get (Var y) i)
+             expandVAdd ty (Var x) (Get (Var y) (Var i))
     x0 = expandVZero ty
 
 --- Destination indices, then source indices
@@ -236,6 +236,7 @@ flatType ty = case ty of
                         valTy' <- flatType valTy
                         return $ fmap (addIdx n') valTy'
   TypeVar _ -> return $ RecLeaf intTy
+  IdxSetLit _ -> return $ RecLeaf intTy
   -- TODO: fix this (only works for range)
   Exists _ -> return (RecTree (Tup [RecLeaf intTy, RecTree (Tup [])]))
   _ -> error $ "Can't flatten type: " ++ show ty

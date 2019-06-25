@@ -40,7 +40,7 @@ deShadowPass decl = case decl of
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
   ULit x -> return (Lit x)
-  UVar v -> liftM Var (getLVar v)
+  UVar v -> asks $ Var . lookupSubst v . fst
   UPrimOp b args -> liftM (PrimOp b []) (traverse recur args)
   UDecls decls body ->
     withCat (mapM_ deShadowDecl decls) $ \() decls' -> do
@@ -55,14 +55,12 @@ deShadowExpr expr = case expr of
     withCat (deShadowPat (RecLeaf b)) $ \b' decls -> do
       body' <- recur body
       return $ For b' $ wrapDecls decls body'
-  UGet e v -> liftM2 Get (recur e) (getLVar v)
+  UGet e v -> liftM2 Get (recur e) (recur v)
   URecCon r -> liftM RecCon $ traverse recur r
   UTabCon xs -> liftM (TabCon 0 unitTy) (mapM recur xs)
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   USrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   where recur = deShadowExpr
-        getLVar :: Var -> DeShadowM Var
-        getLVar v = asks $ lookupSubst v . fst
         deShadowAnnot b = fmap (fmap deShadowType) b
 
 deShadowDecl :: UDecl -> DeShadowCat ()

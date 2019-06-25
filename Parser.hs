@@ -252,7 +252,9 @@ ops = [ [getRule, appRule]
 --     elts -> RecTree $ mixedRecord elts
 
 varName = liftM rawName identifier
-idxExpr = varName
+
+idxExpr :: Parser UExpr
+idxExpr = liftM UVar varName
 
 binder :: Parser UBinder
 binder =     (symbol "_" >> return IgnoreBind)

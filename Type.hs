@@ -63,7 +63,7 @@ getType' check expr = case expr of
                      checkEq "App" a (recur arg)
                      return b
     Get e ie   -> do TabType a b <- recur e
-                     checkEq "Get" a (recur (Var ie))
+                     checkEq "Get" a (recur ie)
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
     RecGet e field -> do RecType r <- recur e
