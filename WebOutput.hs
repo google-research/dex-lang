@@ -113,7 +113,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
           resultChan key `send` resultSource source
           (p, wChan) <- spawn Trap $
-                          worker env (pass decl) (resultChan key) parentChans
+                          worker source env (pass decl) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
       modify $ setVarMap $ (<> M.fromList [(v, key) | v <- lhsVars decl])
@@ -139,19 +139,19 @@ data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: Monoid env => env -> TopPass env ()
+worker :: Monoid env => String -> env -> TopPass env ()
             -> PChan Result
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()
-worker initEnv pass resultChan parentChans = do
+worker source initEnv pass resultChan parentChans = do
   selfChan <- myChan
   mapM (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  spawnLink NoTrap $ execPass env pass (subChan JobDone selfChan) resultChan
+  spawnLink NoTrap $ execPass source env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
-    ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr s)
+    ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr Nothing s)
                             return env
     _ -> Nothing
   forever $ receiveF fReq >>= (`send` env')
@@ -160,9 +160,9 @@ worker initEnv pass resultChan parentChans = do
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
 execPass :: Monoid env =>
-              env -> TopPass env () -> PChan env -> PChan Result -> Actor msg ()
-execPass env pass envChan resultChan = do
-  (ans, env') <- liftIO $ runTopPass outChan env pass
+              String -> env -> TopPass env () -> PChan env -> PChan Result -> Actor msg ()
+execPass source env pass envChan resultChan = do
+  (ans, env') <- liftIO $ runTopPass (outChan, source) env pass
   envChan    `send` (env <> env')
   -- TODO: consider just throwing IO error and letting the supervisor catch it
   resultChan `send` case ans of Left e   -> resultErr e

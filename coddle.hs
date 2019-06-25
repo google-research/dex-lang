@@ -39,7 +39,7 @@ parseFile fname = do
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
   prog <- parseFile "prelude.cod"
-  mapM_ (evalDecl printErr . pass . ignoreExcept . snd) prog
+  flip mapM_ prog $ \(s, decl) -> evalDecl s printErr (pass (ignoreExcept decl))
   where
     printErr (Result _ status _ ) = case status of
       Set (Failed e) -> putStrLn $ pprint e
@@ -55,7 +55,7 @@ evalScript pass fname = do
       printIt "" (resultSource text)
       case decl of
         Left e -> printIt "> " e
-        Right decl' -> evalDecl (printIt "> ") (pass decl')
+        Right decl' -> evalDecl text (printIt "> ") (pass decl')
 
 evalRepl :: Monoid env => FullPass env-> StateT env IO ()
 evalRepl pass = do
@@ -69,17 +69,18 @@ replLoop pass = do
     Nothing -> liftIO exitSuccess
     Just s -> case (parseTopDecl s) of
                 Left e -> printIt "" e
-                Right decl' -> lift $ evalDecl (printIt "") (pass decl')
+                Right decl' -> lift $ evalDecl s (printIt "") (pass decl')
 
 evalWeb :: String -> IO ()
 evalWeb fname = do
   env <- execStateT (evalPrelude fullPass) mempty
   runWeb fname fullPass env
 
-evalDecl :: Monoid env => ResultChan -> TopPass env () -> StateT env IO ()
-evalDecl writeOut pass = do
+evalDecl :: Monoid env =>
+              String -> ResultChan -> TopPass env () -> StateT env IO ()
+evalDecl source writeOut pass = do
   env <- get
-  (ans, env') <- liftIO $ runTopPass (writeOut . resultText) env pass
+  (ans, env') <- liftIO $ runTopPass (writeOut . resultText, source) env pass
   modify $ (<> env')
   liftIO $ writeOut $ case ans of Left e   -> resultErr e
                                   Right () -> resultComplete

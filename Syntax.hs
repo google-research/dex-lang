@@ -7,7 +7,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                DeclP (..), Decl, TopDecl, Command (..), Pat,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..), throw, addContext,
+               Except, Err (..), ErrType (..), throw, addContext, addErrSource,
                FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, unitTy, unitCon,
@@ -51,6 +51,7 @@ data ExprP b = Lit LitVal
           | RecGet (ExprP b) RecField
           | TabCon IdxSetVal Type [ExprP b]
           | Annot (ExprP b) Type
+          | SrcAnnot (ExprP b) SrcPos
              deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
@@ -90,6 +91,7 @@ type TBinder = BinderP Kind
 type IdxSet = Type
 type IdxExpr = Var
 type IdxSetVal = Int
+type SrcPos = (Int, Int)
 
 data LitVal = IntLit  Int
             | RealLit Double
@@ -139,7 +141,7 @@ unitCon = RecCon (Tup [])
 
 data UExpr = ULit LitVal
            | UVar Var
-           | UBuiltin Builtin
+           | UPrimOp Builtin [UExpr]
            | UDecls [UDecl] UExpr
            | ULam Pat UExpr
            | UApp UExpr UExpr
@@ -148,7 +150,8 @@ data UExpr = ULit LitVal
            | URecCon (Record UExpr)
            | UTabCon [UExpr]
            | UAnnot UExpr Type
-               deriving (Show, Eq)
+           | USrcAnnot UExpr SrcPos
+                deriving (Show, Eq)
 
 data UBinder = UBind (BinderP (Maybe Type)) | IgnoreBind  deriving (Show, Eq)
 data UDecl = ULet Pat UExpr
@@ -221,7 +224,7 @@ resultText   s = Result mempty mempty s
 resultErr    e = Result mempty (Set (Failed e)) mempty
 resultComplete = Result mempty (Set Complete)   mempty
 
-data Err = Err ErrType String  deriving (Show)
+data Err = Err ErrType (Maybe SrcPos) String  deriving (Show)
 
 data ErrType = NoErr
              | ParseErr
@@ -237,11 +240,16 @@ data ErrType = NoErr
 type Except a = Either Err a
 
 throw :: MonadError Err m => ErrType -> String -> m a
-throw e s = throwError $ Err e s
+throw e s = throwError $ Err e Nothing s
 
 addContext :: String -> Except a -> Except a
 addContext s err =
-  case err of Left (Err e s') -> Left $ Err e (s' ++ "\ncontext:\n" ++ s)
+  case err of Left (Err e p s') -> Left $ Err e p (s' ++ "\ncontext:\n" ++ s)
+              Right x -> Right x
+
+addErrSource :: String -> Except a -> Except a
+addErrSource s err =
+  case err of Left (Err e p s') -> Left $ Err e p (s' ++ "\ncontext:\n" ++ s)
               Right x -> Right x
 
 instance Semigroup Result where
@@ -404,7 +412,7 @@ freeVarsUExpr expr = case expr of
   ULit _         -> return []
   UVar v         -> do isbound <- asks $ isin v
                        return $ if isbound then [] else [v]
-  UBuiltin _     -> return []
+  UPrimOp _ args -> liftM fold (traverse recur args)
   UDecls [] body -> recur body
   UDecls (decl:decls) final -> case decl of
     ULet    p   e -> liftM2 (<>) (recur e) (recurWith p body)

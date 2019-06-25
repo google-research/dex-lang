@@ -3,7 +3,7 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), throwIf) where
+             (>+>), throwIf, getSource) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -18,13 +18,15 @@ import PPrint
 -- === top-level pass ===
 
 type OutChan = Output -> IO ()
-newtype TopPass env a = TopPass (ReaderT (env, OutChan)
+type Source = String
+type Cfg = (OutChan, Source)
+newtype TopPass env a = TopPass (ReaderT (env, Cfg)
                                    (ExceptT Err
                                       (WriterT env IO)) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadError Err)
 
 getEnv :: Monoid env => TopPass env env
-getEnv = TopPass $ asks fst
+getEnv = TopPass $ asks $ fst
 
 putEnv :: Monoid env => env -> TopPass env ()
 putEnv env = TopPass $ tell env
@@ -34,11 +36,14 @@ writeOut output = do chanWrite <- getOutChan
                      liftIO $ chanWrite output
 
 getOutChan :: Monoid env => TopPass env OutChan
-getOutChan = TopPass $ asks snd
+getOutChan = TopPass $ asks $ fst . snd
 
-runTopPass :: OutChan -> env -> TopPass env a -> IO (Except a, env)
-runTopPass chan env (TopPass m) =
-  runWriterT $ runExceptT $ runReaderT m (env, chan)
+getSource :: Monoid env => TopPass env Source
+getSource = TopPass $ asks $ snd . snd
+
+runTopPass :: Cfg -> env -> TopPass env a -> IO (Except a, env)
+runTopPass cfg env (TopPass m) =
+  runWriterT $ runExceptT $ runReaderT m (env, cfg)
 
 liftTopPass :: Monoid env =>
                  state -> FreshScope -> Pass env state a -> TopPass env a
@@ -58,8 +63,9 @@ infixl 1 >+>
   where
     liftEnv :: (Monoid env, Monoid env') =>
                   env -> TopPass env a -> TopPass env' (a, env)
-    liftEnv env m = do chan <- getOutChan
-                       (x, env') <- liftIO $ runTopPass chan env m
+    liftEnv env m = do c <- getOutChan
+                       s <- getSource
+                       (x, env') <- liftIO $ runTopPass (c,s)env m
                        x' <- liftEither x
                        return (x', env')
 

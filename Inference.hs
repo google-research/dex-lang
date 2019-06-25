@@ -120,6 +120,7 @@ check expr reqTy = case expr of
     -- TODO: check that the annotation is a monotype
     unifyReq annTy
     check e reqTy
+  SrcAnnot e _ -> check e reqTy
   where
     unifyReq ty = unifyCtx expr reqTy ty
 
@@ -307,7 +308,7 @@ inferKinds vs ty = do
     Nothing -> throw TypeErr $ "Conflicting kinds for " ++ pprint vs
     Just m -> return m
   let lookupKind v = case M.lookup v m of
-        Nothing   -> Left $ Err TypeErr $ "Ambiguous kind for " ++ pprint v
+        Nothing   -> Left $ Err TypeErr Nothing $ "Ambiguous kind for " ++ pprint v
         Just kind -> Right kind
   mapM lookupKind vs
 

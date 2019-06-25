@@ -5,64 +5,64 @@ snd :: A a b. (a, b) -> b
 snd (x, y) = y
 
 iadd :: Int -> Int -> Int
-iadd x y = %iadd (x, y)
+iadd x y = %iadd(x, y)
 
 isub :: Int -> Int -> Int
-isub x y = %isub (x, y)
+isub x y = %isub(x, y)
 
 imul :: Int -> Int -> Int
-imul x y = %imul (x, y)
+imul x y = %imul(x, y)
 
 fadd :: Real -> Real -> Real
-fadd x y = %fadd (x, y)
+fadd x y = %fadd(x, y)
 
 fsub :: Real -> Real -> Real
-fsub x y = %fsub (x, y)
+fsub x y = %fsub(x, y)
 
 fmul :: Real -> Real -> Real
-fmul x y = %fmul (x, y)
+fmul x y = %fmul(x, y)
 
 fdiv :: Real -> Real -> Real
-fdiv x y = %fdiv (x, y)
+fdiv x y = %fdiv(x, y)
 
 pow :: Int -> Int -> Int
-pow x y = %pow (x, y)
+pow x y = %pow(x, y)
 
 exp :: Real -> Real
-exp x = %exp x
+exp x = %exp(x)
 
 log :: Real -> Real
-log x = %log x
+log x = %log(x)
 
 sqrt :: Real -> Real
-sqrt x = %sqrt x
+sqrt x = %sqrt(x)
 
 sin :: Real -> Real
-sin x = %sin x
+sin x = %sin(x)
 
 cos :: Real -> Real
-cos x = %cos x
+cos x = %cos(x)
 
 tan :: Real -> Real
-tan x = %tan x
+tan x = %tan(x)
 
 hash :: Int -> Int -> Int
-hash x y = %hash (x, y)
+hash x y = %hash(x, y)
 
 iota :: A i. i=>Int
-iota = %iota ()
+iota = %iota()
 
 range :: Int -> E i. ()
-range n = %range n
+range n = %range(n)
 
 real :: Int -> Real
-real x = %inttoreal x
+real x = %inttoreal(x)
 
 fold :: A i a. i=>(a->a) -> a -> a
-fold fs x0 = %fold (for i. lam x. fs.i x, x0)
+fold fs x0 = %fold(for i. lam x. fs.i x, x0)
 
 rand :: Int -> Real
-rand x = %rand x
+rand x = %rand(x)
 
 sum :: A i. i=>Real -> Real
 sum xs = fold (for i. let x = xs.i in lam c. c + x) 0.0
@@ -77,25 +77,25 @@ map f xs = for i. f xs.i
 --  and `b`. TODO: make some sort of typeclass system
 
 vzero :: A a. a
-vzero = %vzero ()
+vzero = %vzero()
 
 vadd :: A a. a -> a -> a
-vadd x y = %vadd (x, y)
+vadd x y = %vadd(x, y)
 
 vsingle :: A i a. i -> a -> i=>a
-vsingle i x = %vsingle (i, x)
+vsingle i x = %vsingle(i, x)
 
 vsum :: A i a. i=>a -> a
-vsum xs = %vsum (for i. xs.i)
+vsum xs = %vsum(for i. xs.i)
 
 deriv :: A a b. (a -> b) -> a -> (b, a -> b)
-deriv f = %deriv lam x. f x
+deriv f = %deriv(lam x. f x)
 
 jvp :: A a b. (a -> b) -> a -> a -> b
 jvp f x t = snd (deriv f x) t
 
 transpose :: A a b. (a -> b) -> b -> a
-transpose f = %transpose lam t. f t
+transpose f = %transpose(lam t. f t)
 
 vjp :: A a b. (a -> b) -> a -> (b, b -> a)
 vjp f x = let (y, df) = deriv f x

@@ -92,7 +92,14 @@ topLet = do
   return $ ULet p (wrap body)
 
 expr :: Parser UExpr
-expr = makeExprParser (sc >> term >>= maybeAnnot) ops
+expr = makeExprParser (sc >> withSource term >>= maybeAnnot) ops
+
+withSource :: Parser UExpr -> Parser UExpr
+withSource p = do
+  n <- getOffset
+  t <- p
+  n' <- getOffset
+  return $ USrcAnnot t (n, n')
 
 term :: Parser UExpr
 term =   parenRaw
@@ -101,7 +108,7 @@ term =   parenRaw
      <|> declExpr
      <|> lamExpr
      <|> forExpr
-     <|> builtinExpr
+     <|> primOp
      <|> tabCon
      <?> "term"
 
@@ -133,12 +140,14 @@ parenRaw = do
 varExpr :: Parser UExpr
 varExpr = liftM (UVar . rawName) identifier
 
-builtinExpr :: Parser UExpr
-builtinExpr = do
+primOp :: Parser UExpr
+primOp = do
   symbol "%"
   s <- identifier
   case strToBuiltin s of
-    Just b -> return $ UBuiltin b
+    Just b -> do
+      args <- parens $ expr `sepBy` symbol ","
+      return $ UPrimOp b args
     Nothing -> fail $ "Unexpected builtin: " ++ s
 
 declExpr :: Parser UExpr
@@ -221,7 +230,7 @@ appRule = InfixL (sc
                   *> notFollowedBy (choice . map symbol $ opNames)
                   >> return UApp)
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
-  where binOpApp e1 e2 = UApp (UBuiltin builtin) (URecCon (Tup [e1, e2]))
+  where binOpApp e1 e2 = UPrimOp builtin [e1, e2]
 
 getRule = Postfix $ do
   vs  <- many $ symbol "." >> idxExpr

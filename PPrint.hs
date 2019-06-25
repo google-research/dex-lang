@@ -18,7 +18,7 @@ p :: Pretty a => a -> Doc ann
 p = pretty
 
 instance Pretty Err where
-  pretty (Err e s) = p e <+> p s
+  pretty (Err e _ s) = p e <+> p s
 
 instance Pretty ErrType where
   pretty e = case e of
@@ -90,6 +90,7 @@ instance Pretty b => Pretty (ExprP b) where
     TLam binders expr -> "Lam" <+> p binders <> ":"
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
+    SrcAnnot expr _ -> p expr
 
 instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <+> p expr

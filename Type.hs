@@ -126,7 +126,7 @@ checkShadow (v :> _) = do
 
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
-unpackExists ty _ = throw TypeErr $ "Can't unpack " ++ pprint ty
+unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
 
 litType :: LitVal -> BaseType
 litType v = case v of
