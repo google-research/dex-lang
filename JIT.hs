@@ -383,7 +383,7 @@ compileBuiltin b = case b of
   Randint  -> externalMono randIntFun IntType
   IntToReal -> compileUnop realTy (\x -> L.SIToFP x realTy [])
   Iota     -> error "Iota should have been lowered away by now."
-  Fold     -> error "Fold should have been lowered away by now."
+  Scan     -> error "Scan should have been lowered away by now."
 
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]

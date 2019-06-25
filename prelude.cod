@@ -58,8 +58,11 @@ range n = %range(n)
 real :: Int -> Real
 real x = %inttoreal(x)
 
+scan :: A i a b. i=>(a->(a, b)) -> a -> (a, i=>b)
+scan fs x0 = %scan(for i. lam x. fs.i x, x0)
+
 fold :: A i a. i=>(a->a) -> a -> a
-fold fs x0 = %fold(for i. lam x. fs.i x, x0)
+fold fs x0 = fst (scan (for i. lam x. (fs.i x, ())) x0)
 
 rand :: Int -> Real
 rand x = %rand(x)

@@ -152,14 +152,15 @@ builtinType builtin = case builtin of
   Sin      -> realUnOpType
   Cos      -> realUnOpType
   Tan      -> realUnOpType
-  Fold     -> BuiltinType [TyKind, idxSetKind] [j ==> (a --> a), a] a
+  Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
+                          [k ==> (a --> pair a b), a] (pair a (k==>b))
   Iota     -> BuiltinType [idxSetKind] [] (a ==> int)
   Range    -> BuiltinType [] [int] (Exists unitTy)
   Hash     -> BuiltinType [] [int, int] int
   Randint  -> BuiltinType [] [int, int] int
   Rand     -> BuiltinType [] [int] real
   IntToReal -> BuiltinType [] [int] real
-  Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> tup [b, a --> b])
+  Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> pair b (a --> b))
   Transpose -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
   VZero   -> BuiltinType [TyKind] [] a
   VAdd    -> BuiltinType [TyKind] [a, a] a
@@ -176,4 +177,4 @@ builtinType builtin = case builtin of
     k = BoundTVar 2
     int  = BaseType IntType
     real = BaseType RealType
-    tup xs = RecType (Tup xs)
+    pair x y = RecType (Tup [x, y])

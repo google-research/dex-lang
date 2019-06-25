@@ -29,11 +29,11 @@ f x = x
 
 :t let f x::Real = x in f 1
 
-> Type error: 
+> Type error:
 > Expected: Real
 >   Actual: Int
 > In: 1
-> 
+>
 > :t let f x::Real = x in f 1
 >                           ^
 
@@ -48,11 +48,11 @@ f x = x
        g x = iadd x x
     in g
 
-> Type error: 
+> Type error:
 > Expected: Int
 >   Actual: T_1
 > In: x
-> 
+>
 > :t let g :: A a. a -> a ;
 >        g x = iadd x x
 >                   ^^
@@ -71,12 +71,11 @@ h x = x
 fun :: A a. a -> a
 fun x = sin x
 
-> Type error: 
+> Type error:
 > Expected: Real
 >   Actual: T
 > In: x
-> 
+>
 > fun :: A a. a -> a
 > fun x = sin x
 >             ^
-

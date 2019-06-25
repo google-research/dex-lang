@@ -60,7 +60,7 @@ simplify expr = case expr of
   PrimOp b ts args -> do
     ts' <- mapM subTy ts
     case b of
-      Fold      -> simplifyFold    ts' args
+      Scan      -> simplifyScan    ts' args
       VSum      -> simplifyVSum    ts' args
       Deriv     -> expandDeriv     ts' args
       Transpose -> expandTranspose ts' args
@@ -201,13 +201,13 @@ subTy ty = do env <- ask
               return $ maybeSub (fmap fromT . envLookup env) ty
 
 -- TODO: check/fail higher order case
-simplifyFold :: [Type] -> [Expr] -> SimplifyM Expr
-simplifyFold ts [For ib (Lam xb body), x] = do
+simplifyScan :: [Type] -> [Expr] -> SimplifyM Expr
+simplifyScan ts [For ib (Lam xb body), x] = do
   x' <- simplify x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
       body' <- simplifyScoped body
-      return $ PrimOp Fold ts [For ib' (Lam xb' body'), x']
+      return $ PrimOp Scan ts [For ib' (Lam xb' body'), x']
 
 simplifyVSum :: [Type] -> [Expr] -> SimplifyM Expr
 simplifyVSum [ty, n] [For b body] = do

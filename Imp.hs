@@ -81,7 +81,7 @@ toImp expr dests = case expr of
   PrimOp Iota [n] [] -> impIota dests n
   PrimOp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
                              in toImp n nDest
-  PrimOp Fold ts args -> impFold dests ts args
+  PrimOp Scan ts args -> impScan dests ts args
   PrimOp VAdd [ty] [x, y] -> toImp (expandVAdd ty x y) dests
   PrimOp VSum [ty, n] [x] -> toImp (expandVSum ty n x) dests
   PrimOp VZero [ty] []    -> toImp (expandVZero ty) dests
@@ -149,14 +149,17 @@ expandVZero (RecType r) = RecCon (fmap expandVZero r)
 -- TODO: figure out multi-level primitives and put this in the prelude
 -- (doing this here also misses out on inlining/fusion)
 expandVSum :: Type -> Type -> Expr -> Expr
-expandVSum ty n xs = PrimOp Fold [ty, n] [For (i:>n) (Lam (x:>ty) body), x0]
+expandVSum ty n xs = getFst $ PrimOp Scan [ty, unitTy, n]
+                                [For (i:>n) (Lam (x:>ty) bodyWithUnit), x0]
  where
     i = rawName "iVS" -- TODO: freshness
     x = rawName "xVS"
     y = rawName "yVS"
+    getFst expr = RecGet expr fstField
     -- Some bug in imp lowering means this doesn't work without the let...
+    bodyWithUnit = RecCon $ Tup [body, unitCon]
     body = Decls [Let (y:>(TabType n ty)) xs] $
-             expandVAdd ty (Var x) (Get (Var y) (Var i))
+                   expandVAdd ty (Var x) (Get (Var y) (Var i))
     x0 = expandVZero ty
 
 --- Destination indices, then source indices
@@ -174,6 +177,7 @@ indexSource _ IgnoreIt = IgnoreIt
 
 indexDest :: Index -> Dest -> Dest
 indexDest i (Buffer v destIdxs srcIdxs) = Buffer v (destIdxs `snoc` i) srcIdxs
+indexDest _ IgnoreIt = IgnoreIt
 
 writeExprs :: RecTree Dest -> RecTree IExpr -> ImpProg
 writeExprs dests exprs = fold $ fmap (uncurry writeExpr) (recTreeZipEq dests exprs)
@@ -208,18 +212,20 @@ impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) n =
                 return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [i]
     _ -> return $ asProg $ Update outVar destIdxs Copy srcIdxs
 
-impFold :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
-impFold dest [_, n] [For (i :> _) (Lam b body), x] = do
+impScan :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
+impScan dest [_, _, n] [For (i :> _) (Lam b body), x] = do
   n' <- typeToSize n
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->
                extendR (i @> L (n, RecLeaf i')) $
                  bindVal b (fmap IVar accum) $
-                   toImp body (fmap asBuffer accum)
-    return $ loop' <> writeExprs dest (fmap IVar accum)
+                   toImp body $ RecTree $ Tup [fmap asBuffer accum,
+                                               fmap (indexDest i') scanDest]
+    return $ loop' <> writeExprs accumDest (fmap IVar accum)
   where
     asBuffer :: Name -> Dest
     asBuffer v = Buffer v [] []
+    RecTree (Tup [accumDest, scanDest]) = dest
 
 impTabCon :: RecTree Dest -> IdxSetVal -> Type -> [Expr] -> ImpM ImpProg
 impTabCon dest _ _ xs = liftM fold $ zipWithM writeElt [0..] xs
