@@ -61,65 +61,68 @@ infer expr = do ty <- freshVar TyKind
 check :: ExprP UAnnot -> Type -> InferM Expr
 check expr reqTy = case expr of
   Lit c -> do
-    unify (BaseType (litType c)) reqTy
+    unifyReq (BaseType (litType c))
     return (Lit c)
   Var v -> do
     maybeTy <- asks $ (flip envLookup v)
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
                           Just (L ty) -> return ty
-    instantiate ty reqTy (Var v)
+    instantiate (Var v) ty reqTy (Var v)
   PrimOp b [] args -> do
     let BuiltinType kinds argTys ansTy = builtinType b
     vs <- mapM freshVar kinds
-    unify reqTy (instantiateTVs vs ansTy)
+    unifyReq (instantiateTVs vs ansTy)
     let argTys' = map (instantiateTVs vs) argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b vs args'
   Decls decls body -> foldr checkDecl (check body reqTy) decls
   Lam b body -> do
-    (a, bTy) <- splitFun reqTy
+    (a, bTy) <- splitFun expr reqTy
     b' <- checkBinder b a
     body' <- recurWith b' body bTy
     return $ Lam b' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
-    (a, b) <- splitFun f
+    (a, b) <- splitFun expr f
     arg' <- check arg a
-    unify b reqTy
+    unifyReq b
     return $ App fexpr' arg'
   For b body -> do
-    (i, elemTy) <- splitTab reqTy
+    (i, elemTy) <- splitTab expr reqTy
     b' <- inferBinder b
-    unify (binderAnn b') i
+    unifyCtx unitCon (binderAnn b') i  -- TODO: real context
     body' <- recurWith b' body elemTy
     return $ For b' body'
   Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
-    (i, v) <- splitTab tabTy
+    (i, v) <- splitTab expr tabTy
     actualISet <- asks $ fromL . (!idxExpr)
-    unify i actualISet
-    unify v reqTy
+    unifyCtx (Var idxExpr) i actualISet
+    unifyReq v
     return $ Get expr' idxExpr
   RecCon r -> do
     tyExpr <- traverse infer r
-    unify reqTy (RecType (fmap fst tyExpr))
+    unifyReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
   RecGet e field -> do
     (ty, e') <- infer e
-    r <- splitRec (otherFields field) ty
-    unify reqTy (recGet r field) -- TODO: throw graceful error on bad field
+    r <- splitRec expr (otherFields field) ty
+    unifyReq (recGet r field) -- TODO: throw graceful error on bad field
     return $ RecGet e' field
   TabCon _ _ xs -> do
-    (n, elemTy) <- splitTab reqTy
+    (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
     let n' = length xs
-    unify n (IdxSetLit n')
+    -- `==> elemTy` for better messages
+    unifyCtx expr (n ==> elemTy) (IdxSetLit n' ==> elemTy)
     return $ TabCon n' elemTy xs'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
-    unify annTy reqTy
+    unifyReq annTy
     check e reqTy
   where
+    unifyReq ty = unifyCtx expr reqTy ty
+
     checkDecl :: DeclP UAnnot -> InferM Expr -> InferM Expr
     checkDecl decl cont = case decl of
       Let b bound -> do
@@ -144,7 +147,7 @@ check expr reqTy = case expr of
 checkBinder :: BinderP UAnnot -> Type -> InferM Binder
 checkBinder b ty = do
   b' <- inferBinder b
-  unify ty (binderAnn b')
+  unifyCtx unitCon ty (binderAnn b')  -- TODO: real context
   return b'
 
 inferBinder :: BinderP UAnnot -> InferM Binder
@@ -168,27 +171,28 @@ inferLetBinding b expr = case binderAnn b of
     expr' <- check expr ty
     return (fmap fromJust b, expr')
 
-splitFun :: Type -> InferM (Type, Type)
-splitFun f = case f of
+-- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
+splitFun :: ExprP UAnnot -> Type -> InferM (Type, Type)
+splitFun e f = case f of
   ArrType a b -> return (a, b)
   _ -> do a <- freshTy
           b <- freshTy
-          unify f (a --> b)
+          unifyCtx e f (a --> b)
           return (a, b)
 
-splitTab :: Type -> InferM (IdxSet, Type)
-splitTab t = case t of
+splitTab :: ExprP UAnnot -> Type -> InferM (IdxSet, Type)
+splitTab e t = case t of
   TabType i v -> return (i, v)
   _ -> do i <- freshIdx
           v <- freshTy
-          unify t (i ==> v)
+          unifyCtx e t (i ==> v)
           return (i, v)
 
-splitRec :: Record () -> Type -> InferM (Record Type)
-splitRec r ty = case ty of
+splitRec :: ExprP UAnnot -> Record () -> Type -> InferM (Record Type)
+splitRec e r ty = case ty of
   RecType r' -> return r'  -- TODO: check it matches r
   _ -> do r' <- traverse (const freshTy) r
-          unify ty (RecType r')
+          unifyCtx e ty (RecType r')
           return r'
 
 freshVar :: Kind -> InferM Type
@@ -229,43 +233,51 @@ tempVarsEnv = do env <- ask
 tempVars :: HasTypeVars a => a -> InferM [Var]
 tempVars x = liftM freeTyVars (zonk x)
 
-instantiate :: Type -> Type -> Expr -> InferM Expr
-instantiate ty reqTy expr = do
+instantiate :: ExprP UAnnot -> Type -> Type -> Expr -> InferM Expr
+instantiate e ty reqTy expr = do
   ty'    <- zonk ty
   case ty' of
     Forall kinds body -> do
       vs <- mapM freshVar kinds
-      unify reqTy (instantiateTVs vs body)
+      unifyCtx e reqTy (instantiateTVs vs body)
       return $ TApp expr vs
     _ -> do
-      unify reqTy ty'
+      unifyCtx e reqTy ty'
       return expr
 
-bindMVar:: Var -> Type -> InferM ()
+bindMVar :: Var -> Type -> InferM ()
 bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
              | otherwise = do modify $ setSubst $ (<> v @> t)
                               modify $ setTempEnv $ envDelete v
 
+unifyCtx :: ExprP UAnnot -> Type -> Type -> InferM ()
+unifyCtx expr tyReq tyActual = do
+  -- TODO: avoid the double zonking
+  tyReq'    <- zonk tyReq
+  tyActual' <- zonk tyActual
+  let s = "\nExpected: " ++ pprint tyReq'
+       ++ "\n  Actual: " ++ pprint tyActual'
+       ++ "\nIn: "       ++ pprint expr
+  unify s tyReq' tyActual'
+
 -- TODO: check kinds
-unify :: Type -> Type -> InferM ()
-unify t1 t2 = do
+unify :: String -> Type -> Type -> InferM ()
+unify s t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
   env <- ask
-  let unifyErr = throw TypeErr $
-                   "can't unify " ++ pprint t1' ++ " and " ++ pprint t2'
   case (t1', t2') of
     _ | t1' == t2'               -> return ()
     (t, TypeVar v) | not (v `isin` env) -> bindMVar v t
     (TypeVar v, t) | not (v `isin` env) -> bindMVar v t
-    (ArrType a b, ArrType a' b') -> unify a a' >> unify b b'
-    (TabType a b, TabType a' b') -> unify a a' >> unify b b'
-    (Exists t, Exists t')        -> unify t t'
+    (ArrType a b, ArrType a' b') -> unify s a a' >> unify s b b'
+    (TabType a b, TabType a' b') -> unify s a a' >> unify s b b'
+    (Exists t, Exists t')        -> unify s t t'
     (RecType r, RecType r')      ->
-      case zipWithRecord unify r r' of
-             Nothing -> unifyErr
+      case zipWithRecord (unify s) r r' of
+             Nothing -> throw TypeErr s
              Just unifiers -> void $ sequence unifiers
-    _ -> unifyErr
+    _ -> throw TypeErr s
 
 
 occursIn :: Var -> Type -> Bool

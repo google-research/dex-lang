@@ -15,7 +15,6 @@ f x = x
 -- > 1 | y :: A a. a => a
 -- >   |                 ^
 -- > Type error: Conflicting kinds for [a]
-
 :t let g :: A a. a -> a ;
        g x = x
     in g
@@ -30,7 +29,10 @@ f x = x
 
 :t let f x::Real = x in f 1
 
-> Type error: can't unify Int and Real
+> Type error: 
+> Expected: Real
+>   Actual: Int
+> In: 1
 
 :t let g :: A a. (a -> Int) -> (a -> Int) ;
        g x = x
@@ -38,21 +40,31 @@ f x = x
 
 > A a. ((a -> Int) -> (a -> Int))
 
+
 :t let g :: A a. a -> a ;
        g x = iadd x x
     in g
 
-> Type error: can't unify Int and T_1
+> Type error: 
+> Expected: Int
+>   Actual: T_1
+> In: x
 
 h :: A a b. (a -> b) -> (a -> b)
 h x = x
+
 
 -- TODO: binders are flipped.. is this a bug or just a debruijn thing?
 :t h
 
 > A b a. ((a -> b) -> (a -> b))
 
+
 fun :: A a. a -> a
 fun x = sin x
 
-> Type error: can't unify Real and T
+> Type error: 
+> Expected: Real
+>   Actual: T
+> In: x
+

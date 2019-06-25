@@ -10,7 +10,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                Except, Err (..), ErrType (..), throw, addContext,
                FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub, Size, unitTy,
+               freeTyVars, maybeSub, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars,
                lhsVars, Output, Nullable (..), SetVal (..), EvalStatus (..),
@@ -133,6 +133,7 @@ data Value = Value Type (RecTree Vec)  deriving (Show)
 data Vec = IntVec [Int] | RealVec [Double]  deriving (Show)
 
 unitTy = RecType (Tup [])
+unitCon = RecCon (Tup [])
 
 -- === source AST ===
 
