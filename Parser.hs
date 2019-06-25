@@ -254,7 +254,7 @@ ops = [ [getRule, appRule]
 varName = liftM rawName identifier
 
 idxExpr :: Parser UExpr
-idxExpr = liftM UVar varName
+idxExpr = withSource $ liftM UVar varName
 
 binder :: Parser UBinder
 binder =     (symbol "_" >> return IgnoreBind)

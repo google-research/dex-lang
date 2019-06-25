@@ -61,7 +61,7 @@
 >        x = iota :: nx=>Int;
 >        y = iota :: ny=>Int
 >     in sum for i. iadd x.i y.i
->            ^^^^^^^^^^^^^^^^^^^
+>                              ^
 
 :t let _, nx = unpack range 10
    in iota :: nx=>Int
