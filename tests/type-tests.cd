@@ -51,11 +51,11 @@
        y = iota :: ny=>Int
     in sum for i. iadd x.i y.i
 
-> Type error: 
+> Type error:
 > Expected: ny
 >   Actual: nx
 > In: i
-> 
+>
 > :t let _, nx = unpack range 10;
 >        _, ny = unpack range 3;
 >        x = iota :: nx=>Int;
@@ -67,7 +67,7 @@
    in iota :: nx=>Int
 
 > Type error: existential variable leaked
-> 
+>
 > :t let _, nx = unpack range 10
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
 >    in iota :: nx=>Int
@@ -109,11 +109,11 @@ xr = map real arr
 
 :t 1.0 :: Int
 
-> Type error: 
+> Type error:
 > Expected: Int
 >   Actual: Real
 > In: 1.0
-> 
+>
 > :t 1.0 :: Int
 >    ^^^^
 
@@ -129,11 +129,11 @@ xr = map real arr
 
 :t [1, [2]]
 
-> Type error: 
+> Type error:
 > Expected: Int
 >   Actual: T_3=>T_4
 > In: [2]
-> 
+>
 > :t [1, [2]]
 >        ^^^
 
@@ -144,11 +144,11 @@ xr = map real arr
 
 :t [[1, 2], [3]]
 
-> Type error: 
+> Type error:
 > Expected: {..2}=>Int
 >   Actual: {..1}=>Int
 > In: [3]
-> 
+>
 > :t [[1, 2], [3]]
 >             ^^^
 

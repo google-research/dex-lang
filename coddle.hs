@@ -87,7 +87,10 @@ evalDecl source writeOut pass = do
 
 printIt :: (Pretty a, MonadIO m) => String -> a -> m ()
 printIt prefix x = liftIO $ putStrLn $ unlines
-                      [prefix ++ s | s <- lines (pprint x)]
+                      [trim (prefix ++ s) | s <- lines (pprint x)]
+  where
+    trim :: String -> String
+    trim s = reverse $ dropWhile (== ' ') $ reverse s
 
 runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
 runEnv m = evalStateT m mempty
