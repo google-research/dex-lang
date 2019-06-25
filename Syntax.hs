@@ -7,7 +7,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                DeclP (..), Decl, TopDecl, Command (..), Pat,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..), throw, addContext, addErrSource,
+               Except, Err (..), ErrType (..),
+               throw, addContext, addErrSource, addErrSourcePos,
                FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
                freeTyVars, maybeSub, Size, unitTy, unitCon,
@@ -29,7 +30,7 @@ import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Data.Functor.Identity (runIdentity)
-import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Writer
 import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)
@@ -242,15 +243,36 @@ type Except a = Either Err a
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
 
-addContext :: String -> Except a -> Except a
-addContext s err =
-  case err of Left (Err e p s') -> Left $ Err e p (s' ++ "\ncontext:\n" ++ s)
-              Right x -> Right x
+modifyErr :: MonadError e m => m a -> (e -> e) -> m a
+modifyErr m f = catchError m $ \e -> throwError (f e)
 
-addErrSource :: String -> Except a -> Except a
-addErrSource s err =
-  case err of Left (Err e p s') -> Left $ Err e p (s' ++ "\ncontext:\n" ++ s)
-              Right x -> Right x
+
+addContext :: MonadError Err m => String -> m a -> m a
+addContext s m = modifyErr m $ \(Err e p s') ->
+                                 Err e p (s' ++ "\ncontext:\n" ++ s)
+
+addErrSource :: MonadError Err m => String -> m a -> m a
+addErrSource s m = modifyErr m $ \(Err e p s') ->
+  case p of
+    Nothing -> Err e p s'
+    Just pos -> Err e p $ s' ++ "\n\n" ++ unlines (highlightRegion pos (lines s))
+
+addErrSourcePos :: MonadError Err m => SrcPos -> m a -> m a
+addErrSourcePos pNew m = modifyErr m $ \(Err e pPrev s) ->
+  case pPrev of
+    Nothing -> Err e (Just pNew) s
+    _ -> Err e pPrev s
+
+highlightRegion :: SrcPos -> [String] -> [String]
+highlightRegion _ [] = []
+highlightRegion (start, stop) (line:rest)
+  | start > n = line : highlightRegion (start - n - 1, stop - n - 1) rest
+  | otherwise = let accent = take start (repeat ' ') ++
+                             take size  (repeat '^')
+                in  line : accent : rest
+  where
+    n = length line
+    size = (min n stop) - start
 
 instance Semigroup Result where
   Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')

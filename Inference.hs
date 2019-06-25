@@ -51,7 +51,9 @@ typePass tdecl = case tdecl of
       _ -> return $ EvalCmd (Command cmd expr')
 
 liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
-liftTop m  = liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
+liftTop m = do
+  source <- getSource
+  addErrSource source $ liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
 
 infer :: ExprP UAnnot -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind
@@ -120,7 +122,7 @@ check expr reqTy = case expr of
     -- TODO: check that the annotation is a monotype
     unifyReq annTy
     check e reqTy
-  SrcAnnot e _ -> check e reqTy
+  SrcAnnot e pos -> addErrSourcePos pos (check e reqTy)
   where
     unifyReq ty = unifyCtx expr reqTy ty
 

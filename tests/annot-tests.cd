@@ -33,6 +33,9 @@ f x = x
 > Expected: Real
 >   Actual: Int
 > In: 1
+> 
+> :t let f x::Real = x in f 1
+>                           ^
 
 :t let g :: A a. (a -> Int) -> (a -> Int) ;
        g x = x
@@ -49,6 +52,11 @@ f x = x
 > Expected: Int
 >   Actual: T_1
 > In: x
+> 
+> :t let g :: A a. a -> a ;
+>        g x = iadd x x
+>                   ^^
+>     in g
 
 h :: A a b. (a -> b) -> (a -> b)
 h x = x
@@ -67,4 +75,8 @@ fun x = sin x
 > Expected: Real
 >   Actual: T
 > In: x
+> 
+> fun :: A a. a -> a
+> fun x = sin x
+>             ^
 

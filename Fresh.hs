@@ -71,7 +71,7 @@ instance (Monoid w, MonadFresh m) => MonadFresh (WriterT w m) where
 
 instance MonadError e m => MonadError e (FreshT m) where
   throwError = lift . throwError
-  catchError = undefined
+  catchError (FreshT m) f = FreshT $ catchError m $ \e -> case f e of FreshT m' -> m'
 
 -- === reader monad version of fresh var generation ===
 
