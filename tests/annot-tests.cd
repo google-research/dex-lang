@@ -1,21 +1,4 @@
-f :: A a b. a -> a
-f x = x
-
-> Parse error: 1:19:
->   |
-> 1 | f :: A a b. a -> a
->   |                   ^
-> Type error: Ambiguous kind for b
-
--- y :: A a. a => a
--- y = 1
---
--- > Parse error: 1:17:
--- >   |
--- > 1 | y :: A a. a => a
--- >   |                 ^
--- > Type error: Conflicting kinds for [a]
-:t let g :: A a. a -> a ;
+:t let g :: a -> a ;
        g x = x
     in g
 
@@ -37,14 +20,14 @@ f x = x
 > :t let f x::Real = x in f 1
 >                           ^
 
-:t let g :: A a. (a -> Int) -> (a -> Int) ;
+:t let g :: (a -> Int) -> (a -> Int) ;
        g x = x
     in g
 
 > A a. ((a -> Int) -> (a -> Int))
 
 
-:t let g :: A a. a -> a ;
+:t let g :: a -> a ;
        g x = iadd x x
     in g
 
@@ -53,12 +36,12 @@ f x = x
 >   Actual: T_1
 > In: x
 >
-> :t let g :: A a. a -> a ;
+> :t let g :: a -> a ;
 >        g x = iadd x x
 >                   ^^
 >     in g
 
-h :: A a b. (a -> b) -> (a -> b)
+h :: (a -> b) -> (a -> b)
 h x = x
 
 
@@ -68,7 +51,7 @@ h x = x
 > A b a. ((a -> b) -> (a -> b))
 
 
-fun :: A a. a -> a
+fun :: a -> a
 fun x = sin x
 
 > Type error:
@@ -76,6 +59,6 @@ fun x = sin x
 >   Actual: T
 > In: x
 >
-> fun :: A a. a -> a
+> fun :: a -> a
 > fun x = sin x
 >             ^

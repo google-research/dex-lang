@@ -29,53 +29,53 @@
 > Int
 
 
-:t let _, n = unpack range 10;
-       x = iota :: n=>Int
+:t let _, N = unpack range 10;
+       x = iota :: N=>Int
    in isum x
 
 > Int
 
 
-:t let _, nx = unpack range 10;
-       _, ny = unpack range 3;
-       x = iota :: nx=>Int;
-       y = iota :: ny=>Int
+:t let _, Nx = unpack range 10;
+       _, Ny = unpack range 3;
+       x = iota :: Nx=>Int;
+       y = iota :: Ny=>Int
    in real (isum for i. x.i) + real (isum for j. y.j)
 
 > Real
 
 
-:t let _, nx = unpack range 10;
-       _, ny = unpack range 3;
-       x = iota :: nx=>Int;
-       y = iota :: ny=>Int
+:t let _, Nx = unpack range 10;
+       _, Ny = unpack range 3;
+       x = iota :: Nx=>Int;
+       y = iota :: Ny=>Int
     in sum for i. iadd x.i y.i
 
 > Type error:
-> Expected: ny
->   Actual: nx
+> Expected: Ny
+>   Actual: Nx
 > In: i
 >
-> :t let _, nx = unpack range 10;
->        _, ny = unpack range 3;
->        x = iota :: nx=>Int;
->        y = iota :: ny=>Int
+> :t let _, Nx = unpack range 10;
+>        _, Ny = unpack range 3;
+>        x = iota :: Nx=>Int;
+>        y = iota :: Ny=>Int
 >     in sum for i. iadd x.i y.i
 >                              ^
 
-:t let _, nx = unpack range 10
-   in iota :: nx=>Int
+:t let _, Nx = unpack range 10
+   in iota :: Nx=>Int
 
 > Type error: existential variable leaked
 >
-> :t let _, nx = unpack range 10
+> :t let _, Nx = unpack range 10
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
->    in iota :: nx=>Int
+>    in iota :: Nx=>Int
 
-_, arrN = unpack range 10
+_, Narr = unpack range 10
 
 
-arr = iota :: arrN => Int
+arr = iota :: Narr => Int
 
 
 xr = map real arr
@@ -83,7 +83,7 @@ xr = map real arr
 
 :t arr
 
-> arrN=>Int
+> Narr=>Int
 
 
 :t (lam (x, y). x + y) (1.0, 2.0)
@@ -153,12 +153,12 @@ xr = map real arr
 >             ^^^
 
 
-type pair = (Int, Int)
+type Pair = (Int, Int)
 
-p1 :: pair
+p1 :: Pair
 p1 = (1, 2)
 
-p2 :: pair
+p2 :: Pair
 p2 = 1
 
 > Type error:
@@ -166,6 +166,6 @@ p2 = 1
 >   Actual: Int
 > In: 1
 >
-> p2 :: pair
+> p2 :: Pair
 > p2 = 1
 >      ^

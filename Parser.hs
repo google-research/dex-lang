@@ -5,7 +5,8 @@ import Control.Monad.Combinators.Expr
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Text.Parsec as P
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, nub)
+import Data.Char (isLower)
 import Data.Either (isRight)
 
 import Env
@@ -58,7 +59,7 @@ explicitCommand = do
 typedTopLet :: Parser UDecl
 typedTopLet = do
   v <- try (varName <* symbol "::")
-  ty <- typeExpr <* eol
+  ty <- sigmaType <* eol
   ULet p e <- topLet
   case p of
     RecTree _ -> fail "Can't annotate top-level pattern-match"
@@ -79,7 +80,7 @@ unpackBinder :: Parser (UBinder, Var)
 unpackBinder = do
   b <- binder
   symbol ","
-  tv <- varName
+  tv <- capVarName
   symbol "=" >> symbol "unpack"
   return (b, tv)
 
@@ -121,7 +122,7 @@ maybeAnnot e = do
              Just t -> UAnnot e t
 
 typeAnnot :: Parser Type
-typeAnnot = symbol "::" >> typeExpr
+typeAnnot = symbol "::" >> sigmaType
 
 parenRaw = do
   elts <- parens $ expr `sepBy` symbol ","
@@ -179,9 +180,9 @@ forExpr = do
 typeAlias :: Parser UDecl
 typeAlias = do
   symbol "type"
-  v <- varName
+  v <- capVarName
   symbol "="
-  ty <- typeExpr
+  ty <- tauType
   return $ UTAlias v ty
 
 unpackDecl :: Parser UDecl
@@ -193,7 +194,7 @@ unpackDecl = do
 typedLocalLet :: Parser UDecl
 typedLocalLet = do
   v <- try (varName <* symbol "::")
-  ty <- typeExpr <* symbol ";"
+  ty <- sigmaType <* symbol ";"
   v' <- varName
   if v' /= v
     then fail "Type declaration variable must match assignment variable."
@@ -230,14 +231,29 @@ literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
                 <|> fmap RealLit real
                 <|> fmap StrLit stringLiteral
 
-opNames = ["+", "*", "/", "-", "^"]
-resNames = ["for", "lam", "let", "in", "unpack"]
+identifier :: Parser String
+identifier = lexeme . try $ do
+  w <- (:) <$> lowerChar <*> many alphaNumChar
+  if w `elem` resNames
+    then fail $ show w ++ " is a reserved word"
+    else return w
+ where
+   resNames = ["for", "lam", "let", "in", "unpack"]
 
-identifier = makeIdentifier resNames
+capIdentifier :: Parser String
+capIdentifier = lexeme . try $ do
+  w <- (:) <$> upperChar <*> many alphaNumChar
+  if w `elem` resNames
+    then fail $ show w ++ " is a reserved word"
+    else return w
+  where
+    resNames = ["Int", "Real", "Bool", "Str", "A", "E"]
 
-appRule = InfixL (sc
-                  *> notFollowedBy (choice . map symbol $ opNames)
-                  >> return UApp)
+appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
+                     >> return UApp)
+  where
+    opNames = ["+", "*", "/", "-", "^"]
+
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
   where binOpApp e1 e2 = UPrimOp builtin [e1, e2]
 
@@ -251,17 +267,11 @@ ops = [ [getRule, appRule]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
       ]
 
--- idxExpr =   parenIdxExpr
---         <|> liftM (RecLeaf . FV) identifier
-
--- parenIdxExpr = do
---   elts <- parens $ maybeNamed idxExpr `sepBy` symbol ","
---   return $ case elts of
---     [(Nothing, expr)] -> expr
---     elts -> RecTree $ mixedRecord elts
-
 varName :: Parser Name
 varName = liftM rawName identifier
+
+capVarName :: Parser Name
+capVarName = liftM rawName capIdentifier
 
 idxExpr :: Parser UExpr
 idxExpr = withSource $ liftM UVar varName
@@ -283,29 +293,44 @@ parenPat = do
     [x] -> x
     xs -> RecTree $ Tup xs
 
+sigmaType :: Parser Type
+sigmaType = do
+  ty <- typeExpr
+  let vs = nub $ filter nameIsLower (freeTyVars ty)
+  case vs of
+    [] -> return ty
+    _ -> case inferKinds vs ty of
+      Left e -> fail $ pprint e
+      Right kinds -> return $ Forall kinds (abstractTVs vs ty)
+  where
+    nameIsLower v = isLower (nameTag v !! 0)
+
+tauType :: Parser Type
+tauType = do
+  ty <- sigmaType
+  case ty of
+    Forall _ _ -> fail $ "Can't have quantified (lowercase) type variables here"
+    _ -> return ty
+
 typeExpr :: Parser Type
 typeExpr = makeExprParser (sc >> typeExpr') typeOps
+  where
+    typeOps = [ [InfixR (symbol "=>" >> return TabType)]
+              , [InfixR (symbol "->" >> return ArrType)]]
 
--- var :: Parser Var
--- var = liftM rawName $ makeIdentifier
---             ["Int", "Real", "Bool", "Str", "A", "E"]
-
-forallType :: Parser Type
-forallType = do
-  try $ symbol "A"
-  vs <- varName `sepBy` sc
-  symbol "."
-  body <- typeExpr
-  case inferKinds vs body of
-    Left e -> fail $ pprint e
-    Right kinds -> return $ Forall kinds (abstractTVs vs body)
+typeExpr' =   parenTy
+          <|> liftM BaseType baseType
+          <|> liftM TypeVar capVarName
+          <|> liftM TypeVar varName
+          <|> existsType
+          <?> "type"
 
 existsType :: Parser Type
 existsType = do
   try $ symbol "E"
   v <- varName
   symbol "."
-  body <- typeExpr
+  body <- tauType
   return $ Exists (abstractTVs [v] body)
 
 baseType :: Parser BaseType
@@ -314,16 +339,6 @@ baseType = (symbol "Int"  >> return IntType)
        <|> (symbol "Bool" >> return BoolType)
        <|> (symbol "Str"  >> return StrType)
        <?> "base type"
-
-typeOps = [ [InfixR (symbol "=>" >> return TabType)]
-          , [InfixR (symbol "->" >> return ArrType)]]
-
-typeExpr' =   parenTy
-          <|> liftM TypeVar varName
-          <|> liftM BaseType baseType
-          <|> forallType
-          <|> existsType
-          <?> "type"
 
 parenTy :: Parser Type
 parenTy = do
@@ -371,72 +386,3 @@ blankLine = void $ lineMatch (\line -> null line || ">" `isPrefixOf` line)
 
 blanks :: LineParser ()
 blanks = void $ P.many blankLine
-
--- data BoundVars = BoundVars { lVars :: [Var]
---                            , tVars :: [Var] }
-
--- lowerInstr :: UDecl -> UDecl
--- lowerInstr = fmap (lower empty)
---   where empty = BoundVars [] []
-
--- lower :: BoundVars -> UExpr -> UExpr
--- lower env expr = case expr of
---   ULit c         -> ULit c
---   UVar v         -> UVar $ toDeBruijn (lVars env) v
---   UBuiltin b     -> UBuiltin b
---   ULet p e body  -> ULet p (recur e) $ lowerWithMany p body
---   ULam p body    -> ULam p           $ lowerWithMany p body
---   UApp fexpr arg -> UApp (recur fexpr) (recur arg)
---   UFor p body    -> UFor p           $ lowerWith p body
---   UGet e ie      -> UGet (recur e) $ toDeBruijn (lVars env) ie
---   URecCon r      -> URecCon $ fmap recur r
---   UAnnot e t     -> UAnnot (recur e) (lowerType env t)
---   UUnpack v e body -> UUnpack v (recur e) $
---                          lower (env {lVars = v : lVars env}) body
---   where recur = lower env
---         lowerWith p expr = lower (updateLVar p env) expr
---         lowerWithMany p expr = lower (updateLVars (toList p) env) expr
-
---         updateLVar :: Var -> BoundVars -> BoundVars
---         updateLVar v env = env {lVars = v : lVars env}
-
---         updateLVars :: [Var] -> BoundVars -> BoundVars
---         updateLVars vs env = env {lVars = vs ++ lVars env}
-
--- lowerType :: BoundVars -> Type -> Type
--- lowerType env ty = case ty of
---   BaseType b    -> BaseType b
---   TypeVar v     -> TypeVar $ toDeBruijn (tVars env) v
---   ArrType t1 t2 -> ArrType (recur t1) (recur t2)
---   TabType t1 t2 -> TabType (recur t1) (recur t2)
---   -- MetaTypeVar m -> MetaTypeVar m
---   where recur = lowerType env
-
--- updateTVars :: [Var] -> BoundVars -> BoundVars
--- updateTVars vs env = env {tVars = vs ++ tVars env}
-
--- -- boundVarPass :: Pass UExpr UExpr () ()
--- -- boundVarPass = Pass
--- --   { lowerExpr   = \expr env -> do liftErrIO $ checkBoundVarsExpr expr env
--- --                                   return ((), expr)
--- --   , lowerUnpack = \_ expr env -> do liftErrIO $ checkBoundVarsExpr expr env
--- --                                     return ((), (), expr)
--- --   , lowerCmd    = \cmd  env -> return $ checkBoundVarsCmd cmd env }
-
--- checkBoundVarsCmd :: Command UExpr -> Vars -> Command UExpr
--- checkBoundVarsCmd cmd@(Command cmdName expr) envVars =
---   case checkBoundVarsExpr expr envVars of
---     Left err -> CmdErr err
---     Right () -> cmd
--- checkBoundVarsCmd x _ = x
-
--- checkBoundVarsExpr :: UExpr -> Vars -> Except ()
--- checkBoundVarsExpr expr envVars = do
---   let freeVars = fvsUExpr expr
---   lEnv envVars `contains` lEnv freeVars
---   tEnv envVars `contains` tEnv freeVars
---   return ()
---   where contains :: Env i a -> Env i a -> Except ()
---         contains e1 e2 = case fVars (e2 `envDiff` e1) of
---                             v:_ -> Left $ UnboundVarErr v
---                             [] -> Right ()

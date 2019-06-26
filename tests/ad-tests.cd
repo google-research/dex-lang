@@ -16,10 +16,10 @@ f = lam x. x * x * x
 > 3.0
 
 
-_, nx = unpack range 3
+_, Nx = unpack range 3
 
 
-g x = for i::nx. 3.0 * x * x
+g x = for i::Nx. 3.0 * x * x
 
 
 :p jvp g 2.0 1.0
@@ -35,10 +35,10 @@ g2 (x, y) = x * y
 > (2.0, 1.0)
 
 
-xs = for i::nx. real iota.i * 1.0
+xs = for i::Nx. real iota.i * 1.0
 
 
-arrFun c = for i::nx. c
+arrFun c = for i::Nx. c
 
 
 :p let (_, pullback) = vjp arrFun 2.0
@@ -47,7 +47,7 @@ arrFun c = for i::nx. c
 > 3.0
 
 
-:p (transpose vsum  1.5) :: nx=>Real
+:p (transpose vsum  1.5) :: Nx=>Real
 
 > [1.5, 1.5, 1.5]
 

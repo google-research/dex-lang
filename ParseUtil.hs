@@ -1,4 +1,4 @@
-module ParseUtil (lineof, sc, blankLines, stringLiteral, makeIdentifier,
+module ParseUtil (lineof, sc, blankLines, stringLiteral,
                   space, int, real, lexeme, symbol, parens, brackets, Parser,
                   emptyLines, captureSource) where
 
@@ -24,13 +24,6 @@ emptyLines = void $ many (sc >> eol)
 
 stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
-
-makeIdentifier :: [String] -> Parser String
-makeIdentifier reserved = lexeme . try $ do
-  w <- (:) <$> lowerChar <*> many alphaNumChar
-  if w `elem` reserved
-    then fail $ show w ++ " is a reserved word"
-    else return w
 
 space :: Parser ()
 space = void $     takeWhile1P (Just "white space") (`elem` " \t")

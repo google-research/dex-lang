@@ -9,26 +9,26 @@
 > 20.0
 
 
-:p let _, nx = unpack range 100;
-       x = iota ::nx=>Int
+:p let _, Nx = unpack range 100;
+       x = iota ::Nx=>Int
    in isum (for i. x.i)
 
 > 4950
 
 
 :p let vdot x y = sum (for i. x.i * y.i * 2.0);
-       _, nx = unpack range 3;
-       x = iota :: nx=>Int;
+       _, Nx = unpack range 3;
+       x = iota :: Nx=>Int;
        y = map real x
    in vdot y y
 
 > 10.0
 
 
-:p let _, nx = unpack range 3;
-       _, ny = unpack range 4;
-       x = iota :: nx => Int;
-       y = iota :: ny => Int;
+:p let _, Nx = unpack range 3;
+       _, Ny = unpack range 4;
+       x = iota :: Nx => Int;
+       y = iota :: Ny => Int;
        z.i.j = real x.i * real y.j
    in sum (for i. sum z.i)
 
@@ -39,18 +39,18 @@
 -- :p let x = unpack range 10000;
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
-_, nArr = unpack range 7
+_, NArr = unpack range 7
 
 
-arr = iota :: nArr=>Int
+arr = iota :: NArr=>Int
 
 
-:p for i::nArr. iadd iota.i iota.i
+:p for i::NArr. iadd iota.i iota.i
 
 > [0, 2, 4, 6, 8, 10, 12]
 
 
-:p isum for i::nArr. 1
+:p isum for i::NArr. 1
 
 > 7
 
@@ -171,7 +171,7 @@ s = 1.0
 
 > [12, 11, 10]
 
-cumsumplus :: A n. n=>Real -> n=>Real
+cumsumplus :: n=>Real -> n=>Real
 cumsumplus xs = snd (scan (for i. lam c. let ans = c + xs.i
                                          in (ans, 1.0 + ans)) 0.0)
 
