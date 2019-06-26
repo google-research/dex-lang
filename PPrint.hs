@@ -91,6 +91,7 @@ instance Pretty b => Pretty (ExprP b) where
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
     SrcAnnot expr _ -> p expr
+    Annot expr ty -> p expr <+> "::" <+> p ty
 
 instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <+> p expr

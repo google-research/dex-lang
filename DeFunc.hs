@@ -372,7 +372,8 @@ builtinDeriv FMul _ [x1, x2] [t1, t2] = do
   x2' <- writePrimal (rawName "tmp") x2
   return (fmul x1' x2', fadd (fmul x2' t1)
                              (fmul x1' t2))
-builtinDeriv b _ _ _ = error $ "Fwd derivative not implemented: " ++ pprint b
+builtinDeriv b _ _ _ = throw  NotImplementedErr $
+                         "Fwd derivative of " ++ pprint  b
 
 isLinear :: Builtin -> Bool
 isLinear b = case b of
