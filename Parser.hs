@@ -31,9 +31,10 @@ parseit p s = case parse (p <* eof) "" s of
 
 topDeclInstr :: Parser UTopDecl
 topDeclInstr =   explicitCommand
-             <|> liftM UTopDecl typedTopLet
-             <|> liftM UTopDecl topUnpack
-             <|> liftM UTopDecl topLet
+             <|> liftM UTopDecl ( typeAlias
+                              <|> typedTopLet
+                              <|> topUnpack
+                              <|> topLet )
              <|> liftM (UEvalCmd . Command EvalExpr) expr
              <?> "top-level declaration"
 
@@ -153,7 +154,8 @@ primOp = do
 declExpr :: Parser UExpr
 declExpr = do
   symbol "let"
-  decls <- (unpackDecl <|> typedLocalLet <|> localLet) `sepBy` symbol ";"
+  decls <- (typeAlias <|> unpackDecl
+             <|> typedLocalLet <|> localLet) `sepBy` symbol ";"
   symbol "in"
   body <- expr
   return $ UDecls decls body
@@ -174,7 +176,14 @@ forExpr = do
   body <- expr
   return $ foldr UFor body vs
 
--- decl :: Parser (Pat, UExpr)
+typeAlias :: Parser UDecl
+typeAlias = do
+  symbol "type"
+  v <- varName
+  symbol "="
+  ty <- typeExpr
+  return $ UTAlias v ty
+
 unpackDecl :: Parser UDecl
 unpackDecl = do
   (b, tv) <- try unpackBinder
@@ -251,6 +260,7 @@ ops = [ [getRule, appRule]
 --     [(Nothing, expr)] -> expr
 --     elts -> RecTree $ mixedRecord elts
 
+varName :: Parser Name
 varName = liftM rawName identifier
 
 idxExpr :: Parser UExpr

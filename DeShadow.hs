@@ -18,13 +18,15 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = WriterT [DeclP Ann]
                        (CatT (DeShadowEnv, FreshScope)
                           (Either Err)) a
-type DeShadowEnv = (Env Var, Env Var)
+type DeShadowEnv = (Env Var, Env Type)
 type Ann = Maybe Type
 
-deShadowPass :: UTopDecl -> TopPass FreshScope (TopDeclP Ann)
+deShadowPass :: UTopDecl -> TopPass (DeShadowEnv, FreshScope) (TopDeclP Ann)
 deShadowPass decl = case decl of
-  UTopDecl decl -> do ((), [decl']) <- catToTop $ deShadowDecl decl
-                      return $ TopDecl decl'
+  UTopDecl decl -> do ((), decls) <- catToTop $ deShadowDecl decl
+                      return $ case decls of
+                        [decl'] ->  TopDecl decl'
+                        [] -> EvalCmd NoOp
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -32,10 +34,10 @@ deShadowPass decl = case decl of
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
   where
-    deShadowTop :: UExpr -> TopPass FreshScope (ExprP Ann)
+    deShadowTop :: UExpr -> TopPass (DeShadowEnv, FreshScope) (ExprP Ann)
     deShadowTop expr = do
-      scope <- getEnv
-      liftEither $ runFreshRT (runReaderT (deShadowExpr expr) mempty) scope
+      (env, scope) <- getEnv
+      liftEither $ runFreshRT (runReaderT (deShadowExpr expr) env) scope
 
 deShadowExpr :: UExpr -> DeShadowM (ExprP Ann)
 deShadowExpr expr = case expr of
@@ -71,9 +73,12 @@ deShadowDecl (ULet p bound) = do
 deShadowDecl (UUnpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
-  extend (asSnd (tv @> tv'), tv'@>())
+  extend (asSnd (tv @> TypeVar tv'), tv'@>())
   (b', decls) <- captureW $ deShadowPat (RecLeaf b)
   tell $ Unpack b' tv' bound' : decls
+deShadowDecl (UTAlias v ty) = do  -- TODO: deal with capture
+  ty' <- toCat $ deShadowType ty
+  extend (asSnd (v @> ty'), v@>())
 
 deShadowPat :: RecTree UBinder -> DeShadowCat (BinderP Ann)
 deShadowPat pat = do
@@ -106,8 +111,7 @@ freshBinder (v :> ty) = do
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
   subst <- asks $ snd
-  let sub v = Just (TypeVar (lookupSubst v subst))
-  return $ maybeSub sub ty
+  return $ maybeSub (envLookup subst) ty
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do
@@ -122,9 +126,9 @@ withCat m cont = do
                                       flip runCatT (env, scope) $ runWriterT m
   extendR env' $ localFresh (<> scope') $ cont ans decls
 
-catToTop :: DeShadowCat a -> TopPass FreshScope (a, [DeclP Ann])
+catToTop :: DeShadowCat a -> TopPass (DeShadowEnv, FreshScope) (a, [DeclP Ann])
 catToTop m = do
-  scope <- getEnv
-  (ans, (_, scope')) <- liftEither $ flip runCatT (mempty, scope) $ runWriterT m
-  putEnv scope'
+  env <- getEnv
+  (ans, env') <- liftEither $ flip runCatT env $ runWriterT m
+  putEnv env'
   return ans

@@ -152,3 +152,20 @@ xr = map real arr
 > :t [[1, 2], [3]]
 >             ^^^
 
+
+type pair = (Int, Int)
+
+p1 :: pair
+p1 = (1, 2)
+
+p2 :: pair
+p2 = 1
+
+> Type error:
+> Expected: (Int, Int)
+>   Actual: Int
+> In: 1
+>
+> p2 :: pair
+> p2 = 1
+>      ^

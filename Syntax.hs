@@ -156,6 +156,7 @@ data UExpr = ULit LitVal
 
 data UBinder = UBind (BinderP (Maybe Type)) | IgnoreBind  deriving (Show, Eq)
 data UDecl = ULet Pat UExpr
+           | UTAlias Var Type
            | UUnpack UBinder Var UExpr  deriving (Show, Eq)
 
 data UTopDecl = UTopDecl UDecl
