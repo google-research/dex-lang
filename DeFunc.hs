@@ -69,8 +69,16 @@ simplify expr = case expr of
   App fexpr arg -> do
     Lam (v:>_) body <- recur fexpr
     arg' <- recur arg
-    dropSubst $
-      extendR (v @> L arg') $ recur body
+    dropSubst $ do
+      scope <- looks snd
+      case decompose scope arg' of
+        Defer arg'' -> do
+          extendR (v @> L arg'') (recur body)
+        Split arg'' builder -> do
+          ty <- exprType arg''
+          v' <- looks $ rename (rawName "foo") . snd
+          extend ([Let (v':>ty) arg''], v' @> L ty)
+          extendR (v @> L (builder (Var v'))) (recur body)
   For b body -> do
     refreshBinder b $ \b' -> do
       body' <- simplifyScoped body
@@ -148,7 +156,10 @@ decompose scope expr = case expr of
       Defer body' -> Defer body'
       Split body' recon -> Split (Decls decls body') recon
   Lam _ _ -> matLocalVars scope expr
-  PrimOp b _ _ -> if trivialBuiltin b then Defer expr else pureMat expr
+  PrimOp b _ args -> let args' = map (decompose scope) args
+                     in if trivialBuiltin b && all isDefer args'
+                          then Defer expr
+                          else pureMat expr
   App _ _ -> pureMat expr
   For b@(i:>_) body ->
     case decompose scope body of
