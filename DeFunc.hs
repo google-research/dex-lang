@@ -76,7 +76,7 @@ simplify expr = case expr of
           extendR (v @> L arg'') (recur body)
         Split arg'' builder -> do
           ty <- exprType arg''
-          v' <- looks $ rename (rawName "foo") . snd
+          v' <- looks $ rename v . snd
           extend ([Let (v':>ty) arg''], v' @> L ty)
           extendR (v @> L (builder (Var v'))) (recur body)
   For b body -> do
