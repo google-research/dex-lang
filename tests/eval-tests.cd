@@ -171,4 +171,10 @@ s = 1.0
 
 > [12, 11, 10]
 
+cumsumplus :: A n. n=>Real -> n=>Real
+cumsumplus xs = snd (scan (for i. lam c. let ans = c + xs.i
+                                         in (ans, 1.0 + ans)) 0.0)
 
+:p cumsumplus [1.0, 2.0, 3.0]
+
+> [2.0, 4.0, 7.0]
