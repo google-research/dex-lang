@@ -2,10 +2,10 @@
 (setq coddle-highlights
   '(("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\bunpack\\b\\|\\bin\\b"
      . font-lock-keyword-face)
-    ("\\bE\\b\\|\\bA\\b"                            . font-lock-builtin-face)
-    ("->\\|=>\\|\\.\\|,\\|=\\|;\\|::"       . font-lock-variable-name-face)
-    ("Real\\|Int\\|Str"                 . font-lock-type-face)
-    (":t\\|:passes\\|:p\\|:time"        . font-lock-preprocessor-face)))
+    ("\\bE\\b\\|\\bA\\b"              . font-lock-builtin-face)
+    ("->\\|=>\\|\\.\\|,\\|=\\|;\\|::" . font-lock-variable-name-face)
+    ("\\b[[:upper:]][[:alnum:]]*\\b"  . font-lock-type-face)
+    (":t\\|:passes\\|:p\\|:time"      . font-lock-preprocessor-face)))
 
 (setq coddle-mode-syntax-table
       (let ((synTable (make-syntax-table)))
