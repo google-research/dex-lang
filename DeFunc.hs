@@ -242,8 +242,8 @@ askLEnv v = do x <- asks $ flip envLookup v
 
 trivialBuiltin :: Builtin -> Bool
 trivialBuiltin b = case b of
-  Iota -> True
   Range -> True
+  IndexAsInt -> True
   IntToReal -> True
   VZero -> True
   _ -> False

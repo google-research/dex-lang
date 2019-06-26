@@ -154,7 +154,7 @@ builtinType builtin = case builtin of
   Tan      -> realUnOpType
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
                           [k ==> (a --> pair a b), a] (pair a (k==>b))
-  Iota     -> BuiltinType [idxSetKind] [] (a ==> int)
+  IndexAsInt -> BuiltinType [idxSetKind] [i] int
   Range    -> BuiltinType [] [int] (Exists unitTy)
   Hash     -> BuiltinType [] [int, int] int
   Randint  -> BuiltinType [] [int, int] int

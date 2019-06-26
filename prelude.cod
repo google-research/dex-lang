@@ -49,8 +49,11 @@ tan x = %tan(x)
 hash :: Int -> Int -> Int
 hash x y = %hash(x, y)
 
+asint :: A i. i -> Int
+asint i = %asint(i)
+
 iota :: A i. i=>Int
-iota = %iota()
+iota = for i. asint i
 
 range :: Int -> E i. ()
 range n = %range(n)

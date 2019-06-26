@@ -78,7 +78,7 @@ toImp expr dests = case expr of
   Lit x -> return $ write (RecLeaf (ILit x))
   Var v -> do exprs <- asks $ snd . fromL . (!v)
               return $ write exprs
-  PrimOp Iota [n] [] -> impIota dests n
+  PrimOp IndexAsInt [_] [x] -> toImp x dests
   PrimOp Range [] [n] -> let (RecTree (Tup [nDest, _])) = dests
                              in toImp n nDest
   PrimOp Scan ts args -> impScan dests ts args
@@ -203,14 +203,6 @@ typeToSize :: Type -> ImpM Size
 typeToSize (TypeVar v) = liftM IVar $ asks $ fromT . (!v)
 typeToSize (IdxSetLit n) = return (ILit (IntLit n))
 typeToSize ty = throw CompilerErr $ "Not a valid size" ++ pprint ty
-
-impIota :: RecTree Dest -> Type -> ImpM ImpProg
-impIota (RecLeaf (Buffer outVar destIdxs srcIdxs)) n =
-  case srcIdxs of
-    [] -> do n' <- typeToSize n
-             loop n' $ \i ->
-                return $ asProg $ Update outVar (destIdxs `snoc` i) Copy [i]
-    _ -> return $ asProg $ Update outVar destIdxs Copy srcIdxs
 
 impScan :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
 impScan dest [_, _, n] [For (i :> _) (Lam b body), x] = do

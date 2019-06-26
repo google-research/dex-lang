@@ -105,8 +105,8 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
-             | Iota | Range | Scan | Copy | Deriv | Transpose
-             | VZero | VAdd | VSingle | VSum
+             | Range | Scan | Copy | Deriv | Transpose
+             | VZero | VAdd | VSingle | VSum | IndexAsInt
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
@@ -114,9 +114,9 @@ builtinNames = M.fromList [
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
   ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
-  ("scan", Scan), ("iota", Iota), ("range", Range), ("inttoreal", IntToReal),
+  ("scan", Scan), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),
-  ("transpose", Transpose), ("copy", Copy),
+  ("transpose", Transpose), ("copy", Copy), ("asint", IndexAsInt),
   ("vzero", VZero), ("vadd", VAdd), ("vsingle", VSingle), ("vsum", VSum)]
 
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
