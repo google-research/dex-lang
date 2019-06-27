@@ -227,6 +227,7 @@ simplifyVSum [ty, n] [For b body] = do
     case decls of
       [] -> do
         return $ simplifyVSumBody n b' ty body'
+      _ -> error "not implemented yet"
 
 simplifyVSumBody :: Type -> Binder -> Type -> Expr -> Expr
 simplifyVSumBody n b (RecType tr) (RecCon xr) =
@@ -349,10 +350,11 @@ evalDeriv expr = case expr of
     builtinDeriv b tys xs ts
   For b@(i:>ty) body -> do
     let ext = ([], i@>L ty)
-    (body', builder) <- extendLocal (ext, ext) $ evalDerivScoped body
+    (body', builder) <- extendR (i @> Left ty) $
+                          extendLocal (ext, ext) $ evalDerivScoped body
     tab <- writePrimal (rawName "tab") (For b body')
-    let (xBody, tBody) = builder (Get tab (Var i))
-    return (For b xBody, For b tBody)
+    return (For b $           RecGet (Get tab (Var i)) fstField,
+            For b $ builder $ RecGet (Get tab (Var i)) sndField)
   Get e i -> do (x, t) <- evalDeriv e
                 return (Get x i, Get t i)
   RecCon r -> do
@@ -383,14 +385,15 @@ isLinear b = case b of
   VAdd -> True
   _ -> False
 
-evalDerivScoped :: Expr -> DerivM (Expr, Expr -> (Expr, Expr))
+-- exprIn  :: a
+-- exprOut :: (a, c)
+-- builder :: c -> T a
+evalDerivScoped :: Expr -> DerivM (Expr, Expr -> Expr)
 evalDerivScoped expr = do
   ((xOut, tOut), ((xDecls, _), (tDecls, _))) <- scoped (evalDeriv expr)
   tScope <- looks $ snd . snd
-  let tExpr = declsExpr tDecls tOut
-      (saved, recon) = forceSplit $
-                         matLocalVars tScope (RecCon (Tup [xOut, tExpr]))
-  return (declsExpr xDecls saved, unpair . recon)
+  let (saved, recon) = forceSplit $ matLocalVars tScope $ declsExpr tDecls tOut
+  return (declsExpr xDecls (RecCon (Tup [xOut, saved])), recon)
 
 -- TODO: need to have a single shared scope - don't want primal decls reusing
 -- vars already chosen by tangent decls
@@ -544,6 +547,3 @@ declsExpr decls body = Decls decls body
 fromDeclsExpr :: Expr -> ([Decl], Expr)
 fromDeclsExpr (Decls decls body) = (decls, body)
 fromDeclsExpr expr = ([], expr)
-
-unpair :: Expr -> (Expr, Expr)
-unpair (RecCon (Tup [x, y])) = (x, y)
