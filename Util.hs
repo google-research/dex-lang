@@ -4,7 +4,7 @@ module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated, shortList,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst) where
+             onSnd, onFst, highlightRegion) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -133,3 +133,31 @@ restructure xs structure = evalState (traverse procLeaf structure) xs
         procLeaf _ = do (x:xs) <- get
                         put xs
                         return x
+
+highlightRegion :: (Int, Int) -> String -> String
+highlightRegion pos s =
+    -- TODO: flag to control line numbers
+    -- (disabling for now because it makes quine tests tricky)
+    -- "Line " ++ show (1 + lineNum) ++ "\n"
+    allLines !! lineNum ++ "\n"
+    ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
+  where
+    allLines = lines s
+    (lineNum, start, stop) = getPosTriple pos allLines
+
+getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
+getPosTriple (start, stop) lines = (lineNum, start - offset, stop')
+  where
+    lineLengths = map ((+1) . length) lines
+    lineOffsets = cumsum lineLengths
+    lineNum = maxLT lineOffsets start
+    offset = lineOffsets  !! lineNum
+    stop' = min (stop - offset) (lineLengths !! lineNum)
+
+cumsum :: [Int] -> [Int]
+cumsum xs = scanl (+) 0 xs
+
+maxLT :: Ord a => [a] -> a -> Int
+maxLT [] _ = 0
+maxLT (x:xs) n = if n < x then -1
+                          else 1 + maxLT xs n

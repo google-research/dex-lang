@@ -31,15 +31,17 @@ fullPass = deShadowPass
        >+> impPass    >+> checkImp
        >+> jitPass
 
-parseFile :: MonadIO m => String -> m [(String, Except UTopDecl)]
-parseFile fname = do
-  source <- liftIO $ readFile fname
-  return $ parseProg source
+parseFile :: MonadIO m => String -> m (String, [(String, UTopDecl)])
+parseFile fname = liftIO $ do
+  source <- readFile fname
+  liftIO $ case parseProg source of
+    Left e -> putStrLn (pprint e) >> exitFailure
+    Right decls -> return (source, decls)
 
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
-  prog <- parseFile "prelude.cod"
-  flip mapM_ prog $ \(s, decl) -> evalDecl s printErr (pass (ignoreExcept decl))
+  (source, prog) <- parseFile "prelude.cod"
+  mapM_ (evalDecl source printErr . pass . snd) prog
   where
     printErr (Result _ status _ ) = case status of
       Set (Failed e) -> putStrLn $ pprint e
@@ -48,14 +50,10 @@ evalPrelude pass = do
 evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
   evalPrelude pass
-  prog <- parseFile fname
-  mapM_ evalPrint prog
-  where
-    evalPrint (text, decl) = do
-      printIt "" (resultSource text)
-      case decl of
-        Left e -> printIt "> " e
-        Right decl' -> evalDecl text (printIt "> ") (pass decl')
+  (source, prog) <- parseFile fname
+  flip mapM_ prog $ \(declSource, decl) -> do
+    printIt "" (resultSource declSource)
+    evalDecl source (printIt "> ") (pass decl)
 
 evalRepl :: Monoid env => FullPass env-> StateT env IO ()
 evalRepl pass = do

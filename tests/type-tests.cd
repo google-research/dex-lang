@@ -2,52 +2,44 @@
 
 > A a. (a -> a)
 
-
 :t lam x. sum for i. x.i
 
 > A a. (a=>Real -> Real)
-
 
 :t let flip f x y = f y x in flip
 
 > A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
-
 :t lam x. for i j. x.j.i
 
 > A c b a. (b=>a=>c -> a=>b=>c)
 
-
 :t lam f x. f x
 
 > A b a. ((a -> b) -> (a -> b))
-
 
 :t let id x = x
    in id (id) (id 1)
 
 > Int
 
-
-:t let _, N = unpack range 10;
+:t let _, N = unpack range 10
        x = iota :: N=>Int
    in isum x
 
 > Int
 
-
-:t let _, Nx = unpack range 10;
-       _, Ny = unpack range 3;
-       x = iota :: Nx=>Int;
+:t let _, Nx = unpack range 10
+       _, Ny = unpack range 3
+       x = iota :: Nx=>Int
        y = iota :: Ny=>Int
    in real (isum for i. x.i) + real (isum for j. y.j)
 
 > Real
 
-
-:t let _, Nx = unpack range 10;
-       _, Ny = unpack range 3;
-       x = iota :: Nx=>Int;
+:t let _, Nx = unpack range 10
+       _, Ny = unpack range 3
+       x = iota :: Nx=>Int
        y = iota :: Ny=>Int
     in sum for i. iadd x.i y.i
 
@@ -56,10 +48,6 @@
 >   Actual: Nx
 > In: i
 >
-> :t let _, Nx = unpack range 10;
->        _, Ny = unpack range 3;
->        x = iota :: Nx=>Int;
->        y = iota :: Ny=>Int
 >     in sum for i. iadd x.i y.i
 >                              ^
 
@@ -69,34 +57,27 @@
 > Type error: existential variable leaked
 >
 > :t let _, Nx = unpack range 10
->    ^^^^^^^^^^^^^^^^^^^^^^^^^^^
->    in iota :: Nx=>Int
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 _, Narr = unpack range 10
 
-
 arr = iota :: Narr => Int
 
-
 xr = map real arr
-
 
 :t arr
 
 > Narr=>Int
 
-
 :t (lam (x, y). x + y) (1.0, 2.0)
 
 > Real
 
-
-:t let f (x, y) = x + 2.0 * y;
+:t let f (x, y) = x + 2.0 * y
        z.i = (xr.i, xr.i * xr.i)
    in sum (for i. f z.i)
 
 > Real
-
 
 -- yields 'compiler bug'. Should be a different sort of error
 -- :t unpack x = iota 3
@@ -105,7 +86,6 @@ xr = map real arr
 :t 1 :: Int
 
 > Int
-
 
 :t 1.0 :: Int
 
@@ -121,11 +101,9 @@ xr = map real arr
 
 > {..3}=>Int
 
-
 :t []
 
 > A a. {..0}=>a
-
 
 :t [1, [2]]
 
@@ -141,7 +119,6 @@ xr = map real arr
 
 > {..2}=>{..2}=>Int
 
-
 :t [[1, 2], [3]]
 
 > Type error:
@@ -151,7 +128,6 @@ xr = map real arr
 >
 > :t [[1, 2], [3]]
 >             ^^^
-
 
 type Pair = (Int, Int)
 
@@ -166,6 +142,5 @@ p2 = 1
 >   Actual: Int
 > In: 1
 >
-> p2 :: Pair
 > p2 = 1
 >      ^

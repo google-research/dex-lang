@@ -4,7 +4,7 @@
 
 module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var,
                UExpr (..), UTopDecl (..), UDecl (..), ImpDecl (..), TopDeclP (..),
-               DeclP (..), Decl, TopDecl, Command (..), Pat,
+               DeclP (..), Decl, TopDecl, Command (..), Pat, SrcPos,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..),
@@ -22,6 +22,7 @@ import Fresh
 import Record
 import Env
 import Cat
+import Util
 
 import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
@@ -86,7 +87,7 @@ data DeclP b = Let    (BinderP b)     (ExprP b)
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))
 
-data Command expr = Command CmdName expr | NoOp
+data Command expr = Command CmdName expr | NoOp  deriving (Show)
 
 type TBinder = BinderP Kind
 type IdxSet = Type
@@ -160,7 +161,7 @@ data UDecl = ULet Pat UExpr
            | UUnpack UBinder Var UExpr  deriving (Show, Eq)
 
 data UTopDecl = UTopDecl UDecl
-              | UEvalCmd (Command UExpr)
+              | UEvalCmd (Command UExpr)  deriving (Show)
 
 type Pat = RecTree UBinder
 
@@ -256,24 +257,13 @@ addErrSource :: MonadError Err m => String -> m a -> m a
 addErrSource s m = modifyErr m $ \(Err e p s') ->
   case p of
     Nothing -> Err e p s'
-    Just pos -> Err e p $ s' ++ "\n\n" ++ unlines (highlightRegion pos (lines s))
+    Just pos -> Err e p $ s' ++ "\n\n" ++ highlightRegion pos s
 
 addErrSourcePos :: MonadError Err m => SrcPos -> m a -> m a
 addErrSourcePos pNew m = modifyErr m $ \(Err e pPrev s) ->
   case pPrev of
     Nothing -> Err e (Just pNew) s
     _ -> Err e pPrev s
-
-highlightRegion :: SrcPos -> [String] -> [String]
-highlightRegion _ [] = []
-highlightRegion (start, stop) (line:rest)
-  | start > n = line : highlightRegion (start - n - 1, stop - n - 1) rest
-  | otherwise = let accent = take start (repeat ' ') ++
-                             take size  (repeat '^')
-                in  line : accent : rest
-  where
-    n = length line
-    size = (min n stop) - start
 
 instance Semigroup Result where
   Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')

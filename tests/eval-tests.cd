@@ -2,41 +2,36 @@
 
 > 3.0
 
-
 :p let double = lam x. x * 2.0
    in double 10.0
 
 > 20.0
 
-
-:p let _, Nx = unpack range 100;
+:p let _, Nx = unpack range 100
        x = iota ::Nx=>Int
    in isum (for i. x.i)
 
 > 4950
 
-
-:p let vdot x y = sum (for i. x.i * y.i * 2.0);
-       _, Nx = unpack range 3;
-       x = iota :: Nx=>Int;
+:p let vdot x y = sum (for i. x.i * y.i * 2.0)
+       _, Nx = unpack range 3
+       x = iota :: Nx=>Int
        y = map real x
    in vdot y y
 
 > 10.0
 
-
-:p let _, Nx = unpack range 3;
-       _, Ny = unpack range 4;
-       x = iota :: Nx => Int;
-       y = iota :: Ny => Int;
+:p let _, Nx = unpack range 3
+       _, Ny = unpack range 4
+       x = iota :: Nx => Int
+       y = iota :: Ny => Int
        z.i.j = real x.i * real y.j
    in sum (for i. sum z.i)
 
 > 18.0
 
-
 -- :p randint (hash 0 0) 10
--- :p let x = unpack range 10000;
+-- :p let x = unpack range 10000
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
 _, NArr = unpack range 7
@@ -49,11 +44,9 @@ arr = iota :: NArr=>Int
 
 > [0, 2, 4, 6, 8, 10, 12]
 
-
 :p isum for i::NArr. 1
 
 > 7
-
 
 fun = lam y. sum (map real arr) + y
 
@@ -62,44 +55,38 @@ fun = lam y. sum (map real arr) + y
 
 > 24.0
 
-
 :p arr
 
 > [0, 1, 2, 3, 4, 5, 6]
-
 
 :p fold (for i. iadd arr.i) 0
 
 > 21
 
-
 :p 6.0 - 10.0
 
 > -4.0
 
-
 :p (lam (x, y). x + y) (1.0, 2.0)
 
 > 3.0
-
 
 :p let f (x, y) = x y
    in f (lam x. x, 1)
 
 > 1
 
-
-:p let (x,y) = ((1.0,2.0),3.0) in
-       let (x1, x2) = x in x1 + x2 + y
+:p let (x,y) = ((1.0,2.0),3.0)
+       (x1, x2) = x
+   in x1 + x2 + y
 
 > 6.0
 
-
-:p let x = (1.0,2.0) in
-   let (y,z) = x in y + z
+:p let x = (1.0,2.0)
+       (y,z) = x
+   in y + z
 
 > 3.0
-
 
 -- :p let f (x, y) = x + 2 * y;
 --        z.i = (x.i, x.i * x.i)
@@ -108,64 +95,51 @@ fun = lam y. sum (map real arr) + y
 
 > 2.718281828459045
 
-
 :p log 1.0
 
 > 0.0
-
 
 :p sqrt 2.0
 
 > 1.4142135623730951
 
-
 :p sin 3.14159
 
 > 2.65358979335273e-6
-
 
 :p cos 0.0
 
 > 1.0
 
-
 :p tan 1.57079
 
 > 158057.9134162482
-
 
 :p fadd 1.0 2.0
 
 > 3.0
 
-
 :p fsub 1.0 2.0
 
 > -1.0
-
 
 :p fmul 3.0 2.0
 
 > 6.0
 
-
 :p fdiv 3.0 2.0
 
 > 1.5
 
-
 s = 1.0
-
 
 :p s
 
 > 1.0
 
-
 :p [2, 4, 8]
 
 > [2, 4, 8]
-
 
 :p let xs = [2,1,0] in (for i. iadd xs.i 10)
 

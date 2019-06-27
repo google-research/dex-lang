@@ -1,4 +1,4 @@
-:t let g :: a -> a ;
+:t let g :: a -> a
        g x = x
     in g
 
@@ -20,14 +20,14 @@
 > :t let f x::Real = x in f 1
 >                           ^
 
-:t let g :: (a -> Int) -> (a -> Int) ;
+:t let g :: (a -> Int) -> (a -> Int)
        g x = x
     in g
 
 > A a. ((a -> Int) -> (a -> Int))
 
 
-:t let g :: a -> a ;
+:t let g :: a -> a
        g x = iadd x x
     in g
 
@@ -36,10 +36,8 @@
 >   Actual: T_1
 > In: x
 >
-> :t let g :: a -> a ;
 >        g x = iadd x x
 >                   ^^
->     in g
 
 h :: (a -> b) -> (a -> b)
 h x = x
@@ -59,6 +57,5 @@ fun x = sin x
 >   Actual: T
 > In: x
 >
-> fun :: a -> a
 > fun x = sin x
 >             ^
