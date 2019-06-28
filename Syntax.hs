@@ -474,7 +474,7 @@ subExprR expr = case expr of
       refreshBinder b $ \b' -> do
         body' <- recur body
         return $ wrapDecls [Let b' bound'] body'
-    Unpack b tv bound -> do  -- TODO: freshen tv
+    Unpack b tv bound -> do
       bound' <- recur bound
       refreshTBinders [tv:>idxSetKind] $ \[tv':>_] ->
         refreshBinder b $ \b' -> do
@@ -492,16 +492,19 @@ subExprR expr = case expr of
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> liftM (flip RecGet field) (recur e)
   TLam ts expr -> refreshTBinders ts $ \ts' ->
-                    liftM (TLam ts') (recur expr) -- TODO: refresh type vars
+                    liftM (TLam ts') (recur expr)
 
   TApp expr ts -> liftM2 TApp (recur expr) (traverse subTy ts)
   where
     recur = subExprR
 
     lookup :: Name -> Reader (Subst, Scope) Expr
-    lookup v = do mval <- asks $ fmap fromL . flip envLookup v . fst
-                  return $ case mval of Nothing -> Var v
-                                        Just e -> e
+    lookup v = do
+      mval <- asks $ fmap fromL . flip envLookup v . fst
+      case mval of
+        Nothing -> return $ Var v
+        Just e -> local (\(_, scope) -> (mempty, scope)) (subExprR e)
+
 subTy :: Type -> Reader (Subst, Scope) Type
 subTy ty = do env <- asks fst
               return $ maybeSub (fmap fromT . envLookup env) ty
