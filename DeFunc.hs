@@ -67,7 +67,10 @@ simplify expr = case expr of
       _ -> do args' <- mapM recur args
               return $ simplifyBuiltin b ts' args'
   App fexpr arg -> do
-    Lam (v:>_) body <- recur fexpr
+    fexpr' <- recur fexpr
+    (v, body) <- case fexpr' of
+      Lam (v:>_) body -> return (v, body)
+      _ -> throw CompilerErr $ "Expected a lambda, got " ++ pprint fexpr'
     arg' <- recur arg
     dropSubst $ do
       scope <- looks snd
@@ -117,6 +120,10 @@ inlineDecls (Decls decls final) = extend (asFst decls) >> return final
 inlineDecls expr = return expr
 
 simplifyDecl :: Decl -> SimplifyCat ()
+simplifyDecl (Let (v:>_) expr) | v `isin` preludeNames  = do
+  expr' <- toCat $ simplifyScoped expr
+  ty <- toCat $ exprType expr'  -- TODO: use optional types and infer later
+  extend ( v @> L expr' , ([], v @> L ty))
 simplifyDecl (Let (v:>_) bound) = do
   bound' <- toCat $ simplifyScoped bound
   curScope <- looks $ snd . snd
@@ -265,7 +272,7 @@ withCat m cont = do
   extendR env' $ cont ans
 
 dropSubst :: SimplifyM a -> SimplifyM a
-dropSubst m = local (envSubset preludeNames) m
+dropSubst m = local (envIntersect preludeNames) m
 
 applySub :: Expr -> SimplifyM Expr
 applySub expr = do
@@ -367,15 +374,11 @@ evalDeriv expr = case expr of
   _ -> error $ "Surprising expression: " ++ pprint expr
 
 builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
-builtinDeriv b tys xs ts | isLinear b = return (PrimOp b tys xs,
-                                                PrimOp b tys ts)
-builtinDeriv FMul _ [x1, x2] [t1, t2] = do
-  x1' <- writePrimal (rawName "tmp") x1
-  x2' <- writePrimal (rawName "tmp") x2
-  return (fmul x1' x2', fadd (fmul x2' t1)
-                             (fmul x1' t2))
-builtinDeriv b _ _ _ = throw  NotImplementedErr $
-                         "Fwd derivative of " ++ pprint  b
+builtinDeriv b tys xs ts
+  | isLinear b = return (PrimOp b tys xs, PrimOp b tys ts)
+  | otherwise = do
+      val <- writePrimal (rawName "tmp") $ preludeApp (derivRuleName b) tys xs
+      return (RecGet val fstField, naryApp (RecGet val sndField) ts)
 
 isLinear :: Builtin -> Bool
 isLinear b = case b of
@@ -399,7 +402,9 @@ evalDerivScoped expr = do
 -- vars already chosen by tangent decls
 writePrimal :: Name -> Expr -> DerivM Atom
 writePrimal name expr = do
-  v <- looks $ rename name . snd . fst
+  pScope <- looks $ snd . fst
+  tScope <- looks $ snd . snd
+  let v = rename name (pScope <> tScope)
   ty <- primalType expr
   extend ( ([Let (v :> ty) expr], v @> L ty)
          , ([]                  , v @> L ty)) -- primals stay in scope
@@ -545,13 +550,25 @@ fromDeclsExpr :: Expr -> ([Decl], Expr)
 fromDeclsExpr (Decls decls body) = (decls, body)
 fromDeclsExpr expr = ([], expr)
 
+naryApp :: Expr -> [Expr] -> Expr
+naryApp f xs = foldl App f xs
+
+tApp :: Expr -> [Type] -> Expr
+tApp f [] = f
+tApp f ts = TApp f ts
+
 -- === names presumed available from the prelude ===
 
-preludeNames :: [Name]
-preludeNames = map rawName ["fanout"]
+derivRuleName :: Builtin -> String
+derivRuleName b = case b of
+  FMul -> "fmulDeriv"
+  _ -> error $ "Derivative not implemented: " ++ pprint b
+
+preludeNames :: Env ()
+preludeNames = fold [rawName v @> () | v <- ["fanout", "fmulDeriv"]]
 
 preludeApp :: String -> [Type] -> [Expr] -> Expr
-preludeApp s ts xs = foldl App (TApp (Var (rawName s)) ts) xs
+preludeApp s ts xs = naryApp (tApp (Var (rawName s)) ts) xs
 
 appFanout :: Type -> Type -> Expr -> Expr
 appFanout i a x = preludeApp "fanout" [i, a] [x]
