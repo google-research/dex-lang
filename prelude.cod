@@ -110,3 +110,6 @@ vjp f x = let (y, df) = deriv f x
 grad :: (a -> Real) -> a -> a
 grad f x = let (_, pullback) = vjp f x
            in pullback 1.0
+
+fanout :: a -> i=>a
+fanout x = for i. x

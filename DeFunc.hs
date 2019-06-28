@@ -265,7 +265,7 @@ withCat m cont = do
   extendR env' $ cont ans
 
 dropSubst :: SimplifyM a -> SimplifyM a
-dropSubst m = local (const mempty) m
+dropSubst m = local (envSubset preludeNames) m
 
 applySub :: Expr -> SimplifyM Expr
 applySub expr = do
@@ -494,10 +494,7 @@ builtinTranspose FAdd [] ct [t1, t2] = do
   evalTranspose ct' t1
   evalTranspose ct' t2
 builtinTranspose FMul [] ct [x, t] = evalTranspose (fmul x ct) t
-builtinTranspose VSum [_, n] ct [xs] = do
-  ct' <- writeCoTangent ct
-  evalTranspose (For (i:>n) ct') xs
-  where i = rawName "iT"  -- TODO: freshness!
+builtinTranspose VSum [a, n] ct [xs] = evalTranspose (appFanout a n ct) xs
 builtinTranspose b _ _ _ = error $ "Transpose not implemented: " ++ pprint b
 
 writeCoTangent :: Expr -> TransposeM Atom
@@ -547,3 +544,14 @@ declsExpr decls body = Decls decls body
 fromDeclsExpr :: Expr -> ([Decl], Expr)
 fromDeclsExpr (Decls decls body) = (decls, body)
 fromDeclsExpr expr = ([], expr)
+
+-- === names presumed available from the prelude ===
+
+preludeNames :: [Name]
+preludeNames = map rawName ["fanout"]
+
+preludeApp :: String -> [Type] -> [Expr] -> Expr
+preludeApp s ts xs = foldl App (TApp (Var (rawName s)) ts) xs
+
+appFanout :: Type -> Type -> Expr -> Expr
+appFanout i a x = preludeApp "fanout" [i, a] [x]
