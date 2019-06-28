@@ -120,10 +120,9 @@ inlineDecls (Decls decls final) = extend (asFst decls) >> return final
 inlineDecls expr = return expr
 
 simplifyDecl :: Decl -> SimplifyCat ()
-simplifyDecl (Let (v:>_) expr) | v `isin` preludeNames  = do
+simplifyDecl (Let b@(v:>ty) expr) | v `isin` preludeNames  = do
   expr' <- toCat $ simplifyScoped expr
-  ty <- toCat $ exprType expr'  -- TODO: use optional types and infer later
-  extend ( v @> L expr' , ([], v @> L ty))
+  extend ( v @> L expr' , ([Let b expr'], v @> L ty))
 simplifyDecl (Let (v:>_) bound) = do
   bound' <- toCat $ simplifyScoped bound
   curScope <- looks $ snd . snd
@@ -283,11 +282,17 @@ applySub expr = do
 
 checkSubScope :: Subst -> Env () -> SimplifyM ()
 checkSubScope sub scope =
-  if all (`isin` scope) lvars
+  if all (`isin` scope) freeVars
     then return ()
     else throw CompilerErr $ "Free sub vars not in scope:\n" ++
-                    pprint lvars ++ "\n" ++ pprint scope
-  where lvars = envNames $ foldMap freeLVars [expr | L expr <- toList sub]
+                    pprint freeVars ++ "\n" ++ pprint scope
+  where freeVars = envNames $ foldMap getFreeVars (toList sub)
+        getFreeVars :: LorT Expr Type -> Env ()
+        getFreeVars x = case x of
+          L expr -> freeLVars expr <> asEnv (freeTyVars expr)
+          T ty -> asEnv (freeTyVars ty)
+        asEnv :: [Name] -> Env ()
+        asEnv vs = foldMap (@>()) vs
 
 simplifyBuiltin :: Builtin -> [Type] -> [Expr] -> Expr
 simplifyBuiltin FAdd [] [x, y] =
@@ -550,25 +555,11 @@ fromDeclsExpr :: Expr -> ([Decl], Expr)
 fromDeclsExpr (Decls decls body) = (decls, body)
 fromDeclsExpr expr = ([], expr)
 
-naryApp :: Expr -> [Expr] -> Expr
-naryApp f xs = foldl App f xs
-
-tApp :: Expr -> [Type] -> Expr
-tApp f [] = f
-tApp f ts = TApp f ts
-
--- === names presumed available from the prelude ===
+appFanout :: Type -> Type -> Expr -> Expr
+appFanout i a x = preludeApp "fanout" [i, a] [x]
 
 derivRuleName :: Builtin -> String
 derivRuleName b = case b of
   FMul -> "fmulDeriv"
   _ -> error $ "Derivative not implemented: " ++ pprint b
 
-preludeNames :: Env ()
-preludeNames = fold [rawName v @> () | v <- ["fanout", "fmulDeriv"]]
-
-preludeApp :: String -> [Type] -> [Expr] -> Expr
-preludeApp s ts xs = naryApp (tApp (Var (rawName s)) ts) xs
-
-appFanout :: Type -> Type -> Expr -> Expr
-appFanout i a x = preludeApp "fanout" [i, a] [x]

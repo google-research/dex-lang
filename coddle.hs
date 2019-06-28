@@ -15,6 +15,7 @@ import Parser
 import DeShadow
 import Inference
 import DeFunc
+import Expand
 import Imp
 import JIT
 import WebOutput
@@ -27,6 +28,8 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 fullPass = deShadowPass
        >+> typePass   >+> checkTyped
+       >+> deFuncPass >+> checkTyped
+       >+> expandPass >+> checkTyped
        >+> deFuncPass >+> checkTyped
        >+> impPass    >+> checkImp
        >+> jitPass

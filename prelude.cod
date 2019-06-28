@@ -116,3 +116,6 @@ fanout x = for i. x
 
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
+
+vsumImpl :: i=>a -> a
+vsumImpl xs = fold (for i. lam c. vadd c xs.i) vzero

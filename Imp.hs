@@ -23,6 +23,7 @@ type ImpEnv = FullEnv (Type, ImpVal) Name
 
 impPass :: TopDecl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
+  TopDecl (Let (v:>_) _) | v `isin` preludeNames -> return noOpCmd
   TopDecl (Let b expr) -> do
     let binders = impBinders b
     prog <- impExprTop binders expr
@@ -33,7 +34,7 @@ impPass decl = case decl of
     prog <- impExprTop binders expr
     putEnv $ lbindWith b (fmap (IVar . binderVar) binders) <> (iv @> T iv)
     return $ ImpTopLet (toList binders) prog
-  EvalCmd NoOp -> return (ImpEvalCmd (const undefined) [] NoOp)
+  EvalCmd NoOp -> return noOpCmd
   EvalCmd (Command cmd expr) -> do
     env <- getEnv
     let ty = getType (impEnvToTypeEnv env) expr
@@ -42,6 +43,8 @@ impPass decl = case decl of
     case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd (reconstruct ty) (toList binders) (Command cmd prog)
+  where
+    noOpCmd = ImpEvalCmd (const undefined) [] NoOp
 
 impBinders :: Binder -> RecTree IBinder
 impBinders (v :> ty) = fmap (uncurry (:>) . onFst newName) (recTreeNamed itypes)
@@ -83,7 +86,6 @@ toImp expr dests = case expr of
                              in toImp n nDest
   PrimOp Scan ts args -> impScan dests ts args
   PrimOp VAdd [ty] [x, y] -> toImp (expandVAdd ty x y) dests
-  PrimOp VSum [ty, n] [x] -> toImp (expandVSum ty n x) dests
   PrimOp VZero [ty] []    -> toImp (expandVZero ty) dests
   PrimOp b [] args -> do
     let (RecLeaf dest) = dests
@@ -145,22 +147,6 @@ expandVAdd (RecType r) x y = RecCon $ fmap addComponents (recNameVals r)
 expandVZero :: Type -> Expr
 expandVZero (BaseType RealType) = Lit (RealLit 0.0)
 expandVZero (RecType r) = RecCon (fmap expandVZero r)
-
--- TODO: figure out multi-level primitives and put this in the prelude
--- (doing this here also misses out on inlining/fusion)
-expandVSum :: Type -> Type -> Expr -> Expr
-expandVSum ty n xs = getFst $ PrimOp Scan [ty, unitTy, n]
-                                [For (i:>n) (Lam (x:>ty) bodyWithUnit), x0]
- where
-    i = rawName "iVS" -- TODO: freshness
-    x = rawName "xVS"
-    y = rawName "yVS"
-    getFst expr = RecGet expr fstField
-    -- Some bug in imp lowering means this doesn't work without the let...
-    bodyWithUnit = RecCon $ Tup [body, unitCon]
-    body = Decls [Let (y:>(TabType n ty)) xs] $
-                   expandVAdd ty (Var x) (Get (Var y) (Var i))
-    x0 = expandVZero ty
 
 --- Destination indices, then source indices
 

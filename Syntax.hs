@@ -16,7 +16,9 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                Value (..), Vec (..), Result (..), freeVars,
                lhsVars, Output, Nullable (..), SetVal (..), EvalStatus (..),
                MonMap (..), resultSource, resultText, resultErr, resultComplete,
-               Index, wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind) where
+               Index, wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind,
+               preludeNames, preludeApp, naryApp, tApp
+               ) where
 
 import Fresh
 import Record
@@ -138,6 +140,22 @@ data Vec = IntVec [Int] | RealVec [Double]  deriving (Show)
 
 unitTy = RecType (Tup [])
 unitCon = RecCon (Tup [])
+
+-- === functions available from the prelude ===
+
+preludeNames :: Env ()
+preludeNames = fold [rawName v @> ()
+                    | v <- ["fanout", "fmulDeriv", "vsumImpl"]]
+
+preludeApp :: String -> [Type] -> [Expr] -> Expr
+preludeApp s ts xs = naryApp (tApp (Var (rawName s)) ts) xs
+
+naryApp :: Expr -> [Expr] -> Expr
+naryApp f xs = foldl App f xs
+
+tApp :: Expr -> [Type] -> Expr
+tApp f [] = f
+tApp f ts = TApp f ts
 
 -- === source AST ===
 
