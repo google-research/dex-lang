@@ -79,7 +79,10 @@ isum xs = fold (for i. let x = xs.i in lam c. iadd c x) 0
 map :: (a -> b) -> i=>a -> i=>b
 map f xs = for i. f xs.i
 
--- All of the following have implicit vector space typeclass constraints on `a`
+unzip :: i=>(a, b) -> (i=>a, i=>b)
+unzip xys = (map fst xys, map snd xys)
+
+ -- All of the following have implicit vector space typeclass constraints on `a`
 --  and `b`. TODO: make some sort of typeclass system
 
 vzero :: a
@@ -119,3 +122,7 @@ fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 
 vsumImpl :: i=>a -> a
 vsumImpl xs = fold (for i. lam c. vadd c xs.i) vzero
+
+forUnzip :: i=>(b, a -> b) -> (i=>b, a -> i=>b)
+forUnzip xfs = let (xs, fs) = unzip xfs
+               in  (xs, lam t. for i. fs.i t)

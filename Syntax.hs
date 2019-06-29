@@ -145,7 +145,8 @@ unitCon = RecCon (Tup [])
 
 preludeNames :: Env ()
 preludeNames = fold [rawName v @> ()
-                    | v <- ["fanout", "fmulDeriv", "vsumImpl"]]
+                    | v <- ["fanout", "fmulDeriv", "vsumImpl",
+                            "forUnzip"]]
 
 preludeApp :: String -> [Type] -> [Expr] -> Expr
 preludeApp s ts xs = naryApp (tApp (Var (rawName s)) ts) xs

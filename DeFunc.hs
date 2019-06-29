@@ -53,7 +53,7 @@ asTopPass m = do
 
 simplify :: Expr -> SimplifyM Expr
 simplify expr = case expr of
-  Var v -> askLEnv v
+  Var v -> askLEnv v >>= alphaConvert
   Lit _ -> return expr
   Decls decls body -> withCat (mapM_ simplifyDecl decls) $ \() -> recur body
   Lam _ _ -> applySub expr
@@ -109,6 +109,11 @@ simplify expr = case expr of
         recur body
   where
     recur = simplify
+
+alphaConvert :: Expr -> SimplifyM Expr
+alphaConvert expr = do
+  scope <- looks $ snd
+  return $ subExpr mempty (fmap (const ()) scope) expr
 
 simplifyScoped :: Expr -> SimplifyM Expr
 simplifyScoped expr = do
@@ -171,7 +176,7 @@ decompose scope expr = case expr of
     case decompose scope body of
       -- could use a FullMat constructor here
       Split body' recon -> Split (For b body')
-                                 (\e -> For b (recon (Get e (Var i))))  -- need fresh i?
+                                 (\e -> For b (recon (Get e (Var i))))  -- TODO: need fresh i?
       Defer body' -> Defer (For b body')
   Get _ _ -> pureMat expr
   RecCon r -> if all isDefer splits
@@ -227,13 +232,15 @@ simplifyScan ts [For ib (Lam xb body), x] = do
       return $ PrimOp Scan ts [For ib' (Lam xb' body'), x']
 
 simplifyVSum :: [Type] -> [Expr] -> SimplifyM Expr
-simplifyVSum [ty, n] [For b body] = do
-  refreshBinder b $ \b' -> do
-    (decls, body') <- liftM fromDeclsExpr $ simplifyScoped body
-    case decls of
-      [] -> do
-        return $ simplifyVSumBody n b' ty body'
-      _ -> error "not implemented yet"
+simplifyVSum [ty, n] [expr] = do
+  expr' <- simplify expr
+  case expr' of
+    For b body ->
+      let (decls, body') = fromDeclsExpr body
+      in case decls of
+          [] -> return $ simplifyVSumBody n b ty body'
+          _ -> return $ PrimOp VSum [ty, n] [expr']
+    _ -> return $ PrimOp VSum [ty, n] [expr']
 
 simplifyVSumBody :: Type -> Binder -> Type -> Expr -> Expr
 simplifyVSumBody n b (RecType tr) (RecCon xr) =
@@ -329,10 +336,11 @@ expandDeriv _ [Lam b body] = do
     body' <- simplifyScoped body
     scope <- looks snd
     let t = rename (rawName "tangent") scope
-        scope' = scope <> v @> L ty <> t @> L ty
+        pScope = scope <> v @> L ty
+        tScope = pScope <> t @> L ty
         env = getEnvTypes scope <> v @> Right (Var v, Var t)
     ((xOut, tOut), ((xDecls, _), (tDecls, _))) <-
-                    liftEither $ flip runCatT (asSnd scope', asSnd scope') $
+                    liftEither $ flip runCatT (asSnd pScope, asSnd tScope) $
                       flip runReaderT env $ evalDeriv body'
     return $ Lam (v:>ty) $
       declsExpr xDecls $
@@ -360,13 +368,16 @@ evalDeriv expr = case expr of
   PrimOp b tys args -> do
     (xs, ts) <- liftM unzip $ mapM evalDeriv args
     builtinDeriv b tys xs ts
-  For b@(i:>ty) body -> do
-    let ext = ([], i@>L ty)
-    (body', builder) <- extendR (i @> Left ty) $
-                          extendLocal (ext, ext) $ evalDerivScoped body
-    tab <- writePrimal (rawName "tab") (For b body')
-    return (For b $           RecGet (Get tab (Var i)) fstField,
-            For b $ builder $ RecGet (Get tab (Var i)) sndField)
+  For b@(i:>n) body -> do
+    let ext = ([], i@>L n)
+    (xf, t) <- extendR (i @> Left n) $
+                 extendLocal (asFst ext) $ derivAsLam body
+    bodyTy <- exprTypePrimal body
+    tTy    <- exprTypeTangent t
+    -- TODO: make order of type vars predictable
+    out <- writePrimal (rawName "tab") $
+             preludeApp "forUnzip" [bodyTy, n, tTy] [For b xf]
+    return (getFst out, App (getSnd out) t)
   Get e i -> do (x, t) <- evalDeriv e
                 return (Get x i, Get t i)
   RecCon r -> do
@@ -378,11 +389,19 @@ evalDeriv expr = case expr of
             recGetExpr t field)
   _ -> error $ "Surprising expression: " ++ pprint expr
 
+exprTypePrimal :: Expr -> DerivM Type
+exprTypePrimal expr = do env <- looks $ snd . fst
+                         return $ getType env expr
+
+exprTypeTangent :: Expr -> DerivM Type
+exprTypeTangent expr = do env <- looks $ snd . snd
+                          return $ getType env expr
+
 builtinDeriv :: Builtin -> [Type] -> [Expr] -> [Expr] -> DerivM (Expr, Expr)
 builtinDeriv b tys xs ts
   | isLinear b = return (PrimOp b tys xs, PrimOp b tys ts)
   | otherwise = do
-      val <- writePrimal (rawName "tmp") $ preludeApp (derivRuleName b) tys xs
+      val <- writePrimal (rawName "res") $ preludeApp (derivRuleName b) tys xs
       return (RecGet val fstField, naryApp (RecGet val sndField) ts)
 
 isLinear :: Builtin -> Bool
@@ -393,15 +412,22 @@ isLinear b = case b of
   VAdd -> True
   _ -> False
 
--- exprIn  :: a
--- exprOut :: (a, c)
--- builder :: c -> T a
-evalDerivScoped :: Expr -> DerivM (Expr, Expr -> Expr)
-evalDerivScoped expr = do
-  ((xOut, tOut), ((xDecls, _), (tDecls, _))) <- scoped (evalDeriv expr)
+-- a ---> (a, T env -> T a), T env
+derivAsLam :: Expr -> DerivM (Expr, Expr)
+derivAsLam expr = do
+  pScope <- looks $ snd . fst
   tScope <- looks $ snd . snd
-  let (saved, recon) = forceSplit $ matLocalVars tScope $ declsExpr tDecls tOut
-  return (declsExpr xDecls (RecCon (Tup [xOut, saved])), recon)
+  ((xOut, tOut), ((xDecls, _), (tDecls, _))) <- scoped (evalDeriv expr)
+  -- TODO: special-case singleton tuple
+  let vs = envNames $ freeLVars (Decls tDecls tOut) `envIntersect`
+                        (tScope `envDiff` pScope)
+      tys = map (fromL . (tScope !)) vs
+      v = rename (rawName "t") (pScope <> tScope)
+      unpackingDecls = [Let b (RecGet (Var v) i)
+                       | (i, b) <- toList $ recNameVals $ Tup $ zipWith (:>) vs tys]
+      lamExpr = Lam (v :> RecType (Tup tys))
+                    (declsExpr (unpackingDecls <> tDecls) tOut)
+  return (declsExpr xDecls (pair xOut lamExpr), RecCon (Tup (map Var vs)))
 
 -- TODO: need to have a single shared scope - don't want primal decls reusing
 -- vars already chosen by tangent decls
@@ -411,13 +437,15 @@ writePrimal name expr = do
   tScope <- looks $ snd . snd
   let v = rename name (pScope <> tScope)
   ty <- primalType expr
-  extend ( ([Let (v :> ty) expr], v @> L ty)
-         , ([]                  , v @> L ty)) -- primals stay in scope
+  extend $ ( ([Let (v :> ty) expr], v @> L ty)
+           , ([]                  , v @> L ty))
   return $ Var v
 
 writeTangent :: Name -> Expr -> DerivM Atom
 writeTangent name expr = do
-  v <- looks $ rename name . snd . snd
+  pScope <- looks $ snd . fst
+  tScope <- looks $ snd . snd
+  let v = rename name (pScope <> tScope)
   ty <- tangentType expr
   extend $ asSnd ([Let (v :> ty) expr], v @> L ty)
   return $ Var v
@@ -558,8 +586,16 @@ fromDeclsExpr expr = ([], expr)
 appFanout :: Type -> Type -> Expr -> Expr
 appFanout i a x = preludeApp "fanout" [i, a] [x]
 
+getFst :: Expr -> Expr
+getFst x = RecGet x fstField
+
+getSnd :: Expr -> Expr
+getSnd x = RecGet x sndField
+
+pair :: Expr -> Expr -> Expr
+pair x y = RecCon (Tup [x, y])
+
 derivRuleName :: Builtin -> String
 derivRuleName b = case b of
   FMul -> "fmulDeriv"
   _ -> error $ "Derivative not implemented: " ++ pprint b
-
