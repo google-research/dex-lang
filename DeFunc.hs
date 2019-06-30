@@ -172,13 +172,17 @@ decompose scope expr = case expr of
                           then Defer expr
                           else pureMat expr
   App _ _ -> pureMat expr
-  For b@(i:>_) body ->
-    case decompose scope body of
-      -- could use a FullMat constructor here
+  For b@(i:>ty) body ->
+    case decompose (scope <> i @> L ty) body of
+      -- could eta-convert here if `i` is not free in `recon (..)`
       Split body' recon -> Split (For b body')
-                                 (\e -> For b (recon (Get e (Var i))))  -- TODO: need fresh i?
+                                 (\e -> For b (recon (Get e (Var i))))
       Defer body' -> Defer (For b body')
-  Get _ _ -> pureMat expr
+  Get e i -> let e' = decompose scope e
+                 i' = decompose scope i
+             in case (decompose scope e, decompose scope i) of
+               (Defer e', Defer i') -> Defer (Get e' i')
+               _ -> pureMat expr
   RecCon r -> if all isDefer splits
                 then Defer expr
                 else Split expr' build
@@ -193,8 +197,6 @@ decompose scope expr = case expr of
   TLam _ _ -> matLocalVars scope expr
   _ -> error $ "Can't decompose " ++ pprint expr
   where
-    recur = simplify
-
     pureMat :: Expr -> SplitExpr
     pureMat expr = Split expr id
 
