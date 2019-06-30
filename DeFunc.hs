@@ -14,6 +14,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
+import Data.Maybe (fromJust)
 
 type Scope = FullEnv Type ()
 type TopEnv = (Subst, Scope)
@@ -183,16 +184,22 @@ decompose scope expr = case expr of
              in case (decompose scope e, decompose scope i) of
                (Defer e', Defer i') -> Defer (Get e' i')
                _ -> pureMat expr
-  RecCon r -> if all isDefer splits
+  RecCon r ->
+    if all isDefer splits
                 then Defer expr
-                else Split expr' build
+                else Split expr'' (RecCon . build . build')
     where
       splits = fmap (decompose scope) r
-      splits' = fmap forceSplit splits
-      expr' = RecCon $ fmap fst splits'
-      build e = RecCon $ fmap (\(field, (_, f)) -> f (RecGet e field))
-                              (recNameVals splits')
-  RecGet _ _ -> pureMat expr
+      expr' = flip fmap splits $ \s ->
+                case s of Defer _ -> Nothing
+                          Split e _ -> Just e
+      build r = flip fmap (recNameVals splits) $ \(field, s) ->
+                  case s of Defer e' -> e'
+                            Split _ b -> b (fromJust (recGet r field))
+      (expr'', build') = filterRec expr'
+  RecGet e field -> case decompose scope e of
+                      Defer e' -> Defer (RecGet e' field)
+                      Split e' recon -> Split e' (\x -> RecGet (recon x) field)
   TabCon _ _ _ -> pureMat expr
   TLam _ _ -> matLocalVars scope expr
   _ -> error $ "Can't decompose " ++ pprint expr
@@ -200,9 +207,28 @@ decompose scope expr = case expr of
     pureMat :: Expr -> SplitExpr
     pureMat expr = Split expr id
 
-forceSplit :: SplitExpr -> (Expr, Expr -> Expr)
-forceSplit (Split e f) = (e, f)
-forceSplit (Defer   e) = (RecCon (Tup []), const e)
+-- TODO: clean this up, perhaps by defining composition on splits
+filterRec :: Record (Maybe Expr) -> (Expr, Expr -> Record (Maybe Expr))
+filterRec r = let (xs, recon) = recAsList r
+                  (xs', idxs) = filterWithIdxs 0 xs
+              in case xs' of
+                    [x] -> (x,
+                            \e -> Tup $ [case i of Just 0 -> Just e
+                                                   Nothing -> Nothing
+                                        | i <- idxs])
+                    _ -> (RecCon (Tup xs'),
+                          \e -> Tup $ [case i of
+                                         Just i' -> Just (recGetExpr e
+                                                          (tupField (length idxs) i'))
+                                         Nothing -> Nothing
+                                       | i <- idxs])
+
+filterWithIdxs :: Int -> [Maybe a] -> ([a], [Maybe Int])
+filterWithIdxs _ [] = ([], [])
+filterWithIdxs i (Nothing:xs) = let (ys, idxs) = filterWithIdxs i xs
+                                in (ys, Nothing:idxs)
+filterWithIdxs i (Just y:xs) = let (ys, idxs) = filterWithIdxs (i + 1) xs
+                               in (y:ys, Just i:idxs)
 
 isDefer :: SplitExpr -> Bool
 isDefer (Split _ _) = False

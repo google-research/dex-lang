@@ -4,7 +4,7 @@ module Record (Record (..), RecTree (..),
                zipWithRecord, recZipWith, recTreeZipEq,
                recGet, otherFields, recNameVals, RecField,
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed,
-               recUpdate, fstField, sndField
+               recUpdate, fstField, sndField, recAsList, tupField
               ) where
 
 
@@ -92,11 +92,17 @@ recUpdate (RecField _ (RecPos i))  v (Tup xs) = Tup $ prefix ++ (v : suffix)
 otherFields :: RecField -> Record ()
 otherFields (RecField r _) = r
 
+tupField :: Int -> Int -> RecField
+tupField n i = RecField (Tup (take n (repeat ()))) (RecPos i)
+
 fstField :: RecField
 fstField = RecField (Tup [(), ()]) (RecPos 0)
 
 sndField :: RecField
 sndField = RecField (Tup [(), ()]) (RecPos 1)
+
+recAsList :: Record a -> ([a], [b] -> Record b)
+recAsList (Tup xs) = (xs, Tup)
 
 class RecTreeZip tree where
   recTreeZip :: RecTree a -> tree -> RecTree (a, tree)
