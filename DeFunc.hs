@@ -87,6 +87,7 @@ simplify expr = case expr of
     refreshBinder b $ \b' -> do
       body' <- simplifyScoped body
       return $ For b' body'
+  Get (PrimOp VZero [TabType n a] []) _ -> return $ PrimOp VZero [a] []
   Get e ie -> do
     e' <- recur e
     ie' <- recur ie
