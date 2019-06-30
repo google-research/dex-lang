@@ -55,6 +55,7 @@ explicitCommand = do
            "time"    -> return TimeIt
            "plot"    -> return Plot
            "plotmat" -> return PlotMat
+           "flops"   -> return Flops
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
   return $ UEvalCmd (Command cmd e)

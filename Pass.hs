@@ -10,6 +10,8 @@ import Control.Monad.Reader
 import Control.Monad.Writer hiding ((<>))
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc
+
 
 import Syntax
 import Fresh

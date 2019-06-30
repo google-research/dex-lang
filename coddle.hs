@@ -18,6 +18,7 @@ import DeFunc
 import Expand
 import Imp
 import JIT
+import Flops
 import WebOutput
 
 type ResultChan = Result -> IO ()
@@ -32,6 +33,7 @@ fullPass = deShadowPass
        >+> expandPass >+> checkTyped
        >+> deFuncPass >+> checkTyped
        >+> impPass    >+> checkImp
+       >+> flopsPass
        >+> jitPass
 
 parseFile :: MonadIO m => String -> m (String, [(String, UTopDecl)])
