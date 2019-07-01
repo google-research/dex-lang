@@ -135,10 +135,14 @@ restructure xs structure = evalState (traverse procLeaf structure) xs
                         return x
 
 highlightRegion :: (Int, Int) -> String -> String
-highlightRegion pos s =
+highlightRegion pos@(low, high) s
+  | low > high || high >= length s = error $ "Bad region: \n"
+                                              ++ show pos ++ "\n" ++ s
+  | otherwise =
     -- TODO: flag to control line numbers
     -- (disabling for now because it makes quine tests tricky)
     -- "Line " ++ show (1 + lineNum) ++ "\n"
+
     allLines !! lineNum ++ "\n"
     ++ take start (repeat ' ') ++ take (stop - start) (repeat '^') ++ "\n"
   where

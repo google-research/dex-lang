@@ -96,14 +96,14 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
     NewProg source <- receive
     modify $ setVarMap (const mempty)
     keys <- case parseProg source of
-              Right decls -> mapM processDecl decls
+              Right decls -> mapM (processDecl source) decls
               Left e -> do
                 key <- freshKey
                 resultChan key `send` (resultSource source <> resultErr e)
                 return [key]
     resultSetChan `send` updateOrder keys
   where
-    processDecl (source, decl) = do
+    processDecl fullSource (source, decl) = do
       state <- get
       let parents = nub $ catMaybes $ lookupKeys (freeVars decl) (varMap state)
       key <- case M.lookup (source, parents) (declCache state) of
@@ -114,7 +114,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
           resultChan key `send` resultSource source
           (p, wChan) <- spawn Trap $
-                          worker source env (pass decl) (resultChan key) parentChans
+                          worker fullSource env (pass decl) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
       modify $ setVarMap $ (<> M.fromList [(v, key) | v <- lhsVars decl])

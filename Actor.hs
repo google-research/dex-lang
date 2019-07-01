@@ -69,6 +69,7 @@ spawnIO canTrap links (Actor m) = do
                     runReaderT m (ActorConfig self chan linksRef)
                      `catch` (\e ->
                        do linked <- readIORef linksRef
+                          putStrLn $ "Error:\n" ++ show (e::SomeException)
                           mapM_ (cleanup (show (e::SomeException)) self) linked)
   return (Proc canTrap id (asErrPChan chan), asPChan chan)
   where

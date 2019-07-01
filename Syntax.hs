@@ -460,6 +460,7 @@ freeVarsUExpr expr = case expr of
   UGet e ie      -> liftM2 (<>) (recur e) (recur ie)
   URecCon r      -> liftM fold (traverse recur r)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
+  USrcAnnot e _ -> recur e
   where
     recur = freeVarsUExpr
     recurWith p expr = local (foldMap ubind p <>) (recur expr)
