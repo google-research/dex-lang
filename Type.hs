@@ -164,6 +164,7 @@ builtinType builtin = case builtin of
   Hash     -> BuiltinType [] [int, int] int
   Randint  -> BuiltinType [] [int, int] int
   Rand     -> BuiltinType [] [int] real
+  BoolToInt -> BuiltinType [] [bool] int
   IntToReal -> BuiltinType [] [int] real
   Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> pair b (a --> b))
   Transpose -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)

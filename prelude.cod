@@ -61,6 +61,9 @@ range n = %range(n)
 real :: Int -> Real
 real x = %inttoreal(x)
 
+b2i :: Bool -> Int
+b2i x = %booltoint(x)
+
 scan :: a -> i=>(a->(a, b)) -> (a, i=>b)
 scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 

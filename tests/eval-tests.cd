@@ -172,3 +172,8 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
 :p 1.0 < 2.0
 
 > True
+
+:p b2i (1.0 < 2.0)
+
+> 1
+

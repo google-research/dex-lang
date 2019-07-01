@@ -268,10 +268,10 @@ writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) _) = do
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
-  IntLit  x -> L.ConstantOperand $ C.Int 64 (fromIntegral x)
-  RealLit x -> L.ConstantOperand $ C.Float (L.Double x)
-  BoolLit True  -> L.ConstantOperand $ C.Int 64 1
-  BoolLit False -> L.ConstantOperand $ C.Int 64 0
+  IntLit  x -> litInt x
+  RealLit x -> litReal x
+  BoolLit True  -> L.ConstantOperand $ C.Int 1 1
+  BoolLit False -> L.ConstantOperand $ C.Int 1 0
 
 litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
@@ -340,9 +340,10 @@ addInstr :: Named Instruction -> CompileM ()
 addInstr instr = modify $ setCurInstrs (instr:)
 
 scalarTy :: BaseType -> L.Type
-scalarTy ty = case ty of IntType  -> longTy
-                         RealType -> realTy
-                         BoolType -> longTy -- TODO: use 8 bits (or 1 bit!)
+scalarTy ty = case ty of
+  IntType  -> longTy
+  RealType -> realTy
+  BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
 
 compileBinop :: BaseType -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]
@@ -382,6 +383,7 @@ compileBuiltin b = case b of
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
+  BoolToInt -> compileUnop IntType  (\x -> L.ZExt x longTy [])
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   Scan     -> error "Scan should have been lowered away by now."
 
@@ -401,6 +403,7 @@ cosFun     = ExternFunSpec "cos"           realTy [realTy] ["x"]
 tanFun     = ExternFunSpec "tan"           realTy [realTy] ["x"]
 
 charPtrTy = L.ptr (L.IntegerType 8)
+boolTy = L.IntegerType 1
 longTy = L.IntegerType 64
 realTy = L.FloatingPointType L.DoubleFP
 
