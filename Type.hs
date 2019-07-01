@@ -142,11 +142,15 @@ builtinType builtin = case builtin of
   IAdd     -> ibinOpType
   ISub     -> ibinOpType
   IMul     -> ibinOpType
+  ILT      -> BuiltinType [] [int, int] bool
+  IGT      -> BuiltinType [] [int, int] bool
   Pow      -> ibinOpType
   FAdd     -> fbinOpType
   FSub     -> fbinOpType
   FMul     -> fbinOpType
   FDiv     -> fbinOpType
+  FLT      -> BuiltinType [] [real, real] bool
+  FGT      -> BuiltinType [] [real, real] bool
   Exp      -> realUnOpType
   Log      -> realUnOpType
   Sqrt     -> realUnOpType
@@ -178,4 +182,5 @@ builtinType builtin = case builtin of
     k = BoundTVar 2
     int  = BaseType IntType
     real = BaseType RealType
+    bool = BaseType BoolType
     pair x y = RecType (Tup [x, y])

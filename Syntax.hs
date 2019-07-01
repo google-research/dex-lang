@@ -107,6 +107,7 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
+             | FLT | FGT | ILT | IGT
              | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
              | Hash | Rand | Randint | IntToReal
              | Range | Scan | Copy | Deriv | Transpose
@@ -117,6 +118,7 @@ builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
   ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
+  ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
   ("scan", Scan), ("range", Range), ("inttoreal", IntToReal),
   ("hash", Hash), ("rand", Rand), ("randint", Randint), ("deriv", Deriv),

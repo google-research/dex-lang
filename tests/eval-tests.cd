@@ -153,6 +153,22 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
 
 > [2.0, 4.0, 7.0]
 
+:p [False, False, True]
+
+> [False, False, True]
+
 :p (True, False)
 
 > (True, False)
+
+:p 1.0 > 2.0
+
+> False
+
+:p 1.0 > (0.0 - 2.0)
+
+> True
+
+:p 1.0 < 2.0
+
+> True

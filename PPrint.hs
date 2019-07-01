@@ -121,10 +121,11 @@ instance Pretty Statement where
 instance Pretty Value where
   pretty (Value (BaseType IntType ) (RecLeaf (IntVec  [v]))) = p v
   pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = p v
-  pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | v == 0 = "False"
-                                                              | v == 1 = "True"
+  pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | mod v 2 == 0 = "False"
+                                                              | mod v 2 == 1 = "True"
   pretty (Value (RecType r) (RecTree r')) = p (recZipWith Value r r')
   pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
+  pretty v = error $ "Can't print: " ++ show v
 
 splitTab :: IdxSet -> Type -> RecTree Vec -> [Value]
 splitTab (IdxSetLit n) ty v = map (Value ty) $ transposeRecTree (fmap splitVec v)

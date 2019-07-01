@@ -227,6 +227,7 @@ ops = [ [getRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul]  -- binOpRule "/" Div]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
+      , [binOpRule "<" FLT, binOpRule ">" FGT]
       ]
 
 varName :: Parser Name

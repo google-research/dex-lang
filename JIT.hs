@@ -10,6 +10,7 @@ import qualified LLVM.AST.Type as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.IntegerPredicate as L
+import qualified LLVM.AST.FloatingPointPredicate as L
 
 import Control.Monad
 import Control.Monad.State
@@ -37,9 +38,9 @@ import Cat
 import LLVMExec
 
 -- TODO: figure out whether we actually need type everywhere here
-data Ptr w = Ptr w L.Type  deriving (Show)
+data Ptr w = Ptr w BaseType  deriving (Show)
 
-data JitVal w = ScalarVal w L.Type
+data JitVal w = ScalarVal w BaseType
               | ArrayVal (Ptr w) [w]  deriving (Show)
 
 data PCell w = Cell (Ptr w) [w]
@@ -102,9 +103,8 @@ evalProg bs prog = do
 makeDestCell :: PersistEnv -> IBinder -> IO (BinderP PersistCell)
 makeDestCell env (v :> IType ty shape) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
-  return $ v :> Cell (Ptr ptr ty') shape'
+  return $ v :> Cell (Ptr ptr ty) shape'
   where
-    ty' = scalarTy ty
     getSize size = case size of IVar v -> scalarVal (env ! v)
                                 ILit (IntLit n) -> fromIntegral n
     shape' = map getSize shape
@@ -121,7 +121,7 @@ toLLVM bs prog = do
   return (map binderAnn destCells, prog)
 
 asCompileVal :: PersistVal -> CompileVal
-asCompileVal (ScalarVal word ty) = ScalarVal (constOperand (baseTy ty) word) ty
+asCompileVal (ScalarVal word ty) = ScalarVal (constOperand ty word) ty
 asCompileVal (ArrayVal ptr shape) = ArrayVal (ptrLiteral ptr) shape'
   where shape' = map (constOperand IntType) shape
 
@@ -132,7 +132,7 @@ asCompileCell (Cell ptr shape) = Cell (ptrLiteral ptr) shape'
 ptrLiteral :: Ptr Word64 -> Ptr Operand
 ptrLiteral (Ptr ptr ty) = Ptr ptr' ty
   where ptr' = L.ConstantOperand $
-                   C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr ty)
+                  C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr (scalarTy ty))
 
 readPersistCell :: PersistCell -> IO PersistVal
 readPersistCell (Cell (Ptr ptr ty) []) = do [word] <- readPtrs 1 (wordAsPtr ptr)
@@ -141,11 +141,12 @@ readPersistCell (Cell p shape) = return $ ArrayVal p shape
 
 asVec :: PersistVal -> IO Vec
 asVec v = case v of
-  ScalarVal x ty ->  return $ cast (baseTy ty) [x]
+  ScalarVal x ty ->  return $ cast ty [x]
   ArrayVal (Ptr ptr ty) shape -> do let size = fromIntegral $ foldr (*) 1 shape
                                     words <- readPtrs size (wordAsPtr ptr)
-                                    return $ cast (baseTy ty) words
-  where cast IntType xs = IntVec $ map fromIntegral xs
+                                    return $ cast ty words
+  where cast IntType  xs = IntVec $ map fromIntegral xs
+        cast BoolType xs = IntVec $ map fromIntegral xs
         cast RealType xs = RealVec $ map interpret_ieee_64 xs
 
 -- From the data-binary-ieee754 package; is there a more standard way
@@ -189,7 +190,7 @@ compileStatement statement = case statement of
 
 compileExpr :: IExpr -> CompileM CompileVal
 compileExpr expr = case expr of
-  ILit v -> return $ ScalarVal (litVal v) (scalarTy (litType v))
+  ILit v -> return $ ScalarVal (litVal v) (litType v)
   IVar v -> do x <- lookupImpVar v
                case x of
                  Left val -> return val
@@ -218,7 +219,7 @@ indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
 indexPtr (Ptr ptr ty) shape i = do
   stride <- foldM mul (litInt 1) shape
   n <- mul stride i
-  ptr' <- evalInstr "ptr" (L.ptr ty) $ L.GetElementPtr False ptr [n] []
+  ptr' <- evalInstr "ptr" (L.ptr (scalarTy ty)) $ L.GetElementPtr False ptr [n] []
   return (Ptr ptr' ty)
 
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
@@ -239,7 +240,7 @@ compileLoop iVar (ScalarVal n _) body = do
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  extendR (iVar @> (Left $ ScalarVal iVal longTy)) $
+  extendR (iVar @> (Left $ ScalarVal iVal IntType)) $
     compileProg body
   iValInc <- add iVal (litInt 1)
   store i iValInc
@@ -282,7 +283,7 @@ store :: Ptr Operand -> Operand -> CompileM ()
 store (Ptr ptr _) x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 load :: Ptr Operand -> CompileM Operand
-load (Ptr ptr ty) = evalInstr "" ty $ L.Load False ptr Nothing 0 []
+load (Ptr ptr ty) = evalInstr "" (scalarTy ty) $ L.Load False ptr Nothing 0 []
 
 lessThan :: Long -> Long -> CompileM Long
 lessThan x y = evalInstr "lt" longTy $ L.ICmp L.SLT x y []
@@ -296,14 +297,14 @@ evalInstr s ty instr = do v <- freshName s
                           return $ L.LocalReference ty v
 
 addPtr :: Ptr Operand -> Long -> CompileM (Ptr Operand)
-addPtr (Ptr ptr ty) i = do ptr' <- evalInstr "ptr" (L.ptr ty) instr
+addPtr (Ptr ptr ty) i = do ptr' <- evalInstr "ptr" (L.ptr (scalarTy ty)) instr
                            return $ Ptr ptr' ty
   where instr = L.GetElementPtr False ptr [i] []
 
 alloca :: BaseType -> String -> CompileM Cell
 alloca ty s = do v <- freshName s
                  modify $ setScalarDecls ((v L.:= instr):)
-                 return $ Cell (Ptr (L.LocalReference (L.ptr ty') v) ty') []
+                 return $ Cell (Ptr (L.LocalReference (L.ptr ty') v) ty) []
   where ty' = scalarTy ty
         instr = L.Alloca ty' Nothing 0 []
 
@@ -313,7 +314,7 @@ malloc ty shape s = do
     n <- mul (litInt 8) size
     voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [n])
     ptr <- evalInstr s (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
-    return $ Cell (Ptr ptr ty') shape'
+    return $ Cell (Ptr ptr ty) shape'
   where shape' = map scalarVal shape
         ty' = scalarTy ty
 
@@ -343,38 +344,35 @@ scalarTy ty = case ty of IntType  -> longTy
                          RealType -> realTy
                          BoolType -> longTy -- TODO: use 8 bits (or 1 bit!)
 
-baseTy :: L.Type -> BaseType
-baseTy ty = case ty of
-  L.IntegerType 64 -> IntType
-  L.FloatingPointType L.DoubleFP -> RealType
-
-compileBinop :: L.Type -> (Operand -> Operand -> L.Instruction)
+compileBinop :: BaseType -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileBinop ty makeInstr [ScalarVal x _, ScalarVal y _] =
-  liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x y)
+  liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x y)
 
-compileUnop :: L.Type -> (Operand -> L.Instruction)
+compileUnop :: BaseType -> (Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileUnop ty makeInstr [ScalarVal x _] =
-  liftM (flip ScalarVal ty) $ evalInstr "" ty (makeInstr x)
+  liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x)
 
 externalMono :: ExternFunSpec -> BaseType -> [CompileVal] -> CompileM CompileVal
-externalMono f@(ExternFunSpec name retTy _ _) baseTy args = do
+externalMono f@(ExternFunSpec name retTy _ _) ty args = do
   ans <- evalInstr name' retTy $ externCall f (map scalarVal args)
-  return $ ScalarVal ans (scalarTy baseTy)
+  return $ ScalarVal ans ty
   where name' = unpack (fromShort name)
 
 compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b = case b of
-  IAdd     -> compileBinop longTy (\x y -> L.Add False False x y [])
-  ISub     -> compileBinop longTy (\x y -> L.Sub False False x y [])
-  IMul     -> compileBinop longTy (\x y -> L.Mul False False x y [])
-  FAdd     -> compileBinop realTy (\x y -> L.FAdd noFastMathFlags x y [])
-  FSub     -> compileBinop realTy (\x y -> L.FSub noFastMathFlags x y [])
-  FMul     -> compileBinop realTy (\x y -> L.FMul noFastMathFlags x y [])
-  FDiv     -> compileBinop realTy (\x y -> L.FDiv noFastMathFlags x y [])
+  IAdd     -> compileBinop IntType (\x y -> L.Add False False x y [])
+  ISub     -> compileBinop IntType (\x y -> L.Sub False False x y [])
+  IMul     -> compileBinop IntType (\x y -> L.Mul False False x y [])
+  FAdd     -> compileBinop RealType (\x y -> L.FAdd noFastMathFlags x y [])
+  FSub     -> compileBinop RealType (\x y -> L.FSub noFastMathFlags x y [])
+  FMul     -> compileBinop RealType (\x y -> L.FMul noFastMathFlags x y [])
+  FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
+  FLT      -> compileBinop BoolType (\x y -> L.FCmp L.OLT x y [])
+  FGT      -> compileBinop BoolType (\x y -> L.FCmp L.OGT x y [])
   Exp      -> externalMono expFun     RealType
   Log      -> externalMono logFun     RealType
   Sqrt     -> externalMono sqrtFun    RealType
@@ -384,7 +382,7 @@ compileBuiltin b = case b of
   Hash     -> externalMono hashFun    IntType
   Rand     -> externalMono randFun    RealType
   Randint  -> externalMono randIntFun IntType
-  IntToReal -> compileUnop realTy (\x -> L.SIToFP x realTy [])
+  IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   Scan     -> error "Scan should have been lowered away by now."
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
