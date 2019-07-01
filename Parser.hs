@@ -31,9 +31,10 @@ parseit s p = case parse (p <* eof) "" s of
 
 topDeclContext :: Parser (String, UTopDecl)
 topDeclContext = do
-  ans <- try $ withSource (emptyLines >> topDecl)
+  ans <- withSource (emptyLines >> topDecl <* emptyLines)
   blankLines
   outputLines
+  blankLines
   return ans
 
 topDecl :: Parser UTopDecl
