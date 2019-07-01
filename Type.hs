@@ -153,7 +153,7 @@ builtinType builtin = case builtin of
   Cos      -> realUnOpType
   Tan      -> realUnOpType
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
-                          [k ==> (a --> pair a b), a] (pair a (k==>b))
+                          [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> BuiltinType [idxSetKind] [i] int
   Range    -> BuiltinType [] [int] (Exists unitTy)
   Hash     -> BuiltinType [] [int, int] int

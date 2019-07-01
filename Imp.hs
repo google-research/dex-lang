@@ -191,7 +191,7 @@ typeToSize (IdxSetLit n) = return (ILit (IntLit n))
 typeToSize ty = throw CompilerErr $ "Not a valid size" ++ pprint ty
 
 impScan :: RecTree Dest -> [Type] -> [Expr] -> ImpM ImpProg
-impScan dest [_, _, n] [For (i :> _) (Lam b body), x] = do
+impScan dest [_, _, n] [x, For (i :> _) (Lam b body)] = do
   n' <- typeToSize n
   materialize x $ \accum -> do
     loop' <- loop n' $ \i' ->

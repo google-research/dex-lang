@@ -59,7 +59,7 @@ fun = lam y. sum (map real arr) + y
 
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold (for i. iadd arr.i) 0
+:p fold 0 for i. iadd arr.i
 
 > 21
 
@@ -146,8 +146,8 @@ s = 1.0
 > [12, 11, 10]
 
 cumsumplus :: n=>Real -> n=>Real
-cumsumplus xs = snd (scan (for i. lam c. let ans = c + xs.i
-                                         in (ans, 1.0 + ans)) 0.0)
+cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
+                                            in (ans, 1.0 + ans))
 
 :p cumsumplus [1.0, 2.0, 3.0]
 

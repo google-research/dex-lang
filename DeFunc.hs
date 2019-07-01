@@ -253,12 +253,12 @@ subTy ty = do env <- ask
 
 -- TODO: check/fail higher order case
 simplifyScan :: [Type] -> [Expr] -> SimplifyM Expr
-simplifyScan ts [For ib (Lam xb body), x] = do
+simplifyScan ts [x, For ib (Lam xb body)] = do
   x' <- simplify x
   refreshBinder ib $ \ib' ->
     refreshBinder xb $ \xb' -> do
       body' <- simplifyScoped body
-      return $ PrimOp Scan ts [For ib' (Lam xb' body'), x']
+      return $ PrimOp Scan ts [x', For ib' (Lam xb' body')]
 
 simplifyVSum :: [Type] -> [Expr] -> SimplifyM Expr
 simplifyVSum [ty, n] [expr] = do
