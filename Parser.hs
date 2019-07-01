@@ -226,7 +226,7 @@ getRule = Postfix $ do
 
 ops = [ [getRule, appRule]
       , [binOpRule "^" Pow]
-      , [binOpRule "*" FMul]  -- binOpRule "/" Div]
+      , [binOpRule "*" FMul, binOpRule "/" FDiv]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
       ]

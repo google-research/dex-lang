@@ -1,0 +1,39 @@
+
+type Complex = (Real, Real)
+
+cadd :: Complex -> Complex -> Complex
+cadd (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
+
+cmul :: Complex -> Complex -> Complex
+cmul (x1, y1) (x2, y2) = (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
+
+cabs :: Complex -> Real
+cabs (x1, y1) = x1 * x1 + y1 * y1
+
+czero :: Complex
+czero = (0.0, 0.0)
+
+ngrid = 30
+tol = 4.0
+
+_, Niters = unpack range 1000
+_, Ngrid = unpack range ngrid
+
+update :: Complex -> Complex -> Complex
+update c z = cadd c (cmul z z)
+
+inBounds :: Complex -> Bool
+inBounds z = cabs z < tol
+
+escapeTime :: Complex -> Int
+escapeTime c = fst (fold (0, czero) for i::Niters. lam (n, z). let z2 = update c z
+                                                               in (iadd n (b2i (inBounds z2)), z2))
+xs = (linspace ngrid (-2.5) 1.0) :: Ngrid=>Real
+ys = (linspace ngrid (-1.0) 1.0) :: Ngrid=>Real
+
+grid :: N=>N=>Complex
+grid.i.j = (xs.i, ys.j)
+
+:p grid
+
+:p map2 escapeTime grid
