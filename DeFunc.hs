@@ -87,7 +87,7 @@ simplify expr = case expr of
     refreshBinder b $ \b' -> do
       body' <- simplifyScoped body
       return $ For b' body'
-  Get (PrimOp VZero [TabType n a] []) _ -> return $ PrimOp VZero [a] []
+  Get (PrimOp VZero [TabType _ a] []) _ -> return $ PrimOp VZero [a] []
   Get e ie -> do
     e' <- recur e
     ie' <- recur ie
@@ -344,7 +344,10 @@ simplifyBuiltin FMul [] [x, y] =
 simplifyBuiltin VAdd ty [x, y] = case (ty, x, y) of
   (_, PrimOp VZero _ _, _) -> y
   (_, _, PrimOp VZero _ _) -> x
+  (_, PrimOp VSingle [ty, n] [i, x], PrimOp VSingle _ [i', y]) | i == i' ->
+    PrimOp VSingle [ty, n] [i, PrimOp VAdd [ty] [x, y]]
   _ -> PrimOp VAdd ty [x, y]
+
 simplifyBuiltin b ts xs = PrimOp b ts xs
 
 data MaybeZero a = Zero | NonZero a
