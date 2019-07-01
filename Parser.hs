@@ -200,6 +200,8 @@ literal :: Parser LitVal
 literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
                 <|> fmap RealLit real
                 <|> fmap StrLit stringLiteral
+                <|> (symbol "True"  >> return (BoolLit True))
+                <|> (symbol "False" >> return (BoolLit False))
 
 identifier :: Parser String
 identifier = lexeme . try $ do

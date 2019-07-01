@@ -133,6 +133,7 @@ litType v = case v of
   IntLit  _ -> IntType
   RealLit _ -> RealType
   StrLit  _ -> StrType
+  BoolLit _ -> BoolType
 
 data BuiltinType = BuiltinType [Kind] [Type] Type
 

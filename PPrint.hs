@@ -70,6 +70,7 @@ instance Pretty LitVal where
   pretty (IntLit x ) = p x
   pretty (RealLit x) = p x
   pretty (StrLit x ) = p x
+  pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty b => Pretty (ExprP b) where
   pretty expr = case expr of
@@ -120,6 +121,8 @@ instance Pretty Statement where
 instance Pretty Value where
   pretty (Value (BaseType IntType ) (RecLeaf (IntVec  [v]))) = p v
   pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = p v
+  pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | v == 0 = "False"
+                                                              | v == 1 = "True"
   pretty (Value (RecType r) (RecTree r')) = p (recZipWith Value r r')
   pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
 

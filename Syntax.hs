@@ -99,6 +99,7 @@ type SrcPos = (Int, Int)
 
 data LitVal = IntLit  Int
             | RealLit Double
+            | BoolLit Bool
             | StrLit  String
               deriving (Eq, Ord, Show)
 

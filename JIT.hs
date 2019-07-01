@@ -269,6 +269,8 @@ litVal :: LitVal -> Operand
 litVal lit = case lit of
   IntLit  x -> L.ConstantOperand $ C.Int 64 (fromIntegral x)
   RealLit x -> L.ConstantOperand $ C.Float (L.Double x)
+  BoolLit True  -> L.ConstantOperand $ C.Int 64 1
+  BoolLit False -> L.ConstantOperand $ C.Int 64 0
 
 litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
@@ -339,6 +341,7 @@ addInstr instr = modify $ setCurInstrs (instr:)
 scalarTy :: BaseType -> L.Type
 scalarTy ty = case ty of IntType  -> longTy
                          RealType -> realTy
+                         BoolType -> longTy -- TODO: use 8 bits (or 1 bit!)
 
 baseTy :: L.Type -> BaseType
 baseTy ty = case ty of
