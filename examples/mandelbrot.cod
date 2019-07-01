@@ -26,8 +26,11 @@ inBounds :: Complex -> Bool
 inBounds z = cabs z < tol
 
 escapeTime :: Complex -> Int
-escapeTime c = fst (fold (0, czero) for i::Niters. lam (n, z). let z2 = update c z
-                                                               in (iadd n (b2i (inBounds z2)), z2))
+escapeTime c = fst $ fold (0, czero) ..
+  for i::Niters. lam (n, z). ..
+    let z2 = update c z
+    in (iadd n (b2i (inBounds z2)), z2)
+
 xs = (linspace ngrid (-2.5) 1.0) :: Ngrid=>Real
 ys = (linspace ngrid (-1.0) 1.0) :: Ngrid=>Real
 

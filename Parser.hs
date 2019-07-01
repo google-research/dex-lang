@@ -215,7 +215,7 @@ identifier = lexeme . try $ do
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return UApp)
   where
-    opNames = ["+", "*", "/", "-", "^"]
+    opNames = ["+", "*", "/", "-", "^", "$"]
 
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
   where binOpApp e1 e2 = UPrimOp builtin [e1, e2]
@@ -229,7 +229,8 @@ ops = [ [getRule, appRule]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
-      ]
+      , [InfixR (symbol "$" >> return UApp)]
+       ]
 
 varName :: Parser Name
 varName = liftM rawName identifier

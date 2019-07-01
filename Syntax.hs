@@ -459,6 +459,7 @@ freeVarsUExpr expr = case expr of
   UFor v body    -> recurWith [v] body
   UGet e ie      -> liftM2 (<>) (recur e) (recur ie)
   URecCon r      -> liftM fold (traverse recur r)
+  UTabCon xs     -> liftM fold (traverse recur xs)
   UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
   USrcAnnot e _ -> recur e
   where

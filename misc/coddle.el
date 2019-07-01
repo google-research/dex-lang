@@ -1,9 +1,9 @@
 
 (setq coddle-highlights
-  '(("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\bunpack\\b\\|\\bin\\b"
+  '(("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bin\\b"
      . font-lock-keyword-face)
     ("\\bE\\b\\|\\bA\\b"              . font-lock-builtin-face)
-    ("->\\|=>\\|\\.\\|,\\|=\\|;\\|::" . font-lock-variable-name-face)
+    ("->\\|=>\\|\\.\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"  . font-lock-type-face)
     (":t\\|:passes\\|:p\\|:time"      . font-lock-preprocessor-face)))
 

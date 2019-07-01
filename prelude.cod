@@ -68,7 +68,7 @@ scan :: a -> i=>(a->(a, b)) -> (a, i=>b)
 scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 
 fold :: a -> i=>(a->a) -> a
-fold x0 fs = fst (scan x0 for i. lam x. (fs.i x, ()))
+fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
 rand :: Int -> Real
 rand x = %rand(x)
@@ -84,6 +84,9 @@ map f xs = for i. f xs.i
 
 map2 :: (a -> b) -> i=>j=>a -> i=>j=>b
 map2 f xs = for i j. f xs.i.j
+
+zip :: i=>a -> i=>b -> i=>(a,b)
+zip xs ys = for i. (xs.i, ys.i)
 
 unzip :: i=>(a, b) -> (i=>a, i=>b)
 unzip xys = (map fst xys, map snd xys)

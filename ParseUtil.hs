@@ -26,7 +26,8 @@ stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
 
 space :: Parser ()
-space = void $ takeWhile1P (Just "white space") (`elem` " \t")
+space = void $ do takeWhile1P (Just "white space") (`elem` " \t")
+                  optional (symbol "..\n")
 
 int :: Parser Int
 int = L.signed (return ()) L.decimal
