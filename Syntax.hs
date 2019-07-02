@@ -7,7 +7,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                DeclP (..), Decl, TopDecl, Command (..), Pat, SrcPos,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..),
+               Except, Err (..), ErrType (..), OutputElt (..), PlotSpec (..),
                throw, addContext, addErrSource, addErrSourcePos,
                FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
                instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
@@ -242,7 +242,13 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 
 data EvalStatus = Complete | Failed Err
 type Source = String
-type Output = String
+type Output = [OutputElt]
+
+data OutputElt = TextOut String
+               | PlotOut PlotSpec Value
+
+data PlotSpec = Heatmap | Scatter
+
 data Result = Result (SetVal Source) (SetVal EvalStatus) Output
 
 resultSource s = Result (Set s) mempty mempty

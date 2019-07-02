@@ -44,9 +44,9 @@ typePass tdecl = case tdecl of
   EvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
     case cmd of
-      GetType -> do writeOut (pprint ty)
+      GetType -> do writeOutText (pprint ty)
                     return $ EvalCmd NoOp
-      Passes  -> do writeOut ("\nSystem F\n" ++ pprint expr')
+      Passes  -> do writeOutText ("\nSystem F\n" ++ pprint expr')
                     return $ EvalCmd (Command cmd expr')
       _ -> return $ EvalCmd (Command cmd expr')
 

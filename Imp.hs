@@ -40,7 +40,7 @@ impPass decl = case decl of
     let ty = getType (impEnvToTypeEnv env) expr
     let binders = impBinders (rawName "%imptmp" :> ty)
     prog <- impExprTop binders expr
-    case cmd of Passes -> writeOut $ "\n\nImp\n" ++ pprint prog
+    case cmd of Passes -> writeOutText $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd (reconstruct ty) (toList binders) (Command cmd prog)
   where

@@ -74,10 +74,10 @@ jitPass decl = case decl of
   ImpEvalCmd cont bs (Command cmd prog) -> case cmd of
     LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
                llvm <- liftIO $ showLLVM m
-               writeOut llvm
+               writeOutText llvm
     Asm -> do (_, CompiledProg m) <- toLLVM bs prog
               asm <- liftIO $ showAsm m
-              writeOut asm
+              writeOutText asm
     EvalExpr -> do vals <- evalProg bs prog
                    vecs <- liftIO $ mapM asVec vals
                    env <- getEnv
@@ -85,11 +85,11 @@ jitPass decl = case decl of
                                 case v of
                                   ScalarVal w _ -> Just (fromIntegral w)
                                   _ -> Nothing
-                   writeOut $ pprint $ cont tenv vecs
+                   writeOutText $ pprint $ cont tenv vecs
     TimeIt -> do t1 <- liftIO getCurrentTime
                  evalProg bs prog
                  t2 <- liftIO getCurrentTime
-                 writeOut $ show (t2 `diffUTCTime` t1)
+                 writeOutText $ show (t2 `diffUTCTime` t1)
     _ -> return ()
 
 evalProg :: [IBinder] -> ImpProg -> TopPass PersistEnv [PersistVal]

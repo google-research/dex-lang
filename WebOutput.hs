@@ -200,3 +200,7 @@ instance ToJSON a => ToJSON (SetVal a) where
 
 instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
   toJSON (MonMap m) = toJSON (M.toList m)
+
+instance ToJSON OutputElt where
+  toJSON (TextOut s) = toJSON s
+

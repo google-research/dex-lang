@@ -155,7 +155,11 @@ instance Pretty a => Pretty (SetVal a) where
   pretty (Set a) = p a
 
 instance Pretty Result where
-  pretty (Result x y z) = p x <> p y <> p z
+  pretty (Result x y z) = p x <> p y <> vsep (map p z)
+
+instance Pretty OutputElt where
+  pretty (TextOut s) = p s
+  pretty (PlotOut _ _) = "<plot>"
 
 instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x

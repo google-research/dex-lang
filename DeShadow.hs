@@ -30,7 +30,7 @@ deShadowPass decl = case decl of
   UEvalCmd NoOp -> return (EvalCmd NoOp)
   UEvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
-    case cmd of Passes -> writeOut $ "\n\nDeshadowed\n" ++ show expr'
+    case cmd of Passes -> writeOutText $ "\n\nDeshadowed\n" ++ show expr'
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
   where

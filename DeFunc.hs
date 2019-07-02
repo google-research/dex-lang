@@ -40,7 +40,7 @@ deFuncPass topDecl = case topDecl of
   EvalCmd (Command cmd expr) -> do
     (atom, decls) <- asTopPass $ toCat $ simplify expr
     let expr = declsExpr decls atom
-    case cmd of Passes -> writeOut $ "\n\nDefunctionalized\n" ++ pprint expr
+    case cmd of Passes -> writeOutText $ "\n\nDefunctionalized\n" ++ pprint expr
                 _ -> return ()
     return $ EvalCmd (Command cmd expr)
 

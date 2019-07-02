@@ -3,7 +3,7 @@
 
 module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
              ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), throwIf, getSource) where
+             (>+>), throwIf, getSource, writeOutText) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -34,6 +34,9 @@ putEnv env = TopPass $ tell env
 writeOut :: Monoid env => Output -> TopPass env ()
 writeOut output = do chanWrite <- getOutChan
                      liftIO $ chanWrite output
+
+writeOutText :: Monoid env => String -> TopPass env ()
+writeOutText s = writeOut [TextOut s]
 
 getOutChan :: Monoid env => TopPass env OutChan
 getOutChan = TopPass $ asks $ fst . snd
