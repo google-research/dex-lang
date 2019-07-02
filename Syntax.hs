@@ -374,7 +374,7 @@ instance HasVars UExpr where
     UGet e ie  -> freeVars e <> freeVars ie
     URecCon r  -> foldMap freeVars r
     UTabCon xs -> foldMap freeVars xs
-    UAnnot e _    -> freeVars e  -- Annotation is irrelevant for free term variables
+    UAnnot e ty    -> freeVars e <> freeVars ty
     USrcAnnot e _ -> freeVars e
     where
       withPat p e = foldMap freeVars p <>
