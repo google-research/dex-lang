@@ -9,15 +9,14 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutputElt (..), PlotSpec (..),
                throw, addContext, addErrSource, addErrSourcePos,
-               FullEnv (..), (-->), (==>), freeLVars, LorT (..), fromL, fromT,
-               instantiateTVs, abstractTVs, subFreeTVs, HasTypeVars,
-               freeTyVars, maybeSub, Size, unitTy, unitCon,
+               FullEnv, Subst, (-->), (==>), LorT (..), fromL, fromT,
+               subExpr, subType, lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars,
-               lhsVars, Output, Nullable (..), SetVal (..), EvalStatus (..),
+               Output, Nullable (..), SetVal (..), EvalStatus (..),
                MonMap (..), resultSource, resultText, resultErr, resultComplete,
-               Index, wrapDecls, subExpr, Subst, strToBuiltin, idxSetKind,
-               preludeNames, preludeApp, naryApp, tApp
+               Index, wrapDecls, strToBuiltin, idxSetKind,
+               preludeNames, preludeApp, naryApp, tApp,
                ) where
 
 import Fresh
@@ -26,18 +25,13 @@ import Env
 import Cat
 import Util
 
-import Data.List (elemIndex, nub)
 import qualified Data.Map.Strict as M
 
 import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
-import Data.Functor.Identity (runIdentity)
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Writer
 import Control.Monad.Reader
-import Control.Monad.State (State, execState, modify)
-import Control.Applicative (liftA, liftA2, liftA3)
 
 -- === core IR ===
 
@@ -315,170 +309,16 @@ fromL (L x) = x
 fromT :: LorT a b -> b
 fromT (T x) = x
 
+lbind :: BinderP a -> FullEnv a b
+lbind (v:>x) = v @> L x
+
+tbind :: BinderP b -> FullEnv a b
+tbind (v:>x) = v @> T x
+
 type FullEnv v t = Env (LorT v t)
-
-instantiateTVs :: [Type] -> Type -> Type
-instantiateTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar = case tvar of
-                        Left v -> TypeVar v
-                        Right i | i >= depth -> vs !! i
-                                | otherwise -> BoundTVar i
-
-abstractTVs :: [Var] -> Type -> Type
-abstractTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar = case tvar of
-                           Left v -> case elemIndex v vs of
-                                       Nothing -> TypeVar v
-                                       Just i  -> BoundTVar (depth + i)
-                           Right i -> BoundTVar i
-
-subAtDepth :: Int -> (Int -> Either Var Int -> Type) -> Type -> Type
-subAtDepth d f ty = case ty of
-    BaseType _    -> ty
-    TypeVar v     -> f d (Left v)
-    ArrType a b   -> ArrType (recur a) (recur b)
-    TabType a b   -> TabType (recur a) (recur b)
-    RecType r     -> RecType (fmap recur r)
-    Exists body   -> Exists (recurWith 1 body)
-    Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
-    IdxSetLit _   -> ty
-    BoundTVar n   -> f d (Right n)
-  where recur        = subAtDepth d f
-        recurWith d' = subAtDepth (d + d') f
-
-freeTyVars :: HasTypeVars a => a -> [Var]
-freeTyVars x = execState (subFreeTVs collectVars x) []
-  where collectVars :: Var -> State [Var] Type
-        collectVars v = modify (v :) >> return (TypeVar v)
-
-maybeSub :: (Var -> Maybe Type) -> Type -> Type
-maybeSub f ty = runIdentity $ subFreeTVs (return . sub) ty
-  where sub v = case f v of Just t -> t
-                            Nothing -> TypeVar v
-
-subFreeTVs :: (HasTypeVars a,  Applicative f) => (Var -> f Type) -> a -> f a
-subFreeTVs = subFreeTVsBVs []
-
-class HasTypeVars a where
-  subFreeTVsBVs :: Applicative f => [Var] -> (Var -> f Type) -> a -> f a
-
-instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
-  subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)
-                                          (subFreeTVsBVs bvs f y)
-
-instance HasTypeVars Type where
-  subFreeTVsBVs bvs f ty = case ty of
-      BaseType _    -> pure ty
-      TypeVar v | v `elem` bvs -> pure ty
-                | otherwise    -> f v
-      ArrType a b   -> liftA2 ArrType (recur a) (recur b)
-      TabType a b   -> liftA2 TabType (recur a) (recur b)
-      RecType r     -> liftA RecType (traverse recur r)
-      Exists body   -> liftA Exists (recur body)
-      Forall kinds body -> liftA (Forall kinds) (recur body)
-      IdxSetLit _   -> pure ty
-      BoundTVar _   -> pure ty
-    where recur = subFreeTVsBVs bvs f
-
-instance HasTypeVars Expr where
-  subFreeTVsBVs bvs f expr = case expr of
-      Lit c -> pure $ Lit c
-      Var v -> pure $ Var v
-      PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
-                                                  (traverse recur xs)
-      Decls [] final -> recur final
-      Decls (decl:decls) final -> case decl of
-        Let b bound ->
-          liftA3 (\b' bound' body' -> wrapDecls [Let b' bound'] body')
-                 (recurB b) (recur bound) (recur body)
-        Unpack b tv bound ->
-          liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
-                 (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
-        where body = Decls decls final
-      Lam b body       -> liftA2 Lam (recurB b) (recur body)
-      App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-      For b body       -> liftA2 For (recurB b) (recur body)
-      Get e ie         -> liftA2 Get (recur e) (pure ie)
-      RecCon r         -> liftA  RecCon (traverse recur r)
-      RecGet e field   -> liftA (flip RecGet field) (recur e)
-      TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
-      TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
-      TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
-    where recur   = subFreeTVsBVs bvs f
-          recurTy = subFreeTVsBVs bvs f
-          recurB b = traverse recurTy b
-          recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithB  vs b = traverse (recurWithTy vs) b
-
-instance HasTypeVars Binder where
-  subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
-
-freeLVars :: Expr -> Env ()
-freeLVars expr = snd $ runWriter (freeLVarsW expr)
-
-freeLVarsW :: Expr -> Writer (Env ()) ()
-freeLVarsW expr = case expr of
-  Var v     -> tell (v @> ())
-  Lit     _ -> return ()
-  PrimOp _ _ xs -> mapM_ recur xs
-  Decls [] body -> recur body
-  Decls (decl:decls) final -> case decl of
-    Let    b   bound -> recur bound >> unfree b body
-    Unpack b _ bound -> recur bound >> unfree b body
-    where body = Decls decls final
-  Lam b body       -> unfree b body
-  App fexpr arg    -> recur fexpr >> recur arg
-  For b body       -> unfree b body
-  Get e ie         -> recur e >> recur ie
-  RecCon r         -> mapM_ recur r
-  RecGet e _       -> recur e
-  TLam _ expr      -> recur expr
-  TApp expr _      -> recur expr
-  where recur = freeLVarsW
-        unfree (v:>_) expr = censor (envDelete v) (recur expr)
--- TODO: include type variables, since they're now lexcially scoped
-
-freeVars :: UTopDecl -> [Var]
-freeVars decl = case decl of
-  UTopDecl (ULet    _   expr) -> freeVarsUExpr' expr
-  UTopDecl (UUnpack _ _ expr) -> freeVarsUExpr' expr
-  UEvalCmd (Command _ expr) -> freeVarsUExpr' expr
-  UEvalCmd NoOp -> []
-
-freeVarsUExpr' :: UExpr -> [Var]
-freeVarsUExpr' expr = nub $ runReader (freeVarsUExpr expr) mempty
-
-freeVarsUExpr :: UExpr -> Reader (Env (Maybe Type)) [Var]
-freeVarsUExpr expr = case expr of
-  ULit _         -> return []
-  UVar v         -> do isbound <- asks $ isin v
-                       return $ if isbound then [] else [v]
-  UPrimOp _ args -> liftM fold (traverse recur args)
-  UDecls [] body -> recur body
-  UDecls (decl:decls) final -> case decl of
-    ULet    p   e -> liftM2 (<>) (recur e) (recurWith p body)
-    UUnpack b _ e -> liftM2 (<>) (recur e) (recurWith [b] body)
-    where body = UDecls decls final
-  ULam p body    -> recurWith p body
-  UApp fexpr arg -> liftM2 (<>) (recur fexpr) (recur arg)
-  UFor v body    -> recurWith [v] body
-  UGet e ie      -> liftM2 (<>) (recur e) (recur ie)
-  URecCon r      -> liftM fold (traverse recur r)
-  UTabCon xs     -> liftM fold (traverse recur xs)
-  UAnnot e _    -> recur e  -- Annotation is irrelevant for free term variables
-  USrcAnnot e _ -> recur e
-  where
-    recur = freeVarsUExpr
-    recurWith p expr = local (foldMap ubind p <>) (recur expr)
-    ubind b = case b of UBind b' -> bind b'
-                        IgnoreBind -> mempty
-
-lhsVars :: UTopDecl -> [Var]
-lhsVars decl = case decl of
-  UTopDecl (ULet (RecLeaf (UBind (v:>_))) _ ) -> [v]
-  UTopDecl (UUnpack       (UBind (v:>_)) _ _) -> [v]
-  _ -> []
+type Vars = FullEnv () ()
+type Subst = FullEnv Expr Type
+type Scope = Env ()
 
 wrapDecls :: [DeclP b] -> ExprP b -> ExprP b
 wrapDecls [] expr = expr
@@ -486,18 +326,124 @@ wrapDecls decls expr = case expr of
   Decls decls' body -> Decls (decls ++ decls') body
   _ -> Decls decls expr
 
-type Subst = FullEnv Expr Type
-type Scope = Env ()
+-- === substitutions ===
+
+class HasVars a where
+  freeVars :: a -> Vars
+
+instance HasVars b => HasVars (ExprP b) where
+  freeVars expr = case expr of
+    Var v -> v @> L ()
+    Lit _ -> mempty
+    PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
+    Decls decls body -> let (bvs, fvs) = declVars decls
+                        in fvs <> (freeVars body `envDiff` bvs)
+    Lam b body    -> withBinder b body
+    App fexpr arg -> freeVars fexpr <> freeVars arg
+    For b body    -> withBinder b body
+    Get e ie      -> freeVars e <> freeVars ie
+    RecCon r      -> foldMap freeVars r
+    RecGet e _    -> freeVars e
+    TLam vs expr  -> freeVars expr `envDiff` foldMap bind vs
+    TApp expr ts  -> freeVars expr <> foldMap freeVars ts
+    where
+      withBinder (v:>ann) e = freeVars ann <> (freeVars e `envDiff` (v@>()))
+
+instance HasVars Type where
+  freeVars ty = case ty of
+    BaseType _ -> mempty
+    TypeVar v  -> v @> T ()
+    ArrType a b -> freeVars a <> freeVars b
+    TabType a b -> freeVars a <> freeVars b
+    RecType r   -> foldMap freeVars r
+    Exists body -> freeVars body
+    Forall _ body -> freeVars body
+    IdxSetLit _ -> mempty
+    BoundTVar _ -> mempty
+
+instance HasVars UExpr where
+  freeVars expr = case expr of
+    ULit _ -> mempty
+    UVar v -> v @> L ()
+    UPrimOp _ xs -> foldMap freeVars xs
+    UDecls decls body -> let (bvs, fvs) = declVars decls
+                         in fvs <> (freeVars body `envDiff` bvs)
+    ULam p body    -> withPat p body
+    UApp fexpr arg -> freeVars fexpr <> freeVars arg
+    UFor b body    -> withPat [b] body
+    UGet e ie  -> freeVars e <> freeVars ie
+    URecCon r  -> foldMap freeVars r
+    UTabCon xs -> foldMap freeVars xs
+    UAnnot e _    -> freeVars e  -- Annotation is irrelevant for free term variables
+    USrcAnnot e _ -> freeVars e
+    where
+      withPat p e = foldMap freeVars p <>
+                      (freeVars e `envDiff` foldMap lhsVars p)
+
+instance HasVars UBinder where
+  freeVars (UBind (_ :> Just ty)) = freeVars ty
+  freeVars _= mempty
+
+instance HasVars b => HasVars (BinderP b) where
+  freeVars (_ :> b) = freeVars b
+
+instance HasVars b => HasVars (DeclP b) where
+   freeVars (Let    b   expr) = freeVars b <> freeVars expr
+   freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
+
+instance HasVars UDecl where
+  freeVars (ULet p expr) = foldMap freeVars p <> freeVars expr
+  freeVars (UTAlias _ ty) = freeVars ty
+  freeVars (UUnpack b _ expr) = freeVars b <> freeVars expr
+
+instance HasVars UTopDecl where
+  freeVars (UTopDecl decl) = freeVars decl
+  freeVars (UEvalCmd NoOp) = mempty
+  freeVars (UEvalCmd (Command _ expr)) = freeVars expr
+
+instance (HasVars a, HasVars b) => HasVars (LorT a b) where
+  freeVars (L x) = freeVars x
+  freeVars (T x) = freeVars x
+
+class BindsVars a where
+  lhsVars :: a -> Vars
+
+instance BindsVars UBinder where
+  lhsVars (UBind (v:>_)) = v @> L ()
+  lhsVars IgnoreBind = mempty
+
+instance BindsVars (DeclP b) where
+  lhsVars (Let    (v:>_)    _) = v @> L ()
+  lhsVars (Unpack (v:>_) tv _) = v @> L () <> tv @> T ()
+
+instance BindsVars UDecl where
+  lhsVars (ULet p _) = foldMap lhsVars p
+  lhsVars (UTAlias  v _) = v @> T ()
+  lhsVars (UUnpack b tv _) = lhsVars b <> tv @> T ()
+
+instance BindsVars UTopDecl where
+  lhsVars (UTopDecl decl) = lhsVars decl
+  lhsVars _ = mempty
+
+declVars :: (HasVars a, BindsVars a) => [a] -> (Vars, Vars)
+declVars [] = (mempty, mempty)
+declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
+  where
+    (bvs, fvs) = (lhsVars decl, freeVars decl)
+    (bvsRest, fvsRest) = declVars rest
 
 subExpr :: Subst -> Scope -> Expr -> Expr
 subExpr sub scope expr = runReader (subExprR expr) (sub, scope)
 
+subType :: Subst -> Type -> Type
+subType sub ty = runReader (subTyR ty) (sub, mempty)
+
 subExprR :: Expr -> Reader (Subst, Scope) Expr
 subExprR expr = case expr of
-  Var v     -> lookup v
-  Lit     _ -> return expr
-  PrimOp b ts xs -> liftM2 (PrimOp b) (traverse subTy ts)
-                                              (traverse recur xs)
+  Var v -> lookup v
+  Lit _ -> return expr
+  PrimOp b ts xs -> liftM2 (PrimOp b) (traverse subTyR ts)
+                                      (traverse recur xs)
   Decls [] body -> recur body
   Decls (decl:decls) final -> case decl of
     Let b bound -> do
@@ -522,10 +468,10 @@ subExprR expr = case expr of
   Get e ie -> liftM2 Get (recur e) (recur ie)
   RecCon r -> liftM RecCon $ traverse recur r
   RecGet e field -> liftM (flip RecGet field) (recur e)
-  TLam ts expr -> refreshTBinders ts $ \ts' ->
-                    liftM (TLam ts') (recur expr)
+  TLam ts body -> refreshTBinders ts $ \ts' ->
+                    liftM (TLam ts') (recur body)
 
-  TApp expr ts -> liftM2 TApp (recur expr) (traverse subTy ts)
+  TApp body ts -> liftM2 TApp (recur body) (traverse subTyR ts)
   where
     recur = subExprR
 
@@ -536,14 +482,24 @@ subExprR expr = case expr of
         Nothing -> return $ Var v
         Just e -> local (\(_, scope) -> (mempty, scope)) (subExprR e)
 
-subTy :: Type -> Reader (Subst, Scope) Type
-subTy ty = do env <- asks fst
-              return $ maybeSub (fmap fromT . envLookup env) ty
+subTyR :: Type -> Reader (Subst, Scope) Type
+subTyR ty = case ty of
+  BaseType _ -> return ty
+  TypeVar v  -> do x <- asks $ fmap fromT . flip envLookup v . fst
+                   return $ case x of Nothing  -> ty
+                                      Just ty' -> ty'
+  ArrType a b -> liftM2 ArrType (subTyR a) (subTyR b)
+  TabType a b -> liftM2 TabType (subTyR a) (subTyR b)
+  RecType r   -> liftM RecType $ traverse subTyR r
+  Exists body -> liftM Exists $ subTyR body
+  Forall ks body -> liftM (Forall ks) (subTyR body)
+  IdxSetLit _ -> return ty
+  BoundTVar _ -> return ty
 
 refreshBinder :: Binder -> (Binder -> Reader (Subst, Scope) a)
                                    -> Reader (Subst, Scope) a
 refreshBinder (v:>ty) cont = do
-  ty' <- subTy ty
+  ty' <- subTyR ty
   v' <- asks $ rename v . snd
   local (<> (v @> L (Var v'), v'@>())) $
     cont (v':>ty')
@@ -560,9 +516,3 @@ refreshTBinders bs cont = do
       v' <- looks $ rename v . snd
       extend $ (v @> T (TypeVar v'), v'@>())
       return (v':>k)
-
-lbind :: BinderP a -> FullEnv a b
-lbind (v:>x) = v @> L x
-
-tbind :: BinderP b -> FullEnv a b
-tbind (v:>x) = v @> T x

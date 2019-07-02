@@ -39,7 +39,7 @@ deFuncPass topDecl = case topDecl of
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (atom, decls) <- asTopPass $ toCat $ simplify expr
-    let expr = declsExpr decls atom
+    let expr = wrapDecls decls atom
     case cmd of Passes -> writeOutText $ "\n\nDefunctionalized\n" ++ pprint expr
                 _ -> return ()
     return $ EvalCmd (Command cmd expr)
@@ -120,7 +120,7 @@ alphaConvert expr = do
 simplifyScoped :: Expr -> SimplifyM Expr
 simplifyScoped expr = do
   (body, (decls, _)) <- scoped $ simplify expr
-  return (declsExpr decls body)
+  return (wrapDecls decls body)
 
 inlineDecls :: Expr -> SimplifyM Expr
 inlineDecls (Decls decls final) = extend (asFst decls) >> return final
@@ -154,7 +154,7 @@ matLocalVars destScope expr = case localVars of
   [v] -> Split (Var v) (buildVal v)
   vs  -> Split (RecCon (fmap Var (Tup vs))) (buildValTup vs)
   where
-    localVars = envNames $ envDiff (freeLVars expr) destScope
+    localVars = envNames $ envDiff (freeVars expr) destScope
     buildVal    v  new = subExpr (v @> L new) (fmap (const ()) destScope) expr
     buildValTup vs new = subExpr sub          (fmap (const ()) destScope) expr
       where sub = fold $ fmap (\(k,v) -> v @> L (RecGet new k)) (recNameVals (Tup vs))
@@ -249,7 +249,7 @@ exprType expr = do env <- looks $ snd
 
 subTy :: Type -> SimplifyM Type
 subTy ty = do env <- ask
-              return $ maybeSub (fmap fromT . envLookup env) ty
+              return $ subType env ty
 
 -- TODO: check/fail higher order case
 simplifyScan :: [Type] -> [Expr] -> SimplifyM Expr
@@ -318,17 +318,13 @@ applySub expr = do
 
 checkSubScope :: Subst -> Env () -> SimplifyM ()
 checkSubScope sub scope =
-  if all (`isin` scope) freeVars
+  if all (`isin` scope) fvs
     then return ()
     else throw CompilerErr $ "Free sub vars not in scope:\n" ++
-                    pprint freeVars ++ "\n" ++ pprint scope
-  where freeVars = envNames $ foldMap getFreeVars (toList sub)
-        getFreeVars :: LorT Expr Type -> Env ()
-        getFreeVars x = case x of
-          L expr -> freeLVars expr <> asEnv (freeTyVars expr)
-          T ty -> asEnv (freeTyVars ty)
-        asEnv :: [Name] -> Env ()
-        asEnv vs = foldMap (@>()) vs
+                    pprint fvs ++ "\n" ++ pprint scope
+  where
+    fvs :: [Name]
+    fvs = envNames $ foldMap freeVars sub
 
 simplifyBuiltin :: Builtin -> [Type] -> [Expr] -> Expr
 simplifyBuiltin FAdd [] [x, y] =
@@ -375,8 +371,8 @@ expandDeriv _ [Lam b body] = do
                     liftEither $ flip runCatT (asSnd pScope, asSnd tScope) $
                       flip runReaderT env $ evalDeriv body'
     return $ Lam (v:>ty) $
-      declsExpr xDecls $
-        RecCon $ Tup [xOut, Lam (t:>ty) (declsExpr tDecls tOut)]
+      wrapDecls xDecls $
+        RecCon $ Tup [xOut, Lam (t:>ty) (wrapDecls tDecls tOut)]
   where
     getEnvTypes scope = envMapMaybe asType scope
     asType x = case x of L ty -> Just (Left ty)
@@ -408,7 +404,7 @@ evalDeriv expr = case expr of
     tTy    <- exprTypeTangent t
     -- TODO: make order of type vars predictable
     out <- writePrimal (rawName "tab") $
-             preludeApp "forUnzip" [bodyTy, n, tTy] [For b xf]
+             preludeApp "forUnzip" [bodyTy, tTy, n] [For b xf]
     return (getFst out, App (getSnd out) t)
   Get e i -> do (x, t) <- evalDeriv e
                 return (Get x i, Get t i)
@@ -451,15 +447,15 @@ derivAsLam expr = do
   tScope <- looks $ snd . snd
   ((xOut, tOut), ((xDecls, _), (tDecls, _))) <- scoped (evalDeriv expr)
   -- TODO: special-case singleton tuple
-  let vs = envNames $ freeLVars (Decls tDecls tOut) `envIntersect`
+  let vs = envNames $ freeVars (Decls tDecls tOut) `envIntersect`
                         (tScope `envDiff` pScope)
       tys = map (fromL . (tScope !)) vs
       v = rename (rawName "t") (pScope <> tScope)
       unpackingDecls = [Let b (RecGet (Var v) i)
                        | (i, b) <- toList $ recNameVals $ Tup $ zipWith (:>) vs tys]
       lamExpr = Lam (v :> RecType (Tup tys))
-                    (declsExpr (unpackingDecls <> tDecls) tOut)
-  return (declsExpr xDecls (pair xOut lamExpr), RecCon (Tup (map Var vs)))
+                    (wrapDecls (unpackingDecls <> tDecls) tOut)
+  return (wrapDecls xDecls (pair xOut lamExpr), RecCon (Tup (map Var vs)))
 
 -- TODO: need to have a single shared scope - don't want primal decls reusing
 -- vars already chosen by tangent decls
@@ -510,7 +506,7 @@ expandTranspose [_, ctTy] [Lam b body] = do
                                      runWriterT $ flip runReaderT scope' $
                                        evalTranspose (Var ct) body'
     return $ Lam (ct:>ctTy)
-                 (declsExpr ctDecls (vaddMany xTy (snd $ ctEnvPop ctEnv v)))
+                 (wrapDecls ctDecls (vaddMany xTy (snd $ ctEnvPop ctEnv v)))
 
 ctEnvPop :: CTEnv -> Name -> (CTEnv, [Atom])
 ctEnvPop (CTEnv (Env m)) v = (CTEnv (Env m'), x)
@@ -529,7 +525,7 @@ evalTranspose ct expr = case expr of
     let (ctEnv', outCTs) = ctEnvPop ctEnv v
     tell ctEnv'
     evalTranspose (vaddMany ty outCTs) bound
-    where body = declsExpr decls final
+    where body = wrapDecls decls final
   For (i:>iTy) body -> do
     env <- ask
     (((), CTEnv ctEnv), (decls, _)) <- scoped $ lift $ lift $ runWriterT $
@@ -539,7 +535,7 @@ evalTranspose ct expr = case expr of
         final = [vaddMany (fromL (env ! v)) (ctEnv ! v) | v <- vs]
         bodyTy = RecType $ Tup $ map (\v -> fromL (env ! v)) vs
     summed <- writeCoTangent $
-      vsum bodyTy iTy $ For (i:>iTy) (declsExpr decls (RecCon (Tup final)))
+      vsum bodyTy iTy $ For (i:>iTy) (wrapDecls decls (RecCon (Tup final)))
     flip mapM_ (recNameVals (Tup vs)) $ \(field, v) ->
       tell $ CTEnv $ v @> [RecGet summed field]
   Get e i -> do
@@ -606,10 +602,6 @@ recGetExpr :: Expr -> RecField -> Expr
 recGetExpr (RecCon r) field = recGet r field
 recGetExpr (PrimOp VZero [RecType r] []) field = PrimOp VZero [recGet r field] []
 recGetExpr e          field = RecGet e field
-
-declsExpr :: [Decl] -> Expr -> Expr
-declsExpr [] body = body
-declsExpr decls body = Decls decls body
 
 fromDeclsExpr :: Expr -> ([Decl], Expr)
 fromDeclsExpr (Decls decls body) = (decls, body)

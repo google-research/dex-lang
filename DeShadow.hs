@@ -111,7 +111,7 @@ freshBinder (v :> ty) = do
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
   subst <- asks $ snd
-  return $ maybeSub (envLookup subst) ty
+  return $ subType (fmap T subst) ty
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do

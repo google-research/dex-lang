@@ -9,7 +9,8 @@ import Control.Monad.State.Strict
 import Data.Binary.Builder (fromByteString, Builder)
 import Data.Monoid ((<>))
 import Data.List (nub)
-import Data.Maybe (catMaybes, fromJust)
+import Data.Foldable (toList)
+import Data.Maybe (fromJust)
 import qualified Data.Map.Strict as M
 
 import Network.Wai
@@ -76,7 +77,7 @@ data DriverMsg = NewProg String
 data DriverState env = DriverState
   { freshState :: Int
   , declCache :: M.Map (String, [Key]) Key
-  , varMap    :: M.Map Name Key
+  , varMap    :: Env Key
   , workers   :: M.Map Key (Proc, ReqChan env)
   }
 
@@ -105,7 +106,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
   where
     processDecl fullSource (source, decl) = do
       state <- get
-      let parents = nub $ catMaybes $ lookupKeys (freeVars decl) (varMap state)
+      let parents = nub $ toList $ freeVars decl `envIntersect` varMap state
       key <- case M.lookup (source, parents) (declCache state) of
         Just key -> return key
         Nothing -> do
@@ -117,7 +118,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
                           worker fullSource env (pass decl) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
-      modify $ setVarMap $ (<> M.fromList [(v, key) | v <- lhsVars decl])
+      modify $ setVarMap $ (<> fmap (const key) (lhsVars decl))
       return key
 
     resultChan key = subChan (singletonResult key) resultSetChan
@@ -203,4 +204,3 @@ instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
 
 instance ToJSON OutputElt where
   toJSON (TextOut s) = toJSON s
-

@@ -5,7 +5,6 @@ import Control.Monad.Combinators.Expr
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Data.Map.Strict as M
-import Data.List (nub)
 import Data.Char (isLower)
 
 import Env
@@ -13,6 +12,7 @@ import Record
 import ParseUtil
 import Syntax
 import Fresh
+import Type
 import Inference
 import PPrint
 
@@ -260,7 +260,7 @@ parenPat = do
 sigmaType :: Parser Type
 sigmaType = do
   ty <- typeExpr
-  let vs = nub $ filter nameIsLower (freeTyVars ty)
+  let vs = filter nameIsLower $ envNames (freeVars ty)
   case vs of
     [] -> return ty
     _ -> case inferKinds vs ty of

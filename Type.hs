@@ -1,9 +1,14 @@
-module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
-             builtinType, BuiltinType (..)) where
+{-# LANGUAGE FlexibleInstances #-}
 
+module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
+             builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
+             HasTypeVars, freeTyVars, subFreeTVs) where
 import Control.Monad
 import Control.Monad.Except (liftEither)
 import Control.Monad.Reader
+import Control.Monad.State (State, execState, modify)
+import Control.Applicative (liftA, liftA2, liftA3)
+import Data.List (elemIndex)
 
 import Syntax
 import Env
@@ -185,3 +190,100 @@ builtinType builtin = case builtin of
     real = BaseType RealType
     bool = BaseType BoolType
     pair x y = RecType (Tup [x, y])
+
+
+-- The rest is type var manipulation (previously in Syntax.hs). Plan to remove
+-- if we go to a scope-oriented zonkless system
+
+instantiateTVs :: [Type] -> Type -> Type
+instantiateTVs vs x = subAtDepth 0 sub x
+  where sub depth tvar = case tvar of
+                        Left v -> TypeVar v
+                        Right i | i >= depth -> vs !! i
+                                | otherwise -> BoundTVar i
+
+abstractTVs :: [Var] -> Type -> Type
+abstractTVs vs x = subAtDepth 0 sub x
+  where sub depth tvar = case tvar of
+                           Left v -> case elemIndex v vs of
+                                       Nothing -> TypeVar v
+                                       Just i  -> BoundTVar (depth + i)
+                           Right i -> BoundTVar i
+
+subAtDepth :: Int -> (Int -> Either Var Int -> Type) -> Type -> Type
+subAtDepth d f ty = case ty of
+    BaseType _    -> ty
+    TypeVar v     -> f d (Left v)
+    ArrType a b   -> ArrType (recur a) (recur b)
+    TabType a b   -> TabType (recur a) (recur b)
+    RecType r     -> RecType (fmap recur r)
+    Exists body   -> Exists (recurWith 1 body)
+    Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
+    IdxSetLit _   -> ty
+    BoundTVar n   -> f d (Right n)
+  where recur        = subAtDepth d f
+        recurWith d' = subAtDepth (d + d') f
+
+freeTyVars :: HasTypeVars a => a -> [Var]
+freeTyVars x = execState (subFreeTVs collectVars x) []
+  where collectVars :: Var -> State [Var] Type
+        collectVars v = modify (v :) >> return (TypeVar v)
+
+subFreeTVs :: (HasTypeVars a,  Applicative f) => (Var -> f Type) -> a -> f a
+subFreeTVs = subFreeTVsBVs []
+
+class HasTypeVars a where
+  subFreeTVsBVs :: Applicative f => [Var] -> (Var -> f Type) -> a -> f a
+
+instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
+  subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)
+                                          (subFreeTVsBVs bvs f y)
+
+instance HasTypeVars Type where
+  subFreeTVsBVs bvs f ty = case ty of
+      BaseType _    -> pure ty
+      TypeVar v | v `elem` bvs -> pure ty
+                | otherwise    -> f v
+      ArrType a b   -> liftA2 ArrType (recur a) (recur b)
+      TabType a b   -> liftA2 TabType (recur a) (recur b)
+      RecType r     -> liftA RecType (traverse recur r)
+      Exists body   -> liftA Exists (recur body)
+      Forall kinds body -> liftA (Forall kinds) (recur body)
+      IdxSetLit _   -> pure ty
+      BoundTVar _   -> pure ty
+    where recur = subFreeTVsBVs bvs f
+
+instance HasTypeVars Expr where
+  subFreeTVsBVs bvs f expr = case expr of
+      Lit c -> pure $ Lit c
+      Var v -> pure $ Var v
+      PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
+                                                  (traverse recur xs)
+      Decls [] final -> recur final
+      Decls (decl:decls) final -> case decl of
+        Let b bound ->
+          liftA3 (\b' bound' body' -> wrapDecls [Let b' bound'] body')
+                 (recurB b) (recur bound) (recur body)
+        Unpack b tv bound ->
+          liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
+                 (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
+        where body = Decls decls final
+      Lam b body       -> liftA2 Lam (recurB b) (recur body)
+      App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
+      For b body       -> liftA2 For (recurB b) (recur body)
+      Get e ie         -> liftA2 Get (recur e) (pure ie)
+      RecCon r         -> liftA  RecCon (traverse recur r)
+      RecGet e field   -> liftA (flip RecGet field) (recur e)
+      TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
+      TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
+      TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
+    where recur   = subFreeTVsBVs bvs f
+          recurTy = subFreeTVsBVs bvs f
+          recurB b = traverse recurTy b
+          recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
+          recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
+          recurWithB  vs b = traverse (recurWithTy vs) b
+
+instance HasTypeVars Binder where
+  subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
+
