@@ -40,7 +40,7 @@ topDeclContext = do
 topDecl :: Parser UTopDecl
 topDecl =   explicitCommand
         <|> liftM UTopDecl decl
-        <|> liftM (UEvalCmd . Command EvalExpr) expr
+        <|> liftM (UEvalCmd . Command (EvalExpr Printed)) expr
         <?> "top-level declaration"
 
 explicitCommand :: Parser UTopDecl
@@ -48,14 +48,14 @@ explicitCommand = do
   symbol ":"
   cmdName <- identifier
   cmd <- case cmdName of
-           "p"       -> return EvalExpr
+           "p"       -> return $ EvalExpr Printed
            "t"       -> return GetType
            "passes"  -> return Passes
            "llvm"    -> return LLVM
            "asm"     -> return Asm
            "time"    -> return TimeIt
-           "plot"    -> return Plot
-           "plotmat" -> return PlotMat
+           "plot"    -> return $ EvalExpr Scatter
+           "plotmat" -> return $ EvalExpr Heatmap
            "flops"   -> return Flops
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr

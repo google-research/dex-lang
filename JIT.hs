@@ -78,14 +78,14 @@ jitPass decl = case decl of
     Asm -> do (_, CompiledProg m) <- toLLVM bs prog
               asm <- liftIO $ showAsm m
               writeOutText asm
-    EvalExpr -> do vals <- evalProg bs prog
-                   vecs <- liftIO $ mapM asVec vals
-                   env <- getEnv
-                   let tenv = flip envMapMaybe env $ \v ->
-                                case v of
+    EvalExpr fmt -> do vals <- evalProg bs prog
+                       vecs <- liftIO $ mapM asVec vals
+                       env <- getEnv
+                       let tenv = flip envMapMaybe env $ \v ->
+                                    case v of
                                   ScalarVal w _ -> Just (fromIntegral w)
                                   _ -> Nothing
-                   writeOutText $ pprint $ cont tenv vecs
+                       writeOut [ValOut fmt $ cont tenv vecs]
     TimeIt -> do t1 <- liftIO getCurrentTime
                  evalProg bs prog
                  t2 <- liftIO getCurrentTime

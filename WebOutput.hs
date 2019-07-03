@@ -18,7 +18,7 @@ import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (status200)
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.Lazy (toStrict)
-import Data.Aeson hiding (Result, Null)
+import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
 import System.INotify
 
@@ -28,6 +28,7 @@ import Pass
 import Parser
 import PPrint
 import Env
+import Record
 
 type FileName = String
 type Key = Int
@@ -203,4 +204,36 @@ instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
   toJSON (MonMap m) = toJSON (M.toList m)
 
 instance ToJSON OutputElt where
-  toJSON (TextOut s) = toJSON s
+  toJSON (TextOut s)          = object [ "text" .= toJSON s ]
+  toJSON (ValOut Printed val) = object [ "text" .= toJSON (pprint val) ]
+  toJSON (ValOut Scatter val) = object [ "plot" .= makeScatterPlot val ]
+  toJSON (ValOut Heatmap val) = object [ "plot" .= makeHeatmap val ]
+
+makeScatterPlot :: Value -> A.Value
+makeScatterPlot (Value _ vecs) = trace
+  where
+    trace :: A.Value
+    trace = object
+      [ "x" .= toJSON xs
+      , "y" .= toJSON ys
+      , "mode" .= toJSON ("markers"   :: A.Value)
+      , "type" .= toJSON ("scatter" :: A.Value)
+      ]
+    RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
+
+makeHeatmap :: Value -> A.Value
+makeHeatmap (Value ty vecs) = trace
+  where
+    TabType _ (TabType (IdxSetLit n) _) = ty
+    trace :: A.Value
+    trace = object
+      [ "z" .= toJSON (chunk n xs)
+      , "type" .= toJSON ("heatmap" :: A.Value)
+      ]
+    RecLeaf (RealVec xs) = vecs
+
+chunk :: Int -> [a] -> [[a]]
+chunk _ [] = []
+chunk n xs = row : chunk n rest
+  where (row, rest) = splitAt n xs
+

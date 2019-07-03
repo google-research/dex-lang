@@ -7,7 +7,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                DeclP (..), Decl, TopDecl, Command (..), Pat, SrcPos,
                CmdName (..), IdxExpr, Kind (..), UBinder (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..), OutputElt (..), PlotSpec (..),
+               Except, Err (..), ErrType (..), OutputElt (..), OutFormat (..),
                throw, addContext, addErrSource, addErrSourcePos,
                FullEnv, Subst, (-->), (==>), LorT (..), fromL, fromT,
                subExpr, subType, lhsVars, Size, unitTy, unitCon,
@@ -128,13 +128,13 @@ strToBuiltin name = M.lookup name builtinNames
 instance Show Builtin where
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
-data CmdName = GetType | Passes | LLVM | Asm | TimeIt
-             | EvalExpr | Plot | PlotMat | Flops
+data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
+             | EvalExpr OutFormat
                 deriving  (Show, Eq)
 
 
-data Value = Value Type (RecTree Vec)  deriving (Show)
-data Vec = IntVec [Int] | RealVec [Double]  deriving (Show)
+data Value = Value Type (RecTree Vec)  deriving (Show, Eq)
+data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq)
 
 unitTy = RecType (Tup [])
 unitCon = RecCon (Tup [])
@@ -238,10 +238,9 @@ data EvalStatus = Complete | Failed Err
 type Source = String
 type Output = [OutputElt]
 
-data OutputElt = TextOut String
-               | PlotOut PlotSpec Value
+data OutputElt = TextOut String | ValOut OutFormat Value  deriving (Show, Eq)
 
-data PlotSpec = Heatmap | Scatter
+data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq)
 
 data Result = Result (SetVal Source) (SetVal EvalStatus) Output
 

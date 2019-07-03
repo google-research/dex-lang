@@ -97,8 +97,8 @@ size xs = isum (map (lam _. 1) xs) -- TODO: make it a builtin for efficiency
 
 -- TODO: find a way to access the type variable 'i'
 linspace :: Int -> Real -> Real -> i=>Real
-linspace n low high = let dx = high - low / real n
-                      in for i. real iota.i * dx
+linspace n low high = let dx = (high - low) / real n
+                      in for i. low + real iota.i * dx
 
 -- All of the following have implicit vector space typeclass constraints on `a`
 --  and `b`. TODO: make some sort of typeclass system

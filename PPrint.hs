@@ -159,7 +159,8 @@ instance Pretty Result where
 
 instance Pretty OutputElt where
   pretty (TextOut s) = p s
-  pretty (PlotOut _ _) = "<plot>"
+  pretty (ValOut Printed val) = p val
+  pretty _ = "<graphical output>"
 
 instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x

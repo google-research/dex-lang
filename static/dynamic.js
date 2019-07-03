@@ -14,7 +14,15 @@ function append_result(key, result) {
         cell.source.innerHTML = source.val;
     }
     var output = result["output"];
-    cell.output.innerHTML += output;
+    for (var i = 0; i < output.length; i++) {
+        var outputElt = output[i];
+        if ("text" in outputElt) {
+            cell.output.innerHTML += outputElt["text"];
+        } else if ("plot" in outputElt) {
+            plot_div = add_node(cell.output, "plot-output", "");
+            Plotly.plot(plot_div, [outputElt["plot"]]);
+        }
+    }
     var status = result["status"];
     if (status != null) {
         if ("complete" in status.val) {
@@ -24,31 +32,6 @@ function append_result(key, result) {
             cell.cell.className = "err-cell";
         }
     }
-
-    //     if ("unevaluated" in instr) {
-//         var cell = add_node(body, "output-cell", "");
-//         add_node(cell, "source", source);
-//         add_node(cell, "result-unevaluated", "");
-//     } else if ("result" in instr) {
-//         var cell = add_node(body, "output-cell", "");
-//         add_node(cell, "source", source);
-//         result = instr["result"];
-//         if ("text" in result) {
-//             add_node(cell, "result-text", result["text"]);
-//         } else if ("plot" in result) {
-//             plot_div = add_node(cell, "plot-output", "");
-//             Plotly.plot(plot_div, [result["plot"]]);
-//         }
-//     } else if ("error" in instr) {
-//         var cell = add_node(body, "err-cell", "");
-//         add_node(cell, "source", source);
-//         add_node(cell, "result-text", instr["error"]);
-//     } else if ("source_only" in instr) {
-//         var cell = add_node(body, "decl-cell", "");
-//         add_node(cell, "source", source);
-//     }
-//     return cell;
-
 };
 
 function new_cell() {
@@ -72,7 +55,6 @@ source.onmessage = function(event) {
     console.log(results);
     var order    = results[0];
     var contents = results[1];
-    console.log(results);
     for (var i = 0; i < contents.length; i++) {
         append_result(contents[i][0], contents[i][1]);
     }
