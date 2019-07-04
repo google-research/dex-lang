@@ -30,7 +30,7 @@ data Atom = ALit LitVal
 data NType = NBaseType BaseType
            | NTypeVar Var
            | NArrType [NType] [NType]
-           | NTabType IdxSet NType
+           | NTabType NType NType
            | NExists [NType]
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
@@ -114,13 +114,21 @@ normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
   BaseType b -> return $ RecLeaf (NBaseType b)
   TypeVar v -> asks $ fromT . (!v)
-  -- ArrType a b ->
-  -- TabType IdxSet Type ->
-  -- RecType (Record Type) ->
-  -- Forall [Kind] Type ->
-  -- Exists Type ->
-  -- IdxSetLit IdxSetVal ->
-  -- BoundTVar Int ->
+  ArrType a b -> do
+    a' <- normalizeTy a
+    b' <- normalizeTy b
+    return $ RecLeaf $ NArrType (toList a') (toList b')
+  TabType n ty -> do
+    ty' <- normalizeTy ty
+    n'  <- normalizeTy n
+    return $ fmap (NTabType (fromLeaf n')) ty'
+  RecType r -> liftM RecTree $ traverse normalizeTy r
+  Exists ty -> do
+    ty' <- normalizeTy ty
+    return $ RecLeaf $ NExists (toList ty')
+  IdxSetLit x -> return $ RecLeaf $ NIdxSetLit x
+  BoundTVar n -> return $ RecLeaf $ NBoundTVar n
+  Forall _ _ -> error "Shouldn't have forall types left"
 
 normalizeBinder :: Binder -> ([NBinder] -> NormM a) -> NormM a
 normalizeBinder (v:>ty) cont = do
@@ -130,9 +138,6 @@ normalizeBinder (v:>ty) cont = do
           return $ v':>t
   extendR (v @> L (ty, Left (fmap (AVar . binderVar) bs))) $
     cont (toList bs)
-
--- writeVars needs to do something similar (but return atoms rather than extend env)
-
 
 normalizeScoped :: Expr -> NormM NExpr
 normalizeScoped expr = do
