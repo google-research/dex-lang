@@ -10,20 +10,22 @@ import Syntax
 import Record
 import Cat
 import PPrint
+import Fresh
+import Type
 
 data NExpr = NDecls [NDecl] NExpr
-           | NFor Binder NExpr
+           | NFor NBinder NExpr
            | NPrimOp Builtin [NType] [Atom]
            | NApp Atom [Atom]
            | NAtom [Atom]
 
-data NDecl = NLet [Binder] NExpr
-           | NUnpack [Binder] Var NExpr
+data NDecl = NLet [NBinder] NExpr
+           | NUnpack [NBinder] Var NExpr
 
 data Atom = ALit LitVal
           | AVar Var
           | AGet Atom Atom
-          | NLam Binder NExpr
+          | NLam [NBinder] NExpr
 
 data NType = NBaseType BaseType
            | NTypeVar Var
@@ -33,17 +35,16 @@ data NType = NBaseType BaseType
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
 
-type Scope = FullEnv NType ()
-type OutDecls = ([NDecl], Scope)
+type NBinder = BinderP NType
+type Scope = Env ()
 type TLam = ([TBinder], Expr)
-type NormEnv = FullEnv ((Either (RecTree Atom) TLam)) (RecTree NType)
-type NormM a = ReaderT NormEnv (CatT OutDecls (Either Err)) a
+type NormEnv = FullEnv (Type, Either (RecTree Atom) TLam) (RecTree NType)
+type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
--- ** TODO: maintain binder freshness throughout **
 normalize :: Expr -> NormM (RecTree Atom)
 normalize expr = case expr of
   Lit x -> return $ RecLeaf $ ALit x
-  Var v -> asks $ fromLeft (error msg) . fromL . (! v )
+  Var v -> asks $ fromLeft (error msg) . snd. fromL . (! v )
              -- TODO: use this error pattern for env loookups too
              where msg = "Type lambda should be immediately applied"
   PrimOp b [] xs -> do
@@ -52,26 +53,33 @@ normalize expr = case expr of
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     case decl of
-      Let (v:>_) (TLam tbs body) ->
-        extendR (v@>L (Right (tbs, body))) $ normalize rest
-      Let (v:>ty) bound -> do
+      Let (v:>ty) (TLam tbs body) ->
+        extendR (v@>L (ty, Right (tbs, body))) $ normalize rest
+      Let b bound -> do
         bound' <- normalizeScoped bound
-        atoms <- writeVars ty bound'
-        extendR (v@>L (Left atoms)) $ normalize rest
-      -- Unpack b tv bound -> do
-      --   bound' <- normalizeScoped bound
+        normalizeBinder b $ \bs -> do
+          extend $ asFst [NLet bs bound']
+          normalize rest
+      Unpack b tv bound -> do
+        bound' <- normalizeScoped bound
+        tv' <- freshVar tv
+        extendR (tv @> T (RecLeaf (NTypeVar tv'))) $
+          normalizeBinder b $ \bs -> do
+            extend $ asFst [NUnpack bs tv' bound']
+            normalize rest
     where rest = Decls decls final
   Lam b body -> do
-    body' <- normalizeScoped body
-    return $ RecLeaf $ NLam b body'
+    normalizeBinder b $ \bs -> do
+      body' <- normalizeScoped body
+      return $ RecLeaf $ NLam bs body'
   App f x -> do
     f' <- normalize f
     x' <- normalize x
-    ty <- exprType expr
     writeExpr $ NApp (fromLeaf f') (toList x')
-  For b body -> do  -- TODO: freshen binder
-    body' <- normalizeScoped body
-    writeExpr $ NFor b body'
+  For b body -> do
+    normalizeBinder b $ \[b'] -> do
+      body' <- normalizeScoped body
+      writeExpr $ NFor b' body'
   Get e i -> do
     e' <- normalize e
     i' <- normalize i
@@ -80,7 +88,7 @@ normalize expr = case expr of
   -- making a single monorphic version for each distinct type found,
   -- rather than inlining
   TApp (Var v) ts -> do -- Assumes HM-style type lambdas only
-    (bs, body) <- asks $ fromRight (error "Expected t-lambda") . fromL . (! v)
+    (bs, body) <- asks $ fromRight (error "Expected t-lambda") . snd . fromL . (! v)
     ts' <- mapM normalizeTy ts
     extendR (bindFold $ zipWith replaceAnnot bs (map T ts')) $ do
       normalize body
@@ -96,17 +104,55 @@ normalize expr = case expr of
        ty <- exprType expr
        writeVars ty nexpr
 
+freshVar :: Name -> NormM Name
+freshVar v = do
+  v' <- looks $ rename v . snd
+  extend $ asSnd $ v'@> ()
+  return v'
+
 normalizeTy :: Type -> NormM (RecTree NType)
-normalizeTy ty = undefined
+normalizeTy ty = case ty of
+  BaseType b -> return $ RecLeaf (NBaseType b)
+  TypeVar v -> asks $ fromT . (!v)
+  -- ArrType a b ->
+  -- TabType IdxSet Type ->
+  -- RecType (Record Type) ->
+  -- Forall [Kind] Type ->
+  -- Exists Type ->
+  -- IdxSetLit IdxSetVal ->
+  -- BoundTVar Int ->
+
+normalizeBinder :: Binder -> ([NBinder] -> NormM a) -> NormM a
+normalizeBinder (v:>ty) cont = do
+  tys <- normalizeTy ty
+  bs <- flip traverse tys $ \t -> do
+          v' <- freshVar v -- TODO: incorporate field names
+          return $ v':>t
+  extendR (v @> L (ty, Left (fmap (AVar . binderVar) bs))) $
+    cont (toList bs)
+
+-- writeVars needs to do something similar (but return atoms rather than extend env)
+
 
 normalizeScoped :: Expr -> NormM NExpr
-normalizeScoped = undefined
+normalizeScoped expr = do
+  (body, (decls, _)) <- scoped $ normalize expr
+  -- TODO: reduce clutter in the case where these atoms are all
+  -- vars bound at last expression
+  return $ NDecls decls $ NAtom (toList body)
 
 exprType :: Expr -> NormM Type
-exprType = undefined
-
-fromLeaf :: RecTree a -> a
-fromLeaf (RecLeaf x) = x
+exprType expr = do
+  env <- ask
+  let env' = flip fmap env $ \x -> case x of L (ty,_) -> L ty
+                                             T _      -> T ()
+  return $ getType env' expr
 
 writeVars :: Type -> NExpr -> NormM (RecTree Atom)
-writeVars = undefined
+writeVars ty expr = do
+  tys <- normalizeTy ty
+  bs <- flip traverse tys $ \t -> do
+          v' <- freshVar (rawName "tmp")
+          return $ v':>t
+  extend $ asFst [NLet (toList bs) expr]
+  return $ fmap (AVar . binderVar) bs
