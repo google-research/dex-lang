@@ -1,0 +1,67 @@
+
+
+-- simple inlining
+let x = for i. data.i + 1
+in for i. x.i + 2
+
+for i. (data.i + 1) + 2
+
+-- partial DCE
+let (x, y) = (1 + 2, 2 + 2)
+in x + x
+
+let x = 1 + 2
+in x + x
+
+-- indirect DCE
+let x = 1 + 1
+    y = x
+in 2 + 2
+
+2 + 2
+
+-- unzipped, consumed together
+let xys = for i. let x = data.i in (x, x + 1)
+    xs = for i. xys.i[0]
+    ys = for i. xys.i[1]
+in for i. xs.i + ys.i
+
+for i. let xy = (let x = data.i
+                 in (x, x + 1))
+           x = xy[0]
+           y = xy[1]
+        in x + y
+
+-- unzipped, consumed separately
+let xys = for i. let x = data.i in (x, x + 1)
+    xs = for i. xys.i[0]
+    ys = for i. xys.i[1]
+in (for i. xs.i, for i. ys.i)
+
+let xys = for i. let x = data.i in (x, x + 1)
+    xs = for i. xys.i[0]
+    ys = for i. xys.i[1]
+in (for i. xys.i[0], for i. xys.i[1])
+
+-- unzipped, consumed together (alternative IR)
+let (xs, ys) = for i. let x = data.i in (x, x + 1)
+in for i. xs.i + ys.i
+
+for i. let xy = (let x = data.i
+                 in (x, x + 1))
+           x = xy[0]
+           y = xy[1]
+       in x + y
+
+-- don't inline if not indexed
+
+let xs = for i. data.i + 1
+in for i. sum(xs) + 1
+
+-- nested loops
+
+let xs = for i. vsquare data.i
+in for i j. xs.i.j
+
+let xs = for i. vsquare data.i
+in for i j. (vsquare data.i).j
