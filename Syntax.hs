@@ -17,6 +17,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                MonMap (..), resultSource, resultText, resultErr, resultComplete,
                Index, wrapDecls, strToBuiltin, idxSetKind,
                preludeNames, preludeApp, naryApp, tApp,
+               NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
+               NBinder
                ) where
 
 import Fresh
@@ -181,6 +183,40 @@ data UTopDecl = UTopDecl UDecl
               | UEvalCmd (Command UExpr)  deriving (Show)
 
 type Pat = RecTree UBinder
+
+-- === tuple-free ANF-ish normalized IR ===
+
+data NExpr = NDecls [NDecl] NExpr
+           | NFor NBinder NExpr
+           | NPrimOp Builtin [NType] [NAtom]
+           | NApp NAtom [NAtom]
+           | NAtoms [NAtom]
+              deriving (Show)
+
+data NDecl = NLet [NBinder] NExpr
+           | NUnpack [NBinder] Var NExpr
+              deriving (Show)
+
+data NAtom = ALit LitVal
+          | AVar Var
+          | AGet NAtom NAtom
+          | NLam [NBinder] NExpr
+             deriving (Show)
+
+data NType = NBaseType BaseType
+           | NTypeVar Var
+           | NArrType [NType] [NType]
+           | NTabType NType NType
+           | NExists [NType]
+           | NIdxSetLit IdxSetVal
+           | NBoundTVar Int
+              deriving (Show)
+
+data NTopDecl = NTopDecl NDecl
+              | NEvalCmd (Command (Type, NExpr))
+                 deriving (Show)
+
+type NBinder = BinderP NType
 
 -- === imperative IR ===
 

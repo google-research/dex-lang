@@ -1,7 +1,8 @@
-module NExpr where
+module Normalize (normalizePass) where
 
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.Except hiding (Except)
 import Data.Foldable
 import Data.Either
 
@@ -12,36 +13,42 @@ import Cat
 import PPrint
 import Fresh
 import Type
+import Pass
 
-data NExpr = NDecls [NDecl] NExpr
-           | NFor NBinder NExpr
-           | NPrimOp Builtin [NType] [Atom]
-           | NApp Atom [Atom]
-           | NAtom [Atom]
-
-data NDecl = NLet [NBinder] NExpr
-           | NUnpack [NBinder] Var NExpr
-
-data Atom = ALit LitVal
-          | AVar Var
-          | AGet Atom Atom
-          | NLam [NBinder] NExpr
-
-data NType = NBaseType BaseType
-           | NTypeVar Var
-           | NArrType [NType] [NType]
-           | NTabType NType NType
-           | NExists [NType]
-           | NIdxSetLit IdxSetVal
-           | NBoundTVar Int
-
-type NBinder = BinderP NType
 type Scope = Env ()
 type TLam = ([TBinder], Expr)
-type NormEnv = FullEnv (Type, Either (RecTree Atom) TLam) (RecTree NType)
+type NormEnv = FullEnv (Type, Either (RecTree NAtom) TLam) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
-normalize :: Expr -> NormM (RecTree Atom)
+normalizePass :: TopDecl -> TopPass NormEnv TopDecl
+normalizePass decl = do normalizePass' decl
+                        return decl
+
+normalizePass' :: TopDecl -> TopPass NormEnv NTopDecl
+normalizePass' topDecl = case topDecl of
+  TopDecl decl -> do
+    (env, decls) <- asTopPass (normalizeDecl decl)
+    decl' <- case decls of
+      [] -> return $ dummyDecl
+      [decl'] -> return decl'
+    putEnv env
+    return $ NTopDecl decl'
+    where dummyDecl = NLet [] (NAtoms [])
+  EvalCmd NoOp -> return (NEvalCmd NoOp)
+  EvalCmd (Command cmd expr) -> do
+    (ty   , []) <- asTopPass $ exprType expr
+    (expr', []) <- asTopPass $ normalizeScoped expr
+    case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ show expr'
+                _ -> return ()
+    return $ NEvalCmd (Command cmd (ty, expr'))
+
+asTopPass :: NormM a -> TopPass NormEnv (a, [NDecl])
+asTopPass m = do
+  env <- getEnv
+  (ans, (decls, _)) <- liftEither $ runCatT (runReaderT m env) mempty
+  return (ans, decls)
+
+normalize :: Expr -> NormM (RecTree NAtom)
 normalize expr = case expr of
   Lit x -> return $ RecLeaf $ ALit x
   Var v -> asks $ fromLeft (error msg) . snd. fromL . (! v )
@@ -52,24 +59,10 @@ normalize expr = case expr of
     writeExpr $ NPrimOp b [] (fmap fromLeaf xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
-    case decl of
-      Let (v:>ty) (TLam tbs body) ->
-        extendR (v@>L (ty, Right (tbs, body))) $ normalize rest
-      Let b bound -> do
-        bound' <- normalizeScoped bound
-        normalizeBinder b $ \bs -> do
-          extend $ asFst [NLet bs bound']
-          normalize rest
-      Unpack b tv bound -> do
-        bound' <- normalizeScoped bound
-        tv' <- freshVar tv
-        extendR (tv @> T (RecLeaf (NTypeVar tv'))) $
-          normalizeBinder b $ \bs -> do
-            extend $ asFst [NUnpack bs tv' bound']
-            normalize rest
-    where rest = Decls decls final
+    env <- normalizeDecl decl
+    extendR env $ normalize (Decls decls final)
   Lam b body -> do
-    normalizeBinder b $ \bs -> do
+    normalizeBinderR b $ \bs -> do
       body' <- normalizeScoped body
       return $ RecLeaf $ NLam bs body'
   App f x -> do
@@ -77,7 +70,7 @@ normalize expr = case expr of
     x' <- normalize x
     writeExpr $ NApp (fromLeaf f') (toList x')
   For b body -> do
-    normalizeBinder b $ \[b'] -> do
+    normalizeBinderR b $ \[b'] -> do
       body' <- normalizeScoped body
       writeExpr $ NFor b' body'
   Get e i -> do
@@ -99,10 +92,27 @@ normalize expr = case expr of
   _ -> error $ "Can't yet normalize: " ++ pprint expr
   where
      -- TODO: accept name hint
-     writeExpr :: NExpr -> NormM (RecTree Atom)
+     writeExpr :: NExpr -> NormM (RecTree NAtom)
      writeExpr nexpr = do
        ty <- exprType expr
        writeVars ty nexpr
+
+normalizeDecl :: Decl -> NormM NormEnv
+normalizeDecl decl = case decl of
+  Let (v:>ty) (TLam tbs body) -> return $ v@>L (ty, Right (tbs, body))
+  Let b bound -> do
+    bound' <- normalizeScoped bound
+    (bs, env) <- normalizeBinder b
+    extend $ asFst [NLet bs bound']
+    return env
+  Unpack b tv bound -> do
+    bound' <- normalizeScoped bound
+    tv' <- freshVar tv
+    let tenv = tv @> T (RecLeaf (NTypeVar tv'))
+    extendR tenv $ do
+      (bs, lenv) <- normalizeBinder b
+      extend $ asFst [NUnpack bs tv' bound']
+      return $ tenv <> lenv
 
 freshVar :: Name -> NormM Name
 freshVar v = do
@@ -130,21 +140,26 @@ normalizeTy ty = case ty of
   BoundTVar n -> return $ RecLeaf $ NBoundTVar n
   Forall _ _ -> error "Shouldn't have forall types left"
 
-normalizeBinder :: Binder -> ([NBinder] -> NormM a) -> NormM a
-normalizeBinder (v:>ty) cont = do
+normalizeBinder :: Binder -> NormM ([NBinder], NormEnv)
+normalizeBinder (v:>ty) = do
   tys <- normalizeTy ty
   bs <- flip traverse tys $ \t -> do
           v' <- freshVar v -- TODO: incorporate field names
           return $ v':>t
-  extendR (v @> L (ty, Left (fmap (AVar . binderVar) bs))) $
-    cont (toList bs)
+  let env' = (v @> L (ty, Left (fmap (AVar . binderVar) bs)))
+  return (toList bs, env')
+
+normalizeBinderR :: Binder -> ([NBinder] -> NormM a) -> NormM a
+normalizeBinderR b cont = do
+  (bs, env) <- normalizeBinder b
+  extendR env (cont bs)
 
 normalizeScoped :: Expr -> NormM NExpr
 normalizeScoped expr = do
   (body, (decls, _)) <- scoped $ normalize expr
   -- TODO: reduce clutter in the case where these atoms are all
   -- vars bound at last expression
-  return $ NDecls decls $ NAtom (toList body)
+  return $ NDecls decls $ NAtoms (toList body)
 
 exprType :: Expr -> NormM Type
 exprType expr = do
@@ -153,7 +168,7 @@ exprType expr = do
                                              T _      -> T ()
   return $ getType env' expr
 
-writeVars :: Type -> NExpr -> NormM (RecTree Atom)
+writeVars :: Type -> NExpr -> NormM (RecTree NAtom)
 writeVars ty expr = do
   tys <- normalizeTy ty
   bs <- flip traverse tys $ \t -> do

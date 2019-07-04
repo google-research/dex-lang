@@ -20,6 +20,7 @@ import Imp
 import JIT
 import Flops
 import WebOutput
+import Normalize
 
 type ResultChan = Result -> IO ()
 type FullPass env = UTopDecl -> TopPass env ()
@@ -29,6 +30,7 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 fullPass = deShadowPass
        >+> typePass   >+> checkTyped
+       >+> normalizePass
        >+> deFuncPass >+> checkTyped
        >+> expandPass >+> checkTyped
        >+> deFuncPass >+> checkTyped
