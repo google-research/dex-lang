@@ -101,6 +101,44 @@ instance Pretty b => Pretty (DeclP b) where
 instance Pretty Builtin where
   pretty b = p (show b)
 
+instance Pretty NExpr where
+  pretty expr = case expr of
+    NDecls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
+                           <> line <> "in" <+> p body
+    NFor b e -> parens $ "for " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
+    NPrimOp b ts xs -> parens $ p b <> targs <> args
+      where targs = case ts of [] -> mempty; _ -> brackets (hsep (map p ts))
+            args  = case xs of [] -> mempty; _ -> " " <> hsep (map p xs)
+    NApp f xs -> align $ group $ p f <+> hsep (map p xs)
+    NAtoms xs -> tup xs
+
+instance Pretty NDecl where
+  pretty decl = case decl of
+    NLet bs bound   -> tup bs <+> "=" <+> p bound
+    NUnpack bs tv e -> tup bs <> "," <+> p tv <+> "= unpack" <+> p e
+
+instance Pretty NAtom where
+  pretty atom = case atom of
+    NLit v -> p v
+    NVar x -> p x
+    NGet e i -> p e <> "." <> p i
+    NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
+                     <> line <> align (p body)
+
+instance Pretty NType where
+  pretty ty = case ty of
+    NBaseType b  -> p b
+    NTypeVar v   -> p v
+    NBoundTVar n -> "BV" <> p n  -- TODO: invent some variable names
+    NArrType as bs -> parens $ tup as <+> "->" <+> tup bs
+    NTabType a  b  -> p a <> "=>" <> p b
+    NExists tys -> "E" <> "." <> brackets (hsep (map p tys))
+    NIdxSetLit i -> "{.." <> p i <> "}"
+
+tup :: Pretty a => [a] -> Doc ann
+tup [x] = p x
+tup xs  = tupled $ map p xs
+
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar v) = p v

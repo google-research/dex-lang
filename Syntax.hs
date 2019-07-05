@@ -197,11 +197,11 @@ data NDecl = NLet [NBinder] NExpr
            | NUnpack [NBinder] Var NExpr
               deriving (Show)
 
-data NAtom = ALit LitVal
-          | AVar Var
-          | AGet NAtom NAtom
-          | NLam [NBinder] NExpr
-             deriving (Show)
+data NAtom = NLit LitVal
+           | NVar Var
+           | NGet NAtom NAtom
+           | NLam [NBinder] NExpr
+              deriving (Show)
 
 data NType = NBaseType BaseType
            | NTypeVar Var

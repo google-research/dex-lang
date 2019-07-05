@@ -38,7 +38,7 @@ normalizePass' topDecl = case topDecl of
   EvalCmd (Command cmd expr) -> do
     (ty   , []) <- asTopPass $ exprType expr
     (expr', []) <- asTopPass $ normalizeScoped expr
-    case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ show expr'
+    case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ pprint expr'
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, expr'))
 
@@ -50,7 +50,7 @@ asTopPass m = do
 
 normalize :: Expr -> NormM (RecTree NAtom)
 normalize expr = case expr of
-  Lit x -> return $ RecLeaf $ ALit x
+  Lit x -> return $ RecLeaf $ NLit x
   Var v -> asks $ fromLeft (error msg) . snd. fromL . (! v )
              -- TODO: use this error pattern for env loookups too
              where msg = "Type lambda should be immediately applied"
@@ -76,7 +76,7 @@ normalize expr = case expr of
   Get e i -> do
     e' <- normalize e
     i' <- normalize i
-    return $ fmap (flip AGet (fromLeaf i')) e'
+    return $ fmap (flip NGet (fromLeaf i')) e'
   -- TODO: consider finding these application sites in a bottom-up pass and
   -- making a single monorphic version for each distinct type found,
   -- rather than inlining
@@ -146,7 +146,7 @@ normalizeBinder (v:>ty) = do
   bs <- flip traverse tys $ \t -> do
           v' <- freshVar v -- TODO: incorporate field names
           return $ v':>t
-  let env' = (v @> L (ty, Left (fmap (AVar . binderVar) bs)))
+  let env' = (v @> L (ty, Left (fmap (NVar . binderVar) bs)))
   return (toList bs, env')
 
 normalizeBinderR :: Binder -> ([NBinder] -> NormM a) -> NormM a
@@ -159,7 +159,11 @@ normalizeScoped expr = do
   (body, (decls, _)) <- scoped $ normalize expr
   -- TODO: reduce clutter in the case where these atoms are all
   -- vars bound at last expression
-  return $ NDecls decls $ NAtoms (toList body)
+  return $ ndecls decls $ NAtoms (toList body)
+
+ndecls :: [NDecl] -> NExpr -> NExpr
+ndecls [] e = e
+ndecls decls e = NDecls decls e
 
 exprType :: Expr -> NormM Type
 exprType expr = do
@@ -175,4 +179,4 @@ writeVars ty expr = do
           v' <- freshVar (rawName "tmp")
           return $ v':>t
   extend $ asFst [NLet (toList bs) expr]
-  return $ fmap (AVar . binderVar) bs
+  return $ fmap (NVar . binderVar) bs
