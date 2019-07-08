@@ -1,3 +1,5 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Normalize (normalizePass) where
 
 import Control.Monad
@@ -211,15 +213,15 @@ simplify expr = case expr of
     refreshBinders [b] $ \[b'] -> do
       e' <- simplify e
       return $ NFor b' e'
-  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM substType ts) (mapM substAtom xs)
+  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
   NApp f xs -> do
-    xs' <- mapM substAtom xs
-    f <- substAtom f
+    xs' <- mapM nSubst xs
+    f <- nSubst f
     case f of
       NLam bs body -> extendR env (simplify body)
         where env = asFst $ bindEnv bs xs'
       _ -> error "Expected lambda"
-  NAtoms xs -> liftM NAtoms $ mapM substAtom xs
+  NAtoms xs -> liftM NAtoms $ mapM nSubst xs
 
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
@@ -247,24 +249,42 @@ newScope bs = foldMap (\(v:>_) -> v@>()) bs
 refreshBinders :: [NBinder] -> ([NBinder] -> SimplifyM NExpr) -> SimplifyM NExpr
 refreshBinders bs cont = undefined
 
-substAtom :: NAtom -> SimplifyM NAtom
-substAtom atom = case atom of
-  NLit x -> return $ NLit x
-  NVar v -> do
-    x <- asks $ flip envLookup v . fst
-    return $ case x of
-      Nothing -> NVar v
-      Just (L x') -> x'
-  NGet e i -> do
-    e' <- substAtom e
-    i' <- substAtom i
-    return $ NGet e' i'  -- TODO atomic 'for' beta reduction
-  -- AFor b body -> undefined -- TODO subst (refreshing binder) and possibly eta convert
-  NLam bs body -> undefined -- TODO just subst (refreshing binder)
-
-substType :: NType -> SimplifyM NType
-substType ty = undefined
-
 wrapDecl :: NDecl -> NExpr -> NExpr
 wrapDecl decl (NDecls decls body) = NDecls (decl:decls) body
 wrapDecl decl body = NDecls [decl] body
+
+-- === capture-avoiding substitutions on NExpr and friends ===
+
+class NSubst a where
+  nSubst :: MonadReader (FullEnv NAtom Var, Scope) m => a -> m a
+
+instance NSubst NExpr where
+  nSubst expr = undefined
+
+instance NSubst NAtom where
+  nSubst atom = case atom of
+    NLit x -> return $ NLit x
+    NVar v -> do
+      x <- asks $ flip envLookup v . fst
+      return $ case x of
+        Nothing -> NVar v
+        Just (L x') -> x'
+    NGet e i -> do
+      e' <- nSubst e
+      i' <- nSubst i
+      return $ NGet e' i'  -- TODO atomic 'for' beta reduction
+    -- AFor b body -> undefined -- TODO subst (refreshing binder) and possibly eta convert
+    NLam bs body -> undefined -- TODO just subst (refreshing binder)
+
+instance NSubst NType where
+  nSubst ty = case ty of
+    NBaseType _ -> return ty
+    NTypeVar v -> do
+      x <- asks $ flip envLookup v . fst
+      return $ case x of Nothing -> ty
+                         Just (T x') -> NTypeVar x'
+    NArrType as bs -> liftM2 NArrType (mapM nSubst as) (mapM nSubst bs)
+    NTabType a b -> liftM2 NTabType (nSubst a) (nSubst b)
+    NExists ts -> liftM NExists (mapM nSubst ts)
+    NIdxSetLit _ -> return ty
+    NBoundTVar _ -> return ty
