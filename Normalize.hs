@@ -48,6 +48,8 @@ asTopPass m = do
   (ans, (decls, _)) <- liftEither $ runCatT (runReaderT m env) mempty
   return (ans, decls)
 
+-- TODO: rewrite as normalize :: Expr -> NormM NExpr
+-- to avoid unnecessary let bindings
 normalize :: Expr -> NormM (RecTree NAtom)
 normalize expr = case expr of
   Lit x -> return $ RecLeaf $ NLit x
@@ -180,3 +182,89 @@ writeVars ty expr = do
           return $ v':>t
   extend $ asFst [NLet (toList bs) expr]
   return $ fmap (NVar . binderVar) bs
+
+-- === simplification pass ===
+
+type SimplifyEnv = (FullEnv NAtom Var, Scope)
+type SimplifyM a = ReaderT SimplifyEnv (Either Err) a
+
+-- TODO: consider maintaining free variables explicitly
+data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
+
+simplify :: NExpr -> SimplifyM NExpr
+simplify expr = case expr of
+  NDecls [] body -> simplify body
+  NDecls (decl:rest) final -> case decl of
+    NLet bs bound -> do
+      bound' <- simplify bound
+      case decompose mempty bound' of
+        Unchanged ->
+          refreshBinders bs $ \bs' -> do
+            body' <- simplify body
+            return $ wrapDecl (NLet bs' bound') body'
+        Ions bound'' bs' ions ->
+          extendR (bindEnv bs ions, newScope bs') $ do
+            body' <- simplify body
+            return $ wrapDecl (NLet bs' bound'') body'
+    where body = NDecls rest final
+  NFor b e ->
+    refreshBinders [b] $ \[b'] -> do
+      e' <- simplify e
+      return $ NFor b' e'
+  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM substType ts) (mapM substAtom xs)
+  NApp f xs -> do
+    xs' <- mapM substAtom xs
+    f <- substAtom f
+    case f of
+      NLam bs body -> extendR env (simplify body)
+        where env = asFst $ bindEnv bs xs'
+      _ -> error "Expected lambda"
+  NAtoms xs -> liftM NAtoms $ mapM substAtom xs
+
+decompose :: Env NType -> NExpr -> Ions
+decompose scope expr = case expr of
+  NDecls decls body -> decompose (scope <> scope') body
+    where
+      scope' = foldMap declsScope decls
+      declsScope decl = case decl of
+        NLet bs _ -> bindFold bs
+  NFor _ _ -> undefined
+  NPrimOp _ _ _ -> Unchanged
+  NApp _ _ -> error $ "Shouldn't have app left: " ++ pprint expr
+  NAtoms xs -> Ions expr' bs xs  -- TODO: special treatment of unchanged case
+    where
+      vs = foldMap freeVars xs
+      bs = map (uncurry (:>)) $ envPairs $ envIntersect vs scope
+      expr' = NAtoms $ fmap (NVar . binderVar) bs
+
+bindEnv :: [BinderP c] -> [a] -> FullEnv a b
+bindEnv bs xs = fold $ zipWith f bs xs
+  where f (v:>_) x = v @> L x
+
+newScope :: [BinderP a] -> Scope
+newScope bs = foldMap (\(v:>_) -> v@>()) bs
+
+refreshBinders :: [NBinder] -> ([NBinder] -> SimplifyM NExpr) -> SimplifyM NExpr
+refreshBinders bs cont = undefined
+
+substAtom :: NAtom -> SimplifyM NAtom
+substAtom atom = case atom of
+  NLit x -> return $ NLit x
+  NVar v -> do
+    x <- asks $ flip envLookup v . fst
+    return $ case x of
+      Nothing -> NVar v
+      Just (L x') -> x'
+  NGet e i -> do
+    e' <- substAtom e
+    i' <- substAtom i
+    return $ NGet e' i'  -- TODO atomic 'for' beta reduction
+  -- AFor b body -> undefined -- TODO subst (refreshing binder) and possibly eta convert
+  NLam bs body -> undefined -- TODO just subst (refreshing binder)
+
+substType :: NType -> SimplifyM NType
+substType ty = undefined
+
+wrapDecl :: NDecl -> NExpr -> NExpr
+wrapDecl decl (NDecls decls body) = NDecls (decl:decls) body
+wrapDecl decl body = NDecls [decl] body

@@ -415,6 +415,9 @@ instance HasVars UExpr where
       withPat p e = foldMap freeVars p <>
                       (freeVars e `envDiff` foldMap lhsVars p)
 
+instance HasVars NAtom where
+  freeVars atom = undefined
+
 instance HasVars UBinder where
   freeVars (UBind (_ :> Just ty)) = freeVars ty
   freeVars _= mempty
