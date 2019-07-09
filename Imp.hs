@@ -4,6 +4,7 @@ module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
+import Data.Foldable
 
 import Syntax
 import Env
@@ -13,64 +14,99 @@ import Pass
 import Cat
 import Record
 import Util
+import Fresh
 
 data Dest = Buffer Var [Index]
+type ImpEnv = (Env Name, Env ())
+type ImpM a = ReaderT ImpEnv (Either Err) a
 
-impPass :: NTopDecl -> TopPass () ImpDecl
+impPass :: NTopDecl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
-  NTopDecl (NLet bs expr) -> return $ ImpTopLet bs' prog'
-    where
-      prog' = toImp (map asDest bs) expr
-      bs' = map (fmap toImpType) bs
-  NTopDecl (NUnpack bs tv expr) -> return $ ImpTopLet bs' prog'
-    where
-      prog' = toImp (map asDest bs') expr
-      bs' = (tv :> intTy) : map (fmap toImpType) bs
+  NTopDecl decl -> do
+    (bs, prog, env) <- liftTop $ toImpDecl decl
+    putEnv env
+    return $ ImpTopLet bs prog
   NEvalCmd NoOp -> return noOpCmd
-  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
-    let bs = [Name "%imptmp" i :> toImpType t | (i, t) <- zip [0..] ntys]
-        prog = toImp (map asDest bs) expr
+  NEvalCmd (Command cmd (ty, ts, expr)) -> do
+    ts' <- liftTop $ mapM toImpType ts
+    let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts']
+    prog <- liftTop $ toImp (map asDest bs) expr
     case cmd of Passes -> writeOutText $ "\n\nImp\n" ++ pprint prog
                 _ -> return ()
     return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
   where
     noOpCmd = ImpEvalCmd (const undefined) [] NoOp
+    liftTop :: ImpM a -> TopPass ImpEnv a
+    liftTop m = do
+      env <- getEnv
+      liftEither $ runReaderT m env
 
-toImp :: [Dest] -> NExpr -> ImpProg
+toImp :: [Dest] -> NExpr -> ImpM ImpProg
 toImp dests expr = case expr of
   NDecls [] body -> toImp dests body
-  NDecls (decl:rest) final -> case decl of
-     NLet bs bound -> wrapAllocs bs' $ bound' <> body'
-       where
-         bs' = map (fmap toImpType) bs
-         bound' = toImp (map asDest bs) bound
-         body'  = toImp dests (NDecls rest final)
-  -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
-  NPrimOp b _ xs -> ImpProg [writeBuiltin b dest (map toImpAtom xs)]
+  NDecls (decl:rest) final -> do
+    (bs, bound', env) <- toImpDecl decl
+    body' <- extendR env $ toImp dests (NDecls rest final)
+    return $ wrapAllocs bs $ bound' <> body'
+  -- -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+  NPrimOp b _ xs -> do
+    xs' <- mapM toImpAtom xs
+    return $ ImpProg [writeBuiltin b dest xs']
     where [dest] = dests
-  NAtoms xs -> ImpProg $ zipWith copy dests (map toImpAtom xs)
+  NAtoms xs -> do
+    xs' <- mapM toImpAtom xs
+    return $ ImpProg $ zipWith copy dests xs'
 
-toImpAtom :: NAtom -> IExpr
+toImpDecl :: NDecl -> ImpM ([IBinder], ImpProg, ImpEnv)
+toImpDecl decl = case decl of
+  NLet bs expr -> do
+    (bs', env) <- toImpBinders bs
+    expr' <- extendR env $ toImp (map asDest bs') expr
+    return (bs', expr', env)
+  NUnpack nbs tv expr -> do
+    (bs , env ) <- toImpBinders [tv :> NBaseType IntType]
+    (bs', env') <- extendR env $ toImpBinders nbs
+    let bs'' = bs ++ bs'
+        env'' = env <> env'
+    expr' <- extendR env'' $ toImp (map asDest bs'') expr
+    return (bs'', expr', env'')
+
+toImpBinders :: [NBinder] -> ImpM ([IBinder], ImpEnv)
+toImpBinders bs = do
+  vs' <- asks $ renames vs . snd
+  ts' <- mapM toImpType ts
+  let env = (fold $ zipWith (@>) vs vs', foldMap (@>()) vs')
+  return (zipWith (:>) vs' ts', env)
+  where (vs, ts) = unzip [(v, t) | v:>t <- bs]
+
+toImpAtom :: NAtom -> ImpM IExpr
 toImpAtom atom = case atom of
-  NLit x -> ILit x
-  NVar v -> IVar v
-  NGet e i -> IGet (toImpAtom e) (toImpAtom i)
+  NLit x -> return $ ILit x
+  NVar v -> liftM IVar (lookupVar v)
+  NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
 
-toImpType :: NType -> IType
+toImpType :: NType -> ImpM IType
 toImpType ty = case ty of
-  NBaseType b -> IType b []
-  NTabType a b -> addIdx (typeToSize a) (toImpType b)
+  NBaseType b -> return $ IType b []
+  NTabType a b -> liftM2 addIdx (typeToSize a) (toImpType b)
   -- TODO: fix this (only works for range)
-  NExists [] -> intTy
-  NTypeVar _ -> intTy
+  NExists [] -> return intTy
+  NTypeVar _ -> return intTy
   _ -> error $ pprint ty
+
+lookupVar :: Name -> ImpM Name
+lookupVar v = do
+  x <- asks $ flip envLookup v . fst
+  return $ case x of
+    Nothing -> v
+    Just v' -> v'
 
 addIdx :: Size -> IType -> IType
 addIdx n (IType ty shape) = IType ty (n : shape)
 
-typeToSize :: NType -> IExpr
-typeToSize (NTypeVar v) = IVar v
-typeToSize (NIdxSetLit n) = ILit (IntLit n)
+typeToSize :: NType -> ImpM IExpr
+typeToSize (NTypeVar v) = liftM IVar (lookupVar v)
+typeToSize (NIdxSetLit n) = return $ ILit (IntLit n)
 
 asDest :: BinderP a -> Dest
 asDest (v:>_) = Buffer v []
@@ -125,9 +161,6 @@ checkImp decl = decl <$ case decl of
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements
 
-lookupVar :: Var -> ImpCheckM IType
-lookupVar v = asks $ (! v)
-
 checkStatement :: Statement -> ImpCheckM ()
 checkStatement statement = case statement of
   Alloc b body -> do
@@ -167,7 +200,7 @@ checkScalarTy ty ity = throw CompilerErr $ "Wrong types. Expected:" ++ pprint ty
                                                          ++ " Got " ++ pprint ity
 
 checkInt :: IExpr -> ImpCheckM ()
-checkInt (IVar v) = do ty <- lookupVar v
+checkInt (IVar v) = do ty <- asks $ (! v)
                        assertEq ty intTy "Not a valid int"
 checkInt (ILit (IntLit _)) = return ()
 checkInt expr = throw CompilerErr $ "Not an int: " ++ pprint expr
