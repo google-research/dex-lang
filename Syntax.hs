@@ -415,8 +415,36 @@ instance HasVars UExpr where
       withPat p e = foldMap freeVars p <>
                       (freeVars e `envDiff` foldMap lhsVars p)
 
+instance HasVars NExpr where
+  freeVars expr = case expr of
+    NDecls decls body -> let (bvs, fvs) = declVars decls
+                         in fvs <> (freeVars body `envDiff` bvs)
+    NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
+    NApp f xs -> freeVars f <> foldMap freeVars xs
+    NAtoms xs -> foldMap freeVars xs
+
 instance HasVars NAtom where
-  freeVars atom = undefined
+  freeVars atom = case atom of
+    NLit _ -> mempty
+    NVar v -> v @> L ()
+    NGet e i -> freeVars e <> freeVars i
+    -- AFor b body -> freeVars b <> (freeVars body `envDiff` lhsVars b)
+    NLam bs body -> foldMap freeVars bs <>
+                      (freeVars body `envDiff` foldMap lhsVars bs)
+
+instance HasVars NDecl where
+  freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
+  freeVars (NUnpack bs _ expr) = foldMap freeVars bs <> freeVars expr
+
+instance HasVars NType where
+  freeVars ty = case ty of
+    NBaseType _ -> mempty
+    NTypeVar v -> v @> T ()
+    NArrType as bs -> foldMap freeVars as <> foldMap freeVars bs
+    NTabType a b -> freeVars a <> freeVars b
+    NExists ts -> foldMap freeVars ts
+    NIdxSetLit _ -> mempty
+    NBoundTVar _ -> mempty
 
 instance HasVars UBinder where
   freeVars (UBind (_ :> Just ty)) = freeVars ty
@@ -450,6 +478,9 @@ instance BindsVars UBinder where
   lhsVars (UBind (v:>_)) = v @> L ()
   lhsVars IgnoreBind = mempty
 
+instance BindsVars (BinderP a) where
+  lhsVars (v:>_) = v @> L ()
+
 instance BindsVars (DeclP b) where
   lhsVars (Let    (v:>_)    _) = v @> L ()
   lhsVars (Unpack (v:>_) tv _) = v @> L () <> tv @> T ()
@@ -458,6 +489,10 @@ instance BindsVars UDecl where
   lhsVars (ULet p _) = foldMap lhsVars p
   lhsVars (UTAlias  v _) = v @> T ()
   lhsVars (UUnpack b tv _) = lhsVars b <> tv @> T ()
+
+instance BindsVars NDecl where
+  lhsVars (NLet bs _) = foldMap lhsVars bs
+  lhsVars (NUnpack bs tv _) = foldMap lhsVars bs <> tv @> T ()
 
 instance BindsVars UTopDecl where
   lhsVars (UTopDecl decl) = lhsVars decl
