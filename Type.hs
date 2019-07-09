@@ -1,14 +1,16 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             HasTypeVars, freeTyVars, subFreeTVs) where
+             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr) where
 import Control.Monad
-import Control.Monad.Except (liftEither)
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 import Data.List (elemIndex)
+import Data.Foldable
 
 import Syntax
 import Env
@@ -122,7 +124,7 @@ getType' check expr = case expr of
     checkTy :: Type -> TypeM ()
     checkTy _ = return () -- TODO: check kind and unbound type vars
 
-checkShadow :: BinderP a -> TypeM ()
+checkShadow :: (MonadError Err m, MonadReader (Env a) m) => BinderP b -> m ()
 checkShadow (v :> _) = do
   env <- ask
   if v `isin` env
@@ -287,3 +289,105 @@ instance HasTypeVars Expr where
 instance HasTypeVars Binder where
   subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
 
+-- === Normalized IR ===
+
+type NTypeEnv = FullEnv NType ()
+type NTypeM a = ReaderT NTypeEnv (Either Err) a
+
+checkNExpr :: NTopDecl -> TopPass NTypeEnv NTopDecl
+checkNExpr topDecl = topDecl <$ case topDecl of
+  NTopDecl decl -> do
+    env <- liftPass $ checkNDecl decl
+    putEnv env
+  NEvalCmd NoOp -> return ()
+  NEvalCmd (Command _ (_, tys, expr)) -> liftPass $ do
+    tys' <- getNType expr
+    assertEq tys tys' ""
+  where
+    liftPass :: NTypeM a -> TopPass NTypeEnv a
+    liftPass m = do env <- getEnv
+                    liftEither $ runReaderT m env
+
+getNType :: NExpr -> NTypeM [NType]
+getNType expr = case expr of
+  NDecls [] final -> getNType final
+  NDecls (decl:decls) final -> do
+    env <- checkNDecl decl
+    extendR env $ getNType (NDecls decls final)
+  NFor b@(_:>i) body -> do
+    checkNBinder b
+    bodyTys <- extendR (nBinderEnv [b]) (getNType body)
+    return $ map (NTabType i) bodyTys
+  NPrimOp b ts xs -> do
+    mapM_ checkNTy ts
+    argTys'' <- mapM atomType xs
+    assertEq (map fromLeaf argTys') argTys'' "" -- TODO: handle non-leaves
+    return (toList ansTy')
+    where
+      BuiltinType _ argTys ansTy = builtinType b
+      ts' = map nTypeToType ts
+      ansTy':argTys' = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
+  NApp e xs -> do
+    NArrType as bs <- atomType e
+    as' <- mapM atomType xs
+    assertEq as as' ""
+    return bs
+  NAtoms xs -> mapM atomType xs
+
+checkNDecl :: NDecl -> NTypeM NTypeEnv
+checkNDecl decl = case decl of
+  NLet bs expr -> do
+    mapM_ checkNBinder bs
+    ts <- getNType expr
+    assertEq (map binderAnn bs) ts ""
+    return $ nBinderEnv bs
+  NUnpack bs tv _ -> do  -- TODO: check bound expression!
+    checkShadow (tv :> idxSetKind)
+    extendR (tv @> T ()) $ mapM_ checkNBinder bs
+    return $ nBinderEnv bs <> tv @> T ()
+
+nBinderEnv :: [NBinder] -> NTypeEnv
+nBinderEnv bs = foldMap (\(v:>ty) -> v @> L ty) bs
+
+atomType :: NAtom -> NTypeM NType
+atomType atom = case atom of
+  NLit x -> return $ NBaseType (litType x)
+  NVar v -> do
+    x <- asks $ flip envLookup v
+    case x of
+      Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+      Just (L ty) -> return ty
+  NGet e i -> do
+    NTabType a b <- atomType e
+    a' <- atomType i
+    assertEq a a' "Get"
+    return b
+  -- AFor b body ->
+  NLam bs body -> do
+    mapM_ checkNBinder bs
+    bodyTys <- extendR (nBinderEnv bs) (getNType body)
+    return $ NArrType (map binderAnn bs) bodyTys
+
+checkNTy :: NType -> NTypeM ()
+checkNTy _ = return () -- TODO!
+
+checkNBinder :: NBinder -> NTypeM ()
+checkNBinder b = do
+  checkNTy (binderAnn b)
+  checkShadow b
+
+typeToNType :: Type -> RecTree NType
+typeToNType ty = case ty of
+  BaseType b  -> RecLeaf $ NBaseType b
+  TypeVar v   -> RecLeaf $ NTypeVar v
+  ArrType a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
+  TabType n ty -> fmap (NTabType (fromLeaf (recur n))) (recur ty)
+  RecType r   -> RecTree $ fmap recur r
+  Exists ty   -> RecLeaf $ NExists (toList (recur ty))
+  BoundTVar n -> RecLeaf $ NBoundTVar n
+  where recur = typeToNType
+
+nTypeToType :: NType -> Type
+nTypeToType ty = case ty of
+  NBaseType b -> BaseType b
+  NTypeVar v -> TypeVar v

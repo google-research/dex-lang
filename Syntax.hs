@@ -210,7 +210,7 @@ data NType = NBaseType BaseType
            | NExists [NType]
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
-              deriving (Show)
+              deriving (Eq, Show)
 
 data NTopDecl = NTopDecl NDecl
               | NEvalCmd (Command (Type, [NType], NExpr))
