@@ -34,11 +34,12 @@ normalizePass topDecl = case topDecl of
     where dummyDecl = NLet [] (NAtoms [])
   EvalCmd NoOp -> return (NEvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (ty   , []) <- asTopPass $ exprType expr
+    (ty   , []) <- asTopPass $ exprType expr -- TODO: subst type vars
     (expr', []) <- asTopPass $ normalizeScoped expr
+    (ntys , []) <- asTopPass $ normalizeTy ty
     case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ pprint expr'
                 _ -> return ()
-    return $ NEvalCmd (Command cmd (ty, expr'))
+    return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
 
 asTopPass :: NormM a -> TopPass NormEnv (a, [NDecl])
 asTopPass m = do
@@ -200,11 +201,12 @@ simpPass topDecl = case topDecl of
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
   NEvalCmd NoOp -> return (NEvalCmd NoOp)
-  NEvalCmd (Command cmd (ty, expr)) -> do
+  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
+    -- TODO: handle type vars
     expr' <- simpAsTopPass $ simplify expr
     case cmd of Passes -> writeOutText $ "\n\nSimp\n" ++ pprint expr'
                 _ -> return ()
-    return $ NEvalCmd (Command cmd (ty, expr'))
+    return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
 simpAsTopPass :: SimplifyM a -> TopPass SubstEnv a
 simpAsTopPass m = do

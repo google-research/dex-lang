@@ -11,6 +11,8 @@ import Type
 import PPrint
 import Pass
 import Cat
+import Record
+import Util
 
 data Dest = Buffer Var [Index]
 
@@ -21,24 +23,28 @@ impPass decl = case decl of
       prog' = toImp (map asDest bs) expr
       bs' = map (fmap toImpType) bs
   NEvalCmd NoOp -> return noOpCmd
-  -- seems to require type info. An alternative is to store an NDecl instead
-  -- EvalCmd (Command cmd expr) ->
+  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
+    let bs = [Name "%imptmp" i :> toImpType t | (i, t) <- zip [0..] ntys]
+        prog = toImp (map asDest bs) expr
+    case cmd of Passes -> writeOutText $ "\n\nImp\n" ++ pprint prog
+                _ -> return ()
+    return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
   where
     noOpCmd = ImpEvalCmd (const undefined) [] NoOp
 
 toImp :: [Dest] -> NExpr -> ImpProg
 toImp dests expr = case expr of
-    NDecls [] body -> toImp dests body
-    NDecls (decl:rest) final -> case decl of
-       NLet bs bound -> wrapAllocs bs' $ bound' <> body'
-         where
-           bs' = map (fmap toImpType) bs
-           bound' = toImp (map asDest bs) bound
-           body'  = toImp dests (NDecls rest final)
-    -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
-    NPrimOp b _ xs -> ImpProg [writeBuiltin b dest (map toImpAtom xs)]
-      where [dest] = dests
-    NAtoms xs -> ImpProg $ zipWith copy dests (map toImpAtom xs)
+  NDecls [] body -> toImp dests body
+  NDecls (decl:rest) final -> case decl of
+     NLet bs bound -> wrapAllocs bs' $ bound' <> body'
+       where
+         bs' = map (fmap toImpType) bs
+         bound' = toImp (map asDest bs) bound
+         body'  = toImp dests (NDecls rest final)
+  -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+  NPrimOp b _ xs -> ImpProg [writeBuiltin b dest (map toImpAtom xs)]
+    where [dest] = dests
+  NAtoms xs -> ImpProg $ zipWith copy dests (map toImpAtom xs)
 
 toImpAtom :: NAtom -> IExpr
 toImpAtom atom = case atom of
@@ -58,7 +64,7 @@ typeToSize :: NType -> IExpr
 typeToSize (NTypeVar v) = IVar v
 typeToSize (NIdxSetLit n) = ILit (IntLit n)
 
-asDest :: NBinder -> Dest
+asDest :: BinderP a -> Dest
 asDest (v:>_) = Buffer v []
 
 wrapAllocs :: [IBinder] -> ImpProg -> ImpProg
@@ -73,6 +79,22 @@ writeBuiltin b (Buffer name destIdxs) exprs = Update name destIdxs b exprs
 
 intTy :: IType
 intTy = IType IntType []
+
+reconstruct :: Type -> Env Int -> [Vec] -> Value
+reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
+  where
+    typeLeaves :: Type -> RecTree ()
+    typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
+                               TabType _ valTy -> typeLeaves valTy
+                               RecType r -> RecTree $ fmap typeLeaves r
+                               _ -> error $ "can't show " ++ pprint ty
+    subty :: Type -> Type
+    subty ty = case ty of
+      BaseType _ -> ty
+      TabType (TypeVar v) valTy -> TabType (IdxSetLit (tenv ! v)) (subty valTy)
+      TabType n valTy -> TabType n (subty valTy)
+      RecType r -> RecType $ fmap subty r
+      _ -> error $ "can't show " ++ pprint ty
 
 -- === type checking imp programs ===
 

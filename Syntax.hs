@@ -213,7 +213,7 @@ data NType = NBaseType BaseType
               deriving (Show)
 
 data NTopDecl = NTopDecl NDecl
-              | NEvalCmd (Command (Type, NExpr))
+              | NEvalCmd (Command (Type, [NType], NExpr))
                  deriving (Show)
 
 type NBinder = BinderP NType
