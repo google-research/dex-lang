@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Normalize (normalizePass, simpPass, nImpPass) where
+module Normalize (normalizePass, simpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -22,12 +22,8 @@ type TLam = ([TBinder], Expr)
 type NormEnv = FullEnv (Type, Either (RecTree NAtom) TLam) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
-normalizePass :: TopDecl -> TopPass NormEnv (TopDecl, NTopDecl)
-normalizePass decl = do decl' <- normalizePass' decl
-                        return (decl, decl')
-
-normalizePass' :: TopDecl -> TopPass NormEnv NTopDecl
-normalizePass' topDecl = case topDecl of
+normalizePass :: TopDecl -> TopPass NormEnv NTopDecl
+normalizePass topDecl = case topDecl of
   TopDecl decl -> do
     (env, decls) <- asTopPass (normalizeDecl decl)
     decl' <- case decls of
@@ -193,12 +189,8 @@ type SimplifyM a = ReaderT SubstEnv (Either Err) a
 -- TODO: consider maintaining free variables explicitly
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
-simpPass :: (TopDecl, NTopDecl) -> TopPass SubstEnv TopDecl
-simpPass (decl, decl') = do simpPass' decl'
-                            return decl
-
-simpPass' :: NTopDecl -> TopPass SubstEnv NTopDecl
-simpPass' topDecl = case topDecl of
+simpPass :: NTopDecl -> TopPass SubstEnv NTopDecl
+simpPass topDecl = case topDecl of
   NTopDecl decl -> do
     (decls, env) <- simpAsTopPass $ simplifyDecl decl
     decl' <- case decls of
@@ -298,68 +290,6 @@ refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
 wrapDecls :: [NDecl] -> NExpr -> NExpr
 wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
 wrapDecls decls body = NDecls decls body
-
--- === lowering to Imp IR ===
-
-data Dest = Buffer Var [Index]
-
-nImpPass :: NTopDecl -> TopPass () ImpDecl
-nImpPass decl = case decl of
-  NTopDecl (NLet bs expr) -> return $ ImpTopLet bs' prog'
-    where
-      prog' = toImp (map asDest bs) expr
-      bs' = map (fmap toImpType) bs
-  NEvalCmd NoOp -> return noOpCmd
-  -- seems to require type info. An alternative is to store an NDecl instead
-  -- EvalCmd (Command cmd expr) ->
-  where
-    noOpCmd = ImpEvalCmd (const undefined) [] NoOp
-
-
-toImp :: [Dest] -> NExpr -> ImpProg
-toImp dests expr = case expr of
-    NDecls [] body -> toImp dests body
-    NDecls (decl:rest) final -> case decl of
-       NLet bs bound -> wrapAllocs bs' $ bound' <> body'
-         where
-           bs' = map (fmap toImpType) bs
-           bound' = toImp (map asDest bs) bound
-           body'  = toImp dests (NDecls rest final)
-    -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
-    NPrimOp b _ xs -> ImpProg [writeBuiltin b dest (map toImpAtom xs)]
-      where [dest] = dests
-    NAtoms xs -> ImpProg $ zipWith copy dests (map toImpAtom xs)
-
-toImpAtom :: NAtom -> IExpr
-toImpAtom atom = case atom of
-  NLit x -> ILit x
-  NVar v -> IVar v
-  NGet e i -> IGet (toImpAtom e) (toImpAtom i)
-
-toImpType :: NType -> IType
-toImpType ty = case ty of
-  NBaseType b -> IType b []
-  NTabType a b -> addIdx (typeToSize a) (toImpType b)
-
-addIdx :: Size -> IType -> IType
-addIdx n (IType ty shape) = IType ty (n : shape)
-
-typeToSize :: NType -> IExpr
-typeToSize (NTypeVar v) = IVar v
-typeToSize (NIdxSetLit n) = ILit (IntLit n)
-
-asDest :: NBinder -> Dest
-asDest (v:>_) = Buffer v []
-
-wrapAllocs :: [IBinder] -> ImpProg -> ImpProg
-wrapAllocs [] prog = prog
-wrapAllocs (b:bs) prog = ImpProg [Alloc b (wrapAllocs bs prog)]
-
-copy :: Dest -> IExpr -> Statement
-copy (Buffer v idxs) x = Update v idxs Copy [x]
-
-writeBuiltin :: Builtin -> Dest -> [IExpr] -> Statement
-writeBuiltin b (Buffer name destIdxs) exprs = Update name destIdxs b exprs
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 

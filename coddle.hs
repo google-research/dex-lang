@@ -14,8 +14,6 @@ import Type
 import Parser
 import DeShadow
 import Inference
-import DeFunc
-import Expand
 import Imp
 import JIT
 import Flops
@@ -29,12 +27,10 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool}
 
 fullPass = deShadowPass
-       >+> typePass   >+> checkTyped
-       >+> normalizePass >+> simpPass
-       >+> deFuncPass >+> checkTyped
-       >+> expandPass >+> checkTyped
-       >+> deFuncPass >+> checkTyped
-       >+> impPass    >+> checkImp
+       >+> typePass      >+> checkTyped
+       >+> normalizePass
+       >+> simpPass
+       >+> impPass       >+> checkImp
        >+> flopsPass
        >+> jitPass
 
