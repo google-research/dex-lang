@@ -6,7 +6,7 @@
 -- those last three are all needed for monaderror
 
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
-              nameTag, rename, FreshScope, runFreshRT, genFresh,
+              nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh,
               freshenBinder) where
 
@@ -40,6 +40,12 @@ genFresh tag (Env m) = Name tag nextNum
 rename :: Name -> Env a -> Name
 rename v scope | v `isin` scope = genFresh (nameTag v) scope
                | otherwise = v
+
+renames :: [Name] -> Env a -> [Name]
+renames [] _ = []
+renames (v:vs) scope = v':vs'
+  where v' = rename v scope
+        vs' = renames vs (scope <> v' @> undefined)
 
 -- === state monad version of fresh var generation ===
 

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Normalize (normalizePass) where
+module Normalize (normalizePass, simpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -9,7 +9,7 @@ import Data.Foldable
 import Data.Either
 
 import Env
-import Syntax
+import Syntax  hiding (wrapDecls)
 import Record
 import Cat
 import PPrint
@@ -22,9 +22,9 @@ type TLam = ([TBinder], Expr)
 type NormEnv = FullEnv (Type, Either (RecTree NAtom) TLam) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
-normalizePass :: TopDecl -> TopPass NormEnv TopDecl
-normalizePass decl = do normalizePass' decl
-                        return decl
+normalizePass :: TopDecl -> TopPass NormEnv (TopDecl, NTopDecl)
+normalizePass decl = do decl' <- normalizePass' decl
+                        return (decl, decl')
 
 normalizePass' :: TopDecl -> TopPass NormEnv NTopDecl
 normalizePass' topDecl = case topDecl of
@@ -187,33 +187,50 @@ writeVars ty expr = do
 
 -- === simplification pass ===
 
-type SimplifyEnv = (FullEnv NAtom Var, Scope)
-type SimplifyM a = ReaderT SimplifyEnv (Either Err) a
+type SubstEnv = (FullEnv NAtom Var, Scope)
+type SimplifyM a = ReaderT SubstEnv (Either Err) a
 
 -- TODO: consider maintaining free variables explicitly
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
+simpPass :: (TopDecl, NTopDecl) -> TopPass SubstEnv TopDecl
+simpPass (decl, decl') = do simpPass' decl'
+                            return decl
+
+simpPass' :: NTopDecl -> TopPass SubstEnv NTopDecl
+simpPass' topDecl = case topDecl of
+  NTopDecl decl -> do
+    (decls, env) <- simpAsTopPass $ simplifyDecl decl
+    decl' <- case decls of
+      [] -> return $ dummyDecl
+      [decl'] -> return decl'
+    putEnv env
+    return $ NTopDecl decl'
+    where dummyDecl = NLet [] (NAtoms [])
+  NEvalCmd NoOp -> return (NEvalCmd NoOp)
+  NEvalCmd (Command cmd (ty, expr)) -> do
+    expr' <- simpAsTopPass $ simplify expr
+    case cmd of Passes -> writeOutText $ "\n\nSimp\n" ++ pprint expr'
+                _ -> return ()
+    return $ NEvalCmd (Command cmd (ty, expr'))
+
+simpAsTopPass :: SimplifyM a -> TopPass SubstEnv a
+simpAsTopPass m = do
+  env <- getEnv
+  liftEither $ runReaderT m env
+
 simplify :: NExpr -> SimplifyM NExpr
 simplify expr = case expr of
   NDecls [] body -> simplify body
-  NDecls (decl:rest) final -> case decl of
-    NLet bs bound -> do
-      bound' <- simplify bound
-      case decompose mempty bound' of
-        Unchanged ->
-          refreshBinders bs $ \bs' -> do
-            body' <- simplify body
-            return $ wrapDecl (NLet bs' bound') body'
-        Ions bound'' bs' ions ->
-          extendR (bindEnv bs ions, newScope bs') $ do
-            body' <- simplify body
-            return $ wrapDecl (NLet bs' bound'') body'
+  NDecls (decl:rest) final -> do
+    (decls, env) <- simplifyDecl decl
+    body' <- extendR env $ simplify body
+    return $ wrapDecls decls body'
     where body = NDecls rest final
-  NFor b e ->
-    refreshBinders [b] $ \[b'] -> do
+  NFor b e -> do
+    refreshBindersR [b] $ \[b'] -> do
       e' <- simplify e
       return $ NFor b' e'
-  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
   NApp f xs -> do
     xs' <- mapM nSubst xs
     f <- nSubst f
@@ -221,7 +238,20 @@ simplify expr = case expr of
       NLam bs body -> extendR env (simplify body)
         where env = asFst $ bindEnv bs xs'
       _ -> error "Expected lambda"
-  NAtoms xs -> liftM NAtoms $ mapM nSubst xs
+  NPrimOp _ _ _ -> nSubst expr
+  NAtoms _ -> nSubst expr
+
+simplifyDecl :: NDecl -> SimplifyM ([NDecl], SubstEnv)
+simplifyDecl decl = case decl of
+  NLet bs bound -> do
+    bound' <- simplify bound
+    case decompose mempty bound' of
+      Unchanged -> do
+        (bs', env) <- refreshBinders bs
+        return ([NLet bs' bound'], env)
+      Ions bound'' bs' ions ->
+        return ([NLet bs' bound''], env)
+        where env = (bindEnv bs ions, newScope bs')
 
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
@@ -246,12 +276,25 @@ bindEnv bs xs = fold $ zipWith f bs xs
 newScope :: [BinderP a] -> Scope
 newScope bs = foldMap (\(v:>_) -> v@>()) bs
 
-refreshBinders :: [NBinder] -> ([NBinder] -> SimplifyM NExpr) -> SimplifyM NExpr
-refreshBinders bs cont = undefined
+refreshBinders :: MonadReader SubstEnv m => [NBinder] -> m ([NBinder], SubstEnv)
+refreshBinders bs = do
+  scope <- asks snd
+  ts' <- mapM nSubst ts
+  let vs' = renames vs scope
+      env' = fold $ zipWith (\v v' -> v @> L (NVar v')) vs vs'
+      scope' = foldMap (\v -> v @> ()) vs'
+      bs' = zipWith (:>) vs' ts'
+  return (bs', (env', scope'))
+  where (vs, ts) = unzip [(v,t) | v:>t <- bs]
 
-wrapDecl :: NDecl -> NExpr -> NExpr
-wrapDecl decl (NDecls decls body) = NDecls (decl:decls) body
-wrapDecl decl body = NDecls [decl] body
+refreshBindersR :: MonadReader SubstEnv m =>
+                     [NBinder] -> ([NBinder] -> m a) -> m a
+refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
+                             extendR env $ cont bs'
+
+wrapDecls :: [NDecl] -> NExpr -> NExpr
+wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
+wrapDecls decls body = NDecls decls body
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
@@ -259,7 +302,19 @@ class NSubst a where
   nSubst :: MonadReader (FullEnv NAtom Var, Scope) m => a -> m a
 
 instance NSubst NExpr where
-  nSubst expr = undefined
+  nSubst expr = case expr of
+    NDecls [] body -> nSubst body
+    NDecls (decl:rest) final -> case decl of
+      NLet bs bound -> do
+        bound' <- nSubst bound
+        refreshBindersR bs $ \bs' -> do
+           body' <- nSubst body
+           return $ wrapDecls [NLet bs' bound'] body'
+       where body = NDecls rest final
+    NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+    NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
+    NApp f xs -> liftM2 NApp (nSubst f) (mapM nSubst xs)
+    NAtoms xs -> liftM NAtoms $ mapM nSubst xs
 
 instance NSubst NAtom where
   nSubst atom = case atom of
@@ -274,7 +329,10 @@ instance NSubst NAtom where
       i' <- nSubst i
       return $ NGet e' i'  -- TODO atomic 'for' beta reduction
     -- AFor b body -> undefined -- TODO subst (refreshing binder) and possibly eta convert
-    NLam bs body -> undefined -- TODO just subst (refreshing binder)
+    NLam bs body ->
+      refreshBindersR bs $ \bs' -> do
+        body' <- nSubst body
+        return $ NLam bs' body'
 
 instance NSubst NType where
   nSubst ty = case ty of

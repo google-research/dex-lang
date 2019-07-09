@@ -30,7 +30,7 @@ data CmdOpts = CmdOpts { programSource :: Maybe String
 
 fullPass = deShadowPass
        >+> typePass   >+> checkTyped
-       >+> normalizePass
+       >+> normalizePass >+> simpPass
        >+> deFuncPass >+> checkTyped
        >+> expandPass >+> checkTyped
        >+> deFuncPass >+> checkTyped
