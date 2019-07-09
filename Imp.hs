@@ -22,6 +22,10 @@ impPass decl = case decl of
     where
       prog' = toImp (map asDest bs) expr
       bs' = map (fmap toImpType) bs
+  NTopDecl (NUnpack bs tv expr) -> return $ ImpTopLet bs' prog'
+    where
+      prog' = toImp (map asDest bs') expr
+      bs' = (tv :> intTy) : map (fmap toImpType) bs
   NEvalCmd NoOp -> return noOpCmd
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
     let bs = [Name "%imptmp" i :> toImpType t | (i, t) <- zip [0..] ntys]
@@ -56,6 +60,10 @@ toImpType :: NType -> IType
 toImpType ty = case ty of
   NBaseType b -> IType b []
   NTabType a b -> addIdx (typeToSize a) (toImpType b)
+  -- TODO: fix this (only works for range)
+  NExists [] -> intTy
+  NTypeVar _ -> intTy
+  _ -> error $ pprint ty
 
 addIdx :: Size -> IType -> IType
 addIdx n (IType ty shape) = IType ty (n : shape)
@@ -124,7 +132,7 @@ checkStatement :: Statement -> ImpCheckM ()
 checkStatement statement = case statement of
   Alloc b body -> do
     env <- ask
-    if binderVar b `isin` env then throw CompilerErr "Shadows!"
+    if binderVar b `isin` env then throw CompilerErr $ "shadows:" ++ pprint b
                               else return ()
     extendR (bind b) (checkProg body)
   Update v idxs Copy [expr] -> do

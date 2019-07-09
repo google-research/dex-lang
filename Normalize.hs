@@ -246,6 +246,12 @@ simplifyDecl decl = case decl of
       Ions bound'' bs' ions ->
         return ([NLet bs' bound''], env)
         where env = (bindEnv bs ions, newScope bs')
+  NUnpack bs tv bound -> do
+    bound' <- simplify bound
+    tv' <- asks $ rename tv . snd
+    let tEnv = (tv @> T tv', tv' @> ())
+    (bs', lEnv) <- extendR tEnv $ refreshBinders bs
+    return ([NUnpack bs' tv' bound'], tEnv <> lEnv)
 
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
