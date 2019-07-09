@@ -47,17 +47,17 @@ asTopPass m = do
   (ans, (decls, _)) <- liftEither $ runCatT (runReaderT m env) mempty
   return (ans, decls)
 
--- TODO: rewrite as normalize :: Expr -> NormM NExpr
--- to avoid unnecessary let bindings
-normalize :: Expr -> NormM (RecTree NAtom)
+normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
-  Lit x -> return $ RecLeaf $ NLit x
-  Var v -> asks $ fromLeft (error msg) . snd. fromL . (! v )
-             -- TODO: use this error pattern for env loookups too
-             where msg = "Type lambda should be immediately applied"
+  Lit x -> return $ NAtoms [NLit x]
+  Var v -> do
+    xs <- asks $ fromLeft (error msg) . snd. fromL . (! v )
+    return $ NAtoms (toList xs)
+      -- TODO: use this error pattern for env loookups too
+      where msg = "Type lambda should be immediately applied"
   PrimOp b [] xs -> do
-    xs' <- mapM normalize xs
-    writeExpr $ NPrimOp b [] (fmap fromLeaf xs') -- TODO: subst types
+     xs' <- mapM atomize xs
+     return $ NPrimOp b [] (fmap head xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
@@ -65,38 +65,40 @@ normalize expr = case expr of
   Lam b body -> do
     normalizeBinderR b $ \bs -> do
       body' <- normalizeScoped body
-      return $ RecLeaf $ NLam bs body'
+      return $ NAtoms [NLam bs body']
   App f x -> do
-    f' <- normalize f
-    x' <- normalize x
-    writeExpr $ NApp (fromLeaf f') (toList x')
+    f' <- atomize f
+    x' <- atomize x
+    return $ NApp (head f') x'
   For b body -> do
     normalizeBinderR b $ \[b'] -> do
       body' <- normalizeScoped body
-      writeExpr $ NFor b' body'
+      return $ NFor b' body'
   Get e i -> do
-    e' <- normalize e
-    i' <- normalize i
-    return $ fmap (flip NGet (fromLeaf i')) e'
-  -- TODO: consider finding these application sites in a bottom-up pass and
-  -- making a single monorphic version for each distinct type found,
-  -- rather than inlining
+    e' <- atomize e
+    i' <- atomize i
+    return $ NAtoms $ map (flip NGet (head i')) e'
+  -- -- TODO: consider finding these application sites in a bottom-up pass and
+  -- -- making a single monorphic version for each distinct type found,
+  -- -- rather than inlining
   TApp (Var v) ts -> do -- Assumes HM-style type lambdas only
     (bs, body) <- asks $ fromRight (error "Expected t-lambda") . snd . fromL . (! v)
     ts' <- mapM normalizeTy ts
-    extendR (bindFold $ zipWith replaceAnnot bs (map T ts')) $ do
-      normalize body
-  RecCon r -> liftM RecTree $ traverse normalize r
-  RecGet e field -> do
-    (RecTree r) <- normalize e
-    return $ recGet r field
+    let env = bindFold $ zipWith replaceAnnot bs (map T ts')
+    extendR env $ normalize body
+  RecCon r -> do
+    r' <- traverse atomize r
+    return $ NAtoms $ concat $ toList r'
+  RecGet e field -> undefined -- tricky - need to use type
   _ -> error $ "Can't yet normalize: " ++ pprint expr
-  where
-     -- TODO: accept name hint
-     writeExpr :: NExpr -> NormM (RecTree NAtom)
-     writeExpr nexpr = do
-       ty <- exprType expr
-       writeVars ty nexpr
+
+atomize :: Expr -> NormM [NAtom]
+atomize expr = do
+  ty <- exprType expr
+  expr' <- normalize expr
+  case expr' of
+    NAtoms atoms -> return atoms
+    _ -> liftM toList $ writeVars ty expr'
 
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
@@ -158,9 +160,7 @@ normalizeBinderR b cont = do
 normalizeScoped :: Expr -> NormM NExpr
 normalizeScoped expr = do
   (body, (decls, _)) <- scoped $ normalize expr
-  -- TODO: reduce clutter in the case where these atoms are all
-  -- vars bound at last expression
-  return $ ndecls decls $ NAtoms (toList body)
+  return $ ndecls decls body
 
 ndecls :: [NDecl] -> NExpr -> NExpr
 ndecls [] e = e
