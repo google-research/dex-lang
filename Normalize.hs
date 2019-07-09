@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Normalize (normalizePass, simpPass) where
+module Normalize (normalizePass, simpPass, nImpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -298,6 +298,68 @@ refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
 wrapDecls :: [NDecl] -> NExpr -> NExpr
 wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
 wrapDecls decls body = NDecls decls body
+
+-- === lowering to Imp IR ===
+
+data Dest = Buffer Var [Index]
+
+nImpPass :: NTopDecl -> TopPass () ImpDecl
+nImpPass decl = case decl of
+  NTopDecl (NLet bs expr) -> return $ ImpTopLet bs' prog'
+    where
+      prog' = toImp (map asDest bs) expr
+      bs' = map (fmap toImpType) bs
+  NEvalCmd NoOp -> return noOpCmd
+  -- seems to require type info. An alternative is to store an NDecl instead
+  -- EvalCmd (Command cmd expr) ->
+  where
+    noOpCmd = ImpEvalCmd (const undefined) [] NoOp
+
+
+toImp :: [Dest] -> NExpr -> ImpProg
+toImp dests expr = case expr of
+    NDecls [] body -> toImp dests body
+    NDecls (decl:rest) final -> case decl of
+       NLet bs bound -> wrapAllocs bs' $ bound' <> body'
+         where
+           bs' = map (fmap toImpType) bs
+           bound' = toImp (map asDest bs) bound
+           body'  = toImp dests (NDecls rest final)
+    -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+    NPrimOp b _ xs -> ImpProg [writeBuiltin b dest (map toImpAtom xs)]
+      where [dest] = dests
+    NAtoms xs -> ImpProg $ zipWith copy dests (map toImpAtom xs)
+
+toImpAtom :: NAtom -> IExpr
+toImpAtom atom = case atom of
+  NLit x -> ILit x
+  NVar v -> IVar v
+  NGet e i -> IGet (toImpAtom e) (toImpAtom i)
+
+toImpType :: NType -> IType
+toImpType ty = case ty of
+  NBaseType b -> IType b []
+  NTabType a b -> addIdx (typeToSize a) (toImpType b)
+
+addIdx :: Size -> IType -> IType
+addIdx n (IType ty shape) = IType ty (n : shape)
+
+typeToSize :: NType -> IExpr
+typeToSize (NTypeVar v) = IVar v
+typeToSize (NIdxSetLit n) = ILit (IntLit n)
+
+asDest :: NBinder -> Dest
+asDest (v:>_) = Buffer v []
+
+wrapAllocs :: [IBinder] -> ImpProg -> ImpProg
+wrapAllocs [] prog = prog
+wrapAllocs (b:bs) prog = ImpProg [Alloc b (wrapAllocs bs prog)]
+
+copy :: Dest -> IExpr -> Statement
+copy (Buffer v idxs) x = Update v idxs Copy [x]
+
+writeBuiltin :: Builtin -> Dest -> [IExpr] -> Statement
+writeBuiltin b (Buffer name destIdxs) exprs = Update name destIdxs b exprs
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
