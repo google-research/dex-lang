@@ -255,8 +255,11 @@ simplifyDecl decl = case decl of
 
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
-  NDecls decls body -> decompose (scope <> scope') body
+  NDecls decls body -> case body' of
+    Ions expr bs atoms-> Ions (wrapDecls decls expr) bs atoms
+    Unchanged -> Unchanged
     where
+      body' = decompose (scope <> scope') body
       scope' = foldMap declsScope decls
       declsScope decl = case decl of
         NLet bs _ -> bindFold bs
