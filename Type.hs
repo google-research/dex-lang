@@ -370,7 +370,10 @@ atomType atom = case atom of
     a' <- atomType i
     assertEq a a' "Get"
     return b
-  -- AFor b body ->
+  NAtomicFor b body -> do
+    checkNBinder b
+    bodyTy <- extendR (nBinderEnv [b]) (atomType body)
+    return $ NTabType (binderAnn b) bodyTy
   NLam bs body -> do
     mapM_ checkNBinder bs
     bodyTys <- extendR (nBinderEnv bs) (getNType body)

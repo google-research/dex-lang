@@ -48,11 +48,14 @@ toImp dests expr = case expr of
     (bs, bound', env) <- toImpDecl decl
     body' <- extendR env $ toImp dests (NDecls rest final)
     return $ wrapAllocs bs $ bound' <> body'
-  -- -- NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+  NFor b@(_:>n) body -> do
+    ([i:>_], env) <- toImpBinders [b]
+    n' <- typeToSize n
+    body' <- extendR env $ toImp (map (indexDest (IVar i)) dests) body
+    return $ ImpProg [Loop i n' body']
   NPrimOp b _ xs -> do
     xs' <- mapM toImpAtom xs
-    return $ ImpProg [writeBuiltin b dest xs']
-    where [dest] = dests
+    return $ ImpProg [primOpStatement b dests xs']
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
     return $ ImpProg $ zipWith copy dests xs'
@@ -85,6 +88,11 @@ toImpAtom atom = case atom of
   NVar v -> liftM IVar (lookupVar v)
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
 
+primOpStatement :: Builtin -> [Dest] -> [IExpr] -> Statement
+primOpStatement Range      (dest:_) [x] = copy dest x
+primOpStatement IndexAsInt [dest] [x] = copy dest x
+primOpStatement b [dest] xs = writeBuiltin b dest xs
+
 toImpType :: NType -> ImpM IType
 toImpType ty = case ty of
   NBaseType b -> return $ IType b []
@@ -110,6 +118,12 @@ typeToSize (NIdxSetLit n) = return $ ILit (IntLit n)
 
 asDest :: BinderP a -> Dest
 asDest (v:>_) = Buffer v []
+
+indexDest :: Index -> Dest -> Dest
+indexDest i (Buffer v destIdxs) = Buffer v (destIdxs `snoc` i)
+
+snoc :: [a] -> a -> [a]
+snoc xs x = reverse $ x : reverse xs
 
 wrapAllocs :: [IBinder] -> ImpProg -> ImpProg
 wrapAllocs [] prog = prog

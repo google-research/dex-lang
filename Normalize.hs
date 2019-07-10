@@ -55,9 +55,10 @@ normalize expr = case expr of
     return $ NAtoms (toList xs)
       -- TODO: use this error pattern for env loookups too
       where msg = "Type lambda should be immediately applied"
-  PrimOp b [] xs -> do
+  PrimOp b ts xs -> do
      xs' <- mapM atomize xs
-     return $ NPrimOp b [] (fmap head xs') -- TODO: subst types
+     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
+     return $ NPrimOp b ts' (fmap head xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
@@ -249,8 +250,10 @@ simplifyDecl decl = case decl of
         (bs', env) <- refreshBinders bs
         return ([NLet bs' bound'], env)
       Ions bound'' bs' ions ->
-        return ([NLet bs' bound''], env)
+        return $ case bs' of [] -> ([]    , env)
+                             _  -> ([decl], env)
         where env = (bindEnv bs ions, newScope bs')
+              decl' = NLet bs' bound''
   NUnpack bs tv bound -> do
     bound' <- simplify bound
     tv' <- asks $ rename tv . snd
@@ -261,14 +264,18 @@ simplifyDecl decl = case decl of
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
   NDecls decls body -> case body' of
-    Ions expr bs atoms-> Ions (wrapDecls decls expr) bs atoms
+    Ions expr bs atoms -> Ions (wrapDecls decls expr) bs atoms
     Unchanged -> Unchanged
     where
       body' = decompose (scope <> scope') body
       scope' = foldMap declsScope decls
       declsScope decl = case decl of
         NLet bs _ -> bindFold bs
-  NFor _ _ -> undefined
+  NFor b@(_:>n) body -> case decompose mempty body of
+    Unchanged -> Unchanged
+    Ions body' bs atoms -> Ions (NFor b body') bs' atoms'
+      where bs' = map (fmap (NTabType n)) bs
+            atoms' = map (NAtomicFor b) atoms
   NPrimOp _ _ _ -> Unchanged
   NApp _ _ -> error $ "Shouldn't have app left: " ++ pprint expr
   NAtoms xs -> Ions expr' bs xs  -- TODO: special treatment of unchanged case
@@ -301,6 +308,7 @@ refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
                              extendR env $ cont bs'
 
 wrapDecls :: [NDecl] -> NExpr -> NExpr
+wrapDecls [] body = body
 wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
 wrapDecls decls body = NDecls decls body
 

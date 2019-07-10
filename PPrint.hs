@@ -123,6 +123,7 @@ instance Pretty NAtom where
     NGet e i -> p e <> "." <> p i
     NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
                      <> line <> align (p body)
+    NAtomicFor b e -> parens $ "afor " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
 
 instance Pretty NType where
   pretty ty = case ty of
