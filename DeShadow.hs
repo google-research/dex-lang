@@ -49,12 +49,12 @@ deShadowExpr expr = case expr of
       body' <- recur body
       return $ Decls decls' body'
   ULam p body ->
-    withCat (deShadowPat p) $ \b decls -> do
+    withCat (deShadowPat p) $ \p' decls -> do
       body' <- recur body
-      return $ Lam b $ wrapDecls decls body'
+      return $ Lam p' $ wrapDecls decls body'
   UApp fexpr arg -> liftM2 App (recur fexpr) (recur arg)
   UFor b body ->
-    withCat (deShadowPat (RecLeaf b)) $ \b' decls -> do
+    withCat (deShadowPat (RecLeaf b)) $ \(RecLeaf b') decls -> do
       body' <- recur body
       return $ For b' $ wrapDecls decls body'
   UGet e v -> liftM2 Get (recur e) (recur v)
@@ -68,50 +68,57 @@ deShadowExpr expr = case expr of
 deShadowDecl :: UDecl -> DeShadowCat ()
 deShadowDecl (ULet p bound) = do
   bound' <- toCat $ deShadowExpr bound
-  (b, decls) <- captureW $ deShadowPat p
-  tell $ Let b bound' : decls
+  (p', decls) <- captureW $ deShadowPat p
+  tell $ Let p' bound' : decls
 deShadowDecl (UUnpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
   extend (asSnd (tv @> TypeVar tv'), tv'@>())
-  (b', decls) <- captureW $ deShadowPat (RecLeaf b)
+  (RecLeaf b', decls) <- captureW $ deShadowPat (RecLeaf b)
   tell $ Unpack b' tv' bound' : decls
 deShadowDecl (UTAlias v ty) = do  -- TODO: deal with capture
   ty' <- toCat $ deShadowType ty
   extend (asSnd (v @> ty'), v@>())
 
-deShadowPat :: RecTree UBinder -> DeShadowCat (BinderP Ann)
-deShadowPat pat = do
-  case pat of
-    RecLeaf (UBind b) -> do
-      b' <- freshBinder b
-      return b'
-    p -> do
-      v <- looks $ genFresh "pat" . snd
-      extend $ asSnd (v@>())
-      traverse (getPatElt v) (recTreeNamed p)
-      return (v:>Nothing)
+deShadowPat :: UPat -> DeShadowCat (RecTree (BinderP Ann))
+deShadowPat pat = traverse freshBinder pat
 
-getPatElt :: Var -> ([RecField], UBinder) -> DeShadowCat ()
-getPatElt _ (_, IgnoreBind) = return ()
-getPatElt v (fields, (UBind b)) = do
-  b' <- freshBinder b
-  tell $ [Let b' $ foldr (flip RecGet) (Var v) fields]
-
-freshBinder :: BinderP Ann -> DeShadowCat (BinderP Ann)
-freshBinder (v :> ty) = do
-  shadowed <- looks $ (v `isin`) . snd
-  if shadowed then throw RepeatedVarErr (pprint v)
-              else return ()
-  ty' <- toCat $ traverse deShadowType ty
-  v' <- looks $ rename v . snd
-  extend (asFst (v@>v'), v'@>())
-  return (v' :> ty')
+freshBinder :: UBinder -> DeShadowCat (BinderP Ann)
+freshBinder b = case b of
+  IgnoreBind -> do
+    v' <- fresh (rawName "_")
+    return $ v' :> Nothing
+  UBind (v :> ty) -> do
+    shadowed <- looks $ (v `isin`) . snd
+    if shadowed then throw RepeatedVarErr (pprint v) else return ()
+    ty' <- toCat $ traverse deShadowType ty
+    v' <- fresh v
+    return (v' :> ty')
+  where
+    fresh :: Name -> DeShadowCat Name
+    fresh v = do
+      v' <- looks $ rename v . snd
+      extend (asFst (v@>v'), v'@>())
+      return v'
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
   subst <- asks $ snd
-  return $ subType (fmap T subst) ty
+  return $ subType subst ty
+
+subType :: Env Type -> Type -> Type
+subType sub ty = case ty of
+  BaseType _ -> ty
+  TypeVar v  -> case envLookup sub v of Nothing  -> ty
+                                        Just ty' -> ty'
+  ArrType a b -> ArrType (recur a) (recur b)
+  TabType a b -> TabType (recur a) (recur b)
+  RecType r   -> RecType $ fmap recur r
+  Exists body -> Exists $ recur body
+  Forall ks body -> Forall ks (recur body)
+  IdxSetLit _ -> ty
+  BoundTVar _ -> ty
+  where recur = subType sub
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do

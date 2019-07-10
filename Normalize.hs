@@ -62,10 +62,10 @@ normalize expr = case expr of
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
     extendR env $ normalize (Decls decls final)
-  Lam b body -> do
-    normalizeBinderR b $ \bs -> do
-      body' <- normalizeScoped body
-      return $ NAtoms [NLam bs body']
+  Lam p body -> do
+    (bs, env) <- normalizePat p
+    body' <- extendR env $ normalizeScoped body
+    return $ NAtoms [NLam bs body']
   App f x -> do
     f' <- atomize f
     x' <- atomize x
@@ -89,7 +89,6 @@ normalize expr = case expr of
   RecCon r -> do
     r' <- traverse atomize r
     return $ NAtoms $ concat $ toList r'
-  RecGet e field -> undefined -- tricky - need to use type
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 atomize :: Expr -> NormM [NAtom]
@@ -102,10 +101,11 @@ atomize expr = do
 
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
-  Let (v:>ty) (TLam tbs body) -> return $ v@>L (ty, Right (tbs, body))
-  Let b bound -> do
+  Let (RecLeaf (v:>ty)) (TLam tbs body) ->
+    return $ v@>L (ty, Right (tbs, body))
+  Let p bound -> do
     bound' <- normalizeScoped bound
-    (bs, env) <- normalizeBinder b
+    (bs, env) <- normalizePat p
     extend $ asFst [NLet bs bound']
     return env
   Unpack b tv bound -> do
@@ -151,6 +151,11 @@ normalizeBinder (v:>ty) = do
           return $ v':>t
   let env' = (v @> L (ty, Left (fmap (NVar . binderVar) bs)))
   return (toList bs, env')
+
+normalizePat :: RecTree Binder -> NormM ([NBinder], NormEnv)
+normalizePat pat = do
+  (pat', env) <- catTraverse normalizeBinder pat
+  return (fold pat', env)
 
 normalizeBinderR :: Binder -> ([NBinder] -> NormM a) -> NormM a
 normalizeBinderR b cont = do

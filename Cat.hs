@@ -6,7 +6,7 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd,
-            Cat, runCat) where
+            Cat, runCat, catTraverse) where
 
 -- Monad for tracking monoidal state
 
@@ -81,6 +81,20 @@ extendLocal x m = do
   return ans
 
 -- Not part of the cat monad, but related utils for monoidal envs
+
+catTraverse :: (Monoid env, MonadReader env m, Traversable f)
+                  => (a -> m (b, env)) -> f a -> m (f b, env)
+catTraverse f xs = do
+  env <- ask
+  runCatT (traverse (asCat f) xs) env
+  where
+    asCat :: (Monoid env, MonadReader env m)
+                => (a -> m (b, env)) -> a -> CatT env m b
+    asCat f x = do
+      env' <- look
+      (x', env'') <- lift $ local (const env') (f x)
+      extend env''
+      return x'
 
 extendR :: (Monoid env, MonadReader env m) => env -> m a -> m a
 extendR x m = local (<> x) m

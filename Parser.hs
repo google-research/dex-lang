@@ -244,11 +244,11 @@ binder =     (symbol "_" >> return IgnoreBind)
 
 idxPat = binder
 
-pat :: Parser Pat
+pat :: Parser UPat
 pat =   parenPat
     <|> liftM RecLeaf binder
 
-parenPat :: Parser Pat
+parenPat :: Parser UPat
 parenPat = do
   xs <- parens $ pat `sepBy` symbol ","
   return $ case xs of

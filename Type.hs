@@ -3,7 +3,7 @@
 
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr) where
+             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr, patType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -24,10 +24,10 @@ type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
 checkTyped decl = decl <$ case decl of
-  TopDecl (Let b expr) -> do
+  TopDecl (Let p expr) -> do
     ty' <- check expr
-    assertEq (binderAnn b) ty' ""
-    putEnv $ lbind b
+    assertEq (patType p) ty' ""
+    putEnv $ foldMap lbind p
   TopDecl (Unpack b iv expr) -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
@@ -51,8 +51,8 @@ evalTypeM env m = runReaderT m env
 
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
-    Lit c        -> return $ BaseType (litType c)
-    Var v        -> lookupLVar v
+    Lit c -> return $ BaseType (litType c)
+    Var v -> lookupLVar v
     PrimOp b ts xs -> do
       mapM checkTy ts
       let BuiltinType kinds argTys ansTy = builtinType b
@@ -60,9 +60,9 @@ getType' check expr = case expr of
       zipWithM (checkEq "Builtin") argTys' (map recur xs)
       return ansTy'
     Decls decls body -> foldr getTypeDecl (recur body) decls
-    Lam b body -> do checkTy (binderAnn b)
-                     checkShadow b
-                     liftM (ArrType (binderAnn b)) (recurWith b body)
+    Lam p body -> do checkTy (patType p)
+                     checkShadowPat p
+                     liftM (ArrType (patType p)) (recurWithP p body)
     For i body -> do checkTy (binderAnn i)
                      checkShadow i
                      liftM (TabType (binderAnn i)) (recurWith i body)
@@ -73,8 +73,6 @@ getType' check expr = case expr of
                      checkEq "Get" a (recur ie)
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
-    RecGet e field -> do RecType r <- recur e
-                         return $ recGet r field
     TabCon n ty xs -> do
       mapM_ (checkEq "table" ty . recur) xs
       return $ TabType (IdxSetLit n) ty
@@ -88,11 +86,11 @@ getType' check expr = case expr of
   where
     getTypeDecl :: Decl -> TypeM a -> TypeM a
     getTypeDecl decl cont = case decl of
-     Let b expr -> do
-       checkTy (binderAnn b)
-       checkShadow b
-       checkEq "Let" (binderAnn b) (recur expr)
-       extendR (lbind b) cont
+     Let p expr -> do
+       checkTy (patType p)
+       checkShadowPat p
+       checkEq "Let" (patType p) (recur expr)
+       extendR (foldMap lbind p) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
        let tb = tv :> idxSetKind
@@ -112,6 +110,7 @@ getType' check expr = case expr of
 
     recur = getType' check
     recurWith  b  = extendR (lbind b) . recur
+    recurWithP p  = extendR (foldMap lbind p) . recur
     recurWithT bs = extendR (foldMap tbind bs) . recur
 
     lookupLVar :: Var -> TypeM Type
@@ -131,9 +130,16 @@ checkShadow (v :> _) = do
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
+checkShadowPat :: Traversable f => f Binder -> TypeM ()
+checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
+
 unpackExists :: Type -> Var -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
 unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
+
+patType :: RecTree Binder -> Type
+patType (RecLeaf (_:>ty)) = ty
+patType (RecTree r) = RecType $ fmap patType r
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -241,6 +247,9 @@ instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
   subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)
                                           (subFreeTVsBVs bvs f y)
 
+instance (HasTypeVars a) => HasTypeVars (RecTree a) where
+  subFreeTVsBVs bvs f tree = traverse (subFreeTVsBVs bvs f) tree
+
 instance HasTypeVars Type where
   subFreeTVsBVs bvs f ty = case ty of
       BaseType _    -> pure ty
@@ -263,19 +272,18 @@ instance HasTypeVars Expr where
                                                   (traverse recur xs)
       Decls [] final -> recur final
       Decls (decl:decls) final -> case decl of
-        Let b bound ->
-          liftA3 (\b' bound' body' -> wrapDecls [Let b' bound'] body')
-                 (recurB b) (recur bound) (recur body)
+        Let p bound ->
+          liftA3 (\p' bound' body' -> wrapDecls [Let p' bound'] body')
+                 (traverse recurB p) (recur bound) (recur body)
         Unpack b tv bound ->
           liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
                  (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
         where body = Decls decls final
-      Lam b body       -> liftA2 Lam (recurB b) (recur body)
+      Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
       For b body       -> liftA2 For (recurB b) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
-      RecGet e field   -> liftA (flip RecGet field) (recur e)
       TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
       TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
