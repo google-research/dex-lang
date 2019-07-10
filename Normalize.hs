@@ -90,6 +90,10 @@ normalize expr = case expr of
   RecCon r -> do
     r' <- traverse atomize r
     return $ NAtoms $ concat $ toList r'
+  TabCon n ty rows -> do
+    ts' <- liftM toList $ normalizeTy ty
+    rows' <- mapM atomize rows
+    return $ NTabCon n ts' rows'
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 atomize :: Expr -> NormM [NAtom]
@@ -98,7 +102,8 @@ atomize expr = do
   expr' <- normalize expr
   case expr' of
     NAtoms atoms -> return atoms
-    _ -> liftM toList $ writeVars ty expr'
+    _ -> do tys <- normalizeTy ty
+            liftM toList $ writeVars tys expr'
 
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
@@ -179,9 +184,8 @@ exprType expr = do
                                              T _      -> T ()
   return $ getType env' expr
 
-writeVars :: Type -> NExpr -> NormM (RecTree NAtom)
-writeVars ty expr = do
-  tys <- normalizeTy ty
+writeVars :: RecTree NType -> NExpr -> NormM (RecTree NAtom)
+writeVars tys expr = do
   bs <- flip traverse tys $ \t -> do
           v' <- freshVar (rawName "tmp")
           return $ v':>t
@@ -239,7 +243,8 @@ simplify expr = case expr of
         where env = asFst $ bindEnv bs xs'
       _ -> error "Expected lambda"
   NPrimOp _ _ _ -> nSubst expr
-  NAtoms _ -> nSubst expr
+  NAtoms _      -> nSubst expr
+  NTabCon _ _ _ -> nSubst expr
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SubstEnv)
 simplifyDecl decl = case decl of
@@ -250,8 +255,8 @@ simplifyDecl decl = case decl of
         (bs', env) <- refreshBinders bs
         return ([NLet bs' bound'], env)
       Ions bound'' bs' ions ->
-        return $ case bs' of [] -> ([]    , env)
-                             _  -> ([decl], env)
+        return $ case bs' of [] -> ([]     , env)
+                             _  -> ([decl'], env)
         where env = (bindEnv bs ions, newScope bs')
               decl' = NLet bs' bound''
   NUnpack bs tv bound -> do
@@ -283,6 +288,7 @@ decompose scope expr = case expr of
       vs = foldMap freeVars xs
       bs = map (uncurry (:>)) $ envPairs $ envIntersect vs scope
       expr' = NAtoms $ fmap (NVar . binderVar) bs
+  NTabCon _ _ _ -> Unchanged
 
 bindEnv :: [BinderP c] -> [a] -> FullEnv a b
 bindEnv bs xs = fold $ zipWith f bs xs
@@ -331,6 +337,8 @@ instance NSubst NExpr where
     NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
     NApp f xs -> liftM2 NApp (nSubst f) (mapM nSubst xs)
     NAtoms xs -> liftM NAtoms $ mapM nSubst xs
+    NTabCon n ts rows ->
+      liftM2 (NTabCon n) (mapM nSubst ts) (mapM (mapM nSubst) rows)
 
 instance NSubst NAtom where
   nSubst atom = case atom of

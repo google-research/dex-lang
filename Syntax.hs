@@ -191,7 +191,8 @@ data NExpr = NDecls [NDecl] NExpr
            | NPrimOp Builtin [NType] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]
-              deriving (Show)
+           | NTabCon IdxSetVal [NType] [[NAtom]]
+             deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
            | NUnpack [NBinder] Var NExpr

@@ -341,6 +341,10 @@ getNType expr = case expr of
     assertEq as as' ""
     return bs
   NAtoms xs -> mapM atomType xs
+  NTabCon n ts rows -> do
+    rowTys <- mapM (mapM atomType) rows
+    mapM (\ts' -> assertEq ts ts' "") rowTys
+    return $ map (NTabType (NIdxSetLit n)) ts
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of

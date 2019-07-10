@@ -110,6 +110,7 @@ instance Pretty NExpr where
             args  = case xs of [] -> mempty; _ -> " " <> hsep (map p xs)
     NApp f xs -> align $ group $ p f <+> hsep (map p xs)
     NAtoms xs -> tup xs
+    NTabCon _ _ xs -> list (map pretty xs)
 
 instance Pretty NDecl where
   pretty decl = case decl of

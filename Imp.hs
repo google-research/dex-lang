@@ -59,6 +59,10 @@ toImp dests expr = case expr of
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
     return $ ImpProg $ zipWith copy dests xs'
+  NTabCon _ _ rows -> do
+    liftM fold $ zipWithM writeRow [0..] rows
+    where writeRow i row = toImp (indexedDests i) (NAtoms row)
+          indexedDests i = map (indexDest (ILit (IntLit i))) dests
 
 toImpDecl :: NDecl -> ImpM ([IBinder], ImpProg, ImpEnv)
 toImpDecl decl = case decl of
