@@ -16,7 +16,7 @@ all-tests: run-type-tests \
            run-eval-tests \
            run-shadow-tests \
            run-annot-tests \
-           run-ad-tests \
+           # run-ad-tests \
            run-flop-tests
 
 clean:

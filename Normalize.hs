@@ -19,7 +19,7 @@ import Pass
 
 type Scope = Env ()
 data TLam = TLamContents NormEnv [TBinder] Expr
-type NormEnv = FullEnv (Type, Either (RecTree NAtom) TLam) (RecTree NType)
+type NormEnv = FullEnv (Type, Either (RecTree Name) TLam) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
 -- TODO: add top-level freshness scope to top-level env
@@ -52,19 +52,19 @@ normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
   Lit x -> return $ NAtoms [NLit x]
   Var v -> do
-    xs <- asks $ toList . fromLeft (error msg) . snd. fromL . (! v )
-    liftM NAtoms $ mapM unShadow xs
+    vs <- asks $ toList . fromLeft (error msg) . snd. fromL . (! v )
+    return $ NAtoms (map NVar vs)
       where msg = "Type lambda should be immediately applied"
   PrimOp Scan _ [x, For ib (Lam p body)] -> do
     xs <- atomize x
     normalizeBinderR ib $ \[ib'] ->
       normalizePatR p $ \bs -> do
         body' <- normalizeScoped body
-        unShadow $ NScan ib' bs xs body'
+        return $ NScan ib' bs xs body'
   PrimOp b ts xs -> do
     xs' <- mapM atomize xs
     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
-    unShadow $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
+    return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
@@ -76,7 +76,7 @@ normalize expr = case expr of
   App f x -> do
     [f'] <- atomize f
     x' <- atomize x
-    unShadow $ NApp f' x'
+    return $ NApp f' x'
   For b body -> do
     normalizeBinderR b $ \[b'] -> do
       body' <- normalizeScoped body
@@ -84,7 +84,7 @@ normalize expr = case expr of
   Get e i -> do
     e' <- atomize e
     i' <- atomize i
-    unShadow $ NAtoms $ map (flip NGet (fromOne i')) e'
+    return $ NAtoms $ map (flip NGet (fromOne i')) e'
   -- -- TODO: consider finding these application sites in a bottom-up pass and
   -- -- making a single monorphic version for each distinct type found,
   -- -- rather than inlining
@@ -96,28 +96,27 @@ normalize expr = case expr of
     local (const (env <> env')) $ normalize body
   RecCon r -> do
     r' <- traverse atomize r
-    unShadow $ NAtoms $ concat $ toList r'
+    return $ NAtoms $ concat $ toList r'
   TabCon n ty rows -> do
     ts' <- liftM toList $ normalizeTy ty
     rows' <- mapM atomize rows
-    unShadow $ NTabCon n ts' rows'
+    return $ NTabCon n ts' rows'
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
--- TODO: figure out a better way to ensure (or not require) that binders within
--- atoms not shadow their environments. Scattering this everywhere isn't great.
-unShadow :: NSubst a => a -> NormM a
-unShadow x = do
-  scope <- looks snd
-  return $ runReader (nSubst x) (mempty, scope)
-
+-- Only produces atoms without binders (i.e. no NLam/NAtomicFor)
 atomize :: Expr -> NormM [NAtom]
 atomize expr = do
   ty <- exprType expr
   expr' <- normalize expr
   case expr' of
-    NAtoms atoms -> return atoms
-    _ -> do tys <- normalizeTy ty
-            liftM toList $ writeVars tys expr'
+    NAtoms atoms | all noBinders atoms -> return atoms
+    _ -> do tys <- liftM toList $ normalizeTy ty
+            writeVars tys expr'
+  where
+    noBinders :: NAtom -> Bool
+    noBinders (NLam _ _) = False
+    noBinders (NAtomicFor _ _) = False
+    noBinders _ = True
 
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
@@ -170,7 +169,7 @@ normalizeBinder (v:>ty) = do
   bs <- flip traverse tys $ \t -> do
           v' <- freshVar v -- TODO: incorporate field names
           return $ v':>t
-  let env' = (v @> L (ty, Left (fmap (NVar . binderVar) bs)))
+  let env' = (v @> L (ty, Left (fmap binderVar bs)))
   return (toList bs, env')
 
 normalizePat :: RecTree Binder -> NormM ([NBinder], NormEnv)
@@ -199,7 +198,7 @@ exprType expr = do
                                              T _      -> T ()
   return $ getType env' expr
 
-writeVars :: RecTree NType -> NExpr -> NormM (RecTree NAtom)
+writeVars :: Traversable f => f NType -> NExpr -> NormM (f NAtom)
 writeVars tys expr = do
   bs <- flip traverse tys $ \t -> do
           v' <- freshVar (rawName "tmp")
