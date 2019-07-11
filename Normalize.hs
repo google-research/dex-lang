@@ -55,10 +55,16 @@ normalize expr = case expr of
     return $ NAtoms (toList xs)
       -- TODO: use this error pattern for env loookups too
       where msg = "Type lambda should be immediately applied"
+  PrimOp Scan _ [x, For ib (Lam p body)] -> do
+    xs <- atomize x
+    normalizeBinderR ib $ \[ib'] ->
+      normalizePatR p $ \bs -> do
+        body' <- normalizeScoped body
+        return $ NScan ib' bs xs body'
   PrimOp b ts xs -> do
-     xs' <- mapM atomize xs
-     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
-     return $ NPrimOp b ts' (fmap head xs') -- TODO: subst types
+    xs' <- mapM atomize xs
+    ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
+    return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
@@ -68,17 +74,17 @@ normalize expr = case expr of
     body' <- extendR env $ normalizeScoped body
     return $ NAtoms [NLam bs body']
   App f x -> do
-    f' <- atomize f
+    [f'] <- atomize f
     x' <- atomize x
-    return $ NApp (head f') x'
+    return $ NApp f' x'
   For b body -> do
     normalizeBinderR b $ \[b'] -> do
       body' <- normalizeScoped body
-      return $ NFor b' body'
+      return $ NScan b' [] [] body'
   Get e i -> do
     e' <- atomize e
     i' <- atomize i
-    return $ NAtoms $ map (flip NGet (head i')) e'
+    return $ NAtoms $ map (flip NGet (fromOne i')) e'
   -- -- TODO: consider finding these application sites in a bottom-up pass and
   -- -- making a single monorphic version for each distinct type found,
   -- -- rather than inlining
@@ -163,6 +169,12 @@ normalizePat pat = do
   (pat', env) <- catTraverse normalizeBinder pat
   return (fold pat', env)
 
+-- TODO: factor out this pattern
+normalizePatR :: RecTree Binder -> ([NBinder] -> NormM a) -> NormM a
+normalizePatR pat cont = do
+  (pat', env) <- normalizePat pat
+  extendR env (cont pat')
+
 normalizeBinderR :: Binder -> ([NBinder] -> NormM a) -> NormM a
 normalizeBinderR b cont = do
   (bs, env) <- normalizeBinder b
@@ -231,17 +243,18 @@ simplify expr = case expr of
     body' <- extendR env $ simplify body
     return $ wrapDecls decls body'
     where body = NDecls rest final
-  NFor b e -> do
-    refreshBindersR [b] $ \[b'] -> do
+  NScan b bs xs e -> do
+    xs' <- mapM nSubst xs
+    refreshBindersR (b:bs) $ \(b':bs') -> do
       e' <- simplify e
-      return $ NFor b' e'
+      return $ NScan b' bs' xs' e'
   NApp f xs -> do
     xs' <- mapM nSubst xs
     f <- nSubst f
     case f of
       NLam bs body -> extendR env (simplify body)
         where env = asFst $ bindEnv bs xs'
-      _ -> error "Expected lambda"
+      _ -> error $ "Expected lambda, got: " ++ pprint f
   NPrimOp _ _ _ -> nSubst expr
   NAtoms _      -> nSubst expr
   NTabCon _ _ _ -> nSubst expr
@@ -276,11 +289,12 @@ decompose scope expr = case expr of
       scope' = foldMap declsScope decls
       declsScope decl = case decl of
         NLet bs _ -> bindFold bs
-  NFor b@(_:>n) body -> case decompose mempty body of
+  NScan b@(_:>n) [] [] body -> case decompose mempty body of
     Unchanged -> Unchanged
-    Ions body' bs atoms -> Ions (NFor b body') bs' atoms'
+    Ions body' bs atoms -> Ions (NScan b [] [] body') bs' atoms'
       where bs' = map (fmap (NTabType n)) bs
             atoms' = map (NAtomicFor b) atoms
+  NScan _ _ _ _ -> Unchanged
   NPrimOp _ _ _ -> Unchanged
   NApp _ _ -> error $ "Shouldn't have app left: " ++ pprint expr
   NAtoms xs -> Ions expr' bs xs  -- TODO: special treatment of unchanged case
@@ -318,6 +332,10 @@ wrapDecls [] body = body
 wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
 wrapDecls decls body = NDecls decls body
 
+fromOne :: [x] -> x
+fromOne [x] = x
+fromOne _ = error "Expected singleton list"
+
 -- === capture-avoiding substitutions on NExpr and friends ===
 
 class NSubst a where
@@ -333,7 +351,8 @@ instance NSubst NExpr where
            body' <- nSubst body
            return $ wrapDecls [NLet bs' bound'] body'
        where body = NDecls rest final
-    NFor b e -> refreshBindersR [b] $ \[b'] -> liftM (NFor b') (nSubst e)
+    NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
+                         liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
     NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
     NApp f xs -> liftM2 NApp (nSubst f) (mapM nSubst xs)
     NAtoms xs -> liftM NAtoms $ mapM nSubst xs
@@ -345,14 +364,20 @@ instance NSubst NAtom where
     NLit x -> return $ NLit x
     NVar v -> do
       x <- asks $ flip envLookup v . fst
-      return $ case x of
-        Nothing -> NVar v
-        Just (L x') -> x'
+      case x of
+        Nothing -> return $ NVar v
+        Just (L x') -> local (\(_, scope) -> (mempty, scope)) (nSubst x')
     NGet e i -> do
       e' <- nSubst e
       i' <- nSubst i
-      return $ NGet e' i'  -- TODO atomic 'for' beta reduction
-    -- AFor b body -> undefined -- TODO subst (refreshing binder) and possibly eta convert
+      case e' of
+        NAtomicFor (v:>_) body -> extendR (asFst (v@>L i')) $ nSubst body
+        _ -> return $ NGet e' i'
+    NAtomicFor b body ->
+      -- TODO: eta convert if possible
+      refreshBindersR [b] $ \[b'] -> do
+        body' <- nSubst body
+        return $ NAtomicFor b' body'
     NLam bs body ->
       refreshBindersR bs $ \bs' -> do
         body' <- nSubst body

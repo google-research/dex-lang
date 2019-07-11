@@ -17,7 +17,7 @@ import Util
 import Fresh
 
 data Dest = Buffer Var [Index]
-type ImpEnv = (Env Name, Env ())
+type ImpEnv = (Env IExpr, Env ())
 type ImpM a = ReaderT ImpEnv (Either Err) a
 
 impPass :: NTopDecl -> TopPass ImpEnv ImpDecl
@@ -48,11 +48,16 @@ toImp dests expr = case expr of
     (bs, bound', env) <- toImpDecl decl
     body' <- extendR env $ toImp dests (NDecls rest final)
     return $ wrapAllocs bs $ bound' <> body'
-  NFor b@(_:>n) body -> do
-    ([i:>_], env) <- toImpBinders [b]
+  NScan b@(_:>n) bs xs body -> do
+    ([i:>_], idxEnv ) <- toImpBinders [b]
+    xs' <- mapM toImpAtom xs
     n' <- typeToSize n
-    body' <- extendR env $ toImp (map (indexDest (IVar i)) dests) body
-    return $ ImpProg [Loop i n' body']
+    let carryEnv = fold $ zipWith (\(v:>_) d -> v @> destAsIExpr d) bs carryDests
+    body' <- extendR (idxEnv <> (carryEnv, mempty)) $
+               toImp (carryDests <> map (indexDest (IVar i)) mapDests) $ body
+    return $ ImpProg $ zipWith copy carryDests xs' ++ [Loop i n' body']
+    where
+      (carryDests, mapDests) = splitAt (length bs) dests
   NPrimOp b _ xs -> do
     xs' <- mapM toImpAtom xs
     return $ ImpProg [primOpStatement b dests xs']
@@ -82,14 +87,14 @@ toImpBinders :: [NBinder] -> ImpM ([IBinder], ImpEnv)
 toImpBinders bs = do
   vs' <- asks $ renames vs . snd
   ts' <- mapM toImpType ts
-  let env = (fold $ zipWith (@>) vs vs', foldMap (@>()) vs')
+  let env = (fold $ zipWith (\v v' -> v @> IVar v') vs vs', foldMap (@>()) vs')
   return (zipWith (:>) vs' ts', env)
   where (vs, ts) = unzip [(v, t) | v:>t <- bs]
 
 toImpAtom :: NAtom -> ImpM IExpr
 toImpAtom atom = case atom of
   NLit x -> return $ ILit x
-  NVar v -> liftM IVar (lookupVar v)
+  NVar v -> lookupVar v
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
 
 primOpStatement :: Builtin -> [Dest] -> [IExpr] -> Statement
@@ -104,24 +109,28 @@ toImpType ty = case ty of
   -- TODO: fix this (only works for range)
   NExists [] -> return intTy
   NTypeVar _ -> return intTy
+  NIdxSetLit _ -> return intTy
   _ -> error $ pprint ty
 
-lookupVar :: Name -> ImpM Name
+lookupVar :: Name -> ImpM IExpr
 lookupVar v = do
   x <- asks $ flip envLookup v . fst
   return $ case x of
-    Nothing -> v
+    Nothing -> IVar v
     Just v' -> v'
 
 addIdx :: Size -> IType -> IType
 addIdx n (IType ty shape) = IType ty (n : shape)
 
 typeToSize :: NType -> ImpM IExpr
-typeToSize (NTypeVar v) = liftM IVar (lookupVar v)
+typeToSize (NTypeVar v) = lookupVar v
 typeToSize (NIdxSetLit n) = return $ ILit (IntLit n)
 
 asDest :: BinderP a -> Dest
 asDest (v:>_) = Buffer v []
+
+destAsIExpr :: Dest -> IExpr
+destAsIExpr (Buffer v idxs) = foldl IGet (IVar v) idxs
 
 indexDest :: Index -> Dest -> Dest
 indexDest i (Buffer v destIdxs) = Buffer v (destIdxs `snoc` i)

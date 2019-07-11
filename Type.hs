@@ -322,10 +322,16 @@ getNType expr = case expr of
   NDecls (decl:decls) final -> do
     env <- checkNDecl decl
     extendR env $ getNType (NDecls decls final)
-  NFor b@(_:>i) body -> do
+  NScan b@(_:>i) bs xs body -> do
     checkNBinder b
-    bodyTys <- extendR (nBinderEnv [b]) (getNType body)
-    return $ map (NTabType i) bodyTys
+    let carryTys = map binderAnn bs
+    xs' <- mapM atomType xs
+    mapM_ checkNBinder bs
+    assertEq carryTys xs' ""
+    bodyTys <- extendR (nBinderEnv (b:bs)) (getNType body)
+    let (carryTys', outTys) = splitAt (length bs) bodyTys
+    assertEq carryTys carryTys' ""
+    return $ carryTys ++ map (NTabType i) outTys
   NPrimOp b ts xs -> do
     mapM_ checkNTy ts
     argTys'' <- mapM atomType xs

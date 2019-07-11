@@ -187,7 +187,7 @@ type UPat = RecTree UBinder
 -- === tuple-free ANF-ish normalized IR ===
 
 data NExpr = NDecls [NDecl] NExpr
-           | NFor NBinder NExpr
+           | NScan NBinder [NBinder] [NAtom] NExpr
            | NPrimOp Builtin [NType] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]

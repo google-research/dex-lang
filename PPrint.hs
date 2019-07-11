@@ -83,11 +83,11 @@ instance Pretty b => Pretty (ExprP b) where
                                       <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ group $ p e1 <+> p e2
-    For b e      -> parens $ "for " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
+    For b e      -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
     TabCon _ _ xs -> list (map pretty xs)
-    TLam binders expr -> "Lam" <+> p binders <> ":"
+    TLam binders expr -> "Lam" <+> p binders <> "."
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts
     SrcAnnot expr _ -> p expr
@@ -104,7 +104,10 @@ instance Pretty NExpr where
   pretty expr = case expr of
     NDecls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
                            <> line <> "in" <+> p body
-    NFor b e -> parens $ "for " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
+    NScan b [] [] body -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
+    NScan b bs xs body -> parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
+                            <+> hsep (map p xs) <> ","
+                            <+> nest 4 (hardline <> p body)
     NPrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> brackets (hsep (map p ts))
             args  = case xs of [] -> mempty; _ -> " " <> hsep (map p xs)
@@ -124,7 +127,7 @@ instance Pretty NAtom where
     NGet e i -> p e <> "." <> p i
     NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
                      <> line <> align (p body)
-    NAtomicFor b e -> parens $ "afor " <+> p b <+> ":" <+> nest 4 (hardline <> p e)
+    NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
 
 instance Pretty NType where
   pretty ty = case ty of

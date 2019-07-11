@@ -41,11 +41,11 @@ rename :: Name -> Env a -> Name
 rename v scope | v `isin` scope = genFresh (nameTag v) scope
                | otherwise = v
 
-renames :: [Name] -> Env a -> [Name]
+renames :: [Name] -> Env () -> [Name]
 renames [] _ = []
 renames (v:vs) scope = v':vs'
   where v' = rename v scope
-        vs' = renames vs (scope <> v' @> undefined)
+        vs' = renames vs (scope <> v' @> ())
 
 -- === state monad version of fresh var generation ===
 
