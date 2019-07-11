@@ -16,8 +16,8 @@ all-tests: run-type-tests \
            run-eval-tests \
            run-shadow-tests \
            run-annot-tests \
-           # run-ad-tests \
-           run-flop-tests
+           run-flop-tests \
+           # run-ad-tests
 
 clean:
 	rm cbits/*.so

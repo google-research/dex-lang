@@ -23,14 +23,14 @@ type NormEnv = FullEnv (Type, Either (RecTree Name) TLam) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
 -- TODO: add top-level freshness scope to top-level env
-normalizePass :: TopDecl -> TopPass NormEnv NTopDecl
+normalizePass :: TopDecl -> TopPass (NormEnv, Scope) NTopDecl
 normalizePass topDecl = case topDecl of
   TopDecl decl -> do
     (env, decls) <- asTopPass (normalizeDecl decl)
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return decl'
-    putEnv env
+    putEnv (asFst env)
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
   EvalCmd NoOp -> return (NEvalCmd NoOp)
@@ -42,23 +42,24 @@ normalizePass topDecl = case topDecl of
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
 
-asTopPass :: NormM a -> TopPass NormEnv (a, [NDecl])
+asTopPass :: NormM a -> TopPass (NormEnv, Scope) (a, [NDecl])
 asTopPass m = do
-  env <- getEnv
-  (ans, (decls, _)) <- liftEither $ runCatT (runReaderT m env) mempty
+  (env, scope) <- getEnv
+  (ans, (decls, scope')) <- liftEither $ runCatT (runReaderT m env) ([], scope)
+  putEnv (asSnd scope')
   return (ans, decls)
 
 normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
   Lit x -> return $ NAtoms [NLit x]
   Var v -> do
-    vs <- asks $ toList . fromLeft (error msg) . snd. fromL . (! v )
+    vs <- asks $ toList . fromLeft (error msg) . snd . fromL . (! v )
     return $ NAtoms (map NVar vs)
       where msg = "Type lambda should be immediately applied"
   PrimOp Scan _ [x, For ib (Lam p body)] -> do
     xs <- atomize x
-    normalizeBinderR ib $ \[ib'] ->
-      normalizePatR p $ \bs -> do
+    normalizeBindersR [ib] $ \[ib'] ->
+      normalizeBindersR p $ \bs -> do
         body' <- normalizeScoped body
         return $ NScan ib' bs xs body'
   PrimOp b ts xs -> do
@@ -70,15 +71,15 @@ normalize expr = case expr of
     env <- normalizeDecl decl
     extendR env $ normalize (Decls decls final)
   Lam p body -> do
-    (bs, env) <- normalizePat p
-    body' <- extendR env $ normalizeScoped body
-    return $ NAtoms [NLam bs body']
+    normalizeBindersR p $ \bs -> do
+      body' <- normalizeScoped body
+      return $ NAtoms [NLam bs body']
   App f x -> do
     [f'] <- atomize f
     x' <- atomize x
     return $ NApp f' x'
   For b body -> do
-    normalizeBinderR b $ \[b'] -> do
+    normalizeBindersR [b] $ \[b'] -> do
       body' <- normalizeScoped body
       return $ NScan b' [] [] body'
   Get e i -> do
@@ -125,23 +126,17 @@ normalizeDecl decl = case decl of
     return $ v@>L (ty, Right (TLamContents env tbs body))
   Let p bound -> do
     bound' <- normalizeScoped bound
-    (bs, env) <- normalizePat p  -- TODO: this should be scoped
+    (bs, env) <- normalizeBinders p
     extend $ asFst [NLet bs bound']
     return env
   Unpack b tv bound -> do
     bound' <- normalizeScoped bound
-    tv' <- freshVar tv
+    tv' <- looks $ rename tv . snd
     let tenv = tv @> T (RecLeaf (NTypeVar tv'))
     extendR tenv $ do
-      (bs, lenv) <- normalizeBinder b
-      extend $ asFst [NUnpack bs tv' bound']
+      (bs, lenv) <- normalizeBinders [b]
+      extend $ ([NUnpack bs tv' bound'], tv' @> ())
       return $ tenv <> lenv
-
-freshVar :: Name -> NormM Name
-freshVar v = do
-  v' <- looks $ rename v . snd
-  extend $ asSnd $ v'@> ()
-  return v'
 
 normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
@@ -167,24 +162,21 @@ normalizeBinder :: Binder -> NormM ([NBinder], NormEnv)
 normalizeBinder (v:>ty) = do
   tys <- normalizeTy ty
   bs <- flip traverse tys $ \t -> do
-          v' <- freshVar v -- TODO: incorporate field names
+          v' <- looks $ rename v . snd
+          extend $ asSnd (v' @> ())
           return $ v':>t
   let env' = (v @> L (ty, Left (fmap binderVar bs)))
   return (toList bs, env')
 
-normalizePat :: RecTree Binder -> NormM ([NBinder], NormEnv)
-normalizePat pat = liftM fold $ traverse normalizeBinder pat
+normalizeBinders :: Traversable f =>
+                      f Binder -> NormM ([NBinder], NormEnv)
+normalizeBinders bs = liftM fold $ traverse normalizeBinder bs
 
--- TODO: factor out this pattern
-normalizePatR :: RecTree Binder -> ([NBinder] -> NormM a) -> NormM a
-normalizePatR pat cont = do
-  (pat', env) <- normalizePat pat
-  extendR env (cont pat')
-
-normalizeBinderR :: Binder -> ([NBinder] -> NormM a) -> NormM a
-normalizeBinderR b cont = do
-  (bs, env) <- normalizeBinder b
-  extendR env (cont bs)
+normalizeBindersR :: Traversable f =>
+                       f Binder -> ([NBinder] -> NormM a) -> NormM a
+normalizeBindersR bs cont = do
+  ((bs', env), catEnv) <- scoped $ normalizeBinders bs
+  extendLocal catEnv $ extendR env $ cont bs'
 
 normalizeScoped :: Expr -> NormM NExpr
 normalizeScoped expr = do
@@ -200,10 +192,12 @@ exprType expr = do
 
 writeVars :: Traversable f => f NType -> NExpr -> NormM (f NAtom)
 writeVars tys expr = do
-  bs <- flip traverse tys $ \t -> do
-          v' <- freshVar (rawName "tmp")
-          return $ v':>t
-  extend $ asFst [NLet (toList bs) expr]
+  scope <- looks snd
+  let (bs, scope') = flip runCat scope $
+                       flip traverse tys $ \t -> do
+                         v <- freshCat (rawName "tmp")
+                         return $ v:>t
+  extend  ([NLet (toList bs) expr], scope')
   return $ fmap (NVar . binderVar) bs
 
 -- === simplification pass ===
@@ -322,9 +316,8 @@ refreshBinders :: MonadReader SubstEnv m => [NBinder] -> m ([NBinder], SubstEnv)
 refreshBinders bs = do
   scope <- asks snd
   ts' <- mapM nSubst ts
-  let vs' = renames vs scope
+  let (vs', scope') = renames vs scope
       env' = fold $ zipWith (\v v' -> v @> L (NVar v')) vs vs'
-      scope' = foldMap (\v -> v @> ()) vs'
       bs' = zipWith (:>) vs' ts'
   return (bs', (env', scope'))
   where (vs, ts) = unzip [(v,t) | v:>t <- bs]

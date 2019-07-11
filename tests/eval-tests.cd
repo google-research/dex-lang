@@ -177,3 +177,4 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
 
 > 1
 
+

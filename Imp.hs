@@ -85,9 +85,9 @@ toImpDecl decl = case decl of
 
 toImpBinders :: [NBinder] -> ImpM ([IBinder], ImpEnv)
 toImpBinders bs = do
-  vs' <- asks $ renames vs . snd
+  (vs', scope) <- asks $ renames vs . snd
   ts' <- mapM toImpType ts
-  let env = (fold $ zipWith (\v v' -> v @> IVar v') vs vs', foldMap (@>()) vs')
+  let env = (fold $ zipWith (\v v' -> v @> IVar v') vs vs', scope)
   return (zipWith (:>) vs' ts', env)
   where (vs, ts) = unzip [(v, t) | v:>t <- bs]
 

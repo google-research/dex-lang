@@ -28,3 +28,12 @@ arr = 20
 :p arr
 
 > 10
+
+-- testing top-level shadowing
+f x = x
+
+x = 1
+
+:p f 1
+
+> 1

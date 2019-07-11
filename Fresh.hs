@@ -7,7 +7,7 @@
 
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
-              FreshRT, MonadFreshR, freshName, askFresh, localFresh,
+              FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
               freshenBinder) where
 
 import Control.Monad.State.Strict
@@ -15,8 +15,10 @@ import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
+import Data.Foldable
 
 import Env
+import Cat
 
 type FreshScope = Env ()
 
@@ -41,11 +43,13 @@ rename :: Name -> Env a -> Name
 rename v scope | v `isin` scope = genFresh (nameTag v) scope
                | otherwise = v
 
-renames :: [Name] -> Env () -> [Name]
-renames [] _ = []
-renames (v:vs) scope = v':vs'
-  where v' = rename v scope
-        vs' = renames vs (scope <> v' @> ())
+renames :: Traversable f => f Name -> Env () -> (f Name, Env ())
+renames vs scope = runCat (traverse freshCat vs) scope
+
+freshCat :: Name -> Cat (Env ()) Name
+freshCat v = do v' <- looks $ rename v
+                extend (v' @> ())
+                return v'
 
 -- === state monad version of fresh var generation ===
 

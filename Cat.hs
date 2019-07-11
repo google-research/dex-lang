@@ -72,7 +72,6 @@ runCat m env = runIdentity $ runCatT m env
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look
 
--- wrong...
 extendLocal :: (Monoid env, MonadCat env m) => env -> m a -> m a
 extendLocal x m = do
   ((ans, env), _) <- scoped $ do extend x
