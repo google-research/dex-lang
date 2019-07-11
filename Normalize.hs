@@ -296,7 +296,7 @@ decompose scope expr = case expr of
     Unchanged -> Unchanged
     Ions body' bs atoms -> Ions (NScan b [] [] body') bs' atoms'
       where bs' = map (fmap (NTabType n)) bs
-            atoms' = map (NAtomicFor b) atoms
+            atoms' = map (wrapAtomFor b bs) atoms
   NScan _ _ _ _ -> Unchanged
   NPrimOp _ _ _ -> Unchanged
   NApp _ _ -> error $ "Shouldn't have app left: " ++ pprint expr
@@ -306,6 +306,11 @@ decompose scope expr = case expr of
       bs = map (uncurry (:>)) $ envPairs $ envIntersect vs scope
       expr' = NAtoms $ fmap (NVar . binderVar) bs
   NTabCon _ _ _ -> Unchanged
+
+wrapAtomFor :: NBinder -> [NBinder] -> NAtom -> NAtom
+wrapAtomFor b@(i:>_) bs atom = NAtomicFor b atom'
+  where atom' = runReader (nSubst atom) (env, mempty)
+        env = foldMap (\(v:>_) -> v @> L (NGet (NVar v) (NVar i))) bs
 
 bindEnv :: [BinderP c] -> [a] -> FullEnv a b
 bindEnv bs xs = fold $ zipWith f bs xs

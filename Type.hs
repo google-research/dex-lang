@@ -327,15 +327,15 @@ getNType expr = case expr of
     let carryTys = map binderAnn bs
     xs' <- mapM atomType xs
     mapM_ checkNBinder bs
-    assertEq carryTys xs' ""
+    assertEq carryTys xs' "Scan arg"
     bodyTys <- extendR (nBinderEnv (b:bs)) (getNType body)
     let (carryTys', outTys) = splitAt (length bs) bodyTys
-    assertEq carryTys carryTys' ""
+    assertEq carryTys carryTys' "Scan output"
     return $ carryTys ++ map (NTabType i) outTys
   NPrimOp b ts xs -> do
     mapM_ checkNTy ts
     argTys'' <- mapM atomType xs
-    assertEq (map fromLeaf argTys') argTys'' "" -- TODO: handle non-leaves
+    assertEq (map fromLeaf argTys') argTys'' (pprint b) -- TODO: handle non-leaves
     return (toList ansTy')
     where
       BuiltinType _ argTys ansTy = builtinType b
@@ -344,12 +344,12 @@ getNType expr = case expr of
   NApp e xs -> do
     NArrType as bs <- atomType e
     as' <- mapM atomType xs
-    assertEq as as' ""
+    assertEq as as' "App"
     return bs
   NAtoms xs -> mapM atomType xs
   NTabCon n ts rows -> do
     rowTys <- mapM (mapM atomType) rows
-    mapM (\ts' -> assertEq ts ts' "") rowTys
+    mapM (\ts' -> assertEq ts ts' "Tab constructor") rowTys
     return $ map (NTabType (NIdxSetLit n)) ts
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
