@@ -115,17 +115,23 @@ vsingle i x = %vsingle(i, x)
 vsum :: i=>a -> a
 vsum xs = %vsum(for i. xs.i)
 
-deriv :: (a -> b) -> a -> (b, a -> b)
+partialEval :: (a -> b -> (c,d)) -> a -> (c, b -> d)
+partialEval f = %partialEval(lam x y. f x y)
+
+deriv :: (a -> b) -> a -> a -> (b, b)
 deriv f = %deriv(lam x. f x)
 
+linearize :: (a -> b) -> a -> (b, a -> b)
+linearize f = partialEval (deriv f)
+
 jvp :: (a -> b) -> a -> a -> b
-jvp f x t = snd (deriv f x) t
+jvp f x t = snd (linearize f x) t
 
 transpose :: (a -> b) -> b -> a
 transpose f = %transpose(lam t. f t)
 
 vjp :: (a -> b) -> a -> (b, b -> a)
-vjp f x = let (y, df) = deriv f x
+vjp f x = let (y, df) = linearize f x
           in (y, transpose df)
 
 grad :: (a -> Real) -> a -> a

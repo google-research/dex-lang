@@ -179,8 +179,10 @@ builtinType builtin = case builtin of
   Rand     -> BuiltinType [] [int] real
   BoolToInt -> BuiltinType [] [bool] int
   IntToReal -> BuiltinType [] [int] real
-  Deriv     -> BuiltinType [TyKind, TyKind] [a --> b] (a --> pair b (a --> b))
-  Transpose -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
+  Deriv       -> BuiltinType [TyKind, TyKind] [a --> b] (a --> a --> pair b b)
+  PartialEval -> BuiltinType [TyKind, TyKind, TyKind, TyKind]
+                   [a --> b --> pair c d] (a --> pair c (b --> d))
+  Transpose   -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
   VZero   -> BuiltinType [TyKind] [] a
   VAdd    -> BuiltinType [TyKind] [a, a] a
   VSingle -> BuiltinType [TyKind, idxSetKind] [j, a] (j ==> a)
@@ -192,6 +194,8 @@ builtinType builtin = case builtin of
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
+    c = BoundTVar 2
+    d = BoundTVar 3
     j = BoundTVar 1
     k = BoundTVar 2
     int  = BaseType IntType
