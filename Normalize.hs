@@ -240,24 +240,55 @@ simplify expr = case expr of
     return $ wrapDecls decls body'
     where body = NDecls rest final
   NScan b bs xs e -> do
-    xs' <- mapM nSubst xs
+    xs' <- mapM simplifyAtom xs
     refreshBindersR (b:bs) $ \(b':bs') -> do
       e' <- simplify e
       return $ NScan b' bs' xs' e'
   NApp f xs -> do
-    xs' <- mapM nSubst xs
-    f <- nSubst f
-    case f of
+    xs' <- mapM simplifyAtom xs
+    f' <- simplifyAtom f
+    case f' of
       NLam bs body -> extendR env (simplify body)
         where env = asFst $ bindEnv bs xs'
-      _ -> error $ "Expected lambda, got: " ++ pprint f
-  NPrimOp _ _ _ -> nSubst expr
-  NAtoms _      -> nSubst expr
-  NTabCon _ _ _ -> nSubst expr
+      _ -> return $ NApp f' xs'
+  NPrimOp b ts xs -> do
+    ts' <- mapM nSubst ts
+    xs' <- mapM simplifyAtom xs
+    case b of
+      -- Deriv -> expandDeriv ts' xs'
+      _ -> return $ NPrimOp b ts' xs'
+  NAtoms xs -> liftM NAtoms $ mapM simplifyAtom xs
+  NTabCon n ts rows ->
+    liftM2 (NTabCon n) (mapM nSubst ts) (mapM (mapM simplifyAtom) rows)
+
+simplifyAtom :: NAtom -> SimplifyM NAtom
+simplifyAtom atom = case atom of
+  NLit x -> return $ NLit x
+  NVar v -> do
+    x <- asks $ flip envLookup v . fst
+    case x of
+      Nothing -> return $ NVar v
+      Just (L x') -> local (\(_, scope) -> (mempty, scope)) (simplifyAtom x')
+  NGet e i -> do
+    e' <- simplifyAtom e
+    i' <- simplifyAtom i
+    return $ nGet e' i'
+  NAtomicFor b body ->
+    -- TODO: eta convert if possible
+    refreshBindersR [b] $ \[b'] -> do
+      body' <- simplifyAtom body
+      return $ NAtomicFor b' body'
+  NLam bs body ->
+    refreshBindersR bs $ \bs' -> do
+      body' <- simplify body
+      return $ NLam bs' body'
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SubstEnv)
 simplifyDecl decl = case decl of
   NLet bs bound -> do
+    -- As pointed out in the 'ghc inliner' paper, this can lead to exponential
+    -- blowup in compile times. The solution will be to defer some
+    -- simplification, pairing the expression with the env, to be forced later.
     bound' <- simplify bound
     case decompose mempty bound' of
       Unchanged -> do
@@ -292,7 +323,7 @@ decompose scope expr = case expr of
             atoms' = map (wrapAtomFor b bs) atoms
   NScan _ _ _ _ -> Unchanged
   NPrimOp _ _ _ -> Unchanged
-  NApp _ _ -> error $ "Shouldn't have app left: " ++ pprint expr
+  NApp _ _      -> Unchanged
   NAtoms xs -> Ions expr' bs xs  -- TODO: special treatment of unchanged case
     where
       vs = foldMap freeVars xs
@@ -336,6 +367,11 @@ fromOne :: [x] -> x
 fromOne [x] = x
 fromOne _ = error "Expected singleton list"
 
+-- === forward-mode differentiation ===
+
+expandDeriv :: [NType] -> [NAtom] -> SimplifyM NExpr
+expandDeriv _ [NLam bs body] = undefined
+
 -- === capture-avoiding substitutions on NExpr and friends ===
 
 class NSubst a where
@@ -370,9 +406,7 @@ instance NSubst NAtom where
     NGet e i -> do
       e' <- nSubst e
       i' <- nSubst i
-      case e' of
-        NAtomicFor (v:>_) body -> extendR (asFst (v@>L i')) $ nSubst body
-        _ -> return $ NGet e' i'
+      return $ nGet e' i'
     NAtomicFor b body ->
       -- TODO: eta convert if possible
       refreshBindersR [b] $ \[b'] -> do
@@ -395,3 +429,8 @@ instance NSubst NType where
     NExists ts -> liftM NExists (mapM nSubst ts)
     NIdxSetLit _ -> return ty
     NBoundTVar _ -> return ty
+
+nGet :: NAtom -> NAtom -> NAtom
+nGet (NAtomicFor (v:>_) body) i = runReader (nSubst body) (v@>L i, scope)
+  where scope = fmap (const ()) (freeVars i)
+nGet e i = NGet e i
