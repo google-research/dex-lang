@@ -29,25 +29,25 @@ pow :: Int -> Int -> Int
 pow x y = %pow(x, y)
 
 exp :: Real -> Real
-exp x = %exp(x)
+exp x = %%exp(x)
 
 log :: Real -> Real
-log x = %log(x)
+log x = %%log(x)
 
 sqrt :: Real -> Real
-sqrt x = %sqrt(x)
+sqrt x = %%sqrt(x)
 
 sin :: Real -> Real
 sin x = %%sin(x)
 
 cos :: Real -> Real
-cos x = %cos(x)
+cos x = %%cos(x)
 
 tan :: Real -> Real
-tan x = %tan(x)
+tan x = %%tan(x)
 
 hash :: Int -> Int -> Int
-hash x y = %hash(x, y)
+hash x y = %%threefry2x32(x, y)
 
 asint :: i -> Int
 asint i = %asint(i)
@@ -71,7 +71,7 @@ fold :: a -> i=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
 rand :: Int -> Real
-rand x = %rand(x)
+rand x = %%randunif(x)
 
 sum :: i=>Real -> Real
 sum xs = fold 0.0 for i. let x = xs.i in lam c. c + x

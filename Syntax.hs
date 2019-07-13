@@ -103,9 +103,7 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show)
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
-             | FLT | FGT | ILT | IGT
-             | Pow | Exp | Log | Sqrt | Cos | Tan
-             | Hash | Rand | Randint | IntToReal | BoolToInt
+             | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt
              | FFICall Int String
@@ -114,12 +112,10 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
-  ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
+  ("fdiv", FDiv), ("pow", Pow),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
-  ("log", Log), ("sqrt", Sqrt), ("cos", Cos), ("tan", Tan),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
-  ("hash", Hash), ("rand", Rand), ("randint", Randint),
   ("deriv", Deriv), ("partialEval", PartialEval), ("transpose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt),
   ("vzero", VZero), ("vadd", VAdd), ("vsingle", VSingle), ("vsum", VSum)]

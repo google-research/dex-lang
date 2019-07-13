@@ -31,7 +31,7 @@ uint64_t apply_round(uint32_t x, uint32_t y, int rot) {
   return out;
 }
 
-uint64_t threefry_2x32(uint64_t keypair, uint64_t count) {
+uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
   /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins (transitively) */
   /* expect:  threefry_2x32(0, 0) == "0x6b20015999ba4efe"   */
   /*   threefry_2x32  [0x13198a2e, 0x03707344] */

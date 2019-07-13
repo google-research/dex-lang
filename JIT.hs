@@ -22,8 +22,8 @@ import Data.List (nub)
 import Data.Traversable
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
-import Data.ByteString.Short (ShortByteString, toShort, fromShort)
-import Data.ByteString.Char8 (pack, unpack)
+import Data.ByteString.Short (toShort)
+import Data.ByteString.Char8 (pack)
 import Data.Word (Word64)
 
 import Data.Binary.IEEE754 (wordToDouble)
@@ -62,8 +62,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
 
 type CompileM a = Pass ImpVarEnv CompileState a
 data CompiledProg = CompiledProg Module
-data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
-                       deriving (Ord, Eq)
+data ExternFunSpec = ExternFunSpec String L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
@@ -253,7 +252,7 @@ compileLoop iVar (ScalarVal n _) body = do
 
 freshName :: String -> CompileM L.Name
 freshName s = do name <- fresh s
-                 return $ Name (toShort (pack (pprint name)))
+                 return $ strToName $ pprint name
 
 idxCell :: Cell -> [CompileVal] -> CompileM Cell
 idxCell cell [] = return cell
@@ -361,14 +360,8 @@ compileUnop :: BaseType -> (Operand -> L.Instruction)
 compileUnop ty makeInstr [ScalarVal x _] =
   liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x)
 
-externalMono :: ExternFunSpec -> BaseType -> [CompileVal] -> CompileM CompileVal
-externalMono f@(ExternFunSpec name retTy _ _) ty args = do
-  ans <- evalInstr name' retTy $ externCall f (map scalarVal args)
-  return $ ScalarVal ans ty
-  where name' = unpack (fromShort name)
-
-compileFFICall :: Int -> String -> [IType] -> [CompileVal] -> CompileM CompileVal
-compileFFICall n name tys args = do
+compileFFICall :: String -> [IType] -> [CompileVal] -> CompileM CompileVal
+compileFFICall name tys args = do
   ans <- evalInstr name retTy' $ externCall f (map scalarVal args)
   modify $ setFunSpecs (f:)
   return $ ScalarVal ans retTy
@@ -377,8 +370,7 @@ compileFFICall n name tys args = do
     fromScalarIType (IType b []) = b
     retTy:argTys = map fromScalarIType tys
     retTy':argTys' = map scalarTy (retTy:argTys)
-    f = ExternFunSpec (toShort (pack name)) retTy' argTys'
-          [toShort (pack ("arg" ++ show i)) | i <- take n [0..]]
+    f = ExternFunSpec name retTy' argTys'
 
 compileBuiltin :: Builtin -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b ts = case b of
@@ -391,32 +383,17 @@ compileBuiltin b ts = case b of
   FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
   FLT      -> compileBinop BoolType (\x y -> L.FCmp L.OLT x y [])
   FGT      -> compileBinop BoolType (\x y -> L.FCmp L.OGT x y [])
-  Exp      -> externalMono expFun     RealType
-  Log      -> externalMono logFun     RealType
-  Sqrt     -> externalMono sqrtFun    RealType
-  Cos      -> externalMono cosFun     RealType
-  Tan      -> externalMono tanFun     RealType
-  Hash     -> externalMono hashFun    IntType
-  Rand     -> externalMono randFun    RealType
-  Randint  -> externalMono randIntFun IntType
   BoolToInt -> compileUnop IntType  (\x -> L.ZExt x longTy [])
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
-  FFICall n name -> compileFFICall n name ts
+  FFICall _ name -> compileFFICall name ts
   Scan     -> error "Scan should have been lowered away by now."
 
-randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
-randIntFun = ExternFunSpec "randint"       longTy [longTy, longTy] ["keypair", "nmax"]
-hashFun    = ExternFunSpec "threefry_2x32" longTy [longTy, longTy] ["keypair", "count"]
-mallocFun  = ExternFunSpec "malloc_cod" charPtrTy [longTy] ["nbytes"]
-freeFun    = ExternFunSpec "free_cod" charPtrTy [charPtrTy] ["ptr"]
+mallocFun  = ExternFunSpec "malloc_cod"    charPtrTy [longTy]
+freeFun    = ExternFunSpec "free_cod"      charPtrTy [charPtrTy]
 memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
-                                                   ["dest", "src", "nbytes"]
 
-expFun     = ExternFunSpec "exp"           realTy [realTy] ["x"]
-logFun     = ExternFunSpec "log"           realTy [realTy] ["x"]
-sqrtFun    = ExternFunSpec "sqrt"          realTy [realTy] ["x"]
-cosFun     = ExternFunSpec "cos"           realTy [realTy] ["x"]
-tanFun     = ExternFunSpec "tan"           realTy [realTy] ["x"]
+builtinFFISpecs :: [ExternFunSpec]
+builtinFFISpecs = [mallocFun, freeFun, memcpyFun]
 
 charPtrTy = L.ptr (L.IntegerType 8)
 boolTy = L.IntegerType 1
@@ -427,18 +404,14 @@ funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
 makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> Module
-makeModule decls (fstBlock:blocks) funSpecs = mod
+makeModule decls (fstBlock:blocks) userSpecs = mod
   where
     L.BasicBlock name instrs term = fstBlock
     fstBlock' = L.BasicBlock name (decls ++ instrs) term
+    allFFISpecs = nub $ userSpecs ++ builtinFFISpecs
     mod = L.defaultModule { L.moduleName = "test"
-                          , L.moduleDefinitions =
-                                L.GlobalDefinition fundef
-                              : map externDecl (nub funSpecs ++
-                                  [mallocFun, freeFun, memcpyFun,
-                                   hashFun, randFun, randIntFun,
-                                   expFun, logFun, sqrtFun,
-                                   cosFun, tanFun])
+                          , L.moduleDefinitions = L.GlobalDefinition fundef
+                                                : map externDecl allFFISpecs
                           }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
@@ -446,21 +419,25 @@ makeModule decls (fstBlock:blocks) funSpecs = mod
                                 , L.basicBlocks = (fstBlock':blocks) }
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys _) args =
+externCall (ExternFunSpec fname retTy argTys) args =
   L.Call Nothing L.C [] fun args' [] []
   where fun = Right $ L.ConstantOperand $ C.GlobalReference
-                         (funTy retTy argTys) (L.Name fname)
+                         (funTy retTy argTys) (strToName fname)
         args' = [(x ,[]) | x <- args]
 
 externDecl :: ExternFunSpec -> L.Definition
-externDecl (ExternFunSpec fname retTy argTys argNames) =
+externDecl (ExternFunSpec fname retTy argTys) =
   L.GlobalDefinition $ L.functionDefaults {
-    L.name        = L.Name fname
-  , L.parameters  = ([L.Parameter t (L.Name s) []
-                     | (t, s) <- zip argTys argNames], False)
+    L.name        = strToName fname
+  , L.parameters  = ([L.Parameter t (argName i) []
+                     | (i, t) <- zip [0..] argTys], False)
   , L.returnType  = retTy
   , L.basicBlocks = []
   }
+  where argName i = strToName ("arg" ++ show i)
+
+strToName :: String -> L.Name
+strToName s = L.Name $ toShort $ pack s
 
 setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
 setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }

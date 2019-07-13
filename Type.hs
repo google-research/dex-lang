@@ -164,18 +164,10 @@ builtinType builtin = case builtin of
   FDiv     -> fbinOpType
   FLT      -> BuiltinType [] [real, real] bool
   FGT      -> BuiltinType [] [real, real] bool
-  Exp      -> realUnOpType
-  Log      -> realUnOpType
-  Sqrt     -> realUnOpType
-  Cos      -> realUnOpType
-  Tan      -> realUnOpType
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> BuiltinType [idxSetKind] [i] int
   Range    -> BuiltinType [] [int] (Exists unitTy)
-  Hash     -> BuiltinType [] [int, int] int
-  Randint  -> BuiltinType [] [int, int] int
-  Rand     -> BuiltinType [] [int] real
   BoolToInt -> BuiltinType [] [bool] int
   IntToReal -> BuiltinType [] [int] real
   Deriv       -> BuiltinType [TyKind, TyKind] [a --> b] (a --> a --> pair b b)
