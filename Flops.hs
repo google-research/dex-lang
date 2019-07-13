@@ -33,7 +33,7 @@ flops (ImpProg (statement:rest)) = do
 statementFlops :: Statement -> FlopM ()
 statementFlops statement = case statement of
   Alloc _ body -> flops body  -- TODO: count memory allocation
-  Update _ _ b _ -> do
+  Update _ _ b _ _ -> do
     n <- ask
     tell $ Profile $ M.singleton b [n]
   Loop _ size block -> do

@@ -53,7 +53,9 @@ prettyTyDepth d t = case t of
   IdxSetLit i -> "{.." <> p i <> "}"
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
-        tvars i = [['a'..'z'] !! (d - i - 1)] -- TODO: distinguish kinds
+        tvars i = case d - i - 1 of
+                    i' | i' >= 0 -> [['a'..'z'] !! i']
+                       | otherwise -> "#ERR#"
 
 instance Pretty Kind where
 --  pretty IdxSetKind = "R"
@@ -77,8 +79,8 @@ instance Pretty b => Pretty (ExprP b) where
     Lit val      -> p val
     Var v        -> p v
     PrimOp b ts xs -> parens $ p b <> targs <> args
-      where targs = case ts of [] -> mempty; _ -> brackets (hsep (map p ts))
-            args  = case xs of [] -> mempty; _ -> " " <> hsep (map p xs)
+      where targs = case ts of [] -> mempty; _ -> list   (map p ts)
+            args  = case xs of [] -> mempty; _ -> tupled (map p xs)
     Decls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
                                       <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
@@ -109,8 +111,8 @@ instance Pretty NExpr where
                             <+> hsep (map p xs) <> ","
                             <+> nest 4 (hardline <> p body)
     NPrimOp b ts xs -> parens $ p b <> targs <> args
-      where targs = case ts of [] -> mempty; _ -> brackets (hsep (map p ts))
-            args  = case xs of [] -> mempty; _ -> " " <> hsep (map p xs)
+      where targs = case ts of [] -> mempty; _ -> list   (map p ts)
+            args  = case xs of [] -> mempty; _ -> tupled (map p xs)
     NApp f xs -> align $ group $ p f <+> hsep (map p xs)
     NAtoms xs -> tup xs
     NTabCon _ _ xs -> list (map pretty xs)
@@ -136,7 +138,7 @@ instance Pretty NType where
     NBoundTVar n -> "BV" <> p n  -- TODO: invent some variable names
     NArrType as bs -> parens $ tup as <+> "->" <+> tup bs
     NTabType a  b  -> p a <> "=>" <> p b
-    NExists tys -> "E" <> "." <> brackets (hsep (map p tys))
+    NExists tys -> "E" <> "." <> list (map p tys)
     NIdxSetLit i -> "{.." <> p i <> "}"
 
 tup :: Pretty a => [a] -> Doc ann
@@ -156,7 +158,8 @@ instance Pretty ImpProg where
 
 instance Pretty Statement where
   pretty (Alloc b body) = p b <> braces (hardline <> p body)
-  pretty (Update v idxs b exprs) = p v <> p idxs <+> ":=" <+> p b <+> hsep (map p exprs)
+  pretty (Update v idxs b _ exprs) = p v <> p idxs <+>
+                                       ":=" <+> p b <+> hsep (map p exprs)
   pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 

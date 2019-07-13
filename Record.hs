@@ -79,7 +79,7 @@ recTreeNamed (RecTree r) = RecTree $
 recGet :: Record a -> RecField -> a
 recGet (Rec m)  (RecField _ (RecName s)) = fromJust $ M.lookup s m
 recGet (Tup xs) (RecField r (RecPos i )) =
-  if i < length xs
+  if i < length xs && i >= 0
    then xs !! i
    else error $ "Record error " ++ show r ++ " " ++ show i
 

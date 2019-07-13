@@ -58,9 +58,10 @@ toImp dests expr = case expr of
     return $ ImpProg $ zipWith copy carryDests xs' ++ [Loop i n' body']
     where
       (carryDests, mapDests) = splitAt (length bs) dests
-  NPrimOp b _ xs -> do
+  NPrimOp b ts xs -> do
+    ts' <- mapM toImpType ts
     xs' <- mapM toImpAtom xs
-    return $ ImpProg [primOpStatement b dests xs']
+    return $ ImpProg [primOpStatement b dests ts' xs']
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
     return $ ImpProg $ zipWith copy dests xs'
@@ -97,10 +98,10 @@ toImpAtom atom = case atom of
   NVar v -> lookupVar v
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
 
-primOpStatement :: Builtin -> [Dest] -> [IExpr] -> Statement
-primOpStatement Range      (dest:_) [x] = copy dest x
-primOpStatement IndexAsInt [dest] [x] = copy dest x
-primOpStatement b [dest] xs = writeBuiltin b dest xs
+primOpStatement :: Builtin -> [Dest] -> [IType] -> [IExpr] -> Statement
+primOpStatement Range      (dest:_) _ [x] = copy dest x
+primOpStatement IndexAsInt [dest]   _ [x] = copy dest x
+primOpStatement b [Buffer name idxs] ts xs = Update name idxs b ts xs
 
 toImpType :: NType -> ImpM IType
 toImpType ty = case ty of
@@ -142,11 +143,9 @@ wrapAllocs :: [IBinder] -> ImpProg -> ImpProg
 wrapAllocs [] prog = prog
 wrapAllocs (b:bs) prog = ImpProg [Alloc b (wrapAllocs bs prog)]
 
+-- TODO: copy should probably take a type argument
 copy :: Dest -> IExpr -> Statement
-copy (Buffer v idxs) x = Update v idxs Copy [x]
-
-writeBuiltin :: Builtin -> Dest -> [IExpr] -> Statement
-writeBuiltin b (Buffer name destIdxs) exprs = Update name destIdxs b exprs
+copy (Buffer v idxs) x = Update v idxs Copy [] [x]
 
 intTy :: IType
 intTy = IType IntType []
@@ -195,19 +194,20 @@ checkStatement statement = case statement of
     if binderVar b `isin` env then throw CompilerErr $ "shadows:" ++ pprint b
                               else return ()
     extendR (bind b) (checkProg body)
-  Update v idxs Copy [expr] -> do
+  Update v idxs Copy [] [expr] -> do
     mapM_ checkInt idxs
     IType b  shape  <- asks $ (! v)
     IType b' shape' <- impExprType expr
     assertEq b b' "Base type mismatch in copy"
     assertEq (drop (length idxs) shape) shape' "Dimension mismatch"
-  Update v idxs builtin args -> do -- scalar builtins only
+  Update _ _ (FFICall _ _) _ _ -> return () -- TODO: check polymorphic builtins
+  Update v idxs builtin _ args -> do -- scalar builtins only for now
     argTys <- mapM impExprType args
-    let BuiltinType _ inTys (BaseType b) = builtinType builtin
+    let BuiltinType _ inTys retTy = builtinType builtin
     zipWithM_ checkScalarTy inTys argTys
     IType b' shape  <- asks $ (! v)
     case drop (length idxs) shape of
-      [] -> assertEq b b' "Base type mismatch in builtin application"
+      [] -> assertEq retTy (BaseType b') "Base type mismatch in builtin application"
       _  -> throw CompilerErr "Writing to non-scalar buffer"
   Loop i size block -> extendR (i @> intTy) $ do
                           checkInt size

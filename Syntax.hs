@@ -104,10 +104,11 @@ data BaseType = IntType | BoolType | RealType | StrType
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT
-             | Pow | Exp | Log | Sqrt | Sin | Cos | Tan
+             | Pow | Exp | Log | Sqrt | Cos | Tan
              | Hash | Rand | Randint | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt
+             | FFICall Int String
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
@@ -115,7 +116,7 @@ builtinNames = M.fromList [
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
   ("fdiv", FDiv), ("pow", Pow), ("exp", Exp),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
-  ("log", Log), ("sqrt", Sqrt), ("sin", Sin), ("cos", Cos), ("tan", Tan),
+  ("log", Log), ("sqrt", Sqrt), ("cos", Cos), ("tan", Tan),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("hash", Hash), ("rand", Rand), ("randint", Randint),
@@ -129,6 +130,7 @@ strToBuiltin :: String -> Maybe Builtin
 strToBuiltin name = M.lookup name builtinNames
 
 instance Show Builtin where
+  show (FFICall _ s) = "%%" ++ s
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
@@ -226,7 +228,7 @@ type NBinder = BinderP NType
 newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
 
 data Statement = Alloc IBinder ImpProg
-               | Update Var [Index] Builtin [IExpr]
+               | Update Var [Index] Builtin [IType] [IExpr]
                | Loop Var Size ImpProg
                    deriving (Show)
 

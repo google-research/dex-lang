@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Applicative (liftA, liftA2)
 
+import Data.List (nub)
 import Data.Traversable
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
@@ -56,11 +57,13 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
+                                 , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 
 type CompileM a = Pass ImpVarEnv CompileState a
 data CompiledProg = CompiledProg Module
 data ExternFunSpec = ExternFunSpec ShortByteString L.Type [L.Type] [ShortByteString]
+                       deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
@@ -116,7 +119,7 @@ toLLVM bs prog = do
   destCells <- liftIO $ mapM (makeDestCell env) bs
   let env' =    fmap (Left  . asCompileVal) env
              <> fmap (Right . asCompileCell) (bindFold destCells)
-  let initState = CompileState [] [] [] "start_block"
+  let initState = CompileState [] [] [] "start_block" []
   prog <- liftEither $ evalPass env' initState mempty (compileTopProg prog)
   return (map binderAnn destCells, prog)
 
@@ -163,22 +166,23 @@ compileTopProg :: ImpProg -> CompileM CompiledProg
 compileTopProg prog = do
   compileProg prog
   finishBlock (L.Ret Nothing []) (L.Name "")
+  specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
-  return $ CompiledProg (makeModule decls blocks)
+  return $ CompiledProg (makeModule decls blocks specs)
 
 compileProg :: ImpProg -> CompileM ()
 compileProg (ImpProg statements) = mapM_ compileStatement statements
 
 compileStatement :: Statement -> CompileM ()
 compileStatement statement = case statement of
-  Update v idxs b exprs -> do
+  Update v idxs b tys exprs -> do
     vals <- mapM compileExpr exprs
     cell <- lookupCellVar v
     idxs' <- mapM compileExpr idxs
     cell' <- idxCell cell idxs'
     outVal <- case b of Copy -> let [val] = vals in return val
-                        _ -> compileBuiltin b vals
+                        _ -> compileBuiltin b tys vals
     writeCell cell' outVal
   Alloc (v :> IType b shape) body -> do
     shape' <- mapM compileExpr shape
@@ -363,8 +367,21 @@ externalMono f@(ExternFunSpec name retTy _ _) ty args = do
   return $ ScalarVal ans ty
   where name' = unpack (fromShort name)
 
-compileBuiltin :: Builtin -> [CompileVal] -> CompileM CompileVal
-compileBuiltin b = case b of
+compileFFICall :: Int -> String -> [IType] -> [CompileVal] -> CompileM CompileVal
+compileFFICall n name tys args = do
+  ans <- evalInstr name retTy' $ externCall f (map scalarVal args)
+  modify $ setFunSpecs (f:)
+  return $ ScalarVal ans retTy
+  where
+    fromScalarIType :: IType -> BaseType
+    fromScalarIType (IType b []) = b
+    retTy:argTys = map fromScalarIType tys
+    retTy':argTys' = map scalarTy (retTy:argTys)
+    f = ExternFunSpec (toShort (pack name)) retTy' argTys'
+          [toShort (pack ("arg" ++ show i)) | i <- take n [0..]]
+
+compileBuiltin :: Builtin -> [IType] -> [CompileVal] -> CompileM CompileVal
+compileBuiltin b ts = case b of
   IAdd     -> compileBinop IntType (\x y -> L.Add False False x y [])
   ISub     -> compileBinop IntType (\x y -> L.Sub False False x y [])
   IMul     -> compileBinop IntType (\x y -> L.Mul False False x y [])
@@ -377,7 +394,6 @@ compileBuiltin b = case b of
   Exp      -> externalMono expFun     RealType
   Log      -> externalMono logFun     RealType
   Sqrt     -> externalMono sqrtFun    RealType
-  Sin      -> externalMono sinFun     RealType
   Cos      -> externalMono cosFun     RealType
   Tan      -> externalMono tanFun     RealType
   Hash     -> externalMono hashFun    IntType
@@ -385,6 +401,7 @@ compileBuiltin b = case b of
   Randint  -> externalMono randIntFun IntType
   BoolToInt -> compileUnop IntType  (\x -> L.ZExt x longTy [])
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
+  FFICall n name -> compileFFICall n name ts
   Scan     -> error "Scan should have been lowered away by now."
 
 randFun    = ExternFunSpec "randunif"      realTy [longTy] ["keypair"]
@@ -398,7 +415,6 @@ memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy
 expFun     = ExternFunSpec "exp"           realTy [realTy] ["x"]
 logFun     = ExternFunSpec "log"           realTy [realTy] ["x"]
 sqrtFun    = ExternFunSpec "sqrt"          realTy [realTy] ["x"]
-sinFun     = ExternFunSpec "sin"           realTy [realTy] ["x"]
 cosFun     = ExternFunSpec "cos"           realTy [realTy] ["x"]
 tanFun     = ExternFunSpec "tan"           realTy [realTy] ["x"]
 
@@ -410,19 +426,19 @@ realTy = L.FloatingPointType L.DoubleFP
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
-makeModule :: [NInstr] -> [BasicBlock] -> Module
-makeModule decls (fstBlock:blocks) = mod
+makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> Module
+makeModule decls (fstBlock:blocks) funSpecs = mod
   where
     L.BasicBlock name instrs term = fstBlock
     fstBlock' = L.BasicBlock name (decls ++ instrs) term
     mod = L.defaultModule { L.moduleName = "test"
                           , L.moduleDefinitions =
                                 L.GlobalDefinition fundef
-                              : map externDecl
+                              : map externDecl (nub funSpecs ++
                                   [mallocFun, freeFun, memcpyFun,
                                    hashFun, randFun, randIntFun,
                                    expFun, logFun, sqrtFun,
-                                   sinFun, cosFun, tanFun]
+                                   cosFun, tanFun])
                           }
     fundef = L.functionDefaults { L.name        = L.Name "thefun"
                                 , L.parameters  = ([], False)
@@ -450,6 +466,7 @@ setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
 setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
 setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
 setBlockName   update state = state { blockName   = update (blockName   state) }
+setFunSpecs    update state = state { funSpecs = update (funSpecs state) }
 
 instance Functor JitVal where
   fmap = fmapDefault

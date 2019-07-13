@@ -38,7 +38,7 @@ sqrt :: Real -> Real
 sqrt x = %sqrt(x)
 
 sin :: Real -> Real
-sin x = %sin(x)
+sin x = %%sin(x)
 
 cos :: Real -> Real
 cos x = %cos(x)

@@ -124,6 +124,7 @@ term =   parenRaw
      <|> lamExpr
      <|> forExpr
      <|> primOp
+     <|> ffiCall
      <|> tabCon
      <?> "term"
 
@@ -159,13 +160,19 @@ varExpr = liftM (UVar . rawName) identifier
 
 primOp :: Parser UExpr
 primOp = do
-  symbol "%"
-  s <- identifier
-  case strToBuiltin s of
-    Just b -> do
-      args <- parens $ expr `sepBy` symbol ","
-      return $ UPrimOp b args
+  s <- try $ symbol "%" >> identifier
+  b <- case strToBuiltin s of
+    Just b -> return b
     Nothing -> fail $ "Unexpected builtin: " ++ s
+  args <- parens $ expr `sepBy` symbol ","
+  return $ UPrimOp b args
+
+ffiCall :: Parser UExpr
+ffiCall = do
+  symbol "%%"
+  s <- identifier
+  args <- parens $ expr `sepBy` symbol ","
+  return $ UPrimOp (FFICall (length args) s) args
 
 lamExpr :: Parser UExpr
 lamExpr = do
