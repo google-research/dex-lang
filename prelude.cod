@@ -119,7 +119,7 @@ partialEval :: (a -> b -> (c,d)) -> a -> (c, b -> d)
 partialEval f = %partialEval(lam x y. f x y)
 
 deriv :: (a -> b) -> a -> a -> (b, b)
-deriv f = %deriv(lam x. f x)
+deriv f y t = %deriv(lam x. f x) (y, t)
 
 linearize :: (a -> b) -> a -> (b, a -> b)
 linearize f = partialEval (deriv f)

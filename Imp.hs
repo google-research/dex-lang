@@ -111,7 +111,7 @@ toImpType ty = case ty of
   NExists [] -> return intTy
   NTypeVar _ -> return intTy
   NIdxSetLit _ -> return intTy
-  _ -> error $ pprint ty
+  _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 lookupVar :: Name -> ImpM IExpr
 lookupVar v = do

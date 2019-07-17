@@ -202,6 +202,8 @@ data NAtom = NLit LitVal
            | NGet NAtom NAtom
            | NLam [NBinder] NExpr
            | NAtomicFor NBinder NAtom
+           | NDerivAnnot NAtom NAtom
+           | NDeriv NAtom
               deriving (Show)
 
 data NType = NBaseType BaseType

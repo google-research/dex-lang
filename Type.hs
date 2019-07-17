@@ -3,7 +3,8 @@
 
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr, patType) where
+             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr, patType,
+             tangentBunType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -170,7 +171,8 @@ builtinType builtin = case builtin of
   Range    -> BuiltinType [] [int] (Exists unitTy)
   BoolToInt -> BuiltinType [] [bool] int
   IntToReal -> BuiltinType [] [int] real
-  Deriv       -> BuiltinType [TyKind, TyKind] [a --> b] (a --> a --> pair b b)
+  -- TODO: this breaks for tuple or non-reals
+  Deriv       -> BuiltinType [TyKind, TyKind] [a --> b] (pair a a --> pair b b)
   PartialEval -> BuiltinType [TyKind, TyKind, TyKind, TyKind]
                    [a --> b --> pair c d] (a --> pair c (b --> d))
   Transpose   -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
@@ -390,6 +392,10 @@ atomType atom = case atom of
     mapM_ checkNBinder bs
     bodyTys <- extendR (nBinderEnv bs) (getNType body)
     return $ NArrType (map binderAnn bs) bodyTys
+  NDeriv f -> do
+    ty <- atomType f
+    let [ty'] = tangentBunType ty
+    return ty'
 
 checkNTy :: NType -> NTypeM ()
 checkNTy _ = return () -- TODO!
@@ -414,3 +420,15 @@ nTypeToType :: NType -> Type
 nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
+
+tangentBunType :: NType -> [NType]
+tangentBunType ty = case ty of
+  NBaseType b -> case b of RealType -> [ty, ty]
+                           _ -> [ty]
+  NTypeVar _ -> [ty]  -- can only be an index set
+  NArrType as bs -> [NArrType (foldMap recur as) (foldMap recur bs)]
+  NTabType n a -> map (NTabType n) (recur a)
+  NExists ts -> [NExists $ foldMap recur ts]
+  NIdxSetLit _ -> [ty]
+  NBoundTVar _ -> [ty]
+  where recur = tangentBunType

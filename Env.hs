@@ -4,7 +4,7 @@ module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot, envIntersect,
             replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion,
-            envLookupDefault, envDiff, envMapMaybe) where
+            envLookupDefault, envDiff, envMapMaybe, fmapNames) where
 
 import Data.Traversable
 import qualified Data.Map.Strict as M
@@ -37,6 +37,9 @@ envNames (Env m) = M.keys m
 
 envPairs :: Env a -> [(Name, a)]
 envPairs (Env m) = M.toAscList m
+
+fmapNames :: (Name -> a -> b) -> Env a -> Env b
+fmapNames f (Env m) = Env $ M.mapWithKey f m
 
 lookupSubst :: Name -> Env Name -> Name
 lookupSubst v (Env m) = M.findWithDefault v v m

@@ -65,7 +65,9 @@ normalize expr = case expr of
   PrimOp b ts xs -> do
     xs' <- mapM atomize xs
     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
-    return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
+    case b of
+      Deriv -> return $ NAtoms [NDeriv (fromOne (fromOne xs'))]
+      _ -> return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
   Decls [] body -> normalize body
   Decls (decl:decls) final -> do
     env <- normalizeDecl decl
@@ -202,13 +204,14 @@ writeVars tys expr = do
 
 -- === simplification pass ===
 
-type SubstEnv = (FullEnv NAtom Var, Scope)
-type SimplifyM a = ReaderT SubstEnv (Either Err) a
+type NScope = FullEnv NType ()
+type SimpEnv = (FullEnv NAtom Var, NScope)
+type SimplifyM a = ReaderT SimpEnv (Either Err) a
 
 -- TODO: consider maintaining free variables explicitly
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
-simpPass :: NTopDecl -> TopPass SubstEnv NTopDecl
+simpPass :: NTopDecl -> TopPass SimpEnv NTopDecl
 simpPass topDecl = case topDecl of
   NTopDecl decl -> do
     (decls, env) <- simpAsTopPass $ simplifyDecl decl
@@ -226,7 +229,7 @@ simpPass topDecl = case topDecl of
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
-simpAsTopPass :: SimplifyM a -> TopPass SubstEnv a
+simpAsTopPass :: SimplifyM a -> TopPass SimpEnv a
 simpAsTopPass m = do
   env <- getEnv
   liftEither $ runReaderT m env
@@ -241,7 +244,7 @@ simplify expr = case expr of
     where body = NDecls rest final
   NScan b bs xs e -> do
     xs' <- mapM simplifyAtom xs
-    refreshBindersR (b:bs) $ \(b':bs') -> do
+    refreshBindersRSimp (b:bs) $ \(b':bs') -> do
       e' <- simplify e
       return $ NScan b' bs' xs' e'
   NApp f xs -> do
@@ -251,15 +254,10 @@ simplify expr = case expr of
       NLam bs body -> extendR env (simplify body)
         where env = asFst $ bindEnv bs xs'
       _ -> return $ NApp f' xs'
-  NPrimOp b ts xs -> do
-    ts' <- mapM nSubst ts
-    xs' <- mapM simplifyAtom xs
-    case b of
-      -- Deriv -> expandDeriv ts' xs'
-      _ -> return $ NPrimOp b ts' xs'
+  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
   NAtoms xs -> liftM NAtoms $ mapM simplifyAtom xs
   NTabCon n ts rows ->
-    liftM2 (NTabCon n) (mapM nSubst ts) (mapM (mapM simplifyAtom) rows)
+    liftM2 (NTabCon n) (mapM nSubstSimp ts) (mapM (mapM simplifyAtom) rows)
 
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
@@ -275,15 +273,18 @@ simplifyAtom atom = case atom of
     return $ nGet e' i'
   NAtomicFor b body ->
     -- TODO: eta convert if possible
-    refreshBindersR [b] $ \[b'] -> do
+    refreshBindersRSimp [b] $ \[b'] -> do
       body' <- simplifyAtom body
       return $ NAtomicFor b' body'
   NLam bs body ->
-    refreshBindersR bs $ \bs' -> do
+    refreshBindersRSimp bs $ \bs' -> do
       body' <- simplify body
       return $ NLam bs' body'
+  NDeriv f -> do
+    f' <- simplifyAtom f
+    expandDerivTop f'
 
-simplifyDecl :: NDecl -> SimplifyM ([NDecl], SubstEnv)
+simplifyDecl :: NDecl -> SimplifyM ([NDecl], SimpEnv)
 simplifyDecl decl = case decl of
   NLet bs bound -> do
     -- As pointed out in the 'ghc inliner' paper, this can lead to exponential
@@ -292,7 +293,7 @@ simplifyDecl decl = case decl of
     bound' <- simplify bound
     case decompose mempty bound' of
       Unchanged -> do
-        (bs', env) <- refreshBinders bs
+        (bs', env) <- refreshBindersSimp bs
         return ([NLet bs' bound'], env)
       Ions bound'' bs' ions ->
         return $ case bs' of [] -> ([]     , env)
@@ -302,8 +303,8 @@ simplifyDecl decl = case decl of
   NUnpack bs tv bound -> do
     bound' <- simplify bound
     tv' <- asks $ rename tv . snd
-    let tEnv = (tv @> T tv', tv' @> ())
-    (bs', lEnv) <- extendR tEnv $ refreshBinders bs
+    let tEnv = (tv @> T tv', tv' @> T ())
+    (bs', lEnv) <- extendR tEnv $ refreshBindersSimp bs
     return ([NUnpack bs' tv' bound'], tEnv <> lEnv)
 
 decompose :: Env NType -> NExpr -> Ions
@@ -340,23 +341,28 @@ bindEnv :: [BinderP c] -> [a] -> FullEnv a b
 bindEnv bs xs = fold $ zipWith f bs xs
   where f (v:>_) x = v @> L x
 
-newScope :: [BinderP a] -> Scope
-newScope bs = foldMap (\(v:>_) -> v@>()) bs
+newScope :: [NBinder] -> NScope
+newScope bs = foldMap (\(v:>ty) -> v@>L ty) bs
 
-refreshBinders :: MonadReader SubstEnv m => [NBinder] -> m ([NBinder], SubstEnv)
-refreshBinders bs = do
+-- TODO: de-dup with version in subst
+refreshBindersSimp :: [NBinder] -> SimplifyM ([NBinder], SimpEnv)
+refreshBindersSimp bs = catTraverse refreshBinderSimp bs
+
+refreshBinderSimp :: NBinder -> SimplifyM (NBinder, SimpEnv)
+refreshBinderSimp (v:>ty) = do
   scope <- asks snd
-  ts' <- mapM nSubst ts
-  let (vs', scope') = renames vs scope
-      env' = fold $ zipWith (\v v' -> v @> L (NVar v')) vs vs'
-      bs' = zipWith (:>) vs' ts'
-  return (bs', (env', scope'))
-  where (vs, ts) = unzip [(v,t) | v:>t <- bs]
+  ty' <- nSubstSimp ty
+  let v' = rename v scope
+  return (v':>ty', (v @> L (NVar v'), v' @> L ty'))
 
-refreshBindersR :: MonadReader SubstEnv m =>
-                     [NBinder] -> ([NBinder] -> m a) -> m a
-refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
-                             extendR env $ cont bs'
+nSubstSimp :: NSubst a => a -> SimplifyM a
+nSubstSimp x = do
+  (env, scope) <- ask
+  return $ runReader (nSubst x) (env, fmap (const ()) scope)
+
+refreshBindersRSimp :: [NBinder] -> ([NBinder] -> SimplifyM a) -> SimplifyM a
+refreshBindersRSimp bs cont = do (bs', env) <- refreshBindersSimp bs
+                                 extendR env $ cont bs'
 
 wrapDecls :: [NDecl] -> NExpr -> NExpr
 wrapDecls [] body = body
@@ -369,13 +375,97 @@ fromOne _ = error "Expected singleton list"
 
 -- === forward-mode differentiation ===
 
-expandDeriv :: [NType] -> [NAtom] -> SimplifyM NExpr
-expandDeriv _ [NLam bs body] = undefined
+type OneOrTwo a = [a]
+type TangentBun = OneOrTwo NAtom
+type DerivEnv = (Env TangentBun, Env ())
+type DerivM = Reader DerivEnv
+
+expandDerivTop :: NAtom -> SimplifyM NAtom
+expandDerivTop atom@(NVar _) = return (NDeriv atom)
+expandDerivTop atom = do
+  typeEnv <- asks snd
+  let env = flip fmapNames typeEnv $ \v x ->
+               case x of L ty -> pureBun ty (NVar v)
+                         T () -> [] -- TODO: filter properly
+      scope = fmap (const ()) typeEnv
+      atom' = fromOne $ runReader (derivNAtom atom) (env, scope)
+  simplifyAtom atom'
+
+derivNExpr :: NExpr -> DerivM NExpr
+derivNExpr expr = case expr of
+  NDecls [] body -> derivNExpr body
+  NDecls (decl:rest) final -> case decl of
+    NLet bs bound -> do
+      bound' <- derivNExpr bound
+      -- TODO: refresh binders and introduce names for tangents
+      updateDerivBinders bs $ \bs' -> do
+        body' <- derivNExpr body
+        return $ wrapDecls [NLet bs' bound'] body'
+    where body = NDecls rest final
+  -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
+  --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
+  NPrimOp b _ _ -> error $ "Don't know how to differentiate " ++ pprint b
+  NApp f xs -> do
+    [f'] <- derivNAtom f
+    xs' <- liftM concat $ mapM derivNAtom xs
+    return $ NApp f' xs'
+  NAtoms xs -> liftM (NAtoms . concat) $ mapM derivNAtom xs
+
+derivNAtom :: NAtom -> DerivM TangentBun
+derivNAtom atom = case atom of
+  NLit x -> return $ pureBun (NBaseType (litType x)) atom
+  NVar v -> asks $ (!v) . fst
+  NGet x i -> do
+    xs <- derivNAtom x
+    [i'] <- derivNAtom i
+    return $ map (flip NGet i') xs
+  NLam bs body -> do
+    updateDerivBinders bs $ \bs' -> do
+      body' <- derivNExpr body
+      return [NLam bs' body']
+  NAtomicFor b x -> do -- TODO: refresh binder
+    xs <- derivNAtom x
+    updateDerivBinders [b] $ \[b'] ->
+      return $ map (NAtomicFor b') xs
+  NDerivAnnot _ d -> return [d]
+     -- Need to apply substitution here? Probably yes if we have local free vars
+     -- Should annot be OneOrTwo?
+  NDeriv _ -> error "Shouldn't see derivatives here"
+
+updateDerivBinders :: [NBinder] -> ([NBinder] -> DerivM a) -> DerivM a
+updateDerivBinders bs cont = do
+  (bs', env) <- catTraverse derivBinder bs
+  extendR env $ cont (concat bs')
+
+derivBinder :: NBinder -> DerivM (OneOrTwo NBinder, DerivEnv)
+derivBinder (v:>ty) = do
+  let  tys' = tangentBunType ty
+       vs'  = case tys' of [_]   -> [v]
+                           [_,_] -> [v, rawName (nameTag v)]
+  (vs'', scope) <- asks $ renames vs' . snd
+  let env = (v @> map NVar vs'')
+  return (zipWith (:>) vs'' tys', (env, scope))
+
+-- TODO: make this take a scope for fresh index varsto freshen the index vars
+pureBun :: NType -> NAtom -> TangentBun
+pureBun ty x = case ty of
+  NBaseType b -> case b of RealType -> [x, NLit (RealLit 0.0)]
+                           _ -> [x]
+  NTypeVar _ -> [x]  -- can only be an index set
+  NArrType _ _ -> [NDeriv x]
+  NTabType n a -> map (NAtomicFor (i:>n)) (pureBun a (NGet x (NVar i)))
+     where i = rawName "i" -- Shadowing ok here? Prefer 'fanout' from prelude
+--  NExists ts -> [NExists $ foldMap recur ts]
+  NIdxSetLit _ -> [x]
+  NBoundTVar _ -> [x]
+  where recur = tangentBunType
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
+type SubstEnv = (FullEnv NAtom Var, Env ())
+
 class NSubst a where
-  nSubst :: MonadReader (FullEnv NAtom Var, Scope) m => a -> m a
+  nSubst :: MonadReader SubstEnv m => a -> m a
 
 instance NSubst NExpr where
   nSubst expr = case expr of
@@ -434,3 +524,20 @@ nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = runReader (nSubst body) (v@>L i, scope)
   where scope = fmap (const ()) (freeVars i)
 nGet e i = NGet e i
+
+
+-- TODO: de-dup with version in simp, above
+refreshBinders :: MonadReader SubstEnv m => [NBinder] -> m ([NBinder], SubstEnv)
+refreshBinders bs = do
+  scope <- asks snd
+  ts' <- mapM nSubst ts
+  let (vs', scope') = renames vs scope
+      env' = fold $ zipWith (\v v' -> v @> L (NVar v')) vs vs'
+      bs' = zipWith (:>) vs' ts'
+  return (bs', (env', scope'))
+  where (vs, ts) = unzip [(v,t) | v:>t <- bs]
+
+refreshBindersR :: MonadReader SubstEnv m =>
+                     [NBinder] -> ([NBinder] -> m a) -> m a
+refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
+                             extendR env $ cont bs'

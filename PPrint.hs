@@ -130,6 +130,8 @@ instance Pretty NAtom where
     NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
                      <> line <> align (p body)
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
+    NDerivAnnot f df -> parens $ "derivAnnot" <+> parens (p f) <+> parens (p df)
+    NDeriv f -> parens $ "%Deriv" <+> p f
 
 instance Pretty NType where
   pretty ty = case ty of
