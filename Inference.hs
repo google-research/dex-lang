@@ -111,6 +111,10 @@ check expr reqTy = case expr of
     -- `==> elemTy` for better messages
     unifyCtx expr (n ==> elemTy) (IdxSetLit n' ==> elemTy)
     return $ TabCon n' elemTy xs'
+  DerivAnnot e ann -> do
+    e' <- check e reqTy
+    ann' <- check ann (tangentBunType reqTy) -- TODO: handle type vars and meta vars)
+    return $ DerivAnnot e' ann'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     unifyReq annTy

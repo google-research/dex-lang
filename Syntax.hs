@@ -48,6 +48,7 @@ data ExprP b = Lit LitVal
           | RecCon (Record (ExprP b))
           | TabCon IdxSetVal Type [ExprP b]
           | Annot (ExprP b) Type
+          | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos
              deriving (Eq, Ord, Show)
 
@@ -170,6 +171,7 @@ data UExpr = ULit LitVal
            | URecCon (Record UExpr)
            | UTabCon [UExpr]
            | UAnnot UExpr Type
+           | UDerivAnnot UExpr UExpr
            | USrcAnnot UExpr SrcPos
                 deriving (Show, Eq)
 

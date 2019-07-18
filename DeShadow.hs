@@ -61,6 +61,7 @@ deShadowExpr expr = case expr of
   URecCon r -> liftM RecCon $ traverse recur r
   UTabCon xs -> liftM (TabCon 0 unitTy) (mapM recur xs)
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
+  UDerivAnnot expr ann -> liftM2 DerivAnnot (recur expr) (recur ann)
   USrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   where recur = deShadowExpr
         deShadowAnnot b = fmap (fmap deShadowType) b

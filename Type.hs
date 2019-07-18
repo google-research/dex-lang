@@ -4,7 +4,7 @@
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              HasTypeVars, freeTyVars, subFreeTVs, checkNExpr, patType,
-             tangentBunType) where
+             tangentBunType, tangentBunNType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -84,6 +84,10 @@ getType' check expr = case expr of
     TApp fexpr ts   -> do Forall _ body <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
+    DerivAnnot e ann -> do
+      ty <- recur e
+      checkEq "deriv" (tangentBunType ty) (recur ann)
+      return ty
   where
     getTypeDecl :: Decl -> TypeM a -> TypeM a
     getTypeDecl decl cont = case decl of
@@ -291,6 +295,7 @@ instance HasTypeVars Expr where
       TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
       TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
+      DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
           recurB b = traverse recurTy b
@@ -394,8 +399,13 @@ atomType atom = case atom of
     return $ NArrType (map binderAnn bs) bodyTys
   NDeriv f -> do
     ty <- atomType f
-    let [ty'] = tangentBunType ty
+    let [ty'] = tangentBunNType ty
     return ty'
+  NDerivAnnot f ann -> do
+    fTy <- atomType f
+    annTy <- atomType ann
+    assertEq (tangentBunNType fTy) [annTy] "deriv ann"
+    return fTy
 
 checkNTy :: NType -> NTypeM ()
 checkNTy _ = return () -- TODO!
@@ -421,8 +431,8 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
 
-tangentBunType :: NType -> [NType]
-tangentBunType ty = case ty of
+tangentBunNType :: NType -> [NType]
+tangentBunNType ty = case ty of
   NBaseType b -> case b of RealType -> [ty, ty]
                            _ -> [ty]
   NTypeVar _ -> [ty]  -- can only be an index set
@@ -431,4 +441,14 @@ tangentBunType ty = case ty of
   NExists ts -> [NExists $ foldMap recur ts]
   NIdxSetLit _ -> [ty]
   NBoundTVar _ -> [ty]
-  where recur = tangentBunType
+  where recur = tangentBunNType
+
+tangentBunType :: Type -> Type
+tangentBunType ty = case ty of
+  BaseType b -> case b of RealType -> pair ty ty
+                          _ -> ty
+  ArrType a b -> ArrType (recur a) (recur b)
+  _ -> error $ "Don't know bundle type for: " ++ pprint ty
+  where
+    recur = tangentBunType
+    pair x y = RecType $ Tup [x, y]

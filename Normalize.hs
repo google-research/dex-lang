@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module Normalize (normalizePass, simpPass) where
+module Normalize (normalizePass, simpPass, stripAnnotPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -29,7 +29,7 @@ normalizePass topDecl = case topDecl of
     (env, decls) <- asTopPass (normalizeDecl decl)
     decl' <- case decls of
       [] -> return $ dummyDecl
-      [decl'] -> return decl'
+      [decl'] -> return $ decl'
     putEnv (asFst env)
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
@@ -104,6 +104,10 @@ normalize expr = case expr of
     ts' <- liftM toList $ normalizeTy ty
     rows' <- mapM atomize rows
     return $ NTabCon n ts' rows'
+  DerivAnnot e ann -> do
+    [e'] <- atomize e
+    [ann'] <- atomize ann
+    return $ NAtoms [NDerivAnnot e' ann']
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 -- Only produces atoms without binders (i.e. no NLam/NAtomicFor)
@@ -283,6 +287,7 @@ simplifyAtom atom = case atom of
   NDeriv f -> do
     f' <- simplifyAtom f
     expandDerivTop f'
+  NDerivAnnot f df -> liftM2 NDerivAnnot (simplifyAtom f) (simplifyAtom df)
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SimpEnv)
 simplifyDecl decl = case decl of
@@ -404,12 +409,12 @@ derivNExpr expr = case expr of
     where body = NDecls rest final
   -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
   --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
-  NPrimOp b _ _ -> error $ "Don't know how to differentiate " ++ pprint b
   NApp f xs -> do
     [f'] <- derivNAtom f
     xs' <- liftM concat $ mapM derivNAtom xs
     return $ NApp f' xs'
   NAtoms xs -> liftM (NAtoms . concat) $ mapM derivNAtom xs
+  _ -> error $ "Don't know how to differentiate " ++ pprint expr
 
 derivNAtom :: NAtom -> DerivM TangentBun
 derivNAtom atom = case atom of
@@ -439,7 +444,7 @@ updateDerivBinders bs cont = do
 
 derivBinder :: NBinder -> DerivM (OneOrTwo NBinder, DerivEnv)
 derivBinder (v:>ty) = do
-  let  tys' = tangentBunType ty
+  let  tys' = tangentBunNType ty
        vs'  = case tys' of [_]   -> [v]
                            [_,_] -> [v, rawName (nameTag v)]
   (vs'', scope) <- asks $ renames vs' . snd
@@ -458,7 +463,7 @@ pureBun ty x = case ty of
 --  NExists ts -> [NExists $ foldMap recur ts]
   NIdxSetLit _ -> [x]
   NBoundTVar _ -> [x]
-  where recur = tangentBunType
+  where recur = tangentBunNType
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
@@ -541,3 +546,35 @@ refreshBindersR :: MonadReader SubstEnv m =>
                      [NBinder] -> ([NBinder] -> m a) -> m a
 refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
                              extendR env $ cont bs'
+
+-- === stripping annotations ===
+
+stripAnnotPass :: NTopDecl -> TopPass () NTopDecl
+stripAnnotPass topDecl = return $ case topDecl of
+  NTopDecl decl -> NTopDecl $ stripDerivAnnotDecl decl
+  NEvalCmd NoOp -> NEvalCmd NoOp
+  NEvalCmd (Command cmd (ty, tys, expr)) ->
+    NEvalCmd (Command cmd (ty, tys, expr'))
+    where expr' = stripDerivAnnot expr
+
+-- TODO: find a simpler way to do passes that only touch a few constructors
+stripDerivAnnotDecl :: NDecl -> NDecl
+stripDerivAnnotDecl decl = case decl of
+  NLet bs bound -> NLet bs (stripDerivAnnot bound)
+
+stripDerivAnnot :: NExpr -> NExpr
+stripDerivAnnot expr = case expr of
+  NDecls decls body -> NDecls (map stripDerivAnnotDecl decls) (recur body)
+  NScan b bs xs e -> NScan b bs (map recurAtom xs) (recur e)
+  NPrimOp b ts xs -> NPrimOp b ts (map recurAtom xs)
+  NApp f xs -> NApp (recurAtom f) (map recurAtom xs)
+  NAtoms xs -> NAtoms $ map recurAtom xs
+  NTabCon n ts rows -> NTabCon n ts (map (map recurAtom) rows)
+  where recur = stripDerivAnnot
+        recurAtom = stripDerivAnnotAtom
+
+stripDerivAnnotAtom :: NAtom -> NAtom
+stripDerivAnnotAtom atom = case atom of
+  NDerivAnnot f _ -> f
+  NLam bs body -> NLam bs (stripDerivAnnot body)
+  _ -> atom
