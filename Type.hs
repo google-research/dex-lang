@@ -64,9 +64,9 @@ getType' check expr = case expr of
     Lam p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (ArrType (patType p)) (recurWithP p body)
-    For i body -> do checkTy (binderAnn i)
-                     checkShadow i
-                     liftM (TabType (binderAnn i)) (recurWith i body)
+    For p body -> do checkTy (patType p)
+                     checkShadowPat p
+                     liftM (TabType (patType p)) (recurWithP p body)
     App e arg  -> do ArrType a b <- recur e
                      checkEq "App" a (recur arg)
                      return b
@@ -289,7 +289,7 @@ instance HasTypeVars Expr where
         where body = Decls decls final
       Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-      For b body       -> liftA2 For (recurB b) (recur body)
+      For p body       -> liftA2 For (traverse recurB p) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
       TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)

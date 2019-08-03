@@ -185,7 +185,7 @@ lamExpr = do
 forExpr :: Parser UExpr
 forExpr = do
   symbol "for"
-  vs <- some idxPat -- `sepBy` sc
+  vs <- pat `sepBy` sc
   symbol "."
   body <- expr
   return $ foldr UFor body vs
@@ -197,7 +197,7 @@ tabCon = do
 
 idxLhsArgs = do
   symbol "."
-  args <- idxPat `sepBy` symbol "."
+  args <- pat `sepBy` symbol "."
   return $ \body -> foldr UFor body args
 
 lamLhsArgs = do
@@ -249,8 +249,6 @@ idxExpr = withSourceAnn $ liftM UVar varName
 binder :: Parser UBinder
 binder =     (symbol "_" >> return IgnoreBind)
          <|> (liftM UBind $ liftM2 (:>) varName (optional typeAnnot))
-
-idxPat = binder
 
 pat :: Parser UPat
 pat =   parenPat

@@ -30,7 +30,7 @@ fullPass = deShadowPass
        >+> typePass      >+> checkTyped
        >+> normalizePass >+> checkNExpr
        >+> simpPass      >+> checkNExpr
-       >+> stripAnnotPass >+> checkNExpr
+       -- >+> stripAnnotPass >+> checkNExpr
        >+> impPass       >+> checkImp
        >+> flopsPass
        >+> jitPass

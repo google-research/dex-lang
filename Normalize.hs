@@ -56,9 +56,9 @@ normalize expr = case expr of
     vs <- asks $ toList . fromLeft (error msg) . snd . fromL . (! v )
     return $ NAtoms (map NVar vs)
       where msg = "Type lambda should be immediately applied"
-  PrimOp Scan _ [x, For ib (Lam p body)] -> do
+  PrimOp Scan _ [x, For ip (Lam p body)] -> do
     xs <- atomize x
-    normalizeBindersR [ib] $ \[ib'] ->
+    normalizeBindersR ip $ \[ib'] ->
       normalizeBindersR p $ \bs -> do
         body' <- normalizeScoped body
         return $ NScan ib' bs xs body'
@@ -80,8 +80,8 @@ normalize expr = case expr of
     [f'] <- atomize f
     x' <- atomize x
     return $ NApp f' x'
-  For b body -> do
-    normalizeBindersR [b] $ \[b'] -> do
+  For p body -> do
+    normalizeBindersR p $ \[b'] -> do
       body' <- normalizeScoped body
       return $ NScan b' [] [] body'
   Get e i -> do

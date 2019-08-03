@@ -53,10 +53,10 @@ deShadowExpr expr = case expr of
       body' <- recur body
       return $ Lam p' $ wrapDecls decls body'
   UApp fexpr arg -> liftM2 App (recur fexpr) (recur arg)
-  UFor b body ->
-    withCat (deShadowPat (RecLeaf b)) $ \(RecLeaf b') decls -> do
+  UFor p body ->
+    withCat (deShadowPat p) $ \p' decls -> do
       body' <- recur body
-      return $ For b' $ wrapDecls decls body'
+      return $ For p' $ wrapDecls decls body'
   UGet e v -> liftM2 Get (recur e) (recur v)
   URecCon r -> liftM RecCon $ traverse recur r
   UTabCon xs -> liftM (TabCon 0 unitTy) (mapM recur xs)

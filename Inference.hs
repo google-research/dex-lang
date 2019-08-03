@@ -88,12 +88,11 @@ check expr reqTy = case expr of
     arg' <- check arg a
     unifyReq b
     return $ App fexpr' arg'
-  For b body -> do
+  For p body -> do
     (i, elemTy) <- splitTab expr reqTy
-    b' <- inferBinder b
-    unifyCtx unitCon (binderAnn b') i  -- TODO: real context
-    body' <- recurWith b' body elemTy
-    return $ For b' body'
+    p' <- checkPat p i
+    body' <- recurWithP p' body elemTy
+    return $ For p' body'
   Get tabExpr idxExpr -> do
     (tabTy, expr') <- infer tabExpr
     (i, v) <- splitTab expr tabTy

@@ -144,3 +144,7 @@ p2 = 1
 >
 > p2 = 1
 >      ^
+
+:t lam x. for (i,j). x.i.j
+
+> A c b a. (a=>b=>c -> (a, b)=>c)

@@ -41,7 +41,7 @@ data ExprP b = Lit LitVal
           | Decls [DeclP b] (ExprP b)
           | Lam (PatP b) (ExprP b)
           | App (ExprP b) (ExprP b)
-          | For (BinderP b) (ExprP b)
+          | For (PatP b) (ExprP b)
           | Get (ExprP b) (ExprP b)
           | TLam [TBinder] (ExprP b)
           | TApp (ExprP b) [Type]
@@ -166,7 +166,7 @@ data UExpr = ULit LitVal
            | UDecls [UDecl] UExpr
            | ULam UPat UExpr
            | UApp UExpr UExpr
-           | UFor UBinder UExpr
+           | UFor UPat UExpr
            | UGet UExpr UExpr
            | URecCon (Record UExpr)
            | UTabCon [UExpr]
@@ -379,7 +379,7 @@ instance HasVars b => HasVars (ExprP b) where
                         in fvs <> (freeVars body `envDiff` bvs)
     Lam p body    -> withBinders p body
     App fexpr arg -> freeVars fexpr <> freeVars arg
-    For b body    -> withBinders [b] body
+    For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
     RecCon r      -> foldMap freeVars r
     TLam vs expr  -> freeVars expr `envDiff` foldMap bind vs
@@ -409,7 +409,7 @@ instance HasVars UExpr where
                          in fvs <> (freeVars body `envDiff` bvs)
     ULam p body    -> withPat p body
     UApp fexpr arg -> freeVars fexpr <> freeVars arg
-    UFor b body    -> withPat [b] body
+    UFor p body    -> withPat p body
     UGet e ie  -> freeVars e <> freeVars ie
     URecCon r  -> foldMap freeVars r
     UTabCon xs -> foldMap freeVars xs
