@@ -58,10 +58,11 @@ normalize expr = case expr of
       where msg = "Type lambda should be immediately applied"
   PrimOp Scan _ [x, For ip (Lam p body)] -> do
     xs <- atomize x
-    normalizeBindersR ip $ \[ib'] ->
+    normalizeBindersR ip $ \ibs ->
       normalizeBindersR p $ \bs -> do
         body' <- normalizeScoped body
-        return $ NScan ib' bs xs body'
+        scope <- looks snd
+        return $ nestedScan scope ibs bs xs body'
   PrimOp b ts xs -> do
     xs' <- mapM atomize xs
     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
@@ -81,13 +82,14 @@ normalize expr = case expr of
     x' <- atomize x
     return $ NApp f' x'
   For p body -> do
-    normalizeBindersR p $ \[b'] -> do
+    normalizeBindersR p $ \bs -> do
       body' <- normalizeScoped body
-      return $ NScan b' [] [] body'
+      scope <- looks snd
+      return $ nestedScan scope bs [] [] body'
   Get e i -> do
     e' <- atomize e
     i' <- atomize i
-    return $ NAtoms $ map (flip NGet (fromOne i')) e'
+    return $ NAtoms $ map (\x -> foldl NGet x i') e'
   -- -- TODO: consider finding these application sites in a bottom-up pass and
   -- -- making a single monorphic version for each distinct type found,
   -- -- rather than inlining
@@ -125,6 +127,18 @@ atomize expr = do
     noBinders (NAtomicFor _ _) = False
     noBinders _ = True
 
+-- TODO: de-shadowing might be over-zealous here
+-- TODO: ought to freshen the index binders too
+nestedScan :: Scope -> [NBinder] -> [NBinder] -> [NAtom] -> NExpr -> NExpr
+nestedScan scope [] bs xs body = runReader (nSubst body) (bindEnv bs xs, scope)
+nestedScan scope (ib:ibs) bs xs body = NScan ib bs' xs body'
+  where
+    vs = map binderVar bs
+    (vs', scope') = renames vs scope
+    bs' = [v:>ty | (_:>ty, v) <- zip bs vs']
+    xs' = map (NVar . binderVar) bs'
+    body' = nestedScan (scope <> scope') ibs bs xs' body  -- TODO: freshen ibs
+
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
   Let (RecLeaf (v:>ty)) (TLam tbs body) -> do
@@ -155,7 +169,7 @@ normalizeTy ty = case ty of
   TabType n ty -> do
     ty' <- normalizeTy ty
     n'  <- normalizeTy n
-    return $ fmap (NTabType (fromLeaf n')) ty'
+    return $ fmap (\x -> foldr NTabType x (toList n')) ty'
   RecType r -> liftM RecTree $ traverse normalizeTy r
   Exists ty -> do
     ty' <- normalizeTy ty

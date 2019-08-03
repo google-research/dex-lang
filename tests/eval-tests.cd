@@ -177,4 +177,11 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
 
 > 1
 
+_, N3 = unpack range 3
+_, N4 = unpack range 4
+mat = for i::N3 j::N4. iadd iota.i (imul 10 iota.j)
+
+:p isum for (i,j). mat.i.j
+
+> 192
 
