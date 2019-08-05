@@ -9,7 +9,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutputElt (..), OutFormat (..),
                throw, addContext, addErrSource, addErrSourcePos,
-               FullEnv, Subst, (-->), (==>), LorT (..), fromL, fromT,
+               FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), freeVars,
@@ -131,7 +131,7 @@ instance Show Builtin where
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
-             | EvalExpr OutFormat
+             | Interpret | EvalExpr OutFormat
                 deriving  (Show, Eq)
 
 
@@ -357,7 +357,6 @@ tbind (v:>x) = v @> T x
 
 type FullEnv v t = Env (LorT v t)
 type Vars = FullEnv () ()
-type Subst = FullEnv Expr Type
 
 wrapDecls :: [DeclP b] -> ExprP b -> ExprP b
 wrapDecls [] expr = expr
