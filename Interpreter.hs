@@ -13,6 +13,14 @@ import PPrint
 import Cat
 import Record
 
+-- TODO: can we make this as dynamic as the compiled version?
+foreign import ccall "sqrt" c_sqrt :: Double -> Double
+foreign import ccall "sin"  c_sin  :: Double -> Double
+foreign import ccall "cos"  c_cos  :: Double -> Double
+foreign import ccall "tan"  c_tan  :: Double -> Double
+foreign import ccall "exp"  c_exp  :: Double -> Double
+foreign import ccall "log"  c_log  :: Double -> Double
+
 type Val = Expr -- irreducible expressions only
 type Scope = Env ()
 type SubstEnv = (FullEnv Val Type, Scope)
@@ -63,12 +71,22 @@ evalOp op ts xs = case op of
   FAdd -> realBinOp (+) xs
   FSub -> realBinOp (-) xs
   FMul -> realBinOp (*) xs
+  FFICall 1 "sqrt" -> realUnOp c_sqrt xs
+  FFICall 1 "sin"  -> realUnOp c_sin  xs
+  FFICall 1 "cos"  -> realUnOp c_cos  xs
+  FFICall 1 "tan"  -> realUnOp c_tan  xs
+  FFICall 1 "exp"  -> realUnOp c_exp  xs
+  FFICall 1 "log"  -> realUnOp c_log  xs
+
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val
 intBinOp op [Lit (IntLit x), Lit (IntLit y)] = Lit $ IntLit $ op x y
 
 realBinOp :: (Double -> Double -> Double) -> [Val] -> Val
 realBinOp op [Lit (RealLit x), Lit (RealLit y)] = Lit $ RealLit $ op x y
+
+realUnOp :: (Double -> Double) -> [Val] -> Val
+realUnOp op [Lit (RealLit x)] = Lit $ RealLit $ op x
 
 class Subst a where
   subst :: MonadReader SubstEnv m => a -> m a
