@@ -50,6 +50,7 @@ data ExprP b = Lit LitVal
           | Annot (ExprP b) Type
           | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos
+          | Pack (ExprP b) Type Type
              deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType

@@ -12,6 +12,7 @@ import Pass
 import PPrint
 import Cat
 import Record
+import Type
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -53,11 +54,34 @@ reduce expr = case expr of
     Lam p body <- reduce e1
     x <- reduce e2
     extendR (bindPat p x) (reduce body)
+  For (RecLeaf (v:>idxTy)) body -> do
+    expr' <- subst expr
+    IdxSetLit n <- subst idxTy
+    let TabType _ bodyTy = getType mempty expr'
+    xs <- flip traverse [0..n-1] $ \i ->
+            extendR (asFst $ v @> L (Lit (IntLit i))) (reduce body)
+    return $ TabCon n bodyTy xs  -- TODO: allow idx type in tabcon (not just int)
+  Get e i -> do
+    TabCon _ _ xs <- reduce e
+    Lit (IntLit i') <- reduce i
+    return $ xs !! i'
   RecCon r -> liftM RecCon (traverse reduce r)
+  TabCon n ty xs -> liftM2 (TabCon n) (subst ty) (mapM reduce xs)
+  TLam _ _ -> subst expr
+  TApp e1 ts -> do
+    TLam bs body <- reduce e1
+    ts' <- mapM subst ts
+    let env = asFst $ fold [v @> T t | (v:>_, t) <- zip bs ts']
+    extendR env (reduce body)
+  _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
 
 reduceDecl :: Decl -> ReduceM SubstEnv
-reduceDecl (Let p expr) = do val <- reduce expr
-                             return $ bindPat p val
+reduceDecl (Let p expr) = do
+  val <- reduce expr
+  return $ bindPat p val
+reduceDecl (Unpack (v:>_) tv expr) = do
+  Pack val ty _ <- reduce expr
+  return $ asFst $ v @> L val <> tv @> T ty
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L val
@@ -71,13 +95,20 @@ evalOp op ts xs = case op of
   FAdd -> realBinOp (+) xs
   FSub -> realBinOp (-) xs
   FMul -> realBinOp (*) xs
+  FLT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x < fromRealLit y
+  FGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x > fromRealLit y
+  ILT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x < fromIntLit  y
+  IGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x > fromIntLit  y
+  Range -> Pack unitCon (IdxSetLit n) (Exists unitTy)
+    where n = case xs of [x] -> fromIntLit x
+  IndexAsInt -> case xs of [x] -> x
   FFICall 1 "sqrt" -> realUnOp c_sqrt xs
   FFICall 1 "sin"  -> realUnOp c_sin  xs
   FFICall 1 "cos"  -> realUnOp c_cos  xs
   FFICall 1 "tan"  -> realUnOp c_tan  xs
   FFICall 1 "exp"  -> realUnOp c_exp  xs
   FFICall 1 "log"  -> realUnOp c_log  xs
-
+  _ -> error $ "Can't evaluate in interpreter: " ++ pprint (PrimOp op ts xs)
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val
 intBinOp op [Lit (IntLit x), Lit (IntLit y)] = Lit $ IntLit $ op x y
@@ -87,6 +118,12 @@ realBinOp op [Lit (RealLit x), Lit (RealLit y)] = Lit $ RealLit $ op x y
 
 realUnOp :: (Double -> Double) -> [Val] -> Val
 realUnOp op [Lit (RealLit x)] = Lit $ RealLit $ op x
+
+fromIntLit :: Val -> Int
+fromIntLit (Lit (IntLit x)) = x
+
+fromRealLit :: Val -> Double
+fromRealLit (Lit (RealLit x)) = x
 
 class Subst a where
   subst :: MonadReader SubstEnv m => a -> m a
@@ -128,7 +165,9 @@ instance Subst Expr where
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
     where
       refreshPat :: MonadReader SubstEnv m => Pat -> (Pat -> m a) -> m a
-      refreshPat p m = m p -- TODO: actually freshen!
+      refreshPat p m = do
+        p' <- traverse (traverse subst) p -- TODO: actually freshen!
+        m p'
 
 instance Subst Type where
   subst ty = case ty of
