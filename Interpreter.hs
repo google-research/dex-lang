@@ -18,12 +18,12 @@ type Scope = Env ()
 type SubstEnv = (FullEnv Val Type, Scope)
 type ReduceM a = Reader SubstEnv a
 
-interpPass :: TopDecl -> TopPass SubstEnv TopDecl
-interpPass topDecl = topDecl <$ case topDecl of
+interpPass :: TopDecl -> TopPass SubstEnv ()
+interpPass topDecl = () <$ case topDecl of
   TopDecl decl -> do
     env <- getEnv
     putEnv $ runReader (reduceDecl decl) env
-  EvalCmd (Command Interpret expr) -> do
+  EvalCmd (Command (EvalExpr Printed) expr) -> do
     env <- getEnv
     writeOutText $ pprint $ runReader (reduce expr) env
   _ -> return ()

@@ -56,7 +56,6 @@ explicitCommand = do
            "time"    -> return TimeIt
            "plot"    -> return $ EvalExpr Scatter
            "plotmat" -> return $ EvalExpr Heatmap
-           "interp"  -> return Interpret
            "flops"   -> return Flops
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr

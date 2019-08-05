@@ -131,7 +131,7 @@ instance Show Builtin where
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
-             | Interpret | EvalExpr OutFormat
+             | EvalExpr OutFormat
                 deriving  (Show, Eq)
 
 

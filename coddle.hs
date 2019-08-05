@@ -25,17 +25,19 @@ type ResultChan = Result -> IO ()
 type FullPass env = UTopDecl -> TopPass env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
-                       , webOutput     :: Bool}
+                       , webOutput     :: Bool
+                       , useInterpreter :: Bool}
 
 fullPass = deShadowPass
        >+> typePass      >+> checkTyped
-       >+> interpPass
        >+> normalizePass >+> checkNExpr
        >+> simpPass      >+> checkNExpr
        -- >+> stripAnnotPass >+> checkNExpr
        >+> impPass       >+> checkImp
        >+> flopsPass
        >+> jitPass
+
+fullPassInterp = deShadowPass >+> typePass >+> checkTyped >+> interpPass
 
 parseFile :: MonadIO m => String -> m (String, [(String, UTopDecl)])
 parseFile fname = liftIO $ do
@@ -75,10 +77,10 @@ replLoop pass = do
                 Left e -> printIt "" e
                 Right decl' -> lift $ evalDecl s (printIt "") (pass decl')
 
-evalWeb :: String -> IO ()
-evalWeb fname = do
-  env <- execStateT (evalPrelude fullPass) mempty
-  runWeb fname fullPass env
+evalWeb :: Monoid env => FullPass env-> String -> IO ()
+evalWeb pass fname = do
+  env <- execStateT (evalPrelude pass) mempty
+  runWeb fname pass env
 
 evalDecl :: Monoid env =>
               String -> ResultChan -> TopPass env () -> StateT env IO ()
@@ -105,20 +107,23 @@ opts = info (p <**> helper) mempty
             <$> (optional $ argument str (    metavar "FILE"
                                            <> help "Source program"))
             <*> switch (    long "web"
-                         <> help "Whether to use web output instead of stdout" )
+                         <> help "Use web output instead of stdout" )
+            <*> switch (    long "interp"
+                         <> help "Use interpreter")
 
-parseOpts :: IO EvalMode
-parseOpts = do
-  opts <- execParser opts
-  return $ case programSource opts of
-    Nothing -> ReplMode
-    Just fname -> if webOutput opts then WebMode    fname
-                                    else ScriptMode fname
+runMode :: Monoid env => EvalMode -> FullPass env -> IO ()
+runMode evalMode pass = case evalMode of
+  ReplMode         -> runEnv $ evalRepl   pass
+  ScriptMode fname -> runEnv $ evalScript pass fname
+  WebMode    fname -> evalWeb pass fname
 
 main :: IO ()
 main = do
-  evalMode <- parseOpts
-  case evalMode of
-    ReplMode         -> runEnv $ evalRepl   fullPass
-    ScriptMode fname -> runEnv $ evalScript fullPass fname
-    WebMode    fname -> evalWeb fname
+  opts <- execParser opts
+  let evalMode = case programSource opts of
+                   Nothing -> ReplMode
+                   Just fname -> if webOutput opts then WebMode    fname
+                                                   else ScriptMode fname
+  if useInterpreter opts
+    then runMode evalMode fullPassInterp
+    else runMode evalMode fullPass
