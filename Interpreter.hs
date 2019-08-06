@@ -5,6 +5,7 @@ module Interpreter (interpPass) where
 
 import Control.Monad.Reader
 import Data.Foldable (fold)
+import Data.List (mapAccumL)
 
 import Syntax
 import Env
@@ -41,6 +42,13 @@ reduce :: Expr -> ReduceM Val
 reduce expr = case expr of
   Lit _ -> subst expr
   Var _ -> subst expr
+  PrimOp Scan _ [x, fs] -> do
+    x' <- reduce x
+    RecType (Tup [_, TabType (IdxSetLit n) bodyTy]) <- exprType expr
+    fs' <- subst fs
+    scope <- asks snd
+    let (carry, ys) = mapAccumL (evalScanBody scope fs') x' [0..(n-1)]
+    return $ RecCon $ Tup [carry, TabCon n bodyTy ys]
   PrimOp op ts xs -> do
     ts' <- mapM subst ts
     xs' <- mapM reduce xs
@@ -55,9 +63,8 @@ reduce expr = case expr of
     x <- reduce e2
     dropSubst $ extendR (bindPat p x) (reduce body)
   For (RecLeaf (v:>idxTy)) body -> do
-    expr' <- subst expr
     IdxSetLit n <- subst idxTy
-    let TabType _ bodyTy = getType mempty expr'
+    TabType _ bodyTy <- exprType expr
     xs <- flip traverse [0..n-1] $ \i ->
             extendR (asFst $ v @> L (Lit (IntLit i))) (reduce body)
     return $ TabCon n bodyTy xs  -- TODO: allow idx type in tabcon (not just int)
@@ -74,6 +81,18 @@ reduce expr = case expr of
     let env = asFst $ fold [v @> T t | (v:>_, t) <- zip bs ts']
     dropSubst $ extendR env (reduce body)
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
+
+exprType :: Expr -> ReduceM Type
+exprType expr = do expr' <- subst expr
+                   return $ getType mempty expr'
+
+evalScanBody :: Scope -> Expr -> Val -> Int -> (Val, Val)
+evalScanBody scope (For (RecLeaf (ip:>_)) (Lam p body)) accum i =
+  case runReader (reduce body) env of
+    RecCon (Tup [accum', ys]) -> (accum', ys)
+    val -> error $ "unexpected scan result: " ++ pprint val
+  where env =  (ip @> L (Lit (IntLit i)), scope)
+            <> bindPat p accum
 
 reduceDecl :: Decl -> ReduceM SubstEnv
 reduceDecl (Let p expr) = do
