@@ -53,7 +53,7 @@ reduce expr = case expr of
   App e1 e2 -> do
     Lam p body <- reduce e1
     x <- reduce e2
-    extendR (bindPat p x) (reduce body)
+    dropSubst $ extendR (bindPat p x) (reduce body)
   For (RecLeaf (v:>idxTy)) body -> do
     expr' <- subst expr
     IdxSetLit n <- subst idxTy
@@ -72,7 +72,7 @@ reduce expr = case expr of
     TLam bs body <- reduce e1
     ts' <- mapM subst ts
     let env = asFst $ fold [v @> T t | (v:>_, t) <- zip bs ts']
-    extendR env (reduce body)
+    dropSubst $ extendR env (reduce body)
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
 
 reduceDecl :: Decl -> ReduceM SubstEnv
@@ -125,6 +125,9 @@ fromIntLit (Lit (IntLit x)) = x
 fromRealLit :: Val -> Double
 fromRealLit (Lit (RealLit x)) = x
 
+dropSubst :: MonadReader SubstEnv m => m a -> m a
+dropSubst m = do local (\(_, scope) -> (mempty, scope)) m
+
 class Subst a where
   subst :: MonadReader SubstEnv m => a -> m a
 
@@ -135,8 +138,7 @@ instance Subst Expr where
       x <- asks $ flip envLookup v . fst
       case x of
         Nothing -> return expr
-        Just (L x') -> local dropSubst (subst x')
-          where dropSubst (_, scope) = (mempty, scope)
+        Just (L x') -> dropSubst (subst x')
     PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
     Decls [] body -> subst body
     Decls (decl:rest) final -> case decl of
