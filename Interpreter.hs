@@ -14,6 +14,7 @@ import PPrint
 import Cat
 import Record
 import Type
+import Fresh
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -121,6 +122,7 @@ evalOp op ts xs = case op of
   Range -> Pack unitCon (IdxSetLit n) (Exists unitTy)
     where n = case xs of [x] -> fromIntLit x
   IndexAsInt -> case xs of [x] -> x
+  IntToReal -> case xs of [Lit (IntLit x)] -> Lit (RealLit (fromIntegral x))
   FFICall 1 "sqrt" -> realUnOp c_sqrt xs
   FFICall 1 "sin"  -> realUnOp c_sin  xs
   FFICall 1 "cos"  -> realUnOp c_cos  xs
@@ -184,11 +186,22 @@ instance Subst Expr where
     Annot e t -> liftM2 Annot (subst e) (subst t)
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
-    where
-      refreshPat :: MonadReader SubstEnv m => Pat -> (Pat -> m a) -> m a
-      refreshPat p m = do
-        p' <- traverse (traverse subst) p -- TODO: actually freshen!
-        m p'
+
+refreshPat :: MonadReader SubstEnv m => Pat -> (Pat -> m a) -> m a
+refreshPat p m = do
+  p' <- traverse (traverse subst) p -- TODO: actually freshen!
+  env <- ask
+  let (p'', env') = flip runCat env $ flip traverse p' $ \(v:>ty) -> do
+                      v' <- refreshVarCat v
+                      return (v':>ty)
+  extendR env' $ m p''
+
+refreshVarCat :: Name -> Cat SubstEnv Name
+refreshVarCat v = do
+  scope <- looks snd
+  let v' = rename v scope
+  extend $ (v @> L (Var v'), v' @> ())
+  return v'
 
 instance Subst Type where
   subst ty = case ty of
