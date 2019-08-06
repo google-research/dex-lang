@@ -115,6 +115,8 @@ evalOp op ts xs = case op of
   FAdd -> realBinOp (+) xs
   FSub -> realBinOp (-) xs
   FMul -> realBinOp (*) xs
+  FDiv -> realBinOp (/) xs
+  BoolToInt -> case xs of [Lit (BoolLit x)] -> Lit $ IntLit (if x then 1 else 0)
   FLT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x < fromRealLit y
   FGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x > fromRealLit y
   ILT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x < fromIntLit  y
