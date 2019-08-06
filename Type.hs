@@ -74,9 +74,9 @@ getType' check expr = case expr of
                      checkEq "Get" a (recur ie)
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
-    TabCon n ty xs -> do
-      mapM_ (checkEq "table" ty . recur) xs
-      return $ TabType (IdxSetLit n) ty
+    TabCon ty@(TabType _ bodyTy) xs -> do
+      mapM_ (checkEq "table" bodyTy . recur) xs  -- TODO: check length too
+      return ty
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
                         mapM_ checkShadow vks
@@ -292,7 +292,7 @@ instance HasTypeVars Expr where
       For p body       -> liftA2 For (traverse recurB p) (recur body)
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
-      TabCon n ty xs   -> liftA2 (TabCon n) (recurTy ty) (traverse recur xs)
+      TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
       TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
       DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
@@ -356,10 +356,10 @@ getNType expr = case expr of
     assertEq as as' "App"
     return bs
   NAtoms xs -> mapM atomType xs
-  NTabCon n ts rows -> do
-    rowTys <- mapM (mapM atomType) rows
-    mapM (\ts' -> assertEq ts ts' "Tab constructor") rowTys
-    return $ map (NTabType (NIdxSetLit n)) ts
+  NTabCon n elemTys rows -> do
+    rowTys <- mapM getNType rows
+    mapM (\ts -> assertEq elemTys ts "Tab constructor") rowTys
+    return $ map (NTabType n) elemTys
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of

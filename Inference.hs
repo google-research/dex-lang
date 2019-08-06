@@ -103,13 +103,13 @@ check expr reqTy = case expr of
     tyExpr <- traverse infer r
     unifyReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
-  TabCon _ _ xs -> do
+  TabCon _ xs -> do
     (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
     let n' = length xs
     -- `==> elemTy` for better messages
     unifyCtx expr (n ==> elemTy) (IdxSetLit n' ==> elemTy)
-    return $ TabCon n' elemTy xs'
+    return $ TabCon reqTy xs'
   DerivAnnot e ann -> do
     e' <- check e reqTy
     ann' <- check ann (tangentBunType reqTy) -- TODO: handle type vars and meta vars)

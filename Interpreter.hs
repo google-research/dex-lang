@@ -45,11 +45,12 @@ reduce expr = case expr of
   Var _ -> subst expr
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
-    RecType (Tup [_, TabType (IdxSetLit n) bodyTy]) <- exprType expr
+    RecType (Tup [_, ty]) <- exprType expr
+    let TabType (IdxSetLit n) _ = ty
     fs' <- subst fs
     scope <- asks snd
     let (carry, ys) = mapAccumL (evalScanBody scope fs') x' [0..(n-1)]
-    return $ RecCon $ Tup [carry, TabCon n bodyTy ys]
+    return $ RecCon $ Tup [carry, TabCon ty ys]
   PrimOp op ts xs -> do
     ts' <- mapM subst ts
     xs' <- mapM reduce xs
@@ -68,13 +69,13 @@ reduce expr = case expr of
     TabType _ bodyTy <- exprType expr
     xs <- flip traverse [0..n-1] $ \i ->
             extendR (asFst $ v @> L (Lit (IntLit i))) (reduce body)
-    return $ TabCon n bodyTy xs  -- TODO: allow idx type in tabcon (not just int)
+    return $ TabCon (TabType (IdxSetLit n) bodyTy) xs  -- TODO: allow idx type in tabcon (not just int)
   Get e i -> do
-    TabCon _ _ xs <- reduce e
+    TabCon _ xs <- reduce e
     Lit (IntLit i') <- reduce i
     return $ xs !! i'
   RecCon r -> liftM RecCon (traverse reduce r)
-  TabCon n ty xs -> liftM2 (TabCon n) (subst ty) (mapM reduce xs)
+  TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
   TLam _ _ -> subst expr
   TApp e1 ts -> do
     TLam bs body <- reduce e1
@@ -185,7 +186,7 @@ instance Subst Expr where
                       liftM (TLam bs') (subst body) -- TODO: freshen binders
     TApp e ts -> liftM2 TApp (subst e) (mapM subst ts)
     RecCon r -> liftM RecCon (traverse subst r)
-    TabCon n ty xs -> liftM2 (TabCon n) (subst ty) (mapM subst xs)
+    TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
     Annot e t -> liftM2 Annot (subst e) (subst t)
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)

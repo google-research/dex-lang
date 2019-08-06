@@ -59,7 +59,7 @@ deShadowExpr expr = case expr of
       return $ For p' $ wrapDecls decls body'
   UGet e v -> liftM2 Get (recur e) (recur v)
   URecCon r -> liftM RecCon $ traverse recur r
-  UTabCon xs -> liftM (TabCon 0 unitTy) (mapM recur xs)
+  UTabCon xs -> liftM (TabCon Nothing) (mapM recur xs)
   UAnnot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   UDerivAnnot expr ann -> liftM2 DerivAnnot (recur expr) (recur ann)
   USrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)

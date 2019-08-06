@@ -88,7 +88,7 @@ instance Pretty b => Pretty (ExprP b) where
     For b e      -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
-    TabCon _ _ xs -> list (map pretty xs)
+    TabCon _ xs -> list (map pretty xs)
     TLam binders expr -> "Lam" <+> p binders <> "."
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts

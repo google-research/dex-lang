@@ -102,10 +102,10 @@ normalize expr = case expr of
   RecCon r -> do
     r' <- traverse atomize r
     return $ NAtoms $ concat $ toList r'
-  TabCon n ty rows -> do
+  TabCon (TabType (IdxSetLit n) ty) rows -> do
     ts' <- liftM toList $ normalizeTy ty
-    rows' <- mapM atomize rows
-    return $ NTabCon n ts' rows'
+    rows' <- mapM normalize rows
+    return $ NTabCon (NIdxSetLit n) ts' rows'
   DerivAnnot e ann -> do
     [e'] <- atomize e
     [ann'] <- atomize ann
@@ -275,7 +275,7 @@ simplify expr = case expr of
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
   NAtoms xs -> liftM NAtoms $ mapM simplifyAtom xs
   NTabCon n ts rows ->
-    liftM2 (NTabCon n) (mapM nSubstSimp ts) (mapM (mapM simplifyAtom) rows)
+    liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts) (mapM simplify rows)
 
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
@@ -502,7 +502,7 @@ instance NSubst NExpr where
     NApp f xs -> liftM2 NApp (nSubst f) (mapM nSubst xs)
     NAtoms xs -> liftM NAtoms $ mapM nSubst xs
     NTabCon n ts rows ->
-      liftM2 (NTabCon n) (mapM nSubst ts) (mapM (mapM nSubst) rows)
+      liftM3 NTabCon (nSubst n) (mapM nSubst ts) (mapM nSubst rows)
 
 instance NSubst NAtom where
   nSubst atom = case atom of
@@ -583,7 +583,7 @@ stripDerivAnnot expr = case expr of
   NPrimOp b ts xs -> NPrimOp b ts (map recurAtom xs)
   NApp f xs -> NApp (recurAtom f) (map recurAtom xs)
   NAtoms xs -> NAtoms $ map recurAtom xs
-  NTabCon n ts rows -> NTabCon n ts (map (map recurAtom) rows)
+  NTabCon n ts rows -> NTabCon n ts (map recur rows)
   where recur = stripDerivAnnot
         recurAtom = stripDerivAnnotAtom
 

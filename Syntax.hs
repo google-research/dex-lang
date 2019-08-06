@@ -46,7 +46,8 @@ data ExprP b = Lit LitVal
           | TLam [TBinder] (ExprP b)
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
-          | TabCon IdxSetVal Type [ExprP b]
+          | TabCon b [ExprP b]
+          | IdxLit Type Int
           | Annot (ExprP b) Type
           | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos
@@ -193,7 +194,7 @@ data NExpr = NDecls [NDecl] NExpr
            | NPrimOp Builtin [NType] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]
-           | NTabCon IdxSetVal [NType] [[NAtom]]
+           | NTabCon NType [NType] [NExpr]
              deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
