@@ -8,14 +8,13 @@
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
-              freshenBinder) where
+              freshCatSubst, freshenBinder, renamesSubst) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
-import Data.Foldable
 
 import Env
 import Cat
@@ -50,6 +49,14 @@ freshCat :: Name -> Cat (Env ()) Name
 freshCat v = do v' <- looks $ rename v
                 extend (v' @> ())
                 return v'
+
+renamesSubst :: Traversable f => f Name -> Env () -> (f Name, (Env Name, Env ()))
+renamesSubst vs scope = runCat (traverse freshCatSubst vs) (mempty, scope)
+
+freshCatSubst :: Name -> Cat (Env Name, Env ()) Name
+freshCatSubst v = do v' <- looks $ rename v . snd
+                     extend (v @> v', v' @> ())
+                     return v'
 
 -- === state monad version of fresh var generation ===
 

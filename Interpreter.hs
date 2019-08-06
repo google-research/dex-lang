@@ -179,7 +179,8 @@ instance Subst Expr where
         body' <- subst body
         return $ For p' body'
     Get e1 e2 -> liftM2 Get (subst e1) (subst e2)
-    TLam bs body -> liftM (TLam bs) (subst body) -- TODO: freshen binders
+    TLam bs body -> refreshTBinders bs $ \bs' ->
+                      liftM (TLam bs') (subst body) -- TODO: freshen binders
     TApp e ts -> liftM2 TApp (subst e) (mapM subst ts)
     RecCon r -> liftM RecCon (traverse subst r)
     TabCon n ty xs -> liftM2 (TabCon n) (subst ty) (mapM subst xs)
@@ -187,21 +188,25 @@ instance Subst Expr where
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
 
+-- Might be able to de-dup these with explicit traversals, lens-style
 refreshPat :: MonadReader SubstEnv m => Pat -> (Pat -> m a) -> m a
 refreshPat p m = do
-  p' <- traverse (traverse subst) p -- TODO: actually freshen!
-  env <- ask
-  let (p'', env') = flip runCat env $ flip traverse p' $ \(v:>ty) -> do
-                      v' <- refreshVarCat v
-                      return (v':>ty)
-  extendR env' $ m p''
+  p' <- traverse (traverse subst) p
+  scope <- asks snd
+  let (p'', (env', scope')) =
+        flip runCat (mempty, scope) $ flip traverse p' $ \(v:>ty) -> do
+          v' <- freshCatSubst v
+          return (v':>ty)
+  extendR (fmap (L . Var) env', scope') $ m p''
 
-refreshVarCat :: Name -> Cat SubstEnv Name
-refreshVarCat v = do
-  scope <- looks snd
-  let v' = rename v scope
-  extend $ (v @> L (Var v'), v' @> ())
-  return v'
+refreshTBinders :: MonadReader SubstEnv m => [TBinder] -> ([TBinder] -> m a) -> m a
+refreshTBinders bs m = do
+  scope <- asks snd
+  let (bs', (env', scope')) =
+        flip runCat (mempty, scope) $ flip traverse bs $ \(v:>k) -> do
+          v' <- freshCatSubst v
+          return (v':>k)
+  extendR (fmap (T . TypeVar) env', scope') $ m bs'
 
 instance Subst Type where
   subst ty = case ty of
