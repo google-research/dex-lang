@@ -89,6 +89,7 @@ instance Pretty b => Pretty (ExprP b) where
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
     TabCon _ xs -> list (map pretty xs)
+    IdxLit _ i -> p i
     TLam binders expr -> "Lam" <+> p binders <> "."
                                <+> align (p expr)
     TApp expr ts -> p expr <> p ts

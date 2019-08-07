@@ -7,11 +7,11 @@
 
 > 20.0
 
-:p let _, Nx = unpack range 100
+:p let _, Nx = unpack range 10
        x = iota ::Nx=>Int
    in isum (for i. x.i)
 
-> 4950
+> 45
 
 :p let vdot x y = sum (for i. x.i * y.i * 2.0)
        _, Nx = unpack range 3

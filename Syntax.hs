@@ -47,7 +47,7 @@ data ExprP b = Lit LitVal
           | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
           | TabCon b [ExprP b]
-          | IdxLit Type Int
+          | IdxLit IdxSetVal Int
           | Annot (ExprP b) Type
           | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos

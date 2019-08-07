@@ -12,7 +12,12 @@ update-%: tests/%.cd
 	stack exec coddle $^ > $^.tmp
 	mv $^.tmp $^
 
-all-tests: run-type-tests \
+interp-test:
+	./check-quine tests/eval-tests.cd stack exec coddle -- --interp \
+
+
+all-tests: interp-test \
+           run-type-tests \
            run-eval-tests \
            run-shadow-tests \
            run-annot-tests \

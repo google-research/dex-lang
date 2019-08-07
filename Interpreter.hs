@@ -4,7 +4,7 @@
 module Interpreter (interpPass) where
 
 import Control.Monad.Reader
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import Data.List (mapAccumL)
 
 import Syntax
@@ -45,11 +45,10 @@ reduce expr = case expr of
   Var _ -> subst expr
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
-    RecType (Tup [_, ty]) <- exprType expr
-    let TabType (IdxSetLit n) _ = ty
+    RecType (Tup [_, ty@(TabType n _)]) <- exprType expr
     fs' <- subst fs
     scope <- asks snd
-    let (carry, ys) = mapAccumL (evalScanBody scope fs') x' [0..(n-1)]
+    let (carry, ys) = mapAccumL (evalScanBody scope fs') x' (enumerateIdxs n)
     return $ RecCon $ Tup [carry, TabCon ty ys]
   PrimOp op ts xs -> do
     ts' <- mapM subst ts
@@ -64,18 +63,15 @@ reduce expr = case expr of
     Lam p body <- reduce e1
     x <- reduce e2
     dropSubst $ extendR (bindPat p x) (reduce body)
-  For (RecLeaf (v:>idxTy)) body -> do
-    IdxSetLit n <- subst idxTy
-    TabType _ bodyTy <- exprType expr
-    xs <- flip traverse [0..n-1] $ \i ->
-            extendR (asFst $ v @> L (Lit (IntLit i))) (reduce body)
-    return $ TabCon (TabType (IdxSetLit n) bodyTy) xs  -- TODO: allow idx type in tabcon (not just int)
-  Get e i -> do
-    TabCon _ xs <- reduce e
-    Lit (IntLit i') <- reduce i
-    return $ xs !! i'
+  For p body -> do
+    ty@(TabType n _) <- exprType expr
+    xs <- flip traverse (enumerateIdxs n) $ \i ->
+            extendR (bindPat p i) (reduce body)
+    return $ TabCon ty xs
+  Get e i -> liftM2 idxTabCon (reduce e) (reduce i)
   RecCon r -> liftM RecCon (traverse reduce r)
   TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
+  IdxLit _ _ -> subst expr
   TLam _ _ -> subst expr
   TApp e1 ts -> do
     TLam bs body <- reduce e1
@@ -88,13 +84,27 @@ exprType :: Expr -> ReduceM Type
 exprType expr = do expr' <- subst expr
                    return $ getType mempty expr'
 
-evalScanBody :: Scope -> Expr -> Val -> Int -> (Val, Val)
-evalScanBody scope (For (RecLeaf (ip:>_)) (Lam p body)) accum i =
+evalScanBody :: Scope -> Expr -> Val -> Val -> (Val, Val)
+evalScanBody scope (For ip (Lam p body)) accum i =
   case runReader (reduce body) env of
     RecCon (Tup [accum', ys]) -> (accum', ys)
     val -> error $ "unexpected scan result: " ++ pprint val
-  where env =  (ip @> L (Lit (IntLit i)), scope)
-            <> bindPat p accum
+  where env =  bindPat ip i <> bindPat p accum <> asSnd scope
+
+enumerateIdxs :: Type -> [Val]
+enumerateIdxs (IdxSetLit n) = map (IdxLit n) [0..n-1]
+enumerateIdxs (RecType r) = map RecCon $ traverse enumerateIdxs r  -- list monad
+
+idxTabCon :: Val -> Val -> Val
+idxTabCon (TabCon _ xs) i = xs !! idxToInt i
+
+idxToInt :: Val -> Int
+idxToInt i = snd (flattenIdx i)
+
+flattenIdx :: Val -> (Int, Int)
+flattenIdx (IdxLit n i) = (n, i)
+flattenIdx (RecCon r) = foldr f (1,0) $ map flattenIdx (toList r)
+  where f (size, idx) (cumSize, cumIdx) = (cumSize * size, cumIdx + idx * cumSize)
 
 reduceDecl :: Decl -> ReduceM SubstEnv
 reduceDecl (Let p expr) = do
@@ -124,7 +134,7 @@ evalOp op ts xs = case op of
   IGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x > fromIntLit  y
   Range -> Pack unitCon (IdxSetLit n) (Exists unitTy)
     where n = case xs of [x] -> fromIntLit x
-  IndexAsInt -> case xs of [x] -> x
+  IndexAsInt -> case xs of [x] -> Lit (IntLit (idxToInt x))
   IntToReal -> case xs of [Lit (IntLit x)] -> Lit (RealLit (fromIntegral x))
   FFICall 1 "sqrt" -> realUnOp c_sqrt xs
   FFICall 1 "sin"  -> realUnOp c_sin  xs
@@ -186,6 +196,7 @@ instance Subst Expr where
                       liftM (TLam bs') (subst body) -- TODO: freshen binders
     TApp e ts -> liftM2 TApp (subst e) (mapM subst ts)
     RecCon r -> liftM RecCon (traverse subst r)
+    IdxLit _ _ -> return expr
     TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
     Annot e t -> liftM2 Annot (subst e) (subst t)
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
