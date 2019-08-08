@@ -39,8 +39,8 @@ topDeclContext = do
 
 topDecl :: Parser UTopDecl
 topDecl =   explicitCommand
-        <|> liftM UTopDecl decl
-        <|> liftM (UEvalCmd . Command (EvalExpr Printed)) expr
+        <|> liftM TopDecl decl
+        <|> liftM (EvalCmd . Command (EvalExpr Printed)) expr
         <?> "top-level declaration"
 
 explicitCommand :: Parser UTopDecl
@@ -59,7 +59,7 @@ explicitCommand = do
            "flops"   -> return Flops
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
-  return $ UEvalCmd (Command cmd e)
+  return $ EvalCmd (Command cmd e)
 
 -- === Parsing decls ===
 
@@ -75,22 +75,22 @@ typeAlias = do
   v <- capVarName
   symbol "="
   ty <- tauType
-  return $ UTAlias v ty
+  return $ TAlias v ty
 
 typedLet :: Parser UDecl
 typedLet = do
   v <- try (varName <* symbol "::")
   ty <- sigmaType
   declSep
-  ULet p e <- letDecl
+  Let p e <- letDecl
   case p of
     RecTree _ -> fail "Can't annotate patterns"
-    RecLeaf (UBind (v' :> b)) ->
+    RecLeaf (v' :> b) ->
      if v' /= v
        then fail "Type declaration variable must match assignment variable."
        else case b of
-              Just _ -> fail "Competing type annotations"
-              Nothing -> return $ ULet (RecLeaf (UBind (v :> Just ty))) e
+              Ann _ -> fail "Competing type annotations"
+              NoAnn -> return $ Let (RecLeaf (v :> Ann ty)) e
 
 unpack :: Parser UDecl
 unpack = do
@@ -100,7 +100,7 @@ unpack = do
                       symbol "=" >> symbol "unpack"
                       return (b, tv)
   body <- expr
-  return $ UUnpack b tv body
+  return $ Unpack b tv body
 
 letDecl :: Parser UDecl
 letDecl = do
@@ -109,7 +109,7 @@ letDecl = do
                         symbol "="
                         return (p, wrap)
   body <- expr
-  return $ ULet p (wrap body)
+  return $ Let p (wrap body)
 
 -- === Parsing expressions ===
 
@@ -119,7 +119,7 @@ expr = makeExprParser (sc >> withSourceAnn term >>= maybeAnnot) ops
 term :: Parser UExpr
 term =   parenRaw
      <|> varExpr
-     <|> liftM ULit literal
+     <|> liftM Lit literal
      <|> declExpr
      <|> lamExpr
      <|> forExpr
@@ -134,29 +134,33 @@ declExpr = do
   decls <- decl `sepEndBy` declSep
   symbol "in"
   body <- expr
-  return $ UDecls decls body
+  return $ Decls decls body
 
 withSourceAnn :: Parser UExpr -> Parser UExpr
-withSourceAnn p = liftM (uncurry USrcAnnot) (withPos p)
+withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
 maybeAnnot :: UExpr -> Parser UExpr
 maybeAnnot e = do
-  t <- optional typeAnnot
-  return $ case t of
-             Nothing -> e
-             Just t -> UAnnot e t
+  ann <- typeAnnot
+  return $ case ann of
+             NoAnn -> e
+             Ann ty -> Annot e ty
 
-typeAnnot :: Parser Type
-typeAnnot = symbol "::" >> sigmaType
+typeAnnot :: Parser Ann
+typeAnnot = do
+  ann <- optional $ symbol "::" >> sigmaType
+  return $ case ann of
+    Nothing -> NoAnn
+    Just ty -> Ann ty
 
 parenRaw = do
   elts <- parens $ expr `sepBy` symbol ","
   return $ case elts of
     [expr] -> expr
-    elts -> URecCon $ Tup elts
+    elts -> RecCon $ Tup elts
 
 varExpr :: Parser UExpr
-varExpr = liftM (UVar . rawName) identifier
+varExpr = liftM (Var . rawName) identifier
 
 primOp :: Parser UExpr
 primOp = do
@@ -165,14 +169,14 @@ primOp = do
     Just b -> return b
     Nothing -> fail $ "Unexpected builtin: " ++ s
   args <- parens $ expr `sepBy` symbol ","
-  return $ UPrimOp b args
+  return $ PrimOp b [] args
 
 ffiCall :: Parser UExpr
 ffiCall = do
   symbol "%%"
   s <- identifier
   args <- parens $ expr `sepBy` symbol ","
-  return $ UPrimOp (FFICall (length args) s) args
+  return $ PrimOp (FFICall (length args) s) [] args
 
 lamExpr :: Parser UExpr
 lamExpr = do
@@ -180,7 +184,7 @@ lamExpr = do
   ps <- pat `sepBy` sc
   symbol "."
   body <- expr
-  return $ foldr ULam body ps
+  return $ foldr Lam body ps
 
 forExpr :: Parser UExpr
 forExpr = do
@@ -188,21 +192,21 @@ forExpr = do
   vs <- pat `sepBy` sc
   symbol "."
   body <- expr
-  return $ foldr UFor body vs
+  return $ foldr For body vs
 
 tabCon :: Parser UExpr
 tabCon = do
   xs <- brackets $ expr `sepBy` symbol ","
-  return $ UTabCon xs
+  return $ TabCon NoAnn xs
 
 idxLhsArgs = do
   symbol "."
   args <- pat `sepBy` symbol "."
-  return $ \body -> foldr UFor body args
+  return $ \body -> foldr For body args
 
 lamLhsArgs = do
   args <- pat `sepBy` sc
-  return $ \body -> foldr ULam body args
+  return $ \body -> foldr Lam body args
 
 literal :: Parser LitVal
 literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
@@ -220,35 +224,35 @@ identifier = lexeme . try $ do
    resNames = ["for", "lam", "let", "in", "unpack"]
 
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
-                     >> return UApp)
+                     >> return App)
   where
     opNames = ["+", "*", "/", "-", "^", "$"]
 
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
-  where binOpApp e1 e2 = UPrimOp builtin [e1, e2]
+  where binOpApp e1 e2 = PrimOp builtin [] [e1, e2]
 
 getRule = Postfix $ do
   vs  <- many $ symbol "." >> idxExpr
-  return $ \body -> foldr (flip UGet) body (reverse vs)
+  return $ \body -> foldr (flip Get) body (reverse vs)
 
 ops = [ [getRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
-      , [InfixR (symbol "$" >> return UApp)]
-      , [InfixL (symbol "@deriv" >> return UDerivAnnot)]
+      , [InfixR (symbol "$" >> return App)]
+      , [InfixL (symbol "@deriv" >> return DerivAnnot)]
        ]
 
 varName :: Parser Name
 varName = liftM rawName identifier
 
 idxExpr :: Parser UExpr
-idxExpr = withSourceAnn $ liftM UVar varName
+idxExpr = withSourceAnn $ liftM Var varName
 
 binder :: Parser UBinder
-binder =     (symbol "_" >> return IgnoreBind)
-         <|> (liftM UBind $ liftM2 (:>) varName (optional typeAnnot))
+binder = (symbol "_" >> return (Name "_" 0 :> NoAnn))
+     <|> liftM2 (:>) varName typeAnnot
 
 pat :: Parser UPat
 pat =   parenPat

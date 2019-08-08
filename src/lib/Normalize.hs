@@ -223,7 +223,7 @@ writeVars tys expr = do
 -- === simplification pass ===
 
 type NScope = FullEnv NType ()
-type SimpEnv = (FullEnv NAtom Var, NScope)
+type SimpEnv = (FullEnv NAtom Name, NScope)
 type SimplifyM a = ReaderT SimpEnv (Either Err) a
 
 -- TODO: consider maintaining free variables explicitly
@@ -481,7 +481,7 @@ pureBun ty x = case ty of
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
-type SubstEnv = (FullEnv NAtom Var, Env ())
+type SubstEnv = (FullEnv NAtom Name, Env ())
 
 class NSubst a where
   nSubst :: MonadReader SubstEnv m => a -> m a

@@ -118,7 +118,7 @@ getType' check expr = case expr of
     recurWithP p  = extendR (foldMap lbind p) . recur
     recurWithT bs = extendR (foldMap tbind bs) . recur
 
-    lookupLVar :: Var -> TypeM Type
+    lookupLVar :: Name -> TypeM Type
     lookupLVar v = do
       x <- asks $ flip envLookup v
       case x of
@@ -138,7 +138,7 @@ checkShadow (v :> _) = do
 checkShadowPat :: Traversable f => f Binder -> TypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
-unpackExists :: Type -> Var -> Except Type
+unpackExists :: Type -> Name -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
 unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
 
@@ -218,7 +218,7 @@ instantiateTVs vs x = subAtDepth 0 sub x
                                              ++ show i ++ " / " ++ pprint vs
                     | otherwise  -> BoundTVar i
 
-abstractTVs :: [Var] -> Type -> Type
+abstractTVs :: [Name] -> Type -> Type
 abstractTVs vs x = subAtDepth 0 sub x
   where sub depth tvar = case tvar of
                            Left v -> case elemIndex v vs of
@@ -226,7 +226,7 @@ abstractTVs vs x = subAtDepth 0 sub x
                                        Just i  -> BoundTVar (depth + i)
                            Right i -> BoundTVar i
 
-subAtDepth :: Int -> (Int -> Either Var Int -> Type) -> Type -> Type
+subAtDepth :: Int -> (Int -> Either Name Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
@@ -240,16 +240,16 @@ subAtDepth d f ty = case ty of
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
 
-freeTyVars :: HasTypeVars a => a -> [Var]
+freeTyVars :: HasTypeVars a => a -> [Name]
 freeTyVars x = execState (subFreeTVs collectVars x) []
-  where collectVars :: Var -> State [Var] Type
+  where collectVars :: Name -> State [Name] Type
         collectVars v = modify (v :) >> return (TypeVar v)
 
-subFreeTVs :: (HasTypeVars a,  Applicative f) => (Var -> f Type) -> a -> f a
+subFreeTVs :: (HasTypeVars a,  Applicative f) => (Name -> f Type) -> a -> f a
 subFreeTVs = subFreeTVsBVs []
 
 class HasTypeVars a where
-  subFreeTVsBVs :: Applicative f => [Var] -> (Var -> f Type) -> a -> f a
+  subFreeTVsBVs :: Applicative f => [Name] -> (Name -> f Type) -> a -> f a
 
 instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
   subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)

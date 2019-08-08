@@ -16,7 +16,7 @@ import Record
 import Util
 import Fresh
 
-data Dest = Buffer Var [Index]
+data Dest = Buffer Name [Index]
 type ImpEnv = (Env IExpr, Env ())
 type ImpM a = ReaderT ImpEnv (Either Err) a
 

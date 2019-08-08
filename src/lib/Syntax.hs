@@ -2,10 +2,10 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..), Var,
-               UExpr (..), UTopDecl (..), UDecl (..), ImpDecl (..), TopDeclP (..),
+module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
+               UExpr, UTopDecl, UDecl, ImpDecl (..), TopDeclP (..),
                DeclP (..), Decl, TopDecl, Command (..), UPat, Pat, SrcPos,
-               CmdName (..), IdxExpr, Kind (..), UBinder (..), PatP,
+               CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutputElt (..), OutFormat (..),
                throw, addContext, addErrSource, addErrSourcePos,
@@ -36,7 +36,7 @@ import Control.Monad.Except hiding (Except)
 -- === core IR ===
 
 data ExprP b = Lit LitVal
-          | Var Var
+          | Var Name
           | PrimOp Builtin [Type] [ExprP b]
           | Decls [DeclP b] (ExprP b)
           | Lam (PatP b) (ExprP b)
@@ -55,7 +55,7 @@ data ExprP b = Lit LitVal
              deriving (Eq, Ord, Show)
 
 data Type = BaseType BaseType
-          | TypeVar Var
+          | TypeVar Name
           | ArrType Type Type
           | TabType IdxSet Type
           | RecType (Record Type)
@@ -71,20 +71,18 @@ type Decl    = DeclP    Type
 type TopDecl = TopDeclP Type
 type Pat     = PatP     Type
 
-type Var = Name
-
 -- TODO: figure out how to treat index set kinds
 -- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
 data Kind = TyKind  deriving (Show, Eq, Ord)
 idxSetKind = TyKind
 
-data DeclP b = Let    (PatP b)     (ExprP b)
-             | Unpack (BinderP b) Var (ExprP b)
+data DeclP b = Let (PatP b) (ExprP b)
+             | TAlias Name Type
+             | Unpack (BinderP b) Name (ExprP b)
                deriving (Eq, Ord, Show)
 
 type PatP b = RecTree (BinderP b)
 
--- TODO: just use Decl
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))
 
@@ -92,7 +90,7 @@ data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq)
 
 type TBinder = BinderP Kind
 type IdxSet = Type
-type IdxExpr = Var
+type IdxExpr = Name
 type IdxSetVal = Int
 type SrcPos = (Int, Int)
 
@@ -143,6 +141,16 @@ data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq)
 unitTy = RecType (Tup [])
 unitCon = RecCon (Tup [])
 
+-- === source AST ===
+
+data Ann = Ann Type | NoAnn  deriving (Show, Eq)
+
+type UExpr    = ExprP    Ann
+type UBinder  = BinderP  Ann
+type UDecl    = DeclP    Ann
+type UTopDecl = TopDeclP Ann
+type UPat     = PatP     Ann
+
 -- === functions available from the prelude ===
 
 preludeNames :: Env ()
@@ -160,33 +168,6 @@ tApp :: Expr -> [Type] -> Expr
 tApp f [] = f
 tApp f ts = TApp f ts
 
--- === source AST ===
-
-data UExpr = ULit LitVal
-           | UVar Var
-           | UPrimOp Builtin [UExpr]
-           | UDecls [UDecl] UExpr
-           | ULam UPat UExpr
-           | UApp UExpr UExpr
-           | UFor UPat UExpr
-           | UGet UExpr UExpr
-           | URecCon (Record UExpr)
-           | UTabCon [UExpr]
-           | UAnnot UExpr Type
-           | UDerivAnnot UExpr UExpr
-           | USrcAnnot UExpr SrcPos
-                deriving (Show, Eq)
-
-data UBinder = UBind (BinderP (Maybe Type)) | IgnoreBind  deriving (Show, Eq)
-data UDecl = ULet UPat UExpr
-           | UTAlias Var Type
-           | UUnpack UBinder Var UExpr  deriving (Show, Eq)
-
-data UTopDecl = UTopDecl UDecl
-              | UEvalCmd (Command UExpr)  deriving (Show, Eq)
-
-type UPat = RecTree UBinder
-
 -- === tuple-free ANF-ish normalized IR ===
 
 data NExpr = NDecls [NDecl] NExpr
@@ -198,11 +179,11 @@ data NExpr = NDecls [NDecl] NExpr
              deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
-           | NUnpack [NBinder] Var NExpr
+           | NUnpack [NBinder] Name NExpr
               deriving (Show)
 
 data NAtom = NLit LitVal
-           | NVar Var
+           | NVar Name
            | NGet NAtom NAtom
            | NLam [NBinder] NExpr
            | NAtomicFor NBinder NAtom
@@ -211,7 +192,7 @@ data NAtom = NLit LitVal
               deriving (Show)
 
 data NType = NBaseType BaseType
-           | NTypeVar Var
+           | NTypeVar Name
            | NArrType [NType] [NType]
            | NTabType NType NType
            | NExists [NType]
@@ -230,12 +211,12 @@ type NBinder = BinderP NType
 newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
 
 data Statement = Alloc IBinder ImpProg
-               | Update Var [Index] Builtin [IType] [IExpr]
-               | Loop Var Size ImpProg
+               | Update Name [Index] Builtin [IType] [IExpr]
+               | Loop Name Size ImpProg
                    deriving (Show)
 
 data IExpr = ILit LitVal
-           | IVar Var
+           | IVar Name
            | IGet IExpr Index
                deriving (Show, Eq)
 
@@ -401,24 +382,9 @@ instance HasVars Type where
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
 
-instance HasVars UExpr where
-  freeVars expr = case expr of
-    ULit _ -> mempty
-    UVar v -> v @> L ()
-    UPrimOp _ xs -> foldMap freeVars xs
-    UDecls decls body -> let (bvs, fvs) = declVars decls
-                         in fvs <> (freeVars body `envDiff` bvs)
-    ULam p body    -> withPat p body
-    UApp fexpr arg -> freeVars fexpr <> freeVars arg
-    UFor p body    -> withPat p body
-    UGet e ie  -> freeVars e <> freeVars ie
-    URecCon r  -> foldMap freeVars r
-    UTabCon xs -> foldMap freeVars xs
-    UAnnot e ty    -> freeVars e <> freeVars ty
-    USrcAnnot e _ -> freeVars e
-    where
-      withPat p e = foldMap freeVars p <>
-                      (freeVars e `envDiff` foldMap lhsVars p)
+instance HasVars Ann where
+  freeVars NoAnn = mempty
+  freeVars (Ann ty) = freeVars ty
 
 instance HasVars NExpr where
   freeVars expr = case expr of
@@ -451,10 +417,6 @@ instance HasVars NType where
     NIdxSetLit _ -> mempty
     NBoundTVar _ -> mempty
 
-instance HasVars UBinder where
-  freeVars (UBind (_ :> Just ty)) = freeVars ty
-  freeVars _= mempty
-
 instance HasVars b => HasVars (BinderP b) where
   freeVars (_ :> b) = freeVars b
 
@@ -462,15 +424,10 @@ instance HasVars b => HasVars (DeclP b) where
    freeVars (Let    p   expr) = foldMap freeVars p <> freeVars expr
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
 
-instance HasVars UDecl where
-  freeVars (ULet p expr) = foldMap freeVars p <> freeVars expr
-  freeVars (UTAlias _ ty) = freeVars ty
-  freeVars (UUnpack b _ expr) = freeVars b <> freeVars expr
-
-instance HasVars UTopDecl where
-  freeVars (UTopDecl decl) = freeVars decl
-  freeVars (UEvalCmd NoOp) = mempty
-  freeVars (UEvalCmd (Command _ expr)) = freeVars expr
+instance HasVars b => HasVars (TopDeclP b) where
+  freeVars (TopDecl decl) = freeVars decl
+  freeVars (EvalCmd NoOp) = mempty
+  freeVars (EvalCmd (Command _ expr)) = freeVars expr
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
@@ -479,10 +436,6 @@ instance (HasVars a, HasVars b) => HasVars (LorT a b) where
 class BindsVars a where
   lhsVars :: a -> Vars
 
-instance BindsVars UBinder where
-  lhsVars (UBind (v:>_)) = v @> L ()
-  lhsVars IgnoreBind = mempty
-
 instance BindsVars (BinderP a) where
   lhsVars (v:>_) = v @> L ()
 
@@ -490,18 +443,13 @@ instance BindsVars (DeclP b) where
   lhsVars (Let    p    _) = foldMap lhsVars p
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
 
-instance BindsVars UDecl where
-  lhsVars (ULet p _) = foldMap lhsVars p
-  lhsVars (UTAlias  v _) = v @> T ()
-  lhsVars (UUnpack b tv _) = lhsVars b <> tv @> T ()
+instance BindsVars (TopDeclP b) where
+  lhsVars (TopDecl decl) = lhsVars decl
+  lhsVars _ = mempty
 
 instance BindsVars NDecl where
   lhsVars (NLet bs _) = foldMap lhsVars bs
   lhsVars (NUnpack bs tv _) = foldMap lhsVars bs <> tv @> T ()
-
-instance BindsVars UTopDecl where
-  lhsVars (UTopDecl decl) = lhsVars decl
-  lhsVars _ = mempty
 
 declVars :: (HasVars a, BindsVars a) => [a] -> (Vars, Vars)
 declVars [] = (mempty, mempty)

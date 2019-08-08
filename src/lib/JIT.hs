@@ -2,7 +2,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv)
+import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -30,7 +30,7 @@ import Data.Binary.IEEE754 (wordToDouble)
 
 import Type
 import Syntax
-import Env hiding (Name)
+import Env
 import Pass
 import Fresh hiding (freshName)
 import PPrint
@@ -208,14 +208,14 @@ compileExpr expr = case expr of
                             return $ ScalarVal x ty
                    _  -> return $ ArrayVal ptr' shape
 
-lookupImpVar :: Var -> CompileM (Either CompileVal Cell)
+lookupImpVar :: Name -> CompileM (Either CompileVal Cell)
 lookupImpVar v = asks (! v)
 
 readScalarCell :: Cell -> CompileM CompileVal
 readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
                                              return $ ScalarVal op ty
 
-lookupCellVar :: Var -> CompileM Cell
+lookupCellVar :: Name -> CompileM Cell
 lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }
 
 indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
@@ -234,7 +234,7 @@ finishBlock term newName = do
          . setCurInstrs (const [])
          . setBlockName (const newName)
 
-compileLoop :: Var -> CompileVal -> ImpProg -> CompileM ()
+compileLoop :: Name -> CompileVal -> ImpProg -> CompileM ()
 compileLoop iVar (ScalarVal n _) body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"

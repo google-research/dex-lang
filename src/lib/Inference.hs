@@ -25,9 +25,8 @@ data InferState = InferState { tempEnv :: TempEnv
                              , subst :: Subst }
 
 type InferM a = Pass TypeEnv InferState a
-type UAnnot = Maybe Type
 
-typePass :: TopDeclP UAnnot -> TopPass TypeEnv TopDecl
+typePass :: UTopDecl -> TopPass TypeEnv TopDecl
 typePass tdecl = case tdecl of
   TopDecl (Let p expr) -> do
     (p', expr') <- liftTop $ inferLetBinding p expr
@@ -54,12 +53,12 @@ liftTop m = do
   source <- getSource
   addErrSource source $ liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
 
-infer :: ExprP UAnnot -> InferM (Type, Expr)
+infer :: UExpr -> InferM (Type, Expr)
 infer expr = do ty <- freshVar TyKind
                 expr' <- check expr ty
                 return (ty, expr')
 
-check :: ExprP UAnnot -> Type -> InferM Expr
+check :: UExpr -> Type -> InferM Expr
 check expr reqTy = case expr of
   Lit c -> do
     unifyReq (BaseType (litType c))
@@ -122,7 +121,7 @@ check expr reqTy = case expr of
   where
     unifyReq ty = unifyCtx expr reqTy ty
 
-    checkDecl :: DeclP UAnnot -> InferM Expr -> InferM Expr
+    checkDecl :: UDecl -> InferM Expr -> InferM Expr
     checkDecl decl cont = case decl of
       Let p bound -> do
         (p', bound') <- inferLetBinding p bound
@@ -144,28 +143,28 @@ check expr reqTy = case expr of
     recurWith  b expr ty = extendR (lbind b) (check expr ty)
     recurWithP p expr ty = extendR (foldMap lbind p) (check expr ty)
 
-inferBinder :: BinderP UAnnot -> InferM Binder
+inferBinder :: UBinder -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
-                                           Nothing -> freshTy
-                                           Just ty -> return ty
+                                           NoAnn -> freshTy
+                                           Ann ty -> return ty
 
-checkPat :: PatP UAnnot -> Type -> InferM Pat
+checkPat :: UPat -> Type -> InferM Pat
 checkPat p ty = do (ty', p') <- inferPat p
                    unifyCtx unitCon ty ty'
                    return p'
 
-inferPat :: PatP UAnnot -> InferM (Type, Pat)
+inferPat :: UPat -> InferM (Type, Pat)
 inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
 
-inferLetBinding :: PatP UAnnot -> ExprP UAnnot -> InferM (Pat, Expr)
+inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
 inferLetBinding pat expr = case pat of
   RecLeaf b -> case binderAnn b of
-    Nothing -> do
+    NoAnn -> do
       (ty', expr') <- infer expr
       (forallTy, tLam) <- generalize ty' expr'
       return (RecLeaf (replaceAnnot b forallTy), tLam)
-    Just sigmaTy@(Forall kinds tyBody) -> do
+    Ann sigmaTy@(Forall kinds tyBody) -> do
       skolVars <- mapM (fresh . pprint) kinds
       let skolBinders = zipWith (:>) skolVars kinds
       let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
@@ -180,7 +179,7 @@ inferLetBinding pat expr = case pat of
       return (p', expr')
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
-splitFun :: ExprP UAnnot -> Type -> InferM (Type, Type)
+splitFun :: UExpr -> Type -> InferM (Type, Type)
 splitFun e f = case f of
   ArrType a b -> return (a, b)
   _ -> do a <- freshTy
@@ -188,7 +187,7 @@ splitFun e f = case f of
           unifyCtx e f (a --> b)
           return (a, b)
 
-splitTab :: ExprP UAnnot -> Type -> InferM (IdxSet, Type)
+splitTab :: UExpr -> Type -> InferM (IdxSet, Type)
 splitTab e t = case t of
   TabType i v -> return (i, v)
   _ -> do i <- freshIdx
@@ -215,26 +214,26 @@ generalize ty expr = do
              return (Forall kinds $ abstractTVs flexVars ty',
                      TLam (zipWith (:>) flexVars kinds) expr')
   where
-    getKind :: Var -> InferM Kind
+    getKind :: Name -> InferM Kind
     getKind v = gets $ (! v) . tempEnv
 
-getFlexVars :: Type -> Expr -> InferM [Var]
+getFlexVars :: Type -> Expr -> InferM [Name]
 getFlexVars ty expr = do
   tyVars   <- tempVars ty
   exprVars <- tempVars expr
   envVars  <- tempVarsEnv
   return $ nub (tyVars ++ exprVars) \\ envVars
 
-tempVarsEnv :: InferM [Var]
+tempVarsEnv :: InferM [Name]
 tempVarsEnv = do env <- ask
                  vs <- mapM tempVars [ty | L ty <- toList env]
                  let vs' = [v | (v, T _) <- envPairs env]
                  return $ vs' ++ (concat vs)
 
-tempVars :: HasTypeVars a => a -> InferM [Var]
+tempVars :: HasTypeVars a => a -> InferM [Name]
 tempVars x = liftM freeTyVars (zonk x)
 
-instantiate :: ExprP UAnnot -> Type -> Type -> Expr -> InferM Expr
+instantiate :: UExpr -> Type -> Type -> Expr -> InferM Expr
 instantiate e ty reqTy expr = do
   ty'    <- zonk ty
   case ty' of
@@ -246,12 +245,12 @@ instantiate e ty reqTy expr = do
       unifyCtx e reqTy ty'
       return expr
 
-bindMVar :: Var -> Type -> InferM ()
+bindMVar :: Name -> Type -> InferM ()
 bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
              | otherwise = do modify $ setSubst $ (<> v @> t)
                               modify $ setTempEnv $ envDelete v
 
-unifyCtx :: ExprP UAnnot -> Type -> Type -> InferM ()
+unifyCtx :: UExpr -> Type -> Type -> InferM ()
 unifyCtx expr tyReq tyActual = do
   -- TODO: avoid the double zonking
   tyReq'    <- zonk tyReq
@@ -281,13 +280,13 @@ unify s t1 t2 = do
     _ -> throw TypeErr s
 
 
-occursIn :: Var -> Type -> Bool
+occursIn :: Name -> Type -> Bool
 occursIn v t = v `elem` freeTyVars t
 
 zonk :: HasTypeVars a => a -> InferM a
 zonk x = subFreeTVs lookupVar x
 
-lookupVar :: Var -> InferM Type
+lookupVar :: Name -> InferM Type
 lookupVar v = do
   mty <- gets $ flip envLookup v . subst
   case mty of Nothing -> return $ TypeVar v
@@ -301,7 +300,7 @@ setSubst update state = state { subst = update (subst state) }
 setTempEnv :: (TempEnv -> TempEnv) -> InferState -> InferState
 setTempEnv update state = state { tempEnv = update (tempEnv state) }
 
-inferKinds :: [Var] -> Type -> Except [Kind]
+inferKinds :: [Name] -> Type -> Except [Kind]
 inferKinds vs ty = do
   let kinds = execWriter (collectKinds TyKind ty)
   m <- case fromUnambiguousList kinds of
@@ -317,7 +316,7 @@ fromUnambiguousList xs = sequence $ M.fromListWith checkEq (map (onSnd Just) xs)
   where checkEq (Just v) (Just v') | v == v' = Just v
                                    | otherwise = Nothing
 
-collectKinds :: Kind -> Type -> Writer [(Var, Kind)] ()
+collectKinds :: Kind -> Type -> Writer [(Name, Kind)] ()
 collectKinds kind ty = case ty of
   BaseType _    -> return ()
   TypeVar v     -> tell [(v, kind)]
