@@ -88,7 +88,7 @@ type PatP b = RecTree (BinderP b)
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))
 
-data Command expr = Command CmdName expr | NoOp  deriving (Show)
+data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq)
 
 type TBinder = BinderP Kind
 type IdxSet = Type
@@ -183,7 +183,7 @@ data UDecl = ULet UPat UExpr
            | UUnpack UBinder Var UExpr  deriving (Show, Eq)
 
 data UTopDecl = UTopDecl UDecl
-              | UEvalCmd (Command UExpr)  deriving (Show)
+              | UEvalCmd (Command UExpr)  deriving (Show, Eq)
 
 type UPat = RecTree UBinder
 

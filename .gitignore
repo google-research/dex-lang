@@ -1,7 +1,6 @@
 coddle
 *.hi
 *.o
-test
 test.db
 *.prof
 test-script.cd

@@ -7,6 +7,7 @@ import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import Record
 import Syntax
+import Env
 
 pprint :: Pretty a => a -> String
 pprint x = asStr (pretty x)
@@ -103,6 +104,22 @@ instance Pretty b => Pretty (DeclP b) where
 
 instance Pretty Builtin where
   pretty b = p (show b)
+
+instance Pretty UExpr where
+  pretty expr = undefined
+
+instance Pretty UTopDecl where
+  pretty (UTopDecl decl) = p decl
+
+instance Pretty UBinder where
+  pretty (UBind (v :> Nothing)) = p v
+  pretty (UBind (v :> Just ty)) = p (v:>ty)
+  pretty IgnoreBind = "_"
+
+instance Pretty UDecl where
+  pretty (ULet pat expr) = p pat <+> "=" <+> p expr
+  pretty (UTAlias v ty) = undefined
+  pretty (UUnpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty NExpr where
   pretty expr = case expr of
