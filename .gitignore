@@ -9,3 +9,4 @@ test-script.cd
 *.so
 .stack-work
 garbage.hs
+stack.yaml.lock

@@ -2,13 +2,12 @@
 
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
-             composeN, mapMaybe, lookup, uncons, repeated, shortList,
+             composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
-import Test.QuickCheck
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
@@ -115,11 +114,6 @@ repeatedSorted [] = []
 repeatedSorted [_] = []
 repeatedSorted (x:y:rest) | x == y = [x] ++ repeatedSorted (dropWhile (== x) rest)
                           | otherwise = repeatedSorted (y:rest)
-
-shortList :: Int -> Gen a -> Gen [a]
-shortList n g = do
-   n' <- choose (0, n)
-   sequence $ replicate n' g
 
 splitOn :: (a -> Bool) -> [a] -> [[a]]
 splitOn f s = let (prefix, suffix) = break f s
