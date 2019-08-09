@@ -242,12 +242,7 @@ ops = [ [getRule, appRule]
        ]
 
 varName :: Parser Name
-varName = do
-  tag <- identifier
-  count <- optional $ symbol "_" >> int
-  let n = case count of Nothing -> 0
-                        Just n  -> n
-  return $ Name tag n
+varName = liftM2 Name identifier intQualifier
 
 idxExpr :: Parser UExpr
 idxExpr = withSourceAnn $ liftM Var varName
@@ -266,6 +261,12 @@ parenPat = do
   return $ case xs of
     [x] -> x
     xs -> RecTree $ Tup xs
+
+intQualifier :: Parser Int
+intQualifier = do
+  count <- optional $ symbol "_" >> lexeme int
+  return $ case count of Nothing -> 0
+                         Just n  -> n
 
 -- === Parsing types ===
 
@@ -316,7 +317,7 @@ typeName = do
              Just b -> BaseType b
 
 capVarName :: Parser Name
-capVarName = liftM rawName capIdentifier
+capVarName = liftM2 Name capIdentifier intQualifier
 
 capIdentifier :: Parser String
 capIdentifier = lexeme . try $ do

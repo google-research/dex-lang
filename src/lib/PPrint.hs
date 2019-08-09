@@ -99,7 +99,7 @@ instance Pretty b => Pretty (ExprP b) where
 
 instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <+> p expr
-  pretty (TAlias v ty) = p v <+> "=" <+> p ty
+  pretty (TAlias v ty) = "type" <+> p v <+> "=" <+> p ty
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty b => Pretty (TopDeclP b) where

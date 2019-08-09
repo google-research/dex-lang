@@ -13,8 +13,6 @@ arb = arbitrary
 smaller :: Int -> Gen a -> Gen a
 smaller n m = scale (\size -> size `div` n) m  -- TODO: use ceil div instead?
 
-
-
 instance Arbitrary Name where
   arbitrary = liftM2 Name (elements ["x", "y"]) (elements [0, 1])
 
@@ -47,8 +45,8 @@ instance Arbitrary b => Arbitrary (TopDeclP b) where
 instance Arbitrary b => Arbitrary (DeclP b) where
   arbitrary = frequency
     [ (4, liftM2 Let arb arb)
-    , (1, liftM2 TAlias arb arb)
-    , (1, liftM3 Unpack arb arb arb)]
+    , (1, liftM2 TAlias arbTypeName arb)
+    , (1, liftM3 Unpack arb arbTypeName arb)]
 
 instance Arbitrary b => Arbitrary (ExprP b) where
   arbitrary = oneof
@@ -58,3 +56,5 @@ instance Arbitrary b => Arbitrary (ExprP b) where
 instance Arbitrary Ann where
   arbitrary = oneof [return NoAnn, liftM Ann arb]
 
+arbTypeName :: Gen Name
+arbTypeName = liftM2 Name (elements ["A", "B"]) (elements [0, 1])

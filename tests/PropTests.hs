@@ -13,7 +13,7 @@ prop_print_parse_uexpr :: UTopDecl -> Property
 prop_print_parse_uexpr decl =
   case parseTopDecl (pprint decl) of
     Left e -> counterexample (pprint e) False
-    Right decl' -> decl === decl'
+    Right decl' -> decl === stripSrcAnnotTopDecl decl'
 
 -- wrapper to make show pretty
 data PPWrap a = PPWrap a  deriving (Eq)
@@ -35,8 +35,6 @@ args = stdArgs
   , maxSuccess = 100
   , replay = Just (mkQCGen 0, 0)
   }
-
-
 
 main :: IO ()
 main = do

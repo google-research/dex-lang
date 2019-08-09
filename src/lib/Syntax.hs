@@ -18,7 +18,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                Index, wrapDecls, strToBuiltin, idxSetKind,
                preludeNames, preludeApp, naryApp, tApp,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
-               NBinder
+               NBinder, stripSrcAnnotTopDecl
                ) where
 
 import Fresh
@@ -457,3 +457,32 @@ declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
   where
     (bvs, fvs) = (lhsVars decl, freeVars decl)
     (bvsRest, fvsRest) = declVars rest
+
+stripSrcAnnot :: ExprP b -> ExprP b
+stripSrcAnnot expr = case expr of
+  Var _ -> expr
+  Lit _ -> expr
+  PrimOp op ts xs -> PrimOp op ts (map recur xs)
+  Decls decls body -> Decls (map stripSrcAnnotDecl decls) (recur body)
+  Lam p body    -> Lam p (recur body)
+  App fexpr arg -> App (recur fexpr) (recur arg)
+  For b body    -> For b (recur body)
+  Get e ie      -> Get (recur e) (recur ie)
+  RecCon r      -> RecCon (fmap recur r)
+  TLam vs expr  -> TLam vs (recur expr)
+  TApp expr ts  -> TApp (recur expr) ts
+  DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
+  SrcAnnot e _ -> recur e
+  Pack e t1 t2 -> Pack (recur e) t1 t2
+  where recur = stripSrcAnnot
+
+stripSrcAnnotDecl :: DeclP b -> DeclP b
+stripSrcAnnotDecl decl = case decl of
+  Let p body -> Let p (stripSrcAnnot body)
+  TAlias _ _ -> decl
+  Unpack b v body -> Unpack b v (stripSrcAnnot body)
+
+stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
+stripSrcAnnotTopDecl (TopDecl decl) = TopDecl $ stripSrcAnnotDecl decl
+stripSrcAnnotTopDecl (EvalCmd NoOp) = EvalCmd NoOp
+stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))
