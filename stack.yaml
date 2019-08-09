@@ -5,3 +5,4 @@ packages:
 
 extra-deps:
 - megaparsec-7.0.4
+- QuickCheck-2.12.1

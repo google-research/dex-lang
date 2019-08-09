@@ -84,7 +84,7 @@ data DeclP b = Let (PatP b) (ExprP b)
 type PatP b = RecTree (BinderP b)
 
 data TopDeclP b = TopDecl (DeclP b)
-                | EvalCmd (Command (ExprP b))
+                | EvalCmd (Command (ExprP b))  deriving (Show, Eq)
 
 data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq)
 

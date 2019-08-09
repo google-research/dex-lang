@@ -101,6 +101,9 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <+> p expr
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
+instance Pretty b => Pretty (TopDeclP b) where
+  pretty (TopDecl decl) = p decl
+
 instance Pretty Builtin where
   pretty b = p (show b)
 
