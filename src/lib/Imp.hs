@@ -49,7 +49,7 @@ toImp dests expr = case expr of
     body' <- extendR env $ toImp dests (NDecls rest final)
     return $ wrapAllocs bs $ bound' <> body'
   NScan b@(_:>n) bs xs body -> do
-    ([i:>_], idxEnv ) <- toImpBinders [b]
+    ~([i:>_], idxEnv ) <- toImpBinders [b]
     xs' <- mapM toImpAtom xs
     n' <- typeToSize n
     let carryEnv = fold $ zipWith (\(v:>_) d -> v @> destAsIExpr d) bs carryDests
@@ -217,7 +217,7 @@ impExprType :: IExpr -> ImpCheckM IType
 impExprType expr = case expr of
   ILit val -> return $ IType (litType val) []
   IVar v   -> asks $ (! v)
-  IGet e i -> do IType b (_:shape) <- impExprType e
+  IGet e i -> do ~(IType b (_:shape)) <- impExprType e
                  checkInt i
                  return $ IType b shape
 

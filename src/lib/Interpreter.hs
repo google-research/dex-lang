@@ -45,7 +45,7 @@ reduce expr = case expr of
   Var _ -> subst expr
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
-    RecType (Tup [_, ty@(TabType n _)]) <- exprType expr
+    ~(RecType (Tup [_, ty@(TabType n _)])) <- exprType expr
     fs' <- subst fs
     scope <- asks snd
     let (carry, ys) = mapAccumL (evalScanBody scope fs') x' (enumerateIdxs n)
@@ -60,11 +60,11 @@ reduce expr = case expr of
     extendR env' $ reduce (Decls rest body)
   Lam _ _ -> subst expr
   App e1 e2 -> do
-    Lam p body <- reduce e1
+    ~(Lam p body) <- reduce e1
     x <- reduce e2
     dropSubst $ extendR (bindPat p x) (reduce body)
   For p body -> do
-    ty@(TabType n _) <- exprType expr
+    ~(ty@(TabType n _)) <- exprType expr
     xs <- flip traverse (enumerateIdxs n) $ \i ->
             extendR (bindPat p i) (reduce body)
     return $ TabCon ty xs
@@ -74,7 +74,7 @@ reduce expr = case expr of
   IdxLit _ _ -> subst expr
   TLam _ _ -> subst expr
   TApp e1 ts -> do
-    TLam bs body <- reduce e1
+    ~(TLam bs body) <- reduce e1
     ts' <- mapM subst ts
     let env = asFst $ fold [v @> T t | (v:>_, t) <- zip bs ts']
     dropSubst $ extendR env (reduce body)
@@ -111,7 +111,7 @@ reduceDecl (Let p expr) = do
   val <- reduce expr
   return $ bindPat p val
 reduceDecl (Unpack (v:>_) tv expr) = do
-  Pack val ty _ <- reduce expr
+  ~(Pack val ty _) <- reduce expr
   return $ asFst $ v @> L val <> tv @> T ty
 
 bindPat :: Pat -> Val -> SubstEnv

@@ -1,8 +1,8 @@
-resolver: lts-12.26
+resolver: lts-14.0
 
 packages:
 - .
 
 extra-deps:
-- megaparsec-7.0.4
-- QuickCheck-2.12.1
+- llvm-hs-7.0.1
+- llvm-hs-pure-7.0.0

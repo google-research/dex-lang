@@ -67,10 +67,10 @@ getType' check expr = case expr of
     For p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (TabType (patType p)) (recurWithP p body)
-    App e arg  -> do ArrType a b <- recur e
+    App e arg  -> do ~(ArrType a b) <- recur e
                      checkEq "App" a (recur arg)
                      return b
-    Get e ie   -> do TabType a b <- recur e
+    Get e ie   -> do ~(TabType a b) <- recur e
                      checkEq "Get" a (recur ie)
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
@@ -81,7 +81,7 @@ getType' check expr = case expr of
                         let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
                         mapM_ checkShadow vks
                         return $ Forall kinds (abstractTVs vs t)
-    TApp fexpr ts   -> do Forall _ body <- recur fexpr
+    TApp fexpr ts   -> do ~(Forall _ body) <- recur fexpr
                           mapM checkTy ts
                           return $ instantiateTVs ts body
     DerivAnnot e ann -> do
@@ -351,7 +351,7 @@ getNType expr = case expr of
       ts' = map nTypeToType ts
       ansTy':argTys' = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
   NApp e xs -> do
-    NArrType as bs <- atomType e
+    ~(NArrType as bs) <- atomType e
     as' <- mapM atomType xs
     assertEq as as' "App"
     return bs
@@ -385,7 +385,7 @@ atomType atom = case atom of
       Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
       Just (L ty) -> return ty
   NGet e i -> do
-    NTabType a b <- atomType e
+    ~(NTabType a b) <- atomType e
     a' <- atomType i
     assertEq a a' "Get"
     return b

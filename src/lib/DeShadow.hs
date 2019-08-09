@@ -73,7 +73,7 @@ deShadowDecl (Unpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
   extend (asSnd (tv @> TypeVar tv'), tv'@>())
-  (RecLeaf b', decls) <- captureW $ deShadowPat (RecLeaf b)
+  ~(RecLeaf b', decls) <- captureW $ deShadowPat (RecLeaf b)
   tell $ Unpack b' tv' bound' : decls
 deShadowDecl (TAlias v ty) = do  -- TODO: deal with capture
   ty' <- toCat $ deShadowType ty

@@ -34,14 +34,9 @@ args = stdArgs
   , maxSuccess = 100
   }
 
-success :: Result -> Bool
-success result = case result of
-  Success {} -> True
-  _ -> False
-
 main :: IO ()
 main = do
   results <- quickCheckWithResult args (pprintProp prop_print_parse_uexpr)
-  if success results
+  if isSuccess results
     then return ()
     else exitWith (ExitFailure 1)

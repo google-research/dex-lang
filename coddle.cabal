@@ -11,7 +11,7 @@ library
                        WebOutput, Actor, DeShadow, Cat, Flops, Normalize,
                        Interpreter
   build-depends:       base, containers, mtl, binary, bytestring, HUnit,
-                       time, tf-random, llvm-hs-pure ==6.*, llvm-hs ==6.*,
+                       time, tf-random, llvm-hs-pure ==7.*, llvm-hs ==7.*,
                        hinotify, aeson, megaparsec, warp, wai,
                        parser-combinators, http-types, prettyprinter, text,
                        data-binary-ieee754, parsec

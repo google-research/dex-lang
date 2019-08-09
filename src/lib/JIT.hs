@@ -200,8 +200,8 @@ compileExpr expr = case expr of
                  Right cell@(Cell ptr shape) -> case shape of
                     [] -> readScalarCell cell
                     _  -> return $ ArrayVal ptr shape
-  IGet v i -> do ArrayVal ptr (_:shape) <- compileExpr v
-                 ScalarVal i' _ <- compileExpr i
+  IGet v i -> do ~(ArrayVal ptr (_:shape)) <- compileExpr v
+                 ~(ScalarVal i' _) <- compileExpr i
                  ptr'@(Ptr _ ty) <- indexPtr ptr shape i'
                  case shape of
                    [] -> do x <- load ptr'
@@ -216,7 +216,7 @@ readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
                                              return $ ScalarVal op ty
 
 lookupCellVar :: Name -> CompileM Cell
-lookupCellVar v = do { Right cell <- lookupImpVar v; return cell }
+lookupCellVar v = do { ~(Right cell) <- lookupImpVar v; return cell }
 
 indexPtr :: Ptr Operand -> [Operand] -> Operand -> CompileM (Ptr Operand)
 indexPtr (Ptr ptr ty) shape i = do
@@ -238,7 +238,7 @@ compileLoop :: Name -> CompileVal -> ImpProg -> CompileM ()
 compileLoop iVar (ScalarVal n _) body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"
-  Cell i [] <- alloca IntType "i"
+  Cell i _ <- alloca IntType "i"
   store i (litInt 0)
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock

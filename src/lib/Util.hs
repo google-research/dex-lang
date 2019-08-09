@@ -124,7 +124,7 @@ splitOn f s = let (prefix, suffix) = break f s
 restructure :: Traversable f => [a] -> f b -> f a
 restructure xs structure = evalState (traverse procLeaf structure) xs
   where procLeaf :: b -> State [a] a
-        procLeaf _ = do (x:xs) <- get
+        procLeaf _ = do ~(x:xs) <- get
                         put xs
                         return x
 

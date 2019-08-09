@@ -35,9 +35,9 @@ normalizePass topDecl = case topDecl of
     where dummyDecl = NLet [] (NAtoms [])
   EvalCmd NoOp -> return (NEvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (ty   , []) <- asTopPass $ exprType expr -- TODO: subst type vars
-    (expr', []) <- asTopPass $ normalizeScoped expr
-    (ntys , []) <- asTopPass $ normalizeTy ty
+    (ty   , _) <- asTopPass $ exprType expr -- TODO: subst type vars
+    (expr', _) <- asTopPass $ normalizeScoped expr
+    (ntys , _) <- asTopPass $ normalizeTy ty
     case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ pprint expr'
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
@@ -78,7 +78,7 @@ normalize expr = case expr of
       body' <- normalizeScoped body
       return $ NAtoms [NLam bs body']
   App f x -> do
-    [f'] <- atomize f
+    ~[f'] <- atomize f
     x' <- atomize x
     return $ NApp f' x'
   For p body -> do
@@ -107,8 +107,8 @@ normalize expr = case expr of
     rows' <- mapM normalize rows
     return $ NTabCon (NIdxSetLit n) ts' rows'
   DerivAnnot e ann -> do
-    [e'] <- atomize e
-    [ann'] <- atomize ann
+    ~[e'] <- atomize e
+    ~[ann'] <- atomize ann
     return $ NAtoms [NDerivAnnot e' ann']
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
@@ -424,7 +424,7 @@ derivNExpr expr = case expr of
   -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
   --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
   NApp f xs -> do
-    [f'] <- derivNAtom f
+    ~[f'] <- derivNAtom f
     xs' <- liftM concat $ mapM derivNAtom xs
     return $ NApp f' xs'
   NAtoms xs -> liftM (NAtoms . concat) $ mapM derivNAtom xs
@@ -436,7 +436,7 @@ derivNAtom atom = case atom of
   NVar v -> asks $ (!v) . fst
   NGet x i -> do
     xs <- derivNAtom x
-    [i'] <- derivNAtom i
+    ~[i'] <- derivNAtom i
     return $ map (flip NGet i') xs
   NLam bs body -> do
     updateDerivBinders bs $ \bs' -> do
