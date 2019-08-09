@@ -10,11 +10,11 @@ library
                        ParseUtil, Parser, Util, Imp, PPrint, Fresh, Pass,
                        WebOutput, Actor, DeShadow, Cat, Flops, Normalize,
                        Interpreter
-  build-depends:       base, containers, mtl, binary, bytestring, HUnit,
+  build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==7.*, llvm-hs ==7.*,
                        hinotify, aeson, megaparsec, warp, wai,
                        parser-combinators, http-types, prettyprinter, text,
-                       data-binary-ieee754, parsec
+                       data-binary-ieee754
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         cbits/libcod.so
