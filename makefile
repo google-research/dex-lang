@@ -5,16 +5,21 @@ SHELL=/bin/bash
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
 
-run-%: tests/%.cd
-	./check-quine $^ stack exec coddle
+libcod: cbits/libcod.so
+
+run-%: quine-tests/%.cd
+	quine-tests/check-quine $^ stack exec coddle
 
 update-%: tests/%.cd
 	stack exec coddle $^ > $^.tmp
 	mv $^.tmp $^
 
 interp-test:
-	./check-quine tests/eval-tests.cd stack exec coddle -- --interp \
+	./quine-tests/check-quine quine-tests/eval-tests.cd \
+	stack exec coddle -- --interp
 
+stack-tests:
+	stack test
 
 all-tests: interp-test \
            run-type-tests \
@@ -22,7 +27,7 @@ all-tests: interp-test \
            run-shadow-tests \
            run-annot-tests \
            run-flop-tests \
-           # run-ad-tests
+           stack-tests
 
 clean:
 	rm cbits/*.so
