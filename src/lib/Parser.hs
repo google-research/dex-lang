@@ -25,7 +25,7 @@ parseTopDecl :: String -> Except UTopDecl
 parseTopDecl s = parseit s topDecl
 
 parseit :: String -> Parser a -> Except a
-parseit s p = case parse (p <* eof) "" s of
+parseit s p = case parse (p <* (optional eol >> eof)) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
 
@@ -118,7 +118,7 @@ expr = makeExprParser (sc >> withSourceAnn term >>= maybeAnnot) ops
 
 term :: Parser UExpr
 term =   parenRaw
-     <|> varExpr
+     <|> liftM Var varName
      <|> liftM Lit literal
      <|> declExpr
      <|> lamExpr
@@ -158,9 +158,6 @@ parenRaw = do
   return $ case elts of
     [expr] -> expr
     elts -> RecCon $ Tup elts
-
-varExpr :: Parser UExpr
-varExpr = liftM (Var . rawName) identifier
 
 primOp :: Parser UExpr
 primOp = do
@@ -245,7 +242,12 @@ ops = [ [getRule, appRule]
        ]
 
 varName :: Parser Name
-varName = liftM rawName identifier
+varName = do
+  tag <- identifier
+  count <- optional $ symbol "_" >> int
+  let n = case count of Nothing -> 0
+                        Just n  -> n
+  return $ Name tag n
 
 idxExpr :: Parser UExpr
 idxExpr = withSourceAnn $ liftM Var varName

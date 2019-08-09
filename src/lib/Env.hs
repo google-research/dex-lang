@@ -120,7 +120,7 @@ instance Pretty a => Pretty (Env a) where
   pretty (Env m) = pretty (M.toAscList m)
 
 instance Pretty a => Pretty (BinderP a) where
-  pretty (v :> x) = pretty v   <> "::" <> pretty x
+  pretty (v :> x) = pretty v   <> pretty x
 
 instance Functor BinderP where
   fmap = fmapDefault

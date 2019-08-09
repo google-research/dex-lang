@@ -1,4 +1,5 @@
 import Test.QuickCheck
+import Test.QuickCheck.Random
 import System.Exit
 import Data.Text.Prettyprint.Doc
 import Control.Monad
@@ -12,13 +13,13 @@ prop_print_parse_uexpr :: UTopDecl -> Property
 prop_print_parse_uexpr decl =
   case parseTopDecl (pprint decl) of
     Left e -> counterexample (pprint e) False
-    Right decl' | decl == decl' -> property True
+    Right decl' -> decl === decl'
 
 -- wrapper to make show pretty
 data PPWrap a = PPWrap a  deriving (Eq)
 
 instance Pretty a => Show (PPWrap a) where
-  show (PPWrap x) = pprint x
+  show (PPWrap x) = show $ pprint x
 
 instance Arbitrary a => Arbitrary (PPWrap a) where
   arbitrary = liftM PPWrap arbitrary
@@ -32,7 +33,10 @@ pprintProp f = property (f . fromPPWrap)
 args = stdArgs
   { maxSize = 100
   , maxSuccess = 100
+  , replay = Just (mkQCGen 0, 0)
   }
+
+
 
 main :: IO ()
 main = do
