@@ -79,18 +79,18 @@ typeAlias = do
 
 typedLet :: Parser UDecl
 typedLet = do
-  v <- try (varName <* symbol "::")
-  ty <- sigmaType
-  declSep
-  Let p e <- letDecl
-  case p of
-    RecTree _ -> fail "Can't annotate patterns"
-    RecLeaf (v' :> b) ->
-     if v' /= v
-       then fail "Type declaration variable must match assignment variable."
-       else case b of
-              Ann _ -> fail "Competing type annotations"
-              NoAnn -> return $ Let (RecLeaf (v :> Ann ty)) e
+  (v, ty) <- try $ do
+    v <- varName
+    symbol "::"
+    ty <- sigmaType
+    declSep
+    return (v, ty)
+  v' <- varName
+  if v /= v' then fail $ "Expected: " ++ pprint v else return ()
+  wrap <- idxLhsArgs <|> lamLhsArgs
+  symbol "="
+  body <- expr
+  return $ Let (RecLeaf (v :> Ann ty)) (wrap body)
 
 unpack :: Parser UDecl
 unpack = do

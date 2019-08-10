@@ -19,7 +19,7 @@ prop_print_parse_uexpr decl =
 data PPWrap a = PPWrap a  deriving (Eq)
 
 instance Pretty a => Show (PPWrap a) where
-  show (PPWrap x) = show $ pprint x
+  show (PPWrap x) = pprint x
 
 instance Arbitrary a => Arbitrary (PPWrap a) where
   arbitrary = liftM PPWrap arbitrary
