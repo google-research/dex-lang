@@ -1,51 +1,56 @@
 \documentclass[12pt]{article}
 \usepackage{amsmath}
+\usepackage{geometry}
+\geometry{legalpaper, landscape, margin=0in}
 
 \newcommand{\annot}[1]{\texttt{::} #1}
-\newcommand{\quadbar}[0]{\quad | \quad}
+\newcommand{\ttt}[1]{~\texttt{#1}~}
 
 \begin{document}
 
 \vspace{-0.5cm}
 
+\begin{huge}
 \begin{align*}
-\text{Terms } \quad t ::=
- & \quad l  \quadbar x \quadbar i
-      && \text{Literal / variable / index variable} \\
-|& \quad \texttt{let } x \annot{\tau} = t \texttt{ in } t
+\text{Terms } \quad t ::&=~
+l  \mid x
+      && \text{Literal / variable} \\
+&\mid \ttt{let} x \annot{\tau} = t \ttt{in} t
         && \text{Let expression} \\
-|& \quad \texttt{lam } x \annot{\tau} \, \texttt {.} \,\, t
-   \quadbar  t \,\, t
+&\mid \ttt{lam} x \annot{\tau} \ttt {.} t
+   \mid  t ~ t
     && \text{Lambda abstraction / application} \\
-|& \quad \texttt{tlam } a \, . \,\, t
-   \quadbar t \,\, \tau
+&\mid \ttt{tlam} a \, . ~ t
+   \mid t ~ \tau
     && \text{Type-lambda abstraction / application} \\
-|& \quad \texttt{for } i \annot{n} \, \texttt {.} \,\, t
-   \quadbar t.i
+&\mid \ttt{for} i \annot{\iota}  \ttt {.} t
+   \mid t.i
     && \text{Index comprehension / indexing} \\
-|& \quad \texttt{pack } t, \tau \texttt{ :: } \exists n. \,\,\, \tau
+&\mid \ttt{pack} t, \iota \ttt{::} \exists n. ~ \tau
        && \text{Existential packing} \\
-|& \quad \texttt{let } x, n = \texttt{unpack } t \texttt{ in } t
+&\mid \ttt{let} x, n = \ttt{unpack} t \ttt{in} t
        && \text{Existential unpacking}
 \\ \\
-\text{Types} \quad \tau ::=
- & \quad \texttt{Int } | \texttt{ Real} \quadbar a
+\text{Types} \quad \tau, \iota ::&=
+ \ttt{Int} | \ttt{ Real} \mid \ttt{Bool} \mid a
       && \text{Base types and type variable} \\
-|& \quad \tau   \texttt{ -> } \tau  && \text{Arrow type} \\
-|& \quad \forall a. \,\,\, \tau
-   \quadbar \forall n. \,\,\, \tau
+&\mid \tau   \ttt{->} \tau  && \text{Arrow type} \\
+&\mid \forall a. ~ \tau
     && \text{Universal quantification} \\
-|& \quad n  \texttt{ => } \tau  && \text{Table type} \\
-|& \quad \exists n. \,\,\, \tau
+&\mid \iota \ttt{=>} \tau  && \text{Table type} \\
+&\mid \{l\ldots l\}  && \text{Index set literal} \\
+&\mid \exists n. ~ \tau
     && \text{Existential quantification}
 \end{align*}
 %
 \begin{align*}
-\text{Term variables}&       \quad x &
-\text{Index variables}&      \quad i  \\
-\text{Type variables}&       \quad a &
-\text{Index set variables}&  \quad n &
-\text{Literals} & \quad l
+\text{Term variables} \quad x, i \qquad
+\text{Type variables} \quad a, n \qquad
+\text{Literals} \quad l
 \end{align*}
+\end{huge}
 
 \end{document}
+
+%% to convert to slides-friendly png:
+%% convert -alpha remove -density 300 -quality 85 coddle.pdf -transparent white coddle.png
