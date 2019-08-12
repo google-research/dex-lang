@@ -109,6 +109,11 @@ check expr reqTy = case expr of
     -- `==> elemTy` for better messages
     unifyCtx expr (n ==> elemTy) (IdxSetLit n' ==> elemTy)
     return $ TabCon reqTy xs'
+  Pack e ty exTy -> do
+    let (Exists exBody) = exTy
+    unifyReq exTy
+    let t = instantiateTVs [ty] exBody
+    check e t
   DerivAnnot e ann -> do
     e' <- check e reqTy
     ann' <- check ann (tangentBunType reqTy) -- TODO: handle type vars and meta vars)

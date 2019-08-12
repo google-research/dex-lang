@@ -148,3 +148,11 @@ p2 = 1
 :t lam x. for (i,j). x.i.j
 
 > A c b a. (a=>b=>c -> (a, b)=>c)
+
+_, M = unpack range 5
+
+:t for i::M. let _, N = unpack range (asint i)
+                  x = for j::N. asint j
+               in pack x, N, E n. n=>Int
+
+> M=>Ea.a=>Int

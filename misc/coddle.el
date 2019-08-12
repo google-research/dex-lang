@@ -1,6 +1,6 @@
 
 (setq coddle-highlights
-  '(("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bin\\b"
+  '(("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b\\|\\bin\\b"
      . font-lock-keyword-face)
     ("\\bE\\b\\|\\bA\\b"              . font-lock-builtin-face)
     ("->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)

@@ -126,6 +126,7 @@ term =   parenRaw
      <|> primOp
      <|> ffiCall
      <|> tabCon
+     <|> pack
      <?> "term"
 
 declExpr :: Parser UExpr
@@ -196,6 +197,11 @@ tabCon = do
   xs <- brackets $ expr `sepBy` symbol ","
   return $ TabCon NoAnn xs
 
+pack :: Parser UExpr
+pack = do
+  symbol "pack"
+  liftM3 Pack (expr <* symbol ",") (tauType <* symbol ",") existsType
+
 idxLhsArgs = do
   symbol "."
   args <- pat `sepBy` symbol "."
@@ -218,7 +224,7 @@ identifier = lexeme . try $ do
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
   where
-   resNames = ["for", "lam", "let", "in", "unpack"]
+   resNames = ["for", "lam", "let", "in", "unpack", "pack"]
 
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
@@ -306,7 +312,7 @@ existsType = do
   try $ symbol "E"
   v <- varName
   symbol "."
-  body <- tauType
+  body <- typeExpr
   return $ Exists (abstractTVs [v] body)
 
 typeName :: Parser Type

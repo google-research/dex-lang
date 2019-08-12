@@ -61,6 +61,7 @@ deShadowExpr expr = case expr of
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   DerivAnnot expr ann -> liftM2 DerivAnnot (recur expr) (recur ann)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
+  Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
   where recur = deShadowExpr
         deShadowAnnot b = fmap (fmap deShadowType) b
 
