@@ -24,7 +24,7 @@ l  \mid x
    \mid t ~ \tau
     && \text{Type-lambda abstraction / application} \\
 &\mid \ttt{for} i \annot{\iota}  \ttt {.} t
-   \mid t.i
+   \mid t.t
     && \text{Index comprehension / indexing} \\
 &\mid \ttt{pack} t, \iota \ttt{::} \exists n. ~ \tau
        && \text{Existential packing} \\
@@ -38,7 +38,7 @@ l  \mid x
 &\mid \forall a. ~ \tau
     && \text{Universal quantification} \\
 &\mid \iota \ttt{=>} \tau  && \text{Table type} \\
-&\mid \{l\ldots l\}  && \text{Index set literal} \\
+&\mid \ttt{\{<}l\ttt{\}} && \text{Index set literal} \\
 &\mid \exists n. ~ \tau
     && \text{Existential quantification}
 \end{align*}
