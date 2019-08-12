@@ -1,15 +1,19 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module PPrint (pprint) where
+module PPrint (pprint, pprintEsc) where
 
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import Record
 import Syntax
+import Util (findReplace)
 
 pprint :: Pretty a => a -> String
-pprint x = asStr (pretty x)
+pprint x = asStr $ pretty x
+
+pprintEsc :: Pretty a => a -> String
+pprintEsc x = findReplace "; ..\n" "\n" $ findReplace "\n" " ..\n" $ pprint x
 
 asStr :: Doc ann -> String
 asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc

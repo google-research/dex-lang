@@ -4,7 +4,7 @@ module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion) where
+             onSnd, onFst, highlightRegion, findReplace) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -159,3 +159,13 @@ maxLT :: Ord a => [a] -> a -> Int
 maxLT [] _ = 0
 maxLT (x:xs) n = if n < x then -1
                           else 1 + maxLT xs n
+
+-- TODO: find a more efficient implementation
+findReplace :: Eq a => [a] -> [a] -> [a] -> [a]
+findReplace _ _ [] = []
+findReplace old new s@(x:xs) =
+  if take n s == old
+    then new ++ recur (drop n s)
+    else x : recur xs
+  where n = length old
+        recur = findReplace old new

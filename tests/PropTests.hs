@@ -11,7 +11,7 @@ import Generators ()
 
 prop_print_parse_uexpr :: UTopDecl -> Property
 prop_print_parse_uexpr decl =
-  case parseTopDecl (pprint decl) of
+  case parseTopDecl (pprintEsc decl) of
     Left e -> counterexample (pprint e) False
     Right decl' -> decl === stripSrcAnnotTopDecl decl'
 
@@ -19,7 +19,7 @@ prop_print_parse_uexpr decl =
 data PPWrap a = PPWrap a  deriving (Eq)
 
 instance Pretty a => Show (PPWrap a) where
-  show (PPWrap x) = pprint x
+  show (PPWrap x) = pprintEsc x
 
 instance Arbitrary a => Arbitrary (PPWrap a) where
   arbitrary = liftM PPWrap arbitrary
