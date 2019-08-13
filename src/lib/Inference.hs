@@ -113,7 +113,8 @@ check expr reqTy = case expr of
     let (Exists exBody) = exTy
     unifyReq exTy
     let t = instantiateTVs [ty] exBody
-    check e t
+    e' <- check e t
+    return $ Pack e' ty exTy
   DerivAnnot e ann -> do
     e' <- check e reqTy
     ann' <- check ann (tangentBunType reqTy) -- TODO: handle type vars and meta vars)

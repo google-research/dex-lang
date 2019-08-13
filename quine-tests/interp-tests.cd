@@ -1,0 +1,18 @@
+-- language features implemented in interpreter but not yet in the compiler
+
+:p 1
+
+> 1
+
+
+_, M = unpack range 4
+
+xs :: M => (E n. n=>Int)
+xs = for i. let _, N = unpack range (asint i)
+                x = for j::N. asint j
+            in pack x, N, E n. n=>Int
+
+for i. let x, N2 = unpack xs.i  -- TODO: underscore type binder
+       in isum x
+
+> [0, 0, 1, 3]

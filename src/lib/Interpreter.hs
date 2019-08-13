@@ -71,6 +71,7 @@ reduce expr = case expr of
   Get e i -> liftM2 idxTabCon (reduce e) (reduce i)
   RecCon r -> liftM RecCon (traverse reduce r)
   TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
+  Pack e ty exTy -> liftM3 Pack (reduce e) (subst ty) (subst exTy)
   IdxLit _ _ -> subst expr
   TLam _ _ -> subst expr
   TApp e1 ts -> do
@@ -181,6 +182,12 @@ instance Subst Expr where
         refreshPat p $ \p' -> do
            body' <- subst body
            return $ wrapDecls [Let p' bound'] body'
+      Unpack b tv bound -> do
+        bound' <- subst bound
+        refreshTBinders [tv:>idxSetKind] $ \[tv':>_] ->
+          refreshPat [b] $ \[b'] -> do
+            body' <- subst body
+            return $ wrapDecls [Unpack b' tv' bound'] body'
       where body = Decls rest final
     Lam p body -> do
       refreshPat p $ \p' -> do
@@ -198,12 +205,14 @@ instance Subst Expr where
     RecCon r -> liftM RecCon (traverse subst r)
     IdxLit _ _ -> return expr
     TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
+    Pack e ty exTy -> liftM3 Pack (subst e) (subst ty) (subst exTy)
     Annot e t -> liftM2 Annot (subst e) (subst t)
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
 
 -- Might be able to de-dup these with explicit traversals, lens-style
-refreshPat :: MonadReader SubstEnv m => Pat -> (Pat -> m a) -> m a
+refreshPat :: (Traversable t, MonadReader SubstEnv m) =>
+                t Binder -> (t Binder -> m a) -> m a
 refreshPat p m = do
   p' <- traverse (traverse subst) p
   scope <- asks snd

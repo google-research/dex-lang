@@ -27,12 +27,12 @@ checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
 checkTyped decl = decl <$ case decl of
   TopDecl (Let p expr) -> do
     ty' <- check expr
-    assertEq (patType p) ty' ""
+    assertEq (patType p) ty' "Top let"
     putEnv $ foldMap lbind p
   TopDecl (Unpack b iv expr) -> do
     exTy <- check expr
     ty' <- liftEither $ unpackExists exTy iv
-    assertEq (binderAnn b) ty' ""
+    assertEq (binderAnn b) ty' "Top unpack"
     putEnv $ lbind b <> iv @> T idxSetKind
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
@@ -77,6 +77,10 @@ getType' check expr = case expr of
     TabCon ty@(TabType _ bodyTy) xs -> do
       mapM_ (checkEq "table" bodyTy . recur) xs  -- TODO: check length too
       return ty
+    Pack e ty exTy -> do
+      let (Exists exBody) = exTy
+      checkEq "Pack" (instantiateTVs [ty] exBody) (recur e)
+      return exTy
     TLam vks body -> do t <- recurWithT vks body
                         let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
                         mapM_ checkShadow vks
@@ -293,6 +297,7 @@ instance HasTypeVars Expr where
       Get e ie         -> liftA2 Get (recur e) (pure ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
       TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
+      Pack e ty exTy   -> liftA3 Pack (recur e) (recurTy ty) (recurTy exTy)
       TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
       TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
       DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
