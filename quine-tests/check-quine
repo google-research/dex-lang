@@ -1,14 +1,18 @@
 #!/bin/bash
 
 tmpout=$(mktemp)
+errout=$(mktemp)
 tmpdiff=$(mktemp)
 
-if ${@:2} $1 > $tmpout ; then
+if ${@:2} $1 > $tmpout 2> $errout ; then
     diff --left-column -B -y --color=always $1 $tmpout > $tmpdiff \
        && echo OK || cat $tmpdiff
 else
     cat $tmpout
 fi
 
+cat $errout
+
+rm $errout
 rm $tmpout
 rm $tmpdiff
