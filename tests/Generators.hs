@@ -13,13 +13,30 @@ arb = arbitrary
 smaller :: Int -> Gen a -> Gen a
 smaller n m = scale (\size -> size `div` n) m  -- TODO: use ceil div instead?
 
+oneOfFiltered :: [(Bool, Gen a)] -> Gen a
+oneOfFiltered gens = oneof $ map snd $ filter fst gens
+
 instance Arbitrary Name where
   arbitrary = liftM2 Name (elements ["x", "y"]) (elements [0, 1])
 
 instance Arbitrary Type where
-  arbitrary = oneof
-    [ liftM BaseType arb ]
-  -- TODO: the rest
+  arbitrary = arbType 0
+
+arbType :: Int -> Gen Type
+arbType numBinders = do
+  n <- getSize
+  let nonLeaf = n>0
+  oneOfFiltered
+    [ (True, liftM BaseType arb)
+    , (True, liftM TypeVar arbTypeName)
+    , (nonLeaf, liftM2 ArrType (smaller 2 arb) (smaller 2 arb))
+    , (nonLeaf, liftM2 TabType (smaller 2 arb) (smaller 2 arb))
+    , (nonLeaf, liftM RecType arb)
+    -- TODO: add explicit quantification to concrete syntax
+    -- , (True, liftM (Forall [TyKind]) (arbType (numBinders + 1)))
+    -- , (True, liftM Exists (arbType (numBinders + 1)))
+    , (numBinders > 0, liftM BoundTVar (elements [0..numBinders-1]))]
+    --     | IdxSetLit IdxSetVal
 
 instance Arbitrary BaseType where
   arbitrary = elements [IntType, BoolType, RealType]  -- TODO: StrType

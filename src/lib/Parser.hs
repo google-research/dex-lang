@@ -317,22 +317,22 @@ existsType = do
 
 typeName :: Parser Type
 typeName = do
-  w <- lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
-  return $ case M.lookup w baseTypeNames of
-             Nothing -> TypeVar (rawName w)
+  v <- try $ capVarName
+  return $ case M.lookup v baseTypeNames of
+             Nothing -> TypeVar v
              Just b -> BaseType b
 
 capVarName :: Parser Name
 capVarName = liftM2 Name capIdentifier intQualifier
 
 capIdentifier :: Parser String
-capIdentifier = lexeme . try $ do
-  w <- (:) <$> upperChar <*> many alphaNumChar
-  failIf (w `M.member` baseTypeNames) $ show w ++ " is a base type"
-  return w
+capIdentifier = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
-baseTypeNames = M.fromList [ ("Int" , IntType) , ("Real", RealType)
-                           , ("Bool", BoolType), ("Str" , StrType)]
+baseTypeNames = M.fromList
+  [ (rawName "Int" , IntType)
+  , (rawName "Real", RealType)
+  , (rawName "Bool", BoolType)
+  , (rawName "Str" , StrType)]
 
 parenTy :: Parser Type
 parenTy = do

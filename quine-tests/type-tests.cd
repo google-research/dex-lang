@@ -4,7 +4,7 @@
 
 :t lam x. sum for i. x.i
 
-> A a. (a=>Real -> Real)
+> A a. ((a=>Real) -> Real)
 
 :t let flip f x y = f y x in flip
 
@@ -12,7 +12,7 @@
 
 :t lam x. for i j. x.j.i
 
-> A c b a. (b=>a=>c -> a=>b=>c)
+> A c b a. ((b=>(a=>c)) -> (a=>(b=>c)))
 
 :t lam f x. f x
 
@@ -67,7 +67,7 @@ xr = map real arr
 
 :t arr
 
-> Narr=>Int
+> (Narr=>Int)
 
 :t (lam (x, y). x + y) (1.0, 2.0)
 
@@ -99,17 +99,17 @@ xr = map real arr
 
 :t [1, 2, 3]
 
-> {..3}=>Int
+> ({..3}=>Int)
 
 :t []
 
-> A a. {..0}=>a
+> A a. ({..0}=>a)
 
 :t [1, [2]]
 
 > Type error:
 > Expected: Int
->   Actual: T_3=>T_4
+>   Actual: (T_3=>T_4)
 > In: [2]
 >
 > :t [1, [2]]
@@ -117,13 +117,13 @@ xr = map real arr
 
 :t [[1, 2], [3, 4]]
 
-> {..2}=>{..2}=>Int
+> ({..2}=>({..2}=>Int))
 
 :t [[1, 2], [3]]
 
 > Type error:
-> Expected: {..2}=>Int
->   Actual: {..1}=>Int
+> Expected: ({..2}=>Int)
+>   Actual: ({..1}=>Int)
 > In: [3]
 >
 > :t [[1, 2], [3]]
@@ -147,7 +147,7 @@ p2 = 1
 
 :t lam x. for (i,j). x.i.j
 
-> A c b a. (a=>b=>c -> (a, b)=>c)
+> A c b a. ((a=>(b=>c)) -> ((a, b)=>c))
 
 _, M = unpack range 5
 
@@ -155,4 +155,4 @@ _, M = unpack range 5
                   x = for j::N. asint j
                in pack x, N, E n. n=>Int
 
-> M=>Ea.a=>Int
+> (M=>Ea.(a=>Int))

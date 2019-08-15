@@ -47,7 +47,7 @@ prettyTyDepth d t = case t of
   TypeVar v   -> p v
   BoundTVar n -> p (tvars n)
   ArrType a b -> parens $ recur a <+> "->" <+> recur b
-  TabType a b -> recur a <> "=>" <> recur b
+  TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   Forall kinds t -> header <+> recurWith n t
                     where n = length kinds
