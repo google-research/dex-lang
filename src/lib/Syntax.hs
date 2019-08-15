@@ -18,7 +18,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                Index, wrapDecls, strToBuiltin, idxSetKind,
                preludeNames, preludeApp, naryApp, tApp,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
-               NBinder, stripSrcAnnotTopDecl
+               NBinder, stripSrcAnnot, stripSrcAnnotTopDecl
                ) where
 
 import Fresh

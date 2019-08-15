@@ -56,6 +56,7 @@ deShadowExpr expr = case expr of
       body' <- recur body
       return $ For p' $ wrapDecls decls body'
   Get e v -> liftM2 Get (recur e) (recur v)
+  TApp e ts -> liftM2 TApp (recur e) (mapM deShadowType ts)
   RecCon r -> liftM RecCon $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)

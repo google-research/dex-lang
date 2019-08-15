@@ -229,22 +229,28 @@ identifier = lexeme . try $ do
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
   where
-    opNames = ["+", "*", "/", "-", "^", "$"]
+    opNames = ["+", "*", "/", "-", "^", "$", "@"]
+
+postFixRule = Postfix $ do
+  trailers <- some $     (symbol "." >> liftM Left idxExpr)
+                     <|> (symbol "@" >> liftM Right typeExpr)
+  return $ \expr -> foldl addPostFix expr trailers
+  where
+    addPostFix :: UExpr -> Either UExpr Type -> UExpr
+    addPostFix expr (Left idx) = Get expr idx
+    addPostFix (TApp expr tys) (Right ty) = TApp expr (tys ++ [ty])
+    addPostFix expr (Right ty) = TApp expr [ty]
 
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
   where binOpApp e1 e2 = PrimOp builtin [] [e1, e2]
 
-getRule = Postfix $ do
-  vs  <- many $ symbol "." >> idxExpr
-  return $ \body -> foldr (flip Get) body (reverse vs)
-
-ops = [ [getRule, appRule]
+ops = [ [postFixRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
       , [binOpRule "+" FAdd, binOpRule "-" FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
       , [InfixR (symbol "$" >> return App)]
-      , [InfixL (symbol "@deriv" >> return DerivAnnot)]
+      , [InfixL (symbol "#deriv" >> return DerivAnnot)]
        ]
 
 varName :: Parser Name

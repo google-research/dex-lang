@@ -151,8 +151,17 @@ p2 = 1
 
 _, M = unpack range 5
 
+
 :t for i::M. let _, N = unpack range (asint i)
                   x = for j::N. asint j
                in pack x, N, E n. n=>Int
 
 > (M=>Ea.(a=>Int))
+
+-- idfun :: a -> a
+idfun x = x
+
+:t idfun @ Real
+
+> (Real -> Real)
+

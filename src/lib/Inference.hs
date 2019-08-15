@@ -102,6 +102,19 @@ check expr reqTy = case expr of
     tyExpr <- traverse infer r
     unifyReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
+  TApp e ts -> do
+    -- TODO: can this be made more flexible?
+    v <- case stripSrcAnnot e of
+           Var v -> return v
+           _ -> throw NotImplementedErr
+                  "Only variables allowed on LHS of type applications"
+    maybeTy <- asks (flip envLookup v)
+    ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
+                          Just (L ty) -> return ty
+    tyBody <- case ty of Forall _ tyBody -> return tyBody
+                         _ -> throw TypeErr "Expected forall type"
+    unifyReq (instantiateTVs ts tyBody)
+    return $ TApp (Var v) ts
   TabCon _ xs -> do
     (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
@@ -124,6 +137,7 @@ check expr reqTy = case expr of
     unifyReq annTy
     check e reqTy
   SrcAnnot e pos -> addErrSourcePos pos (check e reqTy)
+  _ -> error $ "Unexpected expression: " ++ show expr
   where
     unifyReq ty = unifyCtx expr reqTy ty
 
