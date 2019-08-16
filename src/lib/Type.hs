@@ -188,6 +188,9 @@ builtinType builtin = case builtin of
   VAdd    -> BuiltinType [TyKind] [a, a] a
   VSingle -> BuiltinType [TyKind, idxSetKind] [j, a] (j ==> a)
   VSum    -> BuiltinType [TyKind, idxSetKind] [j ==> a] a
+  Filter -> BuiltinType [TyKind, idxSetKind]
+              [a --> bool, j ==> a] (Exists (i==>a'))
+    where a' = BoundTVar 1  -- under an extra binder
   FFICall n _ -> BuiltinType kinds argTys retTy
     where kinds = take (n + 1) (repeat TyKind)
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
@@ -216,11 +219,12 @@ instantiateTVs vs x = subAtDepth 0 sub x
   where sub depth tvar =
           case tvar of
             Left v -> TypeVar v
-            Right i | i >= depth -> if i < length vs && i >= 0
-                                      then vs !! i
+            Right i | i >= depth -> if i' < length vs && i >= 0
+                                      then vs !! i'
                                       else error $ "Bad index: "
-                                             ++ show i ++ " / " ++ pprint vs
+                                             ++ show i' ++ " / " ++ pprint vs
                     | otherwise  -> BoundTVar i
+              where i' = i - depth
 
 abstractTVs :: [Name] -> Type -> Type
 abstractTVs vs x = subAtDepth 0 sub x

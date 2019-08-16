@@ -64,6 +64,9 @@ real x = %inttoreal(x)
 b2i :: Bool -> Int
 b2i x = %booltoint(x)
 
+filter :: (a -> Bool) -> i=>a -> E j. j=>a
+filter f x = %filter(f, x)
+
 scan :: a -> i=>(a->(a, b)) -> (a, i=>b)
 scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 

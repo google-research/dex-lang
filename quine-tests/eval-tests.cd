@@ -184,4 +184,3 @@ mat = for i::N3 j::N4. iadd iota.i (imul 10 iota.j)
 :p isum for (i,j). mat.i.j
 
 > 192
-

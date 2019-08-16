@@ -107,7 +107,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt
-             | FFICall Int String
+             | FFICall Int String | Filter
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
@@ -118,7 +118,7 @@ builtinNames = M.fromList [
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("deriv", Deriv), ("partialEval", PartialEval), ("transpose", Transpose),
-  ("copy", Copy), ("asint", IndexAsInt),
+  ("copy", Copy), ("asint", IndexAsInt), ("filter", Filter),
   ("vzero", VZero), ("vadd", VAdd), ("vsingle", VSingle), ("vsum", VSum)]
 
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)

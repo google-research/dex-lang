@@ -137,6 +137,8 @@ evalOp op ts xs = case op of
     where n = case xs of [x] -> fromIntLit x
   IndexAsInt -> case xs of [x] -> Lit (IntLit (idxToInt x))
   IntToReal -> case xs of [Lit (IntLit x)] -> Lit (RealLit (fromIntegral x))
+  Filter -> case xs of [f, TabCon ty xs'] ->
+                         exTable ty $ filter (fromBoolLit . asFun f) xs'
   FFICall 1 "sqrt" -> realUnOp c_sqrt xs
   FFICall 1 "sin"  -> realUnOp c_sin  xs
   FFICall 1 "cos"  -> realUnOp c_cos  xs
@@ -144,6 +146,13 @@ evalOp op ts xs = case op of
   FFICall 1 "exp"  -> realUnOp c_exp  xs
   FFICall 1 "log"  -> realUnOp c_log  xs
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint (PrimOp op ts xs)
+
+asFun :: Val -> Val -> Val
+asFun f x = runReader (reduce (App f x)) mempty
+
+exTable :: Type -> [Expr] -> Expr
+exTable (TabType _ ty) xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
+  where exTy = Exists $ TabType (BoundTVar 0) ty
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val
 intBinOp op [Lit (IntLit x), Lit (IntLit y)] = Lit $ IntLit $ op x y
@@ -159,6 +168,9 @@ fromIntLit (Lit (IntLit x)) = x
 
 fromRealLit :: Val -> Double
 fromRealLit (Lit (RealLit x)) = x
+
+fromBoolLit :: Val -> Bool
+fromBoolLit (Lit (BoolLit x)) = x
 
 dropSubst :: MonadReader SubstEnv m => m a -> m a
 dropSubst m = do local (\(_, scope) -> (mempty, scope)) m
