@@ -53,7 +53,7 @@ prettyTyDepth d t = case t of
                     where n = length kinds
                           header = "A" <+> hsep boundvars <> "."
                           boundvars = map (p . tvars) [-n..(-1)]
-  Exists body -> "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
+  Exists body -> parens $ "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> "{.." <> p i <> "}"
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)

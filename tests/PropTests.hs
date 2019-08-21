@@ -10,10 +10,9 @@ import PPrint
 import Generators ()
 
 prop_print_parse_uexpr :: UTopDecl -> Property
-prop_print_parse_uexpr decl =
-  case parseTopDecl (pprintEsc decl) of
-    Left e -> counterexample (pprint e) False
-    Right decl' -> decl === stripSrcAnnotTopDecl decl'
+prop_print_parse_uexpr decl = case parseTopDecl (pprintEsc decl) of
+  Left e -> counterexample (pprint e) False
+  Right decl' -> decl === stripSrcAnnotTopDecl decl'
 
 -- wrapper to make show pretty
 data PPWrap a = PPWrap a  deriving (Eq)
@@ -23,6 +22,7 @@ instance Pretty a => Show (PPWrap a) where
 
 instance Arbitrary a => Arbitrary (PPWrap a) where
   arbitrary = liftM PPWrap arbitrary
+  shrink (PPWrap x) = map PPWrap (shrink x)
 
 fromPPWrap :: PPWrap a -> a
 fromPPWrap (PPWrap x) = x
