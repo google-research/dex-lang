@@ -363,9 +363,15 @@ instance HasVars b => HasVars (ExprP b) where
     App fexpr arg -> freeVars fexpr <> freeVars arg
     For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
-    RecCon r      -> foldMap freeVars r
     TLam vs expr  -> freeVars expr `envDiff` foldMap bind vs
     TApp expr ts  -> freeVars expr <> foldMap freeVars ts
+    RecCon r      -> foldMap freeVars r
+    TabCon ty xs -> freeVars ty <> foldMap freeVars xs
+    IdxLit _ _ -> mempty
+    Annot e ty -> freeVars e <> freeVars ty
+    DerivAnnot e1 e2 -> freeVars e1 <> freeVars e2
+    SrcAnnot e _ -> freeVars e
+    Pack e ty exTy -> freeVars e <> freeVars ty <> freeVars exTy
     where
       withBinders p e = foldMap freeVars p
                           <> (freeVars e `envDiff` foldMap lhsVars p)
@@ -442,6 +448,7 @@ instance BindsVars (BinderP a) where
 instance BindsVars (DeclP b) where
   lhsVars (Let    p    _) = foldMap lhsVars p
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
+  lhsVars (TAlias v _) = v @> T ()
 
 instance BindsVars (TopDeclP b) where
   lhsVars (TopDecl decl) = lhsVars decl
