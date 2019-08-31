@@ -102,6 +102,10 @@ idxTabCon (TabCon _ xs) i = xs !! idxToInt i
 idxToInt :: Val -> Int
 idxToInt i = snd (flattenIdx i)
 
+intToIdx :: Type -> Int -> Val
+intToIdx ty i = idxs !! (i `mod` length idxs)
+  where idxs = enumerateIdxs ty
+
 flattenIdx :: Val -> (Int, Int)
 flattenIdx (IdxLit n i) = (n, i)
 flattenIdx (RecCon r) = foldr f (1,0) $ map flattenIdx (toList r)
@@ -136,7 +140,7 @@ evalOp op ts xs = case op of
   Range -> Pack unitCon (IdxSetLit n) (Exists unitTy)
     where n = case xs of [x] -> fromIntLit x
   IndexAsInt -> case xs of [x] -> Lit (IntLit (idxToInt x))
---  IntAsIndex ->
+  IntAsIndex -> case (ts, xs) of ([ty], [Lit (IntLit x)]) -> intToIdx ty x
   IntToReal -> case xs of [Lit (IntLit x)] -> Lit (RealLit (fromIntegral x))
   Filter -> case xs of [f, TabCon ty xs'] ->
                          exTable ty $ filter (fromBoolLit . asFun f) xs'

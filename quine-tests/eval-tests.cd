@@ -190,3 +190,7 @@ litArr = [10, 5, 3]
 :p litArr.(asidx 2)
 
 > 3
+
+:p litArr.(asidx 4)
+
+> 5
