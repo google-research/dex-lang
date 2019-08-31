@@ -1,4 +1,5 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module PPrint (pprint, pprintEsc) where
 
@@ -6,6 +7,7 @@ import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import Record
+import Env
 import Syntax
 import Util (findReplace)
 
@@ -102,6 +104,16 @@ instance Pretty b => Pretty (ExprP b) where
     DerivAnnot e ann -> p e <+> "@deriv" <+> p ann
     Annot expr ty -> p expr <+> "::" <+> p ty
 
+instance Pretty Ann where
+  pretty NoAnn = ""
+  pretty (Ann ty) = pretty ty
+
+instance Pretty a => Pretty (BinderP a) where
+  pretty (v :> ann) =
+    case asStr ann' of "" -> p v
+                       _  -> p v <> "::" <> ann'
+    where ann' = p ann
+
 instance Pretty b => Pretty (DeclP b) where
   pretty (Let b expr) = p b <+> "=" <+> p expr
   pretty (TAlias v ty) = "type" <+> p v <+> "=" <+> p ty
@@ -112,10 +124,6 @@ instance Pretty b => Pretty (TopDeclP b) where
 
 instance Pretty Builtin where
   pretty b = p (show b)
-
-instance Pretty Ann where
-  pretty NoAnn = ""
-  pretty (Ann ty) = "::" <+> p ty
 
 instance Pretty NExpr where
   pretty expr = case expr of
