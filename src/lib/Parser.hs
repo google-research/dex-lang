@@ -257,7 +257,7 @@ varName :: Parser Name
 varName = liftM2 Name identifier intQualifier
 
 idxExpr :: Parser UExpr
-idxExpr = withSourceAnn $ liftM Var varName
+idxExpr = withSourceAnn $ liftM Var varName <|> parenRaw
 
 binder :: Parser UBinder
 binder = (symbol "_" >> return (Name "_" 0 :> NoAnn))

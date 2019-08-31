@@ -176,6 +176,7 @@ builtinType builtin = case builtin of
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> BuiltinType [idxSetKind] [i] int
+  IntAsIndex -> BuiltinType [idxSetKind] [int] i
   Range    -> BuiltinType [] [int] (Exists unitTy)
   BoolToInt -> BuiltinType [] [bool] int
   IntToReal -> BuiltinType [] [int] real
@@ -298,7 +299,7 @@ instance HasTypeVars Expr where
       Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
       For p body       -> liftA2 For (traverse recurB p) (recur body)
-      Get e ie         -> liftA2 Get (recur e) (pure ie)
+      Get e ie         -> liftA2 Get (recur e) (recur ie)
       RecCon r         -> liftA  RecCon (traverse recur r)
       TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
       Pack e ty exTy   -> liftA3 Pack (recur e) (recurTy ty) (recurTy exTy)
@@ -433,12 +434,14 @@ typeToNType ty = case ty of
   RecType r   -> RecTree $ fmap recur r
   Exists ty   -> RecLeaf $ NExists (toList (recur ty))
   BoundTVar n -> RecLeaf $ NBoundTVar n
+  IdxSetLit n -> RecLeaf $ NIdxSetLit n
   where recur = typeToNType
 
 nTypeToType :: NType -> Type
 nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
+  NIdxSetLit n -> IdxSetLit n
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of

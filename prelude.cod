@@ -52,6 +52,15 @@ hash x y = %%threefry2x32(x, y)
 asint :: i -> Int
 asint i = %asint(i)
 
+asidx :: Int -> i
+asidx i = %asidx(i)
+
+ixadd :: i -> Int -> i
+ixadd i n = asidx $ iadd (asint i) n
+
+ixsub :: i -> Int -> i
+ixsub i n = asidx $ isub (asint i) n
+
 iota :: i=>Int
 iota = for i. asint i
 

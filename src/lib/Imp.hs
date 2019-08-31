@@ -101,6 +101,7 @@ toImpAtom atom = case atom of
 primOpStatement :: Builtin -> [Dest] -> [IType] -> [IExpr] -> Statement
 primOpStatement Range      (dest:_) _ [x] = copy dest x
 primOpStatement IndexAsInt [dest]   _ [x] = copy dest x
+primOpStatement IntAsIndex [dest]   _ [x] = copy dest x  -- TODO: mod n
 primOpStatement b [Buffer name idxs] ts xs = Update name idxs b ts xs
 
 toImpType :: NType -> ImpM IType
