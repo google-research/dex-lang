@@ -156,7 +156,7 @@ _, M = unpack range 5
                   x = for j::N. asint j
                in pack x, N, E n. n=>Int
 
-> (M=>Ea.(a=>Int))
+> (M=>(Ea.(a=>Int)))
 
 -- idfun :: a -> a
 idfun x = x
