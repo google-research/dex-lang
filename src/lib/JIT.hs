@@ -377,6 +377,7 @@ compileBuiltin b ts = case b of
   IAdd     -> compileBinop IntType (\x y -> L.Add False False x y [])
   ISub     -> compileBinop IntType (\x y -> L.Sub False False x y [])
   IMul     -> compileBinop IntType (\x y -> L.Mul False False x y [])
+  Mod      -> compileBinop IntType (\x y -> L.URem x y [])
   FAdd     -> compileBinop RealType (\x y -> L.FAdd noFastMathFlags x y [])
   FSub     -> compileBinop RealType (\x y -> L.FSub noFastMathFlags x y [])
   FMul     -> compileBinop RealType (\x y -> L.FMul noFastMathFlags x y [])

@@ -164,6 +164,7 @@ builtinType builtin = case builtin of
   IAdd     -> ibinOpType
   ISub     -> ibinOpType
   IMul     -> ibinOpType
+  Mod      -> ibinOpType
   ILT      -> BuiltinType [] [int, int] bool
   IGT      -> BuiltinType [] [int, int] bool
   Pow      -> ibinOpType

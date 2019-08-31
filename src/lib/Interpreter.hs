@@ -128,6 +128,7 @@ evalOp op ts xs = case op of
   IAdd -> intBinOp (+) xs
   ISub -> intBinOp (-) xs
   IMul -> intBinOp (*) xs
+  Mod  -> intBinOp mod xs
   FAdd -> realBinOp (+) xs
   FSub -> realBinOp (-) xs
   FMul -> realBinOp (*) xs

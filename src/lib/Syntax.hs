@@ -107,13 +107,13 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
-             | FFICall Int String | Filter
+             | Mod | FFICall Int String | Filter
                 deriving (Eq, Ord)
 
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
-  ("fdiv", FDiv), ("pow", Pow),
+  ("fdiv", FDiv), ("pow", Pow), ("mod", Mod),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
