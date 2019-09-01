@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module Generators where
 
 import Control.Monad
@@ -35,9 +37,9 @@ instance Arbitrary Type where
     ArrType a b -> unitTy : a : b : liftS2 ArrType a b
     TabType a b -> unitTy : a : b : liftS2 TabType a b
     RecType r   -> liftS RecType r
-    -- Forall kinds t ->
-    -- Exists body ->
-    -- IdxSetLit i ->
+    Forall _ _ -> error "Not implemented"
+    Exists _ -> error "Not implemented"
+    IdxSetLit _ -> error "Not implemented"
 
 arbType :: Int -> Gen Type
 arbType numBinders = do
@@ -63,7 +65,7 @@ instance Arbitrary a => Arbitrary (RecTree a) where
   arbitrary = frequency [ (2, liftM RecLeaf arb)
                         , (1, liftM RecTree arb) ]
   shrink (RecLeaf r) = liftS RecLeaf r
-
+  shrink (RecTree _) = error "Not implemented"
 
 -- Note: empty tuples but no singletons
 instance Arbitrary a => Arbitrary (Record a) where
@@ -72,7 +74,7 @@ instance Arbitrary a => Arbitrary (Record a) where
     , (2, sequence $ replicate 2 (smaller 2 arb)) ]
   shrink (Tup xs) = filter notSingleton $ liftS Tup xs
     where notSingleton ys = length ys /= 1
-  -- TODO: generate named records too
+  shrink (Rec _) = error "Not implemented"
 
 instance Arbitrary b => Arbitrary (BinderP b) where
   arbitrary = liftM2 (:>) arb arb
@@ -82,7 +84,7 @@ instance Arbitrary b => Arbitrary (TopDeclP b) where
   arbitrary = liftM TopDecl arb
   shrink topdecl = case topdecl of
     TopDecl decl -> liftS TopDecl decl
-  -- TODO: commands
+    EvalCmd _ -> error "Not implemented"
 
 instance Arbitrary b => Arbitrary (DeclP b) where
   arbitrary = frequency
@@ -91,6 +93,7 @@ instance Arbitrary b => Arbitrary (DeclP b) where
     , (1, liftM3 Unpack arb arbTypeName arb)]
   shrink decl = case decl of
     Let p e     -> liftS2 Let p e
+    Unpack _ _ _ -> error "Not implemented"
     TAlias v ty -> liftS2 TAlias v ty
 
 instance Arbitrary b => Arbitrary (ExprP b) where

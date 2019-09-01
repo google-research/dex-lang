@@ -37,8 +37,8 @@ runActor :: Actor msg () -> IO ()
 runActor (Actor m) = do
   linksRef   <- newIORef []
   chan <- newBackChan
-  id <- myThreadId
-  let p = (Proc Trap id (asErrPChan chan))
+  tid <- myThreadId
+  let p = (Proc Trap tid (asErrPChan chan))
   runReaderT m (ActorConfig p chan linksRef)
 
 subChan :: (a -> b) -> PChan b -> PChan a
@@ -64,14 +64,15 @@ spawnIO :: CanTrap -> [Proc] -> Actor msg () -> IO (Proc, PChan msg)
 spawnIO canTrap links (Actor m) = do
   linksRef   <- newIORef links
   chan <- newBackChan
-  id <- forkIO $ do id <- myThreadId
-                    let self = Proc canTrap id (asErrPChan chan)
-                    runReaderT m (ActorConfig self chan linksRef)
-                     `catch` (\e ->
-                       do linked <- readIORef linksRef
-                          putStrLn $ "Error:\n" ++ show (e::SomeException)
-                          mapM_ (cleanup (show (e::SomeException)) self) linked)
-  return (Proc canTrap id (asErrPChan chan), asPChan chan)
+  tid <- forkIO $ do
+    tid <- myThreadId
+    let self = Proc canTrap tid (asErrPChan chan)
+    runReaderT m (ActorConfig self chan linksRef)
+      `catch` (\e ->
+         do linked <- readIORef linksRef
+            putStrLn $ "Error:\n" ++ show (e::SomeException)
+            mapM_ (cleanup (show (e::SomeException)) self) linked)
+  return (Proc canTrap tid (asErrPChan chan), asPChan chan)
   where
    cleanup :: String -> Proc -> Proc -> IO ()
    cleanup s failed (Proc Trap   _ errChan) = sendFromIO errChan (failed, s)
@@ -95,11 +96,12 @@ myChan = do cfg <- actorCfg
 
 -- TODO: make a construct to receive in a loop to avoid repeated linear search
 receiveErrF :: MonadActor msg m => (Msg msg -> Maybe a) -> m a
-receiveErrF filter = do cfg <- actorCfg
-                        liftIO $ find (selfChan cfg) []
+receiveErrF filterFn = do
+  cfg <- actorCfg
+  liftIO $ find (selfChan cfg) []
   where find chan skipped = do
           x <- readBackChan chan
-          case filter x of
+          case filterFn x of
             Just y -> do pushBackChan chan (reverse skipped)
                          return y
             Nothing -> find chan (x:skipped)
@@ -108,7 +110,7 @@ receiveErr :: MonadActor msg m => m (Msg msg)
 receiveErr = receiveErrF Just
 
 receiveF :: MonadActor msg m => (msg -> Maybe a) -> m a
-receiveF filter = receiveErrF (skipErr >=> filter)
+receiveF filterFn = receiveErrF (skipErr >=> filterFn)
   where skipErr msg = case msg of NormalMsg x -> Just x
                                   ErrMsg _ _  -> Nothing
 

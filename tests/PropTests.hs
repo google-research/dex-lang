@@ -30,6 +30,7 @@ fromPPWrap (PPWrap x) = x
 pprintProp :: (Pretty a, Arbitrary a, Testable prop) => (a -> prop) -> Property
 pprintProp f = property (f . fromPPWrap)
 
+args :: Args
 args = stdArgs
   { maxSize = 100
   , maxSuccess = 100

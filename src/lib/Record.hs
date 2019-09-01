@@ -49,6 +49,7 @@ zipWithRecord f (Rec m) (Rec m') | M.keys m == M.keys m' =  Just $ Rec $ M.inter
 zipWithRecord f (Tup xs) (Tup xs') | length xs == length xs' = Just $ Tup $ zipWith f xs xs'
 zipWithRecord _ _ _ = Nothing
 
+recZipWith :: (a -> b -> c) -> Record a -> Record b -> Record c
 recZipWith f r r' = unJust (zipWithRecord f r r')
 
 recTreeJoin :: RecTree (RecTree a) -> RecTree a
@@ -82,15 +83,18 @@ recGet (Tup xs) (RecField r (RecPos i )) =
   if i < length xs && i >= 0
    then xs !! i
    else error $ "Record error " ++ show r ++ " " ++ show i
+recGet _ _ = error "Record error"
 
 fromLeaf :: RecTree a -> a
 fromLeaf (RecLeaf x) = x
+fromLeaf _ = error "Not a leaf"
 
 recUpdate :: RecField -> a -> Record a -> Record a
 recUpdate (RecField _ (RecName k)) v (Rec m)  = Rec $ M.insert k v m
 recUpdate (RecField _ (RecPos i))  v (Tup xs) = Tup $ prefix ++ (v : suffix)
   where prefix = take i xs
         (_:suffix) = drop i xs
+recUpdate field _ _ = error $ "Can't update record at " ++ show field
 
 otherFields :: RecField -> Record ()
 otherFields (RecField r _) = r
@@ -106,6 +110,7 @@ sndField = RecField (Tup [(), ()]) (RecPos 1)
 
 recAsList :: Record a -> ([a], [b] -> Record b)
 recAsList (Tup xs) = (xs, Tup)
+recAsList _ = error "Not implemented" -- TODO
 
 class RecTreeZip tree where
   recTreeZip :: RecTree a -> tree -> RecTree (a, tree)

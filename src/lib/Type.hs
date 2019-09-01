@@ -36,6 +36,7 @@ checkTyped decl = decl <$ case decl of
     putEnv $ lbind b <> iv @> T idxSetKind
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ check expr
+  TopDecl (TAlias _ _) -> error "Type aliases should be gone by now"
   where
     check :: Expr -> TopPass TypeEnv Type
     check expr = do
@@ -55,10 +56,10 @@ getType' check expr = case expr of
     Lit c -> return $ BaseType (litType c)
     Var v -> lookupLVar v
     PrimOp b ts xs -> do
-      mapM checkTy ts
-      let BuiltinType kinds argTys ansTy = builtinType b
+      mapM_ checkTy ts
+      let BuiltinType _ argTys ansTy = builtinType b
           ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)
-      zipWithM (checkEq "Builtin") argTys' (map recur xs)
+      zipWithM_ (checkEq "Builtin") argTys' (map recur xs)
       return ansTy'
     Decls decls body -> foldr getTypeDecl (recur body) decls
     Lam p body -> do checkTy (patType p)
@@ -74,9 +75,12 @@ getType' check expr = case expr of
                      checkEq "Get" a (recur ie)
                      return b
     RecCon r   -> liftM RecType $ traverse recur r
-    TabCon ty@(TabType _ bodyTy) xs -> do
-      mapM_ (checkEq "table" bodyTy . recur) xs  -- TODO: check length too
-      return ty
+    TabCon ty xs -> do
+      case ty of
+        TabType _ bodyTy -> do
+          mapM_ (checkEq "table" bodyTy . recur) xs  -- TODO: check length too
+          return ty
+        _ -> throw CompilerErr $ "Expected a table type: " ++ pprint ty
     Pack e ty exTy -> do
       let (Exists exBody) = exTy
       checkEq "Pack" (instantiateTVs [ty] exBody) (recur e)
@@ -86,19 +90,22 @@ getType' check expr = case expr of
                         mapM_ checkShadow vks
                         return $ Forall kinds (abstractTVs vs t)
     TApp fexpr ts   -> do ~(Forall _ body) <- recur fexpr
-                          mapM checkTy ts
+                          mapM_ checkTy ts
                           return $ instantiateTVs ts body
     DerivAnnot e ann -> do
       ty <- recur e
       checkEq "deriv" (tangentBunType ty) (recur ann)
       return ty
+    IdxLit _ _   -> error $ "IdxLit not implemented"   -- TODO
+    Annot _ _    -> error $ "Annot not implemented"    -- TODO
+    SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
     getTypeDecl :: Decl -> TypeM a -> TypeM a
     getTypeDecl decl cont = case decl of
-     Let p expr -> do
+     Let p rhs -> do
        checkTy (patType p)
        checkShadowPat p
-       checkEq "Let" (patType p) (recur expr)
+       checkEq "Let" (patType p) (recur rhs)
        extendR (foldMap lbind p) cont
      Unpack b tv _ -> do  -- TODO: check bound expression!
        -- TODO: check leaks
@@ -108,6 +115,7 @@ getType' check expr = case expr of
        extendR (tbind tb) $ do
          checkTy (binderAnn b)
          extendR (lbind b) cont
+     TAlias _ _ -> error "Shouldn't have TAlias left"
 
     runCheck :: TypeM () -> TypeM ()
     runCheck m = if check then m else return ()
@@ -118,7 +126,6 @@ getType' check expr = case expr of
       assertEq ty ty' ("Unexpected type in " ++ s)
 
     recur = getType' check
-    recurWith  b  = extendR (lbind b) . recur
     recurWithP p  = extendR (foldMap lbind p) . recur
     recurWithT bs = extendR (foldMap tbind bs) . recur
 
@@ -174,6 +181,7 @@ builtinType builtin = case builtin of
   FDiv     -> fbinOpType
   FLT      -> BuiltinType [] [real, real] bool
   FGT      -> BuiltinType [] [real, real] bool
+  Copy     -> BuiltinType [TyKind] [a] a
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> BuiltinType [idxSetKind] [i] int
@@ -199,7 +207,6 @@ builtinType builtin = case builtin of
   where
     ibinOpType    = BuiltinType [] [int , int ] int
     fbinOpType    = BuiltinType [] [real, real] real
-    realUnOpType  = BuiltinType [] [real]       real
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
@@ -296,6 +303,7 @@ instance HasTypeVars Expr where
         Unpack b tv bound ->
           liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
                  (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
+        TAlias _ _ -> error "Shouldn't have TAlias left"
         where body = Decls decls final
       Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
@@ -304,9 +312,12 @@ instance HasTypeVars Expr where
       RecCon r         -> liftA  RecCon (traverse recur r)
       TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
       Pack e ty exTy   -> liftA3 Pack (recur e) (recurTy ty) (recurTy exTy)
-      TLam bs expr      -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] expr)
-      TApp expr ts      -> liftA2 TApp (recur expr) (traverse recurTy ts)
+      TLam bs body     -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] body)
+      TApp fexpr ts    -> liftA2 TApp (recur fexpr) (traverse recurTy ts)
       DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
+      IdxLit _ _   -> error $ "IdxLit not implemented" -- TODO
+      Annot _ _    -> error $ "Annot not implemented" -- TODO
+      SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
           recurB b = traverse recurTy b
@@ -369,7 +380,7 @@ getNType expr = case expr of
   NAtoms xs -> mapM atomType xs
   NTabCon n elemTys rows -> do
     rowTys <- mapM getNType rows
-    mapM (\ts -> assertEq elemTys ts "Tab constructor") rowTys
+    mapM_ (\ts -> assertEq elemTys ts "Tab constructor") rowTys
     return $ map (NTabType n) elemTys
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
@@ -393,8 +404,8 @@ atomType atom = case atom of
   NVar v -> do
     x <- asks $ flip envLookup v
     case x of
-      Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
       Just (L ty) -> return ty
+      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   NGet e i -> do
     ~(NTabType a b) <- atomType e
     a' <- atomType i
@@ -431,11 +442,12 @@ typeToNType ty = case ty of
   BaseType b  -> RecLeaf $ NBaseType b
   TypeVar v   -> RecLeaf $ NTypeVar v
   ArrType a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
-  TabType n ty -> fmap (NTabType (fromLeaf (recur n))) (recur ty)
+  TabType a b -> fmap (NTabType (fromLeaf (recur a))) (recur b)
   RecType r   -> RecTree $ fmap recur r
-  Exists ty   -> RecLeaf $ NExists (toList (recur ty))
+  Exists body -> RecLeaf $ NExists (toList (recur body))
   BoundTVar n -> RecLeaf $ NBoundTVar n
   IdxSetLit n -> RecLeaf $ NIdxSetLit n
+  Forall _ _ -> error "Shouldn't have forall types left"
   where recur = typeToNType
 
 nTypeToType :: NType -> Type
@@ -443,6 +455,10 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
+  NArrType _ _ -> error $ "NArrType not implemented"   -- TODO
+  NTabType _ _ -> error $ "NTabType not implemented"   -- TODO
+  NExists _    -> error $ "NExists not implemented"    -- TODO
+  NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of

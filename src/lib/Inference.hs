@@ -9,7 +9,7 @@ import Data.List (nub, (\\))
 import Data.Foldable (toList)
 import qualified Data.Map.Strict as M
 
-import Syntax hiding (Subst)
+import Syntax
 import Env
 import Record
 import Type
@@ -38,6 +38,7 @@ typePass tdecl = case tdecl of
     let b' = fmap (const ty') b -- TODO: actually check the annotated type
     putEnv $ lbind b' <> tv @> T idxSetKind
     return $ TopDecl (Unpack b' tv expr')
+  TopDecl (TAlias _ _) -> error "Shouldn't have TAlias left"
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
@@ -67,6 +68,7 @@ check expr reqTy = case expr of
     maybeTy <- asks $ (flip envLookup v)
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
                           Just (L ty) -> return ty
+                          Just (T _ ) -> error "Expected let-bound var"
     instantiate (Var v) ty reqTy (Var v)
   PrimOp b [] args -> do
     let BuiltinType kinds argTys ansTy = builtinType b
@@ -111,6 +113,7 @@ check expr reqTy = case expr of
     maybeTy <- asks (flip envLookup v)
     ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
                           Just (L ty) -> return ty
+                          Just (T _ ) -> error "Expected let-bound var"
     tyBody <- case ty of Forall _ tyBody -> return tyBody
                          _ -> throw TypeErr "Expected forall type"
     unifyReq (instantiateTVs ts tyBody)
@@ -158,10 +161,10 @@ check expr reqTy = case expr of
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
         return $ wrapDecls [Unpack b' tv bound'] body'
+      TAlias _ _ -> error "Shouldn't have TAlias left"
 
     leakErr = throw TypeErr "existential variable leaked"
-    recurWith  b expr ty = extendR (lbind b) (check expr ty)
-    recurWithP p expr ty = extendR (foldMap lbind p) (check expr ty)
+    recurWithP p e ty = extendR (foldMap lbind p) (check e ty)
 
 inferBinder :: UBinder -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
@@ -220,7 +223,10 @@ freshVar kind = do v <- fresh $ pprint kind
                    modify $ setTempEnv (<> v @> kind)
                    return (TypeVar v)
 
+freshTy :: InferM Type
 freshTy  = freshVar TyKind
+
+freshIdx :: InferM Type
 freshIdx = freshVar idxSetKind
 
 generalize :: Type -> Expr -> InferM (Type, Expr)
@@ -315,10 +321,10 @@ lookupVar v = do
                             return ty'
 
 setSubst :: (Subst -> Subst) -> InferState -> InferState
-setSubst update state = state { subst = update (subst state) }
+setSubst update s = s { subst = update (subst s) }
 
 setTempEnv :: (TempEnv -> TempEnv) -> InferState -> InferState
-setTempEnv update state = state { tempEnv = update (tempEnv state) }
+setTempEnv update s = s { tempEnv = update (tempEnv s) }
 
 inferKinds :: [Name] -> Type -> Except [Kind]
 inferKinds vs ty = do
@@ -335,6 +341,7 @@ fromUnambiguousList :: (Ord k, Eq a) => [(k, a)] -> Maybe (M.Map k a)
 fromUnambiguousList xs = sequence $ M.fromListWith checkEq (map (onSnd Just) xs)
   where checkEq (Just v) (Just v') | v == v' = Just v
                                    | otherwise = Nothing
+        checkEq _ _ = error "Shouldn't happen"
 
 collectKinds :: Kind -> Type -> Writer [(Name, Kind)] ()
 collectKinds kind ty = case ty of

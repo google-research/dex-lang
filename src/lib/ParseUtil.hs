@@ -26,7 +26,7 @@ stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
 
 space :: Parser ()
-space = void $ do takeWhile1P (Just "white space") (`elem` " \t")
+space = void $ do _ <- takeWhile1P (Just "white space") (`elem` " \t")
                   optional (symbol "..\n")
 
 int :: Parser Int
@@ -38,8 +38,8 @@ real = L.signed (return ()) L.float
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc
 
-symbol :: String -> Parser String
-symbol = L.symbol sc
+symbol :: String -> Parser ()
+symbol s = void $ L.symbol sc s
 
 parens :: Parser a -> Parser a
 parens = between (symbol "(") (symbol ")")

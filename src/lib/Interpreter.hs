@@ -91,13 +91,16 @@ evalScanBody scope (For ip (Lam p body)) accum i =
     RecCon (Tup [accum', ys]) -> (accum', ys)
     val -> error $ "unexpected scan result: " ++ pprint val
   where env =  bindPat ip i <> bindPat p accum <> asSnd scope
+evalScanBody _ e _ _ = error $ "Bad scan argument: " ++ pprint e
 
 enumerateIdxs :: Type -> [Val]
 enumerateIdxs (IdxSetLit n) = map (IdxLit n) [0..n-1]
 enumerateIdxs (RecType r) = map RecCon $ traverse enumerateIdxs r  -- list monad
+enumerateIdxs ty = error $ "Not an index type: " ++ pprint ty
 
 idxTabCon :: Val -> Val -> Val
 idxTabCon (TabCon _ xs) i = xs !! idxToInt i
+idxTabCon v _ = error $ "Not a table: " ++ pprint v
 
 idxToInt :: Val -> Int
 idxToInt i = snd (flattenIdx i)
@@ -110,6 +113,7 @@ flattenIdx :: Val -> (Int, Int)
 flattenIdx (IdxLit n i) = (n, i)
 flattenIdx (RecCon r) = foldr f (1,0) $ map flattenIdx (toList r)
   where f (size, idx) (cumSize, cumIdx) = (cumSize * size, cumIdx + idx * cumSize)
+flattenIdx v = error $ "Not a valid index: " ++ pprint v
 
 reduceDecl :: Decl -> ReduceM SubstEnv
 reduceDecl (Let p expr) = do
@@ -118,65 +122,73 @@ reduceDecl (Let p expr) = do
 reduceDecl (Unpack (v:>_) tv expr) = do
   ~(Pack val ty _) <- reduce expr
   return $ asFst $ v @> L val <> tv @> T ty
+reduceDecl (TAlias _ _ ) = error "Shouldn't have TAlias left"
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L val
 bindPat (RecTree r) (RecCon r') = fold $ recZipWith bindPat r r'
+bindPat _ _ = error "Bad pattern"
 
 evalOp :: Builtin -> [Type] -> [Val] -> Val
-evalOp op ts xs = case op of
-  IAdd -> intBinOp (+) xs
-  ISub -> intBinOp (-) xs
-  IMul -> intBinOp (*) xs
-  Mod  -> intBinOp mod xs
-  FAdd -> realBinOp (+) xs
-  FSub -> realBinOp (-) xs
-  FMul -> realBinOp (*) xs
-  FDiv -> realBinOp (/) xs
-  BoolToInt -> case xs of [Lit (BoolLit x)] -> Lit $ IntLit (if x then 1 else 0)
-  FLT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x < fromRealLit y
-  FGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromRealLit x > fromRealLit y
-  ILT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x < fromIntLit  y
-  IGT  -> case xs of [x, y] -> Lit $ BoolLit $ fromIntLit  x > fromIntLit  y
-  Range -> Pack unitCon (IdxSetLit n) (Exists unitTy)
-    where n = case xs of [x] -> fromIntLit x
-  IndexAsInt -> case xs of [x] -> Lit (IntLit (idxToInt x))
-  IntAsIndex -> case (ts, xs) of ([ty], [Lit (IntLit x)]) -> intToIdx ty x
-  IntToReal -> case xs of [Lit (IntLit x)] -> Lit (RealLit (fromIntegral x))
-  Filter -> case xs of [f, TabCon ty xs'] ->
-                         exTable ty $ filter (fromBoolLit . asFun f) xs'
-  FFICall 1 "sqrt" -> realUnOp c_sqrt xs
-  FFICall 1 "sin"  -> realUnOp c_sin  xs
-  FFICall 1 "cos"  -> realUnOp c_cos  xs
-  FFICall 1 "tan"  -> realUnOp c_tan  xs
-  FFICall 1 "exp"  -> realUnOp c_exp  xs
-  FFICall 1 "log"  -> realUnOp c_log  xs
-  _ -> error $ "Can't evaluate in interpreter: " ++ pprint (PrimOp op ts xs)
+evalOp IAdd _ xs = intBinOp (+) xs
+evalOp ISub _ xs = intBinOp (-) xs
+evalOp IMul _ xs = intBinOp (*) xs
+evalOp Mod  _ xs = intBinOp mod xs
+evalOp FAdd _ xs = realBinOp (+) xs
+evalOp FSub _ xs = realBinOp (-) xs
+evalOp FMul _ xs = realBinOp (*) xs
+evalOp FDiv _ xs = realBinOp (/) xs
+evalOp BoolToInt _ ~[Lit (BoolLit x)] = Lit $ IntLit (if x then 1 else 0)
+evalOp FLT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x < fromRealLit y
+evalOp FGT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x > fromRealLit y
+evalOp ILT _ ~[x, y] = Lit $ BoolLit $ fromIntLit  x < fromIntLit  y
+evalOp IGT _ ~[x, y] = Lit $ BoolLit $ fromIntLit  x > fromIntLit  y
+evalOp Range _ ~[x] = Pack unitCon (IdxSetLit (fromIntLit x)) (Exists unitTy)
+evalOp IndexAsInt _ ~[x] = Lit (IntLit (idxToInt x))
+evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
+evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
+evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
+  exTable ty $ filter (fromBoolLit . asFun f) xs
+evalOp (FFICall 1 name) _ xs = case name of
+  "sqrt" -> realUnOp c_sqrt xs
+  "sin"  -> realUnOp c_sin  xs
+  "cos"  -> realUnOp c_cos  xs
+  "tan"  -> realUnOp c_tan  xs
+  "exp"  -> realUnOp c_exp  xs
+  "log"  -> realUnOp c_log  xs
+  _ -> error $ "FFI function not recognized: " ++ name
+evalOp op _ _ = error $ "Primop not implemented: " ++ pprint op
 
 asFun :: Val -> Val -> Val
 asFun f x = runReader (reduce (App f x)) mempty
 
 exTable :: Type -> [Expr] -> Expr
-exTable (TabType _ ty) xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
+exTable ty xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
   where exTy = Exists $ TabType (BoundTVar 0) ty
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val
 intBinOp op [Lit (IntLit x), Lit (IntLit y)] = Lit $ IntLit $ op x y
+intBinOp _ xs = error $ "Bad args: " ++ pprint xs
 
 realBinOp :: (Double -> Double -> Double) -> [Val] -> Val
 realBinOp op [Lit (RealLit x), Lit (RealLit y)] = Lit $ RealLit $ op x y
+realBinOp _ xs = error $ "Bad args: " ++ pprint xs
 
 realUnOp :: (Double -> Double) -> [Val] -> Val
 realUnOp op [Lit (RealLit x)] = Lit $ RealLit $ op x
+realUnOp _ xs = error $ "Bad args: " ++ pprint xs
 
 fromIntLit :: Val -> Int
 fromIntLit (Lit (IntLit x)) = x
+fromIntLit x = error $ "Not an int lit: " ++ pprint x
 
 fromRealLit :: Val -> Double
 fromRealLit (Lit (RealLit x)) = x
+fromRealLit x = error $ "Not a real lit: " ++ pprint x
 
 fromBoolLit :: Val -> Bool
 fromBoolLit (Lit (BoolLit x)) = x
+fromBoolLit x = error $ "Not a bool lit: " ++ pprint x
 
 dropSubst :: MonadReader SubstEnv m => m a -> m a
 dropSubst m = do local (\(_, scope) -> (mempty, scope)) m
@@ -192,6 +204,7 @@ instance Subst Expr where
       case x of
         Nothing -> return expr
         Just (L x') -> dropSubst (subst x')
+        Just (T _ ) -> error "Expected let-bound var"
     PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
     Decls [] body -> subst body
     Decls (decl:rest) final -> case decl of
@@ -206,6 +219,7 @@ instance Subst Expr where
           refreshPat [b] $ \[b'] -> do
             body' <- subst body
             return $ wrapDecls [Unpack b' tv' bound'] body'
+      TAlias _ _ -> error "Shouldn't have TAlias left"
       where body = Decls rest final
     Lam p body -> do
       refreshPat p $ \p' -> do
@@ -256,6 +270,7 @@ instance Subst Type where
       x <- asks $ flip envLookup v . fst
       return $ case x of Nothing -> ty
                          Just (T ty') -> ty'
+                         Just (L _) -> error "Expected type var"
     ArrType a b -> liftM2 ArrType (subst a) (subst b)
     TabType a b -> liftM2 TabType (subst a) (subst b)
     RecType r -> liftM RecType $ traverse subst r

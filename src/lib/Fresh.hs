@@ -36,7 +36,7 @@ genFresh tag (Env m) = Name tag nextNum
                   | tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
-    bigInt = 10^9 :: Int  -- TODO: consider a real sentinel value
+    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
 rename :: Name -> Env a -> Name
 rename v scope | v `isin` scope = genFresh (nameTag v) scope

@@ -20,11 +20,12 @@ type DeShadowCat a = WriterT [UDecl] (CatT (DeShadowEnv, FreshScope)
 type DeShadowEnv = (Env Name, Env Type)
 
 deShadowPass :: UTopDecl -> TopPass (DeShadowEnv, FreshScope) UTopDecl
-deShadowPass decl = case decl of
+deShadowPass topDecl = case topDecl of
   TopDecl decl -> do ((), decls) <- catToTop $ deShadowDecl decl
                      return $ case decls of
                        [decl'] ->  TopDecl decl'
                        [] -> EvalCmd NoOp
+                       _ -> error "Multiple decls not implemented"
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -42,6 +43,7 @@ deShadowExpr expr = case expr of
   Lit x -> return (Lit x)
   Var v -> asks $ Var . lookupSubst v . fst
   PrimOp b [] args -> liftM (PrimOp b []) (traverse recur args)
+  PrimOp _ ts _ -> error $ "Unexpected type args to primop " ++ pprint ts
   Decls decls body ->
     withCat (mapM_ deShadowDecl decls) $ \() decls' -> do
       body' <- recur body
@@ -60,11 +62,13 @@ deShadowExpr expr = case expr of
   RecCon r -> liftM RecCon $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
-  DerivAnnot expr ann -> liftM2 DerivAnnot (recur expr) (recur ann)
+  DerivAnnot e ann -> liftM2 DerivAnnot (recur e) (recur ann)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
+  TLam _ _ -> error "Not tlam in source language"
+  IdxLit _ _ -> error "Not implemented"
+  TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
-        deShadowAnnot b = fmap (fmap deShadowType) b
 
 deShadowDecl :: UDecl -> DeShadowCat ()
 deShadowDecl (Let p bound) = do
@@ -93,14 +97,9 @@ freshBinder (v :> ann) = do
   ty' <- case ann of
            Ann ty -> liftM Ann $ toCat $ deShadowType ty
            NoAnn -> return NoAnn
-  v' <- fresh v
+  v' <- looks $ rename v . snd
+  extend (asFst (v@>v'), v'@>())
   return (v' :> ty')
-  where
-    fresh :: Name -> DeShadowCat Name
-    fresh v = do
-      v' <- looks $ rename v . snd
-      extend (asFst (v@>v'), v'@>())
-      return v'
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do

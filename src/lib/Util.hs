@@ -124,8 +124,8 @@ splitOn f s = let (prefix, suffix) = break f s
 restructure :: Traversable f => [a] -> f b -> f a
 restructure xs structure = evalState (traverse procLeaf structure) xs
   where procLeaf :: b -> State [a] a
-        procLeaf _ = do ~(x:xs) <- get
-                        put xs
+        procLeaf _ = do ~(x:rest) <- get
+                        put rest
                         return x
 
 highlightRegion :: (Int, Int) -> String -> String
@@ -144,9 +144,9 @@ highlightRegion pos@(low, high) s
     (lineNum, start, stop) = getPosTriple pos allLines
 
 getPosTriple :: (Int, Int) -> [String] -> (Int, Int, Int)
-getPosTriple (start, stop) lines = (lineNum, start - offset, stop')
+getPosTriple (start, stop) lines_ = (lineNum, start - offset, stop')
   where
-    lineLengths = map ((+1) . length) lines
+    lineLengths = map ((+1) . length) lines_
     lineOffsets = cumsum lineLengths
     lineNum = maxLT lineOffsets start
     offset = lineOffsets  !! lineNum

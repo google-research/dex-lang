@@ -43,6 +43,7 @@ statementFlops statement = case statement of
 evalSizeExpr :: IExpr -> Term
 evalSizeExpr (ILit (IntLit n)) = litTerm n
 evalSizeExpr (IVar v) = varTerm v
+evalSizeExpr expr = error $ "Not implemented: " ++ pprint expr
 
 litTerm :: Int -> Term
 litTerm n = Term n []

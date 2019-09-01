@@ -6,6 +6,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import qualified Data.Map.Strict as M
 import Data.Char (isLower)
+import Data.Maybe (fromMaybe)
 
 import Env
 import Record
@@ -67,7 +68,7 @@ decl :: Parser UDecl
 decl = typeAlias <|> typedLet <|> unpack <|> letDecl
 
 declSep :: Parser ()
-declSep = void $ ((eol >> sc) <|> void (symbol ";"))
+declSep = void $ (eol >> sc) <|> symbol ";"
 
 typeAlias :: Parser UDecl
 typeAlias = do
@@ -95,7 +96,7 @@ typedLet = do
 unpack :: Parser UDecl
 unpack = do
   (b, tv) <- try $ do b <- binder
-                      symbol ","
+                      comma
                       tv <- capVarName
                       symbol "=" >> symbol "unpack"
                       return (b, tv)
@@ -129,6 +130,13 @@ term =   parenRaw
      <|> pack
      <?> "term"
 
+parenRaw :: Parser UExpr
+parenRaw = do
+  elts <- parens $ expr `sepBy` comma
+  return $ case elts of
+    [e] -> e
+    _ -> RecCon $ Tup elts
+
 declExpr :: Parser UExpr
 declExpr = do
   symbol "let"
@@ -154,33 +162,27 @@ typeAnnot = do
     Nothing -> NoAnn
     Just ty -> Ann ty
 
-parenRaw = do
-  elts <- parens $ expr `sepBy` symbol ","
-  return $ case elts of
-    [expr] -> expr
-    elts -> RecCon $ Tup elts
-
 primOp :: Parser UExpr
 primOp = do
   s <- try $ symbol "%" >> identifier
   b <- case strToBuiltin s of
     Just b -> return b
     Nothing -> fail $ "Unexpected builtin: " ++ s
-  args <- parens $ expr `sepBy` symbol ","
+  args <- parens $ expr `sepBy` comma
   return $ PrimOp b [] args
 
 ffiCall :: Parser UExpr
 ffiCall = do
   symbol "%%"
   s <- identifier
-  args <- parens $ expr `sepBy` symbol ","
+  args <- parens $ expr `sepBy` comma
   return $ PrimOp (FFICall (length args) s) [] args
 
 lamExpr :: Parser UExpr
 lamExpr = do
   symbol "lam"
   ps <- pat `sepBy` sc
-  symbol "."
+  period
   body <- expr
   return $ foldr Lam body ps
 
@@ -188,31 +190,33 @@ forExpr :: Parser UExpr
 forExpr = do
   symbol "for"
   vs <- pat `sepBy` sc
-  symbol "."
+  period
   body <- expr
   return $ foldr For body vs
 
 tabCon :: Parser UExpr
 tabCon = do
-  xs <- brackets $ expr `sepBy` symbol ","
+  xs <- brackets $ expr `sepBy` comma
   return $ TabCon NoAnn xs
 
 pack :: Parser UExpr
 pack = do
   symbol "pack"
-  liftM3 Pack (expr <* symbol ",") (tauType <* symbol ",") existsType
+  liftM3 Pack (expr <* comma) (tauType <* comma) existsType
 
+idxLhsArgs :: Parser (UExpr -> UExpr)
 idxLhsArgs = do
-  symbol "."
-  args <- pat `sepBy` symbol "."
+  period
+  args <- pat `sepBy` period
   return $ \body -> foldr For body args
 
+lamLhsArgs :: Parser (UExpr -> UExpr)
 lamLhsArgs = do
   args <- pat `sepBy` sc
   return $ \body -> foldr Lam body args
 
 literal :: Parser LitVal
-literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (symbol ".")))
+literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (period)))
                 <|> fmap RealLit real
                 <|> fmap StrLit stringLiteral
                 <|> (symbol "True"  >> return (BoolLit True))
@@ -226,24 +230,28 @@ identifier = lexeme . try $ do
   where
    resNames = ["for", "lam", "let", "in", "unpack", "pack"]
 
+appRule :: Operator Parser UExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
   where
     opNames = ["+", "*", "/", "-", "^", "$", "@"]
 
+postFixRule :: Operator Parser UExpr
 postFixRule = Postfix $ do
-  trailers <- some $     (symbol "." >> liftM Left idxExpr)
+  trailers <- some $     (period >> liftM Left idxExpr)
                      <|> (symbol "@" >> liftM Right typeExpr)
-  return $ \expr -> foldl addPostFix expr trailers
+  return $ \e -> foldl addPostFix e trailers
   where
     addPostFix :: UExpr -> Either UExpr Type -> UExpr
-    addPostFix expr (Left idx) = Get expr idx
-    addPostFix (TApp expr tys) (Right ty) = TApp expr (tys ++ [ty])
-    addPostFix expr (Right ty) = TApp expr [ty]
+    addPostFix e (Left idx) = Get e idx
+    addPostFix (TApp e tys) (Right ty) = TApp e (tys ++ [ty])
+    addPostFix e (Right ty) = TApp e [ty]
 
+binOpRule :: String -> Builtin -> Operator Parser UExpr
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
   where binOpApp e1 e2 = PrimOp builtin [] [e1, e2]
 
+ops :: [[Operator Parser UExpr]]
 ops = [ [postFixRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
@@ -269,16 +277,15 @@ pat =   parenPat
 
 parenPat :: Parser UPat
 parenPat = do
-  xs <- parens $ pat `sepBy` symbol ","
+  xs <- parens $ pat `sepBy` comma
   return $ case xs of
     [x] -> x
-    xs -> RecTree $ Tup xs
+    _   -> RecTree $ Tup xs
 
 intQualifier :: Parser Int
 intQualifier = do
-  count <- optional $ symbol "_" >> lexeme int
-  return $ case count of Nothing -> 0
-                         Just n  -> n
+  n <- optional $ symbol "_" >> lexeme int
+  return $ fromMaybe 0 n
 
 -- === Parsing types ===
 
@@ -307,6 +314,7 @@ typeExpr = makeExprParser (sc >> typeExpr') typeOps
     typeOps = [ [InfixR (symbol "=>" >> return TabType)]
               , [InfixR (symbol "->" >> return ArrType)]]
 
+typeExpr' :: Parser Type
 typeExpr' =   parenTy
           <|> existsType
           <|> typeName
@@ -317,7 +325,7 @@ existsType :: Parser Type
 existsType = do
   try $ symbol "E"
   v <- varName
-  symbol "."
+  period
   body <- typeExpr
   return $ Exists (abstractTVs [v] body)
 
@@ -334,6 +342,7 @@ capVarName = liftM2 Name capIdentifier intQualifier
 capIdentifier :: Parser String
 capIdentifier = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
+baseTypeNames :: M.Map Name BaseType
 baseTypeNames = M.fromList
   [ (rawName "Int" , IntType)
   , (rawName "Real", RealType)
@@ -342,7 +351,13 @@ baseTypeNames = M.fromList
 
 parenTy :: Parser Type
 parenTy = do
-  elts <- parens $ typeExpr `sepBy` symbol ","
+  elts <- parens $ typeExpr `sepBy` comma
   return $ case elts of
     [ty] -> ty
     _ -> RecType $ Tup elts
+
+comma :: Parser ()
+comma = symbol ","
+
+period :: Parser ()
+period = symbol "."

@@ -86,14 +86,14 @@ catTraverse :: (Monoid env, MonadReader env m, Traversable f)
 catTraverse f xs = do
   env <- ask
   runCatT (traverse (asCat f) xs) env
-  where
-    asCat :: (Monoid env, MonadReader env m)
-                => (a -> m (b, env)) -> a -> CatT env m b
-    asCat f x = do
-      env' <- look
-      (x', env'') <- lift $ local (const env') (f x)
-      extend env''
-      return x'
+
+asCat :: (Monoid env, MonadReader env m)
+            => (a -> m (b, env)) -> a -> CatT env m b
+asCat f x = do
+  env' <- look
+  (x', env'') <- lift $ local (const env') (f x)
+  extend env''
+  return x'
 
 extendR :: (Monoid env, MonadReader env m) => env -> m a -> m a
 extendR x m = local (<> x) m

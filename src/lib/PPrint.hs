@@ -1,5 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintEsc) where
 
@@ -44,7 +45,7 @@ instance Pretty Type where
   pretty t = prettyTyDepth 0 t
 
 prettyTyDepth :: Int -> Type -> Doc ann
-prettyTyDepth d t = case t of
+prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars n)
@@ -97,12 +98,12 @@ instance Pretty b => Pretty (ExprP b) where
     TabCon _ xs -> list (map pretty xs)
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
     IdxLit _ i -> p i
-    TLam binders expr -> "Lam" <+> p binders <> "."
-                               <+> align (p expr)
-    TApp expr ts -> p expr <> p ts
-    SrcAnnot expr _ -> p expr
+    TLam binders body -> "Lam" <+> p binders <> "."
+                               <+> align (p body)
+    TApp fexpr ts -> p fexpr <> p ts
+    SrcAnnot subexpr _ -> p subexpr
     DerivAnnot e ann -> p e <+> "@deriv" <+> p ann
-    Annot expr ty -> p expr <+> "::" <+> p ty
+    Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
 instance Pretty Ann where
   pretty NoAnn = ""
@@ -121,6 +122,7 @@ instance Pretty b => Pretty (DeclP b) where
 
 instance Pretty b => Pretty (TopDeclP b) where
   pretty (TopDecl decl) = p decl
+  pretty (EvalCmd _ ) = error $ "EvalCmd not implemented" -- TODO
 
 instance Pretty Builtin where
   pretty b = p (show b)
@@ -211,6 +213,7 @@ splitTab (IdxSetLit n) ty v = map (Value ty) $ transposeRecTree (fmap splitVec v
     chunk :: Int -> [a] -> [[a]]
     chunk _ [] = []
     chunk m xs = take m xs : chunk m (drop m xs)
+splitTab _ _ _ = error $ "Not implemented" -- TODO
 
 instance Pretty Vec where
   pretty (IntVec  xs) = p xs

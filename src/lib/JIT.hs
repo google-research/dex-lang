@@ -2,7 +2,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name)
+import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name, dest)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -89,15 +89,15 @@ jitPass decl = case decl of
                                   _ -> Nothing
                        writeOut [ValOut fmt $ cont tenv vecs]
     TimeIt -> do t1 <- liftIO getCurrentTime
-                 evalProg bs prog
+                 _ <- evalProg bs prog
                  t2 <- liftIO getCurrentTime
                  writeOutText $ show (t2 `diffUTCTime` t1)
     _ -> return ()
 
 evalProg :: [IBinder] -> ImpProg -> TopPass PersistEnv [PersistVal]
 evalProg bs prog = do
-  (cells, CompiledProg mod) <- toLLVM bs prog
-  liftIO $ evalJit mod
+  (cells, CompiledProg m) <- toLLVM bs prog
+  liftIO $ evalJit m
   liftIO $ mapM readPersistCell cells
 
 -- This doesn't work with types derived from existentials, because the
@@ -107,8 +107,10 @@ makeDestCell env (v :> IType ty shape) = do
   ptr <- liftM ptrAsWord $ mallocBytes $ fromIntegral $ 8 * product shape'
   return $ v :> Cell (Ptr ptr ty) shape'
   where
-    getSize size = case size of IVar v -> scalarVal (env ! v)
-                                ILit (IntLit n) -> fromIntegral n
+    getSize size = case size of
+      IVar v' -> scalarVal (env ! v')
+      ILit (IntLit n) -> fromIntegral n
+      _ -> error $ "Not a valid size: " ++ pprint size
     shape' = map getSize shape
 
 -- TODO: pass destinations as args rather than baking pointers into LLVM
@@ -119,8 +121,8 @@ toLLVM bs prog = do
   let env' =    fmap (Left  . asCompileVal) env
              <> fmap (Right . asCompileCell) (bindFold destCells)
   let initState = CompileState [] [] [] "start_block" []
-  prog <- liftEither $ evalPass env' initState mempty (compileTopProg prog)
-  return (map binderAnn destCells, prog)
+  prog' <- liftEither $ evalPass env' initState mempty (compileTopProg prog)
+  return (map binderAnn destCells, prog')
 
 asCompileVal :: PersistVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand ty word) ty
@@ -144,12 +146,14 @@ readPersistCell (Cell p shape) = return $ ArrayVal p shape
 asVec :: PersistVal -> IO Vec
 asVec v = case v of
   ScalarVal x ty ->  return $ cast ty [x]
-  ArrayVal (Ptr ptr ty) shape -> do let size = fromIntegral $ foldr (*) 1 shape
-                                    words <- readPtrs size (wordAsPtr ptr)
-                                    return $ cast ty words
+  ArrayVal (Ptr ptr ty) shape -> do
+    let size = fromIntegral $ foldr (*) 1 shape
+    xs <- readPtrs size (wordAsPtr ptr)
+    return $ cast ty xs
   where cast IntType  xs = IntVec $ map fromIntegral xs
         cast BoolType xs = IntVec $ map fromIntegral xs
         cast RealType xs = RealVec $ map interpret_ieee_64 xs
+        cast StrType _ = error "Not implemented"
 
 -- From the data-binary-ieee754 package; is there a more standard way
 -- to do this?  This is also janky because we are just assuming that
@@ -160,6 +164,8 @@ interpret_ieee_64 = wordToDouble
 constOperand :: BaseType -> Word64 -> Operand
 constOperand IntType  x = litInt (fromIntegral x)
 constOperand RealType x = litReal (interpret_ieee_64 x)
+constOperand BoolType _ = error "Not implemented"
+constOperand StrType  _ = error "Not implemented"
 
 compileTopProg :: ImpProg -> CompileM CompiledProg
 compileTopProg prog = do
@@ -214,6 +220,7 @@ lookupImpVar v = asks (! v)
 readScalarCell :: Cell -> CompileM CompileVal
 readScalarCell (Cell ptr@(Ptr _ ty) []) = do op <- load ptr
                                              return $ ScalarVal op ty
+readScalarCell _ = error "Not a scalar cell"
 
 lookupCellVar :: Name -> CompileM Cell
 lookupCellVar v = do { ~(Right cell) <- lookupImpVar v; return cell }
@@ -249,6 +256,7 @@ compileLoop iVar (ScalarVal n _) body = do
   store i iValInc
   loopCond <- iValInc `lessThan` n
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
+compileLoop _ (ArrayVal _ _) _ = error "Array-valued loop max"
 
 freshName :: String -> CompileM L.Name
 freshName s = do name <- fresh s
@@ -261,6 +269,7 @@ idxCell (Cell ptr (_:shape)) (i:idxs) = do
   step <- mul size (scalarVal i)
   ptr' <- addPtr ptr step
   idxCell (Cell ptr' shape) idxs
+idxCell _ _ = error "Index mismatch"
 
 writeCell :: Cell -> CompileVal -> CompileM ()
 writeCell (Cell ptr []) (ScalarVal x _) = store ptr x
@@ -268,6 +277,7 @@ writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) _) = do
   numScalars <- sizeOf shape
   numBytes <- mul (litInt 8) numScalars
   addInstr $ L.Do (externCall memcpyFun [dest, src, numBytes])
+writeCell _ _ = error $ "Bad value type for cell"
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
@@ -275,6 +285,7 @@ litVal lit = case lit of
   RealLit x -> litReal x
   BoolLit True  -> L.ConstantOperand $ C.Int 1 1
   BoolLit False -> L.ConstantOperand $ C.Int 1 0
+  StrLit _ -> error "Not implemented"
 
 litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
@@ -338,6 +349,7 @@ mul x y = evalInstr "mul" longTy $ L.Mul False False x y []
 
 scalarVal :: JitVal a -> a
 scalarVal (ScalarVal x _) = x
+scalarVal (ArrayVal _ _) = error "Not a scalar val"
 
 addInstr :: Named Instruction -> CompileM ()
 addInstr instr = modify $ setCurInstrs (instr:)
@@ -347,27 +359,31 @@ scalarTy ty = case ty of
   IntType  -> longTy
   RealType -> realTy
   BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
+  StrType -> error "Not implemented"
 
 compileBinop :: BaseType -> (Operand -> Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileBinop ty makeInstr [ScalarVal x _, ScalarVal y _] =
   liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x y)
+compileBinop _ _ xs = error $ "Bad args: " ++ show xs
 
 compileUnop :: BaseType -> (Operand -> L.Instruction)
                 -> [CompileVal]
                 -> CompileM CompileVal
 compileUnop ty makeInstr [ScalarVal x _] =
   liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x)
+compileUnop _ _ xs = error $ "Bad args: " ++ show xs
 
 compileFFICall :: String -> [IType] -> [CompileVal] -> CompileM CompileVal
-compileFFICall name tys args = do
-  ans <- evalInstr name retTy' $ externCall f (map scalarVal args)
+compileFFICall name tys xs = do
+  ans <- evalInstr name retTy' $ externCall f (map scalarVal xs)
   modify $ setFunSpecs (f:)
   return $ ScalarVal ans retTy
   where
     fromScalarIType :: IType -> BaseType
     fromScalarIType (IType b []) = b
+    fromScalarIType ty = error $ "Not a scalar: " ++ pprint ty
     retTy:argTys = map fromScalarIType tys
     retTy':argTys' = map scalarTy (retTy:argTys)
     f = ExternFunSpec name retTy' argTys'
@@ -388,50 +404,64 @@ compileBuiltin b ts = case b of
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   FFICall _ name -> compileFFICall name ts
   Scan     -> error "Scan should have been lowered away by now."
+  _ -> error $ "Primop not implemented: " ++ pprint b
 
+mallocFun :: ExternFunSpec
 mallocFun  = ExternFunSpec "malloc_cod"    charPtrTy [longTy]
-freeFun    = ExternFunSpec "free_cod"      charPtrTy [charPtrTy]
+
+freeFun :: ExternFunSpec
+freeFun = ExternFunSpec "free_cod"      charPtrTy [charPtrTy]
+
+memcpyFun :: ExternFunSpec
 memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
 
 builtinFFISpecs :: [ExternFunSpec]
 builtinFFISpecs = [mallocFun, freeFun, memcpyFun]
 
+charPtrTy :: L.Type
 charPtrTy = L.ptr (L.IntegerType 8)
+
+boolTy :: L.Type
 boolTy = L.IntegerType 1
+
+longTy :: L.Type
 longTy = L.IntegerType 64
+
+realTy :: L.Type
 realTy = L.FloatingPointType L.DoubleFP
 
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
 makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> Module
-makeModule decls (fstBlock:blocks) userSpecs = mod
+makeModule decls (fstBlock:blocks) userSpecs = m
   where
     L.BasicBlock name instrs term = fstBlock
     fstBlock' = L.BasicBlock name (decls ++ instrs) term
-    allFFISpecs = nub $ userSpecs ++ builtinFFISpecs
-    mod = L.defaultModule { L.moduleName = "test"
-                          , L.moduleDefinitions = L.GlobalDefinition fundef
-                                                : map externDecl allFFISpecs
-                          }
-    fundef = L.functionDefaults { L.name        = L.Name "thefun"
-                                , L.parameters  = ([], False)
-                                , L.returnType  = L.VoidType
-                                , L.basicBlocks = (fstBlock':blocks) }
+    ffiSpecs = nub $ userSpecs ++ builtinFFISpecs
+    m = L.defaultModule
+      { L.moduleName = "test"
+      , L.moduleDefinitions = L.GlobalDefinition fundef : map externDecl ffiSpecs }
+    fundef = L.functionDefaults
+      { L.name        = L.Name "thefun"
+      , L.parameters  = ([], False)
+      , L.returnType  = L.VoidType
+      , L.basicBlocks = (fstBlock':blocks) }
+makeModule _ [] _ = error $ "Expected at least one block"
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys) args =
-  L.Call Nothing L.C [] fun args' [] []
+externCall (ExternFunSpec fname retTy argTys) xs =
+  L.Call Nothing L.C [] fun xs' [] []
   where fun = Right $ L.ConstantOperand $ C.GlobalReference
                          (funTy retTy argTys) (strToName fname)
-        args' = [(x ,[]) | x <- args]
+        xs' = [(x ,[]) | x <- xs]
 
 externDecl :: ExternFunSpec -> L.Definition
 externDecl (ExternFunSpec fname retTy argTys) =
   L.GlobalDefinition $ L.functionDefaults {
     L.name        = strToName fname
   , L.parameters  = ([L.Parameter t (argName i) []
-                     | (i, t) <- zip [0..] argTys], False)
+                     | (i, t) <- zip [0::Int ..] argTys], False)
   , L.returnType  = retTy
   , L.basicBlocks = []
   }
@@ -440,11 +470,20 @@ externDecl (ExternFunSpec fname retTy argTys) =
 strToName :: String -> L.Name
 strToName s = L.Name $ toShort $ pack s
 
-setScalarDecls update state = state { scalarDecls = update (scalarDecls state) }
-setCurInstrs   update state = state { curInstrs   = update (curInstrs   state) }
-setCurBlocks   update state = state { curBlocks   = update (curBlocks   state) }
-setBlockName   update state = state { blockName   = update (blockName   state) }
-setFunSpecs    update state = state { funSpecs = update (funSpecs state) }
+setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
+setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }
+
+setCurInstrs :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
+setCurInstrs update s = s { curInstrs = update (curInstrs s) }
+
+setCurBlocks :: ([BasicBlock] -> [BasicBlock]) -> CompileState -> CompileState
+setCurBlocks update s = s { curBlocks   = update (curBlocks s) }
+
+setBlockName :: (L.Name -> L.Name) -> CompileState -> CompileState
+setBlockName update s = s { blockName = update (blockName s) }
+
+setFunSpecs :: ([ExternFunSpec] -> [ExternFunSpec]) -> CompileState -> CompileState
+setFunSpecs update s = s { funSpecs = update (funSpecs s) }
 
 instance Functor JitVal where
   fmap = fmapDefault

@@ -30,6 +30,7 @@ normalizePass topDecl = case topDecl of
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return $ decl'
+      _ -> error "Multiple decls not implemented"
     putEnv (asFst env)
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
@@ -157,6 +158,7 @@ normalizeDecl decl = case decl of
       (bs, lenv) <- normalizeBinders [b]
       extend $ ([NUnpack bs tv' bound'], tv' @> ())
       return $ tenv <> lenv
+  TAlias _ _ -> error "Shouldn't have TAlias left"
 
 normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
@@ -166,14 +168,14 @@ normalizeTy ty = case ty of
     a' <- normalizeTy a
     b' <- normalizeTy b
     return $ RecLeaf $ NArrType (toList a') (toList b')
-  TabType n ty -> do
-    ty' <- normalizeTy ty
-    n'  <- normalizeTy n
-    return $ fmap (\x -> foldr NTabType x (toList n')) ty'
+  TabType a b -> do
+    a' <- normalizeTy a
+    b' <- normalizeTy b
+    return $ fmap (\x -> foldr NTabType x (toList a')) b'
   RecType r -> liftM RecTree $ traverse normalizeTy r
-  Exists ty -> do
-    ty' <- normalizeTy ty
-    return $ RecLeaf $ NExists (toList ty')
+  Exists body -> do
+    body' <- normalizeTy body
+    return $ RecLeaf $ NExists (toList body')
   IdxSetLit x -> return $ RecLeaf $ NIdxSetLit x
   BoundTVar n -> return $ RecLeaf $ NBoundTVar n
   Forall _ _ -> error "Shouldn't have forall types left"
@@ -236,6 +238,7 @@ simpPass topDecl = case topDecl of
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return decl'
+      _ -> error "Multiple decls not implemented"
     putEnv env
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
@@ -285,6 +288,7 @@ simplifyAtom atom = case atom of
     case x of
       Nothing -> return $ NVar v
       Just (L x') -> local (\(_, scope) -> (mempty, scope)) (simplifyAtom x')
+      Just (T _) -> error "Expected let-bound var"
   NGet e i -> do
     e' <- simplifyAtom e
     i' <- simplifyAtom i
@@ -329,13 +333,14 @@ simplifyDecl decl = case decl of
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
   NDecls decls body -> case body' of
-    Ions expr bs atoms -> Ions (wrapDecls decls expr) bs atoms
+    Ions e bs atoms -> Ions (wrapDecls decls e) bs atoms
     Unchanged -> Unchanged
     where
       body' = decompose (scope <> scope') body
       scope' = foldMap declsScope decls
       declsScope decl = case decl of
         NLet bs _ -> bindFold bs
+        _ -> error "Not implemented"
   NScan b@(_:>n) [] [] body -> case decompose mempty body of
     Unchanged -> Unchanged
     Ions body' bs atoms -> Ions (NScan b [] [] body') bs' atoms'
@@ -420,6 +425,7 @@ derivNExpr expr = case expr of
       updateDerivBinders bs $ \bs' -> do
         body' <- derivNExpr body
         return $ wrapDecls [NLet bs' bound'] body'
+    _ -> error "Not implemented"
     where body = NDecls rest final
   -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
   --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
@@ -461,6 +467,7 @@ derivBinder (v:>ty) = do
   let  tys' = tangentBunNType ty
        vs'  = case tys' of [_]   -> [v]
                            [_,_] -> [v, rawName (nameTag v)]
+                           _ -> error $ "Too many types: " ++ pprint tys'
   (vs'', scope) <- asks $ renames vs' . snd
   let env = (v @> map NVar vs'')
   return (zipWith (:>) vs'' tys', (env, scope))
@@ -474,10 +481,9 @@ pureBun ty x = case ty of
   NArrType _ _ -> [NDeriv x]
   NTabType n a -> map (NAtomicFor (i:>n)) (pureBun a (NGet x (NVar i)))
      where i = rawName "i" -- Shadowing ok here? Prefer 'fanout' from prelude
---  NExists ts -> [NExists $ foldMap recur ts]
+  NExists _ -> error $ "NExists not implemented" -- TODO
   NIdxSetLit _ -> [x]
   NBoundTVar _ -> [x]
-  where recur = tangentBunNType
 
 -- === capture-avoiding substitutions on NExpr and friends ===
 
@@ -495,7 +501,8 @@ instance NSubst NExpr where
         refreshBindersR bs $ \bs' -> do
            body' <- nSubst body
            return $ wrapDecls [NLet bs' bound'] body'
-       where body = NDecls rest final
+      NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
+      where body = NDecls rest final
     NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
                          liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
     NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
@@ -512,6 +519,7 @@ instance NSubst NAtom where
       case x of
         Nothing -> return $ NVar v
         Just (L x') -> local (\(_, scope) -> (mempty, scope)) (nSubst x')
+        Just (T _) -> error "Expected let-bound variable"
     NGet e i -> do
       e' <- nSubst e
       i' <- nSubst i
@@ -525,6 +533,8 @@ instance NSubst NAtom where
       refreshBindersR bs $ \bs' -> do
         body' <- nSubst body
         return $ NLam bs' body'
+    NDerivAnnot _ _ -> error $ "NDerivAnnot not implemented" -- TODO
+    NDeriv _ -> error $ "NDeriv not implemented" -- TODO
 
 instance NSubst NType where
   nSubst ty = case ty of
@@ -533,6 +543,7 @@ instance NSubst NType where
       x <- asks $ flip envLookup v . fst
       return $ case x of Nothing -> ty
                          Just (T x') -> NTypeVar x'
+                         Just (L _) -> error "Expected type variable"
     NArrType as bs -> liftM2 NArrType (mapM nSubst as) (mapM nSubst bs)
     NTabType a b -> liftM2 NTabType (nSubst a) (nSubst b)
     NExists ts -> liftM NExists (mapM nSubst ts)
@@ -575,6 +586,7 @@ stripAnnotPass topDecl = return $ case topDecl of
 stripDerivAnnotDecl :: NDecl -> NDecl
 stripDerivAnnotDecl decl = case decl of
   NLet bs bound -> NLet bs (stripDerivAnnot bound)
+  NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
 
 stripDerivAnnot :: NExpr -> NExpr
 stripDerivAnnot expr = case expr of

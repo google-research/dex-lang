@@ -50,8 +50,9 @@ runTopPass cfg env (TopPass m) =
 
 liftTopPass :: Monoid env =>
                  state -> FreshScope -> Pass env state a -> TopPass env a
-liftTopPass state scope m = do env <- getEnv
-                               liftEither $ evalPass env state scope m
+liftTopPass state_ scope m = do
+  env <- getEnv
+  liftEither $ evalPass env state_ scope m
 
 infixl 1 >+>
 (>+>) :: (Monoid env1, Monoid env2)
@@ -63,14 +64,15 @@ infixl 1 >+>
                    (z, env2') <- liftEnv env2 (f2 y)
                    putEnv (env1', env2')
                    return z
-  where
-    liftEnv :: (Monoid env, Monoid env') =>
-                  env -> TopPass env a -> TopPass env' (a, env)
-    liftEnv env m = do c <- getOutChan
-                       s <- getSource
-                       (x, env') <- liftIO $ runTopPass (c,s)env m
-                       x' <- liftEither x
-                       return (x', env')
+
+liftEnv :: (Monoid env, Monoid env') =>
+             env -> TopPass env a -> TopPass env' (a, env)
+liftEnv env m = do
+  c <- getOutChan
+  s <- getSource
+  (x, env') <- liftIO $ runTopPass (c,s)env m
+  x' <- liftEither x
+  return (x', env')
 
 -- === common monad structure for pure passes ===
 
@@ -80,9 +82,10 @@ type Pass env state a = ReaderT env (
                                    Either Err))) a
 
 runPass :: env -> state -> FreshScope -> Pass env state a -> Except (a, state)
-runPass env state scope m = runFreshT (runStateT (runReaderT m env) state) scope
+runPass env state_ scope m = runFreshT (runStateT (runReaderT m env) state_) scope
 
-evalPass env state stem = liftM fst . runPass env state stem
+evalPass :: env -> state -> FreshScope -> Pass env state a -> Except a
+evalPass env state_ stem = liftM fst . runPass env state_ stem
 
 assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()

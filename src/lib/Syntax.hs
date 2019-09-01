@@ -74,6 +74,8 @@ type Pat     = PatP     Type
 -- TODO: figure out how to treat index set kinds
 -- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
 data Kind = TyKind  deriving (Show, Eq, Ord)
+
+idxSetKind :: Kind
 idxSetKind = TyKind
 
 data DeclP b = Let (PatP b) (ExprP b)
@@ -110,6 +112,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | Mod | FFICall Int String | Filter
                 deriving (Eq, Ord)
 
+builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
@@ -122,6 +125,7 @@ builtinNames = M.fromList [
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum)]
 
+builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
 
 strToBuiltin :: String -> Maybe Builtin
@@ -139,7 +143,10 @@ data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
 data Value = Value Type (RecTree Vec)  deriving (Show, Eq)
 data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq)
 
+unitTy :: Type
 unitTy = RecType (Tup [])
+
+unitCon :: ExprP b
 unitCon = RecCon (Tup [])
 
 -- === source AST ===
@@ -269,9 +276,16 @@ data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq)
 
 data Result = Result (SetVal Source) (SetVal EvalStatus) Output
 
+resultSource :: String -> Result
 resultSource s = Result (Set s) mempty mempty
-resultText   s = Result mempty mempty s
-resultErr    e = Result mempty (Set (Failed e)) mempty
+
+resultText :: Output -> Result
+resultText s = Result mempty mempty s
+
+resultErr :: Err -> Result
+resultErr e = Result mempty (Set (Failed e)) mempty
+
+resultComplete :: Result
 resultComplete = Result mempty (Set Complete)   mempty
 
 data Err = Err ErrType (Maybe SrcPos) String  deriving (Show)
@@ -322,16 +336,22 @@ instance Monoid Result where
 
 infixr 1 -->
 infixr 2 ==>
+
+(-->) :: Type -> Type -> Type
 (-->) = ArrType
+
+(==>) :: Type -> Type -> Type
 (==>) = TabType
 
 data LorT a b = L a | T b  deriving (Show, Eq)
 
 fromL :: LorT a b -> a
 fromL (L x) = x
+fromL _ = error "Not a let-bound thing"
 
 fromT :: LorT a b -> b
 fromT (T x) = x
+fromT _ = error "Not a type-ish thing"
 
 lbind :: BinderP a -> FullEnv a b
 lbind (v:>x) = v @> L x
@@ -364,8 +384,8 @@ instance HasVars b => HasVars (ExprP b) where
     App fexpr arg -> freeVars fexpr <> freeVars arg
     For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
-    TLam vs expr  -> freeVars expr `envDiff` foldMap bind vs
-    TApp expr ts  -> freeVars expr <> foldMap freeVars ts
+    TLam vs body  -> freeVars body `envDiff` foldMap bind vs
+    TApp fexpr ts -> freeVars fexpr <> foldMap freeVars ts
     RecCon r      -> foldMap freeVars r
     TabCon ty xs -> freeVars ty <> foldMap freeVars xs
     IdxLit _ _ -> mempty
@@ -400,6 +420,8 @@ instance HasVars NExpr where
     NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     NApp f xs -> freeVars f <> foldMap freeVars xs
     NAtoms xs -> foldMap freeVars xs
+    NScan _ _ _ _ -> error $ "NScan not implemented" -- TODO
+    NTabCon _ _ _ -> error $ "NTabCon not implemented" -- TODO
 
 instance HasVars NAtom where
   freeVars atom = case atom of
@@ -409,6 +431,9 @@ instance HasVars NAtom where
     -- AFor b body -> freeVars b <> (freeVars body `envDiff` lhsVars b)
     NLam bs body -> foldMap freeVars bs <>
                       (freeVars body `envDiff` foldMap lhsVars bs)
+    NAtomicFor _ _  -> error $ "NAtomicFor not implemented" -- TODO
+    NDerivAnnot _ _ -> error $ "NDerivAnnot not implemented" -- TODO
+    NDeriv _        -> error $ "NDeriv not implemented" -- TODO
 
 instance HasVars NDecl where
   freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
@@ -430,6 +455,7 @@ instance HasVars b => HasVars (BinderP b) where
 instance HasVars b => HasVars (DeclP b) where
    freeVars (Let    p   expr) = foldMap freeVars p <> freeVars expr
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
+   freeVars (TAlias _ _) = error $ "TAlias not implemented" -- TODO
 
 instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl decl) = freeVars decl
@@ -477,11 +503,14 @@ stripSrcAnnot expr = case expr of
   For b body    -> For b (recur body)
   Get e ie      -> Get (recur e) (recur ie)
   RecCon r      -> RecCon (fmap recur r)
-  TLam vs expr  -> TLam vs (recur expr)
-  TApp expr ts  -> TApp (recur expr) ts
+  TLam vs body  -> TLam vs (recur body)
+  TApp fexpr ts -> TApp (recur fexpr) ts
   DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
   SrcAnnot e _ -> recur e
   Pack e t1 t2 -> Pack (recur e) t1 t2
+  TabCon _ _ -> error $ "TabCon not implemented" -- TODO
+  IdxLit _ _ -> error $ "IdxLit not implemented" -- TODO
+  Annot _ _  -> error $ "Annot not implemented"  -- TODO
   where recur = stripSrcAnnot
 
 stripSrcAnnotDecl :: DeclP b -> DeclP b

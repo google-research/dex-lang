@@ -22,15 +22,15 @@ foreign import ccall "dynamic"
   haskFun :: FunPtr (IO ()) -> IO ()
 
 evalJit :: L.Module -> IO ()
-evalJit mod =
+evalJit m =
   withContext $ \c ->
-    Mod.withModuleFromAST c mod $ \m -> do
-      runPasses m
+    Mod.withModuleFromAST c m $ \m' -> do
+      runPasses m'
       jit c $ \ee ->
-         EE.withModuleInEngine ee m $ \eee -> do
-           fn <- EE.getFunction eee (L.Name "thefun")
-           case fn of
-             Just fn -> runJitted fn
+         EE.withModuleInEngine ee m' $ \eee -> do
+           f <- EE.getFunction eee (L.Name "thefun")
+           case f of
+             Just f' -> runJitted f'
              Nothing -> error "Failed to fetch \"thefun\" from LLVM"
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
@@ -45,22 +45,22 @@ runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
 showLLVM :: L.Module -> IO String
 showLLVM m =
   withContext $ \c ->
-    Mod.withModuleFromAST c m $ \m -> do
-      prePass <- showModule m
-      runPasses m
-      postPass <- showModule m
+    Mod.withModuleFromAST c m $ \m' -> do
+      prePass <- showModule m'
+      runPasses m'
+      postPass <- showModule m'
       return $ "Input LLVM:\n\n" ++ prePass ++ "\nAfter passes:\n\n" ++ postPass
   where
     showModule :: Mod.Module -> IO String
-    showModule m = liftM unpack $ Mod.moduleLLVMAssembly m
+    showModule m' = liftM unpack $ Mod.moduleLLVMAssembly m'
 
 showAsm :: L.Module -> IO String
 showAsm m =
   withContext $ \c ->
-    Mod.withModuleFromAST c m $ \m -> do
-      runPasses m
+    Mod.withModuleFromAST c m $ \m' -> do
+      runPasses m'
       T.withHostTargetMachine $ \t ->
-        liftM unpack $ Mod.moduleTargetAssembly t m
+        liftM unpack $ Mod.moduleTargetAssembly t m'
 
 readPtrs :: Int -> Ptr Word64 -> IO [Word64]
 readPtrs n ptr = mapM readAt [0..n-1]

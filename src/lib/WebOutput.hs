@@ -1,5 +1,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
+
 module WebOutput (runWeb) where
 
 import Control.Concurrent
@@ -38,8 +40,8 @@ type FullPass env = UTopDecl -> TopPass env ()
 runWeb :: Monoid env => FileName -> FullPass env -> env -> IO ()
 runWeb fname pass env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
-  spawn Trap $ mainDriver pass env fname (subChan Push resultsChan)
-  spawn Trap $ webServer (subChan Request resultsChan)
+  _ <- spawn Trap $ mainDriver pass env fname (subChan Push resultsChan)
+  _ <- spawn Trap $ webServer (subChan Request resultsChan)
   liftIO $ forever (threadDelay maxBound)
 
 webServer :: ReqChan ResultSet -> Actor () ()
@@ -74,17 +76,24 @@ webServer resultsRequest = do
 -- === main driver ===
 
 type DriverM env a = StateT (DriverState env) (Actor DriverMsg) a
+type WorkerMap env = M.Map Key (Proc, ReqChan env)
+type DeclCache = M.Map (String, [Key]) Key
 data DriverMsg = NewProg String
 data DriverState env = DriverState
   { freshState :: Int
-  , declCache :: M.Map (String, [Key]) Key
+  , declCache :: DeclCache
   , varMap    :: Env Key
-  , workers   :: M.Map Key (Proc, ReqChan env)
+  , workers   :: WorkerMap env
   }
 
-setDeclCache update state = state { declCache = update (declCache state) }
-setVarMap    update state = state { varMap    = update (varMap    state) }
-setWorkers   update state = state { workers   = update (workers   state) }
+setDeclCache :: (DeclCache -> DeclCache) -> DriverState env -> DriverState env
+setDeclCache update state_ = state_ { declCache = update (declCache state_) }
+
+setVarMap :: (Env Key -> Env Key) -> DriverState env -> DriverState env
+setVarMap update state_ = state_ { varMap = update (varMap state_) }
+
+setWorkers :: (WorkerMap env -> WorkerMap env) -> DriverState env -> DriverState env
+setWorkers update state_ = state_ { workers = update (workers state_) }
 
 initDriverState :: DriverState env
 initDriverState = DriverState 0 mempty mempty mempty
@@ -106,9 +115,9 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
     resultSetChan `send` updateOrder keys
   where
     processDecl fullSource (source, decl) = do
-      state <- get
-      let parents = nub $ toList $ freeVars decl `envIntersect` varMap state
-      key <- case M.lookup (source, parents) (declCache state) of
+      state_ <- get
+      let parents = nub $ toList $ freeVars decl `envIntersect` varMap state_
+      key <- case M.lookup (source, parents) (declCache state_) of
         Just key -> return key
         Nothing -> do
           key <- freshKey
@@ -148,10 +157,10 @@ worker :: Monoid env => String -> env -> TopPass env ()
             -> Actor (WorkerMsg env) ()
 worker source initEnv pass resultChan parentChans = do
   selfChan <- myChan
-  mapM (flip send (subChan EnvResponse selfChan)) parentChans
+  mapM_ (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  spawnLink NoTrap $ execPass source env pass (subChan JobDone selfChan) resultChan
+  _ <- spawnLink NoTrap $ execPass source env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr Nothing s)

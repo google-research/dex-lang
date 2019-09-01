@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -Wno-missing-signatures #-}
+
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
@@ -84,12 +86,12 @@ evalWeb pass fname = do
 
 evalDecl :: Monoid env =>
               String -> ResultChan -> TopPass env () -> StateT env IO ()
-evalDecl source writeOut pass = do
+evalDecl source write pass = do
   env <- get
-  (ans, env') <- liftIO $ runTopPass (writeOut . resultText, source) env pass
+  (ans, env') <- liftIO $ runTopPass (write . resultText, source) env pass
   modify $ (<> env')
-  liftIO $ writeOut $ case ans of Left e   -> resultErr e
-                                  Right () -> resultComplete
+  liftIO $ write $ case ans of Left e   -> resultErr e
+                               Right () -> resultComplete
 
 printIt :: (Pretty a, MonadIO m) => String -> a -> m ()
 printIt prefix x = liftIO $ putStrLn $ unlines
@@ -101,8 +103,8 @@ printIt prefix x = liftIO $ putStrLn $ unlines
 runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
 runEnv m = evalStateT m mempty
 
-opts :: ParserInfo CmdOpts
-opts = info (p <**> helper) mempty
+parseOpts :: ParserInfo CmdOpts
+parseOpts = info (p <**> helper) mempty
   where p = CmdOpts
             <$> (optional $ argument str (    metavar "FILE"
                                            <> help "Source program"))
@@ -119,7 +121,7 @@ runMode evalMode pass = case evalMode of
 
 main :: IO ()
 main = do
-  opts <- execParser opts
+  opts <- execParser parseOpts
   let evalMode = case programSource opts of
                    Nothing -> ReplMode
                    Just fname -> if webOutput opts then WebMode    fname

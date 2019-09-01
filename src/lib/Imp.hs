@@ -22,8 +22,8 @@ type ImpM a = ReaderT ImpEnv (Either Err) a
 
 impPass :: NTopDecl -> TopPass ImpEnv ImpDecl
 impPass decl = case decl of
-  NTopDecl decl -> do
-    (bs, prog, env) <- liftTop $ toImpDecl decl
+  NTopDecl decl' -> do
+    (bs, prog, env) <- liftTop $ toImpDecl decl'
     putEnv env
     return $ ImpTopLet bs prog
   NEvalCmd NoOp -> return noOpCmd
@@ -69,6 +69,7 @@ toImp dests expr = case expr of
     liftM fold $ zipWithM writeRow [0..] rows
     where writeRow i row = toImp (indexedDests i) row
           indexedDests i = map (indexDest (ILit (IntLit i))) dests
+  NApp _ _ -> error "NApp should be gone by now"
 
 toImpDecl :: NDecl -> ImpM ([IBinder], ImpProg, ImpEnv)
 toImpDecl decl = case decl of
@@ -97,12 +98,15 @@ toImpAtom atom = case atom of
   NLit x -> return $ ILit x
   NVar v -> lookupVar v
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
+  _ -> error $ "Not implemented: " ++ pprint atom
 
 primOpStatement :: Builtin -> [Dest] -> [IType] -> [IExpr] -> Statement
 primOpStatement Range      (dest:_) _ [x] = copy dest x
 primOpStatement IndexAsInt [dest]   _ [x] = copy dest x
 primOpStatement IntAsIndex [dest]   _ [x] = copy dest x  -- TODO: mod n
 primOpStatement b [Buffer name idxs] ts xs = Update name idxs b ts xs
+primOpStatement b dests _ _ = error $
+  "Unexpected number of dests: " ++ show (length dests) ++ pprint b
 
 toImpType :: NType -> ImpM IType
 toImpType ty = case ty of
@@ -127,6 +131,7 @@ addIdx n (IType ty shape) = IType ty (n : shape)
 typeToSize :: NType -> ImpM IExpr
 typeToSize (NTypeVar v) = lookupVar v
 typeToSize (NIdxSetLit n) = return $ ILit (IntLit n)
+typeToSize ty = error $ "Not implemented: " ++ pprint ty
 
 asDest :: BinderP a -> Dest
 asDest (v:>_) = Buffer v []
@@ -155,17 +160,18 @@ reconstruct :: Type -> Env Int -> [Vec] -> Value
 reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
   where
     typeLeaves :: Type -> RecTree ()
-    typeLeaves ty = case ty of BaseType _ -> RecLeaf ()
-                               TabType _ valTy -> typeLeaves valTy
-                               RecType r -> RecTree $ fmap typeLeaves r
-                               _ -> error $ "can't show " ++ pprint ty
+    typeLeaves t = case t of
+      BaseType _ -> RecLeaf ()
+      TabType _ valTy -> typeLeaves valTy
+      RecType r -> RecTree $ fmap typeLeaves r
+      _ -> error $ "can't show " ++ pprint t
     subty :: Type -> Type
-    subty ty = case ty of
-      BaseType _ -> ty
+    subty t = case t of
+      BaseType _ -> t
       TabType (TypeVar v) valTy -> TabType (IdxSetLit (tenv ! v)) (subty valTy)
       TabType n valTy -> TabType n (subty valTy)
       RecType r -> RecType $ fmap subty r
-      _ -> error $ "can't show " ++ pprint ty
+      _ -> error $ "can't show " ++ pprint t
 
 -- === type checking imp programs ===
 
