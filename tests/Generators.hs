@@ -1,9 +1,11 @@
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Generators where
 
 import Control.Monad
 import Test.QuickCheck
+import qualified Data.Map.Strict as M
 
 import Record
 import Env
@@ -17,6 +19,14 @@ smaller n m = scale (\size -> size `div` n) m  -- TODO: use ceil div instead?
 
 oneOfFiltered :: [(Bool, Gen a)] -> Gen a
 oneOfFiltered gens = oneof $ map snd $ filter fst gens
+
+oneOrTwo :: Arbitrary a => Gen [a]
+oneOrTwo = do n::Int <- elements [1, 2]
+              mapM (const arbitrary) [1..n]
+
+zeroToTwo :: Arbitrary a => Gen [a]
+zeroToTwo = do n::Int <- elements [0, 1, 2]
+               mapM (const arbitrary) [1..n]
 
 liftS2 :: (Arbitrary a, Arbitrary b) => (a -> b -> c) -> a -> b -> [c]
 liftS2 f x y = [f x' y' | (x', y') <- shrink (x, y)]
@@ -98,9 +108,27 @@ instance Arbitrary b => Arbitrary (DeclP b) where
 
 instance Arbitrary b => Arbitrary (ExprP b) where
   arbitrary = oneof
-    [ liftM Var arbitrary ]
+    [ liftM Lit arb
+    , liftM Var arb
+    , liftM3 PrimOp arb (return []) oneOrTwo  -- TODO: explicit type args
+    , liftM2 Decls oneOrTwo arb  -- TODO: reduce size of children
+    ]
   shrink _ = [] -- TODO: shrink
   -- TODO: the rest
+
+allBuiltins :: [Builtin]
+allBuiltins = M.elems builtinNames
+
+instance Arbitrary Builtin where
+  arbitrary = elements allBuiltins
+
+instance Arbitrary LitVal where
+  arbitrary = oneof
+    [ liftM IntLit  arb
+    , liftM RealLit arb
+    , liftM BoolLit arb ]
+  -- TODO: StrLit
+
 
 instance Arbitrary Ann where
   arbitrary = oneof [return NoAnn, liftM Ann arb]

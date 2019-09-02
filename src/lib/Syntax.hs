@@ -15,7 +15,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                Value (..), Vec (..), Result (..), freeVars,
                Output, Nullable (..), SetVal (..), EvalStatus (..),
                MonMap (..), resultSource, resultText, resultErr, resultComplete,
-               Index, wrapDecls, strToBuiltin, idxSetKind,
+               Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
                preludeNames, preludeApp, naryApp, tApp,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl

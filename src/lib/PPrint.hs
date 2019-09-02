@@ -88,8 +88,9 @@ instance Pretty b => Pretty (ExprP b) where
     PrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
-    Decls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
-                                      <> line <> "in" <+> p body
+    Decls decls body -> parens $
+      align $ "let" <+> align (vcat (punctuate ";" (map p decls)))
+        <> line <> "in" <+> p body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p e)
