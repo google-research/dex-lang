@@ -38,7 +38,7 @@ import Control.Monad.Except hiding (Except)
 data ExprP b = Lit LitVal
           | Var Name
           | PrimOp Builtin [Type] [ExprP b]
-          | Decls [DeclP b] (ExprP b)
+          | Decl (DeclP b) (ExprP b)
           | Lam (PatP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (PatP b) (ExprP b)
@@ -364,9 +364,7 @@ type Vars = FullEnv () ()
 
 wrapDecls :: [DeclP b] -> ExprP b -> ExprP b
 wrapDecls [] expr = expr
-wrapDecls decls expr = case expr of
-  Decls decls' body -> Decls (decls ++ decls') body
-  _ -> Decls decls expr
+wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
 
 -- === substitutions ===
 
@@ -378,8 +376,8 @@ instance HasVars b => HasVars (ExprP b) where
     Var v -> v @> L ()
     Lit _ -> mempty
     PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
-    Decls decls body -> let (bvs, fvs) = declVars decls
-                        in fvs <> (freeVars body `envDiff` bvs)
+    Decl decl body -> let (bvs, fvs) = declVars [decl]
+                      in fvs <> (freeVars body `envDiff` bvs)
     Lam p body    -> withBinders p body
     App fexpr arg -> freeVars fexpr <> freeVars arg
     For b body    -> withBinders b body
@@ -497,7 +495,7 @@ stripSrcAnnot expr = case expr of
   Var _ -> expr
   Lit _ -> expr
   PrimOp op ts xs -> PrimOp op ts (map recur xs)
-  Decls decls body -> Decls (map stripSrcAnnotDecl decls) (recur body)
+  Decl decl body -> Decl (stripSrcAnnotDecl decl) (recur body)
   Lam p body    -> Lam p (recur body)
   App fexpr arg -> App (recur fexpr) (recur arg)
   For b body    -> For b (recur body)

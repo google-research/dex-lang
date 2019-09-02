@@ -77,7 +77,7 @@ check expr reqTy = case expr of
     let argTys' = map (instantiateTVs vs) argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b vs args'
-  Decls decls body -> foldr checkDecl (check body reqTy) decls
+  Decl decl body -> checkDecl decl (check body reqTy)
   Lam p body -> do
     (a, b) <- splitFun expr reqTy
     p' <- checkPat p a

@@ -54,10 +54,9 @@ reduce expr = case expr of
     ts' <- mapM subst ts
     xs' <- mapM reduce xs
     return $ evalOp op ts' xs'
-  Decls [] body -> reduce body
-  Decls (decl:rest) body -> do
+  Decl decl body -> do
     env' <- reduceDecl decl
-    extendR env' $ reduce (Decls rest body)
+    extendR env' $ reduce body
   Lam _ _ -> subst expr
   App e1 e2 -> do
     ~(Lam p body) <- reduce e1
@@ -206,8 +205,7 @@ instance Subst Expr where
         Just (L x') -> dropSubst (subst x')
         Just (T _ ) -> error "Expected let-bound var"
     PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
-    Decls [] body -> subst body
-    Decls (decl:rest) final -> case decl of
+    Decl decl body -> case decl of
       Let p bound -> do
         bound' <- subst bound
         refreshPat p $ \p' -> do
@@ -220,7 +218,6 @@ instance Subst Expr where
             body' <- subst body
             return $ wrapDecls [Unpack b' tv' bound'] body'
       TAlias _ _ -> error "Shouldn't have TAlias left"
-      where body = Decls rest final
     Lam p body -> do
       refreshPat p $ \p' -> do
         body' <- subst body

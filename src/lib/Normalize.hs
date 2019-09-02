@@ -70,10 +70,9 @@ normalize expr = case expr of
     case b of
       Deriv -> return $ NAtoms [NDeriv (fromOne (fromOne xs'))]
       _ -> return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
-  Decls [] body -> normalize body
-  Decls (decl:decls) final -> do
+  Decl decl body -> do
     env <- normalizeDecl decl
-    extendR env $ normalize (Decls decls final)
+    extendR env $ normalize body
   Lam p body -> do
     normalizeBindersR p $ \bs -> do
       body' <- normalizeScoped body

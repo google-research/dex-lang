@@ -111,7 +111,7 @@ instance Arbitrary b => Arbitrary (ExprP b) where
     [ liftM Lit arb
     , liftM Var arb
     , liftM3 PrimOp arb (return []) oneOrTwo  -- TODO: explicit type args
-    , liftM2 Decls oneOrTwo arb  -- TODO: reduce size of children
+    , liftM2 Decl (smaller 2 arb) (smaller 2 arb)
     ]
   shrink _ = [] -- TODO: shrink
   -- TODO: the rest

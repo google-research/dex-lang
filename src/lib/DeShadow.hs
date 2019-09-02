@@ -44,10 +44,10 @@ deShadowExpr expr = case expr of
   Var v -> asks $ Var . lookupSubst v . fst
   PrimOp b [] args -> liftM (PrimOp b []) (traverse recur args)
   PrimOp _ ts _ -> error $ "Unexpected type args to primop " ++ pprint ts
-  Decls decls body ->
-    withCat (mapM_ deShadowDecl decls) $ \() decls' -> do
+  Decl decl body ->
+    withCat (deShadowDecl decl) $ \_ [decl'] -> do
       body' <- recur body
-      return $ Decls decls' body'
+      return $ Decl decl' body'
   Lam p body ->
     withCat (deShadowPat p) $ \p' decls -> do
       body' <- recur body

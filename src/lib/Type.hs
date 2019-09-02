@@ -61,7 +61,7 @@ getType' check expr = case expr of
           ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)
       zipWithM_ (checkEq "Builtin") argTys' (map recur xs)
       return ansTy'
-    Decls decls body -> foldr getTypeDecl (recur body) decls
+    Decl decl body -> getTypeDecl decl $ recur body
     Lam p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (ArrType (patType p)) (recurWithP p body)
@@ -295,8 +295,7 @@ instance HasTypeVars Expr where
       Var v -> pure $ Var v
       PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
                                                   (traverse recur xs)
-      Decls [] final -> recur final
-      Decls (decl:decls) final -> case decl of
+      Decl decl body -> case decl of
         Let p bound ->
           liftA3 (\p' bound' body' -> wrapDecls [Let p' bound'] body')
                  (traverse recurB p) (recur bound) (recur body)
@@ -304,7 +303,6 @@ instance HasTypeVars Expr where
           liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
                  (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
         TAlias _ _ -> error "Shouldn't have TAlias left"
-        where body = Decls decls final
       Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
       App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
       For p body       -> liftA2 For (traverse recurB p) (recur body)

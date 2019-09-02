@@ -143,7 +143,7 @@ declExpr = do
   decls <- decl `sepEndBy` declSep
   symbol "in"
   body <- expr
-  return $ Decls decls body
+  return $ wrapDecls decls body
 
 withSourceAnn :: Parser UExpr -> Parser UExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
