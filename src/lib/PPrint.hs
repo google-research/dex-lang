@@ -128,8 +128,8 @@ instance Pretty Builtin where
 
 instance Pretty NExpr where
   pretty expr = case expr of
-    NDecls decls body -> parens $ align $ "let" <+> align (vcat (map p decls))
-                           <> line <> "in" <+> p body
+    NDecl decl body -> parens $ align $
+      "let" <+> p decl <+> "in" <> line <+> p body
     NScan b [] [] body -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
     NScan b bs xs body -> parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
                             <+> hsep (map p xs) <> ","

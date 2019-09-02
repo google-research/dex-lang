@@ -178,7 +178,7 @@ tApp f ts = TApp f ts
 
 -- === tuple-free ANF-ish normalized IR ===
 
-data NExpr = NDecls [NDecl] NExpr
+data NExpr = NDecl NDecl NExpr
            | NScan NBinder [NBinder] [NAtom] NExpr
            | NPrimOp Builtin [NType] [NAtom]
            | NApp NAtom [NAtom]
@@ -413,8 +413,8 @@ instance HasVars Ann where
 
 instance HasVars NExpr where
   freeVars expr = case expr of
-    NDecls decls body -> let (bvs, fvs) = declVars decls
-                         in fvs <> (freeVars body `envDiff` bvs)
+    NDecl decl body -> let (bvs, fvs) = declVars [decl]
+                        in fvs <> (freeVars body `envDiff` bvs)
     NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     NApp f xs -> freeVars f <> foldMap freeVars xs
     NAtoms xs -> foldMap freeVars xs

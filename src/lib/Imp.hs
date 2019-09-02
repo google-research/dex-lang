@@ -43,10 +43,9 @@ impPass decl = case decl of
 
 toImp :: [Dest] -> NExpr -> ImpM ImpProg
 toImp dests expr = case expr of
-  NDecls [] body -> toImp dests body
-  NDecls (decl:rest) final -> do
+  NDecl decl body -> do
     (bs, bound', env) <- toImpDecl decl
-    body' <- extendR env $ toImp dests (NDecls rest final)
+    body' <- extendR env $ toImp dests body
     return $ wrapAllocs bs $ bound' <> body'
   NScan b@(_:>n) bs xs body -> do
     ~([i:>_], idxEnv ) <- toImpBinders [b]

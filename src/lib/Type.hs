@@ -347,10 +347,9 @@ checkNExpr topDecl = topDecl <$ case topDecl of
 
 getNType :: NExpr -> NTypeM [NType]
 getNType expr = case expr of
-  NDecls [] final -> getNType final
-  NDecls (decl:decls) final -> do
+  NDecl decl body -> do
     env <- checkNDecl decl
-    extendR env $ getNType (NDecls decls final)
+    extendR env $ getNType body
   NScan b@(_:>i) bs xs body -> do
     checkNBinder b
     let carryTys = map binderAnn bs

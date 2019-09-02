@@ -9,7 +9,7 @@ import Data.Foldable
 import Data.Either
 
 import Env
-import Syntax  hiding (wrapDecls)
+import Syntax
 import Record
 import Cat
 import PPrint
@@ -202,7 +202,7 @@ normalizeBindersR bs cont = do
 normalizeScoped :: Expr -> NormM NExpr
 normalizeScoped expr = do
   (body, (decls, _)) <- scoped $ normalize expr
-  return $ wrapDecls decls body
+  return $ wrapNDecls decls body
 
 exprType :: Expr -> NormM Type
 exprType expr = do
@@ -256,12 +256,10 @@ simpAsTopPass m = do
 
 simplify :: NExpr -> SimplifyM NExpr
 simplify expr = case expr of
-  NDecls [] body -> simplify body
-  NDecls (decl:rest) final -> do
+  NDecl decl body -> do
     (decls, env) <- simplifyDecl decl
     body' <- extendR env $ simplify body
-    return $ wrapDecls decls body'
-    where body = NDecls rest final
+    return $ wrapNDecls decls body'
   NScan b bs xs e -> do
     xs' <- mapM simplifyAtom xs
     refreshBindersRSimp (b:bs) $ \(b':bs') -> do
@@ -329,15 +327,18 @@ simplifyDecl decl = case decl of
     (bs', lEnv) <- extendR tEnv $ refreshBindersSimp bs
     return ([NUnpack bs' tv' bound'], tEnv <> lEnv)
 
+wrapNDecls :: [NDecl] -> NExpr -> NExpr
+wrapNDecls [] expr = expr
+wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
+
 decompose :: Env NType -> NExpr -> Ions
 decompose scope expr = case expr of
-  NDecls decls body -> case body' of
-    Ions e bs atoms -> Ions (wrapDecls decls e) bs atoms
+  NDecl decl body -> case body' of
+    Ions e bs atoms -> Ions (NDecl decl e) bs atoms
     Unchanged -> Unchanged
     where
       body' = decompose (scope <> scope') body
-      scope' = foldMap declsScope decls
-      declsScope decl = case decl of
+      scope' = case decl of
         NLet bs _ -> bindFold bs
         _ -> error "Not implemented"
   NScan b@(_:>n) [] [] body -> case decompose mempty body of
@@ -387,11 +388,6 @@ refreshBindersRSimp :: [NBinder] -> ([NBinder] -> SimplifyM a) -> SimplifyM a
 refreshBindersRSimp bs cont = do (bs', env) <- refreshBindersSimp bs
                                  extendR env $ cont bs'
 
-wrapDecls :: [NDecl] -> NExpr -> NExpr
-wrapDecls [] body = body
-wrapDecls decls (NDecls decls' body) = NDecls (decls ++ decls') body
-wrapDecls decls body = NDecls decls body
-
 fromOne :: [x] -> x
 fromOne [x] = x
 fromOne _ = error "Expected singleton list"
@@ -416,16 +412,14 @@ expandDerivTop atom = do
 
 derivNExpr :: NExpr -> DerivM NExpr
 derivNExpr expr = case expr of
-  NDecls [] body -> derivNExpr body
-  NDecls (decl:rest) final -> case decl of
+  NDecl decl body -> case decl of
     NLet bs bound -> do
       bound' <- derivNExpr bound
       -- TODO: refresh binders and introduce names for tangents
       updateDerivBinders bs $ \bs' -> do
         body' <- derivNExpr body
-        return $ wrapDecls [NLet bs' bound'] body'
+        return $ NDecl (NLet bs' bound') body'
     _ -> error "Not implemented"
-    where body = NDecls rest final
   -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
   --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
   NApp f xs -> do
@@ -493,15 +487,13 @@ class NSubst a where
 
 instance NSubst NExpr where
   nSubst expr = case expr of
-    NDecls [] body -> nSubst body
-    NDecls (decl:rest) final -> case decl of
+    NDecl decl body -> case decl of
       NLet bs bound -> do
         bound' <- nSubst bound
         refreshBindersR bs $ \bs' -> do
            body' <- nSubst body
-           return $ wrapDecls [NLet bs' bound'] body'
+           return $ NDecl (NLet bs' bound') body'
       NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-      where body = NDecls rest final
     NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
                          liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
     NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
@@ -589,7 +581,7 @@ stripDerivAnnotDecl decl = case decl of
 
 stripDerivAnnot :: NExpr -> NExpr
 stripDerivAnnot expr = case expr of
-  NDecls decls body -> NDecls (map stripDerivAnnotDecl decls) (recur body)
+  NDecl decl body -> NDecl (stripDerivAnnotDecl decl) (recur body)
   NScan b bs xs e -> NScan b bs (map recurAtom xs) (recur e)
   NPrimOp b ts xs -> NPrimOp b ts (map recurAtom xs)
   NApp f xs -> NApp (recurAtom f) (map recurAtom xs)
