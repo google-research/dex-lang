@@ -88,7 +88,7 @@ instance Pretty b => Pretty (ExprP b) where
     PrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
-    Decl decl body -> parens $ align $ "let" <+> p decl <+> "in" <> line <> p body
+    Decl decl body -> prettyDecl decl body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p e)
@@ -103,6 +103,10 @@ instance Pretty b => Pretty (ExprP b) where
     SrcAnnot subexpr _ -> p subexpr
     DerivAnnot e ann -> p e <+> "@deriv" <+> p ann
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
+
+prettyDecl :: (Pretty decl, Pretty body) => decl -> body -> Doc ann
+prettyDecl decl body = align $ "(" <> "let" <+> p decl <+> "in"
+                                   <> line <> p body <> ")"
 
 instance Pretty Ann where
   pretty NoAnn = ""
@@ -128,8 +132,7 @@ instance Pretty Builtin where
 
 instance Pretty NExpr where
   pretty expr = case expr of
-    NDecl decl body -> parens $ align $
-      "let" <+> p decl <+> "in" <> line <+> p body
+    NDecl decl body -> prettyDecl decl body
     NScan b [] [] body -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
     NScan b bs xs body -> parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
                             <+> hsep (map p xs) <> ","
