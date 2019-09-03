@@ -1,0 +1,10 @@
+-- we don't do let generalization on patterns, but this is a problem if
+-- generalization is required. This fails:
+
+(f, g) = (lam x. x, lam x. x)
+
+--
+
+-- printing of tuple-index tables not implemented
+x = [1,2,3]
+:p for (i,j). iadd x.i x.j
