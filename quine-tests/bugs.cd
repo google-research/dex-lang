@@ -8,3 +8,8 @@
 -- printing of tuple-index tables not implemented
 x = [1,2,3]
 :p for (i,j). iadd x.i x.j
+
+-- nothing stops us trying to unify 'a' (or its tlam counterpart) with a metavar
+-- that doesn't have it in scope.
+-- (GHC's error message mentions skolem vars and escaping scopes...)
+:passes lam x. let f :: a -> a; f y = x in ()
