@@ -42,7 +42,9 @@ interpPass topDecl = () <$ case topDecl of
 reduce :: Expr -> ReduceM Val
 reduce expr = case expr of
   Lit _ -> subst expr
-  Var _ _ -> subst expr
+  Var _ _ -> do
+    expr' <- subst expr
+    dropSubst $ reduce expr'
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
     ~(RecType (Tup [_, ty@(TabType n _)])) <- exprType expr

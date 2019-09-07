@@ -8,6 +8,11 @@
 > 20.0
 
 :p let _, Nx = unpack range 10
+   in isum (iota @Nx)
+
+> 45
+
+:p let _, Nx = unpack range 10
        x = iota ::Nx=>Int
    in isum (for i. x.i)
 
@@ -190,10 +195,6 @@ litArr = [10, 5, 3]
 :p litArr.(asidx 2)
 
 > 3
-
-:p litArr.(asidx 4)
-
-> 5
 
 :p mod 5 3
 
