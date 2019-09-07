@@ -18,7 +18,8 @@
 
 > A b a. ((a -> b) -> (a -> b))
 
-:t let id x = x
+:t let id :: a -> a
+       id x = x
    in id (id) (id 1)
 
 > Int
@@ -158,7 +159,7 @@ _, M = unpack range 5
 
 > (M=>(Ea.(a=>Int)))
 
--- idfun :: a -> a
+idfun :: a -> a
 idfun x = x
 
 :t idfun @ Real

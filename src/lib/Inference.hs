@@ -5,8 +5,8 @@ import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Monad.Writer
 import Control.Monad.State
-import Data.List (nub, (\\))
 import Data.Foldable (toList)
+import Data.List (nub, (\\))
 import qualified Data.Map.Strict as M
 
 import Syntax
@@ -28,26 +28,41 @@ type InferM a = Pass TypeEnv InferState a
 
 typePass :: UTopDecl -> TopPass TypeEnv TopDecl
 typePass tdecl = case tdecl of
-  TopDecl (Let p expr) -> do
-    (p', expr') <- liftTop $ inferLetBinding p expr
-    putEnv $ foldMap lbind p'
-    return $ TopDecl (Let p' expr')
-  TopDecl (Unpack b tv expr) -> do
-    (ty, expr') <- liftTop (infer expr)
-    ty' <- liftEither $ unpackExists ty tv
-    let b' = fmap (const ty') b -- TODO: actually check the annotated type
-    putEnv $ lbind b' <> tv @> T idxSetKind
-    return $ TopDecl (Unpack b' tv expr')
-  TopDecl (TAlias _ _) -> error "Shouldn't have TAlias left"
+  TopDecl decl -> case decl of
+    LetMono p bound -> do
+      (p', bound') <- liftTop $ do
+        (patTy, p') <- inferPat p
+        bound' <- check bound patTy
+        return (p', bound')
+      putEnv (foldMap asEnv p')
+      return $ TopDecl $ LetMono p' bound'
+    LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
+      tlamBody' <- liftTop $ do
+        let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
+        extendR (foldMap tbind tbs) (check tlamBody tyBody')
+      putEnv (lbind b)
+      return $ TopDecl $ LetPoly b (TLam tbs tlamBody')
+    Unpack b tv expr -> do
+      (ty, expr') <- liftTop (infer expr)
+      ty' <- liftEither $ unpackExists ty tv
+      let b' = fmap (const ty') b -- TODO: actually check the annotated type
+      putEnv $ asEnv b' <> tv @> T idxSetKind
+      return $ TopDecl (Unpack b' tv expr')
+    TAlias _ _ -> error "Shouldn't have TAlias left"
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (ty, expr') <- liftTop $ infer expr >>= uncurry generalize
     case cmd of
-      GetType -> do writeOutText (pprint ty)
-                    return $ EvalCmd NoOp
-      Passes  -> do writeOutText ("\nSystem F\n" ++ pprint expr')
-                    return $ EvalCmd (Command cmd expr')
-      _ -> return $ EvalCmd (Command cmd expr')
+      GetType -> do
+        (ty, _) <- liftTop $ infer expr >>= uncurry generalize
+        writeOutText (pprint ty)
+        return $ EvalCmd NoOp
+      Passes  -> do
+        (_, expr') <- liftTop $ infer expr
+        writeOutText ("\nSystem F\n" ++ pprint expr')
+        return $ EvalCmd (Command cmd expr')
+      _ -> do
+        (_, expr') <- liftTop $ infer expr
+        return $ EvalCmd (Command cmd expr')
 
 liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
 liftTop m = do
@@ -64,12 +79,16 @@ check expr reqTy = case expr of
   Lit c -> do
     unifyReq (BaseType (litType c))
     return (Lit c)
-  Var v -> do
+  Var v ts -> do
     maybeTy <- asks $ (flip envLookup v)
-    ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
-                          Just (L ty) -> return ty
-                          Just (T _ ) -> error "Expected let-bound var"
-    instantiate (Var v) ty reqTy (Var v)
+    Forall kinds body <- case maybeTy of
+      Nothing -> throw UnboundVarErr (pprint v)
+      Just (L ty) -> return ty
+      Just (T _ ) -> error "Expected let-bound var"
+    vs <- mapM freshVar (drop (length ts) kinds)
+    let ts' = ts ++ vs
+    unifyCtx expr reqTy (instantiateTVs ts' body)
+    return $ Var v ts'
   PrimOp b [] args -> do
     let BuiltinType kinds argTys ansTy = builtinType b
     vs <- mapM freshVar kinds
@@ -104,20 +123,6 @@ check expr reqTy = case expr of
     tyExpr <- traverse infer r
     unifyReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
-  TApp e ts -> do
-    -- TODO: can this be made more flexible?
-    v <- case stripSrcAnnot e of
-           Var v -> return v
-           _ -> throw NotImplementedErr
-                  "Only variables allowed on LHS of type applications"
-    maybeTy <- asks (flip envLookup v)
-    ty <- case maybeTy of Nothing -> throw UnboundVarErr (pprint v)
-                          Just (L ty) -> return ty
-                          Just (T _ ) -> error "Expected let-bound var"
-    tyBody <- case ty of Forall _ tyBody -> return tyBody
-                         _ -> throw TypeErr "Expected forall type"
-    unifyReq (instantiateTVs ts tyBody)
-    return $ TApp (Var v) ts
   TabCon _ xs -> do
     (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
@@ -144,27 +149,37 @@ check expr reqTy = case expr of
   where
     unifyReq ty = unifyCtx expr reqTy ty
 
+    -- TODO: return env rather than do things cps-like
     checkDecl :: UDecl -> InferM Expr -> InferM Expr
     checkDecl decl cont = case decl of
-      Let p bound -> do
-        (p', bound') <- inferLetBinding p bound
-        extendR (foldMap lbind p') $ do
+      -- TODO: check there are no ambiguous tvars to prevent upstream inference
+      LetMono p bound -> do
+        (patTy, p') <- inferPat p
+        bound' <- check bound patTy
+        extendR (foldMap asEnv p') $ do
           body' <- cont
-          return $ wrapDecls [Let p' bound'] body'
+          return $ Decl (LetMono p' bound') body'
+      LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
+        let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
+        tlamBody' <- extendR (foldMap tbind tbs) (check tlamBody tyBody')
+        -- TODO: check if bound vars leaked?
+        extendR (lbind b) $ do
+          body' <- cont
+          return $ Decl (LetPoly b (TLam tbs tlamBody')) body'
       Unpack b tv bound -> do
         (maybeEx, bound') <- infer bound >>= zonk
         boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                    _ -> throw TypeErr (pprint maybeEx)
         let b' = replaceAnnot b boundTy
-        body' <- extendR (lbind b' <> tv @> T idxSetKind) cont
+        body' <- extendR (asEnv b' <> tv @> T idxSetKind) cont
         tvsEnv <- tempVarsEnv
         tvsReqTy <- tempVars reqTy
         if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-        return $ wrapDecls [Unpack b' tv bound'] body'
+        return $ Decl (Unpack b' tv bound') body'
       TAlias _ _ -> error "Shouldn't have TAlias left"
 
     leakErr = throw TypeErr "existential variable leaked"
-    recurWithP p e ty = extendR (foldMap lbind p) (check e ty)
+    recurWithP p e ty = extendR (foldMap asEnv p) (check e ty)
 
 inferBinder :: UBinder -> InferM Binder
 inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
@@ -180,26 +195,8 @@ inferPat :: UPat -> InferM (Type, Pat)
 inferPat pat = do tree <- traverse inferBinder pat
                   return (patType tree, tree)
 
-inferLetBinding :: UPat -> UExpr -> InferM (Pat, Expr)
-inferLetBinding pat expr = case pat of
-  RecLeaf b -> case binderAnn b of
-    NoAnn -> do
-      (ty', expr') <- infer expr
-      (forallTy, tLam) <- generalize ty' expr'
-      return (RecLeaf (replaceAnnot b forallTy), tLam)
-    Ann sigmaTy@(Forall kinds tyBody) -> do
-      skolVars <- mapM (fresh . pprint) kinds
-      let skolBinders = zipWith (:>) skolVars kinds
-      let exprTy = instantiateTVs (map TypeVar skolVars) tyBody
-      expr' <- extendR (foldMap tbind skolBinders) (check expr exprTy)
-      return (RecLeaf (replaceAnnot b sigmaTy), TLam skolBinders expr')
-    _ -> ansNoGeneralization
-  _ -> ansNoGeneralization
-  where
-    ansNoGeneralization = do
-      (patTy, p') <- inferPat pat
-      expr' <- check expr patTy
-      return (p', expr')
+asEnv :: Binder -> TypeEnv
+asEnv (v:>ty) = v @> L (asSigma ty)
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
 splitFun :: UExpr -> Type -> InferM (Type, Type)
@@ -229,16 +226,14 @@ freshTy  = freshVar TyKind
 freshIdx :: InferM Type
 freshIdx = freshVar idxSetKind
 
-generalize :: Type -> Expr -> InferM (Type, Expr)
+generalize :: Type -> Expr -> InferM (SigmaType, TLam)
 generalize ty expr = do
   ty'   <- zonk ty
   expr' <- zonk expr
   flexVars <- getFlexVars ty' expr'
-  case flexVars of
-    [] -> return (ty', expr')
-    _  -> do kinds <- mapM getKind flexVars
-             return (Forall kinds $ abstractTVs flexVars ty',
-                     TLam (zipWith (:>) flexVars kinds) expr')
+  kinds <- mapM getKind flexVars
+  return (Forall kinds $ abstractTVs flexVars ty',
+          TLam (zipWith (:>) flexVars kinds) expr')
   where
     getKind :: Name -> InferM Kind
     getKind v = gets $ (! v) . tempEnv
@@ -251,25 +246,14 @@ getFlexVars ty expr = do
   return $ nub (tyVars ++ exprVars) \\ envVars
 
 tempVarsEnv :: InferM [Name]
-tempVarsEnv = do env <- ask
-                 vs <- mapM tempVars [ty | L ty <- toList env]
-                 let vs' = [v | (v, T _) <- envPairs env]
-                 return $ vs' ++ (concat vs)
+tempVarsEnv = do
+  env <- ask
+  vs <- mapM tempVars [ty | L ty <- toList env]
+  let vs' = [v | (v, T _) <- envPairs env]
+  return $ vs' ++ (concat vs)
 
 tempVars :: HasTypeVars a => a -> InferM [Name]
 tempVars x = liftM freeTyVars (zonk x)
-
-instantiate :: UExpr -> Type -> Type -> Expr -> InferM Expr
-instantiate e ty reqTy expr = do
-  ty'    <- zonk ty
-  case ty' of
-    Forall kinds body -> do
-      vs <- mapM freshVar kinds
-      unifyCtx e reqTy (instantiateTVs vs body)
-      return $ TApp expr vs
-    _ -> do
-      unifyCtx e reqTy ty'
-      return expr
 
 bindMVar :: Name -> Type -> InferM ()
 bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
@@ -350,7 +334,7 @@ collectKinds kind ty = case ty of
   ArrType a b   -> recur kind       a >> recur kind b
   TabType a b   -> recur idxSetKind a >> recur kind b
   RecType r     -> mapM_ (recur kind) r
-  Forall _ body -> recur kind body
+  -- Forall _ body -> recur kind body
   Exists body   -> recur kind body
   IdxSetLit _   -> return ()
   BoundTVar _   -> return ()

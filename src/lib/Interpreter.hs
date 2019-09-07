@@ -26,7 +26,7 @@ foreign import ccall "log"  c_log  :: Double -> Double
 
 type Val = Expr -- irreducible expressions only
 type Scope = Env ()
-type SubstEnv = (FullEnv Val Type, Scope)
+type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 type ReduceM a = Reader SubstEnv a
 
 interpPass :: TopDecl -> TopPass SubstEnv ()
@@ -42,7 +42,7 @@ interpPass topDecl = () <$ case topDecl of
 reduce :: Expr -> ReduceM Val
 reduce expr = case expr of
   Lit _ -> subst expr
-  Var _ -> subst expr
+  Var _ _ -> subst expr
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
     ~(RecType (Tup [_, ty@(TabType n _)])) <- exprType expr
@@ -72,12 +72,6 @@ reduce expr = case expr of
   TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
   Pack e ty exTy -> liftM3 Pack (reduce e) (subst ty) (subst exTy)
   IdxLit _ _ -> subst expr
-  TLam _ _ -> subst expr
-  TApp e1 ts -> do
-    ~(TLam bs body) <- reduce e1
-    ts' <- mapM subst ts
-    let env = asFst $ fold [v @> T t | (v:>_, t) <- zip bs ts']
-    dropSubst $ extendR env (reduce body)
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
 
 exprType :: Expr -> ReduceM Type
@@ -115,16 +109,19 @@ flattenIdx (RecCon r) = foldr f (1,0) $ map flattenIdx (toList r)
 flattenIdx v = error $ "Not a valid index: " ++ pprint v
 
 reduceDecl :: Decl -> ReduceM SubstEnv
-reduceDecl (Let p expr) = do
+reduceDecl (LetMono p expr) = do
   val <- reduce expr
   return $ bindPat p val
+reduceDecl (LetPoly (v:>_) tlam) = do
+  tlam' <- subst tlam
+  return $ asFst $ v @> L (Right tlam')
 reduceDecl (Unpack (v:>_) tv expr) = do
   ~(Pack val ty _) <- reduce expr
-  return $ asFst $ v @> L val <> tv @> T ty
+  return $ asFst $ v @> L (Right (TLam [] val)) <> tv @> T ty
 reduceDecl (TAlias _ _ ) = error "Shouldn't have TAlias left"
 
 bindPat :: Pat -> Val -> SubstEnv
-bindPat (RecLeaf (v:>_)) val = asFst $ v @> L val
+bindPat (RecLeaf (v:>_)) val = asFst $ v @> L (Right (TLam [] val))
 bindPat (RecTree r) (RecCon r') = fold $ recZipWith bindPat r r'
 bindPat _ _ = error "Bad pattern"
 
@@ -198,25 +195,34 @@ class Subst a where
 instance Subst Expr where
   subst expr = case expr of
     Lit _ -> return expr
-    Var v -> do
+    Var v tys -> do
+      tys' <- mapM subst tys
       x <- asks $ flip envLookup v . fst
       case x of
         Nothing -> return expr
-        Just (L x') -> dropSubst (subst x')
+        Just (L (Left v')) -> return $ Var v' tys'
+        Just (L (Right (TLam tbs body))) -> dropSubst $ extendR env (subst body)
+          where env = asFst $ fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
         Just (T _ ) -> error "Expected let-bound var"
     PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
     Decl decl body -> case decl of
-      Let p bound -> do
+      LetMono p bound -> do
         bound' <- subst bound
         refreshPat p $ \p' -> do
-           body' <- subst body
-           return $ wrapDecls [Let p' bound'] body'
+          body' <- subst body
+          return $ Decl (LetMono p' bound') body'
+      LetPoly (v:>ty) tlam -> do
+        tlam' <- subst tlam
+        ty' <- subst ty
+        v' <- asks $ rename v . snd
+        body' <- extendR ((v @> L (Left v'), v' @> ())) (subst body)
+        return $ Decl (LetPoly (v':>ty') tlam') body'
       Unpack b tv bound -> do
         bound' <- subst bound
         refreshTBinders [tv:>idxSetKind] $ \[tv':>_] ->
           refreshPat [b] $ \[b'] -> do
             body' <- subst body
-            return $ wrapDecls [Unpack b' tv' bound'] body'
+            return $ Decl (Unpack b' tv' bound') body'
       TAlias _ _ -> error "Shouldn't have TAlias left"
     Lam p body -> do
       refreshPat p $ \p' -> do
@@ -228,9 +234,6 @@ instance Subst Expr where
         body' <- subst body
         return $ For p' body'
     Get e1 e2 -> liftM2 Get (subst e1) (subst e2)
-    TLam bs body -> refreshTBinders bs $ \bs' ->
-                      liftM (TLam bs') (subst body) -- TODO: freshen binders
-    TApp e ts -> liftM2 TApp (subst e) (mapM subst ts)
     RecCon r -> liftM RecCon (traverse subst r)
     IdxLit _ _ -> return expr
     TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
@@ -238,6 +241,10 @@ instance Subst Expr where
     Annot e t -> liftM2 Annot (subst e) (subst t)
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
+
+instance Subst TLam where
+  subst (TLam tbs body) = refreshTBinders tbs $ \tbs' ->
+                            liftM (TLam tbs') (subst body)
 
 -- Might be able to de-dup these with explicit traversals, lens-style
 refreshPat :: (Traversable t, MonadReader SubstEnv m) =>
@@ -249,7 +256,7 @@ refreshPat p m = do
         flip runCat (mempty, scope) $ flip traverse p' $ \(v:>ty) -> do
           v' <- freshCatSubst v
           return (v':>ty)
-  extendR (fmap (L . Var) env', scope') $ m p''
+  extendR (fmap (L . Left) env', scope') $ m p''
 
 refreshTBinders :: MonadReader SubstEnv m => [TBinder] -> ([TBinder] -> m a) -> m a
 refreshTBinders bs m = do
@@ -271,7 +278,9 @@ instance Subst Type where
     ArrType a b -> liftM2 ArrType (subst a) (subst b)
     TabType a b -> liftM2 TabType (subst a) (subst b)
     RecType r -> liftM RecType $ traverse subst r
-    Forall ks body -> liftM (Forall ks) (subst body)
     Exists body -> liftM Exists (subst body)
     IdxSetLit _ -> return ty
     BoundTVar _ -> return ty
+
+instance Subst SigmaType where
+  subst (Forall ks body) = liftM (Forall ks) (subst body)

@@ -160,7 +160,7 @@ fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 
 vsumImpl :: i=>a -> a
-vsumImpl xs = fold vzero for i. lam c. vadd c xs.i
+vsumImpl xs = fold vzero for i::i. lam c. vadd c xs.i
 
 forUnzip :: i=>(b, a -> b) -> (i=>b, a -> i=>b)
 forUnzip xfs = let (xs, fs) = unzip xfs

@@ -48,21 +48,25 @@ prettyTyDepth :: Int -> Type -> Doc ann
 prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
-  BoundTVar n -> p (tvars n)
+  BoundTVar n -> p (tvars d n)
   ArrType a b -> parens $ recur a <+> "->" <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
-  Forall kinds t -> header <+> recurWith n t
-                    where n = length kinds
-                          header = "A" <+> hsep boundvars <> "."
-                          boundvars = map (p . tvars) [-n..(-1)]
-  Exists body -> parens $ "E" <> p (tvars (-1)) <> "." <> recurWith 1 body
+  Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> "{.." <> p i <> "}"
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
-        tvars i = case d - i - 1 of
-                    i' | i' >= 0 -> [['a'..'z'] !! i']
-                       | otherwise -> "#ERR#"
+
+instance Pretty SigmaType where
+  pretty (Forall []    t) = prettyTyDepth 0 t
+  pretty (Forall kinds t) = header <+> prettyTyDepth n t
+    where n = length kinds
+          header = "A" <+> hsep boundvars <> "."
+          boundvars = map (p . tvars 0) [-n..(-1)]
+
+tvars :: Int -> Int -> String
+tvars d i = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
+                                 | otherwise -> "#ERR#"
 
 instance Pretty Kind where
 --  pretty IdxSetKind = "R"
@@ -83,8 +87,8 @@ instance Pretty LitVal where
 
 instance Pretty b => Pretty (ExprP b) where
   pretty expr = case expr of
-    Lit val      -> p val
-    Var v        -> p v
+    Lit val -> p val
+    Var v ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
     PrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
@@ -97,9 +101,6 @@ instance Pretty b => Pretty (ExprP b) where
     TabCon _ xs -> list (map pretty xs)
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
     IdxLit _ i -> p i
-    TLam binders body -> "Lam" <+> p binders <> "."
-                               <+> align (p body)
-    TApp fexpr ts -> p fexpr <> p ts
     SrcAnnot subexpr _ -> p subexpr
     DerivAnnot e ann -> p e <+> "@deriv" <+> p ann
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
@@ -119,9 +120,16 @@ instance Pretty a => Pretty (BinderP a) where
     where ann' = p ann
 
 instance Pretty b => Pretty (DeclP b) where
-  pretty (Let b expr) = p b <+> "=" <+> p expr
+  -- TODO: special-case annotated leaf var (print type on own line)
+  pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
+  pretty (LetPoly (v:>ty) (TLam tbs body)) =
+    p v <+> "::" <+> list (map p tbs) <> "." <+> p ty <> line <>
+    p v <+> "="  <+> p body
   pretty (TAlias v ty) = "type" <+> p v <+> "=" <+> p ty
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
+
+instance Pretty b => Pretty (TLamP b) where
+  pretty (TLam binders body) = "Lam" <+> p binders <> "." <+> align (p body)
 
 instance Pretty b => Pretty (TopDeclP b) where
   pretty (TopDecl decl) = p decl

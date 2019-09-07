@@ -3,11 +3,9 @@
 module DeShadow (deShadowPass) where
 
 import Control.Monad.Reader
-import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 
 import Env
-import Record
 import Syntax
 import Pass
 import Fresh
@@ -15,17 +13,15 @@ import PPrint
 import Cat
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
-type DeShadowCat a = WriterT [UDecl] (CatT (DeShadowEnv, FreshScope)
-                          (Either Err)) a
+type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
 type DeShadowEnv = (Env Name, Env Type)
 
 deShadowPass :: UTopDecl -> TopPass (DeShadowEnv, FreshScope) UTopDecl
 deShadowPass topDecl = case topDecl of
-  TopDecl decl -> do ((), decls) <- catToTop $ deShadowDecl decl
-                     return $ case decls of
-                       [decl'] ->  TopDecl decl'
-                       [] -> EvalCmd NoOp
-                       _ -> error "Multiple decls not implemented"
+  TopDecl decl -> do decl' <- catToTop $ deShadowDecl decl
+                     return $ case decl' of
+                       Just decl'' ->  TopDecl decl''
+                       Nothing -> EvalCmd NoOp
   EvalCmd NoOp -> return (EvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
@@ -41,70 +37,85 @@ deShadowPass topDecl = case topDecl of
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
   Lit x -> return (Lit x)
-  Var v -> asks $ Var . lookupSubst v . fst
+  Var v tys -> liftM2 Var (asks $ lookupSubst v . fst) (mapM deShadowType tys)
   PrimOp b [] args -> liftM (PrimOp b []) (traverse recur args)
   PrimOp _ ts _ -> error $ "Unexpected type args to primop " ++ pprint ts
   Decl decl body ->
-    withCat (deShadowDecl decl) $ \_ [decl'] -> do
+    withCat (deShadowDecl decl) $ \decl' -> do
       body' <- recur body
-      return $ Decl decl' body'
+      return $ case decl' of Nothing -> body'
+                             Just decl'' -> Decl decl'' body'
   Lam p body ->
-    withCat (deShadowPat p) $ \p' decls -> do
-      body' <- recur body
-      return $ Lam p' $ wrapDecls decls body'
+    withCat (deShadowPat p) $ \p' ->
+      liftM (Lam p') (recur body)
   App fexpr arg -> liftM2 App (recur fexpr) (recur arg)
   For p body ->
-    withCat (deShadowPat p) $ \p' decls -> do
-      body' <- recur body
-      return $ For p' $ wrapDecls decls body'
+    withCat (deShadowPat p) $ \p' ->
+      liftM (For p') (recur body)
   Get e v -> liftM2 Get (recur e) (recur v)
-  TApp e ts -> liftM2 TApp (recur e) (mapM deShadowType ts)
   RecCon r -> liftM RecCon $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   DerivAnnot e ann -> liftM2 DerivAnnot (recur e) (recur ann)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
-  TLam _ _ -> error "Not tlam in source language"
   IdxLit _ _ -> error "Not implemented"
   TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
 
-deShadowDecl :: UDecl -> DeShadowCat ()
-deShadowDecl (Let p bound) = do
+deShadowDecl :: UDecl -> DeShadowCat (Maybe UDecl)
+deShadowDecl (LetMono p bound) = do
   bound' <- toCat $ deShadowExpr bound
-  (p', decls) <- captureW $ deShadowPat p
-  tell $ Let p' bound' : decls
+  p' <- deShadowPat p
+  return $ Just $ LetMono p' bound'
+deShadowDecl (LetPoly (v:>ty) tlam) = do
+  tlam' <- toCat $ deShadowTLam tlam
+  ty' <- toCat $ deShadowSigmaType ty
+  b' <- freshBinderP (v:>ty')
+  return $ Just $ LetPoly b' tlam'
 deShadowDecl (Unpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
   extend (asSnd (tv @> TypeVar tv'), tv'@>())
-  ~(RecLeaf b', decls) <- captureW $ deShadowPat (RecLeaf b)
-  tell $ Unpack b' tv' bound' : decls
+  b' <- freshBinder b
+  return $ Just $ Unpack b' tv' bound'
 deShadowDecl (TAlias v ty) = do  -- TODO: deal with capture
   ty' <- toCat $ deShadowType ty
   extend (asSnd (v @> ty'), v@>())
+  return Nothing
+
+deShadowTLam :: UTLam -> DeShadowM UTLam
+deShadowTLam (TLam tbs body) = do
+  withCat (traverse freshBinderP tbs) $ \tbs' ->
+    liftM (TLam tbs') (deShadowExpr body)
 
 deShadowPat :: UPat -> DeShadowCat UPat
 deShadowPat pat = traverse freshBinder pat
 
 freshBinder :: UBinder -> DeShadowCat UBinder
-freshBinder (v :> ann) = do
+freshBinder (v:>ann) = do
+  ann' <- case ann of
+            Ann ty -> liftM Ann $ toCat $ deShadowType ty
+            NoAnn -> return NoAnn
+  freshBinderP (v:>ann')
+
+freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
+freshBinderP (v:>ann) = do
   shadowed <- looks $ (v `isin`) . snd
   if shadowed && v /= Name "_" 0
     then throw RepeatedVarErr (pprint v)
     else return ()
-  ty' <- case ann of
-           Ann ty -> liftM Ann $ toCat $ deShadowType ty
-           NoAnn -> return NoAnn
   v' <- looks $ rename v . snd
   extend (asFst (v@>v'), v'@>())
-  return (v' :> ty')
+  return (v':>ann)
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
   subst <- asks $ snd
   return $ subType subst ty
+
+deShadowSigmaType :: SigmaType -> DeShadowM SigmaType
+deShadowSigmaType (Forall kinds body) = liftM (Forall kinds) (deShadowType body)
 
 subType :: Env Type -> Type -> Type
 subType sub ty = case ty of
@@ -115,7 +126,6 @@ subType sub ty = case ty of
   TabType a b -> TabType (recur a) (recur b)
   RecType r   -> RecType $ fmap recur r
   Exists body -> Exists $ recur body
-  Forall ks body -> Forall ks (recur body)
   IdxSetLit _ -> ty
   BoundTVar _ -> ty
   where recur = subType sub
@@ -125,17 +135,16 @@ toCat m = do
   (env, scope) <- look
   liftEither $ flip runFreshRT scope $ flip runReaderT env $ m
 
-withCat :: DeShadowCat a -> (a -> [UDecl] -> DeShadowM b) -> DeShadowM b
+withCat :: DeShadowCat a -> (a -> DeShadowM b) -> DeShadowM b
 withCat m cont = do
   env <- ask
   scope <- askFresh
-  ((ans, decls), (env', scope')) <- liftEither $
-                                      flip runCatT (env, scope) $ runWriterT m
-  extendR env' $ localFresh (<> scope') $ cont ans decls
+  (ans, (env', scope')) <- liftEither $ flip runCatT (env, scope) m
+  extendR env' $ localFresh (<> scope') $ cont ans
 
-catToTop :: DeShadowCat a -> TopPass (DeShadowEnv, FreshScope) (a, [UDecl])
+catToTop :: DeShadowCat a -> TopPass (DeShadowEnv, FreshScope) a
 catToTop m = do
   env <- getEnv
-  (ans, env') <- liftEither $ flip runCatT env $ runWriterT m
+  (ans, env') <- liftEither $ flip runCatT env m
   putEnv env'
   return ans

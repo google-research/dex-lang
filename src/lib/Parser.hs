@@ -65,7 +65,7 @@ explicitCommand = do
 -- === Parsing decls ===
 
 decl :: Parser UDecl
-decl = typeAlias <|> typedLet <|> unpack <|> letDecl
+decl = typeAlias <|> letPoly <|> unpack <|> letMono
 
 declSep :: Parser ()
 declSep = void $ (eol >> sc) <|> symbol ";"
@@ -78,20 +78,21 @@ typeAlias = do
   ty <- tauType
   return $ TAlias v ty
 
-typedLet :: Parser UDecl
-typedLet = do
-  (v, ty) <- try $ do
+letPoly :: Parser UDecl
+letPoly = do
+  (v, (tvs, kinds, tyBody)) <- try $ do
     v <- varName
     symbol "::"
-    ty <- sigmaType
+    sTy <- sigmaType
     declSep
-    return (v, ty)
-  v' <- varName
-  if v /= v' then fail $ "Expected: " ++ pprint v else return ()
+    return (v, sTy)
+  symbol (pprint v)
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
   body <- expr
-  return $ Let (RecLeaf (v :> Ann ty)) (wrap body)
+  let sTy = Forall kinds (abstractTVs tvs tyBody)
+      tbs = zipWith (:>) tvs kinds
+  return $ LetPoly (v:>sTy) (TLam tbs (wrap body))
 
 unpack :: Parser UDecl
 unpack = do
@@ -103,14 +104,14 @@ unpack = do
   body <- expr
   return $ Unpack b tv body
 
-letDecl :: Parser UDecl
-letDecl = do
+letMono :: Parser UDecl
+letMono = do
   (p, wrap) <- try $ do p <- pat
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         symbol "="
                         return (p, wrap)
   body <- expr
-  return $ Let p (wrap body)
+  return $ LetMono p (wrap body)
 
 -- === Parsing expressions ===
 
@@ -119,7 +120,7 @@ expr = makeExprParser (sc >> withSourceAnn term >>= maybeAnnot) ops
 
 term :: Parser UExpr
 term =   parenRaw
-     <|> liftM Var varName
+     <|> var
      <|> liftM Lit literal
      <|> declExpr
      <|> lamExpr
@@ -136,6 +137,9 @@ parenRaw = do
   return $ case elts of
     [e] -> e
     _ -> RecCon $ Tup elts
+
+var :: Parser UExpr
+var = liftM2 Var varName $ many (symbol "@" >> tauTypeAtomic)
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -157,7 +161,7 @@ maybeAnnot e = do
 
 typeAnnot :: Parser Ann
 typeAnnot = do
-  ann <- optional $ symbol "::" >> sigmaType
+  ann <- optional $ symbol "::" >> tauType
   return $ case ann of
     Nothing -> NoAnn
     Just ty -> Ann ty
@@ -238,14 +242,8 @@ appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
 
 postFixRule :: Operator Parser UExpr
 postFixRule = Postfix $ do
-  trailers <- some $     (period >> liftM Left idxExpr)
-                     <|> (symbol "@" >> liftM Right typeExpr)
-  return $ \e -> foldl addPostFix e trailers
-  where
-    addPostFix :: UExpr -> Either UExpr Type -> UExpr
-    addPostFix e (Left idx) = Get e idx
-    addPostFix (TApp e tys) (Right ty) = TApp e (tys ++ [ty])
-    addPostFix e (Right ty) = TApp e [ty]
+  trailers <- some (period >> idxExpr)
+  return $ \e -> foldl Get e trailers
 
 binOpRule :: String -> Builtin -> Operator Parser UExpr
 binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
@@ -265,7 +263,10 @@ varName :: Parser Name
 varName = liftM2 Name identifier intQualifier
 
 idxExpr :: Parser UExpr
-idxExpr = withSourceAnn $ liftM Var varName <|> parenRaw
+idxExpr = withSourceAnn $ rawVar <|> parenRaw
+
+rawVar :: Parser UExpr
+rawVar = liftM (flip Var []) varName
 
 binder :: Parser UBinder
 binder = (symbol "_" >> return (Name "_" 0 :> NoAnn))
@@ -289,44 +290,53 @@ intQualifier = do
 
 -- === Parsing types ===
 
-sigmaType :: Parser Type
+sigmaType :: Parser ([Name], [Kind], Type)
 sigmaType = do
-  ty <- typeExpr
-  let vs = filter nameIsLower $ envNames (freeVars ty)
-  case vs of
-    [] -> return ty
-    _ -> case inferKinds vs ty of
-      Left e -> fail $ pprint e
-      Right kinds -> return $ Forall kinds (abstractTVs vs ty)
+  ty <- tauType
+  let vs = filter nameIsLower $ envNames (freeVars ty)-- TODO: lexcial order!
+  case inferKinds vs ty of
+    Left e -> fail $ pprint e
+    Right kinds -> return (vs, kinds, ty)
   where
     nameIsLower v = isLower (nameTag v !! 0)
 
-tauType :: Parser Type
-tauType = do
-  ty <- sigmaType
-  case ty of
-    Forall _ _ -> fail $ "Can't have quantified (lowercase) type variables here"
-    _ -> return ty
+tauTypeAtomic :: Parser Type
+tauTypeAtomic =   typeName
+              <|> typeVar
+              <|> parenTy
 
-typeExpr :: Parser Type
-typeExpr = makeExprParser (sc >> typeExpr') typeOps
+tauType :: Parser Type
+tauType = makeExprParser (sc >> tauType') typeOps
   where
     typeOps = [ [InfixR (symbol "=>" >> return TabType)]
               , [InfixR (symbol "->" >> return ArrType)]]
 
-typeExpr' :: Parser Type
-typeExpr' =   parenTy
-          <|> existsType
-          <|> typeName
-          <|> liftM TypeVar varName
-          <?> "type"
+tauType' :: Parser Type
+tauType' =   parenTy
+         <|> existsType
+         <|> typeName
+         <|> typeVar
+         <?> "type"
+
+typeVar :: Parser Type
+typeVar = do
+  Name tag n <- varName
+  -- TODO: fix this hack by sorting out namespace rules
+  return $ TypeVar $ Name (tag ++ "T") n
+
+parenTy :: Parser Type
+parenTy = do
+  elts <- parens $ tauType `sepBy` comma
+  return $ case elts of
+    [ty] -> ty
+    _ -> RecType $ Tup elts
 
 existsType :: Parser Type
 existsType = do
   try $ symbol "E"
-  v <- varName
+  ~(TypeVar v) <- typeVar
   period
-  body <- typeExpr
+  body <- tauType
   return $ Exists (abstractTVs [v] body)
 
 typeName :: Parser Type
@@ -348,13 +358,6 @@ baseTypeNames = M.fromList
   , (rawName "Real", RealType)
   , (rawName "Bool", BoolType)
   , (rawName "Str" , StrType)]
-
-parenTy :: Parser Type
-parenTy = do
-  elts <- parens $ typeExpr `sepBy` comma
-  return $ case elts of
-    [ty] -> ty
-    _ -> RecType $ Tup elts
 
 comma :: Parser ()
 comma = symbol ","

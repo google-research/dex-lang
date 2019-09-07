@@ -16,35 +16,32 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                Output, Nullable (..), SetVal (..), EvalStatus (..),
                MonMap (..), resultSource, resultText, resultErr, resultComplete,
                Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
-               preludeNames, preludeApp, naryApp, tApp,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
-               NBinder, stripSrcAnnot, stripSrcAnnotTopDecl
+               NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
+               SigmaType (..), TLamP (..), TLam, UTLam, asSigma
                ) where
 
-import Fresh
 import Record
 import Env
 import Util
 
 import qualified Data.Map.Strict as M
 
-import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
 
 -- === core IR ===
 
-data ExprP b = Lit LitVal
-          | Var Name
+data ExprP b =
+            Lit LitVal
+          | Var Name [Type]
           | PrimOp Builtin [Type] [ExprP b]
           | Decl (DeclP b) (ExprP b)
           | Lam (PatP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (PatP b) (ExprP b)
           | Get (ExprP b) (ExprP b)
-          | TLam [TBinder] (ExprP b)
-          | TApp (ExprP b) [Type]
           | RecCon (Record (ExprP b))
           | TabCon b [ExprP b]
           | IdxLit IdxSetVal Int
@@ -54,22 +51,36 @@ data ExprP b = Lit LitVal
           | Pack (ExprP b) Type Type
              deriving (Eq, Ord, Show)
 
+data DeclP b = LetMono (PatP b) (ExprP b)
+             | LetPoly (BinderP SigmaType) (TLamP b)
+             | TAlias Name Type
+             | Unpack (BinderP b) Name (ExprP b)
+               deriving (Eq, Ord, Show)
+
+type PatP b = RecTree (BinderP b)
+
 data Type = BaseType BaseType
           | TypeVar Name
           | ArrType Type Type
           | TabType IdxSet Type
           | RecType (Record Type)
-          | Forall [Kind] Type
           | Exists Type
           | IdxSetLit IdxSetVal
           | BoundTVar Int
              deriving (Eq, Ord, Show)
+
+data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show)
+data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show)
+
+asSigma :: Type -> SigmaType
+asSigma ty = Forall [] ty
 
 type Expr    = ExprP    Type
 type Binder  = BinderP  Type
 type Decl    = DeclP    Type
 type TopDecl = TopDeclP Type
 type Pat     = PatP     Type
+type TLam    = TLamP    Type
 
 -- TODO: figure out how to treat index set kinds
 -- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
@@ -78,12 +89,6 @@ data Kind = TyKind  deriving (Show, Eq, Ord)
 idxSetKind :: Kind
 idxSetKind = TyKind
 
-data DeclP b = Let (PatP b) (ExprP b)
-             | TAlias Name Type
-             | Unpack (BinderP b) Name (ExprP b)
-               deriving (Eq, Ord, Show)
-
-type PatP b = RecTree (BinderP b)
 
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))  deriving (Show, Eq)
@@ -158,23 +163,7 @@ type UBinder  = BinderP  Ann
 type UDecl    = DeclP    Ann
 type UTopDecl = TopDeclP Ann
 type UPat     = PatP     Ann
-
--- === functions available from the prelude ===
-
-preludeNames :: Env ()
-preludeNames = fold [rawName v @> ()
-                    | v <- ["fanout", "fmulDeriv", "vsumImpl",
-                            "forUnzip"]]
-
-preludeApp :: String -> [Type] -> [Expr] -> Expr
-preludeApp s ts xs = naryApp (tApp (Var (rawName s)) ts) xs
-
-naryApp :: Expr -> [Expr] -> Expr
-naryApp f xs = foldl App f xs
-
-tApp :: Expr -> [Type] -> Expr
-tApp f [] = f
-tApp f ts = TApp f ts
+type UTLam    = TLamP    Ann
 
 -- === tuple-free ANF-ish normalized IR ===
 
@@ -373,7 +362,7 @@ class HasVars a where
 
 instance HasVars b => HasVars (ExprP b) where
   freeVars expr = case expr of
-    Var v -> v @> L ()
+    Var v ts -> v @> L () <> foldMap freeVars ts
     Lit _ -> mempty
     PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     Decl decl body -> let (bvs, fvs) = declVars [decl]
@@ -382,8 +371,7 @@ instance HasVars b => HasVars (ExprP b) where
     App fexpr arg -> freeVars fexpr <> freeVars arg
     For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
-    TLam vs body  -> freeVars body `envDiff` foldMap bind vs
-    TApp fexpr ts -> freeVars fexpr <> foldMap freeVars ts
+    -- TApp fexpr ts -> freeVars fexpr <> foldMap freeVars ts
     RecCon r      -> foldMap freeVars r
     TabCon ty xs -> freeVars ty <> foldMap freeVars xs
     IdxLit _ _ -> mempty
@@ -403,9 +391,11 @@ instance HasVars Type where
     TabType a b -> freeVars a <> freeVars b
     RecType r   -> foldMap freeVars r
     Exists body -> freeVars body
-    Forall _ body -> freeVars body
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
+
+instance HasVars SigmaType where
+  freeVars (Forall _ body) = freeVars body
 
 instance HasVars Ann where
   freeVars NoAnn = mempty
@@ -450,8 +440,12 @@ instance HasVars NType where
 instance HasVars b => HasVars (BinderP b) where
   freeVars (_ :> b) = freeVars b
 
+instance HasVars () where
+  freeVars () = mempty
+
 instance HasVars b => HasVars (DeclP b) where
-   freeVars (Let    p   expr) = foldMap freeVars p <> freeVars expr
+   freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
+   freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
    freeVars (TAlias _ _) = error $ "TAlias not implemented" -- TODO
 
@@ -459,6 +453,9 @@ instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl decl) = freeVars decl
   freeVars (EvalCmd NoOp) = mempty
   freeVars (EvalCmd (Command _ expr)) = freeVars expr
+
+instance HasVars b => HasVars (TLamP b) where
+  freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap bind tbs
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
@@ -471,7 +468,8 @@ instance BindsVars (BinderP a) where
   lhsVars (v:>_) = v @> L ()
 
 instance BindsVars (DeclP b) where
-  lhsVars (Let    p    _) = foldMap lhsVars p
+  lhsVars (LetMono p _ ) = foldMap lhsVars p
+  lhsVars (LetPoly b _) = lhsVars b
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
   lhsVars (TAlias v _) = v @> T ()
 
@@ -492,7 +490,7 @@ declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
 
 stripSrcAnnot :: ExprP b -> ExprP b
 stripSrcAnnot expr = case expr of
-  Var _ -> expr
+  Var _ _ -> expr
   Lit _ -> expr
   PrimOp op ts xs -> PrimOp op ts (map recur xs)
   Decl decl body -> Decl (stripSrcAnnotDecl decl) (recur body)
@@ -501,8 +499,8 @@ stripSrcAnnot expr = case expr of
   For b body    -> For b (recur body)
   Get e ie      -> Get (recur e) (recur ie)
   RecCon r      -> RecCon (fmap recur r)
-  TLam vs body  -> TLam vs (recur body)
-  TApp fexpr ts -> TApp (recur fexpr) ts
+  -- TLam vs body  -> TLam vs (recur body)
+  -- TApp fexpr ts -> TApp (recur fexpr) ts
   DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
   SrcAnnot e _ -> recur e
   Pack e t1 t2 -> Pack (recur e) t1 t2
@@ -513,7 +511,8 @@ stripSrcAnnot expr = case expr of
 
 stripSrcAnnotDecl :: DeclP b -> DeclP b
 stripSrcAnnotDecl decl = case decl of
-  Let p body -> Let p (stripSrcAnnot body)
+  LetMono p body -> LetMono p (stripSrcAnnot body)
+  LetPoly b (TLam tbs body) -> LetPoly b (TLam tbs (stripSrcAnnot body))
   TAlias _ _ -> decl
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
@@ -521,3 +520,8 @@ stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
 stripSrcAnnotTopDecl (TopDecl decl) = TopDecl $ stripSrcAnnotDecl decl
 stripSrcAnnotTopDecl (EvalCmd NoOp) = EvalCmd NoOp
 stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))
+
+instance RecTreeZip Type where
+  recTreeZip (RecTree r) (RecType r') = RecTree $ recZipWith recTreeZip r r'
+  recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
+  recTreeZip (RecTree _) _ = error "Bad zip"

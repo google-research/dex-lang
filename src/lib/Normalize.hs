@@ -6,7 +6,6 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable
-import Data.Either
 
 import Env
 import Syntax
@@ -18,8 +17,8 @@ import Type
 import Pass
 
 type Scope = Env ()
-data TLam = TLamContents NormEnv [TBinder] Expr
-type NormEnv = FullEnv (Type, Either (RecTree Name) TLam) (RecTree NType)
+data TLamEnv = TLamContents NormEnv [TBinder] Expr
+type NormEnv = FullEnv (SigmaType, Either (RecTree Name) TLamEnv) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
 -- TODO: add top-level freshness scope to top-level env
@@ -53,10 +52,16 @@ asTopPass m = do
 normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
   Lit x -> return $ NAtoms [NLit x]
-  Var v -> do
-    vs <- asks $ toList . fromLeft (error msg) . snd . fromL . (! v )
-    return $ NAtoms (map NVar vs)
-      where msg = "Type lambda should be immediately applied"
+  Var v ts -> do
+    x <- asks $ snd . fromL . (! v)
+    case x of
+      Left vs -> case ts of
+        [] -> return $ NAtoms (map NVar (toList vs))
+        _ -> error "Unexpected type application"
+      Right (TLamContents env bs body) -> do
+        ts' <- mapM normalizeTy ts
+        let env' = bindFold $ zipWith replaceAnnot bs (map T ts')
+        local (const (env <> env')) $ normalize body
   PrimOp Scan _ [x, For ip (Lam p body)] -> do
     xs <- atomize x
     normalizeBindersR ip $ \ibs ->
@@ -90,15 +95,6 @@ normalize expr = case expr of
     e' <- atomize e
     i' <- atomize i
     return $ NAtoms $ map (\x -> foldl NGet x i') e'
-  -- -- TODO: consider finding these application sites in a bottom-up pass and
-  -- -- making a single monorphic version for each distinct type found,
-  -- -- rather than inlining
-  TApp (Var v) ts -> do -- Assumes HM-style type lambdas only
-    TLamContents env bs body <- asks $
-        fromRight (error "Expected t-lambda") . snd . fromL . (! v)
-    ts' <- mapM normalizeTy ts
-    let env' = bindFold $ zipWith replaceAnnot bs (map T ts')
-    local (const (env <> env')) $ normalize body
   RecCon r -> do
     r' <- traverse atomize r
     return $ NAtoms $ concat $ toList r'
@@ -141,14 +137,14 @@ nestedScan scope (ib:ibs) bs xs body = NScan ib bs' xs body'
 
 normalizeDecl :: Decl -> NormM NormEnv
 normalizeDecl decl = case decl of
-  Let (RecLeaf (v:>ty)) (TLam tbs body) -> do
-    env <- ask
-    return $ v@>L (ty, Right (TLamContents env tbs body))
-  Let p bound -> do
+  LetMono p bound -> do
     bound' <- normalizeScoped bound
     (bs, env) <- normalizeBinders p
     extend $ asFst [NLet bs bound']
     return env
+  LetPoly (v:>ty) (TLam tbs body) -> do
+    env <- ask
+    return $ v@>L (ty, Right (TLamContents env tbs body))
   Unpack b tv bound -> do
     bound' <- normalizeScoped bound
     tv' <- looks $ rename tv . snd
@@ -177,7 +173,6 @@ normalizeTy ty = case ty of
     return $ RecLeaf $ NExists (toList body')
   IdxSetLit x -> return $ RecLeaf $ NIdxSetLit x
   BoundTVar n -> return $ RecLeaf $ NBoundTVar n
-  Forall _ _ -> error "Shouldn't have forall types left"
 
 normalizeBinder :: Binder -> NormM ([NBinder], NormEnv)
 normalizeBinder (v:>ty) = do
@@ -186,7 +181,7 @@ normalizeBinder (v:>ty) = do
           v' <- looks $ rename v . snd
           extend $ asSnd (v' @> ())
           return $ v':>t
-  let env' = (v @> L (ty, Left (fmap binderVar bs)))
+  let env' = (v @> L (asSigma ty, Left (fmap binderVar bs)))
   return (toList bs, env')
 
 normalizeBinders :: Traversable f =>

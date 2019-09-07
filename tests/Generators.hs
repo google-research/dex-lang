@@ -47,7 +47,6 @@ instance Arbitrary Type where
     ArrType a b -> unitTy : a : b : liftS2 ArrType a b
     TabType a b -> unitTy : a : b : liftS2 TabType a b
     RecType r   -> liftS RecType r
-    Forall _ _ -> error "Not implemented"
     Exists _ -> error "Not implemented"
     IdxSetLit _ -> error "Not implemented"
 
@@ -98,18 +97,19 @@ instance Arbitrary b => Arbitrary (TopDeclP b) where
 
 instance Arbitrary b => Arbitrary (DeclP b) where
   arbitrary = frequency
-    [ (4, liftM2 Let arb arb)
+    [ (4, liftM2 LetMono arb arb)
     , (1, liftM2 TAlias arbTypeName arb)
     , (1, liftM3 Unpack arb arbTypeName arb)]
   shrink decl = case decl of
-    Let p e     -> liftS2 Let p e
+    LetMono p e  -> liftS2 LetMono p e
+    LetPoly _ _  -> error "Not implemented"
     Unpack _ _ _ -> error "Not implemented"
     TAlias v ty -> liftS2 TAlias v ty
 
 instance Arbitrary b => Arbitrary (ExprP b) where
   arbitrary = oneof
     [ liftM Lit arb
-    , liftM Var arb
+    , liftM (flip Var []) arb
     , liftM3 PrimOp arb (return []) oneOrTwo  -- TODO: explicit type args
     , liftM2 Decl (smaller 2 arb) (smaller 2 arb)
     ]

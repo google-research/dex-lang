@@ -12,6 +12,7 @@ import Control.Monad.State (State, execState, modify)
 import Control.Applicative (liftA, liftA2, liftA3)
 import Data.List (elemIndex)
 import Data.Foldable
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -20,30 +21,23 @@ import Pass
 import PPrint
 import Cat
 
-type TypeEnv = FullEnv Type Kind
+type TypeEnv = FullEnv SigmaType Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
 checkTyped decl = decl <$ case decl of
-  TopDecl (Let p expr) -> do
-    ty' <- check expr
-    assertEq (patType p) ty' "Top let"
-    putEnv $ foldMap lbind p
-  TopDecl (Unpack b iv expr) -> do
-    exTy <- check expr
-    ty' <- liftEither $ unpackExists exTy iv
-    assertEq (binderAnn b) ty' "Top unpack"
-    putEnv $ lbind b <> iv @> T idxSetKind
+  TopDecl decl' -> do
+    env <- liftTop (pprint decl') (getTypeDecl True decl')
+    putEnv env
   EvalCmd NoOp -> return ()
-  EvalCmd (Command _ expr) -> void $ check expr
-  TopDecl (TAlias _ _) -> error "Type aliases should be gone by now"
-  where
-    check :: Expr -> TopPass TypeEnv Type
-    check expr = do
-      env <- getEnv
-      liftEither $ addContext (pprint expr) $ evalTypeM env (getType' True expr)
+  EvalCmd (Command _ expr) -> void $ liftTop (pprint expr) (getType' True expr)
 
-getType :: FullEnv Type a -> Expr -> Type
+liftTop :: String -> TypeM a -> TopPass TypeEnv a
+liftTop ctx m = do
+  env <- getEnv
+  liftEither $ addContext ctx $ evalTypeM env m
+
+getType :: FullEnv SigmaType a -> Expr -> Type
 getType env expr =
   ignoreExcept $ addContext (pprint expr) $
      evalTypeM (fmap (L . fromL) env) $ getType' False expr
@@ -54,14 +48,18 @@ evalTypeM env m = runReaderT m env
 getType' :: Bool -> Expr -> TypeM Type
 getType' check expr = case expr of
     Lit c -> return $ BaseType (litType c)
-    Var v -> lookupLVar v
+    Var v ts -> do
+      mapM_ checkTy ts
+      Forall _ body <- lookupLVar v
+      return $ instantiateTVs ts body
     PrimOp b ts xs -> do
       mapM_ checkTy ts
       let BuiltinType _ argTys ansTy = builtinType b
           ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)
       zipWithM_ (checkEq "Builtin") argTys' (map recur xs)
       return ansTy'
-    Decl decl body -> getTypeDecl decl $ recur body
+    Decl decl body -> do env <- getTypeDecl check decl
+                         extendR env (recur body)
     Lam p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (ArrType (patType p)) (recurWithP p body)
@@ -85,13 +83,6 @@ getType' check expr = case expr of
       let (Exists exBody) = exTy
       checkEq "Pack" (instantiateTVs [ty] exBody) (recur e)
       return exTy
-    TLam vks body -> do t <- recurWithT vks body
-                        let (vs, kinds) = unzip [(v, k) | v :> k <- vks]
-                        mapM_ checkShadow vks
-                        return $ Forall kinds (abstractTVs vs t)
-    TApp fexpr ts   -> do ~(Forall _ body) <- recur fexpr
-                          mapM_ checkTy ts
-                          return $ instantiateTVs ts body
     DerivAnnot e ann -> do
       ty <- recur e
       checkEq "deriv" (tangentBunType ty) (recur ann)
@@ -100,44 +91,56 @@ getType' check expr = case expr of
     Annot _ _    -> error $ "Annot not implemented"    -- TODO
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
-    getTypeDecl :: Decl -> TypeM a -> TypeM a
-    getTypeDecl decl cont = case decl of
-     Let p rhs -> do
-       checkTy (patType p)
-       checkShadowPat p
-       checkEq "Let" (patType p) (recur rhs)
-       extendR (foldMap lbind p) cont
-     Unpack b tv _ -> do  -- TODO: check bound expression!
-       -- TODO: check leaks
-       let tb = tv :> idxSetKind
-       checkShadow b
-       checkShadow tb
-       extendR (tbind tb) $ do
-         checkTy (binderAnn b)
-         extendR (lbind b) cont
-     TAlias _ _ -> error "Shouldn't have TAlias left"
-
-    runCheck :: TypeM () -> TypeM ()
-    runCheck m = if check then m else return ()
-
-    checkEq :: String -> Type -> TypeM Type -> TypeM ()
-    checkEq s ty getTy = runCheck $ do
-      ty' <- getTy
-      assertEq ty ty' ("Unexpected type in " ++ s)
-
+    checkEq = checkEq' check
     recur = getType' check
-    recurWithP p  = extendR (foldMap lbind p) . recur
-    recurWithT bs = extendR (foldMap tbind bs) . recur
+    recurWithP p  = extendR (foldMap asEnv p) . recur
 
-    lookupLVar :: Name -> TypeM Type
+    lookupLVar :: Name -> TypeM SigmaType
     lookupLVar v = do
       x <- asks $ flip envLookup v
       case x of
         Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
         Just x' -> return $ fromL x'
 
-    checkTy :: Type -> TypeM ()
-    checkTy _ = return () -- TODO: check kind and unbound type vars
+getTypeDecl :: Bool -> Decl -> TypeM TypeEnv
+getTypeDecl check decl = case decl of
+  LetMono p rhs -> do
+    checkShadowPat p
+    checkEq "LetMono" (patType p) (recur rhs)
+    return (foldMap asEnv p)
+  LetPoly b@(v:>ty) tlam -> do
+    checkShadow b
+    checkEq' check "TLam" ty $ getTypeTLam check tlam
+    return $ v @> L ty
+  Unpack b tv _ -> do  -- TODO: check bound expression!
+    -- TODO: check leaks
+    let tb = tv :> idxSetKind
+    checkShadow b
+    checkShadow tb
+    extendR (tbind tb) $ checkTy (binderAnn b)
+    return (tbind tb <> asEnv b)
+  TAlias _ _ -> error "Shouldn't have TAlias left"
+  where
+    checkEq = checkEq' check
+    recur = getType' check
+
+getTypeTLam :: Bool -> TLam -> TypeM SigmaType
+getTypeTLam check (TLam tbs body) = do
+  mapM_ checkShadow tbs
+  ty <- extendR (foldMap tbind tbs) (getType' check body)
+  let (vs, kinds) = unzip [(v, k) | v :> k <- tbs]
+  return $ Forall kinds (abstractTVs vs ty)
+
+checkTy :: Type -> TypeM ()
+checkTy _ = return () -- TODO: check kind and unbound type vars
+
+runCheck :: Bool -> TypeM () -> TypeM ()
+runCheck check m = if check then m else return ()
+
+checkEq' :: (Pretty a, Eq a) => Bool -> String -> a -> TypeM a -> TypeM ()
+checkEq' check s ty getTy = runCheck check $ do
+  ty' <- getTy
+  assertEq ty ty' ("Unexpected type in " ++ s)
 
 checkShadow :: (MonadError Err m, MonadReader (Env a) m) => BinderP b -> m ()
 checkShadow (v :> _) = do
@@ -146,8 +149,11 @@ checkShadow (v :> _) = do
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
-checkShadowPat :: Traversable f => f Binder -> TypeM ()
+checkShadowPat :: Traversable f => f (BinderP b) -> TypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
+
+asEnv :: Binder -> TypeEnv
+asEnv (v:>ty) = v @> L (asSigma ty)
 
 unpackExists :: Type -> Name -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
@@ -251,7 +257,6 @@ subAtDepth d f ty = case ty of
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
-    Forall kinds body -> (Forall kinds) (recurWith (length kinds) body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
   where recur        = subAtDepth d f
@@ -265,6 +270,7 @@ freeTyVars x = execState (subFreeTVs collectVars x) []
 subFreeTVs :: (HasTypeVars a,  Applicative f) => (Name -> f Type) -> a -> f a
 subFreeTVs = subFreeTVsBVs []
 
+-- TODO: replace this with more general subst/freevar machinery in Syntax.hs
 class HasTypeVars a where
   subFreeTVsBVs :: Applicative f => [Name] -> (Name -> f Type) -> a -> f a
 
@@ -284,23 +290,29 @@ instance HasTypeVars Type where
       TabType a b   -> liftA2 TabType (recur a) (recur b)
       RecType r     -> liftA RecType (traverse recur r)
       Exists body   -> liftA Exists (recur body)
-      Forall kinds body -> liftA (Forall kinds) (recur body)
       IdxSetLit _   -> pure ty
       BoundTVar _   -> pure ty
     where recur = subFreeTVsBVs bvs f
 
+instance HasTypeVars SigmaType where
+  subFreeTVsBVs bvs f (Forall kinds body) =
+      liftA (Forall kinds) (subFreeTVsBVs bvs f body)
+
 instance HasTypeVars Expr where
   subFreeTVsBVs bvs f expr = case expr of
       Lit c -> pure $ Lit c
-      Var v -> pure $ Var v
+      Var v ts -> liftA (Var v) (traverse recurTy ts)
       PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
-                                                  (traverse recur xs)
+                                          (traverse recur xs)
       Decl decl body -> case decl of
-        Let p bound ->
-          liftA3 (\p' bound' body' -> wrapDecls [Let p' bound'] body')
-                 (traverse recurB p) (recur bound) (recur body)
+        LetMono p bound -> liftA2 Decl decl' (recur body)
+          where decl' = liftA2 LetMono (traverse recurB p) (recur bound)
+        LetPoly b (TLam tbs bound) -> liftA2 Decl decl' (recur body)
+          where decl' = liftA2 LetPoly (traverse recurSTy b) tlam
+                vs = [v | v:>_ <- tbs]
+                tlam = liftA (TLam tbs) (recurWith vs bound)
         Unpack b tv bound ->
-          liftA3 (\b' bound' body' -> wrapDecls [Unpack b' tv bound'] body')
+          liftA3 (\b' bound' body' -> Decl (Unpack b' tv bound') body')
                  (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
         TAlias _ _ -> error "Shouldn't have TAlias left"
       Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
@@ -310,18 +322,22 @@ instance HasTypeVars Expr where
       RecCon r         -> liftA  RecCon (traverse recur r)
       TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
       Pack e ty exTy   -> liftA3 Pack (recur e) (recurTy ty) (recurTy exTy)
-      TLam bs body     -> liftA  (TLam bs) (recurWith [v | v:>_ <- bs] body)
-      TApp fexpr ts    -> liftA2 TApp (recur fexpr) (traverse recurTy ts)
       DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
       IdxLit _ _   -> error $ "IdxLit not implemented" -- TODO
       Annot _ _    -> error $ "Annot not implemented" -- TODO
       SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
+    -- TODO: sort out this mess
     where recur   = subFreeTVsBVs bvs f
           recurTy = subFreeTVsBVs bvs f
+          recurSTy = subFreeTVsBVs bvs f
           recurB b = traverse recurTy b
           recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
           recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithB  vs b = traverse (recurWithTy vs) b
+          recurWithB vs b = traverse (recurWithTy vs) b
+
+instance HasTypeVars TLam where
+  subFreeTVsBVs bvs f (TLam bs body) =
+    liftA (TLam bs) (subFreeTVsBVs ([v | v:>_ <- bs] ++ bvs) f body)
 
 instance HasTypeVars Binder where
   subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
@@ -444,7 +460,6 @@ typeToNType ty = case ty of
   Exists body -> RecLeaf $ NExists (toList (recur body))
   BoundTVar n -> RecLeaf $ NBoundTVar n
   IdxSetLit n -> RecLeaf $ NIdxSetLit n
-  Forall _ _ -> error "Shouldn't have forall types left"
   where recur = typeToNType
 
 nTypeToType :: NType -> Type

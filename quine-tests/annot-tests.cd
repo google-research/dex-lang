@@ -33,7 +33,7 @@
 
 > Type error:
 > Expected: Int
->   Actual: T_1
+>   Actual: aT
 > In: x
 >
 >        g x = iadd x x
@@ -54,7 +54,7 @@ fun x = sin x
 
 > Type error:
 > Expected: Real
->   Actual: T
+>   Actual: aT
 > In: x
 >
 > fun x = sin x
