@@ -80,7 +80,7 @@ typeAlias = do
 
 letPoly :: Parser UDecl
 letPoly = do
-  (v, (tvs, kinds, tyBody)) <- try $ do
+  (v, (tvs, kinds, ty)) <- try $ do
     v <- varName
     symbol "::"
     sTy <- sigmaType
@@ -89,10 +89,13 @@ letPoly = do
   symbol (pprint v)
   wrap <- idxLhsArgs <|> lamLhsArgs
   symbol "="
-  body <- expr
-  let sTy = Forall kinds (abstractTVs tvs tyBody)
-      tbs = zipWith (:>) tvs kinds
-  return $ LetPoly (v:>sTy) (TLam tbs (wrap body))
+  rhs <- liftM wrap expr
+  return $ case tvs of
+    [] -> LetMono p rhs
+     where p = RecLeaf $ v :> Ann ty
+    _  -> LetPoly (v:>sTy) (TLam tbs rhs)
+     where sTy = Forall kinds (abstractTVs tvs ty)
+           tbs = zipWith (:>) tvs kinds
 
 unpack :: Parser UDecl
 unpack = do
