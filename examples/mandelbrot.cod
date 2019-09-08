@@ -31,10 +31,9 @@ escapeTime c = fst $ fold (0.0, czero) ..
     let z2 = update c z
     in (n + real (b2i (inBounds z2)), z2)
 
-xs = (linspace ngrid (-2.5) 1.0) :: Ngrid=>Real
-ys = (linspace ngrid (-1.0) 1.0) :: Ngrid=>Real
+xs = linspace @Ngrid (-2.5) 1.0
+ys = linspace @Ngrid (-1.0) 1.0
 
-grid :: N=>N=>Complex
 grid.i.j = (xs.i, ys.j)
 
 :plotmat map2 escapeTime grid

@@ -23,3 +23,8 @@ x = [1,2,3]
 -- polymorphic declarations without explicit types crash the compiler
 -- (should be a straightforward error message)
 f x = x
+
+
+-- apparently we're treating unbound type aliases as things to infer
+x :: N
+x = 1

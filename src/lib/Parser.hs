@@ -295,11 +295,19 @@ intQualifier = do
 
 sigmaType :: Parser ([Name], [Kind], Type)
 sigmaType = do
+  maybeVs <- optional $ do
+    try $ symbol "A"
+    vs <- many typeVar
+    period
+    return [v | TypeVar v <- vs]
   ty <- tauType
-  let vs = filter nameIsLower $ envNames (freeVars ty)-- TODO: lexcial order!
-  case inferKinds vs ty of
+  let vs' = case maybeVs of
+              Nothing -> filter nameIsLower $
+                           envNames (freeVars ty)  -- TODO: lexcial order!
+              Just vs -> vs
+  case inferKinds vs' ty of
     Left e -> fail $ pprint e
-    Right kinds -> return (vs, kinds, ty)
+    Right kinds -> return (vs', kinds, ty)
   where
     nameIsLower v = isLower (nameTag v !! 0)
 

@@ -311,15 +311,16 @@ setTempEnv :: (TempEnv -> TempEnv) -> InferState -> InferState
 setTempEnv update s = s { tempEnv = update (tempEnv s) }
 
 inferKinds :: [Name] -> Type -> Except [Kind]
-inferKinds vs ty = do
-  let kinds = execWriter (collectKinds TyKind ty)
-  m <- case fromUnambiguousList kinds of
-    Nothing -> throw TypeErr $ "Conflicting kinds for " ++ pprint vs
-    Just m -> return m
-  let lookupKind v = case M.lookup v m of
-        Nothing   -> Left $ Err TypeErr Nothing $ "Ambiguous kind for " ++ pprint v
-        Just kind -> Right kind
-  mapM lookupKind vs
+inferKinds vs _ = return $ replicate (length vs) TyKind  -- TODO: other kinds
+-- inferKinds vs ty = do
+  -- let kinds = execWriter (collectKinds TyKind ty)
+  -- m <- case fromUnambiguousList kinds of
+  --   Nothing -> throw TypeErr $ "Conflicting kinds for " ++ pprint vs
+  --   Just m -> return m
+  -- let lookupKind v = case M.lookup v m of
+  --       Nothing   -> Left $ Err TypeErr Nothing $ "Ambiguous kind for " ++ pprint v
+  --       Just kind -> Right kind
+  -- mapM lookupKind vs
 
 fromUnambiguousList :: (Ord k, Eq a) => [(k, a)] -> Maybe (M.Map k a)
 fromUnambiguousList xs = sequence $ M.fromListWith checkEq (map (onSnd Just) xs)
