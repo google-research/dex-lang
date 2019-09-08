@@ -28,3 +28,7 @@ f x = x
 -- apparently we're treating unbound type aliases as things to infer
 x :: N
 x = 1
+
+
+-- need a type class constrain for index sets so that this is an error
+:t for i::Int. 1
