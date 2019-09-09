@@ -3,8 +3,7 @@
 
 module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             HasTypeVars, freeTyVars, subFreeTVs, checkNExpr, patType,
-             tangentBunType, tangentBunNType) where
+             checkNExpr, patType, tangentBunType, tangentBunNType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -226,9 +225,6 @@ builtinType builtin = case builtin of
     pair x y = RecType (Tup [x, y])
 
 
--- The rest is type var manipulation (previously in Syntax.hs). Plan to remove
--- if we go to a scope-oriented zonkless system
-
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
   where sub depth tvar =
@@ -261,86 +257,6 @@ subAtDepth d f ty = case ty of
     BoundTVar n   -> f d (Right n)
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
-
-freeTyVars :: HasTypeVars a => a -> [Name]
-freeTyVars x = execState (subFreeTVs collectVars x) []
-  where collectVars :: Name -> State [Name] Type
-        collectVars v = modify (v :) >> return (TypeVar v)
-
-subFreeTVs :: (HasTypeVars a,  Applicative f) => (Name -> f Type) -> a -> f a
-subFreeTVs = subFreeTVsBVs []
-
--- TODO: replace this with more general subst/freevar machinery in Syntax.hs
-class HasTypeVars a where
-  subFreeTVsBVs :: Applicative f => [Name] -> (Name -> f Type) -> a -> f a
-
-instance (HasTypeVars a, HasTypeVars b) => HasTypeVars (a,b) where
-  subFreeTVsBVs bvs f (x, y) = liftA2 (,) (subFreeTVsBVs bvs f x)
-                                          (subFreeTVsBVs bvs f y)
-
-instance (HasTypeVars a) => HasTypeVars (RecTree a) where
-  subFreeTVsBVs bvs f tree = traverse (subFreeTVsBVs bvs f) tree
-
-instance HasTypeVars Type where
-  subFreeTVsBVs bvs f ty = case ty of
-      BaseType _    -> pure ty
-      TypeVar v | v `elem` bvs -> pure ty
-                | otherwise    -> f v
-      ArrType a b   -> liftA2 ArrType (recur a) (recur b)
-      TabType a b   -> liftA2 TabType (recur a) (recur b)
-      RecType r     -> liftA RecType (traverse recur r)
-      Exists body   -> liftA Exists (recur body)
-      IdxSetLit _   -> pure ty
-      BoundTVar _   -> pure ty
-    where recur = subFreeTVsBVs bvs f
-
-instance HasTypeVars SigmaType where
-  subFreeTVsBVs bvs f (Forall kinds body) =
-      liftA (Forall kinds) (subFreeTVsBVs bvs f body)
-
-instance HasTypeVars Expr where
-  subFreeTVsBVs bvs f expr = case expr of
-      Lit c -> pure $ Lit c
-      Var v ts -> liftA (Var v) (traverse recurTy ts)
-      PrimOp b ts xs -> liftA2 (PrimOp b) (traverse recurTy ts)
-                                          (traverse recur xs)
-      Decl decl body -> case decl of
-        LetMono p bound -> liftA2 Decl decl' (recur body)
-          where decl' = liftA2 LetMono (traverse recurB p) (recur bound)
-        LetPoly b (TLam tbs bound) -> liftA2 Decl decl' (recur body)
-          where decl' = liftA2 LetPoly (traverse recurSTy b) tlam
-                vs = [v | v:>_ <- tbs]
-                tlam = liftA (TLam tbs) (recurWith vs bound)
-        Unpack b tv bound ->
-          liftA3 (\b' bound' body' -> Decl (Unpack b' tv bound') body')
-                 (recurWithB [tv] b) (recur bound) (recurWith [tv] body)
-        TAlias _ _ -> error "Shouldn't have TAlias left"
-      Lam p body       -> liftA2 Lam (traverse recurB p) (recur body)
-      App fexpr arg    -> liftA2 App (recur fexpr) (recur arg)
-      For p body       -> liftA2 For (traverse recurB p) (recur body)
-      Get e ie         -> liftA2 Get (recur e) (recur ie)
-      RecCon r         -> liftA  RecCon (traverse recur r)
-      TabCon ty xs     -> liftA2 TabCon (recurTy ty) (traverse recur xs)
-      Pack e ty exTy   -> liftA3 Pack (recur e) (recurTy ty) (recurTy exTy)
-      DerivAnnot e ann  -> liftA2 DerivAnnot (recur e) (recur ann)
-      IdxLit _ _   -> error $ "IdxLit not implemented" -- TODO
-      Annot _ _    -> error $ "Annot not implemented" -- TODO
-      SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
-    -- TODO: sort out this mess
-    where recur   = subFreeTVsBVs bvs f
-          recurTy = subFreeTVsBVs bvs f
-          recurSTy = subFreeTVsBVs bvs f
-          recurB b = traverse recurTy b
-          recurWith   vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithTy vs = subFreeTVsBVs (vs ++ bvs) f
-          recurWithB vs b = traverse (recurWithTy vs) b
-
-instance HasTypeVars TLam where
-  subFreeTVsBVs bvs f (TLam bs body) =
-    liftA (TLam bs) (subFreeTVsBVs ([v | v:>_ <- bs] ++ bvs) f body)
-
-instance HasTypeVars Binder where
-  subFreeTVsBVs bvs f b = traverse (subFreeTVsBVs bvs f) b
 
 -- === Normalized IR ===
 

@@ -18,7 +18,8 @@
 
 > 45
 
-:p let vdot x y = sum (for i. x.i * y.i * 2.0)
+:p let vdot :: n=>Real -> n=>Real -> Real
+       vdot x y = sum (for i. x.i * y.i * 2.0)
        _, Nx = unpack range 3
        x = iota :: Nx=>Int
        y = map real x
@@ -76,7 +77,8 @@ fun = lam y. sum (map real arr) + y
 
 > 3.0
 
-:p let f (x, y) = x y
+:p let f :: (a -> b, a) -> b
+       f (x, y) = x y
    in f (lam x. x, 1)
 
 > 1

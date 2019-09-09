@@ -1,13 +1,12 @@
+{-# LANGUAGE FlexibleContexts #-}
+
 module Inference (typePass, inferKinds) where
 
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Monad.Writer
-import Control.Monad.State
-import Data.Foldable (toList)
-import Data.List (nub, (\\))
-import qualified Data.Map.Strict as M
+import Data.Foldable (toList, fold)
 
 import Syntax
 import Env
@@ -16,68 +15,77 @@ import Type
 import PPrint
 import Fresh
 import Pass
-import Util (onSnd)
 import Cat
+import Interpreter
 
-type Subst   = Env Type
-type TempEnv = Env Kind
-data InferState = InferState { tempEnv :: TempEnv
-                             , subst :: Subst }
+data Constraint = Constraint Type Type  -- TODO: add context
+type QVars = Env ()
 
-type InferM a = Pass TypeEnv InferState a
+
+type InferM a = ReaderT TypeEnv (
+                  WriterT [Constraint]
+                    (CatT QVars (Either Err))) a
 
 typePass :: UTopDecl -> TopPass TypeEnv TopDecl
 typePass tdecl = case tdecl of
-  TopDecl decl -> case decl of
-    LetMono p bound -> do
-      (p', bound') <- liftTop $ do
-        (patTy, p') <- inferPat p
-        bound' <- check bound patTy
-        return (p', bound')
-      putEnv (foldMap asEnv p')
-      return $ TopDecl $ LetMono p' bound'
-    LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
-      tlamBody' <- liftTop $ do
-        let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
-        extendR (foldMap tbind tbs) (check tlamBody tyBody')
-      putEnv (lbind b)
-      return $ TopDecl $ LetPoly b (TLam tbs tlamBody')
-    Unpack b tv expr -> do
-      (ty, expr') <- liftTop (infer expr)
-      ty' <- liftEither $ unpackExists ty tv
-      let b' = fmap (const ty') b -- TODO: actually check the annotated type
-      putEnv $ asEnv b' <> tv @> T idxSetKind
-      return $ TopDecl (Unpack b' tv expr')
-    TAlias _ _ -> error "Shouldn't have TAlias left"
+  TopDecl decl -> do
+    (decl', env') <- liftTop $ inferDecl decl
+    putEnv env'
+    return $ TopDecl decl'
   EvalCmd NoOp -> return (EvalCmd NoOp)
+  -- TODO: special case for `GetType (Var v [])` which can be polymorphic
   EvalCmd (Command cmd expr) -> do
+    (ty, expr') <- liftTop $ solveLocal $ infer expr
     case cmd of
       GetType -> do
-        (ty, _) <- liftTop $ infer expr >>= uncurry generalize
         writeOutText (pprint ty)
         return $ EvalCmd NoOp
-      Passes  -> do
-        (_, expr') <- liftTop $ infer expr
+      Passes -> do
         writeOutText ("\nSystem F\n" ++ pprint expr')
         return $ EvalCmd (Command cmd expr')
-      _ -> do
-        (_, expr') <- liftTop $ infer expr
-        return $ EvalCmd (Command cmd expr')
+      _ -> return $ EvalCmd (Command cmd expr')
 
-liftTop :: HasTypeVars a => InferM a -> TopPass TypeEnv a
+liftTop :: InferM a -> TopPass TypeEnv a
 liftTop m = do
-  source <- getSource
-  addErrSource source $ liftTopPass (InferState mempty mempty) mempty (m >>= zonk)
+  env <- getEnv
+  -- TODO: check returned qs and cs are empty
+  ((ans, _), _) <- liftEither $ flip runCatT mempty $
+                     runWriterT $ flip runReaderT env $ m
+  return ans
+
+inferDecl :: UDecl -> InferM (Decl, TypeEnv)
+inferDecl decl = case decl of
+  LetMono p bound -> do
+    (p', bound') <- solveLocal $ do
+                      p' <- annotPat p
+                      bound' <- check bound (patType p')
+                      return (p', bound')
+    return (LetMono p' bound', foldMap asEnv p')
+  LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
+    let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
+    -- TODO: check if bound vars leaked (can look at constraints from solve)
+    tlamBody' <- solveLocal $ extendR (foldMap tbind tbs) $
+                   check tlamBody tyBody'
+    return (LetPoly b (TLam tbs tlamBody'), lbind b)
+  Unpack (v:>_) tv bound -> do
+    (maybeEx, bound') <- solveLocal $ infer bound
+    boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
+                               _ -> throw TypeErr (pprint maybeEx)
+    -- TODO: give tv to caller so it can check for leaks
+    -- TODO: check possible type annotation
+    let b' = v :> boundTy
+    return (Unpack b' tv bound', asEnv b')
+  TAlias _ _ -> error "Shouldn't have TAlias left"
 
 infer :: UExpr -> InferM (Type, Expr)
-infer expr = do ty <- freshVar TyKind
+infer expr = do ty <- freshQ
                 expr' <- check expr ty
                 return (ty, expr')
 
 check :: UExpr -> Type -> InferM Expr
 check expr reqTy = case expr of
   Lit c -> do
-    unifyReq (BaseType (litType c))
+    constrainReq (BaseType (litType c))
     return (Lit c)
   Var v ts -> do
     maybeTy <- asks $ (flip envLookup v)
@@ -85,54 +93,58 @@ check expr reqTy = case expr of
       Nothing -> throw UnboundVarErr (pprint v)
       Just (L ty) -> return ty
       Just (T _ ) -> error "Expected let-bound var"
-    vs <- mapM freshVar (drop (length ts) kinds)
+    vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
-    unifyCtx expr reqTy (instantiateTVs ts' body)
+    constrainReq (instantiateTVs ts' body)
     return $ Var v ts'
   PrimOp b [] args -> do
     let BuiltinType kinds argTys ansTy = builtinType b
-    vs <- mapM freshVar kinds
-    unifyReq (instantiateTVs vs ansTy)
+    vs <- mapM (const freshQ) kinds
+    constrainReq (instantiateTVs vs ansTy)
     let argTys' = map (instantiateTVs vs) argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b vs args'
-  Decl decl body -> checkDecl decl (check body reqTy)
+  Decl decl body -> do
+    (decl', env') <- inferDecl decl
+    body' <- extendR env' $ check body reqTy
+    -- TODO: check leaks in unpack
+    return $ Decl decl' body'
   Lam p body -> do
-    (a, b) <- splitFun expr reqTy
+    (a, b) <- splitFun reqTy
     p' <- checkPat p a
-    body' <- recurWithP p' body b
+    body' <- extendR (foldMap asEnv p') (check body b)
     return $ Lam p' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
-    (a, b) <- splitFun expr f
+    (a, b) <- splitFun f
     arg' <- check arg a
-    unifyReq b
+    constrainReq b
     return $ App fexpr' arg'
   For p body -> do
-    (i, elemTy) <- splitTab expr reqTy
-    p' <- checkPat p i
-    body' <- recurWithP p' body elemTy
+    (a, b) <- splitTab reqTy
+    p' <- checkPat p a
+    body' <- extendR (foldMap asEnv p') (check body b)
     return $ For p' body'
   Get tabExpr idxExpr -> do
-    (tabTy, expr') <- infer tabExpr
-    (i, v) <- splitTab expr tabTy
+    (tabTy, tabExpr') <- infer tabExpr
+    (i, v) <- splitTab tabTy
     idxExpr' <- check idxExpr i
-    unifyReq v
-    return $ Get expr' idxExpr'
+    constrainReq v
+    return $ Get tabExpr' idxExpr'
   RecCon r -> do
     tyExpr <- traverse infer r
-    unifyReq (RecType (fmap fst tyExpr))
+    constrainReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
   TabCon _ xs -> do
-    (n, elemTy) <- splitTab expr reqTy
+    (n, elemTy) <- splitTab reqTy
     xs' <- mapM (flip check elemTy) xs
     let n' = length xs
     -- `==> elemTy` for better messages
-    unifyCtx expr (n ==> elemTy) (IdxSetLit n' ==> elemTy)
+    constrainEq (n ==> elemTy) (IdxSetLit n' ==> elemTy)
     return $ TabCon reqTy xs'
   Pack e ty exTy -> do
     let (Exists exBody) = exTy
-    unifyReq exTy
+    constrainReq exTy
     let t = instantiateTVs [ty] exBody
     e' <- check e t
     return $ Pack e' ty exTy
@@ -142,144 +154,97 @@ check expr reqTy = case expr of
     return $ DerivAnnot e' ann'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
-    unifyReq annTy
+    constrainReq annTy
     check e reqTy
-  SrcAnnot e pos -> addErrSourcePos pos (check e reqTy)
+  SrcAnnot e _ -> check e reqTy -- TODO: use the information in error messages
   _ -> error $ "Unexpected expression: " ++ show expr
   where
-    unifyReq ty = unifyCtx expr reqTy ty
+    constrainReq ty = constrainEq reqTy ty
 
-    -- TODO: return env rather than do things cps-like
-    checkDecl :: UDecl -> InferM Expr -> InferM Expr
-    checkDecl decl cont = case decl of
-      -- TODO: check there are no ambiguous tvars to prevent upstream inference
-      LetMono p bound -> do
-        (patTy, p') <- inferPat p
-        bound' <- check bound patTy
-        extendR (foldMap asEnv p') $ do
-          body' <- cont
-          return $ Decl (LetMono p' bound') body'
-      LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
-        let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
-        tlamBody' <- extendR (foldMap tbind tbs) (check tlamBody tyBody')
-        -- TODO: check if bound vars leaked?
-        extendR (lbind b) $ do
-          body' <- cont
-          return $ Decl (LetPoly b (TLam tbs tlamBody')) body'
-      Unpack b tv bound -> do
-        (maybeEx, bound') <- infer bound >>= zonk
-        boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
-                                   _ -> throw TypeErr (pprint maybeEx)
-        let b' = replaceAnnot b boundTy
-        body' <- extendR (asEnv b' <> tv @> T idxSetKind) cont
-        tvsEnv <- tempVarsEnv
-        tvsReqTy <- tempVars reqTy
-        if (tv `elem` tvsEnv) || (tv `elem` tvsReqTy)  then leakErr else return ()
-        return $ Decl (Unpack b' tv bound') body'
-      TAlias _ _ -> error "Shouldn't have TAlias left"
-
-    leakErr = throw TypeErr "existential variable leaked"
-    recurWithP p e ty = extendR (foldMap asEnv p) (check e ty)
-
-inferBinder :: UBinder -> InferM Binder
-inferBinder b = liftM (replaceAnnot b) $ case binderAnn b of
-                                           NoAnn -> freshTy
-                                           Ann ty -> return ty
+constrainEq :: Type -> Type -> InferM ()
+constrainEq t1 t2 = tell [Constraint t1 t2]
 
 checkPat :: UPat -> Type -> InferM Pat
-checkPat p ty = do (ty', p') <- inferPat p
-                   unifyCtx unitCon ty ty'
-                   return p'
+checkPat p ty = do
+  p' <- annotPat p
+  constrainEq ty (patType p')
+  return p'
 
-inferPat :: UPat -> InferM (Type, Pat)
-inferPat pat = do tree <- traverse inferBinder pat
-                  return (patType tree, tree)
+annotPat :: MonadCat QVars m => UPat -> m Pat
+annotPat pat = traverse annotBinder pat
+
+annotBinder :: MonadCat QVars m => UBinder -> m Binder
+annotBinder (v:>ann) = liftM (v:>) $ case ann of NoAnn  -> freshQ
+                                                 Ann ty -> return ty
 
 asEnv :: Binder -> TypeEnv
 asEnv (v:>ty) = v @> L (asSigma ty)
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
-splitFun :: UExpr -> Type -> InferM (Type, Type)
-splitFun e f = case f of
+splitFun :: Type -> InferM (Type, Type)
+splitFun f = case f of
   ArrType a b -> return (a, b)
-  _ -> do a <- freshTy
-          b <- freshTy
-          unifyCtx e f (a --> b)
+  _ -> do a <- freshQ
+          b <- freshQ
+          constrainEq f (a --> b)
           return (a, b)
 
-splitTab :: UExpr -> Type -> InferM (IdxSet, Type)
-splitTab e t = case t of
-  TabType i v -> return (i, v)
-  _ -> do i <- freshIdx
-          v <- freshTy
-          unifyCtx e t (i ==> v)
-          return (i, v)
+splitTab :: Type -> InferM (IdxSet, Type)
+splitTab t = case t of
+  TabType a b -> return (a, b)
+  _ -> do a <- freshQ
+          b <- freshQ
+          constrainEq t (a ==> b)
+          return (a, b)
 
-freshVar :: Kind -> InferM Type
-freshVar kind = do v <- fresh $ pprint kind
-                   modify $ setTempEnv (<> v @> kind)
-                   return (TypeVar v)
+freshQ :: MonadCat QVars m => m Type
+freshQ = do
+  tv <- looks $ rename (rawName "?")
+  extend $ tv @> ()
+  return (TypeVar tv)
 
-freshTy :: InferM Type
-freshTy  = freshVar TyKind
+solveLocal :: Subst a => InferM a -> InferM a
+solveLocal m = do
+  ((ans, freshQs), cs) <- captureW $ scoped $ m
+  (s, cs') <- liftEither $ solvePartial freshQs cs
+  tell $ cs'
+  let freshQsPostSub = freshQs `envDiff` s
+  extend freshQsPostSub
+  let unconstrainedQs = freshQsPostSub `envDiff`
+                          fold [freeTyVars t1 <> freeTyVars t2
+                               | Constraint t1 t2 <- cs']
+  case toList unconstrainedQs of
+    [] -> return ()
+    _  -> throw TypeErr "Must be monomorphic"
+  return $ applySubst s ans
 
-freshIdx :: InferM Type
-freshIdx = freshVar idxSetKind
+solvePartial :: QVars -> [Constraint] -> Except (Env Type, [Constraint])
+solvePartial qs cs = do
+  s <- solve cs
+  return (envIntersect qs s, substAsConstraints (s `envDiff` qs))
+  where substAsConstraints env =
+          [Constraint (TypeVar v) ty | (v, ty) <- envPairs env]
 
-generalize :: Type -> Expr -> InferM (SigmaType, TLam)
-generalize ty expr = do
-  ty'   <- zonk ty
-  expr' <- zonk expr
-  flexVars <- getFlexVars ty' expr'
-  kinds <- mapM getKind flexVars
-  return (Forall kinds $ abstractTVs flexVars ty',
-          TLam (zipWith (:>) flexVars kinds) expr')
-  where
-    getKind :: Name -> InferM Kind
-    getKind v = gets $ (! v) . tempEnv
+-- === constraint solver ===
 
-getFlexVars :: Type -> Expr -> InferM [Name]
-getFlexVars ty expr = do
-  tyVars   <- tempVars ty
-  exprVars <- tempVars expr
-  envVars  <- tempVarsEnv
-  return $ nub (tyVars ++ exprVars) \\ envVars
+solve :: [Constraint] -> Except (Env Type)
+solve cs = do
+  ((), TSubst s) <- runCatT (mapM_ unifyC cs) mempty
+  return s
+  where unifyC (Constraint t1 t2) = unify "" t1 t2
 
-tempVarsEnv :: InferM [Name]
-tempVarsEnv = do
-  env <- ask
-  vs <- mapM tempVars [ty | L ty <- toList env]
-  let vs' = [v | (v, T _) <- envPairs env]
-  return $ vs' ++ (concat vs)
-
-tempVars :: HasTypeVars a => a -> InferM [Name]
-tempVars x = liftM freeTyVars (zonk x)
-
-bindMVar :: Name -> Type -> InferM ()
-bindMVar v t | v `occursIn` t = throw TypeErr (pprint (v, t))
-             | otherwise = do modify $ setSubst $ (<> v @> t)
-                              modify $ setTempEnv $ envDelete v
-
-unifyCtx :: UExpr -> Type -> Type -> InferM ()
-unifyCtx expr tyReq tyActual = do
-  -- TODO: avoid the double zonking
-  tyReq'    <- zonk tyReq
-  tyActual' <- zonk tyActual
-  let s = "\nExpected: " ++ pprint tyReq'
-       ++ "\n  Actual: " ++ pprint tyActual'
-       ++ "\nIn: "       ++ pprint expr
-  unify s tyReq' tyActual'
+newtype TSubst = TSubst (Env Type)
+type SolveM a = CatT TSubst (Either Err) a
 
 -- TODO: check kinds
-unify :: String -> Type -> Type -> InferM ()
+unify :: String -> Type -> Type -> SolveM ()
 unify s t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  env <- ask
   case (t1', t2') of
-    _ | t1' == t2'               -> return ()
-    (t, TypeVar v) | not (v `isin` env) -> bindMVar v t
-    (TypeVar v, t) | not (v `isin` env) -> bindMVar v t
+    _ | t1' == t2' -> return ()
+    (t, TypeVar v) | isQ v -> bindQ v t
+    (TypeVar v, t) | isQ v -> bindQ v t
     (ArrType a b, ArrType a' b') -> unify s a a' >> unify s b b'
     (TabType a b, TabType a' b') -> unify s a a' >> unify s b b'
     (Exists t, Exists t')        -> unify s t t'
@@ -289,54 +254,38 @@ unify s t1 t2 = do
              Just unifiers -> void $ sequence unifiers
     _ -> throw TypeErr s
 
+isQ :: Name -> Bool
+isQ (Name ('?':_) _) = True  -- TODO: add an extra field to `Name` for such namespaces
+isQ _ = False
+
+bindQ :: Name -> Type -> SolveM ()
+bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
+          | otherwise = extend $ TSubst (v @> t)
 
 occursIn :: Name -> Type -> Bool
-occursIn v t = v `elem` freeTyVars t
+occursIn v t = v `isin` freeTyVars t
 
-zonk :: HasTypeVars a => a -> InferM a
-zonk x = subFreeTVs lookupVar x
+zonk :: Type -> SolveM Type
+zonk ty = do
+  TSubst s <- look
+  return $ applySubst s ty
 
-lookupVar :: Name -> InferM Type
-lookupVar v = do
-  mty <- gets $ flip envLookup v . subst
-  case mty of Nothing -> return $ TypeVar v
-              Just ty -> do ty' <- zonk ty
-                            modify $ setSubst (<> v @> ty')
-                            return ty'
+instance Semigroup TSubst where
+  -- TODO: make concatenation more efficient by maintaining a reverse-lookup map
+  TSubst s1 <> TSubst s2 = TSubst (s1' <> s2)
+    where s1' = fmap (applySubst s2) s1
 
-setSubst :: (Subst -> Subst) -> InferState -> InferState
-setSubst update s = s { subst = update (subst s) }
+instance Monoid TSubst where
+  mempty = TSubst mempty
+  mappend = (<>)
 
-setTempEnv :: (TempEnv -> TempEnv) -> InferState -> InferState
-setTempEnv update s = s { tempEnv = update (tempEnv s) }
+-- === misc ===
+
+freeTyVars :: Type -> Env ()
+freeTyVars ty = fmap (const ()) (freeVars ty)
 
 inferKinds :: [Name] -> Type -> Except [Kind]
-inferKinds vs _ = return $ replicate (length vs) TyKind  -- TODO: other kinds
--- inferKinds vs ty = do
-  -- let kinds = execWriter (collectKinds TyKind ty)
-  -- m <- case fromUnambiguousList kinds of
-  --   Nothing -> throw TypeErr $ "Conflicting kinds for " ++ pprint vs
-  --   Just m -> return m
-  -- let lookupKind v = case M.lookup v m of
-  --       Nothing   -> Left $ Err TypeErr Nothing $ "Ambiguous kind for " ++ pprint v
-  --       Just kind -> Right kind
-  -- mapM lookupKind vs
+inferKinds vs _ = return $ map (const TyKind) vs  -- TODO: other kinds
 
-fromUnambiguousList :: (Ord k, Eq a) => [(k, a)] -> Maybe (M.Map k a)
-fromUnambiguousList xs = sequence $ M.fromListWith checkEq (map (onSnd Just) xs)
-  where checkEq (Just v) (Just v') | v == v' = Just v
-                                   | otherwise = Nothing
-        checkEq _ _ = error "Shouldn't happen"
-
-collectKinds :: Kind -> Type -> Writer [(Name, Kind)] ()
-collectKinds kind ty = case ty of
-  BaseType _    -> return ()
-  TypeVar v     -> tell [(v, kind)]
-  ArrType a b   -> recur kind       a >> recur kind b
-  TabType a b   -> recur idxSetKind a >> recur kind b
-  RecType r     -> mapM_ (recur kind) r
-  -- Forall _ body -> recur kind body
-  Exists body   -> recur kind body
-  IdxSetLit _   -> return ()
-  BoundTVar _   -> return ()
-  where recur = collectKinds
+applySubst :: Subst a => Env Type -> a -> a
+applySubst s x = runReader (subst x) (fmap T s, mempty)

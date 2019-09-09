@@ -1,7 +1,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Interpreter (interpPass) where
+module Interpreter (interpPass, Subst, subst) where
 
 import Control.Monad.Reader
 import Data.Foldable (fold, toList)
@@ -201,7 +201,7 @@ instance Subst Expr where
       tys' <- mapM subst tys
       x <- asks $ flip envLookup v . fst
       case x of
-        Nothing -> return expr
+        Nothing -> return $ Var v tys'
         Just (L (Left v')) -> return $ Var v' tys'
         Just (L (Right (TLam tbs body))) -> dropSubst $ extendR env (subst body)
           where env = asFst $ fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
@@ -286,3 +286,13 @@ instance Subst Type where
 
 instance Subst SigmaType where
   subst (Forall ks body) = liftM (Forall ks) (subst body)
+
+instance Subst Binder where
+  -- TODO: this only substitutes the type!
+  subst (v:>ty) = liftM (v:>) (subst ty)
+
+instance Subst Pat where
+  subst p = traverse subst p
+
+instance (Subst a, Subst b) => Subst (a, b) where
+  subst (x, y) = liftM2 (,) (subst x) (subst y)
