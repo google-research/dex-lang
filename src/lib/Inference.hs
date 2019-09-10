@@ -6,7 +6,8 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Monad.Writer
-import Data.Foldable (toList, fold)
+import Data.Foldable (fold)
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -35,15 +36,16 @@ typePass tdecl = case tdecl of
   EvalCmd NoOp -> return (EvalCmd NoOp)
   -- TODO: special case for `GetType (Var v [])` which can be polymorphic
   EvalCmd (Command cmd expr) -> do
-    (ty, expr') <- liftTop $ solveLocal $ infer expr
     case cmd of
       GetType -> do
+        (ty, _) <- liftTop $ inferAndGeneralize expr
         writeOutText (pprint ty)
         return $ EvalCmd NoOp
-      Passes -> do
-        writeOutText ("\nSystem F\n" ++ pprint expr')
+      _ -> do
+        (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
+        case cmd of Passes -> writeOutText ("\nSystem F\n" ++ pprint expr')
+                    _      -> return ()
         return $ EvalCmd (Command cmd expr')
-      _ -> return $ EvalCmd (Command cmd expr')
 
 liftTop :: InferM a -> TopPass TypeEnv a
 liftTop m = do
@@ -56,7 +58,8 @@ liftTop m = do
 inferDecl :: UDecl -> InferM (Decl, TypeEnv)
 inferDecl decl = case decl of
   LetMono p bound -> do
-    (p', bound') <- solveLocal $ do
+    -- TOOD: better errors - infer polymorphic type to suggest annotation
+    (p', bound') <- solveLocalMonomorphic $ do
                       p' <- annotPat p
                       bound' <- check bound (patType p')
                       return (p', bound')
@@ -64,11 +67,11 @@ inferDecl decl = case decl of
   LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
     let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
     -- TODO: check if bound vars leaked (can look at constraints from solve)
-    tlamBody' <- solveLocal $ extendR (foldMap tbind tbs) $
+    tlamBody' <- solveLocalMonomorphic $ extendR (foldMap tbind tbs) $
                    check tlamBody tyBody'
     return (LetPoly b (TLam tbs tlamBody'), lbind b)
   Unpack (v:>_) tv bound -> do
-    (maybeEx, bound') <- solveLocal $ infer bound
+    (maybeEx, bound') <- solveLocalMonomorphic $ infer bound
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
     -- TODO: give tv to caller so it can check for leaks
@@ -203,20 +206,30 @@ freshQ = do
   extend $ tv @> ()
   return (TypeVar tv)
 
-solveLocal :: Subst a => InferM a -> InferM a
+inferAndGeneralize :: UExpr -> InferM (SigmaType, TLam)
+inferAndGeneralize expr = do
+  ((ty, expr'), qs) <- solveLocal $ infer expr
+  let sigmaTy = Forall (map (const TyKind) qs) $ abstractTVs qs ty
+  return (sigmaTy, TLam [] expr')  -- TODO: type-lambda too
+
+solveLocalMonomorphic :: (Pretty a, Subst a) => InferM a -> InferM a
+solveLocalMonomorphic m = do
+  (ans, uncQs) <- solveLocal m
+  case uncQs of
+    [] -> return ans
+    vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
+                        ++ "\n\n" ++ pprint ans
+
+solveLocal :: Subst a => InferM a -> InferM (a, [Name])
 solveLocal m = do
-  ((ans, freshQs), cs) <- captureW $ scoped $ m
+  ((ans, freshQs), cs) <- captureW $ scoped m
   (s, cs') <- liftEither $ solvePartial freshQs cs
   tell $ cs'
-  let freshQsPostSub = freshQs `envDiff` s
-  extend freshQsPostSub
-  let unconstrainedQs = freshQsPostSub `envDiff`
-                          fold [freeTyVars t1 <> freeTyVars t2
-                               | Constraint t1 t2 <- cs']
-  case toList unconstrainedQs of
-    [] -> return ()
-    _  -> throw TypeErr "Must be monomorphic"
-  return $ applySubst s ans
+  let freshQs' = freshQs `envDiff` s
+      unconstrained = freshQs' `envDiff` fold [freeTyVars t1 <> freeTyVars t2
+                                                | Constraint t1 t2 <- cs']
+  extend $ freshQs' `envDiff` unconstrained
+  return (applySubst s ans, envNames unconstrained)
 
 solvePartial :: QVars -> [Constraint] -> Except (Env Type, [Constraint])
 solvePartial qs cs = do
