@@ -4,7 +4,6 @@ import Control.Monad
 import Control.Monad.Combinators.Expr
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import qualified Data.Map.Strict as M
 import Data.Char (isLower)
 import Data.Maybe (fromMaybe)
 
@@ -73,7 +72,7 @@ declSep = void $ (eol >> sc) <|> symbol ";"
 typeAlias :: Parser UDecl
 typeAlias = do
   symbol "type"
-  v <- capVarName
+  v <- upperName
   symbol "="
   ty <- tauType
   return $ TAlias v ty
@@ -81,7 +80,7 @@ typeAlias = do
 letPoly :: Parser UDecl
 letPoly = do
   (v, (tvs, kinds, ty)) <- try $ do
-    v <- varName
+    v <- lowerName
     symbol "::"
     sTy <- sigmaType
     declSep
@@ -101,7 +100,7 @@ unpack :: Parser UDecl
 unpack = do
   (b, tv) <- try $ do b <- binder
                       comma
-                      tv <- capVarName
+                      tv <- upperName
                       symbol "=" >> symbol "unpack"
                       return (b, tv)
   body <- expr
@@ -142,7 +141,7 @@ parenRaw = do
     _ -> RecCon $ Tup elts
 
 var :: Parser UExpr
-var = liftM2 Var varName $ many (symbol "@" >> tauTypeAtomic)
+var = liftM2 Var lowerName $ many (symbol "@" >> tauTypeAtomic)
 
 declExpr :: Parser UExpr
 declExpr = do
@@ -262,18 +261,15 @@ ops = [ [postFixRule, appRule]
       , [InfixL (symbol "#deriv" >> return DerivAnnot)]
        ]
 
-varName :: Parser Name
-varName = liftM2 Name identifier intQualifier
-
 idxExpr :: Parser UExpr
 idxExpr = withSourceAnn $ rawVar <|> parenRaw
 
 rawVar :: Parser UExpr
-rawVar = liftM (flip Var []) varName
+rawVar = liftM (flip Var []) lowerName
 
 binder :: Parser UBinder
 binder = (symbol "_" >> return (Name "_" 0 :> NoAnn))
-     <|> liftM2 (:>) varName typeAnnot
+     <|> liftM2 (:>) lowerName typeAnnot
 
 pat :: Parser UPat
 pat =   parenPat
@@ -290,6 +286,15 @@ intQualifier :: Parser Int
 intQualifier = do
   n <- optional $ symbol "_" >> lexeme int
   return $ fromMaybe 0 n
+
+lowerName :: Parser Name
+lowerName = name identifier
+
+upperName :: Parser Name
+upperName = name $ lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
+
+name :: Parser String -> Parser Name
+name p = liftM2 Name p intQualifier
 
 -- === Parsing types ===
 
@@ -330,10 +335,7 @@ tauType' =   parenTy
          <?> "type"
 
 typeVar :: Parser Type
-typeVar = do
-  Name tag n <- varName
-  -- TODO: fix this hack by sorting out namespace rules
-  return $ TypeVar $ Name (tag ++ "T") n
+typeVar = liftM TypeVar (upperName <|> lowerName)
 
 parenTy :: Parser Type
 parenTy = do
@@ -351,24 +353,11 @@ existsType = do
   return $ Exists (abstractTVs [v] body)
 
 typeName :: Parser Type
-typeName = do
-  v <- try $ capVarName
-  return $ case M.lookup v baseTypeNames of
-             Nothing -> TypeVar v
-             Just b -> BaseType b
-
-capVarName :: Parser Name
-capVarName = liftM2 Name capIdentifier intQualifier
-
-capIdentifier :: Parser String
-capIdentifier = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
-
-baseTypeNames :: M.Map Name BaseType
-baseTypeNames = M.fromList
-  [ (rawName "Int" , IntType)
-  , (rawName "Real", RealType)
-  , (rawName "Bool", BoolType)
-  , (rawName "Str" , StrType)]
+typeName = liftM BaseType $
+       (symbol "Int"  >> return IntType)
+   <|> (symbol "Real" >> return RealType)
+   <|> (symbol "Bool" >> return BoolType)
+   <|> (symbol "Str"  >> return StrType)
 
 comma :: Parser ()
 comma = symbol ","

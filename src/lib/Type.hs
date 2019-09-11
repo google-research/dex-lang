@@ -7,8 +7,6 @@ module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.State (State, execState, modify)
-import Control.Applicative (liftA, liftA2, liftA3)
 import Data.List (elemIndex)
 import Data.Foldable
 import Data.Text.Prettyprint.Doc

@@ -86,7 +86,7 @@ deShadowDecl (TAlias v ty) = do  -- TODO: deal with capture
 
 deShadowTLam :: UTLam -> DeShadowM UTLam
 deShadowTLam (TLam tbs body) = do
-  withCat (traverse freshBinderP tbs) $ \tbs' ->
+  withCat (traverse freshTBinder tbs) $ \tbs' ->
     liftM (TLam tbs') (deShadowExpr body)
 
 deShadowPat :: UPat -> DeShadowCat UPat
@@ -101,13 +101,23 @@ freshBinder (v:>ann) = do
 
 freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
 freshBinderP (v:>ann) = do
-  shadowed <- looks $ (v `isin`) . snd
+  shadowed <- looks $ (v `isin`) . fst . fst
   if shadowed && v /= Name "_" 0
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asFst (v@>v'), v'@>())
   return (v':>ann)
+
+freshTBinder :: TBinder -> DeShadowCat TBinder
+freshTBinder (v:>k) = do
+  shadowed <- looks $ (v `isin`) . snd . fst
+  if shadowed && v /= Name "_" 0
+    then throw RepeatedVarErr (pprint v)
+    else return ()
+  v' <- looks $ rename v . snd
+  extend (asSnd (v@>TypeVar v'), v'@>())
+  return (v':>k)
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = do
