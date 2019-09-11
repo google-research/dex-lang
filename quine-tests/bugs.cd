@@ -13,3 +13,11 @@ x = [1,2,3]
 -- that doesn't have it in scope.
 -- (GHC's error message mentions skolem vars and escaping scopes...)
 :passes lam x. let f :: a -> a; f y = x in ()
+
+-- prints 1 instead
+
+litArr = [10, 5, 3]
+
+:p litArr.(asidx 4)
+
+> 5

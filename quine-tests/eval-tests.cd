@@ -191,10 +191,6 @@ litArr = [10, 5, 3]
 
 > 3
 
-:p litArr.(asidx 4)
-
-> 5
-
 :p mod 5 3
 
 > 2
