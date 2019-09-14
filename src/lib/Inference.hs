@@ -252,14 +252,21 @@ solve cs = do
   ((), TSubst s) <- runCatT (mapM_ unifyC cs) mempty
   return s
   where
-    unifyC (Constraint t1 t2 s ctx) = unify s ctx t1 t2
+    unifyC (Constraint t1 t2 s ctx) = do
+      t1' <- zonk t1
+      t2' <- zonk t2
+      let err = Err TypeErr ctx $
+                  "\nExpected: " ++ pprint t1'
+               ++ "\n  Actual: " ++ pprint t2'
+               ++ "\nIn: "       ++ s
+      unify err t1' t2'
 
 newtype TSubst = TSubst (Env Type)
 type SolveM a = CatT TSubst (Either Err) a
 
 -- TODO: check kinds
-unify :: String -> Ctx -> Type -> Type -> SolveM ()
-unify s ctx t1 t2 = do
+unify :: Err -> Type -> Type -> SolveM ()
+unify err t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
   case (t1', t2') of
@@ -271,15 +278,11 @@ unify s ctx t1 t2 = do
     (Exists t, Exists t')        -> recur t t'
     (RecType r, RecType r')      ->
       case zipWithRecord recur r r' of
-             Nothing -> err t1' t2'
+             Nothing -> throwError err
              Just unifiers -> void $ sequence unifiers
-    _ -> err t1' t2'
+    _ -> throwError err
   where
-    recur = unify s ctx
-    err reqTy actualTy = throwError $ Err TypeErr ctx msg
-      where msg = "\nExpected: " ++ pprint reqTy
-               ++ "\n  Actual: " ++ pprint actualTy
-               ++ "\nIn: "       ++ s
+    recur = unify err
 
 isQ :: Name -> Bool
 isQ (Name ('?':_) _) = True  -- TODO: add an extra field to `Name` for such namespaces

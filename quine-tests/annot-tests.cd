@@ -43,10 +43,9 @@ h :: (a -> b) -> (a -> b)
 h x = x
 
 
--- TODO: binders are flipped.. is this a bug or just a debruijn thing?
 :t h
 
-> A b a. ((a -> b) -> (a -> b))
+> A b a. ((b -> a) -> (b -> a))
 
 
 fun :: a -> a

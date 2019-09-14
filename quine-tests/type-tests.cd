@@ -6,7 +6,7 @@
 
 > A a. ((a=>Real) -> Real)
 
-:t let flip f x y = f y x in flip
+:t lam f x y. f y x
 
 > A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
@@ -110,7 +110,7 @@ xr = map real arr
 
 > Type error:
 > Expected: Int
->   Actual: (T_3=>T_4)
+>   Actual: (?_3=>?_4)
 > In: [2]
 >
 > :t [1, [2]]
@@ -148,7 +148,7 @@ p2 = 1
 
 :t lam x. for (i,j). x.i.j
 
-> A c b a. ((a=>(b=>c)) -> ((a, b)=>c))
+> A c b a. ((b=>(a=>c)) -> ((b, a)=>c))
 
 _, M = unpack range 5
 
