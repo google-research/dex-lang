@@ -67,16 +67,16 @@ inferDecl decl = case decl of
                       return (p', bound')
     return (LetMono p' bound', foldMap asEnv p')
   LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
-    let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
+    let vs = [v | (v:>_) <- tbs]
+        tyBody' = instantiateTVs (map TypeVar vs) tyBody
     -- TODO: check if bound vars leaked (can look at constraints from solve)
-    tlamBody' <- solveLocalMonomorphic $ extendRSnd (foldMap tbind tbs) $
-                   check tlamBody tyBody'
+    tlamBody' <- checkLeaks vs $ solveLocalMonomorphic $
+                   extendRSnd (foldMap tbind tbs) $ check tlamBody tyBody'
     return (LetPoly b (TLam tbs tlamBody'), lbind b)
   Unpack (v:>_) tv bound -> do
     (maybeEx, bound') <- solveLocalMonomorphic $ infer bound
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
-    -- TODO: give tv to caller so it can check for leaks
     -- TODO: check possible type annotation
     let b' = v :> boundTy
     return (Unpack b' tv bound', asEnv b')
@@ -109,10 +109,14 @@ check expr reqTy = case expr of
     let argTys' = map (instantiateTVs vs) argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b vs args'
+  Decl decl@(Unpack _ tv _) body -> do
+    (decl', env') <- inferDecl decl
+    body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
+               check body reqTy
+    return $ Decl decl' body'
   Decl decl body -> do
     (decl', env') <- inferDecl decl
     body' <- extendRSnd env' $ check body reqTy
-    -- TODO: check leaks in unpack
     return $ Decl decl' body'
   Lam p body -> do
     (a, b) <- splitFun expr reqTy
@@ -165,6 +169,19 @@ check expr reqTy = case expr of
   _ -> error $ "Unexpected expression: " ++ show expr
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
+
+checkLeaks :: [Name] -> InferM a -> InferM a
+checkLeaks vs m = do
+  (ans, cs) <- captureW m
+  sequence_ [checkVarConstraint v c | v <- vs, c <- cs]
+  tell cs
+  return ans
+  where
+    checkVarConstraint v (Constraint t1 t2 _ ctx) =
+      if v `isin` (freeVars t1 <> freeVars t2)
+        then throwError $ Err TypeErr ctx $
+               "\nLeaked type variable: " ++ pprint v
+        else return ()
 
 constrainEq :: Type -> Type -> String -> InferM ()
 constrainEq t1 t2 s = do
@@ -285,7 +302,7 @@ unify err t1 t2 = do
     recur = unify err
 
 isQ :: Name -> Bool
-isQ (Name ('?':_) _) = True  -- TODO: add an extra field to `Name` for such namespaces
+isQ (Name ('?':_) _) = True
 isQ _ = False
 
 bindQ :: Name -> Type -> SolveM ()

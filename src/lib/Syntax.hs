@@ -18,7 +18,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
-               SigmaType (..), TLamP (..), TLam, UTLam, asSigma
+               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars
                ) where
 
 import Record

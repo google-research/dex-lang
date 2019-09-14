@@ -55,10 +55,8 @@
 :t let _, Nx = unpack range 10
    in iota :: Nx=>Int
 
-> Type error: existential variable leaked
->
-> :t let _, Nx = unpack range 10
->    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> Type error:
+> Leaked type variable: Nx
 
 _, Narr = unpack range 10
 
@@ -165,3 +163,8 @@ idfun x = x
 :t idfun @ Real
 
 > (Real -> Real)
+
+:t lam x. let f :: a -> a; f y = x in ()
+
+> Type error:
+> Leaked type variable: a
