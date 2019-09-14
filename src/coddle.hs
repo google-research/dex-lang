@@ -19,7 +19,9 @@ import Inference
 import Imp
 import JIT
 import Flops
+#ifdef CODDLE_WEB
 import WebOutput
+#endif
 import Normalize
 import Interpreter
 
@@ -79,10 +81,15 @@ replLoop pass = do
                 Left e -> printIt "" e
                 Right decl' -> lift $ evalDecl s (printIt "") (pass decl')
 
-evalWeb :: Monoid env => FullPass env-> String -> IO ()
+evalWeb :: Monoid env => FullPass env -> String -> IO ()
 evalWeb pass fname = do
+#if CODDLE_WEB
   env <- execStateT (evalPrelude pass) mempty
   runWeb fname pass env
+#else
+  _ <- error "Compiled without the web interface"
+  undefined pass fname -- Silence the "Defined but not used" warning
+#endif
 
 evalDecl :: Monoid env =>
               String -> ResultChan -> TopPass env () -> StateT env IO ()

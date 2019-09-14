@@ -8,27 +8,18 @@ x = [1,2,3]
 :p for (i,j). iadd x.i x.j
 
 
--- nothing stops us trying to unify 'a' (or its tlam counterpart) with a metavar
--- that doesn't have it in scope.
--- (GHC's error message mentions skolem vars and escaping scopes...)
-:passes lam x. let f :: a -> a; f y = x in ()
-
-
 -- out-of-bounds indexing - need to wrap indices
 :p let litArr = [10, 5, 3]
    in litArr.(asidx 4)
 > 5
 
-
 -- polymorphic declarations without explicit types crash the compiler
 -- (should be a straightforward error message)
 f x = x
 
-
 -- apparently we're treating unbound type aliases as things to infer
 x :: N
 x = 1
-
 
 -- need a type class constrain for index sets so that this is an error
 :t for i::Int. 1
