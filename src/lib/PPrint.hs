@@ -53,7 +53,7 @@ prettyTyDepth d ty = case ty of
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
-  IdxSetLit i -> "{.." <> p i <> "}"
+  IdxSetLit i -> p i
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
 

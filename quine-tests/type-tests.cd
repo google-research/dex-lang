@@ -100,11 +100,11 @@ xr = map real arr
 
 :t [1, 2, 3]
 
-> ({..3}=>Int)
+> (3=>Int)
 
 :t []
 
-> A a. ({..0}=>a)
+> A a. (0=>a)
 
 :t [1, [2]]
 
@@ -118,13 +118,13 @@ xr = map real arr
 
 :t [[1, 2], [3, 4]]
 
-> ({..2}=>({..2}=>Int))
+> (2=>(2=>Int))
 
 :t [[1, 2], [3]]
 
 > Type error:
-> Expected: ({..2}=>Int)
->   Actual: ({..1}=>Int)
+> Expected: (2=>Int)
+>   Actual: (1=>Int)
 > In: [3]
 >
 > :t [[1, 2], [3]]
@@ -165,4 +165,3 @@ idfun x = x
 :t idfun @ Real
 
 > (Real -> Real)
-

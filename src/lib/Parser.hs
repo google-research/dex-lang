@@ -222,7 +222,7 @@ lamLhsArgs = do
   return $ \body -> foldr Lam body args
 
 literal :: Parser LitVal
-literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy (period)))
+literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy period))
                 <|> fmap RealLit real
                 <|> fmap StrLit stringLiteral
                 <|> (symbol "True"  >> return (BoolLit True))
@@ -332,10 +332,14 @@ tauType' =   parenTy
          <|> existsType
          <|> typeName
          <|> typeVar
+         <|> idxSetLit
          <?> "type"
 
 typeVar :: Parser Type
 typeVar = liftM TypeVar (upperName <|> lowerName)
+
+idxSetLit :: Parser Type
+idxSetLit = liftM IdxSetLit $ int
 
 parenTy :: Parser Type
 parenTy = do
