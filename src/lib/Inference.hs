@@ -6,6 +6,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Monad.Writer
+import Control.Monad.Except (throwError)
 import Data.Foldable (fold)
 import Data.Text.Prettyprint.Doc
 
@@ -19,11 +20,11 @@ import Pass
 import Cat
 import Interpreter
 
-data Constraint = Constraint Type Type  -- TODO: add context
+data Constraint = Constraint Type Type String Ctx
 type QVars = Env ()
+type Ctx = Maybe SrcPos
 
-
-type InferM a = ReaderT TypeEnv (
+type InferM a = ReaderT (Ctx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
@@ -50,9 +51,10 @@ typePass tdecl = case tdecl of
 liftTop :: InferM a -> TopPass TypeEnv a
 liftTop m = do
   env <- getEnv
+  source <- getSource
   -- TODO: check returned qs and cs are empty
-  ((ans, _), _) <- liftEither $ flip runCatT mempty $
-                     runWriterT $ flip runReaderT env $ m
+  ((ans, _), _) <- addErrSource source $ liftEither $ flip runCatT mempty $
+                     runWriterT $ flip runReaderT (Nothing, env) $ m
   return ans
 
 inferDecl :: UDecl -> InferM (Decl, TypeEnv)
@@ -67,7 +69,7 @@ inferDecl decl = case decl of
   LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
     let tyBody' = instantiateTVs [TypeVar v | (v:>_) <- tbs] tyBody
     -- TODO: check if bound vars leaked (can look at constraints from solve)
-    tlamBody' <- solveLocalMonomorphic $ extendR (foldMap tbind tbs) $
+    tlamBody' <- solveLocalMonomorphic $ extendRSnd (foldMap tbind tbs) $
                    check tlamBody tyBody'
     return (LetPoly b (TLam tbs tlamBody'), lbind b)
   Unpack (v:>_) tv bound -> do
@@ -91,7 +93,7 @@ check expr reqTy = case expr of
     constrainReq (BaseType (litType c))
     return (Lit c)
   Var v ts -> do
-    maybeTy <- asks $ (flip envLookup v)
+    maybeTy <- asks $ flip envLookup v . snd
     Forall kinds body <- case maybeTy of
       Nothing -> throw UnboundVarErr (pprint v)
       Just (L ty) -> return ty
@@ -109,28 +111,28 @@ check expr reqTy = case expr of
     return $ PrimOp b vs args'
   Decl decl body -> do
     (decl', env') <- inferDecl decl
-    body' <- extendR env' $ check body reqTy
+    body' <- extendRSnd env' $ check body reqTy
     -- TODO: check leaks in unpack
     return $ Decl decl' body'
   Lam p body -> do
-    (a, b) <- splitFun reqTy
+    (a, b) <- splitFun expr reqTy
     p' <- checkPat p a
-    body' <- extendR (foldMap asEnv p') (check body b)
+    body' <- extendRSnd (foldMap asEnv p') (check body b)
     return $ Lam p' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
-    (a, b) <- splitFun f
+    (a, b) <- splitFun fexpr f
     arg' <- check arg a
     constrainReq b
     return $ App fexpr' arg'
   For p body -> do
-    (a, b) <- splitTab reqTy
+    (a, b) <- splitTab expr reqTy
     p' <- checkPat p a
-    body' <- extendR (foldMap asEnv p') (check body b)
+    body' <- extendRSnd (foldMap asEnv p') (check body b)
     return $ For p' body'
   Get tabExpr idxExpr -> do
     (tabTy, tabExpr') <- infer tabExpr
-    (i, v) <- splitTab tabTy
+    (i, v) <- splitTab tabExpr tabTy
     idxExpr' <- check idxExpr i
     constrainReq v
     return $ Get tabExpr' idxExpr'
@@ -139,11 +141,11 @@ check expr reqTy = case expr of
     constrainReq (RecType (fmap fst tyExpr))
     return $ RecCon (fmap snd tyExpr)
   TabCon _ xs -> do
-    (n, elemTy) <- splitTab reqTy
+    (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
     let n' = length xs
     -- `==> elemTy` for better messages
-    constrainEq (n ==> elemTy) (IdxSetLit n' ==> elemTy)
+    constrainEq (n ==> elemTy) (IdxSetLit n' ==> elemTy) (pprint expr)
     return $ TabCon reqTy xs'
   Pack e ty exTy -> do
     let (Exists exBody) = exTy
@@ -159,18 +161,20 @@ check expr reqTy = case expr of
     -- TODO: check that the annotation is a monotype
     constrainReq annTy
     check e reqTy
-  SrcAnnot e _ -> check e reqTy -- TODO: use the information in error messages
+  SrcAnnot e pos -> local (\(_,env) -> (Just pos, env)) (check e reqTy)
   _ -> error $ "Unexpected expression: " ++ show expr
   where
-    constrainReq ty = constrainEq reqTy ty
+    constrainReq ty = constrainEq reqTy ty (pprint expr)
 
-constrainEq :: Type -> Type -> InferM ()
-constrainEq t1 t2 = tell [Constraint t1 t2]
+constrainEq :: Type -> Type -> String -> InferM ()
+constrainEq t1 t2 s = do
+  ctx <- asks fst
+  tell [Constraint t1 t2 s ctx]
 
 checkPat :: UPat -> Type -> InferM Pat
 checkPat p ty = do
   p' <- annotPat p
-  constrainEq ty (patType p')
+  constrainEq ty (patType p') (pprint p)
   return p'
 
 annotPat :: MonadCat QVars m => UPat -> m Pat
@@ -184,20 +188,20 @@ asEnv :: Binder -> TypeEnv
 asEnv (v:>ty) = v @> L (asSigma ty)
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
-splitFun :: Type -> InferM (Type, Type)
-splitFun f = case f of
+splitFun :: UExpr -> Type -> InferM (Type, Type)
+splitFun expr f = case f of
   ArrType a b -> return (a, b)
   _ -> do a <- freshQ
           b <- freshQ
-          constrainEq f (a --> b)
+          constrainEq f (a --> b) (pprint expr)
           return (a, b)
 
-splitTab :: Type -> InferM (IdxSet, Type)
-splitTab t = case t of
+splitTab :: UExpr -> Type -> InferM (IdxSet, Type)
+splitTab expr t = case t of
   TabType a b -> return (a, b)
   _ -> do a <- freshQ
           b <- freshQ
-          constrainEq t (a ==> b)
+          constrainEq t (a ==> b) (pprint expr)
           return (a, b)
 
 freshQ :: MonadCat QVars m => m Type
@@ -227,7 +231,7 @@ solveLocal m = do
   tell $ cs'
   let freshQs' = freshQs `envDiff` s
       unconstrained = freshQs' `envDiff` fold [freeTyVars t1 <> freeTyVars t2
-                                                | Constraint t1 t2 <- cs']
+                                                | Constraint t1 t2 _ _ <- cs']
   extend $ freshQs' `envDiff` unconstrained
   return (applySubst s ans, envNames unconstrained)
 
@@ -235,8 +239,11 @@ solvePartial :: QVars -> [Constraint] -> Except (Env Type, [Constraint])
 solvePartial qs cs = do
   s <- solve cs
   return (envIntersect qs s, substAsConstraints (s `envDiff` qs))
-  where substAsConstraints env =
-          [Constraint (TypeVar v) ty | (v, ty) <- envPairs env]
+  where
+    -- We lost the source context when we solved this the first time
+    -- TODO: add context to subst
+    substAsConstraints env =
+          [Constraint (TypeVar v) ty "" Nothing | (v, ty) <- envPairs env]
 
 -- === constraint solver ===
 
@@ -244,28 +251,35 @@ solve :: [Constraint] -> Except (Env Type)
 solve cs = do
   ((), TSubst s) <- runCatT (mapM_ unifyC cs) mempty
   return s
-  where unifyC (Constraint t1 t2) = unify "" t1 t2
+  where
+    unifyC (Constraint t1 t2 s ctx) = unify s ctx t1 t2
 
 newtype TSubst = TSubst (Env Type)
 type SolveM a = CatT TSubst (Either Err) a
 
 -- TODO: check kinds
-unify :: String -> Type -> Type -> SolveM ()
-unify s t1 t2 = do
+unify :: String -> Ctx -> Type -> Type -> SolveM ()
+unify s ctx t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
   case (t1', t2') of
     _ | t1' == t2' -> return ()
     (t, TypeVar v) | isQ v -> bindQ v t
     (TypeVar v, t) | isQ v -> bindQ v t
-    (ArrType a b, ArrType a' b') -> unify s a a' >> unify s b b'
-    (TabType a b, TabType a' b') -> unify s a a' >> unify s b b'
-    (Exists t, Exists t')        -> unify s t t'
+    (ArrType a b, ArrType a' b') -> recur a a' >> recur b b'
+    (TabType a b, TabType a' b') -> recur a a' >> recur b b'
+    (Exists t, Exists t')        -> recur t t'
     (RecType r, RecType r')      ->
-      case zipWithRecord (unify s) r r' of
-             Nothing -> throw TypeErr s
+      case zipWithRecord recur r r' of
+             Nothing -> err t1' t2'
              Just unifiers -> void $ sequence unifiers
-    _ -> throw TypeErr s
+    _ -> err t1' t2'
+  where
+    recur = unify s ctx
+    err reqTy actualTy = throwError $ Err TypeErr ctx msg
+      where msg = "\nExpected: " ++ pprint reqTy
+               ++ "\n  Actual: " ++ pprint actualTy
+               ++ "\nIn: "       ++ s
 
 isQ :: Name -> Bool
 isQ (Name ('?':_) _) = True  -- TODO: add an extra field to `Name` for such namespaces
@@ -302,3 +316,6 @@ inferKinds vs _ = return $ map (const TyKind) vs  -- TODO: other kinds
 
 applySubst :: Subst a => Env Type -> a -> a
 applySubst s x = runReader (subst x) (fmap T s, mempty)
+
+extendRSnd :: (Monoid env, MonadReader (b, env) m) => env -> m a -> m a
+extendRSnd env m = local (\(x, env') -> (x, env' <> env)) m
