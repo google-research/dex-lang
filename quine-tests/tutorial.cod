@@ -1,0 +1,54 @@
+
+-- # Abstract
+-- This is an introduction to the Coddle language. It's aimed at a reader
+-- familiar with a MATLAB/NumPy style of numerical programming. Coddle is
+-- a functional programming language in the spirit of Haskell and SML so we
+-- assume familiarity with this sort of language. (TODO: intro to FP version)
+
+-- This tutorial is a literate program. You can evaluate it by running `coddle
+-- tutorial.cod` and the output should be the same as the file itself!
+-- If you run with `coddle --watch tutorial.cod` then the file will be
+-- re-executed every time the file is saved, so you can play around with it.
+
+-- # Getting started
+
+-- We can evaluate and print expressions with `:p`
+
+:p 100.0 + 1.0
+
+> 101.0
+
+-- We can query the *type* of an expression with `:t`. Here's a pair
+-- of a real number and an integer. (Note that Coddle types don't include
+-- floating point precision. See XXX.)
+
+:t (12.3, 42)
+
+> (Real, Int)
+
+-- The central data structure in Coddle is the 'table'. We could also
+-- call it an 'array' or 'vector'. Let's make one:
+
+xs = [[1,2],[3,4],[5,6]]
+
+:p xs
+
+> [[1, 2], [3, 4], [5, 6]]
+
+:t xs
+
+> 3=>(2=>Int)
+
+-- table types
+-- for expression
+-- syntactic sugar of `x.i = ...`
+-- index polymorphism in function like `dot`
+-- for i::N. ___  annotated for expressions
+-- visible type application
+-- structured index sets like pairs
+-- pack/unpacking
+
+:p 1
+-- TODO
+--  * Precision
+
