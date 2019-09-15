@@ -52,3 +52,11 @@ Test-Suite test-coddle
   hs-source-dirs:      tests
   ghc-options:         cbits/libcod.so
                        -Wall
+
+executable cod2jax.so
+  main-is: Cod2Jax.hs
+  build-depends:       base, aeson, bytestring
+  ghc-options:         -no-hs-main -fPIC -shared -dynamic
+  hs-source-dirs:      src/lib
+  extra-libraries:     HSrts-ghc8.6.5
+  ghc-options:         -Wall
