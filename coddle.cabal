@@ -54,9 +54,9 @@ Test-Suite test-coddle
                        -Wall
 
 executable cod2jax.so
-  main-is: Cod2Jax.hs
-  build-depends:       base, aeson, bytestring
+  main-is:             Cod2Jax.hs
+  build-depends:       coddle, base, aeson, bytestring, mtl
   ghc-options:         -no-hs-main -fPIC -shared -dynamic
-  hs-source-dirs:      src/lib
+  hs-source-dirs:      src/ffi
   extra-libraries:     HSrts-ghc8.6.5
   ghc-options:         -Wall
