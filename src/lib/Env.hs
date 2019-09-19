@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
@@ -10,6 +11,7 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
+import GHC.Generics
 
 import Record
 
@@ -17,9 +19,9 @@ infixr 7 :>
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
-data Name = Name Tag Int  deriving (Show, Ord, Eq)
+data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
 type Tag = String
-data BinderP a = (:>) Name a  deriving (Show, Eq, Ord)
+data BinderP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
 
 envLookup :: Env a -> Name -> Maybe a
 envLookup (Env m) v = M.lookup v m

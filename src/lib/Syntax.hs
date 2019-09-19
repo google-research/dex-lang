@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
@@ -30,6 +31,7 @@ import qualified Data.Map.Strict as M
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
+import GHC.Generics
 
 -- === core IR ===
 
@@ -49,13 +51,13 @@ data ExprP b =
           | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos
           | Pack (ExprP b) Type Type
-             deriving (Eq, Ord, Show)
+             deriving (Eq, Ord, Show, Generic)
 
 data DeclP b = LetMono (PatP b) (ExprP b)
              | LetPoly (BinderP SigmaType) (TLamP b)
              | TAlias Name Type
              | Unpack (BinderP b) Name (ExprP b)
-               deriving (Eq, Ord, Show)
+               deriving (Eq, Ord, Show, Generic)
 
 type PatP b = RecTree (BinderP b)
 
@@ -67,10 +69,10 @@ data Type = BaseType BaseType
           | Exists Type
           | IdxSetLit IdxSetVal
           | BoundTVar Int
-             deriving (Eq, Ord, Show)
+             deriving (Eq, Ord, Show, Generic)
 
-data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show)
-data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show)
+data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show, Generic)
+data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show, Generic)
 
 asSigma :: Type -> SigmaType
 asSigma ty = Forall [] ty
@@ -84,16 +86,16 @@ type TLam    = TLamP    Type
 
 -- TODO: figure out how to treat index set kinds
 -- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
-data Kind = TyKind  deriving (Show, Eq, Ord)
+data Kind = TyKind  deriving (Show, Eq, Ord, Generic)
 
 idxSetKind :: Kind
 idxSetKind = TyKind
 
 
 data TopDeclP b = TopDecl (DeclP b)
-                | EvalCmd (Command (ExprP b))  deriving (Show, Eq)
+                | EvalCmd (Command (ExprP b))  deriving (Show, Eq, Generic)
 
-data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq)
+data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq, Generic)
 
 type TBinder = BinderP Kind
 type IdxSet = Type
@@ -105,17 +107,17 @@ data LitVal = IntLit  Int
             | RealLit Double
             | BoolLit Bool
             | StrLit  String
-              deriving (Eq, Ord, Show)
+              deriving (Eq, Ord, Show, Generic)
 
 data BaseType = IntType | BoolType | RealType | StrType
-                   deriving (Eq, Ord, Show)
+                   deriving (Eq, Ord, Show, Generic)
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
              | Mod | FFICall Int String | Filter
-                deriving (Eq, Ord)
+                deriving (Eq, Ord, Generic)
 
 builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
@@ -142,11 +144,11 @@ instance Show Builtin where
 
 data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
              | EvalExpr OutFormat
-                deriving  (Show, Eq)
+                deriving  (Show, Eq, Generic)
 
 
-data Value = Value Type (RecTree Vec)  deriving (Show, Eq)
-data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq)
+data Value = Value Type (RecTree Vec)  deriving (Show, Eq, Generic)
+data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq, Generic)
 
 unitTy :: Type
 unitTy = RecType (Tup [])
@@ -156,7 +158,7 @@ unitCon = RecCon (Tup [])
 
 -- === source AST ===
 
-data Ann = Ann Type | NoAnn  deriving (Show, Eq)
+data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)
 
 type UExpr    = ExprP    Ann
 type UBinder  = BinderP  Ann
@@ -259,9 +261,10 @@ data EvalStatus = Complete | Failed Err
 type Source = String
 type Output = [OutputElt]
 
-data OutputElt = TextOut String | ValOut OutFormat Value  deriving (Show, Eq)
+data OutputElt = TextOut String | ValOut OutFormat Value
+                   deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq)
+data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)
 
 data Result = Result (SetVal Source) (SetVal EvalStatus) Output
 

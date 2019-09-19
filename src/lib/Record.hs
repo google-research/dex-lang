@@ -1,3 +1,4 @@
+{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Record (Record (..), RecTree (..),
@@ -13,12 +14,13 @@ import Data.Traversable
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc
+import GHC.Generics
 
 data Record a = Rec (M.Map String a)
-              | Tup [a] deriving (Eq, Ord, Show)
+              | Tup [a] deriving (Eq, Ord, Show, Generic)
 
 data RecTree a = RecTree (Record (RecTree a))
-               | RecLeaf a  deriving (Eq, Show, Ord)
+               | RecLeaf a  deriving (Eq, Show, Ord, Generic)
 
 data RecField = RecField (Record ()) RecFieldName  deriving (Eq, Ord, Show)
 data RecFieldName = RecName String | RecPos Int  deriving (Eq, Ord, Show)

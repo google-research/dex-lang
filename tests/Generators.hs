@@ -40,15 +40,7 @@ instance Arbitrary Name where
 
 instance Arbitrary Type where
   arbitrary = arbType 0
-  shrink ty = case ty of
-    BaseType _  -> [unitTy]
-    TypeVar _   -> [unitTy]
-    BoundTVar _ -> [unitTy]
-    ArrType a b -> unitTy : a : b : liftS2 ArrType a b
-    TabType a b -> unitTy : a : b : liftS2 TabType a b
-    RecType r   -> liftS RecType r
-    Exists _ -> error "Not implemented"
-    IdxSetLit _ -> error "Not implemented"
+  shrink = genericShrink
 
 arbType :: Int -> Gen Type
 arbType numBinders = do
@@ -68,32 +60,34 @@ arbType numBinders = do
 
 instance Arbitrary BaseType where
   arbitrary = elements [IntType, BoolType, RealType]  -- TODO: StrType
-  shrink = undefined
+  shrink = genericShrink
 
 instance Arbitrary a => Arbitrary (RecTree a) where
   arbitrary = frequency [ (2, liftM RecLeaf arb)
                         , (1, liftM RecTree arb) ]
-  shrink (RecLeaf r) = liftS RecLeaf r
-  shrink (RecTree _) = error "Not implemented"
+  shrink = genericShrink
 
 -- Note: empty tuples but no singletons
 instance Arbitrary a => Arbitrary (Record a) where
   arbitrary = liftM Tup $ frequency
     [ (1, return [])
     , (2, sequence $ replicate 2 (smaller 2 arb)) ]
-  shrink (Tup xs) = filter notSingleton $ liftS Tup xs
-    where notSingleton ys = length ys /= 1
-  shrink (Rec _) = error "Not implemented"
+  shrink = genericShrink
 
 instance Arbitrary b => Arbitrary (BinderP b) where
   arbitrary = liftM2 (:>) arb arb
-  shrink (v:>ty) = liftS2 (:>) v ty
+  shrink = genericShrink
+
+instance Arbitrary expr => Arbitrary (Command expr) where
+  arbitrary = oneof [liftM2 Command arb arb, return NoOp]
+  shrink = genericShrink
 
 instance Arbitrary b => Arbitrary (TopDeclP b) where
   arbitrary = liftM TopDecl arb
-  shrink topdecl = case topdecl of
-    TopDecl decl -> liftS TopDecl decl
-    EvalCmd _ -> error "Not implemented"
+  shrink = genericShrink
+
+instance Arbitrary CmdName where
+  arbitrary = elements [GetType, EvalExpr Printed]
 
 instance Arbitrary b => Arbitrary (DeclP b) where
   arbitrary = frequency
@@ -113,7 +107,7 @@ instance Arbitrary b => Arbitrary (ExprP b) where
     , liftM3 PrimOp arb (return []) oneOrTwo  -- TODO: explicit type args
     , liftM2 Decl (smaller 2 arb) (smaller 2 arb)
     ]
-  shrink _ = [] -- TODO: shrink
+  shrink = genericShrink
   -- TODO: the rest
 
 allBuiltins :: [Builtin]
@@ -127,13 +121,12 @@ instance Arbitrary LitVal where
     [ liftM IntLit  arb
     , liftM RealLit arb
     , liftM BoolLit arb ]
+  shrink = genericShrink
   -- TODO: StrLit
-
 
 instance Arbitrary Ann where
   arbitrary = oneof [return NoAnn, liftM Ann arb]
-  shrink NoAnn = []
-  shrink (Ann ann) = NoAnn : liftS Ann ann
+  shrink = genericShrink
 
 arbTypeName :: Gen Name
 arbTypeName = liftM2 Name (elements ["A", "B"]) (elements [0, 1])
