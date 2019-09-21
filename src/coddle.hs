@@ -74,12 +74,21 @@ evalRepl pass = do
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
-  source <- getInputLine ">=> "
+  (s, decl) <- readDecl "" ">=> "
+  lift $ evalDecl s (printIt "") (pass decl)
+
+readDecl :: String -> String -> InputT (StateT env IO) (String, UTopDecl)
+readDecl prevRead prompt = do
+  source <- getInputLine prompt
   case source of
     Nothing -> liftIO exitSuccess
-    Just s -> case (parseTopDecl s) of
-                Left e -> printIt "" e
-                Right decl' -> lift $ evalDecl s (printIt "") (pass decl')
+    Just s -> case parseTopDeclRepl s' of
+                Left e -> do printIt "" e
+                             readDecl "" ">=> "
+                Right (Just decl') -> return (s', decl')
+                Right Nothing -> readDecl s' dots
+      where s' = prevRead ++ s ++ "\n"
+            dots = replicate (length prompt - 1) '.' ++ " "
 
 evalWeb :: Monoid env => FullPass env -> String -> IO ()
 evalWeb pass fname = do

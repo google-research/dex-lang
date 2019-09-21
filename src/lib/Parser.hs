@@ -1,4 +1,4 @@
-module Parser (parseProg, parseTopDecl, Prog) where
+module Parser (parseProg, parseTopDecl, parseTopDeclRepl, Prog) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -23,6 +23,9 @@ parseProg s = parseit s $ many topDeclContext <* emptyLines
 
 parseTopDecl :: String -> Except UTopDecl
 parseTopDecl s = parseit s topDecl
+
+parseTopDeclRepl :: String -> Except (Maybe UTopDecl)
+parseTopDeclRepl s = parseit s (reportEOF topDecl)
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (p <* (optional eol >> eof)) "" s of
@@ -60,6 +63,9 @@ explicitCommand = do
            _   -> fail $ "unrecognized command: " ++ show cmdName
   e <- expr
   return $ EvalCmd (Command cmd e)
+
+reportEOF :: Parser a -> Parser (Maybe a)
+reportEOF p = withRecovery (const (eof >> return Nothing)) (liftM Just p)
 
 -- === Parsing decls ===
 
