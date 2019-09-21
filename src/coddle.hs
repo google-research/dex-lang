@@ -1,5 +1,3 @@
-{-# OPTIONS_GHC -Wno-missing-signatures #-}
-
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
@@ -26,12 +24,13 @@ import Normalize
 import Interpreter
 
 type ResultChan = Result -> IO ()
-type FullPass env = UTopDecl -> TopPass env ()
+type FullPass env = UTopDecl -> TopPassM env ()
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool
                        , useInterpreter :: Bool}
 
+fullPass :: TopPass UTopDecl ()
 fullPass = deShadowPass
        >+> typePass      >+> checkTyped
        >+> normalizePass >+> checkNExpr
@@ -41,6 +40,7 @@ fullPass = deShadowPass
        >+> flopsPass
        >+> jitPass
 
+fullPassInterp :: TopPass UTopDecl ()
 fullPassInterp = deShadowPass >+> typePass >+> checkTyped >+> interpPass
 
 parseFile :: MonadIO m => String -> m (String, [(String, UTopDecl)])
@@ -92,10 +92,10 @@ evalWeb pass fname = do
 #endif
 
 evalDecl :: Monoid env =>
-              String -> ResultChan -> TopPass env () -> StateT env IO ()
+              String -> ResultChan -> TopPassM env () -> StateT env IO ()
 evalDecl source write pass = do
   env <- get
-  (ans, env') <- liftIO $ runTopPass (write . resultText, source) env pass
+  (ans, env') <- liftIO $ runTopPassM (write . resultText, source) env pass
   modify $ (<> env')
   liftIO $ write $ case ans of Left e   -> resultErr e
                                Right () -> resultComplete
@@ -134,5 +134,7 @@ main = do
                    Just fname -> if webOutput opts then WebMode    fname
                                                    else ScriptMode fname
   if useInterpreter opts
-    then runMode evalMode fullPassInterp
-    else runMode evalMode fullPass
+    then case fullPassInterp of
+           TopPass f -> runMode evalMode f
+    else  case fullPass of
+           TopPass f -> runMode evalMode f

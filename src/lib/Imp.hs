@@ -20,8 +20,11 @@ data Dest = Buffer Name [Index]
 type ImpEnv = (Env IExpr, Env ())
 type ImpM a = ReaderT ImpEnv (Either Err) a
 
-impPass :: NTopDecl -> TopPass ImpEnv ImpDecl
-impPass decl = case decl of
+impPass :: TopPass NTopDecl ImpDecl
+impPass = TopPass impPass'
+
+impPass' :: NTopDecl -> TopPassM ImpEnv ImpDecl
+impPass' decl = case decl of
   NTopDecl decl' -> do
     (bs, prog, env) <- liftTop $ toImpDecl decl'
     putEnv env
@@ -36,7 +39,7 @@ impPass decl = case decl of
     return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
   where
     noOpCmd = ImpEvalCmd (const undefined) [] NoOp
-    liftTop :: ImpM a -> TopPass ImpEnv a
+    liftTop :: ImpM a -> TopPassM ImpEnv a
     liftTop m = do
       env <- getEnv
       liftEither $ runReaderT m env
@@ -176,15 +179,18 @@ reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
 
 type ImpCheckM a = Pass (Env IType) () a
 
-checkImp :: ImpDecl -> TopPass (Env IType) ImpDecl
-checkImp decl = decl <$ case decl of
+checkImp :: TopPass ImpDecl ImpDecl
+checkImp = TopPass checkImp'
+
+checkImp' :: ImpDecl -> TopPassM (Env IType) ImpDecl
+checkImp' decl = decl <$ case decl of
   ImpTopLet binders prog -> do
     check binders prog
     putEnv $ bindFold binders
   ImpEvalCmd _ _ NoOp -> return ()
   ImpEvalCmd _ bs (Command _ prog) -> check bs prog
   where
-    check :: [IBinder] -> ImpProg -> TopPass (Env IType) ()
+    check :: [IBinder] -> ImpProg -> TopPassM (Env IType) ()
     check bs prog = do
       env <- getEnv
       liftEither $ addContext (pprint prog) $

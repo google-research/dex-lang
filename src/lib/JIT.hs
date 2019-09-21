@@ -67,8 +67,11 @@ data ExternFunSpec = ExternFunSpec String L.Type [L.Type] deriving (Ord, Eq)
 type Long = Operand
 type NInstr = Named Instruction
 
-jitPass :: ImpDecl -> TopPass PersistEnv ()
-jitPass decl = case decl of
+jitPass :: TopPass ImpDecl ()
+jitPass = TopPass jitPass'
+
+jitPass' :: ImpDecl -> TopPassM PersistEnv ()
+jitPass' decl = case decl of
   ImpTopLet bs prog -> do
     vals <- evalProg bs prog
     putEnv $ bindFold $ zipWith replaceAnnot bs vals
@@ -94,7 +97,7 @@ jitPass decl = case decl of
                  writeOutText $ show (t2 `diffUTCTime` t1)
     _ -> return ()
 
-evalProg :: [IBinder] -> ImpProg -> TopPass PersistEnv [PersistVal]
+evalProg :: [IBinder] -> ImpProg -> TopPassM PersistEnv [PersistVal]
 evalProg bs prog = do
   (cells, CompiledProg m) <- toLLVM bs prog
   liftIO $ evalJit m
@@ -114,7 +117,7 @@ makeDestCell env (v :> IType ty shape) = do
     shape' = map getSize shape
 
 -- TODO: pass destinations as args rather than baking pointers into LLVM
-toLLVM :: [IBinder] -> ImpProg -> TopPass PersistEnv ([PersistCell], CompiledProg)
+toLLVM :: [IBinder] -> ImpProg -> TopPassM PersistEnv ([PersistCell], CompiledProg)
 toLLVM bs prog = do
   env <- getEnv
   destCells <- liftIO $ mapM (makeDestCell env) bs

@@ -21,11 +21,14 @@ data TLamEnv = TLamContents NormEnv [TBinder] Expr
 type NormEnv = FullEnv (SigmaType, Either (RecTree Name) TLamEnv) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
+normalizePass :: TopPass TopDecl NTopDecl
+normalizePass = TopPass normalizePass'
+
 -- TODO: add top-level freshness scope to top-level env
-normalizePass :: TopDecl -> TopPass (NormEnv, Scope) NTopDecl
-normalizePass topDecl = case topDecl of
+normalizePass' :: TopDecl -> TopPassM (NormEnv, Scope) NTopDecl
+normalizePass' topDecl = case topDecl of
   TopDecl decl -> do
-    (env, decls) <- asTopPass (normalizeDecl decl)
+    (env, decls) <- asTopPassM (normalizeDecl decl)
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return $ decl'
@@ -35,15 +38,15 @@ normalizePass topDecl = case topDecl of
     where dummyDecl = NLet [] (NAtoms [])
   EvalCmd NoOp -> return (NEvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
-    (ty   , _) <- asTopPass $ exprType expr -- TODO: subst type vars
-    (expr', _) <- asTopPass $ normalizeScoped expr
-    (ntys , _) <- asTopPass $ normalizeTy ty
+    (ty   , _) <- asTopPassM $ exprType expr -- TODO: subst type vars
+    (expr', _) <- asTopPassM $ normalizeScoped expr
+    (ntys , _) <- asTopPassM $ normalizeTy ty
     case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ pprint expr'
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
 
-asTopPass :: NormM a -> TopPass (NormEnv, Scope) (a, [NDecl])
-asTopPass m = do
+asTopPassM :: NormM a -> TopPassM (NormEnv, Scope) (a, [NDecl])
+asTopPassM m = do
   (env, scope) <- getEnv
   (ans, (decls, scope')) <- liftEither $ runCatT (runReaderT m env) ([], scope)
   putEnv (asSnd scope')
@@ -225,10 +228,13 @@ type SimplifyM a = ReaderT SimpEnv (Either Err) a
 -- TODO: consider maintaining free variables explicitly
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
-simpPass :: NTopDecl -> TopPass SimpEnv NTopDecl
-simpPass topDecl = case topDecl of
+simpPass :: TopPass NTopDecl NTopDecl
+simpPass = TopPass simpPass'
+
+simpPass' :: NTopDecl -> TopPassM SimpEnv NTopDecl
+simpPass' topDecl = case topDecl of
   NTopDecl decl -> do
-    (decls, env) <- simpAsTopPass $ simplifyDecl decl
+    (decls, env) <- simpAsTopPassM $ simplifyDecl decl
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return decl'
@@ -239,13 +245,13 @@ simpPass topDecl = case topDecl of
   NEvalCmd NoOp -> return (NEvalCmd NoOp)
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
     -- TODO: handle type vars
-    expr' <- simpAsTopPass $ simplify expr
+    expr' <- simpAsTopPassM $ simplify expr
     case cmd of Passes -> writeOutText $ "\n\nSimp\n" ++ pprint expr'
                 _ -> return ()
     return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
-simpAsTopPass :: SimplifyM a -> TopPass SimpEnv a
-simpAsTopPass m = do
+simpAsTopPassM :: SimplifyM a -> TopPassM SimpEnv a
+simpAsTopPassM m = do
   env <- getEnv
   liftEither $ runReaderT m env
 
@@ -560,7 +566,7 @@ refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
 
 -- === stripping annotations ===
 
-stripAnnotPass :: NTopDecl -> TopPass () NTopDecl
+stripAnnotPass :: NTopDecl -> TopPassM () NTopDecl
 stripAnnotPass topDecl = return $ case topDecl of
   NTopDecl decl -> NTopDecl $ stripDerivAnnotDecl decl
   NEvalCmd NoOp -> NEvalCmd NoOp

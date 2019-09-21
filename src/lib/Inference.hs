@@ -28,8 +28,11 @@ type InferM a = ReaderT (Ctx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
-typePass :: UTopDecl -> TopPass TypeEnv TopDecl
-typePass tdecl = case tdecl of
+typePass :: TopPass UTopDecl TopDecl
+typePass = TopPass typePass'
+
+typePass' :: UTopDecl -> TopPassM TypeEnv TopDecl
+typePass' tdecl = case tdecl of
   TopDecl decl -> do
     (decl', env') <- liftTop $ inferDecl decl
     putEnv env'
@@ -48,7 +51,7 @@ typePass tdecl = case tdecl of
                     _      -> return ()
         return $ EvalCmd (Command cmd expr')
 
-liftTop :: InferM a -> TopPass TypeEnv a
+liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do
   env <- getEnv
   source <- getSource

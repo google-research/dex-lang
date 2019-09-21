@@ -21,15 +21,18 @@ import Cat
 type TypeEnv = FullEnv SigmaType Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
-checkTyped :: TopDecl -> TopPass TypeEnv TopDecl
-checkTyped decl = decl <$ case decl of
+checkTyped :: TopPass TopDecl TopDecl
+checkTyped = TopPass checkTyped'
+
+checkTyped' :: TopDecl -> TopPassM TypeEnv TopDecl
+checkTyped' decl = decl <$ case decl of
   TopDecl decl' -> do
     env <- liftTop (pprint decl') (getTypeDecl True decl')
     putEnv env
   EvalCmd NoOp -> return ()
   EvalCmd (Command _ expr) -> void $ liftTop (pprint expr) (getType' True expr)
 
-liftTop :: String -> TypeM a -> TopPass TypeEnv a
+liftTop :: String -> TypeM a -> TopPassM TypeEnv a
 liftTop ctx m = do
   env <- getEnv
   liftEither $ addContext ctx $ evalTypeM env m
@@ -261,8 +264,11 @@ subAtDepth d f ty = case ty of
 type NTypeEnv = FullEnv NType ()
 type NTypeM a = ReaderT NTypeEnv (Either Err) a
 
-checkNExpr :: NTopDecl -> TopPass NTypeEnv NTopDecl
-checkNExpr topDecl = topDecl <$ case topDecl of
+checkNExpr :: TopPass NTopDecl NTopDecl
+checkNExpr = TopPass checkNExpr'
+
+checkNExpr' :: NTopDecl -> TopPassM NTypeEnv NTopDecl
+checkNExpr' topDecl = topDecl <$ case topDecl of
   NTopDecl decl -> do
     env <- liftPass $ checkNDecl decl
     putEnv env
@@ -271,7 +277,7 @@ checkNExpr topDecl = topDecl <$ case topDecl of
     tys' <- getNType expr
     assertEq tys tys' ""
   where
-    liftPass :: NTypeM a -> TopPass NTypeEnv a
+    liftPass :: NTypeM a -> TopPassM NTypeEnv a
     liftPass m = do env <- getEnv
                     liftEither $ runReaderT m env
 

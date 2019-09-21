@@ -35,7 +35,7 @@ import Record
 type FileName = String
 type Key = Int
 type ResultSet = (SetVal [Key], MonMap Key Result)
-type FullPass env = UTopDecl -> TopPass env ()
+type FullPass env = UTopDecl -> TopPassM env ()
 
 runWeb :: Monoid env => FileName -> FullPass env -> env -> IO ()
 runWeb fname pass env = runActor $ do
@@ -151,7 +151,7 @@ data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: Monoid env => String -> env -> TopPass env ()
+worker :: Monoid env => String -> env -> TopPassM env ()
             -> PChan Result
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()
@@ -172,9 +172,9 @@ worker source initEnv pass resultChan parentChans = do
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
 execPass :: Monoid env =>
-              String -> env -> TopPass env () -> PChan env -> PChan Result -> Actor msg ()
+              String -> env -> TopPassM env () -> PChan env -> PChan Result -> Actor msg ()
 execPass source env pass envChan resultChan = do
-  (ans, env') <- liftIO $ runTopPass (outChan, source) env pass
+  (ans, env') <- liftIO $ runTopPassM (outChan, source) env pass
   envChan    `send` (env <> env')
   -- TODO: consider just throwing IO error and letting the supervisor catch it
   resultChan `send` case ans of Left e   -> resultErr e

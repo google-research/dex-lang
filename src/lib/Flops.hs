@@ -18,11 +18,14 @@ newtype Profile = Profile (M.Map Builtin Count)
 
 type FlopM a = ReaderT Term (Writer Profile) a
 
-flopsPass :: ImpDecl -> TopPass () ImpDecl
-flopsPass (ImpEvalCmd _ _ (Command Flops prog)) = do
+flopsPass :: TopPass ImpDecl ImpDecl
+flopsPass = TopPass flopsPass'
+
+flopsPass' :: ImpDecl -> TopPassM () ImpDecl
+flopsPass' (ImpEvalCmd _ _ (Command Flops prog)) = do
     writeOutText $ pprint $ snd $ runWriter (runReaderT (flops prog) (litTerm 1))
     return $ ImpEvalCmd (const undefined) [] NoOp
-flopsPass decl = return decl
+flopsPass' decl = return decl
 
 flops :: ImpProg -> FlopM ()
 flops (ImpProg []) = return ()

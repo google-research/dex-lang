@@ -39,25 +39,27 @@ declAsJaxpr decl = throw CompilerErr $ "Can't compile to jaxpr: " ++ pprint decl
 exprAsJaxpr :: Expr -> Except Jaxpr
 exprAsJaxpr = undefined
 
+fullPass :: TopPass UTopDecl TopDecl
 fullPass = deShadowPass >+> typePass >+> checkTyped
 
 loadSource :: CString -> IO CString
 loadSource = callSerialized loadSource'
 
 loadSource' :: String -> IO [(String, Jaxpr)]
-loadSource' source = do
-  decls <- liftErrIO $ parseProg source
-  decls' <- evalStateT (mapM (evalDecl source . fullPass . snd) decls) mempty
-  liftErrIO $ mapM declAsJaxpr decls'
+loadSource' source = case fullPass of
+  TopPass f -> do
+    decls <- liftErrIO $ parseProg source
+    decls' <- evalStateT (mapM (evalDecl source . f . snd) decls) mempty
+    liftErrIO $ mapM declAsJaxpr decls'
 
 liftErrIO :: Except a -> IO a
 liftErrIO (Left e)  = putStrLn (pprint e) >> exitFailure
 liftErrIO (Right x) = return x
 
-evalDecl :: Monoid env => String -> TopPass env TopDecl -> StateT env IO TopDecl
+evalDecl :: Monoid env => String -> TopPassM env TopDecl -> StateT env IO TopDecl
 evalDecl source pass = do
   env <- get
-  (ans, env') <- liftIO $ runTopPass (printErr . resultText, source) env pass
+  (ans, env') <- liftIO $ runTopPassM (printErr . resultText, source) env pass
   modify $ (<> env')
   case ans of Left e -> error (pprint e)
               Right decl -> return decl

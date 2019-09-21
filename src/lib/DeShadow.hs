@@ -16,8 +16,11 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
 type DeShadowEnv = (Env Name, Env Type)
 
-deShadowPass :: UTopDecl -> TopPass (DeShadowEnv, FreshScope) UTopDecl
-deShadowPass topDecl = case topDecl of
+deShadowPass :: TopPass UTopDecl UTopDecl
+deShadowPass = TopPass deShadowPass'
+
+deShadowPass' :: UTopDecl -> TopPassM (DeShadowEnv, FreshScope) UTopDecl
+deShadowPass' topDecl = case topDecl of
   TopDecl decl -> do decl' <- catToTop $ deShadowDecl decl
                      return $ case decl' of
                        Just decl'' ->  TopDecl decl''
@@ -29,7 +32,7 @@ deShadowPass topDecl = case topDecl of
                 _ -> return ()
     return $ EvalCmd (Command cmd expr')
   where
-    deShadowTop :: UExpr -> TopPass (DeShadowEnv, FreshScope) UExpr
+    deShadowTop :: UExpr -> TopPassM (DeShadowEnv, FreshScope) UExpr
     deShadowTop expr = do
       (env, scope) <- getEnv
       liftEither $ runFreshRT (runReaderT (deShadowExpr expr) env) scope
@@ -152,7 +155,7 @@ withCat m cont = do
   (ans, (env', scope')) <- liftEither $ flip runCatT (env, scope) m
   extendR env' $ localFresh (<> scope') $ cont ans
 
-catToTop :: DeShadowCat a -> TopPass (DeShadowEnv, FreshScope) a
+catToTop :: DeShadowCat a -> TopPassM (DeShadowEnv, FreshScope) a
 catToTop m = do
   env <- getEnv
   (ans, env') <- liftEither $ flip runCatT env m

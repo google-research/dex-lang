@@ -1,9 +1,10 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE GADTs #-}
 
-module Pass (Pass, TopPass, runPass, liftTopPass, evalPass, assertEq,
-             ignoreExcept, runTopPass, putEnv, getEnv, writeOut,
-             (>+>), throwIf, getSource, writeOutText) where
+module Pass (Pass, TopPassM, runPass, liftTopPassM, evalPass, assertEq,
+             ignoreExcept, runTopPassM, putEnv, getEnv, writeOut,
+             (>+>), throwIf, getSource, writeOutText, TopPass (..)) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -20,57 +21,58 @@ import PPrint
 type OutChan = Output -> IO ()
 type Source = String
 type Cfg = (OutChan, Source)
-newtype TopPass env a = TopPass (ReaderT (env, Cfg)
+newtype TopPassM env a = TopPassM (ReaderT (env, Cfg)
                                    (ExceptT Err
                                       (WriterT env IO)) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadError Err)
 
-getEnv :: Monoid env => TopPass env env
-getEnv = TopPass $ asks $ fst
+data TopPass a b where
+  TopPass :: Monoid env => (a -> TopPassM env b) -> TopPass a b
 
-putEnv :: Monoid env => env -> TopPass env ()
-putEnv env = TopPass $ tell env
+getEnv :: Monoid env => TopPassM env env
+getEnv = TopPassM $ asks $ fst
 
-writeOut :: Monoid env => Output -> TopPass env ()
+putEnv :: Monoid env => env -> TopPassM env ()
+putEnv env = TopPassM $ tell env
+
+writeOut :: Monoid env => Output -> TopPassM env ()
 writeOut output = do chanWrite <- getOutChan
                      liftIO $ chanWrite output
 
-writeOutText :: Monoid env => String -> TopPass env ()
+writeOutText :: Monoid env => String -> TopPassM env ()
 writeOutText s = writeOut [TextOut s]
 
-getOutChan :: Monoid env => TopPass env OutChan
-getOutChan = TopPass $ asks $ fst . snd
+getOutChan :: Monoid env => TopPassM env OutChan
+getOutChan = TopPassM $ asks $ fst . snd
 
-getSource :: Monoid env => TopPass env Source
-getSource = TopPass $ asks $ snd . snd
+getSource :: Monoid env => TopPassM env Source
+getSource = TopPassM $ asks $ snd . snd
 
-runTopPass :: Cfg -> env -> TopPass env a -> IO (Except a, env)
-runTopPass cfg env (TopPass m) =
+runTopPassM :: Cfg -> env -> TopPassM env a -> IO (Except a, env)
+runTopPassM cfg env (TopPassM m) =
   runWriterT $ runExceptT $ runReaderT m (env, cfg)
 
-liftTopPass :: Monoid env =>
-                 state -> FreshScope -> Pass env state a -> TopPass env a
-liftTopPass state_ scope m = do
+liftTopPassM :: Monoid env =>
+                 state -> FreshScope -> Pass env state a -> TopPassM env a
+liftTopPassM state_ scope m = do
   env <- getEnv
   liftEither $ evalPass env state_ scope m
 
 infixl 1 >+>
-(>+>) :: (Monoid env1, Monoid env2)
-      => (a -> TopPass env1 b)
-      -> (b -> TopPass env2 c)
-      -> (a -> TopPass (env1, env2) c)
-(>+>) f1 f2 x = do (env1, env2) <- getEnv
-                   (y, env1') <- liftEnv env1 (f1 x)
-                   (z, env2') <- liftEnv env2 (f2 y)
-                   putEnv (env1', env2')
-                   return z
+(>+>) :: TopPass a b -> TopPass b c -> TopPass a c
+(>+>) (TopPass f1) (TopPass f2) = TopPass $ \x -> do
+  (env1, env2) <- getEnv
+  (y, env1') <- liftEnv env1 (f1 x)
+  (z, env2') <- liftEnv env2 (f2 y)
+  putEnv (env1', env2')
+  return z
 
 liftEnv :: (Monoid env, Monoid env') =>
-             env -> TopPass env a -> TopPass env' (a, env)
+             env -> TopPassM env a -> TopPassM env' (a, env)
 liftEnv env m = do
   c <- getOutChan
   s <- getSource
-  (x, env') <- liftIO $ runTopPass (c,s)env m
+  (x, env') <- liftIO $ runTopPassM (c,s)env m
   x' <- liftEither x
   return (x', env')
 

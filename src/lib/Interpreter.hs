@@ -29,8 +29,11 @@ type Scope = Env ()
 type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 type ReduceM a = Reader SubstEnv a
 
-interpPass :: TopDecl -> TopPass SubstEnv ()
-interpPass topDecl = () <$ case topDecl of
+interpPass :: TopPass TopDecl ()
+interpPass = TopPass interpPass'
+
+interpPass' :: TopDecl -> TopPassM SubstEnv ()
+interpPass' topDecl = () <$ case topDecl of
   TopDecl decl -> do
     env <- getEnv
     putEnv $ runReader (reduceDecl decl) env
