@@ -91,8 +91,8 @@ evalWeb pass fname = do
 #endif
 
 printResult :: SourceBlock -> Result -> String
-printResult _ result = case result of
-  Left err  -> pprint err
+printResult (source, _) result = case result of
+  Left err  -> pprint (addErrSource source err)
   Right out -> pprint out
 
 printLiterate :: SourceBlock -> Result -> String

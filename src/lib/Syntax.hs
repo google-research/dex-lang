@@ -295,9 +295,8 @@ addContext :: MonadError Err m => String -> m a -> m a
 addContext s m = modifyErr m $ \(Err e p s') ->
                                  Err e p (s' ++ "\ncontext:\n" ++ s)
 
-addErrSource :: MonadError Err m => String -> m a -> m a
-addErrSource s m = modifyErr m $ \(Err e p s') ->
-  case p of
+addErrSource :: String -> Err -> Err
+addErrSource s (Err e p s') = case p of
     Nothing -> Err e p s'
     Just pos -> Err e p $ s' ++ "\n\n" ++ highlightRegion pos s
 
