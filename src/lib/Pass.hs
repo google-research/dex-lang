@@ -30,11 +30,11 @@ infixl 1 >+>
 (>+>) (TopPass f1) (TopPass f2) = TopPass $ \x -> do
   (env1, env2) <- look
   (y, env1') <- liftIO $ runTopPassM env1 (f1 x)
-  y' <- liftEither y
   extend (env1', mempty)
+  y' <- liftEither y
   (z, env2') <- liftIO $ runTopPassM env2 (f2 y')
-  z' <- liftEither z
   extend (mempty, env2')
+  z' <- liftEither z
   return z'
 
 throwTopErr :: Err -> TopPassM env a

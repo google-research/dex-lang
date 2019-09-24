@@ -97,7 +97,7 @@ printResult _ result = case result of
 
 printLiterate :: SourceBlock -> Result -> String
 printLiterate block@(source, _) result =
-  source ++ "\n" ++ formatResult (printResult block result) ++ "\n"
+  source ++ formatResult (printResult block result)
   where
     formatResult :: String -> String
     formatResult = unlines . map ("> " ++) . lines
