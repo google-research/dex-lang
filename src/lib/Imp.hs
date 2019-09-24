@@ -3,7 +3,6 @@
 module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
-import Control.Monad.Except (liftEither)
 import Data.Foldable
 
 import Syntax
@@ -21,28 +20,23 @@ type ImpEnv = (Env IExpr, Env ())
 type ImpM a = ReaderT ImpEnv (Either Err) a
 
 impPass :: TopPass NTopDecl ImpDecl
-impPass = TopPass impPass'
-
-impPass' :: NTopDecl -> TopPassM ImpEnv ImpDecl
-impPass' decl = case decl of
+impPass = TopPass $ \decl -> case decl of
   NTopDecl decl' -> do
     (bs, prog, env) <- liftTop $ toImpDecl decl'
-    putEnv env
+    extend env
     return $ ImpTopLet bs prog
-  NEvalCmd NoOp -> return noOpCmd
   NEvalCmd (Command cmd (ty, ts, expr)) -> do
     ts' <- liftTop $ mapM toImpType ts
     let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts']
     prog <- liftTop $ toImp (map asDest bs) expr
-    case cmd of Passes -> writeOutText $ "\n\nImp\n" ++ pprint prog
-                _ -> return ()
-    return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
+    case cmd of
+      Passes -> emitOutput $ TextOut $ "\n\nImp\n" ++ pprint prog
+      _ -> return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
   where
-    noOpCmd = ImpEvalCmd (const undefined) [] NoOp
     liftTop :: ImpM a -> TopPassM ImpEnv a
     liftTop m = do
-      env <- getEnv
-      liftEither $ runReaderT m env
+      env <- look
+      liftExceptTop $ runReaderT m env
 
 toImp :: [Dest] -> NExpr -> ImpM ImpProg
 toImp dests expr = case expr of
@@ -177,7 +171,7 @@ reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
 
 -- === type checking imp programs ===
 
-type ImpCheckM a = Pass (Env IType) () a
+type ImpCheckM a = ReaderT (Env IType) (Either Err) a
 
 checkImp :: TopPass ImpDecl ImpDecl
 checkImp = TopPass checkImp'
@@ -186,15 +180,14 @@ checkImp' :: ImpDecl -> TopPassM (Env IType) ImpDecl
 checkImp' decl = decl <$ case decl of
   ImpTopLet binders prog -> do
     check binders prog
-    putEnv $ bindFold binders
-  ImpEvalCmd _ _ NoOp -> return ()
+    extend $ bindFold binders
   ImpEvalCmd _ bs (Command _ prog) -> check bs prog
   where
     check :: [IBinder] -> ImpProg -> TopPassM (Env IType) ()
     check bs prog = do
-      env <- getEnv
-      liftEither $ addContext (pprint prog) $
-          evalPass (env <> bindFold bs) () mempty (checkProg prog)
+      env <- look
+      liftExceptTop $ addContext (pprint prog) $
+         runReaderT (checkProg prog) (env <> bindFold bs)
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements

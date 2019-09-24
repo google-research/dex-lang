@@ -23,8 +23,8 @@ flopsPass = TopPass flopsPass'
 
 flopsPass' :: ImpDecl -> TopPassM () ImpDecl
 flopsPass' (ImpEvalCmd _ _ (Command Flops prog)) = do
-    writeOutText $ pprint $ snd $ runWriter (runReaderT (flops prog) (litTerm 1))
-    return $ ImpEvalCmd (const undefined) [] NoOp
+  let ans = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
+  emitOutput $ TextOut $ pprint ans
 flopsPass' decl = return decl
 
 flops :: ImpProg -> FlopM ()

@@ -1,6 +1,6 @@
 {-# LANGUAGE FlexibleContexts #-}
 
-module DeShadow (deShadowPass) where
+module DeShadow (sourcePass, deShadowPass) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -16,26 +16,31 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
 type DeShadowEnv = (Env Name, Env Type)
 
-deShadowPass :: TopPass UTopDecl UTopDecl
-deShadowPass = TopPass deShadowPass'
+sourcePass :: TopPass SourceBlock UTopDecl
+sourcePass = TopPass sourcePass'
 
-deShadowPass' :: UTopDecl -> TopPassM (DeShadowEnv, FreshScope) UTopDecl
-deShadowPass' topDecl = case topDecl of
+sourcePass' :: SourceBlock -> TopPassM () UTopDecl
+sourcePass' (_, block) = case block of
+  UTopDecl decl -> return decl
+  ProseBlock _ -> emitOutput NoOutput
+  SourceParseErr s -> throwTopErr $ Err ParseErr Nothing s
+
+deShadowPass :: TopPass UTopDecl UTopDecl
+deShadowPass = TopPass $ \topDecl ->  case topDecl of
   TopDecl decl -> do decl' <- catToTop $ deShadowDecl decl
-                     return $ case decl' of
-                       Just decl'' ->  TopDecl decl''
-                       Nothing -> EvalCmd NoOp
-  EvalCmd NoOp -> return (EvalCmd NoOp)
+                     case decl' of
+                       Just decl'' -> return $ TopDecl decl''
+                       Nothing -> emitOutput NoOutput
   EvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
-    case cmd of Passes -> writeOutText $ "\n\nDeshadowed\n" ++ show expr'
-                _ -> return ()
-    return $ EvalCmd (Command cmd expr')
-  where
-    deShadowTop :: UExpr -> TopPassM (DeShadowEnv, FreshScope) UExpr
-    deShadowTop expr = do
-      (env, scope) <- getEnv
-      liftEither $ runFreshRT (runReaderT (deShadowExpr expr) env) scope
+    case cmd of
+      Passes -> emitOutput $ TextOut $ "\n\nDeshadowed\n" ++ show expr'
+      _ -> return $ EvalCmd (Command cmd expr')
+
+deShadowTop :: UExpr -> TopPassM (DeShadowEnv, FreshScope) UExpr
+deShadowTop expr = do
+  (env, scope) <- look
+  liftExceptTop $ runFreshRT (runReaderT (deShadowExpr expr) env) scope
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
@@ -157,7 +162,7 @@ withCat m cont = do
 
 catToTop :: DeShadowCat a -> TopPassM (DeShadowEnv, FreshScope) a
 catToTop m = do
-  env <- getEnv
-  (ans, env') <- liftEither $ flip runCatT env m
-  putEnv env'
+  env <- look
+  (ans, env') <- liftExceptTop $ flip runCatT env m
+  extend env'
   return ans

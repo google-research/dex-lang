@@ -29,35 +29,29 @@ type InferM a = ReaderT (Ctx, TypeEnv) (
                     (CatT QVars (Either Err))) a
 
 typePass :: TopPass UTopDecl TopDecl
-typePass = TopPass typePass'
-
-typePass' :: UTopDecl -> TopPassM TypeEnv TopDecl
-typePass' tdecl = case tdecl of
+typePass = TopPass $ \tdecl -> case tdecl of
   TopDecl decl -> do
     (decl', env') <- liftTop $ inferDecl decl
-    putEnv env'
+    extend env'
     return $ TopDecl decl'
-  EvalCmd NoOp -> return (EvalCmd NoOp)
   -- TODO: special case for `GetType (Var v [])` which can be polymorphic
   EvalCmd (Command cmd expr) -> do
     case cmd of
       GetType -> do
         (ty, _) <- liftTop $ inferAndGeneralize expr
-        writeOutText (pprint ty)
-        return $ EvalCmd NoOp
+        emitOutput $ TextOut $ pprint ty
       _ -> do
         (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
-        case cmd of Passes -> writeOutText ("\nSystem F\n" ++ pprint expr')
-                    _      -> return ()
-        return $ EvalCmd (Command cmd expr')
+        case cmd of
+          Passes -> emitOutput $ TextOut $ "\nSystem F\n" ++ pprint expr'
+          _      -> return $ EvalCmd (Command cmd expr')
 
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do
-  env <- getEnv
-  source <- getSource
+  env <- look
   -- TODO: check returned qs and cs are empty
-  ((ans, _), _) <- addErrSource source $ liftEither $ flip runCatT mempty $
-                     runWriterT $ flip runReaderT (Nothing, env) $ m
+  ((ans, _), _) <- liftExceptTop $ flip runCatT mempty $
+                        runWriterT $ flip runReaderT (Nothing, env) $ m
   return ans
 
 inferDecl :: UDecl -> InferM (Decl, TypeEnv)

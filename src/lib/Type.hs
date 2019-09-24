@@ -22,20 +22,16 @@ type TypeEnv = FullEnv SigmaType Kind
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkTyped :: TopPass TopDecl TopDecl
-checkTyped = TopPass checkTyped'
-
-checkTyped' :: TopDecl -> TopPassM TypeEnv TopDecl
-checkTyped' decl = decl <$ case decl of
+checkTyped = TopPass $ \decl -> decl <$ case decl of
   TopDecl decl' -> do
     env <- liftTop (pprint decl') (getTypeDecl True decl')
-    putEnv env
-  EvalCmd NoOp -> return ()
+    extend env
   EvalCmd (Command _ expr) -> void $ liftTop (pprint expr) (getType' True expr)
 
 liftTop :: String -> TypeM a -> TopPassM TypeEnv a
 liftTop ctx m = do
-  env <- getEnv
-  liftEither $ addContext ctx $ evalTypeM env m
+  env <- look
+  liftExceptTop $ addContext ctx $ evalTypeM env m
 
 getType :: FullEnv SigmaType a -> Expr -> Type
 getType env expr =
@@ -264,22 +260,18 @@ subAtDepth d f ty = case ty of
 type NTypeEnv = FullEnv NType ()
 type NTypeM a = ReaderT NTypeEnv (Either Err) a
 
-checkNExpr :: TopPass NTopDecl NTopDecl
-checkNExpr = TopPass checkNExpr'
-
-checkNExpr' :: NTopDecl -> TopPassM NTypeEnv NTopDecl
-checkNExpr' topDecl = topDecl <$ case topDecl of
+checkNExpr ::TopPass NTopDecl NTopDecl
+checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
   NTopDecl decl -> do
     env <- liftPass $ checkNDecl decl
-    putEnv env
-  NEvalCmd NoOp -> return ()
+    extend env
   NEvalCmd (Command _ (_, tys, expr)) -> liftPass $ do
     tys' <- getNType expr
     assertEq tys tys' ""
   where
     liftPass :: NTypeM a -> TopPassM NTypeEnv a
-    liftPass m = do env <- getEnv
-                    liftEither $ runReaderT m env
+    liftPass m = do env <- look
+                    liftExceptTop $ runReaderT m env
 
 getNType :: NExpr -> NTypeM [NType]
 getNType expr = case expr of

@@ -6,6 +6,7 @@ module Interpreter (interpPass, Subst, subst) where
 import Control.Monad.Reader
 import Data.Foldable (fold, toList)
 import Data.List (mapAccumL)
+import Data.Void
 
 import Syntax
 import Env
@@ -29,18 +30,19 @@ type Scope = Env ()
 type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 type ReduceM a = Reader SubstEnv a
 
-interpPass :: TopPass TopDecl ()
+interpPass :: TopPass TopDecl Void
 interpPass = TopPass interpPass'
 
-interpPass' :: TopDecl -> TopPassM SubstEnv ()
-interpPass' topDecl = () <$ case topDecl of
+interpPass' :: TopDecl -> TopPassM SubstEnv Void
+interpPass' topDecl = case topDecl of
   TopDecl decl -> do
-    env <- getEnv
-    putEnv $ runReader (reduceDecl decl) env
+    env <- look
+    extend $ runReader (reduceDecl decl) env
+    emitOutput NoOutput
   EvalCmd (Command (EvalExpr Printed) expr) -> do
-    env <- getEnv
-    writeOutText $ pprint $ runReader (reduce expr) env
-  _ -> return ()
+    env <- look
+    emitOutput $ TextOut $ pprint $ runReader (reduce expr) env
+  _ -> emitOutput NoOutput
 
 reduce :: Expr -> ReduceM Val
 reduce expr = case expr of

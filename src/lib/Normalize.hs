@@ -4,7 +4,6 @@ module Normalize (normalizePass, simpPass, stripAnnotPass) where
 
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Except hiding (Except)
 import Data.Foldable
 
 import Env
@@ -21,35 +20,31 @@ data TLamEnv = TLamContents NormEnv [TBinder] Expr
 type NormEnv = FullEnv (SigmaType, Either (RecTree Name) TLamEnv) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
-normalizePass :: TopPass TopDecl NTopDecl
-normalizePass = TopPass normalizePass'
-
 -- TODO: add top-level freshness scope to top-level env
-normalizePass' :: TopDecl -> TopPassM (NormEnv, Scope) NTopDecl
-normalizePass' topDecl = case topDecl of
+normalizePass :: TopPass TopDecl NTopDecl
+normalizePass = TopPass $ \topDecl -> case topDecl of
   TopDecl decl -> do
     (env, decls) <- asTopPassM (normalizeDecl decl)
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return $ decl'
       _ -> error "Multiple decls not implemented"
-    putEnv (asFst env)
+    extend (asFst env)
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
-  EvalCmd NoOp -> return (NEvalCmd NoOp)
   EvalCmd (Command cmd expr) -> do
     (ty   , _) <- asTopPassM $ exprType expr -- TODO: subst type vars
     (expr', _) <- asTopPassM $ normalizeScoped expr
     (ntys , _) <- asTopPassM $ normalizeTy ty
-    case cmd of Passes -> writeOutText $ "\n\nNormalized\n" ++ pprint expr'
-                _ -> return ()
-    return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
+    case cmd of
+      Passes -> emitOutput $ TextOut $ "\n\nNormalized\n" ++ pprint expr'
+      _ -> return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
 
 asTopPassM :: NormM a -> TopPassM (NormEnv, Scope) (a, [NDecl])
 asTopPassM m = do
-  (env, scope) <- getEnv
-  (ans, (decls, scope')) <- liftEither $ runCatT (runReaderT m env) ([], scope)
-  putEnv (asSnd scope')
+  (env, scope) <- look
+  (ans, (decls, scope')) <- liftExceptTop $ runCatT (runReaderT m env) ([], scope)
+  extend (asSnd scope')
   return (ans, decls)
 
 normalize :: Expr -> NormM NExpr
@@ -229,31 +224,27 @@ type SimplifyM a = ReaderT SimpEnv (Either Err) a
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
 simpPass :: TopPass NTopDecl NTopDecl
-simpPass = TopPass simpPass'
-
-simpPass' :: NTopDecl -> TopPassM SimpEnv NTopDecl
-simpPass' topDecl = case topDecl of
+simpPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl decl -> do
     (decls, env) <- simpAsTopPassM $ simplifyDecl decl
     decl' <- case decls of
       [] -> return $ dummyDecl
       [decl'] -> return decl'
       _ -> error "Multiple decls not implemented"
-    putEnv env
+    extend env
     return $ NTopDecl decl'
     where dummyDecl = NLet [] (NAtoms [])
-  NEvalCmd NoOp -> return (NEvalCmd NoOp)
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
     -- TODO: handle type vars
     expr' <- simpAsTopPassM $ simplify expr
-    case cmd of Passes -> writeOutText $ "\n\nSimp\n" ++ pprint expr'
-                _ -> return ()
-    return $ NEvalCmd (Command cmd (ty, ntys, expr'))
+    case cmd of
+      Passes -> emitOutput $ TextOut $ "\n\nSimp\n" ++ pprint expr'
+      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
 simpAsTopPassM :: SimplifyM a -> TopPassM SimpEnv a
 simpAsTopPassM m = do
-  env <- getEnv
-  liftEither $ runReaderT m env
+  env <- look
+  liftExceptTop $ runReaderT m env
 
 simplify :: NExpr -> SimplifyM NExpr
 simplify expr = case expr of
@@ -569,7 +560,6 @@ refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
 stripAnnotPass :: NTopDecl -> TopPassM () NTopDecl
 stripAnnotPass topDecl = return $ case topDecl of
   NTopDecl decl -> NTopDecl $ stripDerivAnnotDecl decl
-  NEvalCmd NoOp -> NEvalCmd NoOp
   NEvalCmd (Command cmd (ty, tys, expr)) ->
     NEvalCmd (Command cmd (ty, tys, expr'))
     where expr' = stripDerivAnnot expr

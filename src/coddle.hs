@@ -4,7 +4,7 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
 import Data.Semigroup ((<>))
-import Data.Text.Prettyprint.Doc
+import Data.Void
 
 import Syntax
 import PPrint
@@ -23,49 +23,51 @@ import WebOutput
 import Normalize
 import Interpreter
 
-type ResultChan = Result -> IO ()
-type FullPass env = UTopDecl -> TopPassM env ()
+type FullPass env = SourceBlock -> TopPassM env Void
 data EvalMode = ReplMode | WebMode String | ScriptMode String
 data CmdOpts = CmdOpts { programSource :: Maybe String
                        , webOutput     :: Bool
                        , useInterpreter :: Bool}
 
-fullPass :: TopPass UTopDecl ()
-fullPass = deShadowPass
-       >+> typePass      >+> checkTyped
-       >+> normalizePass >+> checkNExpr
-       >+> simpPass      >+> checkNExpr
-       -- >+> stripAnnotPass >+> checkNExpr
-       >+> impPass       >+> checkImp
-       >+> flopsPass
-       >+> jitPass
+typeCheckPass :: TopPass SourceBlock TopDecl
+typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkTyped
 
-fullPassInterp :: TopPass UTopDecl ()
-fullPassInterp = deShadowPass >+> typePass >+> checkTyped >+> interpPass
+fullPassInterp :: TopPass SourceBlock Void
+fullPassInterp = typeCheckPass >+> interpPass
 
-parseFile :: MonadIO m => String -> m (String, [(String, UTopDecl)])
-parseFile fname = liftIO $ do
-  source <- readFile fname
-  liftIO $ case parseProg source of
-    Left e -> putStrLn (pprint e) >> exitFailure
-    Right decls -> return (source, decls)
+fullPassJit :: TopPass SourceBlock Void
+fullPassJit = typeCheckPass
+          >+> normalizePass >+> checkNExpr
+          >+> simpPass      >+> checkNExpr
+          >+> impPass       >+> checkImp
+          >+> flopsPass
+          >+> jitPass
+
+evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
+evalDecl pass block = do
+  env <- get
+  ~(Left ans, env') <- liftIO $ runTopPassM env (pass block)
+  modify (<> env')
+  return ans
+
+evalFile :: Monoid env =>
+              FullPass env-> String -> StateT env IO [(SourceBlock, Result)]
+evalFile pass fname = do
+  source <- liftIO $ readFile fname
+  let sourceBlocks = parseProg source
+  results <- mapM (evalDecl pass) sourceBlocks
+  return $ zip sourceBlocks results
 
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
-  (source, prog) <- parseFile "prelude.cod"
-  mapM_ (evalDecl source printErr . pass . snd) prog
-  where
-    printErr (Result _ status _ ) = case status of
-      Set (Failed e) -> putStrLn $ pprint e
-      _ -> return ()
+  result <- evalFile pass "prelude.cod"
+  void $ liftErrIO $ mapM snd result
 
 evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
   evalPrelude pass
-  (source, prog) <- parseFile fname
-  flip mapM_ prog $ \(declSource, decl) -> do
-    printIt "" (resultSource declSource)
-    evalDecl source (printIt "> ") (pass decl)
+  results <- evalFile pass fname
+  liftIO $ putStrLn $ unlines $ map (uncurry printLiterate) results
 
 evalRepl :: Monoid env => FullPass env-> StateT env IO ()
 evalRepl pass = do
@@ -74,21 +76,9 @@ evalRepl pass = do
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
-  (s, decl) <- readDecl "" ">=> "
-  lift $ evalDecl s (printIt "") (pass decl)
-
-readDecl :: String -> String -> InputT (StateT env IO) (String, UTopDecl)
-readDecl prevRead prompt = do
-  source <- getInputLine prompt
-  case source of
-    Nothing -> liftIO exitSuccess
-    Just s -> case parseTopDeclRepl s' of
-                Left e -> do printIt "" e
-                             readDecl "" ">=> "
-                Right (Just decl') -> return (s', decl')
-                Right Nothing -> readDecl s' dots
-      where s' = prevRead ++ s ++ "\n"
-            dots = replicate (length prompt - 1) '.' ++ " "
+  sourceBlock <- readMultiline ">=> " parseTopDeclRepl
+  result <- lift $ evalDecl pass sourceBlock
+  liftIO $ putStrLn $ printResult sourceBlock result
 
 evalWeb :: Monoid env => FullPass env -> String -> IO ()
 evalWeb pass fname = do
@@ -100,24 +90,35 @@ evalWeb pass fname = do
   undefined pass fname -- Silence the "Defined but not used" warning
 #endif
 
-evalDecl :: Monoid env =>
-              String -> ResultChan -> TopPassM env () -> StateT env IO ()
-evalDecl source write pass = do
-  env <- get
-  (ans, env') <- liftIO $ runTopPassM (write . resultText, source) env pass
-  modify $ (<> env')
-  liftIO $ write $ case ans of Left e   -> resultErr e
-                               Right () -> resultComplete
+printResult :: SourceBlock -> Result -> String
+printResult _ result = case result of
+  Left err  -> pprint err
+  Right out -> pprint out
 
-printIt :: (Pretty a, MonadIO m) => String -> a -> m ()
-printIt prefix x = liftIO $ putStrLn $ unlines
-                      [trim (prefix ++ s) | s <- lines (pprint x)]
+printLiterate :: SourceBlock -> Result -> String
+printLiterate block@(source, _) result =
+  source ++ "\n" ++ formatResult (printResult block result) ++ "\n"
   where
-    trim :: String -> String
-    trim s = reverse $ dropWhile (== ' ') $ reverse s
+    formatResult :: String -> String
+    formatResult = unlines . map ("> " ++) . lines
 
-runEnv :: (Monoid s, Monad m) => StateT s m a -> m a
-runEnv m = evalStateT m mempty
+liftErrIO :: MonadIO m => Except a -> m a
+liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
+liftErrIO (Right x) = return x
+
+readMultiline :: (MonadException m, MonadIO m) =>
+                   String -> (String -> Maybe a) -> InputT m a
+readMultiline prompt parse = loop prompt ""
+  where
+    dots = replicate (length prompt - 1) '.' ++ " "
+    loop prompt' prevRead = do
+      source <- getInputLine prompt'
+      case source of
+        Nothing -> liftIO exitSuccess
+        Just s -> case parse s' of
+          Just ans -> return ans
+          Nothing -> loop dots s'
+          where s' = prevRead ++ s ++ "\n"
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = info (p <**> helper) mempty
@@ -134,6 +135,7 @@ runMode evalMode pass = case evalMode of
   ReplMode         -> runEnv $ evalRepl   pass
   ScriptMode fname -> runEnv $ evalScript pass fname
   WebMode    fname -> evalWeb pass fname
+  where runEnv m = evalStateT m mempty
 
 main :: IO ()
 main = do
@@ -145,5 +147,5 @@ main = do
   if useInterpreter opts
     then case fullPassInterp of
            TopPass f -> runMode evalMode f
-    else  case fullPass of
+    else  case fullPassJit of
            TopPass f -> runMode evalMode f

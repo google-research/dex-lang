@@ -1,4 +1,4 @@
-module Parser (parseProg, parseTopDecl, parseTopDeclRepl, Prog) where
+module Parser (parseProg, parseTopDeclRepl) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -16,29 +16,25 @@ import Type
 import Inference
 import PPrint
 
-type Prog = [(String, UTopDecl)]
+parseProg :: String -> [SourceBlock]
+parseProg s = case parseit s $ many sourceBlock of Right ans -> ans
 
-parseProg :: String -> Except Prog
-parseProg s = parseit s $ many topDeclContext <* emptyLines
 
-parseTopDecl :: String -> Except UTopDecl
-parseTopDecl s = parseit s topDecl
-
-parseTopDeclRepl :: String -> Except (Maybe UTopDecl)
-parseTopDeclRepl s = parseit s (reportEOF topDecl)
+parseTopDeclRepl :: String -> Maybe SourceBlock
+parseTopDeclRepl s = case parseit s (reportEOF sourceBlock) of Right ans -> ans
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (p <* (optional eol >> eof)) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
 
-topDeclContext :: Parser (String, UTopDecl)
-topDeclContext = do
-  ans <- withSource (emptyLines >> topDecl <* emptyLines)
+sourceBlock :: Parser SourceBlock
+sourceBlock = do
+  (s, d) <- withSource (emptyLines >> topDecl <* emptyLines)
   blankLines
   outputLines
   blankLines
-  return ans
+  return $ (s, UTopDecl d)
 
 topDecl :: Parser UTopDecl
 topDecl =   explicitCommand

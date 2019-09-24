@@ -229,21 +229,15 @@ instance Pretty Vec where
   pretty (IntVec  xs) = p xs
   pretty (RealVec xs) = p xs
 
-instance Pretty EvalStatus where
-  pretty Complete = ""
-  pretty (Failed err) = p err
-
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
-instance Pretty Result where
-  pretty (Result x y z) = p x <> p y <> vsep (map p z)
-
-instance Pretty OutputElt where
-  pretty (TextOut s) = p s
+instance Pretty Output where
   pretty (ValOut Printed val) = p val
-  pretty _ = "<graphical output>"
+  pretty (ValOut _ _) = "<graphical output>"
+  pretty (TextOut s) = p s
+  pretty NoOutput = ""
 
 instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x

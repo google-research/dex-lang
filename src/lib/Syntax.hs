@@ -8,18 +8,18 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                DeclP (..), Decl, TopDecl, Command (..), UPat, Pat, SrcPos,
                CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..), OutputElt (..), OutFormat (..),
+               Except, Err (..), ErrType (..), OutFormat (..),
                throw, addContext, addErrSource, addErrSourcePos,
                FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result (..), freeVars,
-               Output, Nullable (..), SetVal (..), EvalStatus (..),
-               MonMap (..), resultSource, resultText, resultErr, resultComplete,
+               Value (..), Vec (..), Result, freeVars,
+               Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
-               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars
+               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
+               SourceBlock, SourceBlock' (..)
                ) where
 
 import Record
@@ -91,11 +91,10 @@ data Kind = TyKind  deriving (Show, Eq, Ord, Generic)
 idxSetKind :: Kind
 idxSetKind = TyKind
 
-
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))  deriving (Show, Eq, Generic)
 
-data Command expr = Command CmdName expr | NoOp  deriving (Show, Eq, Generic)
+data Command expr = Command CmdName expr  deriving (Show, Eq, Generic)
 
 type TBinder = BinderP Kind
 type IdxSet = Type
@@ -157,6 +156,12 @@ unitCon :: ExprP b
 unitCon = RecCon (Tup [])
 
 -- === source AST ===
+
+type SourceBlock = (String, SourceBlock')
+data SourceBlock' = UTopDecl UTopDecl
+                  | ProseBlock String -- TODO
+                  | SourceParseErr String
+                    deriving (Show, Eq, Generic)
 
 data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)
 
@@ -257,28 +262,12 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 
 -- === outputs ===
 
-data EvalStatus = Complete | Failed Err
-type Source = String
-type Output = [OutputElt]
+type Result = Except Output
 
-data OutputElt = TextOut String | ValOut OutFormat Value
-                   deriving (Show, Eq, Generic)
+data Output = ValOut OutFormat Value | TextOut String | NoOutput
+                deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)
-
-data Result = Result (SetVal Source) (SetVal EvalStatus) Output
-
-resultSource :: String -> Result
-resultSource s = Result (Set s) mempty mempty
-
-resultText :: Output -> Result
-resultText s = Result mempty mempty s
-
-resultErr :: Err -> Result
-resultErr e = Result mempty (Set (Failed e)) mempty
-
-resultComplete :: Result
-resultComplete = Result mempty (Set Complete)   mempty
 
 data Err = Err ErrType (Maybe SrcPos) String  deriving (Show)
 
@@ -317,12 +306,6 @@ addErrSourcePos pNew m = modifyErr m $ \(Err e pPrev s) ->
   case pPrev of
     Nothing -> Err e (Just pNew) s
     _ -> Err e pPrev s
-
-instance Semigroup Result where
-  Result x y z <> Result x' y' z' = Result (x<>x') (y<>y') (z<>z')
-
-instance Monoid Result where
-  mempty = Result mempty mempty mempty
 
 -- === misc ===
 
@@ -454,7 +437,6 @@ instance HasVars b => HasVars (DeclP b) where
 
 instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl decl) = freeVars decl
-  freeVars (EvalCmd NoOp) = mempty
   freeVars (EvalCmd (Command _ expr)) = freeVars expr
 
 instance HasVars b => HasVars (TLamP b) where
@@ -521,7 +503,6 @@ stripSrcAnnotDecl decl = case decl of
 
 stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
 stripSrcAnnotTopDecl (TopDecl decl) = TopDecl $ stripSrcAnnotDecl decl
-stripSrcAnnotTopDecl (EvalCmd NoOp) = EvalCmd NoOp
 stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))
 
 instance RecTreeZip Type where

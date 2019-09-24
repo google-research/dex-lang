@@ -13,11 +13,11 @@ import qualified LLVM.AST.IntegerPredicate as L
 import qualified LLVM.AST.FloatingPointPredicate as L
 
 import Control.Monad
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Monad.Except (liftEither)
 import Control.Applicative (liftA, liftA2)
 
+import Data.Void
 import Data.List (nub)
 import Data.Traversable
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
@@ -60,42 +60,42 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 
-type CompileM a = Pass ImpVarEnv CompileState a
+type CompileM a = ReaderT ImpVarEnv (StateT CompileState (FreshT (Either Err))) a
 data CompiledProg = CompiledProg Module
 data ExternFunSpec = ExternFunSpec String L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
 
-jitPass :: TopPass ImpDecl ()
+jitPass :: TopPass ImpDecl Void
 jitPass = TopPass jitPass'
 
-jitPass' :: ImpDecl -> TopPassM PersistEnv ()
+jitPass' :: ImpDecl -> TopPassM PersistEnv Void
 jitPass' decl = case decl of
   ImpTopLet bs prog -> do
     vals <- evalProg bs prog
-    putEnv $ bindFold $ zipWith replaceAnnot bs vals
-  ImpEvalCmd _ _ NoOp -> return ()
+    extend $ bindFold $ zipWith replaceAnnot bs vals
+    emitOutput NoOutput
   ImpEvalCmd cont bs (Command cmd prog) -> case cmd of
     LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
                llvm <- liftIO $ showLLVM m
-               writeOutText llvm
+               emitOutput $ TextOut llvm
     Asm -> do (_, CompiledProg m) <- toLLVM bs prog
               asm <- liftIO $ showAsm m
-              writeOutText asm
+              emitOutput $ TextOut asm
     EvalExpr fmt -> do vals <- evalProg bs prog
                        vecs <- liftIO $ mapM asVec vals
-                       env <- getEnv
+                       env <- look
                        let tenv = flip envMapMaybe env $ \v ->
                                     case v of
                                   ScalarVal w _ -> Just (fromIntegral w)
                                   _ -> Nothing
-                       writeOut [ValOut fmt $ cont tenv vecs]
+                       emitOutput $ ValOut fmt $ cont tenv vecs
     TimeIt -> do t1 <- liftIO getCurrentTime
                  _ <- evalProg bs prog
                  t2 <- liftIO getCurrentTime
-                 writeOutText $ show (t2 `diffUTCTime` t1)
-    _ -> return ()
+                 emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
+    _ -> error $ "Unexpected command: " ++ show cmd
 
 evalProg :: [IBinder] -> ImpProg -> TopPassM PersistEnv [PersistVal]
 evalProg bs prog = do
@@ -119,12 +119,13 @@ makeDestCell env (v :> IType ty shape) = do
 -- TODO: pass destinations as args rather than baking pointers into LLVM
 toLLVM :: [IBinder] -> ImpProg -> TopPassM PersistEnv ([PersistCell], CompiledProg)
 toLLVM bs prog = do
-  env <- getEnv
+  env <- look
   destCells <- liftIO $ mapM (makeDestCell env) bs
   let env' =    fmap (Left  . asCompileVal) env
              <> fmap (Right . asCompileCell) (bindFold destCells)
   let initState = CompileState [] [] [] "start_block" []
-  prog' <- liftEither $ evalPass env' initState mempty (compileTopProg prog)
+  prog' <- liftExceptTop $ flip runFreshT mempty $ flip evalStateT initState $
+                flip runReaderT env' $ compileTopProg prog
   return (map binderAnn destCells, prog')
 
 asCompileVal :: PersistVal -> CompileVal
