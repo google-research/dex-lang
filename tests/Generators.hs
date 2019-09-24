@@ -79,7 +79,7 @@ instance Arbitrary b => Arbitrary (BinderP b) where
   shrink = genericShrink
 
 instance Arbitrary expr => Arbitrary (Command expr) where
-  arbitrary = oneof [liftM2 Command arb arb, return NoOp]
+  arbitrary = liftM2 Command arb arb
   shrink = genericShrink
 
 instance Arbitrary b => Arbitrary (TopDeclP b) where

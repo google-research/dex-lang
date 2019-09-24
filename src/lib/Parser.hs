@@ -1,4 +1,4 @@
-module Parser (parseProg, parseTopDeclRepl) where
+module Parser (parseProg, parseTopDeclRepl, parseTopDecl) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -19,9 +19,11 @@ import PPrint
 parseProg :: String -> [SourceBlock]
 parseProg s = case parseit s $ many sourceBlock of Right ans -> ans
 
-
 parseTopDeclRepl :: String -> Maybe SourceBlock
 parseTopDeclRepl s = case parseit s (reportEOF sourceBlock) of Right ans -> ans
+
+parseTopDecl :: String -> Except UTopDecl
+parseTopDecl s = parseit s (topDecl <* eof)
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (p <* (optional eol >> eof)) "" s of
