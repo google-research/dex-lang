@@ -8,7 +8,8 @@ SHELL=/bin/bash
 libcod: cbits/libcod.so
 
 run-%: quine-tests/%.cd
-	quine-tests/check-quine $^ stack exec coddle
+	quine-tests/check-quine $^ \
+	stack exec coddle -- script --lit --allow-errors
 
 update-%: tests/%.cd
 	stack exec coddle $^ > $^.tmp
@@ -16,7 +17,7 @@ update-%: tests/%.cd
 
 interp-test:
 	./quine-tests/check-quine quine-tests/eval-tests.cd \
-	stack exec coddle -- --interp
+	stack exec coddle -- --interp script --lit --allow-errors
 
 stack-tests:
 	stack test

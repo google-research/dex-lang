@@ -10,7 +10,6 @@ import Syntax
 import PPrint
 import Pass
 import Type
-import Util
 
 import Parser
 import DeShadow
@@ -24,11 +23,15 @@ import WebOutput
 import Normalize
 import Interpreter
 
+data Backend = Jit | Interp
+data ErrorHandling = HaltOnErr | ContinueOnErr
+data EvalMode = ReplMode
+              | WebMode FName
+              | ScriptMode FName DocFmt ErrorHandling
+data CmdOpts = CmdOpts EvalMode Backend
+
+type FName = String
 type FullPass env = SourceBlock -> TopPassM env Void
-data EvalMode = ReplMode | WebMode String | ScriptMode String
-data CmdOpts = CmdOpts { programSource :: Maybe String
-                       , webOutput     :: Bool
-                       , useInterpreter :: Bool}
 
 typeCheckPass :: TopPass SourceBlock TopDecl
 typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkTyped
@@ -43,6 +46,22 @@ fullPassJit = typeCheckPass
           >+> impPass       >+> checkImp
           >+> flopsPass
           >+> jitPass
+
+runMode :: Monoid env => EvalMode -> FullPass env -> IO ()
+runMode evalMode pass = do
+  env <- execStateT (evalPrelude pass) mempty
+  let runEnv m = evalStateT m env
+  case evalMode of
+    ReplMode ->
+      runEnv $ runInputT defaultSettings $ forever (replLoop pass)
+    ScriptMode fname fmt _ -> do
+      results <- runEnv $ evalFile pass fname
+      putStr $ printLitProg fmt results
+#if CODDLE_WEB
+    WebMode fname -> runWeb fname pass env
+#else
+    WebMode _ -> error "Compiled without the web interface"
+#endif
 
 evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
 evalDecl pass block = do
@@ -64,54 +83,11 @@ evalPrelude pass = do
   result <- evalFile pass "prelude.cod"
   void $ liftErrIO $ mapM snd result
 
-evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
-evalScript pass fname = do
-  evalPrelude pass
-  results <- evalFile pass fname
-  liftIO $ putStr $ concat $ map (uncurry printLiterate) results
-
-evalRepl :: Monoid env => FullPass env-> StateT env IO ()
-evalRepl pass = do
-  evalPrelude pass
-  runInputT defaultSettings $ forever (replLoop pass)
-
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
   sourceBlock <- readMultiline ">=> " parseTopDeclRepl
   result <- lift $ evalDecl pass sourceBlock
   liftIO $ putStrLn $ printResult sourceBlock result
-
-evalWeb :: Monoid env => FullPass env -> String -> IO ()
-evalWeb pass fname = do
-#if CODDLE_WEB
-  env <- execStateT (evalPrelude pass) mempty
-  runWeb fname pass env
-#else
-  _ <- error "Compiled without the web interface"
-  undefined pass fname -- Silence the "Defined but not used" warning
-#endif
-
-printResult :: SourceBlock -> Result -> String
-printResult block result = case result of
-  Left err  -> pprint (addErrSource (sbOffset block) (sbText block) err)
-  Right out -> pprint out
-
-printLiterate :: SourceBlock -> Result -> String
-printLiterate block result =
-  sbText block ++ formatResult (printResult block result)
-  where
-    formatResult :: String -> String
-    formatResult = unlines . map addPrefix . lines
-
-    addPrefix :: String -> String
-    addPrefix s = case s of "" -> ">"
-                            _ -> "> " ++ s
-
-addErrSource :: Int -> String -> Err -> Err
-addErrSource n s (Err e p s') = case p of
-    Nothing -> Err e p s'
-    Just (start, stop) -> Err e p $ s' ++ "\n\n"
-                           ++ highlightRegion (start - n, stop - n) s
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
@@ -131,32 +107,32 @@ readMultiline prompt parse = loop prompt ""
           Nothing -> loop dots s'
           where s' = prevRead ++ s ++ "\n"
 
-parseOpts :: ParserInfo CmdOpts
-parseOpts = info (p <**> helper) mempty
-  where p = CmdOpts
-            <$> (optional $ argument str (    metavar "FILE"
-                                           <> help "Source program"))
-            <*> switch (    long "web"
-                         <> help "Use web output instead of stdout" )
-            <*> switch (    long "interp"
-                         <> help "Use interpreter")
+simpleInfo :: Parser a -> ParserInfo a
+simpleInfo p = info (p <**> helper) mempty
 
-runMode :: Monoid env => EvalMode -> FullPass env -> IO ()
-runMode evalMode pass = case evalMode of
-  ReplMode         -> runEnv $ evalRepl   pass
-  ScriptMode fname -> runEnv $ evalScript pass fname
-  WebMode    fname -> evalWeb pass fname
-  where runEnv m = evalStateT m mempty
+parseOpts :: ParserInfo CmdOpts
+parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseBackend
+
+parseMode :: Parser EvalMode
+parseMode = subparser $
+     (command "repl" $ simpleInfo (pure ReplMode))
+  <> (command "web"  $ simpleInfo (
+         WebMode <$> argument str (metavar "FILE" <> help "Source program")))
+  <> (command "script" $ simpleInfo (ScriptMode
+    <$> argument str (metavar "FILE" <> help "Source program")
+    <*> (   flag' TextDoc (long "lit"  <> help "Textual literate program output")
+        <|> flag' HtmlDoc (long "html" <> help "HTML literate program output")
+        <|> pure ResultOnly)
+    <*> flag HaltOnErr ContinueOnErr (
+                  long "allow-errors"
+               <> help "Evaluate programs containing non-fatal type errors")))
+
+parseBackend :: Parser Backend
+parseBackend = flag Jit Interp (long "interp" <> help "Use interpreter backend")
 
 main :: IO ()
 main = do
-  opts <- execParser parseOpts
-  let evalMode = case programSource opts of
-                   Nothing -> ReplMode
-                   Just fname -> if webOutput opts then WebMode    fname
-                                                   else ScriptMode fname
-  if useInterpreter opts
-    then case fullPassInterp of
-           TopPass f -> runMode evalMode f
-    else  case fullPassJit of
-           TopPass f -> runMode evalMode f
+  CmdOpts evalMode backend <- execParser parseOpts
+  case backend of
+    Jit    -> case fullPassJit    of TopPass f -> runMode evalMode f
+    Interp -> case fullPassInterp of TopPass f -> runMode evalMode f

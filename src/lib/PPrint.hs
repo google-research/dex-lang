@@ -2,15 +2,16 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintEsc) where
+module PPrint (pprint, pprintEsc, printResult, printLitProg) where
 
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+
 import Record
 import Env
 import Syntax
-import Util (findReplace)
+import Util (findReplace, highlightRegion)
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
@@ -242,3 +243,32 @@ instance Pretty Output where
 instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x
   pretty (T x) = "T" <+> p x
+
+-- === Rendering output ===
+
+printLitProg :: DocFmt -> LitProg -> String
+printLitProg TextDoc prog = concat $ map (uncurry printLiterate) prog
+printLitProg ResultOnly _ = "TODO!"
+printLitProg HtmlDoc _ = "<html>hello!</html>"
+
+printLiterate :: SourceBlock -> Result -> String
+printLiterate block result =
+  sbText block ++ formatResult (printResult block result)
+  where
+    formatResult :: String -> String
+    formatResult = unlines . map addPrefix . lines
+
+    addPrefix :: String -> String
+    addPrefix s = case s of "" -> ">"
+                            _ -> "> " ++ s
+
+printResult :: SourceBlock -> Result -> String
+printResult block result = case result of
+  Left err  -> pprint (addErrSource (sbOffset block) (sbText block) err)
+  Right out -> pprint out
+
+addErrSource :: Int -> String -> Err -> Err
+addErrSource n s (Err e pos s') = case pos of
+    Nothing -> Err e pos s'
+    Just (start, stop) -> Err e pos $ s' ++ "\n\n"
+                           ++ highlightRegion (start - n, stop - n) s
