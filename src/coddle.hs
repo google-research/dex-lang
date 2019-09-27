@@ -10,6 +10,7 @@ import Syntax
 import PPrint
 import Pass
 import Type
+import Util
 
 import Parser
 import DeShadow
@@ -67,7 +68,7 @@ evalScript :: Monoid env => FullPass env-> String -> StateT env IO ()
 evalScript pass fname = do
   evalPrelude pass
   results <- evalFile pass fname
-  liftIO $ putStrLn $ unlines $ map (uncurry printLiterate) results
+  liftIO $ putStr $ concat $ map (uncurry printLiterate) results
 
 evalRepl :: Monoid env => FullPass env-> StateT env IO ()
 evalRepl pass = do
@@ -91,16 +92,26 @@ evalWeb pass fname = do
 #endif
 
 printResult :: SourceBlock -> Result -> String
-printResult (source, _) result = case result of
-  Left err  -> pprint (addErrSource source err)
+printResult block result = case result of
+  Left err  -> pprint (addErrSource (sbOffset block) (sbText block) err)
   Right out -> pprint out
 
 printLiterate :: SourceBlock -> Result -> String
-printLiterate block@(source, _) result =
-  source ++ formatResult (printResult block result)
+printLiterate block result =
+  sbText block ++ formatResult (printResult block result)
   where
     formatResult :: String -> String
-    formatResult = unlines . map ("> " ++) . lines
+    formatResult = unlines . map addPrefix . lines
+
+    addPrefix :: String -> String
+    addPrefix s = case s of "" -> ">"
+                            _ -> "> " ++ s
+
+addErrSource :: Int -> String -> Err -> Err
+addErrSource n s (Err e p s') = case p of
+    Nothing -> Err e p s'
+    Just (start, stop) -> Err e p $ s' ++ "\n\n"
+                           ++ highlightRegion (start - n, stop - n) s
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure

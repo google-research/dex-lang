@@ -1,33 +1,26 @@
 :t lam x. x
-
 > A a. (a -> a)
 
 :t lam x. sum for i. x.i
-
 > A a. ((a=>Real) -> Real)
 
 :t lam f x y. f y x
-
 > A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
 
 :t lam x. for i j. x.j.i
-
 > A c b a. ((b=>(a=>c)) -> (a=>(b=>c)))
 
 :t lam f x. f x
-
 > A b a. ((a -> b) -> (a -> b))
 
 :t let id :: a -> a
        id x = x
    in id (id) (id 1)
-
 > Int
 
 :t let _, N = unpack range 10
        x = iota :: N=>Int
    in isum x
-
 > Int
 
 :t let _, Nx = unpack range 10
@@ -35,7 +28,6 @@
        x = iota :: Nx=>Int
        y = iota :: Ny=>Int
    in real (isum for i. x.i) + real (isum for j. y.j)
-
 > Real
 
 :t let _, Nx = unpack range 10
@@ -43,7 +35,6 @@
        x = iota :: Nx=>Int
        y = iota :: Ny=>Int
     in sum for i. iadd x.i y.i
-
 > Type error:
 > Expected: Ny
 >   Actual: Nx
@@ -54,7 +45,6 @@
 
 :t let _, Nx = unpack range 10
    in iota :: Nx=>Int
-
 > Type error:
 > Leaked type variable: Nx
 
@@ -65,17 +55,14 @@ arr = iota :: Narr => Int
 xr = map real arr
 
 :t arr
-
 > (Narr=>Int)
 
 :t (lam (x, y). x + y) (1.0, 2.0)
-
 > Real
 
 :t let f (x, y) = x + 2.0 * y
        z.i = (xr.i, xr.i * xr.i)
    in sum (for i. f z.i)
-
 > Real
 
 -- yields 'compiler bug'. Should be a different sort of error
@@ -83,11 +70,9 @@ xr = map real arr
 --    in let y = for i j. x.i * x.i
 --       in sum (for i. sum (y.i))
 :t 1 :: Int
-
 > Int
 
 :t 1.0 :: Int
-
 > Type error:
 > Expected: Int
 >   Actual: Real
@@ -97,15 +82,12 @@ xr = map real arr
 >    ^^^^
 
 :t [1, 2, 3]
-
 > (3=>Int)
 
 :t []
-
 > A a. (0=>a)
 
 :t [1, [2]]
-
 > Type error:
 > Expected: Int
 >   Actual: (?_3=>?_4)
@@ -115,11 +97,9 @@ xr = map real arr
 >        ^^^
 
 :t [[1, 2], [3, 4]]
-
 > (2=>(2=>Int))
 
 :t [[1, 2], [3]]
-
 > Type error:
 > Expected: (2=>Int)
 >   Actual: (1=>Int)
@@ -135,7 +115,6 @@ p1 = (1, 2)
 
 p2 :: Pair
 p2 = 1
-
 > Type error:
 > Expected: (Int, Int)
 >   Actual: Int
@@ -145,7 +124,6 @@ p2 = 1
 >      ^
 
 :t lam x. for (i,j). x.i.j
-
 > A c b a. ((b=>(a=>c)) -> ((b, a)=>c))
 
 _, M = unpack range 5
@@ -154,17 +132,14 @@ _, M = unpack range 5
 :t for i::M. let _, N = unpack range (asint i)
                   x = for j::N. asint j
                in pack x, N, E n. n=>Int
-
 > (M=>(Ea.(a=>Int)))
 
 idfun :: a -> a
 idfun x = x
 
 :t idfun @ Real
-
 > (Real -> Real)
 
 :t lam x. let f :: a -> a; f y = x in ()
-
 > Type error:
 > Leaked type variable: a

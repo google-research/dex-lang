@@ -9,8 +9,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..),
-               throw, addContext, addErrSource, addErrSourcePos,
-               FullEnv, (-->), (==>), LorT (..), fromL, fromT,
+               throw, addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result, freeVars,
@@ -19,12 +18,11 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
-               SourceBlock, SourceBlock' (..)
+               SourceBlock (..), SourceBlock' (..)
                ) where
 
 import Record
 import Env
-import Util
 
 import qualified Data.Map.Strict as M
 
@@ -157,10 +155,16 @@ unitCon = RecCon (Tup [])
 
 -- === source AST ===
 
-type SourceBlock = (String, SourceBlock')
+data SourceBlock = SourceBlock
+  { sbOffset   :: Int
+  , sbText     :: String
+  , sbContents :: SourceBlock' }  deriving (Show)
+
 data SourceBlock' = UTopDecl UTopDecl
-                  | ProseBlock String -- TODO
-                  | SourceParseErr String
+                  | ProseBlock String
+                  | CommentLine
+                  | EmptyLines
+                  | UnParseable String
                     deriving (Show, Eq, Generic)
 
 data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)
@@ -294,17 +298,6 @@ modifyErr m f = catchError m $ \e -> throwError (f e)
 addContext :: MonadError Err m => String -> m a -> m a
 addContext s m = modifyErr m $ \(Err e p s') ->
                                  Err e p (s' ++ "\ncontext:\n" ++ s)
-
-addErrSource :: String -> Err -> Err
-addErrSource s (Err e p s') = case p of
-    Nothing -> Err e p s'
-    Just pos -> Err e p $ s' ++ "\n\n" ++ highlightRegion pos s
-
-addErrSourcePos :: MonadError Err m => SrcPos -> m a -> m a
-addErrSourcePos pNew m = modifyErr m $ \(Err e pPrev s) ->
-  case pPrev of
-    Nothing -> Err e (Just pNew) s
-    _ -> Err e pPrev s
 
 -- === misc ===
 

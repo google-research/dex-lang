@@ -25,7 +25,7 @@ p :: Pretty a => a -> Doc ann
 p = pretty
 
 instance Pretty Err where
-  pretty (Err e _ s) = p e <+> p s
+  pretty (Err e _ s) = p e <> p s
 
 instance Pretty ErrType where
   pretty e = case e of

@@ -1,17 +1,14 @@
 :t let g :: a -> a
        g x = x
     in g
-
 > A a. (a -> a)
 
 
 :t let f x::Int = x in f 1
-
 > Int
 
 
 :t let f x::Real = x in f 1
-
 > Type error:
 > Expected: Real
 >   Actual: Int
@@ -23,14 +20,12 @@
 :t let g :: (a -> Int) -> (a -> Int)
        g x = x
     in g
-
 > A a. ((a -> Int) -> (a -> Int))
 
 
 :t let g :: a -> a
        g x = iadd x x
     in g
-
 > Type error:
 > Expected: Int
 >   Actual: a
@@ -44,13 +39,11 @@ h x = x
 
 
 :t h
-
 > A b a. ((b -> a) -> (b -> a))
 
 
 fun :: a -> a
 fun x = sin x
-
 > Type error:
 > Expected: Real
 >   Actual: a

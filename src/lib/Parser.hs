@@ -17,32 +17,46 @@ import Inference
 import PPrint
 
 parseProg :: String -> [SourceBlock]
-parseProg s = case parseit s $ many sourceBlock of Right ans -> ans
+parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
-parseTopDeclRepl s = case parseit s (reportEOF sourceBlock) of Right ans -> ans
+parseTopDeclRepl s = mustParseit s (reportEOF sourceBlock)
 
 parseTopDecl :: String -> Except UTopDecl
-parseTopDecl s = parseit s (topDecl <* eof)
+parseTopDecl s = parseit s topDecl
 
 parseit :: String -> Parser a -> Except a
 parseit s p = case parse (p <* (optional eol >> eof)) "" s of
                 Left e -> throw ParseErr (errorBundlePretty e)
                 Right x -> return x
 
-sourceBlock :: Parser SourceBlock
-sourceBlock = do
-  (s, d) <- withSource (emptyLines >> topDecl <* emptyLines)
-  blankLines
-  outputLines
-  blankLines
-  return $ (s, UTopDecl d)
+mustParseit :: String -> Parser a -> a
+mustParseit s p  = case parseit s p of
+  Right ans -> ans
+  Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
 topDecl :: Parser UTopDecl
-topDecl =   explicitCommand
+topDecl = ( explicitCommand
         <|> liftM TopDecl decl
         <|> liftM (EvalCmd . Command (EvalExpr Printed)) expr
-        <?> "top-level declaration"
+        <?> "top-level declaration" ) <* (void eol <|> eof)
+
+sourceBlock :: Parser SourceBlock
+sourceBlock = do
+  offset <- getOffset
+  (source, block) <- withSource $ withRecovery recover $ sourceBlock'
+  return $ SourceBlock offset source block
+
+recover :: (Stream s, ShowErrorComponent e) => ParseError s e -> Parser SourceBlock'
+recover e = do
+  _ <- manyTill anySingle $ eof <|> void (try (eol >> lookAhead eol))
+  return $ UnParseable (parseErrorPretty e)
+
+sourceBlock' :: Parser SourceBlock'
+sourceBlock' =
+      (some eol >> return EmptyLines)
+  <|> (sc >> eol >> return CommentLine)
+  <|> (liftM UTopDecl topDecl)
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do

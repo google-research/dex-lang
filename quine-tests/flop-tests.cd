@@ -8,7 +8,6 @@ mat :: Nx=>Nx=>Real
 mat = for i j. rand (hash 0 (hash iota.i iota.j))
 
 :flops matmul mat mat
-
 > %fadd 1 Nx^3
 > %fmul 1 Nx^3
 > %copy 2 Nx^2 + 1 Nx^3

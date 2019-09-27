@@ -20,10 +20,12 @@ sourcePass :: TopPass SourceBlock UTopDecl
 sourcePass = TopPass sourcePass'
 
 sourcePass' :: SourceBlock -> TopPassM () UTopDecl
-sourcePass' (_, block) = case block of
+sourcePass' block = case sbContents block of
   UTopDecl decl -> return decl
+  UnParseable s -> throwTopErr $ Err ParseErr Nothing s
   ProseBlock _ -> emitOutput NoOutput
-  SourceParseErr s -> throwTopErr $ Err ParseErr Nothing s
+  CommentLine  -> emitOutput NoOutput
+  EmptyLines   -> emitOutput NoOutput
 
 deShadowPass :: TopPass UTopDecl UTopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of
@@ -111,7 +113,7 @@ freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
 freshBinderP (v:>ann) = do
   shadowed <- looks $ (v `isin`) . fst . fst
   if shadowed && v /= Name "_" 0
-    then throw RepeatedVarErr (pprint v)
+    then throw RepeatedVarErr (" " ++ pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asFst (v@>v'), v'@>())
@@ -121,7 +123,7 @@ freshTBinder :: TBinder -> DeShadowCat TBinder
 freshTBinder (v:>k) = do
   shadowed <- looks $ (v `isin`) . snd . fst
   if shadowed && v /= Name "_" 0
-    then throw RepeatedVarErr (pprint v)
+    then throw RepeatedVarErr (" " ++ pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asSnd (v@>TypeVar v'), v'@>())

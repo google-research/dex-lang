@@ -1,11 +1,9 @@
 
 -- repeated vars in patterns not allowed
 :p let (x, x) = (1, 1) in x
-
 > Variable redefined: x
 
 :p let f (x, x) = x in f (1, 1)
-
 > Variable redefined: x
 
 -- TODO: re-enable if we choose to allow non-peer shadowing
@@ -26,7 +24,6 @@ arr = 20
 > Variable redefined: arr
 
 :p arr
-
 > 10
 
 -- testing top-level shadowing
@@ -36,5 +33,4 @@ f x = x
 x = 1
 
 :p f 1
-
 > 1

@@ -5,7 +5,7 @@ errout=$(mktemp)
 tmpdiff=$(mktemp)
 
 if ${@:2} $1 > $tmpout 2> $errout ; then
-    diff --left-column -B -y --color=always $1 $tmpout > $tmpdiff \
+    diff --left-column -y --color=always $1 $tmpout > $tmpdiff \
        && echo OK || cat $tmpdiff
 else
     cat $tmpout
