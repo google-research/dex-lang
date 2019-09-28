@@ -156,7 +156,8 @@ unitCon = RecCon (Tup [])
 -- === source AST ===
 
 data SourceBlock = SourceBlock
-  { sbOffset   :: Int
+  { sbLine     :: Int
+  , sbOffset   :: Int
   , sbText     :: String
   , sbContents :: SourceBlock' }  deriving (Show)
 

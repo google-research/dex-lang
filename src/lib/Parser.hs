@@ -44,8 +44,9 @@ topDecl = ( explicitCommand
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
+  pos <- getSourcePos
   (source, block) <- withSource $ withRecovery recover $ sourceBlock'
-  return $ SourceBlock offset source block
+  return $ SourceBlock (unPos (sourceLine pos)) offset source block
 
 recover :: (Stream s, ShowErrorComponent e) => ParseError s e -> Parser SourceBlock'
 recover e = do

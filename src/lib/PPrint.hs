@@ -247,8 +247,8 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
 -- === Rendering output ===
 
 printLitProg :: DocFmt -> LitProg -> String
-printLitProg TextDoc prog = concat $ map (uncurry printLiterate) prog
-printLitProg ResultOnly _ = "TODO!"
+printLitProg TextDoc    prog = concat $ map (uncurry printLiterate) prog
+printLitProg ResultOnly prog = concat $ map (uncurry printOutOnly ) prog
 printLitProg HtmlDoc _ = "<html>hello!</html>"
 
 printLiterate :: SourceBlock -> Result -> String
@@ -262,10 +262,19 @@ printLiterate block result =
     addPrefix s = case s of "" -> ">"
                             _ -> "> " ++ s
 
+printOutOnly :: SourceBlock -> Result -> String
+printOutOnly block (Left err) = "\nLine " ++ show (sbLine block) ++ "\n" ++
+                                printErrSrc block err ++ "\n"
+printOutOnly _ (Right NoOutput) = ""
+printOutOnly block (Right out) = sbText block ++ pprint out ++ "\n\n"
+
 printResult :: SourceBlock -> Result -> String
 printResult block result = case result of
-  Left err  -> pprint (addErrSource (sbOffset block) (sbText block) err)
+  Left err  -> printErrSrc block err
   Right out -> pprint out
+
+printErrSrc :: SourceBlock -> Err -> String
+printErrSrc block err = pprint (addErrSource (sbOffset block) (sbText block) err)
 
 addErrSource :: Int -> String -> Err -> Err
 addErrSource n s (Err e pos s') = case pos of
