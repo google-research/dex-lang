@@ -18,7 +18,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
-               SourceBlock (..), SourceBlock' (..), LitProg, DocFmt (..)
+               SourceBlock (..), SourceBlock' (..), LitProg, EvalBlock (..)
                ) where
 
 import Record
@@ -267,9 +267,10 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 
 -- === outputs ===
 
-type LitProg = [(SourceBlock, Result)]
-data DocFmt = ResultOnly | TextDoc | HtmlDoc
+data EvalBlock = EvalBlock SourceBlock Result
+type LitProg = [EvalBlock]
 type Result = Except Output
+
 data Output = ValOut OutFormat Value | TextOut String | NoOutput
                 deriving (Show, Eq, Generic)
 

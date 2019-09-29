@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintEsc, printResult, printLitProg) where
+module PPrint (pprint, pprintEsc, pprintResult) where
 
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -244,37 +244,26 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x
   pretty (T x) = "T" <+> p x
 
--- === Rendering output ===
+instance Pretty SourceBlock where
+  pretty block = p (sbText block)
 
-printLitProg :: DocFmt -> LitProg -> String
-printLitProg TextDoc    prog = concat $ map (uncurry printLiterate) prog
-printLitProg ResultOnly prog = concat $ map (uncurry printOutOnly ) prog
-printLitProg HtmlDoc _ = "<html>hello!</html>"
+instance Pretty EvalBlock where
+  pretty evalBlock@(EvalBlock block _) = p block <> p resultStr
+    where
+      resultStr :: String
+      resultStr = unlines $ map addPrefix $ lines $ pprintResult False evalBlock
+      addPrefix :: String -> String
+      addPrefix s = case s of "" -> ">"
+                              _  -> "> " ++ s
 
-printLiterate :: SourceBlock -> Result -> String
-printLiterate block result =
-  sbText block ++ formatResult (printResult block result)
-  where
-    formatResult :: String -> String
-    formatResult = unlines . map addPrefix . lines
-
-    addPrefix :: String -> String
-    addPrefix s = case s of "" -> ">"
-                            _ -> "> " ++ s
-
-printOutOnly :: SourceBlock -> Result -> String
-printOutOnly block (Left err) = "\nLine " ++ show (sbLine block) ++ "\n" ++
-                                printErrSrc block err ++ "\n"
-printOutOnly _ (Right NoOutput) = ""
-printOutOnly block (Right out) = sbText block ++ pprint out ++ "\n\n"
-
-printResult :: SourceBlock -> Result -> String
-printResult block result = case result of
-  Left err  -> printErrSrc block err
+pprintResult :: Bool -> EvalBlock -> String
+pprintResult showLineNum (EvalBlock block result) = case result of
+  Left err -> lineNum ++ pprint (addErrSource (sbOffset block) (sbText block) err)
+  Right NoOutput -> ""
   Right out -> pprint out
-
-printErrSrc :: SourceBlock -> Err -> String
-printErrSrc block err = pprint (addErrSource (sbOffset block) (sbText block) err)
+  where lineNum = if showLineNum
+                    then "\nLine " ++ show (sbLine block) ++ "\n"
+                    else ""
 
 addErrSource :: Int -> String -> Err -> Err
 addErrSource n s (Err e pos s') = case pos of
