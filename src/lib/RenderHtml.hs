@@ -5,9 +5,12 @@ module RenderHtml (renderLitProgHtml) where
 import Text.Blaze.Html5 as H
 import Text.Blaze.Html5.Attributes as A
 import Text.Blaze.Html.Renderer.String
+import Data.Text (pack)
+import CMark (commonmarkToHtml)
 
 import Syntax
 import PPrint
+
 
 renderLitProgHtml :: LitProg -> String
 renderLitProgHtml blocks = renderHtml $ wrapBody $ mapM_ evalBlockHtml blocks
@@ -24,7 +27,7 @@ evalBlockHtml :: EvalBlock -> Html
 evalBlockHtml evalBlock@(EvalBlock block result) =
   case sbContents block of
     ProseBlock s -> cdiv ("prose-block " ++ cellStatus)
-                         (cdiv "prose-source" (toHtml s))
+                         (cdiv "prose-source" (mdToHtml s))
     EmptyLines -> return ()
     _ -> cdiv ("code-block " ++ cellStatus) $ do
            cdiv "code-source" (toHtml (pprint block))
@@ -36,3 +39,6 @@ evalBlockHtml evalBlock@(EvalBlock block result) =
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
+
+mdToHtml :: String -> Html
+mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
