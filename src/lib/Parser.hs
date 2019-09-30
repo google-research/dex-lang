@@ -49,13 +49,15 @@ sourceBlock = do
   return $ SourceBlock (unPos (sourceLine pos)) offset source block
 
 recover :: (Stream s, ShowErrorComponent e) => ParseError s e -> Parser SourceBlock'
-recover e = do
-  _ <- manyTill anySingle $ eof <|> void (try (eol >> lookAhead eol))
-  return $ UnParseable (parseErrorPretty e)
+recover e = consumeTillBreak >> return (UnParseable (parseErrorPretty e))
+
+consumeTillBreak :: Parser ()
+consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
-      (some eol >> return EmptyLines)
+      (char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak))
+  <|> (some eol >> return EmptyLines)
   <|> (sc >> eol >> return CommentLine)
   <|> (liftM UTopDecl topDecl)
 

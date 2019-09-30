@@ -28,6 +28,7 @@ all-tests: interp-test \
            run-shadow-tests \
            run-annot-tests \
            run-flop-tests \
+           run-tutorial \
            stack-tests
 
 clean:

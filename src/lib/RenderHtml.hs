@@ -22,10 +22,17 @@ wrapBody inner = docTypeHtml $ do
 
 evalBlockHtml :: EvalBlock -> Html
 evalBlockHtml evalBlock@(EvalBlock block result) =
-  H.div (srcDiv <> outDiv) ! class_ cellStatus
+  case sbContents block of
+    ProseBlock s -> cdiv ("prose-block " ++ cellStatus)
+                         (cdiv "prose-source" (toHtml s))
+    EmptyLines -> return ()
+    _ -> cdiv ("code-block " ++ cellStatus) $ do
+           cdiv "code-source" (toHtml (pprint block))
+           cdiv "result-text" (toHtml (pprintResult False evalBlock))
   where
-    srcDiv = H.div (toHtml (pprint block)) ! class_ "source"
-    outDiv = H.div (toHtml (pprintResult False evalBlock)) ! class_ "result-text"
     cellStatus = case result of
-                   Left  _ -> "err-cell"
-                   Right _ -> "complete-cell"
+                   Left  _ -> "err-state"
+                   Right _ -> "complete-state"
+
+cdiv :: String -> Html -> Html
+cdiv c inner = H.div inner ! class_ (stringValue c)

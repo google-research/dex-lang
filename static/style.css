@@ -5,41 +5,25 @@ body {
   max-width: 50em;
   font-family: Helvetica, sans-serif;
   font-size: 100%;
-  line-height: 120%;
   color: #333;
 }
 
-.command {
-  padding-left: 1em;
-  padding-right: 1em;
+.prose-block {
+  margin: 0em 1em;
+  padding: 0.5em 1em;
+  line-height: 140%;
 }
 
-
-.decl-cell {
-  /* display: none; */
-  margin: 0em 0em;
-  padding: 0em 1em;
+.code-block {
+  margin: 0em 1em;
+  padding: 0.5em 1em;
+  background-color: #F0F0F0;
 }
 
-.pending-cell {
-  margin: 1em 0em;
-  padding: 1em 1em;
-  background-color: #00FFFF;
+.prose-source {
 }
 
-.complete-cell {
-  margin: 1em 0em;
-  padding: 1em 1em;
-  background-color: #FFFFFF;
-}
-
-.err-cell {
-  margin: 1em 0em;
-  padding: 1em 1em;
-  background-color: #FAAFBA;
-}
-
-.source {
+.code-source {
   display: block;
   font-family: monospace;
   white-space: pre;
@@ -49,4 +33,16 @@ body {
   display: block;
   font-family: monospace;
   white-space: pre;
+}
+
+.err-state {
+  color: #A80000;
+  font-weight: bold;
+}
+
+.pending-state {
+  background-color: #00FFFF;
+}
+
+.complete-state {
 }
