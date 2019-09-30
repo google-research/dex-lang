@@ -37,6 +37,8 @@ xs = [[1,2],[3,4],[5,6]]
 
 :p 1 1
 
+:p (lam x. x) 1
+
 
 'TODO: table types
   * for expression

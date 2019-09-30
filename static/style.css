@@ -17,7 +17,7 @@ body {
 .code-block {
   margin: 0em 1em;
   padding: 0.5em 1em;
-  background-color: #F0F0F0;
+  background-color: #F8F8F8;
 }
 
 .prose-source {
@@ -45,4 +45,25 @@ body {
 }
 
 .complete-state {
+}
+
+.comment {
+}
+
+.keyword {
+  color: #0000DD;
+}
+
+.builtin {
+}
+
+.command {
+  color: #A80000;
+}
+
+.symbol {
+  color: #F08000;
+}
+
+.type-name {
 }

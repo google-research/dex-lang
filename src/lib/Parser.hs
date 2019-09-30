@@ -63,8 +63,7 @@ sourceBlock' =
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do
-  symbol ":"
-  cmdName <- identifier
+  cmdName <- char ':' >> identifier
   cmd <- case cmdName of
            "p"       -> return $ EvalExpr Printed
            "t"       -> return GetType
