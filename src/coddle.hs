@@ -8,6 +8,7 @@ import Data.Void
 
 import Syntax
 import PPrint
+import RenderHtml
 import Pass
 import Type
 
@@ -114,7 +115,7 @@ simpleInfo p = info (p <**> helper) mempty
 printLitProg :: DocFmt -> LitProg -> String
 printLitProg TextDoc    prog = foldMap pprint prog
 printLitProg ResultOnly prog = foldMap (pprintResult True) prog
--- printLitProg HtmlDoc prog = renderHtml $ foldMap (uncurry htmlBlockResult) prog
+printLitProg HtmlDoc    prog = renderLitProgHtml prog
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseBackend
