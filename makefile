@@ -5,19 +5,19 @@ SHELL=/bin/bash
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
 
-libcod: cbits/libcod.so
+libdex: cbits/libdex.so
 
-run-%: quine-tests/%.cd
+run-%: quine-tests/%.dx
 	quine-tests/check-quine $^ \
-	stack exec coddle -- script --lit --allow-errors
+	stack exec dex -- script --lit --allow-errors
 
-update-%: tests/%.cd
-	stack exec coddle $^ > $^.tmp
+update-%: tests/%.dx
+	stack exec dex $^ > $^.tmp
 	mv $^.tmp $^
 
 interp-test:
-	./quine-tests/check-quine quine-tests/eval-tests.cd \
-	stack exec coddle -- --interp script --lit --allow-errors
+	./quine-tests/check-quine quine-tests/eval-tests.dx \
+	stack exec dex -- --interp script --lit --allow-errors
 
 stack-tests:
 	stack test

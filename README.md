@@ -10,4 +10,4 @@ Workflow
 
 - Compile: `stack build`
 - Run tests: `make all-tests`
-- Start REPL: `stack exec coddle`
+- Start REPL: `stack exec dex`

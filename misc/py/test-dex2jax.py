@@ -1,6 +1,6 @@
-import coddle
+import dex
 
-foo = coddle.load("foo.cod")
+foo = dex.load("foo.dx")
 
 # print foo.addReals(1.0, 2.0)
 

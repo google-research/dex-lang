@@ -411,13 +411,13 @@ compileBuiltin b ts = case b of
   _ -> error $ "Primop not implemented: " ++ pprint b
 
 mallocFun :: ExternFunSpec
-mallocFun  = ExternFunSpec "malloc_cod"    charPtrTy [longTy]
+mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_cod"      charPtrTy [charPtrTy]
+freeFun = ExternFunSpec "free_dex"      charPtrTy [charPtrTy]
 
 memcpyFun :: ExternFunSpec
-memcpyFun  = ExternFunSpec "memcpy_cod" L.VoidType [charPtrTy, charPtrTy, longTy]
+memcpyFun  = ExternFunSpec "memcpy_dex" L.VoidType [charPtrTy, charPtrTy, longTy]
 
 builtinFFISpecs :: [ExternFunSpec]
 builtinFFISpecs = [mallocFun, freeFun, memcpyFun]

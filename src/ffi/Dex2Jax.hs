@@ -2,7 +2,7 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 
-module Cod2Jax where
+module Dex2Jax where
 
 import Foreign.C.String
 import Data.Aeson

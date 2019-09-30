@@ -18,7 +18,7 @@ import Inference
 import Imp
 import JIT
 import Flops
-#ifdef CODDLE_WEB
+#ifdef DEX_WEB
 import WebOutput
 #endif
 import Normalize
@@ -59,7 +59,7 @@ runMode evalMode pass = do
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile pass fname
       putStr $ printLitProg fmt results
-#if CODDLE_WEB
+#if DEX_WEB
     WebMode fname -> runWeb fname pass env
 #else
     WebMode _ -> error "Compiled without the web interface"
@@ -82,7 +82,7 @@ evalFile pass fname = do
 
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
-  result <- evalFile pass "prelude.cod"
+  result <- evalFile pass "prelude.dx"
   void $ liftErrIO $ mapM (\(EvalBlock _ r) -> r) result
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()

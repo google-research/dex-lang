@@ -1,5 +1,5 @@
 cabal-version:       2.0
-name:                coddle
+name:                dex
 version:             0.1.0.0
 author:              Dougal Maclaurin
 maintainer:          dougalm@google.com
@@ -21,41 +21,41 @@ library
                        data-binary-ieee754, blaze-html
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         cbits/libcod.so
+  ghc-options:         cbits/libdex.so
                        -Wall
                        -O0
   if flag(web)
     exposed-modules:   WebOutput
     build-depends: hinotify
 
-executable coddle
-  main-is:             coddle.hs
+executable dex
+  main-is:             dex.hs
   other-extensions:    OverloadedStrings
-  build-depends:       coddle, base, haskeline, prettyprinter, mtl,
+  build-depends:       dex, base, haskeline, prettyprinter, mtl,
                        optparse-applicative
   default-language:    Haskell2010
   hs-source-dirs:      src
   -- this is clearly a hack. Can't figure out where else to put it
-  ghc-options:         cbits/libcod.so
+  ghc-options:         cbits/libdex.so
                        -threaded
                        -Wall
   default-extensions:  CPP
   if flag(web)
-    cpp-options:         -DCODDLE_WEB
+    cpp-options:         -DDEX_WEB
 
-Test-Suite test-coddle
+Test-Suite test-dex
   type:                exitcode-stdio-1.0
   main-is:             PropTests.hs
-  build-depends:       coddle, base, QuickCheck >= 2.12.1, prettyprinter, containers
+  build-depends:       dex, base, QuickCheck >= 2.12.1, prettyprinter, containers
   other-modules:       Generators
   default-language:    Haskell2010
   hs-source-dirs:      tests
-  ghc-options:         cbits/libcod.so
+  ghc-options:         cbits/libdex.so
                        -Wall
 
--- executable cod2jax.so
---   main-is:             Cod2Jax.hs
---   build-depends:       coddle, base, aeson, bytestring, mtl
+-- executable dex2jax.so
+--   main-is:             Dex2Jax.hs
+--   build-depends:       dex, base, aeson, bytestring, mtl
 --   ghc-options:         -no-hs-main -fPIC -shared -dynamic
 --   hs-source-dirs:      src/ffi
 --   extra-libraries:     HSrts-ghc8.6.5

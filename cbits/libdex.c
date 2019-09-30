@@ -3,15 +3,15 @@
 #include "stdlib.h"
 #include "string.h"
 
-char* malloc_cod(long nbytes) {
+char* malloc_dex(long nbytes) {
   return malloc(nbytes);
 }
 
-char* free_cod(char* ptr) {
+char* free_dex(char* ptr) {
   free(ptr);
 }
 
-void memcpy_cod(char* dest, const char* src, long nbytes) {
+void memcpy_dex(char* dest, const char* src, long nbytes) {
   memcpy(dest, src, nbytes);
 }
 

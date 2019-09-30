@@ -1,7 +1,7 @@
 import ctypes
 import json
 
-libname = "./cod2jax.so"
+libname = "./dex2jax.so"
 
 lib = ctypes.cdll.LoadLibrary(libname)
 lib.hs_init(0, 0)  # TODO should call lib.hs_exit() when done
@@ -14,7 +14,7 @@ def setup_f(fname):
 
 loadSource, = map(setup_f, ["loadSource"])
 
-class CoddleModule(object):
+class DexModule(object):
   def __init__(self, functions):
     for fname, definition in functions:
       self.__dict__[fname] = definition
@@ -24,4 +24,4 @@ def load(fname):
     s = f.read()
   top_level_functions = loadSource(s)
   print top_level_functions
-  return CoddleModule(top_level_functions)
+  return DexModule(top_level_functions)
