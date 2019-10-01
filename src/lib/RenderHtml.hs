@@ -3,18 +3,23 @@
 module RenderHtml (renderLitProgHtml) where
 
 import Text.Blaze.Html5 as H  hiding (map)
-import Text.Blaze.Html5.Attributes as A
+import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
 import Data.Text (pack)
+import Data.ByteString.Lazy (unpack)
 import CMark (commonmarkToHtml)
+import Data.Aeson hiding (Result, Null, Value)
+import qualified Data.Aeson as A
+import Data.Char (chr)
 
 import Control.Monad
-import Text.Megaparsec
+import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
 import Syntax
 import PPrint
 import ParseUtil
+import Record
 
 renderLitProgHtml :: LitProg -> String
 renderLitProgHtml blocks = renderHtml $ wrapBody $ mapM_ evalBlockHtml blocks
@@ -25,7 +30,9 @@ wrapBody inner = docTypeHtml $ do
     H.title "Output"
     H.link ! rel "stylesheet" ! href "style.css" ! type_ "text/css"
     H.meta ! charset "UTF-8"
-  H.body $ H.div inner ! A.id "main-output"
+    H.script mempty ! src "https://cdn.plot.ly/plotly-1.2.0.min.js"
+  H.body $ H.div inner ! At.id "main-output"
+  H.script mempty ! src "plot.js"
 
 evalBlockHtml :: EvalBlock -> Html
 evalBlockHtml evalBlock@(EvalBlock block result) =
@@ -35,7 +42,7 @@ evalBlockHtml evalBlock@(EvalBlock block result) =
     EmptyLines -> return ()
     _ -> cdiv ("code-block " ++ cellStatus) $ do
            cdiv "code-source" (highlightSyntax (pprint block))
-           cdiv "result-text" (toHtml (pprintResult False evalBlock))
+           resultHtml evalBlock
   where
     cellStatus = case result of
                    Left  _ -> "err-state"
@@ -46,6 +53,16 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 
 mdToHtml :: String -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
+
+resultHtml :: EvalBlock -> Html
+resultHtml evalBlock@(EvalBlock _ result) =
+  case result of
+    Right NoOutput -> mempty
+    Right (ValOut Heatmap val) -> makeHeatmap val
+    Right (ValOut Scatter val) -> makeScatter val
+    _ -> cdiv "result-text" $ toHtml $ pprintResult False evalBlock
+
+-- === syntax highlighting ===
 
 highlightSyntax :: String -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
@@ -79,3 +96,41 @@ classify =
   where
    keywords = ["for", "lam", "let", "in", "unpack", "pack"]
    symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", "=", ">", "<"]
+
+-- === plotting ===
+
+makeScatter :: Value -> Html
+makeScatter (Value _ vecs) = cdiv "scatter" (jsonAsHtml trace)
+  where
+    trace :: A.Value
+    trace = A.object
+      [ "x" .= toJSON xs
+      , "y" .= toJSON ys
+      , "mode" .= toJSON ("markers"   :: A.Value)
+      , "type" .= toJSON ("scatter" :: A.Value)
+      ]
+    RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
+
+dataDiv :: A.Value -> Html
+dataDiv val = cdiv "data" (jsonAsHtml val) ! At.style "display: none;"
+
+makeHeatmap :: Value -> Html
+makeHeatmap (Value ty vecs) =
+  cdiv "heatmap" (dataDiv trace)
+  where
+    TabType _ (TabType (IdxSetLit n) _) = ty
+    trace :: A.Value
+    trace = A.object
+      [ "z" .= toJSON (chunk n xs)
+      , "type" .= toJSON ("heatmap" :: A.Value)
+      , "colorscale" .= toJSON ("Greys" :: A.Value)
+      ]
+    RecLeaf (RealVec xs) = vecs
+
+jsonAsHtml :: A.Value -> Html
+jsonAsHtml val = toHtml $ map (chr . fromEnum) $ unpack $ encode val
+
+chunk :: Int -> [a] -> [[a]]
+chunk _ [] = []
+chunk n xs = row : chunk n rest
+  where (row, rest) = splitAt n xs

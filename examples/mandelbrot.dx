@@ -13,11 +13,9 @@ cabs (x1, y1) = x1 * x1 + y1 * y1
 czero :: Complex
 czero = (0.0, 0.0)
 
-ngrid = 100
 tol = 2.0
-
-_, Niters = unpack range 100
-_, Ngrid = unpack range ngrid
+type Niters = 100
+type Ngrid  = 100
 
 update :: Complex -> Complex -> Complex
 update c z = cadd c (cmul z z)

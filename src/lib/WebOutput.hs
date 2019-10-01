@@ -245,4 +245,3 @@ chunk :: Int -> [a] -> [[a]]
 chunk _ [] = []
 chunk n xs = row : chunk n rest
   where (row, rest) = splitAt n xs
-
