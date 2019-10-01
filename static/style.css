@@ -48,13 +48,11 @@ body {
 }
 
 .comment {
+  color: #808080;
 }
 
 .keyword {
   color: #0000DD;
-}
-
-.builtin {
 }
 
 .command {
@@ -62,8 +60,9 @@ body {
 }
 
 .symbol {
-  color: #F08000;
+  color: #E07000;
 }
 
 .type-name {
+  color: #A80000;
 }

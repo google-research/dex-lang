@@ -67,35 +67,44 @@ resultHtml evalBlock@(EvalBlock _ result) =
 highlightSyntax :: String -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
   where
-    classified = case parse (scanClassifier classify <* eof) "" s of
+    classified = case parse (many (withSource classify) <* eof) "" s of
                    Left e -> error $ errorBundlePretty e
                    Right ans -> ans
 
-syntaxSpan :: String -> Maybe StrClass -> Html
-syntaxSpan s Nothing = toHtml s
-syntaxSpan s (Just c) = H.span (toHtml s) ! class_ (stringValue className)
+syntaxSpan :: String -> StrClass -> Html
+syntaxSpan s NormalStr = toHtml s
+syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
   where
     className = case c of
-      CommentStr  -> "comment"  ; KeywordStr  -> "keyword"
-      BuiltinStr  -> "builtin"  ; CommandStr  -> "command"
-      SymbolStr   -> "symbol"   ; TypeNameStr -> "type-name"
+      CommentStr  -> "comment"
+      KeywordStr  -> "keyword"
+      CommandStr  -> "command"
+      SymbolStr   -> "symbol"
+      TypeNameStr -> "type-name"
+      NormalStr -> error "Should have been matched already"
 
-data StrClass = CommentStr | KeywordStr | BuiltinStr
-              | CommandStr | SymbolStr | TypeNameStr
-
-scanClassifier :: Parser a -> Parser [(String, Maybe a)]
-scanClassifier parser = many $ withSource (    liftM Just parser
-                                           <|> (anySingle >> return Nothing))
+data StrClass = NormalStr
+              | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
 
 classify :: Parser StrClass
 classify =
-       (char ':' >> many alphaNumChar >> return CommandStr)
-   <|> (choice (map C.string keywords) >> return KeywordStr)
+       (try (char ':' >> lowerWord) >> return CommandStr)
+   <|> (symbol "--" >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
+   <|> (do s <- lowerWord
+           return $ if s `elem` keywords then KeywordStr else NormalStr)
+   <|> (upperWord >> return TypeNameStr)
    <|> (choice (map C.string symbols ) >> return SymbolStr)
-   -- TODO: the rest
+   <|> (anySingle >> return NormalStr)
   where
-   keywords = ["for", "lam", "let", "in", "unpack", "pack"]
+   keywords = ["for", "lam", "let", "in", "unpack", "pack", "type"]
    symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", "=", ">", "<"]
+
+lowerWord :: Parser String
+lowerWord = (:) <$> lowerChar <*> many alphaNumChar
+
+upperWord :: Parser String
+upperWord = (:) <$> upperChar <*> many alphaNumChar
+
 
 -- === plotting ===
 
