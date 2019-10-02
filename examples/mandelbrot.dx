@@ -32,9 +32,9 @@ inBounds z = cabs z < tol
 
 escapeTime :: Complex -> Real
 escapeTime c = fst $ fold (0.0, czero) ..
-  for i::Niters. lam (n, z). ..
-    let z2 = update c z
-    in (n + real (b2i (inBounds z2)), z2)
+  for i::Niters. lam (n, z).
+    z2 = update c z
+    (n + real (b2i (inBounds z2)), z2)
 
 'Evaluate on a grid and plot the results
 

@@ -6,6 +6,8 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Data.Char (isLower)
 import Data.Maybe (fromMaybe)
+import Data.List.NonEmpty (NonEmpty (..))
+import Data.Void
 
 import Env
 import Record
@@ -48,8 +50,11 @@ sourceBlock = do
   (source, block) <- withSource $ withRecovery recover $ sourceBlock'
   return $ SourceBlock (unPos (sourceLine pos)) offset source block
 
-recover :: (Stream s, ShowErrorComponent e) => ParseError s e -> Parser SourceBlock'
-recover e = consumeTillBreak >> return (UnParseable (parseErrorPretty e))
+recover :: ParseError String Void -> Parser SourceBlock'
+recover e = do
+  pos <- liftM statePosState getParserState
+  consumeTillBreak
+  return $ UnParseable $ errorBundlePretty (ParseErrorBundle (e :| []) pos)
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
@@ -75,7 +80,7 @@ explicitCommand = do
            "plotmat" -> return $ EvalExpr Heatmap
            "flops"   -> return Flops
            _   -> fail $ "unrecognized command: " ++ show cmdName
-  e <- expr
+  e <- declOrExpr
   return $ EvalCmd (Command cmd e)
 
 reportEOF :: Parser a -> Parser (Maybe a)
@@ -93,7 +98,7 @@ typeAlias :: Parser UDecl
 typeAlias = do
   symbol "type"
   v <- upperName
-  symbol "="
+  equalSign
   ty <- tauType
   return $ TAlias v ty
 
@@ -107,8 +112,8 @@ letPoly = do
     return (v, sTy)
   symbol (pprint v)
   wrap <- idxLhsArgs <|> lamLhsArgs
-  symbol "="
-  rhs <- liftM wrap expr
+  equalSign
+  rhs <- liftM wrap declOrExpr
   return $ case tvs of
     [] -> LetMono p rhs
      where p = RecLeaf $ v :> Ann ty
@@ -130,9 +135,9 @@ letMono :: Parser UDecl
 letMono = do
   (p, wrap) <- try $ do p <- pat
                         wrap <- idxLhsArgs <|> lamLhsArgs
-                        symbol "="
+                        equalSign
                         return (p, wrap)
-  body <- expr
+  body <- declOrExpr
   return $ LetMono p (wrap body)
 
 -- === Parsing expressions ===
@@ -144,7 +149,6 @@ term :: Parser UExpr
 term =   parenRaw
      <|> var
      <|> liftM Lit literal
-     <|> declExpr
      <|> lamExpr
      <|> forExpr
      <|> primOp
@@ -153,23 +157,25 @@ term =   parenRaw
      <|> pack
      <?> "term"
 
+declOrExpr :: Parser UExpr
+declOrExpr = declExpr <|> expr <?> "decl or expr"
+
 parenRaw :: Parser UExpr
 parenRaw = do
-  elts <- parens $ expr `sepBy` comma
-  return $ case elts of
-    [e] -> e
-    _ -> RecCon $ Tup elts
+  symbol "("
+  e <- declExpr <|> liftM maybeTup (expr `sepBy` comma)
+  symbol ")"
+  return e
+
+maybeTup :: [UExpr] -> UExpr
+maybeTup [e] = e
+maybeTup es = RecCon $ Tup es
 
 var :: Parser UExpr
 var = liftM2 Var lowerName $ many (symbol "@" >> tauTypeAtomic)
 
 declExpr :: Parser UExpr
-declExpr = do
-  symbol "let"
-  decls <- decl `sepEndBy` declSep
-  symbol "in"
-  body <- expr
-  return $ wrapDecls decls body
+declExpr = liftM2 Decl (decl <* declSep) declOrExpr
 
 withSourceAnn :: Parser UExpr -> Parser UExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
@@ -208,16 +214,16 @@ lamExpr :: Parser UExpr
 lamExpr = do
   symbol "lam"
   ps <- pat `sepBy` sc
-  period
-  body <- expr
+  argTerm
+  body <- declOrExpr
   return $ foldr Lam body ps
 
 forExpr :: Parser UExpr
 forExpr = do
   symbol "for"
   vs <- pat `sepBy` sc
-  period
-  body <- expr
+  argTerm
+  body <- declOrExpr
   return $ foldr For body vs
 
 tabCon :: Parser UExpr
@@ -254,7 +260,7 @@ identifier = lexeme . try $ do
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
   where
-   resNames = ["for", "lam", "let", "in", "unpack", "pack"]
+   resNames = ["for", "lam", "unpack", "pack"]
 
 appRule :: Operator Parser UExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
@@ -315,6 +321,12 @@ upperName = name $ lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
 name :: Parser String -> Parser Name
 name p = liftM2 Name p intQualifier
+
+equalSign :: Parser ()
+equalSign = void $ symbol "=" >> optional eol >> sc
+
+argTerm :: Parser ()
+argTerm = void $ symbol "." >> optional eol >> sc
 
 -- === Parsing types ===
 

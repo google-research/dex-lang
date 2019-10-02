@@ -1,9 +1,9 @@
 
 -- repeated vars in patterns not allowed
-:p let (x, x) = (1, 1) in x
+:p (x, x) = (1, 1); x
 > Variable redefined: x
 
-:p let f (x, x) = x in f (1, 1)
+:p f (x, x) = x; f (1, 1)
 > Variable redefined: x
 
 -- TODO: re-enable if we choose to allow non-peer shadowing

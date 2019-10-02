@@ -107,8 +107,7 @@ instance Pretty b => Pretty (ExprP b) where
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
 prettyDecl :: (Pretty decl, Pretty body) => decl -> body -> Doc ann
-prettyDecl decl body = align $ "(" <> "let" <+> p decl <+> "in"
-                                   <> line <> p body <> ")"
+prettyDecl decl body = align $ "(" <> p decl <> ";" <> line <> p body <> ")"
 
 instance Pretty Ann where
   pretty NoAnn = ""

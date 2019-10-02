@@ -1,33 +1,33 @@
 :p 1.0 + 2.0
 > 3.0
 
-:p let double = lam x. x * 2.0
-   in double 10.0
+:p (double = lam x. x * 2.0
+    double 10.0)
 > 20.0
 
-:p let _, Nx = unpack range 10
-   in isum (iota @Nx)
+:p _, Nx = unpack range 10
+   isum (iota @Nx)
 > 45
 
-:p let _, Nx = unpack range 10
-       x = iota ::Nx=>Int
-   in isum (for i. x.i)
+:p _, Nx = unpack range 10
+   x = (iota :: Nx=>Int)
+   isum (for i. x.i)
 > 45
 
-:p let vdot :: n=>Real -> n=>Real -> Real
-       vdot x y = sum (for i. x.i * y.i * 2.0)
-       _, Nx = unpack range 3
-       x = iota :: Nx=>Int
-       y = map real x
-   in vdot y y
+:p vdot :: n=>Real -> n=>Real -> Real
+   vdot x y = sum (for i. x.i * y.i * 2.0)
+   _, Nx = unpack range 3
+   x = (iota :: Nx=>Int)
+   y = map real x
+   vdot y y
 > 10.0
 
-:p let _, Nx = unpack range 3
-       _, Ny = unpack range 4
-       x = iota :: Nx => Int
-       y = iota :: Ny => Int
-       z.i.j = real x.i * real y.j
-   in sum (for i. sum z.i)
+:p _, Nx = unpack range 3
+   _, Ny = unpack range 4
+   x = iota @ Nx
+   y = iota @ Ny
+   z.i.j = real x.i * real y.j
+   sum (for i. sum z.i)
 > 18.0
 
 -- :p randint (hash 0 0) 10
@@ -37,7 +37,7 @@
 _, NArr = unpack range 7
 
 
-arr = iota :: NArr=>Int
+arr = iota @ NArr
 
 
 :p for i::NArr. iadd iota.i iota.i
@@ -64,19 +64,19 @@ fun = lam y. sum (map real arr) + y
 :p (lam (x, y). x + y) (1.0, 2.0)
 > 3.0
 
-:p let f :: (a -> b, a) -> b
-       f (x, y) = x y
-   in f (lam x. x, 1)
+:p f :: (a -> b, a) -> b
+   f (x, y) = x y
+   f (lam x. x, 1)
 > 1
 
-:p let (x,y) = ((1.0,2.0),3.0)
-       (x1, x2) = x
-   in x1 + x2 + y
+:p (x,y) = ((1.0,2.0),3.0)
+   (x1, x2) = x
+   x1 + x2 + y
 > 6.0
 
-:p let x = (1.0,2.0)
-       (y,z) = x
-   in y + z
+:p x = (1.0,2.0)
+   (y,z) = x
+   y + z
 > 3.0
 
 -- :p let f (x, y) = x + 2 * y;
@@ -120,12 +120,12 @@ s = 1.0
 :p [2, 4, 8]
 > [2, 4, 8]
 
-:p let xs = [2,1,0] in (for i. iadd xs.i 10)
+:p xs = [2,1,0]; (for i. iadd xs.i 10)
 > [12, 11, 10]
 
 cumsumplus :: n=>Real -> n=>Real
-cumsumplus xs = snd (scan 0.0 for i. lam c. let ans = c + xs.i
-                                            in (ans, 1.0 + ans))
+cumsumplus xs = snd (scan 0.0 for i. lam c. ans = c + xs.i
+                                            (ans, 1.0 + ans))
 
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2.0, 4.0, 7.0]

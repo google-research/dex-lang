@@ -13,44 +13,44 @@
 :t lam f x. f x
 > A b a. ((a -> b) -> (a -> b))
 
-:t let id :: a -> a
-       id x = x
-   in id (id) (id 1)
+:t id :: a -> a
+   id x = x
+   id (id) (id 1)
 > Int
 
-:t let _, N = unpack range 10
-       x = iota :: N=>Int
-   in isum x
+:t _, N = unpack range 10
+   x = (iota :: N=>Int)
+   isum x
 > Int
 
-:t let _, Nx = unpack range 10
-       _, Ny = unpack range 3
-       x = iota :: Nx=>Int
-       y = iota :: Ny=>Int
-   in real (isum for i. x.i) + real (isum for j. y.j)
+:t _, Nx = unpack range 10
+   _, Ny = unpack range 3
+   x = iota @ Nx
+   y = (iota :: Ny=>Int)
+   real (isum for i. x.i) + real (isum for j. y.j)
 > Real
 
-:t let _, Nx = unpack range 10
-       _, Ny = unpack range 3
-       x = iota :: Nx=>Int
-       y = iota :: Ny=>Int
-    in sum for i. iadd x.i y.i
+:t _, Nx = unpack range 10
+   _, Ny = unpack range 3
+   x = iota @ Nx
+   y = (iota :: Ny=>Int)
+   sum for i. iadd x.i y.i
 > Type error:
 > Expected: Ny
 >   Actual: Nx
 > In: i
 >
->     in sum for i. iadd x.i y.i
->                              ^
+>    sum for i. iadd x.i y.i
+>                          ^
 
-:t let _, Nx = unpack range 10
-   in iota :: Nx=>Int
+:t _, Nx = unpack range 10
+   (iota :: Nx=>Int)
 > Type error:
 > Leaked type variable: Nx
 
 _, Narr = unpack range 10
 
-arr = iota :: Narr => Int
+arr = iota @ Narr
 
 xr = map real arr
 
@@ -60,9 +60,9 @@ xr = map real arr
 :t (lam (x, y). x + y) (1.0, 2.0)
 > Real
 
-:t let f (x, y) = x + 2.0 * y
-       z.i = (xr.i, xr.i * xr.i)
-   in sum (for i. f z.i)
+:t f (x, y) = x + 2.0 * y
+   z.i = (xr.i, xr.i * xr.i)
+   sum (for i. f z.i)
 > Real
 
 -- yields 'compiler bug'. Should be a different sort of error
@@ -129,9 +129,9 @@ p2 = 1
 _, M = unpack range 5
 
 
-:t for i::M. let _, N = unpack range (asint i)
-                  x = for j::N. asint j
-               in pack x, N, E n. n=>Int
+:t for i::M. _, N = unpack range (asint i)
+             x = for j::N. asint j
+             pack x, N, E n. n=>Int
 > (M=>(Ea.(a=>Int)))
 
 idfun :: a -> a
@@ -140,6 +140,6 @@ idfun x = x
 :t idfun @ Real
 > (Real -> Real)
 
-:t lam x. let f :: a -> a; f y = x in ()
+:t lam x. f :: a -> a; f y = x; ()
 > Type error:
 > Leaked type variable: a

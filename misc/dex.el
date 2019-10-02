@@ -3,7 +3,7 @@
   '(("^--.*$"                . font-lock-comment-face)
     ("> .*$"                 . font-lock-comment-face)
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
-    ("\\blam\\b\\|\\bfor\\b\\|\\blet\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b\\|\\bin\\b"
+    ("\\blam\\b\\|\\bfor\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b"
      . font-lock-keyword-face)
     ("\\bE\\b\\|\\bA\\b"              . font-lock-builtin-face)
     ("->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)

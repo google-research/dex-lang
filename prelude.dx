@@ -89,10 +89,10 @@ rand :: Int -> Real
 rand x = %%randunif(x)
 
 sum :: i=>Real -> Real
-sum xs = fold 0.0 for i. let x = xs.i in lam c. c + x
+sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
 
 isum :: i=>Int -> Int
-isum xs = fold 0 for i. let x = xs.i in lam c. iadd c x
+isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
 
 map :: (a -> b) -> i=>a -> i=>b
 map f xs = for i. f xs.i
@@ -114,8 +114,8 @@ size :: A i. Int
 size = isum (fanout @i 1)
 
 linspace :: A n. Real -> Real -> n=>Real
-linspace low high = let dx = (high - low) / real (size @n)
-                    in for i::n. low + real (asint i) * dx
+linspace low high = dx = (high - low) / real (size @n)
+                    for i::n. low + real (asint i) * dx
 
 -- All of the following have implicit vector space typeclass constraints on `a`
 --  and `b`. TODO: make some sort of typeclass system
@@ -148,12 +148,12 @@ transpose :: (a -> b) -> b -> a
 transpose f = %transpose(lam t. f t)
 
 vjp :: (a -> b) -> a -> (b, b -> a)
-vjp f x = let (y, df) = linearize f x
-          in (y, transpose df)
+vjp f x = (y, df) = linearize f x
+          (y, transpose df)
 
 grad :: (a -> Real) -> a -> a
-grad f x = let (_, pullback) = vjp f x
-           in pullback 1.0
+grad f x = (_, pullback) = vjp f x
+           pullback 1.0
 
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
@@ -162,5 +162,5 @@ vsumImpl :: i=>a -> a
 vsumImpl xs = fold vzero for i::i. lam c. vadd c xs.i
 
 forUnzip :: i=>(b, a -> b) -> (i=>b, a -> i=>b)
-forUnzip xfs = let (xs, fs) = unzip xfs
-               in  (xs, lam t. for i. fs.i t)
+forUnzip xfs = (xs, fs) = unzip xfs
+               (xs, lam t. for i. fs.i t)
