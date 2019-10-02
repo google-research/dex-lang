@@ -1,3 +1,6 @@
+'# Mandelbrot set
+
+'First, we implement complex arithmetic
 
 type Complex = (Real, Real)
 
@@ -13,9 +16,13 @@ cabs (x1, y1) = x1 * x1 + y1 * y1
 czero :: Complex
 czero = (0.0, 0.0)
 
+'Parameters
+
 tol = 2.0
-type Niters = 200
-type Ngrid  = 200
+type Niters = 1000
+type Ngrid  = 300
+
+'The actual escape time algorithm
 
 update :: Complex -> Complex -> Complex
 update c z = cadd c (cmul z z)
@@ -29,11 +36,11 @@ escapeTime c = fst $ fold (0.0, czero) ..
     let z2 = update c z
     in (n + real (b2i (inBounds z2)), z2)
 
+'Evaluate on a grid and plot the results
+
 xs = linspace @Ngrid (-2.5) 1.0
 ys = linspace @Ngrid (-1.0) 1.0
 
 grid.j.i = (xs.i, ys.j)
-
--- this is a comment
 
 :plotmat map2 escapeTime grid
