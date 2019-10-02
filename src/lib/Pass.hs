@@ -3,11 +3,12 @@
 {-# LANGUAGE GADTs #-}
 
 module Pass (TopPassM, assertEq, ignoreExcept, liftExceptTop, runTopPassM,
-             throwTopErr, emitOutput, (>+>), throwIf, TopPass (..)) where
+             throwTopErr, emitOutput, (>+>), throwIf, TopPass (..), FullPass) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
+import Data.Void
 
 import Syntax
 import PPrint
@@ -17,6 +18,7 @@ import Cat
 
 type PassResult decl = Either Result decl
 type TopPassM env a = ExceptT Result (CatT env IO) a
+type FullPass env = SourceBlock -> TopPassM env Void
 
 data TopPass a b where
   TopPass :: Monoid env => (a -> TopPassM env b) -> TopPass a b

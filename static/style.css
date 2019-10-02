@@ -1,6 +1,6 @@
 
 body {
-  margin: 1em auto 4em auto;
+  margin: 1em auto 1em auto;
   padding: 1em 1em 1em 1em;
   max-width: 50em;
   font-family: Helvetica, sans-serif;
@@ -8,43 +8,24 @@ body {
   color: #333;
 }
 
+.cell {
+}
+
+.code-block, .err-block, .result-block {
+  padding: 0em 0em 0em 2em;
+  display: block;
+  font-family: monospace;
+  white-space: pre;
+}
+
 .prose-block {
-  margin: 0em 1em;
-  padding: 0.5em 1em;
   line-height: 140%;
 }
 
-.code-block {
-  margin: 0em 1em;
-  padding: 0.5em 1em;
-  background-color: #F8F8F8;
-}
-
-.prose-source {
-}
-
-.code-source {
-  display: block;
-  font-family: monospace;
-  white-space: pre;
-}
-
-.result-text {
-  display: block;
-  font-family: monospace;
-  white-space: pre;
-}
-
-.err-state {
-  color: #A80000;
+.err-block {
   font-weight: bold;
-}
-
-.pending-state {
-  background-color: #00FFFF;
-}
-
-.complete-state {
+  color: #A80000;
+  border-left: 3px solid #A80000;
 }
 
 .comment {

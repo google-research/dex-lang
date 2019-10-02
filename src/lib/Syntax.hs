@@ -428,7 +428,7 @@ instance HasVars b => HasVars (DeclP b) where
    freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
-   freeVars (TAlias _ _) = error $ "TAlias not implemented" -- TODO
+   freeVars (TAlias _ ty) = freeVars ty
 
 instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl decl) = freeVars decl
@@ -440,6 +440,11 @@ instance HasVars b => HasVars (TLamP b) where
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
   freeVars (T x) = freeVars x
+
+instance HasVars SourceBlock where
+  freeVars block = case sbContents block of
+    UTopDecl decl -> freeVars decl
+    _ -> mempty
 
 class BindsVars a where
   lhsVars :: a -> Vars
@@ -460,6 +465,11 @@ instance BindsVars (TopDeclP b) where
 instance BindsVars NDecl where
   lhsVars (NLet bs _) = foldMap lhsVars bs
   lhsVars (NUnpack bs tv _) = foldMap lhsVars bs <> tv @> T ()
+
+instance BindsVars SourceBlock where
+  lhsVars block = case sbContents block of
+    UTopDecl decl -> lhsVars decl
+    _ -> mempty
 
 declVars :: (HasVars a, BindsVars a) => [a] -> (Vars, Vars)
 declVars [] = (mempty, mempty)

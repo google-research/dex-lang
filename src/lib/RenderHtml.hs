@@ -1,6 +1,6 @@
 {-# LANGUAGE OverloadedStrings #-}
 
-module RenderHtml (renderLitProgHtml) where
+module RenderHtml (renderHtml, progHtml, sourceBlockHtml, resultHtml) where
 
 import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At
@@ -21,46 +21,45 @@ import PPrint
 import ParseUtil
 import Record
 
-renderLitProgHtml :: LitProg -> String
-renderLitProgHtml blocks = renderHtml $ wrapBody $ mapM_ evalBlockHtml blocks
+progHtml :: LitProg -> Html
+progHtml blocks = wrapBody $ map evalBlockHtml blocks
 
-wrapBody :: Html -> Html
-wrapBody inner = docTypeHtml $ do
+wrapBody :: [Html] -> Html
+wrapBody blocks = docTypeHtml $ do
   H.head $ do
     H.title "Output"
     H.link ! rel "stylesheet" ! href "style.css" ! type_ "text/css"
     H.meta ! charset "UTF-8"
     H.script mempty ! src "https://cdn.plot.ly/plotly-1.2.0.min.js"
-  H.body $ H.div inner ! At.id "main-output"
-  H.script mempty ! src "plot.js"
+    H.script mempty ! src "plot.js"
+  H.body $ do H.div inner ! At.id "main-output"
+              H.script "render_plots()"
+  where inner = foldMap (cdiv "cell") blocks
 
 evalBlockHtml :: EvalBlock -> Html
-evalBlockHtml evalBlock@(EvalBlock block result) =
-  case sbContents block of
-    ProseBlock s -> cdiv ("prose-block " ++ cellStatus)
-                         (cdiv "prose-source" (mdToHtml s))
-    EmptyLines -> return ()
-    _ -> cdiv ("code-block " ++ cellStatus) $ do
-           cdiv "code-source" (highlightSyntax (pprint block))
-           resultHtml evalBlock
-  where
-    cellStatus = case result of
-                   Left  _ -> "err-state"
-                   Right _ -> "complete-state"
+evalBlockHtml evalBlock@(EvalBlock block _) =
+  sourceBlockHtml block <> resultHtml evalBlock
+
+sourceBlockHtml :: SourceBlock -> Html
+sourceBlockHtml block = case sbContents block of
+  ProseBlock s -> cdiv "prose-block" $ mdToHtml s
+  _ -> cdiv "code-block" $ highlightSyntax (pprint block)
+
+resultHtml :: EvalBlock -> Html
+resultHtml evalBlock@(EvalBlock _ result) =
+  case result of
+    Left _ -> cdiv "err-block" $ toHtml $ pprintResult False evalBlock
+    Right ans -> case ans of
+      NoOutput -> mempty
+      ValOut Heatmap val -> makeHeatmap val
+      ValOut Scatter val -> makeScatter val
+      _ -> cdiv "result-block" $ toHtml $ pprintResult False evalBlock
 
 cdiv :: String -> Html -> Html
 cdiv c inner = H.div inner ! class_ (stringValue c)
 
 mdToHtml :: String -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
-
-resultHtml :: EvalBlock -> Html
-resultHtml evalBlock@(EvalBlock _ result) =
-  case result of
-    Right NoOutput -> mempty
-    Right (ValOut Heatmap val) -> makeHeatmap val
-    Right (ValOut Scatter val) -> makeScatter val
-    _ -> cdiv "result-text" $ toHtml $ pprintResult False evalBlock
 
 -- === syntax highlighting ===
 
@@ -105,7 +104,6 @@ lowerWord = (:) <$> lowerChar <*> many alphaNumChar
 upperWord :: Parser String
 upperWord = (:) <$> upperChar <*> many alphaNumChar
 
-
 -- === plotting ===
 
 makeScatter :: Value -> Html
@@ -125,7 +123,7 @@ dataDiv val = cdiv "data" (jsonAsHtml val) ! At.style "display: none;"
 
 makeHeatmap :: Value -> Html
 makeHeatmap (Value ty vecs) =
-  cdiv "heatmap" (dataDiv trace)
+  cdiv "plot-pending" (dataDiv trace)
   where
     TabType _ (TabType (IdxSetLit n) _) = ty
     trace :: A.Value

@@ -5,7 +5,7 @@ familiar with a MATLAB/NumPy style of numerical programming. Dex is a
 functional programming language in the spirit of Haskell and SML so we assume
 familiarity with this sort of language. (TODO: intro to FP version)
 
-'This tutorial is a literate program. You can evaluate it by running `dex
+'This tutorial is a literate program. You can evaluate it by running `dex`
 with `dex --watch tutorial.cod` then the file will be re-executed every time
 the file is saved, so you can play around with it.
 
@@ -27,18 +27,19 @@ the file is saved, so you can play around with it.
 call it an 'array' or 'vector'. Let's make one:
 
 xs = [[1,2],[3,4],[5,6]]
+
 :p xs
 > [[1, 2], [3, 4], [5, 6]]
 :t xs
 > (3=>(2=>Int))
 
-
 'this is a type error:
 
 :p 1 1
-
-:p (lam x. x) 1
-
+> Type error:
+> Expected: Int
+>   Actual: (?_2 -> ?_3)
+> In: 1
 
 'TODO: table types
   * for expression

@@ -33,7 +33,6 @@ data EvalMode = ReplMode
 data CmdOpts = CmdOpts EvalMode Backend
 
 type FName = String
-type FullPass env = SourceBlock -> TopPassM env Void
 
 typeCheckPass :: TopPass SourceBlock TopDecl
 typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkTyped
@@ -115,7 +114,7 @@ simpleInfo p = info (p <**> helper) mempty
 printLitProg :: DocFmt -> LitProg -> String
 printLitProg TextDoc    prog = foldMap pprint prog
 printLitProg ResultOnly prog = foldMap (pprintResult True) prog
-printLitProg HtmlDoc    prog = renderLitProgHtml prog
+printLitProg HtmlDoc    prog = renderHtml $ progHtml prog
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseBackend

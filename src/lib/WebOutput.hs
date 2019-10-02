@@ -23,19 +23,24 @@ import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
 import System.INotify
+import Data.Void
 
 import Syntax
 import Actor
 import Pass
 import Parser
-import PPrint
 import Env
-import Record
+import RenderHtml
 
 type FileName = String
 type Key = Int
-type ResultSet = (SetVal [Key], MonMap Key Result)
-type FullPass env = UTopDecl -> TopPassM env ()
+
+type TreeAddress = [Int]
+type HtmlString = String
+type HtmlFragment = [(TreeAddress, HtmlString)]
+type CellUpdate = HtmlFragment
+
+type ResultSet = (SetVal [Key], MonMap Key CellUpdate)
 
 runWeb :: Monoid env => FileName -> FullPass env -> env -> IO ()
 runWeb fname pass env = runActor $ do
@@ -55,6 +60,7 @@ webServer resultsRequest = do
       case pathInfo request of
         []             -> respondWith "static/index.html" "text/html"
         ["style.css"]  -> respondWith "static/style.css"  "text/css"
+        ["plot.js"]    -> respondWith "static/plot.js"    "text/javascript"
         ["dynamic.js"] -> respondWith "static/dynamic.js" "text/javascript"
         ["getnext"]    -> respond $ responseStream status200
                              [ ("Content-Type", "text/event-stream")
@@ -106,29 +112,25 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
   forever $ do
     NewProg source <- receive
     modify $ setVarMap (const mempty)
-    keys <- case parseProg source of
-              Right decls -> mapM (processDecl source) decls
-              Left e -> do
-                key <- freshKey
-                resultChan key `send` (resultSource source <> resultErr e)
-                return [key]
+    keys <- mapM processBlock (parseProg source)
     resultSetChan `send` updateOrder keys
   where
-    processDecl fullSource (source, decl) = do
+    processBlock block = do
       state_ <- get
-      let parents = nub $ toList $ freeVars decl `envIntersect` varMap state_
-      key <- case M.lookup (source, parents) (declCache state_) of
+      let parents = nub $ toList $ freeVars block `envIntersect` varMap state_
+      let cacheKey = (sbText block, parents)
+      key <- case M.lookup cacheKey (declCache state_) of
         Just key -> return key
         Nothing -> do
           key <- freshKey
-          modify $ setDeclCache $ M.insert (source, parents) key
+          modify $ setDeclCache $ M.insert cacheKey key
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
-          resultChan key `send` resultSource source
+          resultChan key `send` sourceUpdate block
           (p, wChan) <- spawn Trap $
-                          worker fullSource env (pass decl) (resultChan key) parentChans
+                          worker env (pass block) (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
-      modify $ setVarMap $ (<> fmap (const key) (lhsVars decl))
+      modify $ setVarMap $ (<> fmap (const key) (lhsVars block))
       return key
 
     resultChan key = subChan (singletonResult key) resultSetChan
@@ -141,30 +143,25 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
 lookupKeys :: Ord k => [k] -> M.Map k v -> [Maybe v]
 lookupKeys ks m = map (flip M.lookup m) ks
 
-singletonResult :: Key -> Result -> ResultSet
-singletonResult k r = (mempty, MonMap (M.singleton k r))
-
-updateOrder :: [Key] -> ResultSet
-updateOrder ks = (Set ks, mempty)
-
 data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: Monoid env => String -> env -> TopPassM env ()
-            -> PChan Result
+worker :: Monoid env => env -> TopPassM env Void
+            -> PChan CellUpdate
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()
-worker source initEnv pass resultChan parentChans = do
+worker initEnv pass resultChan parentChans = do
   selfChan <- myChan
   mapM_ (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  _ <- spawnLink NoTrap $ execPass source env pass (subChan JobDone selfChan) resultChan
+  _ <- spawnLink NoTrap $ execPass env pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
-    ErrMsg _ s -> Just $ do resultChan `send` resultErr (Err CompilerErr Nothing s)
-                            return env
+    ErrMsg _ s -> Just $ do
+      resultChan `send` resultUpdate (Left (Err CompilerErr Nothing s))
+      return env
     _ -> Nothing
   forever $ receiveF fReq >>= (`send` env')
   where
@@ -172,16 +169,11 @@ worker source initEnv pass resultChan parentChans = do
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
 execPass :: Monoid env =>
-              String -> env -> TopPassM env () -> PChan env -> PChan Result -> Actor msg ()
-execPass source env pass envChan resultChan = do
-  (ans, env') <- liftIO $ runTopPassM (outChan, source) env pass
+              env -> TopPassM env Void -> PChan env -> PChan CellUpdate -> Actor msg ()
+execPass env pass envChan resultChan = do
+  ~(Left ans, env') <- liftIO $ runTopPassM env pass
   envChan    `send` (env <> env')
-  -- TODO: consider just throwing IO error and letting the supervisor catch it
-  resultChan `send` case ans of Left e   -> resultErr e
-                                Right () -> resultComplete
-  where
-    outChan :: Output -> IO ()
-    outChan x = sendFromIO resultChan (resultText x)
+  resultChan `send` resultUpdate ans
 
 -- sends file contents to subscribers whenever file is modified
 inotifyMe :: String -> PChan String -> IO ()
@@ -191,19 +183,23 @@ inotifyMe fname chan = do
   void $ addWatch inotify [Modify] (pack fname) (const readSend)
   where readSend = readFile fname >>= sendFromIO chan
 
+-- === rendering ===
+
+singletonResult :: Key -> CellUpdate -> ResultSet
+singletonResult k r = (mempty, MonMap (M.singleton k r))
+
+updateOrder :: [Key] -> ResultSet
+updateOrder ks = (Set ks, mempty)
+
+sourceUpdate :: SourceBlock -> CellUpdate
+sourceUpdate block = [([], renderHtml (sourceBlockHtml block))]
+
+-- TODO: add source to errors upstream so we can render results by themselves
+-- without a dummy EvalBlock
+resultUpdate :: Result -> CellUpdate
+resultUpdate result = [([], renderHtml (resultHtml (EvalBlock undefined result)))]
+
 -- === serialization ===
-
-instance ToJSON Result where
-  toJSON (Result source status output) = object [ "source" .= toJSON source
-                                                , "status" .= toJSON status
-                                                , "output" .= toJSON output ]
-instance ToJSON a => ToJSON (Nullable a) where
-  toJSON (Valid x) = object ["val" .= toJSON x]
-  toJSON Null = A.Null
-
-instance ToJSON EvalStatus where
-  toJSON Complete   = object ["complete" .= A.Null]
-  toJSON (Failed e) = object ["failed"   .= toJSON (pprint e)]
 
 instance ToJSON a => ToJSON (SetVal a) where
   toJSON (Set x) = object ["val" .= toJSON x]
@@ -211,37 +207,3 @@ instance ToJSON a => ToJSON (SetVal a) where
 
 instance (ToJSON k, ToJSON v) => ToJSON (MonMap k v) where
   toJSON (MonMap m) = toJSON (M.toList m)
-
-instance ToJSON OutputElt where
-  toJSON (TextOut s)          = object [ "text" .= toJSON s ]
-  toJSON (ValOut Printed val) = object [ "text" .= toJSON (pprint val) ]
-  toJSON (ValOut Scatter val) = object [ "plot" .= makeScatterPlot val ]
-  toJSON (ValOut Heatmap val) = object [ "plot" .= makeHeatmap val ]
-
-makeScatterPlot :: Value -> A.Value
-makeScatterPlot (Value _ vecs) = trace
-  where
-    trace :: A.Value
-    trace = object
-      [ "x" .= toJSON xs
-      , "y" .= toJSON ys
-      , "mode" .= toJSON ("markers"   :: A.Value)
-      , "type" .= toJSON ("scatter" :: A.Value)
-      ]
-    RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
-
-makeHeatmap :: Value -> A.Value
-makeHeatmap (Value ty vecs) = trace
-  where
-    TabType _ (TabType (IdxSetLit n) _) = ty
-    trace :: A.Value
-    trace = object
-      [ "z" .= toJSON (chunk n xs)
-      , "type" .= toJSON ("heatmap" :: A.Value)
-      ]
-    RecLeaf (RealVec xs) = vecs
-
-chunk :: Int -> [a] -> [[a]]
-chunk _ [] = []
-chunk n xs = row : chunk n rest
-  where (row, rest) = splitAt n xs

@@ -14,8 +14,8 @@ czero :: Complex
 czero = (0.0, 0.0)
 
 tol = 2.0
-type Niters = 100
-type Ngrid  = 100
+type Niters = 200
+type Ngrid  = 200
 
 update :: Complex -> Complex -> Complex
 update c z = cadd c (cmul z z)
@@ -32,7 +32,7 @@ escapeTime c = fst $ fold (0.0, czero) ..
 xs = linspace @Ngrid (-2.5) 1.0
 ys = linspace @Ngrid (-1.0) 1.0
 
-grid.i.j = (xs.i, ys.j)
+grid.j.i = (xs.i, ys.j)
 
 -- this is a comment
 
