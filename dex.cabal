@@ -7,7 +7,7 @@ build-type:          Simple
 
 flag web
   description:         Enables the web interface
-  default:             False
+  default:             True
 
 library
   exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
