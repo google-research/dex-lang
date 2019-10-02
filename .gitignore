@@ -10,3 +10,4 @@ test-script.cd
 garbage.hs
 stack.yaml.lock
 *.pyc
+doc/

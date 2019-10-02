@@ -7,8 +7,8 @@ SHELL=/bin/bash
 
 libdex: cbits/libdex.so
 
-run-%: quine-tests/%.dx
-	quine-tests/check-quine $^ \
+run-%: examples/%.dx
+	misc/check-quine $^ \
 	stack exec dex -- script --lit --allow-errors
 
 update-%: tests/%.dx
@@ -16,7 +16,7 @@ update-%: tests/%.dx
 	mv $^.tmp $^
 
 interp-test:
-	./quine-tests/check-quine quine-tests/eval-tests.dx \
+	./misc/check-quine examples/eval-tests.dx \
 	stack exec dex -- --interp script --lit --allow-errors
 
 stack-tests:
@@ -31,5 +31,13 @@ all-tests: interp-test \
            run-tutorial \
            stack-tests
 
-clean:
-	rm cbits/*.so
+doc/%.html: examples/%.dx
+	stack exec dex -- script $^ --html > $@
+
+build-docs: doc/mandelbrot.html \
+            doc/tutorial.html
+	cp static/style.css doc
+	cp static/plot.js doc
+
+clean-docs:
+	rm doc/*
