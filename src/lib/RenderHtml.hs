@@ -27,7 +27,6 @@ progHtml blocks = wrapBody $ map evalBlockHtml blocks
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
   H.head $ do
-    H.title "Output"
     H.link ! rel "stylesheet" ! href "style.css" ! type_ "text/css"
     H.meta ! charset "UTF-8"
     H.script mempty ! src "https://cdn.plot.ly/plotly-1.2.0.min.js"

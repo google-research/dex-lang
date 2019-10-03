@@ -18,14 +18,18 @@ body {
   white-space: pre;
 }
 
+.result-block {
+  border-left: 3px solid  #87CEFA;
+}
+
 .prose-block {
   line-height: 140%;
 }
 
 .err-block {
   font-weight: bold;
-  color: #A80000;
-  border-left: 3px solid #A80000;
+  color: #B22222;
+  border-left: 3px solid #B22222;
 }
 
 .comment {
