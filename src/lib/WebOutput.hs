@@ -162,7 +162,7 @@ worker initEnv block pass resultChan parentChans = do
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do
-      resultChan `send` resultUpdate (Left (Err CompilerErr Nothing s))
+      resultChan `send` resultUpdate (Result (Left (Err CompilerErr Nothing s)))
       return env
     _ -> Nothing
   forever $ receiveF fReq >>= (`send` env')
@@ -195,12 +195,10 @@ updateOrder :: [Key] -> ResultSet
 updateOrder ks = (Set ks, mempty)
 
 sourceUpdate :: SourceBlock -> CellUpdate
-sourceUpdate block = [([], renderHtml (sourceBlockHtml block))]
+sourceUpdate block = [([], pprintHtml block)]
 
--- TODO: add source to errors upstream so we can render results by themselves
--- without a dummy EvalBlock
 resultUpdate :: Result -> CellUpdate
-resultUpdate result = [([], renderHtml (resultHtml (EvalBlock undefined result)))]
+resultUpdate result = [([], pprintHtml result)]
 
 -- === serialization ===
 

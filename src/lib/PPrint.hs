@@ -2,7 +2,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintEsc, pprintResult) where
+module PPrint (pprint, pprintEsc, addErrSrc, printLitBlock) where
 
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -246,26 +246,26 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
 instance Pretty SourceBlock where
   pretty block = p (sbText block)
 
-instance Pretty EvalBlock where
-  pretty evalBlock@(EvalBlock block _) = p block <> p resultStr
-    where
-      resultStr :: String
-      resultStr = unlines $ map addPrefix $ lines $ pprintResult False evalBlock
-      addPrefix :: String -> String
-      addPrefix s = case s of "" -> ">"
-                              _  -> "> " ++ s
+instance Pretty Result where
+  pretty (Result r) = case r of
+    Left err -> p err
+    Right NoOutput -> mempty
+    Right out -> p out
 
-pprintResult :: Bool -> EvalBlock -> String
-pprintResult showLineNum (EvalBlock block result) = case result of
-  Left err -> lineNum ++ pprint (addErrSource (sbOffset block) (sbText block) err)
-  Right NoOutput -> ""
-  Right out -> pprint out
-  where lineNum = if showLineNum
-                    then "\nLine " ++ show (sbLine block) ++ "\n"
-                    else ""
+printLitBlock :: SourceBlock -> Result -> String
+printLitBlock block result = pprint block ++ resultStr
+  where
+    resultStr = unlines $ map addPrefix $ lines $ pprint result
+    addPrefix :: String -> String
+    addPrefix s = case s of "" -> ">"
+                            _  -> "> " ++ s
 
-addErrSource :: Int -> String -> Err -> Err
-addErrSource n s (Err e pos s') = case pos of
-    Nothing -> Err e pos s'
-    Just (start, stop) -> Err e pos $ s' ++ "\n\n"
-                           ++ highlightRegion (start - n, stop - n) s
+-- TODO: add line numbers back (makes the quines a little brittle)
+addErrSrc :: SourceBlock -> Result -> Result
+addErrSrc block result = case result of
+  Result (Left (Err e (Just (start, stop)) s')) ->
+    Result $ Left $ Err e Nothing $ s' ++ "\n\n" ++ ctx
+      where
+        n = sbOffset block
+        ctx = highlightRegion (start - n, stop - n) (sbText block)
+  _ -> result

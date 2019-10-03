@@ -16,7 +16,7 @@ This document is a literate program. You can follow along in the REPL
 
 'Why did we write `1.0` instead of just `1`? Let's try that:
 
--- :p (1 + 2) * 3
+:p (1 + 2) * 3
 
 'We can query the *type* of an expression with `:t`. Here's a pair of a real
  number and an integer. (Note that Dex types don't include floating point

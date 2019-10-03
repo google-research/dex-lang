@@ -16,20 +16,18 @@ import Cat
 
 -- === top-level pass ===
 
-type TopPassM env a = ExceptT Result (CatT env IO) a
+type TopPassM env a = ExceptT Result' (CatT env IO) a
 type FullPass env = SourceBlock -> TopPassM env Void
 
 data TopPass a b where
   TopPass :: Monoid env => (a -> TopPassM env b) -> TopPass a b
 
-runFullPass :: Monoid env =>
-                  env -> FullPass env -> SourceBlock -> IO (Result, env)
-runFullPass env pass x = do
-  (ans, env') <- runTopPassM env (pass x)
-  case ans of Left result -> return (result, env')
-              Right _ -> error "Can't inhabit the void"
+runFullPass :: Monoid env => env -> FullPass env -> SourceBlock -> IO (Result, env)
+runFullPass env pass source = do
+  ~(Left result, env') <- runTopPassM env (pass source)
+  return (addErrSrc source (Result result), env')
 
-runTopPassM :: Monoid env => env -> TopPassM env a -> IO (Either Result a, env)
+runTopPassM :: Monoid env => env -> TopPassM env a -> IO (Either Result' a, env)
 runTopPassM env m = runCatT (runExceptT m) env
 
 infixl 1 >+>

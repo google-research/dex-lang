@@ -72,23 +72,23 @@ evalDecl pass block = do
   return ans
 
 evalFile :: Monoid env =>
-              FullPass env-> String -> StateT env IO [EvalBlock]
+              FullPass env-> String -> StateT env IO [(SourceBlock, Result)]
 evalFile pass fname = do
   source <- liftIO $ readFile fname
   let sourceBlocks = parseProg source
   results <- mapM (evalDecl pass) sourceBlocks
-  return $ zipWith EvalBlock sourceBlocks results
+  return $ zip sourceBlocks results
 
 evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
 evalPrelude pass = do
   result <- evalFile pass "prelude.dx"
-  void $ liftErrIO $ mapM (\(EvalBlock _ r) -> r) result
+  void $ liftErrIO $ mapM (\(_, (Result r)) -> r) result
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
   sourceBlock <- readMultiline ">=> " parseTopDeclRepl
   result <- lift $ evalDecl pass sourceBlock
-  liftIO $ putStrLn $ (pprintResult False) (EvalBlock sourceBlock result)
+  liftIO $ putStrLn $ pprint result
 
 liftErrIO :: MonadIO m => Except a -> m a
 liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
@@ -112,9 +112,9 @@ simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
 printLitProg :: DocFmt -> LitProg -> String
-printLitProg TextDoc    prog = foldMap pprint prog
-printLitProg ResultOnly prog = foldMap (pprintResult True) prog
-printLitProg HtmlDoc    prog = renderHtml $ progHtml prog
+printLitProg TextDoc    prog = foldMap (uncurry printLitBlock) prog
+printLitProg ResultOnly prog = foldMap (pprint . snd) prog
+printLitProg HtmlDoc    prog = progHtml prog
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseBackend

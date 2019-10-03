@@ -12,13 +12,13 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                throw, addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result, freeVars,
+               Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
                NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
                NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
-               SourceBlock (..), SourceBlock' (..), LitProg, EvalBlock (..)
+               SourceBlock (..), SourceBlock' (..), LitProg,
                ) where
 
 import Record
@@ -267,9 +267,9 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 
 -- === outputs ===
 
-data EvalBlock = EvalBlock SourceBlock Result
-type LitProg = [EvalBlock]
-type Result = Except Output
+type LitProg = [(SourceBlock, Result)]
+type Result' = Except Output
+newtype Result = Result Result'
 
 data Output = ValOut OutFormat Value | TextOut String | NoOutput
                 deriving (Show, Eq, Generic)

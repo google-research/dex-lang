@@ -1,6 +1,7 @@
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
-module RenderHtml (renderHtml, progHtml, sourceBlockHtml, resultHtml) where
+module RenderHtml (pprintHtml, progHtml) where
 
 import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At
@@ -21,8 +22,13 @@ import PPrint
 import ParseUtil
 import Record
 
-progHtml :: LitProg -> Html
-progHtml blocks = wrapBody $ map evalBlockHtml blocks
+pprintHtml :: ToMarkup a => a -> String
+pprintHtml x = renderHtml $ toMarkup x
+
+progHtml :: LitProg -> String
+progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
+  where
+    toHtmlBlock (block,result) = toMarkup block <> toMarkup result
 
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
@@ -35,30 +41,25 @@ wrapBody blocks = docTypeHtml $ do
               H.script "render_plots()"
   where inner = foldMap (cdiv "cell") blocks
 
-evalBlockHtml :: EvalBlock -> Html
-evalBlockHtml evalBlock@(EvalBlock block _) =
-  sourceBlockHtml block <> resultHtml evalBlock
-
-sourceBlockHtml :: SourceBlock -> Html
-sourceBlockHtml block = case sbContents block of
-  ProseBlock s -> cdiv "prose-block" $ mdToHtml s
-  _ -> cdiv "code-block" $ highlightSyntax (pprint block)
-
-resultHtml :: EvalBlock -> Html
-resultHtml evalBlock@(EvalBlock _ result) =
-  case result of
-    Left _ -> cdiv "err-block" $ toHtml $ pprintResult False evalBlock
-    Right ans -> case ans of
+instance ToMarkup Result where
+  toMarkup result = case result of
+    Result (Left _) -> cdiv "err-block" $ toHtml $ pprint result
+    Result (Right ans) -> case ans of
       NoOutput -> mempty
       ValOut Heatmap val -> makeHeatmap val
       ValOut Scatter val -> makeScatter val
-      _ -> cdiv "result-block" $ toHtml $ pprintResult False evalBlock
+      _ -> cdiv "result-block" $ toHtml $ pprint result
 
-cdiv :: String -> Html -> Html
-cdiv c inner = H.div inner ! class_ (stringValue c)
+instance ToMarkup SourceBlock where
+  toMarkup block = case sbContents block of
+    ProseBlock s -> cdiv "prose-block" $ mdToHtml s
+    _ -> cdiv "code-block" $ highlightSyntax (pprint block)
 
 mdToHtml :: String -> Html
 mdToHtml s = preEscapedText $ commonmarkToHtml [] $ pack s
+
+cdiv :: String -> Html -> Html
+cdiv c inner = H.div inner ! class_ (stringValue c)
 
 -- === syntax highlighting ===
 
