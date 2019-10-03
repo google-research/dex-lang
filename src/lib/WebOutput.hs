@@ -17,7 +17,7 @@ import qualified Data.Map.Strict as M
 
 import Network.Wai
 import Network.Wai.Handler.Warp (run)
-import Network.HTTP.Types (status200)
+import Network.HTTP.Types (status200, status404)
 import Data.ByteString.Char8 (pack)
 import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
@@ -65,10 +65,13 @@ webServer resultsRequest = do
         ["getnext"]    -> respond $ responseStream status200
                              [ ("Content-Type", "text/event-stream")
                              , ("Cache-Control", "no-cache")] resultStream
+        ["favicon.ico"] -> notfound
         path -> error $ "Unexpected request: " ++ (show path)
       where
         respondWith fname ctype = respond $ responseFile status200
                                    [("Content-Type", ctype)] fname Nothing
+        notfound = respond $ responseLBS status404
+                     [("Content-Type", "text/plain")] "404 - Not Found"
 
     resultStream :: StreamingBody
     resultStream write flush = runActor $ do

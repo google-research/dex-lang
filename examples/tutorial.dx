@@ -1,20 +1,22 @@
 '# Introduction to the Dex language
 
-'Abstract This is an introduction to the Dex language. It's aimed at a reader
-familiar with a MATLAB/NumPy style of numerical programming. Dex is a
-functional programming language in the spirit of Haskell and SML so we assume
-familiarity with this sort of language. (TODO: intro to FP version)
-
-'This tutorial is a literate program. You can evaluate it by running `dex`
-with `dex --watch tutorial.cod` then the file will be re-executed every time
-the file is saved, so you can play around with it.
+'Dex is a functional, statically typed language for array processing.
+Here we introduce the language in a tutorial style. We assume
+reading familiarity with languages in the Haskell/ML family, and with
+array programming in the MATLAB/NumPy style.
+This document is a literate program. You can follow along in the REPL
+(run `dex repl`) or with the live notebook (`dex web examples/tutorial.dx`).
 
 '## Getting started
 
 'We can evaluate and print expressions with `:p`
 
-:p 100.0 + 1.0
+:p (1.0 + 2.0) * 3.0
 > 101.0
+
+'Why did we write `1.0` instead of just `1`? Let's try that:
+
+-- :p (1 + 2) * 3
 
 'We can query the *type* of an expression with `:t`. Here's a pair of a real
  number and an integer. (Note that Dex types don't include floating point
