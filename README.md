@@ -8,7 +8,7 @@ Building
 ========
 
 - Build Dex `make` (or `make-no-web` on non-Linux)
-- Run tests: `make all-tests`
+- Run tests: `make tests`
 - Set up alias (e.g. in .bashrc) `alias dex=stack exec dex --`
 
 Running

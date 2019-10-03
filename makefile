@@ -14,14 +14,15 @@ all-no-web: cbits/libdex.so
 	stack build --flag dex:-web
 
 # Run all tests. T
-all-tests: interp-test \
-           run-type-tests \
-           run-eval-tests \
-           run-shadow-tests \
-           run-annot-tests \
-           run-flop-tests \
-           run-tutorial \
-           stack-tests
+tests: interp-test \
+       run-type-tests \
+       run-eval-tests \
+       run-shadow-tests \
+       run-annot-tests \
+       run-flop-tests \
+       run-tutorial \
+       run-mandelbrot \
+       stack-tests
 
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@

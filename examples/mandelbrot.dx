@@ -44,3 +44,4 @@ ys = linspace @Ngrid -1.0 1.0
 grid.j.i = (xs.i, ys.j)
 
 :plotmat map2 escapeTime grid
+> <graphical output>
