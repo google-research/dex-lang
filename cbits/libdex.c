@@ -2,6 +2,7 @@
 #include "stdint.h"
 #include "stdlib.h"
 #include "string.h"
+#include "inttypes.h"
 
 char* malloc_dex(long nbytes) {
   return malloc(nbytes);
@@ -32,11 +33,7 @@ uint64_t apply_round(uint32_t x, uint32_t y, int rot) {
 }
 
 uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
-  /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins (transitively) */
-  /* expect:  threefry_2x32(0, 0) == "0x6b20015999ba4efe"   */
-  /*   threefry_2x32  [0x13198a2e, 0x03707344] */
-  /*                  [0x243f6a88, 0x85a308d3] == 0xc4923a9c483df7a0 */
-  /*  ^--- not getting these numbers yet! Must be making a mistake somewhere. */
+  /* Based on jax's threefry_2x32 by Matt Johnson and Peter Hawkins */
 
   uint32_t k0;
   uint32_t k1;
@@ -60,42 +57,47 @@ uint64_t threefry2x32(uint64_t keypair, uint64_t count) {
   x = x + k0;
   y = y + k1;
 
+
   for (i=0;i<4;i++) {
     count = apply_round(x, y, rotations1[i]);
     x = (uint32_t) (count >> 32);
     y = (uint32_t) count;
-    x = x + k1;
-    y = y + k2 + 1;
   }
+  x = x + k1;
+  y = y + k2 + 1;
+
 
   for (i=0;i<4;i++) {
     count = apply_round(x, y, rotations2[i]);
     x = (uint32_t) (count >> 32);
     y = (uint32_t) count;
-    x = x + k2;
-    y = y + k0 + 2;
   }
+  x = x + k2;
+  y = y + k0 + 2;
+
   for (i=0;i<4;i++) {
     count = apply_round(x, y, rotations1[i]);
     x = (uint32_t) (count >> 32);
     y = (uint32_t) count;
-    x = x + k0;
-    y = y + k1 + 3;
   }
+  x = x + k0;
+  y = y + k1 + 3;
+
   for (i=0;i<4;i++) {
     count = apply_round(x, y, rotations2[i]);
     x = (uint32_t) (count >> 32);
     y = (uint32_t) count;
-    x = x + k1;
-    y = y + k2 + 4;
   }
+  x = x + k1;
+  y = y + k2 + 4;
+
   for (i=0;i<4;i++) {
     count = apply_round(x, y, rotations1[i]);
     x = (uint32_t) (count >> 32);
     y = (uint32_t) count;
-    x = x + k2;
-    y = y + k0 + 5;
   }
+  x = x + k2;
+  y = y + k0 + 5;
 
   out = (uint64_t) x;
   out = (out << 32) | y;
@@ -120,6 +122,13 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-/* int main(int argc, const char* argv[]) { */
-/*   printf("Final  %f\n", randunif(threefry_2x32(0,0))); */
-/* } */
+int testit() {
+  printf("%" PRIx64 "\n", threefry2x32(0,0));   // expected: 0x6b2001590x99ba4efe
+  printf("%" PRIx64 "\n", threefry2x32(-1,-1)); // expected: 0x1cb996fc0xbb002be7
+  printf("%" PRIx64 "\n", threefry2x32(
+     0x13198a2e03707344,  0x243f6a8885a308d3)); // expected: 0xc4923a9c0x483df7a0
+}
+
+int main(int argc, const char* argv[]) {
+  testit();
+}
