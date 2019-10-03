@@ -67,7 +67,7 @@ runMode evalMode pass = do
 evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
 evalDecl pass block = do
   env <- get
-  ~(Left ans, env') <- liftIO $ runTopPassM env (pass block)
+  (ans, env') <- liftIO $ runFullPass env pass block
   modify (<> env')
   return ans
 

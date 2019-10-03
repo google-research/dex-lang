@@ -23,7 +23,6 @@ import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
 import System.INotify
-import Data.Void
 
 import Syntax
 import Actor
@@ -130,7 +129,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
           resultChan key `send` sourceUpdate block
           (p, wChan) <- spawn Trap $
-                          worker env (pass block) (resultChan key) parentChans
+                          worker env block pass (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
       modify $ setVarMap $ (<> fmap (const key) (lhsVars block))
@@ -150,16 +149,16 @@ data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: Monoid env => env -> TopPassM env Void
+worker :: Monoid env => env -> SourceBlock -> FullPass env
             -> PChan CellUpdate
             -> [ReqChan env]
             -> Actor (WorkerMsg env) ()
-worker initEnv pass resultChan parentChans = do
+worker initEnv block pass resultChan parentChans = do
   selfChan <- myChan
   mapM_ (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  _ <- spawnLink NoTrap $ execPass env pass (subChan JobDone selfChan) resultChan
+  _ <- spawnLink NoTrap $ execPass env block pass (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do
@@ -171,10 +170,11 @@ worker initEnv pass resultChan parentChans = do
     fResponse msg = case msg of EnvResponse x -> Just x; _ -> Nothing
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
-execPass :: Monoid env =>
-              env -> TopPassM env Void -> PChan env -> PChan CellUpdate -> Actor msg ()
-execPass env pass envChan resultChan = do
-  ~(Left ans, env') <- liftIO $ runTopPassM env pass
+execPass :: Monoid env
+              => env -> SourceBlock -> FullPass env -> PChan env -> PChan CellUpdate
+              -> Actor msg ()
+execPass env block pass envChan resultChan = do
+  (ans, env') <- liftIO $ runFullPass env pass block
   envChan    `send` (env <> env')
   resultChan `send` resultUpdate ans
 
