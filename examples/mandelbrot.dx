@@ -11,7 +11,7 @@ cmul :: Complex -> Complex -> Complex
 cmul (x1, y1) (x2, y2) = (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
 
 cabs :: Complex -> Real
-cabs (x1, y1) = x1 * x1 + y1 * y1
+cabs (x, y) = x * x + y * y
 
 czero :: Complex
 czero = (0.0, 0.0)
@@ -33,13 +33,13 @@ inBounds z = cabs z < tol
 escapeTime :: Complex -> Real
 escapeTime c = fst $ fold (0.0, czero) ..
   for i::Niters. lam (n, z).
-    z2 = update c z
-    (n + real (b2i (inBounds z2)), z2)
+    z' = update c z
+    (n + real (b2i (inBounds z')), z')
 
 'Evaluate on a grid and plot the results
 
-xs = linspace @Ngrid (-2.5) 1.0
-ys = linspace @Ngrid (-1.0) 1.0
+xs = linspace @Ngrid -2.5 1.0
+ys = linspace @Ngrid -1.0 1.0
 
 grid.j.i = (xs.i, ys.j)
 

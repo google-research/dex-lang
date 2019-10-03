@@ -256,7 +256,7 @@ literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy period))
 
 identifier :: Parser String
 identifier = lexeme . try $ do
-  w <- (:) <$> lowerChar <*> many alphaNumChar
+  w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
   where
@@ -266,7 +266,7 @@ appRule :: Operator Parser UExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
   where
-    opNames = ["+", "*", "/", "-", "^", "$", "@"]
+    opNames = ["+", "*", "/", "- ", "^", "$", "@"]
 
 postFixRule :: Operator Parser UExpr
 postFixRule = Postfix $ do
@@ -281,7 +281,8 @@ ops :: [[Operator Parser UExpr]]
 ops = [ [postFixRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
-      , [binOpRule "+" FAdd, binOpRule "-" FSub]
+      -- trailing space after "-" to distinguish from negation
+      , [binOpRule "+" FAdd, binOpRule "- " FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
       , [InfixR (symbol "$" >> return App)]
       , [InfixL (symbol "#deriv" >> return DerivAnnot)]
