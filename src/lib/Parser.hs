@@ -8,6 +8,7 @@ import Data.Char (isLower)
 import Data.Maybe (fromMaybe)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
+import qualified Data.Map.Strict as M
 
 import Env
 import Record
@@ -69,17 +70,9 @@ sourceBlock' =
 explicitCommand :: Parser UTopDecl
 explicitCommand = do
   cmdName <- char ':' >> identifier
-  cmd <- case cmdName of
-           "p"       -> return $ EvalExpr Printed
-           "t"       -> return GetType
-           "passes"  -> return Passes
-           "llvm"    -> return LLVM
-           "asm"     -> return Asm
-           "time"    -> return TimeIt
-           "plot"    -> return $ EvalExpr Scatter
-           "plotmat" -> return $ EvalExpr Heatmap
-           "flops"   -> return Flops
-           _   -> fail $ "unrecognized command: " ++ show cmdName
+  cmd <- case M.lookup cmdName commandNames of
+    Just cmd -> return cmd
+    Nothing -> fail $ "unrecognized command: " ++ show cmdName
   e <- declOrExpr
   return $ EvalCmd (Command cmd e)
 
@@ -197,7 +190,7 @@ typeAnnot = do
 primOp :: Parser UExpr
 primOp = do
   s <- try $ symbol "%" >> identifier
-  b <- case strToBuiltin s of
+  b <- case M.lookup s builtinNames of
     Just b -> return b
     Nothing -> fail $ "Unexpected builtin: " ++ s
   args <- parens $ expr `sepBy` comma

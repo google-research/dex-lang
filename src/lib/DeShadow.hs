@@ -21,6 +21,7 @@ sourcePass = TopPass sourcePass'
 
 sourcePass' :: SourceBlock -> TopPassM () UTopDecl
 sourcePass' block = case sbContents block of
+  UTopDecl (EvalCmd (Command Parse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return decl
   UnParseable s -> throwTopErr $ Err ParseErr Nothing s
   ProseBlock _ -> emitOutput NoOutput

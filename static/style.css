@@ -18,6 +18,10 @@ body {
   white-space: pre;
 }
 
+code {
+  background-color: #F0F0F0;
+}
+
 .result-block {
   border-left: 3px solid  #87CEFA;
 }

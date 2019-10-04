@@ -1,22 +1,62 @@
 '# Introduction to the Dex language
 
-'Dex is a functional, statically typed language for array processing.
-Here we introduce the language in a tutorial style. We assume
-reading familiarity with languages in the Haskell/ML family, and with
-array programming in the MATLAB/NumPy style.
-This document is a literate program. You can follow along in the REPL
-(run `dex repl`) or with the live notebook (`dex web examples/tutorial.dx`).
+'Dex is a functional, typed language for array processing.
+Here we introduce the language in a tutorial format. We assume
+reading familiarity with functional programming in the Haskell/ML style
+and numerical programming in the NumPy/MATLAB style.
+This is a literate program with outputs generated mechanically.
+You can follow along in the REPL, `dex repl`,
+or, on Linux, in the live notebook: `dex web examples/tutorial.dx`.
+See the README for installation instructions.
 
-'## Getting started
+'## Expressions
 
 'We can evaluate and print expressions with `:p`
 
 :p (1.0 + 2.0) * 3.0
 > 9.0
 
+'We also have lambda, let, tuple construction and pattern-matching:
+
+:p (x, y) = (1.0, 2.0)   -- let binding (with pattern-matching), tuple construction
+   f = lam z. x + z * y  -- let binding of a lambda function
+   f 1.0 - 2.0           -- body of let expression
+> 1.0
+
+'Let bindings can be separated with a line break or a semicolon. We use white
+space for function application (`f x y` instead of `f(x, y)`). We can use
+`:parse`, which pretty-prints the internal AST, to see how expressions are
+grouped. For example, function application associates to the left:
+
+:parse f 1 2 3
+> (((f 1) 2) 3)
+
+'We can combine a let binding with a lambda expression, writing `f = lam x. ...`
+as `f x = ...`. This is just syntactic sugar. These all parse to exactly the
+same thing:
+
+:parse f x y = 1; f 2 3
+> (f = (lam x . (lam y . 1));
+> ((f 2) 3))
+:parse f = lam x y. 1; f 2 3
+> (f = (lam x . (lam y . 1));
+> ((f 2) 3))
+:parse f = lam x. lam y. 1; f 2 3
+> (f = (lam x . (lam y . 1));
+> ((f 2) 3))
+
+'## Types
+
 'Why did we write `1.0` instead of just `1`? Let's try that:
 
 :p (1 + 2) * 3
+> Type error:
+> Expected: Real
+>   Actual: Int
+> In: 1
+>
+> :p (1 + 2) * 3
+>     ^^
 
 'We can query the *type* of an expression with `:t`. Here's a pair of a real
  number and an integer. (Note that Dex types don't include floating point
@@ -24,6 +64,13 @@ This document is a literate program. You can follow along in the REPL
 
 :t (12.3, 42)
 > (Real, Int)
+
+'Talk about
+  * Polymorphism
+  * Weird choice to not do upstream inference
+  * Lexically scoped type variables and type application
+
+'## Arrays
 
 'The central data structure in Dex is the 'table'. We could also
 call it an 'array' or 'vector'. Let's make one:
@@ -35,15 +82,17 @@ xs = [[1,2],[3,4],[5,6]]
 :t xs
 > (3=>(2=>Int))
 
-'this is a type error:
+'## Existential types
 
-:p 1 1
-> Type error:
-> Expected: Int
->   Actual: (?_2 -> ?_3)
-> In: 1
+'## Unconventional FP design choices
 
-'TODO: table types
+'## Input and output
+
+'## Compiler internals
+
+
+'TODO:
+  * table types
   * for expression
   * syntactic sugar of `x.i = ...`
   * index polymorphism in function like `dot`
@@ -52,4 +101,3 @@ xs = [[1,2],[3,4],[5,6]]
   * structured index sets like pairs
   * pack/unpacking
   * Precision
-

@@ -14,9 +14,9 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
-               Index, wrapDecls, strToBuiltin, builtinNames, idxSetKind,
-               NExpr (..), NDecl (..), NAtom (..), NType (..), NTopDecl (..),
-               NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
+               Index, wrapDecls, builtinNames, commandNames,
+               idxSetKind, NExpr (..), NDecl (..), NAtom (..), NType (..),
+               NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
                SourceBlock (..), SourceBlock' (..), LitProg,
                ) where
@@ -129,17 +129,20 @@ builtinNames = M.fromList [
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo)]
 
+commandNames :: M.Map String CmdName
+commandNames = M.fromList [
+  ("p", EvalExpr Printed), ("t", GetType), ("passes", Passes), ("llvm", LLVM),
+  ("asm", Asm), ("time", TimeIt), ("plot", EvalExpr Scatter),
+  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", Parse)]
+
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
-
-strToBuiltin :: String -> Maybe Builtin
-strToBuiltin name = M.lookup name builtinNames
 
 instance Show Builtin where
   show (FFICall _ s) = "%%" ++ s
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
-data CmdName = GetType | Passes | LLVM | Asm | TimeIt | Flops
+data CmdName = GetType | Parse | Passes | LLVM | Asm | TimeIt | Flops
              | EvalExpr OutFormat
                 deriving  (Show, Eq, Generic)
 
