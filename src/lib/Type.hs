@@ -183,6 +183,7 @@ builtinType builtin = case builtin of
   FDiv     -> fbinOpType
   FLT      -> BuiltinType [] [real, real] bool
   FGT      -> BuiltinType [] [real, real] bool
+  Todo     -> BuiltinType [TyKind] [] a
   Copy     -> BuiltinType [TyKind] [a] a
   Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))

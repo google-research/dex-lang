@@ -13,6 +13,9 @@ isub x y = %isub(x, y)
 imul :: Int -> Int -> Int
 imul x y = %imul(x, y)
 
+todo :: a
+todo = %todo()
+
 mod :: Int -> Int -> Int
 mod x y = %mod(x, y)
 

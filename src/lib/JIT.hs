@@ -404,6 +404,7 @@ compileBuiltin b ts = case b of
   FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
   FLT      -> compileBinop BoolType (\x y -> L.FCmp L.OLT x y [])
   FGT      -> compileBinop BoolType (\x y -> L.FCmp L.OGT x y [])
+  Todo     -> const $ throw OtherErr "Can't compile 'todo'"
   BoolToInt -> compileUnop IntType  (\x -> L.ZExt x longTy [])
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   FFICall _ name -> compileFFICall name ts

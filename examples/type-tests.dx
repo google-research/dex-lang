@@ -143,3 +143,6 @@ idfun x = x
 :t lam x. f :: a -> a; f y = x; ()
 > Type error:
 > Leaked type variable: a
+
+:t (todo :: Int -> Real) 1
+> Real

@@ -113,7 +113,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Deriv | PartialEval | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
-             | Mod | FFICall Int String | Filter
+             | Mod | FFICall Int String | Filter | Todo
                 deriving (Eq, Ord, Generic)
 
 builtinNames :: M.Map String Builtin
@@ -127,7 +127,7 @@ builtinNames = M.fromList [
   ("deriv", Deriv), ("partialEval", PartialEval), ("transpose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
-  ("vsingle", VSingle), ("vsum", VSum)]
+  ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo)]
 
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)

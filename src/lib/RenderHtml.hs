@@ -95,7 +95,7 @@ classify =
    <|> (choice (map C.string symbols ) >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
   where
-   keywords = ["for", "lam", "let", "in", "unpack", "pack", "type"]
+   keywords = ["for", "lam", "let", "in", "unpack", "pack", "type", "todo"]
    symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", "=", ">", "<"]
 
 lowerWord :: Parser String
