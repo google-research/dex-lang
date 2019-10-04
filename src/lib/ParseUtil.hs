@@ -1,5 +1,5 @@
 module ParseUtil (sc, blankLines, stringLiteral, failIf,
-                  space, int, real, lexeme, symbol, parens, brackets, Parser,
+                  space, num, uint, lexeme, symbol, parens, brackets, Parser,
                   emptyLines, nonBlankLines, outputLines, withPos, withSource,
                   getLineNum) where
 
@@ -8,6 +8,7 @@ import Data.Void
 import Text.Megaparsec
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
+
 
 type Parser = Parsec Void String
 
@@ -27,17 +28,23 @@ outputLines :: Parser ()
 outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> eol)
 
 stringLiteral :: Parser String
-stringLiteral = char '"' >> manyTill L.charLiteral (char '"')
+stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
 
 space :: Parser ()
 space = void $ do _ <- takeWhile1P (Just "white space") (`elem` " \t")
                   optional (symbol "..\n")
 
-int :: Parser Int
-int = L.signed (return ()) L.decimal
+num :: Parser (Either Double Int)
+num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
+     <|> (do x <- L.signed (return ()) L.decimal
+             trailingPeriod <- optional (char '.')
+             sc
+             return $ case trailingPeriod of
+               Just _  -> Left (fromIntegral x)
+               Nothing -> Right x)
 
-real :: Parser Double
-real = L.signed (return ()) L.float
+uint :: Parser Int
+uint = L.decimal <* sc
 
 lexeme :: Parser a -> Parser a
 lexeme = L.lexeme sc

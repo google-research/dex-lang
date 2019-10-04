@@ -241,11 +241,16 @@ lamLhsArgs = do
   return $ \body -> foldr Lam body args
 
 literal :: Parser LitVal
-literal = lexeme $  fmap IntLit  (try (int <* notFollowedBy period))
-                <|> fmap RealLit real
-                <|> fmap StrLit stringLiteral
-                <|> (symbol "True"  >> return (BoolLit True))
-                <|> (symbol "False" >> return (BoolLit False))
+literal =     numLit
+          <|> liftM StrLit stringLiteral
+          <|> (symbol "True"  >> return (BoolLit True))
+          <|> (symbol "False" >> return (BoolLit False))
+
+numLit :: Parser LitVal
+numLit = do
+  x <- num
+  return $ case x of Left  r -> RealLit r
+                     Right i -> IntLit  i
 
 identifier :: Parser String
 identifier = lexeme . try $ do
@@ -304,7 +309,7 @@ parenPat = do
 
 intQualifier :: Parser Int
 intQualifier = do
-  n <- optional $ symbol "_" >> lexeme int
+  n <- optional $ symbol "_" >> uint
   return $ fromMaybe 0 n
 
 lowerName :: Parser Name
@@ -365,7 +370,7 @@ typeVar :: Parser Type
 typeVar = liftM TypeVar (upperName <|> lowerName)
 
 idxSetLit :: Parser Type
-idxSetLit = liftM IdxSetLit $ int
+idxSetLit = liftM IdxSetLit uint
 
 parenTy :: Parser Type
 parenTy = do

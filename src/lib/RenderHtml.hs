@@ -96,7 +96,7 @@ classify =
    <|> (anySingle >> return NormalStr)
   where
    keywords = ["for", "lam", "let", "in", "unpack", "pack", "type", "todo"]
-   symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", "=", ">", "<"]
+   symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", ";", "=", ">", "<"]
 
 lowerWord :: Parser String
 lowerWord = (:) <$> lowerChar <*> many alphaNumChar
