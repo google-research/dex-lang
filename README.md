@@ -31,3 +31,9 @@ or look at these example programs:
   * Traditional REPL: `dex repl`
   * Execute script: `dex script example/tutorial.dx`
   * Notebook interface: `dex web example/tutorial.dx`
+
+## License
+
+Apache 2.0
+
+This is an early-stage research project, not an official Google product.
