@@ -33,8 +33,8 @@ run-%: examples/%.dx
 	misc/check-quine $^ \
 	stack exec dex -- script --lit --allow-errors
 
-update-%: tests/%.dx
-	stack exec dex $^ > $^.tmp
+update-%: examples/%.dx
+	stack exec dex -- script --lit --allow-errors $^ > $^.tmp
 	mv $^.tmp $^
 
 interp-test:

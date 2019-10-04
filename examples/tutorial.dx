@@ -1,6 +1,6 @@
 '# Introduction to the Dex language
 
-'Dex is a functional, typed language for array processing.
+'Dex is a functional, statically typed language for array processing.
 Here we introduce the language in a tutorial format. We assume
 reading familiarity with functional programming in the Haskell/ML style
 and numerical programming in the NumPy/MATLAB style.
@@ -13,62 +13,145 @@ See the README for installation instructions.
 
 'We can evaluate and print expressions with `:p`
 
-:p (1.0 + 2.0) * 3.0
+:p (1. + 2.) * 3.
 > 9.0
 
-'We also have lambda, let, tuple construction and pattern-matching:
+'The expression language includes lambda, let, tuple construction and pattern-matching:
 
-:p (x, y) = (1.0, 2.0)   -- let binding (with pattern-matching), tuple construction
+:p (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
    f = lam z. x + z * y  -- let binding of a lambda function
-   f 1.0 - 2.0           -- body of let expression
+   f 1. - 2.             -- body of let expression
 > 1.0
 
 'Let bindings can be separated with a line break or a semicolon. We use white
-space for function application (`f x y` instead of `f(x, y)`). We can use
-`:parse`, which pretty-prints the internal AST, to see how expressions are
-grouped. For example, function application associates to the left:
+space for function application (we write `f x y` instead of `f(x, y)`). We can use
+`:parse`, which pretty-prints the internal AST, to see how subexpressions are
+grouped. For example, function application associates to the left and binds more
+tightly than infix operators.
 
 :parse f 1 2 3
 > (((f 1) 2) 3)
 
+:parse f 1 + g 2
+> (%fadd((f 1), (g 2)))
+
 'We can combine a let binding with a lambda expression, writing `f = lam x. ...`
-as `f x = ...`. This is just syntactic sugar. These all parse to exactly the
-same thing:
+as `f x = ...`. This is just syntactic sugar. These three expression all parse
+to exactly the same thing:
 
 :parse f x y = 1; f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
+
 :parse f = lam x y. 1; f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
+
 :parse f = lam x. lam y. 1; f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
 
 '## Types
 
-'Why did we write `1.0` instead of just `1`? Let's try that:
+'Why did we write `1. + 2.` instead of just `1 + 2`? Let's try that:
 
-:p (1 + 2) * 3
+:p 1 + 2
 > Type error:
 > Expected: Real
 >   Actual: Int
 > In: 1
 >
-> :p (1 + 2) * 3
->     ^^
+> :p 1 + 2
+>    ^^
 
-'We can query the *type* of an expression with `:t`. Here's a pair of a real
- number and an integer. (Note that Dex types don't include floating point
- precision. See XXX.)
+'The problem is that `1` is an integer whereas `+` operates on reals. (Note that
+Haskell overloads `+` and literals using typeclasses. We could do the same,
+but we're keeping it simple for now.) We can query the *type* of an
+expression with `:t`.
 
-:t (12.3, 42)
-> (Real, Int)
+:t 1
+> Int
 
-'Talk about
-  * Polymorphism
-  * Weird choice to not do upstream inference
-  * Lexically scoped type variables and type application
+:t 1.
+> Real
+
+:t lam x y. x + y
+> (Real -> (Real -> Real))
+
+'The type system is completely static. As a consequence, type errors appear at a
+function's call site rather than in its implementation.
+
+:p f x = x + x
+   f 1
+> Type error:
+> Expected: Real
+>   Actual: Int
+> In: 1
+>
+>    f 1
+>      ^
+
+'The expressions we've seen so far have been *implicitly* typed. There have
+been no type annotations at all. The Dex compiler fills in the types using
+very standard Hindley-Milner-style type inference. The result of this process,
+is an *explicitly* typed IR, similar to System F, in which all binders are
+annotated. We can look at the explicitly typed IR with `:typed`:
+
+:typed f x = x * x
+       z = 2.0
+       f z
+> (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
+> (z::Real = 2.0;
+> (f z)))
+
+'We can also add some explicit annotations if we like. Type inference then
+becomes type checking.
+
+:typed f :: Real -> Real
+       f x::Real = x * x
+       z::Real = 2.0
+       f z
+> (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
+> (z::Real = 2.0;
+> (f z)))
+
+'## Polymorphism and let generalization
+
+'Unusually for Hindley-Milner-style languages, user-supplied type annotation are
+mandatory for let-bound *polymorphic* expressions. That is, we don't do let
+generalization. For example, although we can write this:
+
+:typed (lam x. x) 1
+> ((lam x::Int . x) 1)
+
+'It's an error to write this:
+
+:typed id x = x
+       id 1
+> Type error:Ambiguous type variables: [?_3]
+>
+> (id::(?_3 -> ?_3), (lam x::?_3 . x))
+
+'Instead, we have to give the type explicitly:
+
+:typed id :: a -> a
+       id x = x
+       id 1
+> (id :: [a::T]. A a. (a -> a)
+> id = (lam x::a . x);
+> (id @Int 1))
+
+'We *do* generalize when evaluating `:t`, so we can still ask what the
+annotation needs to be:
+
+:t (lam x. x)
+> A a. (a -> a)
+
+'The motivation for this choice is a bit subtle. It's related to the reasons for
+Haskell's ("dreaded") monomorphism restriction: automatic let generalization can
+lead to surprising runtime work duplication in the presence of polymorphism
+that's not purely parametric. We'll say more about it later, when we discuss
+index sets as types.
 
 '## Arrays
 
@@ -82,7 +165,15 @@ xs = [[1,2],[3,4],[5,6]]
 :t xs
 > (3=>(2=>Int))
 
-'## Existential types
+'## Index polymorphism
+
+'Talk about
+  * Polymorphism
+  * Weird choice to not do upstream inference
+  * Lexically scoped type variables and type application
+  * Type application
+
+'## Existential index sets
 
 '## Unconventional FP design choices
 
