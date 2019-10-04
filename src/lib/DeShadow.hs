@@ -21,7 +21,7 @@ sourcePass = TopPass sourcePass'
 
 sourcePass' :: SourceBlock -> TopPassM () UTopDecl
 sourcePass' block = case sbContents block of
-  UTopDecl (EvalCmd (Command Parse expr)) -> emitOutput $ TextOut $ pprint expr
+  UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return decl
   UnParseable s -> throwTopErr $ Err ParseErr Nothing s
   ProseBlock _ -> emitOutput NoOutput
@@ -37,7 +37,7 @@ deShadowPass = TopPass $ \topDecl ->  case topDecl of
   EvalCmd (Command cmd expr) -> do
     expr' <- deShadowTop expr
     case cmd of
-      Passes -> emitOutput $ TextOut $ "\n\nDeshadowed\n" ++ show expr'
+      ShowDeshadowed -> emitOutput $ TextOut $ show expr'
       _ -> return $ EvalCmd (Command cmd expr')
 
 deShadowTop :: UExpr -> TopPassM (DeShadowEnv, FreshScope) UExpr

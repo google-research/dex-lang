@@ -43,8 +43,8 @@ typePass = TopPass $ \tdecl -> case tdecl of
       _ -> do
         (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
         case cmd of
-          Passes -> emitOutput $ TextOut $ "\nSystem F\n" ++ pprint expr'
-          _      -> return $ EvalCmd (Command cmd expr')
+          ShowTyped -> emitOutput $ TextOut $ pprint expr'
+          _ -> return $ EvalCmd (Command cmd expr')
 
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do

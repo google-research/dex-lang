@@ -30,7 +30,7 @@ impPass = TopPass $ \decl -> case decl of
     let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts']
     prog <- liftTop $ toImp (map asDest bs) expr
     case cmd of
-      Passes -> emitOutput $ TextOut $ "\n\nImp\n" ++ pprint prog
+      ShowImp -> emitOutput $ TextOut $ pprint prog
       _ -> return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
   where
     liftTop :: ImpM a -> TopPassM ImpEnv a

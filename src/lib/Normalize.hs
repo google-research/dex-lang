@@ -37,7 +37,7 @@ normalizePass = TopPass $ \topDecl -> case topDecl of
     (expr', _) <- asTopPassM $ normalizeScoped expr
     (ntys , _) <- asTopPassM $ normalizeTy ty
     case cmd of
-      Passes -> emitOutput $ TextOut $ "\n\nNormalized\n" ++ pprint expr'
+      ShowNormalized -> emitOutput $ TextOut $ pprint expr'
       _ -> return $ NEvalCmd (Command cmd (ty, toList ntys, expr'))
 
 asTopPassM :: NormM a -> TopPassM (NormEnv, Scope) (a, [NDecl])
@@ -238,7 +238,7 @@ simpPass = TopPass $ \topDecl -> case topDecl of
     -- TODO: handle type vars
     expr' <- simpAsTopPassM $ simplify expr
     case cmd of
-      Passes -> emitOutput $ TextOut $ "\n\nSimp\n" ++ pprint expr'
+      ShowSimp -> emitOutput $ TextOut $ pprint expr'
       _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
 simpAsTopPassM :: SimplifyM a -> TopPassM SimpEnv a

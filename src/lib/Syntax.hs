@@ -131,9 +131,11 @@ builtinNames = M.fromList [
 
 commandNames :: M.Map String CmdName
 commandNames = M.fromList [
-  ("p", EvalExpr Printed), ("t", GetType), ("passes", Passes), ("llvm", LLVM),
-  ("asm", Asm), ("time", TimeIt), ("plot", EvalExpr Scatter),
-  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", Parse)]
+  ("p", EvalExpr Printed), ("t", GetType), ("typed", ShowTyped),
+  ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
+  ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
+  ("time", TimeIt), ("plot", EvalExpr Scatter),
+  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse)]
 
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
@@ -142,7 +144,8 @@ instance Show Builtin where
   show (FFICall _ s) = "%%" ++ s
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
-data CmdName = GetType | Parse | Passes | LLVM | Asm | TimeIt | Flops
+data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
+             | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
              | EvalExpr OutFormat
                 deriving  (Show, Eq, Generic)
 

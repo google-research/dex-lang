@@ -77,24 +77,28 @@ jitPass' decl = case decl of
     extend $ bindFold $ zipWith replaceAnnot bs vals
     emitOutput NoOutput
   ImpEvalCmd cont bs (Command cmd prog) -> case cmd of
-    LLVM -> do (_, CompiledProg m) <- toLLVM bs prog
-               llvm <- liftIO $ showLLVM m
-               emitOutput $ TextOut llvm
-    Asm -> do (_, CompiledProg m) <- toLLVM bs prog
-              asm <- liftIO $ showAsm m
-              emitOutput $ TextOut asm
-    EvalExpr fmt -> do vals <- evalProg bs prog
-                       vecs <- liftIO $ mapM asVec vals
-                       env <- look
-                       let tenv = flip envMapMaybe env $ \v ->
-                                    case v of
-                                  ScalarVal w _ -> Just (fromIntegral w)
-                                  _ -> Nothing
-                       emitOutput $ ValOut fmt $ cont tenv vecs
-    TimeIt -> do t1 <- liftIO getCurrentTime
-                 _ <- evalProg bs prog
-                 t2 <- liftIO getCurrentTime
-                 emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
+    ShowLLVM -> do
+      (_, CompiledProg m) <- toLLVM bs prog
+      llvm <- liftIO $ showLLVM m
+      emitOutput $ TextOut llvm
+    ShowAsm -> do
+      (_, CompiledProg m) <- toLLVM bs prog
+      asm <- liftIO $ showAsm m
+      emitOutput $ TextOut asm
+    EvalExpr fmt -> do
+      vals <- evalProg bs prog
+      vecs <- liftIO $ mapM asVec vals
+      env <- look
+      let tenv = flip envMapMaybe env $ \v ->
+                   case v of
+                 ScalarVal w _ -> Just (fromIntegral w)
+                 _ -> Nothing
+      emitOutput $ ValOut fmt $ cont tenv vecs
+    TimeIt -> do
+      t1 <- liftIO getCurrentTime
+      _ <- evalProg bs prog
+      t2 <- liftIO getCurrentTime
+      emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
     _ -> error $ "Unexpected command: " ++ show cmd
 
 evalProg :: [IBinder] -> ImpProg -> TopPassM PersistEnv [PersistVal]
