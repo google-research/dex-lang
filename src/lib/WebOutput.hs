@@ -78,8 +78,7 @@ webServer resultsRequest = do
         ["getnext"]    -> respond $ responseStream status200
                              [ ("Content-Type", "text/event-stream")
                              , ("Cache-Control", "no-cache")] resultStream
-        ["favicon.ico"] -> notfound
-        path -> error $ "Unexpected request: " ++ (show path)
+        _ -> notfound
       where
         respondWith fname ctype = respond $ responseFile status200
                                    [("Content-Type", ctype)] fname Nothing
