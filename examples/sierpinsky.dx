@@ -15,3 +15,4 @@ trianglePoints :: 3=>Point
 trianglePoints = [(0.0, 0.0), (1.0, 0.0), (0.5, 0.5 * tan (pi / 3.0))]
 
 :plot runChain @N (update trianglePoints) 0 (0.0, 0.0)
+> <graphical output>
