@@ -22,6 +22,7 @@ tests: interp-test \
        run-flop-tests \
        run-tutorial \
        run-mandelbrot \
+       run-pi \
        stack-tests
 
 %.so: %.c
@@ -48,6 +49,7 @@ doc/%.html: examples/%.dx
 	stack exec dex -- script $^ --html > $@
 
 docs: doc/mandelbrot.html \
+      doc/pi.html \
       doc/tutorial.html
 	cp static/style.css doc
 	cp static/plot.js doc

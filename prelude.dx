@@ -52,8 +52,13 @@ cos x = %%cos(x)
 tan :: Real -> Real
 tan x = %%tan(x)
 
-hash :: Int -> Int -> Int
+type Key = Int
+
+hash :: Key -> Key -> Key
 hash x y = %%threefry2x32(x, y)
+
+splitKey :: Key -> (Key, Key)
+splitKey key = (hash key 0, hash key 1)
 
 asint :: i -> Int
 asint i = %asint(i)
@@ -79,6 +84,9 @@ real x = %inttoreal(x)
 b2i :: Bool -> Int
 b2i x = %booltoint(x)
 
+b2r :: Bool -> Real
+b2r x = real $ b2i x
+
 filter :: (a -> Bool) -> i=>a -> E j. j=>a
 filter f x = %filter(f, x)
 
@@ -88,7 +96,7 @@ scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 fold :: a -> i=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
-rand :: Int -> Real
+rand :: Key -> Real
 rand x = %%randunif(x)
 
 sum :: i=>Real -> Real
@@ -119,6 +127,15 @@ size = isum (fanout @i 1)
 linspace :: A n. Real -> Real -> n=>Real
 linspace low high = dx = (high - low) / real (size @n)
                     for i::n. low + real (asint i) * dx
+
+mean :: A n. n=>Real -> Real
+mean xs = sum xs / real (size @n)
+
+sq :: Real -> Real
+sq x = x * x
+
+std :: A n. n=>Real -> Real
+std xs = sqrt $ mean (map sq xs) - sq (mean xs)
 
 -- All of the following have implicit vector space typeclass constraints on `a`
 --  and `b`. TODO: make some sort of typeclass system

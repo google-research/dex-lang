@@ -197,6 +197,9 @@ get a type error if we try to construct a non-rectangular two-dimensional table:
 > Expected: (3=>Int)
 >   Actual: (1=>Int)
 > In: [100]
+>
+> :t [[10,20,30],[100]]
+>                ^^^^^
 
 'This has an important consequence for the implementation: the elements of a
 table all have the same size, and we can use an efficient unboxed runtime
@@ -210,6 +213,13 @@ for indexing, so we might try to index in to a table like this:
 :p i = 0
    xs = [1,2,3]
    xs.i
+> Type error:
+> Expected: 3
+>   Actual: Int
+> In: i
+>
+>    xs.i
+>       ^
 
 'Unfortunately, it's a type error. `i` is an integer, but we need an index of
 type `3` (the index set `{0,1,2}`). The error might be surprising because we
@@ -220,6 +230,7 @@ we can cast the integer to the required index set.
 :p i = 0
    xs = [1,2,3]
    xs.(asidx i)
+> 1
 
 'But we're better off using indices of the right type to begin with. Where
 would such an index come from? The main means of introducing an index is using
@@ -228,6 +239,7 @@ Dex's `for` construct:
 :p xs = [1., 2., 3.]
    ys = for i::3 . xs.i * xs.i
    ys
+> [1.0, 4.0, 9.0]
 
 '`for` is to tables as `lam` is to functions. It builds a new table whose
 elements are the result of evaluating its body at each index `i` in the given
@@ -239,6 +251,10 @@ the same thing as if we'd annotated the binders manually.
 :typed xs = [1., 2., 3.]
        ys.i = xs.i * xs.i
        ys
+> (xs::(3=>Real) = [1.0, 2.0, 3.0];
+> (ys::(3=>Real) = (for  i::3 . 
+>     (%fmul(xs.i, xs.i)));
+> ys))
 
 'Index set types interact nicely with polymorphism. The language of types, with
 type variables, is a very natural way to express shape constraints.
@@ -247,18 +263,21 @@ For example, adding two vectors of the same size:
 :p addVec :: n=>Real -> n=>Real -> n=>Real
    addVec x y = for i. x.i + y.i
    addVec [1.0, 2.0] [0.1, 0.2]
+> [1.1, 2.2]
 
 'Transposing an array
 
 :p transpose :: n=>m=>a -> m=>n=>a
    transpose x = for i j. x.j.i
    transpose [[1,2,3],[10,20,30]]
+> [[1, 10], [2, 20], [3, 30]]
 
 'Extracting the diagonal of a square array
 
 :p diag :: n=>n=>a -> n=>a
    diag x = for i. x.i.i
    diag [[1,2],[10,20]]
+> [1, 20]
 
 '## TODO:
   * table/function contrast (cheap to create, expensive to apply and vice versa)
