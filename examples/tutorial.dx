@@ -233,40 +233,37 @@ Dex's `for` construct:
 elements are the result of evaluating its body at each index `i` in the given
 index set. Like `lam`, the type annotation (`::3`) is optional and can be
 inferred. Also like `lam`, we can combine the let binding with the `for` expression
-in a way that looks like mathematical index notation:
+in a way that looks like mathematical index notation. Type inference gives us
+the same thing as if we'd annotated the binders manually.
 
-:p xs = [1., 2., 3.]
-   ys.i = xs.i * xs.i
-   ys
+:typed xs = [1., 2., 3.]
+       ys.i = xs.i * xs.i
+       ys
+
+'Index set types interact nicely with polymorphism. The language of types, with
+type variables, is a very natural way to express shape constraints.
+For example, adding two vectors of the same size:
+
+:p addVec :: n=>Real -> n=>Real -> n=>Real
+   addVec x y = for i. x.i + y.i
+   addVec [1.0, 2.0] [0.1, 0.2]
+
+'Transposing an array
 
 :p transpose :: n=>m=>a -> m=>n=>a
    transpose x = for i j. x.j.i
    transpose [[1,2,3],[10,20,30]]
 
-'## Functions vs tables
+'Extracting the diagonal of a square array
 
-'It's clear they're very similar!
-Different is in the performance.
-Perhaps in some glorious future they should be the same.
-Serialization.
-For now not ready to go to quite that extreme, and treating them distinctly.
+:p diag :: n=>n=>a -> n=>a
+   diag x = for i. x.i.i
+   diag [[1,2],[10,20]]
 
-'## Index polymorphism
-
-'## Existential index sets
-
-'## Unconventional FP design choices
-
-'## Input and output
-
-'## Compiler internals
-
-'TODO:
-  * for expression and indexing
-  * syntactic sugar of `x.i = ...`
-  * index polymorphism in function like `dot`
-  * for i::N. ___  annotated for expressions
-  * visible type application
+'## TODO:
+  * table/function contrast (cheap to create, expensive to apply and vice versa)
   * structured index sets like pairs
-  * pack/unpacking
-  * Precision
+  * visible type application
+  * existentials, packing/unpacking
+  * input and output
+  * compiler internals -- normalized IR, imperative IR, LLVM
