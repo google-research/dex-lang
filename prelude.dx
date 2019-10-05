@@ -147,12 +147,12 @@ linearize f = partialEval (deriv f)
 jvp :: (a -> b) -> a -> a -> b
 jvp f x t = snd (linearize f x) t
 
-transpose :: (a -> b) -> b -> a
-transpose f = %transpose(lam t. f t)
+linearTranspose :: (a -> b) -> b -> a
+linearTranspose f = %linearTranspose(lam t. f t)
 
 vjp :: (a -> b) -> a -> (b, b -> a)
 vjp f x = (y, df) = linearize f x
-          (y, transpose df)
+          (y, linearTranspose df)
 
 grad :: (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x

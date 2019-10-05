@@ -153,25 +153,105 @@ lead to surprising runtime work duplication in the presence of polymorphism
 that's not purely parametric. We'll say more about it later, when we discuss
 index sets as types.
 
-'## Arrays
+'In the explicitly typed IR, polymorphism is represented by functions which
+take types as arguments. Explicit types are supplied at call sites, as in
+`id @Int 1` above. This type application is available (but optional) in the
+source language too.
 
-'The central data structure in Dex is the 'table'. We could also
-call it an 'array' or 'vector'. Let's make one:
+:p id :: a -> a
+   id x = x
+   id @Int 1
+> 1
 
-xs = [[1,2],[3,4],[5,6]]
+'Generally, a design goal has been to make sure that all
+well-typed terms in the explicitly typed IR can be written in the source
+langauge too.
 
-:p xs
-> [[1, 2], [3, 4], [5, 6]]
-:t xs
-> (3=>(2=>Int))
+'## Tables (arrays)
+
+'The central data structure in Dex is the "table". We could also
+call it an "vector" or "array" and we'll use these terms interchangeably. A
+table is a mapping from indices to elements. We can build one like this:
+
+:t [10,20,30]
+> (3=>Int)
+
+'Notice its type, `(3=>Int)`. Here `3` is a *type* representing the index set
+`{0, 1, 2}`. The `=>` arrow is the type constructor for table types. A table
+`a=>b` is a mapping from the index set `a` to the element type `b`. Our
+particular table, `[10,20,30]`, maps `0` to `10`, `1` to `20` and `2` to `30`.
+
+'Index set types are quite constrainted, as we'll see later, but elements can be
+any type, including tables. We can construct a two-dimensional table as a table
+of tables:
+
+:t [[10,20,30],[100,200,300]]
+> (2=>(3=>Int))
+
+'Notice rectangularity is enforced by the type system. The elements of the
+outer table all have the same type `3=>Int` and therefore the same size. We'll
+get a type error if we try to construct a non-rectangular two-dimensional table:
+
+:t [[10,20,30],[100]]
+> Type error:
+> Expected: (3=>Int)
+>   Actual: (1=>Int)
+> In: [100]
+
+'This has an important consequence for the implementation: the elements of a
+table all have the same size, and we can use an efficient unboxed runtime
+representation (i.e. flat buffers and strided indices). Later, we'll see how to
+represent ragged tables, with irregularly sized elements using existential
+types, with corresponding run-time cost.
+
+'What can we do with a table? Surely we can index into it. In Dex, we use `.`
+for indexing, so we might try to index in to a table like this:
+
+:p i = 0
+   xs = [1,2,3]
+   xs.i
+
+'Unfortunately, it's a type error. `i` is an integer, but we need an index of
+type `3` (the index set `{0,1,2}`). The error might be surprising because we
+know `i=0` in this case, but that's only true *dynamically* and the static type
+system doesn't know about that. If we're willing to put up with runtime errors
+we can cast the integer to the required index set.
+
+:p i = 0
+   xs = [1,2,3]
+   xs.(asidx i)
+
+'But we're better off using indices of the right type to begin with. Where
+would such an index come from? The main means of introducing an index is using
+Dex's `for` construct:
+
+:p xs = [1., 2., 3.]
+   ys = for i::3 . xs.i * xs.i
+   ys
+
+'`for` is to tables as `lam` is to functions. It builds a new table whose
+elements are the result of evaluating its body at each index `i` in the given
+index set. Like `lam`, the type annotation (`::3`) is optional and can be
+inferred. Also like `lam`, we can combine the let binding with the `for` expression
+in a way that looks like mathematical index notation:
+
+:p xs = [1., 2., 3.]
+   ys.i = xs.i * xs.i
+   ys
+
+:p transpose :: n=>m=>a -> m=>n=>a
+   transpose x = for i j. x.j.i
+   transpose [[1,2,3],[10,20,30]]
+
+'## Functions vs tables
+
+'It's clear they're very similar!
+Different is in the performance.
+Perhaps in some glorious future they should be the same.
+Serialization.
+For now not ready to go to quite that extreme, and treating them distinctly.
 
 '## Index polymorphism
-
-'Talk about
-  * Polymorphism
-  * Weird choice to not do upstream inference
-  * Lexically scoped type variables and type application
-  * Type application
 
 '## Existential index sets
 
@@ -181,10 +261,8 @@ xs = [[1,2],[3,4],[5,6]]
 
 '## Compiler internals
 
-
 'TODO:
-  * table types
-  * for expression
+  * for expression and indexing
   * syntactic sugar of `x.i = ...`
   * index polymorphism in function like `dot`
   * for i::N. ___  annotated for expressions
