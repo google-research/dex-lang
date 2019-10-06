@@ -52,8 +52,19 @@ cos x = %%cos(x)
 tan :: Real -> Real
 tan x = %%tan(x)
 
-hash :: Int -> Int -> Int
+floor :: Real -> Int
+floor x = %%floorDex(x)
+
+pi :: Real
+pi = 3.141592653589793
+
+type Key = Int
+
+hash :: Key -> Key -> Key
 hash x y = %%threefry2x32(x, y)
+
+splitKey :: Key -> (Key, Key)
+splitKey key = (hash key 0, hash key 1)
 
 asint :: i -> Int
 asint i = %asint(i)
@@ -79,8 +90,14 @@ real x = %inttoreal(x)
 b2i :: Bool -> Int
 b2i x = %booltoint(x)
 
+b2r :: Bool -> Real
+b2r x = real $ b2i x
+
 filter :: (a -> Bool) -> i=>a -> E j. j=>a
 filter f x = %filter(f, x)
+
+dup :: a -> (a, a)
+dup x = (x, x)
 
 scan :: a -> i=>(a->(a, b)) -> (a, i=>b)
 scan x0 fs = %scan(x0, for i. lam x. fs.i x)
@@ -88,7 +105,7 @@ scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 fold :: a -> i=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
-rand :: Int -> Real
+rand :: Key -> Real
 rand x = %%randunif(x)
 
 sum :: i=>Real -> Real
@@ -120,6 +137,20 @@ linspace :: A n. Real -> Real -> n=>Real
 linspace low high = dx = (high - low) / real (size @n)
                     for i::n. low + real (asint i) * dx
 
+mean :: A n. n=>Real -> Real
+mean xs = sum xs / real (size @n)
+
+sq :: Real -> Real
+sq x = x * x
+
+std :: A n. n=>Real -> Real
+std xs = sqrt $ mean (map sq xs) - sq (mean xs)
+
+randIdx :: A n. Key -> n
+randIdx key =
+  unif = rand key
+  asidx $ floor $ unif * real (size @n)
+
 -- All of the following have implicit vector space typeclass constraints on `a`
 --  and `b`. TODO: make some sort of typeclass system
 
@@ -147,12 +178,12 @@ linearize f = partialEval (deriv f)
 jvp :: (a -> b) -> a -> a -> b
 jvp f x t = snd (linearize f x) t
 
-transpose :: (a -> b) -> b -> a
-transpose f = %transpose(lam t. f t)
+linearTranspose :: (a -> b) -> b -> a
+linearTranspose f = %linearTranspose(lam t. f t)
 
 vjp :: (a -> b) -> a -> (b, b -> a)
 vjp f x = (y, df) = linearize f x
-          (y, transpose df)
+          (y, linearTranspose df)
 
 grad :: (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x

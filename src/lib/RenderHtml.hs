@@ -120,8 +120,12 @@ upperWord = (:) <$> upperChar <*> many alphaNumChar
 
 -- === plotting ===
 
+dataDiv :: A.Value -> Html
+dataDiv val = cdiv "data" (jsonAsHtml val) ! At.style "display: none;"
+
 makeScatter :: Value -> Html
-makeScatter (Value _ vecs) = cdiv "scatter" (jsonAsHtml trace)
+makeScatter (Value _ vecs) =
+  cdiv "plot-pending" (dataDiv trace)
   where
     trace :: A.Value
     trace = A.object
@@ -131,9 +135,6 @@ makeScatter (Value _ vecs) = cdiv "scatter" (jsonAsHtml trace)
       , "type" .= toJSON ("scatter" :: A.Value)
       ]
     RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
-
-dataDiv :: A.Value -> Html
-dataDiv val = cdiv "data" (jsonAsHtml val) ! At.style "display: none;"
 
 makeHeatmap :: Value -> Html
 makeHeatmap (Value ty vecs) =

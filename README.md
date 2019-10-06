@@ -14,6 +14,8 @@ or look at these example programs:
 
   * [Tutorial](examples/tutorial.dx)
   * [Mandelbrot set](examples/mandelbrot.dx)
+  * [Estimating pi](examples/pi.dx)
+  * [Sierpinsky triangle](examples/sierpinsky.dx)
 
 ## Setup
 

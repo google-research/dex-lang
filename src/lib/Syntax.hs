@@ -138,7 +138,8 @@ builtinNames = M.fromList [
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
-  ("deriv", Deriv), ("partialEval", PartialEval), ("transpose", Transpose),
+  ("deriv", Deriv), ("partialEval", PartialEval),
+  ("linearTranspose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo)]
