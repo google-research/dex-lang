@@ -19,6 +19,7 @@ body {
   font-family: Helvetica, sans-serif;
   font-size: 100%;
   color: #333;
+  padding-bottom: 500px;
 }
 
 .cell {
@@ -47,6 +48,14 @@ code {
   font-weight: bold;
   color: #B22222;
   border-left: 3px solid #B22222;
+}
+
+.plot {
+  padding: 5em;
+}
+
+.plot-img {
+  width: 80%;
 }
 
 .comment {

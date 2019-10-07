@@ -46,13 +46,10 @@ update-%: examples/%.dx
 
 # --- building docs ---
 
-docs: doc/style.css doc/plot.js $(doc-names)
+docs: doc/style.css $(doc-names)
 
 doc/%.html: examples/%.dx
 	$(dex) script $^ --html > $@
 
 doc/%.css: static/%.css
-	cp $^ $@
-
-doc/%.js: static/%.js
 	cp $^ $@

@@ -20,7 +20,8 @@ czero = (0.0, 0.0)
 
 tol = 2.0
 type Niters = 1000
-type Ngrid  = 300
+type Nx = 300
+type Ny = 200
 
 'The actual escape time algorithm
 
@@ -38,8 +39,8 @@ escapeTime c = fst $ fold (0.0, czero) ..
 
 'Evaluate on a grid and plot the results
 
-xs = linspace @Ngrid -2.5 1.0
-ys = linspace @Ngrid -1.0 1.0
+xs = linspace @Nx -2.0 1.0
+ys = linspace @Ny -1.0 1.0
 
 grid.j.i = (xs.i, ys.j)
 

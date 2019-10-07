@@ -1,7 +1,7 @@
 '# Sierpisnky triangle ("chaos game")
 
 type Point = (Real, Real)
-type N = 5000
+type N = 3000
 
 update ::n=>Point -> Key -> Point -> Point
 update points key (x,y) =
@@ -12,7 +12,7 @@ runChain :: A n a. (Key -> a -> a) -> Key -> a -> n=>a
 runChain f key x0 = snd $ scan x0 for i. lam x. dup $ f (hash key (asint i)) x
 
 trianglePoints :: 3=>Point
-trianglePoints = [(0.0, 0.0), (1.0, 0.0), (0.5, 0.5 * tan (pi / 3.0))]
+trianglePoints = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
 :plot runChain @N (update trianglePoints) 0 (0.0, 0.0)
 > <graphical output>

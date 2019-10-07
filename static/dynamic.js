@@ -68,5 +68,4 @@ source.onmessage = function(event) {
         }
         Object.assign(cells, new_cells);
     }
-    render_plots();
 };

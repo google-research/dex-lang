@@ -21,11 +21,7 @@ import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At
 import Text.Blaze.Html.Renderer.String
 import Data.Text (pack)
-import Data.ByteString.Lazy (unpack)
 import CMark (commonmarkToHtml)
-import Data.Aeson hiding (Result, Null, Value)
-import qualified Data.Aeson as A
-import Data.Char (chr)
 
 import Control.Monad
 import Text.Megaparsec hiding (chunk)
@@ -34,7 +30,7 @@ import Text.Megaparsec.Char as C
 import Syntax
 import PPrint
 import ParseUtil
-import Record
+import Plot
 
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x
@@ -49,10 +45,7 @@ wrapBody blocks = docTypeHtml $ do
   H.head $ do
     H.link ! rel "stylesheet" ! href "style.css" ! type_ "text/css"
     H.meta ! charset "UTF-8"
-    H.script mempty ! src "https://cdn.plot.ly/plotly-1.2.0.min.js"
-    H.script mempty ! src "plot.js"
-  H.body $ do H.div inner ! At.id "main-output"
-              H.script "render_plots()"
+  H.body $ H.div inner ! At.id "main-output"
   where inner = foldMap (cdiv "cell") blocks
 
 instance ToMarkup Result where
@@ -60,8 +53,8 @@ instance ToMarkup Result where
     Result (Left _) -> cdiv "err-block" $ toHtml $ pprint result
     Result (Right ans) -> case ans of
       NoOutput -> mempty
-      ValOut Heatmap val -> makeHeatmap val
-      ValOut Scatter val -> makeScatter val
+      ValOut Heatmap val -> cdiv "plot" $ heatmapHtml val
+      ValOut Scatter val -> cdiv "plot" $ scatterHtml val
       _ -> cdiv "result-block" $ toHtml $ pprint result
 
 instance ToMarkup SourceBlock where
@@ -117,42 +110,3 @@ lowerWord = (:) <$> lowerChar <*> many alphaNumChar
 
 upperWord :: Parser String
 upperWord = (:) <$> upperChar <*> many alphaNumChar
-
--- === plotting ===
-
-dataDiv :: A.Value -> Html
-dataDiv val = cdiv "data" (jsonAsHtml val) ! At.style "display: none;"
-
-makeScatter :: Value -> Html
-makeScatter (Value _ vecs) =
-  cdiv "plot-pending" (dataDiv trace)
-  where
-    trace :: A.Value
-    trace = A.object
-      [ "x" .= toJSON xs
-      , "y" .= toJSON ys
-      , "mode" .= toJSON ("markers"   :: A.Value)
-      , "type" .= toJSON ("scatter" :: A.Value)
-      ]
-    RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
-
-makeHeatmap :: Value -> Html
-makeHeatmap (Value ty vecs) =
-  cdiv "plot-pending" (dataDiv trace)
-  where
-    TabType _ (TabType (IdxSetLit n) _) = ty
-    trace :: A.Value
-    trace = A.object
-      [ "z" .= toJSON (chunk n xs)
-      , "type" .= toJSON ("heatmap" :: A.Value)
-      , "colorscale" .= toJSON ("Greys" :: A.Value)
-      ]
-    RecLeaf (RealVec xs) = vecs
-
-jsonAsHtml :: A.Value -> Html
-jsonAsHtml val = toHtml $ map (chr . fromEnum) $ unpack $ encode val
-
-chunk :: Int -> [a] -> [[a]]
-chunk _ [] = []
-chunk n xs = row : chunk n rest
-  where (row, rest) = splitAt n xs
