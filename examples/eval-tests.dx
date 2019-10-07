@@ -168,3 +168,8 @@ litArr = [10, 5, 3]
 
 :p for i::3. 1
 > [1, 1, 1]
+
+:p type Nrand = 6
+   (k, _) = (iadd 1 2, 3)
+   for i::Nrand. iadd k (asint i)
+> [3, 4, 5, 6, 7, 8]

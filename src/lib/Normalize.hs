@@ -275,8 +275,8 @@ simplify expr = case expr of
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     case f' of
-      NLam bs body -> extendR env (simplify body)
-        where env = asFst $ bindEnv bs xs'
+      NLam bs body -> local (\(_, scope) -> (env, scope)) (simplify body)
+        where env = bindEnv bs xs'
       _ -> return $ NApp f' xs'
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
   NAtoms xs -> liftM NAtoms $ mapM simplifyAtom xs

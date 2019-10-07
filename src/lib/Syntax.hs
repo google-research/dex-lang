@@ -149,7 +149,7 @@ commandNames = M.fromList [
   ("p", EvalExpr Printed), ("t", GetType), ("typed", ShowTyped),
   ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
   ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
-  ("time", TimeIt), ("plot", EvalExpr Scatter),
+  ("time", TimeIt), ("plot", EvalExpr Scatter), ("simp", ShowSimp),
   ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse)]
 
 builtinStrs :: M.Map Builtin String
