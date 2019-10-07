@@ -44,7 +44,9 @@ data DocFmt = ResultOnly | TextDoc | HtmlDoc
 data EvalMode = ReplMode
               | WebMode FName
               | ScriptMode FName DocFmt ErrorHandling
-data CmdOpts = CmdOpts EvalMode Backend
+type PreludeFile = String
+data EvalOpts = EvalOpts Backend (Maybe PreludeFile)
+data CmdOpts = CmdOpts EvalMode EvalOpts
 
 type FName = String
 
@@ -62,9 +64,9 @@ fullPassJit = typeCheckPass
           >+> flopsPass
           >+> jitPass
 
-runMode :: Monoid env => EvalMode -> FullPass env -> IO ()
-runMode evalMode pass = do
-  env <- execStateT (evalPrelude pass) mempty
+runMode :: Monoid env => EvalMode -> Maybe PreludeFile -> FullPass env -> IO ()
+runMode evalMode prelude pass = do
+  env <- execStateT (evalPrelude prelude pass) mempty
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode ->
@@ -93,10 +95,12 @@ evalFile pass fname = do
   results <- mapM (evalDecl pass) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude :: Monoid env => FullPass env-> StateT env IO ()
-evalPrelude pass = do
-  result <- evalFile pass "prelude.dx"
+evalPrelude :: Monoid env => Maybe PreludeFile -> FullPass env-> StateT env IO ()
+evalPrelude fname pass = do
+  result <- evalFile pass fname'
   void $ liftErrIO $ mapM (\(_, (Result r)) -> r) result
+  where fname' = case fname of Just f -> f
+                               Nothing -> "prelude.dx"
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
@@ -131,7 +135,7 @@ printLitProg ResultOnly prog = foldMap (pprint . snd) prog
 printLitProg HtmlDoc    prog = progHtml prog
 
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseBackend
+parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
@@ -147,12 +151,19 @@ parseMode = subparser $
                   long "allow-errors"
                <> help "Evaluate programs containing non-fatal type errors")))
 
-parseBackend :: Parser Backend
-parseBackend = flag Jit Interp (long "interp" <> help "Use interpreter backend")
+parseEvalOpts :: Parser EvalOpts
+parseEvalOpts = EvalOpts
+                   <$> (flag Jit Interp $
+                         long "interp" <> help "Use interpreter backend")
+                   <*> (optional $ strOption $
+                            long "prelude"
+                         <> metavar "FILE"
+                         <> help "Alternative prelude file")
+
 
 main :: IO ()
 main = do
-  CmdOpts evalMode backend <- execParser parseOpts
+  CmdOpts evalMode (EvalOpts backend prelude) <- execParser parseOpts
   case backend of
-    Jit    -> case fullPassJit    of TopPass f -> runMode evalMode f
-    Interp -> case fullPassInterp of TopPass f -> runMode evalMode f
+    Jit    -> case fullPassJit    of TopPass f -> runMode evalMode prelude f
+    Interp -> case fullPassInterp of TopPass f -> runMode evalMode prelude f

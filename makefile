@@ -47,6 +47,7 @@ update-%: examples/%.dx
 # --- building docs ---
 
 docs: doc/style.css $(doc-names)
+	$(dex) --prelude /dev/null script prelude.dx --html > doc/prelude.html
 
 doc/%.html: examples/%.dx
 	$(dex) script $^ --html > $@

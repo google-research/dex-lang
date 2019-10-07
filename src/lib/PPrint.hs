@@ -190,7 +190,7 @@ instance Pretty NType where
     NArrType as bs -> parens $ tup as <+> "->" <+> tup bs
     NTabType a  b  -> p a <> "=>" <> p b
     NExists tys -> "E" <> "." <> list (map p tys)
-    NIdxSetLit i -> "{.." <> p i <> "}"
+    NIdxSetLit i -> p i
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x

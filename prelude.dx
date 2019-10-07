@@ -72,6 +72,9 @@ asint i = %asint(i)
 asidx :: Int -> i
 asidx i = %asidx(i)
 
+ixkey :: Key -> n -> Key
+ixkey x i = hash x (asint i)
+
 ixadd :: i -> Int -> i
 ixadd i n = asidx $ iadd (asint i) n
 

@@ -13,6 +13,7 @@ To learn more, check out our
 or look at these example programs:
 
   * [Tutorial](examples/tutorial.dx)
+  * [Dex prelude](prelude.dx)
   * [Mandelbrot set](examples/mandelbrot.dx)
   * [Estimating pi](examples/pi.dx)
   * [Sierpinsky triangle](examples/sierpinsky.dx)
