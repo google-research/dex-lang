@@ -108,6 +108,10 @@ scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 fold :: a -> i=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
+-- TODO: call this `scan` and call the current `scan` something else
+scan' :: a -> n=>(a->a) -> n=>a
+scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
+
 rand :: Key -> Real
 rand x = %%randunif(x)
 

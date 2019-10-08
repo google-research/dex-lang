@@ -410,7 +410,8 @@ instance HasVars NExpr where
     NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     NApp f xs -> freeVars f <> foldMap freeVars xs
     NAtoms xs -> foldMap freeVars xs
-    NScan _ _ _ _ -> error $ "NScan not implemented" -- TODO
+    NScan b bs x0 body -> foldMap freeVars x0 <>
+      ((freeVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
     NTabCon _ _ _ -> error $ "NTabCon not implemented" -- TODO
 
 instance HasVars NAtom where
