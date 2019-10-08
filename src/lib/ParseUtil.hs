@@ -46,7 +46,7 @@ stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
 
 space :: Parser ()
 space = void $ do _ <- takeWhile1P (Just "white space") (`elem` " \t")
-                  optional (symbol "..\n")
+                  optional (lexeme (symbol "..") >> eol)
 
 num :: Parser (Either Double Int)
 num =    liftM Left (try (L.signed (return ()) L.float) <* sc)

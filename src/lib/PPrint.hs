@@ -110,7 +110,7 @@ instance Pretty b => Pretty (ExprP b) where
     Decl decl body -> prettyDecl decl body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
-    For b e      -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p e)
+    For b e      -> parens $ "for " <+> p b <+> "." <> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
     RecCon r     -> p r
     TabCon _ xs -> list (map pretty xs)
