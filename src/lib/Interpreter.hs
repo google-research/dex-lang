@@ -38,6 +38,8 @@ foreign import ccall "cos"  c_cos  :: Double -> Double
 foreign import ccall "tan"  c_tan  :: Double -> Double
 foreign import ccall "exp"  c_exp  :: Double -> Double
 foreign import ccall "log"  c_log  :: Double -> Double
+foreign import ccall "randunif"      c_unif     :: Int -> Double
+foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
 type Val = Expr -- irreducible expressions only
 type Scope = Env ()
@@ -166,13 +168,16 @@ evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
 evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
   exTable ty $ filter (fromBoolLit . asFun f) xs
-evalOp (FFICall 1 name) _ xs = case name of
+evalOp (FFICall _ name) _ xs = case name of
   "sqrt" -> realUnOp c_sqrt xs
   "sin"  -> realUnOp c_sin  xs
   "cos"  -> realUnOp c_cos  xs
   "tan"  -> realUnOp c_tan  xs
   "exp"  -> realUnOp c_exp  xs
   "log"  -> realUnOp c_log  xs
+  "randunif"  -> case xs of [Lit (IntLit x)] -> Lit $ RealLit $ c_unif x
+                            _ -> error "bad arg"
+  "threefry2x32" -> intBinOp c_threefry xs
   _ -> error $ "FFI function not recognized: " ++ name
 evalOp op _ _ = error $ "Primop not implemented: " ++ pprint op
 

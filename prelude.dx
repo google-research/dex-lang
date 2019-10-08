@@ -111,6 +111,13 @@ fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 rand :: Key -> Real
 rand x = %%randunif(x)
 
+randn :: Key -> Real
+randn k =
+  (k1, k2) = splitKey k
+  u1 = rand k1
+  u2 = rand k2
+  sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
+
 sum :: i=>Real -> Real
 sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
 
