@@ -35,7 +35,7 @@ escapeTime :: Complex -> Real
 escapeTime c = fst $ fold (0.0, czero) ..
   for i::Niters. lam (n, z).
     z' = update c z
-    (n + real (b2i (inBounds z')), z')
+    (n + b2r (inBounds z'), z')
 
 'Evaluate on a grid and plot the results
 

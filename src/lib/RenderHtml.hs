@@ -98,6 +98,8 @@ classify =
    <|> (symbol "--" >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
    <|> (do s <- lowerWord
            return $ if s `elem` keywords then KeywordStr else NormalStr)
+   <|> (symbol "A " >> return KeywordStr)
+   <|> (symbol "E " >> return KeywordStr)
    <|> (upperWord >> return TypeNameStr)
    <|> (choice (map C.string symbols ) >> return SymbolStr)
    <|> (anySingle >> return NormalStr)

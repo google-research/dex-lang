@@ -364,6 +364,7 @@ sigmaType = do
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName
               <|> typeVar
+              <|> idxSetLit
               <|> parenTy
 
 tauType :: Parser Type
