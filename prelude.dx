@@ -118,6 +118,9 @@ randn k =
   u2 = rand k2
   sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
 
+many :: A n a. (Key -> a) -> Key -> n=>a
+many f key = for i. f (hash key (asint i))
+
 sum :: i=>Real -> Real
 sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
 

@@ -16,7 +16,7 @@ estimatePiAvgVal key =
 meanAndStdDev :: Key -> Int -> (Key -> Real) -> (Real, Real)
 meanAndStdDev key n f =
   _, N = unpack range n
-  samps = for i::N. f (hash key (asint i))
+  samps = many @N f key
   (mean samps, std samps)
 
 :p meanAndStdDev 0 1000000 estimatePiArea
