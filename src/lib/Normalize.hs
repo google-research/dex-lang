@@ -297,10 +297,11 @@ simplifyAtom atom = case atom of
     i' <- simplifyAtom i
     return $ nGet e' i'
   NAtomicFor b body ->
-    -- TODO: eta convert if possible
-    refreshBindersRSimp [b] $ \[b'] -> do
+    refreshBindersRSimp [b] $ \[b'@(i':>_)] -> do
       body' <- simplifyAtom body
-      return $ NAtomicFor b' body'
+      return $ case body' of
+        NGet e (NVar i) | i == i' -> e
+        _ -> NAtomicFor b' body'
   NLam bs body ->
     refreshBindersRSimp bs $ \bs' -> do
       body' <- simplify body
