@@ -9,25 +9,33 @@ You can follow along in the REPL, `dex repl`,
 or, on Linux, in the live notebook: `dex web examples/tutorial.dx`.
 See the README for installation instructions.
 
-'## Expressions
+'## Expression syntax
 
 'We can evaluate and print expressions with `:p`
 
 :p (1. + 2.) * 3.
 > 9.0
 
-'The expression language includes lambda, let, tuple construction and pattern-matching:
+'We can write let bindings as `x = <expr>; <expr>`. Bindings can be separated
+with a line break or a semicolon. Cosmetic line breaks can be escaped with `..`
+
+:p x = 1.                -- let binding
+   y = (z = 2.; z + 1.)  -- let binding of a nested let expression
+   ..                    -- escaped cosmetic line break
+   x + y                 -- body of let expression
+> 4.0
+
+'We also have lambda, tuple construction and (tuple) pattern-matching:
 
 :p (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
    f = lam z. x + z * y  -- let binding of a lambda function
-   f 1. - 2.             -- body of let expression
-> 1.0
+   f 1. + f 2.           -- body of let expression
+> 8.0
 
-'Let bindings can be separated with a line break or a semicolon. We use white
-space for function application (we write `f x y` instead of `f(x, y)`). We can use
-`:parse`, which pretty-prints the internal AST, to see how subexpressions are
-grouped. For example, function application associates to the left and binds more
-tightly than infix operators.
+'We use white space for function application (we write `f x y` instead of `f(x, y)`).
+To see how subexpressions are grouped, it can be helpful to pretty-print the
+internal AST using `:parse`. For example, we see that function application
+associates to the left and binds more tightly than infix operators.
 
 :parse f 1 2 3
 > (((f 1) 2) 3)
@@ -35,8 +43,17 @@ tightly than infix operators.
 :parse f 1 + g 2
 > (%fadd((f 1), (g 2)))
 
-'We can combine a let binding with a lambda expression, writing `f = lam x. ...`
-as `f x = ...`. This is just syntactic sugar. These three expression all parse
+'To reduce parentheses, we sometimes use `$` for function application. `$` binds
+very loosely:
+
+:parse f $ x + y
+> (f (%fadd(x, y)))
+
+:parse f (x + y)
+> (f (%fadd(x, y)))
+
+'We can combine a let binding with a lambda expression, writing `f = lam x. <expr>`
+as `f x = <expr>`. This is just syntactic sugar. These three expression all parse
 to exactly the same thing:
 
 :parse f x y = 1; f 2 3
@@ -136,6 +153,7 @@ generalization. For example, although we can write this:
 
 :typed id :: a -> a
        id x = x
+       ..
        id 1
 > (id :: [a::T]. A a. (a -> a)
 > id = (lam x::a . x);
@@ -252,7 +270,7 @@ the same thing as if we'd annotated the binders manually.
        ys.i = xs.i * xs.i
        ys
 > (xs::(3=>Real) = [1.0, 2.0, 3.0];
-> (ys::(3=>Real) = (for  i::3 . 
+> (ys::(3=>Real) = (for  i::3 .
 >     (%fmul(xs.i, xs.i)));
 > ys))
 
@@ -262,6 +280,7 @@ For example, adding two vectors of the same size:
 
 :p addVec :: n=>Real -> n=>Real -> n=>Real
    addVec x y = for i. x.i + y.i
+   ..
    addVec [1.0, 2.0] [0.1, 0.2]
 > [1.1, 2.2]
 
@@ -269,6 +288,7 @@ For example, adding two vectors of the same size:
 
 :p transpose :: n=>m=>a -> m=>n=>a
    transpose x = for i j. x.j.i
+   ..
    transpose [[1,2,3],[10,20,30]]
 > [[1, 10], [2, 20], [3, 30]]
 
@@ -276,6 +296,7 @@ For example, adding two vectors of the same size:
 
 :p diag :: n=>n=>a -> n=>a
    diag x = for i. x.i.i
+   ..
    diag [[1,2],[10,20]]
 > [1, 20]
 
@@ -286,3 +307,9 @@ For example, adding two vectors of the same size:
   * existentials, packing/unpacking
   * input and output
   * compiler internals -- normalized IR, imperative IR, LLVM
+  * currying tables
+  * mention prelude
+  * splittable PRNG
+  * automatic differentiation
+  * more syntax
+  * scan, fold
