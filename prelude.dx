@@ -1,8 +1,8 @@
-fst :: (a, b) -> a
-fst (x, y) = x
+'## Dex prelude
 
-snd :: (a, b) -> b
-snd (x, y) = y
+'Runs before every Dex program unless an alternative is provided with `--prelude`.
+
+'Curried wrappers around built-in functions
 
 iadd :: Int -> Int -> Int
 iadd x y = %iadd(x, y)
@@ -12,9 +12,6 @@ isub x y = %isub(x, y)
 
 imul :: Int -> Int -> Int
 imul x y = %imul(x, y)
-
-todo :: a
-todo = %todo()
 
 mod :: Int -> Int -> Int
 mod x y = %mod(x, y)
@@ -33,6 +30,27 @@ fdiv x y = %fdiv(x, y)
 
 pow :: Int -> Int -> Int
 pow x y = %pow(x, y)
+
+asint :: i -> Int
+asint i = %asint(i)
+
+asidx :: Int -> i
+asidx i = %asidx(i)
+
+real :: Int -> Real
+real x = %inttoreal(x)
+
+b2i :: Bool -> Int
+b2i x = %booltoint(x)
+
+filter :: (a -> Bool) -> n=>a -> E m. m=>a
+filter f x = %filter(f, x)
+
+-- `todo` is like `undefined` in Haskell
+todo :: a
+todo = %todo()
+
+'Wrappers around C library functions
 
 exp :: Real -> Real
 exp x = %%exp(x)
@@ -55,8 +73,88 @@ tan x = %%tan(x)
 floor :: Real -> Int
 floor x = %%floorDex(x)
 
+'Misc functions
+
+fst :: (a, b) -> a
+fst (x, y) = x
+
+snd :: (a, b) -> b
+snd (x, y) = y
+
+b2r :: Bool -> Real
+b2r x = real $ b2i x
+
 pi :: Real
 pi = 3.141592653589793
+
+ixadd :: i -> Int -> i
+ixadd i n = asidx $ iadd (asint i) n
+
+ixsub :: i -> Int -> i
+ixsub i n = asidx $ isub (asint i) n
+
+iota :: n=>Int
+iota = for i. asint i
+
+dup :: a -> (a, a)
+dup x = (x, x)
+
+map :: (a -> b) -> n=>a -> n=>b
+map f xs = for i. f xs.i
+
+map2 :: (a -> b) -> n=>m=>a -> n=>m=>b
+map2 f xs = for i j. f xs.i.j
+
+zip :: n=>a -> n=>b -> n=>(a,b)
+zip xs ys = for i. (xs.i, ys.i)
+
+unzip :: n=>(a, b) -> (n=>a, n=>b)
+unzip xys = (map fst xys, map snd xys)
+
+fanout :: A i a. a -> n=>a
+fanout x = for i. x
+
+sq :: Real -> Real
+sq x = x * x
+
+'State-carrying loop constructs
+
+scan :: a -> n=>(a->(a, b)) -> (a, n=>b)
+scan x0 fs = %scan(x0, for i. lam x. fs.i x)
+
+fold :: a -> n=>(a->a) -> a
+fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
+
+-- TODO: call this `scan` and call the current `scan` something else
+scan' :: a -> n=>(a->a) -> n=>a
+scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
+
+'More misc functions
+
+sum :: n=>Real -> Real
+sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
+
+isum :: n=>Int -> Int
+isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
+
+-- TODO: make this a builtin for efficiency
+size :: A n. Int
+size = isum for i::n. 1
+
+range :: Int -> E i. ()
+range n = %range(n)
+
+mean :: A n. n=>Real -> Real
+mean xs = sum xs / real (size @n)
+
+std :: A n. n=>Real -> Real
+std xs = sqrt $ mean (map sq xs) - sq (mean xs)
+
+linspace :: A n. Real -> Real -> n=>Real
+linspace low high = dx = (high - low) / real (size @n)
+                    for i::n. low + real (asint i) * dx
+
+'Functions for working with the pseudorandom number generator
 
 type Key = Int
 
@@ -66,51 +164,11 @@ hash x y = %%threefry2x32(x, y)
 splitKey :: Key -> (Key, Key)
 splitKey key = (hash key 0, hash key 1)
 
-asint :: i -> Int
-asint i = %asint(i)
-
-asidx :: Int -> i
-asidx i = %asidx(i)
+many :: A n a. (Key -> a) -> Key -> n=>a
+many f key = for i. f (hash key (asint i))
 
 ixkey :: Key -> n -> Key
 ixkey x i = hash x (asint i)
-
-ixadd :: i -> Int -> i
-ixadd i n = asidx $ iadd (asint i) n
-
-ixsub :: i -> Int -> i
-ixsub i n = asidx $ isub (asint i) n
-
-iota :: i=>Int
-iota = for i. asint i
-
-range :: Int -> E i. ()
-range n = %range(n)
-
-real :: Int -> Real
-real x = %inttoreal(x)
-
-b2i :: Bool -> Int
-b2i x = %booltoint(x)
-
-b2r :: Bool -> Real
-b2r x = real $ b2i x
-
-filter :: (a -> Bool) -> i=>a -> E j. j=>a
-filter f x = %filter(f, x)
-
-dup :: a -> (a, a)
-dup x = (x, x)
-
-scan :: a -> i=>(a->(a, b)) -> (a, i=>b)
-scan x0 fs = %scan(x0, for i. lam x. fs.i x)
-
-fold :: a -> i=>(a->a) -> a
-fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
-
--- TODO: call this `scan` and call the current `scan` something else
-scan' :: a -> n=>(a->a) -> n=>a
-scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
 
 rand :: Key -> Real
 rand x = %%randunif(x)
@@ -122,54 +180,14 @@ randn k =
   u2 = rand k2
   sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
 
-many :: A n a. (Key -> a) -> Key -> n=>a
-many f key = for i. f (hash key (asint i))
-
-sum :: i=>Real -> Real
-sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
-
-isum :: i=>Int -> Int
-isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
-
-map :: (a -> b) -> i=>a -> i=>b
-map f xs = for i. f xs.i
-
-map2 :: (a -> b) -> i=>j=>a -> i=>j=>b
-map2 f xs = for i j. f xs.i.j
-
-zip :: i=>a -> i=>b -> i=>(a,b)
-zip xs ys = for i. (xs.i, ys.i)
-
-unzip :: i=>(a, b) -> (i=>a, i=>b)
-unzip xys = (map fst xys, map snd xys)
-
-fanout :: A i a. a -> i=>a
-fanout x = for i. x
-
--- TODO: make this a builtin for efficiency
-size :: A i. Int
-size = isum (fanout @i 1)
-
-linspace :: A n. Real -> Real -> n=>Real
-linspace low high = dx = (high - low) / real (size @n)
-                    for i::n. low + real (asint i) * dx
-
-mean :: A n. n=>Real -> Real
-mean xs = sum xs / real (size @n)
-
-sq :: Real -> Real
-sq x = x * x
-
-std :: A n. n=>Real -> Real
-std xs = sqrt $ mean (map sq xs) - sq (mean xs)
-
 randIdx :: A n. Key -> n
 randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
--- All of the following have implicit vector space typeclass constraints on `a`
---  and `b`. TODO: make some sort of typeclass system
+'Vector spaces and automatic differentiation. Note that many of the following
+have implicit vector space typeclass constraints. For now these are not checked
+by the type checker.
 
 vzero :: a
 vzero = %vzero()
@@ -177,10 +195,10 @@ vzero = %vzero()
 vadd :: a -> a -> a
 vadd x y = %vadd(x, y)
 
-vsingle :: i -> a -> i=>a
+vsingle :: n -> a -> n=>a
 vsingle i x = %vsingle(i, x)
 
-vsum :: i=>a -> a
+vsum :: n=>a -> a
 vsum xs = %vsum(for i. xs.i)
 
 partialEval :: (a -> b -> (c,d)) -> a -> (c, b -> d)
@@ -209,9 +227,9 @@ grad f x = (_, pullback) = vjp f x
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 
-vsumImpl :: i=>a -> a
-vsumImpl xs = fold vzero for i::i. lam c. vadd c xs.i
+vsumImpl :: A n a. n=>a -> a
+vsumImpl xs = fold vzero for i::n. lam c. vadd c xs.i
 
-forUnzip :: i=>(b, a -> b) -> (i=>b, a -> i=>b)
+forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs
                (xs, lam t. for i. fs.i t)
