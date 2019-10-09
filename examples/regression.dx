@@ -32,7 +32,6 @@ solve mat b =
        (x', r', p')
   xOut
 
-
 regress :: n=>d=>Real -> n=>Real -> d=>Real
 regress x y =
   xT = transpose x
@@ -45,7 +44,7 @@ noise = 0.1
 (k1, k2) = splitKey 0
 
 trueFun :: Real -> Real
-trueFun x = sin (3.5 * x)
+trueFun x = sin (2.5 * x)
 
 xs :: Nx=>Real
 xs.i = rand (ixkey k1 i)
@@ -56,22 +55,10 @@ ys.i = trueFun xs.i + noise * randn (ixkey k2 i)
 featurize :: Real -> 3=>Real
 featurize x = [1.0, x, sq x]
 
-:plot zip xs ys
-
 params = regress (map featurize xs) ys
 
-ysPred.i = vdot params (featurize xs.i)
-
 :plot zip xs ys
 
-:plot zip xs ysPred
+:plot zip xs  (for i. vdot params (featurize xs.i))
 
-
--- Top-level variable naming bug
--- xsf = map featurize xs
--- parammat' = mmp (transpose xsf) xsf
--- paramb = mvp (transpose xsf) ys
-
--- :simp parammat'
--- :p paramb
--- :p solve parammat' paramb
+-- :simp regress (map featurize xs) ys

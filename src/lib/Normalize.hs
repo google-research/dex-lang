@@ -39,13 +39,11 @@ normalizePass :: TopPass TopDecl NTopDecl
 normalizePass = TopPass $ \topDecl -> case topDecl of
   TopDecl decl -> do
     (env, decls) <- asTopPassM (normalizeDecl decl)
-    decl' <- case decls of
-      [] -> return $ dummyDecl
-      [decl'] -> return $ decl'
-      _ -> error "Multiple decls not implemented"
     extend (asFst env)
-    return $ NTopDecl decl'
-    where dummyDecl = NLet [] (NAtoms [])
+    case decls of
+      [] -> emitOutput $ NoOutput
+      [decl'] -> return $ NTopDecl decl'
+      _ -> error "Multiple decls not implemented"
   EvalCmd (Command cmd expr) -> do
     (ty   , _) <- asTopPassM $ exprType expr -- TODO: subst type vars
     (expr', _) <- asTopPassM $ normalizeScoped expr
@@ -318,14 +316,17 @@ simplifyDecl decl = case decl of
     -- blowup in compile times. The solution will be to defer some
     -- simplification, pairing the expression with the env, to be forced later.
     bound' <- simplify bound
-    case decompose mempty bound' of
+    let v = case bs of [] -> error "no binders"
+                       (v':>_):_ -> v'
+    ions <- renameIons v $ decompose mempty bound'
+    case ions of
       Unchanged -> do
         (bs', env) <- refreshBindersSimp bs
         return ([NLet bs' bound'], env)
-      Ions bound'' bs' ions ->
+      Ions bound'' bs' atoms ->
         return $ case bs' of [] -> ([]     , env)
                              _  -> ([decl'], env)
-        where env = (bindEnv bs ions, newScope bs')
+        where env = (bindEnv bs atoms, newScope bs')
               decl' = NLet bs' bound''
   NUnpack bs tv bound -> do
     bound' <- simplify bound
@@ -385,6 +386,19 @@ refreshBinderSimp (v:>ty) = do
   ty' <- nSubstSimp ty
   let v' = rename v scope
   return (v':>ty', (v @> L (NVar v'), v' @> L ty'))
+
+renameIons :: Name -> Ions -> SimplifyM Ions
+renameIons _ Unchanged = return Unchanged
+renameIons v (Ions expr bs atoms) = do
+  (bs', (env, scope)) <- catTraverse (renameBinder v) bs
+  let atoms' = runReader (mapM nSubst atoms) (env, fmap (const ()) scope)
+  return $ Ions expr bs' atoms'
+
+renameBinder :: Name -> NBinder -> SimplifyM (NBinder, SimpEnv)
+renameBinder proposal (v:>ty) = do
+  scope <- asks snd
+  let v' = rename proposal scope
+  return (v':>ty, (v @> L (NVar v'), v' @> L ty))
 
 nSubstSimp :: NSubst a => a -> SimplifyM a
 nSubstSimp x = do
