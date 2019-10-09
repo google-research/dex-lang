@@ -68,7 +68,17 @@ poly x = for n. pow x (real (asint n))
 params :: 4=>Real
 params = regress poly xs ys
 
+predict :: Real -> Real
+predict x = vdot params (poly x)
+
 :plot xsTest = linspace@100 0.0 1.0
-      ysPred.i = vdot params (poly xsTest.i)
-      zip xsTest ysPred
+      zip xsTest (map predict xsTest)
 > <graphical output>
+
+'RMS error
+
+rmsErr :: n=>Real -> n=>Real -> Real
+rmsErr truth pred = sqrt $ mean for i. sq (pred.i - truth.i)
+
+:p rmsErr ys (map predict xs)
+> 0.11008144336019322
