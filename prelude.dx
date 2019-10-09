@@ -28,8 +28,11 @@ fmul x y = %fmul(x, y)
 fdiv :: Real -> Real -> Real
 fdiv x y = %fdiv(x, y)
 
-pow :: Int -> Int -> Int
-pow x y = %pow(x, y)
+ipow :: Int -> Int -> Int
+ipow x y = %pow(x, y)
+
+pow :: Real -> Real -> Real
+pow x y = %%pow(x, y)
 
 asint :: i -> Int
 asint i = %asint(i)

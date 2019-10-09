@@ -1,5 +1,7 @@
 '# Basis function regression
 
+'Some general linear algebra routines. These should probably live in the prelude.
+
 vdot :: n=>Real -> n=>Real -> Real
 vdot x y = sum for i. x.i * y.i
 
@@ -15,13 +17,13 @@ transpose x = for i j. x.j.i
 inner :: n=>Real -> n=>m=>Real -> m=>Real -> Real
 inner x m y = sum for (i,j). x.i * m.i.j * y.j
 
+-- Conjugate gradients solver
 solve :: A M. M=>M=>Real -> M=>Real -> M=>Real
 solve mat b =
-  x0 = for i::M. 0.0 * b.i  -- Workaround imp lowering bug
+  x0 = for i::M. 0.0 * (real (asint i))  -- Work around imp lowering bug!
   ax = mvp mat x0
   r0.i = b.i - ax.i
-  p0 = r0
-  (xOut, _, _) = fold (x0, r0, p0) ..
+  (xOut, _, _) = fold (x0, r0, r0) ..
      for s::M. lam (x, r, p).
        ap = mvp mat p
        alpha = vdot r r / vdot p ap
@@ -32,11 +34,6 @@ solve mat b =
        (x', r', p')
   xOut
 
-regress :: n=>d=>Real -> n=>Real -> d=>Real
-regress x y =
-  xT = transpose x
-  solve (mmp xT x) (mvp xT y)
-
 'Make some synthetic data
 
 type Nx = 100
@@ -44,7 +41,7 @@ noise = 0.1
 (k1, k2) = splitKey 0
 
 trueFun :: Real -> Real
-trueFun x = sin (2.5 * x)
+trueFun x = x + sin (5.0 * x)
 
 xs :: Nx=>Real
 xs.i = rand (ixkey k1 i)
@@ -52,13 +49,26 @@ xs.i = rand (ixkey k1 i)
 ys :: Nx=>Real
 ys.i = trueFun xs.i + noise * randn (ixkey k2 i)
 
-featurize :: Real -> 3=>Real
-featurize x = [1.0, x, sq x]
-
-params = regress (map featurize xs) ys
-
 :plot zip xs ys
+> <graphical output>
 
-:plot zip xs  (for i. vdot params (featurize xs.i))
+'Implement basis function regression
 
--- :simp regress (map featurize xs) ys
+regress :: (Real -> d=>Real) -> n=>Real -> n=>Real -> d=>Real
+regress featurize xRaw y =
+  x = map featurize xRaw
+  xT = transpose x
+  solve (mmp xT x) (mvp xT y)
+
+'Fit a third-order polynomial
+
+poly :: A d. Real -> d=>Real
+poly x = for n. pow x (real (asint n))
+
+params :: 4=>Real
+params = regress poly xs ys
+
+:plot xsTest = linspace@100 0.0 1.0
+      ysPred.i = vdot params (poly xsTest.i)
+      zip xsTest ysPred
+> <graphical output>

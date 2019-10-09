@@ -21,7 +21,7 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-example-names = type-tests eval-tests shadow-tests annot-tests flop-tests tutorial mandelbrot pi sierpinsky
+example-names = type-tests eval-tests shadow-tests annot-tests flop-tests tutorial mandelbrot pi sierpinsky regression
 quine-test-targets = $(example-names:%=run-%)
 doc-names = $(example-names:%=doc/%.html)
 
