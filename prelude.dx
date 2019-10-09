@@ -111,7 +111,7 @@ zip xs ys = for i. (xs.i, ys.i)
 unzip :: n=>(a, b) -> (n=>a, n=>b)
 unzip xys = (map fst xys, map snd xys)
 
-fanout :: A i a. a -> n=>a
+fanout :: A n a. a -> n=>a
 fanout x = for i. x
 
 sq :: Real -> Real
