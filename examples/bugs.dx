@@ -23,3 +23,10 @@ x = 1
 
 -- need a type class constrain for index sets so that this is an error
 :t for i::Int. 1
+
+-- 'atomic for' should be removed by simp pass before imp pass
+:p x = for i::3. 0; x
+
+-- afor also leaks if it's the argument to a fold
+:p fold (for i::2. 0.0) $ for i::3. lam c. (for j. c.j + real (asint j))
+
