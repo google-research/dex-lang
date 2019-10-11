@@ -37,6 +37,6 @@ or look at these example programs:
 
 ## License
 
-Apache 2.0
+BSD-3
 
 This is an early-stage research project, not an official Google product.
