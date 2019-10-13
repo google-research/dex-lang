@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Type (TypeEnv, checkTyped, getType, litType, unpackExists,
+module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              checkNExpr, patType, tangentBunType, tangentBunNType) where
 import Control.Monad
@@ -329,6 +329,11 @@ checkNDecl decl = case decl of
 
 nBinderEnv :: [NBinder] -> NTypeEnv
 nBinderEnv bs = foldMap (\(v:>ty) -> v @> L ty) bs
+
+getAtomType :: NTypeEnv -> NAtom -> NType
+getAtomType env atom = case runReaderT (atomType atom) env of
+  Left err -> error $ pprint err
+  Right x -> x
 
 atomType :: NAtom -> NTypeM NType
 atomType atom = case atom of

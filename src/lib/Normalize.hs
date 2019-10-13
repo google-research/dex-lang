@@ -225,6 +225,7 @@ type SimpEnv = (FullEnv NAtom Name, NScope)
 type SimplifyM a = ReaderT SimpEnv (Either Err) a
 
 -- TODO: consider maintaining free variables explicitly
+-- ions are atoms with a few bits missing
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
 simpPass :: TopPass NTopDecl NTopDecl
@@ -232,6 +233,7 @@ simpPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl decl -> do
     (decls, env) <- simpAsTopPassM $ simplifyDecl decl
     decl' <- case decls of
+
       [] -> return $ dummyDecl
       [decl'] -> return decl'
       _ -> error "Multiple decls not implemented"
@@ -240,7 +242,7 @@ simpPass = TopPass $ \topDecl -> case topDecl of
     where dummyDecl = NLet [] (NAtoms [])
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
     -- TODO: handle type vars
-    expr' <- simpAsTopPassM $ simplify expr
+    expr' <- simpAsTopPassM $ simplify True expr
     case cmd of
       ShowSimp -> emitOutput $ TextOut $ pprint expr'
       _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
@@ -250,28 +252,36 @@ simpAsTopPassM m = do
   env <- look
   liftExceptTop $ runReaderT m env
 
-simplify :: NExpr -> SimplifyM NExpr
-simplify expr = case expr of
+simplify :: Bool -> NExpr -> SimplifyM NExpr
+simplify mat expr = case expr of
   NDecl decl body -> do
     (decls, env) <- simplifyDecl decl
-    body' <- extendR env $ simplify body
+    body' <- extendR env $ simplify mat body
     return $ wrapNDecls decls body'
   NScan b bs xs e -> do
     xs' <- mapM simplifyAtom xs
-    refreshBindersRSimp (b:bs) $ \(b':bs') -> do
-      e' <- simplify e
-      return $ NScan b' bs' xs' e'
+    (xs'', decls, env) <- materializeAtoms xs'
+    extendR env $
+      refreshBindersRSimp (b:bs) $ \(b':bs') -> do
+        e' <- simplify mat e
+        return $ wrapNDecls decls (NScan b' bs' xs'' e')
   NApp f xs -> do
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     case f' of
-      NLam bs body -> local (\(_, scope) -> (env, scope)) (simplify body)
+      NLam bs body -> local (\(_, scope) -> (env, scope)) (simplify mat body)
         where env = bindEnv bs xs'
       _ -> return $ NApp f' xs'
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
-  NAtoms xs -> liftM NAtoms $ mapM simplifyAtom xs
+  NAtoms xs -> do
+    xs' <- mapM simplifyAtom xs
+    if mat
+      then do
+        (xs'', decls, _) <- materializeAtoms xs'
+        return $ wrapNDecls decls (NAtoms xs'')
+      else return $ NAtoms xs'
   NTabCon n ts rows ->
-    liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts) (mapM simplify rows)
+    liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts) (mapM (simplify mat) rows)
 
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
@@ -294,12 +304,32 @@ simplifyAtom atom = case atom of
         _ -> NAtomicFor b' body'
   NLam bs body ->
     refreshBindersRSimp bs $ \bs' -> do
-      body' <- simplify body
+      body' <- simplify False body
       return $ NLam bs' body'
   NDeriv f -> do
     f' <- simplifyAtom f
     expandDerivTop f'
   NDerivAnnot f df -> liftM2 NDerivAnnot (simplifyAtom f) (simplifyAtom df)
+
+materializeAtoms :: [NAtom] -> SimplifyM ([NAtom], [NDecl], SimpEnv)
+materializeAtoms xs = do
+  (xsDecls, env) <- catTraverse materializeAtom xs
+  let (xs', declss) = unzip xsDecls
+  return (xs', concat declss, env)
+
+materializeAtom :: NAtom -> SimplifyM ((NAtom, [NDecl]), SimpEnv)
+materializeAtom atom = case atom of
+  NAtomicFor b body -> do
+    scope <- asks snd
+    let ty = getAtomType scope atom
+    refreshBindersRSimp [b] $ \[b'] -> do
+      ((body', decls), env) <- materializeAtom body
+      scope' <- asks snd
+      let v = rename (rawName "tab") (scope' <> snd env)
+      let env' = (mempty, v @> L ty)
+      let decl = NLet [v:>ty] (NScan b' [] [] (NAtoms [body']))
+      return ((NVar v, decls ++ [decl]), env <> env')
+  _ -> return ((atom, []), mempty)
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SimpEnv)
 simplifyDecl decl = case decl of
@@ -307,7 +337,7 @@ simplifyDecl decl = case decl of
     -- As pointed out in the 'ghc inliner' paper, this can lead to exponential
     -- blowup in compile times. The solution will be to defer some
     -- simplification, pairing the expression with the env, to be forced later.
-    bound' <- simplify bound
+    bound' <- simplify False bound
     let v = case bs of [] -> error "no binders"
                        (v':>_):_ -> v'
     ions <- renameIons v $ decompose mempty bound'
@@ -321,7 +351,7 @@ simplifyDecl decl = case decl of
         where env = (bindEnv bs atoms, newScope bs')
               decl' = NLet bs' bound''
   NUnpack bs tv bound -> do
-    bound' <- simplify bound
+    bound' <- simplify True bound
     tv' <- asks $ rename tv . snd
     let tEnv = (tv @> T tv', tv' @> T ())
     (bs', lEnv) <- extendR tEnv $ refreshBindersSimp bs

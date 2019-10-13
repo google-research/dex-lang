@@ -20,7 +20,7 @@ inner x m y = sum for (i,j). x.i * m.i.j * y.j
 -- Conjugate gradients solver
 solve :: A M. M=>M=>Real -> M=>Real -> M=>Real
 solve mat b =
-  x0 = for i::M. 0.0 * (real (asint i))  -- Work around imp lowering bug!
+  x0 = for i::M. 0.0
   ax = mvp mat x0
   r0.i = b.i - ax.i
   (xOut, _, _) = fold (x0, r0, r0) ..
