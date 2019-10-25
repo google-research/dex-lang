@@ -123,7 +123,7 @@ check expr reqTy = case expr of
     return $ Decl decl' body'
   Lam p body -> do
     (a, b) <- splitFun expr reqTy
-    p' <- checkPat p a
+    p' <- solveLocalMonomorphic $ checkPat p a
     body' <- extendRSnd (foldMap asEnv p') (check body b)
     return $ Lam p' body'
   App fexpr arg -> do
@@ -263,7 +263,7 @@ solvePartial qs cs = do
     -- We lost the source context when we solved this the first time
     -- TODO: add context to subst
     substAsConstraints env =
-          [Constraint (TypeVar v) ty "" Nothing | (v, ty) <- envPairs env]
+          [Constraint (TypeVar v) ty "From subst" Nothing | (v, ty) <- envPairs env]
 
 -- === constraint solver ===
 

@@ -146,3 +146,15 @@ idfun x = x
 
 :t (todo :: Int -> Real) 1
 > Real
+
+f :: Int -> Real
+f x =
+  z = x + 1.0
+  x
+> Type error:
+> Expected: Real
+>   Actual: Int
+> In: x
+>
+>   z = x + 1.0
+>       ^^

@@ -23,3 +23,13 @@ x = 1
 
 -- need a type class constrain for index sets so that this is an error
 :t for i::Int. 1
+
+-- Bad error message because we lose provenance of the constraint
+:t lam x.
+  z = iadd x 1
+  y = fadd x 1.0
+  (z, y)
+> Type error:
+> Expected: Int
+>   Actual: Real
+> In: From subst
