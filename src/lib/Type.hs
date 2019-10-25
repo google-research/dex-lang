@@ -296,6 +296,9 @@ getNType expr = case expr of
     let (carryTys', outTys) = splitAt (length bs) bodyTys
     assertEq carryTys carryTys' "Scan output"
     return $ carryTys ++ map (NTabType i) outTys
+  NPrimOp Todo ts _ -> do
+    mapM_ checkNTy ts
+    return ts
   NPrimOp b ts xs -> do
     mapM_ checkNTy ts
     argTys'' <- mapM atomType xs
