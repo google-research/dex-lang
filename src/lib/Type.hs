@@ -270,15 +270,16 @@ type NTypeM a = ReaderT NTypeEnv (Either Err) a
 checkNExpr ::TopPass NTopDecl NTopDecl
 checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
   NTopDecl decl -> do
-    env <- liftPass $ checkNDecl decl
+    env <- liftPass (pprint decl) $ checkNDecl decl
     extend env
-  NEvalCmd (Command _ (_, tys, expr)) -> liftPass $ do
+  NEvalCmd (Command _ (_, tys, expr)) -> liftPass ctx $ do
     tys' <- getNType expr
-    assertEq tys tys' ""
+    assertEq tys tys' "NExpr command"
+    where ctx = pprint tys ++ "\n" ++ pprint expr
   where
-    liftPass :: NTypeM a -> TopPassM NTypeEnv a
-    liftPass m = do env <- look
-                    liftExceptTop $ runReaderT m env
+    liftPass :: String -> NTypeM a -> TopPassM NTypeEnv a
+    liftPass ctx m = do env <- look
+                        liftExceptTop $ addContext ctx $ runReaderT m env
 
 getNType :: NExpr -> NTypeM [NType]
 getNType expr = case expr of
@@ -320,7 +321,7 @@ checkNDecl decl = case decl of
   NLet bs expr -> do
     mapM_ checkNBinder bs
     ts <- getNType expr
-    assertEq (map binderAnn bs) ts ""
+    assertEq (map binderAnn bs) ts "Decl"
     return $ nBinderEnv bs
   NUnpack bs tv _ -> do  -- TODO: check bound expression!
     checkShadow (tv :> idxSetKind)
