@@ -1,0 +1,145 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> 2<span class="symbol">.</span>0
+</div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (double <span class="symbol">=</span> <span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> 2<span class="symbol">.</span>0
+    double 10<span class="symbol">.</span>0)
+</div><div class="result-block">20.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   isum (iota <span class="symbol">@</span><span class="type-name">Nx</span>)
+</div><div class="result-block">45</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   x <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   isum (<span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i)
+</div><div class="result-block">45</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> vdot <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+   vdot x y <span class="symbol">=</span> sum (<span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i <span class="symbol">*</span> 2<span class="symbol">.</span>0)
+   _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
+   x <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   y <span class="symbol">=</span> map real x
+   vdot y y
+</div><div class="result-block">10.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
+   _, <span class="type-name">Ny</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 4
+   x <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Nx</span>
+   y <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Ny</span>
+   z<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">=</span> real x<span class="symbol">.</span>i <span class="symbol">*</span> real y<span class="symbol">.</span>j
+   sum (<span class="keyword">for</span> i<span class="symbol">.</span> sum z<span class="symbol">.</span>i)
+</div><div class="result-block">18.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p randint (hash 0 0) 10
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :p let x = unpack range 10000
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--        key = hash 0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--    in sum (for i: randint (key x.i) 10)
+</span></div></div><div class="cell"><div class="code-block">_, <span class="type-name">NArr</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 7
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">arr <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">NArr</span>
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">NArr</span><span class="symbol">.</span> iadd iota<span class="symbol">.</span>i iota<span class="symbol">.</span>i
+</div><div class="result-block">[0, 2, 4, 6, 8, 10, 12]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> isum <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">NArr</span><span class="symbol">.</span> 1
+</div><div class="result-block">7</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">fun <span class="symbol">=</span> <span class="keyword">lam</span> y<span class="symbol">.</span> sum (map real arr) <span class="symbol">+</span> y
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fun 3<span class="symbol">.</span>0
+</div><div class="result-block">24.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> arr
+</div><div class="result-block">[0, 1, 2, 3, 4, 5, 6]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fold 0 <span class="keyword">for</span> i<span class="symbol">.</span> iadd arr<span class="symbol">.</span>i
+</div><div class="result-block">21</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 6<span class="symbol">.</span>0 <span class="symbol">-</span> 10<span class="symbol">.</span>0
+</div><div class="result-block">-4.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="keyword">lam</span> (x, y)<span class="symbol">.</span> x <span class="symbol">+</span> y) (1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0)
+</div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b, a) <span class="symbol">-</span><span class="symbol">&gt;</span> b
+   f (x, y) <span class="symbol">=</span> x y
+   f (<span class="keyword">lam</span> x<span class="symbol">.</span> x, 1)
+</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (x,y) <span class="symbol">=</span> ((1<span class="symbol">.</span>0,2<span class="symbol">.</span>0),3<span class="symbol">.</span>0)
+   (x1, x2) <span class="symbol">=</span> x
+   x1 <span class="symbol">+</span> x2 <span class="symbol">+</span> y
+</div><div class="result-block">6.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> (1<span class="symbol">.</span>0,2<span class="symbol">.</span>0)
+   (y,z) <span class="symbol">=</span> x
+   y <span class="symbol">+</span> z
+</div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p let f (x, y) = x + 2 * y;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--        z.i = (x.i, x.i * x.i)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--    in sum (for i. f z.i)
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exp 1<span class="symbol">.</span>0
+</div><div class="result-block">2.718281828459045</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> log 1<span class="symbol">.</span>0
+</div><div class="result-block">0.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sqrt 2<span class="symbol">.</span>0
+</div><div class="result-block">1.4142135623730951</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sin 3<span class="symbol">.</span>14159
+</div><div class="result-block">2.65358979335273e-6</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> cos 0<span class="symbol">.</span>0
+</div><div class="result-block">1.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> tan 1<span class="symbol">.</span>57079
+</div><div class="result-block">158057.9134162482</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fadd 1<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fsub 1<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">-1.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fmul 3<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">6.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fdiv 3<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">1.5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">s <span class="symbol">=</span> 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> s
+</div><div class="result-block">1.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [2, 4, 8]
+</div><div class="result-block">[2, 4, 8]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> xs <span class="symbol">=</span> [2,1,0]<span class="symbol">;</span> (<span class="keyword">for</span> i<span class="symbol">.</span> iadd xs<span class="symbol">.</span>i 10)
+</div><div class="result-block">[12, 11, 10]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">cumsumplus <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
+cumsumplus xs <span class="symbol">=</span> snd (scan 0<span class="symbol">.</span>0 <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> c<span class="symbol">.</span> ans <span class="symbol">=</span> c <span class="symbol">+</span> xs<span class="symbol">.</span>i
+                                            (ans, 1<span class="symbol">.</span>0 <span class="symbol">+</span> ans))
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> cumsumplus [1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0, 3<span class="symbol">.</span>0]
+</div><div class="result-block">[2.0, 4.0, 7.0]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [<span class="type-name">False</span>, <span class="type-name">False</span>, <span class="type-name">True</span>]
+</div><div class="result-block">[False, False, True]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">True</span>, <span class="type-name">False</span>)
+</div><div class="result-block">(True, False)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> 2<span class="symbol">.</span>0
+</div><div class="result-block">False</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> (0<span class="symbol">.</span>0 <span class="symbol">-</span> 2<span class="symbol">.</span>0)
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&lt;</span> 2<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> b2i (1<span class="symbol">.</span>0 <span class="symbol">&lt;</span> 2<span class="symbol">.</span>0)
+</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">_, <span class="type-name">N3</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
+</div></div><div class="cell"><div class="code-block">_, <span class="type-name">N4</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 4
+</div></div><div class="cell"><div class="code-block">mat <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">N3</span> j<span class="symbol">::</span><span class="type-name">N4</span><span class="symbol">.</span> iadd iota<span class="symbol">.</span>i (imul 10 iota<span class="symbol">.</span>j)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> isum <span class="keyword">for</span> (i,j)<span class="symbol">.</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div><div class="result-block">192</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">litArr <span class="symbol">=</span> [10, 5, 3]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> litArr<span class="symbol">.</span>(asidx 2)
+</div><div class="result-block">3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> mod 5 3
+</div><div class="result-block">2</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> size <span class="symbol">@</span><span class="type-name">N3</span>
+</div><div class="result-block">3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> 1
+</div><div class="result-block">[1, 1, 1]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">type</span> <span class="type-name">Nrand</span> <span class="symbol">=</span> 6
+   (k, _) <span class="symbol">=</span> (iadd 1 2, 3)
+   <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">Nrand</span><span class="symbol">.</span> iadd k (asint i)
+</div><div class="result-block">[3, 4, 5, 6, 7, 8]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> randn (asint i)
+</div><div class="result-block">3.6825456339802366e-2</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> sq <span class="symbol">$</span> randn (asint i)
+</div><div class="result-block">1.0268342292186705</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> 0<span class="symbol">;</span> x
+</div><div class="result-block">[0, 0, 0]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">::</span>4<span class="symbol">.</span> 0<span class="symbol">;</span> x
+</div><div class="result-block">[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fold (<span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> 0<span class="symbol">.</span>0) <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">::</span>2<span class="symbol">.</span> <span class="keyword">lam</span> c<span class="symbol">.</span> (<span class="keyword">for</span> j<span class="symbol">.</span> c<span class="symbol">.</span>j <span class="symbol">+</span> real (asint j))
+</div><div class="result-block">[0.0, 2.0, 4.0]</div></div></div></body></html>

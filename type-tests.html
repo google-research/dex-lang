@@ -1,0 +1,129 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> x
+</div><div class="result-block">A a. (a -&gt; a)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i
+</div><div class="result-block">A a. ((a=&gt;Real) -&gt; Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> f x y<span class="symbol">.</span> f y x
+</div><div class="result-block">A c b a. ((b -&gt; (a -&gt; c)) -&gt; (a -&gt; (b -&gt; c)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div><div class="result-block">A c b a. ((b=&gt;(a=&gt;c)) -&gt; (a=&gt;(b=&gt;c)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> f x<span class="symbol">.</span> f x
+</div><div class="result-block">A b a. ((a -&gt; b) -&gt; (a -&gt; b))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> id <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+   id x <span class="symbol">=</span> x
+   id (id) (id 1)
+</div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">N</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   x <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">N</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   isum x
+</div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   _, <span class="type-name">Ny</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
+   x <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Nx</span>
+   y <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Ny</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   real (isum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i) <span class="symbol">+</span> real (isum <span class="keyword">for</span> j<span class="symbol">.</span> y<span class="symbol">.</span>j)
+</div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   _, <span class="type-name">Ny</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
+   x <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Nx</span>
+   y <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Ny</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   sum <span class="keyword">for</span> i<span class="symbol">.</span> iadd x<span class="symbol">.</span>i y<span class="symbol">.</span>i
+</div><div class="err-block">Type error:
+Expected: Ny
+  Actual: Nx
+In: i
+
+   sum for i. iadd x.i y.i
+                         ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+   (iota <span class="symbol">::</span> <span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+</div><div class="err-block">Type error:
+Leaked type variable: Nx</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">_, <span class="type-name">Narr</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">arr <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Narr</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">xr <span class="symbol">=</span> map real arr
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> arr
+</div><div class="result-block">(Narr=&gt;Int)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">lam</span> (x, y)<span class="symbol">.</span> x <span class="symbol">+</span> y) (1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0)
+</div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> f (x, y) <span class="symbol">=</span> x <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> y
+   z<span class="symbol">.</span>i <span class="symbol">=</span> (xr<span class="symbol">.</span>i, xr<span class="symbol">.</span>i <span class="symbol">*</span> xr<span class="symbol">.</span>i)
+   sum (<span class="keyword">for</span> i<span class="symbol">.</span> f z<span class="symbol">.</span>i)
+</div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- yields &#39;compiler bug&#39;. Should be a different sort of error
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :t unpack x = iota 3
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--    in let y = for i j. x.i * x.i
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--       in sum (for i. sum (y.i))
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:t</span> 1 <span class="symbol">::</span> <span class="type-name">Int</span>
+</div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> 1<span class="symbol">.</span>0 <span class="symbol">::</span> <span class="type-name">Int</span>
+</div><div class="err-block">Type error:
+Expected: Int
+  Actual: Real
+In: 1.0
+
+:t 1.0 :: Int
+   ^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1, 2, 3]
+</div><div class="result-block">(3=&gt;Int)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> []
+</div><div class="result-block">A a. (0=&gt;a)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1, [2]]
+</div><div class="err-block">Type error:
+Expected: Int
+  Actual: (?_3=&gt;?_4)
+In: [2]
+
+:t [1, [2]]
+       ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1, 2], [3, 4]]
+</div><div class="result-block">(2=&gt;(2=&gt;Int))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1, 2], [3]]
+</div><div class="err-block">Type error:
+Expected: (2=&gt;Int)
+  Actual: (1=&gt;Int)
+In: [3]
+
+:t [[1, 2], [3]]
+            ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">Pair</span> <span class="symbol">=</span> (<span class="type-name">Int</span>, <span class="type-name">Int</span>)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">p1 <span class="symbol">::</span> <span class="type-name">Pair</span>
+p1 <span class="symbol">=</span> (1, 2)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">p2 <span class="symbol">::</span> <span class="type-name">Pair</span>
+p2 <span class="symbol">=</span> 1
+</div><div class="err-block">Type error:
+Expected: (Int, Int)
+  Actual: Int
+In: 1
+
+p2 = 1
+     ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> <span class="keyword">for</span> (i,j)<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div><div class="result-block">A c b a. ((b=&gt;(a=&gt;c)) -&gt; ((b, a)=&gt;c))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">_, <span class="type-name">M</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 5
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">M</span><span class="symbol">.</span> _, <span class="type-name">N</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range (asint i)
+             x <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">::</span><span class="type-name">N</span><span class="symbol">.</span> asint j
+             <span class="keyword">pack</span> x, <span class="type-name">N</span>, <span class="keyword">E </span>n<span class="symbol">.</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>
+</div><div class="result-block">(M=&gt;(Ea.(a=&gt;Int)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">idfun <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+idfun x <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> idfun <span class="symbol">@</span> <span class="type-name">Real</span>
+</div><div class="result-block">(Real -&gt; Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> f <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a<span class="symbol">;</span> f y <span class="symbol">=</span> x<span class="symbol">;</span> ()
+</div><div class="err-block">Type error:
+Leaked type variable: a</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">todo</span> <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) 1
+</div><div class="result-block">Real</div></div></div></body></html>

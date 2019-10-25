@@ -1,0 +1,33 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- repeated vars in patterns not allowed
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (x, x) <span class="symbol">=</span> (1, 1)<span class="symbol">;</span> x
+</div><div class="err-block">Variable redefined: x</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f (x, x) <span class="symbol">=</span> x<span class="symbol">;</span> f (1, 1)
+</div><div class="err-block">Variable redefined: x</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: re-enable if we choose to allow non-peer shadowing
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- -- shouldn&#39;t cause error even though it shadows x elsewhere
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- x = 50
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p let x = 100 in (let x = 200 in x)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; [200]
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">arr <span class="symbol">=</span> 10
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: enable when we handle this case
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- _ = 10
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- _ = 10 -- underscore shadows allowed
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">arr <span class="symbol">=</span> 20
+</div><div class="err-block">Variable redefined: arr</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> arr
+</div><div class="result-block">10</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- testing top-level shadowing
+</span></div></div><div class="cell"><div class="code-block">f <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+f x <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">=</span> 1
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f 1
+</div><div class="result-block">1</div></div></div></body></html>
