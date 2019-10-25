@@ -17,6 +17,7 @@ or these example programs:
   * [Mandelbrot set](https://google-research.github.io/dex-lang/mandelbrot.html)
   * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
   * [Sierpinsky triangle](https://google-research.github.io/dex-lang/sierpinsky.html)
+  * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
 ## Setup
