@@ -391,10 +391,12 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
-  NArrType _ _ -> error $ "NArrType not implemented"   -- TODO
-  NTabType _ _ -> error $ "NTabType not implemented"   -- TODO
+  NArrType a b -> ArrType (RecType (Tup (map recur a)))
+                          (RecType (Tup (map recur b)))
+  NTabType a b -> TabType (recur a) (recur b)
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
+  where recur = nTypeToType
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of
