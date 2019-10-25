@@ -1,7 +1,7 @@
 # Dex
 
-Dex (short for "index") is a research language for array processing in the
-Haskell/ML family. The goal of the project is to explore questions about:
+Dex (named for "index") is a research language for array processing in the
+Haskell/ML family. The goal of the project is to explore:
 
   * Type systems for array programming
   * Mathematical program transformations like differentiation and integration
@@ -10,13 +10,14 @@ Haskell/ML family. The goal of the project is to explore questions about:
 
 To learn more, check out our
 [workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS)
-or look at these example programs:
+or these example programs:
 
   * [Tutorial](examples/tutorial.dx)
   * [Dex prelude](prelude.dx)
   * [Mandelbrot set](examples/mandelbrot.dx)
   * [Estimating pi](examples/pi.dx)
   * [Sierpinsky triangle](examples/sierpinsky.dx)
+  * [Brownian bridge](examples/brownian_motion.dx)
 
 ## Setup
 
@@ -25,7 +26,7 @@ or look at these example programs:
 
 ## Building
 
- * Build Dex `make` (or `make-no-web` on non-Linux)
+ * Build Dex: `make`
  * Run tests: `make tests`
  * Set up alias (e.g. in .bashrc) `alias dex=stack exec dex --`
 
