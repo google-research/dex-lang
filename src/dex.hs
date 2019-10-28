@@ -75,9 +75,13 @@ runMode evalMode prelude pass = do
 evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
 evalDecl pass block = do
   env <- get
-  (ans, env') <- liftIO $ runFullPass env pass block
+  (ans, env') <- liftIO (runFullPass env pass block) `catch` (\e ->
+                   return (compilerErr (show (e::SomeException)), mempty))
   modify (<> env')
   return ans
+
+compilerErr :: String -> Result
+compilerErr s = Result $ Left $ Err CompilerErr Nothing s
 
 evalFile :: Monoid env =>
               FullPass env-> String -> StateT env IO [(SourceBlock, Result)]
