@@ -20,6 +20,9 @@ or these example programs:
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
+Please note that Dex is an experimental research project at an early stage of
+development. We welcome contributions. There's plenty of work to do!
+
 ## Setup
 
   * Install [stack](https://www.haskellstack.org)
