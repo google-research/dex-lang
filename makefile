@@ -13,11 +13,6 @@ all: cbits/libdex.so
 all-non-linux: cbits/libdex.so
 	stack build --flag dex:-web
 
-# The web interface uses the Linux inotify service to detect changes to input
-# files. On non-Linux you should compile without it.
-all-no-web: cbits/libdex.so
-	stack build --flag dex:-web
-
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
 

@@ -29,7 +29,7 @@ or these example programs:
 
  * Build Dex: `make`
  * Run tests: `make tests`
- * Set up alias (e.g. in .bashrc) `dex="stack exec dex --"`
+ * Set up alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
 
 ## Running
 
