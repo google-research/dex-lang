@@ -61,3 +61,4 @@ benchmark:
 	gcc -O3 -ffast-math benchmarks/cbench.c -o benchmarks/bench
 	benchmarks/bench 1000
 	$(dex) script benchmarks/time-tests.dx
+	rm benchmarks/bench
