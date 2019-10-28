@@ -55,3 +55,9 @@ doc/%.html: examples/%.dx
 
 doc/%.css: static/%.css
 	cp $^ $@
+
+benchmark:
+	python benchmarks/numpy-bench.py 1000
+	gcc -O3 -ffast-math benchmarks/cbench.c -o benchmarks/bench
+	benchmarks/bench 1000
+	$(dex) script benchmarks/time-tests.dx
