@@ -7,6 +7,7 @@
 import time
 import numpy as np
 import sys
+from __future__ import print_function
 
 
 n = int(sys.argv[1])
@@ -15,4 +16,4 @@ y = np.random.randn(n,n)
 
 t0 = time.time()
 z = np.dot(x, y)
-print "Time for {} by {} matmul: {} s".format(n,n, time.time() - t0)
+print("Time for {} by {} matmul: {} s".format(n,n, time.time() - t0))

@@ -6,6 +6,7 @@
 
 #include "stdio.h"
 #include "stdlib.h"
+#include "time.h"
 
 void matmul(int n, double x[], double y[], double out[]) {
   double accum = 0.0;
@@ -21,8 +22,12 @@ void matmul(int n, double x[], double y[], double out[]) {
 
 int main(int argc, const char* argv[]) {
   int n = atoi(argv[1]);
+  clock_t t0, t1;
   double* x = malloc(n*n * sizeof(double));
   double* y = malloc(n*n * sizeof(double));
   double* z = malloc(n*n * sizeof(double));
+  t0 = clock();
   matmul(n, x, y, z);
+  t1 = clock();
+  printf("Time for %d by %d matmul: %lf s\n", n, n, ((double)(t1 - t0)) / CLOCKS_PER_SEC);
 }
