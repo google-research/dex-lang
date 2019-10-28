@@ -9,6 +9,10 @@ dex := stack exec dex --
 all: cbits/libdex.so
 	stack build
 
+# The web interface uses Linux's inotify API. On non-Linux, we have to build without it.
+all-non-linux: cbits/libdex.so
+	stack build --flag dex:-web
+
 # The web interface uses the Linux inotify service to detect changes to input
 # files. On non-Linux you should compile without it.
 all-no-web: cbits/libdex.so
