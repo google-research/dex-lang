@@ -11,7 +11,7 @@ _, Nx = unpack range 1000
 mat :: Nx=>Nx=>Real
 mat = for i j. rand (hash 0 (hash iota.i iota.j))
 
-:passes matmul2 mat mat
+:time matmul2 mat mat
 
 > 0.804174504s
 
