@@ -27,7 +27,7 @@ or these example programs:
 
 ## Building
 
- * Build Dex: `make`
+ * Build Dex: `make`  (on non-Linux run `make all-non-linux`)
  * Run tests: `make tests`
  * Set up alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
 
