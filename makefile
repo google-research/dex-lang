@@ -38,7 +38,7 @@ run-%: examples/%.dx
 runinterp-%: examples/%.dx
 	misc/check-quine $^ $(dex) --interp script --lit --allow-errors
 
-stack-tests:
+stack-tests: cbits/libdex.so
 	stack test
 
 update-%: examples/%.dx
