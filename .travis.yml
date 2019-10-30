@@ -1,0 +1,36 @@
+# https://docs.haskellstack.org/en/stable/travis_ci/
+
+dist: bionic
+language: generic
+cache:
+  directories:
+  - $HOME/.local/bin
+  - $HOME/.stack
+  - $HOME/.stack-work
+
+addons:
+  apt:
+    update: true
+    packages:
+      - libgmp-dev
+      - llvm-7-tools
+
+jobs:
+  include:
+    - stage: Install Stack
+      script:
+        - export DIR=~/.local/bin
+        - if [ ! -d "$DIR" ]; then mkdir -p ~/.local/bin; fi
+        - export PATH=$HOME/.local/bin:$PATH
+        - travis_retry curl -L https://get.haskellstack.org/stable/linux-x86_64.tar.gz | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+        - stack setup
+    - stage: Build
+      script:
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-7/bin:$PATH
+        - make
+    - stage: Test
+      script:
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-7/bin:$PATH
+        - make libdex
+        - stack install
+        - make tests
