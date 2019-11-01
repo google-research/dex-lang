@@ -300,7 +300,7 @@ simplifyAtom atom = case atom of
     refreshBindersRSimp [b] $ \[b'@(i':>_)] -> do
       body' <- simplifyAtom body
       return $ case body' of
-        NGet e (NVar i) | i == i' -> e
+        NGet e (NVar i) | i == i' && not (isin i (freeVars e)) -> e
         _ -> NAtomicFor b' body'
   NLam bs body ->
     refreshBindersRSimp bs $ \bs' -> do
