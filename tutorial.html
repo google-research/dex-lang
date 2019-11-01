@@ -19,7 +19,7 @@ with a line break or a semicolon. Cosmetic line breaks can be escaped with <code
 </span>   <span class="symbol">.</span><span class="symbol">.</span>                    <span class="comment">-- escaped cosmetic line break
 </span>   x <span class="symbol">+</span> y                 <span class="comment">-- body of let expression
 </span></div><div class="result-block">4.0</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>We also have lambda, tuple construction and (tuple) pattern-matching:</p>
+</div></div><div class="cell"><div class="prose-block"><p>We also have lambda, tuple construction and (tuple) pattern-matching (destructuring):</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (x, y) <span class="symbol">=</span> (1<span class="symbol">.</span>, 2<span class="symbol">.</span>)     <span class="comment">-- let binding (with pattern-matching), tuple construction
 </span>   f <span class="symbol">=</span> <span class="keyword">lam</span> z<span class="symbol">.</span> x <span class="symbol">+</span> z <span class="symbol">*</span> y  <span class="comment">-- let binding of a lambda function
 </span>   f 1<span class="symbol">.</span> <span class="symbol">+</span> f 2<span class="symbol">.</span>           <span class="comment">-- body of let expression
