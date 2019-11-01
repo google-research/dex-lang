@@ -25,7 +25,7 @@ with a line break or a semicolon. Cosmetic line breaks can be escaped with `..`
    x + y                 -- body of let expression
 > 4.0
 
-'We also have lambda, tuple construction and (tuple) pattern-matching:
+'We also have lambda, tuple construction and (tuple) pattern-matching (destructuring):
 
 :p (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
    f = lam z. x + z * y  -- let binding of a lambda function
