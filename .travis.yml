@@ -6,7 +6,7 @@ cache:
   directories:
   - $HOME/.local/bin
   - $HOME/.stack
-  - $HOME/.stack-work
+  - $TRAVIS_BUILD_DIR/.stack-work
 
 addons:
   apt:
