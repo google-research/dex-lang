@@ -319,17 +319,23 @@ materializeAtoms xs = do
 
 materializeAtom :: NAtom -> SimplifyM ((NAtom, [NDecl]), SimpEnv)
 materializeAtom atom = case atom of
-  NAtomicFor b body -> do
+  NAtomicFor _ _ -> do
     scope <- asks snd
     let ty = getAtomType scope atom
-    refreshBindersRSimp [b] $ \[b'] -> do
-      ((body', decls), env) <- materializeAtom body
-      scope' <- asks snd
-      let v = rename (rawName "tab") (scope' <> snd env)
-      let env' = (mempty, v @> L ty)
-      let decl = NLet [v:>ty] (NScan b' [] [] (NAtoms [body']))
-      return ((NVar v, decls ++ [decl]), env <> env')
+    atomExpr <- atomToNExpr atom
+    let v = rename (rawName "tab") scope
+    let env' = (mempty, v @> L ty)
+    let decl = NLet [v:>ty] atomExpr
+    return ((NVar v, [decl]), env')
   _ -> return ((atom, []), mempty)
+  where
+    atomToNExpr :: NAtom -> SimplifyM NExpr
+    atomToNExpr atom = case atom of
+      NAtomicFor b body -> 
+        refreshBindersRSimp [b] $ \[b'] -> do
+          bodyExpr <- atomToNExpr body
+          return (NScan b' [] [] bodyExpr)
+      _ -> return (NAtoms [atom])
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SimpEnv)
 simplifyDecl decl = case decl of
