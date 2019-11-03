@@ -191,3 +191,6 @@ litArr = [10, 5, 3]
 
 :p (mat2 = for i::4 j::4 . asint i; tmp = for i. mat2.i.i; tmp)
 > [0, 1, 2, 3]
+
+:p (x = [[0, 1], [2, 3]]; xt.i.j = x.j.i; xt)
+> [[0, 2], [1, 3]]
