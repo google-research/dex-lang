@@ -328,14 +328,14 @@ materializeAtom atom = case atom of
     let decl = NLet [v:>ty] atomExpr
     return ((NVar v, [decl]), env')
   _ -> return ((atom, []), mempty)
-  where
-    atomToNExpr :: NAtom -> SimplifyM NExpr
-    atomToNExpr atom = case atom of
-      NAtomicFor b body -> 
-        refreshBindersRSimp [b] $ \[b'] -> do
-          bodyExpr <- atomToNExpr body
-          return (NScan b' [] [] bodyExpr)
-      _ -> return (NAtoms [atom])
+
+atomToNExpr :: NAtom -> SimplifyM NExpr
+atomToNExpr atom = case atom of
+  NAtomicFor b body ->
+    refreshBindersRSimp [b] $ \[b'] -> do
+      bodyExpr <- atomToNExpr body
+      return (NScan b' [] [] bodyExpr)
+  _ -> return (NAtoms [atom])
 
 simplifyDecl :: NDecl -> SimplifyM ([NDecl], SimpEnv)
 simplifyDecl decl = case decl of
