@@ -29,7 +29,7 @@ sourcePass' :: SourceBlock -> TopPassM () UTopDecl
 sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return decl
-  UnParseable s -> throwTopErr $ Err ParseErr Nothing s
+  UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   ProseBlock _ -> emitOutput NoOutput
   CommentLine  -> emitOutput NoOutput
   EmptyLines   -> emitOutput NoOutput

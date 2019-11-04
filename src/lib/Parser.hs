@@ -29,7 +29,10 @@ parseProg :: String -> [SourceBlock]
 parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
-parseTopDeclRepl s = mustParseit s (reportEOF sourceBlock)
+parseTopDeclRepl s = case sbContents block of
+  UnParseable True _ -> Nothing
+  _ -> Just block
+  where block = mustParseit s sourceBlock
 
 parseTopDecl :: String -> Except UTopDecl
 parseTopDecl s = parseit s topDecl
@@ -60,8 +63,10 @@ sourceBlock = do
 recover :: ParseError String Void -> Parser SourceBlock'
 recover e = do
   pos <- liftM statePosState getParserState
+  reachedEOF <- (eof >> return True) <|> return False
   consumeTillBreak
-  return $ UnParseable $ errorBundlePretty (ParseErrorBundle (e :| []) pos)
+  return $ UnParseable reachedEOF $
+    errorBundlePretty (ParseErrorBundle (e :| []) pos)
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
@@ -81,9 +86,6 @@ explicitCommand = do
     Nothing -> fail $ "unrecognized command: " ++ show cmdName
   e <- declOrExpr
   return $ EvalCmd (Command cmd e)
-
-reportEOF :: Parser a -> Parser (Maybe a)
-reportEOF p = withRecovery (const (eof >> return Nothing)) (liftM Just p)
 
 -- === Parsing decls ===
 

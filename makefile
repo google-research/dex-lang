@@ -26,7 +26,7 @@ example-names = type-tests eval-tests shadow-tests annot-tests \
 quine-test-targets = $(example-names:%=run-%)
 doc-names = $(example-names:%=doc/%.html)
 
-tests: quine-tests quine-tests-interp stack-tests
+tests: quine-tests quine-tests-interp repl-test stack-tests
 
 quine-tests: $(quine-test-targets)
 
@@ -44,6 +44,11 @@ stack-tests: cbits/libdex.so
 update-%: examples/%.dx
 	$(dex) script --lit --allow-errors $^ > $^.tmp
 	mv $^.tmp $^
+
+repl-test:
+	misc/check-no-diff \
+	  examples/repl-multiline-test-expected-output \
+	  <($(dex) repl < examples/repl-multiline-test.dx)
 
 # --- building docs ---
 

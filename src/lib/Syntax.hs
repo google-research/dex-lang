@@ -174,11 +174,12 @@ data SourceBlock = SourceBlock
   , sbText     :: String
   , sbContents :: SourceBlock' }  deriving (Show)
 
+type ReachedEOF = Bool
 data SourceBlock' = UTopDecl UTopDecl
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
-                  | UnParseable String
+                  | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
 
 data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)

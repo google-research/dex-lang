@@ -1,0 +1,28 @@
+
+-- comment
+
+'Single-line multiline comment
+
+:p double = lam x. x * 2.0
+   double 10.0
+
+f = lam x::Int.
+  (x, ..
+  ..
+  x)
+
+f 1
+
+y = 1. + ..
+    2.
+
+:p y
+
+
+-- This fails
+-- 'Two-line multiline comment
+-- rest of line
+
+-- So does this
+-- :p 1
+-- > 1

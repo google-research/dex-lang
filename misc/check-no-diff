@@ -1,0 +1,7 @@
+#!/bin/bash
+
+tmpdiff=$(mktemp)
+diff --left-column -y --color=always $1 $2 > $tmpdiff \
+       && echo OK || cat $tmpdiff
+
+rm $tmpdiff

@@ -2,11 +2,9 @@
 
 tmpout=$(mktemp)
 errout=$(mktemp)
-tmpdiff=$(mktemp)
 
 if ${@:2} $1 > $tmpout 2> $errout ; then
-    diff --left-column -y --color=always $1 $tmpout > $tmpdiff \
-       && echo OK || cat $tmpdiff
+    misc/check-no-diff $1 $tmpout
 else
     cat $tmpout
 fi
@@ -15,4 +13,3 @@ cat $errout
 
 rm $errout
 rm $tmpout
-rm $tmpdiff
