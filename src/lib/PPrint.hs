@@ -56,7 +56,9 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrType a b -> parens $ recur a <+> "->" <+> recur b
+  ArrType l a b -> parens $ recur a <+> arr <+> recur b
+    where arr = case l of NonLin -> "->"
+                          Lin -> "--o"
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
@@ -100,7 +102,9 @@ instance Pretty b => Pretty (ExprP b) where
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
     Decl decl body -> prettyDecl decl body
-    Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
+    Lam l pat e    -> parens $ align $ group $ s <+> p pat <+> "." <> line <> align (p e)
+      where s = case l of NonLin -> "lam"
+                          Lin    -> "llam"
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie

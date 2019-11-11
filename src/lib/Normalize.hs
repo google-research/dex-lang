@@ -64,7 +64,7 @@ normalize expr = case expr of
         ts' <- mapM normalizeTy ts
         let env' = bindFold $ zipWith replaceAnnot bs (map T ts')
         local (const (env <> env')) $ normalize body
-  PrimOp Scan _ [x, For ip (Lam p body)] -> do
+  PrimOp Scan _ [x, For ip (Lam _ p body)] -> do
     xs <- atomize x
     normalizeBindersR ip $ \ibs ->
       normalizeBindersR p $ \bs -> do
@@ -80,7 +80,7 @@ normalize expr = case expr of
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  Lam p body -> do
+  Lam _ p body -> do
     normalizeBindersR p $ \bs -> do
       body' <- normalizeScoped body
       return $ NAtoms [NLam bs body']
@@ -161,7 +161,7 @@ normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
   BaseType b -> return $ RecLeaf (NBaseType b)
   TypeVar v -> asks $ fromT . (!v)
-  ArrType a b -> do
+  ArrType _ a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b
     return $ RecLeaf $ NArrType (toList a') (toList b')

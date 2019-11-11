@@ -40,6 +40,9 @@ liftS2 f x y = [f x' y' | (x', y') <- shrink (x, y)]
 liftS :: Arbitrary a => (a -> b) -> a -> [b]
 liftS f x = map f (shrink x)
 
+instance Arbitrary Lin where
+  arbitrary = elements [NonLin, Lin]
+
 instance Arbitrary Name where
   arbitrary = liftM2 Name (elements ["x", "y"]) (elements [0, 1])
   shrink _ = []
@@ -55,7 +58,7 @@ arbType numBinders = do
   oneOfFiltered
     [ (True, liftM BaseType arb)
     , (True, liftM TypeVar arbTypeName)
-    , (nonLeaf, liftM2 ArrType (smaller 2 arb) (smaller 2 arb))
+    , (nonLeaf, liftM3 ArrType arb (smaller 2 arb) (smaller 2 arb))
     , (nonLeaf, liftM2 TabType (smaller 2 arb) (smaller 2 arb))
     , (nonLeaf, liftM RecType arb)
     -- TODO: add explicit quantification to concrete syntax

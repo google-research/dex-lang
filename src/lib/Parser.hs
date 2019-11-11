@@ -151,6 +151,7 @@ term =   parenRaw
      <|> var
      <|> liftM Lit literal
      <|> lamExpr
+     <|> linlamExpr
      <|> forExpr
      <|> primOp
      <|> ffiCall
@@ -211,13 +212,22 @@ ffiCall = do
   args <- parens $ expr `sepBy` comma
   return $ PrimOp (FFICall (length args) s) [] args
 
+-- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser UExpr
 lamExpr = do
   symbol "lam"
   ps <- pat `sepBy` sc
   argTerm
   body <- declOrExpr
-  return $ foldr Lam body ps
+  return $ foldr (Lam NonLin) body ps
+
+linlamExpr :: Parser UExpr
+linlamExpr = do
+  symbol "llam"
+  ps <- pat `sepBy` sc
+  argTerm
+  body <- declOrExpr
+  return $ foldr (Lam Lin) body ps
 
 forExpr :: Parser UExpr
 forExpr = do
@@ -246,7 +256,7 @@ idxLhsArgs = do
 lamLhsArgs :: Parser (UExpr -> UExpr)
 lamLhsArgs = do
   args <- pat `sepBy` sc
-  return $ \body -> foldr Lam body args
+  return $ \body -> foldr (Lam NonLin) body args
 
 literal :: Parser LitVal
 literal =     numLit
@@ -266,7 +276,7 @@ identifier = lexeme . try $ do
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
   where
-   resNames = ["for", "lam", "unpack", "pack"]
+   resNames = ["for", "lam", "llam", "unpack", "pack"]
 
 appRule :: Operator Parser UExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
@@ -365,7 +375,8 @@ tauType :: Parser Type
 tauType = makeExprParser (sc >> tauType') typeOps
   where
     typeOps = [ [InfixR (symbol "=>" >> return TabType)]
-              , [InfixR (symbol "->" >> return ArrType)]]
+              , [InfixR (symbol "->"  >> return (ArrType NonLin)),
+                 InfixR (symbol "--o" >> return (ArrType Lin))]]
 
 tauType' :: Parser Type
 tauType' =   parenTy

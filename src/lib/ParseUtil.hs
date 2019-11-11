@@ -19,7 +19,7 @@ import qualified Text.Megaparsec.Char.Lexer as L
 type Parser = Parsec Void String
 
 sc :: Parser ()
-sc = L.space space (L.skipLineComment "--") empty
+sc = L.space space (L.skipLineComment "-- ") empty
 
 blankLines :: Parser ()
 blankLines = void $ many eol

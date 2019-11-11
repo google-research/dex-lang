@@ -16,7 +16,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..),
                throw, addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
-               lhsVars, Size, unitTy, unitCon,
+               lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
@@ -44,7 +44,7 @@ data ExprP b =
           | Var Name [Type]
           | PrimOp Builtin [Type] [ExprP b]
           | Decl (DeclP b) (ExprP b)
-          | Lam (PatP b) (ExprP b)
+          | Lam Lin (PatP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (PatP b) (ExprP b)
           | Get (ExprP b) (ExprP b)
@@ -65,9 +65,11 @@ data DeclP b = LetMono (PatP b) (ExprP b)
 
 type PatP b = RecTree (BinderP b)
 
+data Lin = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
+
 data Type = BaseType BaseType
           | TypeVar Name
-          | ArrType Type Type
+          | ArrType Lin Type Type
           | TabType IdxSet Type
           | RecType (Record Type)
           | Exists Type
@@ -322,7 +324,7 @@ infixr 1 -->
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-(-->) = ArrType
+(-->) = ArrType NonLin
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -362,7 +364,7 @@ instance HasVars b => HasVars (ExprP b) where
     PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     Decl decl body -> let (bvs, fvs) = declVars [decl]
                       in fvs <> (freeVars body `envDiff` bvs)
-    Lam p body    -> withBinders p body
+    Lam _ p body    -> withBinders p body
     App fexpr arg -> freeVars fexpr <> freeVars arg
     For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
@@ -382,7 +384,7 @@ instance HasVars Type where
   freeVars ty = case ty of
     BaseType _ -> mempty
     TypeVar v  -> v @> T ()
-    ArrType a b -> freeVars a <> freeVars b
+    ArrType _ a b -> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
     RecType r   -> foldMap freeVars r
     Exists body -> freeVars body
@@ -499,7 +501,7 @@ stripSrcAnnot expr = case expr of
   Lit _ -> expr
   PrimOp op ts xs -> PrimOp op ts (map recur xs)
   Decl decl body -> Decl (stripSrcAnnotDecl decl) (recur body)
-  Lam p body    -> Lam p (recur body)
+  Lam l p body    -> Lam l p (recur body)
   App fexpr arg -> App (recur fexpr) (recur arg)
   For b body    -> For b (recur body)
   Get e ie      -> Get (recur e) (recur ie)

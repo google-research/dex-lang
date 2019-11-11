@@ -8,10 +8,10 @@
   '(("^--.*$"                . font-lock-comment-face)
     ("> .*$"                 . font-lock-comment-face)
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
-    ("\\blam\\b\\|\\bfor\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b\\|\\btodo\\b"
+    ("\\bllam\\b\\|\\blam\\b\\|\\bfor\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b\\|\\btodo\\b"
      . font-lock-keyword-face)
     ("\\bE\\b\\|\\bA\\b"              . font-lock-keyword-face)
-    ("->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)
+    ("--o\\|->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"  . font-lock-type-face)
     (":t\\|:passes\\|:p\\|:time"      . font-lock-preprocessor-face)
     ))

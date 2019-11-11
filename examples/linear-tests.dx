@@ -1,0 +1,6 @@
+
+
+:t f :: Real --o Real
+   f = llam x. x + x
+   f
+

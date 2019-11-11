@@ -72,9 +72,9 @@ reduce expr = case expr of
   Decl decl body -> do
     env' <- reduceDecl decl
     extendR env' $ reduce body
-  Lam _ _ -> subst expr
+  Lam _ _ _ -> subst expr
   App e1 e2 -> do
-    ~(Lam p body) <- reduce e1
+    ~(Lam _ p body) <- reduce e1
     x <- reduce e2
     dropSubst $ extendR (bindPat p x) (reduce body)
   For p body -> do
@@ -94,7 +94,7 @@ exprType expr = do expr' <- subst expr
                    return $ getType mempty expr'
 
 evalScanBody :: Scope -> Expr -> Val -> Val -> (Val, Val)
-evalScanBody scope (For ip (Lam p body)) accum i =
+evalScanBody scope (For ip (Lam _ p body)) accum i =
   case runReader (reduce body) env of
     RecCon (Tup [accum', ys]) -> (accum', ys)
     val -> error $ "unexpected scan result: " ++ pprint val
@@ -242,10 +242,10 @@ instance Subst Expr where
             body' <- subst body
             return $ Decl (Unpack b' tv' bound') body'
       TAlias _ _ -> error "Shouldn't have TAlias left"
-    Lam p body -> do
+    Lam l p body -> do
       refreshPat p $ \p' -> do
         body' <- subst body
-        return $ Lam p' body'
+        return $ Lam l p' body'
     App e1 e2 -> liftM2 App (subst e1) (subst e2)
     For p body -> do
       refreshPat p $ \p' -> do
@@ -293,7 +293,7 @@ instance Subst Type where
       return $ case x of Nothing -> ty
                          Just (T ty') -> ty'
                          Just (L _) -> error "Expected type var"
-    ArrType a b -> liftM2 ArrType (subst a) (subst b)
+    ArrType l a b -> liftM2 (ArrType l) (subst a) (subst b)
     TabType a b -> liftM2 TabType (subst a) (subst b)
     RecType r -> liftM RecType $ traverse subst r
     Exists body -> liftM Exists (subst body)

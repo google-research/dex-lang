@@ -62,13 +62,13 @@ getType' check expr = case expr of
       return ansTy'
     Decl decl body -> do env <- getTypeDecl check decl
                          extendR env (recur body)
-    Lam p body -> do checkTy (patType p)
-                     checkShadowPat p
-                     liftM (ArrType (patType p)) (recurWithP p body)
+    Lam l p body -> do checkTy (patType p)
+                       checkShadowPat p
+                       liftM (ArrType l (patType p)) (recurWithP p body)
     For p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (TabType (patType p)) (recurWithP p body)
-    App e arg  -> do ~(ArrType a b) <- recur e
+    App e arg  -> do ~(ArrType _ a b) <- recur e
                      checkEq "App" a (recur arg)
                      return b
     Get e ie   -> do ~(TabType a b) <- recur e
@@ -253,7 +253,7 @@ subAtDepth :: Int -> (Int -> Either Name Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
-    ArrType a b   -> ArrType (recur a) (recur b)
+    ArrType l a b -> ArrType l (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
@@ -382,7 +382,7 @@ typeToNType :: Type -> RecTree NType
 typeToNType ty = case ty of
   BaseType b  -> RecLeaf $ NBaseType b
   TypeVar v   -> RecLeaf $ NTypeVar v
-  ArrType a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
+  ArrType _ a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
   TabType a b -> fmap (NTabType (fromLeaf (recur a))) (recur b)
   RecType r   -> RecTree $ fmap recur r
   Exists body -> RecLeaf $ NExists (toList (recur body))
@@ -395,8 +395,8 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
-  NArrType a b -> ArrType (RecType (Tup (map recur a)))
-                          (RecType (Tup (map recur b)))
+  NArrType a b -> ArrType NonLin (RecType (Tup (map recur a)))
+                                 (RecType (Tup (map recur b)))
   NTabType a b -> TabType (recur a) (recur b)
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
@@ -418,7 +418,7 @@ tangentBunType :: Type -> Type
 tangentBunType ty = case ty of
   BaseType b -> case b of RealType -> pair ty ty
                           _ -> ty
-  ArrType a b -> ArrType (recur a) (recur b)
+  ArrType l a b -> ArrType l (recur a) (recur b)
   _ -> error $ "Don't know bundle type for: " ++ pprint ty
   where
     recur = tangentBunType

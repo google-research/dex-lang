@@ -62,9 +62,9 @@ deShadowExpr expr = case expr of
       body' <- recur body
       return $ case decl' of Nothing -> body'
                              Just decl'' -> Decl decl'' body'
-  Lam p body ->
+  Lam l p body ->
     withCat (deShadowPat p) $ \p' ->
-      liftM (Lam p') (recur body)
+      liftM (Lam l p') (recur body)
   App fexpr arg -> liftM2 App (recur fexpr) (recur arg)
   For p body ->
     withCat (deShadowPat p) $ \p' ->
@@ -149,7 +149,7 @@ subType sub ty = case ty of
   BaseType _ -> ty
   TypeVar v  -> case envLookup sub v of Nothing  -> ty
                                         Just ty' -> ty'
-  ArrType a b -> ArrType (recur a) (recur b)
+  ArrType l a b -> ArrType l (recur a) (recur b)
   TabType a b -> TabType (recur a) (recur b)
   RecType r   -> RecType $ fmap recur r
   Exists body -> Exists $ recur body

@@ -121,11 +121,11 @@ check expr reqTy = case expr of
     (decl', env') <- inferDecl decl
     body' <- extendRSnd env' $ check body reqTy
     return $ Decl decl' body'
-  Lam p body -> do
+  Lam l p body -> do
     (a, b) <- splitFun expr reqTy
     p' <- solveLocalMonomorphic $ checkPat p a
     body' <- extendRSnd (foldMap asEnv p') (check body b)
-    return $ Lam p' body'
+    return $ Lam l p' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
     (a, b) <- splitFun fexpr f
@@ -210,7 +210,7 @@ asEnv (v:>ty) = v @> L (asSigma ty)
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
 splitFun :: UExpr -> Type -> InferM (Type, Type)
 splitFun expr f = case f of
-  ArrType a b -> return (a, b)
+  ArrType _ a b -> return (a, b)
   _ -> do a <- freshQ
           b <- freshQ
           constrainEq f (a --> b) (pprint expr)
@@ -293,7 +293,7 @@ unify err t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, TypeVar v) | isQ v -> bindQ v t
     (TypeVar v, t) | isQ v -> bindQ v t
-    (ArrType a b, ArrType a' b') -> recur a a' >> recur b b'
+    (ArrType _ a b, ArrType _ a' b') -> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
     (Exists t, Exists t')        -> recur t t'
     (RecType r, RecType r')      ->
