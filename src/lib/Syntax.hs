@@ -144,7 +144,8 @@ commandNames = M.fromList [
   ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
   ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
   ("time", TimeIt), ("plot", EvalExpr Scatter), ("simp", ShowSimp),
-  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse)]
+  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse),
+  ("tycheck", TypeCheckInternal)]
 
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
@@ -155,7 +156,7 @@ instance Show Builtin where
 
 data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
              | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
-             | EvalExpr OutFormat
+             | EvalExpr OutFormat | TypeCheckInternal
                 deriving  (Show, Eq, Generic)
 
 
@@ -297,6 +298,7 @@ data Err = Err ErrType (Maybe SrcPos) String  deriving (Show)
 data ErrType = NoErr
              | ParseErr
              | TypeErr
+             | LinErr
              | UnboundVarErr
              | RepeatedVarErr
              | CompilerErr

@@ -1,6 +1,29 @@
+:p f :: Real --o Real
+   f = llam x. x
+   f 1.0
+> 1.0
 
+:tycheck llam x::Real. 1.0
+> Linearity error:Variable never spent: x
+> context:
+> (llam x::Real . 1.0)
 
-:t f :: Real --o Real
-   f = llam x. x + x
-   f
+:tycheck llam x::Real. x * x
+> Linearity error:Variable already spent: x
+> context:
+> (llam x::Real . (%fmul(x, x)))
 
+:tycheck llam x::Real. x * 2.0
+> (Real --o Real)
+
+:tycheck llam x::Real. 2.0 * x
+> (Real --o Real)
+
+:tycheck llam x::Real. llam y::Real. x * y
+> (Real --o (Real --o Real))
+
+-- :tycheck llam x::Real. x + x
+
+-- :tycheck llam x::Real. x + 2.0
+
+-- :tycheck llam x::Real. 2.0 + x
