@@ -91,9 +91,14 @@ getType' check expr = case expr of
     For p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (TabType (patType p)) (recurWithP NonLin p body)
-    App e arg  -> do ~(ArrType _ a b) <- recur e
-                     checkEq "App" a (recur arg)
-                     return b
+    App e arg  -> do
+      ~(ArrType l a b) <- recur e
+      checkEq "App" a $ do
+        (a', spent) <- capture (recur arg)
+        throwIf (not (isLinear l || null spent)) LinErr $
+          "Nonlinear function consuming linear data: " ++ pprint (envNames spent)
+        return a'
+      return b
     Get e ie   -> do ~(TabType a b) <- recur e
                      checkEq "Get" a (recur ie)
                      return b
@@ -130,6 +135,10 @@ getType' check expr = case expr of
 ifLinear :: Monad m => Lin -> m () -> m ()
 ifLinear Lin m = m
 ifLinear NonLin _ = return ()
+
+isLinear :: Lin -> Bool
+isLinear Lin    = True
+isLinear NonLin = False
 
 getTypeDecl :: Bool -> Decl -> TypeM TypeCheckEnv
 getTypeDecl check decl = case decl of

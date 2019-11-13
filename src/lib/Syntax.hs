@@ -15,7 +15,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..),
-               throw, addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
+               throw, throwIf,
+               addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
@@ -311,6 +312,10 @@ type Except a = Either Err a
 
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
+
+throwIf :: MonadError Err m => Bool -> ErrType -> String -> m ()
+throwIf True  e s = throw e s
+throwIf False _ _ = return ()
 
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m $ \e -> throwError (f e)

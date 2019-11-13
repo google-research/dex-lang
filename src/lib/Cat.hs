@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
-            extendR, captureW, asFst, asSnd,
+            extendR, captureW, asFst, asSnd, capture,
             Cat, runCat, catTraverse) where
 
 -- Monad for tracking monoidal state
@@ -82,6 +82,12 @@ runCat m env = runIdentity $ runCatT m env
 
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look
+
+capture :: (Monoid env, MonadCat env m) => m a -> m (a, env)
+capture m = do
+  (x, env) <- scoped m
+  extend env
+  return (x, env)
 
 extendLocal :: (Monoid env, MonadCat env m) => env -> m a -> m a
 extendLocal x m = do

@@ -22,6 +22,14 @@
 :tycheck llam x::Real. llam y::Real. x * y
 > (Real --o (Real --o Real))
 
+:tycheck llam x::Real. (llam y. y) x
+> (Real --o Real)
+
+:tycheck llam x::Real. (lam y. y) x
+> Linearity error:Nonlinear function consuming linear data: [x]
+> context:
+> (llam x::Real . ((lam y::Real . y) x))
+
 -- :tycheck llam x::Real. x + x
 
 -- :tycheck llam x::Real. x + 2.0

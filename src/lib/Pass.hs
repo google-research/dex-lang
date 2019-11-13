@@ -9,7 +9,7 @@
 {-# LANGUAGE GADTs #-}
 
 module Pass (TopPassM, assertEq, ignoreExcept, liftExceptTop, runFullPass,
-             throwTopErr, emitOutput, (>+>), throwIf, TopPass (..), FullPass) where
+             throwTopErr, emitOutput, (>+>), TopPass (..), FullPass) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Except hiding (Except)
@@ -65,10 +65,6 @@ assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
-
-throwIf :: MonadError Err m => Bool -> String -> m ()
-throwIf True  s = throw CompilerErr s
-throwIf False _ = return ()
 
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
