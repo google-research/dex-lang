@@ -219,22 +219,16 @@ vsingle i x = %vsingle(i, x)
 vsum :: n=>a -> a
 vsum xs = %vsum(for i. xs.i)
 
-partialEval :: (a -> b -> (c,d)) -> a -> (c, b -> d)
-partialEval f = %partialEval(lam x y. f x y)
+linearize :: (a -> b) -> a -> (b, a --o b)
+linearize f x0 = %linearize(lam x. f x, x0)
 
-deriv :: (a -> b) -> a -> a -> (b, b)
-deriv f y t = %deriv(lam x. f x) (y, t)
+jvp :: (a -> b) -> a -> a --o b
+jvp f x = llam t. snd (linearize f x) t
 
-linearize :: (a -> b) -> a -> (b, a -> b)
-linearize f = partialEval (deriv f)
+linearTranspose :: (a --o b) -> b --o a
+linearTranspose f = %linearTranspose(llam t. f t)
 
-jvp :: (a -> b) -> a -> a -> b
-jvp f x t = snd (linearize f x) t
-
-linearTranspose :: (a -> b) -> b -> a
-linearTranspose f = %linearTranspose(lam t. f t)
-
-vjp :: (a -> b) -> a -> (b, b -> a)
+vjp :: (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x
           (y, linearTranspose df)
 

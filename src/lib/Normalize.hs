@@ -74,9 +74,7 @@ normalize expr = case expr of
   PrimOp b ts xs -> do
     xs' <- mapM atomize xs
     ts' <- liftM (concat . map toList) $ mapM normalizeTy ts
-    case b of
-      Deriv -> return $ NAtoms [NDeriv (fromOne (fromOne xs'))]
-      _ -> return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
+    return $ NPrimOp b ts' (fmap fromOne xs') -- TODO: subst types
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body

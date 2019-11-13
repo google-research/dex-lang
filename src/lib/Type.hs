@@ -270,10 +270,8 @@ builtinType builtin = case builtin of
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real
   -- TODO: this breaks for tuple or non-reals
-  Deriv       -> nonLinBuiltin [TyKind, TyKind] [a --> b] (pair a a --> pair b b)
-  PartialEval -> nonLinBuiltin [TyKind, TyKind, TyKind, TyKind]
-                   [a --> b --> pair c d] (a --> pair c (b --> d))
-  Transpose   -> nonLinBuiltin [TyKind, TyKind] [a --> b] (b --> a)
+  Linearize   -> nonLinBuiltin [TyKind, TyKind] [a --> b, a] (pair b (a --@ b))
+  Transpose   -> nonLinBuiltin [TyKind, TyKind] [a --@ b] (b --@ a)
   VZero   -> nonLinBuiltin [TyKind] [] a
   VAdd    -> nonLinBuiltin [TyKind] [a, a] a
   VSingle -> nonLinBuiltin [TyKind, idxSetKind] [j, a] (j ==> a)
@@ -290,8 +288,8 @@ builtinType builtin = case builtin of
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
-    c = BoundTVar 2
-    d = BoundTVar 3
+    -- c = BoundTVar 2
+    -- d = BoundTVar 3
     j = BoundTVar 1
     k = BoundTVar 2
     int  = BaseType IntType

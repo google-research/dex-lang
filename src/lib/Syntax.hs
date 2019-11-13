@@ -16,7 +16,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
                throw, throwIf,
-               addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
+               addContext, FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
@@ -121,7 +121,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
-             | Range | Scan | Copy | Deriv | PartialEval | Transpose
+             | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
              | Mod | FFICall Int String | Filter | Todo
                 deriving (Eq, Ord, Generic)
@@ -134,8 +134,7 @@ builtinNames = M.fromList [
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
-  ("deriv", Deriv), ("partialEval", PartialEval),
-  ("linearTranspose", Transpose),
+  ("linearize", Linearize), ("linearTranspose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo)]
@@ -329,10 +328,14 @@ addContext s m = modifyErr m $ \(Err e p s') ->
 -- === misc ===
 
 infixr 1 -->
+infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
 (-->) = ArrType NonLin
+
+(--@) :: Type -> Type -> Type
+(--@) = ArrType Lin
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
