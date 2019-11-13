@@ -106,7 +106,7 @@ check expr reqTy = case expr of
     constrainReq (instantiateTVs ts' body)
     return $ Var v ts'
   PrimOp b [] args -> do
-    let BuiltinType kinds argTys ansTy = builtinType b
+    let BuiltinType kinds _ argTys ansTy = builtinType b
     vs <- mapM (const freshQ) kinds
     constrainReq (instantiateTVs vs ansTy)
     let argTys' = map (instantiateTVs vs) argTys

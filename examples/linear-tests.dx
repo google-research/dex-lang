@@ -76,6 +76,40 @@
 > context:
 > (llam x::Real . (x : x))
 
+:tycheck llam x::Real. 1.0 + 2.0
+> Linearity error:Variable never spent: x
+> context:
+> (llam x::Real . (%fadd(1.0, 2.0)))
+
+:tycheck llam x::Real. 1.0 + x
+> Linearity error:Different vars consumed by product: [] vs [x]
+> context:
+> (llam x::Real . (%fadd(1.0, x)))
+
+:tycheck llam x::Real. x + 1.0
+> Linearity error:Different vars consumed by product: [x] vs []
+> context:
+> (llam x::Real . (%fadd(x, 1.0)))
+
+:tycheck llam x::Real. x + x
+> (Real --o Real)
+
+:tycheck llam x::Real. 1.0 * 2.0
+> Linearity error:Variable never spent: x
+> context:
+> (llam x::Real . (%fmul(1.0, 2.0)))
+
+:tycheck llam x::Real. 1.0 * x
+> (Real --o Real)
+
+:tycheck llam x::Real. x * 1.0
+> (Real --o Real)
+
+:tycheck llam x::Real. x * x
+> Linearity error:Variable already spent: x
+> context:
+> (llam x::Real . (%fmul(x, x)))
+
 -- :tycheck llam x::Real. x + x
 
 -- :tycheck llam x::Real. x + 2.0

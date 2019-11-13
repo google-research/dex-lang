@@ -66,11 +66,13 @@ getType' check expr = case expr of
           then throw LinErr $ "Variable already spent: " ++ pprint v
           else extend (v @> ())
       return $ instantiateTVs ts body
-    PrimOp b ts xs -> do
+    PrimOp b ts args -> do
       mapM_ checkTy ts
-      let BuiltinType _ argTys ansTy = builtinType b
-          ansTy':argTys' = map (instantiateTVs ts) (ansTy:argTys)
-      zipWithM_ (checkEq "Builtin") argTys' (map recur xs)
+      let BuiltinType _ (numLin, k) argTys ansTy = builtinType b
+      let (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
+      let (linArgs, nlArgs) = splitAt numLin args
+      checkEq "Builtin" argTys' $
+         liftM2 (++) (traverse recur nlArgs) (checkProd k linArgs)
       return ansTy'
     Decl decl body -> do env <- getTypeDecl check decl
                          extendR env (recur body)
@@ -102,8 +104,7 @@ getType' check expr = case expr of
     Get e ie   -> do ~(TabType a b) <- recur e
                      checkEq "Get" a (recur ie)
                      return b
-    RecCon Cart r -> liftM (RecType Cart) $ shareLinear recur r
-    RecCon Tens r -> liftM (RecType Tens) $ traverse recur r
+    RecCon k r -> liftM (RecType k) $ checkProd k r
     TabCon ty xs -> do
       case ty of
         TabType _ bodyTy -> do
@@ -122,7 +123,9 @@ getType' check expr = case expr of
     Annot _ _    -> error $ "Annot not implemented"    -- TODO
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
+    checkEq :: (Pretty a, Eq a) => String -> a -> TypeM a -> TypeM ()
     checkEq = checkEq' check
+
     recur = getType' check
     recurWithP l p  = extendR (foldMap (asEnv l) p) . recur
 
@@ -132,6 +135,11 @@ getType' check expr = case expr of
       case x of
         Nothing -> throw CompilerErr $ "Lookup failed:" ++ pprint v
         Just x' -> return $ fromL x'
+
+    checkProd :: Traversable f => ProdKind -> f Expr -> TypeM (f Type)
+    checkProd k xs = case k of
+      Cart -> shareLinear recur xs
+      Tens -> traverse    recur xs
 
 ifLinear :: Monad m => Lin -> m () -> m ()
 ifLinear Lin m = m
@@ -231,7 +239,11 @@ litType v = case v of
   StrLit  _ -> StrType
   BoolLit _ -> BoolType
 
-data BuiltinType = BuiltinType [Kind] [Type] Type
+-- BuiltinType represents types of the form
+--     forall [_, _]. (_, _, _) --o (_,_,_) -> _
+--  or forall [_, _]. (_: _: _) --o (_,_,_) -> _
+type LinSpec = (Int, ProdKind)  -- Int is number of linear args
+data BuiltinType = BuiltinType [Kind] LinSpec [Type] Type
 
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
@@ -239,42 +251,42 @@ builtinType builtin = case builtin of
   ISub     -> ibinOpType
   IMul     -> ibinOpType
   Mod      -> ibinOpType
-  ILT      -> BuiltinType [] [int, int] bool
-  IGT      -> BuiltinType [] [int, int] bool
+  ILT      -> nonLinBuiltin [] [int, int] bool
+  IGT      -> nonLinBuiltin [] [int, int] bool
   Pow      -> ibinOpType
-  FAdd     -> fbinOpType
+  FAdd     -> BuiltinType [] (2, Cart) [real, real] real
   FSub     -> fbinOpType
-  FMul     -> fbinOpType
+  FMul     -> BuiltinType [] (2, Tens) [real, real] real
   FDiv     -> fbinOpType
-  FLT      -> BuiltinType [] [real, real] bool
-  FGT      -> BuiltinType [] [real, real] bool
-  Todo     -> BuiltinType [TyKind] [] a
-  Copy     -> BuiltinType [TyKind] [a] a
-  Scan     -> BuiltinType [TyKind, TyKind, idxSetKind]
+  FLT      -> nonLinBuiltin [] [real, real] bool
+  FGT      -> nonLinBuiltin [] [real, real] bool
+  Todo     -> nonLinBuiltin [TyKind] [] a
+  Copy     -> nonLinBuiltin [TyKind] [a] a
+  Scan     -> nonLinBuiltin [TyKind, TyKind, idxSetKind]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
-  IndexAsInt -> BuiltinType [idxSetKind] [i] int
-  IntAsIndex -> BuiltinType [idxSetKind] [int] i
-  Range    -> BuiltinType [] [int] (Exists unitTy)
-  BoolToInt -> BuiltinType [] [bool] int
-  IntToReal -> BuiltinType [] [int] real
+  IndexAsInt -> nonLinBuiltin [idxSetKind] [i] int
+  IntAsIndex -> nonLinBuiltin [idxSetKind] [int] i
+  Range    -> nonLinBuiltin [] [int] (Exists unitTy)
+  BoolToInt -> nonLinBuiltin [] [bool] int
+  IntToReal -> nonLinBuiltin [] [int] real
   -- TODO: this breaks for tuple or non-reals
-  Deriv       -> BuiltinType [TyKind, TyKind] [a --> b] (pair a a --> pair b b)
-  PartialEval -> BuiltinType [TyKind, TyKind, TyKind, TyKind]
+  Deriv       -> nonLinBuiltin [TyKind, TyKind] [a --> b] (pair a a --> pair b b)
+  PartialEval -> nonLinBuiltin [TyKind, TyKind, TyKind, TyKind]
                    [a --> b --> pair c d] (a --> pair c (b --> d))
-  Transpose   -> BuiltinType [TyKind, TyKind] [a --> b] (b --> a)
-  VZero   -> BuiltinType [TyKind] [] a
-  VAdd    -> BuiltinType [TyKind] [a, a] a
-  VSingle -> BuiltinType [TyKind, idxSetKind] [j, a] (j ==> a)
-  VSum    -> BuiltinType [TyKind, idxSetKind] [j ==> a] a
-  Filter -> BuiltinType [TyKind, idxSetKind]
+  Transpose   -> nonLinBuiltin [TyKind, TyKind] [a --> b] (b --> a)
+  VZero   -> nonLinBuiltin [TyKind] [] a
+  VAdd    -> nonLinBuiltin [TyKind] [a, a] a
+  VSingle -> nonLinBuiltin [TyKind, idxSetKind] [j, a] (j ==> a)
+  VSum    -> nonLinBuiltin [TyKind, idxSetKind] [j ==> a] a
+  Filter -> nonLinBuiltin [TyKind, idxSetKind]
               [a --> bool, j ==> a] (Exists (i==>a'))
     where a' = BoundTVar 1  -- under an extra binder
-  FFICall n _ -> BuiltinType kinds argTys retTy
+  FFICall n _ -> nonLinBuiltin kinds argTys retTy
     where kinds = take (n + 1) (repeat TyKind)
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
   where
-    ibinOpType    = BuiltinType [] [int , int ] int
-    fbinOpType    = BuiltinType [] [real, real] real
+    ibinOpType    = nonLinBuiltin [] [int , int ] int
+    fbinOpType    = nonLinBuiltin [] [real, real] real
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
@@ -286,7 +298,7 @@ builtinType builtin = case builtin of
     real = BaseType RealType
     bool = BaseType BoolType
     pair x y = RecType Cart (Tup [x, y])
-
+    nonLinBuiltin kinds argTys ansTy = BuiltinType kinds (0, Cart) argTys ansTy
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
@@ -364,7 +376,7 @@ getNType expr = case expr of
     assertEq (map fromLeaf argTys') argTys'' (pprint b) -- TODO: handle non-leaves
     return (toList ansTy')
     where
-      BuiltinType _ argTys ansTy = builtinType b
+      BuiltinType _ _ argTys ansTy = builtinType b
       ts' = map nTypeToType ts
       ansTy':argTys' = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
   NApp e xs -> do
