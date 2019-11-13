@@ -102,7 +102,8 @@ getType' check expr = case expr of
     Get e ie   -> do ~(TabType a b) <- recur e
                      checkEq "Get" a (recur ie)
                      return b
-    RecCon k r -> liftM (RecType k) $ traverse recur r
+    RecCon Cart r -> liftM (RecType Cart) $ shareLinear recur r
+    RecCon Tens r -> liftM (RecType Tens) $ traverse recur r
     TabCon ty xs -> do
       case ty of
         TabType _ bodyTy -> do
@@ -139,6 +140,28 @@ ifLinear NonLin _ = return ()
 isLinear :: Lin -> Bool
 isLinear Lin    = True
 isLinear NonLin = False
+
+shareLinear :: Traversable f => (a -> TypeM b) -> f a -> TypeM (f b)
+shareLinear f xs = do
+  (ys, spents) <- liftM unzip' $ traverse (scoped . f) xs
+  case getConsensus spents of
+    Right Nothing -> return ()
+    Right (Just spent) -> extend spent
+    Left (s1, s2) -> throw LinErr $
+      "Different vars consumed by product: " ++ pprint (envNames s1)
+                                   ++ " vs " ++ pprint (envNames s2)
+  return ys
+  where
+    unzip' x = (fmap fst x, fmap snd x)
+
+getConsensus :: (Eq a, Traversable f) => f a -> Either (a,a) (Maybe a)
+getConsensus xs = foldr foldBody (Right Nothing) xs
+  where
+    foldBody x state = case state of
+      Left e -> Left e
+      Right Nothing -> Right (Just x)
+      Right (Just x') | x == x' -> Right (Just x')
+                      | otherwise -> Left (x, x')
 
 getTypeDecl :: Bool -> Decl -> TypeM TypeCheckEnv
 getTypeDecl check decl = case decl of
