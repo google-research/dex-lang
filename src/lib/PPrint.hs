@@ -61,7 +61,9 @@ prettyTyDepth d ty = case ty of
     where arr = case l of NonLin -> "->"
                           Lin -> "--o"
   TabType a b -> parens $ recur a <> "=>" <> recur b
-  RecType r   -> p $ fmap (asStr . recur) r
+  RecType Cart r -> p $ fmap (asStr . recur) r
+  RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
+  RecType Tens _ -> error "Not implemented"
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
   where recur = prettyTyDepth d
@@ -109,7 +111,9 @@ instance Pretty b => Pretty (ExprP b) where
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
-    RecCon r     -> p r
+    RecCon Cart r   -> p r
+    RecCon Tens (Tup r) -> parens $ hsep $ punctuate " :" (map p r)
+    RecCon Tens _ -> error "Not implemented"
     TabCon _ xs -> list (map pretty xs)
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
     IdxLit _ i -> p i
@@ -216,7 +220,7 @@ instance Pretty Value where
   pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = p v
   pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | mod v 2 == 0 = "False"
                                                               | mod v 2 == 1 = "True"
-  pretty (Value (RecType r) (RecTree r')) = p (recZipWith Value r r')
+  pretty (Value (RecType _ r) (RecTree r')) = p (recZipWith Value r r')
   pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
   pretty v = error $ "Can't print: " ++ show v
 

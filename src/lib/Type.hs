@@ -102,7 +102,7 @@ getType' check expr = case expr of
     Get e ie   -> do ~(TabType a b) <- recur e
                      checkEq "Get" a (recur ie)
                      return b
-    RecCon r   -> liftM RecType $ traverse recur r
+    RecCon k r -> liftM (RecType k) $ traverse recur r
     TabCon ty xs -> do
       case ty of
         TabType _ bodyTy -> do
@@ -199,7 +199,7 @@ unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
 
 patType :: RecTree Binder -> Type
 patType (RecLeaf (_:>ty)) = ty
-patType (RecTree r) = RecType $ fmap patType r
+patType (RecTree r) = RecType Cart $ fmap patType r
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -262,7 +262,7 @@ builtinType builtin = case builtin of
     int  = BaseType IntType
     real = BaseType RealType
     bool = BaseType BoolType
-    pair x y = RecType (Tup [x, y])
+    pair x y = RecType Cart (Tup [x, y])
 
 
 instantiateTVs :: [Type] -> Type -> Type
@@ -291,7 +291,7 @@ subAtDepth d f ty = case ty of
     TypeVar v     -> f d (Left v)
     ArrType l a b -> ArrType l (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
-    RecType r     -> RecType (fmap recur r)
+    RecType k r   -> RecType k (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
@@ -420,7 +420,7 @@ typeToNType ty = case ty of
   TypeVar v   -> RecLeaf $ NTypeVar v
   ArrType _ a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
   TabType a b -> fmap (NTabType (fromLeaf (recur a))) (recur b)
-  RecType r   -> RecTree $ fmap recur r
+  RecType _ r -> RecTree $ fmap recur r
   Exists body -> RecLeaf $ NExists (toList (recur body))
   BoundTVar n -> RecLeaf $ NBoundTVar n
   IdxSetLit n -> RecLeaf $ NIdxSetLit n
@@ -431,8 +431,8 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
-  NArrType a b -> ArrType NonLin (RecType (Tup (map recur a)))
-                                 (RecType (Tup (map recur b)))
+  NArrType a b -> ArrType NonLin (RecType Cart (Tup (map recur a)))
+                                 (RecType Cart (Tup (map recur b)))
   NTabType a b -> TabType (recur a) (recur b)
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
@@ -458,4 +458,4 @@ tangentBunType ty = case ty of
   _ -> error $ "Don't know bundle type for: " ++ pprint ty
   where
     recur = tangentBunType
-    pair x y = RecType $ Tup [x, y]
+    pair x y = RecType Cart $ Tup [x, y]

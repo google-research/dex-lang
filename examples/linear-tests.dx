@@ -30,6 +30,18 @@
 > context:
 > (llam x::Real . ((lam y::Real . y) x))
 
+:tycheck (1 : 2.0) :: (Int : Real)
+> (Int : Real)
+
+:tycheck (1 , 2.0) :: (Int : Real)
+> Type error:
+> Expected: (Int : Real)
+>   Actual: (Int, Real)
+> In: (1, 2.0)
+>
+> :tycheck (1 , 2.0) :: (Int : Real)
+>          ^^^^^^^^^^
+
 -- :tycheck llam x::Real. x + x
 
 -- :tycheck llam x::Real. x + 2.0

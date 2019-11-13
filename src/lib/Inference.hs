@@ -143,10 +143,10 @@ check expr reqTy = case expr of
     idxExpr' <- check idxExpr i
     constrainReq v
     return $ Get tabExpr' idxExpr'
-  RecCon r -> do
+  RecCon k r -> do
     tyExpr <- traverse infer r
-    constrainReq (RecType (fmap fst tyExpr))
-    return $ RecCon (fmap snd tyExpr)
+    constrainReq (RecType k (fmap fst tyExpr))
+    return $ RecCon k (fmap snd tyExpr)
   TabCon _ xs -> do
     (n, elemTy) <- splitTab expr reqTy
     xs' <- mapM (flip check elemTy) xs
@@ -296,10 +296,10 @@ unify err t1 t2 = do
     (ArrType _ a b, ArrType _ a' b') -> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
     (Exists t, Exists t')        -> recur t t'
-    (RecType r, RecType r')      ->
+    (RecType k r, RecType k' r') | k == k' ->
       case zipWithRecord recur r r' of
-             Nothing -> throwError err
-             Just unifiers -> void $ sequence unifiers
+        Nothing -> throwError err
+        Just unifiers -> void $ sequence unifiers
     _ -> throwError err
   where
     recur = unify err

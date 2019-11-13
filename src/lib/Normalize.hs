@@ -97,7 +97,7 @@ normalize expr = case expr of
     e' <- atomize e
     i' <- atomize i
     return $ NAtoms $ map (\x -> foldl NGet x i') e'
-  RecCon r -> do
+  RecCon _ r -> do
     r' <- traverse atomize r
     return $ NAtoms $ concat $ toList r'
   TabCon (TabType (IdxSetLit n) ty) rows -> do
@@ -169,7 +169,7 @@ normalizeTy ty = case ty of
     a' <- normalizeTy a
     b' <- normalizeTy b
     return $ fmap (\x -> foldr NTabType x (toList a')) b'
-  RecType r -> liftM RecTree $ traverse normalizeTy r
+  RecType _ r -> liftM RecTree $ traverse normalizeTy r
   Exists body -> do
     body' <- normalizeTy body
     return $ RecLeaf $ NExists (toList body')

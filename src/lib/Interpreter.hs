@@ -60,11 +60,11 @@ reduce expr = case expr of
     dropSubst $ reduce expr'
   PrimOp Scan _ [x, fs] -> do
     x' <- reduce x
-    ~(RecType (Tup [_, ty@(TabType n _)])) <- exprType expr
+    ~(RecType _ (Tup [_, ty@(TabType n _)])) <- exprType expr
     fs' <- subst fs
     scope <- asks snd
     let (carry, ys) = mapAccumL (evalScanBody scope fs') x' (enumerateIdxs n)
-    return $ RecCon $ Tup [carry, TabCon ty ys]
+    return $ RecCon Cart $ Tup [carry, TabCon ty ys]
   PrimOp op ts xs -> do
     ts' <- mapM subst ts
     xs' <- mapM reduce xs
@@ -83,7 +83,7 @@ reduce expr = case expr of
             extendR (bindPat p i) (reduce body)
     return $ TabCon ty xs
   Get e i -> liftM2 idxTabCon (reduce e) (reduce i)
-  RecCon r -> liftM RecCon (traverse reduce r)
+  RecCon k r -> liftM (RecCon k) (traverse reduce r)
   TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
   Pack e ty exTy -> liftM3 Pack (reduce e) (subst ty) (subst exTy)
   IdxLit _ _ -> subst expr
@@ -96,14 +96,14 @@ exprType expr = do expr' <- subst expr
 evalScanBody :: Scope -> Expr -> Val -> Val -> (Val, Val)
 evalScanBody scope (For ip (Lam _ p body)) accum i =
   case runReader (reduce body) env of
-    RecCon (Tup [accum', ys]) -> (accum', ys)
+    RecCon _ (Tup [accum', ys]) -> (accum', ys)
     val -> error $ "unexpected scan result: " ++ pprint val
   where env =  bindPat ip i <> bindPat p accum <> asSnd scope
 evalScanBody _ e _ _ = error $ "Bad scan argument: " ++ pprint e
 
 enumerateIdxs :: Type -> [Val]
 enumerateIdxs (IdxSetLit n) = map (IdxLit n) [0..n-1]
-enumerateIdxs (RecType r) = map RecCon $ traverse enumerateIdxs r  -- list monad
+enumerateIdxs (RecType k r) = map (RecCon k) $ traverse enumerateIdxs r  -- list monad
 enumerateIdxs ty = error $ "Not an index type: " ++ pprint ty
 
 idxTabCon :: Val -> Val -> Val
@@ -119,7 +119,7 @@ intToIdx ty i = idxs !! (i `mod` length idxs)
 
 flattenIdx :: Val -> (Int, Int)
 flattenIdx (IdxLit n i) = (n, i)
-flattenIdx (RecCon r) = foldr f (1,0) $ map flattenIdx (toList r)
+flattenIdx (RecCon _ r) = foldr f (1,0) $ map flattenIdx (toList r)
   where f (size, idx) (cumSize, cumIdx) = (cumSize * size, cumIdx + idx * cumSize)
 flattenIdx v = error $ "Not a valid index: " ++ pprint v
 
@@ -137,7 +137,7 @@ reduceDecl (TAlias _ _ ) = error "Shouldn't have TAlias left"
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L (Right (TLam [] val))
-bindPat (RecTree r) (RecCon r') = fold $ recZipWith bindPat r r'
+bindPat (RecTree r) (RecCon _ r') = fold $ recZipWith bindPat r r'
 bindPat _ _ = error "Bad pattern"
 
 evalOp :: Builtin -> [Type] -> [Val] -> Val
@@ -252,7 +252,7 @@ instance Subst Expr where
         body' <- subst body
         return $ For p' body'
     Get e1 e2 -> liftM2 Get (subst e1) (subst e2)
-    RecCon r -> liftM RecCon (traverse subst r)
+    RecCon k r -> liftM (RecCon k) (traverse subst r)
     IdxLit _ _ -> return expr
     TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
     Pack e ty exTy -> liftM3 Pack (subst e) (subst ty) (subst exTy)
@@ -295,7 +295,7 @@ instance Subst Type where
                          Just (L _) -> error "Expected type var"
     ArrType l a b -> liftM2 (ArrType l) (subst a) (subst b)
     TabType a b -> liftM2 TabType (subst a) (subst b)
-    RecType r -> liftM RecType $ traverse subst r
+    RecType k r -> liftM (RecType k) $ traverse subst r
     Exists body -> liftM Exists (subst body)
     IdxSetLit _ -> return ty
     BoundTVar _ -> return ty

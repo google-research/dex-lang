@@ -70,7 +70,7 @@ deShadowExpr expr = case expr of
     withCat (deShadowPat p) $ \p' ->
       liftM (For p') (recur body)
   Get e v -> liftM2 Get (recur e) (recur v)
-  RecCon r -> liftM RecCon $ traverse recur r
+  RecCon k r -> liftM (RecCon k) $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   DerivAnnot e ann -> liftM2 DerivAnnot (recur e) (recur ann)
@@ -151,7 +151,7 @@ subType sub ty = case ty of
                                         Just ty' -> ty'
   ArrType l a b -> ArrType l (recur a) (recur b)
   TabType a b -> TabType (recur a) (recur b)
-  RecType r   -> RecType $ fmap recur r
+  RecType k r -> RecType k $ fmap recur r
   Exists body -> Exists $ recur body
   IdxSetLit _ -> ty
   BoundTVar _ -> ty

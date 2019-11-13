@@ -14,7 +14,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                DeclP (..), Decl, TopDecl, Command (..), UPat, Pat, SrcPos,
                CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
-               Except, Err (..), ErrType (..), OutFormat (..),
+               Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
                throw, throwIf,
                addContext, FullEnv, (-->), (==>), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
@@ -49,7 +49,7 @@ data ExprP b =
           | App (ExprP b) (ExprP b)
           | For (PatP b) (ExprP b)
           | Get (ExprP b) (ExprP b)
-          | RecCon (Record (ExprP b))
+          | RecCon ProdKind (Record (ExprP b))
           | TabCon b [ExprP b]
           | IdxLit IdxSetVal Int
           | Annot (ExprP b) Type
@@ -67,12 +67,13 @@ data DeclP b = LetMono (PatP b) (ExprP b)
 type PatP b = RecTree (BinderP b)
 
 data Lin = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
+data ProdKind = Cart | Tens  deriving (Eq, Ord, Show, Generic)
 
 data Type = BaseType BaseType
           | TypeVar Name
           | ArrType Lin Type Type
           | TabType IdxSet Type
-          | RecType (Record Type)
+          | RecType ProdKind (Record Type)
           | Exists Type
           | IdxSetLit IdxSetVal
           | BoundTVar Int
@@ -165,10 +166,10 @@ data Value = Value Type (RecTree Vec)  deriving (Show, Eq, Generic)
 data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq, Generic)
 
 unitTy :: Type
-unitTy = RecType (Tup [])
+unitTy = RecType Cart (Tup [])
 
 unitCon :: ExprP b
-unitCon = RecCon (Tup [])
+unitCon = RecCon Cart (Tup [])
 
 -- === source AST ===
 
@@ -376,7 +377,7 @@ instance HasVars b => HasVars (ExprP b) where
     For b body    -> withBinders b body
     Get e ie      -> freeVars e <> freeVars ie
     -- TApp fexpr ts -> freeVars fexpr <> foldMap freeVars ts
-    RecCon r      -> foldMap freeVars r
+    RecCon _ r    -> foldMap freeVars r
     TabCon ty xs -> freeVars ty <> foldMap freeVars xs
     IdxLit _ _ -> mempty
     Annot e ty -> freeVars e <> freeVars ty
@@ -393,7 +394,7 @@ instance HasVars Type where
     TypeVar v  -> v @> T ()
     ArrType _ a b -> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
-    RecType r   -> foldMap freeVars r
+    RecType _ r -> foldMap freeVars r
     Exists body -> freeVars body
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
@@ -512,7 +513,7 @@ stripSrcAnnot expr = case expr of
   App fexpr arg -> App (recur fexpr) (recur arg)
   For b body    -> For b (recur body)
   Get e ie      -> Get (recur e) (recur ie)
-  RecCon r      -> RecCon (fmap recur r)
+  RecCon k r    -> RecCon k (fmap recur r)
   -- TLam vs body  -> TLam vs (recur body)
   -- TApp fexpr ts -> TApp (recur fexpr) ts
   DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
@@ -535,6 +536,6 @@ stripSrcAnnotTopDecl (TopDecl decl) = TopDecl $ stripSrcAnnotDecl decl
 stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))
 
 instance RecTreeZip Type where
-  recTreeZip (RecTree r) (RecType r') = RecTree $ recZipWith recTreeZip r r'
+  recTreeZip (RecTree r) (RecType _ r') = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) _ = error "Bad zip"

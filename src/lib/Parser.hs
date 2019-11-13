@@ -163,15 +163,31 @@ declOrExpr :: Parser UExpr
 declOrExpr = declExpr <|> expr <?> "decl or expr"
 
 parenRaw :: Parser UExpr
-parenRaw = do
-  symbol "("
-  e <- declExpr <|> liftM maybeTup (expr `sepBy` comma)
-  symbol ")"
-  return e
+parenRaw = parens $ declExpr <|> productCon
 
-maybeTup :: [UExpr] -> UExpr
-maybeTup [e] = e
-maybeTup es = RecCon $ Tup es
+productCon :: Parser UExpr
+productCon = do
+  (k, xs) <- prod expr
+  return $ case xs of
+    []  -> unitCon
+    [x] -> x
+    _   -> RecCon k (Tup xs)
+
+prod :: Parser a -> Parser (ProdKind, [a])
+prod p = prod1 p <|> return (Cart, [])
+
+prod1 :: Parser a -> Parser (ProdKind, [a])
+prod1 p = do
+  x <- p
+  sep <- optional $     (symbol "," >> return Cart)
+                    <|> (symbol ":" >> return Tens)
+  case sep of
+    Nothing -> return (Cart, [x])
+    Just k -> do
+      xs <- p `sepBy` symbol sep'
+      return (k, x:xs)
+      where sep' = case k of Cart -> ","
+                             Tens -> ":"
 
 var :: Parser UExpr
 var = liftM2 Var lowerName $ many (symbol "@" >> tauTypeAtomic)
@@ -305,7 +321,7 @@ ops = [ [postFixRule, appRule]
        ]
 
 idxExpr :: Parser UExpr
-idxExpr = withSourceAnn $ rawVar <|> parenRaw
+idxExpr = withSourceAnn $ rawVar <|> parens productCon
 
 rawVar :: Parser UExpr
 rawVar = liftM (flip Var []) lowerName
@@ -394,10 +410,10 @@ idxSetLit = liftM IdxSetLit uint
 
 parenTy :: Parser Type
 parenTy = do
-  elts <- parens $ tauType `sepBy` comma
-  return $ case elts of
+  (k, xs) <- parens $ prod tauType
+  return $ case xs of
     [ty] -> ty
-    _ -> RecType $ Tup elts
+    _ -> RecType k $ Tup xs
 
 existsType :: Parser Type
 existsType = do

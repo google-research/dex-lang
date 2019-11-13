@@ -43,6 +43,9 @@ liftS f x = map f (shrink x)
 instance Arbitrary Lin where
   arbitrary = elements [NonLin, Lin]
 
+instance Arbitrary ProdKind where
+  arbitrary = elements [Cart] -- TODO: handle tensor product
+
 instance Arbitrary Name where
   arbitrary = liftM2 Name (elements ["x", "y"]) (elements [0, 1])
   shrink _ = []
@@ -60,7 +63,7 @@ arbType numBinders = do
     , (True, liftM TypeVar arbTypeName)
     , (nonLeaf, liftM3 ArrType arb (smaller 2 arb) (smaller 2 arb))
     , (nonLeaf, liftM2 TabType (smaller 2 arb) (smaller 2 arb))
-    , (nonLeaf, liftM RecType arb)
+    , (nonLeaf, liftM (RecType Cart) arb)
     -- TODO: add explicit quantification to concrete syntax
     -- , (True, liftM (Forall [TyKind]) (arbType (numBinders + 1)))
     , (True, liftM Exists (arbType (numBinders + 1)))
