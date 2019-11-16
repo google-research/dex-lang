@@ -128,7 +128,9 @@ getType' expr = case expr of
       annTy <- recur ann
       assertEq (tangentBunType ty) annTy "deriv"
       return ty
-    IdxLit _ _   -> error $ "IdxLit not implemented"   -- TODO
+    IdxLit n i | 0 <= i && i < n -> return $ IdxSetLit n
+               | otherwise -> throw TypeErr $ "Index out of bounds: "
+                                ++ pprint i ++ " of " ++ pprint n
     Annot _ _    -> error $ "Annot not implemented"    -- TODO
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
