@@ -15,7 +15,6 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.List (elemIndex)
 import Data.Foldable
-import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -33,13 +32,13 @@ type TypeM a = ReaderT TypeCheckEnv (CatT Spent (Either Err)) a
 checkTyped :: TopPass TopDecl TopDecl
 checkTyped = TopPass $ \decl -> decl <$ case decl of
   TopDecl decl' -> do
-    env <- liftTop (pprint decl') (getTypeDecl True decl')
+    env <- liftTop (pprint decl') (getTypeDecl decl')
     extend env
   EvalCmd (Command TypeCheckInternal expr) -> do
-    ty <- liftTop (pprint expr) (getType' True expr)
+    ty <- liftTop (pprint expr) (getType' expr)
     emitOutput $ TextOut $ pprint ty
   EvalCmd (Command _ expr) ->
-    void $ liftTop (pprint expr) (getType' True expr)
+    void $ liftTop (pprint expr) (getType' expr)
 
 liftTop :: String -> TypeM a -> TopPassM TypeCheckEnv a
 liftTop ctx m = do
@@ -49,20 +48,20 @@ liftTop ctx m = do
 getType :: FullEnv SigmaType a -> Expr -> Type
 getType env expr =
   ignoreExcept $ addContext (pprint expr) $
-     evalTypeM (fmap (L . (\ty -> (ty, NonLin)) . fromL) env) $ getType' False expr
+     evalTypeM (fmap (L . (\ty -> (ty, NonLin)) . fromL) env) $ getType' expr
 
 evalTypeM :: TypeCheckEnv -> TypeM a -> Except a
 evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
 
-getType' :: Bool -> Expr -> TypeM Type
-getType' check expr = case expr of
+getType' :: Expr -> TypeM Type
+getType' expr = case expr of
     Lit c -> return $ BaseType (litType c)
     Var v ts -> do
       mapM_ checkTy ts
       (Forall _ body, l) <- lookupLVar v
       ifLinear l $ do
         spent <- look
-        if check && v `isin` spent
+        if v `isin` spent
           then throw LinErr $ "Variable already spent: " ++ pprint v
           else extend (v @> ())
       return $ instantiateTVs ts body
@@ -71,11 +70,12 @@ getType' check expr = case expr of
       let BuiltinType _ (numLin, k) argTys ansTy = builtinType b
       let (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
       let (linArgs, nlArgs) = splitAt numLin args
-      checkEq "Builtin" argTys' $
-         liftM2 (++) (traverse recur nlArgs) (checkProd k linArgs)
+      argTys'' <- liftM2 (++) (traverse recur nlArgs) (checkProd k linArgs)
+      assertEq argTys' argTys'' "Builtin"
       return ansTy'
-    Decl decl body -> do env <- getTypeDecl check decl
-                         extendR env (recur body)
+    Decl decl body -> do
+      env <- getTypeDecl decl
+      extendR env (recur body)
     Lam NonLin p body -> do
       checkTy (patType p)
       checkShadowPat p
@@ -84,9 +84,9 @@ getType' check expr = case expr of
       checkTy ty
       checkShadow b
       (bodyTy, spent) <- scoped $ recurWithP Lin (RecLeaf b) body
-      if check && not (v `isin` spent)
-        then throw LinErr $ "Variable never spent: " ++ pprint v
-        else return ()
+      if v `isin` spent
+        then return ()
+        else throw LinErr $ "Variable never spent: " ++ pprint v
       extend $ spent `envDiff` (v@>())
       return $ ArrType Lin ty bodyTy
     Lam Lin _ _ -> throw NotImplementedErr "Linear lambda patterns"
@@ -95,38 +95,41 @@ getType' check expr = case expr of
                      liftM (TabType (patType p)) (recurWithP NonLin p body)
     App e arg  -> do
       ~(ArrType l a b) <- recur e
-      checkEq "App" a $ do
+      a' <- do
         (a', spent) <- capture (recur arg)
         throwIf (not (isLinear l || null spent)) LinErr $
           "Nonlinear function consuming linear data: " ++ pprint (envNames spent)
         return a'
+      assertEq a a' "App"
       return b
-    Get e ie   -> do ~(TabType a b) <- recur e
-                     checkEq "Get" a (recur ie)
-                     return b
+    Get e ie   -> do
+      ~(TabType a b) <- recur e
+      a' <- recur ie
+      assertEq a a' "Get"
+      return b
     RecCon k r -> liftM (RecType k) $ checkProd k r
     TabCon ty xs -> do
       case ty of
         TabType _ bodyTy -> do
-          mapM_ (checkEq "table" bodyTy . recur) xs  -- TODO: check length too
+          xTys <- mapM recur xs
+          mapM_ (\t -> assertEq bodyTy t "table")  xTys  -- TODO: check length too
           return ty
         _ -> throw CompilerErr $ "Expected a table type: " ++ pprint ty
     Pack e ty exTy -> do
       let (Exists exBody) = exTy
-      checkEq "Pack" (instantiateTVs [ty] exBody) (recur e)
+      rhsTy <- recur e
+      assertEq (instantiateTVs [ty] exBody) rhsTy "Pack"
       return exTy
     DerivAnnot e ann -> do
       ty <- recur e
-      checkEq "deriv" (tangentBunType ty) (recur ann)
+      annTy <- recur ann
+      assertEq (tangentBunType ty) annTy "deriv"
       return ty
     IdxLit _ _   -> error $ "IdxLit not implemented"   -- TODO
     Annot _ _    -> error $ "Annot not implemented"    -- TODO
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
-    checkEq :: (Pretty a, Eq a) => String -> a -> TypeM a -> TypeM ()
-    checkEq = checkEq' check
-
-    recur = getType' check
+    recur = getType'
     recurWithP l p  = extendR (foldMap (asEnv l) p) . recur
 
     lookupLVar :: Name -> TypeM (SigmaType, Lin)
@@ -171,15 +174,17 @@ getConsensus xs = foldr foldBody (Right Nothing) xs
       Right (Just x') | x == x' -> Right (Just x')
                       | otherwise -> Left (x, x')
 
-getTypeDecl :: Bool -> Decl -> TypeM TypeCheckEnv
-getTypeDecl check decl = case decl of
+getTypeDecl :: Decl -> TypeM TypeCheckEnv
+getTypeDecl decl = case decl of
   LetMono p rhs -> do
     checkShadowPat p
-    checkEq "LetMono" (patType p) (recur rhs)
+    ty <- recur rhs
+    assertEq (patType p) ty "LetMono"
     return (foldMap (asEnv NonLin) p)
   LetPoly b@(v:>ty) tlam -> do
     checkShadow b
-    checkEq' check "TLam" ty $ getTypeTLam check tlam
+    ty' <- getTypeTLam tlam
+    assertEq ty ty' "TLam"
     return $ v @> L (ty, NonLin)
   Unpack b tv _ -> do  -- TODO: check bound expression!
     -- TODO: check leaks
@@ -190,26 +195,17 @@ getTypeDecl check decl = case decl of
     return (tbind tb <> asEnv NonLin b)
   TAlias _ _ -> error "Shouldn't have TAlias left"
   where
-    checkEq = checkEq' check
-    recur = getType' check
+    recur = getType'
 
-getTypeTLam :: Bool -> TLam -> TypeM SigmaType
-getTypeTLam check (TLam tbs body) = do
+getTypeTLam :: TLam -> TypeM SigmaType
+getTypeTLam (TLam tbs body) = do
   mapM_ checkShadow tbs
-  ty <- extendR (foldMap tbind tbs) (getType' check body)
+  ty <- extendR (foldMap tbind tbs) (getType' body)
   let (vs, kinds) = unzip [(v, k) | v :> k <- tbs]
   return $ Forall kinds (abstractTVs vs ty)
 
 checkTy :: Type -> TypeM ()
 checkTy _ = return () -- TODO: check kind and unbound type vars
-
-runCheck :: Bool -> TypeM () -> TypeM ()
-runCheck check m = if check then m else return ()
-
-checkEq' :: (Pretty a, Eq a) => Bool -> String -> a -> TypeM a -> TypeM ()
-checkEq' check s ty getTy = runCheck check $ do
-  ty' <- getTy
-  assertEq ty ty' ("Unexpected type in " ++ s)
 
 checkShadow :: (MonadError Err m, MonadReader (Env a) m) => BinderP b -> m ()
 checkShadow (v :> _) = do
