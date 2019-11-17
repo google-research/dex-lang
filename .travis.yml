@@ -13,7 +13,7 @@ addons:
     update: true
     packages:
       - libgmp-dev
-      - llvm-7-tools
+      - llvm-8-tools
 
 jobs:
   include:

@@ -25,7 +25,7 @@ development. We welcome contributions. There's plenty of work to do!
 ## Setup
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 7, e.g. `apt-get install llvm-7-dev`
+  * Install LLVM 8, e.g. `apt-get install llvm-8-dev`
 
 ## Building
 
