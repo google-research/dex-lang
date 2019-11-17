@@ -11,30 +11,32 @@ author:              Dougal Maclaurin
 maintainer:          dougalm@google.com
 build-type:          Simple
 
-flag web
-  description:         Enables the web interface
-  default:             True
+flag inotify
+  description:         Uses inotify to watch for source changes
+  default:             False
 
 library
   exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
                        ParseUtil, Parser, Util, Imp, PPrint, Fresh, Pass,
                        Actor, DeShadow, Cat, Flops, Normalize,
-                       Interpreter, RenderHtml, Plot
+                       Interpreter, RenderHtml, Plot, WebOutput
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==7.*, llvm-hs ==7.*,
                        aeson, megaparsec, warp, wai,
                        parser-combinators, http-types, prettyprinter, text,
                        data-binary-ieee754, blaze-html, cmark, diagrams-lib,
                        diagrams-rasterific, JuicyPixels,
-                       base64-bytestring, vector
+                       base64-bytestring, vector, directory
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         cbits/libdex.so
                        -Wall
                        -O0
-  if flag(web)
-    exposed-modules:   WebOutput
+  if flag(inotify)
     build-depends:     hinotify
+    cpp-options:       -DDEX_INOTIFY
+
+  default-extensions:  CPP
 
 executable dex
   main-is:             dex.hs
@@ -48,8 +50,6 @@ executable dex
                        -threaded
                        -Wall
   default-extensions:  CPP
-  if flag(web)
-    cpp-options:       -DDEX_WEB
 
 Test-Suite test-dex
   type:                exitcode-stdio-1.0

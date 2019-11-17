@@ -9,9 +9,8 @@ dex := stack exec dex --
 all: cbits/libdex.so
 	stack build
 
-# The web interface uses Linux's inotify API. On non-Linux, we have to build without it.
-all-non-linux: cbits/libdex.so
-	stack build --flag dex:-web
+all-inotify: cbits/libdex.so
+	stack build --flag dex:inotify
 
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@

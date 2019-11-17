@@ -29,7 +29,7 @@ development. We welcome contributions. There's plenty of work to do!
 
 ## Building
 
- * Build Dex: `make`  (on non-Linux run `make all-non-linux`)
+ * Build Dex: `make`
  * Run tests: `make tests`
  * Set up alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
 
