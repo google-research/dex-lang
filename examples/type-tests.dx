@@ -158,3 +158,6 @@ f x =
 >
 >   z = x + 1.0
 >       ^^
+:t x = 3
+   for i::x. 0
+> Variable not in scope:type variable "x" (a term variable of the same name is in scope)

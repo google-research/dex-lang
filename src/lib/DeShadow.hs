@@ -137,25 +137,26 @@ freshTBinder (v:>k) = do
   return (v':>k)
 
 deShadowType :: Type -> DeShadowM Type
-deShadowType ty = do
-  subst <- asks $ snd
-  return $ subType subst ty
+deShadowType ty = case ty of
+  BaseType _ -> return ty
+  TypeVar v  -> do
+    (vsub, tsub) <- ask
+    case envLookup tsub v of
+      Just ty' -> return ty'
+      Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint v ++ "\"" ++
+                   (if v `isin` vsub
+                       then " (a term variable of the same name is in scope)"
+                       else "")
+  ArrType a b -> liftM2 ArrType (recur a) (recur b)
+  TabType a b -> liftM2 TabType (recur a) (recur b)
+  RecType r   -> liftM RecType $ traverse recur r
+  Exists body -> liftM Exists $ recur body
+  IdxSetLit _ -> return ty
+  BoundTVar _ -> return ty
+  where recur = deShadowType
 
 deShadowSigmaType :: SigmaType -> DeShadowM SigmaType
 deShadowSigmaType (Forall kinds body) = liftM (Forall kinds) (deShadowType body)
-
-subType :: Env Type -> Type -> Type
-subType sub ty = case ty of
-  BaseType _ -> ty
-  TypeVar v  -> case envLookup sub v of Nothing  -> ty
-                                        Just ty' -> ty'
-  ArrType a b -> ArrType (recur a) (recur b)
-  TabType a b -> TabType (recur a) (recur b)
-  RecType r   -> RecType $ fmap recur r
-  Exists body -> Exists $ recur body
-  IdxSetLit _ -> ty
-  BoundTVar _ -> ty
-  where recur = subType sub
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do
