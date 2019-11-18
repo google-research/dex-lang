@@ -297,8 +297,8 @@ litVal :: LitVal -> Operand
 litVal lit = case lit of
   IntLit  x -> litInt x
   RealLit x -> litReal x
-  BoolLit True  -> L.ConstantOperand $ C.Int 1 1
-  BoolLit False -> L.ConstantOperand $ C.Int 1 0
+  BoolLit True  -> litInt 1
+  BoolLit False -> litInt 0
   StrLit _ -> error "Not implemented"
 
 litInt :: Int -> Operand
@@ -440,7 +440,7 @@ charPtrTy :: L.Type
 charPtrTy = L.ptr (L.IntegerType 8)
 
 boolTy :: L.Type
-boolTy = L.IntegerType 1
+boolTy = L.IntegerType 64
 
 longTy :: L.Type
 longTy = L.IntegerType 64

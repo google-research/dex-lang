@@ -133,6 +133,9 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. ans = c + xs.i
 :p [False, False, True]
 > [False, False, True]
 
+:p [False, True, True, False]  -- testing again because it's been flaky
+> [False, True, True, False]
+
 :p (True, False)
 > (True, False)
 
