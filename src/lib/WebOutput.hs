@@ -24,11 +24,15 @@ import qualified Data.Map.Strict as M
 import Network.Wai
 import Network.Wai.Handler.Warp (run)
 import Network.HTTP.Types (status200, status404)
-import Data.ByteString.Char8 (pack)
 import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
+#if DEX_INOTIFY
 import System.INotify
+import Data.ByteString.Char8 (pack)
+#else
+import System.Directory
+#endif
 
 import Syntax
 import Actor
@@ -115,7 +119,7 @@ mainDriver :: Monoid env => FullPass env -> env -> String
                 -> PChan ResultSet -> Actor DriverMsg ()
 mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
   chan <- myChan
-  liftIO $ inotifyMe fname (subChan NewProg chan)
+  liftIO $ watchFile fname (subChan NewProg chan)
   forever $ do
     NewProg source <- receive
     modify $ setVarMap (const mempty)
@@ -184,12 +188,38 @@ execPass env block pass envChan resultChan = do
   resultChan `send` resultUpdate ans
 
 -- sends file contents to subscribers whenever file is modified
-inotifyMe :: String -> PChan String -> IO ()
-inotifyMe fname chan = do
-  readSend
+watchFile :: String -> PChan String -> IO ()
+watchFile fname chan = onmod fname $ sendFileContents fname chan
+
+sendFileContents :: String -> PChan String -> IO ()
+sendFileContents fname chan = do
+  putStrLn $ fname ++ " updated"
+  s <- readFile fname
+  sendFromIO chan s
+
+#if DEX_INOTIFY
+
+onmod :: String -> IO () -> IO ()
+onmod fname action = do
+  action
   inotify <- initINotify
-  void $ addWatch inotify [Modify] (pack fname) (const readSend)
-  where readSend = readFile fname >>= sendFromIO chan
+  void $ addWatch inotify [Modify] (pack fname) (const action)
+
+#else
+
+onmod :: String -> IO () -> IO ()
+onmod fname action = do
+  action
+  t <- getModificationTime fname
+  void $ forkIO $ loop t
+  where
+    loop t = do
+      t' <- getModificationTime fname
+      threadDelay 100000
+      unless (t == t') action
+      loop t'
+
+#endif
 
 -- === rendering ===
 

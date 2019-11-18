@@ -290,9 +290,10 @@ instance Subst Type where
     BaseType _ -> return ty
     TypeVar v -> do
       x <- asks $ flip envLookup v . fst
-      return $ case x of Nothing -> ty
-                         Just (T ty') -> ty'
-                         Just (L _) -> error "Expected type var"
+      return $ case x of
+        Nothing      -> ty
+        Just (T ty') -> ty'
+        Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
     ArrType l a b -> liftM2 (ArrType l) (subst a) (subst b)
     TabType a b -> liftM2 TabType (subst a) (subst b)
     RecType k r -> liftM (RecType k) $ traverse subst r

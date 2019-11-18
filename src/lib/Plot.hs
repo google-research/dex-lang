@@ -55,7 +55,7 @@ doubleTo8Bit :: Double -> Int
 doubleTo8Bit x = min 255 $ max 0 (round (256 * x) :: Int)
 
 scaleToPlot :: Scale -> Double -> Double
-scaleToPlot (LinearScale low high) x = (x - low) / (high - low)
+scaleToPlot (LinearScale low high) x = (x - low) / (high - low + 1e-6)
 
 pngToHtml :: PngSavable a => Image a -> H.Html
 pngToHtml png = H.img H.! At.class_ "plot-img" H.! At.src

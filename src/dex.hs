@@ -24,9 +24,7 @@ import Inference
 import Imp
 import JIT
 import Flops
-#ifdef DEX_WEB
 import WebOutput
-#endif
 import Normalize
 import Interpreter
 
@@ -66,11 +64,7 @@ runMode evalMode prelude pass = do
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile pass fname
       putStr $ printLitProg fmt results
-#if DEX_WEB
     WebMode fname -> runWeb fname pass env
-#else
-    WebMode _ -> error "Compiled without the web interface"
-#endif
 
 evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
 evalDecl pass block = do
