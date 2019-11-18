@@ -33,10 +33,10 @@ foreign import ccall "log"  c_log  :: Double -> Double
 foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
-type Val = Expr -- irreducible expressions only
+type ClosedExpr = Expr -- no free variables
+type Val        = Expr -- irreducible expressions only
 type Scope = Env ()
 type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
-type ReduceM a = Reader SubstEnv a
 
 interpPass :: TopPass TopDecl Void
 interpPass = TopPass interpPass'
@@ -45,61 +45,48 @@ interpPass' :: TopDecl -> TopPassM SubstEnv Void
 interpPass' topDecl = case topDecl of
   TopDecl decl -> do
     env <- look
-    extend $ runReader (reduceDecl decl) env
+    extend $ reduceDecl $ applySub env decl
     emitOutput NoOutput
   EvalCmd (Command (EvalExpr Printed) expr) -> do
     env <- look
-    emitOutput $ TextOut $ pprint $ runReader (reduce expr) env
+    emitOutput $ TextOut $ pprint $ reduce $ applySub env expr
   _ -> emitOutput NoOutput
 
-reduce :: Expr -> ReduceM Val
+reduce :: ClosedExpr -> Val
 reduce expr = case expr of
-  Lit _ -> subst expr
-  Var _ _ -> do
-    expr' <- subst expr
-    dropSubst $ reduce expr'
-  PrimOp Scan _ [x, fs] -> do
-    x' <- reduce x
-    ~(RecType _ (Tup [_, ty@(TabType n _)])) <- exprType expr
-    fs' <- subst fs
-    scope <- asks snd
-    let (carry, ys) = mapAccumL (evalScanBody scope fs') x' (enumerateIdxs n)
-    return $ RecCon Cart $ Tup [carry, TabCon ty ys]
-  PrimOp op ts xs -> do
-    ts' <- mapM subst ts
-    xs' <- mapM reduce xs
-    return $ evalOp op ts' xs'
-  Decl decl body -> do
-    env' <- reduceDecl decl
-    extendR env' $ reduce body
-  Lam _ _ _ -> subst expr
-  App e1 e2 -> do
-    ~(Lam _ p body) <- reduce e1
-    x <- reduce e2
-    dropSubst $ extendR (bindPat p x) (reduce body)
-  For p body -> do
-    ~(ty@(TabType n _)) <- exprType expr
-    xs <- flip traverse (enumerateIdxs n) $ \i ->
-            extendR (bindPat p i) (reduce body)
-    return $ TabCon ty xs
-  Get e i -> liftM2 idxTabCon (reduce e) (reduce i)
-  RecCon k r -> liftM (RecCon k) (traverse reduce r)
-  TabCon ty xs -> liftM2 TabCon (subst ty) (mapM reduce xs)
-  Pack e ty exTy -> liftM3 Pack (reduce e) (subst ty) (subst exTy)
-  IdxLit _ _ -> subst expr
+  Lit _ -> expr
+  Var _ _ -> error $ "Can only reduce closed expression. Got: " ++ pprint expr
+  PrimOp Scan _ [x, fs] -> RecCon Cart $ Tup [carry, TabCon ty ys]
+    where
+      x'  = reduce x
+      (RecType _ (Tup [_, ty@(TabType n _)])) = getType mempty expr
+      (carry, ys) = mapAccumL (evalScanBody fs) x' (enumerateIdxs n)
+  PrimOp op ts xs -> evalOp op ts (map reduce xs)
+  Decl decl body  -> subReduce (reduceDecl decl) body
+  Lam _ _ _ -> expr
+  App e1 e2 -> subReduce (bindPat p (reduce e2)) body
+    where (Lam _ p body) = reduce e1
+  For p body -> TabCon ty xs
+    where
+      (ty@(TabType n _)) = getType mempty expr
+      xs = map (\i -> subReduce (bindPat p i) body) (enumerateIdxs n)
+  Get e i        -> idxTabCon (reduce e) (reduce i)
+  RecCon k r     -> RecCon k (fmap reduce r)
+  TabCon ty xs   -> TabCon ty (map reduce xs)
+  Pack e ty exTy -> Pack (reduce e) ty exTy
+  IdxLit _ _ -> expr
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
 
-exprType :: Expr -> ReduceM Type
-exprType expr = do expr' <- subst expr
-                   return $ getType mempty expr'
+subReduce :: SubstEnv -> Expr -> Val
+subReduce env expr = reduce (applySub env expr)
 
-evalScanBody :: Scope -> Expr -> Val -> Val -> (Val, Val)
-evalScanBody scope (For ip (Lam _ p body)) accum i =
-  case runReader (reduce body) env of
+evalScanBody :: Expr -> Val -> Val -> (Val, Val)
+evalScanBody (For ip (Lam _ p body)) accum i =
+  case subReduce env body of
     RecCon _ (Tup [accum', ys]) -> (accum', ys)
     val -> error $ "unexpected scan result: " ++ pprint val
-  where env =  bindPat ip i <> bindPat p accum <> asSnd scope
-evalScanBody _ e _ _ = error $ "Bad scan argument: " ++ pprint e
+  where env =  bindPat ip i <> bindPat p accum
+evalScanBody e _ _ = error $ "Bad scan argument: " ++ pprint e
 
 enumerateIdxs :: Type -> [Val]
 enumerateIdxs (IdxSetLit n) = map (IdxLit n) [0..n-1]
@@ -123,16 +110,12 @@ flattenIdx (RecCon _ r) = foldr f (1,0) $ map flattenIdx (toList r)
   where f (size, idx) (cumSize, cumIdx) = (cumSize * size, cumIdx + idx * cumSize)
 flattenIdx v = error $ "Not a valid index: " ++ pprint v
 
-reduceDecl :: Decl -> ReduceM SubstEnv
-reduceDecl (LetMono p expr) = do
-  val <- reduce expr
-  return $ bindPat p val
-reduceDecl (LetPoly (v:>_) tlam) = do
-  tlam' <- subst tlam
-  return $ asFst $ v @> L (Right tlam')
-reduceDecl (Unpack (v:>_) tv expr) = do
-  ~(Pack val ty _) <- reduce expr
-  return $ asFst $ v @> L (Right (TLam [] val)) <> tv @> T ty
+reduceDecl :: Decl -> SubstEnv
+reduceDecl (LetMono p expr) = bindPat p (reduce expr)
+reduceDecl (LetPoly (v:>_) tlam) = asFst $ v @> L (Right tlam)
+reduceDecl (Unpack (v:>_) tv expr) =
+  asFst $ v @> L (Right (TLam [] val)) <> tv @> T ty
+  where (Pack val ty _) = reduce expr
 reduceDecl (TAlias _ _ ) = error "Shouldn't have TAlias left"
 
 bindPat :: Pat -> Val -> SubstEnv
@@ -174,7 +157,7 @@ evalOp (FFICall _ name) _ xs = case name of
 evalOp op _ _ = error $ "Primop not implemented: " ++ pprint op
 
 asFun :: Val -> Val -> Val
-asFun f x = runReader (reduce (App f x)) mempty
+asFun f x = reduce (App f x)
 
 exTable :: Type -> [Expr] -> Expr
 exTable ty xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
@@ -207,6 +190,9 @@ fromBoolLit x = error $ "Not a bool lit: " ++ pprint x
 dropSubst :: MonadReader SubstEnv m => m a -> m a
 dropSubst m = do local (\(_, scope) -> (mempty, scope)) m
 
+applySub :: Subst a => SubstEnv -> a -> a
+applySub sub x = runReader (subst x) sub
+
 class Subst a where
   subst :: MonadReader SubstEnv m => a -> m a
 
@@ -223,34 +209,21 @@ instance Subst Expr where
           where env = asFst $ fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
         Just (T _ ) -> error "Expected let-bound var"
     PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
-    Decl decl body -> case decl of
-      LetMono p bound -> do
-        bound' <- subst bound
-        refreshPat p $ \p' -> do
-          body' <- subst body
-          return $ Decl (LetMono p' bound') body'
-      LetPoly (v:>ty) tlam -> do
-        tlam' <- subst tlam
-        ty' <- subst ty
-        v' <- asks $ rename v . snd
-        body' <- extendR ((v @> L (Left v'), v' @> ())) (subst body)
-        return $ Decl (LetPoly (v':>ty') tlam') body'
-      Unpack b tv bound -> do
-        bound' <- subst bound
-        refreshTBinders [tv:>idxSetKind] $ \[tv':>_] ->
-          refreshPat [b] $ \[b'] -> do
-            body' <- subst body
-            return $ Decl (Unpack b' tv' bound') body'
-      TAlias _ _ -> error "Shouldn't have TAlias left"
+    Decl decl body -> do
+      (decl', env) <- substDeclEnv decl
+      body' <- extendR env (subst body)
+      return $ Decl decl' body'
     Lam l p body -> do
-      refreshPat p $ \p' -> do
-        body' <- subst body
-        return $ Lam l p' body'
+      p' <- traverse subst p
+      (p'', env) <- renamePat p'
+      body' <- extendR env (subst body)
+      return $ Lam l p'' body'
     App e1 e2 -> liftM2 App (subst e1) (subst e2)
     For p body -> do
-      refreshPat p $ \p' -> do
-        body' <- subst body
-        return $ For p' body'
+      p' <- traverse subst p
+      (p'', env) <- renamePat p'
+      body' <- extendR env (subst body)
+      return $ For p'' body'
     Get e1 e2 -> liftM2 Get (subst e1) (subst e2)
     RecCon k r -> liftM (RecCon k) (traverse subst r)
     IdxLit _ _ -> return expr
@@ -260,30 +233,48 @@ instance Subst Expr where
     DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
     SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
 
+substDeclEnv :: MonadReader SubstEnv m => Decl -> m (Decl, SubstEnv)
+substDeclEnv decl = do
+  decl' <- subst decl
+  case decl' of
+    LetMono p rhs -> do
+      (p', env) <- renamePat p
+      return (LetMono p' rhs, env)
+    LetPoly (v:>ty) tlam -> do
+      v' <- asks $ rename v . snd
+      let env = (v @> L (Left v'), v' @> ())
+      return (LetPoly (v':>ty) tlam, env)
+    Unpack b tv bound -> do
+      ~([tv':>_], env) <- renameTBinders [tv:>idxSetKind]
+      ~([b'], env') <- extendR env $ renamePat [b]
+      return (Unpack b' tv' bound, env <> env')
+    TAlias _ _ -> error "Shouldn't have TAlias left"
+
+instance Subst Decl where
+  subst decl = case decl of
+    LetMono p bound   -> liftM2 LetMono (traverse subst p) (subst bound)
+    LetPoly b tlam    -> liftM2 LetPoly (traverse subst b) (subst tlam)
+    Unpack b tv bound -> liftM3 Unpack (subst b) (return tv) (subst bound)
+    TAlias _ _ -> error "Shouldn't have TAlias left"
+
 instance Subst TLam where
-  subst (TLam tbs body) = refreshTBinders tbs $ \tbs' ->
-                            liftM (TLam tbs') (subst body)
+  subst (TLam tbs body) = do
+    (tbs', env) <- renameTBinders tbs
+    body' <- extendR env (subst body)
+    return $ TLam tbs' body'
 
--- Might be able to de-dup these with explicit traversals, lens-style
-refreshPat :: (Traversable t, MonadReader SubstEnv m) =>
-                t Binder -> (t Binder -> m a) -> m a
-refreshPat p m = do
-  p' <- traverse (traverse subst) p
+renamePat :: (Traversable t, MonadReader SubstEnv m) =>
+                t Binder  -> m (t Binder, SubstEnv)
+renamePat p = do
   scope <- asks snd
-  let (p'', (env', scope')) =
-        flip runCat (mempty, scope) $ flip traverse p' $ \(v:>ty) -> do
-          v' <- freshCatSubst v
-          return (v':>ty)
-  extendR (fmap (L . Left) env', scope') $ m p''
+  let (p', (env, scope')) = renameBinders p scope
+  return (p', (fmap (L . Left) env, scope'))
 
-refreshTBinders :: MonadReader SubstEnv m => [TBinder] -> ([TBinder] -> m a) -> m a
-refreshTBinders bs m = do
+renameTBinders :: MonadReader SubstEnv m => [TBinder] -> m ([TBinder], SubstEnv)
+renameTBinders tbs = do
   scope <- asks snd
-  let (bs', (env', scope')) =
-        flip runCat (mempty, scope) $ flip traverse bs $ \(v:>k) -> do
-          v' <- freshCatSubst v
-          return (v':>k)
-  extendR (fmap (T . TypeVar) env', scope') $ m bs'
+  let (tbs', (env, scope')) = renameBinders tbs scope
+  return (tbs', (fmap (T . TypeVar) env, scope'))
 
 instance Subst Type where
   subst ty = case ty of
@@ -305,7 +296,6 @@ instance Subst SigmaType where
   subst (Forall ks body) = liftM (Forall ks) (subst body)
 
 instance Subst Binder where
-  -- TODO: this only substitutes the type!
   subst (v:>ty) = liftM (v:>) (subst ty)
 
 instance Subst Pat where

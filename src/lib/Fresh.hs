@@ -14,7 +14,7 @@
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
-              freshCatSubst, freshenBinder, renamesSubst) where
+              renameBinders, freshenBinder, renamesSubst) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -50,6 +50,13 @@ rename v scope | v `isin` scope = genFresh (nameTag v) scope
 
 renames :: Traversable f => f Name -> Env () -> (f Name, Env ())
 renames vs scope = runCat (traverse freshCat vs) scope
+
+renameBinders :: Traversable f =>
+                   f (BinderP ann) -> Env () -> (f (BinderP ann), (Env Name, Env ()))
+renameBinders bs scope =
+  flip runCat (mempty, scope) $ flip traverse bs $ \(v:>ann) -> do
+     v' <- freshCatSubst v
+     return (v':>ann)
 
 freshCat :: Name -> Cat (Env ()) Name
 freshCat v = do v' <- looks $ rename v
