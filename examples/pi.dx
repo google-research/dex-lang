@@ -21,7 +21,7 @@ meanAndStdDev f key =
 type NumSamps = 1000000
 
 :p meanAndStdDev @NumSamps estimatePiArea 0
-> (3.143024, 1.6411874163007711)
+> (3.143024, 1.6411874)
 
 :p meanAndStdDev @NumSamps estimatePiAvgVal 0
-> (3.1417837281469603, 0.892754742618003)
+> (3.1417837, 0.89275473)

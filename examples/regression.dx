@@ -81,4 +81,4 @@ rmsErr :: n=>Real -> n=>Real -> Real
 rmsErr truth pred = sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 0.11008144336019322
+> 0.11008144

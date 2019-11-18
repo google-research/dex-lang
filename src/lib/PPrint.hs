@@ -10,6 +10,7 @@
 
 module PPrint (pprint, pprintEsc, addErrSrc, printLitBlock) where
 
+import GHC.Float
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -86,9 +87,12 @@ instance Pretty BaseType where
     RealType -> "Real"
     StrType  -> "Str"
 
+printDouble :: Double -> Doc ann
+printDouble x = p (double2Float x)
+
 instance Pretty LitVal where
   pretty (IntLit x ) = p x
-  pretty (RealLit x) = p x
+  pretty (RealLit x) = printDouble x
   pretty (StrLit x ) = p x
   pretty (BoolLit b) = if b then "True" else "False"
 
@@ -98,7 +102,7 @@ instance Pretty b => Pretty (ExprP b) where
     Var v ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
     PrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
-            args  = case xs of [] -> mempty; _ -> tupled (map p xs)
+            args  = tupled (map p xs)
     Decl decl body -> prettyDecl decl body
     Lam pat e    -> parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
@@ -208,7 +212,7 @@ instance Pretty Statement where
 
 instance Pretty Value where
   pretty (Value (BaseType IntType ) (RecLeaf (IntVec  [v]))) = p v
-  pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = p v
+  pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = printDouble v
   pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | mod v 2 == 0 = "False"
                                                               | mod v 2 == 1 = "True"
   pretty (Value (RecType r) (RecTree r')) = p (recZipWith Value r r')
