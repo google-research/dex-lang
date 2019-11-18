@@ -2,6 +2,8 @@
 
 tmpdiff=$(mktemp)
 diff --left-column -y --color=always $1 $2 > $tmpdiff \
-       && echo OK || cat $tmpdiff
+       && echo OK || (cat $tmpdiff; false)
+status=$?
 
 rm $tmpdiff
+exit $status

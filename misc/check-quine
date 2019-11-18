@@ -5,6 +5,7 @@ errout=$(mktemp)
 
 if ${@:2} $1 > $tmpout 2> $errout ; then
     misc/check-no-diff $1 $tmpout
+    status=$?
 else
     cat $tmpout
 fi
@@ -13,3 +14,5 @@ cat $errout
 
 rm $errout
 rm $tmpout
+
+exit $status
