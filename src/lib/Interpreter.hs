@@ -7,9 +7,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Interpreter (interpPass, Subst, subst) where
+module Interpreter (interpPass) where
 
-import Control.Monad.Reader
 import Data.Foldable (fold, toList)
 import Data.List (mapAccumL)
 import Data.Void
@@ -21,7 +20,7 @@ import PPrint
 import Cat
 import Record
 import Type
-import Fresh
+import Subst
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -45,11 +44,11 @@ interpPass' :: TopDecl -> TopPassM SubstEnv Void
 interpPass' topDecl = case topDecl of
   TopDecl decl -> do
     env <- look
-    extend $ reduceDecl $ applySub env decl
+    extend $ reduceDecl $ subst env decl
     emitOutput NoOutput
   EvalCmd (Command (EvalExpr Printed) expr) -> do
     env <- look
-    emitOutput $ TextOut $ pprint $ reduce $ applySub env expr
+    emitOutput $ TextOut $ pprint $ reduce $ subst env expr
   _ -> emitOutput NoOutput
 
 reduce :: ClosedExpr -> Val
@@ -78,7 +77,7 @@ reduce expr = case expr of
   _ -> error $ "Can't evaluate in interpreter: " ++ pprint expr
 
 subReduce :: SubstEnv -> Expr -> Val
-subReduce env expr = reduce (applySub env expr)
+subReduce env expr = reduce (subst env expr)
 
 evalScanBody :: Expr -> Val -> Val -> (Val, Val)
 evalScanBody (For ip (Lam _ p body)) accum i =
@@ -186,120 +185,3 @@ fromRealLit x = error $ "Not a real lit: " ++ pprint x
 fromBoolLit :: Val -> Bool
 fromBoolLit (Lit (BoolLit x)) = x
 fromBoolLit x = error $ "Not a bool lit: " ++ pprint x
-
-dropSubst :: MonadReader SubstEnv m => m a -> m a
-dropSubst m = do local (\(_, scope) -> (mempty, scope)) m
-
-applySub :: Subst a => SubstEnv -> a -> a
-applySub sub x = runReader (subst x) sub
-
-class Subst a where
-  subst :: MonadReader SubstEnv m => a -> m a
-
-instance Subst Expr where
-  subst expr = case expr of
-    Lit _ -> return expr
-    Var v tys -> do
-      tys' <- mapM subst tys
-      x <- asks $ flip envLookup v . fst
-      case x of
-        Nothing -> return $ Var v tys'
-        Just (L (Left v')) -> return $ Var v' tys'
-        Just (L (Right (TLam tbs body))) -> dropSubst $ extendR env (subst body)
-          where env = asFst $ fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
-        Just (T _ ) -> error "Expected let-bound var"
-    PrimOp op ts xs -> liftM2 (PrimOp op) (mapM subst ts) (mapM subst xs)
-    Decl decl body -> do
-      (decl', env) <- substDeclEnv decl
-      body' <- extendR env (subst body)
-      return $ Decl decl' body'
-    Lam l p body -> do
-      p' <- traverse subst p
-      (p'', env) <- renamePat p'
-      body' <- extendR env (subst body)
-      return $ Lam l p'' body'
-    App e1 e2 -> liftM2 App (subst e1) (subst e2)
-    For p body -> do
-      p' <- traverse subst p
-      (p'', env) <- renamePat p'
-      body' <- extendR env (subst body)
-      return $ For p'' body'
-    Get e1 e2 -> liftM2 Get (subst e1) (subst e2)
-    RecCon k r -> liftM (RecCon k) (traverse subst r)
-    IdxLit _ _ -> return expr
-    TabCon ty xs -> liftM2 TabCon (subst ty) (mapM subst xs)
-    Pack e ty exTy -> liftM3 Pack (subst e) (subst ty) (subst exTy)
-    Annot e t -> liftM2 Annot (subst e) (subst t)
-    DerivAnnot e1 e2 -> liftM2 DerivAnnot (subst e1) (subst e2)
-    SrcAnnot e pos -> liftM (flip SrcAnnot pos) (subst e)
-
-substDeclEnv :: MonadReader SubstEnv m => Decl -> m (Decl, SubstEnv)
-substDeclEnv decl = do
-  decl' <- subst decl
-  case decl' of
-    LetMono p rhs -> do
-      (p', env) <- renamePat p
-      return (LetMono p' rhs, env)
-    LetPoly (v:>ty) tlam -> do
-      v' <- asks $ rename v . snd
-      let env = (v @> L (Left v'), v' @> ())
-      return (LetPoly (v':>ty) tlam, env)
-    Unpack b tv bound -> do
-      ~([tv':>_], env) <- renameTBinders [tv:>idxSetKind]
-      ~([b'], env') <- extendR env $ renamePat [b]
-      return (Unpack b' tv' bound, env <> env')
-    TAlias _ _ -> error "Shouldn't have TAlias left"
-
-instance Subst Decl where
-  subst decl = case decl of
-    LetMono p bound   -> liftM2 LetMono (traverse subst p) (subst bound)
-    LetPoly b tlam    -> liftM2 LetPoly (traverse subst b) (subst tlam)
-    Unpack b tv bound -> liftM3 Unpack (subst b) (return tv) (subst bound)
-    TAlias _ _ -> error "Shouldn't have TAlias left"
-
-instance Subst TLam where
-  subst (TLam tbs body) = do
-    (tbs', env) <- renameTBinders tbs
-    body' <- extendR env (subst body)
-    return $ TLam tbs' body'
-
-renamePat :: (Traversable t, MonadReader SubstEnv m) =>
-                t Binder  -> m (t Binder, SubstEnv)
-renamePat p = do
-  scope <- asks snd
-  let (p', (env, scope')) = renameBinders p scope
-  return (p', (fmap (L . Left) env, scope'))
-
-renameTBinders :: MonadReader SubstEnv m => [TBinder] -> m ([TBinder], SubstEnv)
-renameTBinders tbs = do
-  scope <- asks snd
-  let (tbs', (env, scope')) = renameBinders tbs scope
-  return (tbs', (fmap (T . TypeVar) env, scope'))
-
-instance Subst Type where
-  subst ty = case ty of
-    BaseType _ -> return ty
-    TypeVar v -> do
-      x <- asks $ flip envLookup v . fst
-      return $ case x of
-        Nothing      -> ty
-        Just (T ty') -> ty'
-        Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
-    ArrType l a b -> liftM2 (ArrType l) (subst a) (subst b)
-    TabType a b -> liftM2 TabType (subst a) (subst b)
-    RecType k r -> liftM (RecType k) $ traverse subst r
-    Exists body -> liftM Exists (subst body)
-    IdxSetLit _ -> return ty
-    BoundTVar _ -> return ty
-
-instance Subst SigmaType where
-  subst (Forall ks body) = liftM (Forall ks) (subst body)
-
-instance Subst Binder where
-  subst (v:>ty) = liftM (v:>) (subst ty)
-
-instance Subst Pat where
-  subst p = traverse subst p
-
-instance (Subst a, Subst b) => Subst (a, b) where
-  subst (x, y) = liftM2 (,) (subst x) (subst y)

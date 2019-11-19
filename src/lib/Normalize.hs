@@ -20,6 +20,7 @@ import PPrint
 import Fresh
 import Type
 import Pass
+import Subst
 
 type Scope = Env ()
 data TLamEnv = TLamContents NormEnv [TBinder] Expr
@@ -126,7 +127,7 @@ atomize expr = do
 -- TODO: de-shadowing might be over-zealous here
 -- TODO: ought to freshen the index binders too
 nestedScan :: Scope -> [NBinder] -> [NBinder] -> [NAtom] -> NExpr -> NExpr
-nestedScan scope [] bs xs body = runReader (nSubst body) (bindEnv bs xs, scope)
+nestedScan scope [] bs xs body = nSubst (bindEnv bs xs, scope) body
 nestedScan scope (ib:ibs) bs xs body = NScan ib bs' xs body'
   where
     vs = map binderVar bs
@@ -392,7 +393,7 @@ decompose scope expr = case expr of
 
 wrapAtomFor :: NBinder -> [NBinder] -> NAtom -> NAtom
 wrapAtomFor b@(i:>_) bs atom = NAtomicFor b atom'
-  where atom' = runReader (nSubst atom) (env, mempty)
+  where atom' = nSubst (env, mempty) atom
         env = foldMap (\(v:>_) -> v @> L (NGet (NVar v) (NVar i))) bs
 
 bindEnv :: [BinderP c] -> [a] -> FullEnv a b
@@ -417,7 +418,7 @@ renameIons :: Name -> Ions -> SimplifyM Ions
 renameIons _ Unchanged = return Unchanged
 renameIons v (Ions expr bs atoms) = do
   (bs', (env, scope)) <- catTraverse (renameBinder v) bs
-  let atoms' = runReader (mapM nSubst atoms) (env, fmap (const ()) scope)
+  let atoms' = map (nSubst (env, fmap (const ()) scope)) atoms
   return $ Ions expr bs' atoms'
 
 renameBinder :: Name -> NBinder -> SimplifyM (NBinder, SimpEnv)
@@ -429,7 +430,7 @@ renameBinder proposal (v:>ty) = do
 nSubstSimp :: NSubst a => a -> SimplifyM a
 nSubstSimp x = do
   (env, scope) <- ask
-  return $ runReader (nSubst x) (env, fmap (const ()) scope)
+  return $ nSubst (env, fmap (const ()) scope) x
 
 refreshBindersRSimp :: [NBinder] -> ([NBinder] -> SimplifyM a) -> SimplifyM a
 refreshBindersRSimp bs cont = do (bs', env) <- refreshBindersSimp bs
@@ -438,6 +439,11 @@ refreshBindersRSimp bs cont = do (bs', env) <- refreshBindersSimp bs
 fromOne :: [x] -> x
 fromOne [x] = x
 fromOne _ = error "Expected singleton list"
+
+nGet :: NAtom -> NAtom -> NAtom
+nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
+  where scope = fmap (const ()) (freeVars i)
+nGet e i = NGet e i
 
 -- === forward-mode differentiation ===
 
@@ -524,91 +530,6 @@ pureBun ty x = case ty of
   NExists _ -> error $ "NExists not implemented" -- TODO
   NIdxSetLit _ -> [x]
   NBoundTVar _ -> [x]
-
--- === capture-avoiding substitutions on NExpr and friends ===
-
-type SubstEnv = (FullEnv NAtom Name, Env ())
-
-class NSubst a where
-  nSubst :: MonadReader SubstEnv m => a -> m a
-
-instance NSubst NExpr where
-  nSubst expr = case expr of
-    NDecl decl body -> case decl of
-      NLet bs bound -> do
-        bound' <- nSubst bound
-        refreshBindersR bs $ \bs' -> do
-           body' <- nSubst body
-           return $ NDecl (NLet bs' bound') body'
-      NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-    NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
-                         liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
-    NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubst ts) (mapM nSubst xs)
-    NApp f xs -> liftM2 NApp (nSubst f) (mapM nSubst xs)
-    NAtoms xs -> liftM NAtoms $ mapM nSubst xs
-    NTabCon n ts rows ->
-      liftM3 NTabCon (nSubst n) (mapM nSubst ts) (mapM nSubst rows)
-
-instance NSubst NAtom where
-  nSubst atom = case atom of
-    NLit x -> return $ NLit x
-    NVar v -> do
-      x <- asks $ flip envLookup v . fst
-      case x of
-        Nothing -> return $ NVar v
-        Just (L x') -> local (\(_, scope) -> (mempty, scope)) (nSubst x')
-        Just (T _) -> error "Expected let-bound variable"
-    NGet e i -> do
-      e' <- nSubst e
-      i' <- nSubst i
-      return $ nGet e' i'
-    NAtomicFor b body ->
-      -- TODO: eta convert if possible
-      refreshBindersR [b] $ \[b'] -> do
-        body' <- nSubst body
-        return $ NAtomicFor b' body'
-    NLam bs body ->
-      refreshBindersR bs $ \bs' -> do
-        body' <- nSubst body
-        return $ NLam bs' body'
-    NDerivAnnot _ _ -> error $ "NDerivAnnot not implemented" -- TODO
-    NDeriv _ -> error $ "NDeriv not implemented" -- TODO
-
-instance NSubst NType where
-  nSubst ty = case ty of
-    NBaseType _ -> return ty
-    NTypeVar v -> do
-      x <- asks $ flip envLookup v . fst
-      return $ case x of Nothing -> ty
-                         Just (T x') -> NTypeVar x'
-                         Just (L _) -> error "Expected type variable"
-    NArrType as bs -> liftM2 NArrType (mapM nSubst as) (mapM nSubst bs)
-    NTabType a b -> liftM2 NTabType (nSubst a) (nSubst b)
-    NExists ts -> liftM NExists (mapM nSubst ts)
-    NIdxSetLit _ -> return ty
-    NBoundTVar _ -> return ty
-
-nGet :: NAtom -> NAtom -> NAtom
-nGet (NAtomicFor (v:>_) body) i = runReader (nSubst body) (v@>L i, scope)
-  where scope = fmap (const ()) (freeVars i)
-nGet e i = NGet e i
-
-
--- TODO: de-dup with version in simp, above
-refreshBinders :: MonadReader SubstEnv m => [NBinder] -> m ([NBinder], SubstEnv)
-refreshBinders bs = do
-  scope <- asks snd
-  ts' <- mapM nSubst ts
-  let (vs', scope') = renames vs scope
-      env' = fold $ zipWith (\v v' -> v @> L (NVar v')) vs vs'
-      bs' = zipWith (:>) vs' ts'
-  return (bs', (env', scope'))
-  where (vs, ts) = unzip [(v,t) | v:>t <- bs]
-
-refreshBindersR :: MonadReader SubstEnv m =>
-                     [NBinder] -> ([NBinder] -> m a) -> m a
-refreshBindersR bs cont = do (bs', env) <- refreshBinders bs
-                             extendR env $ cont bs'
 
 -- === stripping annotations ===
 

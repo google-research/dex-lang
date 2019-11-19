@@ -24,7 +24,7 @@ import PPrint
 import Fresh
 import Pass
 import Cat
-import Interpreter
+import Subst
 
 data Constraint = Constraint Type Type String Ctx
 type QVars = Env ()
@@ -338,7 +338,7 @@ inferKinds :: [Name] -> Type -> Except [Kind]
 inferKinds vs _ = return $ map (const TyKind) vs  -- TODO: other kinds
 
 applySubst :: Subst a => Env Type -> a -> a
-applySubst s x = runReader (subst x) (fmap T s, mempty)
+applySubst s x = subst (fmap T s, mempty) x
 
 extendRSnd :: (Monoid env, MonadReader (b, env) m) => env -> m a -> m a
 extendRSnd env m = local (\(x, env') -> (x, env' <> env)) m
