@@ -12,6 +12,8 @@ module Interpreter (interpPass) where
 import Data.Foldable (fold, toList)
 import Data.List (mapAccumL)
 import Data.Void
+import Control.Monad.State
+import qualified Data.Map.Strict as M
 
 import Syntax
 import Env
@@ -142,6 +144,8 @@ evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
 evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
   exTable ty $ filter (fromBoolLit . asFun f) xs
+evalOp Transpose _  ~[Lam _ (RecLeaf b) body, ct] =
+  fst $ sepCotangent b (transpose ct body)
 evalOp (FFICall _ name) _ xs = case name of
   "sqrt" -> realUnOp c_sqrt xs
   "sin"  -> realUnOp c_sin  xs
@@ -185,3 +189,48 @@ fromRealLit x = error $ "Not a real lit: " ++ pprint x
 fromBoolLit :: Val -> Bool
 fromBoolLit (Lit (BoolLit x)) = x
 fromBoolLit x = error $ "Not a bool lit: " ++ pprint x
+
+-- === Transposition ===
+
+type CotangentVals = MonMap Name [Val]
+
+transpose :: Val -> Expr -> CotangentVals
+transpose ct expr = case expr of
+  Lit _ -> mempty
+  Var v _ -> MonMap $ M.singleton v [ct]
+  PrimOp op ts xs -> error "todo"
+  Decl (LetMono p rhs) body
+    | hasFVs rhs -> cts <> transpose ct' rhs
+                      where (ct', cts) = sepCotangents p $ transpose ct body
+  App (Lam _ p body) e2 -> transpose ct (Decl (LetMono p e2) body)
+  _ -> error $ "Can't transpose in interpreter: " ++ pprint expr
+
+hasFVs :: Expr -> Bool
+hasFVs expr = not $ null $ envNames $ freeVars expr
+
+sepCotangent :: Binder -> CotangentVals -> (Val, CotangentVals)
+sepCotangent (v:>ty) (MonMap m) = ( sumAt ty $ M.findWithDefault [] v m
+                                  , MonMap (M.delete v m))
+
+sepCotangents :: Pat -> CotangentVals -> (Val, CotangentVals)
+sepCotangents p vs = (recTreeToVal tree, cts)
+  where (tree, cts) = flip runState vs $ flip traverse p $ \b -> do
+                        s <- get
+                        let (x, s') = sepCotangent b s
+                        put s'
+                        return x
+
+recTreeToVal :: RecTree Val -> Val
+recTreeToVal (RecLeaf v) = v
+recTreeToVal (RecTree r) = RecCon Cart $ fmap recTreeToVal r
+
+sumAt :: Type -> [Val] -> Val
+sumAt ty xs = foldr (addAt ty) (zeroAt ty) xs
+
+addAt :: Type -> Val -> Val -> Val
+addAt (BaseType RealType) ~(Lit (RealLit x)) ~(Lit (RealLit y)) = Lit (RealLit (x + y))
+addAt ty _ _ = error $ "Addition not implemented for type: " ++ pprint ty
+
+zeroAt :: Type -> Val
+zeroAt (BaseType RealType) = Lit (RealLit 0.0)
+zeroAt ty = error $ "Zero not implemented for type: " ++ pprint ty
