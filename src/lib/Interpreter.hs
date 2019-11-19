@@ -198,12 +198,24 @@ transpose :: Val -> Expr -> CotangentVals
 transpose ct expr = case expr of
   Lit _ -> mempty
   Var v _ -> MonMap $ M.singleton v [ct]
-  PrimOp op ts xs -> error "todo"
+  PrimOp op ts xs -> transposeOp op ct ts xs
   Decl (LetMono p rhs) body
     | hasFVs rhs -> cts <> transpose ct' rhs
                       where (ct', cts) = sepCotangents p $ transpose ct body
-  App (Lam _ p body) e2 -> transpose ct (Decl (LetMono p e2) body)
+  App e1 e2
+    | hasFVs e2 -> cts <> transpose ct' e2
+                     where
+                       (Lam _ p body) = reduce e1
+                       (ct', cts) = sepCotangents p $ transpose ct body
   _ -> error $ "Can't transpose in interpreter: " ++ pprint expr
+
+transposeOp :: Builtin -> Val -> [Type] -> [Val] -> CotangentVals
+transposeOp op ct ts xs = case (op, ts, xs) of
+  (FAdd, _, ~[x1, x2]) -> transpose ct x1 <> transpose ct x2
+  (FMul, _, ~[x1, x2]) | hasFVs x2 -> let ct' = mul ct (reduce x1)
+                                      in transpose ct' x2
+                       | otherwise -> let ct' = mul ct (reduce x2)
+                                      in transpose ct' x1
 
 hasFVs :: Expr -> Bool
 hasFVs expr = not $ null $ envNames $ freeVars expr
@@ -219,6 +231,9 @@ sepCotangents p vs = (recTreeToVal tree, cts)
                         let (x, s') = sepCotangent b s
                         put s'
                         return x
+
+mul :: Val -> Val -> Val
+mul x y = realBinOp (*) [x, y]
 
 recTreeToVal :: RecTree Val -> Val
 recTreeToVal (RecLeaf v) = v

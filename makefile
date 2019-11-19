@@ -29,7 +29,7 @@ tests: quine-tests quine-tests-interp repl-test stack-tests
 
 quine-tests: $(quine-test-targets)
 
-quine-tests-interp: runinterp-eval-tests runinterp-interp-tests
+quine-tests-interp: runinterp-eval-tests runinterp-ad-tests runinterp-interp-tests
 
 run-%: examples/%.dx
 	misc/check-quine $^ $(dex) script --lit --allow-errors
