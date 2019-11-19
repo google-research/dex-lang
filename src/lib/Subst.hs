@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, NSubst, nSubst) where
+module Subst (Scope, Subst, subst, NSubst, nSubst) where
 
 import Data.Foldable
 

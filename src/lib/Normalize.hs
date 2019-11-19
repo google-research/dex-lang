@@ -22,7 +22,6 @@ import Type
 import Pass
 import Subst
 
-type Scope = Env ()
 data TLamEnv = TLamContents NormEnv [TBinder] Expr
 type NormEnv = FullEnv (SigmaType, Either (RecTree Name) TLamEnv) (RecTree NType)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a

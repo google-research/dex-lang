@@ -13,6 +13,8 @@ import Data.Foldable (fold, toList)
 import Data.List (mapAccumL)
 import Data.Void
 import Control.Monad.State
+import Control.Monad.Reader
+import Control.Monad.Identity
 import qualified Data.Map.Strict as M
 
 import Syntax
@@ -23,6 +25,7 @@ import Cat
 import Record
 import Type
 import Subst
+import Fresh
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -36,7 +39,6 @@ foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
 type ClosedExpr = Expr -- no free variables
 type Val        = Expr -- irreducible expressions only
-type Scope = Env ()
 type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 
 interpPass :: TopPass TopDecl Void
@@ -144,6 +146,7 @@ evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
 evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
   exTable ty $ filter (fromBoolLit . asFun f) xs
+evalOp Linearize _ ~[Lam _ (RecLeaf b) body, x] = runLinearize b body x
 evalOp Transpose _  ~[Lam _ (RecLeaf b) body, ct] =
   fst $ sepCotangent b (transpose ct body)
 evalOp (FFICall _ name) _ xs = case name of
@@ -190,6 +193,95 @@ fromBoolLit :: Val -> Bool
 fromBoolLit (Lit (BoolLit x)) = x
 fromBoolLit x = error $ "Not a bool lit: " ++ pprint x
 
+-- === Linearization ===
+
+type DVal = Val
+type DEnv = Env (Type, DVal)
+type DerivM a = ReaderT DEnv (CatT (Env Type, [Decl]) Identity) a
+
+runLinearize :: Binder -> Expr -> Val -> Val
+runLinearize (v:>ty) body x =
+  pair outPrimal $ Lam Lin (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
+  where
+    t = rawName "t"
+    env = v @> (ty, pair x (Var t []))
+    (out, (_, decls)) = runIdentity $ flip runCatT (t@>ty, []) $
+                          flip runReaderT env $ linearize body
+    (outPrimal, outTangent) = fromPair out
+
+linearize :: Expr -> DerivM DVal
+linearize expr = case expr of
+  Lit _ -> return $ pair expr (zeroAt ty)
+    where ty = getType mempty expr
+  Var v _ -> do
+    val <- asks $ flip envLookup v
+    case val of
+      Nothing -> error $ "Unexpected var: " ++ pprint v
+      Just (_, x)  -> return x
+  PrimOp op ts xs -> do
+    xs' <- mapM linearize xs
+    linearizePrimOp op ts xs'
+  Decl (LetMono p rhs) body -> do
+    rhs' <- linearize rhs
+    extendR (bindPatDeriv p rhs') (linearize body)
+  App e1 e2 -> do
+    e2' <- linearize e2
+    ~(Decl (LetMono p xs) (Lam _ p' body)) <- linearize e1
+    let env = bindPatDeriv p xs <> bindPatDeriv p' e2'
+    extendR env $ linearize body
+  Lam NonLin _ _ -> do
+    env <- ask
+    return $ makeClosure env expr
+  RecCon k r -> liftM (RecCon k) (traverse linearize r)
+  _ -> error $ "Linearization not implemented for: " ++ pprint expr
+
+type Atom = Expr
+
+pair :: Val -> Val -> Val
+pair x y = RecCon Cart $ Tup [x, y]
+
+linearizePrimOp :: Builtin -> [Type] -> [DVal] -> DerivM DVal
+linearizePrimOp op ts xs = case (op, ts, xs) of
+  (FMul, _, ~[x, y]) -> do
+     tOut <- emit $ PrimOp FAdd [] [ PrimOp FMul [] [xp, yt]
+                                   , PrimOp FMul [] [yp, xt]]
+     let pOut = mul xp yp
+     return $ pair pOut tOut
+     where (xp, xt) = fromPair x
+           (yp, yt) = fromPair y
+  (FAdd, _, ~[x, y]) -> do
+     tOut <- emit $ PrimOp FAdd [] [xt, yt]
+     let pOut = add xp yp
+     return $ pair pOut tOut
+     where (xp, xt) = fromPair x
+           (yp, yt) = fromPair y
+  _ -> error $ "Linearization not implemented for " ++ pprint op
+
+emit :: Expr -> DerivM Atom
+emit expr = do
+  scope <- looks fst
+  let v = rename (rawName "t") scope
+  let ty = getType (fmap (L . asSigma) scope) expr
+  extend (v@>ty, [LetMono (RecLeaf (v:>ty)) expr])
+  return $ Var v []
+
+makeClosure :: DEnv -> Expr -> Expr
+makeClosure env expr = Decl (LetMono p xs') expr
+  where
+    (vs, tysxs) = unzip $ envPairs $ envIntersect (freeVars expr) env
+    (tys, xs) = unzip tysxs
+    p = RecTree $ Tup $ [RecLeaf (v:>ty) | (v,ty) <- zip vs tys]
+    xs' = RecCon Cart $ Tup xs
+
+bindPatDeriv :: Pat -> Val -> DEnv
+bindPatDeriv (RecLeaf (v:>ty)) val = v @> (ty, val)
+bindPatDeriv (RecTree r) (RecCon _ r') = fold $ recZipWith bindPatDeriv r r'
+bindPatDeriv _ _ = error "Bad pattern"
+
+fromPair :: Expr -> (Expr, Expr)
+fromPair (RecCon _ (Tup [x, y])) = (x, y)
+fromPair expr = error $ "Not a pair: " ++ pprint expr
+
 -- === Transposition ===
 
 type CotangentVals = MonMap Name [Val]
@@ -213,11 +305,12 @@ transpose ct expr = case expr of
 
 transposeOp :: Builtin -> Val -> [Type] -> [Val] -> CotangentVals
 transposeOp op ct ts xs = case (op, ts, xs) of
-  (FAdd, _, ~[x1, x2]) -> transpose ct x1 <> transpose ct x2
-  (FMul, _, ~[x1, x2]) | hasFVs x2 -> let ct' = mul ct (reduce x1)
-                                      in transpose ct' x2
-                       | otherwise -> let ct' = mul ct (reduce x2)
-                                      in transpose ct' x1
+  (FAdd, _, ~[x, y]) -> transpose ct x <> transpose ct y
+  (FMul, _, ~[x, y]) | hasFVs y  -> let ct' = mul ct (reduce x)
+                                    in transpose ct' y
+                     | otherwise -> let ct' = mul ct (reduce y)
+                                    in transpose ct' x
+  _ -> error $ "Transpose not implemented for " ++ pprint op
 
 hasFVs :: Expr -> Bool
 hasFVs expr = not $ null $ envNames $ freeVars expr
@@ -236,6 +329,9 @@ sepCotangents p vs = (recTreeToVal tree, cts)
 
 mul :: Val -> Val -> Val
 mul x y = realBinOp (*) [x, y]
+
+add :: Val -> Val -> Val
+add x y = realBinOp (+) [x, y]
 
 recTreeToVal :: RecTree Val -> Val
 recTreeToVal (RecLeaf v) = v
