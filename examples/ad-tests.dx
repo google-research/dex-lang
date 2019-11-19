@@ -25,3 +25,14 @@
    f = llam x. (2.0 + 3.0) * x
    tlinear f 1.0
 > 5.0
+
+:p f :: (Real, Real) --o Real
+   f = llam z. (x, y) = z
+               x + y * 2.0
+   tlinear f 1.0
+> (1.0, 2.0)
+
+:p f :: Real --o (Real, Real)
+   f = llam x. (x, x * 2.0)
+   tlinear f (1.0, 3.0)
+> 7.0

@@ -207,6 +207,8 @@ transpose ct expr = case expr of
                      where
                        (Lam _ p body) = reduce e1
                        (ct', cts) = sepCotangents p $ transpose ct body
+  RecCon Cart r -> fold $ recZipWith transpose r' r
+    where (RecCon _ r') = ct
   _ -> error $ "Can't transpose in interpreter: " ++ pprint expr
 
 transposeOp :: Builtin -> Val -> [Type] -> [Val] -> CotangentVals
@@ -243,9 +245,16 @@ sumAt :: Type -> [Val] -> Val
 sumAt ty xs = foldr (addAt ty) (zeroAt ty) xs
 
 addAt :: Type -> Val -> Val -> Val
-addAt (BaseType RealType) ~(Lit (RealLit x)) ~(Lit (RealLit y)) = Lit (RealLit (x + y))
+addAt (BaseType RealType) x y = realBinOp (+) [x, y]
+addAt (RecType k r) ~(RecCon _ xs) ~(RecCon _ ys) = RecCon k $
+  fmap (\(ty,(x,y)) -> addAt ty x y) (recZip3 r xs ys)
 addAt ty _ _ = error $ "Addition not implemented for type: " ++ pprint ty
 
 zeroAt :: Type -> Val
 zeroAt (BaseType RealType) = Lit (RealLit 0.0)
+zeroAt (RecType k r) = RecCon k $ fmap zeroAt r
 zeroAt ty = error $ "Zero not implemented for type: " ++ pprint ty
+
+recZip3 :: Record a -> Record b -> Record c -> Record (a, (b, c))
+recZip3 r1 r2 r3 = recZipWith (,) r1 $ recZipWith (,) r2 r3
+
