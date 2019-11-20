@@ -34,6 +34,7 @@ foreign import ccall "cos"  c_cos  :: Double -> Double
 foreign import ccall "tan"  c_tan  :: Double -> Double
 foreign import ccall "exp"  c_exp  :: Double -> Double
 foreign import ccall "log"  c_log  :: Double -> Double
+foreign import ccall "pow"  c_pow  :: Double -> Double -> Double
 foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
@@ -156,6 +157,7 @@ evalOp (FFICall _ name) _ xs = case name of
   "tan"  -> realUnOp c_tan  xs
   "exp"  -> realUnOp c_exp  xs
   "log"  -> realUnOp c_log  xs
+  "pow"  -> realBinOp c_pow  xs
   "randunif"  -> case xs of [Lit (IntLit x)] -> Lit $ RealLit $ c_unif x
                             _ -> error "bad arg"
   "threefry2x32" -> intBinOp c_threefry xs
@@ -204,10 +206,37 @@ runLinearize (v:>ty) body x =
   pair outPrimal $ Lam Lin (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
   where
     t = rawName "t"
-    env = v @> (ty, pair x (Var t []))
-    (out, (_, decls)) = runIdentity $ flip runCatT (t@>ty, []) $
-                          flip runReaderT env $ linearize body
-    (outPrimal, outTangent) = fromPair out
+    env = v @> (ty, makeDual ty x (Var t []))
+    outTy = getType (v @> L (asSigma ty)) body
+    (out, (_, decls)) =
+        runIdentity $ flip runCatT (t@>ty, []) $ flip runReaderT env $ linearize body
+    (outPrimal, outTangent) = fromDual outTy out
+
+makeDual :: Type -> Val -> Expr -> DVal
+makeDual (BaseType RealType) x t = pair x t
+makeDual (RecType Cart tys) ~(RecCon _ rx) rt = RecCon Cart $ recZipWith f (recNameVals tys) rx
+  where f :: (RecField, Type) -> Val -> DVal
+        f (field, eltTy) x = makeDual eltTy x (getField tys rt field)
+makeDual ty@(TabType n bodyTy) xs t =
+  TabCon ty [makeDual bodyTy (idxTabCon xs i) (Get t i) | i <- enumerateIdxs n]
+makeDual ty _ _ = error $ "Can't make dual number for type: " ++ pprint ty
+
+fromDual :: Type -> DVal -> (Val, Val)
+fromDual (BaseType RealType) ~(RecCon _ (Tup [x, t])) = (x, t)
+fromDual (RecType _ r) (RecCon _ xts) = (RecCon Cart (fmap fst xts'),
+                                         RecCon Cart (fmap snd xts'))
+  where xts' = recZipWith fromDual r xts
+fromDual ty@(TabType _ eltTy) (TabCon _ xts) = (TabCon ty (map fst xts'),
+                                                TabCon ty (map snd xts'))
+  where xts' = map (fromDual eltTy) xts
+fromDual ty _ = error $ "Not a valid type for duals: " ++ pprint ty
+
+-- TODO: replace this with a proper embedding
+getField :: Record Type -> Expr -> RecField -> Expr
+getField tys expr field = Decl (LetMono p' expr) (Var v [])
+  where v = rawName "elt"
+        p = fmap (\ty -> RecLeaf (rawName "_" :> ty)) tys
+        p' = RecTree $ recUpdate field (RecLeaf (v:> recGet tys field)) p
 
 linearize :: Expr -> DerivM DVal
 linearize expr = case expr of
@@ -229,6 +258,13 @@ linearize expr = case expr of
     ~(Decl (LetMono p xs) (Lam _ p' body)) <- linearize e1
     let env = bindPatDeriv p xs <> bindPatDeriv p' e2'
     extendR env $ linearize body
+  For p body -> do
+    ~(ty@(TabType n _)) <- linType expr
+    xs <- mapM (\i -> linearize (subst (bindPat p i) body)) (enumerateIdxs n)
+    return $ TabCon ty xs
+  Get e i -> do
+    e' <- linearize e
+    return $ idxTabCon e' (reduce i)
   Lam NonLin _ _ -> do
     env <- ask
     return $ makeClosure env expr
@@ -239,6 +275,11 @@ type Atom = Expr
 
 pair :: Val -> Val -> Val
 pair x y = RecCon Cart $ Tup [x, y]
+
+linType :: Expr -> DerivM Type
+linType expr = do
+  env <- ask
+  return $ getType (fmap (L . asSigma . fst) env) expr
 
 linearizePrimOp :: Builtin -> [Type] -> [DVal] -> DerivM DVal
 linearizePrimOp op ts xs | nLin == nArgs = do
@@ -342,15 +383,10 @@ sumAt ty xs = foldr (addAt ty) (zeroAt ty) xs
 
 addAt :: Type -> Val -> Val -> Val
 addAt (BaseType RealType) x y = PrimOp FAdd [] [x, y]
-addAt (RecType k r) ~(RecCon _ xs) ~(RecCon _ ys) = RecCon k $
-  fmap (\(ty,(x,y)) -> addAt ty x y) (recZip3 r xs ys)
+addAt (RecType k r) ~(RecCon _ xs) ~(RecCon _ ys) = RecCon k $ (recZipWith3 addAt r xs ys)
 addAt ty _ _ = error $ "Addition not implemented for type: " ++ pprint ty
 
 zeroAt :: Type -> Val
 zeroAt (BaseType RealType) = Lit (RealLit 0.0)
 zeroAt (RecType k r) = RecCon k $ fmap zeroAt r
 zeroAt ty = error $ "Zero not implemented for type: " ++ pprint ty
-
-recZip3 :: Record a -> Record b -> Record c -> Record (a, (b, c))
-recZip3 r1 r2 r3 = recZipWith (,) r1 $ recZipWith (,) r2 r3
-

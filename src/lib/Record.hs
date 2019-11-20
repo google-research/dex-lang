@@ -8,7 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Record (Record (..), RecTree (..),
-               zipWithRecord, recZipWith, recTreeZipEq,
+               zipWithRecord, recZipWith, recZipWith3, recTreeZipEq,
                recGet, otherFields, recNameVals, RecField,
                recTreeJoin, unLeaf, RecTreeZip (..), recTreeNamed,
                recUpdate, fstField, sndField, recAsList, tupField, fromLeaf
@@ -59,6 +59,10 @@ zipWithRecord _ _ _ = Nothing
 
 recZipWith :: (a -> b -> c) -> Record a -> Record b -> Record c
 recZipWith f r r' = unJust (zipWithRecord f r r')
+
+
+recZipWith3 :: (a -> b -> c -> d) -> Record a -> Record b -> Record c -> Record d
+recZipWith3 f r1 r2 r3 = recZipWith ($) (recZipWith f r1 r2) r3
 
 recTreeJoin :: RecTree (RecTree a) -> RecTree a
 recTreeJoin (RecLeaf t) = t
