@@ -241,21 +241,24 @@ pair :: Val -> Val -> Val
 pair x y = RecCon Cart $ Tup [x, y]
 
 linearizePrimOp :: Builtin -> [Type] -> [DVal] -> DerivM DVal
-linearizePrimOp op ts xs = case (op, ts, xs) of
-  (FMul, _, ~[x, y]) -> do
-     tOut <- emit $ PrimOp FAdd [] [ PrimOp FMul [] [xp, yt]
-                                   , PrimOp FMul [] [yp, xt]]
-     let pOut = mul xp yp
-     return $ pair pOut tOut
-     where (xp, xt) = fromPair x
-           (yp, yt) = fromPair y
-  (FAdd, _, ~[x, y]) -> do
-     tOut <- emit $ PrimOp FAdd [] [xt, yt]
-     let pOut = add xp yp
-     return $ pair pOut tOut
-     where (xp, xt) = fromPair x
-           (yp, yt) = fromPair y
-  _ -> error $ "Linearization not implemented for " ++ pprint op
+linearizePrimOp op ts xs | nLin == nArgs = do
+  tOut <- emit $ case prodKind of
+            Cart -> PrimOp op ts xsTangent
+            Tens -> sumAt outTy [PrimOp op ts (swapAt i t xsPrimal)
+                                | (i, t) <- zip [0..] xsTangent]
+  return $ pair pOut tOut
+  where
+    BuiltinType _ (nLin, prodKind) xTys outTy = builtinType op
+    nArgs = length xTys
+    xsPrimal  = map (fst . fromPair) xs
+    xsTangent = map (snd . fromPair) xs
+    pOut = reduce $ PrimOp op ts xsPrimal
+linearizePrimOp op _ _ = error $ "Linearization not implemented for " ++ pprint op
+
+swapAt :: Int -> a -> [a] -> [a]
+swapAt _ _ [] = error "swapping to empty list"
+swapAt 0 y (_:xs) = y:xs
+swapAt n y (x:xs) = x:(swapAt (n-1) y xs)
 
 emit :: Expr -> DerivM Atom
 emit expr = do
@@ -316,7 +319,7 @@ hasFVs :: Expr -> Bool
 hasFVs expr = not $ null $ envNames $ freeVars expr
 
 sepCotangent :: Binder -> CotangentVals -> (Val, CotangentVals)
-sepCotangent (v:>ty) (MonMap m) = ( sumAt ty $ M.findWithDefault [] v m
+sepCotangent (v:>ty) (MonMap m) = ( reduce $ sumAt ty $ M.findWithDefault [] v m
                                   , MonMap (M.delete v m))
 
 sepCotangents :: Pat -> CotangentVals -> (Val, CotangentVals)
@@ -330,9 +333,6 @@ sepCotangents p vs = (recTreeToVal tree, cts)
 mul :: Val -> Val -> Val
 mul x y = realBinOp (*) [x, y]
 
-add :: Val -> Val -> Val
-add x y = realBinOp (+) [x, y]
-
 recTreeToVal :: RecTree Val -> Val
 recTreeToVal (RecLeaf v) = v
 recTreeToVal (RecTree r) = RecCon Cart $ fmap recTreeToVal r
@@ -341,7 +341,7 @@ sumAt :: Type -> [Val] -> Val
 sumAt ty xs = foldr (addAt ty) (zeroAt ty) xs
 
 addAt :: Type -> Val -> Val -> Val
-addAt (BaseType RealType) x y = realBinOp (+) [x, y]
+addAt (BaseType RealType) x y = PrimOp FAdd [] [x, y]
 addAt (RecType k r) ~(RecCon _ xs) ~(RecCon _ ys) = RecCon k $
   fmap (\(ty,(x,y)) -> addAt ty x y) (recZip3 r xs ys)
 addAt ty _ _ = error $ "Addition not implemented for type: " ++ pprint ty
