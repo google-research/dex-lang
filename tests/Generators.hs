@@ -9,6 +9,7 @@
 
 module Generators where
 
+import GHC.Float
 import Control.Monad
 import Test.QuickCheck
 import qualified Data.Map.Strict as M
@@ -131,10 +132,13 @@ instance Arbitrary Builtin where
 instance Arbitrary LitVal where
   arbitrary = oneof
     [ liftM IntLit  arb
-    , liftM RealLit arb
+    , liftM (RealLit . roundTripDouble) arb
     , liftM BoolLit arb ]
   shrink = genericShrink
   -- TODO: StrLit
+
+roundTripDouble :: Double -> Double
+roundTripDouble x = read (show (double2Float x))
 
 instance Arbitrary Ann where
   arbitrary = oneof [return NoAnn, liftM Ann arb]

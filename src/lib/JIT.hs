@@ -184,7 +184,7 @@ constOperand StrType  _ = error "Not implemented"
 compileTopProg :: ImpProg -> CompileM CompiledProg
 compileTopProg prog = do
   compileProg prog
-  finishBlock (L.Ret Nothing []) (L.Name "")
+  finishBlock (L.Ret Nothing []) (L.Name "<ignored>")
   specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
@@ -297,8 +297,8 @@ litVal :: LitVal -> Operand
 litVal lit = case lit of
   IntLit  x -> litInt x
   RealLit x -> litReal x
-  BoolLit True  -> L.ConstantOperand $ C.Int 1 1
-  BoolLit False -> L.ConstantOperand $ C.Int 1 0
+  BoolLit True  -> litInt 1
+  BoolLit False -> litInt 0
   StrLit _ -> error "Not implemented"
 
 litInt :: Int -> Operand
@@ -320,9 +320,12 @@ add :: Long -> Long -> CompileM Long
 add x y = evalInstr "add" longTy $ L.Add False False x y []
 
 evalInstr :: String -> L.Type -> Instruction -> CompileM Operand
-evalInstr s ty instr = do v <- freshName s
-                          addInstr $ v L.:= instr
-                          return $ L.LocalReference ty v
+evalInstr s ty instr = do
+  v <- freshName s'
+  addInstr $ v L.:= instr
+  return $ L.LocalReference ty v
+  where s' = case s of "" -> "v"
+                       _  -> s
 
 addPtr :: Ptr Operand -> Long -> CompileM (Ptr Operand)
 addPtr (Ptr ptr ty) i = do ptr' <- evalInstr "ptr" (L.ptr (scalarTy ty)) instr
@@ -437,7 +440,7 @@ charPtrTy :: L.Type
 charPtrTy = L.ptr (L.IntegerType 8)
 
 boolTy :: L.Type
-boolTy = L.IntegerType 1
+boolTy = L.IntegerType 64
 
 longTy :: L.Type
 longTy = L.IntegerType 64

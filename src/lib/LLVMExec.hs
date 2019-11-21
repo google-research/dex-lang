@@ -28,7 +28,8 @@ foreign import ccall "dynamic"
   haskFun :: FunPtr (IO ()) -> IO ()
 
 evalJit :: L.Module -> IO ()
-evalJit m =
+evalJit m = do
+  T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
       runPasses m'
@@ -49,7 +50,8 @@ runPasses :: Mod.Module -> IO ()
 runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
 
 showLLVM :: L.Module -> IO String
-showLLVM m =
+showLLVM m = do
+  T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
       prePass <- showModule m'

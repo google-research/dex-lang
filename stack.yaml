@@ -8,7 +8,3 @@ resolver: lts-14.0
 
 packages:
 - .
-
-extra-deps:
-- llvm-hs-7.0.1
-- llvm-hs-pure-7.0.0
