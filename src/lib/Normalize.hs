@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Normalize (normalizePass, simpPass, stripAnnotPass) where
+module Normalize (normalizePass, simpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -102,10 +102,6 @@ normalize expr = case expr of
     ts' <- liftM toList $ normalizeTy ty
     rows' <- mapM normalize rows
     return $ NTabCon (NIdxSetLit n) ts' rows'
-  DerivAnnot e ann -> do
-    ~[e'] <- atomize e
-    ~[ann'] <- atomize ann
-    return $ NAtoms [NDerivAnnot e' ann']
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 -- Only produces atoms without binders (i.e. no NLam/NAtomicFor)
@@ -304,10 +300,6 @@ simplifyAtom atom = case atom of
     refreshBindersRSimp bs $ \bs' -> do
       body' <- simplify False body
       return $ NLam bs' body'
-  NDeriv f -> do
-    f' <- simplifyAtom f
-    expandDerivTop f'
-  NDerivAnnot f df -> liftM2 NDerivAnnot (simplifyAtom f) (simplifyAtom df)
 
 materializeAtoms :: [NAtom] -> SimplifyM ([NAtom], [NDecl], SimpEnv)
 materializeAtoms xs = do
@@ -443,121 +435,3 @@ nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
   where scope = fmap (const ()) (freeVars i)
 nGet e i = NGet e i
-
--- === forward-mode differentiation ===
-
-type OneOrTwo a = [a]
-type TangentBun = OneOrTwo NAtom
-type DerivEnv = (Env TangentBun, Env ())
-type DerivM = Reader DerivEnv
-
-expandDerivTop :: NAtom -> SimplifyM NAtom
-expandDerivTop atom@(NVar _) = return (NDeriv atom)
-expandDerivTop atom = do
-  typeEnv <- asks snd
-  let env = flip fmapNames typeEnv $ \v x ->
-               case x of L ty -> pureBun ty (NVar v)
-                         T () -> [] -- TODO: filter properly
-      scope = fmap (const ()) typeEnv
-      atom' = fromOne $ runReader (derivNAtom atom) (env, scope)
-  simplifyAtom atom'
-
-derivNExpr :: NExpr -> DerivM NExpr
-derivNExpr expr = case expr of
-  NDecl decl body -> case decl of
-    NLet bs bound -> do
-      bound' <- derivNExpr bound
-      -- TODO: refresh binders and introduce names for tangents
-      updateDerivBinders bs $ \bs' -> do
-        body' <- derivNExpr body
-        return $ NDecl (NLet bs' bound') body'
-    _ -> error "Not implemented"
-  -- NScan b bs xs e -> refreshBindersR (b:bs) $ \(b':bs') ->
-  --                      liftM2 (NScan b' bs') (mapM nSubst xs) (nSubst e)
-  NApp f xs -> do
-    ~[f'] <- derivNAtom f
-    xs' <- liftM concat $ mapM derivNAtom xs
-    return $ NApp f' xs'
-  NAtoms xs -> liftM (NAtoms . concat) $ mapM derivNAtom xs
-  _ -> error $ "Don't know how to differentiate " ++ pprint expr
-
-derivNAtom :: NAtom -> DerivM TangentBun
-derivNAtom atom = case atom of
-  NLit x -> return $ pureBun (NBaseType (litType x)) atom
-  NVar v -> asks $ (!v) . fst
-  NGet x i -> do
-    xs <- derivNAtom x
-    ~[i'] <- derivNAtom i
-    return $ map (flip NGet i') xs
-  NLam bs body -> do
-    updateDerivBinders bs $ \bs' -> do
-      body' <- derivNExpr body
-      return [NLam bs' body']
-  NAtomicFor b x -> do -- TODO: refresh binder
-    xs <- derivNAtom x
-    updateDerivBinders [b] $ \[b'] ->
-      return $ map (NAtomicFor b') xs
-  NDerivAnnot _ d -> return [d]
-     -- Need to apply substitution here? Probably yes if we have local free vars
-     -- Should annot be OneOrTwo?
-  NDeriv _ -> error "Shouldn't see derivatives here"
-
-updateDerivBinders :: [NBinder] -> ([NBinder] -> DerivM a) -> DerivM a
-updateDerivBinders bs cont = do
-  (bs', env) <- catTraverse derivBinder bs
-  extendR env $ cont (concat bs')
-
-derivBinder :: NBinder -> DerivM (OneOrTwo NBinder, DerivEnv)
-derivBinder (v:>ty) = do
-  let  tys' = tangentBunNType ty
-       vs'  = case tys' of [_]   -> [v]
-                           [_,_] -> [v, rawName (nameTag v)]
-                           _ -> error $ "Too many types: " ++ pprint tys'
-  (vs'', scope) <- asks $ renames vs' . snd
-  let env = (v @> map NVar vs'')
-  return (zipWith (:>) vs'' tys', (env, scope))
-
--- TODO: make this take a scope for fresh index varsto freshen the index vars
-pureBun :: NType -> NAtom -> TangentBun
-pureBun ty x = case ty of
-  NBaseType b -> case b of RealType -> [x, NLit (RealLit 0.0)]
-                           _ -> [x]
-  NTypeVar _ -> [x]  -- can only be an index set
-  NArrType _ _ -> [NDeriv x]
-  NTabType n a -> map (NAtomicFor (i:>n)) (pureBun a (NGet x (NVar i)))
-     where i = rawName "i" -- Shadowing ok here? Prefer 'fanout' from prelude
-  NExists _ -> error $ "NExists not implemented" -- TODO
-  NIdxSetLit _ -> [x]
-  NBoundTVar _ -> [x]
-
--- === stripping annotations ===
-
-stripAnnotPass :: NTopDecl -> TopPassM () NTopDecl
-stripAnnotPass topDecl = return $ case topDecl of
-  NTopDecl decl -> NTopDecl $ stripDerivAnnotDecl decl
-  NEvalCmd (Command cmd (ty, tys, expr)) ->
-    NEvalCmd (Command cmd (ty, tys, expr'))
-    where expr' = stripDerivAnnot expr
-
--- TODO: find a simpler way to do passes that only touch a few constructors
-stripDerivAnnotDecl :: NDecl -> NDecl
-stripDerivAnnotDecl decl = case decl of
-  NLet bs bound -> NLet bs (stripDerivAnnot bound)
-  NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-
-stripDerivAnnot :: NExpr -> NExpr
-stripDerivAnnot expr = case expr of
-  NDecl decl body -> NDecl (stripDerivAnnotDecl decl) (recur body)
-  NScan b bs xs e -> NScan b bs (map recurAtom xs) (recur e)
-  NPrimOp b ts xs -> NPrimOp b ts (map recurAtom xs)
-  NApp f xs -> NApp (recurAtom f) (map recurAtom xs)
-  NAtoms xs -> NAtoms $ map recurAtom xs
-  NTabCon n ts rows -> NTabCon n ts (map recur rows)
-  where recur = stripDerivAnnot
-        recurAtom = stripDerivAnnotAtom
-
-stripDerivAnnotAtom :: NAtom -> NAtom
-stripDerivAnnotAtom atom = case atom of
-  NDerivAnnot f _ -> f
-  NLam bs body -> NLam bs (stripDerivAnnot body)
-  _ -> atom

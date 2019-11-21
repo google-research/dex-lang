@@ -123,11 +123,6 @@ getType' expr = case expr of
       rhsTy <- recur e
       assertEq (instantiateTVs [ty] exBody) rhsTy "Pack"
       return exTy
-    DerivAnnot e ann -> do
-      ty <- recur e
-      annTy <- recur ann
-      assertEq (tangentBunType ty) annTy "deriv"
-      return ty
     IdxLit n i | 0 <= i && i < n -> return $ IdxSetLit n
                | otherwise -> throw TypeErr $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
@@ -426,15 +421,6 @@ atomType atom = case atom of
     mapM_ checkNBinder bs
     bodyTys <- extendR (nBinderEnv bs) (getNType body)
     return $ NArrType (map binderAnn bs) bodyTys
-  NDeriv f -> do
-    ty <- atomType f
-    let [ty'] = tangentBunNType ty
-    return ty'
-  NDerivAnnot f ann -> do
-    fTy <- atomType f
-    annTy <- atomType ann
-    assertEq (tangentBunNType fTy) [annTy] "deriv ann"
-    return fTy
 
 checkNTy :: NType -> NTypeM ()
 checkNTy _ = return () -- TODO!

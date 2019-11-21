@@ -160,10 +160,6 @@ check expr reqTy = case expr of
     let t = instantiateTVs [ty] exBody
     e' <- check e t
     return $ Pack e' ty exTy
-  DerivAnnot e ann -> do
-    e' <- check e reqTy
-    ann' <- check ann (tangentBunType reqTy) -- TODO: handle type vars and meta vars)
-    return $ DerivAnnot e' ann'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     constrainReq annTy

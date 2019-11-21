@@ -317,7 +317,6 @@ ops = [ [postFixRule, appRule]
       , [binOpRule "+" FAdd, binOpRule "- " FSub]
       , [binOpRule "<" FLT, binOpRule ">" FGT]
       , [InfixR (symbol "$" >> return App)]
-      , [InfixL (symbol "#deriv" >> return DerivAnnot)]
        ]
 
 idxExpr :: Parser UExpr

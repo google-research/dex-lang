@@ -53,7 +53,6 @@ data ExprP b =
           | TabCon b [ExprP b]
           | IdxLit IdxSetVal Int
           | Annot (ExprP b) Type
-          | DerivAnnot (ExprP b) (ExprP b)
           | SrcAnnot (ExprP b) SrcPos
           | Pack (ExprP b) Type Type
              deriving (Eq, Ord, Show, Generic)
@@ -214,8 +213,6 @@ data NAtom = NLit LitVal
            | NGet NAtom NAtom
            | NLam [NBinder] NExpr
            | NAtomicFor NBinder NAtom
-           | NDerivAnnot NAtom NAtom
-           | NDeriv NAtom
               deriving (Show)
 
 data NType = NBaseType BaseType
@@ -384,7 +381,6 @@ instance HasVars b => HasVars (ExprP b) where
     TabCon ty xs -> freeVars ty <> foldMap freeVars xs
     IdxLit _ _ -> mempty
     Annot e ty -> freeVars e <> freeVars ty
-    DerivAnnot e1 e2 -> freeVars e1 <> freeVars e2
     SrcAnnot e _ -> freeVars e
     Pack e ty exTy -> freeVars e <> freeVars ty <> freeVars exTy
     where
@@ -429,8 +425,6 @@ instance HasVars NAtom where
     NLam bs body -> foldMap freeVars bs <>
                       (freeVars body `envDiff` foldMap lhsVars bs)
     NAtomicFor _ _  -> error $ "NAtomicFor not implemented" -- TODO
-    NDerivAnnot _ _ -> error $ "NDerivAnnot not implemented" -- TODO
-    NDeriv _        -> error $ "NDeriv not implemented" -- TODO
 
 instance HasVars NDecl where
   freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
@@ -519,7 +513,6 @@ stripSrcAnnot expr = case expr of
   RecCon k r    -> RecCon k (fmap recur r)
   -- TLam vs body  -> TLam vs (recur body)
   -- TApp fexpr ts -> TApp (recur fexpr) ts
-  DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
   SrcAnnot e _ -> recur e
   Pack e t1 t2 -> Pack (recur e) t1 t2
   TabCon _ _ -> error $ "TabCon not implemented" -- TODO

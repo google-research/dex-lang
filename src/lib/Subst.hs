@@ -63,7 +63,6 @@ instance Subst Expr where
     TabCon ty xs -> TabCon (recurTy ty) (map recur xs)
     Pack e ty exTy -> Pack (recur e) (recurTy ty) (recurTy exTy)
     Annot e t        -> Annot (recur e) (recurTy t)
-    DerivAnnot e1 e2 -> DerivAnnot (recur e1) (recur e2)
     SrcAnnot e pos   -> SrcAnnot (recur e) pos
     where
       recur :: Expr -> Expr
@@ -184,8 +183,6 @@ instance NSubst NAtom where
       where
         (bs', env') = refreshNBinders env bs
         body' = nSubst (env <> env') body
-    NDerivAnnot _ _ -> error $ "NDerivAnnot not implemented" -- TODO
-    NDeriv _ -> error $ "NDeriv not implemented" -- TODO
 
 instance NSubst NType where
   nSubst env@(sub, _) ty = case ty of

@@ -122,7 +122,6 @@ instance Pretty b => Pretty (ExprP b) where
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
     IdxLit _ i -> p i
     SrcAnnot subexpr _ -> p subexpr
-    DerivAnnot e ann -> p e <+> "@deriv" <+> p ann
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
 prettyDecl :: (Pretty decl, Pretty body) => decl -> body -> Doc ann
@@ -184,8 +183,6 @@ instance Pretty NAtom where
     NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
                      <> line <> align (p body)
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
-    NDerivAnnot f df -> parens $ "derivAnnot" <+> parens (p f) <+> parens (p df)
-    NDeriv f -> parens $ "%Deriv" <+> p f
 
 instance Pretty NType where
   pretty ty = case ty of

@@ -73,7 +73,6 @@ deShadowExpr expr = case expr of
   RecCon k r -> liftM (RecCon k) $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
-  DerivAnnot e ann -> liftM2 DerivAnnot (recur e) (recur ann)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
   IdxLit _ _ -> error "Not implemented"
