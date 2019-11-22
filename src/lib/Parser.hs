@@ -112,7 +112,7 @@ letPoly = do
     declSep
     return (v, sTy)
   symbol (pprint v)
-  wrap <- idxLhsArgs <|> lamLhsArgs
+  wrap <- idxLhsArgs <|> lamLhsArgs (linearities ty)
   equalSign
   rhs <- liftM wrap declOrExpr
   return $ case tvs of
@@ -121,6 +121,10 @@ letPoly = do
     _  -> LetPoly (v:>sTy) (TLam tbs rhs)
      where sTy = Forall kinds (abstractTVs tvs ty)
            tbs = zipWith (:>) tvs kinds
+
+linearities :: Type -> [Lin]
+linearities (ArrType l _ b) = l:linearities b
+linearities _ = []
 
 unpack :: Parser UDecl
 unpack = do
@@ -135,7 +139,7 @@ unpack = do
 letMono :: Parser UDecl
 letMono = do
   (p, wrap) <- try $ do p <- pat
-                        wrap <- idxLhsArgs <|> lamLhsArgs
+                        wrap <- idxLhsArgs <|> lamLhsArgs []
                         equalSign
                         return (p, wrap)
   body <- declOrExpr
@@ -269,10 +273,10 @@ idxLhsArgs = do
   args <- pat `sepBy` period
   return $ \body -> foldr For body args
 
-lamLhsArgs :: Parser (UExpr -> UExpr)
-lamLhsArgs = do
+lamLhsArgs :: [Lin] -> Parser (UExpr -> UExpr)
+lamLhsArgs lin = do
   args <- pat `sepBy` sc
-  return $ \body -> foldr (Lam NonLin) body args
+  return $ \body -> foldr (uncurry Lam) body (zip (lin ++ repeat NonLin) args)
 
 literal :: Parser LitVal
 literal =     numLit
