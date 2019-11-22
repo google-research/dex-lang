@@ -119,7 +119,7 @@ freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
 freshBinderP (v:>ann) = do
   shadowed <- looks $ (v `isin`) . fst . fst
   if shadowed && v /= Name "_" 0
-    then throw RepeatedVarErr (" " ++ pprint v)
+    then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asFst (v@>v'), v'@>())
@@ -129,7 +129,7 @@ freshTBinder :: TBinder -> DeShadowCat TBinder
 freshTBinder (v:>k) = do
   shadowed <- looks $ (v `isin`) . snd . fst
   if shadowed && v /= Name "_" 0
-    then throw RepeatedVarErr (" " ++ pprint v)
+    then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asSnd (v@>TypeVar v'), v'@>())

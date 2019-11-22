@@ -1,10 +1,10 @@
 
 -- repeated vars in patterns not allowed
 :p (x, x) = (1, 1); x
-> Variable redefined: x
+> Error: variable already defined: x
 
 :p f (x, x) = x; f (1, 1)
-> Variable redefined: x
+> Error: variable already defined: x
 
 -- TODO: re-enable if we choose to allow non-peer shadowing
 -- -- shouldn't cause error even though it shadows x elsewhere
@@ -21,7 +21,7 @@ arr = 10
 -- _ = 10 -- underscore shadows allowed
 
 arr = 20
-> Variable redefined: arr
+> Error: variable already defined: arr
 
 :p arr
 > 10

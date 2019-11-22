@@ -43,12 +43,11 @@ instance Pretty ErrType where
     ParseErr          -> "Parse error:"
     TypeErr           -> "Type error:"
     LinErr            -> "Linearity error:"
-    CompilerErr       -> "Compiler bug!"
-    UnboundVarErr     -> "Variable not in scope:"
-    RepeatedVarErr    -> "Variable redefined:"
+    UnboundVarErr     -> "Error: variable not in scope: "
+    RepeatedVarErr    -> "Error: variable already defined: "
     NotImplementedErr -> "Not implemented:"
-    OtherErr          -> "Error:"
-    UpstreamErr       -> "Upstream failure"
+    CompilerErr       -> "Compiler bug!"
+    MiscErr           -> "Error:"
 
 instance Pretty Type where
   pretty t = prettyTyDepth 0 t

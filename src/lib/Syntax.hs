@@ -301,8 +301,7 @@ data ErrType = NoErr
              | RepeatedVarErr
              | CompilerErr
              | NotImplementedErr
-             | UpstreamErr
-             | OtherErr
+             | MiscErr
   deriving (Show)
 
 type Except a = Either Err a
