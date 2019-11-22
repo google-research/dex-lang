@@ -137,7 +137,7 @@ getTypeDecl decl = case decl of
     return $ v @> L (ty, spent)
   Unpack b tv _ -> do  -- TODO: check bound expression!
     -- TODO: check leaks
-    let tb = tv :> idxSetKind
+    let tb = tv :> idxSet
     checkShadow b
     checkShadow tb
     extendR (tbind tb) $ checkTy (binderAnn b)
@@ -190,6 +190,13 @@ litType v = case v of
 type LinSpec = (Int, ProdKind)  -- Int is number of linear args
 data BuiltinType = BuiltinType [Kind] LinSpec [Type] Type
 
+noCon :: Kind
+noCon = Kind []
+
+idxSet :: Kind
+idxSet = Kind [IdxSet]
+
+
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
   IAdd     -> ibinOpType
@@ -205,27 +212,27 @@ builtinType builtin = case builtin of
   FDiv     -> fbinOpType
   FLT      -> nonLinBuiltin [] [real, real] bool
   FGT      -> nonLinBuiltin [] [real, real] bool
-  Todo     -> nonLinBuiltin [TyKind] [] a
-  Copy     -> nonLinBuiltin [TyKind] [a] a
-  Scan     -> nonLinBuiltin [TyKind, TyKind, idxSetKind]
+  Todo     -> nonLinBuiltin [noCon] [] a
+  Copy     -> nonLinBuiltin [noCon] [a] a
+  Scan     -> nonLinBuiltin [noCon, noCon, idxSet]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
-  IndexAsInt -> nonLinBuiltin [idxSetKind] [i] int
-  IntAsIndex -> nonLinBuiltin [idxSetKind] [int] i
+  IndexAsInt -> nonLinBuiltin [idxSet] [i] int
+  IntAsIndex -> nonLinBuiltin [idxSet] [int] i
   Range    -> nonLinBuiltin [] [int] (Exists unitTy)
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real
   -- TODO: this breaks for tuple or non-reals
-  Linearize   -> nonLinBuiltin [TyKind, TyKind] [a --> b, a] (pair b (a --@ b))
-  Transpose   -> BuiltinType [TyKind, TyKind] (2, Tens) [a --@ b, b] a
-  VZero   -> nonLinBuiltin [TyKind] [] a
-  VAdd    -> nonLinBuiltin [TyKind] [a, a] a
-  VSingle -> nonLinBuiltin [TyKind, idxSetKind] [j, a] (j ==> a)
-  VSum    -> nonLinBuiltin [TyKind, idxSetKind] [j ==> a] a
-  Filter -> nonLinBuiltin [TyKind, idxSetKind]
+  Linearize   -> nonLinBuiltin [noCon, noCon] [a --> b, a] (pair b (a --@ b))
+  Transpose   -> BuiltinType [noCon, noCon] (2, Tens) [a --@ b, b] a
+  VZero   -> nonLinBuiltin [noCon] [] a
+  VAdd    -> nonLinBuiltin [noCon] [a, a] a
+  VSingle -> nonLinBuiltin [noCon, idxSet] [j, a] (j ==> a)
+  VSum    -> nonLinBuiltin [noCon, idxSet] [j ==> a] a
+  Filter -> nonLinBuiltin [noCon, idxSet]
               [a --> bool, j ==> a] (Exists (i==>a'))
     where a' = BoundTVar 1  -- under an extra binder
   FFICall n _ -> nonLinBuiltin kinds argTys retTy
-    where kinds = take (n + 1) (repeat TyKind)
+    where kinds = take (n + 1) (repeat noCon)
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
   where
     ibinOpType    = nonLinBuiltin [] [int , int ] int
@@ -347,7 +354,7 @@ checkNDecl decl = case decl of
     assertEq (map binderAnn bs) ts "Decl"
     return $ nBinderEnv s bs
   NUnpack bs tv _ -> do  -- TODO: check bound expression!
-    checkShadow (tv :> idxSetKind)
+    checkShadow (tv :> idxSet)
     extendR (tv @> T ()) $ mapM_ checkNBinder bs
     return $ nBinderEnv mempty bs <> tv @> T ()
 

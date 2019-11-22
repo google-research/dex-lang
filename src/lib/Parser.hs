@@ -22,7 +22,6 @@ import ParseUtil
 import Syntax
 import Fresh
 import Type
-import Inference
 import PPrint
 
 parseProg :: String -> [SourceBlock]
@@ -105,7 +104,7 @@ typeAlias = do
 
 letPoly :: Parser UDecl
 letPoly = do
-  (v, (tvs, kinds, ty)) <- try $ do
+  (v, (tbs, ty)) <- try $ do
     v <- lowerName
     symbol "::"
     sTy <- sigmaType
@@ -115,12 +114,11 @@ letPoly = do
   wrap <- idxLhsArgs <|> lamLhsArgs (linearities ty)
   equalSign
   rhs <- liftM wrap declOrExpr
-  return $ case tvs of
-    [] -> LetMono p rhs
-     where p = RecLeaf $ v :> Ann ty
+  return $ case tbs of
+    [] -> LetMono (RecLeaf $ v :> Ann ty) rhs
     _  -> LetPoly (v:>sTy) (TLam tbs rhs)
      where sTy = Forall kinds (abstractTVs tvs ty)
-           tbs = zipWith (:>) tvs kinds
+           (tvs, kinds) = unzip [(tv,k) | tv:>k <- tbs]
 
 linearities :: Type -> [Lin]
 linearities (ArrType l _ b) = l:linearities b
@@ -353,7 +351,10 @@ lowerName :: Parser Name
 lowerName = name identifier
 
 upperName :: Parser Name
-upperName = name $ lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
+upperName = name upperStr
+
+upperStr :: Parser String
+upperStr = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
 name :: Parser String -> Parser Name
 name p = liftM2 Name p intQualifier
@@ -366,23 +367,39 @@ argTerm = void $ symbol "." >> optional eol >> sc
 
 -- === Parsing types ===
 
-sigmaType :: Parser ([Name], [Kind], Type)
+sigmaType :: Parser ([TBinder], Type)
 sigmaType = do
-  maybeVs <- optional $ do
+  maybeTbs <- optional $ do
     try $ symbol "A"
-    vs <- many typeVar
+    tBs <- many typeBinder
     period
-    return [v | TypeVar v <- vs]
+    return tBs
   ty <- tauType
-  let vs' = case maybeVs of
-              Nothing -> filter nameIsLower $
-                           envNames (freeVars ty)  -- TODO: lexcial order!
-              Just vs -> vs
-  case inferKinds vs' ty of
-    Left e -> fail $ pprint e
-    Right kinds -> return (vs', kinds, ty)
+  let tbs = case maybeTbs of
+              Nothing -> map (:> Kind []) vs
+                -- TODO: lexcial order!
+                where vs = filter nameIsLower $ envNames (freeVars ty)
+              Just tbs' -> tbs'
+  return (tbs, ty)
   where
     nameIsLower v = isLower (nameTag v !! 0)
+
+typeBinder :: Parser TBinder
+typeBinder = do
+  ~(TypeVar v) <- typeVar
+  cs <-   (symbol "::" >> (    liftM (:[]) className
+                           <|> parens (className `sepBy` comma)))
+      <|> return []
+  return (v:>Kind cs)
+
+className :: Parser ClassName
+className = do
+  s <- upperStr
+  case s of
+    "Show"   -> return Show
+    "VSpace" -> return VSpace
+    "Ix"     -> return IdxSet
+    _ -> fail $ "Unrecognized class constraint: " ++ s
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName

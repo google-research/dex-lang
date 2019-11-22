@@ -82,7 +82,7 @@ substDeclEnv scope decl =
         env = (v @> L (Left v'), v' @> ())
     Unpack b tv bound -> (Unpack b' tv' bound, env <> env')
       where
-        ([tv':>_], env) = renameTBinders scope [tv:>idxSetKind]
+        ([tv':>k], env) = renameTBinders scope [tv:>k]
         ([b'], env') = renamePat (scope <> snd env) [b]
     TAlias _ _ -> error "Shouldn't have TAlias left"
 

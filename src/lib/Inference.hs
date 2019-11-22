@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module Inference (typePass, inferKinds) where
+module Inference (typePass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -233,7 +233,7 @@ freshQ = do
 inferAndGeneralize :: UExpr -> InferM (SigmaType, TLam)
 inferAndGeneralize expr = do
   ((ty, expr'), qs) <- solveLocal $ infer expr
-  let sigmaTy = Forall (map (const TyKind) qs) $ abstractTVs qs ty
+  let sigmaTy = Forall (map (const (Kind [])) qs) $ abstractTVs qs ty
   return (sigmaTy, TLam [] expr')  -- TODO: type-lambda too
 
 solveLocalMonomorphic :: (Pretty a, Subst a) => InferM a -> InferM a
@@ -333,9 +333,6 @@ instance Monoid TSubst where
 
 freeTyVars :: Type -> Env ()
 freeTyVars ty = fmap (const ()) (freeVars ty)
-
-inferKinds :: [Name] -> Type -> Except [Kind]
-inferKinds vs _ = return $ map (const TyKind) vs  -- TODO: other kinds
 
 applySubst :: Subst a => Env Type -> a -> a
 applySubst s x = subst (fmap T s, mempty) x

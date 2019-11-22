@@ -12,20 +12,20 @@
 module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                UExpr, UTopDecl, UDecl, ImpDecl (..), TopDeclP (..),
                DeclP (..), Decl, TopDecl, Command (..), UPat, Pat, SrcPos,
-               CmdName (..), IdxExpr, Kind (..), UBinder, PatP, Ann (..),
+               CmdName (..), IdxExpr, UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
-               throw, throwIf,
+               throw, throwIf, Kind (..),
                addContext, FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames,
-               idxSetKind, NExpr (..), NDecl (..), NAtom (..), NType (..),
+               NExpr (..), NDecl (..), NAtom (..), NType (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
-               SourceBlock (..), SourceBlock' (..), LitProg,
+               SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..)
                ) where
 
 import Record
@@ -68,6 +68,9 @@ type PatP b = RecTree (BinderP b)
 data Lin = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
 data ProdKind = Cart | Tens  deriving (Eq, Ord, Show, Generic)
 
+data ClassName = Show | VSpace | IdxSet deriving (Eq, Ord, Show, Generic)
+newtype Kind = Kind [ClassName]  deriving (Eq, Ord, Show, Generic)
+
 data Type = BaseType BaseType
           | TypeVar Name
           | ArrType Lin Type Type
@@ -91,12 +94,6 @@ type TopDecl = TopDeclP Type
 type Pat     = PatP     Type
 type TLam    = TLamP    Type
 
--- TODO: figure out how to treat index set kinds
--- data Kind = idxSetKind | TyKind  deriving (Show, Eq, Ord)
-data Kind = TyKind  deriving (Show, Eq, Ord, Generic)
-
-idxSetKind :: Kind
-idxSetKind = TyKind
 
 data TopDeclP b = TopDecl (DeclP b)
                 | EvalCmd (Command (ExprP b))  deriving (Show, Eq, Generic)

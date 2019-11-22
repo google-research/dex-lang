@@ -71,16 +71,14 @@ instance Pretty SigmaType where
   pretty (Forall []    t) = prettyTyDepth 0 t
   pretty (Forall kinds t) = header <+> prettyTyDepth n t
     where n = length kinds
-          header = "A" <+> hsep boundvars <> "."
-          boundvars = map (p . tvars 0) [-n..(-1)]
+          header = "A" <+> hsep binders <> "."
+          boundvars :: [Name]
+          boundvars = [Name (tvars 0 i) 0 | i <- [-n..(-1)]]
+          binders = map p $ zipWith (:>) boundvars kinds
 
 tvars :: Int -> Int -> String
 tvars d i = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
                                  | otherwise -> "#ERR#"
-
-instance Pretty Kind where
---  pretty IdxSetKind = "R"
-  pretty TyKind = "T"
 
 instance Pretty BaseType where
   pretty t = case t of
@@ -127,17 +125,29 @@ instance Pretty Ann where
   pretty NoAnn = ""
   pretty (Ann ty) = pretty ty
 
+instance Pretty Kind where
+  pretty (Kind cs) = case cs of
+    []  -> ""
+    [c] -> p c
+    _   -> tupled $ map p cs
+
 instance Pretty a => Pretty (BinderP a) where
   pretty (v :> ann) =
     case asStr ann' of "" -> p v
                        _  -> p v <> "::" <> ann'
     where ann' = p ann
 
+instance Pretty ClassName where
+  pretty name = case name of
+    Show   -> "Show"
+    VSpace -> "VSpace"
+    IdxSet -> "Ix"
+
 instance Pretty b => Pretty (DeclP b) where
   -- TODO: special-case annotated leaf var (print type on own line)
   pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
-  pretty (LetPoly (v:>ty) (TLam tbs body)) =
-    p v <+> "::" <+> list (map p tbs) <> "." <+> p ty <> line <>
+  pretty (LetPoly (v:>ty) (TLam _ body)) =
+    p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
   pretty (TAlias v ty) = "type" <+> p v <+> "=" <+> p ty
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr

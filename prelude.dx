@@ -239,7 +239,7 @@ grad f x = (_, pullback) = vjp f x
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 
-vsumImpl :: A n a. n=>a -> a
+vsumImpl :: A n::Ix a::VSpace. n=>a -> a
 vsumImpl xs = fold vzero for i::n. lam c. vadd c xs.i
 
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)

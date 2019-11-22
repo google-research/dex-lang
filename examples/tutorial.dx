@@ -155,7 +155,7 @@ generalization. For example, although we can write this:
        id x = x
        ..
        id 1
-> (id :: [a::T]. A a. (a -> a)
+> (id :: A a. (a -> a)
 > id = (lam x::a . x);
 > (id @Int 1))
 
