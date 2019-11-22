@@ -25,8 +25,7 @@ import Cat
 
 -- TODO: consider making linearity checking a separate pass?
 type TypeEnv = FullEnv SigmaType Kind
-type LinInfo = Either Lin Spent
-type TypeCheckEnv = FullEnv (SigmaType, LinInfo) Kind
+type TypeCheckEnv = FullEnv (SigmaType, Spent) Kind
 type Spent = Env ()
 type TypeM a = ReaderT TypeCheckEnv (CatT Spent (Either Err)) a
 
@@ -49,7 +48,7 @@ liftTop ctx m = do
 getType :: FullEnv SigmaType a -> Expr -> Type
 getType env expr =
   ignoreExcept $ addContext (pprint expr) $
-     evalTypeM (fmap (L . (\ty -> (ty, Left NonLin)) . fromL) env) $ getType' expr
+     evalTypeM (fmap (L . (\ty -> (ty, mempty)) . fromL) env) $ getType' expr
 
 evalTypeM :: TypeCheckEnv -> TypeM a -> Except a
 evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
@@ -61,11 +60,8 @@ getType' expr = case expr of
       mapM_ checkTy ts
       x <- asks $ flip envLookup v
       case x of
-        Just (L (Forall _ body, l)) -> do
-          case l of
-            Right s     -> mapM_ spendVar (envNames s)
-            Left Lin    -> spendVar v
-            Left NonLin -> return ()
+        Just (L (Forall _ body, s)) -> do
+          mapM_ spendVar (envNames s)
           return $ instantiateTVs ts body
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
     PrimOp b ts args -> do
@@ -82,20 +78,20 @@ getType' expr = case expr of
     Lam NonLin p body -> do
       checkTy (patType p)
       checkShadowPat p
-      liftM (ArrType NonLin (patType p)) (recurWithP NonLin p body)
-    Lam Lin (RecLeaf b@(v:>ty)) body -> do
-      checkTy ty
-      checkShadow b
-      (bodyTy, spent) <- scoped $ recurWithP Lin (RecLeaf b) body
+      liftM (ArrType NonLin (patType p)) (recurWithP mempty p body)
+    Lam Lin p body -> do
+      checkTy (patType p)
+      checkShadowPat p
+      v <- getPatName p
+      (bodyTy, spent) <- scoped $ recurWithP (v@>()) p body
       if v `isin` spent
         then return ()
-        else throw LinErr $ "Variable never spent: " ++ pprint v
+        else throw LinErr $ "Variables never spent: " ++ pprint p
       extend $ spent `envDiff` (v@>())
-      return $ ArrType Lin ty bodyTy
-    Lam Lin _ _ -> throw NotImplementedErr "Linear lambda patterns"
+      return $ ArrType Lin (patType p) bodyTy
     For p body -> do checkTy (patType p)
                      checkShadowPat p
-                     liftM (TabType (patType p)) (recurWithP NonLin p body)
+                     liftM (TabType (patType p)) (recurWithP mempty p body)
     App e arg  -> do
       ~(ArrType l a b) <- recur e
       a' <- do
@@ -130,7 +126,7 @@ getType' expr = case expr of
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
     recur = getType'
-    recurWithP l p  = extendR (foldMap (asEnv (Left l)) p) . recur
+    recurWithP s p  = extendR (foldMap (asEnv s) p) . recur
 
     checkProd :: Traversable f => ProdKind -> f Expr -> TypeM (f Type)
     checkProd k xs = case k of
@@ -143,6 +139,12 @@ spendVar v = do
   if v `isin` spent
     then throw LinErr $ "Variable already spent: " ++ pprint v
     else extend (v @> ())
+
+getPatName :: Pat -> TypeM Name
+getPatName p = case toList p of
+  []  -> throw LinErr $
+           "Empty patterns not allowed for linear lambda (for silly reasons)"
+  (v:>_):_ -> return v
 
 isLinear :: Lin -> Bool
 isLinear Lin    = True
@@ -176,19 +178,19 @@ getTypeDecl decl = case decl of
     checkShadowPat p
     (ty, spent) <- scoped $ recur rhs
     assertEq (patType p) ty "LetMono"
-    return (foldMap (asEnv (Right spent)) p)
+    return (foldMap (asEnv spent) p)
   LetPoly b@(v:>ty) tlam -> do
     checkShadow b
     (ty', spent) <- scoped $ getTypeTLam tlam
     assertEq ty ty' "TLam"
-    return $ v @> L (ty, Right spent)
+    return $ v @> L (ty, spent)
   Unpack b tv _ -> do  -- TODO: check bound expression!
     -- TODO: check leaks
     let tb = tv :> idxSetKind
     checkShadow b
     checkShadow tb
     extendR (tbind tb) $ checkTy (binderAnn b)
-    return (tbind tb <> asEnv (Left NonLin) b)
+    return (tbind tb <> asEnv mempty b)
   TAlias _ _ -> error "Shouldn't have TAlias left"
   where
     recur = getType'
@@ -213,8 +215,8 @@ checkShadow (v :> _) = do
 checkShadowPat :: Traversable f => f (BinderP b) -> TypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
-asEnv :: LinInfo -> Binder -> TypeCheckEnv
-asEnv l (v:>ty) = v @> L (asSigma ty, l)
+asEnv :: Spent -> Binder -> TypeCheckEnv
+asEnv s (v:>ty) = v @> L (asSigma ty, s)
 
 unpackExists :: Type -> Name -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body

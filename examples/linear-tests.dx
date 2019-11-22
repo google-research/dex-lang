@@ -4,7 +4,7 @@
 > 1.0
 
 :tycheck llam x::Real. 1.0
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . 1.0)
 
@@ -43,7 +43,7 @@
 >          ^^^^^^^^^^
 
 :tycheck llam x::Real. (1.0, 2.0)
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . (1.0, 2.0))
 
@@ -61,7 +61,7 @@
 > (Real --o (Real, Real))
 
 :tycheck llam x::Real. (1.0 : 2.0)
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . (1.0 : 2.0))
 
@@ -77,7 +77,7 @@
 > (llam x::Real . (x : x))
 
 :tycheck llam x::Real. 1.0 + 2.0
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . (%fadd(1.0, 2.0)))
 
@@ -95,7 +95,7 @@
 > (Real --o Real)
 
 :tycheck llam x::Real. 1.0 * 2.0
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . (%fmul(1.0, 2.0)))
 
@@ -111,7 +111,7 @@
 > (llam x::Real . (%fmul(x, x)))
 
 :tycheck llam x::Real. y = x; 1.0 * 2.0
-> Linearity error:Variable never spent: x
+> Linearity error:Variables never spent: x::Real
 > context:
 > (llam x::Real . (y::Real = x; (%fmul(1.0, 2.0))))
 
@@ -122,3 +122,13 @@
 > Linearity error:Variable already spent: x
 > context:
 > (llam x::Real . (y::Real = x; (%fmul(y, x))))
+
+:tycheck llam (x, y). x + y
+> ((Real, Real) --o Real)
+
+:tycheck llam (x, y). x * y
+> Linearity error:Variable already spent: x
+> context:
+> (llam (x::Real, y::Real) . (%fmul(x, y)))
+
+
