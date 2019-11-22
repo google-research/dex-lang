@@ -66,12 +66,14 @@ getType' expr = case expr of
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
     PrimOp b ts args -> do
       mapM_ checkTy ts
-      let BuiltinType _ (numLin, k) argTys ansTy = builtinType b
-      let (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
-      let (linArgs, nlArgs) = splitAt numLin args
-      argTys'' <- liftM2 (++) (traverse recur nlArgs) (checkProd k linArgs)
+      argTys'' <- liftM2 (++) (checkNothingSpent $ traverse recur nlArgs)
+                              (traverseProd k recur linArgs)
       assertEq argTys' argTys'' "Builtin"
       return ansTy'
+      where
+        BuiltinType _ (numLin, k) argTys ansTy = builtinType b
+        (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
+        (linArgs, nlArgs) = splitAt numLin args
     Decl decl body -> do
       env <- getTypeDecl decl
       extendR env (recur body)
@@ -83,22 +85,15 @@ getType' expr = case expr of
       checkTy (patType p)
       checkShadowPat p
       v <- getPatName p
-      (bodyTy, spent) <- scoped $ recurWithP (v@>()) p body
-      if v `isin` spent
-        then return ()
-        else throw LinErr $ "Variables never spent: " ++ pprint p
-      extend $ spent `envDiff` (v@>())
+      bodyTy <- checkSpent v (pprint p) $ recurWithP (v@>()) p body
       return $ ArrType Lin (patType p) bodyTy
     For p body -> do checkTy (patType p)
                      checkShadowPat p
                      liftM (TabType (patType p)) (recurWithP mempty p body)
     App e arg  -> do
       ~(ArrType l a b) <- recur e
-      a' <- do
-        (a', spent) <- capture (recur arg)
-        throwIf (not (isLinear l || null spent)) LinErr $
-          "Nonlinear function consuming linear data: " ++ pprint (envNames spent)
-        return a'
+      a' <- case l of Lin    ->                     recur arg
+                      NonLin -> checkNothingSpent $ recur arg
       assertEq a a' "App"
       return b
     Get e ie   -> do
@@ -106,7 +101,7 @@ getType' expr = case expr of
       a' <- recur ie
       assertEq a a' "Get"
       return b
-    RecCon k r -> liftM (RecType k) $ checkProd k r
+    RecCon k r -> liftM (RecType k) (traverseProd k recur r)
     TabCon ty xs -> do
       case ty of
         TabType _ bodyTy -> do
@@ -127,50 +122,6 @@ getType' expr = case expr of
   where
     recur = getType'
     recurWithP s p  = extendR (foldMap (asEnv s) p) . recur
-
-    checkProd :: Traversable f => ProdKind -> f Expr -> TypeM (f Type)
-    checkProd k xs = case k of
-      Cart -> shareLinear recur xs
-      Tens -> traverse    recur xs
-
-spendVar :: Name -> TypeM ()
-spendVar v = do
-  spent <- look
-  if v `isin` spent
-    then throw LinErr $ "Variable already spent: " ++ pprint v
-    else extend (v @> ())
-
-getPatName :: Pat -> TypeM Name
-getPatName p = case toList p of
-  []  -> throw LinErr $
-           "Empty patterns not allowed for linear lambda (for silly reasons)"
-  (v:>_):_ -> return v
-
-isLinear :: Lin -> Bool
-isLinear Lin    = True
-isLinear NonLin = False
-
-shareLinear :: Traversable f => (a -> TypeM b) -> f a -> TypeM (f b)
-shareLinear f xs = do
-  (ys, spents) <- liftM unzip' $ traverse (scoped . f) xs
-  case getConsensus spents of
-    Right Nothing -> return ()
-    Right (Just spent) -> extend spent
-    Left (s1, s2) -> throw LinErr $
-      "Different vars consumed by product: " ++ pprint (envNames s1)
-                                   ++ " vs " ++ pprint (envNames s2)
-  return ys
-  where
-    unzip' x = (fmap fst x, fmap snd x)
-
-getConsensus :: (Eq a, Traversable f) => f a -> Either (a,a) (Maybe a)
-getConsensus xs = foldr foldBody (Right Nothing) xs
-  where
-    foldBody x state = case state of
-      Left e -> Left e
-      Right Nothing -> Right (Just x)
-      Right (Just x') | x == x' -> Right (Just x')
-                      | otherwise -> Left (x, x')
 
 getTypeDecl :: Decl -> TypeM TypeCheckEnv
 getTypeDecl decl = case decl of
@@ -327,8 +278,8 @@ subAtDepth d f ty = case ty of
 
 -- === Normalized IR ===
 
-type NTypeEnv = FullEnv NType ()
-type NTypeM a = ReaderT NTypeEnv (Either Err) a
+type NTypeEnv = FullEnv (NType, Spent) ()
+type NTypeM a = ReaderT NTypeEnv (CatT Spent (Either Err)) a
 
 checkNExpr ::TopPass NTopDecl NTopDecl
 checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
@@ -341,8 +292,10 @@ checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
     where ctx = pprint tys ++ "\n" ++ pprint expr
   where
     liftPass :: String -> NTypeM a -> TopPassM NTypeEnv a
-    liftPass ctx m = do env <- look
-                        liftExceptTop $ addContext ctx $ runReaderT m env
+    liftPass ctx m = do
+      env <- look
+      liftM fst $ liftExceptTop $ addContext ctx $
+        runCatT (runReaderT m env) mempty
 
 getNType :: NExpr -> NTypeM [NType]
 getNType expr = case expr of
@@ -352,10 +305,10 @@ getNType expr = case expr of
   NScan b@(_:>i) bs xs body -> do
     checkNBinder b
     let carryTys = map binderAnn bs
-    xs' <- mapM atomType xs
+    xs' <- atomTypes xs
     mapM_ checkNBinder bs
     assertEq carryTys xs' "Scan arg"
-    bodyTys <- extendR (nBinderEnv (b:bs)) (getNType body)
+    bodyTys <- extendR (nBinderEnv mempty (b:bs)) (getNType body)
     let (carryTys', outTys) = splitAt (length bs) bodyTys
     assertEq carryTys carryTys' "Scan output"
     return $ carryTys ++ map (NTabType i) outTys
@@ -364,16 +317,20 @@ getNType expr = case expr of
     return ts
   NPrimOp b ts xs -> do
     mapM_ checkNTy ts
-    argTys'' <- mapM atomType xs
+    argTys'' <- liftM2 (++) (traverseProd k atomType xsLin)
+                            (checkNothingSpent $ mapM atomType xsNonLin)
     assertEq (map fromLeaf argTys') argTys'' (pprint b) -- TODO: handle non-leaves
     return (toList ansTy')
     where
-      BuiltinType _ _ argTys ansTy = builtinType b
+      BuiltinType _ (numLin, k) argTys ansTy = builtinType b
       ts' = map nTypeToType ts
-      ansTy':argTys' = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
+      (ansTy':argTys') = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
+      (xsLin, xsNonLin) = splitAt numLin xs
   NApp e xs -> do
-    ~(NArrType _ as bs) <- atomType e
-    as' <- mapM atomType xs
+    ~(NArrType l as bs) <- atomType e
+    -- TODO: use cartesian/tensor information from function type
+    as' <- case l of Lin    ->                     atomTypes xs
+                     NonLin -> checkNothingSpent $ atomTypes xs
     assertEq as as' "App"
     return bs
   NAtoms xs -> mapM atomType xs
@@ -386,29 +343,35 @@ checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of
   NLet bs expr -> do
     mapM_ checkNBinder bs
-    ts <- getNType expr
+    (ts, s) <- scoped $ getNType expr
     assertEq (map binderAnn bs) ts "Decl"
-    return $ nBinderEnv bs
+    return $ nBinderEnv s bs
   NUnpack bs tv _ -> do  -- TODO: check bound expression!
     checkShadow (tv :> idxSetKind)
     extendR (tv @> T ()) $ mapM_ checkNBinder bs
-    return $ nBinderEnv bs <> tv @> T ()
+    return $ nBinderEnv mempty bs <> tv @> T ()
 
-nBinderEnv :: [NBinder] -> NTypeEnv
-nBinderEnv bs = foldMap (\(v:>ty) -> v @> L ty) bs
+nBinderEnv :: Spent -> [NBinder] -> NTypeEnv
+nBinderEnv s bs = foldMap (\(v:>ty) -> v @> L (ty, s)) bs
 
-getAtomType :: NTypeEnv -> NAtom -> NType
-getAtomType env atom = case runReaderT (atomType atom) env of
-  Left err -> error $ pprint err
-  Right x -> x
-
+getAtomType :: FullEnv NType () -> NAtom -> NType
+getAtomType env atom =
+  case runCatT (runReaderT (atomType atom) env') mempty of
+    Left err -> error $ pprint err
+    Right (x,_) -> x
+  where
+    env' = fmap addSpent env
+    addSpent val = case val of L ty -> L (ty, mempty)
+                               T k  -> T k
 atomType :: NAtom -> NTypeM NType
 atomType atom = case atom of
   NLit x -> return $ NBaseType (litType x)
   NVar v -> do
     x <- asks $ flip envLookup v
     case x of
-      Just (L ty) -> return ty
+      Just (L (ty, s)) -> do
+        mapM_ spendVar (envNames s)
+        return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   NGet e i -> do
     ~(NTabType a b) <- atomType e
@@ -417,12 +380,21 @@ atomType atom = case atom of
     return b
   NAtomicFor b body -> do
     checkNBinder b
-    bodyTy <- extendR (nBinderEnv [b]) (atomType body)
+    bodyTy <- extendR (nBinderEnv mempty [b]) (atomType body)
     return $ NTabType (binderAnn b) bodyTy
-  NLam l bs body -> do
+  NLam NonLin bs body -> do
     mapM_ checkNBinder bs
-    bodyTys <- extendR (nBinderEnv bs) (getNType body)
-    return $ NArrType l (map binderAnn bs) bodyTys
+    bodyTys <- extendR (nBinderEnv mempty bs) (getNType body)
+    return $ NArrType NonLin (map binderAnn bs) bodyTys
+  NLam Lin bs body -> do
+    mapM_ checkNBinder bs
+    v <- getPatName bs
+    let env = nBinderEnv (v@>()) bs
+    bodyTys <- checkSpent v (pprint bs) $ extendR env (getNType body)
+    return $ NArrType Lin (map binderAnn bs) bodyTys
+
+atomTypes :: [NAtom] -> NTypeM [NType]
+atomTypes xs = traverseProd Cart atomType xs
 
 checkNTy :: NType -> NTypeM ()
 checkNTy _ = return () -- TODO!
@@ -490,3 +462,61 @@ isPrintable ty = case ty of
   IdxSetLit _   -> True
   BoundTVar _   -> error "Type should be closed"
   where recur = isPrintable
+
+-- === utils for working with linearity ===
+
+spendVar :: (MonadError Err m, MonadCat Spent m) => Name -> m ()
+spendVar v = do
+  spent <- look
+  when (v `isin` spent) $ throw LinErr $ "Variable already spent: " ++ pprint v
+  extend (v @> ())
+
+checkSpent :: (MonadError Err m, MonadCat Spent m) =>
+                Name -> String -> m a -> m a
+checkSpent v vStr m = do
+  (ans, spent) <- scoped m
+  unless  (v `isin` spent) $ throw LinErr $ "Variables never spent: " ++ vStr
+  extend $ spent `envDiff` (v@>())
+  return ans
+
+checkNothingSpent :: (MonadError Err m, MonadCat Spent m) => m a -> m a
+checkNothingSpent m = do
+  (ans, spent) <- scoped m
+  unless (null spent) $ throw LinErr $
+    "Nonlinear function consuming linear data: " ++ pprint (envNames spent)
+  return ans
+
+getPatName :: (MonadError Err m, Traversable f) => f (BinderP b) -> m Name
+getPatName p = case toList p of
+  []  -> throw LinErr $
+           "Empty patterns not allowed for linear lambda (for silly reasons)"
+  (v:>_):_ -> return v
+
+traverseProd :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
+                  ProdKind -> (a -> m b) -> f a -> m (f b)
+traverseProd k f xs = case k of
+  Cart -> shareLinear $ fmap f xs
+  Tens -> traverse f xs
+
+shareLinear :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
+                 f (m a) -> m (f a)
+shareLinear actions = do
+  (ys, spents) <- liftM unzip' $ traverse scoped actions
+  case getConsensus spents of
+    Right Nothing -> return ()
+    Right (Just spent) -> extend spent
+    Left (s1, s2) -> throw LinErr $
+      "Different vars consumed by product: " ++ pprint (envNames s1)
+                                   ++ " vs " ++ pprint (envNames s2)
+  return ys
+  where
+    unzip' x = (fmap fst x, fmap snd x)
+
+getConsensus :: (Eq a, Traversable f) => f a -> Either (a,a) (Maybe a)
+getConsensus xs = foldr foldBody (Right Nothing) xs
+  where
+    foldBody x state = case state of
+      Left e -> Left e
+      Right Nothing -> Right (Just x)
+      Right (Just x') | x == x' -> Right (Just x')
+                      | otherwise -> Left (x, x')

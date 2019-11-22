@@ -131,4 +131,8 @@
 > context:
 > (llam (x::Real, y::Real) . (%fmul(x, y)))
 
+:p (llam x. x + x) 1.0
+> 2.0
 
+:p (llam x. x * 3.0) 1.0
+> 3.0
