@@ -372,7 +372,7 @@ getNType expr = case expr of
       ts' = map nTypeToType ts
       ansTy':argTys' = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
   NApp e xs -> do
-    ~(NArrType as bs) <- atomType e
+    ~(NArrType _ as bs) <- atomType e
     as' <- mapM atomType xs
     assertEq as as' "App"
     return bs
@@ -419,10 +419,10 @@ atomType atom = case atom of
     checkNBinder b
     bodyTy <- extendR (nBinderEnv [b]) (atomType body)
     return $ NTabType (binderAnn b) bodyTy
-  NLam bs body -> do
+  NLam l bs body -> do
     mapM_ checkNBinder bs
     bodyTys <- extendR (nBinderEnv bs) (getNType body)
-    return $ NArrType (map binderAnn bs) bodyTys
+    return $ NArrType l (map binderAnn bs) bodyTys
 
 checkNTy :: NType -> NTypeM ()
 checkNTy _ = return () -- TODO!
@@ -436,7 +436,7 @@ typeToNType :: Type -> RecTree NType
 typeToNType ty = case ty of
   BaseType b  -> RecLeaf $ NBaseType b
   TypeVar v   -> RecLeaf $ NTypeVar v
-  ArrType _ a b -> RecLeaf $ NArrType (toList (recur a)) (toList (recur b))
+  ArrType l a b -> RecLeaf $ NArrType l (toList (recur a)) (toList (recur b))
   TabType a b -> fmap (NTabType (fromLeaf (recur a))) (recur b)
   RecType _ r -> RecTree $ fmap recur r
   Exists body -> RecLeaf $ NExists (toList (recur body))
@@ -449,8 +449,8 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
-  NArrType a b -> ArrType NonLin (RecType Cart (Tup (map recur a)))
-                                 (RecType Cart (Tup (map recur b)))
+  NArrType l a b -> ArrType l (RecType Cart (Tup (map recur a)))
+                              (RecType Cart (Tup (map recur b)))
   NTabType a b -> TabType (recur a) (recur b)
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
@@ -461,7 +461,7 @@ tangentBunNType ty = case ty of
   NBaseType b -> case b of RealType -> [ty, ty]
                            _ -> [ty]
   NTypeVar _ -> [ty]  -- can only be an index set
-  NArrType as bs -> [NArrType (foldMap recur as) (foldMap recur bs)]
+  NArrType l as bs -> [NArrType l (foldMap recur as) (foldMap recur bs)]
   NTabType n a -> map (NTabType n) (recur a)
   NExists ts -> [NExists $ foldMap recur ts]
   NIdxSetLit _ -> [ty]

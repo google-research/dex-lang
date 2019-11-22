@@ -179,7 +179,7 @@ instance NSubst NAtom where
       where
         ([b'], env') = refreshNBinders env [b]
         body' = nSubst (env <> env') body
-    NLam bs body -> NLam bs' body'
+    NLam l bs body -> NLam l bs' body'
       where
         (bs', env') = refreshNBinders env bs
         body' = nSubst (env <> env') body
@@ -192,7 +192,7 @@ instance NSubst NType where
         Nothing -> ty
         Just (T x') -> NTypeVar x'
         Just (L _) -> error "Expected type variable"
-    NArrType as bs -> NArrType (map recur as) (map recur bs)
+    NArrType l as bs -> NArrType l (map recur as) (map recur bs)
     NTabType a b   -> NTabType (recur a) (recur b)
     NExists ts -> NExists (map recur ts)
     NIdxSetLit _ -> ty

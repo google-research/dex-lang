@@ -57,9 +57,7 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrType l a b -> parens $ recur a <+> arr <+> recur b
-    where arr = case l of NonLin -> "->"
-                          Lin -> "--o"
+  ArrType l a b -> parens $ recur a <+> arrStr l <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType Cart r -> p $ fmap (asStr . recur) r
   RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
@@ -108,9 +106,8 @@ instance Pretty b => Pretty (ExprP b) where
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = tupled (map p xs)
     Decl decl body -> prettyDecl decl body
-    Lam l pat e    -> parens $ align $ group $ s <+> p pat <+> "." <> line <> align (p e)
-      where s = case l of NonLin -> "lam"
-                          Lin    -> "llam"
+    Lam l pat e    -> parens $ align $ group $ lamStr l <+> p pat <+> "."
+                        <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
@@ -179,8 +176,8 @@ instance Pretty NAtom where
     NLit v -> p v
     NVar x -> p x
     NGet e i -> p e <> "." <> p i
-    NLam bs body -> parens $ align $ group $ "lam" <+> hsep (map p bs) <+> "."
-                     <> line <> align (p body)
+    NLam l bs body -> parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "."
+                       <> line <> align (p body)
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
 
 instance Pretty NType where
@@ -188,10 +185,18 @@ instance Pretty NType where
     NBaseType b  -> p b
     NTypeVar v   -> p v
     NBoundTVar n -> "BV" <> p n  -- TODO: invent some variable names
-    NArrType as bs -> parens $ tup as <+> "->" <+> tup bs
+    NArrType l as bs -> parens $ tup as <+> arrStr l <+> tup bs
     NTabType a  b  -> p a <> "=>" <> p b
     NExists tys -> "E" <> "." <> list (map p tys)
     NIdxSetLit i -> p i
+
+lamStr :: Lin -> Doc ann
+lamStr NonLin = "lam"
+lamStr Lin = "llam"
+
+arrStr :: Lin -> Doc ann
+arrStr NonLin = "->"
+arrStr Lin = "--o"
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x

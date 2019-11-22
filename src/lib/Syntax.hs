@@ -211,13 +211,13 @@ data NDecl = NLet [NBinder] NExpr
 data NAtom = NLit LitVal
            | NVar Name
            | NGet NAtom NAtom
-           | NLam [NBinder] NExpr
+           | NLam Lin [NBinder] NExpr
            | NAtomicFor NBinder NAtom
               deriving (Show)
 
 data NType = NBaseType BaseType
            | NTypeVar Name
-           | NArrType [NType] [NType]
+           | NArrType Lin [NType] [NType]
            | NTabType NType NType
            | NExists [NType]
            | NIdxSetLit IdxSetVal
@@ -421,7 +421,7 @@ instance HasVars NAtom where
     NVar v -> v @> L ()
     NGet e i -> freeVars e <> freeVars i
     -- AFor b body -> freeVars b <> (freeVars body `envDiff` lhsVars b)
-    NLam bs body -> foldMap freeVars bs <>
+    NLam _ bs body -> foldMap freeVars bs <>
                       (freeVars body `envDiff` foldMap lhsVars bs)
     NAtomicFor _ _  -> error $ "NAtomicFor not implemented" -- TODO
 
@@ -433,7 +433,7 @@ instance HasVars NType where
   freeVars ty = case ty of
     NBaseType _ -> mempty
     NTypeVar v -> v @> T ()
-    NArrType as bs -> foldMap freeVars as <> foldMap freeVars bs
+    NArrType _ as bs -> foldMap freeVars as <> foldMap freeVars bs
     NTabType a b -> freeVars a <> freeVars b
     NExists ts -> foldMap freeVars ts
     NIdxSetLit _ -> mempty

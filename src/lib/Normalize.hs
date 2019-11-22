@@ -78,10 +78,10 @@ normalize expr = case expr of
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  Lam _ p body -> do
+  Lam l p body -> do
     normalizeBindersR p $ \bs -> do
       body' <- normalizeScoped body
-      return $ NAtoms [NLam bs body']
+      return $ NAtoms [NLam l bs body']
   App f x -> do
     ~[f'] <- atomize f
     x' <- atomize x
@@ -115,7 +115,7 @@ atomize expr = do
             writeVars tys expr'
   where
     noBinders :: NAtom -> Bool
-    noBinders (NLam _ _) = False
+    noBinders (NLam _ _ _) = False
     noBinders (NAtomicFor _ _) = False
     noBinders _ = True
 
@@ -155,10 +155,10 @@ normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
   BaseType b -> return $ RecLeaf (NBaseType b)
   TypeVar v -> asks $ fromT . (!v)
-  ArrType _ a b -> do
+  ArrType l a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b
-    return $ RecLeaf $ NArrType (toList a') (toList b')
+    return $ RecLeaf $ NArrType l (toList a') (toList b')
   TabType a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b
@@ -263,7 +263,7 @@ simplify mat expr = case expr of
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     case f' of
-      NLam bs body -> local (\(_, scope) -> (env, scope)) (simplify mat body)
+      NLam _ bs body -> local (\(_, scope) -> (env, scope)) (simplify mat body)
         where env = bindEnv bs xs'
       _ -> return $ NApp f' xs'
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
@@ -296,10 +296,10 @@ simplifyAtom atom = case atom of
       return $ case body' of
         NGet e (NVar i) | i == i' && not (isin i (freeVars e)) -> e
         _ -> NAtomicFor b' body'
-  NLam bs body ->
+  NLam l bs body ->
     refreshBindersRSimp bs $ \bs' -> do
       body' <- simplify False body
-      return $ NLam bs' body'
+      return $ NLam l bs' body'
 
 materializeAtoms :: [NAtom] -> SimplifyM ([NAtom], [NDecl], SimpEnv)
 materializeAtoms xs = do
