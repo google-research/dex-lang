@@ -9,7 +9,7 @@
 
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             checkNExpr, patType, tangentBunType, tangentBunNType) where
+             checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -477,3 +477,16 @@ tangentBunType ty = case ty of
   where
     recur = tangentBunType
     pair x y = RecType Cart $ Tup [x, y]
+
+-- TODO: replace with a more general typeclass-like system
+isPrintable :: Type -> Bool
+isPrintable ty = case ty of
+  BaseType _    -> True
+  TypeVar _     -> True -- TODO: lookup var and check
+  ArrType _ _ _ -> False
+  TabType a b   -> recur a && recur b
+  RecType _ r   -> all recur (toList r)
+  Exists _      -> True
+  IdxSetLit _   -> True
+  BoundTVar _   -> error "Type should be closed"
+  where recur = isPrintable

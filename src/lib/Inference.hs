@@ -47,10 +47,14 @@ typePass = TopPass $ \tdecl -> case tdecl of
         (ty, _) <- liftTop $ inferAndGeneralize expr
         emitOutput $ TextOut $ pprint ty
       _ -> do
-        (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
+        (ty, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
         case cmd of
           ShowTyped -> emitOutput $ TextOut $ pprint expr'
-          _ -> return $ EvalCmd (Command cmd expr')
+          TypeCheckInternal -> return $ EvalCmd (Command cmd expr')
+          _ -> do
+            unless (isPrintable ty) $ throwTopErr $
+              Err TypeErr Nothing (" Can't print values of type: " ++ pprint ty)
+            return $ EvalCmd (Command cmd expr')
 
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do

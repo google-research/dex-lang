@@ -161,3 +161,6 @@ f x =
 :t x = 3
    for i::x. 0
 > Error: variable not in scope: type variable "x" (a term variable of the same name is in scope)
+
+:p lam x::Real. x
+> Type error: Can't print values of type: (Real -> Real)
