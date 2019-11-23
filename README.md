@@ -25,7 +25,9 @@ development. We welcome contributions. There's plenty of work to do!
 ## Setup
 
   * Install [stack](https://www.haskellstack.org)
-  * Install LLVM 8, e.g. `apt-get install llvm-8-dev`
+  * Install LLVM 8, e.g. `apt-get install llvm-8-dev` on Ubuntu/Debian.
+    On macOS, the best approach seems to be to build LLVM from source,
+    [as described here](https://github.com/google-research/dex-lang/issues/2#issuecomment-557793009).
 
 ## Building
 
