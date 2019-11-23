@@ -94,7 +94,8 @@ evalPrelude fname pass = do
 
 replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
 replLoop pass = do
-  sourceBlock <- readMultiline ">=> " parseTopDeclRepl
+  -- ANSI escape codes make prompt green
+  sourceBlock <- readMultiline "\ESC[32m\STX>=> \ESC[m\STX" parseTopDeclRepl
   result <- lift $ evalDecl pass sourceBlock
   liftIO $ putStrLn $ pprint result
 
