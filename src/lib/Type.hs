@@ -45,10 +45,12 @@ liftTop ctx m = do
   env <- look
   liftExceptTop $ addContext ctx $ evalTypeM env m
 
-getType :: FullEnv SigmaType a -> Expr -> Type
-getType env expr =
-  ignoreExcept $ addContext (pprint expr) $
-     evalTypeM (fmap (L . (\ty -> (ty, mempty)) . fromL) env) $ getType' expr
+getType :: TypeEnv -> Expr -> Type
+getType env expr = ignoreExcept $ addContext (pprint expr) $ evalTypeM env' $ getType' expr
+  where
+    env' = fmap addEmptySpent env
+    addEmptySpent val = case val of L ty -> L (ty, mempty)
+                                    T k  -> T k
 
 evalTypeM :: TypeCheckEnv -> TypeM a -> Except a
 evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
@@ -88,9 +90,11 @@ getType' expr = case expr of
       v <- getPatName p
       bodyTy <- checkSpent v (pprint p) $ recurWithP (v@>()) p body
       return $ ArrType Lin (patType p) bodyTy
-    For p body -> do checkTy (patType p)
-                     checkShadowPat p
-                     liftM (TabType (patType p)) (recurWithP mempty p body)
+    For p body -> do
+      checkIdxSet (patType p)
+      checkTy (patType p)
+      checkShadowPat p
+      liftM (TabType (patType p)) (recurWithP mempty p body)
     App e arg  -> do
       ~(ArrType l a b) <- recur e
       a' <- case l of Lin    ->                     recur arg
@@ -292,16 +296,23 @@ checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = case c of
   VSpace -> checkVSpace ty
+  IdxSet -> checkIdxSet ty
   _ -> error "Not implemented"
 
 checkVSpace :: Type -> TypeM ()
 checkVSpace ty = case ty of
-  BaseType RealType -> return ()
   TypeVar v         -> checkVarClass VSpace v
-  TabType _ a       -> recur a
-  RecType _ r       -> mapM_ recur r
+  BaseType RealType -> return ()
+  TabType _ a       -> checkVSpace a
+  RecType _ r       -> mapM_ checkVSpace r
   _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
-  where recur = checkVSpace
+
+checkIdxSet :: Type -> TypeM ()
+checkIdxSet ty = case ty of
+  TypeVar v   -> checkVarClass IdxSet v
+  IdxSetLit _ -> return ()
+  RecType _ r -> mapM_ checkIdxSet r
+  _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
 
 checkVarClass :: ClassName -> Name -> TypeM ()
 checkVarClass c v = do
@@ -310,7 +321,7 @@ checkVarClass c v = do
     Just (T (Kind cs)) ->
       unless (c `elem` cs) $ throw TypeErr $ " Type variable \""  ++ pprint v ++
                                              "\" not in class: " ++ pprint c
-    _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+    _ -> throw CompilerErr $ "Lookup of kind failed:" ++ pprint v
 
 -- === Normalized IR ===
 

@@ -150,7 +150,7 @@ isum :: n=>Int -> Int
 isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
 
 -- TODO: make this a builtin for efficiency
-size :: A n. Int
+size :: A n::Ix. Int
 size = isum for i::n. 1
 
 range :: Int -> E i. ()
@@ -198,7 +198,7 @@ randn k =
   u2 = rand k2
   sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
 
-randIdx :: A n. Key -> n
+randIdx :: A n::Ix. Key -> n
 randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)

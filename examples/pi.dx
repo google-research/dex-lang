@@ -13,7 +13,7 @@ estimatePiAvgVal key =
   x = rand key
   4.0 * sqrt (1.0 - sq x)
 
-meanAndStdDev :: A n. (Key -> Real) -> Key -> (Real, Real)
+meanAndStdDev :: A n::Ix. (Key -> Real) -> Key -> (Real, Real)
 meanAndStdDev f key =
   samps = many @n f key
   (mean samps, std samps)

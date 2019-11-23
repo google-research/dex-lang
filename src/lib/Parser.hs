@@ -380,7 +380,8 @@ sigmaType = do
                 -- TODO: lexcial order!
                 where vs = filter nameIsLower $ envNames (freeVars ty)
               Just tbs' -> tbs'
-  return (tbs, ty)
+  let tbs' = map (addIdxSetVars (idxSetVars ty)) tbs
+  return (tbs', ty)
   where
     nameIsLower v = isLower (nameTag v !! 0)
 
@@ -400,6 +401,20 @@ className = do
     "VSpace" -> return VSpace
     "Ix"     -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
+
+addIdxSetVars :: [Name] -> TBinder -> TBinder
+addIdxSetVars vs b@(v:>(Kind cs))
+  | v `elem` vs && not (IdxSet `elem` cs) = v:>(Kind (IdxSet:cs))
+  | otherwise = b
+
+idxSetVars :: Type -> [Name]
+idxSetVars ty = case ty of
+  ArrType _ a b  -> recur a <> recur b
+  TabType a b    -> envNames (freeVars a) <> recur b
+  RecType Cart r -> foldMap recur r
+  Exists body    -> recur body
+  _ -> []
+  where recur = idxSetVars
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName

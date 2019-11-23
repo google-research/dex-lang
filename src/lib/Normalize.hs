@@ -23,7 +23,8 @@ import Pass
 import Subst
 
 data TLamEnv = TLamContents NormEnv [TBinder] Expr
-type NormEnv = FullEnv (SigmaType, Either (RecTree Name) TLamEnv) (RecTree NType)
+type NormSubEnv = FullEnv (Either (RecTree Name) TLamEnv) (RecTree NType)
+type NormEnv = (TypeEnv, NormSubEnv)
 type NormM a = ReaderT NormEnv (CatT ([NDecl], Scope) (Either Err)) a
 
 -- TODO: add top-level freshness scope to top-level env
@@ -55,14 +56,14 @@ normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
   Lit x -> return $ NAtoms [NLit x]
   Var v ts -> do
-    x <- asks $ snd . fromL . (! v)
+    x <- asks $ fromL . (! v) . snd
     case x of
       Left vs -> case ts of
         [] -> return $ NAtoms (map NVar (toList vs))
         _ -> error "Unexpected type application"
-      Right (TLamContents env bs body) -> do
+      Right (TLamContents env tbs body) -> do
         ts' <- mapM normalizeTy ts
-        let env' = bindFold $ zipWith replaceAnnot bs (map T ts')
+        let env' = (foldMap tbind tbs, bindFold $ zipWith replaceAnnot tbs (map T ts'))
         local (const (env <> env')) $ normalize body
   PrimOp Scan _ [x, For ip (Lam _ p body)] -> do
     xs <- atomize x
@@ -140,11 +141,11 @@ normalizeDecl decl = case decl of
     return env
   LetPoly (v:>ty) (TLam tbs body) -> do
     env <- ask
-    return $ v@>L (ty, Right (TLamContents env tbs body))
+    return (v@>L ty, v@>L (Right (TLamContents env tbs body)))
   Unpack b tv bound -> do
     bound' <- normalizeScoped bound
     tv' <- looks $ rename tv . snd
-    let tenv = tv @> T (RecLeaf (NTypeVar tv'))
+    let tenv = (tv @> T (Kind [IdxSet]), tv @> T (RecLeaf (NTypeVar tv')))
     extendR tenv $ do
       (bs, lenv) <- normalizeBinders [b]
       extend $ ([NUnpack bs tv' bound'], tv' @> ())
@@ -154,7 +155,7 @@ normalizeDecl decl = case decl of
 normalizeTy :: Type -> NormM (RecTree NType)
 normalizeTy ty = case ty of
   BaseType b -> return $ RecLeaf (NBaseType b)
-  TypeVar v -> asks $ fromT . (!v)
+  TypeVar v -> asks $ fromT . (!v) . snd
   ArrType l a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b
@@ -177,8 +178,8 @@ normalizeBinder (v:>ty) = do
           v' <- looks $ rename v . snd
           extend $ asSnd (v' @> ())
           return $ v':>t
-  let env' = (v @> L (asSigma ty, Left (fmap binderVar bs)))
-  return (toList bs, env')
+  let env = (v @> L (asSigma ty), v @> L (Left (fmap binderVar bs)))
+  return (toList bs, env)
 
 normalizeBinders :: Traversable f =>
                       f Binder -> NormM ([NBinder], NormEnv)
@@ -197,10 +198,8 @@ normalizeScoped expr = do
 
 exprType :: Expr -> NormM Type
 exprType expr = do
-  env <- ask
-  let env' = flip fmap env $ \x -> case x of L (ty,_) -> L ty
-                                             T _      -> T ()
-  return $ getType env' expr
+  env <- asks fst
+  return $ getType env expr
 
 writeVars :: Traversable f => f NType -> NExpr -> NormM (f NAtom)
 writeVars tys expr = do

@@ -191,3 +191,9 @@ vspaceid x = x
 > (g :: A a. (a -> a)
 > g = (lam x::a . (vspaceid @a x));
 > g @Real)
+
+:tycheck for i::Int. 1
+> Type error: Not a valid index set: Int
+> context:
+> (for  i::Int .
+>     1)
