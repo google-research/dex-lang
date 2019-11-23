@@ -38,8 +38,8 @@ development. We welcome contributions. There's plenty of work to do!
 ## Running
 
   * Traditional REPL: `dex repl`
-  * Execute script: `dex script example/tutorial.dx`
-  * Notebook interface: `dex web example/tutorial.dx`
+  * Execute script: `dex script examples/tutorial.dx`
+  * Notebook interface: `dex web examples/tutorial.dx`
 
 ## License
 
