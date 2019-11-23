@@ -164,3 +164,30 @@ f x =
 
 :p lam x::Real. x
 > Type error: Can't print values of type: (Real -> Real)
+
+vspaceid :: A a::VSpace. a -> a
+vspaceid x = x
+
+:tycheck vspaceid (1.0, [2.0, 3.0])
+> (Real, (2=>Real))
+
+:tycheck vspaceid 0
+> Type error: Not a vector space: Int
+> context:
+> (vspaceid @Int 0)
+
+:tycheck ..
+  g :: A a::VSpace. a -> a
+  g x = vspaceid x
+  g @Real
+> (Real -> Real)
+
+:tycheck ..
+  g :: a -> a
+  g x = vspaceid x
+  g @Real
+> Type error: Type variable "a" not in class: VSpace
+> context:
+> (g :: A a. (a -> a)
+> g = (lam x::a . (vspaceid @a x));
+> g @Real)

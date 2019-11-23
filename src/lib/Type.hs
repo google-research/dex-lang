@@ -60,8 +60,9 @@ getType' expr = case expr of
       mapM_ checkTy ts
       x <- asks $ flip envLookup v
       case x of
-        Just (L (Forall _ body, s)) -> do
+        Just (L (Forall kinds body, s)) -> do
           mapM_ spendVar (envNames s)
+          zipWithM_ checkClassConstraints kinds ts
           return $ instantiateTVs ts body
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
     PrimOp b ts args -> do
@@ -196,7 +197,6 @@ noCon = Kind []
 idxSet :: Kind
 idxSet = Kind [IdxSet]
 
-
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
   IAdd     -> ibinOpType
@@ -282,6 +282,35 @@ subAtDepth d f ty = case ty of
     BoundTVar n   -> f d (Right n)
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
+
+
+-- === Built-in type classes ===
+
+checkClassConstraints :: Kind -> Type -> TypeM ()
+checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
+
+checkClassConstraint :: ClassName -> Type -> TypeM ()
+checkClassConstraint c ty = case c of
+  VSpace -> checkVSpace ty
+  _ -> error "Not implemented"
+
+checkVSpace :: Type -> TypeM ()
+checkVSpace ty = case ty of
+  BaseType RealType -> return ()
+  TypeVar v         -> checkVarClass VSpace v
+  TabType _ a       -> recur a
+  RecType _ r       -> mapM_ recur r
+  _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
+  where recur = checkVSpace
+
+checkVarClass :: ClassName -> Name -> TypeM ()
+checkVarClass c v = do
+  maybeKind <- asks $ flip envLookup v
+  case maybeKind of
+    Just (T (Kind cs)) ->
+      unless (c `elem` cs) $ throw TypeErr $ " Type variable \""  ++ pprint v ++
+                                             "\" not in class: " ++ pprint c
+    _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
 
 -- === Normalized IR ===
 
