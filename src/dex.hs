@@ -31,7 +31,7 @@ import Interpreter
 data Backend = Jit | Interp
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HtmlDoc
-data EvalMode = ReplMode
+data EvalMode = ReplMode String
               | WebMode FName
               | ScriptMode FName DocFmt ErrorHandling
 type PreludeFile = String
@@ -59,8 +59,8 @@ runMode evalMode prelude pass = do
   env <- execStateT (evalPrelude prelude pass) mempty
   let runEnv m = evalStateT m env
   case evalMode of
-    ReplMode ->
-      runEnv $ runInputT defaultSettings $ forever (replLoop pass)
+    ReplMode prompt ->
+      runEnv $ runInputT defaultSettings $ forever (replLoop prompt pass)
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile pass fname
       putStr $ printLitProg fmt results
@@ -92,9 +92,9 @@ evalPrelude fname pass = do
   where fname' = case fname of Just f -> f
                                Nothing -> "prelude.dx"
 
-replLoop :: Monoid env => FullPass env-> InputT (StateT env IO) ()
-replLoop pass = do
-  sourceBlock <- readMultiline ">=> " parseTopDeclRepl
+replLoop :: Monoid env => String -> FullPass env-> InputT (StateT env IO) ()
+replLoop prompt pass = do
+  sourceBlock <- readMultiline prompt parseTopDeclRepl
   result <- lift $ evalDecl pass sourceBlock
   liftIO $ putStrLn $ pprint result
 
@@ -106,7 +106,7 @@ readMultiline :: (MonadException m, MonadIO m) =>
                    String -> (String -> Maybe a) -> InputT m a
 readMultiline prompt parse = loop prompt ""
   where
-    dots = replicate (length prompt - 1) '.' ++ " "
+    dots = replicate 3 '.' ++ " "
     loop prompt' prevRead = do
       source <- getInputLine prompt'
       case source of
@@ -129,7 +129,9 @@ parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
-     (command "repl" $ simpleInfo (pure ReplMode))
+     (command "repl" $ simpleInfo $
+         ReplMode <$> (strOption $ long "prompt" <> value ">=> "
+                         <> metavar "STRING" <> help "REPL prompt"))
   <> (command "web"  $ simpleInfo (
          WebMode <$> argument str (metavar "FILE" <> help "Source program")))
   <> (command "script" $ simpleInfo (ScriptMode
@@ -149,7 +151,6 @@ parseEvalOpts = EvalOpts
                             long "prelude"
                          <> metavar "FILE"
                          <> help "Alternative prelude file")
-
 
 main :: IO ()
 main = do
