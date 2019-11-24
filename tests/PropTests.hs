@@ -4,16 +4,25 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE OverloadedStrings #-}
+
+
 import Test.QuickCheck
 import Test.QuickCheck.Random
 import System.Exit
 import Data.Text.Prettyprint.Doc
 import Control.Monad
+import qualified Hedgehog as H
+import Control.Monad.Reader
+import GHC.Stack
+
 
 import Syntax hiding (Result)
 import Parser
 import PPrint
 import Generators ()
+import GenExpr
+import TestPass
 
 prop_print_parse_uexpr :: UTopDecl -> Property
 prop_print_parse_uexpr decl = case parseTopDecl (pprintEsc decl) of
@@ -46,6 +55,37 @@ args = stdArgs
 main :: IO ()
 main = do
   results <- quickCheckWithResult args (pprintProp prop_print_parse_uexpr)
+  _ <- tests
   if isSuccess results
     then return ()
     else exitWith (ExitFailure 1)
+
+evalIOEither :: (H.MonadTest m, Show x, MonadIO m, HasCallStack) => IO (Either x a) ->  m a
+evalIOEither m = H.evalIO m >>= H.evalEither
+
+prop_jitEval :: H.Property
+prop_jitEval =
+  H.property $ do
+    srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (GenEnv mempty mempty defaultGenOptions))
+    topDecl <- evalIOEither (runTestPass typeCheckPass srcBlk)
+    interres <- evalIOEither (runTestPass passInterp topDecl) >>= H.evalEither
+    H.annotate ("Interpreter result: " ++ pprint interres)
+    jitres <- evalIOEither (runTestPass fullPassJit topDecl) >>= H.evalEither
+    pprint interres H.=== pprint jitres
+
+
+getExpr :: TopDeclP b -> ExprP b
+getExpr ~(EvalCmd (Command _ e)) = e
+
+prop_pprint :: H.Property
+prop_pprint =
+  H.property $ do
+    expr <- H.forAllWith pprint (runReaderT sampleExpr (GenEnv mempty mempty defaultGenOptions))
+    H.tripping expr pprintEsc (\s -> (getExpr . stripSrcAnnotTopDecl) <$> parseTopDecl s)
+
+tests :: IO Bool
+tests =
+  H.checkParallel $ H.Group "TypeCheck" [
+        ("prop_jitEval", prop_jitEval)
+      , ("prop_pprint", prop_pprint)
+    ]
