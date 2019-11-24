@@ -69,12 +69,13 @@ getType' expr = case expr of
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
     PrimOp b ts args -> do
       mapM_ checkTy ts
+      zipWithM_ checkClassConstraints kinds ts
       argTys'' <- liftM2 (++) (checkNothingSpent $ traverse recur nlArgs)
                               (traverseProd k recur linArgs)
       assertEq argTys' argTys'' "Builtin"
       return ansTy'
       where
-        BuiltinType _ (numLin, k) argTys ansTy = builtinType b
+        BuiltinType kinds (numLin, k) argTys ansTy = builtinType b
         (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
         (linArgs, nlArgs) = splitAt numLin args
     Decl decl body -> do
@@ -201,6 +202,9 @@ noCon = Kind []
 idxSet :: Kind
 idxSet = Kind [IdxSet]
 
+vspace :: Kind
+vspace = Kind [VSpace]
+
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
   IAdd     -> ibinOpType
@@ -226,12 +230,12 @@ builtinType builtin = case builtin of
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real
   -- TODO: this breaks for tuple or non-reals
-  Linearize   -> nonLinBuiltin [noCon, noCon] [a --> b, a] (pair b (a --@ b))
-  Transpose   -> BuiltinType [noCon, noCon] (2, Tens) [a --@ b, b] a
-  VZero   -> nonLinBuiltin [noCon] [] a
-  VAdd    -> nonLinBuiltin [noCon] [a, a] a
-  VSingle -> nonLinBuiltin [noCon, idxSet] [j, a] (j ==> a)
-  VSum    -> nonLinBuiltin [noCon, idxSet] [j ==> a] a
+  Linearize   -> nonLinBuiltin [vspace, vspace] [a --> b, a] (pair b (a --@ b))
+  Transpose   -> BuiltinType [vspace, vspace] (2, Tens) [a --@ b, b] a
+  VZero   -> nonLinBuiltin [vspace] [] a
+  VAdd    -> nonLinBuiltin [vspace] [a, a] a
+  VSingle -> nonLinBuiltin [vspace, idxSet] [j, a] (j ==> a)
+  VSum    -> nonLinBuiltin [vspace, idxSet] [j ==> a] a
   Filter -> nonLinBuiltin [noCon, idxSet]
               [a --> bool, j ==> a] (Exists (i==>a'))
     where a' = BoundTVar 1  -- under an extra binder

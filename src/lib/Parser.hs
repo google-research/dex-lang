@@ -393,9 +393,9 @@ className :: Parser ClassName
 className = do
   s <- upperStr
   case s of
-    "Show"   -> return Show
-    "VSpace" -> return VSpace
-    "Ix"     -> return IdxSet
+    "Show" -> return Show
+    "VS"   -> return VSpace
+    "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
 addIdxSetVars :: [Name] -> TBinder -> TBinder

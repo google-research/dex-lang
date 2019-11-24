@@ -34,10 +34,10 @@ ipow x y = %pow(x, y)
 pow :: Real -> Real -> Real
 pow x y = %%pow(x, y)
 
-asint :: i -> Int
+asint :: A i::Ix. i -> Int
 asint i = %asint(i)
 
-asidx :: Int -> i
+asidx :: A i::Ix. Int -> i
 asidx i = %asidx(i)
 
 real :: Int -> Real
@@ -90,10 +90,10 @@ b2r x = real $ b2i x
 pi :: Real
 pi = 3.141592653589793
 
-ixadd :: i -> Int -> i
+ixadd :: A i::Ix. i -> Int -> i
 ixadd i n = asidx $ iadd (asint i) n
 
-ixsub :: i -> Int -> i
+ixsub :: A i::Ix. i -> Int -> i
 ixsub i n = asidx $ isub (asint i) n
 
 iota :: n=>Int
@@ -185,7 +185,7 @@ splitKey3 key =
 many :: A n a. (Key -> a) -> Key -> n=>a
 many f key = for i. f (hash key (asint i))
 
-ixkey :: Key -> n -> Key
+ixkey :: A n::Ix. Key -> n -> Key
 ixkey x i = hash x (asint i)
 
 rand :: Key -> Real
@@ -203,43 +203,41 @@ randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
-'Vector spaces and automatic differentiation. Note that many of the following
-have implicit vector space typeclass constraints. For now these are not checked
-by the type checker.
+'Vector spaces and automatic differentiation.
 
-vzero :: a
+vzero :: A a::VS. a
 vzero = %vzero()
 
-vadd :: a -> a -> a
+vadd :: A a::VS. a -> a -> a
 vadd x y = %vadd(x, y)
 
-vsingle :: n -> a -> n=>a
+vsingle :: A a::VS n. n -> a -> n=>a
 vsingle i x = %vsingle(i, x)
 
-vsum :: n=>a -> a
+vsum :: A a::VS n. n=>a -> a
 vsum xs = %vsum(for i. xs.i)
 
-linearize :: (a -> b) -> a -> (b, a --o b)
+linearize :: A a::VS b::VS. (a -> b) -> a -> (b, a --o b)
 linearize f x0 = %linearize(lam x. f x, x0)
 
-jvp :: (a -> b) -> a -> a --o b
+jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
 jvp f x = llam t. snd (linearize f x) t
 
-tlinear :: (a --o b) --o b --o a
+tlinear :: A a::VS b::VS. (a --o b) --o b --o a
 tlinear = llam f ct. %linearTranspose(llam t. f t, ct)
 
-vjp :: (a -> b) -> a -> (b, b --o a)
+vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x
           (y, tlinear df)
 
-grad :: (a -> Real) -> a -> a
+grad :: A a::VS. (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x
            pullback 1.0
 
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 
-vsumImpl :: A n::Ix a::VSpace. n=>a -> a
+vsumImpl :: A n::Ix a::VS. n=>a -> a
 vsumImpl xs = fold vzero for i::n. lam c. vadd c xs.i
 
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
