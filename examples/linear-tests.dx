@@ -40,7 +40,7 @@
 > In: (1, 2.0)
 >
 > :tycheck (1 , 2.0) :: (Int : Real)
->          ^^^^^^^^^^
+>          ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 :tycheck llam x::Real. (1.0, 2.0)
 > Linearity error:Variables never spent: x::Real

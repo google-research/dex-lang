@@ -19,21 +19,21 @@
 > Int
 
 :t _, N = unpack range 10
-   x = (iota :: N=>Int)
+   x = (iota)::(N=>Int)
    isum x
 > Int
 
 :t _, Nx = unpack range 10
    _, Ny = unpack range 3
    x = iota @ Nx
-   y = (iota :: Ny=>Int)
+   y = (iota)::(Ny=>Int)
    real (isum for i. x.i) + real (isum for j. y.j)
 > Real
 
 :t _, Nx = unpack range 10
    _, Ny = unpack range 3
    x = iota @ Nx
-   y = (iota :: Ny=>Int)
+   y = (iota) :: (Ny=>Int)
    sum for i. iadd x.i y.i
 > Type error:
 > Expected: Ny
@@ -44,7 +44,7 @@
 >                          ^
 
 :t _, Nx = unpack range 10
-   (iota :: Nx=>Int)
+   (iota)::(Nx=>Int)
 > Type error:
 > Leaked type variable: Nx
 
@@ -69,17 +69,17 @@ xr = map real arr
 -- :t unpack x = iota 3
 --    in let y = for i j. x.i * x.i
 --       in sum (for i. sum (y.i))
-:t 1 :: Int
+:t (1) :: Int
 > Int
 
-:t 1.0 :: Int
+:t (1.0) :: Int
 > Type error:
 > Expected: Int
 >   Actual: Real
 > In: 1.0
 >
-> :t 1.0 :: Int
->    ^^^^
+> :t (1.0) :: Int
+>     ^^^
 
 :t [1, 2, 3]
 > (3=>Int)
@@ -144,7 +144,7 @@ idfun x = x
 > Type error:
 > Leaked type variable: a
 
-:t (todo :: Int -> Real) 1
+:t (todo)::(Int -> Real) 1
 > Real
 
 f :: Int -> Real

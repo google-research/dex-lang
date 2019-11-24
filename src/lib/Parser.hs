@@ -89,7 +89,7 @@ explicitCommand = do
 -- === Parsing decls ===
 
 decl :: Parser UDecl
-decl = typeAlias <|> letPoly <|> unpack <|> letMono
+decl = typeAlias <|> unpack <|> letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ (eol >> sc) <|> symbol ";"
@@ -104,12 +104,9 @@ typeAlias = do
 
 letPoly :: Parser UDecl
 letPoly = do
-  (v, (tbs, ty)) <- try $ do
-    v <- lowerName
-    symbol "::"
-    sTy <- sigmaType
-    declSep
-    return (v, sTy)
+  v <- try $ lowerName <* symbol "::"
+  (tbs, ty) <- sigmaType
+  declSep
   symbol (pprint v)
   wrap <- idxLhsArgs <|> lamLhsArgs (linearities ty)
   equalSign
@@ -146,10 +143,10 @@ letMono = do
 -- === Parsing expressions ===
 
 expr :: Parser UExpr
-expr = makeExprParser (sc >> withSourceAnn term >>= maybeAnnot) ops
+expr = makeExprParser (withSourceAnn term) ops
 
 term :: Parser UExpr
-term =   parenRaw
+term =   parenExpr
      <|> var
      <|> liftM Lit literal
      <|> lamExpr
@@ -164,8 +161,12 @@ term =   parenRaw
 declOrExpr :: Parser UExpr
 declOrExpr = declExpr <|> expr <?> "decl or expr"
 
-parenRaw :: Parser UExpr
-parenRaw = parens $ declExpr <|> productCon
+parenExpr :: Parser UExpr
+parenExpr = do
+  e <- parens $ declExpr <|> productCon
+  ann <- typeAnnot
+  return $ case ann of NoAnn  -> e
+                       Ann ty -> Annot e ty
 
 productCon :: Parser UExpr
 productCon = do
@@ -181,15 +182,15 @@ prod p = prod1 p <|> return (Cart, [])
 prod1 :: Parser a -> Parser (ProdKind, [a])
 prod1 p = do
   x <- p
-  sep <- optional $     (symbol "," >> return Cart)
-                    <|> (symbol ":" >> return Tens)
+  sep <- optional $     (comma >> return Cart)
+                    <|> (colon >> return Tens)
   case sep of
     Nothing -> return (Cart, [x])
     Just k -> do
-      xs <- p `sepBy` symbol sep'
+      xs <- p `sepBy` sep'
       return (k, x:xs)
-      where sep' = case k of Cart -> ","
-                             Tens -> ":"
+      where sep' = case k of Cart -> comma
+                             Tens -> colon
 
 var :: Parser UExpr
 var = liftM2 Var lowerName $ many (symbol "@" >> tauTypeAtomic)
@@ -200,16 +201,9 @@ declExpr = liftM2 Decl (decl <* declSep) declOrExpr
 withSourceAnn :: Parser UExpr -> Parser UExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
-maybeAnnot :: UExpr -> Parser UExpr
-maybeAnnot e = do
-  ann <- typeAnnot
-  return $ case ann of
-             NoAnn -> e
-             Ann ty -> Annot e ty
-
 typeAnnot :: Parser Ann
 typeAnnot = do
-  ann <- optional $ symbol "::" >> tauType
+  ann <- optional $ symbol "::" >> tauTypeAtomic
   return $ case ann of
     Nothing -> NoAnn
     Just ty -> Ann ty
@@ -360,17 +354,19 @@ name :: Parser String -> Parser Name
 name p = liftM2 Name p intQualifier
 
 equalSign :: Parser ()
-equalSign = void $ symbol "=" >> optional eol >> sc
+equalSign = do
+  try $ symbol "=" >> notFollowedBy (symbol ">")
+  optional eol >> sc
 
 argTerm :: Parser ()
-argTerm = void $ symbol "." >> optional eol >> sc
+argTerm = symbol "." >> optional eol >> sc
 
 -- === Parsing types ===
 
 sigmaType :: Parser ([TBinder], Type)
 sigmaType = do
   maybeTbs <- optional $ do
-    try $ symbol "A"
+    symbol "A"
     tBs <- many typeBinder
     period
     return tBs
@@ -470,3 +466,6 @@ comma = symbol ","
 
 period :: Parser ()
 period = symbol "."
+
+colon :: Parser ()
+colon = symbol ":"
