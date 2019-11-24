@@ -9,6 +9,7 @@
 module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr, ptrAsWord,
                  mallocBytes, showAsm) where
 
+import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
 import qualified LLVM.PassManager as P
@@ -32,6 +33,8 @@ evalJit m = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
+      -- TODO: enable once we've fixed all the failures!
+      -- L.verify m'
       runPasses m'
       jit c $ \ee ->
          EE.withModuleInEngine ee m' $ \eee -> do
@@ -54,6 +57,7 @@ showLLVM m = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
+      L.verify m'
       prePass <- showModule m'
       runPasses m'
       postPass <- showModule m'
