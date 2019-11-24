@@ -21,6 +21,7 @@ import Foreign.Ptr
 import Foreign.Storable
 import Foreign.Marshal.Alloc (mallocBytes)
 
+import Control.Exception
 import Control.Monad
 import Data.Word (Word64)
 import Data.ByteString.Char8 (unpack)
@@ -33,8 +34,7 @@ evalJit m = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
-      -- TODO: enable once we've fixed all the failures!
-      -- L.verify m'
+      L.verify m'
       runPasses m'
       jit c $ \ee ->
          EE.withModuleInEngine ee m' $ \eee -> do
@@ -57,14 +57,20 @@ showLLVM m = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c m $ \m' -> do
-      L.verify m'
+      verifyErr <- verifyAndRecover m'
       prePass <- showModule m'
       runPasses m'
       postPass <- showModule m'
-      return $ "Input LLVM:\n\n" ++ prePass ++ "\nAfter passes:\n\n" ++ postPass
+      return $ verifyErr ++ "Input LLVM:\n\n" ++ prePass
+            ++ "\nAfter passes:\n\n" ++ postPass
   where
     showModule :: Mod.Module -> IO String
     showModule m' = liftM unpack $ Mod.moduleLLVMAssembly m'
+
+verifyAndRecover :: Mod.Module -> IO String
+verifyAndRecover m =
+  (L.verify m >> return  "") `catch`
+    (\e -> return ("\nVerification error:\n" ++ show (e::SomeException) ++ "\n"))
 
 showAsm :: L.Module -> IO String
 showAsm m =

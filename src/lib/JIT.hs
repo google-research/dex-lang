@@ -290,7 +290,9 @@ writeCell (Cell ptr []) (ScalarVal x _) = store ptr x
 writeCell (Cell (Ptr dest _) shape) (ArrayVal (Ptr src _) _) = do
   numScalars <- sizeOf shape
   numBytes <- mul (litInt 8) numScalars
-  addInstr $ L.Do (externCall memcpyFun [dest, src, numBytes])
+  src'  <- castPtr charTy src
+  dest' <- castPtr charTy dest
+  addInstr $ L.Do (externCall memcpyFun [dest', src', numBytes])
 writeCell _ _ = error $ "Bad value type for cell"
 
 litVal :: LitVal -> Operand
@@ -340,11 +342,11 @@ alloca ty s = do v <- freshName s
         instr = L.Alloca ty' Nothing 0 []
 
 malloc :: BaseType -> [CompileVal] -> String -> CompileM Cell
-malloc ty shape s = do
+malloc ty shape _ = do
     size <- sizeOf shape'
     n <- mul (litInt 8) size
     voidPtr <- evalInstr "" charPtrTy (externCall mallocFun [n])
-    ptr <- evalInstr s (L.ptr ty') $ L.BitCast voidPtr (L.ptr ty') []
+    ptr <- castPtr ty' voidPtr
     return $ Cell (Ptr ptr ty) shape'
   where shape' = map scalarVal shape
         ty' = scalarTy ty
@@ -355,8 +357,13 @@ allocate b shape s = case shape of [] -> alloca b s
 
 free :: Cell -> CompileM ()
 free (Cell (Ptr ptr _) shape) =
-  case shape of [] -> return ()
-                _  -> addInstr $ L.Do (externCall freeFun [ptr])
+  case shape of
+    [] -> return ()
+    _  -> do ptr' <- castPtr charTy ptr
+             addInstr $ L.Do (externCall freeFun [ptr'])
+
+castPtr :: L.Type -> Operand -> CompileM Operand
+castPtr ty ptr = evalInstr "ptrcast" (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
 
 sizeOf :: [Operand] -> CompileM Operand
 sizeOf shape = foldM mul (litInt 1) shape
@@ -392,6 +399,12 @@ compileUnop ty makeInstr [ScalarVal x _] =
   liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x)
 compileUnop _ _ xs = error $ "Bad args: " ++ show xs
 
+compileFCmp :: L.FloatingPointPredicate -> [CompileVal] -> CompileM CompileVal
+compileFCmp p ~[ScalarVal x _, ScalarVal y _] = do
+  boolResult <- evalInstr "" (L.IntegerType 1) (L.FCmp p x y [])
+  intResult <- evalInstr "" boolTy (L.ZExt boolResult boolTy [])
+  return $ ScalarVal intResult BoolType
+
 compileFFICall :: String -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileFFICall name tys xs = do
   ans <- evalInstr name retTy' $ externCall f (map scalarVal xs)
@@ -415,10 +428,10 @@ compileBuiltin b ts = case b of
   FSub     -> compileBinop RealType (\x y -> L.FSub noFastMathFlags x y [])
   FMul     -> compileBinop RealType (\x y -> L.FMul noFastMathFlags x y [])
   FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
-  FLT      -> compileBinop BoolType (\x y -> L.FCmp L.OLT x y [])
-  FGT      -> compileBinop BoolType (\x y -> L.FCmp L.OGT x y [])
+  FLT      -> compileFCmp L.OLT
+  FGT      -> compileFCmp L.OGT
   Todo     -> const $ throw MiscErr "Can't compile 'todo'"
-  BoolToInt -> compileUnop IntType  (\x -> L.ZExt x longTy [])
+  BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   FFICall _ name -> compileFFICall name ts
   Scan     -> error "Scan should have been lowered away by now."
@@ -437,7 +450,10 @@ builtinFFISpecs :: [ExternFunSpec]
 builtinFFISpecs = [mallocFun, freeFun, memcpyFun]
 
 charPtrTy :: L.Type
-charPtrTy = L.ptr (L.IntegerType 8)
+charPtrTy = L.ptr charTy
+
+charTy :: L.Type
+charTy = L.IntegerType 8
 
 boolTy :: L.Type
 boolTy = L.IntegerType 64
