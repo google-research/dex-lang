@@ -95,7 +95,10 @@ evalPrelude fname pass = do
 replLoop :: Monoid env => String -> FullPass env-> InputT (StateT env IO) ()
 replLoop prompt pass = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
+  env <- lift get
   result <- lift $ evalDecl pass sourceBlock
+  case result of Result (Left _) -> lift $ put env
+                 _ -> return ()
   liftIO $ putStrLn $ pprint result
 
 liftErrIO :: MonadIO m => Except a -> m a
