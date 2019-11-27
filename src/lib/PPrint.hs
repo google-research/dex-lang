@@ -116,7 +116,7 @@ instance Pretty b => Pretty (ExprP b) where
     RecCon Tens _ -> error "Not implemented"
     TabCon _ xs -> list (map pretty xs)
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
-    IdxLit _ i -> p i
+    IdxLit n i -> "asidx" <+> "@" <> p (IdxSetLit n) <+> p i
     SrcAnnot subexpr _ -> p subexpr
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
@@ -237,6 +237,7 @@ instance Pretty Value where
   pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = printDouble v
   pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | mod v 2 == 0 = "False"
                                                               | mod v 2 == 1 = "True"
+  pretty (Value (IdxSetLit n) (RecLeaf (IntVec [i]))) = p ((IdxLit n i)::Expr)
   pretty (Value (RecType _ r) (RecTree r')) = p (recZipWith Value r r')
   pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
   pretty v = error $ "Can't print: " ++ show v

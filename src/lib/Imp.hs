@@ -167,6 +167,7 @@ reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
       BaseType _ -> RecLeaf ()
       TabType _ valTy -> typeLeaves valTy
       RecType _ r -> RecTree $ fmap typeLeaves r
+      IdxSetLit _ -> RecLeaf ()
       _ -> error $ "can't show " ++ pprint t
     subty :: Type -> Type
     subty t = case t of
@@ -174,6 +175,7 @@ reconstruct ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
       TabType (TypeVar v) valTy -> TabType (IdxSetLit (tenv ! v)) (subty valTy)
       TabType n valTy -> TabType n (subty valTy)
       RecType k r -> RecType k $ fmap subty r
+      IdxSetLit _ -> t
       _ -> error $ "can't show " ++ pprint t
 
 -- === type checking imp programs ===

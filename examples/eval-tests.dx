@@ -201,3 +201,9 @@ litArr = [10, 5, 3]
 :p (x, y) = (1, (2,3))
    (x, y)
 > (1, (2, 3))
+
+:p for i::3. i
+> [asidx @3 0, asidx @3 1, asidx @3 2]
+
+:p (asidx 0)::1
+> asidx @1 0
