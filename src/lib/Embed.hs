@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbedEnv, NEmbedScope, buildScoped, askType, wrapNDecls,
-              runEmbedT, emitUnpack, nGet, wrapAtomicFor) where
+              runEmbedT, emitUnpack, nGet, wrapAtomicFor, buildNAtomicFor) where
 
 import Env
 import Fresh
@@ -34,6 +34,7 @@ emit expr = case expr of
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat NEmbedEnv m => [NBinder] -> NExpr -> m [NAtom]
+emitTo [] _ = return []
 emitTo bs expr = do
   bs' <- traverse freshenNBinder bs
   extend $ asSnd [NLet bs' expr]
@@ -77,6 +78,14 @@ buildNLam :: (MonadCat NEmbedEnv m) =>
 buildNLam l bs f = do
   (body, bs', decls) <- withBinders bs f
   return $ NLam l bs' $ wrapNDecls decls body
+
+buildNAtomicFor :: (MonadCat NEmbedEnv m) =>
+                     NBinder -> (NAtom -> m NAtom) -> m NAtom
+buildNAtomicFor ib f = do
+  ~(body, [ib'@(i':>_)], _) <- withBinders [ib] (\[x] -> f x) -- TODO: fail if nonempty decls
+  return $ case body of
+    NGet e (NVar i) | i == i' && not (isin i (freeVars e)) -> e
+    _ -> NAtomicFor ib' body
 
 buildNestedNScans :: (MonadCat NEmbedEnv m)
     => [NBinder]                           -- index binders

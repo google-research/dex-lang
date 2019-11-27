@@ -209,6 +209,8 @@ data NAtom = NLit LitVal
            | NVar Name
            | NGet NAtom NAtom
            | NLam Lin [NBinder] NExpr
+           -- Only used internally in the simplification pass as book-keeping
+           -- for compile-time tables of functions etc.
            | NAtomicFor NBinder NAtom
               deriving (Show)
 
