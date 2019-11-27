@@ -232,11 +232,11 @@ genLit ty = Lit <$> case ty of
     StrType -> error "Str type not implemented"
 
 genName :: GenM Name
-genName = Gen.prune (genUntil notShadowed (flip Name 0 <$> str))
+genName = Gen.prune (genUntil notShadowed (fromString <$> str))
     where
         strLen = Range.constant 0 5
         strTail = Gen.frequency [(10, Gen.alphaNum), (1, return '\'')]
-        str = fromString <$> liftM2 (:) Gen.lower (Gen.list strLen strTail)
+        str = liftM2 (:) Gen.lower (Gen.list strLen strTail)
 
 genVars :: Type -> GenM [ExprP b]
 genVars t = view (typeEnvL . at (Forall [] t) . to (maybe [] id) . to (map (flip Var [])))
