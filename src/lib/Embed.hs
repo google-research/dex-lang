@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbedEnv, NEmbedScope, buildScoped, askType, wrapNDecls,
@@ -28,7 +29,7 @@ emit expr = case expr of
   _ -> do
     tys <- askType expr
     -- TODO: use suggestive names based on types (e.g. "f" for function)
-    emitTo (map (rawName "v" :>) tys) expr
+    emitTo (map ("v":>) tys) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat NEmbedEnv m => [NBinder] -> NExpr -> m [NAtom]

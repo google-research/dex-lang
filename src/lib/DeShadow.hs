@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module DeShadow (sourcePass, deShadowPass) where
 
@@ -118,7 +119,7 @@ freshBinder (v:>ann) = do
 freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
 freshBinderP (v:>ann) = do
   shadowed <- looks $ (v `isin`) . fst . fst
-  if shadowed && v /= Name "_" 0
+  if shadowed && v /= "_"
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
@@ -128,7 +129,7 @@ freshBinderP (v:>ann) = do
 freshTBinder :: TBinder -> DeShadowCat TBinder
 freshTBinder (v:>k) = do
   shadowed <- looks $ (v `isin`) . snd . fst
-  if shadowed && v /= Name "_" 0
+  if shadowed && v /= "_"
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd

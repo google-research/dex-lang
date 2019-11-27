@@ -30,6 +30,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
+import Data.String
 import Data.Word (Word64)
 
 import Data.Binary.IEEE754 (wordToDouble)
@@ -68,7 +69,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
 
 type CompileM a = ReaderT ImpVarEnv (StateT CompileState (FreshT (Either Err))) a
 data CompiledProg = CompiledProg Module
-data ExternFunSpec = ExternFunSpec String L.Type [L.Type] deriving (Ord, Eq)
+data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
@@ -184,7 +185,7 @@ constOperand StrType  _ = error "Not implemented"
 compileTopProg :: ImpProg -> CompileM CompiledProg
 compileTopProg prog = do
   compileProg prog
-  finishBlock (L.Ret Nothing []) (L.Name "<ignored>")
+  finishBlock (L.Ret Nothing []) "<ignored>"
   specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
@@ -272,9 +273,9 @@ compileLoop iVar (ScalarVal n _) body = do
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 compileLoop _ (ArrayVal _ _) _ = error "Array-valued loop max"
 
-freshName :: String -> CompileM L.Name
+freshName :: Tag -> CompileM L.Name
 freshName s = do name <- fresh s
-                 return $ strToName $ pprint name
+                 return $ nameToLName name
 
 idxCell :: Cell -> [CompileVal] -> CompileM Cell
 idxCell cell [] = return cell
@@ -321,7 +322,7 @@ lessThan x y = evalInstr "lt" longTy $ L.ICmp L.SLT x y []
 add :: Long -> Long -> CompileM Long
 add x y = evalInstr "add" longTy $ L.Add False False x y []
 
-evalInstr :: String -> L.Type -> Instruction -> CompileM Operand
+evalInstr :: Tag -> L.Type -> Instruction -> CompileM Operand
 evalInstr s ty instr = do
   v <- freshName s'
   addInstr $ v L.:= instr
@@ -334,14 +335,14 @@ addPtr (Ptr ptr ty) i = do ptr' <- evalInstr "ptr" (L.ptr (scalarTy ty)) instr
                            return $ Ptr ptr' ty
   where instr = L.GetElementPtr False ptr [i] []
 
-alloca :: BaseType -> String -> CompileM Cell
+alloca :: BaseType -> Tag -> CompileM Cell
 alloca ty s = do v <- freshName s
                  modify $ setScalarDecls ((v L.:= instr):)
                  return $ Cell (Ptr (L.LocalReference (L.ptr ty') v) ty) []
   where ty' = scalarTy ty
         instr = L.Alloca ty' Nothing 0 []
 
-malloc :: BaseType -> [CompileVal] -> String -> CompileM Cell
+malloc :: BaseType -> [CompileVal] -> Tag -> CompileM Cell
 malloc ty shape _ = do
     size <- sizeOf shape'
     n <- mul (litInt 8) size
@@ -351,7 +352,7 @@ malloc ty shape _ = do
   where shape' = map scalarVal shape
         ty' = scalarTy ty
 
-allocate :: BaseType -> [CompileVal] -> String -> CompileM Cell
+allocate :: BaseType -> [CompileVal] -> Tag -> CompileM Cell
 allocate b shape s = case shape of [] -> alloca b s
                                    _ -> malloc b shape s
 
@@ -405,7 +406,7 @@ compileFCmp p ~[ScalarVal x _, ScalarVal y _] = do
   intResult <- evalInstr "" boolTy (L.ZExt boolResult boolTy [])
   return $ ScalarVal intResult BoolType
 
-compileFFICall :: String -> [IType] -> [CompileVal] -> CompileM CompileVal
+compileFFICall :: Tag -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileFFICall name tys xs = do
   ans <- evalInstr name retTy' $ externCall f (map scalarVal xs)
   modify $ setFunSpecs (f:)
@@ -416,7 +417,7 @@ compileFFICall name tys xs = do
     fromScalarIType ty = error $ "Not a scalar: " ++ pprint ty
     retTy:argTys = map fromScalarIType tys
     retTy':argTys' = map scalarTy (retTy:argTys)
-    f = ExternFunSpec name retTy' argTys'
+    f = ExternFunSpec (L.Name name) retTy' argTys'
 
 compileBuiltin :: Builtin -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b ts = case b of
@@ -433,7 +434,7 @@ compileBuiltin b ts = case b of
   Todo     -> const $ throw MiscErr "Can't compile 'todo'"
   BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
-  FFICall _ name -> compileFFICall name ts
+  FFICall _ name -> compileFFICall (fromString name) ts
   Scan     -> error "Scan should have been lowered away by now."
   _ -> error $ "Primop not implemented: " ++ pprint b
 
@@ -487,22 +488,22 @@ externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
 externCall (ExternFunSpec fname retTy argTys) xs =
   L.Call Nothing L.C [] fun xs' [] []
   where fun = Right $ L.ConstantOperand $ C.GlobalReference
-                         (funTy retTy argTys) (strToName fname)
+                         (funTy retTy argTys) fname
         xs' = [(x ,[]) | x <- xs]
 
 externDecl :: ExternFunSpec -> L.Definition
 externDecl (ExternFunSpec fname retTy argTys) =
   L.GlobalDefinition $ L.functionDefaults {
-    L.name        = strToName fname
+    L.name        = fname
   , L.parameters  = ([L.Parameter t (argName i) []
                      | (i, t) <- zip [0::Int ..] argTys], False)
   , L.returnType  = retTy
   , L.basicBlocks = []
   }
-  where argName i = strToName ("arg" ++ show i)
+  where argName i = L.Name $ "arg" <> fromString (show i)
 
-strToName :: String -> L.Name
-strToName s = L.Name $ toShort $ pack s
+nameToLName :: Name -> L.Name
+nameToLName v = L.Name (toShort $ pack (pprint v))
 
 setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }

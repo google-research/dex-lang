@@ -4,10 +4,13 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE OverloadedStrings #-}
+
 module Parser (parseProg, parseTopDeclRepl, parseTopDecl) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
+import Data.String
 import Text.Megaparsec
 import Text.Megaparsec.Char
 import Data.Char (isLower)
@@ -322,7 +325,7 @@ rawVar :: Parser UExpr
 rawVar = liftM (flip Var []) lowerName
 
 binder :: Parser UBinder
-binder = (symbol "_" >> return (Name "_" 0 :> NoAnn))
+binder = (symbol "_" >> return ("_" :> NoAnn))
      <|> liftM2 (:>) lowerName typeAnnot
 
 pat :: Parser UPat
@@ -351,7 +354,10 @@ upperStr :: Parser String
 upperStr = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
 name :: Parser String -> Parser Name
-name p = liftM2 Name p intQualifier
+name p = do
+  s <- p
+  n <- intQualifier
+  return $ Name (fromString s) n
 
 equalSign :: Parser ()
 equalSign = do
@@ -379,7 +385,7 @@ sigmaType = do
   let tbs' = map (addIdxSetVars (idxSetVars ty)) tbs
   return (tbs', ty)
   where
-    nameIsLower v = isLower (nameTag v !! 0)
+    nameIsLower v = isLower (tagToStr (nameTag v) !! 0)
 
 typeBinder :: Parser TBinder
 typeBinder = do

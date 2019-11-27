@@ -11,6 +11,7 @@
 module PPrint (pprint, pprintEsc, addErrSrc, printLitBlock) where
 
 import GHC.Float
+import Data.String
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -73,11 +74,12 @@ instance Pretty SigmaType where
     where n = length kinds
           header = "A" <+> hsep binders <> "."
           boundvars :: [Name]
-          boundvars = [Name (tvars 0 i) 0 | i <- [-n..(-1)]]
+          boundvars = [tvars 0 i | i <- [-n..(-1)]]
           binders = map p $ zipWith (:>) boundvars kinds
 
-tvars :: Int -> Int -> String
-tvars d i = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
+tvars :: Int -> Int -> Name
+tvars d i = fromString s
+  where s = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
                                  | otherwise -> "#ERR#"
 
 instance Pretty BaseType where

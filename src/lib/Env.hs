@@ -10,10 +10,13 @@
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot, envIntersect,
-            replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion,
+            replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion, tagToStr,
             envLookupDefault, envDiff, envMapMaybe, fmapNames) where
 
+import Data.Char
+import Data.String
 import Data.Traversable
+import qualified Data.ByteString.Short as B
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
@@ -26,7 +29,7 @@ infixr 7 :>
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
 data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
-type Tag = String
+type Tag = B.ShortByteString
 data BinderP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
 
 envLookup :: Env a -> Name -> Maybe a
@@ -139,6 +142,11 @@ instance Traversable BinderP where
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
-  pretty (Name tag n) = pretty tag <> suffix
+  pretty (Name tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n
+instance IsString Name where
+  fromString s = Name (fromString s) 0
+
+tagToStr :: Tag -> String
+tagToStr s = map (chr . fromEnum) (B.unpack s)

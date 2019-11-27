@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Inference (typePass) where
 
@@ -226,7 +227,7 @@ splitTab expr t = case t of
 
 freshQ :: MonadCat QVars m => m Type
 freshQ = do
-  tv <- looks $ rename (rawName "?")
+  tv <- looks $ rename "?"
   extend $ tv @> ()
   return (TypeVar tv)
 
@@ -305,8 +306,9 @@ unify err t1 t2 = do
     recur = unify err
 
 isQ :: Name -> Bool
-isQ (Name ('?':_) _) = True
-isQ _ = False
+isQ (Name tag _) = case tagToStr tag of
+  '?':_ -> True
+  _     -> False
 
 bindQ :: Name -> Type -> SolveM ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))

@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Normalize (normalizePass, simpPass) where
 
@@ -266,7 +267,7 @@ materializeAtom atom = case atom of
     scope <- asks snd
     let ty = getAtomType scope atom
     atomExpr <- atomToNExpr atom
-    let v = rename (rawName "tab") scope
+    let v = rename "tab" scope
     let env' = (mempty, v @> L ty)
     let decl = NLet [v:>ty] atomExpr
     return ((NVar v, [decl]), env')

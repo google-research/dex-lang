@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Interpreter (interpPass) where
 
@@ -205,7 +206,7 @@ runLinearize :: Binder -> Expr -> Val -> Val
 runLinearize (v:>ty) body x =
   pair outPrimal $ Lam Lin (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
   where
-    t = rawName "t"
+    t = "t" :: Name
     env = v @> (ty, makeDual ty x (Var t []))
     outTy = getType (v @> L (asSigma ty)) body
     (out, (_, decls)) =
@@ -234,8 +235,8 @@ fromDual ty _ = error $ "Not a valid type for duals: " ++ pprint ty
 -- TODO: replace this with a proper embedding
 getField :: Record Type -> Expr -> RecField -> Expr
 getField tys expr field = Decl (LetMono p' expr) (Var v [])
-  where v = rawName "elt"
-        p = fmap (\ty -> RecLeaf (rawName "_" :> ty)) tys
+  where v = "elt" :: Name
+        p = fmap (\ty -> RecLeaf ("_" :> ty)) tys
         p' = RecTree $ recUpdate field (RecLeaf (v:> recGet tys field)) p
 
 linearize :: Expr -> DerivM DVal
@@ -304,7 +305,7 @@ swapAt n y (x:xs) = x:(swapAt (n-1) y xs)
 emit :: Expr -> DerivM Atom
 emit expr = do
   scope <- looks fst
-  let v = rename (rawName "t") scope
+  let v = rename "t" scope
   let ty = getType (fmap (L . asSigma) scope) expr
   extend (v@>ty, [LetMono (RecLeaf (v:>ty)) expr])
   return $ Var v []
