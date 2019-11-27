@@ -66,7 +66,7 @@ evalIOEither m = H.evalIO m >>= H.evalEither
 prop_jitEval :: H.Property
 prop_jitEval =
   H.property $ do
-    srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (GenEnv mempty mempty defaultGenOptions))
+    srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (generatorEnv mempty defaultGenOptions))
     topDecl <- evalIOEither (runTestPass typeCheckPass srcBlk)
     interres <- evalIOEither (runTestPass passInterp topDecl) >>= H.evalEither
     H.annotate ("Interpreter result: " ++ pprint interres)
@@ -80,7 +80,7 @@ getExpr ~(EvalCmd (Command _ e)) = e
 prop_pprint :: H.Property
 prop_pprint =
   H.property $ do
-    expr <- H.forAllWith pprint (runReaderT sampleExpr (GenEnv mempty mempty defaultGenOptions))
+    expr <- H.forAllWith pprint (runReaderT sampleExpr (generatorEnv mempty defaultGenOptions))
     H.tripping expr pprintEsc (\s -> (getExpr . stripSrcAnnotTopDecl) <$> parseTopDecl s)
 
 tests :: IO Bool

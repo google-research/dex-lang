@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module GenExpr (sampleExpr, defaultGenOptions, GenOptions (..)
-        , testSampleExpr, GenEnv (..), genSourceBlock, genUTopDecl) where
+        , testSampleExpr, generatorEnv, genSourceBlock, genUTopDecl) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -29,7 +29,7 @@ import PPrint
 testSample :: (Pretty a) => GenM a -> Range.Size -> IO ()
 testSample m s =
     Gen.sample (runReaderT (Gen.resize s (pprint <$> m))
-        (GenEnv mempty mempty defaultGenOptions))
+        (generatorEnv mempty defaultGenOptions))
     >>= putStrLn
 
 testSampleExpr :: Int -> IO ()
@@ -63,6 +63,10 @@ data GenEnv = GenEnv {
     , scopeEnv :: ScopeEnv
     , optsEnv :: GenOptions}
     deriving (Show, Eq, Ord)
+
+
+generatorEnv :: TypeEnv -> GenOptions -> GenEnv
+generatorEnv te opts = GenEnv te (S.fromList (concat (M.elems te))) opts
 
 -- lens
 typeEnvL :: Lens' GenEnv TypeEnv
