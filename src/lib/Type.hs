@@ -9,7 +9,8 @@
 
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable) where
+             checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable,
+             getNExprType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -347,6 +348,14 @@ checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
       env <- look
       liftM fst $ liftExceptTop $ addContext ctx $
         runCatT (runReaderT m env) mempty
+
+getNExprType :: FullEnv NType () -> NExpr -> [NType]
+getNExprType env expr =
+  fst $ ignoreExcept $ runCatT (runReaderT (getNType expr) env') mempty
+  where
+    env' = fmap addEmptySpent env
+    addEmptySpent val = case val of L ty -> L (ty, mempty)
+                                    T k  -> T k
 
 getNType :: NExpr -> NTypeM [NType]
 getNType expr = case expr of
