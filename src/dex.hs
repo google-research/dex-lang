@@ -26,6 +26,7 @@ import JIT
 import Flops
 import WebOutput
 import Normalize
+import Simplify
 import Interpreter
 
 data Backend = Jit | Interp

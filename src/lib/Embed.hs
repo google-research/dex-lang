@@ -9,13 +9,14 @@
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbedEnv, NEmbedScope, buildScoped, askType, wrapNDecls,
-              runEmbedT, emitUnpack) where
+              runEmbedT, emitUnpack, nGet, wrapAtomicFor) where
 
 import Env
 import Fresh
 import Syntax
 import Cat
 import Type
+import Subst
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
 type NEmbedScope = FullEnv NType ()
@@ -112,3 +113,13 @@ runEmbedT m scope = runCatT m (scope, [])
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
+
+nGet :: NAtom -> NAtom -> NAtom
+nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
+  where scope = fmap (const ()) (freeVars i)
+nGet e i = NGet e i
+
+wrapAtomicFor :: NBinder -> [NBinder] -> NAtom -> NAtom
+wrapAtomicFor b@(i:>_) bs atom = NAtomicFor b atom'
+  where atom' = nSubst (env, mempty) atom
+        env = foldMap (\(v:>_) -> v @> L (NGet (NVar v) (NVar i))) bs
