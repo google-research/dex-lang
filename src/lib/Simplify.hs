@@ -33,7 +33,7 @@ data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 simpPass :: TopPass NTopDecl NTopDecl
 simpPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl decl -> do
-    (env, decls) <- simpAsTopPassM $ simplifyDecl decl
+    (env, decls) <- simpAsTopPassM $ simplifyDecl True decl
     extend (asFst env)
     decl' <- case decls of
       [] -> return $ dummyDecl
@@ -58,12 +58,12 @@ simpAsTopPassM m = do
 
 -- Simplification gives us a ([NDecl], NExpr) pair. The decls are fully
 -- simplified: no `NLam`, `NAtomicFor` or differentiation operations. The
--- expression itself will be in a partial state of simplification. e.g a lambda
--- can't be beta-reduced until it meets its argument.
+-- expression itself will be in a state of partial simplification. e.g a lambda
+-- that can't be beta-reduced until it meets its argument.
 simplify :: Bool -> NExpr -> SimplifyM NExpr
 simplify mat expr = case expr of
   NDecl decl body -> do
-    env <- simplifyDecl decl
+    env <- simplifyDecl False decl
     extendR env $ simplify mat body
   NScan ib bs xs e -> do
     xs' <- mapM (simplifyAtom >=> materializeAtom) xs
@@ -143,31 +143,33 @@ getNameHint :: [NBinder] -> Name
 getNameHint bs = case bs of [] -> "tmp"
                             (v:>_):_ -> v
 
-simplifyDecl :: NDecl -> SimplifyM SimpSubEnv
-simplifyDecl decl = case decl of
+simplifyDecl :: Bool -> NDecl -> SimplifyM SimpSubEnv
+simplifyDecl scopedRhs decl = case decl of
   NLet bs bound -> do
     -- As pointed out in the 'ghc inliner' paper, this can lead to exponential
     -- blowup in compile times. The solution will be to defer some
     -- simplification, pairing the expression with the env, to be forced later.
-    bound' <- buildScoped $ simplify False bound
+    bound' <- maybeScoped $ simplify False bound
     bs' <- mapM nSubstSimp bs
     xs <- emitDecomposedTo bs' bound'
     return (bindEnv bs' xs)
   NUnpack bs tv bound -> do
-    bound' <- simplify True bound
+    bound' <- maybeScoped $ simplify True bound
     ~(NTypeVar tv', emitUnpackRest) <- emitUnpack tv bound'
     let tEnv = tv @> T tv'
     bs' <- extendR tEnv $ mapM nSubstSimp bs
     xs <- emitUnpackRest bs'
     return $ tEnv <> bindEnv bs' xs
+  where
+    maybeScoped = if scopedRhs then buildScoped else id
 
 -- `decompose` splits an expression into two parts: a simple expression, (no
 -- lambda etc.) and a list of atoms with holes in them. Once these 'ions' are
 -- filled with values corresponding to the results of the simple expression,
--- they become equivalent to the original expression. For example an expression
--- that constructs a pair of functions becomes an expression that constructrs a
+-- they become equivalent to the original expression. For example, an expression
+-- that constructs a pair of functions becomes an expression that constructs a
 -- pair of closures, paired with ions that can reconstruct the functions given
--- values for the closures. For example, this expression
+-- values for the closures:
 --    f = (y = x + x
 --         (lam z. z + y, lam w. w - y) )
 -- becomes `x + x` and the ions:
