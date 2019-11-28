@@ -15,6 +15,7 @@ import Control.Monad
 import qualified Hedgehog as H
 import Control.Monad.Reader
 import GHC.Stack
+import qualified Data.Map.Strict as M
 
 
 import Syntax hiding (Result)
@@ -63,14 +64,13 @@ main = do
 evalIOEither :: (H.MonadTest m, Show x, MonadIO m, HasCallStack) => IO (Either x a) ->  m a
 evalIOEither m = H.evalIO m >>= H.evalEither
 
-prop_jitEval :: H.Property
-prop_jitEval =
+prop_jitEval :: TypeEnv -> Evaluator -> Evaluator -> H.Property
+prop_jitEval tenv jit interp =
   H.property $ do
-    srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (generatorEnv mempty defaultGenOptions))
-    topDecl <- evalIOEither (runTestPass typeCheckPass srcBlk)
-    interres <- evalIOEither (runTestPass passInterp topDecl) >>= H.evalEither
+    srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (makeGenEnv tenv defaultGenOptions))
+    interres <- evalIOEither (interp srcBlk)
     H.annotate ("Interpreter result: " ++ pprint interres)
-    jitres <- evalIOEither (runTestPass fullPassJit topDecl) >>= H.evalEither
+    jitres <- evalIOEither (jit srcBlk)
     pprint interres H.=== pprint jitres
 
 
@@ -80,12 +80,17 @@ getExpr ~(EvalCmd (Command _ e)) = e
 prop_pprint :: H.Property
 prop_pprint =
   H.property $ do
-    expr <- H.forAllWith pprint (runReaderT sampleExpr (generatorEnv mempty defaultGenOptions))
+    expr <- H.forAllWith pprint (runReaderT sampleExpr (makeGenEnv mempty defaultGenOptions))
     H.tripping expr pprintEsc (\s -> (getExpr . stripSrcAnnotTopDecl) <$> parseTopDecl s)
 
 tests :: IO Bool
-tests =
+tests = do
+  let prelude = "prelude.dx"
+  jit <- runTestPass prelude fullPassJit
+  interp <- runTestPass prelude fullPassInterp
+  preludeEnv <- loadTypeEnv prelude
+  let tyEnv = M.fromListWith (++) [(ty, [name]) | (ty, name) <- preludeEnv]
   H.checkParallel $ H.Group "TypeCheck" [
-        ("prop_jitEval", prop_jitEval)
+        ("prop_jitEval", prop_jitEval tyEnv jit interp)
       , ("prop_pprint", prop_pprint)
     ]

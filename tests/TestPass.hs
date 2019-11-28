@@ -1,6 +1,10 @@
-module TestPass (typeCheckPass, passInterp, fullPassJit, runTestPass) where
+module TestPass (typeCheckPass, fullPassInterp, fullPassJit,
+                 runTestPass, Evaluator, loadTypeEnv) where
 
-import Control.Monad.IO.Class
+import Data.Void
+import Control.Monad.State.Strict
+import qualified Data.Map.Strict as M
+import Unsafe.Coerce
 
 import Pass
 import DeShadow
@@ -12,29 +16,53 @@ import JIT
 import Flops
 import Normalize
 import Interpreter
-import Cat
-
-extractResult :: TopPass a b -> TopPass a Result'
-extractResult (TopPass f) = TopPass $ \x -> do
-    env1 <- look
-    ~(Left res, env1') <- liftIO $ runTopPassM env1 (f x)
-    extend env1'
-    return res
+import Parser
+import Env
 
 typeCheckPass :: TopPass SourceBlock TopDecl
 typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkTyped
 
-passInterp :: TopPass TopDecl Result'
-passInterp = extractResult interpPass
+fullPassInterp :: TopPass SourceBlock Void
+fullPassInterp = typeCheckPass >+> interpPass
 
-fullPassJit :: TopPass TopDecl Result'
-fullPassJit = extractResult (normalizePass >+> checkNExpr
-                                >+> simpPass      >+> checkNExpr
-                                >+> impPass       >+> checkImp
-                                >+> flopsPass
-                                >+> jitPass)
+fullPassJit :: TopPass SourceBlock Void
+fullPassJit = typeCheckPass >+> normalizePass >+> checkNExpr
+                >+> simpPass      >+> checkNExpr
+                >+> impPass       >+> checkImp
+                >+> flopsPass
+                >+> jitPass
 
-runTestPass :: TopPass a b -> a -> IO (Either Result' b)
-runTestPass (TopPass pass) source = do
-    (res, _) <- runTopPassM mempty (pass source)
-    return res
+
+type TestFullPass env b =  SourceBlock -> TopPassM env b
+
+evalDecl :: Monoid env => TestFullPass env b -> SourceBlock -> StateT env IO ()
+evalDecl pass block = do
+  env <- get
+  (_, env') <- liftIO (runTopPassM env (pass block))
+  modify (<> env')
+
+loadFile :: (Monoid env) => String -> TestFullPass env b -> IO env
+loadFile fname pass = do
+    source <- readFile fname
+    let sourceBlocks = parseProg source
+    execStateT (mapM (evalDecl pass) sourceBlocks) mempty
+
+type Evaluator = SourceBlock -> IO Result'
+
+runTestPass :: String -> TopPass SourceBlock Void -> IO Evaluator
+runTestPass fname (TopPass pass) = do
+    env <- loadFile fname pass
+    let eval source = do
+            ~(Left res, _) <- runTopPassM env (pass source)
+            return res
+    return eval
+
+
+loadTypeEnv :: String -> IO [(SigmaType, Name)]
+loadTypeEnv fname =
+    case sourcePass >+> deShadowPass >+> typePass of
+        TopPass pass -> do
+            envs <- loadFile fname pass
+            let env = (snd (unsafeCoerce envs)) :: TypeEnv
+            return $ case env of
+                Env m -> [(ty, name) | (name, L ty) <- M.toList m]
