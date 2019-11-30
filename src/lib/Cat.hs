@@ -25,7 +25,7 @@ import Control.Monad.Except hiding (Except)
 newtype CatT env m a = CatT (StateT (env, env) m a)
   deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
 
-type Cat env a = CatT env Identity a
+type Cat env = CatT env Identity
 
 class (Monoid env, Monad m) => MonadCat env m | m -> env where
   look   :: m env

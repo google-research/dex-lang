@@ -8,8 +8,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
-              NEmbedT, NEmbedEnv, NEmbedScope, buildScoped, askType, wrapNDecls,
-              runEmbedT, emitUnpack, nGet, wrapAtomicFor, buildNAtomicFor) where
+              NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType,
+              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, wrapAtomicFor,
+              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt) where
+
+import Control.Monad
+import Data.List (transpose)
 
 import Env
 import Fresh
@@ -19,6 +23,7 @@ import Type
 import Subst
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
+type NEmbed = Cat NEmbedEnv
 type NEmbedScope = FullEnv NType ()
 type NEmbedEnv = (NEmbedScope, [NDecl])
 
@@ -118,6 +123,9 @@ askType expr = do
 runEmbedT :: Monad m => CatT NEmbedEnv m a -> NEmbedScope -> m (a, NEmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
 
+runEmbed :: Cat NEmbedEnv a -> NEmbedScope -> (a, NEmbedEnv)
+runEmbed m scope = runCat m (scope, [])
+
 -- TODO: `(x,y) = e; (x,y)` --> `e`  optimization
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
@@ -132,3 +140,24 @@ wrapAtomicFor :: NBinder -> [NBinder] -> NAtom -> NAtom
 wrapAtomicFor b@(i:>_) bs atom = NAtomicFor b atom'
   where atom' = nSubst (env, mempty) atom
         env = foldMap (\(v:>_) -> v @> L (NGet (NVar v) (NVar i))) bs
+
+zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
+zeroAt (NBaseType RealType) = return $ NLit (RealLit 0.0)
+zeroAt _ = error "Not implemented"
+
+addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NExpr
+addAt (NBaseType RealType) x y = return $ NPrimOp FAdd [] [x, y]
+addAt _ _ _ = error "Not implemented"
+
+sumAt :: MonadCat NEmbedEnv m => NType -> [NAtom] -> m NAtom
+sumAt ty [] = zeroAt ty
+sumAt _ [x] = return x
+sumAt ty (x:xs) = do
+  xsSum <- sumAt ty xs
+  ~[ans] <- addAt ty xsSum x >>= emit
+  return ans
+
+sumsAt :: MonadCat NEmbedEnv m => [NType] -> [NExpr] -> m NExpr
+sumsAt tys xss = do
+  xss' <- liftM transpose $ mapM emit xss
+  liftM NAtoms $ sequence [sumAt ty xs | (ty, xs) <- zip tys xss']

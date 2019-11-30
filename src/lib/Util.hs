@@ -10,13 +10,18 @@ module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace) where
+             onSnd, onFst, highlightRegion, findReplace, swapAt) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
+
+swapAt :: Int -> a -> [a] -> [a]
+swapAt _ _ [] = error "swapping to empty list"
+swapAt 0 y (_:xs) = y:xs
+swapAt n y (x:xs) = x:(swapAt (n-1) y xs)
 
 onFst :: (a -> b) -> (a, c) -> (b, c)
 onFst f (x, y) = (f x, y)

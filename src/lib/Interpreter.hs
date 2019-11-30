@@ -27,6 +27,7 @@ import Record
 import Type
 import Subst
 import Fresh
+import Util
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -296,11 +297,6 @@ linearizePrimOp op ts xs | nLin == nArgs = do
     xsTangent = map (snd . fromPair) xs
     pOut = reduce $ PrimOp op ts xsPrimal
 linearizePrimOp op _ _ = error $ "Linearization not implemented for " ++ pprint op
-
-swapAt :: Int -> a -> [a] -> [a]
-swapAt _ _ [] = error "swapping to empty list"
-swapAt 0 y (_:xs) = y:xs
-swapAt n y (x:xs) = x:(swapAt (n-1) y xs)
 
 emit :: Expr -> DerivM Atom
 emit expr = do

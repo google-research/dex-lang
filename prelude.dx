@@ -234,6 +234,9 @@ grad :: A a::VS. (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x
            pullback 1.0
 
+deriv :: (Real -> Real) -> Real -> Real
+deriv f x = jvp f x 1.0
+
 fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
 fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
 

@@ -13,6 +13,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable
 
+import Type
 import Env
 import Syntax
 import Cat
@@ -20,6 +21,7 @@ import PPrint
 import Pass
 import Subst
 import Embed
+import Util
 
 type NScope = FullEnv NType ()
 type SimpSubEnv = FullEnv NAtom Name
@@ -78,7 +80,16 @@ simplify mat expr = case expr of
     case f' of
       NLam _ bs body -> local (const env) (simplify mat body)
         where env = bindEnv bs xs'
-      _ -> return $ NApp f' xs'
+      _ -> do
+        ty <- askType (NAtoms [f'])
+        error $ "Should only have lambda here. got: " ++ pprint (NApp f' xs', expr, pprint ty)
+  NPrimOp Linearize _ args -> do
+    ~(NLam l bs body : xs) <- mapM simplifyAtom args
+    bs' <- mapM nSubstSimp bs
+    ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs ->
+                              extendR (bindEnv bs' vs) (simplify False body)
+    local mempty $ do expr' <- runLinearization bs'' xs body'
+                      simplify mat expr'
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
   NAtoms xs -> do
     xs' <- mapM simplifyAtom xs
@@ -106,10 +117,7 @@ simplifyAtom atom = case atom of
     ib' <- nSubstSimp ib
     buildNAtomicFor ib' $ \i ->
       extendR (bindEnv [ib'] [i]) (simplifyAtom body)
-  NLam l bs body -> do
-    bs' <- mapM nSubstSimp bs
-    buildNLam l bs' $ \xs ->
-      extendR (bindEnv bs' xs) (simplify False body)
+  NLam _ _ _ -> nSubstSimp atom
 
 materializeAtom :: NAtom -> SimplifyM NAtom
 materializeAtom atom = do
@@ -209,3 +217,83 @@ nSubstSimp x = do
   env <- ask
   scope <- looks fst  -- do we have to reach into the embedding monad this way?
   return $ nSubst (env, fmap (const ()) scope) x
+
+-- === linearization ===
+
+type TangentM a = ReaderT (Env NAtom) (NEmbedT (Either Err)) a
+
+runLinearization :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
+runLinearization bs xs expr = do
+  (ans, f) <- extendR (bindEnv bs xs) $ linearize expr
+  ans' <- emit ans
+  f' <- buildNLam Lin bs $ \ts -> withReaderT (const $ bindEnvTangent bs ts) f
+  return $ NAtoms $ ans' ++ [f']
+
+bindEnvTangent :: [NBinder] -> [NAtom] -> Env NAtom
+bindEnvTangent bs xs = fold $ zipWith f bs xs
+  where f (v:>_) x = v @> x
+
+linearize :: NExpr -> SimplifyM (NExpr, TangentM NExpr)
+linearize expr = case expr of
+  NDecl decl body -> do
+    (env, makeTangentEnv) <- linearizeDecl decl
+    (ans, fLin) <- extendR env (linearize body)
+    return (ans, do tEnv <- makeTangentEnv
+                    extendR tEnv fLin)
+  NScan _ _ _ _ -> error "not implemented"
+  NApp _ _      -> error "not implemented"
+  NPrimOp b tys xs -> do
+    (xs', xsTangents) <- linearizeAtoms xs
+    let (ans, f) = linearizeBuiltin b tys xs'
+    return (ans, xsTangents >>= f)
+  NAtoms xs -> do
+    (xs', tangents) <- linearizeAtoms xs
+    return (NAtoms xs', liftM NAtoms tangents)
+  NTabCon _ _ _ -> error "not implemented"
+
+linearizeDecl :: NDecl -> SimplifyM (SimpSubEnv, TangentM (Env NAtom))
+linearizeDecl decl = case decl of
+  NLet bs bound -> do
+    bs' <- mapM nSubstSimp bs
+    (xs, fLin) <- linearize bound
+    xs' <- emitTo bs' xs
+    return (bindEnv bs' xs', do ts <- fLin
+                                ts' <- emitTo bs' ts
+                                return (bindEnvTangent bs' ts'))
+  _ -> error "Not implemented"
+
+linearizeAtoms :: [NAtom] -> SimplifyM ([NAtom], TangentM [NAtom])
+linearizeAtoms xs = do
+  (xs', tangents) <- liftM unzip $ mapM linearizeAtom xs
+  return (xs', sequence tangents)
+
+linearizeAtom :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
+linearizeAtom atom = case atom of
+  NLit _ -> zeroDeriv atom
+  NVar v -> do
+    maybeVal <- asks $ flip envLookup v
+    case maybeVal of
+      Just (L x) -> return (x, asks (! v))
+      Nothing -> zeroDeriv atom
+      _ -> error "unexpected lookup"
+  NGet _ _       -> error "not implemented"
+  NAtomicFor _ _ -> error "not implemented"
+  NLam _ _ _     -> error "not implemented"
+
+zeroDeriv :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
+zeroDeriv x = do
+  ~[xTy] <- askType (NAtoms [x])
+  return (x, zeroAt xTy)
+
+linearizeBuiltin :: MonadCat NEmbedEnv m =>
+    Builtin -> [NType] -> [NAtom] -> (NExpr, [NAtom] -> m NExpr)
+linearizeBuiltin op tys xs | nLin == nArgs = (NPrimOp op tys xs, f)
+  where
+    BuiltinType _ (nLin, prodKind) xTys outTy = builtinType op
+    outsTy = toList $ typeToNType outTy
+    nArgs = length xTys
+    f ts = case prodKind of
+             Cart -> return $ NPrimOp op tys ts
+             Tens -> sumsAt outsTy [NPrimOp op tys (swapAt i t xs)
+                                   | (i, t) <- zip [0..] ts]
+linearizeBuiltin op _ _ = error $ "Not implemented: linearization for: " ++ pprint op

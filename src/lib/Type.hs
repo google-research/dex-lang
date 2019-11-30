@@ -10,7 +10,7 @@
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable,
-             getNExprType) where
+             getNExprType, typeToNType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader

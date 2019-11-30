@@ -1,0 +1,56 @@
+
+
+:p f :: Real --o Real
+   f x = x
+   tlinear f 2.0
+> 2.0
+
+:p f :: Real --o Real
+   f x = y = x; y
+   tlinear f 2.0
+> 2.0
+
+:p f :: Real --o Real
+   f x = x + x
+   tlinear f 2.0
+> 4.0
+
+:p f :: Real --o Real
+   f x = y = 2.0 * x
+         3.0 * y + x
+   tlinear f 1.0
+> 7.0
+
+:p f :: Real --o Real
+   f  x = (2.0 + 3.0) * x
+   tlinear f 1.0
+> 5.0
+
+:p f :: (Real, Real) --o Real
+   f z = (x, y) = z
+         x + y * 2.0
+   tlinear f 1.0
+> (1.0, 2.0)
+
+:p f :: Real --o (Real, Real)
+   f x = (x, x * 2.0)
+   tlinear f (1.0, 3.0)
+> 7.0
+
+:p f x = x * x + 1.0
+   jvp f 3.0 2.0
+> 12.0
+
+:p f x = x * x + 1.0
+   snd (vjp f 3.0) 2.0
+> 12.0
+
+:p f :: (Real, Real) -> Real
+   f (x,y) = x * y * 3.0
+   jvp f (2.0, 5.0) (1.0, 100.0)
+> 615.0
+
+:p f :: 3=>Real -> 3=>Real
+   f x = for i. x.i * x.i
+   jvp f [1.0, 1.5, 2.5] [3.0, 4.0, 1.0]
+> [6.0, 12.0, 5.0]

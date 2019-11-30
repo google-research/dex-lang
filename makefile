@@ -19,7 +19,7 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-example-names = type-tests linear-tests eval-tests shadow-tests annot-tests \
+example-names = type-tests linear-tests eval-tests ad-tests shadow-tests annot-tests \
                 flop-tests tutorial mandelbrot pi sierpinsky \
                 regression brownian_motion
 quine-test-targets = $(example-names:%=run-%)
@@ -29,7 +29,7 @@ tests: quine-tests quine-tests-interp repl-test stack-tests
 
 quine-tests: $(quine-test-targets)
 
-quine-tests-interp: runinterp-eval-tests runinterp-ad-tests runinterp-interp-tests
+quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
 run-%: examples/%.dx
 	misc/check-quine $^ $(dex) script --lit --allow-errors
