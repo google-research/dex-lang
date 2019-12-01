@@ -47,7 +47,8 @@ liftTop ctx m = do
   liftExceptTop $ addContext ctx $ evalTypeM env m
 
 getType :: TypeEnv -> Expr -> Type
-getType env expr = ignoreExcept $ addContext (pprint expr) $ evalTypeM env' $ getType' expr
+getType env expr = ignoreExcept $ addContext (pprint expr) $
+  evalTypeM env' $ getType' expr
   where
     env' = fmap addEmptySpent env
     addEmptySpent val = case val of L ty -> L (ty, mempty)
@@ -351,7 +352,8 @@ checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
 
 getNExprType :: FullEnv NType () -> NExpr -> [NType]
 getNExprType env expr =
-  fst $ ignoreExcept $ runCatT (runReaderT (getNType expr) env') mempty
+  fst $ ignoreExcept $ addContext ("Type checking: " ++ pprint expr) $
+    runCatT (runReaderT (getNType expr) env') mempty
   where
     env' = fmap addEmptySpent env
     addEmptySpent val = case val of L ty -> L (ty, mempty)
@@ -393,7 +395,7 @@ getNType expr = case expr of
                      NonLin -> checkNothingSpent $ atomTypes xs
     assertEq as as' "App"
     return bs
-  NAtoms xs -> mapM atomType xs
+  NAtoms xs -> shareLinear (fmap atomType xs)
   NTabCon n elemTys rows -> do
     rowTys <- mapM getNType rows
     mapM_ (\ts -> assertEq elemTys ts "Tab constructor") rowTys

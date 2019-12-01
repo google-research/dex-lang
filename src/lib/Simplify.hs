@@ -11,7 +11,9 @@ module Simplify (simpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Data.Foldable
+import qualified Data.Map.Strict as M
 
 import Type
 import Env
@@ -80,16 +82,15 @@ simplify mat expr = case expr of
     case f' of
       NLam _ bs body -> local (const env) (simplify mat body)
         where env = bindEnv bs xs'
-      _ -> do
-        ty <- askType (NAtoms [f'])
-        error $ "Should only have lambda here. got: " ++ pprint (NApp f' xs', expr, pprint ty)
-  NPrimOp Linearize _ args -> do
-    ~(NLam l bs body : xs) <- mapM simplifyAtom args
-    bs' <- mapM nSubstSimp bs
-    ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs ->
-                              extendR (bindEnv bs' vs) (simplify False body)
-    local mempty $ do expr' <- runLinearization bs'' xs body'
-                      simplify mat expr'
+      _ -> error $ "Should only have lambda here. Got: " ++ pprint expr
+  NPrimOp Linearize _ ~(f:xs) -> do
+    xs' <- mapM simplifyAtom xs
+    (bs, body) <- simplifyLam f
+    local mempty $ runLinearization bs xs' body >>= simplify mat
+  NPrimOp Transpose _ ~(f:cts) -> do
+    cts' <- mapM simplifyAtom cts
+    (bs, body) <- simplifyLam f
+    local mempty $ runTransposition bs cts' body >>= simplify mat
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
   NAtoms xs -> do
     xs' <- mapM simplifyAtom xs
@@ -98,6 +99,15 @@ simplify mat expr = case expr of
       else return $ NAtoms xs'
   NTabCon n ts rows -> liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts)
                                       (mapM (simplify mat) rows)
+
+-- simplifies bodies of first-order functions only
+simplifyLam :: NAtom -> SimplifyM ([NBinder], NExpr)
+simplifyLam f = do
+  ~(NLam l bs body) <- simplifyAtom f
+  bs' <- mapM nSubstSimp bs
+  ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs -> extendR (bindEnv bs' vs)
+                                                     (simplify False body)
+  return (bs'', body')
 
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
@@ -212,7 +222,8 @@ bindEnv :: [BinderP c] -> [a] -> FullEnv a b
 bindEnv bs xs = fold $ zipWith f bs xs
   where f (v:>_) x = v @> L x
 
-nSubstSimp :: NSubst a => a -> SimplifyM a
+nSubstSimp :: (MonadCat NEmbedEnv m, MonadReader SimpSubEnv m)
+                 => NSubst a => a -> m a
 nSubstSimp x = do
   env <- ask
   scope <- looks fst  -- do we have to reach into the embedding monad this way?
@@ -241,7 +252,7 @@ linearize expr = case expr of
     return (ans, do tEnv <- makeTangentEnv
                     extendR tEnv fLin)
   NScan _ _ _ _ -> error "not implemented"
-  NApp _ _      -> error "not implemented"
+  NApp _ _      -> error "Shouldn't have NApp left"
   NPrimOp b tys xs -> do
     (xs', xsTangents) <- linearizeAtoms xs
     let (ans, f) = linearizeBuiltin b tys xs'
@@ -297,3 +308,87 @@ linearizeBuiltin op tys xs | nLin == nArgs = (NPrimOp op tys xs, f)
              Tens -> sumsAt outsTy [NPrimOp op tys (swapAt i t xs)
                                    | (i, t) <- zip [0..] ts]
 linearizeBuiltin op _ _ = error $ "Not implemented: linearization for: " ++ pprint op
+
+-- === transposition ===
+
+type LinVars = Env NType
+type CotangentVals = MonMap Name [NAtom]  -- TODO: consider folding as we go
+type TransposeM a = WriterT CotangentVals
+                      (ReaderT (LinVars, SimpSubEnv) (NEmbedT (Either Err))) a
+
+runTransposition :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
+runTransposition bs cts expr = do
+  (((), cts'), _) <- lift $ flip runReaderT (asFst (bindFold bs)) $ runWriterT $
+                        extractCTs bs $ transpose expr cts
+  return $ NAtoms cts'
+
+transpose :: NExpr -> [NAtom] -> TransposeM ()
+transpose expr cts = case expr of
+  NPrimOp b tys xs -> do
+    -- TODO: subst types
+    xs' <- mapM substNonLin xs
+    cts' <- transposeBuiltin b tys xs' cts
+    sequence_ [transposeAtom x ct | (x, Just ct) <- zip xs cts']
+  NDecl (NLet bs bound) body -> do
+    lin <- isLin bound
+    if lin
+      then do
+        (_, cts') <- extractCTs bs $ extendR (asFst (bindFold bs)) $ transpose body cts
+        transpose bound cts'
+      else do
+        error "Not implemented: nonlinear parts"
+  NAtoms xs -> zipWithM_ transposeAtom xs cts
+  _ -> error $ "Transpose not implemented for " ++ pprint expr
+
+isLin :: HasVars a => a -> TransposeM Bool
+isLin x = do linVs <- asks fst
+             return $ not $ null $ toList $ envIntersect (freeVars x) linVs
+
+substNonLin :: NAtom -> TransposeM (Maybe NAtom)
+substNonLin x = do
+  x' <- do env <- asks snd
+           return $ nSubst (env, mempty) x
+  lin <- isLin x'
+  if lin then return Nothing
+         else return (Just x')
+
+transposeAtom :: NAtom -> NAtom -> TransposeM ()
+transposeAtom atom ct = case atom of
+  NLit _ -> return ()
+  NVar v -> tell $ MonMap $ M.singleton v [ct]
+  _ -> error $ "Can't transpose: " ++ pprint atom
+
+transposeBuiltin :: MonadCat NEmbedEnv m =>
+    Builtin -> [NType] -> [Maybe NAtom] -> [NAtom] -> m [Maybe NAtom]
+transposeBuiltin op _ xs cts = case op of
+  FAdd -> return [Just ct, Just ct]
+            where [ct] = cts
+  FMul -> case xs of
+            [Just x, Nothing] -> do ~[ans] <- emit $ NPrimOp FMul [] [x, ct]
+                                    return [Nothing, Just ans]
+            [Nothing, Just y] -> do ~[ans] <- emit $ NPrimOp FMul [] [ct, y]
+                                    return [Just ans, Nothing]
+            _ -> error $ "Can't transpose: " ++ pprint (op, xs)
+            where [ct] = cts
+  _ -> error $ "Not implemented: transposition for: " ++ pprint op
+
+extractCTs :: [NBinder] -> TransposeM a -> TransposeM (a, [NAtom])
+extractCTs bs m = do
+  (ans, ctEnv) <- captureW m
+  (cts, ctEnv') <- sepCotangents bs ctEnv
+  tell ctEnv'
+  return (ans, cts)
+
+sepCotangent :: MonadCat NEmbedEnv m =>
+                  NBinder -> CotangentVals -> m (NAtom, CotangentVals)
+sepCotangent (v:>ty) (MonMap m) = do
+  ans <- sumAt ty $ M.findWithDefault [] v m
+  return (ans, MonMap (M.delete v m))
+
+sepCotangents :: MonadCat NEmbedEnv m =>
+                   [NBinder] -> CotangentVals -> m ([NAtom], CotangentVals)
+sepCotangents [] cts = return ([], cts)
+sepCotangents (b:bs) cts = do
+  (x , cts' ) <- sepCotangent  b  cts
+  (xs, cts'') <- sepCotangents bs cts'
+  return (x:xs, cts'')

@@ -22,3 +22,31 @@
 :p f x = 4.0 * x * x * x
    deriv (deriv (deriv f)) 1.234
 > 24.0
+
+:p f :: Real --o Real
+   f x = x
+   tlinear f 2.0
+> 2.0
+
+:p f :: Real --o Real
+   f x = x + x
+   tlinear f 1.0
+> 2.0
+
+:p f :: Real --o Real
+   f x = x + (x + x) * 2.0
+   tlinear f 1.0
+> 5.0
+
+:p f :: Real --o Real
+   f x = x * 2.0
+   tlinear f 1.0
+> 2.0
+
+:p f :: Real --o Real
+   f x = 2.0 * x
+   tlinear f 1.0
+> 2.0
+
+:p grad (lam x. x * x) 1.0
+> 2.0
