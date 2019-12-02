@@ -70,8 +70,13 @@ reduce expr = case expr of
   PrimOp op ts xs -> evalOp op ts (map reduce xs)
   Decl decl body  -> subReduce (reduceDecl decl) body
   Lam _ _ _ -> expr
-  App e1 e2 -> subReduce (bindPat p (reduce e2)) body
-    where (Lam _ p body) = reduce e1
+  App e1 e2 -> case reduce e1 of
+    Lam _ p body ->
+      subReduce (bindPat p e2') body
+    PrimOp Transpose _ ~[Lam _ (RecLeaf b) body] ->
+      fst $ sepCotangent b (transpose e2' body)
+    e1' -> error $ "unexpected function: " ++ pprint e1'
+    where e2' = reduce e2
   For p body -> TabCon ty xs
     where
       (ty@(TabType n _)) = getType mempty expr
@@ -151,8 +156,7 @@ evalOp NewtypeCast _ ~[x] = x
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
   exTable ty $ filter (fromBoolLit . asFun f) xs
 evalOp Linearize _ ~[Lam _ (RecLeaf b) body, x] = runLinearize b body x
-evalOp Transpose _  ~[Lam _ (RecLeaf b) body, ct] =
-  fst $ sepCotangent b (transpose ct body)
+evalOp Transpose tys xs = PrimOp Transpose tys xs
 evalOp (FFICall _ name) _ xs = case name of
   "sqrt" -> realUnOp c_sqrt xs
   "sin"  -> realUnOp c_sin  xs
