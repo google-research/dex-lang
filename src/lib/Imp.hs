@@ -241,7 +241,6 @@ checkScalarTy ty ity = throw CompilerErr $ "Wrong types. Expected:" ++ pprint ty
                                                          ++ " Got " ++ pprint ity
 
 checkInt :: IExpr -> ImpCheckM ()
-checkInt (IVar v) = do ty <- asks $ (! v)
-                       assertEq ty intTy "Not a valid int"
-checkInt (ILit (IntLit _)) = return ()
-checkInt expr = throw CompilerErr $ "Not an int: " ++ pprint expr
+checkInt expr = do
+  ty <- impExprType expr
+  assertEq (IType IntType []) ty $ "No an int: " ++ pprint expr

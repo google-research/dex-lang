@@ -239,3 +239,6 @@ myIntId x = x
 
 :p fromMyInt $ myIntId $ toMyInt $ 3
 > 3
+
+:p [0].([asidx 0].(asidx 0))
+> 0
