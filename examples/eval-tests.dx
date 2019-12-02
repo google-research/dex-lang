@@ -207,3 +207,35 @@ litArr = [10, 5, 3]
 
 :p (asidx 0)::1
 > asidx @1 0
+
+newtype MyInt = Int
+
+toMyInt :: Int -> MyInt
+toMyInt x = %newtypecast(x)
+
+fromMyInt :: MyInt -> Int
+fromMyInt x = %newtypecast(x)
+
+myIntId :: MyInt -> MyInt
+myIntId x = x
+
+:p myIntId 1
+> Type error:
+> Expected: MyInt
+>   Actual: Int
+> In: 1
+>
+> :p myIntId 1
+>            ^
+
+:p iadd (toMyInt 2) 2
+> Type error:
+> Expected: Int
+>   Actual: MyInt
+> In: (toMyInt 2)
+>
+> :p iadd (toMyInt 2) 2
+>         ^^^^^^^^^^^^
+
+:p fromMyInt $ myIntId $ toMyInt $ 3
+> 3

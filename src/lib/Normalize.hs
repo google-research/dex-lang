@@ -74,6 +74,12 @@ normalize expr = case expr of
     (bs , toEnv ) <- normalizePat p
     buildNestedNScans ibs bs xs $ \idxs carry ->
       extendR (iToEnv idxs <> toEnv carry) (normalize body)
+  PrimOp NewtypeCast ~[a, b] ~[x] -> do
+    a' <- normalizeTy a
+    b' <- normalizeTy b
+    if a' == b'
+      then normalize x
+      else error $ "Can't cast " ++ pprint a' ++ " to " ++ pprint b'
   PrimOp b ts xs -> do
     ts' <- mapM normalizeTy ts
     xs' <- liftM concat $ mapM atomize xs
@@ -143,7 +149,10 @@ normalizeDecl decl = case decl of
     (bs, toEnv) <- extendR tenv $ normalizePat [b]
     xs <- emitUnpackRest bs
     return (tenv <> toEnv xs)
-  TAlias _ _ -> error "Shouldn't have TAlias left"
+  TyDef NewType v ty -> do
+    ty' <- normalizeTy ty
+    return (v @> T (Kind []), v @> T ty')
+  TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
 
 normalizeTy :: Type -> NormM [NType]
 normalizeTy ty = case ty of

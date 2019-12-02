@@ -84,7 +84,7 @@ substDeclEnv scope decl =
       where
         ([tv':>k], env) = renameTBinders scope [tv:>k]
         ([b'], env') = renamePat (scope <> snd env) [b]
-    TAlias _ _ -> error "Shouldn't have TAlias left"
+    TyDef _ _ _ -> error "Shouldn't have type alias left"
 
 instance Subst Decl where
   subst env decl = case decl of
@@ -92,7 +92,7 @@ instance Subst Decl where
     LetPoly b tlam    -> LetPoly (fmap (subst env) b) (subst env tlam)
     -- TODO:
     Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
-    TAlias _ _ -> error "Shouldn't have TAlias left"
+    TyDef dt v ty -> TyDef dt v (subst env ty)
 
 instance Subst TLam where
    subst env@(_, scope) (TLam tbs body) = TLam tbs' body'

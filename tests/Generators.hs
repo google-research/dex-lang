@@ -106,13 +106,13 @@ instance Arbitrary CmdName where
 instance Arbitrary b => Arbitrary (DeclP b) where
   arbitrary = frequency
     [ (4, liftM2 LetMono arb arb)
-    , (1, liftM2 TAlias arbTypeName arb)
+    , (1, liftM2 (TyDef TyAlias) arbTypeName arb)
     , (1, liftM3 Unpack arb arbTypeName arb)]
   shrink decl = case decl of
     LetMono p e  -> liftS2 LetMono p e
     LetPoly _ _  -> error "Not implemented"
     Unpack _ _ _ -> error "Not implemented"
-    TAlias v ty -> liftS2 TAlias v ty
+    TyDef tdt v ty -> liftS2 (TyDef tdt) v ty
 
 instance Arbitrary b => Arbitrary (ExprP b) where
   arbitrary = oneof

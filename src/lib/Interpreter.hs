@@ -122,7 +122,7 @@ reduceDecl (LetPoly (v:>_) tlam) = asFst $ v @> L (Right tlam)
 reduceDecl (Unpack (v:>_) tv expr) =
   asFst $ v @> L (Right (TLam [] val)) <> tv @> T ty
   where (Pack val ty _) = reduce expr
-reduceDecl (TAlias _ _ ) = error "Shouldn't have TAlias left"
+reduceDecl (TyDef _ v ty) = asFst $ v @> T ty
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L (Right (TLam [] val))
@@ -147,6 +147,7 @@ evalOp Range _ ~[x] = Pack unitCon (IdxSetLit (fromIntLit x)) (Exists unitTy)
 evalOp IndexAsInt _ ~[x] = Lit (IntLit (idxToInt x))
 evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
 evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
+evalOp NewtypeCast _ ~[x] = x
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =
   exTable ty $ filter (fromBoolLit . asFun f) xs
 evalOp Linearize _ ~[Lam _ (RecLeaf b) body, x] = runLinearize b body x

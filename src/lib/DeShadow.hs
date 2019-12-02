@@ -96,10 +96,14 @@ deShadowDecl (Unpack b tv bound) = do
   extend (asSnd (tv @> TypeVar tv'), tv'@>())
   b' <- freshBinder b
   return $ Just $ Unpack b' tv' bound'
-deShadowDecl (TAlias v ty) = do  -- TODO: deal with capture
+deShadowDecl (TyDef TyAlias v ty) = do  -- TODO: deal with capture
   ty' <- toCat $ deShadowType ty
   extend (asSnd (v @> ty'), v@>())
   return Nothing
+deShadowDecl (TyDef NewType v ty) = do
+  ty' <- toCat $ deShadowType ty
+  extend (asSnd (v @> TypeVar v), mempty)
+  return (Just $ TyDef NewType v ty')  -- assumes top-level only
 
 deShadowTLam :: UTLam -> DeShadowM UTLam
 deShadowTLam (TLam tbs body) = do

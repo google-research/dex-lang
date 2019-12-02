@@ -150,7 +150,10 @@ getTypeDecl decl = case decl of
     checkShadow tb
     extendR (tbind tb) $ checkTy (binderAnn b)
     return (tbind tb <> asEnv mempty b)
-  TAlias _ _ -> error "Shouldn't have TAlias left"
+  TyDef NewType v ty -> do
+    checkTy ty
+    return (v @> T (Kind []))
+  TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
   where
     recur = getType'
 
@@ -223,6 +226,7 @@ builtinType builtin = case builtin of
   FLT      -> nonLinBuiltin [] [real, real] bool
   FGT      -> nonLinBuiltin [] [real, real] bool
   Todo     -> nonLinBuiltin [noCon] [] a
+  NewtypeCast -> nonLinBuiltin [noCon, noCon] [a] b
   Copy     -> nonLinBuiltin [noCon] [a] a
   Scan     -> nonLinBuiltin [noCon, noCon, idxSet]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))

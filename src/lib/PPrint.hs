@@ -151,7 +151,9 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (LetPoly (v:>ty) (TLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (TAlias v ty) = "type" <+> p v <+> "=" <+> p ty
+  pretty (TyDef deftype v ty) = keyword <+> p v <+> "=" <+> p ty
+    where keyword = case deftype of TyAlias -> "type"
+                                    NewType -> "newtype"
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
 instance Pretty b => Pretty (TLamP b) where

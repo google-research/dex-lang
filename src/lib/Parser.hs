@@ -92,18 +92,19 @@ explicitCommand = do
 -- === Parsing decls ===
 
 decl :: Parser UDecl
-decl = typeAlias <|> unpack <|> letMono <|> letPoly
+decl = typeDef <|> unpack <|> letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ (eol >> sc) <|> symbol ";"
 
-typeAlias :: Parser UDecl
-typeAlias = do
-  symbol "type"
+typeDef :: Parser UDecl
+typeDef = do
+  defType <-     (symbol "type"    >> return TyAlias)
+             <|> (symbol "newtype" >> return NewType)
   v <- upperName
   equalSign
   ty <- tauType
-  return $ TAlias v ty
+  return $ TyDef defType v ty
 
 letPoly :: Parser UDecl
 letPoly = do

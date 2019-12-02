@@ -15,7 +15,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                CmdName (..), IdxExpr, UBinder, PatP, Ann (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
-               throw, throwIf, Kind (..),
+               throw, throwIf, Kind (..), TyDefType (..),
                addContext, FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
@@ -59,9 +59,11 @@ data ExprP b =
 
 data DeclP b = LetMono (PatP b) (ExprP b)
              | LetPoly (BinderP SigmaType) (TLamP b)
-             | TAlias Name Type
+             | TyDef TyDefType Name Type
              | Unpack (BinderP b) Name (ExprP b)
                deriving (Eq, Ord, Show, Generic)
+
+data TyDefType = TyAlias | NewType  deriving (Eq, Ord, Show, Generic)
 
 type PatP b = RecTree (BinderP b)
 
@@ -119,7 +121,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
-             | Mod | FFICall Int String | Filter | Todo
+             | Mod | FFICall Int String | Filter | Todo | NewtypeCast
                 deriving (Eq, Ord, Generic)
 
 builtinNames :: M.Map String Builtin
@@ -133,7 +135,8 @@ builtinNames = M.fromList [
   ("linearize", Linearize), ("linearTranspose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
-  ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo)]
+  ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo),
+  ("newtypecast", NewtypeCast)]
 
 commandNames :: M.Map String CmdName
 commandNames = M.fromList [
@@ -448,7 +451,7 @@ instance HasVars b => HasVars (DeclP b) where
    freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
-   freeVars (TAlias _ ty) = freeVars ty
+   freeVars (TyDef _ _ ty) = freeVars ty
 
 instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl decl) = freeVars decl
@@ -476,7 +479,7 @@ instance BindsVars (DeclP b) where
   lhsVars (LetMono p _ ) = foldMap lhsVars p
   lhsVars (LetPoly b _) = lhsVars b
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
-  lhsVars (TAlias v _) = v @> T ()
+  lhsVars (TyDef _ v _) = v @> T ()
 
 instance BindsVars (TopDeclP b) where
   lhsVars (TopDecl decl) = lhsVars decl
@@ -522,7 +525,7 @@ stripSrcAnnotDecl :: DeclP b -> DeclP b
 stripSrcAnnotDecl decl = case decl of
   LetMono p body -> LetMono p (stripSrcAnnot body)
   LetPoly b (TLam tbs body) -> LetPoly b (TLam tbs (stripSrcAnnot body))
-  TAlias _ _ -> decl
+  TyDef _ _ _ -> decl
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
 stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
