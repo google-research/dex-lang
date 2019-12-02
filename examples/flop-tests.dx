@@ -4,8 +4,10 @@ matmul x y = for i k. sum (for j. x.i.j * y.j.k)
 
 _, Nx = unpack range 10
 
+k = newKey 0
+
 mat :: Nx=>Nx=>Real
-mat = for i j. rand (hash 0 (hash iota.i iota.j))
+mat = for i j. rand (ixkey (ixkey k i) j)
 
 :flops matmul mat mat
 > %fadd 1 Nx^3

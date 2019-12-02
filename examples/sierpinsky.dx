@@ -14,5 +14,5 @@ runChain f key x0 = scan' x0 (many f key)
 trianglePoints :: 3=>Point
 trianglePoints = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
-:plot runChain @N (update trianglePoints) 0 (0.0, 0.0)
+:plot runChain @N (update trianglePoints) (newKey 0) (0.0, 0.0)
 > <graphical output>

@@ -38,7 +38,7 @@ solve mat b =
 
 type Nx = 100
 noise = 0.1
-(k1, k2) = splitKey 0
+(k1, k2) = splitKey (newKey 0)
 
 trueFun :: Real -> Real
 trueFun x = x + sin (5.0 * x)
@@ -81,4 +81,4 @@ rmsErr :: n=>Real -> n=>Real -> Real
 rmsErr truth pred = sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 0.11008144
+> 9.46494e-2
