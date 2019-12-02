@@ -235,6 +235,7 @@ builtinType builtin = case builtin of
   Range    -> nonLinBuiltin [] [int] (Exists unitTy)
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real
+  Select    -> nonLinBuiltin [noCon] [bool, a, a] a
   -- TODO: this breaks for tuple or non-reals
   Linearize   -> nonLinBuiltin [vspace, vspace] [a --> b, a] (pair b (a --@ b))
   Transpose   -> BuiltinType [vspace, vspace] (1, Tens) [a --@ b] (b --@ a)

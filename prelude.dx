@@ -120,14 +120,11 @@ fanout x = for i. x
 sq :: Real -> Real
 sq x = x * x
 
-selectReal :: Bool -> Real -> Real -> Real
-selectReal p x y = (x * b2r p) + (y * (1.0 - b2r p))
-
-selectInt :: Bool -> Int -> Int -> Int
-selectInt p x y = iadd (imul x (b2i p)) (imul y (isub 1 (b2i p)))
+select :: Bool -> a -> a -> a
+select p x y = %select(p, x, y)
 
 abs :: Real -> Real
-abs x = selectReal (x > 0.0) x (0.0 - x)
+abs x = select (x > 0.0) x (0.0 - x)
 
 'State-carrying loop constructs
 

@@ -121,7 +121,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
-             | Mod | FFICall Int String | Filter | Todo | NewtypeCast
+             | Mod | FFICall Int String | Filter | Todo | NewtypeCast | Select
                 deriving (Eq, Ord, Generic)
 
 builtinNames :: M.Map String Builtin
@@ -136,7 +136,7 @@ builtinNames = M.fromList [
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo),
-  ("newtypecast", NewtypeCast)]
+  ("newtypecast", NewtypeCast), ("select", Select)]
 
 commandNames :: M.Map String CmdName
 commandNames = M.fromList [

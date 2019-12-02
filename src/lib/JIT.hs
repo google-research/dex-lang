@@ -8,7 +8,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name, dest)
+import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name, Select, dest)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -419,6 +419,16 @@ compileFFICall name tys xs = do
     retTy':argTys' = map scalarTy (retTy:argTys)
     f = ExternFunSpec (L.Name name) retTy' argTys'
 
+compileSelect :: [IType] -> [CompileVal] -> CompileM CompileVal
+compileSelect ~[IType ty shape] ~[ScalarVal p _, x, y] = do
+  p' <- evalInstr "" (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
+  case (shape, x, y) of
+    ([], ~(ScalarVal x' _), (ScalarVal y' _)) ->
+        liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) $ L.Select p' x' y' []
+    (_, ~(ArrayVal (Ptr x' ty') shape'), ~(ArrayVal (Ptr y' _) _)) -> do
+        z <- evalInstr "" (L.ptr (scalarTy ty)) $ L.Select p' x' y' []
+        return $ ArrayVal (Ptr z ty') shape'
+
 compileBuiltin :: Builtin -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b ts = case b of
   IAdd     -> compileBinop IntType (\x y -> L.Add False False x y [])
@@ -431,6 +441,7 @@ compileBuiltin b ts = case b of
   FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
   FLT      -> compileFCmp L.OLT
   FGT      -> compileFCmp L.OGT
+  Select   -> compileSelect ts
   Todo     -> const $ throw MiscErr "Can't compile 'todo'"
   BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
