@@ -87,10 +87,12 @@ simplify mat expr = case expr of
     xs' <- mapM simplifyAtom xs
     (bs, body) <- simplifyLam f
     local mempty $ runLinearization bs xs' body >>= simplify mat
-  NPrimOp Transpose _ ~(f:cts) -> do
-    cts' <- mapM simplifyAtom cts
+  NPrimOp Transpose [_, bTy] ~[f] -> do
     (bs, body) <- simplifyLam f
-    local mempty $ runTransposition bs cts' body >>= simplify mat
+    bTy' <- mapM nSubstSimp bTy
+    transposed <- buildNLam Lin ["ct":>ty | ty <- bTy'] $ \cts ->
+                    local mempty $ runTransposition bs cts body
+    return $ NAtoms [transposed]
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM (mapM nSubstSimp) ts)
                                         (mapM simplifyAtom xs)
   NAtoms xs -> do

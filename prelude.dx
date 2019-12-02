@@ -224,7 +224,7 @@ jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
 jvp f x = llam t. snd (linearize f x) t
 
 tlinear :: A a::VS b::VS. (a --o b) --o b --o a
-tlinear = llam f ct. %linearTranspose(llam t. f t, ct)
+tlinear = llam f ct. %linearTranspose(llam t. f t) ct
 
 vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x

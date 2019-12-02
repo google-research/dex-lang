@@ -233,7 +233,7 @@ builtinType builtin = case builtin of
   IntToReal -> nonLinBuiltin [] [int] real
   -- TODO: this breaks for tuple or non-reals
   Linearize   -> nonLinBuiltin [vspace, vspace] [a --> b, a] (pair b (a --@ b))
-  Transpose   -> BuiltinType [vspace, vspace] (2, Tens) [a --@ b, b] a
+  Transpose   -> BuiltinType [vspace, vspace] (1, Tens) [a --@ b] (b --@ a)
   VZero   -> nonLinBuiltin [vspace] [] a
   VAdd    -> nonLinBuiltin [vspace] [a, a] a
   VSingle -> nonLinBuiltin [vspace, idxSet] [j, a] (j ==> a)
