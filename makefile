@@ -25,7 +25,7 @@ example-names = type-tests linear-tests eval-tests ad-tests shadow-tests annot-t
 quine-test-targets = $(example-names:%=run-%)
 doc-names = $(example-names:%=doc/%.html)
 
-tests: quine-tests quine-tests-interp repl-test stack-tests
+tests: quine-tests quine-tests-interp repl-test
 
 quine-tests: $(quine-test-targets)
 
@@ -37,7 +37,7 @@ run-%: examples/%.dx
 runinterp-%: examples/%.dx
 	misc/check-quine $^ $(dex) --interp script --lit --allow-errors
 
-stack-tests: cbits/libdex.so
+prop-tests: cbits/libdex.so
 	stack test
 
 update-%: examples/%.dx

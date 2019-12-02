@@ -293,7 +293,7 @@ data Output = ValOut OutFormat Value | TextOut String | NoOutput
 
 data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)
 
-data Err = Err ErrType (Maybe SrcPos) String  deriving (Show)
+data Err = Err ErrType (Maybe SrcPos) String  deriving (Show, Eq)
 
 data ErrType = NoErr
              | ParseErr
@@ -304,7 +304,7 @@ data ErrType = NoErr
              | CompilerErr
              | NotImplementedErr
              | MiscErr
-  deriving (Show)
+  deriving (Show, Eq)
 
 type Except a = Either Err a
 

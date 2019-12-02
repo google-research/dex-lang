@@ -9,7 +9,7 @@
 {-# LANGUAGE GADTs #-}
 
 module Pass (TopPassM, assertEq, ignoreExcept, liftExceptTop, runFullPass,
-             throwTopErr, emitOutput, (>+>), TopPass (..), FullPass) where
+             throwTopErr, emitOutput, (>+>), TopPass (..), FullPass, runTopPassM) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Except hiding (Except)
