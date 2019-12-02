@@ -91,7 +91,8 @@ simplify mat expr = case expr of
     cts' <- mapM simplifyAtom cts
     (bs, body) <- simplifyLam f
     local mempty $ runTransposition bs cts' body >>= simplify mat
-  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM nSubstSimp ts) (mapM simplifyAtom xs)
+  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM (mapM nSubstSimp) ts)
+                                        (mapM simplifyAtom xs)
   NAtoms xs -> do
     xs' <- mapM simplifyAtom xs
     if mat
@@ -297,11 +298,11 @@ zeroDeriv x = do
   return (x, zeroAt xTy)
 
 linearizeBuiltin :: MonadCat NEmbedEnv m =>
-    Builtin -> [NType] -> [NAtom] -> (NExpr, [NAtom] -> m NExpr)
+    Builtin -> [[NType]] -> [NAtom] -> (NExpr, [NAtom] -> m NExpr)
 linearizeBuiltin op tys xs | nLin == nArgs = (NPrimOp op tys xs, f)
   where
     BuiltinType _ (nLin, prodKind) xTys outTy = builtinType op
-    outsTy = toList $ typeToNType outTy
+    outsTy = typeToNTypes outTy
     nArgs = length xTys
     f ts = case prodKind of
              Cart -> return $ NPrimOp op tys ts
@@ -359,7 +360,7 @@ transposeAtom atom ct = case atom of
   _ -> error $ "Can't transpose: " ++ pprint atom
 
 transposeBuiltin :: MonadCat NEmbedEnv m =>
-    Builtin -> [NType] -> [Maybe NAtom] -> [NAtom] -> m [Maybe NAtom]
+    Builtin -> [[NType]] -> [Maybe NAtom] -> [NAtom] -> m [Maybe NAtom]
 transposeBuiltin op _ xs cts = case op of
   FAdd -> return [Just ct, Just ct]
             where [ct] = cts

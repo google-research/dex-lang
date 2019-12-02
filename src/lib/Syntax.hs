@@ -195,7 +195,7 @@ type UTLam    = TLamP    Ann
 
 data NExpr = NDecl NDecl NExpr
            | NScan NBinder [NBinder] [NAtom] NExpr
-           | NPrimOp Builtin [NType] [NAtom]
+           | NPrimOp Builtin [[NType]] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]
            | NTabCon NType [NType] [NExpr]
@@ -407,7 +407,7 @@ instance HasVars NExpr where
   freeVars expr = case expr of
     NDecl decl body -> let (bvs, fvs) = declVars [decl]
                         in fvs <> (freeVars body `envDiff` bvs)
-    NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
+    NPrimOp _ ts xs -> foldMap (foldMap freeVars) ts <> foldMap freeVars xs
     NApp f xs -> freeVars f <> foldMap freeVars xs
     NAtoms xs -> foldMap freeVars xs
     NScan b bs x0 body -> foldMap freeVars x0 <>

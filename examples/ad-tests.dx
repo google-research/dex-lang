@@ -48,5 +48,15 @@
    tlinear f 1.0
 > 2.0
 
+-- TODO: fix type (linearity) of transpose builtin in NExpr
+-- :p f :: Real --o (Real, Real)
+--    f x = (x, 2.0 * x)
+--    tlinear f (1.0, 3.0)
+
+:p f :: (Real, Real) --o Real
+   f (x,y) = x + 2.0 * y
+   tlinear f 1.0
+> (1.0, 2.0)
+
 :p grad (lam x. x * x) 1.0
 > 2.0

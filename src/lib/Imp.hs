@@ -62,7 +62,7 @@ toImp dests expr = case expr of
     where
       (carryDests, mapDests) = splitAt (length bs) dests
   NPrimOp b ts xs -> do
-    ts' <- mapM toImpType ts
+    ts' <- mapM toImpType (concat ts)
     xs' <- mapM toImpAtom xs
     return $ ImpProg [primOpStatement b dests ts' xs']
   NAtoms xs -> do

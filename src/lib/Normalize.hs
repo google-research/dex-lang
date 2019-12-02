@@ -75,7 +75,7 @@ normalize expr = case expr of
     buildNestedNScans ibs bs xs $ \idxs carry ->
       extendR (iToEnv idxs <> toEnv carry) (normalize body)
   PrimOp b ts xs -> do
-    ts' <- liftM concat $ mapM normalizeTy ts  -- TODO: don't concat
+    ts' <- mapM normalizeTy ts
     xs' <- liftM concat $ mapM atomize xs
     return $ NPrimOp b ts' xs'
   Decl decl body -> do

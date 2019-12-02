@@ -156,7 +156,7 @@ instance NSubst NExpr where
       where
         (b':bs', env') = refreshNBinders env (b:bs)
         body' = nSubst (env <> env') body
-    NPrimOp b ts xs -> NPrimOp b (map (nSubst env) ts) (map recurA xs)
+    NPrimOp b ts xs -> NPrimOp b (map (map (nSubst env)) ts) (map recurA xs)
     NApp f xs -> NApp (recurA f) (map recurA xs)
     NAtoms xs -> NAtoms $ map recurA xs
     NTabCon n ts rows -> NTabCon (nSubst env n) (map (nSubst env) ts) (map recur rows)

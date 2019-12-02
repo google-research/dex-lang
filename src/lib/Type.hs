@@ -10,7 +10,7 @@
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable,
-             getNExprType, typeToNType) where
+             getNExprType, typeToNTypes) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -374,19 +374,19 @@ getNType expr = case expr of
     let (carryTys', outTys) = splitAt (length bs) bodyTys
     assertEq carryTys carryTys' "Scan output"
     return $ carryTys ++ map (NTabType i) outTys
-  NPrimOp Todo ts _ -> do
+  NPrimOp Todo ~[ts] _ -> do
     mapM_ checkNTy ts
     return ts
   NPrimOp b ts xs -> do
-    mapM_ checkNTy ts
+    mapM_ (mapM_ checkNTy) ts
     argTys'' <- liftM2 (++) (traverseProd k atomType xsLin)
                             (checkNothingSpent $ mapM atomType xsNonLin)
-    assertEq (map fromLeaf argTys') argTys'' (pprint b) -- TODO: handle non-leaves
-    return (toList ansTy')
+    assertEq (concat argTys') argTys'' (pprint b)
+    return ansTy'
     where
       BuiltinType _ (numLin, k) argTys ansTy = builtinType b
-      ts' = map nTypeToType ts
-      (ansTy':argTys') = map (typeToNType . instantiateTVs ts') (ansTy:argTys)
+      ts' = map nTypesToType ts
+      (ansTy':argTys') = map (typeToNTypes . instantiateTVs ts') (ansTy:argTys)
       (xsLin, xsNonLin) = splitAt numLin xs
   NApp e xs -> do
     ~(NArrType l as bs) <- atomType e
@@ -466,17 +466,17 @@ checkNBinder b = do
   checkNTy (binderAnn b)
   checkShadow b
 
-typeToNType :: Type -> RecTree NType
-typeToNType ty = case ty of
-  BaseType b  -> RecLeaf $ NBaseType b
-  TypeVar v   -> RecLeaf $ NTypeVar v
-  ArrType l a b -> RecLeaf $ NArrType l (toList (recur a)) (toList (recur b))
-  TabType a b -> fmap (NTabType (fromLeaf (recur a))) (recur b)
-  RecType _ r -> RecTree $ fmap recur r
-  Exists body -> RecLeaf $ NExists (toList (recur body))
-  BoundTVar n -> RecLeaf $ NBoundTVar n
-  IdxSetLit n -> RecLeaf $ NIdxSetLit n
-  where recur = typeToNType
+typeToNTypes :: Type -> [NType]
+typeToNTypes ty = case ty of
+  BaseType b  -> [NBaseType b]
+  TypeVar v   -> [NTypeVar v]
+  ArrType l a b -> [NArrType l (recur a) (recur b)]
+  TabType a b -> map (NTabType (head (recur a))) (recur b)
+  RecType _ r -> foldMap recur r
+  Exists body -> [NExists (toList (recur body))]
+  BoundTVar n -> [NBoundTVar n]
+  IdxSetLit n -> [NIdxSetLit n]
+  where recur = typeToNTypes
 
 nTypeToType :: NType -> Type
 nTypeToType ty = case ty of
@@ -489,6 +489,9 @@ nTypeToType ty = case ty of
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
   where recur = nTypeToType
+
+nTypesToType :: [NType] -> Type
+nTypesToType tys = RecType Cart $ Tup $ map nTypeToType tys
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of
