@@ -26,9 +26,11 @@ import Cat
 
 -- TODO: consider making linearity checking a separate pass?
 type TypeEnv = FullEnv SigmaType Kind
-type TypeCheckEnv = FullEnv (SigmaType, Spent) Kind
 type Spent = Env ()
-type TypeM a = ReaderT TypeCheckEnv (CatT Spent (Either Err)) a
+type TypeCheckEnv = FullEnv (SigmaType, Spent) Kind
+data TypeMCtx = TypeMCtx { tyEnv    :: TypeCheckEnv
+                         , checking :: Bool }
+type TypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
 
 checkTyped :: TopPass TopDecl TopDecl
 checkTyped = TopPass $ \decl -> decl <$ case decl of
@@ -44,17 +46,16 @@ checkTyped = TopPass $ \decl -> decl <$ case decl of
 liftTop :: String -> TypeM a -> TopPassM TypeCheckEnv a
 liftTop ctx m = do
   env <- look
-  liftExceptTop $ addContext ctx $ evalTypeM env m
+  liftExceptTop $ addContext ctx $ evalTypeM (TypeMCtx env True) m
 
 getType :: TypeEnv -> Expr -> Type
 getType env expr = ignoreExcept $ addContext (pprint expr) $
   evalTypeM env' $ getType' expr
   where
-    env' = fmap addEmptySpent env
+    env' = TypeMCtx (fmap addEmptySpent env) False
     addEmptySpent val = case val of L ty -> L (ty, mempty)
                                     T k  -> T k
-
-evalTypeM :: TypeCheckEnv -> TypeM a -> Except a
+evalTypeM :: TypeMCtx -> TypeM a -> Except a
 evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
 
 getType' :: Expr -> TypeM Type
@@ -62,19 +63,20 @@ getType' expr = case expr of
     Lit c -> return $ BaseType (litType c)
     Var v ts -> do
       mapM_ checkTy ts
-      x <- asks $ flip envLookup v
+      x <- asks $ flip envLookup v . tyEnv
       case x of
         Just (L (Forall kinds body, s)) -> do
-          mapM_ spendVar (envNames s)
-          zipWithM_ checkClassConstraints kinds ts
+          whenChecking $ do mapM_ spendVar (envNames s)
+                            zipWithM_ checkClassConstraints kinds ts
           return $ instantiateTVs ts body
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
     PrimOp b ts args -> do
-      mapM_ checkTy ts
-      zipWithM_ checkClassConstraints kinds ts
-      argTys'' <- liftM2 (++) (checkNothingSpent $ traverse recur nlArgs)
-                              (traverseProd k recur linArgs)
-      assertEq argTys' argTys'' "Builtin"
+      whenChecking $ do
+          mapM_ checkTy ts
+          zipWithM_ checkClassConstraints kinds ts
+          argTys'' <- liftM2 (++) (checkNothingSpent $ traverse recur nlArgs)
+                                  (traverseProd k recur linArgs)
+          assertEq argTys' argTys'' "Builtin"
       return ansTy'
       where
         BuiltinType kinds (numLin, k) argTys ansTy = builtinType b
@@ -82,36 +84,36 @@ getType' expr = case expr of
         (linArgs, nlArgs) = splitAt numLin args
     Decl decl body -> do
       env <- getTypeDecl decl
-      extendR env (recur body)
-    Lam NonLin p body -> do
-      checkTy (patType p)
-      checkShadowPat p
-      liftM (ArrType NonLin (patType p)) (recurWithP mempty p body)
-    Lam Lin p body -> do
-      checkTy (patType p)
-      checkShadowPat p
-      v <- getPatName p
-      bodyTy <- checkSpent v (pprint p) $ recurWithP (v@>()) p body
-      return $ ArrType Lin (patType p) bodyTy
+      extendTyEnv env (recur body)
+    Lam l p body -> do
+      whenChecking $ checkTy (patType p) >> checkShadowPat p
+      check <- asks checking
+      bodyTy <- case (l, check) of
+        (Lin, True) -> do v <- getPatName p
+                          checkSpent v (pprint p) $ recurWithP (v@>()) p body
+        _ -> recurWithP mempty p body
+      return $ ArrType l (patType p) bodyTy
     For p body -> do
-      checkClassConstraint IdxSet (patType p)
-      checkTy (patType p)
-      checkShadowPat p
+      whenChecking $ do
+          checkClassConstraint IdxSet (patType p)
+          checkTy (patType p)
+          checkShadowPat p
       liftM (TabType (patType p)) (recurWithP mempty p body)
     App e arg  -> do
       ~(ArrType l a b) <- recur e
-      a' <- case l of Lin    ->                     recur arg
-                      NonLin -> checkNothingSpent $ recur arg
-      assertEq a a' "App"
+      whenChecking $ do
+          a' <- case l of Lin    ->                     recur arg
+                          NonLin -> checkNothingSpent $ recur arg
+          assertEq a a' "App"
       return b
     Get e ie   -> do
       ~(TabType a b) <- recur e
-      a' <- recur ie
-      assertEq a a' "Get"
+      whenChecking $ do a' <- recur ie
+                        assertEq a a' "Get"
       return b
     RecCon k r -> liftM (RecType k) (traverseProd k recur r)
     TabCon ty xs -> do
-      checkClassConstraint Data ty
+      whenChecking $ checkClassConstraint Data ty
       case ty of
         TabType _ bodyTy -> do
           xTys <- mapM recur xs
@@ -130,26 +132,28 @@ getType' expr = case expr of
     SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
   where
     recur = getType'
-    recurWithP s p  = extendR (foldMap (asEnv s) p) . recur
+    recurWithP s p  = extendTyEnv (foldMap (asEnv s) p) . recur
 
 getTypeDecl :: Decl -> TypeM TypeCheckEnv
 getTypeDecl decl = case decl of
   LetMono p rhs -> do
     checkShadowPat p
-    (ty, spent) <- scoped $ recur rhs
-    assertEq (patType p) ty "LetMono"
+    ((), spent) <- scoped $ whenChecking $ do
+                       ty <- recur rhs
+                       assertEq (patType p) ty "LetMono"
     return (foldMap (asEnv spent) p)
   LetPoly b@(v:>ty) tlam -> do
     checkShadow b
-    (ty', spent) <- scoped $ getTypeTLam tlam
-    assertEq ty ty' "TLam"
+    ((), spent) <- scoped $ whenChecking $ do
+                       ty' <- getTypeTLam tlam
+                       assertEq ty ty' "TLam"
     return $ v @> L (ty, spent)
   Unpack b tv _ -> do  -- TODO: check bound expression!
     -- TODO: check leaks
     let tb = tv :> idxSet
     checkShadow b
     checkShadow tb
-    extendR (tbind tb) $ checkTy (binderAnn b)
+    extendTyEnv (tbind tb) $ checkTy (binderAnn b)
     return (tbind tb <> asEnv mempty b)
   TyDef NewType v ty -> do
     checkTy ty
@@ -159,19 +163,26 @@ getTypeDecl decl = case decl of
   where
     recur = getType'
 
+extendTyEnv :: TypeCheckEnv -> TypeM a -> TypeM a
+extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
+
+whenChecking :: TypeM () -> TypeM ()
+whenChecking m = do check <- asks checking
+                    if check then m else return ()
+
 getTypeTLam :: TLam -> TypeM SigmaType
 getTypeTLam (TLam tbs body) = do
   mapM_ checkShadow tbs
-  ty <- extendR (foldMap tbind tbs) (getType' body)
+  ty <- extendTyEnv (foldMap tbind tbs) (getType' body)
   let (vs, kinds) = unzip [(v, k) | v :> k <- tbs]
   return $ Forall kinds (abstractTVs vs ty)
 
 checkTy :: Type -> TypeM ()
 checkTy _ = return () -- TODO: check kind and unbound type vars
 
-checkShadow :: (MonadError Err m, MonadReader (Env a) m) => BinderP b -> m ()
-checkShadow (v :> _) = do
-  env <- ask
+checkShadow :: BinderP b -> TypeM ()
+checkShadow (v :> _) = whenChecking $ do
+  env <- asks tyEnv
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
@@ -307,16 +318,17 @@ subAtDepth d f ty = case ty of
 -- === Built-in type classes ===
 
 checkClassConstraints :: Kind -> Type -> TypeM ()
-checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
+checkClassConstraints (Kind cs) ty =
+  whenChecking $ mapM_ (flip checkClassConstraint ty) cs
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
-  env <- ask
+  env <- asks tyEnv
   liftEither $ checkClassConstraint' env c ty
 
 getClasses :: Type -> TypeM Kind
 getClasses ty = do
-  env <- ask
+  env <- asks tyEnv
   return $ Kind $ filter (isInClass env) [VSpace, IdxSet, Data]
   where
     isInClass env c = case checkClassConstraint' env c ty of Left  _ -> False
@@ -443,7 +455,7 @@ checkNDecl decl = case decl of
     assertEq (map binderAnn bs) ts "Decl"
     return $ nBinderEnv s bs
   NUnpack bs tv _ -> do  -- TODO: check bound expression!
-    checkShadow (tv :> idxSet)
+    checkNShadow (tv :> idxSet)
     extendR (tv @> T ()) $ mapM_ checkNBinder bs
     return $ nBinderEnv mempty bs <> tv @> T ()
 
@@ -498,7 +510,14 @@ checkNTy _ = return () -- TODO!
 checkNBinder :: NBinder -> NTypeM ()
 checkNBinder b = do
   checkNTy (binderAnn b)
-  checkShadow b
+  checkNShadow b
+
+checkNShadow :: BinderP b -> NTypeM ()
+checkNShadow (v :> _) = do
+  env <- ask
+  if v `isin` env
+    then throw CompilerErr $ pprint v ++ " shadowed"
+    else return ()
 
 typeToNTypes :: Type -> [NType]
 typeToNTypes ty = case ty of
