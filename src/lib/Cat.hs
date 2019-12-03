@@ -68,9 +68,13 @@ instance MonadCat env m => MonadCat env (ExceptT e m) where
   extend x = lift $ extend x
   scoped = error "TODO"
 
-instance MonadError e m => MonadError e (CatT env m) where
+instance (Monoid env, MonadError e m) => MonadError e (CatT env m) where
   throwError = lift . throwError
-  catchError = undefined
+  catchError m catch = do
+    env <- look
+    (ans, env') <- lift $ runCatT m env `catchError` (\e -> runCatT (catch e) env)
+    extend env'
+    return ans
 
 runCatT :: (Monoid env, Monad m) => CatT env m a -> env -> m (a, env)
 runCatT (CatT m) initEnv = do

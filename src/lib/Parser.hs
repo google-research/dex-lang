@@ -306,8 +306,9 @@ postFixRule = Postfix $ do
   return $ \e -> foldl Get e trailers
 
 binOpRule :: String -> Builtin -> Operator Parser UExpr
-binOpRule opchar builtin = InfixL (symbol opchar >> return binOpApp)
-  where binOpApp e1 e2 = PrimOp builtin [] [e1, e2]
+binOpRule opchar builtin = InfixL $ do
+  ((), pos) <- withPos $ symbol opchar
+  return $ \e1 e2 -> SrcAnnot (PrimOp builtin [] [e1, e2]) pos
 
 ops :: [[Operator Parser UExpr]]
 ops = [ [postFixRule, appRule]

@@ -3,133 +3,125 @@
    f 1.0
 > 1.0
 
-:tycheck llam x::Real. 1.0
+:t llam x::Real. 1.0
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . 1.0)
 
-:tycheck llam x::Real. x * x
+:t llam x::Real. x * x
 > Linearity error:Variable already spent: x
-> context:
-> (llam x::Real . (%fmul(x, x)))
+>
+> :t llam x::Real. x * x
+>                      ^
 
-:tycheck llam x::Real. x * 2.0
+:t llam x::Real. x * 2.0
 > (Real --o Real)
 
-:tycheck llam x::Real. 2.0 * x
+:t llam x::Real. 2.0 * x
 > (Real --o Real)
 
-:tycheck llam x::Real. llam y::Real. x * y
+:t llam x::Real. llam y::Real. x * y
 > (Real --o (Real --o Real))
 
-:tycheck llam x::Real. (llam y. y) x
+:t llam x::Real. (llam y. y) x
 > (Real --o Real)
 
-:tycheck llam x::Real. (lam y. y) x
+:t llam x::Real. (lam y. y) x
 > Linearity error:Nonlinear function consuming linear data: [x]
-> context:
-> (llam x::Real . ((lam y::Real . y) x))
+>
+> :t llam x::Real. (lam y. y) x
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-:tycheck (1 : 2.0) :: (Int : Real)
+:t (1 : 2.0) :: (Int : Real)
 > (Int : Real)
 
-:tycheck (1 , 2.0) :: (Int : Real)
+:t (1 , 2.0) :: (Int : Real)
 > Type error:
 > Expected: (Int : Real)
 >   Actual: (Int, Real)
 > In: (1, 2.0)
 >
-> :tycheck (1 , 2.0) :: (Int : Real)
->          ^^^^^^^^^^^^^^^^^^^^^^^^^
+> :t (1 , 2.0) :: (Int : Real)
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^
 
-:tycheck llam x::Real. (1.0, 2.0)
+:t llam x::Real. (1.0, 2.0)
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . (1.0, 2.0))
 
-:tycheck llam x::Real. (1.0, x)
-> Linearity error:Different vars consumed by product: [] vs [x]
-> context:
-> (llam x::Real . (1.0, x))
+:t llam x::Real. (1.0, x)
+> Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]
 
-:tycheck llam x::Real. (x, 1.0)
-> Linearity error:Different vars consumed by product: [x] vs []
-> context:
-> (llam x::Real . (x, 1.0))
+:t llam x::Real. (x, 1.0)
+> Linearity error:Different vars consumed by Cartesian product elements: [x] vs []
 
-:tycheck llam x::Real. (x, x)
+:t llam x::Real. (x, x)
 > (Real --o (Real, Real))
 
-:tycheck llam x::Real. (1.0 : 2.0)
+:t llam x::Real. (1.0 : 2.0)
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . (1.0 : 2.0))
 
-:tycheck llam x::Real. (1.0 : x)
+:t llam x::Real. (1.0 : x)
 > (Real --o (Real : Real))
 
-:tycheck llam x::Real. (x : 1.0)
+:t llam x::Real. (x : 1.0)
 > (Real --o (Real : Real))
 
-:tycheck llam x::Real. (x : x)
+:t llam x::Real. (x : x)
 > Linearity error:Variable already spent: x
-> context:
-> (llam x::Real . (x : x))
+>
+> :t llam x::Real. (x : x)
+>                       ^
 
-:tycheck llam x::Real. 1.0 + 2.0
+:t llam x::Real. 1.0 + 2.0
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . (%fadd(1.0, 2.0)))
 
-:tycheck llam x::Real. 1.0 + x
-> Linearity error:Different vars consumed by product: [] vs [x]
-> context:
-> (llam x::Real . (%fadd(1.0, x)))
+:t llam x::Real. 1.0 + x
+> Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]
+>
+> :t llam x::Real. 1.0 + x
+>                      ^^
 
-:tycheck llam x::Real. x + 1.0
-> Linearity error:Different vars consumed by product: [x] vs []
-> context:
-> (llam x::Real . (%fadd(x, 1.0)))
+:t llam x::Real. x + 1.0
+> Linearity error:Different vars consumed by Cartesian product elements: [x] vs []
+>
+> :t llam x::Real. x + 1.0
+>                    ^^
 
-:tycheck llam x::Real. x + x
+:t llam x::Real. x + x
 > (Real --o Real)
 
-:tycheck llam x::Real. 1.0 * 2.0
+:t llam x::Real. 1.0 * 2.0
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . (%fmul(1.0, 2.0)))
 
-:tycheck llam x::Real. 1.0 * x
+:t llam x::Real. 1.0 * x
 > (Real --o Real)
 
-:tycheck llam x::Real. x * 1.0
+:t llam x::Real. x * 1.0
 > (Real --o Real)
 
-:tycheck llam x::Real. x * x
+:t llam x::Real. x * x
 > Linearity error:Variable already spent: x
-> context:
-> (llam x::Real . (%fmul(x, x)))
+>
+> :t llam x::Real. x * x
+>                      ^
 
-:tycheck llam x::Real. y = x; 1.0 * 2.0
+:t llam x::Real. y = x; 1.0 * 2.0
 > Linearity error:Variables never spent: x::Real
-> context:
-> (llam x::Real . (y::Real = x; (%fmul(1.0, 2.0))))
 
-:tycheck llam x::Real. y = x; x + y
+:t llam x::Real. y = x; x + y
 > (Real --o Real)
 
-:tycheck llam x::Real. y = x; y * x
+:t llam x::Real. y = x; y * x
 > Linearity error:Variable already spent: x
-> context:
-> (llam x::Real . (y::Real = x; (%fmul(y, x))))
+>
+> :t llam x::Real. y = x; y * x
+>                             ^
 
-:tycheck llam (x, y). x + y
+:t llam (x, y). x + y
 > ((Real, Real) --o Real)
 
-:tycheck llam (x, y). x * y
+:t llam (x, y). x * y
 > Linearity error:Variable already spent: x
-> context:
-> (llam (x::Real, y::Real) . (%fmul(x, y)))
+>
+> :t llam (x, y). x * y
+>                     ^
 
 :p (llam x. x + x) 1.0
 > 2.0

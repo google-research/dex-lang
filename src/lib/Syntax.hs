@@ -16,13 +16,14 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
                throw, throwIf, Kind (..), TyDefType (..),
-               addContext, FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
+               addContext, addSrcContext,
+               FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon, Lin (..),
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames,
-               NExpr (..), NDecl (..), NAtom (..), NType (..),
+               NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..)
@@ -144,8 +145,7 @@ commandNames = M.fromList [
   ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
   ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
   ("time", TimeIt), ("plot", EvalExpr Scatter), ("simp", ShowSimp),
-  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse),
-  ("tycheck", TypeCheckInternal)]
+  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse)]
 
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
@@ -286,6 +286,7 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 
 type LitProg = [(SourceBlock, Result)]
 type Result' = Except Output
+type SrcCtx = Maybe SrcPos
 newtype Result = Result Result'
 
 data Output = ValOut OutFormat Value | TextOut String | NoOutput
@@ -293,7 +294,7 @@ data Output = ValOut OutFormat Value | TextOut String | NoOutput
 
 data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)
 
-data Err = Err ErrType (Maybe SrcPos) String  deriving (Show, Eq)
+data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
 
 data ErrType = NoErr
              | ParseErr
@@ -322,6 +323,13 @@ modifyErr m f = catchError m $ \e -> throwError (f e)
 addContext :: MonadError Err m => String -> m a -> m a
 addContext s m = modifyErr m $ \(Err e p s') ->
                                  Err e p (s' ++ "\ncontext:\n" ++ s)
+
+addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
+addSrcContext ctx m = modifyErr m updateErr
+  where
+    updateErr :: Err -> Err
+    updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
+                                            Just _  -> Err e ctx' s
 
 -- === misc ===
 
@@ -504,21 +512,19 @@ declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
 stripSrcAnnot :: ExprP b -> ExprP b
 stripSrcAnnot expr = case expr of
   Var _ _ -> expr
-  Lit _ -> expr
+  Lit _   -> expr
   PrimOp op ts xs -> PrimOp op ts (map recur xs)
-  Decl decl body -> Decl (stripSrcAnnotDecl decl) (recur body)
+  Decl decl body  -> Decl (stripSrcAnnotDecl decl) (recur body)
   Lam l p body    -> Lam l p (recur body)
-  App fexpr arg -> App (recur fexpr) (recur arg)
-  For b body    -> For b (recur body)
-  Get e ie      -> Get (recur e) (recur ie)
-  RecCon k r    -> RecCon k (fmap recur r)
-  -- TLam vs body  -> TLam vs (recur body)
-  -- TApp fexpr ts -> TApp (recur fexpr) ts
+  App f arg    -> App (recur f) (recur arg)
+  For b body   -> For b (recur body)
+  Get e ie     -> Get (recur e) (recur ie)
+  RecCon k r   -> RecCon k (fmap recur r)
   SrcAnnot e _ -> recur e
   Pack e t1 t2 -> Pack (recur e) t1 t2
-  TabCon _ _ -> error $ "TabCon not implemented" -- TODO
-  IdxLit _ _ -> error $ "IdxLit not implemented" -- TODO
-  Annot _ _  -> error $ "Annot not implemented"  -- TODO
+  TabCon ty xs -> TabCon ty (fmap recur xs)
+  IdxLit _ _   -> expr
+  Annot e ty   -> Annot (recur e) ty
   where recur = stripSrcAnnot
 
 stripSrcAnnotDecl :: DeclP b -> DeclP b

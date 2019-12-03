@@ -159,12 +159,6 @@ generalization. For example, although we can write this:
 > id = (lam x::a . x);
 > (id @Int 1))
 
-'We *do* generalize when evaluating `:t`, so we can still ask what the
-annotation needs to be:
-
-:t (lam x. x)
-> A a. (a -> a)
-
 'The motivation for this choice is a bit subtle. It's related to the reasons for
 Haskell's ("dreaded") monomorphism restriction: automatic let generalization can
 lead to surprising runtime work duplication in the presence of polymorphism

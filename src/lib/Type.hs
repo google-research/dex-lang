@@ -9,13 +9,14 @@
 
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             checkNExpr, patType, tangentBunType, tangentBunNType, isPrintable,
+             checkNExpr, patType, tangentBunType, tangentBunNType,
              getNExprType, typeToNTypes) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.List (elemIndex)
 import Data.Foldable
+import Data.Either (isLeft)
 
 import Syntax
 import Env
@@ -28,31 +29,35 @@ import Cat
 type TypeEnv = FullEnv SigmaType Kind
 type Spent = Env ()
 type TypeCheckEnv = FullEnv (SigmaType, Spent) Kind
-data TypeMCtx = TypeMCtx { tyEnv    :: TypeCheckEnv
-                         , checking :: Bool }
+data TypeMCtx = TypeMCtx { checking :: Bool
+                         , srcCtx   :: SrcCtx
+                         , tyEnv    :: TypeCheckEnv }
 type TypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
 
 checkTyped :: TopPass TopDecl TopDecl
-checkTyped = TopPass $ \decl -> decl <$ case decl of
+checkTyped = TopPass $ \decl -> stripSrcAnnotTopDecl decl <$ case decl of
   TopDecl decl' -> do
-    env <- liftTop (pprint decl') (getTypeDecl decl')
+    env <- liftTop (getTypeDecl decl')
     extend env
-  EvalCmd (Command TypeCheckInternal expr) -> do
-    ty <- liftTop (pprint expr) (getType' expr)
+  EvalCmd (Command GetType expr) -> do
+    ty <- liftTop (getType' expr)
     emitOutput $ TextOut $ pprint ty
-  EvalCmd (Command _ expr) ->
-    void $ liftTop (pprint expr) (getType' expr)
+  EvalCmd (Command _ expr) -> do
+    ty <- liftTop (getType' expr)
+    env <- look
+    when (isLeft (checkData env ty)) $
+      throwTopErr $ Err TypeErr Nothing (" Can't print values of type: " ++ pprint ty)
 
-liftTop :: String -> TypeM a -> TopPassM TypeCheckEnv a
-liftTop ctx m = do
+liftTop :: TypeM a -> TopPassM TypeCheckEnv a
+liftTop m = do
   env <- look
-  liftExceptTop $ addContext ctx $ evalTypeM (TypeMCtx env True) m
+  liftExceptTop $ evalTypeM (TypeMCtx True Nothing env) m
 
 getType :: TypeEnv -> Expr -> Type
 getType env expr = ignoreExcept $ addContext (pprint expr) $
   evalTypeM env' $ getType' expr
   where
-    env' = TypeMCtx (fmap addEmptySpent env) False
+    env' = TypeMCtx False Nothing (fmap addEmptySpent env)
     addEmptySpent val = case val of L ty -> L (ty, mempty)
                                     T k  -> T k
 evalTypeM :: TypeMCtx -> TypeM a -> Except a
@@ -128,8 +133,8 @@ getType' expr = case expr of
     IdxLit n i | 0 <= i && i < n -> return $ IdxSetLit n
                | otherwise -> throw TypeErr $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
-    Annot _ _    -> error $ "Annot not implemented"    -- TODO
-    SrcAnnot _ _ -> error $ "SrcAnnot not implemented" -- TODO
+    SrcAnnot e pos -> local (\r -> r {srcCtx = Just pos}) (recur e)
+    Annot _ _    -> error $ "Shouldn't have annot left"
   where
     recur = getType'
     recurWithP s p  = extendTyEnv (foldMap (asEnv s) p) . recur
@@ -167,8 +172,10 @@ extendTyEnv :: TypeCheckEnv -> TypeM a -> TypeM a
 extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
 
 whenChecking :: TypeM () -> TypeM ()
-whenChecking m = do check <- asks checking
-                    if check then m else return ()
+whenChecking m = do
+  pos <- asks srcCtx
+  check <- asks checking
+  if check then addSrcContext pos m else return ()
 
 getTypeTLam :: TLam -> TypeM SigmaType
 getTypeTLam (TLam tbs body) = do
@@ -364,6 +371,7 @@ checkData env ty = case ty of
   TabType _ a -> recur a
   RecType _ r -> mapM_ recur r
   IdxSetLit _ -> return ()
+  Exists a    -> recur a
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
@@ -568,19 +576,6 @@ tangentBunType ty = case ty of
     recur = tangentBunType
     pair x y = RecType Cart $ Tup [x, y]
 
--- TODO: replace with a more general typeclass-like system
-isPrintable :: Type -> Bool
-isPrintable ty = case ty of
-  BaseType _    -> True
-  TypeVar _     -> True -- TODO: lookup var and check
-  ArrType _ _ _ -> False
-  TabType a b   -> recur a && recur b
-  RecType _ r   -> all recur (toList r)
-  Exists _      -> True
-  IdxSetLit _   -> True
-  BoundTVar _   -> error "Type should be closed"
-  where recur = isPrintable
-
 -- === utils for working with linearity ===
 
 spendVar :: (MonadError Err m, MonadCat Spent m) => Name -> m ()
@@ -624,8 +619,9 @@ shareLinear actions = do
     Right Nothing -> return ()
     Right (Just spent) -> extend spent
     Left (s1, s2) -> throw LinErr $
-      "Different vars consumed by product: " ++ pprint (envNames s1)
-                                   ++ " vs " ++ pprint (envNames s2)
+      "Different vars consumed by Cartesian product elements: "
+          ++ pprint (envNames s1)
+          ++ " vs " ++ pprint (envNames s2)
   return ys
   where
     unzip' x = (fmap fst x, fmap snd x)

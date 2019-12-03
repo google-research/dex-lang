@@ -1,8 +1,8 @@
-:t g :: a -> a
-   g x = x
-   g
-> A a. (a -> a)
+g :: a -> a
+g x = x
 
+:t g
+> A a. (a -> a)
 
 :t f x::Int = x; f 1
 > Int
@@ -17,22 +17,22 @@
 > :t f x::Real = x; f 1
 >                     ^
 
-:t g :: (a -> Int) -> (a -> Int)
-   g x = x
-   g
+g1 :: (a -> Int) -> (a -> Int)
+g1 x = x
+
+:t g1
 > A a. ((a -> Int) -> (a -> Int))
 
 
-:t g :: a -> a
-   g x = iadd x x
-   g
+g2 :: a -> a
+g2 x = iadd x x
 > Type error:
 > Expected: Int
 >   Actual: a
 > In: x
 >
->    g x = iadd x x
->               ^^
+> g2 x = iadd x x
+>             ^^
 
 h :: (a -> b) -> (a -> b)
 h x = x

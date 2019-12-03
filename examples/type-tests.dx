@@ -1,17 +1,35 @@
 :t lam x. x
-> A a. (a -> a)
+> Type error:Ambiguous type variables: [?_2]
+>
+> ((?_2 -> ?_2), (lam x::?_2 . x))
 
 :t lam x. sum for i. x.i
-> A a. ((a=>Real) -> Real)
+> Type error:Ambiguous type variables: [?_11]
+>
+> ( ((?_11=>Real) -> Real)
+> , (lam x::(?_11=>Real) .
+>    (sum @?_11 (for  i::?_11 .
+>        x.i))) )
 
 :t lam f x y. f y x
-> A c b a. ((b -> (a -> c)) -> (a -> (b -> c)))
+> Type error:Ambiguous type variables: [?_6, ?_9, ?_11]
+>
+> ( ((?_9 -> (?_11 -> ?_6)) -> (?_11 -> (?_9 -> ?_6)))
+> , (lam f::(?_9 -> (?_11 -> ?_6)) . (lam x::?_11 . (lam y::?_9 . ((f y) x)))) )
 
 :t lam x. for i j. x.j.i
-> A c b a. ((b=>(a=>c)) -> (a=>(b=>c)))
+> Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
+>
+> ( ((?_11=>(?_13=>?_7)) -> (?_13=>(?_11=>?_7)))
+> , (lam x::(?_11=>(?_13=>?_7)) .
+>    (for  i::?_13 .
+>        (for  j::?_11 .
+>            x.j.i))) )
 
 :t lam f x. f x
-> A b a. ((a -> b) -> (a -> b))
+> Type error:Ambiguous type variables: [?_4, ?_6]
+>
+> (((?_6 -> ?_4) -> (?_6 -> ?_4)), (lam f::(?_6 -> ?_4) . (lam x::?_6 . (f x))))
 
 :t id :: a -> a
    id x = x
@@ -85,7 +103,9 @@ xr = map real arr
 > (3=>Int)
 
 :t []
-> A a. (0=>a)
+> Type error:Ambiguous type variables: [?_2]
+>
+> ((0=>?_2), [])
 
 :t [1, [2]]
 > Type error:
@@ -124,7 +144,12 @@ p2 = 1
 >      ^
 
 :t lam x. for (i,j). x.i.j
-> A c b a. ((b=>(a=>c)) -> ((b, a)=>c))
+> Type error:Ambiguous type variables: [?_4, ?_9, ?_11]
+>
+> ( ((?_9=>(?_11=>?_4)) -> ((?_9, ?_11)=>?_4))
+> , (lam x::(?_9=>(?_11=>?_4)) .
+>    (for  (i::?_9, j::?_11) .
+>        x.i.j)) )
 
 _, M = unpack range 5
 
@@ -168,49 +193,49 @@ f x =
 vspaceid :: A a::VS. a -> a
 vspaceid x = x
 
-:tycheck vspaceid (1.0, [2.0, 3.0])
+:t vspaceid (1.0, [2.0, 3.0])
 > (Real, (2=>Real))
 
-:tycheck vspaceid 0
+:t vspaceid 0
 > Type error: Not a vector space: Int
-> context:
-> (vspaceid @Int 0)
+>
+> :t vspaceid 0
+>    ^^^^^^^^^
 
-:tycheck ..
+:t ..
   g :: A a::VS. a -> a
   g x = vspaceid x
   g @Real
 > (Real -> Real)
 
-:tycheck ..
+:t ..
   g :: a -> a
   g x = vspaceid x
   g @Real
 > Type error: Type variable "a" not in class: VS
-> context:
-> (g :: A a. (a -> a)
-> g = (lam x::a . (vspaceid @a x));
-> g @Real)
+>
+>   g x = vspaceid x
+>         ^^^^^^^^^
 
-:tycheck for i::Int. 1
+:t for i::Int. 1
 > Type error: Not a valid index set: Int
-> context:
-> (for  i::Int .
->     1)
+>
+> :t for i::Int. 1
+>    ^^^^^^^^^^^^^
 
-:tycheck grad (lam x::Int. real x) 1
+:t grad (lam x::Int. real x) 1
 > Type error: Not a vector space: Int
-> context:
-> ((grad @Int (lam x::Int . (real x))) 1)
+>
+> :t grad (lam x::Int. real x) 1
+>    ^^^^^
 
-:tycheck vadd' :: a -> a -> a
+:t vadd' :: a -> a -> a
          vadd' x y = %vadd(x, y)
          vadd' @Real
 > Type error: Type variable "a" not in class: VS
-> context:
-> (vadd' :: A a. (a -> (a -> a))
-> vadd' = (lam x::a . (lam y::a . (%vadd[a](x, y))));
-> vadd' @Real)
+>
+>          vadd' x y = %vadd(x, y)
+>                      ^^^^^^^^^^^
 
 f1 :: Real -> Real
 f1 x = x
@@ -218,18 +243,20 @@ f1 x = x
 f2 :: Real -> Real
 f2 x = x + x
 
-:tycheck [f1, f2]
+:t [f1, f2]
 > Type error: Not serializable data: (Real -> Real)
-> context:
-> [f1, f2]
+>
+> :t [f1, f2]
+>    ^^^^^^^^
 
-:tycheck select True f1 f2
+:t select True f1 f2
 > Type error: Not serializable data: (Real -> Real)
-> context:
-> (((select @(Real -> Real) True) f1) f2)
+>
+> :t select True f1 f2
+>    ^^^^^^^
 
-:tycheck fold f1 for i::3. lam g. (lam x. g (g x))
+:t fold f1 for i::3. lam g. (lam x. g (g x))
 > Type error: Not serializable data: (Real -> Real)
-> context:
-> ((fold @3 @(Real -> Real) f1) (for  i::3 .
->     (lam g::(Real -> Real) . (lam x::Real . (g (g x))))))
+>
+> :t fold f1 for i::3. lam g. (lam x. g (g x))
+>    ^^^^^

@@ -47,7 +47,9 @@ instance Pretty ErrType where
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
     NotImplementedErr -> "Not implemented:"
-    CompilerErr       -> "Compiler bug!"
+    CompilerErr       ->
+      "Compiler bug!" <> line <>
+      "Please report this at github.com/google-research/dex-lang/issues\n" <> line
     MiscErr           -> "Error:"
 
 instance Pretty Type where

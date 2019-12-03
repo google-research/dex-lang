@@ -27,11 +27,10 @@ import Pass
 import Cat
 import Subst
 
-data Constraint = Constraint Type Type String Ctx
+data Constraint = Constraint Type Type String SrcCtx
 type QVars = Env ()
-type Ctx = Maybe SrcPos
 
-type InferM a = ReaderT (Ctx, TypeEnv) (
+type InferM a = ReaderT (SrcCtx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
@@ -41,21 +40,16 @@ typePass = TopPass $ \tdecl -> case tdecl of
     (decl', env') <- liftTop $ inferDecl decl
     extend env'
     return $ TopDecl decl'
-  -- TODO: special case for `GetType (Var v [])` which can be polymorphic
+  EvalCmd (Command GetType (SrcAnnot (Var v []) _)) -> do
+    env <- look
+    case envLookup env v of
+      Nothing -> throwTopErr $ Err UnboundVarErr Nothing (pprint v)
+      Just ty -> emitOutput $ TextOut $ pprint $ fromL ty
   EvalCmd (Command cmd expr) -> do
+    (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
     case cmd of
-      GetType -> do
-        (ty, _) <- liftTop $ inferAndGeneralize expr
-        emitOutput $ TextOut $ pprint ty
-      _ -> do
-        (ty, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
-        case cmd of
-          ShowTyped -> emitOutput $ TextOut $ pprint expr'
-          TypeCheckInternal -> return $ EvalCmd (Command cmd expr')
-          _ -> do
-            unless (isPrintable ty) $ throwTopErr $
-              Err TypeErr Nothing (" Can't print values of type: " ++ pprint ty)
-            return $ EvalCmd (Command cmd expr')
+      ShowTyped -> emitOutput $ TextOut $ pprint expr'
+      _ -> return $ EvalCmd (Command cmd expr')
 
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do
@@ -170,7 +164,9 @@ check expr reqTy = case expr of
     -- TODO: check that the annotation is a monotype
     constrainReq annTy
     check e reqTy
-  SrcAnnot e pos -> local (\(_,env) -> (Just pos, env)) (check e reqTy)
+  SrcAnnot e pos -> do
+    e' <- local (\(_,env) -> (Just pos, env)) (check e reqTy)
+    return $ SrcAnnot e' pos
   _ -> error $ "Unexpected expression: " ++ show expr
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
@@ -232,11 +228,12 @@ freshQ = do
   extend $ tv @> ()
   return (TypeVar tv)
 
-inferAndGeneralize :: UExpr -> InferM (SigmaType, TLam)
-inferAndGeneralize expr = do
-  ((ty, expr'), qs) <- solveLocal $ infer expr
-  let sigmaTy = Forall (map (const (Kind [])) qs) $ abstractTVs qs ty
-  return (sigmaTy, TLam [] expr')  -- TODO: type-lambda too
+-- We don't currently use this but might want to bring it back
+-- inferAndGeneralize :: UExpr -> InferM (SigmaType, TLam)
+-- inferAndGeneralize expr = do
+--   ((ty, expr'), qs) <- solveLocal $ infer expr
+--   let sigmaTy = Forall (map (const (Kind [])) qs) $ abstractTVs qs ty
+--   return (sigmaTy, TLam [] expr')  -- TODO: type-lambda too
 
 solveLocalMonomorphic :: (Pretty a, Subst a) => InferM a -> InferM a
 solveLocalMonomorphic m = do
