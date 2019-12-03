@@ -8,7 +8,7 @@ update points key (x,y) =
   (x', y') = points.(randIdx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
-runChain :: A n a. (Key -> a -> a) -> Key -> a -> n=>a
+runChain :: A n::Ix a::Data . (Key -> a -> a) -> Key -> a -> n=>a
 runChain f key x0 = scan' x0 (many f key)
 
 trianglePoints :: 3=>Point

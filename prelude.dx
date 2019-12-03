@@ -120,7 +120,7 @@ fanout x = for i. x
 sq :: Real -> Real
 sq x = x * x
 
-select :: Bool -> a -> a -> a
+select :: A a::Data. Bool -> a -> a -> a
 select p x y = %select(p, x, y)
 
 abs :: Real -> Real
@@ -128,14 +128,14 @@ abs x = select (x > 0.0) x (0.0 - x)
 
 'State-carrying loop constructs
 
-scan :: a -> n=>(a->(a, b)) -> (a, n=>b)
+scan :: A n::Ix a::Data b .  a -> n=>(a->(a, b)) -> (a, n=>b)
 scan x0 fs = %scan(x0, for i. lam x. fs.i x)
 
-fold :: a -> n=>(a->a) -> a
+fold :: A n::Ix a::Data . a -> n=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 
 -- TODO: call this `scan` and call the current `scan` something else
-scan' :: a -> n=>(a->a) -> n=>a
+scan' :: A n::Ix a::Data . a -> n=>(a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
 
 'More misc functions
@@ -236,12 +236,6 @@ grad f x = (_, pullback) = vjp f x
 
 deriv :: (Real -> Real) -> Real -> Real
 deriv f x = jvp f x 1.0
-
-fmulDeriv :: Real -> Real -> (Real, Real -> Real -> Real)
-fmulDeriv x y = (x * y, lam tx ty. x * ty + y * tx)
-
-vsumImpl :: A n::Ix a::VS. n=>a -> a
-vsumImpl xs = fold vzero for i::n. lam c. vadd c xs.i
 
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs

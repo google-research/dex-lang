@@ -141,7 +141,7 @@ instance Pretty a => Pretty (BinderP a) where
 
 instance Pretty ClassName where
   pretty name = case name of
-    Show   -> "Show"
+    Data   -> "Data"
     VSpace -> "VS"
     IdxSet -> "Ix"
 

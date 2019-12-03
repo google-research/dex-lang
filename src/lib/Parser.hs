@@ -400,7 +400,7 @@ className :: Parser ClassName
 className = do
   s <- upperStr
   case s of
-    "Show" -> return Show
+    "Data" -> return Data
     "VS"   -> return VSpace
     "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s

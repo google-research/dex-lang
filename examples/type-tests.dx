@@ -211,3 +211,25 @@ vspaceid x = x
 > (vadd' :: A a. (a -> (a -> a))
 > vadd' = (lam x::a . (lam y::a . (%vadd[a](x, y))));
 > vadd' @Real)
+
+f1 :: Real -> Real
+f1 x = x
+
+f2 :: Real -> Real
+f2 x = x + x
+
+:tycheck [f1, f2]
+> Type error: Not serializable data: (Real -> Real)
+> context:
+> [f1, f2]
+
+:tycheck select True f1 f2
+> Type error: Not serializable data: (Real -> Real)
+> context:
+> (((select @(Real -> Real) True) f1) f2)
+
+:tycheck fold f1 for i::3. lam g. (lam x. g (g x))
+> Type error: Not serializable data: (Real -> Real)
+> context:
+> ((fold @3 @(Real -> Real) f1) (for  i::3 .
+>     (lam g::(Real -> Real) . (lam x::Real . (g (g x))))))

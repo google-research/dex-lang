@@ -94,7 +94,7 @@ getType' expr = case expr of
       bodyTy <- checkSpent v (pprint p) $ recurWithP (v@>()) p body
       return $ ArrType Lin (patType p) bodyTy
     For p body -> do
-      checkIdxSet (patType p)
+      checkClassConstraint IdxSet (patType p)
       checkTy (patType p)
       checkShadowPat p
       liftM (TabType (patType p)) (recurWithP mempty p body)
@@ -111,6 +111,7 @@ getType' expr = case expr of
       return b
     RecCon k r -> liftM (RecType k) (traverseProd k recur r)
     TabCon ty xs -> do
+      checkClassConstraint Data ty
       case ty of
         TabType _ bodyTy -> do
           xTys <- mapM recur xs
@@ -152,7 +153,8 @@ getTypeDecl decl = case decl of
     return (tbind tb <> asEnv mempty b)
   TyDef NewType v ty -> do
     checkTy ty
-    return (v @> T (Kind []))
+    classes <- getClasses ty
+    return (v @> T classes)
   TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
   where
     recur = getType'
@@ -210,6 +212,9 @@ idxSet = Kind [IdxSet]
 vspace :: Kind
 vspace = Kind [VSpace]
 
+isData :: Kind
+isData = Kind [Data]
+
 builtinType :: Builtin -> BuiltinType
 builtinType builtin = case builtin of
   IAdd     -> ibinOpType
@@ -228,14 +233,14 @@ builtinType builtin = case builtin of
   Todo     -> nonLinBuiltin [noCon] [] a
   NewtypeCast -> nonLinBuiltin [noCon, noCon] [a] b
   Copy     -> nonLinBuiltin [noCon] [a] a
-  Scan     -> nonLinBuiltin [noCon, noCon, idxSet]
+  Scan     -> nonLinBuiltin [isData, noCon, idxSet]
                           [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> nonLinBuiltin [idxSet] [i] int
   IntAsIndex -> nonLinBuiltin [idxSet] [int] i
   Range    -> nonLinBuiltin [] [int] (Exists unitTy)
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real
-  Select    -> nonLinBuiltin [noCon] [bool, a, a] a
+  Select    -> nonLinBuiltin [isData] [bool, a, a] a
   -- TODO: this breaks for tuple or non-reals
   Linearize   -> nonLinBuiltin [vspace, vspace] [a --> b, a] (pair b (a --@ b))
   Transpose   -> BuiltinType [vspace, vspace] (1, Tens) [a --@ b] (b --@ a)
@@ -305,30 +310,54 @@ checkClassConstraints :: Kind -> Type -> TypeM ()
 checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
-checkClassConstraint c ty = case c of
-  VSpace -> checkVSpace ty
-  IdxSet -> checkIdxSet ty
-  _ -> error "Not implemented"
+checkClassConstraint c ty = do
+  env <- ask
+  liftEither $ checkClassConstraint' env c ty
 
-checkVSpace :: Type -> TypeM ()
-checkVSpace ty = case ty of
-  TypeVar v         -> checkVarClass VSpace v
+getClasses :: Type -> TypeM Kind
+getClasses ty = do
+  env <- ask
+  return $ Kind $ filter (isInClass env) [VSpace, IdxSet, Data]
+  where
+    isInClass env c = case checkClassConstraint' env c ty of Left  _ -> False
+                                                             Right _ -> True
+
+checkClassConstraint' :: TypeCheckEnv -> ClassName -> Type -> Except ()
+checkClassConstraint' env c ty = case c of
+  VSpace -> checkVSpace env ty
+  IdxSet -> checkIdxSet env ty
+  Data   -> checkData   env ty
+
+checkVSpace :: TypeCheckEnv -> Type -> Except ()
+checkVSpace env ty = case ty of
+  TypeVar v         -> checkVarClass env VSpace v
   BaseType RealType -> return ()
-  TabType _ a       -> checkVSpace a
-  RecType _ r       -> mapM_ checkVSpace r
+  TabType _ a       -> recur a
+  RecType _ r       -> mapM_ recur r
   _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
+  where recur = checkVSpace env
 
-checkIdxSet :: Type -> TypeM ()
-checkIdxSet ty = case ty of
-  TypeVar v   -> checkVarClass IdxSet v
+checkIdxSet :: TypeCheckEnv -> Type -> Except ()
+checkIdxSet env ty = case ty of
+  TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
-  RecType _ r -> mapM_ checkIdxSet r
+  RecType _ r -> mapM_ recur r
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
+  where recur = checkIdxSet env
 
-checkVarClass :: ClassName -> Name -> TypeM ()
-checkVarClass c v = do
-  maybeKind <- asks $ flip envLookup v
-  case maybeKind of
+checkData :: TypeCheckEnv -> Type -> Except ()
+checkData env ty = case ty of
+  TypeVar v   -> checkVarClass env Data v
+  BaseType _  -> return ()
+  TabType _ a -> recur a
+  RecType _ r -> mapM_ recur r
+  IdxSetLit _ -> return ()
+  _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
+  where recur = checkData env
+
+checkVarClass :: TypeCheckEnv -> ClassName -> Name -> Except ()
+checkVarClass env c v = do
+  case envLookup env v of
     Just (T (Kind cs)) ->
       unless (c `elem` cs) $ throw TypeErr $ " Type variable \""  ++ pprint v ++
                                              "\" not in class: " ++ pprint c

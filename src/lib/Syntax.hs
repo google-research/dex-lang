@@ -70,7 +70,7 @@ type PatP b = RecTree (BinderP b)
 data Lin = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
 data ProdKind = Cart | Tens  deriving (Eq, Ord, Show, Generic)
 
-data ClassName = Show | VSpace | IdxSet deriving (Eq, Ord, Show, Generic)
+data ClassName = Data | VSpace | IdxSet deriving (Eq, Ord, Show, Generic)
 newtype Kind = Kind [ClassName]  deriving (Eq, Ord, Show, Generic)
 
 data Type = BaseType BaseType
