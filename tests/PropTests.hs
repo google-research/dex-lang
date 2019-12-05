@@ -21,16 +21,13 @@ import TestPass
 main :: IO ()
 main = void tests
 
-evalIOEither :: (H.MonadTest m, Show x, MonadIO m, HasCallStack) => IO (Either x a) ->  m a
-evalIOEither m = H.evalIO m >>= H.evalEither
-
 prop_jitEval :: TypeEnv -> Evaluator -> Evaluator -> H.Property
 prop_jitEval tenv jit interp =
   H.property $ do
     srcBlk <- H.forAllWith pprint (runReaderT genSourceBlock (makeGenEnv tenv defaultGenOptions))
-    interres <- evalIOEither (interp srcBlk)
+    interres <- H.evalIO (interp srcBlk)
     H.annotate ("Interpreter result: " ++ pprint interres)
-    jitres <- evalIOEither (jit srcBlk)
+    jitres <- H.evalIO (jit srcBlk)
     pprint interres H.=== pprint jitres
 
 

@@ -293,7 +293,7 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 type LitProg = [(SourceBlock, Result)]
 type Result' = Except Output
 type SrcCtx = Maybe SrcPos
-newtype Result = Result Result'
+newtype Result = Result Result' deriving (Show, Eq)
 
 data Output = ValOut OutFormat Value | TextOut String | NoOutput
                 deriving (Show, Eq, Generic)

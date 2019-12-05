@@ -287,11 +287,14 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
 instance Pretty SourceBlock where
   pretty block = p (sbText block)
 
-instance Pretty Result where
-  pretty (Result r) = case r of
+instance Pretty Result' where
+  pretty r = case r of
     Left err -> p err
     Right NoOutput -> mempty
     Right out -> p out
+
+instance Pretty Result where
+  pretty (Result r) = pretty r
 
 printLitBlock :: SourceBlock -> Result -> String
 printLitBlock block result = pprint block ++ resultStr
