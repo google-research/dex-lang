@@ -7,26 +7,23 @@ SHELL=/bin/bash
 # https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
 PROF := --profile --work-dir .stack-work-prof
 
-dex := stack exec $(PROF) dex --
-dexnoprof := stack exec dex --
+dex     := stack exec         dex --
+dexprof := stack exec $(PROF) dex --
 
 # --- building Dex ---
 
 all: build
 
 build: cbits/libdex.so
+	stack build
+
+build-prof: cbits/libdex.so
 	stack build $(PROF)
 
 all-inotify: build-inotify
 
 build-inotify: cbits/libdex.so
 	stack build --flag dex:inotify $(PROF)
-
-build-noprof: cbits/libdex.so
-	stack build
-
-build-noprof-inotify: cbits/libdex.so
-	stack build --flag dex:inotify
 
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
@@ -53,6 +50,7 @@ run-%: examples/%.dx
 runinterp-%: examples/%.dx
 	misc/check-quine $^ $(dex) --interp script --allow-errors
 
+# Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
 	stack test $(PROF)
 
@@ -80,5 +78,5 @@ benchmark:
 	python benchmarks/numpy-bench.py 1000
 	gcc -O3 -ffast-math benchmarks/cbench.c -o benchmarks/bench
 	benchmarks/bench 1000
-	$(dexnoprof) script benchmarks/time-tests.dx
+	$(dex) script benchmarks/time-tests.dx
 	rm benchmarks/bench

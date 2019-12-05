@@ -33,7 +33,7 @@ development. We welcome contributions. There's plenty of work to do!
 
  * Build Dex: `make`
  * Run tests: `make tests`
- * Set up alias (e.g. in .bashrc) `alias dex="stack exec --profile --work-dir .stack-work-prof dex --"`
+ * Set up alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
 
 ## Running
 
