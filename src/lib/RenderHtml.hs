@@ -87,7 +87,7 @@ data StrClass = NormalStr
 classify :: Parser StrClass
 classify =
        (try (char ':' >> lowerWord) >> return CommandStr)
-   <|> (symbol "--" >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
+   <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
    <|> (do s <- lowerWord
            return $ if s `elem` keywords then KeywordStr else NormalStr)
    <|> (symbol "A " >> return KeywordStr)
@@ -96,8 +96,8 @@ classify =
    <|> (choice (map C.string symbols ) >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
   where
-   keywords = ["for", "lam", "let", "in", "unpack", "pack", "type", "todo"]
-   symbols = ["+", "*", "/", "-", "^", "$", "@", ".", "::", ";", "=", ">", "<"]
+   keywords = ["for", "lam", "llam", "let", "in", "unpack", "pack", "type", "newtype", "todo"]
+   symbols = ["--o", "+", "*", "/", "-", "^", "$", "@", ".", "::", ";", "=", ">", "<", "#"]
 
 lowerWord :: Parser String
 lowerWord = (:) <$> lowerChar <*> many alphaNumChar
