@@ -59,9 +59,11 @@ todo = %todo()
 exp :: Real -> Real
 exp x = %%exp(x)
 
+@primitive
 log :: Real -> Real
 log x = %%log(x)
 
+@primitive
 sqrt :: Real -> Real
 sqrt x = %%sqrt(x)
 
@@ -240,6 +242,13 @@ grad f x = (_, pullback) = vjp f x
 deriv :: (Real -> Real) -> Real -> Real
 deriv f x = jvp f x 1.0
 
+checkDeriv :: (Real -> Real) -> Real -> Bool
+checkDeriv f x =
+  eps = 1e-5
+  ansAD  = deriv f x
+  ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
+  abs (ansAD - ansNumeric) < 1e-3
+
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs
                (xs, lam t. for i. fs.i t)
@@ -251,5 +260,14 @@ cos#lin :: Real -> (Real, Real --o Real)
 cos#lin x = (cos x, llam t. t * (0.0 - sin x))
 
 exp#lin :: Real -> (Real, Real --o Real)
-exp#lin x = ans = exp x
-            (ans, llam t. t * ans)
+exp#lin x =
+  ans = exp x
+  (ans, llam t. t * ans)
+
+log#lin :: Real -> (Real, Real --o Real)
+log#lin x = (log x, llam t. t / sq x)
+
+sqrt#lin :: Real -> (Real, Real --o Real)
+sqrt#lin x =
+  ans = sqrt x
+  (ans, llam t. 0.5 * t / ans)

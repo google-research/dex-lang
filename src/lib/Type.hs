@@ -250,9 +250,9 @@ builtinType builtin = case builtin of
   IGT      -> nonLinBuiltin [] [int, int] bool
   Pow      -> ibinOpType
   FAdd     -> BuiltinType [] (2, Cart) [real, real] real
-  FSub     -> fbinOpType
+  FSub     -> BuiltinType [] (2, Cart) [real, real] real
   FMul     -> BuiltinType [] (2, Tens) [real, real] real
-  FDiv     -> fbinOpType
+  FDiv     -> BuiltinType [] (1, Cart) [real, real] real
   FLT      -> nonLinBuiltin [] [real, real] bool
   FGT      -> nonLinBuiltin [] [real, real] bool
   Todo     -> nonLinBuiltin [noCon] [] a
@@ -281,7 +281,6 @@ builtinType builtin = case builtin of
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
   where
     ibinOpType    = nonLinBuiltin [] [int , int ] int
-    fbinOpType    = nonLinBuiltin [] [real, real] real
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1

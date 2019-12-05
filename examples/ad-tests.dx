@@ -69,3 +69,45 @@
 
 :p (sin 1.0, deriv (deriv sin) 1.0)
 > (0.84147096, -0.84147096)
+
+:p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
+> (0.5403023, -0.5403023)
+
+:p checkDeriv sin 1.0
+> True
+
+:p checkDeriv cos 1.0
+> True
+
+:p checkDeriv exp 1.0
+> True
+
+:p checkDeriv log 1.0
+> True
+
+:p checkDeriv sqrt 1.0
+> True
+
+:p checkDeriv (lam x. cos (sin (exp x))) 1.0
+> True
+
+:p checkDeriv (deriv sin) 1.0
+> True
+
+:p checkDeriv (deriv cos) 1.0
+> True
+
+@primitive
+badDerivFun :: Real -> Real
+badDerivFun x = x
+
+badDerivFun#lin :: Real -> (Real, Real --o Real)
+badDerivFun#lin x = (x, llam t. 2. * t)
+
+:p checkDeriv badDerivFun 1.0
+> False
+
+-- Perturbation confusion test suggested by Barak Pearlmutter
+-- https://github.com/HIPS/autograd/issues/4
+:p deriv (lam x. x * deriv (lam y. x * y) 2.0) 1.0
+> 2.0
