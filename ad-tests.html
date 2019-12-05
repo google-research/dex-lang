@@ -1,0 +1,87 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> x
+   jvp f 3<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f x <span class="symbol">=</span> x <span class="symbol">*</span> x
+   jvp f 3<span class="symbol">.</span>0 1<span class="symbol">.</span>5
+</div><div class="result-block">9.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f x <span class="symbol">=</span> x <span class="symbol">+</span> x
+   jvp f 3<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">4.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f x <span class="symbol">=</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x
+   jvp f 2<span class="symbol">.</span>0 1<span class="symbol">.</span>5
+</div><div class="result-block">18.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f x <span class="symbol">=</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x
+   jvp (<span class="keyword">lam</span> x<span class="symbol">.</span> jvp f x 1<span class="symbol">.</span>0) 2<span class="symbol">.</span>0 1<span class="symbol">.</span>0
+</div><div class="result-block">12.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f x <span class="symbol">=</span> 4<span class="symbol">.</span>0 <span class="symbol">*</span> x <span class="symbol">*</span> x <span class="symbol">*</span> x
+   deriv (deriv (deriv f)) 1<span class="symbol">.</span>234
+</div><div class="result-block">24.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> x
+   tlinear f 2<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> x <span class="symbol">+</span> x
+   tlinear f 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> x <span class="symbol">+</span> (x <span class="symbol">+</span> x) <span class="symbol">*</span> 2<span class="symbol">.</span>0
+   tlinear f 1<span class="symbol">.</span>0
+</div><div class="result-block">5.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> x <span class="symbol">*</span> 2<span class="symbol">.</span>0
+   tlinear f 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f x <span class="symbol">=</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> x
+   tlinear f 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span>)
+   f x <span class="symbol">=</span> (x, 2<span class="symbol">.</span>0 <span class="symbol">*</span> x)
+   tlinear f (1<span class="symbol">.</span>0, 3<span class="symbol">.</span>0)
+</div><div class="result-block">7.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span>) <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f (x,y) <span class="symbol">=</span> x <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> y
+   tlinear f 1<span class="symbol">.</span>0
+</div><div class="result-block">(1.0, 2.0)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> grad (<span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> x) 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv cos 0<span class="symbol">.</span>0
+</div><div class="result-block">0.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv sin 0<span class="symbol">.</span>0
+</div><div class="result-block">1.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (sin 1<span class="symbol">.</span>0, deriv (deriv sin) 1<span class="symbol">.</span>0)
+</div><div class="result-block">(0.84147096, -0.84147096)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (cos 1<span class="symbol">.</span>0, deriv (deriv (deriv sin)) 1<span class="symbol">.</span>0)
+</div><div class="result-block">(0.5403023, -0.5403023)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv sin 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv cos 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv exp 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv log 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv sqrt 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (<span class="keyword">lam</span> x<span class="symbol">.</span> cos (sin (exp x))) 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (deriv sin) 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (deriv cos) 1<span class="symbol">.</span>0
+</div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
+badDerivFun <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+badDerivFun x <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">badDerivFun<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
+badDerivFun<span class="symbol">#</span>lin x <span class="symbol">=</span> (x, <span class="keyword">llam</span> t<span class="symbol">.</span> 2<span class="symbol">.</span> <span class="symbol">*</span> t)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv badDerivFun 1<span class="symbol">.</span>0
+</div><div class="result-block">False</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Perturbation confusion test suggested by Barak Pearlmutter
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- https://github.com/HIPS/autograd/issues/4
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv (<span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> deriv (<span class="keyword">lam</span> y<span class="symbol">.</span> x <span class="symbol">*</span> y) 2<span class="symbol">.</span>0) 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div></div></body></html>

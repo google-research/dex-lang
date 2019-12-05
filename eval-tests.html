@@ -8,13 +8,13 @@
    isum (iota <span class="symbol">@</span><span class="type-name">Nx</span>)
 </div><div class="result-block">45</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
-   x <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   x <span class="symbol">=</span> iota <span class="symbol">@</span><span class="type-name">Nx</span>
    isum (<span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i)
 </div><div class="result-block">45</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> vdot <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
    vdot x y <span class="symbol">=</span> sum (<span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i <span class="symbol">*</span> 2<span class="symbol">.</span>0)
    _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
-   x <span class="symbol">=</span> (iota <span class="symbol">::</span> <span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+   x <span class="symbol">=</span> (iota) <span class="symbol">::</span> (<span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
    y <span class="symbol">=</span> map real x
    vdot y y
 </div><div class="result-block">10.0</div></div><div class="cell"><div class="code-block">
@@ -68,17 +68,17 @@
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--        z.i = (x.i, x.i * x.i)
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">--    in sum (for i. f z.i)
 </span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exp 1<span class="symbol">.</span>0
-</div><div class="result-block">2.718281828459045</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">2.7182817</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> log 1<span class="symbol">.</span>0
 </div><div class="result-block">0.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sqrt 2<span class="symbol">.</span>0
-</div><div class="result-block">1.4142135623730951</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">1.4142135</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> sin 3<span class="symbol">.</span>14159
-</div><div class="result-block">2.65358979335273e-6</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">2.6535897e-6</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> cos 0<span class="symbol">.</span>0
 </div><div class="result-block">1.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> tan 1<span class="symbol">.</span>57079
-</div><div class="result-block">158057.9134162482</div></div><div class="cell"><div class="code-block">
+</div><div class="result-block">158057.9</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fadd 1<span class="symbol">.</span>0 2<span class="symbol">.</span>0
 </div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fsub 1<span class="symbol">.</span>0 2<span class="symbol">.</span>0
@@ -103,6 +103,8 @@ cumsumplus xs <span class="symbol">=</span> snd (scan 0<span class="symbol">.</s
 </div><div class="result-block">[2.0, 4.0, 7.0]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [<span class="type-name">False</span>, <span class="type-name">False</span>, <span class="type-name">True</span>]
 </div><div class="result-block">[False, False, True]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [<span class="type-name">False</span>, <span class="type-name">True</span>, <span class="type-name">True</span>, <span class="type-name">False</span>]  <span class="comment">-- testing again because it&#39;s been flaky
+</span></div><div class="result-block">[False, True, True, False]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">True</span>, <span class="type-name">False</span>)
 </div><div class="result-block">(True, False)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> 2<span class="symbol">.</span>0
@@ -133,13 +135,67 @@ cumsumplus xs <span class="symbol">=</span> snd (scan 0<span class="symbol">.</s
    (k, _) <span class="symbol">=</span> (iadd 1 2, 3)
    <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">Nrand</span><span class="symbol">.</span> iadd k (asint i)
 </div><div class="result-block">[3, 4, 5, 6, 7, 8]</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> randn (asint i)
-</div><div class="result-block">3.6825456339802366e-2</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> sq <span class="symbol">$</span> randn (asint i)
-</div><div class="result-block">1.0268342292186705</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> k <span class="symbol">=</span> newKey 0
+   mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> randn (ixkey k i)
+</div><div class="result-block">-0.115799494</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> k <span class="symbol">=</span> newKey 0
+   mean <span class="keyword">for</span> i<span class="symbol">::</span>100<span class="symbol">.</span> sq <span class="symbol">$</span> randn (ixkey k i)
+</div><div class="result-block">1.2581897</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> 0<span class="symbol">;</span> x
 </div><div class="result-block">[0, 0, 0]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> <span class="keyword">for</span> j<span class="symbol">::</span>4<span class="symbol">.</span> 0<span class="symbol">;</span> x
 </div><div class="result-block">[[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fold (<span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> 0<span class="symbol">.</span>0) <span class="symbol">$</span> <span class="keyword">for</span> i<span class="symbol">::</span>2<span class="symbol">.</span> <span class="keyword">lam</span> c<span class="symbol">.</span> (<span class="keyword">for</span> j<span class="symbol">.</span> c<span class="symbol">.</span>j <span class="symbol">+</span> real (asint j))
-</div><div class="result-block">[0.0, 2.0, 4.0]</div></div></div></body></html>
+</div><div class="result-block">[0.0, 2.0, 4.0]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (mat2 <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">::</span>4 j<span class="symbol">::</span>4 <span class="symbol">.</span> asint i<span class="symbol">;</span> tmp <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> mat2<span class="symbol">.</span>i<span class="symbol">.</span>i<span class="symbol">;</span> tmp)
+</div><div class="result-block">[0, 1, 2, 3]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (x <span class="symbol">=</span> [[0, 1], [2, 3]]<span class="symbol">;</span> xt<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">=</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i<span class="symbol">;</span> xt)
+</div><div class="result-block">[[0, 2], [1, 3]]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (x, y) <span class="symbol">=</span> (1, (2,3))
+   (x, y)
+</div><div class="result-block">(1, (2, 3))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> i
+</div><div class="result-block">[asidx @3 0, asidx @3 1, asidx @3 2]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (asidx 0)<span class="symbol">::</span>1
+</div><div class="result-block">asidx @1 0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">newtype</span> <span class="type-name">MyInt</span> <span class="symbol">=</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">toMyInt <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">MyInt</span>
+toMyInt x <span class="symbol">=</span> %newtypecast(x)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">fromMyInt <span class="symbol">::</span> <span class="type-name">MyInt</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
+fromMyInt x <span class="symbol">=</span> %newtypecast(x)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">myIntId <span class="symbol">::</span> <span class="type-name">MyInt</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">MyInt</span>
+myIntId x <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> myIntId 1
+</div><div class="err-block">Type error:
+Expected: MyInt
+  Actual: Int
+In: 1
+
+:p myIntId 1
+           ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> iadd (toMyInt 2) 2
+</div><div class="err-block">Type error:
+Expected: Int
+  Actual: MyInt
+In: (toMyInt 2)
+
+:p iadd (toMyInt 2) 2
+        ^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fromMyInt <span class="symbol">$</span> myIntId <span class="symbol">$</span> toMyInt <span class="symbol">$</span> 3
+</div><div class="result-block">3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [0]<span class="symbol">.</span>([asidx 0]<span class="symbol">.</span>(asidx 0))
+</div><div class="result-block">0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">True</span> 1 2
+</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">False</span> 1<span class="symbol">.</span>0 2<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">True</span> [1,2,3] [10,20,30]
+</div><div class="result-block">[1, 2, 3]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">False</span> [1,2,3] [10,20,30]
+</div><div class="result-block">[10, 20, 30]</div></div></div></body></html>

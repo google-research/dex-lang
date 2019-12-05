@@ -1,0 +1,108 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+   f <span class="symbol">=</span> <span class="keyword">llam</span> x<span class="symbol">.</span> x
+   f 1<span class="symbol">.</span>0
+</div><div class="result-block">1.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 1<span class="symbol">.</span>0
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">*</span> x
+</div><div class="err-block">Linearity error:Variable already spent: x
+
+:t llam x::Real. x * x
+                     ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">*</span> 2<span class="symbol">.</span>0
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> x
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> <span class="keyword">llam</span> y<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">*</span> y
+</div><div class="result-block">(Real --o (Real --o Real))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (<span class="keyword">llam</span> y<span class="symbol">.</span> y) x
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (<span class="keyword">lam</span> y<span class="symbol">.</span> y) x
+</div><div class="err-block">Linearity error:Nonlinear function consuming linear data: [x]
+
+:t llam x::Real. (lam y. y) x
+   ^^^^^^^^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (1 : 2<span class="symbol">.</span>0) <span class="symbol">::</span> (<span class="type-name">Int</span> : <span class="type-name">Real</span>)
+</div><div class="result-block">(Int : Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (1 , 2<span class="symbol">.</span>0) <span class="symbol">::</span> (<span class="type-name">Int</span> : <span class="type-name">Real</span>)
+</div><div class="err-block">Type error:
+Expected: (Int : Real)
+  Actual: (Int, Real)
+In: (1, 2.0)
+
+:t (1 , 2.0) :: (Int : Real)
+   ^^^^^^^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0)
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (1<span class="symbol">.</span>0, x)
+</div><div class="err-block">Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (x, 1<span class="symbol">.</span>0)
+</div><div class="err-block">Linearity error:Different vars consumed by Cartesian product elements: [x] vs []</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (x, x)
+</div><div class="result-block">(Real --o (Real, Real))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (1<span class="symbol">.</span>0 : 2<span class="symbol">.</span>0)
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (1<span class="symbol">.</span>0 : x)
+</div><div class="result-block">(Real --o (Real : Real))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (x : 1<span class="symbol">.</span>0)
+</div><div class="result-block">(Real --o (Real : Real))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> (x : x)
+</div><div class="err-block">Linearity error:Variable already spent: x
+
+:t llam x::Real. (x : x)
+                      ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> 2<span class="symbol">.</span>0
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> x
+</div><div class="err-block">Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]
+
+:t llam x::Real. 1.0 + x
+                     ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">+</span> 1<span class="symbol">.</span>0
+</div><div class="err-block">Linearity error:Different vars consumed by Cartesian product elements: [x] vs []
+
+:t llam x::Real. x + 1.0
+                   ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">+</span> x
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 1<span class="symbol">.</span>0 <span class="symbol">*</span> 2<span class="symbol">.</span>0
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> 1<span class="symbol">.</span>0 <span class="symbol">*</span> x
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">*</span> 1<span class="symbol">.</span>0
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x <span class="symbol">*</span> x
+</div><div class="err-block">Linearity error:Variable already spent: x
+
+:t llam x::Real. x * x
+                     ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> y <span class="symbol">=</span> x<span class="symbol">;</span> 1<span class="symbol">.</span>0 <span class="symbol">*</span> 2<span class="symbol">.</span>0
+</div><div class="err-block">Linearity error:Variables never spent: x::Real</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> y <span class="symbol">=</span> x<span class="symbol">;</span> x <span class="symbol">+</span> y
+</div><div class="result-block">(Real --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> y <span class="symbol">=</span> x<span class="symbol">;</span> y <span class="symbol">*</span> x
+</div><div class="err-block">Linearity error:Variable already spent: x
+
+:t llam x::Real. y = x; y * x
+                            ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> (x, y)<span class="symbol">.</span> x <span class="symbol">+</span> y
+</div><div class="result-block">((Real, Real) --o Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">llam</span> (x, y)<span class="symbol">.</span> x <span class="symbol">*</span> y
+</div><div class="err-block">Linearity error:Variable already spent: x
+
+:t llam (x, y). x * y
+                    ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="keyword">llam</span> x<span class="symbol">.</span> x <span class="symbol">+</span> x) 1<span class="symbol">.</span>0
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="keyword">llam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> 3<span class="symbol">.</span>0) 1<span class="symbol">.</span>0
+</div><div class="result-block">3.0</div></div></div></body></html>

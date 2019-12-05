@@ -120,13 +120,9 @@ generalization. For example, although we can write this:</p>
        id x <span class="symbol">=</span> x
        <span class="symbol">.</span><span class="symbol">.</span>
        id 1
-</div><div class="result-block">(id :: [a::T]. A a. (a -&gt; a)
+</div><div class="result-block">(id :: A a. (a -&gt; a)
 id = (lam x::a . x);
 (id @Int 1))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>We <em>do</em> generalize when evaluating <code>:t</code>, so we can still ask what the
-annotation needs to be:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">lam</span> x<span class="symbol">.</span> x)
-</div><div class="result-block">A a. (a -&gt; a)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The motivation for this choice is a bit subtle. It's related to the reasons for
 Haskell's (&quot;dreaded&quot;) monomorphism restriction: automatic let generalization can
 lead to surprising runtime work duplication in the presence of polymorphism
@@ -253,5 +249,3 @@ For example, adding two vectors of the same size:</p>
 <li>scan, fold</li>
 </ul>
 </div></div></div></body></html>
-
-
