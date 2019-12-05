@@ -48,16 +48,16 @@ quine-tests: $(quine-test-targets)
 quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-interp-tests
 
 run-%: examples/%.dx
-	misc/check-quine $^ $(dex) script --lit --allow-errors
+	misc/check-quine $^ $(dex) script --allow-errors
 
 runinterp-%: examples/%.dx
-	misc/check-quine $^ $(dex) --interp script --lit --allow-errors
+	misc/check-quine $^ $(dex) --interp script --allow-errors
 
 prop-tests: cbits/libdex.so
 	stack test $(PROF)
 
 update-%: examples/%.dx
-	$(dex) script --lit --allow-errors $^ > $^.tmp
+	$(dex) script --allow-errors $^ > $^.tmp
 	mv $^.tmp $^
 
 repl-test:
