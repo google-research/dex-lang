@@ -26,7 +26,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
-               SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..)
+               SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
+               RuleAnn (..), DeclAnn (..)
                ) where
 
 import Record
@@ -97,9 +98,12 @@ type TopDecl = TopDeclP Type
 type Pat     = PatP     Type
 type TLam    = TLamP    Type
 
-
-data TopDeclP b = TopDecl (DeclP b)
+data TopDeclP b = TopDecl DeclAnn (DeclP b)
+                | RuleDef RuleAnn SigmaType (TLamP b)
                 | EvalCmd (Command (ExprP b))  deriving (Show, Eq, Generic)
+
+data RuleAnn = LinearizationDef Name deriving (Show, Eq, Generic)
+data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
 
 data Command expr = Command CmdName expr  deriving (Show, Eq, Generic)
 
@@ -145,7 +149,8 @@ commandNames = M.fromList [
   ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
   ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
   ("time", TimeIt), ("plot", EvalExpr Scatter), ("simp", ShowSimp),
-  ("plotmat", EvalExpr Heatmap), ("flops", Flops), ("parse", ShowParse)]
+  ("deriv", ShowDeriv), ("plotmat", EvalExpr Heatmap),
+  ("flops", Flops), ("parse", ShowParse)]
 
 builtinStrs :: M.Map Builtin String
 builtinStrs = M.fromList $ map swap (M.toList builtinNames)
@@ -156,7 +161,7 @@ instance Show Builtin where
 
 data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
              | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
-             | EvalExpr OutFormat | TypeCheckInternal
+             | EvalExpr OutFormat | ShowDeriv
                 deriving  (Show, Eq, Generic)
 
 
@@ -226,7 +231,8 @@ data NType = NBaseType BaseType
            | NBoundTVar Int
               deriving (Eq, Show)
 
-data NTopDecl = NTopDecl NDecl
+data NTopDecl = NTopDecl DeclAnn NDecl
+              | NRuleDef RuleAnn NType NExpr
               | NEvalCmd (Command (Type, [NType], NExpr))
                  deriving (Show)
 
@@ -462,8 +468,12 @@ instance HasVars b => HasVars (DeclP b) where
    freeVars (TyDef _ _ ty) = freeVars ty
 
 instance HasVars b => HasVars (TopDeclP b) where
-  freeVars (TopDecl decl) = freeVars decl
+  freeVars (TopDecl _ decl) = freeVars decl
+  freeVars (RuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
   freeVars (EvalCmd (Command _ expr)) = freeVars expr
+
+instance HasVars RuleAnn where
+  freeVars (LinearizationDef v) = v @> L ()
 
 instance HasVars b => HasVars (TLamP b) where
   freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap bind tbs
@@ -490,7 +500,7 @@ instance BindsVars (DeclP b) where
   lhsVars (TyDef _ v _) = v @> T ()
 
 instance BindsVars (TopDeclP b) where
-  lhsVars (TopDecl decl) = lhsVars decl
+  lhsVars (TopDecl _ decl) = lhsVars decl
   lhsVars _ = mempty
 
 instance BindsVars NDecl where
@@ -535,7 +545,8 @@ stripSrcAnnotDecl decl = case decl of
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
 stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
-stripSrcAnnotTopDecl (TopDecl decl) = TopDecl $ stripSrcAnnotDecl decl
+stripSrcAnnotTopDecl (TopDecl ann decl) = TopDecl ann $ stripSrcAnnotDecl decl
+stripSrcAnnotTopDecl (RuleDef ann b (TLam tbs body)) = RuleDef ann b (TLam tbs (stripSrcAnnot body))
 stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))
 
 instance RecTreeZip Type where

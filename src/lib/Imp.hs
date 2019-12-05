@@ -28,10 +28,11 @@ type ImpM a = ReaderT ImpEnv (Either Err) a
 
 impPass :: TopPass NTopDecl ImpDecl
 impPass = TopPass $ \decl -> case decl of
-  NTopDecl decl' -> do
+  NTopDecl _ decl' -> do
     (bs, prog, env) <- liftTop $ toImpDecl decl'
     extend env
     return $ ImpTopLet bs prog
+  NRuleDef _ _ _ -> error "Shouldn't have this left"
   NEvalCmd (Command cmd (ty, ts, expr)) -> do
     ts' <- liftTop $ mapM toImpType ts
     let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts']

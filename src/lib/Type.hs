@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
@@ -36,9 +37,12 @@ type TypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
 
 checkTyped :: TopPass TopDecl TopDecl
 checkTyped = TopPass $ \decl -> stripSrcAnnotTopDecl decl <$ case decl of
-  TopDecl decl' -> do
+  TopDecl _ decl' -> do
     env <- liftTop (getTypeDecl decl')
     extend env
+  RuleDef ann ty tlam -> do
+    _ <- liftTop $ getTypeDecl $ LetPoly ("_":>ty) tlam
+    liftTop $ checkRuleDefType ann ty
   EvalCmd (Command GetType expr) -> do
     ty <- liftTop (getType' expr)
     emitOutput $ TextOut $ pprint ty
@@ -203,6 +207,9 @@ asEnv s (v:>ty) = v @> L (asSigma ty, s)
 unpackExists :: Type -> Name -> Except Type
 unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
 unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
+
+checkRuleDefType :: RuleAnn -> SigmaType -> TypeM ()
+checkRuleDefType _ _ = return ()  -- TODO!
 
 patType :: RecTree Binder -> Type
 patType (RecLeaf (_:>ty)) = ty
@@ -390,9 +397,10 @@ type NTypeM a = ReaderT NTypeEnv (CatT Spent (Either Err)) a
 
 checkNExpr ::TopPass NTopDecl NTopDecl
 checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
-  NTopDecl decl -> do
+  NTopDecl _ decl -> do
     env <- liftPass (pprint decl) $ checkNDecl decl
     extend env
+  NRuleDef _ _ _ -> return () -- TODO!
   NEvalCmd (Command _ (_, tys, expr)) -> liftPass ctx $ do
     tys' <- getNType expr
     assertEq tys tys' "NExpr command"

@@ -37,20 +37,22 @@ sourcePass' block = case sbContents block of
 
 deShadowPass :: TopPass UTopDecl UTopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of
-  TopDecl decl -> do decl' <- catToTop $ deShadowDecl decl
-                     case decl' of
-                       Just decl'' -> return $ TopDecl decl''
-                       Nothing -> emitOutput NoOutput
+  TopDecl ann decl -> do
+    decl' <- catToTop $ deShadowDecl decl
+    case decl' of
+      Just decl'' -> return $ TopDecl ann decl''
+      Nothing -> emitOutput NoOutput
+  RuleDef ann ty tlam -> catToTop $ deShadowRuleDef ann ty tlam
   EvalCmd (Command cmd expr) -> do
-    expr' <- deShadowTop expr
+    expr' <- liftTop $ deShadowExpr expr
     case cmd of
       ShowDeshadowed -> emitOutput $ TextOut $ show expr'
       _ -> return $ EvalCmd (Command cmd expr')
 
-deShadowTop :: UExpr -> TopPassM (DeShadowEnv, FreshScope) UExpr
-deShadowTop expr = do
+liftTop :: DeShadowM a -> TopPassM (DeShadowEnv, FreshScope) a
+liftTop m = do
   (env, scope) <- look
-  liftExceptTop $ runFreshRT (runReaderT (deShadowExpr expr) env) scope
+  liftExceptTop $ runFreshRT (runReaderT m env) scope
 
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
@@ -79,6 +81,12 @@ deShadowExpr expr = case expr of
   IdxLit _ _ -> error "Not implemented"
   TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
+
+deShadowRuleDef :: RuleAnn -> SigmaType -> UTLam -> DeShadowCat UTopDecl
+deShadowRuleDef ann ty tlam = do
+  tlam' <- toCat $ deShadowTLam tlam
+  ty' <- toCat $ deShadowSigmaType ty
+  return $ RuleDef ann ty' tlam'
 
 deShadowDecl :: UDecl -> DeShadowCat (Maybe UDecl)
 deShadowDecl (LetMono p bound) = do

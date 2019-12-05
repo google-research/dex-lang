@@ -162,8 +162,12 @@ instance Pretty b => Pretty (TLamP b) where
   pretty (TLam binders body) = "Lam" <+> p binders <> "." <+> align (p body)
 
 instance Pretty b => Pretty (TopDeclP b) where
-  pretty (TopDecl decl) = p decl
+  pretty (TopDecl _ decl) = p decl
+  pretty (RuleDef _ _ _) = error "Not implemented"
   pretty (EvalCmd _ ) = error $ "EvalCmd not implemented" -- TODO
+
+instance Pretty RuleAnn where
+  pretty = undefined
 
 instance Pretty Builtin where
   pretty b = p (show b)

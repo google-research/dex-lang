@@ -49,7 +49,7 @@ interpPass = TopPass interpPass'
 
 interpPass' :: TopDecl -> TopPassM SubstEnv Void
 interpPass' topDecl = case topDecl of
-  TopDecl decl -> do
+  TopDecl _ decl -> do
     env <- look
     extend $ reduceDecl $ subst env decl
     emitOutput NoOutput

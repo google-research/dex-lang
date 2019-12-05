@@ -50,6 +50,7 @@ fullPassInterp = typeCheckPass >+> interpPass
 fullPassJit :: TopPass SourceBlock Void
 fullPassJit = typeCheckPass
           >+> normalizePass >+> checkNExpr
+          >+> derivPass     >+> checkNExpr
           >+> simpPass      >+> checkNExpr
           >+> impPass       >+> checkImp
           >+> flopsPass

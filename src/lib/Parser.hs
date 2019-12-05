@@ -51,7 +51,8 @@ mustParseit s p  = case parseit s p of
 
 topDecl :: Parser UTopDecl
 topDecl = ( explicitCommand
-        <|> liftM TopDecl decl
+        <|> ruleDef
+        <|> liftM2 TopDecl topDeclAnn decl
         <|> liftM (EvalCmd . Command (EvalExpr Printed)) expr
         <?> "top-level declaration" ) <* (void eol <|> eof)
 
@@ -89,6 +90,19 @@ explicitCommand = do
   e <- declOrExpr
   return $ EvalCmd (Command cmd e)
 
+topDeclAnn :: Parser DeclAnn
+topDeclAnn =   (symbol "@primitive" >> declSep >> return ADPrimitive)
+           <|> return PlainDecl
+
+ruleDef :: Parser UTopDecl
+ruleDef = do
+  v <- try $ lowerName <* symbol "#"
+  symbol s
+  symbol "::"
+  (ty, tlam) <- letPolyTail $ pprint v ++ "#" ++ s
+  return $ RuleDef (LinearizationDef v) ty tlam
+  where s = "lin"
+
 -- === Parsing decls ===
 
 decl :: Parser UDecl
@@ -109,17 +123,25 @@ typeDef = do
 letPoly :: Parser UDecl
 letPoly = do
   v <- try $ lowerName <* symbol "::"
+  (ty, tlam) <- letPolyTail (pprint v)
+  return $ letPolyToMono (LetPoly (v:>ty) tlam)
+
+letPolyTail :: String -> Parser (SigmaType, UTLam)
+letPolyTail s = do
   (tbs, ty) <- sigmaType
   declSep
-  symbol (pprint v)
+  symbol s
   wrap <- idxLhsArgs <|> lamLhsArgs (linearities ty)
   equalSign
   rhs <- liftM wrap declOrExpr
-  return $ case tbs of
-    [] -> LetMono (RecLeaf $ v :> Ann ty) rhs
-    _  -> LetPoly (v:>sTy) (TLam tbs rhs)
-     where sTy = Forall kinds (abstractTVs tvs ty)
-           (tvs, kinds) = unzip [(tv,k) | tv:>k <- tbs]
+  let (tvs, kinds) = unzip [(tv,k) | tv:>k <- tbs]
+  let sTy = Forall kinds (abstractTVs tvs ty)
+  return (sTy, TLam tbs rhs)
+
+letPolyToMono :: UDecl -> UDecl
+letPolyToMono d = case d of
+  LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> Ann ty) rhs
+  _ -> d
 
 linearities :: Type -> [Lin]
 linearities (ArrType l _ b) = l:linearities b

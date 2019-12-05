@@ -11,7 +11,7 @@
     ("\\bllam\\b\\|\\blam\\b\\|\\bfor\\b\\|\\btype\\b\\|\\bunpack\\b\\|\\bpack\\b\\|\\btodo\\b\\|\\bnewtype\\b"
      . font-lock-keyword-face)
     ("\\bE\\b\\|\\bA\\b"              . font-lock-keyword-face)
-    ("--o\\|->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::" . font-lock-variable-name-face)
+    ("--o\\|->\\|=>\\|\\.\\|@\\|,\\|\\$\\|=\\|;\\|::\\|#" . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"  . font-lock-type-face)
     (":t\\|:passes\\|:p\\|:time"      . font-lock-preprocessor-face)
     ))

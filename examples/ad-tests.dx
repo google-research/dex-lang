@@ -60,3 +60,12 @@
 
 :p grad (lam x. x * x) 1.0
 > 2.0
+
+:p deriv cos 0.0
+> 0.0
+
+:p deriv sin 0.0
+> 1.0
+
+:p (sin 1.0, deriv (deriv sin) 1.0)
+> (0.84147096, -0.84147096)

@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Scope, Subst, subst, NSubst, nSubst) where
+module Subst (Scope, Subst, subst, NSubst, nSubst, NSubstEnv) where
 
 import Data.Foldable
 
@@ -198,6 +198,11 @@ instance NSubst NType where
     NIdxSetLit _ -> ty
     NBoundTVar _ -> ty
     where recur = nSubst env
+
+instance NSubst NDecl where
+   nSubst env decl = case decl of
+     NLet bs expr      -> NLet (map (nSubst env) bs) (nSubst env expr)
+     NUnpack bs v expr -> NUnpack (map (nSubst env) bs) v (nSubst env expr)
 
 instance NSubst NBinder where
    nSubst env (v:>ty) = v :> nSubst env ty

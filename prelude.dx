@@ -55,6 +55,7 @@ todo = %todo()
 
 'Wrappers around C library functions
 
+@primitive
 exp :: Real -> Real
 exp x = %%exp(x)
 
@@ -64,9 +65,11 @@ log x = %%log(x)
 sqrt :: Real -> Real
 sqrt x = %%sqrt(x)
 
+@primitive
 sin :: Real -> Real
 sin x = %%sin(x)
 
+@primitive
 cos :: Real -> Real
 cos x = %%cos(x)
 
@@ -240,3 +243,13 @@ deriv f x = jvp f x 1.0
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs
                (xs, lam t. for i. fs.i t)
+
+sin#lin :: Real -> (Real, Real --o Real)
+sin#lin x = (sin x, llam t. t * cos x)
+
+cos#lin :: Real -> (Real, Real --o Real)
+cos#lin x = (cos x, llam t. t * (0.0 - sin x))
+
+exp#lin :: Real -> (Real, Real --o Real)
+exp#lin x = ans = exp x
+            (ans, llam t. t * ans)

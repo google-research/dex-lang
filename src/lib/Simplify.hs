@@ -7,12 +7,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Simplify (simpPass) where
+module Simplify (derivPass, simpPass) where
 
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Foldable
+import Data.String
 import qualified Data.Map.Strict as M
 
 import Type
@@ -26,39 +27,71 @@ import Embed
 import Util
 
 type NScope = FullEnv NType ()
+
 type SimpSubEnv = FullEnv NAtom Name
-type SimpEnv = (SimpSubEnv, NScope)
-type SimplifyM a = ReaderT SimpSubEnv (NEmbedT (Either Err)) a
+type DerivRuleEnv = Env NAtom
+
+data SimpEnv = SimpEnv { subEnv   :: SimpSubEnv
+                       , derivEnv :: DerivRuleEnv }
+
+type SimpTopEnv = (SimpEnv, NScope)
+type SimplifyM a = ReaderT SimpEnv (NEmbedT (Either Err)) a
 
 -- TODO: consider maintaining free variables explicitly
 -- ions are atoms with a few bits missing
 data Ions = Ions NExpr [NBinder] [NAtom] | Unchanged
 
+derivPass :: TopPass NTopDecl NTopDecl
+derivPass = TopPass $ \topDecl -> case topDecl of
+  NTopDecl PlainDecl decl -> do
+    (env, decls) <- liftTop $ simplifyDecl True decl
+    extend $ asFst env
+    fromDecls PlainDecl decls
+  NRuleDef (LinearizationDef v) ty expr -> do
+    (f, decls) <- liftTop $ do
+                    expr' <- buildScoped $ simplify False expr
+                    ty' <- nSubstSimp ty
+                    let v' = Name (fromString (pprint v ++ "#lin")) 0
+                    ~[f] <- emitDecomposedTo [v':>ty'] expr'
+                    return f
+    extend $ asFst $ mempty {derivEnv = v @> f }
+    fromDecls PlainDecl decls
+  NTopDecl ADPrimitive decl -> do
+    let NLet bs _ = decl
+    (decl', _) <- liftTop $ nSubstSimp decl
+    extend $ asSnd (foldMap lbind bs)
+    return $ NTopDecl PlainDecl decl'
+  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
+    (expr', _) <- liftTop $ buildScoped $ simplify True expr
+    case cmd of
+      ShowDeriv -> emitOutput $ TextOut $ pprint expr'
+      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
+
 simpPass :: TopPass NTopDecl NTopDecl
 simpPass = TopPass $ \topDecl -> case topDecl of
-  NTopDecl decl -> do
-    (env, decls) <- simpAsTopPassM $ simplifyDecl True decl
-    extend (asFst env)
-    decl' <- case decls of
-      [] -> return $ dummyDecl
-      [decl'] -> return decl'
-      _ -> error "Multiple decls not implemented"
-    return $ NTopDecl decl'
-    where dummyDecl = NLet [] (NAtoms [])
+  NTopDecl ann decl -> do
+    (env, decls) <- liftTop $ simplifyDecl True decl
+    extend $ asFst env
+    fromDecls ann decls
+  NRuleDef _ _ _ -> error "Shouldn't have derivative rules left"
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
-    -- TODO: handle type vars
-    (expr', decls) <- simpAsTopPassM $ simplify True expr
-    let expr'' = wrapNDecls decls expr'
+    (expr', _) <- liftTop $ buildScoped $ simplify True expr
     case cmd of
-      ShowSimp -> emitOutput $ TextOut $ pprint expr''
-      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr''))
+      ShowSimp -> emitOutput $ TextOut $ pprint expr'
+      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
 
-simpAsTopPassM :: SimplifyM a -> TopPassM SimpEnv (a, [NDecl])
-simpAsTopPassM m = do
+liftTop :: SimplifyM a -> TopPassM SimpTopEnv (a, [NDecl])
+liftTop m = do
   (env, scope) <- look
   (ans, (scope', decls)) <- liftExceptTop $ runEmbedT (runReaderT m env) scope
   extend (asSnd (scope'))
   return (ans, decls)
+
+fromDecls :: DeclAnn -> [NDecl] -> TopPassM e NTopDecl
+fromDecls ann decls = case decls of
+  []     -> emitOutput NoOutput
+  [decl] -> return $ NTopDecl ann decl
+  _      -> error "Multiple decls not implemented"
 
 -- Simplification gives us a ([NDecl], NExpr) pair. The decls are fully
 -- simplified: no `NLam`, `NAtomicFor` or differentiation operations. The
@@ -75,23 +108,24 @@ simplify mat expr = case expr of
     bs' <- mapM nSubstSimp bs
     buildNScan ib' bs' xs' $ \i carry -> do
       let env = bindEnv [ib'] [i] <> bindEnv bs' carry
-      extendR env $ simplify mat e
+      extendSub env $ simplify mat e
   NApp f xs -> do
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     case f' of
-      NLam _ bs body -> local (const env) (simplify mat body)
-        where env = bindEnv bs xs'
-      _ -> error $ "Should only have lambda here. Got: " ++ pprint expr
+      NLam _ bs body -> dropSub $ extendSub (bindEnv bs xs') $ simplify mat body
+      _ -> return $ NApp f' xs'
   NPrimOp Linearize _ ~(f:xs) -> do
     xs' <- mapM simplifyAtom xs
     (bs, body) <- simplifyLam f
-    local mempty $ runLinearization bs xs' body >>= simplify mat
+    dropSub $ do
+      linearized <- buildScoped $ runLinearization bs xs' body
+      simplify mat linearized
   NPrimOp Transpose [_, bTy] ~[f] -> do
     (bs, body) <- simplifyLam f
     bTy' <- mapM nSubstSimp bTy
     transposed <- buildNLam Lin ["ct":>ty | ty <- bTy'] $ \cts ->
-                    local mempty $ runTransposition bs cts body
+                    dropSub $ runTransposition bs cts body
     return $ NAtoms [transposed]
   NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM (mapM nSubstSimp) ts)
                                         (mapM simplifyAtom xs)
@@ -103,12 +137,18 @@ simplify mat expr = case expr of
   NTabCon n ts rows -> liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts)
                                       (mapM (simplify mat) rows)
 
+extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
+extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
+
+dropSub :: SimplifyM a -> SimplifyM a
+dropSub m = local (\r -> r {subEnv = mempty}) m
+
 -- simplifies bodies of first-order functions only
 simplifyLam :: NAtom -> SimplifyM ([NBinder], NExpr)
 simplifyLam f = do
   ~(NLam l bs body) <- simplifyAtom f
   bs' <- mapM nSubstSimp bs
-  ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs -> extendR (bindEnv bs' vs)
+  ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs -> extendSub (bindEnv bs' vs)
                                                      (simplify False body)
   return (bs'', body')
 
@@ -116,11 +156,11 @@ simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
   NLit x -> return $ NLit x
   NVar v -> do
-    x <- asks $ flip envLookup v
+    x <- asks $ flip envLookup v . subEnv
     case x of
       Nothing -> return $ NVar v
       -- is this freshening necessary here?
-      Just (L x') -> local mempty (simplifyAtom x')
+      Just (L x') -> dropSub (simplifyAtom x')
       Just (T _ ) -> error "Expected let-bound var"
   NGet e i -> do
     e' <- simplifyAtom e
@@ -129,7 +169,7 @@ simplifyAtom atom = case atom of
   NAtomicFor ib body -> do
     ib' <- nSubstSimp ib
     buildNAtomicFor ib' $ \i ->
-      extendR (bindEnv [ib'] [i]) (simplifyAtom body)
+      extendSub (bindEnv [ib'] [i]) (simplifyAtom body)
   NLam _ _ _ -> nSubstSimp atom
 
 materializeAtom :: NAtom -> SimplifyM NAtom
@@ -143,7 +183,7 @@ atomToNExpr atom = case atom of
   NAtomicFor ib body -> do
     ib' <- nSubstSimp ib
     buildNScan ib' [] [] $ \i _ ->
-      extendR (bindEnv [ib'] [i]) (atomToNExpr body)
+      extendSub (bindEnv [ib'] [i]) (atomToNExpr body)
   _ -> return (NAtoms [atom])
 
 -- TODO: make sure we don't lose the names at the top level
@@ -164,7 +204,7 @@ getNameHint :: [NBinder] -> Name
 getNameHint bs = case bs of [] -> "tmp"
                             (v:>_):_ -> v
 
-simplifyDecl :: Bool -> NDecl -> SimplifyM SimpSubEnv
+simplifyDecl :: Bool -> NDecl -> SimplifyM SimpEnv
 simplifyDecl scopedRhs decl = case decl of
   NLet bs bound -> do
     -- As pointed out in the 'ghc inliner' paper, this can lead to exponential
@@ -173,14 +213,14 @@ simplifyDecl scopedRhs decl = case decl of
     bound' <- maybeScoped $ simplify False bound
     bs' <- mapM nSubstSimp bs
     xs <- emitDecomposedTo bs' bound'
-    return (bindEnv bs' xs)
+    return $ mempty {subEnv = bindEnv bs' xs}
   NUnpack bs tv bound -> do
     bound' <- maybeScoped $ simplify True bound
     ~(NTypeVar tv', emitUnpackRest) <- emitUnpack tv bound'
     let tEnv = tv @> T tv'
-    bs' <- extendR tEnv $ mapM nSubstSimp bs
+    bs' <- extendSub tEnv $ mapM nSubstSimp bs
     xs <- emitUnpackRest bs'
-    return $ tEnv <> bindEnv bs' xs
+    return $ mempty {subEnv = tEnv <> bindEnv bs' xs}
   where
     maybeScoped = if scopedRhs then buildScoped else id
 
@@ -225,12 +265,14 @@ bindEnv :: [BinderP c] -> [a] -> FullEnv a b
 bindEnv bs xs = fold $ zipWith f bs xs
   where f (v:>_) x = v @> L x
 
-nSubstSimp :: (MonadCat NEmbedEnv m, MonadReader SimpSubEnv m)
-                 => NSubst a => a -> m a
+nSubstSimp :: (MonadCat NEmbedEnv m, MonadReader SimpEnv m, NSubst a) => a -> m a
 nSubstSimp x = do
-  env <- ask
+  env <- asks subEnv
   scope <- looks fst  -- do we have to reach into the embedding monad this way?
   return $ nSubst (env, fmap (const ()) scope) x
+
+deShadow :: NSubst a => a -> SimplifyM a
+deShadow x = dropSub $ nSubstSimp x
 
 -- === linearization ===
 
@@ -238,7 +280,7 @@ type TangentM a = ReaderT (Env NAtom) (NEmbedT (Either Err)) a
 
 runLinearization :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
 runLinearization bs xs expr = do
-  (ans, f) <- extendR (bindEnv bs xs) $ linearize expr
+  (ans, f) <- extendSub (bindEnv bs xs) $ linearize expr
   ans' <- emit ans
   f' <- buildNLam Lin bs $ \ts -> withReaderT (const $ bindEnvTangent bs ts) f
   return $ NAtoms $ ans' ++ [f']
@@ -251,11 +293,18 @@ linearize :: NExpr -> SimplifyM (NExpr, TangentM NExpr)
 linearize expr = case expr of
   NDecl decl body -> do
     (env, makeTangentEnv) <- linearizeDecl decl
-    (ans, fLin) <- extendR env (linearize body)
+    (ans, fLin) <- extendSub env (linearize body)
     return (ans, do tEnv <- makeTangentEnv
                     extendR tEnv fLin)
   NScan _ _ _ _ -> error "not implemented"
-  NApp _ _      -> error "Shouldn't have NApp left"
+  NApp (NVar v) xs -> do
+    linRule <- asks $ (!v) . derivEnv
+    linRule' <- deShadow linRule
+    (xs', xsTangents) <- linearizeAtoms xs
+    ~(f:ys) <- liftM reverse $ emit $ NApp linRule' xs'
+    return (NAtoms ys, do ts <- xsTangents
+                          return $ NApp f ts)
+  NApp _ _      -> error $ "Shouldn't have NApp left: " ++ pprint expr
   NPrimOp b tys xs -> do
     (xs', xsTangents) <- linearizeAtoms xs
     let (ans, f) = linearizeBuiltin b tys xs'
@@ -285,7 +334,7 @@ linearizeAtom :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
 linearizeAtom atom = case atom of
   NLit _ -> zeroDeriv atom
   NVar v -> do
-    maybeVal <- asks $ flip envLookup v
+    maybeVal <- asks $ flip envLookup v . subEnv
     case maybeVal of
       Just (L x) -> return (x, asks (! v))
       Nothing -> zeroDeriv atom
@@ -336,7 +385,8 @@ transpose expr cts = case expr of
     lin <- isLin bound
     if lin
       then do
-        (_, cts') <- extractCTs bs $ extendR (asFst (bindFold bs)) $ transpose body cts
+        let env = asFst (bindFold bs)
+        (_, cts') <- extractCTs bs $ extendR env $ transpose body cts
         transpose bound cts'
       else do
         error "Not implemented: nonlinear parts"
@@ -395,3 +445,12 @@ sepCotangents (b:bs) cts = do
   (x , cts' ) <- sepCotangent  b  cts
   (xs, cts'') <- sepCotangents bs cts'
   return (x:xs, cts'')
+
+-- === misc ===
+
+instance Semigroup SimpEnv where
+  SimpEnv x1 x2 <> SimpEnv y1 y2  = SimpEnv (x1 <> y1) (x2 <> y2)
+
+instance Monoid SimpEnv where
+  mempty = SimpEnv mempty mempty
+  mappend = (<>)

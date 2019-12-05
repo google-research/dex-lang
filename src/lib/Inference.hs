@@ -36,10 +36,13 @@ type InferM a = ReaderT (SrcCtx, TypeEnv) (
 
 typePass :: TopPass UTopDecl TopDecl
 typePass = TopPass $ \tdecl -> case tdecl of
-  TopDecl decl -> do
+  TopDecl ann decl -> do
     (decl', env') <- liftTop $ inferDecl decl
     extend env'
-    return $ TopDecl decl'
+    return $ TopDecl ann decl'
+  RuleDef ann ty tlam -> do
+    ~(LetPoly _ tlam', _) <- liftTop $ inferDecl $ LetPoly ("_":>ty) tlam
+    return $ RuleDef ann ty tlam'
   EvalCmd (Command GetType (SrcAnnot (Var v []) _)) -> do
     env <- look
     case envLookup env v of
