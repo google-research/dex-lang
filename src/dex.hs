@@ -141,9 +141,8 @@ parseMode = subparser $
          WebMode <$> argument str (metavar "FILE" <> help "Source program")))
   <> (command "script" $ simpleInfo (ScriptMode
     <$> argument str (metavar "FILE" <> help "Source program")
-    <*> (   flag' TextDoc (long "lit"  <> help "Textual literate program output")
-        <|> flag' HtmlDoc (long "html" <> help "HTML literate program output")
-        <|> pure ResultOnly)
+    <*> (   flag' HtmlDoc (long "html" <> help "HTML literate program output")
+        <|> pure TextDoc )
     <*> flag HaltOnErr ContinueOnErr (
                   long "allow-errors"
                <> help "Evaluate programs containing non-fatal type errors")))
