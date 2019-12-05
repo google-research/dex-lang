@@ -2,14 +2,30 @@
 # executables, to support user-account installation of stack.
 SHELL=/bin/bash
 
-dex := stack exec dex --
+# Using separate stack-work directories to avoid recompiling when
+# changing between debug and non-debug builds, per
+# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
+PROF := --profile --work-dir .stack-work-prof
+
+dex := stack exec $(PROF) dex --
+dexnoprof := stack exec dex --
 
 # --- building Dex ---
 
-all: cbits/libdex.so
-	stack build
+all: build
 
-all-inotify: cbits/libdex.so
+build: cbits/libdex.so
+	stack build $(PROF)
+
+all-inotify: build-inotify
+
+build-inotify: cbits/libdex.so
+	stack build --flag dex:inotify $(PROF)
+
+build-noprof: cbits/libdex.so
+	stack build $(PROF)
+
+build-noprof-inotify: cbits/libdex.so
 	stack build --flag dex:inotify
 
 %.so: %.c
@@ -38,7 +54,7 @@ runinterp-%: examples/%.dx
 	misc/check-quine $^ $(dex) --interp script --lit --allow-errors
 
 prop-tests: cbits/libdex.so
-	stack test
+	stack test $(PROF)
 
 update-%: examples/%.dx
 	$(dex) script --lit --allow-errors $^ > $^.tmp
@@ -64,5 +80,5 @@ benchmark:
 	python benchmarks/numpy-bench.py 1000
 	gcc -O3 -ffast-math benchmarks/cbench.c -o benchmarks/bench
 	benchmarks/bench 1000
-	$(dex) script benchmarks/time-tests.dx
+	$(dexnoprof) script benchmarks/time-tests.dx
 	rm benchmarks/bench
