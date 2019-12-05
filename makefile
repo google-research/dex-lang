@@ -23,7 +23,7 @@ build-inotify: cbits/libdex.so
 	stack build --flag dex:inotify $(PROF)
 
 build-noprof: cbits/libdex.so
-	stack build $(PROF)
+	stack build
 
 build-noprof-inotify: cbits/libdex.so
 	stack build --flag dex:inotify
