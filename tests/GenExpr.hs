@@ -129,6 +129,16 @@ preferReturnType :: Type -> GenM Type -> GenM Type
 preferReturnType ty b = view returnTypePrefL >>= (\n -> prefer n (element (allTypes ty)) b)
 
 
+-- type utils
+checkData :: Type -> Bool
+checkData ty = case ty of
+  BaseType _  -> True
+  TabType _ a -> checkData a
+  RecType _ r -> all checkData r
+  IdxSetLit _ -> True
+  _           -> False
+
+
 -- | TODO: StrType
 genBaseType :: GenM BaseType
 genBaseType = element [IntType, BoolType, RealType]
@@ -148,15 +158,15 @@ genTabTypeWith g = liftM2 TabType genIdxSet (small g)
 genTabType :: GenM Type
 genTabType = genTabTypeWith genType
 
--- types that can be lowered to IType
-genValType :: GenM Type
-genValType = genSized leaf tree
+-- types belong to the Data class
+genDataType :: GenM Type
+genDataType = genSized leaf tree
     where
         leaf = BaseType <$> genBaseType
         tree = Gen.frequency [
               (1, leaf)
-            , (2, (RecType Cart) <$> genRecTypeWith genValType)
-            , (2, genTabTypeWith genValType)
+            , (2, (RecType Cart) <$> genRecTypeWith genDataType)
+            , (2, genTabTypeWith genDataType)
             ]
 
 
@@ -263,8 +273,10 @@ genLam a b = do
 
 
 -- table
-genTabCon :: Int -> Type -> GenM UExpr
-genTabCon n ty = TabCon NoAnn <$> replicateM n (small (genExpr ty))
+genTabCon :: Int -> Type -> [GenM UExpr]
+genTabCon n ty
+    | checkData ty = [TabCon NoAnn <$> replicateM n (small (genExpr ty))]
+    | otherwise = []
 
 genFor :: Type -> Type -> GenM UExpr
 genFor a b = do
@@ -273,7 +285,7 @@ genFor a b = do
     return (For pat body)
 
 genTable :: IdxSet -> Type -> GenM UExpr
-genTable ty@(IdxSetLit n) b = Gen.choice [genTabCon n b, genFor ty b]
+genTable ty@(IdxSetLit n) b = Gen.choice (genFor ty b : genTabCon n b)
 genTable ty b = genFor ty b
 
 -- TODO: LetPoly, TAlias, Unpack
@@ -336,7 +348,7 @@ genExpr ty = genSized (genLeafExpr ty) (genTreeExpr ty)
 
 sampleExpr :: GenM UExpr
 sampleExpr = do
-    ty <- genValType
+    ty <- genDataType
     genExpr ty
 
 
