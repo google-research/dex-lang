@@ -97,6 +97,12 @@
 :p checkDeriv (deriv cos) 1.0
 > True
 
+:p deriv (fdiv 3.0) 2.0
+> -0.75
+
+:p deriv (lam x. x / 2.0) 3.0
+> 0.5
+
 @primitive
 badDerivFun :: Real -> Real
 badDerivFun x = x

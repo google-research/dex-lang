@@ -257,14 +257,17 @@ deriv f x = jvp f x 1.0
 derivRev :: (Real -> Real) -> Real -> Real
 derivRev f x = snd (vjp f x) 1.0
 
-checkDeriv :: (Real -> Real) -> Real -> Bool
-checkDeriv f x =
+checkDerivBase :: (Real -> Real) -> Real -> Bool
+checkDerivBase f x =
   eps = 1e-5
   ansFwd  = deriv    f x
   ansRev  = derivRev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
   isClose a b = abs (a - b) < 1e-3
   isClose ansFwd ansNumeric && isClose ansRev ansNumeric
+
+checkDeriv :: (Real -> Real) -> Real -> Bool
+checkDeriv f x = checkDerivBase f x && checkDerivBase (deriv f) x
 
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs

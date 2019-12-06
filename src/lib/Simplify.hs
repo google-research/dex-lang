@@ -359,7 +359,19 @@ linearizeBuiltin op tys xs | nLin == nArgs = (NPrimOp op tys xs, f)
              Cart -> return $ NPrimOp op tys ts
              Tens -> sumsAt outsTy [NPrimOp op tys (swapAt i t xs)
                                    | (i, t) <- zip [0..] ts]
+linearizeBuiltin FDiv _ [x, y] = (NPrimOp FDiv [] [x, y],
+                                  \[tx, ty] -> do t <- linearizedDiv x y tx ty
+                                                  return $ NAtoms [t])
 linearizeBuiltin op _ _ = error $ "Not implemented: linearization for: " ++ pprint op
+
+linearizedDiv :: MonadCat NEmbedEnv m =>
+                   NAtom -> NAtom -> NAtom -> NAtom -> m NAtom
+linearizedDiv x y tx ty = do
+  tx'  <- div' tx y
+  ty'  <- mul ty x
+  ySq  <- mul y y
+  ty'' <- div' ty' ySq >>= neg
+  add tx' ty''
 
 -- === transposition ===
 
