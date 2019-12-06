@@ -431,17 +431,16 @@ instance HasVars NExpr where
     NAtoms xs -> foldMap freeVars xs
     NScan b bs x0 body -> foldMap freeVars x0 <>
       ((freeVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
-    NTabCon _ _ _ -> error $ "NTabCon not implemented" -- TODO
+    NTabCon ty tys rows -> freeVars ty <> foldMap freeVars tys <> foldMap freeVars rows
 
 instance HasVars NAtom where
   freeVars atom = case atom of
     NLit _ -> mempty
     NVar v -> v @> L ()
     NGet e i -> freeVars e <> freeVars i
-    -- AFor b body -> freeVars b <> (freeVars body `envDiff` lhsVars b)
     NLam _ bs body -> foldMap freeVars bs <>
                       (freeVars body `envDiff` foldMap lhsVars bs)
-    NAtomicFor _ _  -> error $ "NAtomicFor not implemented" -- TODO
+    NAtomicFor b body ->  freeVars b <> (freeVars body `envDiff` lhsVars b)
 
 instance HasVars NDecl where
   freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
