@@ -298,10 +298,13 @@ linearize expr = case expr of
                     extendR tEnv fLin)
   NScan _ _ _ _ -> error "not implemented"
   NApp (NVar v) xs -> do
-    linRule <- asks $ (!v) . derivEnv
-    linRule' <- deShadow linRule
+    linRule <- do
+      maybeRule <- asks $ flip envLookup v . derivEnv
+      case maybeRule of
+        Nothing -> throw NotImplementedErr $ " linearization for " ++ pprint v
+        Just rule -> deShadow rule
     (xs', xsTangents) <- linearizeAtoms xs
-    ~(f:ys) <- liftM reverse $ emit $ NApp linRule' xs'
+    ~(f:ys) <- liftM reverse $ emit $ NApp linRule xs'
     return (NAtoms ys, do ts <- xsTangents
                           return $ NApp f ts)
   NApp _ _      -> error $ "Shouldn't have NApp left: " ++ pprint expr

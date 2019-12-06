@@ -209,7 +209,15 @@ unpackExists (Exists body) v = return $ instantiateTVs [TypeVar v] body
 unpackExists ty _ = throw CompilerErr $ "Can't unpack " ++ pprint ty
 
 checkRuleDefType :: RuleAnn -> SigmaType -> TypeM ()
-checkRuleDefType _ _ = return ()  -- TODO!
+checkRuleDefType (LinearizationDef v) linTy = do
+  ty@(Forall kinds body, _) <- asks $ fromL . (!v) . tyEnv
+  (a, b) <- case body of
+              ArrType _ a b -> return (a, b)
+              _ -> throw TypeErr $
+                     "Bad type for linearization-annotated function: " ++ pprint ty
+  let linTyExpected = Forall kinds $ a --> RecType Cart (Tup [b, a --@ b])
+  unless (linTy == linTyExpected) $ throw TypeErr $
+     "Annotation should have type: " ++ pprint linTyExpected
 
 patType :: RecTree Binder -> Type
 patType (RecLeaf (_:>ty)) = ty

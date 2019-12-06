@@ -115,3 +115,14 @@ badDerivFun#lin x = (x, llam t. 2. * t)
 sinn#lin :: Real -> Real
 sinn#lin x = x
 > Error: variable not in scope: sinn
+
+@primitive
+newprim :: Real -> Real
+newprim x = x
+
+newprim#lin :: Real -> Real
+newprim#lin x = x
+> Type error:Annotation should have type: (Real -> (Real, (Real --o Real)))
+
+deriv newprim 1.0
+> Not implemented: linearization for newprim
