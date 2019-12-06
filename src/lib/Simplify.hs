@@ -135,7 +135,7 @@ simplify mat expr = case expr of
       then liftM NAtoms $ mapM materializeAtom xs'
       else return $ NAtoms xs'
   NTabCon n ts rows -> liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts)
-                                      (mapM (simplify mat) rows)
+                                      (mapM (simplify True) rows)
 
 extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
