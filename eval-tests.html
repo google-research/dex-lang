@@ -109,7 +109,7 @@ cumsumplus xs <span class="symbol">=</span> snd (scan 0<span class="symbol">.</s
 </div><div class="result-block">(True, False)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> 2<span class="symbol">.</span>0
 </div><div class="result-block">False</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> (0<span class="symbol">.</span>0 <span class="symbol">-</span> 2<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&gt;</span> neg 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">&lt;</span> 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
@@ -198,4 +198,12 @@ In: (toMyInt 2)
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">True</span> [1,2,3] [10,20,30]
 </div><div class="result-block">[1, 2, 3]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> select <span class="type-name">False</span> [1,2,3] [10,20,30]
-</div><div class="result-block">[10, 20, 30]</div></div></div></body></html>
+</div><div class="result-block">[10, 20, 30]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> [(1, (<span class="keyword">for</span> i<span class="symbol">::</span>2 <span class="symbol">.</span> 3))]<span class="symbol">.</span>(asidx 0)
+</div><div class="result-block">(1, [3, 3])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">False</span> &amp;&amp; <span class="type-name">False</span>, <span class="type-name">False</span> &amp;&amp; <span class="type-name">True</span>, <span class="type-name">True</span> &amp;&amp; <span class="type-name">False</span>, <span class="type-name">True</span> &amp;&amp; <span class="type-name">True</span>)
+</div><div class="result-block">(False, False, False, True)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (not <span class="type-name">False</span>, not <span class="type-name">True</span>)
+</div><div class="result-block">(True, False)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (<span class="type-name">False</span> || <span class="type-name">False</span>, <span class="type-name">False</span> || <span class="type-name">True</span>, <span class="type-name">True</span> || <span class="type-name">False</span>, <span class="type-name">True</span> || <span class="type-name">True</span>)
+</div><div class="result-block">(False, True, True, True)</div></div></div></body></html>

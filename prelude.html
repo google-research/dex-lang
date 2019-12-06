@@ -14,16 +14,19 @@ imul x y <span class="symbol">=</span> %imul(x, y)
 </div></div><div class="cell"><div class="code-block">mod <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
 mod x y <span class="symbol">=</span> %mod(x, y)
 </div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">neg <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
+neg x <span class="symbol">=</span> %fneg(x)
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">fadd <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
 fadd x y <span class="symbol">=</span> %fadd(x, y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">fsub <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
 fsub x y <span class="symbol">=</span> %fsub(x, y)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fmul <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block">fmul <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
 fmul x y <span class="symbol">=</span> %fmul(x, y)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fdiv <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block">fdiv <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
 fdiv x y <span class="symbol">=</span> %fdiv(x, y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">ipow <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
@@ -46,6 +49,15 @@ b2i x <span class="symbol">=</span> %booltoint(x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">filter <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="keyword">E </span>m<span class="symbol">.</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>a
 filter f x <span class="symbol">=</span> %filter(f, x)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">not <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
+not x <span class="symbol">=</span> %not(x)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">and <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
+and x y <span class="symbol">=</span> %and(x, y)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">or <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
+or x y <span class="symbol">=</span> %not(x, y)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- `todo` is like `undefined` in Haskell
 </span></div></div><div class="cell"><div class="code-block"><span class="keyword">todo</span> <span class="symbol">::</span> a
@@ -220,12 +232,12 @@ linearize f x0 <span class="symbol">=</span> %linearize(<span class="keyword">la
 </div></div><div class="cell"><div class="code-block">jvp <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">--o</span> b
 jvp f x <span class="symbol">=</span> <span class="keyword">llam</span> t<span class="symbol">.</span> snd (linearize f x) t
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">tlinear <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">--o</span> b) <span class="symbol">--o</span> b <span class="symbol">--o</span> a
-tlinear <span class="symbol">=</span> <span class="keyword">llam</span> f ct<span class="symbol">.</span> %linearTranspose(<span class="keyword">llam</span> t<span class="symbol">.</span> f t) ct
+</div></div><div class="cell"><div class="code-block">transposeLinear <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">--o</span> b) <span class="symbol">--o</span> b <span class="symbol">--o</span> a
+transposeLinear <span class="symbol">=</span> <span class="keyword">llam</span> f ct<span class="symbol">.</span> %linearTranspose(<span class="keyword">llam</span> t<span class="symbol">.</span> f t) ct
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">vjp <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> (b, b <span class="symbol">--o</span> a)
 vjp f x <span class="symbol">=</span> (y, df) <span class="symbol">=</span> linearize f x
-          (y, tlinear df)
+          (y, transposeLinear df)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">grad <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
 grad f x <span class="symbol">=</span> (_, pullback) <span class="symbol">=</span> vjp f x
@@ -234,12 +246,20 @@ grad f x <span class="symbol">=</span> (_, pullback) <span class="symbol">=</spa
 </div></div><div class="cell"><div class="code-block">deriv <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
 deriv f x <span class="symbol">=</span> jvp f x 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">checkDeriv <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-checkDeriv f x <span class="symbol">=</span>
+</div></div><div class="cell"><div class="code-block">derivRev <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+derivRev f x <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">checkDerivBase <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
+checkDerivBase f x <span class="symbol">=</span>
   eps <span class="symbol">=</span> 1e<span class="symbol">-</span>5
-  ansAD  <span class="symbol">=</span> deriv f x
+  ansFwd  <span class="symbol">=</span> deriv    f x
+  ansRev  <span class="symbol">=</span> derivRev f x
   ansNumeric <span class="symbol">=</span> (f (x <span class="symbol">+</span> eps) <span class="symbol">-</span> f (x <span class="symbol">-</span> eps)) <span class="symbol">/</span> (2<span class="symbol">.</span> <span class="symbol">*</span> eps)
-  abs (ansAD <span class="symbol">-</span> ansNumeric) <span class="symbol">&lt;</span> 1e<span class="symbol">-</span>3
+  isClose a b <span class="symbol">=</span> abs (a <span class="symbol">-</span> b) <span class="symbol">&lt;</span> 1e<span class="symbol">-</span>3
+  isClose ansFwd ansNumeric &amp;&amp; isClose ansRev ansNumeric
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">checkDeriv <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
+checkDeriv f x <span class="symbol">=</span> checkDerivBase f x &amp;&amp; checkDerivBase (deriv f) x
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">forUnzip <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(b, a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> (n<span class="symbol">=</span><span class="symbol">&gt;</span>b, a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>b)
 forUnzip xfs <span class="symbol">=</span> (xs, fs) <span class="symbol">=</span> unzip xfs
@@ -249,7 +269,7 @@ forUnzip xfs <span class="symbol">=</span> (xs, fs) <span class="symbol">=</span
 sin<span class="symbol">#</span>lin x <span class="symbol">=</span> (sin x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> cos x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">cos<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-cos<span class="symbol">#</span>lin x <span class="symbol">=</span> (cos x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> (0<span class="symbol">.</span>0 <span class="symbol">-</span> sin x))
+cos<span class="symbol">#</span>lin x <span class="symbol">=</span> (cos x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> (neg (sin x)))
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">exp<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
 exp<span class="symbol">#</span>lin x <span class="symbol">=</span>
@@ -257,7 +277,7 @@ exp<span class="symbol">#</span>lin x <span class="symbol">=</span>
   (ans, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> ans)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">log<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-log<span class="symbol">#</span>lin x <span class="symbol">=</span> (log x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">/</span> sq x)
+log<span class="symbol">#</span>lin x <span class="symbol">=</span> (log x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">/</span> x)
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">sqrt<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
 sqrt<span class="symbol">#</span>lin x <span class="symbol">=</span>

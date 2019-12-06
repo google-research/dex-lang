@@ -20,31 +20,31 @@
 </div><div class="result-block">24.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
    f x <span class="symbol">=</span> x
-   tlinear f 2<span class="symbol">.</span>0
+   transposeLinear f 2<span class="symbol">.</span>0
 </div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
    f x <span class="symbol">=</span> x <span class="symbol">+</span> x
-   tlinear f 1<span class="symbol">.</span>0
+   transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
    f x <span class="symbol">=</span> x <span class="symbol">+</span> (x <span class="symbol">+</span> x) <span class="symbol">*</span> 2<span class="symbol">.</span>0
-   tlinear f 1<span class="symbol">.</span>0
+   transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">5.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
    f x <span class="symbol">=</span> x <span class="symbol">*</span> 2<span class="symbol">.</span>0
-   tlinear f 1<span class="symbol">.</span>0
+   transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
    f x <span class="symbol">=</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> x
-   tlinear f 1<span class="symbol">.</span>0
+   transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span>)
    f x <span class="symbol">=</span> (x, 2<span class="symbol">.</span>0 <span class="symbol">*</span> x)
-   tlinear f (1<span class="symbol">.</span>0, 3<span class="symbol">.</span>0)
+   transposeLinear f (1<span class="symbol">.</span>0, 3<span class="symbol">.</span>0)
 </div><div class="result-block">7.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> f <span class="symbol">::</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span>) <span class="symbol">--o</span> <span class="type-name">Real</span>
    f (x,y) <span class="symbol">=</span> x <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> y
-   tlinear f 1<span class="symbol">.</span>0
+   transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">(1.0, 2.0)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> grad (<span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> x) 1<span class="symbol">.</span>0
 </div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
@@ -60,18 +60,22 @@
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv cos 1<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv exp 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv exp 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv log 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv log 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv sqrt 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv sqrt 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (<span class="keyword">lam</span> x<span class="symbol">.</span> cos (sin (exp x))) 1<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (<span class="keyword">lam</span> x<span class="symbol">.</span> cos (sin (exp x))) 2<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (deriv sin) 1<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> checkDeriv (deriv cos) 1<span class="symbol">.</span>0
 </div><div class="result-block">True</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv (fdiv 3<span class="symbol">.</span>0) 2<span class="symbol">.</span>0
+</div><div class="result-block">-0.75</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv (<span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">/</span> 2<span class="symbol">.</span>0) 3<span class="symbol">.</span>0
+</div><div class="result-block">0.5</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
 badDerivFun <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
 badDerivFun x <span class="symbol">=</span> x
@@ -84,4 +88,16 @@ badDerivFun<span class="symbol">#</span>lin x <span class="symbol">=</span> (x, 
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Perturbation confusion test suggested by Barak Pearlmutter
 </span></div></div><div class="cell"><div class="code-block"><span class="comment">-- https://github.com/HIPS/autograd/issues/4
 </span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> deriv (<span class="keyword">lam</span> x<span class="symbol">.</span> x <span class="symbol">*</span> deriv (<span class="keyword">lam</span> y<span class="symbol">.</span> x <span class="symbol">*</span> y) 2<span class="symbol">.</span>0) 1<span class="symbol">.</span>0
-</div><div class="result-block">2.0</div></div></div></body></html>
+</div><div class="result-block">2.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">sinn<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+sinn<span class="symbol">#</span>lin x <span class="symbol">=</span> x
+</div><div class="err-block">Error: variable not in scope: sinn</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
+newprim <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+newprim x <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">newprim<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+newprim<span class="symbol">#</span>lin x <span class="symbol">=</span> x
+</div><div class="err-block">Type error:Annotation should have type: (Real -&gt; (Real, (Real --o Real)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">deriv newprim 1<span class="symbol">.</span>0
+</div><div class="err-block">Not implemented: linearization for newprim</div></div></div></body></html>
