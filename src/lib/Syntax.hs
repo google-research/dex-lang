@@ -124,6 +124,7 @@ data BaseType = IntType | BoolType | RealType | StrType
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
+             | And | Or | Not
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
              | Mod | FFICall Int String | Filter | Todo | NewtypeCast | Select
@@ -135,6 +136,7 @@ builtinNames = M.fromList [
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
   ("fdiv", FDiv), ("pow", Pow), ("mod", Mod),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
+  ("and", And), ("or", Or), ("not", Not),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("linearize", Linearize), ("linearTranspose", Transpose),

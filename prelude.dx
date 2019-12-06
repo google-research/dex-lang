@@ -49,6 +49,15 @@ b2i x = %booltoint(x)
 filter :: (a -> Bool) -> n=>a -> E m. m=>a
 filter f x = %filter(f, x)
 
+not :: Bool -> Bool
+not x = %not(x)
+
+and :: Bool -> Bool -> Bool
+and x y = %and(x, y)
+
+or :: Bool -> Bool -> Bool
+or x y = %not(x, y)
+
 -- `todo` is like `undefined` in Haskell
 todo :: a
 todo = %todo()

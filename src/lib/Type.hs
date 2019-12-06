@@ -263,6 +263,9 @@ builtinType builtin = case builtin of
   FDiv     -> BuiltinType [] (1, Cart) [real, real] real
   FLT      -> nonLinBuiltin [] [real, real] bool
   FGT      -> nonLinBuiltin [] [real, real] bool
+  And      -> BuiltinType [] (0, Cart) [bool, bool] bool
+  Or       -> BuiltinType [] (0, Cart) [bool, bool] bool
+  Not      -> BuiltinType [] (0, Cart) [bool] bool
   Todo     -> nonLinBuiltin [noCon] [] a
   NewtypeCast -> nonLinBuiltin [noCon, noCon] [a] b
   Copy     -> nonLinBuiltin [noCon] [a] a

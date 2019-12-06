@@ -8,7 +8,7 @@
 
 module JIT (jitPass) where
 
-import LLVM.AST hiding (Type, Add, Mul, Sub, FAdd, FSub, FMul, FDiv, Name, Select, dest)
+import LLVM.AST (Operand, BasicBlock, Instruction, Module, Named)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -435,12 +435,15 @@ compileBuiltin b ts = case b of
   ISub     -> compileBinop IntType (\x y -> L.Sub False False x y [])
   IMul     -> compileBinop IntType (\x y -> L.Mul False False x y [])
   Mod      -> compileBinop IntType (\x y -> L.URem x y [])
-  FAdd     -> compileBinop RealType (\x y -> L.FAdd noFastMathFlags x y [])
-  FSub     -> compileBinop RealType (\x y -> L.FSub noFastMathFlags x y [])
-  FMul     -> compileBinop RealType (\x y -> L.FMul noFastMathFlags x y [])
-  FDiv     -> compileBinop RealType (\x y -> L.FDiv noFastMathFlags x y [])
+  FAdd     -> compileBinop RealType (\x y -> L.FAdd L.noFastMathFlags x y [])
+  FSub     -> compileBinop RealType (\x y -> L.FSub L.noFastMathFlags x y [])
+  FMul     -> compileBinop RealType (\x y -> L.FMul L.noFastMathFlags x y [])
+  FDiv     -> compileBinop RealType (\x y -> L.FDiv L.noFastMathFlags x y [])
   FLT      -> compileFCmp L.OLT
   FGT      -> compileFCmp L.OGT
+  And      -> compileBinop BoolType (\x y -> L.And x y [])
+  Or       -> compileBinop BoolType (\x y -> L.Or  x y [])
+  Not      -> compileUnop  BoolType (\x -> L.Xor x (litInt 1) [])
   Select   -> compileSelect ts
   Todo     -> const $ throw MiscErr "Can't compile 'todo'"
   BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
