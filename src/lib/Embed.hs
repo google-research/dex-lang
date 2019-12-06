@@ -10,7 +10,8 @@
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType,
               wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, wrapAtomicFor,
-              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt) where
+              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt,
+              emitOneAtom, add, mul, sub, neg, div') where
 
 import Control.Monad
 import Data.List (transpose)
@@ -161,3 +162,21 @@ sumsAt :: MonadCat NEmbedEnv m => [NType] -> [NExpr] -> m NExpr
 sumsAt tys xss = do
   xss' <- liftM transpose $ mapM emit xss
   liftM NAtoms $ sequence [sumAt ty xs | (ty, xs) <- zip tys xss']
+
+neg :: MonadCat NEmbedEnv m => NAtom -> m NAtom
+neg x = emitOneAtom $ NPrimOp FNeg [] [x]
+
+add :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+add x y = emitOneAtom $ NPrimOp FAdd [] [x, y]
+
+mul :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+mul x y = emitOneAtom $ NPrimOp FMul [] [x, y]
+
+sub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+sub x y = emitOneAtom $ NPrimOp FSub [] [x, y]
+
+div' :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+div' x y = emitOneAtom $ NPrimOp FDiv [] [x, y]
+
+emitOneAtom :: MonadCat NEmbedEnv m => NExpr -> m NAtom
+emitOneAtom expr = liftM head $ emit expr

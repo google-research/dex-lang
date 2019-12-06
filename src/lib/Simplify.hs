@@ -173,10 +173,7 @@ simplifyAtom atom = case atom of
   NLam _ _ _ -> nSubstSimp atom
 
 materializeAtom :: NAtom -> SimplifyM NAtom
-materializeAtom atom = do
-  expr <- atomToNExpr atom
-  ~[atom'] <- emit expr
-  return atom'
+materializeAtom atom = atomToNExpr atom >>= emitOneAtom
 
 atomToNExpr :: NAtom -> SimplifyM NExpr
 atomToNExpr atom = case atom of
@@ -421,28 +418,22 @@ transposeBuiltin :: MonadCat NEmbedEnv m =>
     Builtin -> [[NType]] -> [Maybe NAtom] -> [NAtom] -> m [Maybe NAtom]
 transposeBuiltin op _ xs cts = case op of
   FAdd -> return [Just ct, Just ct]
-            where [ct] = cts
   FMul -> case xs of
-            [Just x, Nothing] -> do ~[ans] <- emit $ NPrimOp FMul [] [x, ct]
-                                    return [Nothing, Just ans]
-            [Nothing, Just y] -> do ~[ans] <- emit $ NPrimOp FMul [] [ct, y]
-                                    return [Just ans, Nothing]
-            _ -> error $ "Can't transpose: " ++ pprint (op, xs)
-            where [ct] = cts
+    [Just x , Nothing] -> do { ans <- mul x  ct ; return [Nothing , Just ans] }
+    [Nothing, Just y ] -> do { ans <- mul ct y  ; return [Just ans, Nothing ] }
+    _ -> error $ "Can't transpose: " ++ pprint (op, xs)
   FSub -> do
-    let [ct] = cts
-    ~[negCt] <- emit $ NPrimOp FNeg [] [ct]  -- TODO: actual negation
+    negCt <- neg ct
     return [Just ct, Just negCt]
   FDiv -> do
-    let [ct] = cts
     let [_ , Just y] = xs
-    ~[ctAns] <- emit $ NPrimOp FDiv [] [ct, y]
+    ctAns <- div' ct y
     return [Just ctAns, Nothing]
   FNeg -> do
-    let [ct] = cts
-    ~[ctAns] <- emit $ NPrimOp FNeg [] [ct]
+    ctAns <- neg ct
     return [Just ctAns]
   _ -> error $ "Not implemented: transposition for: " ++ pprint op
+  where [ct] = cts
 
 extractCTs :: [NBinder] -> TransposeM a -> TransposeM (a, [NAtom])
 extractCTs bs m = do

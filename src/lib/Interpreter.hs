@@ -143,6 +143,7 @@ evalOp FAdd _ xs = realBinOp (+) xs
 evalOp FSub _ xs = realBinOp (-) xs
 evalOp FMul _ xs = realBinOp (*) xs
 evalOp FDiv _ xs = realBinOp (/) xs
+evalOp FNeg _ ~[Lit (RealLit x)] = Lit $ RealLit $ - x
 evalOp BoolToInt _ ~[Lit (BoolLit x)] = Lit $ IntLit (if x then 1 else 0)
 evalOp FLT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x < fromRealLit y
 evalOp FGT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x > fromRealLit y
