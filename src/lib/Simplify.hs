@@ -431,13 +431,17 @@ transposeBuiltin op _ xs cts = case op of
             where [ct] = cts
   FSub -> do
     let [ct] = cts
-    ~[negCt] <- emit $ NPrimOp FSub [] [NLit (RealLit 0.0), ct]  -- TODO: actual negation
+    ~[negCt] <- emit $ NPrimOp FNeg [] [ct]  -- TODO: actual negation
     return [Just ct, Just negCt]
   FDiv -> do
     let [ct] = cts
     let [_ , Just y] = xs
     ~[ctAns] <- emit $ NPrimOp FDiv [] [ct, y]
     return [Just ctAns, Nothing]
+  FNeg -> do
+    let [ct] = cts
+    ~[ctAns] <- emit $ NPrimOp FNeg [] [ct]
+    return [Just ctAns]
   _ -> error $ "Not implemented: transposition for: " ++ pprint op
 
 extractCTs :: [NBinder] -> TransposeM a -> TransposeM (a, [NAtom])

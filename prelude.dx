@@ -16,16 +16,19 @@ imul x y = %imul(x, y)
 mod :: Int -> Int -> Int
 mod x y = %mod(x, y)
 
+neg :: Real --o Real
+neg x = %fneg(x)
+
 fadd :: Real -> Real -> Real
 fadd x y = %fadd(x, y)
 
 fsub :: Real -> Real -> Real
 fsub x y = %fsub(x, y)
 
-fmul :: Real -> Real -> Real
+fmul :: Real --o Real --o Real
 fmul x y = %fmul(x, y)
 
-fdiv :: Real -> Real -> Real
+fdiv :: Real --o Real -> Real
 fdiv x y = %fdiv(x, y)
 
 ipow :: Int -> Int -> Int
@@ -271,7 +274,7 @@ sin#lin :: Real -> (Real, Real --o Real)
 sin#lin x = (sin x, llam t. t * cos x)
 
 cos#lin :: Real -> (Real, Real --o Real)
-cos#lin x = (cos x, llam t. t * (0.0 - sin x))
+cos#lin x = (cos x, llam t. t * (neg (sin x)))
 
 exp#lin :: Real -> (Real, Real --o Real)
 exp#lin x =

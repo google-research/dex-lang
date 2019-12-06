@@ -441,6 +441,8 @@ compileBuiltin b ts = case b of
   FDiv     -> compileBinop RealType (\x y -> L.FDiv L.noFastMathFlags x y [])
   FLT      -> compileFCmp L.OLT
   FGT      -> compileFCmp L.OGT
+  -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
+  FNeg     -> compileUnop  RealType (\x -> L.FSub L.noFastMathFlags (litReal 0.0) x [])
   And      -> compileBinop BoolType (\x y -> L.And x y [])
   Or       -> compileBinop BoolType (\x y -> L.Or  x y [])
   Not      -> compileUnop  BoolType (\x -> L.Xor x (litInt 1) [])

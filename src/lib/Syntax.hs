@@ -122,7 +122,7 @@ data LitVal = IntLit  Int
 data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show, Generic)
 
-data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv
+data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
              | And | Or | Not
              | Range | Scan | Copy | Linearize | Transpose
@@ -134,7 +134,7 @@ builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
-  ("fdiv", FDiv), ("pow", Pow), ("mod", Mod),
+  ("fdiv", FDiv), ("fneg", FNeg), ("pow", Pow), ("mod", Mod),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("and", And), ("or", Or), ("not", Not),
   ("scan", Scan), ("range", Range),

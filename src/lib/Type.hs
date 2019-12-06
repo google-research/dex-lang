@@ -261,6 +261,7 @@ builtinType builtin = case builtin of
   FSub     -> BuiltinType [] (2, Cart) [real, real] real
   FMul     -> BuiltinType [] (2, Tens) [real, real] real
   FDiv     -> BuiltinType [] (1, Cart) [real, real] real
+  FNeg     -> BuiltinType [] (1, Cart) [real] real
   FLT      -> nonLinBuiltin [] [real, real] bool
   FGT      -> nonLinBuiltin [] [real, real] bool
   And      -> BuiltinType [] (0, Cart) [bool, bool] bool

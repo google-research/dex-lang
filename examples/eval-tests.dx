@@ -142,7 +142,7 @@ cumsumplus xs = snd (scan 0.0 for i. lam c. ans = c + xs.i
 :p 1.0 > 2.0
 > False
 
-:p 1.0 > (0.0 - 2.0)
+:p 1.0 > neg 2.0
 > True
 
 :p 1.0 < 2.0
