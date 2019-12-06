@@ -385,14 +385,15 @@ transpose expr cts = case expr of
     cts' <- transposeBuiltin b tys xs' cts
     sequence_ [transposeAtom x ct | (x, Just ct) <- zip xs cts']
   NDecl (NLet bs bound) body -> do
-    lin <- isLin bound
-    if lin
-      then do
+    maybeExpr <- substNonLin bound
+    case maybeExpr of
+      Nothing -> do
         let env = asFst (bindFold bs)
         (_, cts') <- extractCTs bs $ extendR env $ transpose body cts
         transpose bound cts'
-      else do
-        error "Not implemented: nonlinear parts"
+      Just bound' -> do
+        xs <- emitTo bs bound'
+        extendR (asSnd (bindEnv bs xs)) $ transpose body cts
   NAtoms xs -> zipWithM_ transposeAtom xs cts
   _ -> error $ "Transpose not implemented for " ++ pprint expr
 
@@ -400,10 +401,12 @@ isLin :: HasVars a => a -> TransposeM Bool
 isLin x = do linVs <- asks fst
              return $ not $ null $ toList $ envIntersect (freeVars x) linVs
 
-substNonLin :: NAtom -> TransposeM (Maybe NAtom)
+substNonLin ::  (HasVars a, NSubst a) => a -> TransposeM (Maybe a)
 substNonLin x = do
-  x' <- do env <- asks snd
-           return $ nSubst (env, mempty) x
+  x' <- do
+    env <- asks snd
+    scope <- looks fst
+    return $ nSubst (env, fmap (const ()) scope) x
   lin <- isLin x'
   if lin then return Nothing
          else return (Just x')
@@ -426,6 +429,15 @@ transposeBuiltin op _ xs cts = case op of
                                     return [Just ans, Nothing]
             _ -> error $ "Can't transpose: " ++ pprint (op, xs)
             where [ct] = cts
+  FSub -> do
+    let [ct] = cts
+    ~[negCt] <- emit $ NPrimOp FSub [] [NLit (RealLit 0.0), ct]  -- TODO: actual negation
+    return [Just ct, Just negCt]
+  FDiv -> do
+    let [ct] = cts
+    let [_ , Just y] = xs
+    ~[ctAns] <- emit $ NPrimOp FDiv [] [ct, y]
+    return [Just ctAns, Nothing]
   _ -> error $ "Not implemented: transposition for: " ++ pprint op
 
 extractCTs :: [NBinder] -> TransposeM a -> TransposeM (a, [NAtom])

@@ -237,12 +237,12 @@ linearize f x0 = %linearize(lam x. f x, x0)
 jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
 jvp f x = llam t. snd (linearize f x) t
 
-tlinear :: A a::VS b::VS. (a --o b) --o b --o a
-tlinear = llam f ct. %linearTranspose(llam t. f t) ct
+transposeLinear :: A a::VS b::VS. (a --o b) --o b --o a
+transposeLinear = llam f ct. %linearTranspose(llam t. f t) ct
 
 vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x
-          (y, tlinear df)
+          (y, transposeLinear df)
 
 grad :: A a::VS. (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x
@@ -251,12 +251,17 @@ grad f x = (_, pullback) = vjp f x
 deriv :: (Real -> Real) -> Real -> Real
 deriv f x = jvp f x 1.0
 
+derivRev :: (Real -> Real) -> Real -> Real
+derivRev f x = snd (vjp f x) 1.0
+
 checkDeriv :: (Real -> Real) -> Real -> Bool
 checkDeriv f x =
   eps = 1e-5
-  ansAD  = deriv f x
+  ansFwd  = deriv    f x
+  ansRev  = derivRev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
-  abs (ansAD - ansNumeric) < 1e-3
+  isClose a b = abs (a - b) < 1e-3
+  isClose ansFwd ansNumeric && isClose ansRev ansNumeric
 
 forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
 forUnzip xfs = (xs, fs) = unzip xfs

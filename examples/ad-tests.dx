@@ -25,37 +25,37 @@
 
 :p f :: Real --o Real
    f x = x
-   tlinear f 2.0
+   transposeLinear f 2.0
 > 2.0
 
 :p f :: Real --o Real
    f x = x + x
-   tlinear f 1.0
+   transposeLinear f 1.0
 > 2.0
 
 :p f :: Real --o Real
    f x = x + (x + x) * 2.0
-   tlinear f 1.0
+   transposeLinear f 1.0
 > 5.0
 
 :p f :: Real --o Real
    f x = x * 2.0
-   tlinear f 1.0
+   transposeLinear f 1.0
 > 2.0
 
 :p f :: Real --o Real
    f x = 2.0 * x
-   tlinear f 1.0
+   transposeLinear f 1.0
 > 2.0
 
 :p f :: Real --o (Real, Real)
    f x = (x, 2.0 * x)
-   tlinear f (1.0, 3.0)
+   transposeLinear f (1.0, 3.0)
 > 7.0
 
 :p f :: (Real, Real) --o Real
    f (x,y) = x + 2.0 * y
-   tlinear f 1.0
+   transposeLinear f 1.0
 > (1.0, 2.0)
 
 :p grad (lam x. x * x) 1.0
