@@ -79,16 +79,16 @@
 :p checkDeriv cos 1.0
 > True
 
-:p checkDeriv exp 1.0
+:p checkDeriv exp 2.0
 > True
 
-:p checkDeriv log 1.0
+:p checkDeriv log 2.0
 > True
 
-:p checkDeriv sqrt 1.0
+:p checkDeriv sqrt 2.0
 > True
 
-:p checkDeriv (lam x. cos (sin (exp x))) 1.0
+:p checkDeriv (lam x. cos (sin (exp x))) 2.0
 > True
 
 :p checkDeriv (deriv sin) 1.0

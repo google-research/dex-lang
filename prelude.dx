@@ -274,7 +274,7 @@ exp#lin x =
   (ans, llam t. t * ans)
 
 log#lin :: Real -> (Real, Real --o Real)
-log#lin x = (log x, llam t. t / sq x)
+log#lin x = (log x, llam t. t / x)
 
 sqrt#lin :: Real -> (Real, Real --o Real)
 sqrt#lin x =
