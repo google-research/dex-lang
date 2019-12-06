@@ -10,6 +10,7 @@ module GenExpr (sampleExpr, defaultGenOptions, GenOptions (..)
 
 import Control.Monad
 import Control.Monad.Reader
+import GHC.Float
 import Hedgehog hiding (Var, Command)
 import Hedgehog.Internal.Shrink (towards)
 import qualified Hedgehog.Gen as Gen
@@ -242,9 +243,14 @@ genLit ty = Lit <$> case ty of
     IntType ->
         view numberSizeL >>= \n -> IntLit <$> Gen.integral_ (Range.constant (negate n) n)
     BoolType -> BoolLit <$> Gen.bool_
-    RealType ->
-        view (numberSizeL . to fromIntegral) >>= \n -> RealLit <$> Gen.realFrac_ (Range.constant (negate n) n)
+    RealType -> do
+        n <- view (numberSizeL . to fromIntegral)
+        (RealLit . roundTripDouble) <$> Gen.realFrac_ (Range.constant (negate n) n)
     StrType -> error "Str type not implemented"
+
+-- TODO: remove this once we have more control over precision of printed floats
+roundTripDouble :: Double -> Double
+roundTripDouble x = read (show (double2Float x))
 
 genName :: GenM Name
 genName = Gen.prune (genUntil notShadowed (fromString <$> str))
