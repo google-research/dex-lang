@@ -111,3 +111,7 @@ badDerivFun#lin x = (x, llam t. 2. * t)
 -- https://github.com/HIPS/autograd/issues/4
 :p deriv (lam x. x * deriv (lam y. x * y) 2.0) 1.0
 > 2.0
+
+sinn#lin :: Real -> Real
+sinn#lin x = x
+> Error: variable not in scope: sinn

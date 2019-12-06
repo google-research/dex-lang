@@ -34,3 +34,6 @@ x = 1
 
 :p f 1
 > 1
+
+:p y
+> Error: variable not in scope: y

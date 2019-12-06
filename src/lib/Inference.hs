@@ -99,11 +99,7 @@ check expr reqTy = case expr of
     constrainReq (BaseType (litType c))
     return (Lit c)
   Var v ts -> do
-    maybeTy <- asks $ flip envLookup v . snd
-    Forall kinds body <- case maybeTy of
-      Nothing -> throw UnboundVarErr (pprint v)
-      Just (L ty) -> return ty
-      Just (T _ ) -> error "Expected let-bound var"
+    Forall kinds body <- asks $ fromL . (! v) . snd
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)

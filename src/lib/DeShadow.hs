@@ -42,7 +42,8 @@ deShadowPass = TopPass $ \topDecl ->  case topDecl of
     case decl' of
       Just decl'' -> return $ TopDecl ann decl''
       Nothing -> emitOutput NoOutput
-  RuleDef ann ty tlam -> catToTop $ deShadowRuleDef ann ty tlam
+  RuleDef ann ty tlam -> liftTop $ liftM3
+    RuleDef (deShadowRuleAnn ann) (deShadowSigmaType ty) (deShadowTLam tlam)
   EvalCmd (Command cmd expr) -> do
     expr' <- liftTop $ deShadowExpr expr
     case cmd of
@@ -57,7 +58,10 @@ liftTop m = do
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
   Lit x -> return (Lit x)
-  Var v tys -> liftM2 Var (asks $ lookupSubst v . fst) (mapM deShadowType tys)
+  Var v tys -> do
+    v' <- lookupLVar v
+    tys' <- mapM deShadowType tys
+    return $ Var v' tys'
   PrimOp b [] args -> liftM (PrimOp b []) (traverse recur args)
   PrimOp _ ts _ -> error $ "Unexpected type args to primop " ++ pprint ts
   Decl decl body ->
@@ -82,11 +86,8 @@ deShadowExpr expr = case expr of
   TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
 
-deShadowRuleDef :: RuleAnn -> SigmaType -> UTLam -> DeShadowCat UTopDecl
-deShadowRuleDef ann ty tlam = do
-  tlam' <- toCat $ deShadowTLam tlam
-  ty' <- toCat $ deShadowSigmaType ty
-  return $ RuleDef ann ty' tlam'
+deShadowRuleAnn :: RuleAnn -> DeShadowM RuleAnn
+deShadowRuleAnn (LinearizationDef v) = liftM LinearizationDef (lookupLVar v)
 
 deShadowDecl :: UDecl -> DeShadowCat (Maybe UDecl)
 deShadowDecl (LetMono p bound) = do
@@ -120,6 +121,13 @@ deShadowTLam (TLam tbs body) = do
 
 deShadowPat :: UPat -> DeShadowCat UPat
 deShadowPat pat = traverse freshBinder pat
+
+lookupLVar :: Name -> DeShadowM Name
+lookupLVar v = do
+  v' <- asks $ flip envLookup v . fst
+  case v' of
+    Nothing  -> throw UnboundVarErr $ pprint v
+    Just v'' -> return v''
 
 freshBinder :: UBinder -> DeShadowCat UBinder
 freshBinder (v:>ann) = do
