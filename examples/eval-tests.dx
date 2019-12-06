@@ -268,3 +268,6 @@ myIntId x = x
 
 :p (False || False, False || True, True || False, True || True)
 > (False, True, True, True)
+
+:p [(for i::1. (False, for j::2. 1.0)), [(True, for k::2 . 2.0)]]
+> [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]

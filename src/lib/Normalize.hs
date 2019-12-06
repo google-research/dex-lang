@@ -113,8 +113,9 @@ normalize expr = case expr of
     return $ NAtoms $ concat r'
   TabCon (TabType (IdxSetLit n) ty) rows -> do
     ts' <- normalizeTy ty
-    rows' <- mapM normalize rows
-    return $ NTabCon (NIdxSetLit n) ts' rows'
+    rows'  <- mapM normalize rows
+    rows'' <- mapM deShadow rows'  -- Should we just make NTabCon an atom?
+    return $ NTabCon (NIdxSetLit n) ts' rows''
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 atomize :: Expr -> NormM [NAtom]

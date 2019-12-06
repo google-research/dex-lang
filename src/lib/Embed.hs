@@ -10,7 +10,7 @@
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType,
               wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, wrapAtomicFor,
-              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt,
+              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
               emitOneAtom, add, mul, sub, neg, div') where
 
 import Control.Monad
@@ -45,6 +45,11 @@ emitTo bs expr = do
   bs' <- traverse freshenNBinder bs
   extend $ asSnd [NLet bs' expr]
   return [NVar v | v:>_ <- bs']
+
+deShadow :: MonadCat NEmbedEnv m => NSubst a => a -> m a
+deShadow x = do
+  scope <- looks fst
+  return $ nSubst (mempty, fmap (const ()) scope) x
 
 noBinders :: NAtom -> Bool
 noBinders atom = case atom of

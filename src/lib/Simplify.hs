@@ -134,8 +134,12 @@ simplify mat expr = case expr of
     if mat
       then liftM NAtoms $ mapM materializeAtom xs'
       else return $ NAtoms xs'
-  NTabCon n ts rows -> liftM3 NTabCon (nSubstSimp n) (mapM nSubstSimp ts)
-                                      (mapM (simplify True) rows)
+  NTabCon n ts rows -> do
+    n'     <- nSubstSimp n
+    ts'    <- mapM nSubstSimp ts
+    rows'  <- mapM (simplify True) rows
+    rows'' <- mapM deShadow rows'
+    return $ NTabCon n' ts' rows''
 
 extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
@@ -267,9 +271,6 @@ nSubstSimp x = do
   env <- asks subEnv
   scope <- looks fst  -- do we have to reach into the embedding monad this way?
   return $ nSubst (env, fmap (const ()) scope) x
-
-deShadow :: NSubst a => a -> SimplifyM a
-deShadow x = dropSub $ nSubstSimp x
 
 -- === linearization ===
 
