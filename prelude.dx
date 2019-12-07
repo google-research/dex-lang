@@ -13,8 +13,11 @@ isub x y = %isub(x, y)
 imul :: Int -> Int -> Int
 imul x y = %imul(x, y)
 
+rem :: Int -> Int -> Int
+rem x y = %rem(x, y)
+
 mod :: Int -> Int -> Int
-mod x y = %mod(x, y)
+mod x y = rem (iadd y (rem x y)) y
 
 neg :: Real --o Real
 neg x = %fneg(x)

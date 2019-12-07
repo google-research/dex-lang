@@ -127,14 +127,14 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | And | Or | Not
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
-             | Mod | FFICall Int String | Filter | Todo | NewtypeCast | Select
+             | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
                 deriving (Eq, Ord, Generic)
 
 builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
-  ("fdiv", FDiv), ("fneg", FNeg), ("pow", Pow), ("mod", Mod),
+  ("fdiv", FDiv), ("fneg", FNeg), ("pow", Pow), ("rem", Rem),
   ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("and", And), ("or", Or), ("not", Not),
   ("scan", Scan), ("range", Range),

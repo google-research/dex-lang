@@ -138,7 +138,7 @@ evalOp :: Builtin -> [Type] -> [Val] -> Val
 evalOp IAdd _ xs = intBinOp (+) xs
 evalOp ISub _ xs = intBinOp (-) xs
 evalOp IMul _ xs = intBinOp (*) xs
-evalOp Mod  _ xs = intBinOp mod xs
+evalOp Rem  _ xs = intBinOp rem xs
 evalOp FAdd _ xs = realBinOp (+) xs
 evalOp FSub _ xs = realBinOp (-) xs
 evalOp FMul _ xs = realBinOp (*) xs
