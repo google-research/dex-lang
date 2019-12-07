@@ -108,7 +108,14 @@ simplify mat expr = case expr of
     bs' <- mapM nSubstSimp bs
     buildNScan ib' bs' xs' $ \i carry -> do
       let env = bindEnv [ib'] [i] <> bindEnv bs' carry
-      extendSub env $ simplify mat e
+      extendSub env $ do
+        e' <- simplify mat e
+        (_, yTys) <- liftM splitCarry $ askType e'
+        let ysBinders  = zipWith (:>) (repeat "y") yTys
+        (csOut, ysOut) <- liftM splitCarry $ emitDecomposedTo (bs' ++ ysBinders) e'
+        csOut' <- mapM materializeAtom csOut
+        return $ NAtoms $ csOut' ++ ysOut
+    where splitCarry = splitAt (length bs)
   NApp f xs -> do
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
@@ -127,8 +134,10 @@ simplify mat expr = case expr of
     transposed <- buildNLam Lin ["ct":>ty | ty <- bTy'] $ \cts ->
                     dropSub $ runTransposition bs cts body
     return $ NAtoms [transposed]
-  NPrimOp b ts xs -> liftM2 (NPrimOp b) (mapM (mapM nSubstSimp) ts)
-                                        (mapM simplifyAtom xs)
+  NPrimOp b ts xs -> do
+    ts' <- mapM (mapM nSubstSimp) ts
+    xs' <- mapM (simplifyAtom >=> materializeAtom) xs
+    return $ NPrimOp b ts' xs'
   NAtoms xs -> do
     xs' <- mapM simplifyAtom xs
     if mat
