@@ -55,7 +55,6 @@ minimumby sq [-1.0, -0.1, 2.0, 3.0]
 
 ' ## The Optimizer itself.
 ### TODO:
- - Replace `res = optStep inits` with `res = fold inits (for iter::200. optStep)`
  - workout how to pass `nparticles` and `niters` in as a variable
      - Currrently hardcoded as 1000 and 200 respectively
  - workout more compact way to define type sig
@@ -85,11 +84,11 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
     initPs::(1000=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p) 
     initG::(Real, d=>Real) = minimumby fst initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
-    res = optStep inits
+    res = fold inits (for iter::200. optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
-:p optimize (newKey 1) rosenbrock2 ([-1.0, -1.0],[2.0, 2.0]) (0.2,0.3,0.4)
+:p optimize (newKey 1) rosenbrock2 ([-1.0, -1.0],[2.0, 2.0]) (0.5,0.3,0.4)
 
 
 
