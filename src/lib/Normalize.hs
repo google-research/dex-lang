@@ -116,6 +116,7 @@ normalize expr = case expr of
     rows'  <- mapM normalize rows
     rows'' <- mapM deShadow rows'  -- Should we just make NTabCon an atom?
     return $ NTabCon (NIdxSetLit n) ts' rows''
+  IdxLit n i -> return $ NPrimOp IntAsIndex [[NIdxSetLit n]] [NLit (IntLit i)]
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
 atomize :: Expr -> NormM [NAtom]

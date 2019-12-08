@@ -118,7 +118,7 @@ instance Pretty b => Pretty (ExprP b) where
     RecCon Tens _ -> error "Not implemented"
     TabCon _ xs -> list (map pretty xs)
     Pack e ty exTy -> "pack" <+> p e <> "," <+> p ty <> "," <+> p exTy
-    IdxLit n i -> "asidx" <+> "@" <> p (IdxSetLit n) <+> p i
+    IdxLit n i -> p i <> "@" <> p (IdxSetLit n)
     SrcAnnot subexpr _ -> p subexpr
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 

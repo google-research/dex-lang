@@ -174,6 +174,7 @@ expr = makeExprParser (withSourceAnn term) ops
 term :: Parser UExpr
 term =   parenExpr
      <|> var
+     <|> idxLit
      <|> liftM Lit literal
      <|> lamExpr
      <|> linlamExpr
@@ -295,6 +296,9 @@ lamLhsArgs :: [Lin] -> Parser (UExpr -> UExpr)
 lamLhsArgs lin = do
   args <- pat `sepBy` sc
   return $ \body -> foldr (uncurry Lam) body (zip (lin ++ repeat NonLin) args)
+
+idxLit :: Parser UExpr
+idxLit = liftM2 (flip IdxLit) (try $ uint <* symbol "@") uint
 
 literal :: Parser LitVal
 literal =     numLit

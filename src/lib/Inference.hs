@@ -166,6 +166,11 @@ check expr reqTy = case expr of
   SrcAnnot e pos -> do
     e' <- local (\(_,env) -> (Just pos, env)) (check e reqTy)
     return $ SrcAnnot e' pos
+  IdxLit n i -> do
+    unless (0 <= i && i < n) $ throw TypeErr $ "Index out of bounds: "
+                                 ++ pprint i ++ " of " ++ pprint n
+    constrainReq (IdxSetLit n)
+    return $ IdxLit n i
   _ -> error $ "Unexpected expression: " ++ show expr
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)

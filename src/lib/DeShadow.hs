@@ -82,7 +82,7 @@ deShadowExpr expr = case expr of
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
-  IdxLit _ _ -> error "Not implemented"
+  IdxLit n i     -> return $ IdxLit n i
   TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
 

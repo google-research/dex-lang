@@ -260,3 +260,15 @@ f2 x = x + x
 >
 > :t fold f1 for i::3. lam g. (lam x. g (g x))
 >    ^^^^^
+
+:t [1,2,3].(3@3)
+> Type error:Index out of bounds: 3 of 3
+
+:t [1,2,3].(3@4)
+> Type error:
+> Expected: 3
+>   Actual: 4
+> In: 3@4
+>
+> :t [1,2,3].(3@4)
+>             ^^^
