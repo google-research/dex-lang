@@ -11,6 +11,7 @@ module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
 import Data.Foldable
+import Data.List (zip4)
 
 import Syntax
 import Env
@@ -65,7 +66,7 @@ toImp dests expr = case expr of
   NPrimOp b ts xs -> do
     ts' <- mapM toImpType (concat ts)
     xs' <- mapM toImpAtom xs
-    return $ ImpProg [primOpStatement b dests ts' xs']
+    return $ toImpPrimOp b dests ts' xs'
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
     return $ ImpProg $ zipWith copy dests xs'
@@ -104,12 +105,16 @@ toImpAtom atom = case atom of
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
   _ -> error $ "Not implemented: " ++ pprint atom
 
-primOpStatement :: Builtin -> [Dest] -> [IType] -> [IExpr] -> Statement
-primOpStatement Range      (dest:_) _ [x] = copy dest x
-primOpStatement IndexAsInt [dest]   _ [x] = copy dest x
-primOpStatement IntAsIndex [dest]   _ [x] = copy dest x  -- TODO: mod n
-primOpStatement b [Buffer name idxs] ts xs = Update name idxs b ts xs
-primOpStatement b dests _ _ = error $
+toImpPrimOp :: Builtin -> [Dest] -> [IType] -> [IExpr] -> ImpProg
+toImpPrimOp Range      (dest:_) _ [x] = ImpProg [copy dest x]
+toImpPrimOp IndexAsInt [dest]   _ [x] = ImpProg [copy dest x]
+toImpPrimOp IntAsIndex [dest]   _ [x] = ImpProg [copy dest x]  -- TODO: mod n
+toImpPrimOp Select dests ts (p:args) =
+  fold $ [ImpProg [Update name idxs Select [t] [p,x,y]] |
+           (x, y, (Buffer name idxs), t) <- zip4 xs ys dests ts]
+  where (xs, ys) = splitAt (length ts) args
+toImpPrimOp b [Buffer name idxs] ts xs = ImpProg [Update name idxs b ts xs]
+toImpPrimOp b dests _ _ = error $
   "Unexpected number of dests: " ++ show (length dests) ++ pprint b
 
 toImpType :: NType -> ImpM IType

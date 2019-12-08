@@ -283,3 +283,12 @@ myIntId x = x
 
 :p fold [1, 2] for i::3. lam c. for j. 4
 > [4, 4]
+
+:p select True (1,2) (2,3)
+> (1, 2)
+
+:p select False (1,[2,3]) (4, for _. 3)
+> (4, [3, 3])
+
+:p select False () ()
+> ()
