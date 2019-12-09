@@ -8,7 +8,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
-              NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType,
+              NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType, askAtomType,
               wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, wrapAtomicFor,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
               emitOneAtom, add, mul, sub, neg, div') where
@@ -125,6 +125,9 @@ askType :: (MonadCat NEmbedEnv m) => NExpr -> m [NType]
 askType expr = do
   tyEnv <- looks fst
   return $ getNExprType tyEnv expr
+
+askAtomType :: (MonadCat NEmbedEnv m) => NAtom -> m NType
+askAtomType x = liftM head $ askType $ NAtoms [x]
 
 runEmbedT :: Monad m => CatT NEmbedEnv m a -> NEmbedScope -> m (a, NEmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])

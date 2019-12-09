@@ -289,8 +289,13 @@ runLinearization :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
 runLinearization bs xs expr = do
   (ans, f) <- extendSub (bindEnv bs xs) $ linearize expr
   ans' <- emit ans
-  f' <- buildNLam Lin bs $ \ts -> withReaderT (const $ bindEnvTangent bs ts) f
+  f' <- runTangent bs f
+  -- TODO: check type here, especially linearity
   return $ NAtoms $ ans' ++ [f']
+
+runTangent :: [NBinder] -> TangentM NExpr -> SimplifyM NAtom
+runTangent bs m = buildNLam Lin bs $ \ts ->
+                    withReaderT (const $ bindEnvTangent bs ts) m
 
 bindEnvTangent :: [NBinder] -> [NAtom] -> Env NAtom
 bindEnvTangent bs xs = fold $ zipWith f bs xs
@@ -303,7 +308,19 @@ linearize expr = case expr of
     (ans, fLin) <- extendSub env (linearize body)
     return (ans, do tEnv <- makeTangentEnv
                     extendR tEnv fLin)
-  NScan _ _ _ _ -> error "not implemented"
+  NScan ib [] [] e -> do
+    envBs <- getContinuousVars expr
+    expr' <- buildNScan ib [] [] $ \i _ -> do
+      extendSub (bindEnv [ib] [i]) $ do
+        (ans, f) <- linearize e
+        ans' <- emit ans
+        f' <- runTangent envBs f
+        return $ NAtoms $ f' : ans'
+    ~(fs:ans) <- emit expr'
+    return (NAtoms ans, do ts <- mapM (lookupTangent . binderVar) envBs
+                           buildNScan ib [] [] $ \i' _ ->
+                             return $ NApp (NGet fs i') ts)
+  NScan _ _ _ _ -> error "Not implemented"
   NApp (NVar v) xs -> do
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
@@ -346,10 +363,13 @@ linearizeAtom atom = case atom of
   NVar v -> do
     maybeVal <- asks $ flip envLookup v . subEnv
     case maybeVal of
-      Just (L x) -> return (x, asks (! v))
+      Just (L x) -> return (x, lookupTangent v)
       Nothing -> zeroDeriv atom
       _ -> error "unexpected lookup"
-  NGet _ _       -> error "not implemented"
+  NGet x i -> do
+    (x', xt) <- linearizeAtom x
+    (i', _) <- linearizeAtom i
+    return (NGet x' i', liftM (flip NGet i') xt)
   NAtomicFor _ _ -> error "not implemented"
   NLam _ _ _     -> error "not implemented"
 
@@ -382,6 +402,22 @@ linearizedDiv x y tx ty = do
   ySq  <- mul y y
   ty'' <- div' ty' ySq >>= neg
   add tx' ty''
+
+lookupTangent :: Name -> TangentM NAtom
+lookupTangent v = asks (!v)
+
+getContinuousVars :: NExpr -> SimplifyM [NBinder]
+getContinuousVars expr = do
+  let vs = [v | (v, L ()) <- envPairs $ freeVars expr]
+  tys <- mapM (\v -> nSubstSimp (NVar v) >>= askAtomType) vs
+  return $ filter (isContinuous . binderAnn) $ zipWith (:>) vs tys
+
+isContinuous :: NType -> Bool
+isContinuous ty = case ty of
+  NBaseType RealType -> True
+  NTabType _ a       -> isContinuous a
+  NExists _          -> error "Not implemented"
+  _                  -> False
 
 -- === transposition ===
 
