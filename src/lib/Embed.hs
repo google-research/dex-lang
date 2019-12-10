@@ -153,6 +153,7 @@ runEmbed m scope = runCat m (scope, [])
 
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
+wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v']) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
 
 nGet :: NAtom -> NAtom -> NAtom
