@@ -4,10 +4,10 @@
 > 1.0
 
 :t llam x::Real. 1.0
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. x * x
-> Linearity error:Variable already spent: x
+> Linearity error: pattern already spent: [x]
 >
 > :t llam x::Real. x * x
 >                      ^
@@ -25,7 +25,7 @@
 > (Real --o Real)
 
 :t llam x::Real. (lam y. y) x
-> Linearity error:Nonlinear function consuming linear data: [x]
+> Linearity error: nonlinear function consumed linear data: [x]
 >
 > :t llam x::Real. (lam y. y) x
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^
@@ -43,19 +43,19 @@
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. (1.0, 2.0)
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. (1.0, x)
-> Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]
+> Linearity error: different consumption by Cartesian product elements: [[], [x]]
 
 :t llam x::Real. (x, 1.0)
-> Linearity error:Different vars consumed by Cartesian product elements: [x] vs []
+> Linearity error: different consumption by Cartesian product elements: [[x], []]
 
 :t llam x::Real. (x, x)
 > (Real --o (Real, Real))
 
 :t llam x::Real. (1.0 : 2.0)
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. (1.0 : x)
 > (Real --o (Real : Real))
@@ -64,22 +64,22 @@
 > (Real --o (Real : Real))
 
 :t llam x::Real. (x : x)
-> Linearity error:Variable already spent: x
+> Linearity error: pattern already spent: [x]
 >
 > :t llam x::Real. (x : x)
 >                       ^
 
 :t llam x::Real. 1.0 + 2.0
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. 1.0 + x
-> Linearity error:Different vars consumed by Cartesian product elements: [] vs [x]
+> Linearity error: different consumption by Cartesian product elements: [[], [x]]
 >
 > :t llam x::Real. 1.0 + x
 >                      ^^
 
 :t llam x::Real. x + 1.0
-> Linearity error:Different vars consumed by Cartesian product elements: [x] vs []
+> Linearity error: different consumption by Cartesian product elements: [[x], []]
 >
 > :t llam x::Real. x + 1.0
 >                    ^^
@@ -88,7 +88,7 @@
 > (Real --o Real)
 
 :t llam x::Real. 1.0 * 2.0
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. 1.0 * x
 > (Real --o Real)
@@ -97,19 +97,19 @@
 > (Real --o Real)
 
 :t llam x::Real. x * x
-> Linearity error:Variable already spent: x
+> Linearity error: pattern already spent: [x]
 >
 > :t llam x::Real. x * x
 >                      ^
 
 :t llam x::Real. y = x; 1.0 * 2.0
-> Linearity error:Variables never spent: x::Real
+> Linearity error: pattern never spent: x::Real
 
 :t llam x::Real. y = x; x + y
 > (Real --o Real)
 
 :t llam x::Real. y = x; y * x
-> Linearity error:Variable already spent: x
+> Linearity error: pattern already spent: [x]
 >
 > :t llam x::Real. y = x; y * x
 >                             ^
@@ -118,7 +118,7 @@
 > ((Real, Real) --o Real)
 
 :t llam (x, y). x * y
-> Linearity error:Variable already spent: x
+> Linearity error: pattern already spent: [x]
 >
 > :t llam (x, y). x * y
 >                     ^
@@ -128,3 +128,51 @@
 
 :p (llam x. x * 3.0) 1.0
 > 3.0
+
+:t llam x. x * 0.0
+> (Real --o Real)
+
+:t llam x. 0.0 * x
+> (Real --o Real)
+
+:t llam x::Real. 0.0 * 0.0
+> (Real --o Real)
+
+:t llam x. x + 0.0
+> (Real --o Real)
+
+:t llam x. 0.0 + x
+> (Real --o Real)
+
+:t llam x::Real. 0.0 + 0.0
+> (Real --o Real)
+
+:t llam x. (0.0 + x) + 0.0
+> (Real --o Real)
+
+:t llam x. (0.0 + x) + 1.0
+> Linearity error: different consumption by Cartesian product elements: [[x], []]
+>
+> :t llam x. (0.0 + x) + 1.0
+>                      ^^
+
+:t llam x. 0.0 + (x + 1.0)
+> Linearity error: different consumption by Cartesian product elements: [[x], []]
+>
+> :t llam x. 0.0 + (x + 1.0)
+>                     ^^
+
+:t llam y. llam x. (x + 0.0) + (y + 0.0)
+> Linearity error: different consumption by Cartesian product elements: [[x], [y]]
+>
+> :t llam y. llam x. (x + 0.0) + (y + 0.0)
+>                              ^^
+
+:t llam y. llam x. (x * 0.0) + y
+> Linearity error: different consumption by Cartesian product elements: [[x, *], [y]]
+>
+> :t llam y. llam x. (x * 0.0) + y
+>                              ^^
+
+:t llam x::Real. ()
+> (Real --o ())

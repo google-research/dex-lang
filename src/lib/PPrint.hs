@@ -43,7 +43,7 @@ instance Pretty ErrType where
     NoErr             -> ""
     ParseErr          -> "Parse error:"
     TypeErr           -> "Type error:"
-    LinErr            -> "Linearity error:"
+    LinErr            -> "Linearity error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
     NotImplementedErr -> "Not implemented:"

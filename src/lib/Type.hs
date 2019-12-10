@@ -18,6 +18,7 @@ import Control.Monad.Reader
 import Data.List (elemIndex)
 import Data.Foldable
 import Data.Either (isLeft)
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -28,7 +29,7 @@ import Cat
 
 -- TODO: consider making linearity checking a separate pass?
 type TypeEnv = FullEnv SigmaType Kind
-type Spent = Env ()
+data Spent = Spent (Env ()) Bool
 type TypeCheckEnv = FullEnv (SigmaType, Spent) Kind
 data TypeMCtx = TypeMCtx { checking :: Bool
                          , srcCtx   :: SrcCtx
@@ -69,13 +70,15 @@ evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
 
 getType' :: Expr -> TypeM Type
 getType' expr = case expr of
-    Lit c -> return $ BaseType (litType c)
+    Lit c -> do
+      when (c == realZero) spendFreely
+      return $ BaseType (litType c)
     Var v ts -> do
       mapM_ checkTy ts
       x <- asks $ flip envLookup v . tyEnv
       case x of
         Just (L (Forall kinds body, s)) -> do
-          whenChecking $ do mapM_ spendVar (envNames s)
+          whenChecking $ do spend s
                             zipWithM_ checkClassConstraints kinds ts
           return $ instantiateTVs ts body
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
@@ -99,7 +102,7 @@ getType' expr = case expr of
       check <- asks checking
       bodyTy <- case (l, check) of
         (Lin, True) -> do v <- getPatName p
-                          checkSpent v (pprint p) $ recurWithP (v@>()) p body
+                          checkSpent v (pprint p) $ recurWithP (asSpent v) p body
         _ -> recurWithP mempty p body
       return $ ArrType l (patType p) bodyTy
     For p body -> do
@@ -500,12 +503,14 @@ getAtomType env atom =
                                T k  -> T k
 atomType :: NAtom -> NTypeM NType
 atomType atom = case atom of
-  NLit x -> return $ NBaseType (litType x)
+  NLit x -> do
+    when (x == realZero) spendFreely
+    return $ NBaseType (litType x)
   NVar v -> do
     x <- asks $ flip envLookup v
     case x of
       Just (L (ty, s)) -> do
-        mapM_ spendVar (envNames s)
+        spend s
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   NGet e i -> do
@@ -524,7 +529,7 @@ atomType atom = case atom of
   NLam Lin bs body -> do
     mapM_ checkNBinder bs
     v <- getPatName bs
-    let env = nBinderEnv (v@>()) bs
+    let env = nBinderEnv (asSpent v) bs
     bodyTys <- checkSpent v (pprint bs) $ extendR env (getNType body)
     return $ NArrType Lin (map binderAnn bs) bodyTys
 
@@ -597,31 +602,37 @@ tangentBunType ty = case ty of
 
 -- === utils for working with linearity ===
 
-spendVar :: (MonadError Err m, MonadCat Spent m) => Name -> m ()
-spendVar v = do
+spend :: (MonadError Err m, MonadCat Spent m) => Spent -> m ()
+spend s = do
   spent <- look
-  when (v `isin` spent) $ throw LinErr $ "Variable already spent: " ++ pprint v
-  extend (v @> ())
+  case spendTens spent s of
+    Just _  -> extend s
+    Nothing -> throw LinErr $ "pattern already spent: " ++ pprint s
 
-checkSpent :: (MonadError Err m, MonadCat Spent m) =>
-                Name -> String -> m a -> m a
+asSpent :: Name -> Spent
+asSpent v = Spent (v@>()) False
+
+spendFreely :: MonadCat Spent m => m ()
+spendFreely = extend $ Spent mempty True
+
+checkSpent :: (MonadError Err m, MonadCat Spent m) => Name -> String -> m a -> m a
 checkSpent v vStr m = do
-  (ans, spent) <- scoped m
-  unless  (v `isin` spent) $ throw LinErr $ "Variables never spent: " ++ vStr
-  extend $ spent `envDiff` (v@>())
+  (ans, Spent vs consumes) <- scoped m
+  unless  (consumes || v `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
+  extend (Spent (vs `envDiff` (v@>())) consumes)
   return ans
 
 checkNothingSpent :: (MonadError Err m, MonadCat Spent m) => m a -> m a
 checkNothingSpent m = do
-  (ans, spent) <- scoped m
-  unless (null spent) $ throw LinErr $
-    "Nonlinear function consuming linear data: " ++ pprint (envNames spent)
+  (ans, spent@(Spent vs _)) <- scoped m
+  unless (null vs) $ throw LinErr $
+    "nonlinear function consumed linear data: " ++ pprint spent
   return ans
 
 getPatName :: (MonadError Err m, Traversable f) => f (BinderP b) -> m Name
 getPatName p = case toList p of
   []  -> throw LinErr $
-           "Empty patterns not allowed for linear lambda (for silly reasons)"
+           "empty patterns not allowed for linear lambda (for silly reasons)"
   (v:>_):_ -> return v
 
 traverseProd :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
@@ -634,22 +645,50 @@ shareLinear :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
                  f (m a) -> m (f a)
 shareLinear actions = do
   (ys, spents) <- liftM unzip' $ traverse scoped actions
-  case getConsensus spents of
-    Right Nothing -> return ()
-    Right (Just spent) -> extend spent
-    Left (s1, s2) -> throw LinErr $
-      "Different vars consumed by Cartesian product elements: "
-          ++ pprint (envNames s1)
-          ++ " vs " ++ pprint (envNames s2)
+  case foldMaybe spendCart cartSpentId spents of
+    Just spent' -> extend spent'
+    Nothing     -> throw LinErr $
+      "different consumption by Cartesian product elements: "
+          ++ pprint (toList spents)
   return ys
-  where
-    unzip' x = (fmap fst x, fmap snd x)
+  where unzip' x = (fmap fst x, fmap snd x)
 
-getConsensus :: (Eq a, Traversable f) => f a -> Either (a,a) (Maybe a)
-getConsensus xs = foldr foldBody (Right Nothing) xs
-  where
-    foldBody x state = case state of
-      Left e -> Left e
-      Right Nothing -> Right (Just x)
-      Right (Just x') | x == x' -> Right (Just x')
-                      | otherwise -> Left (x, x')
+spendTens :: Spent -> Spent -> Maybe Spent
+spendTens (Spent vs consumes) (Spent vs' consumes') = do
+  unless (null (envIntersect vs vs')) Nothing
+  return $ Spent (vs <> vs') (consumes || consumes')
+
+tensSpentId :: Spent
+tensSpentId = Spent mempty False
+
+spendCart :: Spent -> Spent -> Maybe Spent
+spendCart (Spent vs consumes) (Spent vs' consumes') = do
+  unless (consumes  || vs' `containedWithin` vs ) Nothing
+  unless (consumes' || vs  `containedWithin` vs') Nothing
+  return $ Spent (vs <> vs') (consumes && consumes')
+  where containedWithin x y = null $ x `envDiff` y
+
+cartSpentId :: Spent
+cartSpentId = Spent mempty True
+
+realZero :: LitVal
+realZero = RealLit 0.0
+
+-- TODO: consider putting the errors in the monoid itself.
+instance Semigroup Spent where
+  s <> s' = case spendTens s s' of
+              Just s'' -> s''
+              Nothing -> error "Spent twice (this shouldn't happen)"
+
+instance Monoid Spent where
+  mempty = tensSpentId
+  mappend = (<>)
+
+instance Pretty Spent where
+  pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])
+  pretty (Spent vs False) = pretty (envNames vs)
+
+foldMaybe :: Traversable f => (a -> a -> Maybe a) -> a -> f a -> Maybe a
+foldMaybe f x0 xs = foldl f' (Just x0) xs
+  where f' prev x = do prev' <- prev
+                       f prev' x
