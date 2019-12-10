@@ -123,6 +123,9 @@ ixsub i n = asidx $ isub (asint i) n
 iota :: n=>Int
 iota = for i. asint i
 
+id :: a -> a
+id x = x
+
 dup :: a -> (a, a)
 dup x = (x, x)
 
@@ -149,6 +152,7 @@ select p x y = %select(p, x, y)
 
 abs :: Real -> Real
 abs x = select (x > 0.0) x (0.0 - x)
+
 
 'State-carrying loop constructs
 
@@ -232,6 +236,22 @@ randIdx :: A n::Ix. Key -> n
 randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
+
+'min / max etc
+
+minby :: A a::Data. (a->Real)->a->a->a
+minby f x y = select ((f x) < (f y)) x y
+
+min :: Real -> Real -> Real
+min x y = minby id x y
+
+minimumby:: A p q::Data. (q->Real)->(p=>q)->q
+minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
+
+minimum:: A p. (p=>Real)->Real
+minimum xs = minimumby id xs
+
+
 
 'Vector spaces and automatic differentiation.
 
