@@ -272,19 +272,23 @@ linearize expr = case expr of
     (ans, fLin) <- extendSub env (linearize body)
     return (ans, do tEnv <- makeTangentEnv
                     extendR tEnv fLin)
-  NScan ib [] [] e -> do
+  -- TODO: handle non-real carry components
+  NScan ib bs xs e -> do
+    (xs', xsTangents) <- linearizeAtoms xs
     envBs <- getContinuousVars expr
-    expr' <- buildNScan ib [] [] $ \i _ -> do
-      extendSub (bindEnv [ib] [i]) $ do
+    expr' <- buildNScan ib bs xs' $ \i xs'' -> do
+      extendSub (bindEnv (ib:bs) (i:xs'')) $ do
         (ans, f) <- linearize e
         ans' <- emit ans
-        f' <- runTangent envBs f
-        return $ NAtoms $ f' : ans'
-    ~(fs:ans) <- emit expr'
-    return (NAtoms ans, do ts <- mapM (lookupTangent . binderVar) envBs
-                           buildNScan ib [] [] $ \i' _ ->
-                             return $ NApp (NGet fs i') ts)
-  NScan _ _ _ _ -> error "Not implemented"
+        f' <- runTangent (envBs ++ bs) f
+        return $ NAtoms $ ans' ++  [f']
+    (ans, fs) <- liftM splitLast $ emit expr'
+    let tangentComputation = do
+          tsEnv <- mapM (lookupTangent . binderVar) envBs
+          tsCarryInit <- xsTangents
+          buildNScan ib bs tsCarryInit $ \i' tsCarry ->
+            return $ NApp (NGet fs i') (tsEnv ++ tsCarry)
+    return (NAtoms ans, tangentComputation)
   NApp (NVar v) xs -> do
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
@@ -382,6 +386,10 @@ isContinuous ty = case ty of
   NTabType _ a       -> isContinuous a
   NExists _          -> error "Not implemented"
   _                  -> False
+
+splitLast :: [a] -> ([a], a)
+splitLast xs = case reverse xs of x:xs' -> (reverse xs', x)
+                                  _ -> error "list must be nonempty"
 
 -- === transposition ===
 
