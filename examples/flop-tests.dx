@@ -12,4 +12,4 @@ mat = for i j. rand (ixkey (ixkey k i) j)
 :flops matmul mat mat
 > %fadd 1 Nx^3
 > %fmul 1 Nx^3
-> %copy 1 Nx^1 + 2 Nx^2 + 2 Nx^3
+> %copy 1  + 1 Nx^1 + 2 Nx^2 + 2 Nx^3

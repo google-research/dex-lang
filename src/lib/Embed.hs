@@ -9,9 +9,9 @@
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType, askAtomType,
-              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, wrapAtomicFor,
+              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
-              emitOneAtom, add, mul, sub, neg, div') where
+              emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div') where
 
 import Control.Monad
 import Data.List (transpose)
@@ -30,13 +30,17 @@ type NEmbedEnv = (NEmbedScope, [NDecl])
 
 -- Only produces atoms without binders (i.e. no NLam or NAtomicFor) so that we
 -- don't have to deshadow them again later wrt newly in scope variables.
+-- TODO: use suggestive names based on types (e.g. "f" for function)
 emit :: MonadCat NEmbedEnv m => NExpr -> m [NAtom]
-emit expr = case expr of
+emit expr = emitNamed "v" expr
+
+emitNamed :: MonadCat NEmbedEnv m => Name -> NExpr -> m [NAtom]
+emitNamed v expr = case expr of
   NAtoms atoms | all noBinders atoms -> return atoms
   _ -> do
     tys <- askType expr
     -- TODO: use suggestive names based on types (e.g. "f" for function)
-    emitTo (map ("v":>) tys) expr
+    emitTo (map (v:>) tys) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat NEmbedEnv m => [NBinder] -> NExpr -> m [NAtom]
@@ -76,18 +80,18 @@ freshenNBinder (v:>ty) = do
   return (v':>ty)
 
 withBinders :: (MonadCat NEmbedEnv m) =>
-                 [NBinder] -> ([NAtom] -> m a) -> m (a, [NBinder], [NDecl])
+                 [NBinder] -> ([NAtom] -> m a) -> m (a, [NBinder], NEmbedEnv)
 withBinders bs f = do
-  ((ans, bs'), (_, decls)) <- scoped $ do
+  ((ans, bs'), env) <- scoped $ do
       bs' <- traverse freshenNBinder bs
       ans <- f [NVar v | v:>_ <- bs']
       return (ans, bs')
-  return (ans, bs', decls)
+  return (ans, bs', env)
 
 buildNLam :: (MonadCat NEmbedEnv m) =>
               Lin -> [NBinder] -> ([NAtom] -> m NExpr) -> m NAtom
 buildNLam l bs f = do
-  (body, bs', decls) <- withBinders bs f
+  (body, bs', (_, decls)) <- withBinders bs f
   return $ NLam l bs' $ wrapNDecls decls body
 
 buildNAtomicFor :: (MonadCat NEmbedEnv m) =>
@@ -113,7 +117,7 @@ buildNScan :: (MonadCat NEmbedEnv m)
                => NBinder -> [NBinder] -> [NAtom]
                -> (NAtom -> [NAtom] -> m NExpr) -> m NExpr
 buildNScan ib xbs xsInit f = do
-  ~(body, (ib':xbs'), decls) <- withBinders (ib:xbs) $ \(i:xs) -> f i xs
+  ~(body, (ib':xbs'), (_, decls)) <- withBinders (ib:xbs) $ \(i:xs) -> f i xs
   return $ NScan ib' xbs' xsInit (wrapNDecls decls body)
 
 buildScoped :: (MonadCat NEmbedEnv m) => m NExpr -> m NExpr
@@ -129,13 +133,24 @@ askType expr = do
 askAtomType :: (MonadCat NEmbedEnv m) => NAtom -> m NType
 askAtomType x = liftM head $ askType $ NAtoms [x]
 
+materializeAtom :: (MonadCat NEmbedEnv m) => NAtom -> m NAtom
+materializeAtom atom = case atom of
+  NAtomicFor ib@(iv:>_) body -> do
+    ans <- buildNScan ib [] [] $ \i _ -> do
+      scope <- liftM (fmap (const ())) $ looks fst  -- really only need `i` in scope
+      body' <- materializeAtom $ nSubst (iv @> L i, scope) body
+      return $ NAtoms [body']
+    ~[x] <- emit ans
+    return x
+  NLam _ _ _ -> error $ "Can't materialize lambda"
+  _ -> return atom
+
 runEmbedT :: Monad m => CatT NEmbedEnv m a -> NEmbedScope -> m (a, NEmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
 
 runEmbed :: Cat NEmbedEnv a -> NEmbedScope -> (a, NEmbedEnv)
 runEmbed m scope = runCat m (scope, [])
 
--- TODO: `(x,y) = e; (x,y)` --> `e`  optimization
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
@@ -144,11 +159,6 @@ nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
   where scope = fmap (const ()) (freeVars i)
 nGet e i = NGet e i
-
-wrapAtomicFor :: NBinder -> [NBinder] -> NAtom -> NAtom
-wrapAtomicFor b@(i:>_) bs atom = NAtomicFor b atom'
-  where atom' = nSubst (env, mempty) atom
-        env = foldMap (\(v:>_) -> v @> L (NGet (NVar v) (NVar i))) bs
 
 zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
 zeroAt (NBaseType RealType) = return $ NLit (RealLit 0.0)
