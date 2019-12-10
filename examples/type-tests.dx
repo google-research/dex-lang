@@ -31,9 +31,9 @@
 >
 > (((?_6 -> ?_4) -> (?_6 -> ?_4)), (lam f::(?_6 -> ?_4) . (lam x::?_6 . (f x))))
 
-:t id :: a -> a
-   id x = x
-   id (id) (id 1)
+:t myid :: a -> a
+   myid x = x
+   myid (myid) (myid 1)
 > Int
 
 :t _, N = unpack range 10

@@ -143,21 +143,21 @@ generalization. For example, although we can write this:
 
 'It's an error to write this:
 
-:typed id x = x
-       id 1
+:typed myid x = x
+       myid 1
 > Type error:Ambiguous type variables: [?_3]
 >
-> (id::(?_3 -> ?_3), (lam x::?_3 . x))
+> (myid::(?_3 -> ?_3), (lam x::?_3 . x))
 
 'Instead, we have to give the type explicitly:
 
-:typed id :: a -> a
-       id x = x
+:typed myid :: a -> a
+       myid x = x
        ..
-       id 1
-> (id :: A a. (a -> a)
-> id = (lam x::a . x);
-> (id @Int 1))
+       myid 1
+> (myid :: A a. (a -> a)
+> myid = (lam x::a . x);
+> (myid @Int 1))
 
 'The motivation for this choice is a bit subtle. It's related to the reasons for
 Haskell's ("dreaded") monomorphism restriction: automatic let generalization can
@@ -167,12 +167,12 @@ index sets as types.
 
 'In the explicitly typed IR, polymorphism is represented by functions which
 take types as arguments. Explicit types are supplied at call sites, as in
-`id @Int 1` above. This type application is available (but optional) in the
+`myid @Int 1` above. This type application is available (but optional) in the
 source language too.
 
-:p id :: a -> a
-   id x = x
-   id @Int 1
+:p myid :: a -> a
+   myid x = x
+   myid @Int 1
 > 1
 
 'Generally, a design goal has been to make sure that all
