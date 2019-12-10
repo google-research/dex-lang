@@ -53,28 +53,34 @@ toImp dests expr = case expr of
     (bs, bound', env) <- toImpDecl decl
     body' <- extendR env $ toImp dests body
     return $ wrapAllocs bs $ bound' <> body'
-  NScan b@(_:>n) bs xs body -> do
-    ~([i:>_], idxEnv ) <- toImpBinders [b]
+  NScan ib@(_:>n) bs xs body -> do
+    ~([i:>_], idxEnv ) <- toImpBinders [ib]
     xs' <- mapM toImpAtom xs
     n' <- typeToSize n
-    let carryEnv = fold $ zipWith (\(v:>_) d -> v @> destAsIExpr d) bs carryDests
-    body' <- extendR (idxEnv <> (carryEnv, mempty)) $
-               toImp (carryDests <> map (indexDest (IVar i)) mapDests) $ body
-    return $ ImpProg $ zipWith copy carryDests xs' ++ [Loop i n' body']
-    where
-      (carryDests, mapDests) = splitAt (length bs) dests
+    bs' <- mapM toImpBinder bs
+    let (carryOutDests, mapDests) = splitAt (length bs) dests
+    let initProg = fold $ zipWith copy carryOutDests xs'
+    loopProg <- withAlloc bs' $ \carryTmpDests carryTmpVals -> do
+       let copyToTmp = fold $ zipWith copy carryTmpDests (map destAsIExpr carryOutDests)
+       body' <- extendR (idxEnv <> bindEnv bs' carryTmpVals) $
+         toImp (carryOutDests ++ map (indexDest (IVar i)) mapDests) $ body
+       return $ ImpProg [Loop i n' (copyToTmp <> body')]
+    return $ initProg <> loopProg
   NPrimOp b ts xs -> do
     ts' <- mapM toImpType (concat ts)
     xs' <- mapM toImpAtom xs
     return $ toImpPrimOp b dests ts' xs'
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
-    return $ ImpProg $ zipWith copy dests xs'
+    return $ fold $ zipWith copy dests xs'
   NTabCon _ _ rows -> do
     liftM fold $ zipWithM writeRow [0..] rows
     where writeRow i row = toImp (indexedDests i) row
           indexedDests i = map (indexDest (ILit (IntLit i))) dests
   NApp _ _ -> error "NApp should be gone by now"
+
+bindEnv :: [BinderP a] -> [IExpr] -> ImpEnv
+bindEnv bs xs = asFst $ fold $ zipWith (\(v:>_) x -> v @> x) bs xs
 
 toImpDecl :: NDecl -> ImpM ([IBinder], ImpProg, ImpEnv)
 toImpDecl decl = case decl of
@@ -98,6 +104,17 @@ toImpBinders bs = do
   return (zipWith (:>) vs' ts', env)
   where (vs, ts) = unzip [(v, t) | v:>t <- bs]
 
+toImpBinder :: NBinder -> ImpM IBinder
+toImpBinder (v:>ty) = liftM (v:>) (toImpType ty)
+
+withAlloc :: [IBinder] -> ([Dest] -> [IExpr] -> ImpM ImpProg) -> ImpM ImpProg
+withAlloc bs body = do
+  let (vs, ts) = unzip [(v, t) | v:>t <- bs]
+  (vs', scope) <- asks $ renames vs . snd
+  let bs' = zipWith (:>) vs' ts
+  prog <- extendR (asSnd scope) $ body (map asDest bs') (map IVar vs')
+  return $ wrapAllocs bs' prog
+
 toImpAtom :: NAtom -> ImpM IExpr
 toImpAtom atom = case atom of
   NLit x -> return $ ILit x
@@ -106,9 +123,9 @@ toImpAtom atom = case atom of
   _ -> error $ "Not implemented: " ++ pprint atom
 
 toImpPrimOp :: Builtin -> [Dest] -> [IType] -> [IExpr] -> ImpProg
-toImpPrimOp Range      (dest:_) _ [x] = ImpProg [copy dest x]
-toImpPrimOp IndexAsInt [dest]   _ [x] = ImpProg [copy dest x]
-toImpPrimOp IntAsIndex [dest]   _ [x] = ImpProg [copy dest x]  -- TODO: mod n
+toImpPrimOp Range      (dest:_) _ [x] = copy dest x
+toImpPrimOp IndexAsInt [dest]   _ [x] = copy dest x
+toImpPrimOp IntAsIndex [dest]   _ [x] = copy dest x  -- TODO: mod n
 toImpPrimOp Select dests ts (p:args) =
   fold $ [ImpProg [Update name idxs Select [t] [p,x,y]] |
            (x, y, (Buffer name idxs), t) <- zip4 xs ys dests ts]
@@ -159,8 +176,8 @@ wrapAllocs [] prog = prog
 wrapAllocs (b:bs) prog = ImpProg [Alloc b (wrapAllocs bs prog)]
 
 -- TODO: copy should probably take a type argument
-copy :: Dest -> IExpr -> Statement
-copy (Buffer v idxs) x = Update v idxs Copy [] [x]
+copy :: Dest -> IExpr -> ImpProg
+copy (Buffer v idxs) x = ImpProg [Update v idxs Copy [] [x]]
 
 intTy :: IType
 intTy = IType IntType []
