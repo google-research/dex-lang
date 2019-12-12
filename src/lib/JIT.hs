@@ -451,8 +451,7 @@ compileBuiltin b ts = case b of
   BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   FFICall _ name -> compileFFICall (fromString name) ts
-  Scan     -> error "Scan should have been lowered away by now."
-  _ -> error $ "Primop not implemented: " ++ pprint b
+  _ -> error $ "Can't JIT primop: " ++ pprint b
 
 mallocFun :: ExternFunSpec
 mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]

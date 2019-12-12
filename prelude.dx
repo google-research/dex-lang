@@ -98,11 +98,15 @@ floor x = %%floorDex(x)
 
 'Misc functions
 
-fst :: (a, b) -> a
+fst :: (a, b) --o a
 fst (x, y) = x
 
-snd :: (a, b) -> b
+snd :: (a, b) --o b
 snd (x, y) = y
+
+-- Hope to need this less with linearity polymoprhism
+asNonLin :: (a --o b) -> a -> b
+asNonLin f x = f x
 
 b2r :: Bool -> Real
 b2r x = real $ b2i x
@@ -132,7 +136,7 @@ zip :: n=>a -> n=>b -> n=>(a,b)
 zip xs ys = for i. (xs.i, ys.i)
 
 unzip :: n=>(a, b) -> (n=>a, n=>b)
-unzip xys = (map fst xys, map snd xys)
+unzip xys = (map (asNonLin fst) xys, map (asNonLin snd) xys)
 
 fanout :: A n a. a -> n=>a
 fanout x = for i. x
@@ -158,10 +162,16 @@ fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 scan' :: A n::Ix a::Data . a -> n=>(a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
 
+scanlin :: A n::Ix c::Data a b . ((c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
+scanlin f (c0, xs) = %scan(c0, for i. lam c. f (c, xs.i) )
+
+foldlin :: A n::Ix c::Data a . ((c, a) --o c) -> (c, n=>a) --o c
+foldlin f (c0, xs) = fst $ scanlin (llam (c,x). (f (c, x), ())) (c0, xs)
+
 'More misc functions
 
-sum :: n=>Real -> Real
-sum xs = fold 0.0 for i. x = xs.i; lam c. c + x
+sum :: n=>Real --o Real
+sum xs = foldlin (llam (c,x). c + x) (0.0, xs)
 
 isum :: n=>Int -> Int
 isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
@@ -173,7 +183,7 @@ size = isum for i::n. 1
 range :: Int -> E i. ()
 range n = %range(n)
 
-mean :: A n. n=>Real -> Real
+mean :: A n. n=>Real --o Real
 mean xs = sum xs / real (size @n)
 
 std :: A n. n=>Real -> Real

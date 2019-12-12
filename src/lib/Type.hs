@@ -82,12 +82,26 @@ getType' expr = case expr of
                             zipWithM_ checkClassConstraints kinds ts
           return $ instantiateTVs ts body
         _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+    PrimOp Scan ~ts@[cTy, yTy, n] ~[x, fs] -> do
+      let (For ip (Lam _ p body)) = stripSrcAnnot fs
+      whenChecking $ do
+          mapM_ checkTy ts
+          zipWithM_ checkClassConstraints [isData, noCon, idxSet] ts
+          (xTy, xSpent) <- scoped $ recur x
+          let env = foldMap (asEnv mempty) ip <> foldMap (asEnv xSpent) p
+          (bodyTy, bodySpent) <- scoped $ extendTyEnv env $ recur body
+          assertEq cTy xTy "Scan carry"
+          assertEq (pair cTy yTy) bodyTy "Scan body"
+          case spendCart xSpent bodySpent of
+            Nothing -> throwCartErr [xSpent, bodySpent]
+            Just s  -> extend s
+      return $ pair cTy (n==>yTy)
     PrimOp b ts args -> do
       whenChecking $ do
           mapM_ checkTy ts
           zipWithM_ checkClassConstraints kinds ts
-          argTys'' <- liftM2 (++) (checkNothingSpent $ traverse recur nlArgs)
-                                  (traverseProd k recur linArgs)
+          argTys'' <- liftM2 (++) (traverseProd k recur linArgs)
+                                  (checkNothingSpent $ traverse recur nlArgs)
           assertEq argTys' argTys'' "Builtin"
       return ansTy'
       where
@@ -273,8 +287,9 @@ builtinType builtin = case builtin of
   Todo     -> nonLinBuiltin [noCon] [] a
   NewtypeCast -> nonLinBuiltin [noCon, noCon] [a] b
   Copy     -> nonLinBuiltin [noCon] [a] a
+  -- This is only used for inference. Scan is handled specially wrt linearity.
   Scan     -> nonLinBuiltin [isData, noCon, idxSet]
-                          [a, k ==> (a --> pair a b)] (pair a (k==>b))
+                [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> nonLinBuiltin [idxSet] [i] int
   IntAsIndex -> nonLinBuiltin [idxSet] [int] i
   Range    -> nonLinBuiltin [] [int] (Exists unitTy)
@@ -306,8 +321,10 @@ builtinType builtin = case builtin of
     int  = BaseType IntType
     real = BaseType RealType
     bool = BaseType BoolType
-    pair x y = RecType Cart (Tup [x, y])
     nonLinBuiltin kinds argTys ansTy = BuiltinType kinds (0, Cart) argTys ansTy
+
+pair :: Type -> Type -> Type
+pair x y = RecType Cart (Tup [x, y])
 
 instantiateTVs :: [Type] -> Type -> Type
 instantiateTVs vs x = subAtDepth 0 sub x
@@ -443,12 +460,16 @@ getNType expr = case expr of
   NScan b@(_:>i) bs xs body -> do
     checkNBinder b
     let carryTys = map binderAnn bs
-    xs' <- atomTypes xs
     mapM_ checkNBinder bs
+    (xs', xsSpent) <- scoped $ atomTypes xs
     assertEq carryTys xs' "Scan arg"
-    bodyTys <- extendR (nBinderEnv mempty (b:bs)) (getNType body)
+    let env = nBinderEnv xsSpent bs <> nBinderEnv mempty [b]
+    (bodyTys, bodySpent) <- scoped $ extendR env (getNType body)
     let (carryTys', outTys) = splitAt (length bs) bodyTys
     assertEq carryTys carryTys' "Scan output"
+    case spendCart xsSpent bodySpent of
+      Nothing -> throwCartErr [xsSpent, bodySpent]
+      Just s  -> extend s
     return $ carryTys ++ map (NTabType i) outTys
   NPrimOp Todo ~[ts] _ -> do
     mapM_ checkNTy ts
@@ -596,9 +617,7 @@ tangentBunType ty = case ty of
                           _ -> ty
   ArrType l a b -> ArrType l (recur a) (recur b)
   _ -> error $ "Don't know bundle type for: " ++ pprint ty
-  where
-    recur = tangentBunType
-    pair x y = RecType Cart $ Tup [x, y]
+  where recur = tangentBunType
 
 -- === utils for working with linearity ===
 
@@ -647,11 +666,14 @@ shareLinear actions = do
   (ys, spents) <- liftM unzip' $ traverse scoped actions
   case foldMaybe spendCart cartSpentId spents of
     Just spent' -> extend spent'
-    Nothing     -> throw LinErr $
-      "different consumption by Cartesian product elements: "
-          ++ pprint (toList spents)
+    Nothing     -> throwCartErr (toList spents)
   return ys
   where unzip' x = (fmap fst x, fmap snd x)
+
+throwCartErr :: MonadError Err m => [Spent] -> m ()
+throwCartErr spents = throw LinErr $
+                        "different consumption by Cartesian product elements: "
+                          ++ pprint (toList spents)
 
 spendTens :: Spent -> Spent -> Maybe Spent
 spendTens (Spent vs consumes) (Spent vs' consumes') = do
