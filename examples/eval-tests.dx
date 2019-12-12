@@ -322,7 +322,7 @@ myIntId x = x
 :p minimum [2.0, 3.0, 4.0, 1.5, 7.0]
 > 1.5
 
-:p minimumby fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p minimumby (asNonLin fst) [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (1.5, 15)
 
 :p max 2.0 3.0
@@ -334,5 +334,5 @@ myIntId x = x
 :p maximum [2.0, 4.0, 1.5, 7.0]
 > 7.0
 
-:p maximumby fst [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p maximumby (asNonLin fst) [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10.0, 100)
