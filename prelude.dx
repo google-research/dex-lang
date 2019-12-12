@@ -245,7 +245,7 @@ minby f x y = select ((f x) < (f y)) x y
 min :: Real -> Real -> Real
 min = minby id
 
-minimumby:: A p q::Data. (q->Real)->(p=>q)->q
+minimumby :: A p q::Data. (q->Real)->(p=>q)->q
 minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
 
 minimum:: A p. (p=>Real)->Real
