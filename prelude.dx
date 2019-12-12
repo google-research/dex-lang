@@ -243,7 +243,7 @@ minby :: A a::Data. (a->Real)->a->a->a
 minby f x y = select ((f x) < (f y)) x y
 
 min :: Real -> Real -> Real
-min x y = minby id x y
+min = minby id x y
 
 minimumby:: A p q::Data. (q->Real)->(p=>q)->q
 minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
@@ -251,7 +251,20 @@ minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
 minimum:: A p. (p=>Real)->Real
 minimum xs = minimumby id xs
 
+negf :: (a->Real) -> (a->Real)
+negf f x = -1.0 * (f x)
 
+maxby :: A a::Data. (a->Real)->a->a->a
+maxby f = minby (negf f)
+
+max :: Real -> Real -> Real
+max x y = maxby id x y
+
+maximumby:: A p q::Data. (q->Real)->(p=>q)->q
+maximumby f = minimumby (negf f)
+
+maximum:: A p. (p=>Real)->Real
+maximum xs = maximumby id xs
 
 'Vector spaces and automatic differentiation.
 
