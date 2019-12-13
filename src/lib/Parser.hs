@@ -131,7 +131,7 @@ letPolyTail s = do
   (tbs, ty) <- sigmaType
   declSep
   symbol s
-  wrap <- idxLhsArgs <|> lamLhsArgs (linearities ty)
+  wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
   rhs <- liftM wrap declOrExpr
   let (tvs, kinds) = unzip [(tv,k) | tv:>k <- tbs]
@@ -142,10 +142,6 @@ letPolyToMono :: UDecl -> UDecl
 letPolyToMono d = case d of
   LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> Ann ty) rhs
   _ -> d
-
-linearities :: Type -> [Lin]
-linearities (ArrType l _ b) = l:linearities b
-linearities _ = []
 
 unpack :: Parser UDecl
 unpack = do
@@ -160,7 +156,7 @@ unpack = do
 letMono :: Parser UDecl
 letMono = do
   (p, wrap) <- try $ do p <- pat
-                        wrap <- idxLhsArgs <|> lamLhsArgs []
+                        wrap <- idxLhsArgs <|> lamLhsArgs
                         equalSign
                         return (p, wrap)
   body <- declOrExpr
@@ -177,7 +173,6 @@ term =   parenExpr
      <|> idxLit
      <|> liftM Lit literal
      <|> lamExpr
-     <|> linlamExpr
      <|> forExpr
      <|> primOp
      <|> ffiCall
@@ -254,19 +249,12 @@ ffiCall = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser UExpr
 lamExpr = do
-  symbol "lam"
+  multAnn <-    (symbol "lam"  >> return NoAnn)
+            <|> (symbol "llam" >> return (Ann (Mult Lin)))
   ps <- pat `sepBy` sc
   argTerm
   body <- declOrExpr
-  return $ foldr (Lam NonLin) body ps
-
-linlamExpr :: Parser UExpr
-linlamExpr = do
-  symbol "llam"
-  ps <- pat `sepBy` sc
-  argTerm
-  body <- declOrExpr
-  return $ foldr (Lam Lin) body ps
+  return $ foldr (Lam multAnn) body ps
 
 forExpr :: Parser UExpr
 forExpr = do
@@ -292,10 +280,10 @@ idxLhsArgs = do
   args <- pat `sepBy` period
   return $ \body -> foldr For body args
 
-lamLhsArgs :: [Lin] -> Parser (UExpr -> UExpr)
-lamLhsArgs lin = do
+lamLhsArgs :: Parser (UExpr -> UExpr)
+lamLhsArgs = do
   args <- pat `sepBy` sc
-  return $ \body -> foldr (uncurry Lam) body (zip (lin ++ repeat NonLin) args)
+  return $ \body -> foldr (Lam NoAnn) body args
 
 idxLit :: Parser UExpr
 idxLit = liftM2 (flip IdxLit) (try $ uint <* symbol "@") uint
@@ -457,8 +445,8 @@ tauType :: Parser Type
 tauType = makeExprParser (sc >> tauType') typeOps
   where
     typeOps = [ [InfixR (symbol "=>" >> return TabType)]
-              , [InfixR (symbol "->"  >> return (ArrType NonLin)),
-                 InfixR (symbol "--o" >> return (ArrType Lin))]]
+              , [InfixR (symbol "->"  >> return (ArrType (Mult NonLin))),
+                 InfixR (symbol "--o" >> return (ArrType (Mult Lin)))]]
 
 tauType' :: Parser Type
 tauType' =   parenTy

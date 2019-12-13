@@ -89,7 +89,7 @@ withBinders bs f = do
   return (ans, bs', env)
 
 buildNLam :: (MonadCat NEmbedEnv m) =>
-              Lin -> [NBinder] -> ([NAtom] -> m NExpr) -> m NAtom
+              Multiplicity -> [NBinder] -> ([NAtom] -> m NExpr) -> m NAtom
 buildNLam l bs f = do
   (body, bs', (_, decls)) <- withBinders bs f
   return $ NLam l bs' $ wrapNDecls decls body

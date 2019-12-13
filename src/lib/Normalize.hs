@@ -92,7 +92,7 @@ normalize expr = case expr of
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  Lam l p body -> do
+  Lam ~(Mult l) p body -> do
     (bs, toEnv) <- normalizePat p
     f <- buildNLam l bs $ \xs -> extendR (toEnv xs) (normalize body)
     return $ NAtoms [f]
@@ -165,7 +165,7 @@ normalizeTy :: Type -> NormM [NType]
 normalizeTy ty = case ty of
   BaseType b -> return [NBaseType b]
   TypeVar v -> asks $ fromT . (!v) . snd
-  ArrType l a b -> do
+  ArrType ~(Mult l) a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b
     return [NArrType l (toList a') (toList b')]
@@ -179,3 +179,4 @@ normalizeTy ty = case ty of
     return [NExists (toList body')]
   IdxSetLit x -> return [NIdxSetLit x]
   BoundTVar n -> return [NBoundTVar n]
+  Mult _      -> error "Shouldn't be normalizing multiplicity"

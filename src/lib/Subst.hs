@@ -46,9 +46,10 @@ instance Subst Expr where
         decl' = subst env decl
         (decl'', env') = substDeclEnv scope decl'
         body' = subst (env <> env') body
-    Lam l p body -> Lam l p'' body'
+    Lam l p body -> Lam l' p'' body'
       where
         p' = fmap (subst env) p
+        l' = recurTy l
         (p'', env') = renamePat scope p'
         body' = subst (env <> env') body
     App e1 e2 -> App (recur e1) (recur e2)
@@ -116,12 +117,13 @@ instance Subst Type where
         Nothing      -> ty
         Just (T ty') -> ty'
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
-    ArrType l a b -> ArrType l (recur a) (recur b)
+    ArrType l a b -> ArrType (recur l) (recur a) (recur b)
     TabType a b -> TabType (recur a) (recur b)
     RecType k r -> RecType k $ fmap recur r
     Exists body -> Exists (recur body)
     IdxSetLit _ -> ty
     BoundTVar _ -> ty
+    Mult _      -> ty
     where recur = subst env
 
 instance Subst SigmaType where

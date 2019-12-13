@@ -111,14 +111,14 @@ getType' expr = case expr of
     Decl decl body -> do
       env <- getTypeDecl decl
       extendTyEnv env (recur body)
-    Lam l p body -> do
+    Lam m p body -> do
       whenChecking $ checkTy (patType p) >> checkShadowPat p
       check <- asks checking
-      bodyTy <- case (l, check) of
-        (Lin, True) -> do v <- getPatName p
-                          checkSpent v (pprint p) $ recurWithP (asSpent v) p body
+      bodyTy <- case (m, check) of
+        (Mult Lin, True) -> do v <- getPatName p
+                               checkSpent v (pprint p) $ recurWithP (asSpent v) p body
         _ -> recurWithP mempty p body
-      return $ ArrType l (patType p) bodyTy
+      return $ ArrType m (patType p) bodyTy
     For p body -> do
       whenChecking $ do
           checkClassConstraint IdxSet (patType p)
@@ -126,7 +126,7 @@ getType' expr = case expr of
           checkShadowPat p
       liftM (TabType (patType p)) (recurWithP mempty p body)
     App e arg  -> do
-      ~(ArrType l a b) <- recur e
+      ~(ArrType (Mult l) a b) <- recur e
       whenChecking $ do
           a' <- case l of Lin    ->                     recur arg
                           NonLin -> checkNothingSpent $ recur arg
@@ -350,12 +350,13 @@ subAtDepth :: Int -> (Int -> Either Name Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
-    ArrType l a b -> ArrType l (recur a) (recur b)
+    ArrType m a b -> ArrType (recur m) (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType k r   -> RecType k (fmap recur r)
     Exists body   -> Exists (recurWith 1 body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
+    Mult _        -> ty
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
 
@@ -576,12 +577,14 @@ typeToNTypes :: Type -> [NType]
 typeToNTypes ty = case ty of
   BaseType b  -> [NBaseType b]
   TypeVar v   -> [NTypeVar v]
-  ArrType l a b -> [NArrType l (recur a) (recur b)]
+  ArrType (Mult l) a b -> [NArrType l (recur a) (recur b)]
+  ArrType _ _ _ -> error "Should only have concrete multiplicity left"
   TabType a b -> map (NTabType (head (recur a))) (recur b)
   RecType _ r -> foldMap recur r
   Exists body -> [NExists (toList (recur body))]
   BoundTVar n -> [NBoundTVar n]
   IdxSetLit n -> [NIdxSetLit n]
+  Mult _      -> error "Can't convert multiplicity to type"
   where recur = typeToNTypes
 
 nTypeToType :: NType -> Type
@@ -589,8 +592,8 @@ nTypeToType ty = case ty of
   NBaseType b -> BaseType b
   NTypeVar v -> TypeVar v
   NIdxSetLit n -> IdxSetLit n
-  NArrType l a b -> ArrType l (RecType Cart (Tup (map recur a)))
-                              (RecType Cart (Tup (map recur b)))
+  NArrType l a b -> ArrType (Mult l) (RecType Cart (Tup (map recur a)))
+                                     (RecType Cart (Tup (map recur b)))
   NTabType a b -> TabType (recur a) (recur b)
   NExists _    -> error $ "NExists not implemented"    -- TODO
   NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO

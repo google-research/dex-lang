@@ -176,3 +176,68 @@
 
 :t llam x::Real. ()
 > (Real --o ())
+
+nonLinFun :: Real -> Real
+nonLinFun x = x
+
+linFun :: Real --o Real
+linFun x = x
+
+eatsLin :: (Real --o Real) -> Bool
+eatsLin f = True
+
+eatsNonLin :: (Real -> Real) -> Bool
+eatsNonLin f = True
+
+:t eatsLin linFun
+> Bool
+
+:t eatsLin nonLinFun
+> Type error:
+> Expected: (Real --o Real)
+>   Actual: (Real -> Real)
+> In: nonLinFun
+>
+> :t eatsLin nonLinFun
+>            ^^^^^^^^^
+
+:t eatsNonLin linFun
+> Type error:
+> Expected: (Real -> Real)
+>   Actual: (Real --o Real)
+> In: linFun
+>
+> :t eatsNonLin linFun
+>               ^^^^^^
+
+:t eatsNonLin nonLinFun
+> Bool
+
+:t eatsLin (lam x. linFun x)
+> Bool
+
+:t eatsLin (lam x. nonLinFun x)
+> Linearity error: nonlinear function consumed linear data: [x]
+>
+> :t eatsLin (lam x. nonLinFun x)
+>             ^^^^^^^^^^^^^^^^^^
+
+:t eatsNonLin (lam x. linFun x)
+> Bool
+
+:t eatsNonLin (lam x. nonLinFun x)
+> Bool
+
+:t lam f. (eatsLin f, eatsNonLin f)
+> Type error:
+> Expected: (Real -> Real)
+>   Actual: (Real --o Real)
+> In: f
+>
+> :t lam f. (eatsLin f, eatsNonLin f)
+>                                  ^
+
+-- Nonlinear because of defaulting rules
+:t f x = x + x
+   f
+> (Real -> Real)

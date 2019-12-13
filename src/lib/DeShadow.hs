@@ -173,6 +173,7 @@ deShadowType ty = case ty of
   Exists body -> liftM Exists $ recur body
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty
+  Mult      _ -> return ty
   where recur = deShadowType
 
 deShadowSigmaType :: SigmaType -> DeShadowM SigmaType

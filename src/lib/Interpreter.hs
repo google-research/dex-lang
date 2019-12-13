@@ -215,7 +215,7 @@ type DerivM a = ReaderT DEnv (CatT (Env Type, [Decl]) Identity) a
 
 runLinearize :: Binder -> Expr -> Val -> Val
 runLinearize (v:>ty) body x =
-  pair outPrimal $ Lam Lin (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
+  pair outPrimal $ Lam (Mult Lin) (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
   where
     t = "t" :: Name
     env = v @> (ty, makeDual ty x (Var t []))
@@ -277,7 +277,7 @@ linearize expr = case expr of
   Get e i -> do
     e' <- linearize e
     return $ idxTabCon e' (reduce i)
-  Lam NonLin _ _ -> do
+  Lam (Mult NonLin) _ _ -> do
     env <- ask
     return $ makeClosure env expr
   RecCon k r -> liftM (RecCon k) (traverse linearize r)

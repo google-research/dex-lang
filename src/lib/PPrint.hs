@@ -60,13 +60,16 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrType l a b -> parens $ recur a <+> arrStr l <+> recur b
+  ArrType (Mult l) a b -> parens $ recur a <+> arrStr l <+> recur b
+  ArrType m a b -> recur a <+> "--(" <> recur m <> ")" <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType Cart r -> p $ fmap (asStr . recur) r
   RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
   RecType Tens _ -> error "Not implemented"
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
+  Mult Lin    -> "Lin"
+  Mult NonLin -> "NonLin"
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
 
@@ -108,8 +111,9 @@ instance Pretty b => Pretty (ExprP b) where
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = tupled (map p xs)
     Decl decl body -> prettyDecl decl body
-    Lam l pat e    -> parens $ align $ group $ lamStr l <+> p pat <+> "."
-                        <> line <> align (p e)
+    -- TODO: show linearity annotations somehow
+    Lam _ pat e -> parens $ align $ group $ "lam" <+> p pat <+> "."
+                     <> line <> align (p e)
     App e1 e2    -> align $ parens $ group $ p e1 <+> p e2
     For b e      -> parens $ "for " <+> p b <+> "." <> nest 4 (hardline <> p e)
     Get e ie     -> p e <> "." <> p ie
@@ -210,13 +214,13 @@ instance Pretty NType where
     NExists tys -> "E" <> "." <> list (map p tys)
     NIdxSetLit i -> p i
 
-lamStr :: Lin -> Doc ann
+lamStr :: Multiplicity -> Doc ann
 lamStr NonLin = "lam"
-lamStr Lin = "llam"
+lamStr Lin    = "llam"
 
-arrStr :: Lin -> Doc ann
+arrStr :: Multiplicity -> Doc ann
 arrStr NonLin = "->"
-arrStr Lin = "--o"
+arrStr Lin    = "--o"
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x

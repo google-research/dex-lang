@@ -16,9 +16,9 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
                throw, throwIf, Kind (..), TyDefType (..),
-               addContext, addSrcContext,
+               addContext, addSrcContext, Lin, Multiplicity (..),
                FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
-               lhsVars, Size, unitTy, unitCon, Lin (..),
+               lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
                Value (..), Vec (..), Result (..), Result', freeVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
@@ -47,7 +47,7 @@ data ExprP b =
           | Var Name [Type]
           | PrimOp Builtin [Type] [ExprP b]
           | Decl (DeclP b) (ExprP b)
-          | Lam Lin (PatP b) (ExprP b)
+          | Lam b (PatP b) (ExprP b)
           | App (ExprP b) (ExprP b)
           | For (PatP b) (ExprP b)
           | Get (ExprP b) (ExprP b)
@@ -69,7 +69,6 @@ data TyDefType = TyAlias | NewType  deriving (Eq, Ord, Show, Generic)
 
 type PatP b = RecTree (BinderP b)
 
-data Lin = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
 data ProdKind = Cart | Tens  deriving (Eq, Ord, Show, Generic)
 
 data ClassName = Data | VSpace | IdxSet deriving (Eq, Ord, Show, Generic)
@@ -82,8 +81,12 @@ data Type = BaseType BaseType
           | RecType ProdKind (Record Type)
           | Exists Type
           | IdxSetLit IdxSetVal
+          | Mult Multiplicity
           | BoundTVar Int
              deriving (Eq, Ord, Show, Generic)
+
+type Lin = Type -- only TypeVar, BoundTVar and Mult constructors
+data Multiplicity = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
 
 data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show, Generic)
 data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show, Generic)
@@ -218,7 +221,7 @@ data NDecl = NLet [NBinder] NExpr
 data NAtom = NLit LitVal
            | NVar Name
            | NGet NAtom NAtom
-           | NLam Lin [NBinder] NExpr
+           | NLam Multiplicity [NBinder] NExpr
            -- Only used internally in the simplification pass as book-keeping
            -- for compile-time tables of functions etc.
            | NAtomicFor NBinder NAtom
@@ -226,7 +229,7 @@ data NAtom = NLit LitVal
 
 data NType = NBaseType BaseType
            | NTypeVar Name
-           | NArrType Lin [NType] [NType]
+           | NArrType Multiplicity [NType] [NType]
            | NTabType NType NType
            | NExists [NType]
            | NIdxSetLit IdxSetVal
@@ -346,10 +349,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-(-->) = ArrType NonLin
+(-->) = ArrType (Mult NonLin)
 
 (--@) :: Type -> Type -> Type
-(--@) = ArrType Lin
+(--@) = ArrType (Mult Lin)
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -414,6 +417,7 @@ instance HasVars Type where
     Exists body -> freeVars body
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
+    Mult      _ -> mempty
 
 instance HasVars SigmaType where
   freeVars (Forall _ body) = freeVars body

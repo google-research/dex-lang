@@ -120,14 +120,17 @@ check expr reqTy = case expr of
     (decl', env') <- inferDecl decl
     body' <- extendRSnd env' $ check body reqTy
     return $ Decl decl' body'
-  Lam l p body -> do
-    (a, b) <- splitFun expr reqTy
+  Lam mAnn p body -> do
+    m <- case mAnn of Ann ty -> return ty
+                      NoAnn  -> freshLin
+    (m', a, b) <- splitFun expr reqTy
+    constrainEq m m' (pprint expr)
     p' <- solveLocalMonomorphic $ checkPat p a
     body' <- extendRSnd (foldMap asEnv p') (check body b)
-    return $ Lam l p' body'
+    return $ Lam m p' body'
   App fexpr arg -> do
     (f, fexpr') <- infer fexpr
-    (a, b) <- splitFun fexpr f
+    (_, a, b) <- splitFun fexpr f
     arg' <- check arg a
     constrainReq b
     return $ App fexpr' arg'
@@ -203,20 +206,24 @@ annotPat :: MonadCat QVars m => UPat -> m Pat
 annotPat pat = traverse annotBinder pat
 
 annotBinder :: MonadCat QVars m => UBinder -> m Binder
-annotBinder (v:>ann) = liftM (v:>) $ case ann of NoAnn  -> freshQ
-                                                 Ann ty -> return ty
+annotBinder (v:>ann) = liftM (v:>) (fromAnn ann)
+
+fromAnn :: MonadCat QVars m => Ann -> m Type
+fromAnn (NoAnn)  = freshQ
+fromAnn (Ann ty) = return ty
 
 asEnv :: Binder -> TypeEnv
 asEnv (v:>ty) = v @> L (asSigma ty)
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
-splitFun :: UExpr -> Type -> InferM (Type, Type)
+splitFun :: UExpr -> Type -> InferM (Type, Type, Type)
 splitFun expr f = case f of
-  ArrType _ a b -> return (a, b)
+  ArrType m a b -> return (m, a, b)
   _ -> do a <- freshQ
           b <- freshQ
-          constrainEq f (a --> b) (pprint expr)
-          return (a, b)
+          m <- freshLin
+          constrainEq f (ArrType m a b) (pprint expr)
+          return (m, a, b)
 
 splitTab :: UExpr -> Type -> InferM (IdxSet, Type)
 splitTab expr t = case t of
@@ -229,6 +236,13 @@ splitTab expr t = case t of
 freshQ :: MonadCat QVars m => m Type
 freshQ = do
   tv <- looks $ rename "?"
+  extend $ tv @> ()
+  return (TypeVar tv)
+
+-- TODO: use typeclasses annotations instead of distinguishing multiplicity vars like this
+freshLin :: MonadCat QVars m => m Type
+freshLin = do
+  tv <- looks $ rename "*"
   extend $ tv @> ()
   return (TypeVar tv)
 
@@ -252,16 +266,22 @@ solveLocal m = do
   ((ans, freshQs), cs) <- captureW $ scoped m
   (s, cs') <- liftEither $ solvePartial freshQs cs
   tell $ cs'
-  let freshQs' = freshQs `envDiff` s
-      unconstrained = freshQs' `envDiff` fold [freeTyVars t1 <> freeTyVars t2
-                                                | Constraint t1 t2 _ _ <- cs']
+  let freshQs' = freshQs `envDiff` fromTSubst s
+  let unconstrained = freshQs' `envDiff` fold [freeTyVars t1 <> freeTyVars t2
+                                               | Constraint t1 t2 _ _ <- cs']
   extend $ freshQs' `envDiff` unconstrained
-  return (applySubst s ans, envNames unconstrained)
+  let (s', unconstrained') = defaultLinearSubst unconstrained
+  return (applySubst (s <> s') ans, envNames unconstrained')
 
-solvePartial :: QVars -> [Constraint] -> Except (Env Type, [Constraint])
+defaultLinearSubst :: QVars -> (TSubst, QVars)
+defaultLinearSubst vs = (TSubst s, vs `envDiff` s)
+  where multVars = filter isMult (envNames vs)
+        s = foldMap (@> Mult NonLin) multVars
+
+solvePartial :: QVars -> [Constraint] -> Except (TSubst, [Constraint])
 solvePartial qs cs = do
   s <- solve cs
-  return (envIntersect qs s, substAsConstraints (s `envDiff` qs))
+  return (TSubst (envIntersect qs s), substAsConstraints (s `envDiff` qs))
   where
     -- We lost the source context when we solved this the first time
     -- TODO: add context to subst
@@ -284,7 +304,7 @@ solve cs = do
                ++ "\nIn: "       ++ s
       unify err t1' t2'
 
-newtype TSubst = TSubst (Env Type)
+newtype TSubst = TSubst { fromTSubst :: Env Type }
 type SolveM a = CatT TSubst (Either Err) a
 
 -- TODO: check kinds
@@ -296,7 +316,7 @@ unify err t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, TypeVar v) | isQ v -> bindQ v t
     (TypeVar v, t) | isQ v -> bindQ v t
-    (ArrType _ a b, ArrType _ a' b') -> recur a a' >> recur b b'
+    (ArrType l a b, ArrType l' a' b') -> recur l l' >> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
     (Exists t, Exists t')        -> recur t t'
     (RecType k r, RecType k' r') | k == k' ->
@@ -307,9 +327,16 @@ unify err t1 t2 = do
   where
     recur = unify err
 
+-- TODO: something a little less hacky
 isQ :: Name -> Bool
 isQ (Name tag _) = case tagToStr tag of
   '?':_ -> True
+  '*':_ -> True
+  _     -> False
+
+isMult :: Name -> Bool
+isMult (Name tag _) = case tagToStr tag of
+  '*':_ -> True
   _     -> False
 
 bindQ :: Name -> Type -> SolveM ()
@@ -321,13 +348,13 @@ occursIn v t = v `isin` freeTyVars t
 
 zonk :: Type -> SolveM Type
 zonk ty = do
-  TSubst s <- look
+  s <- look
   return $ applySubst s ty
 
 instance Semigroup TSubst where
   -- TODO: make concatenation more efficient by maintaining a reverse-lookup map
   TSubst s1 <> TSubst s2 = TSubst (s1' <> s2)
-    where s1' = fmap (applySubst s2) s1
+    where s1' = fmap (applySubst (TSubst s2)) s1
 
 instance Monoid TSubst where
   mempty = TSubst mempty
@@ -338,8 +365,8 @@ instance Monoid TSubst where
 freeTyVars :: Type -> Env ()
 freeTyVars ty = fmap (const ()) (freeVars ty)
 
-applySubst :: Subst a => Env Type -> a -> a
-applySubst s x = subst (fmap T s, mempty) x
+applySubst :: Subst a => TSubst -> a -> a
+applySubst (TSubst s) x = subst (fmap T s, mempty) x
 
 extendRSnd :: (Monoid env, MonadReader (b, env) m) => env -> m a -> m a
 extendRSnd env m = local (\(x, env') -> (x, env' <> env)) m

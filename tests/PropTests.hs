@@ -9,7 +9,6 @@
 import Control.Monad
 import qualified Hedgehog as H
 import Control.Monad.Reader
-import GHC.Stack
 import qualified Data.Map.Strict as M
 
 import Syntax hiding (Result)

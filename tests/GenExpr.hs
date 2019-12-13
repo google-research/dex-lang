@@ -21,12 +21,10 @@ import Lens.Micro.Platform
 import Data.Text.Prettyprint.Doc
 import Data.String
 
-
 import Record
 import Env
 import Syntax
 import PPrint
-
 
 testSample :: (Pretty a) => TypeEnv -> GenM a -> Range.Size -> IO ()
 testSample env m s =
@@ -196,7 +194,7 @@ genTreeType = Gen.choice [
     ]
   where
       sub = small genType
-      arr = liftM2 (ArrType NonLin) sub sub
+      arr = liftM2 (ArrType (Mult NonLin)) sub sub
 
 
 genType :: GenM Type
@@ -275,7 +273,7 @@ genLam :: Type -> Type -> GenM UExpr
 genLam a b = do
     (pat, env) <- genPatP Ann a
     body <- withBindings env (genExpr b)
-    return (Lam NonLin pat body)
+    return (Lam (Ann (Mult NonLin)) pat body)
 
 
 -- table
@@ -315,7 +313,7 @@ genGet ty = do
 genApp :: Type -> GenM UExpr
 genApp ty = do
     argty <- small (preferReturnType ty genType)
-    fun <- small (genExpr (ArrType NonLin argty ty))
+    fun <- small (genExpr (ArrType (Mult NonLin) argty ty))
     arg <- small (genExpr argty)
     return (App fun arg)
 
