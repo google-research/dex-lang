@@ -3,7 +3,7 @@
 ' ## Fitness function
 
 rosenbrock:: Real -> Real -> Real
-rosenbrock x y = sq (1.0 - x) + 10000.0*sq (y - x*x) 
+rosenbrock x y = sq (1.0 - x) + 80.0*sq (y - x*x)
 
 
 ' We write one that uses vector for input
@@ -44,7 +44,7 @@ minby:: A a::Data. (a->Real)->a->a->a
 minby f x y = [x,y].(asidx $ b2i $ (f x) > (f y))
 
 minby sq -1.0 0.5
-minby fst (0.7, 1000.0) (3.0, 12.0)
+minby (asNonLin fst) (0.7, 8.0) (3.0, 12.0)
 
 
 minimumby:: A p q::Data. (q->Real)->(p=>q)->q
@@ -56,9 +56,8 @@ minimumby sq [-1.0, -0.1, 2.0, 3.0]
 ' ## The Optimizer itself.
 ### TODO:
  - workout how to pass `nparticles` and `niters` in as a variable
-     - Currrently hardcoded as 1000 and 200 respectively
+     - Currrently hardcoded as 50 and 140 respectively
  - workout more compact way to define type sig
-
 
 
 optimize:: Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
@@ -68,23 +67,29 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
         gWeight::Real = gRate * rand keyG
         pWeight::Real = pRate * rand keyP
         (gscore, gloc) = gbest
-        plocs = map snd pbests
-        gDirs::(1000=>d=>Real) = for p i. gloc.i - positions.p.i
-        pDirs::(1000=>d=>Real) = for p i. plocs.p.i - positions.p.i
-        newVelocities::(1000=>d=>Real) = for p i. momentum*velocities.p.i + gWeight*gDirs.p.i + pWeight*gDirs.p.i
-        newPositions::(1000=>d=>Real) = for p i. positions.p.i + velocities.p.i
-        newPbests::(1000=>(Real, d=>Real)) = for p. minby fst pbests.p (f newPositions.p, newPositions.p)
-        newGbest::(Real, d=>Real) = minby fst gbest (minimumby fst newPbests)
+        plocs = map (asNonLin snd) pbests
+        gDirs::(50=>d=>Real) =
+            for p i. gloc.i - positions.p.i
+        pDirs::(50=>d=>Real) =
+            for p i. plocs.p.i - positions.p.i
+        newVelocities::(50=>d=>Real) =
+            for p i. momentum*velocities.p.i + gWeight*gDirs.p.i + pWeight*gDirs.p.i
+        newPositions::(50=>d=>Real) =
+            for p i. positions.p.i + velocities.p.i
+        newPbests::(50=>(Real, d=>Real)) =
+            for p. minby (asNonLin fst) pbests.p (f newPositions.p, newPositions.p)
+        newGbest::(Real, d=>Real) =
+            minby (asNonLin fst) gbest (minimumby (asNonLin fst) newPbests)
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 keyI1 = randBounded keyI1 lb ub
-    randInit keyI = for p::1000. randInit1 $ ixkey keyI p
+    randInit keyI = for p::50. randInit1 $ ixkey keyI p
     (keyPos, keyVel, keyLoop) = splitKey3 key
-    initPositions::(1000=>d=>Real) = randInit keyPos
-    initVelocities::(1000=>d=>Real) = randInit keyVel
-    initPs::(1000=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p) 
-    initG::(Real, d=>Real) = minimumby fst initPs
+    initPositions::(50=>d=>Real) = randInit keyPos
+    initVelocities::(50=>d=>Real) = randInit keyVel
+    initPs::(50=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
+    initG::(Real, d=>Real) = minimumby (asNonLin fst) initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
-    res = fold inits (for iter::200. optStep)
+    res = fold inits (for iter::140. optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
