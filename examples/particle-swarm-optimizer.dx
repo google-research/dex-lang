@@ -52,6 +52,13 @@ minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
 
 minimumby sq [-1.0, -0.1, 2.0, 3.0]
 
+' ### Rand helpers
+
+ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 x i = ixkey $ ixkey x i
+
+:p k = newKey 0
+   for i::2 j::3. sq $ randn (ixkey2 k i j)
 
 ' ## The Optimizer itself.
 ### TODO:
@@ -60,27 +67,33 @@ minimumby sq [-1.0, -0.1, 2.0, 3.0]
  - workout more compact way to define type sig
 
 
+
 optimize:: Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
 optimize key f (lb,ub) (momentum,gRate,pRate) =
     optStep (keyL, gbest, pbests,positions,velocities) =
-        (keyG, keyP, keyNext) = splitKey3 keyL
-        gWeight::Real = gRate * rand keyG
-        pWeight::Real = pRate * rand keyP
-        (gscore, gloc) = gbest
-        plocs = map (asNonLin snd) pbests
-        gDirs::(50=>d=>Real) =
-            for p i. gloc.i - positions.p.i
-        pDirs::(50=>d=>Real) =
-            for p i. plocs.p.i - positions.p.i
-        newVelocities::(50=>d=>Real) =
-            for p i. momentum*velocities.p.i + gWeight*gDirs.p.i + pWeight*gDirs.p.i
-        newPositions::(50=>d=>Real) =
-            for p i. positions.p.i + velocities.p.i
-        newPbests::(50=>(Real, d=>Real)) =
-            for p. minby (asNonLin fst) pbests.p (f newPositions.p, newPositions.p)
+        .. -- prepare stuff for this step
+        newPositions::(50=>d=>Real) = for p i. 
+            positions.p.i + velocities.p.i
+        newPbests::(50=>(Real, d=>Real)) = for p. 
+            minby (asNonLin fst) pbests.p (f newPositions.p, newPositions.p)
         newGbest::(Real, d=>Real) =
             minby (asNonLin fst) gbest (minimumby (asNonLin fst) newPbests)
+        .. -- prepare stuff for next step
+        (keyG, keyP, keyNext) = splitKey3 keyL
+        (gscore, gloc) = gbest
+        plocs = map (asNonLin snd) pbests
+        gVel::(50=>d=>Real) = for p i.
+            weight = rand $ (ixkey2 keyG p i)
+            dir = gloc.i - positions.p.i
+            weight * dir
+        pVel::(50=>d=>Real) = for p i. 
+            weight = rand $ (ixkey2 keyP p i)
+            dir = plocs.p.i - positions.p.i
+            weight * dir
+        newVelocities::(50=>d=>Real) = for p i.
+            momentum*velocities.p.i + gRate*gVel.p.i + pRate*gVel.p.i
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
+    .. -- Initialize
     randInit1 keyI1 = randBounded keyI1 lb ub
     randInit keyI = for p::50. randInit1 $ ixkey keyI p
     (keyPos, keyVel, keyLoop) = splitKey3 key
@@ -89,11 +102,16 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
     initPs::(50=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
     initG::(Real, d=>Real) = minimumby (asNonLin fst) initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
+    .. -- Run the loop
     res = fold inits (for iter::140. optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
-:p optimize (newKey 1) rosenbrock2 ([-1.0, -1.0],[2.0, 2.0]) (0.5,0.3,0.4)
+:p optimize ..
+    (newKey 0) .. -- random seed
+    rosenbrock2 .. -- function to optimize
+    ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
+    (0.5,0.3,0.4) -- momentum/pRate/gRate
 
 
 
