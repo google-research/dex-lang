@@ -10,8 +10,8 @@ rosenbrock x y = sq (1.0 - x) + 80.0*sq (y - x*x)
 
 rosenbrock2:: (2=>Real) -> Real
 rosenbrock2 xs =
-  x = xs.(asidx 0)
-  y = xs.(asidx 1)
+  x = xs.(0@2)
+  y = xs.(1@2)
   rosenbrock x y
 
 
@@ -46,20 +46,6 @@ randBounded key lb ub =
 
 randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
 
-' ### minby and minimumby
-to find the smallest values
-
-minby:: A a::Data. (a->Real)->a->a->a
-minby f x y = [x,y].(asidx $ b2i $ (f x) > (f y))
-
-minby sq -1.0 0.5
-minby (asNonLin fst) (0.7, 8.0) (3.0, 12.0)
-
-
-minimumby:: A p q::Data. (q->Real)->(p=>q)->q
-minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
-
-minimumby sq [-1.0, -0.1, 2.0, 3.0]
 
 ' ## The Optimizer itself.
 ### TODO:
@@ -113,7 +99,6 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
     rosenbrock2 .. -- function to optimize
     ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
     (0.5,0.3,0.4) -- momentum/pRate/gRate
-
 
 
 
