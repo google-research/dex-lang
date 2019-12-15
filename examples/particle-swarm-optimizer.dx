@@ -29,6 +29,15 @@ rosenbrock2 xs =
 
 ' ## Helper functions
 
+' ### Rand helpers
+like `ixkey` but takes 2 index to use as keys
+
+ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 x i = ixkey $ ixkey x i
+
+:p k = newKey 0
+   for i::2 j::3. sq $ randn (ixkey2 k i j)
+
 ' make a random vector unifornly distrubuted between lb and ub
 
 randBounded:: Key -> (d=>Real)->(d=>Real)->(d=>Real)
@@ -37,8 +46,8 @@ randBounded key lb ub =
 
 randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
 
-' minby and minimumby
-' to find the smallest values
+' ### minby and minimumby
+to find the smallest values
 
 minby:: A a::Data. (a->Real)->a->a->a
 minby f x y = [x,y].(asidx $ b2i $ (f x) > (f y))
@@ -51,14 +60,6 @@ minimumby:: A p q::Data. (q->Real)->(p=>q)->q
 minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
 
 minimumby sq [-1.0, -0.1, 2.0, 3.0]
-
-' ### Rand helpers
-
-ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
-ixkey2 x i = ixkey $ ixkey x i
-
-:p k = newKey 0
-   for i::2 j::3. sq $ randn (ixkey2 k i j)
 
 ' ## The Optimizer itself.
 ### TODO:
