@@ -85,6 +85,7 @@ normalize expr = case expr of
     if a' == b'
       then normalize x
       else error $ "Can't cast " ++ pprint a' ++ " to " ++ pprint b'
+  -- TODO: expand functions like `==` over nonscalars
   PrimOp b ts xs -> do
     ts' <- mapM normalizeTy ts
     xs' <- liftM concat $ mapM atomize xs

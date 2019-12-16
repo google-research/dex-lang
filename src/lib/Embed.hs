@@ -199,3 +199,15 @@ div' x y = emitOneAtom $ NPrimOp FDiv [] [x, y]
 
 emitOneAtom :: MonadCat NEmbedEnv m => NExpr -> m NAtom
 emitOneAtom expr = liftM head $ emit expr
+
+type NAtomProd = NAtom  -- the thing we're trying to zip/fold over
+
+embedZipWith :: MonadCat NEmbedEnv m
+                  => (NType -> NAtom -> NAtom -> m NAtom)
+                  -> [NType] -> [NAtomProd] -> [NAtomProd] -> m [NAtomProd]
+embedZipWith f ty x y = undefined
+
+embedFold :: MonadCat NEmbedEnv m
+               => (NType -> NAtom -> [NAtom] -> m [NAtom])
+               -> NType -> NAtomProd -> [NAtom] -> m [NAtom]
+embedFold f ty initCarry xs = undefined

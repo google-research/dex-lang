@@ -27,7 +27,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
-               RuleAnn (..), DeclAnn (..)
+               RuleAnn (..), DeclAnn (..), CmpOp (..)
                ) where
 
 import Record
@@ -126,20 +126,22 @@ data BaseType = IntType | BoolType | RealType | StrType
                    deriving (Eq, Ord, Show, Generic)
 
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
-             | FLT | FGT | ILT | IGT | Pow | IntToReal | BoolToInt
+             | Cmp CmpOp | Pow | IntToReal | BoolToInt
              | And | Or | Not
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
                 deriving (Eq, Ord, Generic)
 
+data CmpOp = Less | Greater | Equal  deriving (Eq, Ord, Show, Generic)
+
 builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
   ("iadd", IAdd), ("isub", ISub), ("imul", IMul),
   ("fadd", FAdd), ("fsub", FSub), ("fmul", FMul),
   ("fdiv", FDiv), ("fneg", FNeg), ("pow", Pow), ("rem", Rem),
-  ("fgt", FLT), ("flt", FGT), ("igt", ILT), ("ilt", IGT),
   ("and", And), ("or", Or), ("not", Not),
+  ("lt", Cmp Less), ("gt", Cmp Greater), ("eq", Cmp Equal),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("linearize", Linearize), ("linearTranspose", Transpose),

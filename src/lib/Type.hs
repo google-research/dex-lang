@@ -271,16 +271,13 @@ builtinType builtin = case builtin of
   ISub     -> ibinOpType
   IMul     -> ibinOpType
   Rem      -> ibinOpType
-  ILT      -> nonLinBuiltin [] [int, int] bool
-  IGT      -> nonLinBuiltin [] [int, int] bool
+  Cmp _    -> nonLinBuiltin [isData] [a, a] bool
   Pow      -> ibinOpType
   FAdd     -> BuiltinType [] (2, Cart) [real, real] real
   FSub     -> BuiltinType [] (2, Cart) [real, real] real
   FMul     -> BuiltinType [] (2, Tens) [real, real] real
   FDiv     -> BuiltinType [] (1, Cart) [real, real] real
   FNeg     -> BuiltinType [] (1, Cart) [real] real
-  FLT      -> nonLinBuiltin [] [real, real] bool
-  FGT      -> nonLinBuiltin [] [real, real] bool
   And      -> BuiltinType [] (0, Cart) [bool, bool] bool
   Or       -> BuiltinType [] (0, Cart) [bool, bool] bool
   Not      -> BuiltinType [] (0, Cart) [bool] bool

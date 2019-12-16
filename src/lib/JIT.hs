@@ -15,8 +15,8 @@ import qualified LLVM.AST.CallingConvention as L
 import qualified LLVM.AST.Type as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
-import qualified LLVM.AST.IntegerPredicate as L
 import qualified LLVM.AST.FloatingPointPredicate as L
+import qualified LLVM.AST.IntegerPredicate as L
 
 import Control.Monad
 import Control.Monad.State.Strict
@@ -400,10 +400,23 @@ compileUnop ty makeInstr [ScalarVal x _] =
   liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) (makeInstr x)
 compileUnop _ _ xs = error $ "Bad args: " ++ show xs
 
-compileFCmp :: L.FloatingPointPredicate -> [CompileVal] -> CompileM CompileVal
-compileFCmp p ~[ScalarVal x _, ScalarVal y _] = do
-  boolResult <- evalInstr "" (L.IntegerType 1) (L.FCmp p x y [])
-  intResult <- evalInstr "" boolTy (L.ZExt boolResult boolTy [])
+compileCmp :: IType -> CmpOp -> CompileVal -> CompileVal -> CompileM CompileVal
+compileCmp ty op ~(ScalarVal x _) ~(ScalarVal y _) = case ty of
+  IType RealType [] ->
+    evalInstr "" (L.IntegerType 1) (L.FCmp p x y []) >>= extendOneBit
+    where p = case op of Less    -> L.OLT
+                         Greater -> L.OGT
+                         Equal   -> L.OEQ
+  IType IntType [] ->
+    evalInstr "" (L.IntegerType 1) (L.ICmp p x y []) >>= extendOneBit
+    where p = case op of Less    -> L.SLT
+                         Greater -> L.SGT
+                         Equal   -> L.EQ
+  _ -> error $ "Can't compile comparison of type: " ++ pprint ty
+
+extendOneBit :: Operand -> CompileM CompileVal
+extendOneBit x = do
+  intResult <- evalInstr "" boolTy (L.ZExt x boolTy [])
   return $ ScalarVal intResult BoolType
 
 compileFFICall :: Tag -> [IType] -> [CompileVal] -> CompileM CompileVal
@@ -439,8 +452,7 @@ compileBuiltin b ts = case b of
   FSub     -> compileBinop RealType (\x y -> L.FSub L.noFastMathFlags x y [])
   FMul     -> compileBinop RealType (\x y -> L.FMul L.noFastMathFlags x y [])
   FDiv     -> compileBinop RealType (\x y -> L.FDiv L.noFastMathFlags x y [])
-  FLT      -> compileFCmp L.OLT
-  FGT      -> compileFCmp L.OGT
+  Cmp cmp  -> \(~[x, y]) -> compileCmp (head ts) cmp x y
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
   FNeg     -> compileUnop  RealType (\x -> L.FSub L.noFastMathFlags (litReal 0.0) x [])
   And      -> compileBinop BoolType (\x y -> L.And x y [])

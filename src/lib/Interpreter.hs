@@ -145,10 +145,10 @@ evalOp FMul _ xs = realBinOp (*) xs
 evalOp FDiv _ xs = realBinOp (/) xs
 evalOp FNeg _ ~[Lit (RealLit x)] = Lit $ RealLit $ - x
 evalOp BoolToInt _ ~[Lit (BoolLit x)] = Lit $ IntLit (if x then 1 else 0)
-evalOp FLT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x < fromRealLit y
-evalOp FGT _ ~[x, y] = Lit $ BoolLit $ fromRealLit x > fromRealLit y
-evalOp ILT _ ~[x, y] = Lit $ BoolLit $ fromIntLit  x < fromIntLit  y
-evalOp IGT _ ~[x, y] = Lit $ BoolLit $ fromIntLit  x > fromIntLit  y
+evalOp (Cmp cmp) [BaseType RealType] ~[x, y] = Lit $ BoolLit $ evalCmp cmp (fromRealLit x) (fromRealLit y)
+evalOp (Cmp cmp) [BaseType IntType ] ~[x, y] = Lit $ BoolLit $ evalCmp cmp (fromIntLit  x) (fromIntLit  y)
+evalOp (Cmp cmp) [IdxSetLit _      ] ~[x, y] = Lit $ BoolLit $ evalCmp cmp (idxToInt    x) (idxToInt    y)
+
 evalOp And _ ~[Lit (BoolLit x),  Lit (BoolLit y)] = Lit $ BoolLit $ x && y
 evalOp Or  _ ~[Lit (BoolLit x),  Lit (BoolLit y)] = Lit $ BoolLit $ x || y
 evalOp Not _ ~[Lit (BoolLit x)]                   = Lit $ BoolLit $ not x
@@ -182,6 +182,11 @@ asFun f x = reduce (App f x)
 exTable :: Type -> [Expr] -> Expr
 exTable ty xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
   where exTy = Exists $ TabType (BoundTVar 0) ty
+
+evalCmp :: Ord a => CmpOp -> a -> a -> Bool
+evalCmp Less    x y = x < y
+evalCmp Greater x y = x > y
+evalCmp Equal   x y = x == y
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val
 intBinOp op [Lit (IntLit x), Lit (IntLit y)] = Lit $ IntLit $ op x y

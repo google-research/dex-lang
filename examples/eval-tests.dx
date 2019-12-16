@@ -336,3 +336,12 @@ myIntId x = x
 
 :p maximumby (asNonLin fst) [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10.0, 100)
+
+:p (1 == 2, -1 == -1, 1 < 2, -1 < 2, 2 < -1)
+> (False, True, True, True, False)
+
+:p (1. == 2., -1. == -1., 1. < 2., -1. < 2., 2. < -1.)
+> (False, True, True, True, False)
+
+:p for i::7. select (i < 3@7) 1 2
+> [1, 1, 1, 2, 2, 2, 2]
