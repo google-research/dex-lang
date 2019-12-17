@@ -411,6 +411,17 @@ transpose expr cts = case expr of
     xs' <- mapM substNonLin xs
     cts' <- transposeBuiltin b tys xs' cts
     sequence_ [transposeAtom x ct | (x, Just ct) <- zip xs cts']
+  NScan ib [] [] e -> do
+    ib' <- substTranspose ib
+    linVars <- asks fst
+    let (envVs, envTys) = unzip $ envPairs $ freeVars e `envIntersect` linVars
+    initCarries <- mapM zeroAt envTys  -- TODO: need to subst type?
+    let carryBinders = zipWith (:>) envVs envTys
+    transposed <- buildNScan ib' carryBinders initCarries $ \i accums -> do
+      ((), cts') <- extractCTs carryBinders $ transpose e $ map (flip nGet i) cts
+      liftM NAtoms $ sequence $ zipWith3 addAt envTys accums cts'
+    cts' <- emit transposed
+    zipWithM_ emitCT envVs cts'
   NDecl (NLet bs bound) body -> do
     maybeExpr <- substNonLin bound
     case maybeExpr of
@@ -428,21 +439,42 @@ isLin :: HasVars a => a -> TransposeM Bool
 isLin x = do linVs <- asks fst
              return $ not $ null $ toList $ envIntersect (freeVars x) linVs
 
+emitCT :: Name -> NAtom -> TransposeM ()
+emitCT v ct = tell $ MonMap $ M.singleton v [ct]
+
 substNonLin ::  (HasVars a, NSubst a) => a -> TransposeM (Maybe a)
 substNonLin x = do
-  x' <- do
-    env <- asks snd
-    scope <- looks fst
-    return $ nSubst (env, fmap (const ()) scope) x
+  x' <- substTranspose x
   lin <- isLin x'
   if lin then return Nothing
          else return (Just x')
 
+substTranspose :: NSubst a => a -> TransposeM a
+substTranspose x = do
+  env <- asks snd
+  scope <- looks fst
+  return $ nSubst (env, fmap (const ()) scope) x
+
 transposeAtom :: NAtom -> NAtom -> TransposeM ()
 transposeAtom atom ct = case atom of
   NLit _ -> return ()
-  NVar v -> tell $ MonMap $ M.singleton v [ct]
+  NVar v -> emitCT v ct
+  NGet x i -> do
+    i' <- substTranspose i
+    ct' <- oneHot i' ct
+    transposeAtom x ct'
   _ -> error $ "Can't transpose: " ++ pprint atom
+
+oneHot :: NAtom -> NAtom -> TransposeM NAtom
+oneHot i x = do
+  n   <- askAtomType i
+  xTy <- askAtomType x
+  zero <- zeroAt xTy
+  expr <- buildNScan ("i" :> n) [] [] $ \i' _ -> do
+    ~[eq] <- emit $ NPrimOp (Cmp Equal) [[n]] [i, i']
+    liftM NAtoms $ emit $ NPrimOp Select [[xTy]] [eq, x, zero]
+  ~[oneHotAtom] <- emit expr
+  return oneHotAtom
 
 transposeBuiltin :: MonadCat NEmbedEnv m =>
     Builtin -> [[NType]] -> [Maybe NAtom] -> [NAtom] -> m [Maybe NAtom]

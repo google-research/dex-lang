@@ -22,6 +22,7 @@ import Syntax
 import Cat
 import Type
 import Subst
+import PPrint
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
 type NEmbed = Cat NEmbedEnv
@@ -94,6 +95,9 @@ buildNLam l bs f = do
   (body, bs', (_, decls)) <- withBinders bs f
   return $ NLam l bs' $ wrapNDecls decls body
 
+buildNFor :: (MonadCat NEmbedEnv m) => NBinder -> (NAtom -> m NExpr) -> m NExpr
+buildNFor b f = buildNScan b [] [] $ \i _ -> f i
+
 buildNAtomicFor :: (MonadCat NEmbedEnv m) =>
                      NBinder -> (NAtom -> m NAtom) -> m NAtom
 buildNAtomicFor ib f = do
@@ -156,6 +160,9 @@ wrapNDecls [] expr = expr
 wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v']) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
 
+atomAsNExpr :: NAtom -> NExpr
+atomAsNExpr x = NAtoms [x]
+
 nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
   where scope = fmap (const ()) (freeVars i)
@@ -163,10 +170,22 @@ nGet e i = NGet e i
 
 zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
 zeroAt (NBaseType RealType) = return $ NLit (RealLit 0.0)
-zeroAt _ = error "Not implemented"
+-- TODO: is there a problem that we're emitting binders here?
+zeroAt (NTabType n a) = do
+  body <- zeroAt a
+  ans <- buildNFor ("_":>n) $ \_ -> return (atomAsNExpr body)
+  ~[ans'] <- emit ans
+  return ans'
+zeroAt ty = error $ "Zeros not implemented for " ++ pprint ty
 
-addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NExpr
-addAt (NBaseType RealType) x y = return $ NPrimOp FAdd [] [x, y]
+addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NAtom
+addAt (NBaseType RealType) x y = do
+  ~[ans] <- emit $ NPrimOp FAdd [] [x, y]
+  return ans
+addAt (NTabType n a) x y = do
+  ans <- buildNFor ("i":>n) $ \i -> liftM atomAsNExpr $ addAt a (nGet x i) (nGet y i)
+  ~[ans'] <- emit ans
+  return ans'
 addAt _ _ _ = error "Not implemented"
 
 sumAt :: MonadCat NEmbedEnv m => NType -> [NAtom] -> m NAtom
@@ -174,8 +193,7 @@ sumAt ty [] = zeroAt ty
 sumAt _ [x] = return x
 sumAt ty (x:xs) = do
   xsSum <- sumAt ty xs
-  ~[ans] <- addAt ty xsSum x >>= emit
-  return ans
+  addAt ty xsSum x
 
 sumsAt :: MonadCat NEmbedEnv m => [NType] -> [NExpr] -> m NExpr
 sumsAt tys xss = do
