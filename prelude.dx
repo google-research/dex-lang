@@ -166,16 +166,16 @@ fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
 scan' :: A n::Ix a::Data . a -> n=>(a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
 
-scanlin :: A n::Ix c::Data a b . ((c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
-scanlin f (c0, xs) = %scan(c0, for i. lam c. f (c, xs.i) )
+scanlin :: A n::Ix c::Data a b . (n =>((c,a) --o (c,b))) -> (c, n=>a) --o (c, n=>b)
+scanlin fs (c0, xs) = %scan(c0, for i. lam c. fs.i (c, xs.i) )
 
-foldlin :: A n::Ix c::Data a . ((c, a) --o c) -> (c, n=>a) --o c
-foldlin f (c0, xs) = fst $ scanlin (llam (c,x). (f (c, x), ())) (c0, xs)
+foldlin :: A n::Ix c::Data a . (n=>((c, a) --o c)) -> (c, n=>a) --o c
+foldlin fs (c0, xs) = fst $ scanlin (for i. llam (c,x). (fs.i (c, x), ())) (c0, xs)
 
 'More misc functions
 
 sum :: n=>Real --o Real
-sum xs = foldlin (llam (c,x). c + x) (0.0, xs)
+sum xs = foldlin (for _. llam (c,x). c + x) (0.0, xs)
 
 isum :: n=>Int -> Int
 isum xs = fold 0 for i. x = xs.i; lam c. iadd c x

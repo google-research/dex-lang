@@ -16,14 +16,16 @@ mat = for i j. rand (ixkey (ixkey k i) j)
 
 -- This should be O(N) but we're instantiating and adding zeros
 :flops transposeLinear (llam xs. for i. xs.i) (for i::N. 0.0)
+> %isub 2 N^1
 > %fadd 1 N^2
 > %eq 1 N^2
-> %copy 1  + 2 N^1 + 1 N^2
+> %copy 1  + 5 N^1 + 1 N^2
 > %select 1 N^2
 
 -- This should be O(NM) but we're instantiating and adding zeros
 :flops transposeLinear (llam m. for i j. m.j.i) (for i::N j::M. 0.0)
+> %isub 2 M^1 N^1 + 2 N^1
 > %fadd 1 M^1 N^2 + 1 M^2 N^2
 > %eq 1 M^1 N^2 + 1 M^2 N^1
-> %copy 1  + 2 M^1 N^1 + 2 M^1 N^2 + 2 M^2 N^2 + 2 N^1
+> %copy 1  + 5 M^1 N^1 + 2 M^1 N^2 + 2 M^2 N^2 + 5 N^1
 > %select 1 M^1 N^2 + 1 M^2 N^1

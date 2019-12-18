@@ -12,3 +12,4 @@ garbage.hs
 stack.yaml.lock
 *.pyc
 doc/
+scratch.dx

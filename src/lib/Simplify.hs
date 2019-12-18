@@ -411,17 +411,28 @@ transpose expr cts = case expr of
     xs' <- mapM substNonLin xs
     cts' <- transposeBuiltin b tys xs' cts
     sequence_ [transposeAtom x ct | (x, Just ct) <- zip xs cts']
-  NScan ib [] [] e -> do
+  NScan ib bs xs e -> do
     ib' <- substTranspose ib
     linVars <- asks fst
+    let (carryCTs, ysCTs) = splitCarry cts
     let (envVs, envTys) = unzip $ envPairs $ freeVars e `envIntersect` linVars
-    initCarries <- mapM zeroAt envTys  -- TODO: need to subst type?
-    let carryBinders = zipWith (:>) envVs envTys
-    transposed <- buildNScan ib' carryBinders initCarries $ \i accums -> do
-      ((), cts') <- extractCTs carryBinders $ transpose e $ map (flip nGet i) cts
-      liftM NAtoms $ sequence $ zipWith3 addAt envTys accums cts'
+    initAccum <- mapM zeroAt envTys  -- TODO: need to subst type?
+    let accumBinders = zipWith (:>) envVs envTys
+    let bs' = bs ++ accumBinders
+    let xs' = carryCTs ++ initAccum
+    transposed <- buildNScan ("i":> binderAnn ib') bs' xs' $ \i c -> do
+      i' <- flipIdx i
+      let (carryCTsIn, accumIn) = splitCarry c
+      ((), cts') <- extractCTs bs' $ extendR (bindFold bs, bindEnv [ib] [i']) $
+                        transpose e $ carryCTsIn ++ map (flip nGet i') ysCTs
+      let (carryCTsOut, ysCTs') = splitCarry cts'
+      accumOut <- sequence $ zipWith3 addAt envTys accumIn ysCTs'
+      return $ NAtoms $ carryCTsOut ++ accumOut
     cts' <- emit transposed
-    zipWithM_ emitCT envVs cts'
+    let (carryCTs', ysCTs') = splitCarry cts'
+    zipWithM_ emitCT envVs ysCTs'
+    zipWithM_ transposeAtom xs carryCTs'
+    where splitCarry = splitAt (length bs)
   NDecl (NLet bs bound) body -> do
     maybeExpr <- substNonLin bound
     case maybeExpr of

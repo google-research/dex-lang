@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType, askAtomType,
-              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet,
+              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, flipIdx,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
               emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div') where
 
@@ -144,8 +144,7 @@ materializeAtom atom = case atom of
       scope <- liftM (fmap (const ())) $ looks fst  -- really only need `i` in scope
       body' <- materializeAtom $ nSubst (iv @> L i, scope) body
       return $ NAtoms [body']
-    ~[x] <- emit ans
-    return x
+    emitOneAtom ans
   NLam _ _ _ -> error $ "Can't materialize lambda"
   _ -> return atom
 
@@ -168,24 +167,33 @@ nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
   where scope = fmap (const ()) (freeVars i)
 nGet e i = NGet e i
 
+flipIdx :: MonadCat NEmbedEnv m => NAtom -> m NAtom
+flipIdx i = do
+  n <- askAtomType i
+  iInt  <- emitOneAtom $ NPrimOp IndexAsInt [[n]] [i]
+  nInt  <- emitOneAtom $ NPrimOp IdxSetSize [[n]] []
+  nInt' <- isub nInt (NLit (IntLit 1))
+  iFlipped <- isub nInt' iInt
+  emitOneAtom $ NPrimOp IntAsIndex [[n]] [iFlipped]
+
+isub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+isub x y = emitOneAtom $ NPrimOp ISub [] [x, y]
+
 zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
 zeroAt (NBaseType RealType) = return $ NLit (RealLit 0.0)
 -- TODO: is there a problem that we're emitting binders here?
 zeroAt (NTabType n a) = do
   body <- zeroAt a
   ans <- buildNFor ("_":>n) $ \_ -> return (atomAsNExpr body)
-  ~[ans'] <- emit ans
-  return ans'
+  emitOneAtom ans
 zeroAt ty = error $ "Zeros not implemented for " ++ pprint ty
 
 addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NAtom
 addAt (NBaseType RealType) x y = do
-  ~[ans] <- emit $ NPrimOp FAdd [] [x, y]
-  return ans
+  emitOneAtom $ NPrimOp FAdd [] [x, y]
 addAt (NTabType n a) x y = do
   ans <- buildNFor ("i":>n) $ \i -> liftM atomAsNExpr $ addAt a (nGet x i) (nGet y i)
-  ~[ans'] <- emit ans
-  return ans'
+  emitOneAtom ans
 addAt _ _ _ = error "Not implemented"
 
 sumAt :: MonadCat NEmbedEnv m => NType -> [NAtom] -> m NAtom
