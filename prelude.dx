@@ -182,7 +182,7 @@ isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
 
 -- TODO: make this a builtin for efficiency
 size :: A n::Ix. Int
-size = isum for i::n. 1
+size = %idxSetSize(@n)
 
 range :: Int -> E i. ()
 range n = %range(n)

@@ -156,6 +156,7 @@ evalOp Range _ ~[x] = Pack unitCon (IdxSetLit (fromIntLit x)) (Exists unitTy)
 evalOp Select _ ~[Lit (BoolLit p), x, y] = if p then x else y
 evalOp IndexAsInt _ ~[x] = Lit (IntLit (idxToInt x))
 evalOp IntAsIndex ~[ty] ~[Lit (IntLit x)] = intToIdx ty x
+evalOp IdxSetSize ~[IdxSetLit n] _ = Lit $ IntLit n
 evalOp IntToReal _ ~[Lit (IntLit x)] = Lit (RealLit (fromIntegral x))
 evalOp NewtypeCast _ ~[x] = x
 evalOp Filter _  ~[f, TabCon (TabType _ ty) xs] =

@@ -129,7 +129,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Cmp CmpOp | Pow | IntToReal | BoolToInt
              | And | Or | Not
              | Range | Scan | Copy | Linearize | Transpose
-             | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex
+             | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
                 deriving (Eq, Ord, Generic)
 
@@ -144,6 +144,7 @@ builtinNames = M.fromList [
   ("lt", Cmp Less), ("gt", Cmp Greater), ("eq", Cmp Equal),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
+  ("idxSetSize", IdxSetSize),
   ("linearize", Linearize), ("linearTranspose", Transpose),
   ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),

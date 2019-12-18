@@ -66,6 +66,10 @@ toImp dests expr = case expr of
          toImp (carryOutDests ++ map (indexDest (IVar i)) mapDests) $ body
        return $ ImpProg [Loop i n' (copyToTmp <> body')]
     return $ initProg <> loopProg
+  NPrimOp IdxSetSize [[n]] _ -> do
+    n' <- typeToSize n
+    let [dest] = dests
+    return $ copy dest n'
   NPrimOp b ts xs -> do
     ts' <- mapM toImpType (concat ts)
     xs' <- mapM toImpAtom xs

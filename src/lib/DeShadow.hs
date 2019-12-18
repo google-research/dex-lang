@@ -62,8 +62,7 @@ deShadowExpr expr = case expr of
     v' <- lookupLVar v
     tys' <- mapM deShadowType tys
     return $ Var v' tys'
-  PrimOp b [] args -> liftM (PrimOp b []) (traverse recur args)
-  PrimOp _ ts _ -> error $ "Unexpected type args to primop " ++ pprint ts
+  PrimOp b ts args -> liftM2 (PrimOp b) (mapM deShadowType ts) (traverse recur args)
   Decl decl body ->
     withCat (deShadowDecl decl) $ \decl' -> do
       body' <- recur body

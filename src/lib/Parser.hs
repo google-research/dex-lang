@@ -215,7 +215,10 @@ prod1 p = do
                              Tens -> colon
 
 var :: Parser UExpr
-var = liftM2 Var lowerName $ many (symbol "@" >> tauTypeAtomic)
+var = liftM2 Var lowerName $ many tyArg
+
+tyArg :: Parser Type
+tyArg = symbol "@" >> tauTypeAtomic
 
 declExpr :: Parser UExpr
 declExpr = liftM2 Decl (decl <* declSep) declOrExpr
@@ -236,8 +239,11 @@ primOp = do
   b <- case M.lookup s builtinNames of
     Just b -> return b
     Nothing -> fail $ "Unexpected builtin: " ++ s
-  args <- parens $ expr `sepBy` comma
-  return $ PrimOp b [] args
+  symbol "("
+  tyArgs <- tyArg `sepBy` comma
+  args   <- expr  `sepBy` comma
+  symbol ")"
+  return $ PrimOp b tyArgs args
 
 ffiCall :: Parser UExpr
 ffiCall = do

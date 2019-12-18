@@ -289,6 +289,7 @@ builtinType builtin = case builtin of
                 [a, k ==> (a --> pair a b)] (pair a (k==>b))
   IndexAsInt -> nonLinBuiltin [idxSet] [i] int
   IntAsIndex -> nonLinBuiltin [idxSet] [int] i
+  IdxSetSize -> nonLinBuiltin [idxSet] [] int
   Range    -> nonLinBuiltin [] [int] (Exists unitTy)
   BoolToInt -> nonLinBuiltin [] [bool] int
   IntToReal -> nonLinBuiltin [] [int] real

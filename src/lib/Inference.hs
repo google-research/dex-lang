@@ -104,13 +104,14 @@ check expr reqTy = case expr of
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
     return $ Var v ts'
-  PrimOp b [] args -> do
+  PrimOp b ts args -> do
     let BuiltinType kinds _ argTys ansTy = builtinType b
-    vs <- mapM (const freshQ) kinds
+    vs <- mapM (const freshQ) (drop (length ts) kinds)
+    let ts' = ts ++ vs
     constrainReq (instantiateTVs vs ansTy)
-    let argTys' = map (instantiateTVs vs) argTys
+    let argTys' = map (instantiateTVs ts') argTys
     args' <- zipWithM check args argTys'
-    return $ PrimOp b vs args'
+    return $ PrimOp b ts' args'
   Decl decl@(Unpack _ tv _) body -> do
     (decl', env') <- inferDecl decl
     body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
@@ -174,7 +175,6 @@ check expr reqTy = case expr of
                                  ++ pprint i ++ " of " ++ pprint n
     constrainReq (IdxSetLit n)
     return $ IdxLit n i
-  _ -> error $ "Unexpected expression: " ++ show expr
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
 
