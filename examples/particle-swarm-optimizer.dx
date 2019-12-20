@@ -18,13 +18,16 @@ rosenbrock2 xs =
 ' Min should be at 1.0, 1.0
 
 :p rosenbrock 1.0 1.000
+> 0.0
 
 :p rosenbrock2 [1.0, 1.000]
+> 0.0
 
 :p rosenbrock 1.0 1.02
+> 3.2e-2
 
 :p rosenbrock2 [1.0, 1.02]
-
+> 3.2e-2
 
 
 ' ## Helper functions
@@ -37,31 +40,37 @@ ixkey2 x i = ixkey $ ixkey x i
 
 :p k = newKey 0
    for i::2 j::3. sq $ randn (ixkey2 k i j)
+> [[1.773118, 0.50770324, 7.503997e-2], [1.4671916, 5.4218978e-2, 0.5504309]]
 
-' make a random vector unifornly distrubuted between lb and ub
+
+' make a random vector uniformly distributed between `lb` and `ub`
 
 randBounded:: Key -> (d=>Real)->(d=>Real)->(d=>Real)
 randBounded key lb ub =
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
-randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
+:p randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
+> [-0.3510105, 1.4935503]
 
 
 ' ## The Optimizer itself.
-### TODO:
- - workout how to pass `nparticles` and `niters` in as a variable
-     - Currrently hardcoded as 50 and 140 respectively
- - workout more compact way to define type sig
+We have **arguments**:
+ - type explicit, `np::Ix`: number of particles
+ - type explicit, `niter::Ix`: number of iterations
+ - type: `d::Ix`: number of dimensions in the domain of `f`, i.e. the search space.
+ - `f::(d=>Real)->Real`: loss function being minimized.
+ - `(lb,ub)::(d=>Real,d=>Real)`: boundries of the space being searched
+ - `(momentum,gRate,pRate)::(Real,Real,Real)`: PSO hyper-parameters to control exploration vs exploitation.
 
+' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
-
-optimize:: Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
+optimize:: A np::Ix niter::Ix d::Ix. Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
 optimize key f (lb,ub) (momentum,gRate,pRate) =
     optStep (keyL, gbest, pbests,positions,velocities) =
         .. -- prepare stuff for this step
-        newPositions::(50=>d=>Real) = for p i. 
+        newPositions::(np=>d=>Real) = for p i. 
             positions.p.i + velocities.p.i
-        newPbests::(50=>(Real, d=>Real)) = for p. 
+        newPbests::(np=>(Real, d=>Real)) = for p. 
             minby (asNonLin fst) pbests.p (f newPositions.p, newPositions.p)
         newGbest::(Real, d=>Real) =
             minby (asNonLin fst) gbest (minimumby (asNonLin fst) newPbests)
@@ -69,37 +78,71 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
         (keyG, keyP, keyNext) = splitKey3 keyL
         (gscore, gloc) = gbest
         plocs = map (asNonLin snd) pbests
-        gVel::(50=>d=>Real) = for p i.
+        gVel::(np=>d=>Real) = for p i.
             weight = rand $ (ixkey2 keyG p i)
             dir = gloc.i - positions.p.i
             weight * dir
-        pVel::(50=>d=>Real) = for p i. 
+        pVel::(np=>d=>Real) = for p i. 
             weight = rand $ (ixkey2 keyP p i)
             dir = plocs.p.i - positions.p.i
             weight * dir
-        newVelocities::(50=>d=>Real) = for p i.
+        newVelocities::(np=>d=>Real) = for p i.
             momentum*velocities.p.i + gRate*gVel.p.i + pRate*gVel.p.i
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     .. -- Initialize
     randInit1 keyI1 = randBounded keyI1 lb ub
-    randInit keyI = for p::50. randInit1 $ ixkey keyI p
+    randInit keyI = for p::np. randInit1 $ ixkey keyI p
     (keyPos, keyVel, keyLoop) = splitKey3 key
-    initPositions::(50=>d=>Real) = randInit keyPos
-    initVelocities::(50=>d=>Real) = randInit keyVel
-    initPs::(50=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
+    initPositions::(np=>d=>Real) = randInit keyPos
+    initVelocities::(np=>d=>Real) = randInit keyVel
+    initPs::(np=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
     initG::(Real, d=>Real) = minimumby (asNonLin fst) initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
     .. -- Run the loop
-    res = fold inits (for iter::140. optStep)
+    res = fold inits (for iter::niter. optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
+' ---
+Lets see how it goes.  
+Run it for more iterations and result should improve.  
+Which it indeed does.
+
 :p optimize ..
+    @50 .. -- number of particles
+    @10 .. -- number of iterations
     (newKey 0) .. -- random seed
     rosenbrock2 .. -- function to optimize
     ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
     (0.5,0.3,0.4) -- momentum/pRate/gRate
+> [3.7902775, 14.911414]
 
 
+:p optimize ..
+    @50 .. -- number of particles
+    @20 .. -- number of iterations
+    (newKey 0) .. -- random seed
+    rosenbrock2 .. -- function to optimize
+    ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
+    (0.5,0.3,0.4) -- momentum/pRate/gRate
+> [1.737736, 3.1227164]
+
+:p optimize ..
+    @50 .. -- number of particles
+    @100 .. -- number of iterations
+    (newKey 0) .. -- random seed
+    rosenbrock2 .. -- function to optimize
+    ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
+    (0.5,0.3,0.4) -- momentum/pRate/gRate
+> [1.0062338, 1.0128839]
+
+:p optimize ..
+    @50 .. -- number of particles
+    @1000 .. -- number of iterations
+    (newKey 0) .. -- random seed
+    rosenbrock2 .. -- function to optimize
+    ([-10.0, -10.0],[20.0, 20.0]) .. -- bounds
+    (0.5,0.3,0.4) -- momentum/pRate/gRate
+> [1.0, 1.0]
 
 ' ---
