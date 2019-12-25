@@ -1,4 +1,4 @@
-' Neural Network
+' # Neural Network
 
 ' ## [FashionMNIST](https://github.com/zalandoresearch/fashion-mnist)
 Data constants generated on 2019-12-24T20:22:19.337 by  
@@ -15,7 +15,20 @@ Truncated to at most 100 items in the training or test sets
 
 ' ## Declare some helpers
 
+' ### Rand helpers
+like `ixkey` but takes 2 index to use as keys
+
+ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 x i = ixkey $ ixkey x i
+
+:p k = newKey 0
+   for i::2 j::3. sq $ randn (ixkey2 k i j)
+> [[1.773118, 0.50770324, 7.503997e-2], [1.4671916, 5.4218978e-2, 0.5504309]]
+
 ' ## Matrix Math
+We only need `matvecmul` not `matmul` because (in the future)
+the Dex compiler will optimize folding over `matvecmul` into efficient
+CPU cache / Accelerator friendly code.
 
 matvecmul:: (d=>n=>Real)->(n=>Real)->(d=>Real)
 matvecmul mat vec = for i.
@@ -41,3 +54,45 @@ sigmoid x = 1.0/(1.0 + exp (neg x))
 :p sigmoid -1000.0
 > 0.0
 
+' softmax, with overflow resistance
+
+softmax:: d=>Real->d=>Real
+softmax xs = ..
+    numer = for i. exp(xs.i - maximum(xs))
+    for i. numer.i / sum(numer)
+
+
+softmax [10000.0, 0.0]
+> [1.0, 0,.0]
+
+softmax [2.0, 2.0, 2.0, 2.0]
+> [0.25, 0.25, 0.25, 0.25]
+
+' ### Layers
+The type of a Dense layer is: `(d=>n=>Real, d=>Real)`.
+That is the weight matrix and the bias vector.
+
+initDense:: A n::Ix d::Ix. Key->(d=>n=>Real, d=>Real)
+initDense key = ..
+    (weightKey, biasKey) = splitKey key
+    weights = for x::d. for y::n.
+        0.1 * (randn $ ixkey2 weightKey x y)
+    biases = for y::d.
+        0.1 * (randn $ ixkey biasKey y)
+    (weights, biases)
+
+initDense @3 @2 (newKey 0)
+> ( [ [-1.6417312e-2, -0.11909912]
+> , [-1.777558e-2, 8.824792e-2]
+> , [0.12012412, 0.12777644] ]
+> , [0.12112768, 2.3284968e-2] )
+
+applyDense:: (d=>n=>Real, d=>Real) -> (n=>Real) -> (d=>Real)
+applyDense (w, b) z = for k::d.
+    (matvecmul w z).k + b.k
+
+
+layer1 = initDense @3 @2 (newKey 0)
+input1 = [1.0, 2.0, 3.0]
+applyDense layer1 input1
+> [2.863232e-2, 0.22663473]
