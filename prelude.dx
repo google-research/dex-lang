@@ -62,7 +62,7 @@ and :: Bool -> Bool -> Bool
 and x y = %and(x, y)
 
 or :: Bool -> Bool -> Bool
-or x y = %not(x, y)
+or x y = %or(x, y)
 
 -- `todo` is like `undefined` in Haskell
 todo :: a
