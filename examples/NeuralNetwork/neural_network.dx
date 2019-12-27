@@ -55,7 +55,10 @@ Truncated to at most 100 items in the training or test sets
 
 
 ' ---
-
+## Neural Network functions
+Note: all out activation and loss functions apply to vector,
+where that vector represents a single observation.
+e.g. binaryCrossEntropy takes in `1=>Real`.
 
 ' ### Activation Functions 
 
@@ -89,6 +92,24 @@ softmax [10000.0, 0.0]
 
 softmax [2.0, 2.0, 2.0, 2.0]
 > [0.25, 0.25, 0.25, 0.25]
+
+' ### Loss functions
+
+binaryCrossEntropy:: (1=>Real)->(1=>Real)->Real
+binaryCrossEntropy target output = ..
+    tar = target.(0@1)
+    out = output.(0@1)
+    eps = 0.000000000000001
+    comp x = 1.0 - x
+    fcrossent f = f(tar) * log(out + eps)
+    (fcrossent id) + (fcrossent comp)
+
+binaryCrossEntropy [1.0] [0.99]
+
+binaryCrossEntropy [1.0] [0.01]
+
+binaryCrossEntropy [0.01] [1.0]
+
 
 ' ### Layers
 The type of a Affine layer is: `(d=>n=>Real, d=>Real)`.
@@ -185,3 +206,8 @@ apply2Net (layer1, layer2) input =
 
 apply2Net xorNetParams [0.9, 0.1]
 
+(binaryCrossEntropy [1.0]) $ apply2Net xorNetParams [0.9, 0.1]
+
+' xorNetLoss:: 1=>Real -> -> Real
+
+grad (binaryCrossEntropy [1.0])
