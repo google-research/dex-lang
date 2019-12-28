@@ -318,7 +318,7 @@ appRule :: Operator Parser UExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
   where
-    opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "&&", "||", "=="]
+    opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
 
 postFixRule :: Operator Parser UExpr
 postFixRule = Postfix $ do
@@ -336,8 +336,12 @@ ops = [ [postFixRule, appRule]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
       -- trailing space after "-" to distinguish from negation
       , [binOpRule "+" FAdd, binOpRule "- " FSub]
-      , [binOpRule "<" (Cmp Less), binOpRule ">" (Cmp Greater),
-         binOpRule "==" (Cmp Equal)]
+      , [binOpRule "==" (Cmp Equal),
+         binOpRule "<=" (Cmp LessEqual),
+         binOpRule ">=" (Cmp GreaterEqual),
+         -- These "<" and ">" must come after "<=" and ">=" or parser will see ("<","=")
+         binOpRule "<" (Cmp Less), binOpRule ">" (Cmp Greater)
+        ]
       , [binOpRule "&&" And, binOpRule "||" Or]
       , [InfixR (symbol "$" >> return App)]
        ]
