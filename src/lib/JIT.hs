@@ -405,12 +405,16 @@ compileCmp ty op ~(ScalarVal x _) ~(ScalarVal y _) = case ty of
   IType RealType [] ->
     evalInstr "" (L.IntegerType 1) (L.FCmp p x y []) >>= extendOneBit
     where p = case op of Less    -> L.OLT
+                         LessEqual -> L.OLE
                          Greater -> L.OGT
+                         GreaterEqual -> L.OGE
                          Equal   -> L.OEQ
   IType IntType [] ->
     evalInstr "" (L.IntegerType 1) (L.ICmp p x y []) >>= extendOneBit
     where p = case op of Less    -> L.SLT
+                         LessEqual -> L.SLE
                          Greater -> L.SGT
+                         GreaterEqual -> L.SGE
                          Equal   -> L.EQ
   _ -> error $ "Can't compile comparison of type: " ++ pprint ty
 

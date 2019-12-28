@@ -186,7 +186,9 @@ exTable ty xs = Pack (TabCon ty xs) (IdxSetLit (length xs)) exTy
 
 evalCmp :: Ord a => CmpOp -> a -> a -> Bool
 evalCmp Less    x y = x < y
+evalCmp LessEqual    x y = x <= y
 evalCmp Greater x y = x > y
+evalCmp GreaterEqual x y = x >= y
 evalCmp Equal   x y = x == y
 
 intBinOp :: (Int -> Int -> Int) -> [Val] -> Val

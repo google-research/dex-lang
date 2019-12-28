@@ -133,7 +133,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
                 deriving (Eq, Ord, Generic)
 
-data CmpOp = Less | Greater | Equal  deriving (Eq, Ord, Show, Generic)
+data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
 
 builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
@@ -142,6 +142,7 @@ builtinNames = M.fromList [
   ("fdiv", FDiv), ("fneg", FNeg), ("pow", Pow), ("rem", Rem),
   ("and", And), ("or", Or), ("not", Not),
   ("lt", Cmp Less), ("gt", Cmp Greater), ("eq", Cmp Equal),
+  ("le", Cmp LessEqual), ("ge", Cmp GreaterEqual),
   ("scan", Scan), ("range", Range),
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("idxSetSize", IdxSetSize),
