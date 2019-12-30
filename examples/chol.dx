@@ -31,7 +31,7 @@ chol x = ..
   fold init fs
 
 
-' test
+' Helpers
 
 ixkey2:: A n::Ix m::Ix. Key -> n -> m -> Key
 ixkey2 x i = ixkey $ ixkey x i
@@ -48,7 +48,6 @@ vdot x y = sum for i. x.i * y.i
 mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
 mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
 
-a = for x::6. for y::6. (randn $ ixkey2 (newKey 1) x y)
 
 eyeLike:: n=>n=>Real -> n=>n=>Real
 eyeLike x = for i. for j.
@@ -56,9 +55,17 @@ eyeLike x = for i. for j.
 
 transpose::n=>m=>Real->m=>n=>Real
 transpose x = for i. for j. x.j.i
+
+mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
+mmadd x y = for i. for j. x.i.j + y.i.j
+
+' Test
+
+a = for x::6. for y::6. (randn $ ixkey2 (newKey 1) x y)
+
 psd = ..
     x = mmp a (transpose a)
-    for i. for j. x.i.j + (eyeLike x).i.j
+    mmadd x $ eyeLike x
 
 :p psd
 > [ [5.087431, -0.20368764, 1.0131348, 5.8492858e-2, -0.6204645, -0.9139846]
