@@ -34,7 +34,7 @@ libdex: cbits/libdex.so
 
 example-names = type-tests eval-tests shadow-tests annot-tests linear-tests ad-tests \
                 monad-tests lens-tests include-test mandelbrot mandelbrot pi sierpinsky \
-                regression brownian_motion
+                regression brownian_motion chol
 quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
