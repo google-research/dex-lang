@@ -1,23 +1,59 @@
-' Cholesky Factorization
+' # Cholesky Factorization
 https://en.wikipedia.org/wiki/Cholesky_decomposition
+
+' ## Helpers
+
+ixkey2:: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 x i = ixkey $ ixkey x i
+
+' ### Index checking
+
+inUpper:: A m::Ix. m -> m -> Bool
+inUpper i j = (asint i) < (asint j)
+
+inLower:: A m::Ix. m -> m -> Bool
+inLower i j = (asint i) > (asint j)
+
+inDiag:: A m::Ix. m -> m -> Bool
+inDiag i j = (asint i) == (asint j)
+
+' ### Matrix Math
+
+vdot :: n=>Real -> n=>Real -> Real
+vdot x y = sum for i. x.i * y.i
+
+
+mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
+
+
+eyeLike:: n=>n=>Real -> n=>n=>Real
+eyeLike x = for i. for j.
+  select (inDiag i j) 1.0 0.0
+
+transpose::n=>m=>Real->m=>n=>Real
+transpose x = for i. for j. x.j.i
+
+mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
+mmadd x y = for i. for j. x.i.j + y.i.j
+
+
+
+' ## Cholesky Algorithm
 
 chol :: (n=>n=>Real) -> (n=>n=>Real)
 chol x = ..
-  inUpper:: A m::Ix. m -> m -> Bool
-  inUpper i j = (asint i) < (asint j)
-  inLower:: A m::Ix. m -> m -> Bool
-  inLower i j = (asint i) > (asint j)
-  ..
-  diagOp r i = sqrt (x.i.i - sum for k::n. select ( inLower k i) (sq r.i.k) 0.0)
+  diagOp r i = 
+    innersum = sum for k::n. ..
+      select (inLower k i) (sq r.i.k) 0.0
+    sqrt (x.i.i - innersum)
   lowerOp r i j = 
     innersum = sum for k. ..
       select (inLower j k) (r.i.k * r.j.k) 0.0
     (x.i.j - innersum) / r.j.j
   ..
-  fs = ..
-  for outerrow::n. ..
-    lam r.
-    for i::n. ..
+  fs = for outerrow::n. ..
+    lam r. for i::n. ..
       select (inUpper i outerrow) ..
         (for j::n. r.i.j) .. -- copy 
         for j::n. ..
@@ -30,34 +66,6 @@ chol x = ..
   init = for i::n. for j::n. 0.0
   fold init fs
 
-
-' Helpers
-
-ixkey2:: A n::Ix m::Ix. Key -> n -> m -> Key
-ixkey2 x i = ixkey $ ixkey x i
-
-' ## Matrix Math
-
-' Vector-Vector dot product
-
-vdot :: n=>Real -> n=>Real -> Real
-vdot x y = sum for i. x.i * y.i
-
-' Matrix Matrix Product
-
-mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
-
-
-eyeLike:: n=>n=>Real -> n=>n=>Real
-eyeLike x = for i. for j.
-  select ((asint i) == (asint j)) 1.0 0.0
-
-transpose::n=>m=>Real->m=>n=>Real
-transpose x = for i. for j. x.j.i
-
-mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
-mmadd x y = for i. for j. x.i.j + y.i.j
 
 ' Test
 
