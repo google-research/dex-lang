@@ -128,6 +128,11 @@ input1 = [1.0, 2.0, 3.0]
 sigmoid $ applyAffine layer1 input1
 > [2.863232e-2, 0.22663473]
 
+
+nn x = sigmoid $ applyAffine layer1 x
+
+nn input1
+
 ' ## XOR Task
 
 xor:: Bool -> Bool -> Bool
@@ -198,14 +203,25 @@ apply2Net xorNetParams [0.9, 0.1]
 
 (binaryCrossEntropy [1.0]) $ apply2Net xorNetParams [0.9, 0.1]
 
-eval2NetLoss:: (oz=>Real->oz=>Real->Real) -> oz=>Real -> iz=>Real -> ((hz=>(iz=>Real), hz=>Real), (oz=>(hz=>Real), oz=>Real)) -> Real
-eval2NetLoss loss target input netParams = ..
-    loss target $ apply2Net netParams input
+loss2Net:: (oz=>Real->oz=>Real->Real) -> oz=>Real -> iz=>Real -> ((hz=>(iz=>Real), hz=>Real), (oz=>(hz=>Real), oz=>Real)) -> Real
+loss2Net lossf target input netParams = ..
+    lossf target $ apply2Net netParams input
 
-eval2NetLoss binaryCrossEntropy [1.0] [0.9, 0.1] xorNetParams 
+loss2Net binaryCrossEntropy [1.0] [0.9, 0.1] xorNetParams 
 
 xorLoss:: ((hz=>(2=>Real), hz=>Real), (1=>(hz=>Real), 1=>Real)) -> Real
-xorLoss = eval2NetLoss binaryCrossEntropy [1.0] [0.9, 0.1]
+xorLoss = loss2Net binaryCrossEntropy [1.0] [0.9, 0.1]
 
 
 grad xorLoss xorNetParams
+
+' ---
+
+fakeCrossEntropy:: (1=>Real)->(1=>Real)->Real
+fakeCrossEntropy target output = sum output
+
+fakeXorLoss:: ((hz=>(2=>Real), hz=>Real), (1=>(hz=>Real), 1=>Real)) -> Real
+fakeXorLoss = loss2Net fakeCrossEntropy [1.0] [0.9, 0.1]
+
+
+grad fakeXorLoss xorNetParams
