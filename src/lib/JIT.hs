@@ -434,7 +434,7 @@ compileFFICall name tys xs = do
     fromScalarIType ty = error $ "Not a scalar: " ++ pprint ty
     retTy:argTys = map fromScalarIType tys
     retTy':argTys' = map scalarTy (retTy:argTys)
-    f = ExternFunSpec (L.Name name) retTy' argTys'
+    f = ExternFunSpec (L.Name (fromString (tagToStr name))) retTy' argTys'
 
 compileSelect :: [IType] -> [CompileVal] -> CompileM CompileVal
 compileSelect ~[IType ty shape] ~[ScalarVal p _, x, y] = do

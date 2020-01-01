@@ -13,10 +13,9 @@ module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion, tagToStr,
             envLookupDefault, envDiff, envMapMaybe, fmapNames) where
 
-import Data.Char
 import Data.String
 import Data.Traversable
-import qualified Data.ByteString.Short as B
+import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
@@ -29,7 +28,7 @@ infixr 7 :>
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
 data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
-type Tag = B.ShortByteString
+type Tag = T.Text
 data BinderP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
 
 envLookup :: Env a -> Name -> Maybe a
@@ -149,4 +148,4 @@ instance IsString Name where
   fromString s = Name (fromString s) 0
 
 tagToStr :: Tag -> String
-tagToStr s = map (chr . fromEnum) (B.unpack s)
+tagToStr s = T.unpack s
