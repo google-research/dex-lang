@@ -134,6 +134,7 @@ instance RecTreeZip (RecTree a) where
     -- Symmetric alternative: recTreeZip x (RecLeaf x') = RecLeaf (x, x')
 
 instance Pretty a => Pretty (Record a) where
+  pretty (Tup [x]) = "(" <> pretty x <> ",)"
   pretty r = align $ tupled $ case r of
                Rec m  -> [pretty k <> "=" <> pretty v | (k,v) <- M.toList m]
                Tup xs -> map pretty xs -- TODO: add trailing comma to singleton tuple

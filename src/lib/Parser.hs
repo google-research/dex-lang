@@ -192,25 +192,24 @@ parenExpr = do
 
 productCon :: Parser UExpr
 productCon = do
-  (k, xs) <- prod expr
-  return $ case xs of
-    []  -> unitCon
-    [x] -> x
-    _   -> RecCon k (Tup xs)
+  ans <- prod expr
+  return $ case ans of
+    Left x -> x
+    Right (k, xs) -> RecCon k (Tup xs)
 
-prod :: Parser a -> Parser (ProdKind, [a])
-prod p = prod1 p <|> return (Cart, [])
+prod :: Parser a -> Parser (Either a (ProdKind, [a]))
+prod p = prod1 p <|> return (Right (Cart, []))
 
-prod1 :: Parser a -> Parser (ProdKind, [a])
+prod1 :: Parser a -> Parser (Either a (ProdKind, [a]))
 prod1 p = do
   x <- p
   sep <- optional $     (comma >> return Cart)
                     <|> (colon >> return Tens)
   case sep of
-    Nothing -> return (Cart, [x])
+    Nothing -> return $ Left x
     Just k -> do
-      xs <- p `sepBy` sep'
-      return (k, x:xs)
+      xs <- p `sepEndBy` sep'
+      return $ Right (k, x:xs)
       where sep' = case k of Cart -> comma
                              Tens -> colon
 
@@ -272,7 +271,7 @@ forExpr = do
 
 tabCon :: Parser UExpr
 tabCon = do
-  xs <- brackets $ expr `sepBy` comma
+  xs <- brackets $ (expr `sepEndBy` comma)
   return $ TabCon NoAnn xs
 
 pack :: Parser UExpr
@@ -362,10 +361,10 @@ pat =   parenPat
 
 parenPat :: Parser UPat
 parenPat = do
-  xs <- parens $ pat `sepBy` comma
-  return $ case xs of
-    [x] -> x
-    _   -> RecTree $ Tup xs
+  ans <- parens $ prod pat
+  return $ case ans of
+    Left x -> x
+    Right (_, xs) -> RecTree $ Tup xs
 
 intQualifier :: Parser Int
 intQualifier = do
@@ -475,10 +474,10 @@ idxSetLit = liftM IdxSetLit uint
 
 parenTy :: Parser Type
 parenTy = do
-  (k, xs) <- parens $ prod tauType
-  return $ case xs of
-    [ty] -> ty
-    _ -> RecType k $ Tup xs
+  ans <- parens $ prod tauType
+  return $ case ans of
+    Left ty -> ty
+    Right (k, xs) -> RecType k $ Tup xs
 
 existsType :: Parser Type
 existsType = do
