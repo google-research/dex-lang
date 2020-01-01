@@ -14,12 +14,12 @@
    isum (for i. x.i)
 > 45
 
-:p vdot :: n=>Real -> n=>Real -> Real
-   vdot x y = sum (for i. x.i * y.i * 2.0)
+:p vdot' :: n=>Real -> n=>Real -> Real
+   vdot' x y = sum (for i. x.i * y.i * 2.0)
    _, Nx = unpack range 3
    x = (iota) :: (Nx=>Int)
    y = map real x
-   vdot y y
+   vdot' y y
 > 10.0
 
 :p _, Nx = unpack range 3

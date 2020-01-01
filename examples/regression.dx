@@ -1,22 +1,5 @@
 '# Basis function regression
 
-'Some general linear algebra routines. These should probably live in the prelude.
-
-vdot :: n=>Real -> n=>Real -> Real
-vdot x y = sum for i. x.i * y.i
-
-mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
-
-mvp :: n=>m=>Real -> m=>Real -> n=>Real
-mvp m v = for i. vdot m.i v
-
-transpose :: n=>m=>Real -> m=>n=>Real
-transpose x = for i j. x.j.i
-
-inner :: n=>Real -> n=>m=>Real -> m=>Real -> Real
-inner x m y = sum for (i,j). x.i * m.i.j * y.j
-
 -- Conjugate gradients solver
 solve :: A M. M=>M=>Real -> M=>Real -> M=>Real
 solve mat b =

@@ -280,10 +280,10 @@ For example, adding two vectors of the same size:
 
 'Transposing an array
 
-:p transpose :: n=>m=>a -> m=>n=>a
-   transpose x = for i j. x.j.i
+:p myTranspose :: n=>m=>a -> m=>n=>a
+   myTranspose x = for i j. x.j.i
    ..
-   transpose [[1,2,3],[10,20,30]]
+   myTranspose [[1,2,3],[10,20,30]]
 > [[1, 10], [2, 20], [3, 30]]
 
 'Extracting the diagonal of a square array
