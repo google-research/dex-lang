@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Inference (typePass) where
+module Inference (typePass, inferExpr) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -57,10 +57,17 @@ typePass = TopPass $ \tdecl -> case tdecl of
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do
   env <- look
+  liftExceptTop $ runInferM env m
+
+runInferM :: TypeEnv -> InferM a -> Except a
+runInferM env m = do
   -- TODO: check returned qs and cs are empty
-  ((ans, _), _) <- liftExceptTop $ flip runCatT mempty $
-                        runWriterT $ flip runReaderT (Nothing, env) $ m
+  ((ans, _), _) <- flip runCatT mempty $
+                     runWriterT $ flip runReaderT (Nothing, env) $ m
   return ans
+
+inferExpr :: UExpr -> Except (Type, Expr)
+inferExpr expr = runInferM mempty $ solveLocalMonomorphic (infer expr)
 
 inferDecl :: UDecl -> InferM (Decl, TypeEnv)
 inferDecl decl = case decl of
@@ -108,7 +115,7 @@ check expr reqTy = case expr of
     let BuiltinType kinds _ argTys ansTy = builtinType b
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
-    constrainReq (instantiateTVs vs ansTy)
+    constrainReq (instantiateTVs ts' ansTy)
     let argTys' = map (instantiateTVs ts') argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b ts' args'

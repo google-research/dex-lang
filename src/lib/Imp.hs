@@ -244,6 +244,7 @@ checkStatement statement = case statement of
   Update _ _ (FFICall _ _) _ _ -> return () -- TODO: check polymorphic builtins
   Update _ _ Select        _ _ -> return () -- TODO: ^
   Update _ _ (Cmp _)       _ _ -> return () -- TODO: ^
+  Update _ _ (MemRef _) _ _ -> return () -- TODO: ^
   Update v idxs builtin _ args -> do -- scalar builtins only for now
     argTys <- mapM impExprType args
     let BuiltinType _ _ inTys retTy = builtinType builtin

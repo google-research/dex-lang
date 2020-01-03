@@ -307,6 +307,7 @@ builtinType builtin = case builtin of
   FFICall n _ -> nonLinBuiltin kinds argTys retTy
     where kinds = take (n + 1) (repeat noCon)
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
+  MemRef _ -> nonLinBuiltin [isData] [] a
   where
     ibinOpType    = nonLinBuiltin [] [int , int ] int
     i = BoundTVar 0
@@ -333,6 +334,7 @@ instantiateTVs vs x = subAtDepth 0 sub x
                                       then vs !! i'
                                       else error $ "Bad index: "
                                              ++ show i' ++ " / " ++ pprint vs
+                                             ++ " in " ++ pprint x
                     | otherwise  -> BoundTVar i
               where i' = i - depth
 

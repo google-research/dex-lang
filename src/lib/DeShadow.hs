@@ -19,6 +19,7 @@ import Fresh
 import PPrint
 import Cat
 import Parser
+import Serialize
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
@@ -31,14 +32,15 @@ sourcePass' :: SourceBlock -> TopPassM () [UTopDecl]
 sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return [decl]
-  IncludeSourceFile fname -> includeFile fname
+  IncludeSourceFile fname -> do
+    source <- liftIO $ readFile fname
+    liftM concat $ mapM sourcePass' $ parseProg source
+  LoadData p fname -> do
+    (ty, binvals) <- liftIO $ loadDataLiteral fname
+    let expr = PrimOp (MemRef binvals) [ty] []
+    return [TopDecl PlainDecl $ LetMono p expr]
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   _ -> return []
-
-includeFile :: String -> TopPassM () [UTopDecl]
-includeFile fname = do
-  source <- liftIO $ readFile fname
-  liftM concat $ mapM sourcePass' $ parseProg source
 
 deShadowPass :: TopPass UTopDecl UTopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of

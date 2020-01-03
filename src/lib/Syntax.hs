@@ -27,18 +27,21 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
-               RuleAnn (..), DeclAnn (..), CmpOp (..)
-               ) where
+               RuleAnn (..), DeclAnn (..), CmpOp (..),
+               Ptr (..), BinValP (..), BinVal, Val) where
 
 import Record
 import Env
 
 import qualified Data.Map.Strict as M
 
+import Data.Word (Word64)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
 import GHC.Generics
+import Control.Applicative (liftA, liftA2)
+import Data.Traversable (fmapDefault, foldMapDefault)
 
 -- === core IR ===
 
@@ -131,6 +134,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Range | Scan | Copy | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
+             | MemRef [BinVal]
                 deriving (Eq, Ord, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
@@ -166,6 +170,7 @@ builtinStrs = M.fromList $ map swap (M.toList builtinNames)
 
 instance Show Builtin where
   show (FFICall _ s) = "%%" ++ s
+  show (MemRef xs) = "%%memref" ++ show xs
   show b = "%" ++ fromJust (M.lookup b builtinStrs)
 
 data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
@@ -176,6 +181,9 @@ data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
 
 data Value = Value Type (RecTree Vec)  deriving (Show, Eq, Generic)
 data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq, Generic)
+
+-- Closed term limited to constructors Lit, RecCon, TabCon, IdxLit, Pack
+type Val = Expr
 
 unitTy :: Type
 unitTy = RecType Cart (Tup [])
@@ -194,6 +202,7 @@ data SourceBlock = SourceBlock
 type ReachedEOF = Bool
 data SourceBlock' = UTopDecl UTopDecl
                   | IncludeSourceFile String
+                  | LoadData UPat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -270,6 +279,29 @@ type IBinder = BinderP IType
 data IType = IType BaseType [Size]  deriving (Show, Eq)
 type Size  = IExpr
 type Index = IExpr
+
+-- === data structures for binary representation ===
+
+-- TODO: figure out whether we actually need type everywhere here
+data Ptr w = Ptr w BaseType  deriving (Show, Eq, Ord)
+
+data BinValP w = ScalarVal w BaseType
+               | ArrayVal (Ptr w) [w]  deriving (Show, Eq, Ord)
+
+type BinVal = BinValP Word64
+
+instance Functor BinValP where
+  fmap = fmapDefault
+
+instance Foldable BinValP where
+  foldMap = foldMapDefault
+
+instance Traversable BinValP where
+  traverse f val = case val of
+    ScalarVal x ty -> liftA (\x' -> ScalarVal x' ty) (f x)
+    ArrayVal (Ptr ptr ty) shape ->
+      liftA2 newVal (f ptr) (traverse f shape)
+      where newVal ptr' shape' = ArrayVal (Ptr ptr' ty) shape'
 
 -- === some handy monoids ===
 

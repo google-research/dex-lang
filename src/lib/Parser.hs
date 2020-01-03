@@ -6,7 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser (parseProg, parseTopDeclRepl, parseTopDecl) where
+module Parser (parseProg, parseData, parseTopDeclRepl, parseTopDecl) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -29,6 +29,9 @@ import PPrint
 
 parseProg :: String -> [SourceBlock]
 parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+
+parseData :: String -> Except UExpr
+parseData s = parseit s literalData
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents block of
@@ -83,7 +86,16 @@ sourceBlock' =
   <|> (some eol >> return EmptyLines)
   <|> (sc >> eol >> return CommentLine)
   <|> (liftM IncludeSourceFile includeSourceFile)
+  <|> loadData
   <|> (liftM UTopDecl topDecl)
+
+loadData :: Parser SourceBlock'
+loadData = do
+  symbol "load"
+  s <- stringLiteral
+  symbol "as"
+  p <- pat
+  return $ LoadData p s
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do
@@ -506,3 +518,9 @@ period = symbol "."
 
 colon :: Parser ()
 colon = symbol ":"
+
+-- === Parsing literal data ===
+
+-- TODO: make a restricted parser that only accepts literals
+literalData :: Parser UExpr
+literalData = expr

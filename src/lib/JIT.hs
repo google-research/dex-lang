@@ -45,20 +45,14 @@ import Cat
 
 import LLVMExec
 
--- TODO: figure out whether we actually need type everywhere here
-data Ptr w = Ptr w BaseType  deriving (Show)
-
-data JitVal w = ScalarVal w BaseType
-              | ArrayVal (Ptr w) [w]  deriving (Show)
-
 data PCell w = Cell (Ptr w) [w]
 type Cell        = PCell Operand
 type PersistCell = PCell Word64
 
-type CompileVal  = JitVal Operand
-type PersistVal  = JitVal Word64
-type PersistEnv = Env PersistVal
+type CompileVal = BinValP Operand
 type ImpVarEnv = Env (Either CompileVal Cell)
+
+type PersistEnv = Env BinVal
 
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
@@ -108,7 +102,7 @@ jitPass' decl = case decl of
       emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
     _ -> error $ "Unexpected command: " ++ show cmd
 
-evalProg :: [IBinder] -> ImpProg -> TopPassM PersistEnv [PersistVal]
+evalProg :: [IBinder] -> ImpProg -> TopPassM PersistEnv [BinVal]
 evalProg bs prog = do
   (cells, CompiledProg m) <- toLLVM bs prog
   liftIO $ evalJit m
@@ -139,7 +133,7 @@ toLLVM bs prog = do
                 flip runReaderT env' $ compileTopProg prog
   return (map binderAnn destCells, prog')
 
-asCompileVal :: PersistVal -> CompileVal
+asCompileVal :: BinVal -> CompileVal
 asCompileVal (ScalarVal word ty) = ScalarVal (constOperand ty word) ty
 asCompileVal (ArrayVal ptr shape) = ArrayVal (ptrLiteral ptr) shape'
   where shape' = map (constOperand IntType) shape
@@ -153,12 +147,12 @@ ptrLiteral (Ptr ptr ty) = Ptr ptr' ty
   where ptr' = L.ConstantOperand $
                   C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr (scalarTy ty))
 
-readPersistCell :: PersistCell -> IO PersistVal
+readPersistCell :: PersistCell -> IO BinVal
 readPersistCell (Cell (Ptr ptr ty) []) = do [word] <- readPtrs 1 (wordAsPtr ptr)
                                             return $ ScalarVal word ty
 readPersistCell (Cell p shape) = return $ ArrayVal p shape
 
-asVec :: PersistVal -> IO Vec
+asVec :: BinVal -> IO Vec
 asVec v = case v of
   ScalarVal x ty ->  return $ cast ty [x]
   ArrayVal (Ptr ptr ty) shape -> do
@@ -372,7 +366,7 @@ sizeOf shape = foldM mul (litInt 1) shape
 mul :: Operand -> Operand -> CompileM Operand
 mul x y = evalInstr "mul" longTy $ L.Mul False False x y []
 
-scalarVal :: JitVal a -> a
+scalarVal :: BinValP a -> a
 scalarVal (ScalarVal x _) = x
 scalarVal (ArrayVal _ _) = error "Not a scalar val"
 
@@ -467,6 +461,7 @@ compileBuiltin b ts = case b of
   BoolToInt -> \(~[x]) -> return x  -- bools stored as ints
   IntToReal -> compileUnop RealType (\x -> L.SIToFP x realTy [])
   FFICall _ name -> compileFFICall (fromString name) ts
+  MemRef ~[x] -> const $ return $ asCompileVal x
   _ -> error $ "Can't JIT primop: " ++ pprint b
 
 mallocFun :: ExternFunSpec
@@ -550,27 +545,3 @@ setBlockName update s = s { blockName = update (blockName s) }
 
 setFunSpecs :: ([ExternFunSpec] -> [ExternFunSpec]) -> CompileState -> CompileState
 setFunSpecs update s = s { funSpecs = update (funSpecs s) }
-
-instance Functor JitVal where
-  fmap = fmapDefault
-
-instance Foldable JitVal where
-  foldMap = foldMapDefault
-
-instance Traversable JitVal where
-  traverse f val = case val of
-    ScalarVal x ty -> liftA (\x' -> ScalarVal x' ty) (f x)
-    ArrayVal (Ptr ptr ty) shape ->
-      liftA2 newVal (f ptr) (traverse f shape)
-      where newVal ptr' shape' = ArrayVal (Ptr ptr' ty) shape'
-
-instance Functor JitVals where
-  fmap = fmapDefault
-
-instance Foldable JitVals where
-  foldMap = foldMapDefault
-
-instance Traversable JitVals where
-  traverse f (JitVals vals) = liftA JitVals $ traverse (traverse f) vals
-
-newtype JitVals w = JitVals [JitVal w]

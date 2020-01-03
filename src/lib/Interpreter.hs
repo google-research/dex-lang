@@ -41,7 +41,6 @@ foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
 type ClosedExpr = Expr -- no free variables
-type Val        = Expr -- irreducible expressions only
 type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 
 interpPass :: TopPass TopDecl Void

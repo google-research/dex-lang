@@ -4,3 +4,11 @@ include "examples/included.dx"
 
 :p x
 > 10
+
+load "examples/somedata.dxo" as dat
+
+:t dat
+> Real
+
+:p dat
+> -2.0
