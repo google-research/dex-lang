@@ -32,14 +32,11 @@ normalizePass = TopPass $ \topDecl -> case topDecl of
   TopDecl ann decl -> do
     (env, decls) <- asTopPassM (normalizeDecl decl)
     extend (asFst env)
-    case decls of
-      [] -> emitOutput $ NoOutput
-      [decl'] -> return $ NTopDecl ann decl'
-      _ -> error "Multiple decls not implemented"
+    return $ map (NTopDecl ann) decls
   RuleDef ann (Forall [] ty) (TLam [] expr) -> do
     (expr', _)  <- asTopPassM $ buildScoped $ normalize expr
     ~([ty'], _) <- asTopPassM $ normalizeTy ty
-    return $ NRuleDef ann ty' expr'
+    return [NRuleDef ann ty' expr']
   RuleDef _ _ _ -> error "Not implemented"
   EvalCmd (Command cmd expr) -> do
     tyEnv <- looks (fst . fst)
@@ -50,7 +47,7 @@ normalizePass = TopPass $ \topDecl -> case topDecl of
        return (ntys, expr')
     case cmd of
       ShowNormalized -> emitOutput $ TextOut $ pprint expr'
-      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
+      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
 
 asTopPassM :: NormM a -> TopPassM (NormEnv, NEmbedScope) (a, [NDecl])
 asTopPassM m = do

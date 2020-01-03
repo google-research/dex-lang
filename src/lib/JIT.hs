@@ -77,7 +77,7 @@ type NInstr = Named Instruction
 jitPass :: TopPass ImpDecl Void
 jitPass = TopPass jitPass'
 
-jitPass' :: ImpDecl -> TopPassM PersistEnv Void
+jitPass' :: ImpDecl -> TopPassM PersistEnv [Void]
 jitPass' decl = case decl of
   ImpTopLet bs prog -> do
     vals <- evalProg bs prog

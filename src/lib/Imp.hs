@@ -32,7 +32,7 @@ impPass = TopPass $ \decl -> case decl of
   NTopDecl _ decl' -> do
     (bs, prog, env) <- liftTop $ toImpDecl decl'
     extend env
-    return $ ImpTopLet bs prog
+    return [ImpTopLet bs prog]
   NRuleDef _ _ _ -> error "Shouldn't have this left"
   NEvalCmd (Command cmd (ty, ts, expr)) -> do
     ts' <- liftTop $ mapM toImpType ts
@@ -40,7 +40,7 @@ impPass = TopPass $ \decl -> case decl of
     prog <- liftTop $ toImp (map asDest bs) expr
     case cmd of
       ShowImp -> emitOutput $ TextOut $ pprint prog
-      _ -> return $ ImpEvalCmd (reconstruct ty) bs (Command cmd prog)
+      _ -> return [ImpEvalCmd (reconstruct ty) bs (Command cmd prog)]
   where
     liftTop :: ImpM a -> TopPassM ImpEnv a
     liftTop m = do
@@ -212,8 +212,8 @@ type ImpCheckM a = ReaderT (Env IType) (Either Err) a
 checkImp :: TopPass ImpDecl ImpDecl
 checkImp = TopPass checkImp'
 
-checkImp' :: ImpDecl -> TopPassM (Env IType) ImpDecl
-checkImp' decl = decl <$ case decl of
+checkImp' :: ImpDecl -> TopPassM (Env IType) [ImpDecl]
+checkImp' decl = [decl] <$ case decl of
   ImpTopLet binders prog -> do
     check binders prog
     extend $ bindFold binders

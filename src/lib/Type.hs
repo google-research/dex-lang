@@ -37,7 +37,7 @@ data TypeMCtx = TypeMCtx { checking :: Bool
 type TypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
 
 checkTyped :: TopPass TopDecl TopDecl
-checkTyped = TopPass $ \decl -> stripSrcAnnotTopDecl decl <$ case decl of
+checkTyped = TopPass $ \decl -> [stripSrcAnnotTopDecl decl] <$ case decl of
   TopDecl _ decl' -> do
     env <- liftTop (getTypeDecl decl')
     extend env
@@ -426,7 +426,7 @@ type NTypeEnv = FullEnv (NType, Spent) ()
 type NTypeM a = ReaderT NTypeEnv (CatT Spent (Either Err)) a
 
 checkNExpr ::TopPass NTopDecl NTopDecl
-checkNExpr = TopPass $ \topDecl -> topDecl <$ case topDecl of
+checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
   NTopDecl _ decl -> do
     env <- liftPass (pprint decl) $ checkNDecl decl
     extend env

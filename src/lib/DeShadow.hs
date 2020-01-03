@@ -26,10 +26,10 @@ type DeShadowEnv = (Env Name, Env Type)
 sourcePass :: TopPass SourceBlock UTopDecl
 sourcePass = TopPass sourcePass'
 
-sourcePass' :: SourceBlock -> TopPassM () UTopDecl
+sourcePass' :: SourceBlock -> TopPassM () [UTopDecl]
 sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
-  UTopDecl decl -> return decl
+  UTopDecl decl -> return [decl]
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   ProseBlock _ -> emitOutput NoOutput
   CommentLine  -> emitOutput NoOutput
@@ -40,15 +40,18 @@ deShadowPass = TopPass $ \topDecl ->  case topDecl of
   TopDecl ann decl -> do
     decl' <- catToTop $ deShadowDecl decl
     case decl' of
-      Just decl'' -> return $ TopDecl ann decl''
+      Just decl'' -> return [TopDecl ann decl'']
       Nothing -> emitOutput NoOutput
-  RuleDef ann ty tlam -> liftTop $ liftM3
-    RuleDef (deShadowRuleAnn ann) (deShadowSigmaType ty) (deShadowTLam tlam)
+  RuleDef ann ty tlam -> liftTop $ do
+    ann'  <- deShadowRuleAnn ann
+    ty'   <- deShadowSigmaType ty
+    tlam' <- deShadowTLam tlam
+    return [RuleDef ann' ty' tlam']
   EvalCmd (Command cmd expr) -> do
     expr' <- liftTop $ deShadowExpr expr
     case cmd of
       ShowDeshadowed -> emitOutput $ TextOut $ show expr'
-      _ -> return $ EvalCmd (Command cmd expr')
+      _ -> return [EvalCmd (Command cmd expr')]
 
 liftTop :: DeShadowM a -> TopPassM (DeShadowEnv, FreshScope) a
 liftTop m = do

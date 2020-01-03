@@ -47,7 +47,7 @@ type SubstEnv = (FullEnv (Either Name TLam) Type, Scope)
 interpPass :: TopPass TopDecl Void
 interpPass = TopPass interpPass'
 
-interpPass' :: TopDecl -> TopPassM SubstEnv Void
+interpPass' :: TopDecl -> TopPassM SubstEnv [Void]
 interpPass' topDecl = case topDecl of
   TopDecl _ decl -> do
     env <- look

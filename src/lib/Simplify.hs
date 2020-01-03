@@ -38,14 +38,12 @@ type SimplifyM a = ReaderT SimpEnv (NEmbedT (Either Err)) a
 
 derivPass :: TopPass NTopDecl NTopDecl
 derivPass = TopPass $ \topDecl -> case topDecl of
-  NTopDecl PlainDecl decl -> do
-    decl' <- simplifyDeclTop decl
-    return $ NTopDecl PlainDecl decl'  -- TODO: handle empty binders specially
+  NTopDecl PlainDecl decl -> simplifyDeclTop decl
   NTopDecl ADPrimitive decl -> do
     let NLet bs _ = decl
     decl' <- liftTopNoDecl $ nSubstSimp decl
     extend $ asSnd (foldMap lbind bs)
-    return $ NTopDecl PlainDecl decl'
+    return [NTopDecl PlainDecl decl']
   NRuleDef (LinearizationDef v) _ ~(NAtoms [f]) -> do
     f' <- liftTopNoDecl $ nSubstSimp f
     extend $ asFst $ mempty {derivEnv = v @> f' }
@@ -54,19 +52,17 @@ derivPass = TopPass $ \topDecl -> case topDecl of
     expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
     case cmd of
       ShowDeriv -> emitOutput $ TextOut $ pprint expr'
-      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
+      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
 
 simpPass :: TopPass NTopDecl NTopDecl
 simpPass = TopPass $ \topDecl -> case topDecl of
-  NTopDecl _ decl -> do
-    decl' <- simplifyDeclTop decl
-    return $ NTopDecl PlainDecl decl' -- TODO: handle empty binders specially
+  NTopDecl _ decl -> simplifyDeclTop decl
   NRuleDef _ _ _ -> error "Shouldn't have derivative rules left"
   NEvalCmd (Command cmd (ty, ntys, expr)) -> do
     expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
     case cmd of
       ShowSimp -> emitOutput $ TextOut $ pprint expr'
-      _ -> return $ NEvalCmd (Command cmd (ty, ntys, expr'))
+      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
 
 liftTopNoDecl :: SimplifyM a -> TopPassM SimpTopEnv a
 liftTopNoDecl m = do
@@ -81,14 +77,11 @@ liftTop m = do
   extend $ asSnd scope'
   return (ans, decls)
 
-simplifyDeclTop :: NDecl -> TopPassM SimpTopEnv NDecl
+simplifyDeclTop :: NDecl -> TopPassM SimpTopEnv [NTopDecl]
 simplifyDeclTop decl = do
   (env, decls) <- liftTop $ simplifyDeclScoped decl
   extend (asFst env)
-  case decls of
-    []      -> emitOutput NoOutput
-    [decl'] -> return decl'
-    _       -> error "Shouldn't have multiple decls"
+  return $ map (NTopDecl PlainDecl) decls
 
 simplifyDeclScoped :: NDecl -> SimplifyM SimpEnv
 simplifyDeclScoped decl = case decl of

@@ -23,15 +23,17 @@ import Cat
 -- === top-level pass ===
 
 type TopPassM env a = ExceptT Result' (CatT env IO) a
-type FullPass env = SourceBlock -> TopPassM env Void
+type FullPass env = SourceBlock -> TopPassM env [Void]
 
 data TopPass a b where
-  TopPass :: Monoid env => (a -> TopPassM env b) -> TopPass a b
+  TopPass :: Monoid env => (a -> TopPassM env [b]) -> TopPass a b
 
 runFullPass :: Monoid env => env -> FullPass env -> SourceBlock -> IO (Result, env)
 runFullPass env pass source = do
-  ~(Left result, env') <- runTopPassM env (pass source)
-  return (addErrSrc source (Result result), env')
+  (result, env') <- runTopPassM env (pass source)
+  let result' = case result of Left r  -> r
+                               Right _ -> Right NoOutput
+  return (addErrSrc source (Result result'), env')
 
 runTopPassM :: Monoid env => env -> TopPassM env a -> IO (Either Result' a, env)
 runTopPassM env m = runCatT (runExceptT m) env
@@ -41,13 +43,13 @@ infixl 1 >+>
 (>+>) :: TopPass a b -> TopPass b c -> TopPass a c
 (>+>) (TopPass f1) (TopPass f2) = TopPass $ \x -> do
   (env1, env2) <- look
-  (y, env1') <- liftIO $ runTopPassM env1 (f1 x)
+  (ys, env1') <- liftIO $ runTopPassM env1 (f1 x)
   extend (env1', mempty)
-  y' <- liftEither y
-  (z, env2') <- liftIO $ runTopPassM env2 (f2 y')
+  ys' <- liftEither ys
+  (zs, env2') <- liftIO $ runTopPassM env2 (mapM f2 ys')
   extend (mempty, env2')
-  z' <- liftEither z
-  return z'
+  zs' <- liftEither zs
+  return $ concat zs'
 
 throwTopErr :: Err -> TopPassM env a
 throwTopErr e = throwError (Left e)

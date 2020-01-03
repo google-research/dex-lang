@@ -39,10 +39,10 @@ typePass = TopPass $ \tdecl -> case tdecl of
   TopDecl ann decl -> do
     (decl', env') <- liftTop $ inferDecl decl
     extend env'
-    return $ TopDecl ann decl'
+    return [TopDecl ann decl']
   RuleDef ann ty tlam -> do
     ~(LetPoly _ tlam', _) <- liftTop $ inferDecl $ LetPoly ("_":>ty) tlam
-    return $ RuleDef ann ty tlam'
+    return [RuleDef ann ty tlam']
   EvalCmd (Command GetType (SrcAnnot (Var v []) _)) -> do
     env <- look
     case envLookup env v of
@@ -52,7 +52,7 @@ typePass = TopPass $ \tdecl -> case tdecl of
     (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
     case cmd of
       ShowTyped -> emitOutput $ TextOut $ pprint expr'
-      _ -> return $ EvalCmd (Command cmd expr')
+      _ -> return [EvalCmd (Command cmd expr')]
 
 liftTop :: InferM a -> TopPassM TypeEnv a
 liftTop m = do

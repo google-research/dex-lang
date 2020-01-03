@@ -27,11 +27,11 @@ type FlopM a = ReaderT Term (Writer Profile) a
 flopsPass :: TopPass ImpDecl ImpDecl
 flopsPass = TopPass flopsPass'
 
-flopsPass' :: ImpDecl -> TopPassM () ImpDecl
+flopsPass' :: ImpDecl -> TopPassM () [ImpDecl]
 flopsPass' (ImpEvalCmd _ _ (Command Flops prog)) = do
   let ans = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
   emitOutput $ TextOut $ pprint ans
-flopsPass' decl = return decl
+flopsPass' decl = return [decl]
 
 flops :: ImpProg -> FlopM ()
 flops (ImpProg []) = return ()
