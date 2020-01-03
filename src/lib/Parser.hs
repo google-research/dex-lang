@@ -56,6 +56,9 @@ topDecl = ( explicitCommand
         <|> liftM (EvalCmd . Command (EvalExpr Printed)) expr
         <?> "top-level declaration" ) <* (void eol <|> eof)
 
+includeSourceFile :: Parser String
+includeSourceFile = symbol "include" >> stringLiteral <* eol
+
 sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
@@ -79,6 +82,7 @@ sourceBlock' =
       (char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak))
   <|> (some eol >> return EmptyLines)
   <|> (sc >> eol >> return CommentLine)
+  <|> (liftM IncludeSourceFile includeSourceFile)
   <|> (liftM UTopDecl topDecl)
 
 explicitCommand :: Parser UTopDecl

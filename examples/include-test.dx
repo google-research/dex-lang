@@ -1,0 +1,6 @@
+
+include "examples/included.dx"
+> 30
+
+:p x
+> 10

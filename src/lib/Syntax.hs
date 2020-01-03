@@ -193,6 +193,7 @@ data SourceBlock = SourceBlock
 
 type ReachedEOF = Bool
 data SourceBlock' = UTopDecl UTopDecl
+                  | IncludeSourceFile String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines

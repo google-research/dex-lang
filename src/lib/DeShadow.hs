@@ -18,6 +18,7 @@ import Pass
 import Fresh
 import PPrint
 import Cat
+import Parser
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
@@ -30,10 +31,14 @@ sourcePass' :: SourceBlock -> TopPassM () [UTopDecl]
 sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return [decl]
+  IncludeSourceFile fname -> includeFile fname
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
-  ProseBlock _ -> emitOutput NoOutput
-  CommentLine  -> emitOutput NoOutput
-  EmptyLines   -> emitOutput NoOutput
+  _ -> return []
+
+includeFile :: String -> TopPassM () [UTopDecl]
+includeFile fname = do
+  source <- liftIO $ readFile fname
+  liftM concat $ mapM sourcePass' $ parseProg source
 
 deShadowPass :: TopPass UTopDecl UTopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of
