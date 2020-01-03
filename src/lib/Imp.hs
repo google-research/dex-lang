@@ -11,7 +11,6 @@ module Imp (impPass, checkImp) where
 
 import Control.Monad.Reader
 import Data.Foldable
-import Data.List (zip4)
 
 import Syntax
 import Env
@@ -130,10 +129,6 @@ toImpPrimOp :: Builtin -> [Dest] -> [IType] -> [IExpr] -> ImpProg
 toImpPrimOp Range      (dest:_) _ [x] = copy dest x
 toImpPrimOp IndexAsInt [dest]   _ [x] = copy dest x
 toImpPrimOp IntAsIndex [dest]   _ [x] = copy dest x  -- TODO: mod n
-toImpPrimOp Select dests ts (p:args) =
-  fold $ [ImpProg [Update name idxs Select [t] [p,x,y]] |
-           (x, y, (Buffer name idxs), t) <- zip4 xs ys dests ts]
-  where (xs, ys) = splitAt (length ts) args
 toImpPrimOp b [Buffer name idxs] ts xs = ImpProg [Update name idxs b ts xs]
 toImpPrimOp b dests _ _ = error $
   "Unexpected number of dests: " ++ show (length dests) ++ pprint b

@@ -429,14 +429,9 @@ compileFFICall name tys xs = do
     f = ExternFunSpec (L.Name (fromString (tagToStr name))) retTy' argTys'
 
 compileSelect :: [IType] -> [CompileVal] -> CompileM CompileVal
-compileSelect ~[IType ty shape] ~[ScalarVal p _, x, y] = do
+compileSelect ~[IType ty _] ~[ScalarVal p _, ScalarVal x _, ScalarVal y _] = do
   p' <- evalInstr "" (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
-  case (shape, x, y) of
-    ([], ~(ScalarVal x' _), (ScalarVal y' _)) ->
-        liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) $ L.Select p' x' y' []
-    (_, ~(ArrayVal (Ptr x' ty') shape'), ~(ArrayVal (Ptr y' _) _)) -> do
-        z <- evalInstr "" (L.ptr (scalarTy ty)) $ L.Select p' x' y' []
-        return $ ArrayVal (Ptr z ty') shape'
+  liftM (flip ScalarVal ty) $ evalInstr "" (scalarTy ty) $ L.Select p' x y []
 
 compileBuiltin :: Builtin -> [IType] -> [CompileVal] -> CompileM CompileVal
 compileBuiltin b ts = case b of

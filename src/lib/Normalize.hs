@@ -78,7 +78,7 @@ normalize expr = case expr of
       extendR (iToEnv idxs <> toEnv carry) (normalize body)
   PrimOp b ts xs -> do
     ts' <- mapM normalizeTy ts
-    xs' <- liftM concat $ mapM atomize xs
+    xs' <- mapM atomize xs
     normalizePrimOp b ts' xs'
   Decl decl body -> do
     env <- normalizeDecl decl
@@ -110,15 +110,23 @@ normalize expr = case expr of
   IdxLit n i -> return $ NPrimOp IntAsIndex [[NIdxSetLit n]] [NLit (IntLit i)]
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 
-normalizePrimOp :: Builtin -> [[NType]] -> [NAtom] -> NormM NExpr
-normalizePrimOp builtin ts xs = case builtin of
+normalizePrimOp :: Builtin -> [[NType]] -> [[NAtom]] -> NormM NExpr
+normalizePrimOp builtin tyArgs args = case builtin of
   NewtypeCast ->
     if a == b then return $ NAtoms [x]
               else error $ "Can't cast " ++ pprint a
                                ++ " to " ++ pprint b
-    where [a, b] = ts
-          [x] = xs
-  _ -> return $ NPrimOp builtin ts xs
+    where [a, b] = tyArgs
+          [[x]] = args
+  Select -> liftM NAtoms $ sequence $ zipWith3 (selectAt p) tys xs ys
+    where [tys] = tyArgs
+          [[p], xs, ys] = args
+  VAdd -> liftM NAtoms $ sequence $ zipWith3 addAt tys xs ys
+    where [tys] = tyArgs
+          [xs, ys] = args
+  VZero -> liftM NAtoms $ mapM zeroAt tys
+    where [tys] = tyArgs
+  _ -> return $ NPrimOp builtin tyArgs (concat args)
 
 atomize :: Expr -> NormM [NAtom]
 atomize expr = normalize expr >>= emit

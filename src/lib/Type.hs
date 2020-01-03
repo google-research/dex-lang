@@ -594,9 +594,12 @@ nBuiltinType b ts =
     IntAsIndex -> return $ nonLinBuiltin [int] [i]  where [[i]] = ts
     BoolToInt  -> return $ nonLinBuiltin [bool] [int]
     IntToReal  -> return $ nonLinBuiltin [int] [real]
-    -- TODO: fix these and require scalar ops only:
-    Cmp _  -> return $ nonLinBuiltin (concat (ts ++ ts)) [bool]
-    Select -> return $ nonLinBuiltin (bool:(concat (ts ++ ts))) (concat ts)
+    Cmp _ -> do
+      t <- fromScalar ts
+      return $ nonLinBuiltin [t, t] [bool]
+    Select -> do
+      t <- fromScalar ts
+      return $ nonLinBuiltin [bool, t, t] [t]
     Linearize -> return ( [NArrType NonLin as bs] ++ as
                         , (bs ++ [NArrType Lin as bs])
                         , [(NonLin, 1 + length as)])
@@ -626,6 +629,20 @@ nBuiltinType b ts =
     fromOne ts' = case ts' of
       [[t]]  -> return t
       _ -> throw TypeErr $ "Expected single NType, got: " ++ pprint ts'
+
+    fromScalar :: MonadError Err m => [[NType]] -> m NType
+    fromScalar ts' = do
+      t <- fromOne ts'
+      if isNScalar t
+        then return t
+        else throw TypeErr $ "Expected scalar type, got: " ++ pprint t
+
+isNScalar :: NType -> Bool
+isNScalar ty = case ty of
+  NBaseType  _ -> True
+  NIdxSetLit _ -> True
+  NTypeVar   _ -> True
+  _            -> False
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of

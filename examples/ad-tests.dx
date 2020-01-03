@@ -182,3 +182,21 @@ myNonCommutingFold y0 =
 
 :p transposeLinear myNonCommutingFold 2.0
 > 2.0
+
+:p vadd 1. 2.
+> 3.0
+
+:p vadd (1.,2.) (3.,4.)
+> (4.0, 6.0)
+
+:p vadd [1.,2.] [3.,4.]
+> [4.0, 6.0]
+
+:p vzero @Real
+> 0.0
+
+:p vzero @(Real, Real)
+> (0.0, 0.0)
+
+:p vzero @(Real, 3=>(Real, Real))
+> (0.0, [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])

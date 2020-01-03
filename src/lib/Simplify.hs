@@ -476,7 +476,7 @@ oneHot i x = do
   zero <- zeroAt xTy
   expr <- buildNScan ("i" :> n) [] [] $ \i' _ -> do
     ~[eq] <- emit $ NPrimOp (Cmp Equal) [[n]] [i, i']
-    liftM NAtoms $ emit $ NPrimOp Select [[xTy]] [eq, x, zero]
+    liftM (NAtoms . pure) $ selectAt eq xTy x zero
   ~[oneHotAtom] <- emit expr
   return oneHotAtom
 

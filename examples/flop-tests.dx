@@ -27,5 +27,5 @@ mat = for i j. rand (ixkey (ixkey k i) j)
 > %isub 2 M^1 N^1 + 2 N^1
 > %fadd 1 M^1 N^2 + 1 M^2 N^2
 > %eq 1 M^1 N^2 + 1 M^2 N^1
-> %copy 1  + 5 M^1 N^1 + 2 M^1 N^2 + 2 M^2 N^2 + 5 N^1
-> %select 1 M^1 N^2 + 1 M^2 N^1
+> %copy 1  + 5 M^1 N^1 + 2 M^1 N^2 + 1 M^2 N^2 + 5 N^1
+> %select 1 M^1 N^2 + 1 M^2 N^2

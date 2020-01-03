@@ -11,7 +11,8 @@ module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScan
               NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType, askAtomType,
               wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, flipIdx,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
-              emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div') where
+              emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div',
+              selectAt) where
 
 import Control.Monad
 import Data.List (transpose)
@@ -22,7 +23,6 @@ import Syntax
 import Cat
 import Type
 import Subst
-import PPrint
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
 type NEmbed = Cat NEmbedEnv
@@ -159,9 +159,6 @@ wrapNDecls [] expr = expr
 wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v']) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
 
-atomAsNExpr :: NAtom -> NExpr
-atomAsNExpr x = NAtoms [x]
-
 nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
   where scope = fmap (const ()) (freeVars i)
@@ -180,21 +177,19 @@ isub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
 isub x y = emitOneAtom $ NPrimOp ISub [] [x, y]
 
 zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
-zeroAt (NBaseType RealType) = return $ NLit (RealLit 0.0)
--- TODO: is there a problem that we're emitting binders here?
-zeroAt (NTabType n a) = do
-  body <- zeroAt a
-  ans <- buildNFor ("_":>n) $ \_ -> return (atomAsNExpr body)
-  emitOneAtom ans
-zeroAt ty = error $ "Zeros not implemented for " ++ pprint ty
+zeroAt ty = do
+  ~[x] <- mapScalars (\_ _ -> return [NLit (RealLit 0.0)]) ty []
+  return x
 
 addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NAtom
-addAt (NBaseType RealType) x y = do
-  emitOneAtom $ NPrimOp FAdd [] [x, y]
-addAt (NTabType n a) x y = do
-  ans <- buildNFor ("i":>n) $ \i -> liftM atomAsNExpr $ addAt a (nGet x i) (nGet y i)
-  emitOneAtom ans
-addAt _ _ _ = error "Not implemented"
+addAt ty xs ys = do
+  ~[x] <- mapScalars (\_ [x, y] -> liftM pure (add x y)) ty [xs, ys]
+  return x
+
+selectAt :: MonadCat NEmbedEnv m => NAtom -> NType -> NAtom -> NAtom -> m NAtom
+selectAt p ty xs ys = do
+  ~[x] <- mapScalars (\t [x, y] -> liftM pure (select p t x y)) ty [xs, ys]
+  return x
 
 sumAt :: MonadCat NEmbedEnv m => NType -> [NAtom] -> m NAtom
 sumAt ty [] = zeroAt ty
@@ -220,8 +215,22 @@ mul x y = emitOneAtom $ NPrimOp FMul [] [x, y]
 sub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
 sub x y = emitOneAtom $ NPrimOp FSub [] [x, y]
 
+select :: MonadCat NEmbedEnv m => NAtom -> NType -> NAtom -> NAtom -> m NAtom
+select p ty x y = emitOneAtom $ NPrimOp Select [[ty]] [p, x, y]
+
 div' :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
 div' x y = emitOneAtom $ NPrimOp FDiv [] [x, y]
 
 emitOneAtom :: MonadCat NEmbedEnv m => NExpr -> m NAtom
 emitOneAtom expr = liftM head $ emit expr
+
+mapScalars :: MonadCat NEmbedEnv m
+                     => (NType -> [NAtom] -> m [NAtom])
+                     -> NType -> [NAtom] -> m [NAtom]
+mapScalars f ty xs = case ty of
+  NBaseType _ -> f ty xs
+  NTabType n a -> do
+    ans <- buildNFor ("i":>n) $ \i ->
+             liftM NAtoms $ mapScalars f a [nGet x i | x <- xs]
+    emit ans
+  _ -> error "Not implemented"
