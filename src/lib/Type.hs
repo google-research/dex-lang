@@ -11,7 +11,7 @@
 module Type (TypeEnv, checkTyped, getType, getAtomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              checkNExpr, patType, tangentBunType, tangentBunNType,
-             getNExprType, typeToNTypes) where
+             getNExprType, splitLinArgs, nBuiltinType) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -477,15 +477,10 @@ getNType expr = case expr of
     return ts
   NPrimOp b ts xs -> do
     mapM_ (mapM_ checkNTy) ts
-    argTys'' <- liftM2 (++) (traverseProd k atomType xsLin)
-                            (checkNothingSpent $ mapM atomType xsNonLin)
-    assertEq (concat argTys') argTys'' (pprint b)
-    return ansTy'
-    where
-      BuiltinType _ (numLin, k) argTys ansTy = builtinType b
-      ts' = map nTypesToType ts
-      (ansTy':argTys') = map (typeToNTypes . instantiateTVs ts') (ansTy:argTys)
-      (xsLin, xsNonLin) = splitAt numLin xs
+    (argTys, ansTys, lin) <- nBuiltinType b ts
+    argTys' <- sequenceLinArgs lin (map atomType xs)
+    assertEq argTys argTys' (pprint b)
+    return ansTys
   NApp e xs -> do
     ~(NArrType l as bs) <- atomType e
     -- TODO: use cartesian/tensor information from function type
@@ -573,34 +568,64 @@ checkNShadow (v :> _) = do
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
-typeToNTypes :: Type -> [NType]
-typeToNTypes ty = case ty of
-  BaseType b  -> [NBaseType b]
-  TypeVar v   -> [NTypeVar v]
-  ArrType (Mult l) a b -> [NArrType l (recur a) (recur b)]
-  ArrType _ _ _ -> error "Should only have concrete multiplicity left"
-  TabType a b -> map (NTabType (head (recur a))) (recur b)
-  RecType _ r -> foldMap recur r
-  Exists body -> [NExists (toList (recur body))]
-  BoundTVar n -> [NBoundTVar n]
-  IdxSetLit n -> [NIdxSetLit n]
-  Mult _      -> error "Can't convert multiplicity to type"
-  where recur = typeToNTypes
 
-nTypeToType :: NType -> Type
-nTypeToType ty = case ty of
-  NBaseType b -> BaseType b
-  NTypeVar v -> TypeVar v
-  NIdxSetLit n -> IdxSetLit n
-  NArrType l a b -> ArrType (Mult l) (RecType Cart (Tup (map recur a)))
-                                     (RecType Cart (Tup (map recur b)))
-  NTabType a b -> TabType (recur a) (recur b)
-  NExists _    -> error $ "NExists not implemented"    -- TODO
-  NBoundTVar _ -> error $ "NBoundTVar not implemented" -- TODO
-  where recur = nTypeToType
+-- TODO: check number of type args first
+nBuiltinType :: MonadError Err m
+                  => Builtin -> [[NType]] -> m ([NType], [NType], ArgLinearity)
+nBuiltinType b ts =
+  case b of
+    IAdd  -> return $ ibinOpType
+    ISub  -> return $ ibinOpType
+    IMul  -> return $ ibinOpType
+    Rem   -> return $ ibinOpType
+    Pow   -> return $ ibinOpType
+    FAdd  -> return $ cartBuiltin [real, real] [real]
+    FSub  -> return $ cartBuiltin [real, real] [real]
+    FNeg  -> return $ cartBuiltin [real]       [real]
+    FMul  -> return $ tensBuiltin [real, real] [real]
+    FDiv  -> return $ ([real, real], [real], [(Lin, 1), (NonLin, 1)])
+    And   -> return $ nonLinBuiltin [bool, bool] [bool]
+    Or    -> return $ nonLinBuiltin [bool, bool] [bool]
+    Not   -> return $ nonLinBuiltin [bool]       [bool]
+    Todo  -> return $ nonLinBuiltin [] [t]  where [[t]] = ts
+    Range -> return $ nonLinBuiltin [int] [NExists []]
+    IdxSetSize -> return $ nonLinBuiltin [] [int]
+    IndexAsInt -> return $ nonLinBuiltin [i] [int]  where [[i]] = ts
+    IntAsIndex -> return $ nonLinBuiltin [int] [i]  where [[i]] = ts
+    BoolToInt  -> return $ nonLinBuiltin [bool] [int]
+    IntToReal  -> return $ nonLinBuiltin [int] [real]
+    -- TODO: fix these and require scalar ops only:
+    Cmp _  -> return $ nonLinBuiltin (concat (ts ++ ts)) [bool]
+    Select -> return $ nonLinBuiltin (bool:(concat (ts ++ ts))) (concat ts)
+    Linearize -> return ( [NArrType NonLin as bs] ++ as
+                        , (bs ++ [NArrType Lin as bs])
+                        , [(NonLin, 1 + length as)])
+      where [as, bs] = ts
+    Transpose -> return ( [NArrType Lin as bs]
+                        , [NArrType Lin bs as]
+                        , [(Lin, 1)] )
+      where [as, bs] = ts
+    MemRef _ -> do
+      t <- fromOne ts
+      return $ nonLinBuiltin [] [t]
+    FFICall _ _ -> return (argTys', retTy, [(NonLin, length argTys')])
+      where
+        retTy:argTys = ts
+        argTys' = concat argTys
+    _ -> throw TypeErr $ "Can't have this builtin in NExpr: " ++ pprint b
+  where
+    nonLinBuiltin xs ys = (xs, ys, [(NonLin, length xs)])
+    cartBuiltin   xs ys = (xs, ys, [(Lin, length xs)])
+    tensBuiltin   xs ys = (xs, ys, [(Lin, 1) | _ <- xs])
+    ibinOpType = nonLinBuiltin [int, int] [int]
+    int  = NBaseType IntType
+    real = NBaseType RealType
+    bool = NBaseType BoolType
 
-nTypesToType :: [NType] -> Type
-nTypesToType tys = RecType Cart $ Tup $ map nTypeToType tys
+    fromOne :: MonadError Err m => [[NType]] -> m NType
+    fromOne ts' = case ts' of
+      [[t]]  -> return t
+      _ -> throw TypeErr $ "Expected single NType, got: " ++ pprint ts'
 
 tangentBunNType :: NType -> [NType]
 tangentBunNType ty = case ty of
@@ -656,6 +681,24 @@ getPatName p = case toList p of
   []  -> throw LinErr $
            "empty patterns not allowed for linear lambda (for silly reasons)"
   (v:>_):_ -> return v
+
+
+-- args are a tensor product of Cartesian products
+type ArgLinearity = [(Multiplicity, Int)]
+
+splitLinArgs :: ArgLinearity -> [a] -> [(Multiplicity, [a])]
+splitLinArgs [] [] = []
+splitLinArgs [] _  = error "Leftover args"
+splitLinArgs ((l, n):linSpecs) xs = (l, xs') : splitLinArgs linSpecs rest
+  where (xs', rest) = splitAt n xs
+
+sequenceLinArgs :: (MonadError Err m, MonadCat Spent m)
+                      => ArgLinearity -> [m a] -> m [a]
+sequenceLinArgs argLin ms = do
+  chunks' <- sequence $ flip map (splitLinArgs argLin ms) $ \(l, chunk) ->
+    case l of Lin    -> shareLinear chunk
+              NonLin -> sequence $ map checkNothingSpent chunk
+  return $ concat chunks'
 
 traverseProd :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
                   ProdKind -> (a -> m b) -> f a -> m (f b)

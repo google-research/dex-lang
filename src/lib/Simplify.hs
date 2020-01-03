@@ -341,15 +341,15 @@ zeroDeriv x = do
 
 linearizeBuiltin :: MonadCat NEmbedEnv m =>
     Builtin -> [[NType]] -> [NAtom] -> (NExpr, [NAtom] -> m NExpr)
-linearizeBuiltin op tys xs | nLin == nArgs = (NPrimOp op tys xs, f)
+linearizeBuiltin op tys xs | isLinear = (NPrimOp op tys xs, f)
   where
-    BuiltinType _ (nLin, prodKind) xTys outTy = builtinType op
-    outsTy = typeToNTypes outTy
-    nArgs = length xTys
-    f ts = case prodKind of
-             Cart -> return $ NPrimOp op tys ts
-             Tens -> sumsAt outsTy [NPrimOp op tys (swapAt i t xs)
-                                   | (i, t) <- zip [0..] ts]
+    (_, outsTy, linSpec) = ignoreExcept $ nBuiltinType op tys
+    isLinear = all (\l -> case fst l of Lin    -> True
+                                        NonLin -> False) linSpec
+    xs' = map snd $ splitLinArgs linSpec xs
+    f ts = sumsAt outsTy [NPrimOp op tys $ concat $ swapAt i t xs'
+                         | (i, t) <- zip [0..] ts']
+             where ts' = map snd $ splitLinArgs linSpec ts
 linearizeBuiltin FDiv _ [x, y] = (NPrimOp FDiv [] [x, y],
                                   \[tx, ty] -> do t <- linearizedDiv x y tx ty
                                                   return $ NAtoms [t])

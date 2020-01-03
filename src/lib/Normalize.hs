@@ -76,17 +76,10 @@ normalize expr = case expr of
     (bs , toEnv ) <- normalizePat p
     buildNestedNScans ibs bs xs $ \idxs carry ->
       extendR (iToEnv idxs <> toEnv carry) (normalize body)
-  PrimOp NewtypeCast ~[a, b] ~[x] -> do
-    a' <- normalizeTy a
-    b' <- normalizeTy b
-    if a' == b'
-      then normalize x
-      else error $ "Can't cast " ++ pprint a' ++ " to " ++ pprint b'
-  -- TODO: expand functions like `==` over nonscalars
   PrimOp b ts xs -> do
     ts' <- mapM normalizeTy ts
     xs' <- liftM concat $ mapM atomize xs
-    return $ NPrimOp b ts' xs'
+    normalizePrimOp b ts' xs'
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
@@ -116,6 +109,16 @@ normalize expr = case expr of
     return $ NTabCon (NIdxSetLit n) ts' rows''
   IdxLit n i -> return $ NPrimOp IntAsIndex [[NIdxSetLit n]] [NLit (IntLit i)]
   _ -> error $ "Can't yet normalize: " ++ pprint expr
+
+normalizePrimOp :: Builtin -> [[NType]] -> [NAtom] -> NormM NExpr
+normalizePrimOp builtin ts xs = case builtin of
+  NewtypeCast ->
+    if a == b then return $ NAtoms [x]
+              else error $ "Can't cast " ++ pprint a
+                               ++ " to " ++ pprint b
+    where [a, b] = ts
+          [x] = xs
+  _ -> return $ NPrimOp builtin ts xs
 
 atomize :: Expr -> NormM [NAtom]
 atomize expr = normalize expr >>= emit

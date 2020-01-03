@@ -21,11 +21,9 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Control.Applicative (liftA, liftA2)
 
 import Data.Void
 import Data.List (nub)
-import Data.Traversable
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Data.ByteString.Short (toShort)
