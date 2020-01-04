@@ -12,6 +12,7 @@ module Normalize (normalizePass) where
 import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable
+import Data.List (transpose)
 
 import Env
 import Syntax
@@ -104,9 +105,9 @@ normalize expr = case expr of
     return $ NAtoms $ concat r'
   TabCon (TabType (IdxSetLit n) ty) rows -> do
     ts' <- normalizeTy ty
-    rows'  <- mapM normalize rows
-    rows'' <- mapM deShadow rows'  -- Should we just make NTabCon an atom?
-    return $ NTabCon (NIdxSetLit n) ts' rows''
+    rows'  <- mapM (normalize >=> emit) rows
+    let tabExprs = zipWith (NTabCon (NIdxSetLit n)) ts' (transpose rows')
+    liftM NAtoms $ mapM emitOneAtom tabExprs
   IdxLit n i -> return $ NPrimOp IntAsIndex [[NIdxSetLit n]] [NLit (IntLit i)]
   _ -> error $ "Can't yet normalize: " ++ pprint expr
 

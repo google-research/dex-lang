@@ -161,7 +161,7 @@ instance NSubst NExpr where
     NPrimOp b ts xs -> NPrimOp b (map (map (nSubst env)) ts) (map recurA xs)
     NApp f xs -> NApp (recurA f) (map recurA xs)
     NAtoms xs -> NAtoms $ map recurA xs
-    NTabCon n ts rows -> NTabCon (nSubst env n) (map (nSubst env) ts) (map recur rows)
+    NTabCon n t xs -> NTabCon (nSubst env n) (nSubst env t) (map recurA xs)
     where
       recur :: NExpr -> NExpr
       recur = nSubst env

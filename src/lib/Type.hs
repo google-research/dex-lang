@@ -489,10 +489,10 @@ getNType expr = case expr of
     assertEq as as' "App"
     return bs
   NAtoms xs -> shareLinear (fmap atomType xs)
-  NTabCon n elemTys rows -> do
-    rowTys <- mapM getNType rows
-    mapM_ (\ts -> assertEq elemTys ts "Tab constructor") rowTys
-    return $ map (NTabType n) elemTys
+  NTabCon n ty xs -> do
+    xTys <- mapM atomType xs
+    mapM_ (\t -> assertEq ty t "Tab constructor") xTys
+    return [NTabType n ty]
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of

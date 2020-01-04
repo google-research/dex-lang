@@ -76,10 +76,11 @@ toImp dests expr = case expr of
   NAtoms xs -> do
     xs' <- mapM toImpAtom xs
     return $ fold $ zipWith copy dests xs'
-  NTabCon _ _ rows -> do
-    liftM fold $ zipWithM writeRow [0..] rows
-    where writeRow i row = toImp (indexedDests i) row
-          indexedDests i = map (indexDest (ILit (IntLit i))) dests
+  NTabCon _ _ xs -> do
+    xs' <- mapM toImpAtom xs
+    return $ fold [copy (indexedDest i) x | (i, x) <- zip [0..] xs']
+    where indexedDest i = indexDest (ILit (IntLit i)) dest
+          [dest] = dests
   NApp _ _ -> error "NApp should be gone by now"
 
 bindEnv :: [BinderP a] -> [IExpr] -> ImpEnv

@@ -225,7 +225,7 @@ data NExpr = NDecl NDecl NExpr
            | NPrimOp Builtin [[NType]] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]
-           | NTabCon NType [NType] [NExpr]
+           | NTabCon NType NType [NAtom]
              deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
@@ -472,7 +472,7 @@ instance HasVars NExpr where
     NAtoms xs -> foldMap freeVars xs
     NScan b bs x0 body -> foldMap freeVars x0 <>
       ((freeVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
-    NTabCon ty tys rows -> freeVars ty <> foldMap freeVars tys <> foldMap freeVars rows
+    NTabCon n ty xs -> freeVars n <> freeVars ty <> foldMap freeVars xs
 
 instance HasVars NAtom where
   freeVars atom = case atom of

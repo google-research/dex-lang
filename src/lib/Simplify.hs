@@ -153,11 +153,10 @@ simplify expr = case expr of
     emit $ NPrimOp b ts' xs'
   NAtoms xs -> mapM simplifyAtom xs
   NTabCon n ts rows -> do
-    -- TODO: consider making NTabCon only take atoms
-    n'     <- nSubstSimp n
-    ts'    <- mapM nSubstSimp ts
-    rows'  <- mapM simplifyMat rows
-    emit $ NTabCon n' ts' rows'
+    n' <- nSubstSimp n
+    t' <- nSubstSimp ts
+    xs' <- mapM (simplifyAtom >=> materializeAtom) rows
+    emit $ NTabCon n' t' xs'
 
 -- As we prepare to leave a scope (say that of `NScan`) we save the variables
 -- we'll no longer have access to once we've left, along with a function that
