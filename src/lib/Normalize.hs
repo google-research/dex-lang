@@ -21,6 +21,7 @@ import PPrint
 import Type
 import Pass
 import Embed
+import Subst
 
 data TLamEnv = TLamContents NormEnv [TBinder] Expr
 type NormEnv = FullEnv (Either [NAtom] TLamEnv) [NType]
@@ -40,15 +41,12 @@ normalizePass = TopPass $ \topDecl -> case topDecl of
   RuleDef _ _ _ -> error "Not implemented"
   EvalCmd (Command cmd expr) -> do
     let ty = getType expr
-    ((ntys, expr'), _) <- asTopPassM $ do
-       expr' <- buildScoped $ normalize expr
-       ntys <- askType expr'
-       return (ntys, expr')
+    (expr', _) <- asTopPassM $ buildScoped $ normalize expr
     case cmd of
       ShowNormalized -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
+      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
 
-asTopPassM :: NormM a -> TopPassM (NormEnv, NEmbedScope) (a, [NDecl])
+asTopPassM :: NormM a -> TopPassM (NormEnv, Scope) (a, [NDecl])
 asTopPassM m = do
   (env, scope) <- look
   (ans, (scope', decls)) <- liftExceptTop $ runEmbedT (runReaderT m env) scope

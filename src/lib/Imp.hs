@@ -33,9 +33,9 @@ impPass = TopPass $ \decl -> case decl of
     extend env
     return [ImpTopLet bs prog]
   NRuleDef _ _ _ -> error "Shouldn't have this left"
-  NEvalCmd (Command cmd (ty, ts, expr)) -> do
-    ts' <- liftTop $ mapM toImpType ts
-    let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts']
+  NEvalCmd (Command cmd (ty, expr)) -> do
+    ts <- liftTop $ mapM toImpType (getNExprType expr)
+    let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts]
     prog <- liftTop $ toImp (map asDest bs) expr
     case cmd of
       ShowImp -> emitOutput $ TextOut $ pprint prog

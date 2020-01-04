@@ -8,8 +8,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
-              NEmbedT, NEmbed, NEmbedEnv, NEmbedScope, buildScoped, askType, askAtomType,
-              wrapNDecls, runEmbedT, runEmbed, emitUnpack, nGet, flipIdx,
+              NEmbedT, NEmbed, NEmbedEnv, buildScoped, wrapNDecls, runEmbedT,
+              runEmbed, emitUnpack, nGet, flipIdx,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
               emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div',
               selectAt) where
@@ -26,8 +26,7 @@ import Subst
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
 type NEmbed = Cat NEmbedEnv
-type NEmbedScope = FullEnv NType ()
-type NEmbedEnv = (NEmbedScope, [NDecl])
+type NEmbedEnv = (Scope, [NDecl])
 
 -- Only produces atoms without binders (i.e. no NLam or NAtomicFor) so that we
 -- don't have to deshadow them again later wrt newly in scope variables.
@@ -38,10 +37,8 @@ emit expr = emitNamed "v" expr
 emitNamed :: MonadCat NEmbedEnv m => Name -> NExpr -> m [NAtom]
 emitNamed v expr = case expr of
   NAtoms atoms | all noBinders atoms -> return atoms
-  _ -> do
-    tys <- askType expr
-    -- TODO: use suggestive names based on types (e.g. "f" for function)
-    emitTo (map (v:>) tys) expr
+  -- TODO: use suggestive names based on types (e.g. "f" for function)
+  _ -> emitTo (map (v:>) (getNExprType expr)) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat NEmbedEnv m => [NBinder] -> NExpr -> m [NAtom]
@@ -54,7 +51,7 @@ emitTo bs expr = do
 deShadow :: MonadCat NEmbedEnv m => NSubst a => a -> m a
 deShadow x = do
   scope <- looks fst
-  return $ nSubst (mempty, fmap (const ()) scope) x
+  return $ nSubst (mempty, scope) x
 
 noBinders :: NAtom -> Bool
 noBinders atom = case atom of
@@ -67,7 +64,7 @@ emitUnpack :: MonadCat NEmbedEnv m =>
 emitUnpack tv expr = do
   scope <- looks fst
   let tv' = rename tv scope
-  extend $ asFst (tv' @> T ())
+  extend $ asFst (tv' @> ())
   let finish bs = do bs' <- traverse freshenNBinder bs
                      extend $ asSnd [NUnpack bs' tv' expr]
                      return [NVar v ty | v:>ty <- bs']
@@ -77,7 +74,7 @@ freshenNBinder :: MonadCat NEmbedEnv m => NBinder -> m NBinder
 freshenNBinder (v:>ty) = do
   scope <- looks fst
   let v' = rename v scope
-  extend $ asFst (v' @> L ty)
+  extend $ asFst (v' @> ())
   return (v':>ty)
 
 withBinders :: (MonadCat NEmbedEnv m) =>
@@ -129,29 +126,21 @@ buildScoped m = do
   (body, (_, decls)) <- scoped m
   return $ wrapNDecls decls body
 
-askType :: (MonadCat NEmbedEnv m) => NExpr -> m [NType]
-askType expr = do
-  tyEnv <- looks fst
-  return $ getNExprType tyEnv expr
-
-askAtomType :: (MonadCat NEmbedEnv m) => NAtom -> m NType
-askAtomType x = liftM head $ askType $ NAtoms [x]
-
 materializeAtom :: (MonadCat NEmbedEnv m) => NAtom -> m NAtom
 materializeAtom atom = case atom of
   NAtomicFor ib@(iv:>_) body -> do
     ans <- buildNScan ib [] [] $ \i _ -> do
-      scope <- liftM (fmap (const ())) $ looks fst  -- really only need `i` in scope
+      scope <- looks fst  -- really only need `i` in scope
       body' <- materializeAtom $ nSubst (iv @> L i, scope) body
       return $ NAtoms [body']
     emitOneAtom ans
   NLam _ _ _ -> error $ "Can't materialize lambda"
   _ -> return atom
 
-runEmbedT :: Monad m => CatT NEmbedEnv m a -> NEmbedScope -> m (a, NEmbedEnv)
+runEmbedT :: Monad m => CatT NEmbedEnv m a -> Scope -> m (a, NEmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
 
-runEmbed :: Cat NEmbedEnv a -> NEmbedScope -> (a, NEmbedEnv)
+runEmbed :: Cat NEmbedEnv a -> Scope -> (a, NEmbedEnv)
 runEmbed m scope = runCat m (scope, [])
 
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
@@ -166,7 +155,7 @@ nGet e i = NGet e i
 
 flipIdx :: MonadCat NEmbedEnv m => NAtom -> m NAtom
 flipIdx i = do
-  n <- askAtomType i
+  let n = atomType i
   iInt  <- emitOneAtom $ NPrimOp IndexAsInt [[n]] [i]
   nInt  <- emitOneAtom $ NPrimOp IdxSetSize [[n]] []
   nInt' <- isub nInt (NLit (IntLit 1))

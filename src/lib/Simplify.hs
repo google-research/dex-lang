@@ -25,15 +25,13 @@ import Subst
 import Embed
 import Util
 
-type NScope = FullEnv NType ()
-
 type SimpSubEnv = FullEnv NAtom Name
 type DerivRuleEnv = Env NAtom
 
 data SimpEnv = SimpEnv { subEnv   :: SimpSubEnv
                        , derivEnv :: DerivRuleEnv }
 
-type SimpTopEnv = (SimpEnv, NScope)
+type SimpTopEnv = (SimpEnv, Scope)
 type SimplifyM a = ReaderT SimpEnv (NEmbedT (Either Err)) a
 
 derivPass :: TopPass NTopDecl NTopDecl
@@ -42,27 +40,27 @@ derivPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl ADPrimitive decl -> do
     let NLet bs _ = decl
     decl' <- liftTopNoDecl $ nSubstSimp decl
-    extend $ asSnd (foldMap lbind bs)
+    extend $ asSnd $ fold [v@>() | (v:>_) <- bs]
     return [NTopDecl PlainDecl decl']
   NRuleDef (LinearizationDef v) _ ~(NAtoms [f]) -> do
     f' <- liftTopNoDecl $ nSubstSimp f
     extend $ asFst $ mempty {derivEnv = v @> f' }
     emitOutput $ NoOutput
-  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
+  NEvalCmd (Command cmd (ty, expr)) -> do
     expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
     case cmd of
       ShowDeriv -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
+      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
 
 simpPass :: TopPass NTopDecl NTopDecl
 simpPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl _ decl -> simplifyDeclTop decl
   NRuleDef _ _ _ -> error "Shouldn't have derivative rules left"
-  NEvalCmd (Command cmd (ty, ntys, expr)) -> do
+  NEvalCmd (Command cmd (ty, expr)) -> do
     expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
     case cmd of
       ShowSimp -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, ntys, expr'))]
+      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
 
 liftTopNoDecl :: SimplifyM a -> TopPassM SimpTopEnv a
 liftTopNoDecl m = do
@@ -160,13 +158,13 @@ simplify expr = case expr of
 -- As we prepare to leave a scope (say that of `NScan`) we save the variables
 -- we'll no longer have access to once we've left, along with a function that
 -- can reconstruct the atoms (e.g. lambdas) on the other side.
-splitAtoms :: NEmbedScope -> [NAtom] -> ([NAtom], [NAtom] -> SimplifyM [NAtom])
+splitAtoms :: Scope -> [NAtom] -> ([NAtom], [NAtom] -> SimplifyM [NAtom])
 splitAtoms scope atoms
   | all isNVar atoms = (atoms, return)
   | otherwise        = (xsSaved, reconstruct)
   where
     isNVar x = case x of NVar _ _-> True; _ -> False
-    vsTys = envPairs $ envIntersect (foldMap freeNVars atoms) scope
+    vsTys = envPairs $ envIntersect scope (foldMap freeNVars atoms)
     xsSaved = [NVar v ty | (v, L ty) <- vsTys]
     reconstruct xs = dropSub $ extendSub env $ mapM nSubstSimp atoms
       where env = fold [v@>L x | ((v,_),x) <- zip vsTys xs]
@@ -236,7 +234,7 @@ nSubstSimp :: (MonadCat NEmbedEnv m, MonadReader SimpEnv m, NSubst a) => a -> m 
 nSubstSimp x = do
   env <- asks subEnv
   scope <- looks fst  -- do we have to reach into the embedding monad this way?
-  return $ nSubst (env, fmap (const ()) scope) x
+  return $ nSubst (env, scope) x
 
 -- === linearization ===
 
@@ -320,12 +318,12 @@ linearizeAtoms xs = do
 
 linearizeAtom :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
 linearizeAtom atom = case atom of
-  NLit _ -> zeroDeriv atom
+  NLit _ -> return $ zeroDeriv atom
   NVar v _ -> do
     maybeVal <- asks $ flip envLookup v . subEnv
     case maybeVal of
       Just (L x) -> return (x, lookupTangent v)
-      Nothing -> zeroDeriv atom
+      Nothing -> return $ zeroDeriv atom
       _ -> error "unexpected lookup"
   NGet x i -> do
     (x', xt) <- linearizeAtom x
@@ -334,10 +332,8 @@ linearizeAtom atom = case atom of
   NAtomicFor _ _ -> error "not implemented"
   NLam _ _ _     -> error "not implemented"
 
-zeroDeriv :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
-zeroDeriv x = do
-  ~[xTy] <- askType (NAtoms [x])
-  return (x, zeroAt xTy)
+zeroDeriv :: NAtom -> (NAtom, TangentM NAtom)
+zeroDeriv x = (x, zeroAt (atomType x))
 
 linearizeBuiltin :: MonadCat NEmbedEnv m =>
     Builtin -> [[NType]] -> [NAtom] -> (NExpr, [NAtom] -> m NExpr)
@@ -456,7 +452,7 @@ substTranspose :: NSubst a => a -> TransposeM a
 substTranspose x = do
   env <- asks snd
   scope <- looks fst
-  return $ nSubst (env, fmap (const ()) scope) x
+  return $ nSubst (env, scope) x
 
 transposeAtom :: NAtom -> NAtom -> TransposeM ()
 transposeAtom atom ct = case atom of
@@ -470,8 +466,8 @@ transposeAtom atom ct = case atom of
 
 oneHot :: NAtom -> NAtom -> TransposeM NAtom
 oneHot i x = do
-  n   <- askAtomType i
-  xTy <- askAtomType x
+  let n   = atomType i
+  let xTy = atomType x
   zero <- zeroAt xTy
   expr <- buildNScan ("i" :> n) [] [] $ \i' _ -> do
     ~[eq] <- emit $ NPrimOp (Cmp Equal) [[n]] [i, i']

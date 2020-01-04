@@ -443,10 +443,8 @@ checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
     env <- liftPass (pprint decl) $ checkNDecl decl
     extend env
   NRuleDef _ _ _ -> return () -- TODO!
-  NEvalCmd (Command _ (_, tys, expr)) -> liftPass ctx $ do
-    tys' <- getNType expr
-    assertEq tys tys' "NExpr command"
-    where ctx = pprint tys ++ "\n" ++ pprint expr
+  NEvalCmd (Command _ (_, expr)) ->
+    liftPass (pprint expr) $ void $ getNTypeChecked expr
   where
     liftPass :: String -> NTypeM a -> TopPassM NTypeEnv a
     liftPass ctx m = do
@@ -454,20 +452,11 @@ checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
       liftM fst $ liftExceptTop $ addContext ctx $
         runCatT (runReaderT m env) mempty
 
-getNExprType :: FullEnv NType () -> NExpr -> [NType]
-getNExprType env expr =
-  fst $ ignoreExcept $ addContext ("Type checking: " ++ pprint expr) $
-    runCatT (runReaderT (getNType expr) env') mempty
-  where
-    env' = fmap addEmptySpent env
-    addEmptySpent val = case val of L ty -> L (ty, mempty)
-                                    T k  -> T k
-
-getNType :: NExpr -> NTypeM [NType]
-getNType expr = case expr of
+getNTypeChecked :: NExpr -> NTypeM [NType]
+getNTypeChecked expr = case expr of
   NDecl decl body -> do
     env <- checkNDecl decl
-    extendR env $ getNType body
+    extendR env $ getNTypeChecked body
   NScan b@(_:>i) bs xs body -> do
     checkNBinder b
     let carryTys = map binderAnn bs
@@ -475,7 +464,7 @@ getNType expr = case expr of
     (xs', xsSpent) <- scoped $ atomTypesChecked xs
     assertEq carryTys xs' "Scan arg"
     let env = nBinderEnv xsSpent bs <> nBinderEnv mempty [b]
-    (bodyTys, bodySpent) <- scoped $ extendR env (getNType body)
+    (bodyTys, bodySpent) <- scoped $ extendR env (getNTypeChecked body)
     let (carryTys', outTys) = splitAt (length bs) bodyTys
     assertEq carryTys carryTys' "Scan output"
     case spendCart xsSpent bodySpent of
@@ -508,7 +497,7 @@ checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of
   NLet bs expr -> do
     mapM_ checkNBinder bs
-    (ts, s) <- scoped $ getNType expr
+    (ts, s) <- scoped $ getNTypeChecked expr
     assertEq (map binderAnn bs) ts "Decl"
     return $ nBinderEnv s bs
   NUnpack bs tv _ -> do  -- TODO: check bound expression!
@@ -525,7 +514,20 @@ atomType atom = case atom of
   NVar _ ty -> ty
   NGet e _  -> b where (NTabType _ b) = atomType e
   NAtomicFor (_:>n) body -> NTabType n (atomType body)
-  NLam _ _ _ -> error "Not implemented" -- we don't seem to use this case..
+  NLam m bs body -> NArrType m (map binderAnn bs) (getNExprType body)
+
+getNExprType :: NExpr -> [NType]
+getNExprType expr = case expr of
+  NDecl _ body -> getNExprType body
+  NScan (_:>n) bs _ body -> carryTys ++ map (NTabType n) outTys
+    where bodyTys = getNExprType body
+          (carryTys, outTys) = splitAt (length bs) bodyTys
+  NPrimOp b ts _ -> ansTys
+    where (_, ansTys, _) = ignoreExcept $ nBuiltinType b ts
+  NApp e _ -> bs
+    where (NArrType _ _ bs) = atomType e
+  NAtoms xs -> map atomType xs
+  NTabCon n ty _ -> [NTabType n ty]
 
 atomTypeChecked :: NAtom -> NTypeM NType
 atomTypeChecked atom = case atom of
@@ -551,13 +553,13 @@ atomTypeChecked atom = case atom of
     return $ NTabType (binderAnn b) bodyTy
   NLam NonLin bs body -> do
     mapM_ checkNBinder bs
-    bodyTys <- extendR (nBinderEnv mempty bs) (getNType body)
+    bodyTys <- extendR (nBinderEnv mempty bs) (getNTypeChecked body)
     return $ NArrType NonLin (map binderAnn bs) bodyTys
   NLam Lin bs body -> do
     mapM_ checkNBinder bs
     v <- getPatName bs
     let env = nBinderEnv (asSpent v) bs
-    bodyTys <- checkSpent v (pprint bs) $ extendR env (getNType body)
+    bodyTys <- checkSpent v (pprint bs) $ extendR env (getNTypeChecked body)
     return $ NArrType Lin (map binderAnn bs) bodyTys
 
 atomTypesChecked :: [NAtom] -> NTypeM [NType]
