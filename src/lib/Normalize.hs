@@ -23,8 +23,7 @@ import Pass
 import Embed
 
 data TLamEnv = TLamContents NormEnv [TBinder] Expr
-type NormSubEnv = FullEnv (Either [NAtom] TLamEnv) [NType]
-type NormEnv = (TypeEnv, NormSubEnv)
+type NormEnv = FullEnv (Either [NAtom] TLamEnv) [NType]
 type NormM a = ReaderT NormEnv (NEmbedT (Either Err)) a
 
 -- TODO: add top-level freshness scope to top-level env
@@ -40,8 +39,7 @@ normalizePass = TopPass $ \topDecl -> case topDecl of
     return [NRuleDef ann ty' expr']
   RuleDef _ _ _ -> error "Not implemented"
   EvalCmd (Command cmd expr) -> do
-    tyEnv <- looks (fst . fst)
-    let ty = getType tyEnv expr
+    let ty = getType expr
     ((ntys, expr'), _) <- asTopPassM $ do
        expr' <- buildScoped $ normalize expr
        ntys <- askType expr'
@@ -60,16 +58,15 @@ asTopPassM m = do
 normalize :: Expr -> NormM NExpr
 normalize expr = case expr of
   Lit x -> return $ NAtoms [NLit x]
-  Var v ts -> do
-    x <- asks $ fromL . (! v) . snd
+  Var v _ ts -> do
+    x <- asks $ fromL . (! v)
     case x of
       Left xs -> case ts of
         [] -> return $ NAtoms xs
         _ -> error "Unexpected type application"
       Right (TLamContents env tbs body) -> do
         ts' <- mapM normalizeTy ts
-        let env' = (foldMap tbind tbs,
-                    foldMap tbind $ zipWith replaceAnnot tbs ts')
+        let env' = foldMap tbind $ zipWith replaceAnnot tbs ts'
         local (const (env <> env')) $ normalize body
   PrimOp Scan _ [x, For ip (Lam _ p body)] -> do
     xs <- atomize x
@@ -136,16 +133,15 @@ normalizePat :: Traversable f => f Binder -> NormM ([NBinder], [NAtom] -> NormEn
 normalizePat p = do
   p' <- traverse (traverse normalizeTy) p
   let bs = fold (fmap flattenBinder p')
-  let tyEnv = foldMap (\(v:>ty) -> v @> L (asSigma ty)) p
-  return (bs, \xs -> (tyEnv, bindPat p' xs))
+  return (bs, bindPat p')
   where
     flattenBinder :: BinderP [NType] -> [NBinder]
     flattenBinder (v:>ts) = map (v:>) ts
 
-bindPat :: Traversable f => f (BinderP [a]) -> [NAtom] -> NormSubEnv
+bindPat :: Traversable f => f (BinderP [a]) -> [NAtom] -> NormEnv
 bindPat p xs = fst $ foldl addBinder (mempty, xs) p
   where
-    addBinder :: (NormSubEnv, [NAtom]) -> BinderP [a] -> (NormSubEnv, [NAtom])
+    addBinder :: (NormEnv, [NAtom]) -> BinderP [a] -> (NormEnv, [NAtom])
     addBinder (env, xs') (v:>ts) = (env <> (v @> L (Left cur)), rest)
       where (cur, rest) = splitAt (length ts) xs'
 
@@ -156,25 +152,25 @@ normalizeDecl decl = case decl of
     bound' <- buildScoped $ normalize bound
     xs <- emitTo bs bound'
     return $ toEnv xs
-  LetPoly (v:>ty) (TLam tbs body) -> do
+  LetPoly (v:>_) (TLam tbs body) -> do
     env <- ask
-    return (v@>L ty, v@>L (Right (TLamContents env tbs body)))
+    return $ v @> L (Right (TLamContents env tbs body))
   Unpack b tv bound -> do
     bound' <- buildScoped $ normalize bound
     (ty, emitUnpackRest) <- emitUnpack tv bound'
-    let tenv = (tv @> T (Kind [IdxSet]), tv @> T [ty])
+    let tenv = tv @> T [ty]
     (bs, toEnv) <- extendR tenv $ normalizePat [b]
     xs <- emitUnpackRest bs
     return (tenv <> toEnv xs)
   TyDef NewType v ty -> do
     ty' <- normalizeTy ty
-    return (v @> T (Kind []), v @> T ty')
+    return $ v @> T ty'
   TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
 
 normalizeTy :: Type -> NormM [NType]
 normalizeTy ty = case ty of
   BaseType b -> return [NBaseType b]
-  TypeVar v -> asks $ fromT . (!v) . snd
+  TypeVar v -> asks $ fromT . (!v)
   ArrType ~(Mult l) a b -> do
     a' <- normalizeTy a
     b' <- normalizeTy b

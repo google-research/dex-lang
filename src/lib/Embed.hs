@@ -49,7 +49,7 @@ emitTo [] _ = return []
 emitTo bs expr = do
   bs' <- traverse freshenNBinder bs
   extend $ asSnd [NLet bs' expr]
-  return [NVar v | v:>_ <- bs']
+  return $ map binderToVar bs'
 
 deShadow :: MonadCat NEmbedEnv m => NSubst a => a -> m a
 deShadow x = do
@@ -70,7 +70,7 @@ emitUnpack tv expr = do
   extend $ asFst (tv' @> T ())
   let finish bs = do bs' <- traverse freshenNBinder bs
                      extend $ asSnd [NUnpack bs' tv' expr]
-                     return [NVar v | v:>_ <- bs']
+                     return [NVar v ty | v:>ty <- bs']
   return (NTypeVar tv', finish)
 
 freshenNBinder :: MonadCat NEmbedEnv m => NBinder -> m NBinder
@@ -85,7 +85,7 @@ withBinders :: (MonadCat NEmbedEnv m) =>
 withBinders bs f = do
   ((ans, bs'), env) <- scoped $ do
       bs' <- traverse freshenNBinder bs
-      ans <- f [NVar v | v:>_ <- bs']
+      ans <- f $ map binderToVar bs'
       return (ans, bs')
   return (ans, bs', env)
 
@@ -103,7 +103,7 @@ buildNAtomicFor :: (MonadCat NEmbedEnv m) =>
 buildNAtomicFor ib f = do
   ~(body, [ib'@(i':>_)], _) <- withBinders [ib] (\[x] -> f x) -- TODO: fail if nonempty decls
   return $ case body of
-    NGet e (NVar i) | i == i' && not (isin i (freeVars e)) -> e
+    NGet e (NVar i _) | i == i' && not (isin i (freeNVars e)) -> e
     _ -> NAtomicFor ib' body
 
 buildNestedNScans :: (MonadCat NEmbedEnv m)
@@ -156,12 +156,12 @@ runEmbed m scope = runCat m (scope, [])
 
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
-wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v']) | v == v' = expr  -- optimization
+wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v' _]) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
 
 nGet :: NAtom -> NAtom -> NAtom
 nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
-  where scope = fmap (const ()) (freeVars i)
+  where scope = fmap (const ()) (freeNVars i)
 nGet e i = NGet e i
 
 flipIdx :: MonadCat NEmbedEnv m => NAtom -> m NAtom
@@ -220,6 +220,9 @@ select p ty x y = emitOneAtom $ NPrimOp Select [[ty]] [p, x, y]
 
 div' :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
 div' x y = emitOneAtom $ NPrimOp FDiv [] [x, y]
+
+binderToVar :: NBinder -> NAtom
+binderToVar (v:>ty) = NVar v ty
 
 emitOneAtom :: MonadCat NEmbedEnv m => NExpr -> m NAtom
 emitOneAtom expr = liftM head $ emit expr

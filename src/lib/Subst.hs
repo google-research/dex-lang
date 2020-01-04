@@ -31,15 +31,16 @@ class Subst a where
 instance Subst Expr where
   subst env@(sub, scope) expr = case expr of
     Lit _ -> expr
-    Var v tys ->
+    Var v ty tys ->
       case envLookup sub v of
-        Nothing -> Var v tys'
-        Just (L (Left v')) -> Var v' tys'
+        Nothing -> Var v ty' tys'
+        Just (L (Left v')) -> Var v' ty' tys'
         Just (L (Right (TLam tbs body))) -> subst (sub', scope) body
           where sub' = fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
         Just (T _ ) -> error "Expected let-bound var"
       where
         tys' = map recurTy tys
+        ty' = recurTy ty
     PrimOp op ts xs -> PrimOp op (map recurTy ts) (map recur xs)
     Decl decl body -> Decl decl'' body'
       where
@@ -102,11 +103,11 @@ instance Subst TLam where
        body' = subst (env <> env') body
 
 renamePat :: Traversable t => Scope -> t Binder -> (t Binder, SubstEnv)
-renamePat scope p = (p', (fmap (L . Left) env, scope'))
+renamePat scope p = (p', (fmap (L . Left . binderVar) env, scope'))
   where (p', (env, scope')) = renameBinders p scope
 
 renameTBinders :: Scope -> [TBinder] -> ([TBinder], SubstEnv)
-renameTBinders scope tbs = (tbs', (fmap (T . TypeVar) env, scope'))
+renameTBinders scope tbs = (tbs', (fmap (T . TypeVar . binderVar) env, scope'))
   where (tbs', (env, scope')) = renameBinders tbs scope
 
 instance Subst Type where
@@ -171,9 +172,9 @@ instance NSubst NExpr where
 instance NSubst NAtom where
   nSubst env@(sub, scope) atom = case atom of
     NLit _ -> atom
-    NVar v ->
+    NVar v ty ->
       case envLookup sub v of
-        Nothing -> atom
+        Nothing -> NVar v (nSubst env ty)
         Just (L x') -> nSubst (mempty, scope) x'
         Just (T _) -> error "Expected let-bound variable"
     NGet e i -> NGet (nSubst env e) (nSubst env i)
@@ -214,5 +215,5 @@ refreshNBinders env@(_, scope) bs = renameNBinders scope bs'
   where bs' = fmap (nSubst env) bs
 
 renameNBinders :: Traversable t => Scope -> t NBinder -> (t NBinder, NSubstEnv)
-renameNBinders scope p = (p', (fmap (L . NVar) env, scope'))
+renameNBinders scope p = (p', (fmap (\(v:>ty) -> L (NVar v ty)) env, scope'))
   where (p', (env, scope')) = renameBinders p scope

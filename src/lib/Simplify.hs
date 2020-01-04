@@ -115,17 +115,16 @@ simplify expr = case expr of
     xs' <- mapM (simplifyAtom >=> materializeAtom) xs
     ib' <- nSubstSimp ib
     bs' <- mapM nSubstSimp bs
-    ((csOut, ysOut), ~(ib'':bs''), (scope, decls)) <-
+    ((csOut, ysOut), ~(ib''@(i:>n):bs''), (scope, decls)) <-
         withBinders (ib':bs') $ \(i:carry) ->
            extendSub (bindEnv (ib':bs') (i:carry)) $ do
              (csOut, ysOut) <- liftM splitCarry $ simplify e
              csOut' <- mapM materializeAtom csOut
              return (csOut', ysOut)
-    let i = binderVar ib''
     let (ysClosure, reconstruct) = splitAtoms (envDelete i scope) ysOut
     (csOut', ysClosure') <- liftM splitCarry $ emit $ NScan ib'' bs'' xs' $
                               wrapNDecls decls (NAtoms (csOut ++ ysClosure))
-    let ysClosure'' = map (flip nGet (NVar i)) ysClosure'
+    let ysClosure'' = map (flip nGet (NVar i n)) ysClosure'
     ysOut' <- liftM (map (NAtomicFor ib'')) $ reconstruct ysClosure''
     return $ csOut' ++ ysOut'
     where splitCarry = splitAt (length bs)
@@ -164,12 +163,13 @@ simplify expr = case expr of
 splitAtoms :: NEmbedScope -> [NAtom] -> ([NAtom], [NAtom] -> SimplifyM [NAtom])
 splitAtoms scope atoms
   | all isNVar atoms = (atoms, return)
-  | otherwise        = (map NVar vs, reconstruct)
+  | otherwise        = (xsSaved, reconstruct)
   where
-    isNVar x = case x of NVar _ -> True; _ -> False
-    vs = envNames $ envIntersect scope (foldMap freeVars atoms)
+    isNVar x = case x of NVar _ _-> True; _ -> False
+    vsTys = envPairs $ envIntersect (foldMap freeNVars atoms) scope
+    xsSaved = [NVar v ty | (v, L ty) <- vsTys]
     reconstruct xs = dropSub $ extendSub env $ mapM nSubstSimp atoms
-      where env = fold [v@>L x | (v,x) <- zip vs xs]
+      where env = fold [v@>L x | ((v,_),x) <- zip vsTys xs]
 
 simplifyMat :: NExpr -> SimplifyM NExpr
 simplifyMat expr = do
@@ -197,10 +197,11 @@ simplifyLam f = do
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
   NLit x -> return $ NLit x
-  NVar v -> do
+  NVar v ty -> do
+    ty' <- nSubstSimp ty
     x <- asks $ flip envLookup v . subEnv
     case x of
-      Nothing -> return $ NVar v
+      Nothing -> return $ NVar v ty'
       -- is this freshening necessary here?
       Just (L x') -> dropSub (simplifyAtom x')
       Just (T _ ) -> error "Expected let-bound var"
@@ -281,7 +282,7 @@ linearize expr = case expr of
           buildNScan ib bs tsCarryInit $ \i' tsCarry ->
             return $ NApp (NGet fs i') (tsEnv ++ tsCarry)
     return (NAtoms ans, tangentComputation)
-  NApp (NVar v) xs -> do
+  NApp (NVar v _) xs -> do
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
       case maybeRule of
@@ -320,7 +321,7 @@ linearizeAtoms xs = do
 linearizeAtom :: NAtom -> SimplifyM (NAtom, TangentM NAtom)
 linearizeAtom atom = case atom of
   NLit _ -> zeroDeriv atom
-  NVar v -> do
+  NVar v _ -> do
     maybeVal <- asks $ flip envLookup v . subEnv
     case maybeVal of
       Just (L x) -> return (x, lookupTangent v)
@@ -368,9 +369,8 @@ lookupTangent v = asks (!v)
 
 getContinuousVars :: NExpr -> SimplifyM [NBinder]
 getContinuousVars expr = do
-  let vs = [v | (v, L ()) <- envPairs $ freeVars expr]
-  tys <- mapM (\v -> nSubstSimp (NVar v) >>= askAtomType) vs
-  return $ filter (isContinuous . binderAnn) $ zipWith (:>) vs tys
+  let bs = [v:>ty | (v, L ty) <- envPairs $ freeNVars expr]
+  return $ filter (isContinuous . binderAnn) bs
 
 isContinuous :: NType -> Bool
 isContinuous ty = case ty of
@@ -407,7 +407,7 @@ transpose expr cts = case expr of
     ib' <- substTranspose ib
     linVars <- asks fst
     let (carryCTs, ysCTs) = splitCarry cts
-    let (envVs, envTys) = unzip $ envPairs $ freeVars e `envIntersect` linVars
+    let (envVs, envTys) = unzip $ envPairs $ freeNVars e `envIntersect` linVars
     initAccum <- mapM zeroAt envTys  -- TODO: need to subst type?
     let accumBinders = zipWith (:>) envVs envTys
     let bs' = bs ++ accumBinders
@@ -438,14 +438,14 @@ transpose expr cts = case expr of
   NAtoms xs -> zipWithM_ transposeAtom xs cts
   _ -> error $ "Transpose not implemented for " ++ pprint expr
 
-isLin :: HasVars a => a -> TransposeM Bool
+isLin :: HasNVars a => a -> TransposeM Bool
 isLin x = do linVs <- asks fst
-             return $ not $ null $ toList $ envIntersect (freeVars x) linVs
+             return $ not $ null $ toList $ envIntersect (freeNVars x) linVs
 
 emitCT :: Name -> NAtom -> TransposeM ()
 emitCT v ct = tell $ MonMap $ M.singleton v [ct]
 
-substNonLin ::  (HasVars a, NSubst a) => a -> TransposeM (Maybe a)
+substNonLin ::  (HasNVars a, NSubst a) => a -> TransposeM (Maybe a)
 substNonLin x = do
   x' <- substTranspose x
   lin <- isLin x'
@@ -461,7 +461,7 @@ substTranspose x = do
 transposeAtom :: NAtom -> NAtom -> TransposeM ()
 transposeAtom atom ct = case atom of
   NLit _ -> return ()
-  NVar v -> emitCT v ct
+  NVar v _ -> emitCT v ct
   NGet x i -> do
     i' <- substTranspose i
     ct' <- oneHot i' ct

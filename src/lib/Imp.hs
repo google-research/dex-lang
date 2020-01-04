@@ -122,7 +122,7 @@ withAlloc bs body = do
 toImpAtom :: NAtom -> ImpM IExpr
 toImpAtom atom = case atom of
   NLit x -> return $ ILit x
-  NVar v -> lookupVar v
+  NVar v _ -> lookupVar v
   NGet e i -> liftM2 IGet (toImpAtom e) (toImpAtom i)
   _ -> error $ "Not implemented: " ++ pprint atom
 

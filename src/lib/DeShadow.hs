@@ -68,10 +68,11 @@ liftTop m = do
 deShadowExpr :: UExpr -> DeShadowM UExpr
 deShadowExpr expr = case expr of
   Lit x -> return (Lit x)
-  Var v tys -> do
+  Var v ann tyArgs -> do
     v' <- lookupLVar v
-    tys' <- mapM deShadowType tys
-    return $ Var v' tys'
+    ann' <- deShadowAnn ann
+    tyArgs' <- mapM deShadowType tyArgs
+    return $ Var v' ann' tyArgs'
   PrimOp b ts args -> liftM2 (PrimOp b) (mapM deShadowType ts) (traverse recur args)
   Decl decl body ->
     withCat (deShadowDecl decl) $ \decl' -> do
@@ -140,9 +141,7 @@ lookupLVar v = do
 
 freshBinder :: UBinder -> DeShadowCat UBinder
 freshBinder (v:>ann) = do
-  ann' <- case ann of
-            Ann ty -> liftM Ann $ toCat $ deShadowType ty
-            NoAnn -> return NoAnn
+  ann' <- toCat $ deShadowAnn ann
   freshBinderP (v:>ann')
 
 freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
@@ -164,6 +163,10 @@ freshTBinder (v:>k) = do
   v' <- looks $ rename v . snd
   extend (asSnd (v@>TypeVar v'), v'@>())
   return (v':>k)
+
+deShadowAnn :: Ann -> DeShadowM Ann
+deShadowAnn NoAnn = return NoAnn
+deShadowAnn (Ann ty) = liftM Ann (deShadowType ty)
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = case ty of

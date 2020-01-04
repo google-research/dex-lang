@@ -230,7 +230,10 @@ prod1 p = do
                              Tens -> colon
 
 var :: Parser UExpr
-var = liftM2 Var lowerName $ many tyArg
+var = do
+  v <- lowerName
+  tyArgs <- many tyArg
+  return $ Var v NoAnn tyArgs
 
 tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
@@ -365,7 +368,9 @@ idxExpr :: Parser UExpr
 idxExpr = withSourceAnn $ rawVar <|> parens productCon
 
 rawVar :: Parser UExpr
-rawVar = liftM (flip Var []) lowerName
+rawVar = do
+  v <- lowerName
+  return $ Var v NoAnn []
 
 binder :: Parser UBinder
 binder = (symbol "_" >> return ("_" :> NoAnn))

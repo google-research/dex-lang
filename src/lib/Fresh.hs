@@ -14,7 +14,7 @@
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
-              renameBinders, freshenBinder, renamesSubst) where
+              renameBinders, freshenBinder) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -52,24 +52,19 @@ renames :: Traversable f => f Name -> Env () -> (f Name, Env ())
 renames vs scope = runCat (traverse freshCat vs) scope
 
 renameBinders :: Traversable f =>
-                   f (BinderP ann) -> Env () -> (f (BinderP ann), (Env Name, Env ()))
-renameBinders bs scope =
-  flip runCat (mempty, scope) $ flip traverse bs $ \(v:>ann) -> do
-     v' <- freshCatSubst v
-     return (v':>ann)
+                   f (BinderP ann) -> Env () -> (f (BinderP ann), (Env (BinderP ann), Env ()))
+renameBinders bs scope = flip runCat (mempty, scope) $ traverse freshCatSubst bs
 
 freshCat :: Name -> Cat (Env ()) Name
 freshCat v = do v' <- looks $ rename v
                 extend (v' @> ())
                 return v'
 
-renamesSubst :: Traversable f => f Name -> Env () -> (f Name, (Env Name, Env ()))
-renamesSubst vs scope = runCat (traverse freshCatSubst vs) (mempty, scope)
-
-freshCatSubst :: Name -> Cat (Env Name, Env ()) Name
-freshCatSubst v = do v' <- looks $ rename v . snd
-                     extend (v @> v', v' @> ())
-                     return v'
+freshCatSubst :: BinderP ann -> Cat (Env (BinderP ann), Env ()) (BinderP ann)
+freshCatSubst (v :> ann) = do
+  v' <- looks $ rename v . snd
+  extend (v @> v':> ann, v' @> ())
+  return $ v':>ann
 
 -- === state monad version of fresh var generation ===
 

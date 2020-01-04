@@ -60,11 +60,11 @@ interpPass' topDecl = case topDecl of
 reduce :: ClosedExpr -> Val
 reduce expr = case expr of
   Lit _ -> expr
-  Var _ _ -> error $ "Can only reduce closed expression. Got: " ++ pprint expr
+  Var _ _ _ -> error $ "Can only reduce closed expression. Got: " ++ pprint expr
   PrimOp Scan _ [x, fs] -> RecCon Cart $ Tup [carry, TabCon ty ys]
     where
       x'  = reduce x
-      (RecType _ (Tup [_, ty@(TabType n _)])) = getType mempty expr
+      (RecType _ (Tup [_, ty@(TabType n _)])) = getType expr
       (carry, ys) = mapAccumL (evalScanBody fs) x' (enumerateIdxs n)
   PrimOp op ts xs -> evalOp op ts (map reduce xs)
   Decl decl body  -> subReduce (reduceDecl decl) body
@@ -78,7 +78,7 @@ reduce expr = case expr of
     where e2' = reduce e2
   For p body -> TabCon ty xs
     where
-      (ty@(TabType n _)) = getType mempty expr
+      (ty@(TabType n _)) = getType expr
       xs = map (\i -> subReduce (bindPat p i) body) (enumerateIdxs n)
   Get e i        -> idxTabCon (reduce e) (reduce i)
   RecCon k r     -> RecCon k (fmap reduce r)
@@ -225,8 +225,8 @@ runLinearize (v:>ty) body x =
   pair outPrimal $ Lam (Mult Lin) (RecLeaf (t:>ty)) $ wrapDecls decls outTangent
   where
     t = "t" :: Name
-    env = v @> (ty, makeDual ty x (Var t []))
-    outTy = getType (v @> L (asSigma ty)) body
+    env = v @> (ty, makeDual ty x (Var t ty []))
+    outTy = getType body
     (out, (_, decls)) =
         runIdentity $ flip runCatT (t@>ty, []) $ flip runReaderT env $ linearize body
     (outPrimal, outTangent) = fromDual outTy out
@@ -252,7 +252,7 @@ fromDual ty _ = error $ "Not a valid type for duals: " ++ pprint ty
 
 -- TODO: replace this with a proper embedding
 getField :: Record Type -> Expr -> RecField -> Expr
-getField tys expr field = Decl (LetMono p' expr) (Var v [])
+getField tys expr field = Decl (LetMono p' expr) (Var v (patType p') [])
   where v = "elt" :: Name
         p = fmap (\ty -> RecLeaf ("_" :> ty)) tys
         p' = RecTree $ recUpdate field (RecLeaf (v:> recGet tys field)) p
@@ -260,8 +260,8 @@ getField tys expr field = Decl (LetMono p' expr) (Var v [])
 linearize :: Expr -> DerivM DVal
 linearize expr = case expr of
   Lit _ -> return $ pair expr (zeroAt ty)
-    where ty = getType mempty expr
-  Var v _ -> do
+    where ty = getType expr
+  Var v _ _ -> do
     val <- asks $ flip envLookup v
     case val of
       Nothing -> error $ "Unexpected var: " ++ pprint v
@@ -278,7 +278,7 @@ linearize expr = case expr of
     let env = bindPatDeriv p xs <> bindPatDeriv p' e2'
     extendR env $ linearize body
   For p body -> do
-    ~(ty@(TabType n _)) <- linType expr
+    let (ty@(TabType n _)) = getType expr
     xs <- mapM (\i -> linearize (subst (bindPat p i) body)) (enumerateIdxs n)
     return $ TabCon ty xs
   Get e i -> do
@@ -294,11 +294,6 @@ type Atom = Expr
 
 pair :: Val -> Val -> Val
 pair x y = RecCon Cart $ Tup [x, y]
-
-linType :: Expr -> DerivM Type
-linType expr = do
-  env <- ask
-  return $ getType (fmap (L . asSigma . fst) env) expr
 
 linearizePrimOp :: Builtin -> [Type] -> [DVal] -> DerivM DVal
 linearizePrimOp op ts xs | nLin == nArgs = do
@@ -319,9 +314,9 @@ emit :: Expr -> DerivM Atom
 emit expr = do
   scope <- looks fst
   let v = rename "t" scope
-  let ty = getType (fmap (L . asSigma) scope) expr
+  let ty = getType expr
   extend (v@>ty, [LetMono (RecLeaf (v:>ty)) expr])
-  return $ Var v []
+  return $ Var v ty []
 
 makeClosure :: DEnv -> Expr -> Expr
 makeClosure env expr = Decl (LetMono p xs') expr
@@ -347,7 +342,7 @@ type CotangentVals = MonMap Name [Val]
 transpose :: Val -> Expr -> CotangentVals
 transpose ct expr = case expr of
   Lit _ -> mempty
-  Var v _ -> MonMap $ M.singleton v [ct]
+  Var v _ _ -> MonMap $ M.singleton v [ct]
   PrimOp op ts xs -> transposeOp op ct ts xs
   Decl (LetMono p rhs) body
     | hasFVs rhs -> cts <> transpose ct' rhs

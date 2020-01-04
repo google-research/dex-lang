@@ -106,7 +106,7 @@ instance Pretty LitVal where
 instance Pretty b => Pretty (ExprP b) where
   pretty expr = case expr of
     Lit val -> p val
-    Var v ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
+    Var v _ ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
     PrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = tupled (map p xs)
@@ -198,7 +198,7 @@ instance Pretty NDecl where
 instance Pretty NAtom where
   pretty atom = case atom of
     NLit v -> p v
-    NVar x -> p x
+    NVar x _ -> p x
     NGet e i -> p e <> "." <> p i
     NLam l bs body -> parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "."
                        <> line <> align (p body)

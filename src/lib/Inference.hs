@@ -43,7 +43,7 @@ typePass = TopPass $ \tdecl -> case tdecl of
   RuleDef ann ty tlam -> do
     ~(LetPoly _ tlam', _) <- liftTop $ inferDecl $ LetPoly ("_":>ty) tlam
     return [RuleDef ann ty tlam']
-  EvalCmd (Command GetType (SrcAnnot (Var v []) _)) -> do
+  EvalCmd (Command GetType (SrcAnnot (Var v NoAnn []) _)) -> do
     env <- look
     case envLookup env v of
       Nothing -> throwTopErr $ Err UnboundVarErr Nothing (pprint v)
@@ -105,12 +105,12 @@ check expr reqTy = case expr of
   Lit c -> do
     constrainReq (BaseType (litType c))
     return (Lit c)
-  Var v ts -> do
+  Var v _ ts -> do
     Forall kinds body <- asks $ fromL . (! v) . snd
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
-    return $ Var v ts'
+    return $ Var v reqTy ts'
   PrimOp b ts args -> do
     let BuiltinType kinds _ argTys ansTy = builtinType b
     vs <- mapM (const freshQ) (drop (length ts) kinds)

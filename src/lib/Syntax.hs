@@ -20,12 +20,12 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
                ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
-               Value (..), Vec (..), Result (..), Result', freeVars,
+               Value (..), Vec (..), Result (..), Result', freeVars, freeNVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames,
                NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
-               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars,
+               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
                RuleAnn (..), DeclAnn (..), CmpOp (..),
                Ptr (..), BinValP (..), BinVal, Val) where
@@ -47,7 +47,7 @@ import Data.Traversable (fmapDefault, foldMapDefault)
 
 data ExprP b =
             Lit LitVal
-          | Var Name [Type]
+          | Var Name b [Type]
           | PrimOp Builtin [Type] [ExprP b]
           | Decl (DeclP b) (ExprP b)
           | Lam b (PatP b) (ExprP b)
@@ -233,7 +233,7 @@ data NDecl = NLet [NBinder] NExpr
               deriving (Show)
 
 data NAtom = NLit LitVal
-           | NVar Name
+           | NVar Name NType
            | NGet NAtom NAtom
            | NLam Multiplicity [NBinder] NExpr
            -- Only used internally in the simplification pass as book-keeping
@@ -424,7 +424,7 @@ class HasVars a where
 
 instance HasVars b => HasVars (ExprP b) where
   freeVars expr = case expr of
-    Var v ts -> v @> L () <> foldMap freeVars ts
+    Var v ty ts -> v @> L () <> freeVars ty <> foldMap freeVars ts
     Lit _ -> mempty
     PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     Decl decl body -> let (bvs, fvs) = declVars [decl]
@@ -463,40 +463,6 @@ instance HasVars Ann where
   freeVars NoAnn = mempty
   freeVars (Ann ty) = freeVars ty
 
-instance HasVars NExpr where
-  freeVars expr = case expr of
-    NDecl decl body -> let (bvs, fvs) = declVars [decl]
-                        in fvs <> (freeVars body `envDiff` bvs)
-    NPrimOp _ ts xs -> foldMap (foldMap freeVars) ts <> foldMap freeVars xs
-    NApp f xs -> freeVars f <> foldMap freeVars xs
-    NAtoms xs -> foldMap freeVars xs
-    NScan b bs x0 body -> foldMap freeVars x0 <>
-      ((freeVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
-    NTabCon n ty xs -> freeVars n <> freeVars ty <> foldMap freeVars xs
-
-instance HasVars NAtom where
-  freeVars atom = case atom of
-    NLit _ -> mempty
-    NVar v -> v @> L ()
-    NGet e i -> freeVars e <> freeVars i
-    NLam _ bs body -> foldMap freeVars bs <>
-                      (freeVars body `envDiff` foldMap lhsVars bs)
-    NAtomicFor b body ->  freeVars b <> (freeVars body `envDiff` lhsVars b)
-
-instance HasVars NDecl where
-  freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
-  freeVars (NUnpack bs _ expr) = foldMap freeVars bs <> freeVars expr
-
-instance HasVars NType where
-  freeVars ty = case ty of
-    NBaseType _ -> mempty
-    NTypeVar v -> v @> T ()
-    NArrType _ as bs -> foldMap freeVars as <> foldMap freeVars bs
-    NTabType a b -> freeVars a <> freeVars b
-    NExists ts -> foldMap freeVars ts
-    NIdxSetLit _ -> mempty
-    NBoundTVar _ -> mempty
-
 instance HasVars b => HasVars (BinderP b) where
   freeVars (_ :> b) = freeVars b
 
@@ -529,6 +495,49 @@ instance HasVars SourceBlock where
     UTopDecl decl -> freeVars decl
     _ -> mempty
 
+type NVars = FullEnv NType ()
+
+class HasNVars a where
+  freeNVars :: a -> NVars
+
+instance HasNVars NExpr where
+  freeNVars expr = case expr of
+    NDecl decl body -> freeNVars decl <> (freeNVars body `envDiff` bvs)
+      where bvs = case decl of NLet bs _       -> foldMap lhsVars bs
+                               NUnpack bs tv _ -> foldMap lhsVars bs <> tv @> T ()
+    NPrimOp _ ts xs -> foldMap (foldMap freeNVars) ts <> foldMap freeNVars xs
+    NApp f xs -> freeNVars f <> foldMap freeNVars xs
+    NAtoms xs -> foldMap freeNVars xs
+    NScan b bs x0 body -> foldMap freeNVars x0 <>
+      ((freeNVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
+    NTabCon n ty xs -> freeNVars n <> freeNVars ty <> foldMap freeNVars xs
+
+instance HasNVars NAtom where
+  freeNVars atom = case atom of
+    NLit _ -> mempty
+    NVar v ty -> v @> L ty <> freeNVars ty
+    NGet e i -> freeNVars e <> freeNVars i
+    NLam _ bs body -> foldMap freeNVars bs <>
+                      (freeNVars body `envDiff` foldMap lhsVars bs)
+    NAtomicFor b body ->  freeNVars b <> (freeNVars body `envDiff` lhsVars b)
+
+instance HasNVars NDecl where
+  freeNVars (NLet bs expr) = foldMap freeNVars bs <> freeNVars expr
+  freeNVars (NUnpack bs _ expr) = foldMap freeNVars bs <> freeNVars expr
+
+instance HasNVars NType where
+  freeNVars ty = case ty of
+    NBaseType _ -> mempty
+    NTypeVar v -> v @> T ()
+    NArrType _ as bs -> foldMap freeNVars as <> foldMap freeNVars bs
+    NTabType a b -> freeNVars a <> freeNVars b
+    NExists ts -> foldMap freeNVars ts
+    NIdxSetLit _ -> mempty
+    NBoundTVar _ -> mempty
+
+instance HasNVars b => HasNVars (BinderP b) where
+  freeNVars (_ :> b) = freeNVars b
+
 class BindsVars a where
   lhsVars :: a -> Vars
 
@@ -545,10 +554,6 @@ instance BindsVars (TopDeclP b) where
   lhsVars (TopDecl _ decl) = lhsVars decl
   lhsVars _ = mempty
 
-instance BindsVars NDecl where
-  lhsVars (NLet bs _) = foldMap lhsVars bs
-  lhsVars (NUnpack bs tv _) = foldMap lhsVars bs <> tv @> T ()
-
 instance BindsVars SourceBlock where
   lhsVars block = case sbContents block of
     UTopDecl decl -> lhsVars decl
@@ -563,7 +568,7 @@ declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
 
 stripSrcAnnot :: ExprP b -> ExprP b
 stripSrcAnnot expr = case expr of
-  Var _ _ -> expr
+  Var _ _ _ -> expr
   Lit _   -> expr
   PrimOp op ts xs -> PrimOp op ts (map recur xs)
   Decl decl body  -> Decl (stripSrcAnnotDecl decl) (recur body)
