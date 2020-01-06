@@ -282,6 +282,9 @@ many f key i = f (hash key (asint i))
 ixkey :: A n::Ix. Key -> n -> Key
 ixkey x i = hash x (asint i)
 
+ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 x i = ixkey $ ixkey x i
+
 rand :: Key -> Real
 rand x = %%randunif(x)
 
