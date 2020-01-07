@@ -22,7 +22,7 @@ import PPrint
 -- TODO: get rid of Vec and use this general-purpose ser-des instead
 -- TODO: break into separate normalization (unzipping) and serialization passes
 
-loadDataLiteral :: String -> IO (Type, [BinVal])
+loadDataLiteral :: String -> IO (Type, [Word64])
 loadDataLiteral fname = do
   source <- readFile fname
   let uval = ignoreExcept $ parseData source
@@ -30,20 +30,20 @@ loadDataLiteral fname = do
   xs <- serialize (stripSrcAnnot val)
   return (ty, xs)
 
-serialize :: Val -> IO [BinVal]
+serialize :: Val -> IO [Word64]
 serialize val = case val of
-  Lit x -> return [uncurry ScalarVal (serializeScalar x)]
+  Lit x -> return [serializeScalar x]
   RecCon _ r -> liftM concat $ traverse serialize r
   TabCon ~(TabType (IdxSetLit n) eltTy) xs -> error "Not implemented"
   _ -> error $ "Not implemented: " ++ pprint val
 
-serializeScalar :: LitVal -> (Word64, BaseType)
+serializeScalar :: LitVal -> Word64
 serializeScalar val = case val of
-  IntLit  x -> (fromIntegral x, IntType)
-  RealLit x -> (doubleToWord x, RealType)
-  BoolLit True  -> (fromIntegral (1::Int), BoolType)
-  BoolLit False -> (fromIntegral (0::Int), BoolType)
+  IntLit  x -> fromIntegral x
+  RealLit x -> doubleToWord x
+  BoolLit True  -> fromIntegral (1::Int)
+  BoolLit False -> fromIntegral (0::Int)
   _ -> error "Not implemented"
 
-deSerialize :: Type -> [BinVal] -> IO Val
+deSerialize :: Type -> [Word64] -> IO Val
 deSerialize = undefined

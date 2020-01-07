@@ -19,7 +19,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                addContext, addSrcContext, Lin, Multiplicity (..),
                FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
-               ImpProg (..), Statement (..), IExpr (..), IType (..), IBinder,
+               ImpProg (..), ImpInstr (..), ImpStatement,
+               IExpr (..), IType (..), IBinder, ArrayType,
                Value (..), Vec (..), Result (..), Result', freeVars, freeNVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames,
@@ -27,8 +28,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
-               RuleAnn (..), DeclAnn (..), CmpOp (..),
-               Ptr (..), BinValP (..), BinVal, Val) where
+               RuleAnn (..), DeclAnn (..), CmpOp (..), Val) where
 
 import Record
 import Env
@@ -40,8 +40,6 @@ import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
 import GHC.Generics
-import Control.Applicative (liftA, liftA2)
-import Data.Traversable (fmapDefault, foldMapDefault)
 
 -- === core IR ===
 
@@ -131,10 +129,10 @@ data BaseType = IntType | BoolType | RealType | StrType
 data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Cmp CmpOp | Pow | IntToReal | BoolToInt
              | And | Or | Not
-             | Range | Scan | Copy | Linearize | Transpose
+             | Range | Scan | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
-             | MemRef [BinVal]
+             | MemRef [Word64]
                 deriving (Eq, Ord, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
@@ -151,7 +149,7 @@ builtinNames = M.fromList [
   ("inttoreal", IntToReal), ("booltoint", BoolToInt),
   ("idxSetSize", IdxSetSize),
   ("linearize", Linearize), ("linearTranspose", Transpose),
-  ("copy", Copy), ("asint", IndexAsInt), ("asidx", IntAsIndex),
+  ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo),
   ("newtypecast", NewtypeCast), ("select", Select)]
@@ -259,49 +257,38 @@ type NBinder = BinderP NType
 
 -- === imperative IR ===
 
-newtype ImpProg = ImpProg [Statement]  deriving (Show, Semigroup, Monoid)
+newtype ImpProg = ImpProg [ImpStatement]  deriving (Show, Semigroup, Monoid)
 
-data Statement = Alloc IBinder ImpProg
-               | Update Name [Index] Builtin [IType] [IExpr]
-               | Loop Name Size ImpProg
-                   deriving (Show)
+type ImpStatement = (Maybe IBinder, ImpInstr)
 
+data ImpInstr = IPrimOp Builtin [BaseType] [IExpr]
+              | Load  IExpr
+              | Store IExpr IExpr  -- destination first
+              | Copy  IExpr IExpr  -- destination first
+              | Alloc ArrayType
+              | Free Name ArrayType
+              | Loop Name Size ImpProg
+                  deriving (Show)
+
+-- TODO: ref literal
 data IExpr = ILit LitVal
-           | IVar Name
+           | IVar Name IType
            | IGet IExpr Index
                deriving (Show, Eq)
 
 data ImpDecl = ImpTopLet [IBinder] ImpProg
-             | ImpEvalCmd (Env Int -> [Vec] -> Value) [IBinder] (Command ImpProg)
-             --            ^ temporary hack until we do existential packing
+             | ImpEvalCmd (Command (Type, [IBinder], ImpProg))
 
 type IBinder = BinderP IType
-data IType = IType BaseType [Size]  deriving (Show, Eq)
+
+data IType = IValType BaseType
+           | IRefType ArrayType
+              deriving (Show, Eq)
+
+type ArrayType = (BaseType, [Size])
+
 type Size  = IExpr
 type Index = IExpr
-
--- === data structures for binary representation ===
-
--- TODO: figure out whether we actually need type everywhere here
-data Ptr w = Ptr w BaseType  deriving (Show, Eq, Ord)
-
-data BinValP w = ScalarVal w BaseType
-               | ArrayVal (Ptr w) [w]  deriving (Show, Eq, Ord)
-
-type BinVal = BinValP Word64
-
-instance Functor BinValP where
-  fmap = fmapDefault
-
-instance Foldable BinValP where
-  foldMap = foldMapDefault
-
-instance Traversable BinValP where
-  traverse f val = case val of
-    ScalarVal x ty -> liftA (\x' -> ScalarVal x' ty) (f x)
-    ArrayVal (Ptr ptr ty) shape ->
-      liftA2 newVal (f ptr) (traverse f shape)
-      where newVal ptr' shape' = ArrayVal (Ptr ptr' ty) shape'
 
 -- === some handy monoids ===
 

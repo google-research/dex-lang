@@ -6,7 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (showLLVM, evalJit, readPtrs, wordAsPtr, ptrAsWord,
+module LLVMExec (showLLVM, evalJit, readPtrs, readPtr, wordAsPtr, ptrAsWord,
                  mallocBytes, showAsm) where
 
 import qualified LLVM.Analysis as L
@@ -83,6 +83,9 @@ showAsm m =
 readPtrs :: Int -> Ptr Word64 -> IO [Word64]
 readPtrs n ptr = mapM readAt [0..n-1]
   where readAt i = peek $ ptr `plusPtr` (8 * i)
+
+readPtr :: Ptr Word64 -> IO Word64
+readPtr ptr = peek ptr
 
 wordAsPtr :: Word64 -> Ptr a
 wordAsPtr x = wordPtrToPtr $ fromIntegral x

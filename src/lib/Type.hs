@@ -293,7 +293,6 @@ builtinType builtin = case builtin of
   Not      -> BuiltinType [] (0, Cart) [bool] bool
   Todo     -> nonLinBuiltin [noCon] [] a
   NewtypeCast -> nonLinBuiltin [noCon, noCon] [a] b
-  Copy     -> nonLinBuiltin [noCon] [a] a
   -- This is only used for inference. Scan is handled specially wrt linearity.
   Scan     -> nonLinBuiltin [isData, noCon, idxSet]
                 [a, k ==> (a --> pair a b)] (pair a (k==>b))

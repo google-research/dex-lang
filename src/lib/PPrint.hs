@@ -228,20 +228,28 @@ tup xs  = tupled $ map p xs
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
-  pretty (IVar v) = p v
+  pretty (IVar v _) = p v
   pretty (IGet expr idx) = p expr <> "." <> p idx
 
 instance Pretty IType where
-  pretty (IType ty shape) = p ty <> p shape
+  pretty (IRefType (ty, shape)) = "Ptr (" <> p ty <> p shape <> ")"
+  pretty (IValType b) = p b
 
 instance Pretty ImpProg where
-  pretty (ImpProg block) = vcat (map p block)
+  pretty (ImpProg block) = vcat (map prettyStatement block)
 
-instance Pretty Statement where
-  pretty (Alloc b body) = p b <> braces (hardline <> p body)
-  pretty (Update v idxs b _ exprs) = p v <> p idxs <+>
-                                       ":=" <+> p b <+> hsep (map p exprs)
-  pretty (Loop i n block) = "for" <+> p i <+> "<" <+> p n <>
+prettyStatement :: (Maybe IBinder, ImpInstr) -> Doc ann
+prettyStatement (Nothing, instr) = p instr
+prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
+
+instance Pretty ImpInstr where
+  pretty (IPrimOp b tys xs) = p b <> p tys <> tup xs
+  pretty (Load ref)         = "load"  <+> p ref
+  pretty (Store dest val)   = "store" <+> p dest <+> p val
+  pretty (Copy dest source) = "copy"  <+> p dest <+> p source
+  pretty (Alloc ty)         = "alloc" <+> p ty
+  pretty (Free name _)      = "free"  <+> p name
+  pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 
 instance Pretty Value where

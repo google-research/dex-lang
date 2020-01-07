@@ -10,6 +10,7 @@
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
             bindWith, binderAnn, binderVar, addAnnot, envIntersect,
+            unzipBinders, binderPair,
             replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion, tagToStr,
             envLookupDefault, envDiff, envMapMaybe, fmapNames) where
 
@@ -101,6 +102,12 @@ binderAnn (_ :> x) = x
 
 binderVar :: BinderP a -> Name
 binderVar (v :> _) = v
+
+unzipBinders :: [BinderP a] -> ([Name], [a])
+unzipBinders bs = unzip $ map binderPair bs
+
+binderPair :: BinderP a -> (Name, a)
+binderPair (v:>x) = (v, x)
 
 addAnnot :: BinderP a -> b -> BinderP (a, b)
 addAnnot b y = fmap (\x -> (x, y)) b
