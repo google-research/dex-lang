@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Imp (impPass, checkImp, impExprType) where
+module Imp (impPass, checkImp, impExprType, substIExpr, substIType) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -19,6 +19,7 @@ import Type
 import PPrint
 import Pass
 import Cat
+import Serialize
 import Fresh hiding (freshName)
 import Subst
 
@@ -112,15 +113,6 @@ toImp dests expr = case expr of
 bindEnv :: [BinderP a] -> [b] -> Env b
 bindEnv bs xs = fold $ zipWith (\(v:>_) x -> v @> x) bs xs
 
-
--- toImpBinder :: NBinder -> ImpM IBinder
--- toImpBinder (v:>ty) = liftM (v:>) (toImpWriteType ty)
-
--- freshenBinder :: IBinder -> ImpM IBinder
--- freshenBinder (v:>ty) = do
---   v' <- freshName v
---   return $ v':>ty
-
 withAllocs :: [ArrayType] -> ([IExpr] -> ImpM a) -> ImpM a
 withAllocs [] body = body []
 withAllocs (ty:tys) body = withAlloc ty $ \x -> withAllocs tys (\xs -> body (x:xs))
@@ -149,6 +141,8 @@ toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
 toImpPrimOp Range      (dest:_) _ [x] = store dest x
 toImpPrimOp IndexAsInt [dest]   _ [x] = store dest x
 toImpPrimOp IntAsIndex [dest]   _ [x] = store dest x  -- TODO: mod n
+toImpPrimOp (MemRef refs) dests _ [] =
+  sequence_ [copy d (IRef r) | (d, r) <- zip dests refs]
 toImpPrimOp b [dest] ts xs = do
   ans <- emitInstr $ IPrimOp b ts xs
   store dest ans
@@ -246,6 +240,22 @@ emitInstr instr = do
       return $ IVar v ty
     Nothing -> error "Expected non-void result"
 
+-- === Substitutions ===
+
+substIExpr :: Env IExpr -> IExpr -> IExpr
+substIExpr env expr = case expr of
+  IVar v _ -> case envLookup env v of
+                Just x  -> x
+                Nothing -> error $ "Lookup failed " ++ pprint expr
+  IGet v i -> IGet (substIExpr env v) (substIExpr env i)
+  ILit _   -> expr
+  IRef _   -> expr
+
+substIType :: Env IExpr -> IType -> IType
+substIType env ty = case ty of
+  IValType _          -> ty
+  IRefType (b, shape) -> IRefType (b, map (substIExpr env) shape)
+
 -- === type checking imp programs ===
 
 type ImpCheckM a = CatT (Env IType) (Either Err) a
@@ -331,7 +341,6 @@ impBuiltinType Select [ty] = return ([boolTy, ty', ty'], Just ty')  where ty' = 
 impBuiltinType BoolToInt [] = return ([boolTy], Just intTy)
 impBuiltinType IntToReal [] = return ([intTy] , Just realTy)
 impBuiltinType (FFICall _ _) (retTy:argTys) = return (map IValType argTys, Just (IValType retTy))
-impBuiltinType (MemRef _) [ty] = return ([], Just ty')  where ty' = IValType ty
 impBuiltinType b ts = throw CompilerErr $ "Bad Imp builtin: " ++ pprint b ++ " @ " ++ pprint ts
 
 checkValidType :: IType -> ImpCheckM ()
@@ -341,6 +350,10 @@ checkValidType (IRefType (_, shape)) = mapM_ checkInt shape
 checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
   ILit val -> return $ IValType (litType val)
+  -- TODO: check shape matches vector length
+  IRef (Array shape vec) -> return $ IRefType (b, shape')
+    where (_, b, _) = vecRefInfo vec
+          shape' = map (ILit . IntLit) shape
   IVar v _ -> looks $ (! v)
   IGet e i -> do
     ~(IRefType (b, (_:shape))) <- checkIExpr e
@@ -363,6 +376,9 @@ fromScalarRefType ty = throw CompilerErr $ "Not a scalar reference type: " ++ pp
 impExprType :: IExpr -> IType
 impExprType expr = case expr of
   ILit v    -> IValType (litType v)
+  IRef (Array shape vec) -> IRefType (b, shape')
+    where (_, b, _) = vecRefInfo vec
+          shape' = map (ILit . IntLit) shape
   IVar _ ty -> ty
   IGet e _  -> case impExprType e of
     IRefType (b, (_:shape)) -> IRefType (b, shape)

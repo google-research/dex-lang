@@ -23,6 +23,7 @@ import Syntax
 import PPrint
 import ParseUtil
 import Plot
+import Serialize()
 
 pprintHtml :: ToMarkup a => a -> String
 pprintHtml x = renderHtml $ toMarkup x

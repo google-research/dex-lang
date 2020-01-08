@@ -22,17 +22,13 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-
 import Data.Void
 import Data.List (nub)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
-
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
-import Data.Word (Word64)
-
-import Data.Binary.IEEE754 (wordToDouble)
+import Foreign.Ptr
 
 import Syntax
 import Env
@@ -41,14 +37,13 @@ import Fresh hiding (freshName)
 import PPrint
 import Cat
 import Imp
-import Record
-import Util
+import Serialize
+import Subst
 
 import LLVMExec
 
-type PersistVal = (IType, Word64) -- TODO: use something with actual Haskell pointers
 type CompileEnv = Env Operand
-type CompileEnvTop = Env PersistVal
+type CompileEnvTop = Env IVal
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
@@ -69,126 +64,83 @@ jitPass = TopPass jitPass'
 jitPass' :: ImpDecl -> TopPassM CompileEnvTop [Void]
 jitPass' decl = case decl of
   ImpTopLet bs prog -> do
-    vals <- evalProg bs prog
-    extend $ bindFold $ zipWith replaceAnnot bs vals
+    env <- look
+    let bs' = map (fmap (substIType env)) bs
+    xs <- evalProg bs' prog
+    xs' <- liftIO $ mapM loadIfScalar xs
+    extend $ bindFold $ zipWith replaceAnnot bs' xs'
     emitOutput NoOutput
-  ImpEvalCmd (Command cmd (ty, bs, prog)) -> case cmd of
-    ShowLLVM -> do
-      (_, CompiledProg m) <- toLLVM bs prog
-      llvm <- liftIO $ showLLVM m
-      emitOutput $ TextOut llvm
-    ShowAsm -> do
-      (_, CompiledProg m) <- toLLVM bs prog
-      asm <- liftIO $ showAsm m
-      emitOutput $ TextOut asm
-    EvalExpr fmt -> do
-      vals <- evalProg bs prog
-      env <- look
-      vecs <- liftIO $ mapM (asVec env) vals
-      let tenv = flip envMapMaybe env $ \v ->
-                   case v of
-                     (IValType IntType, x) -> Just (fromIntegral x)
-                     _ -> Nothing
-      let val = reconstructVal ty tenv vecs
-      emitOutput $ ValOut fmt val
-    TimeIt -> do
-      t1 <- liftIO getCurrentTime
-      _ <- evalProg bs prog
-      t2 <- liftIO getCurrentTime
-      emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
-    _ -> error $ "Unexpected command: " ++ show cmd
+  ImpEvalCmd (Command cmd (ty, bs, prog)) -> do
+    env <- look
+    let bs' = map (fmap (substIType env)) bs
+    let ty' = substTyTop env ty
+    case cmd of
+      ShowLLVM -> do
+        (_, CompiledProg m) <- toLLVM bs' prog
+        llvm <- liftIO $ showLLVM m
+        emitOutput $ TextOut llvm
+      ShowAsm -> do
+        (_, CompiledProg m) <- toLLVM bs' prog
+        asm <- liftIO $ showAsm m
+        emitOutput $ TextOut asm
+      EvalExpr fmt -> do
+        impRefs <- evalProg bs' prog
+        arrays <- liftIO $ mapM loadIRef impRefs
+        emitOutput $ ValOut fmt (FlatVal ty' arrays)
+      TimeIt -> do
+        t1 <- liftIO getCurrentTime
+        _ <- evalProg bs' prog
+        t2 <- liftIO getCurrentTime
+        emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
+      _ -> error $ "Unexpected command: " ++ show cmd
 
-evalProg :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop [PersistVal]
+evalProg :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop [IVal]
 evalProg bs prog = do
   (cells, CompiledProg m) <- toLLVM bs prog
-  liftIO $ do evalJit m
-              mapM loadIfScalar cells
-
--- This doesn't work with types derived from existentials, because the
--- existentially quantified variable isn't in scope yet
-makeDest :: CompileEnvTop -> IBinder -> IO (BinderP PersistVal)
-makeDest env (v :> ty@(IRefType (_, shape))) = do
-  let shape' = map (getConcreteSize env) shape
-  ptr <- liftM ptrAsWord $ mallocBytes $ 8 * product shape'
-  return $ v :> (ty, ptr)
-makeDest _ _ = error "Destination should have a reference type"
-
-loadIfScalar :: PersistVal -> IO PersistVal
-loadIfScalar (IRefType (b, []), ptr) = do
-  ans <- readPtr (wordAsPtr ptr)
-  return (IValType b, ans)
-loadIfScalar val@(IRefType _, _) = return val
-loadIfScalar _ = error "Expected reference"
-
-reconstructVal :: Type -> Env Int -> [Vec] -> Value
-reconstructVal ty tenv vecs = Value (subty ty) $ restructure vecs (typeLeaves ty)
-  where
-    typeLeaves :: Type -> RecTree ()
-    typeLeaves t = case t of
-      BaseType _ -> RecLeaf ()
-      TabType _ valTy -> typeLeaves valTy
-      RecType _ r -> RecTree $ fmap typeLeaves r
-      IdxSetLit _ -> RecLeaf ()
-      _ -> error $ "can't show " ++ pprint t
-    subty :: Type -> Type
-    subty t = case t of
-      BaseType _ -> t
-      TabType (TypeVar v) valTy -> TabType (IdxSetLit (tenv ! v)) (subty valTy)
-      TabType n valTy -> TabType n (subty valTy)
-      RecType k r -> RecType k $ fmap subty r
-      IdxSetLit _ -> t
-      _ -> error $ "can't show " ++ pprint t
-
-
-getConcreteSize :: CompileEnvTop -> Size -> Int
-getConcreteSize env size = case size of
-  ILit (IntLit n) -> n
-  IVar v _        -> fromIntegral $ snd $ env ! v
-  _ -> error $ "Not a valid size: " ++ pprint size
+  liftIO $ evalJit m
+  return cells
 
 -- TODO: pass destinations as args rather than baking pointers into LLVM
-toLLVM :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop ([PersistVal], CompiledProg)
+toLLVM :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop ([IVal], CompiledProg)
 toLLVM bs prog = do
   env <- look
-  destCells <- liftIO $ mapM (makeDest env) bs
-  let env' = fmap asOperand $ env <> bindFold destCells
+  destCells <- liftIO $ mapM allocIRef bs
+  -- TODO just substitute top env up-front instead
+  let env' = fmap iValAsOperand $ env <> bindFold destCells
   let initState = CompileState [] [] [] "start_block" []
   prog' <- liftExceptTop $ flip runFreshT mempty $ flip evalStateT initState $
                 flip runReaderT env' $ compileTopProg prog
   return (map binderAnn destCells, prog')
 
-asOperand :: PersistVal -> Operand
-asOperand (ty, x) = case ty of
-  IValType b      -> constOperand b x
-  IRefType (b, _) -> ptrLiteral b x
+allocIRef :: IBinder -> IO (BinderP IVal)
+allocIRef (v :> IRefType (b, shape)) = do
+  ref <- allocateArray b (map fromILitInt shape)
+  return $ v :> IRef ref
+allocIRef _ = error "Destination should have a reference type"
 
-ptrLiteral :: BaseType -> Word64 -> Operand
-ptrLiteral ty ptr = L.ConstantOperand $ C.IntToPtr (C.Int 64 (fromIntegral ptr)) (L.ptr (scalarTy ty))
+-- TODO: consider distinguishing sizes from ints in Imp
+substTyTop :: CompileEnvTop -> Type -> Type
+substTyTop env ty = subst (envMapMaybe iValToType env, mempty) ty
+   where
+     iValToType :: IExpr -> Maybe (LorT a Type)
+     iValToType expr = case expr of
+       ILit (IntLit n) -> Just (T (IdxSetLit n))
+       _               -> Nothing
 
-constOperand :: BaseType -> Word64 -> Operand
-constOperand IntType  x = litInt (fromIntegral x)
-constOperand RealType x = litReal (interpret_ieee_64 x)
-constOperand BoolType _ = error "Not implemented"
-constOperand StrType  _ = error "Not implemented"
+loadIRef :: IVal -> IO Array
+loadIRef (IRef x) = loadArray x
+loadIRef v = error $ "Not an iref " ++ pprint v
 
-asVec :: CompileEnvTop -> PersistVal -> IO Vec
-asVec env (ty, val) = case ty of
-  IValType b -> return $ cast b [val]
-  IRefType (b, shape) -> do
-    let shape' = map (getConcreteSize env) shape
-    let size = fromIntegral $ foldr (*) 1 shape'
-    xs <- readPtrs size (wordAsPtr val)
-    return $ cast b xs
-  where cast IntType  xs = IntVec $ map fromIntegral xs
-        cast BoolType xs = IntVec $ map fromIntegral xs
-        cast RealType xs = RealVec $ map interpret_ieee_64 xs
-        cast StrType _ = error "Not implemented"
+loadIfScalar :: IVal -> IO IVal
+loadIfScalar val@(IRef (Array shape ref)) = case shape of
+  [] -> liftM (ILit . readScalar) $ loadArray (Array [] ref)
+  _  -> return val
+loadIfScalar _ = error "Expected reference"
 
--- From the data-binary-ieee754 package; is there a more standard way
--- to do this?  This is also janky because we are just assuming that
--- LLVM stores its floats in the ieee format.
-interpret_ieee_64 :: Word64 -> Double
-interpret_ieee_64 = wordToDouble
+-- TODO: consider making an Integral instance
+fromILitInt :: IExpr -> Int
+fromILitInt (ILit (IntLit x)) = x
+fromILitInt expr = error $ "Not an int: " ++ pprint expr
 
 compileTopProg :: ImpProg -> CompileM CompiledProg
 compileTopProg prog = do
@@ -241,7 +193,7 @@ compileInstr instr = case instr of
     case ty of
       (_, []) -> return Nothing  -- Don't free allocas
       _ -> do
-         ptr' <- castPtr charTy v'
+         ptr' <- castLPtr charTy v'
          addInstr $ L.Do (externCall freeFun [ptr'])
          return Nothing
   Loop i n body -> do
@@ -252,6 +204,7 @@ compileInstr instr = case instr of
 compileExpr :: IExpr -> CompileM Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
+  IRef (Array _ ptr) -> return (vecRefToOperand ptr)
   IVar v _ -> lookupImpVar v
   IGet x i -> do
     let (IRefType (_, (_:shape))) = impExprType x
@@ -259,6 +212,10 @@ compileExpr expr = case expr of
     x' <- compileExpr x
     i' <- compileExpr i
     indexPtr x' shape' i'
+
+vecRefToOperand :: VecRef -> Operand
+vecRefToOperand ref = refLiteral b ptr
+  where (_, b, ptr) = vecRefInfo ref
 
 lookupImpVar :: Name -> CompileM Operand
 lookupImpVar v = asks (! v)
@@ -302,9 +259,19 @@ freshName s = do
 
 copy :: Operand -> Operand -> Operand -> CompileM ()
 copy numBytes dest src = do
-  src'  <- castPtr charTy src
-  dest' <- castPtr charTy dest
+  src'  <- castLPtr charTy src
+  dest' <- castLPtr charTy dest
   addInstr $ L.Do (externCall memcpyFun [dest', src', numBytes])
+
+iValAsOperand :: IVal -> Operand
+iValAsOperand val = case val of
+  ILit x             -> litVal x
+  IRef (Array _ ref) -> vecRefToOperand ref
+  _ -> error $ "Not a value: " ++ pprint val
+
+refLiteral :: BaseType -> Ptr () -> Operand
+refLiteral ty ptr = L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
+   where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
@@ -353,10 +320,10 @@ malloc ty shape _ = do
     size <- sizeOf shape
     n <- mul (litInt 8) size
     voidPtr <- emitInstr "" charPtrTy (externCall mallocFun [n])
-    castPtr (scalarTy ty) voidPtr
+    castLPtr (scalarTy ty) voidPtr
 
-castPtr :: L.Type -> Operand -> CompileM Operand
-castPtr ty ptr = emitInstr "ptrcast" (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
+castLPtr :: L.Type -> Operand -> CompileM Operand
+castLPtr ty ptr = emitInstr "ptrcast" (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
 
 sizeOf :: [Operand] -> CompileM Operand
 sizeOf shape = foldM mul (litInt 1) shape
@@ -407,7 +374,6 @@ compileBuiltin Select [ty] [p, x, y] = do
 compileBuiltin BoolToInt [] [x] = return x -- bools stored as ints
 compileBuiltin IntToReal [] [x] = emitInstr "" realTy $ L.SIToFP x realTy []
 compileBuiltin (FFICall _ name) ts xs = compileFFICall (fromString name) ts xs
-compileBuiltin (MemRef [x]) [ty] [] = return $ asOperand (IValType ty, x)
 compileBuiltin Todo _ _ = throw MiscErr "Can't compile 'todo'"
 compileBuiltin b ts _ = error $ "Can't JIT primop: " ++ pprint (b, ts)
 

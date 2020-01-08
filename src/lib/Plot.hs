@@ -23,26 +23,24 @@ import Codec.Picture.Png
 import Codec.Picture.Types
 import qualified Data.Vector as V
 
-import Syntax hiding (Heatmap)
-import Record
+import Syntax
 
 data Scale = LinearScale Double Double
 
-scatterHtml :: Value -> H.Html
-scatterHtml (Value _ vecs) = diagramToHtml $
+scatterHtml :: FlatVal -> H.Html
+scatterHtml (FlatVal _ arrays) = diagramToHtml $
   position [(p2 (scaleToPlot xsc x, scaleToPlot ysc y), spot)
            | (x,y) <- zip xs ys]
   where
-    RecTree (Tup [RecLeaf (RealVec xs), RecLeaf (RealVec ys)]) = vecs
+    [Array _ (RealVec xs), Array _ (RealVec ys)] = arrays
     spot = circle 0.005 # fc blue # lw 0
     xsc = LinearScale (minimum xs) (maximum xs)
     ysc = LinearScale (minimum ys) (maximum ys)
 
-heatmapHtml :: Value -> H.Html
-heatmapHtml (Value ty vecs) = pngToHtml $ generateImage getPix w h
+heatmapHtml :: FlatVal -> H.Html
+heatmapHtml (FlatVal _ ~[array]) = pngToHtml $ generateImage getPix w h
   where
-    TabType (IdxSetLit h) (TabType (IdxSetLit w) _) = ty
-    RecLeaf (RealVec zs) = vecs
+    Array [h, w] (RealVec zs) = array
     zsVec = V.fromList zs
     zScale = LinearScale (minimum zs) (maximum zs)
     getPix i j = greyPix zScale $ zsVec  V.! (j * w + i)

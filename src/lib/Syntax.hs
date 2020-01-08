@@ -19,27 +19,29 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                addContext, addSrcContext, Lin, Multiplicity (..),
                FullEnv, (-->), (==>), (--@), LorT (..), fromL, fromT,
                lhsVars, Size, unitTy, unitCon,
-               ImpProg (..), ImpInstr (..), ImpStatement,
-               IExpr (..), IType (..), IBinder, ArrayType,
-               Value (..), Vec (..), Result (..), Result', freeVars, freeNVars,
+               ImpProg (..), ImpInstr (..), ImpStatement, Val,
+               IExpr (..), IType (..), IBinder, ArrayType, IVal, Ptr,
+               VecRef, VecRef' (..), Vec (..),
+               ArrayP (..), Array, ArrayRef, FlatValP (..), FlatVal, FlatValRef,
+               Result (..), Result', freeVars, freeNVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames,
                NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
-               RuleAnn (..), DeclAnn (..), CmpOp (..), Val) where
+               RuleAnn (..), DeclAnn (..), CmpOp (..))  where
 
 import Record
 import Env
 
 import qualified Data.Map.Strict as M
 
-import Data.Word (Word64)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
 import GHC.Generics
+import Foreign.Ptr
 
 -- === core IR ===
 
@@ -132,7 +134,7 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Range | Scan | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
-             | MemRef [Word64]
+             | MemRef [ArrayRef]
                 deriving (Eq, Ord, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
@@ -176,18 +178,37 @@ data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
              | EvalExpr OutFormat | ShowDeriv
                 deriving  (Show, Eq, Generic)
 
-
-data Value = Value Type (RecTree Vec)  deriving (Show, Eq, Generic)
-data Vec = IntVec [Int] | RealVec [Double]  deriving (Show, Eq, Generic)
-
--- Closed term limited to constructors Lit, RecCon, TabCon, IdxLit, Pack
-type Val = Expr
-
 unitTy :: Type
 unitTy = RecType Cart (Tup [])
 
 unitCon :: ExprP b
 unitCon = RecCon Cart (Tup [])
+
+-- === runtime data representations ===
+
+-- Closed term limited to constructors Lit, RecCon, TabCon, IdxLit, Pack
+type Val = Expr
+
+-- TODO: use Data.Vector instead of lists
+data FlatValP a = FlatVal Type [ArrayP a]  deriving (Show, Eq, Ord, Generic)
+data ArrayP a = Array [Int] a     deriving (Show, Eq, Ord, Generic)
+
+type FlatVal    = FlatValP Vec
+type FlatValRef = FlatValP VecRef
+
+type Array    = ArrayP Vec
+type ArrayRef = ArrayP VecRef
+
+data Vec = IntVec  [Int]
+         | RealVec [Double]
+         | BoolVec [Int]
+            deriving (Show, Eq, Ord, Generic)
+
+type VecRef = (Int, VecRef')
+data VecRef' = IntVecRef  (Ptr Int)
+             | RealVecRef (Ptr Double)
+             | BoolVecRef (Ptr Int)
+                deriving (Show, Eq, Ord, Generic)
 
 -- === source AST ===
 
@@ -270,11 +291,13 @@ data ImpInstr = IPrimOp Builtin [BaseType] [IExpr]
               | Loop Name Size ImpProg
                   deriving (Show)
 
--- TODO: ref literal
 data IExpr = ILit LitVal
+           | IRef ArrayRef
            | IVar Name IType
            | IGet IExpr Index
                deriving (Show, Eq)
+
+type IVal = IExpr  -- only ILit and IRef constructors
 
 data ImpDecl = ImpTopLet [IBinder] ImpProg
              | ImpEvalCmd (Command (Type, [IBinder], ImpProg))
@@ -324,7 +347,7 @@ type Result' = Except Output
 type SrcCtx = Maybe SrcPos
 newtype Result = Result Result' deriving (Show, Eq)
 
-data Output = ValOut OutFormat Value | TextOut String | NoOutput
+data Output = ValOut OutFormat FlatVal | TextOut String | NoOutput
                 deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)

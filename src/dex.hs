@@ -28,6 +28,7 @@ import WebOutput
 import Normalize
 import Simplify
 import Interpreter
+import Serialize
 
 data Backend = Jit | Interp
 data ErrorHandling = HaltOnErr | ContinueOnErr

@@ -7,7 +7,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitOn,
+             insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt) where
@@ -180,3 +180,13 @@ findReplace old new s@(x:xs) =
     else x : recur xs
   where n = length old
         recur = findReplace old new
+
+traverseFun :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
+traverseFun f xs s = runState (traverse (asState . f) xs) s
+
+asState :: (s -> (a, s)) -> State s a
+asState f = do
+  s <- get
+  let (ans, s') = f s
+  put s'
+  return ans

@@ -8,7 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintEsc, addErrSrc, printLitBlock) where
+module PPrint (pprint, pprintEsc, addErrSrc) where
 
 import GHC.Float
 import Data.String
@@ -227,9 +227,10 @@ tup [x] = p x
 tup xs  = tupled $ map p xs
 
 instance Pretty IExpr where
-  pretty (ILit v) = p v
+  pretty (ILit v)   = p v
   pretty (IVar v _) = p v
   pretty (IGet expr idx) = p expr <> "." <> p idx
+  pretty (IRef ref) = p ref
 
 instance Pretty IType where
   pretty (IRefType (ty, shape)) = "Ptr (" <> p ty <> p shape <> ")"
@@ -252,69 +253,29 @@ instance Pretty ImpInstr where
   pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 
-instance Pretty Value where
-  pretty (Value (BaseType IntType ) (RecLeaf (IntVec  [v]))) = p v
-  pretty (Value (BaseType RealType) (RecLeaf (RealVec [v]))) = printDouble v
-  pretty (Value (BaseType BoolType ) (RecLeaf (IntVec  [v]))) | mod v 2 == 0 = "False"
-                                                              | mod v 2 == 1 = "True"
-  pretty (Value (IdxSetLit n) (RecLeaf (IntVec [i]))) = p ((IdxLit n i)::Expr)
-  pretty (Value (RecType _ r) (RecTree r')) = p (recZipWith Value r r')
-  pretty (Value (TabType n ty) v) = list $ map p (splitTab n ty v)
-  pretty v = error $ "Can't print: " ++ show v
+instance Pretty a => Pretty (FlatValP a) where
+  pretty (FlatVal ty refs) = "FlatVal (ty=" <> p ty <> ", refs= " <> p refs <> ")"
 
-splitTab :: IdxSet -> Type -> RecTree Vec -> [Value]
-splitTab (IdxSetLit n) ty v = map (Value ty) $ transposeRecTree (fmap splitVec v)
-  where
-    splitVec :: Vec -> [Vec]
-    splitVec (IntVec  xs) = map IntVec  $ chunk (length xs `div` n) xs
-    splitVec (RealVec xs) = map RealVec $ chunk (length xs `div` n) xs
+instance Pretty a => Pretty (ArrayP a) where
+  pretty (Array shape ref) = p ref <> p shape
 
-    -- TODO: this is O(N^2)
-    transposeRecTree :: RecTree [a] -> [RecTree a]
-    transposeRecTree tree = [fmap (!!i) tree | i <- [0..n-1]]
-
-    chunk :: Int -> [a] -> [[a]]
-    chunk _ [] = []
-    chunk m xs = take m xs : chunk m (drop m xs)
-splitTab _ _ _ = error $ "Not implemented" -- TODO
+instance Pretty VecRef' where
+  pretty (IntVecRef  ptr) = p $ show ptr
+  pretty (RealVecRef ptr) = p $ show ptr
+  pretty (BoolVecRef ptr) = p $ show ptr
 
 instance Pretty Vec where
   pretty (IntVec  xs) = p xs
   pretty (RealVec xs) = p xs
+  pretty (BoolVec xs) = p xs
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
-instance Pretty Output where
-  pretty (ValOut Printed val) = p val
-  pretty (ValOut _ _) = "<graphical output>"
-  pretty (TextOut s) = p s
-  pretty NoOutput = ""
-
 instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x
   pretty (T x) = "T" <+> p x
-
-instance Pretty SourceBlock where
-  pretty block = p (sbText block)
-
-instance Pretty Result' where
-  pretty r = case r of
-    Left err -> p err
-    Right NoOutput -> mempty
-    Right out -> p out
-
-instance Pretty Result where
-  pretty (Result r) = pretty r
-
-printLitBlock :: SourceBlock -> Result -> String
-printLitBlock block result = pprint block ++ resultStr
-  where
-    resultStr = unlines $ map addPrefix $ lines $ pprint result
-    addPrefix :: String -> String
-    addPrefix s = case s of "" -> ">"
-                            _  -> "> " ++ s
 
 -- TODO: add line numbers back (makes the quines a little brittle)
 addErrSrc :: SourceBlock -> Result -> Result
