@@ -619,9 +619,7 @@ nBuiltinType b ts =
                         , [NArrType Lin bs as]
                         , [(Lin, 1)] )
       where [as, bs] = ts
-    MemRef _ -> do
-      t <- fromOne ts
-      return $ nonLinBuiltin [] [t]
+    MemRef _ -> return $ nonLinBuiltin [] t  where [t] = ts
     FFICall _ _ -> return (argTys', retTy, [(NonLin, length argTys')])
       where
         retTy:argTys = ts

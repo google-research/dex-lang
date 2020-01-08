@@ -8,7 +8,7 @@ include "examples/included.dx"
 load "examples/somedata.dxo" as dat
 
 :t dat
-> Real
+> (Real, 2, (2=>(3=>Real)), (2=>(Int, Bool)))
 
 :p dat
-> -2.0
+> (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])

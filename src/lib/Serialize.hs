@@ -22,6 +22,7 @@ import Type
 import Syntax
 import Util
 import PPrint
+import Record
 
 serializeVal :: Val -> IO FlatValRef
 serializeVal val = do
@@ -33,6 +34,17 @@ serializeVal val = do
 
 writeVal :: FlatValRef -> Val -> IO ()
 writeVal (FlatVal (BaseType _) [ref]) (Lit x) = storeArray ref $ scalarArray x
+writeVal (FlatVal (RecType _ r) refs) (RecCon _ valRec) =
+  sequence_ $ recZipWith f refRec valRec
+  where
+    refRec = listIntoRecord r refs
+    f (ty,refs') val = writeVal (FlatVal ty refs') val
+writeVal (FlatVal (TabType _ a) refs) (TabCon _ xs) = zipWithM_ writeRow [0..] xs
+  where
+    writeRow :: Int -> Val -> IO ()
+    writeRow i row = writeVal (FlatVal a (map (subArrayRef i) refs)) row
+writeVal (FlatVal (IdxSetLit _) [ref]) (IdxLit _ i) =
+  storeArray ref $ scalarArray $ IntLit i
 writeVal fv val = error $ "Unexpected flatval/val: " ++ pprint (fv, show val)
 
 restructureVal :: FlatVal -> Val
@@ -60,6 +72,17 @@ subArray i (Array (_:shape) vec) = Array shape sliced
       RealVec xs -> RealVec (slice start stop xs)
       BoolVec xs -> BoolVec (slice start stop xs)
 subArray _ (Array [] _) = error "Can't get subarray of rank-0 array"
+
+subArrayRef :: Int -> ArrayRef -> ArrayRef
+subArrayRef i (Array (_:shape) (_,ref)) = Array shape (newSize, ref')
+  where
+    newSize = product shape
+    offset = i * newSize
+    ref' = case ref of
+     IntVecRef  ptr -> IntVecRef  $ advancePtr ptr offset
+     RealVecRef ptr -> RealVecRef $ advancePtr ptr offset
+     BoolVecRef ptr -> BoolVecRef $ advancePtr ptr offset
+subArrayRef _ (Array [] _) = error "Can't get subarray of rank-0 array"
 
 slice :: Int -> Int -> [a] -> [a]
 slice start stop xs = take (stop - start) $ drop start xs
@@ -116,7 +139,14 @@ flattenType ty = case ty of
   BaseType b  -> [(b, [])]
   RecType _ r -> concat $ map flattenType $ toList r
   TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
+  IdxSetLit _ -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
+
+listIntoRecord :: Record Type -> [a] -> Record (Type, [a])
+listIntoRecord r xs = fst $ traverseFun f r xs
+  where f :: Type -> [a] -> ((Type, [a]), [a])
+        f ty xsRest = ((ty, curXs), rest)
+          where (curXs, rest) = splitAt (length (flattenType ty)) xsRest
 
 -- These Pretty instances are here for circular import reasons
 -- TODO: refactor. Pretty-printing shouldn't do complicated restructuring anyway
