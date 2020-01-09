@@ -92,6 +92,11 @@ jitPass' decl = case decl of
         _ <- evalProg bs' prog
         t2 <- liftIO getCurrentTime
         emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
+      Dump s -> do
+        impRefs <- evalProg bs' prog
+        arrays <- liftIO $ mapM loadIRef impRefs
+        liftIO $ writeFile s $ pprint $ restructureVal $ FlatVal ty' arrays
+        emitOutput NoOutput
       _ -> error $ "Unexpected command: " ++ show cmd
 
 evalProg :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop [IVal]

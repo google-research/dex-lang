@@ -87,6 +87,7 @@ sourceBlock' =
   <|> (sc >> eol >> return CommentLine)
   <|> (liftM IncludeSourceFile includeSourceFile)
   <|> loadData
+  <|> dumpData
   <|> (liftM UTopDecl topDecl)
 
 loadData :: Parser SourceBlock'
@@ -96,6 +97,13 @@ loadData = do
   symbol "as"
   p <- pat
   return $ LoadData p s
+
+dumpData :: Parser SourceBlock'
+dumpData = do
+  symbol "dump"
+  s <- stringLiteral
+  e <- declOrExpr
+  return $ UTopDecl $ EvalCmd (Command (Dump s) e)
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do

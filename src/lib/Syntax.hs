@@ -175,7 +175,7 @@ instance Show Builtin where
 
 data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
              | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
-             | EvalExpr OutFormat | ShowDeriv
+             | EvalExpr OutFormat | ShowDeriv | Dump String
                 deriving  (Show, Eq, Generic)
 
 unitTy :: Type
