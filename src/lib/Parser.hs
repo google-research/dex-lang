@@ -526,6 +526,18 @@ colon = symbol ":"
 
 -- === Parsing literal data ===
 
--- TODO: make a restricted parser that only accepts literals
 literalData :: Parser UExpr
-literalData = expr
+literalData =   idxLit
+            <|> liftM Lit literal
+            <|> tupleData
+            <|> tableData
+
+tupleData :: Parser UExpr
+tupleData = do
+  xs <- parens $ literalData `sepEndBy` comma
+  return $ RecCon Cart $ Tup xs
+
+tableData :: Parser UExpr
+tableData = do
+  xs <- brackets $ literalData `sepEndBy` comma
+  return $ TabCon NoAnn xs
