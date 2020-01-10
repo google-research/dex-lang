@@ -9,12 +9,15 @@
 {-# LANGUAGE GADTs #-}
 
 module Pass (TopPassM, assertEq, ignoreExcept, liftExceptTop, runFullPass,
-             throwTopErr, emitOutput, (>+>), TopPass (..), FullPass, runTopPassM) where
+             throwTopErr, emitOutput, (>+>), TopPass (..), FullPass,
+             runTopPassM, liftIOTop) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Except hiding (Except)
+import Control.Exception (catch, throwIO)
 import Data.Text.Prettyprint.Doc
 import Data.Void
+import System.IO.Error (IOError)
 
 import Syntax
 import PPrint
@@ -60,6 +63,12 @@ emitOutput out = throwError (Right out)
 liftExceptTop :: Either Err a -> TopPassM env a
 liftExceptTop (Left e) = throwError (Left e)
 liftExceptTop (Right x) = return x
+
+liftIOTop :: IO a -> TopPassM env a
+liftIOTop m = do
+  ansExcept <- liftIO $ catchIOExcept $ m `catch` \e ->
+                 throwIO $ Err DataIOErr Nothing (show (e::IOError))
+  liftExceptTop ansExcept
 
 -- === common monad structure for pure passes ===
 

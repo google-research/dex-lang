@@ -33,10 +33,10 @@ sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return [decl]
   IncludeSourceFile fname -> do
-    source <- liftIO $ readFile fname
+    source <- liftIOTop $ readFile fname
     liftM concat $ mapM sourcePass' $ parseProg source
   LoadData p fmt fname -> do
-    (FlatVal ty refs) <- liftIO (loadDataFile fname fmt)
+    (FlatVal ty refs) <- liftIOTop $ loadDataFile fname fmt
     let expr = PrimOp (MemRef refs) [ty] []
     return [TopDecl PlainDecl $ LetMono p expr]
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s

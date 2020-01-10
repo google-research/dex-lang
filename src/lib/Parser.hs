@@ -98,6 +98,7 @@ loadData = do
   s <- stringLiteral
   symbol "as"
   p <- pat
+  void eol
   return $ LoadData p fmt s
 
 dataFormat :: Parser DataFormat
@@ -114,6 +115,7 @@ dumpData = do
   fmt <- dataFormat
   s <- stringLiteral
   e <- declOrExpr
+  void eol
   return $ UTopDecl $ EvalCmd (Command (Dump fmt s) e)
 
 explicitCommand :: Parser UTopDecl

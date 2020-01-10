@@ -30,7 +30,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
-               RuleAnn (..), DeclAnn (..), CmpOp (..))  where
+               RuleAnn (..), DeclAnn (..), CmpOp (..), catchIOExcept)  where
 
 import Record
 import Env
@@ -40,7 +40,7 @@ import qualified Data.Map.Strict as M
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
-import Control.Exception  (Exception)
+import Control.Exception  (Exception, catch)
 import GHC.Generics
 import Foreign.Ptr
 
@@ -382,7 +382,6 @@ throwIf False _ _ = return ()
 modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m $ \e -> throwError (f e)
 
-
 addContext :: MonadError Err m => String -> m a -> m a
 addContext s m = modifyErr m $ \(Err e p s') ->
                                  Err e p (s' ++ "\ncontext:\n" ++ s)
@@ -393,6 +392,9 @@ addSrcContext ctx m = modifyErr m updateErr
     updateErr :: Err -> Err
     updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
                                             Just _  -> Err e ctx' s
+
+catchIOExcept :: IO a -> IO (Except a)
+catchIOExcept m = catch (liftM Right m) $ \e -> return (Left (e::Err))
 
 -- === misc ===
 

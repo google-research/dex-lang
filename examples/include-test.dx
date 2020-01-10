@@ -22,3 +22,17 @@ load dxbo  "scratch/bin-data-dump.dxbo" as dat2
 
 :p dat2
 > (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])
+
+load dxbo "not-a-file" as notData
+> IO error: not-a-file: openFile: does not exist (No such file or directory)
+
+load dxbo  "examples/bad-binary-file.dxbo" as badData
+> IO error: unexpected sizes: [16,8] vs [8,8,8]
+> context:
+> Validation error
+> Claimed header length: 128
+> Claimed total length:  152
+> Actual file length:    128
+> Header data:
+> type: ((2=>(1=>Real)), Int)
+> bufferSizes: [8,8,8]

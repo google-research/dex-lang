@@ -216,15 +216,13 @@ preHeaderLength = 81
 preHeaderStart :: String
 preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
--- TODO: handle IO errors and parse/validation errors gracefully
-
 dumpDataFile :: FilePath -> DataFormat -> FlatValRef -> IO ()
 dumpDataFile fname DexObject valRef = do
   val <- loadFlatVal valRef
   writeFile fname $ pprint $ restructureVal val
 dumpDataFile fname DexBinaryObject val@(FlatVal _ arrayRefs) = do
   withFile fname WriteMode $ \h -> do
-    putBytes h $ serializeHeader $ createHeader val
+    putBytes h $ serializeFullHeader $ createHeader val
     mapM_ (writeArrayToFile h) arrayRefs
 
 loadDataFile :: FilePath -> DataFormat -> IO FlatValRef
@@ -235,10 +233,9 @@ loadDataFile fname DexObject = do
   serializeVal val
 loadDataFile fname DexBinaryObject = do
    -- TODO: check lengths are consistent with type
-  (n, DBOHeader ty sizes) <- readHeader fname
-  totalSize <- liftM (fromIntegral . fileSize) $ getFileStatus fname
-  unless (n + sum sizes == totalSize) $ throwIO $ Err DataIOErr Nothing $
-     show n <> " + sum " <> show sizes <> " != " <> show totalSize
+  (n, header@(DBOHeader ty sizes)) <- readHeader fname
+  actualSize <- liftM (fromIntegral . fileSize) $ getFileStatus fname
+  liftExceptIO $ validateFile n actualSize header
   filePtr <- memmap fname
   let firstPtr = filePtr `plusPtr` n
   let ptrs = init $ scanl plusPtr firstPtr sizes
@@ -256,14 +253,17 @@ readHeader fname = do
     header <- parseFile h (headerLength - preHeaderLength) parseHeader
     return (headerLength, header)
 
-serializeHeader :: DBOHeader -> String
-serializeHeader (DBOHeader ty sizes) = preHeaderPrefix <> padding <> body
+serializeFullHeader :: DBOHeader -> String
+serializeFullHeader header = preHeaderPrefix <> padding <> body
   where
-    body =  "type: "        <> pprint ty  <>  "\n"
-         <> "bufferSizes: " <> show sizes <>  "\n"
+    body = serializeHeader header
     headerSize = preHeaderLength + length body
     preHeaderPrefix = preHeaderStart <> show headerSize <> " "
     padding = replicate (preHeaderLength - length preHeaderPrefix - 1) '-' <> "\n"
+
+serializeHeader :: DBOHeader -> String
+serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprintEsc ty <> "\n"
+                                     <> "bufferSizes: " <> show sizes   <> "\n"
 
 createHeader :: FlatValRef -> DBOHeader
 createHeader (FlatVal ty arrays) = DBOHeader ty sizes
@@ -297,3 +297,22 @@ parseHeader = do
 writeArrayToFile :: Handle -> ArrayRef -> IO ()
 writeArrayToFile h (Array _ ref) = hPutBuf h ptr (size * 8)
   where (size, _, ptr) = vecRefInfo ref
+
+validateFile :: Int -> Int -> DBOHeader -> Except ()
+validateFile headerLength fileLength header@(DBOHeader ty sizes) =
+  addContext ctx $ do
+     let expectedSizes = [product shape * 8 | (_, shape) <- flattenType ty]
+     when (expectedSizes /= sizes) $ throw DataIOErr $
+        "unexpected sizes: " <> show expectedSizes <> " vs " <> show sizes
+     when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size"
+  where
+    claimedLength = headerLength + sum sizes
+    ctx =   "Validation error\n"
+         <> "Claimed header length: " <> show headerLength <> "\n"
+         <> "Claimed total length:  " <> show claimedLength <> "\n"
+         <> "Actual file length:    " <> show fileLength   <> "\n"
+         <> "Header data:\n" <> serializeHeader header
+
+liftExceptIO :: Except a -> IO a
+liftExceptIO (Left e ) = throwIO e
+liftExceptIO (Right x) = return x
