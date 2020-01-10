@@ -14,7 +14,7 @@ addons:
     packages:
       - libgmp-dev
       - llvm-8-tools
-
+      - python3-numpy
 jobs:
   include:
     - stage: Install Stack
