@@ -573,7 +573,8 @@ instance BindsVars (TopDeclP b) where
 
 instance BindsVars SourceBlock where
   lhsVars block = case sbContents block of
-    UTopDecl decl -> lhsVars decl
+    UTopDecl decl  -> lhsVars decl
+    LoadData p _ _ -> foldMap lhsVars p
     _ -> mempty
 
 declVars :: (HasVars a, BindsVars a) => [a] -> (Vars, Vars)
