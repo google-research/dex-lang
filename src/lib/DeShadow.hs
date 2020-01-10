@@ -19,7 +19,6 @@ import Fresh
 import PPrint
 import Cat
 import Parser
-import Inference
 import Serialize
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
@@ -36,19 +35,12 @@ sourcePass' block = case sbContents block of
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     liftM concat $ mapM sourcePass' $ parseProg source
-  LoadData p fname -> do
-    (FlatVal ty refs) <- liftIO $ loadDataLiteral fname
+  LoadData p fmt fname -> do
+    (FlatVal ty refs) <- liftIO (loadDataFile fname fmt)
     let expr = PrimOp (MemRef refs) [ty] []
     return [TopDecl PlainDecl $ LetMono p expr]
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   _ -> return []
-
-loadDataLiteral :: String -> IO FlatValRef
-loadDataLiteral fname = do
-  source <- readFile fname
-  let uval = ignoreExcept $ parseData source
-  let (_, val) = ignoreExcept $ inferExpr uval
-  serializeVal $ val
 
 deShadowPass :: TopPass UTopDecl UTopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of

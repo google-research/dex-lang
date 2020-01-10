@@ -85,17 +85,17 @@ jitPass' decl = case decl of
         emitOutput $ TextOut asm
       EvalExpr fmt -> do
         impRefs <- evalProg bs' prog
-        arrays <- liftIO $ mapM loadIRef impRefs
+        arrays <- liftIO $ mapM (loadArray . fromIRef) impRefs
         emitOutput $ ValOut fmt (FlatVal ty' arrays)
       TimeIt -> do
         t1 <- liftIO getCurrentTime
         _ <- evalProg bs' prog
         t2 <- liftIO getCurrentTime
         emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
-      Dump s -> do
+      Dump fmt s -> do
         impRefs <- evalProg bs' prog
-        arrays <- liftIO $ mapM loadIRef impRefs
-        liftIO $ writeFile s $ pprint $ restructureVal $ FlatVal ty' arrays
+        let val = FlatVal ty' (map fromIRef impRefs)
+        liftIO (dumpDataFile s fmt val)
         emitOutput NoOutput
       _ -> error $ "Unexpected command: " ++ show cmd
 
@@ -132,9 +132,9 @@ substTyTop env ty = subst (envMapMaybe iValToType env, mempty) ty
        ILit (IntLit n) -> Just (T (IdxSetLit n))
        _               -> Nothing
 
-loadIRef :: IVal -> IO Array
-loadIRef (IRef x) = loadArray x
-loadIRef v = error $ "Not an iref " ++ pprint v
+fromIRef :: IVal -> ArrayRef
+fromIRef (IRef x) = x
+fromIRef v = error $ "Not an iref " ++ pprint v
 
 loadIfScalar :: IVal -> IO IVal
 loadIfScalar val@(IRef (Array shape ref)) = case shape of

@@ -5,10 +5,20 @@ include "examples/included.dx"
 :p x
 > 10
 
-load "examples/somedata.dxo" as dat
+load dxo "examples/somedata.dxo" as dat
 
 :t dat
 > (Real, 2, (2=>(3=>Real)), (2=>(Int, Bool)))
 
 :p dat
+> (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])
+
+dump dxbo "scratch/bin-data-dump.dxbo" dat
+
+load dxbo  "scratch/bin-data-dump.dxbo" as dat2
+
+:t dat2
+> (Real, 2, (2=>(3=>Real)), (2=>(Int, Bool)))
+
+:p dat2
 > (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])

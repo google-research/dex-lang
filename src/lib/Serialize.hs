@@ -10,19 +10,31 @@
 
 module Serialize (serializeVal, restructureVal, subArray, readScalar,
                   allocateArray, storeArray, loadArray, vecRefInfo,
-                  printLitBlock) where
+                  storeFlatVal, loadFlatVal, DBOHeader (..),
+                  printLitBlock, dumpDataFile, loadDataFile) where
 
 import Control.Monad
+import Control.Exception (throwIO)
 import Foreign.Ptr
 import Foreign.Marshal.Array
 import Data.Foldable
-import Data.Text.Prettyprint.Doc
+import Data.Text.Prettyprint.Doc  hiding (brackets)
+import qualified Data.ByteString.Char8 as B
+import System.IO
+import System.IO.MMap
+import System.Posix  hiding (ReadOnly)
+import Text.Megaparsec
+import Text.Megaparsec.Char
 
 import Type
 import Syntax
 import Util
 import PPrint
 import Record
+import Inference
+import Pass
+import Parser
+import ParseUtil
 
 serializeVal :: Val -> IO FlatValRef
 serializeVal val = do
@@ -87,6 +99,13 @@ subArrayRef _ (Array [] _) = error "Can't get subarray of rank-0 array"
 slice :: Int -> Int -> [a] -> [a]
 slice start stop xs = take (stop - start) $ drop start xs
 
+-- TODO: check types and lengths match
+storeFlatVal :: FlatValRef -> FlatVal -> IO ()
+storeFlatVal (FlatVal _ refs) (FlatVal _ vals) = zipWithM_ storeArray refs vals
+
+loadFlatVal :: FlatValRef -> IO FlatVal
+loadFlatVal (FlatVal ty refs) = liftM (FlatVal ty) $ mapM loadArray refs
+
 -- TODO: free
 allocateArray :: BaseType -> [Int] -> IO ArrayRef
 allocateArray b shape = do
@@ -134,6 +153,14 @@ vecRefInfo (size, x) = case x of
   RealVecRef ptr -> (size, RealType, castPtr ptr)
   BoolVecRef ptr -> (size, BoolType, castPtr ptr)
 
+newArrayRef :: Ptr () -> (BaseType, [Int]) -> ArrayRef
+newArrayRef ptr (b, shape) = Array shape $ case b of
+  IntType  -> (size, IntVecRef  $ castPtr ptr)
+  RealType -> (size, RealVecRef $ castPtr ptr)
+  BoolType -> (size, BoolVecRef $ castPtr ptr)
+  StrType  -> error "Not implemented"
+  where size = product shape
+
 flattenType :: Type -> [(BaseType, [Int])]
 flattenType ty = case ty of
   BaseType b  -> [(b, [])]
@@ -176,3 +203,97 @@ printLitBlock block result = pprint block ++ resultStr
     addPrefix :: String -> String
     addPrefix s = case s of "" -> ">"
                             _  -> "> " ++ s
+
+-- === binary format ===
+
+data DBOHeader = DBOHeader
+  { objectType     :: Type
+  , bufferSizes    :: [Int] }
+
+preHeaderLength :: Int
+preHeaderLength = 81
+
+preHeaderStart :: String
+preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
+
+-- TODO: handle IO errors and parse/validation errors gracefully
+
+dumpDataFile :: FilePath -> DataFormat -> FlatValRef -> IO ()
+dumpDataFile fname DexObject valRef = do
+  val <- loadFlatVal valRef
+  writeFile fname $ pprint $ restructureVal val
+dumpDataFile fname DexBinaryObject val@(FlatVal _ arrayRefs) = do
+  withFile fname WriteMode $ \h -> do
+    putBytes h $ serializeHeader $ createHeader val
+    mapM_ (writeArrayToFile h) arrayRefs
+
+loadDataFile :: FilePath -> DataFormat -> IO FlatValRef
+loadDataFile fname DexObject = do
+  source <- readFile fname
+  let uval = ignoreExcept $ parseData source
+  let (_, val) = ignoreExcept $ inferExpr uval
+  serializeVal val
+loadDataFile fname DexBinaryObject = do
+   -- TODO: check lengths are consistent with type
+  (n, DBOHeader ty sizes) <- readHeader fname
+  totalSize <- liftM (fromIntegral . fileSize) $ getFileStatus fname
+  unless (n + sum sizes == totalSize) $ throwIO $ Err DataIOErr Nothing $
+     show n <> " + sum " <> show sizes <> " != " <> show totalSize
+  filePtr <- memmap fname
+  let firstPtr = filePtr `plusPtr` n
+  let ptrs = init $ scanl plusPtr firstPtr sizes
+  return $ FlatVal ty $ zipWith newArrayRef ptrs (flattenType ty)
+
+memmap :: FilePath -> IO (Ptr ())
+memmap fname = do
+  (ptr, _, offset, _) <- mmapFilePtr fname ReadOnly Nothing
+  return $ ptr `plusPtr` offset
+
+readHeader :: FilePath -> IO (Int, DBOHeader)
+readHeader fname = do
+  withFile fname ReadMode $ \h -> do
+    headerLength <- parseFile h preHeaderLength parsePreHeader
+    header <- parseFile h (headerLength - preHeaderLength) parseHeader
+    return (headerLength, header)
+
+serializeHeader :: DBOHeader -> String
+serializeHeader (DBOHeader ty sizes) = preHeaderPrefix <> padding <> body
+  where
+    body =  "type: "        <> pprint ty  <>  "\n"
+         <> "bufferSizes: " <> show sizes <>  "\n"
+    headerSize = preHeaderLength + length body
+    preHeaderPrefix = preHeaderStart <> show headerSize <> " "
+    padding = replicate (preHeaderLength - length preHeaderPrefix - 1) '-' <> "\n"
+
+createHeader :: FlatValRef -> DBOHeader
+createHeader (FlatVal ty arrays) = DBOHeader ty sizes
+  where sizes = [8 * product shape | Array shape _ <- arrays]
+
+putBytes :: Handle -> String -> IO ()
+putBytes h s = B.hPut h $ B.pack s
+
+parseFile :: Handle -> Int -> Parser a -> IO a
+parseFile h n p = do
+  s <- liftM B.unpack $ B.hGet h n
+  return $ ignoreExcept $ parseit s p
+
+parsePreHeader :: Parser Int
+parsePreHeader = do
+  symbol preHeaderStart
+  n <- uint
+  void $ many (char '-')
+  void $ char '\n'
+  return n
+
+parseHeader :: Parser DBOHeader
+parseHeader = do
+  void $ symbol "type:"
+  ty <- tauType
+  void $ eol
+  void $ symbol "bufferSizes:"
+  sizes <- brackets $ uint `sepBy1` symbol ","
+  return $ DBOHeader ty sizes
+
+writeArrayToFile :: Handle -> ArrayRef -> IO ()
+writeArrayToFile h (Array _ ref) = hPutBuf h ptr (size * 8)
+  where (size, _, ptr) = vecRefInfo ref

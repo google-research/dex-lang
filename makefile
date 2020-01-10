@@ -38,7 +38,11 @@ example-names = type-tests linear-tests eval-tests ad-tests shadow-tests annot-t
 quine-test-targets = $(example-names:%=run-%)
 doc-names = $(example-names:%=doc/%.html)
 
-tests: quine-tests quine-tests-interp repl-test
+tests: test-prep quine-tests quine-tests-interp repl-test
+
+test-prep:
+	mkdir -p scratch/
+	rm -f scratch/bin-data-dump.dxbo
 
 quine-tests: $(quine-test-targets)
 

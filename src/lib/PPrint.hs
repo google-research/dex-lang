@@ -50,7 +50,7 @@ instance Pretty ErrType where
     CompilerErr       ->
       "Compiler bug!" <> line <>
       "Please report this at github.com/google-research/dex-lang/issues\n" <> line
-    MiscErr           -> "Error:"
+    _                 -> "Error:"
 
 instance Pretty Type where
   pretty t = prettyTyDepth 0 t

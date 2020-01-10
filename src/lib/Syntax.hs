@@ -25,7 +25,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                ArrayP (..), Array, ArrayRef, FlatValP (..), FlatVal, FlatValRef,
                Result (..), Result', freeVars, freeNVars,
                Output (..), Nullable (..), SetVal (..), MonMap (..),
-               Index, wrapDecls, builtinNames, commandNames,
+               Index, wrapDecls, builtinNames, commandNames, DataFormat (..),
                NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
@@ -40,6 +40,7 @@ import qualified Data.Map.Strict as M
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Monad.Except hiding (Except)
+import Control.Exception  (Exception)
 import GHC.Generics
 import Foreign.Ptr
 
@@ -175,7 +176,7 @@ instance Show Builtin where
 
 data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
              | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
-             | EvalExpr OutFormat | ShowDeriv | Dump String
+             | EvalExpr OutFormat | ShowDeriv | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
 unitTy :: Type
@@ -221,12 +222,13 @@ data SourceBlock = SourceBlock
 type ReachedEOF = Bool
 data SourceBlock' = UTopDecl UTopDecl
                   | IncludeSourceFile String
-                  | LoadData UPat String
+                  | LoadData UPat DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
                   | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
+
 
 data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)
 
@@ -350,9 +352,11 @@ newtype Result = Result Result' deriving (Show, Eq)
 data Output = ValOut OutFormat FlatVal | TextOut String | NoOutput
                 deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap | Scatter  deriving (Show, Eq, Generic)
+data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
+data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
 data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
+instance Exception Err
 
 data ErrType = NoErr
              | ParseErr
@@ -362,6 +366,7 @@ data ErrType = NoErr
              | RepeatedVarErr
              | CompilerErr
              | NotImplementedErr
+             | DataIOErr
              | MiscErr
   deriving (Show, Eq)
 

@@ -6,7 +6,8 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser (parseProg, parseData, parseTopDeclRepl, parseTopDecl) where
+module Parser (parseit, parseProg, parseData, parseTopDeclRepl, parseTopDecl,
+              tauType) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -93,17 +94,27 @@ sourceBlock' =
 loadData :: Parser SourceBlock'
 loadData = do
   symbol "load"
+  fmt <- dataFormat
   s <- stringLiteral
   symbol "as"
   p <- pat
-  return $ LoadData p s
+  return $ LoadData p fmt s
+
+dataFormat :: Parser DataFormat
+dataFormat = do
+  s <- identifier
+  case s of
+    "dxo"  -> return DexObject
+    "dxbo" -> return DexBinaryObject
+    _      -> fail $ show s ++ " not a recognized data format (one of dxo|dxbo)"
 
 dumpData :: Parser SourceBlock'
 dumpData = do
   symbol "dump"
+  fmt <- dataFormat
   s <- stringLiteral
   e <- declOrExpr
-  return $ UTopDecl $ EvalCmd (Command (Dump s) e)
+  return $ UTopDecl $ EvalCmd (Command (Dump fmt s) e)
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do
