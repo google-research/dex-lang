@@ -220,7 +220,8 @@ mapScalars :: MonadCat NEmbedEnv m
                      => (NType -> [NAtom] -> m [NAtom])
                      -> NType -> [NAtom] -> m [NAtom]
 mapScalars f ty xs = case ty of
-  NBaseType _ -> f ty xs
+  NBaseType _  -> f ty xs
+  NIdxSetLit _ -> f ty xs
   NTabType n a -> do
     ans <- buildNFor ("i":>n) $ \i ->
              liftM NAtoms $ mapScalars f a [nGet x i | x <- xs]

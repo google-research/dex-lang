@@ -1,0 +1,46 @@
+
+load dxbo "scratch/mnist.dxbo" as mnist
+
+:t mnist
+
+-- TODO: these should come from the data set itself
+type Img = 28=>28=>Real
+type NTrain = 60000
+type NTest  = 10000
+
+(xs, ys, xsTest, ysTest) = mnist
+
+slice :: A n m a . m=>a -> n=>a
+slice xs = for i. xs.(asidx (asint i))
+
+findMin :: n=>Real -> n
+findMin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).  ..
+               select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
+
+findNearestNeighbor :: (a -> a -> Real) -> n=>a -> a -> n
+findNearestNeighbor metric xs x =
+  distances.i = metric xs.i x
+  findMin distances
+
+imgDistance :: Img -> Img -> Real
+imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
+
+example = asidx @NTest 123
+closest = findNearestNeighbor imgDistance xs (xsTest.example)
+:plotmat xsTest.example
+:plotmat xs.closest
+
+'Evaluating the whole test set is *really* slow. The problem is that we're
+looping through the entire training data set for each test example. It
+illustrates how vectorization/batching is important even if you're not trying to
+use fine-grained parallelism. It's just much better for memory bandwidth.
+
+-- Make a small subset of the test set
+type NSmall = 500
+xsTest' = slice @NSmall xsTest
+ysTest' = slice @NSmall ysTest
+
+closestTrainExample :: NSmall=>NTrain
+closestTrainExample.i = findNearestNeighbor imgDistance xs xsTest'.i
+
+:p mean $ for i. real (b2i (ys.(closestTrainExample.i) == ysTest'.i))

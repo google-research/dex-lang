@@ -414,7 +414,8 @@ checkIdxSet env ty = case ty of
 
 checkData :: TypeCheckEnv -> Type -> Except ()
 checkData env ty = case ty of
-  TypeVar v   -> checkVarClass env Data v
+  TypeVar v   -> checkVarClass env IdxSet v `catchError`
+                    const (checkVarClass env Data v)
   BaseType _  -> return ()
   TabType _ a -> recur a
   RecType _ r -> mapM_ recur r
