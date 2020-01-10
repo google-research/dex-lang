@@ -14,3 +14,4 @@ stack.yaml.lock
 doc/
 scratch.dx
 scratch/
+test-scratch/

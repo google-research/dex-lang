@@ -41,8 +41,9 @@ doc-names = $(example-names:%=doc/%.html)
 tests: test-prep quine-tests quine-tests-interp repl-test
 
 test-prep:
-	mkdir -p scratch/
-	rm -f scratch/bin-data-dump.dxbo
+	rm -rf test-scratch/
+	mkdir -p test-scratch/
+	python3 misc/py/generate-dex-data.py
 
 quine-tests: $(quine-test-targets)
 
