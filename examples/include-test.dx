@@ -27,7 +27,7 @@ load dxbo "not-a-file" as notData
 > IO error: not-a-file: openFile: does not exist (No such file or directory)
 
 load dxbo  "examples/bad-binary-file.dxbo" as badData
-> IO error: unexpected sizes: [16,8] vs [8,8,8]
+> IO error: unexpected number of buffers: [16,8] vs [8,8,8]
 > context:
 > Validation error
 > Claimed header length: 128
@@ -102,3 +102,8 @@ load dxbo "/tmp/stuff.dxbo" as xs
 > , [[[1]]]
 > , [6, 5, 4, 3]
 > , [True, False, True] )
+
+load dxbo "examples/dxbo-example.dxbo" as exampleData
+
+:p exampleData
+> (1, 2, [(3, [4, 5]), (6, [7, 8]), (9, [10, 11])])

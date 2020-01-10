@@ -287,11 +287,11 @@ parsePreHeader = do
 
 parseHeader :: Parser DBOHeader
 parseHeader = do
-  void $ symbol "type:"
-  ty <- tauType
-  void $ eol
-  void $ symbol "bufferSizes:"
-  sizes <- brackets $ uint `sepBy1` symbol ","
+  emptyLines
+  ty <- symbol "type:" >> tauType <* eol
+  emptyLines
+  sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
+  emptyLines
   return $ DBOHeader ty sizes
 
 writeArrayToFile :: Handle -> ArrayRef -> IO ()
@@ -301,9 +301,10 @@ writeArrayToFile h (Array _ ref) = hPutBuf h ptr (size * 8)
 validateFile :: Int -> Int -> DBOHeader -> Except ()
 validateFile headerLength fileLength header@(DBOHeader ty sizes) =
   addContext ctx $ do
-     let expectedSizes = [product shape * 8 | (_, shape) <- flattenType ty]
-     when (expectedSizes /= sizes) $ throw DataIOErr $
-        "unexpected sizes: " <> show expectedSizes <> " vs " <> show sizes
+     let minSizes = [product shape * 8 | (_, shape) <- flattenType ty]
+     when (length minSizes /= length sizes) $ throw DataIOErr $
+        "unexpected number of buffers: " <> show minSizes <> " vs " <> show sizes
+     zipWithM_ checkBufferSize minSizes sizes
      when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size"
   where
     claimedLength = headerLength + sum sizes
@@ -312,6 +313,10 @@ validateFile headerLength fileLength header@(DBOHeader ty sizes) =
          <> "Claimed total length:  " <> show claimedLength <> "\n"
          <> "Actual file length:    " <> show fileLength   <> "\n"
          <> "Header data:\n" <> serializeHeader header
+
+checkBufferSize :: Int -> Int -> Except ()
+checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
+   "buffer too small: " <> show size <> " < " <> show minSize
 
 liftExceptIO :: Except a -> IO a
 liftExceptIO (Left e ) = throwIO e
