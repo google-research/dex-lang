@@ -33,7 +33,13 @@ function lookup_address(cell, address) {
 
 var source = new EventSource("/getnext");
 source.onmessage = function(event) {
+    var body = document.getElementById("main-output");
     var msg = JSON.parse(event.data);
+    if (msg == "start") {
+        body.innerHTML = "";
+        cells = {}
+        return
+    }
     var order    = msg[0];
     var contents = msg[1];
     for (var i = 0; i < contents.length; i++) {
@@ -41,7 +47,6 @@ source.onmessage = function(event) {
     }
     if (order != null) {
         var new_cells = {};
-        var body = document.getElementById("main-output");
         body.innerHTML = "";
         for (var i = 0; i < order.val.length; i++) {
             var key = order.val[i]

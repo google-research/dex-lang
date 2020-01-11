@@ -83,6 +83,7 @@ webServer resultsRequest = do
 
     resultStream :: StreamingBody
     resultStream write flush = runActor $ do
+      liftIO $ write (makeBuilder ("start"::String)) >> flush
       myChan >>= send resultsRequest
       forever $ do msg <- receive
                    liftIO $ write (makeBuilder msg) >> flush
