@@ -430,7 +430,7 @@ name p = do
 
 equalSign :: Parser ()
 equalSign = do
-  try $ symbol "=" >> notFollowedBy (symbol ">")
+  try $ symbol "=" >> notFollowedBy (symbol ">" <|> symbol "=")
   optional eol >> sc
 
 argTerm :: Parser ()

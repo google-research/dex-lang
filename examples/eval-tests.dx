@@ -404,3 +404,6 @@ myIntId x = x
 
 :p select True (1,2) (2,3)
 > (1, 2)
+
+:p x = 1; x == x
+> True
