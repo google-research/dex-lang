@@ -184,9 +184,14 @@ compileInstr instr = case instr of
     shape' <- mapM compileExpr shape
     dest'    <- compileExpr dest
     source'  <- compileExpr source
-    numScalars <- sizeOf shape'
-    numBytes <- mul (litInt 8) numScalars
-    copy numBytes dest' source'
+    case shape of
+      [] -> do
+        x <- load source'
+        store dest' x
+      _  -> do
+        numScalars <- sizeOf shape'
+        numBytes <- mul (litInt 8) numScalars
+        copy numBytes dest' source'
     return Nothing
   Alloc (ty, shape) -> liftM Just $ case shape of
     [] -> alloca ty ""
