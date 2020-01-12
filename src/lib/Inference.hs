@@ -92,8 +92,9 @@ inferDecl decl = case decl of
     -- TODO: check possible type annotation
     let b' = v :> boundTy
     return (Unpack b' tv bound', asEnv b')
-  TyDef NewType v ty -> return (TyDef NewType v ty, v @> T (Kind []))
-  TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
+  TyDef NewType v [] ty -> return (TyDef NewType v [] ty, v @> T (Kind []))
+  TyDef NewType _ _ _ -> error "Parametric newtype not implemented"
+  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
 
 infer :: UExpr -> InferM (Type, Expr)
 infer expr = do ty <- freshQ

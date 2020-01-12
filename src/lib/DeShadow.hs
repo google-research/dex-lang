@@ -11,6 +11,7 @@ module DeShadow (sourcePass, deShadowPass) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Data.Foldable
 
 import Env
 import Syntax
@@ -20,10 +21,11 @@ import PPrint
 import Cat
 import Parser
 import Serialize
+import Subst
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
-type DeShadowEnv = (Env Name, Env Type)
+type DeShadowEnv = (Env Name, Env ([BinderP ()], Type))
 
 sourcePass :: TopPass SourceBlock UTopDecl
 sourcePass = TopPass sourcePass'
@@ -112,17 +114,20 @@ deShadowDecl (LetPoly (v:>ty) tlam) = do
 deShadowDecl (Unpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
-  extend (asSnd (tv @> TypeVar tv'), tv'@>())
+  extend (asSnd (tv @> ([], TypeVar tv')), tv'@>())
   b' <- freshBinder b
   return $ Just $ Unpack b' tv' bound'
-deShadowDecl (TyDef TyAlias v ty) = do  -- TODO: deal with capture
-  ty' <- toCat $ deShadowType ty
-  extend (asSnd (v @> ty'), v@>())
+deShadowDecl (TyDef TyAlias v bs ty) = do  -- TODO: deal with capture
+  -- TODO: handle shadowing from binders
+  let env = fold [tv@>([], TypeVar tv) | (tv:>_) <- bs]
+  ty' <- toCat $ extendR (asSnd env) $ deShadowType ty
+  extend (asSnd (v @> (bs, ty')), v@>())
   return Nothing
-deShadowDecl (TyDef NewType v ty) = do
+deShadowDecl (TyDef NewType v [] ty) = do
   ty' <- toCat $ deShadowType ty
-  extend (asSnd (v @> TypeVar v), mempty)
-  return (Just $ TyDef NewType v ty')  -- assumes top-level only
+  extend (asSnd (v @> ([], TypeVar v)), mempty)
+  return (Just $ TyDef NewType v [] ty')  -- assumes top-level only
+deShadowDecl (TyDef NewType _ _ _) = error "Parametric newtype not implemented"
 
 deShadowTLam :: UTLam -> DeShadowM UTLam
 deShadowTLam (TLam tbs body) = do
@@ -161,7 +166,7 @@ freshTBinder (v:>k) = do
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
-  extend (asSnd (v@>TypeVar v'), v'@>())
+  extend (asSnd (v@>([], TypeVar v')), v'@>())
   return (v':>k)
 
 deShadowAnn :: Ann -> DeShadowM Ann
@@ -174,11 +179,26 @@ deShadowType ty = case ty of
   TypeVar v  -> do
     (vsub, tsub) <- ask
     case envLookup tsub v of
-      Just ty' -> return ty'
+      Just ([], ty') -> return ty'
+      Just (bs, _  ) -> throw TypeErr $ pprint v ++ " must be applied to " ++
+                          show (length bs) ++ " type variables"
       Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint v ++ "\"" ++
                    (if v `isin` vsub
                        then " (a term variable of the same name is in scope)"
                        else "")
+  TypeApp f args -> do
+    args' <- mapM deShadowType args
+    case f of
+      TypeVar tv  -> do
+        sub <- asks snd
+        case envLookup sub tv of
+          Just (bs, ty') -> do
+            unless (length bs == length args') $ throw TypeErr $
+              "Expected " ++ show (length bs) ++ " type args in " ++ pprint ty
+            let env = fold [v@>T arg | (v:>_,arg) <- zip bs args']
+            return $ subst (env, mempty) ty'
+          Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint tv ++ "\""
+      _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty
   ArrType l a b -> liftM2 (ArrType l) (recur a) (recur b)
   TabType a b -> liftM2 TabType (recur a) (recur b)
   RecType k r   -> liftM (RecType k) $ traverse recur r

@@ -67,6 +67,7 @@ prettyTyDepth d ty = case ty of
   RecType Cart r -> p $ fmap (asStr . recur) r
   RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
   RecType Tens _ -> error "Not implemented"
+  TypeApp f xs -> p f <+> hsep (map p xs)
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
   Mult Lin    -> "Lin"
@@ -158,7 +159,7 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (LetPoly (v:>ty) (TLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (TyDef deftype v ty) = keyword <+> p v <+> "=" <+> p ty
+  pretty (TyDef deftype v bs ty) = keyword <+> p v <+> p bs <+> "=" <+> p ty
     where keyword = case deftype of TyAlias -> "type"
                                     NewType -> "newtype"
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr

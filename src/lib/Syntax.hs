@@ -65,7 +65,7 @@ data ExprP b =
 
 data DeclP b = LetMono (PatP b) (ExprP b)
              | LetPoly (BinderP SigmaType) (TLamP b)
-             | TyDef TyDefType Name Type
+             | TyDef TyDefType Name [BinderP ()] Type
              | Unpack (BinderP b) Name (ExprP b)
                deriving (Eq, Ord, Show, Generic)
 
@@ -83,6 +83,7 @@ data Type = BaseType BaseType
           | ArrType Lin Type Type
           | TabType IdxSet Type
           | RecType ProdKind (Record Type)
+          | TypeApp Type [Type]
           | Exists Type
           | IdxSetLit IdxSetVal
           | Mult Multiplicity
@@ -468,6 +469,7 @@ instance HasVars Type where
     ArrType _ a b -> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
     RecType _ r -> foldMap freeVars r
+    TypeApp a b -> freeVars a <> foldMap freeVars b
     Exists body -> freeVars body
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
@@ -490,7 +492,7 @@ instance HasVars b => HasVars (DeclP b) where
    freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
-   freeVars (TyDef _ _ ty) = freeVars ty
+   freeVars (TyDef _ _ bs ty) = freeVars ty `envDiff` bindFold bs
 
 instance HasVars b => HasVars (TopDeclP b) where
   freeVars (TopDecl _ decl) = freeVars decl
@@ -565,7 +567,7 @@ instance BindsVars (DeclP b) where
   lhsVars (LetMono p _ ) = foldMap lhsVars p
   lhsVars (LetPoly b _) = lhsVars b
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
-  lhsVars (TyDef _ v _) = v @> T ()
+  lhsVars (TyDef _ v _ _) = v @> T ()
 
 instance BindsVars (TopDeclP b) where
   lhsVars (TopDecl _ decl) = lhsVars decl
@@ -606,7 +608,7 @@ stripSrcAnnotDecl :: DeclP b -> DeclP b
 stripSrcAnnotDecl decl = case decl of
   LetMono p body -> LetMono p (stripSrcAnnot body)
   LetPoly b (TLam tbs body) -> LetPoly b (TLam tbs (stripSrcAnnot body))
-  TyDef _ _ _ -> decl
+  TyDef _ _ _ _ -> decl
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
 stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b

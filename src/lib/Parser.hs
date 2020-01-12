@@ -153,9 +153,10 @@ typeDef = do
   defType <-     (symbol "type"    >> return TyAlias)
              <|> (symbol "newtype" >> return NewType)
   v <- upperName
+  bs <- many lowerName
   equalSign
   ty <- tauType
-  return $ TyDef defType v ty
+  return $ TyDef defType v (map (:>()) bs) ty
 
 letPoly :: Parser UDecl
 letPoly = do
@@ -496,9 +497,19 @@ tauTypeAtomic =   typeName
 tauType :: Parser Type
 tauType = makeExprParser (sc >> tauType') typeOps
   where
-    typeOps = [ [InfixR (symbol "=>" >> return TabType)]
+    typeOps = [ [tyAppRule]
+              , [InfixR (symbol "=>" >> return TabType)]
               , [InfixR (symbol "->"  >> return (ArrType (Mult NonLin))),
                  InfixR (symbol "--o" >> return (ArrType (Mult Lin)))]]
+
+tyAppRule :: Operator Parser Type
+tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
+                    >> return applyType)
+  where tyOpNames = ["=>", "->", "--o"]
+
+applyType :: Type -> Type -> Type
+applyType (TypeApp ty args) arg = TypeApp ty (args ++ [arg])
+applyType ty arg = TypeApp ty [arg]
 
 tauType' :: Parser Type
 tauType' =   parenTy

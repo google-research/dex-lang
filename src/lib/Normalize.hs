@@ -160,10 +160,10 @@ normalizeDecl decl = case decl of
     (bs, toEnv) <- extendR tenv $ normalizePat [b]
     xs <- emitUnpackRest bs
     return (tenv <> toEnv xs)
-  TyDef NewType v ty -> do
+  TyDef NewType v _ ty -> do
     ty' <- normalizeTy ty
     return $ v @> T ty'
-  TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
+  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
 
 normalizeTy :: Type -> NormM [NType]
 normalizeTy ty = case ty of
@@ -183,4 +183,5 @@ normalizeTy ty = case ty of
     return [NExists (toList body')]
   IdxSetLit x -> return [NIdxSetLit x]
   BoundTVar n -> return [NBoundTVar n]
+  TypeApp _ _ -> error "Shouldn't have type application left"
   Mult _      -> error "Shouldn't be normalizing multiplicity"

@@ -126,7 +126,8 @@ reduceDecl (LetPoly (v:>_) tlam) = asFst $ v @> L (Right tlam)
 reduceDecl (Unpack (v:>_) tv expr) =
   asFst $ v @> L (Right (TLam [] val)) <> tv @> T ty
   where (Pack val ty _) = reduce expr
-reduceDecl (TyDef _ v ty) = asFst $ v @> T ty
+-- TODO: handle parametric type aliases
+reduceDecl (TyDef _ v _ ty) = asFst $ v @> T ty
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L (Right (TLam [] val))

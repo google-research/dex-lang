@@ -86,7 +86,7 @@ substDeclEnv scope decl =
       where
         ([tv':>k], env) = renameTBinders scope [tv:>k]
         ([b'], env') = renamePat (scope <> snd env) [b]
-    TyDef _ _ _ -> error "Shouldn't have type alias left"
+    TyDef _ _ _ _ -> error "Shouldn't have type alias left"
 
 instance Subst Decl where
   subst env decl = case decl of
@@ -94,7 +94,10 @@ instance Subst Decl where
     LetPoly b tlam    -> LetPoly (fmap (subst env) b) (subst env tlam)
     -- TODO:
     Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
-    TyDef dt v ty -> TyDef dt v (subst env ty)
+    -- TODO: freshen binders
+    TyDef dt v bs ty ->
+      TyDef dt v bs (subst (subEnv `envDiff` bindFold bs, scope) ty)
+      where (subEnv, scope) = env
 
 instance Subst TLam where
    subst env@(_, scope) (TLam tbs body) = TLam tbs' body'
@@ -121,6 +124,7 @@ instance Subst Type where
     ArrType l a b -> ArrType (recur l) (recur a) (recur b)
     TabType a b -> TabType (recur a) (recur b)
     RecType k r -> RecType k $ fmap recur r
+    TypeApp f args -> TypeApp (recur f) (map recur args)
     Exists body -> Exists (recur body)
     IdxSetLit _ -> ty
     BoundTVar _ -> ty

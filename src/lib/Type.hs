@@ -174,11 +174,12 @@ getTypeDecl decl = case decl of
     checkShadow tb
     extendTyEnv (tbind tb) $ checkTy (binderAnn b)
     return (tbind tb <> asEnv mempty b)
-  TyDef NewType v ty -> do
+  TyDef NewType v [] ty -> do
     checkTy ty
     classes <- getClasses ty
     return (v @> T classes)
-  TyDef TyAlias _ _ -> error "Shouldn't have TAlias left"
+  TyDef NewType _ _ _ -> error "Type parameters in newtype not implemented"
+  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
   where
     recur = getTypeChecked
 
@@ -362,6 +363,7 @@ subAtDepth d f ty = case ty of
     ArrType m a b -> ArrType (recur m) (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType k r   -> RecType k (fmap recur r)
+    TypeApp a b   -> TypeApp (recur a) (map recur b)
     Exists body   -> Exists (recurWith 1 body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
