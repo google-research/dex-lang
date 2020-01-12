@@ -153,6 +153,8 @@ select p x y = %select(p, x, y)
 abs :: Real -> Real
 abs x = select (x > 0.0) x (0.0 - x)
 
+compose :: (b -> c) -> (a -> b) -> a -> c
+compose f g x = f (g x)
 
 'State-carrying loop constructs
 
@@ -251,17 +253,14 @@ minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
 minimum :: A n. (n=>Real)->Real
 minimum = minimumby id
 
-negf :: (a->Real) -> (a->Real)
-negf f x = -1.0 * (f x)
-
 maxby :: A a::Data. (a->Real)->a->a->a
-maxby f = minby (negf f)
+maxby f = minby (asNonLin neg `compose` f)
 
 max :: Real -> Real -> Real
 max x y = maxby id x y
 
 maximumby :: A p q::Data. (q->Real)->(p=>q)->q
-maximumby f = minimumby (negf f)
+maximumby f = minimumby (asNonLin neg `compose` f)
 
 maximum :: A p. (p=>Real)->Real
 maximum xs = maximumby id xs
