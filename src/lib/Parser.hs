@@ -370,6 +370,13 @@ binOpRule opchar builtin = InfixL $ do
   ((), pos) <- withPos $ symbol opchar
   return $ \e1 e2 -> SrcAnnot (PrimOp builtin [] [e1, e2]) pos
 
+backtickRule :: Operator Parser UExpr
+backtickRule = InfixL $ do
+  char '`'
+  v <- rawVar
+  char '`' >> sc
+  return $ \x y -> (v `App` x) `App` y
+
 ops :: [[Operator Parser UExpr]]
 ops = [ [postFixRule, appRule]
       , [binOpRule "^" Pow]
@@ -383,6 +390,7 @@ ops = [ [postFixRule, appRule]
          binOpRule "<" (Cmp Less), binOpRule ">" (Cmp Greater)
         ]
       , [binOpRule "&&" And, binOpRule "||" Or]
+      , [backtickRule]
       , [InfixR (symbol "$" >> return App)]
        ]
 

@@ -407,3 +407,6 @@ myIntId x = x
 
 :p x = 1; x == x
 > True
+
+:p 1 `iadd` 2
+> 3
