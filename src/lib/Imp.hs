@@ -96,6 +96,13 @@ toImp dests expr = case expr of
     n' <- typeToSize n
     let [dest] = dests
     copyOrStore dest n'
+  NPrimOp IntAsIndex [[n]] [i] -> do
+    i' <- toImpAtom i
+    n' <- typeToSize n
+    let op = FFICall 2 "int_to_index_set"
+    ans <- emitInstr $ IPrimOp op [IntType, IntType, IntType] [i', n']
+    let [dest] = dests
+    store dest ans
   NPrimOp b ts xs -> do
     let ts' = map toImpBaseType $ concat ts
     xs' <- mapM toImpAtom xs
@@ -140,7 +147,6 @@ toImpAtom atom = case atom of
 toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
 toImpPrimOp Range      (dest:_) _ [x] = store dest x
 toImpPrimOp IndexAsInt [dest]   _ [x] = store dest x
-toImpPrimOp IntAsIndex [dest]   _ [x] = store dest x  -- TODO: mod n
 toImpPrimOp (MemRef refs) dests _ [] =
   sequence_ [copy d (IRef r) | (d, r) <- zip dests refs]
 toImpPrimOp b [dest] ts xs = do

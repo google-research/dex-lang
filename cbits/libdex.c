@@ -22,6 +22,14 @@ void memcpy_dex(char* dest, const char* src, long nbytes) {
   memcpy(dest, src, nbytes);
 }
 
+long int_to_index_set(long i, long n) {
+  if (i < 0 || i >= n) {
+    printf("Index out of bounds. %d not in [0, %d)\n", i, n);
+    exit(1);
+  }
+  return i;
+}
+
 uint32_t rotate_left(uint32_t x, uint32_t d) {
   return (x << d) | (x >> (32 - d));
 }

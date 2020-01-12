@@ -372,7 +372,7 @@ binOpRule opchar builtin = InfixL $ do
 
 backtickRule :: Operator Parser UExpr
 backtickRule = InfixL $ do
-  char '`'
+  void $ char '`'
   v <- rawVar
   char '`' >> sc
   return $ \x y -> (v `App` x) `App` y
