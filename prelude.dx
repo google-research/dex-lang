@@ -156,6 +156,9 @@ abs x = select (x > 0.0) x (0.0 - x)
 compose :: (b -> c) -> (a -> b) -> a -> c
 compose f g x = f (g x)
 
+slice :: A n m a . m=>a -> Int -> n=>a
+slice xs start = for i. xs.(asidx (asint i `iadd` start))
+
 'State-carrying loop constructs
 
 scan :: A n::Ix a::Data b .  a -> n=>(a->(a, b)) -> (a, n=>b)

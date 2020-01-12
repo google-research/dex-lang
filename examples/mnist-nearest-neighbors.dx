@@ -8,10 +8,7 @@ type Img = 28=>28=>Real
 type NTrain = 60000
 type NTest  = 10000
 
-(xs, ys, xsTest, ysTest) = mnist
-
-slice :: A n m a . m=>a -> n=>a
-slice xs = for i. xs.(asidx (asint i))
+(xsTrain, ysTrain, xsTest, ysTest) = mnist
 
 findMin :: n=>Real -> n
 findMin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).  ..
@@ -28,7 +25,7 @@ imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
 example = asidx @NTest 123
 closest = findNearestNeighbor imgDistance xs (xsTest.example)
 :plotmat xsTest.example
-:plotmat xs.closest
+:plotmat xsTrain.closest
 
 'Evaluating the whole test set is *really* slow. The problem is that we're
 looping through the entire training data set for each test example. It
@@ -37,10 +34,10 @@ use fine-grained parallelism. It's just much better for memory bandwidth.
 
 -- Make a small subset of the test set
 type NSmall = 500
-xsTest' = slice @NSmall xsTest
-ysTest' = slice @NSmall ysTest
+xsTest' = slice @NSmall xsTest 0
+ysTest' = slice @NSmall ysTest 0
 
 closestTrainExample :: NSmall=>NTrain
-closestTrainExample.i = findNearestNeighbor imgDistance xs xsTest'.i
+closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest'.i
 
-:p mean $ for i. real (b2i (ys.(closestTrainExample.i) == ysTest'.i))
+:p mean $ for i. real (b2i (ysTrain.(closestTrainExample.i) == ysTest'.i))
