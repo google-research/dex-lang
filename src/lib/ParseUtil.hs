@@ -4,22 +4,32 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module ParseUtil (sc, blankLines, stringLiteral, failIf,
+module ParseUtil (runTheParser, sc, blankLines, stringLiteral, failIf,
                   space, num, uint, lexeme, symbol, parens, brackets, Parser,
                   emptyLines, nonBlankLines, outputLines, withPos, withSource,
-                  getLineNum) where
+                  getLineNum, mayBreak, mayNotBreak) where
 
 import Control.Monad
+import Control.Monad.Reader
 import Data.Void
 import Text.Megaparsec
 import Text.Megaparsec.Char hiding (space)
 import qualified Text.Megaparsec.Char.Lexer as L
 
 
-type Parser = Parsec Void String
+-- Boolean specifies whether to consume newlines (True)
+type Parser = ReaderT Bool (Parsec Void String)
+
+runTheParser :: String -> Parser a -> Either (ParseErrorBundle String Void) a
+runTheParser s p =  parse (runReaderT p False) "" s
 
 sc :: Parser ()
-sc = L.space space (L.skipLineComment "-- ") empty
+sc = L.space space lineComment empty
+
+lineComment :: Parser ()
+lineComment = do
+  try $ string "--" >> notFollowedBy (void (char 'o'))
+  void (takeWhileP (Just "char") (/= '\n'))
 
 blankLines :: Parser ()
 blankLines = void $ many eol
@@ -37,8 +47,17 @@ stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
 
 space :: Parser ()
-space = void $ do _ <- takeWhile1P (Just "white space") (`elem` " \t")
-                  optional (lexeme (symbol "..") >> eol)
+space = do
+  consumeNewLines <- ask
+  if consumeNewLines
+    then space1
+    else void $ takeWhile1P (Just "white space") (`elem` " \t")
+
+mayBreak :: Parser a -> Parser a
+mayBreak p = local (const True) p
+
+mayNotBreak :: Parser a -> Parser a
+mayNotBreak p = local (const False) p
 
 num :: Parser (Either Double Int)
 num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
@@ -59,10 +78,10 @@ symbol :: String -> Parser ()
 symbol s = void $ L.symbol sc s
 
 parens :: Parser a -> Parser a
-parens = between (symbol "(") (symbol ")")
+parens p = between (mayBreak (symbol "(")) (symbol ")") $ mayBreak p
 
 brackets :: Parser a -> Parser a
-brackets = between (symbol "[") (symbol "]")
+brackets p = between (mayBreak (symbol "[")) (symbol "]") $ mayBreak p
 
 withPos :: Parser a -> Parser (a, (Int, Int))
 withPos p = do

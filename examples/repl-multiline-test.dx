@@ -7,13 +7,12 @@
    double 10.0
 
 f = lam x::Int.
-  (x, ..
-  ..
+  (x,
   x)
 
 f 1
 
-y = 1. + ..
+y = 1. +
     2.
 
 :p y

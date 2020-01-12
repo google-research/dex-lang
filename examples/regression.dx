@@ -6,7 +6,7 @@ solve mat b =
   x0 = for i::M. 0.0
   ax = mvp mat x0
   r0.i = b.i - ax.i
-  (xOut, _, _) = fold (x0, r0, r0) ..
+  (xOut, _, _) = fold (x0, r0, r0) $
      for s::M. lam (x, r, p).
        ap = mvp mat p
        alpha = vdot r r / vdot p ap

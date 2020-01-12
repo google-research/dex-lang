@@ -44,9 +44,9 @@ parseTopDecl :: String -> Except UTopDecl
 parseTopDecl s = parseit s topDecl
 
 parseit :: String -> Parser a -> Except a
-parseit s p = case parse (p <* (optional eol >> eof)) "" s of
-                Left e -> throw ParseErr (errorBundlePretty e)
-                Right x -> return x
+parseit s p = case runTheParser s (p <* (optional eol >> eof)) of
+  Left e -> throw ParseErr (errorBundlePretty e)
+  Right x -> return x
 
 mustParseit :: String -> Parser a -> a
 mustParseit s p  = case parseit s p of
@@ -146,7 +146,7 @@ decl :: Parser UDecl
 decl = typeDef <|> unpack <|> letMono <|> letPoly
 
 declSep :: Parser ()
-declSep = void $ (eol >> sc) <|> symbol ";"
+declSep = void $ some $ (eol >> sc) <|> symbol ";"
 
 typeDef :: Parser UDecl
 typeDef = do
@@ -166,7 +166,7 @@ letPoly = do
 
 letPolyTail :: String -> Parser (SigmaType, UTLam)
 letPolyTail s = do
-  (tbs, ty) <- sigmaType
+  (tbs, ty) <- mayNotBreak $ sigmaType
   declSep
   symbol s
   wrap <- idxLhsArgs <|> lamLhsArgs
@@ -261,7 +261,7 @@ tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
 
 declExpr :: Parser UExpr
-declExpr = liftM2 Decl (decl <* declSep) declOrExpr
+declExpr = liftM2 Decl (mayNotBreak decl <* declSep) declOrExpr
 
 withSourceAnn :: Parser UExpr -> Parser UExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
@@ -367,7 +367,7 @@ postFixRule = Postfix $ do
 
 binOpRule :: String -> Builtin -> Operator Parser UExpr
 binOpRule opchar builtin = InfixL $ do
-  ((), pos) <- withPos $ symbol opchar
+  ((), pos) <- (withPos $ symbol opchar) <* (optional eol >> sc)
   return $ \e1 e2 -> SrcAnnot (PrimOp builtin [] [e1, e2]) pos
 
 backtickRule :: Operator Parser UExpr
@@ -391,7 +391,7 @@ ops = [ [postFixRule, appRule]
         ]
       , [binOpRule "&&" And, binOpRule "||" Or]
       , [backtickRule]
-      , [InfixR (symbol "$" >> return App)]
+      , [InfixR (symbol "$" >> optional eol >> sc >> return App)]
        ]
 
 idxExpr :: Parser UExpr

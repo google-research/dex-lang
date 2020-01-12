@@ -11,7 +11,7 @@ type NTest  = 10000
 (xsTrain, ysTrain, xsTest, ysTest) = mnist
 
 findMin :: n=>Real -> n
-findMin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).  ..
+findMin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).
                select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
 
 findNearestNeighbor :: (a -> a -> Real) -> n=>a -> a -> n

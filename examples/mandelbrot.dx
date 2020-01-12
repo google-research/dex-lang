@@ -32,7 +32,7 @@ inBounds :: Complex -> Bool
 inBounds z = cabs z < tol
 
 escapeTime :: Complex -> Real
-escapeTime c = fst $ fold (0.0, czero) ..
+escapeTime c = fst $ fold (0.0, czero) $
   for i::Niters. lam (n, z).
     z' = update c z
     (n + b2r (inBounds z'), z')

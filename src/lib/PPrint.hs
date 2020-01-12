@@ -8,7 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, pprintEsc, addErrSrc) where
+module PPrint (pprint, addErrSrc) where
 
 import GHC.Float
 import Data.String
@@ -19,13 +19,10 @@ import Data.Text (unpack)
 import Record
 import Env
 import Syntax
-import Util (findReplace, highlightRegion)
+import Util (highlightRegion)
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
-
-pprintEsc :: Pretty a => a -> String
-pprintEsc x = findReplace "; ..\n" "\n" $ findReplace "\n" " ..\n" $ pprint x
 
 asStr :: Doc ann -> String
 asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc

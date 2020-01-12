@@ -174,7 +174,7 @@ cs2 = [1.0, 0.0]
 
 myNonCommutingFold :: Real --o Real
 myNonCommutingFold y0 =
-  fst $ foldlin (for i. llam ((x, y), ()). (cs1.i * x + cs2.i * y, 0.0)) ..
+  fst $ foldlin (for i. llam ((x, y), ()). (cs1.i * x + cs2.i * y, 0.0)) $
                 ((0.0, y0), for _. ())
 
 :p myNonCommutingFold 2.0

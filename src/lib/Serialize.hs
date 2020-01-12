@@ -262,7 +262,7 @@ serializeFullHeader header = preHeaderPrefix <> padding <> body
     padding = replicate (preHeaderLength - length preHeaderPrefix - 1) '-' <> "\n"
 
 serializeHeader :: DBOHeader -> String
-serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprintEsc ty <> "\n"
+serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
                                      <> "bufferSizes: " <> show sizes   <> "\n"
 
 createHeader :: FlatValRef -> DBOHeader

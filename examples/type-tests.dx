@@ -202,20 +202,18 @@ vspaceid x = x
 > :t vspaceid 0
 >    ^^^^^^^^^
 
-:t ..
-  g :: A a::VS. a -> a
-  g x = vspaceid x
-  g @Real
+:t g :: A a::VS. a -> a
+   g x = vspaceid x
+   g @Real
 > (Real -> Real)
 
-:t ..
-  g :: a -> a
-  g x = vspaceid x
-  g @Real
+:t g :: a -> a
+   g x = vspaceid x
+   g @Real
 > Type error: Type variable "a" not in class: VS
 >
->   g x = vspaceid x
->         ^^^^^^^^^
+>    g x = vspaceid x
+>          ^^^^^^^^^
 
 :t for i::Int. 1
 > Type error: Not a valid index set: Int

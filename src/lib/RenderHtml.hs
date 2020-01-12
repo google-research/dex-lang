@@ -66,7 +66,7 @@ cdiv c inner = H.div inner ! class_ (stringValue c)
 highlightSyntax :: String -> Html
 highlightSyntax s = foldMap (uncurry syntaxSpan) classified
   where
-    classified = case parse (many (withSource classify) <* eof) "" s of
+    classified = case runTheParser s (many (withSource classify) <* eof) of
                    Left e -> error $ errorBundlePretty e
                    Right ans -> ans
 
