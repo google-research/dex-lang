@@ -18,6 +18,7 @@ or these example programs:
   * [Sierpinsky triangle](https://google-research.github.io/dex-lang/sierpinsky.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
+  * [MNIST nearest-neighbor classifier](https://google-research.github.io/dex-lang/mnist-nearest-neighbors.html)
 
 Please note that Dex is an experimental research project at an early stage of
 development. We welcome contributions. There's plenty of work to do!

@@ -36,6 +36,7 @@ example-names = type-tests linear-tests eval-tests ad-tests shadow-tests annot-t
                 include-test flop-tests tutorial mandelbrot pi sierpinsky \
                 regression brownian_motion
 quine-test-targets = $(example-names:%=run-%)
+
 doc-names = $(example-names:%=doc/%.html)
 
 tests: test-prep quine-tests quine-tests-interp repl-test
@@ -70,7 +71,9 @@ repl-test:
 
 # --- building docs ---
 
-docs: doc/style.css $(doc-names)
+slow-docs = doc/mnist-nearest-neighbors.html
+
+docs: doc/style.css $(doc-names) $(slow-docs)
 	$(dex) --prelude /dev/null script prelude.dx --html > doc/prelude.html
 
 doc/%.html: examples/%.dx

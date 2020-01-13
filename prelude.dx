@@ -268,6 +268,10 @@ maximumby f = minimumby (asNonLin neg `compose` f)
 maximum :: A p. (p=>Real)->Real
 maximum xs = maximumby id xs
 
+argmin :: n=>Real -> n
+argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).
+               select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
+
 'Vector spaces and automatic differentiation.
 
 vzero :: A a::VS. a

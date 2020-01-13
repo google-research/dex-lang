@@ -10,34 +10,30 @@ type NTest  = 10000
 
 (xsTrain, ysTrain, xsTest, ysTest) = mnist
 
-findMin :: n=>Real -> n
-findMin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).
-               select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
-
 findNearestNeighbor :: (a -> a -> Real) -> n=>a -> a -> n
 findNearestNeighbor metric xs x =
   distances.i = metric xs.i x
-  findMin distances
+  argmin distances
 
 imgDistance :: Img -> Img -> Real
 imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
 
+fracTrue :: n=>Bool -> Real
+fracTrue xs = mean for i. real (b2i xs.i)
+
 example = asidx @NTest 123
-closest = findNearestNeighbor imgDistance xs (xsTest.example)
 :plotmat xsTest.example
+
+-- look at closest match in the training set
+closest = findNearestNeighbor imgDistance xsTrain (xsTest.example)
 :plotmat xsTrain.closest
 
-'Evaluating the whole test set is *really* slow. The problem is that we're
-looping through the entire training data set for each test example. It
-illustrates how vectorization/batching is important even if you're not trying to
-use fine-grained parallelism. It's just much better for memory bandwidth.
+-- Make a subset of the test set (evaluating a single test example takes ~80ms)
+type NTestSmall = 1000
+xsTest' = slice @NTestSmall xsTest 0
+ysTest' = slice @NTestSmall ysTest 0
 
--- Make a small subset of the test set
-type NSmall = 500
-xsTest' = slice @NSmall xsTest 0
-ysTest' = slice @NSmall ysTest 0
-
-closestTrainExample :: NSmall=>NTrain
+closestTrainExample :: NTestSmall => NTrain
 closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest'.i
 
-:p mean $ for i. real (b2i (ysTrain.(closestTrainExample.i) == ysTest'.i))
+:p fracTrue for i. ysTrain.(closestTrainExample.i) == ysTest'.i
