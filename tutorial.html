@@ -13,10 +13,10 @@ See the README for installation instructions.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (1<span class="symbol">.</span> <span class="symbol">+</span> 2<span class="symbol">.</span>) <span class="symbol">*</span> 3<span class="symbol">.</span>
 </div><div class="result-block">9.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>We can write let bindings as <code>x = &lt;expr&gt;; &lt;expr&gt;</code>. Bindings can be separated
-with a line break or a semicolon. Cosmetic line breaks can be escaped with <code>..</code></p>
+with a line break or a semicolon.</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">=</span> 1<span class="symbol">.</span>                <span class="comment">-- let binding
 </span>   y <span class="symbol">=</span> (z <span class="symbol">=</span> 2<span class="symbol">.</span><span class="symbol">;</span> z <span class="symbol">+</span> 1<span class="symbol">.</span>)  <span class="comment">-- let binding of a nested let expression
-</span>   <span class="symbol">.</span><span class="symbol">.</span>                    <span class="comment">-- escaped cosmetic line break
+</span>   <span class="comment">--                    -- pretend empty line (double newline separates top-level decls)
 </span>   x <span class="symbol">+</span> y                 <span class="comment">-- body of let expression
 </span></div><div class="result-block">4.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>We also have lambda, tuple construction and (tuple) pattern-matching (destructuring):</p>
@@ -110,19 +110,19 @@ generalization. For example, although we can write this:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:typed</span> (<span class="keyword">lam</span> x<span class="symbol">.</span> x) 1
 </div><div class="result-block">((lam x::Int . x) 1)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>It's an error to write this:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:typed</span> id x <span class="symbol">=</span> x
-       id 1
+</div></div><div class="cell"><div class="code-block"><span class="command">:typed</span> myid x <span class="symbol">=</span> x
+       myid 1
 </div><div class="err-block">Type error:Ambiguous type variables: [?_3]
 
-(id::(?_3 -&gt; ?_3), (lam x::?_3 . x))</div></div><div class="cell"><div class="code-block">
+(myid::(?_3 -&gt; ?_3), (lam x::?_3 . x))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Instead, we have to give the type explicitly:</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:typed</span> id <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-       id x <span class="symbol">=</span> x
-       <span class="symbol">.</span><span class="symbol">.</span>
-       id 1
-</div><div class="result-block">(id :: A a. (a -&gt; a)
-id = (lam x::a . x);
-(id @Int 1))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:typed</span> myid <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+       myid x <span class="symbol">=</span> x
+       <span class="symbol">-</span><span class="symbol">-</span>
+       myid 1
+</div><div class="result-block">(myid :: A a. (a -&gt; a)
+myid = (lam x::a . x);
+(myid @Int 1))</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>The motivation for this choice is a bit subtle. It's related to the reasons for
 Haskell's (&quot;dreaded&quot;) monomorphism restriction: automatic let generalization can
 lead to surprising runtime work duplication in the presence of polymorphism
@@ -130,11 +130,11 @@ that's not purely parametric. We'll say more about it later, when we discuss
 index sets as types.</p>
 </div></div><div class="cell"><div class="prose-block"><p>In the explicitly typed IR, polymorphism is represented by functions which
 take types as arguments. Explicit types are supplied at call sites, as in
-<code>id @Int 1</code> above. This type application is available (but optional) in the
+<code>myid @Int 1</code> above. This type application is available (but optional) in the
 source language too.</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> id <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-   id x <span class="symbol">=</span> x
-   id <span class="symbol">@</span><span class="type-name">Int</span> 1
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> myid <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+   myid x <span class="symbol">=</span> x
+   myid <span class="symbol">@</span><span class="type-name">Int</span> 1
 </div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Generally, a design goal has been to make sure that all
 well-typed terms in the explicitly typed IR can be written in the source
@@ -218,19 +218,19 @@ type variables, is a very natural way to express shape constraints.
 For example, adding two vectors of the same size:</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> addVec <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
    addVec x y <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">+</span> y<span class="symbol">.</span>i
-   <span class="symbol">.</span><span class="symbol">.</span>
+   <span class="symbol">-</span><span class="symbol">-</span>
    addVec [1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0] [0<span class="symbol">.</span>1, 0<span class="symbol">.</span>2]
 </div><div class="result-block">[1.1, 2.2]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Transposing an array</p>
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> transpose <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-   transpose x <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
-   <span class="symbol">.</span><span class="symbol">.</span>
-   transpose [[1,2,3],[10,20,30]]
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> myTranspose <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span>a
+   myTranspose x <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+   <span class="symbol">-</span><span class="symbol">-</span>
+   myTranspose [[1,2,3],[10,20,30]]
 </div><div class="result-block">[[1, 10], [2, 20], [3, 30]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Extracting the diagonal of a square array</p>
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> diag <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
    diag x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>i
-   <span class="symbol">.</span><span class="symbol">.</span>
+   <span class="symbol">-</span><span class="symbol">-</span>
    diag [[1,2],[10,20]]
 </div><div class="result-block">[1, 20]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><h2>TODO:</h2>

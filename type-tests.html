@@ -27,9 +27,9 @@
 </div><div class="err-block">Type error:Ambiguous type variables: [?_4, ?_6]
 
 (((?_6 -&gt; ?_4) -&gt; (?_6 -&gt; ?_4)), (lam f::(?_6 -&gt; ?_4) . (lam x::?_6 . (f x))))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> id <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-   id x <span class="symbol">=</span> x
-   id (id) (id 1)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> myid <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+   myid x <span class="symbol">=</span> x
+   myid (myid) (myid 1)
 </div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">N</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
    x <span class="symbol">=</span> (iota)<span class="symbol">::</span>(<span class="type-name">N</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
@@ -179,19 +179,17 @@ vspaceid x <span class="symbol">=</span> x
 :t vspaceid 0
    ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">.</span><span class="symbol">.</span>
-  g <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-  g x <span class="symbol">=</span> vspaceid x
-  g <span class="symbol">@</span><span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+   g x <span class="symbol">=</span> vspaceid x
+   g <span class="symbol">@</span><span class="type-name">Real</span>
 </div><div class="result-block">(Real -&gt; Real)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">.</span><span class="symbol">.</span>
-  g <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-  g x <span class="symbol">=</span> vspaceid x
-  g <span class="symbol">@</span><span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
+   g x <span class="symbol">=</span> vspaceid x
+   g <span class="symbol">@</span><span class="type-name">Real</span>
 </div><div class="err-block">Type error: Type variable &quot;a&quot; not in class: VS
 
-  g x = vspaceid x
-        ^^^^^^^^^
+   g x = vspaceid x
+         ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">Int</span><span class="symbol">.</span> 1
 </div><div class="err-block">Type error: Not a valid index set: Int
@@ -236,4 +234,15 @@ f2 x <span class="symbol">=</span> x <span class="symbol">+</span> x
 
 :t fold f1 for i::3. lam g. (lam x. g (g x))
    ^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1,2,3]<span class="symbol">.</span>(3<span class="symbol">@</span>3)
+</div><div class="err-block">Type error:Index out of bounds: 3 of 3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1,2,3]<span class="symbol">.</span>(3<span class="symbol">@</span>4)
+</div><div class="err-block">Type error:
+Expected: 3
+  Actual: 4
+In: 3@4
+
+:t [1,2,3].(3@4)
+            ^^^
 </div></div></div></body></html>

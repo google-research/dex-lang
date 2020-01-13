@@ -29,7 +29,7 @@ update c z <span class="symbol">=</span> cadd c (cmul z z)
 inBounds z <span class="symbol">=</span> cabs z <span class="symbol">&lt;</span> tol
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">escapeTime <span class="symbol">::</span> <span class="type-name">Complex</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-escapeTime c <span class="symbol">=</span> fst <span class="symbol">$</span> fold (0<span class="symbol">.</span>0, czero) <span class="symbol">.</span><span class="symbol">.</span>
+escapeTime c <span class="symbol">=</span> fst <span class="symbol">$</span> fold (0<span class="symbol">.</span>0, czero) <span class="symbol">$</span>
   <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">Niters</span><span class="symbol">.</span> <span class="keyword">lam</span> (n, z)<span class="symbol">.</span>
     z&#39; <span class="symbol">=</span> update c z
     (n <span class="symbol">+</span> b2r (inBounds z&#39;), z&#39;)

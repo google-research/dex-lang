@@ -1,0 +1,99 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">include &quot;examples<span class="symbol">/</span>included<span class="symbol">.</span>dx&quot;
+</div><div class="result-block">30</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x
+</div><div class="result-block">10</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxo &quot;examples<span class="symbol">/</span>somedata<span class="symbol">.</span>dxo&quot; as dat
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> dat
+</div><div class="result-block">(Real, 2, (2=&gt;(3=&gt;Real)), (2=&gt;(Int, Bool)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> dat
+</div><div class="result-block">(1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">dump dxbo &quot;test<span class="symbol">-</span>scratch<span class="symbol">/</span>bin<span class="symbol">-</span>data<span class="symbol">-</span>dump<span class="symbol">.</span>dxbo&quot; dat
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo  &quot;test<span class="symbol">-</span>scratch<span class="symbol">/</span>bin<span class="symbol">-</span>data<span class="symbol">-</span>dump<span class="symbol">.</span>dxbo&quot; as dat2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> dat2
+</div><div class="result-block">(Real, 2, (2=&gt;(3=&gt;Real)), (2=&gt;(Int, Bool)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> dat2
+</div><div class="result-block">(1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo &quot;not<span class="symbol">-</span>a<span class="symbol">-</span>file&quot; as notData
+</div><div class="err-block">IO error: not-a-file: openFile: does not exist (No such file or directory)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo  &quot;examples<span class="symbol">/</span>bad<span class="symbol">-</span>binary<span class="symbol">-</span>file<span class="symbol">.</span>dxbo&quot; as badData
+</div><div class="err-block">IO error: unexpected number of buffers: [16,8] vs [8,8,8]
+context:
+Validation error
+Claimed header length: 128
+Claimed total length:  152
+Actual file length:    128
+Header data:
+type: ((2=&gt;(1=&gt;Real)), Int)
+bufferSizes: [8,8,8]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo &quot;test<span class="symbol">-</span>scratch<span class="symbol">/</span>pydata<span class="symbol">.</span>dxbo&quot; as pydata
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> pydata
+</div><div class="result-block">( Real
+, Int
+, ()
+, Bool
+, Bool
+, (Int, (3=&gt;Real))
+, (2=&gt;(3=&gt;Real))
+, (3=&gt;(2=&gt;Real))
+, Real
+, Real
+, (1=&gt;(1=&gt;(1=&gt;Int)))
+, (4=&gt;Int)
+, (3=&gt;Bool) )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> pydata
+</div><div class="result-block">( 1.2
+, 12
+, ()
+, True
+, False
+, (-2, [1.0, 2.0, 3.0])
+, [[10.0, 20.0, 30.0], [0.1, 0.2, 0.3]]
+, [[10.0, 0.1], [20.0, 0.2], [30.0, 0.3]]
+, 1.3
+, 0.123
+, [[[1]]]
+, [6, 5, 4, 3]
+, [True, False, True] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">dump dxbo &quot;<span class="symbol">/</span>tmp<span class="symbol">/</span>stuff<span class="symbol">.</span>dxbo&quot; pydata
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo &quot;<span class="symbol">/</span>tmp<span class="symbol">/</span>stuff<span class="symbol">.</span>dxbo&quot; as xs
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> xs
+</div><div class="result-block">( Real
+, Int
+, ()
+, Bool
+, Bool
+, (Int, (3=&gt;Real))
+, (2=&gt;(3=&gt;Real))
+, (3=&gt;(2=&gt;Real))
+, Real
+, Real
+, (1=&gt;(1=&gt;(1=&gt;Int)))
+, (4=&gt;Int)
+, (3=&gt;Bool) )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> xs
+</div><div class="result-block">( 1.2
+, 12
+, ()
+, True
+, False
+, (-2, [1.0, 2.0, 3.0])
+, [[10.0, 20.0, 30.0], [0.1, 0.2, 0.3]]
+, [[10.0, 0.1], [20.0, 0.2], [30.0, 0.3]]
+, 1.3
+, 0.123
+, [[[1]]]
+, [6, 5, 4, 3]
+, [True, False, True] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo &quot;examples<span class="symbol">/</span>dxbo<span class="symbol">-</span>example<span class="symbol">.</span>dxbo&quot; as exampleData
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> exampleData
+</div><div class="result-block">(1, 2, [(3, [4, 5]), (6, [7, 8]), (9, [10, 11])])</div></div></div></body></html>

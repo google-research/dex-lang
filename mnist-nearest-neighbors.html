@@ -1,0 +1,44 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">load dxbo &quot;scratch<span class="symbol">/</span>mnist<span class="symbol">.</span>dxbo&quot; as mnist
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> mnist
+</div><div class="result-block">( (60000=&gt;(28=&gt;(28=&gt;Real)))
+, (60000=&gt;Int)
+, (10000=&gt;(28=&gt;(28=&gt;Real)))
+, (10000=&gt;Int) )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these should come from the data set itself
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">Img</span> <span class="symbol">=</span> 28<span class="symbol">=</span><span class="symbol">&gt;</span>28<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">NTrain</span> <span class="symbol">=</span> 60000
+</div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">NTest</span>  <span class="symbol">=</span> 10000
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">(xsTrain, ysTrain, xsTest, ysTest) <span class="symbol">=</span> mnist
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">findNearestNeighbor <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> n
+findNearestNeighbor metric xs x <span class="symbol">=</span>
+  distances<span class="symbol">.</span>i <span class="symbol">=</span> metric xs<span class="symbol">.</span>i x
+  argmin distances
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">::</span> <span class="type-name">Img</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Img</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</span> (i,j)<span class="symbol">.</span> sq (x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
+fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> i<span class="symbol">.</span> real (b2i xs<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
+</div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTest<span class="symbol">.</span>example
+</div><div class="plot"><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAIAAAD9b0jDAAAB2klEQVR4nO2UK4tCQRTH7/WJG8RHEEEEHyAYNQiiYJEb/ARGwWAVBQ0Ws4pBP4BZMCs2H0FR0SaaTJrEpILP/eOwF8Ou985yF3ZhTxhmDvP/zTlzzgxz/wFjfgXU5XKxLLter6WBbjabeDwuk8mKxeLrnWKhp9OJxAjb7XbSQDOZDHB6vb7b7d5uNwmg7Xbb4XCAOBwOxewXhuIqbTabXC5vNBpiiKKgHMch8Ww2K5IoDEXiWq1Wo9HM53NpoKiyxWJBmJVK5dl/vV6Px+P5fP4OFCmD6PF4ttst70yn08FgEH63293r9aihqDjEo9GI9wQCAdKqDMNgjMVi1FCn0wnleDzmYyREg8EwGAyi0She12QyoYCuViudTme32y+Xy/1xjyTrUCg0nU7hyeVyz0eKgrZaLWh8Ph9ZojIk69lsRjyRSAT9i+dLAU2lUqDwfweBhsNh8kZRIpVKlUwmP9UKQOv1+jMUPYtOwBx0k8m0XC7poLVaTalUer1ekiACxG2CWy6XESAmOPUrrXD18/n8fr/HstlsqtVq9sMKhUKn0zkcDnTQRCKBfwR6q9XKPcxsNisUireHYV4qlRaLBR0UVq1WjUYjH53f7+/3+68lwtDv2T/0j0DfAe3iC6jPahN0AAAAAElFTkSuQmCC"></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- look at closest match in the training set
+</span></div></div><div class="cell"><div class="code-block">closest <span class="symbol">=</span> findNearestNeighbor imgDistance xsTrain (xsTest<span class="symbol">.</span>example)
+</div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTrain<span class="symbol">.</span>closest
+</div><div class="plot"><img class="plot-img" src="data:image/png;base64, iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAIAAAD9b0jDAAABwklEQVR4nN3VP8gBYRwH8PNnEMpkkNgUg7IZ5WRwos4mJX+KhYHF7t9ioZTtYjEeymBTymKzspksFiHkz/vtvd5Lb72c697FM1zP73f3fO7puef3HHH/h0Z8HHq9XieTidfrzefzkqHtdlv23arVqjTo7XajaVoul5fLZfSlQdPpNOZIUZSQhwWho9FIp9M5HI71ei0Nejgc1Go1plksFgWKr9HBYADR7/cfj0fJ0EQiAXQ6nT4mF4uFeHQ4HCoUCoPBsFqtuMz5fMY20Gq1er0+EokgfBtlWRbT9Pl8XLjb7UKhEDIWi8XpdOJ9vV5PDKpUKlFIXNjpdCDG4/HNZoMQHzAcDotBNRoN1x+Px3a7XaVSbbdbLpPL5UiSfBttNps8ii2FaRYKBf5uNBoVg7rd7l/obDbjwn6/j6rNZDJiUCzcfr/n0Xq9jv7pdEKBGY3Gy+XyNlqr1QCVSiX0GYYhCMJsNqNqk8kk8qlU6q+Br7cUIFQ9ztNAICD7aVar9clR8AxdLpcmkwmEzWbzeDy48mij0Xgy8EWZdrtd2UOLxWLBYBArO5/PxaM4klutlsvlymazlUpF4LHyeX/TD0W/AEuzKV08HFudAAAAAElFTkSuQmCC"></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- Make a subset of the test set (evaluating a single test example takes ~80ms)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">NTestSmall</span> <span class="symbol">=</span> 1000
+</div></div><div class="cell"><div class="code-block">xsTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> xsTest 0
+</div></div><div class="cell"><div class="code-block">ysTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> ysTest 0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">closestTrainExample <span class="symbol">::</span> <span class="type-name">NTestSmall</span> <span class="symbol">=</span><span class="symbol">&gt;</span> <span class="type-name">NTrain</span>
+closestTrainExample<span class="symbol">.</span>i <span class="symbol">=</span> findNearestNeighbor imgDistance xsTrain xsTest&#39;<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">=</span><span class="symbol">=</span> ysTest&#39;<span class="symbol">.</span>i
+</div><div class="result-block">0.962</div></div></div></body></html>
