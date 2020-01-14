@@ -111,6 +111,10 @@ deShadowDecl (LetPoly (v:>ty) tlam) = do
   ty' <- toCat $ deShadowSigmaType ty
   b' <- freshBinderP (v:>ty')
   return $ Just $ LetPoly b' tlam'
+deShadowDecl (DoBind p bound) = do
+  bound' <- toCat $ deShadowExpr bound
+  p' <- deShadowPat p
+  return $ Just $ DoBind p' bound'
 deShadowDecl (Unpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
@@ -201,7 +205,8 @@ deShadowType ty = case ty of
       _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty
   ArrType l a b -> liftM2 (ArrType l) (recur a) (recur b)
   TabType a b -> liftM2 TabType (recur a) (recur b)
-  RecType k r   -> liftM (RecType k) $ traverse recur r
+  RecType k r -> liftM (RecType k) $ traverse recur r
+  Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
   Exists body -> liftM Exists $ recur body
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty

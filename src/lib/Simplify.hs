@@ -106,6 +106,14 @@ nameHint bs = case bs of [] -> "tmp"
 -- are not: e.g. a lambda that can't be beta-reduced yet.
 simplify :: NExpr -> SimplifyM [NAtom]
 simplify expr = case expr of
+  NDecl (NDoBind bs bound) body -> do
+    bound' <- simplifyAtom bound
+    (bs', body') <- simplifyLam (NLam NonLin bs body)
+    return [NMonadVal (NDecl (NDoBind bs' bound') body')]
+    -- bs' <- mapM nSubstSimp bs
+    -- ans <- withDoBind bs' (NAtoms bound') $ \xs ->
+    --   extendR (mempty {subEnv = bindEnv bs' xs}) (liftM NAtoms (simplify body))
+    -- return [NMonadVal ans]
   NDecl decl body -> do
     env <- simplifyDecl decl
     extendR env $ simplify body
@@ -147,7 +155,10 @@ simplify expr = case expr of
   NPrimOp b ts xs -> do
     ts' <- mapM (mapM nSubstSimp) ts
     xs' <- mapM (simplifyAtom >=> materializeAtom) xs
-    emit $ NPrimOp b ts' xs'
+    let expr' = NPrimOp b ts' xs'
+    case b of
+      MPrim _ -> return [NMonadVal expr']
+      _       -> emit expr'
   NAtoms xs -> mapM simplifyAtom xs
   NTabCon n ts rows -> do
     n' <- nSubstSimp n
@@ -211,6 +222,7 @@ simplifyAtom atom = case atom of
     ib' <- nSubstSimp ib
     buildNAtomicFor ib' $ \i ->
       extendSub (bindEnv [ib'] [i]) (simplifyAtom body)
+  NMonadVal _ -> nSubstSimp atom
   NLam _ _ _ -> nSubstSimp atom
 
 simplifyDecl :: NDecl -> SimplifyM SimpEnv
@@ -218,6 +230,7 @@ simplifyDecl decl = case decl of
   NLet bs bound -> do
     xs <- simplify bound
     return $ mempty {subEnv = bindEnv bs xs}
+  NDoBind _ _ -> error "Shouldn't have do bind here"
   NUnpack bs tv bound -> do
     bound' <- simplify bound
     ~(NTypeVar tv', emitUnpackRest) <- emitUnpack tv (NAtoms bound')

@@ -15,6 +15,7 @@ import Data.String
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import Data.Foldable (toList)
 
 import Record
 import Env
@@ -65,6 +66,7 @@ prettyTyDepth d ty = case ty of
   RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
   RecType Tens _ -> error "Not implemented"
   TypeApp f xs -> p f <+> hsep (map p xs)
+  Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
   Mult Lin    -> "Lin"
@@ -80,6 +82,9 @@ instance Pretty SigmaType where
           boundvars :: [Name]
           boundvars = [tvars 0 i | i <- [-n..(-1)]]
           binders = map p $ zipWith (:>) boundvars kinds
+
+instance Pretty ty => Pretty (EffectTypeP ty) where
+  pretty = undefined
 
 tvars :: Int -> Int -> Name
 tvars d i = fromString s
@@ -156,6 +161,7 @@ instance Pretty b => Pretty (DeclP b) where
   pretty (LetPoly (v:>ty) (TLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
+  pretty (DoBind pat expr) = p pat <+> "<-" <+> p expr
   pretty (TyDef deftype v bs ty) = keyword <+> p v <+> p bs <+> "=" <+> p ty
     where keyword = case deftype of TyAlias -> "type"
                                     NewType -> "newtype"
@@ -191,8 +197,9 @@ instance Pretty NExpr where
 
 instance Pretty NDecl where
   pretty decl = case decl of
-    NLet bs bound   -> tup bs <+> "=" <+> p bound
-    NUnpack bs tv e -> tup bs <> "," <+> p tv <+> "= unpack" <+> p e
+    NLet    bs bound -> tup bs <+> "=" <+> p bound
+    NDoBind bs bound -> tup bs <+> "<-" <+> p bound
+    NUnpack bs tv e  -> tup bs <> "," <+> p tv <+> "= unpack" <+> p e
 
 instance Pretty NAtom where
   pretty atom = case atom of
@@ -202,6 +209,7 @@ instance Pretty NAtom where
     NLam l bs body -> parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "."
                        <> line <> align (p body)
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
+    NMonadVal e -> "mval" <+> p e
 
 instance Pretty NType where
   pretty ty = case ty of
@@ -210,6 +218,7 @@ instance Pretty NType where
     NBoundTVar n -> "BV" <> p n  -- TODO: invent some variable names
     NArrType l as bs -> parens $ tup as <+> arrStr l <+> tup bs
     NTabType a  b  -> p a <> "=>" <> p b
+    NMonad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
     NExists tys -> "E" <> "." <> list (map p tys)
     NIdxSetLit i -> p i
 

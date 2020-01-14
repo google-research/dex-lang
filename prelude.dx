@@ -360,3 +360,26 @@ transpose x = for i j. x.j.i
 
 inner :: n=>Real -> n=>m=>Real -> m=>Real -> Real
 inner x m y = sum for (i,j). x.i * m.i.j * y.j
+
+'Monadic primitives
+
+ask :: A r w::VS s. Monad r w s r
+ask = %ask()
+
+tell :: A r w::VS s . w -> Monad r w s ()
+tell w = %tell(w)
+
+get :: A r w::VS s . Monad r w s s
+get = %get()
+
+put :: A r w::VS s . s -> Monad r w s ()
+put s = %put(s)
+
+run :: A r w::VS s a . r -> s -> Monad r w s a -> (a, w, s)
+run r s m = %run(r, s, m)
+
+return :: A r w::VS s a . a -> Monad r w s a
+return x = %return(x)
+
+bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
+bind m f = x <- m; f x

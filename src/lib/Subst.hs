@@ -82,6 +82,8 @@ substDeclEnv scope decl =
       where
         v' = rename v scope
         env = (v @> L (Left v'), v' @> ())
+    DoBind p rhs -> (DoBind p' rhs, env)
+      where (p', env) = renamePat scope p
     Unpack b tv bound -> (Unpack b' tv' bound, env <> env')
       where
         ([tv':>k], env) = renameTBinders scope [tv:>k]
@@ -92,7 +94,7 @@ instance Subst Decl where
   subst env decl = case decl of
     LetMono p bound   -> LetMono (fmap (subst env) p) (subst env bound)
     LetPoly b tlam    -> LetPoly (fmap (subst env) b) (subst env tlam)
-    -- TODO:
+    DoBind p bound    -> DoBind  (fmap (subst env) p) (subst env bound)
     Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
     -- TODO: freshen binders
     TyDef dt v bs ty ->
@@ -126,6 +128,7 @@ instance Subst Type where
     RecType k r -> RecType k $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
     Exists body -> Exists (recur body)
+    Monad eff a -> Monad (fmap recur eff) (recur a)
     IdxSetLit _ -> ty
     BoundTVar _ -> ty
     Mult _      -> ty
@@ -158,6 +161,10 @@ instance NSubst NExpr where
         where
           (bs', env') = refreshNBinders env bs
           body' = nSubst (env <> env') body
+      NDoBind bs bound -> NDecl (NDoBind bs' (recurA bound)) body'
+        where
+          (bs', env') = refreshNBinders env bs
+          body' = nSubst (env <> env') body
       NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
     NScan b bs xs body -> NScan b' bs' (map recurA xs) body'
       where
@@ -186,6 +193,7 @@ instance NSubst NAtom where
       where
         ([b'], env') = refreshNBinders env [b]
         body' = nSubst (env <> env') body
+    NMonadVal expr -> NMonadVal (nSubst env expr)
     NLam l bs body -> NLam l bs' body'
       where
         (bs', env') = refreshNBinders env bs
@@ -201,6 +209,7 @@ instance NSubst NType where
         Just (L _) -> error "Expected type variable"
     NArrType l as bs -> NArrType l (map recur as) (map recur bs)
     NTabType a b   -> NTabType (recur a) (recur b)
+    NMonad eff a -> NMonad (fmap (map recur) eff) (map recur a)
     NExists ts -> NExists (map recur ts)
     NIdxSetLit _ -> ty
     NBoundTVar _ -> ty

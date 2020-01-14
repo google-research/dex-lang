@@ -92,6 +92,14 @@ toImp dests expr = case expr of
               toImp (carryOutDests ++ indexedDests) $ body
            return i'
        emitStatement (Nothing, Loop i' n' loopBody)
+  NPrimOp MRun ts args -> do
+    let (rArgs, sArgs, NMonadVal m) = splitRunArgs ts args
+    let (aDests, wDests, sDests) = splitRunDests ts dests
+    rArgs' <- mapM toImpAtom rArgs
+    sArgs' <- mapM toImpAtom sArgs
+    zipWithM_ copyOrStore sDests sArgs'
+    mapM_ initializeZero wDests
+    toImpAction (rArgs', wDests, sDests) aDests m
   NPrimOp IdxSetSize [[n]] _ -> do
     n' <- typeToSize n
     let [dest] = dests
@@ -133,6 +141,20 @@ withAlloc ty body = do
   emitStatement (Nothing, Free v ty)
   return ans
 
+splitRunArgs :: [[NType]] -> [NAtom] -> ([NAtom], [NAtom], NAtom)
+splitRunArgs ts args = (r, s, m)
+  where
+    [nr, _, ns, _] = map length ts
+    (r, args') = splitAt nr args
+    (s, [m])   = splitAt ns args'
+
+splitRunDests :: [[NType]] -> [IExpr] -> ([IExpr], [IExpr], [IExpr])
+splitRunDests ts dests = (aDest, wDest, sDest)
+  where
+    [_, nw, _, na] = map length ts
+    (aDest, dests') = splitAt na dests
+    (wDest, sDest)  = splitAt nw dests'
+
 toImpAtom :: NAtom -> ImpM IExpr
 toImpAtom atom = case atom of
   NLit x   -> return $ ILit x
@@ -143,6 +165,36 @@ toImpAtom atom = case atom of
       IRefType (_, []) -> load newRef
       _                -> return newRef
   _ -> error $ "Not implemented: " ++ pprint atom
+
+type MContext = ([IExpr], [IExpr], [IExpr])
+
+toImpAction :: MContext -> [IExpr] -> NExpr -> ImpM ()
+toImpAction mdests@(rVals, wDests, sDests) aDests m = case m of
+  NDecl (NDoBind bs (NMonadVal bound)) body -> do
+    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
+    withAllocs tys $ \bsDests -> do
+      toImpAction mdests bsDests bound
+      xs <- mapM loadIfScalar bsDests
+      extendR (bindEnv bs xs) $ toImpAction mdests aDests body
+  NDecl (NLet bs bound) body -> do
+    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
+    withAllocs tys $ \bsDests -> do
+      toImp bsDests bound
+      xs <- mapM loadIfScalar bsDests
+      extendR (bindEnv bs xs) $ toImpAction mdests aDests body
+  NPrimOp (MPrim p) _ x -> case p of
+    MPut -> do
+      x' <- mapM toImpAtom x
+      zipWithM_ copyOrStore sDests x'
+    MGet -> zipWithM_ copy aDests sDests
+    MAsk -> zipWithM_ copyOrStore aDests rVals
+    MTell-> do
+      x' <- mapM toImpAtom x
+      zipWithM_ addToDest wDests x'
+    MReturn -> do
+      x' <- mapM toImpAtom x
+      zipWithM_ copyOrStore aDests x'
+  _ -> error $ "Unexpected expression" ++ pprint m
 
 toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
 toImpPrimOp Range      (dest:_) _ [x] = store dest x
@@ -217,6 +269,19 @@ copyOrStore :: IExpr -> IExpr -> ImpM ()
 copyOrStore dest src = case impExprType src of
   IValType _ -> store dest src
   IRefType _ -> copy  dest src
+
+addToDest :: IExpr -> IExpr -> ImpM ()
+addToDest dest src = case impExprType src of
+  IValType RealType -> do
+    cur <- load dest
+    updated <- emitInstr $ IPrimOp FAdd [] [cur, src]
+    store dest updated
+  ty -> error $ "Writing not implemented for type " ++ pprint ty
+
+initializeZero :: IExpr -> ImpM()
+initializeZero ref = case impExprType ref of
+  IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
+  ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 copy :: IExpr -> IExpr -> ImpM ()
 copy dest src = emitStatement (Nothing, Copy dest src)

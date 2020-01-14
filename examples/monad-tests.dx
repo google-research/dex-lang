@@ -1,0 +1,54 @@
+
+type Reader r a = Monad r  () () a
+type Writer w a = Monad () w  () a
+type State  s a = Monad () () s  a
+
+:p m :: State Int Int
+   m = get
+   run () 2 m
+> (2, (), 2)
+
+:p m :: State Int ()
+   m = put 3
+   run () 0 m
+> ((), (), 3)
+
+:p m :: Reader Int Int
+   m = ask
+   run 5 () m
+> (5, (), ())
+
+:p m :: Writer Real ()
+   m = _ <- tell 2.0
+       tell 3.0
+   run () () m
+> ((), 5.0, ())
+
+:p m :: Monad () () () Int
+   m = return 4
+   run () () m
+> (4, (), ())
+
+:p
+  stateAction :: Monad () () Real ()
+  stateAction =
+     x <- get
+     y <- put (x + 2.0)
+     z <- get
+     put (z * 3.0)
+  --
+  run () 1.0 stateAction
+> ((), (), 9.0)
+
+:p
+  rwsAction :: Monad Int Real Bool Int
+  rwsAction =
+    x <- get
+    _ <- tell 2.0
+    _ <- put (not x)
+    r <- ask
+    _ <- tell 4.0
+    return (r `iadd` 2)
+  --
+  run 2 True rwsAction
+> (4, 6.0, False)

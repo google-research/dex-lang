@@ -150,6 +150,11 @@ normalizeDecl decl = case decl of
     bound' <- buildScoped $ normalize bound
     xs <- emitTo bs bound'
     return $ toEnv xs
+  DoBind p bound -> do
+    (bs, toEnv) <- normalizePat p
+    ~[bound'] <- atomize bound
+    xs <- emitDoTo bs bound'
+    return $ toEnv xs
   LetPoly (v:>_) (TLam tbs body) -> do
     env <- ask
     return $ v @> L (Right (TLamContents env tbs body))
@@ -178,6 +183,10 @@ normalizeTy ty = case ty of
     b' <- normalizeTy b
     return $ fmap (\x -> foldr NTabType x a') b'
   RecType _ r -> liftM fold $ traverse normalizeTy r
+  Monad eff a -> do
+    eff' <- traverse normalizeTy eff
+    a' <- normalizeTy a
+    return [NMonad eff' a']
   Exists body -> do
     body' <- normalizeTy body
     return [NExists (toList body')]

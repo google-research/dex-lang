@@ -102,6 +102,15 @@ getTypeChecked expr = case expr of
         BuiltinType kinds (numLin, k) argTys ansTy = builtinType b
         (ansTy':argTys') = map (instantiateTVs ts) (ansTy:argTys)
         (linArgs, nlArgs) = splitAt numLin args
+    Decl (DoBind p bound) body -> do
+      checkShadowPat p
+      (eff, spent) <- scoped $ do
+                        ~(Monad eff a) <- recur bound
+                        assertEq (patType p) a "DoBind"
+                        return eff
+      ~(Monad eff' retTy) <- extendTyEnv (foldMap (asEnv spent) p) $ recur body
+      assertEq eff eff' "Effect type mismatch"
+      return $ Monad eff retTy
     Decl decl body -> do
       env <- getTypeDecl decl
       extendTyEnv env (recur body)
@@ -161,6 +170,7 @@ getTypeDecl decl = case decl of
                        ty <- recur rhs
                        assertEq (patType p) ty "LetMono"
     return (foldMap (asEnv spent) p)
+  DoBind _ _ -> error "Shouldn't have DoBind here"
   LetPoly b@(v:>ty) tlam -> do
     checkShadow b
     ((), spent) <- scoped $ checkWithCtx $ do
@@ -318,19 +328,31 @@ builtinType builtin = case builtin of
     where kinds = take (n + 1) (repeat noCon)
           retTy:argTys = take (n + 1) (map BoundTVar [0..])
   MemRef _ -> nonLinBuiltin [isData] [] a
+  MRun    -> nonLinBuiltin (monadCon ++ [noCon]) [r, s, monad d] (tup [d, w, s])
+  MPrim mprim -> case mprim of
+    MAsk    -> nonLinBuiltin monadCon []  (monad r)
+    MTell   -> nonLinBuiltin monadCon [w] (monad unitTy)
+    MGet    -> nonLinBuiltin monadCon []  (monad s)
+    MPut    -> nonLinBuiltin monadCon [s] (monad unitTy)
+    MReturn -> nonLinBuiltin (monadCon ++ [noCon]) [d] (monad d)
   where
     ibinOpType    = nonLinBuiltin [] [int , int ] int
+    [r, w, s] = map BoundTVar [0,1,2]
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
     -- c = BoundTVar 2
-    -- d = BoundTVar 3
+    d = BoundTVar 3
     j = BoundTVar 1
     k = BoundTVar 2
     int  = BaseType IntType
     real = BaseType RealType
     bool = BaseType BoolType
+    tup xs = RecType Cart (Tup xs)
     nonLinBuiltin kinds argTys ansTy = BuiltinType kinds (0, Cart) argTys ansTy
+    monad a' = Monad (Effect r w s) a'
+    -- Specializing writer monad to vector space addition for now
+    monadCon = [noCon, vspace, noCon]
 
 pair :: Type -> Type -> Type
 pair x y = RecType Cart (Tup [x, y])
@@ -364,6 +386,7 @@ subAtDepth d f ty = case ty of
     TabType a b   -> TabType (recur a) (recur b)
     RecType k r   -> RecType k (fmap recur r)
     TypeApp a b   -> TypeApp (recur a) (map recur b)
+    Monad eff a   -> Monad (fmap recur eff) (recur a)
     Exists body   -> Exists (recurWith 1 body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
@@ -456,6 +479,18 @@ checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
 
 getNTypeChecked :: NExpr -> NTypeM [NType]
 getNTypeChecked expr = case expr of
+  NDecl (NDoBind bs rhs) body -> do
+    mapM_ checkNBinder bs
+    (ty, spent) <- scoped $ atomTypeChecked rhs
+    case ty of
+      NMonad eff a -> do
+        assertEq (map binderAnn bs) a "Do bind"
+        bodyTy <- extendR (nBinderEnv spent bs) $ getNTypeChecked body
+        case bodyTy of
+          [NMonad eff' _] -> assertEq eff eff' "Effect type mismatch"
+          ty' -> throw CompilerErr $ "expected monad, got " ++ pprint ty'
+        return bodyTy
+      _ -> error "expected monad"
   NDecl decl body -> do
     env <- checkNDecl decl
     extendR env $ getNTypeChecked body
@@ -563,6 +598,9 @@ atomTypeChecked atom = case atom of
     let env = nBinderEnv (asSpent v) bs
     bodyTys <- checkSpent v (pprint bs) $ extendR env (getNTypeChecked body)
     return $ NArrType Lin (map binderAnn bs) bodyTys
+  NMonadVal expr -> do
+    ~[ty] <- getNTypeChecked expr
+    return ty
 
 atomTypesChecked :: [NAtom] -> NTypeM [NType]
 atomTypesChecked xs = traverseProd Cart atomTypeChecked xs
@@ -586,8 +624,8 @@ checkNShadow (v :> _) = do
 -- TODO: check number of type args first
 nBuiltinType :: MonadError Err m
                   => Builtin -> [[NType]] -> m ([NType], [NType], ArgLinearity)
-nBuiltinType b ts =
-  case b of
+nBuiltinType builtin ts =
+  case builtin of
     IAdd  -> return $ ibinOpType
     ISub  -> return $ ibinOpType
     IMul  -> return $ ibinOpType
@@ -627,7 +665,25 @@ nBuiltinType b ts =
       where
         retTy:argTys = ts
         argTys' = concat argTys
-    _ -> throw TypeErr $ "Can't have this builtin in NExpr: " ++ pprint b
+    -- TODO: make this easier (just derive from Expr type?)
+    MRun -> do
+      let [a] = tyArgs
+      return $ nonLinBuiltin (r ++ s ++ [nmonad a]) (a ++ w ++ s)
+      where
+        r:w:s:tyArgs = ts
+        nmonad a = NMonad (Effect r w s) a
+    MPrim mprim -> case mprim of
+      MAsk  -> return $ nonLinBuiltin [] [nmonad r]
+      MTell -> return $ nonLinBuiltin w  [nmonad []]
+      MGet  -> return $ nonLinBuiltin [] [nmonad s]
+      MPut  -> return $ nonLinBuiltin s  [nmonad []]
+      MReturn -> do
+        let [a] = tyArgs
+        return $ nonLinBuiltin a [nmonad a]
+      where
+        r:w:s:tyArgs = ts
+        nmonad a = NMonad (Effect r w s) a
+    _ -> throw TypeErr $ "Can't have this builtin in NExpr: " ++ pprint builtin
   where
     nonLinBuiltin xs ys = (xs, ys, [(NonLin, length xs)])
     cartBuiltin   xs ys = (xs, ys, [(Lin, length xs)])

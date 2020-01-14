@@ -14,7 +14,7 @@ import Control.Monad.Reader
 import Control.Monad.Except (liftEither)
 import Control.Monad.Writer
 import Control.Monad.Except (throwError)
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -78,6 +78,7 @@ inferDecl decl = case decl of
                       bound' <- check bound (patType p')
                       return (p', bound')
     return (LetMono p' bound', foldMap asEnv p')
+  DoBind _ _ -> error "Shouldn't be able to get here"
   LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
     let vs = [v | (v:>_) <- tbs]
         tyBody' = instantiateTVs (map TypeVar vs) tyBody
@@ -120,6 +121,12 @@ check expr reqTy = case expr of
     let argTys' = map (instantiateTVs ts') argTys
     args' <- zipWithM check args argTys'
     return $ PrimOp b ts' args'
+  Decl (DoBind p bound) body -> do
+    (eff, a) <- fromMonadType expr reqTy
+    p' <- annotPat p
+    bound' <- check bound (Monad eff (patType p'))
+    body' <- extendRSnd (foldMap asEnv p') $ check body (Monad eff a)
+    return $ Decl (DoBind p' bound') body'
   Decl decl@(Unpack _ tv _) body -> do
     (decl', env') <- inferDecl decl
     body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
@@ -222,6 +229,15 @@ fromAnn (Ann ty) = return ty
 
 asEnv :: Binder -> TypeEnv
 asEnv (v:>ty) = v @> L (asSigma ty)
+
+fromMonadType :: UExpr -> Type -> InferM (EffectType, Type)
+fromMonadType expr ty = case ty of
+  Monad eff a -> return (eff, a)
+  _ -> do
+    eff <- liftM3 Effect freshQ freshQ freshQ
+    a <- freshQ
+    constrainEq ty (Monad eff a) (pprint expr)
+    return (eff, a)
 
 -- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
 splitFun :: UExpr -> Type -> InferM (Type, Type, Type)
@@ -327,10 +343,13 @@ unify err t1 t2 = do
     (ArrType l a b, ArrType l' a' b') -> recur l l' >> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
     (Exists t, Exists t')        -> recur t t'
+    (Monad eff a, Monad eff' a') -> zipWithM_ recur (toList eff) (toList eff') >> recur a a'
     (RecType k r, RecType k' r') | k == k' ->
       case zipWithRecord recur r r' of
         Nothing -> throwError err
         Just unifiers -> void $ sequence unifiers
+    (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
+      recur f f' >> zipWithM_ recur xs xs'
     _ -> throwError err
   where
     recur = unify err

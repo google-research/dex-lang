@@ -120,7 +120,7 @@ dumpData = do
 
 explicitCommand :: Parser UTopDecl
 explicitCommand = do
-  cmdName <- char ':' >> identifier
+  cmdName <- char ':' >> identifier <* (optional eol >> sc)
   cmd <- case M.lookup cmdName commandNames of
     Just cmd -> return cmd
     Nothing -> fail $ "unrecognized command: " ++ show cmdName
@@ -143,7 +143,7 @@ ruleDef = do
 -- === Parsing decls ===
 
 decl :: Parser UDecl
-decl = typeDef <|> unpack <|> letMono <|> letPoly
+decl = typeDef <|> unpack <|> doBind <|> letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ some $ (eol >> sc) <|> symbol ";"
@@ -180,6 +180,12 @@ letPolyToMono :: UDecl -> UDecl
 letPolyToMono d = case d of
   LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> Ann ty) rhs
   _ -> d
+
+doBind :: Parser UDecl
+doBind = do
+  p <- try $ pat <* symbol "<-"
+  body <- expr
+  return $ DoBind p body
 
 unpack :: Parser UDecl
 unpack = do
@@ -521,6 +527,7 @@ applyType ty arg = TypeApp ty [arg]
 
 tauType' :: Parser Type
 tauType' =   parenTy
+         <|> monadType
          <|> existsType
          <|> typeName
          <|> typeVar
@@ -529,6 +536,15 @@ tauType' =   parenTy
 
 typeVar :: Parser Type
 typeVar = liftM TypeVar (upperName <|> lowerName)
+
+monadType :: Parser Type
+monadType = do
+  symbol "Monad"
+  r <- tauTypeAtomic
+  w <- tauTypeAtomic
+  s <- tauTypeAtomic
+  a <- tauTypeAtomic
+  return $ Monad (Effect r w s) a
 
 idxSetLit :: Parser Type
 idxSetLit = liftM IdxSetLit uint

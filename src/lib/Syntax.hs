@@ -30,6 +30,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
+               MonadicPrimitive (..), EffectTypeP (..), EffectType, NEffectType,
                RuleAnn (..), DeclAnn (..), CmpOp (..), catchIOExcept)  where
 
 import Record
@@ -43,6 +44,8 @@ import Control.Monad.Except hiding (Except)
 import Control.Exception  (Exception, catch)
 import GHC.Generics
 import Foreign.Ptr
+import Data.Traversable
+import Control.Applicative (liftA3)
 
 -- === core IR ===
 
@@ -65,6 +68,7 @@ data ExprP b =
 
 data DeclP b = LetMono (PatP b) (ExprP b)
              | LetPoly (BinderP SigmaType) (TLamP b)
+             | DoBind (PatP b) (ExprP b)
              | TyDef TyDefType Name [BinderP ()] Type
              | Unpack (BinderP b) Name (ExprP b)
                deriving (Eq, Ord, Show, Generic)
@@ -84,6 +88,7 @@ data Type = BaseType BaseType
           | TabType IdxSet Type
           | RecType ProdKind (Record Type)
           | TypeApp Type [Type]
+          | Monad EffectType Type
           | Exists Type
           | IdxSetLit IdxSetVal
           | Mult Multiplicity
@@ -92,6 +97,11 @@ data Type = BaseType BaseType
 
 type Lin = Type -- only TypeVar, BoundTVar and Mult constructors
 data Multiplicity = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
+
+data EffectTypeP ty = Effect { readerEff :: ty
+                             , writerEff :: ty
+                             , stateEff  :: ty }  deriving (Eq, Ord, Show, Generic)
+type EffectType = EffectTypeP Type
 
 data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show, Generic)
 data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show, Generic)
@@ -136,9 +146,10 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | Range | Scan | Linearize | Transpose
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
-             | MemRef [ArrayRef]
-                deriving (Eq, Ord, Generic)
+             | MemRef [ArrayRef] | MRun | MPrim MonadicPrimitive
+               deriving (Eq, Ord, Generic)
 
+data MonadicPrimitive = MAsk | MTell | MGet | MPut | MReturn deriving (Eq, Ord, Generic)
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
 
 builtinNames :: M.Map String Builtin
@@ -156,7 +167,9 @@ builtinNames = M.fromList [
   ("asint", IndexAsInt), ("asidx", IntAsIndex),
   ("filter", Filter), ("vzero", VZero), ("vadd", VAdd),
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo),
-  ("newtypecast", NewtypeCast), ("select", Select)]
+  ("newtypecast", NewtypeCast), ("select", Select),
+  ("ask", MPrim MAsk), ("tell", MPrim MTell), ("get", MPrim MGet), ("put", MPrim MPut),
+  ("return", MPrim MReturn), ("run", MRun)]
 
 commandNames :: M.Map String CmdName
 commandNames = M.fromList [
@@ -251,6 +264,7 @@ data NExpr = NDecl NDecl NExpr
              deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
+           | NDoBind [NBinder] NAtom
            | NUnpack [NBinder] Name NExpr
               deriving (Show)
 
@@ -261,12 +275,16 @@ data NAtom = NLit LitVal
            -- Only used internally in the simplification pass as book-keeping
            -- for compile-time tables of functions etc.
            | NAtomicFor NBinder NAtom
-              deriving (Show)
+           -- Used internally in simplification pass.
+           -- TODO: consider whether the atom/expr distinction is worth it
+           | NMonadVal NExpr
+             deriving (Show)
 
 data NType = NBaseType BaseType
            | NTypeVar Name
            | NArrType Multiplicity [NType] [NType]
            | NTabType NType NType
+           | NMonad NEffectType [NType]
            | NExists [NType]
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
@@ -278,6 +296,7 @@ data NTopDecl = NTopDecl DeclAnn NDecl
                  deriving (Show)
 
 type NBinder = BinderP NType
+type NEffectType = EffectTypeP [NType]
 
 -- === imperative IR ===
 
@@ -471,6 +490,7 @@ instance HasVars Type where
     RecType _ r -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
     Exists body -> freeVars body
+    Monad eff a -> foldMap freeVars eff <> freeVars a
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
     Mult      _ -> mempty
@@ -608,6 +628,7 @@ stripSrcAnnotDecl :: DeclP b -> DeclP b
 stripSrcAnnotDecl decl = case decl of
   LetMono p body -> LetMono p (stripSrcAnnot body)
   LetPoly b (TLam tbs body) -> LetPoly b (TLam tbs (stripSrcAnnot body))
+  DoBind p body -> DoBind p (stripSrcAnnot body)
   TyDef _ _ _ _ -> decl
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
@@ -620,3 +641,12 @@ instance RecTreeZip Type where
   recTreeZip (RecTree r) (RecType _ r') = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) _ = error "Bad zip"
+
+instance Functor EffectTypeP where
+  fmap = fmapDefault
+
+instance Foldable EffectTypeP where
+  foldMap = foldMapDefault
+
+instance Traversable EffectTypeP where
+  traverse f (Effect r w s) = liftA3 Effect (f r) (f w) (f s)
