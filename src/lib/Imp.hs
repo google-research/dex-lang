@@ -100,6 +100,11 @@ toImp dests expr = case expr of
     zipWithM_ copyOrStore sDests sArgs'
     mapM_ initializeZero wDests
     toImpAction (rArgs', wDests, sDests) aDests m
+  NPrimOp LensGet _ args -> do
+    xs <- mapM toImpAtom $ init args
+    let l = last args
+    ansRefs <- mapM (toImpLensGet l) xs
+    zipWithM_ copy dests ansRefs
   NPrimOp IdxSetSize [[n]] _ -> do
     n' <- typeToSize n
     let [dest] = dests
@@ -161,9 +166,7 @@ toImpAtom atom = case atom of
   NVar v _ -> lookupVar v
   NGet e i -> do
     newRef <- liftM2 IGet (toImpAtom e) (toImpAtom i)
-    case impExprType newRef of
-      IRefType (_, []) -> load newRef
-      _                -> return newRef
+    loadIfScalar newRef
   _ -> error $ "Not implemented: " ++ pprint atom
 
 type MContext = ([IExpr], [IExpr], [IExpr])
@@ -200,6 +203,13 @@ toImpAction mdests@(rVals, wDests, sDests) aDests m = case m of
       x' <- mapM toImpAtom x
       zipWithM_ copyOrStore aDests x'
   _ -> error $ "Unexpected expression" ++ pprint m
+
+toImpLensGet :: NAtom -> IExpr -> ImpM IExpr
+toImpLensGet (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
+  (LensId     , ~[])     -> return x
+  (LensCompose, ~[a, b]) -> toImpLensGet a x >>= toImpLensGet b
+  (IdxAsLens  , ~[i])    -> liftM (IGet x) (toImpAtom i)
+toImpLensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
 toImpPrimOp Range      (dest:_) _ [x] = store dest x

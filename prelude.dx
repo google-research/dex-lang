@@ -383,3 +383,19 @@ return x = %return(x)
 
 bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
 bind m f = x <- m; f x
+
+'Lens primitive
+
+lensGet :: a -> Lens a b -> b
+lensGet x l = %lensGet(x, l)
+
+-- TODO: come up with some infix symbols for some of these
+idxAsLens :: A n::Ix a . n -> Lens (n=>a) a
+idxAsLens i = %idxAsLens(i)
+
+-- Composes left-to-right (unlike usual function composition)
+lensCompose :: Lens a b -> Lens b c -> Lens a c
+lensCompose l1 l2 = %lensCompose(l1, l2)
+
+lensId :: Lens a a
+lensId = %lensId()

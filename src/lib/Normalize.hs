@@ -190,6 +190,10 @@ normalizeTy ty = case ty of
     eff' <- traverse normalizeTy eff
     a' <- normalizeTy a
     return [NMonad eff' a']
+  Lens a b -> do
+    a' <- normalizeTy a
+    b' <- normalizeTy b
+    return [NLens a' b']
   Exists body -> do
     body' <- normalizeTy body
     return [NExists (toList body')]

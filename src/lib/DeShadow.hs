@@ -207,6 +207,7 @@ deShadowType ty = case ty of
   TabType a b -> liftM2 TabType (recur a) (recur b)
   RecType k r -> liftM (RecType k) $ traverse recur r
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
+  Lens a b    -> liftM2 Lens (recur a) (recur b)
   Exists body -> liftM Exists $ recur body
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty

@@ -129,6 +129,7 @@ instance Subst Type where
     TypeApp f args -> TypeApp (recur f) (map recur args)
     Exists body -> Exists (recur body)
     Monad eff a -> Monad (fmap recur eff) (recur a)
+    Lens a b    -> Lens (recur a) (recur b)
     IdxSetLit _ -> ty
     BoundTVar _ -> ty
     Mult _      -> ty
@@ -211,6 +212,7 @@ instance NSubst NType where
     NArrType l as bs -> NArrType l (map recur as) (map recur bs)
     NTabType a b   -> NTabType (recur a) (recur b)
     NMonad eff a -> NMonad (fmap (map recur) eff) (map recur a)
+    NLens a b     -> NLens (map recur a) (map recur b)
     NExists ts -> NExists (map recur ts)
     NIdxSetLit _ -> ty
     NBoundTVar _ -> ty

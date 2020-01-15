@@ -67,6 +67,7 @@ prettyTyDepth d ty = case ty of
   RecType Tens _ -> error "Not implemented"
   TypeApp f xs -> p f <+> hsep (map p xs)
   Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
+  Lens a b    -> "Lens" <+> p a <+> p b
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
   Mult Lin    -> "Lin"
@@ -221,6 +222,7 @@ instance Pretty NType where
     NArrType l as bs -> parens $ tup as <+> arrStr l <+> tup bs
     NTabType a  b  -> p a <> "=>" <> p b
     NMonad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
+    NLens a b    -> "Lens"  <+> p a <+> p b
     NExists tys -> "E" <> "." <> list (map p tys)
     NIdxSetLit i -> p i
 

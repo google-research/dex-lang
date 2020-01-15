@@ -31,7 +31,8 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
                MonadicPrimitive (..), EffectTypeP (..), EffectType, NEffectType,
-               RuleAnn (..), DeclAnn (..), CmpOp (..), catchIOExcept)  where
+               RuleAnn (..), DeclAnn (..), CmpOp (..), catchIOExcept,
+               LensPrimitive (..))  where
 
 import Record
 import Env
@@ -89,6 +90,7 @@ data Type = BaseType BaseType
           | RecType ProdKind (Record Type)
           | TypeApp Type [Type]
           | Monad EffectType Type
+          | Lens Type Type
           | Exists Type
           | IdxSetLit IdxSetVal
           | Mult Multiplicity
@@ -147,10 +149,17 @@ data Builtin = IAdd | ISub | IMul | FAdd | FSub | FMul | FDiv | FNeg
              | VZero | VAdd | VSingle | VSum | IndexAsInt | IntAsIndex | IdxSetSize
              | Rem | FFICall Int String | Filter | Todo | NewtypeCast | Select
              | MemRef [ArrayRef] | MRun | MPrim MonadicPrimitive
+             | LensPrim LensPrimitive | LensGet
                deriving (Eq, Ord, Generic)
 
-data MonadicPrimitive = MAsk | MTell | MGet | MPut | MReturn deriving (Eq, Ord, Generic)
-data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual  deriving (Eq, Ord, Show, Generic)
+data LensPrimitive = IdxAsLens | LensCompose | LensId
+                       deriving (Eq, Ord, Generic)
+
+data MonadicPrimitive = MAsk | MTell | MGet | MPut | MReturn
+                          deriving (Eq, Ord, Generic)
+
+data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
+               deriving (Eq, Ord, Show, Generic)
 
 builtinNames :: M.Map String Builtin
 builtinNames = M.fromList [
@@ -169,7 +178,10 @@ builtinNames = M.fromList [
   ("vsingle", VSingle), ("vsum", VSum), ("todo", Todo),
   ("newtypecast", NewtypeCast), ("select", Select),
   ("ask", MPrim MAsk), ("tell", MPrim MTell), ("get", MPrim MGet), ("put", MPrim MPut),
-  ("return", MPrim MReturn), ("run", MRun)]
+  ("return", MPrim MReturn), ("run", MRun),
+  ("idxAsLens", LensPrim IdxAsLens),
+  ("lensCompose", LensPrim LensCompose), ("lensId", LensPrim LensId),
+  ("lensGet", LensGet)]
 
 commandNames :: M.Map String CmdName
 commandNames = M.fromList [
@@ -283,6 +295,7 @@ data NType = NBaseType BaseType
            | NArrType Multiplicity [NType] [NType]
            | NTabType NType NType
            | NMonad NEffectType [NType]
+           | NLens [NType] [NType]
            | NExists [NType]
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
@@ -491,6 +504,7 @@ instance HasVars Type where
     TypeApp a b -> freeVars a <> foldMap freeVars b
     Exists body -> freeVars body
     Monad eff a -> foldMap freeVars eff <> freeVars a
+    Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
     Mult      _ -> mempty
@@ -579,6 +593,7 @@ instance HasNVars NType where
     NIdxSetLit _ -> mempty
     NBoundTVar _ -> mempty
     NMonad eff a -> freeNVars eff <> foldMap freeNVars a
+    NLens a b    -> foldMap freeNVars a <> foldMap freeNVars b
 
 instance HasNVars NEffectType where
   freeNVars eff = foldMap (foldMap freeNVars) eff

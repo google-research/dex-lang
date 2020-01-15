@@ -343,7 +343,10 @@ unify err t1 t2 = do
     (ArrType l a b, ArrType l' a' b') -> recur l l' >> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
     (Exists t, Exists t')        -> recur t t'
-    (Monad eff a, Monad eff' a') -> zipWithM_ recur (toList eff) (toList eff') >> recur a a'
+    (Monad eff a, Monad eff' a') -> do
+      zipWithM_ recur (toList eff) (toList eff')
+      recur a a'
+    (Lens a b, Lens a' b') -> recur a a' >> recur b b'
     (RecType k r, RecType k' r') | k == k' ->
       case zipWithRecord recur r r' of
         Nothing -> throwError err

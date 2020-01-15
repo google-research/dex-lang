@@ -528,6 +528,7 @@ applyType ty arg = TypeApp ty [arg]
 tauType' :: Parser Type
 tauType' =   parenTy
          <|> monadType
+         <|> lensType
          <|> existsType
          <|> typeName
          <|> typeVar
@@ -545,6 +546,13 @@ monadType = do
   s <- tauTypeAtomic
   a <- tauTypeAtomic
   return $ Monad (Effect r w s) a
+
+lensType :: Parser Type
+lensType = do
+  symbol "Lens"
+  a <- tauTypeAtomic
+  b <- tauTypeAtomic
+  return $ Lens a b
 
 idxSetLit :: Parser Type
 idxSetLit = liftM IdxSetLit uint

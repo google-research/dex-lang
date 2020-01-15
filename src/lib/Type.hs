@@ -335,13 +335,18 @@ builtinType builtin = case builtin of
     MGet    -> nonLinBuiltin monadCon []  (monad s)
     MPut    -> nonLinBuiltin monadCon [s] (monad unitTy)
     MReturn -> nonLinBuiltin (monadCon ++ [noCon]) [d] (monad d)
+  LensGet -> nonLinBuiltin [noCon, noCon] [a, Lens a b] b
+  LensPrim p -> case p of
+    IdxAsLens   -> nonLinBuiltin [idxSet, noCon] [i] (Lens (i==>b) b)
+    LensCompose -> nonLinBuiltin [noCon, noCon, noCon] [Lens a b, Lens b c] (Lens a c)
+    LensId      -> nonLinBuiltin [noCon] [] (Lens a a)
   where
     ibinOpType    = nonLinBuiltin [] [int , int ] int
     [r, w, s] = map BoundTVar [0,1,2]
     i = BoundTVar 0
     a = BoundTVar 0
     b = BoundTVar 1
-    -- c = BoundTVar 2
+    c = BoundTVar 2
     d = BoundTVar 3
     j = BoundTVar 1
     k = BoundTVar 2
@@ -387,6 +392,7 @@ subAtDepth d f ty = case ty of
     RecType k r   -> RecType k (fmap recur r)
     TypeApp a b   -> TypeApp (recur a) (map recur b)
     Monad eff a   -> Monad (fmap recur eff) (recur a)
+    Lens a b      -> Lens (recur a) (recur b)
     Exists body   -> Exists (recurWith 1 body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
@@ -693,6 +699,13 @@ nBuiltinType builtin ts =
       where
         r:w:s:tyArgs = ts
         nmonad a = NMonad (Effect r w s) a
+    LensGet -> return $ nonLinBuiltin (a ++ [NLens a b]) b  where [a, b] = ts
+    LensPrim p -> case p of
+      IdxAsLens   -> return $ nonLinBuiltin [n] [NLens (map (NTabType n) a) a]
+         where [[n], a] = ts
+      LensCompose -> return $ nonLinBuiltin [NLens a b, NLens b c ] [NLens a c]
+         where [a, b, c] = ts
+      LensId      -> return $ nonLinBuiltin [] [NLens a a]  where [a] = ts
     _ -> throw TypeErr $ "Can't have this builtin in NExpr: " ++ pprint builtin
   where
     nonLinBuiltin xs ys = (xs, ys, [(NonLin, length xs)])
@@ -716,8 +729,9 @@ nBuiltinType builtin ts =
         else throw TypeErr $ "Expected scalar type, got: " ++ pprint t
 
 isAtomicBuiltin :: Builtin -> Bool
-isAtomicBuiltin (MPrim _) = True
-isAtomicBuiltin _         = False
+isAtomicBuiltin (MPrim    _) = True
+isAtomicBuiltin (LensPrim _) = True
+isAtomicBuiltin _            = False
 
 isNScalar :: NType -> Bool
 isNScalar ty = case ty of
@@ -736,7 +750,7 @@ tangentBunNType ty = case ty of
   NExists ts -> [NExists $ foldMap recur ts]
   NIdxSetLit _ -> [ty]
   NBoundTVar _ -> [ty]
-  NMonad _ _ -> error "Not implemented"
+  _ -> error "Not implemented"
   where recur = tangentBunNType
 
 tangentBunType :: Type -> Type
