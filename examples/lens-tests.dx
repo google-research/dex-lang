@@ -10,3 +10,6 @@ lens = (lensId `lensCompose` idxAsLens 1@2 `lensCompose` idxAsLens 2@3)
 
 :p lensGet xs lens
 > 6
+
+:p lensGet 1.0 lensId
+> 1.0

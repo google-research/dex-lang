@@ -103,8 +103,8 @@ toImp dests expr = case expr of
   NPrimOp LensGet _ args -> do
     xs <- mapM toImpAtom $ init args
     let l = last args
-    ansRefs <- mapM (toImpLensGet l) xs
-    zipWithM_ copy dests ansRefs
+    ansRefs <- mapM (lensGet l) xs
+    zipWithM_ copyOrStore dests ansRefs
   NPrimOp IdxSetSize [[n]] _ -> do
     n' <- typeToSize n
     let [dest] = dests
@@ -183,33 +183,45 @@ toImpActionExpr mdests dests expr = case expr of
   _ -> error $ "Unexpected expression " ++ pprint expr
 
 toImpAction :: MContext -> [IExpr] -> NAtom -> ImpM ()
-toImpAction mdests@(rVals, wDests, sDests) aDests m = case m of
+toImpAction mdests@(rVals, wDests, sDests) outDests m = case m of
   NDoBind rhs (NLamExpr bs body) -> do
     tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
     withAllocs tys $ \bsDests -> do
       toImpAction mdests bsDests rhs
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImpActionExpr mdests aDests body
-  NAtomicPrimOp (MPrim p) _ x -> case p of
-    MPut -> do
-      x' <- mapM toImpAtom x
-      zipWithM_ copyOrStore sDests x'
-    MGet -> zipWithM_ copy aDests sDests
-    MAsk -> zipWithM_ copyOrStore aDests rVals
+      extendR (bindEnv bs xs) $ toImpActionExpr mdests outDests body
+  NAtomicPrimOp (MPrim MReturn) _ xs -> toImp outDests (NAtoms xs)
+  NAtomicPrimOp (MPrim p) _ (l:x) -> case p of
+    MAsk -> do
+      ans <- mapM (lensGet l) rVals
+      zipWithM_ copyOrStore outDests ans
     MTell-> do
       x' <- mapM toImpAtom x
-      zipWithM_ addToDest wDests x'
-    MReturn -> do
+      wDests' <- mapM (lensIndexRef l) wDests
+      zipWithM_ addToDest wDests' x'
+    MPut -> do
       x' <- mapM toImpAtom x
-      zipWithM_ copyOrStore aDests x'
+      sDests' <- mapM (lensIndexRef l) sDests
+      zipWithM_ copyOrStore sDests' x'
+    MGet -> do
+      ans <- mapM (loadIfScalar >=> lensGet l) sDests
+      zipWithM_ copyOrStore outDests ans
+    MReturn -> error "shouldn't be able to get here"
   _ -> error $ "Unexpected expression" ++ pprint m
 
-toImpLensGet :: NAtom -> IExpr -> ImpM IExpr
-toImpLensGet (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
+lensGet :: NAtom -> IExpr -> ImpM IExpr
+lensGet (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
   (LensId     , ~[])     -> return x
-  (LensCompose, ~[a, b]) -> toImpLensGet a x >>= toImpLensGet b
+  (LensCompose, ~[a, b]) -> lensGet a x >>= lensGet b
+  (IdxAsLens  , ~[i])    -> liftM (IGet x) (toImpAtom i) >>= loadIfScalar
+lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
+
+lensIndexRef :: NAtom -> IExpr -> ImpM IExpr
+lensIndexRef (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
+  (LensId     , ~[])     -> return x
+  (LensCompose, ~[a, b]) -> lensIndexRef a x >>= lensIndexRef b
   (IdxAsLens  , ~[i])    -> liftM (IGet x) (toImpAtom i)
-toImpLensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
+lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
 toImpPrimOp Range      (dest:_) _ [x] = store dest x
@@ -291,7 +303,7 @@ addToDest dest src = case impExprType src of
     cur <- load dest
     updated <- emitInstr $ IPrimOp FAdd [] [cur, src]
     store dest updated
-  ty -> error $ "Writing not implemented for type " ++ pprint ty
+  ty -> error $ "Writing only implemented for scalars" ++ pprint ty
 
 initializeZero :: IExpr -> ImpM()
 initializeZero ref = case impExprType ref of

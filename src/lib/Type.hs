@@ -330,10 +330,10 @@ builtinType builtin = case builtin of
   MemRef _ -> nonLinBuiltin [isData] [] a
   MRun    -> nonLinBuiltin (monadCon ++ [noCon]) [r, s, monad d] (tup [d, w, s])
   MPrim mprim -> case mprim of
-    MAsk    -> nonLinBuiltin monadCon []  (monad r)
-    MTell   -> nonLinBuiltin monadCon [w] (monad unitTy)
-    MGet    -> nonLinBuiltin monadCon []  (monad s)
-    MPut    -> nonLinBuiltin monadCon [s] (monad unitTy)
+    MAsk    -> nonLinBuiltin (monadCon ++ [noCon]) [Lens r d] (monad d)
+    MTell   -> nonLinBuiltin (monadCon ++ [vspace]) [Lens w d, d] (monad unitTy)
+    MGet    -> nonLinBuiltin (monadCon ++ [noCon]) [Lens s d] (monad d)
+    MPut    -> nonLinBuiltin (monadCon ++ [noCon]) [Lens s d, d] (monad unitTy)
     MReturn -> nonLinBuiltin (monadCon ++ [noCon]) [d] (monad d)
   LensGet -> nonLinBuiltin [noCon, noCon] [a, Lens a b] b
   LensPrim p -> case p of
@@ -689,16 +689,14 @@ nBuiltinType builtin ts =
         r:w:s:tyArgs = ts
         nmonad a = NMonad (Effect r w s) a
     MPrim mprim -> case mprim of
-      MAsk  -> return $ nonLinBuiltin [] [nmonad r]
-      MTell -> return $ nonLinBuiltin w  [nmonad []]
-      MGet  -> return $ nonLinBuiltin [] [nmonad s]
-      MPut  -> return $ nonLinBuiltin s  [nmonad []]
-      MReturn -> do
-        let [a] = tyArgs
-        return $ nonLinBuiltin a [nmonad a]
+      MAsk  -> return $ nonLinBuiltin  [NLens r a]       [nmonad a ]
+      MTell -> return $ nonLinBuiltin ([NLens w a] ++ a) [nmonad []]
+      MGet  -> return $ nonLinBuiltin  [NLens s a]       [nmonad a ]
+      MPut  -> return $ nonLinBuiltin ([NLens s a] ++ a) [nmonad []]
+      MReturn -> return $ nonLinBuiltin a [nmonad a]
       where
-        r:w:s:tyArgs = ts
-        nmonad a = NMonad (Effect r w s) a
+        [r, w, s, a] = ts
+        nmonad b = NMonad (Effect r w s) b
     LensGet -> return $ nonLinBuiltin (a ++ [NLens a b]) b  where [a, b] = ts
     LensPrim p -> case p of
       IdxAsLens   -> return $ nonLinBuiltin [n] [NLens (map (NTabType n) a) a]

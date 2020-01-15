@@ -18,12 +18,6 @@ type State  s a = Monad () () s  a
    run 5 () m
 > (5, (), ())
 
-:p m :: Writer Real ()
-   m = _ <- tell 2.0
-       tell 3.0
-   run () () m
-> ((), 5.0, ())
-
 :p m :: Monad () () () Int
    m = return 4
    run () () m
@@ -52,3 +46,17 @@ type State  s a = Monad () () s  a
   --
   run 2 True rwsAction
 > (4, 6.0, False)
+
+:p m :: State (3=>Int) ()
+   m =
+     _ <- puts (idxAsLens 0@3) 10
+     _ <- puts (idxAsLens 2@3) 20
+     x <- gets (idxAsLens 0@3)
+     puts (idxAsLens 1@3) x
+   run () [0,0,0] m
+> ((), (), [10, 10, 20])
+
+:p m :: Reader (3=>Int) Int
+   m = asks (idxAsLens 1@3)
+   run [1,2,3] () m
+> (2, (), ())
