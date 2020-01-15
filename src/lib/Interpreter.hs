@@ -128,6 +128,7 @@ reduceDecl (Unpack (v:>_) tv expr) =
   where (Pack val ty _) = reduce expr
 -- TODO: handle parametric type aliases
 reduceDecl (TyDef _ v _ ty) = asFst $ v @> T ty
+reduceDecl (DoBind _ _) = error "Not implemented"
 
 bindPat :: Pat -> Val -> SubstEnv
 bindPat (RecLeaf (v:>_)) val = asFst $ v @> L (Right (TLam [] val))

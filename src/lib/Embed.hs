@@ -9,10 +9,10 @@
 
 module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, buildScoped, wrapNDecls, runEmbedT,
-              runEmbed, emitUnpack, nGet, flipIdx, withDoBind,
+              runEmbed, emitUnpack, nGet, flipIdx,
               buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
               emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div',
-              selectAt, freshNVar, emitDoTo) where
+              selectAt, freshNVar) where
 
 import Control.Monad
 import Data.List (transpose)
@@ -48,12 +48,6 @@ emitTo bs expr = do
   extend $ asSnd [NLet bs' expr]
   return $ map binderToVar bs'
 
-emitDoTo :: MonadCat NEmbedEnv m => [NBinder] -> NAtom -> m [NAtom]
-emitDoTo bs m = do
-  bs' <- traverse freshenNBinder bs
-  extend $ asSnd [NDoBind bs' m]
-  return $ map binderToVar bs'
-
 deShadow :: MonadCat NEmbedEnv m => NSubst a => a -> m a
 deShadow x = do
   scope <- looks fst
@@ -61,7 +55,7 @@ deShadow x = do
 
 noBinders :: NAtom -> Bool
 noBinders atom = case atom of
-  NLam _ _ _     -> False
+  NLam _ _       -> False
   NAtomicFor _ _ -> False
   _              -> True
 
@@ -95,11 +89,10 @@ withBinders bs f = do
       return (ans, bs')
   return (ans, bs', env)
 
-buildNLam :: (MonadCat NEmbedEnv m) =>
-              Multiplicity -> [NBinder] -> ([NAtom] -> m NExpr) -> m NAtom
-buildNLam l bs f = do
+buildNLam :: (MonadCat NEmbedEnv m) => [NBinder] -> ([NAtom] -> m NExpr) -> m NLamExpr
+buildNLam bs f = do
   (body, bs', (_, decls)) <- withBinders bs f
-  return $ NLam l bs' $ wrapNDecls decls body
+  return $ NLamExpr bs' (wrapNDecls decls body)
 
 buildNFor :: (MonadCat NEmbedEnv m) => NBinder -> (NAtom -> m NExpr) -> m NExpr
 buildNFor b f = buildNScan b [] [] $ \i _ -> f i
@@ -128,14 +121,7 @@ buildNScan :: (MonadCat NEmbedEnv m)
                -> (NAtom -> [NAtom] -> m NExpr) -> m NExpr
 buildNScan ib xbs xsInit f = do
   ~(body, (ib':xbs'), (_, decls)) <- withBinders (ib:xbs) $ \(i:xs) -> f i xs
-  return $ NScan ib' xbs' xsInit (wrapNDecls decls body)
-
-withDoBind :: MonadCat NEmbedEnv m
-            => [NBinder] -> NAtom
-            -> ([NAtom] -> m NExpr) -> m NExpr
-withDoBind bs m cont = buildScoped $ do
-  xs <- emitDoTo bs m
-  cont xs
+  return $ NScan xsInit (NLamExpr (ib':xbs') (wrapNDecls decls body))
 
 buildScoped :: (MonadCat NEmbedEnv m) => m NExpr -> m NExpr
 buildScoped m = do
@@ -150,7 +136,7 @@ materializeAtom atom = case atom of
       body' <- materializeAtom $ nSubst (iv @> L i, scope) body
       return $ NAtoms [body']
     emitOneAtom ans
-  NLam _ _ _ -> error $ "Can't materialize lambda"
+  NLam _ _ -> error $ "Can't materialize lambda"
   _ -> return atom
 
 runEmbedT :: Monad m => CatT NEmbedEnv m a -> Scope -> m (a, NEmbedEnv)
@@ -160,7 +146,6 @@ runEmbed :: Cat NEmbedEnv a -> Scope -> (a, NEmbedEnv)
 runEmbed m scope = runCat m (scope, [])
 
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
-wrapNDecls [] (NAtoms [NMonadVal expr]) = expr
 wrapNDecls [] expr = expr
 wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v' _]) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)

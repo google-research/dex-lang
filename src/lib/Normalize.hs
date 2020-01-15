@@ -76,13 +76,18 @@ normalize expr = case expr of
     ts' <- mapM normalizeTy ts
     xs' <- mapM atomize xs
     normalizePrimOp b ts' xs'
+  Decl (DoBind p bound) body -> do
+    (bs, toEnv) <- normalizePat p
+    ~[m] <- atomize bound
+    f <- buildNLam bs $ \xs -> extendR (toEnv xs) (normalize body)
+    return $ NAtoms [NDoBind m f]
   Decl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
   Lam ~(Mult l) p body -> do
     (bs, toEnv) <- normalizePat p
-    f <- buildNLam l bs $ \xs -> extendR (toEnv xs) (normalize body)
-    return $ NAtoms [f]
+    f <- buildNLam bs $ \xs -> extendR (toEnv xs) (normalize body)
+    return $ NAtoms [NLam l f]
   App f x -> do
     ~[f'] <- atomize f
     x'    <- atomize x
@@ -122,7 +127,9 @@ normalizePrimOp builtin tyArgs args = case builtin of
           [xs, ys] = args
   VZero -> liftM NAtoms $ mapM zeroAt tys
     where [tys] = tyArgs
-  _ -> return $ NPrimOp builtin tyArgs (concat args)
+  _ -> if isAtomicBuiltin builtin
+        then return $ NAtoms [NAtomicPrimOp builtin tyArgs (concat args)]
+        else return $ NPrimOp builtin tyArgs (concat args)
 
 atomize :: Expr -> NormM [NAtom]
 atomize expr = normalize expr >>= emit
@@ -150,11 +157,6 @@ normalizeDecl decl = case decl of
     bound' <- buildScoped $ normalize bound
     xs <- emitTo bs bound'
     return $ toEnv xs
-  DoBind p bound -> do
-    (bs, toEnv) <- normalizePat p
-    ~[bound'] <- atomize bound
-    xs <- emitDoTo bs bound'
-    return $ toEnv xs
   LetPoly (v:>_) (TLam tbs body) -> do
     env <- ask
     return $ v @> L (Right (TLamContents env tbs body))
@@ -169,6 +171,7 @@ normalizeDecl decl = case decl of
     ty' <- normalizeTy ty
     return $ v @> T ty'
   TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
+  DoBind _ _          -> error "Shouldn't have DoBind here"
 
 normalizeTy :: Type -> NormM [NType]
 normalizeTy ty = case ty of

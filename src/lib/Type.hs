@@ -11,7 +11,7 @@
 module Type (TypeEnv, checkTyped, getType, atomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
              checkNExpr, patType, tangentBunType, tangentBunNType,
-             getNExprType, splitLinArgs, nBuiltinType) where
+             getNExprType, splitLinArgs, nBuiltinType, isAtomicBuiltin) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -479,22 +479,10 @@ checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
 
 getNTypeChecked :: NExpr -> NTypeM [NType]
 getNTypeChecked expr = case expr of
-  NDecl (NDoBind bs rhs) body -> do
-    mapM_ checkNBinder bs
-    (ty, spent) <- scoped $ atomTypeChecked rhs
-    case ty of
-      NMonad eff a -> do
-        assertEq (map binderAnn bs) a "Do bind"
-        bodyTy <- extendR (nBinderEnv spent bs) $ getNTypeChecked body
-        case bodyTy of
-          [NMonad eff' _] -> assertEq eff eff' "Effect type mismatch"
-          ty' -> throw CompilerErr $ "expected monad, got " ++ pprint ty'
-        return bodyTy
-      _ -> error "expected monad"
   NDecl decl body -> do
     env <- checkNDecl decl
     extendR env $ getNTypeChecked body
-  NScan b@(_:>i) bs xs body -> do
+  NScan xs (NLamExpr ~(b@(_:>i):bs) body) -> do
     checkNBinder b
     let carryTys = map binderAnn bs
     mapM_ checkNBinder bs
@@ -512,11 +500,8 @@ getNTypeChecked expr = case expr of
     mapM_ checkNTy ts
     return ts
   NPrimOp b ts xs -> do
-    mapM_ (mapM_ checkNTy) ts
-    (argTys, ansTys, lin) <- nBuiltinType b ts
-    argTys' <- sequenceLinArgs lin (map atomTypeChecked xs)
-    assertEq argTys argTys' (pprint b)
-    return ansTys
+    assertEq False (isAtomicBuiltin b) $ "Atomic builtin in NExpr: " ++ pprint b
+    checkPrimOpType b ts xs
   NApp e xs -> do
     ~(NArrType l as bs) <- atomTypeChecked e
     -- TODO: use cartesian/tensor information from function type
@@ -551,12 +536,18 @@ atomType atom = case atom of
   NVar _ ty -> ty
   NGet e _  -> b where (NTabType _ b) = atomType e
   NAtomicFor (_:>n) body -> NTabType n (atomType body)
-  NLam m bs body -> NArrType m (map binderAnn bs) (getNExprType body)
+  NLam m lam -> uncurry (NArrType m) (nLamType lam)
+  NAtomicPrimOp b ts _ -> ansTy
+    where (_, [ansTy], _) = ignoreExcept $ nBuiltinType b ts
+  NDoBind _ f -> ansTy where (_, [ansTy]) = nLamType f
+
+nLamType :: NLamExpr -> ([NType], [NType])
+nLamType (NLamExpr bs body) = (map binderAnn bs, getNExprType body)
 
 getNExprType :: NExpr -> [NType]
 getNExprType expr = case expr of
   NDecl _ body -> getNExprType body
-  NScan (_:>n) bs _ body -> carryTys ++ map (NTabType n) outTys
+  NScan _ (NLamExpr ~((_:>n):bs) body) -> carryTys ++ map (NTabType n) outTys
     where bodyTys = getNExprType body
           (carryTys, outTys) = splitAt (length bs) bodyTys
   NPrimOp b ts _ -> ansTys
@@ -588,19 +579,39 @@ atomTypeChecked atom = case atom of
     checkNBinder b
     bodyTy <- extendR (nBinderEnv mempty [b]) (atomTypeChecked body)
     return $ NTabType (binderAnn b) bodyTy
-  NLam NonLin bs body -> do
-    mapM_ checkNBinder bs
-    bodyTys <- extendR (nBinderEnv mempty bs) (getNTypeChecked body)
-    return $ NArrType NonLin (map binderAnn bs) bodyTys
-  NLam Lin bs body -> do
+  NLam NonLin lam -> lamTypeChecked lam
+  NLam Lin (NLamExpr bs body) -> do
     mapM_ checkNBinder bs
     v <- getPatName bs
     let env = nBinderEnv (asSpent v) bs
     bodyTys <- checkSpent v (pprint bs) $ extendR env (getNTypeChecked body)
     return $ NArrType Lin (map binderAnn bs) bodyTys
-  NMonadVal expr -> do
-    ~[ty] <- getNTypeChecked expr
+  NDoBind m f -> do
+    mTy <- atomTypeChecked m
+    ~(NArrType _ a mb) <- lamTypeChecked f
+    case mb of
+      [NMonad eff b] -> do
+        assertEq mTy (NMonad eff a) "Mismatch in bind"
+        return $ NMonad eff b
+      _ -> throw CompilerErr $ "expected monad, got " ++ pprint mb
+  NAtomicPrimOp b ts xs -> do
+    assertEq True (isAtomicBuiltin b) $ "Non-atomic builtin in NExpr: " ++ pprint b
+    ~[ty] <- checkPrimOpType b ts xs
     return ty
+
+checkPrimOpType :: Builtin -> [[NType]] -> [NAtom] -> NTypeM [NType]
+checkPrimOpType b ts xs = do
+  mapM_ (mapM_ checkNTy) ts
+  (argTys, ansTys, lin) <- nBuiltinType b ts
+  argTys' <- sequenceLinArgs lin (map atomTypeChecked xs)
+  assertEq argTys argTys' (pprint b)
+  return ansTys
+
+lamTypeChecked :: NLamExpr -> NTypeM NType
+lamTypeChecked (NLamExpr bs body) = do
+  mapM_ checkNBinder bs
+  bodyTys <- extendR (nBinderEnv mempty bs) (getNTypeChecked body)
+  return $ NArrType NonLin (map binderAnn bs) bodyTys
 
 atomTypesChecked :: [NAtom] -> NTypeM [NType]
 atomTypesChecked xs = traverseProd Cart atomTypeChecked xs
@@ -619,7 +630,6 @@ checkNShadow (v :> _) = do
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
-
 
 -- TODO: check number of type args first
 nBuiltinType :: MonadError Err m
@@ -705,6 +715,10 @@ nBuiltinType builtin ts =
         then return t
         else throw TypeErr $ "Expected scalar type, got: " ++ pprint t
 
+isAtomicBuiltin :: Builtin -> Bool
+isAtomicBuiltin (MPrim _) = True
+isAtomicBuiltin _         = False
+
 isNScalar :: NType -> Bool
 isNScalar ty = case ty of
   NBaseType  _ -> True
@@ -722,6 +736,7 @@ tangentBunNType ty = case ty of
   NExists ts -> [NExists $ foldMap recur ts]
   NIdxSetLit _ -> [ty]
   NBoundTVar _ -> [ty]
+  NMonad _ _ -> error "Not implemented"
   where recur = tangentBunNType
 
 tangentBunType :: Type -> Type

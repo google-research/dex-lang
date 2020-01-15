@@ -23,7 +23,7 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                IExpr (..), IType (..), IBinder, ArrayType, IVal, Ptr,
                VecRef, VecRef' (..), Vec (..),
                ArrayP (..), Array, ArrayRef, FlatValP (..), FlatVal, FlatValRef,
-               Result (..), Result', freeVars, freeNVars,
+               Result (..), Result', freeVars, freeNVars, NLamExpr (..),
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames, DataFormat (..),
                NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
@@ -256,7 +256,7 @@ type UTLam    = TLamP    Ann
 -- === tuple-free ANF-ish normalized IR ===
 
 data NExpr = NDecl NDecl NExpr
-           | NScan NBinder [NBinder] [NAtom] NExpr
+           | NScan [NAtom] NLamExpr
            | NPrimOp Builtin [[NType]] [NAtom]
            | NApp NAtom [NAtom]
            | NAtoms [NAtom]
@@ -264,20 +264,18 @@ data NExpr = NDecl NDecl NExpr
              deriving (Show)
 
 data NDecl = NLet [NBinder] NExpr
-           | NDoBind [NBinder] NAtom
            | NUnpack [NBinder] Name NExpr
               deriving (Show)
 
 data NAtom = NLit LitVal
            | NVar Name NType
            | NGet NAtom NAtom
-           | NLam Multiplicity [NBinder] NExpr
+           | NLam Multiplicity NLamExpr
            -- Only used internally in the simplification pass as book-keeping
            -- for compile-time tables of functions etc.
            | NAtomicFor NBinder NAtom
-           -- Used internally in simplification pass.
-           -- TODO: consider whether the atom/expr distinction is worth it
-           | NMonadVal NExpr
+           | NAtomicPrimOp Builtin [[NType]] [NAtom]
+           | NDoBind NAtom NLamExpr
              deriving (Show)
 
 data NType = NBaseType BaseType
@@ -289,6 +287,8 @@ data NType = NBaseType BaseType
            | NIdxSetLit IdxSetVal
            | NBoundTVar Int
               deriving (Eq, Show)
+
+data NLamExpr = NLamExpr [NBinder] NExpr  deriving (Show)
 
 data NTopDecl = NTopDecl DeclAnn NDecl
               | NRuleDef RuleAnn NType NExpr
@@ -511,6 +511,7 @@ instance HasVars () where
 instance HasVars b => HasVars (DeclP b) where
    freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
+   freeVars (DoBind  p expr) = foldMap freeVars p <> freeVars expr
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
    freeVars (TyDef _ _ bs ty) = freeVars ty `envDiff` bindFold bs
 
@@ -547,18 +548,22 @@ instance HasNVars NExpr where
     NPrimOp _ ts xs -> foldMap (foldMap freeNVars) ts <> foldMap freeNVars xs
     NApp f xs -> freeNVars f <> foldMap freeNVars xs
     NAtoms xs -> foldMap freeNVars xs
-    NScan b bs x0 body -> foldMap freeNVars x0 <>
-      ((freeNVars body `envDiff` lhsVars b) `envDiff` foldMap lhsVars bs)
+    NScan xs lam -> foldMap freeNVars xs <> freeNVars lam
     NTabCon n ty xs -> freeNVars n <> freeNVars ty <> foldMap freeNVars xs
+
+instance HasNVars NLamExpr where
+  freeNVars (NLamExpr bs body) =  foldMap freeNVars bs
+                               <> (freeNVars body `envDiff` foldMap lhsVars bs)
 
 instance HasNVars NAtom where
   freeNVars atom = case atom of
     NLit _ -> mempty
     NVar v ty -> v @> L ty <> freeNVars ty
     NGet e i -> freeNVars e <> freeNVars i
-    NLam _ bs body -> foldMap freeNVars bs <>
-                      (freeNVars body `envDiff` foldMap lhsVars bs)
+    NLam _ lam -> freeNVars lam
     NAtomicFor b body ->  freeNVars b <> (freeNVars body `envDiff` lhsVars b)
+    NAtomicPrimOp _ ts xs -> foldMap (foldMap freeNVars) ts <> foldMap freeNVars xs
+    NDoBind m f -> freeNVars m <> freeNVars f
 
 instance HasNVars NDecl where
   freeNVars (NLet bs expr) = foldMap freeNVars bs <> freeNVars expr
@@ -573,6 +578,10 @@ instance HasNVars NType where
     NExists ts -> foldMap freeNVars ts
     NIdxSetLit _ -> mempty
     NBoundTVar _ -> mempty
+    NMonad eff a -> freeNVars eff <> foldMap freeNVars a
+
+instance HasNVars NEffectType where
+  freeNVars eff = foldMap (foldMap freeNVars) eff
 
 instance HasNVars b => HasNVars (BinderP b) where
   freeNVars (_ :> b) = freeNVars b
@@ -584,10 +593,11 @@ instance BindsVars (BinderP a) where
   lhsVars (v:>_) = v @> L ()
 
 instance BindsVars (DeclP b) where
-  lhsVars (LetMono p _ ) = foldMap lhsVars p
-  lhsVars (LetPoly b _) = lhsVars b
+  lhsVars (LetMono p _  ) = foldMap lhsVars p
+  lhsVars (LetPoly b _  ) = lhsVars b
   lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
   lhsVars (TyDef _ v _ _) = v @> T ()
+  lhsVars (DoBind  p _  ) = foldMap lhsVars p
 
 instance BindsVars (TopDeclP b) where
   lhsVars (TopDecl _ decl) = lhsVars decl

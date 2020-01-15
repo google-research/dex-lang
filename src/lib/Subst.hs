@@ -161,15 +161,12 @@ instance NSubst NExpr where
         where
           (bs', env') = refreshNBinders env bs
           body' = nSubst (env <> env') body
-      NDoBind bs bound -> NDecl (NDoBind bs' (recurA bound)) body'
-        where
-          (bs', env') = refreshNBinders env bs
-          body' = nSubst (env <> env') body
+      -- NDoBind bs bound -> NDecl (NDoBind bs' (recurA bound)) body'
+      --   where
+      --     (bs', env') = refreshNBinders env bs
+      --     body' = nSubst (env <> env') body
       NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-    NScan b bs xs body -> NScan b' bs' (map recurA xs) body'
-      where
-        (b':bs', env') = refreshNBinders env (b:bs)
-        body' = nSubst (env <> env') body
+    NScan xs lam -> NScan (map recurA xs) (nSubst env lam)
     NPrimOp b ts xs -> NPrimOp b (map (map (nSubst env)) ts) (map recurA xs)
     NApp f xs -> NApp (recurA f) (map recurA xs)
     NAtoms xs -> NAtoms $ map recurA xs
@@ -179,6 +176,11 @@ instance NSubst NExpr where
       recur = nSubst env
       recurA :: NAtom -> NAtom
       recurA = nSubst env
+
+instance NSubst NLamExpr where
+  nSubst env (NLamExpr bs body) = NLamExpr bs' body'
+    where (bs', env') = refreshNBinders env bs
+          body' = nSubst (env <> env') body
 
 instance NSubst NAtom where
   nSubst env@(sub, scope) atom = case atom of
@@ -193,11 +195,10 @@ instance NSubst NAtom where
       where
         ([b'], env') = refreshNBinders env [b]
         body' = nSubst (env <> env') body
-    NMonadVal expr -> NMonadVal (nSubst env expr)
-    NLam l bs body -> NLam l bs' body'
-      where
-        (bs', env') = refreshNBinders env bs
-        body' = nSubst (env <> env') body
+    NLam l lam -> NLam l (nSubst env lam)
+    NAtomicPrimOp b ts xs ->
+      NAtomicPrimOp b (map (map (nSubst env)) ts) (map (nSubst env) xs)
+    NDoBind m f -> NDoBind (nSubst env m) (nSubst env f)
 
 instance NSubst NType where
   nSubst env@(sub, _) ty = case ty of

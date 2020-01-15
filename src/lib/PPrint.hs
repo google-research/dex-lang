@@ -184,10 +184,11 @@ instance Pretty Builtin where
 instance Pretty NExpr where
   pretty expr = case expr of
     NDecl decl body -> prettyDecl decl body
-    NScan b [] [] body -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
-    NScan b bs xs body -> parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
-                            <+> hsep (map p xs) <> ","
-                            <+> nest 4 (hardline <> p body)
+    NScan [] (NLamExpr ~[b] body) -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
+    NScan xs (NLamExpr ~(b:bs) body) ->
+      parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
+        <+> hsep (map p xs) <> ","
+        <+> nest 4 (hardline <> p body)
     NPrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
@@ -198,7 +199,6 @@ instance Pretty NExpr where
 instance Pretty NDecl where
   pretty decl = case decl of
     NLet    bs bound -> tup bs <+> "=" <+> p bound
-    NDoBind bs bound -> tup bs <+> "<-" <+> p bound
     NUnpack bs tv e  -> tup bs <> "," <+> p tv <+> "= unpack" <+> p e
 
 instance Pretty NAtom where
@@ -206,10 +206,12 @@ instance Pretty NAtom where
     NLit v -> p v
     NVar x _ -> p x
     NGet e i -> p e <> "." <> p i
-    NLam l bs body -> parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "."
-                       <> line <> align (p body)
+    NLam l (NLamExpr bs body) ->
+      parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "." <>
+      line <> align (p body)
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
-    NMonadVal e -> "mval" <+> p e
+    NAtomicPrimOp b ts xs -> p (NPrimOp b ts xs)
+    NDoBind m (NLamExpr bs body) -> prettyDecl (asStr (tup bs <+> "<-" <+> p m)) body
 
 instance Pretty NType where
   pretty ty = case ty of

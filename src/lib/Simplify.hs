@@ -106,18 +106,10 @@ nameHint bs = case bs of [] -> "tmp"
 -- are not: e.g. a lambda that can't be beta-reduced yet.
 simplify :: NExpr -> SimplifyM [NAtom]
 simplify expr = case expr of
-  NDecl (NDoBind bs bound) body -> do
-    bound' <- simplifyAtom bound
-    (bs', body') <- simplifyLam (NLam NonLin bs body)
-    return [NMonadVal (NDecl (NDoBind bs' bound') body')]
-    -- bs' <- mapM nSubstSimp bs
-    -- ans <- withDoBind bs' (NAtoms bound') $ \xs ->
-    --   extendR (mempty {subEnv = bindEnv bs' xs}) (liftM NAtoms (simplify body))
-    -- return [NMonadVal ans]
   NDecl decl body -> do
     env <- simplifyDecl decl
     extendR env $ simplify body
-  NScan ib bs xs e -> do
+  NScan xs (NLamExpr ~(ib:bs) e) -> do
     xs' <- mapM (simplifyAtom >=> materializeAtom) xs
     ib' <- nSubstSimp ib
     bs' <- mapM nSubstSimp bs
@@ -128,7 +120,7 @@ simplify expr = case expr of
              csOut' <- mapM materializeAtom csOut
              return (csOut', ysOut)
     let (ysClosure, reconstruct) = splitAtoms (envDelete i scope) ysOut
-    (csOut', ysClosure') <- liftM splitCarry $ emit $ NScan ib'' bs'' xs' $
+    (csOut', ysClosure') <- liftM splitCarry $ emit $ NScan xs' $ NLamExpr (ib'':bs'') $
                               wrapNDecls decls (NAtoms (csOut ++ ysClosure))
     let ysClosure'' = map (flip nGet (NVar i n)) ysClosure'
     ysOut' <- liftM (map (NAtomicFor ib'')) $ reconstruct ysClosure''
@@ -138,27 +130,26 @@ simplify expr = case expr of
     xs' <- mapM simplifyAtom xs
     f' <- simplifyAtom f
     case f' of
-      NLam _ bs body -> dropSub $ extendSub (bindEnv bs xs') $ simplify body
-      _              -> emit $ NApp f' xs'
+      NLam _ (NLamExpr bs body) -> dropSub $ extendSub (bindEnv bs xs') $ simplify body
+      _                         -> emit $ NApp f' xs'
   NPrimOp Linearize _ ~(f:xs) -> do
-    xs' <- mapM simplifyAtom xs
-    (bs, body) <- simplifyLam f
+    ~(NLam _ lam) <- simplifyAtom f
+    lam' <- simplifyLam lam
+    xs'  <- mapM simplifyAtom xs
     dropSub $ do
-      linearized <- buildScoped $ runLinearization bs xs' body
+      linearized <- buildScoped $ runLinearization xs' lam'
       simplify linearized
   NPrimOp Transpose [_, bTy] ~[f] -> do
-    (bs, body) <- simplifyLam f
+    ~(NLam _ lam) <- simplifyAtom f
+    lam' <- simplifyLam lam
     bTy' <- mapM nSubstSimp bTy
-    transposed <- buildNLam Lin ["ct":>ty | ty <- bTy'] $ \cts ->
-                    dropSub $ runTransposition bs cts body
-    return [transposed]
+    transposed <- buildNLam ["ct":>ty | ty <- bTy'] $ \cts ->
+                    dropSub $ runTransposition cts lam'
+    return [NLam Lin transposed]
   NPrimOp b ts xs -> do
     ts' <- mapM (mapM nSubstSimp) ts
     xs' <- mapM (simplifyAtom >=> materializeAtom) xs
-    let expr' = NPrimOp b ts' xs'
-    case b of
-      MPrim _ -> return [NMonadVal expr']
-      _       -> emit expr'
+    emit $ NPrimOp b ts' xs'
   NAtoms xs -> mapM simplifyAtom xs
   NTabCon n ts rows -> do
     n' <- nSubstSimp n
@@ -191,17 +182,16 @@ extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local (\r -> r {subEnv = mempty}) m
 
--- simplifies bodies of first-order functions only
-simplifyLam :: NAtom -> SimplifyM ([NBinder], NExpr)
-simplifyLam f = do
-  ~(NLam l bs body) <- simplifyAtom f
+-- Simplifies bodies of first-order functions only.
+-- Unlike `SimplifyAtom`, the simplifies under the binder too.
+simplifyLam :: NLamExpr -> SimplifyM NLamExpr
+simplifyLam (NLamExpr bs body) = do
   bs' <- mapM nSubstSimp bs
-  ~(NLam _ bs'' body') <- buildNLam l bs' $ \vs ->
-                            extendSub (bindEnv bs' vs) $ do
-                              body' <- simplify body
-                              body'' <- mapM materializeAtom body'
-                              return $ NAtoms body''
-  return (bs'', body')
+  buildNLam bs' $ \vs ->
+    extendSub (bindEnv bs' vs) $ do
+      body' <- simplify body
+      body'' <- mapM materializeAtom body'
+      return $ NAtoms body''
 
 simplifyAtom :: NAtom -> SimplifyM NAtom
 simplifyAtom atom = case atom of
@@ -214,23 +204,24 @@ simplifyAtom atom = case atom of
       -- is this freshening necessary here?
       Just (L x') -> dropSub (simplifyAtom x')
       Just (T _ ) -> error "Expected let-bound var"
-  NGet e i -> do
-    e' <- simplifyAtom e
-    i' <- simplifyAtom i
-    return $ nGet e' i'
+  NGet e i -> liftM2 nGet (simplifyAtom e) (simplifyAtom i)
   NAtomicFor ib body -> do
     ib' <- nSubstSimp ib
     buildNAtomicFor ib' $ \i ->
       extendSub (bindEnv [ib'] [i]) (simplifyAtom body)
-  NMonadVal _ -> nSubstSimp atom
-  NLam _ _ _ -> nSubstSimp atom
+  NLam _ _ -> nSubstSimp atom
+  NDoBind m f -> liftM2 NDoBind (simplifyAtom m) (simplifyLam f)
+  NAtomicPrimOp b ts xs -> do
+    ts' <- mapM (mapM nSubstSimp) ts
+    xs' <- mapM (simplifyAtom >=> materializeAtom) xs
+    return $ NAtomicPrimOp b ts' xs'
 
 simplifyDecl :: NDecl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
   NLet bs bound -> do
     xs <- simplify bound
     return $ mempty {subEnv = bindEnv bs xs}
-  NDoBind _ _ -> error "Shouldn't have do bind here"
+  -- NDoBind _ _ -> error "Shouldn't have do bind here"
   NUnpack bs tv bound -> do
     bound' <- simplify bound
     ~(NTypeVar tv', emitUnpackRest) <- emitUnpack tv (NAtoms bound')
@@ -253,8 +244,8 @@ nSubstSimp x = do
 
 type TangentM a = ReaderT (Env NAtom) (NEmbedT (Either Err)) a
 
-runLinearization :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
-runLinearization bs xs expr = do
+runLinearization :: [NAtom] -> NLamExpr -> SimplifyM NExpr
+runLinearization xs (NLamExpr bs expr) = do
   (ans, f) <- extendSub (bindEnv bs xs) $ linearize expr
   ans' <- emit ans
   f' <- runTangent bs f
@@ -262,7 +253,7 @@ runLinearization bs xs expr = do
   return $ NAtoms $ ans' ++ [f']
 
 runTangent :: [NBinder] -> TangentM NExpr -> SimplifyM NAtom
-runTangent bs m = buildNLam Lin bs $ \ts ->
+runTangent bs m = liftM (NLam Lin) $ buildNLam bs $ \ts ->
                     withReaderT (const $ bindEnvTangent bs ts) m
 
 bindEnvTangent :: [NBinder] -> [NAtom] -> Env NAtom
@@ -277,7 +268,7 @@ linearize expr = case expr of
     return (ans, do tEnv <- makeTangentEnv
                     extendR tEnv fLin)
   -- TODO: handle non-real carry components
-  NScan ib bs xs e -> do
+  NScan xs (NLamExpr ~(ib:bs) e) -> do
     (xs', xsTangents) <- linearizeAtoms xs
     envBs <- getContinuousVars expr
     expr' <- buildNScan ib bs xs' $ \i xs'' -> do
@@ -342,8 +333,7 @@ linearizeAtom atom = case atom of
     (x', xt) <- linearizeAtom x
     (i', _) <- linearizeAtom i
     return (NGet x' i', liftM (flip NGet i') xt)
-  NAtomicFor _ _ -> error "not implemented"
-  NLam _ _ _     -> error "not implemented"
+  _ -> error $ "not implemented: " ++ pprint atom
 
 zeroDeriv :: NAtom -> (NAtom, TangentM NAtom)
 zeroDeriv x = (x, zeroAt (atomType x))
@@ -399,8 +389,8 @@ type CotangentVals = MonMap Name [NAtom]  -- TODO: consider folding as we go
 type TransposeM a = WriterT CotangentVals
                       (ReaderT (LinVars, SimpSubEnv) (NEmbedT (Either Err))) a
 
-runTransposition :: [NBinder] -> [NAtom] -> NExpr -> SimplifyM NExpr
-runTransposition bs cts expr = do
+runTransposition :: [NAtom] -> NLamExpr -> SimplifyM NExpr
+runTransposition cts (NLamExpr bs expr) = do
   (((), cts'), _) <- lift $ flip runReaderT (asFst (bindFold bs)) $ runWriterT $
                         extractCTs bs $ transpose expr cts
   return $ NAtoms cts'
@@ -412,7 +402,7 @@ transpose expr cts = case expr of
     xs' <- mapM substNonLin xs
     cts' <- transposeBuiltin b tys xs' cts
     sequence_ [transposeAtom x ct | (x, Just ct) <- zip xs cts']
-  NScan ib bs xs e -> do
+  NScan xs (NLamExpr (ib:bs) e) -> do
     ib' <- substTranspose ib
     linVars <- asks fst
     let (carryCTs, ysCTs) = splitCarry cts

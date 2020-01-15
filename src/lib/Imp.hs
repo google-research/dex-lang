@@ -75,7 +75,7 @@ toImp dests expr = case expr of
        x <- load tvDest
        extendR (tv @> x) $ toImp dests body
   NDecl (NUnpack _ _ _) _ -> error "Not implemented"
-  NScan (i:>n) bs xs body -> do
+  NScan xs (NLamExpr ~((i:>n):bs) body) -> do
     xs' <- mapM toImpAtom xs
     n' <- typeToSize n
     carryTys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
@@ -93,7 +93,7 @@ toImp dests expr = case expr of
            return i'
        emitStatement (Nothing, Loop i' n' loopBody)
   NPrimOp MRun ts args -> do
-    let (rArgs, sArgs, NMonadVal m) = splitRunArgs ts args
+    let (rArgs, sArgs, m) = splitRunArgs ts args
     let (aDests, wDests, sDests) = splitRunDests ts dests
     rArgs' <- mapM toImpAtom rArgs
     sArgs' <- mapM toImpAtom sArgs
@@ -168,21 +168,26 @@ toImpAtom atom = case atom of
 
 type MContext = ([IExpr], [IExpr], [IExpr])
 
-toImpAction :: MContext -> [IExpr] -> NExpr -> ImpM ()
-toImpAction mdests@(rVals, wDests, sDests) aDests m = case m of
-  NDecl (NDoBind bs (NMonadVal bound)) body -> do
-    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
-    withAllocs tys $ \bsDests -> do
-      toImpAction mdests bsDests bound
-      xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImpAction mdests aDests body
+toImpActionExpr :: MContext -> [IExpr] -> NExpr -> ImpM ()
+toImpActionExpr mdests dests expr = case expr of
   NDecl (NLet bs bound) body -> do
     tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
     withAllocs tys $ \bsDests -> do
       toImp bsDests bound
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImpAction mdests aDests body
-  NPrimOp (MPrim p) _ x -> case p of
+      extendR (bindEnv bs xs) $ toImpActionExpr mdests dests body
+  NAtoms [m] -> toImpAction mdests dests m
+  _ -> error $ "Unexpected expression " ++ pprint expr
+
+toImpAction :: MContext -> [IExpr] -> NAtom -> ImpM ()
+toImpAction mdests@(rVals, wDests, sDests) aDests m = case m of
+  NDoBind rhs (NLamExpr bs body) -> do
+    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
+    withAllocs tys $ \bsDests -> do
+      toImpAction mdests bsDests rhs
+      xs <- mapM loadIfScalar bsDests
+      extendR (bindEnv bs xs) $ toImpActionExpr mdests aDests body
+  NAtomicPrimOp (MPrim p) _ x -> case p of
     MPut -> do
       x' <- mapM toImpAtom x
       zipWithM_ copyOrStore sDests x'
