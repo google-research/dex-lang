@@ -22,30 +22,32 @@ import Cat
 import Serialize
 import Fresh hiding (freshName)
 import Subst
+import Record
 
-type ImpEnv = Env IExpr
+type ImpEnv = Env [IExpr]
 type EmbedEnv = (Scope, ImpProg)
 type ImpM a = ReaderT ImpEnv (CatT EmbedEnv (Either Err)) a
 
 impPass :: TopPass NTopDecl ImpDecl
 impPass = TopPass $ \decl -> case decl of
-  NTopDecl _ (NLet bs bound) -> do
-    let (vs, tys) = unzipBinders bs
-    tys' <- mapM toImpTypeTop tys
+  NTopDecl _ (NLet (v:>ty) bound) -> do
+    tys' <- toImpTypeTop ty
+    (env, scope) <- look
+    let (vs, scope') = renames (replicate (length tys') v) scope
     let bs' = zipWith (:>) vs tys'
+    extend $ asSnd scope'
     ((), prog) <- liftTop $ toImp (map asDest bs') bound
-    let xs = [IVar v (derefTypeIfScalar ty) | (v:>ty) <- bs']
-    extend (bindEnv bs xs, bindEnv bs (repeat ()))
+    let xs = [IVar v' (derefTypeIfScalar ty') | (v':>ty') <- bs']
+    extend $ asFst $ v@>xs
     return [ImpTopLet bs' prog]
-  NTopDecl _ (NUnpack [] tv bound) -> do
+  NTopDecl _ (NUnpack _ tv bound) -> do
     let b = tv:>(IRefType (IntType,[]))
     ((), prog) <- liftTop $ toImp [asDest b] bound
-    extend (tv @> IVar tv intTy, tv @> ())
+    extend (tv @> [IVar tv intTy], tv @> ())
     return [ImpTopLet [b] prog]
-  NTopDecl _ (NUnpack _ _ _) -> error "Not implemented"
   NRuleDef _ _ _ -> error "Shouldn't have this left"
   NEvalCmd (Command cmd (ty, expr)) -> do
-    ts <- mapM toImpTypeTop (getNExprType expr)
+    ts <- toImpTypeTop (getNExprType expr)
     let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts]
     ((), prog) <- liftTop $ toImp (map asDest bs) expr
     case cmd of
@@ -58,80 +60,82 @@ liftTop m = do
   (ans, (_, prog)) <- liftExceptTop $ runCatT (runReaderT m env) (scope, mempty)
   return (ans, prog)
 
-toImpTypeTop :: NType -> TopPassM (ImpEnv, Scope) IType
-toImpTypeTop ty = liftM (IRefType . fst) $ liftTop $ toImpArrayType ty
+toImpTypeTop :: Type -> TopPassM (ImpEnv, Scope) [IType]
+toImpTypeTop ty = liftM (map IRefType . fst) $ liftTop $ toImpArrayType ty
 
 toImp :: [IExpr] -> NExpr -> ImpM ()
 toImp dests expr = case expr of
-  NDecl (NLet bs bound) body -> do
-    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
-    withAllocs tys $ \bsDests -> do
-      toImp bsDests bound
-      xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImp dests body
-  NDecl (NUnpack [] tv bound) body -> do
+  NDecl (NLet b@(_:>ty) bound) body -> do
+    tys <- toImpArrayType ty
+    withAllocs tys $ \bDests -> do
+      toImp bDests bound
+      xs <- mapM loadIfScalar bDests
+      extendR (bindEnv b xs) $ toImp dests body
+  NDecl (NUnpack _ tv bound) body -> do
     withAllocs [(IntType, [])] $ \[tvDest] -> do
        toImp [tvDest] bound
        x <- load tvDest
-       extendR (tv @> x) $ toImp dests body
-  NDecl (NUnpack _ _ _) _ -> error "Not implemented"
-  NScan xs (NLamExpr ~((i:>n):bs) body) -> do
-    xs' <- mapM toImpAtom xs
+       extendR (tv @> [x]) $ toImp dests body
+  NScan x (NLamExpr ~[i:>n, b@(_:>ty)] body) -> do
+    x' <- toImpAtom x
     n' <- typeToSize n
-    carryTys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
-    let (carryOutDests, mapDests) = splitAt (length bs) dests
-    zipWithM_ copyOrStore carryOutDests xs'
+    carryTys <- toImpArrayType ty
+    let (carryOutDests, mapDests) = splitAt (length carryTys) dests
+    zipWithM_ copyOrStore carryOutDests x'
     withAllocs carryTys $ \carryTmpDests -> do
        (i', (_, loopBody)) <- scoped $ do
            zipWithM_ copy carryTmpDests carryOutDests
            carryTmpVals <- mapM loadIfScalar carryTmpDests
            i' <- freshName i
            let iVar = IVar i' intTy
-           extendR (i @> iVar  <> bindEnv bs carryTmpVals) $ do
+           extendR (i @> [iVar] <> bindEnv b carryTmpVals) $ do
               let indexedDests = [IGet d iVar | d <- mapDests]
               toImp (carryOutDests ++ indexedDests) $ body
            return i'
        emitStatement (Nothing, Loop i' n' loopBody)
-  NPrimOp MRun ts args -> do
-    let (rArgs, sArgs, m) = splitRunArgs ts args
+  NPrimOp MRun ts ~[rArgs, sArgs, m] -> do
     let (aDests, wDests, sDests) = splitRunDests ts dests
-    rArgs' <- mapM toImpAtom rArgs
-    sArgs' <- mapM toImpAtom sArgs
+    rArgs' <- toImpAtom rArgs
+    sArgs' <- toImpAtom sArgs
     zipWithM_ copyOrStore sDests sArgs'
     mapM_ initializeZero wDests
     toImpAction (rArgs', wDests, sDests) aDests m
-  NPrimOp LensGet _ args -> do
-    xs <- mapM toImpAtom $ init args
-    let l = last args
-    ansRefs <- mapM (lensGet l) xs
+  NPrimOp LensGet _ ~[x, l] -> do
+    x' <- toImpAtom x
+    ansRefs <- mapM (lensGet l) x'
     zipWithM_ copyOrStore dests ansRefs
-  NPrimOp IdxSetSize [[n]] _ -> do
+  NPrimOp IdxSetSize ~[n] _ -> do
     n' <- typeToSize n
     let [dest] = dests
     copyOrStore dest n'
-  NPrimOp IntAsIndex [[n]] [i] -> do
-    i' <- toImpAtom i
+  NPrimOp IntAsIndex ~[n] ~[i] -> do
+    ~[i'] <- toImpAtom i
     n' <- typeToSize n
     let op = FFICall 2 "int_to_index_set"
     ans <- emitInstr $ IPrimOp op [IntType, IntType, IntType] [i', n']
     let [dest] = dests
     store dest ans
   NPrimOp b ts xs -> do
-    let ts' = map toImpBaseType $ concat ts
+    let ts' = map toImpBaseType ts
     xs' <- mapM toImpAtom xs
-    toImpPrimOp b dests ts' xs'
-  NAtoms xs -> do
-    xs' <- mapM toImpAtom xs
+    toImpPrimOp b dests ts' (concat xs')
+  NRecGet xs i -> do
+    let (RecType _ r) = atomType xs
+    xs' <- toImpAtom xs
+    let x = snd $ recGet (listIntoRecord r xs') i
+    zipWithM_ copyOrStore dests x
+  NAtom x -> do
+    xs' <- toImpAtom x
     zipWithM_ copyOrStore dests xs'
   NTabCon _ _ xs -> do
     xs' <- mapM toImpAtom xs
-    void $ sequence [copyOrStore (indexedDest i) x | (i, x) <- zip [0..] xs']
-    where indexedDest i = IGet dest (ILit (IntLit i))
-          [dest] = dests
+    void $ sequence [copyOrStore (indexedDest d i) x | (i, row) <- zip [0..] xs'
+                                                     , (x, d) <- zip row dests]
+    where indexedDest dest i = IGet dest (ILit (IntLit i))
   NApp _ _ -> error "NApp should be gone by now"
 
-bindEnv :: [BinderP a] -> [b] -> Env b
-bindEnv bs xs = fold $ zipWith (\(v:>_) x -> v @> x) bs xs
+bindEnv :: BinderP a -> b -> Env b
+bindEnv (v:>_) x = v @> x
 
 withAllocs :: [ArrayType] -> ([IExpr] -> ImpM a) -> ImpM a
 withAllocs [] body = body []
@@ -146,63 +150,60 @@ withAlloc ty body = do
   emitStatement (Nothing, Free v ty)
   return ans
 
-splitRunArgs :: [[NType]] -> [NAtom] -> ([NAtom], [NAtom], NAtom)
-splitRunArgs ts args = (r, s, m)
-  where
-    [nr, _, ns, _] = map length ts
-    (r, args') = splitAt nr args
-    (s, [m])   = splitAt ns args'
-
-splitRunDests :: [[NType]] -> [IExpr] -> ([IExpr], [IExpr], [IExpr])
+splitRunDests :: [Type] -> [IExpr] -> ([IExpr], [IExpr], [IExpr])
 splitRunDests ts dests = (aDest, wDest, sDest)
   where
-    [_, nw, _, na] = map length ts
+    [_, nw, _, na] = map (length . flattenType) ts
     (aDest, dests') = splitAt na dests
     (wDest, sDest)  = splitAt nw dests'
 
-toImpAtom :: NAtom -> ImpM IExpr
+toImpAtom :: NAtom -> ImpM [IExpr]
 toImpAtom atom = case atom of
-  NLit x   -> return $ ILit x
+  NLit x   -> return [ILit x]
   NVar v _ -> lookupVar v
-  NGet e i -> do
-    newRef <- liftM2 IGet (toImpAtom e) (toImpAtom i)
-    loadIfScalar newRef
+  NGet x i -> do
+    ~[i'] <- toImpAtom i
+    x' <- toImpAtom x
+    mapM (loadIfScalar . flip IGet i') x'
+  NRecCon _ r -> liftM fold $ traverse toImpAtom r
   _ -> error $ "Not implemented: " ++ pprint atom
 
 type MContext = ([IExpr], [IExpr], [IExpr])
 
 toImpActionExpr :: MContext -> [IExpr] -> NExpr -> ImpM ()
 toImpActionExpr mdests dests expr = case expr of
-  NDecl (NLet bs bound) body -> do
-    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
+  NDecl (NLet b@(_:>ty) bound) body -> do
+    tys <- toImpArrayType ty
     withAllocs tys $ \bsDests -> do
       toImp bsDests bound
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImpActionExpr mdests dests body
-  NAtoms [m] -> toImpAction mdests dests m
+      extendR (bindEnv b xs) $ toImpActionExpr mdests dests body
+  NAtom m -> toImpAction mdests dests m
   _ -> error $ "Unexpected expression " ++ pprint expr
 
 toImpAction :: MContext -> [IExpr] -> NAtom -> ImpM ()
 toImpAction mdests@(rVals, wDests, sDests) outDests m = case m of
-  NDoBind rhs (NLamExpr bs body) -> do
-    tys <- mapM (\(_:>ty) -> toImpArrayType ty) bs
+  NDoBind rhs (NLamExpr ~[b@(_:>ty)] body) -> do
+    tys <- toImpArrayType ty
     withAllocs tys $ \bsDests -> do
       toImpAction mdests bsDests rhs
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv bs xs) $ toImpActionExpr mdests outDests body
-  NAtomicPrimOp (MPrim MReturn) _ xs -> toImp outDests (NAtoms xs)
-  NAtomicPrimOp (MPrim p) _ (l:x) -> case p of
+      extendR (bindEnv b xs) $ toImpActionExpr mdests outDests body
+  NAtomicPrimOp (MPrim MReturn) _ ~[x] -> toImp outDests (NAtom x)
+  NAtomicPrimOp (MPrim p) _ ~(l:args) -> case p of
     MAsk -> do
       ans <- mapM (lensGet l) rVals
       zipWithM_ copyOrStore outDests ans
     MTell-> do
-      x' <- mapM toImpAtom x
+      x' <- toImpAtom x
       wDests' <- mapM (lensIndexRef l) wDests
       zipWithM_ addToDest wDests' x'
+      where [x] = args
     MPut -> do
-      x' <- mapM toImpAtom x
+      x' <- toImpAtom x
       sDests' <- mapM (lensIndexRef l) sDests
       zipWithM_ copyOrStore sDests' x'
+      where [x] = args
     MGet -> do
       ans <- mapM (loadIfScalar >=> lensGet l) sDests
       zipWithM_ copyOrStore outDests ans
@@ -213,14 +214,19 @@ lensGet :: NAtom -> IExpr -> ImpM IExpr
 lensGet (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
   (LensId     , ~[])     -> return x
   (LensCompose, ~[a, b]) -> lensGet a x >>= lensGet b
-  (IdxAsLens  , ~[i])    -> liftM (IGet x) (toImpAtom i) >>= loadIfScalar
+  (IdxAsLens  , ~[i])    -> do
+    ~[i'] <- toImpAtom i
+    loadIfScalar $ IGet x i'
 lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 lensIndexRef :: NAtom -> IExpr -> ImpM IExpr
 lensIndexRef (NAtomicPrimOp (LensPrim lens) _ args) x = case (lens, args) of
   (LensId     , ~[])     -> return x
   (LensCompose, ~[a, b]) -> lensIndexRef a x >>= lensIndexRef b
-  (IdxAsLens  , ~[i])    -> liftM (IGet x) (toImpAtom i)
+  (IdxAsLens  , ~[i])    -> do
+    ~[i'] <- toImpAtom i
+    return $ IGet x i'
+
 lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 toImpPrimOp :: Builtin -> [IExpr] -> [BaseType] -> [IExpr] -> ImpM ()
@@ -233,36 +239,27 @@ toImpPrimOp b [dest] ts xs = do
   store dest ans
 toImpPrimOp b dests _ _ = error $ "Can't compile primop: " ++ show (b, dests)
 
--- Scalars are values and everything else is a reference
-toImpReadType :: NType -> ImpM IType
-toImpReadType ty = case ty of
-  NBaseType b  -> return $ IValType b
-  NTabType a b -> do
+toImpArrayType :: Type -> ImpM [ArrayType]
+toImpArrayType ty = case ty of
+  BaseType b  -> return [(b, [])]
+  TabType a b -> do
     n  <- typeToSize a
-    b' <- toImpReadType b
-    return $ case b' of
-      IValType ty'          -> IRefType (ty', [n])
-      IRefType (ty', shape) -> IRefType (ty', n:shape)
+    arrTys <- toImpArrayType b
+    return [(t, n:shape) | (t, shape) <- arrTys]
   -- TODO: fix this (only works for range)
-  NExists []   -> return intTy
-  NTypeVar _   -> return intTy
-  NIdxSetLit _ -> return intTy
+  RecType _ r -> liftM fold $ traverse toImpArrayType r
+  Exists _    -> return [(IntType, [])]
+  TypeVar _   -> return [(IntType, [])]
+  IdxSetLit _ -> return [(IntType, [])]
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
-toImpArrayType :: NType -> ImpM ArrayType
-toImpArrayType ty = do
-  ty' <- toImpReadType ty
-  return $ case ty' of
-    IValType b -> (b, [])
-    IRefType t -> t
-
-toImpBaseType :: NType -> BaseType
+toImpBaseType :: Type -> BaseType
 toImpBaseType ty = case ty of
-  NBaseType b  -> b
-  NTabType _ a -> toImpBaseType a
-  NExists []   -> IntType
-  NTypeVar _   -> IntType
-  NIdxSetLit _ -> IntType
+  BaseType b  -> b
+  TabType _ a -> toImpBaseType a
+  Exists _    -> IntType
+  TypeVar _   -> IntType
+  IdxSetLit _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty
 
 loadIfScalar :: IExpr -> ImpM IExpr
@@ -280,16 +277,18 @@ derefTypeIfScalar ty = case ty of
   IRefType (_, _ ) ->  ty
   _ -> error "Expected a reference"
 
-lookupVar :: Name -> ImpM IExpr
+lookupVar :: Name -> ImpM [IExpr]
 lookupVar v = do
   x <- asks $ flip envLookup v
   return $ case x of
     Nothing -> error $ "Lookup failed: " ++ pprint v
     Just v' -> v'
 
-typeToSize :: NType -> ImpM IExpr
-typeToSize (NTypeVar v) = lookupVar v
-typeToSize (NIdxSetLit n) = return $ ILit (IntLit n)
+typeToSize :: Type -> ImpM IExpr
+typeToSize (TypeVar v) = do
+  ~[n] <- lookupVar v
+  return n
+typeToSize (IdxSetLit n) = return $ ILit (IntLit n)
 typeToSize ty = error $ "Not implemented: " ++ pprint ty
 
 copyOrStore :: IExpr -> IExpr -> ImpM ()

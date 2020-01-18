@@ -69,7 +69,7 @@ jitPass' decl = case decl of
     xs <- evalProg bs' prog
     xs' <- liftIO $ mapM loadIfScalar xs
     extend $ bindFold $ zipWith replaceAnnot bs' xs'
-    emitOutput NoOutput
+    return []
   ImpEvalCmd (Command cmd (ty, bs, prog)) -> do
     env <- look
     let bs' = map (fmap (substIType env)) bs

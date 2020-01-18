@@ -27,10 +27,10 @@ type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
 type DeShadowEnv = (Env Name, Env ([BinderP ()], Type))
 
-sourcePass :: TopPass SourceBlock UTopDecl
+sourcePass :: TopPass SourceBlock TopDecl
 sourcePass = TopPass sourcePass'
 
-sourcePass' :: SourceBlock -> TopPassM () [UTopDecl]
+sourcePass' :: SourceBlock -> TopPassM () [TopDecl]
 sourcePass' block = case sbContents block of
   UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
   UTopDecl decl -> return [decl]
@@ -44,7 +44,7 @@ sourcePass' block = case sbContents block of
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   _ -> return []
 
-deShadowPass :: TopPass UTopDecl UTopDecl
+deShadowPass :: TopPass TopDecl TopDecl
 deShadowPass = TopPass $ \topDecl ->  case topDecl of
   TopDecl ann decl -> do
     decl' <- catToTop $ deShadowDecl decl
@@ -67,14 +67,14 @@ liftTop m = do
   (env, scope) <- look
   liftExceptTop $ runFreshRT (runReaderT m env) scope
 
-deShadowExpr :: UExpr -> DeShadowM UExpr
+deShadowExpr :: Expr -> DeShadowM Expr
 deShadowExpr expr = case expr of
   Lit x -> return (Lit x)
-  Var v ann tyArgs -> do
+  Var v ty tyArgs -> do
     v' <- lookupLVar v
-    ann' <- deShadowAnn ann
+    ty' <- deShadowType ty
     tyArgs' <- mapM deShadowType tyArgs
-    return $ Var v' ann' tyArgs'
+    return $ Var v' ty' tyArgs'
   PrimOp b ts args -> liftM2 (PrimOp b) (mapM deShadowType ts) (traverse recur args)
   Decl decl body ->
     withCat (deShadowDecl decl) $ \decl' -> do
@@ -91,17 +91,17 @@ deShadowExpr expr = case expr of
   Get e v -> liftM2 Get (recur e) (recur v)
   RecCon k r -> liftM (RecCon k) $ traverse recur r
   TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
+  TabCon _     _  -> error "No annotated tabcon in source language"
   Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
   Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
   IdxLit n i     -> return $ IdxLit n i
-  TabCon (Ann _) _ -> error "No annotated tabcon in source language"
   where recur = deShadowExpr
 
 deShadowRuleAnn :: RuleAnn -> DeShadowM RuleAnn
 deShadowRuleAnn (LinearizationDef v) = liftM LinearizationDef (lookupLVar v)
 
-deShadowDecl :: UDecl -> DeShadowCat (Maybe UDecl)
+deShadowDecl :: Decl -> DeShadowCat (Maybe Decl)
 deShadowDecl (LetMono p bound) = do
   bound' <- toCat $ deShadowExpr bound
   p' <- deShadowPat p
@@ -133,12 +133,12 @@ deShadowDecl (TyDef NewType v [] ty) = do
   return (Just $ TyDef NewType v [] ty')  -- assumes top-level only
 deShadowDecl (TyDef NewType _ _ _) = error "Parametric newtype not implemented"
 
-deShadowTLam :: UTLam -> DeShadowM UTLam
+deShadowTLam :: TLam -> DeShadowM TLam
 deShadowTLam (TLam tbs body) = do
   withCat (traverse freshTBinder tbs) $ \tbs' ->
     liftM (TLam tbs') (deShadowExpr body)
 
-deShadowPat :: UPat -> DeShadowCat UPat
+deShadowPat :: Pat -> DeShadowCat Pat
 deShadowPat pat = traverse freshBinder pat
 
 lookupLVar :: Name -> DeShadowM Name
@@ -148,9 +148,9 @@ lookupLVar v = do
     Nothing  -> throw UnboundVarErr $ pprint v
     Just v'' -> return v''
 
-freshBinder :: UBinder -> DeShadowCat UBinder
-freshBinder (v:>ann) = do
-  ann' <- toCat $ deShadowAnn ann
+freshBinder :: Binder -> DeShadowCat Binder
+freshBinder (v:>ty) = do
+  ann' <- toCat $ deShadowType ty
   freshBinderP (v:>ann')
 
 freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
@@ -172,10 +172,6 @@ freshTBinder (v:>k) = do
   v' <- looks $ rename v . snd
   extend (asSnd (v@>([], TypeVar v')), v'@>())
   return (v':>k)
-
-deShadowAnn :: Ann -> DeShadowM Ann
-deShadowAnn NoAnn = return NoAnn
-deShadowAnn (Ann ty) = liftM Ann (deShadowType ty)
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = case ty of
@@ -212,6 +208,7 @@ deShadowType ty = case ty of
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty
   Mult      _ -> return ty
+  NoAnn       -> return ty
   where recur = deShadowType
 
 deShadowSigmaType :: SigmaType -> DeShadowM SigmaType

@@ -9,10 +9,9 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
-               UExpr, UTopDecl, UDecl, ImpDecl (..), TopDeclP (..),
-               DeclP (..), Decl, TopDecl, Command (..), UPat, Pat, SrcPos,
-               CmdName (..), IdxExpr, UBinder, PatP, Ann (..),
+module Syntax (Expr (..), Type (..), IdxSet, IdxSetVal, Builtin (..),
+               ImpDecl (..), Decl (..), TopDecl (..), Command (..), Pat, SrcPos,
+               CmdName (..), IdxExpr, TLam (..),
                LitVal (..), BaseType (..), Binder, TBinder, lbind, tbind,
                Except, Err (..), ErrType (..), OutFormat (..), ProdKind (..),
                throw, throwIf, Kind (..), TyDefType (..),
@@ -23,12 +22,12 @@ module Syntax (ExprP (..), Expr, Type (..), IdxSet, IdxSetVal, Builtin (..),
                IExpr (..), IType (..), IBinder, ArrayType, IVal, Ptr,
                VecRef, VecRef' (..), Vec (..),
                ArrayP (..), Array, ArrayRef, FlatValP (..), FlatVal, FlatValRef,
-               Result (..), Result', freeVars, freeNVars, NLamExpr (..),
+               Result (..), Result', freeVars, NLamExpr (..),
                Output (..), Nullable (..), SetVal (..), MonMap (..),
                Index, wrapDecls, builtinNames, commandNames, DataFormat (..),
-               NExpr (..), NDecl (..), NAtom (..), NType (..), SrcCtx,
+               NExpr (..), NDecl (..), NAtom (..), SrcCtx,
                NTopDecl (..), NBinder, stripSrcAnnot, stripSrcAnnotTopDecl,
-               SigmaType (..), TLamP (..), TLam, UTLam, asSigma, HasVars, HasNVars,
+               SigmaType (..), asSigma, HasVars,
                SourceBlock (..), SourceBlock' (..), LitProg, ClassName (..),
                MonadicPrimitive (..), EffectTypeP (..), EffectType, NEffectType,
                RuleAnn (..), DeclAnn (..), CmpOp (..), catchIOExcept,
@@ -50,33 +49,32 @@ import Control.Applicative (liftA3)
 
 -- === core IR ===
 
-data ExprP b =
-            Lit LitVal
-          | Var Name b [Type]
-          | PrimOp Builtin [Type] [ExprP b]
-          | Decl (DeclP b) (ExprP b)
-          | Lam b (PatP b) (ExprP b)
-          | App (ExprP b) (ExprP b)
-          | For (PatP b) (ExprP b)
-          | Get (ExprP b) (ExprP b)
-          | RecCon ProdKind (Record (ExprP b))
-          | TabCon b [ExprP b]
+data Expr = Lit LitVal
+          | Var Name Type [Type]
+          | PrimOp Builtin [Type] [Expr]
+          | Decl Decl Expr
+          | Lam Type Pat Expr
+          | App Expr Expr
+          | For Pat Expr
+          | Get Expr Expr
+          | RecCon ProdKind (Record Expr)
+          | TabCon Type [Expr]
           | IdxLit IdxSetVal Int
-          | Annot (ExprP b) Type
-          | SrcAnnot (ExprP b) SrcPos
-          | Pack (ExprP b) Type Type
+          | Annot Expr Type
+          | SrcAnnot Expr SrcPos
+          | Pack Expr Type Type
              deriving (Eq, Ord, Show, Generic)
 
-data DeclP b = LetMono (PatP b) (ExprP b)
-             | LetPoly (BinderP SigmaType) (TLamP b)
-             | DoBind (PatP b) (ExprP b)
-             | TyDef TyDefType Name [BinderP ()] Type
-             | Unpack (BinderP b) Name (ExprP b)
-               deriving (Eq, Ord, Show, Generic)
+data Decl = LetMono Pat Expr
+          | LetPoly (BinderP SigmaType) TLam
+          | DoBind Pat Expr
+          | TyDef TyDefType Name [BinderP ()] Type
+          | Unpack Binder Name Expr
+            deriving (Eq, Ord, Show, Generic)
 
 data TyDefType = TyAlias | NewType  deriving (Eq, Ord, Show, Generic)
 
-type PatP b = RecTree (BinderP b)
+type Pat = RecTree Binder
 
 data ProdKind = Cart | Tens  deriving (Eq, Ord, Show, Generic)
 
@@ -95,7 +93,8 @@ data Type = BaseType BaseType
           | IdxSetLit IdxSetVal
           | Mult Multiplicity
           | BoundTVar Int
-             deriving (Eq, Ord, Show, Generic)
+          | NoAnn
+            deriving (Eq, Ord, Show, Generic)
 
 type Lin = Type -- only TypeVar, BoundTVar and Mult constructors
 data Multiplicity = Lin | NonLin  deriving (Eq, Ord, Show, Generic)
@@ -106,21 +105,16 @@ data EffectTypeP ty = Effect { readerEff :: ty
 type EffectType = EffectTypeP Type
 
 data SigmaType = Forall [Kind] Type  deriving (Eq, Ord, Show, Generic)
-data TLamP b = TLam [TBinder] (ExprP b)  deriving (Eq, Ord, Show, Generic)
+data TLam = TLam [TBinder] Expr  deriving (Eq, Ord, Show, Generic)
 
 asSigma :: Type -> SigmaType
 asSigma ty = Forall [] ty
 
-type Expr    = ExprP    Type
-type Binder  = BinderP  Type
-type Decl    = DeclP    Type
-type TopDecl = TopDeclP Type
-type Pat     = PatP     Type
-type TLam    = TLamP    Type
+type Binder  = BinderP Type
 
-data TopDeclP b = TopDecl DeclAnn (DeclP b)
-                | RuleDef RuleAnn SigmaType (TLamP b)
-                | EvalCmd (Command (ExprP b))  deriving (Show, Eq, Generic)
+data TopDecl = TopDecl DeclAnn Decl
+             | RuleDef RuleAnn SigmaType TLam
+             | EvalCmd (Command Expr)  deriving (Show, Eq, Generic)
 
 data RuleAnn = LinearizationDef Name deriving (Show, Eq, Generic)
 data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
@@ -208,7 +202,7 @@ data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
 unitTy :: Type
 unitTy = RecType Cart (Tup [])
 
-unitCon :: ExprP b
+unitCon :: Expr
 unitCon = RecCon Cart (Tup [])
 
 -- === runtime data representations ===
@@ -246,70 +240,51 @@ data SourceBlock = SourceBlock
   , sbContents :: SourceBlock' }  deriving (Show)
 
 type ReachedEOF = Bool
-data SourceBlock' = UTopDecl UTopDecl
+data SourceBlock' = UTopDecl TopDecl
                   | IncludeSourceFile String
-                  | LoadData UPat DataFormat String
+                  | LoadData Pat DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
                   | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
 
-
-data Ann = Ann Type | NoAnn  deriving (Show, Eq, Generic)
-
-type UExpr    = ExprP    Ann
-type UBinder  = BinderP  Ann
-type UDecl    = DeclP    Ann
-type UTopDecl = TopDeclP Ann
-type UPat     = PatP     Ann
-type UTLam    = TLamP    Ann
-
 -- === tuple-free ANF-ish normalized IR ===
 
 data NExpr = NDecl NDecl NExpr
-           | NScan [NAtom] NLamExpr
-           | NPrimOp Builtin [[NType]] [NAtom]
-           | NApp NAtom [NAtom]
-           | NAtoms [NAtom]
-           | NTabCon NType NType [NAtom]
+           | NScan NAtom NLamExpr
+           | NPrimOp Builtin [Type] [NAtom]
+           | NApp NAtom NAtom
+           | NAtom NAtom
+           | NRecGet NAtom RecField
+           | NTabCon Type Type [NAtom]
              deriving (Show)
 
-data NDecl = NLet [NBinder] NExpr
-           | NUnpack [NBinder] Name NExpr
+data NDecl = NLet NBinder NExpr
+           | NUnpack NBinder Name NExpr
               deriving (Show)
 
 data NAtom = NLit LitVal
-           | NVar Name NType
+           | NVar Name Type
            | NGet NAtom NAtom
-           | NLam Multiplicity NLamExpr
+           | NLam Type NLamExpr
+           | NRecCon ProdKind (Record NAtom)
            -- Only used internally in the simplification pass as book-keeping
            -- for compile-time tables of functions etc.
-           | NAtomicFor NBinder NAtom
-           | NAtomicPrimOp Builtin [[NType]] [NAtom]
+           | NAtomicFor NBinder NExpr
+           | NAtomicPrimOp Builtin [Type] [NAtom]
            | NDoBind NAtom NLamExpr
              deriving (Show)
-
-data NType = NBaseType BaseType
-           | NTypeVar Name
-           | NArrType Multiplicity [NType] [NType]
-           | NTabType NType NType
-           | NMonad NEffectType [NType]
-           | NLens [NType] [NType]
-           | NExists [NType]
-           | NIdxSetLit IdxSetVal
-           | NBoundTVar Int
-              deriving (Eq, Show)
 
 data NLamExpr = NLamExpr [NBinder] NExpr  deriving (Show)
 
 data NTopDecl = NTopDecl DeclAnn NDecl
-              | NRuleDef RuleAnn NType NExpr
+              | NRuleDef RuleAnn Type NExpr
               | NEvalCmd (Command (Type, NExpr))
                  deriving (Show)
 
-type NBinder = BinderP NType
-type NEffectType = EffectTypeP [NType]
+type NBinder = BinderP Type
+type NEffectType = EffectTypeP Type
 
 -- === imperative IR ===
 
@@ -461,9 +436,9 @@ tbind :: BinderP b -> FullEnv a b
 tbind (v:>x) = v @> T x
 
 type FullEnv v t = Env (LorT v t)
-type Vars = FullEnv () ()
+type Vars = FullEnv Type ()
 
-wrapDecls :: [DeclP b] -> ExprP b -> ExprP b
+wrapDecls :: [Decl] -> Expr -> Expr
 wrapDecls [] expr = expr
 wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
 
@@ -472,9 +447,9 @@ wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
 class HasVars a where
   freeVars :: a -> Vars
 
-instance HasVars b => HasVars (ExprP b) where
+instance HasVars Expr where
   freeVars expr = case expr of
-    Var v ty ts -> v @> L () <> freeVars ty <> foldMap freeVars ts
+    Var v ty ts -> v @> L ty <> freeVars ty <> foldMap freeVars ts
     Lit _ -> mempty
     PrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
     Decl decl body -> let (bvs, fvs) = declVars [decl]
@@ -508,13 +483,10 @@ instance HasVars Type where
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
     Mult      _ -> mempty
+    NoAnn       -> mempty
 
 instance HasVars SigmaType where
   freeVars (Forall _ body) = freeVars body
-
-instance HasVars Ann where
-  freeVars NoAnn = mempty
-  freeVars (Ann ty) = freeVars ty
 
 instance HasVars b => HasVars (BinderP b) where
   freeVars (_ :> b) = freeVars b
@@ -522,22 +494,22 @@ instance HasVars b => HasVars (BinderP b) where
 instance HasVars () where
   freeVars () = mempty
 
-instance HasVars b => HasVars (DeclP b) where
+instance HasVars Decl where
    freeVars (LetMono p expr) = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam) = freeVars b <> freeVars tlam
    freeVars (DoBind  p expr) = foldMap freeVars p <> freeVars expr
    freeVars (Unpack b _ expr) = freeVars b <> freeVars expr
    freeVars (TyDef _ _ bs ty) = freeVars ty `envDiff` bindFold bs
 
-instance HasVars b => HasVars (TopDeclP b) where
+instance HasVars TopDecl where
   freeVars (TopDecl _ decl) = freeVars decl
   freeVars (RuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
   freeVars (EvalCmd (Command _ expr)) = freeVars expr
 
 instance HasVars RuleAnn where
-  freeVars (LinearizationDef v) = v @> L ()
+  freeVars (LinearizationDef v) = v @> L unitTy
 
-instance HasVars b => HasVars (TLamP b) where
+instance HasVars TLam where
   freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap bind tbs
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
@@ -549,72 +521,51 @@ instance HasVars SourceBlock where
     UTopDecl decl -> freeVars decl
     _ -> mempty
 
-type NVars = FullEnv NType ()
+instance HasVars NExpr where
+  freeVars expr = case expr of
+    NDecl decl body -> freeVars decl <> (freeVars body `envDiff` bvs)
+      where bvs = case decl of NLet b _       -> lhsVars b
+                               NUnpack b tv _ -> lhsVars b <> tv @> ()
+    NPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
+    NApp f x -> freeVars f <> freeVars x
+    NAtom x  -> freeVars x
+    NScan x lam -> freeVars x <> freeVars lam
+    NRecGet x _ -> freeVars x
+    NTabCon n ty xs -> freeVars n <> freeVars ty <> foldMap freeVars xs
 
-class HasNVars a where
-  freeNVars :: a -> NVars
+instance HasVars NLamExpr where
+  freeVars (NLamExpr bs body) =  foldMap freeVars bs
+                               <> (freeVars body `envDiff` foldMap lhsVars bs)
 
-instance HasNVars NExpr where
-  freeNVars expr = case expr of
-    NDecl decl body -> freeNVars decl <> (freeNVars body `envDiff` bvs)
-      where bvs = case decl of NLet bs _       -> foldMap lhsVars bs
-                               NUnpack bs tv _ -> foldMap lhsVars bs <> tv @> T ()
-    NPrimOp _ ts xs -> foldMap (foldMap freeNVars) ts <> foldMap freeNVars xs
-    NApp f xs -> freeNVars f <> foldMap freeNVars xs
-    NAtoms xs -> foldMap freeNVars xs
-    NScan xs lam -> foldMap freeNVars xs <> freeNVars lam
-    NTabCon n ty xs -> freeNVars n <> freeNVars ty <> foldMap freeNVars xs
-
-instance HasNVars NLamExpr where
-  freeNVars (NLamExpr bs body) =  foldMap freeNVars bs
-                               <> (freeNVars body `envDiff` foldMap lhsVars bs)
-
-instance HasNVars NAtom where
-  freeNVars atom = case atom of
+instance HasVars NAtom where
+  freeVars atom = case atom of
     NLit _ -> mempty
-    NVar v ty -> v @> L ty <> freeNVars ty
-    NGet e i -> freeNVars e <> freeNVars i
-    NLam _ lam -> freeNVars lam
-    NAtomicFor b body ->  freeNVars b <> (freeNVars body `envDiff` lhsVars b)
-    NAtomicPrimOp _ ts xs -> foldMap (foldMap freeNVars) ts <> foldMap freeNVars xs
-    NDoBind m f -> freeNVars m <> freeNVars f
+    NVar v ty -> v @> L ty <> freeVars ty
+    NGet e i -> freeVars e <> freeVars i
+    NLam _ lam -> freeVars lam
+    NRecCon _ r -> foldMap freeVars r
+    NAtomicFor b body ->  freeVars b <> (freeVars body `envDiff` lhsVars b)
+    NAtomicPrimOp _ ts xs -> foldMap freeVars ts <> foldMap freeVars xs
+    NDoBind m f -> freeVars m <> freeVars f
 
-instance HasNVars NDecl where
-  freeNVars (NLet bs expr) = foldMap freeNVars bs <> freeNVars expr
-  freeNVars (NUnpack bs _ expr) = foldMap freeNVars bs <> freeNVars expr
-
-instance HasNVars NType where
-  freeNVars ty = case ty of
-    NBaseType _ -> mempty
-    NTypeVar v -> v @> T ()
-    NArrType _ as bs -> foldMap freeNVars as <> foldMap freeNVars bs
-    NTabType a b -> freeNVars a <> freeNVars b
-    NExists ts -> foldMap freeNVars ts
-    NIdxSetLit _ -> mempty
-    NBoundTVar _ -> mempty
-    NMonad eff a -> freeNVars eff <> foldMap freeNVars a
-    NLens a b    -> foldMap freeNVars a <> foldMap freeNVars b
-
-instance HasNVars NEffectType where
-  freeNVars eff = foldMap (foldMap freeNVars) eff
-
-instance HasNVars b => HasNVars (BinderP b) where
-  freeNVars (_ :> b) = freeNVars b
+instance HasVars NDecl where
+  freeVars (NLet bs expr) = foldMap freeVars bs <> freeVars expr
+  freeVars (NUnpack bs _ expr) = foldMap freeVars bs <> freeVars expr
 
 class BindsVars a where
-  lhsVars :: a -> Vars
+  lhsVars :: a -> Env ()
 
-instance BindsVars (BinderP a) where
-  lhsVars (v:>_) = v @> L ()
+instance BindsVars Binder where
+  lhsVars (v:>_) = v @> ()
 
-instance BindsVars (DeclP b) where
+instance BindsVars Decl where
   lhsVars (LetMono p _  ) = foldMap lhsVars p
-  lhsVars (LetPoly b _  ) = lhsVars b
-  lhsVars (Unpack b tv _) = lhsVars b <> tv @> T ()
-  lhsVars (TyDef _ v _ _) = v @> T ()
+  lhsVars (LetPoly (v:>_) _) = v @> ()
+  lhsVars (Unpack b tv _) = lhsVars b <> tv @> ()
+  lhsVars (TyDef _ v _ _) = v @> ()
   lhsVars (DoBind  p _  ) = foldMap lhsVars p
 
-instance BindsVars (TopDeclP b) where
+instance BindsVars TopDecl where
   lhsVars (TopDecl _ decl) = lhsVars decl
   lhsVars _ = mempty
 
@@ -624,14 +575,14 @@ instance BindsVars SourceBlock where
     LoadData p _ _ -> foldMap lhsVars p
     _ -> mempty
 
-declVars :: (HasVars a, BindsVars a) => [a] -> (Vars, Vars)
+declVars :: (HasVars a, BindsVars a) => [a] -> (Env (), Vars)
 declVars [] = (mempty, mempty)
 declVars (decl:rest) = (bvs <> bvsRest, fvs <> (fvsRest `envDiff` bvs))
   where
     (bvs, fvs) = (lhsVars decl, freeVars decl)
     (bvsRest, fvsRest) = declVars rest
 
-stripSrcAnnot :: ExprP b -> ExprP b
+stripSrcAnnot :: Expr -> Expr
 stripSrcAnnot expr = case expr of
   Var _ _ _ -> expr
   Lit _   -> expr
@@ -649,7 +600,7 @@ stripSrcAnnot expr = case expr of
   Annot e ty   -> Annot (recur e) ty
   where recur = stripSrcAnnot
 
-stripSrcAnnotDecl :: DeclP b -> DeclP b
+stripSrcAnnotDecl :: Decl -> Decl
 stripSrcAnnotDecl decl = case decl of
   LetMono p body -> LetMono p (stripSrcAnnot body)
   LetPoly b (TLam tbs body) -> LetPoly b (TLam tbs (stripSrcAnnot body))
@@ -657,7 +608,7 @@ stripSrcAnnotDecl decl = case decl of
   TyDef _ _ _ _ -> decl
   Unpack b v body -> Unpack b v (stripSrcAnnot body)
 
-stripSrcAnnotTopDecl :: TopDeclP b -> TopDeclP b
+stripSrcAnnotTopDecl :: TopDecl -> TopDecl
 stripSrcAnnotTopDecl (TopDecl ann decl) = TopDecl ann $ stripSrcAnnotDecl decl
 stripSrcAnnotTopDecl (RuleDef ann b (TLam tbs body)) = RuleDef ann b (TLam tbs (stripSrcAnnot body))
 stripSrcAnnotTopDecl (EvalCmd (Command cmd expr)) = EvalCmd (Command cmd (stripSrcAnnot expr))

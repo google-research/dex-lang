@@ -72,6 +72,7 @@ prettyTyDepth d ty = case ty of
   IdxSetLit i -> p i
   Mult Lin    -> "Lin"
   Mult NonLin -> "NonLin"
+  NoAnn       -> ""
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
 
@@ -108,7 +109,7 @@ instance Pretty LitVal where
   pretty (StrLit x ) = p x
   pretty (BoolLit b) = if b then "True" else "False"
 
-instance Pretty b => Pretty (ExprP b) where
+instance Pretty Expr where
   pretty expr = case expr of
     Lit val -> p val
     Var v _ ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
@@ -134,10 +135,6 @@ instance Pretty b => Pretty (ExprP b) where
 prettyDecl :: (Pretty decl, Pretty body) => decl -> body -> Doc ann
 prettyDecl decl body = align $ "(" <> p decl <> ";" <> line <> p body <> ")"
 
-instance Pretty Ann where
-  pretty NoAnn = ""
-  pretty (Ann ty) = pretty ty
-
 instance Pretty Kind where
   pretty (Kind cs) = case cs of
     []  -> ""
@@ -156,7 +153,7 @@ instance Pretty ClassName where
     VSpace -> "VS"
     IdxSet -> "Ix"
 
-instance Pretty b => Pretty (DeclP b) where
+instance Pretty Decl where
   -- TODO: special-case annotated leaf var (print type on own line)
   pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
   pretty (LetPoly (v:>ty) (TLam _ body)) =
@@ -168,10 +165,10 @@ instance Pretty b => Pretty (DeclP b) where
                                     NewType -> "newtype"
   pretty (Unpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
 
-instance Pretty b => Pretty (TLamP b) where
+instance Pretty TLam where
   pretty (TLam binders body) = "Lam" <+> p binders <> "." <+> align (p body)
 
-instance Pretty b => Pretty (TopDeclP b) where
+instance Pretty TopDecl where
   pretty (TopDecl _ decl) = p decl
   pretty (RuleDef _ _ _) = error "Not implemented"
   pretty (EvalCmd _ ) = error $ "EvalCmd not implemented" -- TODO
@@ -185,46 +182,35 @@ instance Pretty Builtin where
 instance Pretty NExpr where
   pretty expr = case expr of
     NDecl decl body -> prettyDecl decl body
-    NScan [] (NLamExpr ~[b] body) -> parens $ "for " <+> p b <+> "." <+> nest 4 (hardline <> p body)
-    NScan xs (NLamExpr ~(b:bs) body) ->
-      parens $ "forM " <+> p b <+> hsep (map p bs) <+> "."
-        <+> hsep (map p xs) <> ","
+    NScan x (NLamExpr ~[ib,bs] body) ->
+      parens $ "forM " <+> p ib <+> p bs <+> "."
+        <+> p x <> ","
         <+> nest 4 (hardline <> p body)
     NPrimOp b ts xs -> parens $ p b <> targs <> args
       where targs = case ts of [] -> mempty; _ -> list   (map p ts)
             args  = case xs of [] -> mempty; _ -> tupled (map p xs)
-    NApp f xs -> align $ group $ p f <+> hsep (map p xs)
-    NAtoms xs -> tup xs
+    NApp f x -> align $ group $ p f <+> p x
+    NAtom x  -> p x
+    NRecGet e i -> "recget" <+> p e <+> p i
     NTabCon _ _ xs -> list (map pretty xs)
 
 instance Pretty NDecl where
   pretty decl = case decl of
-    NLet    bs bound -> tup bs <+> "=" <+> p bound
-    NUnpack bs tv e  -> tup bs <> "," <+> p tv <+> "= unpack" <+> p e
+    NLet    b bound -> p b <+> "=" <+> p bound
+    NUnpack b tv e  -> p b <> "," <+> p tv <+> "= unpack" <+> p e
 
 instance Pretty NAtom where
   pretty atom = case atom of
     NLit v -> p v
     NVar x _ -> p x
     NGet e i -> p e <> "." <> p i
-    NLam l (NLamExpr bs body) ->
+    NLam ~(Mult l) (NLamExpr bs body) ->
       parens $ align $ group $ lamStr l <+> hsep (map p bs) <+> "." <>
       line <> align (p body)
+    NRecCon _ r -> p r
     NAtomicFor b e -> parens $ "afor " <+> p b <+> "." <+> nest 4 (hardline <> p e)
     NAtomicPrimOp b ts xs -> p (NPrimOp b ts xs)
     NDoBind m (NLamExpr bs body) -> prettyDecl (asStr (tup bs <+> "<-" <+> p m)) body
-
-instance Pretty NType where
-  pretty ty = case ty of
-    NBaseType b  -> p b
-    NTypeVar v   -> p v
-    NBoundTVar n -> "BV" <> p n  -- TODO: invent some variable names
-    NArrType l as bs -> parens $ tup as <+> arrStr l <+> tup bs
-    NTabType a  b  -> p a <> "=>" <> p b
-    NMonad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
-    NLens a b    -> "Lens"  <+> p a <+> p b
-    NExists tys -> "E" <> "." <> list (map p tys)
-    NIdxSetLit i -> p i
 
 lamStr :: Multiplicity -> Doc ann
 lamStr NonLin = "lam"

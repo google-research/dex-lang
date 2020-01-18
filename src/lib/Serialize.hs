@@ -17,7 +17,6 @@ import Control.Monad
 import Control.Exception (throwIO)
 import Foreign.Ptr
 import Foreign.Marshal.Array
-import Data.Foldable
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import qualified Data.ByteString.Char8 as B
 import System.IO
@@ -160,20 +159,6 @@ newArrayRef ptr (b, shape) = Array shape $ case b of
   BoolType -> (size, BoolVecRef $ castPtr ptr)
   StrType  -> error "Not implemented"
   where size = product shape
-
-flattenType :: Type -> [(BaseType, [Int])]
-flattenType ty = case ty of
-  BaseType b  -> [(b, [])]
-  RecType _ r -> concat $ map flattenType $ toList r
-  TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
-  IdxSetLit _ -> [(IntType, [])]
-  _ -> error $ "Unexpected type: " ++ show ty
-
-listIntoRecord :: Record Type -> [a] -> Record (Type, [a])
-listIntoRecord r xs = fst $ traverseFun f r xs
-  where f :: Type -> [a] -> ((Type, [a]), [a])
-        f ty xsRest = ((ty, curXs), rest)
-          where (curXs, rest) = splitAt (length (flattenType ty)) xsRest
 
 -- These Pretty instances are here for circular import reasons
 -- TODO: refactor. Pretty-printing shouldn't do complicated restructuring anyway

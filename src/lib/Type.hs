@@ -10,7 +10,7 @@
 
 module Type (TypeEnv, checkTyped, getType, atomType, litType, unpackExists,
              builtinType, BuiltinType (..), instantiateTVs, abstractTVs,
-             checkNExpr, patType, tangentBunType, tangentBunNType,
+             checkNExpr, patType, tangentBunType, listIntoRecord, flattenType,
              getNExprType, splitLinArgs, nBuiltinType, isAtomicBuiltin) where
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -26,6 +26,7 @@ import Record
 import Pass
 import PPrint
 import Cat
+import Util (traverseFun)
 
 -- TODO: consider making linearity checking a separate pass?
 type TypeEnv = FullEnv SigmaType Kind
@@ -397,6 +398,7 @@ subAtDepth d f ty = case ty of
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
     Mult _        -> ty
+    NoAnn         -> NoAnn
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
 
@@ -465,7 +467,7 @@ checkVarClass env c v = do
 
 -- === Normalized IR ===
 
-type NTypeEnv = FullEnv (NType, Spent) ()
+type NTypeEnv = FullEnv (Type, Spent) ()
 type NTypeM a = ReaderT NTypeEnv (CatT Spent (Either Err)) a
 
 checkNExpr ::TopPass NTopDecl NTopDecl
@@ -483,91 +485,96 @@ checkNExpr = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
       liftM fst $ liftExceptTop $ addContext ctx $
         runCatT (runReaderT m env) mempty
 
-getNTypeChecked :: NExpr -> NTypeM [NType]
+getNTypeChecked :: NExpr -> NTypeM Type
 getNTypeChecked expr = case expr of
   NDecl decl body -> do
     env <- checkNDecl decl
     extendR env $ getNTypeChecked body
-  NScan xs (NLamExpr ~(b@(_:>i):bs) body) -> do
-    checkNBinder b
-    let carryTys = map binderAnn bs
-    mapM_ checkNBinder bs
-    (xs', xsSpent) <- scoped $ atomTypesChecked xs
-    assertEq carryTys xs' "Scan arg"
-    let env = nBinderEnv xsSpent bs <> nBinderEnv mempty [b]
-    (bodyTys, bodySpent) <- scoped $ extendR env (getNTypeChecked body)
-    let (carryTys', outTys) = splitAt (length bs) bodyTys
-    assertEq carryTys carryTys' "Scan output"
-    case spendCart xsSpent bodySpent of
-      Nothing -> throwCartErr [xsSpent, bodySpent]
+  NScan x (NLamExpr ~[ib@(_:>i), xb] body) -> do
+    checkNBinder ib
+    let carryTy = binderAnn xb
+    checkNBinder xb
+    (x', xSpent) <- scoped $ atomTypeChecked x
+    assertEq carryTy x' "Scan arg"
+    let env = nBinderEnv xSpent xb <> nBinderEnv mempty ib
+    (bodyTy, bodySpent) <- scoped $ extendR env (getNTypeChecked body)
+    let (carryTy', outTy) = fromPairTy bodyTy
+    assertEq carryTy carryTy' "Scan output"
+    case spendCart xSpent bodySpent of
+      Nothing -> throwCartErr [xSpent, bodySpent]
       Just s  -> extend s
-    return $ carryTys ++ map (NTabType i) outTys
-  NPrimOp Todo ~[ts] _ -> do
-    mapM_ checkNTy ts
-    return ts
-  NPrimOp b ts xs -> do
+    return $ pairTy carryTy (TabType i outTy)
+  NPrimOp Todo ~[ty] _ -> checkNTy ty >> return ty
+  NPrimOp b ts x -> do
     assertEq False (isAtomicBuiltin b) $ "Atomic builtin in NExpr: " ++ pprint b
-    checkPrimOpType b ts xs
-  NApp e xs -> do
-    ~(NArrType l as bs) <- atomTypeChecked e
+    checkPrimOpType b ts x
+  NApp e x -> do
+    ~(ArrType (Mult l) a b) <- atomTypeChecked e
     -- TODO: use cartesian/tensor information from function type
-    as' <- case l of Lin    ->                     atomTypesChecked xs
-                     NonLin -> checkNothingSpent $ atomTypesChecked xs
-    assertEq as as' "App"
-    return bs
-  NAtoms xs -> shareLinear (fmap atomTypeChecked xs)
+    a' <- case l of Lin    ->                     atomTypeChecked x
+                    NonLin -> checkNothingSpent $ atomTypeChecked x
+    assertEq a a' "App"
+    return b
+  NRecGet e i -> do
+    ty <- atomTypeChecked e
+    case ty of
+      RecType _ r -> return $ recGet r i
+      _ -> throw CompilerErr $ "Expected record, got: " ++ pprint ty
+  NAtom x -> atomTypeChecked x
   NTabCon n ty xs -> do
     xTys <- mapM atomTypeChecked xs
     mapM_ (\t -> assertEq ty t "Tab constructor") xTys
-    return [NTabType n ty]
+    return $ TabType n ty
 
 checkNDecl :: NDecl -> NTypeM NTypeEnv
 checkNDecl decl = case decl of
-  NLet bs expr -> do
-    mapM_ checkNBinder bs
-    (ts, s) <- scoped $ getNTypeChecked expr
-    assertEq (map binderAnn bs) ts "Decl"
-    return $ nBinderEnv s bs
-  NUnpack bs tv _ -> do  -- TODO: check bound expression!
+  NLet b expr -> do
+    checkNBinder b
+    (t, s) <- scoped $ getNTypeChecked expr
+    assertEq (binderAnn b) t "Decl"
+    return $ nBinderEnv s b
+  NUnpack b tv _ -> do  -- TODO: check bound expression!
     checkNShadow (tv :> idxSet)
-    extendR (tv @> T ()) $ mapM_ checkNBinder bs
-    return $ nBinderEnv mempty bs <> tv @> T ()
+    extendR (tv @> T ()) $ checkNBinder b
+    return $ nBinderEnv mempty b <> tv @> T ()
 
-nBinderEnv :: Spent -> [NBinder] -> NTypeEnv
-nBinderEnv s bs = foldMap (\(v:>ty) -> v @> L (ty, s)) bs
+nBinderEnv :: Spent -> NBinder -> NTypeEnv
+nBinderEnv s (v:>ty) = v @> L (ty, s)
 
-atomType :: NAtom -> NType
+atomType :: NAtom -> Type
 atomType atom = case atom of
-  NLit x    -> NBaseType (litType x)
+  NLit x    -> BaseType (litType x)
   NVar _ ty -> ty
-  NGet e _  -> b where (NTabType _ b) = atomType e
-  NAtomicFor (_:>n) body -> NTabType n (atomType body)
-  NLam m lam -> uncurry (NArrType m) (nLamType lam)
+  NGet e _  -> b where (TabType _ b) = atomType e
+  NAtomicFor (_:>n) body -> TabType n (getNExprType body)
+  NLam m lam -> ArrType m a b  where ([a], b) = nLamType lam
+  NRecCon k r -> RecType k $ fmap atomType r
   NAtomicPrimOp b ts _ -> ansTy
-    where (_, [ansTy], _) = ignoreExcept $ nBuiltinType b ts
-  NDoBind _ f -> ansTy where (_, [ansTy]) = nLamType f
+    where (_, ansTy, _) = ignoreExcept $ nBuiltinType b ts
+  NDoBind _ f -> snd $ nLamType f
 
-nLamType :: NLamExpr -> ([NType], [NType])
+nLamType :: NLamExpr -> ([Type], Type)
 nLamType (NLamExpr bs body) = (map binderAnn bs, getNExprType body)
 
-getNExprType :: NExpr -> [NType]
+getNExprType :: NExpr -> Type
 getNExprType expr = case expr of
   NDecl _ body -> getNExprType body
-  NScan _ (NLamExpr ~((_:>n):bs) body) -> carryTys ++ map (NTabType n) outTys
-    where bodyTys = getNExprType body
-          (carryTys, outTys) = splitAt (length bs) bodyTys
+  NScan _ (NLamExpr ~[_:>n, _] body) -> pairTy carryTy (TabType n outTy)
+    where (RecType _ (Tup [carryTy, outTy])) = getNExprType body
   NPrimOp b ts _ -> ansTys
     where (_, ansTys, _) = ignoreExcept $ nBuiltinType b ts
-  NApp e _ -> bs
-    where (NArrType _ _ bs) = atomType e
-  NAtoms xs -> map atomType xs
-  NTabCon n ty _ -> [NTabType n ty]
+  NApp e _ -> b  where (ArrType _ _ b) = atomType e
+  NRecGet e i -> case atomType e of
+      RecType _ r -> recGet r i
+      ty          -> error $ "Expected record, got: " ++ pprint ty
+  NAtom x -> atomType x
+  NTabCon n ty _ -> TabType n ty
 
-atomTypeChecked :: NAtom -> NTypeM NType
+atomTypeChecked :: NAtom -> NTypeM Type
 atomTypeChecked atom = case atom of
   NLit x -> do
     when (x == realZero) spendFreely
-    return $ NBaseType (litType x)
+    return $ BaseType (litType x)
   NVar v ty -> do
     x <- asks $ flip envLookup v
     case x of
@@ -577,52 +584,51 @@ atomTypeChecked atom = case atom of
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   NGet e i -> do
-    ~(NTabType a b) <- atomTypeChecked e
+    ~(TabType a b) <- atomTypeChecked e
     a' <- atomTypeChecked i
     assertEq a a' "Get"
     return b
   NAtomicFor b body -> do
     checkNBinder b
-    bodyTy <- extendR (nBinderEnv mempty [b]) (atomTypeChecked body)
-    return $ NTabType (binderAnn b) bodyTy
-  NLam NonLin lam -> lamTypeChecked lam
-  NLam Lin (NLamExpr bs body) -> do
-    mapM_ checkNBinder bs
-    v <- getPatName bs
-    let env = nBinderEnv (asSpent v) bs
-    bodyTys <- checkSpent v (pprint bs) $ extendR env (getNTypeChecked body)
-    return $ NArrType Lin (map binderAnn bs) bodyTys
+    bodyTy <- extendR (nBinderEnv mempty b) (getNTypeChecked body)
+    return $ TabType (binderAnn b) bodyTy
+  NLam (Mult NonLin) lam -> do
+    (~[a], b) <- lamTypeChecked lam
+    return $ ArrType (Mult NonLin) a b
+  NLam (Mult Lin) (NLamExpr ~[b@(v:>_)] body) -> do
+    checkNBinder b
+    let env = nBinderEnv (asSpent v) b
+    bodyTys <- checkSpent v (pprint b) $ extendR env (getNTypeChecked body)
+    return $ ArrType (Mult Lin) (binderAnn b) bodyTys
+  NLam ty _ -> error $ "Expected multiplicity, got: " ++ pprint ty
+  NRecCon k r -> liftM (RecType k) (traverseProd k atomTypeChecked r)
   NDoBind m f -> do
     mTy <- atomTypeChecked m
-    ~(NArrType _ a mb) <- lamTypeChecked f
+    (~[a], mb) <- lamTypeChecked f
     case mb of
-      [NMonad eff b] -> do
-        assertEq mTy (NMonad eff a) "Mismatch in bind"
-        return $ NMonad eff b
+      Monad eff b -> do
+        assertEq mTy (Monad eff a) "Mismatch in bind"
+        return $ Monad eff b
       _ -> throw CompilerErr $ "expected monad, got " ++ pprint mb
   NAtomicPrimOp b ts xs -> do
     assertEq True (isAtomicBuiltin b) $ "Non-atomic builtin in NExpr: " ++ pprint b
-    ~[ty] <- checkPrimOpType b ts xs
-    return ty
+    checkPrimOpType b ts xs
 
-checkPrimOpType :: Builtin -> [[NType]] -> [NAtom] -> NTypeM [NType]
-checkPrimOpType b ts xs = do
-  mapM_ (mapM_ checkNTy) ts
-  (argTys, ansTys, lin) <- nBuiltinType b ts
+checkPrimOpType :: Builtin -> [Type] -> [NAtom] -> NTypeM Type
+checkPrimOpType b tys xs = do
+  mapM_ checkNTy tys
+  (argTys, ansTys, lin) <- nBuiltinType b tys
   argTys' <- sequenceLinArgs lin (map atomTypeChecked xs)
   assertEq argTys argTys' (pprint b)
   return ansTys
 
-lamTypeChecked :: NLamExpr -> NTypeM NType
+lamTypeChecked :: NLamExpr -> NTypeM ([Type], Type)
 lamTypeChecked (NLamExpr bs body) = do
   mapM_ checkNBinder bs
-  bodyTys <- extendR (nBinderEnv mempty bs) (getNTypeChecked body)
-  return $ NArrType NonLin (map binderAnn bs) bodyTys
+  bodyTy <- extendR (foldMap (nBinderEnv mempty) bs) (getNTypeChecked body)
+  return (map binderAnn bs, bodyTy)
 
-atomTypesChecked :: [NAtom] -> NTypeM [NType]
-atomTypesChecked xs = traverseProd Cart atomTypeChecked xs
-
-checkNTy :: NType -> NTypeM ()
+checkNTy :: Type -> NTypeM ()
 checkNTy _ = return () -- TODO!
 
 checkNBinder :: NBinder -> NTypeM ()
@@ -639,7 +645,7 @@ checkNShadow (v :> _) = do
 
 -- TODO: check number of type args first
 nBuiltinType :: MonadError Err m
-                  => Builtin -> [[NType]] -> m ([NType], [NType], ArgLinearity)
+             => Builtin -> [Type] -> m ([Type], Type, ArgLinearity)
 nBuiltinType builtin ts =
   case builtin of
     IAdd  -> return $ ibinOpType
@@ -647,116 +653,90 @@ nBuiltinType builtin ts =
     IMul  -> return $ ibinOpType
     Rem   -> return $ ibinOpType
     Pow   -> return $ ibinOpType
-    FAdd  -> return $ cartBuiltin [real, real] [real]
-    FSub  -> return $ cartBuiltin [real, real] [real]
-    FNeg  -> return $ cartBuiltin [real]       [real]
-    FMul  -> return $ tensBuiltin [real, real] [real]
-    FDiv  -> return $ ([real, real], [real], [(Lin, 1), (NonLin, 1)])
-    And   -> return $ nonLinBuiltin [bool, bool] [bool]
-    Or    -> return $ nonLinBuiltin [bool, bool] [bool]
-    Not   -> return $ nonLinBuiltin [bool]       [bool]
-    Todo  -> return $ nonLinBuiltin [] [t]  where [[t]] = ts
-    Range -> return $ nonLinBuiltin [int] [NExists []]
-    IdxSetSize -> return $ nonLinBuiltin [] [int]
-    IndexAsInt -> return $ nonLinBuiltin [i] [int]  where [[i]] = ts
-    IntAsIndex -> return $ nonLinBuiltin [int] [i]  where [[i]] = ts
-    BoolToInt  -> return $ nonLinBuiltin [bool] [int]
-    IntToReal  -> return $ nonLinBuiltin [int] [real]
-    Cmp _ -> do
-      t <- fromScalar ts
-      return $ nonLinBuiltin [t, t] [bool]
-    Select -> do
-      t <- fromScalar ts
-      return $ nonLinBuiltin [bool, t, t] [t]
-    Linearize -> return ( [NArrType NonLin as bs] ++ as
-                        , (bs ++ [NArrType Lin as bs])
-                        , [(NonLin, 1 + length as)])
-      where [as, bs] = ts
-    Transpose -> return ( [NArrType Lin as bs]
-                        , [NArrType Lin bs as]
+    FAdd  -> return $ cartBuiltin [real, real] real
+    FSub  -> return $ cartBuiltin [real, real] real
+    FNeg  -> return $ cartBuiltin [real]       real
+    FMul  -> return $ tensBuiltin [real, real] real
+    FDiv  -> return $ ([real, real], real, [(Lin, 1), (NonLin, 1)])
+    And   -> return $ nonLinBuiltin [bool, bool] bool
+    Or    -> return $ nonLinBuiltin [bool, bool] bool
+    Not   -> return $ nonLinBuiltin [bool]       bool
+    Todo  -> return $ nonLinBuiltin [] t  where [t] = ts
+    Range -> return $ nonLinBuiltin [int] (Exists (unitTy))
+    IdxSetSize -> return $ nonLinBuiltin [] int
+    IndexAsInt -> return $ nonLinBuiltin [i] int  where [i] = ts
+    IntAsIndex -> return $ nonLinBuiltin [int] i  where [i] = ts
+    BoolToInt  -> return $ nonLinBuiltin [bool] int
+    IntToReal  -> return $ nonLinBuiltin [int] real
+    Cmp _ -> return $ nonLinBuiltin [t, t] bool      where [t] = ts
+    Select -> return $ nonLinBuiltin [bool, t, t] t  where [t] = ts
+    Linearize -> return ( [ArrType (Mult NonLin) a b, a]
+                        , pairTy b (ArrType (Mult Lin) a b)
+                        , [(NonLin, 2)])
+      where [a, b] = ts
+    Transpose -> return ( [ArrType (Mult Lin) as bs]
+                        , (ArrType (Mult Lin) bs as)
                         , [(Lin, 1)] )
       where [as, bs] = ts
     MemRef _ -> return $ nonLinBuiltin [] t  where [t] = ts
-    FFICall _ _ -> return (argTys', retTy, [(NonLin, length argTys')])
-      where
-        retTy:argTys = ts
-        argTys' = concat argTys
+    FFICall _ _ -> return (argTys, retTy, [(NonLin, length argTys)])
+      where retTy:argTys = ts
     -- TODO: make this easier (just derive from Expr type?)
     MRun -> do
       let [a] = tyArgs
-      return $ nonLinBuiltin (r ++ s ++ [nmonad a]) (a ++ w ++ s)
+      return $ nonLinBuiltin [r, s, monad a] (RecType Cart $ Tup [a, w, s])
       where
         r:w:s:tyArgs = ts
-        nmonad a = NMonad (Effect r w s) a
+        monad a = Monad (Effect r w s) a
     MPrim mprim -> case mprim of
-      MAsk  -> return $ nonLinBuiltin  [NLens r a]       [nmonad a ]
-      MTell -> return $ nonLinBuiltin ([NLens w a] ++ a) [nmonad []]
-      MGet  -> return $ nonLinBuiltin  [NLens s a]       [nmonad a ]
-      MPut  -> return $ nonLinBuiltin ([NLens s a] ++ a) [nmonad []]
-      MReturn -> return $ nonLinBuiltin a [nmonad a]
+      MAsk  -> return $ nonLinBuiltin [Lens r a]    (monad a)
+      MTell -> return $ nonLinBuiltin [Lens w a, a] (monad unitTy)
+      MGet  -> return $ nonLinBuiltin [Lens s a]    (monad a)
+      MPut  -> return $ nonLinBuiltin [Lens s a, a] (monad unitTy)
+      MReturn -> return $ nonLinBuiltin [a] (monad a)
       where
         [r, w, s, a] = ts
-        nmonad b = NMonad (Effect r w s) b
-    LensGet -> return $ nonLinBuiltin (a ++ [NLens a b]) b  where [a, b] = ts
+        monad b = Monad (Effect r w s) b
+    LensGet -> return $ nonLinBuiltin [a, Lens a b] b  where [a, b] = ts
     LensPrim p -> case p of
-      IdxAsLens   -> return $ nonLinBuiltin [n] [NLens (map (NTabType n) a) a]
-         where [[n], a] = ts
-      LensCompose -> return $ nonLinBuiltin [NLens a b, NLens b c ] [NLens a c]
+      IdxAsLens   -> return $ nonLinBuiltin [n] (Lens (TabType n a) a)
+         where [n, a] = ts
+      LensCompose -> return $ nonLinBuiltin [Lens a b, Lens b c ] (Lens a c)
          where [a, b, c] = ts
-      LensId      -> return $ nonLinBuiltin [] [NLens a a]  where [a] = ts
+      LensId      -> return $ nonLinBuiltin [] (Lens a a)  where [a] = ts
     _ -> throw TypeErr $ "Can't have this builtin in NExpr: " ++ pprint builtin
   where
-    nonLinBuiltin xs ys = (xs, ys, [(NonLin, length xs)])
-    cartBuiltin   xs ys = (xs, ys, [(Lin, length xs)])
-    tensBuiltin   xs ys = (xs, ys, [(Lin, 1) | _ <- xs])
-    ibinOpType = nonLinBuiltin [int, int] [int]
-    int  = NBaseType IntType
-    real = NBaseType RealType
-    bool = NBaseType BoolType
+    nonLinBuiltin xs y = (xs, y, [(NonLin, length xs)])
+    cartBuiltin   xs y = (xs, y, [(Lin, length xs)])
+    tensBuiltin   xs y = (xs, y, [(Lin, 1) | _ <- xs])
+    ibinOpType = nonLinBuiltin [int, int] int
+    int  = BaseType IntType
+    real = BaseType RealType
+    bool = BaseType BoolType
 
-    fromOne :: MonadError Err m => [[NType]] -> m NType
-    fromOne ts' = case ts' of
-      [[t]]  -> return t
-      _ -> throw TypeErr $ "Expected single NType, got: " ++ pprint ts'
+pairTy :: Type -> Type -> Type
+pairTy x y = RecType Cart $ Tup [x, y]
 
-    fromScalar :: MonadError Err m => [[NType]] -> m NType
-    fromScalar ts' = do
-      t <- fromOne ts'
-      if isNScalar t
-        then return t
-        else throw TypeErr $ "Expected scalar type, got: " ++ pprint t
+fromPairTy :: Type -> (Type, Type)
+fromPairTy (RecType _ (Tup [x, y])) = (x, y)
+fromPairTy ty = error $ "Not a pair type: " ++ pprint ty
 
 isAtomicBuiltin :: Builtin -> Bool
 isAtomicBuiltin (MPrim    _) = True
 isAtomicBuiltin (LensPrim _) = True
 isAtomicBuiltin _            = False
 
-isNScalar :: NType -> Bool
-isNScalar ty = case ty of
-  NBaseType  _ -> True
-  NIdxSetLit _ -> True
-  NTypeVar   _ -> True
-  _            -> False
-
-tangentBunNType :: NType -> [NType]
-tangentBunNType ty = case ty of
-  NBaseType b -> case b of RealType -> [ty, ty]
-                           _ -> [ty]
-  NTypeVar _ -> [ty]  -- can only be an index set
-  NArrType l as bs -> [NArrType l (foldMap recur as) (foldMap recur bs)]
-  NTabType n a -> map (NTabType n) (recur a)
-  NExists ts -> [NExists $ foldMap recur ts]
-  NIdxSetLit _ -> [ty]
-  NBoundTVar _ -> [ty]
-  _ -> error "Not implemented"
-  where recur = tangentBunNType
-
 tangentBunType :: Type -> Type
 tangentBunType ty = case ty of
-  BaseType b -> case b of RealType -> pair ty ty
+  BaseType b -> case b of RealType -> pairTy ty ty
                           _ -> ty
+  TypeVar _ -> ty  -- can only be an index set
   ArrType l a b -> ArrType l (recur a) (recur b)
-  _ -> error $ "Don't know bundle type for: " ++ pprint ty
+  TabType n a   -> TabType n (recur a)
+  Exists t    -> Exists $ recur t
+  IdxSetLit _ -> ty
+  BoundTVar _ -> ty
+  _ -> error "Not implemented"
   where recur = tangentBunType
 
 -- === utils for working with linearity ===
@@ -853,6 +833,23 @@ cartSpentId = Spent mempty True
 
 realZero :: LitVal
 realZero = RealLit 0.0
+
+flattenType :: Type -> [(BaseType, [Int])]
+flattenType ty = case ty of
+  BaseType b  -> [(b, [])]
+  RecType _ r -> concat $ map flattenType $ toList r
+  TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
+  IdxSetLit _ -> [(IntType, [])]
+  -- temporary hack. TODO: fix
+  TabType _             a -> [(b, 0:shape) | (b, shape) <- flattenType a]
+  TypeVar _               -> [(IntType, [])]
+  _ -> error $ "Unexpected type: " ++ show ty
+
+listIntoRecord :: Record Type -> [a] -> Record (Type, [a])
+listIntoRecord r xs = fst $ traverseFun f r xs
+  where f :: Type -> [a] -> ((Type, [a]), [a])
+        f ty xsRest = ((ty, curXs), rest)
+          where (curXs, rest) = splitAt (length (flattenType ty)) xsRest
 
 -- TODO: consider putting the errors in the monoid itself.
 instance Semigroup Spent where

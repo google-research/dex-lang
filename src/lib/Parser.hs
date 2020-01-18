@@ -31,7 +31,7 @@ import PPrint
 parseProg :: String -> [SourceBlock]
 parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
 
-parseData :: String -> Except UExpr
+parseData :: String -> Except Expr
 parseData s = parseit s literalData
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
@@ -40,7 +40,7 @@ parseTopDeclRepl s = case sbContents block of
   _ -> Just block
   where block = mustParseit s sourceBlock
 
-parseTopDecl :: String -> Except UTopDecl
+parseTopDecl :: String -> Except TopDecl
 parseTopDecl s = parseit s topDecl
 
 parseit :: String -> Parser a -> Except a
@@ -53,7 +53,7 @@ mustParseit s p  = case parseit s p of
   Right ans -> ans
   Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
-topDecl :: Parser UTopDecl
+topDecl :: Parser TopDecl
 topDecl = ( explicitCommand
         <|> ruleDef
         <|> liftM2 TopDecl topDeclAnn decl
@@ -118,7 +118,7 @@ dumpData = do
   void eol
   return $ UTopDecl $ EvalCmd (Command (Dump fmt s) e)
 
-explicitCommand :: Parser UTopDecl
+explicitCommand :: Parser TopDecl
 explicitCommand = do
   cmdName <- char ':' >> identifier <* (optional eol >> sc)
   cmd <- case M.lookup cmdName commandNames of
@@ -131,7 +131,7 @@ topDeclAnn :: Parser DeclAnn
 topDeclAnn =   (symbol "@primitive" >> declSep >> return ADPrimitive)
            <|> return PlainDecl
 
-ruleDef :: Parser UTopDecl
+ruleDef :: Parser TopDecl
 ruleDef = do
   v <- try $ lowerName <* symbol "#"
   symbol s
@@ -142,13 +142,13 @@ ruleDef = do
 
 -- === Parsing decls ===
 
-decl :: Parser UDecl
+decl :: Parser Decl
 decl = typeDef <|> unpack <|> doBind <|> letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ some $ (eol >> sc) <|> symbol ";"
 
-typeDef :: Parser UDecl
+typeDef :: Parser Decl
 typeDef = do
   defType <-     (symbol "type"    >> return TyAlias)
              <|> (symbol "newtype" >> return NewType)
@@ -158,13 +158,13 @@ typeDef = do
   ty <- tauType
   return $ TyDef defType v (map (:>()) bs) ty
 
-letPoly :: Parser UDecl
+letPoly :: Parser Decl
 letPoly = do
   v <- try $ lowerName <* symbol "::"
   (ty, tlam) <- letPolyTail (pprint v)
   return $ letPolyToMono (LetPoly (v:>ty) tlam)
 
-letPolyTail :: String -> Parser (SigmaType, UTLam)
+letPolyTail :: String -> Parser (SigmaType, TLam)
 letPolyTail s = do
   (tbs, ty) <- mayNotBreak $ sigmaType
   declSep
@@ -176,18 +176,18 @@ letPolyTail s = do
   let sTy = Forall kinds (abstractTVs tvs ty)
   return (sTy, TLam tbs rhs)
 
-letPolyToMono :: UDecl -> UDecl
+letPolyToMono :: Decl -> Decl
 letPolyToMono d = case d of
-  LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> Ann ty) rhs
+  LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> ty) rhs
   _ -> d
 
-doBind :: Parser UDecl
+doBind :: Parser Decl
 doBind = do
   p <- try $ pat <* symbol "<-"
   body <- expr
   return $ DoBind p body
 
-unpack :: Parser UDecl
+unpack :: Parser Decl
 unpack = do
   (b, tv) <- try $ do b <- binder
                       comma
@@ -197,7 +197,7 @@ unpack = do
   body <- expr
   return $ Unpack b tv body
 
-letMono :: Parser UDecl
+letMono :: Parser Decl
 letMono = do
   (p, wrap) <- try $ do p <- pat
                         wrap <- idxLhsArgs <|> lamLhsArgs
@@ -208,10 +208,10 @@ letMono = do
 
 -- === Parsing expressions ===
 
-expr :: Parser UExpr
+expr :: Parser Expr
 expr = makeExprParser (withSourceAnn term) ops
 
-term :: Parser UExpr
+term :: Parser Expr
 term =   parenExpr
      <|> var
      <|> idxLit
@@ -224,17 +224,17 @@ term =   parenExpr
      <|> pack
      <?> "term"
 
-declOrExpr :: Parser UExpr
+declOrExpr :: Parser Expr
 declOrExpr = declExpr <|> expr <?> "decl or expr"
 
-parenExpr :: Parser UExpr
+parenExpr :: Parser Expr
 parenExpr = do
   e <- parens $ declExpr <|> productCon
   ann <- typeAnnot
-  return $ case ann of NoAnn  -> e
-                       Ann ty -> Annot e ty
+  return $ case ann of NoAnn -> e
+                       ty    -> Annot e ty
 
-productCon :: Parser UExpr
+productCon :: Parser Expr
 productCon = do
   ans <- prod expr
   return $ case ans of
@@ -257,7 +257,7 @@ prod1 p = do
       where sep' = case k of Cart -> comma
                              Tens -> colon
 
-var :: Parser UExpr
+var :: Parser Expr
 var = do
   v <- lowerName
   tyArgs <- many tyArg
@@ -266,20 +266,20 @@ var = do
 tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
 
-declExpr :: Parser UExpr
+declExpr :: Parser Expr
 declExpr = liftM2 Decl (mayNotBreak decl <* declSep) declOrExpr
 
-withSourceAnn :: Parser UExpr -> Parser UExpr
+withSourceAnn :: Parser Expr -> Parser Expr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
-typeAnnot :: Parser Ann
+typeAnnot :: Parser Type
 typeAnnot = do
   ann <- optional $ symbol "::" >> tauTypeAtomic
   return $ case ann of
     Nothing -> NoAnn
-    Just ty -> Ann ty
+    Just ty -> ty
 
-primOp :: Parser UExpr
+primOp :: Parser Expr
 primOp = do
   s <- try $ symbol "%" >> identifier
   b <- case M.lookup s builtinNames of
@@ -291,7 +291,7 @@ primOp = do
   symbol ")"
   return $ PrimOp b tyArgs args
 
-ffiCall :: Parser UExpr
+ffiCall :: Parser Expr
 ffiCall = do
   symbol "%%"
   s <- identifier
@@ -299,16 +299,16 @@ ffiCall = do
   return $ PrimOp (FFICall (length args) s) [] args
 
 -- TODO: combine lamExpr/linlamExpr/forExpr
-lamExpr :: Parser UExpr
+lamExpr :: Parser Expr
 lamExpr = do
   multAnn <-    (symbol "lam"  >> return NoAnn)
-            <|> (symbol "llam" >> return (Ann (Mult Lin)))
+            <|> (symbol "llam" >> return (Mult Lin))
   ps <- pat `sepBy` sc
   argTerm
   body <- declOrExpr
   return $ foldr (Lam multAnn) body ps
 
-forExpr :: Parser UExpr
+forExpr :: Parser Expr
 forExpr = do
   symbol "for"
   vs <- pat `sepBy` sc
@@ -316,28 +316,28 @@ forExpr = do
   body <- declOrExpr
   return $ foldr For body vs
 
-tabCon :: Parser UExpr
+tabCon :: Parser Expr
 tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
   return $ TabCon NoAnn xs
 
-pack :: Parser UExpr
+pack :: Parser Expr
 pack = do
   symbol "pack"
   liftM3 Pack (expr <* comma) (tauType <* comma) existsType
 
-idxLhsArgs :: Parser (UExpr -> UExpr)
+idxLhsArgs :: Parser (Expr -> Expr)
 idxLhsArgs = do
   period
   args <- pat `sepBy` period
   return $ \body -> foldr For body args
 
-lamLhsArgs :: Parser (UExpr -> UExpr)
+lamLhsArgs :: Parser (Expr -> Expr)
 lamLhsArgs = do
   args <- pat `sepBy` sc
   return $ \body -> foldr (Lam NoAnn) body args
 
-idxLit :: Parser UExpr
+idxLit :: Parser Expr
 idxLit = liftM2 (flip IdxLit) (try $ uint <* symbol "@") uint
 
 literal :: Parser LitVal
@@ -360,30 +360,30 @@ identifier = lexeme . try $ do
   where
    resNames = ["for", "lam", "llam", "unpack", "pack"]
 
-appRule :: Operator Parser UExpr
+appRule :: Operator Parser Expr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return App)
   where
     opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
 
-postFixRule :: Operator Parser UExpr
+postFixRule :: Operator Parser Expr
 postFixRule = Postfix $ do
   trailers <- some (period >> idxExpr)
   return $ \e -> foldl Get e trailers
 
-binOpRule :: String -> Builtin -> Operator Parser UExpr
+binOpRule :: String -> Builtin -> Operator Parser Expr
 binOpRule opchar builtin = InfixL $ do
   ((), pos) <- (withPos $ symbol opchar) <* (optional eol >> sc)
   return $ \e1 e2 -> SrcAnnot (PrimOp builtin [] [e1, e2]) pos
 
-backtickRule :: Operator Parser UExpr
+backtickRule :: Operator Parser Expr
 backtickRule = InfixL $ do
   void $ char '`'
   v <- rawVar
   char '`' >> sc
   return $ \x y -> (v `App` x) `App` y
 
-ops :: [[Operator Parser UExpr]]
+ops :: [[Operator Parser Expr]]
 ops = [ [postFixRule, appRule]
       , [binOpRule "^" Pow]
       , [binOpRule "*" FMul, binOpRule "/" FDiv]
@@ -400,23 +400,23 @@ ops = [ [postFixRule, appRule]
       , [InfixR (symbol "$" >> optional eol >> sc >> return App)]
        ]
 
-idxExpr :: Parser UExpr
+idxExpr :: Parser Expr
 idxExpr = withSourceAnn $ rawVar <|> parens productCon
 
-rawVar :: Parser UExpr
+rawVar :: Parser Expr
 rawVar = do
   v <- lowerName
   return $ Var v NoAnn []
 
-binder :: Parser UBinder
+binder :: Parser Binder
 binder = (symbol "_" >> return ("_" :> NoAnn))
      <|> liftM2 (:>) lowerName typeAnnot
 
-pat :: Parser UPat
+pat :: Parser Pat
 pat =   parenPat
     <|> liftM RecLeaf binder
 
-parenPat :: Parser UPat
+parenPat :: Parser Pat
 parenPat = do
   ans <- parens $ prod pat
   return $ case ans of
@@ -590,18 +590,18 @@ colon = symbol ":"
 
 -- === Parsing literal data ===
 
-literalData :: Parser UExpr
+literalData :: Parser Expr
 literalData =   idxLit
             <|> liftM Lit literal
             <|> tupleData
             <|> tableData
 
-tupleData :: Parser UExpr
+tupleData :: Parser Expr
 tupleData = do
   xs <- parens $ literalData `sepEndBy` comma
   return $ RecCon Cart $ Tup xs
 
-tableData :: Parser UExpr
+tableData :: Parser Expr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
   return $ TabCon NoAnn xs

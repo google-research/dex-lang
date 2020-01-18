@@ -133,6 +133,7 @@ instance Subst Type where
     IdxSetLit _ -> ty
     BoundTVar _ -> ty
     Mult _      -> ty
+    NoAnn       -> NoAnn
     where recur = subst env
 
 instance Subst SigmaType where
@@ -158,20 +159,17 @@ class NSubst a where
 instance NSubst NExpr where
   nSubst env expr = case expr of
     NDecl decl body -> case decl of
-      NLet bs bound -> NDecl (NLet bs' (recur bound)) body'
+      NLet b bound -> NDecl (NLet b' (recur bound)) body'
         where
-          (bs', env') = refreshNBinders env bs
+          (~[b'], env') = refreshNBinders env [b]
           body' = nSubst (env <> env') body
-      -- NDoBind bs bound -> NDecl (NDoBind bs' (recurA bound)) body'
-      --   where
-      --     (bs', env') = refreshNBinders env bs
-      --     body' = nSubst (env <> env') body
       NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-    NScan xs lam -> NScan (map recurA xs) (nSubst env lam)
-    NPrimOp b ts xs -> NPrimOp b (map (map (nSubst env)) ts) (map recurA xs)
-    NApp f xs -> NApp (recurA f) (map recurA xs)
-    NAtoms xs -> NAtoms $ map recurA xs
-    NTabCon n t xs -> NTabCon (nSubst env n) (nSubst env t) (map recurA xs)
+    NScan x lam -> NScan (recurA x) (nSubst env lam)
+    NPrimOp b ts x -> NPrimOp b (map (nSubst env) ts) (map recurA x)
+    NApp f x -> NApp (recurA f) (recurA x)
+    NRecGet x i -> NRecGet (recurA x) i
+    NAtom x -> NAtom $ recurA x
+    NTabCon n t x -> NTabCon (nSubst env n) (nSubst env t) (map recurA x)
     where
       recur :: NExpr -> NExpr
       recur = nSubst env
@@ -197,31 +195,36 @@ instance NSubst NAtom where
         ([b'], env') = refreshNBinders env [b]
         body' = nSubst (env <> env') body
     NLam l lam -> NLam l (nSubst env lam)
+    NRecCon k r -> NRecCon k (fmap (nSubst env) r)
     NAtomicPrimOp b ts xs ->
-      NAtomicPrimOp b (map (map (nSubst env)) ts) (map (nSubst env) xs)
+      NAtomicPrimOp b (map (nSubst env) ts) (map (nSubst env) xs)
     NDoBind m f -> NDoBind (nSubst env m) (nSubst env f)
 
-instance NSubst NType where
+instance NSubst Type where
   nSubst env@(sub, _) ty = case ty of
-    NBaseType _ -> ty
-    NTypeVar v -> do
+    BaseType _ -> ty
+    TypeVar v -> do
       case envLookup sub v of
         Nothing -> ty
-        Just (T x') -> NTypeVar x'
+        Just (T x') -> TypeVar x'
         Just (L _) -> error "Expected type variable"
-    NArrType l as bs -> NArrType l (map recur as) (map recur bs)
-    NTabType a b   -> NTabType (recur a) (recur b)
-    NMonad eff a -> NMonad (fmap (map recur) eff) (map recur a)
-    NLens a b     -> NLens (map recur a) (map recur b)
-    NExists ts -> NExists (map recur ts)
-    NIdxSetLit _ -> ty
-    NBoundTVar _ -> ty
+    ArrType l a b -> ArrType l (recur a) (recur b)
+    RecType k r -> RecType k (fmap recur r)
+    TabType a b -> TabType (recur a) (recur b)
+    Monad eff a -> Monad (fmap recur eff) (recur a)
+    Lens a b    -> Lens (recur a) (recur b)
+    Exists t    -> Exists $ recur t
+    IdxSetLit _ -> ty
+    BoundTVar _ -> ty
+    Mult l -> Mult l
+    NoAnn -> NoAnn
+    TypeApp n xs -> TypeApp (recur n) (map recur xs)
     where recur = nSubst env
 
 instance NSubst NDecl where
    nSubst env decl = case decl of
-     NLet bs expr      -> NLet (map (nSubst env) bs) (nSubst env expr)
-     NUnpack bs v expr -> NUnpack (map (nSubst env) bs) v (nSubst env expr)
+     NLet b expr      -> NLet    (nSubst env b)   (nSubst env expr)
+     NUnpack b v expr -> NUnpack (nSubst env b) v (nSubst env expr)
 
 instance NSubst NBinder where
    nSubst env (v:>ty) = v :> nSubst env ty

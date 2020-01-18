@@ -29,12 +29,12 @@ import Subst
 
 data Constraint = Constraint Type Type String SrcCtx
 type QVars = Env ()
-
+type UExpr = Expr
 type InferM a = ReaderT (SrcCtx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
-typePass :: TopPass UTopDecl TopDecl
+typePass :: TopPass TopDecl TopDecl
 typePass = TopPass $ \tdecl -> case tdecl of
   TopDecl ann decl -> do
     (decl', env') <- liftTop $ inferDecl decl
@@ -69,7 +69,7 @@ runInferM env m = do
 inferExpr :: UExpr -> Except (Type, Expr)
 inferExpr expr = runInferM mempty $ solveLocalMonomorphic (infer expr)
 
-inferDecl :: UDecl -> InferM (Decl, TypeEnv)
+inferDecl :: Decl -> InferM (Decl, TypeEnv)
 inferDecl decl = case decl of
   LetMono p bound -> do
     -- TOOD: better errors - infer polymorphic type to suggest annotation
@@ -137,8 +137,8 @@ check expr reqTy = case expr of
     body' <- extendRSnd env' $ check body reqTy
     return $ Decl decl' body'
   Lam mAnn p body -> do
-    m <- case mAnn of Ann ty -> return ty
-                      NoAnn  -> freshLin
+    m <- case mAnn of  NoAnn -> freshLin
+                       ty    -> return ty
     (m', a, b) <- splitFun expr reqTy
     constrainEq m m' (pprint expr)
     p' <- solveLocalMonomorphic $ checkPat p a
@@ -211,21 +211,21 @@ constrainEq t1 t2 s = do
   ctx <- asks fst
   tell [Constraint t1 t2 s ctx]
 
-checkPat :: UPat -> Type -> InferM Pat
+checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
   p' <- annotPat p
   constrainEq ty (patType p') (pprint p)
   return p'
 
-annotPat :: MonadCat QVars m => UPat -> m Pat
+annotPat :: MonadCat QVars m => Pat -> m Pat
 annotPat pat = traverse annotBinder pat
 
-annotBinder :: MonadCat QVars m => UBinder -> m Binder
+annotBinder :: MonadCat QVars m => Binder -> m Binder
 annotBinder (v:>ann) = liftM (v:>) (fromAnn ann)
 
-fromAnn :: MonadCat QVars m => Ann -> m Type
-fromAnn (NoAnn)  = freshQ
-fromAnn (Ann ty) = return ty
+fromAnn :: MonadCat QVars m => Type -> m Type
+fromAnn NoAnn = freshQ
+fromAnn ty    = return ty
 
 asEnv :: Binder -> TypeEnv
 asEnv (v:>ty) = v @> L (asSigma ty)

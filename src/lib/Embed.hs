@@ -7,12 +7,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Embed (emit, emitTo, withBinders, buildNLam, buildNScan, buildNestedNScans,
+module Embed (emit, emitTo, withBinder, buildNLam, buildNScan, buildNestedNScans,
               NEmbedT, NEmbed, NEmbedEnv, buildScoped, wrapNDecls, runEmbedT,
-              runEmbed, emitUnpack, nGet, flipIdx,
-              buildNAtomicFor, zeroAt, addAt, sumAt, sumsAt, deShadow,
-              emitOneAtom, emitNamed, materializeAtom, add, mul, sub, neg, div',
-              selectAt, freshNVar) where
+              runEmbed, emitUnpack, nGet, flipIdx, withBinders,
+              buildNAtomicFor, zeroAt, addAt, sumAt, deShadow,
+              emitNamed, materializeAtom, add, mul, sub, neg, div',
+              selectAt, freshNVar, unitBinder, nUnitCon, buildNFor,
+              nRecGet, recGetFst, recGetSnd, fromPair, fromTup, makePair) where
 
 import Control.Monad
 import Data.List (transpose)
@@ -23,6 +24,9 @@ import Syntax
 import Cat
 import Type
 import Subst
+import Record
+import PPrint
+import Data.Foldable (toList)
 
 type NEmbedT m = CatT NEmbedEnv m  -- TODO: consider a full newtype wrapper
 type NEmbed = Cat NEmbedEnv
@@ -31,27 +35,26 @@ type NEmbedEnv = (Scope, [NDecl])
 -- Only produces atoms without binders (i.e. no NLam or NAtomicFor) so that we
 -- don't have to deshadow them again later wrt newly in scope variables.
 -- TODO: use suggestive names based on types (e.g. "f" for function)
-emit :: MonadCat NEmbedEnv m => NExpr -> m [NAtom]
+emit :: MonadCat NEmbedEnv m => NExpr -> m NAtom
 emit expr = emitNamed "v" expr
 
-emitNamed :: MonadCat NEmbedEnv m => Name -> NExpr -> m [NAtom]
+emitNamed :: MonadCat NEmbedEnv m => Name -> NExpr -> m NAtom
 emitNamed v expr = case expr of
-  NAtoms atoms | all noBinders atoms -> return atoms
+  NAtom atom | noBinders atom -> return atom
   -- TODO: use suggestive names based on types (e.g. "f" for function)
-  _ -> emitTo (map (v:>) (getNExprType expr)) expr
+  _ -> emitTo (v:>getNExprType expr) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
-emitTo :: MonadCat NEmbedEnv m => [NBinder] -> NExpr -> m [NAtom]
-emitTo [] _ = return []
-emitTo bs expr = do
-  bs' <- traverse freshenNBinder bs
-  extend $ asSnd [NLet bs' expr]
-  return $ map binderToVar bs'
+emitTo :: MonadCat NEmbedEnv m => NBinder -> NExpr -> m NAtom
+emitTo b expr = do
+  b' <- freshenNBinder b
+  extend $ asSnd [NLet b' expr]
+  return $ binderToVar b'
 
 deShadow :: MonadCat NEmbedEnv m => NSubst a => a -> m a
 deShadow x = do
-  scope <- looks fst
-  return $ nSubst (mempty, scope) x
+   scope <- looks fst
+   return $ nSubst (mempty, scope) x
 
 noBinders :: NAtom -> Bool
 noBinders atom = case atom of
@@ -66,25 +69,31 @@ freshNVar v = do
   extend $ asFst (v' @> ())
   return v'
 
-emitUnpack :: MonadCat NEmbedEnv m =>
-                Name -> NExpr -> m (NType, [NBinder] -> m [NAtom])
+emitUnpack :: MonadCat NEmbedEnv m
+           => Name -> NExpr -> m (Type, NBinder -> m NAtom)
 emitUnpack tv expr = do
   tv' <- freshNVar tv
-  let finish bs = do bs' <- traverse freshenNBinder bs
-                     extend $ asSnd [NUnpack bs' tv' expr]
-                     return [NVar v ty | v:>ty <- bs']
-  return (NTypeVar tv', finish)
+  let finish b = do b'@(v:>ty) <- freshenNBinder b
+                    extend $ asSnd [NUnpack b' tv' expr]
+                    return $ NVar v ty
+  return (TypeVar tv', finish)
 
 freshenNBinder :: MonadCat NEmbedEnv m => NBinder -> m NBinder
 freshenNBinder (v:>ty) = do
   v' <- freshNVar v
   return (v':>ty)
 
-withBinders :: (MonadCat NEmbedEnv m) =>
-                 [NBinder] -> ([NAtom] -> m a) -> m (a, [NBinder], NEmbedEnv)
+withBinder :: (MonadCat NEmbedEnv m)
+           => NBinder -> (NAtom -> m a) -> m (a, NBinder, NEmbedEnv)
+withBinder b f = do
+  (ans, ~[b'], env) <- withBinders [b] (f . head)
+  return (ans, b', env)
+
+withBinders :: (MonadCat NEmbedEnv m)
+            => [NBinder] -> ([NAtom] -> m a) -> m (a, [NBinder], NEmbedEnv)
 withBinders bs f = do
   ((ans, bs'), env) <- scoped $ do
-      bs' <- traverse freshenNBinder bs
+      bs' <- mapM freshenNBinder bs
       ans <- f $ map binderToVar bs'
       return (ans, bs')
   return (ans, bs', env)
@@ -95,21 +104,27 @@ buildNLam bs f = do
   return $ NLamExpr bs' (wrapNDecls decls body)
 
 buildNFor :: (MonadCat NEmbedEnv m) => NBinder -> (NAtom -> m NExpr) -> m NExpr
-buildNFor b f = buildNScan b [] [] $ \i _ -> f i
+buildNFor ib f = do
+  xb <- unitBinder
+  scanAns <- buildNScan ib xb nUnitCon $ \i _ -> do
+    ans <- f i >>= emit
+    return $ NAtom $ makePair nUnitCon ans
+  scanAns' <- emit scanAns
+  liftM NAtom $ recGetSnd scanAns'
 
 buildNAtomicFor :: (MonadCat NEmbedEnv m) =>
-                     NBinder -> (NAtom -> m NAtom) -> m NAtom
+                     NBinder -> (NAtom -> m NExpr) -> m NAtom
 buildNAtomicFor ib f = do
-  ~(body, [ib'@(i':>_)], _) <- withBinders [ib] (\[x] -> f x) -- TODO: fail if nonempty decls
+  ~(body, ib'@(i':>_), _) <- withBinder ib f -- TODO: fail if nonempty decls
   return $ case body of
-    NGet e (NVar i _) | i == i' && not (isin i (freeNVars e)) -> e
+    NAtom (NGet e (NVar i _)) | i == i' && not (isin i (freeVars e)) -> e
     _ -> NAtomicFor ib' body
 
 buildNestedNScans :: (MonadCat NEmbedEnv m)
-    => [NBinder]                           -- index binders
-    -> [NBinder]                           -- state binders
-    -> [NAtom]                             -- initial data
-    -> ([NAtom] -> [NAtom] -> m NExpr) -- body of scan
+    => [NBinder]                         -- index binders
+    -> NBinder                           -- state binder
+    -> NAtom                             -- initial data
+    -> ([NAtom] -> NAtom -> m NExpr) -- body of scan
     -> m NExpr
 buildNestedNScans [] _ xsInit f = f [] xsInit
 buildNestedNScans (ib:ibs) xbs xsInit f =
@@ -117,11 +132,11 @@ buildNestedNScans (ib:ibs) xbs xsInit f =
     buildNestedNScans ibs xbs xs (\is -> f (i:is))
 
 buildNScan :: (MonadCat NEmbedEnv m)
-               => NBinder -> [NBinder] -> [NAtom]
-               -> (NAtom -> [NAtom] -> m NExpr) -> m NExpr
-buildNScan ib xbs xsInit f = do
-  ~(body, (ib':xbs'), (_, decls)) <- withBinders (ib:xbs) $ \(i:xs) -> f i xs
-  return $ NScan xsInit (NLamExpr (ib':xbs') (wrapNDecls decls body))
+           => NBinder -> NBinder -> NAtom
+           -> (NAtom -> NAtom -> m NExpr) -> m NExpr
+buildNScan ib xb xsInit f = do
+  ~(body, [ib', xb'], (_, decls)) <- withBinders [ib, xb] $ \[i, xs] -> f i xs
+  return $ NScan xsInit $ NLamExpr [ib', xb'] (wrapNDecls decls body)
 
 buildScoped :: (MonadCat NEmbedEnv m) => m NExpr -> m NExpr
 buildScoped m = do
@@ -130,13 +145,14 @@ buildScoped m = do
 
 materializeAtom :: (MonadCat NEmbedEnv m) => NAtom -> m NAtom
 materializeAtom atom = case atom of
-  NAtomicFor ib@(iv:>_) body -> do
-    ans <- buildNScan ib [] [] $ \i _ -> do
+  NAtomicFor ib@(iv:>_) (NAtom body) -> do
+    ans <- buildNFor ib $ \i -> do
       scope <- looks fst  -- really only need `i` in scope
       body' <- materializeAtom $ nSubst (iv @> L i, scope) body
-      return $ NAtoms [body']
-    emitOneAtom ans
+      return $ NAtom body'
+    emit ans
   NLam _ _ -> error $ "Can't materialize lambda"
+  NRecCon m r -> liftM (NRecCon m) $ traverse materializeAtom r
   _ -> return atom
 
 runEmbedT :: Monad m => CatT NEmbedEnv m a -> Scope -> m (a, NEmbedEnv)
@@ -147,85 +163,127 @@ runEmbed m scope = runCat m (scope, [])
 
 wrapNDecls :: [NDecl] -> NExpr -> NExpr
 wrapNDecls [] expr = expr
-wrapNDecls [NLet [v:>_] expr] (NAtoms [NVar v' _]) | v == v' = expr  -- optimization
+wrapNDecls [NLet (v:>_) expr] (NAtom (NVar v' _)) | v == v' = expr  -- optimization
 wrapNDecls (decl:decls) expr = NDecl decl (wrapNDecls decls expr)
 
-nGet :: NAtom -> NAtom -> NAtom
-nGet (NAtomicFor (v:>_) body) i = nSubst (v@>L i, scope) body
-  where scope = fmap (const ()) (freeNVars i)
-nGet e i = NGet e i
+nGet :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
+nGet (NAtomicFor (v:>_) body) i = emitDecls $ nSubst (v@>L i, scope) body
+  where scope = fmap (const ()) (freeVars i)
+nGet e i = return $ NGet e i
+
+emitDecls :: MonadCat NEmbedEnv m => NExpr -> m NAtom
+emitDecls (NDecl decl body) = do
+  extend $ asSnd [decl]
+  emitDecls body
+emitDecls expr = emit expr
 
 flipIdx :: MonadCat NEmbedEnv m => NAtom -> m NAtom
 flipIdx i = do
   let n = atomType i
-  iInt  <- emitOneAtom $ NPrimOp IndexAsInt [[n]] [i]
-  nInt  <- emitOneAtom $ NPrimOp IdxSetSize [[n]] []
+  iInt  <- emit $ NPrimOp IndexAsInt [n] [i]
+  nInt  <- emit $ NPrimOp IdxSetSize [n] []
   nInt' <- isub nInt (NLit (IntLit 1))
   iFlipped <- isub nInt' iInt
-  emitOneAtom $ NPrimOp IntAsIndex [[n]] [iFlipped]
+  emit $ NPrimOp IntAsIndex [n] [iFlipped]
 
 isub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
-isub x y = emitOneAtom $ NPrimOp ISub [] [x, y]
+isub x y = emit $ NPrimOp ISub [] [x, y]
 
-zeroAt :: MonadCat NEmbedEnv m => NType -> m NAtom
-zeroAt ty = do
-  ~[x] <- mapScalars (\_ _ -> return [NLit (RealLit 0.0)]) ty []
-  return x
+zeroAt :: MonadCat NEmbedEnv m => Type -> m NAtom
+zeroAt ty = mapScalars (\_ _ -> return $ NLit (RealLit 0.0)) ty []
 
-addAt :: MonadCat NEmbedEnv m => NType -> NAtom -> NAtom -> m NAtom
-addAt ty xs ys = do
-  ~[x] <- mapScalars (\_ [x, y] -> liftM pure (add x y)) ty [xs, ys]
-  return x
+addAt :: MonadCat NEmbedEnv m => Type -> NAtom -> NAtom -> m NAtom
+addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
 
-selectAt :: MonadCat NEmbedEnv m => NAtom -> NType -> NAtom -> NAtom -> m NAtom
-selectAt p ty xs ys = do
-  ~[x] <- mapScalars (\t [x, y] -> liftM pure (select p t x y)) ty [xs, ys]
-  return x
+selectAt :: MonadCat NEmbedEnv m => NAtom -> Type -> NAtom -> NAtom -> m NAtom
+selectAt p ty xs ys = mapScalars (\t [x, y] -> select p t x y) ty [xs, ys]
 
-sumAt :: MonadCat NEmbedEnv m => NType -> [NAtom] -> m NAtom
-sumAt ty [] = zeroAt ty
-sumAt _ [x] = return x
-sumAt ty (x:xs) = do
-  xsSum <- sumAt ty xs
-  addAt ty xsSum x
+-- sumAt :: MonadCat NEmbedEnv m => Type -> [NAtom] -> m NAtom
+-- sumAt ty [] = zeroAt ty
+-- sumAt _ [x] = return x
+-- sumAt ty (x:xs) = do
+--   xsSum <- sumAt ty xs
+--   addAt ty xsSum x
 
-sumsAt :: MonadCat NEmbedEnv m => [NType] -> [NExpr] -> m NExpr
-sumsAt tys xss = do
-  xss' <- liftM transpose $ mapM emit xss
-  liftM NAtoms $ sequence [sumAt ty xs | (ty, xs) <- zip tys xss']
+sumAt :: MonadCat NEmbedEnv m => Type -> [NExpr] -> m NExpr
+sumAt = undefined
+
+-- sumsAt tys xss = do
+--   xss' <- liftM transpose $ mapM emit xss
+--   liftM NAtom $ sequence [sumAt ty xs | (ty, xs) <- zip tys xss']
 
 neg :: MonadCat NEmbedEnv m => NAtom -> m NAtom
-neg x = emitOneAtom $ NPrimOp FNeg [] [x]
+neg x = emit $ NPrimOp FNeg [] [x]
 
 add :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
-add x y = emitOneAtom $ NPrimOp FAdd [] [x, y]
+add x y = emit $ NPrimOp FAdd [] [x, y]
 
 mul :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
-mul x y = emitOneAtom $ NPrimOp FMul [] [x, y]
+mul x y = emit $ NPrimOp FMul [] [x, y]
 
 sub :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
-sub x y = emitOneAtom $ NPrimOp FSub [] [x, y]
+sub x y = emit $ NPrimOp FSub [] [x, y]
 
-select :: MonadCat NEmbedEnv m => NAtom -> NType -> NAtom -> NAtom -> m NAtom
-select p ty x y = emitOneAtom $ NPrimOp Select [[ty]] [p, x, y]
+select :: MonadCat NEmbedEnv m => NAtom -> Type -> NAtom -> NAtom -> m NAtom
+select p ty x y = emit $ NPrimOp Select [ty] [p, x, y]
 
 div' :: MonadCat NEmbedEnv m => NAtom -> NAtom -> m NAtom
-div' x y = emitOneAtom $ NPrimOp FDiv [] [x, y]
+div' x y = emit $ NPrimOp FDiv [] [x, y]
 
 binderToVar :: NBinder -> NAtom
 binderToVar (v:>ty) = NVar v ty
 
-emitOneAtom :: MonadCat NEmbedEnv m => NExpr -> m NAtom
-emitOneAtom expr = liftM head $ emit expr
+nUnitCon :: NAtom
+nUnitCon = NRecCon Cart (Tup [])
+
+unitBinder :: MonadCat NEmbedEnv m => m NBinder
+unitBinder = do
+  v <- freshNVar "_"
+  return $ v:>unitTy
+
+nRecGet :: MonadCat NEmbedEnv m => NAtom -> RecField -> m NAtom
+nRecGet (NRecCon _ r) i = return $ recGet r i
+nRecGet x i = emit $ NRecGet x i
+
+recGetFst :: MonadCat NEmbedEnv m => NAtom -> m NAtom
+recGetFst x = nRecGet x fstField
+
+recGetSnd :: MonadCat NEmbedEnv m => NAtom -> m NAtom
+recGetSnd x = nRecGet x sndField
+
+unpackRec :: MonadCat NEmbedEnv m => NAtom -> m (Record NAtom)
+unpackRec (NRecCon _ r) = return r
+unpackRec x = case atomType x of
+  RecType _ r -> traverse (nRecGet x . fst) $ recNameVals r
+  ty          -> error $ "Not a tuple: " ++ pprint ty
+
+fromTup :: MonadCat NEmbedEnv m => NAtom -> m [NAtom]
+fromTup x = liftM toList $ unpackRec x
+
+fromPair :: MonadCat NEmbedEnv m => NAtom -> m (NAtom, NAtom)
+fromPair x = do
+  ~[a, b] <- fromTup x
+  return (a, b)
+
+makePair :: NAtom -> NAtom -> NAtom
+makePair x y = NRecCon Cart (Tup [x, y])
 
 mapScalars :: MonadCat NEmbedEnv m
-                     => (NType -> [NAtom] -> m [NAtom])
-                     -> NType -> [NAtom] -> m [NAtom]
+                     => (Type -> [NAtom] -> m NAtom)
+                     -> Type -> [NAtom] -> m NAtom
 mapScalars f ty xs = case ty of
-  NBaseType _  -> f ty xs
-  NIdxSetLit _ -> f ty xs
-  NTabType n a -> do
+  BaseType _  -> f ty xs
+  IdxSetLit _ -> f ty xs
+  TabType n a -> do
     ans <- buildNFor ("i":>n) $ \i ->
-             liftM NAtoms $ mapScalars f a [nGet x i | x <- xs]
+             liftM NAtom $ mapScalars f a [NGet x i | x <- xs]
     emit ans
-  _ -> error "Not implemented"
+  RecType m r -> do
+    xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
+    liftM (NRecCon m) $ sequence $ recZipWith (mapScalars f) r xs'
+  _ -> error $ "Not implemented " ++ pprint ty
+
+transposeRecord :: Record b -> [Record a] -> Record [a]
+transposeRecord r [] = fmap (const []) r
+transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
+
