@@ -13,33 +13,6 @@ ixkey2 x i = ixkey $ ixkey x i
 > [[1.773118, 0.50770324, 7.503997e-2], [1.4671916, 5.4218978e-2, 0.5504309]]
 
 
-
-' ## Matrix Math
-
-' Vector-Vector dot product
-
-vdot :: n=>Real -> n=>Real -> Real
-vdot x y = sum for i. x.i * y.i
-
-' Matrix Matrix Product
-
-mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
-
-' Matrix Vector product
-
-mvp :: n=>m=>Real -> m=>Real -> n=>Real
-mvp m v = for i. vdot m.i v
-
-
-mvp ..
-    [[10.0, 20.0], [30.0, 40.0], [50.0, 60.0]] ..
-    [2.0, 4.0]
-> [100.0, 220.0, 340.0]
-
-
-
-
 ' ---
 ## Neural Network functions
 Note: all out activation and loss functions apply to vectors,
@@ -68,7 +41,7 @@ sigmoid = map sigmoid1
 ' softmax, with overflow resistance
 
 softmax:: d=>Real->d=>Real
-softmax xs = ..
+softmax xs = 
     numer = for i. exp(xs.i - maximum(xs))
     for i. numer.i / sum(numer)
 
@@ -81,8 +54,10 @@ softmax [2.0, 2.0, 2.0, 2.0]
 
 ' ### Loss functions
 
-binaryCrossEntropy:: (1=>Real)->(1=>Real)->Real
-binaryCrossEntropy target output = ..
+type LossFun oz = (oz=>Real)->(oz=>Real)->Real
+
+binaryCrossEntropy:: LossFun 1
+binaryCrossEntropy target output = 
     tar = target.(0@1)
     out = output.(0@1)
     eps = 0.000000000000001
@@ -101,8 +76,10 @@ binaryCrossEntropy [0.01] [1.0]
 The type of a Affine layer is: `(d=>n=>Real, d=>Real)`.
 That is the weight matrix and the bias vector.
 
-initAffine:: A n::Ix d::Ix. Key->(d=>n=>Real, d=>Real)
-initAffine key = ..
+type Layer d n = (d=>n=>Real, d=>Real)
+
+initAffine:: A n::Ix d::Ix. Key->Layer d n
+initAffine key =
     (weightKey, biasKey) = splitKey key
     weights = for x::d. for y::n.
         0.1 * (randn $ ixkey2 weightKey x y)
@@ -116,9 +93,9 @@ initAffine @3 @2 (newKey 0)
 > , [0.12012412, 0.12777644] ]
 > , [0.12112768, 2.3284968e-2] )
 
-applyAffine:: (d=>n=>Real, d=>Real) -> (n=>Real) -> (d=>Real)
+applyAffine:: Layer d n -> (n=>Real) -> (d=>Real)
 applyAffine (w, b) z = for k::d.
-    (mvp w z).k + b.k
+    (w `mvp` z).k + b.k
 
 
 ' try it out
@@ -188,28 +165,30 @@ AFAICT no data structure in Dex right now can hold a arbitrary collection
 of neural network layers/parameters, as it would be a heterogeneous vector, or a tuple of non-fixed length
 As such need different functions for each depth of network
 
-xorNetParams = ( ..
-    initAffine @2 @6 (newKey 10), ..
-    initAffine @6 @1 (newKey 20) ..
+type TwoNet iz hz oz = (Layer hz iz, Layer oz hz)
+
+xorNetParams = (
+    initAffine @2 @6 (newKey 10),
+    initAffine @6 @1 (newKey 20),
 )
 
 :t xorNetParams
 
-apply2Net:: ((hz=>(iz=>Real), hz=>Real), (oz=>(hz=>Real), oz=>Real)) -> iz=>Real -> oz=>Real
-apply2Net (layer1, layer2) input = 
+applyTwoNet:: A iz hz::Ix oz. TwoNet iz hz oz -> iz=>Real -> oz=>Real
+applyTwoNet (layer1, layer2) input = 
     sigmoid $ applyAffine layer2 $ sigmoid $ applyAffine layer1 input
 
-apply2Net xorNetParams [0.9, 0.1]
+applyTwoNet xorNetParams [0.9, 0.1]
 
-(binaryCrossEntropy [1.0]) $ apply2Net xorNetParams [0.9, 0.1]
+(binaryCrossEntropy [1.0]) $ applyTwoNet xorNetParams [0.9, 0.1]
 
-loss2Net:: (oz=>Real->oz=>Real->Real) -> oz=>Real -> iz=>Real -> ((hz=>(iz=>Real), hz=>Real), (oz=>(hz=>Real), oz=>Real)) -> Real
-loss2Net lossf target input netParams = ..
-    lossf target $ apply2Net netParams input
+loss2Net:: A iz hz::Ix oz. LossFun oz -> oz=>Real -> iz=>Real -> TwoNet iz hz oz -> Real
+loss2Net lossf target input netParams = 
+    lossf target $ applyTwoNet netParams input
 
 loss2Net binaryCrossEntropy [1.0] [0.9, 0.1] xorNetParams 
 
-xorLoss:: ((hz=>(2=>Real), hz=>Real), (1=>(hz=>Real), 1=>Real)) -> Real
+xorLoss:: A hz::Ix. TwoNet 2 hz 1 -> Real
 xorLoss = loss2Net binaryCrossEntropy [1.0] [0.9, 0.1]
 
 
@@ -217,10 +196,10 @@ grad xorLoss xorNetParams
 
 ' ---
 
-fakeCrossEntropy:: (1=>Real)->(1=>Real)->Real
+fakeCrossEntropy:: LossFun 1
 fakeCrossEntropy target output = sum output
 
-fakeXorLoss:: ((hz=>(2=>Real), hz=>Real), (1=>(hz=>Real), 1=>Real)) -> Real
+fakeXorLoss:: A hz::Ix. TwoNet 2 hz 1 -> Real
 fakeXorLoss = loss2Net fakeCrossEntropy [1.0] [0.9, 0.1]
 
 
