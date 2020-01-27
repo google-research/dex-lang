@@ -34,38 +34,41 @@ import Inference
 import Pass
 import Parser
 import ParseUtil
+import Normalize
 
 serializeVal :: Val -> IO FlatValRef
 serializeVal val = do
   let ty = getType val
   vecRefs <- mapM (uncurry allocateArray) $ flattenType ty
   let flatValRef = FlatVal ty vecRefs
-  writeVal flatValRef $ stripSrcAnnot  val
+  writeVal flatValRef $ val
   return flatValRef
 
 writeVal :: FlatValRef -> Val -> IO ()
-writeVal (FlatVal (BaseType _) [ref]) (Lit x) = storeArray ref $ scalarArray x
-writeVal (FlatVal (RecType _ r) refs) (RecCon _ valRec) =
+writeVal (FlatVal (BaseType _) [ref]) (PrimCon (Lit x)) =
+  storeArray ref $ scalarArray x
+writeVal (FlatVal (RecType _ r) refs) (PrimCon (RecCon _ valRec)) =
   sequence_ $ recZipWith f refRec valRec
   where
     refRec = listIntoRecord r refs
     f (ty,refs') val = writeVal (FlatVal ty refs') val
-writeVal (FlatVal (TabType _ a) refs) (TabCon _ xs) = zipWithM_ writeRow [0..] xs
+writeVal (FlatVal (TabType _ a) refs) (PrimCon (AtomicTabCon _ xs)) =
+  zipWithM_ writeRow [0..] xs
   where
     writeRow :: Int -> Val -> IO ()
     writeRow i row = writeVal (FlatVal a (map (subArrayRef i) refs)) row
-writeVal (FlatVal (IdxSetLit _) [ref]) (IdxLit _ i) =
+writeVal (FlatVal (IdxSetLit _) [ref]) (PrimCon (IdxLit _ i)) =
   storeArray ref $ scalarArray $ IntLit i
 writeVal fv val = error $ "Unexpected flatval/val: " ++ pprint (fv, show val)
 
 restructureVal :: FlatVal -> Val
 restructureVal (FlatVal ty arrays) = case ty of
-  BaseType _  -> Lit      $ readScalar array  where [array] = arrays
-  RecType k r -> RecCon k $ fst $ traverseFun restructureValPartial r arrays
-  TabType (IdxSetLit n) a -> TabCon ty $
+  BaseType _  -> PrimCon $ Lit      $ readScalar array  where [array] = arrays
+  RecType k r -> PrimCon $ RecCon k $ fst $ traverseFun restructureValPartial r arrays
+  TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon ty $
     [restructureVal $ FlatVal a $ map (subArray i) arrays | i <- [0..n-1]]
-  IdxSetLit n -> IdxLit n i  where [array] = arrays
-                                   IntLit i = readScalar array
+  IdxSetLit n -> PrimCon $ IdxLit n i  where [array] = arrays
+                                             IntLit i = readScalar array
   _ -> error $ "Unexpected type: " ++ show ty
 
 restructureValPartial :: Type -> [Array] -> (Val, [Array])
@@ -215,7 +218,8 @@ loadDataFile fname DexObject = do
   source <- readFile fname
   let uval = ignoreExcept $ parseData source
   let (_, val) = ignoreExcept $ inferExpr uval
-  serializeVal val
+  let val' = ignoreExcept $ normalizeVal val
+  serializeVal val'
 loadDataFile fname DexBinaryObject = do
    -- TODO: check lengths are consistent with type
   (n, header@(DBOHeader ty sizes)) <- readHeader fname

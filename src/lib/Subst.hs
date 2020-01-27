@@ -7,9 +7,8 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Scope, Subst, subst, NSubst, nSubst, NSubstEnv) where
-
-import Data.Foldable
+module Subst (Scope, Subst, subst, SubstEnv,
+              reduceAtom, nRecGet, nTabGet) where
 
 import Env
 import Record
@@ -18,102 +17,71 @@ import PPrint
 import Fresh
 
 type Scope = Env ()
-type SubstEnvP a = (Env a, Scope)
-
--- === Expr ===
-
-type SubstVal = LorT (Either Name TLam) Type
-type SubstEnv = SubstEnvP SubstVal
+type SubstEnv = (FullEnv Atom Type, Scope)
 
 class Subst a where
   subst :: SubstEnv -> a -> a
 
+instance (TraversableExpr expr, Subst ty, Subst e, Subst lam)
+         => Subst (expr ty e lam) where
+  subst env expr = fmapExpr expr (subst env) (subst env) (subst env)
+
 instance Subst Expr where
-  subst env@(sub, scope) expr = case expr of
-    Lit _ -> expr
-    Var v ty tys ->
-      case envLookup sub v of
-        Nothing -> Var v ty' tys'
-        Just (L (Left v')) -> Var v' ty' tys'
-        Just (L (Right (TLam tbs body))) -> subst (sub', scope) body
-          where sub' = fold [tv @> T t | (tv:>_, t) <- zip tbs tys']
-        Just (T _ ) -> error "Expected let-bound var"
-      where
-        tys' = map recurTy tys
-        ty' = recurTy ty
-    PrimOp op ts xs -> PrimOp op (map recurTy ts) (map recur xs)
-    Decl decl body -> Decl decl'' body'
-      where
-        decl' = subst env decl
-        (decl'', env') = substDeclEnv scope decl'
-        body' = subst (env <> env') body
-    Lam l p body -> Lam l' p'' body'
-      where
-        p' = fmap (subst env) p
-        l' = recurTy l
-        (p'', env') = renamePat scope p'
-        body' = subst (env <> env') body
-    App e1 e2 -> App (recur e1) (recur e2)
-    For p body -> For p'' body'
-      where
-        p' = fmap (subst env) p
-        (p'', env') = renamePat scope p'
-        body' = subst (env <> env') body
-    Get e1 e2 -> Get (recur e1) (recur e2)
-    RecCon k r -> RecCon k (fmap recur r)
-    IdxLit _ _ -> expr
-    TabCon ty xs -> TabCon (recurTy ty) (map recur xs)
-    Pack e ty exTy -> Pack (recur e) (recurTy ty) (recurTy exTy)
-    Annot e t        -> Annot (recur e) (recurTy t)
-    SrcAnnot e pos   -> SrcAnnot (recur e) pos
-    where
-      recur :: Expr -> Expr
-      recur = subst env
+  subst env@(_, scope) expr = case expr of
+    Decl decl body -> Decl decl' (subst (env <> env') body)
+      where (decl', env') = refreshDecl scope (subst env decl)
+    CExpr e  -> CExpr $ subst env e
+    Atom  x  -> Atom  $ subst env x
 
-      recurTy :: Type -> Type
-      recurTy = subst env
+instance Subst Atom where
+  subst env@(sub, scope) atom = case atom of
+    Var v ty -> case envLookup sub v of
+      Nothing -> Var v (subst env ty)
+      Just (L x') -> subst (mempty, scope) x'
+      Just (T _ ) -> error "Expected let-bound variable"
+    PrimCon con -> reduceAtom $ PrimCon $ subst env con
 
-substDeclEnv :: Scope -> Decl -> (Decl, SubstEnv)
-substDeclEnv scope decl =
-  case decl of
-    LetMono p rhs -> (LetMono p' rhs, env)
-      where (p', env) = renamePat scope p
-    LetPoly (v:>ty) tlam -> (LetPoly (v':>ty) tlam, env)
-      where
-        v' = rename v scope
-        env = (v @> L (Left v'), v' @> ())
-    DoBind p rhs -> (DoBind p' rhs, env)
-      where (p', env) = renamePat scope p
-    Unpack b tv bound -> (Unpack b' tv' bound, env <> env')
-      where
-        ([tv':>k], env) = renameTBinders scope [tv:>k]
-        ([b'], env') = renamePat (scope <> snd env) [b]
-    TyDef _ _ _ _ -> error "Shouldn't have type alias left"
+reduceAtom :: Atom -> Atom
+reduceAtom atom = case atom of
+  PrimCon (RecGet e i) -> nRecGet e i
+  PrimCon (TabGet e i) -> nTabGet e i
+  _ -> atom
 
-instance Subst Decl where
-  subst env decl = case decl of
-    LetMono p bound   -> LetMono (fmap (subst env) p) (subst env bound)
-    LetPoly b tlam    -> LetPoly (fmap (subst env) b) (subst env tlam)
-    DoBind p bound    -> DoBind  (fmap (subst env) p) (subst env bound)
-    Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
-    -- TODO: freshen binders
-    TyDef dt v bs ty ->
-      TyDef dt v bs (subst (subEnv `envDiff` bindFold bs, scope) ty)
-      where (subEnv, scope) = env
+nRecGet ::  Atom -> RecField -> Atom
+nRecGet (PrimCon (RecCon _ r)) i = recGet r i
+nRecGet x i = PrimCon $ RecGet x i
 
-instance Subst TLam where
-   subst env@(_, scope) (TLam tbs body) = TLam tbs' body'
-     where
-       (tbs', env') = renameTBinders scope tbs
-       body' = subst (env <> env') body
+nTabGet :: Atom -> Atom -> Atom
+nTabGet (PrimCon (AtomicFor (LamExpr (v:>_) body))) i =
+  case body of
+    Atom atom -> subst (v@>L i, scope) atom
+      -- TODO: does the scope actually need all the free vars in atom?
+      where scope = fmap (const ()) (freeVars i)
+    _ -> error $ "Not an atomic body " ++ pprint body
+nTabGet e i = PrimCon $ TabGet e i
 
-renamePat :: Traversable t => Scope -> t Binder -> (t Binder, SubstEnv)
-renamePat scope p = (p', (fmap (L . Left . binderVar) env, scope'))
-  where (p', (env, scope')) = renameBinders p scope
+-- nTabGet :: Atom -> Atom -> Atom
+-- nTabGet (PrimCon (AtomicFor (LamExpr (v:>_) ~(Atom atom)))) i =
+--   subst (v@>L i, scope) atom
+--   -- TODO: does the scope actually need all the free vars in atom?
+--   where scope = fmap (const ()) (freeVars i)
+-- nTabGet e i = PrimCon $ TabGet e i
 
-renameTBinders :: Scope -> [TBinder] -> ([TBinder], SubstEnv)
-renameTBinders scope tbs = (tbs', (fmap (T . TypeVar . binderVar) env, scope'))
-  where (tbs', (env, scope')) = renameBinders tbs scope
+instance Subst LamExpr where
+  subst env@(_, scope) (LamExpr b body) = LamExpr b' body'
+    where (b', env') = refreshBinder scope (subst env b)
+          body' = subst (env <> env') body
+
+refreshDecl :: Env () -> Decl -> (Decl, SubstEnv)
+refreshDecl scope decl = case decl of
+  Let b bound -> (Let b' bound, env)
+    where (b', env) = refreshBinder scope (subst env b)
+  Unpack _ _ _ -> undefined
+
+refreshBinder :: Env () -> Binder -> (Binder, SubstEnv)
+refreshBinder scope (v:>ty) = (v':>ty, env')
+  where v' = rename v scope
+        env' = (v@>L (Var v' ty), v'@>())
 
 instance Subst Type where
    subst env@(sub, _) ty = case ty of
@@ -136,6 +104,11 @@ instance Subst Type where
     NoAnn       -> NoAnn
     where recur = subst env
 
+instance Subst Decl where
+  subst env decl = case decl of
+    Let    b    bound -> Let    (subst env b)    (subst env bound)
+    Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
+
 instance Subst SigmaType where
   subst env (Forall ks body) = Forall ks (subst env body)
 
@@ -147,92 +120,3 @@ instance Subst a => Subst (RecTree a) where
 
 instance (Subst a, Subst b) => Subst (a, b) where
   subst env (x, y) = (subst env x, subst env y)
-
--- -- === NExpr ===
-
-type NSubstVal = LorT NAtom Name
-type NSubstEnv = SubstEnvP NSubstVal
-
-class NSubst a where
-  nSubst :: NSubstEnv -> a -> a
-
-instance NSubst NExpr where
-  nSubst env expr = case expr of
-    NDecl decl body -> case decl of
-      NLet b bound -> NDecl (NLet b' (recur bound)) body'
-        where
-          (~[b'], env') = refreshNBinders env [b]
-          body' = nSubst (env <> env') body
-      NUnpack _ _ _ -> error $ "NUnpack not implemented" -- TODO
-    NScan x lam -> NScan (recurA x) (nSubst env lam)
-    NPrimOp b ts x -> NPrimOp b (map (nSubst env) ts) (map recurA x)
-    NApp f x -> NApp (recurA f) (recurA x)
-    NRecGet x i -> NRecGet (recurA x) i
-    NAtom x -> NAtom $ recurA x
-    NTabCon n t x -> NTabCon (nSubst env n) (nSubst env t) (map recurA x)
-    where
-      recur :: NExpr -> NExpr
-      recur = nSubst env
-      recurA :: NAtom -> NAtom
-      recurA = nSubst env
-
-instance NSubst NLamExpr where
-  nSubst env (NLamExpr bs body) = NLamExpr bs' body'
-    where (bs', env') = refreshNBinders env bs
-          body' = nSubst (env <> env') body
-
-instance NSubst NAtom where
-  nSubst env@(sub, scope) atom = case atom of
-    NLit _ -> atom
-    NVar v ty ->
-      case envLookup sub v of
-        Nothing -> NVar v (nSubst env ty)
-        Just (L x') -> nSubst (mempty, scope) x'
-        Just (T _) -> error "Expected let-bound variable"
-    NGet e i -> NGet (nSubst env e) (nSubst env i)
-    NAtomicFor b body -> NAtomicFor b' body'
-      where
-        ([b'], env') = refreshNBinders env [b]
-        body' = nSubst (env <> env') body
-    NLam l lam -> NLam l (nSubst env lam)
-    NRecCon k r -> NRecCon k (fmap (nSubst env) r)
-    NAtomicPrimOp b ts xs ->
-      NAtomicPrimOp b (map (nSubst env) ts) (map (nSubst env) xs)
-    NDoBind m f -> NDoBind (nSubst env m) (nSubst env f)
-
-instance NSubst Type where
-  nSubst env@(sub, _) ty = case ty of
-    BaseType _ -> ty
-    TypeVar v -> do
-      case envLookup sub v of
-        Nothing -> ty
-        Just (T x') -> TypeVar x'
-        Just (L _) -> error "Expected type variable"
-    ArrType l a b -> ArrType l (recur a) (recur b)
-    RecType k r -> RecType k (fmap recur r)
-    TabType a b -> TabType (recur a) (recur b)
-    Monad eff a -> Monad (fmap recur eff) (recur a)
-    Lens a b    -> Lens (recur a) (recur b)
-    Exists t    -> Exists $ recur t
-    IdxSetLit _ -> ty
-    BoundTVar _ -> ty
-    Mult l -> Mult l
-    NoAnn -> NoAnn
-    TypeApp n xs -> TypeApp (recur n) (map recur xs)
-    where recur = nSubst env
-
-instance NSubst NDecl where
-   nSubst env decl = case decl of
-     NLet b expr      -> NLet    (nSubst env b)   (nSubst env expr)
-     NUnpack b v expr -> NUnpack (nSubst env b) v (nSubst env expr)
-
-instance NSubst NBinder where
-   nSubst env (v:>ty) = v :> nSubst env ty
-
-refreshNBinders :: Traversable t => NSubstEnv -> t NBinder -> (t NBinder, NSubstEnv)
-refreshNBinders env@(_, scope) bs = renameNBinders scope bs'
-  where bs' = fmap (nSubst env) bs
-
-renameNBinders :: Traversable t => Scope -> t NBinder -> (t NBinder, NSubstEnv)
-renameNBinders scope p = (p', (fmap (\(v:>ty) -> L (NVar v ty)) env, scope'))
-  where (p', (env, scope')) = renameBinders p scope

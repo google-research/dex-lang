@@ -14,7 +14,7 @@
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
-              renameBinders, freshenBinder) where
+              renameBinders) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -112,10 +112,10 @@ freshName v cont = do
   let v' = rename v scope
   localFresh (<> v' @> ()) (cont v')
 
-freshenBinder :: MonadFreshR m =>
-                 BinderP a -> (Env Name -> BinderP a -> m b) -> m b
-freshenBinder (v :> ann) cont = freshName v $ \v' ->
-                                  cont (v @> v') (v' :> ann)
+-- freshenBinder :: MonadFreshR m =>
+--                  BinderP a -> (Env Name -> BinderP a -> m b) -> m b
+-- freshenBinder (v :> ann) cont = freshName v $ \v' ->
+--                                   cont (v @> v') (v' :> ann)
 
 class Monad m => MonadFreshR m where
   askFresh :: m FreshScope

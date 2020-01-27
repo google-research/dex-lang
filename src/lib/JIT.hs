@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module JIT (jitPass) where
 
@@ -28,6 +29,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
+import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
 
 import Syntax
@@ -168,9 +170,9 @@ compileProg (ImpProg ((maybeName, instr):prog)) = do
 
 compileInstr :: ImpInstr -> CompileM (Maybe Operand)
 compileInstr instr = case instr of
-  IPrimOp b tys xs -> do
-    xs' <- mapM compileExpr xs
-    liftM Just $ compileBuiltin b tys xs'
+  IPrimOp op -> do
+    op' <- traverseExpr op (return . scalarTy) compileExpr (return . const ())
+    liftM Just $ compilePrimOp op'
   Load ref -> do
     ref' <- compileExpr ref
     liftM Just $ load ref'
@@ -354,38 +356,38 @@ scalarTy ty = case ty of
 extendOneBit :: Operand -> CompileM Operand
 extendOneBit x = emitInstr "" boolTy (L.ZExt x boolTy [])
 
-compileFFICall :: Tag -> [BaseType] -> [Operand] -> CompileM Operand
-compileFFICall name tys xs = do
+compileFFICall :: Tag -> [L.Type] -> L.Type -> [Operand] -> CompileM Operand
+compileFFICall name argTys retTy xs = do
   modify $ setFunSpecs (f:)
   emitInstr name retTy $ externCall f xs
-  where
-    retTy:argTys = map scalarTy tys
-    f = ExternFunSpec (L.Name (fromString (tagToStr name))) retTy argTys
+  where f = ExternFunSpec (L.Name (fromString (tagToStr name))) retTy argTys
 
-compileBuiltin :: Builtin -> [BaseType] -> [Operand] -> CompileM Operand
-compileBuiltin IAdd [] [x, y] = emitInstr "" longTy $ L.Add False False x y []
-compileBuiltin ISub [] [x, y] = emitInstr "" longTy $ L.Sub False False x y []
-compileBuiltin IMul [] [x, y] = emitInstr "" longTy $ L.Mul False False x y []
-compileBuiltin Rem  [] [x, y] = emitInstr "" longTy $ L.SRem x y []
-compileBuiltin FAdd [] [x, y] = emitInstr "" realTy $ L.FAdd L.noFastMathFlags x y []
-compileBuiltin FSub [] [x, y] = emitInstr "" realTy $ L.FSub L.noFastMathFlags x y []
-compileBuiltin FMul [] [x, y] = emitInstr "" realTy $ L.FMul L.noFastMathFlags x y []
-compileBuiltin FDiv [] [x, y] = emitInstr "" realTy $ L.FDiv L.noFastMathFlags x y []
+compilePrimOp :: PrimOp L.Type Operand () -> CompileM Operand
+compilePrimOp (ScalarBinOp op x y) = case op of
+  IAdd   -> emitInstr "" longTy $ L.Add False False x y []
+  ISub   -> emitInstr "" longTy $ L.Sub False False x y []
+  IMul   -> emitInstr "" longTy $ L.Mul False False x y []
+  Rem    -> emitInstr "" longTy $ L.SRem x y []
+  FAdd   -> emitInstr "" realTy $ L.FAdd L.noFastMathFlags x y []
+  FSub   -> emitInstr "" realTy $ L.FSub L.noFastMathFlags x y []
+  FMul   -> emitInstr "" realTy $ L.FMul L.noFastMathFlags x y []
+  FDiv   -> emitInstr "" realTy $ L.FDiv L.noFastMathFlags x y []
+  And    -> emitInstr "" boolTy $ L.And x y []
+  Or     -> emitInstr "" boolTy $ L.Or  x y []
+  ICmp c -> emitInstr "" boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
+  FCmp c -> emitInstr "" boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
+compilePrimOp (ScalarUnOp op x) = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-compileBuiltin FNeg [] [x] = emitInstr "" realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
-compileBuiltin (Cmp op) [IntType]  [x, y] = emitInstr "" boolTy (L.ICmp (intCmpOp   op) x y []) >>= extendOneBit
-compileBuiltin (Cmp op) [RealType] [x, y] = emitInstr "" boolTy (L.FCmp (floatCmpOp op) x y []) >>= extendOneBit
-compileBuiltin And [] [x, y] = emitInstr "" boolTy $ L.And x y []
-compileBuiltin Or  [] [x, y] = emitInstr "" boolTy $ L.Or  x y []
-compileBuiltin Not [] [x]    = emitInstr "" boolTy $ L.Xor x (litInt 1) []
-compileBuiltin Select [ty] [p, x, y] = do
+  FNeg      -> emitInstr "" realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
+  Not       -> emitInstr "" boolTy $ L.Xor x (litInt 1) []
+  BoolToInt -> return x -- bools stored as ints
+  IntToReal -> emitInstr "" realTy $ L.SIToFP x realTy []
+compilePrimOp (Select ty p x y) = do
   p' <- emitInstr "" (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
-  emitInstr "" (scalarTy ty) $ L.Select p' x y []
-compileBuiltin BoolToInt [] [x] = return x -- bools stored as ints
-compileBuiltin IntToReal [] [x] = emitInstr "" realTy $ L.SIToFP x realTy []
-compileBuiltin (FFICall _ name) ts xs = compileFFICall (fromString name) ts xs
-compileBuiltin Todo _ _ = throw MiscErr "Can't compile 'todo'"
-compileBuiltin b ts _ = error $ "Can't JIT primop: " ++ pprint (b, ts)
+  emitInstr "" ty $ L.Select p' x y []
+compilePrimOp (FFICall name argTys ansTy xs) =
+  compileFFICall (fromString name) argTys ansTy xs
+compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate
 floatCmpOp op = case op of
@@ -484,3 +486,9 @@ setBlockName update s = s { blockName = update (blockName s) }
 
 setFunSpecs :: ([ExternFunSpec] -> [ExternFunSpec]) -> CompileState -> CompileState
 setFunSpecs update s = s { funSpecs = update (funSpecs s) }
+
+instance Pretty L.Operand where
+  pretty x = pretty (show x)
+
+instance Pretty L.Type where
+  pretty x = pretty (show x)

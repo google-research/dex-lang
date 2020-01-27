@@ -142,7 +142,7 @@ mainDriver pass env fname resultSetChan = flip evalStateT initDriverState $ do
                           worker env block pass (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
-      modify $ setVarMap $ (<> fmap (const key) (lhsVars block))
+      modify $ setVarMap $ (<> fmap (const key) (sourceBlockBoundVars block))
       return key
 
     resultChan key = subChan (singletonResult key) resultSetChan

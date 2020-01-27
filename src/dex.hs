@@ -27,7 +27,6 @@ import Flops
 import WebOutput
 import Normalize
 import Simplify
-import Interpreter
 import Serialize
 
 data Backend = Jit | Interp
@@ -43,16 +42,16 @@ data CmdOpts = CmdOpts EvalMode EvalOpts
 type FName = String
 
 typeCheckPass :: TopPass SourceBlock TopDecl
-typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkTyped
+typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkFExprPass
 
 fullPassInterp :: TopPass SourceBlock Void
-fullPassInterp = typeCheckPass >+> interpPass
+fullPassInterp = undefined -- typeCheckPass >+> interpPass
 
 fullPassJit :: TopPass SourceBlock Void
 fullPassJit = typeCheckPass
-          >+> normalizePass >+> checkNExpr
-          >+> derivPass     >+> checkNExpr
-          >+> simpPass      >+> checkNExpr
+          >+> normalizePass >+> checkExprPass
+          >+> derivPass     >+> checkExprPass
+          >+> simpPass      >+> checkExprPass
           >+> impPass       >+> checkImp
           >+> flopsPass
           >+> jitPass

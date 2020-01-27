@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Inference (typePass, inferExpr) where
@@ -28,8 +29,9 @@ import Cat
 import Subst
 
 data Constraint = Constraint Type Type String SrcCtx
+type TypeEnv = FullEnv SigmaType Kind
 type QVars = Env ()
-type UExpr = Expr
+type UExpr = FExpr
 type InferM a = ReaderT (SrcCtx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
@@ -43,7 +45,7 @@ typePass = TopPass $ \tdecl -> case tdecl of
   RuleDef ann ty tlam -> do
     ~(LetPoly _ tlam', _) <- liftTop $ inferDecl $ LetPoly ("_":>ty) tlam
     return [RuleDef ann ty tlam']
-  EvalCmd (Command GetType (SrcAnnot (Var v NoAnn []) _)) -> do
+  EvalCmd (Command GetType (SrcAnnot (FVar v NoAnn []) _)) -> do
     env <- look
     case envLookup env v of
       Nothing -> throwTopErr $ Err UnboundVarErr Nothing (pprint v)
@@ -66,19 +68,18 @@ runInferM env m = do
                      runWriterT $ flip runReaderT (Nothing, env) $ m
   return ans
 
-inferExpr :: UExpr -> Except (Type, Expr)
+inferExpr :: UExpr -> Except (Type, FExpr)
 inferExpr expr = runInferM mempty $ solveLocalMonomorphic (infer expr)
 
-inferDecl :: Decl -> InferM (Decl, TypeEnv)
+inferDecl :: FDecl -> InferM (FDecl, TypeEnv)
 inferDecl decl = case decl of
   LetMono p bound -> do
     -- TOOD: better errors - infer polymorphic type to suggest annotation
     (p', bound') <- solveLocalMonomorphic $ do
                       p' <- annotPat p
-                      bound' <- check bound (patType p')
+                      bound' <- check bound (getType p')
                       return (p', bound')
     return (LetMono p' bound', foldMap asEnv p')
-  DoBind _ _ -> error "Shouldn't be able to get here"
   LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
     let vs = [v | (v:>_) <- tbs]
         tyBody' = instantiateTVs (map TypeVar vs) tyBody
@@ -86,98 +87,53 @@ inferDecl decl = case decl of
     tlamBody' <- checkLeaks vs $ solveLocalMonomorphic $
                    extendRSnd (foldMap tbind tbs) $ check tlamBody tyBody'
     return (LetPoly b (TLam tbs tlamBody'), lbind b)
-  Unpack (v:>_) tv bound -> do
+  FUnpack (v:>_) tv bound -> do
     (maybeEx, bound') <- solveLocalMonomorphic $ infer bound
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
                                _ -> throw TypeErr (pprint maybeEx)
     -- TODO: check possible type annotation
     let b' = v :> boundTy
-    return (Unpack b' tv bound', asEnv b')
+    return (FUnpack b' tv bound', asEnv b')
   TyDef NewType v [] ty -> return (TyDef NewType v [] ty, v @> T (Kind []))
   TyDef NewType _ _ _ -> error "Parametric newtype not implemented"
   TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
 
-infer :: UExpr -> InferM (Type, Expr)
+infer :: UExpr -> InferM (Type, FExpr)
 infer expr = do ty <- freshQ
                 expr' <- check expr ty
                 return (ty, expr')
 
-check :: UExpr -> Type -> InferM Expr
+check :: UExpr -> Type -> InferM FExpr
 check expr reqTy = case expr of
-  Lit c -> do
-    constrainReq (BaseType (litType c))
-    return (Lit c)
-  Var v _ ts -> do
+  FDecl decl@(FUnpack _ tv _) body -> do
+    (decl', env') <- inferDecl decl
+    body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
+               check body reqTy
+    return $ FDecl decl' body'
+  FDecl decl body -> do
+    (decl', env') <- inferDecl decl
+    body' <- extendRSnd env' $ check body reqTy
+    return $ FDecl decl' body'
+  FVar v _ ts -> do
     Forall kinds body <- asks $ fromL . (! v) . snd
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
-    return $ Var v reqTy ts'
-  PrimOp b ts args -> do
-    let BuiltinType kinds _ argTys ansTy = builtinType b
-    vs <- mapM (const freshQ) (drop (length ts) kinds)
-    let ts' = ts ++ vs
-    constrainReq (instantiateTVs ts' ansTy)
-    let argTys' = map (instantiateTVs ts') argTys
-    args' <- zipWithM check args argTys'
-    return $ PrimOp b ts' args'
-  Decl (DoBind p bound) body -> do
-    (eff, a) <- fromMonadType expr reqTy
-    p' <- annotPat p
-    bound' <- check bound (Monad eff (patType p'))
-    body' <- extendRSnd (foldMap asEnv p') $ check body (Monad eff a)
-    return $ Decl (DoBind p' bound') body'
-  Decl decl@(Unpack _ tv _) body -> do
-    (decl', env') <- inferDecl decl
-    body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
-               check body reqTy
-    return $ Decl decl' body'
-  Decl decl body -> do
-    (decl', env') <- inferDecl decl
-    body' <- extendRSnd env' $ check body reqTy
-    return $ Decl decl' body'
-  Lam mAnn p body -> do
-    m <- case mAnn of  NoAnn -> freshLin
-                       ty    -> return ty
-    (m', a, b) <- splitFun expr reqTy
-    constrainEq m m' (pprint expr)
-    p' <- solveLocalMonomorphic $ checkPat p a
-    body' <- extendRSnd (foldMap asEnv p') (check body b)
-    return $ Lam m p' body'
-  App fexpr arg -> do
-    (f, fexpr') <- infer fexpr
-    (_, a, b) <- splitFun fexpr f
-    arg' <- check arg a
-    constrainReq b
-    return $ App fexpr' arg'
-  For p body -> do
-    (a, b) <- splitTab expr reqTy
-    p' <- checkPat p a
-    body' <- extendRSnd (foldMap asEnv p') (check body b)
-    return $ For p' body'
-  Get tabExpr idxExpr -> do
-    (tabTy, tabExpr') <- infer tabExpr
-    (i, v) <- splitTab tabExpr tabTy
-    idxExpr' <- check idxExpr i
-    constrainReq v
-    return $ Get tabExpr' idxExpr'
-  RecCon k r -> do
-    tyExpr <- traverse infer r
-    constrainReq (RecType k (fmap fst tyExpr))
-    return $ RecCon k (fmap snd tyExpr)
-  TabCon _ xs -> do
-    (n, elemTy) <- splitTab expr reqTy
-    xs' <- mapM (flip check elemTy) xs
-    let n' = length xs
-    -- `==> elemTy` for better messages
-    constrainEq (n ==> elemTy) (IdxSetLit n' ==> elemTy) (pprint expr)
-    return $ TabCon reqTy xs'
-  Pack e ty exTy -> do
-    let (Exists exBody) = exTy
-    constrainReq exTy
-    let t = instantiateTVs [ty] exBody
-    e' <- check e t
-    return $ Pack e' ty exTy
+    return $ FVar v reqTy ts'
+  -- TODO: consider special-casing App for better error messages
+  -- (e.g. in `f x`, infer `f` then check `x` rather than checking `f` first)
+  FPrimExpr prim -> do
+    (primTy, unc) <- solveLocal $ do
+       typed <- generateSubExprTypes prim
+       let types = fmapExpr typed snd snd snd
+       ansTy <- traversePrimExprType types
+                  (\t1 t2 -> constrainEq t1 t2 (pprint expr))
+                  (\_ _ -> return ())
+       constrainReq ansTy
+       return typed
+    -- TODO: don't ignore explicit annotations (via `snd`)
+    extend $ foldMap (@>()) unc
+    liftM FPrimExpr $ traverseExpr primTy (uncurry checkAnn) (uncurry check) (uncurry checkLam)
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     constrainReq annTy
@@ -185,11 +141,6 @@ check expr reqTy = case expr of
   SrcAnnot e pos -> do
     e' <- local (\(_,env) -> (Just pos, env)) (check e reqTy)
     return $ SrcAnnot e' pos
-  IdxLit n i -> do
-    unless (0 <= i && i < n) $ throw TypeErr $ "Index out of bounds: "
-                                 ++ pprint i ++ " of " ++ pprint n
-    constrainReq (IdxSetLit n)
-    return $ IdxLit n i
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
 
@@ -211,11 +162,70 @@ constrainEq t1 t2 s = do
   ctx <- asks fst
   tell [Constraint t1 t2 s ctx]
 
+checkLam :: FLamExpr -> (Type, Type) -> InferM FLamExpr
+checkLam (FLamExpr p body) (a, b) = do
+  p' <- solveLocalMonomorphic $ checkPat p a
+  body' <- extendRSnd (foldMap asEnv p') (check body b)
+  return $ FLamExpr p' body'
+
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
   p' <- annotPat p
-  constrainEq ty (patType p') (pprint p)
+  constrainEq ty (getType p') (pprint p)
   return p'
+
+checkAnn :: Type -> Type -> InferM Type
+checkAnn NoAnn ty = return ty
+checkAnn ty' ty   = constrainEq ty' ty "annotation" >> return ty
+
+generateSubExprTypes :: PrimExpr ty e lam
+                     -> InferM (PrimExpr (ty, Type) (e, Type) (lam, (Type, Type)))
+generateSubExprTypes (PrimConExpr op) = liftM PrimConExpr $ case op of
+  Lam l lam -> do
+    l' <- freshLin
+    a <- freshQ
+    b <- freshQ
+    return $ Lam (l,l') (lam, (a,b))
+  LensCon (LensCompose l1 l2) -> do
+    a <- freshQ
+    b <- freshQ
+    c <- freshQ
+    return $ LensCon $ LensCompose (l1, Lens a b) (l2, Lens b c)
+  Bind m1 lam -> do
+    a <- freshQ
+    m1' <- freshMonadType
+    m2' <- freshMonadType
+    return $ Bind (m1,m1') (lam, (a,m2'))
+  TabGet xs i -> do
+    n <- freshQ
+    a <- freshQ
+    return $ TabGet (xs, TabType n a) (i, n)
+  _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
+generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
+  App f x -> do
+    l <- freshLin
+    a <- freshQ
+    b <- freshQ
+    return $ App (f, ArrType l a b) (x, a)
+  MonadRun r s m -> do
+    ~m'@(Monad (Effect r' _ s') _) <- freshMonadType
+    return $ MonadRun (r,r') (s,s') (m,m')
+  LensGet x l -> do
+    a <- freshQ
+    b <- freshQ
+    return $ LensGet (x,a) (l, Lens a b)
+  Scan x lam -> do
+    n <- freshQ
+    c <- freshQ
+    y <- freshQ
+    return $ Scan (x,c) (lam,(pairTy n c, pairTy c y))
+  _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
+
+doMSnd :: Monad m => m b -> a -> m (a, b)
+doMSnd m x = do { y <- m; return (x, y) }
+
+freshMonadType :: InferM Type
+freshMonadType = liftM2 Monad (liftM3 Effect freshQ freshQ freshQ) freshQ
 
 annotPat :: MonadCat QVars m => Pat -> m Pat
 annotPat pat = traverse annotBinder pat
@@ -228,34 +238,7 @@ fromAnn NoAnn = freshQ
 fromAnn ty    = return ty
 
 asEnv :: Binder -> TypeEnv
-asEnv (v:>ty) = v @> L (asSigma ty)
-
-fromMonadType :: UExpr -> Type -> InferM (EffectType, Type)
-fromMonadType expr ty = case ty of
-  Monad eff a -> return (eff, a)
-  _ -> do
-    eff <- liftM3 Effect freshQ freshQ freshQ
-    a <- freshQ
-    constrainEq ty (Monad eff a) (pprint expr)
-    return (eff, a)
-
--- TODO: consider expected/actual distinction. App/Lam use it in opposite senses
-splitFun :: UExpr -> Type -> InferM (Type, Type, Type)
-splitFun expr f = case f of
-  ArrType m a b -> return (m, a, b)
-  _ -> do a <- freshQ
-          b <- freshQ
-          m <- freshLin
-          constrainEq f (ArrType m a b) (pprint expr)
-          return (m, a, b)
-
-splitTab :: UExpr -> Type -> InferM (IdxSet, Type)
-splitTab expr t = case t of
-  TabType a b -> return (a, b)
-  _ -> do a <- freshQ
-          b <- freshQ
-          constrainEq t (a ==> b) (pprint expr)
-          return (a, b)
+asEnv (v:>ty) = v @> L (Forall [] ty)
 
 freshQ :: MonadCat QVars m => m Type
 freshQ = do
@@ -263,44 +246,37 @@ freshQ = do
   extend $ tv @> ()
   return (TypeVar tv)
 
--- TODO: use typeclasses annotations instead of distinguishing multiplicity vars like this
 freshLin :: MonadCat QVars m => m Type
 freshLin = do
   tv <- looks $ rename "*"
   extend $ tv @> ()
   return (TypeVar tv)
 
--- We don't currently use this but might want to bring it back
--- inferAndGeneralize :: UExpr -> InferM (SigmaType, TLam)
--- inferAndGeneralize expr = do
---   ((ty, expr'), qs) <- solveLocal $ infer expr
---   let sigmaTy = Forall (map (const (Kind [])) qs) $ abstractTVs qs ty
---   return (sigmaTy, TLam [] expr')  -- TODO: type-lambda too
+defaultLinearSubst :: [Name] -> (TSubst, QVars)
+defaultLinearSubst vs = (TSubst s, foldMap (@>()) vs `envDiff` s)
+  where multVars = filter isMult vs
+        s = foldMap (@> Mult NonLin) multVars
 
-solveLocalMonomorphic :: (Pretty a, Subst a) => InferM a -> InferM a
+solveLocalMonomorphic :: (Pretty a, TySubst a) => InferM a -> InferM a
 solveLocalMonomorphic m = do
   (ans, uncQs) <- solveLocal m
-  case uncQs of
-    [] -> return ans
+  let (s, uncQs') = defaultLinearSubst uncQs
+  let ans' = applySubst s ans
+  case envNames uncQs' of
+    [] -> return ans'
     vs -> throw TypeErr $ "Ambiguous type variables: " ++ pprint vs
-                        ++ "\n\n" ++ pprint ans
+                        ++ "\n\n" ++ pprint ans'
 
-solveLocal :: Subst a => InferM a -> InferM (a, [Name])
+solveLocal :: TySubst a => InferM a -> InferM (a, [Name])
 solveLocal m = do
   ((ans, freshQs), cs) <- captureW $ scoped m
   (s, cs') <- liftEither $ solvePartial freshQs cs
   tell $ cs'
   let freshQs' = freshQs `envDiff` fromTSubst s
-  let unconstrained = freshQs' `envDiff` fold [freeTyVars t1 <> freeTyVars t2
+  let unconstrained = freshQs' `envDiff` fold [freeVars t1 <> freeVars t2
                                                | Constraint t1 t2 _ _ <- cs']
   extend $ freshQs' `envDiff` unconstrained
-  let (s', unconstrained') = defaultLinearSubst unconstrained
-  return (applySubst (s <> s') ans, envNames unconstrained')
-
-defaultLinearSubst :: QVars -> (TSubst, QVars)
-defaultLinearSubst vs = (TSubst s, vs `envDiff` s)
-  where multVars = filter isMult (envNames vs)
-        s = foldMap (@> Mult NonLin) multVars
+  return (applySubst s ans, envNames unconstrained)
 
 solvePartial :: QVars -> [Constraint] -> Except (TSubst, [Constraint])
 solvePartial qs cs = do
@@ -374,7 +350,7 @@ bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
           | otherwise = extend $ TSubst (v @> t)
 
 occursIn :: Name -> Type -> Bool
-occursIn v t = v `isin` freeTyVars t
+occursIn v t = v `isin` freeVars t
 
 zonk :: Type -> SolveM Type
 zonk ty = do
@@ -392,11 +368,46 @@ instance Monoid TSubst where
 
 -- === misc ===
 
-freeTyVars :: Type -> Env ()
-freeTyVars ty = fmap (const ()) (freeVars ty)
-
-applySubst :: Subst a => TSubst -> a -> a
-applySubst (TSubst s) x = subst (fmap T s, mempty) x
+applySubst :: TySubst a => TSubst -> a -> a
+applySubst (TSubst s) x = tySubst s x
 
 extendRSnd :: (Monoid env, MonadReader (b, env) m) => env -> m a -> m a
 extendRSnd env m = local (\(x, env') -> (x, env' <> env)) m
+
+class TySubst a where
+  tySubst :: Env Type -> a -> a
+
+instance TySubst Type where
+  tySubst env ty = subst (fmap T env, mempty) ty
+
+instance TySubst FExpr where
+  tySubst env expr = case expr of
+    FDecl decl body  -> FDecl (tySubst env decl) (tySubst env body)
+    FVar v ty tyArgs -> FVar v (tySubst env ty) (map (tySubst env) tyArgs)
+    Annot e ty       -> Annot (tySubst env e) (tySubst env ty)
+    SrcAnnot e src   -> SrcAnnot (tySubst env e) src
+    FPrimExpr e -> FPrimExpr $ tySubst env e
+
+instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)
+         => TySubst (expr ty e lam) where
+  tySubst env expr = fmapExpr expr (tySubst env) (tySubst env) (tySubst env)
+
+instance TySubst FLamExpr where
+  tySubst env (FLamExpr p body) = FLamExpr (tySubst env p) (tySubst env body)
+
+instance TySubst FDecl where
+  tySubst env decl = case decl of
+    LetMono p e -> LetMono (fmap (tySubst env) p) (tySubst env e)
+    LetPoly (v:>Forall ks ty) (TLam bs body) ->
+       LetPoly (v:>Forall ks (tySubst env ty)) (TLam bs (tySubst env body))
+    TyDef a v args ty -> TyDef a v args (tySubst env ty)
+    FUnpack (v:>ty) tv e -> FUnpack (v:>(tySubst env ty)) tv (tySubst env e)
+
+instance (TySubst a, TySubst b) => TySubst (a, b) where
+  tySubst env (x, y) = (tySubst env x, tySubst env y)
+
+instance TySubst a => TySubst (BinderP a) where
+  tySubst env (v:>ty) = v:> tySubst env ty
+
+instance TySubst a => TySubst (RecTree a) where
+  tySubst env p = fmap (tySubst env) p

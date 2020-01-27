@@ -39,7 +39,7 @@ sourcePass' block = case sbContents block of
     liftM concat $ mapM sourcePass' $ parseProg source
   LoadData p fmt fname -> do
     (FlatVal ty refs) <- liftIOTop $ loadDataFile fname fmt
-    let expr = PrimOp (MemRef refs) [ty] []
+    let expr = FPrimExpr $ PrimConExpr (MemRef ty refs)
     return [TopDecl PlainDecl $ LetMono p expr]
   UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
   _ -> return []
@@ -67,41 +67,33 @@ liftTop m = do
   (env, scope) <- look
   liftExceptTop $ runFreshRT (runReaderT m env) scope
 
-deShadowExpr :: Expr -> DeShadowM Expr
+deShadowExpr :: FExpr -> DeShadowM FExpr
 deShadowExpr expr = case expr of
-  Lit x -> return (Lit x)
-  Var v ty tyArgs -> do
-    v' <- lookupLVar v
-    ty' <- deShadowType ty
-    tyArgs' <- mapM deShadowType tyArgs
-    return $ Var v' ty' tyArgs'
-  PrimOp b ts args -> liftM2 (PrimOp b) (mapM deShadowType ts) (traverse recur args)
-  Decl decl body ->
+  FDecl decl body ->
     withCat (deShadowDecl decl) $ \decl' -> do
       body' <- recur body
       return $ case decl' of Nothing -> body'
-                             Just decl'' -> Decl decl'' body'
-  Lam l p body ->
-    withCat (deShadowPat p) $ \p' ->
-      liftM (Lam l p') (recur body)
-  App fexpr arg -> liftM2 App (recur fexpr) (recur arg)
-  For p body ->
-    withCat (deShadowPat p) $ \p' ->
-      liftM (For p') (recur body)
-  Get e v -> liftM2 Get (recur e) (recur v)
-  RecCon k r -> liftM (RecCon k) $ traverse recur r
-  TabCon NoAnn xs -> liftM (TabCon NoAnn) (mapM recur xs)
-  TabCon _     _  -> error "No annotated tabcon in source language"
-  Annot body ty -> liftM2 Annot (recur body) (deShadowType ty)
+                             Just decl'' -> FDecl decl'' body'
+  FVar v ty tyArgs -> do
+    v' <- lookupLVar v
+    ty' <- deShadowType ty
+    tyArgs' <- mapM deShadowType tyArgs
+    return $ FVar v' ty' tyArgs'
+  FPrimExpr e ->
+    liftM FPrimExpr $ traverseExpr e deShadowType deShadowExpr deShadowLam
+  Annot body ty  -> liftM2 Annot (recur body) (deShadowType ty)
   SrcAnnot e pos -> liftM (flip SrcAnnot pos) (recur e)
-  Pack e ty exTy -> liftM3 Pack (recur e) (deShadowType ty) (deShadowType exTy)
-  IdxLit n i     -> return $ IdxLit n i
   where recur = deShadowExpr
 
 deShadowRuleAnn :: RuleAnn -> DeShadowM RuleAnn
 deShadowRuleAnn (LinearizationDef v) = liftM LinearizationDef (lookupLVar v)
 
-deShadowDecl :: Decl -> DeShadowCat (Maybe Decl)
+deShadowLam :: FLamExpr -> DeShadowM FLamExpr
+deShadowLam (FLamExpr p body) =
+  withCat (deShadowPat p) $ \p' ->
+    liftM (FLamExpr p') (deShadowExpr body)
+
+deShadowDecl :: FDecl -> DeShadowCat (Maybe FDecl)
 deShadowDecl (LetMono p bound) = do
   bound' <- toCat $ deShadowExpr bound
   p' <- deShadowPat p
@@ -111,16 +103,12 @@ deShadowDecl (LetPoly (v:>ty) tlam) = do
   ty' <- toCat $ deShadowSigmaType ty
   b' <- freshBinderP (v:>ty')
   return $ Just $ LetPoly b' tlam'
-deShadowDecl (DoBind p bound) = do
-  bound' <- toCat $ deShadowExpr bound
-  p' <- deShadowPat p
-  return $ Just $ DoBind p' bound'
-deShadowDecl (Unpack b tv bound) = do
+deShadowDecl (FUnpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
   extend (asSnd (tv @> ([], TypeVar tv')), tv'@>())
   b' <- freshBinder b
-  return $ Just $ Unpack b' tv' bound'
+  return $ Just $ FUnpack b' tv' bound'
 deShadowDecl (TyDef TyAlias v bs ty) = do  -- TODO: deal with capture
   -- TODO: handle shadowing from binders
   let env = fold [tv@>([], TypeVar tv) | (tv:>_) <- bs]
@@ -207,7 +195,7 @@ deShadowType ty = case ty of
   Exists body -> liftM Exists $ recur body
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty
-  Mult      _ -> return ty
+  Mult _      -> return ty
   NoAnn       -> return ty
   where recur = deShadowType
 

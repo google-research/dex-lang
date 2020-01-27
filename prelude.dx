@@ -52,9 +52,6 @@ real x = %inttoreal(x)
 b2i :: Bool -> Int
 b2i x = %booltoint(x)
 
-filter :: (a -> Bool) -> n=>a -> E m. m=>a
-filter f x = %filter(f, x)
-
 not :: Bool -> Bool
 not x = %not(x)
 
@@ -162,7 +159,7 @@ slice xs start = for i. xs.(asidx (asint i `iadd` start))
 'State-carrying loop constructs
 
 scan :: A n::Ix a::Data b .  a -> n=>(a->(a, b)) -> (a, n=>b)
-scan x0 fs = %scan(x0, for i. lam x. fs.i x)
+scan x0 fs = %scan(x0, lam (i,x). fs.i x)
 
 fold :: A n::Ix a::Data . a -> n=>(a->a) -> a
 fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
@@ -172,15 +169,15 @@ scan' :: A n::Ix a::Data . a -> n=>(a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
 
 scanlin :: A n::Ix c::Data a b . (n =>((c,a) --o (c,b))) -> (c, n=>a) --o (c, n=>b)
-scanlin fs (c0, xs) = %scan(c0, for i. lam c. fs.i (c, xs.i) )
+scanlin fs (c0, xs) = %scan(c0, lam (i,c). fs.i (c, xs.i) )
 
 foldlin :: A n::Ix c::Data a . (n=>((c, a) --o c)) -> (c, n=>a) --o c
-foldlin fs (c0, xs) = fst $ scanlin (for i. llam (c,x). (fs.i (c, x), ())) (c0, xs)
+foldlin fs (c0, xs) = fst $ scanlin (for i. lam (c,x). (fs.i (c, x), ())) (c0, xs)
 
 'More misc functions
 
 sum :: n=>Real --o Real
-sum xs = foldlin (for _. llam (c,x). c + x) (0.0, xs)
+sum xs = foldlin (for _. lam (c,x). c + x) (0.0, xs)
 
 isum :: n=>Int -> Int
 isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
@@ -280,20 +277,14 @@ vzero = %vzero()
 vadd :: A a::VS. a -> a -> a
 vadd x y = %vadd(x, y)
 
-vsingle :: A a::VS n. n -> a -> n=>a
-vsingle i x = %vsingle(i, x)
-
-vsum :: A a::VS n. n=>a -> a
-vsum xs = %vsum(for i. xs.i)
-
 linearize :: A a::VS b::VS. (a -> b) -> a -> (b, a --o b)
 linearize f x0 = %linearize(lam x. f x, x0)
 
 jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
-jvp f x = llam t. snd (linearize f x) t
+jvp f x t = snd (linearize f x) t
 
 transposeLinear :: A a::VS b::VS. (a --o b) --o b --o a
-transposeLinear = llam f ct. %linearTranspose(llam t. f t) ct
+transposeLinear f ct = %linearTranspose(lam t. f t) ct
 
 vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x
@@ -326,23 +317,23 @@ forUnzip xfs = (xs, fs) = unzip xfs
                (xs, lam t. for i. fs.i t)
 
 sin#lin :: Real -> (Real, Real --o Real)
-sin#lin x = (sin x, llam t. t * cos x)
+sin#lin x = (sin x, lam t. t * cos x)
 
 cos#lin :: Real -> (Real, Real --o Real)
-cos#lin x = (cos x, llam t. t * (neg (sin x)))
+cos#lin x = (cos x, lam t. t * (neg (sin x)))
 
 exp#lin :: Real -> (Real, Real --o Real)
 exp#lin x =
   ans = exp x
-  (ans, llam t. t * ans)
+  (ans, lam t. t * ans)
 
 log#lin :: Real -> (Real, Real --o Real)
-log#lin x = (log x, llam t. t / x)
+log#lin x = (log x, lam t. t / x)
 
 sqrt#lin :: Real -> (Real, Real --o Real)
 sqrt#lin x =
   ans = sqrt x
-  (ans, llam t. 0.5 * t / ans)
+  (ans, lam t. 0.5 * t / ans)
 
 'Some general linear algebra routines.
 

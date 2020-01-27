@@ -19,7 +19,7 @@ library
   exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
                        ParseUtil, Parser, Util, Imp, PPrint, Fresh, Pass,
                        Actor, DeShadow, Cat, Flops, Normalize, Embed, Serialize,
-                       Interpreter, RenderHtml, Plot, WebOutput, Subst, Simplify
+                       RenderHtml, Plot, WebOutput, Subst, Simplify
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==8.*, llvm-hs ==8.*,
                        aeson, megaparsec, warp, wai,

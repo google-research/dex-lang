@@ -41,9 +41,10 @@ flops (ImpProg (statement:rest)) = do
 
 statementFlops :: ImpStatement -> FlopM ()
 statementFlops (_, instr) = case instr of
-  IPrimOp b _ _ -> do
+  IPrimOp op -> do
     n <- ask
-    tell $ Profile $ M.singleton (pprint b) [n]
+    let (blankOp, _) =  unzipExpr op
+    tell $ Profile $ M.singleton (nameToStr (PrimOpExpr blankOp)) [n]
   Load _    -> return ()
   Store _ _ -> return ()
   Copy  _ _ -> do
