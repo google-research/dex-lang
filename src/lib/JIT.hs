@@ -23,6 +23,7 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Data.Foldable (fold)
 import Data.Void
 import Data.List (nub)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
@@ -70,7 +71,7 @@ jitPass' decl = case decl of
     let bs' = map (fmap (substIType env)) bs
     xs <- evalProg bs' prog
     xs' <- liftIO $ mapM loadIfScalar xs
-    extend $ bindFold $ zipWith replaceAnnot bs' xs'
+    extend $ fold $ zipWith (@>) bs' xs'
     return []
   ImpEvalCmd (Command cmd (ty, bs, prog)) -> do
     env <- look
@@ -101,25 +102,25 @@ jitPass' decl = case decl of
         emitOutput NoOutput
       _ -> error $ "Unexpected command: " ++ show cmd
 
-evalProg :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop [IVal]
+evalProg :: [IVar] -> ImpProg -> TopPassM CompileEnvTop [IVal]
 evalProg bs prog = do
   (cells, CompiledProg m) <- toLLVM bs prog
   liftIO $ evalJit m
   return cells
 
 -- TODO: pass destinations as args rather than baking pointers into LLVM
-toLLVM :: [IBinder] -> ImpProg -> TopPassM CompileEnvTop ([IVal], CompiledProg)
+toLLVM :: [IVar] -> ImpProg -> TopPassM CompileEnvTop ([IVal], CompiledProg)
 toLLVM bs prog = do
   env <- look
   destCells <- liftIO $ mapM allocIRef bs
   -- TODO just substitute top env up-front instead
-  let env' = fmap iValAsOperand $ env <> bindFold destCells
+  let env' = fmap iValAsOperand $ env <> foldMap (\v -> v @> varAnn v) destCells
   let initState = CompileState [] [] [] "start_block" []
   prog' <- liftExceptTop $ flip runFreshT mempty $ flip evalStateT initState $
                 flip runReaderT env' $ compileTopProg prog
-  return (map binderAnn destCells, prog')
+  return (map varAnn destCells, prog')
 
-allocIRef :: IBinder -> IO (BinderP IVal)
+allocIRef :: IVar -> IO (VarP IVal)
 allocIRef (v :> IRefType (b, shape)) = do
   ref <- allocateArray b (map fromILitInt shape)
   return $ v :> IRef ref
@@ -164,7 +165,7 @@ compileProg (ImpProg ((maybeName, instr):prog)) = do
   maybeAns <- compileInstr instr
   let env = case (maybeName, maybeAns) of
               (Nothing, Nothing)         -> mempty
-              (Just (name:>_), Just ans) -> name @> ans
+              (Just v, Just ans) -> v @> ans
               _ -> error "Void mismatch"
   extendR env $ compileProg $ ImpProg prog
 
@@ -200,14 +201,12 @@ compileInstr instr = case instr of
     _  -> do
       shape' <- mapM compileExpr shape
       malloc ty shape' ""
-  Free v ty -> do
+  Free (_:> IRefType (_, [])) -> return Nothing  -- Don't free allocas
+  Free v -> do
     v' <- lookupImpVar v
-    case ty of
-      (_, []) -> return Nothing  -- Don't free allocas
-      _ -> do
-         ptr' <- castLPtr charTy v'
-         addInstr $ L.Do (externCall freeFun [ptr'])
-         return Nothing
+    ptr' <- castLPtr charTy v'
+    addInstr $ L.Do (externCall freeFun [ptr'])
+    return Nothing
   Loop i n body -> do
     n' <- compileExpr n
     compileLoop i n' body
@@ -217,7 +216,7 @@ compileExpr :: IExpr -> CompileM Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
   IRef (Array _ ptr) -> return (vecRefToOperand ptr)
-  IVar v _ -> lookupImpVar v
+  IVar v   -> lookupImpVar v
   IGet x i -> do
     let (IRefType (_, (_:shape))) = impExprType x
     shape' <- mapM compileExpr shape
@@ -229,7 +228,7 @@ vecRefToOperand :: VecRef -> Operand
 vecRefToOperand ref = refLiteral b ptr
   where (_, b, ptr) = vecRefInfo ref
 
-lookupImpVar :: Name -> CompileM Operand
+lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)
 
 indexPtr :: Operand -> [Operand] -> Operand -> CompileM Operand
@@ -247,7 +246,7 @@ finishBlock term newName = do
          . setCurInstrs (const [])
          . setBlockName (const newName)
 
-compileLoop :: Name -> Operand -> ImpProg -> CompileM ()
+compileLoop :: IVar -> Operand -> ImpProg -> CompileM ()
 compileLoop iVar n body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"

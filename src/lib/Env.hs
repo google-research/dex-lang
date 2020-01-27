@@ -8,11 +8,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
-            envDelete, envSubset, (!), (@>), BinderP (..), bind, bindFold,
-            bindWith, binderAnn, binderVar, addAnnot, envIntersect,
-            unzipBinders, binderPair,
-            replaceAnnot, bindRecZip, lookupSubst, envMonoidUnion, tagToStr,
-            envLookupDefault, envDiff, envMapMaybe, fmapNames) where
+            envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
+            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe) where
 
 import Data.String
 import Data.Traversable
@@ -22,23 +19,25 @@ import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 
-import Record
-
 infixr 7 :>
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
 data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
 type Tag = T.Text
-data BinderP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
+data VarP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
 
-envLookup :: Env a -> Name -> Maybe a
-envLookup (Env m) v = M.lookup v m
+varAnn :: VarP a -> a
+varAnn (_:>ann) = ann
 
-envLookupDefault :: Env a -> Name -> a -> a
-envLookupDefault env v x = case envLookup env v of
-                             Just x' -> x'
-                             Nothing -> x
+varName :: VarP a -> Name
+varName (v:>_) = v
+
+varAsEnv :: VarP a -> Env a
+varAsEnv v = v @> varAnn v
+
+envLookup :: Env a -> VarP ann -> Maybe a
+envLookup (Env m) v = M.lookup (varName v) m
 
 envMapMaybe :: (a -> Maybe b) -> Env a -> Env b
 envMapMaybe f (Env m) = Env $ M.mapMaybe f m
@@ -48,12 +47,6 @@ envNames (Env m) = M.keys m
 
 envPairs :: Env a -> [(Name, a)]
 envPairs (Env m) = M.toAscList m
-
-fmapNames :: (Name -> a -> b) -> Env a -> Env b
-fmapNames f (Env m) = Env $ M.mapWithKey f m
-
-lookupSubst :: Name -> Env Name -> Name
-lookupSubst v (Env m) = M.findWithDefault v v m
 
 envDelete :: Name -> Env a -> Env a
 envDelete v (Env m) = Env (M.delete v m)
@@ -67,53 +60,19 @@ envIntersect (Env m) (Env m') = Env $ M.intersection m' m
 envDiff :: Env a -> Env b -> Env a
 envDiff (Env m) (Env m') = Env $ M.difference m m'
 
-envMonoidUnion :: Monoid a => Env a -> Env a -> Env a
-envMonoidUnion (Env m) (Env m') = Env $ M.unionWith (<>) m m'
-
-isin :: Name -> Env a -> Bool
+isin :: VarP ann -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
                                      Nothing -> False
 
-(!) :: Env a -> Name -> a
+(!) :: Env a -> VarP ann -> a
 env ! v = case envLookup env v of
   Just x -> x
-  Nothing -> error $ "Lookup of " ++ show v
-                       ++ " in " ++ show (envNames env) ++ " failed"
+  Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
 
 infixr 7 @>
 
-(@>) :: Name -> a -> Env a
-k @> v = Env $ M.singleton k v
-
-bind :: BinderP a -> Env a
-bind (v :> x) = v @> x
-
-bindWith :: BinderP a -> b -> Env (a, b)
-bindWith b y = bind $ fmap (\x -> (x,y)) b
-
-bindFold :: Foldable f => f (BinderP a) -> Env a
-bindFold bs = foldMap bind bs
-
-bindRecZip :: RecTreeZip t => RecTree (BinderP a) -> t -> Env (a, t)
-bindRecZip bs t = foldMap (uncurry bindWith) (recTreeZip bs t)
-
-binderAnn :: BinderP a -> a
-binderAnn (_ :> x) = x
-
-binderVar :: BinderP a -> Name
-binderVar (v :> _) = v
-
-unzipBinders :: [BinderP a] -> ([Name], [a])
-unzipBinders bs = unzip $ map binderPair bs
-
-binderPair :: BinderP a -> (Name, a)
-binderPair (v:>x) = (v, x)
-
-addAnnot :: BinderP a -> b -> BinderP (a, b)
-addAnnot b y = fmap (\x -> (x, y)) b
-
-replaceAnnot :: BinderP a -> b -> BinderP b
-replaceAnnot b y = fmap (const y) b
+(@>) :: VarP b -> a -> Env a
+(v:>_) @> x = Env $ M.singleton v x
 
 instance Functor Env where
   fmap = fmapDefault
@@ -136,13 +95,13 @@ instance Monoid (Env a) where
 instance Pretty a => Pretty (Env a) where
   pretty (Env m) = pretty (M.toAscList m)
 
-instance Functor BinderP where
+instance Functor VarP where
   fmap = fmapDefault
 
-instance Foldable BinderP where
+instance Foldable VarP where
   foldMap = foldMapDefault
 
-instance Traversable BinderP where
+instance Traversable VarP where
   traverse f (v :> x) = fmap (v:>) (f x)
 
 -- TODO: this needs to be injective but it's currently not

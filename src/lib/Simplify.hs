@@ -38,13 +38,13 @@ derivPass :: TopPass NTopDecl NTopDecl
 derivPass = TopPass $ \topDecl -> case topDecl of
   NTopDecl PlainDecl decl -> simplifyDeclTop decl
   NTopDecl ADPrimitive decl -> do
-    let Let (v:>_) _ = decl
+    let Let v _ = decl
     decl' <- liftTopNoDecl $ substSimp decl
     extend $ asSnd $ v@>()
     return [NTopDecl PlainDecl decl']
   NRuleDef (LinearizationDef v) _ ~(Atom f) -> do
     f' <- liftTopNoDecl $ substSimp f
-    extend $ asFst $ mempty {derivEnv = v @> f' }
+    extend $ asFst $ mempty {derivEnv = (v:>()) @> f' }
     emitOutput $ NoOutput
   NEvalCmd (Command cmd (ty, expr)) -> do
     expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
@@ -98,23 +98,11 @@ simplifyLam :: LamExpr -> SimplifyM LamExpr
 simplifyLam (LamExpr b body) = do
   b' <- substSimp b
   buildLam b' $ \x ->
-    extendSub (bindEnv [b] [x]) $
+    extendSub (b @> L x) $
       simplify body >>= materializeAtom
 
 simplifyAtom :: Atom -> SimplifyM Atom
-simplifyAtom atom = case atom of
-  Var v ty -> do
-    ty' <- substSimp ty
-    x <- asks $ flip envLookup v . subEnv
-    case x of
-      Nothing -> return $ Var v ty'
-      -- is this freshening necessary here?
-      Just (L x') -> dropSub (simplifyAtom x')
-      Just (T _ ) -> error "Expected let-bound var"
-  PrimCon (Lam _ _)     -> substSimp atom
-  PrimCon (AtomicFor _) -> substSimp atom
-  PrimCon con -> liftM (reduceAtom . PrimCon) $
-    traverseExpr con substSimp simplifyAtom simplifyLam
+simplifyAtom atom = substSimp atom
 
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr (Scan x (LamExpr b body)) = do
@@ -122,7 +110,7 @@ simplifyCExpr (Scan x (LamExpr b body)) = do
   ~b'@(_:>RecType _ (Tup [n, _]))  <- substSimp b
   ((cOut, yOut), b'', (scope, decls)) <-
      withBinder b' $ \ic -> do
-        extendSub (bindEnvSingle b ic) $ do
+        extendSub (b @> L ic) $ do
            (cOut, yOut) <- liftM fromPair $ simplify body
            cOut' <- materializeAtom cOut
            return (cOut', yOut)
@@ -137,21 +125,21 @@ simplifyCExpr expr = do
   expr' <- traverseExpr expr substSimp (simplifyAtom >=> materializeAtom) simplifyLam
   case expr' of
     App (PrimCon (Lam _ (LamExpr b body))) x ->
-      dropSub $ extendSub (bindEnvSingle b x) $ simplify body
+      dropSub $ extendSub (b @> L x) $ simplify body
     _ -> emit expr'
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
   Let b bound -> do
     x <- simplifyCExpr bound
-    return $ mempty {subEnv = bindEnvSingle b x}
+    return $ mempty {subEnv = b @> L x}
   Unpack b tv bound -> do
     bound' <- simplifyAtom bound
     ~(TypeVar tv', emitUnpackRest) <- emitUnpack tv bound'
     let tEnv = tv @> T (TypeVar tv')
     b' <- extendSub tEnv $ substSimp b
     x <- emitUnpackRest b'
-    return $ mempty {subEnv = tEnv <> bindEnvSingle b' x}
+    return $ mempty {subEnv = tEnv <> b' @> L x}
 
 -- As we prepare to leave a scope (say that of `Scan`) we save the variables
 -- we'll no longer have access to once we've left, along with a function that
@@ -159,11 +147,11 @@ simplifyDecl decl = case decl of
 splitAtom :: Scope -> Atom -> (Atom, Scope -> Atom -> Atom)
 splitAtom scope atom = (xsSaved, reconstruct)
   where
-    isVar x = case x of Var _ _-> True; _ -> False
+    isVar x = case x of Var _-> True; _ -> False
     vsTys = envPairs $ envIntersect scope (freeVars atom)
-    xsSaved = makeTup [Var v ty | (v, L ty) <- vsTys]
+    xsSaved = makeTup [Var (v:>ty) | (v, L ty) <- vsTys]
     reconstruct scope x = subst (env, scope) atom
-      where env = fold [v@>L x' | ((v,_),x') <- zip vsTys $ fromTup x]
+      where env = fold [(v:>())@>L x' | ((v,_),x') <- zip vsTys $ fromTup x]
 
 simplifyMat :: Expr -> SimplifyM Atom
 simplifyMat expr = simplify expr >>= materializeAtom
@@ -173,12 +161,6 @@ extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local (\r -> r {subEnv = mempty}) m
-
-bindEnv :: [BinderP c] -> [a] -> FullEnv a b
-bindEnv bs xs = fold [v @> L x | (v:>_,x) <- zip bs xs]
-
-bindEnvSingle :: BinderP c -> a -> FullEnv a b
-bindEnvSingle (v:>_) x = v @> L x
 
 substSimp :: (MonadCat EmbedEnv m, MonadReader SimpEnv m, Subst a) => a -> m a
 substSimp x = do
@@ -192,17 +174,14 @@ type TangentM a = ReaderT (Env Atom) (EmbedT (Either Err)) a
 
 runLinearization :: Atom -> LamExpr -> SimplifyM Expr
 runLinearization x (LamExpr b expr) = do
-  (ans, f) <- extendSub (bindEnvSingle b x) $ linearize expr
+  (ans, f) <- extendSub (b @> L x) $ linearize expr
   f' <- runTangent b f
   -- TODO: check type here, especially linearity
   return $ Atom $ PrimCon $ RecCon Cart (Tup [ans, f'])
 
-runTangent :: Binder -> TangentM Atom -> SimplifyM Atom
+runTangent :: Var -> TangentM Atom -> SimplifyM Atom
 runTangent b m = liftM (PrimCon . Lam (Mult Lin)) $ buildLam b $ \t ->
-                    withReaderT (const $ bindEnvTangent b t) m
-
-bindEnvTangent :: Binder -> Atom -> Env Atom
-bindEnvTangent (v:>_) x = v @> x
+                    withReaderT (const $ b@>t) m
 
 linearize :: Expr -> SimplifyM (Atom, TangentM Atom)
 linearize expr = case expr of
@@ -218,14 +197,12 @@ linearizeDecl decl = case decl of
   Let b bound -> do
     b' <- substSimp b
     (x, fLin) <- linearizeCExpr bound
-    return (bindEnvSingle b' x,
-            do t <- fLin
-               return (bindEnvTangent b' t))
+    return (b' @> L x, do { t <- fLin; return (b'@>t) })
   _ -> error "Not implemented"
 
 linearizeCExpr :: CExpr -> SimplifyM (Atom, TangentM Atom)
 linearizeCExpr expr = case expr of
-  App (Var v _) x -> do
+  App (Var v) x -> do
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
       case maybeRule of
@@ -244,7 +221,7 @@ mapLinearize f xs = do
 
 linearizeAtom :: Atom -> SimplifyM (Atom, TangentM Atom)
 linearizeAtom atom = case atom of
-  Var v _ -> do
+  Var v -> do
     maybeVal <- asks $ flip envLookup v . subEnv
     case maybeVal of
       Just (L x) -> return (x, lookupTangent v)
@@ -271,13 +248,13 @@ linearizedDiv x y tx ty = do
   ty'' <- div' ty' ySq >>= neg
   add tx' ty''
 
-lookupTangent :: Name -> TangentM Atom
+lookupTangent :: Var -> TangentM Atom
 lookupTangent v = asks (!v)
 
-getContinuousVars :: Expr -> SimplifyM [Binder]
+getContinuousVars :: Expr -> SimplifyM [Var]
 getContinuousVars expr = do
   let bs = [v:>ty | (v, L ty) <- envPairs $ freeVars expr]
-  return $ filter (isContinuous . binderAnn) bs
+  return $ filter (isContinuous . varAnn) bs
 
 isContinuous :: Type -> Bool
 isContinuous ty = case ty of
@@ -299,7 +276,7 @@ type TransposeM a = WriterT CotangentVals
 
 runTransposition :: Atom -> LamExpr -> SimplifyM Expr
 runTransposition ct (LamExpr b expr) = do
-  (((), ct'), _) <- lift $ flip runReaderT (asFst (bind b)) $ runWriterT $
+  (((), ct'), _) <- lift $ flip runReaderT (asFst (b@>varAnn b)) $ runWriterT $
                         extractCT b $ transpose expr ct
   return $ Atom ct'
 
@@ -309,12 +286,12 @@ transpose expr ct = case expr of
     maybeExpr <- substNonLin bound
     case maybeExpr of
       Nothing -> do
-        let env = asFst (bind b)
+        let env = asFst (b@>varAnn b)
         (_, ct') <- extractCT b $ extendR env $ transpose body ct
         transposeCExpr bound ct'
       Just bound' -> do
         x <- emitTo b bound'
-        extendR (asSnd (bindEnvSingle b x)) $ transpose body ct
+        extendR (asSnd (b @> L x)) $ transpose body ct
   CExpr e -> transposeCExpr e ct
   Atom x  -> transposeAtom x ct
   _ -> error $ "Transpose not implemented for " ++ pprint expr
@@ -344,10 +321,10 @@ substTranspose x = do
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
-  Var v _ -> emitCT v ct
+  Var (v:>_) -> emitCT v ct
   _ -> error $ "Can't transpose: " ++ pprint atom
 
-extractCT :: Binder -> TransposeM a -> TransposeM (a, Atom)
+extractCT :: Var -> TransposeM a -> TransposeM (a, Atom)
 extractCT b m = do
   (ans, ctEnv) <- captureW m
   (ct, ctEnv') <- sepCotangent b ctEnv
@@ -355,7 +332,7 @@ extractCT b m = do
   return (ans, ct)
 
 sepCotangent :: MonadCat EmbedEnv m =>
-                  Binder -> CotangentVals -> m (Atom, CotangentVals)
+                  Var -> CotangentVals -> m (Atom, CotangentVals)
 sepCotangent (v:>ty) (MonMap m) = do
   ans <- sumAt ty $ M.findWithDefault [] v m
   return (ans, MonMap (M.delete v m))

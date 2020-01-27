@@ -13,8 +13,7 @@
 
 module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
-              FreshRT, MonadFreshR, freshName, askFresh, localFresh, freshCat,
-              renameBinders) where
+              FreshRT, MonadFreshR, freshName, askFresh, localFresh) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -44,27 +43,17 @@ genFresh tag (Env m) = Name tag nextNum
                   | otherwise   -> error "Ran out of numbers!"
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
-rename :: Name -> Env a -> Name
-rename v scope | v `isin` scope = genFresh (nameTag v) scope
-               | otherwise = v
+rename :: VarP ann -> Env a -> VarP ann
+rename v@(name:>ann) scope | v `isin` scope = genFresh (nameTag name) scope :> ann
+                           | otherwise      = v
 
-renames :: Traversable f => f Name -> Env () -> (f Name, Env ())
+renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
 renames vs scope = runCat (traverse freshCat vs) scope
 
-renameBinders :: Traversable f =>
-                   f (BinderP ann) -> Env () -> (f (BinderP ann), (Env (BinderP ann), Env ()))
-renameBinders bs scope = flip runCat (mempty, scope) $ traverse freshCatSubst bs
-
-freshCat :: Name -> Cat (Env ()) Name
+freshCat :: VarP ann -> Cat (Env ()) (VarP ann)
 freshCat v = do v' <- looks $ rename v
                 extend (v' @> ())
                 return v'
-
-freshCatSubst :: BinderP ann -> Cat (Env (BinderP ann), Env ()) (BinderP ann)
-freshCatSubst (v :> ann) = do
-  v' <- looks $ rename v . snd
-  extend (v @> v':> ann, v' @> ())
-  return $ v':>ann
 
 -- === state monad version of fresh var generation ===
 
@@ -76,7 +65,7 @@ class Monad m => MonadFresh m where
 
 instance Monad m => MonadFresh (FreshT m) where
   fresh tag = FreshT $ do name <- gets (genFresh tag)
-                          modify (<> name @> ())
+                          modify (<> (name:>()) @> ())
                           return name
 
 freshLike :: MonadFresh m => Name -> m Name
@@ -109,13 +98,8 @@ runFreshRT (FreshRT m) scope = runReaderT m scope
 freshName :: MonadFreshR m => Name -> (Name -> m a) -> m a
 freshName v cont = do
   scope <- askFresh
-  let v' = rename v scope
-  localFresh (<> v' @> ()) (cont v')
-
--- freshenBinder :: MonadFreshR m =>
---                  BinderP a -> (Env Name -> BinderP a -> m b) -> m b
--- freshenBinder (v :> ann) cont = freshName v $ \v' ->
---                                   cont (v @> v') (v' :> ann)
+  let (v':>_) = rename (v:>()) scope
+  localFresh (<> (v':>()) @> ()) (cont v')
 
 class Monad m => MonadFreshR m where
   askFresh :: m FreshScope

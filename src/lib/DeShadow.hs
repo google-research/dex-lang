@@ -25,7 +25,7 @@ import Subst
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
-type DeShadowEnv = (Env Name, Env ([BinderP ()], Type))
+type DeShadowEnv = (Env Name, Env ([TVar], Type))
 
 sourcePass :: TopPass SourceBlock TopDecl
 sourcePass = TopPass sourcePass'
@@ -74,11 +74,11 @@ deShadowExpr expr = case expr of
       body' <- recur body
       return $ case decl' of Nothing -> body'
                              Just decl'' -> FDecl decl'' body'
-  FVar v ty tyArgs -> do
+  FVar (v:>ty) tyArgs -> do
     v' <- lookupLVar v
     ty' <- deShadowType ty
     tyArgs' <- mapM deShadowType tyArgs
-    return $ FVar v' ty' tyArgs'
+    return $ FVar (v':>ty') tyArgs'
   FPrimExpr e ->
     liftM FPrimExpr $ traverseExpr e deShadowType deShadowExpr deShadowLam
   Annot body ty  -> liftM2 Annot (recur body) (deShadowType ty)
@@ -111,7 +111,7 @@ deShadowDecl (FUnpack b tv bound) = do
   return $ Just $ FUnpack b' tv' bound'
 deShadowDecl (TyDef TyAlias v bs ty) = do  -- TODO: deal with capture
   -- TODO: handle shadowing from binders
-  let env = fold [tv@>([], TypeVar tv) | (tv:>_) <- bs]
+  let env = fold [tv@>([], TypeVar tv) | tv <- bs]
   ty' <- toCat $ extendR (asSnd env) $ deShadowType ty
   extend (asSnd (v @> (bs, ty')), v@>())
   return Nothing
@@ -131,40 +131,40 @@ deShadowPat pat = traverse freshBinder pat
 
 lookupLVar :: Name -> DeShadowM Name
 lookupLVar v = do
-  v' <- asks $ flip envLookup v . fst
+  v' <- asks $ flip envLookup (v:>()) . fst
   case v' of
     Nothing  -> throw UnboundVarErr $ pprint v
     Just v'' -> return v''
 
-freshBinder :: Binder -> DeShadowCat Binder
+freshBinder :: Var -> DeShadowCat Var
 freshBinder (v:>ty) = do
   ann' <- toCat $ deShadowType ty
   freshBinderP (v:>ann')
 
-freshBinderP :: BinderP a -> DeShadowCat (BinderP a)
-freshBinderP (v:>ann) = do
+freshBinderP :: VarP a -> DeShadowCat (VarP a)
+freshBinderP v = do
   shadowed <- looks $ (v `isin`) . fst . fst
-  if shadowed && v /= "_"
-    then throw RepeatedVarErr (pprint v)
+  if shadowed && varName v /= "_"
+    then throw RepeatedVarErr (pprint (varName v))
     else return ()
   v' <- looks $ rename v . snd
-  extend (asFst (v@>v'), v'@>())
-  return (v':>ann)
+  extend (asFst (v@> varName v'), v'@>())
+  return v'
 
-freshTBinder :: TBinder -> DeShadowCat TBinder
-freshTBinder (v:>k) = do
+freshTBinder :: TVar -> DeShadowCat TVar
+freshTBinder v = do
   shadowed <- looks $ (v `isin`) . snd . fst
-  if shadowed && v /= "_"
+  if shadowed && varName v /= "_"
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
   extend (asSnd (v@>([], TypeVar v')), v'@>())
-  return (v':>k)
+  return v'
 
 deShadowType :: Type -> DeShadowM Type
 deShadowType ty = case ty of
   BaseType _ -> return ty
-  TypeVar v  -> do
+  TypeVar v -> do
     (vsub, tsub) <- ask
     case envLookup tsub v of
       Just ([], ty') -> return ty'
@@ -177,13 +177,13 @@ deShadowType ty = case ty of
   TypeApp f args -> do
     args' <- mapM deShadowType args
     case f of
-      TypeVar tv  -> do
+      TypeVar tv -> do
         sub <- asks snd
         case envLookup sub tv of
           Just (bs, ty') -> do
             unless (length bs == length args') $ throw TypeErr $
               "Expected " ++ show (length bs) ++ " type args in " ++ pprint ty
-            let env = fold [v@>T arg | (v:>_,arg) <- zip bs args']
+            let env = fold [v@>T arg | (v, arg) <- zip bs args']
             return $ subst (env, mempty) ty'
           Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint tv ++ "\""
       _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty

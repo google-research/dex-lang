@@ -23,7 +23,7 @@ import Embed
 import Subst
 import Record
 
-data TLamEnv = TLamContents NormEnv [TBinder] FExpr
+data TLamEnv = TLamContents NormEnv [TVar] FExpr
 type NormEnv = FullEnv (Either Atom TLamEnv) Type
 type NormM a = ReaderT NormEnv (EmbedT (Either Err)) a
 
@@ -64,7 +64,7 @@ normalize expr = case expr of
   FDecl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  FVar v _ ts -> do
+  FVar v ts -> do
     x <- asks $ fromL . (! v)
     case x of
       Left x' -> case ts of
@@ -72,7 +72,7 @@ normalize expr = case expr of
         _ -> error "Unexpected type application"
       Right (TLamContents env tbs body) -> do
         ts' <- mapM substTy ts
-        let env' = foldMap tbind $ zipWith replaceAnnot tbs ts'
+        let env' = fold [tv @> T t' | (tv, t') <- zip tbs ts']
         local (const (env <> env')) $ normalize body
   -- TODO: expand typeclasses in a separate post-normalization pass
   FPrimExpr (PrimOpExpr (For (FLamExpr p body))) -> do
@@ -100,7 +100,7 @@ normalizeLam (FLamExpr p body) = do
     env <- bindPat p x
     extendR env $ normalize body
 
-normalizePat :: Pat -> NormM Binder
+normalizePat :: Pat -> NormM Var
 normalizePat p = do
   ty <- liftM getType $ traverse (traverse substTy) p
   let v' = case toList p of (v:>_):_ -> v
@@ -108,7 +108,7 @@ normalizePat p = do
   return $ v':>ty
 
 bindPat :: Pat -> Atom -> NormM NormEnv
-bindPat (RecLeaf (v:>_)) x = return $ v @> L (Left x)
+bindPat (RecLeaf v) x = return $ v @> L (Left x)
 bindPat (RecTree r) xs =
   liftM fold $ flip traverse (recNameVals r) $ \(i, p) -> do
     bindPat p $ nRecGet xs i
@@ -118,7 +118,7 @@ normalizeDecl decl = case decl of
   LetMono p bound -> do
     xs <- normalize bound  -- TODO: preserve names
     bindPat p xs
-  LetPoly (v:>_) (TLam tbs body) -> do
+  LetPoly v (TLam tbs body) -> do
     env <- ask
     return $ v @> L (Right (TLamContents env tbs body))
   FUnpack b tv bound -> do

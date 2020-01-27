@@ -71,13 +71,13 @@ evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
 instance HasType FExpr where
   getType expr = case expr of
     FDecl _ body -> getType body
-    FVar _ ty _  -> ty
+    FVar (v:>ty) _  -> ty
     FPrimExpr e -> getPrimType e'
       where e' = fmapExpr e id getType getFLamType
     Annot e _    -> getType e
     SrcAnnot e _ -> getType e
 
-instance HasType (RecTree Binder)where
+instance HasType (RecTree Var) where
   getType (RecLeaf (_:>ty)) = ty
   getType (RecTree r) = RecType Cart $ fmap getType r
 
@@ -86,7 +86,7 @@ getFLamType (FLamExpr p body) = (getType p, getType body)
 
 checkTypeFExpr :: FExpr -> FTypeM Type
 checkTypeFExpr expr = case expr of
-  FVar v ty ts -> do
+  FVar v@(_:>ty) ts -> do
     mapM_ checkTy ts
     x <- asks $ flip envLookup v . tyEnv
     case x of
@@ -129,14 +129,14 @@ checkTypeFDecl decl = case decl of
     ((), spent) <- scoped $ checkWithCtx $ do
                        ty' <- checkTypeTLam tlam
                        assertEq ty ty' "TLam"
-    return $ v @> L (ty, spent)
-  FUnpack b tv _ -> do  -- TODO: check bound expression!
+    return $ b @> L (ty, spent)
+  FUnpack b tb _ -> do  -- TODO: check bound expression!
     -- TODO: check leaks
-    let tb = tv :> Kind [IdxSet]
     checkShadow b
     checkShadow tb
-    extendTyEnv (tbind tb) $ checkTy (binderAnn b)
-    return (tbind tb <> asEnv mempty b)
+    let env = tb @> T (varAnn tb)
+    extendTyEnv env $ checkTy (varAnn b)
+    return (env <> asEnv mempty b)
   TyDef NewType v [] ty -> do
     checkTy ty
     classes <- getClasses ty
@@ -155,29 +155,29 @@ checkWithCtx m = do
 checkTypeTLam :: TLam -> FTypeM SigmaType
 checkTypeTLam (TLam tbs body) = do
   mapM_ checkShadow tbs
-  ty <- extendTyEnv (foldMap tbind tbs) (checkTypeFExpr body)
-  let (vs, kinds) = unzip [(v, k) | v :> k <- tbs]
-  return $ Forall kinds (abstractTVs vs ty)
+  let env = foldMap (\b -> b @> T (varAnn b)) tbs
+  ty <- extendTyEnv env (checkTypeFExpr body)
+  return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
 
 checkTy :: Type -> FTypeM ()
 checkTy _ = return () -- TODO: check kind and unbound type vars
 
-checkShadow :: BinderP b -> FTypeM ()
-checkShadow (v :> _) = checkWithCtx $ do
+checkShadow :: Pretty b => VarP b -> FTypeM ()
+checkShadow v = checkWithCtx $ do
   env <- asks tyEnv
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
-checkShadowPat :: Traversable f => f (BinderP b) -> FTypeM ()
+checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> FTypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
-asEnv :: Spent -> Binder -> FTypeEnv
-asEnv s (v:>ty) = v @> L (Forall [] ty, s)
+asEnv :: Spent -> Var -> FTypeEnv
+asEnv s (v:>ty) = (v:>()) @> L (Forall [] ty, s)
 
 checkRuleDefType :: RuleAnn -> SigmaType -> FTypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
-  ty@(Forall kinds body, _) <- asks $ fromL . (!v) . tyEnv
+  ty@(Forall kinds body, _) <- asks $ fromL . (!(v:>())) . tyEnv
   (a, b) <- case body of
               ArrType _ a b -> return (a, b)
               _ -> throw TypeErr $
@@ -206,15 +206,15 @@ instantiateTVs vs x = subAtDepth 0 sub x
                     | otherwise  -> BoundTVar i
               where i' = i - depth
 
-abstractTVs :: [Name] -> Type -> Type
+abstractTVs :: [TVar] -> Type -> Type
 abstractTVs vs x = subAtDepth 0 sub x
   where sub depth tvar = case tvar of
-                           Left v -> case elemIndex v vs of
+                           Left v -> case elemIndex (varName v) (map varName vs) of
                                        Nothing -> TypeVar v
                                        Just i  -> BoundTVar (depth + i)
                            Right i -> BoundTVar i
 
-subAtDepth :: Int -> (Int -> Either Name Int -> Type) -> Type -> Type
+subAtDepth :: Int -> (Int -> Either TVar Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
@@ -285,7 +285,8 @@ checkData env ty = case ty of
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
-checkVarClass :: FTypeEnv -> ClassName -> Name -> Except ()
+-- TODO: check annotation too
+checkVarClass :: FTypeEnv -> ClassName -> TVar -> Except ()
 checkVarClass env c v = do
   case envLookup env v of
     Just (T (Kind cs)) ->
@@ -321,7 +322,7 @@ instance HasType Expr where
 
 instance HasType Atom where
   getType expr = case expr of
-    Var _ ty -> ty
+    Var (_:>ty) -> ty
     PrimCon con -> getPrimType $ PrimConExpr $ fmapExpr con id getType getLamType
 
 instance HasType CExpr where
@@ -345,7 +346,7 @@ checkCExpr op = do
 
 checkAtom :: Atom -> TypeM Type
 checkAtom atom = case atom of
-  Var v ty -> do
+  Var v@(_:>ty) -> do
     x <- asks $ flip envLookup v
     case x of
       Just (L (ty', s)) -> do
@@ -358,8 +359,8 @@ checkAtom atom = case atom of
     checkPrimType (PrimConExpr primType)
 
 checkLam :: LamExpr -> TypeM (Type, Type)
-checkLam (LamExpr (v:>ty) body) = do
-  bodyTy <- extendR (v @> L (ty, mempty)) $ checkExpr body
+checkLam (LamExpr b@(_:>ty) body) = do
+  bodyTy <- extendR (b @> L (ty, mempty)) $ checkExpr body
   return (ty, bodyTy)
 
 checkDecl :: Decl -> TypeM TypeEnv
@@ -367,26 +368,26 @@ checkDecl decl = case decl of
   Let b expr -> do
     checkNBinder b
     (t, s) <- scoped $ checkCExpr expr
-    assertEq (binderAnn b) t "Decl"
+    assertEq (varAnn b) t "Decl"
     return $ binderEnv s b
   Unpack b tv _ -> do  -- TODO: check bound expression!
-    checkNShadow (tv :> Kind [IdxSet])
+    checkNShadow tv
     extendR (tv @> T ()) $ checkNBinder b
     return $ binderEnv mempty b <> tv @> T ()
 
-binderEnv :: Spent -> Binder -> TypeEnv
-binderEnv s (v:>ty) = v @> L (ty, s)
+binderEnv :: Spent -> Var -> TypeEnv
+binderEnv s b@(_:>ty) = b @> L (ty, s)
 
 checkNTy :: Type -> TypeM ()
 checkNTy _ = return () -- TODO!
 
-checkNBinder :: Binder -> TypeM ()
+checkNBinder :: Var -> TypeM ()
 checkNBinder b = do
-  checkNTy (binderAnn b)
+  checkNTy (varAnn b)
   checkNShadow b
 
-checkNShadow :: BinderP b -> TypeM ()
-checkNShadow (v :> _) = do
+checkNShadow :: Pretty b => VarP b -> TypeM ()
+checkNShadow v = do
   env <- ask
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
@@ -525,7 +526,7 @@ spend s = do
     Nothing -> throw LinErr $ "pattern already spent: " ++ pprint s
 
 asSpent :: Name -> Spent
-asSpent v = Spent (v@>()) False
+asSpent v = Spent ((v:>())@>()) False
 
 spendFreely :: MonadCat Spent m => m ()
 spendFreely = extend $ Spent mempty True
@@ -533,9 +534,10 @@ spendFreely = extend $ Spent mempty True
 checkSpent :: (MonadError Err m, MonadCat Spent m) => Name -> String -> m a -> m a
 checkSpent v vStr m = do
   (ans, Spent vs consumes) <- scoped m
-  unless  (consumes || v `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
-  extend (Spent (vs `envDiff` (v@>())) consumes)
+  unless  (consumes || v' `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
+  extend (Spent (vs `envDiff` (v'@>())) consumes)
   return ans
+  where v' = v:>()
 
 checkNothingSpent :: (MonadError Err m, MonadCat Spent m) => m a -> m a
 checkNothingSpent m = do
@@ -544,7 +546,7 @@ checkNothingSpent m = do
     "nonlinear function consumed linear data: " ++ pprint spent
   return ans
 
-getPatName :: (MonadError Err m, Traversable f) => f (BinderP b) -> m Name
+getPatName :: (MonadError Err m, Traversable f) => f (VarP b) -> m Name
 getPatName p = case toList p of
   []  -> throw LinErr $
            "empty patterns not allowed for linear lambda (for silly reasons)"

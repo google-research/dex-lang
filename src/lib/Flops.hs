@@ -51,14 +51,14 @@ statementFlops (_, instr) = case instr of
     n <- ask
     tell $ Profile $ M.singleton "copy" [n]
   Alloc _   -> return ()
-  Free _ _  -> return ()
+  Free _    -> return ()
   Loop _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block
 
 evalSizeExpr :: IExpr -> Term
 evalSizeExpr (ILit (IntLit n)) = litTerm n
-evalSizeExpr (IVar v _) = varTerm v
+evalSizeExpr (IVar (v:>_)) = varTerm v
 evalSizeExpr expr = error $ "Not implemented: " ++ pprint expr
 
 litTerm :: Int -> Term

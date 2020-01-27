@@ -35,8 +35,8 @@ instance Subst Expr where
 
 instance Subst Atom where
   subst env@(sub, scope) atom = case atom of
-    Var v ty -> case envLookup sub v of
-      Nothing -> Var v (subst env ty)
+    Var v -> case envLookup sub v of
+      Nothing -> Var $ fmap (subst env) v
       Just (L x') -> subst (mempty, scope) x'
       Just (T _ ) -> error "Expected let-bound variable"
     PrimCon con -> reduceAtom $ PrimCon $ subst env con
@@ -52,20 +52,13 @@ nRecGet (PrimCon (RecCon _ r)) i = recGet r i
 nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
-nTabGet (PrimCon (AtomicFor (LamExpr (v:>_) body))) i =
+nTabGet (PrimCon (AtomicFor (LamExpr b body))) i =
   case body of
-    Atom atom -> subst (v@>L i, scope) atom
+    Atom atom -> subst (b@>L i, scope) atom
       -- TODO: does the scope actually need all the free vars in atom?
       where scope = fmap (const ()) (freeVars i)
     _ -> error $ "Not an atomic body " ++ pprint body
 nTabGet e i = PrimCon $ TabGet e i
-
--- nTabGet :: Atom -> Atom -> Atom
--- nTabGet (PrimCon (AtomicFor (LamExpr (v:>_) ~(Atom atom)))) i =
---   subst (v@>L i, scope) atom
---   -- TODO: does the scope actually need all the free vars in atom?
---   where scope = fmap (const ()) (freeVars i)
--- nTabGet e i = PrimCon $ TabGet e i
 
 instance Subst LamExpr where
   subst env@(_, scope) (LamExpr b body) = LamExpr b' body'
@@ -78,10 +71,10 @@ refreshDecl scope decl = case decl of
     where (b', env) = refreshBinder scope (subst env b)
   Unpack _ _ _ -> undefined
 
-refreshBinder :: Env () -> Binder -> (Binder, SubstEnv)
-refreshBinder scope (v:>ty) = (v':>ty, env')
-  where v' = rename v scope
-        env' = (v@>L (Var v' ty), v'@>())
+refreshBinder :: Env () -> Var -> (Var, SubstEnv)
+refreshBinder scope b = (b', env')
+  where b' = rename b scope
+        env' = (b@>L (Var b'), b'@>())
 
 instance Subst Type where
    subst env@(sub, _) ty = case ty of
@@ -112,7 +105,7 @@ instance Subst Decl where
 instance Subst SigmaType where
   subst env (Forall ks body) = Forall ks (subst env body)
 
-instance Subst Binder where
+instance Subst Var where
   subst env (v:>ty) = v:> subst env ty
 
 instance Subst a => Subst (RecTree a) where

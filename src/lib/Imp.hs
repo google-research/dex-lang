@@ -20,7 +20,7 @@ import PPrint
 import Pass
 import Cat
 import Serialize
-import Fresh hiding (freshName)
+import Fresh
 import Subst
 import Record
 
@@ -30,27 +30,26 @@ type ImpM a = ReaderT ImpEnv (CatT EmbedEnv (Either Err)) a
 
 impPass :: TopPass NTopDecl ImpDecl
 impPass = TopPass $ \decl -> case decl of
-  NTopDecl _ (Let (v:>ty) bound) -> do
+  NTopDecl _ (Let b@(v:>ty) bound) -> do
     tys' <- toImpTypeTop ty
-    (env, scope) <- look
-    let (vs, scope') = renames (replicate (length tys') v) scope
-    let bs' = zipWith (:>) vs tys'
+    (_, scope) <- look
+    let (bs', scope') = renames (map (v:>) tys') scope
     extend $ asSnd scope'
-    ((), prog) <- liftTop $ toImpCExpr (map asDest bs') bound
-    let xs = [IVar v' (derefTypeIfScalar ty') | (v':>ty') <- bs']
-    extend $ asFst $ v@>xs
+    ((), prog) <- liftTop $ toImpCExpr (map IVar bs') bound
+    let xs = [IVar (v':> derefTypeIfScalar ty') | (v':>ty') <- bs']
+    extend $ asFst $ b@>xs
     return [ImpTopLet bs' prog]
-  NTopDecl _ (Unpack _ tv bound) -> do
+  NTopDecl _ (Unpack _ tb@(tv:>_) bound) -> do
     let b = tv:>(IRefType (IntType,[]))
     ((), prog) <- liftTop $ do x <- toImpScalarAtom bound
-                               store (asDest b) x
-    extend (tv @> [IVar tv intTy], tv @> ())
+                               store (IVar b) x
+    extend (tb @> [IVar (tv:>intTy)], tb @> ())
     return [ImpTopLet [b] prog]
   NRuleDef _ _ _ -> error "Shouldn't have this left"
   NEvalCmd (Command cmd (ty, expr)) -> do
     ts <- toImpTypeTop (getType expr)
     let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts]
-    ((), prog) <- liftTop $ toImpExpr (map asDest bs) expr
+    ((), prog) <- liftTop $ toImpExpr (map IVar bs) expr
     case cmd of
       ShowImp -> emitOutput $ TextOut $ pprint prog
       _ -> return [ImpEvalCmd (Command cmd (ty, bs, prog))]
@@ -71,18 +70,18 @@ toImpExpr dests expr = case expr of
     withAllocs tys $ \bDests -> do
       toImpCExpr bDests bound
       xs <- mapM loadIfScalar bDests
-      extendR (bindEnv b xs) $ toImpExpr dests body
+      extendR (b @> xs) $ toImpExpr dests body
   Decl (Unpack _ tv bound) body -> do
     x <- toImpAtom bound
     extendR (tv @> x) $ toImpExpr dests body
-  CExpr expr -> toImpCExpr dests expr
+  CExpr e   -> toImpCExpr dests e
   Atom atom -> do
     xs <- toImpAtom atom
     zipWithM_ copyOrStore dests xs
 
 toImpAtom :: Atom -> ImpM [IExpr]
 toImpAtom atom = case atom of
-  Var v _ -> lookupVar v
+  Var v -> lookupVar v
   PrimCon con -> case con of
     Lit x -> return [ILit x]
     MemRef _ refs -> return $ map IRef refs
@@ -108,7 +107,7 @@ toImpScalarAtom atom = do
 
 toImpCExpr :: [IExpr] -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
-  Scan x ~(LamExpr b@(v:> (RecType _ (Tup [n, cTy]))) body) -> do
+  Scan x ~(LamExpr b@(_:> (RecType _ (Tup [n, cTy]))) body) -> do
     carryTys <- toImpArrayType cTy
     let (carryOutDests, mapDests) = splitAt (length carryTys) dests
     n' <- typeToSize n
@@ -118,9 +117,9 @@ toImpCExpr dests op = case op of
        (i', (_, loopBody)) <- scoped $ do
            zipWithM_ copy carryTmpDests carryOutDests
            carryTmpVals <- mapM loadIfScalar carryTmpDests
-           i' <- freshName "i"
-           let iVar = IVar i' intTy
-           extendR (v @> (iVar:carryTmpVals)) $ do
+           i' <- freshVar ("i":>intTy)
+           let iVar = IVar i'
+           extendR (b @> (iVar:carryTmpVals)) $ do
               let indexedDests = [IGet d iVar | d <- mapDests]
               toImpExpr (carryOutDests ++ indexedDests) $ body
            return i'
@@ -169,20 +168,16 @@ toImpCExpr dests op = case op of
     store dest ans
     where [dest] = dests
 
-bindEnv :: BinderP a -> b -> Env b
-bindEnv (v:>_) x = v @> x
-
 withAllocs :: [ArrayType] -> ([IExpr] -> ImpM a) -> ImpM a
 withAllocs [] body = body []
 withAllocs (ty:tys) body = withAlloc ty $ \x -> withAllocs tys (\xs -> body (x:xs))
 
 withAlloc :: ArrayType -> (IExpr -> ImpM a) -> ImpM a
 withAlloc ty body = do
-  v <- freshName "x"
-  let ty' = IRefType ty
-  emitStatement (Just (v :> ty'), Alloc ty)
-  ans <- body (IVar v ty')
-  emitStatement (Nothing, Free v ty)
+  v <- freshVar ("x" :> IRefType ty)
+  emitStatement (Just v, Alloc ty)
+  ans <- body (IVar v)
+  emitStatement (Nothing, Free v)
   return ans
 
 splitRunDests :: EffectType -> Type -> [IExpr] -> ([IExpr], [IExpr], [IExpr])
@@ -202,7 +197,7 @@ toImpActionExpr mdests dests expr = case expr of
     withAllocs tys $ \bsDests -> do
       toImpCExpr bsDests bound
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv b xs) $ toImpActionExpr mdests dests body
+      extendR (b @> xs) $ toImpActionExpr mdests dests body
   Atom m -> toImpAction mdests dests m
   _ -> error $ "Unexpected expression " ++ pprint expr
 
@@ -213,7 +208,7 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
     withAllocs tys $ \bsDests -> do
       toImpAction mdests bsDests rhs
       xs <- mapM loadIfScalar bsDests
-      extendR (bindEnv b xs) $ toImpActionExpr mdests outDests body
+      extendR (b @> xs) $ toImpActionExpr mdests outDests body
   Return _ x -> do
     x' <- toImpAtom x
     zipWithM_ copyOrStore outDests x'
@@ -281,20 +276,17 @@ loadIfScalar x = case impExprType x of
   IRefType (_, _ ) -> return x
   _ -> error "Expected a reference"
 
-asDest :: IBinder -> IExpr
-asDest (v:>ty) = IVar v ty
-
 derefTypeIfScalar :: IType -> IType
 derefTypeIfScalar ty = case ty of
   IRefType (b, []) -> IValType b
   IRefType (_, _ ) ->  ty
   _ -> error "Expected a reference"
 
-lookupVar :: Name -> ImpM [IExpr]
+lookupVar :: VarP a -> ImpM [IExpr]
 lookupVar v = do
   x <- asks $ flip envLookup v
   return $ case x of
-    Nothing -> error $ "Lookup failed: " ++ pprint v
+    Nothing -> error $ "Lookup failed: " ++ pprint (varName v)
     Just v' -> v'
 
 typeToSize :: Type -> ImpM IExpr
@@ -331,8 +323,8 @@ load x = emitInstr $ Load x
 store :: IExpr -> IExpr -> ImpM ()
 store dest src = emitStatement (Nothing, Store dest src)
 
-freshName :: Name -> ImpM Name
-freshName v = do
+freshVar :: IVar -> ImpM IVar
+freshVar v = do
   scope <- looks fst
   let v' = rename v scope
   extend $ asFst (v' @> ())
@@ -343,20 +335,20 @@ emitStatement statement = extend $ asSnd $ ImpProg [statement]
 
 emitInstr :: ImpInstr -> ImpM IExpr
 emitInstr instr = do
-  v <- freshName "v"
   case ignoreExcept (instrType instr) of
     Just ty -> do
-      emitStatement (Just (v:>ty), instr)
-      return $ IVar v ty
+      v <- freshVar ("v":>ty)
+      emitStatement (Just v, instr)
+      return $ IVar v
     Nothing -> error "Expected non-void result"
 
 -- -- === Substitutions ===
 
 substIExpr :: Env IExpr -> IExpr -> IExpr
 substIExpr env expr = case expr of
-  IVar v _ -> case envLookup env v of
-                Just x  -> x
-                Nothing -> error $ "Lookup failed " ++ pprint expr
+  IVar v -> case envLookup env v of
+              Just x  -> x
+              Nothing -> error $ "Lookup failed " ++ pprint expr
   IGet v i -> IGet (substIExpr env v) (substIExpr env i)
   ILit _   -> expr
   IRef _   -> expr
@@ -378,14 +370,14 @@ checkImp' decl = [decl] <$ case decl of
   ImpTopLet bs prog -> do
     check bs prog
     -- Scalars are dereferenced after each top-level decl
-    extend $ bindFold $ fmap (fmap derefTypeIfScalar) bs
+    extend $ foldMap (varAsEnv . fmap derefTypeIfScalar) bs
   ImpEvalCmd (Command _ (_, bs, prog)) -> check bs prog
   where
-    check :: [IBinder] -> ImpProg -> TopPassM (Env IType) ()
+    check :: [IVar] -> ImpProg -> TopPassM (Env IType) ()
     check bs prog = do
       env <- look
       void $ liftExceptTop $ addContext (pprint prog) $
-         runCatT (checkProg prog) (env <> bindFold bs)
+         runCatT (checkProg prog) (env <> fold [b @> varAnn b | b <- bs])
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) =
@@ -398,7 +390,7 @@ checkStatement (maybeBinder, instr) = do
     (Nothing, Nothing) -> return ()
     (Nothing, Just _ ) -> throw CompilerErr $ "Result of non-void instruction must be assigned"
     (Just _ , Nothing) -> throw CompilerErr $ "Can't assign result of void instruction"
-    (Just (v:>ty), Just ty') -> do
+    (Just v@(_:>ty), Just ty') -> do
       env <- look
       when (v `isin` env) $ throw CompilerErr $ "shadows:" ++ pprint v
       checkValidType ty
@@ -422,7 +414,7 @@ instrTypeChecked instr = case instr of
     assertEq sourceTy destTy "Type mismatch in store"
     return Nothing
   Alloc ty -> return $ Just $ IRefType ty
-  Free _ _ -> return Nothing  -- TODO: check matched alloc/free
+  Free _   -> return Nothing  -- TODO: check matched alloc/free
   Loop i size block -> do
     checkInt size
     void $ scoped $ extend (i @> intTy) >> checkProg block
@@ -439,7 +431,7 @@ checkIExpr expr = case expr of
   IRef (Array shape vec) -> return $ IRefType (b, shape')
     where (_, b, _) = vecRefInfo vec
           shape' = map (ILit . IntLit) shape
-  IVar v _ -> looks $ (! v)
+  IVar v -> looks $ (! v)
   IGet e i -> do
     ~(IRefType (b, (_:shape))) <- checkIExpr e
     checkInt i
@@ -464,7 +456,7 @@ impExprType expr = case expr of
   IRef (Array shape vec) -> IRefType (b, shape')
     where (_, b, _) = vecRefInfo vec
           shape' = map (ILit . IntLit) shape
-  IVar _ ty -> ty
+  IVar (_:>ty) -> ty
   IGet e _  -> case impExprType e of
     IRefType (b, (_:shape)) -> IRefType (b, shape)
     ty -> error $ "Can't index into: " ++ pprint ty
@@ -476,7 +468,7 @@ instrType instr = case instr of
   Store _ _       -> return Nothing
   Copy  _ _       -> return Nothing
   Alloc ty        -> return $ Just $ IRefType ty
-  Free _ _        -> return Nothing
+  Free _          -> return Nothing
   Loop _ _ _      -> return Nothing
 
 impOpType :: IPrimOp -> IType

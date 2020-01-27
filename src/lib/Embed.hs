@@ -39,19 +39,19 @@ emitNamed :: MonadCat EmbedEnv m => Name -> CExpr -> m Atom
 emitNamed v expr = emitTo (v:>getType expr) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
-emitTo :: MonadCat EmbedEnv m => Binder -> CExpr -> m Atom
+emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
 emitTo b expr = do
   expr' <- deShadow expr
-  b' <- freshenBinder b
+  b' <- freshVar b
   extend $ asSnd [Let b' expr']
-  return $ binderToVar b'
+  return $ Var b'
 
 deShadow :: MonadCat EmbedEnv m => Subst a => a -> m a
 deShadow x = do
    scope <- looks fst
    return $ subst (mempty, scope) x
 
-freshVar :: MonadCat EmbedEnv m => Name -> m Name
+freshVar :: MonadCat EmbedEnv m => VarP ann -> m (VarP ann)
 freshVar v = do
   scope <- looks fst
   let v' = rename v scope
@@ -59,41 +59,36 @@ freshVar v = do
   return v'
 
 emitUnpack :: MonadCat EmbedEnv m
-           => Name -> Atom -> m (Type, Binder -> m Atom)
+           => TVar -> Atom -> m (Type, Var -> m Atom)
 emitUnpack tv expr = do
   tv' <- freshVar tv
-  let finish b = do b'@(v:>ty) <- freshenBinder b
+  let finish b = do b' <- freshVar b
                     extend $ asSnd [Unpack b' tv' expr]
-                    return $ Var v ty
+                    return $ Var b'
   return (TypeVar tv', finish)
 
-freshenBinder :: MonadCat EmbedEnv m => Binder -> m Binder
-freshenBinder (v:>ty) = do
-  v' <- freshVar v
-  return (v':>ty)
-
 withBinder :: (MonadCat EmbedEnv m)
-            => Binder -> (Atom -> m a) -> m (a, Binder, EmbedEnv)
+            => Var -> (Atom -> m a) -> m (a, Var, EmbedEnv)
 withBinder b f = do
   ((ans, b'), env) <- scoped $ do
-      b' <- freshenBinder b
-      ans <- f $ binderToVar b'
+      b' <- freshVar b
+      ans <- f $ Var b'
       return (ans, b')
   return (ans, b', env)
 
-buildLam :: (MonadCat EmbedEnv m) => Binder -> (Atom -> m Atom) -> m LamExpr
+buildLam :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
 buildLam b f = do
   (ans, b', (_, decls)) <- withBinder b f
   return $ LamExpr b' (wrapDecls decls ans)
 
-buildFor :: (MonadCat EmbedEnv m) => Binder -> (Atom -> m Atom) -> m Atom
+buildFor :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m Atom
 buildFor ib f = do
   xb <- unitBinder
   liftM recGetSnd $ buildScan ib xb nUnitCon $ \i _ ->
     liftM (makePair nUnitCon) $ f i
 
 buildScan :: (MonadCat EmbedEnv m)
-           => Binder -> Binder -> Atom
+           => Var -> Var -> Atom
            -> (Atom -> Atom -> m Atom) -> m Atom
 buildScan (_:>n) (_:>cTy) xsInit f = do
   ~(ans, b, (_, decls)) <- withBinder ("v":> pairTy n cTy) $ \ix -> do
@@ -108,9 +103,9 @@ buildScoped m = do
 
 materializeAtom :: (MonadCat EmbedEnv m) => Atom -> m Atom
 materializeAtom atom = case atom of
-  PrimCon (AtomicFor ~(LamExpr b@(v:>_) (Atom body))) -> buildFor b $ \i -> do
+  PrimCon (AtomicFor ~(LamExpr b (Atom body))) -> buildFor b $ \i -> do
     scope <- looks fst  -- really only need `i` in scope
-    materializeAtom $ subst (v @> L i, scope) body
+    materializeAtom $ subst (b @> L i, scope) body
   PrimCon (RecCon m r) -> liftM (PrimCon . RecCon m) $ mapM materializeAtom r
   _ -> return atom
 
@@ -122,7 +117,7 @@ runEmbed m scope = runCat m (scope, [])
 
 wrapDecls :: [Decl] -> Atom -> Expr
 wrapDecls [] atom = Atom atom
-wrapDecls [Let (v:>_) expr] (Var v' _) | v == v' = CExpr expr  -- optimization
+wrapDecls [Let v expr] (Var v') | v == v' = CExpr expr  -- optimization
 wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
 
 flipIdx :: MonadCat EmbedEnv m => Atom -> m Atom
@@ -171,16 +166,11 @@ select ty p x y = emit $ Select ty p x y
 div' :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 div' x y = emit $ ScalarBinOp FDiv x y
 
-binderToVar :: Binder -> Atom
-binderToVar (v:>ty) = Var v ty
-
 nUnitCon :: Atom
 nUnitCon = PrimCon $ RecCon Cart (Tup [])
 
-unitBinder :: MonadCat EmbedEnv m => m Binder
-unitBinder = do
-  v <- freshVar "_"
-  return $ v:>unitTy
+unitBinder :: MonadCat EmbedEnv m => m Var
+unitBinder = freshVar ("_":>unitTy)
 
 recGetFst :: Atom -> Atom
 recGetFst x = nRecGet x fstField

@@ -69,6 +69,7 @@ prettyTyDepth d ty = case ty of
   Lens a b    -> "Lens" <+> p a <+> p b
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   IdxSetLit i -> p i
+  Mult l      -> p (show l)
   NoAnn       -> ""
   where recur = prettyTyDepth d
         recurWith n = prettyTyDepth (d + n)
@@ -113,7 +114,7 @@ instance Pretty Expr where
 
 instance Pretty FExpr where
   pretty expr = case expr of
-    FVar v ann ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts] <+> p ann
+    FVar (v:>ann) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts] <+> p ann
     FDecl decl body -> p decl <> hardline <> p body
     FPrimExpr e -> parens $ p e
     SrcAnnot subexpr _ -> p subexpr
@@ -171,7 +172,7 @@ instance Pretty Kind where
     [c] -> p c
     _   -> tupled $ map p cs
 
-instance Pretty a => Pretty (BinderP a) where
+instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =
     case asStr ann' of "" -> p v
                        _  -> p v <> "::" <> ann'
@@ -190,7 +191,7 @@ instance Pretty Decl where
 
 instance Pretty Atom where
   pretty atom = case atom of
-    Var x _     -> p x
+    Var (x:>_)  -> p x
     PrimCon con -> p (PrimConExpr con)
 
 arrStr :: Type -> Doc ann
@@ -202,8 +203,8 @@ tup [x] = p x
 tup xs  = tupled $ map p xs
 
 instance Pretty IExpr where
-  pretty (ILit v)   = p v
-  pretty (IVar v _) = p v
+  pretty (ILit v) = p v
+  pretty (IVar (v:>_)) = p v
   pretty (IGet expr idx) = p expr <> "." <> p idx
   pretty (IRef ref) = p ref
 
@@ -214,7 +215,7 @@ instance Pretty IType where
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
 
-prettyStatement :: (Maybe IBinder, ImpInstr) -> Doc ann
+prettyStatement :: (Maybe IVar, ImpInstr) -> Doc ann
 prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
@@ -224,7 +225,7 @@ instance Pretty ImpInstr where
   pretty (Store dest val)   = "store" <+> p dest <+> p val
   pretty (Copy dest source) = "copy"  <+> p dest <+> p source
   pretty (Alloc ty)         = "alloc" <+> p ty
-  pretty (Free name _)      = "free"  <+> p name
+  pretty (Free (v:>_))      = "free"  <+> p v
   pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 

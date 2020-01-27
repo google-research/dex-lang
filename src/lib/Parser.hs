@@ -156,7 +156,10 @@ typeDef = do
   bs <- many lowerName
   equalSign
   ty <- tauType
-  return $ TyDef defType v (map (:>()) bs) ty
+  return $ TyDef defType (asTVar v) (map asTVar bs) ty
+
+asTVar :: Name -> TVar
+asTVar v = v :> Kind []
 
 letPoly :: Parser FDecl
 letPoly = do
@@ -172,9 +175,7 @@ letPolyTail s = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
   rhs <- liftM wrap declOrExpr
-  let (tvs, kinds) = unzip [(tv,k) | tv:>k <- tbs]
-  let sTy = Forall kinds (abstractTVs tvs ty)
-  return (sTy, TLam tbs rhs)
+  return (Forall (map varAnn tbs) (abstractTVs tbs ty), TLam tbs rhs)
 
 letPolyToMono :: FDecl -> FDecl
 letPolyToMono d = case d of
@@ -189,7 +190,7 @@ unpack = do
                       symbol "=" >> symbol "unpack"
                       return (b, tv)
   body <- expr
-  return $ FUnpack b tv body
+  return $ FUnpack b (tv:>Kind [IdxSet]) body
 
 letMono :: Parser FDecl
 letMono = do
@@ -257,7 +258,7 @@ var :: Parser FExpr
 var = do
   v <- lowerName
   tyArgs <- many tyArg
-  return $ FVar v NoAnn tyArgs
+  return $ FVar (v:>NoAnn) tyArgs
 
 tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
@@ -426,9 +427,9 @@ idxExpr = withSourceAnn $ rawVar <|> parens productCon
 rawVar :: Parser FExpr
 rawVar = do
   v <- lowerName
-  return $ FVar v NoAnn []
+  return $ FVar (v:>NoAnn) []
 
-binder :: Parser Binder
+binder :: Parser Var
 binder = (symbol "_" >> return ("_" :> NoAnn))
      <|> liftM2 (:>) lowerName typeAnnot
 
@@ -488,7 +489,7 @@ app f x = fPrimOp $ App f x
 
 -- === Parsing types ===
 
-sigmaType :: Parser ([TBinder], Type)
+sigmaType :: Parser ([TVar], Type)
 sigmaType = do
   maybeTbs <- optional $ do
     symbol "A"
@@ -506,9 +507,9 @@ sigmaType = do
   where
     nameIsLower v = isLower (tagToStr (nameTag v) !! 0)
 
-typeBinder :: Parser TBinder
+typeBinder :: Parser TVar
 typeBinder = do
-  ~(TypeVar v) <- typeVar
+  ~(TypeVar (v:>_)) <- typeVar
   cs <-   (symbol "::" >> (    liftM (:[]) className
                            <|> parens (className `sepBy` comma)))
       <|> return []
@@ -523,7 +524,7 @@ className = do
     "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
-addIdxSetVars :: [Name] -> TBinder -> TBinder
+addIdxSetVars :: [Name] -> TVar -> TVar
 addIdxSetVars vs b@(v:>(Kind cs))
   | v `elem` vs && not (IdxSet `elem` cs) = v:>(Kind (IdxSet:cs))
   | otherwise = b
@@ -571,7 +572,9 @@ tauType' =   parenTy
          <?> "type"
 
 typeVar :: Parser Type
-typeVar = liftM TypeVar (upperName <|> lowerName)
+typeVar = do
+  v <- upperName <|> lowerName
+  return $ TypeVar (v:> Kind [])
 
 monadType :: Parser Type
 monadType = do
