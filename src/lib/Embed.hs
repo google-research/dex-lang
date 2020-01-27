@@ -106,7 +106,7 @@ materializeAtom atom = case atom of
   PrimCon (AtomicFor ~(LamExpr b (Atom body))) -> buildFor b $ \i -> do
     scope <- looks fst  -- really only need `i` in scope
     materializeAtom $ subst (b @> L i, scope) body
-  PrimCon (RecCon m r) -> liftM (PrimCon . RecCon m) $ mapM materializeAtom r
+  PrimCon (RecCon r) -> liftM (PrimCon . RecCon) $ mapM materializeAtom r
   _ -> return atom
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
@@ -167,7 +167,7 @@ div' :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 div' x y = emit $ ScalarBinOp FDiv x y
 
 nUnitCon :: Atom
-nUnitCon = PrimCon $ RecCon Cart (Tup [])
+nUnitCon = PrimCon $ RecCon (Tup [])
 
 unitBinder :: MonadCat EmbedEnv m => m Var
 unitBinder = freshVar ("_":>unitTy)
@@ -179,19 +179,19 @@ recGetSnd :: Atom -> Atom
 recGetSnd x = nRecGet x sndField
 
 unpackRec :: Atom -> Record Atom
-unpackRec (PrimCon (RecCon _ r)) = r
+unpackRec (PrimCon (RecCon r)) = r
 unpackRec x = case getType x of
-  RecType _ r -> fmap (nRecGet x . fst) $ recNameVals r
-  ty          -> error $ "Not a tuple: " ++ pprint ty
+  RecType r -> fmap (nRecGet x . fst) $ recNameVals r
+  ty        -> error $ "Not a tuple: " ++ pprint ty
 
 makeTup :: [Atom] -> Atom
-makeTup xs = PrimCon $ RecCon Cart $ Tup xs
+makeTup xs = PrimCon $ RecCon $ Tup xs
 
 fromTup :: Atom -> [Atom]
 fromTup x = toList $ unpackRec x
 
 makePair :: Atom -> Atom -> Atom
-makePair x y = PrimCon $ RecCon Cart (Tup [x, y])
+makePair x y = PrimCon $ RecCon (Tup [x, y])
 
 fromPair :: Atom -> (Atom, Atom)
 fromPair x = (a, b)
@@ -203,8 +203,8 @@ mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
   TabType n a -> buildFor ("i":>n) $ \i -> mapScalars f a [nTabGet x i | x <- xs]
-  RecType m r ->
-    liftM (PrimCon . RecCon m) $ sequence $ recZipWith (mapScalars f) r xs'
+  RecType r ->
+    liftM (PrimCon . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
     where xs' = transposeRecord r $ map unpackRec xs
   _ -> error $ "Not implemented " ++ pprint ty
 

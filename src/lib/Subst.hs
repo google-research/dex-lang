@@ -48,7 +48,7 @@ reduceAtom atom = case atom of
   _ -> atom
 
 nRecGet ::  Atom -> RecField -> Atom
-nRecGet (PrimCon (RecCon _ r)) i = recGet r i
+nRecGet (PrimCon (RecCon r)) i = recGet r i
 nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
@@ -86,7 +86,7 @@ instance Subst Type where
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
     ArrType l a b -> ArrType (recur l) (recur a) (recur b)
     TabType a b -> TabType (recur a) (recur b)
-    RecType k r -> RecType k $ fmap recur r
+    RecType r   -> RecType $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
     Exists body -> Exists (recur body)
     Monad eff a -> Monad (fmap recur eff) (recur a)

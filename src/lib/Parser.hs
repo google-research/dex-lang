@@ -236,23 +236,20 @@ productCon = do
   ans <- prod expr
   return $ case ans of
     Left x -> x
-    Right (k, xs) -> fPrimCon $ RecCon k (Tup xs)
+    Right xs -> fPrimCon $ RecCon (Tup xs)
 
-prod :: Parser a -> Parser (Either a (ProdKind, [a]))
-prod p = prod1 p <|> return (Right (Cart, []))
+prod :: Parser a -> Parser (Either a [a])
+prod p = prod1 p <|> return (Right [])
 
-prod1 :: Parser a -> Parser (Either a (ProdKind, [a]))
+prod1 :: Parser a -> Parser (Either a [a])
 prod1 p = do
   x <- p
-  sep <- optional $     (comma >> return Cart)
-                    <|> (colon >> return Tens)
+  sep <- optional comma
   case sep of
     Nothing -> return $ Left x
-    Just k -> do
-      xs <- p `sepEndBy` sep'
-      return $ Right (k, x:xs)
-      where sep' = case k of Cart -> comma
-                             Tens -> colon
+    Just () -> do
+      xs <- p `sepEndBy` comma
+      return $ Right (x:xs)
 
 var :: Parser FExpr
 var = do
@@ -441,8 +438,8 @@ parenPat :: Parser Pat
 parenPat = do
   ans <- parens $ prod pat
   return $ case ans of
-    Left x -> x
-    Right (_, xs) -> RecTree $ Tup xs
+    Left  x  -> x
+    Right xs -> RecTree $ Tup xs
 
 intQualifier :: Parser Int
 intQualifier = do
@@ -531,11 +528,11 @@ addIdxSetVars vs b@(v:>(Kind cs))
 
 idxSetVars :: Type -> [Name]
 idxSetVars ty = case ty of
-  ArrType _ a b  -> recur a <> recur b
-  TabType a b    -> envNames (freeVars a) <> recur b
-  RecType Cart r -> foldMap recur r
-  Exists body    -> recur body
-  _ -> []
+  ArrType _ a b -> recur a <> recur b
+  TabType a b   -> envNames (freeVars a) <> recur b
+  RecType r     -> foldMap recur r
+  Exists body   -> recur body
+  _             -> []
   where recur = idxSetVars
 
 tauTypeAtomic :: Parser Type
@@ -599,8 +596,8 @@ parenTy :: Parser Type
 parenTy = do
   ans <- parens $ prod tauType
   return $ case ans of
-    Left ty -> ty
-    Right (k, xs) -> RecType k $ Tup xs
+    Left ty  -> ty
+    Right xs -> RecType $ Tup xs
 
 existsType :: Parser Type
 existsType = do
@@ -623,9 +620,6 @@ comma = symbol ","
 period :: Parser ()
 period = symbol "."
 
-colon :: Parser ()
-colon = symbol ":"
-
 -- === Parsing literal data ===
 
 -- TODO: parse directly to an atom instead
@@ -639,7 +633,7 @@ literalData =   liftM (FPrimExpr . PrimConExpr) idxLit
 tupleData :: Parser FExpr
 tupleData = do
   xs <- parens $ literalData `sepEndBy` comma
-  return $ FPrimExpr $ PrimConExpr $ RecCon Cart $ Tup xs
+  return $ FPrimExpr $ PrimConExpr $ RecCon $ Tup xs
 
 tableData :: Parser FExpr
 tableData = do

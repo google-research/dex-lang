@@ -85,7 +85,7 @@ toImpAtom atom = case atom of
   PrimCon con -> case con of
     Lit x -> return [ILit x]
     MemRef _ refs -> return $ map IRef refs
-    RecCon _ r -> liftM fold $ mapM toImpAtom r
+    RecCon r -> liftM fold $ mapM toImpAtom r
     TabGet x i -> do
       i' <- toImpScalarAtom i
       xs <- toImpAtom x
@@ -93,7 +93,7 @@ toImpAtom atom = case atom of
     IdxLit _ i   -> return [ILit (IntLit i)]
     RecGet x i -> do
       xs <- toImpAtom x
-      let (RecType _ rTy) = getType x
+      let (RecType rTy) = getType x
       return $ snd $ recGet (listIntoRecord rTy xs) i
     MemRef _ refs -> return $ map IRef refs
     _ -> error $ "Not implemented: " ++ pprint atom
@@ -107,7 +107,8 @@ toImpScalarAtom atom = do
 
 toImpCExpr :: [IExpr] -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
-  Scan x ~(LamExpr b@(_:> (RecType _ (Tup [n, cTy]))) body) -> do
+  Scan x (LamExpr b body) -> do
+    let (RecType (Tup [n, cTy])) = varAnn b
     carryTys <- toImpArrayType cTy
     let (carryOutDests, mapDests) = splitAt (length carryTys) dests
     n' <- typeToSize n
@@ -255,7 +256,7 @@ toImpArrayType ty = case ty of
     arrTys <- toImpArrayType b
     return [(t, n:shape) | (t, shape) <- arrTys]
   -- TODO: fix this (only works for range)
-  RecType _ r -> liftM fold $ traverse toImpArrayType r
+  RecType r   -> liftM fold $ traverse toImpArrayType r
   Exists _    -> return [(IntType, [])]
   TypeVar _   -> return [(IntType, [])]
   IdxSetLit _ -> return [(IntType, [])]

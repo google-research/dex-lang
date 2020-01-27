@@ -47,7 +47,7 @@ serializeVal val = do
 writeVal :: FlatValRef -> Val -> IO ()
 writeVal (FlatVal (BaseType _) [ref]) (PrimCon (Lit x)) =
   storeArray ref $ scalarArray x
-writeVal (FlatVal (RecType _ r) refs) (PrimCon (RecCon _ valRec)) =
+writeVal (FlatVal (RecType r) refs) (PrimCon (RecCon valRec)) =
   sequence_ $ recZipWith f refRec valRec
   where
     refRec = listIntoRecord r refs
@@ -64,7 +64,7 @@ writeVal fv val = error $ "Unexpected flatval/val: " ++ pprint (fv, show val)
 restructureVal :: FlatVal -> Val
 restructureVal (FlatVal ty arrays) = case ty of
   BaseType _  -> PrimCon $ Lit      $ readScalar array  where [array] = arrays
-  RecType k r -> PrimCon $ RecCon k $ fst $ traverseFun restructureValPartial r arrays
+  RecType r -> PrimCon $ RecCon $ fst $ traverseFun restructureValPartial r arrays
   TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon ty $
     [restructureVal $ FlatVal a $ map (subArray i) arrays | i <- [0..n-1]]
   IdxSetLit n -> PrimCon $ IdxLit n i  where [array] = arrays

@@ -189,7 +189,7 @@ deShadowType ty = case ty of
       _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty
   ArrType l a b -> liftM2 (ArrType l) (recur a) (recur b)
   TabType a b -> liftM2 TabType (recur a) (recur b)
-  RecType k r -> liftM (RecType k) $ traverse recur r
+  RecType r   -> liftM RecType $ traverse recur r
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
   Lens a b    -> liftM2 Lens (recur a) (recur b)
   Exists body -> liftM Exists $ recur body

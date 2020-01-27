@@ -79,7 +79,7 @@ instance HasType FExpr where
 
 instance HasType (RecTree Var) where
   getType (RecLeaf (_:>ty)) = ty
-  getType (RecTree r) = RecType Cart $ fmap getType r
+  getType (RecTree r) = RecType $ fmap getType r
 
 getFLamType :: FLamExpr -> (Type, Type)
 getFLamType (FLamExpr p body) = (getType p, getType body)
@@ -220,7 +220,7 @@ subAtDepth d f ty = case ty of
     TypeVar v     -> f d (Left v)
     ArrType m a b -> ArrType m (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
-    RecType k r   -> RecType k (fmap recur r)
+    RecType r     -> RecType (fmap recur r)
     TypeApp a b   -> TypeApp (recur a) (map recur b)
     Monad eff a   -> Monad (fmap recur eff) (recur a)
     Lens a b      -> Lens (recur a) (recur b)
@@ -261,7 +261,7 @@ checkVSpace env ty = case ty of
   TypeVar v         -> checkVarClass env VSpace v
   BaseType RealType -> return ()
   TabType _ a       -> recur a
-  RecType _ r       -> mapM_ recur r
+  RecType r         -> mapM_ recur r
   _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
   where recur = checkVSpace env
 
@@ -269,7 +269,7 @@ checkIdxSet :: FTypeEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
-  RecType _ r -> mapM_ recur r
+  RecType r   -> mapM_ recur r
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
@@ -279,7 +279,7 @@ checkData env ty = case ty of
                     const (checkVarClass env Data v)
   BaseType _  -> return ()
   TabType _ a -> recur a
-  RecType _ r -> mapM_ recur r
+  RecType r   -> mapM_ recur r
   IdxSetLit _ -> return ()
   Exists a    -> recur a
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
@@ -397,7 +397,7 @@ pairTy :: Type -> Type -> Type
 pairTy x y = tupTy [x, y]
 
 tupTy :: [Type] -> Type
-tupTy xs = RecType Cart $ Tup xs
+tupTy xs = RecType $ Tup xs
 
 tangentBunType :: Type -> Type
 tangentBunType ty = case ty of
@@ -440,7 +440,7 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
     eq a a'
     return b
   For (n,a) -> return $ TabType n a
-  Scan c (RecType _ (Tup [i, c']), RecType _ (Tup [c'', y])) -> do
+  Scan c (RecType (Tup [i, c']), RecType (Tup [c'', y])) -> do
     eq c c' >> eq c c'' >> return (pairTy c (TabType i y))
   TabCon ty xs   -> mapM_ (eq ty) xs >> return (IdxSetLit (length xs) ==> ty)
   ScalarBinOp binop t1 t2 -> do
@@ -473,10 +473,10 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lit l          -> return $ BaseType $ litType l
   Lam l (a,b)    -> return $ ArrType l a b
   IdxLit n _     -> return $ IdxSetLit n
-  RecCon k r     -> return $ RecType k r
+  RecCon r       -> return $ RecType r
   AtomicFor (n,a) -> return $ TabType n a
   TabGet (TabType i a) i' -> eq i i' >> return a
-  RecGet (RecType _ r) i  -> return $ recGet r i
+  RecGet (RecType r) i  -> return $ recGet r i
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
     eq a a'
@@ -569,12 +569,6 @@ sequenceLinArgs argLin ms = do
               NonLin -> sequence $ map checkNothingSpent chunk
   return $ concat chunks'
 
-traverseProd :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
-                  ProdKind -> (a -> m b) -> f a -> m (f b)
-traverseProd k f xs = case k of
-  Cart -> shareLinear $ fmap f xs
-  Tens -> traverse f xs
-
 shareLinear :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
                  f (m a) -> m (f a)
 shareLinear actions = do
@@ -614,7 +608,7 @@ realZero = RealLit 0.0
 flattenType :: Type -> [(BaseType, [Int])]
 flattenType ty = case ty of
   BaseType b  -> [(b, [])]
-  RecType _ r -> concat $ map flattenType $ toList r
+  RecType r -> concat $ map flattenType $ toList r
   TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
   IdxSetLit _ -> [(IntType, [])]
   -- temporary hack. TODO: fix

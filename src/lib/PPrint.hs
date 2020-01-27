@@ -17,7 +17,6 @@ import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import Data.Foldable (toList)
 
-import Record
 import Env
 import Syntax
 import Util (highlightRegion)
@@ -61,9 +60,7 @@ prettyTyDepth d ty = case ty of
   BoundTVar n -> p (tvars d n)
   ArrType l a b -> parens $ recur a <+> arrStr l <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
-  RecType Cart r -> p $ fmap (asStr . recur) r
-  RecType Tens (Tup xs) -> parens $ hsep $ punctuate " :" (map p xs)
-  RecType Tens _ -> error "Not implemented"
+  RecType r   -> p $ fmap (asStr . recur) r
   TypeApp f xs -> p f <+> hsep (map p xs)
   Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
   Lens a b    -> "Lens" <+> p a <+> p b
@@ -151,7 +148,7 @@ instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimCon ty e lam) where
   pretty (TabGet e1 e2) = p e1 <> "." <> p e2
   pretty (RecGet e1 i ) = p e1 <> "#" <> p i
   pretty (AtomicFor lam) = "afor" <+> p lam
-  pretty (RecCon _ r)  = p r
+  pretty (RecCon r) = p r
   pretty (AtomicTabCon _ xs) = list (map pretty xs)
   pretty (IdxLit n i) = p i <> "@" <> p (IdxSetLit n)
   pretty con = p (nameToStr (PrimConExpr blankCon))

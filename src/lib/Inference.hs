@@ -325,7 +325,7 @@ unify err t1 t2 = do
       zipWithM_ recur (toList eff) (toList eff')
       recur a a'
     (Lens a b, Lens a' b') -> recur a a' >> recur b b'
-    (RecType k r, RecType k' r') | k == k' ->
+    (RecType r, RecType r') ->
       case zipWithRecord recur r r' of
         Nothing -> throwError err
         Just unifiers -> void $ sequence unifiers

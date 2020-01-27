@@ -10,7 +10,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Syntax (
-    Type (..), BaseType (..), EffectTypeP (..), EffectType, ProdKind (..),
+    Type (..), BaseType (..), EffectTypeP (..), EffectType,
     Multiplicity (..), SigmaType (..), Kind (..), ClassName (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var , TyDefType (..),
     TVar, TLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
@@ -53,7 +53,7 @@ data Type = TypeVar TVar
           | ArrType Lin Type Type
           | IdxSetLit Int
           | TabType Type Type
-          | RecType ProdKind (Record Type)
+          | RecType (Record Type)
           | Exists Type
           | Monad EffectType Type
           | Lens Type Type
@@ -72,7 +72,6 @@ data EffectTypeP ty = Effect { readerEff :: ty
                              , stateEff  :: ty }  deriving (Show, Eq, Generic)
 type EffectType = EffectTypeP Type
 
-data ProdKind     = Cart | Tens   deriving (Show, Eq, Generic)
 data Multiplicity = Lin | NonLin  deriving (Show, Eq, Generic)
 type Lin = Type
 
@@ -141,7 +140,7 @@ data PrimCon ty e lam =
       | RecGet e RecField
       | AtomicFor lam -- lambda body must be an atom
       | AtomicTabCon ty [e] -- Only used for printing. Intend to remove it.
-      | RecCon ProdKind (Record e)
+      | RecCon (Record e)
       | Pack e ty ty
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
@@ -435,7 +434,7 @@ fromT (T x) = x
 fromT _ = error "Not a type-ish thing"
 
 unitTy :: Type
-unitTy = RecType Cart (Tup [])
+unitTy = RecType (Tup [])
 
 type FullEnv v t = Env (LorT v t)
 
@@ -477,7 +476,7 @@ instance HasVars Type where
     TypeVar v  -> v @> T ()
     ArrType l a b -> freeVars l <> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
-    RecType _ r -> foldMap freeVars r
+    RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
     Exists body -> freeVars body
     Monad eff a -> foldMap freeVars eff <> freeVars a
@@ -598,7 +597,7 @@ instance TraversableExpr PrimCon where
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
     AtomicFor lam  -> liftA  AtomicFor (fL lam)
     AtomicTabCon ty xs -> liftA2 AtomicTabCon (fT ty) (traverse fE xs)
-    RecCon k r     -> liftA  (RecCon k) (traverse fE r)
+    RecCon r       -> liftA  RecCon (traverse fE r)
     Pack e ty ty'  -> liftA3 Pack (fE e) (fT ty) (fT ty')
     Bind e lam -> liftA2 Bind (fE e) (fL lam)
     MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of
@@ -630,7 +629,7 @@ unzipExpr expr = (blankExpr, xs)
             (\lam -> tell ([]  , [] , [lam]))
 
 instance RecTreeZip Type where
-  recTreeZip (RecTree r) (RecType _ r') = RecTree $ recZipWith recTreeZip r r'
+  recTreeZip (RecTree r) (RecType r') = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) _ = error "Bad zip"
 

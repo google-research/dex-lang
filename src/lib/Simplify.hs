@@ -107,7 +107,7 @@ simplifyAtom atom = substSimp atom
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr (Scan x (LamExpr b body)) = do
   x' <- simplifyAtom x >>= materializeAtom
-  ~b'@(_:>RecType _ (Tup [n, _]))  <- substSimp b
+  ~b'@(_:>RecType (Tup [n, _]))  <- substSimp b
   ((cOut, yOut), b'', (scope, decls)) <-
      withBinder b' $ \ic -> do
         extendSub (b @> L ic) $ do
@@ -177,7 +177,7 @@ runLinearization x (LamExpr b expr) = do
   (ans, f) <- extendSub (b @> L x) $ linearize expr
   f' <- runTangent b f
   -- TODO: check type here, especially linearity
-  return $ Atom $ PrimCon $ RecCon Cart (Tup [ans, f'])
+  return $ Atom $ PrimCon $ RecCon (Tup [ans, f'])
 
 runTangent :: Var -> TangentM Atom -> SimplifyM Atom
 runTangent b m = liftM (PrimCon . Lam (Mult Lin)) $ buildLam b $ \t ->
