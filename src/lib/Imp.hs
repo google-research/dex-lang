@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Imp (impPass, checkImp, impExprType, substIExpr, substIType) where
+module Imp (toImpModule, checkImpModule, impExprType, impExprToAtom) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -17,51 +17,44 @@ import Syntax
 import Env
 import Type
 import PPrint
-import Pass
 import Cat
 import Serialize
 import Fresh
 import Subst
 import Record
 
-type ImpEnv = Env [IExpr]
+type ImpEnv = Env (Type, [IExpr])
 type EmbedEnv = (Scope, ImpProg)
-type ImpM a = ReaderT ImpEnv (CatT EmbedEnv (Either Err)) a
+type ImpM a = ReaderT ImpEnv (Cat EmbedEnv) a
 
-impPass :: TopPass NTopDecl ImpDecl
-impPass = TopPass $ \decl -> case decl of
-  NTopDecl _ (Let b@(v:>ty) bound) -> do
-    tys' <- toImpTypeTop ty
-    (_, scope) <- look
-    let (bs', scope') = renames (map (v:>) tys') scope
-    extend $ asSnd scope'
-    ((), prog) <- liftTop $ toImpCExpr (map IVar bs') bound
-    let xs = [IVar (v':> derefTypeIfScalar ty') | (v':>ty') <- bs']
-    extend $ asFst $ b@>xs
-    return [ImpTopLet bs' prog]
-  NTopDecl _ (Unpack _ tb@(tv:>_) bound) -> do
-    let b = tv:>(IRefType (IntType,[]))
-    ((), prog) <- liftTop $ do x <- toImpScalarAtom bound
-                               store (IVar b) x
-    extend (tb @> [IVar (tv:>intTy)], tb @> ())
-    return [ImpTopLet [b] prog]
-  NRuleDef _ _ _ -> error "Shouldn't have this left"
-  NEvalCmd (Command cmd (ty, expr)) -> do
-    ts <- toImpTypeTop (getType expr)
-    let bs = [Name "%imptmp" i :> t | (i, t) <- zip [0..] ts]
-    ((), prog) <- liftTop $ toImpExpr (map IVar bs) expr
-    case cmd of
-      ShowImp -> emitOutput $ TextOut $ pprint prog
-      _ -> return [ImpEvalCmd (Command cmd (ty, bs, prog))]
+-- TODO: free refs that aren't exported
+toImpModule :: Module -> ImpModule
+toImpModule (Module decls result) = ImpModule vs prog env
+  where
+    ((vs, env), prog) = runImpM $ do
+                          (bs, substEnv) <- toImpTopDecls decls
+                          return (bs, subst (substEnv, mempty) result)
 
-liftTop :: ImpM a -> TopPassM (ImpEnv, Scope) (a, ImpProg)
-liftTop m = do
-  (env, scope) <- look
-  (ans, (_, prog)) <- liftExceptTop $ runCatT (runReaderT m env) (scope, mempty)
-  return (ans, prog)
+runImpM :: ImpM a -> (a, ImpProg)
+runImpM m = (ans, prog)
+  where (ans, (_, prog)) = runCat (runReaderT m mempty) mempty
 
-toImpTypeTop :: Type -> TopPassM (ImpEnv, Scope) [IType]
-toImpTypeTop ty = liftM (map IRefType . fst) $ liftTop $ toImpArrayType ty
+toImpTopDecls :: [Decl] -> ImpM ([IVar], FullEnv Atom Type)
+toImpTopDecls [] = return ([], mempty)
+toImpTopDecls (decl:decls) = do
+  (env, vs, substEnv) <- toImpTopDecl decl
+  (vs', substEnv') <- extendR env $ toImpTopDecls decls
+  return (vs ++ vs', substEnv' <> substEnv)
+
+toImpTopDecl :: Decl -> ImpM (ImpEnv, [IVar], FullEnv Atom Type)
+toImpTopDecl decl = case decl of
+  Let b@(_:>ty) bound -> do
+    tys <- toImpArrayType ty
+    vs <- sequence [freshVar ("x" :> IRefType t) | t <- tys]
+    let dests = map IVar vs
+    toImpCExpr dests bound
+    xs <- mapM loadIfScalar dests
+    return (b @> (ty, xs), vs, b @> L (impExprsToAtom (ty, dests)))
 
 toImpExpr :: [IExpr] -> Expr -> ImpM ()
 toImpExpr dests expr = case expr of
@@ -70,10 +63,10 @@ toImpExpr dests expr = case expr of
     withAllocs tys $ \bDests -> do
       toImpCExpr bDests bound
       xs <- mapM loadIfScalar bDests
-      extendR (b @> xs) $ toImpExpr dests body
-  Decl (Unpack _ tv bound) body -> do
+      extendR (b @> (ty, xs)) $ toImpExpr dests body
+  Decl (Unpack (_:>ty) tv bound) body -> do
     x <- toImpAtom bound
-    extendR (tv @> x) $ toImpExpr dests body
+    extendR (tv @> (ty, x)) $ toImpExpr dests body
   CExpr e   -> toImpCExpr dests e
   Atom atom -> do
     xs <- toImpAtom atom
@@ -84,7 +77,7 @@ toImpAtom atom = case atom of
   Var v -> lookupVar v
   PrimCon con -> case con of
     Lit x -> return [ILit x]
-    MemRef _ refs -> return $ map IRef refs
+    MemRef _ ref -> return [IRef ref]
     RecCon r -> liftM fold $ mapM toImpAtom r
     TabGet x i -> do
       i' <- toImpScalarAtom i
@@ -95,9 +88,38 @@ toImpAtom atom = case atom of
       xs <- toImpAtom x
       let (RecType rTy) = getType x
       return $ snd $ recGet (listIntoRecord rTy xs) i
-    MemRef _ refs -> return $ map IRef refs
     _ -> error $ "Not implemented: " ++ pprint atom
   _ -> error $ "Not a scalar atom: " ++ pprint atom
+
+impExprsToAtom :: (Type, [IExpr]) -> Atom
+impExprsToAtom (ty, xs) = restructureAtom ty $ map impExprToAtom xs
+
+impExprToAtom :: IExpr -> Atom
+impExprToAtom e = case e of
+  IVar (v:>ty) -> Var (v:> impTypeToType ty)
+  ILit x       -> PrimCon $ Lit x
+  IRef ref     -> PrimCon $ MemRef ty ref
+    where (Array shape vec) = ref
+          (_, b, _) = vecRefInfo vec
+          ty = foldr TabType (BaseType b) (map IdxSetLit shape)
+  IGet _ _ -> error "Not implemented"
+
+-- TODO: possibly avoid this by maintaining atoms in the env instead of [IExpr]
+restructureAtom :: Type -> [Atom] -> Atom
+restructureAtom (BaseType _) [x] = x
+restructureAtom (IdxSetLit n) [x] = PrimCon (AsIdxAtomic n x)
+restructureAtom (RecType r ) xs = PrimCon $ RecCon $
+  fmap (uncurry restructureAtom) $ listIntoRecord r xs
+restructureAtom (TabType n a) xs = PrimCon $ AtomicFor (LamExpr i (Atom body))
+  where
+    i = rename ("i":>n) (foldMap freeVars xs)
+    body = restructureAtom a [PrimCon $ TabGet x (Var i) | x <- xs]
+restructureAtom ty x = error $ "Can't restructure: " ++ pprint (ty, x)
+
+impTypeToType :: IType -> Type
+impTypeToType (IValType b) = BaseType b
+impTypeToType (IRefType (b, shape)) =
+  foldr (\(ILit (IntLit n)) a -> TabType (IdxSetLit n) a) (BaseType b) shape
 
 toImpScalarAtom :: Atom -> ImpM IExpr
 toImpScalarAtom atom = do
@@ -120,7 +142,7 @@ toImpCExpr dests op = case op of
            carryTmpVals <- mapM loadIfScalar carryTmpDests
            i' <- freshVar ("i":>intTy)
            let iVar = IVar i'
-           extendR (b @> (iVar:carryTmpVals)) $ do
+           extendR (b @> (varAnn b, (iVar:carryTmpVals))) $ do
               let indexedDests = [IGet d iVar | d <- mapDests]
               toImpExpr (carryOutDests ++ indexedDests) $ body
            return i'
@@ -175,11 +197,16 @@ withAllocs (ty:tys) body = withAlloc ty $ \x -> withAllocs tys (\xs -> body (x:x
 
 withAlloc :: ArrayType -> (IExpr -> ImpM a) -> ImpM a
 withAlloc ty body = do
-  v <- freshVar ("x" :> IRefType ty)
-  emitStatement (Just v, Alloc ty)
-  ans <- body (IVar v)
+  ~ref@(IVar v) <- newAlloc ty
+  ans <- body ref
   emitStatement (Nothing, Free v)
   return ans
+
+newAlloc :: ArrayType -> ImpM IExpr
+newAlloc ty = do
+  v <- freshVar ("x" :> IRefType ty)
+  emitStatement (Just v, Alloc ty)
+  return $ IVar v
 
 splitRunDests :: EffectType -> Type -> [IExpr] -> ([IExpr], [IExpr], [IExpr])
 splitRunDests (Effect _ w _) a dests = (aDest, wDest, sDest)
@@ -198,7 +225,7 @@ toImpActionExpr mdests dests expr = case expr of
     withAllocs tys $ \bsDests -> do
       toImpCExpr bsDests bound
       xs <- mapM loadIfScalar bsDests
-      extendR (b @> xs) $ toImpActionExpr mdests dests body
+      extendR (b @> (ty, xs)) $ toImpActionExpr mdests dests body
   Atom m -> toImpAction mdests dests m
   _ -> error $ "Unexpected expression " ++ pprint expr
 
@@ -209,7 +236,7 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
     withAllocs tys $ \bsDests -> do
       toImpAction mdests bsDests rhs
       xs <- mapM loadIfScalar bsDests
-      extendR (b @> xs) $ toImpActionExpr mdests outDests body
+      extendR (b @> (ty, xs)) $ toImpActionExpr mdests outDests body
   Return _ x -> do
     x' <- toImpAtom x
     zipWithM_ copyOrStore outDests x'
@@ -288,7 +315,7 @@ lookupVar v = do
   x <- asks $ flip envLookup v
   return $ case x of
     Nothing -> error $ "Lookup failed: " ++ pprint (varName v)
-    Just v' -> v'
+    Just (_, v') -> v'
 
 typeToSize :: Type -> ImpM IExpr
 typeToSize (TypeVar v) = do
@@ -343,42 +370,12 @@ emitInstr instr = do
       return $ IVar v
     Nothing -> error "Expected non-void result"
 
--- -- === Substitutions ===
-
-substIExpr :: Env IExpr -> IExpr -> IExpr
-substIExpr env expr = case expr of
-  IVar v -> case envLookup env v of
-              Just x  -> x
-              Nothing -> error $ "Lookup failed " ++ pprint expr
-  IGet v i -> IGet (substIExpr env v) (substIExpr env i)
-  ILit _   -> expr
-  IRef _   -> expr
-
-substIType :: Env IExpr -> IType -> IType
-substIType env ty = case ty of
-  IValType _          -> ty
-  IRefType (b, shape) -> IRefType (b, map (substIExpr env) shape)
-
 -- === type checking imp programs ===
 
 type ImpCheckM a = CatT (Env IType) (Either Err) a
 
-checkImp :: TopPass ImpDecl ImpDecl
-checkImp = TopPass checkImp'
-
-checkImp' :: ImpDecl -> TopPassM (Env IType) [ImpDecl]
-checkImp' decl = [decl] <$ case decl of
-  ImpTopLet bs prog -> do
-    check bs prog
-    -- Scalars are dereferenced after each top-level decl
-    extend $ foldMap (varAsEnv . fmap derefTypeIfScalar) bs
-  ImpEvalCmd (Command _ (_, bs, prog)) -> check bs prog
-  where
-    check :: [IVar] -> ImpProg -> TopPassM (Env IType) ()
-    check bs prog = do
-      env <- look
-      void $ liftExceptTop $ addContext (pprint prog) $
-         runCatT (checkProg prog) (env <> fold [b @> varAnn b | b <- bs])
+checkImpModule :: ImpModule -> Except ()
+checkImpModule m = return ()
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) =

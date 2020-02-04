@@ -8,7 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Inference (typePass, inferExpr) where
+module Inference (inferModule, inferExpr) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -24,42 +24,31 @@ import Record
 import Type
 import PPrint
 import Fresh
-import Pass
 import Cat
 import Subst
 
 data Constraint = Constraint Type Type String SrcCtx
-type TypeEnv = FullEnv SigmaType Kind
+type TypeEnv = FullEnv Type Kind
 type QVars = Env ()
 type UExpr = FExpr
 type InferM a = ReaderT (SrcCtx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
-typePass :: TopPass TopDecl TopDecl
-typePass = TopPass $ \tdecl -> case tdecl of
-  TopDecl ann decl -> do
-    (decl', env') <- liftTop $ inferDecl decl
-    extend env'
-    return [TopDecl ann decl']
-  RuleDef ann ty tlam -> do
-    ~(LetPoly _ tlam', _) <- liftTop $ inferDecl $ LetPoly ("_":>ty) tlam
-    return [RuleDef ann ty tlam']
-  EvalCmd (Command GetType (SrcAnnot (FVar v []) _)) -> do
-    env <- look
-    case envLookup env v of
-      Nothing -> throwTopErr $ Err UnboundVarErr Nothing (pprint v)
-      Just ty -> emitOutput $ TextOut $ pprint $ fromL ty
-  EvalCmd (Command cmd expr) -> do
-    (_, expr') <- liftTop $ solveLocalMonomorphic $ infer expr
-    case cmd of
-      ShowTyped -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [EvalCmd (Command cmd expr')]
+inferModule :: TopEnv -> FModule -> Except FModule
+inferModule topEnv (FModule imports body exports) = do
+  let envIn = topEnvToTypeEnv topEnv
+  (body', env') <- runInferM envIn (inferDecls body)
+  let envOut = envIn <> env'
+  let imports' = imports `envIntersect` envIn
+  let exports' = exports `envIntersect` envOut
+  return $ FModule imports' body' exports'
 
-liftTop :: InferM a -> TopPassM TypeEnv a
-liftTop m = do
-  env <- look
-  liftExceptTop $ runInferM env m
+topEnvToTypeEnv :: TopEnv -> TypeEnv
+topEnvToTypeEnv env = flip fmap env $ \ann -> case ann of
+  L (Left atom)  -> L $ Forall [] $ getType atom
+  L (Right tlam) -> L $ getType tlam
+  T _    -> T $ Kind []
 
 runInferM :: TypeEnv -> InferM a -> Except a
 runInferM env m = do
@@ -67,6 +56,14 @@ runInferM env m = do
   ((ans, _), _) <- flip runCatT mempty $
                      runWriterT $ flip runReaderT (Nothing, env) $ m
   return ans
+
+-- TODO: put src ctx in an inner ReaderT so we can just use cat here
+inferDecls :: [FDecl] -> InferM ([FDecl], TypeEnv)
+inferDecls [] = return ([], mempty)
+inferDecls (decl:decls) = do
+  (decl' , env ) <- inferDecl decl
+  (decls', env') <- extendRSnd env $ inferDecls decls
+  return (decl':decls', env <> env')
 
 inferExpr :: UExpr -> Except (Type, FExpr)
 inferExpr expr = runInferM mempty $ solveLocalMonomorphic (infer expr)
@@ -94,9 +91,8 @@ inferDecl decl = case decl of
     -- TODO: check possible type annotation
     let b' = v :> boundTy
     return (FUnpack b' tv bound', asEnv b')
-  TyDef NewType v [] ty -> return (TyDef NewType v [] ty, v @> T (Kind []))
-  TyDef NewType _ _ _ -> error "Parametric newtype not implemented"
-  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
+  TyDef v bs ty -> return (TyDef v bs ty, mempty)
+  FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
 
 infer :: UExpr -> InferM (Type, FExpr)
 infer expr = do ty <- freshQ
@@ -115,7 +111,7 @@ check expr reqTy = case expr of
     body' <- extendRSnd env' $ check body reqTy
     return $ FDecl decl' body'
   FVar v ts -> do
-    Forall kinds body <- asks $ fromL . (! v) . snd
+    ~(Forall kinds body) <- asks $ fromL . (! v) . snd
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
@@ -402,7 +398,6 @@ instance TySubst FDecl where
     LetMono p e -> LetMono (fmap (tySubst env) p) (tySubst env e)
     LetPoly (v:>Forall ks ty) (TLam bs body) ->
        LetPoly (v:>Forall ks (tySubst env ty)) (TLam bs (tySubst env body))
-    TyDef a v args ty -> TyDef a v args (tySubst env ty)
     FUnpack (v:>ty) tv e -> FUnpack (v:>(tySubst env ty)) tv (tySubst env e)
 
 instance (TySubst a, TySubst b) => TySubst (a, b) where

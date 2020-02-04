@@ -11,12 +11,13 @@
 {-# LANGUAGE UndecidableInstances #-}
 -- those last three are all needed for monaderror
 
-module Fresh (fresh, freshLike, FreshT, runFreshT, rawName,
+module Fresh (fresh, freshLike, FreshT, Fresh, runFreshT, runFresh, rawName,
               nameTag, rename, renames, FreshScope, runFreshRT, genFresh,
               FreshRT, MonadFreshR, freshName, askFresh, localFresh) where
 
 import Control.Monad.State.Strict
 import Control.Monad.Reader
+import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Map.Strict as M
@@ -60,6 +61,8 @@ freshCat v = do v' <- looks $ rename v
 newtype FreshT m a = FreshT (StateT FreshScope m a)
   deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
 
+type Fresh = FreshT Identity
+
 class Monad m => MonadFresh m where
   fresh :: Tag -> m Name
 
@@ -73,6 +76,9 @@ freshLike = fresh . nameTag
 
 runFreshT :: Monad m => FreshT m a -> FreshScope -> m a
 runFreshT (FreshT s) scope = evalStateT s scope
+
+runFresh :: Fresh a -> FreshScope -> a
+runFresh m scope = runIdentity $ runFreshT m scope
 
 instance MonadFresh m => MonadFresh (StateT s m) where
   fresh s = lift $ fresh s

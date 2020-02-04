@@ -4,30 +4,33 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE StrictData #-}
 
 module Syntax (
     Type (..), BaseType (..), EffectTypeP (..), EffectType,
-    Multiplicity (..), SigmaType (..), Kind (..), ClassName (..),
-    FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var , TyDefType (..),
+    Multiplicity (..), Kind (..), ClassName (..),
+    FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
     TVar, TLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TopDecl (..), NTopDecl (..),
-    RuleAnn (..), DeclAnn (..), Command (..), CmdName (..), Val,
+    ReachedEOF, SourceBlock' (..), TopEnv, TopResult, TLamEnv (..),
+    RuleAnn (..), DeclAnn (..), CmdName (..), Val,
+    Module (..), FModule (..), ImpModule (..),
     FlatValP (..), ArrayP (..), FlatVal, FlatValRef, Array,
     ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
-    ImpStatement, ImpInstr (..), IExpr (..), IVal, ImpDecl (..), IPrimOp,
+    ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    Result', SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
+    SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
     fromL, fromT, FullEnv, Vars, unitTy, sourceBlockBoundVars,
-    TraversableExpr, traverseExpr, fmapExpr, commandNames, freeVars, HasVars,
-    strToName, nameToStr, unzipExpr)
+    TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars,
+    strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind)
   where
 
 import Data.Tuple (swap)
@@ -45,7 +48,6 @@ import Control.Applicative (liftA3)
 import Record
 import Env
 
-
 -- === types ===
 
 data Type = TypeVar TVar
@@ -55,6 +57,7 @@ data Type = TypeVar TVar
           | TabType Type Type
           | RecType (Record Type)
           | Exists Type
+          | Forall [Kind] Type
           | Monad EffectType Type
           | Lens Type Type
           | TypeApp Type [Type]
@@ -75,7 +78,6 @@ type EffectType = EffectTypeP Type
 data Multiplicity = Lin | NonLin  deriving (Show, Eq, Generic)
 type Lin = Type
 
-data SigmaType = Forall [Kind] Type      deriving (Show, Eq, Generic)
 newtype Kind = Kind [ClassName]          deriving (Show, Eq, Generic)
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
@@ -93,14 +95,18 @@ data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
 type SrcPos = (Int, Int)
 
 data FDecl = LetMono Pat FExpr
-           | LetPoly (VarP SigmaType) TLam
-           | TyDef TyDefType TVar [TVar] Type
+           | LetPoly Var TLam
            | FUnpack Var TVar FExpr
+           | TyDef TVar [TVar] Type
+           | FRuleDef RuleAnn Type TLam
              deriving (Show, Eq, Generic)
 
 type Var  = VarP Type
-data TyDefType = TyAlias | NewType  deriving (Show, Eq, Generic)
 data TLam = TLam [TVar] FExpr  deriving (Show, Eq, Generic)
+
+data FModule = FModule Vars [FDecl] Vars  deriving (Show, Eq, Generic)
+data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
+data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
 
 -- === normalized core IR ===
 
@@ -111,6 +117,7 @@ data Expr = Decl Decl Expr
 
 data Decl = Let Var CExpr
           | Unpack Var TVar Atom
+          | RuleDef RuleAnn Type Expr
             deriving (Show, Eq, Generic)
 
 type CExpr = PrimOp Type Atom LamExpr
@@ -121,10 +128,7 @@ data Atom = Var Var
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
-data NTopDecl = NTopDecl DeclAnn Decl
-              | NRuleDef RuleAnn Type Expr
-              | NEvalCmd (Command (Type, Expr))
-                 deriving (Show, Eq, Generic)
+data Module = Module [Decl] TopEnv  deriving (Show, Eq, Generic)
 
 -- === primitive constructors and operators ===
 
@@ -136,6 +140,7 @@ data PrimCon ty e lam =
         Lit LitVal
       | Lam ty lam
       | IdxLit Int Int
+      | AsIdxAtomic Int e  -- until we handle indices more coherently
       | TabGet e e
       | RecGet e RecField
       | AtomicFor lam -- lambda body must be an atom
@@ -146,7 +151,7 @@ data PrimCon ty e lam =
       | Return (EffectTypeP ty) e
       | Bind e lam
       | LensCon (LensCon ty e)
-      | MemRef ty [ArrayRef]  -- TODO: use a single array only
+      | MemRef ty ArrayRef
       | Todo ty
         deriving (Show, Eq, Generic)
 
@@ -156,8 +161,7 @@ data LitVal = IntLit  Int
             | StrLit  String
               deriving (Show, Eq, Generic)
 
-data MonadCon e = MAsk | MTell e | MGet | MPut e
-                  deriving (Show, Eq, Generic)
+data MonadCon e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
 data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
                     deriving (Show, Eq, Generic)
 
@@ -234,6 +238,11 @@ nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 
 -- === top-level constructs ===
 
+-- TODO: allow type-lambda as an atom and avoid this `Either`
+data TLamEnv = TLamEnv TopEnv TLam  deriving (Show, Eq, Generic)
+type TopResult = LorT (Either Atom TLamEnv) Type
+type TopEnv = Env TopResult
+
 data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
@@ -241,7 +250,8 @@ data SourceBlock = SourceBlock
   , sbContents :: SourceBlock' }  deriving (Show)
 
 type ReachedEOF = Bool
-data SourceBlock' = UTopDecl TopDecl
+data SourceBlock' = RunModule FModule
+                  | Command CmdName (Var, FModule)
                   | IncludeSourceFile String
                   | LoadData Pat DataFormat String
                   | ProseBlock String
@@ -250,28 +260,17 @@ data SourceBlock' = UTopDecl TopDecl
                   | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
 
-data TopDecl = TopDecl DeclAnn FDecl
-             | RuleDef RuleAnn SigmaType TLam
-             | EvalCmd (Command FExpr)  deriving (Show, Eq, Generic)
-
-data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
-data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
-
-data Command expr = Command CmdName expr  deriving (Show, Eq, Generic)
-
-data CmdName = GetType | ShowParse | ShowTyped | ShowLLVM | ShowDeshadowed
-             | ShowNormalized | ShowSimp | ShowImp | ShowAsm | TimeIt | Flops
-             | EvalExpr OutFormat | ShowDeriv | Dump DataFormat String
+data CmdName = GetType | ShowPasses | ShowPass String
+             | TimeIt | Flops | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
-commandNames :: M.Map String CmdName
-commandNames = M.fromList [
-  ("p", EvalExpr Printed), ("t", GetType), ("typed", ShowTyped),
-  ("llvm", ShowLLVM), ("deshadowed", ShowDeshadowed),
-  ("normalized", ShowNormalized), ("imp", ShowImp), ("asm", ShowAsm),
-  ("time", TimeIt), ("plot", EvalExpr Scatter), ("simp", ShowSimp),
-  ("deriv", ShowDeriv), ("plotmat", EvalExpr Heatmap),
-  ("flops", Flops), ("parse", ShowParse)]
+declAsModule :: FDecl -> FModule
+declAsModule decl = FModule (freeVars decl)  [decl] (fDeclBoundVars decl)
+
+exprAsModule :: FExpr -> (Var, FModule)
+exprAsModule expr = (v, FModule (freeVars expr) body (lbind v))
+  where v = "*ans*" :> NoAnn
+        body = [LetMono (RecLeaf v) expr]
 
 -- === runtime data representations ===
 
@@ -300,8 +299,8 @@ data VecRef' = IntVecRef  (Ptr Int)
 
 -- === imperative IR ===
 
+data ImpModule = ImpModule [IVar] ImpProg TopEnv
 newtype ImpProg = ImpProg [ImpStatement]  deriving (Show, Semigroup, Monoid)
-
 type ImpStatement = (Maybe IVar, ImpInstr)
 
 data ImpInstr = Load  IExpr
@@ -321,12 +320,7 @@ data IExpr = ILit LitVal
 
 type IPrimOp = PrimOp BaseType IExpr ()
 type IVal = IExpr  -- only ILit and IRef constructors
-
-data ImpDecl = ImpTopLet [IVar] ImpProg
-             | ImpEvalCmd (Command (Type, [IVar], ImpProg))
-
 type IVar = VarP IType
-
 data IType = IValType BaseType
            | IRefType ArrayType
               deriving (Show, Eq)
@@ -357,12 +351,13 @@ instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
 -- === outputs ===
 
 type LitProg = [(SourceBlock, Result)]
-type Result' = Except Output
 type SrcCtx = Maybe SrcPos
-newtype Result = Result Result' deriving (Show, Eq)
+data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
-data Output = ValOut OutFormat FlatVal | TextOut String | NoOutput
-                deriving (Show, Eq, Generic)
+data Output = ValOut OutFormat Atom
+            | TextOut String
+            | PassInfo String String
+              deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
@@ -383,6 +378,7 @@ data ErrType = NoErr
   deriving (Show, Eq)
 
 type Except a = Either Err a
+
 
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
@@ -440,7 +436,13 @@ type FullEnv v t = Env (LorT v t)
 
 -- === substitutions ===
 
-type Vars = FullEnv Type ()
+type Vars = FullEnv Type Kind
+
+lbind :: Var -> Vars
+lbind v@(_:>ty) = v @> L ty
+
+tbind :: TVar -> Vars
+tbind v@(_:>k) = v @> T k
 
 class HasVars a where
   freeVars :: a -> Vars
@@ -453,41 +455,40 @@ instance HasVars FExpr where
     Annot e ty   -> freeVars e <> freeVars ty
     SrcAnnot e _ -> freeVars e
 
-fDeclBoundVars :: FDecl -> Env ()
+fDeclBoundVars :: FDecl -> Vars
 fDeclBoundVars decl = case decl of
-  LetMono p _      -> foldMap (@>()) p
-  LetPoly v _ -> v @> ()
-  FUnpack b tv _   -> b@>() <> tv@>()
-  TyDef _ v _ _    -> v @> ()
+  LetMono p _    -> foldMap lbind p
+  LetPoly v _    -> lbind v
+  FUnpack b tv _ -> lbind b <> tbind tv
+  FRuleDef _ _ _ -> mempty
+  TyDef v _ _    -> tbind v
 
-sourceBlockBoundVars :: SourceBlock -> Env ()
+sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
-  UTopDecl (TopDecl _ decl) -> fDeclBoundVars decl
-  LoadData p _ _ -> foldMap (@>()) p
-  _ -> mempty
+  RunModule (FModule _ _ vs) -> vs
+  LoadData p _ _           -> foldMap lbind p
+  _                        -> mempty
 
 instance HasVars FLamExpr where
   freeVars (FLamExpr p body) =
-    foldMap freeVars p <> (freeVars body `envDiff` foldMap (@>()) p)
+    foldMap freeVars p <> (freeVars body `envDiff` foldMap lbind p)
 
 instance HasVars Type where
   freeVars ty = case ty of
     BaseType _ -> mempty
-    TypeVar v  -> v @> T ()
+    TypeVar v  -> v @> T (varAnn v)
     ArrType l a b -> freeVars l <> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
-    Exists body -> freeVars body
+    Exists   body -> freeVars body
+    Forall _ body -> freeVars body
     Monad eff a -> foldMap freeVars eff <> freeVars a
     Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
     Mult _      -> mempty
     NoAnn       -> mempty
-
-instance HasVars SigmaType where
-  freeVars (Forall _ body) = freeVars body
 
 instance HasVars b => HasVars (VarP b) where
   freeVars (_ :> b) = freeVars b
@@ -499,18 +500,14 @@ instance HasVars FDecl where
    freeVars (LetMono p expr)   = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam)   = freeVars b <> freeVars tlam
    freeVars (FUnpack b _ expr) = freeVars b <> freeVars expr
-   freeVars (TyDef _ _ bs ty)  = freeVars ty `envDiff` foldMap (@>()) bs
-
-instance HasVars TopDecl where
-  freeVars (TopDecl _ decl) = freeVars decl
-  freeVars (RuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
-  freeVars (EvalCmd (Command _ expr)) = freeVars expr
+   freeVars (FRuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
+   freeVars (TyDef _ bs ty) = freeVars ty `envDiff` foldMap tbind bs
 
 instance HasVars RuleAnn where
   freeVars (LinearizationDef v) = (v:>()) @> L unitTy
 
 instance HasVars TLam where
-  freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap (@>()) tbs
+  freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap tbind tbs
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
@@ -518,7 +515,7 @@ instance (HasVars a, HasVars b) => HasVars (LorT a b) where
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    UTopDecl decl -> freeVars decl
+    RunModule (FModule vs _ _) -> vs
     _ -> mempty
 
 instance HasVars Expr where
@@ -593,6 +590,7 @@ instance TraversableExpr PrimCon where
     Lit l          -> pure   (Lit l)
     Lam lin lam    -> liftA2 Lam (fT lin) (fL lam)
     IdxLit n i     -> pure   (IdxLit n i)
+    AsIdxAtomic n e -> liftA (AsIdxAtomic n) (fE e)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
     AtomicFor lam  -> liftA  AtomicFor (fL lam)

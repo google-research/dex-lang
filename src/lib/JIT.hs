@@ -7,9 +7,9 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (jitPass) where
+module JIT (evalModuleJIT) where
 
-import LLVM.AST (Operand, BasicBlock, Instruction, Module, Named)
+import LLVM.AST (Operand, BasicBlock, Instruction, Named)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -24,9 +24,7 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.Foldable (fold)
-import Data.Void
 import Data.List (nub)
-import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
@@ -35,7 +33,6 @@ import Foreign.Ptr
 
 import Syntax
 import Env
-import Pass
 import Fresh hiding (freshName)
 import PPrint
 import Cat
@@ -46,7 +43,6 @@ import Subst
 import LLVMExec
 
 type CompileEnv = Env Operand
-type CompileEnvTop = Env IVal
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
@@ -54,90 +50,26 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 
-type CompileM a = ReaderT CompileEnv (StateT CompileState (FreshT (Either Err))) a
-data CompiledProg = CompiledProg Module
+type CompileM a = ReaderT CompileEnv (StateT CompileState Fresh) a
 data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
 
-jitPass :: TopPass ImpDecl Void
-jitPass = TopPass jitPass'
+evalModuleJIT :: ImpModule -> IO TopEnv
+evalModuleJIT (ImpModule vs prog topEnv) = do
+  dests <- liftM fold $ mapM allocIRef vs
+  let compileEnv = flip fmap dests $ \(Array _ vec) -> vecRefToOperand vec
+  evalJit $ runCompileM compileEnv (compileTopProg prog)
+  xs' <- mapM (loadIfScalar . IRef) dests
+  let substEnv = (fmap (L . impExprToAtom) xs', mempty)
+  return $ subst substEnv topEnv
 
-jitPass' :: ImpDecl -> TopPassM CompileEnvTop [Void]
-jitPass' decl = case decl of
-  ImpTopLet bs prog -> do
-    env <- look
-    let bs' = map (fmap (substIType env)) bs
-    xs <- evalProg bs' prog
-    xs' <- liftIO $ mapM loadIfScalar xs
-    extend $ fold $ zipWith (@>) bs' xs'
-    return []
-  ImpEvalCmd (Command cmd (ty, bs, prog)) -> do
-    env <- look
-    let bs' = map (fmap (substIType env)) bs
-    let ty' = substTyTop env ty
-    case cmd of
-      ShowLLVM -> do
-        (_, CompiledProg m) <- toLLVM bs' prog
-        llvm <- liftIO $ showLLVM m
-        emitOutput $ TextOut llvm
-      ShowAsm -> do
-        (_, CompiledProg m) <- toLLVM bs' prog
-        asm <- liftIO $ showAsm m
-        emitOutput $ TextOut asm
-      EvalExpr fmt -> do
-        impRefs <- evalProg bs' prog
-        arrays <- liftIO $ mapM (loadArray . fromIRef) impRefs
-        emitOutput $ ValOut fmt (FlatVal ty' arrays)
-      TimeIt -> do
-        t1 <- liftIO getCurrentTime
-        _ <- evalProg bs' prog
-        t2 <- liftIO getCurrentTime
-        emitOutput $ TextOut $ show (t2 `diffUTCTime` t1)
-      Dump fmt s -> do
-        impRefs <- evalProg bs' prog
-        let val = FlatVal ty' (map fromIRef impRefs)
-        liftIO (dumpDataFile s fmt val)
-        emitOutput NoOutput
-      _ -> error $ "Unexpected command: " ++ show cmd
-
-evalProg :: [IVar] -> ImpProg -> TopPassM CompileEnvTop [IVal]
-evalProg bs prog = do
-  (cells, CompiledProg m) <- toLLVM bs prog
-  liftIO $ evalJit m
-  return cells
-
--- TODO: pass destinations as args rather than baking pointers into LLVM
-toLLVM :: [IVar] -> ImpProg -> TopPassM CompileEnvTop ([IVal], CompiledProg)
-toLLVM bs prog = do
-  env <- look
-  destCells <- liftIO $ mapM allocIRef bs
-  -- TODO just substitute top env up-front instead
-  let env' = fmap iValAsOperand $ env <> foldMap (\v -> v @> varAnn v) destCells
-  let initState = CompileState [] [] [] "start_block" []
-  prog' <- liftExceptTop $ flip runFreshT mempty $ flip evalStateT initState $
-                flip runReaderT env' $ compileTopProg prog
-  return (map varAnn destCells, prog')
-
-allocIRef :: IVar -> IO (VarP IVal)
-allocIRef (v :> IRefType (b, shape)) = do
+allocIRef :: IVar -> IO (Env ArrayRef)
+allocIRef v@(_:> IRefType (b, shape)) = do
   ref <- allocateArray b (map fromILitInt shape)
-  return $ v :> IRef ref
+  return $ v @> ref
 allocIRef _ = error "Destination should have a reference type"
-
--- TODO: consider distinguishing sizes from ints in Imp
-substTyTop :: CompileEnvTop -> Type -> Type
-substTyTop env ty = subst (envMapMaybe iValToType env, mempty) ty
-   where
-     iValToType :: IExpr -> Maybe (LorT a Type)
-     iValToType expr = case expr of
-       ILit (IntLit n) -> Just (T (IdxSetLit n))
-       _               -> Nothing
-
-fromIRef :: IVal -> ArrayRef
-fromIRef (IRef x) = x
-fromIRef v = error $ "Not an iref " ++ pprint v
 
 loadIfScalar :: IVal -> IO IVal
 loadIfScalar val@(IRef (Array shape ref)) = case shape of
@@ -150,14 +82,18 @@ fromILitInt :: IExpr -> Int
 fromILitInt (ILit (IntLit x)) = x
 fromILitInt expr = error $ "Not an int: " ++ pprint expr
 
-compileTopProg :: ImpProg -> CompileM CompiledProg
+runCompileM :: CompileEnv -> CompileM a -> a
+runCompileM env m = runFresh (evalStateT (runReaderT m env) initState) mempty
+  where initState = CompileState [] [] [] "start_block" []
+
+compileTopProg :: ImpProg -> CompileM L.Module
 compileTopProg prog = do
   compileProg prog
   finishBlock (L.Ret Nothing []) "<ignored>"
   specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
-  return $ CompiledProg (makeModule decls blocks specs)
+  return $ makeModule decls blocks specs
 
 compileProg :: ImpProg -> CompileM ()
 compileProg (ImpProg []) = return ()
@@ -434,7 +370,7 @@ realTy = L.FloatingPointType L.DoubleFP
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
-makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> Module
+makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> L.Module
 makeModule decls (fstBlock:blocks) userSpecs = m
   where
     L.BasicBlock name instrs term = fstBlock

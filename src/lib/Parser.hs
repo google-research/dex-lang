@@ -40,7 +40,7 @@ parseTopDeclRepl s = case sbContents block of
   _ -> Just block
   where block = mustParseit s sourceBlock
 
-parseTopDecl :: String -> Except TopDecl
+parseTopDecl :: String -> Except FDecl
 parseTopDecl s = parseit s topDecl
 
 parseit :: String -> Parser a -> Except a
@@ -53,11 +53,10 @@ mustParseit s p  = case parseit s p of
   Right ans -> ans
   Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
-topDecl :: Parser TopDecl
-topDecl = ( explicitCommand
-        <|> ruleDef
-        <|> liftM2 TopDecl topDeclAnn decl
-        <|> liftM (EvalCmd . Command (EvalExpr Printed)) expr
+topDecl :: Parser FDecl
+topDecl = ( ruleDef
+        <|> typeDef
+        <|> (topDeclAnn >> decl)  -- TODO: bring back annotation
         <?> "top-level declaration" ) <* (void eol <|> eof)
 
 includeSourceFile :: Parser String
@@ -89,7 +88,9 @@ sourceBlock' =
   <|> (liftM IncludeSourceFile includeSourceFile)
   <|> loadData
   <|> dumpData
-  <|> (liftM UTopDecl topDecl)
+  <|> explicitCommand
+  <|> (liftM (RunModule . declAsModule) topDecl)
+  <|> liftM (Command (EvalExpr Printed) . exprAsModule) expr
 
 loadData :: Parser SourceBlock'
 loadData = do
@@ -116,47 +117,53 @@ dumpData = do
   s <- stringLiteral
   e <- declOrExpr
   void eol
-  return $ UTopDecl $ EvalCmd (Command (Dump fmt s) e)
+  return $ Command (Dump fmt s) (exprAsModule e)
 
-explicitCommand :: Parser TopDecl
+explicitCommand :: Parser SourceBlock'
 explicitCommand = do
   cmdName <- char ':' >> identifier <* (optional eol >> sc)
-  cmd <- case M.lookup cmdName commandNames of
-    Just cmd -> return cmd
-    Nothing -> fail $ "unrecognized command: " ++ show cmdName
-  e <- declOrExpr
-  return $ EvalCmd (Command cmd e)
+  cmd <- case cmdName of
+    "p"       -> return $ EvalExpr Printed
+    "t"       -> return $ GetType
+    "plot"    -> return $ EvalExpr Scatter
+    "plotmat" -> return $ EvalExpr Heatmap
+    "time"    -> return $ TimeIt
+    "flops"   -> return $ Flops
+    "passes"  -> return $ ShowPasses
+    "pass"    -> liftM ShowPass $ identifier <* (optional eol >> sc)
+    _ -> fail $ "unrecognized command: " ++ show cmdName
+  e <- declOrExpr <*eol
+  return $ Command cmd (exprAsModule e)
 
 topDeclAnn :: Parser DeclAnn
 topDeclAnn =   (symbol "@primitive" >> declSep >> return ADPrimitive)
            <|> return PlainDecl
 
-ruleDef :: Parser TopDecl
+ruleDef :: Parser FDecl
 ruleDef = do
   v <- try $ lowerName <* symbol "#"
   symbol s
   symbol "::"
   (ty, tlam) <- letPolyTail $ pprint v ++ "#" ++ s
-  return $ RuleDef (LinearizationDef v) ty tlam
+  return $ FRuleDef (LinearizationDef v) ty tlam
   where s = "lin"
-
--- === Parsing decls ===
-
-decl :: Parser FDecl
-decl = typeDef <|> unpack <|> letMono <|> letPoly
-
-declSep :: Parser ()
-declSep = void $ some $ (eol >> sc) <|> symbol ";"
 
 typeDef :: Parser FDecl
 typeDef = do
-  defType <-     (symbol "type"    >> return TyAlias)
-             <|> (symbol "newtype" >> return NewType)
+  symbol "type"
   v <- upperName
   bs <- many lowerName
   equalSign
   ty <- tauType
-  return $ TyDef defType (asTVar v) (map asTVar bs) ty
+  return $ TyDef (asTVar v) (map asTVar bs) ty
+
+-- === Parsing decls ===
+
+decl :: Parser FDecl
+decl = unpack <|> letMono <|> letPoly
+
+declSep :: Parser ()
+declSep = void $ some $ (eol >> sc) <|> symbol ";"
 
 asTVar :: Name -> TVar
 asTVar v = v :> Kind []
@@ -167,7 +174,7 @@ letPoly = do
   (ty, tlam) <- letPolyTail (pprint v)
   return $ letPolyToMono (LetPoly (v:>ty) tlam)
 
-letPolyTail :: String -> Parser (SigmaType, TLam)
+letPolyTail :: String -> Parser (Type, TLam)
 letPolyTail s = do
   (tbs, ty) <- mayNotBreak $ sigmaType
   declSep

@@ -10,7 +10,7 @@
 module Embed (emit, emitTo, withBinder, buildLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, emitUnpack, flipIdx, zeroAt, addAt, sumAt, deShadow,
-              emitNamed, materializeAtom, add, mul, sub, neg, div',
+              emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, nUnitCon,
               recGetFst, recGetSnd, buildFor, buildScan,
               makeTup, fromTup, makePair, fromPair) where
@@ -100,14 +100,6 @@ buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do
   (ans, (_, decls)) <- scoped m
   return $ wrapDecls decls ans
-
-materializeAtom :: (MonadCat EmbedEnv m) => Atom -> m Atom
-materializeAtom atom = case atom of
-  PrimCon (AtomicFor ~(LamExpr b (Atom body))) -> buildFor b $ \i -> do
-    scope <- looks fst  -- really only need `i` in scope
-    materializeAtom $ subst (b @> L i, scope) body
-  PrimCon (RecCon r) -> liftM (PrimCon . RecCon) $ mapM materializeAtom r
-  _ -> return atom
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])

@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Simplify (derivPass, simpPass) where
+module Simplify (simplifyPass) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -20,7 +20,6 @@ import Env
 import Syntax
 import Cat
 import PPrint
-import Pass
 import Subst
 import Embed
 import Record
@@ -32,58 +31,19 @@ data SimpEnv = SimpEnv { subEnv   :: SimpSubEnv
                        , derivEnv :: DerivRuleEnv }
 
 type SimpTopEnv = (SimpEnv, Scope)
-type SimplifyM a = ReaderT SimpEnv (EmbedT (Either Err)) a
+type SimplifyM a = ReaderT SimpEnv Embed a
 
-derivPass :: TopPass NTopDecl NTopDecl
-derivPass = TopPass $ \topDecl -> case topDecl of
-  NTopDecl PlainDecl decl -> simplifyDeclTop decl
-  NTopDecl ADPrimitive decl -> do
-    let Let v _ = decl
-    decl' <- liftTopNoDecl $ substSimp decl
-    extend $ asSnd $ v@>()
-    return [NTopDecl PlainDecl decl']
-  NRuleDef (LinearizationDef v) _ ~(Atom f) -> do
-    f' <- liftTopNoDecl $ substSimp f
-    extend $ asFst $ mempty {derivEnv = (v:>()) @> f' }
-    emitOutput $ NoOutput
-  NEvalCmd (Command cmd (ty, expr)) -> do
-    expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
-    case cmd of
-      ShowDeriv -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
+simplifyPass :: Module -> Module
+simplifyPass m = Module decls ans
+  where (ans, (_, decls)) = runEmbed (runReaderT (simplifyModule m) mempty) mempty
 
-simpPass :: TopPass NTopDecl NTopDecl
-simpPass = TopPass $ \topDecl -> case topDecl of
-  NTopDecl _ decl -> simplifyDeclTop decl
-  NRuleDef _ _ _ -> error "Shouldn't have derivative rules left"
-  NEvalCmd (Command cmd (ty, expr)) -> do
-    expr' <- liftTopNoDecl $ buildScoped $ simplifyMat expr
-    case cmd of
-      ShowSimp -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
+simplifyModule :: Module -> SimplifyM TopEnv
+simplifyModule (Module decls result) = case decls of
+  [] -> substSimp result
+  (d:ds) -> do
+    env <- simplifyDecl d
+    extendR env $ simplifyModule $ Module ds result
 
-liftTopNoDecl :: SimplifyM a -> TopPassM SimpTopEnv a
-liftTopNoDecl m = do
-  (ans, decls) <- liftTop m
-  unless (null decls) $ throwTopErr $ Err CompilerErr Nothing "Shouldn't have emitted decls"
-  return ans
-
-liftTop :: SimplifyM a -> TopPassM SimpTopEnv (a, [Decl])
-liftTop m = do
-  (env, scope) <- look
-  (ans, (scope', decls)) <- liftExceptTop $ runEmbedT (runReaderT m env) scope
-  extend $ asSnd scope'
-  return (ans, decls)
-
-simplifyDeclTop :: Decl -> TopPassM SimpTopEnv [NTopDecl]
-simplifyDeclTop decl = do
-  (env, decls) <- liftTop $ simplifyDecl decl
-  extend (asFst env)
-  return $ map (NTopDecl PlainDecl) decls
-
--- Simplification gives us a ([Decl], Atom) pair. The decls are fully
--- simplified: no `NLam`, `AtomicFor` or differentiation operations. The atom
--- isn't: e.g. a lambda that can't be beta-reduced yet.
 simplify :: Expr -> SimplifyM Atom
 simplify expr = case expr of
   Decl decl body -> do
@@ -99,21 +59,18 @@ simplifyLam (LamExpr b body) = do
   b' <- substSimp b
   buildLam b' $ \x ->
     extendSub (b @> L x) $
-      simplify body >>= materializeAtom
+      simplify body
 
 simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = substSimp atom
 
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr (Scan x (LamExpr b body)) = do
-  x' <- simplifyAtom x >>= materializeAtom
+  x' <- simplifyAtom x
   ~b'@(_:>RecType (Tup [n, _]))  <- substSimp b
   ((cOut, yOut), b'', (scope, decls)) <-
      withBinder b' $ \ic -> do
-        extendSub (b @> L ic) $ do
-           (cOut, yOut) <- liftM fromPair $ simplify body
-           cOut' <- materializeAtom cOut
-           return (cOut', yOut)
+        extendSub (b @> L ic) $ liftM fromPair $ simplify body
   let (yClosure, reconstruct) = splitAtom scope yOut
   (cOut', yClosure') <- liftM fromPair $ emit $ Scan x' $ LamExpr b'' $
                           wrapDecls decls (makePair cOut yClosure)
@@ -122,7 +79,7 @@ simplifyCExpr (Scan x (LamExpr b body)) = do
                return $ reconstruct scope (nTabGet yClosure' i)
   return $ makePair cOut' (PrimCon $ AtomicFor yOutLam)
 simplifyCExpr expr = do
-  expr' <- traverseExpr expr substSimp (simplifyAtom >=> materializeAtom) simplifyLam
+  expr' <- traverseExpr expr substSimp simplifyAtom simplifyLam
   case expr' of
     App (PrimCon (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
@@ -145,6 +102,7 @@ simplifyDecl decl = case decl of
 -- we'll no longer have access to once we've left, along with a function that
 -- can reconstruct the atom (e.g. lambdas) on the other side.
 splitAtom :: Scope -> Atom -> (Atom, Scope -> Atom -> Atom)
+splitAtom _ atom | isData (getType atom) = (atom, const id)
 splitAtom scope atom = (xsSaved, reconstruct)
   where
     isVar x = case x of Var _-> True; _ -> False
@@ -152,9 +110,6 @@ splitAtom scope atom = (xsSaved, reconstruct)
     xsSaved = makeTup [Var (v:>ty) | (v, L ty) <- vsTys]
     reconstruct scope x = subst (env, scope) atom
       where env = fold [(v:>())@>L x' | ((v,_),x') <- zip vsTys $ fromTup x]
-
-simplifyMat :: Expr -> SimplifyM Atom
-simplifyMat expr = simplify expr >>= materializeAtom
 
 extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
@@ -170,7 +125,7 @@ substSimp x = do
 
 -- -- === linearization ===
 
-type TangentM a = ReaderT (Env Atom) (EmbedT (Either Err)) a
+type TangentM a = ReaderT (Env Atom) Embed a
 
 runLinearization :: Atom -> LamExpr -> SimplifyM Expr
 runLinearization x (LamExpr b expr) = do
@@ -206,7 +161,7 @@ linearizeCExpr expr = case expr of
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
       case maybeRule of
-        Nothing -> throw NotImplementedErr $ " linearization for " ++ pprint v
+        Nothing -> error $ "Linearization not implemented: " ++ pprint v
         Just rule -> deShadow rule
     (x', xTangents) <- linearizeAtom x
     (y, f) <- liftM fromPair $ emit (App linRule x')
@@ -271,8 +226,7 @@ splitLast xs = case reverse xs of x:xs' -> (reverse xs', x)
 
 type LinVars = Env Type
 type CotangentVals = MonMap Name [Atom]  -- TODO: consider folding as we go
-type TransposeM a = WriterT CotangentVals
-                      (ReaderT (LinVars, SimpSubEnv) (EmbedT (Either Err))) a
+type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SimpSubEnv) Embed) a
 
 runTransposition :: Atom -> LamExpr -> SimplifyM Expr
 runTransposition ct (LamExpr b expr) = do

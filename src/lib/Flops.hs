@@ -6,7 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Flops (flopsPass) where
+module Flops (moduleFlops) where
 
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -15,7 +15,6 @@ import Data.Text.Prettyprint.Doc hiding (group)
 
 import Syntax
 import Env
-import Pass
 import PPrint
 
 data Term = Term Int [(Name, Int)]  deriving (Show, Eq, Ord)
@@ -24,14 +23,8 @@ newtype Profile = Profile (M.Map String Count)
 
 type FlopM a = ReaderT Term (Writer Profile) a
 
-flopsPass :: TopPass ImpDecl ImpDecl
-flopsPass = TopPass flopsPass'
-
-flopsPass' :: ImpDecl -> TopPassM () [ImpDecl]
-flopsPass' (ImpEvalCmd (Command Flops (_, _, prog))) = do
-  let ans = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
-  emitOutput $ TextOut $ pprint ans
-flopsPass' decl = return [decl]
+moduleFlops :: ImpModule -> Profile
+moduleFlops (ImpModule _ prog _) = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
 
 flops :: ImpProg -> FlopM ()
 flops (ImpProg []) = return ()

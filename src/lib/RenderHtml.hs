@@ -42,13 +42,13 @@ wrapBody blocks = docTypeHtml $ do
   where inner = foldMap (cdiv "cell") blocks
 
 instance ToMarkup Result where
-  toMarkup result = case result of
-    Result (Left _) -> cdiv "err-block" $ toHtml $ pprint result
-    Result (Right ans) -> case ans of
-      NoOutput -> mempty
-      ValOut Heatmap val -> cdiv "plot" $ heatmapHtml val
-      ValOut Scatter val -> cdiv "plot" $ scatterHtml val
-      _ -> cdiv "result-block" $ toHtml $ pprint result
+  toMarkup = undefined
+  -- toMarkup (Result outs (Left err)) = cdiv "err-block" $ toHtml $ pprint err
+  -- toMarkup (Result outs (Right outs)) = foldMap showOut outs
+  --   where showOut out = case out of
+  --           -- ValOut Heatmap val -> cdiv "plot" $ heatmapHtml val
+  --           -- ValOut Scatter val -> cdiv "plot" $ scatterHtml val
+  --           TextOut s -> cdiv "result-block" $ toHtml $ pprint s
 
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of

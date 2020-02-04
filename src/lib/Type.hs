@@ -9,10 +9,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Type (
-    checkFExprPass, checkExprPass, getType, instantiateTVs, abstractTVs,
+    checkFModule, checkModule, getType, instantiateTVs, abstractTVs,
     tangentBunType, listIntoRecord, flattenType, splitLinArgs,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy) where
+    tupTy, pairTy, isData) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -25,13 +25,12 @@ import Data.Text.Prettyprint.Doc
 import Syntax
 import Env
 import Record
-import Pass
 import PPrint
 import Cat
 import Util (traverseFun)
 
 data Spent = Spent (Env ()) Bool
-type FTypeEnv = FullEnv (SigmaType, Spent) Kind
+type FTypeEnv = FullEnv (Type, Spent) Kind
 
 -- TODO: consider making linearity checking a separate pass?
 data TypeMCtx = TypeMCtx { srcCtx   :: SrcCtx
@@ -41,32 +40,21 @@ type FTypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
 class HasType a where
   getType :: a -> Type
 
+runFTypeM :: TypeMCtx -> FTypeM a -> Except a
+runFTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
+
 -- === type-checking pass on FExpr ===
 
-checkFExprPass :: TopPass TopDecl TopDecl
-checkFExprPass = TopPass $ \decl -> [decl] <$ case decl of
-  TopDecl _ decl' -> do
-    env <- liftTop (checkTypeFDecl decl')
-    extend env
-  RuleDef ann ty tlam -> do
-    _ <- liftTop $ checkTypeFDecl $ LetPoly ("_":>ty) tlam
-    liftTop $ checkRuleDefType ann ty
-  EvalCmd (Command GetType expr) -> do
-    ty <- liftTop (checkTypeFExpr expr)
-    emitOutput $ TextOut $ pprint ty
-  EvalCmd (Command _ expr) -> do
-    ty <- liftTop (checkTypeFExpr expr)
-    env <- look
-    when (isLeft (checkData env ty)) $
-      throwTopErr $ Err TypeErr Nothing (" Can't print values of type: " ++ pprint ty)
-
-liftTop :: FTypeM a -> TopPassM FTypeEnv a
-liftTop m = do
-  env <- look
-  liftExceptTop $ evalTypeM (TypeMCtx Nothing env) m
-
-evalTypeM :: TypeMCtx -> FTypeM a -> Except a
-evalTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
+checkFModule :: FModule -> Except ()
+checkFModule (FModule imports decls vs) =
+  runFTypeM (TypeMCtx Nothing env) (checkFModuleBody decls vs)
+  where env = flip fmap imports $ \x -> case x of L ty -> L (ty, mempty)
+                                                  T k  -> T k
+checkFModuleBody :: [FDecl] -> Vars -> FTypeM ()
+checkFModuleBody decls vsOut = case decls of
+  []     -> return ()  -- TODO: check vars
+  (d:ds) -> do env <- checkTypeFDecl d
+               extendTyEnv env $ checkFModuleBody ds vsOut
 
 instance HasType FExpr where
   getType expr = case expr of
@@ -137,12 +125,8 @@ checkTypeFDecl decl = case decl of
     let env = tb @> T (varAnn tb)
     extendTyEnv env $ checkTy (varAnn b)
     return (env <> asEnv mempty b)
-  TyDef NewType v [] ty -> do
-    checkTy ty
-    classes <- getClasses ty
-    return (v @> T classes)
-  TyDef NewType _ _ _ -> error "Type parameters in newtype not implemented"
-  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
+  FRuleDef ann ty tlam -> return mempty  -- TODO
+  TyDef v bs ty -> return mempty -- TODO
 
 extendTyEnv :: FTypeEnv -> FTypeM a -> FTypeM a
 extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
@@ -152,7 +136,7 @@ checkWithCtx m = do
   pos <- asks srcCtx
   addSrcContext pos m
 
-checkTypeTLam :: TLam -> FTypeM SigmaType
+checkTypeTLam :: TLam -> FTypeM Type
 checkTypeTLam (TLam tbs body) = do
   mapM_ checkShadow tbs
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
@@ -175,9 +159,9 @@ checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 asEnv :: Spent -> Var -> FTypeEnv
 asEnv s (v:>ty) = (v:>()) @> L (Forall [] ty, s)
 
-checkRuleDefType :: RuleAnn -> SigmaType -> FTypeM ()
+checkRuleDefType :: RuleAnn -> Type -> FTypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
-  ty@(Forall kinds body, _) <- asks $ fromL . (!(v:>())) . tyEnv
+  ~ty@(Forall kinds body, _) <- asks $ fromL . (!(v:>())) . tyEnv
   (a, b) <- case body of
               ArrType _ a b -> return (a, b)
               _ -> throw TypeErr $
@@ -285,6 +269,10 @@ checkData env ty = case ty of
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
+isData :: Type -> Bool
+isData ty = case checkData mempty ty of Left _ -> False
+                                        Right _ -> True
+
 -- TODO: check annotation too
 checkVarClass :: FTypeEnv -> ClassName -> TVar -> Except ()
 checkVarClass env c v = do
@@ -299,20 +287,17 @@ checkVarClass env c v = do
 type TypeEnv = FullEnv (Type, Spent) ()
 type TypeM a = ReaderT TypeEnv (CatT Spent (Either Err)) a
 
-checkExprPass ::TopPass NTopDecl NTopDecl
-checkExprPass = TopPass $ \topDecl -> [topDecl] <$ case topDecl of
-  NTopDecl _ decl -> do
-    env <- liftPass (pprint decl) $ checkDecl decl
-    extend env
-  NRuleDef _ _ _ -> return () -- TODO!
-  NEvalCmd (Command _ (_, expr)) ->
-    liftPass (pprint expr) $ void $ checkExpr expr
-  where
-    liftPass :: String -> TypeM a -> TopPassM TypeEnv a
-    liftPass ctx m = do
-      env <- look
-      liftM fst $ liftExceptTop $ addContext ctx $
-        runCatT (runReaderT m env) mempty
+checkModule :: Module -> Except ()
+checkModule m = liftM fst $ runCatT (runReaderT (checkModule' m) mempty) mempty
+
+checkModule' :: Module -> TypeM ()
+checkModule' (Module decls result) = case decls of
+  [] -> void $ flip traverse result $ \val -> case val of
+          L (Left x) -> void $ checkAtom x
+          _ -> return ()
+  (d:ds) -> do
+    env <- checkDecl d
+    extendR env $ checkModule' (Module ds result)
 
 instance HasType Expr where
   getType expr = case expr of
@@ -327,6 +312,13 @@ instance HasType Atom where
 
 instance HasType CExpr where
   getType op = getPrimType $ PrimOpExpr $ fmapExpr op id getType getLamType
+
+instance HasType TLamEnv where
+  getType (TLamEnv _ tlam) = getType tlam
+
+instance HasType TLam where
+  getType (TLam tbs body) = Forall (map varAnn tbs) body'
+    where body' = abstractTVs tbs (getType body)
 
 getLamType :: LamExpr -> (Type, Type)
 getLamType (LamExpr (_:>ty) body) = (ty, getType body)

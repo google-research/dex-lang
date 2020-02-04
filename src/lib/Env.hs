@@ -9,7 +9,7 @@
 
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe) where
+            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe, fmapNames) where
 
 import Data.String
 import Data.Traversable
@@ -25,7 +25,7 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
 data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
 type Tag = T.Text
-data VarP a = (:>) Name a  deriving (Show, Eq, Ord, Generic)
+data VarP a = (:>) Name a  deriving (Show, Ord, Generic)
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -47,6 +47,9 @@ envNames (Env m) = M.keys m
 
 envPairs :: Env a -> [(Name, a)]
 envPairs (Env m) = M.toAscList m
+
+fmapNames :: (Name -> a -> b) -> Env a -> Env b
+fmapNames f (Env m) = Env $ M.mapWithKey f m
 
 envDelete :: Name -> Env a -> Env a
 envDelete v (Env m) = Env (M.delete v m)
@@ -93,7 +96,11 @@ instance Monoid (Env a) where
   mappend = (<>)
 
 instance Pretty a => Pretty (Env a) where
-  pretty (Env m) = pretty (M.toAscList m)
+  pretty (Env m) = tupled [pretty v <+> "@>" <+> pretty x
+                          | (v, x) <- M.toAscList m]
+
+instance Eq (VarP a) where
+  (v:>_) == (v':>_) = v == v'
 
 instance Functor VarP where
   fmap = fmapDefault

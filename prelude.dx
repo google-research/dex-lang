@@ -201,13 +201,15 @@ linspace low high = dx = (high - low) / real (size @n)
 
 'Functions for working with the pseudorandom number generator
 
-newtype Key = Int
+-- TODO: implement newtypes again (maybe fake them with records)
+-- newtype Key = Int
+type Key = Int
 
 hash :: Key -> Int -> Key
 hash x y = %%threefry2x32(x, y)
 
 newKey :: Int -> Key
-newKey x = hash %newtypecast(0) x
+newKey x = x  -- hash %newtypecast(0) x
 
 splitKey :: Key -> (Key, Key)
 splitKey key = (hash key 0, hash key 1)

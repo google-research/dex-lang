@@ -10,26 +10,15 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
 import Data.Semigroup ((<>))
-import Data.Void
 
 import Syntax
 import PPrint
 import RenderHtml
-import Pass
-import Type
 
+import TopLevel
 import Parser
-import DeShadow
-import Inference
-import Imp
-import JIT
-import Flops
 import WebOutput
-import Normalize
-import Simplify
-import Serialize
 
-data Backend = Jit | Interp
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HtmlDoc
 data EvalMode = ReplMode String
@@ -41,65 +30,45 @@ data CmdOpts = CmdOpts EvalMode EvalOpts
 
 type FName = String
 
-typeCheckPass :: TopPass SourceBlock TopDecl
-typeCheckPass = sourcePass >+> deShadowPass >+> typePass >+> checkFExprPass
-
-fullPassInterp :: TopPass SourceBlock Void
-fullPassInterp = undefined -- typeCheckPass >+> interpPass
-
-fullPassJit :: TopPass SourceBlock Void
-fullPassJit = typeCheckPass
-          >+> normalizePass >+> checkExprPass
-          >+> derivPass     >+> checkExprPass
-          >+> simpPass      >+> checkExprPass
-          >+> impPass       >+> checkImp
-          >+> flopsPass
-          >+> jitPass
-
-runMode :: Monoid env => EvalMode -> Maybe PreludeFile -> FullPass env -> IO ()
-runMode evalMode prelude pass = do
-  env <- execStateT (evalPrelude prelude pass) mempty
+runMode :: EvalMode -> Maybe PreludeFile -> Backend -> IO ()
+runMode evalMode prelude backend = do
+  env <- execStateT (evalPrelude prelude backend) mempty
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
-      runEnv $ runInputT defaultSettings $ forever (replLoop prompt pass)
+      runEnv $ runInputT defaultSettings $ forever (replLoop prompt backend)
     ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile pass fname
+      results <- runEnv $ evalFile backend fname
       putStr $ printLitProg fmt results
-    WebMode fname -> runWeb fname pass env
+    WebMode fname -> runWeb fname backend env
 
-evalDecl :: Monoid env => FullPass env -> SourceBlock -> StateT env IO Result
-evalDecl pass block = do
+evalDecl :: Backend -> SourceBlock -> StateT TopEnv IO Result
+evalDecl backend block = do
   env <- get
-  (ans, env') <- liftIO (runFullPass env pass block) `catch` (\e ->
-                   return (compilerErr (show (e::SomeException)), mempty))
+  (env', ans) <- liftIO (evalBlock backend env block)
   modify (<> env')
   return ans
 
-compilerErr :: String -> Result
-compilerErr s = Result $ Left $ Err CompilerErr Nothing s
-
-evalFile :: Monoid env =>
-              FullPass env-> String -> StateT env IO [(SourceBlock, Result)]
-evalFile pass fname = do
+evalFile :: Backend -> String -> StateT TopEnv IO [(SourceBlock, Result)]
+evalFile backend fname = do
   source <- liftIO $ readFile fname
   let sourceBlocks = parseProg source
-  results <- mapM (evalDecl pass) sourceBlocks
+  results <- mapM (evalDecl backend) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude :: Monoid env => Maybe PreludeFile -> FullPass env-> StateT env IO ()
-evalPrelude fname pass = do
-  result <- evalFile pass fname'
-  void $ liftErrIO $ mapM (\(_, (Result r)) -> r) result
+evalPrelude :: Maybe PreludeFile -> Backend-> StateT TopEnv IO ()
+evalPrelude fname backend = do
+  result <- evalFile backend fname'
+  void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
   where fname' = case fname of Just f -> f
                                Nothing -> "prelude.dx"
 
-replLoop :: Monoid env => String -> FullPass env-> InputT (StateT env IO) ()
-replLoop prompt pass = do
+replLoop :: String -> Backend -> InputT (StateT TopEnv IO) ()
+replLoop prompt backend = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
-  result <- lift $ evalDecl pass sourceBlock
-  case result of Result (Left _) -> lift $ put env
+  result <- lift $ (evalDecl backend) sourceBlock
+  case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
 
@@ -159,6 +128,4 @@ parseEvalOpts = EvalOpts
 main :: IO ()
 main = do
   CmdOpts evalMode (EvalOpts backend prelude) <- execParser parseOpts
-  case backend of
-    Jit    -> case fullPassJit    of TopPass f -> runMode evalMode prelude f
-    Interp -> case fullPassInterp of TopPass f -> runMode evalMode prelude f
+  runMode evalMode prelude backend

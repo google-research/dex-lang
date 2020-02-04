@@ -11,13 +11,12 @@
 module Serialize (serializeVal, restructureVal, subArray, readScalar,
                   allocateArray, storeArray, loadArray, vecRefInfo,
                   storeFlatVal, loadFlatVal, DBOHeader (..),
-                  printLitBlock, dumpDataFile, loadDataFile) where
+                  dumpDataFile, loadDataFile, loadAtomVal) where
 
 import Control.Monad
 import Control.Exception (throwIO)
 import Foreign.Ptr
 import Foreign.Marshal.Array
-import Data.Text.Prettyprint.Doc  hiding (brackets)
 import qualified Data.ByteString.Char8 as B
 import System.IO
 import System.IO.MMap
@@ -25,13 +24,14 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec
 import Text.Megaparsec.Char
 
+import Env
+import Subst
 import Type
 import Syntax
 import Util
 import PPrint
 import Record
 import Inference
-import Pass
 import Parser
 import ParseUtil
 import Normalize
@@ -163,34 +163,29 @@ newArrayRef ptr (b, shape) = Array shape $ case b of
   StrType  -> error "Not implemented"
   where size = product shape
 
--- These Pretty instances are here for circular import reasons
--- TODO: refactor. Pretty-printing shouldn't do complicated restructuring anyway
-
-instance Pretty Output where
-  pretty (ValOut Printed val) = pretty (restructureVal val)
-  pretty (ValOut _ _) = "<graphical output>"
-  pretty (TextOut s) = pretty s
-  pretty NoOutput = ""
-
-instance Pretty SourceBlock where
-  pretty block = pretty (sbText block)
-
-instance Pretty Result' where
-  pretty r = case r of
-    Left err -> pretty err
-    Right NoOutput -> mempty
-    Right out -> pretty out
-
-instance Pretty Result where
-  pretty (Result r) = pretty r
-
-printLitBlock :: SourceBlock -> Result -> String
-printLitBlock block result = pprint block ++ resultStr
+-- turns memrefs into atomic table constructors
+loadAtomVal :: [Int] -> Atom -> IO Atom
+loadAtomVal idxs (PrimCon (TabGet x i)) = loadAtomVal (i':idxs) x
+  where (PrimCon (IdxLit _ i')) = i
+loadAtomVal idxs (PrimCon (MemRef ty ref)) = do
+  let ref' = foldl (flip subArrayRef) ref idxs
+  let ty'  = foldl (\t _ -> tabEltType t) ty  idxs
+  array <- loadArray ref'
+  return $ restructureVal $ FlatVal ty' [array]
+loadAtomVal [] (PrimCon (AtomicFor lam)) = do
+  xs <- traverse (loadAtomVal [] . ithBody) [0..n-1]
+  return $ PrimCon $ AtomicTabCon (getType body) xs
   where
-    resultStr = unlines $ map addPrefix $ lines $ pprint result
-    addPrefix :: String -> String
-    addPrefix s = case s of "" -> ">"
-                            _  -> "> " ++ s
+    (LamExpr (v@(_:>IdxSetLit n)) (Atom body)) = lam
+    ithBody :: Int -> Atom
+    ithBody i = subst (v @> L (PrimCon (IdxLit n i)), mempty) body
+loadAtomVal [] (PrimCon con) = do
+  liftM PrimCon $ traverseExpr con return (loadAtomVal []) return
+loadAtomVal _ atom = error $ "Unexpected atom: " ++ pprint atom
+
+tabEltType :: Type -> Type
+tabEltType (TabType _ a) = a
+tabEltType ty = error $ "Not a table type: " ++ pprint ty
 
 -- === binary format ===
 

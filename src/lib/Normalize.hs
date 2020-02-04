@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Normalize (normalizePass, normalizeVal) where
+module Normalize (normalizeModule, normalizeVal) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -18,44 +18,31 @@ import Syntax
 import Cat
 import PPrint
 import Type
-import Pass
 import Embed
 import Subst
 import Record
 
-data TLamEnv = TLamContents NormEnv [TVar] FExpr
-type NormEnv = FullEnv (Either Atom TLamEnv) Type
-type NormM a = ReaderT NormEnv (EmbedT (Either Err)) a
+type NormEnv = TopEnv
+type NormM a = ReaderT NormEnv Embed a
 
--- TODO: add top-level freshness scope to top-level env
-normalizePass :: TopPass TopDecl NTopDecl
-normalizePass = TopPass $ \topDecl -> case topDecl of
-  TopDecl ann decl -> do
-    (env, decls) <- asTopPassM (normalizeDecl decl)
-    extend (asFst env)
-    return $ map (NTopDecl ann) decls
-  RuleDef ann (Forall [] ty) (TLam [] expr) -> do
-    (expr', _) <- asTopPassM $ buildScoped $ normalize expr
-    (ty'  , _) <- asTopPassM $ substTy ty
-    return [NRuleDef ann ty' expr']
-  RuleDef _ _ _ -> error "Not implemented"
-  EvalCmd (Command cmd expr) -> do
-    let ty = getType expr
-    (expr', _) <- asTopPassM $ buildScoped $ normalize expr
-    case cmd of
-      ShowNormalized -> emitOutput $ TextOut $ pprint expr'
-      _ -> return [NEvalCmd (Command cmd (ty, expr'))]
+normalizeModule :: TopEnv -> FModule -> Module
+normalizeModule env (FModule _ body _) = Module decls envOut
+  where (envOut, decls) = runNormM (normalizeTopDecls body) env
 
-asTopPassM :: NormM a -> TopPassM (NormEnv, Scope) (a, [Decl])
-asTopPassM m = do
-  (env, scope) <- look
-  (ans, (scope', decls)) <- liftExceptTop $ runEmbedT (runReaderT m env) scope
-  extend (asSnd (scope'))
-  return (ans, decls)
+normalizeTopDecls :: [FDecl] -> NormM NormEnv
+normalizeTopDecls [] = return mempty
+normalizeTopDecls (decl:decls) = do
+  env  <- normalizeDecl decl
+  env' <- extendR env $ normalizeTopDecls decls
+  return (env <> env')
+
+runNormM :: NormM a -> NormEnv -> (a, [Decl])
+runNormM m env = (ans, decls)
+  where (ans, (_, decls)) = runEmbed (runReaderT m env) mempty
 
 normalizeVal :: FExpr -> Except Atom
 normalizeVal expr = do
-  (ans, (_, decls)) <- runEmbedT (runReaderT (normalize expr) mempty) mempty
+  let (ans, decls) = runNormM (normalize expr) mempty
   case decls of [] -> return ans
                 _  -> throw MiscErr "leftover decls"
 
@@ -70,7 +57,7 @@ normalize expr = case expr of
       Left x' -> case ts of
         [] -> return x'
         _ -> error "Unexpected type application"
-      Right (TLamContents env tbs body) -> do
+      Right (TLamEnv env (TLam tbs body)) -> do
         ts' <- mapM substTy ts
         let env' = fold [tv @> T t' | (tv, t') <- zip tbs ts']
         local (const (env <> env')) $ normalize body
@@ -120,7 +107,7 @@ normalizeDecl decl = case decl of
     bindPat p xs
   LetPoly v (TLam tbs body) -> do
     env <- ask
-    return $ v @> L (Right (TLamContents env tbs body))
+    return $ v @> L (Right (TLamEnv env (TLam tbs body)))
   FUnpack b tv bound -> do
     bound' <- normalize bound
     (ty, emitUnpackRest) <- emitUnpack tv bound'
@@ -129,10 +116,10 @@ normalizeDecl decl = case decl of
     x <- emitUnpackRest bs
     lenv <- bindPat (RecLeaf b) x
     return (tenv <> lenv)
-  TyDef NewType v _ ty -> do
+  TyDef v [] ty -> do
     ty' <- substTy ty
     return $ v @> T ty'
-  TyDef TyAlias _ _ _ -> error "Shouldn't have TAlias left"
+  FRuleDef _ _ _ -> return mempty  -- TODO
 
 substTy :: Type -> NormM Type
 substTy ty = do

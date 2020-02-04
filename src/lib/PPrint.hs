@@ -6,10 +6,12 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, addErrSrc) where
+module PPrint (pprint, assertEq, ignoreExcept, printLitBlock) where
 
+import Control.Monad.Except hiding (Except)
 import GHC.Float
 import Data.String
 import Data.Text.Prettyprint.Doc.Render.Text
@@ -19,7 +21,6 @@ import Data.Foldable (toList)
 
 import Env
 import Syntax
-import Util (highlightRegion)
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
@@ -65,20 +66,18 @@ prettyTyDepth d ty = case ty of
   Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
   Lens a b    -> "Lens" <+> p a <+> p b
   Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
-  IdxSetLit i -> p i
-  Mult l      -> p (show l)
-  NoAnn       -> ""
-  where recur = prettyTyDepth d
-        recurWith n = prettyTyDepth (d + n)
-
-instance Pretty SigmaType where
-  pretty (Forall []    t) = prettyTyDepth 0 t
-  pretty (Forall kinds t) = header <+> prettyTyDepth n t
+  Forall []    t -> prettyTyDepth d t
+  Forall kinds t -> header <+> prettyTyDepth (d + n) t
     where n = length kinds
           header = "A" <+> hsep binders <> "."
           boundvars :: [Name]
           boundvars = [tvars 0 i | i <- [-n..(-1)]]
           binders = map p $ zipWith (:>) boundvars kinds
+  IdxSetLit i -> p i
+  Mult l      -> p (show l)
+  NoAnn       -> ""
+  where recur = prettyTyDepth d
+        recurWith n = prettyTyDepth (d + n)
 
 instance Pretty ty => Pretty (EffectTypeP ty) where
   pretty (Effect r w s) = "[" <> p r <+> p w <+> p s <> "]"
@@ -105,15 +104,15 @@ instance Pretty LitVal where
   pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty Expr where
-  pretty (Decl decl body) = p decl <> hardline <> p body
+  pretty (Decl decl body) = align $ p decl <> hardline <> p body
   pretty (CExpr expr) = p (PrimOpExpr expr)
   pretty (Atom atom) = p atom
 
 instance Pretty FExpr where
   pretty expr = case expr of
     FVar (v:>ann) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts] <+> p ann
-    FDecl decl body -> p decl <> hardline <> p body
-    FPrimExpr e -> parens $ p e
+    FDecl decl body -> align $ p decl <> hardline <> p body
+    FPrimExpr e -> p e
     SrcAnnot subexpr _ -> p subexpr
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
@@ -123,10 +122,9 @@ instance Pretty FDecl where
   pretty (LetPoly (v:>ty) (TLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (TyDef deftype v bs ty) = keyword <+> p v <+> p bs <+> "=" <+> p ty
-    where keyword = case deftype of TyAlias -> "type"
-                                    NewType -> "newtype"
   pretty (FUnpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
+  pretty (FRuleDef ann ty tlam) = "<TODO: rule def>"
+  pretty (TyDef v bs ty) = "type" <+> p v <+> p bs <+> "=" <+> p ty
 
 instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimExpr ty e lam) where
   pretty (PrimOpExpr  op ) = p op
@@ -145,12 +143,13 @@ instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimOp ty e lam) where
 instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
   pretty (Lam _ lam)   = p lam
-  pretty (TabGet e1 e2) = p e1 <> "." <> p e2
-  pretty (RecGet e1 i ) = p e1 <> "#" <> p i
+  pretty (TabGet e1 e2) = p e1 <> "." <> parens (p e2)
+  pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (AtomicFor lam) = "afor" <+> p lam
   pretty (RecCon r) = p r
   pretty (AtomicTabCon _ xs) = list (map pretty xs)
   pretty (IdxLit n i) = p i <> "@" <> p (IdxSetLit n)
+  pretty (AsIdxAtomic n e) = parens $ parens (p e) <> "@" <> p n
   pretty con = p (nameToStr (PrimConExpr blankCon))
                   <> parens (p tys <+> p xs <+> p lams)
     where (blankCon, (tys, xs, lams)) = unzipExpr con
@@ -185,6 +184,9 @@ instance Pretty Decl where
   pretty decl = case decl of
     Let    b bound -> p b <+> "=" <+> p (PrimOpExpr bound)
     Unpack b tv e  -> p b <> "," <+> p tv <+> "= unpack" <+> p e
+
+instance Pretty TLamEnv where
+  pretty _ = "<tlam>"
 
 instance Pretty Atom where
   pretty atom = case atom of
@@ -250,12 +252,47 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (L x) = "L" <+> p x
   pretty (T x) = "T" <+> p x
 
--- TODO: add line numbers back (makes the quines a little brittle)
-addErrSrc :: SourceBlock -> Result -> Result
-addErrSrc block result = case result of
-  Result (Left (Err e (Just (start, stop)) s')) ->
-    Result $ Left $ Err e Nothing $ s' ++ "\n\n" ++ ctx
-      where
-        n = sbOffset block
-        ctx = highlightRegion (start - n, stop - n) (sbText block)
-  _ -> result
+instance Pretty Output where
+  pretty (ValOut Printed atom) = pretty atom
+  pretty (ValOut _ _) = "<graphical output>"
+  pretty (TextOut   s) = pretty s
+  pretty (PassInfo name s) = p name <> ":" <> hardline <> p s <> hardline
+
+instance Pretty SourceBlock where
+  pretty block = pretty (sbText block)
+
+instance Pretty Result where
+  pretty (Result outs r) = vcat (map pretty outs) <> maybeErr
+    where maybeErr = case r of Left err -> hardline <> p err
+                               Right () -> mempty
+
+instance Pretty FModule where
+  pretty (FModule _ decls _) = vsep $ map p decls
+
+instance Pretty Module where
+  pretty (Module decls result) = vsep (map p decls) <> hardline <> p result
+
+instance Pretty ImpModule where
+  pretty (ImpModule vs prog result) =
+    p vs <> hardline <> p prog <> hardline <> p result
+
+instance (Pretty a, Pretty b) => Pretty (Either a b) where
+  pretty (Left  x) = "Left"  <+> p x
+  pretty (Right x) = "Right" <+> p x
+
+printLitBlock :: SourceBlock -> Result -> String
+printLitBlock block result = pprint block ++ resultStr
+  where
+    resultStr = unlines $ map addPrefix $ lines $ pprint result
+    addPrefix :: String -> String
+    addPrefix s = case s of "" -> ">"
+                            _  -> "> " ++ s
+
+assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq x y s = if x == y then return ()
+                           else throw CompilerErr msg
+  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
+
+ignoreExcept :: Except a -> a
+ignoreExcept (Left e) = error $ pprint e
+ignoreExcept (Right x) = x

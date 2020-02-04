@@ -88,7 +88,8 @@ instance Subst Type where
     TabType a b -> TabType (recur a) (recur b)
     RecType r   -> RecType $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
-    Exists body -> Exists (recur body)
+    Exists    body -> Exists    (recur body)
+    Forall ks body -> Forall ks (recur body)
     Monad eff a -> Monad (fmap recur eff) (recur a)
     Lens a b    -> Lens (recur a) (recur b)
     IdxSetLit _ -> ty
@@ -102,9 +103,6 @@ instance Subst Decl where
     Let    b    bound -> Let    (subst env b)    (subst env bound)
     Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
 
-instance Subst SigmaType where
-  subst env (Forall ks body) = Forall ks (subst env body)
-
 instance Subst Var where
   subst env (v:>ty) = v:> subst env ty
 
@@ -113,3 +111,17 @@ instance Subst a => Subst (RecTree a) where
 
 instance (Subst a, Subst b) => Subst (a, b) where
   subst env (x, y) = (subst env x, subst env y)
+
+instance Subst a => Subst (Env a) where
+  subst env xs = fmap (subst env) xs
+
+instance (Subst a, Subst b) => Subst (LorT a b) where
+  subst env (L x) = L (subst env x)
+  subst env (T y) = T (subst env y)
+
+instance Subst TLamEnv where
+  subst env (TLamEnv topEnv tlam) = TLamEnv (subst env topEnv) tlam
+
+instance (Subst a, Subst b) => Subst (Either a b)where
+  subst env (Left  x) = Left  (subst env x)
+  subst env (Right x) = Right (subst env x)

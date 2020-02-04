@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module DeShadow (sourcePass, deShadowPass) where
+module DeShadow (deShadowModule) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
@@ -15,65 +15,46 @@ import Data.Foldable
 
 import Env
 import Syntax
-import Pass
 import Fresh
 import PPrint
 import Cat
-import Parser
-import Serialize
 import Subst
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
 type DeShadowEnv = (Env Name, Env ([TVar], Type))
 
-sourcePass :: TopPass SourceBlock TopDecl
-sourcePass = TopPass sourcePass'
+-- TODO: check top-level binders are all unique wrt imports and each other
+-- TODO: work through type aliases from incoming top env
+deShadowModule :: TopEnv -> FModule -> Except FModule
+deShadowModule env (FModule imports decls exports) = do
+  decls' <- runFreshRT (runReaderT (deShadowTopDecls decls) env') scope
+  return $ FModule imports decls' exports
+  where env' = topEnvToDeshadowEnv env
+        scope = fmap (const ()) env
 
-sourcePass' :: SourceBlock -> TopPassM () [TopDecl]
-sourcePass' block = case sbContents block of
-  UTopDecl (EvalCmd (Command ShowParse expr)) -> emitOutput $ TextOut $ pprint expr
-  UTopDecl decl -> return [decl]
-  IncludeSourceFile fname -> do
-    source <- liftIOTop $ readFile fname
-    liftM concat $ mapM sourcePass' $ parseProg source
-  LoadData p fmt fname -> do
-    (FlatVal ty refs) <- liftIOTop $ loadDataFile fname fmt
-    let expr = FPrimExpr $ PrimConExpr (MemRef ty refs)
-    return [TopDecl PlainDecl $ LetMono p expr]
-  UnParseable _ s -> throwTopErr $ Err ParseErr Nothing s
-  _ -> return []
+topEnvToDeshadowEnv :: TopEnv -> DeShadowEnv
+topEnvToDeshadowEnv env = (termEnv, tyEnv)
+  where
+    env' = fmapNames (,) env
+    termEnv = flip envMapMaybe env' $ \x -> case x of
+                (v, L _) -> Just v
+                _        -> Nothing
+    tyEnv = flip envMapMaybe env $ \x -> case x of
+                L _  -> Nothing
+                T ty -> Just ([], ty)
 
-deShadowPass :: TopPass TopDecl TopDecl
-deShadowPass = TopPass $ \topDecl ->  case topDecl of
-  TopDecl ann decl -> do
-    decl' <- catToTop $ deShadowDecl decl
-    case decl' of
-      Just decl'' -> return [TopDecl ann decl'']
-      Nothing -> emitOutput NoOutput
-  RuleDef ann ty tlam -> liftTop $ do
-    ann'  <- deShadowRuleAnn ann
-    ty'   <- deShadowSigmaType ty
-    tlam' <- deShadowTLam tlam
-    return [RuleDef ann' ty' tlam']
-  EvalCmd (Command cmd expr) -> do
-    expr' <- liftTop $ deShadowExpr expr
-    case cmd of
-      ShowDeshadowed -> emitOutput $ TextOut $ show expr'
-      _ -> return [EvalCmd (Command cmd expr')]
-
-liftTop :: DeShadowM a -> TopPassM (DeShadowEnv, FreshScope) a
-liftTop m = do
-  (env, scope) <- look
-  liftExceptTop $ runFreshRT (runReaderT m env) scope
+deShadowTopDecls :: [FDecl] -> DeShadowM [FDecl]
+deShadowTopDecls [] = return []
+deShadowTopDecls (decl : decls) = do
+  withCat (deShadowDecl decl) $ \decl' ->
+    liftM (decl':) (deShadowTopDecls decls)
 
 deShadowExpr :: FExpr -> DeShadowM FExpr
 deShadowExpr expr = case expr of
   FDecl decl body ->
-    withCat (deShadowDecl decl) $ \decl' -> do
-      body' <- recur body
-      return $ case decl' of Nothing -> body'
-                             Just decl'' -> FDecl decl'' body'
+    withCat (deShadowDecl decl) $ \decl' ->
+      liftM (FDecl decl') $ recur body
   FVar (v:>ty) tyArgs -> do
     v' <- lookupLVar v
     ty' <- deShadowType ty
@@ -93,33 +74,30 @@ deShadowLam (FLamExpr p body) =
   withCat (deShadowPat p) $ \p' ->
     liftM (FLamExpr p') (deShadowExpr body)
 
-deShadowDecl :: FDecl -> DeShadowCat (Maybe FDecl)
+deShadowDecl :: FDecl -> DeShadowCat FDecl
 deShadowDecl (LetMono p bound) = do
   bound' <- toCat $ deShadowExpr bound
   p' <- deShadowPat p
-  return $ Just $ LetMono p' bound'
+  return $ LetMono p' bound'
 deShadowDecl (LetPoly (v:>ty) tlam) = do
   tlam' <- toCat $ deShadowTLam tlam
-  ty' <- toCat $ deShadowSigmaType ty
+  ty' <- toCat $ deShadowType ty
   b' <- freshBinderP (v:>ty')
-  return $ Just $ LetPoly b' tlam'
+  return $ LetPoly b' tlam'
 deShadowDecl (FUnpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
   extend (asSnd (tv @> ([], TypeVar tv')), tv'@>())
   b' <- freshBinder b
-  return $ Just $ FUnpack b' tv' bound'
-deShadowDecl (TyDef TyAlias v bs ty) = do  -- TODO: deal with capture
+  return $ FUnpack b' tv' bound'
+deShadowDecl (FRuleDef ann ty tlam) = toCat $
+  liftM3 FRuleDef (deShadowRuleAnn ann) (deShadowType ty) (deShadowTLam tlam)
+deShadowDecl (TyDef v bs ty) = do
   -- TODO: handle shadowing from binders
   let env = fold [tv@>([], TypeVar tv) | tv <- bs]
   ty' <- toCat $ extendR (asSnd env) $ deShadowType ty
   extend (asSnd (v @> (bs, ty')), v@>())
-  return Nothing
-deShadowDecl (TyDef NewType v [] ty) = do
-  ty' <- toCat $ deShadowType ty
-  extend (asSnd (v @> ([], TypeVar v)), mempty)
-  return (Just $ TyDef NewType v [] ty')  -- assumes top-level only
-deShadowDecl (TyDef NewType _ _ _) = error "Parametric newtype not implemented"
+  return $ TyDef v bs ty'
 
 deShadowTLam :: TLam -> DeShadowM TLam
 deShadowTLam (TLam tbs body) = do
@@ -193,14 +171,12 @@ deShadowType ty = case ty of
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
   Lens a b    -> liftM2 Lens (recur a) (recur b)
   Exists body -> liftM Exists $ recur body
+  Forall kinds body -> liftM (Forall kinds) (deShadowType body)
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty
   Mult _      -> return ty
   NoAnn       -> return ty
   where recur = deShadowType
-
-deShadowSigmaType :: SigmaType -> DeShadowM SigmaType
-deShadowSigmaType (Forall kinds body) = liftM (Forall kinds) (deShadowType body)
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do
@@ -213,10 +189,3 @@ withCat m cont = do
   scope <- askFresh
   (ans, (env', scope')) <- liftEither $ flip runCatT (env, scope) m
   extendR env' $ localFresh (<> scope') $ cont ans
-
-catToTop :: DeShadowCat a -> TopPassM (DeShadowEnv, FreshScope) a
-catToTop m = do
-  env <- look
-  (ans, env') <- liftExceptTop $ flip runCatT env m
-  extend env'
-  return ans

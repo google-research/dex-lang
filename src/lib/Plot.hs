@@ -28,22 +28,25 @@ import Syntax
 data Scale = LinearScale Double Double
 
 scatterHtml :: FlatVal -> H.Html
-scatterHtml (FlatVal _ arrays) = diagramToHtml $
-  position [(p2 (scaleToPlot xsc x, scaleToPlot ysc y), spot)
-           | (x,y) <- zip xs ys]
-  where
-    [Array _ (RealVec xs), Array _ (RealVec ys)] = arrays
-    spot = circle 0.005 # fc blue # lw 0
-    xsc = LinearScale (minimum xs) (maximum xs)
-    ysc = LinearScale (minimum ys) (maximum ys)
+scatterHtml = undefined
+
+-- scatterHtml (FlatVal _ arrays) = diagramToHtml $
+--   position [(p2 (scaleToPlot xsc x, scaleToPlot ysc y), spot)
+--            | (x,y) <- zip xs ys]
+--   where
+--     [Array _ (RealVec xs), Array _ (RealVec ys)] = arrays
+--     spot = circle 0.005 # fc blue # lw 0
+--     xsc = LinearScale (minimum xs) (maximum xs)
+--     ysc = LinearScale (minimum ys) (maximum ys)
 
 heatmapHtml :: FlatVal -> H.Html
-heatmapHtml (FlatVal _ ~[array]) = pngToHtml $ generateImage getPix w h
-  where
-    Array [h, w] (RealVec zs) = array
-    zsVec = V.fromList zs
-    zScale = LinearScale (minimum zs) (maximum zs)
-    getPix i j = greyPix zScale $ zsVec  V.! (j * w + i)
+heatmapHtml = undefined
+-- heatmapHtml (FlatVal _ ~[array]) = pngToHtml $ generateImage getPix w h
+--   where
+--     Array [h, w] (RealVec zs) = array
+--     zsVec = V.fromList zs
+--     zScale = LinearScale (minimum zs) (maximum zs)
+--     getPix i j = greyPix zScale $ zsVec  V.! (j * w + i)
 
 greyPix :: Scale -> Double -> PixelRGB8
 greyPix scale_ x = PixelRGB8 px px px
