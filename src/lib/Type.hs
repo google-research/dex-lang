@@ -12,7 +12,7 @@ module Type (
     checkFModule, checkModule, getType, instantiateTVs, abstractTVs,
     tangentBunType, listIntoRecord, flattenType, splitLinArgs,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy, isData) where
+    tupTy, pairTy, isData, IsModule, moduleType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -214,6 +214,31 @@ subAtDepth d f ty = case ty of
     NoAnn         -> NoAnn
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
+
+-- -- === Module interfaces ===
+
+class IsModule a where
+  moduleType :: a -> ModuleType
+
+instance IsModule FModule where
+  moduleType (FModule imports _ exports) = ModuleType imports exports'
+    -- Temporary hack. TODO: fix
+    where exports' = flip fmap exports $ \x ->
+            case x of L (Forall [] ty) -> L ty
+                      _ -> x
+
+instance IsModule Module where
+  moduleType (Module _ result) = ModuleType mempty (topEnvType result)
+
+instance IsModule ImpModule where
+  moduleType (ImpModule _ _ result) = ModuleType mempty (topEnvType result)
+
+topEnvType :: TopEnv -> FullEnv Type Kind
+topEnvType env = flip fmap env $ \x ->
+  case x of L (Left atom) -> L (getType atom)
+            L (Right lam) -> L (getType lam)
+            T ty          -> T (Kind []) -- TODO
+
 
 -- -- === Built-in typeclasses ===
 

@@ -255,7 +255,7 @@ instance Pretty Output where
   pretty (ValOut Printed atom) = pretty atom
   pretty (ValOut _ _) = "<graphical output>"
   pretty (TextOut   s) = pretty s
-  pretty (PassInfo name s) = p name <> ":" <> hardline <> p s <> hardline
+  pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)
@@ -266,10 +266,17 @@ instance Pretty Result where
                                Right () -> mempty
 
 instance Pretty FModule where
-  pretty (FModule _ decls _) = vsep $ map p decls
+  pretty (FModule imports decls exports) = "imports:" <+> p imports
+                            <> hardline <> vsep (map p decls)
+                            <> hardline <> "exports:" <+> p exports
 
 instance Pretty Module where
-  pretty (Module decls result) = vsep (map p decls) <> hardline <> p result
+  pretty (Module decls result) = vsep (map p decls)
+                  <> hardline <> "exports:" <> p result
+
+instance Pretty ModuleType where
+  pretty (ModuleType imports exports) = "imports:" <+> p imports
+                                    <+> "exports:" <+> p exports
 
 instance Pretty ImpModule where
   pretty (ImpModule vs prog result) =

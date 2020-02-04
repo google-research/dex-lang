@@ -20,7 +20,7 @@ module Syntax (
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TopEnv, TopResult, TLamEnv (..),
     RuleAnn (..), DeclAnn (..), CmdName (..), Val,
-    Module (..), FModule (..), ImpModule (..),
+    Module (..), FModule (..), ImpModule (..), ModuleType (..),
     FlatValP (..), ArrayP (..), FlatVal, FlatValRef, Array,
     ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
     ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -129,6 +129,8 @@ data Atom = Var Var
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
 data Module = Module [Decl] TopEnv  deriving (Show, Eq, Generic)
+
+data ModuleType = ModuleType (FullEnv Type Kind) (FullEnv Type Kind)  deriving (Show, Eq)
 
 -- === primitive constructors and operators ===
 

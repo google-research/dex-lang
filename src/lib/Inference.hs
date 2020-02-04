@@ -42,6 +42,8 @@ inferModule topEnv (FModule imports body exports) = do
   let envOut = envIn <> env'
   let imports' = imports `envIntersect` envIn
   let exports' = exports `envIntersect` envOut
+              <> flip envMapMaybe exports (\x -> case x of T k -> Just (T k)
+                                                           _   -> Nothing)
   return $ FModule imports' body' exports'
 
 topEnvToTypeEnv :: TopEnv -> TypeEnv

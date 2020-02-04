@@ -73,22 +73,33 @@ evalSourceBlock env block = case block of
 evalModule :: TopEnv -> FModule -> TopPassM TopEnv
 evalModule env = inferTypes env >=> evalTyped env
 
+-- TODO: check here for upstream errors
 inferTypes :: TopEnv -> FModule -> TopPassM FModule
-inferTypes env =
-      exceptPass "deshadow"       (deShadowModule env)
-  >=> exceptPass "type inference" (inferModule    env) >=> checkPass checkFModule
+inferTypes env m = do
+  mds   <- exceptPass "deshadow"       (deShadowModule env) m
+  typed <- exceptPass "type inference" (inferModule    env) mds
+  liftEither $ checkFModule typed
+  return typed
 
--- TODO return a `ModuleP ()` here, representing a fully-evaluated module
 evalTyped :: TopEnv -> FModule -> TopPassM TopEnv
-evalTyped env =
-      asPass "normalize" (normalizeModule env) >=> checkPass checkModule
-  >=> asPass "simplify"  simplifyPass          >=> checkPass checkModule
-  >=> asPass "imp" toImpModule                 >=> checkPass checkImpModule
+evalTyped env m = ($ m) $
+      asPass "normalize" (normalizeModule env) >=> checkPass ty checkModule
+  >=> asPass "simplify"  simplifyPass          >=> checkPass ty checkModule
+  >=> asPass "imp" toImpModule                 >=> checkPass ty checkImpModule
   >=> analysisPass "flops" moduleFlops
   >=> ioPass "jit" evalModuleJIT
+  where
+    (ModuleType _ exports) = moduleType m
+    ty = ModuleType mempty exports
 
-checkPass :: (a -> Except ()) -> a -> TopPassM a
-checkPass f x = liftEither (f x) >> return x
+checkPass :: IsModule a => ModuleType -> (a -> Except ()) -> a -> TopPassM a
+checkPass ty f x = do
+  let ty' = moduleType x
+  liftEither (f x)
+  when (ty /= ty') $ throw CompilerErr $
+      "Wrong module type.\nExpected: " ++ pprint ty
+                     ++ "\n  Actual: " ++ pprint ty'
+  return x
 
 exceptPass :: Pretty b => String -> (a -> Except b) -> a -> TopPassM b
 exceptPass s f x = namedPass s $ liftEither (f x)
