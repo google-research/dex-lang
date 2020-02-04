@@ -24,6 +24,7 @@ import Serialize
 import Fresh
 import Subst
 import Record
+import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
 type EmbedEnv = (Scope, ImpProg)
@@ -32,34 +33,30 @@ type ImpM a = ReaderT ImpEnv (Cat EmbedEnv) a
 data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
 
--- TODO: free refs that aren't exported
 toImpModule :: Module -> ImpModule
-toImpModule (Module decls result) = ImpModule vs prog env
-  where
-    ((vs, env), prog) = runImpM $ do
-                          (bs, substEnv) <- toImpTopDecls decls
-                          return (bs, subst (substEnv, mempty) result)
+toImpModule m = ImpModule vs prog result
+  where ((vs, result), (_, prog)) =
+          runCat (runReaderT (toImpModule' m) mempty) mempty
 
-runImpM :: ImpM a -> (a, ImpProg)
-runImpM m = (ans, prog)
-  where (ans, (_, prog)) = runCat (runReaderT m mempty) mempty
+toImpModule' :: Module -> ImpM ([IVar], TopEnv)
+toImpModule' (Module decls result) = do
+  let vs = resultVars result
+  outAllocs <- mapM topAlloc vs
+  let outTuple = PrimCon $ RecCon $ Tup $ map Var vs
+  let outDests = ICon    $ RecCon $ Tup $ outAllocs
+  toImpExpr (fmap IVar outDests) (wrapDecls decls outTuple)
+  let substEnv = fold [v @> L (impAtomToAtom (fmap IVar out))
+                      | (v, out) <- zip vs outAllocs]
+  let flatAllocVars = concat $ map toList outAllocs
+  return (flatAllocVars, subst (substEnv, mempty) result)
 
-toImpTopDecls :: [Decl] -> ImpM ([IVar], FullEnv Atom Type)
-toImpTopDecls [] = return ([], mempty)
-toImpTopDecls (decl:decls) = do
-  (env, vs, substEnv) <- toImpTopDecl decl
-  (vs', substEnv') <- extendR env $ toImpTopDecls decls
-  return (vs ++ vs', substEnv' <> substEnv)
+resultVars :: TopEnv -> [Var]
+resultVars env = [v:>ty | (v, L ty) <- envPairs $ freeVars env]
 
-toImpTopDecl :: Decl -> ImpM (ImpEnv, [IVar], FullEnv Atom Type)
-toImpTopDecl decl = case decl of
-  Let b@(_:>ty) bound -> do
-    tys <- toImpArrayType ty
-    vs <- traverse (\t -> freshVar ("x" :> IRefType t)) tys
-    let dests = fmap IVar vs
-    toImpCExpr dests bound
-    xs <- mapM loadIfScalar dests
-    return (b @> xs, toList vs, b @> L (impAtomToAtom dests))
+topAlloc :: Var -> ImpM (IAtomP IVar)
+topAlloc (v:>ty) = do
+  tys <- toImpArrayType ty
+  flip traverse tys $ \impTy -> freshVar (v :> IRefType impTy)
 
 toImpExpr :: IAtom -> Expr -> ImpM ()
 toImpExpr dests expr = case expr of
@@ -86,11 +83,13 @@ toImpAtom atom = case atom of
     TabGet x i -> do
       i' <- toImpScalarAtom i
       xs <- toImpAtom x
-      flip traverse xs $ \leaf -> loadIfScalar $ IGet leaf i'
+      traverse loadIfScalar $ indexIAtom xs i'
     IdxLit _ i   -> return $ ILeaf (ILit (IntLit i))
     RecGet x i -> do
-      ~(ICon (RecCon r)) <- toImpAtom x
-      return $ recGet r i
+      x' <- toImpAtom x
+      case x' of
+        ICon (RecCon r)-> return $ recGet r i
+        val -> error $ "Expected a record, got: " ++ show val
     _ -> error $ "Not implemented: " ++ pprint atom
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
@@ -115,15 +114,14 @@ toImpCExpr dests op = case op of
            i' <- freshVar ("i":>intTy)
            let iVar = IVar i'
            extendR (b @> toPair (ILeaf iVar) carryTmpVals) $ do
-              let indexedDests = fmap (\d -> IGet d iVar) mapDests
+              let indexedDests = indexIAtom mapDests iVar
               toImpExpr (toPair carryOutDests indexedDests) body
            return i'
        emitStatement (Nothing, Loop i' n' loopBody)
   TabCon _ rows -> do
     rows' <- mapM toImpAtom rows
-    void $ sequence [copyOrStoreIAtom (indexedDests i) row
+    void $ sequence [copyOrStoreIAtom (indexIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
-    where indexedDests i = fmap (\d -> IGet d (ILit (IntLit i))) dests
   MonadRun rArgs sArgs m -> do
     rArgs' <- toImpAtom rArgs
     sArgs' <- toImpAtom sArgs
@@ -168,7 +166,7 @@ toImpCExpr dests op = case op of
 
 withAllocs :: Var -> (IAtom -> ImpM a) -> ImpM a
 withAllocs (_:>ty) body = do
-  dest <-toImpArrayType ty >>= mapM newAlloc
+  dest <- toImpArrayType ty >>= mapM newAlloc
   ans <- body dest
   flip mapM_ dest $ \(IVar v) -> emitStatement (Nothing, Free v)
   return ans
@@ -235,6 +233,12 @@ lensIndexRef (PrimCon (LensCon lens)) x = case lens of
     ~(ILeaf i') <- toImpAtom i
     return $ IGet x i'
 lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
+
+indexIAtom :: IAtom -> IExpr -> IAtom
+indexIAtom x i = case x of
+  ICon (RecZip _ r) -> ICon $ RecCon $ fmap (flip indexIAtom i) r
+  ILeaf x' -> ILeaf $ IGet x' i
+  _ -> error $ "Unexpected atom: " ++ show x
 
 toImpArrayType :: Type -> ImpM (IAtomP ArrayType)
 toImpArrayType ty = case ty of

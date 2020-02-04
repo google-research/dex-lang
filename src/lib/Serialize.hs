@@ -8,7 +8,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Serialize (serializeVal, restructureVal, subArray, readScalar,
+module Serialize (serializeVal, restructureVal, subArray, subArrayRef, readScalar,
                   allocateArray, storeArray, loadArray, vecRefInfo,
                   storeFlatVal, loadFlatVal, DBOHeader (..),
                   dumpDataFile, loadDataFile, loadAtomVal) where
@@ -33,6 +33,7 @@ import Inference
 import Parser
 import ParseUtil
 import Normalize
+import Subst
 
 serializeVal :: Val -> IO FlatValRef
 serializeVal val = do
@@ -84,17 +85,6 @@ subArray i (Array (_:shape) vec) = Array shape sliced
       RealVec xs -> RealVec (slice start stop xs)
       BoolVec xs -> BoolVec (slice start stop xs)
 subArray _ (Array [] _) = error "Can't get subarray of rank-0 array"
-
-subArrayRef :: Int -> ArrayRef -> ArrayRef
-subArrayRef i (Array (_:shape) (_,ref)) = Array shape (newSize, ref')
-  where
-    newSize = product shape
-    offset = i * newSize
-    ref' = case ref of
-     IntVecRef  ptr -> IntVecRef  $ advancePtr ptr offset
-     RealVecRef ptr -> RealVecRef $ advancePtr ptr offset
-     BoolVecRef ptr -> BoolVecRef $ advancePtr ptr offset
-subArrayRef _ (Array [] _) = error "Can't get subarray of rank-0 array"
 
 slice :: Int -> Int -> [a] -> [a]
 slice start stop xs = take (stop - start) $ drop start xs

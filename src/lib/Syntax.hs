@@ -140,7 +140,6 @@ data PrimCon ty e lam =
         Lit LitVal
       | Lam ty lam
       | IdxLit Int Int
-      | AsIdxAtomic Int e  -- until we handle indices more coherently
       | TabGet e e
       | RecGet e RecField
       | AtomicTabCon ty [e] -- Only used for printing. May remove it.
@@ -541,6 +540,17 @@ instance HasVars Decl where
   freeVars (Let    bs   expr) = foldMap freeVars bs <> freeVars expr
   freeVars (Unpack bs _ expr) = foldMap freeVars bs <> freeVars expr
 
+instance HasVars a => HasVars (Env a) where
+  freeVars env = foldMap freeVars env
+
+instance HasVars TLamEnv where
+  -- TODO: should be `freeVars topEnv` but it blows up the complexity
+  freeVars (TLamEnv topEnv _) = mempty
+
+instance (HasVars a, HasVars b) => HasVars (Either a b)where
+  freeVars (Left  x) = freeVars x
+  freeVars (Right x) = freeVars x
+
 fmapExpr :: TraversableExpr expr
          => expr ty e lam
          -> (ty  -> ty')
@@ -590,7 +600,6 @@ instance TraversableExpr PrimCon where
     Lit l          -> pure   (Lit l)
     Lam lin lam    -> liftA2 Lam (fT lin) (fL lam)
     IdxLit n i     -> pure   (IdxLit n i)
-    AsIdxAtomic n e -> liftA (AsIdxAtomic n) (fE e)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
     AtomicTabCon ty xs -> liftA2 AtomicTabCon (fT ty) (traverse fE xs)

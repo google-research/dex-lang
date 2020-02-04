@@ -7,8 +7,10 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Scope, Subst, subst, SubstEnv,
+module Subst (Scope, Subst, subst, SubstEnv, subArrayRef,
               reduceAtom, nRecGet, nTabGet) where
+
+import Foreign.Marshal.Array
 
 import Env
 import Record
@@ -39,6 +41,8 @@ instance Subst Atom where
       Nothing -> Var $ fmap (subst env) v
       Just (L x') -> subst (mempty, scope) x'
       Just (T _ ) -> error "Expected let-bound variable"
+    -- This case is ensure indexing is reduced if possible
+    PrimCon (TabGet x i) -> nTabGet (subst env x) (subst env i)
     PrimCon con -> reduceAtom $ PrimCon $ subst env con
 
 reduceAtom :: Atom -> Atom
@@ -53,6 +57,8 @@ nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
 nTabGet (PrimCon (RecZip _ r)) i = PrimCon $ RecCon $ fmap (flip nTabGet i) r
+nTabGet (PrimCon (MemRef (TabType _ ty) ref)) (PrimCon (IdxLit _ i)) =
+  PrimCon $ MemRef ty (subArrayRef i ref)
 nTabGet e i = PrimCon $ TabGet e i
 
 instance Subst LamExpr where
@@ -120,3 +126,16 @@ instance Subst TLamEnv where
 instance (Subst a, Subst b) => Subst (Either a b)where
   subst env (Left  x) = Left  (subst env x)
   subst env (Right x) = Right (subst env x)
+
+
+-- This is just here to avoid and import cycle: TODO: organize better
+subArrayRef :: Int -> ArrayRef -> ArrayRef
+subArrayRef i (Array (_:shape) (_,ref)) = Array shape (newSize, ref')
+  where
+    newSize = product shape
+    offset = i * newSize
+    ref' = case ref of
+     IntVecRef  ptr -> IntVecRef  $ advancePtr ptr offset
+     RealVecRef ptr -> RealVecRef $ advancePtr ptr offset
+     BoolVecRef ptr -> BoolVecRef $ advancePtr ptr offset
+subArrayRef _ (Array [] _) = error "Can't get subarray of rank-0 array"

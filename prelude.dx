@@ -209,7 +209,7 @@ hash :: Key -> Int -> Key
 hash x y = %%threefry2x32(x, y)
 
 newKey :: Int -> Key
-newKey x = x  -- hash %newtypecast(0) x
+newKey x = hash 0 x
 
 splitKey :: Key -> (Key, Key)
 splitKey key = (hash key 0, hash key 1)

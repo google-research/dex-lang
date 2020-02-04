@@ -149,7 +149,6 @@ instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimCon ty e lam) where
   pretty (RecZip _ r) = "zip" <+> p r
   pretty (AtomicTabCon _ xs) = list (map pretty xs)
   pretty (IdxLit n i) = p i <> "@" <> p (IdxSetLit n)
-  pretty (AsIdxAtomic n e) = parens $ parens (p e) <> "@" <> p n
   pretty con = p (nameToStr (PrimConExpr blankCon))
                   <> parens (p tys <+> p xs <+> p lams)
     where (blankCon, (tys, xs, lams)) = unzipExpr con
