@@ -50,36 +50,18 @@ simplify expr = case expr of
     env <- simplifyDecl decl
     extendR env $ simplify body
   CExpr e -> simplifyCExpr e
-  Atom x -> simplifyAtom x
+  Atom x -> substSimp x
 
 -- Simplifies bodies of first-order functions only.
--- Unlike `SimplifyAtom`, the simplifies under the binder too.
+-- Unlike `substSimp`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM LamExpr
 simplifyLam (LamExpr b body) = do
   b' <- substSimp b
-  buildLam b' $ \x ->
-    extendSub (b @> L x) $
-      simplify body
-
-simplifyAtom :: Atom -> SimplifyM Atom
-simplifyAtom atom = substSimp atom
+  buildLam b' $ \x -> extendSub (b @> L x) $ simplify body
 
 simplifyCExpr :: CExpr -> SimplifyM Atom
-simplifyCExpr (Scan x (LamExpr b body)) = do
-  x' <- simplifyAtom x
-  ~b'@(_:>RecType (Tup [n, _]))  <- substSimp b
-  ((cOut, yOut), b'', (scope, decls)) <-
-     withBinder b' $ \ic -> do
-        extendSub (b @> L ic) $ liftM fromPair $ simplify body
-  let (yClosure, reconstruct) = splitAtom scope yOut
-  (cOut', yClosure') <- liftM fromPair $ emit $ Scan x' $ LamExpr b'' $
-                          wrapDecls decls (makePair cOut yClosure)
-  yOutLam <- buildLam ("i":>n) $ \i -> do
-               scope <- looks fst
-               return $ reconstruct scope (nTabGet yClosure' i)
-  return $ makePair cOut' (PrimCon $ AtomicFor yOutLam)
 simplifyCExpr expr = do
-  expr' <- traverseExpr expr substSimp simplifyAtom simplifyLam
+  expr' <- traverseExpr expr substSimp substSimp simplifyLam
   case expr' of
     App (PrimCon (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
@@ -91,25 +73,12 @@ simplifyDecl decl = case decl of
     x <- simplifyCExpr bound
     return $ mempty {subEnv = b @> L x}
   Unpack b tv bound -> do
-    bound' <- simplifyAtom bound
+    bound' <- substSimp bound
     ~(TypeVar tv', emitUnpackRest) <- emitUnpack tv bound'
     let tEnv = tv @> T (TypeVar tv')
     b' <- extendSub tEnv $ substSimp b
     x <- emitUnpackRest b'
     return $ mempty {subEnv = tEnv <> b' @> L x}
-
--- As we prepare to leave a scope (say that of `Scan`) we save the variables
--- we'll no longer have access to once we've left, along with a function that
--- can reconstruct the atom (e.g. lambdas) on the other side.
-splitAtom :: Scope -> Atom -> (Atom, Scope -> Atom -> Atom)
-splitAtom _ atom | isData (getType atom) = (atom, const id)
-splitAtom scope atom = (xsSaved, reconstruct)
-  where
-    isVar x = case x of Var _-> True; _ -> False
-    vsTys = envPairs $ envIntersect scope (freeVars atom)
-    xsSaved = makeTup [Var (v:>ty) | (v, L ty) <- vsTys]
-    reconstruct scope x = subst (env, scope) atom
-      where env = fold [(v:>())@>L x' | ((v,_),x') <- zip vsTys $ fromTup x]
 
 extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
@@ -217,10 +186,6 @@ isContinuous ty = case ty of
   TabType _ a       -> isContinuous a
   Exists _          -> error "Not implemented"
   _                  -> False
-
-splitLast :: [a] -> ([a], a)
-splitLast xs = case reverse xs of x:xs' -> (reverse xs', x)
-                                  _ -> error "list must be nonempty"
 
 -- -- === transposition ===
 

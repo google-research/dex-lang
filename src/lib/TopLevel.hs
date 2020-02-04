@@ -48,13 +48,13 @@ evalSourceBlock env block = case block of
     EvalExpr fmt -> do
       env' <- filterOutputs (const False) $ evalModule env m
       let (L (Left val)) = env' ! v
-      val' <- liftIO $ loadAtomVal [] val
+      val' <- liftIO $ loadAtomVal val
       tell [ValOut fmt val']
       return mempty
     GetType -> do  -- TODO: don't actually evaluate it
       env' <- filterOutputs (const False) $ evalModule env m
       let (L (Left val)) = env' ! v
-      val' <- liftIO $ loadAtomVal [] val
+      val' <- liftIO $ loadAtomVal val
       tell [TextOut $ pprint (getType val')]
       return mempty
     ShowPasses -> liftM (const mempty) $ filterOutputs f $ evalModule env m
@@ -96,8 +96,8 @@ exceptPass s f x = namedPass s $ liftEither (f x)
 asPass :: Pretty b => String -> (a -> b) -> a -> TopPassM b
 asPass s f x = namedPass s $ return (f x)
 
-ioPass :: String -> (a -> IO b) -> a -> TopPassM b
-ioPass _ f x = liftIO (f x)
+ioPass :: Pretty b => String -> (a -> IO b) -> a -> TopPassM b
+ioPass s f x = namedPass s $ liftIO (f x)
 
 analysisPass :: Pretty b => String -> (a -> b) -> a -> TopPassM a
 analysisPass name f x = namedPass name (return (f x)) >> return x

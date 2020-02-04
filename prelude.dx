@@ -158,29 +158,29 @@ slice xs start = for i. xs.(asidx (asint i `iadd` start))
 
 'State-carrying loop constructs
 
-scan :: A n::Ix a::Data b .  a -> n=>(a->(a, b)) -> (a, n=>b)
-scan x0 fs = %scan(x0, lam (i,x). fs.i x)
+scan :: A n::Ix a::Data b .  a -> (n->a->(a, b)) -> (a, n=>b)
+scan x0 fs = %scan(x0, lam (i,x). fs i x)
 
-fold :: A n::Ix a::Data . a -> n=>(a->a) -> a
-fold x0 fs = fst $ scan x0 for i. lam x. (fs.i x, ())
+fold :: A n::Ix a::Data . a -> (n->a->a) -> a
+fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
 
 -- TODO: call this `scan` and call the current `scan` something else
-scan' :: A n::Ix a::Data . a -> n=>(a->a) -> n=>a
-scan' x0 fs = snd $ scan x0 for i. lam x. dup (fs.i x)
+scan' :: A n::Ix a::Data . a -> (n->a->a) -> n=>a
+scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 
-scanlin :: A n::Ix c::Data a b . (n =>((c,a) --o (c,b))) -> (c, n=>a) --o (c, n=>b)
-scanlin fs (c0, xs) = %scan(c0, lam (i,c). fs.i (c, xs.i) )
+scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
+scanlin fs (c0, xs) = %scan(c0, lam (i,c). fs i (c, xs.i) )
 
-foldlin :: A n::Ix c::Data a . (n=>((c, a) --o c)) -> (c, n=>a) --o c
-foldlin fs (c0, xs) = fst $ scanlin (for i. lam (c,x). (fs.i (c, x), ())) (c0, xs)
+foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
+foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
 
 'More misc functions
 
 sum :: n=>Real --o Real
-sum xs = foldlin (for _. lam (c,x). c + x) (0.0, xs)
+sum xs = foldlin (lam _ (c,x). c + x) (0.0, xs)
 
 isum :: n=>Int -> Int
-isum xs = fold 0 for i. x = xs.i; lam c. iadd c x
+isum xs = fold 0 lam i c. iadd c xs.i
 
 -- TODO: make this a builtin for efficiency
 size :: A n::Ix. Int
@@ -250,7 +250,7 @@ min :: Real -> Real -> Real
 min = minby id
 
 minimumby :: A n a::Data. (a->Real)->(n=>a)->a
-minimumby f xs = fold xs.(asidx 0) (for i. minby f xs.i)
+minimumby f xs = fold xs.(asidx 0) (lam i. minby f xs.i)
 
 minimum :: A n. (n=>Real)->Real
 minimum = minimumby id
@@ -268,7 +268,7 @@ maximum :: A p. (p=>Real)->Real
 maximum xs = maximumby id xs
 
 argmin :: n=>Real -> n
-argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) for i. lam (bestIx, bestDist).
+argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) lam i (bestIx, bestDist).
                select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
 
 'Vector spaces and automatic differentiation.

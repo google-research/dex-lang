@@ -24,8 +24,6 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec
 import Text.Megaparsec.Char
 
-import Env
-import Subst
 import Type
 import Syntax
 import Util
@@ -164,28 +162,13 @@ newArrayRef ptr (b, shape) = Array shape $ case b of
   where size = product shape
 
 -- turns memrefs into atomic table constructors
-loadAtomVal :: [Int] -> Atom -> IO Atom
-loadAtomVal idxs (PrimCon (TabGet x i)) = loadAtomVal (i':idxs) x
-  where (PrimCon (IdxLit _ i')) = i
-loadAtomVal idxs (PrimCon (MemRef ty ref)) = do
-  let ref' = foldl (flip subArrayRef) ref idxs
-  let ty'  = foldl (\t _ -> tabEltType t) ty  idxs
-  array <- loadArray ref'
-  return $ restructureVal $ FlatVal ty' [array]
-loadAtomVal [] (PrimCon (AtomicFor lam)) = do
-  xs <- traverse (loadAtomVal [] . ithBody) [0..n-1]
-  return $ PrimCon $ AtomicTabCon (getType body) xs
-  where
-    (LamExpr (v@(_:>IdxSetLit n)) (Atom body)) = lam
-    ithBody :: Int -> Atom
-    ithBody i = subst (v @> L (PrimCon (IdxLit n i)), mempty) body
-loadAtomVal [] (PrimCon con) = do
-  liftM PrimCon $ traverseExpr con return (loadAtomVal []) return
-loadAtomVal _ atom = error $ "Unexpected atom: " ++ pprint atom
-
-tabEltType :: Type -> Type
-tabEltType (TabType _ a) = a
-tabEltType ty = error $ "Not a table type: " ++ pprint ty
+loadAtomVal :: Atom -> IO Atom
+loadAtomVal (PrimCon (MemRef ty ref)) = do
+  array <- loadArray ref
+  return $ restructureVal $ FlatVal ty [array]
+loadAtomVal (PrimCon con) = do
+  liftM PrimCon $ traverseExpr con return loadAtomVal return
+loadAtomVal atom = error $ "Unexpected atom: " ++ pprint atom
 
 -- === binary format ===
 

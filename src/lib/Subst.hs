@@ -52,12 +52,7 @@ nRecGet (PrimCon (RecCon r)) i = recGet r i
 nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
-nTabGet (PrimCon (AtomicFor (LamExpr b body))) i =
-  case body of
-    Atom atom -> subst (b@>L i, scope) atom
-      -- TODO: does the scope actually need all the free vars in atom?
-      where scope = fmap (const ()) (freeVars i)
-    _ -> error $ "Not an atomic body " ++ pprint body
+nTabGet (PrimCon (RecZip _ r)) i = PrimCon $ RecCon $ fmap (flip nTabGet i) r
 nTabGet e i = PrimCon $ TabGet e i
 
 instance Subst LamExpr where

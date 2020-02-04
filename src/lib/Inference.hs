@@ -284,7 +284,7 @@ solvePartial qs cs = do
     -- We lost the source context when we solved this the first time
     -- TODO: add context to subst
     substAsConstraints env =
-          [Constraint (TypeVar (v:>Kind [])) ty "From subst" Nothing | (v, ty) <- envPairs env]
+          [Constraint (TypeVar (v:>Kind [])) ty "<unknown source>" Nothing | (v, ty) <- envPairs env]
 
 -- === constraint solver ===
 

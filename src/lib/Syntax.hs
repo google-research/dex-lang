@@ -143,9 +143,9 @@ data PrimCon ty e lam =
       | AsIdxAtomic Int e  -- until we handle indices more coherently
       | TabGet e e
       | RecGet e RecField
-      | AtomicFor lam -- lambda body must be an atom
-      | AtomicTabCon ty [e] -- Only used for printing. Intend to remove it.
+      | AtomicTabCon ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
+      | RecZip ty (Record e)
       | Pack e ty ty
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
@@ -593,9 +593,9 @@ instance TraversableExpr PrimCon where
     AsIdxAtomic n e -> liftA (AsIdxAtomic n) (fE e)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
-    AtomicFor lam  -> liftA  AtomicFor (fL lam)
     AtomicTabCon ty xs -> liftA2 AtomicTabCon (fT ty) (traverse fE xs)
     RecCon r       -> liftA  RecCon (traverse fE r)
+    RecZip ty r    -> liftA2 RecZip (fT ty) (traverse fE r)
     Pack e ty ty'  -> liftA3 Pack (fE e) (fT ty) (fT ty')
     Bind e lam -> liftA2 Bind (fE e) (fL lam)
     MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of

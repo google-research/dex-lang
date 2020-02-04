@@ -466,7 +466,12 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lam l (a,b)    -> return $ ArrType l a b
   IdxLit n _     -> return $ IdxSetLit n
   RecCon r       -> return $ RecType r
-  AtomicFor (n,a) -> return $ TabType n a
+  RecZip n r -> do
+    mapM_ (eq n . fst) r'
+    return (TabType n (RecType (fmap snd r')))
+    where
+     fromTabType (TabType n' a) = (n', a)
+     r' = fmap fromTabType r
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i  -> return $ recGet r i
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
