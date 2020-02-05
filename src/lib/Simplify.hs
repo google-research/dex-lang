@@ -50,7 +50,16 @@ simplify expr = case expr of
     env <- simplifyDecl decl
     extendR env $ simplify body
   CExpr e -> simplifyCExpr e
-  Atom x -> substSimp x
+  Atom x -> simplifyAtom x
+
+simplifyAtom :: Atom -> SimplifyM Atom
+simplifyAtom atom = case atom of
+  Var _             -> substSimp atom
+  -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
+  TLam _ _          -> substSimp atom
+  PrimCon (Lam _ _) -> substSimp atom
+  PrimCon con -> liftM PrimCon $
+    traverseExpr con substSimp simplifyAtom simplifyLam
 
 -- Simplifies bodies of first-order functions only.
 -- Unlike `substSimp`, this simplifies under the binder too.
@@ -61,7 +70,7 @@ simplifyLam (LamExpr b body) = do
 
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
-  expr' <- traverseExpr expr substSimp substSimp simplifyLam
+  expr' <- traverseExpr expr substSimp simplifyAtom simplifyLam
   case expr' of
     App (PrimCon (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
