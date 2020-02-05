@@ -62,9 +62,9 @@ prettyTyDepth d ty = case ty of
   ArrType l a b -> parens $ recur a <+> arrStr l <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
-  TypeApp f xs -> p f <+> hsep (map p xs)
-  Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
-  Lens a b    -> "Lens" <+> p a <+> p b
+  TypeApp f xs -> recur f <+> hsep (map recur xs)
+  Monad eff a -> "Monad" <+> hsep (map recur (toList eff)) <+> recur a
+  Lens a b    -> "Lens" <+> recur a <+> recur b
   Forall []    t -> prettyTyDepth d t
   Forall kinds t -> header <+> prettyTyDepth (d + n) t
     where n = length kinds
@@ -125,41 +125,57 @@ instance Pretty FDecl where
   pretty (FRuleDef ann ty tlam) = "<TODO: rule def>"
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
-instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimExpr ty e lam) where
+instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (PrimOpExpr  op ) = p op
   pretty (PrimConExpr con) = p con
 
-instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimOp ty e lam) where
+instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (App e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
-  pretty (For lam) = "build" <+> p lam
+  pretty (For lam) = "for" <+> i <+> "." <+> body
+    where (i, body) = prettyLam lam
   pretty (TabCon _ xs) = list (map pretty xs)
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
+  pretty (MonadRun r s m) = "run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
-  pretty op = "%" <> p (nameToStr (PrimOpExpr blankOp))
-                  <> (tupled $ (map (\t -> "@" <> p t) tys ++ map p xs ++ map p lams))
-    where (blankOp, (tys, xs, lams)) = unzipExpr op
+  pretty op = prettyExprDefault (PrimOpExpr op)
 
-instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimCon ty e lam) where
+instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
-  pretty (Lam _ lam)   = p lam
+  pretty (Lam _ lam)   = prettyL lam
   pretty (TabGet e1 e2) = p e1 <> "." <> parens (p e2)
   pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
   pretty (RecZip _ r) = "zip" <+> p r
   pretty (AtomicTabCon _ xs) = list (map pretty xs)
   pretty (IdxLit n i) = p i <> "@" <> p (IdxSetLit n)
-  pretty con = p (nameToStr (PrimConExpr blankCon))
-                  <> parens (p tys <+> p xs <+> p lams)
-    where (blankCon, (tys, xs, lams)) = unzipExpr con
+  pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
+    where (v, body) = prettyLam f
+  pretty con = prettyExprDefault (PrimConExpr con)
 
-instance Pretty LamExpr where
-  pretty (LamExpr b e) =
-    parens $ align $ group $ "lam" <+> p b <+> "." <> line <> align (p e)
+prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
+prettyExprDefault expr =
+  p (nameToStr blankExpr) <> tupled (map p xs ++ map prettyL lams)
+  where (blankExpr, (_, xs, lams)) = unzipExpr expr
 
-instance Pretty FLamExpr where
-  pretty (FLamExpr pat e) =
-    parens $ align $ group $ "lam" <+> p pat <+> "." <> line <> align (p e)
+prettyL :: PrettyLam a => a -> Doc ann
+prettyL lam = parens $ align $ group $ "lam" <+> v <+> "." <> line <> align body
+  where (v, body) = prettyLam lam
+
+class PrettyLam a where
+  prettyLam :: a -> (Doc ann, Doc ann)
+
+instance PrettyLam LamExpr where
+  prettyLam (LamExpr b e) = (p b, p e)
+
+instance PrettyLam FLamExpr where
+  prettyLam (FLamExpr pat e) = (p pat, p e)
+
+instance PrettyLam () where
+  prettyLam () = ("", "")
+
+instance (Pretty a, Pretty b) => PrettyLam (a, b) where
+  prettyLam (x, y) = (p x, p y)
 
 instance Pretty Kind where
   pretty (Kind cs) = case cs of
