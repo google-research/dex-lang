@@ -55,7 +55,7 @@ resultVars env = [v:>ty | (v, L ty) <- envPairs $ freeVars env]
 
 topAlloc :: Var -> ImpM (IAtomP IVar)
 topAlloc (v:>ty) = do
-  tys <- toImpArrayType ty
+  tys <- toImpArrayType [] ty
   flip traverse tys $ \impTy -> freshVar (v :> IRefType impTy)
 
 toImpExpr :: IAtom -> Expr -> ImpM ()
@@ -166,7 +166,7 @@ toImpCExpr dests op = case op of
 
 withAllocs :: Var -> (IAtom -> ImpM a) -> ImpM a
 withAllocs (_:>ty) body = do
-  dest <- toImpArrayType ty >>= mapM newAlloc
+  dest <- toImpArrayType [] ty >>= mapM newAlloc
   ans <- body dest
   flip mapM_ dest $ \(IVar v) -> emitStatement (Nothing, Free v)
   return ans
@@ -240,22 +240,23 @@ indexIAtom x i = case x of
   ILeaf x' -> ILeaf $ IGet x' i
   _ -> error $ "Unexpected atom: " ++ show x
 
-toImpArrayType :: Type -> ImpM (IAtomP ArrayType)
-toImpArrayType ty = case ty of
-  BaseType b  -> return $ ILeaf (b, [])
+toImpArrayType :: [IExpr] -> Type -> ImpM (IAtomP ArrayType)
+toImpArrayType ns ty = case ty of
+  BaseType b  -> return $ ILeaf (b, ns)
   -- TODO: zip if element type is a record
   TabType a b -> do
     n  <- typeToSize a
-    eltTys <- toImpArrayType b
-    let arrTys = fmap (\(t, shape) -> (t, n:shape)) eltTys
-    return $ case arrTys of
-      ICon (RecCon r) -> ICon $ RecZip a r
-      _               -> arrTys
+    toImpArrayType (ns ++ [n]) b
   -- TODO: fix this (only works for range)
-  RecType r   -> liftM (ICon . RecCon) $ traverse toImpArrayType r
-  Exists _    -> return $ ILeaf (IntType, [])
-  TypeVar _   -> return $ ILeaf (IntType, [])
-  IdxSetLit _ -> return $ ILeaf (IntType, [])
+  RecType r -> case ns of
+    [] -> liftM (ICon . RecCon    ) $ traverse (toImpArrayType ns) r
+    _  -> liftM (ICon . RecZip ns') $ traverse (toImpArrayType ns) r
+    where
+      ns' = map fromIntLit ns
+      fromIntLit (ILit (IntLit n)) = n
+  Exists _    -> return $ ILeaf (IntType, ns)
+  TypeVar _   -> return $ ILeaf (IntType, ns)
+  IdxSetLit _ -> return $ ILeaf (IntType, ns)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 impExprToAtom :: IExpr -> Atom

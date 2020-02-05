@@ -491,12 +491,12 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lam l (a,b)    -> return $ ArrType l a b
   IdxLit n _     -> return $ IdxSetLit n
   RecCon r       -> return $ RecType r
-  RecZip n r -> do
-    mapM_ (eq n . fst) r'
-    return (TabType n (RecType (fmap snd r')))
+  RecZip ns r -> do
+    let r' = fmap (stripLeadingDims (length ns)) r
+    return $ foldr TabType (RecType r') (map IdxSetLit ns)
     where
-     fromTabType (TabType n' a) = (n', a)
-     r' = fmap fromTabType r
+      stripLeadingDims 0 t = t
+      stripLeadingDims n (TabType _ a) = stripLeadingDims (n-1) a
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i  -> return $ recGet r i
   Bind (Monad eff a) (a', (Monad eff' b)) -> do

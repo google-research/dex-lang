@@ -146,7 +146,7 @@ data PrimCon ty e lam =
       | RecGet e RecField
       | AtomicTabCon ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
-      | RecZip ty (Record e)
+      | RecZip [Int] (Record e)
       | Pack e ty ty
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
@@ -606,7 +606,9 @@ instance TraversableExpr PrimCon where
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
     AtomicTabCon ty xs -> liftA2 AtomicTabCon (fT ty) (traverse fE xs)
     RecCon r       -> liftA  RecCon (traverse fE r)
-    RecZip ty r    -> liftA2 RecZip (fT ty) (traverse fE r)
+    -- TODO: consider merging this with `RecCon` (the empty `tys` case)
+    -- TOOD: types instead of ints
+    RecZip ns r    -> liftA (RecZip ns) (traverse fE r)
     Pack e ty ty'  -> liftA3 Pack (fE e) (fT ty) (fT ty')
     Bind e lam -> liftA2 Bind (fE e) (fL lam)
     MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of
