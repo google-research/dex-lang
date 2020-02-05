@@ -299,10 +299,8 @@ solve cs = do
       t1' <- zonk t1
       t2' <- zonk t2
       let err = Err TypeErr ctx $
-               --    "\nExpected: " ++ pprint t1'
-               -- ++ "\n  Actual: " ++ pprint t2'
-                  "\nExpected: " ++ show t1'
-               ++ "\n  Actual: " ++ show t2'
+                  "\nExpected: " ++ pprint t1'
+               ++ "\n  Actual: " ++ pprint t2'
                ++ "\nIn: "       ++ s
       unify err t1' t2'
 

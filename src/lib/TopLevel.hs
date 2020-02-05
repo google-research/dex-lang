@@ -23,7 +23,6 @@ import Simplify
 import Serialize
 import Imp
 import JIT
-import Flops
 import PPrint
 import Util (highlightRegion)
 
@@ -76,46 +75,34 @@ evalModule env = inferTypes env >=> evalTyped env
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> FModule -> TopPassM FModule
 inferTypes env m = do
-  mds   <- exceptPass "deshadow"       (deShadowModule env) m
-  typed <- exceptPass "type inference" (inferModule    env) mds
+  mds   <- asPass "deshadow"       (liftEither . deShadowModule env) m
+  typed <- asPass "type inference" (liftEither . inferModule    env) mds
   liftEither $ checkFModule typed
   return typed
 
 evalTyped :: TopEnv -> FModule -> TopPassM TopEnv
 evalTyped env m = ($ m) $
-      asPass "normalize" (normalizeModule env) >=> checkPass ty checkModule
-  >=> asPass "simplify"  simplifyPass          >=> checkPass ty checkModule
-  >=> asPass "imp" toImpModule                 >=> checkPass ty checkImpModule
-  >=> analysisPass "flops" moduleFlops
-  >=> ioPass "jit" evalModuleJIT
+      asPass "normalize" (return . normalizeModule env) >=> checkPass ty checkModule
+  >=> asPass "simplify"  (return . simplifyPass)        >=> checkPass ty checkModule
+  >=> asPass "imp"       (return . toImpModule)         >=> checkPass ty checkImpModule
+  >=> asPass "jit" (liftIO . evalModuleJIT)
   where
     (ModuleType _ exports) = moduleType m
     ty = ModuleType mempty exports
 
-checkPass :: IsModule a => ModuleType -> (a -> Except ()) -> a -> TopPassM a
-checkPass ty f x = do
-  let ty' = moduleType x
+checkPass :: (Pretty a, IsModule a) => ModuleType -> (a -> Except ()) -> a -> TopPassM a
+checkPass ty f x = withDebugCtx ("Checking: \n" ++ pprint x) $ do
   liftEither (f x)
+  let ty' = moduleType x
   when (ty /= ty') $ throw CompilerErr $
       "Wrong module type.\nExpected: " ++ pprint ty
                      ++ "\n  Actual: " ++ pprint ty'
   return x
 
-exceptPass :: Pretty b => String -> (a -> Except b) -> a -> TopPassM b
-exceptPass s f x = namedPass s $ liftEither (f x)
-
-asPass :: Pretty b => String -> (a -> b) -> a -> TopPassM b
-asPass s f x = namedPass s $ return (f x)
-
-ioPass :: Pretty b => String -> (a -> IO b) -> a -> TopPassM b
-ioPass s f x = namedPass s $ liftIO (f x)
-
-analysisPass :: Pretty b => String -> (a -> b) -> a -> TopPassM a
-analysisPass name f x = namedPass name (return (f x)) >> return x
-
-namedPass :: Pretty a => String -> TopPassM a -> TopPassM a
-namedPass name m = do
-  (ans, s) <- asTopPassM $ runTopPassM (printedPass m) `catch` asCompilerErr name
+asPass :: (Pretty a, Pretty b) => String -> (a -> TopPassM b) -> a -> TopPassM b
+asPass name f x = do
+  let ctx = name ++ " pass with input:\n" ++ pprint x
+  (ans, s) <- withDebugCtx ctx $ printedPass (f x)
   tell [PassInfo name s]
   return ans
 
@@ -126,10 +113,6 @@ printedPass m = do
   -- uncover exceptions by forcing evaluation of printed result
   _ <- liftIO $ evaluate (length s)
   return (ans, s)
-
-asCompilerErr :: String -> SomeException -> IO (Except a, [Output])
-asCompilerErr name e = return (Left $ Err CompilerErr Nothing msg, [])
-  where msg = "Error in " ++ name ++ " pass:\n" ++ show e
 
 filterOutputs :: (Output -> Bool) -> TopPassM a -> TopPassM a
 filterOutputs f m = do
@@ -143,6 +126,9 @@ asTopPassM m = do
   tell outs
   liftEither ans
 
+withDebugCtx :: String -> TopPassM a -> TopPassM a
+withDebugCtx msg m = catchError (catchHardErrors m) $ \e -> throwError (addDebugCtx msg e)
+
 addErrSrc :: MonadError Err m => SourceBlock -> m a -> m a
 addErrSrc block m = m `catchError` (throwError . addCtx block)
 
@@ -153,3 +139,13 @@ addCtx block err@(Err e src s) = case src of
     Err e Nothing $ s ++ "\n\n" ++ ctx
     where n = sbOffset block
           ctx = highlightRegion (start - n, stop - n) (sbText block)
+
+addDebugCtx :: String -> Err -> Err
+addDebugCtx ctx (Err CompilerErr c msg) = Err CompilerErr c msg'
+  where msg' = msg ++ "\n=== context ===\n" ++ ctx ++ "\n"
+addDebugCtx _ e = e
+
+catchHardErrors :: TopPassM a -> TopPassM a
+catchHardErrors m = asTopPassM $ runTopPassM m `catch` asCompilerErr
+  where asCompilerErr :: SomeException -> IO (Except a, [Output])
+        asCompilerErr e = return (Left $ Err CompilerErr Nothing (show e), [])
