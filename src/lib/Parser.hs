@@ -163,7 +163,7 @@ typeDef = do
 -- === Parsing decls ===
 
 decl :: Parser FDecl
-decl = unpack <|> letMono <|> letPoly
+decl = letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ some $ (eol >> sc) <|> symbol ";"
@@ -192,16 +192,6 @@ letPolyToMono d = case d of
   LetPoly (v:> Forall [] ty) (FTLam [] rhs) -> LetMono (RecLeaf $ v:> ty) rhs
   _ -> d
 
-unpack :: Parser FDecl
-unpack = do
-  (b, tv) <- try $ do b <- binder
-                      comma
-                      tv <- upperName
-                      symbol "=" >> symbol "unpack"
-                      return (b, tv)
-  body <- expr
-  return $ FUnpack b (tv:>Kind [IdxSet]) body
-
 letMono :: Parser FDecl
 letMono = do
   (p, wrap) <- try $ do p <- pat
@@ -226,7 +216,6 @@ term =   parenExpr
      <|> primExpr
      <|> ffiCall
      <|> tabCon
-     <|> pack
      <?> "term"
 
 declOrExpr :: Parser FExpr
@@ -343,11 +332,6 @@ tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
   return $ fPrimOp $ TabCon NoAnn xs
 
-pack :: Parser FExpr
-pack = do
-  symbol "pack"
-  liftM fPrimCon $ liftM3 Pack (expr <* comma) (tauType <* comma) existsType
-
 idxLhsArgs :: Parser (FExpr -> FExpr)
 idxLhsArgs = do
   period
@@ -379,8 +363,7 @@ identifier = lexeme . try $ do
   w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
-  where
-   resNames = ["for", "lam", "unpack", "pack"]
+  where resNames = ["for", "lam"]
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
@@ -541,7 +524,6 @@ idxSetVars ty = case ty of
   ArrType _ a b -> recur a <> recur b
   TabType a b   -> envNames (freeVars a) <> recur b
   RecType r     -> foldMap recur r
-  Exists body   -> recur body
   _             -> []
   where recur = idxSetVars
 
@@ -572,7 +554,6 @@ tauType' :: Parser Type
 tauType' =   parenTy
          <|> monadType
          <|> lensType
-         <|> existsType
          <|> typeName
          <|> typeVar
          <|> idxSetLit
@@ -608,14 +589,6 @@ parenTy = do
   return $ case ans of
     Left ty  -> ty
     Right xs -> RecType $ Tup xs
-
-existsType :: Parser Type
-existsType = do
-  try $ symbol "E"
-  ~(TypeVar v) <- typeVar
-  period
-  body <- tauType
-  return $ Exists (abstractTVs [v] body)
 
 typeName :: Parser Type
 typeName = liftM BaseType $

@@ -186,8 +186,8 @@ isum xs = fold 0 lam i c. iadd c xs.i
 size :: A n::Ix. Int
 size = %idxSetSize(@n)
 
-range :: Int -> E i. ()
-range n = %range(n)
+-- range :: Int -> E i. ()
+-- range n = %range(n)
 
 mean :: A n. n=>Real --o Real
 mean xs = sum xs / real (size @n)

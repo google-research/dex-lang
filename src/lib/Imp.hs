@@ -65,9 +65,6 @@ toImpExpr dests expr = case expr of
       toImpCExpr bDests bound
       xs <- mapM loadIfScalar bDests
       extendR (b @> xs) $ toImpExpr dests body
-  Decl (Unpack _ tv bound) body -> do
-    x <- toImpAtom bound
-    extendR (tv @> x) $ toImpExpr dests body
   CExpr e   -> toImpCExpr dests e
   Atom atom -> do
     xs <- toImpAtom atom
@@ -254,7 +251,6 @@ toImpArrayType ns ty = case ty of
     where
       ns' = map fromIntLit ns
       fromIntLit (ILit (IntLit n)) = n
-  Exists _    -> return $ ILeaf (IntType, ns)
   TypeVar _   -> return $ ILeaf (IntType, ns)
   IdxSetLit _ -> return $ ILeaf (IntType, ns)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
@@ -282,7 +278,6 @@ toImpBaseType :: Type -> BaseType
 toImpBaseType ty = case ty of
   BaseType b  -> b
   TabType _ a -> toImpBaseType a
-  Exists _    -> IntType
   TypeVar _   -> IntType
   IdxSetLit _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty

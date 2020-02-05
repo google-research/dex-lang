@@ -56,7 +56,6 @@ data Type = TypeVar TVar
           | IdxSetLit Int
           | TabType Type Type
           | RecType (Record Type)
-          | Exists Type
           | Forall [Kind] Type
           | TypeAlias [Kind] Type
           | Monad EffectType Type
@@ -97,7 +96,6 @@ type SrcPos = (Int, Int)
 
 data FDecl = LetMono Pat FExpr
            | LetPoly Var FTLam
-           | FUnpack Var TVar FExpr
            | TyDef TVar Type
            | FRuleDef RuleAnn Type FTLam
              deriving (Show, Eq, Generic)
@@ -117,7 +115,6 @@ data Expr = Decl Decl Expr
             deriving (Show, Eq, Generic)
 
 data Decl = Let Var CExpr
-          | Unpack Var TVar Atom
           | RuleDef RuleAnn Type Expr
             deriving (Show, Eq, Generic)
 
@@ -149,7 +146,6 @@ data PrimCon ty e lam =
       | AtomicTabCon ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
       | RecZip [Int] (Record e)
-      | Pack e ty ty
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
       | Bind e lam
@@ -460,7 +456,6 @@ fDeclBoundVars :: FDecl -> Vars
 fDeclBoundVars decl = case decl of
   LetMono p _    -> foldMap lbind p
   LetPoly v _    -> lbind v
-  FUnpack b tv _ -> lbind b <> tbind tv
   FRuleDef _ _ _ -> mempty
   TyDef v _      -> tbind v
 
@@ -482,7 +477,6 @@ instance HasVars Type where
     TabType a b -> freeVars a <> freeVars b
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
-    Exists      body -> freeVars body
     Forall    _ body -> freeVars body
     TypeAlias _ body -> freeVars body
     Monad eff a -> foldMap freeVars eff <> freeVars a
@@ -501,7 +495,6 @@ instance HasVars () where
 instance HasVars FDecl where
    freeVars (LetMono p expr)   = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam)   = freeVars b <> freeVars tlam
-   freeVars (FUnpack b _ expr) = freeVars b <> freeVars expr
    freeVars (TyDef _ ty)       = freeVars ty
    freeVars (FRuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
 
@@ -528,8 +521,7 @@ instance HasVars Expr where
 
 declBoundVars :: Decl -> Env ()
 declBoundVars decl = case decl of
-  Let    b    _ -> b@>()
-  Unpack b tb _ -> b@>() <> tb@>()
+  Let b _ -> b@>()
 
 instance HasVars LamExpr where
   freeVars (LamExpr b body) = freeVars b <> (freeVars body `envDiff` (b@>()))
@@ -541,8 +533,7 @@ instance HasVars Atom where
     PrimCon con   -> freeVars con
 
 instance HasVars Decl where
-  freeVars (Let    bs   expr) = foldMap freeVars bs <> freeVars expr
-  freeVars (Unpack bs _ expr) = foldMap freeVars bs <> freeVars expr
+  freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
 
 instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
@@ -608,7 +599,6 @@ instance TraversableExpr PrimCon where
     -- TODO: consider merging this with `RecCon` (the empty `tys` case)
     -- TOOD: types instead of ints
     RecZip ns r    -> liftA (RecZip ns) (traverse fE r)
-    Pack e ty ty'  -> liftA3 Pack (fE e) (fT ty) (fT ty')
     Bind e lam -> liftA2 Bind (fE e) (fL lam)
     MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of
        MAsk    -> pure  MAsk

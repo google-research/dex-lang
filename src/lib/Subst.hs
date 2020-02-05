@@ -73,7 +73,6 @@ refreshDecl :: Env () -> Decl -> (Decl, SubstEnv)
 refreshDecl scope decl = case decl of
   Let b bound -> (Let b' bound, env)
     where (b', env) = refreshBinder scope (subst env b)
-  Unpack _ _ _ -> undefined
 
 refreshBinder :: Env () -> Var -> (Var, SubstEnv)
 refreshBinder scope b = (b', env')
@@ -97,7 +96,6 @@ instance Subst Type where
     TabType a b -> TabType (recur a) (recur b)
     RecType r   -> RecType $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
-    Exists    body -> Exists    (recur body)
     Forall    ks body -> Forall    ks (recur body)
     TypeAlias ks body -> TypeAlias ks (recur body)
     Monad eff a -> Monad (fmap recur eff) (recur a)
@@ -111,7 +109,6 @@ instance Subst Type where
 instance Subst Decl where
   subst env decl = case decl of
     Let    b    bound -> Let    (subst env b)    (subst env bound)
-    Unpack b tv bound -> Unpack (subst env b) tv (subst env bound)
 
 instance Subst Var where
   subst env (v:>ty) = v:> subst env ty

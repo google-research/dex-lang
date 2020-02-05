@@ -79,13 +79,6 @@ simplifyDecl decl = case decl of
   Let b bound -> do
     x <- simplifyCExpr bound
     return $ mempty {subEnv = b @> L x}
-  Unpack b tv bound -> do
-    bound' <- substSimp bound
-    ~(TypeVar tv', emitUnpackRest) <- emitUnpack tv bound'
-    let tEnv = tv @> T (TypeVar tv')
-    b' <- extendSub tEnv $ substSimp b
-    x <- emitUnpackRest b'
-    return $ mempty {subEnv = tEnv <> b' @> L x}
 
 extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
@@ -191,7 +184,6 @@ isContinuous :: Type -> Bool
 isContinuous ty = case ty of
   BaseType RealType -> True
   TabType _ a       -> isContinuous a
-  Exists _          -> error "Not implemented"
   _                  -> False
 
 -- -- === transposition ===

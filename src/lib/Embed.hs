@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, withBinder, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, emitUnpack, flipIdx, zeroAt, addAt, sumAt, deShadow,
+              runEmbed, flipIdx, zeroAt, addAt, sumAt, deShadow,
               emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, nUnitCon,
               recGetFst, recGetSnd, buildFor, buildScan,
@@ -57,15 +57,6 @@ freshVar v = do
   let v' = rename v scope
   extend $ asFst (v' @> ())
   return v'
-
-emitUnpack :: MonadCat EmbedEnv m
-           => TVar -> Atom -> m (Type, Var -> m Atom)
-emitUnpack tv expr = do
-  tv' <- freshVar tv
-  let finish b = do b' <- freshVar b
-                    extend $ asSnd [Unpack b' tv' expr]
-                    return $ Var b'
-  return (TypeVar tv', finish)
 
 withBinder :: (MonadCat EmbedEnv m)
             => Var -> (Atom -> m a) -> m (a, Var, EmbedEnv)

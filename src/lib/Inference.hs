@@ -80,13 +80,6 @@ inferDecl decl = case decl of
     tlamBody' <- checkLeaks tbs $ solveLocalMonomorphic $
                    extendRSnd env $ check tlamBody tyBody'
     return (LetPoly b (FTLam tbs tlamBody'), b @> L (varAnn b))
-  FUnpack (v:>_) tv bound -> do
-    (maybeEx, bound') <- solveLocalMonomorphic $ infer bound
-    boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
-                               _ -> throw TypeErr (pprint maybeEx)
-    -- TODO: check possible type annotation
-    let b' = v :> boundTy
-    return (FUnpack b' tv bound', asEnv b')
   TyDef v ty -> return (TyDef v ty, mempty)
   FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
 
@@ -97,11 +90,6 @@ infer expr = do ty <- freshQ
 
 check :: UExpr -> Type -> InferM FExpr
 check expr reqTy = case expr of
-  FDecl decl@(FUnpack _ tv _) body -> do
-    (decl', env') <- inferDecl decl
-    body' <- checkLeaks [tv] $ solveLocalMonomorphic $ extendRSnd env' $
-               check body reqTy
-    return $ FDecl decl' body'
   FDecl decl body -> do
     (decl', env') <- inferDecl decl
     body' <- extendRSnd env' $ check body reqTy
@@ -313,7 +301,6 @@ unify err t1 t2 = do
     (TypeVar (v:>_), t) | isQ v -> bindQ v t
     (ArrType l a b, ArrType l' a' b') -> recur l l' >> recur a a' >> recur b b'
     (TabType a b, TabType a' b') -> recur a a' >> recur b b'
-    (Exists t, Exists t')        -> recur t t'
     (Monad eff a, Monad eff' a') -> do
       zipWithM_ recur (toList eff) (toList eff')
       recur a a'
@@ -395,7 +382,6 @@ instance TySubst FDecl where
     LetMono p e -> LetMono (fmap (tySubst env) p) (tySubst env e)
     LetPoly (v:>Forall ks ty) (FTLam bs body) ->
        LetPoly (v:>Forall ks (tySubst env ty)) (FTLam bs (tySubst env body))
-    FUnpack (v:>ty) tv e -> FUnpack (v:>(tySubst env ty)) tv (tySubst env e)
 
 instance (TySubst a, TySubst b) => TySubst (a, b) where
   tySubst env (x, y) = (tySubst env x, tySubst env y)

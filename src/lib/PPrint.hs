@@ -65,7 +65,6 @@ prettyTyDepth d ty = case ty of
   TypeApp f xs -> p f <+> hsep (map p xs)
   Monad eff a -> "Monad" <+> hsep (map p (toList eff)) <+> p a
   Lens a b    -> "Lens" <+> p a <+> p b
-  Exists body -> parens $ "E" <> p (tvars d (-1)) <> "." <> recurWith 1 body
   Forall []    t -> prettyTyDepth d t
   Forall kinds t -> header <+> prettyTyDepth (d + n) t
     where n = length kinds
@@ -123,7 +122,6 @@ instance Pretty FDecl where
   pretty (LetPoly (v:>ty) (FTLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (FUnpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
   pretty (FRuleDef ann ty tlam) = "<TODO: rule def>"
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
@@ -183,8 +181,7 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let    b bound -> p b <+> "=" <+> p (PrimOpExpr bound)
-    Unpack b tv e  -> p b <> "," <+> p tv <+> "= unpack" <+> p e
+    Let b bound -> p b <+> "=" <+> p (PrimOpExpr bound)
 
 instance Pretty Atom where
   pretty atom = case atom of

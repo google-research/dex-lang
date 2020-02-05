@@ -98,14 +98,6 @@ normalizeDecl decl = case decl of
       let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
       extendR env $ normalize body
     return $ v @> L tlam
-  FUnpack b tv bound -> do
-    bound' <- normalize bound
-    (ty, emitUnpackRest) <- emitUnpack tv bound'
-    let tenv = tv @> T ty
-    bs <- extendR tenv $ normalizePat (RecLeaf b)
-    x <- emitUnpackRest bs
-    lenv <- bindPat (RecLeaf b) x
-    return (tenv <> lenv)
   TyDef v ty -> do
     ty' <- substTy ty
     return $ v @> T ty'

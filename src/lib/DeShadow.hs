@@ -83,12 +83,6 @@ deShadowDecl (LetPoly (v:>ty) tlam) = do
   ty' <- toCat $ deShadowType ty
   b' <- freshBinderP (v:>ty')
   return $ LetPoly b' tlam'
-deShadowDecl (FUnpack b tv bound) = do
-  bound' <- toCat $ deShadowExpr bound
-  tv' <- looks $ rename tv . snd
-  extend (asSnd (tv @> TypeVar tv'), tv'@>())
-  b' <- freshBinder b
-  return $ FUnpack b' tv' bound'
 deShadowDecl (FRuleDef ann ty tlam) = toCat $
   liftM3 FRuleDef (deShadowRuleAnn ann) (deShadowType ty) (deShadowTLam tlam)
 deShadowDecl (TyDef v ty) = do
@@ -169,7 +163,6 @@ deShadowType ty = case ty of
   RecType r   -> liftM RecType $ traverse recur r
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
   Lens a b    -> liftM2 Lens (recur a) (recur b)
-  Exists body -> liftM Exists $ recur body
   Forall    kinds body -> liftM (Forall    kinds) (deShadowType body)
   TypeAlias kinds body -> liftM (TypeAlias kinds) (deShadowType body)
   IdxSetLit _ -> return ty

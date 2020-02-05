@@ -118,13 +118,6 @@ checkTypeFDecl decl = case decl of
                        ty' <- checkTypeTLam tlam
                        assertEq ty ty' "TLam"
     return $ b @> L (ty, spent)
-  FUnpack b tb _ -> do  -- TODO: check bound expression!
-    -- TODO: check leaks
-    checkShadow b
-    checkShadow tb
-    let env = tb @> T (varAnn tb)
-    extendTyEnv env $ checkTy (varAnn b)
-    return (env <> asEnv mempty b)
   FRuleDef ann ty tlam -> return mempty  -- TODO
   TyDef v ty -> return mempty -- TODO
 
@@ -212,7 +205,6 @@ subAtDepth d f ty = case ty of
     TypeApp a b   -> TypeApp (recur a) (map recur b)
     Monad eff a   -> Monad (fmap recur eff) (recur a)
     Lens a b      -> Lens (recur a) (recur b)
-    Exists body   -> Exists (recurWith 1 body)
     Forall    ks body -> Forall    ks (recurWith (length ks) body)
     TypeAlias ks body -> TypeAlias ks (recurWith (length ks) body)
     IdxSetLit _   -> ty
@@ -290,7 +282,6 @@ checkData env ty = case ty of
   TabType _ a -> recur a
   RecType r   -> mapM_ recur r
   IdxSetLit _ -> return ()
-  Exists a    -> recur a
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
@@ -392,10 +383,6 @@ checkDecl decl = case decl of
     (t, s) <- scoped $ checkCExpr expr
     assertEq (varAnn b) t "Decl"
     return $ binderEnv s b
-  Unpack b tv _ -> do  -- TODO: check bound expression!
-    checkNShadow tv
-    extendR (tv @> T ()) $ checkNBinder b
-    return $ binderEnv mempty b <> tv @> T ()
 
 binderEnv :: Spent -> Var -> TypeEnv
 binderEnv s b@(_:>ty) = b @> L (ty, s)
@@ -428,7 +415,6 @@ tangentBunType ty = case ty of
   TypeVar _ -> ty  -- can only be an index set
   ArrType l a b -> ArrType l (recur a) (recur b)
   TabType n a   -> TabType n (recur a)
-  Exists t    -> Exists $ recur t
   IdxSetLit _ -> ty
   BoundTVar _ -> ty
   _ -> error "Not implemented"
@@ -488,7 +474,6 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   Transpose (a, b)    -> return (b --@ a)
   IntAsIndex ty i  -> eq (BaseType IntType) i >> return ty
   IdxSetSize _     -> return $ BaseType IntType
-  Range ty         -> eq (BaseType IntType) ty >> return (Exists unitTy)
   NewtypeCast ty _ -> return ty
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
   _ -> throw CompilerErr $ "Unexpected primitive type: " ++ pprint op
