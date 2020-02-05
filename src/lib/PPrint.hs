@@ -111,7 +111,7 @@ instance Pretty Expr where
 
 instance Pretty FExpr where
   pretty expr = case expr of
-    FVar (v:>ann) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts] <+> p ann
+    FVar (v:>ann) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
     FDecl decl body -> align $ p decl <> hardline <> p body
     FPrimExpr e -> p e
     SrcAnnot subexpr _ -> p subexpr
@@ -120,7 +120,7 @@ instance Pretty FExpr where
 instance Pretty FDecl where
   -- TODO: special-case annotated leaf var (print type on own line)
   pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
-  pretty (LetPoly (v:>ty) (TLam _ body)) =
+  pretty (LetPoly (v:>ty) (FTLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
   pretty (FUnpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
@@ -133,6 +133,7 @@ instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimExpr ty e lam) where
 
 instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimOp ty e lam) where
   pretty (App e1 e2) = p e1 <+> p e2
+  pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
   pretty (For lam) = "build" <+> p lam
   pretty (TabCon _ xs) = list (map pretty xs)
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
@@ -185,12 +186,10 @@ instance Pretty Decl where
     Let    b bound -> p b <+> "=" <+> p (PrimOpExpr bound)
     Unpack b tv e  -> p b <> "," <+> p tv <+> "= unpack" <+> p e
 
-instance Pretty TLamEnv where
-  pretty _ = "<tlam>"
-
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
+    TLam ks body -> "tlam" <+> p ks <+> "." <+> p body
     PrimCon con -> p (PrimConExpr con)
 
 arrStr :: Type -> Doc ann
@@ -272,8 +271,9 @@ instance Pretty FModule where
                             <> hardline <> "exports:" <+> p exports
 
 instance Pretty Module where
-  pretty (Module decls result) = vsep (map p decls)
-                  <> hardline <> "exports:" <> p result
+  pretty (Module imports decls result) = "imports:" <+> p imports
+                           <> hardline <> vsep (map p decls)
+                           <> hardline <> "exports:" <+> p result
 
 instance Pretty ModuleType where
   pretty (ModuleType imports exports) = "imports:" <+> p imports

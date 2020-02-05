@@ -15,10 +15,10 @@ module Syntax (
     Type (..), BaseType (..), EffectTypeP (..), EffectType,
     Multiplicity (..), Kind (..), ClassName (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
-    TVar, TLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
+    TVar, FTLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TopEnv, TopResult, TLamEnv (..),
+    ReachedEOF, SourceBlock' (..), TopEnv,
     RuleAnn (..), DeclAnn (..), CmdName (..), Val,
     Module (..), FModule (..), ImpModule (..), ModuleType (..),
     FlatValP (..), ArrayP (..), FlatVal, FlatValRef, Array,
@@ -96,14 +96,14 @@ data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
 type SrcPos = (Int, Int)
 
 data FDecl = LetMono Pat FExpr
-           | LetPoly Var TLam
+           | LetPoly Var FTLam
            | FUnpack Var TVar FExpr
            | TyDef TVar Type
-           | FRuleDef RuleAnn Type TLam
+           | FRuleDef RuleAnn Type FTLam
              deriving (Show, Eq, Generic)
 
 type Var  = VarP Type
-data TLam = TLam [TVar] FExpr  deriving (Show, Eq, Generic)
+data FTLam = FTLam [TVar] FExpr  deriving (Show, Eq, Generic)
 
 data FModule = FModule Vars [FDecl] Vars  deriving (Show, Eq, Generic)
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
@@ -124,12 +124,13 @@ data Decl = Let Var CExpr
 type CExpr = PrimOp Type Atom LamExpr
 
 data Atom = Var Var
+          | TLam [TVar] Expr
           | PrimCon (PrimCon Type Atom LamExpr)  -- must be fully reduced
             deriving (Show, Eq, Generic)
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
-data Module = Module [Decl] TopEnv  deriving (Show, Eq, Generic)
+data Module = Module Vars [Decl] TopEnv  deriving (Show, Eq, Generic)
 
 data ModuleType = ModuleType (FullEnv Type Kind) (FullEnv Type Kind)  deriving (Show, Eq)
 
@@ -169,6 +170,7 @@ data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
 
 data PrimOp ty e lam =
         App e e
+      | TApp e [ty]
       | For lam | Scan e lam
       | TabCon ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
@@ -240,10 +242,7 @@ nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 
 -- === top-level constructs ===
 
--- TODO: allow type-lambda as an atom and avoid this `Either`
-data TLamEnv = TLamEnv TopEnv TLam  deriving (Show, Eq, Generic)
-type TopResult = LorT (Either Atom TLamEnv) Type
-type TopEnv = Env TopResult
+type TopEnv = FullEnv Atom Type
 
 data SourceBlock = SourceBlock
   { sbLine     :: Int
@@ -509,8 +508,8 @@ instance HasVars FDecl where
 instance HasVars RuleAnn where
   freeVars (LinearizationDef v) = (v:>()) @> L unitTy
 
-instance HasVars TLam where
-  freeVars (TLam tbs expr) = freeVars expr `envDiff` foldMap tbind tbs
+instance HasVars FTLam where
+  freeVars (FTLam tbs expr) = freeVars expr `envDiff` foldMap tbind tbs
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
@@ -538,6 +537,7 @@ instance HasVars LamExpr where
 instance HasVars Atom where
   freeVars atom = case atom of
     Var v@(_:>ty) -> v @> L ty <> freeVars ty
+    TLam tvs body -> freeVars body `envDiff` foldMap (@>()) tvs
     PrimCon con   -> freeVars con
 
 instance HasVars Decl where
@@ -546,10 +546,6 @@ instance HasVars Decl where
 
 instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
-
-instance HasVars TLamEnv where
-  -- TODO: should be `freeVars topEnv` but it blows up the complexity
-  freeVars (TLamEnv topEnv _) = mempty
 
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
@@ -579,6 +575,7 @@ instance TraversableExpr PrimExpr where
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
     App e1 e2            -> liftA2 App (fE e1) (fE e2)
+    TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
     Scan e lam           -> liftA2 Scan (fE e) (fL lam)
     TabCon ty xs         -> liftA2 TabCon (fT ty) (traverse fE xs)

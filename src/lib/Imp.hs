@@ -39,7 +39,7 @@ toImpModule m = ImpModule vs prog result
           runCat (runReaderT (toImpModule' m) mempty) mempty
 
 toImpModule' :: Module -> ImpM ([IVar], TopEnv)
-toImpModule' (Module decls result) = do
+toImpModule' (Module _ decls result) = do
   let vs = resultVars result
   outAllocs <- mapM topAlloc vs
   let outTuple = PrimCon $ RecCon $ Tup $ map Var vs

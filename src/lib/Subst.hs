@@ -11,6 +11,7 @@ module Subst (Scope, Subst, subst, SubstEnv, subArrayRef,
               reduceAtom, nRecGet, nTabGet) where
 
 import Foreign.Marshal.Array
+import Data.Foldable
 
 import Env
 import Record
@@ -41,6 +42,8 @@ instance Subst Atom where
       Nothing -> Var $ fmap (subst env) v
       Just (L x') -> subst (mempty, scope) x'
       Just (T _ ) -> error "Expected let-bound variable"
+    TLam tvs body -> TLam tvs' $ subst (env <> env') body
+      where (tvs', env') = refreshTBinders scope tvs
     -- This case is ensure indexing is reduced if possible
     PrimCon (TabGet x i) -> nTabGet (subst env x) (subst env i)
     PrimCon con -> reduceAtom $ PrimCon $ subst env con
@@ -76,6 +79,11 @@ refreshBinder :: Env () -> Var -> (Var, SubstEnv)
 refreshBinder scope b = (b', env')
   where b' = rename b scope
         env' = (b@>L (Var b'), b'@>())
+
+refreshTBinders :: Env () -> [TVar] -> ([TVar], SubstEnv)
+refreshTBinders scope bs = (bs', env')
+  where (bs', scope') = renames bs scope
+        env' = (fold [b @> T (TypeVar b') | (b,b') <- zip bs bs'], scope')
 
 instance Subst Type where
    subst env@(sub, _) ty = case ty of
@@ -121,13 +129,9 @@ instance (Subst a, Subst b) => Subst (LorT a b) where
   subst env (L x) = L (subst env x)
   subst env (T y) = T (subst env y)
 
-instance Subst TLamEnv where
-  subst env (TLamEnv topEnv tlam) = TLamEnv (subst env topEnv) tlam
-
 instance (Subst a, Subst b) => Subst (Either a b)where
   subst env (Left  x) = Left  (subst env x)
   subst env (Right x) = Right (subst env x)
-
 
 -- This is just here to avoid and import cycle: TODO: organize better
 subArrayRef :: Int -> ArrayRef -> ArrayRef

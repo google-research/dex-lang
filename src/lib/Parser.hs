@@ -177,7 +177,7 @@ letPoly = do
   (ty, tlam) <- letPolyTail (pprint v)
   return $ letPolyToMono (LetPoly (v:>ty) tlam)
 
-letPolyTail :: String -> Parser (Type, TLam)
+letPolyTail :: String -> Parser (Type, FTLam)
 letPolyTail s = do
   (tbs, ty) <- mayNotBreak $ sigmaType
   declSep
@@ -185,11 +185,11 @@ letPolyTail s = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
   rhs <- liftM wrap declOrExpr
-  return (Forall (map varAnn tbs) (abstractTVs tbs ty), TLam tbs rhs)
+  return (Forall (map varAnn tbs) (abstractTVs tbs ty), FTLam tbs rhs)
 
 letPolyToMono :: FDecl -> FDecl
 letPolyToMono d = case d of
-  LetPoly (v:> Forall [] ty) (TLam [] rhs) -> LetMono (RecLeaf $ v:> ty) rhs
+  LetPoly (v:> Forall [] ty) (FTLam [] rhs) -> LetMono (RecLeaf $ v:> ty) rhs
   _ -> d
 
 unpack :: Parser FDecl

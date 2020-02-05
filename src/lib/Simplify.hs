@@ -26,23 +26,23 @@ import Record
 
 type SimpSubEnv = FullEnv Atom Type
 type DerivRuleEnv = Env Atom
-
 data SimpEnv = SimpEnv { subEnv   :: SimpSubEnv
                        , derivEnv :: DerivRuleEnv }
 
-type SimpTopEnv = (SimpEnv, Scope)
 type SimplifyM a = ReaderT SimpEnv Embed a
 
-simplifyPass :: Module -> Module
-simplifyPass m = Module decls ans
-  where (ans, (_, decls)) = runEmbed (runReaderT (simplifyModule m) mempty) mempty
+simplifyPass :: TopEnv -> Module -> Module
+simplifyPass env m = Module mempty decls ans
+  where
+    env' = SimpEnv env mempty
+    (ans, (_, decls)) = runEmbed (runReaderT (simplifyModule m) env') mempty
 
 simplifyModule :: Module -> SimplifyM TopEnv
-simplifyModule (Module decls result) = case decls of
+simplifyModule (Module _ decls result) = case decls of
   [] -> substSimp result
   (d:ds) -> do
     env <- simplifyDecl d
-    extendR env $ simplifyModule $ Module ds result
+    extendR env $ simplifyModule $ Module mempty ds result
 
 simplify :: Expr -> SimplifyM Atom
 simplify expr = case expr of
@@ -65,6 +65,13 @@ simplifyCExpr expr = do
   case expr' of
     App (PrimCon (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
+    TApp (TLam tbs body) ts -> do
+      let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
+      dropSub $ extendSub env $ simplify body
+    -- TODO: remove this once we have monadic traversal instead of scan
+    For (LamExpr b body) ->
+      buildFor b $ \x -> extendSub (b @> L x) (simplify body)
+    Select ty p x y -> selectAt ty p x y
     _ -> emit expr'
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv

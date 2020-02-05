@@ -37,7 +37,7 @@ type InferM a = ReaderT (SrcCtx, TypeEnv) (
 
 inferModule :: TopEnv -> FModule -> Except FModule
 inferModule topEnv (FModule imports body exports) = do
-  let envIn = topEnvToTypeEnv topEnv
+  let envIn = topEnvType topEnv
   (body', env') <- runInferM envIn (inferDecls body)
   let envOut = envIn <> env'
   let imports' = imports `envIntersect` envIn
@@ -45,12 +45,6 @@ inferModule topEnv (FModule imports body exports) = do
               <> flip envMapMaybe exports (\x -> case x of T k -> Just (T k)
                                                            _   -> Nothing)
   return $ FModule imports' body' exports'
-
-topEnvToTypeEnv :: TopEnv -> TypeEnv
-topEnvToTypeEnv env = flip fmap env $ \ann -> case ann of
-  L (Left atom)  -> L $ Forall [] $ getType atom
-  L (Right tlam) -> L $ getType tlam
-  T _    -> T $ Kind []
 
 runInferM :: TypeEnv -> InferM a -> Except a
 runInferM env m = do
@@ -79,13 +73,13 @@ inferDecl decl = case decl of
                       bound' <- check bound (getType p')
                       return (p', bound')
     return (LetMono p' bound', foldMap asEnv p')
-  LetPoly b@(_:> Forall _ tyBody) (TLam tbs tlamBody) -> do
+  LetPoly b@(_:> Forall _ tyBody) (FTLam tbs tlamBody) -> do
     let tyBody' = instantiateTVs (map TypeVar tbs) tyBody
     -- TODO: check if bound vars leaked (can look at constraints from solve)
     let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
     tlamBody' <- checkLeaks tbs $ solveLocalMonomorphic $
                    extendRSnd env $ check tlamBody tyBody'
-    return (LetPoly b (TLam tbs tlamBody'), b @> L (varAnn b))
+    return (LetPoly b (FTLam tbs tlamBody'), b @> L (varAnn b))
   FUnpack (v:>_) tv bound -> do
     (maybeEx, bound') <- solveLocalMonomorphic $ infer bound
     boundTy <- case maybeEx of Exists t -> return $ instantiateTVs [TypeVar tv] t
@@ -113,11 +107,12 @@ check expr reqTy = case expr of
     body' <- extendRSnd env' $ check body reqTy
     return $ FDecl decl' body'
   FVar v ts -> do
-    ~(Forall kinds body) <- asks $ fromL . (! v) . snd
+    ty <- asks $ fromL . (! v) . snd
+    let (kinds, body) = asForall ty
     vs <- mapM (const freshQ) (drop (length ts) kinds)
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
-    return $ FVar (varName v :> reqTy) ts'
+    return $ FVar (varName v :> ty) ts'
   -- TODO: consider special-casing App for better error messages
   -- (e.g. in `f x`, infer `f` then check `x` rather than checking `f` first)
   FPrimExpr prim -> do
@@ -237,7 +232,7 @@ fromAnn NoAnn = freshQ
 fromAnn ty    = return ty
 
 asEnv :: Var -> TypeEnv
-asEnv b = b @> L (Forall [] (varAnn b))
+asEnv b = b @> L (varAnn b)
 
 freshQ :: MonadCat QVars m => m Type
 freshQ = do
@@ -398,8 +393,8 @@ instance TySubst FLamExpr where
 instance TySubst FDecl where
   tySubst env decl = case decl of
     LetMono p e -> LetMono (fmap (tySubst env) p) (tySubst env e)
-    LetPoly (v:>Forall ks ty) (TLam bs body) ->
-       LetPoly (v:>Forall ks (tySubst env ty)) (TLam bs (tySubst env body))
+    LetPoly (v:>Forall ks ty) (FTLam bs body) ->
+       LetPoly (v:>Forall ks (tySubst env ty)) (FTLam bs (tySubst env body))
     FUnpack (v:>ty) tv e -> FUnpack (v:>(tySubst env ty)) tv (tySubst env e)
 
 instance (TySubst a, TySubst b) => TySubst (a, b) where

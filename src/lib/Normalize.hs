@@ -25,9 +25,9 @@ import Record
 type NormEnv = TopEnv
 type NormM a = ReaderT NormEnv Embed a
 
-normalizeModule :: TopEnv -> FModule -> Module
-normalizeModule env (FModule _ body _) = Module decls envOut
-  where (envOut, decls) = runNormM (normalizeTopDecls body) env
+normalizeModule :: FModule -> Module
+normalizeModule (FModule imports body _) = Module imports decls envOut
+  where (envOut, decls) = runNormM (normalizeTopDecls body) mempty
 
 normalizeTopDecls :: [FDecl] -> NormM NormEnv
 normalizeTopDecls [] = return mempty
@@ -51,34 +51,22 @@ normalize expr = case expr of
   FDecl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  FVar v ts -> do
-    x <- asks $ fromL . (! v)
-    case x of
-      Left x' -> case ts of
-        [] -> return x'
-        _ -> error "Unexpected type application"
-      Right (TLamEnv env (TLam tbs body)) -> do
-        ts' <- mapM substTy ts
-        let env' = fold [tv @> T t' | (tv, t') <- zip tbs ts']
-        local (const (env <> env')) $ normalize body
-  -- TODO: expand typeclasses in a separate post-normalization pass
-  FPrimExpr (PrimOpExpr (For (FLamExpr p body))) -> do
-    b <- normalizePat p
-    buildFor b $ \x -> do
-      env <- bindPat p x
-      extendR env (normalize body)
-  FPrimExpr (PrimOpExpr op) -> do
-    op' <- traverseExpr op substTy normalize normalizeLam
-    case op' of
-      Select ty p x y -> selectAt ty p x y
-      NewtypeCast ty x | ty == getType x -> return x
-                       | otherwise -> error $ "Can't cast " ++ pprint (getType x)
-                                                  ++ " to " ++ pprint ty
-      _ -> emit op'
+  FVar v [] -> lookupVar v
+  FVar v ts -> liftM2 TApp (lookupVar v) (mapM substTy ts) >>= emit
+  FPrimExpr (PrimOpExpr op) ->
+    traverseExpr op substTy normalize normalizeLam >>= emit
   FPrimExpr (PrimConExpr con) ->
     liftM PrimCon $ traverseExpr con substTy normalize normalizeLam
   Annot    e _ -> normalize e
   SrcAnnot e _ -> normalize e
+
+lookupVar :: Var -> NormM Atom
+lookupVar v = do
+  env <- ask
+  return $ case envLookup env v of
+     Nothing    -> Var v
+     Just (L x) -> x
+     Just (T _) -> error $ "Lookup failed: " ++ pprint v
 
 normalizeLam :: FLamExpr -> NormM LamExpr
 normalizeLam (FLamExpr p body) = do
@@ -95,7 +83,7 @@ normalizePat p = do
   return $ v':>ty
 
 bindPat :: Pat -> Atom -> NormM NormEnv
-bindPat (RecLeaf v) x = return $ v @> L (Left x)
+bindPat (RecLeaf v) x = return $ v @> L x
 bindPat (RecTree r) xs =
   liftM fold $ flip traverse (recNameVals r) $ \(i, p) -> do
     bindPat p $ nRecGet xs i
@@ -105,9 +93,11 @@ normalizeDecl decl = case decl of
   LetMono p bound -> do
     xs <- normalize bound  -- TODO: preserve names
     bindPat p xs
-  LetPoly v (TLam tbs body) -> do
-    env <- ask
-    return $ v @> L (Right (TLamEnv env (TLam tbs body)))
+  LetPoly v (FTLam tvs body) -> do
+    tlam <- buildTLam tvs $ \tys -> do
+      let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
+      extendR env $ normalize body
+    return $ v @> L tlam
   FUnpack b tv bound -> do
     bound' <- normalize bound
     (ty, emitUnpackRest) <- emitUnpack tv bound'
@@ -124,8 +114,4 @@ normalizeDecl decl = case decl of
 substTy :: Type -> NormM Type
 substTy ty = do
   env <- ask
-  return $ subst (envMapMaybe f env, mempty) ty
-  where
-    f :: LorT (Either Atom TLamEnv) Type -> Maybe (LorT a Type)
-    f (L _) = Nothing
-    f (T t) = Just (T t)
+  return $ subst (env, mempty) ty

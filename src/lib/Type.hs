@@ -10,16 +10,15 @@
 
 module Type (
     checkFModule, checkModule, getType, instantiateTVs, abstractTVs,
-    tangentBunType, listIntoRecord, flattenType, splitLinArgs,
+    tangentBunType, listIntoRecord, flattenType, splitLinArgs, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy, isData, IsModule, moduleType) where
+    tupTy, pairTy, isData, IsModule, moduleType, topEnvType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.List (elemIndex)
 import Data.Foldable
-import Data.Either (isLeft)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -74,16 +73,17 @@ getFLamType (FLamExpr p body) = (getType p, getType body)
 
 checkTypeFExpr :: FExpr -> FTypeM Type
 checkTypeFExpr expr = case expr of
-  FVar v@(_:>ty) ts -> do
+  FVar v@(_:>annTy) ts -> do
     mapM_ checkTy ts
     x <- asks $ flip envLookup v . tyEnv
     case x of
-      Just (L (Forall kinds body, s)) -> do
+      Just (L (ty, s)) -> do
+        assertEq annTy ty "Var annotation"
+        let (kinds, body) = asForall ty
+        assertEq (length kinds) (length ts) "Number of type args"
         checkWithCtx $ do spend s
                           zipWithM_ checkClassConstraints kinds ts
-        let ty' = instantiateTVs ts body
-        assertEq ty ty' "Var annotation"
-        return ty
+        return $ instantiateTVs ts body
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
     env <- checkTypeFDecl decl
@@ -112,7 +112,7 @@ checkTypeFDecl decl = case decl of
                        ty <- checkTypeFExpr rhs
                        assertEq (getType p) ty "LetMono"
     return (foldMap (asEnv spent) p)
-  LetPoly b@(v:>ty) tlam -> do
+  LetPoly b@(_:>ty) tlam -> do
     checkShadow b
     ((), spent) <- scoped $ checkWithCtx $ do
                        ty' <- checkTypeTLam tlam
@@ -131,13 +131,17 @@ checkTypeFDecl decl = case decl of
 extendTyEnv :: FTypeEnv -> FTypeM a -> FTypeM a
 extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
 
+asForall :: Type -> ([Kind], Type)
+asForall (Forall ks body) = (ks, body)
+asForall ty = ([], ty)
+
 checkWithCtx :: FTypeM () -> FTypeM ()
 checkWithCtx m = do
   pos <- asks srcCtx
   addSrcContext pos m
 
-checkTypeTLam :: TLam -> FTypeM Type
-checkTypeTLam (TLam tbs body) = do
+checkTypeTLam :: FTLam -> FTypeM Type
+checkTypeTLam (FTLam tbs body) = do
   mapM_ checkShadow tbs
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
   ty <- extendTyEnv env (checkTypeFExpr body)
@@ -157,7 +161,7 @@ checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> FTypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
 asEnv :: Spent -> Var -> FTypeEnv
-asEnv s (v:>ty) = (v:>()) @> L (Forall [] ty, s)
+asEnv s (v:>ty) = (v:>()) @> L (ty, s)
 
 checkRuleDefType :: RuleAnn -> Type -> FTypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
@@ -223,24 +227,18 @@ class IsModule a where
   moduleType :: a -> ModuleType
 
 instance IsModule FModule where
-  moduleType (FModule imports _ exports) = ModuleType imports exports'
-    -- Temporary hack. TODO: fix
-    where exports' = flip fmap exports $ \x ->
-            case x of L (Forall [] ty) -> L ty
-                      _ -> x
+  moduleType (FModule imports _ exports) = ModuleType imports exports
 
 instance IsModule Module where
-  moduleType (Module _ result) = ModuleType mempty (topEnvType result)
+  moduleType (Module imports _ result) = ModuleType imports (topEnvType result)
 
 instance IsModule ImpModule where
   moduleType (ImpModule _ _ result) = ModuleType mempty (topEnvType result)
 
 topEnvType :: TopEnv -> FullEnv Type Kind
-topEnvType env = flip fmap env $ \x ->
-  case x of L (Left atom) -> L (getType atom)
-            L (Right lam) -> L (getType lam)
-            T ty          -> T (Kind []) -- TODO
-
+topEnvType env = flip fmap env $ \ann -> case ann of
+  L x -> L $ getType x
+  T _ -> T $ Kind []  -- TODO
 
 -- -- === Built-in typeclasses ===
 
@@ -315,16 +313,20 @@ type TypeEnv = FullEnv (Type, Spent) ()
 type TypeM a = ReaderT TypeEnv (CatT Spent (Either Err)) a
 
 checkModule :: Module -> Except ()
-checkModule m = liftM fst $ runCatT (runReaderT (checkModule' m) mempty) mempty
+checkModule (Module imports decls result) =
+  liftM fst $ runCatT (runReaderT (checkModuleBody (decls, result)) env) mempty
+  where env = flip fmap imports $ \val -> case val of
+          L x -> L (x, mempty)
+          T _ -> T ()
 
-checkModule' :: Module -> TypeM ()
-checkModule' (Module decls result) = case decls of
+checkModuleBody :: ([Decl], TopEnv) -> TypeM ()
+checkModuleBody (decls, result) = case decls of
   [] -> void $ flip traverse result $ \val -> case val of
-          L (Left x) -> void $ checkAtom x
+          L x -> void $ checkAtom x
           _ -> return ()
   (d:ds) -> do
     env <- checkDecl d
-    extendR env $ checkModule' (Module ds result)
+    extendR env $ checkModuleBody (ds, result)
 
 instance HasType Expr where
   getType expr = case expr of
@@ -335,16 +337,14 @@ instance HasType Expr where
 instance HasType Atom where
   getType expr = case expr of
     Var (_:>ty) -> ty
+    TLam vs body -> Forall (map varAnn vs) $ abstractTVs vs (getType body)
     PrimCon con -> getPrimType $ PrimConExpr $ fmapExpr con id getType getLamType
 
 instance HasType CExpr where
   getType op = getPrimType $ PrimOpExpr $ fmapExpr op id getType getLamType
 
-instance HasType TLamEnv where
-  getType (TLamEnv _ tlam) = getType tlam
-
-instance HasType TLam where
-  getType (TLam tbs body) = Forall (map varAnn tbs) body'
+instance HasType FTLam where
+  getType (FTLam tbs body) = Forall (map varAnn tbs) body'
     where body' = abstractTVs tbs (getType body)
 
 getLamType :: LamExpr -> (Type, Type)
@@ -373,6 +373,9 @@ checkAtom atom = case atom of
         assertEq ty' ty "NVar annot"
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+  TLam tvs body -> do
+    bodyTy <- extendR (foldMap (@> T ()) tvs) (checkExpr body)
+    return $ Forall (map varAnn tvs) (abstractTVs tvs bodyTy)
   PrimCon con -> do
     primType <- traverseExpr con return checkAtom checkLam
     checkPrimType (PrimConExpr primType)
@@ -458,6 +461,7 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   App (ArrType _ a b) a' -> do
     eq a a'
     return b
+  TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
   For (n,a) -> return $ TabType n a
   Scan c (RecType (Tup [i, c']), RecType (Tup [c'', y])) -> do
     eq c c' >> eq c c'' >> return (pairTy c (TabType i y))

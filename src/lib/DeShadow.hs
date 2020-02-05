@@ -97,10 +97,10 @@ deShadowDecl (TyDef v ty) = do
   extend (asSnd (v @> ty'), v@>())
   return $ TyDef v ty'
 
-deShadowTLam :: TLam -> DeShadowM TLam
-deShadowTLam (TLam tbs body) = do
+deShadowTLam :: FTLam -> DeShadowM FTLam
+deShadowTLam (FTLam tbs body) = do
   withCat (traverse freshTBinder tbs) $ \tbs' ->
-    liftM (TLam tbs') (deShadowExpr body)
+    liftM (FTLam tbs') (deShadowExpr body)
 
 deShadowPat :: Pat -> DeShadowCat Pat
 deShadowPat pat = traverse freshBinder pat

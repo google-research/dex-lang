@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Embed (emit, emitTo, withBinder, buildLam,
+module Embed (emit, emitTo, withBinder, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, emitUnpack, flipIdx, zeroAt, addAt, sumAt, deShadow,
               emitNamed, add, mul, sub, neg, div',
@@ -80,6 +80,14 @@ buildLam :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
 buildLam b f = do
   (ans, b', (_, decls)) <- withBinder b f
   return $ LamExpr b' (wrapDecls decls ans)
+
+buildTLam :: (MonadCat EmbedEnv m) => [TVar] -> ([Type] -> m Atom) -> m Atom
+buildTLam bs f = do
+  ((ans, bs'), (_, decls)) <- scoped $ do
+      bs' <- mapM freshVar bs
+      ans <- f (map TypeVar bs')
+      return (ans, bs')
+  return $ TLam bs' (wrapDecls decls ans)
 
 buildFor :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m Atom
 buildFor ib f = do

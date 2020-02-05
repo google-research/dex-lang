@@ -9,7 +9,7 @@
 module TopLevel (evalBlock, Backend (..)) where
 
 import Control.Exception hiding (throw)
-import Control.Monad.Writer.Strict
+import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 
@@ -28,6 +28,7 @@ import Util (highlightRegion)
 
 data Backend = Jit | Interp
 type TopPassM a = ExceptT Err (WriterT [Output] IO) a
+type Pass a b = a -> TopPassM b
 
 -- TODO: handle errors due to upstream modules failing
 evalBlock :: Backend -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
@@ -46,13 +47,13 @@ evalSourceBlock env block = case block of
   Command cmd (v, m) -> case cmd of
     EvalExpr fmt -> do
       env' <- filterOutputs (const False) $ evalModule env m
-      let (L (Left val)) = env' ! v
+      let (L val) = env' ! v
       val' <- liftIO $ loadAtomVal val
       tell [ValOut fmt val']
       return mempty
     GetType -> do  -- TODO: don't actually evaluate it
       env' <- filterOutputs (const False) $ evalModule env m
-      let (L (Left val)) = env' ! v
+      let (L val) = env' ! v
       val' <- liftIO $ loadAtomVal val
       tell [TextOut $ pprint (getType val')]
       return mempty
@@ -69,42 +70,32 @@ evalSourceBlock env block = case block of
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalModule :: TopEnv -> FModule -> TopPassM TopEnv
+evalModule :: TopEnv -> Pass FModule TopEnv
 evalModule env = inferTypes env >=> evalTyped env
 
 -- TODO: check here for upstream errors
-inferTypes :: TopEnv -> FModule -> TopPassM FModule
-inferTypes env m = do
-  mds   <- asPass "deshadow"       (liftEither . deShadowModule env) m
-  typed <- asPass "type inference" (liftEither . inferModule    env) mds
-  liftEither $ checkFModule typed
-  return typed
+inferTypes :: TopEnv -> Pass FModule Module
+inferTypes env m = ($ m) $
+      namedPass "deshadow"       (liftEither . deShadowModule env) (const (return ()))
+  >=> namedPass "type inference" (liftEither . inferModule    env) checkFModule
+  >=> namedPass "normalize"      (return     . normalizeModule   ) checkModule
 
-evalTyped :: TopEnv -> FModule -> TopPassM TopEnv
+evalTyped :: TopEnv -> Pass Module TopEnv
 evalTyped env m = ($ m) $
-      asPass "normalize" (return . normalizeModule env) >=> checkPass ty checkModule
-  >=> asPass "simplify"  (return . simplifyPass)        >=> checkPass ty checkModule
-  >=> asPass "imp"       (return . toImpModule)         >=> checkPass ty checkImpModule
-  >=> asPass "jit" (liftIO . evalModuleJIT)
-  where
-    (ModuleType _ exports) = moduleType m
-    ty = ModuleType mempty exports
+      namedPass "simplify" (return . simplifyPass env) checkModule
+  >=> namedPass "imp"      (return . toImpModule)      checkImpModule
+  >=> namedPass "jit"      (liftIO . evalModuleJIT)    (const (return ()))
 
-checkPass :: (Pretty a, IsModule a) => ModuleType -> (a -> Except ()) -> a -> TopPassM a
-checkPass ty f x = withDebugCtx ("Checking: \n" ++ pprint x) $ do
-  liftEither (f x)
-  let ty' = moduleType x
-  when (ty /= ty') $ throw CompilerErr $
-      "Wrong module type.\nExpected: " ++ pprint ty
-                     ++ "\n  Actual: " ++ pprint ty'
-  return x
-
-asPass :: (Pretty a, Pretty b) => String -> (a -> TopPassM b) -> a -> TopPassM b
-asPass name f x = do
-  let ctx = name ++ " pass with input:\n" ++ pprint x
-  (ans, s) <- withDebugCtx ctx $ printedPass (f x)
+namedPass :: (Pretty a, Pretty b)
+          => String -> Pass a b -> (b -> Except ()) -> Pass a b
+namedPass name pass check x = do
+  (ans, s) <- withDebugCtx passCtx $ printedPass (pass x)
   tell [PassInfo name s]
+  withDebugCtx checkCtx $ liftEither $ check ans
   return ans
+  where
+    passCtx  = name ++ " pass with input:\n" ++ pprint x
+    checkCtx = "Checking post-" ++ name ++ ":\n" ++ pprint x
 
 printedPass :: Pretty a => TopPassM a -> TopPassM (a, String)
 printedPass m = do
