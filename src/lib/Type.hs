@@ -126,7 +126,7 @@ checkTypeFDecl decl = case decl of
     extendTyEnv env $ checkTy (varAnn b)
     return (env <> asEnv mempty b)
   FRuleDef ann ty tlam -> return mempty  -- TODO
-  TyDef v bs ty -> return mempty -- TODO
+  TyDef v ty -> return mempty -- TODO
 
 extendTyEnv :: FTypeEnv -> FTypeM a -> FTypeM a
 extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
@@ -209,6 +209,8 @@ subAtDepth d f ty = case ty of
     Monad eff a   -> Monad (fmap recur eff) (recur a)
     Lens a b      -> Lens (recur a) (recur b)
     Exists body   -> Exists (recurWith 1 body)
+    Forall    ks body -> Forall    ks (recurWith (length ks) body)
+    TypeAlias ks body -> TypeAlias ks (recurWith (length ks) body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
     NoAnn         -> NoAnn

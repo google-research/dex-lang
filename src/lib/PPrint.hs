@@ -73,6 +73,7 @@ prettyTyDepth d ty = case ty of
           boundvars :: [Name]
           boundvars = [tvars 0 i | i <- [-n..(-1)]]
           binders = map p $ zipWith (:>) boundvars kinds
+  TypeAlias _ _ -> "<type alias>"  -- TODO
   IdxSetLit i -> p i
   Mult l      -> p (show l)
   NoAnn       -> ""
@@ -124,7 +125,7 @@ instance Pretty FDecl where
     p v <+> "="  <+> p body
   pretty (FUnpack b tv expr) = p b <> "," <+> p tv <+> "= unpack" <+> p expr
   pretty (FRuleDef ann ty tlam) = "<TODO: rule def>"
-  pretty (TyDef v bs ty) = "type" <+> p v <+> p bs <+> "=" <+> p ty
+  pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
 instance (Pretty ty, Pretty e, Pretty lam) => Pretty (PrimExpr ty e lam) where
   pretty (PrimOpExpr  op ) = p op

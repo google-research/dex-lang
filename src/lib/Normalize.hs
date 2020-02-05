@@ -116,7 +116,7 @@ normalizeDecl decl = case decl of
     x <- emitUnpackRest bs
     lenv <- bindPat (RecLeaf b) x
     return (tenv <> lenv)
-  TyDef v [] ty -> do
+  TyDef v ty -> do
     ty' <- substTy ty
     return $ v @> T ty'
   FRuleDef _ _ _ -> return mempty  -- TODO

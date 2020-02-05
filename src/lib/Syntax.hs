@@ -58,6 +58,7 @@ data Type = TypeVar TVar
           | RecType (Record Type)
           | Exists Type
           | Forall [Kind] Type
+          | TypeAlias [Kind] Type
           | Monad EffectType Type
           | Lens Type Type
           | TypeApp Type [Type]
@@ -97,7 +98,7 @@ type SrcPos = (Int, Int)
 data FDecl = LetMono Pat FExpr
            | LetPoly Var TLam
            | FUnpack Var TVar FExpr
-           | TyDef TVar [TVar] Type
+           | TyDef TVar Type
            | FRuleDef RuleAnn Type TLam
              deriving (Show, Eq, Generic)
 
@@ -462,7 +463,7 @@ fDeclBoundVars decl = case decl of
   LetPoly v _    -> lbind v
   FUnpack b tv _ -> lbind b <> tbind tv
   FRuleDef _ _ _ -> mempty
-  TyDef v _ _    -> tbind v
+  TyDef v _      -> tbind v
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
@@ -482,8 +483,9 @@ instance HasVars Type where
     TabType a b -> freeVars a <> freeVars b
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
-    Exists   body -> freeVars body
-    Forall _ body -> freeVars body
+    Exists      body -> freeVars body
+    Forall    _ body -> freeVars body
+    TypeAlias _ body -> freeVars body
     Monad eff a -> foldMap freeVars eff <> freeVars a
     Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
@@ -501,8 +503,8 @@ instance HasVars FDecl where
    freeVars (LetMono p expr)   = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam)   = freeVars b <> freeVars tlam
    freeVars (FUnpack b _ expr) = freeVars b <> freeVars expr
+   freeVars (TyDef _ ty)       = freeVars ty
    freeVars (FRuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
-   freeVars (TyDef _ bs ty) = freeVars ty `envDiff` foldMap tbind bs
 
 instance HasVars RuleAnn where
   freeVars (LinearizationDef v) = (v:>()) @> L unitTy

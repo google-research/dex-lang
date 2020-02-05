@@ -93,7 +93,7 @@ inferDecl decl = case decl of
     -- TODO: check possible type annotation
     let b' = v :> boundTy
     return (FUnpack b' tv bound', asEnv b')
-  TyDef v bs ty -> return (TyDef v bs ty, mempty)
+  TyDef v ty -> return (TyDef v ty, mempty)
   FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
 
 infer :: UExpr -> InferM (Type, FExpr)
@@ -299,8 +299,10 @@ solve cs = do
       t1' <- zonk t1
       t2' <- zonk t2
       let err = Err TypeErr ctx $
-                  "\nExpected: " ++ pprint t1'
-               ++ "\n  Actual: " ++ pprint t2'
+               --    "\nExpected: " ++ pprint t1'
+               -- ++ "\n  Actual: " ++ pprint t2'
+                  "\nExpected: " ++ show t1'
+               ++ "\n  Actual: " ++ show t2'
                ++ "\nIn: "       ++ s
       unify err t1' t2'
 

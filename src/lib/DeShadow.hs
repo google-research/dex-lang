@@ -11,18 +11,17 @@ module DeShadow (deShadowModule) where
 
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable
 
 import Env
 import Syntax
 import Fresh
 import PPrint
 import Cat
-import Subst
+import Type
 
 type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
 type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
-type DeShadowEnv = (Env Name, Env ([TVar], Type))
+type DeShadowEnv = (Env Name, Env Type)
 
 -- TODO: check top-level binders are all unique wrt imports and each other
 -- TODO: work through type aliases from incoming top env
@@ -42,7 +41,7 @@ topEnvToDeshadowEnv env = (termEnv, tyEnv)
                 _        -> Nothing
     tyEnv = flip envMapMaybe env $ \x -> case x of
                 L _  -> Nothing
-                T ty -> Just ([], ty)
+                T ty -> Just ty
 
 deShadowTopDecls :: [FDecl] -> DeShadowM [FDecl]
 deShadowTopDecls [] = return []
@@ -87,17 +86,16 @@ deShadowDecl (LetPoly (v:>ty) tlam) = do
 deShadowDecl (FUnpack b tv bound) = do
   bound' <- toCat $ deShadowExpr bound
   tv' <- looks $ rename tv . snd
-  extend (asSnd (tv @> ([], TypeVar tv')), tv'@>())
+  extend (asSnd (tv @> TypeVar tv'), tv'@>())
   b' <- freshBinder b
   return $ FUnpack b' tv' bound'
 deShadowDecl (FRuleDef ann ty tlam) = toCat $
   liftM3 FRuleDef (deShadowRuleAnn ann) (deShadowType ty) (deShadowTLam tlam)
-deShadowDecl (TyDef v bs ty) = do
+deShadowDecl (TyDef v ty) = do
   -- TODO: handle shadowing from binders
-  let env = fold [tv@>([], TypeVar tv) | tv <- bs]
-  ty' <- toCat $ extendR (asSnd env) $ deShadowType ty
-  extend (asSnd (v @> (bs, ty')), v@>())
-  return $ TyDef v bs ty'
+  ty' <- toCat $ deShadowType ty
+  extend (asSnd (v @> ty'), v@>())
+  return $ TyDef v ty'
 
 deShadowTLam :: TLam -> DeShadowM TLam
 deShadowTLam (TLam tbs body) = do
@@ -136,7 +134,7 @@ freshTBinder v = do
     then throw RepeatedVarErr (pprint v)
     else return ()
   v' <- looks $ rename v . snd
-  extend (asSnd (v@>([], TypeVar v')), v'@>())
+  extend (asSnd (v@> TypeVar v'), v'@>())
   return v'
 
 deShadowType :: Type -> DeShadowM Type
@@ -145,9 +143,10 @@ deShadowType ty = case ty of
   TypeVar v -> do
     (vsub, tsub) <- ask
     case envLookup tsub v of
-      Just ([], ty') -> return ty'
-      Just (bs, _  ) -> throw TypeErr $ pprint v ++ " must be applied to " ++
-                          show (length bs) ++ " type variables"
+      Just (TypeAlias ks _ ) ->
+          throw TypeErr $ pprint v ++ " must be applied to " ++
+                          show (length ks) ++ " type variables"
+      Just ty' -> return ty'
       Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint v ++ "\"" ++
                    (if v `isin` vsub
                        then " (a term variable of the same name is in scope)"
@@ -158,11 +157,11 @@ deShadowType ty = case ty of
       TypeVar tv -> do
         sub <- asks snd
         case envLookup sub tv of
-          Just (bs, ty') -> do
-            unless (length bs == length args') $ throw TypeErr $
-              "Expected " ++ show (length bs) ++ " type args in " ++ pprint ty
-            let env = fold [v@>T arg | (v, arg) <- zip bs args']
-            return $ subst (env, mempty) ty'
+          Just (TypeAlias ks ty') -> do
+            unless (length ks == length args') $ throw TypeErr $
+                "Expected " ++ show (length ks) ++ " type args in " ++ pprint ty
+            return $ instantiateTVs args' ty'
+          Just ty' -> return ty'
           Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint tv ++ "\""
       _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty
   ArrType l a b -> liftM2 (ArrType l) (recur a) (recur b)
@@ -171,7 +170,8 @@ deShadowType ty = case ty of
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)
   Lens a b    -> liftM2 Lens (recur a) (recur b)
   Exists body -> liftM Exists $ recur body
-  Forall kinds body -> liftM (Forall kinds) (deShadowType body)
+  Forall    kinds body -> liftM (Forall    kinds) (deShadowType body)
+  TypeAlias kinds body -> liftM (TypeAlias kinds) (deShadowType body)
   IdxSetLit _ -> return ty
   BoundTVar _ -> return ty
   Mult _      -> return ty

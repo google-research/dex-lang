@@ -18,7 +18,6 @@ import Data.Char (isLower)
 import Data.Maybe (fromMaybe)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
-import qualified Data.Map.Strict as M
 
 import Env
 import Record
@@ -155,7 +154,11 @@ typeDef = do
   bs <- many lowerName
   equalSign
   ty <- tauType
-  return $ TyDef (asTVar v) (map asTVar bs) ty
+  let ty' = case bs of
+              [] -> ty
+              _  -> TypeAlias (map varAnn tvs) (abstractTVs tvs ty)
+                      where tvs = map asTVar bs
+  return $ TyDef (asTVar v) ty'
 
 -- === Parsing decls ===
 

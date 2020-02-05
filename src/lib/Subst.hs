@@ -90,7 +90,8 @@ instance Subst Type where
     RecType r   -> RecType $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
     Exists    body -> Exists    (recur body)
-    Forall ks body -> Forall ks (recur body)
+    Forall    ks body -> Forall    ks (recur body)
+    TypeAlias ks body -> TypeAlias ks (recur body)
     Monad eff a -> Monad (fmap recur eff) (recur a)
     Lens a b    -> Lens (recur a) (recur b)
     IdxSetLit _ -> ty
