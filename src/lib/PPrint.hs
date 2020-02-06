@@ -134,7 +134,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
   pretty (For lam) = "for" <+> i <+> "." <+> body
     where (i, body) = prettyLam lam
-  pretty (TabCon _ xs) = list (map pretty xs)
+  pretty (TabCon _ _ xs) = list (map pretty xs)
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (MonadRun r s m) = "run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
@@ -147,7 +147,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
   pretty (RecZip _ r) = "zip" <+> p r
-  pretty (AtomicTabCon _ xs) = list (map pretty xs)
+  pretty (AtomicTabCon _ _ xs) = list (map pretty xs)
   pretty (IdxLit n i) = p i <> "@" <> p (IdxSetLit n)
   pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
     where (v, body) = prettyLam f
@@ -275,7 +275,7 @@ instance Pretty SourceBlock where
 
 instance Pretty Result where
   pretty (Result outs r) = vcat (map pretty outs) <> maybeErr
-    where maybeErr = case r of Left err -> hardline <> p err
+    where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
 instance Pretty body => Pretty (ModuleP body) where

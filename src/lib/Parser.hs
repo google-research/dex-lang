@@ -330,7 +330,7 @@ forExpr = do
 tabCon :: Parser FExpr
 tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
-  return $ fPrimOp $ TabCon NoAnn xs
+  return $ fPrimOp $ TabCon NoAnn NoAnn xs
 
 idxLhsArgs :: Parser (FExpr -> FExpr)
 idxLhsArgs = do
@@ -621,4 +621,4 @@ tupleData = do
 tableData :: Parser FExpr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
-  return $ FPrimExpr $ PrimOpExpr $ TabCon NoAnn xs
+  return $ FPrimExpr $ PrimOpExpr $ TabCon NoAnn NoAnn xs

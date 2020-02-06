@@ -51,7 +51,7 @@ writeVal (FlatVal (RecType r) refs) (PrimCon (RecCon valRec)) =
   where
     refRec = listIntoRecord r refs
     f (ty,refs') val = writeVal (FlatVal ty refs') val
-writeVal (FlatVal (TabType _ a) refs) (PrimCon (AtomicTabCon _ xs)) =
+writeVal (FlatVal (TabType _ a) refs) (PrimCon (AtomicTabCon _ _ xs)) =
   zipWithM_ writeRow [0..] xs
   where
     writeRow :: Int -> Val -> IO ()
@@ -64,7 +64,7 @@ restructureVal :: FlatVal -> Val
 restructureVal (FlatVal ty arrays) = case ty of
   BaseType _  -> PrimCon $ Lit      $ readScalar array  where [array] = arrays
   RecType r -> PrimCon $ RecCon $ fst $ traverseFun restructureValPartial r arrays
-  TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon ty $
+  TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon (IdxSetLit n) a $
     [restructureVal $ FlatVal a $ map (subArray i) arrays | i <- [0..n-1]]
   IdxSetLit n -> PrimCon $ IdxLit n i  where [array] = arrays
                                              IntLit i = readScalar array

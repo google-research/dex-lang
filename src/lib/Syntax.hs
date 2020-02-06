@@ -152,7 +152,7 @@ data PrimCon ty e lam =
       | IdxLit Int Int
       | TabGet e e
       | RecGet e RecField
-      | AtomicTabCon ty [e] -- Only used for printing. May remove it.
+      | AtomicTabCon ty ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
       | RecZip [Int] (Record e)
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
@@ -178,7 +178,7 @@ data PrimOp ty e lam =
         App e e
       | TApp e [ty]
       | For lam
-      | TabCon ty [e]
+      | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
       | MonadRun e e e | LensGet e e
@@ -577,7 +577,7 @@ instance TraversableExpr PrimOp where
     App e1 e2            -> liftA2 App (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
-    TabCon ty xs         -> liftA2 TabCon (fT ty) (traverse fE xs)
+    TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
     ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
     ScalarUnOp  op e     -> liftA  (ScalarUnOp  op) (fE e)
     VSpaceOp ty VZero    -> liftA2 VSpaceOp (fT ty) (pure VZero)
@@ -601,7 +601,7 @@ instance TraversableExpr PrimCon where
     IdxLit n i     -> pure   (IdxLit n i)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
-    AtomicTabCon ty xs -> liftA2 AtomicTabCon (fT ty) (traverse fE xs)
+    AtomicTabCon n ty xs -> liftA3 AtomicTabCon (fT n) (fT ty) (traverse fE xs)
     RecCon r       -> liftA  RecCon (traverse fE r)
     -- TODO: consider merging this with `RecCon` (the empty `tys` case)
     -- TOOD: types instead of ints

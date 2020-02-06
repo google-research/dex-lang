@@ -422,7 +422,8 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
     return b
   TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
   For (n,a) -> return $ TabType n a
-  TabCon ty xs   -> mapM_ (eq ty) xs >> return (IdxSetLit (length xs) ==> ty)
+  TabCon n ty xs -> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
+    where n' = IdxSetLit (length xs)
   ScalarBinOp binop t1 t2 -> do
     eq (BaseType t1') t1
     eq (BaseType t2') t2
@@ -447,7 +448,7 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   IdxSetSize _     -> return $ BaseType IntType
   NewtypeCast ty _ -> return ty
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
-  _ -> throw CompilerErr $ "Unexpected primitive type: " ++ pprint op
+  _ -> error $ "Unexpected primitive type: " ++ pprint op
 traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lit l          -> return $ BaseType $ litType l
   Lam l (a,b)    -> return $ ArrType l a b
@@ -461,6 +462,8 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
       stripLeadingDims n (TabType _ a) = stripLeadingDims (n-1) a
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i  -> return $ recGet r i
+  AtomicTabCon n ty xs -> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
+    where n' = IdxSetLit (length xs)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
     eq a a'
@@ -478,7 +481,7 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
   MemRef ty _ -> return ty
   Todo ty     -> return ty
-  _ -> throw CompilerErr $ "Unexpected primitive type: " ++ pprint con
+  _ -> error $ "Unexpected primitive type: " ++ pprint con
 
 binOpType :: ScalarBinOp -> (BaseType, BaseType, BaseType)
 binOpType op = case op of

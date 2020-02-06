@@ -100,20 +100,18 @@ check expr reqTy = case expr of
     let ts' = ts ++ vs
     constrainReq (instantiateTVs ts' body)
     return $ FVar (varName v :> ty) ts'
-  -- TODO: consider special-casing App for better error messages
-  -- (e.g. in `f x`, infer `f` then check `x` rather than checking `f` first)
   FPrimExpr prim -> do
-    (primTy, unc) <- solveLocal $ do
-       typed <- generateSubExprTypes prim
-       let types = fmapExpr typed snd snd snd
-       ansTy <- traversePrimExprType types
-                  (\t1 t2 -> constrainEq t1 t2 (pprint expr))
-                  (\_ _ -> return ())
-       constrainReq ansTy
-       return typed
+    primTy <- generateSubExprTypes prim
     -- TODO: don't ignore explicit annotations (via `snd`)
-    extend $ foldMap (\v -> (v:>())@>()) unc
-    liftM FPrimExpr $ traverseExpr primTy (uncurry checkAnn) (uncurry check) (uncurry checkLam)
+    let types = fmapExpr primTy snd snd snd
+    ansTy <- traversePrimExprType types
+               (\t1 t2 -> constrainEq t1 t2 (pprint expr))
+               (\_ _ -> return ())
+    let constrainArgs = liftM FPrimExpr $ traverseExpr primTy
+                          (uncurry checkAnn) (uncurry check) (uncurry checkLam)
+    if constrainTopDown prim
+      then constrainReq ansTy >> constrainArgs
+      else constrainArgs      <* constrainReq ansTy
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     constrainReq annTy
@@ -123,6 +121,12 @@ check expr reqTy = case expr of
     return $ SrcAnnot e' pos
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
+
+constrainTopDown :: PrimExpr e ty lam -> Bool
+constrainTopDown expr = case expr of
+  PrimConExpr (TabGet _ _) -> False
+  PrimOpExpr  _            -> False
+  PrimConExpr _            -> True
 
 checkLeaks :: [TVar] -> InferM a -> InferM a
 checkLeaks vs m = do

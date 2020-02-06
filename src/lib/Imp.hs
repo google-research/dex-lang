@@ -98,7 +98,7 @@ toImpScalarAtom atom = do
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
-  TabCon _ rows -> do
+  TabCon _ _ rows -> do
     rows' <- mapM toImpAtom rows
     void $ sequence [copyOrStoreIAtom (indexIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
