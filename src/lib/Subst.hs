@@ -7,8 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Scope, Subst, subst, SubstEnv, subArrayRef,
-              reduceAtom, nRecGet, nTabGet) where
+module Subst (Subst, subst, subArrayRef, reduceAtom, nRecGet, nTabGet) where
 
 import Foreign.Marshal.Array
 import Data.Foldable
@@ -19,11 +18,8 @@ import Syntax
 import PPrint
 import Fresh
 
-type Scope = Env ()
-type SubstEnv = (FullEnv Atom Type, Scope)
-
 class Subst a where
-  subst :: SubstEnv -> a -> a
+  subst :: (SubstEnv, Scope) -> a -> a
 
 instance (TraversableExpr expr, Subst ty, Subst e, Subst lam)
          => Subst (expr ty e lam) where
@@ -69,17 +65,17 @@ instance Subst LamExpr where
     where (b', env') = refreshBinder scope (subst env b)
           body' = subst (env <> env') body
 
-refreshDecl :: Env () -> Decl -> (Decl, SubstEnv)
+refreshDecl :: Env () -> Decl -> (Decl, (SubstEnv, Scope))
 refreshDecl scope decl = case decl of
   Let b bound -> (Let b' bound, env)
     where (b', env) = refreshBinder scope (subst env b)
 
-refreshBinder :: Env () -> Var -> (Var, SubstEnv)
+refreshBinder :: Env () -> Var -> (Var, (SubstEnv, Scope))
 refreshBinder scope b = (b', env')
   where b' = rename b scope
         env' = (b@>L (Var b'), b'@>())
 
-refreshTBinders :: Env () -> [TVar] -> ([TVar], SubstEnv)
+refreshTBinders :: Env () -> [TVar] -> ([TVar], (SubstEnv, Scope))
 refreshTBinders scope bs = (bs', env')
   where (bs', scope') = renames bs scope
         env' = (fold [b @> T (TypeVar b') | (b,b') <- zip bs bs'], scope')

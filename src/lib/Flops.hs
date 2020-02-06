@@ -23,8 +23,8 @@ newtype Profile = Profile (M.Map String Count)
 
 type FlopM a = ReaderT Term (Writer Profile) a
 
-moduleFlops :: ImpModule -> Profile
-moduleFlops (ImpModule _ prog _) = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
+moduleFlops :: ImpModBody -> Profile
+moduleFlops (ImpModBody _ prog _) = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
 
 flops :: ImpProg -> FlopM ()
 flops (ImpProg []) = return ()

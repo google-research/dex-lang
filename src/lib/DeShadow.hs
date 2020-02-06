@@ -25,14 +25,14 @@ type DeShadowEnv = (Env Name, Env Type)
 
 -- TODO: check top-level binders are all unique wrt imports and each other
 -- TODO: work through type aliases from incoming top env
-deShadowModule :: TopEnv -> FModule -> Except FModule
-deShadowModule env (FModule imports decls exports) = do
+deShadowModule :: SubstEnv -> FModule -> Except FModule
+deShadowModule env (Module ty (FModBody decls)) = do
   decls' <- runFreshRT (runReaderT (deShadowTopDecls decls) env') scope
-  return $ FModule imports decls' exports
+  return $ Module ty (FModBody decls')
   where env' = topEnvToDeshadowEnv env
         scope = fmap (const ()) env
 
-topEnvToDeshadowEnv :: TopEnv -> DeShadowEnv
+topEnvToDeshadowEnv :: SubstEnv -> DeShadowEnv
 topEnvToDeshadowEnv env = (termEnv, tyEnv)
   where
     env' = fmapNames (,) env

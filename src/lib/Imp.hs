@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Imp (toImpModule, checkImpModule, impExprToAtom, impExprType) where
+module Imp (toImpModule, impExprToAtom, impExprType) where
 
 import Control.Applicative
 import Control.Monad.Reader
@@ -34,12 +34,12 @@ data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
 
 toImpModule :: Module -> ImpModule
-toImpModule m = ImpModule vs prog result
+toImpModule (Module ty m) = Module ty (ImpModBody vs prog result)
   where ((vs, result), (_, prog)) =
-          runCat (runReaderT (toImpModule' m) mempty) mempty
+          runCat (runReaderT (toImpModBody m) mempty) mempty
 
-toImpModule' :: Module -> ImpM ([IVar], TopEnv)
-toImpModule' (Module _ decls result) = do
+toImpModBody :: ModBody -> ImpM ([IVar], SubstEnv)
+toImpModBody (ModBody decls result) = do
   let vs = resultVars result
   outAllocs <- mapM topAlloc vs
   let outTuple = PrimCon $ RecCon $ Tup $ map Var vs
@@ -50,7 +50,7 @@ toImpModule' (Module _ decls result) = do
   let flatAllocVars = concat $ map toList outAllocs
   return (flatAllocVars, subst (substEnv, mempty) result)
 
-resultVars :: TopEnv -> [Var]
+resultVars :: SubstEnv -> [Var]
 resultVars env = [v:>ty | (v, L ty) <- envPairs $ freeVars env]
 
 topAlloc :: Var -> ImpM (IAtomP IVar)
@@ -354,9 +354,12 @@ emitInstr instr = do
 
 type ImpCheckM a = CatT (Env IType) (Either Err) a
 
-checkImpModule :: ImpModule -> Except ()
-checkImpModule (ImpModule vs prog _) = void $ runCatT (checkProg prog) env
-  where env = foldMap (\v -> v@> varAnn v) vs
+instance IsModuleBody ImpModBody where
+  checkModuleBody _ (ImpModBody vs prog result) = do
+    let env = foldMap (\v -> v@> varAnn v) vs
+    ((), env') <- runCatT (checkProg prog) env
+    let tyEnv = fmap (L . impTypeToType) (env <> env')
+    checkModuleBody tyEnv (ModBody [] result)
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) =

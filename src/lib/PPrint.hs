@@ -278,22 +278,21 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> hardline <> p err
                                Right () -> mempty
 
-instance Pretty FModule where
-  pretty (FModule imports decls exports) = "imports:" <+> p imports
-                            <> hardline <> vsep (map p decls)
-                            <> hardline <> "exports:" <+> p exports
+instance Pretty body => Pretty (ModuleP body) where
+  pretty (Module (imports, exports) body) = "imports:" <+> p imports
+                             <> hardline <> p body
+                             <> hardline <> "exports:" <+> p exports
 
-instance Pretty Module where
-  pretty (Module imports decls result) = "imports:" <+> p imports
-                           <> hardline <> vsep (map p decls)
-                           <> hardline <> "exports:" <+> p result
 
-instance Pretty ModuleType where
-  pretty (ModuleType imports exports) = "imports:" <+> p imports
-                                    <+> "exports:" <+> p exports
+instance Pretty FModBody where
+  pretty (FModBody decls) = vsep (map p decls)
 
-instance Pretty ImpModule where
-  pretty (ImpModule vs prog result) =
+instance Pretty ModBody where
+  pretty (ModBody decls result) =
+    vsep (map p decls) <> hardline <> "result:" <+> p result
+
+instance Pretty ImpModBody where
+  pretty (ImpModBody vs prog result) =
     p vs <> hardline <> p prog <> hardline <> p result
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where

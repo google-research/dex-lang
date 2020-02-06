@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module TopLevel (evalBlock, Backend (..)) where
+module TopLevel (evalBlock, Backend (..), TopEnv) where
 
 import Control.Exception hiding (throw)
 import Control.Monad.Writer.Strict  hiding (pass)
@@ -28,6 +28,7 @@ import Util (highlightRegion)
 
 data Backend = Jit | Interp
 type TopPassM a = ExceptT Err (WriterT [Output] IO) a
+type TopEnv = SubstEnv
 type Pass a b = a -> TopPassM b
 
 -- TODO: handle errors due to upstream modules failing
@@ -76,26 +77,25 @@ evalModule env = inferTypes env >=> evalTyped env
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> Pass FModule Module
 inferTypes env m = ($ m) $
-      namedPass "deshadow"       (liftEither . deShadowModule env) (const (return ()))
-  >=> namedPass "type inference" (liftEither . inferModule    env) checkFModule
-  >=> namedPass "normalize"      (return     . normalizeModule   ) checkModule
+      namedPass "type"      (liftEither . (deShadowModule env  >=> inferModule env))
+  >=> namedPass "normalize" (return     . normalizeModule   )
 
 evalTyped :: TopEnv -> Pass Module TopEnv
 evalTyped env m = ($ m) $
-      namedPass "simplify" (return . simplifyPass env) checkModule
-  >=> namedPass "imp"      (return . toImpModule)      checkImpModule
-  >=> namedPass "jit"      (liftIO . evalModuleJIT)    (const (return ()))
+      namedPass "simplify" (return . simplifyModule env)
+  >=> namedPass "imp"      (return . toImpModule)
+  >=> namedPass "jit"      (liftIO . evalModuleJIT)
+  >=> (return . topEnvFromModule)
 
-namedPass :: (Pretty a, Pretty b)
-          => String -> Pass a b -> (b -> Except ()) -> Pass a b
-namedPass name pass check x = do
+namedPass :: (IsModule a, Pretty a, IsModule b, Pretty b)
+          => String -> Pass a b -> Pass a b
+namedPass name pass x = do
+  let passCtx  = name ++ " pass with input:\n" ++ pprint x
   (ans, s) <- withDebugCtx passCtx $ printedPass (pass x)
   tell [PassInfo name s]
-  withDebugCtx checkCtx $ liftEither $ check ans
+  let checkCtx = "Checking after " ++ name ++ " pass:\n" ++ pprint ans
+  withDebugCtx checkCtx $ liftEither $ checkModule ans
   return ans
-  where
-    passCtx  = name ++ " pass with input:\n" ++ pprint x
-    checkCtx = "Checking post-" ++ name ++ ":\n" ++ pprint x
 
 printedPass :: Pretty a => TopPassM a -> TopPassM (a, String)
 printedPass m = do
@@ -116,6 +116,9 @@ asTopPassM m = do
   (ans, outs) <- liftIO m
   tell outs
   liftEither ans
+
+topEnvFromModule :: Module -> TopEnv
+topEnvFromModule (Module _ (ModBody _ result)) = result
 
 withDebugCtx :: String -> TopPassM a -> TopPassM a
 withDebugCtx msg m = catchError (catchHardErrors m) $ \e -> throwError (addDebugCtx msg e)

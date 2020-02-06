@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Simplify (simplifyPass) where
+module Simplify (simplifyModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -24,25 +24,23 @@ import Subst
 import Embed
 import Record
 
-type SimpSubEnv = FullEnv Atom Type
 type DerivRuleEnv = Env Atom
-data SimpEnv = SimpEnv { subEnv   :: SimpSubEnv
+data SimpEnv = SimpEnv { subEnv   :: SubstEnv
                        , derivEnv :: DerivRuleEnv }
 
 type SimplifyM a = ReaderT SimpEnv Embed a
 
-simplifyPass :: TopEnv -> Module -> Module
-simplifyPass env m = Module mempty decls ans
+simplifyModule :: SubstEnv -> Module -> Module
+simplifyModule env (Module (_, exports) m) =
+  Module (mempty, exports) (ModBody decls ans')
   where
     env' = SimpEnv env mempty
-    (ans, (_, decls)) = runEmbed (runReaderT (simplifyModule m) env') mempty
+    (ans', (_, decls)) = runEmbed (runReaderT (simplifyModBody m) env') mempty
 
-simplifyModule :: Module -> SimplifyM TopEnv
-simplifyModule (Module _ decls result) = case decls of
-  [] -> substSimp result
-  (d:ds) -> do
-    env <- simplifyDecl d
-    extendR env $ simplifyModule $ Module mempty ds result
+simplifyModBody :: ModBody -> SimplifyM SubstEnv
+simplifyModBody (ModBody decls result) = do
+  env <- catFold simplifyDecl decls
+  extendR env $ substSimp result
 
 simplify :: Expr -> SimplifyM Atom
 simplify expr = case expr of
@@ -86,7 +84,7 @@ simplifyDecl decl = case decl of
     x <- simplifyCExpr bound
     return $ mempty {subEnv = b @> L x}
 
-extendSub :: SimpSubEnv -> SimplifyM a -> SimplifyM a
+extendSub :: SubstEnv -> SimplifyM a -> SimplifyM a
 extendSub env m = local (\r -> r { subEnv = subEnv r <> env }) m
 
 dropSub :: SimplifyM a -> SimplifyM a
@@ -122,7 +120,7 @@ linearize expr = case expr of
                     extendR tEnv fLin)
   Atom x -> linearizeAtom x
 
-linearizeDecl :: Decl -> SimplifyM (SimpSubEnv, TangentM (Env Atom))
+linearizeDecl :: Decl -> SimplifyM (SubstEnv, TangentM (Env Atom))
 linearizeDecl decl = case decl of
   Let b bound -> do
     b' <- substSimp b
@@ -196,7 +194,7 @@ isContinuous ty = case ty of
 
 type LinVars = Env Type
 type CotangentVals = MonMap Name [Atom]  -- TODO: consider folding as we go
-type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SimpSubEnv) Embed) a
+type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SubstEnv) Embed) a
 
 runTransposition :: Atom -> LamExpr -> SimplifyM Expr
 runTransposition ct (LamExpr b expr) = do

@@ -18,9 +18,10 @@ module Syntax (
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TopEnv,
+    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
     RuleAnn (..), DeclAnn (..), CmdName (..), Val,
-    Module (..), FModule (..), ImpModule (..), ModuleType (..),
+    ModuleP (..), ModuleType, Module, ModBody (..), Module,
+    FModBody (..), FModule, ImpModBody (..), ImpModule,
     FlatValP (..), ArrayP (..), FlatVal, FlatValRef, Array,
     ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
     ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -28,7 +29,7 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
-    fromL, fromT, FullEnv, Vars, unitTy, sourceBlockBoundVars,
+    fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind)
   where
@@ -81,6 +82,13 @@ type Lin = Type
 newtype Kind = Kind [ClassName]          deriving (Show, Eq, Generic)
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
+type TypeEnv  = FullEnv Type Kind
+type SubstEnv = FullEnv Atom Type
+type Scope = Env ()
+
+type ModuleType = (TypeEnv, TypeEnv)
+data ModuleP body = Module ModuleType body  deriving (Show, Eq)
+
 -- === front-end language AST ===
 
 data FExpr = FDecl FDecl FExpr
@@ -103,7 +111,9 @@ data FDecl = LetMono Pat FExpr
 type Var  = VarP Type
 data FTLam = FTLam [TVar] FExpr  deriving (Show, Eq, Generic)
 
-data FModule = FModule Vars [FDecl] Vars  deriving (Show, Eq, Generic)
+data FModBody = FModBody [FDecl]        deriving (Show, Eq, Generic)
+type FModule = ModuleP FModBody
+
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
 
@@ -127,9 +137,8 @@ data Atom = Var Var
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
-data Module = Module Vars [Decl] TopEnv  deriving (Show, Eq, Generic)
-
-data ModuleType = ModuleType (FullEnv Type Kind) (FullEnv Type Kind)  deriving (Show, Eq)
+data ModBody = ModBody [Decl] SubstEnv  deriving (Show, Eq, Generic)
+type Module = ModuleP ModBody
 
 -- === primitive constructors and operators ===
 
@@ -238,8 +247,6 @@ nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
 
 -- === top-level constructs ===
 
-type TopEnv = FullEnv Atom Type
-
 data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
@@ -262,10 +269,10 @@ data CmdName = GetType | ShowPasses | ShowPass String
                 deriving  (Show, Eq, Generic)
 
 declAsModule :: FDecl -> FModule
-declAsModule decl = FModule (freeVars decl)  [decl] (fDeclBoundVars decl)
+declAsModule decl = Module (freeVars decl, fDeclBoundVars decl) (FModBody [decl])
 
 exprAsModule :: FExpr -> (Var, FModule)
-exprAsModule expr = (v, FModule (freeVars expr) body (lbind v))
+exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body))
   where v = "*ans*" :> NoAnn
         body = [LetMono (RecLeaf v) expr]
 
@@ -296,7 +303,9 @@ data VecRef' = IntVecRef  (Ptr Int)
 
 -- === imperative IR ===
 
-data ImpModule = ImpModule [IVar] ImpProg TopEnv
+data ImpModBody = ImpModBody [IVar] ImpProg SubstEnv
+type ImpModule = ModuleP ImpModBody
+
 newtype ImpProg = ImpProg [ImpStatement]  deriving (Show, Semigroup, Monoid)
 type ImpStatement = (Maybe IVar, ImpInstr)
 
@@ -433,7 +442,7 @@ type FullEnv v t = Env (LorT v t)
 
 -- === substitutions ===
 
-type Vars = FullEnv Type Kind
+type Vars = TypeEnv
 
 lbind :: Var -> Vars
 lbind v@(_:>ty) = v @> L ty
@@ -461,7 +470,7 @@ fDeclBoundVars decl = case decl of
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
-  RunModule (FModule _ _ vs) -> vs
+  RunModule (Module (_,vs) _) -> vs
   LoadData p _ _           -> foldMap lbind p
   _                        -> mempty
 
@@ -510,7 +519,7 @@ instance (HasVars a, HasVars b) => HasVars (LorT a b) where
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    RunModule (FModule vs _ _) -> vs
+    RunModule (Module (vs, _) _) -> vs
     _ -> mempty
 
 instance HasVars Expr where

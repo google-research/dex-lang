@@ -22,21 +22,13 @@ import Embed
 import Subst
 import Record
 
-type NormEnv = TopEnv
-type NormM a = ReaderT NormEnv Embed a
+type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
-normalizeModule (FModule imports body _) = Module imports decls envOut
-  where (envOut, decls) = runNormM (normalizeTopDecls body) mempty
+normalizeModule (Module ty (FModBody decls)) = Module ty (ModBody decls' results)
+  where (results, decls') = runNormM (catFold normalizeDecl decls) mempty
 
-normalizeTopDecls :: [FDecl] -> NormM NormEnv
-normalizeTopDecls [] = return mempty
-normalizeTopDecls (decl:decls) = do
-  env  <- normalizeDecl decl
-  env' <- extendR env $ normalizeTopDecls decls
-  return (env <> env')
-
-runNormM :: NormM a -> NormEnv -> (a, [Decl])
+runNormM :: NormM a -> SubstEnv -> (a, [Decl])
 runNormM m env = (ans, decls)
   where (ans, (_, decls)) = runEmbed (runReaderT m env) mempty
 
@@ -82,13 +74,13 @@ normalizePat p = do
                             []       -> "_"
   return $ v':>ty
 
-bindPat :: Pat -> Atom -> NormM NormEnv
+bindPat :: Pat -> Atom -> NormM SubstEnv
 bindPat (RecLeaf v) x = return $ v @> L x
 bindPat (RecTree r) xs =
   liftM fold $ flip traverse (recNameVals r) $ \(i, p) -> do
     bindPat p $ nRecGet xs i
 
-normalizeDecl :: FDecl -> NormM NormEnv
+normalizeDecl :: FDecl -> NormM SubstEnv
 normalizeDecl decl = case decl of
   LetMono p bound -> do
     xs <- normalize bound  -- TODO: preserve names

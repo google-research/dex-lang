@@ -12,7 +12,7 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd, capture,
-            Cat, runCat, newCatT, catTraverse) where
+            Cat, runCat, newCatT, catTraverse, catFold) where
 
 -- Monad for tracking monoidal state
 
@@ -115,6 +115,10 @@ catTraverse :: (Monoid env, MonadReader env m, Traversable f)
 catTraverse f xs = do
   env <- ask
   runCatT (traverse (asCat f) xs) env
+
+catFold :: (Monoid env, MonadReader env m, Traversable f)
+        => (a -> m env) -> f a -> m env
+catFold f xs = liftM snd $ catTraverse (liftM ((,) ()) . f) xs
 
 asCat :: (Monoid env, MonadReader env m)
             => (a -> m (b, env)) -> a -> CatT env m b

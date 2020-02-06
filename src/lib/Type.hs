@@ -9,10 +9,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Type (
-    checkFModule, checkModule, getType, instantiateTVs, abstractTVs,
+    getType, instantiateTVs, abstractTVs, topEnvType,
     tangentBunType, listIntoRecord, flattenType, splitLinArgs, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy, isData, IsModule, moduleType, topEnvType) where
+    tupTy, pairTy, isData, checkModule, IsModule, IsModuleBody (..)) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -28,24 +28,50 @@ import PPrint
 import Cat
 import Util (traverseFun)
 
-data Spent = Spent (Env ()) Bool
-type TypeEnv = FullEnv Type Kind
-type FTypeM a = ReaderT TypeEnv (ReaderT SrcCtx (Either Err)) a
+type TypeM a = ReaderT TypeEnv (ReaderT SrcCtx (Either Err)) a
 
 class HasType a where
   getType :: a -> Type
 
+runTypeM :: TypeEnv -> TypeM a -> Except a
+runTypeM env m = runReaderT (runReaderT m env) Nothing
+
+-- === Module interfaces ===
+
+class IsModule a where
+  checkModule  :: a -> Except ()
+  moduleType   :: a -> ModuleType
+
+class IsModuleBody a where
+  checkModuleBody  :: TypeEnv -> a -> Except TypeEnv
+
+instance (IsModuleBody body) => IsModule (ModuleP body) where
+  checkModule (Module (imports, exports) body) = do
+    exports' <- checkModuleBody imports body
+    assertEq exports exports' "Module exports"
+  moduleType (Module ty _) = ty
+
+instance IsModuleBody FModBody where
+  checkModuleBody env (FModBody decls) =
+    runTypeM env $ catFold checkTypeFDecl decls
+
+instance IsModuleBody ModBody where
+  checkModuleBody env (ModBody decls result) = runTypeM env $ do
+    env' <- catFold checkDecl decls
+    extendR env' $ traverse checkTyOrKind result
+
+topEnvType :: SubstEnv -> TypeEnv
+topEnvType env = fmap getTyOrKind env
+
+checkTyOrKind :: LorT Atom Type -> TypeM (LorT Type Kind)
+checkTyOrKind (L x) = liftM L $ checkAtom x
+checkTyOrKind (T _) = return $ T $ Kind []
+
+getTyOrKind :: LorT Atom Type -> LorT Type Kind
+getTyOrKind (L x) = L $ getType x
+getTyOrKind (T _) = T $ Kind []
+
 -- === type-checking pass on FExpr ===
-
-checkFModule :: FModule -> Except ()
-checkFModule (FModule imports decls vs) =
-  runReaderT (runReaderT (checkFModuleBody decls vs) imports) Nothing
-
-checkFModuleBody :: [FDecl] -> Vars -> FTypeM ()
-checkFModuleBody decls vsOut = case decls of
-  []     -> return ()  -- TODO: check vars
-  (d:ds) -> do env <- checkTypeFDecl d
-               extendR env $ checkFModuleBody ds vsOut
 
 instance HasType FExpr where
   getType expr = case expr of
@@ -63,7 +89,7 @@ instance HasType (RecTree Var) where
 getFLamType :: FLamExpr -> (Type, Type)
 getFLamType (FLamExpr p body) = (getType p, getType body)
 
-checkTypeFExpr :: FExpr -> FTypeM Type
+checkTypeFExpr :: FExpr -> TypeM Type
 checkTypeFExpr expr = case expr of
   FVar v@(_:>annTy) ts -> do
     mapM_ checkTy ts
@@ -88,14 +114,14 @@ checkTypeFExpr expr = case expr of
     assertEq ty ty' "Type annotation"
     return ty'
 
-checkTypeFlam :: FLamExpr -> FTypeM (Type, Type)
+checkTypeFlam :: FLamExpr -> TypeM (Type, Type)
 checkTypeFlam (FLamExpr p body) = do
   checkTy pTy >> checkShadowPat p
   bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr body
   return (pTy, bodyTy)
   where pTy = getType p
 
-checkTypeFDecl :: FDecl -> FTypeM TypeEnv
+checkTypeFDecl :: FDecl -> TypeM TypeEnv
 checkTypeFDecl decl = case decl of
   LetMono p rhs -> do
     checkShadowPat p
@@ -108,41 +134,41 @@ checkTypeFDecl decl = case decl of
                       assertEq ty ty' "TLam"
     return $ b @> L ty
   FRuleDef ann ty tlam -> return mempty  -- TODO
-  TyDef v ty -> return mempty -- TODO
+  TyDef tv ty -> return $ tbind tv
 
 asForall :: Type -> ([Kind], Type)
 asForall (Forall ks body) = (ks, body)
 asForall ty = ([], ty)
 
-checkWithCtx :: FTypeM () -> FTypeM ()
+checkWithCtx :: TypeM () -> TypeM ()
 checkWithCtx m = do
   pos <- lift ask
   addSrcContext pos m
 
-addCtx :: SrcPos -> FTypeM a -> FTypeM a
+addCtx :: SrcPos -> TypeM a -> TypeM a
 addCtx pos m = mapReaderT (local (const (Just pos))) m
 
-checkTypeTLam :: FTLam -> FTypeM Type
+checkTypeTLam :: FTLam -> TypeM Type
 checkTypeTLam (FTLam tbs body) = do
   mapM_ checkShadow tbs
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
   ty <- extendR env (checkTypeFExpr body)
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
 
-checkTy :: Type -> FTypeM ()
+checkTy :: Type -> TypeM ()
 checkTy _ = return () -- TODO: check kind and unbound type vars
 
-checkShadow :: Pretty b => VarP b -> FTypeM ()
+checkShadow :: Pretty b => VarP b -> TypeM ()
 checkShadow v = checkWithCtx $ do
   env <- ask
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
-checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> FTypeM ()
+checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> TypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
-checkRuleDefType :: RuleAnn -> Type -> FTypeM ()
+checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ~ty@(Forall kinds body) <- asks $ fromL . (!(v:>()))
   (a, b) <- case body of
@@ -199,37 +225,18 @@ subAtDepth d f ty = case ty of
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
 
--- -- === Module interfaces ===
+-- === Built-in typeclasses ===
 
-class IsModule a where
-  moduleType :: a -> ModuleType
-
-instance IsModule FModule where
-  moduleType (FModule imports _ exports) = ModuleType imports exports
-
-instance IsModule Module where
-  moduleType (Module imports _ result) = ModuleType imports (topEnvType result)
-
-instance IsModule ImpModule where
-  moduleType (ImpModule _ _ result) = ModuleType mempty (topEnvType result)
-
-topEnvType :: TopEnv -> FullEnv Type Kind
-topEnvType env = flip fmap env $ \ann -> case ann of
-  L x -> L $ getType x
-  T _ -> T $ Kind []  -- TODO
-
--- -- === Built-in typeclasses ===
-
-checkClassConstraints :: Kind -> Type -> FTypeM ()
+checkClassConstraints :: Kind -> Type -> TypeM ()
 checkClassConstraints (Kind cs) ty =
   checkWithCtx $ mapM_ (flip checkClassConstraint ty) cs
 
-checkClassConstraint :: ClassName -> Type -> FTypeM ()
+checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
   env <- ask
   liftEither $ checkClassConstraint' env c ty
 
-getClasses :: Type -> FTypeM Kind
+getClasses :: Type -> TypeM Kind
 getClasses ty = do
   env <- ask
   return $ Kind $ filter (isInClass env) [VSpace, IdxSet, Data]
@@ -285,21 +292,6 @@ checkVarClass env c v = do
     _ -> throw CompilerErr $ "Lookup of kind failed:" ++ pprint v
 
 -- -- === Normalized IR ===
-
-type TypeM a = ReaderT TypeEnv (Either Err) a
-
-checkModule :: Module -> Except ()
-checkModule (Module imports decls result) =
-  runReaderT (checkModuleBody (decls, result)) imports
-
-checkModuleBody :: ([Decl], TopEnv) -> TypeM ()
-checkModuleBody (decls, result) = case decls of
-  [] -> void $ flip traverse result $ \val -> case val of
-          L x -> void $ checkAtom x
-          _ -> return ()
-  (d:ds) -> do
-    env <- checkDecl d
-    extendR env $ checkModuleBody (ds, result)
 
 instance HasType Expr where
   getType expr = case expr of
@@ -510,6 +502,8 @@ unOpType op = case op of
   _ -> error $ show op
 
 -- === utils for working with linearity ===
+
+data Spent = Spent (Env ()) Bool
 
 spend :: (MonadError Err m, MonadCat Spent m) => Spent -> m ()
 spend s = do

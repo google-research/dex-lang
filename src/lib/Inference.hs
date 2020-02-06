@@ -28,15 +28,14 @@ import Cat
 import Subst
 
 data Constraint = Constraint Type Type String SrcCtx
-type TypeEnv = FullEnv Type Kind
 type QVars = Env ()
 type UExpr = FExpr
 type InferM a = ReaderT (SrcCtx, TypeEnv) (
                   WriterT [Constraint]
                     (CatT QVars (Either Err))) a
 
-inferModule :: TopEnv -> FModule -> Except FModule
-inferModule topEnv (FModule imports body exports) = do
+inferModule :: SubstEnv -> FModule -> Except FModule
+inferModule topEnv (Module (imports, exports) (FModBody body)) = do
   let envIn = topEnvType topEnv
   (body', env') <- runInferM envIn (inferDecls body)
   let envOut = envIn <> env'
@@ -44,7 +43,7 @@ inferModule topEnv (FModule imports body exports) = do
   let exports' = exports `envIntersect` envOut
               <> flip envMapMaybe exports (\x -> case x of T k -> Just (T k)
                                                            _   -> Nothing)
-  return $ FModule imports' body' exports'
+  return $ Module (imports', exports') (FModBody body')
 
 runInferM :: TypeEnv -> InferM a -> Except a
 runInferM env m = do
