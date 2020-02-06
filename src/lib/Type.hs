@@ -29,36 +29,28 @@ import Cat
 import Util (traverseFun)
 
 data Spent = Spent (Env ()) Bool
-type FTypeEnv = FullEnv (Type, Spent) Kind
-
--- TODO: consider making linearity checking a separate pass?
-data TypeMCtx = TypeMCtx { srcCtx   :: SrcCtx
-                         , tyEnv    :: FTypeEnv }
-type FTypeM a = ReaderT TypeMCtx (CatT Spent (Either Err)) a
+type TypeEnv = FullEnv Type Kind
+type FTypeM a = ReaderT TypeEnv (ReaderT SrcCtx (Either Err)) a
 
 class HasType a where
   getType :: a -> Type
-
-runFTypeM :: TypeMCtx -> FTypeM a -> Except a
-runFTypeM env m = liftM fst $ runCatT (runReaderT m env) mempty
 
 -- === type-checking pass on FExpr ===
 
 checkFModule :: FModule -> Except ()
 checkFModule (FModule imports decls vs) =
-  runFTypeM (TypeMCtx Nothing env) (checkFModuleBody decls vs)
-  where env = flip fmap imports $ \x -> case x of L ty -> L (ty, mempty)
-                                                  T k  -> T k
+  runReaderT (runReaderT (checkFModuleBody decls vs) imports) Nothing
+
 checkFModuleBody :: [FDecl] -> Vars -> FTypeM ()
 checkFModuleBody decls vsOut = case decls of
   []     -> return ()  -- TODO: check vars
   (d:ds) -> do env <- checkTypeFDecl d
-               extendTyEnv env $ checkFModuleBody ds vsOut
+               extendR env $ checkFModuleBody ds vsOut
 
 instance HasType FExpr where
   getType expr = case expr of
     FDecl _ body -> getType body
-    FVar (v:>ty) _  -> ty
+    FVar (_:>ty) _ -> ty
     FPrimExpr e -> getPrimType e'
       where e' = fmapExpr e id getType getFLamType
     Annot e _    -> getType e
@@ -75,23 +67,22 @@ checkTypeFExpr :: FExpr -> FTypeM Type
 checkTypeFExpr expr = case expr of
   FVar v@(_:>annTy) ts -> do
     mapM_ checkTy ts
-    x <- asks $ flip envLookup v . tyEnv
+    x <- asks $ flip envLookup v
     case x of
-      Just (L (ty, s)) -> do
+      Just (L ty) -> do
         assertEq annTy ty "Var annotation"
         let (kinds, body) = asForall ty
         assertEq (length kinds) (length ts) "Number of type args"
-        checkWithCtx $ do spend s
-                          zipWithM_ checkClassConstraints kinds ts
+        checkWithCtx $ zipWithM_ checkClassConstraints kinds ts
         return $ instantiateTVs ts body
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
     env <- checkTypeFDecl decl
-    extendTyEnv env (checkTypeFExpr body)
+    extendR env (checkTypeFExpr body)
   FPrimExpr e -> do
     eTy <- traverseExpr e return checkTypeFExpr checkTypeFlam
     checkPrimType eTy
-  SrcAnnot e pos -> local (\r -> r {srcCtx = Just pos}) (checkTypeFExpr e)
+  SrcAnnot e pos -> addCtx pos (checkTypeFExpr e)
   Annot e ty     -> do
     ty' <- checkTypeFExpr e
     assertEq ty ty' "Type annotation"
@@ -100,29 +91,24 @@ checkTypeFExpr expr = case expr of
 checkTypeFlam :: FLamExpr -> FTypeM (Type, Type)
 checkTypeFlam (FLamExpr p body) = do
   checkTy pTy >> checkShadowPat p
-  bodyTy <- extendTyEnv (foldMap (asEnv mempty) p) $ checkTypeFExpr body
+  bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr body
   return (pTy, bodyTy)
   where pTy = getType p
 
-checkTypeFDecl :: FDecl -> FTypeM FTypeEnv
+checkTypeFDecl :: FDecl -> FTypeM TypeEnv
 checkTypeFDecl decl = case decl of
   LetMono p rhs -> do
     checkShadowPat p
-    ((), spent) <- scoped $ checkWithCtx $ do
-                       ty <- checkTypeFExpr rhs
-                       assertEq (getType p) ty "LetMono"
-    return (foldMap (asEnv spent) p)
+    checkWithCtx $ do ty <- checkTypeFExpr rhs
+                      assertEq (getType p) ty "LetMono"
+    return (foldMap lbind p)
   LetPoly b@(_:>ty) tlam -> do
     checkShadow b
-    ((), spent) <- scoped $ checkWithCtx $ do
-                       ty' <- checkTypeTLam tlam
-                       assertEq ty ty' "TLam"
-    return $ b @> L (ty, spent)
+    checkWithCtx $ do ty' <- checkTypeTLam tlam
+                      assertEq ty ty' "TLam"
+    return $ b @> L ty
   FRuleDef ann ty tlam -> return mempty  -- TODO
   TyDef v ty -> return mempty -- TODO
-
-extendTyEnv :: FTypeEnv -> FTypeM a -> FTypeM a
-extendTyEnv env m = local (\ctx -> ctx { tyEnv = tyEnv ctx <> env }) m
 
 asForall :: Type -> ([Kind], Type)
 asForall (Forall ks body) = (ks, body)
@@ -130,14 +116,17 @@ asForall ty = ([], ty)
 
 checkWithCtx :: FTypeM () -> FTypeM ()
 checkWithCtx m = do
-  pos <- asks srcCtx
+  pos <- lift ask
   addSrcContext pos m
+
+addCtx :: SrcPos -> FTypeM a -> FTypeM a
+addCtx pos m = mapReaderT (local (const (Just pos))) m
 
 checkTypeTLam :: FTLam -> FTypeM Type
 checkTypeTLam (FTLam tbs body) = do
   mapM_ checkShadow tbs
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
-  ty <- extendTyEnv env (checkTypeFExpr body)
+  ty <- extendR env (checkTypeFExpr body)
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
 
 checkTy :: Type -> FTypeM ()
@@ -145,7 +134,7 @@ checkTy _ = return () -- TODO: check kind and unbound type vars
 
 checkShadow :: Pretty b => VarP b -> FTypeM ()
 checkShadow v = checkWithCtx $ do
-  env <- asks tyEnv
+  env <- ask
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
@@ -153,12 +142,9 @@ checkShadow v = checkWithCtx $ do
 checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> FTypeM ()
 checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
-asEnv :: Spent -> Var -> FTypeEnv
-asEnv s (v:>ty) = (v:>()) @> L (ty, s)
-
 checkRuleDefType :: RuleAnn -> Type -> FTypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
-  ~ty@(Forall kinds body, _) <- asks $ fromL . (!(v:>())) . tyEnv
+  ~ty@(Forall kinds body) <- asks $ fromL . (!(v:>()))
   (a, b) <- case body of
               ArrType _ a b -> return (a, b)
               _ -> throw TypeErr $
@@ -240,24 +226,24 @@ checkClassConstraints (Kind cs) ty =
 
 checkClassConstraint :: ClassName -> Type -> FTypeM ()
 checkClassConstraint c ty = do
-  env <- asks tyEnv
+  env <- ask
   liftEither $ checkClassConstraint' env c ty
 
 getClasses :: Type -> FTypeM Kind
 getClasses ty = do
-  env <- asks tyEnv
+  env <- ask
   return $ Kind $ filter (isInClass env) [VSpace, IdxSet, Data]
   where
     isInClass env c = case checkClassConstraint' env c ty of Left  _ -> False
                                                              Right _ -> True
 
-checkClassConstraint' :: FTypeEnv -> ClassName -> Type -> Except ()
+checkClassConstraint' :: TypeEnv -> ClassName -> Type -> Except ()
 checkClassConstraint' env c ty = case c of
   VSpace -> checkVSpace env ty
   IdxSet -> checkIdxSet env ty
   Data   -> checkData   env ty
 
-checkVSpace :: FTypeEnv -> Type -> Except ()
+checkVSpace :: TypeEnv -> Type -> Except ()
 checkVSpace env ty = case ty of
   TypeVar v         -> checkVarClass env VSpace v
   BaseType RealType -> return ()
@@ -266,7 +252,7 @@ checkVSpace env ty = case ty of
   _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
   where recur = checkVSpace env
 
-checkIdxSet :: FTypeEnv -> Type -> Except ()
+checkIdxSet :: TypeEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
@@ -274,7 +260,7 @@ checkIdxSet env ty = case ty of
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
-checkData :: FTypeEnv -> Type -> Except ()
+checkData :: TypeEnv -> Type -> Except ()
 checkData env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v `catchError`
                     const (checkVarClass env Data v)
@@ -290,7 +276,7 @@ isData ty = case checkData mempty ty of Left _ -> False
                                         Right _ -> True
 
 -- TODO: check annotation too
-checkVarClass :: FTypeEnv -> ClassName -> TVar -> Except ()
+checkVarClass :: TypeEnv -> ClassName -> TVar -> Except ()
 checkVarClass env c v = do
   case envLookup env v of
     Just (T (Kind cs)) ->
@@ -300,15 +286,11 @@ checkVarClass env c v = do
 
 -- -- === Normalized IR ===
 
-type TypeEnv = FullEnv (Type, Spent) ()
-type TypeM a = ReaderT TypeEnv (CatT Spent (Either Err)) a
+type TypeM a = ReaderT TypeEnv (Either Err) a
 
 checkModule :: Module -> Except ()
 checkModule (Module imports decls result) =
-  liftM fst $ runCatT (runReaderT (checkModuleBody (decls, result)) env) mempty
-  where env = flip fmap imports $ \val -> case val of
-          L x -> L (x, mempty)
-          T _ -> T ()
+  runReaderT (checkModuleBody (decls, result)) imports
 
 checkModuleBody :: ([Decl], TopEnv) -> TypeM ()
 checkModuleBody (decls, result) = case decls of
@@ -359,13 +341,12 @@ checkAtom atom = case atom of
   Var v@(_:>ty) -> do
     x <- asks $ flip envLookup v
     case x of
-      Just (L (ty', s)) -> do
-        spend s
+      Just (L ty') -> do
         assertEq ty' ty "NVar annot"
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   TLam tvs body -> do
-    bodyTy <- extendR (foldMap (@> T ()) tvs) (checkExpr body)
+    bodyTy <- extendR (foldMap tbind tvs) (checkExpr body)
     return $ Forall (map varAnn tvs) (abstractTVs tvs bodyTy)
   PrimCon con -> do
     primType <- traverseExpr con return checkAtom checkLam
@@ -373,19 +354,19 @@ checkAtom atom = case atom of
 
 checkLam :: LamExpr -> TypeM (Type, Type)
 checkLam (LamExpr b@(_:>ty) body) = do
-  bodyTy <- extendR (b @> L (ty, mempty)) $ checkExpr body
+  bodyTy <- extendR (b @> L ty) $ checkExpr body
   return (ty, bodyTy)
 
 checkDecl :: Decl -> TypeM TypeEnv
 checkDecl decl = case decl of
   Let b expr -> do
     checkNBinder b
-    (t, s) <- scoped $ checkCExpr expr
+    t <- checkCExpr expr
     assertEq (varAnn b) t "Decl"
-    return $ binderEnv s b
+    return $ binderEnv b
 
-binderEnv :: Spent -> Var -> TypeEnv
-binderEnv s b@(_:>ty) = b @> L (ty, s)
+binderEnv :: Var -> TypeEnv
+binderEnv b@(_:>ty) = b @> L ty
 
 checkNTy :: Type -> TypeM ()
 checkNTy _ = return () -- TODO!
