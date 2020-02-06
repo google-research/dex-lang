@@ -58,7 +58,7 @@ simplifyAtom atom = case atom of
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _          -> substSimp atom
   PrimCon (Lam _ _) -> substSimp atom
-  PrimCon con -> liftM PrimCon $
+  PrimCon con -> liftM (reduceAtom . PrimCon) $
     traverseExpr con substSimp simplifyAtom simplifyLam
 
 -- Simplifies bodies of first-order functions only.

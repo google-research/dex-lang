@@ -50,8 +50,8 @@ instance Subst Atom where
 
 reduceAtom :: Atom -> Atom
 reduceAtom atom = case atom of
-  PrimCon (RecGet e i) -> nRecGet e i
-  PrimCon (TabGet e i) -> nTabGet e i
+  PrimCon (RecGet e i) -> nRecGet (reduceAtom e) i
+  PrimCon (TabGet e i) -> nTabGet (reduceAtom e) i
   _ -> atom
 
 nRecGet ::  Atom -> RecField -> Atom
