@@ -182,6 +182,10 @@ generateSubExprTypes (PrimConExpr op) = liftM PrimConExpr $ case op of
     n <- freshQ
     a <- freshQ
     return $ TabGet (xs, TabType n a) (i, n)
+  Seq lam -> do
+    m <- freshMonadType
+    n <- freshQ
+    return $ Seq (lam, (n, m))
   _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
 generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
   App f x -> do
@@ -196,11 +200,6 @@ generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
     a <- freshQ
     b <- freshQ
     return $ LensGet (x,a) (l, Lens a b)
-  Scan x lam -> do
-    n <- freshQ
-    c <- freshQ
-    y <- freshQ
-    return $ Scan (x,c) (lam,(pairTy n c, pairTy c y))
   _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
 
 doMSnd :: Monad m => m b -> a -> m (a, b)

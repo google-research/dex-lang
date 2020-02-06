@@ -77,9 +77,6 @@ simplifyCExpr expr = do
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
       dropSub $ extendSub env $ simplify body
-    -- TODO: remove this once we have monadic traversal instead of scan
-    For (LamExpr b body) ->
-      buildFor b $ \x -> extendSub (b @> L x) (simplify body)
     Select ty p x y -> selectAt ty p x y
     _ -> emit expr'
 

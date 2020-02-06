@@ -12,8 +12,7 @@ module Embed (emit, emitTo, withBinder, buildLam, buildTLam,
               runEmbed, flipIdx, zeroAt, addAt, sumAt, deShadow,
               emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, nUnitCon,
-              recGetFst, recGetSnd, buildFor, buildScan,
-              makeTup, fromTup, makePair, fromPair) where
+              recGetFst, recGetSnd, makeTup, fromTup, makePair, fromPair) where
 
 import Control.Monad
 import Data.Foldable (toList)
@@ -79,21 +78,6 @@ buildTLam bs f = do
       ans <- f (map TypeVar bs')
       return (ans, bs')
   return $ TLam bs' (wrapDecls decls ans)
-
-buildFor :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m Atom
-buildFor ib f = do
-  xb <- unitBinder
-  liftM recGetSnd $ buildScan ib xb nUnitCon $ \i _ ->
-    liftM (makePair nUnitCon) $ f i
-
-buildScan :: (MonadCat EmbedEnv m)
-           => Var -> Var -> Atom
-           -> (Atom -> Atom -> m Atom) -> m Atom
-buildScan (_:>n) (_:>cTy) xsInit f = do
-  ~(ans, b, (_, decls)) <- withBinder ("v":> pairTy n cTy) $ \ix -> do
-      let (i, xs) = fromPair ix
-      f i xs
-  emit $ Scan xsInit $ LamExpr b (wrapDecls decls ans)
 
 buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do
@@ -193,7 +177,9 @@ mapScalars :: MonadCat EmbedEnv m
 mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
-  TabType n a -> buildFor ("i":>n) $ \i -> mapScalars f a [nTabGet x i | x <- xs]
+  TabType n a -> do
+    lam <- buildLam ("i":>n) $ \i -> mapScalars f a [nTabGet x i | x <- xs]
+    emit $ For lam
   RecType r ->
     liftM (PrimCon . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
     where xs' = transposeRecord r $ map unpackRec xs
@@ -202,4 +188,3 @@ mapScalars f ty xs = case ty of
 transposeRecord :: Record b -> [Record a] -> Record [a]
 transposeRecord r [] = fmap (const []) r
 transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
-

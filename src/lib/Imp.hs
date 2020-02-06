@@ -98,27 +98,15 @@ toImpScalarAtom atom = do
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
-  Scan x (LamExpr b body) -> do
-    let (RecType (Tup [n, cTy])) = varAnn b
-    let (carryOutDests, mapDests) = fromPair dests
-    n' <- typeToSize n
-    xs' <- toImpAtom x
-    copyOrStoreIAtom carryOutDests xs'
-    withAllocs ("c":>cTy) $ \carryTmpDests -> do
-       (i', (_, loopBody)) <- scoped $ do
-           zipWithM_ copy (toList carryTmpDests) (toList carryOutDests)
-           carryTmpVals <- mapM loadIfScalar carryTmpDests
-           i' <- freshVar ("i":>intTy)
-           let iVar = IVar i'
-           extendR (b @> toPair (ILeaf iVar) carryTmpVals) $ do
-              let indexedDests = indexIAtom mapDests iVar
-              toImpExpr (toPair carryOutDests indexedDests) body
-           return i'
-       emitStatement (Nothing, Loop i' n' loopBody)
   TabCon _ rows -> do
     rows' <- mapM toImpAtom rows
     void $ sequence [copyOrStoreIAtom (indexIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
+  For (LamExpr b body) -> do
+    n' <- typeToSize (varAnn b)
+    emitLoop n' $ \i -> do
+      let ithDest = indexIAtom dests i
+      extendR (b @> ILeaf i) $ toImpExpr ithDest body
   MonadRun rArgs sArgs m -> do
     rArgs' <- toImpAtom rArgs
     sArgs' <- toImpAtom sArgs
@@ -149,7 +137,6 @@ toImpCExpr dests op = case op of
     n' <- typeToSize n
     copyOrStore dest n'
     where (ILeaf dest) = dests
-  Range n-> toImpScalarAtom n >>= store dest where (ILeaf dest) = dests
   ScalarUnOp IndexAsInt i -> toImpScalarAtom i >>= store dest
     where (ILeaf dest) = dests
   _ -> do
@@ -196,6 +183,11 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
   Return _ x -> do
     x' <- toImpAtom x
     copyOrStoreIAtom outDests x'
+  Seq (LamExpr b body) -> do
+    n' <- typeToSize (varAnn b)
+    emitLoop n' $ \i -> do
+      let ithDest = indexIAtom outDests i
+      extendR (b @> ILeaf i) $ toImpActionExpr mdests ithDest body
   MonadCon _ _ l m -> case m of
     MAsk -> do
       ans <- mapM (lensGet l) rVals
@@ -244,7 +236,6 @@ toImpArrayType ns ty = case ty of
   TabType a b -> do
     n  <- typeToSize a
     toImpArrayType (ns ++ [n]) b
-  -- TODO: fix this (only works for range)
   RecType r -> case ns of
     [] -> liftM (ICon . RecCon    ) $ traverse (toImpArrayType ns) r
     _  -> liftM (ICon . RecZip ns') $ traverse (toImpArrayType ns) r
@@ -338,6 +329,14 @@ freshVar v = do
   let v' = rename v scope
   extend $ asFst (v' @> ())
   return v'
+
+emitLoop :: IExpr -> (IExpr -> ImpM ()) -> ImpM ()
+emitLoop n body = do
+  (i, (_, loopBody)) <- scoped $ do
+    i <- freshVar ("i":>intTy)
+    body $ IVar i
+    return i
+  emitStatement (Nothing, Loop i n loopBody)
 
 emitStatement :: ImpStatement -> ImpM ()
 emitStatement statement = extend $ asSnd $ ImpProg [statement]
@@ -460,13 +459,6 @@ impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
 intTy :: IType
 intTy = IValType IntType
-
-fromPair :: IAtom -> (IAtom, IAtom)
-fromPair (ICon (RecCon (Tup [x, y]))) = (x, y)
-fromPair x = error $ "Not a pair: " ++ show x
-
-toPair :: IAtom -> IAtom -> IAtom
-toPair x y = ICon $ RecCon $ Tup [x, y]
 
 instance Functor IAtomP where
   fmap = fmapDefault

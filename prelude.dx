@@ -156,10 +156,71 @@ compose f g x = f (g x)
 slice :: A n m a . m=>a -> Int -> n=>a
 slice xs start = for i. xs.(asidx (asint i `iadd` start))
 
+'Lens primitive
+
+lensGet :: a -> Lens a b -> b
+lensGet x l = %lensGet(x, l)
+
+-- TODO: come up with some infix symbols for some of these
+idxAsLens :: A n::Ix a . n -> Lens (n=>a) a
+idxAsLens i = %idxAsLens(i)
+
+-- Composes left-to-right (unlike usual function composition)
+lensCompose :: Lens a b -> Lens b c -> Lens a c
+lensCompose l1 l2 = %lensCompose(l1, l2)
+
+lensId :: Lens a a
+lensId = %lensId()
+
+'Monadic primitives
+
+asks :: A r w::VS s a . Lens r a -> Monad r w s a
+asks l = %ask(l)
+
+ask :: A r w::VS s . Monad r w s r
+ask = asks lensId
+
+tells :: A r w::VS s a::VS . Lens w a -> a -> Monad r w s ()
+tells l x = %tell(l, x)
+
+tell :: A r w::VS s . w -> Monad r w s ()
+tell w = tells lensId w
+
+gets :: A r w::VS s a. Lens s a -> Monad r w s a
+gets l = %get(l)
+
+get :: A r w::VS s . Monad r w s s
+get = gets lensId
+
+puts :: A r w::VS s a . Lens s a -> a -> Monad r w s ()
+puts l x = %put(l, x)
+
+put :: A r w::VS s . s -> Monad r w s ()
+put s = puts lensId s
+
+run :: A r w::VS s a . r -> s -> Monad r w s a -> (a, w, s)
+run r s m = %run(r, s, m)
+
+return :: A r w::VS s a . a -> Monad r w s a
+return x = %return(x)
+
+bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
+bind m f = x <- m; f x
+
 'State-carrying loop constructs
 
+seq :: (n -> Monad r w s a) -> Monad r w s (n=>a)
+seq f = %seq(lam i. f i)
+
 scan :: A n::Ix a::Data b .  a -> (n->a->(a, b)) -> (a, n=>b)
-scan x0 fs = %scan(x0, lam (i,x). fs i x)
+scan x0 fs =
+  (ys, (), xOut) = run () x0 $ seq $
+    lam i.
+      c <- get
+      (c', y) = fs i c
+      _ <- put c'
+      return y
+  (xOut, ys)
 
 fold :: A n::Ix a::Data . a -> (n->a->a) -> a
 fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
@@ -169,7 +230,7 @@ scan' :: A n::Ix a::Data . a -> (n->a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 
 scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
-scanlin fs (c0, xs) = %scan(c0, lam (i,c). fs i (c, xs.i) )
+scanlin fs (c0, xs) = scan c0 lam i c. fs i (c, xs.i)
 
 foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
 foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
@@ -353,54 +414,3 @@ transpose x = for i j. x.j.i
 
 inner :: n=>Real -> n=>m=>Real -> m=>Real -> Real
 inner x m y = sum for (i,j). x.i * m.i.j * y.j
-
-'Lens primitive
-
-lensGet :: a -> Lens a b -> b
-lensGet x l = %lensGet(x, l)
-
--- TODO: come up with some infix symbols for some of these
-idxAsLens :: A n::Ix a . n -> Lens (n=>a) a
-idxAsLens i = %idxAsLens(i)
-
--- Composes left-to-right (unlike usual function composition)
-lensCompose :: Lens a b -> Lens b c -> Lens a c
-lensCompose l1 l2 = %lensCompose(l1, l2)
-
-lensId :: Lens a a
-lensId = %lensId()
-
-'Monadic primitives
-
-asks :: A r w::VS s a . Lens r a -> Monad r w s a
-asks l = %ask(l)
-
-ask :: A r w::VS s . Monad r w s r
-ask = asks lensId
-
-tells :: A r w::VS s a::VS . Lens w a -> a -> Monad r w s ()
-tells l x = %tell(l, x)
-
-tell :: A r w::VS s . w -> Monad r w s ()
-tell w = tells lensId w
-
-gets :: A r w::VS s a. Lens s a -> Monad r w s a
-gets l = %get(l)
-
-get :: A r w::VS s . Monad r w s s
-get = gets lensId
-
-puts :: A r w::VS s a . Lens s a -> a -> Monad r w s ()
-puts l x = %put(l, x)
-
-put :: A r w::VS s . s -> Monad r w s ()
-put s = puts lensId s
-
-run :: A r w::VS s a . r -> s -> Monad r w s a -> (a, w, s)
-run r s m = %run(r, s, m)
-
-return :: A r w::VS s a . a -> Monad r w s a
-return x = %return(x)
-
-bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
-bind m f = x <- m; f x

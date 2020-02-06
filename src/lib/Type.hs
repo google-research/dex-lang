@@ -449,8 +449,6 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
     return b
   TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
   For (n,a) -> return $ TabType n a
-  Scan c (RecType (Tup [i, c']), RecType (Tup [c'', y])) -> do
-    eq c c' >> eq c c'' >> return (pairTy c (TabType i y))
   TabCon ty xs   -> mapM_ (eq ty) xs >> return (IdxSetLit (length xs) ==> ty)
   ScalarBinOp binop t1 t2 -> do
     eq (BaseType t1') t1
@@ -504,6 +502,7 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
     IdxAsLens ty n -> return $ Lens (TabType n ty) ty
     LensId ty      -> return $ Lens ty ty
     LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
+  Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
   MemRef ty _ -> return ty
   Todo ty     -> return ty
   _ -> throw CompilerErr $ "Unexpected primitive type: " ++ pprint con

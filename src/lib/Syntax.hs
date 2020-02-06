@@ -150,6 +150,7 @@ data PrimCon ty e lam =
       | Return (EffectTypeP ty) e
       | Bind e lam
       | LensCon (LensCon ty e)
+      | Seq lam
       | MemRef ty ArrayRef
       | Todo ty
         deriving (Show, Eq, Generic)
@@ -167,13 +168,13 @@ data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
 data PrimOp ty e lam =
         App e e
       | TApp e [ty]
-      | For lam | Scan e lam
+      | For lam
       | TabCon ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
       | MonadRun e e e | LensGet e e
       | Linearize lam e | Transpose lam
-      | IntAsIndex ty e | IdxSetSize ty | Range e
+      | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
       | NewtypeCast ty e
         deriving (Show, Eq, Generic)
@@ -202,8 +203,6 @@ builtinNames = M.fromList
   , ("inttoreal", unOp IntToReal)
   , ("booltoint", unOp BoolToInt)
   , ("asint"    , unOp IndexAsInt)
-  , ("scan"            , PrimOpExpr $ Scan () ())
-  , ("range"           , PrimOpExpr $ Range ())
   , ("idxSetSize"      , PrimOpExpr $ IdxSetSize ())
   , ("linearize"       , PrimOpExpr $ Linearize () ())
   , ("linearTranspose" , PrimOpExpr $ Transpose ())
@@ -222,6 +221,7 @@ builtinNames = M.fromList
   , ("idxAsLens"  , PrimConExpr $ LensCon $ IdxAsLens () ())
   , ("lensCompose", PrimConExpr $ LensCon $ LensCompose () ())
   , ("lensId"     , PrimConExpr $ LensCon $ LensId ())
+  , ("seq"        , PrimConExpr $ Seq ())
   , ("todo"       , PrimConExpr $ Todo ())]
   where
     binOp op = PrimOpExpr $ ScalarBinOp op () ()
@@ -568,7 +568,6 @@ instance TraversableExpr PrimOp where
     App e1 e2            -> liftA2 App (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
-    Scan e lam           -> liftA2 Scan (fE e) (fL lam)
     TabCon ty xs         -> liftA2 TabCon (fT ty) (traverse fE xs)
     ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
     ScalarUnOp  op e     -> liftA  (ScalarUnOp  op) (fE e)
@@ -582,7 +581,6 @@ instance TraversableExpr PrimOp where
     Transpose lam        -> liftA  Transpose (fL lam)
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
-    Range e              -> liftA  Range (fE e)
     NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
       liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
@@ -610,6 +608,7 @@ instance TraversableExpr PrimCon where
       IdxAsLens ty e    -> liftA2 IdxAsLens (fT ty) (fE e)
       LensCompose e1 e2 -> liftA2 LensCompose (fE e1) (fE e2)
       LensId ty         -> liftA  LensId (fT ty)
+    Seq lam             -> liftA  Seq (fL lam)
     MemRef ty refs -> liftA2 MemRef (fT ty) (pure refs)
     Todo ty        -> liftA  Todo (fT ty)
 
