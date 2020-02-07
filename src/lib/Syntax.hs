@@ -397,8 +397,7 @@ modifyErr :: MonadError e m => m a -> (e -> e) -> m a
 modifyErr m f = catchError m $ \e -> throwError (f e)
 
 addContext :: MonadError Err m => String -> m a -> m a
-addContext s m = modifyErr m $ \(Err e p s') ->
-                                 Err e p (s' ++ "\ncontext:\n" ++ s)
+addContext s m = modifyErr m $ \(Err e p s') -> Err e p (s' ++ s)
 
 addSrcContext :: MonadError Err m => SrcCtx -> m a -> m a
 addSrcContext ctx m = modifyErr m updateErr
