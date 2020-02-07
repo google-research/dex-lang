@@ -149,12 +149,12 @@ data PrimExpr ty e lam = PrimOpExpr  (PrimOp ty e lam)
 data PrimCon ty e lam =
         Lit LitVal
       | Lam ty lam
-      | IdxLit Int Int
       | TabGet e e
       | RecGet e RecField
       | AtomicTabCon ty ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
       | RecZip [Int] (Record e)
+      | AsIdx Int [Int] e  -- TODO: something more general, when we need it
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
       | Bind e lam
@@ -597,7 +597,7 @@ instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
     Lit l          -> pure   (Lit l)
     Lam lin lam    -> liftA2 Lam (fT lin) (fL lam)
-    IdxLit n i     -> pure   (IdxLit n i)
+    AsIdx n s i    -> liftA (AsIdx n s) (fE i)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
     AtomicTabCon n ty xs -> liftA3 AtomicTabCon (fT n) (fT ty) (traverse fE xs)

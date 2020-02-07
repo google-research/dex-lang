@@ -441,13 +441,13 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 traversePrimExprType (PrimConExpr con) eq inClass = case con of
-  Lit l          -> return $ BaseType $ litType l
-  Lam l (a,b)    -> return $ ArrType l a b
-  IdxLit n i     -> do
-    throwIf (i < 0 || i >= n) TypeErr $ "Index out of bounds: "
-                                      ++ pprint i ++ " of " ++ pprint n
-    return $ IdxSetLit n
-  RecCon r       -> return $ RecType r
+  Lit l       -> return $ BaseType $ litType l
+  Lam l (a,b) -> return $ ArrType l a b
+  AsIdx n shape i -> do
+    eq (asTabType (BaseType IntType)) i
+    return $ asTabType (IdxSetLit n)
+    where asTabType x = foldr TabType x (map IdxSetLit shape)
+  RecCon r    -> return $ RecType r
   RecZip ns r -> do
     let r' = fmap (stripLeadingDims (length ns)) r
     return $ foldr TabType (RecType r') (map IdxSetLit ns)

@@ -343,8 +343,13 @@ lamLhsArgs = do
   args <- pat `sepBy` sc
   return $ \body -> foldr fLam body args
 
-idxLit :: Parser (PrimCon ty e lam)
-idxLit = liftM2 (flip IdxLit) (try $ uint <* symbol "@") uint
+idxLit :: Parser (PrimCon Type FExpr FLamExpr)
+idxLit = do
+  i <- try $ uint <* symbol "@"
+  n <- uint
+  failIf (i < 0 || i >= n) $ "Index out of bounds: "
+                                ++ pprint i ++ " of " ++ pprint n
+  return $ AsIdx n [] (FPrimExpr $ PrimConExpr $ Lit $ IntLit i)
 
 literal :: Parser LitVal
 literal =     numLit

@@ -56,8 +56,6 @@ writeVal (FlatVal (TabType _ a) refs) (PrimCon (AtomicTabCon _ _ xs)) =
   where
     writeRow :: Int -> Val -> IO ()
     writeRow i row = writeVal (FlatVal a (map (subArrayRef i) refs)) row
-writeVal (FlatVal (IdxSetLit _) [ref]) (PrimCon (IdxLit _ i)) =
-  storeArray ref $ scalarArray $ IntLit i
 writeVal fv val = error $ "Unexpected flatval/val: " ++ pprint (fv, show val)
 
 restructureVal :: FlatVal -> Val
@@ -66,8 +64,6 @@ restructureVal (FlatVal ty arrays) = case ty of
   RecType r -> PrimCon $ RecCon $ fst $ traverseFun restructureValPartial r arrays
   TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon (IdxSetLit n) a $
     [restructureVal $ FlatVal a $ map (subArray i) arrays | i <- [0..n-1]]
-  IdxSetLit n -> PrimCon $ IdxLit n i  where [array] = arrays
-                                             IntLit i = readScalar array
   _ -> error $ "Unexpected type: " ++ show ty
 
 restructureValPartial :: Type -> [Array] -> (Val, [Array])
@@ -153,11 +149,11 @@ newArrayRef ptr (b, shape) = Array shape $ case b of
 
 -- turns memrefs into atomic table constructors
 loadAtomVal :: Atom -> IO Atom
-loadAtomVal (PrimCon (MemRef ty ref)) = do
-  array <- loadArray ref
-  return $ restructureVal $ FlatVal ty [array]
-loadAtomVal (PrimCon con) = do
-  liftM PrimCon $ traverseExpr con return loadAtomVal return
+loadAtomVal (PrimCon con) = case con of
+  MemRef ty ref -> do
+    array <- loadArray ref
+    return $ restructureVal $ FlatVal ty [array]
+  _ -> liftM PrimCon $ traverseExpr con return loadAtomVal return
 loadAtomVal atom = error $ "Unexpected atom: " ++ pprint atom
 
 -- === binary format ===

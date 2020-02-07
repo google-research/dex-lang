@@ -56,7 +56,7 @@ nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
 nTabGet (PrimCon (RecZip _ r)) i = PrimCon $ RecCon $ fmap (flip nTabGet i) r
-nTabGet (PrimCon (MemRef (TabType _ ty) ref)) (PrimCon (IdxLit _ i)) =
+nTabGet (PrimCon (MemRef (TabType _ ty) ref)) (PrimCon (AsIdx _ _ (PrimCon (Lit (IntLit i))))) =
   PrimCon $ MemRef ty (subArrayRef i ref)
 nTabGet e i = PrimCon $ TabGet e i
 

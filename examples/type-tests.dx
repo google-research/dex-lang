@@ -240,6 +240,11 @@ f2 x = x + x
 > :t [1,2,3].(3@3)
 >             ^^^
 
+> Parse error:237:16:
+>     |
+> 237 | :t [1,2,3].(3@3)
+>     |                ^
+> Index out of bounds: 3 of 3
 :t [1,2,3].(3@4)
 > Type error:
 > Expected: 3

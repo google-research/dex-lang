@@ -81,7 +81,7 @@ toImpAtom atom = case atom of
       i' <- toImpScalarAtom i
       xs <- toImpAtom x
       traverse loadIfScalar $ indexIAtom xs i'
-    IdxLit _ i   -> return $ ILeaf (ILit (IntLit i))
+    AsIdx n shape i -> liftM (ICon . AsIdx n shape) (toImpAtom i)
     RecGet x i -> do
       x' <- toImpAtom x
       case x' of
@@ -93,8 +93,10 @@ toImpAtom atom = case atom of
 toImpScalarAtom :: Atom -> ImpM IExpr
 toImpScalarAtom atom = do
   atom' <- toImpAtom atom
-  case atom' of ILeaf x -> return x
-                _       -> error "Expected scalar"
+  return $ case atom' of
+    ILeaf x             -> x
+    ICon (AsIdx _ [] (ILeaf i)) -> i
+    _                   -> error "Expected scalar"
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
@@ -106,7 +108,7 @@ toImpCExpr dests op = case op of
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
       let ithDest = indexIAtom dests i
-      extendR (b @> ILeaf i) $ toImpExpr ithDest body
+      extendR (b @> asIdx n' i) $ toImpExpr ithDest body
   MonadRun rArgs sArgs m -> do
     rArgs' <- toImpAtom rArgs
     sArgs' <- toImpAtom sArgs
@@ -124,7 +126,7 @@ toImpCExpr dests op = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     store dest ans
-    where (ILeaf dest) = dests
+    where (ICon (AsIdx _ _ (ILeaf dest))) = dests
   Cmp cmpOp ty x y -> do
     x' <- toImpScalarAtom x
     y' <- toImpScalarAtom y
@@ -187,7 +189,7 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
       let ithDest = indexIAtom outDests i
-      extendR (b @> ILeaf i) $ toImpActionExpr mdests ithDest body
+      extendR (b @> asIdx n' i) $ toImpActionExpr mdests ithDest body
   MonadCon _ _ l m -> case m of
     MAsk -> do
       ans <- mapM (lensGet l) rVals
@@ -226,6 +228,7 @@ lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 indexIAtom :: IAtom -> IExpr -> IAtom
 indexIAtom x i = case x of
   ICon (RecZip _ r) -> ICon $ RecCon $ fmap (flip indexIAtom i) r
+  ICon (AsIdx n (_:shape) xs) -> ICon $ AsIdx n shape $ indexIAtom xs i
   ILeaf x' -> ILeaf $ IGet x' i
   _ -> error $ "Unexpected atom: " ++ show x
 
@@ -242,8 +245,7 @@ toImpArrayType ns ty = case ty of
     where
       ns' = map fromIntLit ns
       fromIntLit (ILit (IntLit n)) = n
-  TypeVar _   -> return $ ILeaf (IntType, ns)
-  IdxSetLit _ -> return $ ILeaf (IntType, ns)
+  IdxSetLit n -> return $ ICon $ AsIdx n (map fromIInt ns) $ ILeaf (IntType, ns)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 impExprToAtom :: IExpr -> Atom
@@ -337,6 +339,12 @@ emitLoop n body = do
     body $ IVar i
     return i
   emitStatement (Nothing, Loop i n loopBody)
+
+asIdx :: IExpr -> IExpr -> IAtom
+asIdx n i = ICon $ AsIdx (fromIInt n) [] (ILeaf i)
+
+fromIInt :: IExpr -> Int
+fromIInt (ILit (IntLit x)) = x
 
 emitStatement :: ImpStatement -> ImpM ()
 emitStatement statement = extend $ asSnd $ ImpProg [statement]
