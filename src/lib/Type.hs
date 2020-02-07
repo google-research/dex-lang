@@ -28,13 +28,13 @@ import PPrint
 import Cat
 import Util (traverseFun)
 
-type TypeM a = ReaderT TypeEnv (ReaderT SrcCtx (Either Err)) a
+type TypeM a = ReaderT TypeEnv (Either Err) a
 
 class HasType a where
   getType :: a -> Type
 
 runTypeM :: TypeEnv -> TypeM a -> Except a
-runTypeM env m = runReaderT (runReaderT m env) Nothing
+runTypeM env m = runReaderT m env
 
 -- === Module interfaces ===
 
@@ -99,7 +99,7 @@ checkTypeFExpr expr = case expr of
         assertEq annTy ty "Var annotation"
         let (kinds, body) = asForall ty
         assertEq (length kinds) (length ts) "Number of type args"
-        checkWithCtx $ zipWithM_ checkClassConstraints kinds ts
+        zipWithM_ checkClassConstraints kinds ts
         return $ instantiateTVs ts body
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
@@ -108,7 +108,7 @@ checkTypeFExpr expr = case expr of
   FPrimExpr e -> do
     eTy <- traverseExpr e return checkTypeFExpr checkTypeFlam
     checkPrimType eTy
-  SrcAnnot e pos -> addCtx pos (checkTypeFExpr e)
+  SrcAnnot e pos -> addSrcContext (Just pos) $ checkTypeFExpr e
   Annot e ty     -> do
     ty' <- checkTypeFExpr e
     assertEq ty ty' "Type annotation"
@@ -125,13 +125,13 @@ checkTypeFDecl :: FDecl -> TypeM TypeEnv
 checkTypeFDecl decl = case decl of
   LetMono p rhs -> do
     checkShadowPat p
-    checkWithCtx $ do ty <- checkTypeFExpr rhs
-                      assertEq (getType p) ty "LetMono"
+    ty <- checkTypeFExpr rhs
+    assertEq (getType p) ty "LetMono"
     return (foldMap lbind p)
   LetPoly b@(_:>ty) tlam -> do
     checkShadow b
-    checkWithCtx $ do ty' <- checkTypeTLam tlam
-                      assertEq ty ty' "TLam"
+    ty' <- checkTypeTLam tlam
+    assertEq ty ty' "TLam"
     return $ b @> L ty
   FRuleDef ann ty tlam -> return mempty  -- TODO
   TyDef tv ty -> return $ tbind tv
@@ -139,14 +139,6 @@ checkTypeFDecl decl = case decl of
 asForall :: Type -> ([Kind], Type)
 asForall (Forall ks body) = (ks, body)
 asForall ty = ([], ty)
-
-checkWithCtx :: TypeM () -> TypeM ()
-checkWithCtx m = do
-  pos <- lift ask
-  addSrcContext pos m
-
-addCtx :: SrcPos -> TypeM a -> TypeM a
-addCtx pos m = mapReaderT (local (const (Just pos))) m
 
 checkTypeTLam :: FTLam -> TypeM Type
 checkTypeTLam (FTLam tbs body) = do
@@ -159,7 +151,7 @@ checkTy :: Type -> TypeM ()
 checkTy _ = return () -- TODO: check kind and unbound type vars
 
 checkShadow :: Pretty b => VarP b -> TypeM ()
-checkShadow v = checkWithCtx $ do
+checkShadow v = do
   env <- ask
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
@@ -228,8 +220,7 @@ subAtDepth d f ty = case ty of
 -- === Built-in typeclasses ===
 
 checkClassConstraints :: Kind -> Type -> TypeM ()
-checkClassConstraints (Kind cs) ty =
-  checkWithCtx $ mapM_ (flip checkClassConstraint ty) cs
+checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
@@ -402,14 +393,13 @@ getPrimType e = ignoreExcept $ traversePrimExprType e ignoreConstraint ignoreCla
   where ignoreConstraint _ _ = return ()
         ignoreClass      _ _ = return ()
 
-checkPrimType :: MonadError Err m => PrimExprType -> m Type
-checkPrimType e = traversePrimExprType e checkConstraint checkClass
+checkPrimType :: PrimExprType -> TypeM Type
+checkPrimType e = traversePrimExprType e checkConstraint (flip checkClassConstraint)
   where
-    checkConstraint :: MonadError Err m => Type -> Type -> m ()
+    checkConstraint :: Type -> Type -> TypeM ()
     checkConstraint ty1 ty2 | ty1 == ty2 = return ()
-
-    checkClass :: MonadError Err m => Type -> ClassName -> m ()
-    checkClass _ _ = return () -- TODO
+                            | otherwise  = throw TypeErr $
+                                pprint ty1 ++ " != " ++ pprint ty2
 
 traversePrimExprType :: MonadError Err m
                      => PrimExprType
@@ -421,8 +411,9 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
     eq a a'
     return b
   TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
-  For (n,a) -> return $ TabType n a
-  TabCon n ty xs -> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
+  For (n,a) -> inClass n IdxSet >> inClass a Data >> return (TabType n a)
+  TabCon n ty xs ->
+    inClass ty Data >> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
     where n' = IdxSetLit (length xs)
   ScalarBinOp binop t1 t2 -> do
     eq (BaseType t1') t1
@@ -434,8 +425,8 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   ScalarUnOp unop ty -> eq (BaseType ty') ty >> return (BaseType outTy)
     where (ty', outTy) = unOpType unop
   -- TODO: check vspace constraints
-  VSpaceOp ty VZero        -> return ty
-  VSpaceOp ty (VAdd e1 e2) -> eq ty e1 >> eq ty e2 >> return ty
+  VSpaceOp ty VZero        -> inClass ty VSpace >> return ty
+  VSpaceOp ty (VAdd e1 e2) -> inClass ty VSpace >> eq ty e1 >> eq ty e2 >> return ty
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (BaseType BoolType)
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return ty
   MonadRun r s (Monad (Effect r' w s') a) -> do
@@ -452,7 +443,10 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
 traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lit l          -> return $ BaseType $ litType l
   Lam l (a,b)    -> return $ ArrType l a b
-  IdxLit n _     -> return $ IdxSetLit n
+  IdxLit n i     -> do
+    throwIf (i < 0 || i >= n) TypeErr $ "Index out of bounds: "
+                                      ++ pprint i ++ " of " ++ pprint n
+    return $ IdxSetLit n
   RecCon r       -> return $ RecType r
   RecZip ns r -> do
     let r' = fmap (stripLeadingDims (length ns)) r

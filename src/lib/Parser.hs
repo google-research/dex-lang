@@ -89,7 +89,7 @@ sourceBlock' =
   <|> dumpData
   <|> explicitCommand
   <|> (liftM (RunModule . declAsModule) topDecl)
-  <|> liftM (Command (EvalExpr Printed) . exprAsModule) expr
+  <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
 
 loadData :: Parser SourceBlock'
 loadData = do
@@ -492,7 +492,8 @@ sigmaType = do
                 -- TODO: lexcial order!
                 where vs = filter nameIsLower $ envNames (freeVars ty)
               Just tbs' -> tbs'
-  let tbs' = map (addIdxSetVars (idxSetVars ty)) tbs
+  let tbs' = map (  addClassVars Data   (dataVars   ty)
+                  . addClassVars IdxSet (idxSetVars ty)) tbs
   return (tbs', ty)
   where
     nameIsLower v = isLower (tagToStr (nameTag v) !! 0)
@@ -514,9 +515,9 @@ className = do
     "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
-addIdxSetVars :: [Name] -> TVar -> TVar
-addIdxSetVars vs b@(v:>(Kind cs))
-  | v `elem` vs && not (IdxSet `elem` cs) = v:>(Kind (IdxSet:cs))
+addClassVars :: ClassName -> [Name] -> TVar -> TVar
+addClassVars c vs b@(v:>(Kind cs))
+  | v `elem` vs && not (c `elem` cs) = v:>(Kind (c:cs))
   | otherwise = b
 
 idxSetVars :: Type -> [Name]
@@ -526,6 +527,14 @@ idxSetVars ty = case ty of
   RecType r     -> foldMap recur r
   _             -> []
   where recur = idxSetVars
+
+dataVars :: Type -> [Name]
+dataVars ty = case ty of
+  ArrType _ a b -> recur a <> recur b
+  TabType _ b   -> envNames (freeVars b)
+  RecType r     -> foldMap recur r
+  _             -> []
+  where recur = dataVars
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName

@@ -375,10 +375,6 @@ checkDerivBase f x =
 checkDeriv :: (Real -> Real) -> Real -> Bool
 checkDeriv f x = checkDerivBase f x && checkDerivBase (deriv f) x
 
-forUnzip :: n=>(b, a -> b) -> (n=>b, a -> n=>b)
-forUnzip xfs = (xs, fs) = unzip xfs
-               (xs, lam t. for i. fs.i t)
-
 sin#lin :: Real -> (Real, Real --o Real)
 sin#lin x = (sin x, lam t. t * cos x)
 

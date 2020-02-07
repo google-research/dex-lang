@@ -1,79 +1,63 @@
 :t lam x. x
 > Type error:Ambiguous type variables: [?_2]
 >
-> ((?_2 -> ?_2), (lam x::?_2 . x))
+> ([*ans*::? = (lam x::?_3 . x)], (*ans* @> L ?))
 
 :t lam x. sum for i. x.i
-> Type error:Ambiguous type variables: [?_11]
+> Type error:Ambiguous type variables: [?_6]
 >
-> ( ((?_11=>Real) -> Real)
-> , (lam x::(?_11=>Real) .
->    (sum @?_11 (for  i::?_11 .
->        x.i))) )
+> ([*ans*::? = (lam x::?_3 . sum @?_6 for i::?_9 . x.(i))], (*ans* @> L ?))
 
 :t lam f x y. f y x
-> Type error:Ambiguous type variables: [?_6, ?_9, ?_11]
+> Type error:Ambiguous type variables: [?_8, ?_10, ?_12]
 >
-> ( ((?_9 -> (?_11 -> ?_6)) -> (?_11 -> (?_9 -> ?_6)))
-> , (lam f::(?_9 -> (?_11 -> ?_6)) . (lam x::?_11 . (lam y::?_9 . ((f y) x)))) )
+> ( [*ans*::? = (lam f::?_3 . (lam x::?_6 . (lam y::?_9 . f y x)))]
+> , (*ans* @> L ?) )
 
 :t lam x. for i j. x.j.i
-> Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
+> Type error:Ambiguous type variables: [?_8, ?_10, ?_12]
 >
-> ( ((?_11=>(?_13=>?_7)) -> (?_13=>(?_11=>?_7)))
-> , (lam x::(?_11=>(?_13=>?_7)) .
->    (for  i::?_13 .
->        (for  j::?_11 .
->            x.j.i))) )
+> ( [*ans*::? = (lam x::?_3 . for i::?_6 . for j::?_9 . x.(j).(i))]
+> , (*ans* @> L ?) )
 
 :t lam f x. f x
-> Type error:Ambiguous type variables: [?_4, ?_6]
+> Type error:Ambiguous type variables: [?_5, ?_7]
 >
-> (((?_6 -> ?_4) -> (?_6 -> ?_4)), (lam f::(?_6 -> ?_4) . (lam x::?_6 . (f x))))
+> ([*ans*::? = (lam f::?_3 . (lam x::?_6 . f x))], (*ans* @> L ?))
 
 :t myid :: a -> a
    myid x = x
    myid (myid) (myid 1)
 > Int
 
-:t _, N = unpack range 10
-   x = (iota)::(N=>Int)
+:t x = (iota)::(10=>Int)
    isum x
 > Int
 
-:t _, Nx = unpack range 10
-   _, Ny = unpack range 3
-   x = iota @ Nx
-   y = (iota)::(Ny=>Int)
+:t x = iota @ 10
+   y = (iota)::(3=>Int)
    real (isum for i. x.i) + real (isum for j. y.j)
 > Real
 
-:t _, Nx = unpack range 10
-   _, Ny = unpack range 3
-   x = iota @ Nx
-   y = (iota) :: (Ny=>Int)
+:t x = iota @ 10
+   y = (iota) :: (3=>Int)
    sum for i. iadd x.i y.i
 > Type error:
-> Expected: Ny
->   Actual: Nx
+> Expected: 3
+>   Actual: 10
 > In: i
 >
 >    sum for i. iadd x.i y.i
 >                          ^
 
-:t _, Nx = unpack range 10
-   (iota)::(Nx=>Int)
-> Type error:
-> Leaked type variable: Nx
-
-_, Narr = unpack range 10
+type Narr = 10
 
 arr = iota @ Narr
 
 xr = map real arr
 
 :t arr
-> (Narr=>Int)
+> (10=>Int)
 
 :t (lam (x, y). x + y) (1.0, 2.0)
 > Real
@@ -105,12 +89,12 @@ xr = map real arr
 :t []
 > Type error:Ambiguous type variables: [?_2]
 >
-> ((0=>?_2), [])
+> ([*ans*::? = []], (*ans* @> L ?))
 
 :t [1, [2]]
 > Type error:
 > Expected: Int
->   Actual: (?_3=>?_4)
+>   Actual: (1=>Int)
 > In: [2]
 >
 > :t [1, [2]]
@@ -144,20 +128,9 @@ p2 = 1
 >      ^
 
 :t lam x. for (i,j). x.i.j
-> Type error:Ambiguous type variables: [?_4, ?_9, ?_11]
+> Type error:Ambiguous type variables: [?_5, ?_8, ?_10]
 >
-> ( ((?_9=>(?_11=>?_4)) -> ((?_9, ?_11)=>?_4))
-> , (lam x::(?_9=>(?_11=>?_4)) .
->    (for  (i::?_9, j::?_11) .
->        x.i.j)) )
-
-_, M = unpack range 5
-
-
-:t for i::M. _, N = unpack range (asint i)
-             x = for j::N. asint j
-             pack x, N, E n. n=>Int
-> (M=>(Ea.(a=>Int)))
+> ([*ans*::? = (lam x::?_3 . for (i::?_6, j::?_7) . x.(i).(j))], (*ans* @> L ?))
 
 idfun :: a -> a
 idfun x = x
@@ -166,11 +139,13 @@ idfun x = x
 > (Real -> Real)
 
 :t lam x. f :: a -> a; f y = x; ()
-> Type error:
-> Leaked type variable: a
+> Type error:Leaked type variable: a
+>
+> :t lam x. f :: a -> a; f y = x; ()
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-:t (todo)::(Int -> Real) 1
-> Real
+-- :t (todo)::(Int -> Real) 1
+-- > Real
 
 f :: Int -> Real
 f x =
@@ -188,7 +163,7 @@ f x =
 > Error: variable not in scope: type variable "x" (a term variable of the same name is in scope)
 
 :p lam x::Real. x
-> Type error: Can't print values of type: (Real -> Real)
+> (lam x::Real . x)
 
 vspaceid :: A a::VS. a -> a
 vspaceid x = x
@@ -253,14 +228,17 @@ f2 x = x + x
 > :t select True f1 f2
 >    ^^^^^^^
 
-:t fold f1 for i::3. lam g. (lam x. g (g x))
+:t fold f1 lam i::3 g. (lam x. g (g x))
 > Type error: Not serializable data: (Real -> Real)
 >
-> :t fold f1 for i::3. lam g. (lam x. g (g x))
+> :t fold f1 lam i::3 g. (lam x. g (g x))
 >    ^^^^^
 
 :t [1,2,3].(3@3)
 > Type error:Index out of bounds: 3 of 3
+>
+> :t [1,2,3].(3@3)
+>             ^^^
 
 :t [1,2,3].(3@4)
 > Type error:
