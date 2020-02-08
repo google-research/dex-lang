@@ -20,10 +20,9 @@ module Syntax (
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
     RuleAnn (..), DeclAnn (..), CmdName (..), Val,
-    ModuleP (..), ModuleType, Module, ModBody (..), Module,
+    ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
-    FlatValP (..), ArrayP (..), FlatVal, FlatValRef, Array,
-    ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
+    ArrayP (..), Array, ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
     ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -139,6 +138,7 @@ data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
 data ModBody = ModBody [Decl] SubstEnv  deriving (Show, Eq, Generic)
 type Module = ModuleP ModBody
+type Val = Atom
 
 -- === primitive constructors and operators ===
 
@@ -151,7 +151,6 @@ data PrimCon ty e lam =
       | Lam ty lam
       | TabGet e e
       | RecGet e RecField
-      | AtomicTabCon ty ty [e] -- Only used for printing. May remove it.
       | RecCon (Record e)
       | RecZip [Int] (Record e)
       | AsIdx Int [Int] e  -- TODO: something more general, when we need it
@@ -160,7 +159,8 @@ data PrimCon ty e lam =
       | Bind e lam
       | LensCon (LensCon ty e)
       | Seq lam
-      | MemRef ty ArrayRef
+      | ArrayRef ty ArrayRef
+      | ArrayVal ty Array
       | Todo ty
         deriving (Show, Eq, Generic)
 
@@ -278,14 +278,8 @@ exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body))
 
 -- === runtime data representations ===
 
-type Val = Atom
-
 -- TODO: use Data.Vector instead of lists
-data FlatValP a = FlatVal Type [ArrayP a]  deriving (Show, Eq, Generic)
-data ArrayP a = Array [Int] a     deriving (Show, Eq, Generic)
-
-type FlatVal    = FlatValP Vec
-type FlatValRef = FlatValP VecRef
+data ArrayP a = Array [Int] a  deriving (Show, Eq, Generic)
 
 type Array    = ArrayP Vec
 type ArrayRef = ArrayP VecRef
@@ -293,13 +287,13 @@ type ArrayRef = ArrayP VecRef
 data Vec = IntVec  [Int]
          | RealVec [Double]
          | BoolVec [Int]
-            deriving (Show, Eq, Generic)
+           deriving (Show, Eq, Generic)
 
 type VecRef = (Int, VecRef')
 data VecRef' = IntVecRef  (Ptr Int)
              | RealVecRef (Ptr Double)
              | BoolVecRef (Ptr Int)
-                deriving (Show, Eq, Generic)
+               deriving (Show, Eq, Generic)
 
 -- === imperative IR ===
 
@@ -406,8 +400,10 @@ addSrcContext ctx m = modifyErr m updateErr
     updateErr (Err e ctx' s) = case ctx' of Nothing -> Err e ctx  s
                                             Just _  -> Err e ctx' s
 
-catchIOExcept :: IO a -> IO (Except a)
-catchIOExcept m = catch (liftM Right m) $ \e -> return (Left (e::Err))
+catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
+catchIOExcept m = do
+  ans <- liftIO $ catch (liftM Right m) $ \e -> return (Left (e::Err))
+  liftEither ans
 
 -- === misc ===
 
@@ -600,7 +596,6 @@ instance TraversableExpr PrimCon where
     AsIdx n s i    -> liftA (AsIdx n s) (fE i)
     TabGet e i     -> liftA2 TabGet (fE e) (fE i)
     RecGet e i     -> liftA2 RecGet (fE e) (pure i)
-    AtomicTabCon n ty xs -> liftA3 AtomicTabCon (fT n) (fT ty) (traverse fE xs)
     RecCon r       -> liftA  RecCon (traverse fE r)
     -- TODO: consider merging this with `RecCon` (the empty `tys` case)
     -- TOOD: types instead of ints
@@ -617,8 +612,9 @@ instance TraversableExpr PrimCon where
       LensCompose e1 e2 -> liftA2 LensCompose (fE e1) (fE e2)
       LensId ty         -> liftA  LensId (fT ty)
     Seq lam             -> liftA  Seq (fL lam)
-    MemRef ty refs -> liftA2 MemRef (fT ty) (pure refs)
-    Todo ty        -> liftA  Todo (fT ty)
+    Todo ty             -> liftA  Todo (fT ty)
+    ArrayRef ty refs -> liftA2 ArrayRef (fT ty) (pure refs)
+    ArrayVal ty refs -> liftA2 ArrayVal (fT ty) (pure refs)
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where

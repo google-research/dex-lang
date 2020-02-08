@@ -456,8 +456,6 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
       stripLeadingDims n (TabType _ a) = stripLeadingDims (n-1) a
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i  -> return $ recGet r i
-  AtomicTabCon n ty xs -> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
-    where n' = IdxSetLit (length xs)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
     eq a a'
@@ -473,7 +471,8 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
     LensId ty      -> return $ Lens ty ty
     LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
-  MemRef ty _ -> return ty
+  ArrayRef ty _ -> return ty
+  ArrayVal ty _ -> return ty
   Todo ty     -> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 

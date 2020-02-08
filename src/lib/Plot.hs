@@ -27,23 +27,23 @@ import Syntax
 
 data Scale = LinearScale Double Double
 
-scatterHtml :: FlatVal -> H.Html
+scatterHtml :: Val -> H.Html
 scatterHtml = undefined
 
 -- scatterHtml (FlatVal _ arrays) = diagramToHtml $
 --   position [(p2 (scaleToPlot xsc x, scaleToPlot ysc y), spot)
 --            | (x,y) <- zip xs ys]
 --   where
---     [Array _ (RealVec xs), Array _ (RealVec ys)] = arrays
+--     [Array _ (RealVecVal xs), Array _ (RealVec ys)] = arrays
 --     spot = circle 0.005 # fc blue # lw 0
 --     xsc = LinearScale (minimum xs) (maximum xs)
 --     ysc = LinearScale (minimum ys) (maximum ys)
 
-heatmapHtml :: FlatVal -> H.Html
+heatmapHtml :: Val -> H.Html
 heatmapHtml = undefined
 -- heatmapHtml (FlatVal _ ~[array]) = pngToHtml $ generateImage getPix w h
 --   where
---     Array [h, w] (RealVec zs) = array
+--     Array [h, w] (RealVecVal zs) = array
 --     zsVec = V.fromList zs
 --     zScale = LinearScale (minimum zs) (maximum zs)
 --     getPix i j = greyPix zScale $ zsVec  V.! (j * w + i)

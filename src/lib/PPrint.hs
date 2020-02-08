@@ -21,6 +21,7 @@ import Data.Foldable (toList)
 
 import Env
 import Syntax
+import Array
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
@@ -146,11 +147,13 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (TabGet e1 e2) = p e1 <> "." <> parens (p e2)
   pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
-  pretty (RecZip _ r) = "zip" <+> p r
-  pretty (AtomicTabCon _ _ xs) = list (map pretty xs)
+  pretty (RecZip [] r) = p r
+  pretty (RecZip _  r) = "zip" <+> p r
   pretty (AsIdx n _ i) = p i <> "@" <> p n
   pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
     where (v, body) = prettyLam f
+  pretty (ArrayVal _ array) = p array
+  pretty (ArrayRef _ array) = p array
   pretty con = prettyExprDefault (PrimConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
@@ -240,11 +243,12 @@ instance Pretty ImpInstr where
   pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
 
-instance Pretty a => Pretty (FlatValP a) where
-  pretty (FlatVal ty refs) = "FlatVal (ty=" <> p ty <> ", refs= " <> p refs <> ")"
+instance Pretty Array where
+  pretty array@(Array []    _) = p $ readScalar array
+  pretty array@(Array (n:_) _) = p [subArray i array | i <- [0..n-1]]
 
-instance Pretty a => Pretty (ArrayP a) where
-  pretty (Array shape ref) = p ref <> p shape
+instance Pretty ArrayRef where
+  pretty (Array shape _) = "<array" <> p shape <> ">"
 
 instance Pretty VecRef' where
   pretty (IntVecRef  ptr) = p $ show ptr

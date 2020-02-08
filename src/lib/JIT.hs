@@ -37,9 +37,8 @@ import Fresh hiding (freshName)
 import PPrint
 import Cat
 import Imp
-import Serialize
+import Array
 import Subst
-
 import LLVMExec
 
 type CompileEnv = Env Operand

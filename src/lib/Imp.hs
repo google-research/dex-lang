@@ -20,7 +20,7 @@ import Env
 import Type
 import PPrint
 import Cat
-import Serialize
+import Array
 import Fresh
 import Subst
 import Record
@@ -75,7 +75,8 @@ toImpAtom atom = case atom of
   Var v -> lookupVar v
   PrimCon con -> case con of
     Lit x        -> return $ ILeaf $ ILit x
-    MemRef _ ref -> return $ ILeaf $ IRef ref
+    ArrayRef _ ref -> return $ ILeaf $ IRef ref
+    ArrayVal _ _ -> error "Shouldn't have array values here"
     RecCon r     -> liftM (ICon . RecCon) $ mapM toImpAtom r
     TabGet x i -> do
       i' <- toImpScalarAtom i
@@ -252,7 +253,7 @@ impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
   ILit x       -> PrimCon $ Lit x
-  IRef ref     -> PrimCon $ MemRef ty ref
+  IRef ref     -> PrimCon $ ArrayRef ty ref
     where (Array shape vec) = ref
           (_, b, _) = vecRefInfo vec
           ty = foldr TabType (BaseType b) (map IdxSetLit shape)

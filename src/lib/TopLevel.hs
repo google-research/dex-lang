@@ -24,6 +24,8 @@ import Serialize
 import Imp
 import JIT
 import PPrint
+import Parser
+import Record
 import Util (highlightRegion)
 
 data Backend = Jit | Interp
@@ -45,28 +47,46 @@ runTopPassM m = runWriterT $ runExceptT m
 evalSourceBlock :: TopEnv -> SourceBlock' -> TopPassM TopEnv
 evalSourceBlock env block = case block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
-  Command cmd (v, m) -> case cmd of
+  Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
-      env' <- filterOutputs (const False) $ evalModule env m
-      let (L val) = env' ! v
-      val' <- liftIO $ loadAtomVal val
+      val <- evalModuleVal env v m
+      val' <- liftIOTop $ valWithoutRefs val
       tell [ValOut fmt val']
-      return mempty
     GetType -> do  -- TODO: don't actually evaluate it
-      env' <- filterOutputs (const False) $ evalModule env m
-      let (L val) = env' ! v
-      val' <- liftIO $ loadAtomVal val
-      tell [TextOut $ pprint (getType val')]
-      return mempty
+      val <- evalModuleVal env v m
+      tell [TextOut $ pprint (getType val)]
+    Dump DexObject fname -> do
+      val <- evalModuleVal env v m
+      val' <- liftIOTop $ valWithoutRefs val
+      liftIOTop $ writeFile fname $ pprint val'
+    Dump DexBinaryObject fname -> do
+      val <- evalModuleVal env v m
+      liftIOTop $ dumpDataFile fname val
     ShowPasses -> liftM (const mempty) $ filterOutputs f $ evalModule env m
       where f out = case out of PassInfo _ _ -> True; _ -> False
     ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
       where f out = case out of PassInfo s' _ | s == s' -> True; _ -> False
-    _ -> return mempty -- TODO
+    _ -> return ()
   IncludeSourceFile _ -> undefined
-  LoadData _ _ _      -> undefined
+  LoadData p DexObject fname -> do
+    source <- liftIOTop $ readFile fname
+    let val = ignoreExcept $ parseData source
+    let decl = LetMono p val
+    let m = Module (mempty, foldMap lbind p) $ FModBody [decl]
+    filterOutputs (const False) $ evalModule env m
+  LoadData p DexBinaryObject fname -> do
+    val <- liftIOTop $ loadDataFile fname
+    -- TODO: handle patterns and type annotations in binder
+    let (RecLeaf b) = p
+    return $ b @> L val
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
+
+evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
+evalModuleVal env v m = do
+  env' <- filterOutputs (const False) $ evalModule env m
+  let (L val) = env' ! v
+  return val
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -138,6 +158,10 @@ addDebugCtx :: String -> Err -> Err
 addDebugCtx ctx (Err CompilerErr c msg) = Err CompilerErr c msg'
   where msg' = msg ++ "\n=== context ===\n" ++ ctx ++ "\n"
 addDebugCtx _ e = e
+
+liftIOTop :: IO a -> TopPassM a
+liftIOTop m = catchIOExcept $ m `catch` \e ->
+                 throwIO $ Err DataIOErr Nothing (show (e::IOError))
 
 catchHardErrors :: TopPassM a -> TopPassM a
 catchHardErrors m = asTopPassM $ runTopPassM m `catch` asCompilerErr

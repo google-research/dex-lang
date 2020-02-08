@@ -17,6 +17,7 @@ import Record
 import Syntax
 import PPrint
 import Fresh
+import Array
 
 class Subst a where
   subst :: (SubstEnv, Scope) -> a -> a
@@ -55,10 +56,18 @@ nRecGet (PrimCon (RecCon r)) i = recGet r i
 nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
-nTabGet (PrimCon (RecZip _ r)) i = PrimCon $ RecCon $ fmap (flip nTabGet i) r
-nTabGet (PrimCon (MemRef (TabType _ ty) ref)) (PrimCon (AsIdx _ _ (PrimCon (Lit (IntLit i))))) =
-  PrimCon $ MemRef ty (subArrayRef i ref)
-nTabGet e i = PrimCon $ TabGet e i
+nTabGet x i = case i of
+  PrimCon (AsIdx _ _ (PrimCon (Lit (IntLit i')))) -> nTabGetLit x i i'
+  _ -> case x of
+         PrimCon (RecZip _ r) -> PrimCon $ RecCon $ fmap (flip nTabGet i) r
+         _ -> PrimCon $ TabGet x i
+
+nTabGetLit :: Atom -> Atom -> Int -> Atom
+nTabGetLit (PrimCon e@(ArrayRef (TabType _ ty) ref)) _ i =
+  PrimCon $ ArrayRef ty (subArrayRef i ref)
+nTabGetLit (PrimCon e@(ArrayVal (TabType _ ty) ref)) _ i =
+  PrimCon $ ArrayVal ty (subArray i ref)
+nTabGetLit x i _ = PrimCon $ TabGet x i
 
 instance Subst LamExpr where
   subst env@(_, scope) (LamExpr b body) = LamExpr b' body'
@@ -125,15 +134,3 @@ instance (Subst a, Subst b) => Subst (LorT a b) where
 instance (Subst a, Subst b) => Subst (Either a b)where
   subst env (Left  x) = Left  (subst env x)
   subst env (Right x) = Right (subst env x)
-
--- This is just here to avoid and import cycle: TODO: organize better
-subArrayRef :: Int -> ArrayRef -> ArrayRef
-subArrayRef i (Array (_:shape) (_,ref)) = Array shape (newSize, ref')
-  where
-    newSize = product shape
-    offset = i * newSize
-    ref' = case ref of
-     IntVecRef  ptr -> IntVecRef  $ advancePtr ptr offset
-     RealVecRef ptr -> RealVecRef $ advancePtr ptr offset
-     BoolVecRef ptr -> BoolVecRef $ advancePtr ptr offset
-subArrayRef _ (Array [] _) = error "Can't get subarray of rank-0 array"

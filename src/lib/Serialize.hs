@@ -4,159 +4,27 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE FlexibleInstances #-}
-{-# OPTIONS_GHC -Wno-orphans #-}
-
-module Serialize (serializeVal, restructureVal, subArray, subArrayRef, readScalar,
-                  allocateArray, storeArray, loadArray, vecRefInfo,
-                  storeFlatVal, loadFlatVal, DBOHeader (..),
-                  dumpDataFile, loadDataFile, loadAtomVal) where
+module Serialize (DBOHeader (..), dumpDataFile, loadDataFile,
+                 valWithoutRefs, valWithRefsOnly) where
 
 import Control.Monad
+import Control.Monad.Writer
+import Control.Monad.State
 import Control.Exception (throwIO)
 import Foreign.Ptr
-import Foreign.Marshal.Array
 import qualified Data.ByteString.Char8 as B
 import System.IO
 import System.IO.MMap
 import System.Posix  hiding (ReadOnly)
-import Text.Megaparsec
+import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 
 import Type
 import Syntax
-import Util
 import PPrint
-import Record
-import Inference
 import Parser
 import ParseUtil
-import Normalize
-import Subst
-
-serializeVal :: Val -> IO FlatValRef
-serializeVal val = do
-  let ty = getType val
-  vecRefs <- mapM (uncurry allocateArray) $ flattenType ty
-  let flatValRef = FlatVal ty vecRefs
-  writeVal flatValRef $ val
-  return flatValRef
-
-writeVal :: FlatValRef -> Val -> IO ()
-writeVal (FlatVal (BaseType _) [ref]) (PrimCon (Lit x)) =
-  storeArray ref $ scalarArray x
-writeVal (FlatVal (RecType r) refs) (PrimCon (RecCon valRec)) =
-  sequence_ $ recZipWith f refRec valRec
-  where
-    refRec = listIntoRecord r refs
-    f (ty,refs') val = writeVal (FlatVal ty refs') val
-writeVal (FlatVal (TabType _ a) refs) (PrimCon (AtomicTabCon _ _ xs)) =
-  zipWithM_ writeRow [0..] xs
-  where
-    writeRow :: Int -> Val -> IO ()
-    writeRow i row = writeVal (FlatVal a (map (subArrayRef i) refs)) row
-writeVal fv val = error $ "Unexpected flatval/val: " ++ pprint (fv, show val)
-
-restructureVal :: FlatVal -> Val
-restructureVal (FlatVal ty arrays) = case ty of
-  BaseType _  -> PrimCon $ Lit      $ readScalar array  where [array] = arrays
-  RecType r -> PrimCon $ RecCon $ fst $ traverseFun restructureValPartial r arrays
-  TabType (IdxSetLit n) a -> PrimCon $ AtomicTabCon (IdxSetLit n) a $
-    [restructureVal $ FlatVal a $ map (subArray i) arrays | i <- [0..n-1]]
-  _ -> error $ "Unexpected type: " ++ show ty
-
-restructureValPartial :: Type -> [Array] -> (Val, [Array])
-restructureValPartial ty xsRest = (restructureVal (FlatVal ty xs), rest)
-  where (xs, rest) = splitAt (length (flattenType ty)) xsRest
-
-subArray :: Int -> Array -> Array
-subArray i (Array (_:shape) vec) = Array shape sliced
-  where
-    subArraySize = product shape
-    start = i * subArraySize
-    stop  = start + subArraySize
-    sliced = case vec of
-      IntVec  xs -> IntVec  (slice start stop xs)
-      RealVec xs -> RealVec (slice start stop xs)
-      BoolVec xs -> BoolVec (slice start stop xs)
-subArray _ (Array [] _) = error "Can't get subarray of rank-0 array"
-
-slice :: Int -> Int -> [a] -> [a]
-slice start stop xs = take (stop - start) $ drop start xs
-
--- TODO: check types and lengths match
-storeFlatVal :: FlatValRef -> FlatVal -> IO ()
-storeFlatVal (FlatVal _ refs) (FlatVal _ vals) = zipWithM_ storeArray refs vals
-
-loadFlatVal :: FlatValRef -> IO FlatVal
-loadFlatVal (FlatVal ty refs) = liftM (FlatVal ty) $ mapM loadArray refs
-
--- TODO: free
-allocateArray :: BaseType -> [Int] -> IO ArrayRef
-allocateArray b shape = do
-  ptr <- case b of
-    IntType  -> liftM IntVecRef  $ mallocArray size
-    RealType -> liftM RealVecRef $ mallocArray size
-    BoolType -> liftM BoolVecRef $ mallocArray size
-    StrType  -> error "Not implemented"
-  return $ Array shape (size, ptr)
-  where size = product shape
-
-storeArray :: ArrayRef -> Array -> IO ()
-storeArray (Array _ (_, ref)) (Array _ vec) = case (ref, vec) of
-  (IntVecRef  ptr, IntVec  xs) -> pokeArray ptr xs
-  (RealVecRef ptr, RealVec xs) -> pokeArray ptr xs
-  (BoolVecRef ptr, BoolVec xs) -> pokeArray ptr xs
-  _ -> error "Mismatched types"
-
-loadArray :: ArrayRef -> IO Array
-loadArray (Array shape (size, ref)) = case ref of
-  IntVecRef  ptr -> liftM (Array shape . IntVec ) $ peekArray size ptr
-  RealVecRef ptr -> liftM (Array shape . RealVec) $ peekArray size ptr
-  BoolVecRef ptr -> liftM (Array shape . BoolVec) $ peekArray size ptr
-
-readScalar :: Array -> LitVal
-readScalar (Array [] vec) = case vec of
-  IntVec  [x] -> IntLit  x
-  RealVec [x] -> RealLit x
-  BoolVec [x] -> BoolLit $ case x of 0 -> False
-                                     _ -> True
-  _ -> error "Not a singleton list"
-readScalar _ = error "Array must be rank-0"
-
-scalarArray :: LitVal -> Array
-scalarArray val = case val of
-  IntLit  x -> Array [] (IntVec  [x])
-  RealLit x -> Array [] (RealVec [x])
-  BoolLit False -> Array [] (BoolVec [0])
-  BoolLit True  -> Array [] (BoolVec [1])
-  _ -> error "Not implemented"
-
-vecRefInfo :: VecRef -> (Int, BaseType, Ptr ())
-vecRefInfo (size, x) = case x of
-  IntVecRef  ptr -> (size, IntType , castPtr ptr)
-  RealVecRef ptr -> (size, RealType, castPtr ptr)
-  BoolVecRef ptr -> (size, BoolType, castPtr ptr)
-
-newArrayRef :: Ptr () -> (BaseType, [Int]) -> ArrayRef
-newArrayRef ptr (b, shape) = Array shape $ case b of
-  IntType  -> (size, IntVecRef  $ castPtr ptr)
-  RealType -> (size, RealVecRef $ castPtr ptr)
-  BoolType -> (size, BoolVecRef $ castPtr ptr)
-  StrType  -> error "Not implemented"
-  where size = product shape
-
--- turns memrefs into atomic table constructors
-loadAtomVal :: Atom -> IO Atom
-loadAtomVal (PrimCon con) = case con of
-  MemRef ty ref -> do
-    array <- loadArray ref
-    return $ restructureVal $ FlatVal ty [array]
-  _ -> liftM PrimCon $ traverseExpr con return loadAtomVal return
-loadAtomVal atom = error $ "Unexpected atom: " ++ pprint atom
-
--- === binary format ===
+import Array
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -168,23 +36,16 @@ preHeaderLength = 81
 preHeaderStart :: String
 preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
-dumpDataFile :: FilePath -> DataFormat -> FlatValRef -> IO ()
-dumpDataFile fname DexObject valRef = do
-  val <- loadFlatVal valRef
-  writeFile fname $ pprint $ restructureVal val
-dumpDataFile fname DexBinaryObject val@(FlatVal _ arrayRefs) = do
+dumpDataFile :: FilePath -> Val -> IO ()
+dumpDataFile fname val = do
+  arrayRefs <- liftM getValRefs $ valWithRefsOnly val
+  let ty = getType val
   withFile fname WriteMode $ \h -> do
-    putBytes h $ serializeFullHeader $ createHeader val
+    putBytes h $ serializeFullHeader $ createHeader ty arrayRefs
     mapM_ (writeArrayToFile h) arrayRefs
 
-loadDataFile :: FilePath -> DataFormat -> IO FlatValRef
-loadDataFile fname DexObject = do
-  source <- readFile fname
-  let uval = ignoreExcept $ parseData source
-  let (_, val) = ignoreExcept $ inferExpr uval
-  let val' = ignoreExcept $ normalizeVal val
-  serializeVal val'
-loadDataFile fname DexBinaryObject = do
+loadDataFile :: FilePath -> IO Val
+loadDataFile fname = do
    -- TODO: check lengths are consistent with type
   (n, header@(DBOHeader ty sizes)) <- readHeader fname
   actualSize <- liftM (fromIntegral . fileSize) $ getFileStatus fname
@@ -192,7 +53,7 @@ loadDataFile fname DexBinaryObject = do
   filePtr <- memmap fname
   let firstPtr = filePtr `plusPtr` n
   let ptrs = init $ scanl plusPtr firstPtr sizes
-  return $ FlatVal ty $ zipWith newArrayRef ptrs (flattenType ty)
+  return $ valFromPtrs ty ptrs
 
 memmap :: FilePath -> IO (Ptr ())
 memmap fname = do
@@ -218,8 +79,8 @@ serializeHeader :: DBOHeader -> String
 serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
                                      <> "bufferSizes: " <> show sizes   <> "\n"
 
-createHeader :: FlatValRef -> DBOHeader
-createHeader (FlatVal ty arrays) = DBOHeader ty sizes
+createHeader :: Type -> [ArrayRef] -> DBOHeader
+createHeader ty arrays = DBOHeader ty sizes
   where sizes = [8 * product shape | Array shape _ <- arrays]
 
 putBytes :: Handle -> String -> IO ()
@@ -270,6 +131,52 @@ validateFile headerLength fileLength header@(DBOHeader ty sizes) =
 checkBufferSize :: Int -> Int -> Except ()
 checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
    "buffer too small: " <> show size <> " < " <> show minSize
+
+valFromPtrs :: Type -> [Ptr ()] -> Val
+valFromPtrs ty = evalState (valFromPtrs' [] ty)
+
+valFromPtrs' :: [Int] -> Type -> State [Ptr ()] Val
+valFromPtrs' shape ty = case ty of
+  BaseType b -> do
+    ~(ptr:ptrs) <- get
+    put ptrs
+    return $ PrimCon $ ArrayRef ty' $ newArrayRef ptr (b, shape)
+    where ty' = foldr TabType ty (map IdxSetLit shape)
+  RecType r -> liftM (PrimCon . RecZip shape) $ traverse (valFromPtrs' shape) r
+  TabType n a -> valFromPtrs' (shape ++ [n']) a
+    where (IdxSetLit n') = n
+  IdxSetLit n -> do
+    liftM (PrimCon . AsIdx n shape) $ valFromPtrs' shape (BaseType IntType)
+  _ -> error $ "Not implemented: " ++ pprint ty
+
+type PrimConVal = PrimCon Type Atom LamExpr
+
+traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
+traverseVal f val = case val of
+  PrimCon con -> do
+    ans <- f con
+    liftM PrimCon $ case ans of
+      Just con' -> return con'
+      Nothing   -> traverseExpr con return (traverseVal f) return
+  atom -> return atom
+
+valWithoutRefs :: Val -> IO Val
+valWithoutRefs val = flip traverseVal val $ \con -> case con of
+  ArrayRef ty ref -> liftM (Just . ArrayVal ty) $ loadArray ref
+  _ -> return Nothing
+
+valWithRefsOnly :: Val -> IO Val
+valWithRefsOnly val = flip traverseVal val $ \con -> case con of
+  ArrayVal ty x -> liftM (Just . ArrayRef ty) $ allocAndStoreArray x
+  Lit x -> liftM (Just . ArrayRef (getType val)) $ allocAndStoreArray $ scalarArray x
+  _ -> return Nothing
+
+getValRefs :: Val -> [ArrayRef]
+getValRefs val = execWriter $ flip traverseVal val $ \con -> case con of
+  ArrayRef _ ref -> tell [ref] >> return (Just con)
+  ArrayVal _ _ -> error "Shouldn't have ArrayVal left"
+  Lit _        -> error "Shouldn't have Lit left"
+  _ -> return Nothing
 
 liftExceptIO :: Except a -> IO a
 liftExceptIO (Left e ) = throwIO e
