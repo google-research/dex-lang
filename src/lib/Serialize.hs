@@ -4,8 +4,10 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE OverloadedStrings #-}
+
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile,
-                 valWithoutRefs, valWithRefsOnly) where
+                 valWithoutRefs, valWithRefsOnly, pprintVal) where
 
 import Control.Monad
 import Control.Monad.Writer
@@ -18,6 +20,7 @@ import System.IO.MMap
 import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
+import Data.Text.Prettyprint.Doc  hiding (brackets)
 
 import Type
 import Syntax
@@ -25,6 +28,7 @@ import PPrint
 import Parser
 import ParseUtil
 import Array
+import Subst
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -142,14 +146,31 @@ valFromPtrs' shape ty = case ty of
     put ptrs
     return $ PrimCon $ ArrayRef ty' $ newArrayRef ptr (b, shape)
     where ty' = foldr TabType ty (map IdxSetLit shape)
-  RecType r -> liftM (PrimCon . RecZip shape) $ traverse (valFromPtrs' shape) r
-  TabType n a -> valFromPtrs' (shape ++ [n']) a
+  RecType r -> liftM (PrimCon . RecCon) $ traverse (valFromPtrs' shape) r
+  TabType n a -> liftM (PrimCon . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
   IdxSetLit n -> do
-    liftM (PrimCon . AsIdx n shape) $ valFromPtrs' shape (BaseType IntType)
+    liftM (PrimCon . AsIdx n) $ valFromPtrs' shape (BaseType IntType)
   _ -> error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
+
+pprintVal :: Val -> IO String
+pprintVal val = liftM asStr $ prettyVal val
+
+prettyVal :: Val -> IO (Doc ann)
+prettyVal val = case val of
+  PrimCon (RecCon r) -> liftM pretty $ traverse (liftM asStr . prettyVal) r
+  PrimCon (AFor (IdxSetLit n) _) -> do
+    xs <- mapM (liftM asStr . prettyVal . nTabGetLit val) [0..n-1]
+    return $ pretty xs
+  PrimCon (ArrayRef _ arr@(Array [] _)) -> do
+    arr' <- loadArray arr
+    return $ pretty $ readScalar arr'
+  PrimCon (AsIdx n i) -> do
+    i' <- prettyVal i
+    return $ i' <> "@" <> pretty n
+  _ -> return $ pretty val
 
 traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
 traverseVal f val = case val of

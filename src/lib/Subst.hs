@@ -7,7 +7,8 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, subArrayRef, reduceAtom, nRecGet, nTabGet) where
+module Subst (Subst, subst, subArrayRef, reduceAtom, nRecGet, nTabGet,
+              nTabGetLit) where
 
 import Foreign.Marshal.Array
 import Data.Foldable
@@ -18,6 +19,7 @@ import Syntax
 import PPrint
 import Fresh
 import Array
+import Type
 
 class Subst a where
   subst :: (SubstEnv, Scope) -> a -> a
@@ -57,17 +59,27 @@ nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
 nTabGet x i = case i of
-  PrimCon (AsIdx _ _ (PrimCon (Lit (IntLit i')))) -> nTabGetLit x i i'
-  _ -> case x of
-         PrimCon (RecZip _ r) -> PrimCon $ RecCon $ fmap (flip nTabGet i) r
-         _ -> PrimCon $ TabGet x i
+  PrimCon (AsIdx _ (PrimCon (Lit (IntLit i')))) -> nTabGetLit x i'
+  _ -> PrimCon $ TabGet x i
 
-nTabGetLit :: Atom -> Atom -> Int -> Atom
-nTabGetLit (PrimCon e@(ArrayRef (TabType _ ty) ref)) _ i =
-  PrimCon $ ArrayRef ty (subArrayRef i ref)
-nTabGetLit (PrimCon e@(ArrayVal (TabType _ ty) ref)) _ i =
-  PrimCon $ ArrayVal ty (subArray i ref)
-nTabGetLit x i _ = PrimCon $ TabGet x i
+nTabGetLit :: Atom -> Int -> Atom
+nTabGetLit atom i = case atom of
+  PrimCon (ArrayRef (TabType _ ty) ref) -> PrimCon $ ArrayRef ty (subArrayRef i ref)
+  PrimCon (ArrayVal (TabType _ ty) ref) -> PrimCon $ ArrayVal ty (subArray i ref)
+  PrimCon (AFor _ body)                 -> indexSubst i [] body
+  _ -> PrimCon $ TabGet atom i'
+    where i' = PrimCon $ AsIdx n $ PrimCon $ Lit (IntLit i)
+          (TabType (IdxSetLit n) _) = getType atom
+
+indexSubst :: Int -> [()] -> Atom -> Atom
+indexSubst i stack atom = case atom of
+  PrimCon con -> case con of
+    AFor n body -> PrimCon $ AFor n $ indexSubst i (():stack) body
+    AGet x -> case stack of
+      []        -> nTabGetLit x i
+      ():stack' -> PrimCon $ AGet $ indexSubst i stack' x
+    _ -> PrimCon $ fmapExpr con id (indexSubst i stack) (error "unexpected lambda")
+  _ -> error "Unused index"
 
 instance Subst LamExpr where
   subst env@(_, scope) (LamExpr b body) = LamExpr b' body'

@@ -212,7 +212,7 @@ litArr = [10, 5, 3]
 > (1, (2, 3))
 
 :p for i::3. i
-> [0, 1, 2]@3
+> [0@3, 1@3, 2@3]
 
 :p (asidx 0)::1
 > 0@1
@@ -254,7 +254,7 @@ litArr = [10, 5, 3]
 -- TODO: We'd prefer it to look like this:
 -- > [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
 :p [(for i::1. (False, for j::2. 1.0)), [(True, for k::2 . 2.0)]]
-> zip ([[False], [True]], [[[1.0, 1.0]], [[2.0, 2.0]]])
+> [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
 
 :p (mod 5 3, mod 7 3, mod -1 3, mod -5 3)
 > (2, 1, 2, 1)

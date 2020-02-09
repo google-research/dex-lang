@@ -443,19 +443,12 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
 traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrType l a b
-  AsIdx n shape i -> do
-    eq (asTabType (BaseType IntType)) i
-    return $ asTabType (IdxSetLit n)
-    where asTabType x = foldr TabType x (map IdxSetLit shape)
   RecCon r    -> return $ RecType r
-  RecZip ns r -> do
-    let r' = fmap (stripLeadingDims (length ns)) r
-    return $ foldr TabType (RecType r') (map IdxSetLit ns)
-    where
-      stripLeadingDims 0 t = t
-      stripLeadingDims n (TabType _ a) = stripLeadingDims (n-1) a
   TabGet (TabType i a) i' -> eq i i' >> return a
-  RecGet (RecType r) i  -> return $ recGet r i
+  RecGet (RecType r) i    -> return $ recGet r i
+  AFor n a                -> return $ TabType n a
+  AGet (TabType _ a)      -> return $ a  -- TODO: check index stack
+  AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
     eq a a'

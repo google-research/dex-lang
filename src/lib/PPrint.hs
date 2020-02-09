@@ -9,7 +9,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, assertEq, ignoreExcept, printLitBlock) where
+module PPrint (pprint, assertEq, ignoreExcept, printLitBlock, asStr) where
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
@@ -147,9 +147,8 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (TabGet e1 e2) = p e1 <> "." <> parens (p e2)
   pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
-  pretty (RecZip [] r) = p r
-  pretty (RecZip _  r) = "zip" <+> p r
-  pretty (AsIdx n _ i) = p i <> "@" <> p n
+  pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
+  pretty (AsIdx n i) = p i <> "@" <> p n
   pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
     where (v, body) = prettyLam f
   pretty (ArrayVal _ array) = p array
@@ -286,7 +285,6 @@ instance Pretty body => Pretty (ModuleP body) where
   pretty (Module (imports, exports) body) = "imports:" <+> p imports
                              <> hardline <> p body
                              <> hardline <> "exports:" <+> p exports
-
 
 instance Pretty FModBody where
   pretty (FModBody decls) = vsep (map p decls)

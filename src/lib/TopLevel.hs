@@ -48,10 +48,10 @@ evalSourceBlock :: TopEnv -> SourceBlock' -> TopPassM TopEnv
 evalSourceBlock env block = case block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
-    EvalExpr fmt -> do
+    EvalExpr _ -> do
       val <- evalModuleVal env v m
-      val' <- liftIOTop $ valWithoutRefs val
-      tell [ValOut fmt val']
+      s <- liftIOTop $ pprintVal val
+      tell [TextOut s]
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalModuleVal env v m
       tell [TextOut $ pprint (getType val)]

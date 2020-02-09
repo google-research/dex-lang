@@ -152,8 +152,9 @@ data PrimCon ty e lam =
       | TabGet e e
       | RecGet e RecField
       | RecCon (Record e)
-      | RecZip [Int] (Record e)
-      | AsIdx Int [Int] e  -- TODO: something more general, when we need it
+      | AFor ty e
+      | AGet e
+      | AsIdx Int e
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
       | Bind e lam
@@ -591,16 +592,16 @@ instance TraversableExpr PrimOp where
 
 instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
-    Lit l          -> pure   (Lit l)
-    Lam lin lam    -> liftA2 Lam (fT lin) (fL lam)
-    AsIdx n s i    -> liftA (AsIdx n s) (fE i)
-    TabGet e i     -> liftA2 TabGet (fE e) (fE i)
-    RecGet e i     -> liftA2 RecGet (fE e) (pure i)
-    RecCon r       -> liftA  RecCon (traverse fE r)
-    -- TODO: consider merging this with `RecCon` (the empty `tys` case)
-    -- TOOD: types instead of ints
-    RecZip ns r    -> liftA (RecZip ns) (traverse fE r)
-    Bind e lam -> liftA2 Bind (fE e) (fL lam)
+    Lit l       -> pure   (Lit l)
+    Lam lin lam -> liftA2 Lam (fT lin) (fL lam)
+    -- for printing only
+    TabGet e i  -> liftA2 TabGet (fE e) (fE i)
+    RecGet e i  -> liftA2 RecGet (fE e) (pure i)
+    AFor n e    -> liftA2 AFor (fT n) (fE e)
+    AGet e      -> liftA  AGet (fE e)
+    AsIdx n e   -> liftA  (AsIdx n) (fE e)
+    RecCon r    -> liftA  RecCon (traverse fE r)
+    Bind e lam  -> liftA2 Bind (fE e) (fL lam)
     MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of
        MAsk    -> pure  MAsk
        MTell e -> liftA MTell (fE e)

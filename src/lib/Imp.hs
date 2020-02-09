@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE FlexibleInstances #-}
 
 module Imp (toImpModule, impExprToAtom, impExprType) where
 
@@ -14,6 +15,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable
 import Data.Traversable
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -77,17 +79,17 @@ toImpAtom atom = case atom of
     Lit x        -> return $ ILeaf $ ILit x
     ArrayRef _ ref -> return $ ILeaf $ IRef ref
     ArrayVal _ _ -> error "Shouldn't have array values here"
-    RecCon r     -> liftM (ICon . RecCon) $ mapM toImpAtom r
     TabGet x i -> do
       i' <- toImpScalarAtom i
       xs <- toImpAtom x
       traverse loadIfScalar $ indexIAtom xs i'
-    AsIdx n shape i -> liftM (ICon . AsIdx n shape) (toImpAtom i)
     RecGet x i -> do
       x' <- toImpAtom x
       case x' of
         ICon (RecCon r)-> return $ recGet r i
         val -> error $ "Expected a record, got: " ++ show val
+    _ -> liftM ICon $ traverseExpr con return toImpAtom $
+                        const (error "unexpected lambda")
     _ -> error $ "Not implemented: " ++ pprint atom
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
@@ -95,9 +97,9 @@ toImpScalarAtom :: Atom -> ImpM IExpr
 toImpScalarAtom atom = do
   atom' <- toImpAtom atom
   return $ case atom' of
-    ILeaf x             -> x
-    ICon (AsIdx _ [] (ILeaf i)) -> i
-    _                   -> error "Expected scalar"
+    ILeaf x                  -> x
+    ICon (AsIdx _ (ILeaf i)) -> i
+    _ -> error $ "Expected scalar, got: " ++ pprint atom'
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
@@ -127,7 +129,7 @@ toImpCExpr dests op = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     store dest ans
-    where (ICon (AsIdx _ _ (ILeaf dest))) = dests
+    where (ICon (AsIdx _ (ILeaf dest))) = dests
   Cmp cmpOp ty x y -> do
     x' <- toImpScalarAtom x
     y' <- toImpScalarAtom y
@@ -228,25 +230,28 @@ lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 indexIAtom :: IAtom -> IExpr -> IAtom
 indexIAtom x i = case x of
-  ICon (RecZip _ r) -> ICon $ RecCon $ fmap (flip indexIAtom i) r
-  ICon (AsIdx n (_:shape) xs) -> ICon $ AsIdx n shape $ indexIAtom xs i
   ILeaf x' -> ILeaf $ IGet x' i
+  ICon (AFor _ body) -> indexSubst i [] body
   _ -> error $ "Unexpected atom: " ++ show x
 
+indexSubst :: IExpr -> [()] -> IAtom -> IAtom
+indexSubst i stack atom = case atom of
+  ICon con -> case con of
+    AFor n body -> ICon $ AFor n $ indexSubst i (():stack) body
+    AGet x -> case stack of
+      []        -> indexIAtom x i
+      ():stack' -> ICon $ AGet $ indexSubst i stack' x
+    _ -> ICon $ fmapExpr con id (indexSubst i stack) (error "unexpected lambda")
+  _ -> error "Unused index"
+
 toImpArrayType :: [IExpr] -> Type -> ImpM (IAtomP ArrayType)
-toImpArrayType ns ty = case ty of
-  BaseType b  -> return $ ILeaf (b, ns)
-  -- TODO: zip if element type is a record
-  TabType a b -> do
-    n  <- typeToSize a
-    toImpArrayType (ns ++ [n]) b
-  RecType r -> case ns of
-    [] -> liftM (ICon . RecCon    ) $ traverse (toImpArrayType ns) r
-    _  -> liftM (ICon . RecZip ns') $ traverse (toImpArrayType ns) r
-    where
-      ns' = map fromIntLit ns
-      fromIntLit (ILit (IntLit n)) = n
-  IdxSetLit n -> return $ ICon $ AsIdx n (map fromIInt ns) $ ILeaf (IntType, ns)
+toImpArrayType shape ty = case ty of
+  BaseType b  -> return $ foldr (const (ICon . AGet)) (ILeaf (b, shape)) shape
+  TabType n b -> do
+    n'  <- typeToSize n
+    liftM (ICon . AFor n) $ toImpArrayType (shape ++ [n']) b
+  RecType r   -> liftM (ICon . RecCon ) $ traverse (toImpArrayType shape) r
+  IdxSetLit n -> liftM (ICon . AsIdx n) $ toImpArrayType shape (BaseType IntType)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 impExprToAtom :: IExpr -> Atom
@@ -342,7 +347,7 @@ emitLoop n body = do
   emitStatement (Nothing, Loop i n loopBody)
 
 asIdx :: IExpr -> IExpr -> IAtom
-asIdx n i = ICon $ AsIdx (fromIInt n) [] (ILeaf i)
+asIdx n i = ICon $ AsIdx (fromIInt n) (ILeaf i)
 
 fromIInt :: IExpr -> Int
 fromIInt (ILit (IntLit x)) = x
@@ -481,3 +486,8 @@ instance Foldable IAtomP where
 instance Traversable IAtomP where
   traverse f (ILeaf x) = liftA ILeaf (f x)
   traverse f (ICon con) = liftA ICon $ traverseExpr con pure (traverse f) pure
+
+instance Pretty IAtom where
+  pretty atom = case atom of
+    ILeaf x  -> pretty x
+    ICon con -> pretty (PrimConExpr con)
