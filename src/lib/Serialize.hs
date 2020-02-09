@@ -6,8 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Serialize (DBOHeader (..), dumpDataFile, loadDataFile,
-                 valWithoutRefs, valWithRefsOnly, pprintVal) where
+module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal) where
 
 import Control.Monad
 import Control.Monad.Writer
@@ -42,7 +41,7 @@ preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
 dumpDataFile :: FilePath -> Val -> IO ()
 dumpDataFile fname val = do
-  arrayRefs <- liftM getValRefs $ valWithRefsOnly val
+  arrayRefs <- liftM getValRefs $ valScalarsToArrays val
   let ty = getType val
   withFile fname WriteMode $ \h -> do
     putBytes h $ serializeFullHeader $ createHeader ty arrayRefs
@@ -57,6 +56,7 @@ loadDataFile fname = do
   filePtr <- memmap fname
   let firstPtr = filePtr `plusPtr` n
   let ptrs = init $ scanl plusPtr firstPtr sizes
+  -- TODO: typecheck result
   return $ valFromPtrs ty ptrs
 
 memmap :: FilePath -> IO (Ptr ())
@@ -83,9 +83,9 @@ serializeHeader :: DBOHeader -> String
 serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
                                      <> "bufferSizes: " <> show sizes   <> "\n"
 
-createHeader :: Type -> [ArrayRef] -> DBOHeader
+createHeader :: Type -> [Array] -> DBOHeader
 createHeader ty arrays = DBOHeader ty sizes
-  where sizes = [8 * product shape | Array shape _ <- arrays]
+  where sizes = [8 * product shape | Array shape _ _ <- arrays]
 
 putBytes :: Handle -> String -> IO ()
 putBytes h s = B.hPut h $ B.pack s
@@ -112,9 +112,9 @@ parseHeader = do
   emptyLines
   return $ DBOHeader ty sizes
 
-writeArrayToFile :: Handle -> ArrayRef -> IO ()
-writeArrayToFile h (Array _ ref) = hPutBuf h ptr (size * 8)
-  where (size, _, ptr) = vecRefInfo ref
+writeArrayToFile :: Handle -> Array -> IO ()
+writeArrayToFile h (Array shape _ ptr) = hPutBuf h ptr (size * 8)
+  where size = product shape
 
 validateFile :: Int -> Int -> DBOHeader -> Except ()
 validateFile headerLength fileLength header@(DBOHeader ty sizes) =
@@ -144,8 +144,9 @@ valFromPtrs' shape ty = case ty of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    return $ PrimCon $ ArrayRef ty' $ newArrayRef ptr (b, shape)
-    where ty' = foldr TabType ty (map IdxSetLit shape)
+    let ty' = foldr (\n a -> TabType (IdxSetLit n) a) ty shape
+    let arr = PrimCon $ ArrayRef ty' $ Array shape b ptr
+    return $ foldr (\_ x -> PrimCon $ AGet x) arr shape
   RecType r -> liftM (PrimCon . RecCon) $ traverse (valFromPtrs' shape) r
   TabType n a -> liftM (PrimCon . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
@@ -159,18 +160,22 @@ pprintVal :: Val -> IO String
 pprintVal val = liftM asStr $ prettyVal val
 
 prettyVal :: Val -> IO (Doc ann)
-prettyVal val = case val of
-  PrimCon (RecCon r) -> liftM pretty $ traverse (liftM asStr . prettyVal) r
-  PrimCon (AFor (IdxSetLit n) _) -> do
-    xs <- mapM (liftM asStr . prettyVal . nTabGetLit val) [0..n-1]
+prettyVal (PrimCon con) = case con of
+  RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
+  AFor (IdxSetLit n) _ -> do
+    xs <- mapM (liftM asStr . prettyVal . nTabGetLit (PrimCon con)) [0..n-1]
     return $ pretty xs
-  PrimCon (ArrayRef _ arr@(Array [] _)) -> do
-    arr' <- loadArray arr
-    return $ pretty $ readScalar arr'
-  PrimCon (AsIdx n i) -> do
+  ArrayRef _ arr@(Array [] _ _) -> liftM pretty $ loadScalar arr
+  ArrayRef (TabType _ ty) arr@(Array (n:_) _ _) -> do
+    xs <- flip mapM [0..n-1] $ \i ->
+      liftM asStr $ prettyVal $ PrimCon $ ArrayRef ty $ subArray i arr
+    return $ pretty xs
+  AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
-  _ -> return $ pretty val
+  Lit x -> return $ pretty x
+  _ -> return $ pretty con
+prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 
 traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
 traverseVal f val = case val of
@@ -181,22 +186,19 @@ traverseVal f val = case val of
       Nothing   -> traverseExpr con return (traverseVal f) return
   atom -> return atom
 
-valWithoutRefs :: Val -> IO Val
-valWithoutRefs val = flip traverseVal val $ \con -> case con of
-  ArrayRef ty ref -> liftM (Just . ArrayVal ty) $ loadArray ref
+valScalarsToArrays :: Val -> IO Val
+valScalarsToArrays val = flip traverseVal val $ \con -> case con of
+  Lit x -> do
+    arr <- allocateArray b []
+    storeScalar arr x
+    return $ Just $ ArrayRef (BaseType b) arr
+    where b = litType x
   _ -> return Nothing
 
-valWithRefsOnly :: Val -> IO Val
-valWithRefsOnly val = flip traverseVal val $ \con -> case con of
-  ArrayVal ty x -> liftM (Just . ArrayRef ty) $ allocAndStoreArray x
-  Lit x -> liftM (Just . ArrayRef (getType val)) $ allocAndStoreArray $ scalarArray x
-  _ -> return Nothing
-
-getValRefs :: Val -> [ArrayRef]
+getValRefs :: Val -> [Array]
 getValRefs val = execWriter $ flip traverseVal val $ \con -> case con of
   ArrayRef _ ref -> tell [ref] >> return (Just con)
-  ArrayVal _ _ -> error "Shouldn't have ArrayVal left"
-  Lit _        -> error "Shouldn't have Lit left"
+  Lit _          -> error "Shouldn't have Lit left"
   _ -> return Nothing
 
 liftExceptIO :: Except a -> IO a

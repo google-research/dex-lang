@@ -22,8 +22,7 @@ module Syntax (
     RuleAnn (..), DeclAnn (..), CmdName (..), Val,
     ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
-    ArrayP (..), Array, ArrayRef, Vec (..), VecRef, VecRef' (..), ImpProg (..),
-    ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
+    Array (..), ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -160,8 +159,7 @@ data PrimCon ty e lam =
       | Bind e lam
       | LensCon (LensCon ty e)
       | Seq lam
-      | ArrayRef ty ArrayRef
-      | ArrayVal ty Array
+      | ArrayRef ty Array
       | Todo ty
         deriving (Show, Eq, Generic)
 
@@ -170,6 +168,8 @@ data LitVal = IntLit  Int
             | BoolLit Bool
             | StrLit  String
               deriving (Show, Eq, Generic)
+
+data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
 
 data MonadCon e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
 data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
@@ -277,25 +277,6 @@ exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body))
   where v = "*ans*" :> NoAnn
         body = [LetMono (RecLeaf v) expr]
 
--- === runtime data representations ===
-
--- TODO: use Data.Vector instead of lists
-data ArrayP a = Array [Int] a  deriving (Show, Eq, Generic)
-
-type Array    = ArrayP Vec
-type ArrayRef = ArrayP VecRef
-
-data Vec = IntVec  [Int]
-         | RealVec [Double]
-         | BoolVec [Int]
-           deriving (Show, Eq, Generic)
-
-type VecRef = (Int, VecRef')
-data VecRef' = IntVecRef  (Ptr Int)
-             | RealVecRef (Ptr Double)
-             | BoolVecRef (Ptr Int)
-               deriving (Show, Eq, Generic)
-
 -- === imperative IR ===
 
 data ImpModBody = ImpModBody [IVar] ImpProg SubstEnv
@@ -314,7 +295,7 @@ data ImpInstr = Load  IExpr
                 deriving (Show)
 
 data IExpr = ILit LitVal
-           | IRef ArrayRef
+           | IRef Array
            | IVar IVar
            | IGet IExpr Index
                deriving (Show, Eq)
@@ -614,8 +595,7 @@ instance TraversableExpr PrimCon where
       LensId ty         -> liftA  LensId (fT ty)
     Seq lam             -> liftA  Seq (fL lam)
     Todo ty             -> liftA  Todo (fT ty)
-    ArrayRef ty refs -> liftA2 ArrayRef (fT ty) (pure refs)
-    ArrayVal ty refs -> liftA2 ArrayVal (fT ty) (pure refs)
+    ArrayRef ty ref     -> liftA2 ArrayRef (fT ty) (pure ref)
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where

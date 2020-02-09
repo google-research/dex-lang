@@ -7,10 +7,8 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, subArrayRef, reduceAtom, nRecGet, nTabGet,
-              nTabGetLit) where
+module Subst (Subst, subst, reduceAtom, nRecGet, nTabGet, nTabGetLit) where
 
-import Foreign.Marshal.Array
 import Data.Foldable
 
 import Env
@@ -64,8 +62,7 @@ nTabGet x i = case i of
 
 nTabGetLit :: Atom -> Int -> Atom
 nTabGetLit atom i = case atom of
-  PrimCon (ArrayRef (TabType _ ty) ref) -> PrimCon $ ArrayRef ty (subArrayRef i ref)
-  PrimCon (ArrayVal (TabType _ ty) ref) -> PrimCon $ ArrayVal ty (subArray i ref)
+  PrimCon (ArrayRef (TabType _ ty) ref) -> PrimCon $ ArrayRef ty (subArray i ref)
   PrimCon (AFor _ body)                 -> indexSubst i [] body
   _ -> PrimCon $ TabGet atom i'
     where i' = PrimCon $ AsIdx n $ PrimCon $ Lit (IntLit i)

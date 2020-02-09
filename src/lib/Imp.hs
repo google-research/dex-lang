@@ -22,7 +22,6 @@ import Env
 import Type
 import PPrint
 import Cat
-import Array
 import Fresh
 import Subst
 import Record
@@ -78,7 +77,6 @@ toImpAtom atom = case atom of
   PrimCon con -> case con of
     Lit x        -> return $ ILeaf $ ILit x
     ArrayRef _ ref -> return $ ILeaf $ IRef ref
-    ArrayVal _ _ -> error "Shouldn't have array values here"
     TabGet x i -> do
       i' <- toImpScalarAtom i
       xs <- toImpAtom x
@@ -259,8 +257,7 @@ impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
   ILit x       -> PrimCon $ Lit x
   IRef ref     -> PrimCon $ ArrayRef ty ref
-    where (Array shape vec) = ref
-          (_, b, _) = vecRefInfo vec
+    where (Array shape b _) = ref
           ty = foldr TabType (BaseType b) (map IdxSetLit shape)
   _ -> error "Not implemented"
 
@@ -424,9 +421,8 @@ checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
   ILit val -> return $ IValType (litType val)
   -- TODO: check shape matches vector length
-  IRef (Array shape vec) -> return $ IRefType (b, shape')
-    where (_, b, _) = vecRefInfo vec
-          shape' = map (ILit . IntLit) shape
+  IRef (Array shape b _) -> return $ IRefType (b, shape')
+    where shape' = map (ILit . IntLit) shape
   IVar v -> looks $ (! v)
   IGet e i -> do
     ~(IRefType (b, (_:shape))) <- checkIExpr e
@@ -449,9 +445,8 @@ fromScalarRefType ty = throw CompilerErr $ "Not a scalar reference type: " ++ pp
 impExprType :: IExpr -> IType
 impExprType expr = case expr of
   ILit v    -> IValType (litType v)
-  IRef (Array shape vec) -> IRefType (b, shape')
-    where (_, b, _) = vecRefInfo vec
-          shape' = map (ILit . IntLit) shape
+  IRef (Array shape b _) -> IRefType (b, shape')
+    where shape' = map (ILit . IntLit) shape
   IVar (_:>ty) -> ty
   IGet e _  -> case impExprType e of
     IRefType (b, (_:shape)) -> IRefType (b, shape)

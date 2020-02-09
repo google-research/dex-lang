@@ -447,7 +447,7 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i    -> return $ recGet r i
   AFor n a                -> return $ TabType n a
-  AGet (TabType _ a)      -> return $ a  -- TODO: check index stack
+  AGet ~(TabType _ a)     -> return $ a  -- TODO: check index stack
   AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
@@ -465,7 +465,6 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
     LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
   ArrayRef ty _ -> return ty
-  ArrayVal ty _ -> return ty
   Todo ty     -> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 

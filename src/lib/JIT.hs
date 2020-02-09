@@ -58,21 +58,21 @@ type NInstr = Named Instruction
 evalModuleJIT :: ImpModule -> IO Module
 evalModuleJIT (Module ty (ImpModBody vs prog result)) = do
   dests <- liftM fold $ mapM allocIRef vs
-  let compileEnv = flip fmap dests $ \(Array _ vec) -> vecRefToOperand vec
+  let compileEnv = fmap arrayToOperand dests
   evalJit $ runCompileM compileEnv (compileTopProg prog)
   xs' <- mapM (loadIfScalar . IRef) dests
   let substEnv = (fmap (L . impExprToAtom) xs', mempty)
   return $ Module ty $ ModBody [] (subst substEnv result)
 
-allocIRef :: IVar -> IO (Env ArrayRef)
+allocIRef :: IVar -> IO (Env Array)
 allocIRef v@(_:> IRefType (b, shape)) = do
   ref <- allocateArray b (map fromILitInt shape)
   return $ v @> ref
 allocIRef _ = error "Destination should have a reference type"
 
 loadIfScalar :: IVal -> IO IVal
-loadIfScalar val@(IRef (Array shape ref)) = case shape of
-  [] -> liftM (ILit . readScalar) $ loadArray (Array [] ref)
+loadIfScalar val@(IRef array@(Array shape _ _)) = case shape of
+  [] -> liftM ILit $ loadScalar array
   _  -> return val
 loadIfScalar _ = error "Expected reference"
 
@@ -150,7 +150,7 @@ compileInstr instr = case instr of
 compileExpr :: IExpr -> CompileM Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
-  IRef (Array _ ptr) -> return (vecRefToOperand ptr)
+  IRef x   -> return $ arrayToOperand x
   IVar v   -> lookupImpVar v
   IGet x i -> do
     let (IRefType (_, (_:shape))) = impExprType x
@@ -159,9 +159,8 @@ compileExpr expr = case expr of
     i' <- compileExpr i
     indexPtr x' shape' i'
 
-vecRefToOperand :: VecRef -> Operand
-vecRefToOperand ref = refLiteral b ptr
-  where (_, b, ptr) = vecRefInfo ref
+arrayToOperand :: Array -> Operand
+arrayToOperand (Array _ b ptr) = refLiteral b ptr
 
 lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)
@@ -208,12 +207,6 @@ copy numBytes dest src = do
   src'  <- castLPtr charTy src
   dest' <- castLPtr charTy dest
   addInstr $ L.Do (externCall memcpyFun [dest', src', numBytes])
-
-iValAsOperand :: IVal -> Operand
-iValAsOperand val = case val of
-  ILit x             -> litVal x
-  IRef (Array _ ref) -> vecRefToOperand ref
-  _ -> error $ "Not a value: " ++ pprint val
 
 refLiteral :: BaseType -> Ptr () -> Operand
 refLiteral ty ptr = L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))

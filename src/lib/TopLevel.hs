@@ -57,8 +57,8 @@ evalSourceBlock env block = case block of
       tell [TextOut $ pprint (getType val)]
     Dump DexObject fname -> do
       val <- evalModuleVal env v m
-      val' <- liftIOTop $ valWithoutRefs val
-      liftIOTop $ writeFile fname $ pprint val'
+      s <- liftIOTop $ pprintVal val
+      liftIOTop $ writeFile fname s
     Dump DexBinaryObject fname -> do
       val <- evalModuleVal env v m
       liftIOTop $ dumpDataFile fname val
@@ -160,7 +160,7 @@ addDebugCtx ctx (Err CompilerErr c msg) = Err CompilerErr c msg'
 addDebugCtx _ e = e
 
 liftIOTop :: IO a -> TopPassM a
-liftIOTop m = catchIOExcept $ m `catch` \e ->
+liftIOTop m = catchIOExcept $ (m >>= evaluate) `catch` \e ->
                  throwIO $ Err DataIOErr Nothing (show (e::IOError))
 
 catchHardErrors :: TopPassM a -> TopPassM a
