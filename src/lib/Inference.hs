@@ -101,9 +101,8 @@ check expr reqTy = case expr of
 
 constrainTopDown :: PrimExpr e ty lam -> Bool
 constrainTopDown expr = case expr of
-  ConExpr (TabGet _ _) -> False
-  PrimOpExpr  _            -> False
-  ConExpr _            -> True
+  PrimOpExpr _ -> False
+  ConExpr    _ -> True
 
 checkLam :: FLamExpr -> (Type, Type) -> InferM FLamExpr
 checkLam (FLamExpr p body) (a, b) = do
@@ -139,10 +138,6 @@ generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
     m1' <- freshMonadType
     m2' <- freshMonadType
     return $ Bind (m1,m1') (lam, (a,m2'))
-  TabGet xs i -> do
-    n <- freshQ
-    a <- freshQ
-    return $ TabGet (xs, TabType n a) (i, n)
   Seq lam -> do
     m <- freshMonadType
     n <- freshQ
@@ -154,6 +149,10 @@ generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
     a <- freshQ
     b <- freshQ
     return $ App (f, ArrowType l a b) (x, a)
+  TabGet xs i -> do
+    n <- freshQ
+    a <- freshQ
+    return $ TabGet (xs, TabType n a) (i, n)
   MonadRun r s m -> do
     ~m'@(Monad (Effect r' _ s') _) <- freshMonadType
     return $ MonadRun (r,r') (s,s') (m,m')

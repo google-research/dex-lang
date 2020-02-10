@@ -415,6 +415,12 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   TabCon n ty xs ->
     inClass ty Data >> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
     where n' = IdxSetLit (length xs)
+  TabGet (TabType i a) i' -> eq i i' >> return a
+  RecGet (RecType r) i    -> return $ recGet r i
+  ArrayGep (ArrayType (_:shape) b) i -> do
+    eq (BaseType IntType) i
+    return $ ArrayType shape b
+  LoadScalar (ArrayType [] b) -> return $ BaseType b
   ScalarBinOp binop t1 t2 -> do
     eq (BaseType t1') t1
     eq (BaseType t2') t2
@@ -444,9 +450,8 @@ traversePrimExprType (ConExpr con) eq inClass = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrowType l a b
   RecCon r    -> return $ RecType r
-  TabGet (TabType i a) i' -> eq i i' >> return a
-  RecGet (RecType r) i    -> return $ recGet r i
   AFor n a                -> return $ TabType n a
+  AGet (ArrayType _ b) -> return $ BaseType b  -- TODO: check shape matches AFor scope
   AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
@@ -463,11 +468,6 @@ traversePrimExprType (ConExpr con) eq inClass = case con of
     LensId ty      -> return $ Lens ty ty
     LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
-  IdxFromStack         -> return $ BaseType IntType
-  ArrayGep (ArrayType (_:shape) b) i -> do
-    eq (BaseType IntType) i
-    return $ ArrayType shape b
-  LoadScalar (ArrayType [] b) -> return $ BaseType b
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
   Todo ty     -> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con

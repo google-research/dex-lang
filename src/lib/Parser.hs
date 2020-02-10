@@ -379,7 +379,7 @@ appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
 postFixRule :: Operator Parser FExpr
 postFixRule = Postfix $ do
   trailers <- some (period >> idxExpr)
-  return $ \e -> foldl (\x i -> fPrimCon $ TabGet x i) e trailers
+  return $ \e -> foldl (\x i -> fPrimOp $ TabGet x i) e trailers
 
 scalarBinOpRule :: String -> ScalarBinOp -> Operator Parser FExpr
 scalarBinOpRule opchar op = binOpRule opchar f

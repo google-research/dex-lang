@@ -149,8 +149,6 @@ data PrimExpr ty e lam = PrimOpExpr  (PrimOp ty e lam)
 data PrimCon ty e lam =
         Lit LitVal
       | Lam ty lam
-      | TabGet e e
-      | RecGet e RecField
       | RecCon (Record e)
       | AsIdx Int e
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
@@ -158,10 +156,8 @@ data PrimCon ty e lam =
       | Bind e lam
       | LensCon (LensCon ty e)
       | Seq lam
-      | LoadScalar e
       | AFor ty e
-      | IdxFromStack
-      | ArrayGep e e
+      | AGet e
       | ArrayRef Array
       | Todo ty
         deriving (Show, Eq, Generic)
@@ -182,6 +178,10 @@ data PrimOp ty e lam =
         App e e
       | TApp e [ty]
       | For lam
+      | TabGet e e
+      | RecGet e RecField
+      | ArrayGep e e
+      | LoadScalar e
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
@@ -559,6 +559,10 @@ instance TraversableExpr PrimOp where
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
     TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
+    TabGet e i           -> liftA2 TabGet (fE e) (fE i)
+    RecGet e i           -> liftA2 RecGet (fE e) (pure i)
+    ArrayGep e i         -> liftA2 ArrayGep (fE e) (fE i)
+    LoadScalar e         -> liftA  LoadScalar (fE e)
     ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
     ScalarUnOp  op e     -> liftA  (ScalarUnOp  op) (fE e)
     VSpaceOp ty VZero    -> liftA2 VSpaceOp (fT ty) (pure VZero)
@@ -579,10 +583,8 @@ instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
     Lit l       -> pure   (Lit l)
     Lam lin lam -> liftA2 Lam (fT lin) (fL lam)
-    -- for printing only
-    TabGet e i  -> liftA2 TabGet (fE e) (fE i)
-    RecGet e i  -> liftA2 RecGet (fE e) (pure i)
     AFor n e    -> liftA2 AFor (fT n) (fE e)
+    AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA  (AsIdx n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
     Bind e lam  -> liftA2 Bind (fE e) (fL lam)
@@ -598,9 +600,6 @@ instance TraversableExpr PrimCon where
       LensId ty         -> liftA  LensId (fT ty)
     Seq lam             -> liftA  Seq (fL lam)
     Todo ty             -> liftA  Todo (fT ty)
-    IdxFromStack        -> pure   IdxFromStack
-    ArrayGep e i        -> liftA2 ArrayGep (fE e) (fE i)
-    LoadScalar e        -> liftA  LoadScalar (fE e)
     ArrayRef ref        -> pure $ ArrayRef ref
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)

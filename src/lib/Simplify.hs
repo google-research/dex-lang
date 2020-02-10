@@ -56,8 +56,7 @@ simplifyAtom atom = case atom of
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _          -> substSimp atom
   Con (Lam _ _) -> substSimp atom
-  Con con -> liftM (reduceAtom . Con) $
-    traverseExpr con substSimp simplifyAtom simplifyLam
+  Con con -> liftM Con $ traverseExpr con substSimp simplifyAtom simplifyLam
 
 -- Simplifies bodies of first-order functions only.
 -- Unlike `substSimp`, this simplifies under the binder too.
@@ -75,6 +74,7 @@ simplifyCExpr expr = do
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
       dropSub $ extendSub env $ simplify body
+    RecGet (Con (RecCon r)) i -> return $ recGet r i
     Select ty p x y -> selectAt ty p x y
     _ -> emit expr'
 
@@ -137,9 +137,13 @@ linearizeCExpr expr = case expr of
         Nothing -> error $ "Linearization not implemented: " ++ pprint v
         Just rule -> deShadow rule
     (x', xTangents) <- linearizeAtom x
-    (y, f) <- liftM fromPair $ emit (App linRule x')
+    ~(Tup [y, f]) <- emit (App linRule x') >>= unpackRec
     return (y, do {ts <- xTangents; emit $ App f ts})
   App _ _      -> error $ "Shouldn't have NApp left: " ++ pprint expr
+  -- TabGet x i -> do
+  --   (x', xt) <- linearizeAtom x
+  --   (i', _) <- linearizeAtom i
+  --   return (Con (TabGet x' i'), liftM (Con . flip TabGet i') xt)
 
 mapLinearize :: (a -> SimplifyM (a, TangentM a))
              -> [a] -> SimplifyM ([a], TangentM [a])
@@ -157,10 +161,6 @@ linearizeAtom atom = case atom of
       _ -> error "unexpected lookup"
   Con con -> case con of
     Lit _ -> return $ zeroDeriv atom
-    TabGet x i -> do
-      (x', xt) <- linearizeAtom x
-      (i', _) <- linearizeAtom i
-      return (Con (TabGet x' i'), liftM (Con . flip TabGet i') xt)
     _ -> error $ "not implemented: " ++ pprint atom
   _ -> error $ "not implemented: " ++ pprint atom
 

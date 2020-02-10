@@ -63,6 +63,7 @@ prettyTyDepth d ty = case ty of
   ArrowType l a b -> parens $ recur a <+> arrStr l <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
+  ArrayType shape b -> p b <> p shape
   TypeApp f xs -> recur f <+> hsep (map recur xs)
   Monad eff a -> "Monad" <+> hsep (map recur (toList eff)) <+> recur a
   Lens a b    -> "Lens" <+> recur a <+> recur b
@@ -136,6 +137,10 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (For lam) = "for" <+> i <+> "." <+> body
     where (i, body) = prettyLam lam
   pretty (TabCon _ _ xs) = list (map pretty xs)
+  pretty (TabGet e1 e2) = parens (p e1) <> "." <> parens (p e2)
+  pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
+  pretty (ArrayGep x i) = parens (p x) <> "." <> p i
+  pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (MonadRun r s m) = "run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
@@ -144,17 +149,12 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
   pretty (Lam _ lam)   = prettyL lam
-  pretty (TabGet e1 e2) = parens (p e1) <> "." <> parens (p e2)
-  pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
   pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
   pretty (AsIdx n i) = p i <> "@" <> p n
   pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
     where (v, body) = prettyLam f
   pretty (ArrayRef array) = p array
-  pretty IdxFromStack = "*"
-  pretty (ArrayGep x i) = parens (p x) <> "." <> p i
-  pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty con = prettyExprDefault (ConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann

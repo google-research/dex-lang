@@ -78,7 +78,8 @@ bindPat :: Pat -> Atom -> NormM SubstEnv
 bindPat (RecLeaf v) x = return $ v @> L x
 bindPat (RecTree r) xs =
   liftM fold $ flip traverse (recNameVals r) $ \(i, p) -> do
-    bindPat p $ nRecGet xs i
+    x <- nRecGet xs i
+    bindPat p x
 
 normalizeDecl :: FDecl -> NormM SubstEnv
 normalizeDecl decl = case decl of

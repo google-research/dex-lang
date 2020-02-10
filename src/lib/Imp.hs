@@ -70,15 +70,6 @@ toImpAtom atom = case atom of
   Con con -> case con of
     Lit x        -> return $ ILeaf $ ILit x
     ArrayRef ref -> return $ ILeaf $ IRef ref
-    TabGet x i -> do
-      i' <- toImpAtom i >>= fromScalarIAtom
-      xs <- toImpAtom x
-      return $ tabGetIAtom xs i'
-    RecGet x i -> do
-      x' <- toImpAtom x
-      case x' of
-        ICon (RecCon r)-> return $ recGet r i
-        val -> error $ "Expected a record, got: " ++ show val
     _ -> liftM ICon $ traverseExpr con return toImpAtom $
                         const (error "unexpected lambda")
     _ -> error $ "Not implemented: " ++ pprint atom
@@ -86,13 +77,13 @@ toImpAtom atom = case atom of
 
 fromScalarIAtom :: IAtom -> ImpM IExpr
 fromScalarIAtom atom = case atom of
-  ILeaf x                     -> return x
-  ICon (LoadScalar (ILeaf x)) -> load x
-  ICon (AsIdx _ x)            -> fromScalarIAtom x
+  ILeaf x               -> return x
+  ICon (AGet (ILeaf x)) -> load x
+  ICon (AsIdx _ x)      -> fromScalarIAtom x
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 fromScalarDest :: IAtom -> IExpr
-fromScalarDest (ICon (LoadScalar (ILeaf x))) = x
+fromScalarDest (ICon (AGet (ILeaf x))) = x
 fromScalarDest atom = error $ "Not a scalar dest " ++ pprint atom
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
@@ -106,6 +97,15 @@ toImpCExpr dests op = case op of
     emitLoop n' $ \i -> do
       let ithDest = tabGetIAtom dests i
       extendR (b @> asIdx n' i) $ toImpExpr ithDest body
+  TabGet x i -> do
+    i' <- toImpAtom i >>= fromScalarIAtom
+    xs <- toImpAtom x
+    copyIAtom dests $ tabGetIAtom xs i'
+  RecGet x i -> do
+    x' <- toImpAtom x
+    case x' of
+      ICon (RecCon r)-> copyIAtom dests $ recGet r i
+      val -> error $ "Expected a record, got: " ++ show val
   MonadRun rArgs sArgs m -> do
     rArgs' <- toImpAtom rArgs
     sArgs' <- toImpAtom sArgs
@@ -123,7 +123,7 @@ toImpCExpr dests op = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     store dest ans
-    where (ICon (AsIdx _ (ICon (LoadScalar (ILeaf dest))))) = dests
+    where (ICon (AsIdx _ (ICon (AGet (ILeaf dest))))) = dests
   Cmp cmpOp ty x y -> do
     x' <- toImpAtom x >>= fromScalarIAtom
     y' <- toImpAtom y >>= fromScalarIAtom
@@ -159,10 +159,8 @@ makeDest' :: [IExpr] -> Type -> WriterT [IVar] ImpM IAtom
 makeDest' shape ty = case ty of
   BaseType b  -> do
     v <- lift $ freshVar ("v":> IRefType (b, shape))
-    let scalarRef = foldr (const (ICon . aget)) (ILeaf (IVar v)) shape
     tell [v]
-    return $ ICon $ LoadScalar $ scalarRef
-    where aget x = ArrayGep x (ICon IdxFromStack)
+    return $ ICon $ AGet $ ILeaf $ IVar v
   TabType n b -> do
     n'  <- lift $ typeToSize n
     liftM (ICon . AFor n) $ makeDest' (shape ++ [n']) b
@@ -201,11 +199,11 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (Con con) = case con of
       copyIAtom outDests ans
     MTell x -> do
       x' <- toImpAtom x
-      wDests' <- lensIndexRef l wDests
+      wDests' <- lensGet l wDests
       zipWithM_ addToDest (toList wDests') (toList x')
     MPut x -> do
       x' <- toImpAtom x
-      sDests' <- lensIndexRef l sDests
+      sDests' <- lensGet l sDests
       copyIAtom sDests' x'
     MGet -> do
       ans <- lensGet l sDests
@@ -216,34 +214,18 @@ lensGet :: Atom -> IAtom -> ImpM IAtom
 lensGet (Con (LensCon lens)) x = case lens of
   LensId _ -> return x
   LensCompose a b -> lensGet a x >>= lensGet b
-  IdxAsLens _ i -> do
-    i' <- toImpAtom i >>= fromScalarIAtom
-    return $ tabGetIAtom x i'
+  IdxAsLens _ i -> liftM (tabGetIAtom x) $ fromScalarIAtom =<< toImpAtom i
 lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
-
-lensIndexRef :: Atom -> IAtom -> ImpM IAtom
-lensIndexRef (Con (LensCon lens)) x = case lens of
-  LensId _ -> return x
-  LensCompose a b -> lensIndexRef a x >>= lensIndexRef b
-  IdxAsLens _ i -> do
-    i' <- toImpAtom i >>= fromScalarIAtom
-    return $ tabGetIAtom x i'
-lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 tabGetIAtom :: IAtom -> IExpr -> IAtom
 tabGetIAtom x i = case x of
-  ICon (AFor _ body) -> impIndexSubst [] i body
+  ICon (AFor _ body) -> impIndexSubst i body
   _ -> error $ "Unexpected atom: " ++ show x
 
-impIndexSubst :: [()] -> IExpr -> IAtom -> IAtom
-impIndexSubst stack i atom = case atom of
-  ICon con -> case con of
-    AFor n body -> ICon $ AFor n $ impIndexSubst (():stack) i body
-    ArrayGep x (ICon IdxFromStack)-> case stack of
-      []        -> ILeaf $ IGet x' i  where (ILeaf x') = x
-      ():stack' -> ICon $ ArrayGep (impIndexSubst stack' i x) (ICon IdxFromStack)
-    _ -> ICon $ fmapExpr con id (impIndexSubst stack i) (error "unexpected lambda")
-  _ -> error "Unused index"
+impIndexSubst :: IExpr -> IAtom -> IAtom
+impIndexSubst i atom = case atom of
+  ILeaf x  -> ILeaf $ IGet x i
+  ICon con -> ICon $ fmapExpr con id (impIndexSubst i) (error "unexpected lambda")
 
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of

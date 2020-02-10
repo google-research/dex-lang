@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, reduceAtom, nRecGet, nTabGet, indexSubst) where
+module Subst (Subst, subst) where
 
 import Data.Foldable
 
@@ -40,41 +40,7 @@ instance Subst Atom where
       Just (T _ ) -> error "Expected let-bound variable"
     TLam tvs body -> TLam tvs' $ subst (env <> env') body
       where (tvs', env') = refreshTBinders scope tvs
-    -- This case is ensure indexing is reduced if possible
-    Con (TabGet   x i) -> nTabGet  (subst env x) (subst env i)
-    Con (ArrayGep x i) -> arrayGep (subst env x) (subst env i)
-    Con con -> reduceAtom $ Con $ subst env con
-
-reduceAtom :: Atom -> Atom
-reduceAtom atom = case atom of
-  Con (RecGet e i) -> nRecGet (reduceAtom e) i
-  Con (TabGet e i) -> nTabGet (reduceAtom e) i
-  _ -> atom
-
-nRecGet ::  Atom -> RecField -> Atom
-nRecGet (Con (RecCon r)) i = recGet r i
-nRecGet x i = Con $ RecGet x i
-
-nTabGet :: Atom -> Atom -> Atom
-nTabGet x i = case (x, i) of
-  (Con (AFor _ body), Con (AsIdx _ i')) -> indexSubst [] i' body
-  _ -> Con $ TabGet x i
-
-arrayGep :: Atom -> Atom -> Atom
-arrayGep (Con (ArrayRef x)) (Con (Lit (IntLit i))) =
-  Con $ ArrayRef $ subArray i x
-arrayGep x i = Con $ ArrayGep x i
-
-indexSubst :: [()] -> Atom -> Atom -> Atom
-indexSubst stack i atom = case atom of
-  Con con -> case con of
-    AFor n body -> Con $ AFor n $ indexSubst (():stack) i body
-    ArrayGep x (Con IdxFromStack) -> case stack of
-      []        -> arrayGep x i
-      ():stack' -> Con $ ArrayGep atom' $ Con IdxFromStack
-         where atom' = indexSubst stack' i x
-    _ -> Con $ fmapExpr con id (indexSubst stack i) (error "unexpected lambda")
-  _ -> error "Unused index"
+    Con con -> Con $ subst env con
 
 instance Subst LamExpr where
   subst env@(_, scope) (LamExpr b body) = LamExpr b' body'

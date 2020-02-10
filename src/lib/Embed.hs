@@ -10,9 +10,9 @@
 module Embed (emit, emitTo, withBinder, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, flipIdx, zeroAt, addAt, sumAt, deShadow,
-              emitNamed, add, mul, sub, neg, div',
-              selectAt, freshVar, unitBinder, nUnitCon,
-              recGetFst, recGetSnd, makeTup, fromTup, makePair, fromPair) where
+              nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
+              selectAt, freshVar, unitBinder, nUnitCon, unpackRec,
+              makeTup, makePair) where
 
 import Control.Monad
 import Data.Foldable (toList)
@@ -147,30 +147,27 @@ nUnitCon = Con $ RecCon (Tup [])
 unitBinder :: MonadCat EmbedEnv m => m Var
 unitBinder = freshVar ("_":>unitTy)
 
-recGetFst :: Atom -> Atom
-recGetFst x = nRecGet x fstField
+nRecGet :: MonadCat EmbedEnv m => Atom -> RecField -> m Atom
+nRecGet (Con (RecCon r)) i = return $ recGet r i
+nRecGet x i = emit $ RecGet x i
 
-recGetSnd :: Atom -> Atom
-recGetSnd x = nRecGet x sndField
+nTabGet :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
+nTabGet x i = emit $ TabGet x i
 
-unpackRec :: Atom -> Record Atom
-unpackRec (Con (RecCon r)) = r
+arrayGep :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
+arrayGep x i = emit $ ArrayGep x i
+
+unpackRec :: MonadCat EmbedEnv m => Atom -> m (Record Atom)
+unpackRec (Con (RecCon r)) = return r
 unpackRec x = case getType x of
-  RecType r -> fmap (nRecGet x . fst) $ recNameVals r
+  RecType r -> mapM (nRecGet x . fst) $ recNameVals r
   ty        -> error $ "Not a tuple: " ++ pprint ty
 
 makeTup :: [Atom] -> Atom
 makeTup xs = Con $ RecCon $ Tup xs
 
-fromTup :: Atom -> [Atom]
-fromTup x = toList $ unpackRec x
-
 makePair :: Atom -> Atom -> Atom
 makePair x y = Con $ RecCon (Tup [x, y])
-
-fromPair :: Atom -> (Atom, Atom)
-fromPair x = (a, b)
-  where [a, b] = fromTup x
 
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
@@ -178,11 +175,13 @@ mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
   TabType n a -> do
-    lam <- buildLam ("i":>n) $ \i -> mapScalars f a [nTabGet x i | x <- xs]
+    lam <- buildLam ("i":>n) $ \i -> do
+      xs' <- mapM (flip nTabGet i) xs
+      mapScalars f a xs'
     emit $ For lam
-  RecType r ->
+  RecType r -> do
+    xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
     liftM (Con . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
-    where xs' = transposeRecord r $ map unpackRec xs
   _ -> error $ "Not implemented " ++ pprint ty
 
 transposeRecord :: Record b -> [Record a] -> Record [a]

@@ -27,7 +27,6 @@ import PPrint
 import Parser
 import ParseUtil
 import Array
-import Subst
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -144,9 +143,7 @@ valFromPtrs' shape ty = case ty of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    let arr = Con $ ArrayRef $ Array shape b ptr
-    return $ Con $ LoadScalar $ foldr (const aGet) arr shape
-    where aGet x = Con $ ArrayGep x (Con IdxFromStack)
+    return $ Con $ AGet $ Con $ ArrayRef $ Array shape b ptr
   RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
   TabType n a -> liftM (Con . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
@@ -164,15 +161,21 @@ prettyVal (Con con) = case con of
   RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
   AFor (IdxSetLit n) body -> do
     xs <- flip mapM [0..n-1] $ \i ->
-      liftM asStr $ prettyVal $ indexSubst [] (Con (Lit (IntLit i))) body
+      liftM asStr $ prettyVal $ litIndexSubst i body
     return $ pretty xs
-  LoadScalar (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
+  AGet (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
   Lit x -> return $ pretty x
   _ -> return $ pretty con
 prettyVal atom = error $ "Unexpected value: " ++ pprint atom
+
+litIndexSubst :: Int -> Atom -> Atom
+litIndexSubst i atom = case atom of
+  Con (ArrayRef x) -> Con $ ArrayRef $ subArray i x
+  Con con -> Con $ fmapExpr con id (litIndexSubst i) (error "unexpected lambda")
+  _ -> error "Unused index"
 
 traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
 traverseVal f val = case val of
@@ -186,10 +189,9 @@ traverseVal f val = case val of
 valScalarsToArrays :: Val -> IO Val
 valScalarsToArrays val = flip traverseVal val $ \con -> case con of
   Lit x -> do
-    arr <- allocateArray b []
+    arr <- allocateArray (litType x) []
     storeScalar arr x
-    return $ Just $ LoadScalar $ Con $ ArrayRef arr
-    where b = litType x
+    return $ Just $ AGet $ Con $ ArrayRef arr
   _ -> return Nothing
 
 getValRefs :: Val -> [Array]
