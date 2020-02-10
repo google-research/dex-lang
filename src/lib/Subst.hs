@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, reduceAtom, nRecGet, nTabGet, nTabGetLit) where
+module Subst (Subst, subst, reduceAtom, nRecGet, nTabGet, indexSubst) where
 
 import Data.Foldable
 
@@ -17,7 +17,6 @@ import Syntax
 import PPrint
 import Fresh
 import Array
-import Type
 
 class Subst a where
   subst :: (SubstEnv, Scope) -> a -> a
@@ -42,7 +41,8 @@ instance Subst Atom where
     TLam tvs body -> TLam tvs' $ subst (env <> env') body
       where (tvs', env') = refreshTBinders scope tvs
     -- This case is ensure indexing is reduced if possible
-    PrimCon (TabGet x i) -> nTabGet (subst env x) (subst env i)
+    PrimCon (TabGet   x i) -> nTabGet  (subst env x) (subst env i)
+    PrimCon (ArrayGep x i) -> arrayGep (subst env x) (subst env i)
     PrimCon con -> reduceAtom $ PrimCon $ subst env con
 
 reduceAtom :: Atom -> Atom
@@ -56,26 +56,24 @@ nRecGet (PrimCon (RecCon r)) i = recGet r i
 nRecGet x i = PrimCon $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
-nTabGet x i = case i of
-  PrimCon (AsIdx _ (PrimCon (Lit (IntLit i')))) -> nTabGetLit x i'
+nTabGet x i = case (x, i) of
+  (PrimCon (AFor _ body), PrimCon (AsIdx _ i')) -> indexSubst [] i' body
   _ -> PrimCon $ TabGet x i
 
-nTabGetLit :: Atom -> Int -> Atom
-nTabGetLit atom i = case atom of
-  PrimCon (ArrayRef (TabType _ ty) ref) -> PrimCon $ ArrayRef ty (subArray i ref)
-  PrimCon (AFor _ body)                 -> indexSubst i [] body
-  _ -> PrimCon $ TabGet atom i'
-    where i' = PrimCon $ AsIdx n $ PrimCon $ Lit (IntLit i)
-          (TabType (IdxSetLit n) _) = getType atom
+arrayGep :: Atom -> Atom -> Atom
+arrayGep (PrimCon (ArrayRef x)) (PrimCon (Lit (IntLit i))) =
+  PrimCon $ ArrayRef $ subArray i x
+arrayGep x i = PrimCon $ ArrayGep x i
 
-indexSubst :: Int -> [()] -> Atom -> Atom
-indexSubst i stack atom = case atom of
+indexSubst :: [()] -> Atom -> Atom -> Atom
+indexSubst stack i atom = case atom of
   PrimCon con -> case con of
-    AFor n body -> PrimCon $ AFor n $ indexSubst i (():stack) body
-    AGet x -> case stack of
-      []        -> nTabGetLit x i
-      ():stack' -> PrimCon $ AGet $ indexSubst i stack' x
-    _ -> PrimCon $ fmapExpr con id (indexSubst i stack) (error "unexpected lambda")
+    AFor n body -> PrimCon $ AFor n $ indexSubst (():stack) i body
+    ArrayGep x (PrimCon IdxFromStack) -> case stack of
+      []        -> arrayGep x i
+      ():stack' -> PrimCon $ ArrayGep atom' $ PrimCon IdxFromStack
+         where atom' = indexSubst stack' i x
+    _ -> PrimCon $ fmapExpr con id (indexSubst stack i) (error "unexpected lambda")
   _ -> error "Unused index"
 
 instance Subst LamExpr where
@@ -106,8 +104,9 @@ instance Subst Type where
         Nothing      -> ty
         Just (T ty') -> ty'
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
-    ArrType l a b -> ArrType (recur l) (recur a) (recur b)
+    ArrowType l a b -> ArrowType (recur l) (recur a) (recur b)
     TabType a b -> TabType (recur a) (recur b)
+    ArrayType shape b -> ArrayType shape b
     RecType r   -> RecType $ fmap recur r
     TypeApp f args -> TypeApp (recur f) (map recur args)
     Forall    ks body -> Forall    ks (recur body)

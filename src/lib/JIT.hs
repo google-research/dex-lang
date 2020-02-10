@@ -60,8 +60,7 @@ evalModuleJIT (Module ty (ImpModBody vs prog result)) = do
   dests <- liftM fold $ mapM allocIRef vs
   let compileEnv = fmap arrayToOperand dests
   evalJit $ runCompileM compileEnv (compileTopProg prog)
-  xs' <- mapM (loadIfScalar . IRef) dests
-  let substEnv = (fmap (L . impExprToAtom) xs', mempty)
+  let substEnv = (fmap (L . impExprToAtom . IRef) dests, mempty)
   return $ Module ty $ ModBody [] (subst substEnv result)
 
 allocIRef :: IVar -> IO (Env Array)
@@ -69,12 +68,6 @@ allocIRef v@(_:> IRefType (b, shape)) = do
   ref <- allocateArray b (map fromILitInt shape)
   return $ v @> ref
 allocIRef _ = error "Destination should have a reference type"
-
-loadIfScalar :: IVal -> IO IVal
-loadIfScalar val@(IRef array@(Array shape _ _)) = case shape of
-  [] -> liftM ILit $ loadScalar array
-  _  -> return val
-loadIfScalar _ = error "Expected reference"
 
 -- TODO: consider making an Integral instance
 fromILitInt :: IExpr -> Int

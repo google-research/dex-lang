@@ -144,9 +144,9 @@ valFromPtrs' shape ty = case ty of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    let ty' = foldr (\n a -> TabType (IdxSetLit n) a) ty shape
-    let arr = PrimCon $ ArrayRef ty' $ Array shape b ptr
-    return $ foldr (\_ x -> PrimCon $ AGet x) arr shape
+    let arr = PrimCon $ ArrayRef $ Array shape b ptr
+    return $ PrimCon $ LoadScalar $ foldr (const aGet) arr shape
+    where aGet x = PrimCon $ ArrayGep x (PrimCon IdxFromStack)
   RecType r -> liftM (PrimCon . RecCon) $ traverse (valFromPtrs' shape) r
   TabType n a -> liftM (PrimCon . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
@@ -162,14 +162,11 @@ pprintVal val = liftM asStr $ prettyVal val
 prettyVal :: Val -> IO (Doc ann)
 prettyVal (PrimCon con) = case con of
   RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
-  AFor (IdxSetLit n) _ -> do
-    xs <- mapM (liftM asStr . prettyVal . nTabGetLit (PrimCon con)) [0..n-1]
-    return $ pretty xs
-  ArrayRef _ arr@(Array [] _ _) -> liftM pretty $ loadScalar arr
-  ArrayRef (TabType _ ty) arr@(Array (n:_) _ _) -> do
+  AFor (IdxSetLit n) body -> do
     xs <- flip mapM [0..n-1] $ \i ->
-      liftM asStr $ prettyVal $ PrimCon $ ArrayRef ty $ subArray i arr
+      liftM asStr $ prettyVal $ indexSubst [] (PrimCon (Lit (IntLit i))) body
     return $ pretty xs
+  LoadScalar (PrimCon (ArrayRef array)) -> liftM pretty $ loadScalar array
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
@@ -191,14 +188,14 @@ valScalarsToArrays val = flip traverseVal val $ \con -> case con of
   Lit x -> do
     arr <- allocateArray b []
     storeScalar arr x
-    return $ Just $ ArrayRef (BaseType b) arr
+    return $ Just $ LoadScalar $ PrimCon $ ArrayRef arr
     where b = litType x
   _ -> return Nothing
 
 getValRefs :: Val -> [Array]
 getValRefs val = execWriter $ flip traverseVal val $ \con -> case con of
-  ArrayRef _ ref -> tell [ref] >> return (Just con)
-  Lit _          -> error "Shouldn't have Lit left"
+  ArrayRef ref -> tell [ref] >> return (Just con)
+  Lit _        -> error "Shouldn't have Lit left"
   _ -> return Nothing
 
 liftExceptIO :: Except a -> IO a

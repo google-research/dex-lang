@@ -527,7 +527,7 @@ addClassVars c vs b@(v:>(Kind cs))
 
 idxSetVars :: Type -> [Name]
 idxSetVars ty = case ty of
-  ArrType _ a b -> recur a <> recur b
+  ArrowType _ a b -> recur a <> recur b
   TabType a b   -> envNames (freeVars a) <> recur b
   RecType r     -> foldMap recur r
   _             -> []
@@ -535,7 +535,7 @@ idxSetVars ty = case ty of
 
 dataVars :: Type -> [Name]
 dataVars ty = case ty of
-  ArrType _ a b -> recur a <> recur b
+  ArrowType _ a b -> recur a <> recur b
   TabType _ b   -> envNames (freeVars b)
   RecType r     -> foldMap recur r
   _             -> []
@@ -552,8 +552,8 @@ tauType = makeExprParser (sc >> tauType') typeOps
   where
     typeOps = [ [tyAppRule]
               , [InfixR (symbol "=>" >> return TabType)]
-              , [InfixR (symbol "->"  >> return (ArrType (Mult NonLin))),
-                 InfixR (symbol "--o" >> return (ArrType (Mult Lin)))]]
+              , [InfixR (symbol "->"  >> return (ArrowType (Mult NonLin))),
+                 InfixR (symbol "--o" >> return (ArrowType (Mult Lin)))]]
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)

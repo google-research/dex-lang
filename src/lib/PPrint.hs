@@ -60,7 +60,7 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrType l a b -> parens $ recur a <+> arrStr l <+> recur b
+  ArrowType l a b -> parens $ recur a <+> arrStr l <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   TypeApp f xs -> recur f <+> hsep (map recur xs)
@@ -144,14 +144,17 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
   pretty (Lam _ lam)   = prettyL lam
-  pretty (TabGet e1 e2) = p e1 <> "." <> parens (p e2)
+  pretty (TabGet e1 e2) = parens (p e1) <> "." <> parens (p e2)
   pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
   pretty (RecCon r) = p r
   pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
   pretty (AsIdx n i) = p i <> "@" <> p n
   pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
     where (v, body) = prettyLam f
-  pretty (ArrayRef ty array) = "ArrayRef[" <+> p ty <+> p array <> "]"
+  pretty (ArrayRef array) = p array
+  pretty IdxFromStack = "*"
+  pretty (ArrayGep x i) = parens (p x) <> "." <> p i
+  pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty con = prettyExprDefault (PrimConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
@@ -242,7 +245,7 @@ instance Pretty ImpInstr where
                                nest 4 (hardline <> p block)
 
 instance Pretty Array where
-  pretty array = p (show array)
+  pretty (Array shape b _) = "Ref::" <> p b <> p shape
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""

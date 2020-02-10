@@ -153,7 +153,7 @@ generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
     l <- freshLin
     a <- freshQ
     b <- freshQ
-    return $ App (f, ArrType l a b) (x, a)
+    return $ App (f, ArrowType l a b) (x, a)
   MonadRun r s m -> do
     ~m'@(Monad (Effect r' _ s') _) <- freshMonadType
     return $ MonadRun (r,r') (s,s') (m,m')
@@ -262,7 +262,7 @@ unify t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, TypeVar v) | isQ v -> bindQ v t
     (TypeVar v, t) | isQ v -> bindQ v t
-    (ArrType l a b, ArrType l' a' b') -> unify l l' >> unify a a' >> unify b b'
+    (ArrowType l a b, ArrowType l' a' b') -> unify l l' >> unify a a' >> unify b b'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
     (Monad eff a, Monad eff' a') -> do
       zipWithM_ unify (toList eff) (toList eff')

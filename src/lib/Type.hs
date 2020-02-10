@@ -164,7 +164,7 @@ checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ~ty@(Forall kinds body) <- asks $ fromL . (!(v:>()))
   (a, b) <- case body of
-              ArrType _ a b -> return (a, b)
+              ArrowType _ a b -> return (a, b)
               _ -> throw TypeErr $
                      "Bad type for linearization-annotated function: " ++ pprint ty
   let linTyExpected = Forall kinds $ a --> pairTy b (a --@ b)
@@ -203,7 +203,7 @@ subAtDepth :: Int -> (Int -> Either TVar Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
-    ArrType m a b -> ArrType m (recur a) (recur b)
+    ArrowType m a b -> ArrowType m (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
     TypeApp a b   -> TypeApp (recur a) (map recur b)
@@ -377,7 +377,7 @@ tangentBunType ty = case ty of
   BaseType b -> case b of RealType -> pairTy ty ty
                           _ -> ty
   TypeVar _ -> ty  -- can only be an index set
-  ArrType l a b -> ArrType l (recur a) (recur b)
+  ArrowType l a b -> ArrowType l (recur a) (recur b)
   TabType n a   -> TabType n (recur a)
   IdxSetLit _ -> ty
   BoundTVar _ -> ty
@@ -407,7 +407,7 @@ traversePrimExprType :: MonadError Err m
                      -> (Type -> ClassName -> m ()) -- add class constraint
                      -> m Type
 traversePrimExprType (PrimOpExpr op) eq inClass = case op of
-  App (ArrType _ a b) a' -> do
+  App (ArrowType _ a b) a' -> do
     eq a a'
     return b
   TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
@@ -442,12 +442,11 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 traversePrimExprType (PrimConExpr con) eq inClass = case con of
   Lit l       -> return $ BaseType $ litType l
-  Lam l (a,b) -> return $ ArrType l a b
+  Lam l (a,b) -> return $ ArrowType l a b
   RecCon r    -> return $ RecType r
   TabGet (TabType i a) i' -> eq i i' >> return a
   RecGet (RecType r) i    -> return $ recGet r i
   AFor n a                -> return $ TabType n a
-  AGet ~(TabType _ a)     -> return $ a  -- TODO: check index stack
   AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
   Bind (Monad eff a) (a', (Monad eff' b)) -> do
     zipWithM_ eq (toList eff) (toList eff')
@@ -464,7 +463,12 @@ traversePrimExprType (PrimConExpr con) eq inClass = case con of
     LensId ty      -> return $ Lens ty ty
     LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
-  ArrayRef ty _ -> return ty
+  IdxFromStack         -> return $ BaseType IntType
+  ArrayGep (ArrayType (_:shape) b) i -> do
+    eq (BaseType IntType) i
+    return $ ArrayType shape b
+  LoadScalar (ArrayType [] b) -> return $ BaseType b
+  ArrayRef (Array shape b _) -> return $ ArrayType shape b
   Todo ty     -> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 

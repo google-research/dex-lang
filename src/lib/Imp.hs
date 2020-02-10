@@ -13,6 +13,7 @@ module Imp (toImpModule, impExprToAtom, impExprType) where
 import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Writer
 import Data.Foldable
 import Data.Traversable
 import Data.Text.Prettyprint.Doc
@@ -29,7 +30,7 @@ import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
 type EmbedEnv = (Scope, ImpProg)
-type ImpM a = ReaderT ImpEnv (Cat EmbedEnv) a
+type ImpM = ReaderT ImpEnv (Cat EmbedEnv)
 
 data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
@@ -42,45 +43,37 @@ toImpModule (Module ty m) = Module ty (ImpModBody vs prog result)
 toImpModBody :: ModBody -> ImpM ([IVar], SubstEnv)
 toImpModBody (ModBody decls result) = do
   let vs = resultVars result
-  outAllocs <- mapM topAlloc vs
   let outTuple = PrimCon $ RecCon $ Tup $ map Var vs
-  let outDests = ICon    $ RecCon $ Tup $ outAllocs
-  toImpExpr (fmap IVar outDests) (wrapDecls decls outTuple)
-  let substEnv = fold [v @> L (impAtomToAtom (fmap IVar out))
-                      | (v, out) <- zip vs outAllocs]
-  let flatAllocVars = concat $ map toList outAllocs
-  return (flatAllocVars, subst (substEnv, mempty) result)
+  (outDest, vs') <- makeDest $ getType outTuple
+  let (ICon (RecCon (Tup outDests))) = outDest
+  toImpExpr outDest (wrapDecls decls outTuple)
+  let substEnv = fold [v @> L (impAtomToAtom x) | (v, x) <- zip vs outDests]
+  return (vs', subst (substEnv, mempty) result)
 
 resultVars :: SubstEnv -> [Var]
 resultVars env = [v:>ty | (v, L ty) <- envPairs $ freeVars env]
 
-topAlloc :: Var -> ImpM (IAtomP IVar)
-topAlloc (v:>ty) = do
-  tys <- toImpArrayType [] ty
-  flip traverse tys $ \impTy -> freshVar (v :> IRefType impTy)
-
 toImpExpr :: IAtom -> Expr -> ImpM ()
 toImpExpr dests expr = case expr of
   Decl (Let b bound) body -> do
-    withAllocs b $ \bDests -> do
-      toImpCExpr bDests bound
-      xs <- mapM loadIfScalar bDests
+    withAllocs b $ \xs-> do
+      toImpCExpr xs bound
       extendR (b @> xs) $ toImpExpr dests body
   CExpr e   -> toImpCExpr dests e
   Atom atom -> do
     xs <- toImpAtom atom
-    copyOrStoreIAtom dests xs
+    copyIAtom dests xs
 
 toImpAtom :: Atom -> ImpM IAtom
 toImpAtom atom = case atom of
   Var v -> lookupVar v
   PrimCon con -> case con of
     Lit x        -> return $ ILeaf $ ILit x
-    ArrayRef _ ref -> return $ ILeaf $ IRef ref
+    ArrayRef ref -> return $ ILeaf $ IRef ref
     TabGet x i -> do
-      i' <- toImpScalarAtom i
+      i' <- toImpAtom i >>= fromScalarIAtom
       xs <- toImpAtom x
-      traverse loadIfScalar $ indexIAtom xs i'
+      return $ tabGetIAtom xs i'
     RecGet x i -> do
       x' <- toImpAtom x
       case x' of
@@ -91,87 +84,99 @@ toImpAtom atom = case atom of
     _ -> error $ "Not implemented: " ++ pprint atom
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
-toImpScalarAtom :: Atom -> ImpM IExpr
-toImpScalarAtom atom = do
-  atom' <- toImpAtom atom
-  return $ case atom' of
-    ILeaf x                  -> x
-    ICon (AsIdx _ (ILeaf i)) -> i
-    _ -> error $ "Expected scalar, got: " ++ pprint atom'
+fromScalarIAtom :: IAtom -> ImpM IExpr
+fromScalarIAtom atom = case atom of
+  ILeaf x                     -> return x
+  ICon (LoadScalar (ILeaf x)) -> load x
+  ICon (AsIdx _ x)            -> fromScalarIAtom x
+  _ -> error $ "Expected scalar, got: " ++ pprint atom
+
+fromScalarDest :: IAtom -> IExpr
+fromScalarDest (ICon (LoadScalar (ILeaf x))) = x
+fromScalarDest atom = error $ "Not a scalar dest " ++ pprint atom
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
   TabCon _ _ rows -> do
     rows' <- mapM toImpAtom rows
-    void $ sequence [copyOrStoreIAtom (indexIAtom dests $ ILit (IntLit i)) row
+    void $ sequence [copyIAtom (tabGetIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
   For (LamExpr b body) -> do
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
-      let ithDest = indexIAtom dests i
+      let ithDest = tabGetIAtom dests i
       extendR (b @> asIdx n' i) $ toImpExpr ithDest body
   MonadRun rArgs sArgs m -> do
     rArgs' <- toImpAtom rArgs
     sArgs' <- toImpAtom sArgs
-    copyOrStoreIAtom sDests sArgs'
+    copyIAtom sDests sArgs'
     mapM_ initializeZero wDests
     toImpAction (rArgs', wDests, sDests) aDests m
     where (ICon (RecCon (Tup [aDests, wDests, sDests]))) = dests
   LensGet x l -> do
     x' <- toImpAtom x
-    ansRefs <- mapM (lensGet l) x'
-    copyOrStoreIAtom dests ansRefs
+    ansRefs <- lensGet l x'
+    copyIAtom dests ansRefs
   IntAsIndex n i -> do
-    i' <- toImpScalarAtom i
+    i' <- toImpAtom i >>= fromScalarIAtom
     n' <- typeToSize n
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     store dest ans
-    where (ICon (AsIdx _ (ILeaf dest))) = dests
+    where (ICon (AsIdx _ (ICon (LoadScalar (ILeaf dest))))) = dests
   Cmp cmpOp ty x y -> do
-    x' <- toImpScalarAtom x
-    y' <- toImpScalarAtom y
+    x' <- toImpAtom x >>= fromScalarIAtom
+    y' <- toImpAtom y >>= fromScalarIAtom
     ans <- emitInstr $ IPrimOp $ ScalarBinOp (op' cmpOp) x' y'
-    store dest ans
-    where (ILeaf dest) = dests
-          op' = case ty of BaseType RealType -> FCmp
+    store (fromScalarDest dests) ans
+    where op' = case ty of BaseType RealType -> FCmp
                            _                 -> ICmp
   IdxSetSize n -> do
     n' <- typeToSize n
-    copyOrStore dest n'
-    where (ILeaf dest) = dests
-  ScalarUnOp IndexAsInt i -> toImpScalarAtom i >>= store dest
-    where (ILeaf dest) = dests
+    copyOrStore (fromScalarDest dests) n'
+  ScalarUnOp IndexAsInt i ->
+    toImpAtom i >>= fromScalarIAtom >>= store (fromScalarDest dests)
   _ -> do
     op' <- traverseExpr op
               (return . toImpBaseType)
-              toImpScalarAtom
+              (toImpAtom >=> fromScalarIAtom)
               (const (return ()))
     ans <- emitInstr $ IPrimOp op'
-    store dest ans
-    where ~(ILeaf dest) = dests
+    store (fromScalarDest dests) ans
 
 withAllocs :: Var -> (IAtom -> ImpM a) -> ImpM a
 withAllocs (_:>ty) body = do
-  dest <- toImpArrayType [] ty >>= mapM newAlloc
+  (dest, vs) <- makeDest ty
+  flip mapM_ vs $ \v@(_:>IRefType ty) -> emitStatement (Just v, Alloc ty)
   ans <- body dest
-  flip mapM_ dest $ \(IVar v) -> emitStatement (Nothing, Free v)
+  flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
   return ans
 
-newAlloc :: ArrayType -> ImpM IExpr
-newAlloc ty = do
-  v <- freshVar ("x" :> IRefType ty)
-  emitStatement (Just v, Alloc ty)
-  return $ IVar v
+makeDest :: Type -> ImpM (IAtom, [IVar])
+makeDest ty = runWriterT $ makeDest' [] ty
+
+makeDest' :: [IExpr] -> Type -> WriterT [IVar] ImpM IAtom
+makeDest' shape ty = case ty of
+  BaseType b  -> do
+    v <- lift $ freshVar ("v":> IRefType (b, shape))
+    let scalarRef = foldr (const (ICon . aget)) (ILeaf (IVar v)) shape
+    tell [v]
+    return $ ICon $ LoadScalar $ scalarRef
+    where aget x = ArrayGep x (ICon IdxFromStack)
+  TabType n b -> do
+    n'  <- lift $ typeToSize n
+    liftM (ICon . AFor n) $ makeDest' (shape ++ [n']) b
+  RecType r   -> liftM (ICon . RecCon ) $ traverse (makeDest' shape) r
+  IdxSetLit n -> liftM (ICon . AsIdx n) $ makeDest' shape (BaseType IntType)
+  _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 type MContext = (IAtom, IAtom, IAtom)
 
 toImpActionExpr :: MContext -> IAtom -> Expr -> ImpM ()
 toImpActionExpr mdests dests expr = case expr of
   Decl (Let b bound) body -> do
-    withAllocs b $ \bsDests -> do
-      toImpCExpr bsDests bound
-      xs <- mapM loadIfScalar bsDests
+    withAllocs b $ \xs-> do
+      toImpCExpr xs bound
       extendR (b @> xs) $ toImpActionExpr mdests dests body
   Atom m -> toImpAction mdests dests m
   _ -> error $ "Unexpected expression " ++ pprint expr
@@ -179,92 +184,78 @@ toImpActionExpr mdests dests expr = case expr of
 toImpAction :: MContext -> IAtom -> Atom -> ImpM ()
 toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
   Bind rhs (LamExpr b body) -> do
-    withAllocs b $ \bsDests -> do
-      toImpAction mdests bsDests rhs
-      xs <- mapM loadIfScalar bsDests
+    withAllocs b $ \xs -> do
+      toImpAction mdests xs rhs
       extendR (b @> xs) $ toImpActionExpr mdests outDests body
   Return _ x -> do
     x' <- toImpAtom x
-    copyOrStoreIAtom outDests x'
+    copyIAtom outDests x'
   Seq (LamExpr b body) -> do
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
-      let ithDest = indexIAtom outDests i
+      let ithDest = tabGetIAtom outDests i
       extendR (b @> asIdx n' i) $ toImpActionExpr mdests ithDest body
   MonadCon _ _ l m -> case m of
     MAsk -> do
-      ans <- mapM (lensGet l) rVals
-      copyOrStoreIAtom outDests ans
+      ans <- lensGet l rVals
+      copyIAtom outDests ans
     MTell x -> do
       x' <- toImpAtom x
-      wDests' <- mapM (lensIndexRef l) wDests
+      wDests' <- lensIndexRef l wDests
       zipWithM_ addToDest (toList wDests') (toList x')
     MPut x -> do
       x' <- toImpAtom x
-      sDests' <- mapM (lensIndexRef l) sDests
-      copyOrStoreIAtom sDests' x'
+      sDests' <- lensIndexRef l sDests
+      copyIAtom sDests' x'
     MGet -> do
-      ans <- mapM loadIfScalar sDests >>= mapM (lensGet l)
-      copyOrStoreIAtom outDests ans
+      ans <- lensGet l sDests
+      copyIAtom outDests ans
   _ -> error $ "Unexpected expression" ++ pprint con
 
-lensGet :: Atom -> IExpr -> ImpM IExpr
+lensGet :: Atom -> IAtom -> ImpM IAtom
 lensGet (PrimCon (LensCon lens)) x = case lens of
   LensId _ -> return x
   LensCompose a b -> lensGet a x >>= lensGet b
   IdxAsLens _ i -> do
-    i' <- toImpScalarAtom i
-    loadIfScalar $ IGet x i'
+    i' <- toImpAtom i >>= fromScalarIAtom
+    return $ tabGetIAtom x i'
 lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
 
-lensIndexRef :: Atom -> IExpr -> ImpM IExpr
+lensIndexRef :: Atom -> IAtom -> ImpM IAtom
 lensIndexRef (PrimCon (LensCon lens)) x = case lens of
   LensId _ -> return x
   LensCompose a b -> lensIndexRef a x >>= lensIndexRef b
   IdxAsLens _ i -> do
-    ~(ILeaf i') <- toImpAtom i
-    return $ IGet x i'
+    i' <- toImpAtom i >>= fromScalarIAtom
+    return $ tabGetIAtom x i'
 lensIndexRef expr _ = error $ "Not a lens expression: " ++ pprint expr
 
-indexIAtom :: IAtom -> IExpr -> IAtom
-indexIAtom x i = case x of
-  ILeaf x' -> ILeaf $ IGet x' i
-  ICon (AFor _ body) -> indexSubst i [] body
+tabGetIAtom :: IAtom -> IExpr -> IAtom
+tabGetIAtom x i = case x of
+  ICon (AFor _ body) -> impIndexSubst [] i body
   _ -> error $ "Unexpected atom: " ++ show x
 
-indexSubst :: IExpr -> [()] -> IAtom -> IAtom
-indexSubst i stack atom = case atom of
+impIndexSubst :: [()] -> IExpr -> IAtom -> IAtom
+impIndexSubst stack i atom = case atom of
   ICon con -> case con of
-    AFor n body -> ICon $ AFor n $ indexSubst i (():stack) body
-    AGet x -> case stack of
-      []        -> indexIAtom x i
-      ():stack' -> ICon $ AGet $ indexSubst i stack' x
-    _ -> ICon $ fmapExpr con id (indexSubst i stack) (error "unexpected lambda")
+    AFor n body -> ICon $ AFor n $ impIndexSubst (():stack) i body
+    ArrayGep x (ICon IdxFromStack)-> case stack of
+      []        -> ILeaf $ IGet x' i  where (ILeaf x') = x
+      ():stack' -> ICon $ ArrayGep (impIndexSubst stack' i x) (ICon IdxFromStack)
+    _ -> ICon $ fmapExpr con id (impIndexSubst stack i) (error "unexpected lambda")
   _ -> error "Unused index"
-
-toImpArrayType :: [IExpr] -> Type -> ImpM (IAtomP ArrayType)
-toImpArrayType shape ty = case ty of
-  BaseType b  -> return $ foldr (const (ICon . AGet)) (ILeaf (b, shape)) shape
-  TabType n b -> do
-    n'  <- typeToSize n
-    liftM (ICon . AFor n) $ toImpArrayType (shape ++ [n']) b
-  RecType r   -> liftM (ICon . RecCon ) $ traverse (toImpArrayType shape) r
-  IdxSetLit n -> liftM (ICon . AsIdx n) $ toImpArrayType shape (BaseType IntType)
-  _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
   ILit x       -> PrimCon $ Lit x
-  IRef ref     -> PrimCon $ ArrayRef ty ref
-    where (Array shape b _) = ref
-          ty = foldr TabType (BaseType b) (map IdxSetLit shape)
+  IRef ref     -> PrimCon $ ArrayRef ref
   _ -> error "Not implemented"
 
 impTypeToType :: IType -> Type
 impTypeToType (IValType b) = BaseType b
-impTypeToType (IRefType (b, shape)) =
-  foldr (\(ILit (IntLit n)) a -> TabType (IdxSetLit n) a) (BaseType b) shape
+impTypeToType (IRefType (b, shape)) = ArrayType shape' b
+  where shape' = map (\(ILit (IntLit n)) -> n) shape
 
 impAtomToAtom :: IAtom -> Atom
 impAtomToAtom (ILeaf e) = impExprToAtom e
@@ -277,12 +268,6 @@ toImpBaseType ty = case ty of
   TypeVar _   -> IntType
   IdxSetLit _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty
-
-loadIfScalar :: IExpr -> ImpM IExpr
-loadIfScalar x = case impExprType x of
-  IRefType (_, []) -> load x
-  IRefType (_, _ ) -> return x
-  _ -> error "Expected a reference"
 
 lookupVar :: VarP a -> ImpM IAtom
 lookupVar v = do
@@ -298,26 +283,19 @@ typeToSize (TypeVar v) = do
 typeToSize (IdxSetLit n) = return $ ILit (IntLit n)
 typeToSize ty = error $ "Not implemented: " ++ pprint ty
 
-copyOrStoreIAtom :: IAtom -> IAtom -> ImpM ()
-copyOrStoreIAtom dest src = zipWithM_ copyOrStore (toList dest) (toList src)
+-- TODO: this is pretty iffy
+copyIAtom :: IAtom -> IAtom -> ImpM ()
+copyIAtom dest src = zipWithM_ copyOrStore (toList dest) (toList src)
+
+asIdx :: IExpr -> IExpr -> IAtom
+asIdx n i = ICon $ AsIdx (fromIInt n) (ILeaf i)
+
+-- === Imp embedding ===
 
 copyOrStore :: IExpr -> IExpr -> ImpM ()
 copyOrStore dest src = case impExprType src of
   IValType _ -> store dest src
   IRefType _ -> copy  dest src
-
-addToDest :: IExpr -> IExpr -> ImpM ()
-addToDest dest src = case impExprType src of
-  IValType RealType -> do
-    cur <- load dest
-    updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src
-    store dest updated
-  ty -> error $ "Writing only implemented for scalars" ++ pprint ty
-
-initializeZero :: IExpr -> ImpM ()
-initializeZero ref = case impExprType ref of
-  IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
-  ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 copy :: IExpr -> IExpr -> ImpM ()
 copy dest src = emitStatement (Nothing, Copy dest src)
@@ -343,9 +321,6 @@ emitLoop n body = do
     return i
   emitStatement (Nothing, Loop i n loopBody)
 
-asIdx :: IExpr -> IExpr -> IAtom
-asIdx n i = ICon $ AsIdx (fromIInt n) (ILeaf i)
-
 fromIInt :: IExpr -> Int
 fromIInt (ILit (IntLit x)) = x
 
@@ -360,6 +335,19 @@ emitInstr instr = do
       emitStatement (Just v, instr)
       return $ IVar v
     Nothing -> error "Expected non-void result"
+
+addToDest :: IExpr -> IExpr -> ImpM ()
+addToDest dest src = case impExprType src of
+  IValType RealType -> do
+    cur <- load dest
+    updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src
+    store dest updated
+  ty -> error $ "Writing only implemented for scalars" ++ pprint ty
+
+initializeZero :: IExpr -> ImpM ()
+initializeZero ref = case impExprType ref of
+  IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
+  ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 -- === type checking imp programs ===
 

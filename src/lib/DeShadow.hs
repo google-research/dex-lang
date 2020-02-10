@@ -158,7 +158,7 @@ deShadowType ty = case ty of
           Just ty' -> return ty'
           Nothing -> throw UnboundVarErr $ "type variable \"" ++ pprint tv ++ "\""
       _ -> throw TypeErr $ "Unexpected type application: " ++ pprint ty
-  ArrType l a b -> liftM2 (ArrType l) (recur a) (recur b)
+  ArrowType l a b -> liftM2 (ArrowType l) (recur a) (recur b)
   TabType a b -> liftM2 TabType (recur a) (recur b)
   RecType r   -> liftM RecType $ traverse recur r
   Monad eff a -> liftM2 Monad (traverse recur eff) (recur a)

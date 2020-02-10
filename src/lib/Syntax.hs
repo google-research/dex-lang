@@ -51,9 +51,10 @@ import Env
 
 data Type = TypeVar TVar
           | BaseType BaseType
-          | ArrType Lin Type Type
+          | ArrowType Lin Type Type
           | IdxSetLit Int
           | TabType Type Type
+          | ArrayType [Int] BaseType
           | RecType (Record Type)
           | Forall [Kind] Type
           | TypeAlias [Kind] Type
@@ -151,15 +152,17 @@ data PrimCon ty e lam =
       | TabGet e e
       | RecGet e RecField
       | RecCon (Record e)
-      | AFor ty e
-      | AGet e
       | AsIdx Int e
       | MonadCon (EffectTypeP ty) ty e (MonadCon e)
       | Return (EffectTypeP ty) e
       | Bind e lam
       | LensCon (LensCon ty e)
       | Seq lam
-      | ArrayRef ty Array
+      | LoadScalar e
+      | AFor ty e
+      | IdxFromStack
+      | ArrayGep e e
+      | ArrayRef Array
       | Todo ty
         deriving (Show, Eq, Generic)
 
@@ -394,10 +397,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-(-->) = ArrType (Mult NonLin)
+(-->) = ArrowType (Mult NonLin)
 
 (--@) :: Type -> Type -> Type
-(--@) = ArrType (Mult Lin)
+(--@) = ArrowType (Mult Lin)
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -459,8 +462,9 @@ instance HasVars Type where
   freeVars ty = case ty of
     BaseType _ -> mempty
     TypeVar v  -> v @> T (varAnn v)
-    ArrType l a b -> freeVars l <> freeVars a <> freeVars b
+    ArrowType l a b -> freeVars l <> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
+    ArrayType _ _ -> mempty
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
     Forall    _ body -> freeVars body
@@ -579,7 +583,6 @@ instance TraversableExpr PrimCon where
     TabGet e i  -> liftA2 TabGet (fE e) (fE i)
     RecGet e i  -> liftA2 RecGet (fE e) (pure i)
     AFor n e    -> liftA2 AFor (fT n) (fE e)
-    AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA  (AsIdx n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
     Bind e lam  -> liftA2 Bind (fE e) (fL lam)
@@ -595,7 +598,10 @@ instance TraversableExpr PrimCon where
       LensId ty         -> liftA  LensId (fT ty)
     Seq lam             -> liftA  Seq (fL lam)
     Todo ty             -> liftA  Todo (fT ty)
-    ArrayRef ty ref     -> liftA2 ArrayRef (fT ty) (pure ref)
+    IdxFromStack        -> pure   IdxFromStack
+    ArrayGep e i        -> liftA2 ArrayGep (fE e) (fE i)
+    LoadScalar e        -> liftA  LoadScalar (fE e)
+    ArrayRef ref        -> pure $ ArrayRef ref
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where
