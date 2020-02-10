@@ -128,7 +128,7 @@ instance Pretty FDecl where
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (PrimOpExpr  op ) = p op
-  pretty (PrimConExpr con) = p con
+  pretty (ConExpr con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (App e1 e2) = p e1 <+> p e2
@@ -155,7 +155,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty IdxFromStack = "*"
   pretty (ArrayGep x i) = parens (p x) <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
-  pretty con = prettyExprDefault (PrimConExpr con)
+  pretty con = prettyExprDefault (ConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
 prettyExprDefault expr =
@@ -207,7 +207,7 @@ instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
     TLam ks body -> "tlam" <+> p ks <+> "." <+> p body
-    PrimCon con -> p (PrimConExpr con)
+    Con con -> p (ConExpr con)
 
 arrStr :: Type -> Doc ann
 arrStr (Mult Lin) = "--o"

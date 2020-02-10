@@ -43,7 +43,7 @@ toImpModule (Module ty m) = Module ty (ImpModBody vs prog result)
 toImpModBody :: ModBody -> ImpM ([IVar], SubstEnv)
 toImpModBody (ModBody decls result) = do
   let vs = resultVars result
-  let outTuple = PrimCon $ RecCon $ Tup $ map Var vs
+  let outTuple = Con $ RecCon $ Tup $ map Var vs
   (outDest, vs') <- makeDest $ getType outTuple
   let (ICon (RecCon (Tup outDests))) = outDest
   toImpExpr outDest (wrapDecls decls outTuple)
@@ -67,7 +67,7 @@ toImpExpr dests expr = case expr of
 toImpAtom :: Atom -> ImpM IAtom
 toImpAtom atom = case atom of
   Var v -> lookupVar v
-  PrimCon con -> case con of
+  Con con -> case con of
     Lit x        -> return $ ILeaf $ ILit x
     ArrayRef ref -> return $ ILeaf $ IRef ref
     TabGet x i -> do
@@ -182,7 +182,7 @@ toImpActionExpr mdests dests expr = case expr of
   _ -> error $ "Unexpected expression " ++ pprint expr
 
 toImpAction :: MContext -> IAtom -> Atom -> ImpM ()
-toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
+toImpAction mdests@(rVals, wDests, sDests) outDests (Con con) = case con of
   Bind rhs (LamExpr b body) -> do
     withAllocs b $ \xs -> do
       toImpAction mdests xs rhs
@@ -213,7 +213,7 @@ toImpAction mdests@(rVals, wDests, sDests) outDests (PrimCon con) = case con of
   _ -> error $ "Unexpected expression" ++ pprint con
 
 lensGet :: Atom -> IAtom -> ImpM IAtom
-lensGet (PrimCon (LensCon lens)) x = case lens of
+lensGet (Con (LensCon lens)) x = case lens of
   LensId _ -> return x
   LensCompose a b -> lensGet a x >>= lensGet b
   IdxAsLens _ i -> do
@@ -222,7 +222,7 @@ lensGet (PrimCon (LensCon lens)) x = case lens of
 lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 lensIndexRef :: Atom -> IAtom -> ImpM IAtom
-lensIndexRef (PrimCon (LensCon lens)) x = case lens of
+lensIndexRef (Con (LensCon lens)) x = case lens of
   LensId _ -> return x
   LensCompose a b -> lensIndexRef a x >>= lensIndexRef b
   IdxAsLens _ i -> do
@@ -248,8 +248,8 @@ impIndexSubst stack i atom = case atom of
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
-  ILit x       -> PrimCon $ Lit x
-  IRef ref     -> PrimCon $ ArrayRef ref
+  ILit x       -> Con $ Lit x
+  IRef ref     -> Con $ ArrayRef ref
   _ -> error "Not implemented"
 
 impTypeToType :: IType -> Type
@@ -259,7 +259,7 @@ impTypeToType (IRefType (b, shape)) = ArrayType shape' b
 
 impAtomToAtom :: IAtom -> Atom
 impAtomToAtom (ILeaf e) = impExprToAtom e
-impAtomToAtom (ICon con) = PrimCon $ fmapExpr con id impAtomToAtom (const undefined)
+impAtomToAtom (ICon con) = Con $ fmapExpr con id impAtomToAtom (const undefined)
 
 toImpBaseType :: Type -> BaseType
 toImpBaseType ty = case ty of
@@ -473,4 +473,4 @@ instance Traversable IAtomP where
 instance Pretty IAtom where
   pretty atom = case atom of
     ILeaf x  -> pretty x
-    ICon con -> pretty (PrimConExpr con)
+    ICon con -> pretty (ConExpr con)

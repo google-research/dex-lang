@@ -101,9 +101,9 @@ check expr reqTy = case expr of
 
 constrainTopDown :: PrimExpr e ty lam -> Bool
 constrainTopDown expr = case expr of
-  PrimConExpr (TabGet _ _) -> False
+  ConExpr (TabGet _ _) -> False
   PrimOpExpr  _            -> False
-  PrimConExpr _            -> True
+  ConExpr _            -> True
 
 checkLam :: FLamExpr -> (Type, Type) -> InferM FLamExpr
 checkLam (FLamExpr p body) (a, b) = do
@@ -123,7 +123,7 @@ checkAnn ty' ty   = constrainEq ty' ty "annotation" >> return ty
 
 generateSubExprTypes :: PrimExpr ty e lam
                      -> InferM (PrimExpr (ty, Type) (e, Type) (lam, (Type, Type)))
-generateSubExprTypes (PrimConExpr op) = liftM PrimConExpr $ case op of
+generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
   Lam l lam -> do
     l' <- freshLin
     a <- freshQ

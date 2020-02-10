@@ -41,39 +41,39 @@ instance Subst Atom where
     TLam tvs body -> TLam tvs' $ subst (env <> env') body
       where (tvs', env') = refreshTBinders scope tvs
     -- This case is ensure indexing is reduced if possible
-    PrimCon (TabGet   x i) -> nTabGet  (subst env x) (subst env i)
-    PrimCon (ArrayGep x i) -> arrayGep (subst env x) (subst env i)
-    PrimCon con -> reduceAtom $ PrimCon $ subst env con
+    Con (TabGet   x i) -> nTabGet  (subst env x) (subst env i)
+    Con (ArrayGep x i) -> arrayGep (subst env x) (subst env i)
+    Con con -> reduceAtom $ Con $ subst env con
 
 reduceAtom :: Atom -> Atom
 reduceAtom atom = case atom of
-  PrimCon (RecGet e i) -> nRecGet (reduceAtom e) i
-  PrimCon (TabGet e i) -> nTabGet (reduceAtom e) i
+  Con (RecGet e i) -> nRecGet (reduceAtom e) i
+  Con (TabGet e i) -> nTabGet (reduceAtom e) i
   _ -> atom
 
 nRecGet ::  Atom -> RecField -> Atom
-nRecGet (PrimCon (RecCon r)) i = recGet r i
-nRecGet x i = PrimCon $ RecGet x i
+nRecGet (Con (RecCon r)) i = recGet r i
+nRecGet x i = Con $ RecGet x i
 
 nTabGet :: Atom -> Atom -> Atom
 nTabGet x i = case (x, i) of
-  (PrimCon (AFor _ body), PrimCon (AsIdx _ i')) -> indexSubst [] i' body
-  _ -> PrimCon $ TabGet x i
+  (Con (AFor _ body), Con (AsIdx _ i')) -> indexSubst [] i' body
+  _ -> Con $ TabGet x i
 
 arrayGep :: Atom -> Atom -> Atom
-arrayGep (PrimCon (ArrayRef x)) (PrimCon (Lit (IntLit i))) =
-  PrimCon $ ArrayRef $ subArray i x
-arrayGep x i = PrimCon $ ArrayGep x i
+arrayGep (Con (ArrayRef x)) (Con (Lit (IntLit i))) =
+  Con $ ArrayRef $ subArray i x
+arrayGep x i = Con $ ArrayGep x i
 
 indexSubst :: [()] -> Atom -> Atom -> Atom
 indexSubst stack i atom = case atom of
-  PrimCon con -> case con of
-    AFor n body -> PrimCon $ AFor n $ indexSubst (():stack) i body
-    ArrayGep x (PrimCon IdxFromStack) -> case stack of
+  Con con -> case con of
+    AFor n body -> Con $ AFor n $ indexSubst (():stack) i body
+    ArrayGep x (Con IdxFromStack) -> case stack of
       []        -> arrayGep x i
-      ():stack' -> PrimCon $ ArrayGep atom' $ PrimCon IdxFromStack
+      ():stack' -> Con $ ArrayGep atom' $ Con IdxFromStack
          where atom' = indexSubst stack' i x
-    _ -> PrimCon $ fmapExpr con id (indexSubst stack i) (error "unexpected lambda")
+    _ -> Con $ fmapExpr con id (indexSubst stack i) (error "unexpected lambda")
   _ -> error "Unused index"
 
 instance Subst LamExpr where

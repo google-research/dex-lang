@@ -100,7 +100,7 @@ flipIdx i = do
   let n = getType i
   iInt  <- undefined -- emit $ IndexAsInt i
   nInt  <- emit $ IdxSetSize n
-  nInt' <- isub nInt (PrimCon $ Lit (IntLit 1))
+  nInt' <- isub nInt (Con $ Lit (IntLit 1))
   iFlipped <- isub nInt' iInt
   emit $ IntAsIndex n iFlipped
 
@@ -108,7 +108,7 @@ isub :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 isub x y = emit $ ScalarBinOp ISub x y
 
 zeroAt :: MonadCat EmbedEnv m => Type -> m Atom
-zeroAt ty = mapScalars (\_ _ -> return $ PrimCon $ Lit (RealLit 0.0)) ty []
+zeroAt ty = mapScalars (\_ _ -> return $ Con $ Lit (RealLit 0.0)) ty []
 
 addAt :: MonadCat EmbedEnv m => Type -> Atom -> Atom -> m Atom
 addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
@@ -142,7 +142,7 @@ div' :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 div' x y = emit $ ScalarBinOp FDiv x y
 
 nUnitCon :: Atom
-nUnitCon = PrimCon $ RecCon (Tup [])
+nUnitCon = Con $ RecCon (Tup [])
 
 unitBinder :: MonadCat EmbedEnv m => m Var
 unitBinder = freshVar ("_":>unitTy)
@@ -154,19 +154,19 @@ recGetSnd :: Atom -> Atom
 recGetSnd x = nRecGet x sndField
 
 unpackRec :: Atom -> Record Atom
-unpackRec (PrimCon (RecCon r)) = r
+unpackRec (Con (RecCon r)) = r
 unpackRec x = case getType x of
   RecType r -> fmap (nRecGet x . fst) $ recNameVals r
   ty        -> error $ "Not a tuple: " ++ pprint ty
 
 makeTup :: [Atom] -> Atom
-makeTup xs = PrimCon $ RecCon $ Tup xs
+makeTup xs = Con $ RecCon $ Tup xs
 
 fromTup :: Atom -> [Atom]
 fromTup x = toList $ unpackRec x
 
 makePair :: Atom -> Atom -> Atom
-makePair x y = PrimCon $ RecCon (Tup [x, y])
+makePair x y = Con $ RecCon (Tup [x, y])
 
 fromPair :: Atom -> (Atom, Atom)
 fromPair x = (a, b)
@@ -181,7 +181,7 @@ mapScalars f ty xs = case ty of
     lam <- buildLam ("i":>n) $ \i -> mapScalars f a [nTabGet x i | x <- xs]
     emit $ For lam
   RecType r ->
-    liftM (PrimCon . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
+    liftM (Con . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
     where xs' = transposeRecord r $ map unpackRec xs
   _ -> error $ "Not implemented " ++ pprint ty
 

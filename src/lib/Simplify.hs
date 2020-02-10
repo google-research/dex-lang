@@ -55,8 +55,8 @@ simplifyAtom atom = case atom of
   Var _             -> substSimp atom
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _          -> substSimp atom
-  PrimCon (Lam _ _) -> substSimp atom
-  PrimCon con -> liftM (reduceAtom . PrimCon) $
+  Con (Lam _ _) -> substSimp atom
+  Con con -> liftM (reduceAtom . Con) $
     traverseExpr con substSimp simplifyAtom simplifyLam
 
 -- Simplifies bodies of first-order functions only.
@@ -70,7 +70,7 @@ simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
   expr' <- traverseExpr expr substSimp simplifyAtom simplifyLam
   case expr' of
-    App (PrimCon (Lam _ (LamExpr b body))) x ->
+    App (Con (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
@@ -105,10 +105,10 @@ runLinearization x (LamExpr b expr) = do
   (ans, f) <- extendSub (b @> L x) $ linearize expr
   f' <- runTangent b f
   -- TODO: check type here, especially linearity
-  return $ Atom $ PrimCon $ RecCon (Tup [ans, f'])
+  return $ Atom $ Con $ RecCon (Tup [ans, f'])
 
 runTangent :: Var -> TangentM Atom -> SimplifyM Atom
-runTangent b m = liftM (PrimCon . Lam (Mult Lin)) $ buildLam b $ \t ->
+runTangent b m = liftM (Con . Lam (Mult Lin)) $ buildLam b $ \t ->
                     withReaderT (const $ b@>t) m
 
 linearize :: Expr -> SimplifyM (Atom, TangentM Atom)
@@ -155,12 +155,12 @@ linearizeAtom atom = case atom of
       Just (L x) -> return (x, lookupTangent v)
       Nothing -> return $ zeroDeriv atom
       _ -> error "unexpected lookup"
-  PrimCon con -> case con of
+  Con con -> case con of
     Lit _ -> return $ zeroDeriv atom
     TabGet x i -> do
       (x', xt) <- linearizeAtom x
       (i', _) <- linearizeAtom i
-      return (PrimCon (TabGet x' i'), liftM (PrimCon . flip TabGet i') xt)
+      return (Con (TabGet x' i'), liftM (Con . flip TabGet i') xt)
     _ -> error $ "not implemented: " ++ pprint atom
   _ -> error $ "not implemented: " ++ pprint atom
 

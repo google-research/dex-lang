@@ -47,8 +47,8 @@ normalize expr = case expr of
   FVar v ts -> liftM2 TApp (lookupVar v) (mapM substTy ts) >>= emit
   FPrimExpr (PrimOpExpr op) ->
     traverseExpr op substTy normalize normalizeLam >>= emit
-  FPrimExpr (PrimConExpr con) ->
-    liftM PrimCon $ traverseExpr con substTy normalize normalizeLam
+  FPrimExpr (ConExpr con) ->
+    liftM Con $ traverseExpr con substTy normalize normalizeLam
   Annot    e _ -> normalize e
   SrcAnnot e _ -> normalize e
 

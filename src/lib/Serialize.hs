@@ -144,14 +144,14 @@ valFromPtrs' shape ty = case ty of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    let arr = PrimCon $ ArrayRef $ Array shape b ptr
-    return $ PrimCon $ LoadScalar $ foldr (const aGet) arr shape
-    where aGet x = PrimCon $ ArrayGep x (PrimCon IdxFromStack)
-  RecType r -> liftM (PrimCon . RecCon) $ traverse (valFromPtrs' shape) r
-  TabType n a -> liftM (PrimCon . AFor n) $ valFromPtrs' (shape ++ [n']) a
+    let arr = Con $ ArrayRef $ Array shape b ptr
+    return $ Con $ LoadScalar $ foldr (const aGet) arr shape
+    where aGet x = Con $ ArrayGep x (Con IdxFromStack)
+  RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
+  TabType n a -> liftM (Con . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
   IdxSetLit n -> do
-    liftM (PrimCon . AsIdx n) $ valFromPtrs' shape (BaseType IntType)
+    liftM (Con . AsIdx n) $ valFromPtrs' shape (BaseType IntType)
   _ -> error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
@@ -160,13 +160,13 @@ pprintVal :: Val -> IO String
 pprintVal val = liftM asStr $ prettyVal val
 
 prettyVal :: Val -> IO (Doc ann)
-prettyVal (PrimCon con) = case con of
+prettyVal (Con con) = case con of
   RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
   AFor (IdxSetLit n) body -> do
     xs <- flip mapM [0..n-1] $ \i ->
-      liftM asStr $ prettyVal $ indexSubst [] (PrimCon (Lit (IntLit i))) body
+      liftM asStr $ prettyVal $ indexSubst [] (Con (Lit (IntLit i))) body
     return $ pretty xs
-  LoadScalar (PrimCon (ArrayRef array)) -> liftM pretty $ loadScalar array
+  LoadScalar (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
@@ -176,9 +176,9 @@ prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 
 traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
 traverseVal f val = case val of
-  PrimCon con -> do
+  Con con -> do
     ans <- f con
-    liftM PrimCon $ case ans of
+    liftM Con $ case ans of
       Just con' -> return con'
       Nothing   -> traverseExpr con return (traverseVal f) return
   atom -> return atom
@@ -188,7 +188,7 @@ valScalarsToArrays val = flip traverseVal val $ \con -> case con of
   Lit x -> do
     arr <- allocateArray b []
     storeScalar arr x
-    return $ Just $ LoadScalar $ PrimCon $ ArrayRef arr
+    return $ Just $ LoadScalar $ Con $ ArrayRef arr
     where b = litType x
   _ -> return Nothing
 

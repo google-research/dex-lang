@@ -131,7 +131,7 @@ type CExpr = PrimOp Type Atom LamExpr
 
 data Atom = Var Var
           | TLam [TVar] Expr
-          | PrimCon (PrimCon Type Atom LamExpr)  -- must be fully reduced
+          | Con (PrimCon Type Atom LamExpr)  -- must be fully reduced
             deriving (Show, Eq, Generic)
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
@@ -143,7 +143,7 @@ type Val = Atom
 -- === primitive constructors and operators ===
 
 data PrimExpr ty e lam = PrimOpExpr  (PrimOp ty e lam)
-                       | PrimConExpr (PrimCon ty e lam)
+                       | ConExpr (PrimCon ty e lam)
                          deriving (Show, Eq, Generic)
 
 data PrimCon ty e lam =
@@ -226,16 +226,16 @@ builtinNames = M.fromList
   , ("select"          , PrimOpExpr $ Select () () () ())
   , ("run"             , PrimOpExpr $ MonadRun () () ())
   , ("lensGet"         , PrimOpExpr $ LensGet () ())
-  , ("ask"        , PrimConExpr $ MonadCon eff () () $ MAsk)
-  , ("tell"       , PrimConExpr $ MonadCon eff () () $ MTell ())
-  , ("get"        , PrimConExpr $ MonadCon eff () () $ MGet)
-  , ("put"        , PrimConExpr $ MonadCon eff () () $ MPut  ())
-  , ("return"     , PrimConExpr $ Return eff ())
-  , ("idxAsLens"  , PrimConExpr $ LensCon $ IdxAsLens () ())
-  , ("lensCompose", PrimConExpr $ LensCon $ LensCompose () ())
-  , ("lensId"     , PrimConExpr $ LensCon $ LensId ())
-  , ("seq"        , PrimConExpr $ Seq ())
-  , ("todo"       , PrimConExpr $ Todo ())]
+  , ("ask"        , ConExpr $ MonadCon eff () () $ MAsk)
+  , ("tell"       , ConExpr $ MonadCon eff () () $ MTell ())
+  , ("get"        , ConExpr $ MonadCon eff () () $ MGet)
+  , ("put"        , ConExpr $ MonadCon eff () () $ MPut  ())
+  , ("return"     , ConExpr $ Return eff ())
+  , ("idxAsLens"  , ConExpr $ LensCon $ IdxAsLens () ())
+  , ("lensCompose", ConExpr $ LensCon $ LensCompose () ())
+  , ("lensId"     , ConExpr $ LensCon $ LensId ())
+  , ("seq"        , ConExpr $ Seq ())
+  , ("todo"       , ConExpr $ Todo ())]
   where
     binOp op = PrimOpExpr $ ScalarBinOp op () ()
     unOp  op = PrimOpExpr $ ScalarUnOp  op ()
@@ -520,7 +520,7 @@ instance HasVars Atom where
   freeVars atom = case atom of
     Var v@(_:>ty) -> v @> L ty <> freeVars ty
     TLam tvs body -> freeVars body `envDiff` foldMap (@>()) tvs
-    PrimCon con   -> freeVars con
+    Con con   -> freeVars con
 
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
@@ -551,7 +551,7 @@ class TraversableExpr expr where
 
 instance TraversableExpr PrimExpr where
   traverseExpr (PrimOpExpr  e) fT fE fL = liftA PrimOpExpr  $ traverseExpr e fT fE fL
-  traverseExpr (PrimConExpr e) fT fE fL = liftA PrimConExpr $ traverseExpr e fT fE fL
+  traverseExpr (ConExpr e) fT fE fL = liftA ConExpr $ traverseExpr e fT fE fL
 
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of

@@ -349,7 +349,7 @@ idxLit = do
   n <- uint
   failIf (i < 0 || i >= n) $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
-  return $ AsIdx n (FPrimExpr $ PrimConExpr $ Lit $ IntLit i)
+  return $ AsIdx n (FPrimExpr $ ConExpr $ Lit $ IntLit i)
 
 literal :: Parser LitVal
 literal =     numLit
@@ -474,7 +474,7 @@ fFor :: Pat -> FExpr -> FExpr
 fFor p body = fPrimOp $ For $ FLamExpr p body
 
 fPrimCon :: PrimCon Type FExpr FLamExpr -> FExpr
-fPrimCon con = FPrimExpr $ PrimConExpr con
+fPrimCon con = FPrimExpr $ ConExpr con
 
 fPrimOp :: PrimOp Type FExpr FLamExpr -> FExpr
 fPrimOp op = FPrimExpr $ PrimOpExpr op
@@ -622,15 +622,15 @@ period = symbol "."
 -- TODO: parse directly to an atom instead
 
 literalData :: Parser FExpr
-literalData =   liftM (FPrimExpr . PrimConExpr) idxLit
-            <|> liftM (FPrimExpr . PrimConExpr . Lit) literal
+literalData =   liftM (FPrimExpr . ConExpr) idxLit
+            <|> liftM (FPrimExpr . ConExpr . Lit) literal
             <|> tupleData
             <|> tableData
 
 tupleData :: Parser FExpr
 tupleData = do
   xs <- parens $ literalData `sepEndBy` comma
-  return $ FPrimExpr $ PrimConExpr $ RecCon $ Tup xs
+  return $ FPrimExpr $ ConExpr $ RecCon $ Tup xs
 
 tableData :: Parser FExpr
 tableData = do

@@ -294,7 +294,7 @@ instance HasType Atom where
   getType expr = case expr of
     Var (_:>ty) -> ty
     TLam vs body -> Forall (map varAnn vs) $ abstractTVs vs (getType body)
-    PrimCon con -> getPrimType $ PrimConExpr $ fmapExpr con id getType getLamType
+    Con con -> getPrimType $ ConExpr $ fmapExpr con id getType getLamType
 
 instance HasType CExpr where
   getType op = getPrimType $ PrimOpExpr $ fmapExpr op id getType getLamType
@@ -331,9 +331,9 @@ checkAtom atom = case atom of
   TLam tvs body -> do
     bodyTy <- extendR (foldMap tbind tvs) (checkExpr body)
     return $ Forall (map varAnn tvs) (abstractTVs tvs bodyTy)
-  PrimCon con -> do
+  Con con -> do
     primType <- traverseExpr con return checkAtom checkLam
-    checkPrimType (PrimConExpr primType)
+    checkPrimType (ConExpr primType)
 
 checkLam :: LamExpr -> TypeM (Type, Type)
 checkLam (LamExpr b@(_:>ty) body) = do
@@ -440,7 +440,7 @@ traversePrimExprType (PrimOpExpr op) eq inClass = case op of
   NewtypeCast ty _ -> return ty
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
   _ -> error $ "Unexpected primitive type: " ++ pprint op
-traversePrimExprType (PrimConExpr con) eq inClass = case con of
+traversePrimExprType (ConExpr con) eq inClass = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrowType l a b
   RecCon r    -> return $ RecType r
