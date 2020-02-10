@@ -12,6 +12,7 @@ import Control.Exception hiding (throw)
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Syntax
 import DeShadow
@@ -63,9 +64,9 @@ evalSourceBlock env block = case block of
       val <- evalModuleVal env v m
       liftIOTop $ dumpDataFile fname val
     ShowPasses -> liftM (const mempty) $ filterOutputs f $ evalModule env m
-      where f out = case out of PassInfo _ _ -> True; _ -> False
+      where f out = case out of PassInfo _ _ _ -> True; _ -> False
     ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
-      where f out = case out of PassInfo s' _ | s == s' -> True; _ -> False
+      where f out = case out of PassInfo s' _ _ | s == s' -> True; _ -> False
     _ -> return ()
   IncludeSourceFile _ -> undefined
   LoadData p DexObject fname -> do
@@ -111,8 +112,10 @@ namedPass :: (IsModule a, Pretty a, IsModule b, Pretty b)
           => String -> Pass a b -> Pass a b
 namedPass name pass x = do
   let passCtx  = name ++ " pass with input:\n" ++ pprint x
+  t1 <- liftIO getCurrentTime
   (ans, s) <- withDebugCtx passCtx $ printedPass (pass x)
-  tell [PassInfo name s]
+  t2 <- liftIO getCurrentTime
+  tell [PassInfo name (show (t2 `diffUTCTime` t1)) s]
   let checkCtx = "Checking after " ++ name ++ " pass:\n" ++ pprint ans
   withDebugCtx checkCtx $ liftEither $ checkModule ans
   return ans

@@ -259,7 +259,8 @@ instance Pretty Output where
   pretty (ValOut Printed atom) = pretty atom
   pretty (ValOut _ _) = "<graphical output>"
   pretty (TextOut   s) = pretty s
-  pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
+  pretty (PassInfo name t s) = "===" <+> p name <+> "==="
+    <> hardline <> p s <> hardline <> "time:" <+> p t
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)

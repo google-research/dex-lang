@@ -56,6 +56,8 @@ type Long = Operand
 type NInstr = Named Instruction
 
 evalModuleJIT :: ImpModule -> IO Module
+evalModuleJIT (Module ty (ImpModBody [] (ImpProg []) result)) =
+  return $ Module ty $ ModBody [] result
 evalModuleJIT (Module ty (ImpModBody vs prog result)) = do
   dests <- liftM fold $ mapM allocIRef vs
   let compileEnv = fmap arrayToOperand dests

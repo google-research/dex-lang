@@ -341,7 +341,7 @@ data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 data Output = ValOut OutFormat Atom
             | TextOut String
-            | PassInfo String String
+            | PassInfo String String String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
