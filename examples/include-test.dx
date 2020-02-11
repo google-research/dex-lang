@@ -1,6 +1,7 @@
 
--- include "examples/included.dx"
+include "examples/included.dx"
 > 30
+> 40
 
 :p x
 > 10
@@ -28,7 +29,6 @@ load dxbo "not-a-file" as notData
 
 load dxbo  "examples/bad-binary-file.dxbo" as badData
 > IO error: unexpected number of buffers: [16,8] vs [8,8,8]
-> context:
 > Validation error
 > Claimed header length: 128
 > Claimed total length:  152

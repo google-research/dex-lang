@@ -7,7 +7,7 @@ solve mat b =
   ax = mvp mat x0
   r0.i = b.i - ax.i
   (xOut, _, _) = fold (x0, r0, r0) $
-     for s::M. lam (x, r, p).
+     lam s::M (x, r, p).
        ap = mvp mat p
        alpha = vdot r r / vdot p ap
        x'.i = x.i + alpha * p.i

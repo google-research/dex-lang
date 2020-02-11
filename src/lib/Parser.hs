@@ -132,7 +132,9 @@ explicitCommand = do
     "pass"    -> liftM ShowPass $ identifier <* (optional eol >> sc)
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- declOrExpr <*eol
-  return $ Command cmd (exprAsModule e)
+  return $ case (cmd, e) of
+    (GetType, SrcAnnot (FVar v []) _) -> GetNameType v
+    _ -> Command cmd (exprAsModule e)
 
 topDeclAnn :: Parser DeclAnn
 topDeclAnn =   (symbol "@primitive" >> declSep >> return ADPrimitive)

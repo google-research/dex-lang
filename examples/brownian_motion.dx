@@ -12,7 +12,7 @@ bmIter (key, y, sigma, t) =
 
 sampleBM :: Key -> UnitInterval -> Real
 sampleBM key t =
-  (_, y, _, _) = fold (key, 0.0, 1.0, t) for i::10. bmIter
+  (_, y, _, _) = fold (key, 0.0, 1.0, t) lam i::10. bmIter
   y
 
 xs = linspace @1000 0.0 1.0

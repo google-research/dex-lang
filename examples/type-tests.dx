@@ -6,7 +6,7 @@
 :t lam x. sum for i. x.i
 > Type error:Ambiguous type variables: [?_6]
 >
-> ([*ans*::? = (lam x::?_3 . sum @?_6 for i::?_9 . x.(i))], (*ans* @> L ?))
+> ([*ans*::? = (lam x::?_3 . sum @?_6 for i::?_9 . (x).(i))], (*ans* @> L ?))
 
 :t lam f x y. f y x
 > Type error:Ambiguous type variables: [?_8, ?_10, ?_12]
@@ -17,7 +17,7 @@
 :t lam x. for i j. x.j.i
 > Type error:Ambiguous type variables: [?_8, ?_10, ?_12]
 >
-> ( [*ans*::? = (lam x::?_3 . for i::?_6 . for j::?_9 . x.(j).(i))]
+> ( [*ans*::? = (lam x::?_3 . for i::?_6 . for j::?_9 . ((x).(j)).(i))]
 > , (*ans* @> L ?) )
 
 :t lam f x. f x
@@ -130,7 +130,8 @@ p2 = 1
 :t lam x. for (i,j). x.i.j
 > Type error:Ambiguous type variables: [?_5, ?_8, ?_10]
 >
-> ([*ans*::? = (lam x::?_3 . for (i::?_6, j::?_7) . x.(i).(j))], (*ans* @> L ?))
+> ( [*ans*::? = (lam x::?_3 . for (i::?_6, j::?_7) . ((x).(i)).(j))]
+> , (*ans* @> L ?) )
 
 idfun :: a -> a
 idfun x = x
@@ -234,17 +235,6 @@ f2 x = x + x
 > :t fold f1 lam i::3 g. (lam x. g (g x))
 >    ^^^^^
 
-:t [1,2,3].(3@3)
-> Type error:Index out of bounds: 3 of 3
->
-> :t [1,2,3].(3@3)
->             ^^^
-
-> Parse error:237:16:
->     |
-> 237 | :t [1,2,3].(3@3)
->     |                ^
-> Index out of bounds: 3 of 3
 :t [1,2,3].(3@4)
 > Type error:
 > Expected: 3

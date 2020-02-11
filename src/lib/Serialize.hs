@@ -120,9 +120,9 @@ validateFile headerLength fileLength header@(DBOHeader ty sizes) =
   addContext ctx $ do
      let minSizes = [product shape * 8 | (_, shape) <- flattenType ty]
      when (length minSizes /= length sizes) $ throw DataIOErr $
-        "unexpected number of buffers: " <> show minSizes <> " vs " <> show sizes
+       "unexpected number of buffers: " <> show minSizes <> " vs " <> show sizes <> "\n"
      zipWithM_ checkBufferSize minSizes sizes
-     when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size"
+     when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size\n"
   where
     claimedLength = headerLength + sum sizes
     ctx =   "Validation error\n"

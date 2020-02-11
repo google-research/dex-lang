@@ -260,6 +260,7 @@ data SourceBlock = SourceBlock
 type ReachedEOF = Bool
 data SourceBlock' = RunModule FModule
                   | Command CmdName (Var, FModule)
+                  | GetNameType Var
                   | IncludeSourceFile String
                   | LoadData Pat DataFormat String
                   | ProseBlock String

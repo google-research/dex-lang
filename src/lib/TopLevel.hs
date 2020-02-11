@@ -9,6 +9,7 @@
 module TopLevel (evalBlock, Backend (..), TopEnv) where
 
 import Control.Exception hiding (throw)
+import Control.Monad.State
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
@@ -16,6 +17,7 @@ import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Syntax
 import DeShadow
+import Cat
 import Env
 import Type
 import Inference
@@ -49,10 +51,14 @@ evalSourceBlock :: TopEnv -> SourceBlock' -> TopPassM TopEnv
 evalSourceBlock env block = case block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
-    EvalExpr _ -> do
+    EvalExpr fmt -> do
       val <- evalModuleVal env v m
-      s <- liftIOTop $ pprintVal val
-      tell [TextOut s]
+      case fmt of
+        Printed -> do
+          s <- liftIOTop $ pprintVal val
+          tell [TextOut s]
+        Heatmap -> tell [TextOut "<graphical output>"]
+        Scatter -> tell [TextOut "<graphical output>"]
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalModuleVal env v m
       tell [TextOut $ pprint (getType val)]
@@ -68,7 +74,12 @@ evalSourceBlock env block = case block of
     ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
       where f out = case out of PassInfo s' _ _ | s == s' -> True; _ -> False
     _ -> return ()
-  IncludeSourceFile _ -> undefined
+  GetNameType v -> case env ! v of
+    L val -> tell [TextOut $ pprint (getType val)] >> return mempty
+    _ -> throw UnboundVarErr $ pprint v
+  IncludeSourceFile fname -> do
+    source <- liftIOTop $ readFile fname
+    evalSourceBlocks env $ map sbContents $ parseProg source
   LoadData p DexObject fname -> do
     source <- liftIOTop $ readFile fname
     let val = ignoreExcept $ parseData source
@@ -82,6 +93,13 @@ evalSourceBlock env block = case block of
     return $ b @> L val
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
+
+evalSourceBlocks :: TopEnv -> [SourceBlock'] -> TopPassM TopEnv
+evalSourceBlocks env blocks =
+  liftM snd $ flip runCatT env $ flip mapM_ blocks $ \block -> do
+    env' <- look
+    env'' <- lift $ evalSourceBlock env' block
+    extend env''
 
 evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do

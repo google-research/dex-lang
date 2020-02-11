@@ -15,7 +15,7 @@ estimatePiAvgVal key =
 
 meanAndStdDev :: A n::Ix. (Key -> Real) -> Key -> (Real, Real)
 meanAndStdDev f key =
-  samps = many @n f key
+  samps = for i::n. many f key i
   (mean samps, std samps)
 
 type NumSamps = 1000000
