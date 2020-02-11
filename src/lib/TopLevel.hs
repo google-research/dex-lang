@@ -117,6 +117,7 @@ evalModule env = inferTypes env >=> evalTyped env
 inferTypes :: TopEnv -> Pass FModule Module
 inferTypes env m = ($ m) $
       namedPass "type"      (liftEither . (deShadowModule env  >=> inferModule env))
+  >=> namedPass "lincheck"  (\x -> x <$ liftEither (checkLinFModule x))
   >=> namedPass "normalize" (return     . normalizeModule   )
 
 evalTyped :: TopEnv -> Pass Module TopEnv

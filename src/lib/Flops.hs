@@ -37,7 +37,7 @@ statementFlops (_, instr) = case instr of
   IPrimOp op -> do
     n <- ask
     let (blankOp, _) =  unzipExpr op
-    tell $ Profile $ M.singleton (nameToStr (PrimOpExpr blankOp)) [n]
+    tell $ Profile $ M.singleton (nameToStr (OpExpr blankOp)) [n]
   Load _    -> return ()
   Store _ _ -> return ()
   Copy  _ _ -> do

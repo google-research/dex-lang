@@ -229,16 +229,16 @@ fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
 scan' :: A n::Ix a::Data . a -> (n->a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 
-scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
-scanlin fs (c0, xs) = scan c0 lam i c. fs i (c, xs.i)
+-- scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
+-- scanlin fs (c0, xs) = scan c0 lam i c. fs i (c, xs.i)
 
-foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
-foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
+-- foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
+-- foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
 
 'More misc functions
 
-sum :: n=>Real --o Real
-sum xs = foldlin (lam _ (c,x). c + x) (0.0, xs)
+sum :: n=>Real -> Real
+sum xs = fold 0.0 (lam i c. c + xs.i)
 
 isum :: n=>Int -> Int
 isum xs = fold 0 lam i c. iadd c xs.i
@@ -250,7 +250,7 @@ size = %idxSetSize(@n)
 -- range :: Int -> E i. ()
 -- range n = %range(n)
 
-mean :: A n. n=>Real --o Real
+mean :: A n. n=>Real -> Real
 mean xs = sum xs / real (size @n)
 
 std :: A n. n=>Real -> Real
@@ -302,7 +302,7 @@ randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
-'min / max etc
+-- 'min / max etc
 
 minby :: A a::Data. (a->Real)->a->a->a
 minby f x y = select ((f x) < (f y)) x y
@@ -346,7 +346,7 @@ linearize f x0 = %linearize(lam x. f x, x0)
 jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
 jvp f x t = snd (linearize f x) t
 
-transposeLinear :: A a::VS b::VS. (a --o b) --o b --o a
+transposeLinear :: A a::VS b::VS. (a --o b) -> b --o a
 transposeLinear f ct = %linearTranspose(lam t. f t) ct
 
 vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)

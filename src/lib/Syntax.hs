@@ -142,7 +142,7 @@ type Val = Atom
 
 -- === primitive constructors and operators ===
 
-data PrimExpr ty e lam = PrimOpExpr  (PrimOp ty e lam)
+data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
                        | ConExpr (PrimCon ty e lam)
                          deriving (Show, Eq, Generic)
 
@@ -175,7 +175,7 @@ data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
                     deriving (Show, Eq, Generic)
 
 data PrimOp ty e lam =
-        App e e
+        App ty e e
       | TApp e [ty]
       | For lam
       | TabGet e e
@@ -216,16 +216,16 @@ builtinNames = M.fromList
   , ("inttoreal", unOp IntToReal)
   , ("booltoint", unOp BoolToInt)
   , ("asint"    , unOp IndexAsInt)
-  , ("idxSetSize"      , PrimOpExpr $ IdxSetSize ())
-  , ("linearize"       , PrimOpExpr $ Linearize () ())
-  , ("linearTranspose" , PrimOpExpr $ Transpose ())
-  , ("asidx"           , PrimOpExpr $ IntAsIndex () ())
-  , ("vzero"           , PrimOpExpr $ VSpaceOp () $ VZero)
-  , ("vadd"            , PrimOpExpr $ VSpaceOp () $ VAdd () ())
-  , ("newtypecast"     , PrimOpExpr $ NewtypeCast () ())
-  , ("select"          , PrimOpExpr $ Select () () () ())
-  , ("run"             , PrimOpExpr $ MonadRun () () ())
-  , ("lensGet"         , PrimOpExpr $ LensGet () ())
+  , ("idxSetSize"      , OpExpr $ IdxSetSize ())
+  , ("linearize"       , OpExpr $ Linearize () ())
+  , ("linearTranspose" , OpExpr $ Transpose ())
+  , ("asidx"           , OpExpr $ IntAsIndex () ())
+  , ("vzero"           , OpExpr $ VSpaceOp () $ VZero)
+  , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
+  , ("newtypecast"     , OpExpr $ NewtypeCast () ())
+  , ("select"          , OpExpr $ Select () () () ())
+  , ("run"             , OpExpr $ MonadRun () () ())
+  , ("lensGet"         , OpExpr $ LensGet () ())
   , ("ask"        , ConExpr $ MonadCon eff () () $ MAsk)
   , ("tell"       , ConExpr $ MonadCon eff () () $ MTell ())
   , ("get"        , ConExpr $ MonadCon eff () () $ MGet)
@@ -237,8 +237,8 @@ builtinNames = M.fromList
   , ("seq"        , ConExpr $ Seq ())
   , ("todo"       , ConExpr $ Todo ())]
   where
-    binOp op = PrimOpExpr $ ScalarBinOp op () ()
-    unOp  op = PrimOpExpr $ ScalarUnOp  op ()
+    binOp op = OpExpr $ ScalarBinOp op () ()
+    unOp  op = OpExpr $ ScalarUnOp  op ()
     eff = Effect () () ()
 
 strToName :: String -> Maybe PrimName
@@ -551,12 +551,12 @@ class TraversableExpr expr where
                -> f (expr ty' e' lam')
 
 instance TraversableExpr PrimExpr where
-  traverseExpr (PrimOpExpr  e) fT fE fL = liftA PrimOpExpr  $ traverseExpr e fT fE fL
+  traverseExpr (OpExpr  e) fT fE fL = liftA OpExpr  $ traverseExpr e fT fE fL
   traverseExpr (ConExpr e) fT fE fL = liftA ConExpr $ traverseExpr e fT fE fL
 
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
-    App e1 e2            -> liftA2 App (fE e1) (fE e2)
+    App ty e1 e2         -> liftA3 App (fT ty) (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
     TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)

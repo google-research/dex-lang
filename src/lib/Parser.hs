@@ -315,11 +315,12 @@ rawLamExpr = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
 lamExpr = do
-  symbol "lam"
+  ann <-    (symbol "lam"  >> return NoAnn)
+        <|> (symbol "llam" >> return (Mult Lin))
   ps <- pat `sepBy` sc
   argTerm
   body <- declOrExpr
-  return $ foldr fLam body ps
+  return $ foldr (fLam ann) body ps
 
 forExpr :: Parser FExpr
 forExpr = do
@@ -343,7 +344,7 @@ idxLhsArgs = do
 lamLhsArgs :: Parser (FExpr -> FExpr)
 lamLhsArgs = do
   args <- pat `sepBy` sc
-  return $ \body -> foldr fLam body args
+  return $ \body -> foldr (fLam NoAnn) body args
 
 idxLit :: Parser (PrimCon Type FExpr FLamExpr)
 idxLit = do
@@ -370,11 +371,11 @@ identifier = lexeme . try $ do
   w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
-  where resNames = ["for", "lam"]
+  where resNames = ["for", "lam", "llam"]
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
-                     >> return (\x y -> fPrimOp $ App x y))
+                     >> return (\x y -> fPrimOp $ App NoAnn x y))
   where
     opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
 
@@ -385,11 +386,11 @@ postFixRule = Postfix $ do
 
 scalarBinOpRule :: String -> ScalarBinOp -> Operator Parser FExpr
 scalarBinOpRule opchar op = binOpRule opchar f
-  where f x y = FPrimExpr $ PrimOpExpr $ ScalarBinOp op x y
+  where f x y = FPrimExpr $ OpExpr $ ScalarBinOp op x y
 
 cmpRule :: String -> CmpOp -> Operator Parser FExpr
 cmpRule opchar op = binOpRule opchar f
-  where f x y = FPrimExpr $ PrimOpExpr $ Cmp op NoAnn x y
+  where f x y = FPrimExpr $ OpExpr $ Cmp op NoAnn x y
 
 binOpRule :: String -> (FExpr -> FExpr -> FExpr) -> Operator Parser FExpr
 binOpRule opchar f = InfixL $ do
@@ -469,8 +470,8 @@ equalSign = do
 argTerm :: Parser ()
 argTerm = symbol "." >> optional eol >> sc
 
-fLam :: Pat -> FExpr -> FExpr
-fLam p body = fPrimCon $ Lam NoAnn $ FLamExpr p body
+fLam :: Type -> Pat -> FExpr -> FExpr
+fLam l p body = fPrimCon $ Lam l $ FLamExpr p body
 
 fFor :: Pat -> FExpr -> FExpr
 fFor p body = fPrimOp $ For $ FLamExpr p body
@@ -479,10 +480,10 @@ fPrimCon :: PrimCon Type FExpr FLamExpr -> FExpr
 fPrimCon con = FPrimExpr $ ConExpr con
 
 fPrimOp :: PrimOp Type FExpr FLamExpr -> FExpr
-fPrimOp op = FPrimExpr $ PrimOpExpr op
+fPrimOp op = FPrimExpr $ OpExpr op
 
 app :: FExpr -> FExpr -> FExpr
-app f x = fPrimOp $ App f x
+app f x = fPrimOp $ App NoAnn f x
 
 -- === Parsing types ===
 
@@ -637,4 +638,4 @@ tupleData = do
 tableData :: Parser FExpr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
-  return $ FPrimExpr $ PrimOpExpr $ TabCon NoAnn NoAnn xs
+  return $ FPrimExpr $ OpExpr $ TabCon NoAnn NoAnn xs

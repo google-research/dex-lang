@@ -45,7 +45,7 @@ normalize expr = case expr of
     extendR env $ normalize body
   FVar v [] -> lookupVar v
   FVar v ts -> liftM2 TApp (lookupVar v) (mapM substTy ts) >>= emit
-  FPrimExpr (PrimOpExpr op) ->
+  FPrimExpr (OpExpr op) ->
     traverseExpr op substTy normalize normalizeLam >>= emit
   FPrimExpr (ConExpr con) ->
     liftM Con $ traverseExpr con substTy normalize normalizeLam

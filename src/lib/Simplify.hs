@@ -69,7 +69,7 @@ simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
   expr' <- traverseExpr expr substSimp simplifyAtom simplifyLam
   case expr' of
-    App (Con (Lam _ (LamExpr b body))) x ->
+    App _ (Con (Lam _ (LamExpr b body))) x ->
       dropSub $ extendSub (b @> L x) $ simplify body
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
@@ -130,16 +130,16 @@ linearizeDecl decl = case decl of
 
 linearizeCExpr :: CExpr -> SimplifyM (Atom, TangentM Atom)
 linearizeCExpr expr = case expr of
-  App (Var v) x -> do
+  App l (Var v) x -> do
     linRule <- do
       maybeRule <- asks $ flip envLookup v . derivEnv
       case maybeRule of
         Nothing -> error $ "Linearization not implemented: " ++ pprint v
         Just rule -> deShadow rule
     (x', xTangents) <- linearizeAtom x
-    ~(Tup [y, f]) <- emit (App linRule x') >>= unpackRec
-    return (y, do {ts <- xTangents; emit $ App f ts})
-  App _ _      -> error $ "Shouldn't have NApp left: " ++ pprint expr
+    ~(Tup [y, f]) <- emit (App l linRule x') >>= unpackRec
+    return (y, do {ts <- xTangents; emit $ App l f ts})
+  App _ _ _ -> error $ "Shouldn't have App left: " ++ pprint expr
   -- TabGet x i -> do
   --   (x', xt) <- linearizeAtom x
   --   (i', _) <- linearizeAtom i

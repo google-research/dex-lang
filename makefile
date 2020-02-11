@@ -32,7 +32,7 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-example-names = type-tests eval-tests shadow-tests annot-tests \
+example-names = type-tests eval-tests shadow-tests annot-tests linear-tests \
                 monad-tests lens-tests include-test mandelbrot mandelbrot pi sierpinsky \
                 regression brownian_motion
 quine-test-targets = $(example-names:%=run-%)

@@ -101,7 +101,7 @@ check expr reqTy = case expr of
 
 constrainTopDown :: PrimExpr e ty lam -> Bool
 constrainTopDown expr = case expr of
-  PrimOpExpr _ -> False
+  OpExpr _ -> False
   ConExpr    _ -> True
 
 checkLam :: FLamExpr -> (Type, Type) -> InferM FLamExpr
@@ -143,12 +143,12 @@ generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
     n <- freshQ
     return $ Seq (lam, (n, m))
   _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
-generateSubExprTypes (PrimOpExpr  op) = liftM PrimOpExpr $ case op of
-  App f x -> do
-    l <- freshLin
+generateSubExprTypes (OpExpr  op) = liftM OpExpr $ case op of
+  App l f x -> do
+    l' <- freshLin
     a <- freshQ
     b <- freshQ
-    return $ App (f, ArrowType l a b) (x, a)
+    return $ App (l,l') (f, ArrowType l' a b) (x, a)
   TabGet xs i -> do
     n <- freshQ
     a <- freshQ

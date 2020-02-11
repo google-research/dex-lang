@@ -5,6 +5,9 @@
 
 :t llam x::Real. 1.0
 > Linearity error: pattern never spent: x::Real
+>
+> :t llam x::Real. 1.0
+>    ^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. x * x
 > Linearity error: pattern already spent: [x]
@@ -30,56 +33,41 @@
 > :t llam x::Real. (lam y. y) x
 >    ^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-:t (1 : 2.0) :: (Int : Real)
-> (Int : Real)
-
-:t (1 , 2.0) :: (Int : Real)
-> Type error:
-> Expected: (Int : Real)
->   Actual: (Int, Real)
-> In: (1, 2.0)
->
-> :t (1 , 2.0) :: (Int : Real)
->    ^^^^^^^^^^^^^^^^^^^^^^^^^
-
 :t llam x::Real. (1.0, 2.0)
 > Linearity error: pattern never spent: x::Real
+>
+> :t llam x::Real. (1.0, 2.0)
+>    ^^^^^^^^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. (1.0, x)
-> Linearity error: different consumption by Cartesian product elements: [[], [x]]
+> Linearity error: different consumption by Cartesian product elements: [] vs [x]
+>
+> :t llam x::Real. (1.0, x)
+>                  ^^^^^^^^
 
 :t llam x::Real. (x, 1.0)
-> Linearity error: different consumption by Cartesian product elements: [[x], []]
+> Linearity error: different consumption by Cartesian product elements: [x] vs []
+>
+> :t llam x::Real. (x, 1.0)
+>                  ^^^^^^^^
 
 :t llam x::Real. (x, x)
 > (Real --o (Real, Real))
 
-:t llam x::Real. (1.0 : 2.0)
-> Linearity error: pattern never spent: x::Real
-
-:t llam x::Real. (1.0 : x)
-> (Real --o (Real : Real))
-
-:t llam x::Real. (x : 1.0)
-> (Real --o (Real : Real))
-
-:t llam x::Real. (x : x)
-> Linearity error: pattern already spent: [x]
->
-> :t llam x::Real. (x : x)
->                       ^
-
 :t llam x::Real. 1.0 + 2.0
 > Linearity error: pattern never spent: x::Real
+>
+> :t llam x::Real. 1.0 + 2.0
+>    ^^^^^^^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. 1.0 + x
-> Linearity error: different consumption by Cartesian product elements: [[], [x]]
+> Linearity error: different consumption by Cartesian product elements: [] vs [x]
 >
 > :t llam x::Real. 1.0 + x
 >                      ^^
 
 :t llam x::Real. x + 1.0
-> Linearity error: different consumption by Cartesian product elements: [[x], []]
+> Linearity error: different consumption by Cartesian product elements: [x] vs []
 >
 > :t llam x::Real. x + 1.0
 >                    ^^
@@ -89,6 +77,9 @@
 
 :t llam x::Real. 1.0 * 2.0
 > Linearity error: pattern never spent: x::Real
+>
+> :t llam x::Real. 1.0 * 2.0
+>    ^^^^^^^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. 1.0 * x
 > (Real --o Real)
@@ -104,6 +95,9 @@
 
 :t llam x::Real. y = x; 1.0 * 2.0
 > Linearity error: pattern never spent: x::Real
+>
+> :t llam x::Real. y = x; 1.0 * 2.0
+>    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. y = x; x + y
 > (Real --o Real)
@@ -151,25 +145,25 @@
 > (Real --o Real)
 
 :t llam x. (0.0 + x) + 1.0
-> Linearity error: different consumption by Cartesian product elements: [[x], []]
+> Linearity error: different consumption by Cartesian product elements: [x] vs []
 >
 > :t llam x. (0.0 + x) + 1.0
 >                      ^^
 
 :t llam x. 0.0 + (x + 1.0)
-> Linearity error: different consumption by Cartesian product elements: [[x], []]
+> Linearity error: different consumption by Cartesian product elements: [x] vs []
 >
 > :t llam x. 0.0 + (x + 1.0)
 >                     ^^
 
 :t llam y. llam x. (x + 0.0) + (y + 0.0)
-> Linearity error: different consumption by Cartesian product elements: [[x], [y]]
+> Linearity error: different consumption by Cartesian product elements: [x] vs [y]
 >
 > :t llam y. llam x. (x + 0.0) + (y + 0.0)
 >                              ^^
 
 :t llam y. llam x. (x * 0.0) + y
-> Linearity error: different consumption by Cartesian product elements: [[x, *], [y]]
+> Linearity error: different consumption by Cartesian product elements: [x, *] vs [y]
 >
 > :t llam y. llam x. (x * 0.0) + y
 >                              ^^

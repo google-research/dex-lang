@@ -10,9 +10,10 @@
 
 module Type (
     getType, instantiateTVs, abstractTVs, topEnvType,
-    tangentBunType, listIntoRecord, flattenType, splitLinArgs, asForall,
+    tangentBunType, flattenType, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy, isData, checkModule, IsModule, IsModuleBody (..)) where
+    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
+    checkLinFModule) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -26,7 +27,6 @@ import Env
 import Record
 import PPrint
 import Cat
-import Util (traverseFun)
 
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
@@ -133,8 +133,8 @@ checkTypeFDecl decl = case decl of
     ty' <- checkTypeTLam tlam
     assertEq ty ty' "TLam"
     return $ b @> L ty
-  FRuleDef ann ty tlam -> return mempty  -- TODO
-  TyDef tv ty -> return $ tbind tv
+  FRuleDef _ _ _ -> return mempty  -- TODO
+  TyDef tv _ -> return $ tbind tv
 
 asForall :: Type -> ([Kind], Type)
 asForall (Forall ks body) = (ks, body)
@@ -203,9 +203,10 @@ subAtDepth :: Int -> (Int -> Either TVar Int -> Type) -> Type -> Type
 subAtDepth d f ty = case ty of
     BaseType _    -> ty
     TypeVar v     -> f d (Left v)
-    ArrowType m a b -> ArrowType m (recur a) (recur b)
+    ArrowType m a b -> ArrowType (recur m) (recur a) (recur b)
     TabType a b   -> TabType (recur a) (recur b)
     RecType r     -> RecType (fmap recur r)
+    ArrayType _ _ -> ty
     TypeApp a b   -> TypeApp (recur a) (map recur b)
     Monad eff a   -> Monad (fmap recur eff) (recur a)
     Lens a b      -> Lens (recur a) (recur b)
@@ -213,6 +214,7 @@ subAtDepth d f ty = case ty of
     TypeAlias ks body -> TypeAlias ks (recurWith (length ks) body)
     IdxSetLit _   -> ty
     BoundTVar n   -> f d (Right n)
+    Mult l        -> Mult l
     NoAnn         -> NoAnn
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f
@@ -226,14 +228,6 @@ checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
   env <- ask
   liftEither $ checkClassConstraint' env c ty
-
-getClasses :: Type -> TypeM Kind
-getClasses ty = do
-  env <- ask
-  return $ Kind $ filter (isInClass env) [VSpace, IdxSet, Data]
-  where
-    isInClass env c = case checkClassConstraint' env c ty of Left  _ -> False
-                                                             Right _ -> True
 
 checkClassConstraint' :: TypeEnv -> ClassName -> Type -> Except ()
 checkClassConstraint' env c ty = case c of
@@ -297,7 +291,7 @@ instance HasType Atom where
     Con con -> getPrimType $ ConExpr $ fmapExpr con id getType getLamType
 
 instance HasType CExpr where
-  getType op = getPrimType $ PrimOpExpr $ fmapExpr op id getType getLamType
+  getType op = getPrimType $ OpExpr $ fmapExpr op id getType getLamType
 
 instance HasType FTLam where
   getType (FTLam tbs body) = Forall (map varAnn tbs) body'
@@ -317,7 +311,7 @@ checkExpr expr = case expr of
 checkCExpr :: CExpr -> TypeM Type
 checkCExpr op = do
   primType <- traverseExpr op return checkAtom checkLam
-  checkPrimType (PrimOpExpr primType)
+  checkPrimType (OpExpr primType)
 
 checkAtom :: Atom -> TypeM Type
 checkAtom atom = case atom of
@@ -406,11 +400,12 @@ traversePrimExprType :: MonadError Err m
                      -> (Type -> Type      -> m ()) -- add equality constraint
                      -> (Type -> ClassName -> m ()) -- add class constraint
                      -> m Type
-traversePrimExprType (PrimOpExpr op) eq inClass = case op of
-  App (ArrowType _ a b) a' -> do
+traversePrimExprType (OpExpr op) eq inClass = case op of
+  App l (ArrowType l' a b) a' -> do
     eq a a'
+    eq l l'
     return b
-  TApp (Forall ks body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
+  TApp (Forall _ body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
   For (n,a) -> inClass n IdxSet >> inClass a Data >> return (TabType n a)
   TabCon n ty xs ->
     inClass ty Data >> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
@@ -493,9 +488,98 @@ unOpType op = case op of
   BoolToInt  -> (BoolType, IntType)
   _ -> error $ show op
 
--- === utils for working with linearity ===
+flattenType :: Type -> [(BaseType, [Int])]
+flattenType ty = case ty of
+  BaseType b  -> [(b, [])]
+  RecType r -> concat $ map flattenType $ toList r
+  TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
+  IdxSetLit _ -> [(IntType, [])]
+  -- temporary hack. TODO: fix
+  TabType _             a -> [(b, 0:shape) | (b, shape) <- flattenType a]
+  TypeVar _               -> [(IntType, [])]
+  _ -> error $ "Unexpected type: " ++ show ty
+
+-- === linearity ===
 
 data Spent = Spent (Env ()) Bool
+type LinM a = ReaderT (Env Spent) (CatT Spent (Either Err)) a
+
+checkLinFModule :: FModule -> Except ()
+checkLinFModule (Module _ (FModBody decls)) = void $
+  runCatT (runReaderT (mapM_ checkLinFDecl decls) mempty) mempty
+
+checkLinFExpr :: FExpr -> LinM ()
+checkLinFExpr expr = case expr of
+  FVar v _ -> do
+    env <- ask
+    case envLookup env v of
+      Nothing -> return ()
+      Just s  -> spend s
+  FDecl decl body -> do
+    env <- checkLinFDecl decl
+    extendR env (checkLinFExpr body)
+  FPrimExpr e -> checkLinPrim e checkLinFExpr checkLinFLam
+  SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
+  Annot e _      -> checkLinFExpr e
+
+checkLinFDecl :: FDecl -> LinM (Env Spent)
+checkLinFDecl decl = case decl of
+  LetMono p rhs -> do
+    ((), spent) <- scoped $ checkLinFExpr rhs
+    return $ foldMap (@>spent) p
+  LetPoly _ (FTLam _ expr) -> do
+    void $ checkLinFExpr expr
+    return mempty
+  _ -> return mempty
+
+checkLinPrim :: PrimExpr Type e lam
+             -> (e -> LinM ()) -> (Multiplicity -> lam -> LinM ()) -> LinM ()
+checkLinPrim e check checkLamLin = case e of
+  OpExpr op -> case op of
+    App (Mult Lin   ) f x -> check f >> check x
+    App (Mult NonLin) f x -> check f >> blockLinEnv (check x)
+    ScalarUnOp  FNeg x    -> check x
+    ScalarBinOp FMul x y  -> check x >> check y
+    ScalarBinOp FDiv x y  -> check x >> blockLinEnv (check y)
+    ScalarBinOp FAdd x y  -> void $ dupLinEnv (check x) (check y)
+    ScalarBinOp FSub x y  -> void $ dupLinEnv (check x) (check y)
+    _ -> void $
+      traverseExpr e return (blockLinEnv . check) (blockLinEnv . checkLamLin NonLin)
+  ConExpr con -> case con of
+    Lit (RealLit 0.0) -> spendFreely
+    RecCon r -> void $ fanoutLinEnv $ map check $ toList r
+    Lam (Mult l) lam -> checkLamLin l lam
+    _ -> void $
+      traverseExpr e return (blockLinEnv . check) (blockLinEnv . checkLamLin NonLin)
+
+checkLinFLam :: Multiplicity -> FLamExpr -> LinM ()
+checkLinFLam Lin (FLamExpr p body) = do
+  v <- getPatName p
+  let env = foldMap (@>asSpent v) p
+  checkSpent v (pprint p) $ extendR env $ checkLinFExpr body
+checkLinFLam NonLin (FLamExpr p body) =
+  extendR (foldMap (@>mempty) p) $ checkLinFExpr body
+
+dupLinEnv :: LinM a -> LinM b -> LinM (a, b)
+dupLinEnv m1 m2 = do
+  (x1, s1) <- scoped m1
+  (x2, s2) <- scoped m2
+  case spendCart s1 s2 of
+    Just spent' -> extend spent' >> return (x1, x2)
+    Nothing     -> throw LinErr $
+                     "different consumption by Cartesian product elements: "
+                  ++ pprint s1 ++ " vs " ++ pprint s2
+
+fanoutLinEnv :: [LinM a] -> LinM [a]
+fanoutLinEnv []     = spendFreely >> return []
+fanoutLinEnv (m:ms) = liftM (uncurry (:)) $ dupLinEnv m (fanoutLinEnv ms)
+
+blockLinEnv :: LinM a -> LinM a
+blockLinEnv m = do
+  (ans, spent@(Spent vs _)) <- scoped m
+  unless (null vs) $ throw LinErr $
+    "nonlinear function consumed linear data: " ++ pprint spent
+  return ans
 
 spend :: (MonadError Err m, MonadCat Spent m) => Spent -> m ()
 spend s = do
@@ -518,58 +602,16 @@ checkSpent v vStr m = do
   return ans
   where v' = v:>()
 
-checkNothingSpent :: (MonadError Err m, MonadCat Spent m) => m a -> m a
-checkNothingSpent m = do
-  (ans, spent@(Spent vs _)) <- scoped m
-  unless (null vs) $ throw LinErr $
-    "nonlinear function consumed linear data: " ++ pprint spent
-  return ans
-
-getPatName :: (MonadError Err m, Traversable f) => f (VarP b) -> m Name
+getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
   []  -> throw LinErr $
            "empty patterns not allowed for linear lambda (for silly reasons)"
   (v:>_):_ -> return v
 
--- args are a tensor product of Cartesian products
-type ArgLinearity = [(Multiplicity, Int)]
-
-splitLinArgs :: ArgLinearity -> [a] -> [(Multiplicity, [a])]
-splitLinArgs [] [] = []
-splitLinArgs [] _  = error "Leftover args"
-splitLinArgs ((l, n):linSpecs) xs = (l, xs') : splitLinArgs linSpecs rest
-  where (xs', rest) = splitAt n xs
-
-sequenceLinArgs :: (MonadError Err m, MonadCat Spent m)
-                      => ArgLinearity -> [m a] -> m [a]
-sequenceLinArgs argLin ms = do
-  chunks' <- sequence $ flip map (splitLinArgs argLin ms) $ \(l, chunk) ->
-    case l of Lin    -> shareLinear chunk
-              NonLin -> sequence $ map checkNothingSpent chunk
-  return $ concat chunks'
-
-shareLinear :: (MonadError Err m, MonadCat Spent m, Traversable f) =>
-                 f (m a) -> m (f a)
-shareLinear actions = do
-  (ys, spents) <- liftM unzip' $ traverse scoped actions
-  case foldMaybe spendCart cartSpentId spents of
-    Just spent' -> extend spent'
-    Nothing     -> throwCartErr (toList spents)
-  return ys
-  where unzip' x = (fmap fst x, fmap snd x)
-
-throwCartErr :: MonadError Err m => [Spent] -> m ()
-throwCartErr spents = throw LinErr $
-                        "different consumption by Cartesian product elements: "
-                          ++ pprint (toList spents)
-
 spendTens :: Spent -> Spent -> Maybe Spent
 spendTens (Spent vs consumes) (Spent vs' consumes') = do
   unless (null (envIntersect vs vs')) Nothing
   return $ Spent (vs <> vs') (consumes || consumes')
-
-tensSpentId :: Spent
-tensSpentId = Spent mempty False
 
 spendCart :: Spent -> Spent -> Maybe Spent
 spendCart (Spent vs consumes) (Spent vs' consumes') = do
@@ -578,28 +620,11 @@ spendCart (Spent vs consumes) (Spent vs' consumes') = do
   return $ Spent (vs <> vs') (consumes && consumes')
   where containedWithin x y = null $ x `envDiff` y
 
+tensSpentId :: Spent
+tensSpentId = Spent mempty False
+
 cartSpentId :: Spent
 cartSpentId = Spent mempty True
-
-realZero :: LitVal
-realZero = RealLit 0.0
-
-flattenType :: Type -> [(BaseType, [Int])]
-flattenType ty = case ty of
-  BaseType b  -> [(b, [])]
-  RecType r -> concat $ map flattenType $ toList r
-  TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
-  IdxSetLit _ -> [(IntType, [])]
-  -- temporary hack. TODO: fix
-  TabType _             a -> [(b, 0:shape) | (b, shape) <- flattenType a]
-  TypeVar _               -> [(IntType, [])]
-  _ -> error $ "Unexpected type: " ++ show ty
-
-listIntoRecord :: Record Type -> [a] -> Record (Type, [a])
-listIntoRecord r xs = fst $ traverseFun f r xs
-  where f :: Type -> [a] -> ((Type, [a]), [a])
-        f ty xsRest = ((ty, curXs), rest)
-          where (curXs, rest) = splitAt (length (flattenType ty)) xsRest
 
 -- TODO: consider putting the errors in the monoid itself.
 instance Semigroup Spent where
@@ -614,8 +639,3 @@ instance Monoid Spent where
 instance Pretty Spent where
   pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])
   pretty (Spent vs False) = pretty (envNames vs)
-
-foldMaybe :: Traversable f => (a -> a -> Maybe a) -> a -> f a -> Maybe a
-foldMaybe f x0 xs = foldl f' (Just x0) xs
-  where f' prev x = do prev' <- prev
-                       f prev' x

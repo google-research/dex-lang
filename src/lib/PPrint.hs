@@ -107,7 +107,7 @@ instance Pretty LitVal where
 
 instance Pretty Expr where
   pretty (Decl decl body) = align $ p decl <> hardline <> p body
-  pretty (CExpr expr) = p (PrimOpExpr expr)
+  pretty (CExpr expr) = p (OpExpr expr)
   pretty (Atom atom) = p atom
 
 instance Pretty FExpr where
@@ -128,11 +128,11 @@ instance Pretty FDecl where
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
-  pretty (PrimOpExpr  op ) = p op
+  pretty (OpExpr  op ) = p op
   pretty (ConExpr con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (App e1 e2) = p e1 <+> p e2
+  pretty (App _ e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
   pretty (For lam) = "for" <+> i <+> "." <+> body
     where (i, body) = prettyLam lam
@@ -144,7 +144,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (MonadRun r s m) = "run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
-  pretty op = prettyExprDefault (PrimOpExpr op)
+  pretty op = prettyExprDefault (OpExpr op)
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
@@ -201,7 +201,7 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let b bound -> p b <+> "=" <+> p (PrimOpExpr bound)
+    Let b bound -> p b <+> "=" <+> p (OpExpr bound)
 
 instance Pretty Atom where
   pretty atom = case atom of
