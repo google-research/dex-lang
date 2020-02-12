@@ -63,7 +63,7 @@ lookupVar v = do
 normalizeLam :: FLamExpr -> NormM LamExpr
 normalizeLam (FLamExpr p body) = do
   b <- normalizePat p
-  buildLam b $ \x -> do
+  buildLamExpr b $ \x -> do
     env <- bindPat p x
     extendR env $ normalize body
 

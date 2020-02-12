@@ -434,8 +434,8 @@ traversePrimExprType (OpExpr op) eq inClass = case op of
     eq r r' >> eq s s'
     return $ tupTy [a, w, s]
   LensGet a (Lens a' b) -> eq a a' >> return b
-  Linearize (a, b) a' -> eq a a' >> return (pairTy b (a --@ b))
-  Transpose (a, b)    -> return (b --@ a)
+  Linearize (a, b) -> return (a --> pairTy b (a --@ b))
+  Transpose (a, b) -> return (b --@ a)
   IntAsIndex ty i  -> eq (BaseType IntType) i >> return ty
   IdxSetSize _     -> return $ BaseType IntType
   NewtypeCast ty _ -> return ty

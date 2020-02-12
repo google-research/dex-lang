@@ -186,7 +186,7 @@ data PrimOp ty e lam =
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
       | MonadRun e e e | LensGet e e
-      | Linearize lam e | Transpose lam
+      | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
       | NewtypeCast ty e
@@ -217,7 +217,7 @@ builtinNames = M.fromList
   , ("booltoint", unOp BoolToInt)
   , ("asint"    , unOp IndexAsInt)
   , ("idxSetSize"      , OpExpr $ IdxSetSize ())
-  , ("linearize"       , OpExpr $ Linearize () ())
+  , ("linearize"       , OpExpr $ Linearize ())
   , ("linearTranspose" , OpExpr $ Transpose ())
   , ("asidx"           , OpExpr $ IntAsIndex () ())
   , ("vzero"           , OpExpr $ VSpaceOp () $ VZero)
@@ -572,7 +572,7 @@ instance TraversableExpr PrimOp where
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
     MonadRun r s m       -> liftA3  MonadRun (fE r) (fE s) (fE m)
     LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
-    Linearize lam e      -> liftA2 Linearize (fL lam) (fE e)
+    Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)

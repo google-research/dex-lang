@@ -7,14 +7,15 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Embed (emit, emitTo, withBinder, buildLam, buildTLam,
+module Embed (emit, emitTo, withBinder, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, flipIdx, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, nUnitCon, unpackRec,
-              makeTup, makePair) where
+              makeTup, makePair, substEmbed) where
 
 import Control.Monad
+import Control.Monad.Reader
 import Data.Foldable (toList)
 
 import Env
@@ -66,8 +67,12 @@ withBinder b f = do
       return (ans, b')
   return (ans, b', env)
 
-buildLam :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
-buildLam b f = do
+buildLam :: MonadCat EmbedEnv m
+         => Multiplicity -> Var -> (Atom -> m Atom) -> m Atom
+buildLam l b f = liftM (Con . Lam (Mult l)) $ buildLamExpr b f
+
+buildLamExpr :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
+buildLamExpr b f = do
   (ans, b', (_, decls)) <- withBinder b f
   return $ LamExpr b' (wrapDecls decls ans)
 
@@ -175,7 +180,7 @@ mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
   TabType n a -> do
-    lam <- buildLam ("i":>n) $ \i -> do
+    lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
     emit $ For lam
@@ -187,3 +192,10 @@ mapScalars f ty xs = case ty of
 transposeRecord :: Record b -> [Record a] -> Record [a]
 transposeRecord r [] = fmap (const []) r
 transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
+
+substEmbed :: (MonadCat EmbedEnv m, MonadReader (FullEnv Atom Type) m, Subst a)
+           => a -> m a
+substEmbed x = do
+  env <- ask
+  scope <- looks fst
+  return $ subst (env, scope) x
