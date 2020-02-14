@@ -14,7 +14,7 @@ module Type (
     tangentBunType, flattenType, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
-    checkLinFModule, LinApplicative (..), LinearTraversable (..)) where
+    checkLinFModule) where
 
 import Control.Applicative
 import Control.Monad
@@ -501,38 +501,6 @@ flattenType ty = case ty of
   TypeVar _               -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
 
--- === linearity-aware traversal ===
-
-class Applicative f => LinApplicative f where
-  tensPure   :: a -> f a
-  tensLiftA2 :: (a -> b -> c) -> f a -> f b -> f c
-  withoutLin :: f a -> f a
-
-class LinearTraversable f where
-  traverseLin :: LinApplicative m
-              => f e lam -> (e -> m e') -> (lam -> m lam') -> m (f e' lam')
-
-instance LinearTraversable (PrimExpr Type) where
-  traverseLin (OpExpr  e) f flam = liftA OpExpr  $ traverseLin e f flam
-  traverseLin (ConExpr e) f flam = liftA ConExpr $ traverseLin e f flam
-
-instance LinearTraversable (PrimOp Type) where
-  traverseLin e f flam = case e of
-    ScalarUnOp  FNeg x    -> liftA  (ScalarUnOp  FNeg) (f x)
-    ScalarBinOp FAdd x y  -> liftA2 (ScalarBinOp FAdd) (f x) (f y)
-    ScalarBinOp FSub x y  -> liftA2 (ScalarBinOp FSub) (f x) (f y)
-    ScalarBinOp FDiv x y  -> tensLiftA2 (ScalarBinOp FDiv) (f x) (withoutLin (f y))
-    ScalarBinOp FMul x y  -> tensLiftA2 (ScalarBinOp FMul) (f x) (f y)
-    App (Mult Lin   ) fun x -> tensLiftA2 (App (Mult Lin)) (f fun) (f x)
-    App (Mult NonLin) fun x ->   liftA2 (App (Mult NonLin)) (f fun) (withoutLin (f x))
-    _ -> withoutLin $ traverseExpr e pure f flam
-
-instance LinearTraversable (PrimCon Type) where
-  traverseLin e f flam = case e of
-    Lit (RealLit 0.0) -> pure $ Lit (RealLit 0.0)
-    RecCon r -> liftA RecCon $ traverse f r
-    _ -> withoutLin $ traverseExpr e pure f flam
-
 -- === linearity ===
 
 data Spent = Spent (Env ()) Bool  -- flag means 'may consume any linear vars'
@@ -558,7 +526,8 @@ checkLinFExpr expr = case expr of
     let s = asSpent v
     checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
   FPrimExpr (ConExpr (Lam (Mult NonLin) lam)) -> checkLinFLam lam
-  FPrimExpr e -> void $ traverseLin e checkLinFExpr checkLinFLam
+  FPrimExpr (OpExpr  op ) -> checkPrimOp  op
+  FPrimExpr (ConExpr con) -> checkPrimCon con
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
   Annot e _      -> checkLinFExpr e
 
@@ -574,6 +543,39 @@ checkLinFDecl decl = case decl of
     void $ checkLinFExpr expr
     return mempty
   _ -> return mempty
+
+checkPrimOp :: PrimOp Type FExpr FLamExpr -> LinCheckM ()
+checkPrimOp e = case e of
+  ScalarUnOp  FNeg x    -> check x
+  ScalarBinOp FAdd x y  -> check x >> check y
+  ScalarBinOp FSub x y  -> check x >> check y
+  ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
+  ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
+  App (Mult Lin   ) fun x -> tensCheck (check fun) (check x)
+  App (Mult NonLin) fun x -> check fun >> withoutLin (check x)
+  _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
+  where check = checkLinFExpr
+
+checkPrimCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
+checkPrimCon e = case e of
+  Lit (RealLit 0.0) -> return ()
+  RecCon r -> mapM_ check r
+  _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
+  where check = checkLinFExpr
+
+withoutLin :: LinCheckM a -> LinCheckM a
+withoutLin (LinCheckM m) = LinCheckM $ do
+  (ans, s@(Spent vs _)) <- m
+  unless (null vs) $ throw LinErr $
+    "nonlinear function consumed linear data: " ++ pprint s
+  return (ans, tensId)
+
+tensCheck :: LinCheckM () -> LinCheckM () -> LinCheckM ()
+tensCheck x y = LinCheckM $ do
+  ((), sx) <- runLinCheckM x
+  ((), sy) <- runLinCheckM y
+  sxy <- liftEither $ tensCat sx sy
+  return ((), sxy)
 
 getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
@@ -649,16 +651,3 @@ instance MonadReader (Env Spent) LinCheckM where
 instance MonadError Err LinCheckM where
   throwError err = LinCheckM $ throwError err
   catchError (LinCheckM m) f = LinCheckM $ catchError m (runLinCheckM . f)
-
-instance LinApplicative LinCheckM where
-  tensPure x = LinCheckM $ return (x, tensId)
-  tensLiftA2 f x y = LinCheckM $ do
-    (x', sx) <- runLinCheckM x
-    (y', sy) <- runLinCheckM y
-    sxy <- liftEither $ tensCat sx sy
-    return (f x' y', sxy)
-  withoutLin (LinCheckM m) = LinCheckM $ do
-    (ans, s@(Spent vs _)) <- m
-    unless (null vs) $ throw LinErr $
-      "nonlinear function consumed linear data: " ++ pprint s
-    return (ans, tensId)

@@ -15,7 +15,7 @@ module Syntax (
     Type (..), BaseType (..), EffectTypeP (..), EffectType,
     Multiplicity (..), Kind (..), ClassName (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
-    TVar, FTLam (..), Expr (..), Decl (..), CExpr, Atom (..), LamExpr (..),
+    TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
@@ -127,11 +127,12 @@ data Decl = Let Var CExpr
           | RuleDef RuleAnn Type Expr
             deriving (Show, Eq, Generic)
 
-type CExpr = PrimOp Type Atom LamExpr
+type CExpr = PrimOp  Type Atom LamExpr
+type Con   = PrimCon Type Atom LamExpr
 
 data Atom = Var Var
           | TLam [TVar] Expr
-          | Con (PrimCon Type Atom LamExpr)  -- must be fully reduced
+          | Con Con
             deriving (Show, Eq, Generic)
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)

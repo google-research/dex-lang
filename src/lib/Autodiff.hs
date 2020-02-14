@@ -9,6 +9,7 @@
 
 module Autodiff (linearize, transposeMap) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -23,72 +24,81 @@ import PPrint
 import Subst
 import Embed
 
-type LinearizeM a = ReaderT SubstEnv Embed a
-type TangentM   a = ReaderT SubstEnv Embed a
-
 -- -- === linearization ===
+
+type EmbedSubM a = ReaderT SubstEnv Embed a
+newtype LinA a = LinA { runLinA :: EmbedSubM (a, EmbedSubM a) }
 
 linearize :: Scope -> LamExpr -> Atom
 linearize scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam NonLin b $ \x -> do
-    (y, yt) <- runReaderT (linearizeExpr expr) (b @> L x)
+    (y, yt) <- runReaderT (runLinA (linearizeExpr expr)) (b @> L x)
     -- TODO: check linearity
     fLin <- buildLam Lin b $ \xt -> runReaderT yt (b @> L xt)
     return $ makePair y fLin
 
-linearizeExpr :: Expr -> LinearizeM (Atom, TangentM Atom)
+linearizeExpr :: Expr -> LinA Atom
 linearizeExpr expr = case expr of
-  Decl decl body -> do
-    (env, makeTangentEnv) <- linearizeDecl decl
-    (ans, fLin) <- extendR env (linearizeExpr body)
-    return (ans, do tEnv <- makeTangentEnv
+  Decl (Let b bound) body -> LinA $ do
+    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr bound
+    (ans, fLin) <- extendR env $ runLinA $ linearizeExpr body
+    return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
   CExpr e -> linearizeCExpr e
   Atom x  -> linearizeAtom x
 
-linearizeDecl :: Decl -> LinearizeM (SubstEnv, TangentM SubstEnv)
-linearizeDecl decl = case decl of
-  Let b bound -> do
-    b' <- substEmbed b
-    (x, fLin) <- linearizeCExpr bound
-    return (b' @> L x, do t <- fLin
-                          return (b'@> L t))
-  _ -> error "Not implemented"
+linearizeCExpr :: CExpr -> LinA Atom
+linearizeCExpr expr = case expr' of
+  ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
+  ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
+  ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
+  ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) x1 x2
+  _ -> error $ "not implemented: " ++ pprint expr
+  where expr' = fmapExpr expr id linearizeAtom id
 
-linearizeCExpr :: CExpr -> LinearizeM (Atom, TangentM Atom)
-linearizeCExpr expr = case expr of
-  ScalarBinOp FAdd x1 x2 -> do
-    (x1', t1) <- linearizeAtom x1
-    (x2', t2) <- linearizeAtom x2
-    y <- add x1' x2'
-    return (y, do t1' <- t1
-                  t2' <- t2
-                  add t1' t2')
-  ScalarBinOp FMul x1 x2 -> do
-    (x1', t1) <- linearizeAtom x1
-    (x2', t2) <- linearizeAtom x2
-    y <- mul x1' x2'
-    return (y, do t1' <- t1
-                  t2' <- t2
-                  yt1 <- mul x1' t2'
-                  yt2 <- mul t1' x2'
-                  add yt1 yt2)
+linearizePrimCon :: Con -> LinA Atom
+linearizePrimCon con = case con' of
+  Lit _    -> LinA $ return (x, zeroAt (getType x))  where x = Con con
+  RecCon r -> liftA (Con . RecCon) $ sequenceA r
+  _ -> error $ "not implemented: " ++ pprint con
+  where con' = fmapExpr con id linearizeAtom id
 
-linearizeAtom :: Atom -> LinearizeM (Atom, TangentM Atom)
+linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom = case atom of
-  Var v -> do
+  Var v -> LinA $ do
     maybeVal <- asks $ flip envLookup v
     case maybeVal of
       Just (L x) -> return (x, asks (fromL . (!v)))
-      Nothing -> return $ zeroDeriv atom
+      Nothing    -> return (atom, zeroAt (getType atom))
       _ -> error "unexpected lookup"
-  Con con -> case con of
-    Lit _ -> return $ zeroDeriv atom
-    _ -> error $ "not implemented: " ++ pprint atom
-  _ -> error $ "not implemented: " ++ pprint atom
+  Con con -> linearizePrimCon con
 
-zeroDeriv :: Atom -> (Atom, TangentM Atom)
-zeroDeriv x = (x, zeroAt (getType x))
+tensLiftA2 :: (a -> b -> CExpr) -> LinA a -> LinA b -> LinA Atom
+tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
+  (x1, mt1) <- m1
+  (x2, mt2) <- m2
+  ans <- emit $ f x1 x2
+  return (ans, do t1 <- mt1
+                  t2 <- mt2
+                  tOut1 <- emit $ f x1 t2
+                  tOut2 <- emit $ f t1 x2
+                  add tOut1 tOut2)
+
+bindLin :: LinA a -> (a -> EmbedSubM b) -> LinA b
+bindLin (LinA m) f = LinA $ do
+  (e, t) <- m
+  x <- f e
+  return (x, t >>= f)
+
+instance Functor LinA where
+  fmap = liftA
+
+instance Applicative LinA where
+  pure x = LinA $ return (x, return x)
+  liftA2 f (LinA m1) (LinA m2) = LinA $ do
+    (x1, t1) <- m1
+    (x2, t2) <- m2
+    return (f x1 x2, liftM2 f t1 t2)
 
 -- -- === transposition ===
 
