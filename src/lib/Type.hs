@@ -7,14 +7,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
     getType, instantiateTVs, abstractTVs, topEnvType,
     tangentBunType, flattenType, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
-    checkLinFModule) where
+    checkLinFModule, LinApplicative (..), LinearTraversable (..)) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -499,16 +501,49 @@ flattenType ty = case ty of
   TypeVar _               -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
 
+-- === linearity-aware traversal ===
+
+class Applicative f => LinApplicative f where
+  tensPure   :: a -> f a
+  tensLiftA2 :: (a -> b -> c) -> f a -> f b -> f c
+  withoutLin :: f a -> f a
+
+class LinearTraversable f where
+  traverseLin :: LinApplicative m
+              => f e lam -> (e -> m e') -> (lam -> m lam') -> m (f e' lam')
+
+instance LinearTraversable (PrimExpr Type) where
+  traverseLin (OpExpr  e) f flam = liftA OpExpr  $ traverseLin e f flam
+  traverseLin (ConExpr e) f flam = liftA ConExpr $ traverseLin e f flam
+
+instance LinearTraversable (PrimOp Type) where
+  traverseLin e f flam = case e of
+    ScalarUnOp  FNeg x    -> liftA  (ScalarUnOp  FNeg) (f x)
+    ScalarBinOp FAdd x y  -> liftA2 (ScalarBinOp FAdd) (f x) (f y)
+    ScalarBinOp FSub x y  -> liftA2 (ScalarBinOp FSub) (f x) (f y)
+    ScalarBinOp FDiv x y  -> tensLiftA2 (ScalarBinOp FDiv) (f x) (withoutLin (f y))
+    ScalarBinOp FMul x y  -> tensLiftA2 (ScalarBinOp FMul) (f x) (f y)
+    App (Mult Lin   ) fun x -> tensLiftA2 (App (Mult Lin)) (f fun) (f x)
+    App (Mult NonLin) fun x ->   liftA2 (App (Mult NonLin)) (f fun) (withoutLin (f x))
+    _ -> withoutLin $ traverseExpr e pure f flam
+
+instance LinearTraversable (PrimCon Type) where
+  traverseLin e f flam = case e of
+    Lit (RealLit 0.0) -> pure $ Lit (RealLit 0.0)
+    RecCon r -> liftA RecCon $ traverse f r
+    _ -> withoutLin $ traverseExpr e pure f flam
+
 -- === linearity ===
 
-data Spent = Spent (Env ()) Bool
-type LinM a = ReaderT (Env Spent) (CatT Spent (Either Err)) a
+data Spent = Spent (Env ()) Bool  -- flag means 'may consume any linear vars'
+newtype LinCheckM a = LinCheckM
+  { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, Spent) }
 
 checkLinFModule :: FModule -> Except ()
-checkLinFModule (Module _ (FModBody decls)) = void $
-  runCatT (runReaderT (mapM_ checkLinFDecl decls) mempty) mempty
+checkLinFModule (Module _ (FModBody decls)) =
+  void $ runReaderT (runLinCheckM $ mapM_ checkLinFDecl decls) mempty
 
-checkLinFExpr :: FExpr -> LinM ()
+checkLinFExpr :: FExpr -> LinCheckM ()
 checkLinFExpr expr = case expr of
   FVar v _ -> do
     env <- ask
@@ -518,89 +553,27 @@ checkLinFExpr expr = case expr of
   FDecl decl body -> do
     env <- checkLinFDecl decl
     extendR env (checkLinFExpr body)
-  FPrimExpr e -> checkLinPrim e checkLinFExpr checkLinFLam
+  FPrimExpr (ConExpr (Lam (Mult Lin) (FLamExpr p body))) -> do
+    v <- getPatName p
+    let s = asSpent v
+    checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
+  FPrimExpr (ConExpr (Lam (Mult NonLin) lam)) -> checkLinFLam lam
+  FPrimExpr e -> void $ traverseLin e checkLinFExpr checkLinFLam
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
   Annot e _      -> checkLinFExpr e
 
-checkLinFDecl :: FDecl -> LinM (Env Spent)
+checkLinFLam :: FLamExpr -> LinCheckM ()
+checkLinFLam (FLamExpr _ body) = checkLinFExpr body
+
+checkLinFDecl :: FDecl -> LinCheckM (Env Spent)
 checkLinFDecl decl = case decl of
   LetMono p rhs -> do
-    ((), spent) <- scoped $ checkLinFExpr rhs
+    ((), spent) <- captureSpent $ checkLinFExpr rhs
     return $ foldMap (@>spent) p
   LetPoly _ (FTLam _ expr) -> do
     void $ checkLinFExpr expr
     return mempty
   _ -> return mempty
-
-checkLinPrim :: PrimExpr Type e lam
-             -> (e -> LinM ()) -> (Multiplicity -> lam -> LinM ()) -> LinM ()
-checkLinPrim e check checkLamLin = case e of
-  OpExpr op -> case op of
-    App (Mult Lin   ) f x -> check f >> check x
-    App (Mult NonLin) f x -> check f >> blockLinEnv (check x)
-    ScalarUnOp  FNeg x    -> check x
-    ScalarBinOp FMul x y  -> check x >> check y
-    ScalarBinOp FDiv x y  -> check x >> blockLinEnv (check y)
-    ScalarBinOp FAdd x y  -> void $ dupLinEnv (check x) (check y)
-    ScalarBinOp FSub x y  -> void $ dupLinEnv (check x) (check y)
-    _ -> void $
-      traverseExpr e return (blockLinEnv . check) (blockLinEnv . checkLamLin NonLin)
-  ConExpr con -> case con of
-    Lit (RealLit 0.0) -> spendFreely
-    RecCon r -> void $ fanoutLinEnv $ map check $ toList r
-    Lam (Mult l) lam -> checkLamLin l lam
-    _ -> void $
-      traverseExpr e return (blockLinEnv . check) (blockLinEnv . checkLamLin NonLin)
-
-checkLinFLam :: Multiplicity -> FLamExpr -> LinM ()
-checkLinFLam Lin (FLamExpr p body) = do
-  v <- getPatName p
-  let env = foldMap (@>asSpent v) p
-  checkSpent v (pprint p) $ extendR env $ checkLinFExpr body
-checkLinFLam NonLin (FLamExpr p body) =
-  extendR (foldMap (@>mempty) p) $ checkLinFExpr body
-
-dupLinEnv :: LinM a -> LinM b -> LinM (a, b)
-dupLinEnv m1 m2 = do
-  (x1, s1) <- scoped m1
-  (x2, s2) <- scoped m2
-  case spendCart s1 s2 of
-    Just spent' -> extend spent' >> return (x1, x2)
-    Nothing     -> throw LinErr $
-                     "different consumption by Cartesian product elements: "
-                  ++ pprint s1 ++ " vs " ++ pprint s2
-
-fanoutLinEnv :: [LinM a] -> LinM [a]
-fanoutLinEnv []     = spendFreely >> return []
-fanoutLinEnv (m:ms) = liftM (uncurry (:)) $ dupLinEnv m (fanoutLinEnv ms)
-
-blockLinEnv :: LinM a -> LinM a
-blockLinEnv m = do
-  (ans, spent@(Spent vs _)) <- scoped m
-  unless (null vs) $ throw LinErr $
-    "nonlinear function consumed linear data: " ++ pprint spent
-  return ans
-
-spend :: (MonadError Err m, MonadCat Spent m) => Spent -> m ()
-spend s = do
-  spent <- look
-  case spendTens spent s of
-    Just _  -> extend s
-    Nothing -> throw LinErr $ "pattern already spent: " ++ pprint s
-
-asSpent :: Name -> Spent
-asSpent v = Spent ((v:>())@>()) False
-
-spendFreely :: MonadCat Spent m => m ()
-spendFreely = extend $ Spent mempty True
-
-checkSpent :: (MonadError Err m, MonadCat Spent m) => Name -> String -> m a -> m a
-checkSpent v vStr m = do
-  (ans, Spent vs consumes) <- scoped m
-  unless  (consumes || v' `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
-  extend (Spent (vs `envDiff` (v'@>())) consumes)
-  return ans
-  where v' = v:>()
 
 getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
@@ -608,34 +581,84 @@ getPatName p = case toList p of
            "empty patterns not allowed for linear lambda (for silly reasons)"
   (v:>_):_ -> return v
 
-spendTens :: Spent -> Spent -> Maybe Spent
-spendTens (Spent vs consumes) (Spent vs' consumes') = do
-  unless (null (envIntersect vs vs')) Nothing
+spend :: Spent -> LinCheckM ()
+spend s = LinCheckM $ return ((), s)
+
+checkSpent :: Name -> String -> LinCheckM a -> LinCheckM a
+checkSpent v vStr m = do
+  (ans, Spent vs consumes) <- captureSpent m
+  unless  (consumes || v' `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
+  spend (Spent (vs `envDiff` (v'@>())) consumes)
+  return ans
+   where v' = v:>()
+
+asSpent :: Name -> Spent
+asSpent v = Spent ((v:>())@>()) False
+
+tensCat :: Spent -> Spent -> Except Spent
+tensCat (Spent vs consumes) (Spent vs' consumes') = do
+  let overlap = envIntersect vs vs'
+  unless (null overlap) $ throw LinErr $ "pattern spent twice: "
+                                       ++ pprint (Spent overlap False)
   return $ Spent (vs <> vs') (consumes || consumes')
 
-spendCart :: Spent -> Spent -> Maybe Spent
-spendCart (Spent vs consumes) (Spent vs' consumes') = do
-  unless (consumes  || vs' `containedWithin` vs ) Nothing
-  unless (consumes' || vs  `containedWithin` vs') Nothing
+cartCat :: Spent -> Spent -> Except Spent
+cartCat s1@(Spent vs consumes) s2@(Spent vs' consumes') = do
+  unless (consumes  || vs' `containedWithin` vs ) $ throw LinErr errMsg
+  unless (consumes' || vs  `containedWithin` vs') $ throw LinErr errMsg
   return $ Spent (vs <> vs') (consumes && consumes')
   where containedWithin x y = null $ x `envDiff` y
+        errMsg = "different consumption by Cartesian product elements: "
+                  ++ pprint s1 ++ " vs " ++ pprint s2
 
-tensSpentId :: Spent
-tensSpentId = Spent mempty False
+tensId :: Spent
+tensId = Spent mempty False
 
-cartSpentId :: Spent
-cartSpentId = Spent mempty True
+cartId :: Spent
+cartId = Spent mempty True
 
--- TODO: consider putting the errors in the monoid itself.
-instance Semigroup Spent where
-  s <> s' = case spendTens s s' of
-              Just s'' -> s''
-              Nothing -> error "Spent twice (this shouldn't happen)"
-
-instance Monoid Spent where
-  mempty = tensSpentId
-  mappend = (<>)
+captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
+captureSpent m = LinCheckM $ do
+  (x, s) <- runLinCheckM m
+  return ((x, s), cartId)
 
 instance Pretty Spent where
   pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])
   pretty (Spent vs False) = pretty (envNames vs)
+
+instance Functor LinCheckM where
+  fmap = liftM
+
+instance Applicative LinCheckM where
+  pure x = LinCheckM $ return (x, cartId)
+  (<*>) = ap
+
+instance Monad LinCheckM where
+  m >>= f = LinCheckM $ do
+    (x, s1) <- runLinCheckM m
+    (y, s2) <- runLinCheckM (f x)
+    s <- liftEither $ cartCat s1 s2
+    return (y, s)
+
+instance MonadReader (Env Spent) LinCheckM where
+  ask = LinCheckM $ do
+    env <- ask
+    return (env, cartId)
+  local env (LinCheckM m) = LinCheckM $ local env m
+
+instance MonadError Err LinCheckM where
+  throwError err = LinCheckM $ throwError err
+  catchError (LinCheckM m) f = LinCheckM $ catchError m (runLinCheckM . f)
+
+instance LinApplicative LinCheckM where
+  tensPure x = LinCheckM $ return (x, tensId)
+  tensLiftA2 f x y = LinCheckM $ do
+    (x', sx) <- runLinCheckM x
+    (y', sy) <- runLinCheckM y
+    sxy <- liftEither $ tensCat sx sy
+    return (f x' y', sxy)
+  withoutLin (LinCheckM m) = LinCheckM $ do
+    (ans, s@(Spent vs _)) <- m
+    unless (null vs) $ throw LinErr $
+      "nonlinear function consumed linear data: " ++ pprint s
+    return (ans, tensId)

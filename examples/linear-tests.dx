@@ -10,10 +10,10 @@
 >    ^^^^^^^^^^^^^^^^^
 
 :t llam x::Real. x * x
-> Linearity error: pattern already spent: [x]
+> Linearity error: pattern spent twice: [x]
 >
 > :t llam x::Real. x * x
->                      ^
+>                    ^^
 
 :t llam x::Real. x * 2.0
 > (Real --o Real)
@@ -88,10 +88,10 @@
 > (Real --o Real)
 
 :t llam x::Real. x * x
-> Linearity error: pattern already spent: [x]
+> Linearity error: pattern spent twice: [x]
 >
 > :t llam x::Real. x * x
->                      ^
+>                    ^^
 
 :t llam x::Real. y = x; 1.0 * 2.0
 > Linearity error: pattern never spent: x::Real
@@ -103,19 +103,19 @@
 > (Real --o Real)
 
 :t llam x::Real. y = x; y * x
-> Linearity error: pattern already spent: [x]
+> Linearity error: pattern spent twice: [x]
 >
 > :t llam x::Real. y = x; y * x
->                             ^
+>                           ^^
 
 :t llam (x, y). x + y
 > ((Real, Real) --o Real)
 
 :t llam (x, y). x * y
-> Linearity error: pattern already spent: [x]
+> Linearity error: pattern spent twice: [x]
 >
 > :t llam (x, y). x * y
->                     ^
+>                   ^^
 
 :p (llam x. x + x) 1.0
 > 2.0
