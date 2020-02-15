@@ -23,6 +23,7 @@ import Cat
 import PPrint
 import Subst
 import Embed
+import Record
 
 -- -- === linearization ===
 
@@ -53,6 +54,7 @@ linearizeCExpr expr = case expr' of
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
   ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) x1 x2
+  RecGet x i -> liftA (flip RecGet i) x `bindLin` emit
   _ -> error $ "not implemented: " ++ pprint expr
   where expr' = fmapExpr expr id linearizeAtom id
 
@@ -143,10 +145,22 @@ transposeCExpr expr ct = case expr of
         x' <- substTranspose x
         ct' <- mul ct x'
         transposeAtom y ct'
+  RecGet x i -> do
+    ~(Con (RecCon rZeros)) <- zeroAt (getType x)
+    let ct' = Con $ RecCon $ recUpdate i ct rZeros
+    transposeAtom x ct'
+  _ -> error $ "transposition not implemented for: " ++ pprint expr
+
+transposeCon :: Con -> Atom -> TransposeM ()
+transposeCon con ct = case con of
+  RecCon r -> do
+    rCT <- unpackRec ct
+    sequence_ $ recZipWith transposeAtom r rCT
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
   Var (v:>_) -> emitCT v ct
+  Con con -> transposeCon con ct
   _ -> error $ "Can't transpose: " ++ pprint atom
 
 isLin :: HasVars a => a -> TransposeM Bool

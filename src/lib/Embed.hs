@@ -112,6 +112,7 @@ flipIdx i = do
 isub :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 isub x y = emit $ ScalarBinOp ISub x y
 
+-- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadCat EmbedEnv m => Type -> m Atom
 zeroAt ty = mapScalars (\_ _ -> return $ Con $ Lit (RealLit 0.0)) ty []
 
