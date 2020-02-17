@@ -1,3 +1,4 @@
+from __future__ import print_function
 # Copyright 2019 Google LLC
 #
 # Use of this source code is governed by a BSD-style
@@ -29,5 +30,5 @@ def load(fname):
   with open(fname) as f:
     s = f.read()
   top_level_functions = loadSource(s)
-  print top_level_functions
+  print(top_level_functions)
   return DexModule(top_level_functions)
