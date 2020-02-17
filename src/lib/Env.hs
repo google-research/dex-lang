@@ -9,7 +9,8 @@
 
 module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
             envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe, fmapNames) where
+            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe, fmapNames,
+            rawName, nameTag, rename, renames, genFresh) where
 
 import Data.String
 import Data.Traversable
@@ -18,6 +19,8 @@ import qualified Data.Map.Strict as M
 import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
+
+import Cat
 
 infixr 7 :>
 
@@ -71,6 +74,35 @@ isin v env = case envLookup env v of Just _  -> True
 env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
+
+rawName :: Tag -> Name
+rawName s = Name s 0
+
+nameTag :: Name -> Tag
+nameTag (Name tag _) = tag
+
+genFresh :: Tag -> Env a -> Name
+genFresh tag (Env m) = Name tag nextNum
+  where
+    nextNum = case M.lookupLT (Name tag bigInt) m of
+                Nothing -> 0
+                Just (Name tag' i, _)
+                  | tag' /= tag -> 0
+                  | i < bigInt  -> i + 1
+                  | otherwise   -> error "Ran out of numbers!"
+    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
+
+rename :: VarP ann -> Env a -> VarP ann
+rename v@(name:>ann) scope | v `isin` scope = genFresh (nameTag name) scope :> ann
+                           | otherwise      = v
+
+renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
+renames vs scope = runCat (traverse freshCat vs) scope
+
+freshCat :: VarP ann -> Cat (Env ()) (VarP ann)
+freshCat v = do v' <- looks $ rename v
+                extend (v' @> ())
+                return v'
 
 infixr 7 @>
 

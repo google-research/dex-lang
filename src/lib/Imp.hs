@@ -23,7 +23,6 @@ import Env
 import Type
 import PPrint
 import Cat
-import Fresh
 import Subst
 import Record
 import Embed (wrapDecls)

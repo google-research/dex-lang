@@ -21,7 +21,6 @@ import Env
 import Record
 import Type
 import PPrint
-import Fresh
 import Cat
 import Subst
 

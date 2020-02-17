@@ -15,7 +15,6 @@ import Env
 import Record
 import Syntax
 import PPrint
-import Fresh
 import Array
 
 class Subst a where

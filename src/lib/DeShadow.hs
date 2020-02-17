@@ -14,20 +14,19 @@ import Control.Monad.Except hiding (Except)
 
 import Env
 import Syntax
-import Fresh
 import PPrint
 import Cat
 import Type
 
-type DeShadowM a = ReaderT DeShadowEnv (FreshRT (Either Err)) a
-type DeShadowCat a = (CatT (DeShadowEnv, FreshScope) (Either Err)) a
+type DeShadowM a = ReaderT (DeShadowEnv, Scope) (Either Err) a
+type DeShadowCat a = CatT  (DeShadowEnv, Scope) (Either Err) a
 type DeShadowEnv = (Env Name, Env Type)
 
 -- TODO: check top-level binders are all unique wrt imports and each other
 -- TODO: work through type aliases from incoming top env
 deShadowModule :: SubstEnv -> FModule -> Except FModule
 deShadowModule env (Module ty (FModBody decls)) = do
-  decls' <- runFreshRT (runReaderT (deShadowTopDecls decls) env') scope
+  decls' <- runReaderT (deShadowTopDecls decls) (env', scope)
   return $ Module ty (FModBody decls')
   where env' = topEnvToDeshadowEnv env
         scope = fmap (const ()) env
@@ -101,7 +100,7 @@ deShadowPat pat = traverse freshBinder pat
 
 lookupLVar :: Name -> DeShadowM Name
 lookupLVar v = do
-  v' <- asks $ flip envLookup (v:>()) . fst
+  v' <- asks $ flip envLookup (v:>()) . fst . fst
   case v' of
     Nothing  -> throw UnboundVarErr $ pprint v
     Just v'' -> return v''
@@ -135,7 +134,7 @@ deShadowType :: Type -> DeShadowM Type
 deShadowType ty = case ty of
   BaseType _ -> return ty
   TypeVar v -> do
-    (vsub, tsub) <- ask
+    (vsub, tsub) <- asks fst
     case envLookup tsub v of
       Just (TypeAlias ks _ ) ->
           throw TypeErr $ pprint v ++ " must be applied to " ++
@@ -149,7 +148,7 @@ deShadowType ty = case ty of
     args' <- mapM deShadowType args
     case f of
       TypeVar tv -> do
-        sub <- asks snd
+        sub <- asks $ snd . fst
         case envLookup sub tv of
           Just (TypeAlias ks ty') -> do
             unless (length ks == length args') $ throw TypeErr $
@@ -173,12 +172,11 @@ deShadowType ty = case ty of
 
 toCat :: DeShadowM a -> DeShadowCat a
 toCat m = do
-  (env, scope) <- look
-  liftEither $ flip runFreshRT scope $ flip runReaderT env $ m
+  env <- look
+  liftEither $ flip runReaderT env $ m
 
 withCat :: DeShadowCat a -> (a -> DeShadowM b) -> DeShadowM b
 withCat m cont = do
   env <- ask
-  scope <- askFresh
-  (ans, (env', scope')) <- liftEither $ flip runCatT (env, scope) m
-  extendR env' $ localFresh (<> scope') $ cont ans
+  (ans, env') <- liftEither $ flip runCatT env m
+  extendR env' $ cont ans

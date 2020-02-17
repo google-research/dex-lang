@@ -19,7 +19,6 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 
 import Env
-import Fresh
 import Syntax
 import Cat
 import Type

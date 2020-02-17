@@ -33,7 +33,6 @@ import Foreign.Ptr
 
 import Syntax
 import Env
-import Fresh hiding (freshName)
 import PPrint
 import Cat
 import Imp
@@ -46,10 +45,11 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
+                                 , usedNames :: Scope
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 
-type CompileM a = ReaderT CompileEnv (StateT CompileState Fresh) a
+type CompileM a = ReaderT CompileEnv (State CompileState) a
 data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
@@ -77,8 +77,8 @@ fromILitInt (ILit (IntLit x)) = x
 fromILitInt expr = error $ "Not an int: " ++ pprint expr
 
 runCompileM :: CompileEnv -> CompileM a -> a
-runCompileM env m = runFresh (evalStateT (runReaderT m env) initState) mempty
-  where initState = CompileState [] [] [] "start_block" []
+runCompileM env m = evalState (runReaderT m env) initState
+  where initState = CompileState [] [] [] "start_block" mempty []
 
 compileTopProg :: ImpProg -> CompileM L.Module
 compileTopProg prog = do
@@ -192,7 +192,9 @@ compileLoop iVar n body = do
 
 freshName :: Tag -> CompileM L.Name
 freshName s = do
-  name <- fresh s'
+  used <- gets usedNames
+  let v'@(name:>_) = rename (rawName s':>()) used
+  modify $ \s -> s { usedNames = used <> v'@>() }
   return $ nameToLName name
   where s' = case s of "" -> "v"
                        _  -> s

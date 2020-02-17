@@ -23,7 +23,6 @@ import Env
 import Record
 import ParseUtil
 import Syntax
-import Fresh
 import Type
 import PPrint
 
