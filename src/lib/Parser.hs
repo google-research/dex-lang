@@ -170,7 +170,7 @@ declSep :: Parser ()
 declSep = void $ some $ (eol >> sc) <|> symbol ";"
 
 asTVar :: Name -> TVar
-asTVar v = v :> Kind []
+asTVar v = v :> TyKind []
 
 letPoly :: Parser FDecl
 letPoly = do
@@ -495,7 +495,7 @@ sigmaType = do
     return tBs
   ty <- tauType
   let tbs = case maybeTbs of
-              Nothing -> map (:> Kind []) vs
+              Nothing -> map (:> TyKind []) vs
                 -- TODO: lexcial order!
                 where vs = filter nameIsLower $ envNames (freeVars ty)
               Just tbs' -> tbs'
@@ -511,7 +511,7 @@ typeBinder = do
   cs <-   (symbol "::" >> (    liftM (:[]) className
                            <|> parens (className `sepBy` comma)))
       <|> return []
-  return (v:>Kind cs)
+  return (v:>TyKind cs)
 
 className :: Parser ClassName
 className = do
@@ -523,8 +523,8 @@ className = do
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
 addClassVars :: ClassName -> [Name] -> TVar -> TVar
-addClassVars c vs b@(v:>(Kind cs))
-  | v `elem` vs && not (c `elem` cs) = v:>(Kind (c:cs))
+addClassVars c vs b@(v:>(TyKind cs))
+  | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
   | otherwise = b
 
 idxSetVars :: Type -> [Name]
@@ -578,7 +578,7 @@ tauType' =   parenTy
 typeVar :: Parser Type
 typeVar = do
   v <- upperName <|> lowerName
-  return $ TypeVar (v:> Kind [])
+  return $ TypeVar (v:> TyKind [])
 
 monadType :: Parser Type
 monadType = do

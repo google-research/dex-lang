@@ -67,11 +67,11 @@ topEnvType env = fmap getTyOrKind env
 
 checkTyOrKind :: LorT Atom Type -> TypeM (LorT Type Kind)
 checkTyOrKind (L x) = liftM L $ checkAtom x
-checkTyOrKind (T _) = return $ T $ Kind []
+checkTyOrKind (T _) = return $ T $ TyKind []
 
 getTyOrKind :: LorT Atom Type -> LorT Type Kind
 getTyOrKind (L x) = L $ getType x
-getTyOrKind (T _) = T $ Kind []
+getTyOrKind (T _) = T $ TyKind []
 
 -- === type-checking pass on FExpr ===
 
@@ -101,7 +101,7 @@ checkTypeFExpr expr = case expr of
         assertEq annTy ty "Var annotation"
         let (kinds, body) = asForall ty
         assertEq (length kinds) (length ts) "Number of type args"
-        zipWithM_ checkClassConstraints kinds ts
+        zipWithM_ checkKind kinds ts
         return $ instantiateTVs ts body
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
@@ -223,8 +223,8 @@ subAtDepth d f ty = case ty of
 
 -- === Built-in typeclasses ===
 
-checkClassConstraints :: Kind -> Type -> TypeM ()
-checkClassConstraints (Kind cs) ty = mapM_ (flip checkClassConstraint ty) cs
+checkKind :: Kind -> Type -> TypeM ()
+checkKind (TyKind cs) ty = mapM_ (flip checkClassConstraint ty) cs
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
@@ -273,7 +273,7 @@ isData ty = case checkData mempty ty of Left _ -> False
 checkVarClass :: TypeEnv -> ClassName -> TVar -> Except ()
 checkVarClass env c v = do
   case envLookup env v of
-    Just (T (Kind cs)) ->
+    Just (T (TyKind cs)) ->
       unless (c `elem` cs) $ throw TypeErr $ " Type variable \""  ++ pprint v ++
                                              "\" not in class: " ++ pprint c
     _ -> throw CompilerErr $ "Lookup of kind failed:" ++ pprint v

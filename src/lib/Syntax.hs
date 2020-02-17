@@ -78,7 +78,9 @@ type EffectType = EffectTypeP Type
 data Multiplicity = Lin | NonLin  deriving (Show, Eq, Generic)
 type Lin = Type
 
-newtype Kind = Kind [ClassName]          deriving (Show, Eq, Generic)
+data Kind = TyKind [ClassName]
+          | Multiplicity
+            deriving (Show, Eq, Generic)
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
 type TypeEnv  = FullEnv Type Kind

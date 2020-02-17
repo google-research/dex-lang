@@ -182,10 +182,11 @@ instance (Pretty a, Pretty b) => PrettyLam (a, b) where
   prettyLam (x, y) = (p x, p y)
 
 instance Pretty Kind where
-  pretty (Kind cs) = case cs of
+  pretty (TyKind cs) = case cs of
     []  -> ""
     [c] -> p c
     _   -> tupled $ map p cs
+  pretty Multiplicity = "Mult"
 
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =

@@ -55,7 +55,7 @@ inferDecl decl = case decl of
     let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
     tlamBody' <- checkLeaks tbs $ extendR env $ check tlamBody tyBody'
     return (LetPoly b (FTLam tbs tlamBody'), b @> L (varAnn b))
-  TyDef v ty -> return (TyDef v ty, v @> T (Kind []))
+  TyDef v ty -> return (TyDef v ty, v @> T (TyKind []))
   FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
 
 infer :: FExpr -> InferM (Type, FExpr)
@@ -123,7 +123,7 @@ generateSubExprTypes :: PrimExpr ty e lam
                      -> InferM (PrimExpr (ty, Type) (e, Type) (lam, (Type, Type)))
 generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
   Lam l lam -> do
-    l' <- freshLin
+    l' <- freshInferenceVar Multiplicity
     a <- freshQ
     b <- freshQ
     return $ Lam (l,l') (lam, (a,b))
@@ -144,7 +144,7 @@ generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
   _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
 generateSubExprTypes (OpExpr  op) = liftM OpExpr $ case op of
   App l f x -> do
-    l' <- freshLin
+    l' <- freshInferenceVar Multiplicity
     a <- freshQ
     b <- freshQ
     return $ App (l,l') (f, ArrowType l' a b) (x, a)
@@ -223,16 +223,13 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshQ :: MonadCat SolverEnv m => m Type
-freshQ = do
-  tv <- looks $ rename ("?":>Kind []) . solverVars
-  extend $ SolverEnv (tv @> Kind []) mempty
-  return (TypeVar tv)
+freshQ :: InferM Type
+freshQ = freshInferenceVar $ TyKind []
 
-freshLin :: InferM Type
-freshLin = do
-  tv <- looks $ rename ("*":>Kind []) . solverVars
-  extend $ SolverEnv (tv @> Kind []) mempty
+freshInferenceVar :: Kind -> InferM Type
+freshInferenceVar k = do
+  tv <- looks $ rename ("?":>k) . solverVars
+  extend $ SolverEnv (tv @> k) mempty
   return (TypeVar tv)
 
 constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
@@ -282,13 +279,11 @@ bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
 isQ :: TVar -> Bool
 isQ (Name tag _ :> _) = case tagToStr tag of
   '?':_ -> True
-  '*':_ -> True
   _     -> False
 
 isMult :: TVar -> Bool
-isMult (Name tag _ :> _) = case tagToStr tag of
-  '*':_ -> True
-  _     -> False
+isMult (_ :> TyKind _    ) = False
+isMult (_ :> Multiplicity) = True
 
 occursIn :: TVar -> Type -> Bool
 occursIn v t = v `isin` freeVars t
