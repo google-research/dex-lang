@@ -161,7 +161,7 @@ f x =
 >       ^^
 :t x = 3
    for i::x. 0
-> Error: variable not in scope: type variable "x" (a term variable of the same name is in scope)
+> Error: variable not in scope: type variable "x"
 
 :p lam x::Real. x
 > (lam x::Real . x)

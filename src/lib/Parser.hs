@@ -11,11 +11,8 @@ module Parser (parseit, parseProg, parseData, parseTopDeclRepl, parseTopDecl,
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
-import Data.String
 import Text.Megaparsec
 import Text.Megaparsec.Char
-import Data.Char (isLower)
-import Data.Maybe (fromMaybe)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
 
@@ -152,7 +149,7 @@ typeDef :: Parser FDecl
 typeDef = do
   symbol "type"
   v <- upperName
-  bs <- many lowerName
+  bs <- many $ name LocalTVName identifier
   equalSign
   ty <- tauType
   let ty' = case bs of
@@ -441,25 +438,17 @@ parenPat = do
     Left  x  -> x
     Right xs -> RecTree $ Tup xs
 
-intQualifier :: Parser Int
-intQualifier = do
-  n <- optional $ symbol "_" >> uint
-  return $ fromMaybe 0 n
-
 lowerName :: Parser Name
-lowerName = name identifier
+lowerName = name SourceName identifier
 
 upperName :: Parser Name
-upperName = name upperStr
+upperName = name SourceName upperStr
 
 upperStr :: Parser String
 upperStr = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
 
-name :: Parser String -> Parser Name
-name p = do
-  s <- p
-  n <- intQualifier
-  return $ Name (fromString s) n
+name :: NameSpace -> Parser String -> Parser Name
+name ns p = liftM (rawName ns) p
 
 equalSign :: Parser ()
 equalSign = do
@@ -497,13 +486,13 @@ sigmaType = do
   let tbs = case maybeTbs of
               Nothing -> map (:> TyKind []) vs
                 -- TODO: lexcial order!
-                where vs = filter nameIsLower $ envNames (freeVars ty)
+                where vs = filter localTVName $ envNames (freeVars ty)
               Just tbs' -> tbs'
   let tbs' = map (  addClassVars Data   (dataVars   ty)
                   . addClassVars IdxSet (idxSetVars ty)) tbs
   return (tbs', ty)
   where
-    nameIsLower v = isLower (tagToStr (nameTag v) !! 0)
+    localTVName v = nameSpace v == LocalTVName
 
 typeBinder :: Parser TVar
 typeBinder = do
@@ -577,7 +566,7 @@ tauType' =   parenTy
 
 typeVar :: Parser Type
 typeVar = do
-  v <- upperName <|> lowerName
+  v <- upperName <|> name LocalTVName identifier
   return $ TypeVar (v:> TyKind [])
 
 monadType :: Parser Type

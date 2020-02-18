@@ -228,7 +228,7 @@ freshQ = freshInferenceVar $ TyKind []
 
 freshInferenceVar :: Kind -> InferM Type
 freshInferenceVar k = do
-  tv <- looks $ rename ("?":>k) . solverVars
+  tv <- looks $ rename (rawName InferenceName "?" :> k) . solverVars
   extend $ SolverEnv (tv @> k) mempty
   return (TypeVar tv)
 
@@ -275,11 +275,9 @@ bindQ :: (MonadCat SolverEnv m, MonadError Err m) => TVar -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
           | otherwise = extend $ mempty { solverSub = v @> t }
 
--- TODO: something a little less hacky
 isQ :: TVar -> Bool
-isQ (Name tag _ :> _) = case tagToStr tag of
-  '?':_ -> True
-  _     -> False
+isQ (v :> _) | nameSpace v == InferenceName = True
+             | otherwise = False
 
 isMult :: TVar -> Bool
 isMult (_ :> TyKind _    ) = False

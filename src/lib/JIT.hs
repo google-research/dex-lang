@@ -127,7 +127,7 @@ compileInstr instr = case instr of
         copy numBytes dest' source'
     return Nothing
   Alloc (ty, shape) -> liftM Just $ case shape of
-    [] -> alloca ty ""
+    [] -> alloca ty
     _  -> do
       shape' <- mapM compileExpr shape
       malloc ty shape' ""
@@ -164,7 +164,7 @@ indexPtr :: Operand -> [Operand] -> Operand -> CompileM Operand
 indexPtr ptr shape i = do
   stride <- foldM mul (litInt 1) shape
   n <- mul stride i
-  emitInstr "ptr" (L.typeOf ptr) $ L.GetElementPtr False ptr [n] []
+  emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [n] []
 
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
 finishBlock term newName = do
@@ -179,7 +179,7 @@ compileLoop :: IVar -> Operand -> ImpProg -> CompileM ()
 compileLoop iVar n body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"
-  i <- alloca IntType "i"
+  i <- alloca IntType
   store i (litInt 0)
   entryCond <- load i >>= (`lessThan` n)
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
@@ -190,14 +190,12 @@ compileLoop iVar n body = do
   loopCond <- iValInc `lessThan` n
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
-freshName :: Tag -> CompileM L.Name
-freshName s = do
+freshName :: Name -> CompileM L.Name
+freshName v = do
   used <- gets usedNames
-  let v'@(name:>_) = rename (rawName s':>()) used
+  let v'@(name:>_) = rename (v:>()) used
   modify $ \s -> s { usedNames = used <> v'@>() }
   return $ nameToLName name
-  where s' = case s of "" -> "v"
-                       _  -> s
 
 copy :: Operand -> Operand -> Operand -> CompileM ()
 copy numBytes dest src = do
@@ -227,25 +225,25 @@ store :: Operand -> Operand -> CompileM ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 load :: Operand -> CompileM Operand
-load ptr = emitInstr "" valTy $ L.Load False ptr Nothing 0 []
+load ptr = emitInstr valTy $ L.Load False ptr Nothing 0 []
   where (L.PointerType valTy _) = L.typeOf ptr
 
 lessThan :: Long -> Long -> CompileM Long
-lessThan x y = emitInstr "lt" longTy $ L.ICmp L.SLT x y []
+lessThan x y = emitInstr longTy $ L.ICmp L.SLT x y []
 
 add :: Long -> Long -> CompileM Long
-add x y = emitInstr "add" longTy $ L.Add False False x y []
+add x y = emitInstr longTy $ L.Add False False x y []
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
-emitInstr :: Tag -> L.Type -> Instruction -> CompileM Operand
-emitInstr s ty instr = do
-  v <- freshName s
+emitInstr :: L.Type -> Instruction -> CompileM Operand
+emitInstr ty instr = do
+  v <- freshName "v"
   addInstr $ v L.:= instr
   return $ L.LocalReference ty v
 
-alloca :: BaseType -> Tag -> CompileM Operand
-alloca ty s = do
-  v <- freshName s
+alloca :: BaseType -> CompileM Operand
+alloca ty = do
+  v <- freshName "v"
   modify $ setScalarDecls ((v L.:= instr):)
   return $ L.LocalReference (L.ptr ty') v
   where ty' = scalarTy ty
@@ -255,17 +253,17 @@ malloc :: BaseType -> [Operand] -> Tag -> CompileM Operand
 malloc ty shape _ = do
     size <- sizeOf shape
     n <- mul (litInt 8) size
-    voidPtr <- emitInstr "" charPtrTy (externCall mallocFun [n])
+    voidPtr <- emitInstr charPtrTy (externCall mallocFun [n])
     castLPtr (scalarTy ty) voidPtr
 
 castLPtr :: L.Type -> Operand -> CompileM Operand
-castLPtr ty ptr = emitInstr "ptrcast" (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
+castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
 
 sizeOf :: [Operand] -> CompileM Operand
 sizeOf shape = foldM mul (litInt 1) shape
 
 mul :: Operand -> Operand -> CompileM Operand
-mul x y = emitInstr "mul" longTy $ L.Mul False False x y []
+mul x y = emitInstr longTy $ L.Mul False False x y []
 
 addInstr :: Named Instruction -> CompileM ()
 addInstr instr = modify $ setCurInstrs (instr:)
@@ -278,39 +276,39 @@ scalarTy ty = case ty of
   StrType  -> error "Not implemented"
 
 extendOneBit :: Operand -> CompileM Operand
-extendOneBit x = emitInstr "" boolTy (L.ZExt x boolTy [])
+extendOneBit x = emitInstr boolTy (L.ZExt x boolTy [])
 
-compileFFICall :: Tag -> [L.Type] -> L.Type -> [Operand] -> CompileM Operand
+compileFFICall :: String -> [L.Type] -> L.Type -> [Operand] -> CompileM Operand
 compileFFICall name argTys retTy xs = do
   modify $ setFunSpecs (f:)
-  emitInstr name retTy $ externCall f xs
-  where f = ExternFunSpec (L.Name (fromString (tagToStr name))) retTy argTys
+  emitInstr retTy $ externCall f xs
+  where f = ExternFunSpec (L.Name (fromString name)) retTy argTys
 
 compilePrimOp :: PrimOp L.Type Operand () -> CompileM Operand
 compilePrimOp (ScalarBinOp op x y) = case op of
-  IAdd   -> emitInstr "" longTy $ L.Add False False x y []
-  ISub   -> emitInstr "" longTy $ L.Sub False False x y []
-  IMul   -> emitInstr "" longTy $ L.Mul False False x y []
-  Rem    -> emitInstr "" longTy $ L.SRem x y []
-  FAdd   -> emitInstr "" realTy $ L.FAdd L.noFastMathFlags x y []
-  FSub   -> emitInstr "" realTy $ L.FSub L.noFastMathFlags x y []
-  FMul   -> emitInstr "" realTy $ L.FMul L.noFastMathFlags x y []
-  FDiv   -> emitInstr "" realTy $ L.FDiv L.noFastMathFlags x y []
-  And    -> emitInstr "" boolTy $ L.And x y []
-  Or     -> emitInstr "" boolTy $ L.Or  x y []
-  ICmp c -> emitInstr "" boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
-  FCmp c -> emitInstr "" boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
+  IAdd   -> emitInstr longTy $ L.Add False False x y []
+  ISub   -> emitInstr longTy $ L.Sub False False x y []
+  IMul   -> emitInstr longTy $ L.Mul False False x y []
+  Rem    -> emitInstr longTy $ L.SRem x y []
+  FAdd   -> emitInstr realTy $ L.FAdd L.noFastMathFlags x y []
+  FSub   -> emitInstr realTy $ L.FSub L.noFastMathFlags x y []
+  FMul   -> emitInstr realTy $ L.FMul L.noFastMathFlags x y []
+  FDiv   -> emitInstr realTy $ L.FDiv L.noFastMathFlags x y []
+  And    -> emitInstr boolTy $ L.And x y []
+  Or     -> emitInstr boolTy $ L.Or  x y []
+  ICmp c -> emitInstr boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
+  FCmp c -> emitInstr boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
 compilePrimOp (ScalarUnOp op x) = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg      -> emitInstr "" realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
-  Not       -> emitInstr "" boolTy $ L.Xor x (litInt 1) []
+  FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
+  Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
   BoolToInt -> return x -- bools stored as ints
-  IntToReal -> emitInstr "" realTy $ L.SIToFP x realTy []
+  IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
 compilePrimOp (Select ty p x y) = do
-  p' <- emitInstr "" (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
-  emitInstr "" ty $ L.Select p' x y []
+  p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
+  emitInstr ty $ L.Select p' x y []
 compilePrimOp (FFICall name argTys ansTy xs) =
-  compileFFICall (fromString name) argTys ansTy xs
+  compileFFICall name argTys ansTy xs
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate

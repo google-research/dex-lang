@@ -7,10 +7,10 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Env (Name (..), Tag, Env (..), envLookup, isin, envNames, envPairs,
-            envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, tagToStr, varAsEnv, envDiff, envMapMaybe, fmapNames,
-            rawName, nameTag, rename, renames, genFresh) where
+module Env (Name, Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
+            envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames,
+            rawName, nameSpace, rename, renames) where
 
 import Data.String
 import Data.Traversable
@@ -26,9 +26,19 @@ infixr 7 :>
 
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
-data Name = Name Tag Int  deriving (Show, Ord, Eq, Generic)
+-- TODO: consider parameterizing by namespace, for type-level namespace checks.
+data Name = Name NameSpace Tag Int  deriving (Show, Ord, Eq, Generic)
+data NameSpace = GenName | SourceName | InferenceName | LocalTVName
+                 deriving  (Show, Ord, Eq)
+
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic)
+
+rawName :: NameSpace -> String -> Name
+rawName s t = Name s (fromString t) 0
+
+nameSpace :: Name -> NameSpace
+nameSpace (Name s _ _) = s
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -75,26 +85,20 @@ env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
 
-rawName :: Tag -> Name
-rawName s = Name s 0
-
-nameTag :: Name -> Tag
-nameTag (Name tag _) = tag
-
-genFresh :: Tag -> Env a -> Name
-genFresh tag (Env m) = Name tag nextNum
+genFresh :: Name-> Env a -> Name
+genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
-    nextNum = case M.lookupLT (Name tag bigInt) m of
+    nextNum = case M.lookupLT (Name ns tag bigInt) m of
                 Nothing -> 0
-                Just (Name tag' i, _)
-                  | tag' /= tag -> 0
+                Just (Name ns' tag' i, _)
+                  | ns' /= ns || tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
 rename :: VarP ann -> Env a -> VarP ann
-rename v@(name:>ann) scope | v `isin` scope = genFresh (nameTag name) scope :> ann
-                           | otherwise      = v
+rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
+                        | otherwise      = v
 
 renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
 renames vs scope = runCat (traverse freshCat vs) scope
@@ -146,11 +150,11 @@ instance Traversable VarP where
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
-  pretty (Name tag n) = pretty (tagToStr tag) <> suffix
+  pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n
 instance IsString Name where
-  fromString s = Name (fromString s) 0
+  fromString s = Name GenName (fromString s) 0
 
 tagToStr :: Tag -> String
 tagToStr s = T.unpack s
