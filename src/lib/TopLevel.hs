@@ -6,10 +6,11 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module TopLevel (evalBlock, Backend (..), TopEnv) where
+module TopLevel (evalBlock, EvalOpts (..), Backend (..), TopEnv) where
 
 import Control.Exception hiding (throw)
 import Control.Monad.State
+import Control.Monad.Reader
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
@@ -32,20 +33,26 @@ import Record
 import Util (highlightRegion)
 
 data Backend = Jit | Interp
-type TopPassM a = ExceptT Err (WriterT [Output] IO) a
+data EvalOpts = EvalOpts
+  { evalBackend :: Backend
+  , preludeFile :: FilePath
+  , logAll      :: Bool }
+
+type TopPassM a = ReaderT EvalOpts (ExceptT Err (WriterT [Output] IO)) a
 type TopEnv = SubstEnv
 type Pass a b = a -> TopPassM b
 
 -- TODO: handle errors due to upstream modules failing
-evalBlock :: Backend -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
-evalBlock _ env block = do
-  (ans, outs) <- runTopPassM $ addErrSrc block $ evalSourceBlock env (sbContents block)
+evalBlock :: EvalOpts -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
+evalBlock opts env block = do
+  (ans, outs) <- runTopPassM opts $ addErrSrc block $
+                   evalSourceBlock env (sbContents block)
   case ans of
     Left err   -> return (mempty, Result outs (Left err))
     Right env' -> return (env'  , Result outs (Right ()))
 
-runTopPassM :: TopPassM a -> IO (Except a, [Output])
-runTopPassM m = runWriterT $ runExceptT m
+runTopPassM :: EvalOpts -> TopPassM a -> IO (Except a, [Output])
+runTopPassM opts m = runWriterT $ runExceptT $ runReaderT m opts
 
 evalSourceBlock :: TopEnv -> SourceBlock' -> TopPassM TopEnv
 evalSourceBlock env block = case block of
@@ -149,9 +156,13 @@ printedPass m = do
 
 filterOutputs :: (Output -> Bool) -> TopPassM a -> TopPassM a
 filterOutputs f m = do
-  (ans, outs) <- liftIO $ runTopPassM m
-  tell $ filter f outs
-  liftEither ans
+  opts <- ask
+  if logAll opts
+    then m
+    else do
+      (ans, outs) <- liftIO $ runTopPassM opts m
+      tell $ filter f outs
+      liftEither ans
 
 asTopPassM :: IO (Except a, [Output]) -> TopPassM a
 asTopPassM m = do
@@ -186,6 +197,8 @@ liftIOTop m = catchIOExcept $ (m >>= evaluate) `catch` \e ->
                  throwIO $ Err DataIOErr Nothing (show (e::IOError))
 
 catchHardErrors :: TopPassM a -> TopPassM a
-catchHardErrors m = asTopPassM $ runTopPassM m `catch` asCompilerErr
+catchHardErrors m = do
+  opts <- ask
+  asTopPassM $ runTopPassM opts m `catch` asCompilerErr
   where asCompilerErr :: SomeException -> IO (Except a, [Output])
         asCompilerErr e = return (Left $ Err CompilerErr Nothing (show e), [])

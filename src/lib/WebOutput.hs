@@ -51,10 +51,10 @@ type CellUpdate = HtmlFragment
 
 type ResultSet = (SetVal [Key], MonMap Key CellUpdate)
 
-runWeb :: FileName -> Backend -> TopEnv -> IO ()
-runWeb fname backend env = runActor $ do
+runWeb :: FileName -> EvalOpts -> TopEnv -> IO ()
+runWeb fname opts env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
-  _ <- spawn Trap $ mainDriver backend env fname (subChan Push resultsChan)
+  _ <- spawn Trap $ mainDriver opts env fname (subChan Push resultsChan)
   _ <- spawn Trap $ webServer (subChan Request resultsChan)
   liftIO $ forever (threadDelay maxBound)
 
@@ -116,9 +116,9 @@ setWorkers update state_ = state_ { workers = update (workers state_) }
 initDriverState :: DriverState env
 initDriverState = DriverState 0 mempty mempty mempty
 
-mainDriver :: Backend -> TopEnv -> String
+mainDriver :: EvalOpts -> TopEnv -> String
                 -> PChan ResultSet -> Actor DriverMsg ()
-mainDriver backend env fname resultSetChan = flip evalStateT initDriverState $ do
+mainDriver opts env fname resultSetChan = flip evalStateT initDriverState $ do
   chan <- myChan
   liftIO $ watchFile fname (subChan NewProg chan)
   forever $ do
@@ -139,7 +139,7 @@ mainDriver backend env fname resultSetChan = flip evalStateT initDriverState $ d
           parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
           resultChan key `send` sourceUpdate block
           (p, wChan) <- spawn Trap $
-                          worker env block backend (resultChan key) parentChans
+                          worker env block opts (resultChan key) parentChans
           modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
           return key
       modify $ setVarMap $ (<> fmap (const key) (sourceBlockBoundVars block))
@@ -159,16 +159,16 @@ data WorkerMsg a = EnvResponse a
                  | JobDone a
                  | EnvRequest (PChan a)
 
-worker :: TopEnv -> SourceBlock -> Backend
+worker :: TopEnv -> SourceBlock -> EvalOpts
        -> PChan CellUpdate
        -> [ReqChan TopEnv]
        -> Actor (WorkerMsg TopEnv) ()
-worker initEnv block backend resultChan parentChans = do
+worker initEnv block opts resultChan parentChans = do
   selfChan <- myChan
   mapM_ (flip send (subChan EnvResponse selfChan)) parentChans
   envs <- mapM (const (receiveF fResponse)) parentChans
   let env = initEnv <> mconcat envs
-  _ <- spawnLink NoTrap $ execPass env block backend (subChan JobDone selfChan) resultChan
+  _ <- spawnLink NoTrap $ execPass env block opts (subChan JobDone selfChan) resultChan
   env' <- join $ receiveErrF $ \msg -> case msg of
     NormalMsg (JobDone x) -> Just (return x)
     ErrMsg _ s -> Just $ do
@@ -180,10 +180,10 @@ worker initEnv block backend resultChan parentChans = do
     fResponse msg = case msg of EnvResponse x -> Just x; _ -> Nothing
     fReq      msg = case msg of EnvRequest  x -> Just x; _ -> Nothing
 
-execPass :: TopEnv -> SourceBlock -> Backend -> PChan TopEnv -> PChan CellUpdate
+execPass :: TopEnv -> SourceBlock -> EvalOpts -> PChan TopEnv -> PChan CellUpdate
          -> Actor msg ()
-execPass env block backend envChan resultChan = do
-  (env', ans) <- liftIO $ evalBlock backend env block
+execPass env block opts envChan resultChan = do
+  (env', ans) <- liftIO $ evalBlock opts env block
   envChan    `send` (env <> env')
   resultChan `send` resultUpdate ans
 

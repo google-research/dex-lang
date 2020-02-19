@@ -22,52 +22,46 @@ import WebOutput
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HtmlDoc
 data EvalMode = ReplMode String
-              | WebMode FName
-              | ScriptMode FName DocFmt ErrorHandling
-type PreludeFile = String
-data EvalOpts = EvalOpts Backend (Maybe PreludeFile)
+              | WebMode FilePath
+              | ScriptMode FilePath DocFmt ErrorHandling
 data CmdOpts = CmdOpts EvalMode EvalOpts
 
-type FName = String
-
-runMode :: EvalMode -> Maybe PreludeFile -> Backend -> IO ()
-runMode evalMode prelude backend = do
-  env <- execStateT (evalPrelude prelude backend) mempty
+runMode :: EvalMode -> EvalOpts -> IO ()
+runMode evalMode opts = do
+  env <- execStateT (evalPrelude opts) mempty
   let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
-      runEnv $ runInputT defaultSettings $ forever (replLoop prompt backend)
+      runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
     ScriptMode fname fmt _ -> do
-      results <- runEnv $ evalFile backend fname
+      results <- runEnv $ evalFile opts fname
       putStr $ printLitProg fmt results
-    WebMode fname -> runWeb fname backend env
+    WebMode fname -> runWeb fname opts env
 
-evalDecl :: Backend -> SourceBlock -> StateT TopEnv IO Result
-evalDecl backend block = do
+evalDecl :: EvalOpts -> SourceBlock -> StateT TopEnv IO Result
+evalDecl opts block = do
   env <- get
-  (env', ans) <- liftIO (evalBlock backend env block)
+  (env', ans) <- liftIO (evalBlock opts env block)
   modify (<> env')
   return ans
 
-evalFile :: Backend -> String -> StateT TopEnv IO [(SourceBlock, Result)]
-evalFile backend fname = do
+evalFile :: EvalOpts -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
+evalFile opts fname = do
   source <- liftIO $ readFile fname
   let sourceBlocks = parseProg source
-  results <- mapM (evalDecl backend) sourceBlocks
+  results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude :: Maybe PreludeFile -> Backend-> StateT TopEnv IO ()
-evalPrelude fname backend = do
-  result <- evalFile backend fname'
+evalPrelude ::EvalOpts-> StateT TopEnv IO ()
+evalPrelude opts = do
+  result <- evalFile opts (preludeFile opts)
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
-  where fname' = case fname of Just f -> f
-                               Nothing -> "prelude.dx"
 
-replLoop :: String -> Backend -> InputT (StateT TopEnv IO) ()
-replLoop prompt backend = do
+replLoop :: String -> EvalOpts -> InputT (StateT TopEnv IO) ()
+replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
-  result <- lift $ (evalDecl backend) sourceBlock
+  result <- lift $ (evalDecl opts) sourceBlock
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
@@ -118,14 +112,12 @@ parseMode = subparser $
 
 parseEvalOpts :: Parser EvalOpts
 parseEvalOpts = EvalOpts
-                   <$> (flag Jit Interp $
-                         long "interp" <> help "Use interpreter backend")
-                   <*> (optional $ strOption $
-                            long "prelude"
-                         <> metavar "FILE"
-                         <> help "Alternative prelude file")
+  <$> (flag Jit Interp $ long "interp" <> help "Use interpreter backend")
+  <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
+                                  <> help "Prelude file" <> showDefault)
+  <*> (flag False True $ long "logall" <> help "Log all debug info")
 
 main :: IO ()
 main = do
-  CmdOpts evalMode (EvalOpts backend prelude) <- execParser parseOpts
-  runMode evalMode prelude backend
+  CmdOpts evalMode opts <- execParser parseOpts
+  runMode evalMode opts
