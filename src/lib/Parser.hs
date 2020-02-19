@@ -148,15 +148,15 @@ ruleDef = do
 typeDef :: Parser FDecl
 typeDef = do
   symbol "type"
-  v <- upperName
-  bs <- many $ name LocalTVName identifier
+  ~(TypeVar v) <- typeVar
+  tvs <- many localTypeVar
+  let tvs' = [tv | ~(TypeVar tv) <- tvs]
   equalSign
   ty <- tauType
-  let ty' = case bs of
+  let ty' = case tvs' of
               [] -> ty
-              _  -> TypeAlias (map varAnn tvs) (abstractTVs tvs ty)
-                      where tvs = map asTVar bs
-  return $ TyDef (asTVar v) ty'
+              _  -> TypeAlias (map varAnn tvs') (abstractTVs tvs' ty)
+  return $ TyDef v ty'
 
 -- === Parsing decls ===
 
@@ -165,9 +165,6 @@ decl = letMono <|> letPoly
 
 declSep :: Parser ()
 declSep = void $ some $ (eol >> sc) <|> symbol ";"
-
-asTVar :: Name -> TVar
-asTVar v = v :> TyKind []
 
 letPoly :: Parser FDecl
 letPoly = do
@@ -424,7 +421,7 @@ rawVar = do
   return $ FVar (v:>NoAnn) []
 
 binder :: Parser Var
-binder = (symbol "_" >> return ("_" :> NoAnn))
+binder = (symbol "_" >> return (rawName SourceName "_" :> NoAnn))
      <|> liftM2 (:>) lowerName typeAnnot
 
 pat :: Parser Pat
@@ -440,9 +437,6 @@ parenPat = do
 
 lowerName :: Parser Name
 lowerName = name SourceName identifier
-
-upperName :: Parser Name
-upperName = name SourceName upperStr
 
 upperStr :: Parser String
 upperStr = lexeme . try $ (:) <$> upperChar <*> many alphaNumChar
@@ -496,7 +490,7 @@ sigmaType = do
 
 typeBinder :: Parser TVar
 typeBinder = do
-  ~(TypeVar (v:>_)) <- typeVar
+  ~(TypeVar (v:>_)) <- typeVar <|> localTypeVar
   cs <-   (symbol "::" >> (    liftM (:[]) className
                            <|> parens (className `sepBy` comma)))
       <|> return []
@@ -535,6 +529,7 @@ dataVars ty = case ty of
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName
               <|> typeVar
+              <|> localTypeVar
               <|> idxSetLit
               <|> parenTy
 
@@ -561,29 +556,27 @@ tauType' =   parenTy
          <|> lensType
          <|> typeName
          <|> typeVar
+         <|> localTypeVar
          <|> idxSetLit
          <?> "type"
 
 typeVar :: Parser Type
 typeVar = do
-  v <- upperName <|> name LocalTVName identifier
+  v <- name SourceTypeName upperStr
+  return $ TypeVar (v:> TyKind [])
+
+localTypeVar :: Parser Type
+localTypeVar = do
+  v <- name LocalTVName identifier
   return $ TypeVar (v:> TyKind [])
 
 monadType :: Parser Type
-monadType = do
-  symbol "Monad"
-  r <- tauTypeAtomic
-  w <- tauTypeAtomic
-  s <- tauTypeAtomic
-  a <- tauTypeAtomic
-  return $ Monad (Effect r w s) a
+monadType = symbol "Monad" >> liftM2 Monad (liftM3 Effect t t t) t
+  where t = tauTypeAtomic
 
 lensType :: Parser Type
-lensType = do
-  symbol "Lens"
-  a <- tauTypeAtomic
-  b <- tauTypeAtomic
-  return $ Lens a b
+lensType = symbol "Lens" >> liftM2 Lens t t
+  where t = tauTypeAtomic
 
 idxSetLit :: Parser Type
 idxSetLit = liftM IdxSetLit uint

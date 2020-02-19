@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, withBinder, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, flipIdx, zeroAt, addAt, sumAt, deShadow,
+              runEmbed, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, nUnitCon, unpackRec,
               makeTup, makePair, substEmbed) where
@@ -98,18 +98,6 @@ wrapDecls :: [Decl] -> Atom -> Expr
 wrapDecls [] atom = Atom atom
 wrapDecls [Let v expr] (Var v') | v == v' = CExpr expr  -- optimization
 wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
-
-flipIdx :: MonadCat EmbedEnv m => Atom -> m Atom
-flipIdx i = do
-  let n = getType i
-  iInt  <- undefined -- emit $ IndexAsInt i
-  nInt  <- emit $ IdxSetSize n
-  nInt' <- isub nInt (Con $ Lit (IntLit 1))
-  iFlipped <- isub nInt' iInt
-  emit $ IntAsIndex n iFlipped
-
-isub :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
-isub x y = emit $ ScalarBinOp ISub x y
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadCat EmbedEnv m => Type -> m Atom

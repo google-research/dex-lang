@@ -9,7 +9,8 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module PPrint (pprint, assertEq, ignoreExcept, printLitBlock, asStr) where
+module PPrint (pprint, pprintList,
+               assertEq, ignoreExcept, printLitBlock, asStr) where
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
@@ -21,10 +22,12 @@ import Data.Foldable (toList)
 
 import Env
 import Syntax
-import Array
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
+
+pprintList :: Pretty a => [a] -> String
+pprintList xs = asStr $ vsep $ punctuate "," (map p xs)
 
 asStr :: Doc ann -> String
 asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
@@ -277,7 +280,7 @@ instance Pretty body => Pretty (ModuleP body) where
                              <> hardline <> "exports:" <+> p exports
 
 instance Pretty FModBody where
-  pretty (FModBody decls) = vsep (map p decls)
+  pretty (FModBody decls tyDefs) = vsep (map p decls) <> hardline <> p tyDefs
 
 instance Pretty ModBody where
   pretty (ModBody decls result) =

@@ -25,7 +25,8 @@ import Record
 type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
-normalizeModule (Module ty (FModBody decls)) = Module ty (ModBody decls' results)
+normalizeModule (Module ty (FModBody decls tySub)) =
+  Module ty (ModBody decls' (fmap T tySub <> results))
   where (results, decls') = runNormM (catFold normalizeDecl decls) mempty
 
 runNormM :: NormM a -> SubstEnv -> (a, [Decl])
@@ -91,9 +92,7 @@ normalizeDecl decl = case decl of
       let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
       extendR env $ normalize body
     return $ v @> L tlam
-  TyDef v ty -> do
-    ty' <- substTy ty
-    return $ v @> T ty'
+  TyDef _ _ -> error "Shouldn't have TyDef left"
   FRuleDef _ _ _ -> return mempty  -- TODO
 
 substTy :: Type -> NormM Type

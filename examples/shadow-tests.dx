@@ -37,3 +37,12 @@ x = 1
 
 :p y
 > Error: variable not in scope: y
+
+(_, _, z) = (1,2,3)
+
+:p z
+> 3
+
+:p (_, _, w) = (1,2,4)
+   w
+> 4

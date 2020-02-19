@@ -112,7 +112,7 @@ data FDecl = LetMono Pat FExpr
 type Var  = VarP Type
 data FTLam = FTLam [TVar] FExpr  deriving (Show, Eq, Generic)
 
-data FModBody = FModBody [FDecl]        deriving (Show, Eq, Generic)
+data FModBody = FModBody [FDecl] (Env Type)  deriving (Show, Eq, Generic)
 type FModule = ModuleP FModBody
 
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
@@ -277,10 +277,10 @@ data CmdName = GetType | ShowPasses | ShowPass String
                 deriving  (Show, Eq, Generic)
 
 declAsModule :: FDecl -> FModule
-declAsModule decl = Module (freeVars decl, fDeclBoundVars decl) (FModBody [decl])
+declAsModule decl = Module (freeVars decl, fDeclBoundVars decl) (FModBody [decl] mempty)
 
 exprAsModule :: FExpr -> (Var, FModule)
-exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body))
+exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body mempty))
   where v = "*ans*" :> NoAnn
         body = [LetMono (RecLeaf v) expr]
 

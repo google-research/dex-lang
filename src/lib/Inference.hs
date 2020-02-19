@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Inference (inferModule, inferExpr) where
 
@@ -27,15 +28,34 @@ import Subst
 type InferM a = ReaderT TypeEnv (SolverT (Either Err)) a
 
 inferModule :: SubstEnv -> FModule -> Except FModule
-inferModule topEnv (Module (imports, exports) (FModBody body)) = do
+inferModule topEnv m@(Module (imports, exports) (FModBody body _)) = do
   let envIn = topEnvType topEnv
-  (body', envOut) <- runInferM  envIn $ catTraverse inferDecl body
+  checkImports envIn m
+  let tySubEnv = flip envMapMaybe topEnv $ \case L _ -> Nothing; T ty -> Just ty
+  let (body', tySub) = expandTyAliases tySubEnv body
+  (body'', envOut) <- runInferM envIn $ catTraverse inferDecl body'
   let imports' = imports `envIntersect` envIn
-  let exports' = exports `envIntersect` (envIn <> envOut)
-  return $ Module (imports', exports') (FModBody body')
+  let exports' = exports `envIntersect` (envIn <> envOut <> tySubEnvType)
+       where tySubEnvType = fmap (const (T (TyKind []))) tySub
+  return $ Module (imports', exports') (FModBody body'' tySub)
 
 runInferM :: (TySubst a, Pretty a) => TypeEnv -> InferM a -> Except a
 runInferM env m = runSolverT (runReaderT m env)
+
+expandTyAliases :: Env Type -> [FDecl] -> ([FDecl], Env Type)
+expandTyAliases env decls =
+  snd $ flip runCat ([], env) $ flip mapM_ decls $
+    \case TyDef v ty -> extend ([], v @> ty)
+          decl       -> do e <- looks snd
+                           extend ([tySubst e decl], mempty)
+
+checkImports :: TypeEnv -> FModule -> Except ()
+checkImports env m = do
+  let unboundVars = envNames $ imports `envDiff` env
+  unless (null unboundVars) $ throw UnboundVarErr $ pprintList unboundVars
+  let shadowedVars = envNames $ exports `envIntersect` env
+  unless (null shadowedVars) $ throw RepeatedVarErr $ pprintList shadowedVars
+  where (imports, exports) = moduleType m
 
 inferExpr :: FExpr -> Except (Type, FExpr)
 inferExpr expr = runInferM mempty $ infer expr
@@ -44,10 +64,9 @@ inferDecl :: FDecl -> InferM (FDecl, TypeEnv)
 inferDecl decl = case decl of
   LetMono p bound -> do
     -- TOOD: better errors - infer polymorphic type to suggest annotation
-    (p', bound') <- do
-                      p' <- annotPat p
-                      bound' <- check bound (getType p')
-                      return (p', bound')
+    liftEither $ checkPatShadow p
+    p' <- annotPat p
+    bound' <- check bound (getType p')
     return (LetMono p' bound', foldMap asEnv p')
   LetPoly ~b@(_:> Forall _ tyBody) (FTLam tbs tlamBody) -> do
     let tyBody' = instantiateTVs (map TypeVar tbs) tyBody
@@ -55,8 +74,8 @@ inferDecl decl = case decl of
     let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
     tlamBody' <- checkLeaks tbs $ extendR env $ check tlamBody tyBody'
     return (LetPoly b (FTLam tbs tlamBody'), b @> L (varAnn b))
-  TyDef v ty -> return (TyDef v ty, v @> T (TyKind []))
   FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
+  TyDef _ _ -> error "Shouldn't have TyDef left"
 
 infer :: FExpr -> InferM (Type, FExpr)
 infer expr = do ty <- freshQ
@@ -111,9 +130,21 @@ checkLam (FLamExpr p body) (a, b) = do
 
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
+  liftEither $ checkPatShadow p
   p' <- annotPat p
   constrainEq ty (getType p') (pprint p)
   return p'
+
+checkPatShadow :: Pat -> Except ()
+checkPatShadow pat = do
+  let dups = filter (/= underscore) $ findDups $ map varName $ toList pat
+  unless (null dups) $ throw RepeatedVarErr $ pprintList dups
+  where underscore = rawName SourceName "_"
+
+findDups :: Eq a => [a] -> [a]
+findDups [] = []
+findDups (x:xs) | x `elem` xs = x : findDups xs
+                | otherwise   =     findDups xs
 
 checkAnn :: Type -> Type -> InferM Type
 checkAnn NoAnn ty = return ty

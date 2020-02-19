@@ -20,7 +20,6 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Data.List (elemIndex)
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
 
@@ -29,6 +28,7 @@ import Env
 import Record
 import PPrint
 import Cat
+import Subst
 
 type TypeM a = ReaderT TypeEnv (Either Err) a
 
@@ -54,8 +54,10 @@ instance (IsModuleBody body) => IsModule (ModuleP body) where
   moduleType (Module ty _) = ty
 
 instance IsModuleBody FModBody where
-  checkModuleBody env (FModBody decls) =
-    runTypeM env $ catFold checkTypeFDecl decls
+  checkModuleBody env (FModBody decls tyDefs) = do
+    termEnv <- runTypeM env $ catFold checkTypeFDecl decls
+    return $ termEnv <> tyDefEnv
+    where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
 
 instance IsModuleBody ModBody where
   checkModuleBody env (ModBody decls result) = runTypeM env $ do
@@ -118,7 +120,7 @@ checkTypeFExpr expr = case expr of
 
 checkTypeFlam :: FLamExpr -> TypeM (Type, Type)
 checkTypeFlam (FLamExpr p body) = do
-  checkTy pTy >> checkShadowPat p
+  checkTy pTy
   bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr body
   return (pTy, bodyTy)
   where pTy = getType p
@@ -126,12 +128,10 @@ checkTypeFlam (FLamExpr p body) = do
 checkTypeFDecl :: FDecl -> TypeM TypeEnv
 checkTypeFDecl decl = case decl of
   LetMono p rhs -> do
-    checkShadowPat p
     ty <- checkTypeFExpr rhs
     assertEq (getType p) ty "LetMono"
     return (foldMap lbind p)
   LetPoly b@(_:>ty) tlam -> do
-    checkShadow b
     ty' <- checkTypeTLam tlam
     assertEq ty ty' "TLam"
     return $ b @> L ty
@@ -144,7 +144,6 @@ asForall ty = ([], ty)
 
 checkTypeTLam :: FTLam -> TypeM Type
 checkTypeTLam (FTLam tbs body) = do
-  mapM_ checkShadow tbs
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
   ty <- extendR env (checkTypeFExpr body)
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
@@ -158,9 +157,6 @@ checkShadow v = do
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
-
-checkShadowPat :: (Pretty b, Traversable f) => f (VarP b) -> TypeM ()
-checkShadowPat pat = mapM_ checkShadow pat -- TODO: check mutual shadows!
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
@@ -179,47 +175,6 @@ litType v = case v of
   RealLit _ -> RealType
   StrLit  _ -> StrType
   BoolLit _ -> BoolType
-
-instantiateTVs :: [Type] -> Type -> Type
-instantiateTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar =
-          case tvar of
-            Left v -> TypeVar v
-            Right i | i >= depth -> if i' < length vs && i >= 0
-                                      then vs !! i'
-                                      else error $ "Bad index: "
-                                             ++ show i' ++ " / " ++ pprint vs
-                                             ++ " in " ++ pprint x
-                    | otherwise  -> BoundTVar i
-              where i' = i - depth
-
-abstractTVs :: [TVar] -> Type -> Type
-abstractTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar = case tvar of
-                           Left v -> case elemIndex (varName v) (map varName vs) of
-                                       Nothing -> TypeVar v
-                                       Just i  -> BoundTVar (depth + i)
-                           Right i -> BoundTVar i
-
-subAtDepth :: Int -> (Int -> Either TVar Int -> Type) -> Type -> Type
-subAtDepth d f ty = case ty of
-    BaseType _    -> ty
-    TypeVar v     -> f d (Left v)
-    ArrowType m a b -> ArrowType (recur m) (recur a) (recur b)
-    TabType a b   -> TabType (recur a) (recur b)
-    RecType r     -> RecType (fmap recur r)
-    ArrayType _ _ -> ty
-    TypeApp a b   -> TypeApp (recur a) (map recur b)
-    Monad eff a   -> Monad (fmap recur eff) (recur a)
-    Lens a b      -> Lens (recur a) (recur b)
-    Forall    ks body -> Forall    ks (recurWith (length ks) body)
-    TypeAlias ks body -> TypeAlias ks (recurWith (length ks) body)
-    IdxSetLit _   -> ty
-    BoundTVar n   -> f d (Right n)
-    Mult l        -> Mult l
-    NoAnn         -> NoAnn
-  where recur        = subAtDepth d f
-        recurWith d' = subAtDepth (d + d') f
 
 -- === Built-in typeclasses ===
 
@@ -508,7 +463,7 @@ newtype LinCheckM a = LinCheckM
   { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, Spent) }
 
 checkLinFModule :: FModule -> Except ()
-checkLinFModule (Module _ (FModBody decls)) =
+checkLinFModule (Module _ (FModBody decls _)) =
   void $ runReaderT (runLinCheckM $ mapM_ checkLinFDecl decls) mempty
 
 checkLinFExpr :: FExpr -> LinCheckM ()

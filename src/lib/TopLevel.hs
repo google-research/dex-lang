@@ -17,7 +17,6 @@ import Data.Text.Prettyprint.Doc
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Syntax
-import DeShadow
 import Cat
 import Env
 import Type
@@ -91,7 +90,7 @@ evalSourceBlock env block = case block of
     source <- liftIOTop $ readFile fname
     let val = ignoreExcept $ parseData source
     let decl = LetMono p val
-    let m = Module (mempty, foldMap lbind p) $ FModBody [decl]
+    let m = Module (mempty, foldMap lbind p) $ FModBody [decl] mempty
     filterOutputs (const False) $ evalModule env m
   LoadData p DexBinaryObject fname -> do
     val <- liftIOTop $ loadDataFile fname
@@ -123,7 +122,7 @@ evalModule env = inferTypes env >=> evalTyped env
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> Pass FModule Module
 inferTypes env m = ($ m) $
-      namedPass "type"      (liftEither . (deShadowModule env  >=> inferModule env))
+      namedPass "type"      (liftEither . inferModule env)
   >=> namedPass "lincheck"  (\x -> x <$ liftEither (checkLinFModule x))
   >=> namedPass "normalize" (return     . normalizeModule   )
 

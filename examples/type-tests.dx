@@ -160,8 +160,8 @@ f x =
 >   z = x + 1.0
 >       ^^
 :t x = 3
-   for i::x. 0
-> Error: variable not in scope: type variable "x"
+   for i::Foo. 0
+> Error: variable not in scope: Foo
 
 :p lam x::Real. x
 > (lam x::Real . x)
