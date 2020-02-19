@@ -26,14 +26,24 @@ type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
 normalizeModule (Module ty (FModBody decls tySub)) =
-  Module ty (ModBody decls' (TopEnv (substEnvType results') results'))
+  Module ty (ModBody decls' (tySubTop <> fold results))
   where
-    (results, decls') = runNormM (catFold normalizeDecl decls) mempty
-    results' = fmap T tySub <> results
+    ((results, _), decls') = runNormM (catTraverse normalizeTopDecl decls) mempty
+    tySub' = fmap T tySub
+    tySubTop = TopEnv (substEnvType tySub') tySub' mempty
 
 runNormM :: NormM a -> SubstEnv -> (a, [Decl])
 runNormM m env = (ans, decls)
   where (ans, (_, decls)) = runEmbed (runReaderT m env) mempty
+
+normalizeTopDecl :: FDecl -> NormM (TopEnv, SubstEnv)
+normalizeTopDecl decl = case decl of
+  FRuleDef (LinearizationDef v) _ (FTLam [] expr) -> do
+    ans <- normalize expr
+    return (TopEnv mempty mempty ((v:>())@>ans), mempty)
+  _ -> do
+    subEnv <- normalizeDecl decl
+    return (TopEnv (substEnvType subEnv) subEnv mempty, subEnv)
 
 normalizeVal :: FExpr -> Except Atom
 normalizeVal expr = do
@@ -89,13 +99,16 @@ normalizeDecl decl = case decl of
   LetMono p bound -> do
     xs <- normalize bound  -- TODO: preserve names
     bindPat p xs
-  LetPoly v (FTLam tvs body) -> do
-    tlam <- buildTLam tvs $ \tys -> do
-      let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
-      extendR env $ normalize body
-    return $ v @> L tlam
-  TyDef _ _ -> error "Shouldn't have TyDef left"
-  FRuleDef _ _ _ -> return mempty  -- TODO
+  LetPoly v tlam -> do
+    x <- normalizeTLam tlam
+    return $ v @> L x
+  _ -> error $ "Shouldn't this left: " ++ pprint decl
+
+normalizeTLam ::FTLam -> NormM Atom
+normalizeTLam (FTLam tvs body) =
+  buildTLam tvs $ \tys -> do
+    let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
+    extendR env $ normalize body
 
 substTy :: Type -> NormM Type
 substTy ty = do

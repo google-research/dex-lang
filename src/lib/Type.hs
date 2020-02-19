@@ -135,25 +135,30 @@ checkTypeFDecl decl = case decl of
     assertEq (getType p) ty "LetMono"
     return (foldMap lbind p)
   LetPoly b@(_:>ty) tlam -> do
-    ty' <- checkTypeTLam tlam
+    ty' <- checkTypeFTLam tlam
     assertEq ty ty' "TLam"
     return $ b @> L ty
-  FRuleDef _ _ _ -> return mempty  -- TODO
+  FRuleDef ann annTy tlam -> do
+    ty <- checkTypeFTLam tlam
+    assertEq annTy ty "Rule def"
+    checkRuleDefType ann ty
+    return mempty
   TyDef tv _ -> return $ tbind tv
 
 asForall :: Type -> ([Kind], Type)
 asForall (Forall ks body) = (ks, body)
 asForall ty = ([], ty)
 
-checkTypeTLam :: FTLam -> TypeM Type
-checkTypeTLam (FTLam tbs body) = do
+checkTypeFTLam :: FTLam -> TypeM Type
+checkTypeFTLam (FTLam tbs body) = do
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
   ty <- extendR env (checkTypeFExpr body)
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
-  ~ty@(Forall kinds body) <- asks $ fromL . (!(v:>()))
+  ty <- asks $ fromL . (!(v:>()))
+  let (kinds, body) = asForall ty
   (a, b) <- case body of
               ArrowType _ a b -> return (a, b)
               _ -> throw TypeErr $

@@ -28,7 +28,7 @@ import Subst
 type InferM a = ReaderT TypeEnv (SolverT (Either Err)) a
 
 inferModule :: TopEnv -> FModule -> Except FModule
-inferModule (TopEnv tyEnv subEnv) m = do
+inferModule (TopEnv tyEnv subEnv _) m = do
   let (Module (imports, exports) (FModBody body _)) = m
   checkImports tyEnv m
   let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
@@ -68,13 +68,13 @@ inferDecl decl = case decl of
     p' <- annotPat p
     bound' <- check bound (getType p')
     return (LetMono p' bound', foldMap asEnv p')
-  LetPoly ~b@(_:> Forall _ tyBody) (FTLam tbs tlamBody) -> do
-    let tyBody' = instantiateTVs (map TypeVar tbs) tyBody
-    -- TODO: check if bound vars leaked (can look at constraints from solve)
-    let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
-    tlamBody' <- checkLeaks tbs $ extendR env $ check tlamBody tyBody'
-    return (LetPoly b (FTLam tbs tlamBody'), b @> L (varAnn b))
-  FRuleDef _ _ _ -> return (decl, mempty)  -- TODO
+  LetPoly b@(_:> ty) tlam -> do
+    tlam' <- checkTLam ty tlam
+    return (LetPoly b tlam', b @> L ty)
+  FRuleDef ann annTy tlam -> do
+    -- TODO: check against expected type for the particular rule
+    tlam' <- checkTLam annTy tlam
+    return (FRuleDef ann annTy tlam', mempty)
   TyDef _ _ -> error "Shouldn't have TyDef left"
 
 infer :: FExpr -> InferM (Type, FExpr)
@@ -116,6 +116,12 @@ check expr reqTy = case expr of
     return $ SrcAnnot e' pos
   where
     constrainReq ty = constrainEq reqTy ty (pprint expr)
+
+checkTLam :: Type -> FTLam -> InferM FTLam
+checkTLam ~(Forall _ tyBody) (FTLam tbs tlamBody) = do
+ let tyBody' = instantiateTVs (map TypeVar tbs) tyBody
+ let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
+ liftM (FTLam tbs) $ checkLeaks tbs $ extendR env $ check tlamBody tyBody'
 
 constrainTopDown :: PrimExpr e ty lam -> Bool
 constrainTopDown expr = case expr of

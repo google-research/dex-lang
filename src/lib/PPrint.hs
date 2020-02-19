@@ -275,7 +275,7 @@ instance Pretty Result where
                                Right () -> mempty
 
 instance Pretty TopEnv where
-  pretty (TopEnv _ subEnv) = p subEnv
+  pretty (TopEnv _ subEnv _) = p subEnv
 
 instance Pretty body => Pretty (ModuleP body) where
   pretty (Module (imports, exports) body) = "imports:" <+> p imports

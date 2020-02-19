@@ -97,7 +97,7 @@ evalSourceBlock env block = case block of
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
     let outEnv = b @> L val
-    return $ TopEnv (substEnvType outEnv) outEnv
+    return $ TopEnv (substEnvType outEnv) outEnv mempty
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
 

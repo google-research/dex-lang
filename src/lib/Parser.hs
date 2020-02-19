@@ -51,7 +51,7 @@ mustParseit s p  = case parseit s p of
 topDecl :: Parser FDecl
 topDecl = ( ruleDef
         <|> typeDef
-        <|> (topDeclAnn >> decl)  -- TODO: bring back annotation
+        <|> decl
         <?> "top-level declaration" ) <* (void eol <|> eof)
 
 includeSourceFile :: Parser String
@@ -131,10 +131,6 @@ explicitCommand = do
   return $ case (cmd, e) of
     (GetType, SrcAnnot (FVar v []) _) -> GetNameType v
     _ -> Command cmd (exprAsModule e)
-
-topDeclAnn :: Parser DeclAnn
-topDeclAnn =   (symbol "@primitive" >> declSep >> return ADPrimitive)
-           <|> return PlainDecl
 
 ruleDef :: Parser FDecl
 ruleDef = do

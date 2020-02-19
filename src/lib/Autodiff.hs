@@ -30,33 +30,54 @@ import Record
 type EmbedSubM a = ReaderT SubstEnv Embed a
 newtype LinA a = LinA { runLinA :: EmbedSubM (a, EmbedSubM a) }
 
-linearize :: Scope -> LamExpr -> Atom
-linearize scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
+linearize :: TopEnv -> Scope -> LamExpr -> Atom
+linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam NonLin b $ \x -> do
-    (y, yt) <- runReaderT (runLinA (linearizeExpr expr)) (b @> L x)
+    (y, yt) <- runReaderT (runLinA (linearizeExpr env expr)) (b @> L x)
     -- TODO: check linearity
     fLin <- buildLam Lin b $ \xt -> runReaderT yt (b @> L xt)
     return $ makePair y fLin
 
-linearizeExpr :: Expr -> LinA Atom
-linearizeExpr expr = case expr of
+linearizeExpr :: TopEnv -> Expr -> LinA Atom
+linearizeExpr topEnv expr = case expr of
   Decl (Let b bound) body -> LinA $ do
-    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr bound
-    (ans, fLin) <- extendR env $ runLinA $ linearizeExpr body
+    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr topEnv bound
+    (ans, fLin) <- extendR env $ runLinA $ linearizeExpr topEnv body
     return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
-  CExpr e -> linearizeCExpr e
+  CExpr e -> linearizeCExpr topEnv e
   Atom x  -> linearizeAtom x
 
-linearizeCExpr :: CExpr -> LinA Atom
-linearizeCExpr expr = case expr' of
+linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
+linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
+  (x, t) <- runLinA $ linearizeAtom arg
+  ~(Tup [y, f]) <- emit (App (Mult NonLin) (linRules topEnv ! v) x) >>= unpackRec
+  return (y, do t' <- t
+                emit $ App (Mult Lin) f t')
+linearizeCExpr topEnv expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
   ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) x1 x2
+  -- TODO: define this in the prelude instead (need richer deriv rules)
+  ScalarBinOp FDiv x y -> LinA $ do
+    (x', tx) <- runLinA x
+    (y', ty) <- runLinA y
+    ans <- div' x' y'
+    return (ans, do tx' <- tx
+                    ty' <- ty
+                    linearizedDiv x' y' tx' ty')
   RecGet x i -> liftA (flip RecGet i) x `bindLin` emit
   _ -> error $ "not implemented: " ++ pprint expr
   where expr' = fmapExpr expr id linearizeAtom id
+
+linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
+linearizedDiv x y tx ty = do
+  tx'  <- div' tx y
+  ty'  <- mul ty x
+  ySq  <- mul y y
+  ty'' <- div' ty' ySq >>= neg
+  add tx' ty''
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con' of
@@ -131,9 +152,16 @@ transposeExpr expr ct = case expr of
 
 transposeCExpr :: CExpr -> Atom -> TransposeM ()
 transposeCExpr expr ct = case expr of
+  ScalarUnOp FNeg x -> do
+    ctNeg <- neg ct
+    transposeAtom x ctNeg
   ScalarBinOp FAdd x y -> do
     transposeAtom x ct
     transposeAtom y ct
+  ScalarBinOp FSub x y -> do
+    ctNeg <- neg ct
+    transposeAtom x ct
+    transposeAtom y ctNeg
   ScalarBinOp FMul x y -> do
     xLin <- isLin x
     if xLin
@@ -145,6 +173,10 @@ transposeCExpr expr ct = case expr of
         x' <- substTranspose x
         ct' <- mul ct x'
         transposeAtom y ct'
+  ScalarBinOp FDiv x y -> do
+    y' <- substTranspose y
+    ct' <- div' ct y'
+    transposeAtom x ct'
   RecGet x i -> do
     ~(Con (RecCon rZeros)) <- zeroAt (getType x)
     let ct' = Con $ RecCon $ recUpdate i ct rZeros

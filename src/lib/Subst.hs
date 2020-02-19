@@ -104,7 +104,7 @@ instance Subst a => Subst (Env a) where
   subst env xs = fmap (subst env) xs
 
 instance Subst TopEnv where
-  subst env (TopEnv e1 e2) = TopEnv (subst env e1) (subst env e2)
+  subst env (TopEnv e1 e2 e3) = TopEnv (subst env e1) (subst env e2) (subst env e3)
 
 instance (Subst a, Subst b) => Subst (LorT a b) where
   subst env (L x) = L (subst env x)

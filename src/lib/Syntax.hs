@@ -19,7 +19,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
-    RuleAnn (..), DeclAnn (..), CmdName (..), Val, TopEnv (..),
+    RuleAnn (..), CmdName (..), Val, TopEnv (..),
     ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
     Array (..), ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -84,7 +84,8 @@ data Kind = TyKind [ClassName]
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
 data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
-                     , topSubstEnv :: SubstEnv }  deriving (Show, Eq, Generic)
+                     , topSubstEnv :: SubstEnv
+                     , linRules    :: Env Atom }  deriving (Show, Eq, Generic)
 
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
@@ -120,7 +121,6 @@ data FModBody = FModBody [FDecl] (Env Type)  deriving (Show, Eq, Generic)
 type FModule = ModuleP FModBody
 
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
-data DeclAnn = PlainDecl | ADPrimitive  deriving (Show, Eq, Generic)
 
 -- === normalized core IR ===
 
@@ -129,9 +129,7 @@ data Expr = Decl Decl Expr
           | Atom Atom
             deriving (Show, Eq, Generic)
 
-data Decl = Let Var CExpr
-          | RuleDef RuleAnn Type Expr
-            deriving (Show, Eq, Generic)
+data Decl = Let Var CExpr  deriving (Show, Eq, Generic)
 
 type CExpr = PrimOp  Type Atom LamExpr
 type Con   = PrimCon Type Atom LamExpr
@@ -540,7 +538,7 @@ instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
 
 instance HasVars TopEnv where
-  freeVars (TopEnv e1 e2) = freeVars e1 <> freeVars e2
+  freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
 
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
@@ -651,7 +649,7 @@ instance Traversable EffectTypeP where
   traverse f (Effect r w s) = liftA3 Effect (f r) (f w) (f s)
 
 instance Semigroup TopEnv where
-  TopEnv e1 e2 <> TopEnv e1' e2' = TopEnv (e1 <> e1') (e2 <> e2')
+  TopEnv e1 e2 e3 <> TopEnv e1' e2' e3' = TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')
 
 instance Monoid TopEnv where
-  mempty = TopEnv mempty mempty
+  mempty = TopEnv mempty mempty mempty
