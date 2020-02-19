@@ -16,7 +16,6 @@ module Embed (emit, emitTo, withBinder, buildLamExpr, buildLam, buildTLam,
 
 import Control.Monad
 import Control.Monad.Reader
-import Data.Foldable (toList)
 
 import Env
 import Syntax
@@ -146,9 +145,6 @@ nRecGet x i = emit $ RecGet x i
 
 nTabGet :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 nTabGet x i = emit $ TabGet x i
-
-arrayGep :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
-arrayGep x i = emit $ ArrayGep x i
 
 unpackRec :: MonadCat EmbedEnv m => Atom -> m (Record Atom)
 unpackRec (Con (RecCon r)) = return r

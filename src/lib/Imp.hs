@@ -34,23 +34,21 @@ type ImpM = ReaderT ImpEnv (Cat EmbedEnv)
 data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
 
-toImpModule :: Module -> ImpModule
-toImpModule (Module ty m) = Module ty (ImpModBody vs prog result)
+toImpModule :: TopEnv -> Module -> ImpModule
+toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
   where ((vs, result), (_, prog)) =
-          runCat (runReaderT (toImpModBody m) mempty) mempty
+          runCat (runReaderT (toImpModBody env imports m) mempty) mempty
 
-toImpModBody :: ModBody -> ImpM ([IVar], SubstEnv)
-toImpModBody (ModBody decls result) = do
-  let vs = resultVars result
+toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
+toImpModBody topEnv imports (ModBody decls result) = do
+  let decls' = map (subst (topSubstEnv topEnv, mempty)) decls
+  let vs = [v:>ty | (v, L ty) <- envPairs $ freeVars result `envDiff` imports]
   let outTuple = Con $ RecCon $ Tup $ map Var vs
   (outDest, vs') <- makeDest $ getType outTuple
   let (ICon (RecCon (Tup outDests))) = outDest
-  toImpExpr outDest (wrapDecls decls outTuple)
+  toImpExpr outDest (wrapDecls decls' outTuple)
   let substEnv = fold [v @> L (impAtomToAtom x) | (v, x) <- zip vs outDests]
   return (vs', subst (substEnv, mempty) result)
-
-resultVars :: SubstEnv -> [Var]
-resultVars env = [v:>ty | (v, L ty) <- envPairs $ freeVars env]
 
 toImpExpr :: IAtom -> Expr -> ImpM ()
 toImpExpr dests expr = case expr of
@@ -335,11 +333,11 @@ initializeZero ref = case impExprType ref of
 type ImpCheckM a = CatT (Env IType) (Either Err) a
 
 instance IsModuleBody ImpModBody where
-  checkModuleBody _ (ImpModBody vs prog result) = do
+  checkModuleBody imports (ImpModBody vs prog result) = do
     let env = foldMap (\v -> v@> varAnn v) vs
     ((), env') <- runCatT (checkProg prog) env
     let tyEnv = fmap (L . impTypeToType) (env <> env')
-    checkModuleBody tyEnv (ModBody [] result)
+    checkModuleBody (imports <> tyEnv) (ModBody [] result)
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) =

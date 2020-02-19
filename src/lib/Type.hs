@@ -10,7 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
-    getType, instantiateTVs, abstractTVs, topEnvType,
+    getType, instantiateTVs, abstractTVs, substEnvType,
     tangentBunType, flattenType, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
@@ -41,6 +41,7 @@ runTypeM env m = runReaderT m env
 -- === Module interfaces ===
 
 class IsModule a where
+  -- TODO: consider just a 'Check' typeclass
   checkModule  :: a -> Except ()
   moduleType   :: a -> ModuleType
 
@@ -60,12 +61,14 @@ instance IsModuleBody FModBody where
     where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
 
 instance IsModuleBody ModBody where
-  checkModuleBody env (ModBody decls result) = runTypeM env $ do
-    env' <- catFold checkDecl decls
-    extendR env' $ traverse checkTyOrKind result
+  checkModuleBody env (ModBody decls result) = do
+    runTypeM (env <> topTypeEnv result) $ do
+      env' <- catFold checkDecl decls
+      extendR env' $ traverse checkTyOrKind (topSubstEnv result)
+    return $ topTypeEnv result
 
-topEnvType :: SubstEnv -> TypeEnv
-topEnvType env = fmap getTyOrKind env
+substEnvType :: SubstEnv -> TypeEnv
+substEnvType env = fmap getTyOrKind env
 
 checkTyOrKind :: LorT Atom Type -> TypeM (LorT Type Kind)
 checkTyOrKind (L x) = liftM L $ checkAtom x
@@ -147,16 +150,6 @@ checkTypeTLam (FTLam tbs body) = do
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
   ty <- extendR env (checkTypeFExpr body)
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
-
-checkTy :: Type -> TypeM ()
-checkTy _ = return () -- TODO: check kind and unbound type vars
-
-checkShadow :: Pretty b => VarP b -> TypeM ()
-checkShadow v = do
-  env <- ask
-  if v `isin` env
-    then throw CompilerErr $ pprint v ++ " shadowed"
-    else return ()
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
@@ -294,7 +287,7 @@ checkLam (LamExpr b@(_:>ty) body) = do
 checkDecl :: Decl -> TypeM TypeEnv
 checkDecl decl = case decl of
   Let b expr -> do
-    checkNBinder b
+    checkBinder b
     t <- checkCExpr expr
     assertEq (varAnn b) t "Decl"
     return $ binderEnv b
@@ -302,16 +295,16 @@ checkDecl decl = case decl of
 binderEnv :: Var -> TypeEnv
 binderEnv b@(_:>ty) = b @> L ty
 
-checkNTy :: Type -> TypeM ()
-checkNTy _ = return () -- TODO!
+checkTy :: Type -> TypeM ()
+checkTy _ = return () -- TODO: check kind and unbound type vars
 
-checkNBinder :: Var -> TypeM ()
-checkNBinder b = do
-  checkNTy (varAnn b)
-  checkNShadow b
+checkBinder :: Var -> TypeM ()
+checkBinder b = do
+  checkTy (varAnn b)
+  checkShadow b
 
-checkNShadow :: Pretty b => VarP b -> TypeM ()
-checkNShadow v = do
+checkShadow :: Pretty b => VarP b -> TypeM ()
+checkShadow v = do
   env <- ask
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"

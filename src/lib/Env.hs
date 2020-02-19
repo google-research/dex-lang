@@ -10,7 +10,7 @@
 module Env (Name, Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames,
-            rawName, nameSpace, rename, renames) where
+            rawName, nameSpace, rename, renames, renameWithNS) where
 
 import Data.String
 import Data.Traversable
@@ -96,6 +96,9 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
+
+renameWithNS :: NameSpace -> VarP ann -> Env a -> VarP ann
+renameWithNS ns (Name _ tag _ :> ann) scope = rename (Name ns tag 0 :> ann) scope
 
 rename :: VarP ann -> Env a -> VarP ann
 rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann

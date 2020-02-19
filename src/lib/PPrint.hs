@@ -274,6 +274,9 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
+instance Pretty TopEnv where
+  pretty (TopEnv _ subEnv) = p subEnv
+
 instance Pretty body => Pretty (ModuleP body) where
   pretty (Module (imports, exports) body) = "imports:" <+> p imports
                              <> hardline <> p body

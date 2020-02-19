@@ -19,7 +19,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
-    RuleAnn (..), DeclAnn (..), CmdName (..), Val,
+    RuleAnn (..), DeclAnn (..), CmdName (..), Val, TopEnv (..),
     ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
     Array (..), ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -83,8 +83,12 @@ data Kind = TyKind [ClassName]
             deriving (Show, Eq, Generic)
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
+data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
+                     , topSubstEnv :: SubstEnv }  deriving (Show, Eq, Generic)
+
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
+
 type Scope = Env ()
 
 type ModuleType = (TypeEnv, TypeEnv)
@@ -139,7 +143,7 @@ data Atom = Var Var
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
-data ModBody = ModBody [Decl] SubstEnv  deriving (Show, Eq, Generic)
+data ModBody = ModBody [Decl] TopEnv  deriving (Show, Eq, Generic)
 type Module = ModuleP ModBody
 type Val = Atom
 
@@ -286,7 +290,7 @@ exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body mempty))
 
 -- === imperative IR ===
 
-data ImpModBody = ImpModBody [IVar] ImpProg SubstEnv
+data ImpModBody = ImpModBody [IVar] ImpProg TopEnv
 type ImpModule = ModuleP ImpModBody
 
 newtype ImpProg = ImpProg [ImpStatement]  deriving (Show, Semigroup, Monoid)
@@ -526,15 +530,26 @@ instance HasVars Atom where
     TLam tvs body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
 
+instance HasVars Kind where
+  freeVars _ = mempty
+
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
 
 instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
 
+instance HasVars TopEnv where
+  freeVars (TopEnv e1 e2) = freeVars e1 <> freeVars e2
+
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
   freeVars (Right x) = freeVars x
+
+instance HasVars ModBody where
+  freeVars (ModBody (decl:decls) results) =
+    freeVars decl <> (freeVars (ModBody decls results) `envDiff` declBoundVars decl)
+  freeVars (ModBody [] results) = freeVars results
 
 fmapExpr :: TraversableExpr expr
          => expr ty e lam
@@ -634,3 +649,9 @@ instance Foldable EffectTypeP where
 
 instance Traversable EffectTypeP where
   traverse f (Effect r w s) = liftA3 Effect (f r) (f w) (f s)
+
+instance Semigroup TopEnv where
+  TopEnv e1 e2 <> TopEnv e1' e2' = TopEnv (e1 <> e1') (e2 <> e2')
+
+instance Monoid TopEnv where
+  mempty = TopEnv mempty mempty

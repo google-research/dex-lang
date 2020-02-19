@@ -21,15 +21,17 @@ import Embed
 import Record
 
 type SimpEnv = SubstEnv
-type SimplifyM a = ReaderT SimpEnv Embed a
+type SimplifyM a = ReaderT SimpEnv (ReaderT TopEnv Embed) a
 
-simplifyModule :: SubstEnv -> Module -> Module
-simplifyModule env (Module (_, exports) m) =
-  Module (mempty, exports) (ModBody decls ans')
+simplifyModule :: TopEnv -> Module -> Module
+simplifyModule env (Module (_, exports) m) = Module (imports, exports) modBody
   where
-    (ans', (_, decls)) = runEmbed (runReaderT (simplifyModBody m) env) mempty
+    (ans', (_, decls)) = flip runEmbed mempty $ flip runReaderT env $
+                         flip runReaderT mempty $ simplifyModBody m
+    modBody = ModBody decls ans'
+    imports = freeVars modBody
 
-simplifyModBody :: ModBody -> SimplifyM SubstEnv
+simplifyModBody :: ModBody -> SimplifyM TopEnv
 simplifyModBody (ModBody decls result) = do
   env <- catFold simplifyDecl decls
   extendR env $ substEmbed result
@@ -59,9 +61,11 @@ simplifyLam (LamExpr b body) = do
 
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
+  -- TODO: consider looking for the reducible constructors first
   expr' <- traverseExpr expr substEmbed simplifyAtom simplifyLam
-  case expr' of
-    App _ (Con (Lam _ (LamExpr b body))) x ->
+  topEnv <- lift $ asks topSubstEnv
+  case substShallow topEnv expr' of
+    App _ (Con (Lam _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
@@ -75,6 +79,20 @@ simplifyCExpr expr = do
       scope <- looks fst
       return $ transposeMap scope lam
     _ -> emit expr'
+
+substShallow :: SubstEnv -> CExpr -> CExpr
+substShallow env expr = case expr of
+  App l f x  -> App l (subst f) x
+  TApp f ts  -> TApp (subst f) ts
+  RecGet x i -> RecGet (subst x) i
+  _ -> expr
+  where
+    subst :: Atom -> Atom
+    subst x = case x of
+      Var v -> case envLookup env v of
+        Just (L x') -> x'
+        _           -> x
+      _             -> x
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of

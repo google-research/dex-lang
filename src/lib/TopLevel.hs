@@ -6,7 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module TopLevel (evalBlock, EvalOpts (..), Backend (..), TopEnv) where
+module TopLevel (evalBlock, EvalOpts (..), Backend (..)) where
 
 import Control.Exception hiding (throw)
 import Control.Monad.State
@@ -29,6 +29,7 @@ import JIT
 import PPrint
 import Parser
 import Record
+import Subst
 import Util (highlightRegion)
 
 data Backend = Jit | Interp
@@ -38,7 +39,6 @@ data EvalOpts = EvalOpts
   , logAll      :: Bool }
 
 type TopPassM a = ReaderT EvalOpts (ExceptT Err (WriterT [Output] IO)) a
-type TopEnv = SubstEnv
 type Pass a b = a -> TopPassM b
 
 -- TODO: handle errors due to upstream modules failing
@@ -80,7 +80,7 @@ evalSourceBlock env block = case block of
     ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
       where f out = case out of PassInfo s' _ _ | s == s' -> True; _ -> False
     _ -> return ()
-  GetNameType v -> case env ! v of
+  GetNameType v -> case topSubstEnv env ! v of
     L val -> tell [TextOut $ pprint (getType val)] >> return mempty
     _ -> throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
@@ -96,7 +96,8 @@ evalSourceBlock env block = case block of
     val <- liftIOTop $ loadDataFile fname
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
-    return $ b @> L val
+    let outEnv = b @> L val
+    return $ TopEnv (substEnvType outEnv) outEnv
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
 
@@ -110,8 +111,8 @@ evalSourceBlocks env blocks =
 evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do
   env' <- filterOutputs (const False) $ evalModule env m
-  let (L val) = env' ! v
-  return val
+  let (L val) = topSubstEnv env' ! v
+  return $ subst (topSubstEnv (env <> env'), mempty) val
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -129,7 +130,7 @@ inferTypes env m = ($ m) $
 evalTyped :: TopEnv -> Pass Module TopEnv
 evalTyped env m = ($ m) $
       namedPass "simplify" (return . simplifyModule env)
-  >=> namedPass "imp"      (return . toImpModule)
+  >=> namedPass "imp"      (return . toImpModule env)
   >=> namedPass "jit"      (liftIO . evalModuleJIT)
   >=> (return . topEnvFromModule)
 

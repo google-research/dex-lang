@@ -27,15 +27,15 @@ import Subst
 
 type InferM a = ReaderT TypeEnv (SolverT (Either Err)) a
 
-inferModule :: SubstEnv -> FModule -> Except FModule
-inferModule topEnv m@(Module (imports, exports) (FModBody body _)) = do
-  let envIn = topEnvType topEnv
-  checkImports envIn m
-  let tySubEnv = flip envMapMaybe topEnv $ \case L _ -> Nothing; T ty -> Just ty
+inferModule :: TopEnv -> FModule -> Except FModule
+inferModule (TopEnv tyEnv subEnv) m = do
+  let (Module (imports, exports) (FModBody body _)) = m
+  checkImports tyEnv m
+  let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
   let (body', tySub) = expandTyAliases tySubEnv body
-  (body'', envOut) <- runInferM envIn $ catTraverse inferDecl body'
-  let imports' = imports `envIntersect` envIn
-  let exports' = exports `envIntersect` (envIn <> envOut <> tySubEnvType)
+  (body'', envOut) <- runInferM tyEnv $ catTraverse inferDecl body'
+  let imports' = imports `envIntersect` tyEnv
+  let exports' = exports `envIntersect` (tyEnv <> envOut <> tySubEnvType)
        where tySubEnvType = fmap (const (T (TyKind []))) tySub
   return $ Module (imports', exports') (FModBody body'' tySub)
 

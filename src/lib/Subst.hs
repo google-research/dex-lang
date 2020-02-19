@@ -16,7 +16,6 @@ import Env
 import Record
 import Syntax
 import PPrint
-import Array
 
 class Subst a where
   subst :: (SubstEnv, Scope) -> a -> a
@@ -89,6 +88,9 @@ instance Subst Decl where
   subst env decl = case decl of
     Let    b    bound -> Let    (subst env b)    (subst env bound)
 
+instance Subst Kind where
+  subst _ k = k
+
 instance Subst Var where
   subst env (v:>ty) = v:> subst env ty
 
@@ -100,6 +102,9 @@ instance (Subst a, Subst b) => Subst (a, b) where
 
 instance Subst a => Subst (Env a) where
   subst env xs = fmap (subst env) xs
+
+instance Subst TopEnv where
+  subst env (TopEnv e1 e2) = TopEnv (subst env e1) (subst env e2)
 
 instance (Subst a, Subst b) => Subst (LorT a b) where
   subst env (L x) = L (subst env x)

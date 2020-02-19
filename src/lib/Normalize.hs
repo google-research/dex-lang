@@ -26,8 +26,10 @@ type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
 normalizeModule (Module ty (FModBody decls tySub)) =
-  Module ty (ModBody decls' (fmap T tySub <> results))
-  where (results, decls') = runNormM (catFold normalizeDecl decls) mempty
+  Module ty (ModBody decls' (TopEnv (substEnvType results') results'))
+  where
+    (results, decls') = runNormM (catFold normalizeDecl decls) mempty
+    results' = fmap T tySub <> results
 
 runNormM :: NormM a -> SubstEnv -> (a, [Decl])
 runNormM m env = (ans, decls)
