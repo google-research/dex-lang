@@ -54,7 +54,7 @@ linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   ~(Tup [y, f]) <- emit (App (Mult NonLin) (linRules topEnv ! v) x) >>= unpackRec
   return (y, do t' <- t
                 emit $ App (Mult Lin) f t')
-linearizeCExpr topEnv expr = case expr' of
+linearizeCExpr _ expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
@@ -95,6 +95,7 @@ linearizeAtom atom = case atom of
       Nothing    -> return (atom, zeroAt (getType atom))
       _ -> error "unexpected lookup"
   Con con -> linearizePrimCon con
+  _ -> error "Not implemented"
 
 tensLiftA2 :: (a -> b -> CExpr) -> LinA a -> LinA b -> LinA Atom
 tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
@@ -148,7 +149,6 @@ transposeExpr expr ct = case expr of
         extendR (asSnd (b @> L x)) $ transposeExpr body ct
   CExpr e -> transposeCExpr e ct
   Atom x  -> transposeAtom x ct
-  _ -> error $ "Transpose not implemented for " ++ pprint expr
 
 transposeCExpr :: CExpr -> Atom -> TransposeM ()
 transposeCExpr expr ct = case expr of
@@ -188,6 +188,7 @@ transposeCon con ct = case con of
   RecCon r -> do
     rCT <- unpackRec ct
     sequence_ $ recZipWith transposeAtom r rCT
+  _ -> error "Not implemented"
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of

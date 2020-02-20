@@ -23,8 +23,6 @@ import Codec.Picture.Png
 import Codec.Picture.Types
 import qualified Data.Vector as V
 
-import Syntax
-
 data Scale = LinearScale Double Double
 
 scatterHtml :: [Double] -> [Double] -> H.Html

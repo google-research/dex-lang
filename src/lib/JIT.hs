@@ -298,12 +298,14 @@ compilePrimOp (ScalarBinOp op x y) = case op of
   Or     -> emitInstr boolTy $ L.Or  x y []
   ICmp c -> emitInstr boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
   FCmp c -> emitInstr boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
+  _ -> error "Not implemented"
 compilePrimOp (ScalarUnOp op x) = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
   FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
   Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
   BoolToInt -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
+  _ -> error "Not implemented"
 compilePrimOp (Select ty p x y) = do
   p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
   emitInstr ty $ L.Select p' x y []

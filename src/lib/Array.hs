@@ -35,6 +35,7 @@ loadScalar (Array [] b ptr) = case b of
     x <- peek (castPtr ptr :: Ptr Int)
     return $ BoolLit $ case x of 0 -> False
                                  _ -> True
+  _ -> error "Not implemented"
 loadScalar _ = error "Array must be rank-0"
 
 storeScalar :: Array -> LitVal -> IO ()
@@ -44,4 +45,5 @@ storeScalar (Array [] _ ptr) val = case val of
   BoolLit x -> case x of False -> poke ptr' 0
                          True  -> poke ptr' 1
     where ptr' = castPtr ptr :: Ptr Int
+  _ -> error "Not implemented"
 storeScalar _ _ = error "Array must be rank-0"

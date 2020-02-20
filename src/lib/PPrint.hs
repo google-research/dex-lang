@@ -82,7 +82,6 @@ prettyTyDepth d ty = case ty of
   Mult l      -> p (show l)
   NoAnn       -> ""
   where recur = prettyTyDepth d
-        recurWith n = prettyTyDepth (d + n)
 
 instance Pretty ty => Pretty (EffectTypeP ty) where
   pretty (Effect r w s) = "[" <> p r <+> p w <+> p s <> "]"
@@ -115,7 +114,7 @@ instance Pretty Expr where
 
 instance Pretty FExpr where
   pretty expr = case expr of
-    FVar (v:>ann) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
+    FVar (v:>_) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
     FDecl decl body -> align $ p decl <> hardline <> p body
     FPrimExpr e -> p e
     SrcAnnot subexpr _ -> p subexpr
@@ -127,7 +126,7 @@ instance Pretty FDecl where
   pretty (LetPoly (v:>ty) (FTLam _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (FRuleDef ann ty tlam) = "<TODO: rule def>"
+  pretty (FRuleDef _ _ _) = "<TODO: rule def>"
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where

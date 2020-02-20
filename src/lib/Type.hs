@@ -16,7 +16,6 @@ module Type (
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
     checkLinFModule) where
 
-import Control.Applicative
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -64,7 +63,7 @@ instance IsModuleBody ModBody where
   checkModuleBody env (ModBody decls result) = do
     runTypeM (env <> topTypeEnv result) $ do
       env' <- catFold checkDecl decls
-      extendR env' $ traverse checkTyOrKind (topSubstEnv result)
+      void $ extendR env' $ traverse checkTyOrKind (topSubstEnv result)
     return $ topTypeEnv result
 
 substEnvType :: SubstEnv -> TypeEnv
@@ -178,6 +177,7 @@ litType v = case v of
 
 checkKind :: Kind -> Type -> TypeM ()
 checkKind (TyKind cs) ty = mapM_ (flip checkClassConstraint ty) cs
+checkKind Multiplicity _ = error "Not implemented"
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
@@ -396,7 +396,7 @@ traversePrimExprType (OpExpr op) eq inClass = case op of
   NewtypeCast ty _ -> return ty
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
   _ -> error $ "Unexpected primitive type: " ++ pprint op
-traversePrimExprType (ConExpr con) eq inClass = case con of
+traversePrimExprType (ConExpr con) eq _ = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrowType l a b
   RecCon r    -> return $ RecType r
@@ -416,7 +416,7 @@ traversePrimExprType (ConExpr con) eq inClass = case con of
   LensCon l -> case l of
     IdxAsLens ty n -> return $ Lens (TabType n ty) ty
     LensId ty      -> return $ Lens ty ty
-    LensCompose (Lens a b) (Lens b' c) -> eq b b' >> return (Lens a c)
+    LensCompose ~(Lens a b) ~(Lens b' c) -> eq b b' >> return (Lens a c)
   Seq (n, Monad eff a) -> return $ Monad eff (TabType n a)
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
   Todo ty     -> return ty

@@ -502,7 +502,7 @@ className = do
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
 addClassVars :: ClassName -> [Name] -> TVar -> TVar
-addClassVars c vs b@(v:>(TyKind cs))
+addClassVars c vs ~b@(v:>(TyKind cs))
   | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
   | otherwise = b
 

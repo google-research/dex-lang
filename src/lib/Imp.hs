@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp (toImpModule, impExprToAtom, impExprType) where
 
@@ -69,7 +70,6 @@ toImpAtom atom = case atom of
     ArrayRef ref -> return $ ILeaf $ IRef ref
     _ -> liftM ICon $ traverseExpr con return toImpAtom $
                         const (error "unexpected lambda")
-    _ -> error $ "Not implemented: " ++ pprint atom
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
 fromScalarIAtom :: IAtom -> ImpM IExpr
@@ -144,7 +144,7 @@ toImpCExpr dests op = case op of
 withAllocs :: Var -> (IAtom -> ImpM a) -> ImpM a
 withAllocs (_:>ty) body = do
   (dest, vs) <- makeDest ty
-  flip mapM_ vs $ \v@(_:>IRefType ty) -> emitStatement (Just v, Alloc ty)
+  flip mapM_ vs $ \v@(_:>IRefType refTy) -> emitStatement (Just v, Alloc refTy)
   ans <- body dest
   flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
   return ans
@@ -177,7 +177,7 @@ toImpActionExpr mdests dests expr = case expr of
   _ -> error $ "Unexpected expression " ++ pprint expr
 
 toImpAction :: MContext -> IAtom -> Atom -> ImpM ()
-toImpAction mdests@(rVals, wDests, sDests) outDests (Con con) = case con of
+toImpAction mdests@(rVals, wDests, sDests) outDests ~(Con con) = case con of
   Bind rhs (LamExpr b body) -> do
     withAllocs b $ \xs -> do
       toImpAction mdests xs rhs
@@ -301,7 +301,7 @@ emitLoop n body = do
   emitStatement (Nothing, Loop i n loopBody)
 
 fromIInt :: IExpr -> Int
-fromIInt (ILit (IntLit x)) = x
+fromIInt ~(ILit (IntLit x)) = x
 
 emitStatement :: ImpStatement -> ImpM ()
 emitStatement statement = extend $ asSnd $ ImpProg [statement]
