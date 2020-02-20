@@ -67,23 +67,18 @@ todo = %todo()
 
 'Wrappers around C library functions
 
-@primitive
 exp :: Real -> Real
 exp x = %%exp(x)
 
-@primitive
 log :: Real -> Real
 log x = %%log(x)
 
-@primitive
 sqrt :: Real -> Real
 sqrt x = %%sqrt(x)
 
-@primitive
 sin :: Real -> Real
 sin x = %%sin(x)
 
-@primitive
 cos :: Real -> Real
 cos x = %%cos(x)
 
