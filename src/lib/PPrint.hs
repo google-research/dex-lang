@@ -260,9 +260,9 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (T x) = "T" <+> p x
 
 instance Pretty Output where
-  pretty (ValOut Printed atom) = pretty atom
-  pretty (ValOut _ _) = "<graphical output>"
   pretty (TextOut   s) = pretty s
+  pretty (HeatmapOut _ _ _) = "<graphical output>"
+  pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name t s) = "===" <+> p name <+> "==="
     <> hardline <> p s <> hardline <> "time:" <+> p t
 

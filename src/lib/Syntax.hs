@@ -345,8 +345,9 @@ type LitProg = [(SourceBlock, Result)]
 type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
-data Output = ValOut OutFormat Atom
-            | TextOut String
+data Output = TextOut String
+            | HeatmapOut Int Int [Double]
+            | ScatterOut [Double] [Double]
             | PassInfo String String String
               deriving (Show, Eq, Generic)
 
@@ -506,7 +507,9 @@ instance (HasVars a, HasVars b) => HasVars (LorT a b) where
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    RunModule (Module (vs, _) _) -> vs
+    RunModule (Module (vs, _) _)    -> vs
+    Command _ (_, Module (vs, _) _) -> vs
+    GetNameType v                   -> v @> L (varAnn v)
     _ -> mempty
 
 instance HasVars Expr where

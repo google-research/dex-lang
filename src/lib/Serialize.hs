@@ -6,7 +6,8 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal) where
+module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
+                 valToHeatmap, valToScatter) where
 
 import Control.Monad
 import Control.Monad.Writer
@@ -27,6 +28,7 @@ import PPrint
 import Parser
 import ParseUtil
 import Array
+import Record
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -152,6 +154,24 @@ valFromPtrs' shape ty = case ty of
   _ -> error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
+
+valToScatter :: Val -> IO Output
+valToScatter ~(Con (AFor (IdxSetLit n) body)) = do
+  xs' <- sequence [liftM fromRealLit $ loadScalar (subArray i xs) | i <- [0.. n - 1]]
+  ys' <- sequence [liftM fromRealLit $ loadScalar (subArray i ys) | i <- [0.. n - 1]]
+  return $ ScatterOut xs' ys'
+  where ~(Con (RecCon (Tup [Con (AGet (Con (ArrayRef xs))),
+                            Con (AGet (Con (ArrayRef ys)))]))) = body
+
+valToHeatmap :: Val -> IO Output
+valToHeatmap ~(Con (AFor (IdxSetLit h) body)) = do
+  xs <- sequence [liftM fromRealLit $ loadScalar (subArray j (subArray i array))
+                 | i <- [0..h-1], j <- [0..w-1]]
+  return $ HeatmapOut h w xs
+  where ~(Con (AFor (IdxSetLit w) (Con (AGet (Con (ArrayRef array)))))) = body
+
+fromRealLit :: LitVal -> Double
+fromRealLit ~(RealLit x) = x
 
 pprintVal :: Val -> IO String
 pprintVal val = liftM asStr $ prettyVal val

@@ -30,8 +30,7 @@ pprintHtml x = renderHtml $ toMarkup x
 
 progHtml :: LitProg -> String
 progHtml blocks = renderHtml $ wrapBody $ map toHtmlBlock blocks
-  where
-    toHtmlBlock (block,result) = toMarkup block <> toMarkup result
+  where toHtmlBlock (block,result) = toMarkup block <> toMarkup result
 
 wrapBody :: [Html] -> Html
 wrapBody blocks = docTypeHtml $ do
@@ -42,13 +41,16 @@ wrapBody blocks = docTypeHtml $ do
   where inner = foldMap (cdiv "cell") blocks
 
 instance ToMarkup Result where
-  toMarkup = undefined
-  -- toMarkup (Result outs (Left err)) = cdiv "err-block" $ toHtml $ pprint err
-  -- toMarkup (Result outs (Right outs)) = foldMap showOut outs
-  --   where showOut out = case out of
-  --           -- ValOut Heatmap val -> cdiv "plot" $ heatmapHtml val
-  --           -- ValOut Scatter val -> cdiv "plot" $ scatterHtml val
-  --           TextOut s -> cdiv "result-block" $ toHtml $ pprint s
+  toMarkup (Result outs err) = foldMap toMarkup outs <> err'
+    where err' = case err of
+                   Left e   -> cdiv "err-block" $ toHtml $ pprint e
+                   Right () -> mempty
+
+instance ToMarkup Output where
+  toMarkup out = case out of
+    HeatmapOut h w zs -> heatmapHtml h w zs
+    ScatterOut xs ys  -> scatterHtml xs ys
+    _ -> cdiv "result-block" $ toHtml $ pprint out
 
 instance ToMarkup SourceBlock where
   toMarkup block = case sbContents block of

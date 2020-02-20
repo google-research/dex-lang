@@ -63,8 +63,12 @@ evalSourceBlock env block = case block of
         Printed -> do
           s <- liftIOTop $ pprintVal val
           tell [TextOut s]
-        Heatmap -> tell [TextOut "<graphical output>"]
-        Scatter -> tell [TextOut "<graphical output>"]
+        Heatmap -> do
+          output <- liftIOTop $ valToHeatmap val
+          tell [output]
+        Scatter -> do
+          output <- liftIOTop $ valToScatter val
+          tell [output]
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalModuleVal env v m
       tell [TextOut $ pprint (getType val)]

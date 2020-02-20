@@ -27,12 +27,7 @@ import Network.HTTP.Types (status200, status404)
 import Data.ByteString.Lazy (toStrict)
 import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
-#if DEX_INOTIFY
-import System.INotify
-import Data.ByteString.Char8 (pack)
-#else
 import System.Directory
-#endif
 
 import Syntax
 import Actor
@@ -93,27 +88,27 @@ webServer resultsRequest = do
 
 -- === main driver ===
 
-type DriverM env a = StateT (DriverState env) (Actor DriverMsg) a
-type WorkerMap env = M.Map Key (Proc, ReqChan env)
+type DriverM a = StateT DriverState (Actor DriverMsg) a
+type WorkerMap = M.Map Key (Proc, ReqChan TopEnv)
 type DeclCache = M.Map (String, [Key]) Key
 data DriverMsg = NewProg String
-data DriverState env = DriverState
+data DriverState = DriverState
   { freshState :: Int
   , declCache :: DeclCache
   , varMap    :: Env Key
-  , workers   :: WorkerMap env
+  , workers   :: WorkerMap
   }
 
-setDeclCache :: (DeclCache -> DeclCache) -> DriverState env -> DriverState env
+setDeclCache :: (DeclCache -> DeclCache) -> DriverState -> DriverState
 setDeclCache update state_ = state_ { declCache = update (declCache state_) }
 
-setVarMap :: (Env Key -> Env Key) -> DriverState env -> DriverState env
+setVarMap :: (Env Key -> Env Key) -> DriverState -> DriverState
 setVarMap update state_ = state_ { varMap = update (varMap state_) }
 
-setWorkers :: (WorkerMap env -> WorkerMap env) -> DriverState env -> DriverState env
+setWorkers :: (WorkerMap -> WorkerMap) -> DriverState -> DriverState
 setWorkers update state_ = state_ { workers = update (workers state_) }
 
-initDriverState :: DriverState env
+initDriverState :: DriverState
 initDriverState = DriverState 0 mempty mempty mempty
 
 mainDriver :: EvalOpts -> TopEnv -> String
@@ -124,33 +119,34 @@ mainDriver opts env fname resultSetChan = flip evalStateT initDriverState $ do
   forever $ do
     NewProg source <- receive
     modify $ setVarMap (const mempty)
-    keys <- mapM processBlock (parseProg source)
+    keys <- mapM (processBlock opts env resultSetChan) (parseProg source)
     resultSetChan `send` updateOrder keys
-  where
-    processBlock block = do
-      state_ <- get
-      let parents = nub $ toList $ freeVars block `envIntersect` varMap state_
-      let cacheKey = (sbText block, parents)
-      key <- case M.lookup cacheKey (declCache state_) of
-        Just key -> return key
-        Nothing -> do
-          key <- freshKey
-          modify $ setDeclCache $ M.insert cacheKey key
-          parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
-          resultChan key `send` sourceUpdate block
-          (p, wChan) <- spawn Trap $
-                          worker env block opts (resultChan key) parentChans
-          modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
-          return key
-      modify $ setVarMap $ (<> fmap (const key) (sourceBlockBoundVars block))
-      return key
 
+processBlock :: EvalOpts -> TopEnv -> PChan ResultSet -> SourceBlock
+             -> StateT DriverState (Actor DriverMsg) Key
+processBlock opts env resultSetChan block = do
+  state_ <- get
+  let parents = nub $ toList $ freeVars block `envIntersect` varMap state_
+  let cacheKey = (sbText block, parents)
+  key <- case M.lookup cacheKey (declCache state_) of
+    Just key -> return key
+    Nothing -> do
+      key <- freshKey
+      modify $ setDeclCache $ M.insert cacheKey key
+      parentChans <- gets $ map (snd . fromJust) . lookupKeys parents . workers
+      resultChan key `send` sourceUpdate block
+      (p, wChan) <- spawn Trap $ worker env block opts (resultChan key) parentChans
+      modify $ setWorkers $ M.insert key (p, subChan EnvRequest wChan)
+      return key
+  modify $ setVarMap $ (<> fmap (const key) (sourceBlockBoundVars block))
+  return key
+  where
     resultChan key = subChan (singletonResult key) resultSetChan
 
-    freshKey :: DriverM env Key
-    freshKey = do n <- gets freshState
-                  modify $ \s -> s {freshState = n + 1}
-                  return n
+freshKey :: DriverM Key
+freshKey = do n <- gets freshState
+              modify $ \s -> s {freshState = n + 1}
+              return n
 
 lookupKeys :: Ord k => [k] -> M.Map k v -> [Maybe v]
 lookupKeys ks m = map (flip M.lookup m) ks
@@ -197,16 +193,6 @@ sendFileContents fname chan = do
   s <- readFile fname
   sendFromIO chan s
 
-#if DEX_INOTIFY
-
-onmod :: String -> IO () -> IO ()
-onmod fname action = do
-  action
-  inotify <- initINotify
-  void $ addWatch inotify [Modify] (pack fname) (const action)
-
-#else
-
 onmod :: String -> IO () -> IO ()
 onmod fname action = do
   action
@@ -218,8 +204,6 @@ onmod fname action = do
       threadDelay 100000
       unless (t == t') action
       loop t'
-
-#endif
 
 -- === rendering ===
 

@@ -33,10 +33,6 @@ library
   ghc-options:         cbits/libdex.so
                        -Wall
                        -O0
-  if flag(inotify)
-    build-depends:     hinotify
-    cpp-options:       -DDEX_INOTIFY
-
   default-extensions:  CPP
 
 executable dex
