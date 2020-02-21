@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module RenderHtml (pprintHtml, progHtml) where
+module RenderHtml (pprintHtml, progHtml, ToMarkup) where
 
 import Text.Blaze.Html5 as H  hiding (map)
 import Text.Blaze.Html5.Attributes as At

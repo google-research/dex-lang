@@ -656,3 +656,9 @@ instance Semigroup TopEnv where
 
 instance Monoid TopEnv where
   mempty = TopEnv mempty mempty mempty
+
+instance Eq SourceBlock where
+  x == y = sbText x == sbText y
+
+instance Ord SourceBlock where
+  compare x y = compare (sbText x) (sbText y)

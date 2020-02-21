@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
-            extendR, captureW, asFst, asSnd, capture,
+            extendR, captureW, asFst, asSnd, capture, asCat, evalCatT,
             Cat, runCat, newCatT, catTraverse, catFold) where
 
 -- Monad for tracking monoidal state
@@ -81,6 +81,9 @@ runCatT (CatT m) initEnv = do
   (ans, (_, newEnv)) <- runStateT m (initEnv, mempty)
   return (ans, newEnv)
 
+evalCatT :: (Monoid env, Monad m) => CatT env m a -> m a
+evalCatT m = liftM fst $ runCatT m mempty
+
 newCatT :: (Monoid env, Monad m) => (env -> m (a, env)) -> CatT env m a
 newCatT  f = do
   env <- look
@@ -106,7 +109,6 @@ extendLocal x m = do
                                  scoped m
   extend env
   return ans
-
 
 -- Not part of the cat monad, but related utils for monoidal envs
 

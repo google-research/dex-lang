@@ -14,8 +14,9 @@ module Actor (Actor, Proc, PChan, CanTrap (..), Msg (..),
               runActor, spawn, spawnLink, send,
               receive, receiveF, receiveErr, receiveErrF,
               myChan, subChan, sendFromIO, ServerMsg (..),
-              logServer, ReqChan) where
+              logServer, ReqChan, subscribe) where
 
+import Control.Concurrent
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
@@ -23,9 +24,8 @@ import Control.Exception
 import Data.IORef
 import Data.Monoid ((<>))
 
+import Cat
 import Util
-
-import Control.Concurrent
 
 data Msg a = ErrMsg Proc String | NormalMsg a
 data CanTrap = Trap | NoTrap  deriving (Show, Ord, Eq)
@@ -39,7 +39,7 @@ data ActorConfig m = ActorConfig { selfProc  :: Proc
 newtype Actor m a = Actor (ReaderT (ActorConfig m) IO a)
   deriving (Functor, Applicative, Monad, MonadIO)
 
-runActor :: Actor msg () -> IO ()
+runActor :: Actor msg a -> IO a
 runActor (Actor m) = do
   linksRef   <- newIORef []
   chan <- newBackChan
@@ -148,6 +148,9 @@ instance MonadActor msg m => MonadActor msg (StateT s m) where
 instance MonadActor msg m => MonadActor msg (ReaderT r m) where
   actorCfg = lift actorCfg
 
+instance MonadActor msg m => MonadActor msg (CatT env m) where
+  actorCfg = lift actorCfg
+
 -- === ready-made actors for common patterns ===
 
 -- similar to a CPS transformation a ==> (a -> r) -> r
@@ -155,6 +158,9 @@ type ReqChan a = PChan (PChan a)
 
 data ServerMsg a = Request (PChan a)
                  | Push a
+
+subscribe :: MonadActor msg m => ReqChan msg -> m ()
+subscribe chan = myChan >>= send chan
 
 -- combines inputs monoidally and pushes incremental updates to subscribers
 logServer :: Monoid a => Actor (ServerMsg a) ()

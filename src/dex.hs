@@ -17,12 +17,13 @@ import RenderHtml
 
 import TopLevel
 import Parser
-import WebOutput
+import LiveOutput
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
 data DocFmt = ResultOnly | TextDoc | HtmlDoc
 data EvalMode = ReplMode String
-              | WebMode FilePath
+              | WebMode    FilePath
+              | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
 data CmdOpts = CmdOpts EvalMode EvalOpts
 
@@ -36,7 +37,8 @@ runMode evalMode opts = do
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
       putStr $ printLitProg fmt results
-    WebMode fname -> runWeb fname opts env
+    WebMode   fname -> runWeb      fname opts env
+    WatchMode fname -> runTerminal fname opts env
 
 evalDecl :: EvalOpts -> SourceBlock -> StateT TopEnv IO Result
 evalDecl opts block = do
@@ -100,15 +102,16 @@ parseMode = subparser $
      (command "repl" $ simpleInfo $
          ReplMode <$> (strOption $ long "prompt" <> value ">=> "
                          <> metavar "STRING" <> help "REPL prompt"))
-  <> (command "web"  $ simpleInfo (
-         WebMode <$> argument str (metavar "FILE" <> help "Source program")))
-  <> (command "script" $ simpleInfo (ScriptMode
-    <$> argument str (metavar "FILE" <> help "Source program")
+  <> (command "web"    $ simpleInfo (WebMode    <$> sourceFileInfo ))
+  <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
+  <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
     <*> (   flag' HtmlDoc (long "html" <> help "HTML literate program output")
         <|> pure TextDoc )
     <*> flag HaltOnErr ContinueOnErr (
                   long "allow-errors"
                <> help "Evaluate programs containing non-fatal type errors")))
+  where
+    sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
 
 parseEvalOpts :: Parser EvalOpts
 parseEvalOpts = EvalOpts
