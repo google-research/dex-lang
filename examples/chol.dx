@@ -19,35 +19,22 @@ inDiag i j = (asint i) == (asint j)
 
 ' ### Matrix Math
 
-vdot :: n=>Real -> n=>Real -> Real
-vdot x y = sum for i. x.i * y.i
-
-
-mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
-
-
 eyeLike:: n=>n=>Real -> n=>n=>Real
 eyeLike x = for i. for j.
   select (inDiag i j) 1.0 0.0
 
-transpose::n=>m=>Real->m=>n=>Real
-transpose x = for i. for j. x.j.i
-
 mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
 mmadd x y = for i. for j. x.i.j + y.i.j
-
-
 
 ' ## Cholesky Algorithm
 
 chol :: (n=>n=>Real) -> (n=>n=>Real)
 chol x = ..
-  diagOp r j = 
+  diagOp r j =
     innersum = sum for k::n. ..
       select (inLower j k) (sq r.j.k) 0.0
     sqrt (x.j.j - innersum)
-  lowerOp r i j = 
+  lowerOp r i j =
     innersum = sum for k. ..
       select (inLower j k) (r.i.k * r.j.k) 0.0
     jdiag = diagOp r j -- can't look up r.j.j as it is not computed yet.
@@ -56,7 +43,7 @@ chol x = ..
   fs = for outerrow::n. ..
     lam r. for i::n. ..
       select (inUpper i outerrow)  ..
-        (for j::n. r.i.j) .. -- copy 
+        (for j::n. r.i.j) .. -- copy
         for j::n. ..
           select (inUpper i j) ..
             0.0 ..
@@ -109,65 +96,65 @@ reconst = for i. for j. psd.i.j - (mmp l (transpose l)).i.j
 ' #### Timing
 
 :flops chol (demoPSDMatrix @1 (newKey 1))
-> %fadd 5 
-> %fsub 3 
-> %fmul 8 
-> %fdiv 1 
-> %lt 2 
-> %gt 4 
-> %eq 1 
-> %copy 28 
-> %%cos 1 
-> %%log 1 
-> %%randunif 2 
-> %%sqrt 3 
-> %%threefry2x32 5 
-> %select 7 
+> %fadd 5
+> %fsub 3
+> %fmul 8
+> %fdiv 1
+> %lt 2
+> %gt 4
+> %eq 1
+> %copy 28
+> %%cos 1
+> %%log 1
+> %%randunif 2
+> %%sqrt 3
+> %%threefry2x32 5
+> %select 7
 
 :flops chol (demoPSDMatrix @2 (newKey 1))
-> %fadd 60 
-> %fsub 24 
-> %fmul 72 
-> %fdiv 8 
-> %lt 12 
-> %gt 56 
-> %eq 4 
-> %copy 247 
-> %%cos 4 
-> %%log 4 
-> %%randunif 8 
-> %%sqrt 20 
-> %%threefry2x32 17 
-> %select 72 
+> %fadd 60
+> %fsub 24
+> %fmul 72
+> %fdiv 8
+> %lt 12
+> %gt 56
+> %eq 4
+> %copy 247
+> %%cos 4
+> %%log 4
+> %%randunif 8
+> %%sqrt 20
+> %%threefry2x32 17
+> %select 72
 
 :flops chol (demoPSDMatrix @3 (newKey 1))
-> %fadd 279 
-> %fsub 81 
-> %fmul 306 
-> %fdiv 27 
-> %lt 36 
-> %gt 270 
-> %eq 9 
-> %copy 1030 
-> %%cos 9 
-> %%log 9 
-> %%randunif 18 
-> %%sqrt 63 
-> %%threefry2x32 37 
-> %select 315 
+> %fadd 279
+> %fsub 81
+> %fmul 306
+> %fdiv 27
+> %lt 36
+> %gt 270
+> %eq 9
+> %copy 1030
+> %%cos 9
+> %%log 9
+> %%randunif 18
+> %%sqrt 63
+> %%threefry2x32 37
+> %select 315
 
 :flops chol (demoPSDMatrix @4 (newKey 1))
-> %fadd 848 
-> %fsub 192 
-> %fmul 896 
-> %fdiv 64 
-> %lt 80 
-> %gt 832 
-> %eq 16 
-> %copy 2965 
-> %%cos 16 
-> %%log 16 
-> %%randunif 32 
-> %%sqrt 144 
-> %%threefry2x32 65 
-> %select 928 
+> %fadd 848
+> %fsub 192
+> %fmul 896
+> %fdiv 64
+> %lt 80
+> %gt 832
+> %eq 16
+> %copy 2965
+> %%cos 16
+> %%log 16
+> %%randunif 32
+> %%sqrt 144
+> %%threefry2x32 65
+> %select 928
