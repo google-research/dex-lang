@@ -14,7 +14,6 @@ rosenbrock2 xs =
   y = xs.(1@2)
   rosenbrock x y
 
-
 ' Min should be at 1.0, 1.0
 
 :p rosenbrock 1.0 1.000
@@ -33,15 +32,6 @@ rosenbrock2 xs =
 ' ## Helper functions
 
 ' ### Rand helpers
-like `ixkey` but takes 2 index to use as keys
-
-ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
-ixkey2 x i = ixkey $ ixkey x i
-
-:p k = newKey 0
-   for i::2 j::3. sq $ randn (ixkey2 k i j)
-> [[1.773118, 0.50770324, 7.503997e-2], [1.4671916, 5.4218978e-2, 0.5504309]]
-
 
 ' make a random vector uniformly distributed between `lb` and `ub`
 
@@ -68,9 +58,9 @@ optimize:: A np::Ix niter::Ix d::Ix. Key->((d=>Real)->Real) -> (d=>Real,d=>Real)
 optimize key f (lb,ub) (momentum,gRate,pRate) =
     optStep (keyL, gbest, pbests,positions,velocities) =
         .. -- prepare stuff for this step
-        newPositions::(np=>d=>Real) = for p i. 
+        newPositions::(np=>d=>Real) = for p i.
             positions.p.i + velocities.p.i
-        newPbests::(np=>(Real, d=>Real)) = for p. 
+        newPbests::(np=>(Real, d=>Real)) = for p.
             minby (asNonLin fst) pbests.p (f newPositions.p, newPositions.p)
         newGbest::(Real, d=>Real) =
             minby (asNonLin fst) gbest (minimumby (asNonLin fst) newPbests)
@@ -82,7 +72,7 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
             weight = rand $ (ixkey2 keyG p i)
             dir = gloc.i - positions.p.i
             weight * dir
-        pVel::(np=>d=>Real) = for p i. 
+        pVel::(np=>d=>Real) = for p i.
             weight = rand $ (ixkey2 keyP p i)
             dir = plocs.p.i - positions.p.i
             weight * dir
@@ -104,8 +94,8 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
     finalGloc
 
 ' ---
-Lets see how it goes.  
-Run it for more iterations and result should improve.  
+Lets see how it goes.
+Run it for more iterations and result should improve.
 Which it indeed does.
 
 :p optimize ..
@@ -146,3 +136,4 @@ Which it indeed does.
 > [1.0, 1.0]
 
 ' ---
+
