@@ -3,25 +3,11 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 
 ' ## Helpers
 
-ixkey2:: A n::Ix m::Ix. Key -> n -> m -> Key
-ixkey2 x i = ixkey $ ixkey x i
-
-' ### Index checking
-
-inUpper:: A m::Ix. m -> m -> Bool
-inUpper i j = (asint i) < (asint j)
-
-inLower:: A m::Ix. m -> m -> Bool
-inLower i j = (asint i) > (asint j)
-
-inDiag:: A m::Ix. m -> m -> Bool
-inDiag i j = (asint i) == (asint j)
-
 ' ### Matrix Math
 
 eyeLike:: n=>n=>Real -> n=>n=>Real
 eyeLike x = for i. for j.
-  select (inDiag i j) 1.0 0.0
+  select (i == j) 1.0 0.0
 
 mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
 mmadd x y = for i. for j. x.i.j + y.i.j
@@ -29,28 +15,26 @@ mmadd x y = for i. for j. x.i.j + y.i.j
 ' ## Cholesky Algorithm
 
 chol :: (n=>n=>Real) -> (n=>n=>Real)
-chol x = ..
+chol x =
   diagOp r j =
-    innersum = sum for k::n. ..
-      select (inLower j k) (sq r.j.k) 0.0
+    innersum = sum for k::n.
+      select (j > k) (sq r.j.k) 0.0
     sqrt (x.j.j - innersum)
   lowerOp r i j =
-    innersum = sum for k. ..
-      select (inLower j k) (r.i.k * r.j.k) 0.0
+    innersum = sum for k.
+      select (j > k) (r.i.k * r.j.k) 0.0
     jdiag = diagOp r j -- can't look up r.j.j as it is not computed yet.
     (x.i.j - innersum) / jdiag
-  ..
-  fs = for outerrow::n. ..
-    lam r. for i::n. ..
-      select (inUpper i outerrow)  ..
-        (for j::n. r.i.j) .. -- copy
-        for j::n. ..
-          select (inUpper i j) ..
-            0.0 ..
-            (select (inLower i j) ..
-              (lowerOp r i j) ..
-              (diagOp r j))
-  ..
+  fs = lam outerrow::n.
+    lam r. for i::n.
+      (select (i < outerrow)
+        (for j::n. r.i.j)  -- copy
+        for j::n.
+          select (i < j)
+            0.0
+            (select (i > j)
+              (lowerOp r i j)
+              (diagOp r j)))
   init = for i::n. for j::n. 0.0
   fold init fs
 
@@ -61,7 +45,7 @@ chol x = ..
 ' Test
 
 demoPSDMatrix:: A n::Ix. Key -> n=>n=>Real
-demoPSDMatrix key = ..
+demoPSDMatrix key =
   a = for x::n. for y::n. (randn $ ixkey2 key x y)
   x = mmp a (transpose a)
   mmadd x $ eyeLike x
