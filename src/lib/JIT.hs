@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (evalModuleJIT) where
+module JIT (evalModuleJIT, linking_hack) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named)
 import qualified LLVM.AST as L
@@ -39,6 +39,9 @@ import Imp
 import Array
 import Subst
 import LLVMExec
+
+-- This forces the linker to link libdex.so. TODO: something better
+foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
 type CompileEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
