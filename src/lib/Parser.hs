@@ -441,12 +441,10 @@ name :: NameSpace -> Parser String -> Parser Name
 name ns p = liftM (rawName ns) p
 
 equalSign :: Parser ()
-equalSign = do
-  try $ symbol "=" >> notFollowedBy (symbol ">" <|> symbol "=")
-  optional eol >> sc
+equalSign = mayBreak $ try $ symbol "=" >> notFollowedBy (symbol ">" <|> symbol "=")
 
 argTerm :: Parser ()
-argTerm = symbol "." >> optional eol >> sc
+argTerm = mayBreak $ symbol "."
 
 fLam :: Type -> Pat -> FExpr -> FExpr
 fLam l p body = fPrimCon $ Lam l $ FLamExpr p body

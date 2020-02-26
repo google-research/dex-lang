@@ -375,3 +375,18 @@ litArr = [10, 5, 3]
 
 :p slice @3 [1,2,3,4,5] 2
 > [3, 4, 5]
+
+-- TODO: test file specifically for parse errors (including testing error messages)
+:p f :: Real->Real
+   f x =
+     -- line comment should be ok here
+     2.0 * x
+   f 1.0
+> 2.0
+
+:p f :: Real->Real
+   f  = lam x.
+     -- line comment should be ok here
+     2.0 * x
+   f 1.0
+> 2.0
