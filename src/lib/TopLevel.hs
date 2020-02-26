@@ -25,6 +25,7 @@ import Normalize
 import Simplify
 import Serialize
 import Imp
+import Flops
 import JIT
 import PPrint
 import Parser
@@ -126,29 +127,38 @@ evalModule env = inferTypes env >=> evalTyped env
 
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> Pass FModule Module
-inferTypes env m = ($ m) $
-      namedPass "type"      (liftEither . inferModule env)
-  >=> namedPass "lincheck"  (\x -> x <$ liftEither (checkLinFModule x))
-  >=> namedPass "normalize" (return     . normalizeModule   )
+inferTypes env m =
+      tell [PassInfo Parse "" (pprint m)]
+  >>  namedPass TypePass (liftEither . inferModule env) m
+  >>= namedPass NormPass (return     . normalizeModule)
 
 evalTyped :: TopEnv -> Pass Module TopEnv
-evalTyped env m = ($ m) $
-      namedPass "simplify" (return . simplifyModule env)
-  >=> namedPass "imp"      (return . toImpModule env)
-  >=> namedPass "jit"      (liftIO . evalModuleJIT)
-  >=> (return . topEnvFromModule)
+evalTyped env =
+      namedPass SimpPass (return . simplifyModule env)
+  >=> namedPass ImpPass  (return . toImpModule env)
+  >=> evalImp
+
+evalImp :: Pass ImpModule TopEnv
+evalImp m = do
+  countFlops m
+  (result, outs) <- liftIO $ evalModuleJIT m
+  tell outs
+  return result
 
 namedPass :: (IsModule a, Pretty a, IsModule b, Pretty b)
-          => String -> Pass a b -> Pass a b
+          => PassName -> Pass a b -> Pass a b
 namedPass name pass x = do
-  let passCtx  = name ++ " pass with input:\n" ++ pprint x
+  let passCtx  = pprint name ++ " pass with input:\n" ++ pprint x
   t1 <- liftIO getCurrentTime
   (ans, s) <- withDebugCtx passCtx $ printedPass (pass x)
   t2 <- liftIO getCurrentTime
   tell [PassInfo name (show (t2 `diffUTCTime` t1)) s]
-  let checkCtx = "Checking after " ++ name ++ " pass:\n" ++ pprint ans
+  let checkCtx = "Checking after " ++ pprint name ++ " pass:\n" ++ pprint ans
   withDebugCtx checkCtx $ liftEither $ checkModule ans
   return ans
+
+countFlops :: ImpModule -> TopPassM ()
+countFlops (Module _  m) = tell [PassInfo Flops "" (pprint (moduleFlops m))]
 
 printedPass :: Pretty a => TopPassM a -> TopPassM (a, String)
 printedPass m = do
@@ -173,9 +183,6 @@ asTopPassM m = do
   (ans, outs) <- liftIO m
   tell outs
   liftEither ans
-
-topEnvFromModule :: Module -> TopEnv
-topEnvFromModule (Module _ (ModBody _ result)) = result
 
 withDebugCtx :: String -> TopPassM a -> TopPassM a
 withDebugCtx msg m = catchError (catchHardErrors m) $ \e -> throwError (addDebugCtx msg e)

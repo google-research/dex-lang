@@ -58,15 +58,16 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 type Long = Operand
 type NInstr = Named Instruction
 
-evalModuleJIT :: ImpModule -> IO Module
+evalModuleJIT :: ImpModule -> IO (TopEnv, [Output])
 evalModuleJIT (Module ty (ImpModBody [] (ImpProg []) result)) =
-  return $ Module ty $ ModBody [] result
+  return (result, [])
 evalModuleJIT (Module ty (ImpModBody vs prog result)) = do
   dests <- liftM fold $ mapM allocIRef vs
   let compileEnv = fmap arrayToOperand dests
-  evalJit $ runCompileM compileEnv (compileTopProg prog)
+  let llvmModule = runCompileM compileEnv (compileTopProg prog)
   let substEnv = (fmap (L . impExprToAtom . IRef) dests, mempty)
-  return $ Module ty $ ModBody [] (subst substEnv result)
+  passInfo <- evalJit llvmModule
+  return (subst substEnv result, passInfo)
 
 allocIRef :: IVar -> IO (Env Array)
 allocIRef v@(_:> IRefType (b, shape)) = do

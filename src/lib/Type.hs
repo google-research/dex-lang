@@ -13,8 +13,7 @@ module Type (
     getType, instantiateTVs, abstractTVs, substEnvType,
     tangentBunType, flattenType, asForall,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
-    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
-    checkLinFModule) where
+    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..)) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -56,6 +55,7 @@ instance (IsModuleBody body) => IsModule (ModuleP body) where
 instance IsModuleBody FModBody where
   checkModuleBody env (FModBody decls tyDefs) = do
     termEnv <- runTypeM env $ catFold checkTypeFDecl decls
+    mapM_ runCheckLinFDecl decls
     return $ termEnv <> tyDefEnv
     where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
 
@@ -460,9 +460,9 @@ data Spent = Spent (Env ()) Bool  -- flag means 'may consume any linear vars'
 newtype LinCheckM a = LinCheckM
   { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, Spent) }
 
-checkLinFModule :: FModule -> Except ()
-checkLinFModule (Module _ (FModBody decls _)) =
-  void $ runReaderT (runLinCheckM $ mapM_ checkLinFDecl decls) mempty
+runCheckLinFDecl :: FDecl -> Except ()
+runCheckLinFDecl decls =
+  void $ runReaderT (runLinCheckM $ checkLinFDecl decls) mempty
 
 checkLinFExpr :: FExpr -> LinCheckM ()
 checkLinFExpr expr = case expr of

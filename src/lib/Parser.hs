@@ -116,17 +116,17 @@ dumpData = do
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do
-  cmdName <- char ':' >> identifier <* (optional eol >> sc)
+  cmdName <- char ':' >> mayBreak identifier
   cmd <- case cmdName of
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
     "plot"    -> return $ EvalExpr Scatter
     "plotmat" -> return $ EvalExpr Heatmap
     "time"    -> return $ TimeIt
-    "flops"   -> return $ Flops
     "passes"  -> return $ ShowPasses
-    "pass"    -> liftM ShowPass $ identifier <* (optional eol >> sc)
-    _ -> fail $ "unrecognized command: " ++ show cmdName
+    _ -> case parsePassName cmdName of
+      Just p -> return $ ShowPass p
+      _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- declOrExpr <*eol
   return $ case (cmd, e) of
     (GetType, SrcAnnot (FVar v []) _) -> GetNameType v

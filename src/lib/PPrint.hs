@@ -262,8 +262,12 @@ instance Pretty Output where
   pretty (TextOut   s) = pretty s
   pretty (HeatmapOut _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
-  pretty (PassInfo name t s) = "===" <+> p name <+> "==="
-    <> hardline <> p s <> hardline <> "time:" <+> p t
+  pretty (PassInfo name t s) = "===" <+> p name <+> "===" <> hardline <> p s <> t'
+    where t' = case t of "" -> ""
+                         _  -> hardline <> "time:" <+> p t
+
+instance Pretty PassName where
+  pretty x = p $ show x
 
 instance Pretty SourceBlock where
   pretty block = pretty (sbText block)

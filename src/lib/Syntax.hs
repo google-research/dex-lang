@@ -27,7 +27,7 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
-    fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars,
+    fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind)
   where
@@ -274,8 +274,8 @@ data SourceBlock' = RunModule FModule
                   | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
 
-data CmdName = GetType | ShowPasses | ShowPass String
-             | TimeIt | Flops | EvalExpr OutFormat | Dump DataFormat String
+data CmdName = GetType | ShowPasses | ShowPass PassName
+             | TimeIt | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
 declAsModule :: FDecl -> FModule
@@ -339,6 +339,28 @@ instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
 instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
   mempty = MonMap mempty
 
+-- === passes ===
+
+data PassName = Parse | TypePass | NormPass | SimpPass | ImpPass | JitPass
+              | Flops | LLVMOpt | AsmPass
+                deriving (Ord, Eq, Bounded, Enum)
+
+passNameMap :: M.Map String PassName
+passNameMap = buildNameMap
+
+parsePassName :: String -> Maybe PassName
+parsePassName s = M.lookup s passNameMap
+
+instance Show PassName where
+  show p = case p of
+    Parse    -> "parse" ; TypePass -> "typed"   ; NormPass -> "norm"
+    SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass  -> "llvm"
+    Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass  -> "asm"
+
+-- TODO: consider using this for builtins too
+buildNameMap :: (Show a, Enum a, Bounded a) => M.Map String a
+buildNameMap = M.fromList [(show x, x) | x <- [minBound..maxBound]]
+
 -- === outputs ===
 
 type LitProg = [(SourceBlock, Result)]
@@ -348,7 +370,7 @@ data Result = Result [Output] (Except ())  deriving (Show, Eq)
 data Output = TextOut String
             | HeatmapOut Int Int [Double]
             | ScatterOut [Double] [Double]
-            | PassInfo String String String
+            | PassInfo PassName String String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
