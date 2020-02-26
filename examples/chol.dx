@@ -1,0 +1,144 @@
+' # Cholesky Factorization
+https://en.wikipedia.org/wiki/Cholesky_decomposition
+
+' ## Helpers
+
+' ### Matrix Math
+
+eyeLike:: n=>n=>Real -> n=>n=>Real
+eyeLike x = for i. for j.
+  select (i == j) 1.0 0.0
+
+mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
+mmadd x y = for i. for j. x.i.j + y.i.j
+
+' ## Cholesky Algorithm
+
+chol :: (n=>n=>Real) -> (n=>n=>Real)
+chol x =
+  diagOp r j =
+    innersum = sum for k::n.
+      select (j > k) (sq r.j.k) 0.0
+    sqrt (x.j.j - innersum)
+  lowerOp r i j =
+    innersum = sum for k.
+      select (j > k) (r.i.k * r.j.k) 0.0
+    jdiag = diagOp r j -- can't look up r.j.j as it is not computed yet.
+    (x.i.j - innersum) / jdiag
+  fs = lam outerrow::n.
+    lam r. for i::n.
+      (select (i < outerrow)
+        (for j::n. r.i.j)  -- copy
+        for j::n.
+          select (i < j)
+            0.0
+            (select (i > j)
+              (lowerOp r i j)
+              (diagOp r j)))
+  init = for i::n. for j::n. 0.0
+  fold init fs
+
+
+
+
+
+' Test
+
+demoPSDMatrix:: A n::Ix. Key -> n=>n=>Real
+demoPSDMatrix key =
+  a = for x::n. for y::n. (randn $ ixkey2 key x y)
+  x = mmp a (transpose a)
+  mmadd x $ eyeLike x
+
+psd = demoPSDMatrix @5 (newKey 1)
+:p psd
+> [ [5.0101504, 8.795412e-2, 0.7408708, -7.481893e-2, -1.1080669]
+> , [8.795412e-2, 4.527965, 1.3578157, -1.6046677, -1.2366911]
+> , [0.7408708, 1.3578157, 4.7222195, -1.1773552, 1.6373565]
+> , [-7.481893e-2, -1.6046677, -1.1773552, 7.2309613, -2.2290187]
+> , [-1.1080669, -1.2366911, 1.6373565, -2.2290187, 4.5027013] ]
+
+l = chol psd
+
+:p l
+> [ [2.2383366, 0.0, 0.0, 0.0, 0.0]
+> , [3.929441e-2, 2.1275387, 0.0, 0.0, 0.0]
+> , [0.3309917, 0.6320964, 2.052588, 0.0, 0.0]
+> , [-3.3426132e-2, -0.7536193, -0.33612752, 2.5590858, 0.0]
+> , [-0.49504036, -0.57213473, 1.053721, -0.9075714, 1.4128994] ]
+
+reconst = for i. for j. psd.i.j - (mmp l (transpose l)).i.j
+
+:p reconst
+> [ [-8.881784e-16, 0.0, 1.110223e-16, 0.0, 0.0]
+> , [0.0, 0.0, -2.220446e-16, 0.0, 0.0]
+> , [1.110223e-16, -2.220446e-16, -8.881784e-16, 0.0, 0.0]
+> , [0.0, 0.0, 0.0, 0.0, 0.0]
+> , [0.0, 0.0, 0.0, 0.0, 0.0] ]
+
+
+' #### Timing
+
+:flops chol (demoPSDMatrix @1 (newKey 1))
+> %fadd 5
+> %fsub 3
+> %fmul 8
+> %fdiv 1
+> %lt 2
+> %gt 4
+> %eq 1
+> %copy 28
+> %%cos 1
+> %%log 1
+> %%randunif 2
+> %%sqrt 3
+> %%threefry2x32 5
+> %select 7
+
+:flops chol (demoPSDMatrix @2 (newKey 1))
+> %fadd 60
+> %fsub 24
+> %fmul 72
+> %fdiv 8
+> %lt 12
+> %gt 56
+> %eq 4
+> %copy 247
+> %%cos 4
+> %%log 4
+> %%randunif 8
+> %%sqrt 20
+> %%threefry2x32 17
+> %select 72
+
+:flops chol (demoPSDMatrix @3 (newKey 1))
+> %fadd 279
+> %fsub 81
+> %fmul 306
+> %fdiv 27
+> %lt 36
+> %gt 270
+> %eq 9
+> %copy 1030
+> %%cos 9
+> %%log 9
+> %%randunif 18
+> %%sqrt 63
+> %%threefry2x32 37
+> %select 315
+
+:flops chol (demoPSDMatrix @4 (newKey 1))
+> %fadd 848
+> %fsub 192
+> %fmul 896
+> %fdiv 64
+> %lt 80
+> %gt 832
+> %eq 16
+> %copy 2965
+> %%cos 16
+> %%log 16
+> %%randunif 32
+> %%sqrt 144
+> %%threefry2x32 65
+> %select 928
