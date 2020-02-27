@@ -200,7 +200,7 @@ generateSubExprTypes (OpExpr  op) = liftM OpExpr $ case op of
     a <- freshQ
     return $ TabGet (xs, TabType n a) (i, n)
   MonadRun r s m -> do
-    ~m'@(Monad (Effect r' _ s') _) <- freshMonadType
+    ~m'@(Monad (Effect _ r' _ s') _) <- freshMonadType
     return $ MonadRun (r,r') (s,s') (m,m')
   LensGet x l -> do
     a <- freshQ
@@ -212,7 +212,8 @@ doMSnd :: Monad m => m b -> a -> m (a, b)
 doMSnd m x = do { y <- m; return (x, y) }
 
 freshMonadType :: InferM Type
-freshMonadType = liftM2 Monad (liftM3 Effect freshQ freshQ freshQ) freshQ
+freshMonadType = liftM2 Monad (liftM4 Effect lin freshQ freshQ freshQ) freshQ
+  where lin = freshInferenceVar Multiplicity
 
 annotPat :: Pat -> InferM Pat
 annotPat pat = traverse annotBinder pat

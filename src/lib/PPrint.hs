@@ -84,7 +84,7 @@ prettyTyDepth d ty = case ty of
   where recur = prettyTyDepth d
 
 instance Pretty ty => Pretty (EffectTypeP ty) where
-  pretty (Effect r w s) = "[" <> p r <+> p w <+> p s <> "]"
+  pretty (Effect _ r w s) = "[" <> p r <+> p w <+> p s <> "]"
 
 tvars :: Int -> Int -> Name
 tvars d i = fromString s

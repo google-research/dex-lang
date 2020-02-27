@@ -237,7 +237,40 @@ eatsNonLin f = True
 > :t lam f. (eatsLin f, eatsNonLin f)
 >                                  ^
 
+linFstArg :: Real --o Real -> Real
+linFstArg x y = x / y
+
+linUnary :: Real --o Real
+linUnary x = linFstArg x 1.0
+
 -- Nonlinear because of defaulting rules
 :t f x = x + x
    f
 > (Real -> Real)
+
+-- TODO: figure out how to avoid using builtins here.
+mId :: LinMonad Real Real () ()
+mId =
+  x <- askL
+  %tell(lensId, x)
+
+runId :: Real --o Real
+runId x =
+  ((), y, ()) = runL (x, ()) mId
+  y
+
+mSq :: LinMonad Real Real () ()
+mSq =
+  x <- askL
+  %tell(lensId, x * x)
+> Linearity error: pattern spent twice: [mLin]
+>
+>   %tell(lensId, x * x)
+>                   ^^
+
+badTell :: LinMonad Real Real () ()
+badTell = %tell(lensId, 1.0)
+> Linearity error: pattern never spent: mLin
+>
+> badTell = %tell(lensId, 1.0)
+>           ^^^^^^^^^^^^^^^^^^

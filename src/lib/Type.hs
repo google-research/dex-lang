@@ -375,7 +375,7 @@ traversePrimExprType (OpExpr op) eq inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass ty VSpace >> eq ty e1 >> eq ty e2 >> return ty
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (BaseType BoolType)
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return ty
-  MonadRun r s (Monad (Effect r' w s') a) -> do
+  MonadRun r s (Monad (Effect _ r' w s') a) -> do
     eq r r' >> eq s s'
     return $ tupTy [a, w, s]
   LensGet a (Lens a' b) -> eq a a' >> return b
@@ -385,7 +385,7 @@ traversePrimExprType (OpExpr op) eq inClass = case op of
   IdxSetSize _     -> return $ BaseType IntType
   NewtypeCast ty _ -> return ty
   FFICall _ argTys ansTy argTys' -> zipWithM_ eq argTys argTys' >> return ansTy
-  _ -> error $ "Unexpected primitive type: " ++ pprint op
+  _ -> error $ "Unexpected primitive type: " ++ show op
 traversePrimExprType (ConExpr con) eq _ = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrowType l a b
@@ -397,7 +397,7 @@ traversePrimExprType (ConExpr con) eq _ = case con of
     zipWithM_ eq (toList eff) (toList eff')
     eq a a'
     return $ Monad eff b
-  MonadCon eff@(Effect r w s) x l m -> case m of
+  MonadCon eff@(Effect _ r w s) x l m -> case m of
     MAsk     -> eq (Lens r x) l            >> return (Monad eff x)
     MTell x' -> eq (Lens w x) l >> eq x x' >> return (Monad eff unitTy)
     MGet     -> eq (Lens s x) l            >> return (Monad eff x)
@@ -464,11 +464,6 @@ checkLinFExpr expr = case expr of
   FDecl decl body -> do
     env <- checkLinFDecl decl
     extendR env (checkLinFExpr body)
-  FPrimExpr (ConExpr (Lam (Mult Lin) (FLamExpr p body))) -> do
-    v <- getPatName p
-    let s = asSpent v
-    checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
-  FPrimExpr (ConExpr (Lam (Mult NonLin) lam)) -> checkLinFLam lam
   FPrimExpr (OpExpr  op ) -> checkPrimOp  op
   FPrimExpr (ConExpr con) -> checkPrimCon con
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
@@ -495,14 +490,30 @@ checkPrimOp e = case e of
   ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App (Mult Lin   ) fun x -> tensCheck (check fun) (check x)
-  App (Mult NonLin) fun x -> check fun >> withoutLin (check x)
+  App (Mult NonLin) fun x -> tensCheck (check fun) (withoutLin (check x))
+  MonadRun r s m | isLinMonad (getType m) ->
+    tensCheck (check r >> check s) (withoutLin (check m))
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
 checkPrimCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
 checkPrimCon e = case e of
+  Lam (Mult NonLin) lam -> checkLinFLam lam
+  Lam (Mult Lin) (FLamExpr p body) -> do
+    v <- getPatName p
+    let s = asSpent v
+    checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
   Lit (RealLit 0.0) -> return ()
   RecCon r -> mapM_ check r
+  MonadCon (Effect (Mult Lin) _ _ _) _ _ mcon -> case mcon of
+     MAsk    -> spend tensId
+     MTell w -> checkSpent monadPat (pprint monadPat) $ checkLinFExpr w
+     MGet    -> spend tensId
+     MPut s  -> checkSpent monadPat (pprint monadPat) $ checkLinFExpr s
+  Bind m (FLamExpr p body) | isLinMonad (getType m) -> do
+    checkLinFExpr m
+    let env = foldMap (@> asSpent monadPat) p
+    extendR env $ checkLinFExpr body
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
@@ -512,6 +523,10 @@ withoutLin (LinCheckM m) = LinCheckM $ do
   unless (null vs) $ throw LinErr $
     "nonlinear function consumed linear data: " ++ pprint s
   return (ans, tensId)
+
+isLinMonad :: Type -> Bool
+isLinMonad (Monad (Effect (Mult Lin) _ _ _) _) = True
+isLinMonad _ = False
 
 tensCheck :: LinCheckM () -> LinCheckM () -> LinCheckM ()
 tensCheck x y = LinCheckM $ do
@@ -566,6 +581,10 @@ captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
 captureSpent m = LinCheckM $ do
   (x, s) <- runLinCheckM m
   return ((x, s), cartId)
+
+-- TODO: allow multiple sources of monadic linearity
+monadPat :: Name
+monadPat = "mLin"
 
 instance Pretty Spent where
   pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])

@@ -70,7 +70,8 @@ data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
 type TVar = VarP Kind
 
-data EffectTypeP ty = Effect { readerEff :: ty
+data EffectTypeP ty = Effect { effLin    :: ty
+                             , readerEff :: ty
                              , writerEff :: ty
                              , stateEff  :: ty }  deriving (Show, Eq, Generic)
 type EffectType = EffectTypeP Type
@@ -244,7 +245,7 @@ builtinNames = M.fromList
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
-    eff = Effect () () ()
+    eff = Effect () () () ()
 
 strToName :: String -> Maybe PrimName
 strToName s = M.lookup s builtinNames
@@ -671,7 +672,7 @@ instance Foldable EffectTypeP where
   foldMap = foldMapDefault
 
 instance Traversable EffectTypeP where
-  traverse f (Effect r w s) = liftA3 Effect (f r) (f w) (f s)
+  traverse f (Effect l r w s) = Effect <$> f l <*> f r <*>  f w <*> f s
 
 instance Semigroup TopEnv where
   TopEnv e1 e2 e3 <> TopEnv e1' e2' e3' = TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')

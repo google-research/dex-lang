@@ -567,7 +567,9 @@ localTypeVar = do
   return $ TypeVar (v:> TyKind [])
 
 monadType :: Parser Type
-monadType = symbol "Monad" >> liftM2 Monad (liftM3 Effect t t t) t
+monadType =
+      (symbol "Monad"    >> liftM2 Monad (liftM3 (Effect (Mult NonLin)) t t t) t)
+  <|> (symbol "LinMonad" >> liftM2 Monad (liftM3 (Effect (Mult Lin   )) t t t) t)
   where t = tauTypeAtomic
 
 lensType :: Parser Type

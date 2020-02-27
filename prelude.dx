@@ -202,6 +202,17 @@ return x = %return(x)
 bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
 bind m f = x <- m; f x
 
+-- TODO: linearity polymorphism would avoid this parallel linear universe
+
+asksL :: A r w::VS s a . Lens r a -> LinMonad r w s a
+asksL l = %ask(l)
+
+askL :: A r w::VS s . LinMonad r w s r
+askL = asksL lensId
+
+runL :: A r w::VS s a . (r, s) --o LinMonad r w s a -> (a, w, s)
+runL (r, s) m = %run(r, s, m)
+
 'State-carrying loop constructs
 
 seq :: (n -> Monad r w s a) -> Monad r w s (n=>a)
