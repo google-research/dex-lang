@@ -129,7 +129,7 @@ explicitCommand = do
       _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- declOrExpr <*eol
   return $ case (cmd, e) of
-    (GetType, SrcAnnot (FVar v []) _) -> GetNameType v
+    (GetType, SrcAnnot (FVar v) _) -> GetNameType v
     _ -> Command cmd (exprAsModule e)
 
 ruleDef :: Parser FDecl
@@ -245,7 +245,9 @@ var :: Parser FExpr
 var = do
   v <- lowerName
   tyArgs <- many tyArg
-  return $ FVar (v:>NoAnn) tyArgs
+  return $ case tyArgs of
+    [] -> FVar (v:>NoAnn)
+    _  -> FPrimExpr $ OpExpr $ TApp (FVar (v:>NoAnn)) tyArgs
 
 tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
@@ -414,7 +416,7 @@ idxExpr = withSourceAnn $ rawVar <|> parens productCon
 rawVar :: Parser FExpr
 rawVar = do
   v <- lowerName
-  return $ FVar (v:>NoAnn) []
+  return $ FVar (v:>NoAnn)
 
 binder :: Parser Var
 binder = (symbol "_" >> return (rawName SourceName "_" :> NoAnn))

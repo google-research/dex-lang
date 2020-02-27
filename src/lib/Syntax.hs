@@ -98,7 +98,7 @@ data ModuleP body = Module ModuleType body  deriving (Show, Eq)
 -- === front-end language AST ===
 
 data FExpr = FDecl FDecl FExpr
-           | FVar Var [Type]
+           | FVar Var
            | FPrimExpr (PrimExpr Type FExpr FLamExpr)
            | Annot FExpr Type
            | SrcAnnot FExpr SrcPos -- TODO: make mandatory?
@@ -465,7 +465,7 @@ class HasVars a where
 instance HasVars FExpr where
   freeVars expr = case expr of
     FDecl decl body -> freeVars decl <> (freeVars body `envDiff` fDeclBoundVars decl)
-    FVar v@(_:>ty) tyArgs -> v@>L ty <> freeVars ty <> foldMap freeVars tyArgs
+    FVar v@(_:>ty) -> v@>L ty <> freeVars ty
     FPrimExpr e  -> freeVars e
     Annot e ty   -> freeVars e <> freeVars ty
     SrcAnnot e _ -> freeVars e

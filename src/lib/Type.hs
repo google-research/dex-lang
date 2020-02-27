@@ -11,7 +11,7 @@
 
 module Type (
     getType, instantiateTVs, abstractTVs, substEnvType,
-    tangentBunType, flattenType, asForall,
+    tangentBunType, flattenType,
     litType, traversePrimExprType, binOpType, unOpType, PrimExprType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..)) where
 
@@ -82,7 +82,7 @@ getTyOrKind (T _) = T $ TyKind []
 instance HasType FExpr where
   getType expr = case expr of
     FDecl _ body -> getType body
-    FVar (_:>ty) _ -> ty
+    FVar (_:>ty) -> ty
     FPrimExpr e -> getPrimType e'
       where e' = fmapExpr e id getType getFLamType
     Annot e _    -> getType e
@@ -97,16 +97,12 @@ getFLamType (FLamExpr p body) = (getType p, getType body)
 
 checkTypeFExpr :: FExpr -> TypeM Type
 checkTypeFExpr expr = case expr of
-  FVar v@(_:>annTy) ts -> do
-    mapM_ checkTy ts
+  FVar v@(_:>annTy) -> do
     x <- asks $ flip envLookup v
     case x of
       Just (L ty) -> do
         assertEq annTy ty "Var annotation"
-        let (kinds, body) = asForall ty
-        assertEq (length kinds) (length ts) "Number of type args"
-        zipWithM_ checkKind kinds ts
-        return $ instantiateTVs ts body
+        return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
     env <- checkTypeFDecl decl
@@ -144,10 +140,6 @@ checkTypeFDecl decl = case decl of
     return mempty
   TyDef tv _ -> return $ tbind tv
 
-asForall :: Type -> ([Kind], Type)
-asForall (Forall ks body) = (ks, body)
-asForall ty = ([], ty)
-
 checkTypeFTLam :: FTLam -> TypeM Type
 checkTypeFTLam (FTLam tbs body) = do
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
@@ -157,14 +149,13 @@ checkTypeFTLam (FTLam tbs body) = do
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ty <- asks $ fromL . (!(v:>()))
-  let (kinds, body) = asForall ty
-  (a, b) <- case body of
-              ArrowType _ a b -> return (a, b)
-              _ -> throw TypeErr $
-                     "Bad type for linearization-annotated function: " ++ pprint ty
-  let linTyExpected = Forall kinds $ a --> pairTy b (a --@ b)
-  unless (linTy == linTyExpected) $ throw TypeErr $
-     "Annotation should have type: " ++ pprint linTyExpected
+  case ty of
+    ArrowType _ a b -> do
+      let linTyExpected = Forall [] $ a --> pairTy b (a --@ b)
+      unless (linTy == linTyExpected) $ throw TypeErr $
+        "Annotation should have type: " ++ pprint linTyExpected
+    _ -> throw TypeErr $
+           "Bad type for linearization-annotated function: " ++ pprint ty
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -174,10 +165,6 @@ litType v = case v of
   BoolLit _ -> BoolType
 
 -- === Built-in typeclasses ===
-
-checkKind :: Kind -> Type -> TypeM ()
-checkKind (TyKind cs) ty = mapM_ (flip checkClassConstraint ty) cs
-checkKind Multiplicity _ = error "Not implemented"
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
@@ -360,7 +347,10 @@ traversePrimExprType (OpExpr op) eq inClass = case op of
     eq a a'
     eq l l'
     return b
-  TApp (Forall _ body) ts -> return $ instantiateTVs ts body  --TODO: check kinds
+  TApp (Forall kinds body) ts -> do
+    assertEq (length kinds) (length ts) "Number of type args"
+    sequence_ [ mapM_ (inClass t) cs | (TyKind cs, t) <- zip kinds ts]
+    return $ instantiateTVs ts body
   For (n,a) -> inClass n IdxSet >> inClass a Data >> return (TabType n a)
   TabCon n ty xs ->
     inClass ty Data >> mapM_ (eq ty) xs >> eq n n' >> return (n ==> ty)
@@ -466,7 +456,7 @@ runCheckLinFDecl decls =
 
 checkLinFExpr :: FExpr -> LinCheckM ()
 checkLinFExpr expr = case expr of
-  FVar v _ -> do
+  FVar v -> do
     env <- ask
     case envLookup env v of
       Nothing -> spend tensId

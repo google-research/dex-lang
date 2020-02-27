@@ -56,8 +56,7 @@ normalize expr = case expr of
   FDecl decl body -> do
     env <- normalizeDecl decl
     extendR env $ normalize body
-  FVar v [] -> lookupVar v
-  FVar v ts -> liftM2 TApp (lookupVar v) (mapM substTy ts) >>= emit
+  FVar v -> lookupVar v
   FPrimExpr (OpExpr op) ->
     traverseExpr op substTy normalize normalizeLam >>= emit
   FPrimExpr (ConExpr con) ->

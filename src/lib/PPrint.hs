@@ -114,7 +114,7 @@ instance Pretty Expr where
 
 instance Pretty FExpr where
   pretty expr = case expr of
-    FVar (v:>_) ts -> foldl (<+>) (p v) ["@" <> p t | t <- ts]
+    FVar (v:>_) -> p v
     FDecl decl body -> align $ p decl <> hardline <> p body
     FPrimExpr e -> p e
     SrcAnnot subexpr _ -> p subexpr

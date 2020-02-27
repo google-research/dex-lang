@@ -88,13 +88,20 @@ check expr reqTy = case expr of
     (decl', env') <- inferDecl decl
     body' <- extendR env' $ check body reqTy
     return $ FDecl decl' body'
-  FVar v ts -> do
+  FVar v -> do
     ty <- asks $ fromL . (! v)
-    let (kinds, body) = asForall ty
-    vs <- mapM (const freshQ) (drop (length ts) kinds)
-    let ts' = ts ++ vs
-    constrainReq (instantiateTVs ts' body)
-    return $ FVar (varName v :> ty) ts'
+    case ty of
+      Forall _ _ -> check (fTyApp v []) reqTy
+      _ -> constrainReq ty >> return (FVar (varName v :> ty))
+  FPrimExpr (OpExpr (TApp (FVar v) ts)) -> do
+    ty <- asks $ fromL . (! v)
+    case ty of
+      Forall kinds body -> do
+        vs <- mapM (const freshQ) (drop (length ts) kinds)
+        let ts' = ts ++ vs
+        constrainReq (instantiateTVs ts' body)
+        return $ fTyApp (varName v :> ty) ts'
+      _ -> throw TypeErr "Unexpected type application"
   FPrimExpr prim -> do
     primTy <- generateSubExprTypes prim
     -- TODO: don't ignore explicit annotations (via `snd`)
@@ -140,6 +147,9 @@ checkPat p ty = do
   p' <- annotPat p
   constrainEq ty (getType p') (pprint p)
   return p'
+
+fTyApp :: Var -> [Type] -> FExpr
+fTyApp v tys = FPrimExpr $ OpExpr $ TApp (FVar v) tys
 
 checkPatShadow :: Pat -> Except ()
 checkPatShadow pat = do
@@ -345,7 +355,7 @@ instance TySubst Type where
 instance TySubst FExpr where
   tySubst env expr = case expr of
     FDecl decl body  -> FDecl (tySubst env decl) (tySubst env body)
-    FVar (v:>ty) tyArgs -> FVar (v:>tySubst env ty) (map (tySubst env) tyArgs)
+    FVar (v:>ty)     -> FVar (v:>tySubst env ty)
     Annot e ty       -> Annot (tySubst env e) (tySubst env ty)
     SrcAnnot e src   -> SrcAnnot (tySubst env e) src
     FPrimExpr e -> FPrimExpr $ tySubst env e
