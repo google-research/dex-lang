@@ -27,6 +27,12 @@
 :t llam x::Real. (llam y. y) x
 > (Real --o Real)
 
+:t lam x::Real. llam y::Real. x
+> Linearity error: pattern never spent: y::Real
+>
+> :t lam x::Real. llam y::Real. x
+>                 ^^^^^^^^^^^^^^^
+
 :t llam x::Real. (lam y. y) x
 > Linearity error: nonlinear function consumed linear data: [x]
 >

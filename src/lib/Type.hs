@@ -469,7 +469,7 @@ checkLinFExpr expr = case expr of
   FVar v _ -> do
     env <- ask
     case envLookup env v of
-      Nothing -> return ()
+      Nothing -> spend tensId
       Just s  -> spend s
   FDecl decl body -> do
     env <- checkLinFDecl decl
