@@ -271,6 +271,13 @@ asIdx n i = ICon $ AsIdx (fromIInt n) (ILeaf i)
 
 -- === Imp embedding ===
 
+-- TODO: be stricter about where we expect values vs refs
+-- and remove loadIfRef and copyOrStore
+loadIfRef :: IExpr -> ImpM IExpr
+loadIfRef x = case impExprType x of
+  IValType _ -> return x
+  IRefType _ -> load x
+
 copyOrStore :: IExpr -> IExpr -> ImpM ()
 copyOrStore dest src = case impExprType src of
   IValType _ -> store dest src
@@ -316,12 +323,11 @@ emitInstr instr = do
     Nothing -> error "Expected non-void result"
 
 addToDest :: IExpr -> IExpr -> ImpM ()
-addToDest dest src = case impExprType src of
-  IValType RealType -> do
-    cur <- load dest
-    updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src
-    store dest updated
-  ty -> error $ "Writing only implemented for scalars" ++ pprint ty
+addToDest dest src = do
+  cur <- load dest
+  src' <- loadIfRef src
+  updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src'
+  store dest updated
 
 initializeZero :: IExpr -> ImpM ()
 initializeZero ref = case impExprType ref of
