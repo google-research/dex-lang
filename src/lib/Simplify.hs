@@ -25,13 +25,16 @@ data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
 type SimplifyM a = ReaderT SimpEnv (ReaderT (TopEnv, SimpOpts) Embed) a
 
 simplifyModule :: TopEnv -> Module -> Module
-simplifyModule env (Module (_, exports) m) = Module (imports, exports) modBody
+simplifyModule env m = simplifyModuleOpts (SimpOpts False) env $
+                       simplifyModuleOpts (SimpOpts True ) env $ m
+
+simplifyModuleOpts :: SimpOpts -> TopEnv -> Module -> Module
+simplifyModuleOpts opts env (Module (_, exports) m) = Module (imports, exports) modBody
   where
     (ans', (_, decls)) = flip runEmbed mempty $ flip runReaderT (env, opts) $
                          flip runReaderT mempty $ simplifyModBody m
     modBody = ModBody decls ans'
     imports = freeVars modBody
-    opts = SimpOpts False
 
 simplifyModBody :: ModBody -> SimplifyM TopEnv
 simplifyModBody (ModBody decls result) = do
@@ -48,7 +51,17 @@ simplify expr = case expr of
 
 simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
-  Var _         -> substEmbed atom
+  Var v -> do
+    -- TODO: simplify this by requiring different namespaces for top/local vars
+    (topEnv, opts) <- lift ask
+    localEnv <- ask
+    case envLookup localEnv v of
+      Just ~(L x) -> deShadow x
+      Nothing -> case envLookup (topSubstEnv topEnv) v of
+        Just ~(L x)
+          | preserveDerivRules opts && v `isin` linRules topEnv -> substEmbed atom
+          | otherwise -> dropSub $ simplifyAtom x
+        _             -> substEmbed atom
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _      -> substEmbed atom
   Con (Lam _ _) -> substEmbed atom
@@ -63,20 +76,16 @@ simplifyLam (LamExpr b body) = do
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyCExpr :: CExpr -> SimplifyM Atom
-simplifyCExpr (Linearize lam) = do
-  (topEnv, _) <- lift ask
-  lam' <- withRulesPreserved $ simplifyLam lam
-  scope <- looks fst
-  return $ linearize topEnv scope lam'
-simplifyCExpr (Transpose lam) = do
-  lam' <- simplifyLam lam
-  scope <- looks fst
-  return $ transposeMap scope lam'
 simplifyCExpr expr = do
   expr' <- traverseExpr expr substEmbed simplifyAtom simplifyLam
-  (topEnv, opts) <- lift ask
-  -- TODO: consider looking for the reducible constructors first
-  case substTopShallow opts topEnv expr' of
+  case expr' of
+    Linearize lam -> do
+      (topEnv, _) <- lift ask
+      scope <- looks fst
+      return $ linearize topEnv scope lam
+    Transpose lam -> do
+      scope <- looks fst
+      return $ transposeMap scope lam
     App _ (Con (Lam _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs body) ts -> do
@@ -85,26 +94,6 @@ simplifyCExpr expr = do
     RecGet (Con (RecCon r)) i -> return $ recGet r i
     Select ty p x y -> selectAt ty p x y
     _ -> emit expr'
-
-substTopShallow :: SimpOpts -> TopEnv -> CExpr -> CExpr
-substTopShallow opts env expr = case expr of
-  App l f x  -> App l (subst f) x
-  TApp f ts  -> TApp (subst f) ts
-  RecGet x i -> RecGet (subst x) i
-  _ -> expr
-  where
-    subst :: Atom -> Atom
-    subst x = case x of
-      Var v | preserveDerivRules opts && v `isin` linRules env -> x
-            | otherwise -> case envLookup (topSubstEnv env) v of
-                             Just (L x') -> x'
-                             _           -> x
-      _ -> x
-
-withRulesPreserved :: SimplifyM a -> SimplifyM a
-withRulesPreserved m = do
-  env <- ask
-  lift $ local (\(e,_) -> (e, SimpOpts True)) $ runReaderT m env
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of

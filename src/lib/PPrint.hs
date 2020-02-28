@@ -144,7 +144,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (ArrayGep x i) = parens (p x) <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
-  pretty (MonadRun r s m) = "run" <+> align (p r <+> p s <> hardline <> p m)
+  pretty (MonadRun r s m) = "%run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
   pretty op = prettyExprDefault (OpExpr op)
 

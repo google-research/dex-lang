@@ -68,3 +68,12 @@ type State  s a = Monad () () s  a
     tell x
   run () 1.0 m
 > ((), 1.0, 1.0)
+
+myAction:: Monad Real Real () ()
+myAction =
+  _ <- tell 1.0
+  _ <- tell 2.0
+  return ()
+
+:p run 1.0 () myAction
+> ((), 3.0, ())
