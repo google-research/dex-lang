@@ -181,7 +181,46 @@ transposeCExpr expr ct = case expr of
     ~(Con (RecCon rZeros)) <- zeroAt (getType x)
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
+  MonadRun r _ m -> do
+    ~(Tup [a, w, _]) <- unpackRec ct
+    m' <- buildAction $ do
+            transposeAction a m
+            return $ Con $ Return (flipEff eff) unitCon
+    ans <- emit $ MonadRun w unitCon m'
+    ~(Tup [_, r', _]) <- unpackRec ans
+    transposeAtom r r'
+    where (Monad eff _) = getType m
   _ -> error $ "transposition not implemented for: " ++ pprint expr
+
+transposeActionExpr :: Expr -> Atom -> TransposeM ()
+transposeActionExpr expr ct = case expr of
+  Decl (Let b bound) body -> do
+    ct' <- withLinVar b $ transposeActionExpr body ct
+    transposeCExpr bound ct'
+  Atom m -> transposeAction ct m
+  _ -> error $ "Unexpected expression " ++ pprint expr
+
+transposeAction :: Atom -> Atom -> TransposeM ()
+transposeAction ct ~(Con con) = case con of
+  Bind rhs (LamExpr b body) -> do
+    ct' <- withLinVar b $ transposeActionExpr body ct
+    transposeAction ct' rhs
+  Return eff x -> do
+    ct' <- emitAction $ Con $ Return (flipEff eff) x
+    transposeAtom x ct'
+  Seq (LamExpr _ _) -> error "not implemented"
+  MonadCon eff xTy l m -> case m of
+    MAsk -> void $ emitAction $ Con $ MonadCon eff' xTy l $ MTell ct
+    MTell x -> do
+      ct' <- emitAction $ Con $ MonadCon eff' xTy l $ MAsk
+      transposeAtom x ct'
+    MPut _ -> error "not implemented"
+    MGet   -> error "not implemented"
+    where eff' = flipEff eff
+  _ -> error $ "Unexpected expression" ++ pprint con
+
+flipEff :: EffectTypeP ty -> EffectTypeP ty
+flipEff (Effect lin r w s) = Effect lin w r s
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of

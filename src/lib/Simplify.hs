@@ -33,7 +33,7 @@ simplifyModuleOpts opts env (Module (_, exports) m) = Module (imports, exports) 
   where
     (ans', (_, decls)) = flip runEmbed mempty $ flip runReaderT (env, opts) $
                          flip runReaderT mempty $ simplifyModBody m
-    modBody = ModBody decls ans'
+    modBody = ModBody (map fromLetDecl decls) ans'
     imports = freeVars modBody
 
 simplifyModBody :: ModBody -> SimplifyM TopEnv

@@ -60,11 +60,16 @@ instance IsModuleBody FModBody where
     where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
 
 instance IsModuleBody ModBody where
-  checkModuleBody env (ModBody decls result) = do
+  -- TODO: find a better way to decide which errors are compiler errors
+  checkModuleBody env (ModBody decls result) = asCompilerErr $ do
     runTypeM (env <> topTypeEnv result) $ do
       env' <- catFold checkDecl decls
       void $ extendR env' $ traverse checkTyOrKind (topSubstEnv result)
     return $ topTypeEnv result
+
+asCompilerErr :: Except a -> Except a
+asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
+asCompilerErr (Right x) = Right x
 
 substEnvType :: SubstEnv -> TypeEnv
 substEnvType env = fmap getTyOrKind env

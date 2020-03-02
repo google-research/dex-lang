@@ -33,7 +33,7 @@ normalizeModule (Module ty (FModBody decls tySub)) =
     tySubTop = TopEnv (substEnvType tySub') tySub' mempty
 
 runNormM :: NormM a -> SubstEnv -> (a, [Decl])
-runNormM m env = (ans, decls)
+runNormM m env = (ans, map fromLetDecl decls)
   where (ans, (_, decls)) = runEmbed (runReaderT m env) mempty
 
 normalizeTopDecl :: FDecl -> NormM (TopEnv, SubstEnv)

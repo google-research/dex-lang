@@ -212,7 +212,10 @@ doMSnd :: Monad m => m b -> a -> m (a, b)
 doMSnd m x = do { y <- m; return (x, y) }
 
 freshMonadType :: InferM Type
-freshMonadType = liftM2 Monad (liftM4 Effect lin freshQ freshQ freshQ) freshQ
+freshMonadType = liftM2 Monad freshEffect freshQ
+
+freshEffect :: InferM EffectType
+freshEffect = liftM4 Effect lin freshQ freshQ freshQ
   where lin = freshInferenceVar Multiplicity
 
 annotPat :: Pat -> InferM Pat
