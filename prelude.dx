@@ -167,66 +167,48 @@ lensCompose l1 l2 = %lensCompose(l1, l2)
 lensId :: Lens a a
 lensId = %lensId()
 
-'Monadic primitives
+'Effective primitives
 
-asks :: A r w::VS s a . Lens r a -> Monad r w s a
+asks :: A r w::VS s a . Lens r a -> {r, w, s} a
 asks l = %ask(l)
 
-ask :: A r w::VS s . Monad r w s r
-ask = asks lensId
+ask :: A r w::VS s . () -> {r, w, s} r
+ask () = asks lensId
 
-tells :: A r w::VS s a::VS . Lens w a -> a -> Monad r w s ()
+tells :: A r w::VS s a::VS . Lens w a -> a -> {r, w, s} ()
 tells l x = %tell(l, x)
 
-tell :: A r w::VS s . w -> Monad r w s ()
+tell :: A r w::VS s . w -> {r, w, s} ()
 tell w = tells lensId w
 
-gets :: A r w::VS s a. Lens s a -> Monad r w s a
+gets :: A r w::VS s a. Lens s a -> {r, w, s} a
 gets l = %get(l)
 
-get :: A r w::VS s . Monad r w s s
-get = gets lensId
+get :: A r w::VS s . () -> {r, w, s} s
+get () = gets lensId
 
-puts :: A r w::VS s a . Lens s a -> a -> Monad r w s ()
+puts :: A r w::VS s a . Lens s a -> a -> {r, w, s} ()
 puts l x = %put(l, x)
 
-put :: A r w::VS s . s -> Monad r w s ()
+put :: A r w::VS s . s -> {r, w, s} ()
 put s = puts lensId s
 
-run :: A r w::VS s a . r -> s -> Monad r w s a -> (a, w, s)
-run r s m = %run(r, s, m)
+run :: A r w::VS s a . r -> s -> (() -> {r, w, s} a) -> (a, w, s)
+run r s f = %run(r, s, lam (). f ())
 
-return :: A r w::VS s a . a -> Monad r w s a
+return :: A r w::VS s a . a -> {r, w, s} a
 return x = %return(x)
-
-bind :: A r w::VS s a b. Monad r w s a -> (a -> Monad r w s b) -> Monad r w s b
-bind m f = x <- m; f x
-
--- TODO: linearity polymorphism would avoid this parallel linear universe
-
-asksL :: A r w::VS s a . Lens r a -> LinMonad r w s a
-asksL l = %ask(l)
-
-askL :: A r w::VS s . LinMonad r w s r
-askL = asksL lensId
-
-runL :: A r w::VS s a . (r, s) --o LinMonad r w s a -> (a, w, s)
-runL (r, s) m = %run(r, s, m)
 
 'State-carrying loop constructs
 
-seq :: (n -> Monad r w s a) -> Monad r w s (n=>a)
-seq f = %seq(lam i. f i)
-
 scan :: A n::Ix a::Data b .  a -> (n->a->(a, b)) -> (a, n=>b)
 scan x0 fs =
-  (ys, (), xOut) = run () x0 $ seq $
-    lam i.
-      c <- get
+   (ys, (), xOut) = run () x0 $ lam (). for i.
+      c = get ()
       (c', y) = fs i c
-      _ <- put c'
+      _ = put c'
       return y
-  (xOut, ys)
+   (xOut, ys)
 
 fold :: A n::Ix a::Data . a -> (n->a->a) -> a
 fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
@@ -249,7 +231,6 @@ sum xs = fold 0.0 (lam i c. c + xs.i)
 isum :: n=>Int -> Int
 isum xs = fold 0 lam i c. iadd c xs.i
 
--- TODO: make this a builtin for efficiency
 size :: A n::Ix. Int
 size = %idxSetSize(@n)
 
@@ -311,7 +292,7 @@ randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
--- 'min / max etc
+'min / max etc
 
 minby :: A a::Data. (a->Real)->a->a->a
 minby f x y = select ((f x) < (f y)) x y

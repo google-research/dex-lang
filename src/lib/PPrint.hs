@@ -18,7 +18,6 @@ import Data.String
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
-import Data.Foldable (toList)
 
 import Env
 import Syntax
@@ -63,12 +62,12 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrowType l a b -> parens $ recur a <+> arrStr l <+> recur b
+  ArrowType l a (Pure, b) -> parens $ recur a <+> arrStr l <+> recur b
+  ArrowType l a (eff , b) -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   ArrayType shape b -> p b <> p shape
   TypeApp f xs -> recur f <+> hsep (map recur xs)
-  Monad eff a -> "Monad" <+> hsep (map recur (toList eff)) <+> recur a
   Lens a b    -> "Lens" <+> recur a <+> recur b
   Forall []    t -> prettyTyDepth d t
   Forall kinds t -> header <+> prettyTyDepth (d + n) t
@@ -79,17 +78,22 @@ prettyTyDepth d ty = case ty of
           binders = map p $ zipWith (:>) boundvars kinds
   TypeAlias _ _ -> "<type alias>"  -- TODO
   IdxSetLit i -> p i
-  Mult l      -> p (show l)
-  NoAnn       -> ""
-  where recur = prettyTyDepth d
+  Lin    -> "Lin"
+  NonLin -> "NonLin"
+  Pure   -> "Pure"
+  Effect r w s -> "{" <> recur r <> "," <+> recur w <> "," <+> recur s <> "}"
+  NoAnn  -> ""
+  where
+    recur = prettyTyDepth d
 
-instance Pretty ty => Pretty (EffectTypeP ty) where
-  pretty (Effect _ r w s) = "[" <> p r <+> p w <+> p s <> "]"
+    arrStr :: Type -> Doc ann
+    arrStr Lin = "--o"
+    arrStr _   = "->"
 
 tvars :: Int -> Int -> Name
 tvars d i = fromString s
   where s = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
-                                 | otherwise -> "#ERR#"
+                                 | otherwise -> "#ERR#" ++ show i'
 
 instance Pretty BaseType where
   pretty t = case t of
@@ -144,7 +148,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (ArrayGep x i) = parens (p x) <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
-  pretty (MonadRun r s m) = "%run" <+> align (p r <+> p s <> hardline <> p m)
+  -- pretty (MonadRun r s m) = "%run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
   pretty op = prettyExprDefault (OpExpr op)
 
@@ -154,8 +158,8 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (RecCon r) = p r
   pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
   pretty (AsIdx n i) = p i <> "@" <> p n
-  pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
-    where (v, body) = prettyLam f
+  -- pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
+  --   where (v, body) = prettyLam f
   pretty (ArrayRef array) = p array
   pretty con = prettyExprDefault (ConExpr con)
 
@@ -188,7 +192,8 @@ instance Pretty Kind where
     []  -> ""
     [c] -> p c
     _   -> tupled $ map p cs
-  pretty Multiplicity = "Mult"
+  pretty MultKind = "Mult"
+  pretty EffectKind = "Effect"
 
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =
@@ -211,10 +216,6 @@ instance Pretty Atom where
     Var (x:>_)  -> p x
     TLam ks body -> "tlam" <+> p ks <+> "." <+> p body
     Con con -> p (ConExpr con)
-
-arrStr :: Type -> Doc ann
-arrStr (Mult Lin) = "--o"
-arrStr _          = "->"
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x

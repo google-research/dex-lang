@@ -7,7 +7,7 @@
 module ParseUtil (runTheParser, sc, blankLines, stringLiteral, failIf,
                   space, num, uint, lexeme, symbol, parens, brackets, Parser,
                   emptyLines, nonBlankLines, outputLines, withPos, withSource,
-                  getLineNum, mayBreak, mayNotBreak) where
+                  getLineNum, mayBreak, mayNotBreak, bracketed) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -77,11 +77,14 @@ lexeme = L.lexeme sc
 symbol :: String -> Parser ()
 symbol s = void $ L.symbol sc s
 
+bracketed :: String -> String -> Parser a -> Parser a
+bracketed left right p = between (mayBreak (symbol left)) (symbol right) $ mayBreak p
+
 parens :: Parser a -> Parser a
-parens p = between (mayBreak (symbol "(")) (symbol ")") $ mayBreak p
+parens p = bracketed "(" ")" p
 
 brackets :: Parser a -> Parser a
-brackets p = between (mayBreak (symbol "[")) (symbol "]") $ mayBreak p
+brackets p = bracketed "[" "]" p
 
 withPos :: Parser a -> Parser (a, (Int, Int))
 withPos p = do

@@ -12,7 +12,7 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               runEmbed, fromLetDecl, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
-              makeTup, makePair, substEmbed, emitAction, buildAction) where
+              makeTup, makePair, substEmbed) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -38,14 +38,7 @@ emit :: MonadCat EmbedEnv m => CExpr -> m Atom
 emit expr = emitNamed "v" expr
 
 emitNamed :: MonadCat EmbedEnv m => Name -> CExpr -> m Atom
-emitNamed v expr = emitTo (v:>getType expr) expr
-
-emitAction :: MonadCat EmbedEnv m => Atom -> m Atom
-emitAction m = do
-  let ~(Monad _ ty) = getType m
-  v <- freshVar ("v" :> ty)
-  extend $ asSnd [Right (v, m)]
-  return $ Var v
+emitNamed v expr = emitTo (v:>snd (getCExprType expr)) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
@@ -76,9 +69,8 @@ withBinder b f = do
       return (ans, b')
   return (ans, b', env)
 
-buildLam :: MonadCat EmbedEnv m
-         => Multiplicity -> Var -> (Atom -> m Atom) -> m Atom
-buildLam l b f = liftM (Con . Lam (Mult l)) $ buildLamExpr b f
+buildLam :: MonadCat EmbedEnv m => Mult -> Var -> (Atom -> m Atom) -> m Atom
+buildLam l b f = liftM (Con . Lam l) $ buildLamExpr b f
 
 buildLamExpr :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
 buildLamExpr b f = do
@@ -97,24 +89,6 @@ buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do
   (ans, (_, decls)) <- scoped m
   return $ wrapEmbedDecls decls ans
-
-buildAction :: (MonadCat EmbedEnv m) => m Atom -> m Atom
-buildAction m  = do
-  (ans, (_, decls)) <- scoped m
-  wrapAction decls ans
-
-wrapAction :: (MonadCat EmbedEnv m) => [EmbedDecl] -> Atom -> m Atom
-wrapAction [] x = return x
-wrapAction (Left decl : decls) x = do
-  extend (declBoundVars decl, [Left decl])
-  wrapAction decls x
-wrapAction (Right (v, m) : decls) x =
-  return $ makeBind v m $ wrapActionExpr decls x
-
-wrapActionExpr :: [EmbedDecl] -> Atom -> Expr
-wrapActionExpr [] x = Atom x
-wrapActionExpr (Left decl    : decls) x = Decl decl $ wrapActionExpr decls x
-wrapActionExpr (Right (v, m) : decls) x = Atom $ makeBind v m $ wrapActionExpr decls x
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
@@ -190,9 +164,6 @@ makeTup xs = Con $ RecCon $ Tup xs
 makePair :: Atom -> Atom -> Atom
 makePair x y = Con $ RecCon (Tup [x, y])
 
-makeBind :: Var -> Atom -> Expr -> Atom
-makeBind v m body = Con $ Bind m $ LamExpr v body
-
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
@@ -221,4 +192,4 @@ substEmbed x = do
 
 fromLetDecl :: EmbedDecl -> Decl
 fromLetDecl (Left d) = d
-fromLetDecl (Right d) = error "Not a let decl"
+fromLetDecl (Right _) = error "Not a let decl"

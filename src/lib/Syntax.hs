@@ -12,11 +12,11 @@
 {-# LANGUAGE StrictData #-}
 
 module Syntax (
-    Type (..), BaseType (..), EffectTypeP (..), EffectType,
-    Multiplicity (..), Kind (..), ClassName (..),
+    Type (..), BaseType (..), Effect, EffectiveType, Mult,
+    Kind (..), ClassName (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), MonadCon (..), LensCon (..), PrimOp (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), LensCon (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
     RuleAnn (..), CmdName (..), Val, TopEnv (..),
@@ -51,37 +51,38 @@ import Env
 
 data Type = TypeVar TVar
           | BaseType BaseType
-          | ArrowType Lin Type Type
+          | ArrowType Mult Type EffectiveType
           | IdxSetLit Int
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
           | Forall [Kind] Type
           | TypeAlias [Kind] Type
-          | Monad EffectType Type
           | Lens Type Type
           | TypeApp Type [Type]
           | BoundTVar Int
-          | Mult Multiplicity
+          | Lin
+          | NonLin
+          | Pure
+          | Effect { readerEff    :: Type
+                   , writerEff    :: Type
+                   , stateEff     :: Type }
           | NoAnn
+            deriving (Show, Eq, Generic)
+
+data Kind = TyKind [ClassName]
+          | MultKind
+          | EffectKind
             deriving (Show, Eq, Generic)
 
 data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
 type TVar = VarP Kind
 
-data EffectTypeP ty = Effect { effLin    :: ty
-                             , readerEff :: ty
-                             , writerEff :: ty
-                             , stateEff  :: ty }  deriving (Show, Eq, Generic)
-type EffectType = EffectTypeP Type
+type Mult = Type
+type Effect = Type
+type EffectiveType = (Effect, Type)
 
-data Multiplicity = Lin | NonLin  deriving (Show, Eq, Generic)
-type Lin = Type
-
-data Kind = TyKind [ClassName]
-          | Multiplicity
-            deriving (Show, Eq, Generic)
 data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 
 data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
@@ -157,11 +158,7 @@ data PrimCon ty e lam =
       | Lam ty lam
       | RecCon (Record e)
       | AsIdx Int e
-      | MonadCon (EffectTypeP ty) ty e (MonadCon e)
-      | Return (EffectTypeP ty) e
-      | Bind e lam
       | LensCon (LensCon ty e)
-      | Seq lam
       | AFor ty e
       | AGet e
       | ArrayRef Array
@@ -176,7 +173,6 @@ data LitVal = IntLit  Int
 
 data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
 
-data MonadCon e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
 data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
                     deriving (Show, Eq, Generic)
 
@@ -191,12 +187,17 @@ data PrimOp ty e lam =
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
-      | MonadRun e e e | LensGet e e
+      | PrimEffect ty ty e (PrimEffect e)
+      | Return ty e
+      | RunEffect e e lam
+      | LensGet e e
       | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
       | NewtypeCast ty e
         deriving (Show, Eq, Generic)
+
+data PrimEffect e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
 
 data VSpaceOp e = VZero | VAdd e e deriving (Show, Eq, Generic)
 data ScalarBinOp = IAdd | ISub | IMul | ICmp CmpOp | Pow
@@ -230,22 +231,20 @@ builtinNames = M.fromList
   , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
   , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
-  , ("run"             , OpExpr $ MonadRun () () ())
+  , ("return"          , OpExpr $ Return () ())
+  , ("run"             , OpExpr $ RunEffect () () ())
   , ("lensGet"         , OpExpr $ LensGet () ())
-  , ("ask"        , ConExpr $ MonadCon eff () () $ MAsk)
-  , ("tell"       , ConExpr $ MonadCon eff () () $ MTell ())
-  , ("get"        , ConExpr $ MonadCon eff () () $ MGet)
-  , ("put"        , ConExpr $ MonadCon eff () () $ MPut  ())
-  , ("return"     , ConExpr $ Return eff ())
   , ("idxAsLens"  , ConExpr $ LensCon $ IdxAsLens () ())
   , ("lensCompose", ConExpr $ LensCon $ LensCompose () ())
   , ("lensId"     , ConExpr $ LensCon $ LensId ())
-  , ("seq"        , ConExpr $ Seq ())
-  , ("todo"       , ConExpr $ Todo ())]
+  , ("todo"       , ConExpr $ Todo ())
+  , ("ask"        , OpExpr $ PrimEffect () () () $ MAsk)
+  , ("tell"       , OpExpr $ PrimEffect () () () $ MTell ())
+  , ("get"        , OpExpr $ PrimEffect () () () $ MGet)
+  , ("put"        , OpExpr $ PrimEffect () () () $ MPut  ()) ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
-    eff = Effect () () () ()
 
 strToName :: String -> Maybe PrimName
 strToName s = M.lookup s builtinNames
@@ -427,10 +426,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-(-->) = ArrowType (Mult NonLin)
+a --> b = ArrowType NonLin a (Pure, b)
 
 (--@) :: Type -> Type -> Type
-(--@) = ArrowType (Mult Lin)
+a --@ b = ArrowType Lin a (Pure, b)
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -492,18 +491,21 @@ instance HasVars Type where
   freeVars ty = case ty of
     BaseType _ -> mempty
     TypeVar v  -> v @> T (varAnn v)
-    ArrowType l a b -> freeVars l <> freeVars a <> freeVars b
+    ArrowType l a (eff, b) -> freeVars l <> freeVars eff
+                           <> freeVars a <> freeVars b
     TabType a b -> freeVars a <> freeVars b
     ArrayType _ _ -> mempty
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
     Forall    _ body -> freeVars body
     TypeAlias _ body -> freeVars body
-    Monad eff a -> foldMap freeVars eff <> freeVars a
     Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
     BoundTVar _ -> mempty
-    Mult _      -> mempty
+    Lin         -> mempty
+    NonLin      -> mempty
+    Pure        -> mempty
+    Effect r w s -> freeVars r <> freeVars w <> freeVars s
     NoAnn       -> mempty
 
 instance HasVars b => HasVars (VarP b) where
@@ -542,8 +544,7 @@ instance HasVars Expr where
     Atom atom      -> freeVars atom
 
 declBoundVars :: Decl -> Env ()
-declBoundVars decl = case decl of
-  Let b _ -> b@>()
+declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
   freeVars (LamExpr b body) = freeVars b <> (freeVars body `envDiff` (b@>()))
@@ -598,6 +599,8 @@ instance TraversableExpr PrimExpr where
 
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
+    -- App has effects sometimes and not other times. it's a good argument for
+    -- not distinguishing PrimOp and PrimCon
     App ty e1 e2         -> liftA3 App (fT ty) (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
@@ -612,7 +615,13 @@ instance TraversableExpr PrimOp where
     VSpaceOp ty (VAdd e1 e2) -> liftA2 VSpaceOp (fT ty) (liftA2 VAdd (fE e1) (fE e2))
     Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
-    MonadRun r s m       -> liftA3  MonadRun (fE r) (fE s) (fE m)
+    PrimEffect eff t l m -> liftA3 PrimEffect (fT eff) (fT t) (fE l) <*> (case m of
+       MAsk    -> pure  MAsk
+       MTell e -> liftA MTell (fE e)
+       MGet    -> pure  MGet
+       MPut  e -> liftA MPut  (fE e))
+    Return eff e         -> liftA2 Return (fT eff) (fE e)
+    RunEffect r s lam    -> liftA3 RunEffect (fE r) (fE s) (fL lam)
     LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
@@ -630,18 +639,10 @@ instance TraversableExpr PrimCon where
     AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA  (AsIdx n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
-    Bind e lam  -> liftA2 Bind (fE e) (fL lam)
-    MonadCon eff t l m -> liftA3 MonadCon (traverse fT eff) (fT t) (fE l) <*> (case m of
-       MAsk    -> pure  MAsk
-       MTell e -> liftA MTell (fE e)
-       MGet    -> pure  MGet
-       MPut  e -> liftA MPut  (fE e))
-    Return eff e -> liftA2 Return (traverse fT eff) (fE e)
     LensCon l -> liftA LensCon $ case l of
       IdxAsLens ty e    -> liftA2 IdxAsLens (fT ty) (fE e)
       LensCompose e1 e2 -> liftA2 LensCompose (fE e1) (fE e2)
       LensId ty         -> liftA  LensId (fT ty)
-    Seq lam             -> liftA  Seq (fL lam)
     Todo ty             -> liftA  Todo (fT ty)
     ArrayRef ref        -> pure $ ArrayRef ref
 
@@ -665,15 +666,6 @@ instance RecTreeZip Type where
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) _ = error "Bad zip"
 
-instance Functor EffectTypeP where
-  fmap = fmapDefault
-
-instance Foldable EffectTypeP where
-  foldMap = foldMapDefault
-
-instance Traversable EffectTypeP where
-  traverse f (Effect l r w s) = Effect <$> f l <*> f r <*>  f w <*> f s
-
 instance Semigroup TopEnv where
   TopEnv e1 e2 e3 <> TopEnv e1' e2' e3' = TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')
 
@@ -685,3 +677,17 @@ instance Eq SourceBlock where
 
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
+
+instance Functor PrimEffect where
+  fmap = fmapDefault
+
+instance Foldable PrimEffect where
+  foldMap = foldMapDefault
+
+instance Traversable PrimEffect where
+  traverse f prim = case prim of
+    MAsk    -> pure  MAsk
+    MTell x -> liftA MTell (f x)
+    MGet    -> pure  MGet
+    MPut  x -> liftA MPut (f x)
+

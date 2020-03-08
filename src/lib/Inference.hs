@@ -33,7 +33,7 @@ inferModule (TopEnv tyEnv subEnv _) m = do
   checkImports tyEnv m
   let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
   let (body', tySub) = expandTyAliases tySubEnv body
-  (body'', envOut) <- runInferM tyEnv $ catTraverse inferDecl body'
+  (body'', envOut) <- runInferM tyEnv $ catTraverse (inferDecl Pure) body'
   let imports' = imports `envIntersect` tyEnv
   let exports' = exports `envIntersect` (tyEnv <> envOut <> tySubEnvType)
        where tySubEnvType = fmap (const (T (TyKind []))) tySub
@@ -58,15 +58,16 @@ checkImports env m = do
   where (imports, exports) = moduleType m
 
 inferExpr :: FExpr -> Except (Type, FExpr)
-inferExpr expr = runInferM mempty $ infer expr
+inferExpr = undefined -- expr = runInferM mempty $ infer expr
 
-inferDecl :: FDecl -> InferM (FDecl, TypeEnv)
-inferDecl decl = case decl of
+-- TODO: top decl version that checks no effects
+inferDecl :: Effect -> FDecl -> InferM (FDecl, TypeEnv)
+inferDecl eff decl = case decl of
   LetMono p bound -> do
     -- TOOD: better errors - infer polymorphic type to suggest annotation
     liftEither $ checkPatShadow p
     p' <- annotPat p
-    bound' <- check bound (getType p')
+    bound' <- check bound (eff, getType p')
     return (LetMono p' bound', foldMap asEnv p')
   LetPoly b@(_:> ty) tlam -> do
     tlam' <- checkTLam ty tlam
@@ -77,23 +78,27 @@ inferDecl decl = case decl of
     return (FRuleDef ann annTy tlam', mempty)
   TyDef _ _ -> error "Shouldn't have TyDef left"
 
-infer :: FExpr -> InferM (Type, FExpr)
-infer expr = do ty <- freshQ
-                expr' <- check expr ty
-                return (ty, expr')
-
-check :: FExpr -> Type -> InferM FExpr
-check expr reqTy = case expr of
+check :: FExpr -> EffectiveType -> InferM FExpr
+check expr reqEffTy@(reqEff, reqTy) = case expr of
   FDecl decl body -> do
-    (decl', env') <- inferDecl decl
-    body' <- extendR env' $ check body reqTy
+    declEff <- freshInferenceVar EffectKind
+    (decl', env') <- inferDecl declEff decl
+    declEff' <- zonk declEff
+    case declEff' of
+      Pure         -> return ()
+      Effect _ _ _ -> constrainEq reqEff declEff' (pprint decl)
+      -- TODO: think harder about this
+      _ -> constrainEq Pure declEff' "(getting here might mean a compiler bug)"
+    body' <- extendR env' $ check body reqEffTy
     return $ FDecl decl' body'
   FVar v -> do
+    constrainPure
     ty <- asks $ fromL . (! v)
     case ty of
-      Forall _ _ -> check (fTyApp v []) reqTy
+      Forall _ _ -> check (fTyApp v []) reqEffTy
       _ -> constrainReq ty >> return (FVar (varName v :> ty))
   FPrimExpr (OpExpr (TApp (FVar v) ts)) -> do
+    constrainPure
     ty <- asks $ fromL . (! v)
     case ty of
       Forall kinds body -> do
@@ -102,40 +107,48 @@ check expr reqTy = case expr of
         constrainReq (instantiateTVs ts' body)
         return $ fTyApp (varName v :> ty) ts'
       _ -> throw TypeErr "Unexpected type application"
-  FPrimExpr prim -> do
-    primTy <- generateSubExprTypes prim
+  FPrimExpr (OpExpr op) -> do
+    opTy <- generateOpSubExprTypes op
     -- TODO: don't ignore explicit annotations (via `snd`)
-    let types = fmapExpr primTy snd snd snd
-    ansTy <- traversePrimExprType types
+    (eff, ansTy) <- traverseOpType (fmapExpr opTy snd snd snd)
+                      (\t1 t2 -> constrainEq t1 t2 (pprint expr))
+                      (\_ _ -> return ())
+    constrainEq reqEff eff (pprint expr)
+    op' <- traverseExpr opTy
+      (uncurry checkAnn) (uncurry checkPure) (uncurry checkLam)
+    constrainReq ansTy
+    return $ FPrimExpr $ OpExpr $ op'
+  FPrimExpr (ConExpr con) -> do
+    conTy <- generateConSubExprTypes con
+    -- TODO: don't ignore explicit annotations (via `snd`)
+    ansTy <- traverseConType (fmapExpr conTy snd snd snd)
                (\t1 t2 -> constrainEq t1 t2 (pprint expr))
                (\_ _ -> return ())
-    let constrainArgs = liftM FPrimExpr $ traverseExpr primTy
-                          (uncurry checkAnn) (uncurry check) (uncurry checkLam)
-    if constrainTopDown prim
-      then constrainReq ansTy >> constrainArgs
-      else constrainArgs      <* constrainReq ansTy
+    constrainReq ansTy
+    con' <- traverseExpr conTy
+      (uncurry checkAnn) (uncurry checkPure) (uncurry checkLam)
+    return $ FPrimExpr $ ConExpr con'
   Annot e annTy -> do
     -- TODO: check that the annotation is a monotype
     constrainReq annTy
-    check e reqTy
+    check e reqEffTy
   SrcAnnot e pos -> do
-    e' <- addSrcContext (Just pos) $ check e reqTy
+    e' <- addSrcContext (Just pos) $ check e reqEffTy
     return $ SrcAnnot e' pos
   where
-    constrainReq ty = constrainEq reqTy ty (pprint expr)
+    constrainReq ty = constrainEq reqTy  ty    (pprint expr)
+    constrainPure   = constrainEq reqEff Pure  (pprint expr)
+
+checkPure :: FExpr -> Type -> InferM FExpr
+checkPure expr ty = check expr (Pure, ty)
 
 checkTLam :: Type -> FTLam -> InferM FTLam
 checkTLam ~(Forall _ tyBody) (FTLam tbs tlamBody) = do
- let tyBody' = instantiateTVs (map TypeVar tbs) tyBody
+ let tyBody' = (Pure, instantiateTVs (map TypeVar tbs) tyBody)
  let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
  liftM (FTLam tbs) $ checkLeaks tbs $ extendR env $ check tlamBody tyBody'
 
-constrainTopDown :: PrimExpr e ty lam -> Bool
-constrainTopDown expr = case expr of
-  OpExpr _ -> False
-  ConExpr    _ -> True
-
-checkLam :: FLamExpr -> (Type, Type) -> InferM FLamExpr
+checkLam :: FLamExpr -> (Type, EffectiveType) -> InferM FLamExpr
 checkLam (FLamExpr p body) (a, b) = do
   p' <- checkPat p a
   body' <- extendR (foldMap asEnv p') (check body b)
@@ -166,57 +179,64 @@ checkAnn :: Type -> Type -> InferM Type
 checkAnn NoAnn ty = return ty
 checkAnn ty' ty   = constrainEq ty' ty "annotation" >> return ty
 
-generateSubExprTypes :: PrimExpr ty e lam
-                     -> InferM (PrimExpr (ty, Type) (e, Type) (lam, (Type, Type)))
-generateSubExprTypes (ConExpr op) = liftM ConExpr $ case op of
+generateConSubExprTypes :: PrimCon ty e lam
+  -> InferM (PrimCon (ty, Type) (e, Type) (lam, (Type, EffectiveType)))
+generateConSubExprTypes con = case con of
   Lam l lam -> do
-    l' <- freshInferenceVar Multiplicity
-    a <- freshQ
-    b <- freshQ
+    l' <- freshInferenceVar MultKind
+    (a, b) <- freshLamType
     return $ Lam (l,l') (lam, (a,b))
   LensCon (LensCompose l1 l2) -> do
     a <- freshQ
     b <- freshQ
     c <- freshQ
     return $ LensCon $ LensCompose (l1, Lens a b) (l2, Lens b c)
-  Bind m1 lam -> do
-    a <- freshQ
-    m1' <- freshMonadType
-    m2' <- freshMonadType
-    return $ Bind (m1,m1') (lam, (a,m2'))
-  Seq lam -> do
-    m <- freshMonadType
-    n <- freshQ
-    return $ Seq (lam, (n, m))
-  _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
-generateSubExprTypes (OpExpr  op) = liftM OpExpr $ case op of
+  _ -> traverseExpr con (doMSnd freshQ) (doMSnd freshQ) (doMSnd freshLamType)
+
+generateOpSubExprTypes :: PrimOp ty e lam
+  -> InferM (PrimOp (ty, Type) (e, Type) (lam, (Type, EffectiveType)))
+generateOpSubExprTypes op = case op of
   App l f x -> do
-    l' <- freshInferenceVar Multiplicity
-    a <- freshQ
-    b <- freshQ
+    l'  <- freshInferenceVar MultKind
+    (a, b) <- freshLamType
     return $ App (l,l') (f, ArrowType l' a b) (x, a)
   TabGet xs i -> do
     n <- freshQ
     a <- freshQ
     return $ TabGet (xs, TabType n a) (i, n)
-  MonadRun r s m -> do
-    ~m'@(Monad (Effect _ r' _ s') _) <- freshMonadType
-    return $ MonadRun (r,r') (s,s') (m,m')
   LensGet x l -> do
     a <- freshQ
     b <- freshQ
     return $ LensGet (x,a) (l, Lens a b)
-  _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd (liftM2 (,) freshQ freshQ))
+  PrimEffect eff a l m -> do
+    eff' <- freshEffect
+    a'   <- freshQ
+    l'   <- freshQ
+    m'   <- traverse (doMSnd freshQ) m
+    return $ PrimEffect (eff, eff') (a, a') (l, l') m'
+  RunEffect r s f -> do
+    r' <- freshQ
+    s' <- freshQ
+    f' <- liftM2 (,) freshQ $ liftM2 (,) freshEffect freshQ
+    return $ RunEffect (r,r') (s,s') (f,f')
+  Return  eff a -> do
+    eff' <- freshEffect
+    a'   <- freshQ
+    return $ Return (eff, eff') (a, a')
+  _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd freshLamType)
+
+freshLamType :: InferM (Type, EffectiveType)
+freshLamType = do
+  a <- freshQ
+  b <- freshQ
+  eff <- freshInferenceVar EffectKind
+  return (a, (eff, b))
+
+freshEffect :: InferM Type
+freshEffect = liftM3 Effect freshQ freshQ freshQ
 
 doMSnd :: Monad m => m b -> a -> m (a, b)
 doMSnd m x = do { y <- m; return (x, y) }
-
-freshMonadType :: InferM Type
-freshMonadType = liftM2 Monad freshEffect freshQ
-
-freshEffect :: InferM EffectType
-freshEffect = liftM4 Effect lin freshQ freshQ freshQ
-  where lin = freshInferenceVar Multiplicity
 
 annotPat :: Pat -> InferM Pat
 annotPat pat = traverse annotBinder pat
@@ -241,18 +261,21 @@ runSolverT :: (MonadError Err m, TySubst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m
-   applyNonlinDefault
+   applyDefaults
    ans' <- zonk ans
    vs <- looks $ envNames . unsolved
    throwIf (not (null vs)) TypeErr $ "Ambiguous type variables: "
                                    ++ pprint vs ++ "\n\n" ++ pprint ans
    return ans'
 
-applyNonlinDefault :: MonadCat SolverEnv m => m ()
-applyNonlinDefault = do
+applyDefaults :: MonadCat SolverEnv m => m ()
+applyDefaults = do
   vs <- looks unsolved
-  let multVars = filter isMult $ map (uncurry (:>)) $ envPairs vs
-  extend $ SolverEnv mempty $ foldMap (\v -> v @> Mult NonLin) multVars
+  flip mapM_ (envPairs vs) $ \(v, k) -> case k of
+    MultKind   -> addSub v NonLin
+    EffectKind -> addSub v Pure
+    _ -> return ()
+  where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
 solveLocal :: (MonadCat SolverEnv m, MonadError Err m, TySubst a)
            => m a -> m a
@@ -308,11 +331,9 @@ unify t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, TypeVar v) | isQ v -> bindQ v t
     (TypeVar v, t) | isQ v -> bindQ v t
-    (ArrowType l a b, ArrowType l' a' b') -> unify l l' >> unify a a' >> unify b b'
+    (ArrowType l a (eff, b), ArrowType l' a' (eff', b')) ->
+      unify l l' >> unify a a' >> unify b b' >> unify eff eff'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
-    (Monad eff a, Monad eff' a') -> do
-      zipWithM_ unify (toList eff) (toList eff')
-      unify a a'
     (Lens a b, Lens a' b') -> unify a a' >> unify b b'
     (RecType r, RecType r') ->
       case zipWithRecord unify r r' of
@@ -320,6 +341,7 @@ unify t1 t2 = do
         Just unifiers -> void $ sequence unifiers
     (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
       unify f f' >> zipWithM_ unify xs xs'
+    (Effect r w s, Effect r' w' s') -> unify r r' >> unify w w' >> unify s s'
     _ -> throw TypeErr ""
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => TVar -> Type -> m ()
@@ -329,10 +351,6 @@ bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
 isQ :: TVar -> Bool
 isQ (v :> _) | nameSpace v == InferenceName = True
              | otherwise = False
-
-isMult :: TVar -> Bool
-isMult (_ :> TyKind _    ) = False
-isMult (_ :> Multiplicity) = True
 
 occursIn :: TVar -> Type -> Bool
 occursIn v t = v `isin` freeVars t

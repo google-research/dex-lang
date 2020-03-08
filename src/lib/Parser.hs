@@ -211,7 +211,6 @@ term =   parenExpr
 
 declOrExpr :: Parser FExpr
 declOrExpr =   declExpr
-           <|> doExpr
            <|> expr <?> "decl or expr"
 
 parenExpr :: Parser FExpr
@@ -255,18 +254,6 @@ tyArg = symbol "@" >> tauTypeAtomic
 declExpr :: Parser FExpr
 declExpr = liftM2 FDecl (mayNotBreak decl <* declSep) declOrExpr
 
-doExpr :: Parser FExpr
-doExpr = do
-  (p, bound) <- mayNotBreak doBind <* declSep
-  body <- declOrExpr
-  return $ fPrimCon $ Bind bound (FLamExpr p body)
-
-doBind :: Parser (Pat, FExpr)
-doBind = do
-  p <- try $ pat <* symbol "<-"
-  body <- expr
-  return (p, body)
-
 withSourceAnn :: Parser FExpr -> Parser FExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
@@ -306,8 +293,8 @@ rawLamExpr = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
 lamExpr = do
-  ann <-    (symbol "lam"  >> return NoAnn)
-        <|> (symbol "llam" >> return (Mult Lin))
+  ann <-    NoAnn <$ symbol "lam"
+        <|> Lin   <$ symbol "llam"
   ps <- pat `sepBy` sc
   argTerm
   body <- declOrExpr
@@ -508,7 +495,7 @@ addClassVars c vs ~b@(v:>(TyKind cs))
 
 idxSetVars :: Type -> [Name]
 idxSetVars ty = case ty of
-  ArrowType _ a b -> recur a <> recur b
+  ArrowType _ a (_, b) -> recur a <> recur b
   TabType a b   -> envNames (freeVars a) <> recur b
   RecType r     -> foldMap recur r
   _             -> []
@@ -516,7 +503,7 @@ idxSetVars ty = case ty of
 
 dataVars :: Type -> [Name]
 dataVars ty = case ty of
-  ArrowType _ a b -> recur a <> recur b
+  ArrowType _ a (_, b) -> recur a <> recur b
   TabType _ b   -> envNames (freeVars b)
   RecType r     -> foldMap recur r
   _             -> []
@@ -533,9 +520,21 @@ tauType :: Parser Type
 tauType = makeExprParser (sc >> tauType') typeOps
   where
     typeOps = [ [tyAppRule]
-              , [InfixR (symbol "=>" >> return TabType)]
-              , [InfixR (symbol "->"  >> return (ArrowType (Mult NonLin))),
-                 InfixR (symbol "--o" >> return (ArrowType (Mult Lin)))]]
+              , [InfixR (TabType <$ symbol "=>")]
+              , [InfixR arrowType] ]
+
+arrowType :: Parser (Type -> Type -> Type)
+arrowType = do
+  lin <-  NonLin <$ symbol "->"
+      <|> Lin    <$ symbol "--o"
+  eff <- effectType <|> return Pure
+  return $ \a b -> ArrowType lin a (eff, b)
+
+-- TODO: linearity
+effectType :: Parser Effect
+effectType = do
+  bracketed "{" "}" $ liftM3 Effect t (comma >> t) (comma >> t)
+  where t = tauTypeAtomic
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
@@ -548,7 +547,6 @@ applyType ty arg = TypeApp ty [arg]
 
 tauType' :: Parser Type
 tauType' =   parenTy
-         <|> monadType
          <|> lensType
          <|> typeName
          <|> typeVar
@@ -565,12 +563,6 @@ localTypeVar :: Parser Type
 localTypeVar = do
   v <- name LocalTVName identifier
   return $ TypeVar (v:> TyKind [])
-
-monadType :: Parser Type
-monadType =
-      (symbol "Monad"    >> liftM2 Monad (liftM3 (Effect (Mult NonLin)) t t t) t)
-  <|> (symbol "LinMonad" >> liftM2 Monad (liftM3 (Effect (Mult Lin   )) t t t) t)
-  where t = tauTypeAtomic
 
 lensType :: Parser Type
 lensType = symbol "Lens" >> liftM2 Lens t t

@@ -1,29 +1,29 @@
 :t lam x. x
 > Type error:Ambiguous type variables: [?_3]
 >
-> ([*ans*::? = (lam x::?_4 . x)], (*ans* @> L ?))
+> ([*ans*::? = (lam x::?_5 . x)], (*ans* @> L ?))
 
 :t lam x. sum for i. x.i
-> Type error:Ambiguous type variables: [?_8]
+> Type error:Ambiguous type variables: [?_10]
 >
-> ([*ans*::? = (lam x::?_4 . sum @?_8 for i::?_11 . (x).(i))], (*ans* @> L ?))
+> ([*ans*::? = (lam x::?_5 . sum @?_10 for i::?_14 . (x).(i))], (*ans* @> L ?))
 
 :t lam f x y. f y x
-> Type error:Ambiguous type variables: [?_11, ?_14, ?_17]
+> Type error:Ambiguous type variables: [?_13, ?_17, ?_21]
 >
-> ( [*ans*::? = (lam f::?_4 . (lam x::?_8 . (lam y::?_12 . f y x)))]
+> ( [*ans*::? = (lam f::?_5 . (lam x::?_10 . (lam y::?_15 . f y x)))]
 > , (*ans* @> L ?) )
 
 :t lam x. for i j. x.j.i
-> Type error:Ambiguous type variables: [?_9, ?_11, ?_13]
+> Type error:Ambiguous type variables: [?_11, ?_14, ?_16]
 >
-> ( [*ans*::? = (lam x::?_4 . for i::?_7 . for j::?_10 . ((x).(j)).(i))]
+> ( [*ans*::? = (lam x::?_5 . for i::?_9 . for j::?_13 . ((x).(j)).(i))]
 > , (*ans* @> L ?) )
 
 :t lam f x. f x
-> Type error:Ambiguous type variables: [?_7, ?_10]
+> Type error:Ambiguous type variables: [?_8, ?_12]
 >
-> ([*ans*::? = (lam f::?_4 . (lam x::?_8 . f x))], (*ans* @> L ?))
+> ([*ans*::? = (lam f::?_5 . (lam x::?_10 . f x))], (*ans* @> L ?))
 
 :t myid :: a -> a
    myid x = x
@@ -128,9 +128,9 @@ p2 = 1
 >      ^
 
 :t lam x. for (i,j). x.i.j
-> Type error:Ambiguous type variables: [?_6, ?_9, ?_11]
+> Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
 >
-> ( [*ans*::? = (lam x::?_4 . for (i::?_7, j::?_8) . ((x).(i)).(j))]
+> ( [*ans*::? = (lam x::?_5 . for (i::?_9, j::?_10) . ((x).(i)).(j))]
 > , (*ans* @> L ?) )
 
 idfun :: a -> a

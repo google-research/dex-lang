@@ -29,8 +29,9 @@ import Record
 import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
+type EffectContext = Maybe (IAtom, IAtom, IAtom)
 type EmbedEnv = (Scope, ImpProg)
-type ImpM = ReaderT ImpEnv (Cat EmbedEnv)
+type ImpM = ReaderT ImpEnv (ReaderT EffectContext (Cat EmbedEnv))
 
 data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
@@ -38,7 +39,8 @@ type IAtom = IAtomP IExpr
 toImpModule :: TopEnv -> Module -> ImpModule
 toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
   where ((vs, result), (_, prog)) =
-          runCat (runReaderT (toImpModBody env imports m) mempty) mempty
+          flip runCat mempty $ flip runReaderT Nothing $
+             flip runReaderT mempty $ toImpModBody env imports m
 
 toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
 toImpModBody topEnv imports (ModBody decls result) = do
@@ -103,13 +105,33 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  MonadRun rArgs sArgs m -> do
-    rArgs' <- toImpAtom rArgs
-    sArgs' <- toImpAtom sArgs
-    copyIAtom sDests sArgs'
-    mapM_ initializeZero wDests
-    toImpAction (rArgs', wDests, sDests) aDests m
-    where (ICon (RecCon (Tup [aDests, wDests, sDests]))) = dests
+  RunEffect r s (LamExpr _ body) -> do
+    r' <- toImpAtom r
+    s' <- toImpAtom s
+    copyIAtom sDest s'
+    mapM_ initializeZero wDest
+    withEffectContext (Just (r', wDest, sDest)) $ toImpExpr aDest body
+    where (ICon (RecCon (Tup [aDest, wDest, sDest]))) = dests
+  Return _ x -> do
+    x' <- toImpAtom x
+    copyIAtom dests x'
+  PrimEffect _ _ l m -> do
+    ~(Just (rVals, wDests, sDests)) <- lift ask
+    case m of
+      MAsk -> do
+        ans <- lensGet l rVals
+        copyIAtom dests ans
+      MTell x -> do
+        x' <- toImpAtom x
+        wDests' <- lensGet l wDests
+        zipWithM_ addToDest (toList wDests') (toList x')
+      MPut x -> do
+        x' <- toImpAtom x
+        sDests' <- lensGet l sDests
+        copyIAtom sDests' x'
+      MGet -> do
+        ans <- lensGet l sDests
+        copyIAtom dests ans
   LensGet x l -> do
     x' <- toImpAtom x
     ansRefs <- lensGet l x'
@@ -149,6 +171,11 @@ withAllocs (_:>ty) body = do
   flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
   return ans
 
+withEffectContext :: EffectContext -> ImpM a -> ImpM a
+withEffectContext ctx m = do
+  env <- ask
+  lift $ local (const ctx) (runReaderT m env)
+
 makeDest :: Type -> ImpM (IAtom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty
 
@@ -164,48 +191,6 @@ makeDest' shape ty = case ty of
   RecType r   -> liftM (ICon . RecCon ) $ traverse (makeDest' shape) r
   IdxSetLit n -> liftM (ICon . AsIdx n) $ makeDest' shape (BaseType IntType)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
-
-type MContext = (IAtom, IAtom, IAtom)
-
-toImpActionExpr :: MContext -> IAtom -> Expr -> ImpM ()
-toImpActionExpr mdests dests expr = case expr of
-  Decl (Let b bound) body -> do
-    withAllocs b $ \xs-> do
-      toImpCExpr xs bound
-      extendR (b @> xs) $ toImpActionExpr mdests dests body
-  Atom m -> toImpAction mdests dests m
-  _ -> error $ "Unexpected expression " ++ pprint expr
-
-toImpAction :: MContext -> IAtom -> Atom -> ImpM ()
-toImpAction mdests@(rVals, wDests, sDests) outDests ~(Con con) = case con of
-  Bind rhs (LamExpr b body) -> do
-    withAllocs b $ \xs -> do
-      toImpAction mdests xs rhs
-      extendR (b @> xs) $ toImpActionExpr mdests outDests body
-  Return _ x -> do
-    x' <- toImpAtom x
-    copyIAtom outDests x'
-  Seq (LamExpr b body) -> do
-    n' <- typeToSize (varAnn b)
-    emitLoop n' $ \i -> do
-      let ithDest = tabGetIAtom outDests i
-      extendR (b @> asIdx n' i) $ toImpActionExpr mdests ithDest body
-  MonadCon _ _ l m -> case m of
-    MAsk -> do
-      ans <- lensGet l rVals
-      copyIAtom outDests ans
-    MTell x -> do
-      x' <- toImpAtom x
-      wDests' <- lensGet l wDests
-      zipWithM_ addToDest (toList wDests') (toList x')
-    MPut x -> do
-      x' <- toImpAtom x
-      sDests' <- lensGet l sDests
-      copyIAtom sDests' x'
-    MGet -> do
-      ans <- lensGet l sDests
-      copyIAtom outDests ans
-  _ -> error $ "Unexpected expression" ++ pprint con
 
 lensGet :: Atom -> IAtom -> ImpM IAtom
 lensGet (Con (LensCon lens)) x = case lens of

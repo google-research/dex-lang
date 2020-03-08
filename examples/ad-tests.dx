@@ -121,12 +121,12 @@ sinn#lin :: Real -> Real
 sinn#lin x = x
 > Error: variable not in scope: sinn
 
-:p
-  mId :: LinMonad Real Real () ()
-  mId =
-    x <- askL
-    y = x + x * 2.0
-    %tell(lensId, y)
-  --
-  runL (1.0, ()) mId
-> ((), 3.0, ())
+-- :p
+--   mId :: LinMonad Real Real () ()
+--   mId =
+--     x <- askL
+--     y = x + x * 2.0
+--     %tell(lensId, y)
+--   --
+--   runL (1.0, ()) mId
+-- > ((), 3.0, ())

@@ -248,29 +248,31 @@ linUnary x = linFstArg x 1.0
    f
 > (Real -> Real)
 
--- TODO: figure out how to avoid using builtins here.
-mId :: LinMonad Real Real () ()
-mId =
-  x <- askL
-  %tell(lensId, x)
+-- TODO: re-enable these
 
-runId :: Real --o Real
-runId x =
-  ((), y, ()) = runL (x, ()) mId
-  y
+-- -- TODO: figure out how to avoid using builtins here.
+-- mId :: () -> Lin {Real, Real, ()} ()
+-- mId () =
+--   x = askL
+--   %tell(lensId, x)
 
-mSq :: LinMonad Real Real () ()
-mSq =
-  x <- askL
-  %tell(lensId, x * x)
-> Linearity error: pattern spent twice: [mLin]
->
->   %tell(lensId, x * x)
->                   ^^
+-- runId :: Real --o Real
+-- runId x =
+--   ((), y, ()) = runL (x, ()) mId
+--   y
 
-badTell :: LinMonad Real Real () ()
-badTell = %tell(lensId, 1.0)
-> Linearity error: pattern never spent: mLin
->
-> badTell = %tell(lensId, 1.0)
->           ^^^^^^^^^^^^^^^^^^
+-- mSq :: LinMonad Real Real () ()
+-- mSq =
+--   x <- askL
+--   %tell(lensId, x * x)
+-- > Linearity error: pattern spent twice: [mLin]
+-- >
+-- >   %tell(lensId, x * x)
+-- >                   ^^
+
+-- badTell :: LinMonad Real Real () ()
+-- badTell = %tell(lensId, 1.0)
+-- > Linearity error: pattern never spent: mLin
+-- >
+-- > badTell = %tell(lensId, 1.0)
+-- >           ^^^^^^^^^^^^^^^^^^

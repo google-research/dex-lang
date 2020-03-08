@@ -1,78 +1,74 @@
 
-type Reader r a = Monad r  () () a
-type Writer w a = Monad () w  () a
-type State  s a = Monad () () s  a
-
-:p m :: State Int Int
-   m = get
+:p m :: () -> {(), (), Int} Int
+   m () = get ()
    run () 2 m
 > (2, (), 2)
 
-:p m :: State Int ()
-   m = put 3
+:p m :: () -> {(), (), Int} ()
+   m () = put 3
    run () 0 m
 > ((), (), 3)
 
-:p m :: Reader Int Int
-   m = ask
+:p m :: () -> {Int, (), ()} Int
+   m () = ask ()
    run 5 () m
 > (5, (), ())
 
-:p m :: Monad () () () Int
-   m = return 4
+:p m :: () -> {(), (), ()} Int
+   m () = return 4
    run () () m
 > (4, (), ())
 
 :p
-  stateAction :: Monad () () Real ()
-  stateAction =
-     x <- get
-     y <- put (x + 2.0)
-     z <- get
+  stateAction :: () -> {(), (), Real} ()
+  stateAction () =
+     x = get ()
+     y = put (x + 2.0)
+     z = get ()
      put (z * 3.0)
   --
   run () 1.0 stateAction
 > ((), (), 9.0)
 
 :p
-  rwsAction :: Monad Int Real Bool Int
-  rwsAction =
-    x <- get
-    _ <- tell 2.0
-    _ <- put (not x)
-    r <- ask
-    _ <- tell 4.0
+  rwsAction :: () -> {Int, Real, Bool} Int
+  rwsAction () =
+    x = get ()
+    _ = tell 2.0
+    _ = put (not x)
+    r = ask ()
+    _ = tell 4.0
     return (r `iadd` 2)
   --
   run 2 True rwsAction
 > (4, 6.0, False)
 
-:p m :: State (3=>Int) ()
-   m =
-     _ <- puts (idxAsLens 0@3) 10
-     _ <- puts (idxAsLens 2@3) 20
-     x <- gets (idxAsLens 0@3)
+:p m :: () -> {(), () , (3=>Int)} ()
+   m () =
+     _ = puts (idxAsLens 0@3) 10
+     _ = puts (idxAsLens 2@3) 20
+     x = gets (idxAsLens 0@3)
      puts (idxAsLens 1@3) x
    run () [0,0,0] m
 > ((), (), [10, 10, 20])
 
-:p m :: Reader (3=>Int) Int
-   m = asks (idxAsLens 1@3)
+:p m :: () -> {(3=>Int), (), ()} Int
+   m () = asks (idxAsLens 1@3)
    run [1,2,3] () m
 > (2, (), ())
 
 :p
-  m :: Monad () Real Real ()
-  m =
-    x <- get
+  m :: () -> {(), Real, Real} ()
+  m () =
+    x = get ()
     tell x
   run () 1.0 m
 > ((), 1.0, 1.0)
 
-myAction:: Monad Real Real () ()
-myAction =
-  _ <- tell 1.0
-  _ <- tell 2.0
+myAction:: () -> {Real, Real, ()} ()
+myAction () =
+  _ = tell 1.0
+  _ = tell 2.0
   return ()
 
 :p run 1.0 () myAction
