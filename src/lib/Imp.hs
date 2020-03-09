@@ -19,6 +19,7 @@ import Data.Foldable
 import Data.Traversable
 import Data.Text.Prettyprint.Doc
 
+import Parser  -- TODO fake dependence
 import Syntax
 import Env
 import Type

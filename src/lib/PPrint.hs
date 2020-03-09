@@ -62,8 +62,8 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrowType l a (Pure, b) -> parens $ recur a <+> arrStr l <+> recur b
-  ArrowType l a (eff , b) -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
+  ArrowType l a (eff , b) | isPure eff -> parens $ recur a <+> arrStr l <+> recur b
+                          | otherwise -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   ArrayType shape b -> p b <> p shape
@@ -80,8 +80,7 @@ prettyTyDepth d ty = case ty of
   IdxSetLit i -> p i
   Lin    -> "Lin"
   NonLin -> "NonLin"
-  Pure   -> "Pure"
-  Effect r w s -> "{" <> recur r <> "," <+> recur w <> "," <+> recur s <> "}"
+  Effect _ _ -> "TODO" -- "{" <> recur r <> "," <+> recur w <> "," <+> recur s <> "}"
   NoAnn  -> ""
   where
     recur = prettyTyDepth d

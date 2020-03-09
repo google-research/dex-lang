@@ -15,6 +15,7 @@ import Text.Megaparsec
 import Text.Megaparsec.Char
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
+import Data.Foldable (fold)
 
 import Env
 import Record
@@ -527,14 +528,20 @@ arrowType :: Parser (Type -> Type -> Type)
 arrowType = do
   lin <-  NonLin <$ symbol "->"
       <|> Lin    <$ symbol "--o"
-  eff <- effectType <|> return Pure
+  eff <- effectType <|> return noEffect
   return $ \a b -> ArrowType lin a (eff, b)
+
+effectRow :: Parser (EffectRow Type)
+effectRow =
+      (symbol "Reader" >> tauType >>= \t -> return (EffectRow [t] [] []))
+  <|> (symbol "Writer" >> tauType >>= \t -> return (EffectRow [] [t] []))
+  <|> (symbol "State"  >> tauType >>= \t -> return (EffectRow [] [] [t]))
 
 -- TODO: linearity
 effectType :: Parser Effect
 effectType = do
-  bracketed "{" "}" $ liftM3 Effect t (comma >> t) (comma >> t)
-  where t = tauTypeAtomic
+  effects <- bracketed "{" "}" $ effectRow `sepBy` comma
+  return $ Effect (fold effects) Nothing
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)

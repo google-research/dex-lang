@@ -17,6 +17,7 @@ import Control.Monad.Except hiding (Except)
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc
 
+import Parser  -- TODO fake dependence
 import Syntax
 import Env
 import Record

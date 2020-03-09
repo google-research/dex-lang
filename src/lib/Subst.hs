@@ -81,8 +81,13 @@ instance Subst Type where
     BoundTVar _ -> ty
     Lin         -> ty
     NonLin      -> ty
-    Pure        -> ty
-    Effect r w s -> Effect (recur r) (recur w) (recur s)
+    Effect eff t -> case t of
+      Nothing -> Effect eff' Nothing
+      Just v  -> case recur (TypeVar v) of
+        TypeVar v'            -> Effect eff' (Just v')
+        Effect eff'' t'       -> Effect (eff' <> eff'') t'
+        _ -> error "unexpected kind: expected effect kind!"
+      where eff' = fmap recur eff
     NoAnn       -> NoAnn
     where recur = subst env
 
@@ -159,8 +164,7 @@ subAtDepth d f ty = case ty of
     BoundTVar n   -> f d (Right n)
     Lin           -> Lin
     NonLin        -> NonLin
-    Pure          -> Pure
-    Effect r w s -> Effect (recur r) (recur w) (recur s)
+    Effect eff t -> Effect (fmap recur eff) t
     NoAnn         -> NoAnn
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f

@@ -1,4 +1,4 @@
--- Copyright 2019 Google LLC
+-- Copyright 2019 Google LL
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -29,7 +29,8 @@ module Syntax (
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
     fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
-    strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind)
+    strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
+    noEffect, isPure, EffectRow (..))
   where
 
 import Data.Tuple (swap)
@@ -63,12 +64,21 @@ data Type = TypeVar TVar
           | BoundTVar Int
           | Lin
           | NonLin
-          | Pure
-          | Effect { readerEff    :: Type
-                   , writerEff    :: Type
-                   , stateEff     :: Type }
+          | Effect (EffectRow Type) (Maybe TVar)
           | NoAnn
             deriving (Show, Eq, Generic)
+
+data EffectRow ty = EffectRow { readerEff :: [ty]
+                              , writerEff :: [ty]
+                              , stateEff  :: [ty] }
+                  deriving (Show, Eq, Generic)
+
+noEffect :: Type
+noEffect = Effect mempty Nothing
+
+isPure :: Type -> Bool
+isPure (Effect f Nothing) | f == mempty = True
+isPure _ = False
 
 data Kind = TyKind [ClassName]
           | MultKind
@@ -189,7 +199,9 @@ data PrimOp ty e lam =
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
       | PrimEffect ty ty e (PrimEffect e)
       | Return ty e
-      | RunEffect e e lam
+      | RunReader e lam
+      | RunWriter lam
+      | RunState e lam
       | LensGet e e
       | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
@@ -232,7 +244,9 @@ builtinNames = M.fromList
   , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
   , ("return"          , OpExpr $ Return () ())
-  , ("run"             , OpExpr $ RunEffect () () ())
+  , ("runReader"             , OpExpr $ RunReader () ())
+  , ("runWriter"             , OpExpr $ RunWriter ())
+  , ("runState"              , OpExpr $ RunState () ())
   , ("lensGet"         , OpExpr $ LensGet () ())
   , ("idxAsLens"  , ConExpr $ LensCon $ IdxAsLens () ())
   , ("lensCompose", ConExpr $ LensCon $ LensCompose () ())
@@ -426,10 +440,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = ArrowType NonLin a (Pure, b)
+a --> b = ArrowType NonLin a (noEffect, b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = ArrowType Lin a (Pure, b)
+a --@ b = ArrowType Lin a (noEffect, b)
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -504,8 +518,10 @@ instance HasVars Type where
     BoundTVar _ -> mempty
     Lin         -> mempty
     NonLin      -> mempty
-    Pure        -> mempty
-    Effect r w s -> freeVars r <> freeVars w <> freeVars s
+    Effect eff t -> foldMap freeVars eff <> tailVars
+      where tailVars = case t of
+                         Nothing -> mempty
+                         Just v  -> freeVars (TypeVar v)
     NoAnn       -> mempty
 
 instance HasVars b => HasVars (VarP b) where
@@ -621,7 +637,7 @@ instance TraversableExpr PrimOp where
        MGet    -> pure  MGet
        MPut  e -> liftA MPut  (fE e))
     Return eff e         -> liftA2 Return (fT eff) (fE e)
-    RunEffect r s lam    -> liftA3 RunEffect (fE r) (fE s) (fL lam)
+    -- RunEffect r s lam    -> liftA3 RunEffect (fE r) (fE s) (fL lam)
     LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
@@ -691,3 +707,18 @@ instance Traversable PrimEffect where
     MGet    -> pure  MGet
     MPut  x -> liftA MPut (f x)
 
+instance Functor EffectRow where
+  fmap = fmapDefault
+
+instance Foldable EffectRow where
+  foldMap = foldMapDefault
+
+instance Traversable EffectRow where
+  traverse f (EffectRow r w s) =
+    liftA3 EffectRow (traverse f r) (traverse f w) (traverse f s)
+
+instance Semigroup (EffectRow ty) where
+  EffectRow r w s <> EffectRow r' w' s' = EffectRow (r <> r') (w <> w') (s <> s')
+
+instance Monoid (EffectRow ty) where
+  mempty = EffectRow [] [] []

@@ -148,13 +148,13 @@ checkTypeFDecl decl = case decl of
   LetPoly b@(_:>ty) tlam -> do
     ty' <- checkTypeFTLam tlam
     assertEq ty ty' "TLam"
-    return (Pure, b @> L ty)
+    return (noEffect, b @> L ty)
   FRuleDef ann annTy tlam -> do
     ty <- checkTypeFTLam tlam
     assertEq annTy ty "Rule def"
     checkRuleDefType ann ty
-    return (Pure, mempty)
-  TyDef tv _ -> return (Pure, tbind tv)
+    return (noEffect, mempty)
+  TyDef tv _ -> return (noEffect, tbind tv)
 
 checkTypeFTLam :: FTLam -> TypeM Type
 checkTypeFTLam (FTLam tbs body) = do
@@ -166,7 +166,7 @@ checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ty <- asks $ fromL . (!(v:>()))
   case ty of
-    ArrowType _ a (Pure, b) -> do
+    ArrowType _ a (eff, b) | isPure eff -> do
       let linTyExpected = Forall [] $ a --> pairTy b (a --@ b)
       unless (linTy == linTyExpected) $ throw TypeErr $
         "Annotation should have type: " ++ pprint linTyExpected
@@ -287,14 +287,14 @@ fromPure :: MonadError Err m => EffectiveType -> m Type
 fromPure (eff, ty) = checkPure eff >> return ty
 
 checkPure :: MonadError Err m => Effect -> m ()
-checkPure Pure = return ()
-checkPure eff  = throw TypeErr $ "Unexpected effect " ++ pprint eff
+checkPure eff | isPure eff = return ()
+              | otherwise = throw TypeErr $ "Unexpected effect " ++ pprint eff
 
 checkEffectMatches :: MonadError Err m => Effect -> Effect -> m ()
-checkEffectMatches _ Pure = return ()
-checkEffectMatches eff eff' | eff == eff' = return ()
-                            | otherwise   = throw TypeErr $ "Effect mismatch: "
-                                          ++ pprint eff ++ " vs " ++ pprint eff'
+checkEffectMatches = undefined
+-- checkEffectMatches eff eff' | eff == eff' = return ()
+--                             | otherwise   = throw TypeErr $ "Effect mismatch: "
+--                                           ++ pprint eff ++ " vs " ++ pprint eff'
 
 checkLam :: LamExpr -> TypeM (Type, EffectiveType)
 checkLam (LamExpr b@(_:>ty) body) = do
@@ -333,14 +333,14 @@ tupTy :: [Type] -> Type
 tupTy xs = RecType $ Tup xs
 
 pureTy :: Type -> EffectiveType
-pureTy ty = (Pure, ty)
+pureTy ty = (noEffect, ty)
 
 tangentBunType :: Type -> Type
 tangentBunType ty = case ty of
   BaseType b -> case b of RealType -> pairTy ty ty
                           _ -> ty
   TypeVar _ -> ty  -- can only be an index set
-  ArrowType l a (Pure, b) -> ArrowType l (recur a) (Pure, recur b)
+  ArrowType l a (eff, b) | isPure eff -> ArrowType l (recur a) (noEffect, recur b)
   TabType n a   -> TabType n (recur a)
   IdxSetLit _ -> ty
   BoundTVar _ -> ty
@@ -414,21 +414,21 @@ traverseOpType op eq inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass ty VSpace >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  PrimEffect ~eff@(Effect r w s) x l m -> case m of
-    MAsk     -> eq (Lens r x) l            >> return (eff, x)
-    MTell x' -> eq (Lens w x) l >> eq x x' >> return (eff, unitTy)
-    MGet     -> eq (Lens s x) l            >> return (eff, x)
-    MPut  x' -> eq (Lens s x) l >> eq x x' >> return (eff, unitTy)
-  RunEffect r s (a, ~(Effect r' w s', b)) -> do
-    eq a unitTy >> eq r r' >> eq s s'
-    return $ pureTy $ tupTy [b, w, s]
-  Return ~(Effect r w s) a -> return (Effect r w s, a)
+  -- PrimEffect ~eff@(Effect r w s) x l m -> case m of
+  --   MAsk     -> eq (Lens r x) l            >> return (eff, x)
+  --   MTell x' -> eq (Lens w x) l >> eq x x' >> return (eff, unitTy)
+  --   MGet     -> eq (Lens s x) l            >> return (eff, x)
+  --   MPut  x' -> eq (Lens s x) l >> eq x x' >> return (eff, unitTy)
+  -- RunEffect r s (a, ~(Effect r' w s', b)) -> do
+  --   eq a unitTy >> eq r r' >> eq s s'
+  --   return $ pureTy $ tupTy [b, w, s]
+  -- Return ~(Effect r w s) a -> return (Effect r w s, a)
   LensGet a (Lens a' b) -> eq a a' >> return (pureTy b)
   Linearize (a, (eff, b)) -> do
-    eq Pure eff
+    eq noEffect eff
     return $ pureTy $ a --> pairTy b (a --@ b)
   Transpose (a, (eff, b)) -> do
-    eq Pure eff
+    eq noEffect eff
     return $ pureTy $ b --@ a
   IntAsIndex ty i  -> eq (BaseType IntType) i >> return (pureTy ty)
   IdxSetSize _     -> return $ pureTy $ BaseType IntType
