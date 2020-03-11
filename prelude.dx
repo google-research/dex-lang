@@ -169,45 +169,48 @@ lensId = %lensId()
 
 'Effective primitives
 
-asks :: A r w::VS s a . Lens r a -> {r, w, s} a
+asks :: Lens r a -> {Reader r} a
 asks l = %ask(l)
 
-ask :: A r w::VS s . () -> {r, w, s} r
+ask :: () -> {Reader r} r
 ask () = asks lensId
 
-tells :: A r w::VS s a::VS . Lens w a -> a -> {r, w, s} ()
+tells :: A w::VS a::VS . Lens w a -> a -> {Writer w} ()
 tells l x = %tell(l, x)
 
-tell :: A r w::VS s . w -> {r, w, s} ()
+tell :: A w::VS . w -> {Writer w} ()
 tell w = tells lensId w
 
-gets :: A r w::VS s a. Lens s a -> {r, w, s} a
+gets :: A s a . Lens s a -> {State s} a
 gets l = %get(l)
 
-get :: A r w::VS s . () -> {r, w, s} s
+get :: A s . () -> {State s} s
 get () = gets lensId
 
-puts :: A r w::VS s a . Lens s a -> a -> {r, w, s} ()
+puts :: A s a . Lens s a -> a -> {State s} ()
 puts l x = %put(l, x)
 
-put :: A r w::VS s . s -> {r, w, s} ()
+put :: A s . s -> {State s} ()
 put s = puts lensId s
 
-run :: A r w::VS s a . r -> s -> (() -> {r, w, s} a) -> (a, w, s)
-run r s f = %run(r, s, lam (). f ())
+runReader :: r -> (() -> {Reader r |eff} a) -> {|eff} a
+runReader r f = %runReader(r, lam (). f ())
 
-return :: A r w::VS s a . a -> {r, w, s} a
-return x = %return(x)
+runWriter :: A eff w::VS a . (() -> {Writer w |eff} a) -> {|eff} (a, w)
+runWriter f = %runWriter(lam (). f ())
+
+runState :: s -> (() -> {State s |eff} a) -> {|eff} (a, s)
+runState s f = %runState(s, lam (). f ())
 
 'State-carrying loop constructs
 
 scan :: A n::Ix a::Data b .  a -> (n->a->(a, b)) -> (a, n=>b)
 scan x0 fs =
-   (ys, (), xOut) = run () x0 $ lam (). for i.
+   (ys, xOut) = runState x0 $ lam (). for i.
       c = get ()
       (c', y) = fs i c
       _ = put c'
-      return y
+      y
    (xOut, ys)
 
 fold :: A n::Ix a::Data . a -> (n->a->a) -> a

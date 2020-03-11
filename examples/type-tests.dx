@@ -6,7 +6,7 @@
 :t lam x. sum for i. x.i
 > Type error:Ambiguous type variables: [?_10]
 >
-> ([*ans*::? = (lam x::?_5 . sum @?_10 for i::?_14 . (x).(i))], (*ans* @> L ?))
+> ([*ans*::? = (lam x::?_5 . sum @?_10 for i::?_15 . (x).(i))], (*ans* @> L ?))
 
 :t lam f x y. f y x
 > Type error:Ambiguous type variables: [?_13, ?_17, ?_21]

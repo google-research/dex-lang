@@ -19,7 +19,6 @@ import Data.Foldable
 import Data.Traversable
 import Data.Text.Prettyprint.Doc
 
-import Parser  -- TODO fake dependence
 import Syntax
 import Env
 import Type
@@ -30,7 +29,7 @@ import Record
 import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
-type EffectContext = Maybe (IAtom, IAtom, IAtom)
+type EffectContext = EffectRow IAtom
 type EmbedEnv = (Scope, ImpProg)
 type ImpM = ReaderT ImpEnv (ReaderT EffectContext (Cat EmbedEnv))
 
@@ -40,7 +39,7 @@ type IAtom = IAtomP IExpr
 toImpModule :: TopEnv -> Module -> ImpModule
 toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
   where ((vs, result), (_, prog)) =
-          flip runCat mempty $ flip runReaderT Nothing $
+          flip runCat mempty $ flip runReaderT mempty $
              flip runReaderT mempty $ toImpModBody env imports m
 
 toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
@@ -92,7 +91,7 @@ toImpCExpr dests op = case op of
     rows' <- mapM toImpAtom rows
     void $ sequence [copyIAtom (tabGetIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
-  For (LamExpr b body) -> do
+  For (LamExpr b _ body) -> do
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
       let ithDest = tabGetIAtom dests i
@@ -106,31 +105,36 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  RunEffect r s (LamExpr _ body) -> do
+  RunReader r (LamExpr _ _ body) -> do
     r' <- toImpAtom r
+    withEffectContext (readerRow r') $ toImpExpr dests body
+  RunWriter (LamExpr _ _ body) -> do
+    mapM_ initializeZero wDest
+    withEffectContext (writerRow wDest) $ toImpExpr aDest body
+    where (ICon (RecCon (Tup [aDest, wDest]))) = dests
+  RunState s (LamExpr _ _ body) -> do
     s' <- toImpAtom s
     copyIAtom sDest s'
-    mapM_ initializeZero wDest
-    withEffectContext (Just (r', wDest, sDest)) $ toImpExpr aDest body
-    where (ICon (RecCon (Tup [aDest, wDest, sDest]))) = dests
-  Return _ x -> do
-    x' <- toImpAtom x
-    copyIAtom dests x'
-  PrimEffect _ _ l m -> do
-    ~(Just (rVals, wDests, sDests)) <- lift ask
+    withEffectContext (stateRow sDest) $ toImpExpr aDest body
+    where (ICon (RecCon (Tup [aDest, sDest]))) = dests
+  PrimEffect l m -> do
     case m of
       MAsk -> do
+        rVals <- lift $ asks $ head . readerEff
         ans <- lensGet l rVals
         copyIAtom dests ans
       MTell x -> do
+        wDests <- lift $ asks $ head . writerEff
         x' <- toImpAtom x
         wDests' <- lensGet l wDests
         zipWithM_ addToDest (toList wDests') (toList x')
       MPut x -> do
+        sDests <- lift $ asks $ head . stateEff
         x' <- toImpAtom x
         sDests' <- lensGet l sDests
         copyIAtom sDests' x'
       MGet -> do
+        sDests <- lift $ asks $ head . stateEff
         ans <- lensGet l sDests
         copyIAtom dests ans
   LensGet x l -> do
@@ -175,7 +179,7 @@ withAllocs (_:>ty) body = do
 withEffectContext :: EffectContext -> ImpM a -> ImpM a
 withEffectContext ctx m = do
   env <- ask
-  lift $ local (const ctx) (runReaderT m env)
+  lift $ local (ctx <>) (runReaderT m env)
 
 makeDest :: Type -> ImpM (IAtom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty

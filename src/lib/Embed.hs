@@ -38,7 +38,7 @@ emit :: MonadCat EmbedEnv m => CExpr -> m Atom
 emit expr = emitNamed "v" expr
 
 emitNamed :: MonadCat EmbedEnv m => Name -> CExpr -> m Atom
-emitNamed v expr = emitTo (v:>snd (getCExprType expr)) expr
+emitNamed v expr = emitTo (v:> getType expr) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
@@ -69,13 +69,15 @@ withBinder b f = do
       return (ans, b')
   return (ans, b', env)
 
-buildLam :: MonadCat EmbedEnv m => Mult -> Var -> (Atom -> m Atom) -> m Atom
-buildLam l b f = liftM (Con . Lam l) $ buildLamExpr b f
+buildLam :: MonadCat EmbedEnv m
+         => Effect -> Mult -> Var -> (Atom -> m Atom) -> m Atom
+buildLam eff l b f = liftM (Con . Lam l) $ buildLamExpr eff b f
 
-buildLamExpr :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m LamExpr
-buildLamExpr b f = do
+buildLamExpr :: (MonadCat EmbedEnv m)
+             => Effect -> Var -> (Atom -> m Atom) -> m LamExpr
+buildLamExpr eff b f = do
   (ans, b', (_, decls)) <- withBinder b f
-  return $ LamExpr b' (wrapEmbedDecls decls ans)
+  return $ LamExpr b' eff (wrapEmbedDecls decls ans)
 
 buildTLam :: (MonadCat EmbedEnv m) => [TVar] -> ([Type] -> m Atom) -> m Atom
 buildTLam bs f = do
@@ -170,7 +172,7 @@ mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
   TabType n a -> do
-    lam <- buildLamExpr ("i":>n) $ \i -> do
+    lam <- buildLamExpr noEffect ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
     emit $ For lam

@@ -17,7 +17,6 @@ import Control.Monad.Except hiding (Except)
 import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc
 
-import Parser  -- TODO fake dependence
 import Syntax
 import Env
 import Record
@@ -34,7 +33,7 @@ inferModule (TopEnv tyEnv subEnv _) m = do
   checkImports tyEnv m
   let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
   let (body', tySub) = expandTyAliases tySubEnv body
-  (body'', envOut) <- runInferM tyEnv $ catTraverse (inferDecl Pure) body'
+  (body'', envOut) <- runInferM tyEnv $ catTraverse (inferDecl noEffect) body'
   let imports' = imports `envIntersect` tyEnv
   let exports' = exports `envIntersect` (tyEnv <> envOut <> tySubEnvType)
        where tySubEnvType = fmap (const (T (TyKind []))) tySub
@@ -61,7 +60,6 @@ checkImports env m = do
 inferExpr :: FExpr -> Except (Type, FExpr)
 inferExpr = undefined -- expr = runInferM mempty $ infer expr
 
--- TODO: top decl version that checks no effects
 inferDecl :: Effect -> FDecl -> InferM (FDecl, TypeEnv)
 inferDecl eff decl = case decl of
   LetMono p bound -> do
@@ -80,26 +78,17 @@ inferDecl eff decl = case decl of
   TyDef _ _ -> error "Shouldn't have TyDef left"
 
 check :: FExpr -> EffectiveType -> InferM FExpr
-check expr reqEffTy@(reqEff, reqTy) = case expr of
+check expr reqEffTy@(allowedEff, reqTy) = case expr of
   FDecl decl body -> do
-    declEff <- freshInferenceVar EffectKind
-    (decl', env') <- inferDecl declEff decl
-    declEff' <- zonk declEff
-    case declEff' of
-      Pure         -> return ()
-      Effect _ _ _ -> constrainEq reqEff declEff' (pprint decl)
-      -- TODO: think harder about this
-      _ -> constrainEq Pure declEff' "(getting here might mean a compiler bug)"
+    (decl', env') <- inferDecl allowedEff decl
     body' <- extendR env' $ check body reqEffTy
     return $ FDecl decl' body'
   FVar v -> do
-    constrainPure
     ty <- asks $ fromL . (! v)
     case ty of
       Forall _ _ -> check (fTyApp v []) reqEffTy
       _ -> constrainReq ty >> return (FVar (varName v :> ty))
   FPrimExpr (OpExpr (TApp (FVar v) ts)) -> do
-    constrainPure
     ty <- asks $ fromL . (! v)
     case ty of
       Forall kinds body -> do
@@ -114,10 +103,11 @@ check expr reqEffTy@(reqEff, reqTy) = case expr of
     (eff, ansTy) <- traverseOpType (fmapExpr opTy snd snd snd)
                       (\t1 t2 -> constrainEq t1 t2 (pprint expr))
                       (\_ _ -> return ())
-    constrainEq reqEff eff (pprint expr)
     op' <- traverseExpr opTy
       (uncurry checkAnn) (uncurry checkPure) (uncurry checkLam)
     constrainReq ansTy
+    eff' <- openEffect eff
+    constrainEq allowedEff eff' (pprint expr)
     return $ FPrimExpr $ OpExpr $ op'
   FPrimExpr (ConExpr con) -> do
     conTy <- generateConSubExprTypes con
@@ -137,23 +127,22 @@ check expr reqEffTy@(reqEff, reqTy) = case expr of
     e' <- addSrcContext (Just pos) $ check e reqEffTy
     return $ SrcAnnot e' pos
   where
-    constrainReq ty = constrainEq reqTy  ty    (pprint expr)
-    constrainPure   = constrainEq reqEff Pure  (pprint expr)
+    constrainReq ty = constrainEq reqTy  ty       (pprint expr)
 
 checkPure :: FExpr -> Type -> InferM FExpr
-checkPure expr ty = check expr (Pure, ty)
+checkPure expr ty = check expr (noEffect, ty)
 
 checkTLam :: Type -> FTLam -> InferM FTLam
 checkTLam ~(Forall _ tyBody) (FTLam tbs tlamBody) = do
- let tyBody' = (Pure, instantiateTVs (map TypeVar tbs) tyBody)
- let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
- liftM (FTLam tbs) $ checkLeaks tbs $ extendR env $ check tlamBody tyBody'
+  let tyBody' = (noEffect, instantiateTVs (map TypeVar tbs) tyBody)
+  let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
+  liftM (FTLam tbs) $ checkLeaks tbs $ extendR env $ check tlamBody tyBody'
 
 checkLam :: FLamExpr -> (Type, EffectiveType) -> InferM FLamExpr
-checkLam (FLamExpr p body) (a, b) = do
+checkLam (FLamExpr p _ body) (a, b@(eff,_)) = do
   p' <- checkPat p a
   body' <- extendR (foldMap asEnv p') (check body b)
-  return $ FLamExpr p' body'
+  return $ FLamExpr p' eff body'
 
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
@@ -179,6 +168,13 @@ findDups (x:xs) | x `elem` xs = x : findDups xs
 checkAnn :: Type -> Type -> InferM Type
 checkAnn NoAnn ty = return ty
 checkAnn ty' ty   = constrainEq ty' ty "annotation" >> return ty
+
+openEffect :: Effect -> InferM Effect
+openEffect eff = do
+  ~(Effect row tailVar) <- zonk eff
+  case tailVar of
+    Nothing -> liftM (Effect row . Just) $ freshInferenceVar EffectKind
+    Just _  -> return $ Effect row tailVar
 
 generateConSubExprTypes :: PrimCon ty e lam
   -> InferM (PrimCon (ty, Type) (e, Type) (lam, (Type, EffectiveType)))
@@ -209,32 +205,36 @@ generateOpSubExprTypes op = case op of
     a <- freshQ
     b <- freshQ
     return $ LensGet (x,a) (l, Lens a b)
-  PrimEffect eff a l m -> do
-    eff' <- freshEffect
-    a'   <- freshQ
-    l'   <- freshQ
+  PrimEffect l m -> do
+    l'   <- liftM2 Lens freshQ freshQ
     m'   <- traverse (doMSnd freshQ) m
-    return $ PrimEffect (eff, eff') (a, a') (l, l') m'
-  RunEffect r s f -> do
+    return $ PrimEffect (l, l') m'
+  RunReader r f -> do
     r' <- freshQ
+    a  <- freshQ
+    tailVar <- freshInferenceVar EffectKind
+    let fTy = (unitTy, (Effect (readerRow r') (Just tailVar), a))
+    return $ RunReader (r, r') (f, fTy)
+  RunWriter f -> do
+    w  <- freshQ
+    a  <- freshQ
+    tailVar <- freshInferenceVar EffectKind
+    let fTy = (unitTy, (Effect (writerRow w) (Just tailVar), a))
+    return $ RunWriter (f, fTy)
+  RunState s f -> do
     s' <- freshQ
-    f' <- liftM2 (,) freshQ $ liftM2 (,) freshEffect freshQ
-    return $ RunEffect (r,r') (s,s') (f,f')
-  Return  eff a -> do
-    eff' <- freshEffect
-    a'   <- freshQ
-    return $ Return (eff, eff') (a, a')
+    a  <- freshQ
+    tailVar <- freshInferenceVar EffectKind
+    let fTy = (unitTy, (Effect (stateRow s') (Just tailVar), a))
+    return $ RunState (s, s') (f, fTy)
   _ -> traverseExpr op (doMSnd freshQ) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM (Type, EffectiveType)
 freshLamType = do
   a <- freshQ
   b <- freshQ
-  eff <- freshInferenceVar EffectKind
+  eff <- liftM (Effect mempty . Just) $ freshInferenceVar EffectKind
   return (a, (eff, b))
-
-freshEffect :: InferM Type
-freshEffect = liftM3 Effect freshQ freshQ freshQ
 
 doMSnd :: Monad m => m b -> a -> m (a, b)
 doMSnd m x = do { y <- m; return (x, y) }
@@ -274,18 +274,18 @@ applyDefaults = do
   vs <- looks unsolved
   flip mapM_ (envPairs vs) $ \(v, k) -> case k of
     MultKind   -> addSub v NonLin
-    EffectKind -> addSub v Pure
+    EffectKind -> addSub v noEffect
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
-solveLocal :: (MonadCat SolverEnv m, MonadError Err m, TySubst a)
+solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, TySubst a)
            => m a -> m a
 solveLocal m = do
   (ans, env@(SolverEnv freshVars sub)) <- scoped (m >>= zonk)
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: (MonadCat SolverEnv m, MonadError Err m, TySubst a)
+checkLeaks :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, TySubst a)
            => [TVar] -> m a -> m a
 checkLeaks tvs m = do
   (ans, env) <- scoped $ solveLocal m
@@ -298,10 +298,10 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshQ :: InferM Type
+freshQ :: MonadCat SolverEnv m => m Type
 freshQ = freshInferenceVar $ TyKind []
 
-freshInferenceVar :: Kind -> InferM Type
+freshInferenceVar :: MonadCat SolverEnv m => Kind -> m Type
 freshInferenceVar k = do
   tv <- looks $ rename (rawName InferenceName "?" :> k) . solverVars
   extend $ SolverEnv (tv @> k) mempty
@@ -342,8 +342,22 @@ unify t1 t2 = do
         Just unifiers -> void $ sequence unifiers
     (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
       unify f f' >> zipWithM_ unify xs xs'
-    (Effect r w s, Effect r' w' s') -> unify r r' >> unify w w' >> unify s s'
+    (Effect r t, Effect r' t') -> do
+      let shared = rowMeet r r'
+      mapM_ (uncurry unify) shared
+      newTail <- liftM Just $ freshInferenceVar EffectKind
+      matchTail t  $ Effect (rowDiff r' shared) newTail
+      matchTail t' $ Effect (rowDiff r  shared) newTail
     _ -> throw TypeErr ""
+
+-- TODO: can we make this less complicated?
+matchTail :: (MonadCat SolverEnv m, MonadError Err m)
+          => Maybe Type -> Effect -> m ()
+matchTail t ~eff@(Effect row t') = case (t, t') of
+  _                     | t == t' && row == mempty -> return ()
+  (Just (TypeVar v), _) | isQ v                  -> zonk eff               >>= bindQ v
+  (_, Just (TypeVar v)) | isQ v && row == mempty -> zonk (Effect mempty t) >>= bindQ v
+  _ -> throw TypeErr ""
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => TVar -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
@@ -388,7 +402,8 @@ instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)
   tySubst env expr = fmapExpr expr (tySubst env) (tySubst env) (tySubst env)
 
 instance TySubst FLamExpr where
-  tySubst env (FLamExpr p body) = FLamExpr (tySubst env p) (tySubst env body)
+  tySubst env (FLamExpr p eff body) =
+    FLamExpr (tySubst env p) (tySubst env eff) (tySubst env body)
 
 instance TySubst FDecl where
   tySubst env decl = case decl of

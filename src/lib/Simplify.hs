@@ -70,9 +70,10 @@ simplifyAtom atom = case atom of
 -- Simplifies bodies of first-order functions only.
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM LamExpr
-simplifyLam (LamExpr b body) = do
+simplifyLam (LamExpr b eff body) = do
+  eff' <- substEmbed eff
   b' <- substEmbed b
-  buildLamExpr b' $ \x -> extendR (b @> L x) $ simplify body
+  buildLamExpr eff' b' $ \x -> extendR (b @> L x) $ simplify body
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyCExpr :: CExpr -> SimplifyM Atom
@@ -86,7 +87,7 @@ simplifyCExpr expr = do
     Transpose lam -> do
       scope <- looks fst
       return $ transposeMap scope lam
-    App _ (Con (Lam _ (LamExpr b body))) x -> do
+    App _ (Con (Lam _ (LamExpr b _ body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]

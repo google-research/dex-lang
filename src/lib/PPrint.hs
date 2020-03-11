@@ -62,8 +62,9 @@ prettyTyDepth d ty = case ty of
   BaseType b  -> p b
   TypeVar v   -> p v
   BoundTVar n -> p (tvars d n)
-  ArrowType l a (eff , b) | isPure eff -> parens $ recur a <+> arrStr l <+> recur b
-                          | otherwise -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
+  ArrowType l a (eff, b)
+    | isPure eff -> parens $ recur a <+> arrStr l <+>               recur b
+    | otherwise  -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
   TabType a b -> parens $ recur a <> "=>" <> recur b
   RecType r   -> p $ fmap (asStr . recur) r
   ArrayType shape b -> p b <> p shape
@@ -80,7 +81,9 @@ prettyTyDepth d ty = case ty of
   IdxSetLit i -> p i
   Lin    -> "Lin"
   NonLin -> "NonLin"
-  Effect _ _ -> "TODO" -- "{" <> recur r <> "," <+> recur w <> "," <+> recur s <> "}"
+  Effect row t -> "{" <> p (fmap (asStr . recur) row) <> tailVar <> "}"
+    where tailVar = case t of Nothing -> mempty
+                              Just v  -> "|" <+> recur v
   NoAnn  -> ""
   where
     recur = prettyTyDepth d
@@ -93,6 +96,13 @@ tvars :: Int -> Int -> Name
 tvars d i = fromString s
   where s = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
                                  | otherwise -> "#ERR#" ++ show i'
+
+instance Pretty a => Pretty (EffectRow a) where
+  pretty (EffectRow rs ws ss) = hsep $ punctuate "," $ rs' ++ ws' ++ ss'
+    where
+      rs' = ["Reader" <+> p r | r <- rs]
+      ws' = ["Writer" <+> p w | w <- ws]
+      ss' = ["State"  <+> p s | s <- ss]
 
 instance Pretty BaseType where
   pretty t = case t of
@@ -175,10 +185,10 @@ class PrettyLam a where
   prettyLam :: a -> (Doc ann, Doc ann)
 
 instance PrettyLam LamExpr where
-  prettyLam (LamExpr b e) = (p b, p e)
+  prettyLam (LamExpr b _ e) = (p b, p e)
 
 instance PrettyLam FLamExpr where
-  prettyLam (FLamExpr pat e) = (p pat, p e)
+  prettyLam (FLamExpr pat _ e) = (p pat, p e)
 
 instance PrettyLam () where
   prettyLam () = ("", "")

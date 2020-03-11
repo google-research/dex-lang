@@ -31,11 +31,11 @@ type EmbedSubM a = ReaderT SubstEnv Embed a
 newtype LinA a = LinA { runLinA :: EmbedSubM (a, EmbedSubM a) }
 
 linearize :: TopEnv -> Scope -> LamExpr -> Atom
-linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam NonLin b $ \x -> do
+linearize env scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
+  buildLam noEffect NonLin b $ \x -> do
     (y, yt) <- runReaderT (runLinA (linearizeExpr env expr)) (b @> L x)
     -- TODO: check linearity
-    fLin <- buildLam Lin b $ \xt -> runReaderT yt (b @> L xt)
+    fLin <- buildLam noEffect Lin b $ \xt -> runReaderT yt (b @> L xt)
     return $ makePair y fLin
 
 linearizeExpr :: TopEnv -> Expr -> LinA Atom
@@ -131,8 +131,8 @@ type CotangentVals = MonMap Name [Atom]  -- TODO: consider folding as we go
 type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SubstEnv) Embed) a
 
 transposeMap :: Scope -> LamExpr -> Atom
-transposeMap scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam Lin ("ct" :> snd (getExprType expr)) $ \ct -> do
+transposeMap scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
+  buildLam noEffect Lin ("ct" :> getType expr) $ \ct -> do
     flip runReaderT mempty $ liftM fst $ runWriterT $
       withLinVar b $ transposeExpr expr ct
 
@@ -181,6 +181,7 @@ transposeCExpr expr ct = case expr of
     ~(Con (RecCon rZeros)) <- zeroAt (getType x)
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
+  _ -> error "not implemented"
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of

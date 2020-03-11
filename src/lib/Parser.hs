@@ -289,7 +289,7 @@ rawLamExpr = do
   p <- pat
   argTerm
   body <- declOrExpr
-  return $ FLamExpr p body
+  return $ FLamExpr p NoAnn body
 
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
@@ -437,10 +437,10 @@ argTerm :: Parser ()
 argTerm = mayBreak $ symbol "."
 
 fLam :: Type -> Pat -> FExpr -> FExpr
-fLam l p body = fPrimCon $ Lam l $ FLamExpr p body
+fLam l p body = fPrimCon $ Lam l $ FLamExpr p NoAnn body
 
 fFor :: Pat -> FExpr -> FExpr
-fFor p body = fPrimOp $ For $ FLamExpr p body
+fFor p body = fPrimOp $ For $ FLamExpr p NoAnn body
 
 fPrimCon :: PrimCon Type FExpr FLamExpr -> FExpr
 fPrimCon con = FPrimExpr $ ConExpr con
@@ -533,15 +533,19 @@ arrowType = do
 
 effectRow :: Parser (EffectRow Type)
 effectRow =
-      (symbol "Reader" >> tauType >>= \t -> return (EffectRow [t] [] []))
-  <|> (symbol "Writer" >> tauType >>= \t -> return (EffectRow [] [t] []))
-  <|> (symbol "State"  >> tauType >>= \t -> return (EffectRow [] [] [t]))
+      (symbol "Reader" >> tauType >>= \t -> return (readerRow t))
+  <|> (symbol "Writer" >> tauType >>= \t -> return (writerRow t))
+  <|> (symbol "State"  >> tauType >>= \t -> return (stateRow  t))
 
 -- TODO: linearity
 effectType :: Parser Effect
-effectType = do
-  effects <- bracketed "{" "}" $ effectRow `sepBy` comma
-  return $ Effect (fold effects) Nothing
+effectType =  bracketed "{" "}" $ do
+  effects <- effectRow `sepBy` comma
+  tailVar <- optional $ do
+               symbol "|"
+               v <- name LocalTVName identifier
+               return $ TypeVar (v:> EffectKind)
+  return $ Effect (fold effects) tailVar
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)

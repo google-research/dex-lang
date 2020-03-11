@@ -12,7 +12,6 @@
 module Type (
     getType, instantiateTVs, abstractTVs, substEnvType,
     tangentBunType, flattenType, PrimOpType, PrimConType,
-    getExprType, getCExprType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..)) where
 
@@ -55,8 +54,7 @@ instance (IsModuleBody body) => IsModule (ModuleP body) where
 
 instance IsModuleBody FModBody where
   checkModuleBody env (FModBody decls tyDefs) = do
-    (effs, termEnv) <- runTypeM env $ catTraverse checkTypeFDecl decls
-    mapM_ checkPure effs
+    termEnv <- runTypeM env $ catFold (checkTypeFDecl noEffect) decls
     mapM_ runCheckLinFDecl decls
     return $ termEnv <> tyDefEnv
     where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
@@ -87,79 +85,64 @@ getTyOrKind (T _) = T $ TyKind []
 
 -- === type-checking pass on FExpr ===
 
-getFExprType :: FExpr -> EffectiveType
-getFExprType expr = case expr of
-  FDecl _ body -> getFExprType body
-  FVar (_:>ty) -> pureTy ty
-  FPrimExpr (OpExpr e) -> getOpType e'
-    where e' = fmapExpr e id (snd . getFExprType) getFLamType
-  FPrimExpr (ConExpr e) -> pureTy $ getConType e'
-    where e' = fmapExpr e id (snd . getFExprType) getFLamType
-  Annot e _    -> getFExprType e
-  SrcAnnot e _ -> getFExprType e
-
-getFLamType :: FLamExpr -> (Type, EffectiveType)
-getFLamType (FLamExpr p body) = (getType p, getFExprType body)
-
 instance HasType (RecTree Var) where
   getType (RecLeaf (_:>ty)) = ty
   getType (RecTree r) = RecType $ fmap getType r
 
-checkTypeFExpr :: FExpr -> TypeM EffectiveType
-checkTypeFExpr expr = case expr of
+checkTypeFExpr :: Effect -> FExpr -> TypeM Type
+checkTypeFExpr eff expr = case expr of
   FVar v@(_:>annTy) -> do
     x <- asks $ flip envLookup v
     case x of
       Just (L ty) -> do
         assertEq annTy ty "Var annotation"
-        return $ pureTy ty
+        return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   FDecl decl body -> do
-    (declEff, env) <- checkTypeFDecl decl
-    (eff, ty ) <- extendR env (checkTypeFExpr body)
-    checkEffectMatches eff declEff
-    return (eff, ty)
+    env <- checkTypeFDecl eff decl
+    extendR env (checkTypeFExpr eff body)
   FPrimExpr (ConExpr con) -> do
-    eTy <- traverseExpr con return (checkTypeFExpr >=> fromPure) checkTypeFlam
-    liftM pureTy $ checkConType eTy
+    eTy <- traverseExpr con return (checkTypeFExpr noEffect) checkTypeFlam
+    checkConType eTy
   FPrimExpr (OpExpr con) -> do
-    eTy <- traverseExpr con return (checkTypeFExpr >=> fromPure) checkTypeFlam
-    checkOpType eTy
-  SrcAnnot e pos -> addSrcContext (Just pos) $ checkTypeFExpr e
+    eTy <- traverseExpr con return (checkTypeFExpr noEffect) checkTypeFlam
+    (eff', ty) <- checkOpType eTy
+    checkExtends eff eff'
+    return ty
+  SrcAnnot e pos -> addSrcContext (Just pos) $ checkTypeFExpr eff e
   -- TODO: consider effect annotations
-  Annot e ty -> do
-    ty' <- checkTypeFExpr e
-    assertEq (pureTy ty) ty' "Type annotation"
+  Annot e _ -> do
+    ty' <- checkTypeFExpr noEffect e
     return ty'
 
 checkTypeFlam :: FLamExpr -> TypeM (Type, EffectiveType)
-checkTypeFlam (FLamExpr p body) = do
+checkTypeFlam (FLamExpr p eff body) = do
   checkTy pTy
-  bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr body
-  return (pTy, bodyTy)
+  bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr eff body
+  return (pTy, (eff, bodyTy))
   where pTy = getType p
 
-checkTypeFDecl :: FDecl -> TypeM (Effect, TypeEnv)
-checkTypeFDecl decl = case decl of
+checkTypeFDecl :: Effect -> FDecl -> TypeM TypeEnv
+checkTypeFDecl eff decl = case decl of
   LetMono p rhs -> do
-    (eff, ty) <- checkTypeFExpr rhs
+    ty <- checkTypeFExpr eff rhs
     assertEq (getType p) ty "LetMono"
-    return (eff, foldMap lbind p)
+    return $ foldMap lbind p
   LetPoly b@(_:>ty) tlam -> do
     ty' <- checkTypeFTLam tlam
     assertEq ty ty' "TLam"
-    return (noEffect, b @> L ty)
+    return (b @> L ty)
   FRuleDef ann annTy tlam -> do
     ty <- checkTypeFTLam tlam
     assertEq annTy ty "Rule def"
     checkRuleDefType ann ty
-    return (noEffect, mempty)
-  TyDef tv _ -> return (noEffect, tbind tv)
+    return mempty
+  TyDef tv _ -> return $ tbind tv
 
 checkTypeFTLam :: FTLam -> TypeM Type
 checkTypeFTLam (FTLam tbs body) = do
   let env = foldMap (\b -> b @> T (varAnn b)) tbs
-  ty <- extendR env (checkTypeFExpr body) >>= fromPure
+  ty <- extendR env $ checkTypeFExpr noEffect body
   return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
@@ -240,30 +223,32 @@ instance HasType Atom where
   getType atom = case atom of
     Var (_:>ty) -> ty
     TLam vs body -> do
-      Forall (map varAnn vs) $ abstractTVs vs $ snd $ getExprType body
+      Forall (map varAnn vs) $ abstractTVs vs $ getType body
     Con con -> getConType $ fmapExpr con id getType getLamType
 
-getExprType :: Expr -> EffectiveType
-getExprType expr = case expr of
-  Decl _ e -> getExprType e
-  CExpr e  -> getCExprType e
-  Atom x   -> pureTy $ getType x
+instance HasType Expr where
+  getType expr = case expr of
+    Decl _ e -> getType e
+    CExpr e  -> getType e
+    Atom x   -> getType x
 
-getCExprType :: CExpr -> EffectiveType
-getCExprType op = getOpType $ fmapExpr op id getType getLamType
+instance HasType CExpr where
+  getType op = snd $ getOpType $ fmapExpr op id getType getLamType
 
 getLamType :: LamExpr -> (Type, EffectiveType)
-getLamType (LamExpr (_:>ty) body) = (ty, getExprType body)
+getLamType (LamExpr (_:>ty) eff body) = (ty, (eff, getType body))
 
-checkExpr :: Expr -> TypeM EffectiveType
-checkExpr expr = case expr of
+checkExpr :: Effect -> Expr -> TypeM Type
+checkExpr eff expr = case expr of
   Decl decl body -> do
-    (declEff , env) <- checkDecl decl
-    (eff, ty)   <- extendR env $ checkExpr body
-    checkEffectMatches eff declEff
-    return (eff, ty)
-  CExpr e -> checkCExpr e
-  Atom x  -> liftM pureTy $ checkAtom x
+    (declEff, env) <- checkDecl decl
+    checkExtends eff declEff
+    extendR env $ checkExpr eff body
+  CExpr e -> do
+    (eff', ty) <- checkCExpr e
+    checkExtends eff eff'
+    return ty
+  Atom x -> checkAtom x
 
 checkCExpr :: CExpr -> TypeM EffectiveType
 checkCExpr op = traverseExpr op return checkAtom checkLam >>= checkOpType
@@ -278,28 +263,31 @@ checkAtom atom = case atom of
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   TLam tvs body -> do
-    (eff, bodyTy) <- extendR (foldMap tbind tvs) (checkExpr body)
-    checkPure eff
+    bodyTy <- extendR (foldMap tbind tvs) (checkExpr noEffect body)
     return $ Forall (map varAnn tvs) (abstractTVs tvs bodyTy)
   Con con -> traverseExpr con return checkAtom checkLam >>= checkConType
-
-fromPure :: MonadError Err m => EffectiveType -> m Type
-fromPure (eff, ty) = checkPure eff >> return ty
 
 checkPure :: MonadError Err m => Effect -> m ()
 checkPure eff | isPure eff = return ()
               | otherwise = throw TypeErr $ "Unexpected effect " ++ pprint eff
 
-checkEffectMatches :: MonadError Err m => Effect -> Effect -> m ()
-checkEffectMatches = undefined
--- checkEffectMatches eff eff' | eff == eff' = return ()
---                             | otherwise   = throw TypeErr $ "Effect mismatch: "
---                                           ++ pprint eff ++ " vs " ++ pprint eff'
+checkExtends :: MonadError Err m => Effect -> Effect -> m ()
+checkExtends (Effect row _) (Effect row' Nothing) = checkRowExtends row row'
+checkExtends eff eff' | eff == eff' = return ()
+                      | otherwise   = throw TypeErr $ "Effect mismatch: "
+                           ++ pprint eff ++ " doesn't extend " ++ pprint eff'
+
+checkRowExtends :: MonadError Err m => EffectRow Type -> EffectRow Type -> m ()
+checkRowExtends row row' = do
+  mapM_ (\(t,t') -> assertEq t t' "Effect type mismatch") $ rowMeet row row'
+  let extraEffects = rowJoin row row' `rowDiff` row
+  when (extraEffects /= mempty) $
+    throw TypeErr $ "Extra effects: " ++ pprint extraEffects
 
 checkLam :: LamExpr -> TypeM (Type, EffectiveType)
-checkLam (LamExpr b@(_:>ty) body) = do
-  bodyTy <- extendR (b @> L ty) $ checkExpr body
-  return (ty, bodyTy)
+checkLam (LamExpr b@(_:>ty) eff body) = do
+  bodyTy <- extendR (b @> L ty) $ checkExpr eff body
+  return (ty, (eff, bodyTy))
 
 checkDecl :: Decl -> TypeM (Effect, TypeEnv)
 checkDecl (Let b expr) = do
@@ -414,15 +402,17 @@ traverseOpType op eq inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass ty VSpace >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  -- PrimEffect ~eff@(Effect r w s) x l m -> case m of
-  --   MAsk     -> eq (Lens r x) l            >> return (eff, x)
-  --   MTell x' -> eq (Lens w x) l >> eq x x' >> return (eff, unitTy)
-  --   MGet     -> eq (Lens s x) l            >> return (eff, x)
-  --   MPut  x' -> eq (Lens s x) l >> eq x x' >> return (eff, unitTy)
-  -- RunEffect r s (a, ~(Effect r' w s', b)) -> do
-  --   eq a unitTy >> eq r r' >> eq s s'
-  --   return $ pureTy $ tupTy [b, w, s]
-  -- Return ~(Effect r w s) a -> return (Effect r w s, a)
+  PrimEffect ~(Lens s x) m -> case m of
+    MAsk     ->            return (Effect (readerRow s) Nothing, x)
+    MTell x' -> eq x x' >> return (Effect (writerRow s) Nothing, unitTy)
+    MGet     ->            return (Effect (stateRow  s) Nothing, x)
+    MPut  x' -> eq x x' >> return (Effect (stateRow  s) Nothing, unitTy)
+  RunReader r (u, (eff, a)) -> eq u unitTy >> eq r' r >> return (eff', a)
+    where (r', eff') = peelReader eff
+  RunWriter (u, (eff, a)) -> eq u unitTy >> return (eff', pairTy a w)
+    where (w, eff') = peelWriter eff
+  RunState s (u, (eff, a)) -> eq u unitTy >> eq s' s >> return (eff', pairTy a s)
+    where (s', eff') = peelState eff
   LensGet a (Lens a' b) -> eq a a' >> return (pureTy b)
   Linearize (a, (eff, b)) -> do
     eq noEffect eff
@@ -489,6 +479,18 @@ flattenType ty = case ty of
   TypeVar _               -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
 
+peelReader :: Effect -> (Type, Effect)
+peelReader ~(Effect (EffectRow (r:rs) ws ss) tailVar) =
+  (r, Effect (EffectRow rs ws ss) tailVar)
+
+peelWriter :: Effect -> (Type, Effect)
+peelWriter ~(Effect (EffectRow rs (w:ws) ss) tailVar) =
+  (w, Effect (EffectRow rs ws ss) tailVar)
+
+peelState :: Effect -> (Type, Effect)
+peelState ~(Effect (EffectRow rs ws (s:ss)) tailVar) =
+  (s, Effect (EffectRow rs ws ss) tailVar)
+
 -- === linearity ===
 
 data Spent = Spent (Env ()) Bool  -- flag means 'may consume any linear vars'
@@ -516,7 +518,7 @@ checkLinFExpr expr = case expr of
   Annot e _      -> checkLinFExpr e
 
 checkLinFLam :: FLamExpr -> LinCheckM ()
-checkLinFLam (FLamExpr _ body) = checkLinFExpr body
+checkLinFLam (FLamExpr _ _ body) = checkLinFExpr body
 
 checkLinFDecl :: FDecl -> LinCheckM (Env Spent)
 checkLinFDecl decl = case decl of
@@ -543,7 +545,7 @@ checkLinOp e = case e of
 checkLinCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
 checkLinCon e = case e of
   Lam NonLin lam -> checkLinFLam lam
-  Lam Lin (FLamExpr p body) -> do
+  Lam Lin (FLamExpr p _ body) -> do
     v <- getPatName p
     let s = asSpent v
     checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
@@ -575,9 +577,6 @@ getPatName p = case toList p of
 
 spend :: Spent -> LinCheckM ()
 spend s = LinCheckM $ return ((), (s, cartId))
-
-spendEff :: Spent -> LinCheckM ()
-spendEff sEff = LinCheckM $ return ((), (cartId, sEff))
 
 checkSpent :: Name -> String -> LinCheckM a -> LinCheckM a
 checkSpent v vStr m = do
@@ -616,15 +615,6 @@ captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
 captureSpent m = LinCheckM $ do
   (x, (s, sEff)) <- runLinCheckM m
   return ((x, s), (cartId, sEff))
-
-captureSpentEff :: LinCheckM a -> LinCheckM (a, Spent)
-captureSpentEff m = LinCheckM $ do
-  (x, (s, sEff)) <- runLinCheckM m
-  return ((x, sEff), (s, cartId))
-
--- TODO: allow multiple sources of monadic linearity
-monadPat :: Name
-monadPat = "mLin"
 
 instance Pretty Spent where
   pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])

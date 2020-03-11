@@ -30,7 +30,8 @@ module Syntax (
     fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
-    noEffect, isPure, EffectRow (..))
+    noEffect, isPure, EffectRow (..), readerRow, writerRow, stateRow,
+    rowMeet, rowJoin, rowDiff)
   where
 
 import Data.Tuple (swap)
@@ -64,21 +65,9 @@ data Type = TypeVar TVar
           | BoundTVar Int
           | Lin
           | NonLin
-          | Effect (EffectRow Type) (Maybe TVar)
+          | Effect (EffectRow Type) (Maybe Type)
           | NoAnn
             deriving (Show, Eq, Generic)
-
-data EffectRow ty = EffectRow { readerEff :: [ty]
-                              , writerEff :: [ty]
-                              , stateEff  :: [ty] }
-                  deriving (Show, Eq, Generic)
-
-noEffect :: Type
-noEffect = Effect mempty Nothing
-
-isPure :: Type -> Bool
-isPure (Effect f Nothing) | f == mempty = True
-isPure _ = False
 
 data Kind = TyKind [ClassName]
           | MultKind
@@ -88,8 +77,7 @@ data Kind = TyKind [ClassName]
 data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
 type TVar = VarP Kind
-
-type Mult = Type
+type Mult   = Type
 type Effect = Type
 type EffectiveType = (Effect, Type)
 
@@ -104,6 +92,19 @@ type SubstEnv = FullEnv Atom Type
 
 type Scope = Env ()
 
+data EffectRow ty = EffectRow
+  { readerEff :: [ty]
+  , writerEff :: [ty]
+  , stateEff  :: [ty] }
+  deriving (Show, Eq, Generic)
+
+noEffect :: Effect
+noEffect = Effect mempty Nothing
+
+isPure :: Effect -> Bool
+isPure (Effect eff Nothing) | eff == mempty = True
+isPure _ = False
+
 type ModuleType = (TypeEnv, TypeEnv)
 data ModuleP body = Module ModuleType body  deriving (Show, Eq)
 
@@ -117,7 +118,7 @@ data FExpr = FDecl FDecl FExpr
              deriving (Eq, Show, Generic)
 
 type Pat = RecTree Var
-data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
+data FLamExpr = FLamExpr Pat Effect FExpr  deriving (Show, Eq, Generic)
 type SrcPos = (Int, Int)
 
 data FDecl = LetMono Pat FExpr
@@ -151,7 +152,7 @@ data Atom = Var Var
           | Con Con
             deriving (Show, Eq, Generic)
 
-data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
+data LamExpr = LamExpr Var Effect Expr  deriving (Show, Eq, Generic)
 
 data ModBody = ModBody [Decl] TopEnv  deriving (Show, Eq, Generic)
 type Module = ModuleP ModBody
@@ -197,11 +198,10 @@ data PrimOp ty e lam =
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
-      | PrimEffect ty ty e (PrimEffect e)
-      | Return ty e
+      | PrimEffect e (PrimEffect e)
       | RunReader e lam
-      | RunWriter lam
-      | RunState e lam
+      | RunWriter   lam
+      | RunState  e lam
       | LensGet e e
       | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
@@ -243,19 +243,18 @@ builtinNames = M.fromList
   , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
   , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
-  , ("return"          , OpExpr $ Return () ())
-  , ("runReader"             , OpExpr $ RunReader () ())
-  , ("runWriter"             , OpExpr $ RunWriter ())
-  , ("runState"              , OpExpr $ RunState () ())
+  , ("runReader"       , OpExpr $ RunReader () ())
+  , ("runWriter"       , OpExpr $ RunWriter ())
+  , ("runState"        , OpExpr $ RunState () ())
   , ("lensGet"         , OpExpr $ LensGet () ())
   , ("idxAsLens"  , ConExpr $ LensCon $ IdxAsLens () ())
   , ("lensCompose", ConExpr $ LensCon $ LensCompose () ())
   , ("lensId"     , ConExpr $ LensCon $ LensId ())
   , ("todo"       , ConExpr $ Todo ())
-  , ("ask"        , OpExpr $ PrimEffect () () () $ MAsk)
-  , ("tell"       , OpExpr $ PrimEffect () () () $ MTell ())
-  , ("get"        , OpExpr $ PrimEffect () () () $ MGet)
-  , ("put"        , OpExpr $ PrimEffect () () () $ MPut  ()) ]
+  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
+  , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
+  , ("get"        , OpExpr $ PrimEffect () $ MGet)
+  , ("put"        , OpExpr $ PrimEffect () $ MPut  ()) ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
@@ -498,8 +497,8 @@ sourceBlockBoundVars block = case sbContents block of
   _                        -> mempty
 
 instance HasVars FLamExpr where
-  freeVars (FLamExpr p body) =
-    foldMap freeVars p <> (freeVars body `envDiff` foldMap lbind p)
+  freeVars (FLamExpr p eff body) = foldMap freeVars p <> freeVars eff
+                                 <> (freeVars body `envDiff` foldMap lbind p)
 
 instance HasVars Type where
   freeVars ty = case ty of
@@ -518,10 +517,7 @@ instance HasVars Type where
     BoundTVar _ -> mempty
     Lin         -> mempty
     NonLin      -> mempty
-    Effect eff t -> foldMap freeVars eff <> tailVars
-      where tailVars = case t of
-                         Nothing -> mempty
-                         Just v  -> freeVars (TypeVar v)
+    Effect eff t -> foldMap freeVars eff <> foldMap freeVars t
     NoAnn       -> mempty
 
 instance HasVars b => HasVars (VarP b) where
@@ -563,7 +559,8 @@ declBoundVars :: Decl -> Env ()
 declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
-  freeVars (LamExpr b body) = freeVars b <> (freeVars body `envDiff` (b@>()))
+  freeVars (LamExpr b eff body) = freeVars b <> freeVars eff
+                                <> (freeVars body `envDiff` (b@>()))
 
 instance HasVars Atom where
   freeVars atom = case atom of
@@ -631,13 +628,14 @@ instance TraversableExpr PrimOp where
     VSpaceOp ty (VAdd e1 e2) -> liftA2 VSpaceOp (fT ty) (liftA2 VAdd (fE e1) (fE e2))
     Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
-    PrimEffect eff t l m -> liftA3 PrimEffect (fT eff) (fT t) (fE l) <*> (case m of
+    PrimEffect l m -> liftA2 PrimEffect (fE l) $ case m of
        MAsk    -> pure  MAsk
        MTell e -> liftA MTell (fE e)
        MGet    -> pure  MGet
-       MPut  e -> liftA MPut  (fE e))
-    Return eff e         -> liftA2 Return (fT eff) (fE e)
-    -- RunEffect r s lam    -> liftA3 RunEffect (fE r) (fE s) (fL lam)
+       MPut  e -> liftA MPut  (fE e)
+    RunReader r lam      -> liftA2 RunReader (fE r) (fL lam)
+    RunWriter   lam      -> liftA  RunWriter        (fL lam)
+    RunState  s lam      -> liftA2 RunState  (fE s) (fL lam)
     LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
@@ -718,7 +716,31 @@ instance Traversable EffectRow where
     liftA3 EffectRow (traverse f r) (traverse f w) (traverse f s)
 
 instance Semigroup (EffectRow ty) where
-  EffectRow r w s <> EffectRow r' w' s' = EffectRow (r <> r') (w <> w') (s <> s')
+  EffectRow r w s <> EffectRow r' w' s' =
+    EffectRow (r <> r') (w <> w') (s <> s')
 
 instance Monoid (EffectRow ty) where
   mempty = EffectRow [] [] []
+
+readerRow :: a -> EffectRow a
+readerRow x = EffectRow [x] [] []
+
+writerRow :: a -> EffectRow a
+writerRow x = EffectRow [] [x] []
+
+stateRow :: a -> EffectRow a
+stateRow x = EffectRow [] [] [x]
+
+rowMeet :: EffectRow a -> EffectRow b -> EffectRow (a, b)
+rowMeet (EffectRow r w s) (EffectRow r' w' s') =
+  EffectRow (zip r r') (zip w w') (zip s s')
+
+rowJoin :: EffectRow a -> EffectRow b -> EffectRow ()
+rowJoin (EffectRow r w s) (EffectRow r' w' s') =
+  EffectRow (listJoin r r') (listJoin w w') (listJoin s s')
+  where listJoin xs ys = replicate (max (length xs) (length ys)) ()
+
+rowDiff :: EffectRow a -> EffectRow b -> EffectRow a
+rowDiff (EffectRow r w s) (EffectRow r' w' s') =
+  EffectRow (listDiff r r') (listDiff w w') (listDiff s s')
+  where listDiff xs ys = drop (length ys) xs

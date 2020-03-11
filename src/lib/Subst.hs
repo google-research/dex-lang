@@ -42,7 +42,7 @@ instance Subst Atom where
     Con con -> Con $ subst env con
 
 instance Subst LamExpr where
-  subst env@(_, scope) (LamExpr b body) = LamExpr b' body'
+  subst env@(_, scope) (LamExpr b eff body) = LamExpr b' (subst env eff) body'
     where (b', env') = refreshBinder scope (subst env b)
           body' = subst (env <> env') body
 
@@ -81,15 +81,16 @@ instance Subst Type where
     BoundTVar _ -> ty
     Lin         -> ty
     NonLin      -> ty
-    Effect eff t -> case t of
-      Nothing -> Effect eff' Nothing
-      Just v  -> case recur (TypeVar v) of
-        TypeVar v'            -> Effect eff' (Just v')
-        Effect eff'' t'       -> Effect (eff' <> eff'') t'
-        _ -> error "unexpected kind: expected effect kind!"
-      where eff' = fmap recur eff
+    Effect row t -> case t of
+      Nothing -> Effect row' Nothing
+      Just v  -> substTail row' (recur v)
+      where row' = fmap recur row
     NoAnn       -> NoAnn
     where recur = subst env
+
+substTail :: EffectRow Type -> Type -> Effect
+substTail row (Effect row' t) = Effect (row <> row') t
+substTail row t = Effect row (Just t)
 
 instance Subst Decl where
   subst env decl = case decl of
@@ -164,7 +165,10 @@ subAtDepth d f ty = case ty of
     BoundTVar n   -> f d (Right n)
     Lin           -> Lin
     NonLin        -> NonLin
-    Effect eff t -> Effect (fmap recur eff) t
+    Effect row t  -> case t of
+      Nothing -> Effect row' Nothing
+      Just v  -> substTail row' (recur v)
+      where row' = fmap recur row
     NoAnn         -> NoAnn
   where recur        = subAtDepth d f
         recurWith d' = subAtDepth (d + d') f

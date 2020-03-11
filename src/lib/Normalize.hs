@@ -73,9 +73,10 @@ lookupVar v = do
      Just (T _) -> error $ "Lookup failed: " ++ pprint v
 
 normalizeLam :: FLamExpr -> NormM LamExpr
-normalizeLam (FLamExpr p body) = do
+normalizeLam (FLamExpr p eff body) = do
+  eff' <- substTy eff
   b <- normalizePat p
-  buildLamExpr b $ \x -> do
+  buildLamExpr eff' b $ \x -> do
     env <- bindPat p x
     extendR env $ normalize body
 
