@@ -98,11 +98,13 @@ tvars d i = fromString s
                                  | otherwise -> "#ERR#" ++ show i'
 
 instance Pretty a => Pretty (EffectRow a) where
-  pretty (EffectRow rs ws ss) = hsep $ punctuate "," $ rs' ++ ws' ++ ss'
+  pretty (EffectRow rs lrs ws ss) = hsep $
+    punctuate "," $ rs' ++ lrs' ++ ws' ++ ss'
     where
-      rs' = ["Reader" <+> p r | r <- rs]
-      ws' = ["Writer" <+> p w | w <- ws]
-      ss' = ["State"  <+> p s | s <- ss]
+      rs'  = ["Reader" <+> p r | r <- rs]
+      lrs' = ["LinReader" <+> p r | r <- lrs]
+      ws'  = ["Writer" <+> p w | w <- ws]
+      ss'  = ["State"  <+> p s | s <- ss]
 
 instance Pretty BaseType where
   pretty t = case t of

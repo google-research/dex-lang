@@ -30,8 +30,8 @@ module Syntax (
     fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
-    noEffect, isPure, EffectRow (..), readerRow, writerRow, stateRow,
-    rowMeet, rowJoin, rowDiff)
+    noEffect, isPure, EffectRow (..), readerRow, linReaderRow, writerRow,
+    stateRow, rowMeet, rowJoin, rowDiff)
   where
 
 import Data.Tuple (swap)
@@ -94,6 +94,7 @@ type Scope = Env ()
 
 data EffectRow ty = EffectRow
   { readerEff :: [ty]
+  , linReaderEff :: [ty]
   , writerEff :: [ty]
   , stateEff  :: [ty] }
   deriving (Show, Eq, Generic)
@@ -200,6 +201,7 @@ data PrimOp ty e lam =
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
       | PrimEffect e (PrimEffect e)
       | RunReader e lam
+      | RunLinReader e lam
       | RunWriter   lam
       | RunState  e lam
       | LensGet e e
@@ -209,7 +211,8 @@ data PrimOp ty e lam =
       | NewtypeCast ty e
         deriving (Show, Eq, Generic)
 
-data PrimEffect e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
+data PrimEffect e = MAsk | MLinAsk | MTell e
+                  | MGet | MPut e  deriving (Show, Eq, Generic)
 
 data VSpaceOp e = VZero | VAdd e e deriving (Show, Eq, Generic)
 data ScalarBinOp = IAdd | ISub | IMul | ICmp CmpOp | Pow
@@ -244,6 +247,7 @@ builtinNames = M.fromList
   , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
   , ("runReader"       , OpExpr $ RunReader () ())
+  , ("runLinReader"    , OpExpr $ RunLinReader () ())
   , ("runWriter"       , OpExpr $ RunWriter ())
   , ("runState"        , OpExpr $ RunState () ())
   , ("lensGet"         , OpExpr $ LensGet () ())
@@ -252,6 +256,7 @@ builtinNames = M.fromList
   , ("lensId"     , ConExpr $ LensCon $ LensId ())
   , ("todo"       , ConExpr $ Todo ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
+  , ("askLin"     , OpExpr $ PrimEffect () $ MLinAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ()) ]
@@ -630,10 +635,12 @@ instance TraversableExpr PrimOp where
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
     PrimEffect l m -> liftA2 PrimEffect (fE l) $ case m of
        MAsk    -> pure  MAsk
+       MLinAsk -> pure  MLinAsk
        MTell e -> liftA MTell (fE e)
        MGet    -> pure  MGet
        MPut  e -> liftA MPut  (fE e)
     RunReader r lam      -> liftA2 RunReader (fE r) (fL lam)
+    RunLinReader r lam   -> liftA2 RunLinReader (fE r) (fL lam)
     RunWriter   lam      -> liftA  RunWriter        (fL lam)
     RunState  s lam      -> liftA2 RunState  (fE s) (fL lam)
     LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
@@ -701,6 +708,7 @@ instance Foldable PrimEffect where
 instance Traversable PrimEffect where
   traverse f prim = case prim of
     MAsk    -> pure  MAsk
+    MLinAsk -> pure  MLinAsk
     MTell x -> liftA MTell (f x)
     MGet    -> pure  MGet
     MPut  x -> liftA MPut (f x)
@@ -712,35 +720,39 @@ instance Foldable EffectRow where
   foldMap = foldMapDefault
 
 instance Traversable EffectRow where
-  traverse f (EffectRow r w s) =
-    liftA3 EffectRow (traverse f r) (traverse f w) (traverse f s)
+  traverse f (EffectRow r lr w s) =
+    liftA3 EffectRow (traverse f r) (traverse f lr) (traverse f w)
+                 <*> (traverse f s)
 
 instance Semigroup (EffectRow ty) where
-  EffectRow r w s <> EffectRow r' w' s' =
-    EffectRow (r <> r') (w <> w') (s <> s')
+  EffectRow r lr w s <> EffectRow r' lr' w' s' =
+    EffectRow (r <> r') (lr <> lr') (w <> w') (s <> s')
 
 instance Monoid (EffectRow ty) where
-  mempty = EffectRow [] [] []
+  mempty = EffectRow [] [] [] []
 
 readerRow :: a -> EffectRow a
-readerRow x = EffectRow [x] [] []
+readerRow x = EffectRow [x] [] [] []
+
+linReaderRow :: a -> EffectRow a
+linReaderRow x = EffectRow [] [x] [] []
 
 writerRow :: a -> EffectRow a
-writerRow x = EffectRow [] [x] []
+writerRow x = EffectRow [] [] [x] []
 
 stateRow :: a -> EffectRow a
-stateRow x = EffectRow [] [] [x]
+stateRow x = EffectRow [] [] [] [x]
 
 rowMeet :: EffectRow a -> EffectRow b -> EffectRow (a, b)
-rowMeet (EffectRow r w s) (EffectRow r' w' s') =
-  EffectRow (zip r r') (zip w w') (zip s s')
+rowMeet (EffectRow r lr w s) (EffectRow r' lr' w' s') =
+  EffectRow (zip r r') (zip lr lr') (zip w w') (zip s s')
 
 rowJoin :: EffectRow a -> EffectRow b -> EffectRow ()
-rowJoin (EffectRow r w s) (EffectRow r' w' s') =
-  EffectRow (listJoin r r') (listJoin w w') (listJoin s s')
+rowJoin (EffectRow r lr w s) (EffectRow r' lr' w' s') =
+  EffectRow (listJoin r r') (listJoin lr lr') (listJoin w w') (listJoin s s')
   where listJoin xs ys = replicate (max (length xs) (length ys)) ()
 
 rowDiff :: EffectRow a -> EffectRow b -> EffectRow a
-rowDiff (EffectRow r w s) (EffectRow r' w' s') =
-  EffectRow (listDiff r r') (listDiff w w') (listDiff s s')
+rowDiff (EffectRow r lr w s) (EffectRow r' lr' w' s') =
+  EffectRow (listDiff r r') (listDiff lr lr') (listDiff w w') (listDiff s s')
   where listDiff xs ys = drop (length ys) xs

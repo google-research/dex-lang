@@ -534,6 +534,7 @@ arrowType = do
 effectRow :: Parser (EffectRow Type)
 effectRow =
       (symbol "Reader" >> tauType >>= \t -> return (readerRow t))
+  <|> (symbol "LinReader" >> tauType >>= \t -> return (linReaderRow t))
   <|> (symbol "Writer" >> tauType >>= \t -> return (writerRow t))
   <|> (symbol "State"  >> tauType >>= \t -> return (stateRow  t))
 

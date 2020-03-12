@@ -89,6 +89,16 @@ instance HasType (RecTree Var) where
   getType (RecLeaf (_:>ty)) = ty
   getType (RecTree r) = RecType $ fmap getType r
 
+instance HasType FExpr where
+  getType expr = case expr of
+    FVar (_:>annTy) -> annTy
+    FDecl _ body -> getType body
+    FPrimExpr e -> case e of
+      ConExpr con ->       getConType $ fmapExpr con id getType getFLamType
+      OpExpr  op  -> snd $ getOpType  $ fmapExpr op  id getType getFLamType
+    SrcAnnot e _ -> getType e
+    Annot e _    -> getType e
+
 checkTypeFExpr :: Effect -> FExpr -> TypeM Type
 checkTypeFExpr eff expr = case expr of
   FVar v@(_:>annTy) -> do
@@ -114,6 +124,9 @@ checkTypeFExpr eff expr = case expr of
   Annot e _ -> do
     ty' <- checkTypeFExpr noEffect e
     return ty'
+
+getFLamType :: FLamExpr -> (Type, EffectiveType)
+getFLamType (FLamExpr p eff body) = (getType p, (eff, getType body))
 
 checkTypeFlam :: FLamExpr -> TypeM (Type, EffectiveType)
 checkTypeFlam (FLamExpr p eff body) = do
@@ -404,11 +417,14 @@ traverseOpType op eq inClass = case op of
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
   PrimEffect ~(Lens s x) m -> case m of
     MAsk     ->            return (Effect (readerRow s) Nothing, x)
+    MLinAsk  ->            return (Effect (linReaderRow s) Nothing, x)
     MTell x' -> eq x x' >> return (Effect (writerRow s) Nothing, unitTy)
     MGet     ->            return (Effect (stateRow  s) Nothing, x)
     MPut  x' -> eq x x' >> return (Effect (stateRow  s) Nothing, unitTy)
   RunReader r (u, (eff, a)) -> eq u unitTy >> eq r' r >> return (eff', a)
     where (r', eff') = peelReader eff
+  RunLinReader lr (u, (eff, a)) -> eq u unitTy >> eq lr' lr >> return (eff', a)
+    where (lr', eff') = peelLinReader eff
   RunWriter (u, (eff, a)) -> eq u unitTy >> return (eff', pairTy a w)
     where (w, eff') = peelWriter eff
   RunState s (u, (eff, a)) -> eq u unitTy >> eq s' s >> return (eff', pairTy a s)
@@ -480,20 +496,24 @@ flattenType ty = case ty of
   _ -> error $ "Unexpected type: " ++ show ty
 
 peelReader :: Effect -> (Type, Effect)
-peelReader ~(Effect (EffectRow (r:rs) ws ss) tailVar) =
-  (r, Effect (EffectRow rs ws ss) tailVar)
+peelReader ~(Effect (EffectRow (r:rs) lrs ws ss) tailVar) =
+  (r, Effect (EffectRow rs lrs ws ss) tailVar)
+
+peelLinReader :: Effect -> (Type, Effect)
+peelLinReader ~(Effect (EffectRow rs (lr:lrs) ws ss) tailVar) =
+  (lr, Effect (EffectRow rs lrs ws ss) tailVar)
 
 peelWriter :: Effect -> (Type, Effect)
-peelWriter ~(Effect (EffectRow rs (w:ws) ss) tailVar) =
-  (w, Effect (EffectRow rs ws ss) tailVar)
+peelWriter ~(Effect (EffectRow rs lrs (w:ws) ss) tailVar) =
+  (w, Effect (EffectRow rs lrs ws ss) tailVar)
 
 peelState :: Effect -> (Type, Effect)
-peelState ~(Effect (EffectRow rs ws (s:ss)) tailVar) =
-  (s, Effect (EffectRow rs ws ss) tailVar)
+peelState ~(Effect (EffectRow rs lrs ws (s:ss)) tailVar) =
+  (s, Effect (EffectRow rs lrs ws ss) tailVar)
 
 -- === linearity ===
 
-data Spent = Spent (Env ()) Bool  -- flag means 'may consume any linear vars'
+type Spent = Env ()
 -- Second element of (Spent, Spent) pair is spending due to writer effect
 newtype LinCheckM a = LinCheckM
   { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, (Spent, Spent)) }
@@ -507,12 +527,14 @@ checkLinFExpr expr = case expr of
   FVar v -> do
     env <- ask
     case envLookup env v of
-      Nothing -> spend tensId
+      Nothing -> spend mempty
       Just s  -> spend s
   FDecl decl body -> do
     env <- checkLinFDecl decl
     extendR env (checkLinFExpr body)
-  FPrimExpr (OpExpr  op ) -> checkLinOp  op
+  FPrimExpr (OpExpr  op ) -> do
+    let effSpending = fst $ getOpType $ fmapExpr op id getType getFLamType
+    tensCheck (checkLinOp op) (spendEffect effSpending)
   FPrimExpr (ConExpr con) -> checkLinCon con
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
   Annot e _      -> checkLinFExpr e
@@ -539,6 +561,8 @@ checkLinOp e = case e of
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App Lin    fun x -> tensCheck (check fun) (check x)
   App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
+  RunLinReader r lam ->
+    tensCheck (check r) (withLocalLinVar readerPat (checkLinFLam lam))
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
@@ -548,26 +572,42 @@ checkLinCon e = case e of
   Lam Lin (FLamExpr p _ body) -> do
     v <- getPatName p
     let s = asSpent v
-    checkSpent v (pprint p) $ extendR (foldMap (@>s) p) $ checkLinFExpr body
-  Lit (RealLit 0.0) -> return ()
+    withLocalLinVar v $ extendR (foldMap (@>s) p) $ checkLinFExpr body
   RecCon r -> mapM_ check r
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
+withLocalLinVar :: Name -> LinCheckM a -> LinCheckM a
+withLocalLinVar v m = do
+  (ans, vs) <- captureSpent m
+  spend $ vs `envDiff` (v'@>())
+  return ans
+  where v' = v:>()
+
 withoutLin :: LinCheckM a -> LinCheckM a
 withoutLin (LinCheckM m) = LinCheckM $ do
-  (ans, (s@(Spent vs _), sEff)) <- m
+  (ans, (vs, sEff)) <- m
   unless (null vs) $ throw LinErr $
-    "nonlinear function consumed linear data: " ++ pprint s
-  return (ans, (tensId, sEff))
+    "nonlinear function consumed linear data: " ++ showSpent vs
+  return (ans, (mempty, sEff))
 
 tensCheck :: LinCheckM () -> LinCheckM () -> LinCheckM ()
 tensCheck x y = LinCheckM $ do
   ((), (sx, sxEff)) <- runLinCheckM x
   ((), (sy, syEff)) <- runLinCheckM y
-  sxy    <- liftEither $ tensCat sx    sy
-  sxyEff <- liftEither $ cartCat sxEff syEff
-  return ((), (sxy, sxyEff))
+  sxy    <- liftEither $ tensCat sx sy
+  return ((), (sxy, sxEff <> syEff))
+
+readerPat :: Name
+readerPat = "#readerPat"
+
+-- TODO: handle more than one linear reader effect
+spendEffect :: Effect -> LinCheckM ()
+spendEffect (Effect row _) = case linReaderEff row of
+  []  -> return ()
+  [_] -> spend $ asSpent readerPat
+  _   -> error "Not implemented: multiple linear reader effects"
+spendEffect ty = error $ "Unexpected effect: " ++ pprint ty
 
 getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
@@ -576,69 +616,43 @@ getPatName p = case toList p of
   (v:>_):_ -> return v
 
 spend :: Spent -> LinCheckM ()
-spend s = LinCheckM $ return ((), (s, cartId))
-
-checkSpent :: Name -> String -> LinCheckM a -> LinCheckM a
-checkSpent v vStr m = do
-  (ans, Spent vs consumes) <- captureSpent m
-  unless  (consumes || v' `isin` vs) $ throw LinErr $ "pattern never spent: " ++ vStr
-  spend (Spent (vs `envDiff` (v'@>())) consumes)
-  return ans
-   where v' = v:>()
+spend s = LinCheckM $ return ((), (s, mempty))
 
 asSpent :: Name -> Spent
-asSpent v = Spent ((v:>())@>()) False
+asSpent v = (v:>())@>()
 
 tensCat :: Spent -> Spent -> Except Spent
-tensCat (Spent vs consumes) (Spent vs' consumes') = do
+tensCat vs vs' = do
   let overlap = envIntersect vs vs'
   unless (null overlap) $ throw LinErr $ "pattern spent twice: "
-                                       ++ pprint (Spent overlap False)
-  return $ Spent (vs <> vs') (consumes || consumes')
-
-cartCat :: Spent -> Spent -> Except Spent
-cartCat s1@(Spent vs consumes) s2@(Spent vs' consumes') = do
-  unless (consumes  || vs' `containedWithin` vs ) $ throw LinErr errMsg
-  unless (consumes' || vs  `containedWithin` vs') $ throw LinErr errMsg
-  return $ Spent (vs <> vs') (consumes && consumes')
-  where containedWithin x y = null $ x `envDiff` y
-        errMsg = "different consumption by Cartesian product elements: "
-                  ++ pprint s1 ++ " vs " ++ pprint s2
-
-tensId :: Spent
-tensId = Spent mempty False
-
-cartId :: Spent
-cartId = Spent mempty True
+                                       ++ showSpent overlap
+  return $ vs <> vs'
 
 captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
 captureSpent m = LinCheckM $ do
   (x, (s, sEff)) <- runLinCheckM m
-  return ((x, s), (cartId, sEff))
+  return ((x, s), (mempty, sEff))
 
-instance Pretty Spent where
-  pretty (Spent vs True ) = pretty (envNames vs ++ ["*"])
-  pretty (Spent vs False) = pretty (envNames vs)
+showSpent :: Spent -> String
+showSpent vs = pprint $ envNames vs
 
 instance Functor LinCheckM where
   fmap = liftM
 
 instance Applicative LinCheckM where
-  pure x = LinCheckM $ return (x, (cartId, cartId))
+  pure x = LinCheckM $ return (x, (mempty, mempty))
   (<*>) = ap
 
 instance Monad LinCheckM where
   m >>= f = LinCheckM $ do
-    (x, (s1, s1Eff)) <- runLinCheckM m
-    (y, (s2, s2Eff)) <- runLinCheckM (f x)
-    s    <- liftEither $ cartCat s1    s2
-    sEff <- liftEither $ cartCat s1Eff s2Eff
-    return (y, (s, sEff))
+    (x, s1) <- runLinCheckM m
+    (y, s2) <- runLinCheckM (f x)
+    return (y, (s1 <> s2))
 
 instance MonadReader (Env Spent) LinCheckM where
   ask = LinCheckM $ do
     env <- ask
-    return (env, (cartId, cartId))
+    return (env, (mempty, mempty))
   local env (LinCheckM m) = LinCheckM $ local env m
 
 instance MonadError Err LinCheckM where

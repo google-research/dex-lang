@@ -175,6 +175,12 @@ asks l = %ask(l)
 ask :: () -> {Reader r} r
 ask () = asks lensId
 
+asksLin :: Lens r a -> {LinReader r} a
+asksLin l = %askLin(l)
+
+askLin :: () -> {LinReader r} r
+askLin () = asksLin lensId
+
 tells :: A w::VS a::VS . Lens w a -> a -> {Writer w} ()
 tells l x = %tell(l, x)
 
@@ -195,6 +201,9 @@ put s = puts lensId s
 
 runReader :: r -> (() -> {Reader r |eff} a) -> {|eff} a
 runReader r f = %runReader(r, lam (). f ())
+
+runLinReader :: r --o (() -> {LinReader r |eff} a) -> {|eff} a
+runLinReader r f = %runLinReader(r, lam (). f ())
 
 runWriter :: A eff w::VS a . (() -> {Writer w |eff} a) -> {|eff} (a, w)
 runWriter f = %runWriter(lam (). f ())

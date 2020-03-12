@@ -108,6 +108,9 @@ toImpCExpr dests op = case op of
   RunReader r (LamExpr _ _ body) -> do
     r' <- toImpAtom r
     withEffectContext (readerRow r') $ toImpExpr dests body
+  RunLinReader r (LamExpr _ _ body) -> do
+    r' <- toImpAtom r
+    withEffectContext (linReaderRow r') $ toImpExpr dests body
   RunWriter (LamExpr _ _ body) -> do
     mapM_ initializeZero wDest
     withEffectContext (writerRow wDest) $ toImpExpr aDest body
@@ -121,6 +124,10 @@ toImpCExpr dests op = case op of
     case m of
       MAsk -> do
         rVals <- lift $ asks $ head . readerEff
+        ans <- lensGet l rVals
+        copyIAtom dests ans
+      MLinAsk -> do
+        rVals <- lift $ asks $ head . linReaderEff
         ans <- lensGet l rVals
         copyIAtom dests ans
       MTell x -> do

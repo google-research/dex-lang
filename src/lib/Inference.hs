@@ -209,6 +209,12 @@ generateOpSubExprTypes op = case op of
     l'   <- liftM2 Lens freshQ freshQ
     m'   <- traverse (doMSnd freshQ) m
     return $ PrimEffect (l, l') m'
+  RunLinReader r f -> do
+    r' <- freshQ
+    a  <- freshQ
+    tailVar <- freshInferenceVar EffectKind
+    let fTy = (unitTy, (Effect (linReaderRow r') (Just tailVar), a))
+    return $ RunLinReader (r, r') (f, fTy)
   RunReader r f -> do
     r' <- freshQ
     a  <- freshQ
