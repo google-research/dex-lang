@@ -13,7 +13,7 @@ addons:
     update: true
     packages:
       - libgmp-dev
-      - llvm-8-tools
+      - llvm-9-tools
       - python3-numpy
 jobs:
   include:

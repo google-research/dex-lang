@@ -4,7 +4,11 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
-resolver: lts-14.0
+resolver: lts-14.27
 
 packages:
 - .
+
+extra-deps:
+  - llvm-hs-9.0.1
+  - llvm-hs-pure-9.0.0

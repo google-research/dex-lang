@@ -22,7 +22,6 @@ import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Exception
 import Data.IORef
-import Data.Monoid ((<>))
 
 import Cat
 import Util

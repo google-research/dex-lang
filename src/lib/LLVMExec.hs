@@ -76,7 +76,7 @@ verifyAndRecover m =
     (\e -> return ("\nVerification error:\n" ++ show (e::SomeException) ++ "\n"))
 
 showAsm :: Mod.Module -> IO String
-showAsm m = T.withHostTargetMachine $ \t ->
+showAsm m = T.withHostTargetMachineDefault $ \t ->
               liftM unpack $ Mod.moduleTargetAssembly t m
 
 passes :: P.PassSetSpec

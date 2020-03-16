@@ -9,7 +9,6 @@ import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
-import Data.Semigroup ((<>))
 
 import Syntax
 import PPrint
