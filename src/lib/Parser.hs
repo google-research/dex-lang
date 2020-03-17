@@ -21,7 +21,6 @@ import Env
 import Record
 import ParseUtil
 import Syntax
-import Type
 import PPrint
 
 parseProg :: String -> [SourceBlock]
@@ -152,7 +151,7 @@ typeDef = do
   ty <- tauType
   let ty' = case tvs' of
               [] -> ty
-              _  -> TypeAlias (map varAnn tvs') (abstractTVs tvs' ty)
+              _  -> TypeAlias tvs' ty
   return $ TyDef v ty'
 
 -- === Parsing decls ===
@@ -177,7 +176,7 @@ letPolyTail s = do
   wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
   rhs <- liftM wrap declOrExpr
-  return (Forall (map varAnn tbs) (abstractTVs tbs ty), FTLam tbs rhs)
+  return (Forall tbs ty, FTLam tbs rhs)
 
 letPolyToMono :: FDecl -> FDecl
 letPolyToMono d = case d of

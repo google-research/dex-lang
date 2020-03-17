@@ -58,11 +58,10 @@ data Type = TypeVar TVar
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
-          | Forall [Kind] Type
-          | TypeAlias [Kind] Type
+          | Forall [TVar] Type
+          | TypeAlias [TVar] Type
           | Lens Type Type
           | TypeApp Type [Type]
-          | BoundTVar Int
           | Lin
           | NonLin
           | Effect (EffectRow Type) (Maybe Type)
@@ -515,11 +514,10 @@ instance HasVars Type where
     ArrayType _ _ -> mempty
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
-    Forall    _ body -> freeVars body
-    TypeAlias _ body -> freeVars body
+    Forall    tbs body -> freeVars body `envDiff` foldMap tbind tbs
+    TypeAlias tbs body -> freeVars body `envDiff` foldMap tbind tbs
     Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
-    BoundTVar _ -> mempty
     Lin         -> mempty
     NonLin      -> mempty
     Effect eff t -> foldMap freeVars eff <> foldMap freeVars t

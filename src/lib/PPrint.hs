@@ -14,7 +14,6 @@ module PPrint (pprint, pprintList,
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
-import Data.String
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -55,47 +54,31 @@ instance Pretty ErrType where
     MiscErr           -> "Error:"
 
 instance Pretty Type where
-  pretty t = prettyTyDepth 0 t
-
-prettyTyDepth :: Int -> Type -> Doc ann
-prettyTyDepth d ty = case ty of
-  BaseType b  -> p b
-  TypeVar v   -> p v
-  BoundTVar n -> p (tvars d n)
-  ArrowType l a (eff, b)
-    | isPure eff -> parens $ recur a <+> arrStr l <+>               recur b
-    | otherwise  -> parens $ recur a <+> arrStr l <+> recur eff <+> recur b
-  TabType a b -> parens $ recur a <> "=>" <> recur b
-  RecType r   -> p $ fmap (asStr . recur) r
-  ArrayType shape b -> p b <> p shape
-  TypeApp f xs -> recur f <+> hsep (map recur xs)
-  Lens a b    -> "Lens" <+> recur a <+> recur b
-  Forall []    t -> prettyTyDepth d t
-  Forall kinds t -> header <+> prettyTyDepth (d + n) t
-    where n = length kinds
-          header = "A" <+> hsep binders <> "."
-          boundvars :: [Name]
-          boundvars = [tvars 0 i | i <- [-n..(-1)]]
-          binders = map p $ zipWith (:>) boundvars kinds
-  TypeAlias _ _ -> "<type alias>"  -- TODO
-  IdxSetLit i -> p i
-  Lin    -> "Lin"
-  NonLin -> "NonLin"
-  Effect row t -> "{" <> p (fmap (asStr . recur) row) <> tailVar <> "}"
-    where tailVar = case t of Nothing -> mempty
-                              Just v  -> "|" <+> recur v
-  NoAnn  -> ""
-  where
-    recur = prettyTyDepth d
-
-    arrStr :: Type -> Doc ann
-    arrStr Lin = "--o"
-    arrStr _   = "->"
-
-tvars :: Int -> Int -> Name
-tvars d i = fromString s
-  where s = case d - i - 1 of i' | i' >= 0 -> [['a'..'z'] !! i']
-                                 | otherwise -> "#ERR#" ++ show i'
+  pretty ty = case ty of
+    BaseType b  -> p b
+    TypeVar v   -> p v
+    ArrowType l a (eff, b)
+      | isPure eff -> parens $ p a <+> arrStr l <+>               p b
+      | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
+    TabType a b -> parens $ p a <> "=>" <> p b
+    RecType r   -> p $ fmap (asStr . p) r
+    ArrayType shape b -> p b <> p shape
+    TypeApp f xs -> p f <+> hsep (map p xs)
+    Lens a b    -> "Lens" <+> p a <+> p b
+    Forall bs body -> header <+> p body
+      where header = "A" <+> hsep (map p bs) <> "."
+    TypeAlias _ _ -> "<type alias>"  -- TODO
+    IdxSetLit i -> p i
+    Lin    -> "Lin"
+    NonLin -> "NonLin"
+    Effect row t -> "{" <> p (fmap (asStr . p) row) <> tailVar <> "}"
+      where tailVar = case t of Nothing -> mempty
+                                Just v  -> "|" <+> p v
+    NoAnn  -> ""
+    where
+      arrStr :: Type -> Doc ann
+      arrStr Lin = "--o"
+      arrStr _   = "->"
 
 instance Pretty a => Pretty (EffectRow a) where
   pretty (EffectRow rs lrs ws ss) = hsep $

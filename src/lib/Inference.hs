@@ -14,7 +14,7 @@ module Inference (inferModule, inferExpr) where
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -91,10 +91,11 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
   FPrimExpr (OpExpr (TApp (FVar v) ts)) -> do
     ty <- asks $ fromL . (! v)
     case ty of
-      Forall kinds body -> do
-        vs <- mapM (const freshQ) (drop (length ts) kinds)
+      Forall bs body -> do
+        vs <- mapM (freshInferenceVar . varAnn) (drop (length ts) bs)
         let ts' = ts ++ vs
-        constrainReq (instantiateTVs ts' body)
+        let env = fold [tv @> T t | (tv, t) <- zip bs ts']
+        constrainReq (subst (env, mempty) body)
         return $ fTyApp (varName v :> ty) ts'
       _ -> throw TypeErr "Unexpected type application"
   FPrimExpr (OpExpr op) -> do
@@ -133,8 +134,9 @@ checkPure :: FExpr -> Type -> InferM FExpr
 checkPure expr ty = check expr (noEffect, ty)
 
 checkTLam :: Type -> FTLam -> InferM FTLam
-checkTLam ~(Forall _ tyBody) (FTLam tbs tlamBody) = do
-  let tyBody' = (noEffect, instantiateTVs (map TypeVar tbs) tyBody)
+checkTLam ~(Forall tbs' tyBody) (FTLam tbs tlamBody) = do
+  let substEnv = fold [v @> T (TypeVar ty) | (v, ty) <- zip tbs' tbs]
+  let tyBody' = (noEffect, subst (substEnv, mempty) tyBody)
   let env = foldMap (\tb -> tb @> T (varAnn tb)) tbs
   liftM (FTLam tbs) $ checkLeaks tbs $ extendR env $ check tlamBody tyBody'
 

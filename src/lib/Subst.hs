@@ -7,10 +7,9 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, instantiateTVs, abstractTVs) where
+module Subst (Subst, subst) where
 
 import Data.Foldable
-import Data.List (elemIndex)
 
 import Env
 import Record
@@ -78,7 +77,6 @@ instance Subst Type where
     TypeAlias ks body -> TypeAlias ks (recur body)
     Lens a b    -> Lens (recur a) (recur b)
     IdxSetLit _ -> ty
-    BoundTVar _ -> ty
     Lin         -> ty
     NonLin      -> ty
     Effect row t -> case t of
@@ -124,51 +122,8 @@ instance (Subst a, Subst b) => Subst (Either a b)where
 
 -- TODO: check kinds before alias expansion
 reduceTypeApp :: Type -> [Type] -> Type
-reduceTypeApp (TypeAlias ks ty) xs | length ks == length xs = instantiateTVs xs ty
-                                   | otherwise = error "Kind error"
+reduceTypeApp (TypeAlias bs ty) xs
+  | length bs == length xs = subst (env, mempty) ty
+  | otherwise = error "Kind error"
+    where env = fold [v @> T x | (v, x) <- zip bs xs]
 reduceTypeApp f xs = TypeApp f xs
-
-instantiateTVs :: [Type] -> Type -> Type
-instantiateTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar =
-          case tvar of
-            Left v -> TypeVar v
-            Right i | i >= depth -> if i' < length vs && i >= 0
-                                      then vs !! i'
-                                      else error $ "Bad index: "
-                                             ++ show i' ++ " / " ++ pprint vs
-                                             ++ " in " ++ pprint x
-                    | otherwise  -> BoundTVar i
-              where i' = i - depth
-
-abstractTVs :: [TVar] -> Type -> Type
-abstractTVs vs x = subAtDepth 0 sub x
-  where sub depth tvar = case tvar of
-                           Left v -> case elemIndex (varName v) (map varName vs) of
-                                       Nothing -> TypeVar v
-                                       Just i  -> BoundTVar (depth + i)
-                           Right i -> BoundTVar i
-
-subAtDepth :: Int -> (Int -> Either TVar Int -> Type) -> Type -> Type
-subAtDepth d f ty = case ty of
-    BaseType _    -> ty
-    TypeVar v     -> f d (Left v)
-    ArrowType m a (eff, b) -> ArrowType (recur m) (recur a) (recur eff, recur b)
-    TabType a b   -> TabType (recur a) (recur b)
-    RecType r     -> RecType (fmap recur r)
-    ArrayType _ _ -> ty
-    TypeApp a b   -> TypeApp (recur a) (map recur b)
-    Lens a b      -> Lens (recur a) (recur b)
-    Forall    ks body -> Forall    ks (recurWith (length ks) body)
-    TypeAlias ks body -> TypeAlias ks (recurWith (length ks) body)
-    IdxSetLit _   -> ty
-    BoundTVar n   -> f d (Right n)
-    Lin           -> Lin
-    NonLin        -> NonLin
-    Effect row t  -> case t of
-      Nothing -> Effect row' Nothing
-      Just v  -> substTail row' (recur v)
-      where row' = fmap recur row
-    NoAnn         -> NoAnn
-  where recur        = subAtDepth d f
-        recurWith d' = subAtDepth (d + d') f

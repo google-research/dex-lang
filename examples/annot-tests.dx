@@ -39,7 +39,7 @@ h x = x
 
 
 :t h
-> A b a. ((b -> a) -> (b -> a))
+> A a b. ((a -> b) -> (a -> b))
 
 
 fun :: a -> a

@@ -10,8 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
-    getType, instantiateTVs, abstractTVs, substEnvType,
-    tangentBunType, flattenType, PrimOpType, PrimConType,
+    getType, substEnvType, tangentBunType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..)) where
 
@@ -154,9 +153,8 @@ checkTypeFDecl eff decl = case decl of
 
 checkTypeFTLam :: FTLam -> TypeM Type
 checkTypeFTLam (FTLam tbs body) = do
-  let env = foldMap (\b -> b @> T (varAnn b)) tbs
-  ty <- extendR env $ checkTypeFExpr noEffect body
-  return $ Forall (map varAnn tbs) (abstractTVs tbs ty)
+  body' <- extendR (foldMap tbind tbs) $ checkTypeFExpr noEffect body
+  return $ Forall tbs body'
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
@@ -235,8 +233,7 @@ checkVarClass env c v = do
 instance HasType Atom where
   getType atom = case atom of
     Var (_:>ty) -> ty
-    TLam vs body -> do
-      Forall (map varAnn vs) $ abstractTVs vs $ getType body
+    TLam vs body -> Forall vs $ getType body
     Con con -> getConType $ fmapExpr con id getType getLamType
 
 instance HasType Expr where
@@ -277,7 +274,7 @@ checkAtom atom = case atom of
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
   TLam tvs body -> do
     bodyTy <- extendR (foldMap tbind tvs) (checkExpr noEffect body)
-    return $ Forall (map varAnn tvs) (abstractTVs tvs bodyTy)
+    return $ Forall tvs bodyTy
   Con con -> traverseExpr con return checkAtom checkLam >>= checkConType
 
 checkPure :: MonadError Err m => Effect -> m ()
@@ -344,7 +341,6 @@ tangentBunType ty = case ty of
   ArrowType l a (eff, b) | isPure eff -> ArrowType l (recur a) (noEffect, recur b)
   TabType n a   -> TabType n (recur a)
   IdxSetLit _ -> ty
-  BoundTVar _ -> ty
   _ -> error "Not implemented"
   where recur = tangentBunType
 
@@ -386,10 +382,12 @@ traverseOpType op eq inClass = case op of
     eq a a'
     eq l l'
     return b
-  TApp (Forall kinds body) ts -> do
-    assertEq (length kinds) (length ts) "Number of type args"
-    sequence_ [ mapM_ (inClass t) cs | (TyKind cs, t) <- zip kinds ts]
-    return $ pureTy $ instantiateTVs ts body
+  TApp (Forall bs body) ts -> do
+    -- TODO: check kinds here
+    assertEq (length bs) (length ts) "Number of type args"
+    sequence_ [ mapM_ (inClass t) cs | (_ :> TyKind cs, t) <- zip bs ts]
+    let env = fold [b @> T t | (b, t) <- zip bs ts]
+    return $ pureTy $ subst (env, mempty) body
   For (n,(eff, a)) ->
     inClass n IdxSet >> inClass a Data >> return (eff, TabType n a)
   TabCon n ty xs ->
