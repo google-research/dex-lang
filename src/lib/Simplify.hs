@@ -63,7 +63,7 @@ simplifyAtom atom = case atom of
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
-  TLam _ _      -> substEmbed atom
+  TLam _ _ _    -> substEmbed atom
   Con (Lam _ _) -> substEmbed atom
   Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom simplifyLam
 
@@ -89,7 +89,7 @@ simplifyCExpr expr = do
       return $ transposeMap scope lam
     App _ (Con (Lam _ (LamExpr b _ body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
-    TApp (TLam tbs body) ts -> do
+    TApp (TLam tbs _ body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
       dropSub $ extendR env $ simplify body
     RecGet (Con (RecCon r)) i -> return $ recGet r i

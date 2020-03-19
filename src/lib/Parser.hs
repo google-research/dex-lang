@@ -170,17 +170,17 @@ letPoly = do
 
 letPolyTail :: String -> Parser (Type, FTLam)
 letPolyTail s = do
-  (tbs, ty) <- mayNotBreak $ sigmaType
+  ~(Forall tbs qs ty) <- mayNotBreak $ sigmaType
   declSep
   symbol s
   wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
   rhs <- liftM wrap declOrExpr
-  return (Forall tbs ty, FTLam tbs rhs)
+  return (Forall tbs qs ty, FTLam tbs qs rhs)
 
 letPolyToMono :: FDecl -> FDecl
 letPolyToMono d = case d of
-  LetPoly (v:> Forall [] ty) (FTLam [] rhs) -> LetMono (RecLeaf $ v:> ty) rhs
+  LetPoly (v:> Forall [] _ ty) (FTLam [] _ rhs) -> LetMono (RecLeaf $ v:> ty) rhs
   _ -> d
 
 letMono :: Parser FDecl
@@ -452,32 +452,43 @@ app f x = fPrimOp $ App NoAnn f x
 
 -- === Parsing types ===
 
-sigmaType :: Parser ([TVar], Type)
-sigmaType = do
-  maybeTbs <- optional $ do
-    symbol "A"
-    tBs <- many typeBinder
-    period
-    return tBs
+sigmaType :: Parser Type
+sigmaType = explicitSigmaType <|> implicitSigmaType
+
+explicitSigmaType :: Parser Type
+explicitSigmaType = do
+  symbol "A"
+  tbs <- many typeBinder
+  qs <- (symbol "|" >> qual `sepBy` comma) <|> return []
+  period
   ty <- tauType
-  let tbs = case maybeTbs of
-              Nothing -> map (:> TyKind []) vs
-                -- TODO: lexcial order!
-                where vs = filter localTVName $ envNames (freeVars ty)
-              Just tbs' -> tbs'
-  let tbs' = map (  addClassVars Data   (dataVars   ty)
-                  . addClassVars IdxSet (idxSetVars ty)) tbs
-  return (tbs', ty)
-  where
-    localTVName v = nameSpace v == LocalTVName
+  return $ Forall tbs qs ty
+
+implicitSigmaType :: Parser Type
+implicitSigmaType = do
+  ty <- tauType
+  let tbs =  [v:>NoKindAnn | v <- envNames (freeVars ty)
+                           , nameSpace v == LocalTVName]
+  return $ Forall tbs [] ty
 
 typeBinder :: Parser TVar
 typeBinder = do
   ~(TypeVar (v:>_)) <- typeVar <|> localTypeVar
-  cs <-   (symbol "::" >> (    liftM (:[]) className
-                           <|> parens (className `sepBy` comma)))
-      <|> return []
-  return (v:>TyKind cs)
+  k <-  (symbol "::" >> kindName)
+    <|> return NoKindAnn
+  return $ v :> k
+
+kindName :: Parser Kind
+kindName =   (symbol "Ty"     >> return TyKind)
+         <|> (symbol "Mult"   >> return MultKind)
+         <|> (symbol "Effect" >> return EffectKind)
+         <?> "kind"
+
+qual :: Parser TyQual
+qual = do
+  c <- className
+  ~(TypeVar v) <- typeVar <|> localTypeVar
+  return $ TyQual v c
 
 className :: Parser ClassName
 className = do
@@ -488,26 +499,11 @@ className = do
     "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
-addClassVars :: ClassName -> [Name] -> TVar -> TVar
-addClassVars c vs ~b@(v:>(TyKind cs))
-  | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
-  | otherwise = b
+-- addClassVars :: ClassName -> [Name] -> TVar -> TVar
+-- addClassVars c vs ~b@(v:>(TyKind cs))
+--   | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
+--   | otherwise = b
 
-idxSetVars :: Type -> [Name]
-idxSetVars ty = case ty of
-  ArrowType _ a (_, b) -> recur a <> recur b
-  TabType a b   -> envNames (freeVars a) <> recur b
-  RecType r     -> foldMap recur r
-  _             -> []
-  where recur = idxSetVars
-
-dataVars :: Type -> [Name]
-dataVars ty = case ty of
-  ArrowType _ a (_, b) -> recur a <> recur b
-  TabType _ b   -> envNames (freeVars b)
-  RecType r     -> foldMap recur r
-  _             -> []
-  where recur = dataVars
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName
@@ -543,8 +539,7 @@ effectType =  bracketed "{" "}" $ do
   effects <- effectRow `sepBy` comma
   tailVar <- optional $ do
                symbol "|"
-               v <- name LocalTVName identifier
-               return $ TypeVar (v:> EffectKind)
+               localTypeVar
   return $ Effect (fold effects) tailVar
 
 tyAppRule :: Operator Parser Type
@@ -568,12 +563,12 @@ tauType' =   parenTy
 typeVar :: Parser Type
 typeVar = do
   v <- name SourceTypeName upperStr
-  return $ TypeVar (v:> TyKind [])
+  return $ TypeVar (v:> NoKindAnn)
 
 localTypeVar :: Parser Type
 localTypeVar = do
   v <- name LocalTVName identifier
-  return $ TypeVar (v:> TyKind [])
+  return $ TypeVar (v:> NoKindAnn)
 
 lensType :: Parser Type
 lensType = symbol "Lens" >> liftM2 Lens t t

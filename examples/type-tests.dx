@@ -6,8 +6,7 @@
 :t lam x. sum for i. x.i
 > Type error:Ambiguous type variables: [?_10]
 >
-> ( [*ans*::? = (lam x::?_5 . sum @?_10::Ix for i::?_15 . (x).(i))]
-> , (*ans* @> L ?) )
+> ([*ans*::? = (lam x::?_5 . sum @?_10 for i::?_15 . (x).(i))], (*ans* @> L ?))
 
 :t lam f x y. f y x
 > Type error:Ambiguous type variables: [?_13, ?_17, ?_21]
@@ -167,7 +166,7 @@ f x =
 :p lam x::Real. x
 > (lam x::Real . x)
 
-vspaceid :: A a::VS. a -> a
+vspaceid :: A a | VS a . a -> a
 vspaceid x = x
 
 :t vspaceid (1.0, [2.0, 3.0])
@@ -179,7 +178,7 @@ vspaceid x = x
 > :t vspaceid 0
 >    ^^^^^^^^^
 
-:t g :: A a::VS. a -> a
+:t g :: A a | VS a . a -> a
    g x = vspaceid x
    g @Real
 > (Real -> Real)
@@ -245,6 +244,12 @@ f2 x = x + x
 > :t [1,2,3].(3@4)
 >             ^^^
 
+type MyInt = Int
+type MyInt2 = MyInt
+
+x :: MyInt2
+x = 1
+
 type MyPair a = (a, a)
 
 :p
@@ -253,3 +258,24 @@ type MyPair a = (a, a)
   --
   pairs
 > ((1, 2), (1.0, 2.0))
+
+fEff :: () -> {| a} a
+fEff = todo
+> Kind error:
+> Expected: Type
+>   Actual: Effect
+
+fAmb :: A a. ()
+fAmb = ()
+> Kind error:Ambiguous kind for type variable: a::NoKindAnn
+
+:p
+  fEff2 :: () -> {|eff} ()
+  fEff2 = todo
+  fEff2 @Int ()
+> Kind error:
+> Expected: Effect
+>   Actual: Type
+>
+>   fEff2 @Int ()
+>   ^^^^^^^^^^^

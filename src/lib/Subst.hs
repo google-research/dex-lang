@@ -36,14 +36,20 @@ instance Subst Atom where
       Nothing -> Var $ fmap (subst env) v
       Just (L x') -> subst (mempty, scope) x'
       Just (T _ ) -> error "Expected let-bound variable"
-    TLam tvs body -> TLam tvs' $ subst (env <> env') body
+    TLam tvs qs body -> TLam tvs' qs' $ subst env'' body
       where (tvs', env') = refreshTBinders scope tvs
+            env'' = env <> env'
+            qs' = map (subst env'') qs
     Con con -> Con $ subst env con
 
 instance Subst LamExpr where
   subst env@(_, scope) (LamExpr b eff body) = LamExpr b' (subst env eff) body'
     where (b', env') = refreshBinder scope (subst env b)
           body' = subst (env <> env') body
+
+instance Subst TyQual where
+  subst env (TyQual tv c) = TyQual tv' c
+    where (TypeVar tv') = subst env (TypeVar tv)
 
 refreshDecl :: Env () -> Decl -> (Decl, (SubstEnv, Scope))
 refreshDecl scope decl = case decl of
@@ -73,8 +79,8 @@ instance Subst Type where
     ArrayType shape b -> ArrayType shape b
     RecType r   -> RecType $ fmap recur r
     TypeApp f args -> reduceTypeApp (recur f) (map recur args)
-    Forall    ks body -> Forall    ks (recur body)
-    TypeAlias ks body -> TypeAlias ks (recur body)
+    Forall    ks con body -> Forall    ks con (recur body)
+    TypeAlias ks     body -> TypeAlias ks     (recur body)
     Lens a b    -> Lens (recur a) (recur b)
     IdxSetLit _ -> ty
     Lin         -> ty

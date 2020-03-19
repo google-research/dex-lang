@@ -43,6 +43,7 @@ instance Pretty ErrType where
     NoErr             -> ""
     ParseErr          -> "Parse error:"
     TypeErr           -> "Type error:"
+    KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
@@ -65,8 +66,12 @@ instance Pretty Type where
     ArrayType shape b -> p b <> p shape
     TypeApp f xs -> p f <+> hsep (map p xs)
     Lens a b    -> "Lens" <+> p a <+> p b
-    Forall bs body -> header <+> p body
-      where header = "A" <+> hsep (map p bs) <> "."
+    Forall bs qs body -> header <+> p body
+      where
+        header = "A" <+> hsep (map p bs) <> qual <> "."
+        qual = case qs of
+                 [] -> mempty
+                 _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IdxSetLit i -> p i
     Lin    -> "Lin"
@@ -88,6 +93,9 @@ instance Pretty a => Pretty (EffectRow a) where
       lrs' = ["LinReader" <+> p r | r <- lrs]
       ws'  = ["Writer" <+> p w | w <- ws]
       ss'  = ["State"  <+> p s | s <- ss]
+
+instance Pretty TyQual where
+  pretty (TyQual v c) = p c <+> p v
 
 instance Pretty BaseType where
   pretty t = case t of
@@ -121,7 +129,7 @@ instance Pretty FExpr where
 instance Pretty FDecl where
   -- TODO: special-case annotated leaf var (print type on own line)
   pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
-  pretty (LetPoly (v:>ty) (FTLam _ body)) =
+  pretty (LetPoly (v:>ty) (FTLam _ _ body)) =
     p v <+> "::" <+> p ty <> line <>
     p v <+> "="  <+> p body
   pretty (FRuleDef _ _ _) = "<TODO: rule def>"
@@ -182,17 +190,17 @@ instance (Pretty a, Pretty b) => PrettyLam (a, b) where
   prettyLam (x, y) = (p x, p y)
 
 instance Pretty Kind where
-  pretty (TyKind cs) = case cs of
-    []  -> ""
-    [c] -> p c
-    _   -> tupled $ map p cs
-  pretty MultKind = "Mult"
+  pretty TyKind     = "Type"
+  pretty MultKind   = "Mult"
   pretty EffectKind = "Effect"
+  pretty k = p $ show k
 
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =
-    case asStr ann' of "" -> p v
-                       _  -> p v <> "::" <> ann'
+    case asStr ann' of
+      ""     -> p v
+      "Type" -> p v
+      _      -> p v <> "::" <> ann'
     where ann' = p ann
 
 instance Pretty ClassName where
@@ -208,7 +216,7 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
-    TLam ks body -> "tlam" <+> p ks <+> "." <+> p body
+    TLam vs qs body -> "tlam" <+> p vs <+> "|" <+> p qs <+> "." <+> p body
     Con con -> p (ConExpr con)
 
 tup :: Pretty a => [a] -> Doc ann

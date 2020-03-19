@@ -12,7 +12,8 @@
 module Type (
     getType, substEnvType, tangentBunType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
-    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..)) where
+    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
+    getKind, checkKindIs, checkKindEq) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -27,13 +28,14 @@ import PPrint
 import Cat
 import Subst
 
-type TypeM a = ReaderT TypeEnv (Either Err) a
+type ClassEnv = MonMap Name [ClassName]
+type TypeM a = ReaderT TypeEnv (ReaderT ClassEnv (Either Err)) a
 
 class HasType a where
   getType :: a -> Type
 
 runTypeM :: TypeEnv -> TypeM a -> Except a
-runTypeM env m = runReaderT m env
+runTypeM env m = runReaderT (runReaderT m env) mempty
 
 -- === Module interfaces ===
 
@@ -56,7 +58,7 @@ instance IsModuleBody FModBody where
     termEnv <- runTypeM env $ catFold (checkTypeFDecl noEffect) decls
     mapM_ runCheckLinFDecl decls
     return $ termEnv <> tyDefEnv
-    where tyDefEnv = fmap (const (T (TyKind []))) tyDefs
+    where tyDefEnv = fmap (T . getKind) tyDefs
 
 instance IsModuleBody ModBody where
   -- TODO: find a better way to decide which errors are compiler errors
@@ -75,12 +77,74 @@ substEnvType :: SubstEnv -> TypeEnv
 substEnvType env = fmap getTyOrKind env
 
 checkTyOrKind :: LorT Atom Type -> TypeM (LorT Type Kind)
-checkTyOrKind (L x) = liftM L $ checkAtom x
-checkTyOrKind (T _) = return $ T $ TyKind []
+checkTyOrKind (L x ) = liftM L $ checkAtom x
+checkTyOrKind (T ty) = liftM T $ checkKind ty
 
 getTyOrKind :: LorT Atom Type -> LorT Type Kind
-getTyOrKind (L x) = L $ getType x
-getTyOrKind (T _) = T $ TyKind []
+getTyOrKind (L x ) = L $ getType x
+getTyOrKind (T ty) = T $ getKind ty
+
+-- === kind checking ===
+
+getKind :: Type -> Kind
+getKind ty = case ty of
+  TypeVar v       -> varAnn v
+  TypeAlias vs rhs -> ArrowKind (map varAnn vs) (getKind rhs)
+  Lin        -> MultKind
+  NonLin     -> MultKind
+  Effect _ _ -> EffectKind
+  NoAnn      -> NoKindAnn
+  _          -> TyKind
+
+checkKind :: (MonadError Err m, MonadReader TypeEnv m)
+          => Type -> m Kind
+checkKind ty = case ty of
+  TypeVar v@(_:>k) -> do
+    x <- asks $ flip envLookup v
+    case x of
+      Just (T k') -> do
+        assertEq k k' "Kind annotation"
+      _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
+    return k
+  BaseType _ -> return TyKind
+  ArrowType m a (e, b) -> do
+    checkKindIs MultKind   m
+    checkKindIs TyKind     a
+    checkKindIs EffectKind e
+    checkKindIs TyKind     b
+    return TyKind
+  IdxSetLit _ -> return TyKind
+  TabType n a -> checkKindIs TyKind n >> checkKindIs TyKind a >> return TyKind
+  ArrayType _ _ -> return TyKind
+  RecType r -> mapM_ (checkKindIs TyKind) r >> return TyKind
+  Forall vs _ body -> do
+    extendR (foldMap tbind vs) (checkKindIs TyKind body)
+    return TyKind
+  TypeAlias vs body -> do
+    bodyKind <- extendR (foldMap tbind vs) (checkKind body)
+    return $ ArrowKind (map varAnn vs) bodyKind
+  Lens a b -> checkKindIs TyKind a >> checkKindIs TyKind b >> return TyKind
+  Lin      -> return MultKind
+  NonLin   -> return MultKind
+  Effect eff tailVar -> do
+    mapM_ (checkKindIs TyKind) eff
+    case tailVar of
+      Nothing -> return ()
+      Just tv@(TypeVar _) -> checkKindIs EffectKind tv
+      _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
+    return EffectKind
+  NoAnn -> error "Shouldn't have NoAnn left"
+
+checkKindIs :: (MonadError Err m, MonadReader TypeEnv m)
+            => Kind -> Type -> m ()
+checkKindIs k ty = do
+  k' <- checkKind ty
+  checkKindEq k k'
+
+checkKindEq :: MonadError Err m => Kind -> Kind -> m ()
+checkKindEq k1 k2 | k1 == k2  = return ()
+                  | otherwise = throw KindErr $ "\nExpected: " ++ pprint k1
+                                             ++ "\n  Actual: " ++ pprint k2
 
 -- === type-checking pass on FExpr ===
 
@@ -129,7 +193,7 @@ getFLamType (FLamExpr p eff body) = (getType p, (eff, getType body))
 
 checkTypeFlam :: FLamExpr -> TypeM (Type, EffectiveType)
 checkTypeFlam (FLamExpr p eff body) = do
-  checkTy pTy
+  void $ checkKind pTy
   bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr eff body
   return (pTy, (eff, bodyTy))
   where pTy = getType p
@@ -152,16 +216,18 @@ checkTypeFDecl eff decl = case decl of
   TyDef tv _ -> return $ tbind tv
 
 checkTypeFTLam :: FTLam -> TypeM Type
-checkTypeFTLam (FTLam tbs body) = do
-  body' <- extendR (foldMap tbind tbs) $ checkTypeFExpr noEffect body
-  return $ Forall tbs body'
+checkTypeFTLam (FTLam tbs qs body) = do
+  -- TODO: check qualifiers
+  body' <- extendClassEnv qs $ extendR (foldMap tbind tbs) $
+             checkTypeFExpr noEffect body
+  return $ Forall tbs qs body'
 
 checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ty <- asks $ fromL . (!(v:>()))
   case ty of
     ArrowType _ a (eff, b) | isPure eff -> do
-      let linTyExpected = Forall [] $ a --> pairTy b (a --@ b)
+      let linTyExpected = Forall [] [] $ a --> pairTy b (a --@ b)
       unless (linTy == linTyExpected) $ throw TypeErr $
         "Annotation should have type: " ++ pprint linTyExpected
     _ -> throw TypeErr $
@@ -178,16 +244,16 @@ litType v = case v of
 
 checkClassConstraint :: ClassName -> Type -> TypeM ()
 checkClassConstraint c ty = do
-  env <- ask
+  env <- lift ask
   liftEither $ checkClassConstraint' env c ty
 
-checkClassConstraint' :: TypeEnv -> ClassName -> Type -> Except ()
+checkClassConstraint' :: ClassEnv -> ClassName -> Type -> Except ()
 checkClassConstraint' env c ty = case c of
   VSpace -> checkVSpace env ty
   IdxSet -> checkIdxSet env ty
   Data   -> checkData   env ty
 
-checkVSpace :: TypeEnv -> Type -> Except ()
+checkVSpace :: ClassEnv -> Type -> Except ()
 checkVSpace env ty = case ty of
   TypeVar v         -> checkVarClass env VSpace v
   BaseType RealType -> return ()
@@ -196,7 +262,7 @@ checkVSpace env ty = case ty of
   _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
   where recur = checkVSpace env
 
-checkIdxSet :: TypeEnv -> Type -> Except ()
+checkIdxSet :: ClassEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
@@ -204,7 +270,7 @@ checkIdxSet env ty = case ty of
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
-checkData :: TypeEnv -> Type -> Except ()
+checkData :: ClassEnv -> Type -> Except ()
 checkData env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v `catchError`
                     const (checkVarClass env Data v)
@@ -220,20 +286,18 @@ isData ty = case checkData mempty ty of Left _ -> False
                                         Right _ -> True
 
 -- TODO: check annotation too
-checkVarClass :: TypeEnv -> ClassName -> TVar -> Except ()
-checkVarClass env c v = do
-  case envLookup env v of
-    Just (T (TyKind cs)) ->
-      unless (c `elem` cs) $ throw TypeErr $ " Type variable \""  ++ pprint v ++
-                                             "\" not in class: " ++ pprint c
-    _ -> throw CompilerErr $ "Lookup of kind failed:" ++ pprint v
+checkVarClass :: ClassEnv -> ClassName -> TVar -> Except ()
+checkVarClass env c (v:>_) =
+  unless (c `elem` cs) $ throw TypeErr $
+              " Type variable \"" ++ pprint v ++ "\" not in class: " ++ pprint c
+  where cs = monMapLookup env v
 
 -- -- === Normalized IR ===
 
 instance HasType Atom where
   getType atom = case atom of
     Var (_:>ty) -> ty
-    TLam vs body -> Forall vs $ getType body
+    TLam vs qs body -> Forall vs qs $ getType body
     Con con -> getConType $ fmapExpr con id getType getLamType
 
 instance HasType Expr where
@@ -272,9 +336,10 @@ checkAtom atom = case atom of
         assertEq ty' ty "NVar annot"
         return ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
-  TLam tvs body -> do
-    bodyTy <- extendR (foldMap tbind tvs) (checkExpr noEffect body)
-    return $ Forall tvs bodyTy
+  TLam tvs qs body -> do
+    -- TODO: extend env with qstraints
+    bodyTy <- extendClassEnv qs $ extendR (foldMap tbind tvs) (checkExpr noEffect body)
+    return $ Forall tvs qs bodyTy
   Con con -> traverseExpr con return checkAtom checkLam >>= checkConType
 
 checkPure :: MonadError Err m => Effect -> m ()
@@ -309,12 +374,10 @@ checkDecl (Let b expr) = do
 binderEnv :: Var -> TypeEnv
 binderEnv b@(_:>ty) = b @> L ty
 
-checkTy :: Type -> TypeM ()
-checkTy _ = return () -- TODO: check kind and unbound type vars
-
 checkBinder :: Var -> TypeM ()
 checkBinder b = do
-  checkTy (varAnn b)
+  kind <- checkKind (varAnn b)
+  assertEq TyKind kind "kind error"
   checkShadow b
 
 checkShadow :: Pretty b => VarP b -> TypeM ()
@@ -350,22 +413,19 @@ type PrimOpType  = PrimOp  Type Type (Type, EffectiveType)
 type PrimConType = PrimCon Type Type (Type, EffectiveType)
 
 getOpType :: PrimOpType -> EffectiveType
-getOpType e = ignoreExcept $ traverseOpType e ignoreConstraint ignoreClass
+getOpType e = ignoreExcept $ traverseOpType e ignoreArgs ignoreArgs ignoreArgs
 
 getConType :: PrimConType -> Type
-getConType e = ignoreExcept $ traverseConType e ignoreConstraint ignoreClass
+getConType e = ignoreExcept $ traverseConType e ignoreArgs ignoreArgs ignoreArgs
 
 checkOpType :: PrimOpType -> TypeM EffectiveType
-checkOpType e = traverseOpType e checkConstraint (flip checkClassConstraint)
+checkOpType e = traverseOpType e checkConstraint checkKindIs checkClassConstraint
 
 checkConType :: PrimConType -> TypeM Type
-checkConType e = traverseConType e checkConstraint (flip checkClassConstraint)
+checkConType e = traverseConType e checkConstraint checkKindIs checkClassConstraint
 
-ignoreConstraint :: Monad m => Type -> Type -> m ()
-ignoreConstraint _ _ = return ()
-
-ignoreClass :: Monad m => Type -> ClassName -> m ()
-ignoreClass _ _ = return ()
+ignoreArgs :: Monad m => a -> b -> m ()
+ignoreArgs _ _ = return ()
 
 checkConstraint :: Type -> Type -> TypeM ()
 checkConstraint ty1 ty2 | ty1 == ty2 = return ()
@@ -374,24 +434,28 @@ checkConstraint ty1 ty2 | ty1 == ty2 = return ()
 
 traverseOpType :: MonadError Err m
                      => PrimOpType
-                     -> (Type -> Type      -> m ()) -- add equality constraint
-                     -> (Type -> ClassName -> m ()) -- add class constraint
+                     -> (Type      -> Type -> m ()) -- add equality constraint
+                     -> (Kind      -> Type -> m ()) -- add kind constraint
+                     -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m EffectiveType
-traverseOpType op eq inClass = case op of
+traverseOpType op eq kindIs inClass = case op of
   App l (ArrowType l' a b) a' -> do
     eq a a'
     eq l l'
     return b
-  TApp (Forall bs body) ts -> do
-    -- TODO: check kinds here
+  TApp (Forall bs quals body) ts -> do
     assertEq (length bs) (length ts) "Number of type args"
-    sequence_ [ mapM_ (inClass t) cs | (_ :> TyKind cs, t) <- zip bs ts]
+    zipWithM_ (kindIs . varAnn) bs ts
+    sequence_ [inClass c t | (t, b) <- zip ts bs, c <- requiredClasses b]
     let env = fold [b @> T t | (b, t) <- zip bs ts]
     return $ pureTy $ subst (env, mempty) body
+    where
+      requiredClasses :: TVar -> [ClassName]
+      requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For (n,(eff, a)) ->
-    inClass n IdxSet >> inClass a Data >> return (eff, TabType n a)
+    inClass IdxSet n >> inClass Data a >> return (eff, TabType n a)
   TabCon n ty xs ->
-    inClass ty Data >> mapM_ (eq ty) xs >> eq n n' >> return (pureTy (n ==> ty))
+    inClass Data ty >> mapM_ (eq ty) xs >> eq n n' >> return (pureTy (n ==> ty))
     where n' = IdxSetLit (length xs)
   TabGet (TabType i a) i' -> eq i i' >> return (pureTy a)
   RecGet (RecType r) i    -> return $ pureTy $ recGet r i
@@ -409,8 +473,8 @@ traverseOpType op eq inClass = case op of
   ScalarUnOp unop ty -> eq (BaseType ty') ty >> return (pureTy (BaseType outTy))
     where (ty', outTy) = unOpType unop
   -- TODO: check vspace constraints
-  VSpaceOp ty VZero        -> inClass ty VSpace >> return (pureTy ty)
-  VSpaceOp ty (VAdd e1 e2) -> inClass ty VSpace >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
+  VSpaceOp ty VZero        -> inClass VSpace ty >> return (pureTy ty)
+  VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
   PrimEffect ~(Lens s x) m -> case m of
@@ -443,10 +507,11 @@ traverseOpType op eq inClass = case op of
 
 traverseConType :: MonadError Err m
                      => PrimConType
-                     -> (Type -> Type      -> m ()) -- add equality constraint
-                     -> (Type -> ClassName -> m ()) -- add class constraint
+                     -> (Type      -> Type -> m ()) -- add equality constraint
+                     -> (Kind      -> Type -> m ()) -- add kind constraint
+                     -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
-traverseConType con eq _ = case con of
+traverseConType con eq kindIs _ = case con of
   Lit l       -> return $ BaseType $ litType l
   Lam l (a,b) -> return $ ArrowType l a b
   RecCon r    -> return $ RecType r
@@ -458,7 +523,7 @@ traverseConType con eq _ = case con of
     LensId ty      -> return $ Lens ty ty
     LensCompose ~(Lens a b) ~(Lens b' c) -> eq b b' >> return (Lens a c)
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
-  Todo ty     -> return ty
+  Todo ty -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 
 binOpType :: ScalarBinOp -> (BaseType, BaseType, BaseType)
@@ -509,6 +574,12 @@ peelState :: Effect -> (Type, Effect)
 peelState ~(Effect (EffectRow rs lrs ws (s:ss)) tailVar) =
   (s, Effect (EffectRow rs lrs ws ss) tailVar)
 
+extendClassEnv :: [TyQual] -> TypeM a -> TypeM a
+extendClassEnv qs m = do
+  r <- ask
+  let classEnv = fold [monMapSingle v [c] | TyQual (v:>_) c <- qs]
+  lift $ extendR classEnv $ runReaderT m r
+
 -- === linearity ===
 
 type Spent = Env ()
@@ -545,7 +616,7 @@ checkLinFDecl decl = case decl of
   LetMono p rhs -> do
     ((), spent) <- captureSpent $ checkLinFExpr rhs
     return $ foldMap (@>spent) p
-  LetPoly _ (FTLam _ expr) -> do
+  LetPoly _ (FTLam _ _ expr) -> do
     void $ checkLinFExpr expr
     return mempty
   _ -> return mempty

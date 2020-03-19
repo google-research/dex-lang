@@ -79,13 +79,15 @@ buildLamExpr eff b f = do
   (ans, b', (_, decls)) <- withBinder b f
   return $ LamExpr b' eff (wrapEmbedDecls decls ans)
 
-buildTLam :: (MonadCat EmbedEnv m) => [TVar] -> ([Type] -> m Atom) -> m Atom
+buildTLam :: (MonadCat EmbedEnv m)
+          => [TVar] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
 buildTLam bs f = do
-  ((ans, bs'), (_, decls)) <- scoped $ do
+  -- TODO: refresh type vars in qs
+  (((qs, body), bs'), (_, decls)) <- scoped $ do
       bs' <- mapM freshVar bs
       ans <- f (map TypeVar bs')
       return (ans, bs')
-  return $ TLam bs' (wrapEmbedDecls decls ans)
+  return $ TLam bs' qs (wrapEmbedDecls decls body)
 
 buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do

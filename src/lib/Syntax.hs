@@ -13,7 +13,7 @@
 
 module Syntax (
     Type (..), BaseType (..), Effect, EffectiveType, Mult,
-    Kind (..), ClassName (..),
+    Kind (..), ClassName (..), TyQual (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), LensCon (..), PrimOp (..),
@@ -31,7 +31,7 @@ module Syntax (
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectRow (..), readerRow, linReaderRow, writerRow,
-    stateRow, rowMeet, rowJoin, rowDiff)
+    stateRow, rowMeet, rowJoin, rowDiff, monMapSingle, monMapLookup)
   where
 
 import Data.Tuple (swap)
@@ -58,7 +58,7 @@ data Type = TypeVar TVar
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
-          | Forall [TVar] Type
+          | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
           | Lens Type Type
           | TypeApp Type [Type]
@@ -68,10 +68,14 @@ data Type = TypeVar TVar
           | NoAnn
             deriving (Show, Eq, Generic)
 
-data Kind = TyKind [ClassName]
+data Kind = TyKind
+          | ArrowKind [Kind] Kind
           | MultKind
           | EffectKind
-            deriving (Show, Eq, Generic)
+          | NoKindAnn
+            deriving (Eq, Show, Generic)
+
+data  TyQual = TyQual TVar ClassName  deriving (Eq, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
@@ -128,7 +132,7 @@ data FDecl = LetMono Pat FExpr
              deriving (Show, Eq, Generic)
 
 type Var  = VarP Type
-data FTLam = FTLam [TVar] FExpr  deriving (Show, Eq, Generic)
+data FTLam = FTLam [TVar] [TyQual] FExpr  deriving (Show, Eq, Generic)
 
 data FModBody = FModBody [FDecl] (Env Type)  deriving (Show, Eq, Generic)
 type FModule = ModuleP FModBody
@@ -148,7 +152,7 @@ type CExpr = PrimOp  Type Atom LamExpr
 type Con   = PrimCon Type Atom LamExpr
 
 data Atom = Var Var
-          | TLam [TVar] Expr
+          | TLam [TVar] [TyQual] Expr
           | Con Con
             deriving (Show, Eq, Generic)
 
@@ -356,6 +360,13 @@ instance (Ord k, Semigroup v) => Semigroup (MonMap k v) where
 instance (Ord k, Semigroup v) => Monoid (MonMap k v) where
   mempty = MonMap mempty
 
+monMapSingle :: k -> v -> MonMap k v
+monMapSingle k v = MonMap (M.singleton k v)
+
+monMapLookup :: (Monoid v, Ord k) => MonMap k v -> k -> v
+monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
+                                                 Just v  -> v
+
 -- === passes ===
 
 data PassName = Parse | TypePass | NormPass | SimpPass | ImpPass | JitPass
@@ -399,6 +410,7 @@ instance Exception Err
 data ErrType = NoErr
              | ParseErr
              | TypeErr
+             | KindErr
              | LinErr
              | UnboundVarErr
              | RepeatedVarErr
@@ -514,8 +526,8 @@ instance HasVars Type where
     ArrayType _ _ -> mempty
     RecType r   -> foldMap freeVars r
     TypeApp a b -> freeVars a <> foldMap freeVars b
-    Forall    tbs body -> freeVars body `envDiff` foldMap tbind tbs
-    TypeAlias tbs body -> freeVars body `envDiff` foldMap tbind tbs
+    Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
+    TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
     Lens a b    -> freeVars a <> freeVars b
     IdxSetLit _ -> mempty
     Lin         -> mempty
@@ -539,7 +551,7 @@ instance HasVars RuleAnn where
   freeVars (LinearizationDef v) = (v:>()) @> L unitTy
 
 instance HasVars FTLam where
-  freeVars (FTLam tbs expr) = freeVars expr `envDiff` foldMap tbind tbs
+  freeVars (FTLam tbs _ expr) = freeVars expr `envDiff` foldMap tbind tbs
 
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
@@ -568,7 +580,7 @@ instance HasVars LamExpr where
 instance HasVars Atom where
   freeVars atom = case atom of
     Var v@(_:>ty) -> v @> L ty <> freeVars ty
-    TLam tvs body -> freeVars body `envDiff` foldMap (@>()) tvs
+    TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
 
 instance HasVars Kind where

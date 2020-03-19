@@ -44,7 +44,7 @@ chol x =
 
 ' Test
 
-demoPSDMatrix:: A n::Ix. Key -> n=>n=>Real
+demoPSDMatrix:: Key -> n=>n=>Real
 demoPSDMatrix key =
   a = for x::n. for y::n. (randn $ ixkey2 key x y)
   x = mmp a (transpose a)

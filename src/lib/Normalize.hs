@@ -38,7 +38,7 @@ runNormM m env = (ans, map fromLetDecl decls)
 
 normalizeTopDecl :: FDecl -> NormM (TopEnv, SubstEnv)
 normalizeTopDecl decl = case decl of
-  FRuleDef (LinearizationDef v) _ (FTLam [] expr) -> do
+  FRuleDef (LinearizationDef v) _ (FTLam [] [] expr) -> do
     ans <- normalize expr
     return (TopEnv mempty mempty ((v:>())@>ans), mempty)
   _ -> do
@@ -58,9 +58,9 @@ normalize expr = case expr of
     extendR env $ normalize body
   FVar v -> lookupVar v
   FPrimExpr (OpExpr op) ->
-    traverseExpr op substTy normalize normalizeLam >>= emit
+    traverseExpr op substNorm normalize normalizeLam >>= emit
   FPrimExpr (ConExpr con) ->
-    liftM Con $ traverseExpr con substTy normalize normalizeLam
+    liftM Con $ traverseExpr con substNorm normalize normalizeLam
   Annot    e _ -> normalize e
   SrcAnnot e _ -> normalize e
 
@@ -74,7 +74,7 @@ lookupVar v = do
 
 normalizeLam :: FLamExpr -> NormM LamExpr
 normalizeLam (FLamExpr p eff body) = do
-  eff' <- substTy eff
+  eff' <- substNorm eff
   b <- normalizePat p
   buildLamExpr eff' b $ \x -> do
     env <- bindPat p x
@@ -82,7 +82,7 @@ normalizeLam (FLamExpr p eff body) = do
 
 normalizePat :: Pat -> NormM Var
 normalizePat p = do
-  ty <- liftM getType $ traverse (traverse substTy) p
+  ty <- liftM getType $ traverse (traverse substNorm) p
   let v' = case toList p of (v:>_):_ -> v
                             []       -> "_"
   return $ v':>ty
@@ -105,12 +105,14 @@ normalizeDecl decl = case decl of
   _ -> error $ "Shouldn't this left: " ++ pprint decl
 
 normalizeTLam ::FTLam -> NormM Atom
-normalizeTLam (FTLam tvs body) =
+normalizeTLam (FTLam tvs qs body) =
   buildTLam tvs $ \tys -> do
+    qs' <- mapM substNorm qs
     let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
-    extendR env $ normalize body
+    body' <- extendR env $ normalize body
+    return (qs', body')
 
-substTy :: Type -> NormM Type
-substTy ty = do
+substNorm :: Subst a => a -> NormM a
+substNorm x = do
   env <- ask
-  return $ subst (env, mempty) ty
+  return $ subst (env, mempty) x

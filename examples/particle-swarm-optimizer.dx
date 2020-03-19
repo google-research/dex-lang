@@ -31,10 +31,10 @@ rosenbrock2 xs =
 
 ' ## Helper functions
 
-minbyfst:: A a::Data. (Real, a)->(Real, a)->(Real, a)
+minbyfst:: A a | Data a . (Real, a)->(Real, a)->(Real, a)
 minbyfst = minby (asNonLin fst)
 
-minimumbyfst:: A n a::Data. (n=>(Real, a))->(Real, a)
+minimumbyfst:: A n a | Data a . (n=>(Real, a))->(Real, a)
 minimumbyfst = minimumby (asNonLin fst)
 
 ' ### Rand helpers
@@ -61,9 +61,9 @@ We have **arguments**:
 
 ' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
-optimize:: A np::Ix niter::Ix d::Ix. Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
+optimize:: A np::Ty niter::Ty d | Ix np, Ix niter, Ix d . Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
 optimize key f (lb,ub) (momentum,gRate,pRate) =
-    optStep (keyL, gbest, pbests, positions, velocities) =       
+    optStep (keyL, gbest, pbests, positions, velocities) =
         newPositions::(np=>d=>Real) = for p i.
             positions.p.i + velocities.p.i
         newPbests::(np=>(Real, d=>Real)) = for p.
@@ -101,7 +101,7 @@ Lets see how it goes.
 Run it for more iterations and result should improve.
 Which it indeed does.
 
-:p (optimize 
+:p (optimize
     @50  -- number of particles
     @10  -- number of iterations
     (newKey 0)  -- random seed
@@ -112,7 +112,7 @@ Which it indeed does.
 > [3.7902775, 14.911414]
 
 
-:p (optimize 
+:p (optimize
     @50  -- number of particles
     @20  -- number of iterations
     (newKey 0)  -- random seed
@@ -122,7 +122,7 @@ Which it indeed does.
 )
 > [1.737736, 3.1227164]
 
-:p (optimize 
+:p (optimize
     @50  -- number of particles
     @100  -- number of iterations
     (newKey 0)  -- random seed
@@ -132,7 +132,7 @@ Which it indeed does.
 )
 > [1.0062338, 1.0128839]
 
-:p (optimize 
+:p (optimize
     @50  -- number of particles
     @1000  -- number of iterations
     (newKey 0)  -- random seed
@@ -143,4 +143,3 @@ Which it indeed does.
 > [1.0, 1.0]
 
 ' ---
-

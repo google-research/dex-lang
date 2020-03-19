@@ -40,10 +40,10 @@ ipow x y = %pow(x, y)
 pow :: Real -> Real -> Real
 pow x y = %%pow(x, y)
 
-asint :: A i::Ix. i -> Int
+asint :: A i | Ix i . i -> Int
 asint i = %asint(i)
 
-asidx :: A i::Ix. Int -> i
+asidx :: A i | Ix i . Int -> i
 asidx i = %asidx(i)
 
 real :: Int -> Real
@@ -106,10 +106,10 @@ b2r x = real $ b2i x
 pi :: Real
 pi = 3.141592653589793
 
-ixadd :: A i::Ix. i -> Int -> i
+ixadd :: A i | Ix i . i -> Int -> i
 ixadd i n = asidx $ iadd (asint i) n
 
-ixsub :: A i::Ix. i -> Int -> i
+ixsub :: A i | Ix i . i -> Int -> i
 ixsub i n = asidx $ isub (asint i) n
 
 iota :: n=>Int
@@ -139,7 +139,7 @@ fanout x = for i. x
 sq :: Real -> Real
 sq x = x * x
 
-select :: A a::Data. Bool -> a -> a -> a
+select :: A a | Data a . Bool -> a -> a -> a
 select p x y = %select(p, x, y)
 
 abs :: Real -> Real
@@ -157,7 +157,7 @@ lensGet :: a -> Lens a b -> b
 lensGet x l = %lensGet(x, l)
 
 -- TODO: come up with some infix symbols for some of these
-idxAsLens :: A n::Ix a . n -> Lens (n=>a) a
+idxAsLens :: A n a | Ix n . n -> Lens (n=>a) a
 idxAsLens i = %idxAsLens(i)
 
 -- Composes left-to-right (unlike usual function composition)
@@ -181,10 +181,10 @@ asksLin l = %askLin(l)
 askLin :: () -> {LinReader r} r
 askLin () = asksLin lensId
 
-tells :: A w::VS a::VS . Lens w a -> a -> {Writer w} ()
+tells :: A w a | VS w, VS a . Lens w a -> a -> {Writer w} ()
 tells l x = %tell(l, x)
 
-tell :: A w::VS . w -> {Writer w} ()
+tell :: A w | VS w . w -> {Writer w} ()
 tell w = tells lensId w
 
 gets :: A s a . Lens s a -> {State s} a
@@ -205,7 +205,7 @@ runReader r f = %runReader(r, lam (). f ())
 runLinReader :: r --o (() -> {LinReader r |eff} a) -> {|eff} a
 runLinReader r f = %runLinReader(r, lam (). f ())
 
-runWriter :: A eff w::VS a . (() -> {Writer w |eff} a) -> {|eff} (a, w)
+runWriter :: A eff w a | VS w . (() -> {Writer w |eff} a) -> {|eff} (a, w)
 runWriter f = %runWriter(lam (). f ())
 
 runState :: s -> (() -> {State s |eff} a) -> {|eff} (a, s)
@@ -213,7 +213,7 @@ runState s f = %runState(s, lam (). f ())
 
 'State-carrying loop constructs
 
-scan :: A n::Ix a::Data b .  a -> (n->a->(a, b)) -> (a, n=>b)
+scan :: A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
 scan x0 fs =
    (ys, xOut) = runState x0 $ lam (). for i.
       c = get ()
@@ -222,11 +222,11 @@ scan x0 fs =
       y
    (xOut, ys)
 
-fold :: A n::Ix a::Data . a -> (n->a->a) -> a
+fold :: A n a | Ix n, Data a . a -> (n->a->a) -> a
 fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
 
 -- TODO: call this `scan` and call the current `scan` something else
-scan' :: A n::Ix a::Data . a -> (n->a->a) -> n=>a
+scan' :: A n a | Ix n, Data a . a -> (n->a->a) -> n=>a
 scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 
 -- scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
@@ -243,7 +243,7 @@ sum xs = fold 0.0 (lam i c. c + xs.i)
 isum :: n=>Int -> Int
 isum xs = fold 0 lam i c. iadd c xs.i
 
-size :: A n::Ix. Int
+size :: A n::Ty. Int
 size = %idxSetSize(@n)
 
 -- range :: Int -> E i. ()
@@ -280,13 +280,13 @@ splitKey3 key =
   (k2, k3) = splitKey key'
   (k1, k2, k3)
 
-many :: A n::Ix a. (Key -> a) -> Key -> n -> a
+many :: A n a | Ix n . (Key -> a) -> Key -> n -> a
 many f key i = f (hash key (asint i))
 
-ixkey :: A n::Ix. Key -> n -> Key
+ixkey :: A n | Ix n . Key -> n -> Key
 ixkey x i = hash x (asint i)
 
-ixkey2 :: A n::Ix m::Ix. Key -> n -> m -> Key
+ixkey2 :: A n m | Ix n, Ix m . Key -> n -> m -> Key
 ixkey2 x i = ixkey $ ixkey x i
 
 rand :: Key -> Real
@@ -299,32 +299,32 @@ randn k =
   u2 = rand k2
   sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
 
-randIdx :: A n::Ix. Key -> n
+randIdx :: A n | Ix n . Key -> n
 randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
 'min / max etc
 
-minby :: A a::Data. (a->Real)->a->a->a
+minby :: A a | Data a . (a->Real)->a->a->a
 minby f x y = select ((f x) < (f y)) x y
 
 min :: Real -> Real -> Real
 min = minby id
 
-minimumby :: A n a::Data. (a->Real)->(n=>a)->a
+minimumby :: A n a | Data a . (a->Real)->(n=>a)->a
 minimumby f xs = fold xs.(asidx 0) (lam i. minby f xs.i)
 
-minimum :: A n. (n=>Real)->Real
+minimum :: A n . (n=>Real)->Real
 minimum = minimumby id
 
-maxby :: A a::Data. (a->Real)->a->a->a
+maxby :: A a | Data a . (a->Real)->a->a->a
 maxby f = minby (asNonLin neg `compose` f)
 
 max :: Real -> Real -> Real
 max x y = maxby id x y
 
-maximumby :: A p q::Data. (q->Real)->(p=>q)->q
+maximumby :: A p q | Data q . (q->Real)->(p=>q)->q
 maximumby f = minimumby (asNonLin neg `compose` f)
 
 maximum :: A p. (p=>Real)->Real
@@ -336,26 +336,26 @@ argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) lam i (bestIx, bestDist).
 
 'Vector spaces and automatic differentiation.
 
-vzero :: A a::VS. a
+vzero :: A a | VS a . a
 vzero = %vzero()
 
-vadd :: A a::VS. a -> a -> a
+vadd :: A a | VS a . a -> a -> a
 vadd x y = %vadd(x, y)
 
-linearize :: A a::VS b::VS. (a -> b) -> a -> (b, a --o b)
+linearize :: A a b | VS a, VS b . (a -> b) -> a -> (b, a --o b)
 linearize f x0 = %linearize(lam x. f x) x0
 
-jvp :: A a::VS b::VS. (a -> b) -> a -> a --o b
+jvp :: A a b | VS a, VS b . (a -> b) -> a -> a --o b
 jvp f x t = snd (linearize f x) t
 
-transposeLinear :: A a::VS b::VS. (a --o b) -> b --o a
+transposeLinear :: A a b | VS a, VS b . (a --o b) -> b --o a
 transposeLinear f ct = %linearTranspose(lam t. f t) ct
 
-vjp :: A a::VS b::VS. (a -> b) -> a -> (b, b --o a)
+vjp :: A a b | VS a, VS b . (a -> b) -> a -> (b, b --o a)
 vjp f x = (y, df) = linearize f x
           (y, transposeLinear df)
 
-grad :: A a::VS. (a -> Real) -> a -> a
+grad :: A a | VS a . (a -> Real) -> a -> a
 grad f x = (_, pullback) = vjp f x
            pullback 1.0
 
