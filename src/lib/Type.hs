@@ -106,26 +106,12 @@ checkKind ty = case ty of
         assertEq k k' "Kind annotation"
       _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
     return k
-  BaseType _ -> return TyKind
-  ArrowType m a (e, b) -> do
-    checkKindIs MultKind   m
-    checkKindIs TyKind     a
-    checkKindIs EffectKind e
-    checkKindIs TyKind     b
-    return TyKind
-  IdxSetLit _ -> return TyKind
-  TabType n a -> checkKindIs TyKind n >> checkKindIs TyKind a >> return TyKind
-  ArrayType _ _ -> return TyKind
-  RecType r -> mapM_ (checkKindIs TyKind) r >> return TyKind
   Forall vs _ body -> do
     extendR (foldMap tbind vs) (checkKindIs TyKind body)
     return TyKind
   TypeAlias vs body -> do
     bodyKind <- extendR (foldMap tbind vs) (checkKind body)
     return $ ArrowKind (map varAnn vs) bodyKind
-  Lens a b -> checkKindIs TyKind a >> checkKindIs TyKind b >> return TyKind
-  Lin      -> return MultKind
-  NonLin   -> return MultKind
   Effect eff tailVar -> do
     mapM_ (checkKindIs TyKind) eff
     case tailVar of
@@ -134,6 +120,9 @@ checkKind ty = case ty of
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
+  _ -> do
+    void $ traverseType (\k t -> checkKindIs k t >> return t) ty
+    return $ getKind ty
 
 checkKindIs :: (MonadError Err m, MonadReader TypeEnv m)
             => Kind -> Type -> m ()

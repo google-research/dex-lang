@@ -10,6 +10,7 @@
 module Subst (Subst, subst) where
 
 import Data.Foldable
+import Control.Monad.Identity
 
 import Env
 import Record
@@ -68,28 +69,19 @@ refreshTBinders scope bs = (bs', env')
 
 instance Subst Type where
    subst env@(sub, _) ty = case ty of
-    BaseType _ -> ty
     TypeVar v ->
       case envLookup sub v of
         Nothing      -> ty
         Just (T ty') -> ty'
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
-    ArrowType l a (eff, b) -> ArrowType (recur l) (recur a) (recur eff, recur b)
-    TabType a b -> TabType (recur a) (recur b)
-    ArrayType shape b -> ArrayType shape b
-    RecType r   -> RecType $ fmap recur r
-    TypeApp f args -> reduceTypeApp (recur f) (map recur args)
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
-    Lens a b    -> Lens (recur a) (recur b)
-    IdxSetLit _ -> ty
-    Lin         -> ty
-    NonLin      -> ty
+    TypeApp f args -> reduceTypeApp (recur f) (map recur args)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
       where row' = fmap recur row
-    NoAnn       -> NoAnn
+    _ -> runIdentity $ traverseType (\_ t -> return (subst env t)) ty
     where recur = subst env
 
 substTail :: EffectRow Type -> Type -> Effect

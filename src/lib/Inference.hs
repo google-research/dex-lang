@@ -303,20 +303,7 @@ inferKindsM kind ty = case ty of
     body' <- inferKindsM TyKind body
     vs' <- mapM addKindAnn vs
     return $ TypeAlias vs' body'
-  BaseType _ -> return ty
-  ArrowType m a (e, b) ->
-    liftM3 ArrowType (inferKindsM MultKind m) (inferKindsM TyKind a) $
-      liftM2 (,) (inferKindsM EffectKind e) (inferKindsM TyKind b)
-  IdxSetLit _ -> return ty
-  TabType n a -> liftM2 TabType (inferKindsM TyKind n) (inferKindsM TyKind a)
-  ArrayType _ _ -> return ty
-  RecType r -> liftM RecType $ traverse (inferKindsM TyKind) r
-  Lens a b -> liftM2 Lens (inferKindsM TyKind a) (inferKindsM TyKind b)
-  Lin    -> return ty
-  NonLin -> return ty
-  Effect eff tailVar -> liftM2 Effect (traverse (inferKindsM TyKind) eff)
-                                      (traverse (inferKindsM EffectKind) tailVar)
-  NoAnn -> return NoAnn
+  _ -> traverseType inferKindsM ty
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do

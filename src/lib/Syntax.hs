@@ -31,7 +31,7 @@ module Syntax (
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectRow (..), readerRow, linReaderRow, writerRow,
-    stateRow, rowMeet, rowJoin, rowDiff, monMapSingle, monMapLookup)
+    stateRow, rowMeet, rowJoin, rowDiff, monMapSingle, monMapLookup, traverseType)
   where
 
 import Data.Tuple (swap)
@@ -518,22 +518,10 @@ instance HasVars FLamExpr where
 
 instance HasVars Type where
   freeVars ty = case ty of
-    BaseType _ -> mempty
     TypeVar v  -> v @> T (varAnn v)
-    ArrowType l a (eff, b) -> freeVars l <> freeVars eff
-                           <> freeVars a <> freeVars b
-    TabType a b -> freeVars a <> freeVars b
-    ArrayType _ _ -> mempty
-    RecType r   -> foldMap freeVars r
-    TypeApp a b -> freeVars a <> foldMap freeVars b
     Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
-    Lens a b    -> freeVars a <> freeVars b
-    IdxSetLit _ -> mempty
-    Lin         -> mempty
-    NonLin      -> mempty
-    Effect eff t -> foldMap freeVars eff <> foldMap freeVars t
-    NoAnn       -> mempty
+    _ -> execWriter $ traverseType (\_ t -> (tell (freeVars t) >> return t)) ty
 
 instance HasVars b => HasVars (VarP b) where
   freeVars (_ :> b) = freeVars b
@@ -766,3 +754,23 @@ rowDiff :: EffectRow a -> EffectRow b -> EffectRow a
 rowDiff (EffectRow r lr w s) (EffectRow r' lr' w' s') =
   EffectRow (listDiff r r') (listDiff lr lr') (listDiff w w') (listDiff s s')
   where listDiff xs ys = drop (length ys) xs
+
+traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
+traverseType f ty = case ty of
+  BaseType _           -> pure ty
+  ArrowType m a (e, b) -> liftA3 ArrowType (f MultKind m) (f TyKind a) $
+                            liftA2 (,) (f EffectKind e) (f TyKind b)
+  IdxSetLit _          -> pure ty
+  TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
+  ArrayType _ _        -> pure ty
+  RecType r            -> liftA RecType $ traverse (f TyKind) r
+  Lens a b             ->  liftA2 Lens (f TyKind a) (f TyKind b)
+  TypeApp t xs         -> liftA2 TypeApp (f TyKind t) (traverse (f TyKind) xs)
+  Lin                  -> pure Lin
+  NonLin               -> pure NonLin
+  Effect row tailVar   -> liftA2 Effect (traverse (f TyKind) row)
+                                        (traverse (f EffectKind) tailVar)
+  NoAnn                -> pure NoAnn
+  TypeVar _            -> error "Shouldn't be handled generically"
+  Forall _ _ _         -> error "Shouldn't be handled generically"
+  TypeAlias _ _        -> error "Shouldn't be handled generically"
