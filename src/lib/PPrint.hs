@@ -14,6 +14,7 @@ module PPrint (pprint, pprintList,
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
+import qualified Data.Map as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -76,7 +77,8 @@ instance Pretty Type where
     IdxSetLit i -> p i
     Lin    -> "Lin"
     NonLin -> "NonLin"
-    Effect row t -> "{" <> p (fmap (asStr . p) row) <> tailVar <> "}"
+    Label lab -> p lab
+    Effect row t -> "{" <> p row <> tailVar <> "}"
       where tailVar = case t of Nothing -> mempty
                                 Just v  -> "|" <+> p v
     NoAnn  -> ""
@@ -85,14 +87,24 @@ instance Pretty Type where
       arrStr Lin = "--o"
       arrStr _   = "->"
 
-instance Pretty a => Pretty (EffectRow a) where
-  pretty (EffectRow rs lrs ws ss) = hsep $
-    punctuate "," $ rs' ++ lrs' ++ ws' ++ ss'
-    where
-      rs'  = ["Reader" <+> p r | r <- rs]
-      lrs' = ["LinReader" <+> p r | r <- lrs]
-      ws'  = ["Writer" <+> p w | w <- ws]
-      ss'  = ["State"  <+> p s | s <- ss]
+instance Pretty Label where
+  pretty (LabelLit l) = "#" <> p l
+  pretty (LabelVar v) = p v
+
+instance Pretty a => Pretty (Row a) where
+  pretty (Row (MonMap m)) = p (M.toList m)
+
+--     punctuate "," $ rs' ++ lrs' ++ ws' ++ ss'
+--     where
+--       rs'  = ["Reader" <+> p r | r <- rs]
+--       lrs' = ["LinReader" <+> p r | r <- lrs]
+--       ws'  = ["Writer" <+> p w | w <- ws]
+--       ss'  = ["State"  <+> p s | s <- ss]
+
+instance Pretty a => Pretty (OneEffect a) where
+  pretty (Reader x) = "Reader" <+> p x
+  pretty (Writer x) = "Writer" <+> p x
+  pretty (State  x) = "State"  <+> p x
 
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v

@@ -188,21 +188,6 @@ linUnary x = linFstArg x 1.0
    f
 > (Real -> Real)
 
-m :: () -> {LinReader Real} Real
-m () =
-  x = askLin ()
-  x * x
-> Linearity error: pattern spent twice: [#readerPat]
->
->   x * x
->     ^^
-
-m :: () -> {LinReader Real} Real
-m () =
-  x = askLin ()
-  y = askLin ()
-  x + y
-
 -- TODO: re-enable these
 
 -- -- TODO: figure out how to avoid using builtins here.

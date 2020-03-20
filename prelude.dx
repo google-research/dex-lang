@@ -169,56 +169,47 @@ lensId = %lensId()
 
 'Effective primitives
 
-asks :: Lens r a -> {Reader r} a
-asks l = %ask(l)
+asks :: A l r a. Lens r a -> {l :: Reader r} a
+asks lens = %ask(@l, lens)
 
-ask :: () -> {Reader r} r
-ask () = asks lensId
+ask :: A l r. () -> {l :: Reader r} r
+ask () = asks @l lensId
 
-asksLin :: Lens r a -> {LinReader r} a
-asksLin l = %askLin(l)
+tells :: A l w a | VS w, VS a . Lens w a -> a -> {l :: Writer w} ()
+tells lens x = %tell(@l, lens, x)
 
-askLin :: () -> {LinReader r} r
-askLin () = asksLin lensId
+tell :: A l w | VS w . w -> {l :: Writer w} ()
+tell w = tells @l lensId w
 
-tells :: A w a | VS w, VS a . Lens w a -> a -> {Writer w} ()
-tells l x = %tell(l, x)
+gets :: A l s a . Lens s a -> {l :: State s} a
+gets lens = %get(@l, lens)
 
-tell :: A w | VS w . w -> {Writer w} ()
-tell w = tells lensId w
+get :: A l s . () -> {l :: State s} s
+get () = gets @l lensId
 
-gets :: A s a . Lens s a -> {State s} a
-gets l = %get(l)
+puts :: A l s a . Lens s a -> a -> {l :: State s} ()
+puts lens x = %put(@l, lens, x)
 
-get :: A s . () -> {State s} s
-get () = gets lensId
+put :: A l s . s -> {l :: State s} ()
+put s = puts @l lensId s
 
-puts :: A s a . Lens s a -> a -> {State s} ()
-puts l x = %put(l, x)
+runReader :: A l r a eff . r -> (() -> {l :: Reader r |eff} a) -> {|eff} a
+runReader r f = %runReader(@l, r, lam (). f ())
 
-put :: A s . s -> {State s} ()
-put s = puts lensId s
+runWriter :: A l w a eff | VS w . (() -> {l :: Writer w |eff} a) -> {|eff} (a, w)
+runWriter f = %runWriter(@l, lam (). f ())
 
-runReader :: r -> (() -> {Reader r |eff} a) -> {|eff} a
-runReader r f = %runReader(r, lam (). f ())
-
-runLinReader :: r --o (() -> {LinReader r |eff} a) -> {|eff} a
-runLinReader r f = %runLinReader(r, lam (). f ())
-
-runWriter :: A eff w a | VS w . (() -> {Writer w |eff} a) -> {|eff} (a, w)
-runWriter f = %runWriter(lam (). f ())
-
-runState :: s -> (() -> {State s |eff} a) -> {|eff} (a, s)
-runState s f = %runState(s, lam (). f ())
+runState :: A l s eff a . s -> (() -> {l :: State s |eff} a) -> {|eff} (a, s)
+runState s f = %runState(@l, s, lam (). f ())
 
 'State-carrying loop constructs
 
 scan :: A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
 scan x0 fs =
-   (ys, xOut) = runState x0 $ lam (). for i.
-      c = get ()
+   (ys, xOut) = runState @#s x0 $ lam (). for i.
+      c = get @#s ()
       (c', y) = fs i c
-      _ = put c'
+      _ = put @#s c'
       y
    (xOut, ys)
 

@@ -29,7 +29,7 @@ import Record
 import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
-type EffectContext = EffectRow IAtom
+type EffectContext = Row (OneEffect IAtom)
 type EmbedEnv = (Scope, ImpProg)
 type ImpM = ReaderT ImpEnv (ReaderT EffectContext (Cat EmbedEnv))
 
@@ -105,43 +105,36 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  RunReader r (LamExpr _ _ body) -> do
+  RunReader ~(Label l) r (LamExpr _ _ body) -> do
     r' <- toImpAtom r
-    withEffectContext (readerRow r') $ toImpExpr dests body
-  RunLinReader r (LamExpr _ _ body) -> do
-    r' <- toImpAtom r
-    withEffectContext (linReaderRow r') $ toImpExpr dests body
-  RunWriter (LamExpr _ _ body) -> do
+    withEffectContext (singletonRow l (Reader r')) $ toImpExpr dests body
+  RunWriter ~(Label l) (LamExpr _ _ body) -> do
     mapM_ initializeZero wDest
-    withEffectContext (writerRow wDest) $ toImpExpr aDest body
+    withEffectContext (singletonRow l (Writer wDest)) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, wDest]))) = dests
-  RunState s (LamExpr _ _ body) -> do
+  RunState ~(Label l) s (LamExpr _ _ body) -> do
     s' <- toImpAtom s
     copyIAtom sDest s'
-    withEffectContext (stateRow sDest) $ toImpExpr aDest body
+    withEffectContext (singletonRow l (State sDest)) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
-  PrimEffect l m -> do
+  PrimEffect ~(Label lab) l m -> do
     case m of
       MAsk -> do
-        rVals <- lift $ asks $ head . readerEff
-        ans <- lensGet l rVals
-        copyIAtom dests ans
-      MLinAsk -> do
-        rVals <- lift $ asks $ head . linReaderEff
+        ~(Reader rVals) <- lookupEffectContext lab
         ans <- lensGet l rVals
         copyIAtom dests ans
       MTell x -> do
-        wDests <- lift $ asks $ head . writerEff
+        ~(Writer wDests) <- lookupEffectContext lab
         x' <- toImpAtom x
         wDests' <- lensGet l wDests
         zipWithM_ addToDest (toList wDests') (toList x')
       MPut x -> do
-        sDests <- lift $ asks $ head . stateEff
+        ~(State sDests) <- lookupEffectContext lab
         x' <- toImpAtom x
         sDests' <- lensGet l sDests
         copyIAtom sDests' x'
       MGet -> do
-        sDests <- lift $ asks $ head . stateEff
+        ~(State sDests) <- lookupEffectContext lab
         ans <- lensGet l sDests
         copyIAtom dests ans
   LensGet x l -> do
@@ -187,6 +180,9 @@ withEffectContext :: EffectContext -> ImpM a -> ImpM a
 withEffectContext ctx m = do
   env <- ask
   lift $ local (ctx <>) (runReaderT m env)
+
+lookupEffectContext :: Label -> ImpM (OneEffect IAtom)
+lookupEffectContext l = lift $ asks $ (ignoreExcept . peekRow l)
 
 makeDest :: Type -> ImpM (IAtom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty

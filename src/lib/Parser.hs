@@ -7,15 +7,15 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Parser (parseit, parseProg, parseData, parseTopDeclRepl, parseTopDecl,
-              tauType) where
+               tauType) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
-import Text.Megaparsec
+import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char
+import Data.Foldable (fold)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
-import Data.Foldable (fold)
 
 import Env
 import Record
@@ -144,14 +144,13 @@ ruleDef = do
 typeDef :: Parser FDecl
 typeDef = do
   symbol "type"
-  ~(TypeVar v) <- typeVar
+  v <- typeVar
   tvs <- many localTypeVar
-  let tvs' = [tv | ~(TypeVar tv) <- tvs]
   equalSign
   ty <- tauType
-  let ty' = case tvs' of
+  let ty' = case tvs of
               [] -> ty
-              _  -> TypeAlias tvs' ty
+              _  -> TypeAlias tvs ty
   return $ TyDef v ty'
 
 -- === Parsing decls ===
@@ -473,7 +472,7 @@ implicitSigmaType = do
 
 typeBinder :: Parser TVar
 typeBinder = do
-  ~(TypeVar (v:>_)) <- typeVar <|> localTypeVar
+  (v:>_) <- typeVar <|> localTypeVar
   k <-  (symbol "::" >> kindName)
     <|> return NoKindAnn
   return $ v :> k
@@ -482,12 +481,13 @@ kindName :: Parser Kind
 kindName =   (symbol "Ty"     >> return TyKind)
          <|> (symbol "Mult"   >> return MultKind)
          <|> (symbol "Effect" >> return EffectKind)
+         <|> (symbol "Label"  >> return LabelKind)
          <?> "kind"
 
 qual :: Parser TyQual
 qual = do
   c <- className
-  ~(TypeVar v) <- typeVar <|> localTypeVar
+  v <- typeVar <|> localTypeVar
   return $ TyQual v c
 
 className :: Parser ClassName
@@ -507,9 +507,10 @@ className = do
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   typeName
-              <|> typeVar
-              <|> localTypeVar
+              <|> liftM TypeVar typeVar
+              <|> liftM TypeVar localTypeVar
               <|> idxSetLit
+              <|> liftM Label labelLit
               <|> parenTy
 
 tauType :: Parser Type
@@ -526,12 +527,21 @@ arrowType = do
   eff <- effectType <|> return noEffect
   return $ \a b -> ArrowType lin a (eff, b)
 
+labelLit :: Parser Label
+labelLit = char '#' >> liftM LabelLit lowerName
+
 effectRow :: Parser (EffectRow Type)
-effectRow =
-      (symbol "Reader" >> tauType >>= \t -> return (readerRow t))
-  <|> (symbol "LinReader" >> tauType >>= \t -> return (linReaderRow t))
-  <|> (symbol "Writer" >> tauType >>= \t -> return (writerRow t))
-  <|> (symbol "State"  >> tauType >>= \t -> return (stateRow  t))
+effectRow = do
+  l <- labelLit <|> liftM LabelVar localTypeVar
+  symbol "::"
+  eff <- oneEffect
+  return $ singletonRow l eff
+
+oneEffect :: Parser (OneEffect Type)
+oneEffect =
+      liftM Reader (symbol "Reader" >> tauType)
+  <|> liftM Writer (symbol "Writer" >> tauType)
+  <|> liftM State  (symbol "State"  >> tauType)
 
 -- TODO: linearity
 effectType :: Parser Effect
@@ -540,7 +550,7 @@ effectType =  bracketed "{" "}" $ do
   tailVar <- optional $ do
                symbol "|"
                localTypeVar
-  return $ Effect (fold effects) tailVar
+  return $ Effect (fold effects) (fmap TypeVar tailVar)
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
@@ -555,20 +565,20 @@ tauType' :: Parser Type
 tauType' =   parenTy
          <|> lensType
          <|> typeName
-         <|> typeVar
-         <|> localTypeVar
+         <|> liftM TypeVar typeVar
+         <|> liftM TypeVar localTypeVar
          <|> idxSetLit
          <?> "type"
 
-typeVar :: Parser Type
+typeVar :: Parser TVar
 typeVar = do
   v <- name SourceTypeName upperStr
-  return $ TypeVar (v:> NoKindAnn)
+  return (v:> NoKindAnn)
 
-localTypeVar :: Parser Type
+localTypeVar :: Parser TVar
 localTypeVar = do
   v <- name LocalTVName identifier
-  return $ TypeVar (v:> NoKindAnn)
+  return (v:> NoKindAnn)
 
 lensType :: Parser Type
 lensType = symbol "Lens" >> liftM2 Lens t t

@@ -77,16 +77,24 @@ instance Subst Type where
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
     TypeApp f args -> reduceTypeApp (recur f) (map recur args)
+    Label lab -> Label $ subst env lab
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
-      where row' = fmap recur row
+      where row' = runIdentity $ traverseRowLabels (return . subst env) $
+                     fmap (fmap recur) row
     _ -> runIdentity $ traverseType (\_ t -> return (subst env t)) ty
     where recur = subst env
 
 substTail :: EffectRow Type -> Type -> Effect
 substTail row (Effect row' t) = Effect (row <> row') t
 substTail row t = Effect row (Just t)
+
+instance Subst Label where
+  subst _   (LabelLit l) = LabelLit l
+  subst env (LabelVar v) = case subst env (TypeVar v) of
+    Label lab  -> lab
+    TypeVar v' -> LabelVar v'
 
 instance Subst Decl where
   subst env decl = case decl of

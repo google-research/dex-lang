@@ -93,6 +93,7 @@ getKind ty = case ty of
   Lin        -> MultKind
   NonLin     -> MultKind
   Effect _ _ -> EffectKind
+  Label _    -> LabelKind
   NoAnn      -> NoKindAnn
   _          -> TyKind
 
@@ -112,8 +113,13 @@ checkKind ty = case ty of
   TypeAlias vs body -> do
     bodyKind <- extendR (foldMap tbind vs) (checkKind body)
     return $ ArrowKind (map varAnn vs) bodyKind
+  Label lab -> do
+    case lab of
+      LabelVar v -> checkKindIs LabelKind (TypeVar v)
+      _          -> return ()
+    return LabelKind
   Effect eff tailVar -> do
-    mapM_ (checkKindIs TyKind) eff
+    mapM_ (mapM_ (checkKindIs TyKind)) eff
     case tailVar of
       Nothing -> return ()
       Just tv@(TypeVar _) -> checkKindIs EffectKind tv
@@ -466,20 +472,23 @@ traverseOpType op eq kindIs inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  PrimEffect ~(Lens s x) m -> case m of
-    MAsk     ->            return (Effect (readerRow s) Nothing, x)
-    MLinAsk  ->            return (Effect (linReaderRow s) Nothing, x)
-    MTell x' -> eq x x' >> return (Effect (writerRow s) Nothing, unitTy)
-    MGet     ->            return (Effect (stateRow  s) Nothing, x)
-    MPut  x' -> eq x x' >> return (Effect (stateRow  s) Nothing, unitTy)
-  RunReader r (u, (eff, a)) -> eq u unitTy >> eq r' r >> return (eff', a)
-    where (r', eff') = peelReader eff
-  RunLinReader lr (u, (eff, a)) -> eq u unitTy >> eq lr' lr >> return (eff', a)
-    where (lr', eff') = peelLinReader eff
-  RunWriter (u, (eff, a)) -> eq u unitTy >> return (eff', pairTy a w)
-    where (w, eff') = peelWriter eff
-  RunState s (u, (eff, a)) -> eq u unitTy >> eq s' s >> return (eff', pairTy a s)
-    where (s', eff') = peelState eff
+  PrimEffect ~(Label lab) ~(Lens s x) m -> case m of
+    MAsk     ->            return (Effect (singletonRow lab (Reader s)) Nothing, x)
+    MTell x' -> eq x x' >> return (Effect (singletonRow lab (Writer s)) Nothing, unitTy)
+    MGet     ->            return (Effect (singletonRow lab (State  s)) Nothing, x)
+    MPut  x' -> eq x x' >> return (Effect (singletonRow lab (State  s)) Nothing, unitTy)
+  RunReader ~(Label l) r ~(u, (Effect row tailVar, a)) -> do
+    ~(Reader r', row') <- liftEither $ popRow l row
+    eq u unitTy >> eq r' r
+    return (Effect row' tailVar, a)
+  RunWriter ~(Label l) (u, (Effect row tailVar, a)) -> do
+    ~(Writer w, row') <- liftEither $ popRow l row
+    eq u unitTy
+    return (Effect row' tailVar, pairTy a w)
+  RunState ~(Label l) s (u, (Effect row tailVar, a)) -> do
+    ~(State s', row') <- liftEither $ popRow l row
+    eq u unitTy >> eq s' s
+    return (Effect row' tailVar, pairTy a s)
   LensGet a (Lens a' b) -> eq a a' >> return (pureTy b)
   Linearize (a, (eff, b)) -> do
     eq noEffect eff
@@ -547,21 +556,21 @@ flattenType ty = case ty of
   TypeVar _               -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
 
-peelReader :: Effect -> (Type, Effect)
-peelReader ~(Effect (EffectRow (r:rs) lrs ws ss) tailVar) =
-  (r, Effect (EffectRow rs lrs ws ss) tailVar)
+-- peelReader :: Effect -> (Type, Effect)
+-- peelReader ~(Effect (EffectRow (r:rs) lrs ws ss) tailVar) =
+--   (r, Effect (EffectRow rs lrs ws ss) tailVar)
 
-peelLinReader :: Effect -> (Type, Effect)
-peelLinReader ~(Effect (EffectRow rs (lr:lrs) ws ss) tailVar) =
-  (lr, Effect (EffectRow rs lrs ws ss) tailVar)
+-- peelLinReader :: Effect -> (Type, Effect)
+-- peelLinReader ~(Effect (EffectRow rs (lr:lrs) ws ss) tailVar) =
+--   (lr, Effect (EffectRow rs lrs ws ss) tailVar)
 
-peelWriter :: Effect -> (Type, Effect)
-peelWriter ~(Effect (EffectRow rs lrs (w:ws) ss) tailVar) =
-  (w, Effect (EffectRow rs lrs ws ss) tailVar)
+-- peelWriter :: Effect -> (Type, Effect)
+-- peelWriter ~(Effect (EffectRow rs lrs (w:ws) ss) tailVar) =
+--   (w, Effect (EffectRow rs lrs ws ss) tailVar)
 
-peelState :: Effect -> (Type, Effect)
-peelState ~(Effect (EffectRow rs lrs ws (s:ss)) tailVar) =
-  (s, Effect (EffectRow rs lrs ws ss) tailVar)
+-- peelState :: Effect -> (Type, Effect)
+-- peelState ~(Effect (EffectRow rs lrs ws (s:ss)) tailVar) =
+--   (s, Effect (EffectRow rs lrs ws ss) tailVar)
 
 extendClassEnv :: [TyQual] -> TypeM a -> TypeM a
 extendClassEnv qs m = do
@@ -590,9 +599,10 @@ checkLinFExpr expr = case expr of
   FDecl decl body -> do
     env <- checkLinFDecl decl
     extendR env (checkLinFExpr body)
-  FPrimExpr (OpExpr  op ) -> do
-    let effSpending = fst $ getOpType $ fmapExpr op id getType getFLamType
-    tensCheck (checkLinOp op) (spendEffect effSpending)
+  FPrimExpr (OpExpr  op ) ->
+    checkLinOp op
+    -- let effSpending = fst $ getOpType $ fmapExpr op id getType getFLamType
+    -- tensCheck (checkLinOp op) (spendEffect effSpending)
   FPrimExpr (ConExpr con) -> checkLinCon con
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
   Annot e _      -> checkLinFExpr e
@@ -619,8 +629,6 @@ checkLinOp e = case e of
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App Lin    fun x -> tensCheck (check fun) (check x)
   App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
-  RunLinReader r lam ->
-    tensCheck (check r) (withLocalLinVar readerPat (checkLinFLam lam))
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
@@ -660,12 +668,12 @@ readerPat :: Name
 readerPat = "#readerPat"
 
 -- TODO: handle more than one linear reader effect
-spendEffect :: Effect -> LinCheckM ()
-spendEffect (Effect row _) = case linReaderEff row of
-  []  -> return ()
-  [_] -> spend $ asSpent readerPat
-  _   -> error "Not implemented: multiple linear reader effects"
-spendEffect ty = error $ "Unexpected effect: " ++ pprint ty
+-- spendEffect :: Effect -> LinCheckM ()
+-- spendEffect (Effect row _) = case linReaderEff row of
+--   []  -> return ()
+--   [_] -> spend $ asSpent readerPat
+--   _   -> error "Not implemented: multiple linear reader effects"
+-- spendEffect ty = error $ "Unexpected effect: " ++ pprint ty
 
 getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
