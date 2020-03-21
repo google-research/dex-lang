@@ -188,11 +188,6 @@ generateConSubExprTypes con = case con of
     l' <- fromAnn MultKind l
     (a, b) <- freshLamType
     return $ Lam l' (lam, (a,b))
-  LensCon (LensCompose l1 l2) -> do
-    a <- freshQ
-    b <- freshQ
-    c <- freshQ
-    return $ LensCon $ LensCompose (l1, Lens a b) (l2, Lens b c)
   _ -> traverseExpr con (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 generateOpSubExprTypes :: PrimOp Type e lam
@@ -206,15 +201,11 @@ generateOpSubExprTypes op = case op of
     n <- freshQ
     a <- freshQ
     return $ TabGet (xs, TabType n a) (i, n)
-  LensGet x l -> do
-    a <- freshQ
-    b <- freshQ
-    return $ LensGet (x,a) (l, Lens a b)
-  PrimEffect lab l m -> do
+  PrimEffect lab s m -> do
     lab' <- fromLabel lab
-    l'   <- liftM2 Lens freshQ freshQ
+    s'   <- fromAnn TyKind s
     m'   <- traverse (doMSnd freshQ) m
-    return $ PrimEffect (Label lab') (l, l') m'
+    return $ PrimEffect (Label lab') s' m'
   RunReader l r f -> do
     l' <- fromLabel l
     r' <- freshQ
@@ -236,6 +227,14 @@ generateOpSubExprTypes op = case op of
     tailVar <- freshInferenceVar EffectKind
     let fTy = (unitTy,  (Effect (singletonRow l' (State s')) (Just tailVar), a))
     return $ RunState (Label l') (s, s') (f, fTy)
+  IndexEff effTy l i f -> do
+    l' <- fromLabel l
+    i' <- freshQ
+    s  <- freshQ
+    a  <- freshQ
+    tailVar <- freshInferenceVar EffectKind
+    let eff = Effect (singletonRow l' (fmap (const s) effTy)) (Just tailVar)
+    return $ IndexEff effTy (Label l') (i, i') (f, (unitTy, (eff, a)))
   _ -> traverseExpr op (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM (Type, EffectiveType)
@@ -432,7 +431,6 @@ unify t1 t2 = do
     (ArrowType l a (eff, b), ArrowType l' a' (eff', b')) ->
       unify l l' >> unify a a' >> unify b b' >> unify eff eff'
     (TabType a b, TabType a' b') -> unify a a' >> unify b b'
-    (Lens a b, Lens a' b') -> unify a a' >> unify b b'
     (RecType r, RecType r') ->
       case zipWithRecord unify r r' of
         Nothing -> throw TypeErr ""

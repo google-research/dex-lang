@@ -66,7 +66,6 @@ instance Pretty Type where
     RecType r   -> p $ fmap (asStr . p) r
     ArrayType shape b -> p b <> p shape
     TypeApp f xs -> p f <+> hsep (map p xs)
-    Lens a b    -> "Lens" <+> p a <+> p b
     Forall bs qs body -> header <+> p body
       where
         header = "A" <+> hsep (map p bs) <> qual <> "."

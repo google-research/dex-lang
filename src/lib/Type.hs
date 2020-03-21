@@ -472,11 +472,11 @@ traverseOpType op eq kindIs inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  PrimEffect ~(Label lab) ~(Lens s x) m -> case m of
-    MAsk     ->            return (Effect (singletonRow lab (Reader s)) Nothing, x)
-    MTell x' -> eq x x' >> return (Effect (singletonRow lab (Writer s)) Nothing, unitTy)
-    MGet     ->            return (Effect (singletonRow lab (State  s)) Nothing, x)
-    MPut  x' -> eq x x' >> return (Effect (singletonRow lab (State  s)) Nothing, unitTy)
+  PrimEffect ~(Label lab) x m -> case m of
+    MAsk     ->            return (Effect (singletonRow lab (Reader x)) Nothing, x)
+    MTell x' -> eq x x' >> return (Effect (singletonRow lab (Writer x)) Nothing, unitTy)
+    MGet     ->            return (Effect (singletonRow lab (State  x)) Nothing, x)
+    MPut  x' -> eq x x' >> return (Effect (singletonRow lab (State  x)) Nothing, unitTy)
   RunReader ~(Label l) r ~(u, (Effect row tailVar, a)) -> do
     ~(Reader r', row') <- liftEither $ popRow l row
     eq u unitTy >> eq r' r
@@ -489,7 +489,12 @@ traverseOpType op eq kindIs inClass = case op of
     ~(State s', row') <- liftEither $ popRow l row
     eq u unitTy >> eq s' s
     return (Effect row' tailVar, pairTy a s)
-  LensGet a (Lens a' b) -> eq a a' >> return (pureTy b)
+  IndexEff _ ~(Label l) i (u, (Effect row tailVar, a)) -> do
+    (eff, row') <- liftEither $ popRow l row
+    eq u unitTy
+    let eff' = fmap (TabType i) eff
+    let row'' = singletonRow l eff' <> row'
+    return (Effect row'' tailVar, a)
   Linearize (a, (eff, b)) -> do
     eq noEffect eff
     return $ pureTy $ a --> pairTy b (a --@ b)
@@ -516,10 +521,6 @@ traverseConType con eq kindIs _ = case con of
   AFor n a                -> return $ TabType n a
   AGet (ArrayType _ b) -> return $ BaseType b  -- TODO: check shape matches AFor scope
   AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
-  LensCon l -> case l of
-    IdxAsLens ty n -> return $ Lens (TabType n ty) ty
-    LensId ty      -> return $ Lens ty ty
-    LensCompose ~(Lens a b) ~(Lens b' c) -> eq b b' >> return (Lens a c)
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
   Todo ty -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con

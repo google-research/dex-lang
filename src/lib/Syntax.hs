@@ -16,7 +16,7 @@ module Syntax (
     Kind (..), ClassName (..), TyQual (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), LensCon (..), PrimOp (..),
+    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
     RuleAnn (..), CmdName (..), Val, TopEnv (..),
@@ -62,7 +62,6 @@ data Type = TypeVar TVar
           | RecType (Record Type)
           | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
-          | Lens Type Type
           | TypeApp Type [Type]
           | Lin
           | NonLin
@@ -180,7 +179,6 @@ data PrimCon ty e lam =
       | Lam ty lam
       | RecCon (Record e)
       | AsIdx Int e
-      | LensCon (LensCon ty e)
       | AFor ty e
       | AGet e
       | ArrayRef Array
@@ -195,9 +193,6 @@ data LitVal = IntLit  Int
 
 data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
 
-data LensCon ty e = IdxAsLens ty e | LensCompose e e | LensId ty
-                    deriving (Show, Eq, Generic)
-
 data PrimOp ty e lam =
         App ty e e
       | TApp e [ty]
@@ -209,11 +204,11 @@ data PrimOp ty e lam =
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
-      | PrimEffect ty e (PrimEffect e)
+      | PrimEffect ty ty (PrimEffect e)
       | RunReader ty e lam
       | RunWriter ty   lam
       | RunState  ty e lam
-      | LensGet e e
+      | IndexEff (OneEffect ()) ty e lam
       | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
@@ -257,10 +252,9 @@ builtinNames = M.fromList
   , ("runReader"       , OpExpr $ RunReader () () ())
   , ("runWriter"       , OpExpr $ RunWriter () ())
   , ("runState"        , OpExpr $ RunState  () () ())
-  , ("lensGet"         , OpExpr $ LensGet () ())
-  , ("idxAsLens"  , ConExpr $ LensCon $ IdxAsLens () ())
-  , ("lensCompose", ConExpr $ LensCon $ LensCompose () ())
-  , ("lensId"     , ConExpr $ LensCon $ LensId ())
+  , ("indexReader"     , OpExpr $ IndexEff (Reader ()) () () ())
+  , ("indexWriter"     , OpExpr $ IndexEff (Writer ()) () () ())
+  , ("indexState"      , OpExpr $ IndexEff (State  ()) () () ())
   , ("todo"       , ConExpr $ Todo ())
   , ("ask"        , OpExpr $ PrimEffect () () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () () $ MTell ())
@@ -642,7 +636,7 @@ instance TraversableExpr PrimOp where
     VSpaceOp ty (VAdd e1 e2) -> liftA2 VSpaceOp (fT ty) (liftA2 VAdd (fE e1) (fE e2))
     Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
-    PrimEffect lab l m -> liftA3 PrimEffect (fT lab) (fE l) $ case m of
+    PrimEffect lab s m -> liftA3 PrimEffect (fT lab) (fT s) $ case m of
        MAsk    -> pure  MAsk
        MTell e -> liftA MTell (fE e)
        MGet    -> pure  MGet
@@ -650,7 +644,7 @@ instance TraversableExpr PrimOp where
     RunReader l r lam    -> liftA3 RunReader (fT l) (fE r) (fL lam)
     RunWriter l   lam    -> liftA2 RunWriter (fT l)        (fL lam)
     RunState  l s lam    -> liftA3 RunState  (fT l) (fE s) (fL lam)
-    LensGet e1 e2        -> liftA2 LensGet (fE e1) (fE e2)
+    IndexEff eff l i lam -> liftA3 (IndexEff eff) (fT l) (fE i) (fL lam)
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
@@ -667,10 +661,6 @@ instance TraversableExpr PrimCon where
     AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA  (AsIdx n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
-    LensCon l -> liftA LensCon $ case l of
-      IdxAsLens ty e    -> liftA2 IdxAsLens (fT ty) (fE e)
-      LensCompose e1 e2 -> liftA2 LensCompose (fE e1) (fE e2)
-      LensId ty         -> liftA  LensId (fT ty)
     Todo ty             -> liftA  Todo (fT ty)
     ArrayRef ref        -> pure $ ArrayRef ref
 
@@ -782,7 +772,6 @@ traverseType f ty = case ty of
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r
-  Lens a b             ->  liftA2 Lens (f TyKind a) (f TyKind b)
   TypeApp t xs         -> liftA2 TypeApp (f TyKind t) (traverse (f TyKind) xs)
   Lin                  -> pure Lin
   NonLin               -> pure NonLin

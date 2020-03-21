@@ -40,15 +40,15 @@
 
 :p m :: () -> {#s :: State (3=>Int)} ()
    m () =
-     _ = puts @#s (idxAsLens 0@3) 10
-     _ = puts @#s (idxAsLens 2@3) 20
-     x = gets @#s (idxAsLens 0@3)
-     puts @#s (idxAsLens 1@3) x
+     _ = indexState @#s 0@3 lam (). put @#s 10
+     _ = indexState @#s 2@3 lam (). put @#s 20
+     x = indexState @#s 0@3 lam (). get @#s ()
+     indexState     @#s 1@3 lam (). put @#s x
    runState @#s [0,0,0] m
 > ((), [10, 10, 20])
 
 :p m :: () -> {#r :: Reader (3=>Int)} Int
-   m () = asks @#r (idxAsLens 1@3)
+   m () = indexReader @#r (1@3) lam (). ask @#r ()
    runReader @#r [1,2,3] m
 > 2
 
@@ -77,3 +77,13 @@ myAction () =
     tell @#w1 1.0
   runWriter @#w1 $ lam (). runWriter @#w2 m
 > (((), 3.0), 2.0)
+
+
+foom :: () -> {#s :: State (3=>Int)} ()
+foom () =
+  _ = indexState @#s (0@3) $ lam (). put @#s 1
+  _ = indexState @#s (2@3) $ lam (). put @#s 2
+  ()
+
+:p runState @#s [0,0,0] foom
+> ((), [1, 0, 2])

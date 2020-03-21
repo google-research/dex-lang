@@ -151,47 +151,19 @@ compose f g x = f (g x)
 slice :: A n m a . m=>a -> Int -> n=>a
 slice xs start = for i. xs.(asidx (asint i `iadd` start))
 
-'Lens primitive
-
-lensGet :: a -> Lens a b -> b
-lensGet x l = %lensGet(x, l)
-
--- TODO: come up with some infix symbols for some of these
-idxAsLens :: A n a | Ix n . n -> Lens (n=>a) a
-idxAsLens i = %idxAsLens(i)
-
--- Composes left-to-right (unlike usual function composition)
-lensCompose :: Lens a b -> Lens b c -> Lens a c
-lensCompose l1 l2 = %lensCompose(l1, l2)
-
-lensId :: Lens a a
-lensId = %lensId()
-
 'Effective primitives
 
-asks :: A l r a. Lens r a -> {l :: Reader r} a
-asks lens = %ask(@l, lens)
-
 ask :: A l r. () -> {l :: Reader r} r
-ask () = asks @l lensId
-
-tells :: A l w a | VS w, VS a . Lens w a -> a -> {l :: Writer w} ()
-tells lens x = %tell(@l, lens, x)
+ask () = %ask(@l)
 
 tell :: A l w | VS w . w -> {l :: Writer w} ()
-tell w = tells @l lensId w
-
-gets :: A l s a . Lens s a -> {l :: State s} a
-gets lens = %get(@l, lens)
+tell w = %tell(@l, w)
 
 get :: A l s . () -> {l :: State s} s
-get () = gets @l lensId
-
-puts :: A l s a . Lens s a -> a -> {l :: State s} ()
-puts lens x = %put(@l, lens, x)
+get () = %get(@l)
 
 put :: A l s . s -> {l :: State s} ()
-put s = puts @l lensId s
+put s = %put(@l, s)
 
 runReader :: A l r a eff . r -> (() -> {l :: Reader r |eff} a) -> {|eff} a
 runReader r f = %runReader(@l, r, lam (). f ())
@@ -201,6 +173,18 @@ runWriter f = %runWriter(@l, lam (). f ())
 
 runState :: A l s eff a . s -> (() -> {l :: State s |eff} a) -> {|eff} (a, s)
 runState s f = %runState(@l, s, lam (). f ())
+
+indexReader :: A l n a r eff .
+    n -> (() -> {l :: Reader r |eff} a) -> {l :: Reader (n=>r) |eff} a
+indexReader i f = %indexReader(@l, i, lam (). f ())
+
+indexState :: A l n a s eff .
+    n -> (() -> {l :: State s |eff} a) -> {l :: State (n=>s) |eff} a
+indexState i f = %indexState(@l, i, lam (). f ())
+
+indexWriter :: A l n a s eff .
+    n -> (() -> {l :: Writer s |eff} a) -> {l :: Writer (n=>s) |eff} a
+indexWriter i f = %indexWriter(@l, i, lam (). f ())
 
 'State-carrying loop constructs
 

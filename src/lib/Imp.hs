@@ -107,40 +107,36 @@ toImpCExpr dests op = case op of
       val -> error $ "Expected a record, got: " ++ show val
   RunReader ~(Label l) r (LamExpr _ _ body) -> do
     r' <- toImpAtom r
-    withEffectContext (singletonRow l (Reader r')) $ toImpExpr dests body
+    withEffectContext (singletonRow l (Reader r') <>) $ toImpExpr dests body
   RunWriter ~(Label l) (LamExpr _ _ body) -> do
     mapM_ initializeZero wDest
-    withEffectContext (singletonRow l (Writer wDest)) $ toImpExpr aDest body
+    withEffectContext (singletonRow l (Writer wDest) <>) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, wDest]))) = dests
   RunState ~(Label l) s (LamExpr _ _ body) -> do
     s' <- toImpAtom s
     copyIAtom sDest s'
-    withEffectContext (singletonRow l (State sDest)) $ toImpExpr aDest body
+    withEffectContext (singletonRow l (State sDest) <>) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
-  PrimEffect ~(Label lab) l m -> do
+  IndexEff _ ~(Label l) i (LamExpr _ _ body) -> do
+    i' <- toImpAtom i >>= fromScalarIAtom
+    withEffectContext (updateRow l (fmap (flip tabGetIAtom i')))
+                      (toImpExpr dests body)
+  PrimEffect ~(Label lab) _ m -> do
     case m of
       MAsk -> do
         ~(Reader rVals) <- lookupEffectContext lab
-        ans <- lensGet l rVals
-        copyIAtom dests ans
+        copyIAtom dests rVals
       MTell x -> do
         ~(Writer wDests) <- lookupEffectContext lab
         x' <- toImpAtom x
-        wDests' <- lensGet l wDests
-        zipWithM_ addToDest (toList wDests') (toList x')
+        zipWithM_ addToDest (toList wDests) (toList x')
       MPut x -> do
         ~(State sDests) <- lookupEffectContext lab
         x' <- toImpAtom x
-        sDests' <- lensGet l sDests
-        copyIAtom sDests' x'
+        copyIAtom sDests x'
       MGet -> do
         ~(State sDests) <- lookupEffectContext lab
-        ans <- lensGet l sDests
-        copyIAtom dests ans
-  LensGet x l -> do
-    x' <- toImpAtom x
-    ansRefs <- lensGet l x'
-    copyIAtom dests ansRefs
+        copyIAtom dests sDests
   IntAsIndex n i -> do
     i' <- toImpAtom i >>= fromScalarIAtom
     n' <- typeToSize n
@@ -176,13 +172,17 @@ withAllocs (_:>ty) body = do
   flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
   return ans
 
-withEffectContext :: EffectContext -> ImpM a -> ImpM a
-withEffectContext ctx m = do
+withEffectContext :: (EffectContext -> EffectContext) -> ImpM a -> ImpM a
+withEffectContext f m = do
   env <- ask
-  lift $ local (ctx <>) (runReaderT m env)
+  lift $ local f (runReaderT m env)
 
 lookupEffectContext :: Label -> ImpM (OneEffect IAtom)
 lookupEffectContext l = lift $ asks $ (ignoreExcept . peekRow l)
+
+updateRow :: Label -> (a -> a) -> Row a -> Row a
+updateRow l f row = singletonRow l (f x) <> row'
+ where (x, row') = ignoreExcept $ popRow l row
 
 makeDest :: Type -> ImpM (IAtom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty
@@ -199,13 +199,6 @@ makeDest' shape ty = case ty of
   RecType r   -> liftM (ICon . RecCon ) $ traverse (makeDest' shape) r
   IdxSetLit n -> liftM (ICon . AsIdx n) $ makeDest' shape (BaseType IntType)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
-
-lensGet :: Atom -> IAtom -> ImpM IAtom
-lensGet (Con (LensCon lens)) x = case lens of
-  LensId _ -> return x
-  LensCompose a b -> lensGet a x >>= lensGet b
-  IdxAsLens _ i -> liftM (tabGetIAtom x) $ fromScalarIAtom =<< toImpAtom i
-lensGet expr _ = error $ "Not a lens expression: " ++ pprint expr
 
 tabGetIAtom :: IAtom -> IExpr -> IAtom
 tabGetIAtom x i = case x of

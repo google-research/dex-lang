@@ -459,7 +459,7 @@ explicitSigmaType = do
   symbol "A"
   tbs <- many typeBinder
   qs <- (symbol "|" >> qual `sepBy` comma) <|> return []
-  period
+  mayBreak period
   ty <- tauType
   return $ Forall tbs qs ty
 
@@ -563,7 +563,6 @@ applyType ty arg = TypeApp ty [arg]
 
 tauType' :: Parser Type
 tauType' =   parenTy
-         <|> lensType
          <|> typeName
          <|> liftM TypeVar typeVar
          <|> liftM TypeVar localTypeVar
@@ -579,10 +578,6 @@ localTypeVar :: Parser TVar
 localTypeVar = do
   v <- name LocalTVName identifier
   return (v:> NoKindAnn)
-
-lensType :: Parser Type
-lensType = symbol "Lens" >> liftM2 Lens t t
-  where t = tauTypeAtomic
 
 idxSetLit :: Parser Type
 idxSetLit = liftM IdxSetLit uint
