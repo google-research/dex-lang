@@ -29,7 +29,7 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int  deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | SourceTypeName
-               | InferenceName | LocalTVName
+               | InferenceName | LocalTVName | EffectLabel
                  deriving  (Show, Ord, Eq)
 
 type Tag = T.Text

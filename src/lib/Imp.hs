@@ -29,9 +29,8 @@ import Record
 import Embed (wrapDecls)
 
 type ImpEnv = Env IAtom
-type EffectContext = Row (OneEffect IAtom)
 type EmbedEnv = (Scope, ImpProg)
-type ImpM = ReaderT ImpEnv (ReaderT EffectContext (Cat EmbedEnv))
+type ImpM = ReaderT ImpEnv (Cat EmbedEnv)
 
 data IAtomP a = ILeaf a | ICon (PrimCon Type (IAtomP a) ())  deriving (Show)
 type IAtom = IAtomP IExpr
@@ -40,7 +39,7 @@ toImpModule :: TopEnv -> Module -> ImpModule
 toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
   where ((vs, result), (_, prog)) =
           flip runCat mempty $ flip runReaderT mempty $
-             flip runReaderT mempty $ toImpModBody env imports m
+              toImpModBody env imports m
 
 toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
 toImpModBody topEnv imports (ModBody decls result) = do
@@ -105,37 +104,42 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  RunReader ~(Label l) r (LamExpr _ _ body) -> do
+  RunReader l r (LamExpr _ _ body) -> do
+    let l' = fromLabelLit l
     r' <- toImpAtom r
-    withEffectContext (singletonRow l (Reader r') <>) $ toImpExpr dests body
-  RunWriter ~(Label l) (LamExpr _ _ body) -> do
+    extendR (l' @> r') $ toImpExpr dests body
+  RunWriter l (LamExpr _ _ body) -> do
+    let l' = fromLabelLit l
     mapM_ initializeZero wDest
-    withEffectContext (singletonRow l (Writer wDest) <>) $ toImpExpr aDest body
+    extendR (l' @> wDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, wDest]))) = dests
-  RunState ~(Label l) s (LamExpr _ _ body) -> do
+  RunState l s (LamExpr _ _ body) -> do
+    let l' = fromLabelLit l
     s' <- toImpAtom s
     copyIAtom sDest s'
-    withEffectContext (singletonRow l (State sDest) <>) $ toImpExpr aDest body
+    extendR (l' @> sDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
-  IndexEff _ ~(Label l) i (LamExpr _ _ body) -> do
+  IndexEff _ l i (LamExpr _ _ body) -> do
+    let l' = fromLabelLit l
     i' <- toImpAtom i >>= fromScalarIAtom
-    withEffectContext (updateRow l (fmap (flip tabGetIAtom i')))
-                      (toImpExpr dests body)
-  PrimEffect ~(Label lab) _ m -> do
+    curRef <- lookupVar l'
+    extendR (l' @> tabGetIAtom curRef i') (toImpExpr dests body)
+  PrimEffect l _ m -> do
+    let l' = fromLabelLit l
     case m of
       MAsk -> do
-        ~(Reader rVals) <- lookupEffectContext lab
+        rVals <- lookupVar l'
         copyIAtom dests rVals
       MTell x -> do
-        ~(Writer wDests) <- lookupEffectContext lab
+        wDests <- lookupVar l'
         x' <- toImpAtom x
         zipWithM_ addToDest (toList wDests) (toList x')
       MPut x -> do
-        ~(State sDests) <- lookupEffectContext lab
+        sDests <- lookupVar l'
         x' <- toImpAtom x
         copyIAtom sDests x'
       MGet -> do
-        ~(State sDests) <- lookupEffectContext lab
+        sDests <- lookupVar l'
         copyIAtom dests sDests
   IntAsIndex n i -> do
     i' <- toImpAtom i >>= fromScalarIAtom
@@ -171,18 +175,6 @@ withAllocs (_:>ty) body = do
   ans <- body dest
   flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
   return ans
-
-withEffectContext :: (EffectContext -> EffectContext) -> ImpM a -> ImpM a
-withEffectContext f m = do
-  env <- ask
-  lift $ local f (runReaderT m env)
-
-lookupEffectContext :: Label -> ImpM (OneEffect IAtom)
-lookupEffectContext l = lift $ asks $ (ignoreExcept . peekRow l)
-
-updateRow :: Label -> (a -> a) -> Row a -> Row a
-updateRow l f row = singletonRow l (f x) <> row'
- where (x, row') = ignoreExcept $ popRow l row
 
 makeDest :: Type -> ImpM (IAtom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty
@@ -233,6 +225,9 @@ toImpBaseType ty = case ty of
   TypeVar _   -> IntType
   IdxSetLit _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty
+
+fromLabelLit :: Type -> (VarP ())
+fromLabelLit ~(Label (LabelLit x)) = x :> ()
 
 lookupVar :: VarP a -> ImpM IAtom
 lookupVar v = do

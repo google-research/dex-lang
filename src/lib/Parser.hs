@@ -528,7 +528,7 @@ arrowType = do
   return $ \a b -> ArrowType lin a (eff, b)
 
 labelLit :: Parser Label
-labelLit = char '#' >> liftM LabelLit lowerName
+labelLit = char '#' >> liftM LabelLit (name EffectLabel identifier)
 
 effectRow :: Parser (EffectRow Type)
 effectRow = do
