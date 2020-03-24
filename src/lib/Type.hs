@@ -557,22 +557,6 @@ flattenType ty = case ty of
   TypeVar _               -> [(IntType, [])]
   _ -> error $ "Unexpected type: " ++ show ty
 
--- peelReader :: Effect -> (Type, Effect)
--- peelReader ~(Effect (EffectRow (r:rs) lrs ws ss) tailVar) =
---   (r, Effect (EffectRow rs lrs ws ss) tailVar)
-
--- peelLinReader :: Effect -> (Type, Effect)
--- peelLinReader ~(Effect (EffectRow rs (lr:lrs) ws ss) tailVar) =
---   (lr, Effect (EffectRow rs lrs ws ss) tailVar)
-
--- peelWriter :: Effect -> (Type, Effect)
--- peelWriter ~(Effect (EffectRow rs lrs (w:ws) ss) tailVar) =
---   (w, Effect (EffectRow rs lrs ws ss) tailVar)
-
--- peelState :: Effect -> (Type, Effect)
--- peelState ~(Effect (EffectRow rs lrs ws (s:ss)) tailVar) =
---   (s, Effect (EffectRow rs lrs ws ss) tailVar)
-
 extendClassEnv :: [TyQual] -> TypeM a -> TypeM a
 extendClassEnv qs m = do
   r <- ask
@@ -582,9 +566,8 @@ extendClassEnv qs m = do
 -- === linearity ===
 
 type Spent = Env ()
--- Second element of (Spent, Spent) pair is spending due to writer effect
 newtype LinCheckM a = LinCheckM
-  { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, (Spent, Spent)) }
+  { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, (Spent, Env Spent)) }
 
 runCheckLinFDecl :: FDecl -> Except ()
 runCheckLinFDecl decls =
@@ -592,18 +575,11 @@ runCheckLinFDecl decls =
 
 checkLinFExpr :: FExpr -> LinCheckM ()
 checkLinFExpr expr = case expr of
-  FVar v -> do
-    env <- ask
-    case envLookup env v of
-      Nothing -> spend mempty
-      Just s  -> spend s
+  FVar v -> checkLinVar v
   FDecl decl body -> do
     env <- checkLinFDecl decl
     extendR env (checkLinFExpr body)
-  FPrimExpr (OpExpr  op ) ->
-    checkLinOp op
-    -- let effSpending = fst $ getOpType $ fmapExpr op id getType getFLamType
-    -- tensCheck (checkLinOp op) (spendEffect effSpending)
+  FPrimExpr (OpExpr  op ) -> checkLinOp op
   FPrimExpr (ConExpr con) -> checkLinCon con
   SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
   Annot e _      -> checkLinFExpr e
@@ -630,6 +606,18 @@ checkLinOp e = case e of
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App Lin    fun x -> tensCheck (check fun) (check x)
   App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
+  RunReader (Label (LabelLit l)) r (FLamExpr _ _ body) -> do
+    ((), spent) <- captureSpent $ checkLinFExpr r
+    extendR ((l:>()) @> spent) $ checkLinFExpr body
+  RunWriter (Label (LabelLit l)) (FLamExpr _ _ body) -> do
+    ((), spent) <- captureEffSpent (l:>()) $ checkLinFExpr body
+    spend spent
+  PrimEffect (Label (LabelLit l)) _ m -> case m of
+    MAsk -> checkLinVar (l:>())
+    MTell x -> do
+      ((), s) <- captureSpent $ checkLinFExpr x
+      spendEff (l:>()) s
+    _ -> error "Not implemented"
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
@@ -665,16 +653,12 @@ tensCheck x y = LinCheckM $ do
   sxy    <- liftEither $ tensCat sx sy
   return ((), (sxy, sxEff <> syEff))
 
-readerPat :: Name
-readerPat = "#readerPat"
-
--- TODO: handle more than one linear reader effect
--- spendEffect :: Effect -> LinCheckM ()
--- spendEffect (Effect row _) = case linReaderEff row of
---   []  -> return ()
---   [_] -> spend $ asSpent readerPat
---   _   -> error "Not implemented: multiple linear reader effects"
--- spendEffect ty = error $ "Unexpected effect: " ++ pprint ty
+checkLinVar :: VarP a -> LinCheckM ()
+checkLinVar v = do
+  env <- ask
+  case envLookup env v of
+    Nothing -> spend mempty
+    Just s  -> spend s
 
 getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
 getPatName p = case toList p of
@@ -684,6 +668,9 @@ getPatName p = case toList p of
 
 spend :: Spent -> LinCheckM ()
 spend s = LinCheckM $ return ((), (s, mempty))
+
+spendEff :: VarP a -> Spent -> LinCheckM ()
+spendEff v s = LinCheckM $ return ((), (mempty, v@>s))
 
 asSpent :: Name -> Spent
 asSpent v = (v:>())@>()
@@ -699,6 +686,13 @@ captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
 captureSpent m = LinCheckM $ do
   (x, (s, sEff)) <- runLinCheckM m
   return ((x, s), (mempty, sEff))
+
+captureEffSpent :: VarP a ->  LinCheckM a -> LinCheckM (a, Spent)
+captureEffSpent (v:>_) m = LinCheckM $ do
+  (x, (s, sEff)) <- runLinCheckM m
+  let varSpent = sEff ! (v:>())
+  let sEff' = envDelete v sEff
+  return ((x, varSpent), (s, sEff'))
 
 showSpent :: Spent -> String
 showSpent vs = pprint $ envNames vs

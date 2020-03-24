@@ -188,31 +188,38 @@ linUnary x = linFstArg x 1.0
    f
 > (Real -> Real)
 
--- TODO: re-enable these
+f1 :: Real --o Real
+f1 x = %runReader(@#r, x, lam ().
+   y = %ask(@#r)
+   z = %ask(@#r)
+   y + z)
 
--- -- TODO: figure out how to avoid using builtins here.
--- mId :: () -> Lin {Real, Real, ()} ()
--- mId () =
---   x = askL
---   %tell(lensId, x)
+f2 :: Real --o Real
+f2 x = %runReader(@#r, x, lam ().
+   y = %ask(@#r)
+   z = %ask(@#r)
+   y * z)
+> Linearity error: pattern spent twice: [x]
+>
+>    y * z)
+>      ^^
 
--- runId :: Real --o Real
--- runId x =
---   ((), y, ()) = runL (x, ()) mId
---   y
+f3 :: Real --o Real
+f3 x =
+  y = snd $ %runWriter(@#w, lam ().
+        _ = %tell(@#w, x)
+        _ = %tell(@#w, x)
+        ())
+  y + x
 
--- mSq :: LinMonad Real Real () ()
--- mSq =
---   x <- askL
---   %tell(lensId, x * x)
--- > Linearity error: pattern spent twice: [mLin]
--- >
--- >   %tell(lensId, x * x)
--- >                   ^^
-
--- badTell :: LinMonad Real Real () ()
--- badTell = %tell(lensId, 1.0)
--- > Linearity error: pattern never spent: mLin
--- >
--- > badTell = %tell(lensId, 1.0)
--- >           ^^^^^^^^^^^^^^^^^^
+f2 :: Real --o Real
+f2 x =
+  y = snd $ %runWriter(@#w, lam ().
+        _ = %tell(@#w, x)
+        _ = %tell(@#w, x)
+        ())
+  y * x
+> Linearity error: pattern spent twice: [x]
+>
+>   y * x
+>     ^^
