@@ -139,8 +139,10 @@ transposeMap scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
   Decl (Let b bound) body -> do
+    let (eff, _) = getEffType bound
+    linEff <- isLinEff eff
     lin <- isLin bound
-    if lin
+    if lin || linEff
       then do
         ct' <- withLinVar b $ transposeExpr body ct
         transposeCExpr bound ct'
@@ -181,14 +183,40 @@ transposeCExpr expr ct = case expr of
     ~(Con (RecCon rZeros)) <- zeroAt (getType x)
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
-  _ -> error "not implemented"
+  -- TODO: de-dup RunReader/RunWriter a bit
+  RunReader l r (LamExpr _ eff body) -> do
+    let eff' = transposeEffect eff
+    vs <- freeLinVars body
+    body' <- buildLamExpr eff' ("_":>unitTy) $ \_ -> do
+               vsCTs <- extractCTs vs $ transposeExpr body ct
+               return $ Con $ RecCon $ Tup vsCTs
+    (vsCTs, ctr) <- emit (RunWriter l body') >>= fromPair
+    ~(Tup vsCTs') <- unpackRec vsCTs
+    zipWithM_ (emitCT . varName) vs vsCTs'
+    transposeAtom r ctr
+  RunWriter l (LamExpr _ eff body) -> do
+    (ctBody, ctEff) <- fromPair ct
+    let eff' = transposeEffect eff
+    vs <- freeLinVars body
+    body' <- buildLamExpr eff' ("_":>unitTy) $ \_ -> do
+               vsCTs <- extractCTs vs $ transposeExpr body ctBody
+               return $ Con $ RecCon $ Tup vsCTs
+    vsCTs <- emit (RunReader l ctEff body')
+    ~(Tup vsCTs') <- unpackRec vsCTs
+    zipWithM_ (emitCT . varName) vs vsCTs'
+  PrimEffect l ty MAsk      -> void $ emit $ PrimEffect l ty (MTell ct)
+  PrimEffect l ty (MTell x) -> do
+    ct' <- emit $ PrimEffect l ty MAsk
+    transposeAtom x ct'
+  _ -> error $ "not implemented: transposition for: " ++ pprint expr
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
+  Lit _ -> return ()
   RecCon r -> do
     rCT <- unpackRec ct
     sequence_ $ recZipWith transposeAtom r rCT
-  _ -> error "Not implemented"
+  _ -> error $ "not implemented: transposition for: " ++ pprint con
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
@@ -196,9 +224,27 @@ transposeAtom atom ct = case atom of
   Con con -> transposeCon con ct
   _ -> error $ "Can't transpose: " ++ pprint atom
 
+transposeEffect :: Effect -> Effect
+transposeEffect ~(Effect row tailVar) =
+  Effect (fmap transposeOneEffect row) tailVar
+
+transposeOneEffect :: OneEffect a -> OneEffect a
+transposeOneEffect eff = case eff of
+  Reader x -> Writer x
+  Writer x -> Reader x
+  State  x -> State  x
+
+freeLinVars :: HasVars a => a -> TransposeM [Var]
+freeLinVars x = do
+  linVs <- asks fst
+  return [v:>ty | (v, L ty) <- envPairs $ envIntersect linVs (freeVars x)]
+
 isLin :: HasVars a => a -> TransposeM Bool
-isLin x = do linVs <- asks fst
-             return $ not $ null $ toList $ envIntersect (freeVars x) linVs
+isLin x = liftM (not . null) $ freeLinVars x
+
+-- TODO: allow nonlinear effects
+isLinEff :: Effect -> TransposeM Bool
+isLinEff ~(Effect row _) = return $ not $ null $ toList row
 
 emitCT :: Name -> Atom -> TransposeM ()
 emitCT v ct = tell $ MonMap $ M.singleton v [ct]
@@ -210,14 +256,20 @@ substTranspose x = do
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v m = extractCT v $ extendR (asFst (v@>())) m
+withLinVar v m = liftM snd $ extractCT v $ extendR (asFst (v@>())) m
 
-extractCT :: Var -> TransposeM () -> TransposeM Atom
+extractCT :: Var -> TransposeM a -> TransposeM (a, Atom)
 extractCT b m = do
-  ((), ctEnv) <- captureW m
+  (ans, ctEnv) <- captureW m
   (ct, ctEnv') <- sepCotangent b ctEnv
   tell ctEnv'
-  return ct
+  return (ans, ct)
+
+extractCTs :: [Var] -> TransposeM () -> TransposeM [Atom]
+extractCTs [] m = m >> return []
+extractCTs (v:vs) m = do
+  (vs', v') <- extractCT v $ extractCTs vs m
+  return (v':vs')
 
 sepCotangent :: MonadCat EmbedEnv m =>
                   Var -> CotangentVals -> m (Atom, CotangentVals)

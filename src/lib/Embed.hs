@@ -12,7 +12,7 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               runEmbed, fromLetDecl, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
-              makeTup, makePair, substEmbed) where
+              makeTup, makePair, substEmbed, fromPair) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -167,6 +167,13 @@ makeTup xs = Con $ RecCon $ Tup xs
 
 makePair :: Atom -> Atom -> Atom
 makePair x y = Con $ RecCon (Tup [x, y])
+
+fromPair :: MonadCat EmbedEnv m => Atom -> m (Atom, Atom)
+fromPair pair = do
+  r <- unpackRec pair
+  case r of
+    Tup [x, y] -> return (x, y)
+    _          -> error $ "Not a pair: " ++ pprint pair
 
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom

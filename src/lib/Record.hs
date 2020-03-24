@@ -15,7 +15,6 @@ module Record (Record (..), RecTree (..),
               ) where
 
 
-import Util
 import Data.Traversable
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromJust)
@@ -58,8 +57,11 @@ zipWithRecord f (Tup xs) (Tup xs') | length xs == length xs' = Just $ Tup $ zipW
 zipWithRecord _ _ _ = Nothing
 
 recZipWith :: (a -> b -> c) -> Record a -> Record b -> Record c
-recZipWith f r r' = unJust (zipWithRecord f r r')
-
+recZipWith f r r' = case zipWithRecord f r r' of
+  Just ans -> ans
+  Nothing  -> error $ "Record mismatch: " ++ showIt r ++ " vs " ++ showIt r'
+    where showIt :: Record a -> String
+          showIt x = show (fmap (const ()) x)
 
 recZipWith3 :: (a -> b -> c -> d) -> Record a -> Record b -> Record c -> Record d
 recZipWith3 f r1 r2 r3 = recZipWith ($) (recZipWith f r1 r2) r3

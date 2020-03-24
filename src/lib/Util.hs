@@ -6,7 +6,7 @@
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
-module Util (group, ungroup, unJust, pad, padLeft, delIdx, replaceIdx,
+module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
@@ -58,10 +58,6 @@ group ((k,v):xs) =
 ungroup ::  [(a, [b])] -> [(a,b)]
 ungroup [] = []
 ungroup ((k,vs):xs) = (zip (repeat k) vs) ++ ungroup xs
-
-unJust :: Maybe a -> a
-unJust (Just x) = x
-unJust Nothing = error "whoops! [unJust]"
 
 uncons :: [a] -> (a, [a])
 uncons (x:xs) = (x, xs)

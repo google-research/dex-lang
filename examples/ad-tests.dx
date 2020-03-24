@@ -130,3 +130,18 @@ sinn#lin x = x
 --   --
 --   runL (1.0, ()) mId
 -- > ((), 3.0, ())
+
+tripleit :: Real --o Real
+tripleit x = %runReader(@#r, x, lam ().
+   y = %ask(@#r)
+   z = %ask(@#r)
+   y + z + x)
+
+:p tripleit 1.0
+> 3.0
+
+:p transposeLinear tripleit 1.0
+> 3.0
+
+:p transposeLinear (transposeLinear tripleit) 1.0
+> 3.0

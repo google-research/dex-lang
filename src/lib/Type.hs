@@ -13,7 +13,7 @@ module Type (
     getType, substEnvType, tangentBunType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
-    getKind, checkKindIs, checkKindEq) where
+    getKind, checkKindIs, checkKindEq, getEffType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -302,10 +302,13 @@ instance HasType Expr where
     Atom x   -> getType x
 
 instance HasType CExpr where
-  getType op = snd $ getOpType $ fmapExpr op id getType getLamType
+  getType op = snd $ getEffType op
 
 getLamType :: LamExpr -> (Type, EffectiveType)
 getLamType (LamExpr (_:>ty) eff body) = (ty, (eff, getType body))
+
+getEffType :: CExpr -> EffectiveType
+getEffType op = getOpType $ fmapExpr op id getType getLamType
 
 checkExpr :: Effect -> Expr -> TypeM Type
 checkExpr eff expr = case expr of
