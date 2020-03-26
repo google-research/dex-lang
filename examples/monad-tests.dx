@@ -87,3 +87,36 @@ foom () =
 
 :p runState @#s [0,0,0] foom
 > ((), [1, 0, 2])
+
+:p
+  foo :: Real -> Real
+  foo x =
+     f = runReader @#r x lam ().
+           y = ask @#r ()
+           lam z. 100.0 * x + 10.0 * y + z
+     f 1.0
+
+  foo 3.0
+> 331.0
+
+:p
+  foo :: Real -> (Real, Real)
+  foo x =
+     (f, ans) = runState @#s x lam ().
+         y = get @#s ()
+         lam z. 100.0 * x + 10.0 * y + z
+     (f 1.0, ans)
+
+  foo 3.0
+> (331.0, 3.0)
+
+:p
+  foo :: Real -> (Real, Real)
+  foo x =
+     (f, ans) = runWriter @#s lam ().
+        _ = tell @#s x
+        lam y. 10.0 * x + y
+     (f 1.0, ans)
+
+  foo 3.0
+> (31.0, 3.0)

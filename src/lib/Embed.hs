@@ -12,7 +12,7 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               runEmbed, fromLetDecl, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
-              makeTup, makePair, substEmbed, fromPair) where
+              makeTup, makePair, substEmbed, fromPair, buildLamExprAux) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -78,6 +78,12 @@ buildLamExpr :: (MonadCat EmbedEnv m)
 buildLamExpr eff b f = do
   (ans, b', (_, decls)) <- withBinder b f
   return $ LamExpr b' eff (wrapEmbedDecls decls ans)
+
+buildLamExprAux :: (MonadCat EmbedEnv m)
+             => Effect -> Var -> (Atom -> m (Atom, a)) -> m (LamExpr, a)
+buildLamExprAux eff b f = do
+  ((ans, aux), b', (_, decls)) <- withBinder b f
+  return (LamExpr b' eff (wrapEmbedDecls decls ans), aux)
 
 buildTLam :: (MonadCat EmbedEnv m)
           => [TVar] -> ([Type] -> m ([TyQual], Atom)) -> m Atom

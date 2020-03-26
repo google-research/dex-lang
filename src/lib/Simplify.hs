@@ -19,6 +19,8 @@ import Syntax
 import Cat
 import Embed
 import Record
+import Subst
+import Type
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
@@ -65,28 +67,66 @@ simplifyAtom atom = case atom of
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _ _    -> substEmbed atom
   Con (Lam _ _) -> substEmbed atom
-  Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom simplifyLam
+  Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
+                       $ error "Shouldn't have lambda left"
 
--- Simplifies bodies of first-order functions only.
 -- Unlike `substEmbed`, this simplifies under the binder too.
-simplifyLam :: LamExpr -> SimplifyM LamExpr
+simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
 simplifyLam (LamExpr b eff body) = do
   eff' <- substEmbed eff
   b' <- substEmbed b
-  buildLamExpr eff' b' $ \x -> extendR (b @> L x) $ simplify body
+  if isData (getType body)
+    then do
+      lam <- buildLamExpr eff' b' $ \x -> extendR (b @> L x) $ simplify body
+      return (lam, Nothing)
+    else do
+      (lam, recon) <- buildLamExprAux eff' b' $ \x -> extendR (b @> L x) $ do
+        (body', (scope, decls)) <- scoped $ simplify body
+        extend (mempty, decls)
+        return $ separateDataComponent scope body'
+      return $ (lam, Just recon)
+
+separateDataComponent :: (MonadCat EmbedEnv m)
+                      => Scope -> Atom -> (Atom, Atom -> m Atom)
+separateDataComponent localVars atom = (makeTup $ map Var vs, recon)
+  where
+    vs = [v:>ty | (v, L ty) <- envPairs $ localVars `envIntersect` freeVars atom]
+    recon :: MonadCat EmbedEnv m => Atom -> m Atom
+    recon xs = do
+      ~(Tup xs') <- unpackRec xs
+      let env = fold $ zipWith (\v x -> v @> L x) vs xs'
+      scope <- looks fst
+      return $ subst (env, scope) atom
+
+reconstructAtom :: MonadCat EmbedEnv m
+                => Maybe (Atom -> m Atom) -> Atom -> m Atom
+reconstructAtom recon x = case recon of
+  Nothing -> return x
+  Just f  -> f x
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
   expr' <- traverseExpr expr substEmbed simplifyAtom simplifyLam
   case expr' of
-    Linearize lam -> do
+    Linearize (lam, _) -> do
       (topEnv, _) <- lift ask
       scope <- looks fst
       return $ linearize topEnv scope lam
-    Transpose lam -> do
+    Transpose (lam, _) -> do
       scope <- looks fst
       return $ transposeMap scope lam
+    RunReader l r (lam, recon) -> do
+      ans <- emit $ RunReader l r lam
+      reconstructAtom recon ans
+    RunWriter l (lam, recon) -> do
+      (ans, w) <- fromPair =<< emit (RunWriter l lam)
+      ans' <- reconstructAtom recon ans
+      return $ makePair ans' w
+    RunState l s (lam, recon) -> do
+      (ans, s') <- fromPair =<< emit (RunState l s lam)
+      ans' <- reconstructAtom recon ans
+      return $ makePair ans' s'
     App _ (Con (Lam _ (LamExpr b _ body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
@@ -94,7 +134,7 @@ simplifyCExpr expr = do
       dropSub $ extendR env $ simplify body
     RecGet (Con (RecCon r)) i -> return $ recGet r i
     Select ty p x y -> selectAt ty p x y
-    _ -> emit expr'
+    _ -> emit $ fmapExpr expr' id id fst
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
