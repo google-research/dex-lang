@@ -145,3 +145,29 @@ tripleit x = %runReader(@#r, x, lam ().
 
 :p transposeLinear (transposeLinear tripleit) 1.0
 > 3.0
+
+mySquare :: Real -> Real
+mySquare x = runReader @#r x lam ().
+  y = ask @#r ()
+  x * y
+
+:p mySquare 3.0
+> 9.0
+
+:p jvp mySquare 3.0 1.0
+> 6.0
+
+:p transposeLinear (jvp mySquare 3.0) 1.0
+> 6.0
+
+myOtherSquare :: Real -> Real
+myOtherSquare x = snd $ runWriter @#w lam (). tell @#w (x * x)
+
+:p myOtherSquare 3.0
+> 9.0
+
+:p jvp myOtherSquare 3.0 1.0
+> 6.0
+
+:p transposeLinear (jvp myOtherSquare 3.0) 1.0
+> 6.0

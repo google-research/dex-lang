@@ -48,13 +48,25 @@ linearizeExpr topEnv expr = case expr of
   CExpr e -> linearizeCExpr topEnv e
   Atom x  -> linearizeAtom x
 
+-- TODO: handle a binder (will it be linear? nonlinear? specified by a flag?)
+linearizeLamExpr :: TopEnv -> [Var] -> LamExpr -> EmbedSubM LamExpr
+linearizeLamExpr topEnv vs (LamExpr _ eff body) =
+  buildLamExpr eff ("_":>unitTy) $ \_ -> do
+    (body', bodyTan)  <- runLinA $ linearizeExpr topEnv body
+    fLin <- buildLam eff Lin ("t":>envTy) $ \t -> do
+      ~(Tup t') <- unpackRec t
+      let env' = fmap L $ fold $ zipWith (@>) vs t'
+      lift $ runReaderT bodyTan env'
+    return $ makePair body' fLin
+  where envTy = RecType $ Tup $ map varAnn vs
+
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
 linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
   ~(Tup [y, f]) <- emit (App NonLin (linRules topEnv ! v) x) >>= unpackRec
   return (y, do t' <- t
                 emit $ App Lin f t')
-linearizeCExpr _ expr = case expr' of
+linearizeCExpr topEnv expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
@@ -67,9 +79,33 @@ linearizeCExpr _ expr = case expr' of
     return (ans, do tx' <- tx
                     ty' <- ty
                     linearizedDiv x' y' tx' ty')
+  RunReader l r lam@(LamExpr b eff _) -> LinA $ do
+    (r', rt) <- runLinA r
+    linVars <- asks getEnvVars
+    lam' <- linearizeLamExpr topEnv linVars lam
+    (ans, lin) <- fromPair =<< emit (RunReader l r' lam')
+    return ( ans
+           , do rt' <- rt
+                arg <- asks $ tangentTuple linVars
+                effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin lin arg
+                emit $ RunReader l rt' effLam')
+  RunWriter l lam@(LamExpr b eff _) -> LinA $ do
+    linVars <- asks getEnvVars
+    lam' <- linearizeLamExpr topEnv linVars lam
+    (ansLin, w) <- fromPair =<< emit (RunWriter l lam')
+    (ans, lin) <- fromPair ansLin
+    return ( makePair ans w
+           , do arg <- asks $ tangentTuple linVars
+                effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin lin arg
+                emit $ RunWriter l effLam')
+  PrimEffect l ty  MAsk     -> pure  (PrimEffect l ty MAsk)      `bindLin` emit
+  PrimEffect l ty (MTell x) -> liftA (PrimEffect l ty . MTell) x `bindLin` emit
   RecGet x i -> liftA (flip RecGet i) x `bindLin` emit
   _ -> error $ "not implemented: " ++ pprint expr
   where expr' = fmapExpr expr id linearizeAtom id
+
+getEnvVars :: SubstEnv -> [Var]
+getEnvVars env = [v:>getType x | (v, L x) <- envPairs env]
 
 linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
 linearizedDiv x y tx ty = do
@@ -78,6 +114,9 @@ linearizedDiv x y tx ty = do
   ySq  <- mul y y
   ty'' <- div' ty' ySq >>= neg
   add tx' ty''
+
+tangentTuple :: [Var] -> SubstEnv -> Atom
+tangentTuple vs env = makeTup [fromL (env ! v) | v <- vs]
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con' of

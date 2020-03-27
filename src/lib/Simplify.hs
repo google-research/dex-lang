@@ -112,6 +112,7 @@ simplifyCExpr expr = do
     Linearize (lam, _) -> do
       (topEnv, _) <- lift ask
       scope <- looks fst
+      -- TODO: simplify the result to remove functions introduced by linearization
       return $ linearize topEnv scope lam
     Transpose (lam, _) -> do
       scope <- looks fst
