@@ -14,6 +14,7 @@ addons:
     packages:
       - libgmp-dev
       - llvm-9-tools
+      - llvm-9-dev
       - python3-numpy
 jobs:
   include:
@@ -24,13 +25,17 @@ jobs:
         - export PATH=$HOME/.local/bin:$PATH
         - travis_retry curl -L https://get.haskellstack.org/stable/linux-x86_64.tar.gz | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
         - stack setup
+    - stage: Build dependencies
+      script:
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
+        - stack build --only-dependencies
     - stage: Build
       script:
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-7/bin:$PATH
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
         - make
     - stage: Test
       script:
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-7/bin:$PATH
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
         - make libdex
         - stack install
         - make tests
