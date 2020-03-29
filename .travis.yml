@@ -16,14 +16,16 @@ addons:
       - llvm-9-tools
       - llvm-9-dev
       - python3-numpy
+      - haskell-stack
 jobs:
   include:
-    - stage: Install Stack
+    - stage: Upgrade Stack
       script:
         - export DIR=~/.local/bin
         - if [ ! -d "$DIR" ]; then mkdir -p ~/.local/bin; fi
         - export PATH=$HOME/.local/bin:$PATH
-        - travis_retry curl -L https://get.haskellstack.org/stable/linux-x86_64.tar.gz | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack'
+        - stack upgrade
+        - hash -r
         - stack setup
     - stage: Build dependencies
       script:
