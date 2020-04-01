@@ -14,7 +14,6 @@ module PPrint (pprint, pprintList,
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
-import qualified Data.Map as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -59,11 +58,12 @@ instance Pretty Type where
   pretty ty = case ty of
     BaseType b  -> p b
     TypeVar v   -> p v
-    ArrowType l a (eff, b)
-      | isPure eff -> parens $ p a <+> arrStr l <+>               p b
+    ArrowType l (Pi a (eff, b))
+      | isPure eff -> parens $ p a <+> arrStr l <+>           p b
       | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
     TabType a b -> parens $ p a <> "=>" <> p b
     RecType r   -> p $ fmap (asStr . p) r
+    Ref t       -> "Ref" <+> p t
     ArrayType shape b -> p b <> p shape
     TypeApp f xs -> p f <+> hsep (map p xs)
     Forall bs qs body -> header <+> p body
@@ -74,36 +74,27 @@ instance Pretty Type where
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IdxSetLit i -> p i
+    Dep x  -> "Dep" <+> p x
+    NoDep  -> "NoDep"
     Lin    -> "Lin"
     NonLin -> "NonLin"
-    Label lab -> p lab
-    Effect row t -> "{" <> p row <> tailVar <> "}"
-      where tailVar = case t of Nothing -> mempty
-                                Just v  -> "|" <+> p v
+    Effect row t -> "{" <> row' <+> tailVar <> "}"
+      where
+        row' = hsep $ punctuate "," $
+                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
+        tailVar = case t of Nothing -> mempty
+                            Just v  -> "|" <+> p v
     NoAnn  -> ""
     where
       arrStr :: Type -> Doc ann
       arrStr Lin = "--o"
       arrStr _   = "->"
 
-instance Pretty Label where
-  pretty (LabelLit l) = "#" <> p l
-  pretty (LabelVar v) = p v
+instance Pretty PiType where
+  pretty (Pi a b) = "Pi" <+> p a <+> p b
 
-instance Pretty a => Pretty (Row a) where
-  pretty (Row (MonMap m)) = p (M.toList m)
-
---     punctuate "," $ rs' ++ lrs' ++ ws' ++ ss'
---     where
---       rs'  = ["Reader" <+> p r | r <- rs]
---       lrs' = ["LinReader" <+> p r | r <- lrs]
---       ws'  = ["Writer" <+> p w | w <- ws]
---       ss'  = ["State"  <+> p s | s <- ss]
-
-instance Pretty a => Pretty (OneEffect a) where
-  pretty (Reader x) = "Reader" <+> p x
-  pretty (Writer x) = "Writer" <+> p x
-  pretty (State  x) = "State"  <+> p x
+instance Pretty EffectName where
+  pretty x = p (show x)
 
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
@@ -151,7 +142,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) wher
   pretty (ConExpr con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (App _ e1 e2) = p e1 <+> p e2
+  pretty (App _ _ e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
   pretty (For lam) = "for" <+> i <+> "." <+> body
     where (i, body) = prettyLam lam
@@ -199,6 +190,9 @@ instance PrettyLam () where
 
 instance (Pretty a, Pretty b) => PrettyLam (a, b) where
   prettyLam (x, y) = (p x, p y)
+
+instance PrettyLam PiType where
+  prettyLam (Pi a (eff,b)) = (p a, p eff <+> p b)
 
 instance Pretty Kind where
   pretty TyKind     = "Type"

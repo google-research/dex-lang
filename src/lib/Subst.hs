@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst) where
+module Subst (Subst, subst, scopelessSubst) where
 
 import Data.Foldable
 import Control.Monad.Identity
@@ -16,6 +16,10 @@ import Env
 import Record
 import Syntax
 import PPrint
+
+scopelessSubst :: Subst a => SubstEnv -> a -> a
+scopelessSubst env x = subst (env, scope) x
+  where scope = fmap (const ()) $ foldMap freeVars env
 
 class Subst a where
   subst :: (SubstEnv, Scope) -> a -> a
@@ -32,21 +36,26 @@ instance Subst Expr where
     Atom  x  -> Atom  $ subst env x
 
 instance Subst Atom where
-  subst env@(sub, scope) atom = case atom of
-    Var v -> case envLookup sub v of
-      Nothing -> Var $ fmap (subst env) v
-      Just (L x') -> subst (mempty, scope) x'
-      Just (T _ ) -> error "Expected let-bound variable"
+  subst env@(_, scope) atom = case atom of
+    Var v -> substVar env v
     TLam tvs qs body -> TLam tvs' qs' $ subst env'' body
       where (tvs', env') = refreshTBinders scope tvs
             env'' = env <> env'
             qs' = map (subst env'') qs
     Con con -> Con $ subst env con
 
+substVar :: (SubstEnv, Scope) -> Var -> Atom
+substVar env@(sub, scope) v = case envLookup sub v of
+  Nothing -> Var $ fmap (subst env) v
+  Just (L x') -> subst (mempty, scope) x'
+  Just (T _ ) -> error "Expected let-bound variable"
+
 instance Subst LamExpr where
-  subst env@(_, scope) (LamExpr b eff body) = LamExpr b' (subst env eff) body'
+  subst env@(_, scope) (LamExpr b eff body) = LamExpr b' (subst env eff') body'
     where (b', env') = refreshBinder scope (subst env b)
-          body' = subst (env <> env') body
+          env'' = env <> env'
+          body' = subst env'' body
+          eff'  = subst env'' eff
 
 instance Subst TyQual where
   subst env (TyQual tv c) = TyQual tv' c
@@ -68,33 +77,41 @@ refreshTBinders scope bs = (bs', env')
         env' = (fold [b @> T (TypeVar b') | (b,b') <- zip bs bs'], scope')
 
 instance Subst Type where
-   subst env@(sub, _) ty = case ty of
+  subst env@(sub, _) ty = case ty of
     TypeVar v ->
       case envLookup sub v of
         Nothing      -> ty
         Just (T ty') -> ty'
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
+    ArrowType l p -> ArrowType (recur l) (subst env p)
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
     TypeApp f args -> reduceTypeApp (recur f) (map recur args)
-    Label lab -> Label $ subst env lab
+    Dep v -> case substVar env v of
+               Var v' -> Dep v'
+               _      -> NoDep  -- TODO: make this an error
+                                -- (need to be stricter about where we put `Dep`)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
-      where row' = runIdentity $ traverseRowLabels (return . subst env) $
-                     fmap (fmap recur) row
+      where row' = foldMap (uncurry (@>))
+                     [ (substName sub v :> (), (eff, recur effTy))
+                     | (v, (eff, effTy)) <- envPairs row]
     _ -> runIdentity $ traverseType (\_ t -> return (subst env t)) ty
     where recur = subst env
+
+instance Subst PiType where
+  subst env (Pi a b) = Pi (subst env a) (subst env b)
+
+substName :: SubstEnv -> Name -> Name
+substName env v = case envLookup env (v:>()) of
+  Just (L (Var (v':>_))) -> v'
+  Nothing -> v
+  _ -> error $ "Lookup failed: " ++ pprint v
 
 substTail :: EffectRow Type -> Type -> Effect
 substTail row (Effect row' t) = Effect (row <> row') t
 substTail row t = Effect row (Just t)
-
-instance Subst Label where
-  subst _   (LabelLit l) = LabelLit l
-  subst env (LabelVar v) = case subst env (TypeVar v) of
-    Label lab  -> lab
-    TypeVar v' -> LabelVar v'
 
 instance Subst Decl where
   subst env decl = case decl of

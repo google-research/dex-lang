@@ -96,6 +96,9 @@ fst (x, y) = x
 snd :: (a, b) --o b
 snd (x, y) = y
 
+swap :: (a, b) -> (b, a)
+swap (x, y) = (y, x)
+
 -- Hope to need this less with linearity polymoprhism
 asNonLin :: (a --o b) -> a -> b
 asNonLin f x = f x
@@ -153,49 +156,56 @@ slice xs start = for i. xs.(asidx (asint i `iadd` start))
 
 'Effective primitives
 
-ask :: A l r. () -> {l :: Reader r} r
-ask () = %ask(@l)
+ask :: Pi rRef::(Ref r) -> {Reader rRef} r
+ask r = %ask(r)
 
-tell :: A l w | VS w . w -> {l :: Writer w} ()
-tell w = %tell(@l, w)
+tell :: Pi wRef::(Ref w) -> w -> {Writer wRef} ()
+tell w x = %tell(w, x)
 
-get :: A l s . () -> {l :: State s} s
-get () = %get(@l)
+get :: Pi sRef::(Ref s) -> {State sRef} s
+get s = %get(s)
 
-put :: A l s . s -> {l :: State s} ()
-put s = %put(@l, s)
+put :: Pi sRef::(Ref s) -> s -> {State sRef} ()
+put s x = %put(s, x)
 
-runReader :: A l r a eff . r -> (() -> {l :: Reader r |eff} a) -> {|eff} a
-runReader r f = %runReader(@l, r, lam (). f ())
+runReader :: rt -> (Pi r::(Ref rt) -> {Reader r |eff} a) -> {|eff} a
+runReader r f = %runReader(r, lam r'. f r')
 
-runWriter :: A l w a eff | VS w . (() -> {l :: Writer w |eff} a) -> {|eff} (a, w)
-runWriter f = %runWriter(@l, lam (). f ())
+runWriter :: A wt a eff | VS w . (Pi w::(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
+runWriter f = %runWriter(lam w. f w)
 
-runState :: A l s eff a . s -> (() -> {l :: State s |eff} a) -> {|eff} (a, s)
-runState s f = %runState(@l, s, lam (). f ())
+runState :: A st eff a . st -> (Pi s::(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
+runState s f = %runState(s, lam s'. f s')
 
-indexReader :: A l n a r eff .
-    n -> (() -> {l :: Reader r |eff} a) -> {l :: Reader (n=>r) |eff} a
-indexReader i f = %indexReader(@l, i, lam (). f ())
+indexReader :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
+indexReader s i f = %indexReader(s, i, lam s'. f s')
 
-indexState :: A l n a s eff .
-    n -> (() -> {l :: State s |eff} a) -> {l :: State (n=>s) |eff} a
-indexState i f = %indexState(@l, i, lam (). f ())
+indexWriter :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {Writer s |eff} a) -> {Writer s' |eff} a
+indexWriter s i f = %indexWriter(s, i, lam s'. f s')
 
-indexWriter :: A l n a s eff .
-    n -> (() -> {l :: Writer s |eff} a) -> {l :: Writer (n=>s) |eff} a
-indexWriter i f = %indexWriter(@l, i, lam (). f ())
+indexState :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {State s |eff} a) -> {State s' |eff} a
+indexState s i f = %indexState(s, i, lam s'. f s')
+
+putAt :: Pi s::(Ref (i=>a)) -> i -> a -> {State s} ()
+putAt ref i x = indexState ref i lam ref'. put ref' x
+
+getAt :: Pi s::(Ref (i=>a)) -> i -> {State s} a
+getAt ref i = indexState ref i lam ref'. get ref'
+
+putAt2 :: Pi s::(Ref (i=>j=>a)) -> i -> j -> a -> {State s} ()
+putAt2 ref i j x = indexState ref i lam ref'. putAt ref' j x
+
+getAt2 :: Pi s::(Ref (i=>j=>a)) -> i -> j -> {State s} a
+getAt2 ref i j = indexState ref i lam ref'. getAt ref' j
 
 'State-carrying loop constructs
 
 scan :: A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
-scan x0 fs =
-   (ys, xOut) = runState @#s x0 $ lam (). for i.
-      c = get @#s ()
-      (c', y) = fs i c
-      _ = put @#s c'
-      y
-   (xOut, ys)
+scan x0 fs = swap $ runState x0 lam s. for i.
+   c = get s
+   (c', y) = fs i c
+   _ = put s c'
+   y
 
 fold :: A n a | Ix n, Data a . a -> (n->a->a) -> a
 fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
@@ -210,7 +220,7 @@ scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 -- foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
 -- foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
 
-'More misc functions
+-- 'More misc functions
 
 sum :: n=>Real -> Real
 sum xs = fold 0.0 (lam i c. c + xs.i)
@@ -221,8 +231,8 @@ isum xs = fold 0 lam i c. iadd c xs.i
 size :: A n::Ty. Int
 size = %idxSetSize(@n)
 
--- range :: Int -> E i. ()
--- range n = %range(n)
+-- -- range :: Int -> E i. ()
+-- -- range n = %range(n)
 
 mean :: A n. n=>Real -> Real
 mean xs = sum xs / real (size @n)
@@ -234,7 +244,7 @@ linspace :: A n. Real -> Real -> n=>Real
 linspace low high = dx = (high - low) / real (size @n)
                     for i::n. low + real (asint i) * dx
 
-'Functions for working with the pseudorandom number generator
+-- 'Functions for working with the pseudorandom number generator
 
 -- TODO: implement newtypes again (maybe fake them with records)
 -- newtype Key = Int

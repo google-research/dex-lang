@@ -28,8 +28,6 @@ import PPrint
 type EmbedT m = CatT EmbedEnv m  -- TODO: consider a full newtype wrapper
 type Embed = Cat EmbedEnv
 
--- TODO: figure out a clearer story about actions vs ordinary expressions.
---       Possibly use distinct but compatible embeddings.
 type EmbedDecl = Either Decl (Var, Atom)
 type EmbedEnv = (Scope, [EmbedDecl])
 
@@ -70,19 +68,19 @@ withBinder b f = do
   return (ans, b', env)
 
 buildLam :: MonadCat EmbedEnv m
-         => Effect -> Mult -> Var -> (Atom -> m Atom) -> m Atom
-buildLam eff l b f = liftM (Con . Lam l) $ buildLamExpr eff b f
+         => Mult -> Var -> (Atom -> m (Atom, Effect)) -> m Atom
+buildLam l b f = liftM (Con . Lam l) $ buildLamExpr b f
 
 buildLamExpr :: (MonadCat EmbedEnv m)
-             => Effect -> Var -> (Atom -> m Atom) -> m LamExpr
-buildLamExpr eff b f = do
-  (ans, b', (_, decls)) <- withBinder b f
+             => Var -> (Atom -> m (Atom, Effect)) -> m LamExpr
+buildLamExpr b f = do
+  ((ans, eff), b', (_, decls)) <- withBinder b f
   return $ LamExpr b' eff (wrapEmbedDecls decls ans)
 
 buildLamExprAux :: (MonadCat EmbedEnv m)
-             => Effect -> Var -> (Atom -> m (Atom, a)) -> m (LamExpr, a)
-buildLamExprAux eff b f = do
-  ((ans, aux), b', (_, decls)) <- withBinder b f
+                => Var -> (Atom -> m ((Atom, Effect), a)) -> m (LamExpr, a)
+buildLamExprAux b f = do
+  (((ans, eff), aux), b', (_, decls)) <- withBinder b f
   return (LamExpr b' eff (wrapEmbedDecls decls ans), aux)
 
 buildTLam :: (MonadCat EmbedEnv m)
@@ -153,7 +151,7 @@ unitCon :: Atom
 unitCon = Con $ RecCon (Tup [])
 
 unitBinder :: MonadCat EmbedEnv m => m Var
-unitBinder = freshVar ("_":>unitTy)
+unitBinder = freshVar (NoName:>unitTy)
 
 nRecGet :: MonadCat EmbedEnv m => Atom -> RecField -> m Atom
 nRecGet (Con (RecCon r)) i = return $ recGet r i
@@ -187,9 +185,10 @@ mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
   IdxSetLit _ -> f ty xs
   TabType n a -> do
-    lam <- buildLamExpr noEffect ("i":>n) $ \i -> do
+    lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
-      mapScalars f a xs'
+      ans <- mapScalars f a xs'
+      return (ans, noEffect)
     emit $ For lam
   RecType r -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs

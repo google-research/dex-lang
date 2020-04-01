@@ -74,17 +74,19 @@ lookupVar v = do
 
 normalizeLam :: FLamExpr -> NormM LamExpr
 normalizeLam (FLamExpr p eff body) = do
-  eff' <- substNorm eff
   b <- normalizePat p
-  buildLamExpr eff' b $ \x -> do
+  buildLamExpr b $ \x -> do
     env <- bindPat p x
-    extendR env $ normalize body
+    extendR env $ do
+      eff' <- substNorm eff
+      ans <- normalize body
+      return (ans, eff')
 
 normalizePat :: Pat -> NormM Var
 normalizePat p = do
   ty <- liftM getType $ traverse (traverse substNorm) p
   let v' = case toList p of (v:>_):_ -> v
-                            []       -> "_"
+                            []       -> NoName
   return $ v':>ty
 
 bindPat :: Pat -> Atom -> NormM SubstEnv

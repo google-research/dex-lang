@@ -104,42 +104,37 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  RunReader l r (LamExpr _ _ body) -> do
-    let l' = fromLabelLit l
+  RunReader r (LamExpr ref _ body) -> do
     r' <- toImpAtom r
-    extendR (l' @> r') $ toImpExpr dests body
-  RunWriter l (LamExpr _ _ body) -> do
-    let l' = fromLabelLit l
+    extendR (ref @> r') $ toImpExpr dests body
+  RunWriter (LamExpr ref _ body) -> do
     mapM_ initializeZero wDest
-    extendR (l' @> wDest) $ toImpExpr aDest body
+    extendR (ref @> wDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, wDest]))) = dests
-  RunState l s (LamExpr _ _ body) -> do
-    let l' = fromLabelLit l
+  RunState s (LamExpr ref _ body) -> do
     s' <- toImpAtom s
     copyIAtom sDest s'
-    extendR (l' @> sDest) $ toImpExpr aDest body
+    extendR (ref @> sDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
-  IndexEff _ l i (LamExpr _ _ body) -> do
-    let l' = fromLabelLit l
+  IndexEff _ ~(Dep ref) _ i (LamExpr ref' _ body) -> do
     i' <- toImpAtom i >>= fromScalarIAtom
-    curRef <- lookupVar l'
-    extendR (l' @> tabGetIAtom curRef i') (toImpExpr dests body)
-  PrimEffect l _ m -> do
-    let l' = fromLabelLit l
+    curRef <- lookupVar ref
+    extendR (ref' @> tabGetIAtom curRef i') (toImpExpr dests body)
+  PrimEffect ~(Dep ref) _ m -> do
     case m of
       MAsk -> do
-        rVals <- lookupVar l'
+        rVals <- lookupVar ref
         copyIAtom dests rVals
       MTell x -> do
-        wDests <- lookupVar l'
+        wDests <- lookupVar ref
         x' <- toImpAtom x
         zipWithM_ addToDest (toList wDests) (toList x')
       MPut x -> do
-        sDests <- lookupVar l'
+        sDests <- lookupVar ref
         x' <- toImpAtom x
         copyIAtom sDests x'
       MGet -> do
-        sDests <- lookupVar l'
+        sDests <- lookupVar ref
         copyIAtom dests sDests
   IntAsIndex n i -> do
     i' <- toImpAtom i >>= fromScalarIAtom
@@ -225,9 +220,6 @@ toImpBaseType ty = case ty of
   TypeVar _   -> IntType
   IdxSetLit _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty
-
-fromLabelLit :: Type -> (VarP ())
-fromLabelLit ~(Label (LabelLit x)) = x :> ()
 
 lookupVar :: VarP a -> ImpM IAtom
 lookupVar v = do

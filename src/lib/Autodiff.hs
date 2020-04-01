@@ -32,11 +32,13 @@ newtype LinA a = LinA { runLinA :: EmbedSubM (a, EmbedSubM a) }
 
 linearize :: TopEnv -> Scope -> LamExpr -> Atom
 linearize env scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
-  buildLam noEffect NonLin b $ \x -> do
+  buildLam NonLin b $ \x -> do
     (y, yt) <- runReaderT (runLinA (linearizeExpr env expr)) (b @> L x)
     -- TODO: check linearity
-    fLin <- buildLam noEffect Lin b $ \xt -> runReaderT yt (b @> L xt)
-    return $ makePair y fLin
+    fLin <- buildLam Lin b $ \xt ->do
+              ans <- runReaderT yt (b @> L xt)
+              return (ans, noEffect)
+    return (makePair y fLin, noEffect)
 
 linearizeExpr :: TopEnv -> Expr -> LinA Atom
 linearizeExpr topEnv expr = case expr of
@@ -51,21 +53,22 @@ linearizeExpr topEnv expr = case expr of
 -- TODO: handle a binder (will it be linear? nonlinear? specified by a flag?)
 linearizeLamExpr :: TopEnv -> [Var] -> LamExpr -> EmbedSubM LamExpr
 linearizeLamExpr topEnv vs (LamExpr _ eff body) =
-  buildLamExpr eff ("_":>unitTy) $ \_ -> do
+  buildLamExpr (NoName:>unitTy) $ \_ -> do
     (body', bodyTan)  <- runLinA $ linearizeExpr topEnv body
-    fLin <- buildLam eff Lin ("t":>envTy) $ \t -> do
+    fLin <- buildLam Lin ("t":>envTy) $ \t -> do
       ~(Tup t') <- unpackRec t
       let env' = fmap L $ fold $ zipWith (@>) vs t'
-      lift $ runReaderT bodyTan env'
-    return $ makePair body' fLin
+      ans <- lift $ runReaderT bodyTan env'
+      return (ans, eff)  -- TODO: subst effect?
+    return (makePair body' fLin, eff)
   where envTy = RecType $ Tup $ map varAnn vs
 
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
-linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
+linearizeCExpr topEnv (App _ _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
-  ~(Tup [y, f]) <- emit (App NonLin (linRules topEnv ! v) x) >>= unpackRec
+  ~(Tup [y, f]) <- emit (App NonLin NoDep (linRules topEnv ! v) x) >>= unpackRec
   return (y, do t' <- t
-                emit $ App Lin f t')
+                emit $ App Lin NoAnn f t')
 linearizeCExpr topEnv expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
@@ -79,27 +82,30 @@ linearizeCExpr topEnv expr = case expr' of
     return (ans, do tx' <- tx
                     ty' <- ty
                     linearizedDiv x' y' tx' ty')
-  RunReader l r lam@(LamExpr b eff _) -> LinA $ do
-    (r', rt) <- runLinA r
-    linVars <- asks getEnvVars
-    lam' <- linearizeLamExpr topEnv linVars lam
-    (ans, lin) <- fromPair =<< emit (RunReader l r' lam')
-    return ( ans
-           , do rt' <- rt
-                arg <- asks $ tangentTuple linVars
-                effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin lin arg
-                emit $ RunReader l rt' effLam')
-  RunWriter l lam@(LamExpr b eff _) -> LinA $ do
-    linVars <- asks getEnvVars
-    lam' <- linearizeLamExpr topEnv linVars lam
-    (ansLin, w) <- fromPair =<< emit (RunWriter l lam')
-    (ans, lin) <- fromPair ansLin
-    return ( makePair ans w
-           , do arg <- asks $ tangentTuple linVars
-                effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin lin arg
-                emit $ RunWriter l effLam')
-  PrimEffect l ty  MAsk     -> pure  (PrimEffect l ty MAsk)      `bindLin` emit
-  PrimEffect l ty (MTell x) -> liftA (PrimEffect l ty . MTell) x `bindLin` emit
+--   RunReader l r lam@(LamExpr b eff _) -> LinA $ do
+--     (r', rt) <- runLinA r
+--     linVars <- asks getEnvVars
+--     lam' <- linearizeLamExpr topEnv linVars lam
+--     (ans, lin) <- fromPair =<< emit (RunReader l r' lam')
+--     return ( ans
+--            , do rt' <- rt
+--                 arg <- asks $ tangentTuple linVars
+--                 effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin NoAnn lin arg
+--                 emit $ RunReader l rt' effLam')
+--   RunWriter l lam@(LamExpr b eff _) -> LinA $ do
+--     linVars <- asks getEnvVars
+--     lam' <- linearizeLamExpr topEnv linVars lam
+--     (ansLin, w) <- fromPair =<< emit (RunWriter l lam')
+--     (ans, lin) <- fromPair ansLin
+--     return ( makePair ans w
+--            , do arg <- asks $ tangentTuple linVars
+--                 effLam' <- buildLamExpr eff b $ \_ -> emit $ App Lin NoAnn lin arg
+--                 emit $ RunWriter l effLam')
+  PrimEffect ~(Dep ref) refArg m ->
+    liftA3 (\ref' refArg' m' -> PrimEffect (Dep ref') refArg' m')
+      (liftA (\(Var v) -> v) $ linearizeVar ref) refArg
+      (case m of MAsk      -> pure MAsk
+                 (MTell x) -> liftA MTell x) `bindLin` emit
   RecGet x i -> liftA (flip RecGet i) x `bindLin` emit
   _ -> error $ "not implemented: " ++ pprint expr
   where expr' = fmapExpr expr id linearizeAtom id
@@ -127,14 +133,17 @@ linearizePrimCon con = case con' of
 
 linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom = case atom of
-  Var v -> LinA $ do
-    maybeVal <- asks $ flip envLookup v
-    case maybeVal of
-      Just (L x) -> return (x, asks (fromL . (!v)))
-      Nothing    -> return (atom, zeroAt (getType atom))
-      _ -> error "unexpected lookup"
+  Var v -> linearizeVar v
   Con con -> linearizePrimCon con
   _ -> error "Not implemented"
+
+linearizeVar :: Var -> LinA Atom
+linearizeVar v = LinA $ do
+  maybeVal <- asks $ flip envLookup v
+  case maybeVal of
+    Just (L x) -> return (x, asks (fromL . (!v)))
+    Nothing    -> return (Var v, zeroAt (varAnn v))
+    _ -> error "unexpected lookup"
 
 tensLiftA2 :: (a -> b -> CExpr) -> LinA a -> LinA b -> LinA Atom
 tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
@@ -171,9 +180,10 @@ type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SubstEnv) Embed) a
 
 transposeMap :: Scope -> LamExpr -> Atom
 transposeMap scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
-  buildLam noEffect Lin ("ct" :> getType expr) $ \ct -> do
-    flip runReaderT mempty $ liftM fst $ runWriterT $
-      withLinVar b $ transposeExpr expr ct
+  buildLam Lin ("ct" :> getType expr) $ \ct -> do
+    flip runReaderT mempty $ liftM fst $ runWriterT $ do
+      ans <- withLinVar b $ transposeExpr expr ct
+      return (ans, noEffect)
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
@@ -223,31 +233,42 @@ transposeCExpr expr ct = case expr of
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
   -- TODO: de-dup RunReader/RunWriter a bit
-  RunReader l r (LamExpr _ eff body) -> do
-    let eff' = transposeEffect eff
+  RunReader r (LamExpr v eff body) -> do
     vs <- freeLinVars body
-    body' <- buildLamExpr eff' ("_":>unitTy) $ \_ -> do
-               vsCTs <- extractCTs vs $ transposeExpr body ct
-               return $ Con $ RecCon $ Tup vsCTs
-    (vsCTs, ctr) <- emit (RunWriter l body') >>= fromPair
+    body' <- buildLamExpr v $ \x ->
+               extendR (asSnd (v @> L x)) $ do
+                 eff' <- transposeEffect eff v
+                 vsCTs <- extractCTs vs $ transposeExpr body ct
+                 return (Con $ RecCon $ Tup vsCTs, eff')
+    (vsCTs, ctr) <- emit (RunWriter body') >>= fromPair
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ (emitCT . varName) vs vsCTs'
     transposeAtom r ctr
-  RunWriter l (LamExpr _ eff body) -> do
+  RunWriter (LamExpr v eff body) -> do
     (ctBody, ctEff) <- fromPair ct
-    let eff' = transposeEffect eff
     vs <- freeLinVars body
-    body' <- buildLamExpr eff' ("_":>unitTy) $ \_ -> do
-               vsCTs <- extractCTs vs $ transposeExpr body ctBody
-               return $ Con $ RecCon $ Tup vsCTs
-    vsCTs <- emit (RunReader l ctEff body')
+    body' <- buildLamExpr v $ \x -> do
+               extendR (asSnd (v @> L x)) $ do
+                 vsCTs <- extractCTs vs $ transposeExpr body ctBody
+                 eff' <- transposeEffect eff v
+                 return (Con $ RecCon $ Tup vsCTs, eff')
+    vsCTs <- emit (RunReader ctEff body')
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ (emitCT . varName) vs vsCTs'
-  PrimEffect l ty MAsk      -> void $ emit $ PrimEffect l ty (MTell ct)
-  PrimEffect l ty (MTell x) -> do
-    ct' <- emit $ PrimEffect l ty MAsk
-    transposeAtom x ct'
+  PrimEffect ~(Dep ref) refArg m -> do
+    ref' <- substVar ref
+    refArg' <- substTranspose refArg
+    case m of
+      MAsk -> void $ emit $ PrimEffect (Dep ref') refArg' (MTell ct)
+      MTell x -> do
+       ct' <- emit $ PrimEffect (Dep ref') refArg' MAsk
+       transposeAtom x ct'
   _ -> error $ "not implemented: transposition for: " ++ pprint expr
+
+substVar :: Var -> TransposeM Var
+substVar v = do
+  ~(Var v') <- substTranspose (Var v)
+  return v'
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con ct = case con of
@@ -263,15 +284,19 @@ transposeAtom atom ct = case atom of
   Con con -> transposeCon con ct
   _ -> error $ "Can't transpose: " ++ pprint atom
 
-transposeEffect :: Effect -> Effect
-transposeEffect ~(Effect row tailVar) =
-  Effect (fmap transposeOneEffect row) tailVar
+transposeEffect :: Effect -> Var -> TransposeM Effect
+transposeEffect ~(Effect row tailVar) v = do
+  let ((effName, ty), row') = ignoreExcept $ popRow (varName v) row
+  let effName' = transposeEffectName effName
+  ty' <- substTranspose ty
+  v'  <- substVar v
+  return $ Effect (v'@>(effName', ty') <> row') tailVar
 
-transposeOneEffect :: OneEffect a -> OneEffect a
-transposeOneEffect eff = case eff of
-  Reader x -> Writer x
-  Writer x -> Reader x
-  State  x -> State  x
+transposeEffectName :: EffectName -> EffectName
+transposeEffectName eff = case eff of
+  Reader -> Writer
+  Writer -> Reader
+  State  -> State
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]
 freeLinVars x = do

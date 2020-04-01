@@ -10,15 +10,16 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
-    getType, substEnvType, tangentBunType, flattenType, PrimOpType, PrimConType,
+    getType, substEnvType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
-    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..),
-    getKind, checkKindIs, checkKindEq, getEffType) where
+    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
+    getKind, checkKindIs, checkKindEq, getEffType, getPatName) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable
+import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -93,7 +94,6 @@ getKind ty = case ty of
   Lin        -> MultKind
   NonLin     -> MultKind
   Effect _ _ -> EffectKind
-  Label _    -> LabelKind
   NoAnn      -> NoKindAnn
   _          -> TyKind
 
@@ -107,17 +107,18 @@ checkKind ty = case ty of
         assertEq k k' "Kind annotation"
       _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
     return k
+  ArrowType m (Pi a (e, b)) -> do
+    checkKindIs MultKind m
+    checkKindIs TyKind a
+    checkKindIs EffectKind e
+    checkKindIs TyKind b
+    return TyKind
   Forall vs _ body -> do
     extendR (foldMap tbind vs) (checkKindIs TyKind body)
     return TyKind
   TypeAlias vs body -> do
     bodyKind <- extendR (foldMap tbind vs) (checkKind body)
     return $ ArrowKind (map varAnn vs) bodyKind
-  Label lab -> do
-    case lab of
-      LabelVar v -> checkKindIs LabelKind (TypeVar v)
-      _          -> return ()
-    return LabelKind
   Effect eff tailVar -> do
     mapM_ (mapM_ (checkKindIs TyKind)) eff
     case tailVar of
@@ -183,15 +184,17 @@ checkTypeFExpr eff expr = case expr of
     ty' <- checkTypeFExpr noEffect e
     return ty'
 
-getFLamType :: FLamExpr -> (Type, EffectiveType)
-getFLamType (FLamExpr p eff body) = (getType p, (eff, getType body))
+getFLamType :: FLamExpr -> PiType
+getFLamType (FLamExpr p eff body) = makePi v (eff, getType body)
+   where v = getPatName p :> getType p
 
-checkTypeFlam :: FLamExpr -> TypeM (Type, EffectiveType)
+checkTypeFlam :: FLamExpr -> TypeM PiType
 checkTypeFlam (FLamExpr p eff body) = do
   void $ checkKind pTy
   bodyTy <- extendR (foldMap lbind p) $ checkTypeFExpr eff body
-  return (pTy, (eff, bodyTy))
+  return $ makePi v (eff, bodyTy)
   where pTy = getType p
+        v = getPatName p :> pTy
 
 checkTypeFDecl :: Effect -> FDecl -> TypeM TypeEnv
 checkTypeFDecl eff decl = case decl of
@@ -221,7 +224,7 @@ checkRuleDefType :: RuleAnn -> Type -> TypeM ()
 checkRuleDefType (LinearizationDef v) linTy = do
   ty <- asks $ fromL . (!(v:>()))
   case ty of
-    ArrowType _ a (eff, b) | isPure eff -> do
+    ArrowType _ (Pi a (eff, b)) | isPure eff -> do
       let linTyExpected = Forall [] [] $ a --> pairTy b (a --@ b)
       unless (linTy == linTyExpected) $ throw TypeErr $
         "Annotation should have type: " ++ pprint linTyExpected
@@ -304,8 +307,8 @@ instance HasType Expr where
 instance HasType CExpr where
   getType op = snd $ getEffType op
 
-getLamType :: LamExpr -> (Type, EffectiveType)
-getLamType (LamExpr (_:>ty) eff body) = (ty, (eff, getType body))
+getLamType :: LamExpr -> PiType
+getLamType (LamExpr b eff body) = makePi b (eff, getType body)
 
 getEffType :: CExpr -> EffectiveType
 getEffType op = getOpType $ fmapExpr op id getType getLamType
@@ -353,14 +356,21 @@ checkExtends eff eff' | eff == eff' = return ()
 checkRowExtends :: MonadError Err m => EffectRow Type -> EffectRow Type -> m ()
 checkRowExtends row row' = do
   mapM_ (\(t,t') -> assertEq t t' "Effect type mismatch") $ rowMeet row row'
-  let extraEffects = rowJoin row row' `rowDiff` row
+  let extraEffects = rowJoin row row' `envDiff` row
   when (extraEffects /= mempty) $
     throw TypeErr $ "Extra effects: " ++ pprint extraEffects
 
-checkLam :: LamExpr -> TypeM (Type, EffectiveType)
-checkLam (LamExpr b@(_:>ty) eff body) = do
-  bodyTy <- extendR (b @> L ty) $ checkExpr eff body
-  return (ty, (eff, bodyTy))
+rowMeet :: Env a -> Env b -> Env (a, b)
+rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
+
+rowJoin :: Env a -> Env b -> Env ()
+rowJoin (Env m) (Env m') =
+  Env $ M.unionWith (\() () -> ()) (fmap (const ()) m) (fmap (const ()) m')
+
+checkLam :: LamExpr -> TypeM PiType
+checkLam (LamExpr b@(_:>a) eff body) = do
+  bodyTy <- extendR (b @> L a) $ checkExpr eff body
+  return $ makePi b (eff, bodyTy)
 
 checkDecl :: Decl -> TypeM (Effect, TypeEnv)
 checkDecl (Let b expr) = do
@@ -394,21 +404,10 @@ tupTy xs = RecType $ Tup xs
 pureTy :: Type -> EffectiveType
 pureTy ty = (noEffect, ty)
 
-tangentBunType :: Type -> Type
-tangentBunType ty = case ty of
-  BaseType b -> case b of RealType -> pairTy ty ty
-                          _ -> ty
-  TypeVar _ -> ty  -- can only be an index set
-  ArrowType l a (eff, b) | isPure eff -> ArrowType l (recur a) (noEffect, recur b)
-  TabType n a   -> TabType n (recur a)
-  IdxSetLit _ -> ty
-  _ -> error "Not implemented"
-  where recur = tangentBunType
-
 -- === primitive ops and constructors ===
 
-type PrimOpType  = PrimOp  Type Type (Type, EffectiveType)
-type PrimConType = PrimCon Type Type (Type, EffectiveType)
+type PrimOpType  = PrimOp  Type Type PiType
+type PrimConType = PrimCon Type Type PiType
 
 getOpType :: PrimOpType -> EffectiveType
 getOpType e = ignoreExcept $ traverseOpType e ignoreArgs ignoreArgs ignoreArgs
@@ -437,10 +436,10 @@ traverseOpType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m EffectiveType
 traverseOpType op eq kindIs inClass = case op of
-  App l (ArrowType l' a b) a' -> do
+  App l d (ArrowType l' piTy@(Pi a _)) a' -> do
     eq a a'
     eq l l'
-    return b
+    return $ applyPi piTy d
   TApp (Forall bs quals body) ts -> do
     assertEq (length bs) (length ts) "Number of type args"
     zipWithM_ (kindIs . varAnn) bs ts
@@ -450,7 +449,7 @@ traverseOpType op eq kindIs inClass = case op of
     where
       requiredClasses :: TVar -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
-  For (n,(eff, a)) ->
+  For (Pi n (eff, a)) ->
     inClass IdxSet n >> inClass Data a >> return (eff, TabType n a)
   TabCon n ty xs ->
     inClass Data ty >> mapM_ (eq ty) xs >> eq n n' >> return (pureTy (n ==> ty))
@@ -475,33 +474,39 @@ traverseOpType op eq kindIs inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  PrimEffect ~(Label lab) x m -> case m of
-    MAsk     ->            return (Effect (singletonRow lab (Reader x)) Nothing, x)
-    MTell x' -> eq x x' >> return (Effect (singletonRow lab (Writer x)) Nothing, unitTy)
-    MGet     ->            return (Effect (singletonRow lab (State  x)) Nothing, x)
-    MPut  x' -> eq x x' >> return (Effect (singletonRow lab (State  x)) Nothing, unitTy)
-  RunReader ~(Label l) r ~(u, (Effect row tailVar, a)) -> do
-    ~(Reader r', row') <- liftEither $ popRow l row
-    eq u unitTy >> eq r' r
+  PrimEffect ~(Dep ref) ~(Ref x) m -> case m of
+    MAsk     ->            return (Effect (ref @> (Reader, Ref x)) Nothing, x)
+    MTell x' -> eq x x' >> return (Effect (ref @> (Writer, Ref x)) Nothing, unitTy)
+    MGet     ->            return (Effect (ref @> (State , Ref x)) Nothing, x)
+    MPut  x' -> eq x x' >> return (Effect (ref @> (State , Ref x)) Nothing, unitTy)
+  RunReader r ~(Pi (Ref r') (Effect row tailVar, a)) -> do
+    ((effName, refTy), row') <- popRow (DeBruijn 0) row
+    assertEq Reader effName "Effect"
+    eq r r'
+    eq (Ref r) refTy
     return (Effect row' tailVar, a)
-  RunWriter ~(Label l) (u, (Effect row tailVar, a)) -> do
-    ~(Writer w, row') <- liftEither $ popRow l row
-    eq u unitTy
+  RunWriter ~(Pi (Ref w) (Effect row tailVar, a)) -> do
+    ((effName, refTy), row') <- popRow (DeBruijn 0) row
+    assertEq Writer effName "Effect"
+    eq (Ref w) refTy
     return (Effect row' tailVar, pairTy a w)
-  RunState ~(Label l) s (u, (Effect row tailVar, a)) -> do
-    ~(State s', row') <- liftEither $ popRow l row
-    eq u unitTy >> eq s' s
+  RunState s ~(Pi (Ref s') (Effect row tailVar, a)) -> do
+    ((effName, refTy), row') <- popRow (DeBruijn 0) row
+    assertEq State effName "Effect"
+    eq s s'
+    eq (Ref s) refTy
     return (Effect row' tailVar, pairTy a s)
-  IndexEff _ ~(Label l) i (u, (Effect row tailVar, a)) -> do
-    (eff, row') <- liftEither $ popRow l row
-    eq u unitTy
-    let eff' = fmap (TabType i) eff
-    let row'' = singletonRow l eff' <> row'
+  IndexEff eff ~(Dep ref) tabRef i ~(Pi (Ref x) (Effect row tailVar, a)) -> do
+    ((eff', xRef), row') <- liftEither $ popRow (DeBruijn 0) row
+    assertEq eff eff' "Effect"
+    eq tabRef  (Ref (TabType i x))
+    eq xRef    (Ref x)
+    let row'' = row' <> (ref @> (eff, Ref (TabType i x)))
     return (Effect row'' tailVar, a)
-  Linearize (a, (eff, b)) -> do
+  Linearize (Pi a (eff, b)) -> do
     eq noEffect eff
     return $ pureTy $ a --> pairTy b (a --@ b)
-  Transpose (a, (eff, b)) -> do
+  Transpose (Pi a (eff, b)) -> do
     eq noEffect eff
     return $ pureTy $ b --@ a
   IntAsIndex ty i  -> eq (BaseType IntType) i >> return (pureTy ty)
@@ -518,10 +523,10 @@ traverseConType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
 traverseConType con eq kindIs _ = case con of
-  Lit l       -> return $ BaseType $ litType l
-  Lam l (a,b) -> return $ ArrowType l a b
-  RecCon r    -> return $ RecType r
-  AFor n a                -> return $ TabType n a
+  Lit l    -> return $ BaseType $ litType l
+  Lam l p  -> return $ ArrowType l p
+  RecCon r -> return $ RecType r
+  AFor n a -> return $ TabType n a
   AGet (ArrayType _ b) -> return $ BaseType b  -- TODO: check shape matches AFor scope
   AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
@@ -548,6 +553,13 @@ unOpType op = case op of
   IntToReal  -> (IntType, RealType)
   BoolToInt  -> (BoolType, IntType)
   _ -> error $ show op
+
+popRow :: (Pretty a, MonadError Err m)
+       => Name -> EffectRow a -> m ((EffectName, a), EffectRow a)
+popRow v env = case envLookup env (v:>()) of
+  Just x -> return (x, envDelete v env)
+  _      -> throw CompilerErr $
+              "Row lookup failed: " ++ show v ++ " in " ++ pprint env
 
 flattenType :: Type -> [(BaseType, [Int])]
 flattenType ty = case ty of
@@ -607,20 +619,20 @@ checkLinOp e = case e of
   ScalarBinOp FSub x y  -> check x >> check y
   ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
-  App Lin    fun x -> tensCheck (check fun) (check x)
-  App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
-  RunReader (Label (LabelLit l)) r (FLamExpr _ _ body) -> do
+  App Lin    _ fun x -> tensCheck (check fun) (check x)
+  App NonLin _ fun x -> tensCheck (check fun) (withoutLin (check x))
+  RunReader r (FLamExpr ~(RecLeaf v) _ body) -> do
     ((), spent) <- captureSpent $ checkLinFExpr r
-    extendR ((l:>()) @> spent) $ checkLinFExpr body
-  RunWriter (Label (LabelLit l)) (FLamExpr _ _ body) -> do
-    ((), spent) <- captureEffSpent (l:>()) $ checkLinFExpr body
+    extendR (v @> spent) $ checkLinFExpr body
+  RunWriter (FLamExpr ~(RecLeaf v) _ body) -> do
+    ((), spent) <- captureEffSpent v $ checkLinFExpr body
     spend spent
-  PrimEffect (Label (LabelLit l)) _ m -> case m of
-    MAsk -> checkLinVar (l:>())
+  PrimEffect ~(Dep ref) _ m -> case m of
+    MAsk -> checkLinVar ref
     MTell x -> do
       ((), s) <- captureSpent $ checkLinFExpr x
-      spendEff (l:>()) s
-    _ -> error "Not implemented"
+      spendEff ref s
+    _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 
@@ -628,7 +640,7 @@ checkLinCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
 checkLinCon e = case e of
   Lam NonLin lam -> checkLinFLam lam
   Lam Lin (FLamExpr p _ body) -> do
-    v <- getPatName p
+    let v = getPatName p
     let s = asSpent v
     withLocalLinVar v $ extendR (foldMap (@>s) p) $ checkLinFExpr body
   RecCon r -> mapM_ check r
@@ -663,11 +675,10 @@ checkLinVar v = do
     Nothing -> spend mempty
     Just s  -> spend s
 
-getPatName :: (MonadError Err m, Traversable f) => f Var -> m Name
-getPatName p = case toList p of
-  []  -> throw LinErr $
-           "empty patterns not allowed for linear lambda (for silly reasons)"
-  (v:>_):_ -> return v
+getPatName :: RecTree Var -> Name
+getPatName (RecLeaf (v:>_)) = v
+getPatName p = case toList p of (v:>_):_ -> v
+                                _        -> NoName
 
 spend :: Spent -> LinCheckM ()
 spend s = LinCheckM $ return ((), (s, mempty))
@@ -690,7 +701,7 @@ captureSpent m = LinCheckM $ do
   (x, (s, sEff)) <- runLinCheckM m
   return ((x, s), (mempty, sEff))
 
-captureEffSpent :: VarP a ->  LinCheckM a -> LinCheckM (a, Spent)
+captureEffSpent :: VarP ann ->  LinCheckM a -> LinCheckM (a, Spent)
 captureEffSpent (v:>_) m = LinCheckM $ do
   (x, (s, sEff)) <- runLinCheckM m
   let varSpent = sEff ! (v:>())

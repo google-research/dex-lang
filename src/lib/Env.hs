@@ -7,7 +7,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Env (Name, Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
+module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames,
             rawName, nameSpace, rename, renames, renameWithNS) where
@@ -27,9 +27,10 @@ infixr 7 :>
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
-data Name = Name NameSpace Tag Int  deriving (Show, Ord, Eq, Generic)
+data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
+            deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | SourceTypeName
-               | InferenceName | LocalTVName | EffectLabel
+               | InferenceName | LocalTVName | NoNameSpace
                  deriving  (Show, Ord, Eq)
 
 type Tag = T.Text
@@ -40,6 +41,8 @@ rawName s t = Name s (fromString t) 0
 
 nameSpace :: Name -> NameSpace
 nameSpace (Name s _ _) = s
+nameSpace NoName       = NoNameSpace
+nameSpace (DeBruijn _) = NoNameSpace
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -87,10 +90,12 @@ env ! v = case envLookup env v of
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
 
 genFresh :: Name-> Env a -> Name
+genFresh NoName _ = NoName
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
                 Nothing -> 0
+                Just (NoName, _) -> 0
                 Just (Name ns' tag' i, _)
                   | ns' /= ns || tag' /= tag -> 0
                   | i < bigInt  -> i + 1
@@ -98,6 +103,7 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 
 renameWithNS :: NameSpace -> VarP ann -> Env a -> VarP ann
+renameWithNS _  (NoName       :> ann) _     = NoName :> ann
 renameWithNS ns (Name _ tag _ :> ann) scope = rename (Name ns tag 0 :> ann) scope
 
 rename :: VarP ann -> Env a -> VarP ann
@@ -154,6 +160,8 @@ instance Traversable VarP where
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
+  pretty NoName = "_"
+  pretty (DeBruijn i) = "!" <> pretty i
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n

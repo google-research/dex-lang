@@ -73,17 +73,21 @@ simplifyAtom atom = case atom of
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
 simplifyLam (LamExpr b eff body) = do
-  eff' <- substEmbed eff
   b' <- substEmbed b
   if isData (getType body)
     then do
-      lam <- buildLamExpr eff' b' $ \x -> extendR (b @> L x) $ simplify body
+      lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ do
+        eff' <- substEmbed eff
+        ans  <- simplify body
+        return (ans, eff')
       return (lam, Nothing)
     else do
-      (lam, recon) <- buildLamExprAux eff' b' $ \x -> extendR (b @> L x) $ do
+      (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b @> L x) $ do
+        eff' <- substEmbed eff
         (body', (scope, decls)) <- scoped $ simplify body
         extend (mempty, decls)
-        return $ separateDataComponent scope body'
+        let (ans, f) = separateDataComponent scope body'
+        return ((ans, eff'), f)
       return $ (lam, Just recon)
 
 separateDataComponent :: (MonadCat EmbedEnv m)
@@ -117,18 +121,18 @@ simplifyCExpr expr = do
     Transpose (lam, _) -> do
       scope <- looks fst
       return $ transposeMap scope lam
-    RunReader l r (lam, recon) -> do
-      ans <- emit $ RunReader l r lam
+    RunReader r (lam, recon) -> do
+      ans <- emit $ RunReader r lam
       reconstructAtom recon ans
-    RunWriter l (lam, recon) -> do
-      (ans, w) <- fromPair =<< emit (RunWriter l lam)
+    RunWriter (lam, recon) -> do
+      (ans, w) <- fromPair =<< emit (RunWriter lam)
       ans' <- reconstructAtom recon ans
       return $ makePair ans' w
-    RunState l s (lam, recon) -> do
-      (ans, s') <- fromPair =<< emit (RunState l s lam)
+    RunState s (lam, recon) -> do
+      (ans, s') <- fromPair =<< emit (RunState s lam)
       ans' <- reconstructAtom recon ans
       return $ makePair ans' s'
-    App _ (Con (Lam _ (LamExpr b _ body))) x -> do
+    App _ _ (Con (Lam _ (LamExpr b _ body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]

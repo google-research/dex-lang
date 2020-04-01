@@ -189,15 +189,15 @@ linUnary x = linFstArg x 1.0
 > (Real -> Real)
 
 f1 :: Real --o Real
-f1 x = %runReader(@#r, x, lam ().
-   y = %ask(@#r)
-   z = %ask(@#r)
+f1 x = %runReader(x, lam r.
+   y = %ask(r)
+   z = %ask(r)
    y + z)
 
 f2 :: Real --o Real
-f2 x = %runReader(@#r, x, lam ().
-   y = %ask(@#r)
-   z = %ask(@#r)
+f2 x = %runReader(x, lam r.
+   y = %ask(r)
+   z = %ask(r)
    y * z)
 > Linearity error: pattern spent twice: [x]
 >
@@ -206,17 +206,17 @@ f2 x = %runReader(@#r, x, lam ().
 
 f3 :: Real --o Real
 f3 x =
-  y = snd $ %runWriter(@#w, lam ().
-        _ = %tell(@#w, x)
-        _ = %tell(@#w, x)
+  y = snd $ %runWriter(lam w.
+        _ = %tell(w, x)
+        _ = %tell(w, x)
         ())
   y + x
 
 f2 :: Real --o Real
 f2 x =
-  y = snd $ %runWriter(@#w, lam ().
-        _ = %tell(@#w, x)
-        _ = %tell(@#w, x)
+  y = snd $ %runWriter(lam w.
+        _ = %tell(w, x)
+        _ = %tell(w, x)
         ())
   y * x
 > Linearity error: pattern spent twice: [x]

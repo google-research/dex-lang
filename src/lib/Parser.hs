@@ -198,7 +198,7 @@ expr = makeExprParser (withSourceAnn term) ops
 
 term :: Parser FExpr
 term =   parenExpr
-     <|> var
+     <|>  var
      <|> liftM fPrimCon idxLit
      <|> liftM (fPrimCon . Lit) literal
      <|> lamExpr
@@ -352,7 +352,7 @@ identifier = lexeme . try $ do
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
-                     >> return (\x y -> fPrimOp $ App NoAnn x y))
+                     >> return (\x y -> fPrimOp $ App NoAnn NoAnn x y))
   where
     opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
 
@@ -405,7 +405,7 @@ rawVar = do
   return $ FVar (v:>NoAnn)
 
 binder :: Parser Var
-binder = (symbol "_" >> return (rawName SourceName "_" :> NoAnn))
+binder = (symbol "_" >> return (NoName :> NoAnn))
      <|> liftM2 (:>) lowerName typeAnnot
 
 pat :: Parser Pat
@@ -447,7 +447,7 @@ fPrimOp :: PrimOp Type FExpr FLamExpr -> FExpr
 fPrimOp op = FPrimExpr $ OpExpr op
 
 app :: FExpr -> FExpr -> FExpr
-app f x = fPrimOp $ App NoAnn f x
+app f x = fPrimOp $ App NoAnn NoAnn f x
 
 -- === Parsing types ===
 
@@ -481,7 +481,6 @@ kindName :: Parser Kind
 kindName =   (symbol "Ty"     >> return TyKind)
          <|> (symbol "Mult"   >> return MultKind)
          <|> (symbol "Effect" >> return EffectKind)
-         <|> (symbol "Label"  >> return LabelKind)
          <?> "kind"
 
 qual :: Parser TyQual
@@ -504,17 +503,18 @@ className = do
 --   | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
 --   | otherwise = b
 
-
 tauTypeAtomic :: Parser Type
-tauTypeAtomic =   typeName
+tauTypeAtomic =   parenTy
+              <|> liftM (ArrowType NonLin) piType
+              <|> liftM Ref (symbol "Ref" >> tauTypeAtomic)
+              <|> typeName
               <|> liftM TypeVar typeVar
               <|> liftM TypeVar localTypeVar
               <|> idxSetLit
-              <|> liftM Label labelLit
-              <|> parenTy
+              <?> "type"
 
 tauType :: Parser Type
-tauType = makeExprParser (sc >> tauType') typeOps
+tauType = makeExprParser (sc >> tauTypeAtomic) typeOps
   where
     typeOps = [ [tyAppRule]
               , [InfixR (TabType <$ symbol "=>")]
@@ -525,23 +525,30 @@ arrowType = do
   lin <-  NonLin <$ symbol "->"
       <|> Lin    <$ symbol "--o"
   eff <- effectType <|> return noEffect
-  return $ \a b -> ArrowType lin a (eff, b)
+  return $ \a b -> ArrowType lin $ Pi a (eff, b)
 
-labelLit :: Parser Label
-labelLit = char '#' >> liftM LabelLit (name EffectLabel identifier)
+piType :: Parser PiType
+piType = do
+  symbol "Pi"
+  v <- lowerName
+  symbol "::"
+  a <- tauTypeAtomic
+  symbol "->"
+  eff <- effectType <|> return noEffect
+  b <- tauType
+  return $ makePi (v:>a) (eff, b)
 
 effectRow :: Parser (EffectRow Type)
 effectRow = do
-  l <- labelLit <|> liftM LabelVar localTypeVar
-  symbol "::"
-  eff <- oneEffect
-  return $ singletonRow l eff
+  e <- effectName
+  v <- lowerName
+  return $ (v:>()) @> (e, NoAnn)
 
-oneEffect :: Parser (OneEffect Type)
-oneEffect =
-      liftM Reader (symbol "Reader" >> tauType)
-  <|> liftM Writer (symbol "Writer" >> tauType)
-  <|> liftM State  (symbol "State"  >> tauType)
+effectName :: Parser EffectName
+effectName =
+      (symbol "Reader" >> return Reader)
+  <|> (symbol "Writer" >> return Writer)
+  <|> (symbol "State"  >> return State )
 
 -- TODO: linearity
 effectType :: Parser Effect
@@ -560,14 +567,6 @@ tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
 applyType :: Type -> Type -> Type
 applyType (TypeApp ty args) arg = TypeApp ty (args ++ [arg])
 applyType ty arg = TypeApp ty [arg]
-
-tauType' :: Parser Type
-tauType' =   parenTy
-         <|> typeName
-         <|> liftM TypeVar typeVar
-         <|> liftM TypeVar localTypeVar
-         <|> idxSetLit
-         <?> "type"
 
 typeVar :: Parser TVar
 typeVar = do

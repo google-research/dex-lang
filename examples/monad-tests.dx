@@ -1,98 +1,107 @@
 
-:p m :: () -> {#s :: State Int} Int
-   m () = get @#s ()
-   runState @#s 2 m
+:p m :: Pi s::(Ref Int) -> {State s} Int
+   m s = get s
+   runState 2 m
 > (2, 2)
 
-:p m :: () -> {#s :: State Int} ()
-   m () = put @#s 3
-   runState @#s 0 m
+:p m :: Pi s::(Ref Int) -> {State s} ()
+   m s = put s 3
+   runState 0 m
 > ((), 3)
 
-:p m :: () -> {#r :: Reader Int} Int
-   m () = ask @#r ()
-   runReader @#r 5 m
+:p m :: Pi r::(Ref Int) -> {Reader r} Int
+   m r = ask r
+   runReader 5 m
 > 5
 
 :p
-  stateAction :: () -> {#s :: State Real} ()
-  stateAction () =
-     x = get @#s ()
-     y = put @#s (x + 2.0)
-     z = get @#s ()
-     put @#s (z * 3.0)
+  stateAction :: Pi s::(Ref Real) -> {State s} ()
+  stateAction s =
+     x = get s
+     y = put s (x + 2.0)
+     z = get s
+     put s (z * 3.0)
   --
-  runState @#s 1.0 stateAction
+  runState 1.0 stateAction
 > ((), 9.0)
 
 :p
-  rwsAction :: () -> {#r :: Reader Int, #w :: Writer Real, #s :: State Bool} Int
-  rwsAction () =
-    x = get  @#s ()
-    _ = tell @#w 2.0
-    _ = put  @#s (not x)
-    r = ask  @#r ()
-    _ = tell @#w 4.0
+  rwsAction :: Pi r::(Ref Int) -> Pi w::(Ref Real) -> Pi s::(Ref Bool) -> {Reader r, Writer w, State s} Int
+  rwsAction r w s =
+    x = get  s
+    _ = tell w 2.0
+    _ = put  s (not x)
+    r = ask  r
+    _ = tell w 4.0
     (r `iadd` 2)
   --
-  runReader @#r 2 $ lam (). runState @#s True $ lam (). runWriter @#w rwsAction
+  runReader 2 $ lam r.
+    runState True $ lam s.
+      runWriter $ lam w.
+        rwsAction r w s
 > ((4, 6.0), False)
 
-:p m :: () -> {#s :: State (3=>Int)} ()
-   m () =
-     _ = indexState @#s 0@3 lam (). put @#s 10
-     _ = indexState @#s 2@3 lam (). put @#s 20
-     x = indexState @#s 0@3 lam (). get @#s ()
-     indexState     @#s 1@3 lam (). put @#s x
-   runState @#s [0,0,0] m
+:p m :: Pi s::(Ref (3=>Int)) -> {State s} ()
+   m s =
+     _ = indexState s 0@3 lam s'. put s' 10
+     _ = indexState s 2@3 lam s'. put s' 20
+     x = indexState s 0@3 lam s'. get s'
+     indexState     s 1@3 lam s'. put s' x
+   runState [0,0,0] m
 > ((), [10, 10, 20])
 
-:p m :: () -> {#r :: Reader (3=>Int)} Int
-   m () = indexReader @#r (1@3) lam (). ask @#r ()
-   runReader @#r [1,2,3] m
+:p runState [0,0,0] lam s.
+     _ = putAt s 0@3 10
+     _ = putAt s 2@3 20
+     x = getAt s 0@3
+     putAt s 1@3 x
+> ((), [10, 10, 20])
+
+:p runReader [1,2,3] lam r .
+     indexReader r (1@3) lam r'. ask r'
 > 2
 
 :p
-  m :: () -> {#w :: Writer Real, #s :: State Real} ()
-  m () =
-    x = get @#s ()
-    tell @#w x
-  runState @#s 1.0 $ lam (). runWriter @#w m
+  m :: Pi w::(Ref Real) -> Pi s::(Ref Real) -> {Writer w, State s} ()
+  m w s =
+    x = get s
+    tell w x
+  runState 1.0 lam s. runWriter lam w . m w s
 > (((), 1.0), 1.0)
 
-myAction:: () -> {#r :: Reader Real, #w :: Writer Real} ()
-myAction () =
-  _ = tell @#w 1.0
-  _ = tell @#w 2.0
+myAction:: Pi w::(Ref Real) -> Pi r::(Ref Real) -> {Reader r, Writer w} ()
+myAction w r =
+  x = ask r
+  _ = tell w x
+  _ = tell w 2.0
   ()
 
-:p runReader @#r 1.0 $ lam (). runWriter @#w myAction
-> ((), 3.0)
+:p runReader 1.5 lam r. runWriter lam w. myAction w r
+> ((), 3.5)
 
 :p
-  m :: () -> {#w1 :: Writer Real, #w2 :: Writer Real} ()
-  m () =
-    _ = tell @#w1 1.0
-    _ = tell @#w2 3.0
-    tell @#w1 1.0
-  runWriter @#w1 $ lam (). runWriter @#w2 m
+  m :: Pi w1::(Ref Real) -> Pi w2::(Ref Real) -> {Writer w1, Writer w2} ()
+  m w1 w2 =
+    _ = tell w1 1.0
+    _ = tell w2 3.0
+    tell w1 1.0
+  runWriter lam w1. runWriter lam w2. m w1 w2
 > (((), 3.0), 2.0)
 
-
-foom :: () -> {#s :: State (3=>Int)} ()
-foom () =
-  _ = indexState @#s (0@3) $ lam (). put @#s 1
-  _ = indexState @#s (2@3) $ lam (). put @#s 2
+foom :: Pi s::(Ref (3=>Int)) -> {State s} ()
+foom s =
+  _ = indexState s (0@3) $ lam s'. put s' 1
+  _ = indexState s (2@3) $ lam s'. put s' 2
   ()
 
-:p runState @#s [0,0,0] foom
+:p runState [0,0,0] foom
 > ((), [1, 0, 2])
 
 :p
   foo :: Real -> Real
   foo x =
-     f = runReader @#r x lam ().
-           y = ask @#r ()
+     f = runReader x lam r.
+           y = ask r
            lam z. 100.0 * x + 10.0 * y + z
      f 1.0
 
@@ -102,8 +111,8 @@ foom () =
 :p
   foo :: Real -> (Real, Real)
   foo x =
-     (f, ans) = runState @#s x lam ().
-         y = get @#s ()
+     (f, ans) = runState x lam s.
+         y = get s
          lam z. 100.0 * x + 10.0 * y + z
      (f 1.0, ans)
 
@@ -113,10 +122,44 @@ foom () =
 :p
   foo :: Real -> (Real, Real)
   foo x =
-     (f, ans) = runWriter @#s lam ().
-        _ = tell @#s x
+     (f, ans) = runWriter lam s.
+        _ = tell s x
         lam y. 10.0 * x + y
      (f 1.0, ans)
 
   foo 3.0
 > (31.0, 3.0)
+
+:p
+  runReader 2.0 lam r::(Ref Real).
+    runWriter lam w::(Ref Real).
+      runWriter lam w'::(Ref Real).
+        runState 3 lam s.
+          x = ask r
+          y = get s
+          _ = tell w  x
+          _ = tell w' (x + x)
+          _ = put s 4
+          (x, y)
+> ((((2.0, 3), 4), 4.0), 2.0)
+
+-- TODO: this should be a type error!
+:p
+   m :: Pi r::(Ref (3=>Int)) -> {Reader r} (3=>Int)
+   m r = indexReader r (1@3) lam r'. ask r
+   runReader [1,2,3] m
+> [1, 2, 3]
+
+symmetrizeInPlace :: n=>n=>Real -> n=>n=>Real
+symmetrizeInPlace mat =
+  snd $ runState mat lam ref.
+    for i j.
+       x = getAt2 ref i j
+       y = getAt2 ref j i
+       avg = (x + y) / 2.0
+       _ = putAt2 ref i j avg
+       _ = putAt2 ref j i avg
+       ()
+
+symmetrizeInPlace [[1.,2.],[3.,4.]]
+> [[1.0, 2.5], [2.5, 4.0]]

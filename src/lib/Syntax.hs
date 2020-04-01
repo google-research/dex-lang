@@ -30,10 +30,8 @@ module Syntax (
     fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
-    noEffect, isPure, Row (..), OneEffect (..), EffectRow, Label (..),
-    traverseType, rowMeet, rowJoin, rowDiff, monMapSingle, monMapLookup,
-    traverseRowLabels, singletonRow, popRow, peekRow
-    )
+    noEffect, isPure, EffectName (..), EffectRow,
+    traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi)
   where
 
 import Data.Tuple (swap)
@@ -45,6 +43,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Exception  (Exception, catch)
 import GHC.Generics
 import Foreign.Ptr
+import Data.Foldable (fold)
 import Data.Traversable
 import Control.Applicative (liftA3)
 
@@ -55,38 +54,36 @@ import Env
 
 data Type = TypeVar TVar
           | BaseType BaseType
-          | ArrowType Mult Type EffectiveType
+          | ArrowType Mult PiType
           | IdxSetLit Int
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
+          | Ref Type
           | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
           | TypeApp Type [Type]
+          | Dep Var
+          | NoDep
           | Lin
           | NonLin
           | Effect (EffectRow Type) (Maybe Type)
-          | Label Label
           | NoAnn
             deriving (Show, Eq, Generic)
-
-data Label = LabelLit Name
-           | LabelVar TVar
-             deriving (Show, Ord, Eq, Generic)
 
 data Kind = TyKind
           | ArrowKind [Kind] Kind
           | MultKind
           | EffectKind
-          | LabelKind
+          | DepKind
           | NoKindAnn
             deriving (Eq, Show, Ord, Generic)
 
-newtype Row a = Row (MonMap Label [a])  deriving (Eq, Show, Semigroup, Monoid)
-type EffectRow a = Row (OneEffect a)
+type EffectRow a = Env (EffectName, a)
 
-data OneEffect ty = Reader ty | Writer ty | State ty
-                    deriving (Eq, Show)
+data EffectName = Reader | Writer | State  deriving (Eq, Show)
+
+data PiType = Pi Type EffectiveType  deriving (Eq, Show)
 
 data  TyQual = TyQual TVar ClassName  deriving (Eq, Show)
 
@@ -194,7 +191,7 @@ data LitVal = IntLit  Int
 data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
 
 data PrimOp ty e lam =
-        App ty e e
+        App ty ty e e
       | TApp e [ty]
       | For lam
       | TabGet e e
@@ -204,11 +201,11 @@ data PrimOp ty e lam =
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
       | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
-      | PrimEffect ty ty (PrimEffect e)
-      | RunReader ty e lam
-      | RunWriter ty   lam
-      | RunState  ty e lam
-      | IndexEff (OneEffect ()) ty e lam
+      | PrimEffect ty e (PrimEffect e)
+      | RunReader e  lam
+      | RunWriter    lam
+      | RunState  e  lam
+      | IndexEff EffectName ty e e lam
       | Linearize lam | Transpose lam
       | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
@@ -249,12 +246,12 @@ builtinNames = M.fromList
   , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
   , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
-  , ("runReader"       , OpExpr $ RunReader () () ())
-  , ("runWriter"       , OpExpr $ RunWriter () ())
-  , ("runState"        , OpExpr $ RunState  () () ())
-  , ("indexReader"     , OpExpr $ IndexEff (Reader ()) () () ())
-  , ("indexWriter"     , OpExpr $ IndexEff (Writer ()) () () ())
-  , ("indexState"      , OpExpr $ IndexEff (State  ()) () () ())
+  , ("runReader"       , OpExpr $ RunReader () ())
+  , ("runWriter"       , OpExpr $ RunWriter    ())
+  , ("runState"        , OpExpr $ RunState  () ())
+  , ("indexReader"     , OpExpr $ IndexEff Reader () () () ())
+  , ("indexWriter"     , OpExpr $ IndexEff Writer () () () ())
+  , ("indexState"      , OpExpr $ IndexEff State  () () () ())
   , ("todo"       , ConExpr $ Todo ())
   , ("ask"        , OpExpr $ PrimEffect () () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () () $ MTell ())
@@ -452,10 +449,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = ArrowType NonLin a (noEffect, b)
+a --> b = ArrowType NonLin $ Pi a (noEffect, b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = ArrowType Lin a (noEffect, b)
+a --@ b = ArrowType Lin $ Pi a (noEffect, b)
 
 (==>) :: Type -> Type -> Type
 (==>) = TabType
@@ -515,18 +512,22 @@ instance HasVars FLamExpr where
 
 instance HasVars Type where
   freeVars ty = case ty of
+    ArrowType l p -> freeVars l <> freeVars p
     TypeVar v  -> tbind v
     Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
-    Label lab -> freeVars lab
-    Effect row tailVar ->
-         foldMap (foldMap freeVars) row <> foldMap freeVars tailVar
-      <> execWriter (flip traverseRowLabels row $ \lab -> lab <$ tell (freeVars lab))
+    Dep (DeBruijn _:>_) -> mempty
+    Dep v -> lbind v
+    Effect row tailVar ->  foldMap freeVarsEffect (envPairs row)
+                        <> foldMap freeVars tailVar
     _ -> execWriter $ flip traverseType ty $ \_ t -> t <$ tell (freeVars t)
 
-instance HasVars Label where
-  freeVars (LabelLit _) = mempty
-  freeVars (LabelVar v) = tbind v
+freeVarsEffect :: (Name, (EffectName, Type)) -> Vars
+freeVarsEffect (DeBruijn _, (_, ty)) =              freeVars ty
+freeVarsEffect (v,          (_, ty)) = (v:>()) @> L ty <> freeVars ty
+
+instance HasVars PiType where
+  freeVars (Pi a (eff, b)) = freeVars a <> freeVars eff <> freeVars b
 
 instance HasVars b => HasVars (VarP b) where
   freeVars (_ :> b) = freeVars b
@@ -549,6 +550,9 @@ instance HasVars FTLam where
 instance (HasVars a, HasVars b) => HasVars (LorT a b) where
   freeVars (L x) = freeVars x
   freeVars (T x) = freeVars x
+
+instance (HasVars a, HasVars b) => HasVars (a, b) where
+  freeVars (x, y) = freeVars x <> freeVars y
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
@@ -620,9 +624,7 @@ instance TraversableExpr PrimExpr where
 
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
-    -- App has effects sometimes and not other times. it's a good argument for
-    -- not distinguishing PrimOp and PrimCon
-    App ty e1 e2         -> liftA3 App (fT ty) (fE e1) (fE e2)
+    App l d e1 e2        -> liftA4 App (fT l) (fT d) (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
     For lam              -> liftA  For (fL lam)
     TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
@@ -636,15 +638,15 @@ instance TraversableExpr PrimOp where
     VSpaceOp ty (VAdd e1 e2) -> liftA2 VSpaceOp (fT ty) (liftA2 VAdd (fE e1) (fE e2))
     Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
-    PrimEffect lab s m -> liftA3 PrimEffect (fT lab) (fT s) $ case m of
+    PrimEffect d ref m   -> liftA3 PrimEffect (fT d) (fE ref) $ case m of
        MAsk    -> pure  MAsk
        MTell e -> liftA MTell (fE e)
        MGet    -> pure  MGet
        MPut  e -> liftA MPut  (fE e)
-    RunReader l r lam    -> liftA3 RunReader (fT l) (fE r) (fL lam)
-    RunWriter l   lam    -> liftA2 RunWriter (fT l)        (fL lam)
-    RunState  l s lam    -> liftA3 RunState  (fT l) (fE s) (fL lam)
-    IndexEff eff l i lam -> liftA3 (IndexEff eff) (fT l) (fE i) (fL lam)
+    RunReader r  lam    -> liftA2 RunReader (fE r ) (fL lam)
+    RunWriter    lam    -> liftA  RunWriter         (fL lam)
+    RunState  s  lam    -> liftA2 RunState  (fE s ) (fL lam)
+    IndexEff eff d ref i lam -> liftA4 (IndexEff eff) (fT d) (fE ref) (fE i) (fL lam)
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
@@ -668,6 +670,9 @@ instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where
   freeVars expr = execWriter $
     traverseExpr expr (tell . freeVars) (tell . freeVars) (tell . freeVars)
+
+liftA4 :: Applicative f => (a -> b -> c -> d -> e) -> f a -> f b -> f c -> f d -> f e
+liftA4 f a b c d = f <$> a <*> b <*> c <*> d
 
 unzipExpr :: TraversableExpr expr
           => expr ty e lam -> (expr () () (), ([ty], [e], [lam]))
@@ -709,71 +714,64 @@ instance Traversable PrimEffect where
     MGet    -> pure  MGet
     MPut  x -> liftA MPut (f x)
 
-instance Functor OneEffect where
-  fmap = fmapDefault
-
-instance Foldable OneEffect where
-  foldMap = foldMapDefault
-
-instance Traversable OneEffect where
-  traverse f eff = case eff of
-    Reader x -> liftA Reader (f x)
-    Writer x -> liftA Writer (f x)
-    State  x -> liftA State  (f x)
-
-instance Functor Row where
-  fmap = fmapDefault
-
-instance Foldable Row where
-  foldMap = foldMapDefault
-
-instance Traversable Row where
-  traverse f (Row (MonMap m)) = liftA (Row . MonMap) (traverse (traverse f) m)
-
--- TODO: check that the new labels are distinct!
-traverseRowLabels :: Applicative m => (Label -> m Label) -> Row a -> m (Row a)
-traverseRowLabels f (Row (MonMap m)) =
-  liftA (Row . MonMap . M.fromList) $ flip traverse (M.toList m) $ \(k,x) ->
-    liftA (\k' -> (k',x)) (f k)
-
-singletonRow :: Label -> a -> Row a
-singletonRow lab x = Row $ MonMap $ M.singleton lab [x]
-
-popRow :: Label -> Row a -> Except (a, Row a)
-popRow l (Row (MonMap m)) = case M.lookup l m of
-  Just (x:xs) -> return (x, filterEmpties $ Row $ MonMap $ M.insert l xs m)
-  _           -> throw CompilerErr $ "Lookup failed: " ++ show l
-
-peekRow :: Label -> Row a -> Except a
-peekRow l row = liftM fst $ popRow l row
-
-rowMeet :: Row a -> Row b -> Row (a, b)
-rowMeet (Row (MonMap m)) (Row (MonMap m')) =
-  filterEmpties $ Row $ MonMap $ M.intersectionWith zip m m'
-
-rowJoin :: Row a -> Row b -> Row ()
-rowJoin (Row (MonMap m)) (Row (MonMap m')) = Row $ MonMap $
-  M.map (flip replicate ()) $ M.unionWith max (M.map length m) (M.map length m')
-
-rowDiff :: Row a -> Row b -> Row a
-rowDiff (Row (MonMap m)) (Row (MonMap m')) = filterEmpties $ Row $ MonMap $
-  M.differenceWith (\xs ys -> Just (drop (length ys) xs)) m m'
-
--- TODO: representation that doesn't require this canonicalization?
-filterEmpties :: Row a -> Row a
-filterEmpties (Row (MonMap m)) = Row $ MonMap $ M.filter (not . null) m
-
 traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
-  ArrowType m a (e, b) -> liftA3 ArrowType (f MultKind m) (f TyKind a) $
-                            liftA2 (,) (f EffectKind e) (f TyKind b)
   IdxSetLit _          -> pure ty
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r
+  Ref t                -> liftA Ref (f TyKind t)
   TypeApp t xs         -> liftA2 TypeApp (f TyKind t) (traverse (f TyKind) xs)
+  NoDep                -> pure NoDep
   Lin                  -> pure Lin
   NonLin               -> pure NonLin
   NoAnn                -> pure NoAnn
   _ -> error $ "Shouldn't be handled generically: " ++ show ty
+
+makePi :: Var -> EffectiveType -> PiType
+makePi (v:>a) (eff, b) = Pi a ( abstractType v 0 eff
+                              , abstractType v 0 b)
+
+applyPi :: PiType -> Type -> EffectiveType
+applyPi (Pi _ (eff, b)) (Dep (v:>_)) = ( instantiateType 0 v eff
+                                       , instantiateType 0 v b)
+applyPi (Pi _ b) _ = b
+
+instantiateType :: Int -> Name -> Type -> Type
+instantiateType d name ty = case ty of
+ Dep (v:>ann) -> Dep $ lookupDBVar v :> recur ann
+ TypeVar _ -> ty
+ ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+   Pi (recur a) (instantiateType (d+1) name e, instantiateType (d+1) name b)
+ Forall tbs cs body -> Forall tbs cs $ recur body
+ Effect row tailVar -> Effect row' tailVar
+   where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
+                     | (v, (eff, ann)) <- envPairs row]
+ _ -> runIdentity $ flip traverseType ty $ (const (return . recur))
+ where
+   recur ::Type -> Type
+   recur = instantiateType d name
+
+   lookupDBVar :: Name -> Name
+   lookupDBVar v = case v of DeBruijn i | i == d -> name
+                             _                   -> v
+
+abstractType :: Name -> Int -> Type -> Type
+abstractType v d ty = case ty of
+  Dep (v':>ann) -> Dep (substWithDBVar v' :> recur ann)
+  TypeVar _ -> ty
+  ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+    Pi (recur a) (abstractType v (d+1) e, abstractType v (d+1) b)
+  Forall tbs cs body -> Forall tbs cs $ recur body
+  Effect row tailVar -> Effect row' tailVar
+    where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
+                     | (v', (eff, ann)) <- envPairs row]
+  _ -> runIdentity $ flip traverseType ty $ (const (return . recur))
+  where
+    recur ::Type -> Type
+    recur = abstractType v d
+
+    substWithDBVar :: Name -> Name
+    substWithDBVar v' | v == v'   = DeBruijn d
+                      | otherwise = v'
