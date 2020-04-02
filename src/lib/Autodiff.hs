@@ -174,14 +174,14 @@ instance Applicative LinA where
 
 -- -- === transposition ===
 
-type LinVars = Env ()
-type CotangentVals = MonMap Name [Atom]  -- TODO: consider folding as we go
-type TransposeM a = WriterT CotangentVals (ReaderT (LinVars, SubstEnv) Embed) a
+type LinVars = Env Atom
+type WriterRefEnv = Env Atom
+type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> LamExpr -> Atom
 transposeMap scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
   buildLam Lin ("ct" :> getType expr) $ \ct -> do
-    flip runReaderT mempty $ liftM fst $ runWriterT $ do
+    flip runReaderT mempty $ do
       ans <- withLinVar b $ transposeExpr expr ct
       return (ans, noEffect)
 
@@ -238,23 +238,23 @@ transposeCExpr expr ct = case expr of
     body' <- buildLamExpr v $ \x ->
                extendR (asSnd (v @> L x)) $ do
                  eff' <- transposeEffect eff v
-                 vsCTs <- extractCTs vs $ transposeExpr body ct
+                 vsCTs <- withLinVars vs $ transposeExpr body ct
                  return (Con $ RecCon $ Tup vsCTs, eff')
     (vsCTs, ctr) <- emit (RunWriter body') >>= fromPair
     ~(Tup vsCTs') <- unpackRec vsCTs
-    zipWithM_ (emitCT . varName) vs vsCTs'
+    zipWithM_ emitCT vs vsCTs'
     transposeAtom r ctr
   RunWriter (LamExpr v eff body) -> do
     (ctBody, ctEff) <- fromPair ct
     vs <- freeLinVars body
     body' <- buildLamExpr v $ \x -> do
                extendR (asSnd (v @> L x)) $ do
-                 vsCTs <- extractCTs vs $ transposeExpr body ctBody
+                 vsCTs <- withLinVars vs $ transposeExpr body ctBody
                  eff' <- transposeEffect eff v
                  return (Con $ RecCon $ Tup vsCTs, eff')
     vsCTs <- emit (RunReader ctEff body')
     ~(Tup vsCTs') <- unpackRec vsCTs
-    zipWithM_ (emitCT . varName) vs vsCTs'
+    zipWithM_ emitCT vs vsCTs'
   PrimEffect ~(Dep ref) refArg m -> do
     ref' <- substVar ref
     refArg' <- substTranspose refArg
@@ -280,7 +280,7 @@ transposeCon con ct = case con of
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
 transposeAtom atom ct = case atom of
-  Var (v:>_) -> emitCT v ct
+  Var v -> emitCT v ct
   Con con -> transposeCon con ct
   _ -> error $ "Can't transpose: " ++ pprint atom
 
@@ -310,8 +310,12 @@ isLin x = liftM (not . null) $ freeLinVars x
 isLinEff :: Effect -> TransposeM Bool
 isLinEff ~(Effect row _) = return $ not $ null $ toList row
 
-emitCT :: Name -> Atom -> TransposeM ()
-emitCT v ct = tell $ MonMap $ M.singleton v [ct]
+emitCT :: Var -> Atom -> TransposeM ()
+emitCT v ct = do
+  linVars <- asks fst
+  case envLookup linVars v of
+    Just refArg@(Var ref) -> void $ emit $ PrimEffect (Dep ref) refArg (MTell ct)
+    _ -> return ()
 
 substTranspose :: Subst a => a -> TransposeM a
 substTranspose x = do
@@ -320,23 +324,24 @@ substTranspose x = do
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v m = liftM snd $ extractCT v $ extendR (asFst (v@>())) m
+withLinVar v m = liftM fst $ extractCT v m
 
-extractCT :: Var -> TransposeM a -> TransposeM (a, Atom)
-extractCT b m = do
-  (ans, ctEnv) <- captureW m
-  (ct, ctEnv') <- sepCotangent b ctEnv
-  tell ctEnv'
-  return (ans, ct)
+withLinVars :: [Var] -> TransposeM () -> TransposeM [Atom]
+withLinVars [] m = m >> return []
+withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
-extractCTs :: [Var] -> TransposeM () -> TransposeM [Atom]
-extractCTs [] m = m >> return []
-extractCTs (v:vs) m = do
-  (vs', v') <- extractCT v $ extractCTs vs m
-  return (v':vs')
+curWriterEffect :: TransposeM Effect
+curWriterEffect = do
+  linVars <- asks fst
+  let effRow = fold [ref @> (Writer, varAnn ref) | Var ref <- toList linVars]
+  return $ Effect effRow Nothing
 
-sepCotangent :: MonadCat EmbedEnv m =>
-                  Var -> CotangentVals -> m (Atom, CotangentVals)
-sepCotangent (v:>ty) (MonMap m) = do
-  ans <- sumAt ty $ M.findWithDefault [] v m
-  return (ans, MonMap (M.delete v m))
+extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
+extractCT v@(_:>ty) m = do
+  (lam, ans) <- buildLamExprAux ("ctRef":> Ref ty) $ \ctRef@(Var effName) -> do
+    extendR (asFst (v @> ctRef)) $ do
+      ans <- m
+      eff <- curWriterEffect
+      return ((unitCon, eff), ans)
+  (_, w) <- emit (RunWriter lam) >>= fromPair
+  return (w, ans)
