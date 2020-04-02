@@ -31,7 +31,7 @@ type EmbedSubM a = ReaderT SubstEnv Embed a
 newtype LinA a = LinA { runLinA :: EmbedSubM (a, EmbedSubM a) }
 
 linearize :: TopEnv -> Scope -> LamExpr -> Atom
-linearize env scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
+linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam NonLin b $ \x -> do
     (y, yt) <- runReaderT (runLinA (linearizeExpr env expr)) (b @> L x)
     -- TODO: check linearity
@@ -52,16 +52,16 @@ linearizeExpr topEnv expr = case expr of
 
 -- TODO: handle a binder (will it be linear? nonlinear? specified by a flag?)
 linearizeLamExpr :: TopEnv -> [Var] -> LamExpr -> EmbedSubM LamExpr
-linearizeLamExpr topEnv vs (LamExpr _ eff body) =
-  buildLamExpr (NoName:>unitTy) $ \_ -> do
-    (body', bodyTan)  <- runLinA $ linearizeExpr topEnv body
-    fLin <- buildLam Lin ("t":>envTy) $ \t -> do
-      ~(Tup t') <- unpackRec t
-      let env' = fmap L $ fold $ zipWith (@>) vs t'
-      ans <- lift $ runReaderT bodyTan env'
-      return (ans, eff)  -- TODO: subst effect?
-    return (makePair body' fLin, eff)
-  where envTy = RecType $ Tup $ map varAnn vs
+linearizeLamExpr = undefined
+-- linearizeLamExpr topEnv vs (LamExpr _ body) =
+--   buildLamExpr (NoName:>unitTy) $ \_ -> do
+--     (body', bodyTan)  <- runLinA $ linearizeExpr topEnv body
+--     fLin <- buildLam Lin ("t":>envTy) $ \t -> do
+--       ~(Tup t') <- unpackRec t
+--       let env' = fmap L $ fold $ zipWith (@>) vs t'
+--       lift $ runReaderT bodyTan env'
+--     return $ makePair body' fLin
+--   where envTy = RecType $ Tup $ map varAnn vs
 
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
 linearizeCExpr topEnv (App _ _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
@@ -179,7 +179,7 @@ type WriterRefEnv = Env Atom
 type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> LamExpr -> Atom
-transposeMap scope (LamExpr b _ expr) = fst $ flip runEmbed scope $ do
+transposeMap scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam Lin ("ct" :> getType expr) $ \ct -> do
     flip runReaderT mempty $ do
       ans <- withLinVar b $ transposeExpr expr ct
@@ -233,25 +233,23 @@ transposeCExpr expr ct = case expr of
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
   -- TODO: de-dup RunReader/RunWriter a bit
-  RunReader r (LamExpr v eff body) -> do
+  RunReader r (LamExpr v body) -> do
     vs <- freeLinVars body
     body' <- buildLamExpr v $ \x ->
                extendR (asSnd (v @> L x)) $ do
-                 eff' <- transposeEffect eff v
                  vsCTs <- withLinVars vs $ transposeExpr body ct
-                 return (Con $ RecCon $ Tup vsCTs, eff')
+                 return $ Con $ RecCon $ Tup vsCTs
     (vsCTs, ctr) <- emit (RunWriter body') >>= fromPair
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ emitCT vs vsCTs'
     transposeAtom r ctr
-  RunWriter (LamExpr v eff body) -> do
+  RunWriter (LamExpr v body) -> do
     (ctBody, ctEff) <- fromPair ct
     vs <- freeLinVars body
     body' <- buildLamExpr v $ \x -> do
                extendR (asSnd (v @> L x)) $ do
                  vsCTs <- withLinVars vs $ transposeExpr body ctBody
-                 eff' <- transposeEffect eff v
-                 return (Con $ RecCon $ Tup vsCTs, eff')
+                 return $ Con $ RecCon $ Tup vsCTs
     vsCTs <- emit (RunReader ctEff body')
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ emitCT vs vsCTs'
@@ -283,20 +281,6 @@ transposeAtom atom ct = case atom of
   Var v -> emitCT v ct
   Con con -> transposeCon con ct
   _ -> error $ "Can't transpose: " ++ pprint atom
-
-transposeEffect :: Effect -> Var -> TransposeM Effect
-transposeEffect ~(Effect row tailVar) v = do
-  let ((effName, ty), row') = ignoreExcept $ popRow (varName v) row
-  let effName' = transposeEffectName effName
-  ty' <- substTranspose ty
-  v'  <- substVar v
-  return $ Effect (v'@>(effName', ty') <> row') tailVar
-
-transposeEffectName :: EffectName -> EffectName
-transposeEffectName eff = case eff of
-  Reader -> Writer
-  Writer -> Reader
-  State  -> State
 
 freeLinVars :: HasVars a => a -> TransposeM [Var]
 freeLinVars x = do
@@ -330,18 +314,11 @@ withLinVars :: [Var] -> TransposeM () -> TransposeM [Atom]
 withLinVars [] m = m >> return []
 withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
-curWriterEffect :: TransposeM Effect
-curWriterEffect = do
-  linVars <- asks fst
-  let effRow = fold [ref @> (Writer, varAnn ref) | Var ref <- toList linVars]
-  return $ Effect effRow Nothing
-
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
 extractCT v@(_:>ty) m = do
   (lam, ans) <- buildLamExprAux ("ctRef":> Ref ty) $ \ctRef@(Var effName) -> do
     extendR (asFst (v @> ctRef)) $ do
       ans <- m
-      eff <- curWriterEffect
-      return ((unitCon, eff), ans)
+      return (unitCon, ans)
   (_, w) <- emit (RunWriter lam) >>= fromPair
   return (w, ans)

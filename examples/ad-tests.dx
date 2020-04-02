@@ -121,20 +121,20 @@ sinn#lin :: Real -> Real
 sinn#lin x = x
 > Error: variable not in scope: sinn
 
--- tripleit :: Real --o Real
--- tripleit x = %runReader(x, lam r.
---    y = %ask(r)
---    z = %ask(r)
---    y + z + x)
+tripleit :: Real --o Real
+tripleit x = %runReader(x, lam r.
+   y = %ask(r)
+   z = %ask(r)
+   y + z + x)
 
--- :p tripleit 1.0
--- > 3.0
+:p tripleit 1.0
+> 3.0
 
--- :p transposeLinear tripleit 1.0
--- > 3.0
+:p transposeLinear tripleit 1.0
+> 3.0
 
--- :p transposeLinear (transposeLinear tripleit) 1.0
--- > 3.0
+:p transposeLinear (transposeLinear tripleit) 1.0
+> 3.0
 
 -- mySquare :: Real -> Real
 -- mySquare x = runReader x lam r.

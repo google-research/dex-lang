@@ -158,7 +158,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
-  pretty (Lam _ lam)   = prettyL lam
+  pretty (Lam _ _ lam)   = prettyL lam
   pretty (RecCon r) = p r
   pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
   pretty (AsIdx n i) = p i <> "@" <> p n
@@ -180,10 +180,10 @@ class PrettyLam a where
   prettyLam :: a -> (Doc ann, Doc ann)
 
 instance PrettyLam LamExpr where
-  prettyLam (LamExpr b _ e) = (p b, p e)
+  prettyLam (LamExpr b e) = (p b, p e)
 
 instance PrettyLam FLamExpr where
-  prettyLam (FLamExpr pat _ e) = (p pat, p e)
+  prettyLam (FLamExpr pat e) = (p pat, p e)
 
 instance PrettyLam () where
   prettyLam () = ("", "")

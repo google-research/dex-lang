@@ -65,29 +65,24 @@ simplifyAtom atom = case atom of
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
-  TLam _ _ _    -> substEmbed atom
-  Con (Lam _ _) -> substEmbed atom
+  TLam _ _ _      -> substEmbed atom
+  Con (Lam _ _ _) -> substEmbed atom
   Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
                        $ error "Shouldn't have lambda left"
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
-simplifyLam (LamExpr b eff body) = do
+simplifyLam (LamExpr b body) = do
   b' <- substEmbed b
   if isData (getType body)
     then do
-      lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ do
-        eff' <- substEmbed eff
-        ans  <- simplify body
-        return (ans, eff')
+      lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ simplify body
       return (lam, Nothing)
     else do
       (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b @> L x) $ do
-        eff' <- substEmbed eff
         (body', (scope, decls)) <- scoped $ simplify body
         extend (mempty, decls)
-        let (ans, f) = separateDataComponent scope body'
-        return ((ans, eff'), f)
+        return $ separateDataComponent scope body'
       return $ (lam, Just recon)
 
 separateDataComponent :: (MonadCat EmbedEnv m)
@@ -132,7 +127,7 @@ simplifyCExpr expr = do
       (ans, s') <- fromPair =<< emit (RunState s lam)
       ans' <- reconstructAtom recon ans
       return $ makePair ans' s'
-    App _ _ (Con (Lam _ (LamExpr b _ body))) x -> do
+    App _ _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
       let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]

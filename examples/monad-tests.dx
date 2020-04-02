@@ -163,3 +163,9 @@ symmetrizeInPlace mat =
 
 symmetrizeInPlace [[1.,2.],[3.,4.]]
 > [[1.0, 2.5], [2.5, 4.0]]
+
+:p runReader 5 lam r. ()
+> ()
+
+:p  %runReader(5, lam r. ())
+> ()

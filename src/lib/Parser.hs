@@ -287,7 +287,7 @@ rawLamExpr = do
   p <- pat
   argTerm
   body <- declOrExpr
-  return $ FLamExpr p NoAnn body
+  return $ FLamExpr p body
 
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
@@ -435,10 +435,10 @@ argTerm :: Parser ()
 argTerm = mayBreak $ symbol "."
 
 fLam :: Type -> Pat -> FExpr -> FExpr
-fLam l p body = fPrimCon $ Lam l $ FLamExpr p NoAnn body
+fLam l p body = fPrimCon $ Lam l NoAnn $ FLamExpr p body
 
 fFor :: Pat -> FExpr -> FExpr
-fFor p body = fPrimOp $ For $ FLamExpr p NoAnn body
+fFor p body = fPrimOp $ For $ FLamExpr p body
 
 fPrimCon :: PrimCon Type FExpr FLamExpr -> FExpr
 fPrimCon con = FPrimExpr $ ConExpr con

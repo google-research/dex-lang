@@ -90,7 +90,7 @@ toImpCExpr dests op = case op of
     rows' <- mapM toImpAtom rows
     void $ sequence [copyIAtom (tabGetIAtom dests $ ILit (IntLit i)) row
                     | (i, row) <- zip [0..] rows']
-  For (LamExpr b _ body) -> do
+  For (LamExpr b body) -> do
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
       let ithDest = tabGetIAtom dests i
@@ -104,19 +104,19 @@ toImpCExpr dests op = case op of
     case x' of
       ICon (RecCon r)-> copyIAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  RunReader r (LamExpr ref _ body) -> do
+  RunReader r (LamExpr ref body) -> do
     r' <- toImpAtom r
     extendR (ref @> r') $ toImpExpr dests body
-  RunWriter (LamExpr ref _ body) -> do
+  RunWriter (LamExpr ref body) -> do
     mapM_ initializeZero wDest
     extendR (ref @> wDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, wDest]))) = dests
-  RunState s (LamExpr ref _ body) -> do
+  RunState s (LamExpr ref body) -> do
     s' <- toImpAtom s
     copyIAtom sDest s'
     extendR (ref @> sDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
-  IndexEff _ ~(Dep ref) _ i (LamExpr ref' _ body) -> do
+  IndexEff _ ~(Dep ref) _ i (LamExpr ref' body) -> do
     i' <- toImpAtom i >>= fromScalarIAtom
     curRef <- lookupVar ref
     extendR (ref' @> tabGetIAtom curRef i') (toImpExpr dests body)

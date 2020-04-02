@@ -125,7 +125,7 @@ data FExpr = FDecl FDecl FExpr
              deriving (Eq, Show, Generic)
 
 type Pat = RecTree Var
-data FLamExpr = FLamExpr Pat Effect FExpr  deriving (Show, Eq, Generic)
+data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
 type SrcPos = (Int, Int)
 
 data FDecl = LetMono Pat FExpr
@@ -159,7 +159,7 @@ data Atom = Var Var
           | Con Con
             deriving (Show, Eq, Generic)
 
-data LamExpr = LamExpr Var Effect Expr  deriving (Show, Eq, Generic)
+data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
 data ModBody = ModBody [Decl] TopEnv  deriving (Show, Eq, Generic)
 type Module = ModuleP ModBody
@@ -173,7 +173,7 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 
 data PrimCon ty e lam =
         Lit LitVal
-      | Lam ty lam
+      | Lam ty ty lam
       | RecCon (Record e)
       | AsIdx Int e
       | AFor ty e
@@ -507,8 +507,8 @@ sourceBlockBoundVars block = case sbContents block of
   _                        -> mempty
 
 instance HasVars FLamExpr where
-  freeVars (FLamExpr p eff body) = foldMap freeVars p <> freeVars eff
-                                 <> (freeVars body `envDiff` foldMap lbind p)
+  freeVars (FLamExpr p body) =
+    foldMap freeVars p <> (freeVars body `envDiff` foldMap lbind p)
 
 instance HasVars Type where
   freeVars ty = case ty of
@@ -571,8 +571,7 @@ declBoundVars :: Decl -> Env ()
 declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
-  freeVars (LamExpr b eff body) = freeVars b <> freeVars eff
-                                <> (freeVars body `envDiff` (b@>()))
+  freeVars (LamExpr b body) = freeVars b <> (freeVars body `envDiff` (b@>()))
 
 instance HasVars Atom where
   freeVars atom = case atom of
@@ -658,7 +657,7 @@ instance TraversableExpr PrimOp where
 instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
     Lit l       -> pure   (Lit l)
-    Lam lin lam -> liftA2 Lam (fT lin) (fL lam)
+    Lam lin eff lam -> liftA3 Lam (fT lin) (fT eff) (fL lam)
     AFor n e    -> liftA2 AFor (fT n) (fE e)
     AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA  (AsIdx n) (fE e)

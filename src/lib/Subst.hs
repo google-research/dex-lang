@@ -51,11 +51,10 @@ substVar env@(sub, scope) v = case envLookup sub v of
   Just (T _ ) -> error "Expected let-bound variable"
 
 instance Subst LamExpr where
-  subst env@(_, scope) (LamExpr b eff body) = LamExpr b' (subst env eff') body'
+  subst env@(_, scope) (LamExpr b body) = LamExpr b' body'
     where (b', env') = refreshBinder scope (subst env b)
           env'' = env <> env'
           body' = subst env'' body
-          eff'  = subst env'' eff
 
 instance Subst TyQual where
   subst env (TyQual tv c) = TyQual tv' c

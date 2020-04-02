@@ -164,12 +164,12 @@ checkTLam ~(Forall tbs qs tyBody) (FTLam _ _ tlamBody) = do
     check tlamBody (noEffect, tyBody)
 
 checkLam :: FLamExpr -> PiType -> InferM FLamExpr
-checkLam (FLamExpr p _ body) piTy@(Pi a _) = do
+checkLam (FLamExpr p body) piTy@(Pi a _) = do
   p' <- checkPat p a
   piTy' <- zonk piTy
-  let b@(eff, _) = applyPi piTy' (Dep (getPatName p :> a))
-  body' <- extendR (foldMap asEnv p') (check body b)
-  return $ FLamExpr p' eff body'
+  let effTy = applyPi piTy' (Dep (getPatName p :> a))
+  body' <- extendR (foldMap asEnv p') $ check body effTy
+  return $ FLamExpr p' body'
 
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
@@ -201,10 +201,10 @@ openEffect eff = do
 generateConSubExprTypes :: PrimCon Type e lam
   -> InferM (PrimCon Type (e, Type) (lam, PiType))
 generateConSubExprTypes con = case con of
-  Lam l lam -> do
+  Lam l _ lam -> do
     l' <- fromAnn MultKind l
-    lam' <- freshLamType
-    return $ Lam l' (lam, lam')
+    lam'@(Pi _ (eff,_)) <- freshLamType
+    return $ Lam l' eff (lam, lam')
   _ -> traverseExpr con (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 generateOpSubExprTypes :: PrimOp Type FExpr FLamExpr
@@ -219,28 +219,28 @@ generateOpSubExprTypes op = case op of
     s  <- freshQ
     m' <- traverse (doMSnd freshQ) m
     return $ PrimEffect d (ref, Ref s) m'
-  RunReader r f@(FLamExpr (RecLeaf (v:>_)) _ _) -> do
+  RunReader r f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     r' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
     let eff = Effect ((v:>()) @> (Reader, Ref r')) (Just tailVar)
     let fTy = makePi (v:> Ref r') (eff, a)
     return $ RunReader (r, r') (f, fTy)
-  RunWriter f@(FLamExpr (RecLeaf (v:>_)) _ _) -> do
+  RunWriter f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     w <- freshQ
     a <- freshQ
     tailVar <- freshInferenceVar EffectKind
     let eff = Effect ((v:>()) @> (Writer, Ref w)) (Just tailVar)
     let fTy = makePi (v:> Ref w) (eff, a)
     return $ RunWriter (f, fTy)
-  RunState s f@(FLamExpr (RecLeaf (v:>_)) _ _) -> do
+  RunState s f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     s' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
     let eff = Effect ((v:>()) @> (State, Ref s')) (Just tailVar)
     let fTy = makePi (v:> Ref s') (eff, a)
     return $ RunState (s, s') (f, fTy)
-  IndexEff effName _ tabRef i f@(FLamExpr (RecLeaf (v:>_)) _ _) -> do
+  IndexEff effName _ tabRef i f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     d  <- fromDepVar tabRef
     i' <- freshQ
     x  <- freshQ
@@ -523,8 +523,7 @@ instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)
   tySubst env expr = fmapExpr expr (tySubst env) (tySubst env) (tySubst env)
 
 instance TySubst FLamExpr where
-  tySubst env (FLamExpr p eff body) =
-    FLamExpr (tySubst env p) (tySubst env eff) (tySubst env body)
+  tySubst env (FLamExpr p body) = FLamExpr (tySubst env p) (tySubst env body)
 
 instance TySubst FDecl where
   tySubst env decl = case decl of

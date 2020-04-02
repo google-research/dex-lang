@@ -69,19 +69,21 @@ withBinder b f = do
 
 buildLam :: MonadCat EmbedEnv m
          => Mult -> Var -> (Atom -> m (Atom, Effect)) -> m Atom
-buildLam l b f = liftM (Con . Lam l) $ buildLamExpr b f
+buildLam l v f = do
+  (lam, eff) <- buildLamExprAux v $ \v' -> f v'
+  return $ Con $ Lam l eff lam
 
 buildLamExpr :: (MonadCat EmbedEnv m)
-             => Var -> (Atom -> m (Atom, Effect)) -> m LamExpr
+             => Var -> (Atom -> m Atom) -> m LamExpr
 buildLamExpr b f = do
-  ((ans, eff), b', (_, decls)) <- withBinder b f
-  return $ LamExpr b' eff (wrapEmbedDecls decls ans)
+  (ans, b', (_, decls)) <- withBinder b f
+  return $ LamExpr b' (wrapEmbedDecls decls ans)
 
 buildLamExprAux :: (MonadCat EmbedEnv m)
-                => Var -> (Atom -> m ((Atom, Effect), a)) -> m (LamExpr, a)
+                => Var -> (Atom -> m (Atom, a)) -> m (LamExpr, a)
 buildLamExprAux b f = do
-  (((ans, eff), aux), b', (_, decls)) <- withBinder b f
-  return (LamExpr b' eff (wrapEmbedDecls decls ans), aux)
+  ((ans, aux), b', (_, decls)) <- withBinder b f
+  return (LamExpr b' (wrapEmbedDecls decls ans), aux)
 
 buildTLam :: (MonadCat EmbedEnv m)
           => [TVar] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
@@ -187,8 +189,7 @@ mapScalars f ty xs = case ty of
   TabType n a -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
-      ans <- mapScalars f a xs'
-      return (ans, noEffect)
+      mapScalars f a xs'
     emit $ For lam
   RecType r -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
