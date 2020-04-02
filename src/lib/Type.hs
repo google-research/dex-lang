@@ -664,6 +664,8 @@ checkLinOp e = case e of
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App Lin    _ fun x -> tensCheck (check fun) (check x)
   App NonLin _ fun x -> tensCheck (check fun) (withoutLin (check x))
+  For (FLamExpr _ body) -> checkLinFExpr body
+  TabGet x i -> tensCheck (check x) (withoutLin (check i))
   RunReader r (FLamExpr ~(RecLeaf v) body) -> do
     ((), spent) <- captureSpent $ checkLinFExpr r
     extendR (v @> spent) $ checkLinFExpr body

@@ -136,6 +136,20 @@ tripleit x = %runReader(x, lam r.
 :p transposeLinear (transposeLinear tripleit) 1.0
 > 3.0
 
+:p
+  f :: Real --o n=>Real
+  f x = for i. x
+
+  transposeLinear f [1.0, 2.0]
+> 3.0
+
+:p
+  f :: n=>Real --o n=>Real
+  f x = for i. x.i * 2.0
+
+  transposeLinear f [1.0, 2.0]
+> [2.0, 4.0]
+
 -- mySquare :: Real -> Real
 -- mySquare x = runReader x lam r.
 --   y = ask r

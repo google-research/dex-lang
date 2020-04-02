@@ -305,6 +305,7 @@ addToDest dest src = do
 initializeZero :: IExpr -> ImpM ()
 initializeZero ref = case impExprType ref of
   IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
+  IRefType (RealType, (n:_)) -> emitLoop n $ \i -> initializeZero $ IGet ref i
   ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 -- === type checking imp programs ===

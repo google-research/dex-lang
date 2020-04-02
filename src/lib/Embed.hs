@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, zeroAt, addAt, sumAt, deShadow,
+              runEmbed, zeroAt, addAt, sumAt, deShadow, withIndexed,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
               makeTup, makePair, substEmbed, fromPair, buildLamExprAux) where
@@ -98,6 +98,13 @@ buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do
   (ans, (_, decls)) <- scoped m
   return $ wrapDecls decls ans
+
+withIndexed :: (MonadCat EmbedEnv m)
+            => EffectName -> Atom -> Atom -> (Atom -> m Atom) -> m Atom
+withIndexed eff ~ref@(Var refVar) i f = do
+  lam <- buildLamExpr ("ref":>Ref a) $ \ref' -> f ref'
+  emit $ IndexEff eff (Dep refVar) ref i lam
+  where (Ref (TabType _ a)) = getType ref
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])

@@ -232,6 +232,23 @@ transposeCExpr expr ct = case expr of
     ~(Con (RecCon rZeros)) <- zeroAt (getType x)
     let ct' = Con $ RecCon $ recUpdate i ct rZeros
     transposeAtom x ct'
+  For (LamExpr v body) -> do
+    -- TODO: flip index or iteration order!
+    lam <- buildLamExpr v $ \i -> do
+      ct' <- nTabGet ct i
+      extendR (asSnd (v @> L i)) $ transposeExpr body ct'
+      return unitCon
+    void $ emit $ For lam
+  TabGet ~(Var x) i -> do
+    i' <- substTranspose i
+    linVars <- asks fst
+    ref <- case envLookup linVars x of
+             Just ref -> return ref
+             -- might be possible to reach here indexing into a literal zero array
+             _ -> error "Not implemented"
+    void $ withIndexed Writer ref i $ \(Var ref') -> do
+      emitCTToRef ref' ct
+      return unitCon
   -- TODO: de-dup RunReader/RunWriter a bit
   RunReader r (LamExpr v body) -> do
     vs <- freeLinVars body
@@ -298,8 +315,11 @@ emitCT :: Var -> Atom -> TransposeM ()
 emitCT v ct = do
   linVars <- asks fst
   case envLookup linVars v of
-    Just refArg@(Var ref) -> void $ emit $ PrimEffect (Dep ref) refArg (MTell ct)
+    Just ~(Var ref) -> emitCTToRef ref ct
     _ -> return ()
+
+emitCTToRef :: Var -> Atom -> TransposeM ()
+emitCTToRef ref ct = void $ emit $ PrimEffect (Dep ref) (Var ref) (MTell ct)
 
 substTranspose :: Subst a => a -> TransposeM a
 substTranspose x = do
