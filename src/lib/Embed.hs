@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, fromLetDecl, zeroAt, addAt, sumAt, deShadow,
+              runEmbed, zeroAt, addAt, sumAt, deShadow,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
               makeTup, makePair, substEmbed, fromPair, buildLamExprAux) where
@@ -28,8 +28,7 @@ import PPrint
 type EmbedT m = CatT EmbedEnv m  -- TODO: consider a full newtype wrapper
 type Embed = Cat EmbedEnv
 
-type EmbedDecl = Either Decl (Var, Atom)
-type EmbedEnv = (Scope, [EmbedDecl])
+type EmbedEnv = (Scope, [Decl])
 
 -- TODO: use suggestive names based on types (e.g. "f" for function)
 emit :: MonadCat EmbedEnv m => CExpr -> m Atom
@@ -43,7 +42,7 @@ emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
 emitTo b expr = do
   expr' <- deShadow expr
   b' <- freshVar b
-  extend $ asSnd [Left $ Let b' expr']
+  extend $ asSnd [Let b' expr']
   return $ Var b'
 
 deShadow :: MonadCat EmbedEnv m => Subst a => a -> m a
@@ -77,13 +76,13 @@ buildLamExpr :: (MonadCat EmbedEnv m)
              => Var -> (Atom -> m Atom) -> m LamExpr
 buildLamExpr b f = do
   (ans, b', (_, decls)) <- withBinder b f
-  return $ LamExpr b' (wrapEmbedDecls decls ans)
+  return $ LamExpr b' (wrapDecls decls ans)
 
 buildLamExprAux :: (MonadCat EmbedEnv m)
                 => Var -> (Atom -> m (Atom, a)) -> m (LamExpr, a)
 buildLamExprAux b f = do
   ((ans, aux), b', (_, decls)) <- withBinder b f
-  return (LamExpr b' (wrapEmbedDecls decls ans), aux)
+  return (LamExpr b' (wrapDecls decls ans), aux)
 
 buildTLam :: (MonadCat EmbedEnv m)
           => [TVar] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
@@ -93,21 +92,18 @@ buildTLam bs f = do
       bs' <- mapM freshVar bs
       ans <- f (map TypeVar bs')
       return (ans, bs')
-  return $ TLam bs' qs (wrapEmbedDecls decls body)
+  return $ TLam bs' qs (wrapDecls decls body)
 
 buildScoped :: (MonadCat EmbedEnv m) => m Atom -> m Expr
 buildScoped m = do
   (ans, (_, decls)) <- scoped m
-  return $ wrapEmbedDecls decls ans
+  return $ wrapDecls decls ans
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
 
 runEmbed :: Cat EmbedEnv a -> Scope -> (a, EmbedEnv)
 runEmbed m scope = runCat m (scope, [])
-
-wrapEmbedDecls :: [EmbedDecl] -> Atom -> Expr
-wrapEmbedDecls decls x = wrapDecls (map fromLetDecl decls) x
 
 wrapDecls :: [Decl] -> Atom -> Expr
 wrapDecls [] atom = Atom atom
@@ -206,7 +202,3 @@ substEmbed x = do
   env <- ask
   scope <- looks fst
   return $ subst (env, scope) x
-
-fromLetDecl :: EmbedDecl -> Decl
-fromLetDecl (Left d) = d
-fromLetDecl (Right _) = error "Not a let decl"
