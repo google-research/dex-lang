@@ -2,28 +2,41 @@
 # executables, to support user-account installation of stack.
 SHELL=/bin/bash
 
-# Using separate stack-work directories to avoid recompiling when
-# changing between debug and non-debug builds, per
-# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
-PROF := --profile --work-dir .stack-work-prof
+STACK=$(shell command -v stack 2>/dev/null)
+ifeq (, $(STACK))
+	STACK=cabal
 
-dex     := stack exec         dex --
-dexprof := stack exec $(PROF) dex --
+  PROF := --enable-library-profiling --enable-executable-profiling
+
+	dex     := cabal exec dex --
+	dexprof := cabal exec $(PROF) dex -- +RTS -p -RTS
+else
+	STACK=stack
+
+	# Using separate stack-work directories to avoid recompiling when
+	# changing between debug and non-debug builds, per
+	# https://github.com/commercialhaskell/stack/issues/1132#issuecomment-386666166
+	PROF := --profile --work-dir .stack-work-prof
+
+	dex     := stack exec         dex --
+	dexprof := stack exec $(PROF) dex --
+endif
+
 
 # --- building Dex ---
 
 all: build
 
 build: cbits/libdex.so
-	stack build
+	$(STACK) build
 
 build-prof: cbits/libdex.so
-	stack build $(PROF)
+	$(STACK) build $(PROF)
 
 all-inotify: build-inotify
 
 build-inotify: cbits/libdex.so
-	stack build --flag dex:inotify $(PROF)
+	$(STACK) build --flag dex:inotify $(PROF)
 
 %.so: %.c
 	gcc -fPIC -shared $^ -o $@
@@ -58,7 +71,7 @@ runinterp-%: examples/%.dx
 
 # Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
-	stack test $(PROF)
+	$(STACK) test $(PROF)
 
 update-%: examples/%.dx
 	$(dex) script --allow-errors $^ > $^.tmp
