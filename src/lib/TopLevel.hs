@@ -85,9 +85,9 @@ evalSourceBlock env block = case block of
     ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
       where f out = case out of PassInfo s' _ _ | s == s' -> True; _ -> False
     _ -> return ()
-  GetNameType v -> case topSubstEnv env ! v of
-    L val -> tell [TextOut $ pprint (getType val)] >> return mempty
-    _ -> throw UnboundVarErr $ pprint v
+  GetNameType v -> case topSubstEnv env `envLookup` v of
+    Just (L val) -> tell [TextOut $ pprint (getType val)] >> return mempty
+    _            -> throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIOTop $ readFile fname
     evalSourceBlocks env $ map sbContents $ parseProg source
