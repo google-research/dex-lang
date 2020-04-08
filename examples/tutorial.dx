@@ -177,7 +177,7 @@ source language too.
 
 'Generally, a design goal has been to make sure that all
 well-typed terms in the explicitly typed IR can be written in the source
-langauge too.
+language too.
 
 '## Tables (arrays)
 
