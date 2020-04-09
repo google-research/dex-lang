@@ -69,12 +69,15 @@ linearizeCExpr topEnv (App _ _ (Var v) arg) | v `isin` linRules topEnv = LinA $ 
   ~(Tup [y, f]) <- emit (App NonLin NoDep (linRules topEnv ! v) x) >>= unpackRec
   return (y, do t' <- t
                 emit $ App Lin NoAnn f t')
+linearizeCExpr _ expr | isSingletonType (tangentType (getType expr)) = LinA $ do
+  expr' <- substEmbed expr
+  ans <- emit expr'
+  return $ withZeroTangent ans
 linearizeCExpr topEnv expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
   ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) x1 x2
-  -- TODO: define this in the prelude instead (need richer deriv rules)
   ScalarBinOp FDiv x y -> LinA $ do
     (x', tx) <- runLinA x
     (y', ty) <- runLinA y
@@ -82,6 +85,13 @@ linearizeCExpr topEnv expr = case expr' of
     return (ans, do tx' <- tx
                     ty' <- ty
                     linearizedDiv x' y' tx' ty')
+  TabGet x i -> LinA $ do
+    (i', _)  <- runLinA i
+    (x', tx) <- runLinA x
+    ans <- emit $ TabGet x' i'
+    return (ans, do tx' <- tx
+                    emit $ TabGet tx' i')
+-- TODO: define this in the prelude instead (need richer deriv rules)
 --   RunReader l r lam@(LamExpr b eff _) -> LinA $ do
 --     (r', rt) <- runLinA r
 --     linVars <- asks getEnvVars
@@ -126,12 +136,14 @@ tangentTuple vs env = makeTup [fromL (env ! v) | v <- vs]
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con' of
-  Lit _    -> LinA $ return (x, zeroAt (getType x))  where x = Con con
+  Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
   RecCon r -> liftA (Con . RecCon) $ sequenceA r
   _ -> error $ "not implemented: " ++ pprint con
   where con' = fmapExpr con id linearizeAtom id
 
 linearizeAtom :: Atom -> LinA Atom
+linearizeAtom atom | isSingletonType (tangentType (getType atom)) =
+  LinA $ liftM withZeroTangent $ substEmbed atom
 linearizeAtom atom = case atom of
   Var v -> linearizeVar v
   Con con -> linearizePrimCon con
@@ -142,8 +154,26 @@ linearizeVar v = LinA $ do
   maybeVal <- asks $ flip envLookup v
   case maybeVal of
     Just (L x) -> return (x, asks (fromL . (!v)))
-    Nothing    -> return (Var v, zeroAt (varAnn v))
+    Nothing    -> return (withZeroTangent (Var v))
     _ -> error "unexpected lookup"
+
+withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
+withZeroTangent x = (x, zeroAt (tangentType (getType x)))
+
+tangentType :: Type -> Type
+tangentType ty = case ty of
+  BaseType RealType -> BaseType RealType
+  BaseType  _ -> unitTy
+  IdxSetLit _ -> unitTy
+  TabType n a -> TabType n (tangentType a)
+  RecType r -> RecType $ fmap tangentType r
+
+isSingletonType :: Type -> Bool
+isSingletonType ty = case ty of
+  BaseType  _ -> False
+  IdxSetLit _ -> False
+  TabType _ a -> isSingletonType a
+  RecType r -> all isSingletonType r
 
 tensLiftA2 :: (a -> b -> CExpr) -> LinA a -> LinA b -> LinA Atom
 tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do

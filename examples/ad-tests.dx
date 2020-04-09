@@ -175,3 +175,24 @@ tripleit x = %runReader(x, lam r.
 
 -- :p transposeLinear (jvp myOtherSquare 3.0) 1.0
 -- > 6.0
+
+:p
+  f :: Real -> Real
+  f x = fst (x * x, iadd 2 1)
+  --
+  jvp f 1.0 3.0
+> 6.0
+
+:p
+  f :: 2=>Real -> Real
+  f xs = xs.(0@2) * xs.(1@2)
+  --
+  jvp f [1., 2.] [3.0, 4.0]
+> 10.0
+
+:p
+  f :: (Real,Real) -> Real
+  f (x,y) = x * y
+  --
+  jvp f (1., 2.) (3.0, 4.0)
+> 10.0
