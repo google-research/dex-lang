@@ -576,7 +576,7 @@ traverseConType con eq kindIs _ = case con of
   RecCon r -> return $ RecType r
   AFor n a -> return $ TabType n a
   AGet (ArrayType _ b) -> return $ BaseType b  -- TODO: check shape matches AFor scope
-  AsIdx n e -> eq e (BaseType IntType) >> return (IdxSetLit n)
+  AsIdx n e -> eq e (BaseType IntType) >> return n
   ArrayRef (Array shape b _) -> return $ ArrayType shape b
   Todo ty -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con

@@ -150,7 +150,7 @@ valFromPtrs' shape ty = case ty of
   TabType n a -> liftM (Con . AFor n) $ valFromPtrs' (shape ++ [n']) a
     where (IdxSetLit n') = n
   IdxSetLit n -> do
-    liftM (Con . AsIdx n) $ valFromPtrs' shape (BaseType IntType)
+    liftM (Con . AsIdx (IdxSetLit n)) $ valFromPtrs' shape (BaseType IntType)
   _ -> error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
