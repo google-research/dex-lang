@@ -178,7 +178,12 @@ data PrimCon ty e lam =
         Lit LitVal
       | Lam ty ty lam
       | RecCon (Record e)
-      | AsIdx Int e
+      | AsIdx ty e        -- Construct an index from an expression
+                          -- NOTE: the indices are expected to be zero-based!
+                          -- This means that even though the index space might
+                          -- contain all integers between 5 and 10 (exclusive),
+                          -- the only integers that are valid to be cast to such
+                          -- indices fall into the range of [0, 5).
       | AFor ty e
       | AGet e
       | ArrayRef Array
@@ -663,7 +668,7 @@ instance TraversableExpr PrimCon where
     Lam lin eff lam -> liftA3 Lam (fT lin) (fT eff) (fL lam)
     AFor n e    -> liftA2 AFor (fT n) (fE e)
     AGet e      -> liftA  AGet (fE e)
-    AsIdx n e   -> liftA  (AsIdx n) (fE e)
+    AsIdx n e   -> liftA2 AsIdx (fT n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
     Todo ty             -> liftA  Todo (fT ty)
     ArrayRef ref        -> pure $ ArrayRef ref

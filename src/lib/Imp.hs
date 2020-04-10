@@ -94,7 +94,7 @@ toImpCExpr dests op = case op of
     n' <- typeToSize (varAnn b)
     emitLoop n' $ \i -> do
       let ithDest = tabGetIAtom dests i
-      extendR (b @> asIdx n' i) $ toImpExpr ithDest body
+      extendR (b @> asIdx (varAnn b) i) $ toImpExpr ithDest body
   TabGet x i -> do
     i' <- toImpAtom i >>= fromScalarIAtom
     xs <- toImpAtom x
@@ -184,7 +184,7 @@ makeDest' shape ty = case ty of
     n'  <- lift $ typeToSize n
     liftM (ICon . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (ICon . RecCon ) $ traverse (makeDest' shape) r
-  IdxSetLit n -> liftM (ICon . AsIdx n) $ makeDest' shape (BaseType IntType)
+  IdxSetLit n -> liftM (ICon . AsIdx (IdxSetLit n)) $ makeDest' shape (BaseType IntType)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
 tabGetIAtom :: IAtom -> IExpr -> IAtom
@@ -245,8 +245,8 @@ toImpDepVal (DepLit i) = return $ ILit $ IntLit i
 copyIAtom :: IAtom -> IAtom -> ImpM ()
 copyIAtom dest src = zipWithM_ copyOrStore (toList dest) (toList src)
 
-asIdx :: IExpr -> IExpr -> IAtom
-asIdx n i = ICon $ AsIdx (fromIInt n) (ILeaf i)
+asIdx :: Type -> IExpr -> IAtom
+asIdx n i = ICon $ AsIdx n (ILeaf i)
 
 -- === Imp embedding ===
 

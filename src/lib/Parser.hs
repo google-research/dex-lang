@@ -329,7 +329,7 @@ idxLit = do
   n <- uint
   failIf (i < 0 || i >= n) $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
-  return $ AsIdx n (FPrimExpr $ ConExpr $ Lit $ IntLit i)
+  return $ AsIdx (IdxSetLit n) (FPrimExpr $ ConExpr $ Lit $ IntLit i)
 
 literal :: Parser LitVal
 literal =     numLit
