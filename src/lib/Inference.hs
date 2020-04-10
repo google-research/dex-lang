@@ -331,8 +331,13 @@ inferKindsM kind ty = case ty of
       return (v' @> (eff, t))
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
+  Range a b -> do
+    -- TODO: check kinds
+    a' <- inferKindsM DepKind a
+    b' <- inferKindsM DepKind b
+    return $ Range a' b'
+  Dep v -> return $ Dep v
   _ -> traverseType inferKindsM ty
-
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do

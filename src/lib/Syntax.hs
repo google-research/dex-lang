@@ -14,7 +14,7 @@
 module Syntax (
     Type (..), BaseType (..), Effect, EffectiveType, Mult,
     Kind (..), ClassName (..), TyQual (..),
-    FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var,
+    FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var, Dep,
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
@@ -56,6 +56,7 @@ data Type = TypeVar TVar
           | BaseType BaseType
           | ArrowType Mult PiType
           | IdxSetLit Int
+          | Range Type Type
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
@@ -64,6 +65,7 @@ data Type = TypeVar TVar
           | TypeAlias [TVar] Type
           | TypeApp Type [Type]
           | Dep Var
+          | DepLit Int
           | NoDep
           | Lin
           | NonLin
@@ -91,6 +93,7 @@ data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
 type TVar = VarP Kind
 type Mult   = Type
+type Dep    = Type
 type Effect = Type
 type EffectiveType = (Effect, Type)
 
@@ -717,11 +720,13 @@ traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
   IdxSetLit _          -> pure ty
+  Range a b            -> liftA2 Range (f DepKind a) (f DepKind b)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r
   Ref t                -> liftA Ref (f TyKind t)
   TypeApp t xs         -> liftA2 TypeApp (f TyKind t) (traverse (f TyKind) xs)
+  DepLit n             -> pure (DepLit n)
   NoDep                -> pure NoDep
   Lin                  -> pure Lin
   NonLin               -> pure NonLin

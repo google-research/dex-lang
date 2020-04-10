@@ -233,7 +233,13 @@ typeToSize (TypeVar v) = do
   ~(ILeaf n) <- lookupVar v
   return n
 typeToSize (IdxSetLit n) = return $ ILit (IntLit n)
-typeToSize ty = error $ "Not implemented: " ++ pprint ty
+typeToSize (Range low high) = do
+  low'  <- toImpDepVal low
+  high' <- toImpDepVal high
+  emitInstr $ IPrimOp $ ScalarBinOp ISub high' low'
+
+toImpDepVal :: Dep -> ImpM IExpr
+toImpDepVal (DepLit i) = return $ ILit $ IntLit i
 
 -- TODO: this is pretty iffy
 copyIAtom :: IAtom -> IAtom -> ImpM ()

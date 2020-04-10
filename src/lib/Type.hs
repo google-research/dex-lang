@@ -123,6 +123,8 @@ getKind ty = case ty of
   NonLin     -> MultKind
   Effect _ _ -> EffectKind
   NoAnn      -> NoKindAnn
+  Dep _      -> DepKind
+  DepLit _   -> DepKind
   _          -> TyKind
 
 checkKind :: (MonadError Err m, MonadReader TypeEnv m)
@@ -155,6 +157,12 @@ checkKind ty = case ty of
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
+  Range a b -> do
+    -- TODO: check kinds
+    -- checkKindIs DepKind a
+    -- checkKindIs DepKind b
+    return TyKind
+  Dep _ -> error "didn't expect dep"
   _ -> do
     void $ traverseType (\k t -> checkKindIs k t >> return t) ty
     return $ getKind ty
@@ -298,6 +306,7 @@ checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
   RecType r   -> mapM_ recur r
+  Range _ _   -> return ()
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
@@ -308,6 +317,7 @@ checkData env ty = case ty of
   BaseType _  -> return ()
   TabType _ a -> recur a
   RecType r   -> mapM_ recur r
+  Range _ _   -> return ()
   IdxSetLit _ -> return ()
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
