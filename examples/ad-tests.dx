@@ -196,3 +196,10 @@ tripleit x = %runReader(x, lam r.
   --
   jvp f (1., 2.) (3.0, 4.0)
 > 10.0
+
+:p
+  f :: n=>Real -> n=>Real
+  f xs = for i. xs.i * xs.i
+  --
+  jvp f [1.,2.] [3.,4.]
+> [6.0, 16.0]

@@ -91,6 +91,28 @@ linearizeCExpr topEnv expr = case expr' of
     ans <- emit $ TabGet x' i'
     return (ans, do tx' <- tx
                     emit $ TabGet tx' i')
+  -- I wish this didn't have to be so complicated. It's those pesky residuals.
+  For (LamExpr i body) -> LinA $ do
+    (lam, (iPrimal, vs, tBuilder)) <- buildLamExprAux i $ \i'@(Var iVar) ->
+       extendR (i @> L i') $ do
+          ((ans, ansT), embedEnv) <- scoped $ runLinA $ linearizeExpr topEnv body
+          let localScope = fst embedEnv
+          extend embedEnv
+          -- TODO: we build the linear expression just to find its free
+          -- variables. If this is slow, we can cache them separately.
+          (ansT', (_, declsT)) <- scoped $ local (const mempty) ansT
+          let fvs = freeVars ansT' <> foldMap freeVars declsT
+          let residualVs = [v :> ty | (v, L ty) <- envPairs $ localScope `envIntersect` fvs]
+          let ansWithResiduals = makePair ans (makeTup (map Var residualVs))
+          return (ansWithResiduals, (iVar, residualVs, ansT))
+    extend $ asFst (foldMap (@>()) (iPrimal:vs))
+    (ans, residuals) <- emit (For lam) >>= unzipTab
+    return (ans, emit =<< liftM For (buildLamExpr i $ \i' -> do
+       ~(Tup residuals') <- emit (TabGet residuals i') >>= unpackRec
+       scope <- looks fst
+       (ansT', (_, decls)) <- scoped tBuilder
+       let env = (iPrimal @> L i') <> fold [v @> L x | (v, x) <- zip vs residuals']
+       emitExpr $ subst (env, scope) $ wrapDecls decls ansT'))
 -- TODO: define this in the prelude instead (need richer deriv rules)
 --   RunReader l r lam@(LamExpr b eff _) -> LinA $ do
 --     (r', rt) <- runLinA r
@@ -153,7 +175,12 @@ linearizeVar :: Var -> LinA Atom
 linearizeVar v = LinA $ do
   maybeVal <- asks $ flip envLookup v
   case maybeVal of
-    Just (L x) -> return (x, asks (fromL . (!v)))
+    Just (L x) -> return (x, do
+      maybeTVal <- asks $ flip envLookup v
+      -- TODO: consider having separate primal-subst and tangent envs
+      case maybeTVal of
+        Just (L t) -> return t
+        Nothing    -> zeroAt $ tangentType $ varAnn v)
     Nothing    -> return (withZeroTangent (Var v))
     _ -> error "unexpected lookup"
 

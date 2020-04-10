@@ -12,7 +12,8 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               runEmbed, zeroAt, addAt, sumAt, deShadow, withIndexed,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
-              makeTup, makePair, substEmbed, fromPair, buildLamExprAux) where
+              makeTup, makePair, substEmbed, fromPair, buildLamExprAux,
+              emitExpr, unzipTab) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -44,6 +45,12 @@ emitTo b expr = do
   b' <- freshVar b
   extend $ asSnd [Let b' expr']
   return $ Var b'
+
+-- Assumes the decl binders are already fresh wrt current scope
+emitExpr :: MonadCat EmbedEnv m => Expr -> m Atom
+emitExpr (Decl decl@(Let v _) body) = extend (v@>(), [decl]) >> emitExpr body
+emitExpr (Atom atom) = return atom
+emitExpr (CExpr expr) = emit expr
 
 deShadow :: MonadCat EmbedEnv m => Subst a => a -> m a
 deShadow x = do
@@ -183,6 +190,20 @@ fromPair pair = do
   case r of
     Tup [x, y] -> return (x, y)
     _          -> error $ "Not a pair: " ++ pprint pair
+
+buildFor :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m Atom
+buildFor i body = do
+  lam <- buildLamExpr i body
+  emit $ For lam
+
+unzipTab :: (MonadCat EmbedEnv m) => Atom -> m (Atom, Atom)
+unzipTab tab = do
+  fsts <- buildFor ("i":>n) $ \i ->
+            liftM fst $ emit (TabGet tab i) >>= fromPair
+  snds <- buildFor ("i":>n) $ \i ->
+            liftM snd $ emit (TabGet tab i) >>= fromPair
+  return (fsts, snds)
+  where (TabType n _) = getType tab
 
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
