@@ -6,24 +6,25 @@
 :t lam x. sum for i. x.i
 > Type error:Ambiguous type variables: [?_10]
 >
-> ([*ans*::? = (lam x::?_5 . sum @?_10 for i::?_15 . (x).(i))], (*ans* @> L ?))
+> ( [*ans*::? = (lam x::?_5 . ((sum @?_10) (for i::?_15 .  (x.i))))]
+> , (*ans* @> L ?) )
 
 :t lam f x y. f y x
 > Type error:Ambiguous type variables: [?_13, ?_17, ?_21]
 >
-> ( [*ans*::? = (lam f::?_5 . (lam x::?_10 . (lam y::?_15 . f y x)))]
+> ( [*ans*::? = (lam f::?_5 . (lam x::?_10 . (lam y::?_15 . ((f y) x))))]
 > , (*ans* @> L ?) )
 
 :t lam x. for i j. x.j.i
 > Type error:Ambiguous type variables: [?_11, ?_14, ?_16]
 >
-> ( [*ans*::? = (lam x::?_5 . for i::?_9 . for j::?_13 . ((x).(j)).(i))]
+> ( [*ans*::? = (lam x::?_5 . (for i::?_9 .  (for j::?_13 .  ((x.j).i))))]
 > , (*ans* @> L ?) )
 
 :t lam f x. f x
 > Type error:Ambiguous type variables: [?_8, ?_12]
 >
-> ([*ans*::? = (lam f::?_5 . (lam x::?_10 . f x))], (*ans* @> L ?))
+> ([*ans*::? = (lam f::?_5 . (lam x::?_10 . (f x)))], (*ans* @> L ?))
 
 :t myid :: a -> a
    myid x = x
@@ -89,13 +90,13 @@ xr = map real arr
 :t []
 > Type error:Ambiguous type variables: [?_2]
 >
-> ([*ans*::? = []], (*ans* @> L ?))
+> ([*ans*::? = ([])], (*ans* @> L ?))
 
 :t [1, [2]]
 > Type error:
 > Expected: Int
 >   Actual: (1=>Int)
-> In: [2]
+> In: ([2])
 >
 > :t [1, [2]]
 >        ^^^
@@ -107,7 +108,7 @@ xr = map real arr
 > Type error:
 > Expected: (2=>Int)
 >   Actual: (1=>Int)
-> In: [3]
+> In: ([3])
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -130,7 +131,7 @@ p2 = 1
 :t lam x. for (i,j). x.i.j
 > Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
 >
-> ( [*ans*::? = (lam x::?_5 . for (i::?_9, j::?_10) . ((x).(i)).(j))]
+> ( [*ans*::? = (lam x::?_5 . (for (i::?_9, j::?_10) .  ((x.i).j)))]
 > , (*ans* @> L ?) )
 
 idfun :: a -> a
@@ -164,7 +165,8 @@ f x =
 > Error: variable not in scope: Foo
 
 :p lam x::Real. x
-> (lam x::Real . x)
+> (lam x::Real .
+>    x)
 
 vspaceid :: A a | VS a . a -> a
 vspaceid x = x

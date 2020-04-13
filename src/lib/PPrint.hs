@@ -118,15 +118,16 @@ instance Pretty LitVal where
   pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty Expr where
-  pretty (Decl decl body) = align $ p decl <> hardline <> p body
+  pretty (Decl decl body) = p decl <> hardline <> p body
   pretty (CExpr expr) = p (OpExpr expr)
   pretty (Atom atom) = p atom
 
 instance Pretty FExpr where
   pretty expr = case expr of
     FVar (v:>_) -> p v
-    FDecl decl body -> align $ p decl <> hardline <> p body
-    FPrimExpr e -> p e
+    FDecl decl body -> p decl <> hardline <> p body
+    FPrimExpr (OpExpr  e) -> parens $ p e
+    FPrimExpr (ConExpr e) -> p e
     SrcAnnot subexpr _ -> p subexpr
     Annot subexpr ty -> p subexpr <+> "::" <+> p ty
 
@@ -146,36 +147,33 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) wher
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (App _ _ e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
-  pretty (For lam) = "for" <+> i <+> "." <+> body
+  pretty (For lam) = "for" <+> i <+> "." <+> nest 3 (line <> body)
     where (i, body) = prettyLam lam
   pretty (TabCon _ _ xs) = list (map pretty xs)
-  pretty (TabGet e1 e2) = parens (p e1) <> "." <> parens (p e2)
-  pretty (RecGet e1 i ) = p e1 <> "#" <> parens (p i)
-  pretty (ArrayGep x i) = parens (p x) <> "." <> p i
+  pretty (TabGet   x i) = p x <> "." <> p i
+  pretty (RecGet   x i) = p x <> "#" <> p i
+  pretty (ArrayGep x i) = p x <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
-  -- pretty (MonadRun r s m) = "%run" <+> align (p r <+> p s <> hardline <> p m)
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
   pretty op = prettyExprDefault (OpExpr op)
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
-  pretty (Lam _ _ lam)   = prettyL lam
-  pretty (RecCon r) = p r
-  pretty (AFor n body) = "afor *::" <> p n <+> "." <+> p body
-  pretty (AsIdx n i) = p i <> "@" <> p n
-  -- pretty (Bind m f) = align $ v <+> "<-" <+> p m <> hardline <> body
-  --   where (v, body) = prettyLam f
+  pretty (Lam _ _ lam) = parens $ prettyL lam
+  pretty (RecCon r)    = p r
+  pretty (AFor n body) = parens $ "afor *::" <> p n <+> "." <+> p body
+  pretty (AsIdx n i)   = p i <> "@" <> p n
   pretty (ArrayRef array) = p array
   pretty con = prettyExprDefault (ConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
 prettyExprDefault expr =
-  p (nameToStr blankExpr) <> tupled (map p xs ++ map prettyL lams)
+  p ("%" ++ nameToStr blankExpr) <+> hsep (map p xs ++ map prettyL lams)
   where (blankExpr, (_, xs, lams)) = unzipExpr expr
 
 prettyL :: PrettyLam a => a -> Doc ann
-prettyL lam = parens $ align $ group $ "lam" <+> v <+> "." <> line <> align body
+prettyL lam = "lam" <+> v <+> "." <> nest 3 (line <> body)
   where (v, body) = prettyLam lam
 
 class PrettyLam a where
