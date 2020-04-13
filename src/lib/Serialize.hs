@@ -26,7 +26,6 @@ import Type
 import Syntax
 import PPrint
 import Parser
-import ParseUtil
 import Array
 import Record
 

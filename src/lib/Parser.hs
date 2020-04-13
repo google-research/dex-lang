@@ -6,20 +6,22 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Parser (parseit, parseProg, parseData, parseTopDeclRepl, parseTopDecl,
-               tauType) where
+module Parser (Parser, parseit, parseProg, parseData, runTheParser,
+               parseTopDeclRepl, parseTopDecl, uint, withSource,
+               emptyLines, brackets, tauType, symbol) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
+import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
-import Text.Megaparsec.Char
+import Text.Megaparsec.Char hiding (space)
 import Data.Foldable (fold)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
+import qualified Text.Megaparsec.Char.Lexer as L
 
 import Env
 import Record
-import ParseUtil
 import Syntax
 import PPrint
 
@@ -629,3 +631,85 @@ tableData :: Parser FExpr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
   return $ FPrimExpr $ OpExpr $ TabCon NoAnn NoAnn xs
+
+-- === Util ===
+
+-- Boolean specifies whether to consume newlines (True)
+type Parser = ReaderT Bool (Parsec Void String)
+
+runTheParser :: String -> Parser a -> Either (ParseErrorBundle String Void) a
+runTheParser s p =  parse (runReaderT p False) "" s
+
+sc :: Parser ()
+sc = L.space space lineComment empty
+
+lineComment :: Parser ()
+lineComment = do
+  try $ string "--" >> notFollowedBy (void (char 'o'))
+  void (takeWhileP (Just "char") (/= '\n'))
+
+emptyLines :: Parser ()
+emptyLines = void $ many (sc >> eol)
+
+outputLines :: Parser ()
+outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> eol)
+
+stringLiteral :: Parser String
+stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
+
+space :: Parser ()
+space = do
+  consumeNewLines <- ask
+  if consumeNewLines
+    then space1
+    else void $ takeWhile1P (Just "white space") (`elem` (" \t" :: String))
+
+mayBreak :: Parser a -> Parser a
+mayBreak p = local (const True) p
+
+mayNotBreak :: Parser a -> Parser a
+mayNotBreak p = local (const False) p
+
+num :: Parser (Either Double Int)
+num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
+     <|> (do x <- L.signed (return ()) L.decimal
+             trailingPeriod <- optional (char '.')
+             sc
+             return $ case trailingPeriod of
+               Just _  -> Left (fromIntegral x)
+               Nothing -> Right x)
+
+uint :: Parser Int
+uint = L.decimal <* sc
+
+lexeme :: Parser a -> Parser a
+lexeme = L.lexeme sc
+
+symbol :: String -> Parser ()
+symbol s = void $ L.symbol sc s
+
+bracketed :: String -> String -> Parser a -> Parser a
+bracketed left right p = between (mayBreak (symbol left)) (symbol right) $ mayBreak p
+
+parens :: Parser a -> Parser a
+parens p = bracketed "(" ")" p
+
+brackets :: Parser a -> Parser a
+brackets p = bracketed "[" "]" p
+
+withPos :: Parser a -> Parser (a, (Int, Int))
+withPos p = do
+  n <- getOffset
+  x <- p
+  n' <- getOffset
+  return $ (x, (n, n'))
+
+withSource :: Parser a -> Parser (String, a)
+withSource p = do
+  s <- getInput
+  (x, (start, end)) <- withPos p
+  return (take (end - start) s, x)
+
+failIf :: Bool -> String -> Parser ()
+failIf True s = fail s
+failIf False _ = return ()

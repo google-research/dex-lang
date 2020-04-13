@@ -15,7 +15,7 @@ import PPrint
 import RenderHtml
 
 import TopLevel
-import Parser
+import Parser  hiding (Parser)
 import LiveOutput
 
 data ErrorHandling = HaltOnErr | ContinueOnErr

@@ -21,7 +21,7 @@ import Text.Megaparsec.Char as C
 
 import Syntax
 import PPrint
-import ParseUtil
+import Parser
 import Plot
 import Serialize()
 
