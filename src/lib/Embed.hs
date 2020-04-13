@@ -10,10 +10,11 @@
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, deShadow, withIndexed,
-              nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
+              nRecGet, nTabGet, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
               makeTup, makePair, substEmbed, fromPair, buildLamExprAux,
-              emitExpr, unzipTab, buildFor) where
+              emitExpr, unzipTab, buildFor, isSingletonType,
+              singletonTypeVal) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -33,18 +34,23 @@ type EmbedEnv = (Scope, [Decl])
 
 -- TODO: use suggestive names based on types (e.g. "f" for function)
 emit :: MonadCat EmbedEnv m => CExpr -> m Atom
-emit expr = emitNamed "v" expr
-
-emitNamed :: MonadCat EmbedEnv m => Name -> CExpr -> m Atom
-emitNamed v expr = emitTo (v:> getType expr) expr
+emit expr = emitTo ("v":>NoAnn) expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
 emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
-emitTo b expr = do
-  expr' <- deShadow expr
-  b' <- freshVar b
-  extend $ asSnd [Let b' expr']
-  return $ Var b'
+emitTo (v:>_) expr = case singletonTypeVal ty of
+  Nothing -> do
+    expr' <- deShadow expr
+    v' <- freshVar (v:>ty)
+    extend $ asSnd [Let v' expr']
+    return $ Var v'
+  Just x
+    | eff == noEffect -> return x
+    | otherwise -> do
+        expr' <- deShadow expr
+        extend $ asSnd [Let (NoName:>ty) expr']
+        return x
+  where (eff, ty) = getEffType expr
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitExpr :: MonadCat EmbedEnv m => Expr -> m Atom
@@ -230,3 +236,17 @@ substEmbed x = do
   env <- ask
   scope <- looks fst
   return $ subst (env, scope) x
+
+
+isSingletonType :: Type -> Bool
+isSingletonType ty = case singletonTypeVal ty of
+  Nothing -> False
+  Just _  -> True
+
+singletonTypeVal :: Type -> Maybe Atom
+singletonTypeVal ty = case ty of
+  BaseType  _ -> Nothing
+  IdxSetLit _ -> Nothing
+  TabType n a -> liftM (Con . AFor n) $ singletonTypeVal a
+  RecType r   -> liftM (Con . RecCon) $ traverse singletonTypeVal r
+  _           -> Nothing

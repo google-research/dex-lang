@@ -201,15 +201,6 @@ hasDiscreteType expr = case tailVar of
   where (Effect eff tailVar, ty) = getEffType expr
         tangentTy = tangentType ty
 
-isSingletonType :: Type -> Bool
-isSingletonType ty = case ty of
-  BaseType  _ -> False
-  IdxSetLit _ -> False
-  TabType _ a -> isSingletonType a
-  RecType r   -> all isSingletonType r
-  Ref _       -> False
-  _ -> error $ "Can't differentiate wrt type " ++ pprint ty
-
 tensLiftA2 :: (HasVars a, HasVars b)
            => (a -> b -> CExpr) -> LinA a -> LinA b -> LinA Atom
 tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do

@@ -216,6 +216,7 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
+    Let (NoName:>_) bound -> p (OpExpr bound)
     Let b bound -> p b <+> "=" <+> p (OpExpr bound)
 
 instance Pretty Atom where

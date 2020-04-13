@@ -121,7 +121,9 @@ freshCat v = do v' <- looks $ rename v
 infixr 7 @>
 
 (@>) :: VarP b -> a -> Env a
-(v:>_) @> x = Env $ M.singleton v x
+(v:>_) @> x = case v of
+  NoName -> mempty
+  _      -> Env $ M.singleton v x
 
 instance Functor Env where
   fmap = fmapDefault
