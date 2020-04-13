@@ -237,9 +237,10 @@ typeToSize (Range low high) = do
   low'  <- toImpDepVal low
   high' <- toImpDepVal high
   emitInstr $ IPrimOp $ ScalarBinOp ISub high' low'
+typeToSize ty = error $ "Not implemented " ++ pprint ty
 
 toImpDepVal :: Dep -> ImpM IExpr
-toImpDepVal (DepLit i) = return $ ILit $ IntLit i
+toImpDepVal ~(DepLit i) = return $ ILit $ IntLit i
 
 -- TODO: this is pretty iffy
 copyIAtom :: IAtom -> IAtom -> ImpM ()
@@ -285,9 +286,6 @@ emitLoop n body = do
     body $ IVar i
     return i
   emitStatement (Nothing, Loop i n loopBody)
-
-fromIInt :: IExpr -> Int
-fromIInt ~(ILit (IntLit x)) = x
 
 emitStatement :: ImpStatement -> ImpM ()
 emitStatement statement = extend $ asSnd $ ImpProg [statement]

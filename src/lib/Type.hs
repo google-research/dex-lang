@@ -158,7 +158,7 @@ checkKind ty = case ty of
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
-  Range a b -> do
+  Range _ _ -> do
     -- TODO: check kinds
     -- checkKindIs DepKind a
     -- checkKindIs DepKind b

@@ -91,11 +91,13 @@ env ! v = case envLookup env v of
 
 genFresh :: Name-> Env a -> Name
 genFresh NoName _ = NoName
+genFresh (DeBruijn _) _ = error "Renaming de Bruijn indices"
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
                 Nothing -> 0
                 Just (NoName, _) -> 0
+                Just (DeBruijn _, _) -> error "Renaming de Bruijn indices"
                 Just (Name ns' tag' i, _)
                   | ns' /= ns || tag' /= tag -> 0
                   | i < bigInt  -> i + 1
@@ -105,6 +107,7 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
 renameWithNS :: NameSpace -> VarP ann -> Env a -> VarP ann
 renameWithNS _  (NoName       :> ann) _     = NoName :> ann
 renameWithNS ns (Name _ tag _ :> ann) scope = rename (Name ns tag 0 :> ann) scope
+renameWithNS _  (DeBruijn _ :> _) _ = error "Renaming de Bruijn indices"
 
 rename :: VarP ann -> Env a -> VarP ann
 rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann

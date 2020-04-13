@@ -14,7 +14,6 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Foldable
-import qualified Data.Map.Strict as M
 
 import Type
 import Env
@@ -61,7 +60,7 @@ linearizeLamExpr topEnv (LamExpr v body) = do
                                            linearizeExpr topEnv body
        let localScope = fst embedEnv
        extend embedEnv
-       let residualVs = [v :> ty | (v, L ty) <- envPairs $ localScope `envIntersect` fvs]
+       let residualVs = [rv :> ty | (rv, L ty) <- envPairs $ localScope `envIntersect` fvs]
        let ansWithResiduals = makePair ans (makeTup (map Var residualVs))
        return (ansWithResiduals, (iVar, residualVs, ansT))
   extend $ asFst (foldMap (@>()) (v':residualVs))
@@ -69,7 +68,7 @@ linearizeLamExpr topEnv (LamExpr v body) = do
      ~(Tup residuals') <- unpackRec residuals
      scope <- looks fst
      (ansT', (_, decls)) <- extendR (v @> L (Var v')) $ scoped tBuilder
-     let env = (v' @> L v'') <> fold [v @> L x | (v, x) <- zip residualVs residuals']
+     let env = (v' @> L v'') <> fold [rv @> L x | (rv, x) <- zip residualVs residuals']
      emitExpr $ subst (env, scope) $ wrapDecls decls ansT')
 
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
@@ -115,32 +114,26 @@ linearizeCExpr topEnv expr = case expr' of
     (ans, residuals) <- fromPair =<< emit (RunReader r' lam')
     saveVars residuals
     return (ans , do rt' <- rt
-                     lam' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                     emit $ RunReader rt' lam')
+                     lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
+                     emit $ RunReader rt' lam'')
   RunWriter lam@(LamExpr ref _) -> LinA $ do
     (lam', lin) <- lift $ linearizeLamExpr topEnv lam
     (ansRes, w) <- fromPair =<< emit (RunWriter lam')
     (ans, residuals) <- fromPair ansRes
     saveVars residuals
     return ( makePair ans w
-           , do lam' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                emit $ RunWriter lam')
+           , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
+                emit $ RunWriter lam'')
   PrimEffect ~(Dep ref) refArg m ->
     liftA3 (\ref' refArg' m' -> PrimEffect (Dep ref') refArg' m')
       (liftA (\(Var v) -> v) $ linearizeVar ref) refArg
-      (case m of MAsk      -> pure MAsk
-                 (MTell x) -> liftA MTell x) `bindLin` emit
-  PrimEffect ~(Dep ref) refArg m ->
-    liftA3 (\ref' refArg' m' -> PrimEffect (Dep ref') refArg' m')
-      (liftA (\(Var v) -> v) $ linearizeVar ref) refArg
-      (case m of MAsk      -> pure MAsk
-                 (MTell x) -> liftA MTell x) `bindLin` emit
+      (case m of
+         MAsk    -> pure MAsk
+         MTell x -> liftA MTell x
+         _       -> error "Not implemented") `bindLin` emit
   RecGet x i -> liftA (flip RecGet i) x `bindLin` emit
   _ -> error $ "not implemented: " ++ pprint expr
   where expr' = fmapExpr expr id linearizeAtom id
-
-getEnvVars :: SubstEnv -> [Var]
-getEnvVars env = [v:>getType x | (v, L x) <- envPairs env]
 
 linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
 linearizedDiv x y tx ty = do
@@ -149,9 +142,6 @@ linearizedDiv x y tx ty = do
   ySq  <- mul y y
   ty'' <- div' ty' ySq >>= neg
   add tx' ty''
-
-tangentTuple :: [Var] -> SubstEnv -> Atom
-tangentTuple vs env = makeTup [fromL (env ! v) | v <- vs]
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con' of
@@ -176,7 +166,7 @@ linearizeVar v = LinA $ do
       maybeTVal <- asks $ flip envLookup v
       -- TODO: consider having separate primal-subst and tangent envs
       case maybeTVal of
-        Just (L t) -> return t
+        Just ~(L t) -> return t
         Nothing    -> error "Tangent lookup failed")
     Nothing    -> return (withZeroTangent (Var v))
     _ -> error "unexpected lookup"
@@ -191,7 +181,7 @@ tangentType ty = case ty of
   IdxSetLit _ -> unitTy
   TabType n a -> TabType n (tangentType a)
   RecType r   -> RecType $ fmap tangentType r
-  Ref ty      -> Ref $ tangentType ty
+  Ref a       -> Ref $ tangentType a
   _ -> error $ "Can't differentiate wrt type " ++ pprint ty
 
 hasDiscreteType :: HasType e => e -> Bool
@@ -237,7 +227,6 @@ instance Applicative LinA where
 -- -- === transposition ===
 
 type LinVars = Env Atom
-type WriterRefEnv = Env Atom
 type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> LamExpr -> Atom
@@ -308,7 +297,7 @@ transposeCExpr expr ct = case expr of
              Just ref -> return ref
              -- might be possible to reach here indexing into a literal zero array
              _ -> error "Not implemented"
-    void $ withIndexed Writer ref i $ \(Var ref') -> do
+    void $ withIndexed Writer ref i' $ \(Var ref') -> do
       emitCTToRef ref' ct
       return unitCon
   -- TODO: de-dup RunReader/RunWriter a bit
@@ -340,6 +329,7 @@ transposeCExpr expr ct = case expr of
       MTell x -> do
        ct' <- emit $ PrimEffect (Dep ref') refArg' MAsk
        transposeAtom x ct'
+      _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint expr
 
 substVar :: Var -> TransposeM Var
@@ -398,7 +388,7 @@ withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
 extractCT v@(_:>ty) m = do
-  (lam, ans) <- buildLamExprAux ("ctRef":> Ref ty) $ \ctRef@(Var effName) -> do
+  (lam, ans) <- buildLamExprAux ("ctRef":> Ref ty) $ \ctRef -> do
     extendR (asFst (v @> ctRef)) $ do
       ans <- m
       return (unitCon, ans)
