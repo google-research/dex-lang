@@ -13,7 +13,8 @@ module Type (
     getType, substEnvType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
-    getKind, checkKindIs, checkKindEq, getEffType, getPatName) where
+    getKind, checkKindIs, checkKindEq, getEffType, getPatName,
+    HasType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)

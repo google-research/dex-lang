@@ -223,7 +223,7 @@ scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
 -- 'More misc functions
 
 sum :: n=>Real -> Real
-sum xs = fold 0.0 (lam i c. c + xs.i)
+sum xs = snd $ runWriter lam ref. for i. tell ref xs.i
 
 isum :: n=>Int -> Int
 isum xs = fold 0 lam i c. iadd c xs.i

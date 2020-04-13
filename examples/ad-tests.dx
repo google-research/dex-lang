@@ -203,3 +203,15 @@ tripleit x = %runReader(x, lam r.
   --
   jvp f [1.,2.] [3.,4.]
 > [6.0, 16.0]
+
+:p
+  f :: Real -> Real
+  f xs = runReader xs lam ref.
+            y = ask ref
+            y * y * y
+  --
+  jvp f 2. 3.
+> 36.0
+
+:p jvp sum [1., 2.] [3.0, 4.0]
+> 7.0

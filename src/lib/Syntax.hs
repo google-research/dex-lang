@@ -30,7 +30,7 @@ module Syntax (
     fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
-    noEffect, isPure, EffectName (..), EffectRow,
+    noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi)
   where
 

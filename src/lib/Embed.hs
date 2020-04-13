@@ -13,7 +13,7 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               nRecGet, nTabGet, emitNamed, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unitCon, unpackRec,
               makeTup, makePair, substEmbed, fromPair, buildLamExprAux,
-              emitExpr, unzipTab) where
+              emitExpr, unzipTab, buildFor) where
 
 import Control.Monad
 import Control.Monad.Reader
