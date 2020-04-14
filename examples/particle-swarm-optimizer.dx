@@ -2,13 +2,13 @@
 
 ' ## Fitness function
 
-rosenbrock:: Real -> Real -> Real
+rosenbrock: Real -> Real -> Real
 rosenbrock x y = sq (1.0 - x) + 80.0*sq (y - x*x)
 
 
 ' We write one that uses vector for input
 
-rosenbrock2:: (2=>Real) -> Real
+rosenbrock2: (2=>Real) -> Real
 rosenbrock2 xs =
   x = xs.(0@2)
   y = xs.(1@2)
@@ -31,17 +31,17 @@ rosenbrock2 xs =
 
 ' ## Helper functions
 
-minbyfst:: A a | Data a . (Real, a)->(Real, a)->(Real, a)
+minbyfst: A a | Data a . (Real, a)->(Real, a)->(Real, a)
 minbyfst = minby (asNonLin fst)
 
-minimumbyfst:: A n a | Data a . (n=>(Real, a))->(Real, a)
+minimumbyfst: A n a | Data a . (n=>(Real, a))->(Real, a)
 minimumbyfst = minimumby (asNonLin fst)
 
 ' ### Rand helpers
 
 ' make a random vector uniformly distributed between `lb` and `ub`
 
-randBounded:: Key -> (d=>Real)->(d=>Real)->(d=>Real)
+randBounded: Key -> (d=>Real)->(d=>Real)->(d=>Real)
 randBounded key lb ub =
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
@@ -52,47 +52,47 @@ randBounded key lb ub =
 
 ' ## The Optimizer itself.
 We have **arguments**:
- - type explicit, `np::Ix`: number of particles
- - type explicit, `niter::Ix`: number of iterations
- - type: `d::Ix`: number of dimensions in the domain of `f`, i.e. the search space.
- - `f::(d=>Real)->Real`: loss function being minimized.
- - `(lb,ub)::(d=>Real,d=>Real)`: boundries of the space being searched
- - `(momentum,gRate,pRate)::(Real,Real,Real)`: PSO hyper-parameters to control exploration vs exploitation.
+ - type explicit, `np:Ix`: number of particles
+ - type explicit, `niter:Ix`: number of iterations
+ - type: `d:Ix`: number of dimensions in the domain of `f`, i.e. the search space.
+ - `f:(d=>Real)->Real`: loss function being minimized.
+ - `(lb,ub):(d=>Real,d=>Real)`: boundries of the space being searched
+ - `(momentum,gRate,pRate):(Real,Real,Real)`: PSO hyper-parameters to control exploration vs exploitation.
 
 ' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
-optimize:: A np::Ty niter::Ty d | Ix np, Ix niter, Ix d . Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
+optimize: A np:Ty niter:Ty d | Ix np, Ix niter, Ix d . Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
 optimize key f (lb,ub) (momentum,gRate,pRate) =
     optStep (keyL, gbest, pbests, positions, velocities) =
-        newPositions::(np=>d=>Real) = for p i.
+        newPositions:(np=>d=>Real) = for p i.
             positions.p.i + velocities.p.i
-        newPbests::(np=>(Real, d=>Real)) = for p.
+        newPbests:(np=>(Real, d=>Real)) = for p.
             minbyfst pbests.p (f newPositions.p, newPositions.p)
-        newGbest::(Real, d=>Real) =
+        newGbest:(Real, d=>Real) =
             minbyfst gbest (minimumbyfst newPbests)
         (keyG, keyP, keyNext) = splitKey3 keyL
         (gscore, gloc) = gbest
         plocs = map (asNonLin snd) pbests
-        gVel::(np=>d=>Real) = for p i.
+        gVel:(np=>d=>Real) = for p i.
             weight = rand $ (ixkey2 keyG p i)
             dir = gloc.i - positions.p.i
             weight * dir
-        pVel::(np=>d=>Real) = for p i.
+        pVel:(np=>d=>Real) = for p i.
             weight = rand $ (ixkey2 keyP p i)
             dir = plocs.p.i - positions.p.i
             weight * dir
-        newVelocities::(np=>d=>Real) = for p i.
+        newVelocities:(np=>d=>Real) = for p i.
             momentum*velocities.p.i + gRate*gVel.p.i + pRate*gVel.p.i
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 keyI1 = randBounded keyI1 lb ub
-    randInit keyI = for p::np. randInit1 $ ixkey keyI p
+    randInit keyI = for p:np. randInit1 $ ixkey keyI p
     (keyPos, keyVel, keyLoop) = splitKey3 key
-    initPositions::(np=>d=>Real) = randInit keyPos
-    initVelocities::(np=>d=>Real) = randInit keyVel
-    initPs::(np=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
-    initG::(Real, d=>Real) = minimumbyfst initPs
+    initPositions:(np=>d=>Real) = randInit keyPos
+    initVelocities:(np=>d=>Real) = randInit keyVel
+    initPs:(np=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
+    initG:(Real, d=>Real) = minimumbyfst initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
-    res = fold inits (lam iter::niter. optStep)
+    res = fold inits (\iter:niter. optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 

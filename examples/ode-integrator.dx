@@ -5,19 +5,19 @@ type Dynamics d = EState d -> EState d
 
 type N = 100000
 
-eulerStep :: Pi s::(Ref (EState d)) -> Dynamics d -> Time -> {State s} ()
+eulerStep : s:(Ref (EState d)) -> Dynamics d -> Time -> {State s} ()
 eulerStep sRef dyn dt =
   s = get sRef
   dsdt = dyn s
   s' = for i. s.i + dsdt.i * dt
   put sRef s'
 
-euler :: Dynamics d -> EState d -> Time -> EState d
+euler : Dynamics d -> EState d -> Time -> EState d
 euler f x0 dt =
-  snd $ runState x0 lam sRef.
-    for i::N. eulerStep sRef f dt
+  snd $ runState x0 \sRef.
+    for i:N. eulerStep sRef f dt
 
-myDyn :: Dynamics d
+myDyn : Dynamics d
 myDyn x = x
 
 s0 = [1.0]

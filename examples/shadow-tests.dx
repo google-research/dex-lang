@@ -31,7 +31,7 @@ arr = 20
 > 10
 
 -- testing top-level shadowing
-f :: a -> a
+f : a -> a
 f x = x
 
 x = 1

@@ -10,15 +10,15 @@ type NTest  = 10000
 
 (xsTrain, ysTrain, xsTest, ysTest) = mnist
 
-findNearestNeighbor :: (a -> a -> Real) -> n=>a -> a -> n
+findNearestNeighbor : (a -> a -> Real) -> n=>a -> a -> n
 findNearestNeighbor metric xs x =
   distances.i = metric xs.i x
   argmin distances
 
-imgDistance :: Img -> Img -> Real
+imgDistance : Img -> Img -> Real
 imgDistance x y = sum for (i,j). sq (x.i.j - y.i.j)
 
-fracTrue :: n=>Bool -> Real
+fracTrue : n=>Bool -> Real
 fracTrue xs = mean for i. real (b2i xs.i)
 
 example = asidx @NTest 123
@@ -33,7 +33,7 @@ type NTestSmall = 1000
 xsTest' = slice @NTestSmall xsTest 0
 ysTest' = slice @NTestSmall ysTest 0
 
-closestTrainExample :: NTestSmall => NTrain
+closestTrainExample : NTestSmall => NTrain
 closestTrainExample.i = findNearestNeighbor imgDistance xsTrain xsTest'.i
 
 :p fracTrue for i. ysTrain.(closestTrainExample.i) == ysTest'.i

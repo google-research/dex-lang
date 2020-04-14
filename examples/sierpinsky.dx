@@ -3,15 +3,15 @@
 type Point = (Real, Real)
 type N = 3000
 
-update ::n=>Point -> Key -> Point -> Point
+update :n=>Point -> Key -> Point -> Point
 update points key (x,y) =
   (x', y') = points.(randIdx key)
   (0.5 * (x + x'), 0.5 * (y + y'))
 
-runChain :: A n::Ty a | Ix n, Data a  . (Key -> a -> a) -> Key -> a -> n=>a
+runChain : A n:Ty a | Ix n, Data a  . (Key -> a -> a) -> Key -> a -> n=>a
 runChain f key x0 = scan' x0 (many f key)
 
-trianglePoints :: 3=>Point
+trianglePoints : 3=>Point
 trianglePoints = [(0.0, 0.0), (1.0, 0.0), (0.5, sqrt 0.75)]
 
 :plot runChain @N (update trianglePoints) (newKey 0) (0.0, 0.0)

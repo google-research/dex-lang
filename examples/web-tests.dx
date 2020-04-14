@@ -1,7 +1,7 @@
 
 _, N = unpack range 7
 
-xs = for i::N. real iota.i
+xs = for i:N. real iota.i
 
 :p 1 + 1.0
 
@@ -9,4 +9,4 @@ xs = for i::N. real iota.i
 
 :plot for i. (xs.i, xs.i * xs.i)
 
-:plotmat for i::N j::N. rand $ hash (hash 0 iota.i) iota.j
+:plotmat for i:N j:N. rand $ hash (hash 0 iota.i) iota.j

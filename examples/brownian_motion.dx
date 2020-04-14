@@ -2,7 +2,7 @@
 
 type UnitInterval = Real
 
-bmIter :: (Key, Real, Real, UnitInterval) -> (Key, Real, Real, UnitInterval)
+bmIter : (Key, Real, Real, UnitInterval) -> (Key, Real, Real, UnitInterval)
 bmIter (key, y, sigma, t) =
   (kDraw, kL, kR) = splitKey3 key
   t' = abs (t - 0.5)
@@ -10,9 +10,9 @@ bmIter (key, y, sigma, t) =
   key' = select (t > 0.5) kL kR
   (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
-sampleBM :: Key -> UnitInterval -> Real
+sampleBM : Key -> UnitInterval -> Real
 sampleBM key t =
-  (_, y, _, _) = fold (key, 0.0, 1.0, t) lam i::10. bmIter
+  (_, y, _, _) = fold (key, 0.0, 1.0, t) \i:10. bmIter
   y
 
 xs = linspace @1000 0.0 1.0

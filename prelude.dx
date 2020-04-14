@@ -4,246 +4,246 @@
 
 'Curried wrappers around built-in functions
 
-iadd :: Int -> Int -> Int
+iadd : Int -> Int -> Int
 iadd x y = %iadd(x, y)
 
-isub :: Int -> Int -> Int
+isub : Int -> Int -> Int
 isub x y = %isub(x, y)
 
-imul :: Int -> Int -> Int
+imul : Int -> Int -> Int
 imul x y = %imul(x, y)
 
-rem :: Int -> Int -> Int
+rem : Int -> Int -> Int
 rem x y = %rem(x, y)
 
-mod :: Int -> Int -> Int
+mod : Int -> Int -> Int
 mod x y = rem (iadd y (rem x y)) y
 
-neg :: Real --o Real
+neg : Real --o Real
 neg x = %fneg(x)
 
-fadd :: Real -> Real -> Real
+fadd : Real -> Real -> Real
 fadd x y = %fadd(x, y)
 
-fsub :: Real -> Real -> Real
+fsub : Real -> Real -> Real
 fsub x y = %fsub(x, y)
 
-fmul :: Real --o Real --o Real
+fmul : Real --o Real --o Real
 fmul x y = %fmul(x, y)
 
-fdiv :: Real --o Real -> Real
+fdiv : Real --o Real -> Real
 fdiv x y = %fdiv(x, y)
 
-ipow :: Int -> Int -> Int
+ipow : Int -> Int -> Int
 ipow x y = %pow(x, y)
 
-pow :: Real -> Real -> Real
+pow : Real -> Real -> Real
 pow x y = %%pow(x, y)
 
-asint :: A i | Ix i . i -> Int
+asint : A i | Ix i . i -> Int
 asint i = %asint(i)
 
-asidx :: A i | Ix i . Int -> i
+asidx : A i | Ix i . Int -> i
 asidx i = %asidx(i)
 
-real :: Int -> Real
+real : Int -> Real
 real x = %inttoreal(x)
 
-b2i :: Bool -> Int
+b2i : Bool -> Int
 b2i x = %booltoint(x)
 
-not :: Bool -> Bool
+not : Bool -> Bool
 not x = %not(x)
 
-and :: Bool -> Bool -> Bool
+and : Bool -> Bool -> Bool
 and x y = %and(x, y)
 
-or :: Bool -> Bool -> Bool
+or : Bool -> Bool -> Bool
 or x y = %or(x, y)
 
 -- `todo` is like `undefined` in Haskell
-todo :: a
+todo : a
 todo = %todo()
 
 'Wrappers around C library functions
 
-exp :: Real -> Real
+exp : Real -> Real
 exp x = %%exp(x)
 
-log :: Real -> Real
+log : Real -> Real
 log x = %%log(x)
 
-sqrt :: Real -> Real
+sqrt : Real -> Real
 sqrt x = %%sqrt(x)
 
-sin :: Real -> Real
+sin : Real -> Real
 sin x = %%sin(x)
 
-cos :: Real -> Real
+cos : Real -> Real
 cos x = %%cos(x)
 
-tan :: Real -> Real
+tan : Real -> Real
 tan x = %%tan(x)
 
-floor :: Real -> Int
+floor : Real -> Int
 floor x = %%floorDex(x)
 
 'Misc functions
 
-fst :: (a, b) --o a
+fst : (a, b) --o a
 fst (x, y) = x
 
-snd :: (a, b) --o b
+snd : (a, b) --o b
 snd (x, y) = y
 
-swap :: (a, b) -> (b, a)
+swap : (a, b) -> (b, a)
 swap (x, y) = (y, x)
 
 -- Hope to need this less with linearity polymoprhism
-asNonLin :: (a --o b) -> a -> b
+asNonLin : (a --o b) -> a -> b
 asNonLin f x = f x
 
-b2r :: Bool -> Real
+b2r : Bool -> Real
 b2r x = real $ b2i x
 
-pi :: Real
+pi : Real
 pi = 3.141592653589793
 
-ixadd :: A i | Ix i . i -> Int -> i
+ixadd : A i | Ix i . i -> Int -> i
 ixadd i n = asidx $ iadd (asint i) n
 
-ixsub :: A i | Ix i . i -> Int -> i
+ixsub : A i | Ix i . i -> Int -> i
 ixsub i n = asidx $ isub (asint i) n
 
-iota :: n=>Int
+iota : n=>Int
 iota = for i. asint i
 
-id :: a -> a
+id : a -> a
 id x = x
 
-dup :: a -> (a, a)
+dup : a -> (a, a)
 dup x = (x, x)
 
-map :: (a -> b) -> n=>a -> n=>b
+map : (a -> b) -> n=>a -> n=>b
 map f xs = for i. f xs.i
 
-map2 :: (a -> b) -> n=>m=>a -> n=>m=>b
+map2 : (a -> b) -> n=>m=>a -> n=>m=>b
 map2 f xs = for i j. f xs.i.j
 
-zip :: n=>a -> n=>b -> n=>(a,b)
+zip : n=>a -> n=>b -> n=>(a,b)
 zip xs ys = for i. (xs.i, ys.i)
 
-unzip :: n=>(a, b) -> (n=>a, n=>b)
+unzip : n=>(a, b) -> (n=>a, n=>b)
 unzip xys = (map (asNonLin fst) xys, map (asNonLin snd) xys)
 
-fanout :: A n a. a -> n=>a
+fanout : A n a. a -> n=>a
 fanout x = for i. x
 
-sq :: Real -> Real
+sq : Real -> Real
 sq x = x * x
 
-select :: A a | Data a . Bool -> a -> a -> a
+select : A a | Data a . Bool -> a -> a -> a
 select p x y = %select(p, x, y)
 
-abs :: Real -> Real
+abs : Real -> Real
 abs x = select (x > 0.0) x (0.0 - x)
 
-compose :: (b -> c) -> (a -> b) -> a -> c
+compose : (b -> c) -> (a -> b) -> a -> c
 compose f g x = f (g x)
 
-slice :: A n m a . m=>a -> Int -> n=>a
+slice : A n m a . m=>a -> Int -> n=>a
 slice xs start = for i. xs.(asidx (asint i `iadd` start))
 
 'Effective primitives
 
-ask :: Pi rRef::(Ref r) -> {Reader rRef} r
+ask : rRef:(Ref r) -> {Reader rRef} r
 ask r = %ask(r)
 
-tell :: Pi wRef::(Ref w) -> w -> {Writer wRef} ()
+tell : wRef:(Ref w) -> w -> {Writer wRef} ()
 tell w x = %tell(w, x)
 
-get :: Pi sRef::(Ref s) -> {State sRef} s
+get : sRef:(Ref s) -> {State sRef} s
 get s = %get(s)
 
-put :: Pi sRef::(Ref s) -> s -> {State sRef} ()
+put : sRef:(Ref s) -> s -> {State sRef} ()
 put s x = %put(s, x)
 
-runReader :: rt -> (Pi r::(Ref rt) -> {Reader r |eff} a) -> {|eff} a
-runReader r f = %runReader(r, lam r'. f r')
+runReader : rt -> (r:(Ref rt) -> {Reader r |eff} a) -> {|eff} a
+runReader r f = %runReader(r, \r'. f r')
 
-runWriter :: A wt a eff | VS w . (Pi w::(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
-runWriter f = %runWriter(lam w. f w)
+runWriter : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
+runWriter f = %runWriter(\w. f w)
 
-runState :: A st eff a . st -> (Pi s::(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
-runState s f = %runState(s, lam s'. f s')
+runState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
+runState s f = %runState(s, \s'. f s')
 
-indexReader :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
-indexReader s i f = %indexReader(s, i, lam s'. f s')
+indexReader : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
+indexReader s i f = %indexReader(s, i, \s'. f s')
 
-indexWriter :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {Writer s |eff} a) -> {Writer s' |eff} a
-indexWriter s i f = %indexWriter(s, i, lam s'. f s')
+indexWriter : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Writer s |eff} a) -> {Writer s' |eff} a
+indexWriter s i f = %indexWriter(s, i, \s'. f s')
 
-indexState :: Pi s'::(Ref (n=>st)) -> n -> (Pi s::(Ref st) -> {State s |eff} a) -> {State s' |eff} a
-indexState s i f = %indexState(s, i, lam s'. f s')
+indexState : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {State s |eff} a) -> {State s' |eff} a
+indexState s i f = %indexState(s, i, \s'. f s')
 
-putAt :: Pi s::(Ref (i=>a)) -> i -> a -> {State s} ()
-putAt ref i x = indexState ref i lam ref'. put ref' x
+putAt : s:(Ref (i=>a)) -> i -> a -> {State s} ()
+putAt ref i x = indexState ref i \ref'. put ref' x
 
-getAt :: Pi s::(Ref (i=>a)) -> i -> {State s} a
-getAt ref i = indexState ref i lam ref'. get ref'
+getAt : s:(Ref (i=>a)) -> i -> {State s} a
+getAt ref i = indexState ref i \ref'. get ref'
 
-putAt2 :: Pi s::(Ref (i=>j=>a)) -> i -> j -> a -> {State s} ()
-putAt2 ref i j x = indexState ref i lam ref'. putAt ref' j x
+putAt2 : s:(Ref (i=>j=>a)) -> i -> j -> a -> {State s} ()
+putAt2 ref i j x = indexState ref i \ref'. putAt ref' j x
 
-getAt2 :: Pi s::(Ref (i=>j=>a)) -> i -> j -> {State s} a
-getAt2 ref i j = indexState ref i lam ref'. getAt ref' j
+getAt2 : s:(Ref (i=>j=>a)) -> i -> j -> {State s} a
+getAt2 ref i j = indexState ref i \ref'. getAt ref' j
 
 'State-carrying loop constructs
 
-scan :: A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
-scan x0 fs = swap $ runState x0 lam s. for i.
+scan : A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
+scan x0 fs = swap $ runState x0 \s. for i.
    c = get s
    (c', y) = fs i c
    _ = put s c'
    y
 
-fold :: A n a | Ix n, Data a . a -> (n->a->a) -> a
-fold x0 fs = fst $ scan x0 lam i x. (fs i x, ())
+fold : A n a | Ix n, Data a . a -> (n->a->a) -> a
+fold x0 fs = fst $ scan x0 \i x. (fs i x, ())
 
 -- TODO: call this `scan` and call the current `scan` something else
-scan' :: A n a | Ix n, Data a . a -> (n->a->a) -> n=>a
-scan' x0 fs = snd $ scan x0 lam i x. dup (fs i x)
+scan' : A n a | Ix n, Data a . a -> (n->a->a) -> n=>a
+scan' x0 fs = snd $ scan x0 \i x. dup (fs i x)
 
--- scanlin :: A n::Ix c::Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
--- scanlin fs (c0, xs) = scan c0 lam i c. fs i (c, xs.i)
+-- scanlin : A n:Ix c:Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
+-- scanlin fs (c0, xs) = scan c0 \i c. fs i (c, xs.i)
 
--- foldlin :: A n::Ix c::Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
--- foldlin fs (c0, xs) = fst $ scanlin (lam i (c,x). (fs i (c, x), ())) (c0, xs)
+-- foldlin : A n:Ix c:Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
+-- foldlin fs (c0, xs) = fst $ scanlin (\i (c,x). (fs i (c, x), ())) (c0, xs)
 
 -- 'More misc functions
 
-sum :: n=>Real -> Real
-sum xs = snd $ runWriter lam ref. for i. tell ref xs.i
+sum : n=>Real -> Real
+sum xs = snd $ runWriter \ref. for i. tell ref xs.i
 
-isum :: n=>Int -> Int
-isum xs = fold 0 lam i c. iadd c xs.i
+isum : n=>Int -> Int
+isum xs = fold 0 \i c. iadd c xs.i
 
-size :: A n::Ty. Int
+size : A n:Ty. Int
 size = %idxSetSize(@n)
 
--- -- range :: Int -> E i. ()
+-- -- range : Int -> E i. ()
 -- -- range n = %range(n)
 
-mean :: A n. n=>Real -> Real
+mean : A n. n=>Real -> Real
 mean xs = sum xs / real (size @n)
 
-std :: A n. n=>Real -> Real
+std : A n. n=>Real -> Real
 std xs = sqrt $ mean (map sq xs) - sq (mean xs)
 
-linspace :: A n. Real -> Real -> n=>Real
+linspace : A n. Real -> Real -> n=>Real
 linspace low high =
   dx = (high - low) / real (size @n)
-  for i::n. low + real (asint i) * dx
+  for i:n. low + real (asint i) * dx
 
 -- 'Functions for working with the pseudorandom number generator
 
@@ -251,109 +251,109 @@ linspace low high =
 -- newtype Key = Int
 type Key = Int
 
-hash :: Key -> Int -> Key
+hash : Key -> Int -> Key
 hash x y = %%threefry2x32(x, y)
 
-newKey :: Int -> Key
+newKey : Int -> Key
 newKey x = hash 0 x
 
-splitKey :: Key -> (Key, Key)
+splitKey : Key -> (Key, Key)
 splitKey key = (hash key 0, hash key 1)
 
-splitKey3 :: Key -> (Key, Key, Key)
+splitKey3 : Key -> (Key, Key, Key)
 splitKey3 key =
   (k1, key') = splitKey key
   (k2, k3) = splitKey key'
   (k1, k2, k3)
 
-many :: A n a | Ix n . (Key -> a) -> Key -> n -> a
+many : A n a | Ix n . (Key -> a) -> Key -> n -> a
 many f key i = f (hash key (asint i))
 
-ixkey :: A n | Ix n . Key -> n -> Key
+ixkey : A n | Ix n . Key -> n -> Key
 ixkey x i = hash x (asint i)
 
-ixkey2 :: A n m | Ix n, Ix m . Key -> n -> m -> Key
+ixkey2 : A n m | Ix n, Ix m . Key -> n -> m -> Key
 ixkey2 x i = ixkey $ ixkey x i
 
-rand :: Key -> Real
+rand : Key -> Real
 rand x = %%randunif(x)
 
-randn :: Key -> Real
+randn : Key -> Real
 randn k =
   (k1, k2) = splitKey k
   u1 = rand k1
   u2 = rand k2
   sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
 
-randIdx :: A n | Ix n . Key -> n
+randIdx : A n | Ix n . Key -> n
 randIdx key =
   unif = rand key
   asidx $ floor $ unif * real (size @n)
 
 'min / max etc
 
-minby :: A a | Data a . (a->Real)->a->a->a
+minby : A a | Data a . (a->Real)->a->a->a
 minby f x y = select ((f x) < (f y)) x y
 
-min :: Real -> Real -> Real
+min : Real -> Real -> Real
 min = minby id
 
-minimumby :: A n a | Data a . (a->Real)->(n=>a)->a
-minimumby f xs = fold xs.(asidx 0) (lam i. minby f xs.i)
+minimumby : A n a | Data a . (a->Real)->(n=>a)->a
+minimumby f xs = fold xs.(asidx 0) (\i. minby f xs.i)
 
-minimum :: A n . (n=>Real)->Real
+minimum : A n . (n=>Real)->Real
 minimum = minimumby id
 
-maxby :: A a | Data a . (a->Real)->a->a->a
+maxby : A a | Data a . (a->Real)->a->a->a
 maxby f = minby (asNonLin neg `compose` f)
 
-max :: Real -> Real -> Real
+max : Real -> Real -> Real
 max x y = maxby id x y
 
-maximumby :: A p q | Data q . (q->Real)->(p=>q)->q
+maximumby : A p q | Data q . (q->Real)->(p=>q)->q
 maximumby f = minimumby (asNonLin neg `compose` f)
 
-maximum :: A p. (p=>Real)->Real
+maximum : A p. (p=>Real)->Real
 maximum xs = maximumby id xs
 
-argmin :: n=>Real -> n
-argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) lam i (bestIx, bestDist).
+argmin : n=>Real -> n
+argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) \i (bestIx, bestDist).
                select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
 
 'Vector spaces and automatic differentiation.
 
-vzero :: A a | VS a . a
+vzero : A a | VS a . a
 vzero = %vzero()
 
-vadd :: A a | VS a . a -> a -> a
+vadd : A a | VS a . a -> a -> a
 vadd x y = %vadd(x, y)
 
-linearize :: A a b | VS a, VS b . (a -> b) -> a -> (b, a --o b)
-linearize f x0 = %linearize(lam x. f x) x0
+linearize : A a b | VS a, VS b . (a -> b) -> a -> (b, a --o b)
+linearize f x0 = %linearize(\x. f x) x0
 
-jvp :: A a b | VS a, VS b . (a -> b) -> a -> a --o b
+jvp : A a b | VS a, VS b . (a -> b) -> a -> a --o b
 jvp f x t = snd (linearize f x) t
 
-transposeLinear :: A a b | VS a, VS b . (a --o b) -> b --o a
-transposeLinear f ct = %linearTranspose(lam t. f t) ct
+transposeLinear : A a b | VS a, VS b . (a --o b) -> b --o a
+transposeLinear f ct = %linearTranspose(\t. f t) ct
 
-vjp :: A a b | VS a, VS b . (a -> b) -> a -> (b, b --o a)
+vjp : A a b | VS a, VS b . (a -> b) -> a -> (b, b --o a)
 vjp f x =
   (y, df) = linearize f x
   (y, transposeLinear df)
 
-grad :: A a | VS a . (a -> Real) -> a -> a
+grad : A a | VS a . (a -> Real) -> a -> a
 grad f x =
   (_, pullback) = vjp f x
   pullback 1.0
 
-deriv :: (Real -> Real) -> Real -> Real
+deriv : (Real -> Real) -> Real -> Real
 deriv f x = jvp f x 1.0
 
-derivRev :: (Real -> Real) -> Real -> Real
+derivRev : (Real -> Real) -> Real -> Real
 derivRev f x = snd (vjp f x) 1.0
 
-checkDerivBase :: (Real -> Real) -> Real -> Bool
+checkDerivBase : (Real -> Real) -> Real -> Bool
 checkDerivBase f x =
   eps = 1e-5
   ansFwd  = deriv    f x
@@ -362,41 +362,41 @@ checkDerivBase f x =
   isClose a b = abs (a - b) < 1e-3
   isClose ansFwd ansNumeric && isClose ansRev ansNumeric
 
-checkDeriv :: (Real -> Real) -> Real -> Bool
+checkDeriv : (Real -> Real) -> Real -> Bool
 checkDeriv f x = checkDerivBase f x && checkDerivBase (deriv f) x
 
-sin#lin :: Real -> (Real, Real --o Real)
-sin#lin x = (sin x, lam t. t * cos x)
+sin#lin : Real -> (Real, Real --o Real)
+sin#lin x = (sin x, \t. t * cos x)
 
-cos#lin :: Real -> (Real, Real --o Real)
-cos#lin x = (cos x, lam t. t * (neg (sin x)))
+cos#lin : Real -> (Real, Real --o Real)
+cos#lin x = (cos x, \t. t * (neg (sin x)))
 
-exp#lin :: Real -> (Real, Real --o Real)
+exp#lin : Real -> (Real, Real --o Real)
 exp#lin x =
   ans = exp x
-  (ans, lam t. t * ans)
+  (ans, \t. t * ans)
 
-log#lin :: Real -> (Real, Real --o Real)
-log#lin x = (log x, lam t. t / x)
+log#lin : Real -> (Real, Real --o Real)
+log#lin x = (log x, \t. t / x)
 
-sqrt#lin :: Real -> (Real, Real --o Real)
+sqrt#lin : Real -> (Real, Real --o Real)
 sqrt#lin x =
   ans = sqrt x
-  (ans, lam t. 0.5 * t / ans)
+  (ans, \t. 0.5 * t / ans)
 
 'Some general linear algebra routines.
 
-vdot :: n=>Real -> n=>Real -> Real
+vdot : n=>Real -> n=>Real -> Real
 vdot x y = sum for i. x.i * y.i
 
-mmp :: l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
 mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
 
-mvp :: n=>m=>Real -> m=>Real -> n=>Real
+mvp : n=>m=>Real -> m=>Real -> n=>Real
 mvp m v = for i. vdot m.i v
 
-transpose :: n=>m=>Real -> m=>n=>Real
+transpose : n=>m=>Real -> m=>n=>Real
 transpose x = for i j. x.j.i
 
-inner :: n=>Real -> n=>m=>Real -> m=>Real -> Real
+inner : n=>Real -> n=>m=>Real -> m=>Real -> Real
 inner x m y = sum for (i,j). x.i * m.i.j * y.j

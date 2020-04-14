@@ -128,20 +128,20 @@ annotated. We can look at the explicitly typed IR with `:typed`:
   f x = x * x
   z = 2.0
   f z
-> (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
-> (z::Real = 2.0;
+> (f:(Real -> Real) = (lam x:Real . (%fmul(x, x)));
+> (z:Real = 2.0;
 > (f z)))
 
 'We can also add some explicit annotations if we like. Type inference then
 becomes type checking.
 
 :typed
-  f :: Real -> Real
-  f x::Real = x * x
-  z::Real = 2.0
+  f : Real -> Real
+  f x:Real = x * x
+  z:Real = 2.0
   f z
-> (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
-> (z::Real = 2.0;
+> (f:(Real -> Real) = (lam x:Real . (%fmul(x, x)));
+> (z:Real = 2.0;
 > (f z)))
 
 '## Polymorphism and let generalization
@@ -151,7 +151,7 @@ mandatory for let-bound *polymorphic* expressions. That is, we don't do let
 generalization. For example, although we can write this:
 
 :typed (lam x. x) 1
-> ((lam x::Int . x) 1)
+> ((lam x:Int . x) 1)
 
 'It's an error to write this:
 
@@ -160,17 +160,17 @@ generalization. For example, although we can write this:
    myid 1
 > Type error:Ambiguous type variables: [?_3]
 >
-> (myid::(?_3 -> ?_3), (lam x::?_3 . x))
+> (myid:(?_3 -> ?_3), (lam x:?_3 . x))
 
 'Instead, we have to give the type explicitly:
 
 :typed
-   myid :: a -> a
+   myid : a -> a
    myid x = x
 
    myid 1
-> (myid :: A a. (a -> a)
-> myid = (lam x::a . x);
+> (myid : A a. (a -> a)
+> myid = (lam x:a . x);
 > (myid @Int 1))
 
 'The motivation for this choice is a bit subtle. It's related to the reasons for
@@ -185,7 +185,7 @@ take types as arguments. Explicit types are supplied at call sites, as in
 source language too.
 
 :p
-   myid :: a -> a
+   myid : a -> a
    myid x = x
    myid @Int 1
 > 1
@@ -267,13 +267,13 @@ Dex's `for` construct:
 
 :p
    xs = [1., 2., 3.]
-   ys = for i::3 . xs.i * xs.i
+   ys = for i:3 . xs.i * xs.i
    ys
 > [1.0, 4.0, 9.0]
 
 '`for` is to tables as `lam` is to functions. It builds a new table whose
 elements are the result of evaluating its body at each index `i` in the given
-index set. Like `lam`, the type annotation (`::3`) is optional and can be
+index set. Like `lam`, the type annotation (`:3`) is optional and can be
 inferred. Also like `lam`, we can combine the let binding with the `for` expression
 in a way that looks like mathematical index notation. Type inference gives us
 the same thing as if we'd annotated the binders manually.
@@ -282,8 +282,8 @@ the same thing as if we'd annotated the binders manually.
    xs = [1., 2., 3.]
    ys.i = xs.i * xs.i
    ys
-> (xs::(3=>Real) = [1.0, 2.0, 3.0];
-> (ys::(3=>Real) = (for  i::3 .
+> (xs:(3=>Real) = [1.0, 2.0, 3.0];
+> (ys:(3=>Real) = (for  i:3 .
 >     (%fmul(xs.i, xs.i)));
 > ys))
 
@@ -292,7 +292,7 @@ type variables, is a very natural way to express shape constraints.
 For example, adding two vectors of the same size:
 
 :p
-   addVec :: n=>Real -> n=>Real -> n=>Real
+   addVec : n=>Real -> n=>Real -> n=>Real
    addVec x y = for i. x.i + y.i
    --
    addVec [1.0, 2.0] [0.1, 0.2]
@@ -301,7 +301,7 @@ For example, adding two vectors of the same size:
 'Transposing an array
 
 :p
-   myTranspose :: n=>m=>a -> m=>n=>a
+   myTranspose : n=>m=>a -> m=>n=>a
    myTranspose x = for i j. x.j.i
    --
    myTranspose [[1,2,3],[10,20,30]]
@@ -310,7 +310,7 @@ For example, adding two vectors of the same size:
 'Extracting the diagonal of a square array
 
 :p
-   diag :: n=>n=>a -> n=>a
+   diag : n=>n=>a -> n=>a
    diag x = for i. x.i.i
    --
    diag [[1,2],[10,20]]

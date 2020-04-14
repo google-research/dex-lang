@@ -5,9 +5,9 @@
 
 _, M = unpack range 4
 
-xs :: M => (E n. n=>Int)
+xs : M => (E n. n=>Int)
 xs = for i. _, N = unpack range (asint i)
-            x = for j::N. asint j
+            x = for j:N. asint j
             pack x, N, E n. n=>Int
 
 for i. x, N2 = unpack xs.i  -- TODO: underscore type binder

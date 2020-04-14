@@ -5,19 +5,19 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 
 ' ### Matrix Math
 
-eyeLike:: n=>n=>Real -> n=>n=>Real
+eyeLike: n=>n=>Real -> n=>n=>Real
 eyeLike x = for i. for j.
   select (i == j) 1.0 0.0
 
-mmadd:: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
+mmadd: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
 mmadd x y = for i. for j. x.i.j + y.i.j
 
 ' ## Cholesky Algorithm
 
-chol :: (n=>n=>Real) -> (n=>n=>Real)
+chol : (n=>n=>Real) -> (n=>n=>Real)
 chol x =
   diagOp r j =
-    innersum = sum for k::n.
+    innersum = sum for k:n.
       select (j > k) (sq r.j.k) 0.0
     sqrt (x.j.j - innersum)
   lowerOp r i j =
@@ -25,28 +25,25 @@ chol x =
       select (j > k) (r.i.k * r.j.k) 0.0
     jdiag = diagOp r j -- can't look up r.j.j as it is not computed yet.
     (x.i.j - innersum) / jdiag
-  fs = lam outerrow::n.
-    lam r. for i::n.
+  fs = \outerrow:n.
+    \r. for i:n.
       (select (i < outerrow)
-        (for j::n. r.i.j)  -- copy
-        for j::n.
+        (for j:n. r.i.j)  -- copy
+        for j:n.
           (select (i < j)
              0.0
              (select (i > j)
                 (lowerOp r i j)
                 (diagOp r j))))
-  init = for i::n. for j::n. 0.0
+  init = for i:n. for j:n. 0.0
   fold init fs
-
-
-
 
 
 ' Test
 
-demoPSDMatrix:: Key -> n=>n=>Real
+demoPSDMatrix: Key -> n=>n=>Real
 demoPSDMatrix key =
-  a = for x::n. for y::n. (randn $ ixkey2 key x y)
+  a = for x:n. for y:n. (randn $ ixkey2 key x y)
   x = mmp a (transpose a)
   mmadd x $ eyeLike x
 

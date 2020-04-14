@@ -1,51 +1,49 @@
-:t lam x. x
+:t \x. x
 > Type error:Ambiguous type variables: [?_3]
 >
-> ([*ans*::? = (lam x::?_5 . x)], (*ans* @> L ?))
+> ([*ans*:? = (\x:?_5 . x)], (*ans* @> L ?))
 
-:t lam x. sum for i. x.i
+:t \x. sum for i. x.i
 > Type error:Ambiguous type variables: [?_10]
 >
-> ( [*ans*::? = (lam x::?_5 . ((sum @?_10) (for i::?_15 .  (x.i))))]
-> , (*ans* @> L ?) )
+> ([*ans*:? = (\x:?_5 . ((sum @?_10) (for i:?_15 .  (x.i))))], (*ans* @> L ?))
 
-:t lam f x y. f y x
+:t \f x y. f y x
 > Type error:Ambiguous type variables: [?_13, ?_17, ?_21]
 >
-> ( [*ans*::? = (lam f::?_5 . (lam x::?_10 . (lam y::?_15 . ((f y) x))))]
-> , (*ans* @> L ?) )
+> ([*ans*:? = (\f:?_5 . (\x:?_10 . (\y:?_15 . ((f y) x))))], (*ans* @> L ?))
 
-:t lam x. for i j. x.j.i
+:t \x. for i j. x.j.i
 > Type error:Ambiguous type variables: [?_11, ?_14, ?_16]
 >
-> ( [*ans*::? = (lam x::?_5 . (for i::?_9 .  (for j::?_13 .  ((x.j).i))))]
+> ( [*ans*:? = (\x:?_5 . (for i:?_9 .  (for j:?_13 .  ((x.j).i))))]
 > , (*ans* @> L ?) )
 
-:t lam f x. f x
+:t \f x. f x
 > Type error:Ambiguous type variables: [?_8, ?_12]
 >
-> ([*ans*::? = (lam f::?_5 . (lam x::?_10 . (f x)))], (*ans* @> L ?))
+> ([*ans*:? = (\f:?_5 . (\x:?_10 . (f x)))], (*ans* @> L ?))
 
 :t
-   myid :: a -> a
+   myid : a -> a
    myid x = x
    myid (myid) (myid 1)
 > Int
 
 :t
-   x = (iota)::(10=>Int)
+   x = (iota):(10=>Int)
    isum x
 > Int
 
 :t
    x = iota @ 10
-   y = (iota)::(3=>Int)
+   y = (iota):(3=>Int)
    real (isum for i. x.i) + real (isum for j. y.j)
 > Real
 
 :t
    x = iota @ 10
-   y = (iota) :: (3=>Int)
+   y = (iota) : (3=>Int)
    sum for i. iadd x.i y.i
 > Type error:
 > Expected: 3
@@ -64,7 +62,7 @@ xr = map real arr
 :t arr
 > (10=>Int)
 
-:t (lam (x, y). x + y) (1.0, 2.0)
+:t (\(x, y). x + y) (1.0, 2.0)
 > Real
 
 :t
@@ -77,16 +75,16 @@ xr = map real arr
 -- :t unpack x = iota 3
 --    in let y = for i j. x.i * x.i
 --       in sum (for i. sum (y.i))
-:t (1) :: Int
+:t (1) : Int
 > Int
 
-:t (1.0) :: Int
+:t (1.0) : Int
 > Type error:
 > Expected: Int
 >   Actual: Real
 > In: 1.0
 >
-> :t (1.0) :: Int
+> :t (1.0) : Int
 >     ^^^
 
 :t [1, 2, 3]
@@ -95,7 +93,7 @@ xr = map real arr
 :t []
 > Type error:Ambiguous type variables: [?_2]
 >
-> ([*ans*::? = ([])], (*ans* @> L ?))
+> ([*ans*:? = ([])], (*ans* @> L ?))
 
 :t [1, [2]]
 > Type error:
@@ -120,10 +118,10 @@ xr = map real arr
 
 type Pair = (Int, Int)
 
-p1 :: Pair
+p1 : Pair
 p1 = (1, 2)
 
-p2 :: Pair
+p2 : Pair
 p2 = 1
 > Type error:
 > Expected: (Int, Int)
@@ -133,31 +131,30 @@ p2 = 1
 > p2 = 1
 >      ^
 
-:t lam x. for (i,j). x.i.j
+:t \x. for (i,j). x.i.j
 > Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
 >
-> ( [*ans*::? = (lam x::?_5 . (for (i::?_9, j::?_10) .  ((x.i).j)))]
-> , (*ans* @> L ?) )
+> ([*ans*:? = (\x:?_5 . (for (i:?_9, j:?_10) .  ((x.i).j)))], (*ans* @> L ?))
 
-idfun :: a -> a
+idfun : a -> a
 idfun x = x
 
 :t idfun @ Real
 > (Real -> Real)
 
-:t lam x.
-     f :: a -> a
+:t \x.
+     f : a -> a
      f y = x
      ()
 > Type error:Leaked type variable: a
 >
-> :t lam x.
->    ^^^^^^^
+> :t \x.
+>    ^^^^
 
--- :t (todo)::(Int -> Real) 1
+-- :t (todo):(Int -> Real) 1
 -- > Real
 
-f :: Int -> Real
+f : Int -> Real
 f x =
   z = x + 1.0
   x
@@ -170,14 +167,14 @@ f x =
 >       ^^
 :t
    x = 3
-   for i::Foo. 0
+   for i:Foo. 0
 > Error: variable not in scope: Foo
 
-:p lam x::Real. x
-> (lam x::Real .
+:p \x:Real. x
+> (\x:Real .
 >    x)
 
-vspaceid :: A a | VS a . a -> a
+vspaceid : A a | VS a . a -> a
 vspaceid x = x
 
 :t vspaceid (1.0, [2.0, 3.0])
@@ -190,13 +187,13 @@ vspaceid x = x
 >    ^^^^^^^^^
 
 :t
-   g :: A a | VS a . a -> a
+   g : A a | VS a . a -> a
    g x = vspaceid x
    g @Real
 > (Real -> Real)
 
 :t
-   g :: a -> a
+   g : a -> a
    g x = vspaceid x
    g @Real
 > Type error: Type variable "a" not in class: VS
@@ -204,20 +201,20 @@ vspaceid x = x
 >    g x = vspaceid x
 >          ^^^^^^^^^
 
-:t for i::Int. 1
+:t for i:Int. 1
 > Type error: Not a valid index set: Int
 >
-> :t for i::Int. 1
->    ^^^^^^^^^^^^^
+> :t for i:Int. 1
+>    ^^^^^^^^^^^^
 
-:t grad (lam x::Int. real x) 1
+:t grad (\x:Int. real x) 1
 > Type error: Not a vector space: Int
 >
-> :t grad (lam x::Int. real x) 1
+> :t grad (\x:Int. real x) 1
 >    ^^^^^
 
 :t
-   vadd' :: a -> a -> a
+   vadd' : a -> a -> a
    vadd' x y = %vadd(x, y)
 
    vadd' @Real
@@ -226,10 +223,10 @@ vspaceid x = x
 >    vadd' x y = %vadd(x, y)
 >                ^^^^^^^^^^^
 
-f1 :: Real -> Real
+f1 : Real -> Real
 f1 x = x
 
-f2 :: Real -> Real
+f2 : Real -> Real
 f2 x = x + x
 
 :t [f1, f2]
@@ -244,10 +241,10 @@ f2 x = x + x
 > :t select True f1 f2
 >    ^^^^^^^
 
-:t fold f1 lam i::3 g. (lam x. g (g x))
+:t fold f1 \i:3 g. (\x. g (g x))
 > Type error: Not serializable data: (Real -> Real)
 >
-> :t fold f1 lam i::3 g. (lam x. g (g x))
+> :t fold f1 \i:3 g. (\x. g (g x))
 >    ^^^^^
 
 :t [1,2,3].(3@4)
@@ -262,30 +259,30 @@ f2 x = x + x
 type MyInt = Int
 type MyInt2 = MyInt
 
-x :: MyInt2
+x : MyInt2
 x = 1
 
 type MyPair a = (a, a)
 
 :p
-  pairs :: (MyPair Int, MyPair Real)
+  pairs : (MyPair Int, MyPair Real)
   pairs = ((1, 2), (1.0, 2.0))
   --
   pairs
 > ((1, 2), (1.0, 2.0))
 
-fEff :: () -> {| a} a
+fEff : () -> {| a} a
 fEff = todo
 > Kind error:
 > Expected: Type
 >   Actual: Effect
 
-fAmb :: A a. ()
+fAmb : A a. ()
 fAmb = ()
-> Kind error:Ambiguous kind for type variable: a::NoKindAnn
+> Kind error:Ambiguous kind for type variable: a:NoKindAnn
 
 :p
-  fEff2 :: () -> {|eff} ()
+  fEff2 : () -> {|eff} ()
   fEff2 = todo
   fEff2 @Int ()
 > Kind error:

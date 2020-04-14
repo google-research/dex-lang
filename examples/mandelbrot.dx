@@ -4,16 +4,16 @@
 
 type Complex = (Real, Real)
 
-cadd :: Complex -> Complex -> Complex
+cadd : Complex -> Complex -> Complex
 cadd (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
 
-cmul :: Complex -> Complex -> Complex
+cmul : Complex -> Complex -> Complex
 cmul (x1, y1) (x2, y2) = (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
 
-cabs :: Complex -> Real
+cabs : Complex -> Real
 cabs (x, y) = x * x + y * y
 
-czero :: Complex
+czero : Complex
 czero = (0.0, 0.0)
 
 'Parameters
@@ -25,15 +25,15 @@ type Ny = 200
 
 'The actual escape time algorithm
 
-update :: Complex -> Complex -> Complex
+update : Complex -> Complex -> Complex
 update c z = cadd c (cmul z z)
 
-inBounds :: Complex -> Bool
+inBounds : Complex -> Bool
 inBounds z = cabs z < tol
 
-escapeTime :: Complex -> Real
+escapeTime : Complex -> Real
 escapeTime c = fst $ fold (0.0, czero) $
-  lam i::Niters  (n, z).
+  \i:Niters  (n, z).
     z' = update c z
     (n + b2r (inBounds z'), z')
 

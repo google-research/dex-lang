@@ -1,6 +1,6 @@
 '# Monte Carlo estimates of pi
 
-estimatePiArea :: Key -> Real
+estimatePiArea : Key -> Real
 estimatePiArea key =
   (k1, k2) = splitKey key
   x = rand k1
@@ -8,14 +8,14 @@ estimatePiArea key =
   inBounds = sq x + sq y < 1.0
   4.0 * b2r inBounds
 
-estimatePiAvgVal :: Key -> Real
+estimatePiAvgVal : Key -> Real
 estimatePiAvgVal key =
   x = rand key
   4.0 * sqrt (1.0 - sq x)
 
-meanAndStdDev :: A n::Ty | Ix n . (Key -> Real) -> Key -> (Real, Real)
+meanAndStdDev : A n:Ty | Ix n . (Key -> Real) -> Key -> (Real, Real)
 meanAndStdDev f key =
-  samps = for i::n. many f key i
+  samps = for i:n. many f key i
   (mean samps, std samps)
 
 type NumSamps = 1000000

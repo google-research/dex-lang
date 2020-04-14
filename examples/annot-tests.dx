@@ -1,16 +1,16 @@
-g :: a -> a
+g : a -> a
 g x = x
 
 :t g
 > A a. (a -> a)
 
 :t
-  f x::Int = x
+  f x:Int = x
   f 1
 > Int
 
 :t
-   f x::Real = x
+   f x:Real = x
    f 1
 > Type error:
 > Expected: Real
@@ -20,13 +20,13 @@ g x = x
 >    f 1
 >      ^
 
-g1 :: (a -> Int) -> (a -> Int)
+g1 : (a -> Int) -> (a -> Int)
 g1 x = x
 
 :t g1
 > A a. ((a -> Int) -> (a -> Int))
 
-g2 :: a -> a
+g2 : a -> a
 g2 x = iadd x x
 > Type error:
 > Expected: Int
@@ -36,14 +36,14 @@ g2 x = iadd x x
 > g2 x = iadd x x
 >             ^^
 
-h :: (a -> b) -> (a -> b)
+h : (a -> b) -> (a -> b)
 h x = x
 
 
 :t h
 > A a b. ((a -> b) -> (a -> b))
 
-fun :: a -> a
+fun : a -> a
 fun x = sin x
 > Type error:
 > Expected: Real

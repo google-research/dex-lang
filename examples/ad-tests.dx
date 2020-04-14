@@ -1,5 +1,5 @@
 :p
-   f :: Real -> Real
+   f : Real -> Real
    f x = x
    jvp f 3.0 2.0
 > 2.0
@@ -21,7 +21,7 @@
 
 :p
    f x = x * x * x
-   jvp (lam x. jvp f x 1.0) 2.0 1.0
+   jvp (\x. jvp f x 1.0) 2.0 1.0
 > 12.0
 
 :p
@@ -30,48 +30,48 @@
 > 24.0
 
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f x = x
    transposeLinear f 2.0
 > 2.0
 
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f x = x + x
    transposeLinear f 1.0
 > 2.0
 
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f x = x + (x + x) * 2.0
    transposeLinear f 1.0
 > 5.0
 
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f x = x * 2.0
    transposeLinear f 1.0
 > 2.0
 
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f x = 2.0 * x
    transposeLinear f 1.0
 > 2.0
 
 :p
-   f :: Real --o (Real, Real)
+   f : Real --o (Real, Real)
    f x = (x, 2.0 * x)
    transposeLinear f (1.0, 3.0)
 > 7.0
 
 :p
-   f :: (Real, Real) --o Real
+   f : (Real, Real) --o Real
    f (x,y) = x + 2.0 * y
    transposeLinear f 1.0
 > (1.0, 2.0)
 
-:p grad (lam x. x * x) 1.0
+:p grad (\x. x * x) 1.0
 > 2.0
 
 :p deriv cos 0.0
@@ -101,7 +101,7 @@
 :p checkDeriv sqrt 2.0
 > True
 
-:p checkDeriv (lam x. cos (sin (exp x))) 2.0
+:p checkDeriv (\x. cos (sin (exp x))) 2.0
 > True
 
 :p checkDeriv (deriv sin) 1.0
@@ -113,13 +113,13 @@
 :p deriv (fdiv 3.0) 2.0
 > -0.75
 
-:p deriv (lam x. x / 2.0) 3.0
+:p deriv (\x. x / 2.0) 3.0
 > 0.5
 
-badDerivFun :: Real -> Real
+badDerivFun : Real -> Real
 badDerivFun x = x
 
-badDerivFun#lin :: Real -> (Real, Real --o Real)
+badDerivFun#lin : Real -> (Real, Real --o Real)
 badDerivFun#lin x = (x, llam t. 2. * t)
 
 :p checkDeriv badDerivFun 1.0
@@ -127,15 +127,15 @@ badDerivFun#lin x = (x, llam t. 2. * t)
 
 -- Perturbation confusion test suggested by Barak Pearlmutter
 -- https://github.com/HIPS/autograd/issues/4
-:p deriv (lam x. x * deriv (lam y. x * y) 2.0) 1.0
+:p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.0
 
-sinn#lin :: Real -> Real
+sinn#lin : Real -> Real
 sinn#lin x = x
 > Error: variable not in scope: sinn
 
-tripleit :: Real --o Real
-tripleit x = %runReader(x, lam r.
+tripleit : Real --o Real
+tripleit x = %runReader(x, \r.
    y = %ask(r)
    z = %ask(r)
    y + z + x)
@@ -150,21 +150,21 @@ tripleit x = %runReader(x, lam r.
 > 3.0
 
 :p
-  f :: Real --o n=>Real
+  f : Real --o n=>Real
   f x = for i. x
 
   transposeLinear f [1.0, 2.0]
 > 3.0
 
 :p
-  f :: n=>Real --o n=>Real
+  f : n=>Real --o n=>Real
   f x = for i. x.i * 2.0
 
   transposeLinear f [1.0, 2.0]
 > [2.0, 4.0]
 
--- mySquare :: Real -> Real
--- mySquare x = runReader x lam r.
+-- mySquare : Real -> Real
+-- mySquare x = runReader x \r.
 --   y = ask r
 --   x * y
 
@@ -177,8 +177,8 @@ tripleit x = %runReader(x, lam r.
 -- :p transposeLinear (jvp mySquare 3.0) 1.0
 -- > 6.0
 
--- myOtherSquare :: Real -> Real
--- myOtherSquare x = snd $ runWriter lam w. tell w (x * x)
+-- myOtherSquare : Real -> Real
+-- myOtherSquare x = snd $ runWriter \w. tell w (x * x)
 
 -- :p myOtherSquare 3.0
 -- > 9.0
@@ -190,36 +190,36 @@ tripleit x = %runReader(x, lam r.
 -- > 6.0
 
 :p
-  f :: Real -> Real
+  f : Real -> Real
   f x = fst (x * x, iadd 2 1)
   --
   jvp f 1.0 3.0
 > 6.0
 
 :p
-  f :: 2=>Real -> Real
+  f : 2=>Real -> Real
   f xs = xs.(0@2) * xs.(1@2)
   --
   jvp f [1., 2.] [3.0, 4.0]
 > 10.0
 
 :p
-  f :: (Real,Real) -> Real
+  f : (Real,Real) -> Real
   f (x,y) = x * y
   --
   jvp f (1., 2.) (3.0, 4.0)
 > 10.0
 
 :p
-  f :: n=>Real -> n=>Real
+  f : n=>Real -> n=>Real
   f xs = for i. xs.i * xs.i
   --
   jvp f [1.,2.] [3.,4.]
 > [6.0, 16.0]
 
 :p
-  f :: Real -> Real
-  f xs = runReader xs lam ref.
+  f : Real -> Real
+  f xs = runReader xs \ref.
             y = ask ref
             y * y * y
   --

@@ -74,7 +74,8 @@ sourceBlock = do
 recover :: ParseError String Void -> Parser SourceBlock'
 recover e = do
   pos <- liftM statePosState getParserState
-  reachedEOF <- (eof >> return True) <|> return False
+  reachedEOF <-  try (mayBreak sc >> eof >> return True)
+             <|> return False
   consumeTillBreak
   return $ UnParseable reachedEOF $
     errorBundlePretty (ParseErrorBundle (e :| []) pos)
@@ -143,7 +144,7 @@ ruleDef :: Parser FDecl
 ruleDef = do
   v <- try $ lowerName <* symbol "#"
   symbol s
-  symbol "::"
+  symbol ":"
   (ty, tlam) <- letPolyTail $ pprint v ++ "#" ++ s
   return $ FRuleDef (LinearizationDef v) ty tlam
   where s = "lin"
@@ -164,7 +165,7 @@ typeDef = do
 
 letPoly :: Parser FDecl
 letPoly = do
-  v <- try $ lowerName <* symbol "::"
+  v <- try $ lowerName <* symbol ":"
   (ty, tlam) <- letPolyTail (pprint v)
   return $ letPolyToMono (LetPoly (v:>ty) tlam)
 
@@ -206,9 +207,8 @@ block = do
   withIndent indent $ do
     statements <- mayNotBreak $ statement `sepBy1` (symbol ";" <|> try nextLine)
     case last statements of
-      Left _ -> optional eol >> fail "Last statement in a block must be an expression."
-      _      -> return ()
-    return $ wrapStatements statements
+      Left _ -> fail "Last statement in a block must be an expression."
+      _      -> return $ wrapStatements statements
 
 wrapStatements :: [Statement] -> FExpr
 wrapStatements statements = case statements of
@@ -282,7 +282,7 @@ withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
 typeAnnot :: Parser Type
 typeAnnot = do
-  ann <- optional $ symbol "::" >> tauTypeAtomic
+  ann <- optional $ symbol ":" >> tauTypeAtomic
   return $ case ann of
     Nothing -> NoAnn
     Just ty -> ty
@@ -307,7 +307,7 @@ ffiCall = do
 
 rawLamExpr :: Parser FLamExpr
 rawLamExpr = do
-  symbol "lam"
+  symbol "\\"
   p <- pat
   argTerm
   body <- blockOrExpr
@@ -316,7 +316,7 @@ rawLamExpr = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
 lamExpr = do
-  ann <-    NoAnn <$ symbol "lam"
+  ann <-    NoAnn <$ symbol "\\"
         <|> Lin   <$ symbol "llam"
   ps <- pat `sepBy` sc
   argTerm
@@ -372,13 +372,14 @@ identifier = lexeme . try $ do
   w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
-  where resNames = ["for", "lam", "llam"]
+  where resNames = ["for", "llam"]
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return (\x y -> fPrimOp $ App NoAnn NoAnn x y))
   where
-    opNames = [".", "+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
+    opNames = [ ".", "+", "*", "/", "- ", "^", "$", "@"
+              , "<", ">", "<=", ">=", "&&", "||", "=="]
 
 scalarBinOpRule :: String -> ScalarBinOp -> Operator Parser FExpr
 scalarBinOpRule opchar op = binOpRule opchar f
@@ -488,7 +489,7 @@ implicitSigmaType = do
 typeBinder :: Parser TVar
 typeBinder = do
   (v:>_) <- typeVar <|> localTypeVar
-  k <-  (symbol "::" >> kindName)
+  k <-  (symbol ":" >> kindName)
     <|> return NoKindAnn
   return $ v :> k
 
@@ -553,9 +554,7 @@ arrowType = do
 
 piType :: Parser PiType
 piType = do
-  symbol "Pi"
-  v <- lowerName
-  symbol "::"
+  v <- try $ lowerName <* symbol ":"
   a <- tauTypeAtomic
   symbol "->"
   eff <- effectType <|> return noEffect

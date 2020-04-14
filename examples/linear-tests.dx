@@ -1,69 +1,69 @@
 :p
-   f :: Real --o Real
+   f : Real --o Real
    f = llam x. x
    f 1.0
 > 1.0
 
-:t llam x::Real. x * x
+:t llam x:Real. x * x
 > Linearity error: pattern spent twice: [x]
 >
-> :t llam x::Real. x * x
->                    ^^
+> :t llam x:Real. x * x
+>                   ^^
 
-:t llam x::Real. x * 2.0
+:t llam x:Real. x * 2.0
 > (Real --o Real)
 
-:t llam x::Real. 2.0 * x
+:t llam x:Real. 2.0 * x
 > (Real --o Real)
 
-:t llam x::Real. llam y::Real. x * y
+:t llam x:Real. llam y:Real. x * y
 > (Real --o (Real --o Real))
 
-:t llam x::Real. (llam y. y) x
+:t llam x:Real. (llam y. y) x
 > (Real --o Real)
 
-:t llam x::Real. (lam y. y) x
+:t llam x:Real. (\y. y) x
 > Linearity error: nonlinear function consumed linear data: [x]
 >
-> :t llam x::Real. (lam y. y) x
->    ^^^^^^^^^^^^^^^^^^^^^^^^^^
+> :t llam x:Real. (\y. y) x
+>    ^^^^^^^^^^^^^^^^^^^^^^
 
-:t llam x::Real. (1.0, x)
+:t llam x:Real. (1.0, x)
 > (Real --o (Real, Real))
 
-:t llam x::Real. (x, 1.0)
+:t llam x:Real. (x, 1.0)
 > (Real --o (Real, Real))
 
-:t llam x::Real. (x, x)
+:t llam x:Real. (x, x)
 > (Real --o (Real, Real))
 
-:t llam x::Real. 1.0 + x
+:t llam x:Real. 1.0 + x
 > (Real --o Real)
 
-:t llam x::Real. x + 1.0
+:t llam x:Real. x + 1.0
 > (Real --o Real)
 
-:t llam x::Real. x + x
+:t llam x:Real. x + x
 > (Real --o Real)
 
-:t llam x::Real. 1.0 * x
+:t llam x:Real. 1.0 * x
 > (Real --o Real)
 
-:t llam x::Real. x * 1.0
+:t llam x:Real. x * 1.0
 > (Real --o Real)
 
-:t llam x::Real. x * x
+:t llam x:Real. x * x
 > Linearity error: pattern spent twice: [x]
 >
-> :t llam x::Real. x * x
->                    ^^
+> :t llam x:Real. x * x
+>                   ^^
 
-:t llam x::Real.
+:t llam x:Real.
      y = x
      x + y
 > (Real --o Real)
 
-:t llam x::Real.
+:t llam x:Real.
      y = x; y * x
 > Linearity error: pattern spent twice: [x]
 >
@@ -91,7 +91,7 @@
 :t llam x. 0.0 * x
 > (Real --o Real)
 
-:t llam x::Real. 0.0 * 0.0
+:t llam x:Real. 0.0 * 0.0
 > (Real --o Real)
 
 :t llam x. x + 0.0
@@ -100,7 +100,7 @@
 :t llam x. 0.0 + x
 > (Real --o Real)
 
-:t llam x::Real. 0.0 + 0.0
+:t llam x:Real. 0.0 + 0.0
 > (Real --o Real)
 
 :t llam x. (0.0 + x) + 0.0
@@ -118,19 +118,19 @@
 :t llam y. llam x. (x * 0.0) + y
 > (Real --o (Real --o Real))
 
-:t llam x::Real. ()
+:t llam x:Real. ()
 > (Real --o ())
 
-nonLinFun :: Real -> Real
+nonLinFun : Real -> Real
 nonLinFun x = x
 
-linFun :: Real --o Real
+linFun : Real --o Real
 linFun x = x
 
-eatsLin :: (Real --o Real) -> Bool
+eatsLin : (Real --o Real) -> Bool
 eatsLin f = True
 
-eatsNonLin :: (Real -> Real) -> Bool
+eatsNonLin : (Real -> Real) -> Bool
 eatsNonLin f = True
 
 :t eatsLin linFun
@@ -157,34 +157,34 @@ eatsNonLin f = True
 :t eatsNonLin nonLinFun
 > Bool
 
-:t eatsLin (lam x. linFun x)
+:t eatsLin (\x. linFun x)
 > Bool
 
-:t eatsLin (lam x. nonLinFun x)
+:t eatsLin (\x. nonLinFun x)
 > Linearity error: nonlinear function consumed linear data: [x]
 >
-> :t eatsLin (lam x. nonLinFun x)
->             ^^^^^^^^^^^^^^^^^^
+> :t eatsLin (\x. nonLinFun x)
+>             ^^^^^^^^^^^^^^^
 
-:t eatsNonLin (lam x. linFun x)
+:t eatsNonLin (\x. linFun x)
 > Bool
 
-:t eatsNonLin (lam x. nonLinFun x)
+:t eatsNonLin (\x. nonLinFun x)
 > Bool
 
-:t lam f. (eatsLin f, eatsNonLin f)
+:t \f. (eatsLin f, eatsNonLin f)
 > Type error:
 > Expected: (Real -> Real)
 >   Actual: (Real --o Real)
 > In: f
 >
-> :t lam f. (eatsLin f, eatsNonLin f)
->                                  ^
+> :t \f. (eatsLin f, eatsNonLin f)
+>                               ^
 
-linFstArg :: Real --o Real -> Real
+linFstArg : Real --o Real -> Real
 linFstArg x y = x / y
 
-linUnary :: Real --o Real
+linUnary : Real --o Real
 linUnary x = linFstArg x 1.0
 
 -- Nonlinear because of defaulting rules
@@ -193,14 +193,14 @@ linUnary x = linFstArg x 1.0
    f
 > (Real -> Real)
 
-f1 :: Real --o Real
-f1 x = %runReader(x, lam r.
+f1 : Real --o Real
+f1 x = %runReader(x, \r.
    y = %ask(r)
    z = %ask(r)
    y + z)
 
-f2 :: Real --o Real
-f2 x = %runReader(x, lam r.
+f2 : Real --o Real
+f2 x = %runReader(x, \r.
    y = %ask(r)
    z = %ask(r)
    y * z)
@@ -209,17 +209,17 @@ f2 x = %runReader(x, lam r.
 >    y * z)
 >      ^^
 
-f3 :: Real --o Real
+f3 : Real --o Real
 f3 x =
-  y = snd $ %runWriter(lam w.
+  y = snd $ %runWriter(\w.
         _ = %tell(w, x)
         _ = %tell(w, x)
         ())
   y + x
 
-f2 :: Real --o Real
+f2 : Real --o Real
 f2 x =
-  y = snd $ %runWriter(lam w.
+  y = snd $ %runWriter(\w.
         _ = %tell(w, x)
         _ = %tell(w, x)
         ())

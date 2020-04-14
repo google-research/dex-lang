@@ -4,12 +4,12 @@
 'Single-line multiline comment
 
 :p
-   triple = lam x.
+   triple = \x.
      y = x + x
      x + y
    triple 10.0
 
-f = lam x::Int.
+f = \x:Int.
   (x,
   x)
 

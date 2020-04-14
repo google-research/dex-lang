@@ -129,13 +129,13 @@ instance Pretty FExpr where
     FPrimExpr (OpExpr  e) -> parens $ p e
     FPrimExpr (ConExpr e) -> p e
     SrcAnnot subexpr _ -> p subexpr
-    Annot subexpr ty -> p subexpr <+> "::" <+> p ty
+    Annot subexpr ty -> p subexpr <+> ":" <+> p ty
 
 instance Pretty FDecl where
   -- TODO: special-case annotated leaf var (print type on own line)
   pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
   pretty (LetPoly (v:>ty) (FTLam _ _ body)) =
-    p v <+> "::" <+> p ty <> line <>
+    p v <+> ":" <+> p ty <> line <>
     p v <+> "="  <+> p body
   pretty (FRuleDef _ _ _) = "<TODO: rule def>"
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
@@ -173,7 +173,7 @@ prettyExprDefault expr =
   where (blankExpr, (_, xs, lams)) = unzipExpr expr
 
 prettyL :: PrettyLam a => a -> Doc ann
-prettyL lam = "lam" <+> v <+> "." <> nest 3 (line <> body)
+prettyL lam = "\\" <> v <+> "." <> nest 3 (line <> body)
   where (v, body) = prettyLam lam
 
 class PrettyLam a where
@@ -205,7 +205,7 @@ instance Pretty a => Pretty (VarP a) where
     case asStr ann' of
       ""     -> p v
       "Type" -> p v
-      _      -> p v <> "::" <> ann'
+      _      -> p v <> ":" <> ann'
     where ann' = p ann
 
 instance Pretty ClassName where

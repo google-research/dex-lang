@@ -18,11 +18,11 @@ x = [1,2,3]
 f x = x
 
 -- apparently we're treating unbound type aliases as things to infer
-x :: N
+x : N
 x = 1
 
 -- need a type class constrain for index sets so that this is an error
-:t for i::Int. 1
+:t for i:Int. 1
 
 -- Bad error message because we lose provenance of the constraint
 :t lam x.

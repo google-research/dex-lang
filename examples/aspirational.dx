@@ -4,29 +4,29 @@
 -- * type aliases with type variables
 -- * index set sum types (and generalization of inL and inR)
 -- * while loop construct (for fixed-point iter version)
---    loop :: (a -> Either b a) -> (b, E n. n=>a)
+--    loop : (a -> Either b a) -> (b, E n. n=>a)
 -- * unpacking multiple type variables
 
 type ParamsIdx d = Either d () -- concrete syntax for sum types?
 type Params d = (ParamsIdx d)=>Real
 
-logLogistic :: Real -> Real
+logLogistic : Real -> Real
 logLogistic x = log $ 1 / (1 + exp (-x))
 
-bool2pm1 :: Bool -> Real
+bool2pm1 : Bool -> Real
 bool2pm1 x = select x 1.0 -1.0
 
-evalLogreg :: Params d -> d=>Real -> Real
+evalLogreg : Params d -> d=>Real -> Real
 evalLogreg params x =
   let w.i = x.(L i)  -- can we improve this unpacking?
       b   = x.(R ())
   in logLogistic $ b + vdot w x
 
-logRegLoss :: Params d -> d=>Real -> Bool -> Real
+logRegLoss : Params d -> d=>Real -> Bool -> Real
 logRegLoss params x y = (evalLogReg params x) * (bool2pm1 y)
 
 -- what about looping until convergence? Need a different looping construct
-optimize :: (n=>Real -> Real) -> (n=>Real)
+optimize : (n=>Real -> Real) -> (n=>Real)
 optimize f = ..
   let lr = 0.1
       scale = 0.1
@@ -35,14 +35,14 @@ optimize f = ..
   in loopN nIters x0 lam x. let dx = grad f x
                             in for i. x.i + lr * dx.ix'
 
-theData :: E n d. (n=>d=>Real, n=>Bool)
+theData : E n d. (n=>d=>Real, n=>Bool)
 
 (xs, ys), N, D = unpack data
 
-loss :: D=>R -> R
+loss : D=>R -> R
 loss params = mean (for i. logRegLoss params xs.i ys.i)
 
 -- cross-validation? minibatches?
-optParams :: Params D
+optParams : Params D
 optParams = optimize 0 logRegLoss
 
