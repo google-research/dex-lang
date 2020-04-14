@@ -75,8 +75,8 @@ instance Pretty Type where
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IdxSetLit i -> p i
     Range a b -> "Range" <+> p a <+> p b
-    DepLit x  -> "DepLit" <+> p x
-    Dep x  -> "Dep" <+> p x
+    DepLit x  -> "(DepLit" <+> p x <+> ")"
+    Dep x  -> "(Dep" <+> p x <+> ")"
     NoDep  -> "NoDep"
     Lin    -> "Lin"
     NonLin -> "NonLin"

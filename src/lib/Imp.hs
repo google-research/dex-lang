@@ -240,7 +240,9 @@ typeToSize (Range low high) = do
 typeToSize ty = error $ "Not implemented " ++ pprint ty
 
 toImpDepVal :: Dep -> ImpM IExpr
-toImpDepVal ~(DepLit i) = return $ ILit $ IntLit i
+toImpDepVal (DepLit i) = return $ ILit $ IntLit i
+toImpDepVal (Dep v)    = lookupVar v >>= fromScalarIAtom
+toImpDepVal o          = error $ pprint o
 
 -- TODO: this is pretty iffy
 copyIAtom :: IAtom -> IAtom -> ImpM ()
