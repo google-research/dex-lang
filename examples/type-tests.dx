@@ -26,21 +26,25 @@
 >
 > ([*ans*::? = (lam f::?_5 . (lam x::?_10 . (f x)))], (*ans* @> L ?))
 
-:t myid :: a -> a
+:t
+   myid :: a -> a
    myid x = x
    myid (myid) (myid 1)
 > Int
 
-:t x = (iota)::(10=>Int)
+:t
+   x = (iota)::(10=>Int)
    isum x
 > Int
 
-:t x = iota @ 10
+:t
+   x = iota @ 10
    y = (iota)::(3=>Int)
    real (isum for i. x.i) + real (isum for j. y.j)
 > Real
 
-:t x = iota @ 10
+:t
+   x = iota @ 10
    y = (iota) :: (3=>Int)
    sum for i. iadd x.i y.i
 > Type error:
@@ -63,7 +67,8 @@ xr = map real arr
 :t (lam (x, y). x + y) (1.0, 2.0)
 > Real
 
-:t f (x, y) = x + 2.0 * y
+:t
+   f (x, y) = x + 2.0 * y
    z.i = (xr.i, xr.i * xr.i)
    sum (for i. f z.i)
 > Real
@@ -140,11 +145,14 @@ idfun x = x
 :t idfun @ Real
 > (Real -> Real)
 
-:t lam x. f :: a -> a; f y = x; ()
+:t lam x.
+     f :: a -> a
+     f y = x
+     ()
 > Type error:Leaked type variable: a
 >
-> :t lam x. f :: a -> a; f y = x; ()
->    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> :t lam x.
+>    ^^^^^^^
 
 -- :t (todo)::(Int -> Real) 1
 -- > Real
@@ -160,7 +168,8 @@ f x =
 >
 >   z = x + 1.0
 >       ^^
-:t x = 3
+:t
+   x = 3
    for i::Foo. 0
 > Error: variable not in scope: Foo
 
@@ -180,12 +189,14 @@ vspaceid x = x
 > :t vspaceid 0
 >    ^^^^^^^^^
 
-:t g :: A a | VS a . a -> a
+:t
+   g :: A a | VS a . a -> a
    g x = vspaceid x
    g @Real
 > (Real -> Real)
 
-:t g :: a -> a
+:t
+   g :: a -> a
    g x = vspaceid x
    g @Real
 > Type error: Type variable "a" not in class: VS
@@ -205,13 +216,15 @@ vspaceid x = x
 > :t grad (lam x::Int. real x) 1
 >    ^^^^^
 
-:t vadd' :: a -> a -> a
-         vadd' x y = %vadd(x, y)
-         vadd' @Real
+:t
+   vadd' :: a -> a -> a
+   vadd' x y = %vadd(x, y)
+
+   vadd' @Real
 > Type error: Type variable "a" not in class: VS
 >
->          vadd' x y = %vadd(x, y)
->                      ^^^^^^^^^^^
+>    vadd' x y = %vadd(x, y)
+>                ^^^^^^^^^^^
 
 f1 :: Real -> Real
 f1 x = x

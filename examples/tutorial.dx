@@ -16,18 +16,21 @@ See the README for installation instructions.
 :p (1. + 2.) * 3.
 > 9.0
 
-'We can write let bindings as `x = <expr>; <expr>`. Bindings can be separated
-with a line break or a semicolon.
+'Let bindings, `x = <expr>`, appear on their own line, with Python-like
+indentation rules.
 
-:p x = 1.                -- let binding
-   y = (z = 2.; z + 1.)  -- let binding of a nested let expression
-   --                    -- pretend empty line (double newline separates top-level decls)
+:p
+   x = 1.     -- let binding
+   y = (      -- let binding of a nested let expression
+     z = 2.
+     z + 1.)
    x + y                 -- body of let expression
 > 4.0
 
 'We also have lambda, tuple construction and (tuple) pattern-matching (destructuring):
 
-:p (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
+:p
+   (x, y) = (1., 2.)     -- let binding (with pattern-matching), tuple construction
    f = lam z. x + z * y  -- let binding of a lambda function
    f 1. + f 2.           -- body of let expression
 > 8.0
@@ -56,15 +59,21 @@ very loosely:
 as `f x = <expr>`. This is just syntactic sugar. These three expression all parse
 to exactly the same thing:
 
-:parse f x y = 1; f 2 3
+:parse
+  f x y = 1
+  f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
 
-:parse f = lam x y. 1; f 2 3
+:parse
+  f = lam x y. 1
+  f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
 
-:parse f = lam x. lam y. 1; f 2 3
+:parse
+  f = lam x. lam y. 1
+  f 2 3
 > (f = (lam x . (lam y . 1));
 > ((f 2) 3))
 
@@ -98,7 +107,8 @@ expression with `:t`.
 'The type system is completely static. As a consequence, type errors appear at a
 function's call site rather than in its implementation.
 
-:p f x = x + x
+:p
+   f x = x + x
    f 1
 > Type error:
 > Expected: Real
@@ -114,9 +124,10 @@ very standard Hindley-Milner-style type inference. The result of this process,
 is an *explicitly* typed IR, similar to System F, in which all binders are
 annotated. We can look at the explicitly typed IR with `:typed`:
 
-:typed f x = x * x
-       z = 2.0
-       f z
+:typed
+  f x = x * x
+  z = 2.0
+  f z
 > (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
 > (z::Real = 2.0;
 > (f z)))
@@ -124,10 +135,11 @@ annotated. We can look at the explicitly typed IR with `:typed`:
 'We can also add some explicit annotations if we like. Type inference then
 becomes type checking.
 
-:typed f :: Real -> Real
-       f x::Real = x * x
-       z::Real = 2.0
-       f z
+:typed
+  f :: Real -> Real
+  f x::Real = x * x
+  z::Real = 2.0
+  f z
 > (f::(Real -> Real) = (lam x::Real . (%fmul(x, x)));
 > (z::Real = 2.0;
 > (f z)))
@@ -143,18 +155,20 @@ generalization. For example, although we can write this:
 
 'It's an error to write this:
 
-:typed myid x = x
-       myid 1
+:typed
+   myid x = x
+   myid 1
 > Type error:Ambiguous type variables: [?_3]
 >
 > (myid::(?_3 -> ?_3), (lam x::?_3 . x))
 
 'Instead, we have to give the type explicitly:
 
-:typed myid :: a -> a
-       myid x = x
-       --
-       myid 1
+:typed
+   myid :: a -> a
+   myid x = x
+
+   myid 1
 > (myid :: A a. (a -> a)
 > myid = (lam x::a . x);
 > (myid @Int 1))
@@ -170,7 +184,8 @@ take types as arguments. Explicit types are supplied at call sites, as in
 `myid @Int 1` above. This type application is available (but optional) in the
 source language too.
 
-:p myid :: a -> a
+:p
+   myid :: a -> a
    myid x = x
    myid @Int 1
 > 1
@@ -222,7 +237,8 @@ types, with corresponding run-time cost.
 'What can we do with a table? Surely we can index into it. In Dex, we use `.`
 for indexing, so we might try to index in to a table like this:
 
-:p i = 0
+:p
+   i = 0
    xs = [1,2,3]
    xs.i
 > Type error:
@@ -239,7 +255,8 @@ know `i=0` in this case, but that's only true *dynamically* and the static type
 system doesn't know about that. If we're willing to put up with runtime errors
 we can cast the integer to the required index set.
 
-:p i = 0
+:p
+   i = 0
    xs = [1,2,3]
    xs.(asidx i)
 > 1
@@ -248,7 +265,8 @@ we can cast the integer to the required index set.
 would such an index come from? The main means of introducing an index is using
 Dex's `for` construct:
 
-:p xs = [1., 2., 3.]
+:p
+   xs = [1., 2., 3.]
    ys = for i::3 . xs.i * xs.i
    ys
 > [1.0, 4.0, 9.0]
@@ -260,9 +278,10 @@ inferred. Also like `lam`, we can combine the let binding with the `for` express
 in a way that looks like mathematical index notation. Type inference gives us
 the same thing as if we'd annotated the binders manually.
 
-:typed xs = [1., 2., 3.]
-       ys.i = xs.i * xs.i
-       ys
+:typed
+   xs = [1., 2., 3.]
+   ys.i = xs.i * xs.i
+   ys
 > (xs::(3=>Real) = [1.0, 2.0, 3.0];
 > (ys::(3=>Real) = (for  i::3 .
 >     (%fmul(xs.i, xs.i)));
@@ -272,7 +291,8 @@ the same thing as if we'd annotated the binders manually.
 type variables, is a very natural way to express shape constraints.
 For example, adding two vectors of the same size:
 
-:p addVec :: n=>Real -> n=>Real -> n=>Real
+:p
+   addVec :: n=>Real -> n=>Real -> n=>Real
    addVec x y = for i. x.i + y.i
    --
    addVec [1.0, 2.0] [0.1, 0.2]
@@ -280,7 +300,8 @@ For example, adding two vectors of the same size:
 
 'Transposing an array
 
-:p myTranspose :: n=>m=>a -> m=>n=>a
+:p
+   myTranspose :: n=>m=>a -> m=>n=>a
    myTranspose x = for i j. x.j.i
    --
    myTranspose [[1,2,3],[10,20,30]]
@@ -288,7 +309,8 @@ For example, adding two vectors of the same size:
 
 'Extracting the diagonal of a square array
 
-:p diag :: n=>n=>a -> n=>a
+:p
+   diag :: n=>n=>a -> n=>a
    diag x = for i. x.i.i
    --
    diag [[1,2],[10,20]]

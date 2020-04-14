@@ -4,25 +4,27 @@ g x = x
 :t g
 > A a. (a -> a)
 
-:t f x::Int = x; f 1
+:t
+  f x::Int = x
+  f 1
 > Int
 
-
-:t f x::Real = x; f 1
+:t
+   f x::Real = x
+   f 1
 > Type error:
 > Expected: Real
 >   Actual: Int
 > In: 1
 >
-> :t f x::Real = x; f 1
->                     ^
+>    f 1
+>      ^
 
 g1 :: (a -> Int) -> (a -> Int)
 g1 x = x
 
 :t g1
 > A a. ((a -> Int) -> (a -> Int))
-
 
 g2 :: a -> a
 g2 x = iadd x x
@@ -40,7 +42,6 @@ h x = x
 
 :t h
 > A a b. ((a -> b) -> (a -> b))
-
 
 fun :: a -> a
 fun x = sin x

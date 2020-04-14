@@ -1,9 +1,13 @@
 
 -- repeated vars in patterns not allowed
-:p (x, x) = (1, 1); x
+:p
+  (x, x) = (1, 1)
+  x
 > Error: variable already defined: x
 
-:p f (x, x) = x; f (1, 1)
+:p
+  f (x, x) = x
+  f (1, 1)
 > Error: variable already defined: x
 
 -- TODO: re-enable if we choose to allow non-peer shadowing
@@ -43,6 +47,7 @@ x = 1
 :p z
 > 3
 
-:p (_, _, w) = (1,2,4)
+:p
+   (_, _, w) = (1,2,4)
    w
 > 4

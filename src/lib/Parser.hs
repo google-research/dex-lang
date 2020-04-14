@@ -25,6 +25,10 @@ import Record
 import Syntax
 import PPrint
 
+data ParseCtx = ParseCtx { curIndent :: Int
+                         , canBreak  :: Bool }
+type Parser = ReaderT ParseCtx (Parsec Void String)
+
 parseProg :: String -> [SourceBlock]
 parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
 
@@ -32,10 +36,10 @@ parseData :: String -> Except FExpr
 parseData s = parseit s literalData
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
-parseTopDeclRepl s = case sbContents block of
+parseTopDeclRepl s = case sbContents b of
   UnParseable True _ -> Nothing
-  _ -> Just block
-  where block = mustParseit s sourceBlock
+  _ -> Just b
+  where b = mustParseit s sourceBlock
 
 parseTopDecl :: String -> Except FDecl
 parseTopDecl s = parseit s topDecl
@@ -53,7 +57,8 @@ mustParseit s p  = case parseit s p of
 topDecl :: Parser FDecl
 topDecl = ( ruleDef
         <|> typeDef
-        <|> decl
+        <|> letMono
+        <|> letPoly
         <?> "top-level declaration" ) <* (void eol <|> eof)
 
 includeSourceFile :: Parser String
@@ -63,8 +68,8 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
-  (source, block) <- withSource $ withRecovery recover $ sourceBlock'
-  return $ SourceBlock (unPos (sourceLine pos)) offset source block
+  (src, b) <- withSource $ withRecovery recover $ sourceBlock'
+  return $ SourceBlock (unPos (sourceLine pos)) offset src b
 
 recover :: ParseError String Void -> Parser SourceBlock'
 recover e = do
@@ -112,13 +117,13 @@ dumpData = do
   symbol "dump"
   fmt <- dataFormat
   s <- stringLiteral
-  e <- declOrExpr
+  e <- blockOrExpr
   void eol
   return $ Command (Dump fmt s) (exprAsModule e)
 
 explicitCommand :: Parser SourceBlock'
 explicitCommand = do
-  cmdName <- char ':' >> mayBreak identifier
+  cmdName <- char ':' >> identifier
   cmd <- case cmdName of
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
@@ -129,7 +134,7 @@ explicitCommand = do
     _ -> case parsePassName cmdName of
       Just p -> return $ ShowPass p
       _ -> fail $ "unrecognized command: " ++ show cmdName
-  e <- declOrExpr <*eol
+  e <- blockOrExpr <*eol
   return $ case (cmd, e) of
     (GetType, SrcAnnot (FVar v) _) -> GetNameType v
     _ -> Command cmd (exprAsModule e)
@@ -157,12 +162,6 @@ typeDef = do
 
 -- === Parsing decls ===
 
-decl :: Parser FDecl
-decl = letMono <|> letPoly
-
-declSep :: Parser ()
-declSep = void $ some $ (eol >> sc) <|> symbol ";"
-
 letPoly :: Parser FDecl
 letPoly = do
   v <- try $ lowerName <* symbol "::"
@@ -172,11 +171,11 @@ letPoly = do
 letPolyTail :: String -> Parser (Type, FTLam)
 letPolyTail s = do
   ~(Forall tbs qs ty) <- mayNotBreak $ sigmaType
-  declSep
+  nextLine
   symbol s
   wrap <- idxLhsArgs <|> lamLhsArgs
   equalSign
-  rhs <- liftM wrap declOrExpr
+  rhs <- liftM wrap blockOrExpr
   return (Forall tbs qs ty, FTLam tbs qs rhs)
 
 letPolyToMono :: FDecl -> FDecl
@@ -190,33 +189,59 @@ letMono = do
                         wrap <- idxLhsArgs <|> lamLhsArgs
                         equalSign
                         return (p, wrap)
-  body <- declOrExpr
+  body <- blockOrExpr
   return $ LetMono p (wrap body)
 
 -- === Parsing expressions ===
 
+type Statement = Either FDecl FExpr
+
+blockOrExpr :: Parser FExpr
+blockOrExpr = block <|> expr
+
+block :: Parser FExpr
+block = do
+  nextLine
+  indent <- liftM length $ some (char ' ')
+  withIndent indent $ do
+    statements <- mayNotBreak $ statement `sepBy1` (symbol ";" <|> try nextLine)
+    case last statements of
+      Left _ -> optional eol >> fail "Last statement in a block must be an expression."
+      _      -> return ()
+    return $ wrapStatements statements
+
+wrapStatements :: [Statement] -> FExpr
+wrapStatements statements = case statements of
+  [Right e] -> e
+  s:rest -> FDecl s' (wrapStatements rest)
+    where s' = case s of
+                 Left  d -> d
+                 Right e -> LetMono (RecLeaf (NoName:>NoAnn)) e
+  [] -> error "Shouldn't be reachable"
+
+statement :: Parser Statement
+statement =   liftM Left (letMono <|> letPoly)
+          <|> liftM Right expr
+          <?> "decl or expr"
+
 expr :: Parser FExpr
-expr = makeExprParser (withSourceAnn term) ops
-
-term :: Parser FExpr
-term =   parenExpr
-     <|>  var
-     <|> liftM fPrimCon idxLit
-     <|> liftM (fPrimCon . Lit) literal
-     <|> lamExpr
-     <|> forExpr
-     <|> primExpr
-     <|> ffiCall
-     <|> tabCon
-     <?> "term"
-
-declOrExpr :: Parser FExpr
-declOrExpr =   declExpr
-           <|> expr <?> "decl or expr"
+expr = makeExprParser (withSourceAnn expr') ops
+  where
+    expr' :: Parser FExpr
+    expr' =   parenExpr
+          <|> var
+          <|> liftM fPrimCon idxLit
+          <|> liftM (fPrimCon . Lit) literal
+          <|> lamExpr
+          <|> forExpr
+          <|> primExpr
+          <|> ffiCall
+          <|> tabCon
+          <?> "expr"
 
 parenExpr :: Parser FExpr
 parenExpr = do
-  e <- parens $ declExpr <|> productCon
+  e <- parens $ block <|> productCon
   ann <- typeAnnot
   return $ case ann of NoAnn -> e
                        ty    -> Annot e ty
@@ -252,9 +277,6 @@ var = do
 tyArg :: Parser Type
 tyArg = symbol "@" >> tauTypeAtomic
 
-declExpr :: Parser FExpr
-declExpr = liftM2 FDecl (mayNotBreak decl <* declSep) declOrExpr
-
 withSourceAnn :: Parser FExpr -> Parser FExpr
 withSourceAnn p = liftM (uncurry SrcAnnot) (withPos p)
 
@@ -288,7 +310,7 @@ rawLamExpr = do
   symbol "lam"
   p <- pat
   argTerm
-  body <- declOrExpr
+  body <- blockOrExpr
   return $ FLamExpr p body
 
 -- TODO: combine lamExpr/linlamExpr/forExpr
@@ -298,7 +320,7 @@ lamExpr = do
         <|> Lin   <$ symbol "llam"
   ps <- pat `sepBy` sc
   argTerm
-  body <- declOrExpr
+  body <- blockOrExpr
   return $ foldr (fLam ann) body ps
 
 forExpr :: Parser FExpr
@@ -306,7 +328,7 @@ forExpr = do
   symbol "for"
   vs <- pat `sepBy` sc
   argTerm
-  body <- declOrExpr
+  body <- blockOrExpr
   return $ foldr fFor body vs
 
 tabCon :: Parser FExpr
@@ -356,12 +378,7 @@ appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
                      >> return (\x y -> fPrimOp $ App NoAnn NoAnn x y))
   where
-    opNames = ["+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
-
-postFixRule :: Operator Parser FExpr
-postFixRule = Postfix $ do
-  trailers <- some (period >> idxExpr)
-  return $ \e -> foldl (\x i -> fPrimOp $ TabGet x i) e trailers
+    opNames = [".", "+", "*", "/", "- ", "^", "$", "@", "<", ">", "<=", ">=", "&&", "||", "=="]
 
 scalarBinOpRule :: String -> ScalarBinOp -> Operator Parser FExpr
 scalarBinOpRule opchar op = binOpRule opchar f
@@ -373,7 +390,7 @@ cmpRule opchar op = binOpRule opchar f
 
 binOpRule :: String -> (FExpr -> FExpr -> FExpr) -> Operator Parser FExpr
 binOpRule opchar f = InfixL $ do
-  ((), pos) <- (withPos $ symbol opchar) <* (optional eol >> sc)
+  ((), pos) <- (withPos $ mayBreak $ symbol opchar) <* (optional eol >> sc)
   return $ \e1 e2 -> SrcAnnot (f e1 e2) pos
 
 backtickRule :: Operator Parser FExpr
@@ -384,22 +401,18 @@ backtickRule = InfixL $ do
   return $ \x y -> (v `app` x) `app ` y
 
 ops :: [[Operator Parser FExpr]]
-ops = [ [postFixRule, appRule]
+ops = [ [binOpRule "." (\x i -> FPrimExpr $ OpExpr $ TabGet x i)]
+      , [appRule]
       , [scalarBinOpRule "^" Pow]
       , [scalarBinOpRule "*" FMul, scalarBinOpRule "/" FDiv]
-      -- -- trailing space after "-" to distinguish from negation
+      -- trailing space after "-" to distinguish from negation
       , [scalarBinOpRule "+" FAdd, scalarBinOpRule "- " FSub]
       , [cmpRule "==" Equal, cmpRule "<=" LessEqual, cmpRule ">=" GreaterEqual,
-         -- These "<" and ">" must come after "<=" and ">=" or parser will see ("<","=")
-         cmpRule "<" Less, cmpRule ">" Greater
-        ]
+         cmpRule "<" Less, cmpRule ">" Greater]
       , [scalarBinOpRule "&&" And, scalarBinOpRule "||" Or]
       , [backtickRule]
-      , [InfixR (symbol "$" >> optional eol >> sc >> return (\x y -> app x y))]
+      , [InfixR (mayBreak (symbol "$") >> return (\x y -> app x y))]
        ]
-
-idxExpr :: Parser FExpr
-idxExpr = withSourceAnn $ rawVar <|> parens productCon
 
 rawVar :: Parser FExpr
 rawVar = do
@@ -431,10 +444,10 @@ name :: NameSpace -> Parser String -> Parser Name
 name ns p = liftM (rawName ns) p
 
 equalSign :: Parser ()
-equalSign = mayBreak $ try $ symbol "=" >> notFollowedBy (symbol ">" <|> symbol "=")
+equalSign = try $ symbol "=" >> notFollowedBy (symbol ">" <|> symbol "=")
 
 argTerm :: Parser ()
-argTerm = mayBreak $ symbol "."
+argTerm = mayNotBreak $ symbol "."
 
 fLam :: Type -> Pat -> FExpr -> FExpr
 fLam l p body = fPrimCon $ Lam l NoAnn $ FLamExpr p body
@@ -634,11 +647,8 @@ tableData = do
 
 -- === Util ===
 
--- Boolean specifies whether to consume newlines (True)
-type Parser = ReaderT Bool (Parsec Void String)
-
 runTheParser :: String -> Parser a -> Either (ParseErrorBundle String Void) a
-runTheParser s p =  parse (runReaderT p False) "" s
+runTheParser s p =  parse (runReaderT p (ParseCtx 0 False)) "" s
 
 sc :: Parser ()
 sc = L.space space lineComment empty
@@ -659,16 +669,16 @@ stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
 
 space :: Parser ()
 space = do
-  consumeNewLines <- ask
+  consumeNewLines <- asks canBreak
   if consumeNewLines
     then space1
     else void $ takeWhile1P (Just "white space") (`elem` (" \t" :: String))
 
 mayBreak :: Parser a -> Parser a
-mayBreak p = local (const True) p
+mayBreak p = local (\ctx -> ctx { canBreak = True }) p
 
 mayNotBreak :: Parser a -> Parser a
-mayNotBreak p = local (const False) p
+mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
 
 num :: Parser (Either Double Int)
 num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
@@ -689,7 +699,7 @@ symbol :: String -> Parser ()
 symbol s = void $ L.symbol sc s
 
 bracketed :: String -> String -> Parser a -> Parser a
-bracketed left right p = between (mayBreak (symbol left)) (symbol right) $ mayBreak p
+bracketed left right p = between (symbol left) (symbol right) $ mayBreak p
 
 parens :: Parser a -> Parser a
 parens p = bracketed "(" ")" p
@@ -704,11 +714,21 @@ withPos p = do
   n' <- getOffset
   return $ (x, (n, n'))
 
+nextLine :: Parser ()
+nextLine = do
+  void eol
+  n <- asks curIndent
+  void $ mayNotBreak $ many $ try (sc >> eol)
+  void $ replicateM n (char ' ')
+
 withSource :: Parser a -> Parser (String, a)
 withSource p = do
   s <- getInput
   (x, (start, end)) <- withPos p
   return (take (end - start) s, x)
+
+withIndent :: Int -> Parser a -> Parser a
+withIndent n p = local (\ctx -> ctx { curIndent = curIndent ctx + n }) $ p
 
 failIf :: Bool -> String -> Parser ()
 failIf True s = fail s

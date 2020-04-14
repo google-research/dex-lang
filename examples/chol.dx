@@ -30,11 +30,11 @@ chol x =
       (select (i < outerrow)
         (for j::n. r.i.j)  -- copy
         for j::n.
-          select (i < j)
-            0.0
-            (select (i > j)
-              (lowerOp r i j)
-              (diagOp r j)))
+          (select (i < j)
+             0.0
+             (select (i > j)
+                (lowerOp r i j)
+                (diagOp r j))))
   init = for i::n. for j::n. 0.0
   fold init fs
 

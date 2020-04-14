@@ -54,8 +54,9 @@ params = regress poly xs ys
 predict :: Real -> Real
 predict x = vdot params (poly x)
 
-:plot xsTest = linspace@100 0.0 1.0
-      zip xsTest (map predict xsTest)
+:plot
+   xsTest = linspace@100 0.0 1.0
+   zip xsTest (map predict xsTest)
 > <graphical output>
 
 'RMS error

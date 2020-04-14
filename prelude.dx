@@ -241,8 +241,9 @@ std :: A n. n=>Real -> Real
 std xs = sqrt $ mean (map sq xs) - sq (mean xs)
 
 linspace :: A n. Real -> Real -> n=>Real
-linspace low high = dx = (high - low) / real (size @n)
-                    for i::n. low + real (asint i) * dx
+linspace low high =
+  dx = (high - low) / real (size @n)
+  for i::n. low + real (asint i) * dx
 
 -- 'Functions for working with the pseudorandom number generator
 
@@ -337,12 +338,14 @@ transposeLinear :: A a b | VS a, VS b . (a --o b) -> b --o a
 transposeLinear f ct = %linearTranspose(lam t. f t) ct
 
 vjp :: A a b | VS a, VS b . (a -> b) -> a -> (b, b --o a)
-vjp f x = (y, df) = linearize f x
-          (y, transposeLinear df)
+vjp f x =
+  (y, df) = linearize f x
+  (y, transposeLinear df)
 
 grad :: A a | VS a . (a -> Real) -> a -> a
-grad f x = (_, pullback) = vjp f x
-           pullback 1.0
+grad f x =
+  (_, pullback) = vjp f x
+  pullback 1.0
 
 deriv :: (Real -> Real) -> Real -> Real
 deriv f x = jvp f x 1.0

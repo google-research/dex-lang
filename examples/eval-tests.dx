@@ -1,25 +1,29 @@
 :p 1.0 + 2.0
 > 3.0
 
-:p (double = lam x. x * 2.0
-    double 10.0)
+:p
+   double = lam x. x * 2.0
+   double 10.0
 > 20.0
 
 :p isum (iota @10)
 > 45
 
-:p x = iota @10
+:p
+   x = iota @10
    isum (for i. x.i)
 > 45
 
-:p vdot' :: n=>Real -> n=>Real -> Real
+:p
+   vdot' :: n=>Real -> n=>Real -> Real
    vdot' x y = sum (for i. x.i * y.i * 2.0)
    x = (iota) :: (3=>Int)
    y = map real x
    vdot' y y
 > 10.0
 
-:p x = iota @ 3
+:p
+   x = iota @ 3
    y = iota @ 4
    z.i.j = real x.i * real y.j
    sum (for i. sum z.i)
@@ -59,17 +63,20 @@ fun = lam y. sum (map real arr) + y
 :p (lam (x, y). x + y) (1.0, 2.0)
 > 3.0
 
-:p f :: (a -> b, a) -> b
+:p
+   f :: (a -> b, a) -> b
    f (x, y) = x y
    f (lam x. x, 1)
 > 1
 
-:p (x,y) = ((1.0,2.0),3.0)
+:p
+   (x,y) = ((1.0,2.0),3.0)
    (x1, x2) = x
    x1 + x2 + y
 > 6.0
 
-:p x = (1.0,2.0)
+:p
+   x = (1.0,2.0)
    (y,z) = x
    y + z
 > 3.0
@@ -115,12 +122,15 @@ s = 1.0
 :p [2, 4, 8]
 > [2, 4, 8]
 
-:p xs = [2,1,0]; (for i. iadd xs.i 10)
+:p
+   xs = [2,1,0]
+   for i. iadd xs.i 10
 > [12, 11, 10]
 
 cumsumplus :: n=>Real -> n=>Real
-cumsumplus xs = snd (scan 0.0 lam i c. ans = c + xs.i
-                                       (ans, 1.0 + ans))
+cumsumplus xs = snd $ scan 0.0 lam i c.
+  ans = c + xs.i
+  (ans, 1.0 + ans)
 
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2.0, 4.0, 7.0]
@@ -180,38 +190,52 @@ litArr = [10, 5, 3]
 :p for i::3. 1
 > [1, 1, 1]
 
-:p (k, _) = (iadd 1 2, 3)
+:p
+   (k, _) = (iadd 1 2, 3)
    for i::6. iadd k (asint i)
 > [3, 4, 5, 6, 7, 8]
 
-:p k = newKey 0
+:p
+   k = newKey 0
    mean for i::100. randn (ixkey k i)
 > -0.115799494
 
-:p k = newKey 0
+:p
+   k = newKey 0
    mean for i::100. sq $ randn (ixkey k i)
 > 1.2581897
 
 :p for i::3 j::2. rand $ ixkey2 (newKey 11) i j
 > [[0.47415292, 0.9145164], [0.7944602, 0.27679908], [0.58958626, 0.7116251]]
 
-:p x = for i::3. 0; x
+:p
+  x = for i::3. 0
+  x
 > [0, 0, 0]
 
-:p x = for i::3. for j::4. 0; x
+:p
+   x = for i::3. for j::4. 0
+   x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
 :p fold (for i::3. 0.0) $ lam i::2 c. (for j. c.j + real (asint j))
 > [0.0, 2.0, 4.0]
 
-:p (mat2 = for i::4 j::4 . asint i; tmp = for i. mat2.i.i; tmp)
+:p
+   mat2 = for i::4 j::4 . asint i
+   tmp = for i. mat2.i.i
+   tmp
 > [0, 1, 2, 3]
 
-:p (x = [[0, 1], [2, 3]]; xt.i.j = x.j.i; xt)
+:p
+  x = [[0, 1], [2, 3]]
+  xt.i.j = x.j.i
+  xt
 > [[0, 2], [1, 3]]
 
-:p (x, y) = (1, (2,3))
-   (x, y)
+:p
+  (x, y) = (1, (2,3))
+  (x, y)
 > (1, (2, 3))
 
 :p for i::3. i
@@ -349,7 +373,9 @@ litArr = [10, 5, 3]
 :p (1,True,) :: (Int, Bool,)
 > (1, True)
 
-:p (x,) = (1,); x
+:p
+  (x,) = (1,)
+  x
 > 1
 
 :p [1,]
@@ -367,7 +393,8 @@ litArr = [10, 5, 3]
 :p select True (1,2) (2,3)
 > (1, 2)
 
-:p x = 1; x == x
+:p
+  x = 1; x == x
 > True
 
 :p 1 `iadd` 2
@@ -377,15 +404,17 @@ litArr = [10, 5, 3]
 > [3, 4, 5]
 
 -- TODO: test file specifically for parse errors (including testing error messages)
-:p f :: Real->Real
+:p
+   f :: Real->Real
    f x =
      -- line comment should be ok here
      2.0 * x
    f 1.0
 > 2.0
 
-:p f :: Real->Real
-   f  = lam x.
+:p
+   f :: Real->Real
+   f = lam x.
      -- line comment should be ok here
      2.0 * x
    f 1.0

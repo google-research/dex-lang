@@ -1,4 +1,5 @@
-:p f :: Real --o Real
+:p
+   f :: Real --o Real
    f = llam x. x
    f 1.0
 > 1.0
@@ -57,14 +58,17 @@
 > :t llam x::Real. x * x
 >                    ^^
 
-:t llam x::Real. y = x; x + y
+:t llam x::Real.
+     y = x
+     x + y
 > (Real --o Real)
 
-:t llam x::Real. y = x; y * x
+:t llam x::Real.
+     y = x; y * x
 > Linearity error: pattern spent twice: [x]
 >
-> :t llam x::Real. y = x; y * x
->                           ^^
+>      y = x; y * x
+>               ^^
 
 :t llam (x, y). x + y
 > ((Real, Real) --o Real)
@@ -184,7 +188,8 @@ linUnary :: Real --o Real
 linUnary x = linFstArg x 1.0
 
 -- Nonlinear because of defaulting rules
-:t f x = x + x
+:t
+   f x = x + x
    f
 > (Real -> Real)
 
