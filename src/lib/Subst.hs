@@ -88,6 +88,7 @@ instance Subst Type where
     TypeApp f args -> reduceTypeApp (recur f) (map recur args)
     Dep v -> case substVar env v of
                Var v' -> Dep v'
+               Con (Lit (IntLit i)) -> DepLit i
                _      -> NoDep  -- TODO: make this an error
                                 -- (need to be stricter about where we put `Dep`)
     Effect row t -> case t of
