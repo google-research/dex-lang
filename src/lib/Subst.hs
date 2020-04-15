@@ -89,8 +89,7 @@ instance Subst Type where
     Dep v -> case substVar env v of
                Var v' -> Dep v'
                Con (Lit (IntLit i)) -> DepLit i
-               _      -> NoDep  -- TODO: make this an error
-                                -- (need to be stricter about where we put `Dep`)
+               term   -> error $ "Can't lift term into a type: " ++ (pprint term)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)

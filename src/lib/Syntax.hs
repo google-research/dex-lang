@@ -31,7 +31,8 @@ module Syntax (
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
-    traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi)
+    traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi,
+    isDependentType)
   where
 
 import Data.Tuple (swap)
@@ -77,9 +78,9 @@ data Kind = TyKind
           | ArrowKind [Kind] Kind
           | MultKind
           | EffectKind
-          | DepKind
+          | DepKind Type
           | NoKindAnn
-            deriving (Eq, Show, Ord, Generic)
+            deriving (Eq, Show, Generic)
 
 type EffectRow a = Env (EffectName, a)
 
@@ -725,7 +726,7 @@ traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
   IdxSetLit _          -> pure ty
-  Range a b            -> liftA2 Range (f DepKind a) (f DepKind b)
+  Range a b            -> liftA2 Range (f depIntType a) (f depIntType b)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r
@@ -737,6 +738,8 @@ traverseType f ty = case ty of
   NonLin               -> pure NonLin
   NoAnn                -> pure NoAnn
   _ -> error $ "Shouldn't be handled generically: " ++ show ty
+  where
+    depIntType = DepKind $ BaseType $ IntType
 
 makePi :: Var -> EffectiveType -> PiType
 makePi (v:>a) (eff, b) = Pi a ( abstractType v 0 eff
@@ -784,3 +787,9 @@ abstractType v d ty = case ty of
     substWithDBVar :: Name -> Name
     substWithDBVar v' | v == v'   = DeBruijn d
                       | otherwise = v'
+
+isDependentType :: PiType -> Bool
+isDependentType (Pi _ (eff, b)) = usesPiVar eff || usesPiVar b
+  where
+    usesPiVar t = (dummyName :> ()) `isin` freeVars (instantiateType 0 dummyName t)
+    dummyName = "__dummy_type_variable_that_should_be_unused!"

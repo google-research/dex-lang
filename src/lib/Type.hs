@@ -120,13 +120,13 @@ getKind :: Type -> Kind
 getKind ty = case ty of
   TypeVar v       -> varAnn v
   TypeAlias vs rhs -> ArrowKind (map varAnn vs) (getKind rhs)
-  Lin        -> MultKind
-  NonLin     -> MultKind
-  Effect _ _ -> EffectKind
-  NoAnn      -> NoKindAnn
-  Dep _      -> DepKind
-  DepLit _   -> DepKind
-  _          -> TyKind
+  Lin          -> MultKind
+  NonLin       -> MultKind
+  Effect _ _   -> EffectKind
+  NoAnn        -> NoKindAnn
+  Dep (_ :> t) -> DepKind t
+  DepLit _     -> DepKind $ BaseType IntType
+  _            -> TyKind
 
 checkKind :: (MonadError Err m, MonadReader TypeEnv m)
           => Type -> m Kind
@@ -158,12 +158,15 @@ checkKind ty = case ty of
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
-  Range _ _ -> do
-    -- TODO: check kinds
-    -- checkKindIs DepKind a
-    -- checkKindIs DepKind b
-    return TyKind
-  Dep _ -> error "didn't expect dep"
+  Range a b -> do
+      checkKindIs depIntKind a
+      checkKindIs depIntKind b
+      return TyKind
+    where
+      depIntKind = DepKind $ BaseType $ IntType
+  Dep (_ :> t) -> do
+    -- TODO: Make sure this is consistent with the environment (use checkVar)
+    return $ DepKind t
   _ -> do
     void $ traverseType (\k t -> checkKindIs k t >> return t) ty
     return $ getKind ty
