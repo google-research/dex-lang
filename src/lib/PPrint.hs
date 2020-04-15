@@ -195,9 +195,10 @@ instance PrettyLam PiType where
   prettyLam (Pi a (eff,b)) = (p a, p eff <+> p b)
 
 instance Pretty Kind where
-  pretty TyKind     = "Type"
-  pretty MultKind   = "Mult"
-  pretty EffectKind = "Effect"
+  pretty TyKind      = "Type"
+  pretty MultKind    = "Mult"
+  pretty EffectKind  = "Effect"
+  pretty (DepKind t) = pretty t
   pretty k = p $ show k
 
 instance Pretty a => Pretty (VarP a) where

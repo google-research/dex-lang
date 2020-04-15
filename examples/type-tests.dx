@@ -291,3 +291,17 @@ fAmb = ()
 >
 >   fEff2 @Int ()
 >   ^^^^^^^^^^^
+
+:p
+    for i:7. sum for j:(Range 0 unboundName). 1.0
+> Error: variable not in scope: unboundName
+
+:p
+    x = "123"
+    for i:7. sum for j:(Range 0 x). 1.0
+> Kind error:
+> Expected: Int
+>   Actual: Str
+>
+>     for i:7. sum for j:(Range 0 x). 1.0
+>              ^^^^

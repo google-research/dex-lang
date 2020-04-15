@@ -113,10 +113,12 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     f' <- checkPure f $ ArrowType l' piTy
     x' <- checkPure x a
     piTy' <- zonk piTy
-    -- TODO: check if piTy' is actually dependent, and use `d = NoDep` if not
-    let d = case x' of FVar v              -> Dep v
-                       SrcAnnot (FVar v) _ -> Dep v
-                       _                   -> NoDep
+    let d = if isDependentType piTy'
+              then case x' of
+                FVar v              -> Dep v
+                SrcAnnot (FVar v) _ -> Dep v
+                _                   -> error $ pprint x'
+              else NoDep
     let (eff, b) = applyPi piTy' d
     constrainReq b
     eff' <- openEffect eff
@@ -332,11 +334,18 @@ inferKindsM kind ty = case ty of
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
   Range a b -> do
-    -- TODO: check kinds
-    a' <- inferKindsM DepKind a
-    b' <- inferKindsM DepKind b
-    return $ Range a' b'
-  Dep v -> return $ Dep v
+      a' <- inferKindsM depIntType a
+      b' <- inferKindsM depIntType b
+      return $ Range a' b'
+    where depIntType = DepKind $ BaseType IntType
+  --Dep v -> return $ Dep v  -- FIXME: Infer type for the variable
+                           --        This requires unifying InferM and InferKindM
+  Dep v@(name :> _) -> do
+    env <- look
+    case envLookup env v of
+      Just (L t) -> return $ Dep $ name :> t
+      Just (T _) -> error "Expected a term"
+      Nothing -> error "Failed to infer the type of dependent variable"
   _ -> traverseType inferKindsM ty
 
 addKindAnn :: TVar -> InferKindM TVar
