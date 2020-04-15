@@ -192,28 +192,28 @@ tripleit x = %runReader(x, \r.
 :p
   f : Real -> Real
   f x = fst (x * x, iadd 2 1)
-  --
+
   jvp f 1.0 3.0
 > 6.0
 
 :p
   f : 2=>Real -> Real
   f xs = xs.(0@2) * xs.(1@2)
-  --
+
   jvp f [1., 2.] [3.0, 4.0]
 > 10.0
 
 :p
   f : (Real,Real) -> Real
   f (x,y) = x * y
-  --
+
   jvp f (1., 2.) (3.0, 4.0)
 > 10.0
 
 :p
   f : n=>Real -> n=>Real
   f xs = for i. xs.i * xs.i
-  --
+
   jvp f [1.,2.] [3.,4.]
 > [6.0, 16.0]
 
@@ -222,9 +222,15 @@ tripleit x = %runReader(x, \r.
   f xs = runReader xs \ref.
             y = ask ref
             y * y * y
-  --
+
   jvp f 2. 3.
 > 36.0
 
 :p jvp sum [1., 2.] [3.0, 4.0]
 > 7.0
+
+:p grad sum [1.,2.]
+> [1.0, 1.0]
+
+:p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
+> ([3.0, 4.0], [1.0, 2.0])

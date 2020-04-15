@@ -302,11 +302,15 @@ emitInstr instr = do
     Nothing -> error "Expected non-void result"
 
 addToDest :: IExpr -> IExpr -> ImpM ()
-addToDest dest src = do
-  cur <- load dest
-  src' <- loadIfRef src
-  updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src'
-  store dest updated
+addToDest dest src = case impExprType dest of
+  IRefType (RealType, []) -> do
+    cur <- load dest
+    src' <- loadIfRef src
+    updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src'
+    store dest updated
+  IRefType (RealType, (n:_)) ->
+    emitLoop n $ \i -> addToDest (IGet dest i) (IGet src i)
+  ty -> error $ "Addition not implemented for type: " ++ pprint ty
 
 initializeZero :: IExpr -> ImpM ()
 initializeZero ref = case impExprType ref of

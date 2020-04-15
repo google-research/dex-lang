@@ -338,6 +338,7 @@ substVar v = do
   return v'
 
 transposeCon :: Con -> Atom -> TransposeM ()
+transposeCon con _ | isSingletonType (getType (Con con)) = return ()
 transposeCon con ct = case con of
   Lit _ -> return ()
   RecCon r -> do
