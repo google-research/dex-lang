@@ -162,7 +162,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
   pretty (Lam _ _ lam) = parens $ prettyL lam
   pretty (RecCon r)    = p r
-  pretty (AFor n body) = parens $ "afor *::" <> p n <+> "." <+> p body
+  pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
   pretty (AsIdx n i)   = p i <> "@" <> p n
   pretty (ArrayRef array) = p array
   pretty con = prettyExprDefault (ConExpr con)
@@ -258,7 +258,7 @@ instance Pretty ImpInstr where
                                nest 4 (hardline <> p block)
 
 instance Pretty Array where
-  pretty (Array shape b _) = "Ref::" <> p b <> p shape
+  pretty (Array shape b _) = "Ref:" <> p b <> p shape
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""

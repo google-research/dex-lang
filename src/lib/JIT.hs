@@ -293,6 +293,7 @@ compilePrimOp (ScalarBinOp op x y) = case op of
   IAdd   -> emitInstr longTy $ L.Add False False x y []
   ISub   -> emitInstr longTy $ L.Sub False False x y []
   IMul   -> emitInstr longTy $ L.Mul False False x y []
+  IDiv   -> emitInstr longTy $ L.SDiv False x y []
   Rem    -> emitInstr longTy $ L.SRem x y []
   FAdd   -> emitInstr realTy $ L.FAdd L.noFastMathFlags x y []
   FSub   -> emitInstr realTy $ L.FSub L.noFastMathFlags x y []

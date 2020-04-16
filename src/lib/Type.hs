@@ -14,7 +14,7 @@ module Type (
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
     getKind, checkKindIs, checkKindEq, getEffType, getPatName,
-    HasType) where
+    getConType, checkEffType, HasType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -589,6 +589,7 @@ binOpType :: ScalarBinOp -> (BaseType, BaseType, BaseType)
 binOpType op = case op of
   IAdd   -> (i, i, i);  ISub   -> (i, i, i)
   IMul   -> (i, i, i);  ICmp _ -> (i, i, b)
+  IDiv   -> (i, i, i)
   Pow    -> (i, i, i);  Rem    -> (i, i, i)
   FAdd   -> (r, r, r);  FSub   -> (r, r, r)
   FMul   -> (r, r, r);  FCmp _ -> (r, r, b)

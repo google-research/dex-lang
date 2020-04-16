@@ -14,8 +14,10 @@ module Imp (toImpModule, impExprToAtom, impExprType) where
 import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Control.Monad.State
 import Control.Monad.Writer
 import Data.Foldable
+import Data.Functor.Reverse
 import Data.Traversable
 import Data.Text.Prettyprint.Doc
 
@@ -86,19 +88,23 @@ fromScalarDest atom = error $ "Not a scalar dest " ++ pprint atom
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()
 toImpCExpr dests op = case op of
-  TabCon _ _ rows -> do
+  TabCon n _ rows -> do
     rows' <- mapM toImpAtom rows
-    void $ sequence [copyIAtom (tabGetIAtom dests $ ILit (IntLit i)) row
-                    | (i, row) <- zip [0..] rows']
-  For (LamExpr b body) -> do
-    n' <- typeToSize (varAnn b)
+    forM_ (zip [0..] rows') $ \(i, row) -> do
+      i' <- intToIndex n $ ILit $ IntLit i
+      ithDest <- impTabGet dests i'
+      copyIAtom ithDest row
+  For (LamExpr b@(_:>n) body) -> do
+    n' <- indexSetSize n
     emitLoop n' $ \i -> do
-      let ithDest = tabGetIAtom dests i
-      extendR (b @> asIdx (varAnn b) i) $ toImpExpr ithDest body
+      i' <- intToIndex n i
+      ithDest <- impTabGet dests i'
+      extendR (b @> i') $ toImpExpr ithDest body
   TabGet x i -> do
-    i' <- toImpAtom i >>= fromScalarIAtom
-    xs <- toImpAtom x
-    copyIAtom dests $ tabGetIAtom xs i'
+    i' <- toImpAtom i
+    x' <- toImpAtom x
+    ans <- impTabGet x' i'
+    copyIAtom dests ans
   RecGet x i -> do
     x' <- toImpAtom x
     case x' of
@@ -117,9 +123,10 @@ toImpCExpr dests op = case op of
     extendR (ref @> sDest) $ toImpExpr aDest body
     where (ICon (RecCon (Tup [aDest, sDest]))) = dests
   IndexEff _ ~(Dep ref) _ i (LamExpr ref' body) -> do
-    i' <- toImpAtom i >>= fromScalarIAtom
+    i' <- toImpAtom i
     curRef <- lookupVar ref
-    extendR (ref' @> tabGetIAtom curRef i') (toImpExpr dests body)
+    curRef' <- impTabGet curRef i'
+    extendR (ref' @> curRef') (toImpExpr dests body)
   PrimEffect ~(Dep ref) _ m -> do
     case m of
       MAsk -> do
@@ -138,7 +145,7 @@ toImpCExpr dests op = case op of
         copyIAtom dests sDests
   IntAsIndex n i -> do
     i' <- toImpAtom i >>= fromScalarIAtom
-    n' <- typeToSize n
+    n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     store dest ans
@@ -151,7 +158,7 @@ toImpCExpr dests op = case op of
     where op' = case ty of BaseType RealType -> FCmp
                            _                 -> ICmp
   IdxSetSize n -> do
-    n' <- typeToSize n
+    n' <- indexSetSize n
     copyOrStore (fromScalarDest dests) n'
   ScalarUnOp IndexAsInt i ->
     toImpAtom i >>= fromScalarIAtom >>= store (fromScalarDest dests)
@@ -181,21 +188,62 @@ makeDest' shape ty = case ty of
     tell [v]
     return $ ICon $ AGet $ ILeaf $ IVar v
   TabType n b -> do
-    n'  <- lift $ typeToSize n
+    n'  <- lift $ indexSetSize n
     liftM (ICon . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (ICon . RecCon ) $ traverse (makeDest' shape) r
   IdxSetLit n -> liftM (ICon . AsIdx (IdxSetLit n)) $ makeDest' shape (BaseType IntType)
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
 
-tabGetIAtom :: IAtom -> IExpr -> IAtom
-tabGetIAtom x i = case x of
-  ICon (AFor _ body) -> impIndexSubst i body
-  _ -> error $ "Unexpected atom: " ++ show x
+impTabGet :: IAtom -> IAtom -> ImpM IAtom
+impTabGet x i = do
+  i' <- indexToInt i
+  case x of
+    ICon (AFor _ body) -> return $ impIndexSubst i' body
+    _ -> error $ "Unexpected atom: " ++ show x
 
 impIndexSubst :: IExpr -> IAtom -> IAtom
 impIndexSubst i atom = case atom of
   ILeaf x  -> ILeaf $ IGet x i
+  -- TODO: should be more selective about which constructors we recur into
   ICon con -> ICon $ fmapExpr con id (impIndexSubst i) (error "unexpected lambda")
+
+intToIndex :: Type -> IExpr -> ImpM IAtom
+intToIndex ty i = case ty of
+  IdxSetLit _ -> return $ ICon $ AsIdx ty $ ILeaf i
+  Range _ _   -> return $ ICon $ AsIdx ty $ ILeaf i
+  RecType r -> do
+    strides <- getStrides $ fmap (\t->(t,t)) r
+    liftM (ICon . RecCon) $
+      flip evalStateT i $ forM strides $ \(ty', stride) -> do
+        i' <- get
+        iCur  <- lift $ emitBinOp IDiv i' stride
+        iRest <- lift $ emitBinOp  Rem i' stride
+        put iRest
+        lift $ intToIndex ty' iCur
+  _ -> error $ "Unexpected type " ++ pprint ty
+
+indexToInt :: IAtom -> ImpM IExpr
+indexToInt idx = case idx of
+  ICon (RecCon r) -> do
+    rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) r
+    foldrM f (ILit $ IntLit 0) rWithStrides
+    where
+      f :: (IAtom, IExpr) -> IExpr -> ImpM IExpr
+      f (i, stride) cumIdx = do
+        i' <- indexToInt i
+        iDelta  <- impMul i' stride
+        impAdd cumIdx iDelta
+  _ -> fromScalarIAtom idx
+
+getStrides :: Traversable f => f (a, Type) -> ImpM (f (a, IExpr))
+getStrides xs =
+  liftM getReverse $ flip evalStateT (ILit (IntLit 1)) $
+    forM (Reverse xs) $ \(x, ty) -> do
+      stride  <- get
+      size    <- lift $ indexSetSize ty
+      stride' <- lift $ impMul stride size
+      put stride'
+      return (x, stride)
 
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
@@ -228,16 +276,16 @@ lookupVar v = do
     Nothing -> error $ "Lookup failed: " ++ pprint (varName v)
     Just v' -> v'
 
-typeToSize :: Type -> ImpM IExpr
-typeToSize (TypeVar v) = do
-  ~(ILeaf n) <- lookupVar v
-  return n
-typeToSize (IdxSetLit n) = return $ ILit (IntLit n)
-typeToSize (Range low high) = do
+indexSetSize :: Type -> ImpM IExpr
+indexSetSize (IdxSetLit n) = return $ ILit (IntLit n)
+indexSetSize (Range low high) = do
   low'  <- toImpDepVal low
   high' <- toImpDepVal high
   emitInstr $ IPrimOp $ ScalarBinOp ISub high' low'
-typeToSize ty = error $ "Not implemented " ++ pprint ty
+indexSetSize (RecType r) = do
+  sizes <- traverse indexSetSize r
+  impProd $ toList sizes
+indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 toImpDepVal :: Dep -> ImpM IExpr
 toImpDepVal (DepLit i) = return $ ILit $ IntLit i
@@ -248,8 +296,18 @@ toImpDepVal o          = error $ pprint o
 copyIAtom :: IAtom -> IAtom -> ImpM ()
 copyIAtom dest src = zipWithM_ copyOrStore (toList dest) (toList src)
 
-asIdx :: Type -> IExpr -> IAtom
-asIdx n i = ICon $ AsIdx n (ILeaf i)
+impProd :: [IExpr] -> ImpM IExpr
+impProd []     = return $ ILit $ IntLit 1
+impProd (x:xs) = foldrM impMul x xs
+
+emitBinOp :: ScalarBinOp -> IExpr -> IExpr -> ImpM IExpr
+emitBinOp op x y = emitInstr $ IPrimOp $ ScalarBinOp op x y
+
+impAdd :: IExpr -> IExpr -> ImpM IExpr
+impAdd = emitBinOp IAdd
+
+impMul :: IExpr -> IExpr -> ImpM IExpr
+impMul = emitBinOp IMul
 
 -- === Imp embedding ===
 
@@ -443,3 +501,9 @@ instance Pretty IAtom where
   pretty atom = case atom of
     ILeaf x  -> pretty x
     ICon con -> pretty (ConExpr con)
+
+instance HasType IAtom where
+  getEffType atom = (noEffect, case atom of
+    ILeaf x -> impTypeToType $ impExprType x
+    ICon con -> getConType $ fmapExpr con id getType (error "unexpected lambda"))
+  checkEffType = undefined

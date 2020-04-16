@@ -224,8 +224,8 @@ data PrimOp ty e lam =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
 
 data VSpaceOp e = VZero | VAdd e e deriving (Show, Eq, Generic)
-data ScalarBinOp = IAdd | ISub | IMul | ICmp CmpOp | Pow
-                 | FAdd | FSub | FMul | FCmp CmpOp | FDiv
+data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
+                 | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
                  | And | Or | Rem
                    deriving (Show, Eq, Generic)
 
@@ -239,9 +239,11 @@ type PrimName = PrimExpr () () ()
 
 builtinNames :: M.Map String PrimName
 builtinNames = M.fromList
-  [ ("iadd", binOp IAdd), ("isub", binOp ISub), ("imul", binOp IMul)
-  , ("fadd", binOp FAdd), ("fsub", binOp FSub), ("fmul", binOp FMul)
-  , ("fdiv", binOp FDiv), ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  [ ("iadd", binOp IAdd), ("isub", binOp ISub)
+  , ("imul", binOp IMul), ("fdiv", binOp FDiv)
+  , ("fadd", binOp FAdd), ("fsub", binOp FSub)
+  , ("fmul", binOp FMul), ("idiv", binOp IDiv)
+  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
   , ("inttoreal", unOp IntToReal)

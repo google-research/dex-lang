@@ -13,6 +13,9 @@ isub x y = %isub(x, y)
 imul : Int -> Int -> Int
 imul x y = %imul(x, y)
 
+idiv : Int -> Int -> Int
+idiv x y = %idiv(x, y)
+
 rem : Int -> Int -> Int
 rem x y = %rem(x, y)
 
