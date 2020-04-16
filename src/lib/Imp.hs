@@ -217,8 +217,8 @@ intToIndex ty i = case ty of
     liftM (ICon . RecCon) $
       flip evalStateT i $ forM strides $ \(ty', stride) -> do
         i' <- get
-        iCur  <- lift $ emitBinOp IDiv i' stride
-        iRest <- lift $ emitBinOp  Rem i' stride
+        iCur  <- lift $ impDiv i' stride
+        iRest <- lift $ impRem i' stride
         put iRest
         lift $ intToIndex ty' iCur
   _ -> error $ "Unexpected type " ++ pprint ty
@@ -305,10 +305,24 @@ emitBinOp :: ScalarBinOp -> IExpr -> IExpr -> ImpM IExpr
 emitBinOp op x y = emitInstr $ IPrimOp $ ScalarBinOp op x y
 
 impAdd :: IExpr -> IExpr -> ImpM IExpr
-impAdd = emitBinOp IAdd
+impAdd (ILit (IntLit 0)) y = return y
+impAdd x (ILit (IntLit 0)) = return x
+impAdd (ILit (IntLit x)) (ILit (IntLit y)) = return $ ILit $ IntLit $ x + y
+impAdd x y = emitBinOp IAdd x y
 
 impMul :: IExpr -> IExpr -> ImpM IExpr
-impMul = emitBinOp IMul
+impMul (ILit (IntLit 1)) y = return y
+impMul x (ILit (IntLit 1)) = return x
+impMul (ILit (IntLit x)) (ILit (IntLit y)) = return $ ILit $ IntLit $ x * y
+impMul x y = emitBinOp IMul x y
+
+impDiv :: IExpr -> IExpr -> ImpM IExpr
+impDiv x (ILit (IntLit 1)) = return x
+impDiv x y = emitBinOp IDiv x y
+
+impRem :: IExpr -> IExpr -> ImpM IExpr
+impRem _ (ILit (IntLit 1)) = return $ ILit $ IntLit 0
+impRem x y = emitBinOp Rem x y
 
 -- === Imp embedding ===
 
@@ -420,7 +434,7 @@ instrTypeChecked instr = case instr of
   Copy dest source -> do
     destTy   <- (checkIExpr >=> fromRefType) dest
     sourceTy <- (checkIExpr >=> fromRefType) source
-    assertEq sourceTy destTy "Type mismatch in store"
+    assertEq sourceTy destTy "Type mismatch in copy"
     return Nothing
   Alloc ty -> return $ Just $ IRefType ty
   Free _   -> return Nothing  -- TODO: check matched alloc/free

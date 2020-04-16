@@ -14,7 +14,7 @@ module Type (
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
     getKind, checkKindIs, checkKindEq, getEffType, getPatName,
-    getConType, checkEffType, HasType) where
+    getConType, checkEffType, HasType, indexSetConcreteSize) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -509,9 +509,15 @@ traverseOpType op eq kindIs inClass = case op of
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For (Pi n (eff, a)) ->
     inClass IdxSet n >> inClass Data a >> return (eff, TabType n a)
-  TabCon n ty xs ->
-    inClass Data ty >> mapM_ (eq ty) xs >> eq n n' >> return (pureTy (n ==> ty))
-    where n' = IdxSetLit (length xs)
+  TabCon n ty xs -> do
+    case indexSetConcreteSize n of
+      Nothing -> throw TypeErr $
+         "Literal table must have a concrete index set.\nGot: " ++ pprint n
+      Just n' | n' == length xs -> do inClass Data ty >> mapM_ (eq ty) xs
+                                      return (pureTy (n ==> ty))
+              | otherwise -> throw TypeErr $
+                  "Index set size mismatch: " ++
+                     show n' ++ " != " ++ show (length xs)
   TabGet (TabType i a) i' -> eq i i' >> return (pureTy a)
   RecGet (RecType r) i    -> return $ pureTy $ recGet r i
   ArrayGep (ArrayType (_:shape) b) i -> do
@@ -635,6 +641,13 @@ extendClassEnv qs m = do
   r <- ask
   let classEnv = fold [monMapSingle v [c] | TyQual (v:>_) c <- qs]
   lift $ extendR classEnv $ runReaderT m r
+
+indexSetConcreteSize :: Type -> Maybe Int
+indexSetConcreteSize ty = case ty of
+  IdxSetLit n -> Just n
+  Range (DepLit low) (DepLit high) -> Just $ high - low
+  RecType r -> liftM product $ mapM indexSetConcreteSize $ toList r
+  _ -> Nothing
 
 -- === linearity ===
 

@@ -91,7 +91,7 @@ xr = map real arr
 > (3=>Int)
 
 :t []
-> Type error:Ambiguous type variables: [?_2]
+> Type error:Ambiguous type variables: [?_1]
 >
 > ([*ans*:? = ([])], (*ans* @> L ?))
 
@@ -305,3 +305,16 @@ fAmb = ()
 >
 >     for i:7. sum for j:(Range 0 x). 1.0
 >              ^^^^
+
+:p [1,2,3]@Int
+> Type error:Literal table must have a concrete index set.
+> Got: Int
+>
+> :p [1,2,3]@Int
+>    ^^^^^^^^^^^
+
+:p [1,2,3]@2
+> Type error:Index set size mismatch: 2 != 3
+>
+> :p [1,2,3]@2
+>    ^^^^^^^^^

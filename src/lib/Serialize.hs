@@ -178,10 +178,14 @@ pprintVal val = liftM asStr $ prettyVal val
 prettyVal :: Val -> IO (Doc ann)
 prettyVal (Con con) = case con of
   RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
-  AFor (IdxSetLit n) body -> do
-    xs <- flip mapM [0..n-1] $ \i ->
+  AFor n body -> do
+    xs <- flip mapM [0..n'-1] $ \i ->
       liftM asStr $ prettyVal $ litIndexSubst i body
-    return $ pretty xs
+    return $ pretty xs <> idxSetStr
+    where
+      (Just n') = indexSetConcreteSize n
+      idxSetStr = case n of IdxSetLit _ -> mempty
+                            _           -> "@" <> pretty n
   AGet (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
   AsIdx n i -> do
     i' <- prettyVal i
