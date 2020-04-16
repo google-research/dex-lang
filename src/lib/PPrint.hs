@@ -155,6 +155,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (ArrayGep x i) = p x <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
+  pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
   pretty op = prettyExprDefault (OpExpr op)
 
@@ -163,6 +164,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lam _ _ lam) = parens $ prettyL lam
   pretty (RecCon r)    = p r
   pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
+  pretty (AGet e)      = "aget" <+> p e
   pretty (AsIdx n i)   = p i <> "@" <> p n
   pretty (ArrayRef array) = p array
   pretty con = prettyExprDefault (ConExpr con)

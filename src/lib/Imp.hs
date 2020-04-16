@@ -84,6 +84,7 @@ fromScalarIAtom atom = case atom of
 
 fromScalarDest :: IAtom -> IExpr
 fromScalarDest (ICon (AGet (ILeaf x))) = x
+fromScalarDest (ICon (AsIdx _ i)) = fromScalarDest i
 fromScalarDest atom = error $ "Not a scalar dest " ++ pprint atom
 
 toImpCExpr :: IAtom -> CExpr -> ImpM ()

@@ -457,3 +457,9 @@ litArr = [10, 5, 3]
   zs = for (i,j). ys.(i,j)
   for i j. zs.(j,i)
 > [[1, 3], [2, 4]]
+
+:p argmin [1.0, 2.0, 0.4, 5.0]
+> 2@4
+
+:p select True (asidx @2 0) (asidx @2 1)
+> 0@2
