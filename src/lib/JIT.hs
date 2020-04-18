@@ -141,6 +141,12 @@ compileInstr instr = case instr of
     ptr' <- castLPtr charTy v'
     addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
+  IGet x i -> do
+    let (IRefType (_, (_:shape))) = impExprType x
+    shape' <- mapM compileExpr shape
+    x' <- compileExpr x
+    i' <- compileExpr i
+    liftM Just $ indexPtr x' shape' i'
   Loop i n body -> do
     n' <- compileExpr n
     compileLoop i n' body
@@ -151,12 +157,6 @@ compileExpr expr = case expr of
   ILit v   -> return (litVal v)
   IRef x   -> return $ arrayToOperand x
   IVar v   -> lookupImpVar v
-  IGet x i -> do
-    let (IRefType (_, (_:shape))) = impExprType x
-    shape' <- mapM compileExpr shape
-    x' <- compileExpr x
-    i' <- compileExpr i
-    indexPtr x' shape' i'
 
 arrayToOperand :: Array -> Operand
 arrayToOperand (Array _ b ptr) = refLiteral b ptr

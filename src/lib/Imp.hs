@@ -199,14 +199,14 @@ impTabGet :: IAtom -> IAtom -> ImpM IAtom
 impTabGet x i = do
   i' <- indexToInt i
   case x of
-    ICon (AFor _ body) -> return $ impIndexSubst i' body
+    ICon (AFor _ body) -> impIndexSubst i' body
     _ -> error $ "Unexpected atom: " ++ show x
 
-impIndexSubst :: IExpr -> IAtom -> IAtom
+impIndexSubst :: IExpr -> IAtom -> ImpM IAtom
 impIndexSubst i atom = case atom of
-  ILeaf x  -> ILeaf $ IGet x i
+  ILeaf x  -> liftM ILeaf $ emitInstr $ IGet x i
   -- TODO: should be more selective about which constructors we recur into
-  ICon con -> ICon $ fmapExpr con id (impIndexSubst i) (error "unexpected lambda")
+  ICon con -> liftM ICon $ traverseExpr con return (impIndexSubst i) (error "unexpected lambda")
 
 intToIndex :: Type -> IExpr -> ImpM IAtom
 intToIndex ty i = case ty of
@@ -382,13 +382,17 @@ addToDest dest src = case impExprType dest of
     updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src'
     store dest updated
   IRefType (RealType, (n:_)) ->
-    emitLoop n $ \i -> addToDest (IGet dest i) (IGet src i)
+    emitLoop n $ \i -> do
+      dest' <- emitInstr $ IGet dest i
+      src'  <- emitInstr $ IGet src  i
+      addToDest dest' src'
   ty -> error $ "Addition not implemented for type: " ++ pprint ty
 
 initializeZero :: IExpr -> ImpM ()
 initializeZero ref = case impExprType ref of
   IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
-  IRefType (RealType, (n:_)) -> emitLoop n $ \i -> initializeZero $ IGet ref i
+  IRefType (RealType, (n:_)) ->
+    emitLoop n $ \i -> emitInstr (IGet ref i) >>= initializeZero
   ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 -- === type checking imp programs ===
@@ -442,6 +446,10 @@ instrTypeChecked instr = case instr of
     checkInt size
     void $ scoped $ extend (i @> intTy) >> checkProg block
     return Nothing
+  IGet e i -> do
+    ~(IRefType (b, (_:shape))) <- checkIExpr e
+    checkInt i
+    return $ Just $ IRefType (b, shape)
 
 checkValidType :: IType -> ImpCheckM ()
 checkValidType (IValType _         ) = return ()
@@ -454,10 +462,6 @@ checkIExpr expr = case expr of
   IRef (Array shape b _) -> return $ IRefType (b, shape')
     where shape' = map (ILit . IntLit) shape
   IVar v -> looks $ (! v)
-  IGet e i -> do
-    ~(IRefType (b, (_:shape))) <- checkIExpr e
-    checkInt i
-    return $ IRefType (b, shape)
 
 checkInt :: IExpr -> ImpCheckM ()
 checkInt expr = do
@@ -478,9 +482,6 @@ impExprType expr = case expr of
   IRef (Array shape b _) -> IRefType (b, shape')
     where shape' = map (ILit . IntLit) shape
   IVar (_:>ty) -> ty
-  IGet e _  -> case impExprType e of
-    IRefType (b, (_:shape)) -> IRefType (b, shape)
-    ty -> error $ "Can't index into: " ++ pprint ty
 
 instrType :: MonadError Err m => ImpInstr -> m (Maybe IType)
 instrType instr = case instr of
@@ -491,6 +492,9 @@ instrType instr = case instr of
   Alloc ty        -> return $ Just $ IRefType ty
   Free _          -> return Nothing
   Loop _ _ _      -> return Nothing
+  IGet e _        -> case impExprType e of
+    IRefType (b, (_:shape)) -> return $ Just $ IRefType (b, shape)
+    ty -> error $ "Can't index into: " ++ pprint ty
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op

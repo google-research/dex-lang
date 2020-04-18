@@ -325,6 +325,7 @@ data ImpInstr = Load  IExpr
               | Copy  IExpr IExpr  -- destination first
               | Alloc ArrayType
               | Free IVar
+              | IGet IExpr Index
               | Loop IVar Size ImpProg
               | IPrimOp IPrimOp
                 deriving (Show)
@@ -332,8 +333,7 @@ data ImpInstr = Load  IExpr
 data IExpr = ILit LitVal
            | IRef Array
            | IVar IVar
-           | IGet IExpr Index
-               deriving (Show, Eq)
+             deriving (Show, Eq)
 
 type IPrimOp = PrimOp BaseType IExpr ()
 type IVal = IExpr  -- only ILit and IRef constructors

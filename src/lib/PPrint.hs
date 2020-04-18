@@ -235,7 +235,6 @@ tup xs  = tupled $ map p xs
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar (v:>_)) = p v
-  pretty (IGet expr idx) = p expr <> "." <> p idx
   pretty (IRef ref) = p ref
 
 instance Pretty IType where
@@ -255,6 +254,7 @@ instance Pretty ImpInstr where
   pretty (Store dest val)   = "store" <+> p dest <+> p val
   pretty (Copy dest source) = "copy"  <+> p dest <+> p source
   pretty (Alloc ty)         = "alloc" <+> p ty
+  pretty (IGet expr idx)    = p expr <> "." <> p idx
   pretty (Free (v:>_))      = "free"  <+> p v
   pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
                                nest 4 (hardline <> p block)
