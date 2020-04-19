@@ -11,7 +11,6 @@ module Simplify (simplifyModule) where
 
 import Control.Monad
 import Control.Monad.Reader
-import Data.Foldable
 
 import Autodiff
 import Env
@@ -93,9 +92,8 @@ separateDataComponent localVars atom = (makeTup $ map Var vs, recon)
     recon :: MonadCat EmbedEnv m => Atom -> m Atom
     recon xs = do
       ~(Tup xs') <- unpackRec xs
-      let env = fold $ zipWith (\v x -> v @> L x) vs xs'
       scope <- looks fst
-      return $ subst (env, scope) atom
+      return $ subst (newLEnv vs xs', scope) atom
 
 reconstructAtom :: MonadCat EmbedEnv m
                 => Maybe (Atom -> m Atom) -> Atom -> m Atom
@@ -130,8 +128,7 @@ simplifyCExpr expr = do
     App _ _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
-      let env = fold [tv @> T t' | (tv, t') <- zip tbs ts]
-      dropSub $ extendR env $ simplify body
+      dropSub $ extendR (newTEnv tbs ts) $ simplify body
     RecGet (Con (RecCon r)) i -> return $ recGet r i
     Select ty p x y -> selectAt ty p x y
     _ -> emit $ fmapExpr expr' id id fst

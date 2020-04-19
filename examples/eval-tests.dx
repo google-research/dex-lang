@@ -278,8 +278,6 @@ litArr = [10, 5, 3]
 :p (or False False, or False True, or True False, or True True)
 > (False, True, True, True)
 
--- TODO: We'd prefer it to look like this:
--- > [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
 :p [(for i:1. (False, for j:2. 1.0)), [(True, for k:2 . 2.0)]]
 > [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
 

@@ -9,7 +9,6 @@
 
 module Subst (Subst, subst, scopelessSubst) where
 
-import Data.Foldable
 import Control.Monad.Identity
 
 import Env
@@ -73,7 +72,7 @@ refreshBinder scope b = (b', env')
 refreshTBinders :: Env () -> [TVar] -> ([TVar], (SubstEnv, Scope))
 refreshTBinders scope bs = (bs', env')
   where (bs', scope') = renames bs scope
-        env' = (fold [b @> T (TypeVar b') | (b,b') <- zip bs bs'], scope')
+        env' = (newTEnv bs (map TypeVar bs'), scope')
 
 instance Subst Type where
   subst env@(sub, _) ty = case ty of
@@ -145,7 +144,6 @@ instance (Subst a, Subst b) => Subst (Either a b)where
 -- TODO: check kinds before alias expansion
 reduceTypeApp :: Type -> [Type] -> Type
 reduceTypeApp (TypeAlias bs ty) xs
-  | length bs == length xs = subst (env, mempty) ty
+  | length bs == length xs = subst (newTEnv bs xs, mempty) ty
   | otherwise = error "Kind error"
-    where env = fold [v @> T x | (v, x) <- zip bs xs]
 reduceTypeApp f xs = TypeApp f xs

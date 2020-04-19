@@ -103,7 +103,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
         ts' <- zipWithM inferKinds kinds ts
         vs <- mapM freshInferenceVar (drop (length ts) kinds)
         let ts'' = ts' ++ vs
-        let env = fold [tv @> T t | (tv, t) <- zip bs ts'']
+        let env = newTEnv bs ts''
         constrainReq (subst (env, mempty) body)
         return $ fTyApp (varName v :> ty) ts''
       _ -> throw TypeErr "Unexpected type application"
@@ -308,7 +308,7 @@ inferKindsM kind ty = case ty of
     extend (foldMap tbind vs)
     body' <- inferKindsM TyKind body
     vs' <- mapM addKindAnn vs
-    let substEnv = fold [v @> T (TypeVar v') | (v, v') <- zip vs vs']
+    let substEnv = newTEnv vs (map TypeVar vs')
     let qs' = map (subst (substEnv, mempty)) $ qs ++ impliedClasses body
     return $ Forall vs' qs' body'
   TypeAlias vs body -> do

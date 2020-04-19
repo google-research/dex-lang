@@ -32,7 +32,7 @@ module Syntax (
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi,
-    isDependentType)
+    isDependentType, newEnv, newLEnv, newTEnv)
   where
 
 import Data.Tuple (swap)
@@ -492,6 +492,15 @@ lbind v@(_:>ty) = v @> L ty
 
 tbind :: TVar -> Vars
 tbind v@(_:>k) = v @> T k
+
+newEnv :: [Var] -> [a] -> Env a
+newEnv vs xs = fold $ zipWith (@>) vs xs
+
+newLEnv :: [VarP ann] -> [a] -> FullEnv a b
+newLEnv vs xs = fold [v @> L x | (v, x) <- zip vs xs]
+
+newTEnv :: [VarP ann] -> [b] -> FullEnv a b
+newTEnv vs xs = fold [v @> T x | (v, x) <- zip vs xs]
 
 class HasVars a where
   freeVars :: a -> Vars

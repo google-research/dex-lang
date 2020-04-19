@@ -502,8 +502,7 @@ traverseOpType op eq kindIs inClass = case op of
     assertEq (length bs) (length ts) "Number of type args"
     zipWithM_ (kindIs . varAnn) bs ts
     sequence_ [inClass c t | (t, b) <- zip ts bs, c <- requiredClasses b]
-    let env = fold [b @> T t | (b, t) <- zip bs ts]
-    return $ pureTy $ subst (env, mempty) body
+    return $ pureTy $ subst (newTEnv bs ts, mempty) body
     where
       requiredClasses :: TVar -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']

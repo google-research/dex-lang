@@ -68,7 +68,7 @@ linearizeLamExpr topEnv (LamExpr v body) = do
      ~(Tup residuals') <- unpackRec residuals
      scope <- looks fst
      (ansT', (_, decls)) <- extendR (v @> L (Var v')) $ scoped tBuilder
-     let env = (v' @> L v'') <> fold [rv @> L x | (rv, x) <- zip residualVs residuals']
+     let env = (v' @> L v'') <> newLEnv residualVs residuals'
      emitExpr $ subst (env, scope) $ wrapDecls decls ansT')
 
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
