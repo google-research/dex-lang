@@ -42,9 +42,9 @@ evalJit ast = do
           f <- liftM (fromMaybe (error "failed to fetch function")) $
                  EE.getFunction eee (L.Name "thefun")
           runJitted f
-      return [ PassInfo JitPass preOpt  ""
-             , PassInfo LLVMOpt postOpt ""
-             , PassInfo AsmPass asm     ""]
+      return [ PassInfo JitPass "" preOpt
+             , PassInfo LLVMOpt "" postOpt
+             , PassInfo AsmPass "" asm]
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing

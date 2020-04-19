@@ -14,6 +14,7 @@ module JAX (evalModuleJAX) where
 import Control.Monad.Reader
 import Data.ByteString.Lazy.Char8 (pack, unpack)
 import Data.Aeson
+import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import System.Process hiding (env)
 import System.IO
@@ -29,9 +30,10 @@ evalModuleJAX :: Module -> IO (TopEnv, [Output])
 evalModuleJAX (Module _ (ModBody [] out)) = return (out, [])
 evalModuleJAX m = do
   let (jmod, vs, resultEnv) = moduleToJaxpr m
+  let info = PassInfo JAXPass "" (pprint jmod)
   results <- evalJModule jmod
   let substEnv = newLEnv vs (map jAtomToAtom results)
-  return (scopelessSubst substEnv resultEnv, [])
+  return (scopelessSubst substEnv resultEnv, [info])
 
 evalJModule :: JModule -> IO JResults
 evalJModule m = pyCall m
@@ -145,6 +147,24 @@ pipeCall cmd args input = do
   hGetContents hOut
 
 -- === instances ===
+
+instance Pretty JModule where
+  pretty (JModule decls vs) = vsep (map pretty decls) <> hardline
+                            <> "exports:" <+> hsep (map pretty vs)
+
+instance Pretty JAtom where
+  pretty (JLit x) = pretty x
+  pretty (JVar (v:>_)) = pretty v
+
+instance Pretty JDecl where
+  pretty (JLet v rhs) = pretty v <+> "=" <+> pretty rhs
+
+instance Pretty a => Pretty (JOpP a) where
+  pretty (JScalarBinOp op x y) = pretty (show op) <+> pretty x <+> pretty y
+  pretty (JScalarUnOp  op x)   = pretty (show op) <+> pretty x
+
+instance Pretty JType where
+  pretty (JType b) = pretty b
 
 instance ToJSON   JDecl
 instance FromJSON JDecl
