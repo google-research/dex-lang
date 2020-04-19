@@ -31,7 +31,7 @@ data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | SourceTypeName
                | InferenceName | LocalTVName | NoNameSpace
-                 deriving  (Show, Ord, Eq)
+                 deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic)

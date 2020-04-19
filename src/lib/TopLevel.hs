@@ -26,6 +26,7 @@ import Simplify
 import Serialize
 import Imp
 import Flops
+import JAX
 import JIT
 import PPrint
 import Parser
@@ -33,7 +34,7 @@ import Record
 import Subst
 import Util (highlightRegion)
 
-data Backend = Jit | Interp
+data Backend = LLVM | Interp | JAX
 data EvalOpts = EvalOpts
   { evalBackend :: Backend
   , preludeFile :: FilePath
@@ -123,7 +124,14 @@ evalModuleVal env v m = do
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalModule :: TopEnv -> Pass FModule TopEnv
-evalModule env = inferTypes env >=> evalTyped env
+evalModule env untyped = do
+  typed     <- inferTypes env untyped
+  optimized <- corePasses env typed
+  backend <- asks evalBackend
+  case backend of
+    LLVM   -> evalJIT env optimized
+    JAX    -> evalJAX optimized
+    Interp -> error "Interpreter currently broken"
 
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> Pass FModule Module
@@ -132,16 +140,22 @@ inferTypes env m =
   >>  namedPass TypePass (liftEither . inferModule env) m
   >>= namedPass NormPass (return     . normalizeModule)
 
-evalTyped :: TopEnv -> Pass Module TopEnv
-evalTyped env =
-      namedPass SimpPass (return . simplifyModule env)
-  >=> namedPass ImpPass  (return . toImpModule env)
-  >=> evalImp
+corePasses :: TopEnv -> Pass Module Module
+corePasses env = namedPass SimpPass (return . simplifyModule env)
+
+evalJIT :: TopEnv -> Pass Module TopEnv
+evalJIT env = namedPass ImpPass  (return . toImpModule env) >=> evalImp
 
 evalImp :: Pass ImpModule TopEnv
 evalImp m = do
   countFlops m
   (result, outs) <- liftIO $ evalModuleJIT m
+  tell outs
+  return result
+
+evalJAX :: Pass Module TopEnv
+evalJAX m = do
+  (result, outs) <- liftIO $ evalModuleJAX m
   tell outs
   return result
 

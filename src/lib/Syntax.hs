@@ -84,11 +84,11 @@ data Kind = TyKind
 
 type EffectRow a = Env (EffectName, a)
 
-data EffectName = Reader | Writer | State  deriving (Eq, Show)
+data EffectName = Reader | Writer | State  deriving (Eq, Show, Generic)
 
 data PiType = Pi Type EffectiveType  deriving (Eq, Show)
 
-data  TyQual = TyQual TVar ClassName  deriving (Eq, Show)
+data TyQual = TyQual TVar ClassName  deriving (Eq, Show)
 
 data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
@@ -375,7 +375,7 @@ monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
 -- === passes ===
 
 data PassName = Parse | TypePass | NormPass | SimpPass | ImpPass | JitPass
-              | Flops | LLVMOpt | AsmPass
+              | Flops | LLVMOpt | AsmPass | JAXPass
                 deriving (Ord, Eq, Bounded, Enum)
 
 passNameMap :: M.Map String PassName
@@ -389,6 +389,7 @@ instance Show PassName where
     Parse    -> "parse" ; TypePass -> "typed"   ; NormPass -> "norm"
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass  -> "llvm"
     Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass  -> "asm"
+    JAXPass  -> "jax"
 
 -- TODO: consider using this for builtins too
 buildNameMap :: (Show a, Enum a, Bounded a) => M.Map String a

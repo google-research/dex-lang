@@ -4,6 +4,8 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE LambdaCase #-}
+
 import System.Console.Haskeline
 import System.Exit
 import Control.Monad
@@ -112,9 +114,16 @@ parseMode = subparser $
   where
     sourceFileInfo = argument str (metavar "FILE" <> help "Source program")
 
+optionList :: [(String, a)] -> ReadM a
+optionList opts = eitherReader $ \s -> case lookup s opts of
+  Just x  -> Right x
+  Nothing -> Left $ "Bad option. Expected one of: " ++ show (map fst opts)
+
 parseEvalOpts :: Parser EvalOpts
 parseEvalOpts = EvalOpts
-  <$> (flag Jit Interp $ long "interp" <> help "Use interpreter backend")
+  <$> (option
+         (optionList [("LLVM", LLVM), ("JAX", JAX), ("interp", Interp)])
+         (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (flag False True $ long "logall" <> help "Log all debug info")
