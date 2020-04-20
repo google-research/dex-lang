@@ -187,8 +187,12 @@ makeDest' shape ty = case ty of
     n'  <- lift $ indexSetSize n
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
-  IdxSetLit n -> liftM (Con . AsIdx (IdxSetLit n)) $ makeDest' shape (BaseType IntType)
+  t@(IdxSetLit _)    -> scalarIndexSet t
+  t@(IntRange _ _)   -> scalarIndexSet t
+  t@(IndexRange _ _) -> scalarIndexSet t
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
+  where
+    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseType IntType)
 
 impTabGet :: Atom -> Atom -> ImpM Atom
 impTabGet ~(Con (AFor _ body)) i = do
@@ -199,8 +203,9 @@ impTabGet ~(Con (AFor _ body)) i = do
 
 intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty i = case ty of
-  IdxSetLit _ -> return $ Con $ AsIdx ty $ impExprToAtom i
-  Range _ _   -> return $ Con $ AsIdx ty $ impExprToAtom i
+  IdxSetLit _ -> iAsIdx
+  IntRange _ _   -> iAsIdx
+  IndexRange _ _ -> iAsIdx
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM (Con . RecCon) $
@@ -211,6 +216,8 @@ intToIndex ty i = case ty of
         put iRest
         lift $ intToIndex ty' iCur
   _ -> error $ "Unexpected type " ++ pprint ty
+  where
+    iAsIdx = return $ Con $ AsIdx ty $ impExprToAtom i
 
 indexToInt :: Atom -> ImpM IExpr
 indexToInt idx = case idx of
@@ -269,10 +276,14 @@ lookupVar v = do
 
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (IdxSetLit n) = return $ ILit (IntLit n)
-indexSetSize (Range low high) = do
+indexSetSize (IntRange low high) = do
   low'  <- toImpDepVal low
   high' <- toImpDepVal high
-  emitInstr $ IPrimOp $ ScalarBinOp ISub high' low'
+  impSub high' low'
+indexSetSize (IndexRange low high) = do
+  low'  <- toImpDepVal low
+  high' <- toImpDepVal high
+  impSub high' low'
 indexSetSize (RecType r) = do
   sizes <- traverse indexSetSize r
   impProd $ toList sizes
@@ -351,6 +362,9 @@ impDiv x y = emitBinOp IDiv x y
 impRem :: IExpr -> IExpr -> ImpM IExpr
 impRem _ (ILit (IntLit 1)) = return $ ILit $ IntLit 0
 impRem x y = emitBinOp Rem x y
+
+impSub :: IExpr -> IExpr -> ImpM IExpr
+impSub x y = emitBinOp ISub x y
 
 -- === Imp embedding ===
 

@@ -523,7 +523,8 @@ className = do
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   parenTy
               <|> liftM (ArrowType NonLin) piType
-              <|> rangeType
+              <|> intRangeType
+              <|> indexRangeType
               <|> liftM Ref (symbol "Ref" >> tauTypeAtomic)
               <|> typeName
               <|> liftM TypeVar typeVar
@@ -538,8 +539,11 @@ tauType = makeExprParser (sc >> tauTypeAtomic) typeOps
               , [InfixR (TabType <$ symbol "=>")]
               , [InfixR arrowType] ]
 
-rangeType :: Parser Type
-rangeType = symbol "Range" >> liftM2 Range dep dep
+intRangeType :: Parser Type
+intRangeType = symbol "IntRange" >> liftM2 IntRange dep dep
+
+indexRangeType :: Parser Type
+indexRangeType = symbol "IdxRange" >> liftM2 IndexRange dep dep
 
 dep :: Parser Dep
 dep =    (do v <- lowerName
