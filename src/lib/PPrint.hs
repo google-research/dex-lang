@@ -75,7 +75,8 @@ instance Pretty Type where
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IdxSetLit i -> p i
-    Range a b -> "Range" <+> p a <+> p b
+    IntRange a b -> "(IntRange" <+> p a <+> p b <> ")"
+    IndexRange a b -> "(IndexRange" <+> p a <+> p b <> ")"
     DepLit x  -> "(DepLit" <+> p x <+> ")"
     Dep x  -> "(Dep" <+> p x <+> ")"
     NoDep  -> "NoDep"

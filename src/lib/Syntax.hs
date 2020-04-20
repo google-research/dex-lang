@@ -57,7 +57,8 @@ data Type = TypeVar TVar
           | BaseType BaseType
           | ArrowType Mult PiType
           | IdxSetLit Int
-          | Range Type Type
+          | IntRange Type Type
+          | IndexRange Type Type
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
@@ -219,6 +220,7 @@ data PrimOp ty e lam =
       | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
       | NewtypeCast ty e
+      | Inject e
         deriving (Show, Eq, Generic)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
@@ -267,7 +269,8 @@ builtinNames = M.fromList
   , ("ask"        , OpExpr $ PrimEffect () () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () () $ MGet)
-  , ("put"        , OpExpr $ PrimEffect () () $ MPut  ()) ]
+  , ("put"        , OpExpr $ PrimEffect () () $ MPut  ())
+  , ("inject"     , OpExpr $ Inject ())                        ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
@@ -674,6 +677,7 @@ instance TraversableExpr PrimOp where
     NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
       liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
+    Inject e             -> liftA Inject (fE e)
 
 instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
@@ -738,7 +742,8 @@ traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
   IdxSetLit _          -> pure ty
-  Range a b            -> liftA2 Range (f depIntType a) (f depIntType b)
+  IntRange a b         -> liftA2 IntRange (f depIntType a) (f depIntType b)
+  IndexRange a b       -> liftA2 IndexRange (f depIntType a) (f depIntType b)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r

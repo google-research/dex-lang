@@ -158,12 +158,15 @@ checkKind ty = case ty of
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
-  Range a b -> do
+  IntRange a b -> do
       checkKindIs depIntKind a
       checkKindIs depIntKind b
       return TyKind
     where
       depIntKind = DepKind $ BaseType $ IntType
+  IndexRange _ _ -> do
+    -- TODO: Check that a and b are types that have an instance of Idx
+    return TyKind
   Dep (_ :> t) -> do
     -- TODO: Make sure this is consistent with the environment (use checkVar)
     return $ DepKind t
@@ -310,7 +313,8 @@ checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
   IdxSetLit _ -> return ()
   RecType r   -> mapM_ recur r
-  Range _ _   -> return ()
+  IntRange _ _   -> return ()
+  IndexRange _ _ -> return ()
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
@@ -321,7 +325,8 @@ checkData env ty = case ty of
   BaseType _  -> return ()
   TabType _ a -> recur a
   RecType r   -> mapM_ recur r
-  Range _ _   -> return ()
+  IntRange _ _   -> return ()
+  IndexRange _ _ -> return ()
   IdxSetLit _ -> return ()
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
@@ -569,6 +574,9 @@ traverseOpType op eq kindIs inClass = case op of
   NewtypeCast ty _ -> return $ pureTy ty
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureTy ansTy)
+  Inject (IndexRange (Dep low) (Dep high)) -> do
+    eq (varAnn low) (varAnn high)
+    return $ pureTy $ (varAnn low)
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 
 traverseConType :: MonadError Err m
@@ -644,7 +652,7 @@ extendClassEnv qs m = do
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   IdxSetLit n -> Just n
-  Range (DepLit low) (DepLit high) -> Just $ high - low
+  IntRange (DepLit low) (DepLit high) -> Just $ high - low
   RecType r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 

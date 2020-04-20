@@ -124,6 +124,16 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     eff' <- openEffect eff
     constrainEq allowedEff eff' (pprint expr)
     return $ FPrimExpr $ OpExpr $ App l' d f' x'
+  FPrimExpr (OpExpr (Inject e)) -> do
+    et' <- freshQ
+    e' <- checkPure e et'
+    et <- zonk et'
+    case et of
+      (IndexRange (Dep low) (Dep _)) -> do
+        low' <- fromAnn TyKind (varAnn low)
+        constrainEq reqTy low' (pprint e)
+        return $ FPrimExpr $ OpExpr $ Inject e'
+      _ -> error "Inject only supported for index ranges"
   FPrimExpr (OpExpr op) -> do
     opTy <- generateOpSubExprTypes op
     -- TODO: don't ignore explicit annotations (via `snd`)
@@ -333,13 +343,14 @@ inferKindsM kind ty = case ty of
       return (v' @> (eff, t))
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
-  Range a b -> do
+  IntRange a b -> do
       a' <- inferKindsM depIntType a
       b' <- inferKindsM depIntType b
-      return $ Range a' b'
+      return $ IntRange a' b'
     where depIntType = DepKind $ BaseType IntType
-  --Dep v -> return $ Dep v  -- FIXME: Infer type for the variable
-                           --        This requires unifying InferM and InferKindM
+  IndexRange a b -> do
+      -- TODO: Validate the kinds
+      return $ IndexRange a b
   Dep v@(name :> _) -> do
     env <- look
     case envLookup env v of
