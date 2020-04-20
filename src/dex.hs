@@ -11,6 +11,8 @@ import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
+import System.Posix.Terminal (queryTerminal)
+import System.Posix.IO (stdOutput)
 
 import Syntax
 import PPrint
@@ -37,7 +39,7 @@ runMode evalMode opts = do
       runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
-      putStr $ printLitProg fmt results
+      printLitProg fmt results
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
@@ -90,10 +92,12 @@ readMultiline prompt parse = loop prompt ""
 simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
-printLitProg :: DocFmt -> LitProg -> String
-printLitProg TextDoc    prog = foldMap (uncurry printLitBlock) prog
-printLitProg ResultOnly prog = foldMap (pprint . snd) prog
-printLitProg HtmlDoc    prog = progHtml prog
+printLitProg :: DocFmt -> LitProg -> IO ()
+printLitProg ResultOnly prog = putStr $ foldMap (pprint . snd) prog
+printLitProg HtmlDoc    prog = putStr $ progHtml prog
+printLitProg TextDoc    prog = do
+  isatty <- queryTerminal stdOutput
+  putStr $ foldMap (uncurry (printLitBlock isatty)) prog
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts

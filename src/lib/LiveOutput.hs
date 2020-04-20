@@ -210,7 +210,7 @@ renderResults (RFragment (Set ids) blocks results) =
   liftM fold $ flip mapM ids $ \i -> do
     b <- M.lookup i blocks
     r <- M.lookup i results
-    return $ printLitBlock b r
+    return $ printLitBlock True b r
 
 -- === watching files ===
 

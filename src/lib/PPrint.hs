@@ -17,6 +17,7 @@ import GHC.Float
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
+import System.Console.ANSI
 
 import Env
 import Syntax
@@ -312,13 +313,28 @@ instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x
 
-printLitBlock :: SourceBlock -> Result -> String
-printLitBlock block result = pprint block ++ resultStr
-  where
-    resultStr = unlines $ map addPrefix $ lines $ pprint result
-    addPrefix :: String -> String
-    addPrefix s = case s of "" -> ">"
-                            _  -> "> " ++ s
+printLitBlock :: Bool -> SourceBlock -> Result -> String
+printLitBlock isatty block (Result outs result) =
+  pprint block ++ concat (map (printOutput isatty) outs) ++ printResult isatty result
+
+printOutput :: Bool -> Output -> String
+printOutput isatty out = addPrefix (addColor isatty Cyan ">") $ pprint $ out
+
+printResult :: Bool -> Except () -> String
+printResult _ (Right ()) = ""
+printResult isatty (Left err) = addColor isatty Red $ addPrefix ">" $ pprint err
+
+addPrefix :: String -> String -> String
+addPrefix prefix str = unlines $ map prefixLine $ lines str
+  where prefixLine :: String -> String
+        prefixLine s = case s of "" -> prefix
+                                 _  -> prefix ++ " " ++ s
+
+addColor :: Bool -> Color -> String -> String
+addColor False _ s = s
+addColor True c s =
+  setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
+  ++ s ++ setSGRCode [Reset]
 
 assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
