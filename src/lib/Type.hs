@@ -164,7 +164,7 @@ checkKind ty = case ty of
       return TyKind
     where
       depIntKind = DepKind $ BaseType $ IntType
-  IndexRange _ _ -> do
+  IndexRange _ _ _ _ -> do
     -- TODO: Check that a and b are types that have an instance of Idx
     return TyKind
   Dep (_ :> t) -> do
@@ -310,23 +310,23 @@ checkVSpace env ty = case ty of
 
 checkIdxSet :: ClassEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
-  TypeVar v   -> checkVarClass env IdxSet v
-  RecType r   -> mapM_ recur r
-  IntRange _ _   -> return ()
-  IndexRange _ _ -> return ()
+  TypeVar v          -> checkVarClass env IdxSet v
+  RecType r          -> mapM_ recur r
+  IntRange _ _       -> return ()
+  IndexRange _ _ _ _ -> return ()
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
 checkData :: ClassEnv -> Type -> Except ()
 checkData env ty = case ty of
-  TypeVar v   -> checkVarClass env IdxSet v `catchError`
-                    const (checkVarClass env Data v)
-  BaseType _  -> return ()
-  TabType _ a -> recur a
-  RecType r   -> mapM_ recur r
-  IntRange _ _   -> return ()
-  IndexRange _ _ -> return ()
-  _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
+  TypeVar v          -> checkVarClass env IdxSet v `catchError`
+                           const (checkVarClass env Data v)
+  BaseType _         -> return ()
+  TabType _ a        -> recur a
+  RecType r          -> mapM_ recur r
+  IntRange _ _       -> return ()
+  IndexRange _ _ _ _ -> return ()
+  _ -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
 isData :: Type -> Bool
@@ -572,7 +572,7 @@ traverseOpType op eq kindIs inClass = case op of
   NewtypeCast ty _ -> return $ pureTy ty
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureTy ansTy)
-  Inject (IndexRange (Dep low) (Dep high)) -> do
+  Inject (IndexRange (Dep low) _ (Dep high) _) -> do
     eq (varAnn low) (varAnn high)
     return $ pureTy $ (varAnn low)
   _ -> error $ "Unexpected primitive type: " ++ pprint op

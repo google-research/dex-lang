@@ -75,8 +75,11 @@ instance Pretty Type where
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IntRange (DepLit 0) (DepLit n) -> p n
-    IntRange a b -> "(IntRange" <+> p a <+> p b <> ")"
-    IndexRange a b -> "(IndexRange" <+> p a <+> p b <> ")"
+    IntRange a b -> p a <> "...<" <> p b
+    IndexRange a True  b True  -> p a <> "..." <> p b
+    IndexRange a False b True  -> p a <> ">.." <> p b
+    IndexRange a True  b False -> p a <> "..<" <> p b
+    IndexRange a False b False -> p a <> ">.<" <> p b
     DepLit x  -> "(DepLit" <+> p x <+> ")"
     Dep x  -> "(Dep" <+> p x <+> ")"
     NoDep  -> "NoDep"
