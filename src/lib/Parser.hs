@@ -334,7 +334,7 @@ forExpr = do
 tabCon :: Parser FExpr
 tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
-  n <- tyArg <|> return (IdxSetLit (length xs))
+  n <- tyArg <|> return (IntRange (DepLit 0) (DepLit (length xs)))
   return $ fPrimOp $ TabCon n NoAnn xs
 
 idxLhsArgs :: Parser (FExpr -> FExpr)
@@ -354,7 +354,8 @@ idxLit = do
   n <- uint
   failIf (i < 0 || i >= n) $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
-  return $ AsIdx (IdxSetLit n) (FPrimExpr $ ConExpr $ Lit $ IntLit i)
+  return $ AsIdx (IntRange (DepLit 0) (DepLit n))
+                 (FPrimExpr $ ConExpr $ Lit $ IntLit i)
 
 literal :: Parser LitVal
 literal =     numLit
@@ -607,7 +608,9 @@ localTypeVar = do
   return (v:> NoKindAnn)
 
 idxSetLit :: Parser Type
-idxSetLit = liftM IdxSetLit uint
+idxSetLit = do
+  n <- uint
+  return $ IntRange (DepLit 0) (DepLit n)
 
 parenTy :: Parser Type
 parenTy = do
@@ -647,7 +650,7 @@ tupleData = do
 tableData :: Parser FExpr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
-  n <- tyArg <|> return (IdxSetLit (length xs))
+  n <- tyArg <|> return (IntRange (DepLit 0) (DepLit (length xs)))
   return $ FPrimExpr $ OpExpr $ TabCon n NoAnn xs
 
 -- === Util ===

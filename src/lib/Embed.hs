@@ -215,7 +215,7 @@ mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
   BaseType _  -> f ty xs
-  IdxSetLit _ -> f ty xs
+  FixedIntRange _ _ -> f ty xs
   TabType n a -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
@@ -246,7 +246,6 @@ isSingletonType ty = case singletonTypeVal ty of
 singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal ty = case ty of
   BaseType  _ -> Nothing
-  IdxSetLit _ -> Nothing
   TabType n a -> liftM (Con . AFor n) $ singletonTypeVal a
   RecType r   -> liftM (Con . RecCon) $ traverse singletonTypeVal r
   _           -> Nothing
