@@ -33,7 +33,8 @@ module Syntax (
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi,
-    isDependentType, newEnv, newLEnv, newTEnv, pattern FixedIntRange)
+    isDependentType, newEnv, newLEnv, newTEnv, pattern FixedIntRange,
+    indexRangeBound)
   where
 
 import Data.Tuple (swap)
@@ -58,7 +59,7 @@ data Type = TypeVar TVar
           | BaseType BaseType
           | ArrowType Mult PiType
           | IntRange Type Type
-          | IndexRange Type Bool Type Bool -- True if the endpoint is included
+          | IndexRange (Maybe (Type, Bool)) (Maybe (Type, Bool)) -- True if the endpoint is included
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
@@ -74,9 +75,6 @@ data Type = TypeVar TVar
           | Effect (EffectRow Type) (Maybe Type)
           | NoAnn
             deriving (Show, Eq, Generic)
-
-pattern FixedIntRange :: Int -> Int -> Type
-pattern FixedIntRange low high = IntRange (DepLit low) (DepLit high)
 
 data Kind = TyKind
           | ArrowKind [Kind] Kind
@@ -119,6 +117,14 @@ noEffect = Effect mempty Nothing
 isPure :: Effect -> Bool
 isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
+
+pattern FixedIntRange :: Int -> Int -> Type
+pattern FixedIntRange low high = IntRange (DepLit low) (DepLit high)
+
+-- Extracts a defined bound of the index range
+indexRangeBound :: Type -> Type
+indexRangeBound  (IndexRange (Just (b, _)) _) = b
+indexRangeBound ~(IndexRange _ (Just (b, _))) = b
 
 type ModuleType = (TypeEnv, TypeEnv)
 data ModuleP body = Module ModuleType body  deriving (Show, Eq)
@@ -745,7 +751,10 @@ traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
   IntRange a b         -> liftA2 IntRange (f depIntType a) (f depIntType b)
-  IndexRange a ac b bc -> liftA4 IndexRange (f depIntType a) (pure ac) (f depIntType b) (pure bc)
+  -- TODO: We really shouldn't be passing depIntType into f in this case
+  IndexRange a b       -> liftA2 IndexRange
+    (traverse (\(t, i) -> liftA2 (,) (f depIntType t) (pure i)) a)
+    (traverse (\(t, i) -> liftA2 (,) (f depIntType t) (pure i)) b)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r

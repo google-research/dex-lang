@@ -76,10 +76,15 @@ instance Pretty Type where
     TypeAlias _ _ -> "<type alias>"  -- TODO
     IntRange (DepLit 0) (DepLit n) -> p n
     IntRange a b -> p a <> "...<" <> p b
-    IndexRange a True  b True  -> p a <> "..." <> p b
-    IndexRange a False b True  -> p a <> ">.." <> p b
-    IndexRange a True  b False -> p a <> "..<" <> p b
-    IndexRange a False b False -> p a <> ">.<" <> p b
+    IndexRange (Just (a, True )) (Just (b, True )) -> p a <> "..." <> p b
+    IndexRange (Just (a, False)) (Just (b, True )) -> p a <> ">.." <> p b
+    IndexRange (Just (a, True )) (Just (b, False)) -> p a <> "..<" <> p b
+    IndexRange (Just (a, False)) (Just (b, False)) -> p a <> ">.<" <> p b
+    IndexRange Nothing (Just (b, True )) -> "..." <> p b
+    IndexRange Nothing (Just (b, False)) -> "..<" <> p b
+    IndexRange (Just (a, True )) Nothing -> p a <> "..."
+    IndexRange (Just (a, False)) Nothing -> p a <> ">.."
+    IndexRange Nothing Nothing -> undefined -- Rejected while parsing
     DepLit x  -> "(DepLit" <+> p x <+> ")"
     Dep x  -> "(Dep" <+> p x <+> ")"
     NoDep  -> "NoDep"
