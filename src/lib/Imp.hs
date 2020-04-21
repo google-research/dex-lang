@@ -187,7 +187,6 @@ makeDest' shape ty = case ty of
     n'  <- lift $ indexSetSize n
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
-  t@(IdxSetLit _)    -> scalarIndexSet t
   t@(IntRange _ _)   -> scalarIndexSet t
   t@(IndexRange _ _) -> scalarIndexSet t
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
@@ -203,7 +202,6 @@ impTabGet ~(Con (AFor _ body)) i = do
 
 intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty i = case ty of
-  IdxSetLit _ -> iAsIdx
   IntRange _ _   -> iAsIdx
   IndexRange _ _ -> iAsIdx
   RecType r -> do
@@ -261,10 +259,11 @@ typeToIType ty = case ty of
 
 toImpBaseType :: Type -> BaseType
 toImpBaseType ty = case ty of
-  BaseType b  -> b
-  TabType _ a -> toImpBaseType a
-  TypeVar _   -> IntType
-  IdxSetLit _ -> IntType
+  BaseType b   -> b
+  TabType _ a  -> toImpBaseType a
+  TypeVar _    -> IntType
+  IntRange _ _ -> IntType
+  IndexRange (Dep (_:>t)) _ -> toImpBaseType t
   _ -> error $ "Unexpected type: " ++ pprint ty
 
 lookupVar :: VarP a -> ImpM Atom
@@ -275,7 +274,7 @@ lookupVar v = do
     Just v' -> v'
 
 indexSetSize :: Type -> ImpM IExpr
-indexSetSize (IdxSetLit n) = return $ ILit (IntLit n)
+indexSetSize (FixedIntRange low high) = return $ ILit $ IntLit $ high - low
 indexSetSize (IntRange low high) = do
   low'  <- toImpDepVal low
   high' <- toImpDepVal high

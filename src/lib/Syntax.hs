@@ -10,6 +10,7 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
     Type (..), BaseType (..), Effect, EffectiveType, Mult,
@@ -32,7 +33,7 @@ module Syntax (
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseType, monMapSingle, monMapLookup, PiType (..), makePi, applyPi,
-    isDependentType, newEnv, newLEnv, newTEnv)
+    isDependentType, newEnv, newLEnv, newTEnv, pattern FixedIntRange)
   where
 
 import Data.Tuple (swap)
@@ -56,7 +57,6 @@ import Env
 data Type = TypeVar TVar
           | BaseType BaseType
           | ArrowType Mult PiType
-          | IdxSetLit Int
           | IntRange Type Type
           | IndexRange Type Type
           | TabType Type Type
@@ -74,6 +74,9 @@ data Type = TypeVar TVar
           | Effect (EffectRow Type) (Maybe Type)
           | NoAnn
             deriving (Show, Eq, Generic)
+
+pattern FixedIntRange :: Int -> Int -> Type
+pattern FixedIntRange low high = IntRange (DepLit low) (DepLit high)
 
 data Kind = TyKind
           | ArrowKind [Kind] Kind
@@ -741,7 +744,6 @@ instance Traversable PrimEffect where
 traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
-  IdxSetLit _          -> pure ty
   IntRange a b         -> liftA2 IntRange (f depIntType a) (f depIntType b)
   IndexRange a b       -> liftA2 IndexRange (f depIntType a) (f depIntType b)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)

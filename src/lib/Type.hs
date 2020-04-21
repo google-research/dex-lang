@@ -311,7 +311,6 @@ checkVSpace env ty = case ty of
 checkIdxSet :: ClassEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
   TypeVar v   -> checkVarClass env IdxSet v
-  IdxSetLit _ -> return ()
   RecType r   -> mapM_ recur r
   IntRange _ _   -> return ()
   IndexRange _ _ -> return ()
@@ -327,7 +326,6 @@ checkData env ty = case ty of
   RecType r   -> mapM_ recur r
   IntRange _ _   -> return ()
   IndexRange _ _ -> return ()
-  IdxSetLit _ -> return ()
   _           -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
@@ -636,8 +634,8 @@ flattenType :: Type -> [(BaseType, [Int])]
 flattenType ty = case ty of
   BaseType b  -> [(b, [])]
   RecType r -> concat $ map flattenType $ toList r
-  TabType (IdxSetLit n) a -> [(b, n:shape) | (b, shape) <- flattenType a]
-  IdxSetLit _ -> [(IntType, [])]
+  TabType (FixedIntRange low high) a -> [(b, (high - low):shape) | (b, shape) <- flattenType a]
+  FixedIntRange _ _ -> [(IntType, [])]
   -- temporary hack. TODO: fix
   TabType _             a -> [(b, 0:shape) | (b, shape) <- flattenType a]
   TypeVar _               -> [(IntType, [])]
@@ -651,8 +649,7 @@ extendClassEnv qs m = do
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
-  IdxSetLit n -> Just n
-  IntRange (DepLit low) (DepLit high) -> Just $ high - low
+  FixedIntRange low high -> Just $ high - low
   RecType r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 

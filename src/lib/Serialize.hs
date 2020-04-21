@@ -146,28 +146,31 @@ valFromPtrs' shape ty = case ty of
     put ptrs
     return $ Con $ AGet $ Con $ ArrayRef $ Array shape b ptr
   RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
-  TabType n a -> liftM (Con . AFor n) $ valFromPtrs' (shape ++ [n']) a
-    where (IdxSetLit n') = n
-  IdxSetLit n -> do
-    liftM (Con . AsIdx (IdxSetLit n)) $ valFromPtrs' shape (BaseType IntType)
+  TabType idx@(FixedIntRange low high) a ->
+    liftM (Con . AFor idx) $ valFromPtrs' (shape ++ [(high - low)]) a
+  IntRange _ _ -> do
+    liftM (Con . AsIdx ty) $ valFromPtrs' shape (BaseType IntType)
   _ -> error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
 
 valToScatter :: Val -> IO Output
-valToScatter ~(Con (AFor (IdxSetLit n) body)) = do
-  xs' <- sequence [liftM fromRealLit $ loadScalar (subArray i xs) | i <- [0.. n - 1]]
-  ys' <- sequence [liftM fromRealLit $ loadScalar (subArray i ys) | i <- [0.. n - 1]]
+valToScatter ~(Con (AFor (FixedIntRange low high) body)) = do
+  xs' <- sequence [liftM fromRealLit $ loadScalar (subArray i xs) | i <- [0..(n - 1)]]
+  ys' <- sequence [liftM fromRealLit $ loadScalar (subArray i ys) | i <- [0..(n - 1)]]
   return $ ScatterOut xs' ys'
   where ~(Con (RecCon (Tup [Con (AGet (Con (ArrayRef xs))),
                             Con (AGet (Con (ArrayRef ys)))]))) = body
+        n = high - low
 
 valToHeatmap :: Val -> IO Output
-valToHeatmap ~(Con (AFor (IdxSetLit h) body)) = do
+valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = do
   xs <- sequence [liftM fromRealLit $ loadScalar (subArray j (subArray i array))
                  | i <- [0..h-1], j <- [0..w-1]]
   return $ HeatmapOut h w xs
-  where ~(Con (AFor (IdxSetLit w) (Con (AGet (Con (ArrayRef array)))))) = body
+  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet (Con (ArrayRef array)))))) = body
+        h = hh - hl
+        w = wh - wl
 
 fromRealLit :: LitVal -> Double
 fromRealLit ~(RealLit x) = x
@@ -184,8 +187,8 @@ prettyVal (Con con) = case con of
     return $ pretty xs <> idxSetStr
     where
       (Just n') = indexSetConcreteSize n
-      idxSetStr = case n of IdxSetLit _ -> mempty
-                            _           -> "@" <> pretty n
+      idxSetStr = case n of FixedIntRange 0 _ -> mempty
+                            _                 -> "@" <> pretty n
   AGet (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
   AsIdx n i -> do
     i' <- prettyVal i

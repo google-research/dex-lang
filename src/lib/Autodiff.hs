@@ -177,11 +177,12 @@ withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 tangentType :: Type -> Type
 tangentType ty = case ty of
   BaseType RealType -> BaseType RealType
-  BaseType  _ -> unitTy
-  IdxSetLit _ -> unitTy
-  TabType n a -> TabType n (tangentType a)
-  RecType r   -> RecType $ fmap tangentType r
-  Ref a       -> Ref $ tangentType a
+  BaseType   _   -> unitTy
+  IntRange   _ _ -> unitTy
+  IndexRange _ _ -> unitTy
+  TabType n a    -> TabType n (tangentType a)
+  RecType r      -> RecType $ fmap tangentType r
+  Ref a          -> Ref $ tangentType a
   _ -> error $ "Can't differentiate wrt type " ++ pprint ty
 
 hasDiscreteType :: HasType e => e -> Bool

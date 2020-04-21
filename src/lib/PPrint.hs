@@ -74,7 +74,7 @@ instance Pretty Type where
                  [] -> mempty
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
-    IdxSetLit i -> p i
+    IntRange (DepLit 0) (DepLit n) -> p n
     IntRange a b -> "(IntRange" <+> p a <+> p b <> ")"
     IndexRange a b -> "(IndexRange" <+> p a <+> p b <> ")"
     DepLit x  -> "(DepLit" <+> p x <+> ")"
