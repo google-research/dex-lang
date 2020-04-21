@@ -129,9 +129,10 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     e' <- checkPure e et'
     et <- zonk et'
     case et of
-      (IndexRange (Dep low) _ (Dep _) _) -> do
-        low' <- fromAnn TyKind (varAnn low)
-        constrainEq reqTy low' (pprint e)
+      idx@(IndexRange _ _) -> do
+        let (Dep (_:>boundAnn)) = indexRangeBound idx
+        boundType <- fromAnn TyKind boundAnn
+        constrainEq reqTy boundType $ pprint e
         return $ FPrimExpr $ OpExpr $ Inject e'
       _ -> error "Inject only supported for index ranges"
   FPrimExpr (OpExpr op) -> do
@@ -348,9 +349,9 @@ inferKindsM kind ty = case ty of
       b' <- inferKindsM depIntType b
       return $ IntRange a' b'
     where depIntType = DepKind $ BaseType IntType
-  IndexRange a ai b bi -> do
+  IndexRange a b -> do
       -- TODO: Validate the kinds
-      return $ IndexRange a ai b bi
+      return $ IndexRange a b
   Dep v@(name :> _) -> do
     env <- look
     case envLookup env v of

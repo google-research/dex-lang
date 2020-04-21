@@ -552,14 +552,24 @@ intRangeType = do
 indexRangeType :: Parser Type
 indexRangeType = do
   (low, lincl, hincl) <- try $ do
-    low <- dep
+    low <- option Nothing (Just <$> dep)
     (lincl, hincl) <-  (symbol "..." >> pure (True , True ))
                    <|> (symbol "..<" >> pure (True , False))
                    <|> (symbol ">.." >> pure (False, True ))
                    <|> (symbol ">.<" >> pure (False, False))
     return (low, lincl, hincl)
-  high <- dep
-  return $ IndexRange low lincl high hincl
+  high <- option Nothing (Just <$> dep)
+  case (low, high) of
+    (Nothing, Nothing) -> fail "Index range must be provided with at least one bound"
+    (Nothing, _      ) -> assertInclusive lincl
+    (_      , Nothing) -> assertInclusive hincl
+    _                  -> return ()
+  return $ IndexRange (fmap (\b -> (b, lincl)) low )
+                      (fmap (\b -> (b, hincl)) high)
+  where
+    assertInclusive isInclusive = if isInclusive
+      then return ()
+      else fail "Index ranges without specified bounds have to be inclusive"
 
 dep :: Parser Dep
 dep =    (do v <- lowerName

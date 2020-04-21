@@ -6,6 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp (toImpModule, impExprToAtom, impExprType) where
@@ -188,7 +189,7 @@ makeDest' shape ty = case ty of
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
   t@(IntRange   _ _)     -> scalarIndexSet t
-  t@(IndexRange _ _ _ _) -> scalarIndexSet t
+  t@(IndexRange _ _)     -> scalarIndexSet t
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
   where
     scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseType IntType)
@@ -203,7 +204,7 @@ impTabGet ~(Con (AFor _ body)) i = do
 intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty i = case ty of
   IntRange _ _       -> iAsIdx
-  IndexRange _ _ _ _ -> iAsIdx
+  IndexRange _ _     -> iAsIdx
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM (Con . RecCon) $
@@ -259,11 +260,12 @@ typeToIType ty = case ty of
 
 toImpBaseType :: Type -> BaseType
 toImpBaseType ty = case ty of
-  BaseType b   -> b
-  TabType _ a  -> toImpBaseType a
-  TypeVar _    -> IntType
-  IntRange _ _ -> IntType
-  IndexRange (Dep (_:>t)) _ _ _ -> toImpBaseType t
+  BaseType b     -> b
+  TabType _ a    -> toImpBaseType a
+  TypeVar _      -> IntType
+  IntRange _ _   -> IntType
+  IndexRange _ _ -> toImpBaseType t
+    where (Dep (_:>t)) = indexRangeBound ty
   _ -> error $ "Unexpected type: " ++ pprint ty
 
 lookupVar :: VarP a -> ImpM Atom
@@ -278,14 +280,20 @@ indexSetSize (IntRange low high) = do
   low'  <- toImpDepVal low
   high' <- toImpDepVal high
   impSub high' low'
-indexSetSize (IndexRange low lincl high hincl) = do
-  low'  <- toImpDepVal low
-  high' <- toImpDepVal high
-  n <- impAdd boundaryOffset =<< impSub high' low'
+indexSetSize (IndexRange maybeLow maybeHigh) = do
+  (low, lowIncluded) <- case maybeLow of
+    Nothing        -> return (zero, True)
+    Just (b, incl) -> toImpDepVal b  >>= return . (,incl)
+  (high, highIncluded) <- case maybeHigh of
+    -- NOTE: We exclude the end, because the size is out of bounds!
+    Nothing        -> indexSetSize t >>= return . (,False)
+      where (Just (Dep (_:>t), _)) = maybeLow
+    Just (b, incl) -> toImpDepVal b  >>= return . (,incl)
+  let boundaryOffset = (fromEnum highIncluded) - (fromEnum $ not lowIncluded)
+  n <- impAdd (ILit $ IntLit boundaryOffset) =<< impSub high low
   isNonNegative <- impCmp GreaterEqual n zero
   emitInstr $ IPrimOp $ Select IntType isNonNegative n zero
   where
-    boundaryOffset = ILit $ IntLit $ (fromEnum hincl) - (fromEnum $ not lincl)
     zero = ILit $ IntLit 0
 indexSetSize (RecType r) = do
   sizes <- traverse indexSetSize r
