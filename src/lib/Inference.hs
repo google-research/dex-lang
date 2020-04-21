@@ -129,7 +129,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     e' <- checkPure e et'
     et <- zonk et'
     case et of
-      (IndexRange (Dep low) (Dep _)) -> do
+      (IndexRange (Dep low) _ (Dep _) _) -> do
         low' <- fromAnn TyKind (varAnn low)
         constrainEq reqTy low' (pprint e)
         return $ FPrimExpr $ OpExpr $ Inject e'
@@ -348,9 +348,9 @@ inferKindsM kind ty = case ty of
       b' <- inferKindsM depIntType b
       return $ IntRange a' b'
     where depIntType = DepKind $ BaseType IntType
-  IndexRange a b -> do
+  IndexRange a ai b bi -> do
       -- TODO: Validate the kinds
-      return $ IndexRange a b
+      return $ IndexRange a ai b bi
   Dep v@(name :> _) -> do
     env <- look
     case envLookup env v of

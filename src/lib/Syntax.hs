@@ -58,7 +58,7 @@ data Type = TypeVar TVar
           | BaseType BaseType
           | ArrowType Mult PiType
           | IntRange Type Type
-          | IndexRange Type Type
+          | IndexRange Type Bool Type Bool -- True if the endpoint is included
           | TabType Type Type
           | ArrayType [Int] BaseType
           | RecType (Record Type)
@@ -745,7 +745,7 @@ traverseType :: Applicative m => (Kind -> Type -> m Type) -> Type -> m Type
 traverseType f ty = case ty of
   BaseType _           -> pure ty
   IntRange a b         -> liftA2 IntRange (f depIntType a) (f depIntType b)
-  IndexRange a b       -> liftA2 IndexRange (f depIntType a) (f depIntType b)
+  IndexRange a ac b bc -> liftA4 IndexRange (f depIntType a) (pure ac) (f depIntType b) (pure bc)
   TabType a b          -> liftA2 TabType (f TyKind a) (f TyKind b)
   ArrayType _ _        -> pure ty
   RecType r            -> liftA RecType $ traverse (f TyKind) r
