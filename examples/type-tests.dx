@@ -299,12 +299,13 @@ fAmb = ()
 :p
     x = "123"
     for i:7. sum for j:0...<x. 1.0
-> Kind error:
+> Type error:
 > Expected: Int
 >   Actual: Str
+> In: x
 >
 >     for i:7. sum for j:0...<x. 1.0
->              ^^^^
+>                  ^^^^^^^^^^^^^^^^^
 
 :p [1,2,3]@Int
 > Type error:Literal table must have a concrete index set.
@@ -327,7 +328,10 @@ fAmb = ()
 -- TODO: Fix the kind error!
 :p
   for i:4. sum for j:1..<i. 1.0
-> [0.0, 0.0, 1.0, 2.0]
+> Type error: Not a valid index set: Int
+>
+>   for i:4. sum for j:1..<i. 1.0
+>            ^^^^
 
 -- TODO: Implement a dependent arrow type
 -- :p

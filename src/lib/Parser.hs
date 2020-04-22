@@ -15,6 +15,7 @@ import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space)
+import Data.Functor
 import Data.Foldable (fold)
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
@@ -24,6 +25,7 @@ import Env
 import Record
 import Syntax
 import PPrint
+import Type
 
 data ParseCtx = ParseCtx { curIndent :: Int
                          , canBreak  :: Bool }
@@ -226,18 +228,18 @@ statement =   liftM Left (letMono <|> letPoly)
 
 expr :: Parser FExpr
 expr = makeExprParser (withSourceAnn expr') ops
-  where
-    expr' :: Parser FExpr
-    expr' =   parenExpr
-          <|> var
-          <|> liftM fPrimCon idxLit
-          <|> liftM (fPrimCon . Lit) literal
-          <|> lamExpr
-          <|> forExpr
-          <|> primExpr
-          <|> ffiCall
-          <|> tabCon
-          <?> "expr"
+
+expr' :: Parser FExpr
+expr' =   parenExpr
+      <|> var
+      <|> liftM fPrimCon idxLit
+      <|> liftM (fPrimCon . Lit) literal
+      <|> lamExpr
+      <|> forExpr
+      <|> primExpr
+      <|> ffiCall
+      <|> tabCon
+      <?> "expr"
 
 parenExpr :: Parser FExpr
 parenExpr = do
@@ -334,7 +336,7 @@ forExpr = do
 tabCon :: Parser FExpr
 tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
-  n <- tyArg <|> return (IntRange (DepLit 0) (DepLit (length xs)))
+  n <- tyArg <|> return (FixedIntRange 0 (length xs))
   return $ fPrimOp $ TabCon n NoAnn xs
 
 idxLhsArgs :: Parser (FExpr -> FExpr)
@@ -354,7 +356,7 @@ idxLit = do
   n <- uint
   failIf (i < 0 || i >= n) $ "Index out of bounds: "
                                 ++ pprint i ++ " of " ++ pprint n
-  return $ AsIdx (IntRange (DepLit 0) (DepLit n))
+  return $ AsIdx (FixedIntRange 0 n)
                  (FPrimExpr $ ConExpr $ Lit $ IntLit i)
 
 literal :: Parser LitVal
@@ -378,7 +380,7 @@ identifier = lexeme . try $ do
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
-                     >> return (\x y -> fPrimOp $ App NoAnn NoAnn x y))
+                     >> return (\x y -> fPrimOp $ App NoAnn x y))
   where
     opNames = [ ".", "+", "*", "/", "- ", "^", "$", "@"
               , "<", ">", "<=", ">=", "&&", "||", "=="]
@@ -465,7 +467,7 @@ fPrimOp :: PrimOp Type FExpr FLamExpr -> FExpr
 fPrimOp op = FPrimExpr $ OpExpr op
 
 app :: FExpr -> FExpr -> FExpr
-app f x = fPrimOp $ App NoAnn NoAnn f x
+app f x = fPrimOp $ App NoAnn f x
 
 -- === Parsing types ===
 
@@ -543,38 +545,39 @@ tauType = makeExprParser (sc >> tauTypeAtomic) typeOps
 intRangeType :: Parser Type
 intRangeType = do
   low <- try $ do
-    low <- dep
+    low <- atom
     symbol "...<"
     return low
-  high <- dep
+  high <- atom
   return $ IntRange low high
 
 indexRangeType :: Parser Type
 indexRangeType = do
-  (low, lincl, hincl) <- try $ do
-    low <- option Nothing (Just <$> dep)
-    (lincl, hincl) <-  (symbol "..." >> pure (True , True ))
-                   <|> (symbol "..<" >> pure (True , False))
-                   <|> (symbol ">.." >> pure (False, True ))
-                   <|> (symbol ">.<" >> pure (False, False))
-    return (low, lincl, hincl)
-  high <- option Nothing (Just <$> dep)
-  case (low, high) of
-    (Nothing, Nothing) -> fail "Index range must be provided with at least one bound"
-    (Nothing, _      ) -> assertInclusive lincl
-    (_      , Nothing) -> assertInclusive hincl
-    _                  -> return ()
-  return $ IndexRange (fmap (\b -> (b, lincl)) low )
-                      (fmap (\b -> (b, hincl)) high)
-  where
-    assertInclusive isInclusive = if isInclusive
-      then return ()
-      else fail "Index ranges without specified bounds have to be inclusive"
+  -- TODO: We need `try` because `.` is overloaded.
+  --       Consider requiring parens or using `->` in for/lambda.
+  low  <- try $ lowerLim <* char '.'
+  high <- upperLim
+  sc
+  when ((low, high) == (Unlimited, Unlimited)) $
+    fail "Index range must be provided with at least one bound"
+  return $ IndexRange NoAnn low high
 
-dep :: Parser Dep
-dep =    (do v <- lowerName
-             return $ Dep (v:>NoAnn))
-     <|> liftM DepLit uint
+lowerLim :: Parser (Limit Atom)
+lowerLim =   (                      char '.' $> Unlimited)
+         <|> (atom >>= \lim -> (   (char '.' $> InclusiveLim lim)
+                               <|> (char '<' $> ExclusiveLim lim)))
+
+upperLim :: Parser (Limit Atom)
+upperLim =   (char '.' >> (   liftM  InclusiveLim atom
+                          <|> return Unlimited))
+         <|> (char '<' >>     liftM  ExclusiveLim atom)
+
+atom :: Parser Atom
+atom = do
+  e <- expr'
+  case fromAtomicFExpr e of
+    Nothing -> fail "Expected a fully-reduced expression"
+    Just x -> return x
 
 arrowType :: Parser (Type -> Type -> Type)
 arrowType = do
@@ -635,7 +638,7 @@ localTypeVar = do
 idxSetLit :: Parser Type
 idxSetLit = do
   n <- uint
-  return $ IntRange (DepLit 0) (DepLit n)
+  return $ FixedIntRange 0 n
 
 parenTy :: Parser Type
 parenTy = do
@@ -675,7 +678,7 @@ tupleData = do
 tableData :: Parser FExpr
 tableData = do
   xs <- brackets $ literalData `sepEndBy` comma
-  n <- tyArg <|> return (IntRange (DepLit 0) (DepLit (length xs)))
+  n <- tyArg <|> return (FixedIntRange 0 (length xs))
   return $ FPrimExpr $ OpExpr $ TabCon n NoAnn xs
 
 -- === Util ===
@@ -716,7 +719,7 @@ mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
 num :: Parser (Either Double Int)
 num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
      <|> (do x <- L.signed (return ()) L.decimal
-             trailingPeriod <- optional (char '.')
+             trailingPeriod <- optional $ try $ char '.' >> notFollowedBy (char '.')
              sc
              return $ case trailingPeriod of
                Just _  -> Left (fromIntegral x)

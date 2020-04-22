@@ -74,20 +74,16 @@ instance Pretty Type where
                  [] -> mempty
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
-    IntRange (DepLit 0) (DepLit n) -> p n
+    IntRange (Con (Lit (IntLit 0))) (Con (Lit (IntLit n))) -> p n
     IntRange a b -> p a <> "...<" <> p b
-    IndexRange (Just (a, True )) (Just (b, True )) -> p a <> "..." <> p b
-    IndexRange (Just (a, False)) (Just (b, True )) -> p a <> ">.." <> p b
-    IndexRange (Just (a, True )) (Just (b, False)) -> p a <> "..<" <> p b
-    IndexRange (Just (a, False)) (Just (b, False)) -> p a <> ">.<" <> p b
-    IndexRange Nothing (Just (b, True )) -> "..." <> p b
-    IndexRange Nothing (Just (b, False)) -> "..<" <> p b
-    IndexRange (Just (a, True )) Nothing -> p a <> "..."
-    IndexRange (Just (a, False)) Nothing -> p a <> ">.."
-    IndexRange Nothing Nothing -> undefined -- Rejected while parsing
-    DepLit x  -> "(DepLit" <+> p x <+> ")"
-    Dep x  -> "(Dep" <+> p x <+> ")"
-    NoDep  -> "NoDep"
+    IndexRange _ low high -> low' <> "." <> high'
+      where
+        low'  = case low  of InclusiveLim x -> p x <> "."
+                             ExclusiveLim x -> p x <> "<"
+                             Unlimited      ->       ".."
+        high' = case high of InclusiveLim x -> "." <> p x
+                             ExclusiveLim x -> "<" <> p x
+                             Unlimited      -> ".."
     Lin    -> "Lin"
     NonLin -> "NonLin"
     Effect row t -> "{" <> row' <+> tailVar <> "}"
@@ -155,7 +151,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) wher
   pretty (ConExpr con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (App _ _ e1 e2) = p e1 <+> p e2
+  pretty (App _ e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
   pretty (For lam) = "for" <+> i <+> "." <+> nest 3 (line <> body)
     where (i, body) = prettyLam lam
@@ -210,7 +206,6 @@ instance Pretty Kind where
   pretty TyKind      = "Type"
   pretty MultKind    = "Mult"
   pretty EffectKind  = "Effect"
-  pretty (DepKind t) = pretty t
   pretty k = p $ show k
 
 instance Pretty a => Pretty (VarP a) where

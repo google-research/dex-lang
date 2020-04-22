@@ -107,38 +107,31 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
         constrainReq (subst (env, mempty) body)
         return $ fTyApp (varName v :> ty) ts''
       _ -> throw TypeErr "Unexpected type application"
-  FPrimExpr (OpExpr (App l _ f x)) -> do
+  FPrimExpr (OpExpr (App l f x)) -> do
     l'  <- fromAnn MultKind l
     piTy@(Pi a _) <- freshLamType
     f' <- checkPure f $ ArrowType l' piTy
     x' <- checkPure x a
     piTy' <- zonk piTy
-    let d = if isDependentType piTy'
-              then case x' of
-                FVar v              -> Dep v
-                SrcAnnot (FVar v) _ -> Dep v
-                _                   -> error $ pprint x'
-              else NoDep
-    let (eff, b) = applyPi piTy' d
+    (eff, b) <- maybeApplyPi piTy' (fromAtomicFExpr x')
     constrainReq b
     eff' <- openEffect eff
     constrainEq allowedEff eff' (pprint expr)
-    return $ FPrimExpr $ OpExpr $ App l' d f' x'
+    return $ FPrimExpr $ OpExpr $ App l' f' x'
   FPrimExpr (OpExpr (Inject e)) -> do
-    et' <- freshQ
-    e' <- checkPure e et'
-    et <- zonk et'
-    case et of
-      idx@(IndexRange _ _) -> do
-        let (Dep (_:>boundAnn)) = indexRangeBound idx
-        boundType <- fromAnn TyKind boundAnn
-        constrainEq reqTy boundType $ pprint e
+    et <- freshQ
+    e' <- checkPure e et
+    et' <- zonk et
+    case et' of
+      IndexRange ty _ _ -> do
+        constrainReq ty
         return $ FPrimExpr $ OpExpr $ Inject e'
-      _ -> error "Inject only supported for index ranges"
+      _ -> throw TypeErr "Expected index range"
   FPrimExpr (OpExpr op) -> do
     opTy <- generateOpSubExprTypes op
     -- TODO: don't ignore explicit annotations (via `snd`)
-    (eff, ansTy) <- traverseOpType (fmapExpr opTy id snd snd)
+    (eff, ansTy) <- traverseOpType
+                      (fmapExpr opTy id (\(e,t)->(fromAtomicFExpr e, t)) snd)
                       (\t1 t2 -> constrainEq t1 t2 (pprint expr))
                       (\_ _ -> return ())
                       (\_ _ -> return ())
@@ -180,7 +173,7 @@ checkLam :: FLamExpr -> PiType -> InferM FLamExpr
 checkLam (FLamExpr p body) piTy@(Pi a _) = do
   p' <- checkPat p a
   piTy' <- zonk piTy
-  let effTy = applyPi piTy' (Dep (getPatName p :> a))
+  effTy <- maybeApplyPi piTy' (Just (Var (getPatName p :> a)))
   body' <- extendR (foldMap asEnv p') $ check body effTy
   return $ FLamExpr p' body'
 
@@ -190,6 +183,19 @@ checkPat p ty = do
   p' <- annotPat p
   constrainEq ty (getType p') (pprint p)
   return p'
+
+checkAtom :: Atom -> Type -> InferM Atom
+checkAtom atom ty = do
+  fexpr <- check (toAtomicFExpr atom) (noEffect, ty)
+  case fromAtomicFExpr fexpr of
+    Just atom' -> return atom'
+    Nothing -> error "Shouldn't be possible to infer an atom into a non-atom"
+
+inferAtom :: Atom -> InferM (Atom, Type)
+inferAtom atom = do
+  ty <- freshQ
+  atom' <- checkAtom atom ty
+  return (atom', ty)
 
 fTyApp :: Var -> [Type] -> FExpr
 fTyApp v tys = FPrimExpr $ OpExpr $ TApp (FVar v) tys
@@ -227,11 +233,10 @@ generateOpSubExprTypes op = case op of
     n <- freshQ
     a <- freshQ
     return $ TabGet (xs, TabType n a) (i, n)
-  PrimEffect _ ref m -> do
-    d  <- fromDepVar ref
+  PrimEffect ref m -> do
     s  <- freshQ
     m' <- traverse (doMSnd freshQ) m
-    return $ PrimEffect d (ref, Ref s) m'
+    return $ PrimEffect (ref, Ref s) m'
   RunReader r f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     r' <- freshQ
     a  <- freshQ
@@ -253,8 +258,7 @@ generateOpSubExprTypes op = case op of
     let eff = Effect ((v:>()) @> (State, Ref s')) (Just tailVar)
     let fTy = makePi (v:> Ref s') (eff, a)
     return $ RunState (s, s') (f, fTy)
-  IndexEff effName _ tabRef i f@(FLamExpr (RecLeaf (v:>_)) _) -> do
-    d  <- fromDepVar tabRef
+  IndexEff effName tabRef i f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     i' <- freshQ
     x  <- freshQ
     a  <- freshQ
@@ -262,7 +266,7 @@ generateOpSubExprTypes op = case op of
     tailVar <- freshInferenceVar EffectKind
     let eff = Effect ((v:>()) @> (effName, Ref x)) (Just tailVar)
     let fTy = makePi (v:> Ref x) (eff, a)
-    return $ IndexEff effName d (tabRef, Ref tabType) (i, i') (f, fTy)
+    return $ IndexEff effName (tabRef, Ref tabType) (i, i') (f, fTy)
   _ -> traverseExpr op (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM PiType
@@ -285,11 +289,6 @@ fromAnn :: Kind -> Type -> InferM Type
 fromAnn k NoAnn = freshInferenceVar k
 fromAnn k ty    = inferKinds k ty
 
-fromDepVar :: FExpr -> InferM Type
-fromDepVar (FVar v) = return $ Dep v
-fromDepVar (SrcAnnot e _) = fromDepVar e
-fromDepVar _ = throw TypeErr "Dependent argument must be a variable"
-
 asEnv :: Var -> TypeEnv
 asEnv b = b @> L (varAnn b)
 
@@ -300,7 +299,8 @@ type InferKindM a = ReaderT [Type] (CatT TypeEnv (Either Err)) a
 inferKinds :: Kind -> Type -> InferM Type
 inferKinds kind ty = do
   env <- ask
-  liftEither $ runInferKinds env kind ty
+  env' <- traverse zonk env
+  liftEither $ runInferKinds env' kind ty
 
 runInferKinds :: TypeEnv -> Kind -> Type -> Except Type
 runInferKinds env kind ty = liftM fst $
@@ -345,20 +345,19 @@ inferKindsM kind ty = case ty of
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
   IntRange a b -> do
-      a' <- inferKindsM depIntType a
-      b' <- inferKindsM depIntType b
-      return $ IntRange a' b'
-    where depIntType = DepKind $ BaseType IntType
-  IndexRange a b -> do
-      -- TODO: Validate the kinds
-      return $ IndexRange a b
-  Dep v@(name :> _) -> do
     env <- look
-    case envLookup env v of
-      Just (L t) -> return $ Dep $ name :> t
-      Just (T _) -> error "Expected a term"
-      Nothing -> error "Failed to infer the type of dependent variable"
-  _ -> traverseType inferKindsM ty
+    a' <- liftEither $ runInferM env $ checkAtom a $ BaseType IntType
+    b' <- liftEither $ runInferM env $ checkAtom b $ BaseType IntType
+    return $ IntRange a' b'
+  IndexRange _ a b -> do
+    env <- look
+    a' <- forM a $ liftEither . runInferM env . liftM fst . inferAtom
+    b' <- forM b $ liftEither . runInferM env . liftM fst . inferAtom
+    -- TODO: separate kind inference from type-of-terms-within-types inference
+    -- and do the latter as ordinary type inference instead of these bespoke rules.
+    let t = getType $ head $ toList a' ++ toList b'
+    return $ IndexRange t a' b'
+  _ -> traverseType ty inferKindsM (error "Shouldn't have dependent term left")
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do
@@ -466,10 +465,11 @@ unify :: (MonadCat SolverEnv m, MonadError Err m)
 unify t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
+  vs <- looks solverVars
   case (t1', t2') of
     _ | t1' == t2' -> return ()
-    (t, TypeVar v) | isQ v -> bindQ v t
-    (TypeVar v, t) | isQ v -> bindQ v t
+    (t, TypeVar v) | v `isin` vs -> bindQ v t
+    (TypeVar v, t) | v `isin` vs -> bindQ v t
     (ArrowType l (Pi a (eff, b)), ArrowType l' (Pi a' (eff', b'))) -> do
       -- TODO: think very hard about the leak checks we need to add here
       unify l l' >> unify a a' >> unify b b' >> unify eff eff'
@@ -497,19 +497,17 @@ rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
 -- TODO: can we make this less complicated?
 matchTail :: (MonadCat SolverEnv m, MonadError Err m)
           => Maybe Type -> Effect -> m ()
-matchTail t ~eff@(Effect row t') = case (t, t') of
-  _                     | t == t' && row == mempty -> return ()
-  (Just (TypeVar v), _) | isQ v                  -> zonk eff               >>= bindQ v
-  (_, Just (TypeVar v)) | isQ v && row == mempty -> zonk (Effect mempty t) >>= bindQ v
-  _ -> throw TypeErr ""
+matchTail t ~eff@(Effect row t') = do
+  vs <- looks solverVars
+  case (t, t') of
+    _                     | t == t' && row == mempty     -> return ()
+    (Just (TypeVar v), _) | v `isin` vs                  -> zonk eff               >>= bindQ v
+    (_, Just (TypeVar v)) | v `isin` vs && row == mempty -> zonk (Effect mempty t) >>= bindQ v
+    _ -> throw TypeErr ""
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => TVar -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
           | otherwise = extend $ mempty { solverSub = v @> t }
-
-isQ :: TVar -> Bool
-isQ (v :> _) | nameSpace v == InferenceName = True
-             | otherwise = False
 
 occursIn :: TVar -> Type -> Bool
 occursIn v t = v `isin` freeVars t
@@ -543,6 +541,9 @@ instance TySubst FExpr where
     Annot e ty       -> Annot (tySubst env e) (tySubst env ty)
     SrcAnnot e src   -> SrcAnnot (tySubst env e) src
     FPrimExpr e -> FPrimExpr $ tySubst env e
+
+instance TySubst Atom where
+  tySubst env atom = subst (fmap T env, mempty) atom
 
 instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)
          => TySubst (expr ty e lam) where

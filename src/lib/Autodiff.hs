@@ -72,12 +72,12 @@ linearizeLamExpr topEnv (LamExpr v body) = do
      emitExpr $ subst (env, scope) $ wrapDecls decls ansT')
 
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
-linearizeCExpr topEnv (App _ _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
+linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
-  ~(Tup [y, f]) <- emit (App NonLin NoDep (linRules topEnv ! v) x) >>= unpackRec
+  ~(Tup [y, f]) <- emit (App NonLin (linRules topEnv ! v) x) >>= unpackRec
   saveVars f
   return ( y
-         , liftM (App Lin NoAnn f) t >>= emit )
+         , liftM (App Lin f) t >>= emit )
 linearizeCExpr _ expr | hasDiscreteType expr = LinA $ do
   expr' <- substEmbed expr
   ans <- emit expr'
@@ -124,9 +124,8 @@ linearizeCExpr topEnv expr = case expr' of
     return ( makePair ans w
            , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
                 emit $ RunWriter lam'')
-  PrimEffect ~(Dep ref) refArg m ->
-    liftA3 (\ref' refArg' m' -> PrimEffect (Dep ref') refArg' m')
-      (liftA (\(Var v) -> v) $ linearizeVar ref) refArg
+  PrimEffect refArg m ->
+    liftA2 PrimEffect refArg
       (case m of
          MAsk    -> pure MAsk
          MTell x -> liftA MTell x
@@ -179,7 +178,7 @@ tangentType ty = case ty of
   BaseType RealType -> BaseType RealType
   BaseType   _       -> unitTy
   IntRange   _ _     -> unitTy
-  IndexRange _ _     -> unitTy
+  IndexRange _ _ _   -> unitTy
   TabType n a        -> TabType n (tangentType a)
   RecType r          -> RecType $ fmap tangentType r
   Ref a              -> Ref $ tangentType a
@@ -322,21 +321,15 @@ transposeCExpr expr ct = case expr of
     vsCTs <- emit (RunReader ctEff body')
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ emitCT vs vsCTs'
-  PrimEffect ~(Dep ref) refArg m -> do
-    ref' <- substVar ref
+  PrimEffect refArg m -> do
     refArg' <- substTranspose refArg
     case m of
-      MAsk -> void $ emit $ PrimEffect (Dep ref') refArg' (MTell ct)
+      MAsk -> void $ emit $ PrimEffect refArg' (MTell ct)
       MTell x -> do
-       ct' <- emit $ PrimEffect (Dep ref') refArg' MAsk
+       ct' <- emit $ PrimEffect refArg' MAsk
        transposeAtom x ct'
       _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint expr
-
-substVar :: Var -> TransposeM Var
-substVar v = do
-  ~(Var v') <- substTranspose (Var v)
-  return v'
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
@@ -373,7 +366,7 @@ emitCT v ct = do
     _ -> return ()
 
 emitCTToRef :: Var -> Atom -> TransposeM ()
-emitCTToRef ref ct = void $ emit $ PrimEffect (Dep ref) (Var ref) (MTell ct)
+emitCTToRef ref ct = void $ emit $ PrimEffect (Var ref) (MTell ct)
 
 substTranspose :: Subst a => a -> TransposeM a
 substTranspose x = do

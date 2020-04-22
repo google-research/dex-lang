@@ -125,7 +125,7 @@ simplifyCExpr expr = do
       (ans, s') <- fromPair =<< emit (RunState s lam)
       ans' <- reconstructAtom recon ans
       return $ makePair ans' s'
-    App _ _ (Con (Lam _ _ (LamExpr b body))) x -> do
+    App _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
       dropSub $ extendR (newTEnv tbs ts) $ simplify body

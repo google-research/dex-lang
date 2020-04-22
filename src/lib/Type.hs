@@ -7,14 +7,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
     getType, substEnvType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
-    getKind, checkKindIs, checkKindEq, getEffType, getPatName,
-    getConType, checkEffType, HasType, indexSetConcreteSize) where
+    getKind, checkKindEq, getEffType, getPatName,
+    getConType, checkEffType, HasType, indexSetConcreteSize,
+    maybeApplyPi, makePi, applyPi, isDependentType) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -63,6 +65,11 @@ checkVar v@(_:>annTy) = do
 
 pureType :: Type -> EffectiveType
 pureType ty = (noEffect, ty)
+
+checkTypeIs :: HasType a => Type -> a -> TypeM ()
+checkTypeIs ty x = do
+  ty' <- checkType x
+  checkConstraint ty ty'
 
 -- === Module interfaces ===
 
@@ -124,12 +131,9 @@ getKind ty = case ty of
   NonLin       -> MultKind
   Effect _ _   -> EffectKind
   NoAnn        -> NoKindAnn
-  Dep (_ :> t) -> DepKind t
-  DepLit _     -> DepKind $ BaseType IntType
   _            -> TyKind
 
-checkKind :: (MonadError Err m, MonadReader TypeEnv m)
-          => Type -> m Kind
+checkKind :: Type -> TypeM Kind
 checkKind ty = case ty of
   TypeVar v@(_:>k) -> do
     x <- asks $ flip envLookup v
@@ -157,25 +161,19 @@ checkKind ty = case ty of
       Just tv@(TypeVar _) -> checkKindIs EffectKind tv
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return EffectKind
-  NoAnn -> error "Shouldn't have NoAnn left"
-  IntRange a b -> do
-      checkKindIs depIntKind a
-      checkKindIs depIntKind b
-      return TyKind
-    where
-      depIntKind = DepKind $ BaseType $ IntType
-  IndexRange _ _ -> do
-    -- TODO: Check that a and b are types that have an instance of Idx
+  IndexRange t a b -> do
+    checkKindIs TyKind t
+    checkClassConstraint IdxSet t
+    mapM_ (checkTypeIs t) a
+    mapM_ (checkTypeIs t) b
     return TyKind
-  Dep (_ :> t) -> do
-    -- TODO: Make sure this is consistent with the environment (use checkVar)
-    return $ DepKind t
+  NoAnn -> error "Shouldn't have NoAnn left"
   _ -> do
-    void $ traverseType (\k t -> checkKindIs k t >> return t) ty
+    void $ traverseType ty (\k t -> checkKindIs k t >> return t)
+                           (\t e -> checkTypeIs t e >> return e)
     return $ getKind ty
 
-checkKindIs :: (MonadError Err m, MonadReader TypeEnv m)
-            => Kind -> Type -> m ()
+checkKindIs :: Kind -> Type -> TypeM ()
 checkKindIs k ty = do
   k' <- checkKind ty
   checkKindEq k k'
@@ -205,7 +203,8 @@ instance HasType FExpr where
         eff = ignoreExcept $ combineEffects bodyEff $ getFDeclEff decl
     FPrimExpr e -> case e of
       ConExpr con -> pureTy $ getConType $ fmapExpr con id getType getFLamType
-      OpExpr  op  -> getOpType $ fmapExpr op id getType getFLamType
+      OpExpr  op  -> getOpType $ fmapExpr op id addType getFLamType
+        where addType x = (fromAtomicFExpr x, getType x)
     SrcAnnot e _ -> getEffType e
     Annot e _    -> getEffType e
 
@@ -220,8 +219,9 @@ instance HasType FExpr where
       eTy <- traverseExpr con return checkPureType checkTypeFlam
       liftM pureTy $ checkConType eTy
     FPrimExpr (OpExpr con) -> do
-      eTy <- traverseExpr con return checkPureType checkTypeFlam
+      eTy <- traverseExpr con return addType checkTypeFlam
       checkOpType eTy
+      where addType x = liftM (fromAtomicFExpr x,) (checkPureType x)
     SrcAnnot e pos -> addSrcContext (Just pos) $ checkEffType e
     Annot e ty -> do
       ty' <- checkPureType e
@@ -313,7 +313,7 @@ checkIdxSet env ty = case ty of
   TypeVar v          -> checkVarClass env IdxSet v
   RecType r          -> mapM_ recur r
   IntRange _ _       -> return ()
-  IndexRange _ _     -> return ()
+  IndexRange _ _ _   -> return ()
   _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
@@ -325,7 +325,7 @@ checkData env ty = case ty of
   TabType _ a        -> recur a
   RecType r          -> mapM_ recur r
   IntRange _ _       -> return ()
-  IndexRange _ _     -> return ()
+  IndexRange _ _ _   -> return ()
   _ -> throw TypeErr $ " Not serializable data: " ++ pprint ty
   where recur = checkData env
 
@@ -373,8 +373,12 @@ instance HasType Expr where
     Atom x  -> checkEffType x
 
 instance HasType CExpr where
-  getEffType   op = getOpType $ fmapExpr op id getType getLamType
-  checkEffType op = traverseExpr op return checkType checkLam >>= checkOpType
+  getEffType   op = getOpType $ fmapExpr op id addType getLamType
+    where addType x = (Just x, getType x)
+  checkEffType op = do
+    op' <- traverseExpr op return addType checkLam
+    checkOpType op'
+    where addType x = liftM (Just x,) (checkType x)
 
 getLamType :: LamExpr -> PiType
 getLamType (LamExpr b body) = makePi b $ getEffType body
@@ -467,7 +471,7 @@ pureTy ty = (noEffect, ty)
 
 -- === primitive ops and constructors ===
 
-type PrimOpType  = PrimOp  Type Type PiType
+type PrimOpType  = PrimOp  Type (Maybe Atom, Type) PiType
 type PrimConType = PrimCon Type Type PiType
 
 getOpType :: PrimOpType -> EffectiveType
@@ -490,17 +494,37 @@ checkConstraint ty1 ty2 | ty1 == ty2 = return ()
                         | otherwise  = throw TypeErr $
                                          pprint ty1 ++ " != " ++ pprint ty2
 
+isDependentOp :: PrimOp ty e lam -> Bool
+isDependentOp op = case op of
+  App _ _ _        -> True
+  PrimEffect _ _   -> True
+  IndexEff _ _ _ _ -> True
+  _                -> False
+
 traverseOpType :: MonadError Err m
-                     => PrimOpType
-                     -> (Type      -> Type -> m ()) -- add equality constraint
-                     -> (Kind      -> Type -> m ()) -- add kind constraint
-                     -> (ClassName -> Type -> m ()) -- add class constraint
-                     -> m EffectiveType
-traverseOpType op eq kindIs inClass = case op of
-  App l d (ArrowType l' piTy@(Pi a _)) a' -> do
+               => PrimOpType
+               -> (Type      -> Type -> m ()) -- add equality constraint
+               -> (Kind      -> Type -> m ()) -- add kind constraint
+               -> (ClassName -> Type -> m ()) -- add class constraint
+               -> m EffectiveType
+traverseOpType op eq _ _ | isDependentOp op = case op of
+  App l (_, ArrowType l' piTy@(Pi a _)) (x, a') -> do
     eq a a'
     eq l l'
-    return $ applyPi piTy d
+    maybeApplyPi piTy x
+  PrimEffect ~(Just (Var ref), Ref x) m -> case m of
+    MAsk         ->            return (Effect (ref @> (Reader, Ref x)) Nothing, x)
+    MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, Ref x)) Nothing, unitTy)
+    MGet         ->            return (Effect (ref @> (State , Ref x)) Nothing, x)
+    MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , Ref x)) Nothing, unitTy)
+  IndexEff eff ~(Just (Var ref), tabRef) (_, i) ~(Pi (Ref x) (Effect row tailVar, a)) -> do
+    row' <- popRow eq row (eff, Ref x)
+    eq tabRef (Ref (TabType i x))
+    let row'' = row' <> (ref @> (eff, Ref (TabType i x)))
+    return (Effect row'' tailVar, a)
+  _ -> error $ "Unexpected primitive type: " ++ pprint op
+
+traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
   TApp (Forall bs quals body) ts -> do
     assertEq (length bs) (length ts) "Number of type args"
     zipWithM_ (kindIs . varAnn) bs ts
@@ -540,11 +564,6 @@ traverseOpType op eq kindIs inClass = case op of
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
   Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (BaseType BoolType))
   Select ty p a b -> eq ty a >> eq ty b >> eq (BaseType BoolType) p >> return (pureTy ty)
-  PrimEffect ~(Dep ref) ~(Ref x) m -> case m of
-    MAsk     ->            return (Effect (ref @> (Reader, Ref x)) Nothing, x)
-    MTell x' -> eq x x' >> return (Effect (ref @> (Writer, Ref x)) Nothing, unitTy)
-    MGet     ->            return (Effect (ref @> (State , Ref x)) Nothing, x)
-    MPut  x' -> eq x x' >> return (Effect (ref @> (State , Ref x)) Nothing, unitTy)
   RunReader r ~(Pi (Ref r') (Effect row tailVar, a)) -> do
     row' <- popRow eq row (Reader, (Ref r))
     eq r r'
@@ -556,11 +575,6 @@ traverseOpType op eq kindIs inClass = case op of
     row' <- popRow eq row (State, Ref s)
     eq s s'
     return (Effect row' tailVar, pairTy a s)
-  IndexEff eff ~(Dep ref) tabRef i ~(Pi (Ref x) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (eff, Ref x)
-    eq tabRef  (Ref (TabType i x))
-    let row'' = row' <> (ref @> (eff, Ref (TabType i x)))
-    return (Effect row'' tailVar, a)
   Linearize (Pi a (eff, b)) -> do
     eq noEffect eff
     return $ pureTy $ a --> pairTy b (a --@ b)
@@ -572,11 +586,7 @@ traverseOpType op eq kindIs inClass = case op of
   NewtypeCast ty _ -> return $ pureTy ty
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureTy ansTy)
-  Inject idx@(IndexRange maybeLow maybeHigh) -> do
-    case (maybeLow, maybeHigh) of
-      (Just (Dep low, _), Just (Dep high, _)) -> eq (varAnn low) (varAnn high)
-      _ -> return ()
-    return $ pureTy $ indexRangeBound idx
+  Inject (IndexRange ty _ _) -> return $ pureTy ty
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 
 traverseConType :: MonadError Err m
@@ -632,6 +642,14 @@ popRow eq env (eff, x) = case envLookup env (v:>()) of
   where v = DeBruijn 0
         env' = envDelete v env
 
+maybeApplyPi :: MonadError Err m => PiType -> Maybe Atom -> m EffectiveType
+maybeApplyPi piTy maybeAtom
+  | isDependentType piTy = do
+      case maybeAtom of
+        Just atom -> return $ applyPi piTy atom
+        Nothing -> throw TypeErr $ "Dependent argument must be fully-reduced"
+  | otherwise = return b  where (Pi _ b) = piTy
+
 flattenType :: Type -> [(BaseType, [Int])]
 flattenType ty = case ty of
   BaseType b  -> [(b, [])]
@@ -654,6 +672,20 @@ indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
   RecType r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
+
+makePi :: Var -> EffectiveType -> PiType
+makePi v@(_:>a) (eff, b) = Pi a ( abstractDepType v 0 eff
+                                , abstractDepType v 0 b)
+
+applyPi :: PiType -> Atom -> EffectiveType
+applyPi (Pi _ (eff, b)) x = ( instantiateDepType 0 x eff
+                            , instantiateDepType 0 x b)
+
+isDependentType :: PiType -> Bool
+isDependentType (Pi _ (eff, b)) = usesPiVar eff || usesPiVar b
+  where
+    usesPiVar t = dummyVar `isin` freeVars (instantiateDepType 0 (Var dummyVar) t)
+    dummyVar ="__dummy_type_variable_that_should_be_unused!" :> unitTy
 
 -- === linearity ===
 
@@ -696,8 +728,8 @@ checkLinOp e = case e of
   ScalarBinOp FSub x y  -> check x >> check y
   ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
-  App Lin    _ fun x -> tensCheck (check fun) (check x)
-  App NonLin _ fun x -> tensCheck (check fun) (withoutLin (check x))
+  App Lin    fun x -> tensCheck (check fun) (check x)
+  App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
   For (FLamExpr _ body) -> checkLinFExpr body
   TabGet x i -> tensCheck (check x) (withoutLin (check i))
   RunReader r (FLamExpr ~(RecLeaf v) body) -> do
@@ -706,12 +738,13 @@ checkLinOp e = case e of
   RunWriter (FLamExpr ~(RecLeaf v) body) -> do
     ((), spent) <- captureEffSpent v $ checkLinFExpr body
     spend spent
-  PrimEffect ~(Dep ref) _ m -> case m of
-    MAsk -> checkLinVar ref
+  PrimEffect ref m -> case m of
+    MAsk -> checkLinVar ref'
     MTell x -> do
       ((), s) <- captureSpent $ checkLinFExpr x
-      spendEff ref s
+      spendEff ref' s
     _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
+    where (Just (Var ref')) = fromAtomicFExpr ref
   _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
   where check = checkLinFExpr
 

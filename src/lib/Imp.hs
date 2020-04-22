@@ -120,12 +120,12 @@ toImpCExpr dests op = case op of
     copyAtom sDest s'
     extendR (ref @> sDest) $ toImpExpr aDest body
     where (Con (RecCon (Tup [aDest, sDest]))) = dests
-  IndexEff _ ~(Dep ref) _ i (LamExpr ref' body) -> do
+  IndexEff _ ~(Var ref) i (LamExpr ref' body) -> do
     i' <- impSubst i
     curRef <- lookupVar ref
     curRef' <- impTabGet curRef i'
     extendR (ref' @> curRef') (toImpExpr dests body)
-  PrimEffect ~(Dep ref) _ m -> do
+  PrimEffect ~(Var ref) m -> do
     case m of
       MAsk -> do
         rVals <- lookupVar ref
@@ -188,8 +188,8 @@ makeDest' shape ty = case ty of
     n'  <- lift $ indexSetSize n
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
-  t@(IntRange   _ _)     -> scalarIndexSet t
-  t@(IndexRange _ _)     -> scalarIndexSet t
+  t@(IntRange   _ _  ) -> scalarIndexSet t
+  t@(IndexRange _ _ _) -> scalarIndexSet t
   _ -> error $ "Can't lower type to imp: " ++ pprint ty
   where
     scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseType IntType)
@@ -203,8 +203,8 @@ impTabGet ~(Con (AFor _ body)) i = do
 
 intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty i = case ty of
-  IntRange _ _       -> iAsIdx
-  IndexRange _ _     -> iAsIdx
+  IntRange _ _     -> iAsIdx
+  IndexRange _ _ _ -> iAsIdx
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM (Con . RecCon) $
@@ -264,8 +264,7 @@ toImpBaseType ty = case ty of
   TabType _ a    -> toImpBaseType a
   TypeVar _      -> IntType
   IntRange _ _   -> IntType
-  IndexRange _ _ -> toImpBaseType t
-    where (Dep (_:>t)) = indexRangeBound ty
+  IndexRange _ _ _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint ty
 
 lookupVar :: VarP a -> ImpM Atom
@@ -277,33 +276,26 @@ lookupVar v = do
 
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (IntRange low high) = do
-  low'  <- toImpDepVal low
-  high' <- toImpDepVal high
+  low'  <- impSubst low  >>= fromScalarAtom
+  high' <- impSubst high >>= fromScalarAtom
   impSub high' low'
-indexSetSize (IndexRange maybeLow maybeHigh) = do
-  (low, lowIncluded) <- case maybeLow of
-    Nothing        -> return (zero, True)
-    Just (b, incl) -> toImpDepVal b  >>= return . (,incl)
-  (high, highIncluded) <- case maybeHigh of
-    -- NOTE: We exclude the end, because the size is out of bounds!
-    Nothing        -> indexSetSize t >>= return . (,False)
-      where (Just (Dep (_:>t), _)) = maybeLow
-    Just (b, incl) -> toImpDepVal b  >>= return . (,incl)
-  let boundaryOffset = (fromEnum highIncluded) - (fromEnum $ not lowIncluded)
-  n <- impAdd (ILit $ IntLit boundaryOffset) =<< impSub high low
-  isNonNegative <- impCmp GreaterEqual n zero
-  emitInstr $ IPrimOp $ Select IntType isNonNegative n zero
+indexSetSize (IndexRange n low high) = do
+  low' <- case low of
+    InclusiveLim x -> impSubst x >>= indexToInt
+    ExclusiveLim x -> impSubst x >>= indexToInt >>= impAdd one
+    Unlimited      -> return zero
+  high' <- case high of
+    InclusiveLim x -> impSubst x >>= indexToInt >>= impAdd one
+    ExclusiveLim x -> impSubst x >>= indexToInt
+    Unlimited      -> indexSetSize n
+  impSub high' low'
   where
     zero = ILit $ IntLit 0
+    one  = ILit $ IntLit 1
 indexSetSize (RecType r) = do
   sizes <- traverse indexSetSize r
   impProd $ toList sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
-
-toImpDepVal :: Dep -> ImpM IExpr
-toImpDepVal (DepLit i) = return $ ILit $ IntLit i
-toImpDepVal (Dep v)    = lookupVar v >>= fromScalarAtom
-toImpDepVal o          = error $ pprint o
 
 traverseLeaves :: Applicative f => (Atom -> f Atom) -> Atom -> f Atom
 traverseLeaves f atom = case atom of
@@ -379,9 +371,9 @@ impSub (ILit (IntLit a)) (ILit (IntLit b)) = return $ ILit $ IntLit $ a - b
 impSub a (ILit (IntLit 0)) = return a
 impSub x y = emitBinOp ISub x y
 
-impCmp :: CmpOp -> IExpr -> IExpr -> ImpM IExpr
-impCmp GreaterEqual (ILit (IntLit a)) (ILit (IntLit b)) = return $ ILit $ BoolLit $ a >= b
-impCmp op x y = emitBinOp (ICmp op) x y
+_impCmp :: CmpOp -> IExpr -> IExpr -> ImpM IExpr
+_impCmp GreaterEqual (ILit (IntLit a)) (ILit (IntLit b)) = return $ ILit $ BoolLit $ a >= b
+_impCmp op x y = emitBinOp (ICmp op) x y
 
 -- === Imp embedding ===
 

@@ -114,9 +114,9 @@ buildScoped m = do
 
 withIndexed :: (MonadCat EmbedEnv m)
             => EffectName -> Atom -> Atom -> (Atom -> m Atom) -> m Atom
-withIndexed eff ~ref@(Var refVar) i f = do
+withIndexed eff ref i f = do
   lam <- buildLamExpr ("ref":>Ref a) $ \ref' -> f ref'
-  emit $ IndexEff eff (Dep refVar) ref i lam
+  emit $ IndexEff eff ref i lam
   where (Ref (TabType _ a)) = getType ref
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)

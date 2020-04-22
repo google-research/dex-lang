@@ -7,9 +7,11 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, scopelessSubst) where
+module Subst (Subst, subst, scopelessSubst,
+              abstractDepType, instantiateDepType) where
 
 import Control.Monad.Identity
+import Data.Foldable (fold)
 
 import Env
 import Record
@@ -85,17 +87,14 @@ instance Subst Type where
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
     TypeApp f args -> reduceTypeApp (recur f) (map recur args)
-    Dep v -> case substVar env v of
-               Var v' -> Dep v'
-               Con (Lit (IntLit i)) -> DepLit i
-               term   -> error $ "Can't lift term into a type: " ++ (pprint term)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
       where row' = foldMap (uncurry (@>))
                      [ (substName sub v :> (), (eff, recur effTy))
                      | (v, (eff, effTy)) <- envPairs row]
-    _ -> runIdentity $ traverseType (\_ t -> return (subst env t)) ty
+    _ -> runIdentity $ traverseType ty (\_ t -> return (subst env t))
+                                       (\_ e -> return (subst env e))
     where recur = subst env
 
 instance Subst PiType where
@@ -147,3 +146,42 @@ reduceTypeApp (TypeAlias bs ty) xs
   | length bs == length xs = subst (newTEnv bs xs, mempty) ty
   | otherwise = error "Kind error"
 reduceTypeApp f xs = TypeApp f xs
+
+instantiateDepType :: Int -> Atom -> Type -> Type
+instantiateDepType d x ty = case ty of
+  TypeVar _ -> ty
+  ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+    Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
+  Forall tbs cs body -> Forall tbs cs $ recur body
+  Effect row tailVar -> Effect row' tailVar
+    where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
+                      | (v, (eff, ann)) <- envPairs row]
+  _ -> runIdentity $ traverseType ty (const (return . recur)) $
+         \_ atom -> return $ subst (((DeBruijn d :>()) @> L x), mempty) atom
+  where
+    recur ::Type -> Type
+    recur = instantiateDepType d x
+
+    lookupDBVar :: Name -> Name
+    lookupDBVar v = case v of
+      DeBruijn i | i == d -> v'  where (Var (v':>_)) = x
+      _                   -> v
+
+abstractDepType :: Var -> Int -> Type -> Type
+abstractDepType v d ty = case ty of
+  TypeVar _ -> ty
+  ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+    Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
+  Forall tbs cs body -> Forall tbs cs $ recur body
+  Effect row tailVar -> Effect row' tailVar
+    where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
+                      | (v', (eff, ann)) <- envPairs row]
+  _ -> runIdentity $ traverseType ty (const (return . recur)) $
+          \_ atom -> return $ subst (v @> L (Var (DeBruijn d :> varAnn v)), mempty) atom
+  where
+    recur ::Type -> Type
+    recur = abstractDepType v d
+
+    substWithDBVar :: Name -> Name
+    substWithDBVar v' | varName v == v' = DeBruijn d
+                      | otherwise       = v'
