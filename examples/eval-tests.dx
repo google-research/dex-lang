@@ -511,3 +511,9 @@ litArr = [10, 5, 3]
   xs = [[1],[2]]
   for (i,j). xs.i.j
 > [1, 2]@(2, 1)
+
+:p
+  xs = for i:5. 1.0
+  two = asidx @5 2
+  for i:3. sum for j:(two<..). xs.(%inject(j))
+> [2.0, 2.0, 2.0]
