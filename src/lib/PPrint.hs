@@ -80,10 +80,10 @@ instance Pretty Type where
       where
         low'  = case low  of InclusiveLim x -> p x <> "."
                              ExclusiveLim x -> p x <> "<"
-                             Unlimited      ->       ".."
+                             Unlimited      ->        "."
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
-                             Unlimited      -> ".."
+                             Unlimited      -> "."
     Lin    -> "Lin"
     NonLin -> "NonLin"
     Effect row t -> "{" <> row' <+> tailVar <> "}"
