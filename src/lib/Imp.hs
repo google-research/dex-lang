@@ -18,6 +18,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Foldable
 import Data.Functor.Reverse
+import Data.Text.Prettyprint.Doc
 
 import Syntax
 import Env
@@ -465,8 +466,7 @@ instance IsModuleBody ImpModBody where
     checkModuleBody (imports <> tyEnv) (ModBody [] result)
 
 checkProg :: ImpProg -> ImpCheckM ()
-checkProg (ImpProg statements) =
-  mapM_ (\x -> addContext (pprint x) (checkStatement x)) statements
+checkProg (ImpProg statements) = mapM_ checkStatement statements
 
 checkStatement :: ImpStatement -> ImpCheckM ()
 checkStatement (maybeBinder, instr) = do
@@ -484,7 +484,7 @@ checkStatement (maybeBinder, instr) = do
 
 instrTypeChecked :: ImpInstr -> ImpCheckM (Maybe IType)
 instrTypeChecked instr = case instr of
-  IPrimOp op -> return $ Just $ impOpType op -- TODO: check args
+  IPrimOp op -> liftM Just $ checkImpOp op
   Load ref -> do
     b <- (checkIExpr >=>  fromScalarRefType) ref
     return $ Just $ IValType b
@@ -526,6 +526,32 @@ checkInt expr = do
   ty <- checkIExpr expr
   assertEq (IValType IntType) ty $ "Not an int: " ++ pprint expr
 
+checkImpOp :: IPrimOp -> ImpCheckM IType
+checkImpOp op = do
+  op' <- traverseExpr op
+           return
+           (\x  -> checkIExpr x)
+           (error "shouldn't have lambda")
+  case op' of
+    ScalarBinOp scalarOp x y -> do
+      checkEq x (IValType x')
+      checkEq y (IValType y')
+      return $ IValType ty
+      where (x', y', ty) = binOpType scalarOp
+    ScalarUnOp scalarOp x -> do
+      checkEq x (IValType x')
+      return $ IValType ty
+      where (x', ty) = unOpType scalarOp
+    Select ty _ x y -> do
+      checkEq (IValType ty) x
+      checkEq (IValType ty) y
+      return $ IValType ty
+    FFICall _ _ ty _   -> return $ IValType ty -- TODO: check
+    _ -> error $ "Not allowed in Imp IR: " ++ pprint op
+  where
+    checkEq :: (Pretty a, Eq a) => a -> a -> ImpCheckM ()
+    checkEq t t' = assertEq t t' (pprint op)
+
 fromRefType :: MonadError Err m => IType -> m ArrayType
 fromRefType (IRefType ty) = return ty
 fromRefType ty = throw CompilerErr $ "Not a reference type: " ++ pprint ty
@@ -553,6 +579,7 @@ instrType instr = case instr of
   IGet e _        -> case impExprType e of
     IRefType (b, (_:shape)) -> return $ Just $ IRefType (b, shape)
     ty -> error $ "Can't index into: " ++ pprint ty
+
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op

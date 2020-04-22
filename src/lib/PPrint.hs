@@ -343,7 +343,7 @@ addColor True c s =
 assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
-  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y
+  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y ++ "\n"
 
 ignoreExcept :: Except a -> a
 ignoreExcept (Left e) = error $ pprint e
