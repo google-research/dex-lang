@@ -159,6 +159,16 @@ toImpCExpr dests op = case op of
     store (fromScalarDest dests) n'
   ScalarUnOp IndexAsInt i ->
     impSubst i >>= fromScalarAtom >>= store (fromScalarDest dests)
+  Inject e -> do
+    e' <- impSubst e
+    let (IndexRange t low _) = getType e'
+    offset <- case low of
+      InclusiveLim a -> indexToInt a
+      ExclusiveLim a -> indexToInt a >>= impAdd (ILit $ IntLit 1234)
+      Unlimited      -> return zero
+    restrictIdx <- indexToInt e'
+    idx <- impAdd restrictIdx offset
+    intToIndex t idx >>= copyAtom dests
   _ -> do
     op' <- traverseExpr op
               (return . toImpBaseType)
@@ -274,6 +284,12 @@ lookupVar v = do
     Nothing -> error $ "Lookup failed: " ++ pprint (varName v)
     Just v' -> v'
 
+zero :: IExpr
+zero = ILit $ IntLit 0
+
+one :: IExpr
+one  = ILit $ IntLit 1
+
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (IntRange low high) = do
   low'  <- impSubst low  >>= fromScalarAtom
@@ -289,9 +305,6 @@ indexSetSize (IndexRange n low high) = do
     ExclusiveLim x -> impSubst x >>= indexToInt
     Unlimited      -> indexSetSize n
   impSub high' low'
-  where
-    zero = ILit $ IntLit 0
-    one  = ILit $ IntLit 1
 indexSetSize (RecType r) = do
   sizes <- traverse indexSetSize r
   impProd $ toList sizes
