@@ -32,11 +32,11 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
 linearize :: TopEnv -> Scope -> LamExpr -> Atom
 linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam NonLin b $ \x -> do
+  buildLam (TC NonLin) b $ \x -> do
     ((y, yt), _) <- flip runReaderT (b @> L x) $ runWriterT $
                       runLinA (linearizeExpr env expr)
     -- TODO: check linearity
-    fLin <- buildLam Lin b $ \xt ->do
+    fLin <- buildLam (TC Lin) b $ \xt ->do
               ans <- runReaderT yt (b @> L xt)
               return (ans, noEffect)
     return (makePair y fLin, noEffect)
@@ -74,10 +74,10 @@ linearizeLamExpr topEnv (LamExpr v body) = do
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
 linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
-  ~(Tup [y, f]) <- emit (App NonLin (linRules topEnv ! v) x) >>= unpackRec
+  ~(Tup [y, f]) <- emit (App (TC NonLin) (linRules topEnv ! v) x) >>= unpackRec
   saveVars f
   return ( y
-         , liftM (App Lin f) t >>= emit )
+         , liftM (App (TC Lin) f) t >>= emit )
 linearizeCExpr _ expr | hasDiscreteType expr = LinA $ do
   expr' <- substEmbed expr
   ans <- emit expr'
@@ -174,15 +174,16 @@ withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
 withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 
 tangentType :: Type -> Type
-tangentType ty = case ty of
-  BaseType RealType -> BaseType RealType
+tangentType (TC con) = case con of
+  BaseType RealType  -> TC $ BaseType RealType
   BaseType   _       -> unitTy
   IntRange   _ _     -> unitTy
   IndexRange _ _ _   -> unitTy
-  TabType n a        -> TabType n (tangentType a)
-  RecType r          -> RecType $ fmap tangentType r
-  Ref a              -> Ref $ tangentType a
-  _ -> error $ "Can't differentiate wrt type " ++ pprint ty
+  TabType n a        -> TC $ TabType n (tangentType a)
+  RecType r          -> TC $ RecType $ fmap tangentType r
+  Ref a              -> TC $ Ref $ tangentType a
+  _ -> error $ "Can't differentiate wrt type " ++ pprint con
+tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 
 hasDiscreteType :: HasType e => e -> Bool
 hasDiscreteType expr = case tailVar of
@@ -231,7 +232,7 @@ type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> LamExpr -> Atom
 transposeMap scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam Lin ("ct" :> getType expr) $ \ct -> do
+  buildLam (TC Lin) ("ct" :> getType expr) $ \ct -> do
     flip runReaderT mempty $ do
       ans <- withLinVar b $ transposeExpr expr ct
       return (ans, noEffect)
@@ -383,7 +384,7 @@ withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
 extractCT v@(_:>ty) m = do
-  (lam, ans) <- buildLamExprAux ("ctRef":> Ref ty) $ \ctRef -> do
+  (lam, ans) <- buildLamExprAux ("ctRef":> TC (Ref ty)) $ \ctRef -> do
     extendR (asFst (v @> ctRef)) $ do
       ans <- m
       return (unitCon, ans)

@@ -318,8 +318,8 @@ rawLamExpr = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
 lamExpr = do
-  ann <-    NoAnn <$ symbol "\\"
-        <|> Lin   <$ symbol "llam"
+  ann <-    NoAnn  <$ symbol "\\"
+        <|> TC Lin <$ symbol "llam"
   ps <- pat `sepBy` sc
   argTerm
   body <- blockOrExpr
@@ -525,8 +525,8 @@ className = do
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   parenTy
-              <|> liftM (ArrowType NonLin) piType
-              <|> liftM Ref (symbol "Ref" >> tauTypeAtomic)
+              <|> liftM (ArrowType (TC NonLin)) piType
+              <|> liftM (TC . Ref) (symbol "Ref" >> tauTypeAtomic)
               <|> typeName
               <|> intRangeType
               <|> indexRangeType
@@ -539,7 +539,7 @@ tauType :: Parser Type
 tauType = makeExprParser (sc >> tauTypeAtomic) typeOps
   where
     typeOps = [ [tyAppRule]
-              , [InfixR (TabType <$ symbol "=>")]
+              , [InfixR (symbol "=>" $> (==>))]
               , [InfixR arrowType] ]
 
 intRangeType :: Parser Type
@@ -549,7 +549,7 @@ intRangeType = do
     symbol "...<"
     return low
   high <- atom
-  return $ IntRange low high
+  return $ TC $ IntRange low high
 
 indexRangeType :: Parser Type
 indexRangeType = do
@@ -560,7 +560,7 @@ indexRangeType = do
   sc
   when ((low, high) == (Unlimited, Unlimited)) $
     fail "Index range must be provided with at least one bound"
-  return $ IndexRange NoAnn low high
+  return $ TC $ IndexRange NoAnn low high
 
 lowerLim :: Parser (Limit Atom)
 lowerLim =   (                      char '.' $> Unlimited)
@@ -584,7 +584,7 @@ arrowType = do
   lin <-  NonLin <$ symbol "->"
       <|> Lin    <$ symbol "--o"
   eff <- effectType <|> return noEffect
-  return $ \a b -> ArrowType lin $ Pi a (eff, b)
+  return $ \a b -> ArrowType (TC lin) $ Pi a (eff, b)
 
 piType :: Parser PiType
 piType = do
@@ -622,8 +622,8 @@ tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
   where tyOpNames = ["=>", "->", "--o"]
 
 applyType :: Type -> Type -> Type
-applyType (TypeApp ty args) arg = TypeApp ty (args ++ [arg])
-applyType ty arg = TypeApp ty [arg]
+applyType (TC (TypeApp ty args)) arg = TC $ TypeApp ty (args ++ [arg])
+applyType ty arg = TC $ TypeApp ty [arg]
 
 typeVar :: Parser TVar
 typeVar = do
@@ -645,10 +645,10 @@ parenTy = do
   ans <- parens $ prod tauType
   return $ case ans of
     Left ty  -> ty
-    Right xs -> RecType $ Tup xs
+    Right xs -> TC $ RecType $ Tup xs
 
 typeName :: Parser Type
-typeName = liftM BaseType $
+typeName = liftM (TC . BaseType) $
        (symbol "Int"  >> return IntType)
    <|> (symbol "Real" >> return RealType)
    <|> (symbol "Bool" >> return BoolType)

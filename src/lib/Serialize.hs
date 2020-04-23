@@ -140,7 +140,7 @@ valFromPtrs :: Type -> [Ptr ()] -> Val
 valFromPtrs ty = evalState (valFromPtrs' [] ty)
 
 valFromPtrs' :: [Int] -> Type -> State [Ptr ()] Val
-valFromPtrs' shape ty = case ty of
+valFromPtrs' shape ty@(TC con) = case con of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
@@ -149,8 +149,9 @@ valFromPtrs' shape ty = case ty of
   TabType idx@(FixedIntRange low high) a ->
     liftM (Con . AFor idx) $ valFromPtrs' (shape ++ [(high - low)]) a
   IntRange _ _ -> do
-    liftM (Con . AsIdx ty) $ valFromPtrs' shape (BaseType IntType)
+    liftM (Con . AsIdx ty) $ valFromPtrs' shape (TC $ BaseType IntType)
   _ -> error $ "Not implemented: " ++ pprint ty
+valFromPtrs' _ ty = error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
 

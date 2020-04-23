@@ -123,7 +123,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     e' <- checkPure e et
     et' <- zonk et
     case et' of
-      IndexRange ty _ _ -> do
+      TC (IndexRange ty _ _) -> do
         constrainReq ty
         return $ FPrimExpr $ OpExpr $ Inject e'
       _ -> throw TypeErr "Expected index range"
@@ -232,41 +232,44 @@ generateOpSubExprTypes op = case op of
   TabGet xs i -> do
     n <- freshQ
     a <- freshQ
-    return $ TabGet (xs, TabType n a) (i, n)
+    return $ TabGet (xs, n ==> a) (i, n)
   PrimEffect ref m -> do
     s  <- freshQ
     m' <- traverse (doMSnd freshQ) m
-    return $ PrimEffect (ref, Ref s) m'
+    return $ PrimEffect (ref, TC (Ref s)) m'
   RunReader r f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     r' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let eff = Effect ((v:>()) @> (Reader, Ref r')) (Just tailVar)
-    let fTy = makePi (v:> Ref r') (eff, a)
+    let refTy = TC $ Ref r'
+    let eff = Effect ((v:>()) @> (Reader, refTy)) (Just tailVar)
+    let fTy = makePi (v:>refTy) (eff, a)
     return $ RunReader (r, r') (f, fTy)
   RunWriter f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     w <- freshQ
     a <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let eff = Effect ((v:>()) @> (Writer, Ref w)) (Just tailVar)
-    let fTy = makePi (v:> Ref w) (eff, a)
+    let refTy = TC $ Ref w
+    let eff = Effect ((v:>()) @> (Writer,refTy)) (Just tailVar)
+    let fTy = makePi (v:>refTy) (eff, a)
     return $ RunWriter (f, fTy)
   RunState s f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     s' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let eff = Effect ((v:>()) @> (State, Ref s')) (Just tailVar)
-    let fTy = makePi (v:> Ref s') (eff, a)
+    let refTy = TC $ Ref s'
+    let eff = Effect ((v:>()) @> (State, refTy)) (Just tailVar)
+    let fTy = makePi (v:>refTy) (eff, a)
     return $ RunState (s, s') (f, fTy)
   IndexEff effName tabRef i f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     i' <- freshQ
     x  <- freshQ
     a  <- freshQ
-    let tabType = TabType i' x
+    let tabType = i' ==> x
     tailVar <- freshInferenceVar EffectKind
-    let eff = Effect ((v:>()) @> (effName, Ref x)) (Just tailVar)
-    let fTy = makePi (v:> Ref x) (eff, a)
-    return $ IndexEff effName (tabRef, Ref tabType) (i, i') (f, fTy)
+    let eff = Effect ((v:>()) @> (effName, TC (Ref x))) (Just tailVar)
+    let fTy = makePi (v:> TC (Ref x)) (eff, a)
+    return $ IndexEff effName (tabRef, TC (Ref tabType)) (i, i') (f, fTy)
   _ -> traverseExpr op (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM PiType
@@ -344,20 +347,24 @@ inferKindsM kind ty = case ty of
       return (v' @> (eff, t))
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
-  IntRange a b -> do
+  TC (IntRange a b) -> do
     env <- look
-    a' <- liftEither $ runInferM env $ checkAtom a $ BaseType IntType
-    b' <- liftEither $ runInferM env $ checkAtom b $ BaseType IntType
-    return $ IntRange a' b'
-  IndexRange _ a b -> do
+    a' <- liftEither $ runInferM env $ checkAtom a $ TC $ BaseType IntType
+    b' <- liftEither $ runInferM env $ checkAtom b $ TC $ BaseType IntType
+    return $ TC $ IntRange a' b'
+  TC (IndexRange _ a b) -> do
     env <- look
     a' <- forM a $ liftEither . runInferM env . liftM fst . inferAtom
     b' <- forM b $ liftEither . runInferM env . liftM fst . inferAtom
     -- TODO: separate kind inference from type-of-terms-within-types inference
     -- and do the latter as ordinary type inference instead of these bespoke rules.
     let t = getType $ head $ toList a' ++ toList b'
-    return $ IndexRange t a' b'
-  _ -> traverseType ty inferKindsM (error "Shouldn't have dependent term left")
+    return $ TC $ IndexRange t a' b'
+  NoAnn -> error "shouldn't have NoAnn left"
+  TC con -> liftM TC $
+    traverseTyCon (fst $ tyConKind con)
+       (\(t,k) -> inferKindsM k t)
+       (error "Shouldn't have dependent term left")
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do
@@ -376,16 +383,16 @@ impliedClasses ty =  map (flip TyQual Data  ) (dataVars   ty)
 idxSetVars :: Type -> [TVar]
 idxSetVars ty = case ty of
   ArrowType _ (Pi a (_, b)) -> recur a <> recur b
-  TabType a b   -> map (:>NoKindAnn) (envNames (freeVars a)) <> recur b
-  RecType r     -> foldMap recur r
-  _             -> []
+  TC (TabType a b) -> map (:>NoKindAnn) (envNames (freeVars a)) <> recur b
+  TC (RecType r  ) -> foldMap recur r
+  _           -> []
   where recur = idxSetVars
 
 dataVars :: Type -> [TVar]
 dataVars ty = case ty of
   ArrowType _ (Pi a (_, b)) -> recur a <> recur b
-  TabType _ b   -> map (:>NoKindAnn) (envNames (freeVars b))
-  RecType r     -> foldMap recur r
+  TC (TabType _ b) -> map (:>NoKindAnn) (envNames (freeVars b))
+  TC (RecType r  ) -> foldMap recur r
   _             -> []
   where recur = dataVars
 
@@ -410,7 +417,7 @@ applyDefaults :: MonadCat SolverEnv m => m ()
 applyDefaults = do
   vs <- looks unsolved
   forM_ (envPairs vs) $ \(v, k) -> case k of
-    MultKind   -> addSub v NonLin
+    MultKind   -> addSub v (TC NonLin)
     EffectKind -> addSub v noEffect
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
@@ -473,14 +480,6 @@ unify t1 t2 = do
     (ArrowType l (Pi a (eff, b)), ArrowType l' (Pi a' (eff', b'))) -> do
       -- TODO: think very hard about the leak checks we need to add here
       unify l l' >> unify a a' >> unify b b' >> unify eff eff'
-    (TabType a b, TabType a' b') -> unify a a' >> unify b b'
-    (Ref a, Ref a') -> unify a a'
-    (RecType r, RecType r') ->
-      case zipWithRecord unify r r' of
-        Nothing -> throw TypeErr ""
-        Just unifiers -> void $ sequence unifiers
-    (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
-      unify f f' >> zipWithM_ unify xs xs'
     (Effect r t, Effect r' t') -> do
       let shared = rowMeet r r'
       forM_ shared $ \((e, et), (e', et')) -> do
@@ -489,7 +488,17 @@ unify t1 t2 = do
       newTail <- liftM Just $ freshInferenceVar EffectKind
       matchTail t  $ Effect (envDiff r' shared) newTail
       matchTail t' $ Effect (envDiff r  shared) newTail
-    _ -> throw TypeErr ""
+    (TC con, TC con') -> case (con, con') of
+      (TabType a b, TabType a' b') -> unify a a' >> unify b b'
+      (Ref a, Ref a') -> unify a a'
+      (RecType r, RecType r') ->
+        case zipWithRecord unify r r' of
+          Nothing -> throw TypeErr ""
+          Just unifiers -> void $ sequence unifiers
+      (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
+        unify f f' >> zipWithM_ unify xs xs'
+      _ -> throw TypeErr ""
+    _   -> throw TypeErr ""
 
 rowMeet :: Env a -> Env b -> Env (a, b)
 rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'

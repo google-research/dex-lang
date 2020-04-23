@@ -10,7 +10,6 @@
 module Subst (Subst, subst, scopelessSubst,
               abstractDepType, instantiateDepType) where
 
-import Control.Monad.Identity
 import Data.Foldable (fold)
 
 import Env
@@ -86,15 +85,15 @@ instance Subst Type where
     ArrowType l p -> ArrowType (recur l) (subst env p)
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
-    TypeApp f args -> reduceTypeApp (recur f) (map recur args)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
       where row' = foldMap (uncurry (@>))
                      [ (substName sub v :> (), (eff, recur effTy))
                      | (v, (eff, effTy)) <- envPairs row]
-    _ -> runIdentity $ traverseType ty (\_ t -> return (subst env t))
-                                       (\_ e -> return (subst env e))
+    NoAnn -> NoAnn
+    TC (TypeApp f args) -> reduceTypeApp (recur f) (map recur args)
+    TC con -> TC $ fmapTyCon con (subst env) (subst env)
     where recur = subst env
 
 instance Subst PiType where
@@ -145,7 +144,7 @@ reduceTypeApp :: Type -> [Type] -> Type
 reduceTypeApp (TypeAlias bs ty) xs
   | length bs == length xs = subst (newTEnv bs xs, mempty) ty
   | otherwise = error "Kind error"
-reduceTypeApp f xs = TypeApp f xs
+reduceTypeApp f xs = TC $ TypeApp f xs
 
 instantiateDepType :: Int -> Atom -> Type -> Type
 instantiateDepType d x ty = case ty of
@@ -156,8 +155,10 @@ instantiateDepType d x ty = case ty of
   Effect row tailVar -> Effect row' tailVar
     where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
                       | (v, (eff, ann)) <- envPairs row]
-  _ -> runIdentity $ traverseType ty (const (return . recur)) $
-         \_ atom -> return $ subst (((DeBruijn d :>()) @> L x), mempty) atom
+  TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
+     where env = (DeBruijn d :>()) @> L x
+  NoAnn -> NoAnn
+  TypeAlias _ _ -> error "Shouldn't have type alias left"
   where
     recur ::Type -> Type
     recur = instantiateDepType d x
@@ -176,8 +177,10 @@ abstractDepType v d ty = case ty of
   Effect row tailVar -> Effect row' tailVar
     where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
                       | (v', (eff, ann)) <- envPairs row]
-  _ -> runIdentity $ traverseType ty (const (return . recur)) $
-          \_ atom -> return $ subst (v @> L (Var (DeBruijn d :> varAnn v)), mempty) atom
+  TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
+    where env = v @> L (Var (DeBruijn d :> varAnn v))
+  NoAnn -> NoAnn
+  TypeAlias _ _ -> error "Shouldn't have type alias left"
   where
     recur ::Type -> Type
     recur = abstractDepType v d

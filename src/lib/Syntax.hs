@@ -32,9 +32,9 @@ module Syntax (
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
-    traverseType, monMapSingle, monMapLookup, PiType (..),
+    traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, newLEnv, newTEnv, pattern FixedIntRange,
-    fromAtomicFExpr, toAtomicFExpr, Limit (..))
+    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..))
   where
 
 import Data.Tuple (swap)
@@ -56,22 +56,25 @@ import Env
 -- === types ===
 
 data Type = TypeVar TVar
-          | BaseType BaseType
           | ArrowType Mult PiType
-          | IntRange Atom Atom
-          | IndexRange Type (Limit Atom) (Limit Atom)
-          | TabType Type Type
-          | ArrayType [Int] BaseType
-          | RecType (Record Type)
-          | Ref Type
           | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
-          | TypeApp Type [Type]
-          | Lin
-          | NonLin
+          | TC (TyCon Type Atom)
           | Effect (EffectRow Type) (Maybe Type)
           | NoAnn
             deriving (Show, Eq, Generic)
+
+data TyCon ty e = BaseType BaseType
+                | IntRange e e
+                | IndexRange ty (Limit e) (Limit e)
+                | TabType ty ty
+                | ArrayType [Int] BaseType
+                | RecType (Record ty)
+                | Ref ty
+                | TypeApp ty [ty]
+                | Lin
+                | NonLin
+                  deriving (Show, Eq, Generic)
 
 data Kind = TyKind
           | ArrowKind [Kind] Kind
@@ -120,8 +123,8 @@ isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
 
 pattern FixedIntRange :: Int -> Int -> Type
-pattern FixedIntRange low high = IntRange (Con (Lit (IntLit low )))
-                                          (Con (Lit (IntLit high)))
+pattern FixedIntRange low high = TC (IntRange (Con (Lit (IntLit low )))
+                                              (Con (Lit (IntLit high))))
 
 type ModuleType = (TypeEnv, TypeEnv)
 data ModuleP body = Module ModuleType body  deriving (Show, Eq)
@@ -470,13 +473,13 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = ArrowType NonLin $ Pi a (noEffect, b)
+a --> b = ArrowType (TC NonLin) $ Pi a (noEffect, b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = ArrowType Lin $ Pi a (noEffect, b)
+a --@ b = ArrowType (TC Lin) $ Pi a (noEffect, b)
 
 (==>) :: Type -> Type -> Type
-(==>) = TabType
+a ==> b = TC $ TabType a b
 
 data LorT a b = L a | T b  deriving (Show, Eq)
 
@@ -489,7 +492,7 @@ fromT (T x) = x
 fromT _ = error "Not a type-ish thing"
 
 unitTy :: Type
-unitTy = RecType (Tup [])
+unitTy = TC (RecType (Tup []))
 
 type FullEnv v t = Env (LorT v t)
 
@@ -565,8 +568,9 @@ instance HasVars Type where
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
     Effect row tailVar ->  foldMap freeVarsEffect (envPairs row)
                         <> foldMap freeVars tailVar
-    _ -> execWriter $ traverseType ty (\_ t -> t <$ tell (freeVars t))
-                                      (\_ e -> e <$ tell (freeVars e))
+    NoAnn -> mempty
+    TC con -> execWriter $ traverseTyCon con (\t -> t <$ tell (freeVars t))
+                                             (\e -> e <$ tell (freeVars e))
 
 freeVarsEffect :: (Name, (EffectName, Type)) -> Vars
 freeVarsEffect (DeBruijn _, (_, ty)) =              freeVars ty
@@ -728,7 +732,7 @@ unzipExpr expr = (blankExpr, xs)
             (\lam -> tell ([]  , [] , [lam]))
 
 instance RecTreeZip Type where
-  recTreeZip (RecTree r) (RecType r') = RecTree $ recZipWith recTreeZip r r'
+  recTreeZip (RecTree r) (TC (RecType r')) = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
   recTreeZip (RecTree _) _ = error "Bad zip"
 
@@ -769,25 +773,19 @@ instance Traversable Limit where
     ExclusiveLim x -> liftA ExclusiveLim (f x)
     Unlimited      -> pure Unlimited
 
--- TODO: consider putting these cases under `TyCon ty e`, parameterized by the
--- types of subtypes and subterms
-traverseType :: Applicative m
-             => Type
-             -> (Kind -> Type -> m Type)
-             -> (Type -> Atom -> m Atom)
-             -> m Type
-traverseType ty fTy fE = case ty of
-  BaseType _        -> pure ty
-  IntRange a b      -> liftA2 IntRange (fE (BaseType IntType) a)
-                                       (fE (BaseType IntType) b)
-  IndexRange t a b  -> liftA3 IndexRange (fTy TyKind t) (traverse (fE t) a)
-                                                        (traverse (fE t) b)
-  TabType a b       -> liftA2 TabType (fTy TyKind a) (fTy TyKind b)
-  ArrayType _ _     -> pure ty
-  RecType r         -> liftA RecType $ traverse (fTy TyKind) r
-  Ref t             -> liftA Ref (fTy TyKind t)
-  TypeApp t xs      -> liftA2 TypeApp (fTy TyKind t) (traverse (fTy TyKind) xs)
+traverseTyCon :: Applicative m
+              => TyCon ty e -> (ty -> m ty') -> (e -> m e') -> m (TyCon ty' e')
+traverseTyCon con fTy fE = case con of
+  BaseType b        -> pure $ BaseType b
+  IntRange a b      -> liftA2 IntRange (fE a) (fE b)
+  IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
+  TabType a b       -> liftA2 TabType (fTy a) (fTy b)
+  ArrayType shape b -> pure $ ArrayType shape b
+  RecType r         -> liftA RecType $ traverse (fTy ) r
+  Ref t             -> liftA Ref (fTy t)
+  TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
   Lin               -> pure Lin
   NonLin            -> pure NonLin
-  NoAnn             -> pure NoAnn
-  _ -> error $ "Shouldn't be handled generically: " ++ show ty
+
+fmapTyCon :: TyCon ty e -> (ty -> ty') -> (e -> e') -> TyCon ty' e'
+fmapTyCon con fT fE = runIdentity $ traverseTyCon con (return . fT) (return . fE)

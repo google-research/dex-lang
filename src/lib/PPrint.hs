@@ -57,16 +57,10 @@ instance Pretty ErrType where
 
 instance Pretty Type where
   pretty ty = case ty of
-    BaseType b  -> p b
     TypeVar v   -> p v
     ArrowType l (Pi a (eff, b))
       | isPure eff -> parens $ p a <+> arrStr l <+>           p b
       | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
-    TabType a b -> parens $ p a <> "=>" <> p b
-    RecType r   -> p $ fmap (asStr . p) r
-    Ref t       -> "Ref" <+> p t
-    ArrayType shape b -> p b <> p shape
-    TypeApp f xs -> p f <+> hsep (map p xs)
     Forall bs qs body -> header <+> p body
       where
         header = "A" <+> hsep (map p bs) <> qual <> "."
@@ -74,6 +68,28 @@ instance Pretty Type where
                  [] -> mempty
                  _  -> " |" <+> hsep (punctuate "," (map p qs))
     TypeAlias _ _ -> "<type alias>"  -- TODO
+    Effect row t -> "{" <> row' <+> tailVar <> "}"
+      where
+        row' = hsep $ punctuate "," $
+                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
+        tailVar = case t of Nothing -> mempty
+                            Just v  -> "|" <+> p v
+    NoAnn  -> ""
+    TC con -> p con
+    where
+      arrStr :: Type -> Doc ann
+      arrStr (TC Lin) = "--o"
+      arrStr _        = "->"
+
+instance Pretty ty => Pretty (TyCon ty Atom) where
+  pretty con = case con of
+    BaseType b  -> p b
+    TabType a b -> parens $ p a <> "=>" <> p b
+    RecType r   -> p $ fmap (asStr . p) r
+    Ref t       -> "Ref" <+> p t
+    TypeApp f xs -> p f <+> hsep (map p xs)
+    ArrayType shape b -> p b <> p shape
+    -- This rule forces us to specialize to Atom. Is there a better way?
     IntRange (Con (Lit (IntLit 0))) (Con (Lit (IntLit n))) -> p n
     IntRange a b -> p a <> "...<" <> p b
     IndexRange _ low high -> low' <> "." <> high'
@@ -86,17 +102,6 @@ instance Pretty Type where
                              Unlimited      -> "."
     Lin    -> "Lin"
     NonLin -> "NonLin"
-    Effect row t -> "{" <> row' <+> tailVar <> "}"
-      where
-        row' = hsep $ punctuate "," $
-                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
-        tailVar = case t of Nothing -> mempty
-                            Just v  -> "|" <+> p v
-    NoAnn  -> ""
-    where
-      arrStr :: Type -> Doc ann
-      arrStr Lin = "--o"
-      arrStr _   = "->"
 
 instance Pretty PiType where
   pretty (Pi a b) = "Pi" <+> p a <+> p b

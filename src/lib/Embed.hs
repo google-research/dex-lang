@@ -115,9 +115,9 @@ buildScoped m = do
 withIndexed :: (MonadCat EmbedEnv m)
             => EffectName -> Atom -> Atom -> (Atom -> m Atom) -> m Atom
 withIndexed eff ref i f = do
-  lam <- buildLamExpr ("ref":>Ref a) $ \ref' -> f ref'
+  lam <- buildLamExpr ("ref":>TC (Ref a)) $ \ref' -> f ref'
   emit $ IndexEff eff ref i lam
-  where (Ref (TabType _ a)) = getType ref
+  where (TC (Ref (TC (TabType _ a)))) = getType ref
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
@@ -181,8 +181,8 @@ nTabGet x i = emit $ TabGet x i
 unpackRec :: MonadCat EmbedEnv m => Atom -> m (Record Atom)
 unpackRec (Con (RecCon r)) = return r
 unpackRec x = case getType x of
-  RecType r -> mapM (nRecGet x . fst) $ recNameVals r
-  ty        -> error $ "Not a tuple: " ++ pprint ty
+  TC (RecType r) -> mapM (nRecGet x . fst) $ recNameVals r
+  ty             -> error $ "Not a tuple: " ++ pprint ty
 
 makeTup :: [Atom] -> Atom
 makeTup xs = Con $ RecCon $ Tup xs
@@ -209,19 +209,19 @@ unzipTab tab = do
   snds <- buildFor ("i":>n) $ \i ->
             liftM snd $ emit (TabGet tab i) >>= fromPair
   return (fsts, snds)
-  where (TabType n _) = getType tab
+  where (TC (TabType n _)) = getType tab
 
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  BaseType _  -> f ty xs
   FixedIntRange _ _ -> f ty xs
-  TabType n a -> do
+  TC (BaseType _)  -> f ty xs
+  TC (TabType n a) -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
     emit $ For lam
-  RecType r -> do
+  TC (RecType r) -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
     liftM (Con . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
   _ -> error $ "Not implemented " ++ pprint ty
@@ -237,15 +237,15 @@ substEmbed x = do
   scope <- looks fst
   return $ subst (env, scope) x
 
-
 isSingletonType :: Type -> Bool
 isSingletonType ty = case singletonTypeVal ty of
   Nothing -> False
   Just _  -> True
 
 singletonTypeVal :: Type -> Maybe Atom
-singletonTypeVal ty = case ty of
+singletonTypeVal (TC con) = case con of
   BaseType  _ -> Nothing
   TabType n a -> liftM (Con . AFor n) $ singletonTypeVal a
   RecType r   -> liftM (Con . RecCon) $ traverse singletonTypeVal r
   _           -> Nothing
+singletonTypeVal _ = Nothing

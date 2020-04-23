@@ -124,15 +124,15 @@ toImpCExpr' dests op = case op of
     y' <- fromScalarAtom y
     ans <- emitInstr $ IPrimOp $ ScalarBinOp (op' cmpOp) x' y'
     store (fromScalarDest dests) ans
-    where op' = case ty of BaseType RealType -> FCmp
-                           _                 -> ICmp
+    where op' = case ty of TC (BaseType RealType) -> FCmp
+                           _                      -> ICmp
   IdxSetSize n -> do
     n' <- indexSetSize n
     store (fromScalarDest dests) n'
   ScalarUnOp IndexAsInt i ->
     fromScalarAtom i >>= store (fromScalarDest dests)
   Inject e -> do
-    let (IndexRange t low _) = getType e
+    let (TC (IndexRange t low _)) = getType e
     offset <- case low of
       InclusiveLim a -> indexToInt a
       ExclusiveLim a -> indexToInt a >>= impAdd (ILit $ IntLit 1)
@@ -177,7 +177,7 @@ makeDest :: Type -> ImpM (Atom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty
 
 makeDest' :: [IExpr] -> Type -> WriterT [IVar] ImpM Atom
-makeDest' shape ty = case ty of
+makeDest' shape ty@(TC con) = case con of
   BaseType b  -> do
     v <- lift $ freshVar ("v":> IRefType (b, shape))
     tell [v]
@@ -186,11 +186,12 @@ makeDest' shape ty = case ty of
     n'  <- lift $ indexSetSize n
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
   RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
-  t@(IntRange   _ _  ) -> scalarIndexSet t
-  t@(IndexRange _ _ _) -> scalarIndexSet t
-  _ -> error $ "Can't lower type to imp: " ++ pprint ty
+  IntRange   _ _   -> scalarIndexSet ty
+  IndexRange _ _ _ -> scalarIndexSet ty
+  _ -> error $ "Can't lower type to imp: " ++ pprint con
   where
-    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseType IntType)
+    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (TC (BaseType IntType))
+makeDest' _ ty = error $ "Can't lower type to imp: " ++ pprint ty
 
 impTabGet :: Atom -> Atom -> ImpM Atom
 impTabGet ~(Con (AFor _ body)) i = do
@@ -200,7 +201,7 @@ impTabGet ~(Con (AFor _ body)) i = do
     return $ Con $ AGet $ impExprToAtom ans
 
 intToIndex :: Type -> IExpr -> ImpM Atom
-intToIndex ty i = case ty of
+intToIndex ty@(TC con) i = case con of
   IntRange _ _     -> iAsIdx
   IndexRange _ _ _ -> iAsIdx
   RecType r -> do
@@ -212,9 +213,10 @@ intToIndex ty i = case ty of
         iRest <- lift $ impRem i' stride
         put iRest
         lift $ intToIndex ty' iCur
-  _ -> error $ "Unexpected type " ++ pprint ty
+  _ -> error $ "Unexpected type " ++ pprint con
   where
     iAsIdx = return $ Con $ AsIdx ty $ impExprToAtom i
+intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 
 indexToInt :: Atom -> ImpM IExpr
 indexToInt idx = case idx of
@@ -246,24 +248,24 @@ impExprToAtom e = case e of
   IRef ref     -> Con $ ArrayRef ref
 
 impTypeToType :: IType -> Type
-impTypeToType (IValType b) = BaseType b
-impTypeToType (IRefType (b, shape)) = ArrayType shape' b
+impTypeToType (IValType  b        ) = TC $ BaseType         b
+impTypeToType (IRefType (b, shape)) = TC $ ArrayType shape' b
   where shape' = map (\(ILit (IntLit n)) -> n) shape
 
 typeToIType :: Type -> IType
 typeToIType ty = case ty of
-  BaseType b -> IValType b
-  ArrayType shape b -> IRefType (b, map (ILit . IntLit) shape)
+  TC (BaseType        b) -> IValType b
+  TC (ArrayType shape b) -> IRefType (b, map (ILit . IntLit) shape)
   _ -> error $ "Not a valid Imp type: " ++ pprint ty
 
 toImpBaseType :: Type -> BaseType
-toImpBaseType ty = case ty of
-  BaseType b     -> b
-  TabType _ a    -> toImpBaseType a
-  TypeVar _      -> IntType
-  IntRange _ _   -> IntType
+toImpBaseType (TC con) = case con of
+  BaseType b       -> b
+  TabType _ a      -> toImpBaseType a
+  IntRange _ _     -> IntType
   IndexRange _ _ _ -> IntType
-  _ -> error $ "Unexpected type: " ++ pprint ty
+  _ -> error $ "Unexpected type: " ++ pprint con
+toImpBaseType ty = error $ "Unexpected type: " ++ pprint ty
 
 zero :: IExpr
 zero = ILit $ IntLit 0
@@ -272,23 +274,25 @@ one :: IExpr
 one  = ILit $ IntLit 1
 
 indexSetSize :: Type -> ImpM IExpr
-indexSetSize (IntRange low high) = do
-  low'  <- fromScalarAtom low
-  high' <- fromScalarAtom high
-  impSub high' low'
-indexSetSize (IndexRange n low high) = do
-  low' <- case low of
-    InclusiveLim x -> indexToInt x
-    ExclusiveLim x -> indexToInt x >>= impAdd one
-    Unlimited      -> return zero
-  high' <- case high of
-    InclusiveLim x -> indexToInt x >>= impAdd one
-    ExclusiveLim x -> indexToInt x
-    Unlimited      -> indexSetSize n
-  impSub high' low'
-indexSetSize (RecType r) = do
-  sizes <- traverse indexSetSize r
-  impProd $ toList sizes
+indexSetSize (TC con) = case con of
+  IntRange low high -> do
+    low'  <- fromScalarAtom low
+    high' <- fromScalarAtom high
+    impSub high' low'
+  IndexRange n low high -> do
+    low' <- case low of
+      InclusiveLim x -> indexToInt x
+      ExclusiveLim x -> indexToInt x >>= impAdd one
+      Unlimited      -> return zero
+    high' <- case high of
+      InclusiveLim x -> indexToInt x >>= impAdd one
+      ExclusiveLim x -> indexToInt x
+      Unlimited      -> indexSetSize n
+    impSub high' low'
+  RecType r -> do
+    sizes <- traverse indexSetSize r
+    impProd $ toList sizes
+  _ -> error $ "Not implemented " ++ pprint con
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 traverseLeaves :: Applicative f => (Atom -> f Atom) -> Atom -> f Atom

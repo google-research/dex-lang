@@ -328,7 +328,7 @@ fAmb = ()
 -- TODO: Fix the kind error!
 :p
   for i:4. sum for j:1..<i. 1.0
-> Type error: Not a valid index set: Int
+> Type error:Int != 4
 >
 >   for i:4. sum for j:1..<i. 1.0
 >            ^^^^

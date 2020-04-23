@@ -96,7 +96,7 @@ toJaxOp cexpr = case cexpr of
 
 fromScalarAtom ::Atom -> JAtom
 fromScalarAtom atom = case atom of
-  Var (v:>BaseType b)  -> JVar (v:>JType b)
+  Var (v :> TC (BaseType b)) -> JVar (v:>JType b)
   Con (Lit x) -> JLit x
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
@@ -115,12 +115,12 @@ freshVar v = do
 
 jAtomToAtom :: JAtom -> Atom
 jAtomToAtom jatom = case jatom of
-  JVar (v:> JType b) -> Var (v:>BaseType b)
+  JVar (v:> JType b) -> Var (v:>TC (BaseType b))
   JLit x -> Con $ Lit x
 
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
-  BaseType b -> JType b
+  TC (BaseType b) -> JType b
   _ -> error $ "Not a jax type: " ++ pprint ty
 
 jSubst :: Subst a => a -> JaxM a
