@@ -27,7 +27,6 @@ import Syntax
 import PPrint
 import Parser
 import Array
-import Record
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -160,8 +159,8 @@ valToScatter ~(Con (AFor (FixedIntRange low high) body)) = do
   xs' <- sequence [liftM fromRealLit $ loadScalar (subArray i xs) | i <- [0..(n - 1)]]
   ys' <- sequence [liftM fromRealLit $ loadScalar (subArray i ys) | i <- [0..(n - 1)]]
   return $ ScatterOut xs' ys'
-  where ~(Con (RecCon (Tup [Con (AGet (Con (ArrayRef xs))),
-                            Con (AGet (Con (ArrayRef ys)))]))) = body
+  where ~(PairVal (Con (AGet (Con (ArrayRef xs))))
+                  (Con (AGet (Con (ArrayRef ys))))) = body
         n = high - low
 
 valToHeatmap :: Val -> IO Output

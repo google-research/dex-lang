@@ -13,7 +13,7 @@
 module Type (
     getType, substEnvType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
-    tupTy, pairTy, isData, IsModule (..), IsModuleBody (..), popRow,
+    isData, IsModule (..), IsModuleBody (..), popRow,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     getConType, checkEffType, HasType, indexSetConcreteSize,
     maybeApplyPi, makePi, applyPi, isDependentType) where
@@ -137,19 +137,18 @@ getKind ty = case ty of
 tyConKind :: TyCon Type e -> (TyCon (Type, Kind) (e, Type), Kind)
 tyConKind con = case con of
   BaseType b        -> (BaseType b, TyKind)
-  IntRange a b      -> (IntRange (a, TC $ BaseType $ IntType)
-                                 (b, TC $ BaseType $ IntType), TyKind)
+  IntRange a b      -> (IntRange (a, IntTy) (b, IntTy), TyKind)
   -- This forces us to specialize to `TyCon Type e` instead of `TyCon ty e`
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
   TabType a b       -> (TabType (a, TyKind) (b, TyKind), TyKind)
   ArrayType shape b -> (ArrayType shape b, TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
-  Ref t             -> (Ref (t, TyKind), TyKind)
+  RefType t         -> (RefType (t, TyKind), TyKind)
   TypeApp t xs      -> (TypeApp (t, tk) (map (,TyKind) xs), TyKind)
     where tk = ArrowKind (map (const TyKind) xs) TyKind
-  Lin               -> (Lin   , MultKind)
-  NonLin            -> (NonLin, MultKind)
+  LinCon            -> (LinCon   , MultKind)
+  NonLinCon         -> (NonLinCon, MultKind)
 
 checkKind :: Type -> TypeM Kind
 checkKind ty = case ty of
@@ -201,11 +200,11 @@ checkKindEq k1 k2 | k1 == k2  = return ()
 instance HasType (RecTree Var) where
   getEffType tree = pureType $ case tree of
     RecLeaf v -> varAnn v
-    RecTree r -> TC $ RecType $ fmap getType r
+    RecTree r -> RecTy $ fmap getType r
 
   checkEffType tree = liftM pureType $ case tree of
     RecLeaf v -> checkVar v
-    RecTree r -> liftM (TC . RecType) $ traverse checkType r
+    RecTree r -> liftM RecTy $ traverse checkType r
 
 instance HasType FExpr where
   getEffType expr = case expr of
@@ -286,7 +285,7 @@ checkRuleDefType (LinearizationDef v) linTy = do
   ty <- asks $ fromL . (!(v:>()))
   case ty of
     ArrowType _ (Pi a (eff, b)) | isPure eff -> do
-      let linTyExpected = Forall [] [] $ a --> pairTy b (a --@ b)
+      let linTyExpected = Forall [] [] $ a --> PairTy b (a --@ b)
       unless (linTy == linTyExpected) $ throw TypeErr $
         "Annotation should have type: " ++ pprint linTyExpected
     _ -> throw TypeErr $
@@ -314,20 +313,20 @@ checkClassConstraint' env c ty = case c of
 
 checkVSpace :: ClassEnv -> Type -> Except ()
 checkVSpace env ty = case ty of
-  TypeVar v         -> checkVarClass env VSpace v
-  TC (BaseType RealType) -> return ()
-  TC (TabType _ a)       -> recur a
-  TC (RecType r)         -> mapM_ recur r
-  _                 -> throw TypeErr $ " Not a vector space: " ++ pprint ty
+  TypeVar v -> checkVarClass env VSpace v
+  RealTy    -> return ()
+  TabTy _ a -> recur a
+  RecTy r   -> mapM_ recur r
+  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
   where recur = checkVSpace env
 
 checkIdxSet :: ClassEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
-  TypeVar v          -> checkVarClass env IdxSet v
-  TC (RecType r)          -> mapM_ recur r
-  TC (IntRange _ _)       -> return ()
-  TC (IndexRange _ _ _)   -> return ()
-  _           -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
+  TypeVar v             -> checkVarClass env IdxSet v
+  RecTy r               -> mapM_ recur r
+  TC (IntRange _ _)     -> return ()
+  TC (IndexRange _ _ _) -> return ()
+  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
 checkData :: ClassEnv -> Type -> Except ()
@@ -475,12 +474,6 @@ checkShadow v = do
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
 
-pairTy :: Type -> Type -> Type
-pairTy x y = tupTy [x, y]
-
-tupTy :: [Type] -> Type
-tupTy xs = TC $ RecType $ Tup xs
-
 pureTy :: Type -> EffectiveType
 pureTy ty = (noEffect, ty)
 
@@ -527,15 +520,15 @@ traverseOpType op eq _ _ | isDependentOp op = case op of
     eq a a'
     eq l l'
     maybeApplyPi piTy x
-  PrimEffect ~(Just (Var ref), TC (Ref x)) m -> case m of
-    MAsk         ->            return (Effect (ref @> (Reader, TC $ Ref x)) Nothing, x)
-    MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, TC $ Ref x)) Nothing, unitTy)
-    MGet         ->            return (Effect (ref @> (State , TC $ Ref x)) Nothing, x)
-    MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , TC $ Ref x)) Nothing, unitTy)
-  IndexEff eff ~(Just (Var ref), tabRef) (_, i) ~(Pi (TC (Ref x)) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (eff, TC $ Ref x)
-    eq tabRef (TC $ Ref (TC $ TabType i x))
-    let row'' = row' <> (ref @> (eff, TC $ Ref (TC $ TabType i x)))
+  PrimEffect ~(Just (Var ref), RefTy x) m -> case m of
+    MAsk         ->            return (Effect (ref @> (Reader, RefTy x)) Nothing, x)
+    MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, RefTy x)) Nothing, UnitTy)
+    MGet         ->            return (Effect (ref @> (State , RefTy x)) Nothing, x)
+    MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , RefTy x)) Nothing, UnitTy)
+  IndexEff eff ~(Just (Var ref), tabRef) (_, i) ~(Pi (RefTy x) (Effect row tailVar, a)) -> do
+    row' <- popRow eq row (eff, RefTy x)
+    eq tabRef (RefTy (TabTy i x))
+    let row'' = row' <> (ref @> (eff, RefTy (TabTy i x)))
     return (Effect row'' tailVar, a)
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 
@@ -549,7 +542,7 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
       requiredClasses :: TVar -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For (Pi n (eff, a)) ->
-    inClass IdxSet n >> inClass Data a >> return (eff, TC $ TabType n a)
+    inClass IdxSet n >> inClass Data a >> return (eff, TabTy n a)
   TabCon n ty xs -> do
     case indexSetConcreteSize n of
       Nothing -> throw TypeErr $
@@ -559,45 +552,45 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
               | otherwise -> throw TypeErr $
                   "Index set size mismatch: " ++
                      show n' ++ " != " ++ show (length xs)
-  TabGet (TC (TabType i a)) i' -> eq i i' >> return (pureTy a)
-  RecGet (TC (RecType r)) i    -> return $ pureTy $ recGet r i
-  ArrayGep (TC (ArrayType (_:shape) b)) i -> do
-    eq (TC $ BaseType IntType) i
-    return $ pureTy $ TC $ ArrayType shape b
-  LoadScalar (TC (ArrayType [] b)) -> return $ pureTy $ TC $ BaseType b
+  TabGet (TabTy i a) i' -> eq i i' >> return (pureTy a)
+  RecGet (RecTy r) i    -> return $ pureTy $ recGet r i
+  ArrayGep (ArrayTy (_:shape) b) i -> do
+    eq IntTy i
+    return $ pureTy $ ArrayTy shape b
+  LoadScalar (ArrayTy [] b) -> return $ pureTy $ BaseTy b
   ScalarBinOp binop t1 t2 -> do
-    eq (TC $ BaseType t1') t1
-    eq (TC $ BaseType t2') t2
-    return $ pureTy $ TC $ BaseType tOut
+    eq (BaseTy t1') t1
+    eq (BaseTy t2') t2
+    return $ pureTy $ BaseTy tOut
     where (t1', t2', tOut) = binOpType binop
   -- TODO: check index set constraint
-  ScalarUnOp IndexAsInt _ -> return $ pureTy $ TC $ BaseType IntType
-  ScalarUnOp unop ty -> eq (TC $ BaseType ty') ty >> return (pureTy (TC $ BaseType outTy))
+  ScalarUnOp IndexAsInt _ -> return $ pureTy IntTy
+  ScalarUnOp unop ty -> eq (BaseTy ty') ty >> return (pureTy (BaseTy outTy))
     where (ty', outTy) = unOpType unop
   -- -- TODO: check vspace constraints
   VSpaceOp ty VZero        -> inClass VSpace ty >> return (pureTy ty)
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureTy ty)
-  Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy (TC $ BaseType BoolType))
-  Select ty p a b -> eq ty a >> eq ty b >> eq (TC $ BaseType BoolType) p >> return (pureTy ty)
-  RunReader r ~(Pi (TC (Ref r')) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (Reader, (TC $ Ref r))
+  Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureTy BoolTy)
+  Select ty p a b -> eq ty a >> eq ty b >> eq BoolTy p >> return (pureTy ty)
+  RunReader r ~(Pi (RefTy r') (Effect row tailVar, a)) -> do
+    row' <- popRow eq row (Reader, RefTy r)
     eq r r'
     return (Effect row' tailVar, a)
-  RunWriter ~(Pi (TC (Ref w)) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (Writer, TC $ Ref w)
-    return (Effect row' tailVar, pairTy a w)
-  RunState s ~(Pi (TC (Ref s')) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (State, TC $ Ref s)
+  RunWriter ~(Pi (RefTy w) (Effect row tailVar, a)) -> do
+    row' <- popRow eq row (Writer, RefTy w)
+    return (Effect row' tailVar, PairTy a w)
+  RunState s ~(Pi (RefTy s') (Effect row tailVar, a)) -> do
+    row' <- popRow eq row (State, RefTy s)
     eq s s'
-    return (Effect row' tailVar, pairTy a s)
+    return (Effect row' tailVar, PairTy a s)
   Linearize (Pi a (eff, b)) -> do
     eq noEffect eff
-    return $ pureTy $ a --> pairTy b (a --@ b)
+    return $ pureTy $ a --> PairTy b (a --@ b)
   Transpose (Pi a (eff, b)) -> do
     eq noEffect eff
     return $ pureTy $ b --@ a
-  IntAsIndex ty i  -> eq (TC $ BaseType IntType) i >> return (pureTy ty)
-  IdxSetSize _     -> return $ pureTy $ TC $ BaseType IntType
+  IntAsIndex ty i  -> eq IntTy i >> return (pureTy ty)
+  IdxSetSize _     -> return $ pureTy IntTy
   NewtypeCast ty _ -> return $ pureTy ty
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureTy ansTy)
@@ -611,15 +604,15 @@ traverseConType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
 traverseConType con eq kindIs _ = case con of
-  Lit l    -> return $ TC $ BaseType $ litType l
+  Lit l    -> return $ BaseTy $ litType l
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
-  RecCon r -> return $ TC $ RecType r
-  AFor n a -> return $ TC $ TabType n a
-  AGet (TC (ArrayType _ b)) -> return $ TC $ BaseType b  -- TODO: check shape matches AFor scope
-  AsIdx n e -> eq e (TC $ BaseType IntType) >> return n
-  ArrayRef (Array shape b _) -> return $ TC $ ArrayType shape b
+  RecCon r -> return $ RecTy r
+  AFor n a -> return $ TabTy n a
+  AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
+  AsIdx n e -> eq e (BaseTy IntType) >> return n
+  ArrayRef (Array shape b _) -> return $ ArrayTy shape b
   Todo ty -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 
@@ -685,7 +678,7 @@ extendClassEnv qs m = do
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
-  TC (RecType r) -> liftM product $ mapM indexSetConcreteSize $ toList r
+  RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 
 makePi :: Var -> EffectiveType -> PiType
@@ -700,7 +693,7 @@ isDependentType :: PiType -> Bool
 isDependentType (Pi _ (eff, b)) = usesPiVar eff || usesPiVar b
   where
     usesPiVar t = dummyVar `isin` freeVars (instantiateDepType 0 (Var dummyVar) t)
-    dummyVar ="__dummy_type_variable_that_should_be_unused!" :> unitTy
+    dummyVar ="__dummy_type_variable_that_should_be_unused!" :> UnitTy
 
 -- === linearity ===
 
@@ -743,8 +736,8 @@ checkLinOp e = case e of
   ScalarBinOp FSub x y  -> check x >> check y
   ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
-  App (TC Lin   ) fun x -> tensCheck (check fun) (check x)
-  App (TC NonLin) fun x -> tensCheck (check fun) (withoutLin (check x))
+  App Lin    fun x -> tensCheck (check fun) (check x)
+  App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
   For (FLamExpr _ body) -> checkLinFExpr body
   TabGet x i -> tensCheck (check x) (withoutLin (check i))
   RunReader r (FLamExpr ~(RecLeaf v) body) -> do
@@ -765,8 +758,8 @@ checkLinOp e = case e of
 
 checkLinCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
 checkLinCon e = case e of
-  Lam (TC NonLin) _ lam -> checkLinFLam lam
-  Lam (TC Lin   ) _ (FLamExpr p body) -> do
+  Lam NonLin _ lam -> checkLinFLam lam
+  Lam Lin    _ (FLamExpr p body) -> do
     let v = getPatName p
     let s = asSpent v
     withLocalLinVar v $ extendR (foldMap (@>s) p) $ checkLinFExpr body

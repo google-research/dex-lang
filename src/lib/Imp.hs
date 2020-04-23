@@ -7,6 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp (toImpModule, impExprToAtom, impExprType) where
@@ -41,9 +42,9 @@ toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
 toImpModBody topEnv imports (ModBody decls result) = do
   let decls' = map (subst (topSubstEnv topEnv, mempty)) decls
   let vs = [v:>ty | (v, L ty) <- envPairs $ freeVars result `envDiff` imports]
-  let outTuple = Con $ RecCon $ Tup $ map Var vs
+  let outTuple = TupVal $ map Var vs
   (outDest, vs') <- makeDest $ getType outTuple
-  let (Con (RecCon (Tup outDests))) = outDest
+  let (TupVal outDests) = outDest
   toImpExpr mempty outDest (wrapDecls decls' outTuple)
   return (vs', subst (newLEnv vs outDests, mempty) result)
 
@@ -78,7 +79,7 @@ toImpCExpr' :: Atom -> PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM ()
 toImpCExpr' dests op = case op of
   TabCon n _ rows -> do
     forM_ (zip [0..] rows) $ \(i, row) -> do
-      i' <- intToIndex n $ ILit $ IntLit i
+      i' <- intToIndex n $ IIntVal i
       ithDest <- impTabGet dests i'
       copyAtom ithDest row
   For (LamExpr b@(_:>idxTy) body, env) -> do
@@ -92,18 +93,18 @@ toImpCExpr' dests op = case op of
     copyAtom dests ans
   RecGet x i -> do
     case x of
-      Con (RecCon r)-> copyAtom dests $ recGet r i
+      RecVal r -> copyAtom dests $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
   RunReader r (LamExpr ref body, env) -> do
     toImpExpr (env <> ref @> L r) dests body
   RunWriter (LamExpr ref body, env) -> do
     initializeAtomZero wDest
     toImpExpr (env <> ref @> L wDest) aDest body
-    where (Con (RecCon (Tup [aDest, wDest]))) = dests
+    where (PairVal aDest wDest) = dests
   RunState s (LamExpr ref body, env) -> do
     copyAtom sDest s
     toImpExpr (env <> ref @> L sDest) aDest body
-    where (Con (RecCon (Tup [aDest, sDest]))) = dests
+    where (PairVal aDest sDest) = dests
   IndexEff _ ref i (LamExpr b body, env) -> do
     ref' <- impTabGet ref i
     toImpExpr (env <> b @> L ref') dests body
@@ -124,8 +125,8 @@ toImpCExpr' dests op = case op of
     y' <- fromScalarAtom y
     ans <- emitInstr $ IPrimOp $ ScalarBinOp (op' cmpOp) x' y'
     store (fromScalarDest dests) ans
-    where op' = case ty of TC (BaseType RealType) -> FCmp
-                           _                      -> ICmp
+    where op' = case ty of BaseTy RealType -> FCmp
+                           _               -> ICmp
   IdxSetSize n -> do
     n' <- indexSetSize n
     store (fromScalarDest dests) n'
@@ -135,8 +136,8 @@ toImpCExpr' dests op = case op of
     let (TC (IndexRange t low _)) = getType e
     offset <- case low of
       InclusiveLim a -> indexToInt a
-      ExclusiveLim a -> indexToInt a >>= impAdd (ILit $ IntLit 1)
-      Unlimited      -> return zero
+      ExclusiveLim a -> indexToInt a >>= impAdd IOne
+      Unlimited      -> return IZero
     restrictIdx <- indexToInt e
     idx <- impAdd restrictIdx offset
     intToIndex t idx >>= copyAtom dests
@@ -185,12 +186,12 @@ makeDest' shape ty@(TC con) = case con of
   TabType n b -> do
     n'  <- lift $ indexSetSize n
     liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
-  RecType r   -> liftM (Con . RecCon ) $ traverse (makeDest' shape) r
+  RecType r   -> liftM RecVal $ traverse (makeDest' shape) r
   IntRange   _ _   -> scalarIndexSet ty
   IndexRange _ _ _ -> scalarIndexSet ty
   _ -> error $ "Can't lower type to imp: " ++ pprint con
   where
-    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (TC (BaseType IntType))
+    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseTy IntType)
 makeDest' _ ty = error $ "Can't lower type to imp: " ++ pprint ty
 
 impTabGet :: Atom -> Atom -> ImpM Atom
@@ -206,7 +207,7 @@ intToIndex ty@(TC con) i = case con of
   IndexRange _ _ _ -> iAsIdx
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
-    liftM (Con . RecCon) $
+    liftM RecVal $
       flip evalStateT i $ forM strides $ \(ty', stride) -> do
         i' <- get
         iCur  <- lift $ impDiv i' stride
@@ -220,9 +221,9 @@ intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 
 indexToInt :: Atom -> ImpM IExpr
 indexToInt idx = case idx of
-  Con (RecCon r) -> do
+  RecVal r -> do
     rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) r
-    foldrM f (ILit $ IntLit 0) rWithStrides
+    foldrM f (IIntVal 0) rWithStrides
     where
       f :: (Atom, IExpr) -> IExpr -> ImpM IExpr
       f (i, stride) cumIdx = do
@@ -233,7 +234,7 @@ indexToInt idx = case idx of
 
 getStrides :: Traversable f => f (a, Type) -> ImpM (f (a, IExpr))
 getStrides xs =
-  liftM getReverse $ flip evalStateT (ILit (IntLit 1)) $
+  liftM getReverse $ flip evalStateT (IIntVal 1) $
     forM (Reverse xs) $ \(x, ty) -> do
       stride  <- get
       size    <- lift $ indexSetSize ty
@@ -248,14 +249,14 @@ impExprToAtom e = case e of
   IRef ref     -> Con $ ArrayRef ref
 
 impTypeToType :: IType -> Type
-impTypeToType (IValType  b        ) = TC $ BaseType         b
-impTypeToType (IRefType (b, shape)) = TC $ ArrayType shape' b
-  where shape' = map (\(ILit (IntLit n)) -> n) shape
+impTypeToType (IValType  b        ) = BaseTy         b
+impTypeToType (IRefType (b, shape)) = ArrayTy shape' b
+  where shape' = map (\(IIntVal n) -> n) shape
 
 typeToIType :: Type -> IType
 typeToIType ty = case ty of
-  TC (BaseType        b) -> IValType b
-  TC (ArrayType shape b) -> IRefType (b, map (ILit . IntLit) shape)
+  BaseTy        b -> IValType b
+  ArrayTy shape b -> IRefType (b, map IIntVal shape)
   _ -> error $ "Not a valid Imp type: " ++ pprint ty
 
 toImpBaseType :: Type -> BaseType
@@ -267,12 +268,6 @@ toImpBaseType (TC con) = case con of
   _ -> error $ "Unexpected type: " ++ pprint con
 toImpBaseType ty = error $ "Unexpected type: " ++ pprint ty
 
-zero :: IExpr
-zero = ILit $ IntLit 0
-
-one :: IExpr
-one  = ILit $ IntLit 1
-
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (TC con) = case con of
   IntRange low high -> do
@@ -282,10 +277,10 @@ indexSetSize (TC con) = case con of
   IndexRange n low high -> do
     low' <- case low of
       InclusiveLim x -> indexToInt x
-      ExclusiveLim x -> indexToInt x >>= impAdd one
-      Unlimited      -> return zero
+      ExclusiveLim x -> indexToInt x >>= impAdd IOne
+      Unlimited      -> return IZero
     high' <- case high of
-      InclusiveLim x -> indexToInt x >>= impAdd one
+      InclusiveLim x -> indexToInt x >>= impAdd IOne
       ExclusiveLim x -> indexToInt x
       Unlimited      -> indexSetSize n
     impSub high' low'
@@ -338,39 +333,39 @@ addToAtomLeaf ~(Con (AGet dest)) src = case src of
   where dest' = fromArrayAtom dest
 
 impProd :: [IExpr] -> ImpM IExpr
-impProd []     = return $ ILit $ IntLit 1
+impProd []     = return $ IOne
 impProd (x:xs) = foldrM impMul x xs
 
 emitBinOp :: ScalarBinOp -> IExpr -> IExpr -> ImpM IExpr
 emitBinOp op x y = emitInstr $ IPrimOp $ ScalarBinOp op x y
 
 impAdd :: IExpr -> IExpr -> ImpM IExpr
-impAdd (ILit (IntLit 0)) y = return y
-impAdd x (ILit (IntLit 0)) = return x
-impAdd (ILit (IntLit x)) (ILit (IntLit y)) = return $ ILit $ IntLit $ x + y
+impAdd IZero y = return y
+impAdd x IZero = return x
+impAdd (IIntVal x) (IIntVal y) = return $ IIntVal $ x + y
 impAdd x y = emitBinOp IAdd x y
 
 impMul :: IExpr -> IExpr -> ImpM IExpr
-impMul (ILit (IntLit 1)) y = return y
-impMul x (ILit (IntLit 1)) = return x
-impMul (ILit (IntLit x)) (ILit (IntLit y)) = return $ ILit $ IntLit $ x * y
+impMul IOne y = return y
+impMul x IOne = return x
+impMul (IIntVal x) (IIntVal y) = return $ IIntVal $ x * y
 impMul x y = emitBinOp IMul x y
 
 impDiv :: IExpr -> IExpr -> ImpM IExpr
-impDiv x (ILit (IntLit 1)) = return x
+impDiv x IOne = return x
 impDiv x y = emitBinOp IDiv x y
 
 impRem :: IExpr -> IExpr -> ImpM IExpr
-impRem _ (ILit (IntLit 1)) = return $ ILit $ IntLit 0
+impRem _ IOne = return IZero
 impRem x y = emitBinOp Rem x y
 
 impSub :: IExpr -> IExpr -> ImpM IExpr
-impSub (ILit (IntLit a)) (ILit (IntLit b)) = return $ ILit $ IntLit $ a - b
-impSub a (ILit (IntLit 0)) = return a
+impSub (IIntVal a) (IIntVal b)  = return $ IIntVal $ a - b
+impSub a IZero = return a
 impSub x y = emitBinOp ISub x y
 
 _impCmp :: CmpOp -> IExpr -> IExpr -> ImpM IExpr
-_impCmp GreaterEqual (ILit (IntLit a)) (ILit (IntLit b)) = return $ ILit $ BoolLit $ a >= b
+_impCmp GreaterEqual (IIntVal a) (IIntVal b) = return $ ILit $ BoolLit $ a >= b
 _impCmp op x y = emitBinOp (ICmp op) x y
 
 -- === Imp embedding ===
@@ -394,7 +389,7 @@ freshVar v = do
 emitLoop :: IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop n body = do
   (i, (_, loopBody)) <- scoped $ do
-    i <- freshVar ("i":>intTy)
+    i <- freshVar ("i":>IIntTy)
     body $ IVar i
     return i
   emitStatement (Nothing, Loop i n loopBody)
@@ -486,7 +481,7 @@ instrTypeChecked instr = case instr of
   Free _   -> return Nothing  -- TODO: check matched alloc/free
   Loop i size block -> do
     checkInt size
-    void $ scoped $ extend (i @> intTy) >> checkProg block
+    void $ scoped $ extend (i @> IIntTy) >> checkProg block
     return Nothing
   IGet e i -> do
     ~(IRefType (b, (_:shape))) <- checkIExpr e
@@ -572,5 +567,14 @@ impOpType (Select ty _ _ _   ) = IValType ty
 impOpType (FFICall _ _ ty _  ) = IValType ty
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
-intTy :: IType
-intTy = IValType IntType
+pattern IIntTy :: IType
+pattern IIntTy = IValType IntType
+
+pattern IIntVal :: Int -> IExpr
+pattern IIntVal x = ILit (IntLit x)
+
+pattern IZero :: IExpr
+pattern IZero = IIntVal 0
+
+pattern IOne :: IExpr
+pattern IOne = IIntVal 1

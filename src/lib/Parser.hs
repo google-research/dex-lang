@@ -318,8 +318,8 @@ rawLamExpr = do
 -- TODO: combine lamExpr/linlamExpr/forExpr
 lamExpr :: Parser FExpr
 lamExpr = do
-  ann <-    NoAnn  <$ symbol "\\"
-        <|> TC Lin <$ symbol "llam"
+  ann <-    NoAnn <$ symbol "\\"
+        <|> Lin   <$ symbol "llam"
   ps <- pat `sepBy` sc
   argTerm
   body <- blockOrExpr
@@ -525,8 +525,8 @@ className = do
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   parenTy
-              <|> liftM (ArrowType (TC NonLin)) piType
-              <|> liftM (TC . Ref) (symbol "Ref" >> tauTypeAtomic)
+              <|> liftM (ArrowType NonLin) piType
+              <|> liftM RefTy (symbol "Ref" >> tauTypeAtomic)
               <|> typeName
               <|> intRangeType
               <|> indexRangeType
@@ -584,7 +584,7 @@ arrowType = do
   lin <-  NonLin <$ symbol "->"
       <|> Lin    <$ symbol "--o"
   eff <- effectType <|> return noEffect
-  return $ \a b -> ArrowType (TC lin) $ Pi a (eff, b)
+  return $ \a b -> ArrowType lin $ Pi a (eff, b)
 
 piType :: Parser PiType
 piType = do
@@ -645,10 +645,10 @@ parenTy = do
   ans <- parens $ prod tauType
   return $ case ans of
     Left ty  -> ty
-    Right xs -> TC $ RecType $ Tup xs
+    Right xs -> RecTy $ Tup xs
 
 typeName :: Parser Type
-typeName = liftM (TC . BaseType) $
+typeName = liftM BaseTy $
        (symbol "Int"  >> return IntType)
    <|> (symbol "Real" >> return RealType)
    <|> (symbol "Bool" >> return BoolType)

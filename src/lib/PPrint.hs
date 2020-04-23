@@ -78,7 +78,7 @@ instance Pretty Type where
     TC con -> p con
     where
       arrStr :: Type -> Doc ann
-      arrStr (TC Lin) = "--o"
+      arrStr Lin = "--o"
       arrStr _        = "->"
 
 instance Pretty ty => Pretty (TyCon ty Atom) where
@@ -86,11 +86,11 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     BaseType b  -> p b
     TabType a b -> parens $ p a <> "=>" <> p b
     RecType r   -> p $ fmap (asStr . p) r
-    Ref t       -> "Ref" <+> p t
+    RefType t   -> "Ref" <+> p t
     TypeApp f xs -> p f <+> hsep (map p xs)
     ArrayType shape b -> p b <> p shape
     -- This rule forces us to specialize to Atom. Is there a better way?
-    IntRange (Con (Lit (IntLit 0))) (Con (Lit (IntLit n))) -> p n
+    IntRange (IntVal 0) (IntVal n) -> p n
     IntRange a b -> p a <> "...<" <> p b
     IndexRange _ low high -> low' <> "." <> high'
       where
@@ -100,8 +100,8 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
-    Lin    -> "Lin"
-    NonLin -> "NonLin"
+    LinCon    -> "Lin"
+    NonLinCon -> "NonLin"
 
 instance Pretty PiType where
   pretty (Pi a b) = "Pi" <+> p a <+> p b

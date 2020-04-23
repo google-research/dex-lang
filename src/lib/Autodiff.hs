@@ -32,14 +32,14 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
 linearize :: TopEnv -> Scope -> LamExpr -> Atom
 linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam (TC NonLin) b $ \x -> do
+  buildLam NonLin b $ \x -> do
     ((y, yt), _) <- flip runReaderT (b @> L x) $ runWriterT $
                       runLinA (linearizeExpr env expr)
     -- TODO: check linearity
-    fLin <- buildLam (TC Lin) b $ \xt ->do
+    fLin <- buildLam Lin b $ \xt ->do
               ans <- runReaderT yt (b @> L xt)
               return (ans, noEffect)
-    return (makePair y fLin, noEffect)
+    return (PairVal y fLin, noEffect)
 
 linearizeExpr :: TopEnv -> Expr -> LinA Atom
 linearizeExpr topEnv expr = case expr of
@@ -61,7 +61,7 @@ linearizeLamExpr topEnv (LamExpr v body) = do
        let localScope = fst embedEnv
        extend embedEnv
        let residualVs = [rv :> ty | (rv, L ty) <- envPairs $ localScope `envIntersect` fvs]
-       let ansWithResiduals = makePair ans (makeTup (map Var residualVs))
+       let ansWithResiduals = PairVal ans (TupVal (map Var residualVs))
        return (ansWithResiduals, (iVar, residualVs, ansT))
   extend $ asFst (foldMap (@>()) (v':residualVs))
   return (lam, \v'' residuals -> do
@@ -74,10 +74,10 @@ linearizeLamExpr topEnv (LamExpr v body) = do
 linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
 linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
-  ~(Tup [y, f]) <- emit (App (TC NonLin) (linRules topEnv ! v) x) >>= unpackRec
+  (y, f) <- emit (App NonLin (linRules topEnv ! v) x) >>= fromPair
   saveVars f
   return ( y
-         , liftM (App (TC Lin) f) t >>= emit )
+         , liftM (App Lin f) t >>= emit )
 linearizeCExpr _ expr | hasDiscreteType expr = LinA $ do
   expr' <- substEmbed expr
   ans <- emit expr'
@@ -121,7 +121,7 @@ linearizeCExpr topEnv expr = case expr' of
     (ansRes, w) <- fromPair =<< emit (RunWriter lam')
     (ans, residuals) <- fromPair ansRes
     saveVars residuals
-    return ( makePair ans w
+    return ( PairVal ans w
            , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
                 emit $ RunWriter lam'')
   PrimEffect refArg m ->
@@ -145,7 +145,7 @@ linearizedDiv x y tx ty = do
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con' of
   Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
-  RecCon r -> liftA (Con . RecCon) $ sequenceA r
+  RecCon r -> liftA RecVal $ sequenceA r
   _ -> error $ "not implemented: " ++ pprint con
   where con' = fmapExpr con id linearizeAtom id
 
@@ -176,13 +176,13 @@ withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 tangentType :: Type -> Type
 tangentType (TC con) = case con of
   BaseType RealType  -> TC $ BaseType RealType
-  BaseType   _       -> unitTy
-  IntRange   _ _     -> unitTy
-  IndexRange _ _ _   -> unitTy
-  TabType n a        -> TC $ TabType n (tangentType a)
-  RecType r          -> TC $ RecType $ fmap tangentType r
-  Ref a              -> TC $ Ref $ tangentType a
-  _ -> error $ "Can't differentiate wrt type " ++ pprint con
+  BaseType   _       -> UnitTy
+  IntRange   _ _     -> UnitTy
+  IndexRange _ _ _   -> UnitTy
+  TabType n a        -> TabTy n (tangentType a)
+  RecType r          -> RecTy $ fmap tangentType r
+  RefType a          -> RefTy $ tangentType a
+  _           -> error $ "Can't differentiate wrt type " ++ pprint con
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 
 hasDiscreteType :: HasType e => e -> Bool
@@ -232,7 +232,7 @@ type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> LamExpr -> Atom
 transposeMap scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam (TC Lin) ("ct" :> getType expr) $ \ct -> do
+  buildLam Lin ("ct" :> getType expr) $ \ct -> do
     flip runReaderT mempty $ do
       ans <- withLinVar b $ transposeExpr expr ct
       return (ans, noEffect)
@@ -281,15 +281,15 @@ transposeCExpr expr ct = case expr of
     ct' <- div' ct y'
     transposeAtom x ct'
   RecGet x i -> do
-    ~(Con (RecCon rZeros)) <- zeroAt (getType x)
-    let ct' = Con $ RecCon $ recUpdate i ct rZeros
+    ~(RecVal rZeros) <- zeroAt (getType x)
+    let ct' = RecVal $ recUpdate i ct rZeros
     transposeAtom x ct'
   For (LamExpr v body) -> do
     -- TODO: flip index or iteration order!
     lam <- buildLamExpr v $ \i -> do
       ct' <- nTabGet ct i
       extendR (asSnd (v @> L i)) $ transposeExpr body ct'
-      return unitCon
+      return UnitVal
     void $ emit $ For lam
   TabGet ~(Var x) i -> do
     i' <- substTranspose i
@@ -300,14 +300,14 @@ transposeCExpr expr ct = case expr of
              _ -> error "Not implemented"
     void $ withIndexed Writer ref i' $ \(Var ref') -> do
       emitCTToRef ref' ct
-      return unitCon
+      return UnitVal
   -- TODO: de-dup RunReader/RunWriter a bit
   RunReader r (LamExpr v body) -> do
     vs <- freeLinVars body
     body' <- buildLamExpr v $ \x ->
                extendR (asSnd (v @> L x)) $ do
                  vsCTs <- withLinVars vs $ transposeExpr body ct
-                 return $ Con $ RecCon $ Tup vsCTs
+                 return $ TupVal vsCTs
     (vsCTs, ctr) <- emit (RunWriter body') >>= fromPair
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ emitCT vs vsCTs'
@@ -318,7 +318,7 @@ transposeCExpr expr ct = case expr of
     body' <- buildLamExpr v $ \x -> do
                extendR (asSnd (v @> L x)) $ do
                  vsCTs <- withLinVars vs $ transposeExpr body ctBody
-                 return $ Con $ RecCon $ Tup vsCTs
+                 return $ TupVal vsCTs
     vsCTs <- emit (RunReader ctEff body')
     ~(Tup vsCTs') <- unpackRec vsCTs
     zipWithM_ emitCT vs vsCTs'
@@ -384,9 +384,9 @@ withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
 extractCT v@(_:>ty) m = do
-  (lam, ans) <- buildLamExprAux ("ctRef":> TC (Ref ty)) $ \ctRef -> do
+  (lam, ans) <- buildLamExprAux ("ctRef":> RefTy ty) $ \ctRef -> do
     extendR (asFst (v @> ctRef)) $ do
       ans <- m
-      return (unitCon, ans)
+      return (UnitVal, ans)
   (_, w) <- emit (RunWriter lam) >>= fromPair
   return (w, ans)

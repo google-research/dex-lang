@@ -28,13 +28,18 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
-    fromL, fromT, FullEnv, unitTy, sourceBlockBoundVars, PassName (..), parsePassName,
+    fromL, fromT, FullEnv, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, newLEnv, newTEnv, pattern FixedIntRange,
-    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..))
+    newEnv, newLEnv, newTEnv,
+    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..),
+    pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
+    pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
+    pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
+    pattern RecTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
+    pattern PairVal, pattern TupVal, pattern RecVal)
   where
 
 import Data.Tuple (swap)
@@ -70,10 +75,10 @@ data TyCon ty e = BaseType BaseType
                 | TabType ty ty
                 | ArrayType [Int] BaseType
                 | RecType (Record ty)
-                | Ref ty
+                | RefType ty
                 | TypeApp ty [ty]
-                | Lin
-                | NonLin
+                | LinCon
+                | NonLinCon
                   deriving (Show, Eq, Generic)
 
 data Kind = TyKind
@@ -121,10 +126,6 @@ noEffect = Effect mempty Nothing
 isPure :: Effect -> Bool
 isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
-
-pattern FixedIntRange :: Int -> Int -> Type
-pattern FixedIntRange low high = TC (IntRange (Con (Lit (IntLit low )))
-                                              (Con (Lit (IntLit high))))
 
 type ModuleType = (TypeEnv, TypeEnv)
 data ModuleP body = Module ModuleType body  deriving (Show, Eq)
@@ -468,19 +469,6 @@ catchIOExcept m = do
 
 -- === misc ===
 
-infixr 1 -->
-infixr 1 --@
-infixr 2 ==>
-
-(-->) :: Type -> Type -> Type
-a --> b = ArrowType (TC NonLin) $ Pi a (noEffect, b)
-
-(--@) :: Type -> Type -> Type
-a --@ b = ArrowType (TC Lin) $ Pi a (noEffect, b)
-
-(==>) :: Type -> Type -> Type
-a ==> b = TC $ TabType a b
-
 data LorT a b = L a | T b  deriving (Show, Eq)
 
 fromL :: LorT a b -> a
@@ -490,9 +478,6 @@ fromL _ = error "Not a let-bound thing"
 fromT :: LorT a b -> b
 fromT (T x) = x
 fromT _ = error "Not a type-ish thing"
-
-unitTy :: Type
-unitTy = TC (RecType (Tup []))
 
 type FullEnv v t = Env (LorT v t)
 
@@ -592,7 +577,7 @@ instance HasVars FDecl where
    freeVars (FRuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
 
 instance HasVars RuleAnn where
-  freeVars (LinearizationDef v) = (v:>()) @> L unitTy
+  freeVars (LinearizationDef v) = (v:>()) @> L UnitTy
 
 instance HasVars FTLam where
   freeVars (FTLam tbs _ expr) = freeVars expr `envDiff` foldMap tbind tbs
@@ -782,10 +767,82 @@ traverseTyCon con fTy fE = case con of
   TabType a b       -> liftA2 TabType (fTy a) (fTy b)
   ArrayType shape b -> pure $ ArrayType shape b
   RecType r         -> liftA RecType $ traverse (fTy ) r
-  Ref t             -> liftA Ref (fTy t)
+  RefType t         -> liftA RefType (fTy t)
   TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
-  Lin               -> pure Lin
-  NonLin            -> pure NonLin
+  LinCon            -> pure LinCon
+  NonLinCon         -> pure NonLinCon
 
 fmapTyCon :: TyCon ty e -> (ty -> ty') -> (e -> e') -> TyCon ty' e'
 fmapTyCon con fT fE = runIdentity $ traverseTyCon con (return . fT) (return . fE)
+
+-- === Synonyms ===
+
+infixr 1 -->
+infixr 1 --@
+infixr 2 ==>
+
+(-->) :: Type -> Type -> Type
+a --> b = ArrowType NonLin $ Pi a (noEffect, b)
+
+(--@) :: Type -> Type -> Type
+a --@ b = ArrowType Lin $ Pi a (noEffect, b)
+
+(==>) :: Type -> Type -> Type
+a ==> b = TC $ TabType a b
+
+pattern IntVal :: Int -> Atom
+pattern IntVal x = Con (Lit (IntLit x))
+
+pattern RecVal :: Record Atom -> Atom
+pattern RecVal r = Con (RecCon r)
+
+pattern TupVal :: [Atom] -> Atom
+pattern TupVal xs = RecVal (Tup xs)
+
+pattern PairVal :: Atom -> Atom -> Atom
+pattern PairVal x y = TupVal [x, y]
+
+pattern PairTy :: Type -> Type -> Type
+pattern PairTy x y = TC (RecType (Tup [x, y]))
+
+pattern TupTy :: [Type] -> Type
+pattern TupTy xs = TC (RecType (Tup xs))
+
+pattern UnitVal :: Atom
+pattern UnitVal = TupVal []
+
+pattern UnitTy :: Type
+pattern UnitTy = TupTy []
+
+pattern TabTy :: Type -> Type -> Type
+pattern TabTy a b = TC (TabType a b)
+
+pattern ArrayTy :: [Int] -> BaseType -> Type
+pattern ArrayTy shape b = TC (ArrayType shape b)
+
+pattern BaseTy :: BaseType -> Type
+pattern BaseTy b = TC (BaseType b)
+
+pattern RecTy :: Record Type -> Type
+pattern RecTy a = TC (RecType a)
+
+pattern RefTy :: Type -> Type
+pattern RefTy a = TC (RefType a)
+
+pattern NonLin :: Type
+pattern NonLin = TC NonLinCon
+
+pattern Lin :: Type
+pattern Lin = TC LinCon
+
+pattern IntTy :: Type
+pattern IntTy = TC (BaseType IntType)
+
+pattern BoolTy :: Type
+pattern BoolTy = TC (BaseType BoolType)
+
+pattern RealTy :: Type
+pattern RealTy = TC (BaseType RealType)
+
+pattern FixedIntRange :: Int -> Int -> Type
+pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))

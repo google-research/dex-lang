@@ -86,7 +86,7 @@ simplifyLam (LamExpr b body) = do
 
 separateDataComponent :: (MonadCat EmbedEnv m)
                       => Scope -> Atom -> (Atom, Atom -> m Atom)
-separateDataComponent localVars atom = (makeTup $ map Var vs, recon)
+separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
   where
     vs = [v:>ty | (v, L ty) <- envPairs $ localVars `envIntersect` freeVars atom]
     recon :: MonadCat EmbedEnv m => Atom -> m Atom
@@ -120,16 +120,16 @@ simplifyCExpr expr = do
     RunWriter (lam, recon) -> do
       (ans, w) <- fromPair =<< emit (RunWriter lam)
       ans' <- reconstructAtom recon ans
-      return $ makePair ans' w
+      return $ PairVal ans' w
     RunState s (lam, recon) -> do
       (ans, s') <- fromPair =<< emit (RunState s lam)
       ans' <- reconstructAtom recon ans
-      return $ makePair ans' s'
+      return $ PairVal ans' s'
     App _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
       dropSub $ extendR (newTEnv tbs ts) $ simplify body
-    RecGet (Con (RecCon r)) i -> return $ recGet r i
+    RecGet (RecVal r) i -> return $ recGet r i
     Select ty p x y -> selectAt ty p x y
     _ -> emit $ fmapExpr expr' id id fst
 

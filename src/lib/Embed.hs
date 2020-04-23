@@ -11,8 +11,8 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, deShadow, withIndexed,
               nRecGet, nTabGet, add, mul, sub, neg, div',
-              selectAt, freshVar, unitBinder, unitCon, unpackRec,
-              makeTup, makePair, substEmbed, fromPair, buildLamExprAux,
+              selectAt, freshVar, unitBinder, unpackRec,
+              substEmbed, fromPair, buildLamExprAux,
               emitExpr, unzipTab, buildFor, isSingletonType,
               singletonTypeVal) where
 
@@ -115,9 +115,9 @@ buildScoped m = do
 withIndexed :: (MonadCat EmbedEnv m)
             => EffectName -> Atom -> Atom -> (Atom -> m Atom) -> m Atom
 withIndexed eff ref i f = do
-  lam <- buildLamExpr ("ref":>TC (Ref a)) $ \ref' -> f ref'
+  lam <- buildLamExpr ("ref":> RefTy a) $ \ref' -> f ref'
   emit $ IndexEff eff ref i lam
-  where (TC (Ref (TC (TabType _ a)))) = getType ref
+  where (RefTy (TabTy _ a)) = getType ref
 
 runEmbedT :: Monad m => CatT EmbedEnv m a -> Scope -> m (a, EmbedEnv)
 runEmbedT m scope = runCatT m (scope, [])
@@ -165,30 +165,21 @@ select ty p x y = emit $ Select ty p x y
 div' :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 div' x y = emit $ ScalarBinOp FDiv x y
 
-unitCon :: Atom
-unitCon = Con $ RecCon (Tup [])
-
 unitBinder :: MonadCat EmbedEnv m => m Var
-unitBinder = freshVar (NoName:>unitTy)
+unitBinder = freshVar (NoName:>UnitTy)
 
 nRecGet :: MonadCat EmbedEnv m => Atom -> RecField -> m Atom
-nRecGet (Con (RecCon r)) i = return $ recGet r i
+nRecGet (RecVal r) i = return $ recGet r i
 nRecGet x i = emit $ RecGet x i
 
 nTabGet :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 nTabGet x i = emit $ TabGet x i
 
 unpackRec :: MonadCat EmbedEnv m => Atom -> m (Record Atom)
-unpackRec (Con (RecCon r)) = return r
+unpackRec (RecVal r) = return r
 unpackRec x = case getType x of
-  TC (RecType r) -> mapM (nRecGet x . fst) $ recNameVals r
-  ty             -> error $ "Not a tuple: " ++ pprint ty
-
-makeTup :: [Atom] -> Atom
-makeTup xs = Con $ RecCon $ Tup xs
-
-makePair :: Atom -> Atom -> Atom
-makePair x y = Con $ RecCon (Tup [x, y])
+  RecTy r -> mapM (nRecGet x . fst) $ recNameVals r
+  ty -> error $ "Not a tuple: " ++ pprint ty
 
 fromPair :: MonadCat EmbedEnv m => Atom -> m (Atom, Atom)
 fromPair pair = do
@@ -209,21 +200,21 @@ unzipTab tab = do
   snds <- buildFor ("i":>n) $ \i ->
             liftM snd $ emit (TabGet tab i) >>= fromPair
   return (fsts, snds)
-  where (TC (TabType n _)) = getType tab
+  where (TabTy n _) = getType tab
 
 mapScalars :: MonadCat EmbedEnv m
            => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
   FixedIntRange _ _ -> f ty xs
-  TC (BaseType _)  -> f ty xs
-  TC (TabType n a) -> do
+  BaseTy _  -> f ty xs
+  TabTy n a -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
     emit $ For lam
-  TC (RecType r) -> do
+  RecTy r -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
-    liftM (Con . RecCon) $ sequence $ recZipWith (mapScalars f) r xs'
+    liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'
   _ -> error $ "Not implemented " ++ pprint ty
 
 transposeRecord :: Record b -> [Record a] -> Record [a]
@@ -246,6 +237,6 @@ singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal (TC con) = case con of
   BaseType  _ -> Nothing
   TabType n a -> liftM (Con . AFor n) $ singletonTypeVal a
-  RecType r   -> liftM (Con . RecCon) $ traverse singletonTypeVal r
+  RecType r   -> liftM RecVal $ traverse singletonTypeVal r
   _           -> Nothing
 singletonTypeVal _ = Nothing

@@ -236,12 +236,12 @@ generateOpSubExprTypes op = case op of
   PrimEffect ref m -> do
     s  <- freshQ
     m' <- traverse (doMSnd freshQ) m
-    return $ PrimEffect (ref, TC (Ref s)) m'
+    return $ PrimEffect (ref, RefTy s) m'
   RunReader r f@(FLamExpr (RecLeaf (v:>_)) _) -> do
     r' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let refTy = TC $ Ref r'
+    let refTy = RefTy r'
     let eff = Effect ((v:>()) @> (Reader, refTy)) (Just tailVar)
     let fTy = makePi (v:>refTy) (eff, a)
     return $ RunReader (r, r') (f, fTy)
@@ -249,7 +249,7 @@ generateOpSubExprTypes op = case op of
     w <- freshQ
     a <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let refTy = TC $ Ref w
+    let refTy = RefTy w
     let eff = Effect ((v:>()) @> (Writer,refTy)) (Just tailVar)
     let fTy = makePi (v:>refTy) (eff, a)
     return $ RunWriter (f, fTy)
@@ -257,7 +257,7 @@ generateOpSubExprTypes op = case op of
     s' <- freshQ
     a  <- freshQ
     tailVar <- freshInferenceVar EffectKind
-    let refTy = TC $ Ref s'
+    let refTy = RefTy s'
     let eff = Effect ((v:>()) @> (State, refTy)) (Just tailVar)
     let fTy = makePi (v:>refTy) (eff, a)
     return $ RunState (s, s') (f, fTy)
@@ -267,9 +267,9 @@ generateOpSubExprTypes op = case op of
     a  <- freshQ
     let tabType = i' ==> x
     tailVar <- freshInferenceVar EffectKind
-    let eff = Effect ((v:>()) @> (effName, TC (Ref x))) (Just tailVar)
-    let fTy = makePi (v:> TC (Ref x)) (eff, a)
-    return $ IndexEff effName (tabRef, TC (Ref tabType)) (i, i') (f, fTy)
+    let eff = Effect ((v:>()) @> (effName, RefTy x)) (Just tailVar)
+    let fTy = makePi (v:> RefTy x) (eff, a)
+    return $ IndexEff effName (tabRef, RefTy tabType) (i, i') (f, fTy)
   _ -> traverseExpr op (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM PiType
@@ -383,17 +383,17 @@ impliedClasses ty =  map (flip TyQual Data  ) (dataVars   ty)
 idxSetVars :: Type -> [TVar]
 idxSetVars ty = case ty of
   ArrowType _ (Pi a (_, b)) -> recur a <> recur b
-  TC (TabType a b) -> map (:>NoKindAnn) (envNames (freeVars a)) <> recur b
-  TC (RecType r  ) -> foldMap recur r
-  _           -> []
+  TabTy a b -> map (:>NoKindAnn) (envNames (freeVars a)) <> recur b
+  RecTy r   -> foldMap recur r
+  _         -> []
   where recur = idxSetVars
 
 dataVars :: Type -> [TVar]
 dataVars ty = case ty of
   ArrowType _ (Pi a (_, b)) -> recur a <> recur b
-  TC (TabType _ b) -> map (:>NoKindAnn) (envNames (freeVars b))
-  TC (RecType r  ) -> foldMap recur r
-  _             -> []
+  TabTy _ b -> map (:>NoKindAnn) (envNames (freeVars b))
+  RecTy r   -> foldMap recur r
+  _         -> []
   where recur = dataVars
 
 -- === constraint solver ===
@@ -417,7 +417,7 @@ applyDefaults :: MonadCat SolverEnv m => m ()
 applyDefaults = do
   vs <- looks unsolved
   forM_ (envPairs vs) $ \(v, k) -> case k of
-    MultKind   -> addSub v (TC NonLin)
+    MultKind   -> addSub v NonLin
     EffectKind -> addSub v noEffect
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
@@ -490,7 +490,7 @@ unify t1 t2 = do
       matchTail t' $ Effect (envDiff r  shared) newTail
     (TC con, TC con') -> case (con, con') of
       (TabType a b, TabType a' b') -> unify a a' >> unify b b'
-      (Ref a, Ref a') -> unify a a'
+      (RefType a, RefType a') -> unify a a'
       (RecType r, RecType r') ->
         case zipWithRecord unify r r' of
           Nothing -> throw TypeErr ""
