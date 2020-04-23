@@ -108,7 +108,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
         return $ fTyApp (varName v :> ty) ts''
       _ -> throw TypeErr "Unexpected type application"
   FPrimExpr (OpExpr (App l f x)) -> do
-    l'  <- fromAnn MultKind l
+    l'  <- inferKinds MultKind l
     piTy@(Pi a _) <- freshLamType
     f' <- checkPure f $ ArrowType l' piTy
     x' <- checkPure x a
@@ -191,12 +191,6 @@ checkAtom atom ty = do
     Just atom' -> return atom'
     Nothing -> error "Shouldn't be possible to infer an atom into a non-atom"
 
-inferAtom :: Atom -> InferM (Atom, Type)
-inferAtom atom = do
-  ty <- freshQ
-  atom' <- checkAtom atom ty
-  return (atom', ty)
-
 fTyApp :: Var -> [Type] -> FExpr
 fTyApp v tys = FPrimExpr $ OpExpr $ TApp (FVar v) tys
 
@@ -221,10 +215,10 @@ generateConSubExprTypes :: PrimCon Type e lam
   -> InferM (PrimCon Type (e, Type) (lam, PiType))
 generateConSubExprTypes con = case con of
   Lam l _ lam -> do
-    l' <- fromAnn MultKind l
+    l' <- inferKinds MultKind l
     lam'@(Pi _ (eff,_)) <- freshLamType
     return $ Lam l' eff (lam, lam')
-  _ -> traverseExpr con (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
+  _ -> traverseExpr con (inferKinds TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 generateOpSubExprTypes :: PrimOp Type FExpr FLamExpr
   -> InferM (PrimOp Type (FExpr, Type) (FLamExpr, PiType))
@@ -270,7 +264,7 @@ generateOpSubExprTypes op = case op of
     let eff = Effect ((v:>()) @> (effName, RefTy x)) (Just tailVar)
     let fTy = makePi (v:> RefTy x) (eff, a)
     return $ IndexEff effName (tabRef, RefTy tabType) (i, i') (f, fTy)
-  _ -> traverseExpr op (fromAnn TyKind) (doMSnd freshQ) (doMSnd freshLamType)
+  _ -> traverseExpr op (inferKinds TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 freshLamType :: InferM PiType
 freshLamType = do
@@ -286,31 +280,27 @@ annotPat :: Pat -> InferM Pat
 annotPat pat = traverse annotBinder pat
 
 annotBinder :: Var -> InferM Var
-annotBinder (v:>ann) = liftM (v:>) (fromAnn TyKind ann)
-
-fromAnn :: Kind -> Type -> InferM Type
-fromAnn k NoAnn = freshInferenceVar k
-fromAnn k ty    = inferKinds k ty
+annotBinder (v:>ann) = liftM (v:>) (inferKinds TyKind ann)
 
 asEnv :: Var -> TypeEnv
 asEnv b = b @> L (varAnn b)
 
 -- === kind inference ===
 
-type InferKindM a = ReaderT [Type] (CatT TypeEnv (Either Err)) a
+type InferKindM a = ReaderT [Type] (CatT TypeEnv InferM) a
 
 inferKinds :: Kind -> Type -> InferM Type
 inferKinds kind ty = do
   env <- ask
-  env' <- traverse zonk env
-  liftEither $ runInferKinds env' kind ty
+  liftM fst $ runCatT (runReaderT (inferKindsM kind ty) []) env
 
 runInferKinds :: TypeEnv -> Kind -> Type -> Except Type
-runInferKinds env kind ty = liftM fst $
+runInferKinds env kind ty = liftM fst $ runInferM env $
   runCatT (runReaderT (inferKindsM kind ty) []) env
 
 inferKindsM :: Kind -> Type -> InferKindM Type
 inferKindsM kind ty = case ty of
+  NoAnn -> lift $ lift $ freshInferenceVar kind
   TypeVar tv@(v:>_) -> do
     x <- looks $ flip envLookup tv
     case x of
@@ -347,24 +337,13 @@ inferKindsM kind ty = case ty of
       return (v' @> (eff, t))
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
-  TC (IntRange a b) -> do
-    env <- look
-    a' <- liftEither $ runInferM env $ checkAtom a $ TC $ BaseType IntType
-    b' <- liftEither $ runInferM env $ checkAtom b $ TC $ BaseType IntType
-    return $ TC $ IntRange a' b'
-  TC (IndexRange _ a b) -> do
-    env <- look
-    a' <- forM a $ liftEither . runInferM env . liftM fst . inferAtom
-    b' <- forM b $ liftEither . runInferM env . liftM fst . inferAtom
-    -- TODO: separate kind inference from type-of-terms-within-types inference
-    -- and do the latter as ordinary type inference instead of these bespoke rules.
-    let t = getType $ head $ toList a' ++ toList b'
-    return $ TC $ IndexRange t a' b'
-  NoAnn -> error "shouldn't have NoAnn left"
-  TC con -> liftM TC $
-    traverseTyCon (fst $ tyConKind con)
-       (\(t,k) -> inferKindsM k t)
-       (error "Shouldn't have dependent term left")
+  TC con -> liftM TC $ do
+    con' <- traverseTyCon (fst $ tyConKind con)
+              (\(t,k) -> inferKindsM k t)
+              (return . fst)
+    traverseTyCon (fst $ tyConKind con')
+              (return . fst)
+              (\(x,t) -> lift $ lift $ checkAtom x t)
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do

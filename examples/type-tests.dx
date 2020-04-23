@@ -328,10 +328,13 @@ fAmb = ()
 -- TODO: Fix the kind error!
 :p
   for i:4. sum for j:1..<i. 1.0
-> Type error:Int != 4
+> Type error:
+> Expected: Int
+>   Actual: 4
+> In: i
 >
 >   for i:4. sum for j:1..<i. 1.0
->            ^^^^
+>                ^^^^^^^^^^^^^^^^
 
 -- TODO: Implement a dependent arrow type
 -- :p
