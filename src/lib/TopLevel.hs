@@ -4,6 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
 
 module TopLevel (evalBlock, EvalOpts (..), Backend (..)) where
@@ -81,11 +82,12 @@ evalSourceBlock env block = case block of
     Dump DexBinaryObject fname -> do
       val <- evalModuleVal env v m
       liftIOTop $ dumpDataFile fname val
-    ShowPasses -> liftM (const mempty) $ filterOutputs f $ evalModule env m
-      where f out = case out of PassInfo _ _ _ -> True; _ -> False
-    ShowPass s -> liftM (const mempty) $ filterOutputs f $ evalModule env m
-      where f out = case out of PassInfo s' _ _ | s == s' -> True; _ -> False
-    _ -> return ()
+    ShowPasses -> runWithFilter $ \case PassInfo _ _ _ -> True;            _ -> False
+    ShowPass s -> runWithFilter $ \case PassInfo s' _ _ | s == s' -> True; _ -> False
+    TimeIt     -> runWithFilter $ \case PassInfo LLVMEval _ _ -> True;     _ -> False
+    where
+      runWithFilter :: (Output -> Bool) -> TopPassM ()
+      runWithFilter f = liftM (const mempty) $ filterOutputs f $ evalModule env m
   GetNameType v -> case topSubstEnv env `envLookup` v of
     Just (L val) -> tell [TextOut $ pprint (getType val)] >> return mempty
     _            -> throw UnboundVarErr $ pprint v

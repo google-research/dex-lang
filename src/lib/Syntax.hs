@@ -388,7 +388,7 @@ monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
 -- === passes ===
 
 data PassName = Parse | TypePass | NormPass | SimpPass | ImpPass | JitPass
-              | Flops | LLVMOpt | AsmPass | JAXPass
+              | Flops | LLVMOpt | AsmPass | JAXPass | LLVMEval
                 deriving (Ord, Eq, Bounded, Enum)
 
 passNameMap :: M.Map String PassName
@@ -402,7 +402,7 @@ instance Show PassName where
     Parse    -> "parse" ; TypePass -> "typed"   ; NormPass -> "norm"
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass  -> "llvm"
     Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass  -> "asm"
-    JAXPass  -> "jax"
+    JAXPass  -> "jax"   ; LLVMEval -> "llvmeval"
 
 -- TODO: consider using this for builtins too
 buildNameMap :: (Show a, Enum a, Bounded a) => M.Map String a

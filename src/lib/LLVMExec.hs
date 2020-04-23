@@ -15,6 +15,7 @@ import qualified LLVM.PassManager as P
 import qualified LLVM.ExecutionEngine as EE
 import qualified LLVM.Target as T
 import LLVM.Context
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Foreign.Ptr
 import Control.Exception
@@ -41,10 +42,13 @@ evalJit ast = do
         EE.withModuleInEngine ee m $ \eee -> do
           f <- liftM (fromMaybe (error "failed to fetch function")) $
                  EE.getFunction eee (L.Name "thefun")
+          t1 <- getCurrentTime
           runJitted f
-      return [ PassInfo JitPass "" preOpt
-             , PassInfo LLVMOpt "" postOpt
-             , PassInfo AsmPass "" asm]
+          t2 <- getCurrentTime
+          return [ PassInfo JitPass "" preOpt
+                 , PassInfo LLVMOpt "" postOpt
+                 , PassInfo AsmPass "" asm
+                 , PassInfo LLVMEval "" (show (t2 `diffUTCTime` t1))]
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
