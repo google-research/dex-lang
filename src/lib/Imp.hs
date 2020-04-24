@@ -30,40 +30,38 @@ import Subst
 import Record
 import Embed (wrapDecls)
 
-type EmbedEnv = (Scope, ImpProg)
+type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
 toImpModule :: TopEnv -> Module -> ImpModule
 toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
-  where ((vs, result), (_, prog)) =
-          flip runCat mempty $ toImpModBody env imports m
+  where ((vs, result, prog), _) = flip runCat mempty $ toImpModBody env imports m
 
-toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv)
+toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv, ImpProg)
 toImpModBody topEnv imports (ModBody decls result) = do
   let decls' = map (subst (topSubstEnv topEnv, mempty)) decls
   let vs = [v:>ty | (v, L ty) <- envPairs $ freeVars result `envDiff` imports]
   let outTuple = TupVal $ map Var vs
   (outDest, vs') <- makeDest $ getType outTuple
   let (TupVal outDests) = outDest
-  toImpExpr mempty outDest (wrapDecls decls' outTuple)
-  return (vs', subst (newLEnv vs outDests, mempty) result)
+  ((), prog) <- scopedBlock $ do
+    ans <- toImpExpr mempty (wrapDecls decls' outTuple)
+    copyAtom outDest ans
+  return (vs', subst (newLEnv vs outDests, mempty) result, prog)
 
-toImpExpr :: SubstEnv -> Atom -> Expr -> ImpM ()
-toImpExpr env dests expr = case expr of
+toImpExpr :: SubstEnv -> Expr -> ImpM Atom
+toImpExpr env expr = case expr of
   Decl (Let b bound) body -> do
     b' <- traverse (impSubst env) b
-    withAllocs b' $ \xs-> do
-      toImpCExpr env xs bound
-      toImpExpr (env <> b'@> L xs) dests body
-  CExpr op -> toImpCExpr env dests op
-  Atom atom -> do
-    xs <- impSubst env atom
-    copyAtom dests xs
+    ans <- toImpCExpr env bound
+    toImpExpr (env <> b'@> L ans) body
+  CExpr op -> toImpCExpr env op
+  Atom atom -> impSubst env atom
 
-toImpCExpr :: SubstEnv -> Atom -> CExpr -> ImpM ()
-toImpCExpr env dest op = do
+toImpCExpr :: SubstEnv -> CExpr -> ImpM Atom
+toImpCExpr env op = do
   op' <- traverseExpr op (impSubst env) (impSubst env) (substLamPartial env)
-  toImpCExpr' dest op'
+  toImpCExpr' op'
 
 substLamPartial :: SubstEnv -> LamExpr -> ImpM (LamExpr, SubstEnv)
 substLamPartial env (LamExpr b body) = do
@@ -72,66 +70,73 @@ substLamPartial env (LamExpr b body) = do
 
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
-  scope <- looks fst
+  scope <- looks (fst . snd)
   return $ subst (env, scope) x
 
-toImpCExpr' :: Atom -> PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM ()
-toImpCExpr' dests op = case op of
+toImpCExpr' :: PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM Atom
+toImpCExpr' op = case op of
   TabCon n _ rows -> do
+    dest <- alloc resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
       i' <- intToIndex n $ IIntVal i
-      ithDest <- impTabGet dests i'
+      ithDest <- impTabGet dest i'
       copyAtom ithDest row
+    return dest
   For (LamExpr b@(_:>idxTy) body, env) -> do
     n' <-  indexSetSize idxTy
+    dest <- alloc resultTy
     emitLoop n' $ \i -> do
       i' <- intToIndex idxTy i
-      ithDest <- impTabGet dests i'
-      toImpExpr (env <> b @> L i') ithDest body
-  TabGet x i -> do
-    ans <- impTabGet x i
-    copyAtom dests ans
+      ithDest <- impTabGet dest i'
+      ans <- toImpExpr (env <> b @> L i') body
+      copyAtom ithDest ans
+    return dest
+  TabGet x i -> impTabGet x i
   RecGet x i -> do
     case x of
-      RecVal r -> copyAtom dests $ recGet r i
+      RecVal r -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
   RunReader r (LamExpr ref body, env) -> do
-    toImpExpr (env <> ref @> L r) dests body
+    toImpExpr (env <> ref @> L r) body
   RunWriter (LamExpr ref body, env) -> do
+    wDest <- alloc wTy
     initializeAtomZero wDest
-    toImpExpr (env <> ref @> L wDest) aDest body
-    where (PairVal aDest wDest) = dests
+    aResult <- toImpExpr (env <> ref @> L wDest) body
+    return $ PairVal aResult wDest
+    where (PairTy _ wTy) = resultTy
   RunState s (LamExpr ref body, env) -> do
+    sDest <- alloc sTy
     copyAtom sDest s
-    toImpExpr (env <> ref @> L sDest) aDest body
-    where (PairVal aDest sDest) = dests
+    aResult <- toImpExpr (env <> ref @> L sDest) body
+    return $ PairVal aResult sDest
+    where (PairTy _ sTy) = resultTy
   IndexEff _ ref i (LamExpr b body, env) -> do
     ref' <- impTabGet ref i
-    toImpExpr (env <> b @> L ref') dests body
+    toImpExpr (env <> b @> L ref') body
   PrimEffect ref m -> do
     case m of
-      MAsk    -> copyAtom dests ref
-      MTell x -> addToAtom ref x
-      MPut x  -> copyAtom ref x
-      MGet    -> copyAtom dests ref
+      MAsk    -> return ref
+      MTell x -> addToAtom ref x >> return UnitVal
+      MPut x  -> copyAtom  ref x >> return UnitVal
+      MGet -> do
+        dest <- alloc resultTy
+        copyAtom dest ref
+        return dest
   IntAsIndex n i -> do
     i' <- fromScalarAtom i
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
-    store (fromScalarDest dests) ans
+    return $ toScalarAtom resultTy ans
   Cmp cmpOp ty x y -> do
     x' <- fromScalarAtom x
     y' <- fromScalarAtom y
     ans <- emitInstr $ IPrimOp $ ScalarBinOp (op' cmpOp) x' y'
-    store (fromScalarDest dests) ans
+    return $ toScalarAtom resultTy ans
     where op' = case ty of BaseTy RealType -> FCmp
                            _               -> ICmp
-  IdxSetSize n -> do
-    n' <- indexSetSize n
-    store (fromScalarDest dests) n'
-  ScalarUnOp IndexAsInt i ->
-    fromScalarAtom i >>= store (fromScalarDest dests)
+  IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
+  ScalarUnOp IndexAsInt i -> return i
   Inject e -> do
     let (TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -140,11 +145,22 @@ toImpCExpr' dests op = case op of
       Unlimited      -> return IZero
     restrictIdx <- indexToInt e
     idx <- impAdd restrictIdx offset
-    intToIndex t idx >>= copyAtom dests
+    intToIndex t idx
   _ -> do
     op' <- traverseExpr op (return . toImpBaseType) fromScalarAtom (const (return ()))
-    ans <- emitInstr $ IPrimOp op'
-    store (fromScalarDest dests) ans
+    liftM (toScalarAtom resultTy) $ emitInstr (IPrimOp op')
+  where
+    resultTy :: Type
+    resultTy = getType $ CExpr $ fmapExpr op id id fst
+
+toScalarAtom :: Type -> IExpr -> Atom
+toScalarAtom _  (ILit v) = Con $ Lit v
+toScalarAtom _  (IRef x) = Con $ ArrayRef x
+toScalarAtom ty x@(IVar (v:>_)) = case ty of
+  BaseTy _                -> Var (v:>ty)
+  TC (IntRange       _ _) -> Con $ AsIdx ty $ toScalarAtom IntTy x
+  TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' x
+  _ -> error $ "Not a scalar type: " ++ pprint ty
 
 fromScalarAtom :: Atom -> ImpM IExpr
 fromScalarAtom atom = case atom of
@@ -160,19 +176,13 @@ fromArrayAtom atom = case atom of
   Con (ArrayRef array) -> IRef array
   _ -> error $ "Expected array, got: " ++ pprint atom
 
-fromScalarDest :: Atom -> IExpr
-fromScalarDest atom = case atom of
-  Con (AGet x)    -> fromArrayAtom x
-  Con (AsIdx _ i) -> fromScalarDest i
-  _ -> error $ "Not a scalar dest " ++ pprint atom
-
-withAllocs :: Var -> (Atom -> ImpM a) -> ImpM a
-withAllocs (_:>ty) body = do
+-- TODO: free!
+alloc :: Type -> ImpM Atom
+alloc ty = do
   (dest, vs) <- makeDest ty
   flip mapM_ vs $ \v@(_:>IRefType refTy) -> emitStatement (Just v, Alloc refTy)
-  ans <- body dest
-  flip mapM_ vs $ \v -> emitStatement (Nothing, Free v)
-  return ans
+  extend $ asFst vs
+  return dest
 
 makeDest :: Type -> ImpM (Atom, [IVar])
 makeDest ty = runWriterT $ makeDest' [] ty
@@ -381,21 +391,27 @@ store dest src = emitStatement (Nothing, Store dest src)
 
 freshVar :: IVar -> ImpM IVar
 freshVar v = do
-  scope <- looks fst
+  scope <- looks (fst . snd)
   let v' = rename v scope
-  extend $ asFst (v' @> ())
+  extend $ asSnd $ asFst (v' @> ())
   return v'
 
 emitLoop :: IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop n body = do
-  (i, (_, loopBody)) <- scoped $ do
+  (i, loopBody) <- scopedBlock $ do
     i <- freshVar ("i":>IIntTy)
     body $ IVar i
     return i
   emitStatement (Nothing, Loop i n loopBody)
 
+scopedBlock :: ImpM a -> ImpM (a, ImpProg)
+scopedBlock body = do
+  (ans, (allocs, (_, prog))) <- scoped body
+  let frees = ImpProg [(Nothing, Free v) | v <- allocs]
+  return (ans, prog <> frees)
+
 emitStatement :: ImpStatement -> ImpM ()
-emitStatement statement = extend $ asSnd $ ImpProg [statement]
+emitStatement statement = extend $ asSnd $ asSnd $ ImpProg [statement]
 
 emitInstr :: ImpInstr -> ImpM IExpr
 emitInstr instr = do

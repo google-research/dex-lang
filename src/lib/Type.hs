@@ -520,11 +520,17 @@ traverseOpType op eq _ _ | isDependentOp op = case op of
     eq a a'
     eq l l'
     maybeApplyPi piTy x
-  PrimEffect ~(Just (Var ref), RefTy x) m -> case m of
-    MAsk         ->            return (Effect (ref @> (Reader, RefTy x)) Nothing, x)
-    MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, RefTy x)) Nothing, UnitTy)
-    MGet         ->            return (Effect (ref @> (State , RefTy x)) Nothing, x)
-    MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , RefTy x)) Nothing, UnitTy)
+  PrimEffect ~(Just val, ty) m -> do
+    let (ref, x) = case (val, ty) of
+          (Var ref', RefTy x') -> (ref', x')
+          -- This case is a hack for the Imp lowering, which does a dodgy substitution here
+          -- TODO: something better!
+          _ -> ("###":>UnitTy, ty)
+    case m of
+      MAsk         ->            return (Effect (ref @> (Reader, RefTy x)) Nothing, x)
+      MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, RefTy x)) Nothing, UnitTy)
+      MGet         ->            return (Effect (ref @> (State , RefTy x)) Nothing, x)
+      MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , RefTy x)) Nothing, UnitTy)
   IndexEff eff ~(Just (Var ref), tabRef) (_, i) ~(Pi (RefTy x) (Effect row tailVar, a)) -> do
     row' <- popRow eq row (eff, RefTy x)
     eq tabRef (RefTy (TabTy i x))

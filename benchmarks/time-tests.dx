@@ -5,7 +5,7 @@ matmul x y = for i k. sum (for j. x.i.j * y.j.k)
 matmul2 : i=>j=>Real -> j=>k=>Real -> i=>k=>Real
 matmul2 xs ys = for i k. fold 0.0 \j c. c + xs.i.j * ys.j.k
 
-type Nx = 10
+type Nx = 1000
 
 mat : Nx=>Nx=>Real
 mat = for i j. rand (hash 0 (hash iota.i iota.j))
