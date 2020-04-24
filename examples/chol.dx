@@ -5,47 +5,33 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 
 ' ### Matrix Math
 
-eyeLike: n=>n=>Real -> n=>n=>Real
-eyeLike x = for i. for j.
-  select (i == j) 1.0 0.0
+eye : n=>n=>Real
+eye = for i j. select (i == j) 1.0 0.0
 
 mmadd: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
-mmadd x y = for i. for j. x.i.j + y.i.j
+mmadd x y = for i j. x.i.j + y.i.j
 
 ' ## Cholesky Algorithm
 
 chol : (n=>n=>Real) -> (n=>n=>Real)
-chol x =
-  diagOp r j =
-    innersum = sum for k:n.
-      select (j > k) (sq r.j.k) 0.0
-    sqrt (x.j.j - innersum)
-  lowerOp r i j =
-    innersum = sum for k.
-      select (j > k) (r.i.k * r.j.k) 0.0
-    jdiag = diagOp r j -- can't look up r.j.j as it is not computed yet.
-    (x.i.j - innersum) / jdiag
-  fs = \outerrow:n.
-    \r. for i:n.
-      (select (i < outerrow)
-        (for j:n. r.i.j)  -- copy
-        for j:n.
-          (select (i < j)
-             0.0
-             (select (i > j)
-                (lowerOp r i j)
-                (diagOp r j))))
-  init = for i:n. for j:n. 0.0
-  fold init fs
-
+chol x = snd $ runState (for _ _. 0.0) \buf.
+  for i.
+    for j':(...i).
+      j = %inject(j')
+      row  = for k:(..<j). getAt2 buf i %inject(k)
+      row' = for k:(..<j). getAt2 buf j %inject(k)
+      a = x.i.j - vdot row row'
+      b = getAt2 buf j j
+      putAt2 buf i j $ select (i==j) (sqrt a) (a / b)
+    ()
 
 ' Test
 
 demoPSDMatrix: Key -> n=>n=>Real
 demoPSDMatrix key =
-  a = for x:n. for y:n. (randn $ ixkey2 key x y)
+  a = for i:n j:n. randn $ ixkey2 key i j
   x = mmp a (transpose a)
-  mmadd x $ eyeLike x
+  mmadd x eye
 
 psd = demoPSDMatrix @5 (newKey 1)
 :p psd
