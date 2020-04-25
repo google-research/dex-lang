@@ -1,8 +1,6 @@
 ' # Cholesky Factorization
 https://en.wikipedia.org/wiki/Cholesky_decomposition
 
-' ## Helpers
-
 ' ### Matrix Math
 
 eye : n=>n=>Real
@@ -25,36 +23,55 @@ chol x = snd $ runState (for _ _. 0.0) \buf.
       putAt2 buf i j $ select (i==j) (sqrt a) (a / b)
     ()
 
+' ## PSD solver based on Cholesky decomposition
+
+trisolveL : n=>n=>Real -> n=>Real -> n=>Real
+trisolveL mat b = execState (for _. 0.0) \buf.
+  for i.
+    row   = for j:(..<i). mat.i.%inject(j)
+    xPrev = for j:(..<i). getAt buf %inject(j)
+    putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
+
+trisolveU : n=>n=>Real -> n=>Real -> n=>Real
+trisolveU mat b = execState (for _. 0.0) \buf.
+  rof i.
+    row   = for j:(i...). mat.i.%inject(j)
+    xPrev = for j:(i...). getAt buf %inject(j)
+    putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
+
+psdsolve : n=>n=>Real -> n=>Real -> n=>Real
+psdsolve mat b =
+  l = chol mat
+  trisolveU (transpose l) $  trisolveL l b
+
 ' Test
 
-demoPSDMatrix: Key -> n=>n=>Real
-demoPSDMatrix key =
-  a = for i:n j:n. randn $ ixkey2 key i j
+type N = 4
+(k1, k2) = splitKey $ newKey 0
+
+psd : N=>N=>Real
+psd =
+  a = for i:N j:N. randn $ ixkey2 k1 i j
   x = mmp a (transpose a)
   mmadd x eye
 
-psd = demoPSDMatrix @5 (newKey 1)
-:p psd
-> [ [5.0101504, 8.795412e-2, 0.7408708, -7.481893e-2, -1.1080669]
-> , [8.795412e-2, 4.527965, 1.3578157, -1.6046677, -1.2366911]
-> , [0.7408708, 1.3578157, 4.7222195, -1.1773552, 1.6373565]
-> , [-7.481893e-2, -1.6046677, -1.1773552, 7.2309613, -2.2290187]
-> , [-1.1080669, -1.2366911, 1.6373565, -2.2290187, 4.5027013] ]
-
+l : N=>N=>Real
 l = chol psd
 
 :p l
-> [ [2.2383366, 0.0, 0.0, 0.0, 0.0]
-> , [3.929441e-2, 2.1275387, 0.0, 0.0, 0.0]
-> , [0.3309917, 0.6320964, 2.052588, 0.0, 0.0]
-> , [-3.3426132e-2, -0.7536193, -0.33612752, 2.5590858, 0.0]
-> , [-0.49504036, -0.57213473, 1.053721, -0.9075714, 1.4128994] ]
+> [ [2.021765, 0.0, 0.0, 0.0]
+> , [-1.7950183, 1.9901744, 0.0, 0.0]
+> , [-0.89788574, 0.18675673, 1.9802661, 0.0]
+> , [1.4457518, -0.29644823, 0.72458607, 2.2308075] ]
 
-reconst = for i. for j. psd.i.j - (mmp l (transpose l)).i.j
+psdReconstructed = l `mmp` transpose l
 
-:p reconst
-> [ [-8.881784e-16, 0.0, 1.110223e-16, 0.0, 0.0]
-> , [0.0, 0.0, -2.220446e-16, 0.0, 0.0]
-> , [1.110223e-16, -2.220446e-16, -8.881784e-16, 0.0, 0.0]
-> , [0.0, 0.0, 0.0, 0.0, 0.0]
-> , [0.0, 0.0, 0.0, 0.0, 0.0] ]
+:p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
+> 2.4651903e-32
+
+vec : N=>Real
+vec = for i. randn $ ixkey k2 i
+
+:p (vec, mvp psd (psdsolve psd vec))
+> ( [1.2112769, 0.23284969, -0.74191034, 0.8833507]
+> , [1.2112769, 0.23284969, -0.74191034, 0.8833507] )
