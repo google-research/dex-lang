@@ -33,7 +33,7 @@ module Syntax (
     strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, newLEnv, newTEnv,
+    newEnv, newLEnv, newTEnv, Direction (..),
     fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..),
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
@@ -213,7 +213,7 @@ data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
 data PrimOp ty e lam =
         App ty e e
       | TApp e [ty]
-      | For lam
+      | For Direction lam
       | TabGet e e
       | RecGet e RecField
       | ArrayGep e e
@@ -246,6 +246,8 @@ data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | IndexAsInt
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
+
+data Direction = Fwd | Rev  deriving (Show, Eq, Generic)
 
 type PrimName = PrimExpr () () ()
 
@@ -339,7 +341,7 @@ data ImpInstr = Load  IExpr
               | Alloc ArrayType
               | Free IVar
               | IGet IExpr Index
-              | Loop IVar Size ImpProg
+              | Loop Direction IVar Size ImpProg
               | IPrimOp IPrimOp
                 deriving (Show)
 
@@ -660,7 +662,7 @@ instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
     App l e1 e2          -> liftA3 App (fT l) (fE e1) (fE e2)
     TApp e tys           -> liftA2 TApp (fE e) (traverse fT tys)
-    For lam              -> liftA  For (fL lam)
+    For d lam            -> liftA  (For d) (fL lam)
     TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
     TabGet e i           -> liftA2 TabGet (fE e) (fE i)
     RecGet e i           -> liftA2 RecGet (fE e) (pure i)

@@ -327,11 +327,12 @@ lamExpr = do
 
 forExpr :: Parser FExpr
 forExpr = do
-  symbol "for"
+  dir <-  (symbol "for" $> Fwd)
+      <|> (symbol "rof" $> Rev)
   vs <- pat `sepBy` sc
   argTerm
   body <- blockOrExpr
-  return $ foldr fFor body vs
+  return $ foldr (fFor dir) body vs
 
 tabCon :: Parser FExpr
 tabCon = do
@@ -343,7 +344,7 @@ idxLhsArgs :: Parser (FExpr -> FExpr)
 idxLhsArgs = do
   period
   args <- pat `sepBy` period
-  return $ \body -> foldr fFor body args
+  return $ \body -> foldr (fFor Fwd) body args
 
 lamLhsArgs :: Parser (FExpr -> FExpr)
 lamLhsArgs = do
@@ -376,7 +377,7 @@ identifier = lexeme . try $ do
   w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
-  where resNames = ["for", "llam"]
+  where resNames = ["for", "rof", "llam"]
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
@@ -457,8 +458,8 @@ argTerm = mayNotBreak $ symbol "."
 fLam :: Type -> Pat -> FExpr -> FExpr
 fLam l p body = fPrimCon $ Lam l NoAnn $ FLamExpr p body
 
-fFor :: Pat -> FExpr -> FExpr
-fFor p body = fPrimOp $ For $ FLamExpr p body
+fFor :: Direction -> Pat -> FExpr -> FExpr
+fFor d p body = fPrimOp $ For d $ FLamExpr p body
 
 fPrimCon :: PrimCon Type FExpr FLamExpr -> FExpr
 fPrimCon con = FPrimExpr $ ConExpr con

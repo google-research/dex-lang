@@ -147,9 +147,9 @@ compileInstr instr = case instr of
     x' <- compileExpr x
     i' <- compileExpr i
     liftM Just $ indexPtr x' shape' i'
-  Loop i n body -> do
+  Loop d i n body -> do
     n' <- compileExpr n
-    compileLoop i n' body
+    compileLoop d i n' body
     return Nothing
 
 compileExpr :: IExpr -> CompileM Operand
@@ -179,19 +179,23 @@ finishBlock term newName = do
          . setCurInstrs (const [])
          . setBlockName (const newName)
 
-compileLoop :: IVar -> Operand -> ImpProg -> CompileM ()
-compileLoop iVar n body = do
+compileLoop :: Direction -> IVar -> Operand -> ImpProg -> CompileM ()
+compileLoop d iVar n body = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"
   i <- alloca IntType
-  store i (litInt 0)
-  entryCond <- load i >>= (`lessThan` n)
+  i0 <- case d of Fwd -> return $ litInt 0
+                  Rev -> n `sub` litInt 1
+  store i i0
+  entryCond <- litInt 0 `lessThan` n
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
   extendR (iVar @> iVal) $ compileProg body
-  iValInc <- add iVal (litInt 1)
-  store i iValInc
-  loopCond <- iValInc `lessThan` n
+  iValNew <- case d of Fwd -> add iVal $ litInt 1
+                       Rev -> sub iVal $ litInt 1
+  store i iValNew
+  loopCond <- case d of Fwd -> iValNew `lessThan` n
+                        Rev -> iValNew `greaterOrEq` litInt 0
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
 freshName :: Name -> CompileM L.Name
@@ -235,8 +239,14 @@ load ptr = emitInstr valTy $ L.Load False ptr Nothing 0 []
 lessThan :: Long -> Long -> CompileM Long
 lessThan x y = emitInstr longTy $ L.ICmp L.SLT x y []
 
+greaterOrEq :: Long -> Long -> CompileM Long
+greaterOrEq x y = emitInstr longTy $ L.ICmp L.SGE x y []
+
 add :: Long -> Long -> CompileM Long
 add x y = emitInstr longTy $ L.Add False False x y []
+
+sub :: Long -> Long -> CompileM Long
+sub x y = emitInstr longTy $ L.Sub False False x y []
 
 -- TODO: consider getting type from instruction rather than passing it explicitly
 emitInstr :: L.Type -> Instruction -> CompileM Operand

@@ -547,7 +547,7 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     where
       requiredClasses :: TVar -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
-  For (Pi n (eff, a)) ->
+  For _ (Pi n (eff, a)) ->
     inClass IdxSet n >> inClass Data a >> return (eff, TabTy n a)
   TabCon n ty xs -> do
     case indexSetConcreteSize n of
@@ -744,7 +744,7 @@ checkLinOp e = case e of
   ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
   App Lin    fun x -> tensCheck (check fun) (check x)
   App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
-  For (FLamExpr _ body) -> checkLinFExpr body
+  For _ (FLamExpr _ body) -> checkLinFExpr body
   TabGet x i -> tensCheck (check x) (withoutLin (check i))
   RunReader r (FLamExpr ~(RecLeaf v) body) -> do
     ((), spent) <- captureSpent $ checkLinFExpr r

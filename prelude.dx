@@ -177,8 +177,18 @@ runReader r f = %runReader(r, \r'. f r')
 runWriter : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
 runWriter f = %runWriter(\w. f w)
 
+execWriter : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} wt
+execWriter f =
+  (_, ans) = runWriter f
+  ans
+
 runState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
 runState s f = %runState(s, \s'. f s')
+
+execState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} st
+execState s f =
+  (_, ans) = runState s f
+  ans
 
 indexReader : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
 indexReader s i f = %indexReader(s, i, \s'. f s')

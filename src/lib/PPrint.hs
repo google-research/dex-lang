@@ -158,7 +158,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) wher
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (App _ e1 e2) = p e1 <+> p e2
   pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
-  pretty (For lam) = "for" <+> i <+> "." <+> nest 3 (line <> body)
+  pretty (For d lam) = dirStr d <+> i <+> "." <+> nest 3 (line <> body)
     where (i, body) = prettyLam lam
   pretty (TabCon _ _ xs) = list (map pretty xs)
   pretty (TabGet   x i) = p x <> "." <> p i
@@ -266,8 +266,12 @@ instance Pretty ImpInstr where
   pretty (Alloc ty)         = "alloc" <+> p ty
   pretty (IGet expr idx)    = p expr <> "." <> p idx
   pretty (Free (v:>_))      = "free"  <+> p v
-  pretty (Loop i n block)   = "for"   <+> p i <+> "<" <+> p n <>
-                               nest 4 (hardline <> p block)
+  pretty (Loop d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
+                              nest 4 (hardline <> p block)
+
+dirStr :: Direction -> Doc ann
+dirStr Fwd = "for"
+dirStr Rev = " rof"
 
 instance Pretty Array where
   pretty (Array shape b _) = "Ref:" <> p b <> p shape

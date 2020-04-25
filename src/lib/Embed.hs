@@ -188,16 +188,16 @@ fromPair pair = do
     Tup [x, y] -> return (x, y)
     _          -> error $ "Not a pair: " ++ pprint pair
 
-buildFor :: (MonadCat EmbedEnv m) => Var -> (Atom -> m Atom) -> m Atom
-buildFor i body = do
+buildFor :: (MonadCat EmbedEnv m) => Direction -> Var -> (Atom -> m Atom) -> m Atom
+buildFor d i body = do
   lam <- buildLamExpr i body
-  emit $ For lam
+  emit $ For d lam
 
 unzipTab :: (MonadCat EmbedEnv m) => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildFor ("i":>n) $ \i ->
+  fsts <- buildFor Fwd ("i":>n) $ \i ->
             liftM fst $ emit (TabGet tab i) >>= fromPair
-  snds <- buildFor ("i":>n) $ \i ->
+  snds <- buildFor Fwd ("i":>n) $ \i ->
             liftM snd $ emit (TabGet tab i) >>= fromPair
   return (fsts, snds)
   where (TabTy n _) = getType tab
@@ -211,7 +211,7 @@ mapScalars f ty xs = case ty of
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
-    emit $ For lam
+    emit $ For Fwd lam
   RecTy r -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
     liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'

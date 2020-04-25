@@ -102,12 +102,12 @@ linearizeCExpr topEnv expr = case expr' of
     ans <- emit $ TabGet x' i'
     return (ans, do tx' <- tx
                     emit $ TabGet tx' i')
-  For lam@(LamExpr i _) -> LinA $ do
+  For d lam@(LamExpr i _) -> LinA $ do
     (lam', lin) <- lift $ linearizeLamExpr topEnv lam
-    (ans, residuals) <- emit (For lam') >>= unzipTab
+    (ans, residuals) <- emit (For d lam') >>= unzipTab
     saveVars residuals
-    return (ans, buildFor i $ \i' -> do residuals' <- emit $ TabGet residuals i'
-                                        lin i' residuals')
+    return (ans, buildFor d i $ \i' -> do residuals' <- emit $ TabGet residuals i'
+                                          lin i' residuals')
   RunReader r lam@(LamExpr ref _) -> LinA $ do
     (r', rt) <- runLinA r
     (lam', lin) <- lift $ linearizeLamExpr topEnv lam
@@ -284,13 +284,12 @@ transposeCExpr expr ct = case expr of
     ~(RecVal rZeros) <- zeroAt (getType x)
     let ct' = RecVal $ recUpdate i ct rZeros
     transposeAtom x ct'
-  For (LamExpr v body) -> do
-    -- TODO: flip index or iteration order!
+  For d (LamExpr v body) -> do
     lam <- buildLamExpr v $ \i -> do
       ct' <- nTabGet ct i
       extendR (asSnd (v @> L i)) $ transposeExpr body ct'
       return UnitVal
-    void $ emit $ For lam
+    void $ emit $ For (flipDir d) lam
   TabGet ~(Var x) i -> do
     i' <- substTranspose i
     linVars <- asks fst
@@ -390,3 +389,7 @@ extractCT v@(_:>ty) m = do
       return (UnitVal, ans)
   (_, w) <- emit (RunWriter lam) >>= fromPair
   return (w, ans)
+
+flipDir :: Direction -> Direction
+flipDir Fwd = Rev
+flipDir Rev = Fwd

@@ -82,10 +82,10 @@ toImpCExpr' op = case op of
       ithDest <- impTabGet dest i'
       copyAtom ithDest row
     return dest
-  For (LamExpr b@(_:>idxTy) body, env) -> do
+  For d (LamExpr b@(_:>idxTy) body, env) -> do
     n' <-  indexSetSize idxTy
     dest <- alloc resultTy
-    emitLoop n' $ \i -> do
+    emitLoop d n' $ \i -> do
       i' <- intToIndex idxTy i
       ithDest <- impTabGet dest i'
       ans <- toImpExpr (env <> b @> L i') body
@@ -396,13 +396,13 @@ freshVar v = do
   extend $ asSnd $ asFst (v' @> ())
   return v'
 
-emitLoop :: IExpr -> (IExpr -> ImpM ()) -> ImpM ()
-emitLoop n body = do
+emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
+emitLoop d n body = do
   (i, loopBody) <- scopedBlock $ do
     i <- freshVar ("i":>IIntTy)
     body $ IVar i
     return i
-  emitStatement (Nothing, Loop i n loopBody)
+  emitStatement (Nothing, Loop d i n loopBody)
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do
@@ -430,7 +430,7 @@ addToDestFromRef dest src = case impExprType dest of
     updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src'
     store dest updated
   IRefType (RealType, (n:_)) ->
-    emitLoop n $ \i -> do
+    emitLoop Fwd n $ \i -> do
       dest' <- emitInstr $ IGet dest i
       src'  <- emitInstr $ IGet src  i
       addToDestFromRef dest' src'
@@ -446,7 +446,7 @@ initializeZero :: IExpr -> ImpM ()
 initializeZero ref = case impExprType ref of
   IRefType (RealType, []) -> store ref (ILit (RealLit 0.0))
   IRefType (RealType, (n:_)) ->
-    emitLoop n $ \i -> emitInstr (IGet ref i) >>= initializeZero
+    emitLoop Fwd n $ \i -> emitInstr (IGet ref i) >>= initializeZero
   ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 -- === type checking imp programs ===
@@ -495,7 +495,7 @@ instrTypeChecked instr = case instr of
     return Nothing
   Alloc ty -> return $ Just $ IRefType ty
   Free _   -> return Nothing  -- TODO: check matched alloc/free
-  Loop i size block -> do
+  Loop _ i size block -> do
     checkInt size
     void $ scoped $ extend (i @> IIntTy) >> checkProg block
     return Nothing
@@ -570,7 +570,7 @@ instrType instr = case instr of
   Copy  _ _       -> return Nothing
   Alloc ty        -> return $ Just $ IRefType ty
   Free _          -> return Nothing
-  Loop _ _ _      -> return Nothing
+  Loop _ _ _ _    -> return Nothing
   IGet e _        -> case impExprType e of
     IRefType (b, (_:shape)) -> return $ Just $ IRefType (b, shape)
     ty -> error $ "Can't index into: " ++ pprint ty
