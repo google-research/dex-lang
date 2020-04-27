@@ -1,14 +1,22 @@
 
-matmul : i=>j=>Real -> j=>k=>Real -> i=>k=>Real
-matmul x y = for i k. sum (for j. x.i.j * y.j.k)
+mmp' : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp' m1 m2 =
+  jvp (mmp m1) m2 m2
 
-matmul2 : i=>j=>Real -> j=>k=>Real -> i=>k=>Real
-matmul2 xs ys = for i k. fold 0.0 \j c. c + xs.i.j * ys.j.k
+mmp'' : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp'' m1 m2 =
+  snd (vjp (mmp (transpose m1)) (for _ _. 0.0)) m2
 
 type Nx = 1000
 
 mat : Nx=>Nx=>Real
-mat = for i j. rand (hash 0 (hash iota.i iota.j))
+mat = for i j. rand $ ixkey2 (newKey 0) i j
 
-:time matmul2 mat mat
-> 0.804174504s  <-- used to get this at Nx=1000. No longer..
+:time mmp mat mat
+> 0.804174504s
+
+-- These should be comparable to `mmp` (but currently aren't!)
+
+-- :time mmp' mat mat
+
+-- :time mmp'' mat mat

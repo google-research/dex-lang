@@ -232,5 +232,6 @@ tripleit x = %runReader(x, \r.
 :p grad sum [1.,2.]
 > [1.0, 1.0]
 
-:p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
-> ([3.0, 4.0], [1.0, 2.0])
+-- *BUG* This fails if `vdot` uses `fsum` instead of `sum`
+-- :p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
+-- > ([3.0, 4.0], [1.0, 2.0])

@@ -143,11 +143,11 @@ linearizedDiv x y tx ty = do
   add tx' ty''
 
 linearizePrimCon :: Con -> LinA Atom
-linearizePrimCon con = case con' of
+linearizePrimCon con = case con of
   Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
-  RecCon r -> liftA RecVal $ sequenceA r
+  AFor _ _ -> LinA $ return (withZeroTangent x)  where x = Con con
+  RecCon r -> liftA RecVal $ sequenceA $ fmap linearizeAtom r
   _ -> error $ "not implemented: " ++ pprint con
-  where con' = fmapExpr con id linearizeAtom id
 
 linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom | hasDiscreteType atom =

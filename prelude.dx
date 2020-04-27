@@ -238,6 +238,10 @@ scan' x0 fs = snd $ scan x0 \i x. dup (fs i x)
 sum : n=>Real -> Real
 sum xs = snd $ runWriter \ref. for i. tell ref xs.i
 
+-- Should this version of `sum` be the main one?
+fsum : A n | Ix n . (n->Real) -> Real
+fsum xs = snd $ runWriter \ref. for i. tell ref $ xs i
+
 isum : n=>Int -> Int
 isum xs = fold 0 \i c. iadd c xs.i
 
@@ -399,17 +403,19 @@ sqrt#lin x =
 
 'Some general linear algebra routines.
 
+transpose : n=>m=>Real -> m=>n=>Real
+transpose x = for i j. x.j.i
+
 vdot : n=>Real -> n=>Real -> Real
-vdot x y = sum for i. x.i * y.i
+vdot x y = fsum \i. x.i * y.i
 
 mmp : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 = for i k. sum for j. m1.i.j * m2.j.k
+mmp m1 m2 =
+  m2' = transpose m2
+  for i k. fsum \j. m1.i.j * m2'.k.j
 
 mvp : n=>m=>Real -> m=>Real -> n=>Real
 mvp m v = for i. vdot m.i v
 
-transpose : n=>m=>Real -> m=>n=>Real
-transpose x = for i j. x.j.i
-
 inner : n=>Real -> n=>m=>Real -> m=>Real -> Real
-inner x m y = sum for (i,j). x.i * m.i.j * y.j
+inner x m y = fsum \(i,j). x.i * m.i.j * y.j

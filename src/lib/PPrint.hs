@@ -274,7 +274,7 @@ dirStr Fwd = "for"
 dirStr Rev = " rof"
 
 instance Pretty Array where
-  pretty (Array shape b _) = "Ref:" <> p b <> p shape
+  pretty (Array shape b _) = "ArrayLit(" <> p b <> p shape <> ")"
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
