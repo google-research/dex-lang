@@ -309,27 +309,18 @@ transposeCExpr expr ct = case expr of
     void $ withIndexed Writer ref i' $ \(Var ref') -> do
       emitCTToRef ref' ct
       return UnitVal
-  -- TODO: de-dup RunReader/RunWriter a bit
   RunReader r (LamExpr v body) -> do
-    vs <- freeLinVars body
-    body' <- buildLamExpr v $ \x ->
-               extendR (asSnd (v @> L x)) $ do
-                 vsCTs <- withLinVars vs $ transposeExpr body ct
-                 return $ TupVal vsCTs
-    (vsCTs, ctr) <- emit (RunWriter body') >>= fromPair
-    ~(Tup vsCTs') <- unpackRec vsCTs
-    zipWithM_ emitCT vs vsCTs'
+    lam <- buildLamExpr v $ \x -> do
+             extendR (asSnd (v @> L x)) $ transposeExpr body ct
+             return UnitVal
+    (_, ctr) <- emit (RunWriter lam) >>= fromPair
     transposeAtom r ctr
   RunWriter (LamExpr v body) -> do
     (ctBody, ctEff) <- fromPair ct
-    vs <- freeLinVars body
-    body' <- buildLamExpr v $ \x -> do
-               extendR (asSnd (v @> L x)) $ do
-                 vsCTs <- withLinVars vs $ transposeExpr body ctBody
-                 return $ TupVal vsCTs
-    vsCTs <- emit (RunReader ctEff body')
-    ~(Tup vsCTs') <- unpackRec vsCTs
-    zipWithM_ emitCT vs vsCTs'
+    lam <- buildLamExpr v $ \x -> do
+             extendR (asSnd (v @> L x)) $ transposeExpr body ctBody
+             return UnitVal
+    void $ emit $ RunReader ctEff lam
   PrimEffect refArg m -> do
     refArg' <- substTranspose refArg
     case m of
@@ -385,10 +376,6 @@ substTranspose x = do
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
 withLinVar v m = liftM fst $ extractCT v m
-
-withLinVars :: [Var] -> TransposeM () -> TransposeM [Atom]
-withLinVars [] m = m >> return []
-withLinVars (v:vs) m = liftM (uncurry (:)) $ extractCT v $ withLinVars vs m
 
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
 extractCT v@(_:>ty) m = do

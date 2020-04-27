@@ -232,6 +232,21 @@ tripleit x = %runReader(x, \r.
 :p grad sum [1.,2.]
 > [1.0, 1.0]
 
--- *BUG* This fails if `vdot` uses `fsum` instead of `sum`
--- :p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
--- > ([3.0, 4.0], [1.0, 2.0])
+
+vec = [1.]
+
+:p jvp (\x. vec) [1.] [1.]
+> [0.0]
+
+:p grad (\(x, y). vdot x y) ([1.,2.], [3.,4.])
+> ([3.0, 4.0], [1.0, 2.0])
+
+:p
+  f : Real -> Real
+  f x =
+    y = x * 2.0
+    execWriter \ref.
+      tell ref (x * 2.0)
+      tell ref y
+  grad f 1.0
+> 4.0
