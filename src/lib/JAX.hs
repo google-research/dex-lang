@@ -18,6 +18,8 @@ import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import System.Process hiding (env)
 import System.IO
+import Control.Applicative
+import Data.Traversable
 
 import Env
 import Syntax
@@ -40,27 +42,37 @@ evalJModule m = pyCall m
 
 -- === JAXish IR ===
 
+type AxisSize = Int
+
 type JVar = VarP JType
-data JDecl = JLet JVar JOp            deriving (Generic, Show)
-data JAtom = JLit LitVal | JVar JVar  deriving (Generic, Show)
-type JOp = JOpP JAtom
+type JIndexVar = VarP AxisSize
+data JDecl = JLet JVar JOp               deriving (Generic, Show)
+data JAtom = JLit LitVal | JVar JVar     deriving (Generic, Show)
 data JModule = JModule [JDecl] JResults  deriving (Generic, Show)
 type JResults = [JAtom]
 
-data JType = JType BaseType  deriving (Generic, Show)
+data JType = JType [AxisSize] BaseType  deriving (Generic, Show)
 
 data JOpP e = JScalarBinOp ScalarBinOp e e
             | JScalarUnOp  ScalarUnOp e
               deriving (Generic, Show)
 
+data JOp = JFor [JIndexVar] [JIndexVar] (JOpP (JAtom, [JIndexVar]))
+           deriving (Generic, Show)
 type EmbedEnv = (Scope, [JDecl])
-type JaxM = ReaderT (Env Atom) (Cat EmbedEnv)
+type JaxEnv = ((Env Atom), [JIndexVar])
+type JaxM = ReaderT JaxEnv (Cat EmbedEnv)
 
 -- TODO: type checker
 getJOpType :: JOp -> JType
-getJOpType jOp = case jOp of
-  JScalarBinOp op _ _ -> JType outTy  where (_, _, outTy) = binOpType op
-  JScalarUnOp  op _   -> JType outTy  where (_,    outTy) = unOpType  op
+getJOpType (JFor foridx _ op) =
+  let (JType leafshape basetype) = getJOpPType op
+  in JType (map varAnn foridx ++ leafshape) basetype
+
+getJOpPType :: JOpP a -> JType
+getJOpPType op = case op of
+  JScalarBinOp op _ _ -> JType [] outTy  where (_, _, outTy) = binOpType op
+  JScalarUnOp  op _   -> JType [] outTy  where (_,    outTy) = unOpType  op
 
 -- === lowering from Expr ===
 
@@ -70,7 +82,7 @@ moduleToJaxpr (Module _ (ModBody decls results)) =
   where
     (env, (_, decls')) = flip runCat mempty $ flip runReaderT mempty $
                            catFold toJaxDecl decls
-    results' = scopelessSubst (fmap L env) results
+    results' = scopelessSubst (fmap L (fst env)) results
     vs = [v:> typeToJType ty | (v, L ty) <- envPairs $ freeVars results']
 
 _toJaxExpr :: Expr -> JaxM Atom
@@ -81,10 +93,10 @@ _toJaxExpr expr = case expr of
   CExpr op -> toJaxOp op
   Atom x -> jSubst x
 
-toJaxDecl :: Decl -> JaxM (Env Atom)
+toJaxDecl :: Decl -> JaxM JaxEnv
 toJaxDecl (Let v rhs) = do
   ans <- toJaxOp rhs
-  return $ v @> ans
+  return $ asFst $ v @> ans
 
 toJaxOp :: CExpr -> JaxM Atom
 toJaxOp cexpr = case cexpr of
@@ -96,14 +108,16 @@ toJaxOp cexpr = case cexpr of
 
 fromScalarAtom ::Atom -> JAtom
 fromScalarAtom atom = case atom of
-  Var (v :> BaseTy b) -> JVar (v:>JType b)
+  Var (v :> BaseTy b) -> JVar (v:>JType [] b)
   Con (Lit x) -> JLit x
   _ -> error $ "Not a scalar atom: " ++ pprint atom
 
-emitJOp :: JOp -> JaxM JAtom
+emitJOp :: JOpP JAtom -> JaxM JAtom
 emitJOp op = do
-  v <- freshVar ("v":> getJOpType op)
-  extend $ asSnd [JLet v op]
+  idxs <- asks snd
+  let op' = JFor idxs [] $ fmap (\x -> (x, [])) op
+  v <- freshVar ("v":> getJOpType op')
+  extend $ (v @> (), [JLet v op'])
   return $ JVar v
 
 freshVar :: JVar -> JaxM JVar
@@ -115,17 +129,17 @@ freshVar v = do
 
 jAtomToAtom :: JAtom -> Atom
 jAtomToAtom jatom = case jatom of
-  JVar (v:> JType b) -> Var (v:> BaseTy b)
+  JVar (v:> JType []b) -> Var (v:> BaseTy b)
   JLit x -> Con $ Lit x
 
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
-  BaseTy b -> JType b
+  BaseTy b -> JType [] b
   _ -> error $ "Not a jax type: " ++ pprint ty
 
 jSubst :: Subst a => a -> JaxM a
 jSubst x = do
-  env <- ask
+  env <- asks fst
   return $ scopelessSubst (fmap L env) x
 
 -- === call python over a pipe ===
@@ -164,10 +178,16 @@ instance Pretty a => Pretty (JOpP a) where
   pretty (JScalarUnOp  op x)   = pretty (show op) <+> pretty x
 
 instance Pretty JType where
-  pretty (JType b) = pretty b
+  pretty (JType s b) = pretty b <+> pretty s
+
+instance Pretty JOp where
+  pretty _ = undefined
 
 instance ToJSON   JDecl
 instance FromJSON JDecl
+
+instance ToJSON   JOp
+instance FromJSON JOp
 
 instance ToJSON   JAtom
 instance FromJSON JAtom
@@ -204,3 +224,15 @@ instance FromJSON LitVal
 
 instance ToJSON   BaseType
 instance FromJSON BaseType
+
+instance Functor JOpP where
+  fmap = fmapDefault
+
+instance Foldable JOpP where
+  foldMap = foldMapDefault
+
+instance Traversable JOpP where
+  traverse f op = case op of
+    JScalarBinOp o x y -> liftA2 (JScalarBinOp o) (f x) (f y)
+    JScalarUnOp o x    -> liftA  (JScalarUnOp o) (f x)
+

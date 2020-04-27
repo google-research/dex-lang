@@ -6,6 +6,7 @@
 
 import json
 import sys
+import pprint
 
 log = sys.stderr.write
 
@@ -64,5 +65,6 @@ def eval_prog(prog):
 if __name__ == "__main__":
   log("hello from python!\n")
   prog = json.load(sys.stdin)
-  result = eval_prog(prog)
-  json.dump(result, sys.stdout)
+  log(pprint.pformat(prog))
+  # result = eval_prog(prog)
+  # json.dump(result, sys.stdout)
