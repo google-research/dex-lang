@@ -27,6 +27,7 @@ import Simplify
 import Serialize
 import Imp
 import Flops
+import Interpreter
 import JAX
 import JIT
 import PPrint
@@ -133,7 +134,7 @@ evalModule env untyped = do
   case backend of
     LLVM   -> evalJIT env optimized
     JAX    -> evalJAX optimized
-    Interp -> error "Interpreter currently broken"
+    Interp -> evalInterp optimized
 
 -- TODO: check here for upstream errors
 inferTypes :: TopEnv -> Pass FModule Module
@@ -158,6 +159,12 @@ evalImp m = do
 evalJAX :: Pass Module TopEnv
 evalJAX m = do
   (result, outs) <- liftIO $ evalModuleJAX m
+  tell outs
+  return result
+
+evalInterp :: Pass Module TopEnv
+evalInterp m = do
+  (result, outs) <- liftIO $ evalModuleInterp m
   tell outs
   return result
 

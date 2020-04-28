@@ -39,7 +39,7 @@ module Syntax (
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern TupVal, pattern RecVal)
+    pattern PairVal, pattern TupVal, pattern RecVal, pattern RealVal)
   where
 
 import Data.Tuple (swap)
@@ -794,6 +794,9 @@ a ==> b = TC $ TabType a b
 
 pattern IntVal :: Int -> Atom
 pattern IntVal x = Con (Lit (IntLit x))
+
+pattern RealVal :: Double -> Atom
+pattern RealVal x = Con (Lit (RealLit x))
 
 pattern RecVal :: Record Atom -> Atom
 pattern RecVal r = Con (RecCon r)
