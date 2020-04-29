@@ -37,7 +37,6 @@ import PPrint
 import Cat
 import Imp
 import Array
-import Subst
 import LLVMExec
 
 -- This forces the linker to link libdex.so. TODO: something better
@@ -58,16 +57,15 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 type Long = Operand
 type NInstr = Named Instruction
 
-evalModuleJIT :: ImpModule -> IO (TopEnv, [Output])
-evalModuleJIT (Module _ (ImpModBody [] (ImpProg []) result)) =
+evalModuleJIT :: TopEnv -> ImpModule -> IO (TopEnv, [Output])
+evalModuleJIT _ (Module _ _ (ImpModBody [] (ImpProg []) result)) =
   return (result, [])
-evalModuleJIT (Module _ (ImpModBody vs prog result)) = do
+evalModuleJIT env (Module _ _ (ImpModBody vs prog result)) = do
   dests <- liftM fold $ mapM allocIRef vs
-  let compileEnv = fmap arrayToOperand dests
+  let compileEnv = fmap arrayToOperand (topArrayEnv env <> dests)
   let llvmModule = runCompileM compileEnv (compileTopProg prog)
-  let substEnv = (fmap (L . impExprToAtom . IRef) dests, mempty)
   passInfo <- evalJit llvmModule
-  return (subst substEnv result, passInfo)
+  return (result {topArrayEnv = dests}, passInfo)
 
 allocIRef :: IVar -> IO (Env Array)
 allocIRef v@(_:> IRefType (b, shape)) = do
@@ -155,7 +153,6 @@ compileInstr instr = case instr of
 compileExpr :: IExpr -> CompileM Operand
 compileExpr expr = case expr of
   ILit v   -> return (litVal v)
-  IRef x   -> return $ arrayToOperand x
   IVar v   -> lookupImpVar v
 
 arrayToOperand :: Array -> Operand

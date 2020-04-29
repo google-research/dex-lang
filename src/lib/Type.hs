@@ -82,10 +82,10 @@ class IsModuleBody a where
   checkModuleBody  :: TypeEnv -> a -> Except TypeEnv
 
 instance (IsModuleBody body) => IsModule (ModuleP body) where
-  checkModule (Module (imports, exports) body) = do
+  checkModule (Module _ (imports, exports) body) = do
     exports' <- checkModuleBody imports body
     assertEq exports exports' "Module exports"
-  moduleType (Module ty _) = ty
+  moduleType (Module _ ty _) = ty
 
 instance IsModuleBody FModBody where
   checkModuleBody env (FModBody decls tyDefs) = do
@@ -611,6 +611,8 @@ traverseConType :: MonadError Err m
                      -> m Type
 traverseConType con eq kindIs _ = case con of
   Lit l    -> return $ BaseTy $ litType l
+  ArrayLit (ArrayLitVal shape b _) ->
+    return $ ArrayTy shape b  -- TODO: check elements
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
@@ -618,7 +620,6 @@ traverseConType con eq kindIs _ = case con of
   AFor n a -> return $ TabTy n a
   AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
   AsIdx n e -> eq e (BaseTy IntType) >> return n
-  ArrayRef (Array shape b _) -> return $ ArrayTy shape b
   Todo ty -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 

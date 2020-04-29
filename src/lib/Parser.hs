@@ -71,7 +71,7 @@ sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
   (src, b) <- withSource $ withRecovery recover $ sourceBlock'
-  return $ SourceBlock (unPos (sourceLine pos)) offset src b
+  return $ SourceBlock (unPos (sourceLine pos)) offset src b Nothing
 
 recover :: ParseError String Void -> Parser SourceBlock'
 recover e = do
@@ -162,6 +162,16 @@ typeDef = do
               [] -> ty
               _  -> TypeAlias tvs ty
   return $ TyDef v ty'
+
+declAsModule :: FDecl -> FModule
+declAsModule decl =
+  Module Nothing (freeVars decl, fDeclBoundVars decl) (FModBody [decl] mempty)
+
+exprAsModule :: FExpr -> (Var, FModule)
+exprAsModule e =
+  (v, Module Nothing (freeVars e, lbind v) (FModBody body mempty))
+  where v = "*ans*" :> NoAnn
+        body = [LetMono (RecLeaf v) e]
 
 -- === Parsing decls ===
 

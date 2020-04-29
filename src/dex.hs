@@ -30,39 +30,44 @@ data EvalMode = ReplMode String
               | ScriptMode FilePath DocFmt ErrorHandling
 data CmdOpts = CmdOpts EvalMode EvalOpts
 
+type BlockCounter = Int
+type EvalState = (BlockCounter, TopEnv)
+
 runMode :: EvalMode -> EvalOpts -> IO ()
 runMode evalMode opts = do
-  env <- execStateT (evalPrelude opts) mempty
-  let runEnv m = evalStateT m env
+  (n, env) <- execStateT (evalPrelude opts) (0, mempty)
+  let runEnv m = evalStateT m (n, env)
   case evalMode of
     ReplMode prompt ->
       runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
     ScriptMode fname fmt _ -> do
       results <- runEnv $ evalFile opts fname
       printLitProg fmt results
+    -- These are broken if the prelude produces any arrays because the blockId
+    -- counter restarts at zero. TODO: make prelude an implicit import block
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalDecl :: EvalOpts -> SourceBlock -> StateT TopEnv IO Result
+evalDecl :: EvalOpts -> SourceBlock -> StateT EvalState IO Result
 evalDecl opts block = do
-  env <- get
-  (env', ans) <- liftIO (evalBlock opts env block)
-  modify (<> env')
+  (n, env) <- get
+  (env', ans) <- liftIO $ evalBlock opts env $ addBlockId n block
+  put (n+1, env <> env')
   return ans
 
-evalFile :: EvalOpts -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
+evalFile :: EvalOpts -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
 evalFile opts fname = do
   source <- liftIO $ readFile fname
   let sourceBlocks = parseProg source
   results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude ::EvalOpts-> StateT TopEnv IO ()
+evalPrelude ::EvalOpts-> StateT EvalState IO ()
 evalPrelude opts = do
   result <- evalFile opts (preludeFile opts)
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalOpts -> InputT (StateT TopEnv IO) ()
+replLoop :: String -> EvalOpts -> InputT (StateT EvalState IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get

@@ -25,12 +25,12 @@ import Record
 type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
-normalizeModule (Module ty (FModBody decls tySub)) =
-  Module ty (ModBody decls' (tySubTop <> fold results))
+normalizeModule (Module bid ty (FModBody decls tySub)) =
+  Module bid ty (ModBody decls' (tySubTop <> fold results))
   where
     ((results, _), decls') = runNormM (catTraverse normalizeTopDecl decls) mempty
     tySub' = fmap T tySub
-    tySubTop = TopEnv (substEnvType tySub') tySub' mempty
+    tySubTop = TopEnv (substEnvType tySub') tySub' mempty mempty
 
 runNormM :: NormM a -> SubstEnv -> (a, [Decl])
 runNormM m env = (ans, decls)
@@ -40,10 +40,11 @@ normalizeTopDecl :: FDecl -> NormM (TopEnv, SubstEnv)
 normalizeTopDecl decl = case decl of
   FRuleDef (LinearizationDef v) _ (FTLam [] [] expr) -> do
     ans <- normalize expr
-    return (TopEnv mempty mempty ((v:>())@>ans), mempty)
+    return (mempty { linRules = (v:>())@>ans }, mempty)
   _ -> do
     subEnv <- normalizeDecl decl
-    return (TopEnv (substEnvType subEnv) subEnv mempty, subEnv)
+    return (mempty { topTypeEnv = substEnvType subEnv
+                   , topSubstEnv = subEnv }, subEnv)
 
 normalizeVal :: FExpr -> Except Atom
 normalizeVal expr = do

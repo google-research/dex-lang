@@ -30,7 +30,8 @@ simplifyModule env m = simplifyModuleOpts (SimpOpts False) env $
                        simplifyModuleOpts (SimpOpts True ) env $ m
 
 simplifyModuleOpts :: SimpOpts -> TopEnv -> Module -> Module
-simplifyModuleOpts opts env (Module (_, exports) m) = Module (imports, exports) modBody
+simplifyModuleOpts opts env (Module bid (_, exports) m) =
+  Module bid (imports, exports) modBody
   where
     (ans', (_, decls)) = flip runEmbed mempty $ flip runReaderT (env, opts) $
                          flip runReaderT mempty $ simplifyModBody m

@@ -34,15 +34,20 @@ type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
 toImpModule :: TopEnv -> Module -> ImpModule
-toImpModule env (Module ty@(imports, _) m) = Module ty (ImpModBody vs prog result)
-  where ((vs, result, prog), _) = flip runCat mempty $ toImpModBody env imports m
+toImpModule env (Module bid ty@(imports, _) m) =
+  Module bid ty (ImpModBody vs prog result)
+  where
+    Just bid' = bid
+    ((vs, result, prog), _) =
+        flip runCat mempty $ toImpModBody (ArrayName bid') env imports m
 
-toImpModBody :: TopEnv -> TypeEnv -> ModBody -> ImpM ([IVar], TopEnv, ImpProg)
-toImpModBody topEnv imports (ModBody decls result) = do
+toImpModBody :: NameSpace -> TopEnv -> TypeEnv -> ModBody
+             -> ImpM ([IVar], TopEnv, ImpProg)
+toImpModBody ns topEnv imports (ModBody decls result) = do
   let decls' = map (subst (topSubstEnv topEnv, mempty)) decls
   let vs = [v:>ty | (v, L ty) <- envPairs $ freeVars result `envDiff` imports]
   let outTuple = TupVal $ map Var vs
-  (outDest, vs') <- makeDest $ getType outTuple
+  (outDest, vs') <- makeDest (Name ns "ptr" 0) $ getType outTuple
   let (TupVal outDests) = outDest
   ((), prog) <- scopedBlock $ do
     ans <- toImpExpr mempty (wrapDecls decls' outTuple)
@@ -155,7 +160,6 @@ toImpCExpr' op = case op of
 
 toScalarAtom :: Type -> IExpr -> Atom
 toScalarAtom _  (ILit v) = Con $ Lit v
-toScalarAtom _  (IRef x) = Con $ ArrayRef x
 toScalarAtom ty x@(IVar (v:>_)) = case ty of
   BaseTy _                -> Var (v:>ty)
   TC (IntRange       _ _) -> Con $ AsIdx ty $ toScalarAtom IntTy x
@@ -173,36 +177,35 @@ fromScalarAtom atom = case atom of
 fromArrayAtom :: Atom -> IExpr
 fromArrayAtom atom = case atom of
   Var (v:>ty)          -> IVar (v :> typeToIType ty)
-  Con (ArrayRef array) -> IRef array
   _ -> error $ "Expected array, got: " ++ pprint atom
 
 -- TODO: free!
 alloc :: Type -> ImpM Atom
 alloc ty = do
-  (dest, vs) <- makeDest ty
+  (dest, vs) <- makeDest "v" ty
   flip mapM_ vs $ \v@(_:>IRefType refTy) -> emitStatement (Just v, Alloc refTy)
   extend $ asFst vs
   return dest
 
-makeDest :: Type -> ImpM (Atom, [IVar])
-makeDest ty = runWriterT $ makeDest' [] ty
+makeDest :: Name-> Type -> ImpM (Atom, [IVar])
+makeDest name ty = runWriterT $ makeDest' name [] ty
 
-makeDest' :: [IExpr] -> Type -> WriterT [IVar] ImpM Atom
-makeDest' shape ty@(TC con) = case con of
+makeDest' :: Name-> [IExpr] -> Type -> WriterT [IVar] ImpM Atom
+makeDest' name shape ty@(TC con) = case con of
   BaseType b  -> do
-    v <- lift $ freshVar ("v":> IRefType (b, shape))
+    v <- lift $ freshVar (name :> IRefType (b, shape))
     tell [v]
     return $ Con $ AGet $ Var (fmap impTypeToType v)
   TabType n b -> do
     n'  <- lift $ indexSetSize n
-    liftM (Con . AFor n) $ makeDest' (shape ++ [n']) b
-  RecType r   -> liftM RecVal $ traverse (makeDest' shape) r
+    liftM (Con . AFor n) $ makeDest' name (shape ++ [n']) b
+  RecType r   -> liftM RecVal $ traverse (makeDest' name shape) r
   IntRange   _ _   -> scalarIndexSet ty
   IndexRange _ _ _ -> scalarIndexSet ty
   _ -> error $ "Can't lower type to imp: " ++ pprint con
   where
-    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' shape (BaseTy IntType)
-makeDest' _ ty = error $ "Can't lower type to imp: " ++ pprint ty
+    scalarIndexSet t = liftM (Con . AsIdx t) $ makeDest' name shape (BaseTy IntType)
+makeDest' _ _ ty = error $ "Can't lower type to imp: " ++ pprint ty
 
 impTabGet :: Atom -> Atom -> ImpM Atom
 impTabGet ~(Con (AFor _ body)) i = do
@@ -256,7 +259,6 @@ impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
   ILit x       -> Con $ Lit x
-  IRef ref     -> Con $ ArrayRef ref
 
 impTypeToType :: IType -> Type
 impTypeToType (IValType  b        ) = BaseTy         b
@@ -455,10 +457,14 @@ type ImpCheckM a = CatT (Env IType) (Either Err) a
 
 instance IsModuleBody ImpModBody where
   checkModuleBody imports (ImpModBody vs prog result) = do
-    let env = foldMap (\v -> v@> varAnn v) vs
+    let env = arrayImports imports <> foldMap (\v -> v@> varAnn v) vs
     ((), env') <- runCatT (checkProg prog) env
     let tyEnv = fmap (L . impTypeToType) (env <> env')
     checkModuleBody (imports <> tyEnv) (ModBody [] result)
+
+arrayImports :: TypeEnv -> Env IType
+arrayImports env = fold [ (v:>()) @> typeToIType ty
+                        | (v@(Name (ArrayName _) _ _), L ty) <- envPairs env]
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements
@@ -512,8 +518,6 @@ checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
   ILit val -> return $ IValType (litType val)
   -- TODO: check shape matches vector length
-  IRef (Array shape b _) -> return $ IRefType (b, shape')
-    where shape' = map (ILit . IntLit) shape
   IVar v -> looks $ (! v)
 
 checkInt :: IExpr -> ImpCheckM ()
@@ -558,8 +562,6 @@ fromScalarRefType ty = throw CompilerErr $ "Not a scalar reference type: " ++ pp
 impExprType :: IExpr -> IType
 impExprType expr = case expr of
   ILit v    -> IValType (litType v)
-  IRef (Array shape b _) -> IRefType (b, shape')
-    where shape' = map (ILit . IntLit) shape
   IVar (_:>ty) -> ty
 
 instrType :: MonadError Err m => ImpInstr -> m (Maybe IType)

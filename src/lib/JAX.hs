@@ -29,7 +29,7 @@ import Type
 import Cat
 
 evalModuleJAX :: Module -> IO (TopEnv, [Output])
-evalModuleJAX (Module _ (ModBody [] out)) = return (out, [])
+evalModuleJAX (Module _ _ (ModBody [] out)) = return (out, [])
 evalModuleJAX m = do
   let (jmod, vs, resultEnv) = moduleToJaxpr m
   let info = PassInfo JAXPass "" (pprint jmod)
@@ -77,7 +77,7 @@ getJOpPType op = case op of
 -- === lowering from Expr ===
 
 moduleToJaxpr :: Module -> (JModule, [JVar], TopEnv)
-moduleToJaxpr (Module _ (ModBody decls results)) =
+moduleToJaxpr (Module _ _ (ModBody decls results)) =
   (JModule decls' (map JVar vs), vs, results')
   where
     (env, (_, decls')) = flip runCat mempty $ flip runReaderT mempty $

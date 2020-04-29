@@ -31,6 +31,7 @@ data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | SourceTypeName
                | InferenceName | LocalTVName | NoNameSpace
+               | ArrayName Int
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
@@ -167,9 +168,12 @@ instance Traversable VarP where
 instance Pretty Name where
   pretty NoName = "_"
   pretty (DeBruijn i) = "!" <> pretty i
-  pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
+  pretty (Name ns tag n) = nsPrefix <> pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n
+                  nsPrefix = case ns of ArrayName i -> pretty i <> "/"
+                                        _           -> mempty
+
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0
 

@@ -17,6 +17,7 @@ import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
+import Array
 import Syntax
 import Cat
 import Env
@@ -48,8 +49,7 @@ type Pass a b = a -> TopPassM b
 -- TODO: handle errors due to upstream modules failing
 evalBlock :: EvalOpts -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
 evalBlock opts env block = do
-  (ans, outs) <- runTopPassM opts $ addErrSrc block $
-                   evalSourceBlock env (sbContents block)
+  (ans, outs) <- runTopPassM opts $ addErrSrc block $ evalSourceBlock env block
   case ans of
     Left err   -> return (mempty, Result outs (Left err))
     Right env' -> return (env'  , Result outs (Right ()))
@@ -57,8 +57,8 @@ evalBlock opts env block = do
 runTopPassM :: EvalOpts -> TopPassM a -> IO (Except a, [Output])
 runTopPassM opts m = runWriterT $ runExceptT $ runReaderT m opts
 
-evalSourceBlock :: TopEnv -> SourceBlock' -> TopPassM TopEnv
-evalSourceBlock env block = case block of
+evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
+evalSourceBlock env block = case sbContents block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -94,23 +94,24 @@ evalSourceBlock env block = case block of
     _            -> throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIOTop $ readFile fname
-    evalSourceBlocks env $ map sbContents $ parseProg source
+    evalSourceBlocks env $ parseProg source
   LoadData p DexObject fname -> do
     source <- liftIOTop $ readFile fname
     let val = ignoreExcept $ parseData source
     let decl = LetMono p val
-    let m = Module (mempty, foldMap lbind p) $ FModBody [decl] mempty
-    filterOutputs (const False) $ evalModule env m
+    filterOutputs (const False) $ evalModule env $
+      Module (sbId block) (mempty, foldMap lbind p) $ FModBody [decl] mempty
   LoadData p DexBinaryObject fname -> do
     val <- liftIOTop $ loadDataFile fname
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
     let outEnv = b @> L val
-    return $ TopEnv (substEnvType outEnv) outEnv mempty
+    return $ mempty { topTypeEnv = substEnvType outEnv
+                    , topSubstEnv = outEnv }
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
 
-evalSourceBlocks :: TopEnv -> [SourceBlock'] -> TopPassM TopEnv
+evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
 evalSourceBlocks env blocks =
   liftM snd $ flip runCatT env $ flip mapM_ blocks $ \block -> do
     env' <- look
@@ -121,9 +122,17 @@ evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do
   env' <- filterOutputs (const False) $ evalModule env m
   let (L val) = topSubstEnv env' ! v
-  return $ subst (topSubstEnv (env <> env'), mempty) val
+  let fullEnv = env <> env'
+  let val' = subst (topSubstEnv fullEnv, mempty) val
+  arraySubstEnv <- liftIO $ buildArraySubst $ topArrayEnv fullEnv
+  return $ subst (arraySubstEnv, mempty) val'
 
--- TODO: extract only the relevant part of the env we can check for module-level
+buildArraySubst :: Env Array -> IO SubstEnv
+buildArraySubst env = forM env $ \arrPtr -> do
+  arrVal <- loadArray arrPtr
+  return $ L $ Con $ ArrayLit arrVal
+
+ -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalModule :: TopEnv -> Pass FModule TopEnv
@@ -147,12 +156,12 @@ corePasses :: TopEnv -> Pass Module Module
 corePasses env = namedPass SimpPass (return . simplifyModule env)
 
 evalJIT :: TopEnv -> Pass Module TopEnv
-evalJIT env = namedPass ImpPass  (return . toImpModule env) >=> evalImp
+evalJIT env = namedPass ImpPass  (return . toImpModule env) >=> evalImp env
 
-evalImp :: Pass ImpModule TopEnv
-evalImp m = do
+evalImp :: TopEnv -> Pass ImpModule TopEnv
+evalImp env m = do
   countFlops m
-  (result, outs) <- liftIO $ evalModuleJIT m
+  (result, outs) <- liftIO $ evalModuleJIT env m
   tell outs
   return result
 
@@ -181,7 +190,7 @@ namedPass name pass x = do
   return ans
 
 countFlops :: ImpModule -> TopPassM ()
-countFlops (Module _  m) = tell [PassInfo Flops "" (pprint (moduleFlops m))]
+countFlops (Module _ _  m) = tell [PassInfo Flops "" (pprint (moduleFlops m))]
 
 printedPass :: Pretty a => TopPassM a -> TopPassM (a, String)
 printedPass m = do

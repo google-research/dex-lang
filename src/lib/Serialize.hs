@@ -22,11 +22,11 @@ import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 
+import Array
 import Type
 import Syntax
 import PPrint
 import Parser
-import Array
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -40,7 +40,7 @@ preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
 dumpDataFile :: FilePath -> Val -> IO ()
 dumpDataFile fname val = do
-  arrayRefs <- liftM getValRefs $ valScalarsToArrays val
+  arrayRefs <- mapM allocStoreArray $ getValArrays val
   let ty = getType val
   withFile fname WriteMode $ \h -> do
     putBytes h $ serializeFullHeader $ createHeader ty arrayRefs
@@ -56,7 +56,7 @@ loadDataFile fname = do
   let firstPtr = filePtr `plusPtr` n
   let ptrs = init $ scanl plusPtr firstPtr sizes
   -- TODO: typecheck result
-  return $ valFromPtrs ty ptrs
+  valFromPtrs ty ptrs
 
 memmap :: FilePath -> IO (Ptr ())
 memmap fname = do
@@ -135,15 +135,16 @@ checkBufferSize :: Int -> Int -> Except ()
 checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
    "buffer too small: " <> show size <> " < " <> show minSize
 
-valFromPtrs :: Type -> [Ptr ()] -> Val
-valFromPtrs ty = evalState (valFromPtrs' [] ty)
+valFromPtrs :: Type -> [Ptr ()] -> IO Val
+valFromPtrs ty = evalStateT (valFromPtrs' [] ty)
 
-valFromPtrs' :: [Int] -> Type -> State [Ptr ()] Val
+valFromPtrs' :: [Int] -> Type -> StateT [Ptr ()] IO Val
 valFromPtrs' shape ty@(TC con) = case con of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    return $ Con $ AGet $ Con $ ArrayRef $ Array shape b ptr
+    arrayVal <- liftIO $ loadArray $ Array shape b ptr
+    return $ Con $ AGet $ Con $ ArrayLit $ arrayVal
   RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
   TabType idx@(FixedIntRange low high) a ->
     liftM (Con . AFor idx) $ valFromPtrs' (shape ++ [(high - low)]) a
@@ -155,20 +156,20 @@ valFromPtrs' _ ty = error $ "Not implemented: " ++ pprint ty
 type PrimConVal = PrimCon Type Atom LamExpr
 
 valToScatter :: Val -> IO Output
-valToScatter ~(Con (AFor (FixedIntRange low high) body)) = do
-  xs' <- sequence [liftM fromRealLit $ loadScalar (subArray i xs) | i <- [0..(n - 1)]]
-  ys' <- sequence [liftM fromRealLit $ loadScalar (subArray i ys) | i <- [0..(n - 1)]]
-  return $ ScatterOut xs' ys'
-  where ~(PairVal (Con (AGet (Con (ArrayRef xs))))
-                  (Con (AGet (Con (ArrayRef ys))))) = body
-        n = high - low
+valToScatter ~(Con (AFor _ body)) = return $ ScatterOut xs' ys'
+  where
+    ~(PairVal (Con (AGet (Con (ArrayLit (ArrayLitVal _ _ xs)))))
+              (Con (AGet (Con (ArrayLit (ArrayLitVal _ _ ys)))))) = body
+    xs' = map fromRealLit xs
+    ys' = map fromRealLit ys
 
 valToHeatmap :: Val -> IO Output
 valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = do
-  xs <- sequence [liftM fromRealLit $ loadScalar (subArray j (subArray i array))
+  array' <- allocStoreArray array
+  xs <- sequence [liftM fromRealLit $ loadScalar (subArray j (subArray i array'))
                  | i <- [0..h-1], j <- [0..w-1]]
   return $ HeatmapOut h w xs
-  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet (Con (ArrayRef array)))))) = body
+  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet (Con (ArrayLit array)))))) = body
         h = hh - hl
         w = wh - wl
 
@@ -189,7 +190,7 @@ prettyVal (Con con) = case con of
       (Just n') = indexSetConcreteSize n
       idxSetStr = case n of FixedIntRange 0 _ -> mempty
                             _                 -> "@" <> pretty n
-  AGet (Con (ArrayRef array)) -> liftM pretty $ loadScalar array
+  AGet (Con (ArrayLit (ArrayLitVal _ _ [x]))) -> return $ pretty x
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
@@ -199,7 +200,7 @@ prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 
 litIndexSubst :: Int -> Atom -> Atom
 litIndexSubst i atom = case atom of
-  Con (ArrayRef x) -> Con $ ArrayRef $ subArray i x
+  Con (ArrayLit x) -> Con $ ArrayLit $ subArrayVal i x
   Con con -> Con $ fmapExpr con id (litIndexSubst i) (error "unexpected lambda")
   _ -> error "Unused index"
 
@@ -212,18 +213,10 @@ traverseVal f val = case val of
       Nothing   -> traverseExpr con return (traverseVal f) return
   atom -> return atom
 
-valScalarsToArrays :: Val -> IO Val
-valScalarsToArrays val = flip traverseVal val $ \con -> case con of
-  Lit x -> do
-    arr <- allocateArray (litType x) []
-    storeScalar arr x
-    return $ Just $ AGet $ Con $ ArrayRef arr
-  _ -> return Nothing
-
-getValRefs :: Val -> [Array]
-getValRefs val = execWriter $ flip traverseVal val $ \con -> case con of
-  ArrayRef ref -> tell [ref] >> return (Just con)
-  Lit _        -> error "Shouldn't have Lit left"
+getValArrays :: Val -> [ArrayLitVal]
+getValArrays val = execWriter $ flip traverseVal val $ \con -> case con of
+  ArrayLit arr -> tell [arr]                            >> return (Just con)
+  Lit x        -> tell [ArrayLitVal [] (litType x) [x]] >> return (Just con)
   _ -> return Nothing
 
 liftExceptIO :: Except a -> IO a

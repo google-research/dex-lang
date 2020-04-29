@@ -23,18 +23,18 @@ module Syntax (
     RuleAnn (..), CmdName (..), Val, TopEnv (..),
     ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
-    Array (..), ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
+    ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
     fromL, fromT, FullEnv, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
-    strToName, nameToStr, unzipExpr, declAsModule, exprAsModule, lbind, tbind,
+    strToName, nameToStr, unzipExpr, lbind, tbind, fDeclBoundVars,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, newLEnv, newTEnv, Direction (..),
-    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..),
+    newEnv, newLEnv, newTEnv, Direction (..), Array (..), ArrayLitVal (..),
+    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -49,8 +49,8 @@ import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import Control.Exception  (Exception, catch)
-import GHC.Generics
 import Foreign.Ptr
+import GHC.Generics
 import Data.Foldable (fold)
 import Data.Traversable
 import Control.Applicative (liftA3)
@@ -113,8 +113,8 @@ data Limit a = InclusiveLim a
 
 data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
                      , topSubstEnv :: SubstEnv
-                     , linRules    :: Env Atom }  deriving (Show, Eq, Generic)
-
+                     , linRules    :: Env Atom
+                     , topArrayEnv :: Env Array }  deriving (Show, Eq, Generic)
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
 
@@ -128,7 +128,7 @@ isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
 
 type ModuleType = (TypeEnv, TypeEnv)
-data ModuleP body = Module ModuleType body  deriving (Show, Eq)
+data ModuleP body = Module (Maybe BlockId) ModuleType body  deriving (Show, Eq)
 
 -- === front-end language AST ===
 
@@ -188,17 +188,12 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 
 data PrimCon ty e lam =
         Lit LitVal
+      | ArrayLit ArrayLitVal
       | Lam ty ty lam
       | RecCon (Record e)
-      | AsIdx ty e        -- Construct an index from an expression
-                          -- NOTE: the indices are expected to be zero-based!
-                          -- This means that even though the index space might
-                          -- contain all integers between 5 and 10 (exclusive),
-                          -- the only integers that are valid to be cast to such
-                          -- indices fall into the range of [0, 5).
+      | AsIdx ty e  -- Construct an index from its ordinal index (zero-based int)
       | AFor ty e
       | AGet e
-      | ArrayRef Array
       | Todo ty
         deriving (Show, Eq, Generic)
 
@@ -209,6 +204,7 @@ data LitVal = IntLit  Int
               deriving (Show, Eq, Generic)
 
 data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
+data ArrayLitVal = ArrayLitVal [Int] BaseType [LitVal]  deriving (Show, Eq, Generic)
 
 data PrimOp ty e lam =
         App ty e e
@@ -301,8 +297,10 @@ data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
   , sbText     :: String
-  , sbContents :: SourceBlock' }  deriving (Show)
+  , sbContents :: SourceBlock'
+  , sbId       :: Maybe BlockId }  deriving (Show)
 
+type BlockId = Int
 type ReachedEOF = Bool
 data SourceBlock' = RunModule FModule
                   | Command CmdName (Var, FModule)
@@ -319,13 +317,16 @@ data CmdName = GetType | ShowPasses | ShowPass PassName
              | TimeIt | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
-declAsModule :: FDecl -> FModule
-declAsModule decl = Module (freeVars decl, fDeclBoundVars decl) (FModBody [decl] mempty)
+addBlockId :: BlockId -> SourceBlock -> SourceBlock
+addBlockId bid block = block {sbContents = contents', sbId = Just bid}
+  where
+    contents' = case sbContents block of
+      RunModule m -> RunModule $ addBlockIdModule bid m
+      Command cmd (v, m) -> Command cmd (v, addBlockIdModule bid m)
+      contents -> contents
 
-exprAsModule :: FExpr -> (Var, FModule)
-exprAsModule expr = (v, Module (freeVars expr, lbind v) (FModBody body mempty))
-  where v = "*ans*" :> NoAnn
-        body = [LetMono (RecLeaf v) expr]
+addBlockIdModule :: BlockId -> ModuleP body -> ModuleP body
+addBlockIdModule bid (Module _ ty body) = Module (Just bid) ty body
 
 -- === imperative IR ===
 
@@ -346,7 +347,6 @@ data ImpInstr = Load  IExpr
                 deriving (Show)
 
 data IExpr = ILit LitVal
-           | IRef Array
            | IVar IVar
              deriving (Show, Eq)
 
@@ -539,7 +539,7 @@ fDeclBoundVars decl = case decl of
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
-  RunModule (Module (_,vs) _) -> vs
+  RunModule (Module _ (_,vs) _) -> vs
   LoadData p _ _           -> foldMap lbind p
   _                        -> mempty
 
@@ -593,9 +593,9 @@ instance (HasVars a, HasVars b) => HasVars (a, b) where
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    RunModule (Module (vs, _) _)    -> vs
-    Command _ (_, Module (vs, _) _) -> vs
-    GetNameType v                   -> v @> L (varAnn v)
+    RunModule (   Module _ (vs, _) _) -> vs
+    Command _ (_, Module _ (vs, _) _) -> vs
+    GetNameType v                     -> v @> L (varAnn v)
     _ -> mempty
 
 instance HasVars Expr where
@@ -626,7 +626,7 @@ instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
 
 instance HasVars TopEnv where
-  freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
+  freeVars (TopEnv e1 e2 e3 _) = freeVars e1 <> freeVars e2 <> freeVars e3
 
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
@@ -694,14 +694,14 @@ instance TraversableExpr PrimOp where
 
 instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
-    Lit l       -> pure   (Lit l)
+    Lit l        -> pure $ Lit l
+    ArrayLit arr -> pure $ ArrayLit arr
     Lam lin eff lam -> liftA3 Lam (fT lin) (fT eff) (fL lam)
     AFor n e    -> liftA2 AFor (fT n) (fE e)
     AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA2 AsIdx (fT n) (fE e)
     RecCon r    -> liftA  RecCon (traverse fE r)
     Todo ty             -> liftA  Todo (fT ty)
-    ArrayRef ref        -> pure $ ArrayRef ref
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where
@@ -724,10 +724,11 @@ instance RecTreeZip Type where
   recTreeZip (RecTree _) _ = error "Bad zip"
 
 instance Semigroup TopEnv where
-  TopEnv e1 e2 e3 <> TopEnv e1' e2' e3' = TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')
+  TopEnv e1 e2 e3 e4 <> TopEnv e1' e2' e3' e4' =
+    TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3') (e4 <> e4')
 
 instance Monoid TopEnv where
-  mempty = TopEnv mempty mempty mempty
+  mempty = TopEnv mempty mempty mempty mempty
 
 instance Eq SourceBlock where
   x == y = sbText x == sbText y

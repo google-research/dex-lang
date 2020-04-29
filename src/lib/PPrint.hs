@@ -172,12 +172,12 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
+  pretty (ArrayLit (ArrayLitVal _ _ array)) = p array
   pretty (Lam _ _ lam) = parens $ prettyL lam
   pretty (RecCon r)    = p r
   pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
   pretty (AGet e)      = "aget" <+> p e
   pretty (AsIdx n i)   = p i <> "@" <> p n
-  pretty (ArrayRef array) = p array
   pretty con = prettyExprDefault (ConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
@@ -245,7 +245,6 @@ tup xs  = tupled $ map p xs
 instance Pretty IExpr where
   pretty (ILit v) = p v
   pretty (IVar (v:>_)) = p v
-  pretty (IRef ref) = p ref
 
 instance Pretty IType where
   pretty (IRefType (ty, shape)) = "Ptr (" <> p ty <> p shape <> ")"
@@ -272,9 +271,6 @@ instance Pretty ImpInstr where
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
 dirStr Rev = " rof"
-
-instance Pretty Array where
-  pretty (Array shape b _) = "ArrayLit(" <> p b <> p shape <> ")"
 
 instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
@@ -304,10 +300,10 @@ instance Pretty Result where
                                Right () -> mempty
 
 instance Pretty TopEnv where
-  pretty (TopEnv _ subEnv _) = p subEnv
+  pretty (TopEnv _ subEnv _ _) = p subEnv
 
 instance Pretty body => Pretty (ModuleP body) where
-  pretty (Module (imports, exports) body) = "imports:" <+> p imports
+  pretty (Module _ (imports, exports) body) = "imports:" <+> p imports
                              <> hardline <> p body
                              <> hardline <> "exports:" <+> p exports
 

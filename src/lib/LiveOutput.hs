@@ -100,7 +100,8 @@ launchBlockEval n = do
   let chan = subChan (oneResult n) resultsChan
   envMap <- looks snd
   let parentEnvLocs = map (envMap M.!) parents
-  void $ liftIO $ forkIO $ blockEval cfg block parentEnvLocs envLoc chan
+  let block' = addBlockId n block
+  void $ liftIO $ forkIO $ blockEval cfg block' parentEnvLocs envLoc chan
 
 blockEval :: (EvalOpts, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()

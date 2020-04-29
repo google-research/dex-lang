@@ -23,8 +23,8 @@ foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
 evalModuleInterp :: Module -> IO (TopEnv, [Output])
-evalModuleInterp (Module _ (ModBody [] out)) = return (out, [])
-evalModuleInterp (Module _ (ModBody decls results)) = do
+evalModuleInterp (Module _ _ (ModBody [] out)) = return (out, [])
+evalModuleInterp (Module _ _ (ModBody decls results)) = do
   let env = foldl (\sub decl -> sub <> evalDecl sub decl) mempty decls
   return (subst (env, mempty) results, [])
 

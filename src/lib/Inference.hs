@@ -29,8 +29,8 @@ import Subst
 type InferM = ReaderT TypeEnv (SolverT (Either Err))
 
 inferModule :: TopEnv -> FModule -> Except FModule
-inferModule (TopEnv tyEnv subEnv _) m = do
-  let (Module (imports, exports) (FModBody body _)) = m
+inferModule (TopEnv tyEnv subEnv _ _) m = do
+  let (Module bid (imports, exports) (FModBody body _)) = m
   checkImports tyEnv m
   let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
   (body', tySub) <- expandTyAliases tySubEnv body
@@ -38,7 +38,7 @@ inferModule (TopEnv tyEnv subEnv _) m = do
   let imports' = imports `envIntersect` tyEnv
   let exports' = exports `envIntersect` (tyEnv <> envOut <> tySubEnvType)
        where tySubEnvType = fmap (T . getKind) tySub
-  return $ Module (imports', exports') (FModBody body'' tySub)
+  return $ Module bid (imports', exports') (FModBody body'' tySub)
 
 runInferM :: (TySubst a, Pretty a) => TypeEnv -> InferM a -> Except a
 runInferM env m = runSolverT (runReaderT m env)
