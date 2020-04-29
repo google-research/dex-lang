@@ -16,12 +16,12 @@ import Diagrams.Prelude
 import Diagrams.Backend.Rasterific
 import Data.ByteString.Lazy (toStrict)
 import Data.Text.Encoding (decodeUtf8)
+import qualified Data.Vector.Unboxed as V
 import qualified Data.ByteString.Base64 as Base64
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as At
 import Codec.Picture.Png
 import Codec.Picture.Types
-import qualified Data.Vector as V
 
 data Scale = LinearScale Double Double
 
@@ -34,12 +34,11 @@ scatterHtml xs ys = diagramToHtml $
     xsc = LinearScale (minimum xs) (maximum xs)
     ysc = LinearScale (minimum ys) (maximum ys)
 
-heatmapHtml :: Int -> Int -> [Double] -> H.Html
+heatmapHtml :: Int -> Int -> (V.Vector Double) -> H.Html
 heatmapHtml h w zs = pngToHtml $ generateImage getPix w h
   where
-    zsVec = V.fromList zs
-    zScale = LinearScale (minimum zs) (maximum zs)
-    getPix i j = greyPix zScale $ zsVec  V.! (j * w + i)
+    zScale = LinearScale (V.minimum zs) (V.maximum zs)
+    getPix i j = greyPix zScale $ zs  V.! (j * w + i)
 
 greyPix :: Scale -> Double -> PixelRGB8
 greyPix scale_ x = PixelRGB8 px px px

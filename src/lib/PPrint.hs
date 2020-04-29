@@ -88,7 +88,7 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     RecType r   -> p $ fmap (asStr . p) r
     RefType t   -> "Ref" <+> p t
     TypeApp f xs -> p f <+> hsep (map p xs)
-    ArrayType shape b -> p b <> p shape
+    ArrayType (shape, b) -> p b <> p shape
     -- This rule forces us to specialize to Atom. Is there a better way?
     IntRange (IntVal 0) (IntVal n) -> p n
     IntRange a b -> p a <> "...<" <> p b
@@ -172,7 +172,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (Lit l)       = p l
-  pretty (ArrayLit (ArrayLitVal _ _ array)) = p array
+  pretty (ArrayLit array) = p array
   pretty (Lam _ _ lam) = parens $ prettyL lam
   pretty (RecCon r)    = p r
   pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body

@@ -551,7 +551,7 @@ checkImpOp op = do
     checkEq :: (Pretty a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
 
-fromRefType :: MonadError Err m => IType -> m ArrayType
+fromRefType :: MonadError Err m => IType -> m IArrayType
 fromRefType (IRefType ty) = return ty
 fromRefType ty = throw CompilerErr $ "Not a reference type: " ++ pprint ty
 

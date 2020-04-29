@@ -24,7 +24,7 @@ module Syntax (
     ModuleP (..), ModuleType, Module, ModBody (..),
     FModBody (..), FModule, ImpModBody (..), ImpModule,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
-    IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
+    IVar, IType (..), IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
@@ -33,7 +33,7 @@ module Syntax (
     strToName, nameToStr, unzipExpr, lbind, tbind, fDeclBoundVars,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, newLEnv, newTEnv, Direction (..), Array (..), ArrayLitVal (..),
+    newEnv, newLEnv, newTEnv, Direction (..), ArrayRef, Array,
     fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
@@ -42,21 +42,22 @@ module Syntax (
     pattern PairVal, pattern TupVal, pattern RecVal, pattern RealVal)
   where
 
-import Data.Tuple (swap)
 import qualified Data.Map.Strict as M
 import Control.Applicative
+import Control.Exception  (Exception, catch)
 import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
-import Control.Exception  (Exception, catch)
-import Foreign.Ptr
-import GHC.Generics
+import qualified Data.Vector.Unboxed as V
 import Data.Foldable (fold)
 import Data.Traversable
+import Data.Tuple (swap)
 import Control.Applicative (liftA3)
+import GHC.Generics
 
 import Record
 import Env
+import Array
 
 -- === types ===
 
@@ -73,7 +74,7 @@ data TyCon ty e = BaseType BaseType
                 | IntRange e e
                 | IndexRange ty (Limit e) (Limit e)
                 | TabType ty ty
-                | ArrayType [Int] BaseType
+                | ArrayType ArrayType
                 | RecType (Record ty)
                 | RefType ty
                 | TypeApp ty [ty]
@@ -96,8 +97,6 @@ data PiType = Pi Type EffectiveType  deriving (Eq, Show)
 
 data TyQual = TyQual TVar ClassName  deriving (Eq, Show)
 
-data BaseType = IntType | BoolType | RealType | StrType
-                deriving (Show, Eq, Generic)
 type TVar = VarP Kind
 type Mult   = Type
 type Dep    = Type
@@ -114,7 +113,7 @@ data Limit a = InclusiveLim a
 data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
                      , topSubstEnv :: SubstEnv
                      , linRules    :: Env Atom
-                     , topArrayEnv :: Env Array }  deriving (Show, Eq, Generic)
+                     , topArrayEnv :: Env ArrayRef }  deriving (Show, Eq, Generic)
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
 
@@ -188,7 +187,7 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 
 data PrimCon ty e lam =
         Lit LitVal
-      | ArrayLit ArrayLitVal
+      | ArrayLit Array
       | Lam ty ty lam
       | RecCon (Record e)
       | AsIdx ty e  -- Construct an index from its ordinal index (zero-based int)
@@ -196,15 +195,6 @@ data PrimCon ty e lam =
       | AGet e
       | Todo ty
         deriving (Show, Eq, Generic)
-
-data LitVal = IntLit  Int
-            | RealLit Double
-            | BoolLit Bool
-            | StrLit  String
-              deriving (Show, Eq, Generic)
-
-data Array = Array [Int] BaseType (Ptr ())  deriving (Show, Eq)
-data ArrayLitVal = ArrayLitVal [Int] BaseType [LitVal]  deriving (Show, Eq, Generic)
 
 data PrimOp ty e lam =
         App ty e e
@@ -339,7 +329,7 @@ type ImpStatement = (Maybe IVar, ImpInstr)
 data ImpInstr = Load  IExpr
               | Store IExpr IExpr  -- destination first
               | Copy  IExpr IExpr  -- destination first
-              | Alloc ArrayType
+              | Alloc IArrayType
               | Free IVar
               | IGet IExpr Index
               | Loop Direction IVar Size ImpProg
@@ -354,10 +344,10 @@ type IPrimOp = PrimOp BaseType IExpr ()
 type IVal = IExpr  -- only ILit and IRef constructors
 type IVar = VarP IType
 data IType = IValType BaseType
-           | IRefType ArrayType
+           | IRefType IArrayType
               deriving (Show, Eq)
 
-type ArrayType = (BaseType, [Size])
+type IArrayType = (BaseType, [Size])
 
 type Size  = IExpr
 type Index = IExpr
@@ -417,8 +407,8 @@ type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 data Output = TextOut String
-            | HeatmapOut Int Int [Double]
-            | ScatterOut [Double] [Double]
+            | HeatmapOut Int Int (V.Vector Double)
+            | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String String
               deriving (Show, Eq, Generic)
 
@@ -768,7 +758,7 @@ traverseTyCon con fTy fE = case con of
   IntRange a b      -> liftA2 IntRange (fE a) (fE b)
   IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
   TabType a b       -> liftA2 TabType (fTy a) (fTy b)
-  ArrayType shape b -> pure $ ArrayType shape b
+  ArrayType t       -> pure $ ArrayType t
   RecType r         -> liftA RecType $ traverse (fTy ) r
   RefType t         -> liftA RefType (fTy t)
   TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
@@ -824,7 +814,7 @@ pattern TabTy :: Type -> Type -> Type
 pattern TabTy a b = TC (TabType a b)
 
 pattern ArrayTy :: [Int] -> BaseType -> Type
-pattern ArrayTy shape b = TC (ArrayType shape b)
+pattern ArrayTy shape b = TC (ArrayType (shape, b))
 
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)

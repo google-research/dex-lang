@@ -67,12 +67,8 @@ evalSourceBlock env block = case sbContents block of
         Printed -> do
           s <- liftIOTop $ pprintVal val
           tell [TextOut s]
-        Heatmap -> do
-          output <- liftIOTop $ valToHeatmap val
-          tell [output]
-        Scatter -> do
-          output <- liftIOTop $ valToScatter val
-          tell [output]
+        Heatmap -> tell [valToHeatmap val]
+        Scatter -> tell [valToScatter val]
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalModuleVal env v m
       tell [TextOut $ pprint (getType val)]
@@ -127,7 +123,7 @@ evalModuleVal env v m = do
   arraySubstEnv <- liftIO $ buildArraySubst $ topArrayEnv fullEnv
   return $ subst (arraySubstEnv, mempty) val'
 
-buildArraySubst :: Env Array -> IO SubstEnv
+buildArraySubst :: Env ArrayRef -> IO SubstEnv
 buildArraySubst env = forM env $ \arrPtr -> do
   arrVal <- loadArray arrPtr
   return $ L $ Con $ ArrayLit arrVal

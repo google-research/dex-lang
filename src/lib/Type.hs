@@ -25,6 +25,7 @@ import Data.Foldable
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
+import Array
 import Syntax
 import Env
 import Record
@@ -142,7 +143,7 @@ tyConKind con = case con of
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
   TabType a b       -> (TabType (a, TyKind) (b, TyKind), TyKind)
-  ArrayType shape b -> (ArrayType shape b, TyKind)
+  ArrayType t       -> (ArrayType t, TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
   RefType t         -> (RefType (t, TyKind), TyKind)
   TypeApp t xs      -> (TypeApp (t, tk) (map (,TyKind) xs), TyKind)
@@ -611,8 +612,7 @@ traverseConType :: MonadError Err m
                      -> m Type
 traverseConType con eq kindIs _ = case con of
   Lit l    -> return $ BaseTy $ litType l
-  ArrayLit (ArrayLitVal shape b _) ->
-    return $ ArrayTy shape b  -- TODO: check elements
+  ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))

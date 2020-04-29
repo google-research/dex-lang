@@ -40,7 +40,7 @@ preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
 dumpDataFile :: FilePath -> Val -> IO ()
 dumpDataFile fname val = do
-  arrayRefs <- mapM allocStoreArray $ getValArrays val
+  arrayRefs <- mapM storeArrayNew $ getValArrays val
   let ty = getType val
   withFile fname WriteMode $ \h -> do
     putBytes h $ serializeFullHeader $ createHeader ty arrayRefs
@@ -82,9 +82,9 @@ serializeHeader :: DBOHeader -> String
 serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
                                      <> "bufferSizes: " <> show sizes   <> "\n"
 
-createHeader :: Type -> [Array] -> DBOHeader
+createHeader :: Type -> [ArrayRef] -> DBOHeader
 createHeader ty arrays = DBOHeader ty sizes
-  where sizes = [8 * product shape | Array shape _ _ <- arrays]
+  where sizes = [8 * product shape | ArrayRef (shape, _) _ <- arrays]
 
 putBytes :: Handle -> String -> IO ()
 putBytes h s = B.hPut h $ B.pack s
@@ -111,8 +111,8 @@ parseHeader = do
   emptyLines
   return $ DBOHeader ty sizes
 
-writeArrayToFile :: Handle -> Array -> IO ()
-writeArrayToFile h (Array shape _ ptr) = hPutBuf h ptr (size * 8)
+writeArrayToFile :: Handle -> ArrayRef -> IO ()
+writeArrayToFile h (ArrayRef (shape, _) ptr) = hPutBuf h ptr (size * 8)
   where size = product shape
 
 validateFile :: Int -> Int -> DBOHeader -> Except ()
@@ -143,7 +143,7 @@ valFromPtrs' shape ty@(TC con) = case con of
   BaseType b -> do
     ~(ptr:ptrs) <- get
     put ptrs
-    arrayVal <- liftIO $ loadArray $ Array shape b ptr
+    arrayVal <- liftIO $ loadArray $ ArrayRef (shape, b) ptr
     return $ Con $ AGet $ Con $ ArrayLit $ arrayVal
   RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
   TabType idx@(FixedIntRange low high) a ->
@@ -155,26 +155,18 @@ valFromPtrs' _ ty = error $ "Not implemented: " ++ pprint ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
 
-valToScatter :: Val -> IO Output
-valToScatter ~(Con (AFor _ body)) = return $ ScatterOut xs' ys'
+valToScatter :: Val -> Output
+valToScatter ~(Con (AFor _ body)) = ScatterOut xs ys
   where
-    ~(PairVal (Con (AGet (Con (ArrayLit (ArrayLitVal _ _ xs)))))
-              (Con (AGet (Con (ArrayLit (ArrayLitVal _ _ ys)))))) = body
-    xs' = map fromRealLit xs
-    ys' = map fromRealLit ys
+    ~(PairVal (Con (AGet (Con (ArrayLit (Array _ (DoubleVec xs))))))
+              (Con (AGet (Con (ArrayLit (Array _ (DoubleVec ys))))))) = body
 
-valToHeatmap :: Val -> IO Output
-valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = do
-  array' <- allocStoreArray array
-  xs <- sequence [liftM fromRealLit $ loadScalar (subArray j (subArray i array'))
-                 | i <- [0..h-1], j <- [0..w-1]]
-  return $ HeatmapOut h w xs
-  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet (Con (ArrayLit array)))))) = body
+valToHeatmap :: Val -> Output
+valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = HeatmapOut h w xs
+  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet arr)))) = body
+        ~(Con (ArrayLit (Array _ (DoubleVec xs)))) = arr
         h = hh - hl
         w = wh - wl
-
-fromRealLit :: LitVal -> Double
-fromRealLit ~(RealLit x) = x
 
 pprintVal :: Val -> IO String
 pprintVal val = liftM asStr $ prettyVal val
@@ -190,7 +182,7 @@ prettyVal (Con con) = case con of
       (Just n') = indexSetConcreteSize n
       idxSetStr = case n of FixedIntRange 0 _ -> mempty
                             _                 -> "@" <> pretty n
-  AGet (Con (ArrayLit (ArrayLitVal _ _ [x]))) -> return $ pretty x
+  AGet (Con (ArrayLit arr)) -> return $ pretty $ scalarFromArray arr
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n
@@ -200,7 +192,7 @@ prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 
 litIndexSubst :: Int -> Atom -> Atom
 litIndexSubst i atom = case atom of
-  Con (ArrayLit x) -> Con $ ArrayLit $ subArrayVal i x
+  Con (ArrayLit x) -> Con $ ArrayLit $ subArray i x
   Con con -> Con $ fmapExpr con id (litIndexSubst i) (error "unexpected lambda")
   _ -> error "Unused index"
 
@@ -213,10 +205,10 @@ traverseVal f val = case val of
       Nothing   -> traverseExpr con return (traverseVal f) return
   atom -> return atom
 
-getValArrays :: Val -> [ArrayLitVal]
+getValArrays :: Val -> [Array]
 getValArrays val = execWriter $ flip traverseVal val $ \con -> case con of
-  ArrayLit arr -> tell [arr]                            >> return (Just con)
-  Lit x        -> tell [ArrayLitVal [] (litType x) [x]] >> return (Just con)
+  ArrayLit arr -> tell [arr]               >> return (Just con)
+  Lit x        -> tell [arrayFromScalar x] >> return (Just con)
   _ -> return Nothing
 
 liftExceptIO :: Except a -> IO a

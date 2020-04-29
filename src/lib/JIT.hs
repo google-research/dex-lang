@@ -67,9 +67,9 @@ evalModuleJIT env (Module _ _ (ImpModBody vs prog result)) = do
   passInfo <- evalJit llvmModule
   return (result {topArrayEnv = dests}, passInfo)
 
-allocIRef :: IVar -> IO (Env Array)
+allocIRef :: IVar -> IO (Env ArrayRef)
 allocIRef v@(_:> IRefType (b, shape)) = do
-  ref <- allocateArray b (map fromILitInt shape)
+  ref <- newArrayRef (map fromILitInt shape, b)
   return $ v @> ref
 allocIRef _ = error "Destination should have a reference type"
 
@@ -155,8 +155,8 @@ compileExpr expr = case expr of
   ILit v   -> return (litVal v)
   IVar v   -> lookupImpVar v
 
-arrayToOperand :: Array -> Operand
-arrayToOperand (Array _ b ptr) = refLiteral b ptr
+arrayToOperand :: ArrayRef -> Operand
+arrayToOperand (ArrayRef (_, b) ptr) = refLiteral b ptr
 
 lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)

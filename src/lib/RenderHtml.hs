@@ -16,6 +16,7 @@ import Data.Text (pack)
 import CMark (commonmarkToHtml)
 
 import Control.Monad
+import qualified Data.Vector.Unboxed as V
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 
@@ -49,7 +50,7 @@ instance ToMarkup Result where
 instance ToMarkup Output where
   toMarkup out = case out of
     HeatmapOut h w zs -> heatmapHtml h w zs
-    ScatterOut xs ys  -> scatterHtml xs ys
+    ScatterOut xs ys  -> scatterHtml (V.toList xs) (V.toList ys)
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
 instance ToMarkup SourceBlock where

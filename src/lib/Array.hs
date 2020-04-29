@@ -4,75 +4,112 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Array (allocateArray, loadScalar, storeScalar, allocStoreArray,
-              subArray, subArrayVal, loadArray, storeArray) where
+{-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DeriveGeneric #-}
+
+module Array (
+  BaseType (..), LitVal (..), ArrayType, Array (..), ArrayRef (..),
+  Vec (..), subArray, scalarFromArray, arrayFromScalar,
+  loadArray, storeArray, subArrayRef, newArrayRef, storeArrayNew) where
 
 import Control.Monad
+import Control.Monad.Primitive (PrimState)
+import Data.Text.Prettyprint.Doc
+import qualified Data.Vector.Unboxed as V
 import Foreign.Marshal.Alloc
+import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
+import GHC.Generics
 
-import Syntax
+data Array    = Array    ArrayType Vec     deriving (Show, Eq, Generic)
+data ArrayRef = ArrayRef ArrayType (Ptr ())  deriving (Show, Eq, Generic)
+
+data LitVal = IntLit  Int
+            | RealLit Double
+            | BoolLit Bool
+            | StrLit  String
+              deriving (Show, Eq, Generic)
+
+data Vec = IntVec    (V.Vector Int)
+         | DoubleVec (V.Vector Double)
+           deriving (Show, Eq, Generic)
+
+data VecRef = IntVecRef    (V.MVector (PrimState IO) Int)
+            | DoubleVecRef (V.MVector (PrimState IO) Double)
+              deriving (Generic)
+
+data BaseType = IntType | BoolType | RealType | StrType
+                deriving (Show, Eq, Generic)
+
+type ArrayType = ([Int], BaseType)
 
 sizeOf :: BaseType -> Int
 sizeOf _ = 8
 
-loadArray :: Array -> IO ArrayLitVal
-loadArray arr@(Array shape b _) = do
-  xs <- case shape of
-          [] -> liftM (:[]) $ loadScalar arr
-          (n:_) -> liftM concat $ forM [0..(n-1)] $ \i -> do
-                     (ArrayLitVal _ _ xs) <- loadArray $ subArray i arr
-                     return xs
-  return $ ArrayLitVal shape b xs
-
-allocStoreArray :: ArrayLitVal -> IO Array
-allocStoreArray arr@(ArrayLitVal shape b _) = do
-  arrayRef <- allocateArray b shape
-  storeArray arrayRef arr
-  return arrayRef
-
-storeArray :: Array -> ArrayLitVal -> IO ()
-storeArray ref (ArrayLitVal [] _ ~[x]) = storeScalar ref x
-storeArray ref arr@(ArrayLitVal (n:_) _ _) = forM_ [0..(n-1)] $ \i -> do
-  storeArray (subArray i ref) (subArrayVal i arr)
-
-subArrayVal :: Int -> ArrayLitVal -> ArrayLitVal
-subArrayVal i (ArrayLitVal (_:shape) b xs) =
-  ArrayLitVal shape b $ take size $ drop offset xs
-  where
-    size = product shape
-    offset = i * size
-subArrayVal _ (ArrayLitVal [] _ _) = error "Can't get subarray of rank-0 array"
-
 subArray :: Int -> Array -> Array
-subArray i (Array (_:shape) b ptr) = Array shape b ptr'
-  where ptr' = ptr `plusPtr` (i * product shape * sizeOf b)
-subArray _ (Array [] _ _) = error "Can't get subarray of rank-0 array"
+subArray i (Array ((_:shape), b) vec) = Array (shape, b) vec'
+  where size = product shape
+        offset = i * size
+        vec' = case vec of
+                 IntVec    xs -> IntVec    $ V.slice offset size xs
+                 DoubleVec xs -> DoubleVec $ V.slice offset size xs
+subArray _ _ = error "Can't get subarray of rank-0 array"
+
+scalarFromArray :: Array -> LitVal
+scalarFromArray (Array ([], b) vec) = case b of
+  IntType  -> IntLit  $ xs V.! 0       where IntVec    xs = vec
+  BoolType -> BoolLit $ xs V.! 0 /= 0  where IntVec    xs = vec
+  RealType -> RealLit $ xs V.! 0       where DoubleVec xs = vec
+  _ -> error "Not implemented"
+scalarFromArray _ = error "Array must be rank-0"
+
+arrayFromScalar :: LitVal -> Array
+arrayFromScalar val = case val of
+  IntLit  x -> Array ([], IntType ) $ IntVec $ V.fromList [x]
+  BoolLit x -> Array ([], BoolType) $ IntVec $ V.fromList [x']
+    where x' = case x of False -> 0
+                         True  -> 1
+  RealLit x -> Array ([], RealType) $ DoubleVec $ V.fromList [x]
+  _ -> error "Not implemented"
+
+loadArray :: ArrayRef -> IO Array
+loadArray (ArrayRef ty@(shape,b) ptr) = liftM (Array ty) $ case b of
+  IntType  -> liftM IntVec    $ peekVec size $ castPtr ptr
+  BoolType -> liftM IntVec    $ peekVec size $ castPtr ptr
+  RealType -> liftM DoubleVec $ peekVec size $ castPtr ptr
+  _ -> error "Not implemented"
+  where size = product shape
+
+storeArray :: ArrayRef -> Array -> IO ()
+storeArray (ArrayRef _ ptr) (Array _ vec) = case vec of
+  IntVec    v -> pokeVec (castPtr ptr) v
+  DoubleVec v -> pokeVec (castPtr ptr) v
+
+peekVec :: (V.Unbox a, Storable a) => Int -> Ptr a -> IO (V.Vector a)
+peekVec size ptr = V.generateM size $ \i -> peek (ptr `advancePtr` i)
+
+pokeVec :: (V.Unbox a, Storable a) => Ptr a -> V.Vector a -> IO ()
+pokeVec ptr v = forM_ [0..(V.length v - 1)] $ \i -> do
+  x <- V.indexM v i
+  poke (ptr `advancePtr` i) x
+
+subArrayRef :: Int -> ArrayRef -> ArrayRef
+subArrayRef i (ArrayRef ty@((_:shape), b) ptr) = ArrayRef ty ptr'
+  where ptr' = ptr `advancePtr` (i * product shape * sizeOf b)
+subArrayRef _ _ = error "Can't get subarray of rank-0 array"
 
 -- TODO: free
-allocateArray :: BaseType -> [Int] -> IO Array
-allocateArray b shape = do
+newArrayRef :: ArrayType -> IO ArrayRef
+newArrayRef ty@(shape, b) = do
   ptr <- mallocBytes $ product shape * sizeOf b
-  return $ Array shape b ptr
+  return $ ArrayRef ty ptr
 
-loadScalar :: Array -> IO LitVal
-loadScalar (Array [] b ptr) = case b of
-  IntType  -> liftM IntLit  $ peek (castPtr ptr)
-  RealType -> liftM RealLit $ peek (castPtr ptr)
-  BoolType -> do
-    x <- peek (castPtr ptr :: Ptr Int)
-    return $ BoolLit $ case x of 0 -> False
-                                 _ -> True
-  _ -> error "Not implemented"
-loadScalar _ = error "Array must be rank-0"
+storeArrayNew :: Array -> IO ArrayRef
+storeArrayNew arr@(Array ty _) = do
+  ref <- newArrayRef ty
+  storeArray ref arr
+  return ref
 
-storeScalar :: Array -> LitVal -> IO ()
-storeScalar (Array [] _ ptr) val = case val of
-  IntLit  x -> poke (castPtr ptr) x
-  RealLit x -> poke (castPtr ptr) x
-  BoolLit x -> case x of False -> poke ptr' 0
-                         True  -> poke ptr' 1
-    where ptr' = castPtr ptr :: Ptr Int
-  _ -> error "Not implemented"
-storeScalar _ _ = error "Array must be rank-0"
+instance Pretty Array where
+  pretty (Array _ _) = "<<TODO: array printing>>"
