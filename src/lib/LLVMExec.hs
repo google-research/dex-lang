@@ -6,7 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (showLLVM, evalJit) where
+module LLVMExec (showLLVM, evalLLVM, linking_hack) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -25,11 +25,14 @@ import Data.Maybe (fromMaybe)
 
 import Syntax
 
+-- This forces the linker to link libdex.so. TODO: something better
+foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
+
 foreign import ccall "dynamic"
   haskFun :: FunPtr (IO ()) -> IO ()
 
-evalJit :: L.Module -> IO [Output]
-evalJit ast = do
+evalLLVM :: L.Module -> IO [Output]
+evalLLVM ast = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c ast $ \m -> do

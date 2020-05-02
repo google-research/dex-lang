@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (evalModuleJIT, linking_hack) where
+module JIT (impToLLVM) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named)
 import qualified LLVM.AST as L
@@ -23,7 +23,6 @@ import qualified LLVM.AST.IntegerPredicate as L
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Data.Foldable (fold)
 import Data.List (nub)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
@@ -37,10 +36,6 @@ import PPrint
 import Cat
 import Imp
 import Array
-import LLVMExec
-
--- This forces the linker to link libdex.so. TODO: something better
-foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
 type CompileEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
@@ -57,23 +52,17 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 type Long = Operand
 type NInstr = Named Instruction
 
-evalModuleJIT :: TopEnv -> ImpModule -> IO (TopEnv, [Output])
-evalModuleJIT _ (Module _ _ (ImpModBody [] (ImpProg []) result)) =
-  return (result, [])
-evalModuleJIT env (Module _ _ (ImpModBody vs prog result)) = do
-  dests <- liftM fold $ mapM allocIRef vs
-  let compileEnv = fmap arrayToOperand (topArrayEnv env <> dests)
+impToLLVM :: Env ArrayRef -> ImpFunction -> IO ([ArrayRef], L.Module)
+impToLLVM env (ImpFunction vsOut _ prog) = do
+  dests <- mapM allocIRef vsOut
+  let compileEnv = fmap arrayToOperand (env <> newEnv vsOut dests)
   let llvmModule = runCompileM compileEnv (compileTopProg prog)
-  passInfo <- evalJit llvmModule
-  return (result {topArrayEnv = dests}, passInfo)
+  return (dests, llvmModule)
 
-allocIRef :: IVar -> IO (Env ArrayRef)
-allocIRef v@(_:> IRefType (b, shape)) = do
-  ref <- newArrayRef (map fromILitInt shape, b)
-  return $ v @> ref
+allocIRef :: IVar -> IO ArrayRef
+allocIRef (_:> IRefType (b, shape)) = newArrayRef (map fromILitInt shape, b)
 allocIRef _ = error "Destination should have a reference type"
 
--- TODO: consider making an Integral instance
 fromILitInt :: IExpr -> Int
 fromILitInt (ILit (IntLit x)) = x
 fromILitInt expr = error $ "Not an int: " ++ pprint expr

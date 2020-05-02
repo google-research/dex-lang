@@ -19,10 +19,9 @@ module Syntax (
     TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope,
-    RuleAnn (..), CmdName (..), Val, TopEnv (..),
-    ModuleP (..), ModuleType, Module, ModBody (..),
-    FModBody (..), FModule, ImpModBody (..), ImpModule,
+    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
+    RuleAnn (..), CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEvalEnv, TopEnv (..),
+    ModuleP (..), ModuleType, Module, FModule, ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -31,7 +30,7 @@ module Syntax (
     fromL, fromT, FullEnv, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, lbind, tbind, fDeclBoundVars,
-    noEffect, isPure, EffectName (..), EffectRow, Vars,
+    noEffect, isPure, EffectName (..), EffectRow, Vars, wrapFDecls,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, newLEnv, newTEnv, Direction (..), ArrayRef, Array,
     fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
@@ -110,12 +109,15 @@ data Limit a = InclusiveLim a
              | Unlimited
                deriving (Show, Eq, Generic)
 
-data TopEnv = TopEnv { topTypeEnv  :: TypeEnv
-                     , topSubstEnv :: SubstEnv
-                     , linRules    :: Env Atom
-                     , topArrayEnv :: Env ArrayRef }  deriving (Show, Eq, Generic)
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
+
+type TopInfEnv  = (TypeEnv, Env Type)
+type TopSimpEnv = SubstEnv
+type TopEvalEnv = Env ArrayRef
+type RuleEnv = Env Atom
+data TopEnv = TopEnv TopInfEnv TopSimpEnv TopEvalEnv RuleEnv
+              deriving (Show, Eq, Generic)
 
 type Scope = Env ()
 
@@ -126,7 +128,8 @@ isPure :: Effect -> Bool
 isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
 
-type ModuleType = (TypeEnv, TypeEnv)
+type LTVar = VarP (LorT Type Kind)
+type ModuleType = ([LTVar], [LTVar])
 data ModuleP body = Module (Maybe BlockId) ModuleType body  deriving (Show, Eq)
 
 -- === front-end language AST ===
@@ -145,14 +148,11 @@ type SrcPos = (Int, Int)
 data FDecl = LetMono Pat FExpr
            | LetPoly Var FTLam
            | TyDef TVar Type
-           | FRuleDef RuleAnn Type FTLam
              deriving (Show, Eq, Generic)
 
 type Var  = VarP Type
 data FTLam = FTLam [TVar] [TyQual] FExpr  deriving (Show, Eq, Generic)
-
-data FModBody = FModBody [FDecl] (Env Type)  deriving (Show, Eq, Generic)
-type FModule = ModuleP FModBody
+type FModule = ModuleP [FDecl]
 
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 
@@ -175,8 +175,7 @@ data Atom = Var Var
 
 data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
-data ModBody = ModBody [Decl] TopEnv  deriving (Show, Eq, Generic)
-type Module = ModuleP ModBody
+type Module = ModuleP Expr
 type Val = Atom
 
 -- === primitive constructors and operators ===
@@ -297,6 +296,7 @@ data SourceBlock' = RunModule FModule
                   | GetNameType Var
                   | IncludeSourceFile String
                   | LoadData Pat DataFormat String
+                  | RuleDef RuleAnn Type FTLam
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -320,10 +320,11 @@ addBlockIdModule bid (Module _ ty body) = Module (Just bid) ty body
 
 -- === imperative IR ===
 
-data ImpModBody = ImpModBody [IVar] ImpProg TopEnv
-type ImpModule = ModuleP ImpModBody
-
-newtype ImpProg = ImpProg [ImpStatement]  deriving (Show, Semigroup, Monoid)
+-- TODO: add args
+data ImpFunction = ImpFunction [IVar] [IVar] ImpProg  -- destinations first
+                   deriving (Show, Eq)
+newtype ImpProg = ImpProg [ImpStatement]
+                  deriving (Show, Eq, Generic, Semigroup, Monoid)
 type ImpStatement = (Maybe IVar, ImpInstr)
 
 data ImpInstr = Load  IExpr
@@ -334,7 +335,7 @@ data ImpInstr = Load  IExpr
               | IGet IExpr Index
               | Loop Direction IVar Size ImpProg
               | IPrimOp IPrimOp
-                deriving (Show)
+                deriving (Show, Eq)
 
 data IExpr = ILit LitVal
            | IVar IVar
@@ -500,7 +501,7 @@ lbind v@(_:>ty) = v @> L ty
 tbind :: TVar -> Vars
 tbind v@(_:>k) = v @> T k
 
-newEnv :: [Var] -> [a] -> Env a
+newEnv :: [VarP ann] -> [a] -> Env a
 newEnv vs xs = fold $ zipWith (@>) vs xs
 
 newLEnv :: [VarP ann] -> [a] -> FullEnv a b
@@ -508,6 +509,10 @@ newLEnv vs xs = fold [v @> L x | (v, x) <- zip vs xs]
 
 newTEnv :: [VarP ann] -> [b] -> FullEnv a b
 newTEnv vs xs = fold [v @> T x | (v, x) <- zip vs xs]
+
+wrapFDecls :: [FDecl] -> FExpr -> FExpr
+wrapFDecls [] ans = ans
+wrapFDecls (decl:decls) expr = FDecl decl (wrapFDecls decls expr)
 
 class HasVars a where
   freeVars :: a -> Vars
@@ -524,12 +529,11 @@ fDeclBoundVars :: FDecl -> Vars
 fDeclBoundVars decl = case decl of
   LetMono p _    -> foldMap lbind p
   LetPoly v _    -> lbind v
-  FRuleDef _ _ _ -> mempty
   TyDef v _      -> tbind v
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
-  RunModule (Module _ (_,vs) _) -> vs
+  RunModule (Module _ (_,vs) _) -> foldMap varAsEnv vs
   LoadData p _ _           -> foldMap lbind p
   _                        -> mempty
 
@@ -566,7 +570,6 @@ instance HasVars FDecl where
    freeVars (LetMono p expr)   = foldMap freeVars p <> freeVars expr
    freeVars (LetPoly b tlam)   = freeVars b <> freeVars tlam
    freeVars (TyDef _ ty)       = freeVars ty
-   freeVars (FRuleDef ann ty body) = freeVars ann <> freeVars ty <> freeVars body
 
 instance HasVars RuleAnn where
   freeVars (LinearizationDef v) = (v:>()) @> L UnitTy
@@ -583,9 +586,10 @@ instance (HasVars a, HasVars b) => HasVars (a, b) where
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    RunModule (   Module _ (vs, _) _) -> vs
-    Command _ (_, Module _ (vs, _) _) -> vs
+    RunModule (   Module _ (vs, _) _) -> foldMap varAsEnv vs
+    Command _ (_, Module _ (vs, _) _) -> foldMap varAsEnv vs
     GetNameType v                     -> v @> L (varAnn v)
+    RuleDef ann ty body -> freeVars ann <> freeVars ty <> freeVars body
     _ -> mempty
 
 instance HasVars Expr where
@@ -616,16 +620,11 @@ instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
 
 instance HasVars TopEnv where
-  freeVars (TopEnv e1 e2 e3 _) = freeVars e1 <> freeVars e2 <> freeVars e3
+  freeVars (TopEnv e1 e2 _ e4) = freeVars e1 <> freeVars e2 <> freeVars e4
 
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
   freeVars (Right x) = freeVars x
-
-instance HasVars ModBody where
-  freeVars (ModBody (decl:decls) results) =
-    freeVars decl <> (freeVars (ModBody decls results) `envDiff` declBoundVars decl)
-  freeVars (ModBody [] results) = freeVars results
 
 fmapExpr :: TraversableExpr expr
          => expr ty e lam
@@ -714,7 +713,7 @@ instance RecTreeZip Type where
   recTreeZip (RecTree _) _ = error "Bad zip"
 
 instance Semigroup TopEnv where
-  TopEnv e1 e2 e3 e4 <> TopEnv e1' e2' e3' e4' =
+  TopEnv e1 e2 e3 e4 <> TopEnv e1' e2' e3' e4'=
     TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3') (e4 <> e4')
 
 instance Monoid TopEnv where

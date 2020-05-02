@@ -9,7 +9,7 @@
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JAX (evalModuleJAX) where
+module JAX (evalExprJAX) where
 
 import Control.Monad.Reader
 import Data.ByteString.Lazy.Char8 (pack, unpack)
@@ -28,30 +28,22 @@ import PPrint
 import Type
 import Cat
 
-evalModuleJAX :: Module -> IO (TopEnv, [Output])
-evalModuleJAX (Module _ _ (ModBody [] out)) = return (out, [])
-evalModuleJAX m = do
-  let (jmod, vs, resultEnv) = moduleToJaxpr m
-  let info = PassInfo JAXPass "" (pprint jmod)
-  results <- evalJModule jmod
-  let substEnv = newLEnv vs (map jAtomToAtom results)
-  return (scopelessSubst substEnv resultEnv, [info])
-
-evalJModule :: JModule -> IO JResults
-evalJModule m = pyCall m
+evalExprJAX :: Expr -> IO ([ArrayRef], [Output])
+evalExprJAX m = undefined
 
 -- === JAXish IR ===
 
 type AxisSize = Int
-
 type JVar = VarP JType
 type JIndexVar = VarP AxisSize
 data JDecl = JLet JVar JOp               deriving (Generic, Show)
+data JExpr = JDecl JDecl JExpr
+           | JOp JOp
+           | JAtoms [JAtom]              deriving (Generic, Show)
 data JAtom = JLit LitVal | JVar JVar     deriving (Generic, Show)
-data JModule = JModule [JDecl] JResults  deriving (Generic, Show)
-type JResults = [JAtom]
+data JFunction = JFunction [JVar] JExpr  deriving (Generic, Show)
 
-data JType = JType [AxisSize] BaseType  deriving (Generic, Show)
+data JType = JType [AxisSize] BaseType   deriving (Generic, Show)
 
 data JOpP e = JScalarBinOp ScalarBinOp e e
             | JScalarUnOp  ScalarUnOp e
@@ -76,20 +68,11 @@ getJOpPType op = case op of
 
 -- === lowering from Expr ===
 
-moduleToJaxpr :: Module -> (JModule, [JVar], TopEnv)
-moduleToJaxpr (Module _ _ (ModBody decls results)) =
-  (JModule decls' (map JVar vs), vs, results')
-  where
-    (env, (_, decls')) = flip runCat mempty $ flip runReaderT mempty $
-                           catFold toJaxDecl decls
-    results' = scopelessSubst (fmap L (fst env)) results
-    vs = [v:> typeToJType ty | (v, L ty) <- envPairs $ freeVars results']
-
-_toJaxExpr :: Expr -> JaxM Atom
-_toJaxExpr expr = case expr of
+toJaxExpr :: Expr -> JaxM Atom
+toJaxExpr expr = case expr of
   Decl decl body -> do
     env <- toJaxDecl decl
-    extendR env $ _toJaxExpr body
+    extendR env $ toJaxExpr body
   CExpr op -> toJaxOp op
   Atom x -> jSubst x
 
@@ -162,10 +145,6 @@ pipeCall cmd args input = do
 
 -- === instances ===
 
-instance Pretty JModule where
-  pretty (JModule decls vs) = vsep (map pretty decls) <> hardline
-                            <> "exports:" <+> hsep (map pretty vs)
-
 instance Pretty JAtom where
   pretty (JLit x) = pretty x
   pretty (JVar (v:>_)) = pretty v
@@ -201,9 +180,6 @@ instance (FromJSON e) => FromJSON (JOpP e)
 instance ToJSON   JType
 instance FromJSON JType
 
-instance ToJSON   JModule
-instance FromJSON JModule
-
 instance ToJSON   Name
 instance FromJSON Name
 
@@ -235,4 +211,3 @@ instance Traversable JOpP where
   traverse f op = case op of
     JScalarBinOp o x y -> liftA2 (JScalarBinOp o) (f x) (f y)
     JScalarUnOp o x    -> liftA  (JScalarUnOp o) (f x)
-

@@ -23,25 +23,33 @@ import Type
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
-type SimplifyM a = ReaderT SimpEnv (ReaderT (TopEnv, SimpOpts) Embed) a
+type SimplifyM a = ReaderT SimpEnv (ReaderT ((SubstEnv, RuleEnv), SimpOpts) Embed) a
 
-simplifyModule :: TopEnv -> Module -> Module
-simplifyModule env m = simplifyModuleOpts (SimpOpts False) env $
-                       simplifyModuleOpts (SimpOpts True ) env $ m
+simplifyModule :: SubstEnv -> RuleEnv -> Module -> (Module, SubstEnv)
+simplifyModule substEnv rulesEnv m = (mOut', subst (envOut', mempty) envOut)
+  where (mOut , envOut ) = simplifyModuleOpts (SimpOpts True ) (substEnv, rulesEnv) m
+        (mOut', envOut') = simplifyModuleOpts (SimpOpts False) (substEnv, rulesEnv) mOut
 
-simplifyModuleOpts :: SimpOpts -> TopEnv -> Module -> Module
-simplifyModuleOpts opts env (Module bid (_, exports) m) =
-  Module bid (imports, exports) modBody
+simplifyModuleOpts :: SimpOpts -> (SubstEnv, RuleEnv)
+                   -> Module -> (Module, SubstEnv)
+simplifyModuleOpts opts env (Module bid (_, exports) expr) =
+  (Module bid (imports', (fmap (fmap L) exports')) expr', outEnv)
   where
-    (ans', (_, decls)) = flip runEmbed mempty $ flip runReaderT (env, opts) $
-                         flip runReaderT mempty $ simplifyModBody m
-    modBody = ModBody decls ans'
-    imports = freeVars modBody
+    (exports', expr', results) = runSimplifyM opts env $ simplifyTop expr
+    imports' = map (uncurry (:>)) $ envPairs $ freeVars expr'
+    outEnv = newLEnv exports results
 
-simplifyModBody :: ModBody -> SimplifyM TopEnv
-simplifyModBody (ModBody decls result) = do
-  env <- catFold simplifyDecl decls
-  extendR env $ substEmbed result
+runSimplifyM :: SimpOpts -> (SubstEnv, RuleEnv) -> SimplifyM a -> a
+runSimplifyM opts env m =
+  fst $ flip runEmbed mempty $ flip runReaderT (env, opts) $
+    flip runReaderT mempty m
+
+simplifyTop :: Expr -> SimplifyM ([Var], Expr, [Atom])
+simplifyTop expr = do
+  ~(ans@(TupVal results), (scope, decls)) <- scoped $ simplify expr
+  let vs = [v:>ty | (v, L ty) <- envPairs $ scope `envIntersect` freeVars ans]
+  let expr' = wrapDecls decls $ TupVal $ map Var vs
+  return (vs, expr', results)  -- no need to choose fresh names
 
 simplify :: Expr -> SimplifyM Atom
 simplify expr = case expr of
@@ -55,13 +63,13 @@ simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
   Var v -> do
     -- TODO: simplify this by requiring different namespaces for top/local vars
-    (topEnv, opts) <- lift ask
+    ((topEnv, rulesEnv), opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
       Just ~(L x) -> deShadow x
-      Nothing -> case envLookup (topSubstEnv topEnv) v of
+      Nothing -> case envLookup topEnv v of
         Just ~(L x)
-          | preserveDerivRules opts && v `isin` linRules topEnv -> substEmbed atom
+          | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
@@ -108,10 +116,10 @@ simplifyCExpr expr = do
   expr' <- traverseExpr expr substEmbed simplifyAtom simplifyLam
   case expr' of
     Linearize (lam, _) -> do
-      (topEnv, _) <- lift ask
+      rulesEnv <- lift $ asks (snd . fst)
       scope <- looks fst
       -- TODO: simplify the result to remove functions introduced by linearization
-      return $ linearize topEnv scope lam
+      return $ linearize rulesEnv scope lam
     Transpose (lam, _) -> do
       scope <- looks fst
       return $ transposeMap scope lam

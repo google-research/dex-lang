@@ -7,7 +7,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
-                 valToHeatmap, valToScatter) where
+                 valToHeatmap, valToScatter, reStructureArrays) where
 
 import Control.Monad
 import Control.Monad.Writer
@@ -135,23 +135,29 @@ checkBufferSize :: Int -> Int -> Except ()
 checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
    "buffer too small: " <> show size <> " < " <> show minSize
 
-valFromPtrs :: Type -> [Ptr ()] -> IO Val
-valFromPtrs ty = evalStateT (valFromPtrs' [] ty)
+reStructureArrays :: Type -> [Val] -> Val
+reStructureArrays ty xs = evalState (reStructureArrays' ty) xs
 
-valFromPtrs' :: [Int] -> Type -> StateT [Ptr ()] IO Val
-valFromPtrs' shape ty@(TC con) = case con of
-  BaseType b -> do
-    ~(ptr:ptrs) <- get
-    put ptrs
-    arrayVal <- liftIO $ loadArray $ ArrayRef (shape, b) ptr
-    return $ Con $ AGet $ Con $ ArrayLit $ arrayVal
-  RecType r -> liftM (Con . RecCon) $ traverse (valFromPtrs' shape) r
-  TabType idx@(FixedIntRange low high) a ->
-    liftM (Con . AFor idx) $ valFromPtrs' (shape ++ [(high - low)]) a
+reStructureArrays' :: Type -> State [Val] Val
+reStructureArrays' ty@(TC con) = case con of
+  BaseType _ -> do
+    ~(x:xs) <- get
+    put xs
+    return $ Con $ AGet x
+  RecType r -> liftM (Con . RecCon) $ traverse reStructureArrays' r
+  TabType n a -> liftM (Con . AFor n) $ reStructureArrays' a
   IntRange _ _ -> do
-    liftM (Con . AsIdx ty) $ valFromPtrs' shape (TC $ BaseType IntType)
+    liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
   _ -> error $ "Not implemented: " ++ pprint ty
-valFromPtrs' _ ty = error $ "Not implemented: " ++ pprint ty
+reStructureArrays' ty = error $ "Not implemented: " ++ pprint ty
+
+valFromPtrs :: Type -> [Ptr ()] -> IO Val
+valFromPtrs ty ptrs = do
+  arrays <- forM (zip ptrs arrTys) $ \(ptr, (b, shape)) -> do
+              x <- loadArray $ ArrayRef (shape, b) ptr
+              return $ Con $ ArrayLit x
+  return $ reStructureArrays ty arrays
+  where arrTys = flattenType ty
 
 type PrimConVal = PrimCon Type Atom LamExpr
 

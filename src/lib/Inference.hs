@@ -28,17 +28,17 @@ import Subst
 
 type InferM = ReaderT TypeEnv (SolverT (Either Err))
 
-inferModule :: TopEnv -> FModule -> Except FModule
-inferModule (TopEnv tyEnv subEnv _ _) m = do
-  let (Module bid (imports, exports) (FModBody body _)) = m
+inferModule :: TopInfEnv -> FModule -> Except (FModule, TopInfEnv)
+inferModule (tyEnv, tySubEnv) m = do
+  let (Module bid (imports, exports) body) = m
   checkImports tyEnv m
-  let tySubEnv = flip envMapMaybe subEnv $ \case L _ -> Nothing; T ty -> Just ty
-  (body', tySub) <- expandTyAliases tySubEnv body
-  (body'', envOut) <- runInferM tyEnv $ catTraverse (inferDecl noEffect) body'
-  let imports' = imports `envIntersect` tyEnv
-  let exports' = exports `envIntersect` (tyEnv <> envOut <> tySubEnvType)
-       where tySubEnvType = fmap (T . getKind) tySub
-  return $ Module bid (imports', exports') (FModBody body'' tySub)
+  (body', tySubEnvOut) <- expandTyAliases tySubEnv body
+  (body'', tyEnvOut) <- runInferM tyEnv $ catTraverse (inferDecl noEffect) body'
+  let tyEnvOut' = tyEnvOut <> fmap (T . getKind) tySubEnvOut
+  let imports' = map (addTopVarAnn  tyEnv              ) imports
+  let exports' = map (addTopVarAnn (tyEnv <> tyEnvOut')) exports
+  let m' = Module bid (imports', exports') body''
+  return (m', (tyEnvOut', tySubEnvOut))
 
 runInferM :: (TySubst a, Pretty a) => TypeEnv -> InferM a -> Except a
 runInferM env m = runSolverT (runReaderT m env)
@@ -57,8 +57,13 @@ expandTyAliasDecl decl = do
       extend ([], v @> ty'')
     _ -> extend ([tySubst env decl], mempty)
 
+addTopVarAnn :: TypeEnv -> VarP (LorT Type Kind) -> VarP (LorT Type Kind)
+addTopVarAnn env v = case envLookup env v of
+  Just ann -> varName v :> ann
+  Nothing -> error "Lookup of interface var failed"
+
 checkImports :: TypeEnv -> FModule -> Except ()
-checkImports env m = do
+checkImports env m  = do
   let unboundVars = envNames $ imports `envDiff` env
   unless (null unboundVars) $ throw UnboundVarErr $ pprintList unboundVars
   let shadowedVars = envNames $ exports `envIntersect` env
@@ -77,11 +82,6 @@ inferDecl eff decl = case decl of
     ty' <- inferKinds TyKind ty
     tlam' <- checkTLam ty' tlam
     return (LetPoly (v:>ty') tlam', b @> L ty')
-  FRuleDef ann annTy tlam -> do
-    -- TODO: check against expected type for the particular rule
-    annTy' <- inferKinds TyKind annTy
-    tlam' <- checkTLam annTy' tlam
-    return (FRuleDef ann annTy' tlam', mempty)
   TyDef _ _ -> error "Shouldn't have TyDef left"
 
 check :: FExpr -> EffectiveType -> InferM FExpr
@@ -546,7 +546,6 @@ instance TySubst FDecl where
     LetPoly ~(v:>Forall ks qs ty) lam ->
       LetPoly (v:>Forall ks qs (tySubst env ty)) (tySubst env lam)
     TyDef v ty -> TyDef v (tySubst env ty)
-    FRuleDef ann ty lam -> FRuleDef ann (tySubst env ty) (tySubst env lam)
 
 instance TySubst FTLam where
   tySubst env (FTLam bs qs body) = FTLam bs qs (tySubst env body)

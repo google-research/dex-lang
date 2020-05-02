@@ -9,7 +9,7 @@
 
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
             rawName, nameSpace, rename, renames, renameWithNS) where
 
 import Data.String
@@ -53,6 +53,9 @@ varName (v:>_) = v
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
+
+envAsVars :: Env a -> [VarP a]
+envAsVars env = map (uncurry (:>)) $ envPairs env
 
 envLookup :: Env a -> VarP ann -> Maybe a
 envLookup (Env m) v = M.lookup (varName v) m

@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Interpreter (evalModuleInterp) where
+module Interpreter (evalExpr) where
 
 import Syntax
 import Env
@@ -22,15 +22,9 @@ foreign import ccall "pow"  c_pow  :: Double -> Double -> Double
 foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
-evalModuleInterp :: Module -> IO (TopEnv, [Output])
-evalModuleInterp (Module _ _ (ModBody [] out)) = return (out, [])
-evalModuleInterp (Module _ _ (ModBody decls results)) = do
-  let env = foldl (\sub decl -> sub <> evalDecl sub decl) mempty decls
-  return (subst (env, mempty) results, [])
-
-_evalExpr :: SubstEnv -> Expr -> Atom
-_evalExpr env expr = case expr of
-  Decl decl body -> _evalExpr (env <> env') body
+evalExpr :: SubstEnv -> Expr -> Atom
+evalExpr env expr = case expr of
+  Decl decl body -> evalExpr (env <> env') body
     where env' = evalDecl env decl
   CExpr op -> evalCExpr $ subst (env, mempty) op
   Atom x -> subst (env, mempty) x

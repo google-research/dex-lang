@@ -148,7 +148,6 @@ instance Pretty FDecl where
   pretty (LetPoly (v:>ty) (FTLam _ _ body)) =
     p v <+> ":" <+> p ty <> line <>
     p v <+> "="  <+> p body
-  pretty (FRuleDef _ _ _) = "<TODO: rule def>"
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
@@ -253,6 +252,12 @@ instance Pretty IType where
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
 
+instance Pretty ImpFunction where
+  pretty (ImpFunction vsOut vsIn body) =
+                   "in:  " <> p vsIn
+    <> hardline <> "out: " <> p vsOut
+    <> hardline <> p body
+
 prettyStatement :: (Maybe IVar, ImpInstr) -> Doc ann
 prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
@@ -299,24 +304,10 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
-instance Pretty TopEnv where
-  pretty (TopEnv _ subEnv _ _) = p subEnv
-
 instance Pretty body => Pretty (ModuleP body) where
   pretty (Module _ (imports, exports) body) = "imports:" <+> p imports
                              <> hardline <> p body
                              <> hardline <> "exports:" <+> p exports
-
-instance Pretty FModBody where
-  pretty (FModBody decls tyDefs) = vsep (map p decls) <> hardline <> p tyDefs
-
-instance Pretty ModBody where
-  pretty (ModBody decls result) =
-    vsep (map p decls) <> hardline <> "result:" <+> p result
-
-instance Pretty ImpModBody where
-  pretty (ImpModBody vs prog result) =
-    p vs <> hardline <> p prog <> hardline <> p result
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x

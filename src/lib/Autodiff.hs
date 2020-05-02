@@ -30,7 +30,7 @@ type EmbedSubM = ReaderT SubstEnv Embed
 type PrimalM = WriterT Vars EmbedSubM
 newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
-linearize :: TopEnv -> Scope -> LamExpr -> Atom
+linearize :: RuleEnv -> Scope -> LamExpr -> Atom
 linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam NonLin b $ \x -> do
     ((y, yt), _) <- flip runReaderT (b @> L x) $ runWriterT $
@@ -41,23 +41,23 @@ linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
               return (ans, noEffect)
     return (PairVal y fLin, noEffect)
 
-linearizeExpr :: TopEnv -> Expr -> LinA Atom
-linearizeExpr topEnv expr = case expr of
+linearizeExpr :: RuleEnv -> Expr -> LinA Atom
+linearizeExpr ruleEnv expr = case expr of
   Decl (Let b bound) body -> LinA $ do
-    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr topEnv bound
-    (ans, fLin) <- extendR env $ runLinA $ linearizeExpr topEnv body
+    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr ruleEnv bound
+    (ans, fLin) <- extendR env $ runLinA $ linearizeExpr ruleEnv body
     return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
-  CExpr e -> linearizeCExpr topEnv e
+  CExpr e -> linearizeCExpr ruleEnv e
   Atom x  -> linearizeAtom x
 
-linearizeLamExpr :: TopEnv -> LamExpr
+linearizeLamExpr :: RuleEnv -> LamExpr
                  -> EmbedSubM (LamExpr, [Type], Atom -> [Atom] -> EmbedSubM Atom)
-linearizeLamExpr topEnv (LamExpr v body) = do
+linearizeLamExpr ruleEnv (LamExpr v body) = do
   (lam, (v', residualVs, tBuilder)) <- buildLamExprAux v $ \v'@(Var iVar) ->
     extendR (v @> L v') $ do
        (((ans, ansT), embedEnv), fvs) <- runWriterT $ scoped $ runLinA $
-                                           linearizeExpr topEnv body
+                                           linearizeExpr ruleEnv body
        let localScope = fst embedEnv
        extend embedEnv
        let residualVs = [rv :> ty | (rv, L ty) <- envPairs $ localScope `envIntersect` fvs]
@@ -77,10 +77,10 @@ unpackResiduals f (t:ts) packed = do
   (ans, rs) <- unpackResiduals f ts packed'
   return (ans, r:rs)
 
-linearizeCExpr :: TopEnv -> CExpr -> LinA Atom
-linearizeCExpr topEnv (App _ (Var v) arg) | v `isin` linRules topEnv = LinA $ do
+linearizeCExpr :: RuleEnv -> CExpr -> LinA Atom
+linearizeCExpr ruleEnv (App _ (Var v) arg) | v `isin` ruleEnv = LinA $ do
   (x, t) <- runLinA $ linearizeAtom arg
-  (y, f) <- emit (App NonLin (linRules topEnv ! v) x) >>= fromPair
+  (y, f) <- emit (App NonLin (ruleEnv ! v) x) >>= fromPair
   saveVars f
   return ( y
          , liftM (App Lin f) t >>= emit )
@@ -89,7 +89,7 @@ linearizeCExpr _ expr | hasDiscreteType expr = LinA $ do
   ans <- emit expr'
   return $ withZeroTangent ans
 
-linearizeCExpr topEnv expr = case expr' of
+linearizeCExpr ruleEnv expr = case expr' of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emit
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emit
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emit
@@ -109,7 +109,7 @@ linearizeCExpr topEnv expr = case expr' of
     return (ans, do tx' <- tx
                     emit $ TabGet tx' i')
   For d lam@(LamExpr i _) -> LinA $ do
-    (lam', rTys, lin) <- lift $ linearizeLamExpr topEnv lam
+    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
     ansRes <- emit $ For d lam'
     (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
     mapM_ saveVars residuals
@@ -118,7 +118,7 @@ linearizeCExpr topEnv expr = case expr' of
                    lin i' residuals')
   RunReader r lam@(LamExpr ref _) -> LinA $ do
     (r', rt) <- runLinA r
-    (lam', rTys, lin) <- lift $ linearizeLamExpr topEnv lam
+    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
     ansRes <- emit $ RunReader r' lam'
     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
     mapM_ saveVars residuals
@@ -126,7 +126,7 @@ linearizeCExpr topEnv expr = case expr' of
                      lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
                      emit $ RunReader rt' lam'')
   RunWriter lam@(LamExpr ref _) -> LinA $ do
-    (lam', rTys, lin) <- lift $ linearizeLamExpr topEnv lam
+    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
     (ansRes, w) <- fromPair =<< emit (RunWriter lam')
     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
     mapM_ saveVars residuals

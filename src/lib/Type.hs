@@ -13,9 +13,9 @@
 module Type (
     getType, substEnvType, flattenType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
-    isData, IsModule (..), IsModuleBody (..), popRow,
+    isData, Checkable (..), popRow, getTyOrKind, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
-    getConType, checkEffType, HasType, indexSetConcreteSize,
+    checkRuleDefType, getConType, checkEffType, HasType, indexSetConcreteSize,
     maybeApplyPi, makePi, applyPi, isDependentType) where
 
 import Control.Monad
@@ -74,38 +74,24 @@ checkTypeIs ty x = do
 
 -- === Module interfaces ===
 
-class IsModule a where
-  -- TODO: consider just a 'Check' typeclass
-  checkModule  :: a -> Except ()
-  moduleType   :: a -> ModuleType
+moduleType :: ModuleP body -> (TypeEnv, TypeEnv)
+moduleType (Module _ (imports, exports) _) = ( foldMap varAsEnv imports
+                                             , foldMap varAsEnv exports )
 
-class IsModuleBody a where
-  checkModuleBody  :: TypeEnv -> a -> Except TypeEnv
+class Checkable a where
+  checkValid :: a -> Except ()
 
-instance (IsModuleBody body) => IsModule (ModuleP body) where
-  checkModule (Module _ (imports, exports) body) = do
-    exports' <- checkModuleBody imports body
-    assertEq exports exports' "Module exports"
-  moduleType (Module _ ty _) = ty
+instance Checkable FModule where
+  checkValid m@(Module _ _ decls) = do
+    let expr = wrapFDecls decls $ FPrimExpr $ ConExpr $ RecCon $ Tup []
+    void $ runTypeM imports $ checkPureType expr
+    void $ runLinCheck $ checkLinFExpr expr
+    where (imports, _) = moduleType m
 
-instance IsModuleBody FModBody where
-  checkModuleBody env (FModBody decls tyDefs) = do
-    termEnv <- runTypeM env $ flip catFold decls $ \decl -> do
-                 (eff, declEnv) <- checkTypeFDecl decl
-                 assertEq noEffect eff $ "Unexpected top-level effect: " ++ pprint eff
-                 return declEnv
-    mapM_ runCheckLinFDecl decls
-    return $ termEnv <> tyDefEnv
-    where tyDefEnv = fmap (T . getKind) tyDefs
-
-instance IsModuleBody ModBody where
-  -- TODO: find a better way to decide which errors are compiler errors
-  checkModuleBody env (ModBody decls result) = asCompilerErr $ do
-    runTypeM (env <> topTypeEnv result) $ do
-      (effs, env') <- catTraverse checkDecl decls
-      mapM_ checkPure effs
-      void $ extendR env' $ traverse checkTyOrKind (topSubstEnv result)
-    return $ topTypeEnv result
+instance Checkable Module where
+  checkValid m@(Module _ _ expr) = asCompilerErr $
+    void $ runTypeM imports $ checkPureType expr
+    where (imports, _) = moduleType m
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
@@ -113,10 +99,6 @@ asCompilerErr (Right x) = Right x
 
 substEnvType :: SubstEnv -> TypeEnv
 substEnvType env = fmap getTyOrKind env
-
-checkTyOrKind :: LorT Atom Type -> TypeM (LorT Type Kind)
-checkTyOrKind (L x ) = liftM L $ checkType x
-checkTyOrKind (T ty) = liftM T $ checkKind ty
 
 getTyOrKind :: LorT Atom Type -> LorT Type Kind
 getTyOrKind (L x ) = L $ getType x
@@ -268,11 +250,6 @@ checkTypeFDecl decl = case decl of
     ty' <- checkTypeFTLam tlam
     assertEq ty ty' "TLam"
     return (noEffect, b @> L ty)
-  FRuleDef ann annTy tlam -> do
-    ty <- checkTypeFTLam tlam
-    assertEq annTy ty "Rule def"
-    checkRuleDefType ann ty
-    return (noEffect, mempty)
   TyDef tv _ -> return (noEffect, tbind tv)
 
 checkTypeFTLam :: FTLam -> TypeM Type
@@ -409,11 +386,6 @@ combineEffects ~eff@(Effect row t) ~eff'@(Effect row' t') = case (t, t') of
     | eff == eff' -> return eff
     | otherwise -> throw TypeErr $ "Effect mismatch "
                                  ++ pprint eff ++ " != " ++ pprint eff'
-
-checkPure :: MonadError Err m => Effect -> m ()
-checkPure eff | isPure eff = return ()
-              | otherwise = throw TypeErr $ "Unexpected effect " ++ pprint eff
-
 
 checkExtends :: MonadError Err m => Effect -> Effect -> m ()
 checkExtends (Effect row _) (Effect row' Nothing) = checkRowExtends row row'
@@ -708,9 +680,8 @@ type Spent = Env ()
 newtype LinCheckM a = LinCheckM
   { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, (Spent, Env Spent)) }
 
-runCheckLinFDecl :: FDecl -> Except ()
-runCheckLinFDecl decls =
-  void $ runReaderT (runLinCheckM $ checkLinFDecl decls) mempty
+runLinCheck :: LinCheckM a -> Except ()
+runLinCheck m = void $ runReaderT (runLinCheckM m) mempty
 
 checkLinFExpr :: FExpr -> LinCheckM ()
 checkLinFExpr expr = case expr of

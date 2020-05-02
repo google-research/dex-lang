@@ -10,7 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpModule, impExprToAtom, impExprType) where
+module Imp (toImpFunction, impExprToAtom, impExprType) where
 
 import Control.Applicative
 import Control.Monad.Reader
@@ -28,31 +28,22 @@ import PPrint
 import Cat
 import Subst
 import Record
-import Embed (wrapDecls)
 
 type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
-toImpModule :: TopEnv -> Module -> ImpModule
-toImpModule env (Module bid ty@(imports, _) m) =
-  Module bid ty (ImpModBody vs prog result)
-  where
-    Just bid' = bid
-    ((vs, result, prog), _) =
-        flip runCat mempty $ toImpModBody (ArrayName bid') env imports m
-
-toImpModBody :: NameSpace -> TopEnv -> TypeEnv -> ModBody
-             -> ImpM ([IVar], TopEnv, ImpProg)
-toImpModBody ns topEnv imports (ModBody decls result) = do
-  let decls' = map (subst (topSubstEnv topEnv, mempty)) decls
-  let vs = [v:>ty | (v, L ty) <- envPairs $ freeVars result `envDiff` imports]
-  let outTuple = TupVal $ map Var vs
-  (outDest, vs') <- makeDest (Name ns "ptr" 0) $ getType outTuple
-  let (TupVal outDests) = outDest
+toImpFunction :: Maybe Int -> Expr -> ImpFunction
+toImpFunction ~(Just bid) expr = runImpM $ do
+  let nameBase = Name (ArrayName bid) "ptr" 0
+  (outDest, vsOut) <- makeDest nameBase $ getType expr
+  let vsIn = arrayImports $ freeVars expr
   ((), prog) <- scopedBlock $ do
-    ans <- toImpExpr mempty (wrapDecls decls' outTuple)
+    ans <- toImpExpr mempty expr
     copyAtom outDest ans
-  return (vs', subst (newLEnv vs outDests, mempty) result, prog)
+  return $ ImpFunction vsOut vsIn prog
+
+runImpM :: ImpM a -> a
+runImpM m = fst $ runCat m mempty
 
 toImpExpr :: SubstEnv -> Expr -> ImpM Atom
 toImpExpr env expr = case expr of
@@ -455,16 +446,14 @@ initializeZero ref = case impExprType ref of
 
 type ImpCheckM a = CatT (Env IType) (Either Err) a
 
-instance IsModuleBody ImpModBody where
-  checkModuleBody imports (ImpModBody vs prog result) = do
-    let env = arrayImports imports <> foldMap (\v -> v@> varAnn v) vs
-    ((), env') <- runCatT (checkProg prog) env
-    let tyEnv = fmap (L . impTypeToType) (env <> env')
-    checkModuleBody (imports <> tyEnv) (ModBody [] result)
+instance Checkable ImpFunction where
+   checkValid (ImpFunction vsOut vsIn prog) = do
+     let env = foldMap varAsEnv $ vsOut ++ vsIn
+     void $ runCatT (checkProg prog) env
 
-arrayImports :: TypeEnv -> Env IType
-arrayImports env = fold [ (v:>()) @> typeToIType ty
-                        | (v@(Name (ArrayName _) _ _), L ty) <- envPairs env]
+arrayImports :: TypeEnv -> [IVar]
+arrayImports env = [v:>typeToIType ty
+                   | (v@(Name (ArrayName _) _ _), L ty) <- envPairs env]
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements

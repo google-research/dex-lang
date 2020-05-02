@@ -6,7 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module Flops (moduleFlops) where
+module Flops (impFunctionFlops) where
 
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -23,8 +23,9 @@ newtype Profile = Profile (M.Map String Count)
 
 type FlopM a = ReaderT Term (Writer Profile) a
 
-moduleFlops :: ImpModBody -> Profile
-moduleFlops (ImpModBody _ prog _) = snd $ runWriter (runReaderT (flops prog) (litTerm 1))
+impFunctionFlops :: ImpFunction -> Profile
+impFunctionFlops (ImpFunction _ _ prog) =
+  snd $ runWriter (runReaderT (flops prog) (litTerm 1))
 
 flops :: ImpProg -> FlopM ()
 flops (ImpProg []) = return ()

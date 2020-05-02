@@ -57,8 +57,7 @@ mustParseit s p  = case parseit s p of
   Left e -> error $ "This shouldn't happen:\n" ++ pprint e
 
 topDecl :: Parser FDecl
-topDecl = ( ruleDef
-        <|> typeDef
+topDecl = ( typeDef
         <|> letMono
         <|> letPoly
         <?> "top-level declaration" ) <* (void eol <|> eof)
@@ -94,6 +93,7 @@ sourceBlock' =
   <|> loadData
   <|> dumpData
   <|> explicitCommand
+  <|> ruleDef
   <|> (liftM (RunModule . declAsModule) topDecl)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
 
@@ -142,13 +142,14 @@ explicitCommand = do
     (GetType, SrcAnnot (FVar v) _) -> GetNameType v
     _ -> Command cmd (exprAsModule e)
 
-ruleDef :: Parser FDecl
+ruleDef :: Parser SourceBlock'
 ruleDef = do
   v <- try $ lowerName <* symbol "#"
   symbol s
   symbol ":"
   (ty, tlam) <- letPolyTail $ pprint v ++ "#" ++ s
-  return $ FRuleDef (LinearizationDef v) ty tlam
+  void eol
+  return $ RuleDef (LinearizationDef v) ty tlam
   where s = "lin"
 
 typeDef :: Parser FDecl
@@ -164,14 +165,18 @@ typeDef = do
   return $ TyDef v ty'
 
 declAsModule :: FDecl -> FModule
-declAsModule decl =
-  Module Nothing (freeVars decl, fDeclBoundVars decl) (FModBody [decl] mempty)
+declAsModule decl = Module Nothing modTy [decl]
+  where  modTy = (envToVarList $ freeVars decl, envToVarList $ fDeclBoundVars decl)
 
 exprAsModule :: FExpr -> (Var, FModule)
-exprAsModule e =
-  (v, Module Nothing (freeVars e, lbind v) (FModBody body mempty))
-  where v = "*ans*" :> NoAnn
-        body = [LetMono (RecLeaf v) e]
+exprAsModule e = (v, Module Nothing modTy body)
+  where
+    v = "*ans*" :> NoAnn
+    body = [LetMono (RecLeaf v) e]
+    modTy = (envToVarList $ freeVars e, [fmap L v])
+
+envToVarList :: TypeEnv -> [VarP (LorT Type Kind)]
+envToVarList env = map (uncurry (:>)) $ envPairs env
 
 -- === Parsing decls ===
 

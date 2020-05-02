@@ -25,30 +25,20 @@ import Record
 type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
-normalizeModule (Module bid ty (FModBody decls tySub)) =
-  Module bid ty (ModBody decls' (tySubTop <> fold results))
+normalizeModule (Module bid moduleTy@(_, outVars) decls) =
+  Module bid moduleTy $ wrapDecls decls' ans
   where
-    ((results, _), decls') = runNormM (catTraverse normalizeTopDecl decls) mempty
-    tySub' = fmap T tySub
-    tySubTop = TopEnv (substEnvType tySub') tySub' mempty mempty
+    outFVars = [FVar (v:>ty) | (v:>L ty) <- outVars]
+    outTuple = FPrimExpr $ ConExpr $ RecCon $ Tup outFVars
+    (ans, decls') = runNormM $ normalize $ wrapFDecls decls outTuple
 
-runNormM :: NormM a -> SubstEnv -> (a, [Decl])
-runNormM m env = (ans, decls)
-  where (ans, (_, decls)) = runEmbed (runReaderT m env) mempty
-
-normalizeTopDecl :: FDecl -> NormM (TopEnv, SubstEnv)
-normalizeTopDecl decl = case decl of
-  FRuleDef (LinearizationDef v) _ (FTLam [] [] expr) -> do
-    ans <- normalize expr
-    return (mempty { linRules = (v:>())@>ans }, mempty)
-  _ -> do
-    subEnv <- normalizeDecl decl
-    return (mempty { topTypeEnv = substEnvType subEnv
-                   , topSubstEnv = subEnv }, subEnv)
+runNormM :: NormM a -> (a, [Decl])
+runNormM m = (ans, decls)
+  where (ans, (_, decls)) = runEmbed (runReaderT m mempty) mempty
 
 normalizeVal :: FExpr -> Except Atom
 normalizeVal expr = do
-  let (ans, decls) = runNormM (normalize expr) mempty
+  let (ans, decls) = runNormM (normalize expr)
   case decls of [] -> return ans
                 _  -> throw MiscErr "leftover decls"
 

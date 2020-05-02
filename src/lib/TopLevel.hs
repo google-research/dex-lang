@@ -14,6 +14,8 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Writer.Strict  hiding (pass)
 import Control.Monad.Except hiding (Except)
+import Data.Foldable (toList)
+import Data.String
 import Data.Text.Prettyprint.Doc
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
@@ -29,8 +31,8 @@ import Serialize
 import Imp
 import Flops
 import Interpreter
-import JAX
 import JIT
+import LLVMExec
 import PPrint
 import Parser
 import Record
@@ -58,7 +60,7 @@ runTopPassM :: EvalOpts -> TopPassM a -> IO (Except a, [Output])
 runTopPassM opts m = runWriterT $ runExceptT $ runReaderT m opts
 
 evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlock env block = case sbContents block of
+evalSourceBlock env@(TopEnv (typeEnv, _) _ _ _) block = case sbContents block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -85,9 +87,9 @@ evalSourceBlock env block = case sbContents block of
     where
       runWithFilter :: (Output -> Bool) -> TopPassM ()
       runWithFilter f = liftM (const mempty) $ filterOutputs f $ evalModule env m
-  GetNameType v -> case topSubstEnv env `envLookup` v of
-    Just (L val) -> tell [TextOut $ pprint (getType val)] >> return mempty
-    _            -> throw UnboundVarErr $ pprint v
+  GetNameType v -> case envLookup typeEnv v of
+    Just (L ty) -> tell [TextOut $ pprint ty] >> return mempty
+    _           -> throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIOTop $ readFile fname
     evalSourceBlocks env $ parseProg source
@@ -95,15 +97,21 @@ evalSourceBlock env block = case sbContents block of
     source <- liftIOTop $ readFile fname
     let val = ignoreExcept $ parseData source
     let decl = LetMono p val
+    let outVars = map (\(v:>ty) -> v:>L ty) $ toList p
     filterOutputs (const False) $ evalModule env $
-      Module (sbId block) (mempty, foldMap lbind p) $ FModBody [decl] mempty
+      Module (sbId block) ([], outVars) [decl]
   LoadData p DexBinaryObject fname -> do
     val <- liftIOTop $ loadDataFile fname
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
     let outEnv = b @> L val
-    return $ mempty { topTypeEnv = substEnvType outEnv
-                    , topSubstEnv = outEnv }
+    return $ TopEnv (substEnvType outEnv, mempty) outEnv mempty mempty
+  RuleDef ann@(LinearizationDef v) ~(Forall [] [] ty) ~(FTLam [] [] expr) -> do
+    let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
+    let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr
+    let m = Module (sbId block) (imports, [fmap L v']) [LetMono (RecLeaf v') expr]
+    env' <- filterOutputs (const False) $ evalModule env m
+    return $ env' <> TopEnv mempty mempty mempty ((v:>()) @> Var v')
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
 
@@ -117,10 +125,10 @@ evalSourceBlocks env blocks =
 evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do
   env' <- filterOutputs (const False) $ evalModule env m
-  let (L val) = topSubstEnv env' ! v
-  let fullEnv = env <> env'
-  let val' = subst (topSubstEnv fullEnv, mempty) val
-  arraySubstEnv <- liftIO $ buildArraySubst $ topArrayEnv fullEnv
+  let (TopEnv _ simpEnv evalEnv _) = env <> env'
+  let (L val) = simpEnv ! v
+  let val' = subst (simpEnv, mempty) val
+  arraySubstEnv <- liftIO $ buildArraySubst evalEnv
   return $ subst (arraySubstEnv, mempty) val'
 
 buildArraySubst :: Env ArrayRef -> IO SubstEnv
@@ -132,48 +140,57 @@ buildArraySubst env = forM env $ \arrPtr -> do
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalModule :: TopEnv -> Pass FModule TopEnv
-evalModule env untyped = do
-  typed     <- inferTypes env untyped
-  optimized <- corePasses env typed
-  backend <- asks evalBackend
-  case backend of
-    LLVM   -> evalJIT env optimized
-    JAX    -> evalJAX optimized
-    Interp -> evalInterp optimized
+evalModule (TopEnv infEnv simpEnv evalEnv ruleEnv) untyped@(Module bid _ _) = do
+  tell [PassInfo Parse "" (pprint untyped)]
+  (typed, infEnv') <- typePass infEnv untyped
+  normalized <- normalizePass typed
+  (defunctionalized, simpEnv') <- simpPass simpEnv ruleEnv normalized
+  let (Module _ (_, outVars) dfExpr) = defunctionalized
+  case dfExpr of
+    Atom UnitVal -> do
+      return $ TopEnv infEnv' simpEnv' mempty mempty
+    _ -> do
+      backend <- asks evalBackend
+      (results, evalEnv') <- evalDFExpr bid backend evalEnv dfExpr
+      let simpEnv'' = subst (newLEnv outVars results, mempty) simpEnv'
+      return $ TopEnv infEnv' simpEnv'' evalEnv' mempty
+
+evalDFExpr :: Maybe Int -> Backend -> Env ArrayRef -> Pass Expr ([Atom], Env ArrayRef)
+evalDFExpr bid backend arrayEnv expr = case backend of
+  LLVM -> do
+    impFunction@(ImpFunction arrayVars _ _) <- impPass bid expr
+    countFlops impFunction
+    (refs, llvmProg) <- liftIO $ impToLLVM arrayEnv impFunction
+    void $ liftIO $ evalLLVM llvmProg
+    let arrays = map (impExprToAtom . IVar) arrayVars
+    let TupVal results = reStructureArrays (getType expr) arrays
+    return (results, newEnv arrayVars refs)
+  JAX -> error "Not implemented"
+  Interp -> do
+    let TupVal results = evalExpr mempty expr
+    return (results, mempty)
 
 -- TODO: check here for upstream errors
-inferTypes :: TopEnv -> Pass FModule Module
-inferTypes env m =
-      tell [PassInfo Parse "" (pprint m)]
-  >>  namedPass TypePass (liftEither . inferModule env) m
-  >>= namedPass NormPass (return     . normalizeModule)
+typePass :: TopInfEnv -> Pass FModule (FModule, TopInfEnv)
+typePass env m = do
+  (typed, envOut) <- liftEither $ inferModule env m
+  liftEither $ checkValid typed
+  return (typed, envOut)
 
-corePasses :: TopEnv -> Pass Module Module
-corePasses env = namedPass SimpPass (return . simplifyModule env)
+normalizePass :: Pass FModule Module
+normalizePass = namedPass NormPass (return . normalizeModule)
 
-evalJIT :: TopEnv -> Pass Module TopEnv
-evalJIT env = namedPass ImpPass  (return . toImpModule env) >=> evalImp env
+-- TODO: add back logging
+simpPass :: SubstEnv -> RuleEnv -> Pass Module (Module, SubstEnv)
+simpPass substEnv rulesEnv m = return $ simplifyModule substEnv rulesEnv m
 
-evalImp :: TopEnv -> Pass ImpModule TopEnv
-evalImp env m = do
-  countFlops m
-  (result, outs) <- liftIO $ evalModuleJIT env m
-  tell outs
-  return result
+impPass :: Maybe Int -> Pass Expr ImpFunction
+impPass bid = namedPass ImpPass (return . toImpFunction bid)
 
-evalJAX :: Pass Module TopEnv
-evalJAX m = do
-  (result, outs) <- liftIO $ evalModuleJAX m
-  tell outs
-  return result
+countFlops :: ImpFunction -> TopPassM ()
+countFlops f = tell [PassInfo Flops "" (pprint (impFunctionFlops f))]
 
-evalInterp :: Pass Module TopEnv
-evalInterp m = do
-  (result, outs) <- liftIO $ evalModuleInterp m
-  tell outs
-  return result
-
-namedPass :: (IsModule a, Pretty a, IsModule b, Pretty b)
+namedPass :: (Pretty a, Checkable b, Pretty b)
           => PassName -> Pass a b -> Pass a b
 namedPass name pass x = do
   let passCtx  = pprint name ++ " pass with input:\n" ++ pprint x
@@ -182,11 +199,8 @@ namedPass name pass x = do
   t2 <- liftIO getCurrentTime
   tell [PassInfo name (show (t2 `diffUTCTime` t1)) s]
   let checkCtx = "Checking after " ++ pprint name ++ " pass:\n" ++ pprint ans
-  withDebugCtx checkCtx $ liftEither $ checkModule ans
+  withDebugCtx checkCtx $ liftEither $ checkValid ans
   return ans
-
-countFlops :: ImpModule -> TopPassM ()
-countFlops (Module _ _  m) = tell [PassInfo Flops "" (pprint (moduleFlops m))]
 
 printedPass :: Pretty a => TopPassM a -> TopPassM (a, String)
 printedPass m = do
