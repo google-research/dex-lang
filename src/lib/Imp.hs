@@ -10,7 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module Imp (toImpFunction, impExprToAtom, impExprType) where
+module Imp (toImpFunction, impExprToAtom, impExprType, impTypeToArrayType) where
 
 import Control.Applicative
 import Control.Monad.Reader
@@ -250,6 +250,15 @@ impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
   IVar (v:>ty) -> Var (v:> impTypeToType ty)
   ILit x       -> Con $ Lit x
+
+-- TODO: pick a single convention for order of (BaseType, Shape) pair
+impTypeToArrayType :: IType -> ArrayType
+impTypeToArrayType (IRefType (b, shape)) = (map fromILitInt shape, b)
+impTypeToArrayType _ = error "Not an array type"
+
+fromILitInt :: IExpr -> Int
+fromILitInt (ILit (IntLit x)) = x
+fromILitInt expr = error $ "Not an int: " ++ pprint expr
 
 impTypeToType :: IType -> Type
 impTypeToType (IValType  b        ) = BaseTy         b

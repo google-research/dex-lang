@@ -23,7 +23,7 @@ module Syntax (
     RuleAnn (..), CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEvalEnv, TopEnv (..),
     ModuleP (..), ModuleType, Module, FModule, ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
-    IVar, IType (..), IArrayType, SetVal (..), MonMap (..), LitProg,
+    IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),

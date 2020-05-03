@@ -6,7 +6,8 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (showLLVM, evalLLVM, linking_hack) where
+module LLVMExec (LLVMFunction (..), showLLVM, evalLLVM, callLLVM,
+                 linking_hack) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -17,22 +18,39 @@ import qualified LLVM.Target as T
 import LLVM.Context
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
+import Foreign.Marshal.Alloc
 import Foreign.Ptr
+import Foreign.Storable
 import Control.Exception
 import Control.Monad
 import Data.ByteString.Char8 (unpack)
 import Data.Maybe (fromMaybe)
 
 import Syntax
+import Array
 
 -- This forces the linker to link libdex.so. TODO: something better
 foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
 foreign import ccall "dynamic"
-  haskFun :: FunPtr (IO ()) -> IO ()
+  callFunPtr :: FunPtr (Ptr () -> IO ()) -> Ptr () -> IO ()
 
-evalLLVM :: L.Module -> IO [Output]
-evalLLVM ast = do
+data LLVMFunction = LLVMFunction [ArrayType] [ArrayType] L.Module  -- outputs first
+
+-- TODO: check arg types
+callLLVM :: LLVMFunction -> [ArrayRef] -> [ArrayRef] -> IO [Output]
+callLLVM (LLVMFunction _ _ ast) outArrays inArrays = do
+  let ioArgs = outArrays ++ inArrays
+  argsPtr <- mallocBytes $ length ioArgs * ptrSize
+  forM_ (zip [0..] ioArgs) $ \(i, ArrayRef _ p) -> do
+    poke (argsPtr `plusPtr` (i * ptrSize)) p
+  logs <- evalLLVM ast argsPtr
+  free argsPtr
+  return logs
+  where ptrSize = 8
+
+evalLLVM :: L.Module -> Ptr () -> IO [Output]
+evalLLVM ast argPtr = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c ast $ \m -> do
@@ -44,9 +62,9 @@ evalLLVM ast = do
       jit c $ \ee -> do
         EE.withModuleInEngine ee m $ \eee -> do
           f <- liftM (fromMaybe (error "failed to fetch function")) $
-                 EE.getFunction eee (L.Name "thefun")
+                 EE.getFunction eee (L.Name "entryFun")
           t1 <- getCurrentTime
-          runJitted f
+          callFunPtr (castFunPtr f :: FunPtr (Ptr () -> IO ())) argPtr
           t2 <- getCurrentTime
           return [ PassInfo JitPass "" preOpt
                  , PassInfo LLVMOpt "" postOpt
@@ -55,9 +73,6 @@ evalLLVM ast = do
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
-
-runJitted :: FunPtr a -> IO ()
-runJitted fn = haskFun (castFunPtr fn :: FunPtr (IO ()))
 
 runPasses :: Mod.Module -> IO ()
 runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m

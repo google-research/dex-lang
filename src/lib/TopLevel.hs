@@ -158,13 +158,17 @@ evalModule (TopEnv infEnv simpEnv evalEnv ruleEnv) untyped@(Module bid _ _) = do
 evalDFExpr :: Maybe Int -> Backend -> Env ArrayRef -> Pass Expr ([Atom], Env ArrayRef)
 evalDFExpr bid backend arrayEnv expr = case backend of
   LLVM -> do
-    impFunction@(ImpFunction arrayVars _ _) <- impPass bid expr
+    impFunction@(ImpFunction arrayOutVars arrayInVars _) <- impPass bid expr
     countFlops impFunction
-    (refs, llvmProg) <- liftIO $ impToLLVM arrayEnv impFunction
-    void $ liftIO $ evalLLVM llvmProg
-    let arrays = map (impExprToAtom . IVar) arrayVars
-    let TupVal results = reStructureArrays (getType expr) arrays
-    return (results, newEnv arrayVars refs)
+    let inArrays = map (arrayEnv !) arrayInVars
+    let llvmFunc = impToLLVM impFunction
+    outArrays <- liftIO $ forM arrayOutVars $ \(_:>iTy) ->
+                   newArrayRef $ impTypeToArrayType iTy
+    logs <- liftIO $ callLLVM llvmFunc outArrays inArrays
+    tell logs
+    let TupVal results = reStructureArrays (getType expr) $
+                            map (impExprToAtom . IVar) arrayOutVars
+    return (results, newEnv arrayOutVars outArrays)
   JAX -> error "Not implemented"
   Interp -> do
     let TupVal results = evalExpr mempty expr

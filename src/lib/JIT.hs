@@ -9,7 +9,7 @@
 
 module JIT (impToLLVM) where
 
-import LLVM.AST (Operand, BasicBlock, Instruction, Named)
+import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import qualified LLVM.AST as L
 import qualified LLVM.AST.Global as L
 import qualified LLVM.AST.CallingConvention as L
@@ -28,16 +28,16 @@ import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
 import Data.Text.Prettyprint.Doc
-import Foreign.Ptr
 
+import LLVMExec
 import Syntax
 import Env
 import PPrint
 import Cat
 import Imp
-import Array
 
 type CompileEnv = Env Operand
+-- TODO: consider using LLVM.IRBuilder.Monad instead of rolling our own here
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
@@ -51,34 +51,37 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
+type Function = L.Global
 
-impToLLVM :: Env ArrayRef -> ImpFunction -> IO ([ArrayRef], L.Module)
-impToLLVM env (ImpFunction vsOut _ prog) = do
-  dests <- mapM allocIRef vsOut
-  let compileEnv = fmap arrayToOperand (env <> newEnv vsOut dests)
-  let llvmModule = runCompileM compileEnv (compileTopProg prog)
-  return (dests, llvmModule)
-
-allocIRef :: IVar -> IO ArrayRef
-allocIRef (_:> IRefType (b, shape)) = newArrayRef (map fromILitInt shape, b)
-allocIRef _ = error "Destination should have a reference type"
-
-fromILitInt :: IExpr -> Int
-fromILitInt (ILit (IntLit x)) = x
-fromILitInt expr = error $ "Not an int: " ++ pprint expr
+impToLLVM :: ImpFunction -> LLVMFunction
+impToLLVM f = runCompileM mempty (compileTopProg f)
 
 runCompileM :: CompileEnv -> CompileM a -> a
 runCompileM env m = evalState (runReaderT m env) initState
   where initState = CompileState [] [] [] "start_block" mempty []
 
-compileTopProg :: ImpProg -> CompileM L.Module
-compileTopProg prog = do
-  compileProg prog
+compileTopProg :: ImpFunction -> CompileM LLVMFunction
+compileTopProg (ImpFunction outVars inVars prog) = do
+  let ioVars = outVars ++ inVars
+  let ioVarTypes = map (impRefTypeAsPtrType . varAnn) ioVars
+  (params, operands) <- liftM unzip $ mapM freshParamOpPair ioVarTypes
+  let paramEnv = newEnv ioVars operands
+  extendR paramEnv $ compileProg prog
   finishBlock (L.Ret Nothing []) "<ignored>"
   specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
-  return $ makeModule decls blocks specs
+  return $ LLVMFunction (map (impTypeToArrayType . varAnn) outVars)
+                        (map (impTypeToArrayType . varAnn) inVars )
+                        (makeModule params decls blocks specs)
+
+impRefTypeAsPtrType :: IType -> L.Type
+impRefTypeAsPtrType ty = L.ptr $ scalarTy $ snd $ impTypeToArrayType ty
+
+freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
+freshParamOpPair ty = do
+  v <- freshName "arg"
+  return (L.Parameter ty v [], L.LocalReference ty v)
 
 compileProg :: ImpProg -> CompileM ()
 compileProg (ImpProg []) = return ()
@@ -144,9 +147,6 @@ compileExpr expr = case expr of
   ILit v   -> return (litVal v)
   IVar v   -> lookupImpVar v
 
-arrayToOperand :: ArrayRef -> Operand
-arrayToOperand (ArrayRef (_, b) ptr) = refLiteral b ptr
-
 lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)
 
@@ -154,7 +154,10 @@ indexPtr :: Operand -> [Operand] -> Operand -> CompileM Operand
 indexPtr ptr shape i = do
   stride <- foldM mul (litInt 1) shape
   n <- mul stride i
-  emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [n] []
+  gep ptr n
+
+gep :: Operand -> Operand -> CompileM Operand
+gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
 
 finishBlock :: L.Terminator -> L.Name -> CompileM ()
 finishBlock term newName = do
@@ -196,10 +199,6 @@ copy numBytes dest src = do
   src'  <- castLPtr charTy src
   dest' <- castLPtr charTy dest
   addInstr $ L.Do (externCall memcpyFun [dest', src', numBytes])
-
-refLiteral :: BaseType -> Ptr () -> Operand
-refLiteral ty ptr = L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
-   where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
@@ -360,28 +359,52 @@ realTy = L.FloatingPointType L.DoubleFP
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
-makeModule :: [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> L.Module
-makeModule decls (fstBlock:blocks) userSpecs = m
+makeModule :: [Parameter] -> [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> L.Module
+makeModule params decls (fstBlock:blocks) userSpecs = m
   where
     L.BasicBlock name instrs term = fstBlock
     fstBlock' = L.BasicBlock name (decls ++ instrs) term
     ffiSpecs = nub $ userSpecs ++ builtinFFISpecs
-    m = L.defaultModule
-      { L.moduleName = "test"
-      , L.moduleDefinitions = L.GlobalDefinition fundef : map externDecl ffiSpecs }
-    fundef = L.functionDefaults
-      { L.name        = L.Name "thefun"
-      , L.parameters  = ([], False)
+    paramTypes = map L.typeOf params
+    mainFun = L.functionDefaults
+      { L.name        = "mainFun"
+      , L.parameters  = (params, False)
       , L.returnType  = L.VoidType
       , L.basicBlocks = (fstBlock':blocks) }
-makeModule _ [] _ = error $ "Expected at least one block"
+    wrapperFun = wrapVariadic paramTypes $
+                   callableOperand (funTy L.VoidType paramTypes) "mainFun"
+    m = L.defaultModule
+      { L.moduleName = "mainModule"
+      , L.moduleDefinitions =
+          L.GlobalDefinition mainFun
+        : L.GlobalDefinition (wrapperFun { L.name = "entryFun" })
+        : map externDecl ffiSpecs }
+makeModule _ _ [] _ = error $ "Expected at least one block"
+
+wrapVariadic :: [L.Type] -> L.CallableOperand -> Function
+wrapVariadic argTypes f = runCompileM mempty $ do
+  (argParam, argOperand) <- freshParamOpPair (L.ptr charPtrTy)
+  args <- forM (zip [0..] argTypes) $ \(i, ty) -> do
+    curPtr <- gep argOperand $ litInt i
+    arg <- load curPtr
+    emitInstr ty $ L.BitCast arg ty []
+  addInstr $ L.Do $ callInstr f args
+  instrs <- liftM reverse $ gets curInstrs
+  return $ L.functionDefaults
+    { L.parameters = ([argParam], False)
+    , L.returnType = L.VoidType
+    , L.basicBlocks = [L.BasicBlock "mainblock" instrs (L.Do (L.Ret Nothing []))] }
+
+callableOperand :: L.Type -> L.Name -> L.CallableOperand
+callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys) xs =
-  L.Call Nothing L.C [] fun xs' [] []
-  where fun = Right $ L.ConstantOperand $ C.GlobalReference
-                         (funTy retTy argTys) fname
-        xs' = [(x ,[]) | x <- xs]
+externCall (ExternFunSpec fname retTy argTys) xs = callInstr fun xs
+  where fun = callableOperand (funTy retTy argTys) fname
+
+callInstr :: L.CallableOperand -> [L.Operand] -> L.Instruction
+callInstr fun xs = L.Call Nothing L.C [] fun xs' [] []
+ where xs' = [(x ,[]) | x <- xs]
 
 externDecl :: ExternFunSpec -> L.Definition
 externDecl (ExternFunSpec fname retTy argTys) =
