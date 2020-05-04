@@ -61,7 +61,8 @@ import Array
 -- === types ===
 
 data Type = TypeVar TVar
-          | ArrowType Mult PiType
+          | ArrowType Mult (PiType EffectiveType)
+          | TabType (PiType Type)
           | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
           | TC (TyCon Type Atom)
@@ -72,7 +73,6 @@ data Type = TypeVar TVar
 data TyCon ty e = BaseType BaseType
                 | IntRange e e
                 | IndexRange ty (Limit e) (Limit e)
-                | TabType ty ty
                 | ArrayType ArrayType
                 | RecType (Record ty)
                 | RefType ty
@@ -92,7 +92,8 @@ type EffectRow a = Env (EffectName, a)
 
 data EffectName = Reader | Writer | State  deriving (Eq, Show, Generic)
 
-data PiType = Pi Type EffectiveType  deriving (Eq, Show)
+-- TODO: Make a functor over EffectiveType (TabType doesn't have effects)
+data PiType b = Pi Type b  deriving (Eq, Show)
 
 data TyQual = TyQual TVar ClassName  deriving (Eq, Show)
 
@@ -543,6 +544,7 @@ instance HasVars FLamExpr where
 instance HasVars Type where
   freeVars ty = case ty of
     ArrowType l p -> freeVars l <> freeVars p
+    TabType p -> freeVars p
     TypeVar v  -> tbind v
     Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
@@ -556,8 +558,8 @@ freeVarsEffect :: (Name, (EffectName, Type)) -> Vars
 freeVarsEffect (DeBruijn _, (_, ty)) =              freeVars ty
 freeVarsEffect (v,          (_, ty)) = (v:>()) @> L ty <> freeVars ty
 
-instance HasVars PiType where
-  freeVars (Pi a (eff, b)) = freeVars a <> freeVars eff <> freeVars b
+instance HasVars b => HasVars (PiType b) where
+  freeVars (Pi a b) = freeVars a <> freeVars b
 
 instance HasVars b => HasVars (VarP b) where
   freeVars (_ :> b) = freeVars b
@@ -755,7 +757,6 @@ traverseTyCon con fTy fE = case con of
   BaseType b        -> pure $ BaseType b
   IntRange a b      -> liftA2 IntRange (fE a) (fE b)
   IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
-  TabType a b       -> liftA2 TabType (fTy a) (fTy b)
   ArrayType t       -> pure $ ArrayType t
   RecType r         -> liftA RecType $ traverse (fTy ) r
   RefType t         -> liftA RefType (fTy t)
@@ -779,7 +780,7 @@ a --> b = ArrowType NonLin $ Pi a (noEffect, b)
 a --@ b = ArrowType Lin $ Pi a (noEffect, b)
 
 (==>) :: Type -> Type -> Type
-a ==> b = TC $ TabType a b
+a ==> b = TabType $ Pi a b
 
 pattern IntVal :: Int -> Atom
 pattern IntVal x = Con (Lit (IntLit x))
@@ -809,7 +810,7 @@ pattern UnitTy :: Type
 pattern UnitTy = TupTy []
 
 pattern TabTy :: Type -> Type -> Type
-pattern TabTy a b = TC (TabType a b)
+pattern TabTy a b = TabType (Pi a b)
 
 pattern ArrayTy :: [Int] -> BaseType -> Type
 pattern ArrayTy shape b = TC (ArrayType (shape, b))
@@ -840,3 +841,6 @@ pattern RealTy = TC (BaseType RealType)
 
 pattern FixedIntRange :: Int -> Int -> Type
 pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))
+
+-- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
+-- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}

@@ -602,7 +602,7 @@ arrowType = do
   eff <- effectType <|> return noEffect
   return $ \a b -> ArrowType lin $ Pi a (eff, b)
 
-piType :: Parser PiType
+piType :: Parser (PiType EffectiveType)
 piType = do
   v <- try $ lowerName <* symbol ":"
   a <- tauTypeAtomic

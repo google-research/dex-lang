@@ -139,13 +139,13 @@ reStructureArrays :: Type -> [Val] -> Val
 reStructureArrays ty xs = evalState (reStructureArrays' ty) xs
 
 reStructureArrays' :: Type -> State [Val] Val
+reStructureArrays' (TabTy n a) = liftM (Con . AFor n) $ reStructureArrays' a
 reStructureArrays' ty@(TC con) = case con of
   BaseType _ -> do
     ~(x:xs) <- get
     put xs
     return $ Con $ AGet x
   RecType r -> liftM (Con . RecCon) $ traverse reStructureArrays' r
-  TabType n a -> liftM (Con . AFor n) $ reStructureArrays' a
   IntRange _ _ -> do
     liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
   _ -> error $ "Not implemented: " ++ pprint ty

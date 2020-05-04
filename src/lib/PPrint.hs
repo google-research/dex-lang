@@ -61,6 +61,7 @@ instance Pretty Type where
     ArrowType l (Pi a (eff, b))
       | isPure eff -> parens $ p a <+> arrStr l <+>           p b
       | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
+    TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
     Forall bs qs body -> header <+> p body
       where
         header = "A" <+> hsep (map p bs) <> qual <> "."
@@ -84,7 +85,6 @@ instance Pretty Type where
 instance Pretty ty => Pretty (TyCon ty Atom) where
   pretty con = case con of
     BaseType b  -> p b
-    TabType a b -> parens $ p a <> "=>" <> p b
     RecType r   -> p $ fmap (asStr . p) r
     RefType t   -> "Ref" <+> p t
     TypeApp f xs -> p f <+> hsep (map p xs)
@@ -103,7 +103,7 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     LinCon    -> "Lin"
     NonLinCon -> "NonLin"
 
-instance Pretty PiType where
+instance Pretty b => Pretty (PiType b) where
   pretty (Pi a b) = "Pi" <+> p a <+> p b
 
 instance Pretty EffectName where
@@ -203,8 +203,11 @@ instance PrettyLam () where
 instance (Pretty a, Pretty b) => PrettyLam (a, b) where
   prettyLam (x, y) = (p x, p y)
 
-instance PrettyLam PiType where
-  prettyLam (Pi a (eff,b)) = (p a, p eff <+> p b)
+instance PrettyLam (PiType EffectiveType) where
+  prettyLam (Pi a (eff, b)) = (p a, p eff <+> p b)
+
+instance PrettyLam (PiType Type) where
+  prettyLam (Pi a b) = (p a, p b)
 
 instance Pretty Kind where
   pretty TyKind      = "Type"

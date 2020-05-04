@@ -234,9 +234,9 @@ isSingletonType ty = case singletonTypeVal ty of
   Just _  -> True
 
 singletonTypeVal :: Type -> Maybe Atom
+singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
 singletonTypeVal (TC con) = case con of
   BaseType  _ -> Nothing
-  TabType n a -> liftM (Con . AFor n) $ singletonTypeVal a
   RecType r   -> liftM RecVal $ traverse singletonTypeVal r
   _           -> Nothing
 singletonTypeVal _ = Nothing
