@@ -541,7 +541,7 @@ className = do
 
 tauTypeAtomic :: Parser Type
 tauTypeAtomic =   parenTy
-              <|> liftM (ArrowType NonLin) piType
+              <|> dependentArrow
               <|> liftM RefTy (symbol "Ref" >> tauTypeAtomic)
               <|> typeName
               <|> intRangeType
@@ -602,14 +602,19 @@ arrowType = do
   eff <- effectType <|> return noEffect
   return $ \a b -> ArrowType lin $ Pi a (eff, b)
 
-piType :: Parser (PiType EffectiveType)
-piType = do
+dependentArrow :: Parser Type
+dependentArrow = do
   v <- try $ lowerName <* symbol ":"
   a <- tauTypeAtomic
-  symbol "->"
-  eff <- effectType <|> return noEffect
-  b <- tauType
-  return $ makePi (v:>a) (eff, b)
+  isFunction <-  (symbol "->" *> return True)
+             <|> (symbol "=>" *> return False)
+  if isFunction
+    then do
+      eff <- (effectType <|> return noEffect)
+      b <- tauType
+      return $ ArrowType NonLin $ makePi (v:>a) (eff, b)
+    else do
+      TabType . makePi (v:>a) <$> tauType
 
 effectRow :: Parser (EffectRow Type)
 effectRow = do
