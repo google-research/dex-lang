@@ -7,10 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, scopelessSubst,
-              abstractDepType, instantiateDepType) where
-
-import Data.Foldable (fold)
+module Subst (Subst, subst, scopelessSubst) where
 
 import Env
 import Record
@@ -83,6 +80,7 @@ instance Subst Type where
         Just (T ty') -> ty'
         Just (L _)   -> error $ "Shadowed type var: " ++ pprint v
     ArrowType l p -> ArrowType (recur l) (subst env p)
+    TabType p -> TabType (subst env p)
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
     Effect row t -> case t of
@@ -96,7 +94,7 @@ instance Subst Type where
     TC con -> TC $ fmapTyCon con (subst env) (subst env)
     where recur = subst env
 
-instance Subst PiType where
+instance Subst b => Subst (PiType b) where
   subst env (Pi a b) = Pi (subst env a) (subst env b)
 
 substName :: SubstEnv -> Name -> Name
@@ -146,46 +144,3 @@ reduceTypeApp (TypeAlias bs ty) xs
   | length bs == length xs = subst (newTEnv bs xs, mempty) ty
   | otherwise = error "Kind error"
 reduceTypeApp f xs = TC $ TypeApp f xs
-
-instantiateDepType :: Int -> Atom -> Type -> Type
-instantiateDepType d x ty = case ty of
-  TypeVar _ -> ty
-  ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
-    Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
-  Forall tbs cs body -> Forall tbs cs $ recur body
-  Effect row tailVar -> Effect row' tailVar
-    where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
-                      | (v, (eff, ann)) <- envPairs row]
-  TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-     where env = (DeBruijn d :>()) @> L x
-  NoAnn -> NoAnn
-  TypeAlias _ _ -> error "Shouldn't have type alias left"
-  where
-    recur ::Type -> Type
-    recur = instantiateDepType d x
-
-    lookupDBVar :: Name -> Name
-    lookupDBVar v = case v of
-      DeBruijn i | i == d -> v'  where (Var (v':>_)) = x
-      _                   -> v
-
-abstractDepType :: Var -> Int -> Type -> Type
-abstractDepType v d ty = case ty of
-  TypeVar _ -> ty
-  ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
-    Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
-  Forall tbs cs body -> Forall tbs cs $ recur body
-  Effect row tailVar -> Effect row' tailVar
-    where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
-                      | (v', (eff, ann)) <- envPairs row]
-  TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-    where env = v @> L (Var (DeBruijn d :> varAnn v))
-  NoAnn -> NoAnn
-  TypeAlias _ _ -> error "Shouldn't have type alias left"
-  where
-    recur ::Type -> Type
-    recur = abstractDepType v d
-
-    substWithDBVar :: Name -> Name
-    substWithDBVar v' | varName v == v' = DeBruijn d
-                      | otherwise       = v'

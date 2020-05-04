@@ -181,14 +181,14 @@ makeDest :: Name-> Type -> ImpM (Atom, [IVar])
 makeDest name ty = runWriterT $ makeDest' name [] ty
 
 makeDest' :: Name-> [IExpr] -> Type -> WriterT [IVar] ImpM Atom
+makeDest' name shape (TabTy n b) = do
+  n'  <- lift $ indexSetSize n
+  liftM (Con . AFor n) $ makeDest' name (shape ++ [n']) b
 makeDest' name shape ty@(TC con) = case con of
   BaseType b  -> do
     v <- lift $ freshVar (name :> IRefType (b, shape))
     tell [v]
     return $ Con $ AGet $ Var (fmap impTypeToType v)
-  TabType n b -> do
-    n'  <- lift $ indexSetSize n
-    liftM (Con . AFor n) $ makeDest' name (shape ++ [n']) b
   RecType r   -> liftM RecVal $ traverse (makeDest' name shape) r
   IntRange   _ _   -> scalarIndexSet ty
   IndexRange _ _ _ -> scalarIndexSet ty
@@ -271,9 +271,9 @@ typeToIType ty = case ty of
   _ -> error $ "Not a valid Imp type: " ++ pprint ty
 
 toImpBaseType :: Type -> BaseType
+toImpBaseType (TabTy _ a) = toImpBaseType a
 toImpBaseType (TC con) = case con of
   BaseType b       -> b
-  TabType _ a      -> toImpBaseType a
   IntRange _ _     -> IntType
   IndexRange _ _ _ -> IntType
   _ -> error $ "Unexpected type: " ++ pprint con

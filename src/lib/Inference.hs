@@ -169,7 +169,7 @@ checkTLam ~(Forall tbs qs tyBody) (FTLam _ _ tlamBody) = do
   liftM (FTLam tbs qs) $ checkLeaks tbs $ extendR env $
     check tlamBody (noEffect, tyBody)
 
-checkLam :: FLamExpr -> PiType -> InferM FLamExpr
+checkLam :: FLamExpr -> PiType EffectiveType -> InferM FLamExpr
 checkLam (FLamExpr p body) piTy@(Pi a _) = do
   p' <- checkPat p a
   piTy' <- zonk piTy
@@ -212,7 +212,7 @@ openEffect eff = do
     Just _  -> return $ Effect row tailVar
 
 generateConSubExprTypes :: PrimCon Type e lam
-  -> InferM (PrimCon Type (e, Type) (lam, PiType))
+  -> InferM (PrimCon Type (e, Type) (lam, PiType EffectiveType))
 generateConSubExprTypes con = case con of
   Lam l _ lam -> do
     l' <- inferKinds MultKind l
@@ -221,7 +221,7 @@ generateConSubExprTypes con = case con of
   _ -> traverseExpr con (inferKinds TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 generateOpSubExprTypes :: PrimOp Type FExpr FLamExpr
-  -> InferM (PrimOp Type (FExpr, Type) (FLamExpr, PiType))
+  -> InferM (PrimOp Type (FExpr, Type) (FLamExpr, PiType EffectiveType))
 generateOpSubExprTypes op = case op of
   TabGet xs i -> do
     n <- freshQ
@@ -266,7 +266,7 @@ generateOpSubExprTypes op = case op of
     return $ IndexEff effName (tabRef, RefTy tabType) (i, i') (f, fTy)
   _ -> traverseExpr op (inferKinds TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
-freshLamType :: InferM PiType
+freshLamType :: InferM (PiType EffectiveType)
 freshLamType = do
   a <- freshQ
   b <- freshQ
@@ -327,6 +327,11 @@ inferKindsM kind ty = case ty of
       eff' <- inferKindsM EffectKind eff
       b'   <- inferKindsM TyKind     b
       return $ ArrowType m' $ Pi a' (eff', b')
+  TabType (Pi a b) -> do
+    a' <- inferKindsM TyKind a
+    local ([a'] <>) $ do
+      b' <- inferKindsM TyKind b
+      return $ TabType $ Pi a' b'
   Effect row tailVar -> do
     checkKindEq kind EffectKind
     row' <- liftM fold $ forM (envPairs row) $ \(v, (eff, NoAnn)) -> do
@@ -467,8 +472,8 @@ unify t1 t2 = do
       newTail <- liftM Just $ freshInferenceVar EffectKind
       matchTail t  $ Effect (envDiff r' shared) newTail
       matchTail t' $ Effect (envDiff r  shared) newTail
+    (TabTy a b, TabTy a' b') -> unify a a' >> unify b b'
     (TC con, TC con') -> case (con, con') of
-      (TabType a b, TabType a' b') -> unify a a' >> unify b b'
       (RefType a, RefType a') -> unify a a'
       (RecType r, RecType r') ->
         case zipWithRecord unify r r' of
@@ -519,7 +524,7 @@ class TySubst a where
 instance TySubst Type where
   tySubst env ty = subst (fmap T env, mempty) ty
 
-instance TySubst PiType where
+instance Subst t => TySubst (PiType t) where
   tySubst env ty = subst (fmap T env, mempty) ty
 
 instance TySubst FExpr where

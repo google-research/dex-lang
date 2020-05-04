@@ -102,3 +102,6 @@ benchmark:
 	benchmarks/bench 1000
 	$(dex) script benchmarks/time-tests.dx
 	rm benchmarks/bench
+
+clean:
+	$(STACK) clean

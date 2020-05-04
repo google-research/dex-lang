@@ -183,12 +183,12 @@ withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
 withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 
 tangentType :: Type -> Type
+tangentType (TabTy n a) = TabTy n (tangentType a)
 tangentType (TC con) = case con of
   BaseType RealType  -> TC $ BaseType RealType
   BaseType   _       -> UnitTy
   IntRange   _ _     -> UnitTy
   IndexRange _ _ _   -> UnitTy
-  TabType n a        -> TabTy n (tangentType a)
   RecType r          -> RecTy $ fmap tangentType r
   RefType a          -> RefTy $ tangentType a
   _           -> error $ "Can't differentiate wrt type " ++ pprint con
