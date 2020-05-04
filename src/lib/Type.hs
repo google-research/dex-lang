@@ -16,7 +16,7 @@ module Type (
     isData, Checkable (..), popRow, getTyOrKind, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     checkRuleDefType, getConType, checkEffType, HasType, indexSetConcreteSize,
-    maybeApplyPi, makePi, applyPi, isDependentType) where
+    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)

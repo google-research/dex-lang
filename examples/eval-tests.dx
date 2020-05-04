@@ -531,3 +531,8 @@ litArr = [10, 5, 3]
       put ref $ c + 1.0
       c
 > ([3.0, 2.0, 1.0, 0.0], 4.0)
+
+:p
+  x: (i:4=>(...i)=>4) = for i:4. for j:(...i). i
+  1.0
+> Error: variable not in scope: !0
