@@ -26,6 +26,7 @@ import Control.Monad
 import Data.ByteString.Char8 (unpack)
 import Data.Maybe (fromMaybe)
 
+import Logging
 import Syntax
 import Array
 
@@ -38,27 +39,27 @@ foreign import ccall "dynamic"
 data LLVMFunction = LLVMFunction [ArrayType] [ArrayType] L.Module  -- outputs first
 
 -- TODO: check arg types
-callLLVM :: LLVMFunction -> [ArrayRef] -> [ArrayRef] -> IO [Output]
-callLLVM (LLVMFunction _ _ ast) outArrays inArrays = do
+callLLVM :: Logger [Output] -> LLVMFunction -> [ArrayRef] -> [ArrayRef] -> IO ()
+callLLVM logger (LLVMFunction _ _ ast) outArrays inArrays = do
   let ioArgs = outArrays ++ inArrays
   argsPtr <- mallocBytes $ length ioArgs * ptrSize
   forM_ (zip [0..] ioArgs) $ \(i, ArrayRef _ p) -> do
     poke (argsPtr `plusPtr` (i * ptrSize)) p
-  logs <- evalLLVM ast argsPtr
+  logs <- evalLLVM logger ast argsPtr
   free argsPtr
   return logs
   where ptrSize = 8
 
-evalLLVM :: L.Module -> Ptr () -> IO [Output]
-evalLLVM ast argPtr = do
+evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ()
+evalLLVM logger ast argPtr = do
   T.initializeAllTargets
   withContext $ \c ->
     Mod.withModuleFromAST c ast $ \m -> do
+      showModule m >>= logPass logger JitPass
       L.verify m
-      preOpt <- showModule m
       runPasses m
-      postOpt <- showModule m
-      asm <- showAsm m
+      showModule m >>= logPass logger LLVMOpt
+      showAsm    m >>= logPass logger AsmPass
       jit c $ \ee -> do
         EE.withModuleInEngine ee m $ \eee -> do
           f <- liftM (fromMaybe (error "failed to fetch function")) $
@@ -66,13 +67,13 @@ evalLLVM ast argPtr = do
           t1 <- getCurrentTime
           callFunPtr (castFunPtr f :: FunPtr (Ptr () -> IO ())) argPtr
           t2 <- getCurrentTime
-          return [ PassInfo JitPass "" preOpt
-                 , PassInfo LLVMOpt "" postOpt
-                 , PassInfo AsmPass "" asm
-                 , PassInfo LLVMEval "" (show (t2 `diffUTCTime` t1))]
+          logPass logger LLVMEval $ show (t2 `diffUTCTime` t1)
 
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
+
+logPass :: Logger [Output] -> PassName -> String -> IO ()
+logPass logger passName s = logThis logger [PassInfo passName s]
 
 runPasses :: Mod.Module -> IO ()
 runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m

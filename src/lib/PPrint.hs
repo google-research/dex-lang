@@ -289,12 +289,11 @@ instance (Pretty a, Pretty b) => Pretty (LorT a b) where
   pretty (T x) = "T" <+> p x
 
 instance Pretty Output where
-  pretty (TextOut   s) = pretty s
+  pretty (TextOut s) = pretty s
   pretty (HeatmapOut _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
-  pretty (PassInfo name t s) = "===" <+> p name <+> "===" <> hardline <> p s <> t'
-    where t' = case t of "" -> ""
-                         _  -> hardline <> "time:" <+> p t
+  pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
+  pretty (MiscLog s) = "===" <+> p s <+> "==="
 
 instance Pretty PassName where
   pretty x = p $ show x

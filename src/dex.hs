@@ -137,6 +137,7 @@ parseEvalOpts = EvalConfig
                                   <> help "Prelude file" <> showDefault)
   <*> (flag False True $ long "logall" <> help "Log all debug info")
   <*> pure (error "Backend not initialized")
+  <*> pure (error "Logging not initialized")
 
 main :: IO ()
 main = do

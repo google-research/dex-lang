@@ -105,12 +105,11 @@ launchBlockEval n = do
 
 blockEval :: (EvalConfig, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
-blockEval = undefined
--- blockEval (opts, topEnv) block parentLocs loc resultChan = do
---   parentEnv <- liftM fold $ mapM readMVar parentLocs
---   (env', ans) <- liftIO $ evalBlock opts (topEnv <> parentEnv) block
---   putMVar loc (parentEnv <> env')
---   sendFromIO resultChan ans
+blockEval (opts, topEnv) block parentLocs loc resultChan = do
+  parentEnv <- liftM fold $ mapM readMVar parentLocs
+  (env', ans) <- liftIO $ evalBlock opts (topEnv <> parentEnv) block
+  putMVar loc (parentEnv <> env')
+  sendFromIO resultChan ans
 
 addToBlockDag :: Node SourceBlock -> DriverM NodeId
 addToBlockDag node = do

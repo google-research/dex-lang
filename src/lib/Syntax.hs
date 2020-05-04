@@ -9,6 +9,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE PatternSynonyms #-}
 
@@ -26,7 +27,7 @@ module Syntax (
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
-    addSrcContext, catchIOExcept, (-->), (--@), (==>), LorT (..),
+    addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>), LorT (..),
     fromL, fromT, FullEnv, sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
     strToName, nameToStr, unzipExpr, lbind, tbind, fDeclBoundVars,
@@ -43,7 +44,7 @@ module Syntax (
 
 import qualified Data.Map.Strict as M
 import Control.Applicative
-import Control.Exception  (Exception, catch)
+import Control.Exception hiding (throw)
 import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
@@ -410,7 +411,8 @@ data Result = Result [Output] (Except ())  deriving (Show, Eq)
 data Output = TextOut String
             | HeatmapOut Int Int (V.Vector Double)
             | ScatterOut (V.Vector Double) (V.Vector Double)
-            | PassInfo PassName String String
+            | PassInfo PassName String
+            | MiscLog String
               deriving (Show, Eq, Generic)
 
 data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
@@ -434,7 +436,6 @@ data ErrType = NoErr
 
 type Except a = Either Err a
 
-
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
 
@@ -456,9 +457,15 @@ addSrcContext ctx m = modifyErr m updateErr
                                             Just _  -> Err e ctx' s
 
 catchIOExcept :: (MonadIO m , MonadError Err m) => IO a -> m a
-catchIOExcept m = do
-  ans <- liftIO $ catch (liftM Right m) $ \e -> return (Left (e::Err))
-  liftEither ans
+catchIOExcept m = (liftIO >=> liftEither) $ (liftM Right m) `catches`
+  [ Handler $ \(e::Err)           -> return $ Left e
+  , Handler $ \(e::IOError)       -> return $ Left $ Err DataIOErr   Nothing $ show e
+  , Handler $ \(e::SomeException) -> return $ Left $ Err CompilerErr Nothing $ show e
+  ]
+
+liftEitherIO :: (Exception e, MonadIO m) => Either e a -> m a
+liftEitherIO (Left err) = liftIO $ throwIO err
+liftEitherIO (Right x ) = return x
 
 -- === misc ===
 
