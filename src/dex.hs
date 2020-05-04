@@ -28,12 +28,12 @@ data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
-data CmdOpts = CmdOpts EvalMode EvalOpts
+data CmdOpts = CmdOpts EvalMode EvalConfig
 
 type BlockCounter = Int
 type EvalState = (BlockCounter, TopEnv)
 
-runMode :: EvalMode -> EvalOpts -> IO ()
+runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
   (n, env) <- execStateT (evalPrelude opts) (0, mempty)
   let runEnv m = evalStateT m (n, env)
@@ -48,26 +48,26 @@ runMode evalMode opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalDecl :: EvalOpts -> SourceBlock -> StateT EvalState IO Result
+evalDecl :: EvalConfig -> SourceBlock -> StateT EvalState IO Result
 evalDecl opts block = do
   (n, env) <- get
   (env', ans) <- liftIO $ evalBlock opts env $ addBlockId n block
   put (n+1, env <> env')
   return ans
 
-evalFile :: EvalOpts -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
+evalFile :: EvalConfig -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
 evalFile opts fname = do
   source <- liftIO $ readFile fname
   let sourceBlocks = parseProg source
   results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude ::EvalOpts-> StateT EvalState IO ()
+evalPrelude ::EvalConfig-> StateT EvalState IO ()
 evalPrelude opts = do
   result <- evalFile opts (preludeFile opts)
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalOpts -> InputT (StateT EvalState IO) ()
+replLoop :: String -> EvalConfig -> InputT (StateT EvalState IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
@@ -128,16 +128,18 @@ optionList opts = eitherReader $ \s -> case lookup s opts of
   Just x  -> Right x
   Nothing -> Left $ "Bad option. Expected one of: " ++ show (map fst opts)
 
-parseEvalOpts :: Parser EvalOpts
-parseEvalOpts = EvalOpts
+parseEvalOpts :: Parser EvalConfig
+parseEvalOpts = EvalConfig
   <$> (option
          (optionList [("LLVM", LLVM), ("JAX", JAX), ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (flag False True $ long "logall" <> help "Log all debug info")
+  <*> pure (error "Backend not initialized")
 
 main :: IO ()
 main = do
   CmdOpts evalMode opts <- execParser parseOpts
-  runMode evalMode opts
+  engine <- initializeBackend $ backendName opts
+  runMode evalMode $ opts { evalEngine = engine }

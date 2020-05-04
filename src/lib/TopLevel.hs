@@ -6,9 +6,12 @@
 
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE OverloadedStrings #-}
 
-module TopLevel (evalBlock, EvalOpts (..), Backend (..)) where
+module TopLevel (evalBlock, EvalConfig (..), initializeBackend,
+                 Backend (..)) where
 
+import Control.Concurrent.MVar
 import Control.Exception hiding (throw)
 import Control.Monad.State
 import Control.Monad.Reader
@@ -40,27 +43,33 @@ import Subst
 import Util (highlightRegion)
 
 data Backend = LLVM | Interp | JAX
-data EvalOpts = EvalOpts
-  { evalBackend :: Backend
+data EvalConfig = EvalConfig
+  { backendName :: Backend
   , preludeFile :: FilePath
-  , logAll      :: Bool }
+  , logAll      :: Bool
+  , evalEngine  :: BackendEngine }
 
-type TopPassM a = ReaderT EvalOpts (ExceptT Err (WriterT [Output] IO)) a
+data BackendEngine = LLVMEngine LLVMEngine
+                   | InterpEngine
+
+type LLVMEngine = MVar (Env ArrayRef)
+
+type TopPassM a = ReaderT EvalConfig (ExceptT Err (WriterT [Output] IO)) a
 type Pass a b = a -> TopPassM b
 
 -- TODO: handle errors due to upstream modules failing
-evalBlock :: EvalOpts -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
+evalBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
 evalBlock opts env block = do
   (ans, outs) <- runTopPassM opts $ addErrSrc block $ evalSourceBlock env block
   case ans of
     Left err   -> return (mempty, Result outs (Left err))
     Right env' -> return (env'  , Result outs (Right ()))
 
-runTopPassM :: EvalOpts -> TopPassM a -> IO (Except a, [Output])
+runTopPassM :: EvalConfig -> TopPassM a -> IO (Except a, [Output])
 runTopPassM opts m = runWriterT $ runExceptT $ runReaderT m opts
 
 evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlock env@(TopEnv (typeEnv, _) _ _ _) block = case sbContents block of
+evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
   RunModule m -> filterOutputs (const False) $ evalModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -105,13 +114,13 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _ _) block = case sbContents block of
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
     let outEnv = b @> L val
-    return $ TopEnv (substEnvType outEnv, mempty) outEnv mempty mempty
+    return $ TopEnv (substEnvType outEnv, mempty) outEnv mempty
   RuleDef ann@(LinearizationDef v) ~(Forall [] [] ty) ~(FTLam [] [] expr) -> do
     let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
     let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr
     let m = Module (sbId block) (imports, [fmap L v']) [LetMono (RecLeaf v') expr]
     env' <- filterOutputs (const False) $ evalModule env m
-    return $ env' <> TopEnv mempty mempty mempty ((v:>()) @> Var v')
+    return $ env' <> TopEnv mempty mempty ((v:>()) @> Var v')
   UnParseable _ s -> throw ParseErr s
   _               -> return mempty
 
@@ -125,22 +134,17 @@ evalSourceBlocks env blocks =
 evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do
   env' <- filterOutputs (const False) $ evalModule env m
-  let (TopEnv _ simpEnv evalEnv _) = env <> env'
+  let (TopEnv _ simpEnv _) = env <> env'
   let (L val) = simpEnv ! v
   let val' = subst (simpEnv, mempty) val
-  arraySubstEnv <- liftIO $ buildArraySubst evalEnv
-  return $ subst (arraySubstEnv, mempty) val'
-
-buildArraySubst :: Env ArrayRef -> IO SubstEnv
-buildArraySubst env = forM env $ \arrPtr -> do
-  arrVal <- loadArray arrPtr
-  return $ L $ Con $ ArrayLit arrVal
+  backend <- asks evalEngine
+  liftIO $ substArrayLiterals backend val'
 
  -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalModule :: TopEnv -> Pass FModule TopEnv
-evalModule (TopEnv infEnv simpEnv evalEnv ruleEnv) untyped@(Module bid _ _) = do
+evalModule (TopEnv infEnv simpEnv ruleEnv) untyped = do
   tell [PassInfo Parse "" (pprint untyped)]
   (typed, infEnv') <- typePass infEnv untyped
   normalized <- normalizePass typed
@@ -148,31 +152,64 @@ evalModule (TopEnv infEnv simpEnv evalEnv ruleEnv) untyped@(Module bid _ _) = do
   let (Module _ (_, outVars) dfExpr) = defunctionalized
   case dfExpr of
     Atom UnitVal -> do
-      return $ TopEnv infEnv' simpEnv' mempty mempty
+      return $ TopEnv infEnv' simpEnv' mempty
     _ -> do
-      backend <- asks evalBackend
-      (results, evalEnv') <- evalDFExpr bid backend evalEnv dfExpr
+      ~(TupVal results) <- evalBackend dfExpr
       let simpEnv'' = subst (newLEnv outVars results, mempty) simpEnv'
-      return $ TopEnv infEnv' simpEnv'' evalEnv' mempty
+      return $ TopEnv infEnv' simpEnv'' mempty
 
-evalDFExpr :: Maybe Int -> Backend -> Env ArrayRef -> Pass Expr ([Atom], Env ArrayRef)
-evalDFExpr bid backend arrayEnv expr = case backend of
-  LLVM -> do
-    impFunction@(ImpFunction arrayOutVars arrayInVars _) <- impPass bid expr
-    countFlops impFunction
-    let inArrays = map (arrayEnv !) arrayInVars
-    let llvmFunc = impToLLVM impFunction
-    outArrays <- liftIO $ forM arrayOutVars $ \(_:>iTy) ->
-                   newArrayRef $ impTypeToArrayType iTy
-    logs <- liftIO $ callLLVM llvmFunc outArrays inArrays
-    tell logs
-    let TupVal results = reStructureArrays (getType expr) $
-                            map (impExprToAtom . IVar) arrayOutVars
-    return (results, newEnv arrayOutVars outArrays)
-  JAX -> error "Not implemented"
-  Interp -> do
-    let TupVal results = evalExpr mempty expr
-    return (results, mempty)
+evalBackend :: Pass Expr Atom
+evalBackend expr = do
+  backend <- asks evalEngine
+  case backend of
+    LLVMEngine engine -> do
+      let inVars = arrayVars expr
+      impFunction <- impPass (inVars, expr)
+      countFlops impFunction
+      let llvmFunc = impToLLVM impFunction
+      (outVars, logs) <- liftIO $ execLLVM engine llvmFunc inVars
+      tell logs
+      return $ reStructureArrays (getType expr) $ map Var outVars
+    InterpEngine -> return $ evalExpr mempty expr
+
+arrayVars :: HasVars a => a -> [Var]
+arrayVars x = [v:>ty | (v@(Name ArrayName _ _), L ty) <- envPairs (freeVars x)]
+
+initializeBackend :: Backend -> IO BackendEngine
+initializeBackend backend = case backend of
+  LLVM -> liftM LLVMEngine $ newMVar mempty
+  _ -> error "Not implemented"
+
+substArrayLiterals :: (HasVars a, Subst a) => BackendEngine -> a -> IO a
+substArrayLiterals backend x = do
+  let vs = arrayVars x
+  arrays <- requestArrays backend vs
+  let arrayAtoms = map (Con . ArrayLit) arrays
+  return $ subst (newLEnv vs arrayAtoms, mempty) x
+
+-- TODO: think carefully about whether this is thread-safe
+execLLVM :: LLVMEngine -> LLVMFunction -> [Var] -> IO ([Var], [Output])
+execLLVM envRef fun@(LLVMFunction outTys _ _) inVars = do
+  modifyMVar envRef $ \env -> do
+    outRefs <- mapM newArrayRef outTys
+    let inRefs = flip map inVars $ \v ->
+                   case envLookup env v of
+                     Just ref -> ref
+                     Nothing  -> error "Array lookup failed"
+    let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outRefs
+    let outVars = zipWith (\v (b,shape) -> v :> ArrayTy b shape) outNames outTys
+    logs <- callLLVM fun outRefs inRefs
+    return (env <> env', (outVars, logs))
+
+requestArrays :: BackendEngine -> [Var] -> IO [Array]
+requestArrays backend vs = case backend of
+  LLVMEngine env -> do
+    env' <- readMVar env
+    forM vs $ \v -> do
+      case envLookup env' v of
+        Just ref -> loadArray ref
+        Nothing -> error "Array lookup failed"
+  _ -> error "Not implemented"
 
 -- TODO: check here for upstream errors
 typePass :: TopInfEnv -> Pass FModule (FModule, TopInfEnv)
@@ -188,8 +225,8 @@ normalizePass = namedPass NormPass (return . normalizeModule)
 simpPass :: SubstEnv -> RuleEnv -> Pass Module (Module, SubstEnv)
 simpPass substEnv rulesEnv m = return $ simplifyModule substEnv rulesEnv m
 
-impPass :: Maybe Int -> Pass Expr ImpFunction
-impPass bid = namedPass ImpPass (return . toImpFunction bid)
+impPass :: Pass ([Var], Expr) ImpFunction
+impPass = namedPass ImpPass (return . toImpFunction)
 
 countFlops :: ImpFunction -> TopPassM ()
 countFlops f = tell [PassInfo Flops "" (pprint (impFunctionFlops f))]
@@ -231,7 +268,8 @@ asTopPassM m = do
   liftEither ans
 
 withDebugCtx :: String -> TopPassM a -> TopPassM a
-withDebugCtx msg m = catchError (catchHardErrors m) $ \e -> throwError (addDebugCtx msg e)
+withDebugCtx msg m = catchError (catchHardErrors m) $ \e ->
+  throwError (addDebugCtx msg e)
 
 addErrSrc :: MonadError Err m => SourceBlock -> m a -> m a
 addErrSrc block m = m `catchError` (throwError . addCtx block)

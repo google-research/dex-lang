@@ -20,7 +20,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
-    RuleAnn (..), CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEvalEnv, TopEnv (..),
+    RuleAnn (..), CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..),
     ModuleP (..), ModuleType, Module, FModule, ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
@@ -114,9 +114,8 @@ type SubstEnv = FullEnv Atom Type
 
 type TopInfEnv  = (TypeEnv, Env Type)
 type TopSimpEnv = SubstEnv
-type TopEvalEnv = Env ArrayRef
 type RuleEnv = Env Atom
-data TopEnv = TopEnv TopInfEnv TopSimpEnv TopEvalEnv RuleEnv
+data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
               deriving (Show, Eq, Generic)
 
 type Scope = Env ()
@@ -620,7 +619,7 @@ instance HasVars a => HasVars (Env a) where
   freeVars env = foldMap freeVars env
 
 instance HasVars TopEnv where
-  freeVars (TopEnv e1 e2 _ e4) = freeVars e1 <> freeVars e2 <> freeVars e4
+  freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
 
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
@@ -713,11 +712,11 @@ instance RecTreeZip Type where
   recTreeZip (RecTree _) _ = error "Bad zip"
 
 instance Semigroup TopEnv where
-  TopEnv e1 e2 e3 e4 <> TopEnv e1' e2' e3' e4'=
-    TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3') (e4 <> e4')
+  TopEnv e1 e2 e3 <> TopEnv e1' e2' e3'=
+    TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')
 
 instance Monoid TopEnv where
-  mempty = TopEnv mempty mempty mempty mempty
+  mempty = TopEnv mempty mempty mempty
 
 instance Eq SourceBlock where
   x == y = sbText x == sbText y

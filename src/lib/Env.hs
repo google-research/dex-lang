@@ -10,8 +10,9 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
-            rawName, nameSpace, rename, renames, renameWithNS) where
+            rawName, nameSpace, rename, renames, nameItems, renameWithNS) where
 
+import Control.Monad
 import Data.String
 import Data.Traversable
 import qualified Data.Text as T
@@ -30,8 +31,7 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | SourceTypeName
-               | InferenceName | LocalTVName | NoNameSpace
-               | ArrayName Int
+               | InferenceName | LocalTVName | NoNameSpace | ArrayName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
@@ -118,12 +118,17 @@ rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
                         | otherwise      = v
 
 renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
-renames vs scope = runCat (traverse freshCat vs) scope
+renames vs scope = runCat (traverse (freshCat ()) vs) scope
 
-freshCat :: VarP ann -> Cat (Env ()) (VarP ann)
-freshCat v = do v' <- looks $ rename v
-                extend (v' @> ())
-                return v'
+nameItems :: Traversable f => Name -> Env a -> f a -> (f Name, Env a)
+nameItems v env xs = flip runCat env $ forM xs $ \x ->
+                       liftM varName $ freshCat x (v:>())
+
+freshCat :: a -> VarP ann -> Cat (Env a) (VarP ann)
+freshCat x v = do
+  v' <- looks $ rename v
+  extend (v' @> x)
+  return v'
 
 infixr 7 @>
 
@@ -171,11 +176,9 @@ instance Traversable VarP where
 instance Pretty Name where
   pretty NoName = "_"
   pretty (DeBruijn i) = "!" <> pretty i
-  pretty (Name ns tag n) = nsPrefix <> pretty (tagToStr tag) <> suffix
+  pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> "_" <> pretty n
-                  nsPrefix = case ns of ArrayName i -> pretty i <> "/"
-                                        _           -> mempty
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0

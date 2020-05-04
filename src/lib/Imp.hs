@@ -32,15 +32,14 @@ import Record
 type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
-toImpFunction :: Maybe Int -> Expr -> ImpFunction
-toImpFunction ~(Just bid) expr = runImpM $ do
-  let nameBase = Name (ArrayName bid) "ptr" 0
-  (outDest, vsOut) <- makeDest nameBase $ getType expr
-  let vsIn = arrayImports $ freeVars expr
+toImpFunction :: ([Var], Expr) -> ImpFunction
+toImpFunction (vsIn, expr) = runImpM $ do
+  (outDest, vsOut) <- makeDest "out" $ getType expr
   ((), prog) <- scopedBlock $ do
     ans <- toImpExpr mempty expr
     copyAtom outDest ans
-  return $ ImpFunction vsOut vsIn prog
+  let vsIn' = map (fmap typeToIType) vsIn
+  return $ ImpFunction vsOut vsIn' prog
 
 runImpM :: ImpM a -> a
 runImpM m = fst $ runCat m mempty
@@ -459,10 +458,6 @@ instance Checkable ImpFunction where
    checkValid (ImpFunction vsOut vsIn prog) = do
      let env = foldMap varAsEnv $ vsOut ++ vsIn
      void $ runCatT (checkProg prog) env
-
-arrayImports :: TypeEnv -> [IVar]
-arrayImports env = [v:>typeToIType ty
-                   | (v@(Name (ArrayName _) _ _), L ty) <- envPairs env]
 
 checkProg :: ImpProg -> ImpCheckM ()
 checkProg (ImpProg statements) = mapM_ checkStatement statements

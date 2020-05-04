@@ -41,18 +41,18 @@ data RFragment = RFragment (SetVal [NodeId])
                            (M.Map NodeId SourceBlock)
                            (M.Map NodeId Result)
 
-runWeb :: FilePath -> EvalOpts -> TopEnv -> IO ()
+runWeb :: FilePath -> EvalConfig -> TopEnv -> IO ()
 runWeb fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   putStrLn "Streaming output to localhost:8000"
   run 8000 $ serveResults $ resultStream resultsChan
 
-runTerminal :: FilePath -> EvalOpts -> TopEnv -> IO ()
+runTerminal :: FilePath -> EvalConfig -> TopEnv -> IO ()
 runTerminal fname opts env = do
   resultsChan <- watchAndEvalFile fname opts env
   displayResultsTerm resultsChan
 
-watchAndEvalFile :: FilePath -> EvalOpts -> TopEnv -> IO (ReqChan RFragment)
+watchAndEvalFile :: FilePath -> EvalConfig -> TopEnv -> IO (ReqChan RFragment)
 watchAndEvalFile fname opts env = runActor $ do
   (_, resultsChan) <- spawn Trap logServer
   let cfg = ((opts, env), subChan Push resultsChan)
@@ -65,7 +65,7 @@ watchAndEvalFile fname opts env = runActor $ do
 type SourceContents = String
 
 type EnvMap = M.Map NodeId (MVar TopEnv)
-type DriverCfg = ((EvalOpts, TopEnv), PChan RFragment)
+type DriverCfg = ((EvalConfig, TopEnv), PChan RFragment)
 type DriverM = ReaderT DriverCfg
                  (CatT (Dag SourceBlock, EnvMap)
                    (Actor SourceContents))
@@ -103,13 +103,14 @@ launchBlockEval n = do
   let block' = addBlockId n block
   void $ liftIO $ forkIO $ blockEval cfg block' parentEnvLocs envLoc chan
 
-blockEval :: (EvalOpts, TopEnv) -> SourceBlock
+blockEval :: (EvalConfig, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
-blockEval (opts, topEnv) block parentLocs loc resultChan = do
-  parentEnv <- liftM fold $ mapM readMVar parentLocs
-  (env', ans) <- liftIO $ evalBlock opts (topEnv <> parentEnv) block
-  putMVar loc (parentEnv <> env')
-  sendFromIO resultChan ans
+blockEval = undefined
+-- blockEval (opts, topEnv) block parentLocs loc resultChan = do
+--   parentEnv <- liftM fold $ mapM readMVar parentLocs
+--   (env', ans) <- liftIO $ evalBlock opts (topEnv <> parentEnv) block
+--   putMVar loc (parentEnv <> env')
+--   sendFromIO resultChan ans
 
 addToBlockDag :: Node SourceBlock -> DriverM NodeId
 addToBlockDag node = do
