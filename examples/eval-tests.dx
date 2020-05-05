@@ -535,4 +535,9 @@ litArr = [10, 5, 3]
 :p
   x: (i:4=>(...i)=>4) = for i:4. for j:(...i). i
   1.0
-> Error: variable not in scope: !0
+> Compiler bug!
+> Please report this at github.com/google-research/dex-lang/issues
+>
+> Lookup of DeBruijn 0 failed
+> CallStack (from HasCallStack):
+>   error, called at src/lib/Env.hs:94:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env

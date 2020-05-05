@@ -527,7 +527,7 @@ class HasVars a where
 instance HasVars FExpr where
   freeVars expr = case expr of
     FDecl decl body -> freeVars decl <> (freeVars body `envDiff` fDeclBoundVars decl)
-    FVar v@(_:>ty) -> v@>L ty <> freeVars ty
+    FVar v       -> freeVarVars v
     FPrimExpr e  -> freeVars e
     Annot e ty   -> freeVars e <> freeVars ty
     SrcAnnot e _ -> freeVars e
@@ -546,7 +546,7 @@ sourceBlockBoundVars block = case sbContents block of
 
 instance HasVars FLamExpr where
   freeVars (FLamExpr p body) =
-    foldMap freeVars p <> (freeVars body `envDiff` foldMap lbind p)
+    foldMap freeBinderVars p <> (freeVars body `envDiff` foldMap lbind p)
 
 instance HasVars Type where
   freeVars ty = case ty of
@@ -555,28 +555,30 @@ instance HasVars Type where
     TypeVar v  -> tbind v
     Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
-    Effect row tailVar ->  foldMap freeVarsEffect (envPairs row)
+    Effect row tailVar ->  foldMap (freeVarVars . \(v, (_,t)) -> v:>t) (envPairs row)
                         <> foldMap freeVars tailVar
     NoAnn -> mempty
     TC con -> execWriter $ traverseTyCon con (\t -> t <$ tell (freeVars t))
                                              (\e -> e <$ tell (freeVars e))
 
-freeVarsEffect :: (Name, (EffectName, Type)) -> Vars
-freeVarsEffect (DeBruijn _, (_, ty)) =              freeVars ty
-freeVarsEffect (v,          (_, ty)) = (v:>()) @> L ty <> freeVars ty
-
 instance HasVars b => HasVars (PiType b) where
   freeVars (Pi a b) = freeVars a <> freeVars b
 
-instance HasVars b => HasVars (VarP b) where
-  freeVars (_ :> b) = freeVars b
+-- NOTE: We don't have an instance for VarP, because it's used to represent
+--       both binders and regular variables, but each requires different treatment
+freeBinderVars :: Var -> Vars
+freeBinderVars (_ :> t) = freeVars t
+
+freeVarVars :: Var -> Vars
+freeVarVars (DeBruijn _ :> t) = freeVars t
+freeVarVars v@(_ :> t) = lbind v <> freeVars t
 
 instance HasVars () where
   freeVars () = mempty
 
 instance HasVars FDecl where
-   freeVars (LetMono p expr)   = foldMap freeVars p <> freeVars expr
-   freeVars (LetPoly b tlam)   = freeVars b <> freeVars tlam
+   freeVars (LetMono p expr)   = foldMap freeBinderVars p <> freeVars expr
+   freeVars (LetPoly b tlam)   = freeBinderVars b <> freeVars tlam
    freeVars (TyDef _ ty)       = freeVars ty
 
 instance HasVars RuleAnn where
@@ -610,11 +612,11 @@ declBoundVars :: Decl -> Env ()
 declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
-  freeVars (LamExpr b body) = freeVars b <> (freeVars body `envDiff` (b@>()))
+  freeVars (LamExpr b body) = freeBinderVars b <> (freeVars body `envDiff` (b@>()))
 
 instance HasVars Atom where
   freeVars atom = case atom of
-    Var v@(_:>ty) -> v @> L ty <> freeVars ty
+    Var v -> freeVarVars v
     TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
 
