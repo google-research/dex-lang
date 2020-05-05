@@ -20,7 +20,7 @@ library
                        Parser, Util, Imp, PPrint, Array,
                        Actor, Cat, Flops, Normalize, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Subst, Simplify, TopLevel,
-                       Autodiff, JAX, Interpreter, Logging
+                       Autodiff, JAX, Interpreter, Logging, PipeRPC
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
                        aeson, megaparsec, warp, wai,

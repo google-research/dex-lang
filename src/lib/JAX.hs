@@ -9,13 +9,14 @@
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JAX (evalExprJAX) where
+module JAX (JAtom (..), jAtomToAtom, JExpr, toJaxExprTop, jAtomsToAtom) where
 
 import Control.Monad.Reader
 import Data.ByteString.Lazy.Char8 (pack, unpack)
 import Data.Aeson
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
+import GHC.Stack
 import System.Process hiding (env)
 import System.IO
 import Control.Applicative
@@ -24,12 +25,10 @@ import Data.Traversable
 import Env
 import Syntax
 import Subst
+import PipeRPC
 import PPrint
 import Type
 import Cat
-
-evalExprJAX :: Expr -> IO ([ArrayRef], [Output])
-evalExprJAX m = undefined
 
 -- === JAXish IR ===
 
@@ -37,9 +36,7 @@ type AxisSize = Int
 type JVar = VarP JType
 type JIndexVar = VarP AxisSize
 data JDecl = JLet JVar JOp               deriving (Generic, Show)
-data JExpr = JDecl JDecl JExpr
-           | JOp JOp
-           | JAtoms [JAtom]              deriving (Generic, Show)
+data JExpr = JExpr [JDecl] [JAtom]       deriving (Generic, Show)
 data JAtom = JLit LitVal | JVar JVar     deriving (Generic, Show)
 data JFunction = JFunction [JVar] JExpr  deriving (Generic, Show)
 
@@ -55,18 +52,20 @@ type EmbedEnv = (Scope, [JDecl])
 type JaxEnv = ((Env Atom), [JIndexVar])
 type JaxM = ReaderT JaxEnv (Cat EmbedEnv)
 
--- TODO: type checker
-getJOpType :: JOp -> JType
-getJOpType (JFor foridx _ op) =
-  let (JType leafshape basetype) = getJOpPType op
-  in JType (map varAnn foridx ++ leafshape) basetype
-
-getJOpPType :: JOpP a -> JType
-getJOpPType op = case op of
-  JScalarBinOp op _ _ -> JType [] outTy  where (_, _, outTy) = binOpType op
-  JScalarUnOp  op _   -> JType [] outTy  where (_,    outTy) = unOpType  op
-
 -- === lowering from Expr ===
+
+toJaxExprTop :: Expr -> JExpr
+toJaxExprTop expr = JExpr decls $ atomToJAtoms result
+  where
+    (result, (_, decls)) = runCat (runReaderT (toJaxExpr expr) mempty) mempty
+
+jAtomsToAtom :: [JAtom] -> Atom
+jAtomsToAtom [JLit x] = TupVal [Con $ Lit x]
+
+atomToJAtoms :: Atom -> [JAtom]
+atomToJAtoms (TupVal xs) = foldMap atomToJAtoms xs
+atomToJAtoms (Con (Lit x)) = [JLit x]
+atomToJAtoms (Var (v :> BaseTy b)) = [JVar (v :> JType [] b)]
 
 toJaxExpr :: Expr -> JaxM Atom
 toJaxExpr expr = case expr of
@@ -89,7 +88,7 @@ toJaxOp cexpr = case cexpr of
     liftM jAtomToAtom $ emitJOp $ JScalarBinOp op x' y'
   _ ->     error $ "Not implemented: " ++ pprint cexpr
 
-fromScalarAtom ::Atom -> JAtom
+fromScalarAtom :: HasCallStack => Atom -> JAtom
 fromScalarAtom atom = case atom of
   Var (v :> BaseTy b) -> JVar (v:>JType [] b)
   Con (Lit x) -> JLit x
@@ -125,23 +124,15 @@ jSubst x = do
   env <- asks fst
   return $ scopelessSubst (fmap L env) x
 
--- === call python over a pipe ===
+getJOpType :: JOp -> JType
+getJOpType (JFor foridx _ op) =
+  let (JType leafshape basetype) = getJOpPType op
+  in JType (map varAnn foridx ++ leafshape) basetype
 
-pyCall :: (ToJSON a, FromJSON b) => a -> IO b
-pyCall arg = do
-  ansEncoded <- pipeCall "python3" ["misc/py/jax_call.py"] (unpack (encode arg))
-  case eitherDecode (pack ansEncoded) of
-    Left s    -> error $ "Couldn't decode JSON\n" ++ s
-    Right ans -> return ans
-
-pipeCall :: FilePath -> [String] -> String -> IO String
-pipeCall cmd args input = do
-  ~(Just hIn, Just hOut, _, _) <- createProcess $ (proc cmd args)
-                                    { std_in  = CreatePipe
-                                    , std_out = CreatePipe }
-  hPutStr hIn input
-  hClose hIn
-  hGetContents hOut
+getJOpPType :: JOpP a -> JType
+getJOpPType op = case op of
+  JScalarBinOp op _ _ -> JType [] outTy  where (_, _, outTy) = binOpType op
+  JScalarUnOp  op _   -> JType [] outTy  where (_,    outTy) = unOpType  op
 
 -- === instances ===
 
@@ -164,6 +155,9 @@ instance Pretty JOp where
 
 instance ToJSON   JDecl
 instance FromJSON JDecl
+
+instance ToJSON   JExpr
+instance FromJSON JExpr
 
 instance ToJSON   JOp
 instance FromJSON JOp

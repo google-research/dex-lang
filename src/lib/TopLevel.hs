@@ -36,8 +36,10 @@ import Logging
 import LLVMExec
 import PPrint
 import Parser
+import PipeRPC
 import Record
 import Subst
+import JAX
 import Util (highlightRegion)
 
 data Backend = LLVM | Interp | JAX
@@ -49,9 +51,11 @@ data EvalConfig = EvalConfig
   , logService  :: Logger [Output] }
 
 data BackendEngine = LLVMEngine LLVMEngine
+                   | JaxServer JaxServer
                    | InterpEngine
 
 type LLVMEngine = MVar (Env ArrayRef)
+type JaxServer = PipeServer (JExpr -> [JAtom], ())
 
 type TopPassM a = ReaderT EvalConfig IO a
 
@@ -182,6 +186,10 @@ evalBackend expr = do
       let llvmFunc = impToLLVM impFunction
       outVars <- liftIO $ execLLVM logger engine llvmFunc inVars
       return $ reStructureArrays (getType expr) $ map Var outVars
+    JaxServer server -> do
+      let jexpr = toJaxExprTop expr
+      jatom <- callPipeServer server jexpr
+      return $ jAtomsToAtom jatom
     InterpEngine -> return $ evalExpr mempty expr
 
 arrayVars :: HasVars a => a -> [Var]
@@ -190,6 +198,7 @@ arrayVars x = [v:>ty | (v@(Name ArrayName _ _), L ty) <- envPairs (freeVars x)]
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
   LLVM -> liftM LLVMEngine $ newMVar mempty
+  JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
 substArrayLiterals :: (HasVars a, Subst a) => BackendEngine -> a -> IO a
@@ -214,6 +223,7 @@ execLLVM logger envRef fun@(LLVMFunction outTys _ _) inVars = do
     return (env <> env', outVars)
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
+requestArrays _ [] = return []
 requestArrays backend vs = case backend of
   LLVMEngine env -> do
     env' <- readMVar env
