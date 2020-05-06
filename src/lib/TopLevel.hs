@@ -55,7 +55,10 @@ data BackendEngine = LLVMEngine LLVMEngine
                    | InterpEngine
 
 type LLVMEngine = MVar (Env ArrayRef)
-type JaxServer = PipeServer (JExpr -> [JAtom], ())
+type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> [JVar]
+                           ,( [JVar] -> [Array]
+                           ,( Array -> ()  -- for debugging
+                           ,())))
 
 type TopPassM a = ReaderT EvalConfig IO a
 
@@ -173,13 +176,19 @@ evalModule (TopEnv infEnv simpEnv ruleEnv) untyped = do
       let simpEnv'' = subst (newLEnv outVars results, mempty) simpEnv'
       return $ TopEnv infEnv' simpEnv'' mempty
 
+initializeBackend :: Backend -> IO BackendEngine
+initializeBackend backend = case backend of
+  LLVM -> liftM LLVMEngine $ newMVar mempty
+  JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
+  _ -> error "Not implemented"
+
 evalBackend :: Expr -> TopPassM Atom
 evalBackend expr = do
   backend <- asks evalEngine
   logger  <- asks logService
+  let inVars = arrayVars expr
   case backend of
     LLVMEngine engine -> do
-      let inVars = arrayVars expr
       let impFunction = toImpFunction (inVars, expr)
       checkPass ImpPass impFunction
       logPass Flops $ impFunctionFlops impFunction
@@ -187,19 +196,30 @@ evalBackend expr = do
       outVars <- liftIO $ execLLVM logger engine llvmFunc inVars
       return $ reStructureArrays (getType expr) $ map Var outVars
     JaxServer server -> do
-      let jexpr = toJaxExprTop expr
-      jatom <- callPipeServer server jexpr
-      return $ jAtomsToAtom jatom
+      -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
+      let jfun = toJaxFunction (inVars, expr)
+      let inVars' = map (fmap typeToJType) inVars
+      outVars <- callPipeServer server (jfun, inVars')
+      let outVars' = map (fmap jTypeToType) outVars
+      return $ reStructureArrays (getType expr) $ map Var outVars'
     InterpEngine -> return $ evalExpr mempty expr
+
+requestArrays :: BackendEngine -> [Var] -> IO [Array]
+requestArrays _ [] = return []
+requestArrays backend vs = case backend of
+  LLVMEngine env -> do
+    env' <- readMVar env
+    forM vs $ \v -> do
+      case envLookup env' v of
+        Just ref -> loadArray ref
+        Nothing -> error "Array lookup failed"
+  JaxServer server -> do
+    let vs' = map (fmap typeToJType) vs
+    callPipeServer (psPop server) vs'
+  _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
 arrayVars x = [v:>ty | (v@(Name ArrayName _ _), L ty) <- envPairs (freeVars x)]
-
-initializeBackend :: Backend -> IO BackendEngine
-initializeBackend backend = case backend of
-  LLVM -> liftM LLVMEngine $ newMVar mempty
-  JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
-  _ -> error "Not implemented"
 
 substArrayLiterals :: (HasVars a, Subst a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
@@ -221,17 +241,6 @@ execLLVM logger envRef fun@(LLVMFunction outTys _ _) inVars = do
     let outVars = zipWith (\v (b,shape) -> v :> ArrayTy b shape) outNames outTys
     callLLVM logger fun outRefs inRefs
     return (env <> env', outVars)
-
-requestArrays :: BackendEngine -> [Var] -> IO [Array]
-requestArrays _ [] = return []
-requestArrays backend vs = case backend of
-  LLVMEngine env -> do
-    env' <- readMVar env
-    forM vs $ \v -> do
-      case envLookup env' v of
-        Just ref -> loadArray ref
-        Nothing -> error "Array lookup failed"
-  _ -> error "Not implemented"
 
 -- TODO: check here for upstream errors
 typePass :: TopInfEnv -> FModule -> TopPassM (FModule, TopInfEnv)
