@@ -11,6 +11,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
+{-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
@@ -38,7 +39,7 @@ module Syntax (
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
-    pattern RecTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
+    pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern TupVal, pattern RecVal, pattern RealVal)
   where
 
@@ -76,6 +77,7 @@ data TyCon ty e = BaseType BaseType
                 | IndexRange ty (Limit e) (Limit e)
                 | ArrayType ArrayType
                 | RecType (Record ty)
+                | SumType (ty, ty)
                 | RefType ty
                 | TypeApp ty [ty]
                 | LinCon
@@ -189,6 +191,7 @@ data PrimCon ty e lam =
         Lit LitVal
       | ArrayLit Array
       | Lam ty ty lam
+      | SumCon ty e (Either () ()) -- Either constructor indicates which constructor to use
       | RecCon (Record e)
       | AsIdx ty e  -- Construct an index from its ordinal index (zero-based int)
       | AFor ty e
@@ -201,6 +204,7 @@ data PrimOp ty e lam =
       | TApp e [ty]
       | For Direction lam
       | TabGet e e
+      | SumCase e lam lam
       | RecGet e RecField
       | ArrayGep e e
       | LoadScalar e
@@ -264,6 +268,8 @@ builtinNames = M.fromList
   , ("indexWriter"     , OpExpr $ IndexEff Writer () () ())
   , ("indexState"      , OpExpr $ IndexEff State  () () ())
   , ("todo"       , ConExpr $ Todo ())
+  , ("left"       , ConExpr $ SumCon () () (Left ()))
+  , ("right"      , ConExpr $ SumCon () () (Right ()))
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
@@ -527,7 +533,7 @@ class HasVars a where
 instance HasVars FExpr where
   freeVars expr = case expr of
     FDecl decl body -> freeVars decl <> (freeVars body `envDiff` fDeclBoundVars decl)
-    FVar v       -> freeVarVars v
+    FVar v       -> varFreeVars v
     FPrimExpr e  -> freeVars e
     Annot e ty   -> freeVars e <> freeVars ty
     SrcAnnot e _ -> freeVars e
@@ -545,8 +551,10 @@ sourceBlockBoundVars block = case sbContents block of
   _                        -> mempty
 
 instance HasVars FLamExpr where
-  freeVars (FLamExpr p body) =
-    foldMap freeBinderVars p <> (freeVars body `envDiff` foldMap lbind p)
+  freeVars (FLamExpr p body) = binderFTVs <> (freeVars body `envDiff` binderVs)
+    where
+      binderFTVs = foldMap freeBinderTypeVars p
+      binderVs   = foldMap lbind p
 
 instance HasVars Type where
   freeVars ty = case ty of
@@ -555,7 +563,7 @@ instance HasVars Type where
     TypeVar v  -> tbind v
     Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
-    Effect row tailVar ->  foldMap (freeVarVars . \(v, (_,t)) -> v:>t) (envPairs row)
+    Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
                         <> foldMap freeVars tailVar
     NoAnn -> mempty
     TC con -> execWriter $ traverseTyCon con (\t -> t <$ tell (freeVars t))
@@ -566,19 +574,19 @@ instance HasVars b => HasVars (PiType b) where
 
 -- NOTE: We don't have an instance for VarP, because it's used to represent
 --       both binders and regular variables, but each requires different treatment
-freeBinderVars :: Var -> Vars
-freeBinderVars (_ :> t) = freeVars t
+freeBinderTypeVars :: Var -> Vars
+freeBinderTypeVars (_ :> t) = freeVars t
 
-freeVarVars :: Var -> Vars
-freeVarVars (DeBruijn _ :> t) = freeVars t
-freeVarVars v@(_ :> t) = lbind v <> freeVars t
+varFreeVars :: Var -> Vars
+varFreeVars (DeBruijn _ :> t) = freeVars t
+varFreeVars v@(_ :> t) = lbind v <> freeVars t
 
 instance HasVars () where
   freeVars () = mempty
 
 instance HasVars FDecl where
-   freeVars (LetMono p expr)   = foldMap freeBinderVars p <> freeVars expr
-   freeVars (LetPoly b tlam)   = freeBinderVars b <> freeVars tlam
+   freeVars (LetMono p expr)   = foldMap freeBinderTypeVars p <> freeVars expr
+   freeVars (LetPoly b tlam)   = freeBinderTypeVars b <> freeVars tlam
    freeVars (TyDef _ ty)       = freeVars ty
 
 instance HasVars RuleAnn where
@@ -612,11 +620,11 @@ declBoundVars :: Decl -> Env ()
 declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
-  freeVars (LamExpr b body) = freeBinderVars b <> (freeVars body `envDiff` (b@>()))
+  freeVars (LamExpr b body) = freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
 
 instance HasVars Atom where
   freeVars atom = case atom of
-    Var v -> freeVarVars v
+    Var v -> varFreeVars v
     TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
 
@@ -664,6 +672,7 @@ instance TraversableExpr PrimOp where
     For d lam            -> liftA  (For d) (fL lam)
     TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
     TabGet e i           -> liftA2 TabGet (fE e) (fE i)
+    SumCase e l r        -> liftA3 SumCase (fE e) (fL l) (fL r)
     RecGet e i           -> liftA2 RecGet (fE e) (pure i)
     ArrayGep e i         -> liftA2 ArrayGep (fE e) (fE i)
     LoadScalar e         -> liftA  LoadScalar (fE e)
@@ -699,6 +708,7 @@ instance TraversableExpr PrimCon where
     AFor n e    -> liftA2 AFor (fT n) (fE e)
     AGet e      -> liftA  AGet (fE e)
     AsIdx n e   -> liftA2 AsIdx (fT n) (fE e)
+    SumCon t e c -> liftA3 SumCon (fT t) (fE e) (pure c)
     RecCon r    -> liftA  RecCon (traverse fE r)
     Todo ty             -> liftA  Todo (fT ty)
 
@@ -767,7 +777,8 @@ traverseTyCon con fTy fE = case con of
   IntRange a b      -> liftA2 IntRange (fE a) (fE b)
   IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
   ArrayType t       -> pure $ ArrayType t
-  RecType r         -> liftA RecType $ traverse (fTy ) r
+  SumType (l, r)    -> liftA SumType $ liftA2 (,) (fTy l) (fTy r)
+  RecType r         -> liftA RecType $ traverse fTy r
   RefType t         -> liftA RefType (fTy t)
   TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
   LinCon            -> pure LinCon
@@ -829,6 +840,9 @@ pattern BaseTy b = TC (BaseType b)
 
 pattern RecTy :: Record Type -> Type
 pattern RecTy a = TC (RecType a)
+
+pattern SumTy :: Type -> Type -> Type
+pattern SumTy l r = TC (SumType (l, r))
 
 pattern RefTy :: Type -> Type
 pattern RefTy a = TC (RefType a)

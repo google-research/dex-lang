@@ -251,6 +251,7 @@ expr' =   parenExpr
       <|> liftM (fPrimCon . Lit) literal
       <|> lamExpr
       <|> forExpr
+      <|> caseExpr
       <|> primExpr
       <|> ffiCall
       <|> tabCon
@@ -349,6 +350,25 @@ forExpr = do
   body <- blockOrExpr
   return $ foldr (fFor dir) body vs
 
+caseExpr :: Parser FExpr
+caseExpr = do
+  try $ symbol "case"
+  e <- expr
+  nextLine
+  indent <- liftM length $ some $ char ' '
+  withIndent indent $ do
+    l <- pattern "Left"
+    nextLine
+    r <- pattern "Right"
+    return $ FPrimExpr $ OpExpr $ SumCase e l r
+  where
+    pattern cons = do
+      symbol cons
+      p <- pat
+      symbol "->"
+      e <- blockOrExpr
+      return $ FLamExpr p e
+
 tabCon :: Parser FExpr
 tabCon = do
   xs <- brackets $ (expr `sepEndBy` comma)
@@ -392,7 +412,7 @@ identifier = lexeme . try $ do
   w <- (:) <$> lowerChar <*> many (alphaNumChar <|> char '\'')
   failIf (w `elem` resNames) $ show w ++ " is a reserved word"
   return w
-  where resNames = ["for", "rof", "llam"]
+  where resNames = ["for", "rof", "llam", "case"]
 
 appRule :: Operator Parser FExpr
 appRule = InfixL (sc *> notFollowedBy (choice . map symbol $ opNames)
@@ -643,6 +663,7 @@ tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
   where tyOpNames = ["=>", "->", "--o"]
 
 applyType :: Type -> Type -> Type
+applyType (TC (TypeApp (TypeVar (Name SourceTypeName "Either" 0 :> _)) [l])) r = TC $ SumType (l, r)
 applyType (TC (TypeApp ty args)) arg = TC $ TypeApp ty (args ++ [arg])
 applyType ty arg = TC $ TypeApp ty [arg]
 
