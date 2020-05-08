@@ -126,6 +126,7 @@ tyConKind con = case con of
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
   ArrayType t       -> (ArrayType t, TyKind)
+  SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
   RefType t         -> (RefType (t, TyKind), TyKind)
   TypeApp t xs      -> (TypeApp (t, tk) (map (,TyKind) xs), TyKind)
@@ -537,6 +538,14 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
               | otherwise -> throw TypeErr $
                   "Index set size mismatch: " ++
                      show n' ++ " != " ++ show (length xs)
+  SumCase st lp@(Pi la (leff, lb)) lr@(Pi ra (reff, rb)) -> do
+    unless (not $ any isDependentType [lp, lr]) $ throw TypeErr $
+        "Return type of cases cannot depend on the matched value"
+    eq st (SumTy la ra)
+    eq leff noEffect
+    eq reff noEffect
+    eq lb rb
+    return $ pureType $ lb
   RecGet (RecTy r) i    -> return $ pureTy $ recGet r i
   ArrayGep (ArrayTy (_:shape) b) i -> do
     eq IntTy i
@@ -593,6 +602,9 @@ traverseConType con eq kindIs _ = case con of
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
+  SumCon t' t s -> case s of
+    Left _  -> return $ TC $ SumType (t, t')
+    Right _ -> return $ TC $ SumType (t', t)
   RecCon r -> return $ RecTy r
   AFor n a -> return $ TabTy n a
   AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
@@ -673,7 +685,7 @@ makePi v@(_:>a) b = Pi a $ abstractDepType v 0 b
 applyPi :: PiAbstractable t => PiType t -> Atom -> t
 applyPi (Pi _ b) x = instantiateDepType 0 x b
 
-isDependentType :: HasVars t => PiAbstractable t => PiType t -> Bool
+isDependentType :: (HasVars t, PiAbstractable t) => PiType t -> Bool
 isDependentType (Pi _ b) = usesPiVar b
   where
     usesPiVar t = dummyVar `isin` freeVars (instantiateDepType 0 (Var dummyVar) t)
@@ -832,7 +844,7 @@ checkLinVar v = do
     Nothing -> spend mempty
     Just s  -> spend s
 
-getPatName :: RecTree Var -> Name
+getPatName :: Pat -> Name
 getPatName (RecLeaf (v:>_)) = v
 getPatName p = case toList p of (v:>_):_ -> v
                                 _        -> NoName

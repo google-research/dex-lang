@@ -479,9 +479,10 @@ unify t1 t2 = do
         case zipWithRecord unify r r' of
           Nothing -> throw TypeErr ""
           Just unifiers -> void $ sequence unifiers
+      (SumType (l, r), SumType (l', r')) -> unify l l' >> unify r r'
       (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
         unify f f' >> zipWithM_ unify xs xs'
-      _ -> throw TypeErr ""
+      _   -> throw TypeErr ""
     _   -> throw TypeErr ""
 
 rowMeet :: Env a -> Env b -> Env (a, b)
