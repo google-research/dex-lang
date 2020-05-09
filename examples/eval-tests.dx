@@ -540,4 +540,4 @@ litArr = [10, 5, 3]
 >
 > Lookup of DeBruijn 0 failed
 > CallStack (from HasCallStack):
->   error, called at src/lib/Env.hs:94:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env
+>   error, called at src/lib/Env.hs:100:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env

@@ -10,9 +10,11 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
-            rawName, nameSpace, rename, renames, nameItems, renameWithNS) where
+            rawName, nameSpace, rename, renames, nameItems, renameWithNS,
+            renameChoice) where
 
 import Control.Monad
+import Data.List (minimumBy)
 import Data.String
 import Data.Traversable
 import qualified Data.Text as T
@@ -50,6 +52,10 @@ varAnn (_:>ann) = ann
 
 varName :: VarP a -> Name
 varName (v:>_) = v
+
+nameTag :: Name -> Int
+nameTag (Name _ _ tag) = tag
+nameTag _ = 0
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
@@ -116,6 +122,11 @@ renameWithNS _  (DeBruijn _ :> _) _ = error "Renaming de Bruijn indices"
 rename :: VarP ann -> Env a -> VarP ann
 rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
                         | otherwise      = v
+
+renameChoice :: [Name] -> Env a -> Name
+renameChoice vs scope =
+  minimumBy (\v1 v2 -> nameTag v1 `compare` nameTag v2) vs'
+  where vs' = [varName $ rename (v:>()) scope | v <- vs]
 
 renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
 renames vs scope = runCat (traverse (freshCat ()) vs) scope

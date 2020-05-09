@@ -22,18 +22,13 @@ import Data.Aeson  hiding (Array)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import GHC.Stack
-import Control.Applicative
-import Data.Traversable
-import Data.List (elemIndex)
 
 import Env
 import Syntax
 import PPrint
-import Record
 import Type
 import Cat
 import Array
-import Subst
 
 -- === JAXish IR ===
 
@@ -107,6 +102,7 @@ toJaxAtom env atom = case atom of
     Nothing -> error "lookup failed"
   Con (Lit x) -> return $ TmpCon $ Lit x
   Con (RecCon r) -> liftM (TmpCon . RecCon) $ traverse (toJaxAtom env) r
+  _ -> error $ "Not implemented " ++ pprint atom
 
 toJaxOp :: JSubstEnv -> CExpr -> JaxM TmpAtom
 toJaxOp env cexpr = do
@@ -118,7 +114,7 @@ toJaxOp' expr = case expr of
   For _ (LamExpr i@(_ :> FixedIntRange 0 n) body, env) -> do
     idxEnv <- ask
     -- TODO: scope this to avoid burning through names
-    i' <- freshVar $ Name JaxIdx "i" 0 :> n
+    i' <-freshIdxVar n
     iotaVar <- emitJFor $ JFor [] [] $ JIota n
     let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ JVar iotaVar [i']
     let env' = env <> i @> iotaAtom
@@ -129,10 +125,10 @@ toJaxOp' expr = case expr of
   TabGet ~(TmpCon (AFor _ tab)) i -> do
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
   ScalarBinOp op x y -> do
-    idxEnv <- ask
     ans <- emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
     return $ toScalarAtom ans
   _ -> error $ "Not implemented: " ++ show expr
+
 
 -- TODO: use AsIdx
 iotaVarAsIdx :: Type -> JAtom -> TmpAtom
@@ -145,14 +141,13 @@ fromScalarAtom atom = case atom of
   TmpLeaf v idxs -> JVar v idxs
   TmpCon (Lit x) -> JLit x
   TmpCon (AsIdx _ x) -> fromScalarAtom x
-  TmpCon (AGet atom) -> fromScalarAtom atom
+  TmpCon (AGet x)    -> fromScalarAtom x
   _ -> error $ "Not a scalar atom: " ++ show atom
 
 toScalarAtom :: JAtom -> TmpAtom
 toScalarAtom atom = case atom of
   JVar v idxs -> TmpCon $ AGet $ TmpLeaf v idxs
   JLit x      -> TmpCon $ Lit x
-  _ -> error $ "Not implemented " ++ pprint atom
 
 traverseArrayLeaves :: Monad m => TmpAtom -> (JAtom -> m JAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
@@ -183,6 +178,14 @@ freshVar v = do
   extend $ asFst (v' @> ())
   return v'
 
+freshIdxVar :: AxisSize -> JaxM IdxVar
+freshIdxVar n = do
+  scope <- looks fst
+  let nameChoices = [Name JaxIdx name 0 | name <- ["i", "j", "k"]]
+  let v = renameChoice nameChoices scope :> n
+  extend $ asFst (v @> ())
+  return v
+
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
   BaseTy b        -> JType []    b
@@ -205,7 +208,7 @@ instance Checkable JaxFunction where
 checkJExprType :: JTypeEnv -> JExpr -> Except [JType]
 checkJExprType initEnv (JExpr decls results) =
   liftM fst $ flip runCatT initEnv $ do
-    forM decls $ \(JLet v@(_:>reqTy) jfor) -> do
+    forM_ decls $ \(JLet v@(_:>reqTy) jfor) -> do
       env <- look
       ty <- checkJType env jfor
       assertEq reqTy ty "Annotation"
@@ -230,7 +233,7 @@ instance HasJType JFor where
 
 checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
 checkBinders env bs = do
-  mapM (checkNoShadow env) bs
+  mapM_ (checkNoShadow env) bs
   checkNoMutualShadows bs
 
 instance HasJType JAtom where
@@ -244,12 +247,12 @@ instance HasJType JAtom where
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
       throwIf (length idxs > length shape) CompilerErr $
         "Too many indices: " ++ pprint idxs
-      forM (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
+      forM_ (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
         case envLookup env i of
           Just (T nEnv) -> do
             assertEq nEnv nAnn "Index size doesn't match binder"
             assertEq nArr nAnn "Index size doesn't match array shape"
-          Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint i
+          _ -> throw CompilerErr $ "Lookup failed: " ++ pprint i
       return $ JType (drop (length idxs) shape) b
     JLit x -> return $ JType [] $ litType x
 
@@ -270,6 +273,7 @@ traverseJOpType jop = case jop of
   JId ty   -> return $ ty
   JIota n  -> return $ JType [n] IntType
   JGet (JType (_:shape) b) _ -> return $ JType shape b
+  JGet (JType [] _) _ -> error "Attempting to index zero-dim array"
 
 -- === instances ===
 
