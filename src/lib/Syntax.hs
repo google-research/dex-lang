@@ -508,10 +508,10 @@ toAtomicFExpr atom = case atom of
 
 type Vars = TypeEnv
 
-lbind :: Var -> Vars
+lbind :: VarP a -> FullEnv a b
 lbind v@(_:>ty) = v @> L ty
 
-tbind :: TVar -> Vars
+tbind :: VarP b -> FullEnv a b
 tbind v@(_:>k) = v @> T k
 
 newEnv :: [VarP ann] -> [a] -> Env a

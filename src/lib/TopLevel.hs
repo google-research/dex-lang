@@ -198,7 +198,7 @@ evalBackend expr = do
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, expr)
-      logPass JAXPass jfun
+      checkPass JAXPass jfun
       let inVars' = map (fmap typeToJType) inVars
       outVars <- callPipeServer server (jfun, inVars')
       let outVars' = map (fmap jTypeToType) outVars
@@ -252,9 +252,9 @@ typePass env m = do
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
 checkPass name x = do
-  logTop $ MiscLog $ "Checking " ++ pprint name
-  liftEitherIO $ checkValid x
   logPass name x
+  liftEitherIO $ checkValid x
+  logTop $ MiscLog $ pprint name ++ " checks passed"
 
 logPass :: Pretty a => PassName -> a -> TopPassM ()
 logPass passName x = logTop $ PassInfo passName $ pprint x

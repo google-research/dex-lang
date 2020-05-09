@@ -5,6 +5,8 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE DeriveTraversable #-}
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TupleSections #-}
 {-# OPTIONS_GHC -Wno-missing-signatures #-}
@@ -13,6 +15,7 @@
 module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
             JExpr, JaxFunction, toJaxFunction) where
 
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Aeson  hiding (Array)
@@ -36,11 +39,12 @@ import Subst
 
 type JVar   = VarP JType
 
-data JDecl = JLet JVar JFor                    deriving (Generic, Show)
-data JExpr = JExpr [JDecl] [JAtom]             deriving (Generic, Show)
-data JAtom = JLit LitVal | JVar JVar [IdxVar]  deriving (Generic, Show)
-data JType = JType [AxisSize] BaseType         deriving (Generic, Show)
-data JaxFunction = JaxFunction [JVar] JExpr    deriving (Generic, Show)
+data JDecl = JLet JVar JFor                    deriving (Generic, Show, Eq)
+data JExpr = JExpr [JDecl] [JAtom]             deriving (Generic, Show, Eq)
+data JAtom = JLit LitVal | JVar JVar [IdxVar]  deriving (Generic, Show, Eq)
+data JType = JType [AxisSize] BaseType         deriving (Generic, Show, Eq)
+
+data JaxFunction = JaxFunction [JVar] JExpr    deriving (Generic, Show, Eq)
 
 type AxisSize = Int
 type IdxVar = VarP AxisSize
@@ -50,14 +54,14 @@ data JOpP e = JId e
             | JGet e e
             | JScalarBinOp ScalarBinOp e e
             | JScalarUnOp  ScalarUnOp e
-              deriving (Generic, Show)
+              deriving (Generic, Functor, Foldable, Traversable, Show, Eq)
 
 data TmpAtom = TmpLeaf JVar [IdxVar]
              | TmpCon (PrimCon Type TmpAtom ())
-               deriving (Generic, Show)
+               deriving (Generic, Show, Eq)
 
 data JFor = JFor [IdxVar] [IdxVar] (JOpP JAtom)
-           deriving (Generic, Show)
+            deriving (Generic, Show, Eq)
 
 type EmbedEnv = (Scope, [JDecl])
 type JSubstEnv = Env TmpAtom
@@ -168,7 +172,7 @@ emitOp op = do
 
 emitJFor :: JFor -> JaxM JVar
 emitJFor jfor = do
-  v <- freshVar ("v":> getJForType jfor)
+  v <- freshVar ("v":> getJType jfor)
   extend $ (v @> (), [JLet v jfor])
   return v
 
@@ -189,26 +193,83 @@ jTypeToType :: JType -> Type
 jTypeToType ty = case ty of
   JType shape b -> ArrayTy shape b
 
-getJForType :: JFor -> JType
-getJForType (JFor forVars _ op) =
-  let (JType leafshape basetype) = getJOpType op
-  in JType (map varAnn forVars ++ leafshape) basetype
+-- === JAXy IR Types ===
 
-getJOpType :: JOpP JAtom -> JType
-getJOpType jOp = case jOp of
-  JScalarBinOp op _ _ -> JType [] outTy  where (_, _, outTy) = binOpType op
-  JScalarUnOp  op _   -> JType [] outTy  where (_,    outTy) = unOpType  op
-  JId x    -> getJAtomType x
-  JIota n  -> JType [n] IntType
-  JGet x _ -> JType shape b
-    where (JType (_:shape) b) = getJAtomType x
-  _ -> error $ "Not implemented: " ++ show jOp
+type JTypeEnv = FullEnv JType AxisSize
 
-getJAtomType :: JAtom -> JType
-getJAtomType atom = case atom of
-  JLit x -> JType [] $ litType x
-  JVar (v:>JType shape b) idxs -> JType shape' b
-    where shape' = drop (length idxs) shape
+instance Checkable JaxFunction where
+  checkValid (JaxFunction vs body) = do
+    let argTys = map varAnn vs
+    void $ checkJExprType (newLEnv vs argTys) body
+
+checkJExprType :: JTypeEnv -> JExpr -> Except [JType]
+checkJExprType initEnv (JExpr decls results) =
+  liftM fst $ flip runCatT initEnv $ do
+    forM decls $ \(JLet v@(_:>reqTy) jfor) -> do
+      env <- look
+      ty <- checkJType env jfor
+      assertEq reqTy ty "Annotation"
+      extend (v @> L ty)
+    env <- look
+    forM results $ checkJType env
+
+class HasJType a where
+  getJType   :: a -> JType
+  checkJType :: MonadError Err m => JTypeEnv -> a -> m JType
+
+instance HasJType JFor where
+  getJType (JFor idxs _ op) = JType (map varAnn idxs ++ shape) b
+    where (JType shape b) = getJType op
+
+  checkJType env (JFor idxs sumIdxs op) = do
+    checkBinders env idxs
+    checkBinders env sumIdxs
+    let env' = env <> foldMap tbind idxs <> foldMap tbind sumIdxs
+    (JType shape b) <- checkJType env' op
+    return (JType (map varAnn idxs ++ shape) b)
+
+checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
+checkBinders env bs = do
+  mapM (checkNoShadow env) bs
+  checkNoMutualShadows bs
+
+instance HasJType JAtom where
+  getJType atom = case atom of
+    JVar (_:> JType shape b) idxs -> JType (drop (length idxs) shape) b
+    JLit x -> JType [] $ litType x
+  checkJType env atom = case atom of
+    JVar v@(_:> ty@(JType shape b)) idxs -> do
+      case envLookup env v of
+        Just (L reqTy) -> assertEq reqTy ty "JVar"
+        _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+      throwIf (length idxs > length shape) CompilerErr $
+        "Too many indices: " ++ pprint idxs
+      forM (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
+        case envLookup env i of
+          Just (T nEnv) -> do
+            assertEq nEnv nAnn "Index size doesn't match binder"
+            assertEq nArr nAnn "Index size doesn't match array shape"
+          Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint i
+      return $ JType (drop (length idxs) shape) b
+    JLit x -> return $ JType [] $ litType x
+
+instance HasJType a => HasJType (JOpP a) where
+  getJType op = ignoreExcept $ traverseJOpType $ fmap getJType op
+  checkJType env op = do
+    op' <- traverse (checkJType env) op
+    traverseJOpType op'
+
+traverseJOpType :: MonadError Err m => JOpP JType -> m JType
+traverseJOpType jop = case jop of
+  JScalarBinOp op _ _ ->
+    return $ JType [] outTy
+    where (_, _, outTy) = binOpType op
+  JScalarUnOp  op _   ->
+    return $ JType [] outTy
+    where (_,    outTy) = unOpType  op
+  JId ty   -> return $ ty
+  JIota n  -> return $ JType [n] IntType
+  JGet (JType (_:shape) b) _ -> return $ JType shape b
 
 -- === instances ===
 
@@ -218,6 +279,7 @@ instance Pretty JaxFunction where
 instance Pretty JExpr where
   pretty (JExpr decls results) =
     foldMap (\d -> pretty d <> hardline) decls <> "results:" <+> pretty results
+
 instance Pretty JAtom where
   pretty (JLit x)           = pretty x
   pretty (JVar (v:>_) idxs) =
@@ -227,11 +289,7 @@ instance Pretty JDecl where
   pretty (JLet v rhs) = pretty v <+> "=" <+> pretty rhs
 
 instance Pretty a => Pretty (JOpP a) where
-  pretty (JScalarBinOp op x y) = pretty (show op) <+> pretty x <+> pretty y
-  pretty (JScalarUnOp  op x)   = pretty (show op) <+> pretty x
-  pretty (JIota n)  = "iota@" <> pretty n
-  pretty (JGet x i) = "get" <+> pretty x <+> pretty i
-  pretty (JId x)    = "id" <+> pretty x
+  pretty op = prettyOpName op <+> foldMap (\x -> parens (pretty x) <> " ") op
 
 instance Pretty JType where
   pretty (JType s b) = pretty b <> pretty s
@@ -241,9 +299,17 @@ instance Pretty JFor where
                                <> prettyIdxBinders "sum" sumIdxs
                                <> pretty op
 
+prettyOpName :: JOpP a -> Doc ann
+prettyOpName jop = case jop of
+  JScalarBinOp op _ _ -> pretty $ show op
+  JScalarUnOp  op _   -> pretty $ show op
+  JIota n  -> "iota@" <> pretty n
+  JGet _ _ -> "get"
+  JId _    -> "id"
+
 prettyIdxBinders :: Doc ann -> [IdxVar] -> Doc ann
 prettyIdxBinders _ [] = mempty
-prettyIdxBinders s idxs = s <+> hsep (map pretty idxs) <> " . "
+prettyIdxBinders s idxs = s <+> hsep (map (pretty . varName) idxs) <> " . "
 
 instance ToJSON   JDecl
 instance FromJSON JDecl
@@ -295,14 +361,3 @@ instance FromJSON Array
 
 instance ToJSON   Vec
 instance FromJSON Vec
-
-instance Functor JOpP where
-  fmap = fmapDefault
-
-instance Foldable JOpP where
-  foldMap = foldMapDefault
-
-instance Traversable JOpP where
-  traverse f op = case op of
-    JScalarBinOp o x y -> liftA2 (JScalarBinOp o) (f x) (f y)
-    JScalarUnOp o x    -> liftA  (JScalarUnOp o) (f x)

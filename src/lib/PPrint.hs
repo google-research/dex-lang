@@ -14,6 +14,7 @@ module PPrint (pprint, pprintList,
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
+import GHC.Stack
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -344,6 +345,6 @@ assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y ++ "\n"
 
-ignoreExcept :: Except a -> a
+ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x

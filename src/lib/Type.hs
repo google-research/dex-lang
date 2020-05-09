@@ -16,7 +16,8 @@ module Type (
     isData, Checkable (..), popRow, getTyOrKind, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     checkRuleDefType, getConType, checkEffType, HasType, indexSetConcreteSize,
-    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable) where
+    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
+    checkNoShadow, checkNoMutualShadows) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -443,14 +444,22 @@ checkBinder :: Var -> TypeM ()
 checkBinder b = do
   kind <- checkKind (varAnn b)
   assertEq TyKind kind "kind error"
-  checkShadow b
-
-checkShadow :: Pretty b => VarP b -> TypeM ()
-checkShadow v = do
   env <- ask
+  checkNoShadow env b
+
+checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
+checkNoShadow env v = do
   if v `isin` env
     then throw CompilerErr $ pprint v ++ " shadowed"
     else return ()
+
+checkNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
+                    => f (VarP b) -> m ()
+checkNoMutualShadows bs =
+  void $ flip runCatT mempty $ forM bs $ \b -> do
+    env <- look
+    checkNoShadow env b
+    extend (b@>())
 
 pureTy :: Type -> EffectiveType
 pureTy ty = (noEffect, ty)
