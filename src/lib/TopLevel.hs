@@ -198,6 +198,7 @@ evalBackend expr = do
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, expr)
+      logPass JAXPass jfun
       let inVars' = map (fmap typeToJType) inVars
       outVars <- callPipeServer server (jfun, inVars')
       let outVars' = map (fmap jTypeToType) outVars

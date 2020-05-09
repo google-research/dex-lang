@@ -30,7 +30,7 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | SourceTypeName
+data NameSpace = GenName | SourceName | SourceTypeName | JaxIdx
                | InferenceName | LocalTVName | NoNameSpace | ArrayName
                  deriving  (Show, Ord, Eq, Generic)
 
