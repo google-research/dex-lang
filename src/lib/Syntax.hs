@@ -524,8 +524,7 @@ newTEnv :: [VarP ann] -> [b] -> FullEnv a b
 newTEnv vs xs = fold [v @> T x | (v, x) <- zip vs xs]
 
 wrapFDecls :: [FDecl] -> FExpr -> FExpr
-wrapFDecls [] ans = ans
-wrapFDecls (decl:decls) expr = FDecl decl (wrapFDecls decls expr)
+wrapFDecls decls result = foldr FDecl result decls
 
 class HasVars a where
   freeVars :: a -> Vars

@@ -9,7 +9,7 @@
 
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, zeroAt, addAt, sumAt, deShadow, withIndexed,
+              runEmbed, zeroAt, addAt, sumAt, embedScope, withIndexed,
               nRecGet, nTabGet, add, mul, sub, neg, div',
               selectAt, freshVar, unitBinder, unpackRec,
               substEmbed, fromPair, buildLamExprAux,
@@ -40,14 +40,14 @@ emit expr = emitTo ("v":>NoAnn) expr
 emitTo :: MonadCat EmbedEnv m => Var -> CExpr -> m Atom
 emitTo (v:>_) expr = case singletonTypeVal ty of
   Nothing -> do
-    expr' <- deShadow expr
+    expr' <- deShadow expr <$> embedScope
     v' <- freshVar (v:>ty)
     extend $ asSnd [Let v' expr']
     return $ Var v'
   Just x
     | eff == noEffect -> return x
     | otherwise -> do
-        expr' <- deShadow expr
+        expr' <- deShadow expr <$> embedScope
         extend $ asSnd [Let (NoName:>ty) expr']
         return x
   where (eff, ty) = getEffType expr
@@ -58,10 +58,8 @@ emitExpr (Decl decl@(Let v _) body) = extend (v@>(), [decl]) >> emitExpr body
 emitExpr (Atom atom) = return atom
 emitExpr (CExpr expr) = emit expr
 
-deShadow :: MonadCat EmbedEnv m => Subst a => a -> m a
-deShadow x = do
-   scope <- looks fst
-   return $ subst (mempty, scope) x
+embedScope :: MonadCat EmbedEnv m => m Scope
+embedScope = looks fst
 
 freshVar :: MonadCat EmbedEnv m => VarP ann -> m (VarP ann)
 freshVar v = do
@@ -70,6 +68,10 @@ freshVar v = do
   extend $ asFst (v' @> ())
   return v'
 
+-- Runs second argument on a fresh binder variable and returns its result,
+-- the fresh variable name and the EmbedEnv accumulated during its execution.
+-- The first argument specifies the type of the binder variable, and is used
+-- as a hint for its name.
 withBinder :: (MonadCat EmbedEnv m)
             => Var -> (Atom -> m a) -> m (a, Var, EmbedEnv)
 withBinder b f = do
@@ -126,9 +128,8 @@ runEmbed :: Cat EmbedEnv a -> Scope -> (a, EmbedEnv)
 runEmbed m scope = runCat m (scope, [])
 
 wrapDecls :: [Decl] -> Atom -> Expr
-wrapDecls [] atom = Atom atom
 wrapDecls [Let v expr] (Var v') | v == v' = CExpr expr  -- optimization
-wrapDecls (decl:decls) expr = Decl decl (wrapDecls decls expr)
+wrapDecls decls result = foldr Decl (Atom result) decls
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadCat EmbedEnv m => Type -> m Atom
@@ -236,7 +237,8 @@ isSingletonType ty = case singletonTypeVal ty of
 singletonTypeVal :: Type -> Maybe Atom
 singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
 singletonTypeVal (TC con) = case con of
-  BaseType  _ -> Nothing
+  -- XXX: This returns Nothing if it's a record that is not an empty tuple (or contains
+  --      anything else than only empty tuples inside)!
   RecType r   -> liftM RecVal $ traverse singletonTypeVal r
   _           -> Nothing
 singletonTypeVal _ = Nothing

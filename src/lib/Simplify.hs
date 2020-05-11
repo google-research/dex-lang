@@ -66,7 +66,7 @@ simplifyAtom atom = case atom of
     ((topEnv, rulesEnv), opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
-      Just ~(L x) -> deShadow x
+      Just ~(L x) -> deShadow x <$> embedScope
       Nothing -> case envLookup topEnv v of
         Just ~(L x)
           | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom

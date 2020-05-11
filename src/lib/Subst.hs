@@ -7,7 +7,7 @@
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Subst (Subst, subst, scopelessSubst) where
+module Subst (Subst, subst, deShadow, scopelessSubst) where
 
 import Env
 import Record
@@ -19,6 +19,8 @@ scopelessSubst env x = subst (env, scope) x
   where scope = fmap (const ()) $ foldMap freeVars env
 
 class Subst a where
+  -- NOTE: Scope is here only to allow the substitution to generate fresh variables
+  -- See "Secrets of the Glasgow Haskell Compiler inliner", Section 3.2
   subst :: (SubstEnv, Scope) -> a -> a
 
 instance (TraversableExpr expr, Subst ty, Subst e, Subst lam)
@@ -43,8 +45,8 @@ instance Subst Atom where
 
 substVar :: (SubstEnv, Scope) -> Var -> Atom
 substVar env@(sub, scope) v = case envLookup sub v of
-  Nothing -> Var $ fmap (subst env) v
-  Just (L x') -> subst (mempty, scope) x'
+  Nothing     -> Var $ fmap (subst env) v
+  Just (L x') -> deShadow x' scope
   Just (T _ ) -> error "Expected let-bound variable"
 
 instance Subst LamExpr where
@@ -144,3 +146,6 @@ reduceTypeApp (TypeAlias bs ty) xs
   | length bs == length xs = subst (newTEnv bs xs, mempty) ty
   | otherwise = error "Kind error"
 reduceTypeApp f xs = TC $ TypeApp f xs
+
+deShadow :: Subst a => a -> Scope -> a
+deShadow x scope = subst (mempty, scope) x
