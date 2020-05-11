@@ -22,7 +22,7 @@ class JaxFunction(object):
     for b, op in decls:
       assert isinstance(b, Var)
       assert isinstance(op, Operation)
-    for r in results: assert isatom(r)
+    for r in results: assert isinstance(r, Atom)
     self.binders = binders
     self.decls = decls
     self.results = results
@@ -34,19 +34,74 @@ class JaxFunction(object):
   def des(obj):
     binders_ser, (decls_ser, results_ser) = obj
     binders = map(Var.des, binders_ser)
-    results = map(des_atom, results_ser)
+    results = map(Atom.des, results_ser)
     decls = [(Var.des(b), Operation.des(op)) for (b, op) in decls_ser]
     return JaxFunction(binders, decls, results)
 
-class Var(object):
-  def __init__(self, name, ty):
-    namespace, root, i = name
+class Name(object):
+  def __init__(self, namespace, root, i):
+    assert isinstance(i, int)
     assert isinstance(namespace, str)
     assert isinstance(root, str)
-    assert isinstance(i, int)
+    self._name = (namespace, root, i)
+
+  @staticmethod
+  def des(obj):
+    namespace, root, i = obj
+    return Name(namespace, root, i)
+
+  def ser(self):
+    return {"tag":"Name", "contents": list(self._name)}
+
+  def __repr__(self): return str(self)
+  def __str__(self):
+    (_, root, i) = self._name
+    if i == 0:
+      return root
+    else:
+      return root + str(i)
+
+  def __eq__(self, other):
+    assert isinstance(other, Name)
+    return self._name == other._name
+
+  def __hash__(self):
+    return hash(self._name)
+
+class IdxVar(object):
+  def __init__(self, name, size):
+    assert isinstance(name, Name)
+    assert isinstance(size, int)
+    self.name = name
+    self.size = size
+
+  def __repr__(self): return str(self)
+  def __str__(self):
+    return str(self.name) + ":" + str(self.size)
+
+  def __eq__(self, other):
+    assert isinstance(other, IdxVar)
+    return self.name == other.name
+
+  def __hash__(self):
+    return hash(self.name)
+
+  @staticmethod
+  def des(obj):
+    name, idxSize = obj
+    assert name["tag"] == "Name"
+    return IdxVar(Name.des(name["contents"]), idxSize)
+
+class Var(object):
+  def __init__(self, name, ty):
     assert isinstance(ty, Ty)
-    self.name = (namespace, root, i)
+    assert isinstance(name, Name)
+    self.name = name
     self.ty = ty
+
+  def __repr__(self): return str(self)
+  def __str__(self):
+    return str(self.name) + ":" + str(self.ty)
 
   def __eq__(self, other):
     assert isinstance(other, Var)
@@ -56,17 +111,77 @@ class Var(object):
     return hash(self.name)
 
   def ser(self):
-    return [{"tag":"Name", "contents": list(self.name)},
-            self.ty.ser()]
+    return [self.name.ser(), self.ty.ser()]
 
   @staticmethod
   def des(obj):
     name, (shape, basetype) = obj
     assert name["tag"] == "Name"
-    return Var(name["contents"], Ty(basetype, shape))
+    return Var(Name.des(name["contents"]), Ty(shape, basetype))
+
+class Atom(object):
+  def __init__(self, case, data):
+    self.case = case
+    if case == "Var":
+      assert isinstance(data, Var)
+      self.var = data
+    elif case == "Lit":
+      assert isinstance(data, arrayish_types)
+      self.val = data
+    else:
+      assert False
+
+  def __repr__(self): return str(self)
+  def __str__(self):
+   if self.case == "Var":
+     return str(self.var)
+   elif self.case == "Lit":
+     return str(self.val)
+   else:
+     assert False
+
+  @property
+  def ty(self):
+    if self.case == "Var":
+      return self.var.ty
+    elif self.case == "Lit":
+      x = self.val
+      return array_ty(x)
+    else:
+      assert False
+
+  @staticmethod
+  def des(obj):
+    if obj["tag"] == "JVar":
+      val = obj["contents"]
+      return Atom("Var", Var.des(val))
+    elif obj["tag"] == "JLit":
+      (shape, b), vec = obj["contents"]
+      val = np.array(vec["contents"], dtype=basetype_dtype(b)).reshape(shape)
+      return Atom("Lit", val)
+
+class IndexedAtom(object):
+  def __init__(self, atom, idxs):
+    assert isinstance(atom, Atom)
+    for i in idxs: assert isinstance(i, IdxVar)
+    self.atom = atom
+    self.idxs = idxs
+
+  @property
+  def ty(self):
+    assert False
+
+  @staticmethod
+  def des(obj):
+    atom, idxs = obj
+    return IndexedAtom(Atom.des(atom), map(IdxVar.des, idxs))
+
+  def __repr__(self): return str(self)
+  def __str__(self):
+    return str(self.atom) + "".join("." + str(i) for i in self.idxs)
 
 class Ty(object):
-  def __init__(self, basetype, shape):
+  def __init__(self, shape, basetype):
     for n in shape: assert isinstance(n, int)
     assert basetype in ["IntType", "BoolType", "RealType"]
     self.basetype = basetype
@@ -79,17 +194,21 @@ class Ty(object):
   def des(obj):
     assert False
 
+  def __repr__(self): return str(self)
+  def __str__(self):
+    return self.basetype + str(self.shape)
+
 class Operation(object):
-  def __init__(self, for_idxs, sum_idxs, op_name, args):
-    for i in for_idxs: assert isinstance(i, int)
-    for i in sum_idxs: assert isinstance(i, int)
+  def __init__(self, for_idxs, sum_idxs, op_name, size_args, args):
+    for i in for_idxs: assert isinstance(i, IdxVar)
+    for i in sum_idxs: assert isinstance(i, IdxVar)
     assert isinstance(op_name, str)
-    for arg, idxs in args:
-      for i in idxs: assert isinstance(i, int)
-      assert isatom(arg)
+    for size in size_args: assert isinstance(size, int)
+    for arg in args: assert isinstance(arg, IndexedAtom)
     self.for_idxs = for_idxs
     self.sum_idxs = sum_idxs
     self.op_name = op_name
+    self.size_args = size_args
     self.args = args
 
   def ser(self):
@@ -97,17 +216,24 @@ class Operation(object):
 
   @staticmethod
   def des(obj):
-    for_idxs, sum_idxs, op_and_args_ser = obj
-    op_name, args = des_op_and_args(op_and_args_ser)
-    return Operation(for_idxs, sum_idxs, op_name, args)
+    for_idxs_ser, sum_idxs_ser, op_and_args_ser = obj
+    for_idxs = map(IdxVar.des, for_idxs_ser)
+    sum_idxs = map(IdxVar.des, sum_idxs_ser)
+    op_name, size_args, args = des_op_and_args(op_and_args_ser)
+    return Operation(for_idxs, sum_idxs, op_name, size_args, args)
     assert False
 
+  def __repr__(self): return str(self)
+  def __str__(self):
+    return "for " + str(tuple(self.for_idxs)) \
+              + " " + self.op_name + " " + str(tuple(self.args))
+
+def array_ty(x):
+  return Ty(x.shape, dtype_basetype(x.dtype))
+
 def ser_array(arr):
-  assert isinstance(arr, np.ndarray)
-  if arr.dtype in [np.int32, np.int64]:
-    return [atom_type(arr).ser(), ser_flat_vec(arr.ravel())]
-  else:
-    assert False
+  assert isinstance(arr, arrayish_types)
+  return [array_ty(arr).ser(), ser_flat_vec(arr.ravel())]
 
 def ser_flat_vec(vec):
   if vec.dtype in [np.int32, np.int64]:
@@ -115,68 +241,110 @@ def ser_flat_vec(vec):
   else:
     assert False
 
-def atom_as_array(x):
-  assert isatom(x)
-  if isinstance(x, np.ndarray):
-    return x
-  elif isinstance(x, Var):
-    assert False
-  else:
-    return np.array(x)
-
-def des_atom(obj):
-  if obj["tag"] == "JVar":
-    return Var.des(obj["contents"])
-  elif obj["tag"] == "JLit":
-    val = obj["contents"]
-    if val["tag"] == "IntLit":
-      return np.array(val["contents"], dtype=np.int64)
-    else:
-      assert False
-  else:
-    assert False
-
 def des_op_and_args(obj):
-  if obj["tag"] == "JScalarBinOp":
+  tag = obj["tag"]
+  if tag == "JScalarBinOp":
     binop_name, x_ser, y_ser = obj["contents"]
-    x = des_indexed_atom(x_ser)
-    y = des_indexed_atom(y_ser)
-    return binop_name["tag"], [x, y]
+    x = IndexedAtom.des(x_ser)
+    y = IndexedAtom.des(y_ser)
+    return binop_name["tag"], [], [x, y]
+  elif tag == "JIota":
+    size = obj["contents"]
+    assert isinstance(size, int)
+    return "Iota", [size], []
+  elif tag == "JId":
+    x_ser = obj["contents"]
+    x = IndexedAtom.des(x_ser)
+    return "Id", [], [x]
+  elif tag == "JGet":
+    x_ser, y_ser = obj["contents"]
+    x = IndexedAtom.des(x_ser)
+    y = IndexedAtom.des(y_ser)
+    return "Get", [], [x, y]
   else:
-    assert False
-
-def des_indexed_atom(atom_idxs):
-  atom_ser, idxs_ser = atom_idxs
-  return (des_atom(atom_ser), map(Var.des, idxs_ser))
+    raise Exception("Not implemented: " + str(tag))
 
 global_env = {}
 
-def eval_op(env, op_name, op_args):
-  if op_name == "IAdd":
-    (x,_), (y,_) = op_args
-    return x + y
+def eval_op(op):
+  if op.op_name in ("IAdd", "IMul"):
+    x, y = op.args
+    x_bc = broadcast_dims(op.for_idxs, x.idxs, x.atom.val)
+    y_bc = broadcast_dims(op.for_idxs, y.idxs, y.atom.val)
+    if op.op_name == "IAdd":
+      ans = x_bc + y_bc
+    elif op.op_name == "IMul":
+      ans = x_bc * y_bc
+    else:
+      assert False
+    return Atom("Lit", ans)
+  elif op.op_name == "Iota":
+    n, = op.size_args
+    val = np.arange(n)
+    val_bc = broadcast_dims(op.for_idxs, [], val)
+    return Atom("Lit", val_bc)
+  elif op.op_name == "Id":
+    x, = op.args
+    x_bc = broadcast_dims(op.for_idxs, x.idxs, x.atom.val)
+    return Atom("Lit", x_bc)
+  elif op.op_name == "Get":
+    x, idx = op.args
+    out_shape = [i.size for i in op.for_idxs]
+    x_idxs_used = get_stack_idxs_used(op.for_idxs, x.idxs)
+    leading_idx_arrays = []
+    for i, idx_used in enumerate(x_idxs_used):
+      if idx_used:
+        leading_idx_arrays.append(nth_iota(out_shape, i))
+      else:
+        pass
+    payload_idx_array = broadcast_dims(op.for_idxs, idx.idxs, idx.atom.val)
+    out = x.atom.val[tuple(leading_idx_arrays) + (payload_idx_array,)]
+    return Atom("Lit", out)
   else:
-    raise Exception("Unrecognized op: {}".format(op_name))
+    raise Exception("Unrecognized op: {}".format(op.op_name))
+
+def broadcast_dims(for_idxs, idxs, x):
+  idxs_used = get_stack_idxs_used(for_idxs, idxs)
+  return broadcast_with(x, [i.size for i in for_idxs], idxs_used)
+
+def broadcast_with(x, final_shape, idxs_used):
+  rem_shape = list(x.shape[sum(idxs_used):])
+  reshape_shape = [size if use else 1 for (size, use) in zip(final_shape, idxs_used)]
+  x_singletons = np.reshape(x, reshape_shape + rem_shape)
+  return np.broadcast_to(x_singletons, final_shape + rem_shape)
+
+def nth_iota(shape, i):
+  size = shape[i]
+  iota = np.arange(size)
+  idxs_used = [Discard for _ in shape]
+  idxs_used[i] = Use
+  return broadcast_with(iota, shape, idxs_used)
+
+Use = True
+Discard = False
+def get_stack_idxs_used(for_idxs, idxs):
+  stack_vars = []
+  cur_idxs = list(idxs)
+  for i in for_idxs:
+    if cur_idxs and i == cur_idxs[0]:
+      stack_vars.append(Use)
+      cur_idxs = cur_idxs[1:]
+    else:
+      stack_vars.append(Discard)
+  return stack_vars
 
 arrayish_types = (np.ndarray, np.int64, np.float64)
 
-def isatom(val):
-  return (isinstance(val, Var)
-       or isinstance(val, arrayish_types))
+def subst_op(env, op):
+  args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]
+  return Operation(op.for_idxs, op.sum_idxs, op.op_name, op.size_args, args)
 
 def subst_atom(env, x):
-  assert isatom(x)
-  if isinstance(x, Var):
-    return env[x]
-  else:
+  assert isinstance(x, Atom)
+  if x.case == "Var":
+    return env[x.var]
+  elif x.case == "Lit":
     return x
-
-def atom_type(x):
-  assert isatom(x)
-  if isinstance(x, Var):
-    return x.ty
-  elif isinstance(x, arrayish_types):
-    return Ty(dtype_basetype(x.dtype), x.shape)
   else:
     assert False
 
@@ -186,29 +354,39 @@ def dtype_basetype(x):
   else:
     assert False
 
+def basetype_dtype(x):
+  if x == "IntType":
+    return np.int64
+  else:
+    assert False
+
 def atom_as_var(x):
-  assert isatom(x)
+  assert isinstance(x, Atom)
   i = len(global_env)
-  name = ("ArrayName", "arr", i)
-  v = Var(name, atom_type(x))
+  name = Name("ArrayName", "arr", i)
+  v = Var(name, x.ty)
   assert v not in global_env
   global_env[v] = x
   return v
 
 def eval_function_application(top_arg):
   f = JaxFunction.des(top_arg[0])
+  args = [Atom("Var", Var.des(x)) for x in top_arg[1]]
   env = global_env.copy()
-  f_args = [subst_atom(env, Var.des(x)) for x in top_arg[1]]
-  for v, arg in zip(f.binders, f_args):
+  args_subst = [subst_atom(env, arg) for arg in args]
+  for v, arg in zip(f.binders, args_subst):
     env[v] = arg
   for (v, op) in f.decls:
-    op_args = [(subst_atom(env, x), idxs) for (x, idxs) in op.args]
-    env[v] = eval_op(env, op.op_name, op_args)
+    print((v, op))
+    print(subst_op(env, op))
+    print(eval_op(subst_op(env, op)))
+    print("=====")
+    env[v] = eval_op(subst_op(env, op))
   return [atom_as_var(subst_atom(env, r)).ser() for r in f.results]
 
 def retrieve_arrays(arrs):
   vs = map(Var.des, arrs)
-  return [ser_array(atom_as_array(global_env[v])) for v in vs]
+  return [ser_array(global_env[v].val) for v in vs]
 
 def just_print_it(obj):
   print(obj)

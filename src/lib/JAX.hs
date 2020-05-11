@@ -105,8 +105,8 @@ toJaxAtom env atom = case atom of
     Just x  -> x
     Nothing -> error "lookup failed"
   Con (Lit x) -> TmpCon $ AGet $ TmpLeaf $ IdxAtom (JLit $ arrayFromScalar x) []
-  Con (RecCon r) -> TmpCon $ RecCon $ fmap (toJaxAtom env) r
-  _ -> error $ "Not implemented " ++ pprint atom
+  Con con -> TmpCon $ fmapExpr con id (toJaxAtom env) (error "unexpected lambda")
+  _ -> error $ "Not implemented: " ++ pprint atom
 
 toJaxOp :: JSubstEnv -> CExpr -> JaxM TmpAtom
 toJaxOp env cexpr = toJaxOp' cexpr'
