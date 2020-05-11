@@ -51,7 +51,6 @@ import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import qualified Data.Vector.Unboxed as V
 import Data.Foldable (fold)
-import Data.Traversable
 import Data.Tuple (swap)
 import Control.Applicative (liftA3)
 import GHC.Generics
@@ -111,7 +110,7 @@ data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
 data Limit a = InclusiveLim a
              | ExclusiveLim a
              | Unlimited
-               deriving (Show, Eq, Generic)
+               deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 type TypeEnv  = FullEnv Type Kind
 type SubstEnv = FullEnv Atom Type
@@ -223,7 +222,8 @@ data PrimOp ty e lam =
       | Inject e
         deriving (Show, Eq, Generic)
 
-data PrimEffect e = MAsk | MTell e | MGet | MPut e  deriving (Show, Eq, Generic)
+data PrimEffect e = MAsk | MTell e | MGet | MPut e
+    deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data VSpaceOp e = VZero | VAdd e e deriving (Show, Eq, Generic)
 data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
@@ -744,31 +744,6 @@ instance Eq SourceBlock where
 
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
-
-instance Functor PrimEffect where
-  fmap = fmapDefault
-
-instance Foldable PrimEffect where
-  foldMap = foldMapDefault
-
-instance Traversable PrimEffect where
-  traverse f prim = case prim of
-    MAsk    -> pure  MAsk
-    MTell x -> liftA MTell (f x)
-    MGet    -> pure  MGet
-    MPut  x -> liftA MPut (f x)
-
-instance Functor Limit where
-  fmap = fmapDefault
-
-instance Foldable Limit where
-  foldMap = foldMapDefault
-
-instance Traversable Limit where
-  traverse f lim = case lim of
-    InclusiveLim x -> liftA InclusiveLim (f x)
-    ExclusiveLim x -> liftA ExclusiveLim (f x)
-    Unlimited      -> pure Unlimited
 
 traverseTyCon :: Applicative m
               => TyCon ty e -> (ty -> m ty') -> (e -> m e') -> m (TyCon ty' e')

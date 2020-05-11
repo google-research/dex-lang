@@ -15,41 +15,19 @@ module Record (Record (..), RecTree (..),
               ) where
 
 
-import Data.Traversable
 import qualified Data.Map.Strict as M
 import Data.Maybe (fromJust)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 
 data Record a = Rec (M.Map String a)
-              | Tup [a] deriving (Eq, Ord, Show, Generic)
+              | Tup [a] deriving (Eq, Ord, Show, Generic, Functor, Foldable, Traversable)
 
 data RecTree a = RecTree (Record (RecTree a))
-               | RecLeaf a  deriving (Eq, Show, Ord, Generic)
+               | RecLeaf a  deriving (Eq, Show, Ord, Generic, Functor, Foldable, Traversable)
 
 data RecField = RecField (Record ()) RecFieldName  deriving (Eq, Ord, Show)
 data RecFieldName = RecName String | RecPos Int  deriving (Eq, Ord, Show)
-
-instance Functor Record where
-  fmap = fmapDefault
-
-instance Foldable Record where
-  foldMap = foldMapDefault
-
-instance Traversable Record where
-  traverse f (Rec m) = fmap Rec $ traverse f m
-  traverse f (Tup m) = fmap Tup $ traverse f m
-
-instance Functor RecTree where
-  fmap = fmapDefault
-
-instance Foldable RecTree where
-  foldMap = foldMapDefault
-
-instance Traversable RecTree where
-  traverse f t = case t of
-    RecTree r -> fmap RecTree $ traverse (traverse f) r
-    RecLeaf x -> fmap RecLeaf $ f x
 
 zipWithRecord :: (a -> b -> c) -> Record a -> Record b -> Maybe (Record c)
 zipWithRecord f (Rec m) (Rec m') | M.keys m == M.keys m' =  Just $ Rec $ M.intersectionWith f m m'
