@@ -16,10 +16,8 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
 import Control.Monad
 import Data.List (minimumBy)
 import Data.String
-import Data.Traversable
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
-import Control.Applicative (liftA)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 
@@ -27,7 +25,7 @@ import Cat
 
 infixr 7 :>
 
-newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord)
+newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord, Functor, Foldable, Traversable)
 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
@@ -37,7 +35,7 @@ data NameSpace = GenName | SourceName | SourceTypeName | JaxIdx
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
-data VarP a = (:>) Name a  deriving (Show, Ord, Generic)
+data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
 
 rawName :: NameSpace -> String -> Name
 rawName s t = Name s (fromString t) 0
@@ -148,16 +146,6 @@ infixr 7 @>
   NoName -> mempty
   _      -> Env $ M.singleton v x
 
-instance Functor Env where
-  fmap = fmapDefault
-
-instance Foldable Env where
-  foldMap = foldMapDefault
-
-instance Traversable Env where
-  traverse f (Env m) = liftA Env (traverse f m)
-
-
 -- Note: Env is right-biased, so that we extend envs on the right
 instance Semigroup (Env a) where
   Env m <> Env m' = Env (m' <> m)
@@ -172,15 +160,6 @@ instance Pretty a => Pretty (Env a) where
 
 instance Eq (VarP a) where
   (v:>_) == (v':>_) = v == v'
-
-instance Functor VarP where
-  fmap = fmapDefault
-
-instance Foldable VarP where
-  foldMap = foldMapDefault
-
-instance Traversable VarP where
-  traverse f (v :> x) = fmap (v:>) (f x)
 
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
