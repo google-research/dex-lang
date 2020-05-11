@@ -180,6 +180,8 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
   pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
   pretty (AGet e)      = "aget" <+> p e
   pretty (AsIdx n i)   = p i <> "@" <> p n
+  pretty (SumCon t e (Left _))  = parens $ "Left @"  <> p t <+> p e
+  pretty (SumCon t e (Right _)) = parens $ "Right @" <> p t <+> p e
   pretty con = prettyExprDefault (ConExpr con)
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann

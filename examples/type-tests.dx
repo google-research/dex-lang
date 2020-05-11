@@ -368,3 +368,15 @@ differentCaseResultTypes x = case x
 inferEither x = case x
     Left i -> iadd i 1
     Right f -> floor f
+
+caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
+caseEffects ref x = case x
+    Left  i -> ()
+    Right r -> tell ref r
+> Type error:
+> Expected: { }
+>   Actual: {Writer ref | ?_36:Effect}
+> In: ((tell ref) r)
+>
+> caseEffects ref x = case x
+>                     ^^^^^^^

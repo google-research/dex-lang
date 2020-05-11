@@ -541,3 +541,15 @@ litArr = [10, 5, 3]
 > Lookup of DeBruijn 0 failed
 > CallStack (from HasCallStack):
 >   error, called at src/lib/Env.hs:98:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env
+
+eitherFloor : Either Int Real -> Int
+eitherFloor x = case x
+    Left i  -> i
+    Right f -> %%floorDex(f)
+
+:p
+  eitherFloor (%right(1.2))
+> 1
+
+:p ((%right(1.2)) : (Either Int Real))
+> (1, 1.2, False)
