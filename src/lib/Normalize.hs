@@ -7,7 +7,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Normalize (normalizeModule, normalizeVal) where
+module Normalize (normalizeModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -35,12 +35,6 @@ normalizeModule (Module bid moduleTy@(_, outVars) decls) =
 runNormM :: NormM a -> (a, [Decl])
 runNormM m = (ans, decls)
   where (ans, (_, decls)) = runEmbed (runReaderT m mempty) mempty
-
-normalizeVal :: FExpr -> Except Atom
-normalizeVal expr = do
-  let (ans, decls) = runNormM (normalize expr)
-  case decls of [] -> return ans
-                _  -> throw MiscErr "leftover decls"
 
 normalize :: FExpr -> NormM Atom
 normalize expr = case expr of
@@ -72,7 +66,7 @@ normalizeLam (FLamExpr p body) = do
 
 normalizePat :: Pat -> NormM Var
 normalizePat p = do
-  ty <- liftM getType $ traverse (traverse substNorm) p
+  ty <- getType <$> traverse (traverse substNorm) p
   let v' = case toList p of (v:>_):_ -> v
                             []       -> NoName
   return $ v':>ty
@@ -105,4 +99,5 @@ normalizeTLam (FTLam tvs qs body) =
 substNorm :: Subst a => a -> NormM a
 substNorm x = do
   env <- ask
-  return $ subst (env, mempty) x
+  scope <- embedScope
+  return $ subst (env, scope) x

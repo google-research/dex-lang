@@ -34,7 +34,7 @@ library
   ghc-options:         cbits/libdex.so
                        -Wall
                        -O0
-  default-extensions:  CPP, DeriveTraversable
+  default-extensions:  CPP, DeriveTraversable, TypeApplications
 
 executable dex
   main-is:             dex.hs

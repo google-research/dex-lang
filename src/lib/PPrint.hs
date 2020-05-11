@@ -169,6 +169,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
   pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
+  pretty (SumCase c l r) = "case (" <+> p c <> ")" <> nest 2 ("\n" <> prettyL l) <+> nest 2 ("\n" <> prettyL r)
   pretty op = prettyExprDefault (OpExpr op)
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
@@ -183,7 +184,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
 prettyExprDefault expr =
-  p ("%" ++ nameToStr blankExpr) <+> hsep (map p xs ++ map prettyL lams)
+  p ("%" ++ nameToStr blankExpr) <+> hsep (map p xs ++ map (nest 2 . ("\n"<>) . prettyL) lams)
   where (blankExpr, (_, xs, lams)) = unzipExpr expr
 
 prettyL :: PrettyLam a => a -> Doc ann
