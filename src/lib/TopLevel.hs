@@ -46,7 +46,7 @@ data Backend = LLVM | Interp | JAX
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
-  , logAll      :: Bool  -- TODO:  logFile :: Maybe FilePath
+  , logFile     :: Maybe FilePath
   , evalEngine  :: BackendEngine
   , logService  :: Logger [Output] }
 
@@ -72,7 +72,7 @@ evalBlock opts env block = do
     Right env' -> return (env'  , Result outs' (Right ()))
 
 runTopPassM :: EvalConfig -> TopPassM a -> IO (Except a, [Output])
-runTopPassM opts m = runLogger $ \logger ->
+runTopPassM opts m = runLogger (logFile opts) $ \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
 
 evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv

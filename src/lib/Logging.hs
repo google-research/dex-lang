@@ -6,22 +6,32 @@
 
 module Logging (Logger, runLogger, logThis, readLog) where
 
-import Control.Concurrent.MVar
+import Control.Monad
 import Control.Monad.IO.Class
+import Data.Text.Prettyprint.Doc
+import Control.Concurrent.MVar
+import Prelude hiding (log)
+import System.IO
 
-type Logger l = MVar l
+import PPrint
 
-runLogger :: (Monoid l, MonadIO m) => (Logger l -> m a) -> m (a, l)
-runLogger m = do
-  logger <- liftIO $ newMVar mempty
-  ans <- m logger
-  logged <- liftIO $ readMVar logger
+data Logger l = Logger (MVar l) (Maybe Handle)
+
+runLogger :: (Monoid l, MonadIO m) => Maybe FilePath -> (Logger l -> m a) -> m (a, l)
+runLogger maybePath m = do
+  log <- liftIO $ newMVar mempty
+  logFile <- liftIO $ forM maybePath $ \path -> openFile path WriteMode
+  ans <- m $ Logger log logFile
+  logged <- liftIO $ readMVar log
   return (ans, logged)
 
-logThis :: (Monoid l, MonadIO m) => Logger l -> l -> m ()
-logThis logger x = liftIO $ do
-  cur <- takeMVar logger
-  putMVar logger $ cur <> x
+logThis :: (Pretty l, Monoid l, MonadIO m) => Logger l -> l -> m ()
+logThis (Logger log maybeLogHandle) x = liftIO $ do
+  forM_ maybeLogHandle $ \h -> do
+    hPutStrLn h $ pprint x
+    hFlush h
+  cur <- takeMVar log
+  putMVar log $ cur <> x
 
 readLog :: MonadIO m => Logger l -> m l
-readLog logger = liftIO $ readMVar logger
+readLog (Logger log _) = liftIO $ readMVar log

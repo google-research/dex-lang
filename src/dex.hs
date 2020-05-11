@@ -135,7 +135,9 @@ parseEvalOpts = EvalConfig
          (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
-  <*> (flag False True $ long "logall" <> help "Log all debug info")
+  <*> (optional $ strOption $ long "logto"
+                    <> metavar "FILE"
+                    <> help "File to log to" <> showDefault)
   <*> pure (error "Backend not initialized")
   <*> pure (error "Logging not initialized")
 
