@@ -53,6 +53,7 @@ import qualified Data.Vector.Unboxed as V
 import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Control.Applicative (liftA3)
+import Data.Bifunctor
 import GHC.Generics
 
 import Record
@@ -67,7 +68,7 @@ data Type = TypeVar TVar
           | Forall [TVar] [TyQual] Type
           | TypeAlias [TVar] Type
           | TC (TyCon Type Atom)
-          | Effect (EffectRow Type) (Maybe Type)
+          | Effect (EffectRow Type) (Maybe Type) -- (Maybe Type) for the optional row tail variable
           | NoAnn
             deriving (Show, Eq, Generic)
 
@@ -90,6 +91,8 @@ data Kind = TyKind
           | NoKindAnn
             deriving (Eq, Show, Generic)
 
+-- This represents a row like {Writer (x :: Ref t), Reader (y :: Ref t')}
+-- as the following map: {x: (Writer, t), y: (Reader, t')}.
 type EffectRow a = Env (EffectName, a)
 
 data EffectName = Reader | Writer | State  deriving (Eq, Show, Generic)
@@ -189,7 +192,7 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 data PrimCon ty e lam =
         Lit LitVal
       | ArrayLit Array
-      | Lam ty ty lam
+      | Lam ty ty lam  -- First type for linearity, second for effects
       | SumCon ty e (Either () ()) -- Either constructor indicates which constructor to use
       | RecCon (Record e)
       | AsIdx ty e  -- Construct an index from its ordinal index (zero-based int)
@@ -199,7 +202,7 @@ data PrimCon ty e lam =
         deriving (Show, Eq, Generic)
 
 data PrimOp ty e lam =
-        App ty e e
+        App ty e e  -- Type argument used only for linearity
       | TApp e [ty]
       | For Direction lam
       | TabGet e e
@@ -484,6 +487,10 @@ fromL _ = error "Not a let-bound thing"
 fromT :: LorT a b -> b
 fromT (T x) = x
 fromT _ = error "Not a type-ish thing"
+
+instance Bifunctor LorT where
+  bimap f _ (L x) = L $ f x
+  bimap _ f (T x) = T $ f x
 
 type FullEnv v t = Env (LorT v t)
 

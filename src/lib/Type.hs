@@ -551,6 +551,8 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     unless (not $ any isDependentType [lp, lr]) $ throw TypeErr $
         "Return type of cases cannot depend on the matched value"
     eq st (SumTy la ra)
+    inClass Data la
+    inClass Data ra
     eq leff noEffect
     eq reff noEffect
     eq lb rb
