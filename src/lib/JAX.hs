@@ -32,17 +32,16 @@ import Array
 
 -- === JAXish IR ===
 
-type JVar   = VarP JType
-
-data JDecl = JLet JVar JFor                    deriving (Generic, Show, Eq)
-data JExpr = JExpr [JDecl] [JAtom]             deriving (Generic, Show, Eq)
-data JAtom = JLit LitVal | JVar JVar [IdxVar]  deriving (Generic, Show, Eq)
-data JType = JType [AxisSize] BaseType         deriving (Generic, Show, Eq)
-
-data JaxFunction = JaxFunction [JVar] JExpr    deriving (Generic, Show, Eq)
-
 type AxisSize = Int
+type JVar   = VarP JType
 type IdxVar = VarP AxisSize
+
+data JDecl = JLet JVar JFor                 deriving (Generic, Show, Eq)
+data JExpr = JExpr [JDecl] [JAtom]          deriving (Generic, Show, Eq)
+data JAtom = JLit Array | JVar JVar         deriving (Generic, Show, Eq)
+data IdxAtom = IdxAtom JAtom [IdxVar]       deriving (Generic, Show, Eq)
+data JType = JType [AxisSize] BaseType      deriving (Generic, Show, Eq)
+data JaxFunction = JaxFunction [JVar] JExpr deriving (Generic, Show, Eq)
 
 data JOpP e = JId e
             | JIota AxisSize
@@ -51,11 +50,11 @@ data JOpP e = JId e
             | JScalarUnOp  ScalarUnOp e
               deriving (Generic, Functor, Foldable, Traversable, Show, Eq)
 
-data TmpAtom = TmpLeaf JVar [IdxVar]
+data TmpAtom = TmpLeaf IdxAtom
              | TmpCon (PrimCon Type TmpAtom ())
                deriving (Generic, Show, Eq)
 
-data JFor = JFor [IdxVar] [IdxVar] (JOpP JAtom)
+data JFor = JFor [IdxVar] [IdxVar] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
 type EmbedEnv = (Scope, [JDecl])
@@ -71,16 +70,21 @@ runJaxM m = fst $ runCat (runReaderT m mempty) mempty
 toJaxFunction :: ([Var], Expr) -> JaxFunction
 toJaxFunction (vs, expr) = runJaxM $ do
   vs' <- mapM freshVar vs
-  let env = newEnv vs $ map (\v -> TmpLeaf (fmap typeToJType v) []) vs'
+  let env = newEnv vs $ map varToTmpAtom vs
   (result, (_, decls)) <- scoped $ do
     result <- toJaxExpr env expr
     return $ flattenAtom result
   let jvs = map (fmap typeToJType) vs'
   return $ JaxFunction jvs $ JExpr decls result
 
+varToTmpAtom :: Var -> TmpAtom
+varToTmpAtom v = TmpLeaf $ IdxAtom (JVar $ fmap typeToJType v) []
+
 flattenAtom :: TmpAtom -> [JAtom]
 flattenAtom atom =
-  execWriter $ traverseArrayLeaves atom $ \x -> tell [x] >> return x
+  execWriter $ traverseArrayLeaves atom $ \(IdxAtom x []) -> do
+    tell [x]
+    return $ IdxAtom x []
 
 toJaxExpr :: JSubstEnv -> Expr -> JaxM TmpAtom
 toJaxExpr env expr = case expr of
@@ -88,26 +92,25 @@ toJaxExpr env expr = case expr of
     env' <- toJaxDecl env decl
     toJaxExpr (env <> env') body
   CExpr op -> toJaxOp env op
-  Atom x -> toJaxAtom env x
+  Atom x -> return $ toJaxAtom env x
 
 toJaxDecl :: JSubstEnv -> Decl -> JaxM JSubstEnv
 toJaxDecl env (Let v rhs) = do
   ans <- toJaxOp env rhs
   return $ v @> ans
 
-toJaxAtom :: JSubstEnv -> Atom -> JaxM TmpAtom
+toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
 toJaxAtom env atom = case atom of
   Var v -> case envLookup env v of
-    Just x  -> return x
+    Just x  -> x
     Nothing -> error "lookup failed"
-  Con (Lit x) -> return $ TmpCon $ Lit x
-  Con (RecCon r) -> liftM (TmpCon . RecCon) $ traverse (toJaxAtom env) r
+  Con (Lit x) -> TmpCon $ AGet $ TmpLeaf $ IdxAtom (JLit $ arrayFromScalar x) []
+  Con (RecCon r) -> TmpCon $ RecCon $ fmap (toJaxAtom env) r
   _ -> error $ "Not implemented " ++ pprint atom
 
 toJaxOp :: JSubstEnv -> CExpr -> JaxM TmpAtom
-toJaxOp env cexpr = do
-  cexpr' <- traverseExpr cexpr return (toJaxAtom env) (\lam -> return (lam, env))
-  toJaxOp' cexpr'
+toJaxOp env cexpr = toJaxOp' cexpr'
+  where cexpr' = fmapExpr cexpr id (toJaxAtom env) (,env)
 
 toJaxOp' :: PrimOp Type TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
 toJaxOp' expr = case expr of
@@ -116,54 +119,44 @@ toJaxOp' expr = case expr of
     -- TODO: scope this to avoid burning through names
     i' <-freshIdxVar n
     iotaVar <- emitJFor $ JFor [] [] $ JIota n
-    let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ JVar iotaVar [i']
+    let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ IdxAtom (JVar iotaVar) [i']
     let env' = env <> i @> iotaAtom
     ans <- extendR [i'] $ toJaxExpr env' body
     liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
       ansVar <- emitJFor $ JFor (idxEnv ++ [i']) [] $ JId x
-      return $ JVar ansVar idxEnv
+      return $ IdxAtom (JVar ansVar) idxEnv
   TabGet ~(TmpCon (AFor _ tab)) i -> do
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
-  ScalarBinOp op x y -> do
-    ans <- emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
-    return $ toScalarAtom ans
+  ScalarBinOp op x y -> liftM TmpLeaf $
+    emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
+  ScalarUnOp IndexAsInt x -> liftM TmpLeaf $
+    emitOp $ JId (fromScalarAtom x)
   _ -> error $ "Not implemented: " ++ show expr
 
+iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
+iotaVarAsIdx n x = TmpCon $ AsIdx n $ TmpLeaf x
 
--- TODO: use AsIdx
-iotaVarAsIdx :: Type -> JAtom -> TmpAtom
-iotaVarAsIdx n atom = case atom of
-  JVar v idxs -> TmpCon $ AsIdx n $ TmpCon $ AGet $ TmpLeaf v idxs
-  _ -> error $ "not implemented " ++ pprint atom
-
-fromScalarAtom :: HasCallStack => TmpAtom -> JAtom
+fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
-  TmpLeaf v idxs -> JVar v idxs
-  TmpCon (Lit x) -> JLit x
+  TmpLeaf x -> x
   TmpCon (AsIdx _ x) -> fromScalarAtom x
   TmpCon (AGet x)    -> fromScalarAtom x
   _ -> error $ "Not a scalar atom: " ++ show atom
 
-toScalarAtom :: JAtom -> TmpAtom
-toScalarAtom atom = case atom of
-  JVar v idxs -> TmpCon $ AGet $ TmpLeaf v idxs
-  JLit x      -> TmpCon $ Lit x
-
-traverseArrayLeaves :: Monad m => TmpAtom -> (JAtom -> m JAtom) -> m TmpAtom
+traverseArrayLeaves :: HasCallStack => Monad m => TmpAtom -> (IdxAtom -> m IdxAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
-  TmpCon (Lit  x)      -> liftM toScalarAtom $ f $ JLit x
-  TmpCon (RecCon r)    -> liftM (TmpCon . RecCon) $ traverse (flip traverseArrayLeaves f) r
-  TmpCon (AFor n body) -> liftM (TmpCon . AFor n) $ traverseArrayLeaves body f
-  TmpCon (AGet (TmpLeaf v idxs)) -> do
-    ~(JVar v' idxs') <- f $ JVar v idxs
-    return $ TmpCon $ AGet $ TmpLeaf v' idxs'
-  _ -> error $ "Not implemented: " ++ show atom
+  TmpCon con         -> liftM TmpCon $ case con of
+    RecCon r         -> liftM (RecCon) $ traverse (flip traverseArrayLeaves f) r
+    AFor n body      -> liftM (AFor n) $ traverseArrayLeaves body f
+    AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
+    _ -> error $ "Not implemented: " ++ show atom
+  TmpLeaf x -> liftM TmpLeaf $ f x
 
-emitOp :: JOpP JAtom -> JaxM JAtom
+emitOp :: JOpP IdxAtom -> JaxM IdxAtom
 emitOp op = do
   idxEnv <- ask
   v <- emitJFor $ JFor idxEnv [] op
-  return $ JVar v idxEnv
+  return $ IdxAtom (JVar v) idxEnv
 
 emitJFor :: JFor -> JaxM JVar
 emitJFor jfor = do
@@ -188,7 +181,6 @@ freshIdxVar n = do
 
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
-  BaseTy b        -> JType []    b
   ArrayTy shape b -> JType shape b
   _ -> error $ "Not a jax type: " ++ pprint ty
 
@@ -236,25 +228,35 @@ checkBinders env bs = do
   mapM_ (checkNoShadow env) bs
   checkNoMutualShadows bs
 
+instance HasJType IdxAtom where
+  getJType (IdxAtom x idxs) = JType (drop (length idxs) shape) b
+    where JType shape b = getJType x
+
+  checkJType env (IdxAtom x idxs) = do
+    JType shape b <- checkJType env x
+    throwIf (length idxs > length shape) CompilerErr $
+        "Too many indices: " ++ pprint idxs
+    forM_ (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
+      case envLookup env i of
+        Just (T nEnv) -> do
+          assertEq nEnv nAnn "Index size doesn't match binder"
+          assertEq nArr nAnn "Index size doesn't match array shape"
+        _ -> throw CompilerErr $ "Lookup failed: " ++ pprint i
+    return $ JType (drop (length idxs) shape) b
+
 instance HasJType JAtom where
   getJType atom = case atom of
-    JVar (_:> JType shape b) idxs -> JType (drop (length idxs) shape) b
-    JLit x -> JType [] $ litType x
+    JVar (_:> ty) -> ty
+    JLit (Array (shape, b) _) -> JType shape b
+
   checkJType env atom = case atom of
-    JVar v@(_:> ty@(JType shape b)) idxs -> do
+    JVar v@(_:> ty) -> do
       case envLookup env v of
-        Just (L reqTy) -> assertEq reqTy ty "JVar"
+        Just (L reqTy) -> do
+          assertEq reqTy ty "JVar"
+          return ty
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-      throwIf (length idxs > length shape) CompilerErr $
-        "Too many indices: " ++ pprint idxs
-      forM_ (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
-        case envLookup env i of
-          Just (T nEnv) -> do
-            assertEq nEnv nAnn "Index size doesn't match binder"
-            assertEq nArr nAnn "Index size doesn't match array shape"
-          _ -> throw CompilerErr $ "Lookup failed: " ++ pprint i
-      return $ JType (drop (length idxs) shape) b
-    JLit x -> return $ JType [] $ litType x
+    JLit (Array (shape, b) _) -> return $ JType shape b
 
 instance HasJType a => HasJType (JOpP a) where
   getJType op = ignoreExcept $ traverseJOpType $ fmap getJType op
@@ -284,10 +286,12 @@ instance Pretty JExpr where
   pretty (JExpr decls results) =
     foldMap (\d -> pretty d <> hardline) decls <> "results:" <+> pretty results
 
+instance Pretty IdxAtom where
+  pretty (IdxAtom x idxs) = pretty x <> foldMap (\(i:>_) -> "." <> pretty i) idxs
+
 instance Pretty JAtom where
-  pretty (JLit x)           = pretty x
-  pretty (JVar (v:>_) idxs) =
-    pretty v <> foldMap (\(i:>_) -> "." <> pretty i) idxs
+  pretty (JLit x)      = pretty $ scalarFromArray x
+  pretty (JVar (v:>_)) = pretty v
 
 instance Pretty JDecl where
   pretty (JLet v rhs) = pretty v <+> "=" <+> pretty rhs
@@ -329,6 +333,9 @@ instance FromJSON JFor
 
 instance ToJSON   JAtom
 instance FromJSON JAtom
+
+instance ToJSON   IdxAtom
+instance FromJSON IdxAtom
 
 instance (ToJSON   ann) => ToJSON   (VarP ann)
 instance (FromJSON ann) => FromJSON (VarP ann)
