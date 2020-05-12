@@ -45,7 +45,7 @@ normalize expr = case expr of
     extendR env $ normalize body
   FVar v -> lookupVar v
   FPrimExpr (OpExpr (SumCase sumVal lBody rBody)) -> do
-    ~(Tup [lInput, rInput, side]) <- unpackRec =<< normalize sumVal
+    ~(Tup [side, lInput, rInput]) <- unpackRec =<< normalize sumVal
     lOutput <- app lBody lInput
     rOutput <- app rBody rInput
     emit $ Select (getType lOutput) side lOutput rOutput
@@ -59,8 +59,8 @@ normalize expr = case expr of
     other <- arbitraryValue <$> substType ty'
     value <- normalize e'
     return $ Con $ RecCon $ Tup $ case side of
-      Left  _ -> [value, other, Con $ Lit $ BoolLit True ]
-      Right _ -> [other, value, Con $ Lit $ BoolLit False]
+      Left  _ -> [Con $ Lit $ BoolLit True, value, other]
+      Right _ -> [Con $ Lit $ BoolLit False, other, value]
   FPrimExpr (ConExpr con) ->
     liftM Con $ traverseExpr con substType normalize normalizeLam
   Annot    e _ -> normalize e
@@ -74,9 +74,11 @@ arbitraryValue (TC (BaseType BoolType))   = Con $ Lit $ BoolLit False
 arbitraryValue (TC (BaseType StrType))    = Con $ Lit $ StrLit ""
 arbitraryValue (TC (RecType r))           = Con $ RecCon $ fmap arbitraryValue r
 -- XXX: This might not be strictly legal, because those types might have no inhabitants!
-arbitraryValue ty@(TC (IndexRange _ _ _)) = Con $ AsIdx ty $ Con $ Lit $ IntLit 0
-arbitraryValue ty@(TC (IntRange _ _))     = Con $ AsIdx ty $ Con $ Lit $ IntLit 0
-arbitraryValue _ = error "arbitraryValue only supports types that conform to Data"
+arbitraryValue t@(TC (IndexRange _ _ _))  = Con $ AsIdx t $ Con $ Lit $ IntLit 0
+arbitraryValue t@(TC (IntRange _ _))      = Con $ AsIdx t $ Con $ Lit $ IntLit 0
+arbitraryValue t                          = Con $ AsIdx t $ Con $ Lit $ IntLit 0
+-- TODO: If if conforms to IdxSet then we can just return AsIdx
+--arbitraryValue t = error $ "arbitraryValue only supports types that conform to Data, but got: " ++ pprint t
 
 lookupVar :: Var -> NormM Atom
 lookupVar v = do
@@ -126,7 +128,7 @@ normalizeTLam (FTLam tvs qs body) =
     return (qs', body')
 
 desugarType :: Type -> Type
-desugarType (SumTy l r) = RecTy $ Tup $ [l, r, TC $ BaseType BoolType]
+desugarType (SumTy l r) = RecTy $ Tup $ [TC $ BaseType BoolType, l, r]
 desugarType tv@(TypeVar _) = tv
 desugarType (ArrowType l (Pi a (eff, b))) = ArrowType l $ Pi (desugarType a) (eff, desugarType b)
 desugarType (TabType (Pi a b)) = TabType $ Pi (desugarType a) (desugarType b)

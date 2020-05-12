@@ -308,6 +308,8 @@ checkIdxSet :: ClassEnv -> Type -> Except ()
 checkIdxSet env ty = case ty of
   TypeVar v             -> checkVarClass env IdxSet v
   RecTy r               -> mapM_ recur r
+  SumTy l r             -> recur l >> recur r
+  TC (BaseType BoolType) -> return ()
   TC (IntRange _ _)     -> return ()
   TC (IndexRange _ _ _) -> return ()
   _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
@@ -639,10 +641,11 @@ binOpType op = case op of
 
 unOpType :: ScalarUnOp -> (BaseType, BaseType)
 unOpType op = case op of
-  Not        -> (BoolType, BoolType)
-  FNeg       -> (RealType, RealType)
-  IntToReal  -> (IntType, RealType)
-  BoolToInt  -> (BoolType, IntType)
+  Not             -> (BoolType, BoolType)
+  FNeg            -> (RealType, RealType)
+  IntToReal       -> (IntType, RealType)
+  BoolToInt       -> (BoolType, IntType)
+  UnsafeIntToBool -> (IntType, BoolType)
   _ -> error $ show op
 
 popRow :: MonadError Err m
@@ -678,6 +681,7 @@ extendClassEnv qs m = do
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
+  TC (BaseType BoolType) -> Just 2
   RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 
