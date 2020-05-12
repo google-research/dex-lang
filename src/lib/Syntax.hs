@@ -234,7 +234,7 @@ data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
                  | And | Or | Rem
                    deriving (Show, Eq, Generic)
 
-data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | IndexAsInt
+data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool | IndexAsInt
                   deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual

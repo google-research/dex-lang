@@ -552,4 +552,4 @@ eitherFloor x = case x
 > 1
 
 :p ((%right(1.2)) : (Either Int Real))
-> (1, 1.2, False)
+> (False, 1, 1.2)

@@ -206,8 +206,9 @@ impTabGet ~(Con (AFor _ body)) i = do
 
 intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty@(TC con) i = case con of
-  IntRange _ _     -> iAsIdx
-  IndexRange _ _ _ -> iAsIdx
+  IntRange _ _      -> iAsIdx
+  IndexRange _ _ _  -> iAsIdx
+  BaseType BoolType -> impExprToAtom <$> emitUnOp UnsafeIntToBool i
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM RecVal $
@@ -223,6 +224,7 @@ intToIndex ty@(TC con) i = case con of
 intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 
 indexToInt :: Atom -> ImpM IExpr
+indexToInt idx | getType idx == TC (BaseType BoolType) = emitUnOp BoolToInt =<< fromScalarAtom idx
 indexToInt idx = case idx of
   RecVal r -> do
     rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) r
@@ -298,6 +300,7 @@ indexSetSize (TC con) = case con of
   RecType r -> do
     sizes <- traverse indexSetSize r
     impProd $ toList sizes
+  BaseType BoolType -> return $ IIntVal 2
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
@@ -346,6 +349,9 @@ addToAtomLeaf ~(Con (AGet dest)) src = case src of
 impProd :: [IExpr] -> ImpM IExpr
 impProd []     = return $ IOne
 impProd (x:xs) = foldrM impMul x xs
+
+emitUnOp :: ScalarUnOp -> IExpr -> ImpM IExpr
+emitUnOp op x = emitInstr $ IPrimOp $ ScalarUnOp op x
 
 emitBinOp :: ScalarBinOp -> IExpr -> IExpr -> ImpM IExpr
 emitBinOp op x y = emitInstr $ IPrimOp $ ScalarBinOp op x y

@@ -304,6 +304,7 @@ compilePrimOp (ScalarUnOp op x) = case op of
   FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
   Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
   BoolToInt -> return x -- bools stored as ints
+  UnsafeIntToBool -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
   _ -> error "Not implemented"
 compilePrimOp (Select ty p x y) = do
