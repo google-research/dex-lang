@@ -87,10 +87,18 @@ toImpCExpr' op = case op of
       copyAtom ithDest ans
     return dest
   TabGet x i -> impTabGet x i
+  SumGet x getLeft ->
+    case x of
+      SumVal _ l r -> return $ if getLeft then l else r
+      val -> error $ "Expected a sum type, got: " ++ pprint val
+  SumTag x ->
+    case x of
+      SumVal t _ _ -> return t
+      val -> error $ "Expected a sum type, got: " ++ pprint val
   RecGet x i -> do
     case x of
       RecVal r -> return $ recGet r i
-      val -> error $ "Expected a record, got: " ++ show val
+      val -> error $ "Expected a record, got: " ++ pprint val
   RunReader r (LamExpr ref body, env) -> do
     toImpExpr (env <> ref @> L r) body
   RunWriter (LamExpr ref body, env) -> do
@@ -133,12 +141,12 @@ toImpCExpr' op = case op of
   IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
   ScalarUnOp IndexAsInt i -> return i
   Inject e -> do
-    let (TC (IndexRange t low _)) = getType e
+    let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
-      InclusiveLim a -> indexToInt a
-      ExclusiveLim a -> indexToInt a >>= impAdd IOne
+      InclusiveLim a -> indexToInt t a
+      ExclusiveLim a -> indexToInt t a >>= impAdd IOne
       Unlimited      -> return IZero
-    restrictIdx <- indexToInt e
+    restrictIdx <- indexToInt rt e
     idx <- impAdd restrictIdx offset
     intToIndex t idx
   _ -> do
@@ -156,12 +164,26 @@ toScalarAtom ty x@(IVar (v:>_)) = case ty of
   TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' x
   _ -> error $ "Not a scalar type: " ++ pprint ty
 
+
+anyValue :: Type -> IExpr
+anyValue (TC (BaseType RealType))   = ILit $ RealLit 1.0
+anyValue (TC (BaseType IntType))    = ILit $ IntLit 1
+anyValue (TC (BaseType BoolType))   = ILit $ BoolLit False
+anyValue (TC (BaseType StrType))    = ILit $ StrLit ""
+-- XXX: This is not strictly correct, because those types might not have any
+--      inhabitants. We might want to consider emitting some run-time code that
+--      aborts the program if this really ends up being the case.
+anyValue (TC (IntRange _ _))        = ILit $ IntLit 0
+anyValue (TC (IndexRange _ _ _))    = ILit $ IntLit 0
+anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t
+
 fromScalarAtom :: Atom -> ImpM IExpr
 fromScalarAtom atom = case atom of
-  Var (v:>ty)     -> return $ IVar (v :> typeToIType ty)
-  Con (Lit x)     -> return $ ILit x
-  Con (AGet x)    -> load (fromArrayAtom x)
-  Con (AsIdx _ x) -> fromScalarAtom x
+  Var (v:>ty)       -> return $ IVar (v :> typeToIType ty)
+  Con (Lit x)       -> return $ ILit x
+  Con (AGet x)      -> load (fromArrayAtom x)
+  Con (AsIdx _ x)   -> fromScalarAtom x
+  Con (AnyValue ty) -> return $ anyValue ty
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 fromArrayAtom :: Atom -> IExpr
@@ -198,8 +220,8 @@ makeDest' name shape ty@(TC con) = case con of
 makeDest' _ _ ty = error $ "Can't lower type to imp: " ++ pprint ty
 
 impTabGet :: Atom -> Atom -> ImpM Atom
-impTabGet ~(Con (AFor _ body)) i = do
-  i' <- indexToInt i
+impTabGet ~(Con (AFor it body)) i = do
+  i' <- indexToInt it i
   flip traverseLeaves body $ \(~(Con (AGet arr))) -> do
     ans <- emitInstr $ IGet (fromArrayAtom arr) i'
     return $ Con $ AGet $ impExprToAtom ans
@@ -212,32 +234,52 @@ intToIndex ty@(TC con) i = case con of
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM RecVal $
-      flip evalStateT i $ forM strides $ \(ty', stride) -> do
+      flip evalStateT i $ forM strides $ \(ty', _, stride) -> do
         i' <- get
         iCur  <- lift $ impDiv i' stride
         iRest <- lift $ impRem i' stride
         put iRest
         lift $ intToIndex ty' iCur
+  SumType (l, r) -> do
+    ls <- indexSetSize l
+    isLeft <- impCmp Less i ls
+    li <- intToIndex l i
+    ri <- intToIndex r =<< impSub i ls
+    return $ Con $ SumCon (toScalarAtom BoolTy isLeft) li ri
   _ -> error $ "Unexpected type " ++ pprint con
   where
     iAsIdx = return $ Con $ AsIdx ty $ impExprToAtom i
 intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 
-indexToInt :: Atom -> ImpM IExpr
-indexToInt idx | getType idx == TC (BaseType BoolType) = emitUnOp BoolToInt =<< fromScalarAtom idx
-indexToInt idx = case idx of
-  RecVal r -> do
-    rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) r
-    foldrM f (IIntVal 0) rWithStrides
-    where
-      f :: (Atom, IExpr) -> IExpr -> ImpM IExpr
-      f (i, stride) cumIdx = do
-        i' <- indexToInt i
-        iDelta  <- impMul i' stride
-        impAdd cumIdx iDelta
-  _ -> fromScalarAtom idx
+indexToInt :: Type -> Atom -> ImpM IExpr
+indexToInt ty idx = case ty of
+  BoolTy  -> emitUnOp BoolToInt =<< fromScalarAtom idx
+  RecTy _ -> do
+    case idx of
+      (RecVal rv) -> do
+        rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) rv
+        foldrM f (IIntVal 0) rWithStrides
+        where
+        f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr
+        f (i, it, stride) cumIdx = do
+          i' <- indexToInt it i
+          iDelta  <- impMul i' stride
+          impAdd cumIdx iDelta
+      _ -> error $ "Expected a record, got: " ++ pprint idx
+  SumTy lType rType     -> do
+    case idx of
+      (SumVal con lVal rVal) -> do
+        lTypeSize <- indexSetSize lType
+        lInt <- indexToInt lType lVal
+        rInt <- impAdd lTypeSize =<< indexToInt rType rVal
+        conExpr <- fromScalarAtom con
+        impSelect conExpr lInt rInt
+      _ -> error $ "Expected a sum constructor, got: " ++ pprint idx
+  TC (IntRange _ _)     -> fromScalarAtom idx
+  TC (IndexRange _ _ _) -> fromScalarAtom idx
+  _ -> error $ "Unexpected type " ++ pprint ty
 
-getStrides :: Traversable f => f (a, Type) -> ImpM (f (a, IExpr))
+getStrides :: Traversable f => f (a, Type) -> ImpM (f (a, Type, IExpr))
 getStrides xs =
   liftM getReverse $ flip evalStateT (IIntVal 1) $
     forM (Reverse xs) $ \(x, ty) -> do
@@ -245,7 +287,7 @@ getStrides xs =
       size    <- lift $ indexSetSize ty
       stride' <- lift $ impMul stride size
       put stride'
-      return (x, stride)
+      return (x, ty, stride)
 
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of
@@ -289,18 +331,22 @@ indexSetSize (TC con) = case con of
     impSub high' low'
   IndexRange n low high -> do
     low' <- case low of
-      InclusiveLim x -> indexToInt x
-      ExclusiveLim x -> indexToInt x >>= impAdd IOne
+      InclusiveLim x -> indexToInt n x
+      ExclusiveLim x -> indexToInt n x >>= impAdd IOne
       Unlimited      -> return IZero
     high' <- case high of
-      InclusiveLim x -> indexToInt x >>= impAdd IOne
-      ExclusiveLim x -> indexToInt x
+      InclusiveLim x -> indexToInt n x >>= impAdd IOne
+      ExclusiveLim x -> indexToInt n x
       Unlimited      -> indexSetSize n
     impSub high' low'
   RecType r -> do
     sizes <- traverse indexSetSize r
     impProd $ toList sizes
   BaseType BoolType -> return $ IIntVal 2
+  SumType (l, r) -> do
+    ls <- indexSetSize l
+    rs <- indexSetSize r
+    impAdd ls rs
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
@@ -381,9 +427,14 @@ impSub (IIntVal a) (IIntVal b)  = return $ IIntVal $ a - b
 impSub a IZero = return a
 impSub x y = emitBinOp ISub x y
 
-_impCmp :: CmpOp -> IExpr -> IExpr -> ImpM IExpr
-_impCmp GreaterEqual (IIntVal a) (IIntVal b) = return $ ILit $ BoolLit $ a >= b
-_impCmp op x y = emitBinOp (ICmp op) x y
+impCmp :: CmpOp -> IExpr -> IExpr -> ImpM IExpr
+impCmp GreaterEqual (IIntVal a) (IIntVal b) = return $ ILit $ BoolLit $ a >= b
+impCmp op x y = emitBinOp (ICmp op) x y
+
+-- Precondition: x and y don't have array types
+impSelect :: IExpr -> IExpr -> IExpr -> ImpM IExpr
+impSelect p x y = emitInstr $ IPrimOp $ Select t p x y
+  where (IValType t) = impExprType x
 
 -- === Imp embedding ===
 

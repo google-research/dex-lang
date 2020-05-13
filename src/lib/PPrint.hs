@@ -168,21 +168,31 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
-  pretty (FFICall s _ _ xs) = "%%" <> p s <> tup xs
+  pretty (FFICall s _ _ xs) = "%%" <> p s <+> tup xs
+  pretty (SumGet e isLeft) = parens $ (if isLeft then "projLeft" else "projRight") <+> p e
+  pretty (SumTag e)        = parens $ "projTag" <+> p e
   pretty (SumCase c l r) = "case (" <+> p c <> ")" <> nest 2 ("\n" <> prettyL l) <+> nest 2 ("\n" <> prettyL r)
   pretty op = prettyExprDefault (OpExpr op)
 
-instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
-  pretty (Lit l)       = p l
-  pretty (ArrayLit array) = p array
-  pretty (Lam _ _ lam) = parens $ prettyL lam
-  pretty (RecCon r)    = p r
-  pretty (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
-  pretty (AGet e)      = "aget" <+> p e
-  pretty (AsIdx n i)   = p i <> "@" <> p n
-  pretty (SumCon t e (Left _))  = parens $ "Left @"  <> p t <+> p e
-  pretty (SumCon t e (Right _)) = parens $ "Right @" <> p t <+> p e
-  pretty con = prettyExprDefault (ConExpr con)
+prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
+prettyPrimCon (Lit l)       = p l
+prettyPrimCon (ArrayLit array) = p array
+prettyPrimCon (Lam _ _ lam) = parens $ prettyL lam
+prettyPrimCon (RecCon r)    = p r
+prettyPrimCon (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
+prettyPrimCon (AGet e)      = "aget" <+> p e
+prettyPrimCon (AsIdx n i)   = p i <> "@" <> p n
+prettyPrimCon (AnyValue t)  = parens $ "AnyValue @" <> p t
+prettyPrimCon (SumCon c l r) = parens $ "SumCon" <+> p c <+> p l <+> p r
+prettyPrimCon con = prettyExprDefault (ConExpr con)
+
+instance {-# OVERLAPPABLE #-} (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
+  pretty = prettyPrimCon
+
+instance (Pretty ty, PrettyLam lam) => Pretty (PrimCon ty Atom lam) where
+  pretty (SumCon (Con (Lit (BoolLit True)))  l _) = "Left"  <+> p l
+  pretty (SumCon (Con (Lit (BoolLit False))) _ r) = "Right" <+> p r
+  pretty con = prettyPrimCon con
 
 prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
 prettyExprDefault expr =

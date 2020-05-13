@@ -40,7 +40,7 @@ module Syntax (
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern TupVal, pattern RecVal, pattern RealVal)
+    pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal, pattern RealVal)
   where
 
 import qualified Data.Map.Strict as M
@@ -192,10 +192,11 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 data PrimCon ty e lam =
         Lit LitVal
       | ArrayLit Array
-      | Lam ty ty lam  -- First type for linearity, second for effects
-      | SumCon ty e (Either () ()) -- Either constructor indicates which constructor to use
+      | Lam ty ty lam      -- First type for linearity, second for effects
+      | AnyValue ty        -- Produces an arbitrary value of a given type
+      | SumCon e e e       -- (bool constructor tag (True is Left), left value, right value)
       | RecCon (Record e)
-      | AsIdx ty e  -- Construct an index from its ordinal index (zero-based int)
+      | AsIdx ty e         -- Construct an index from its ordinal index (zero-based int)
       | AFor ty e
       | AGet e
       | Todo ty
@@ -208,6 +209,8 @@ data PrimOp ty e lam =
       | TabGet e e
       | SumCase e lam lam
       | RecGet e RecField
+      | SumGet e Bool
+      | SumTag e
       | ArrayGep e e
       | LoadScalar e
       | TabCon ty ty [e]
@@ -271,8 +274,6 @@ builtinNames = M.fromList
   , ("indexWriter"     , OpExpr $ IndexEff Writer () () ())
   , ("indexState"      , OpExpr $ IndexEff State  () () ())
   , ("todo"       , ConExpr $ Todo ())
-  , ("left"       , ConExpr $ SumCon () () (Left ()))
-  , ("right"      , ConExpr $ SumCon () () (Right ()))
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
@@ -681,6 +682,8 @@ instance TraversableExpr PrimOp where
     TabGet e i           -> liftA2 TabGet (fE e) (fE i)
     SumCase e l r        -> liftA3 SumCase (fE e) (fL l) (fL r)
     RecGet e i           -> liftA2 RecGet (fE e) (pure i)
+    SumGet e s           -> liftA2 SumGet (fE e) (pure s)
+    SumTag e             -> liftA  SumTag (fE e)
     ArrayGep e i         -> liftA2 ArrayGep (fE e) (fE i)
     LoadScalar e         -> liftA  LoadScalar (fE e)
     ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
@@ -712,12 +715,13 @@ instance TraversableExpr PrimCon where
     Lit l        -> pure $ Lit l
     ArrayLit arr -> pure $ ArrayLit arr
     Lam lin eff lam -> liftA3 Lam (fT lin) (fT eff) (fL lam)
-    AFor n e    -> liftA2 AFor (fT n) (fE e)
-    AGet e      -> liftA  AGet (fE e)
-    AsIdx n e   -> liftA2 AsIdx (fT n) (fE e)
-    SumCon t e c -> liftA3 SumCon (fT t) (fE e) (pure c)
-    RecCon r    -> liftA  RecCon (traverse fE r)
-    Todo ty             -> liftA  Todo (fT ty)
+    AFor n e     -> liftA2 AFor (fT n) (fE e)
+    AGet e       -> liftA  AGet (fE e)
+    AsIdx n e    -> liftA2 AsIdx (fT n) (fE e)
+    AnyValue t   -> AnyValue <$> fT t
+    SumCon c l r -> SumCon <$> fE c <*> fE l <*> fE r
+    RecCon r     -> liftA  RecCon (traverse fE r)
+    Todo ty      -> liftA  Todo (fT ty)
 
 instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where
@@ -792,6 +796,9 @@ pattern RealVal x = Con (Lit (RealLit x))
 
 pattern RecVal :: Record Atom -> Atom
 pattern RecVal r = Con (RecCon r)
+
+pattern SumVal :: Atom -> Atom -> Atom -> Atom
+pattern SumVal t l r = Con (SumCon t l r)
 
 pattern TupVal :: [Atom] -> Atom
 pattern TupVal xs = RecVal (Tup xs)

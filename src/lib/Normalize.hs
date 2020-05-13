@@ -12,7 +12,6 @@ module Normalize (normalizeModule) where
 import Control.Monad
 import Control.Monad.Reader
 import Data.Foldable
-import Data.Bifunctor
 
 import Env
 import Syntax
@@ -26,10 +25,9 @@ import Record
 type NormM a = ReaderT SubstEnv Embed a
 
 normalizeModule :: FModule -> Module
-normalizeModule (Module bid (imports, exports) decls) =
-  Module bid (desugarSig imports, desugarSig exports) $ wrapDecls decls' ans
+normalizeModule (Module bid sig@(_, exports) decls) =
+  Module bid sig $ wrapDecls decls' ans
   where
-    desugarSig = fmap (fmap $ bimap desugarType id)
     outFVars = [FVar (v:>ty) | (v:>L ty) <- exports]
     outTuple = FPrimExpr $ ConExpr $ RecCon $ Tup outFVars
     (ans, decls') = runNormM $ normalize $ wrapFDecls decls outTuple
@@ -44,47 +42,18 @@ normalize expr = case expr of
     env <- normalizeDecl decl
     extendR env $ normalize body
   FVar v -> lookupVar v
-  FPrimExpr (OpExpr (SumCase sumVal lBody rBody)) -> do
-    ~(Tup [side, lInput, rInput]) <- unpackRec =<< normalize sumVal
-    lOutput <- app lBody lInput
-    rOutput <- app rBody rInput
-    emit $ Select (getType lOutput) side lOutput rOutput
-    where
-      app body arg =
-        let lam = FPrimExpr $ ConExpr $ Lam NonLin noEffect body in
-        normalize $ FPrimExpr $ OpExpr $ App NonLin lam $ toAtomicFExpr arg
   FPrimExpr (OpExpr op) ->
-    traverseExpr op substType normalize normalizeLam >>= emit
-  FPrimExpr (ConExpr (SumCon ty' e' side)) -> do
-    other <- arbitraryValue <$> substType ty'
-    value <- normalize e'
-    return $ Con $ RecCon $ Tup $ case side of
-      Left  _ -> [Con $ Lit $ BoolLit True, value, other]
-      Right _ -> [Con $ Lit $ BoolLit False, other, value]
+    traverseExpr op substNorm normalize normalizeLam >>= emit
   FPrimExpr (ConExpr con) ->
-    liftM Con $ traverseExpr con substType normalize normalizeLam
+    liftM Con $ traverseExpr con substNorm normalize normalizeLam
   Annot    e _ -> normalize e
   SrcAnnot e _ -> normalize e
-
-arbitraryValue :: Type -> Atom
-arbitraryValue (TabTy a b)                = Con $ AFor a $ arbitraryValue b
-arbitraryValue (TC (BaseType RealType))   = Con $ Lit $ RealLit 1.0
-arbitraryValue (TC (BaseType IntType))    = Con $ Lit $ IntLit 1
-arbitraryValue (TC (BaseType BoolType))   = Con $ Lit $ BoolLit False
-arbitraryValue (TC (BaseType StrType))    = Con $ Lit $ StrLit ""
-arbitraryValue (TC (RecType r))           = Con $ RecCon $ fmap arbitraryValue r
--- XXX: This might not be strictly legal, because those types might have no inhabitants!
-arbitraryValue t@(TC (IndexRange _ _ _))  = Con $ AsIdx t $ Con $ Lit $ IntLit 0
-arbitraryValue t@(TC (IntRange _ _))      = Con $ AsIdx t $ Con $ Lit $ IntLit 0
-arbitraryValue t                          = Con $ AsIdx t $ Con $ Lit $ IntLit 0
--- TODO: If if conforms to IdxSet then we can just return AsIdx
---arbitraryValue t = error $ "arbitraryValue only supports types that conform to Data, but got: " ++ pprint t
 
 lookupVar :: Var -> NormM Atom
 lookupVar v = do
   env <- ask
   case envLookup env v of
-     Nothing    -> Var <$> traverse substType v
+     Nothing    -> Var <$> traverse substNorm v
      Just (L x) -> return x
      Just (T _) -> error $ "Lookup failed: " ++ pprint v
 
@@ -97,7 +66,7 @@ normalizeLam (FLamExpr p body) = do
 
 normalizePat :: Pat -> NormM Var
 normalizePat p = do
-  ty <- getType <$> traverse (traverse substType) p
+  ty <- getType <$> traverse (traverse substNorm) p
   let v' = case toList p of (v:>_):_ -> v
                             []       -> NoName
   return $ v':>ty
@@ -126,20 +95,6 @@ normalizeTLam (FTLam tvs qs body) =
     let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
     body' <- extendR env $ normalize body
     return (qs', body')
-
-desugarType :: Type -> Type
-desugarType (SumTy l r) = RecTy $ Tup $ [TC $ BaseType BoolType, l, r]
-desugarType tv@(TypeVar _) = tv
-desugarType (ArrowType l (Pi a (eff, b))) = ArrowType l $ Pi (desugarType a) (eff, desugarType b)
-desugarType (TabType (Pi a b)) = TabType $ Pi (desugarType a) (desugarType b)
-desugarType (Forall vs qs t)   = Forall vs qs $ desugarType t
-desugarType (TypeAlias vs t)   = TypeAlias vs $ desugarType t
-desugarType (TC con)           = TC $ fmapTyCon con desugarType id
-desugarType eff@(Effect _ _)   = eff
-desugarType NoAnn = NoAnn
-
-substType :: Type -> NormM Type
-substType t = desugarType <$> substNorm t
 
 substNorm :: Subst a => a -> NormM a
 substNorm x = do

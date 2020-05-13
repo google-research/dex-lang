@@ -249,6 +249,7 @@ expr' =   parenExpr
       <|> var
       <|> liftM fPrimCon idxLit
       <|> liftM (fPrimCon . Lit) literal
+      <|> sumCon
       <|> lamExpr
       <|> forExpr
       <|> caseExpr
@@ -256,6 +257,16 @@ expr' =   parenExpr
       <|> ffiCall
       <|> tabCon
       <?> "expr"
+
+sumCon :: Parser FExpr
+sumCon = do
+  isLeft <- conParse "Left" True <|> conParse "Right" False
+  v <- expr
+  let isLeftExpr = FPrimExpr $ ConExpr $ Lit $ BoolLit $ isLeft
+  return $ makeSum isLeftExpr $ if isLeft then (v, anyValue) else (anyValue, v)
+  where conParse sym val = try $ symbol sym *> pure val
+        makeSum isLeftExpr (l, r) = FPrimExpr $ ConExpr $ SumCon isLeftExpr l r
+        anyValue = FPrimExpr $ ConExpr $ AnyValue NoAnn
 
 parenExpr :: Parser FExpr
 parenExpr = do

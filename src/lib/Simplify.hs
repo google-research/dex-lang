@@ -75,8 +75,13 @@ simplifyAtom atom = case atom of
   -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
   TLam _ _ _      -> substEmbed atom
   Con (Lam _ _ _) -> substEmbed atom
+  Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
+  Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
+  Con (AnyValue (SumTy l r)) -> do
+    Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
   Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
                        $ error "Shouldn't have lambda left"
+  where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
@@ -134,11 +139,23 @@ simplifyCExpr expr = do
       (ans, s') <- fromPair =<< emit (RunState s lam)
       ans' <- reconstructAtom recon ans
       return $ PairVal ans' s'
+    SumCase c (lBody, _) (rBody, _) -> do
+      l <- projApp lBody True
+      r <- projApp rBody False
+      isLeft <- simplRec $ SumTag c
+      emit $ Select (getType l) isLeft l r
+      where
+        simplRec = dropSub . simplifyCExpr
+        projApp body isLeft = do
+          cComp <- simplRec $ SumGet c isLeft
+          simplRec $ App NonLin (Con $ Lam NonLin noEffect body) cComp
     App _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
       dropSub $ extendR (newTEnv tbs ts) $ simplify body
     RecGet (RecVal r) i -> return $ recGet r i
+    SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
+    SumTag (SumVal s _ _) -> return $ s
     Select ty p x y -> selectAt ty p x y
     _ -> emit $ fmapExpr expr' id id fst
 
