@@ -20,6 +20,7 @@ import Control.Monad.Writer
 import Data.Foldable
 import Data.Functor.Reverse
 import Data.Text.Prettyprint.Doc
+import Data.Maybe (fromJust)
 
 import Syntax
 import Env
@@ -254,10 +255,10 @@ intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 indexToInt :: Type -> Atom -> ImpM IExpr
 indexToInt ty idx = case ty of
   BoolTy  -> emitUnOp BoolToInt =<< fromScalarAtom idx
-  RecTy _ -> do
+  RecTy rt -> do
     case idx of
       (RecVal rv) -> do
-        rWithStrides <- getStrides $ fmap (\x -> (x, getType x)) rv
+        rWithStrides <- getStrides $ fromJust $ zipWithRecord (,) rv rt
         foldrM f (IIntVal 0) rWithStrides
         where
         f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr
