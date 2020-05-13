@@ -199,8 +199,10 @@ evalBackend expr = do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, expr)
       checkPass JAXPass jfun
+      let jfunSimp = simplifyJaxFunction jfun
+      checkPass JAXSimpPass jfunSimp
       let inVars' = map (fmap typeToJType) inVars
-      outVars <- callPipeServer server (jfun, inVars')
+      outVars <- callPipeServer server (jfunSimp, inVars')
       let outVars' = map (fmap jTypeToType) outVars
       return $ reStructureArrays (getType expr) $ map Var outVars'
     InterpEngine -> return $ evalExpr mempty expr

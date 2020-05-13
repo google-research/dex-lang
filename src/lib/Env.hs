@@ -20,6 +20,7 @@ import qualified Data.Text as T
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
+import GHC.Stack
 
 import Cat
 
@@ -92,7 +93,7 @@ isin :: VarP ann -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
                                      Nothing -> False
 
-(!) :: Env a -> VarP ann -> a
+(!) :: HasCallStack => Env a -> VarP ann -> a
 env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"

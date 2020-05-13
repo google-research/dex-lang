@@ -5,15 +5,12 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE DeriveTraversable #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
-{-# OPTIONS_GHC -Wno-missing-signatures #-}
+{-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
-            JExpr, JaxFunction, toJaxFunction) where
+            JExpr, JaxFunction, toJaxFunction, simplifyJaxFunction) where
 
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -57,10 +54,10 @@ data TmpAtom = TmpLeaf IdxAtom
 data JFor = JFor [IdxVar] [IdxVar] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
-type EmbedEnv = (Scope, [JDecl])
+type JEmbedEnv = (Scope, [JDecl])
 type JSubstEnv = Env TmpAtom
 type IdxEnv = [IdxVar]  -- for i j. --> [i, j]
-type JaxM = ReaderT IdxEnv (Cat EmbedEnv)
+type JaxM = ReaderT IdxEnv (Cat JEmbedEnv)
 
 runJaxM :: JaxM a -> a
 runJaxM m = fst $ runCat (runReaderT m mempty) mempty
@@ -152,33 +149,6 @@ traverseArrayLeaves atom f = case atom of
     _ -> error $ "Not implemented: " ++ show atom
   TmpLeaf x -> liftM TmpLeaf $ f x
 
-emitOp :: JOpP IdxAtom -> JaxM IdxAtom
-emitOp op = do
-  idxEnv <- ask
-  v <- emitJFor $ JFor idxEnv [] op
-  return $ IdxAtom (JVar v) idxEnv
-
-emitJFor :: JFor -> JaxM JVar
-emitJFor jfor = do
-  v <- freshVar ("v":> getJType jfor)
-  extend $ (v @> (), [JLet v jfor])
-  return v
-
-freshVar :: VarP ann -> JaxM (VarP ann)
-freshVar v = do
-  scope <- looks fst
-  let v' = rename v scope
-  extend $ asFst (v' @> ())
-  return v'
-
-freshIdxVar :: AxisSize -> JaxM IdxVar
-freshIdxVar n = do
-  scope <- looks fst
-  let nameChoices = [Name JaxIdx name 0 | name <- ["i", "j", "k"]]
-  let v = renameChoice nameChoices scope :> n
-  extend $ asFst (v @> ())
-  return v
-
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
   ArrayTy shape b -> JType shape b
@@ -187,6 +157,122 @@ typeToJType ty = case ty of
 jTypeToType :: JType -> Type
 jTypeToType ty = case ty of
   JType shape b -> ArrayTy shape b
+
+emitOp :: JOpP IdxAtom -> JaxM IdxAtom
+emitOp op = do
+  idxEnv <- ask
+  v <- emitJFor $ JFor idxEnv [] op
+  return $ IdxAtom (JVar v) idxEnv
+
+-- === Simplification pass on JAX IR ===
+
+type SimpEnv = (Env JAtom, Env JFor)
+type SimpM = Cat JEmbedEnv
+
+pattern JForId :: JAtom -> JFor
+pattern JForId x = JFor [] [] (JId (IdxAtom x []))
+
+simplifyJaxFunction :: JaxFunction -> JaxFunction
+simplifyJaxFunction (JaxFunction vs expr) = fst $ flip runCat mempty $ do
+  vs' <- mapM freshVar vs
+  let env = (newEnv vs (map JVar vs'), mempty)
+  (result', (_, decls')) <- scoped $ simplifyJaxExpr env expr
+  return $ JaxFunction vs' $ JExpr decls' result'
+
+simplifyJaxExpr :: SimpEnv -> JExpr -> SimpM [JAtom]
+simplifyJaxExpr env (JExpr decls results) = do
+  (_, env') <- flip runCatT env $ mapM simplifyJaxDecl decls
+  let (substEnv, _) = env <> env'
+  return $ fmap (substJAtom substEnv) results
+
+simplifyJaxDecl :: JDecl -> CatT SimpEnv SimpM ()
+simplifyJaxDecl (JLet v jfor) = do
+  (substEnv, bindingEnv) <- look
+  let jfor' = simplifyJFor bindingEnv $ substJFor substEnv jfor
+  case jfor' of
+    JForId x -> extend $ asFst (v @> x)
+    _ -> do
+      vOut <- lift $ emitJFor jfor'
+      extend $ (v @> JVar vOut, vOut @> jfor')
+
+simplifyJFor :: Env JFor -> JFor -> JFor
+simplifyJFor env (JFor forIdxs _ op) =
+  case op' of
+    JGet (IdxAtom x xIdxs) idx -> case matchIota env idx of
+      Just i -> simplifyJFor env $
+                  JFor forIdxs [] $ JId $ IdxAtom x $ xIdxs ++ [i]
+      Nothing -> jfor'
+    JId (IdxAtom x xIdxs) -> JFor forIdxs' [] $ JId $ IdxAtom x xIdxs'
+      where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
+    _ -> jfor'
+  where
+    op' = fmap (simpFix $ simplifyIdxAtom env) op
+    jfor' = JFor forIdxs [] op'
+
+matchIota :: Env JFor -> IdxAtom -> Maybe IdxVar
+matchIota env (IdxAtom (JVar v) idxs) = do
+  jfor <- envLookup env v
+  result <- applyIdxs jfor idxs
+  case result of
+    (JIota _, [i]) -> Just i
+    _ -> Nothing
+matchIota _ _ = Nothing
+
+simplifyIdxAtom :: Env JFor -> IdxAtom -> Maybe IdxAtom
+simplifyIdxAtom env idxAtom = case idxAtom of
+  IdxAtom (JVar v) idxs -> do
+    jfor <- envLookup env v
+    result <- applyIdxs jfor idxs
+    case result of
+      (JId (IdxAtom x idxs'), idxs'') -> return $ IdxAtom x (idxs' <> idxs'')
+      _ -> Nothing
+  _     -> Nothing
+
+applyIdxs :: JFor -> [IdxVar] -> Maybe (JOpP IdxAtom, [IdxVar])
+applyIdxs (JFor idxBinders [] op) idxs | length idxs >= length idxBinders = do
+  let op' = flip fmap op $ \(IdxAtom x atomIdxs) ->
+              IdxAtom x $ map (substEnv !) atomIdxs
+  return (op', remIdxs)
+  where
+    substEnv = newEnv idxBinders appIdxs
+    (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
+applyIdxs _ _ = Nothing
+
+substJFor :: Env JAtom -> JFor -> JFor
+substJFor env (JFor forIdxs [] op) =
+  JFor forIdxs [] $ fmap (substIdxAtom env) op
+substJFor _ jfor = jfor
+
+substIdxAtom :: Env JAtom -> IdxAtom -> IdxAtom
+substIdxAtom env (IdxAtom x idxs) = IdxAtom (substJAtom env x) idxs
+
+substJAtom :: Env JAtom-> JAtom -> JAtom
+substJAtom env x = case x of
+  JLit _ -> x
+  JVar v -> env ! v
+
+-- === JAX IR builder ===
+
+emitJFor :: MonadCat JEmbedEnv m => JFor -> m JVar
+emitJFor jfor = do
+  v <- freshVar ("v":> getJType jfor)
+  extend $ (v @> (), [JLet v jfor])
+  return v
+
+freshVar :: MonadCat JEmbedEnv m => VarP ann -> m (VarP ann)
+freshVar v = do
+  scope <- looks fst
+  let v' = rename v scope
+  extend $ asFst (v' @> ())
+  return v'
+
+freshIdxVar :: MonadCat JEmbedEnv m => AxisSize -> m IdxVar
+freshIdxVar n = do
+  scope <- looks fst
+  let nameChoices = [Name JaxIdx name 0 | name <- ["i", "j", "k"]]
+  let v = renameChoice nameChoices scope :> n
+  extend $ asFst (v @> ())
+  return v
 
 -- === JAXy IR Types ===
 
@@ -276,6 +362,21 @@ traverseJOpType jop = case jop of
   JIota n  -> return $ JType [n] IntType
   JGet (JType (_:shape) b) _ -> return $ JType shape b
   JGet (JType [] _) _ -> error "Attempting to index zero-dim array"
+
+-- === utils ===
+
+dropCommonTail :: Eq a => [a] -> [a] -> ([a], [a])
+dropCommonTail xs ys = (reverse xs', reverse ys')
+  where (xs', ys') = dropCommonPrefix (reverse xs) (reverse ys)
+
+dropCommonPrefix :: Eq a => [a] -> [a] -> ([a], [a])
+dropCommonPrefix (x:xs) (y:ys) | x == y = dropCommonPrefix xs ys
+dropCommonPrefix xs ys = (xs, ys)
+
+simpFix :: (a -> Maybe a) -> a -> a
+simpFix f x = case f x of
+  Nothing -> x
+  Just x' -> simpFix f x'
 
 -- === instances ===
 
