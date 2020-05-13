@@ -545,11 +545,11 @@ litArr = [10, 5, 3]
 eitherFloor : Either Int Real -> Int
 eitherFloor x = case x
     Left i  -> i
-    Right f -> %%floorDex(f)
+    Right f -> floor f
 
 :p
-  eitherFloor (%right(1.2))
+  eitherFloor (Right 1.2)
 > 1
 
-:p ((%right(1.2)) : (Either Int Real))
-> (False, 1, 1.2)
+:p ((Right 1.2) : (Either Int Real))
+> Right 1.2

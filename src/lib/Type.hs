@@ -559,7 +559,9 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     eq reff noEffect
     eq lb rb
     return $ pureType $ lb
-  RecGet (RecTy r) i    -> return $ pureTy $ recGet r i
+  RecGet (RecTy r) i -> return $ pureTy $ recGet r i
+  SumGet (SumTy l r) isLeft -> return $ pureTy $ if isLeft then l else r
+  SumTag (SumTy _ _) -> return $ pureTy $ TC $ BaseType BoolType
   ArrayGep (ArrayTy (_:shape) b) i -> do
     eq IntTy i
     return $ pureTy $ ArrayTy shape b
@@ -615,9 +617,8 @@ traverseConType con eq kindIs _ = case con of
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
-  SumCon t' t s -> case s of
-    Left _  -> return $ TC $ SumType (t, t')
-    Right _ -> return $ TC $ SumType (t', t)
+  AnyValue t   -> return $ t
+  SumCon _ l r -> return $ SumTy l r
   RecCon r -> return $ RecTy r
   AFor n a -> return $ TabTy n a
   AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
