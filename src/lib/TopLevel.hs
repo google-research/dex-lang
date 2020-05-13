@@ -201,8 +201,10 @@ evalBackend expr = do
       checkPass JAXPass jfun
       let jfunSimp = simplifyJaxFunction jfun
       checkPass JAXSimpPass jfunSimp
+      let jfunDCE = dceJaxFunction jfunSimp
+      checkPass JAXSimpPass jfunDCE
       let inVars' = map (fmap typeToJType) inVars
-      outVars <- callPipeServer server (jfunSimp, inVars')
+      outVars <- callPipeServer server (jfunDCE, inVars')
       let outVars' = map (fmap jTypeToType) outVars
       return $ reStructureArrays (getType expr) $ map Var outVars'
     InterpEngine -> return $ evalExpr mempty expr

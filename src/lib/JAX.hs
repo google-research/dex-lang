@@ -6,17 +6,20 @@
 
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
-            JExpr, JaxFunction, toJaxFunction, simplifyJaxFunction) where
+            JExpr, JaxFunction, toJaxFunction, simplifyJaxFunction,
+            dceJaxFunction) where
 
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Data.Aeson  hiding (Array)
 import Data.Text.Prettyprint.Doc
+import Data.Foldable
 import GHC.Generics
 import GHC.Stack
 
@@ -183,12 +186,12 @@ simplifyJaxExpr :: SimpEnv -> JExpr -> SimpM [JAtom]
 simplifyJaxExpr env (JExpr decls results) = do
   (_, env') <- flip runCatT env $ mapM simplifyJaxDecl decls
   let (substEnv, _) = env <> env'
-  return $ fmap (substJAtom substEnv) results
+  return $ fmap (jSubst substEnv) results
 
 simplifyJaxDecl :: JDecl -> CatT SimpEnv SimpM ()
 simplifyJaxDecl (JLet v jfor) = do
   (substEnv, bindingEnv) <- look
-  let jfor' = simplifyJFor bindingEnv $ substJFor substEnv jfor
+  let jfor' = simplifyJFor bindingEnv $ jSubst substEnv jfor
   case jfor' of
     JForId x -> extend $ asFst (v @> x)
     _ -> do
@@ -238,18 +241,23 @@ applyIdxs (JFor idxBinders [] op) idxs | length idxs >= length idxBinders = do
     (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
 applyIdxs _ _ = Nothing
 
-substJFor :: Env JAtom -> JFor -> JFor
-substJFor env (JFor forIdxs [] op) =
-  JFor forIdxs [] $ fmap (substIdxAtom env) op
-substJFor _ jfor = jfor
+-- === DCE pass on JAX IR ===
 
-substIdxAtom :: Env JAtom -> IdxAtom -> IdxAtom
-substIdxAtom env (IdxAtom x idxs) = IdxAtom (substJAtom env x) idxs
+dceJaxFunction :: JaxFunction -> JaxFunction
+dceJaxFunction (JaxFunction vs (JExpr decls results)) =
+  fst $ flip runCat mempty $ do
+    extend $ freeJVars results
+    decls' <- reverse <$> fold <$> mapM dceJDecl (reverse decls)
+    return $ JaxFunction vs $ JExpr decls' results
 
-substJAtom :: Env JAtom-> JAtom -> JAtom
-substJAtom env x = case x of
-  JLit _ -> x
-  JVar v -> env ! v
+dceJDecl :: JDecl -> Cat (Env ()) [JDecl]
+dceJDecl decl@(JLet v jfor) = do
+  usedVars <- look
+  if v `isin` usedVars
+    then do
+      extend $ freeJVars jfor
+      return [decl]
+    else return []
 
 -- === JAX IR builder ===
 
@@ -362,6 +370,33 @@ traverseJOpType jop = case jop of
   JIota n  -> return $ JType [n] IntType
   JGet (JType (_:shape) b) _ -> return $ JType shape b
   JGet (JType [] _) _ -> error "Attempting to index zero-dim array"
+
+-- === free vars and substitutions ===
+
+class HasJVars a where
+  freeJVars :: a -> Env ()
+  jSubst :: Env JAtom -> a -> a
+
+instance HasJVars JFor where
+  freeJVars (JFor _ _ op) = freeJVars op
+  jSubst env (JFor forIdxs sumIdxs op) =
+    JFor forIdxs sumIdxs $ jSubst env op
+
+instance HasJVars JAtom where
+  freeJVars x = case x of
+    JLit _ -> mempty
+    JVar v -> v @> ()
+  jSubst env x = case x of
+    JLit _ -> x
+    JVar v -> env ! v
+
+instance HasJVars IdxAtom where
+  freeJVars (IdxAtom x _) = freeJVars x
+  jSubst env (IdxAtom x idxs) = IdxAtom (jSubst env x) idxs
+
+instance (Traversable f, HasJVars a) => HasJVars (f a) where
+  freeJVars xs = foldMap freeJVars xs
+  jSubst env op = fmap (jSubst env) op
 
 -- === utils ===
 
