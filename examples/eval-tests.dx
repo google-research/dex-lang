@@ -540,7 +540,8 @@ litArr = [10, 5, 3]
 >
 > Lookup of DeBruijn 0 failed
 > CallStack (from HasCallStack):
->   error, called at src/lib/Env.hs:98:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env
+>   error, called at src/lib/Env.hs:99:14 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Env
+>   !, called at src/lib/Inference.hs:94:27 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Inference
 
 eitherFloor : Either Int Real -> Int
 eitherFloor x = case x
@@ -553,3 +554,26 @@ eitherFloor x = case x
 
 :p ((Right 1.2) : (Either Int Real))
 > Right 1.2
+
+-- Sum types as flattened index sets!
+type Weights n m = n=>m=>Real
+type Biases  n   = n=>Real
+type Params  n m = (Either (n,m) n)=>Real
+
+w = for i:2. for j:3. (real (asint i)) * 3.0 + (real (asint j))
+b = for j:2. neg (real (asint j) + 1.0)
+
+flatten : (Weights n m, Biases n) -> Params n m
+flatten (w, b) = for idx. case idx
+  Left (i,j) -> w.i.j
+  Right i    -> b.i
+
+unflatten : Params n m -> (Weights n m, Biases n)
+unflatten params =
+  ( for i. for j. params.(Left (i,j))
+  , for i.        params.(Right i)    )
+
+:p (w, b)
+> ([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [-1.0, -2.0])
+:p unflatten (flatten (w, b))
+> ([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [-1.0, -2.0])
