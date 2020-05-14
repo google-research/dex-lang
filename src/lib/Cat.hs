@@ -48,7 +48,9 @@ instance (Monoid env, Monad m) => MonadCat env (CatT env m) where
 instance MonadCat env m => MonadCat env (StateT s m) where
   look = lift look
   extend x = lift $ extend x
-  scoped = undefined -- is this even possible?
+  scoped m = StateT $ \s -> do
+    ((ans, s'), env) <- scoped $ runStateT m s
+    return $ ((ans, env), s')
 
 instance MonadCat env m => MonadCat env (ReaderT r m) where
   look = lift look
