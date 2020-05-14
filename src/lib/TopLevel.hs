@@ -117,7 +117,7 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
     let outEnv = b @> L val
-    return $ TopEnv (substEnvType outEnv, mempty) outEnv mempty
+    return $ TopEnv (fmap getTyOrKind outEnv, mempty) outEnv mempty
   RuleDef ann@(LinearizationDef v) ~(Forall [] [] ty) ~(FTLam [] [] expr) -> do
     let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
     let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr

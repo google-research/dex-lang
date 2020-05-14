@@ -211,7 +211,7 @@ tmpAtomScalarLit :: LitVal -> TmpAtom
 tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit $ arrayFromScalar x) []
 
 instance HasType TmpAtom where
-  getEffType atom = pureTy $ case atom of
+  getEffType atom = pureType $ case atom of
     TmpLeaf idxAtom -> jTypeToType $ getJType idxAtom
     TmpRefName _ -> undefined
     TmpCon con -> getConType $ fmapExpr con id getType $ error "unexpected lambda"
@@ -367,10 +367,18 @@ instance HasJType JFor where
     (JType shape b) <- checkJType env' op
     return (JType (map varAnn idxs ++ shape) b)
 
+assertNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
+                    => f (VarP b) -> m ()
+assertNoMutualShadows bs =
+  void $ flip runCatT mempty $ forM bs $ \b -> do
+    env <- look
+    assertNoShadow env b
+    extend (b@>())
+
 checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
 checkBinders env bs = do
-  mapM_ (checkNoShadow env) bs
-  checkNoMutualShadows bs
+  mapM_ (assertNoShadow env) bs
+  assertNoMutualShadows bs
 
 instance HasJType IdxAtom where
   getJType (IdxAtom x idxs) = JType (drop (length idxs) shape) b

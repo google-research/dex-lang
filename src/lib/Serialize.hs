@@ -21,6 +21,7 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
+import Data.Foldable
 
 import Array
 import Type
@@ -220,3 +221,15 @@ getValArrays val = execWriter $ flip traverseVal val $ \con -> case con of
 liftExceptIO :: Except a -> IO a
 liftExceptIO (Left e ) = throwIO e
 liftExceptIO (Right x) = return x
+
+flattenType :: Type -> [(BaseType, [Int])]
+flattenType (FixedIntRange _ _) = [(IntType, [])]
+flattenType (TabTy (FixedIntRange low high) a) =
+    [(b, (high - low):shape) | (b, shape) <- flattenType a]
+-- temporary hack. TODO: fix
+flattenType (TabTy _ a) = [(b, 0:shape) | (b, shape) <- flattenType a]
+flattenType (TC con) = case con of
+  BaseType b  -> [(b, [])]
+  RecType r -> concat $ map flattenType $ toList r
+  _ -> error $ "Unexpected type: " ++ show con
+flattenType ty = error $ "Unexpected type: " ++ show ty
