@@ -154,7 +154,7 @@ checkKind ty = case ty of
   TC con -> do
     let (conKind, resultKind) = tyConKind con
     void $ traverseTyCon conKind (\(t,k) -> checkKindIs k t)
-                                 (\(e,t) -> checkType e >>= checkConstraint t)
+                                 (\(e,t) -> checkType e >>= checkTypeEq t)
     return resultKind
 
 checkKindIs :: Kind -> Type -> TypeM ()
@@ -442,16 +442,16 @@ getConType :: PrimConType -> Type
 getConType e = ignoreExcept $ traverseConType e ignoreArgs ignoreArgs ignoreArgs
 
 checkOpType :: PrimOpType -> TypeM EffectiveType
-checkOpType e = traverseOpType e checkConstraint checkKindIs checkClassConstraint
+checkOpType e = traverseOpType e checkTypeEq checkKindIs checkClassConstraint
 
 checkConType :: PrimConType -> TypeM Type
-checkConType e = traverseConType e checkConstraint checkKindIs checkClassConstraint
+checkConType e = traverseConType e checkTypeEq checkKindIs checkClassConstraint
 
 ignoreArgs :: Monad m => a -> b -> m ()
 ignoreArgs _ _ = return ()
 
-checkConstraint :: Type -> Type -> TypeM ()
-checkConstraint ty1 ty2 | ty1 == ty2 = return ()
+checkTypeEq :: Type -> Type -> TypeM ()
+checkTypeEq ty1 ty2 | ty1 == ty2 = return ()
                         | otherwise  = throw TypeErr $
                                          pprint ty1 ++ " != " ++ pprint ty2
 
