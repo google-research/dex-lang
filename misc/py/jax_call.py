@@ -238,6 +238,8 @@ def ser_array(arr):
 def ser_flat_vec(vec):
   if vec.dtype in [np.int32, np.int64]:
     return {"tag":"IntVec", "contents": map(int, vec)}
+  if vec.dtype in [np.float32, np.float64]:
+    return {"tag":"DoubleVec", "contents": map(float, vec)}
   else:
     assert False
 
@@ -267,13 +269,13 @@ def des_op_and_args(obj):
 global_env = {}
 
 def eval_op(op):
-  if op.op_name in ("IAdd", "IMul"):
+  if op.op_name in ("IAdd", "IMul", "FAdd", "FMul"):
     x, y = op.args
     x_bc = broadcast_dims(op.for_idxs, x.idxs, x.atom.val)
     y_bc = broadcast_dims(op.for_idxs, y.idxs, y.atom.val)
-    if op.op_name == "IAdd":
+    if op.op_name in ("IAdd", "FAdd"):
       ans = x_bc + y_bc
-    elif op.op_name == "IMul":
+    elif op.op_name == ("IMul", "FMul"):
       ans = x_bc * y_bc
     else:
       assert False
@@ -351,12 +353,16 @@ def subst_atom(env, x):
 def dtype_basetype(x):
   if x in [np.int32, np.int64]:
     return "IntType"
+  elif x in [np.float32, np.float64]:
+    return "RealType"
   else:
     assert False
 
 def basetype_dtype(x):
   if x == "IntType":
     return np.int64
+  if x == "RealType":
+    return np.float64
   else:
     assert False
 
@@ -377,10 +383,6 @@ def eval_function_application(top_arg):
   for v, arg in zip(f.binders, args_subst):
     env[v] = arg
   for (v, op) in f.decls:
-    print((v, op))
-    print(subst_op(env, op))
-    print(eval_op(subst_op(env, op)))
-    print("=====")
     env[v] = eval_op(subst_op(env, op))
   return [atom_as_var(subst_atom(env, r)).ser() for r in f.results]
 

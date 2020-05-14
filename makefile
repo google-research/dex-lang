@@ -53,7 +53,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep quine-tests repl-test
+tests: test-prep quine-tests jax-tests repl-test
 
 test-prep:
 	rm -rf test-scratch/
@@ -77,6 +77,9 @@ prop-tests: cbits/libdex.so
 update-%: examples/%.dx
 	$(dex) script --allow-errors $^ > $^.tmp
 	mv $^.tmp $^
+
+jax-tests:
+	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script
 
 repl-test:
 	misc/check-no-diff \

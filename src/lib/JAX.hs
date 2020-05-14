@@ -17,6 +17,7 @@ module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Control.Monad.State.Strict
 import Data.Aeson  hiding (Array)
 import Data.Text.Prettyprint.Doc
 import Data.Foldable
@@ -28,6 +29,7 @@ import Syntax
 import PPrint
 import Type
 import Cat
+import Record
 import Array
 
 -- === JAXish IR ===
@@ -51,21 +53,24 @@ data JOpP e = JId e
               deriving (Generic, Functor, Foldable, Traversable, Show, Eq)
 
 data TmpAtom = TmpLeaf IdxAtom
+             | TmpRefName Var
              | TmpCon (PrimCon Type TmpAtom ())
                deriving (Generic, Show, Eq)
 
 data JFor = JFor [IdxVar] [IdxVar] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
+-- === lowering from Expr ===
+
 type JEmbedEnv = (Scope, [JDecl])
 type JSubstEnv = Env TmpAtom
+type EffectState = Env TmpAtom
 type IdxEnv = [IdxVar]  -- for i j. --> [i, j]
-type JaxM = ReaderT IdxEnv (Cat JEmbedEnv)
+type JaxM = ReaderT IdxEnv (StateT EffectState (Cat JEmbedEnv))
 
 runJaxM :: JaxM a -> a
-runJaxM m = fst $ runCat (runReaderT m mempty) mempty
-
--- === lowering from Expr ===
+runJaxM m = fst $ flip runCat mempty $
+  flip evalStateT mempty $ flip runReaderT mempty m
 
 toJaxFunction :: ([Var], Expr) -> JaxFunction
 toJaxFunction (vs, expr) = runJaxM $ do
@@ -101,10 +106,11 @@ toJaxDecl env (Let v rhs) = do
 
 toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
 toJaxAtom env atom = case atom of
+  Var v@(_:>RefTy _) -> TmpRefName v
   Var v -> case envLookup env v of
     Just x  -> x
     Nothing -> error "lookup failed"
-  Con (Lit x) -> TmpCon $ AGet $ TmpLeaf $ IdxAtom (JLit $ arrayFromScalar x) []
+  Con (Lit x) -> tmpAtomScalarLit x
   Con con -> TmpCon $ fmapExpr con id (toJaxAtom env) (error "unexpected lambda")
   _ -> error $ "Not implemented: " ++ pprint atom
 
@@ -127,10 +133,30 @@ toJaxOp' expr = case expr of
       return $ IdxAtom (JVar ansVar) idxEnv
   TabGet ~(TmpCon (AFor _ tab)) i -> do
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
-  ScalarBinOp op x y -> liftM TmpLeaf $
+  ScalarBinOp op x y -> liftM toScalarAtom $
     emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
-  ScalarUnOp IndexAsInt x -> liftM TmpLeaf $
+  ScalarUnOp IndexAsInt x -> liftM toScalarAtom $
     emitOp $ JId (fromScalarAtom x)
+  RunWriter (LamExpr refVar body, env) -> do
+    let (RefTy wTy) = varAnn refVar
+    wInit <- zerosAt wTy
+    modify (<> refVar @> wInit)
+    aResult <- toJaxExpr env body
+    wFinal <- gets $ (! refVar)
+    modify $ envDelete (varName refVar)
+    return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
+  PrimEffect (TmpRefName refVar) m -> do
+    case m of
+      MTell x -> do
+        curAccum <- gets (! refVar)
+        newAccum <- addPoly curAccum x
+        modify (<> refVar @> newAccum)
+        return $ TmpCon $ RecCon $ Tup []
+      _ -> error $ "Not implemented: " ++ show expr
+  RecGet x i -> do
+    case x of
+      TmpCon (RecCon r) -> return $ recGet r i
+      val -> error $ "Expected a record, got: " ++ show val
   _ -> error $ "Not implemented: " ++ show expr
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
@@ -138,10 +164,12 @@ iotaVarAsIdx n x = TmpCon $ AsIdx n $ TmpLeaf x
 
 fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
-  TmpLeaf x -> x
   TmpCon (AsIdx _ x) -> fromScalarAtom x
-  TmpCon (AGet x)    -> fromScalarAtom x
+  TmpCon (AGet (TmpLeaf x)) -> x
   _ -> error $ "Not a scalar atom: " ++ show atom
+
+toScalarAtom :: IdxAtom -> TmpAtom
+toScalarAtom x = TmpCon $ AGet $ TmpLeaf x
 
 traverseArrayLeaves :: HasCallStack => Monad m => TmpAtom -> (IdxAtom -> m IdxAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
@@ -151,6 +179,7 @@ traverseArrayLeaves atom f = case atom of
     AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
     _ -> error $ "Not implemented: " ++ show atom
   TmpLeaf x -> liftM TmpLeaf $ f x
+  TmpRefName _ -> error "Unexpected reference name"
 
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
@@ -166,6 +195,27 @@ emitOp op = do
   idxEnv <- ask
   v <- emitJFor $ JFor idxEnv [] op
   return $ IdxAtom (JVar v) idxEnv
+
+zerosAt :: Type -> JaxM TmpAtom
+zerosAt ty = case ty of
+  BaseTy RealType -> return $ tmpAtomScalarLit $ RealLit 0.0
+  _ -> error "Not implemented"
+
+addPoly ::   TmpAtom -> TmpAtom -> JaxM TmpAtom
+addPoly x y = case getType x of
+  BaseTy RealType -> liftM toScalarAtom $
+    emitOp $ JScalarBinOp FAdd (fromScalarAtom x) (fromScalarAtom y)
+  ty -> error $ "Not implemented: " ++ pprint ty
+
+tmpAtomScalarLit :: LitVal -> TmpAtom
+tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit $ arrayFromScalar x) []
+
+instance HasType TmpAtom where
+  getEffType atom = pureTy $ case atom of
+    TmpLeaf idxAtom -> jTypeToType $ getJType idxAtom
+    TmpRefName _ -> undefined
+    TmpCon con -> getConType $ fmapExpr con id getType $ error "unexpected lambda"
+  checkEffType = error "Not implemented"
 
 -- === Simplification pass on JAX IR ===
 

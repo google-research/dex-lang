@@ -17,7 +17,7 @@ module Type (
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     checkRuleDefType, getConType, checkEffType, HasType, indexSetConcreteSize,
     maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
-    checkNoShadow, checkNoMutualShadows) where
+    checkNoShadow, checkNoMutualShadows, pureTy) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
