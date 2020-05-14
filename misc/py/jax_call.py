@@ -169,7 +169,8 @@ class IndexedAtom(object):
 
   @property
   def ty(self):
-    assert False
+    atom_ty = self.atom.ty
+    return Ty(atom_ty.shape[:len(self.idxs)], atom_ty.basetype)
 
   @staticmethod
   def des(obj):
@@ -185,10 +186,14 @@ class Ty(object):
     for n in shape: assert isinstance(n, int)
     assert basetype in ["IntType", "BoolType", "RealType"]
     self.basetype = basetype
-    self.shape = shape
+    self.shape = tuple(shape)
 
   def ser(self):
     return [self.shape, self.basetype]
+
+  def __eq__(self, other):
+    assert isinstance(other, Ty)
+    return self.basetype == other.basetype and self.shape == other.shape
 
   @staticmethod
   def des(obj):
@@ -211,6 +216,10 @@ class Operation(object):
     self.size_args = size_args
     self.args = args
 
+  @property
+  def all_idxs(self):
+    return self.for_idxs + self.sum_idxs
+
   def ser(self):
     assert False
 
@@ -225,8 +234,8 @@ class Operation(object):
 
   def __repr__(self): return str(self)
   def __str__(self):
-    return "for " + str(tuple(self.for_idxs)) \
-              + " " + self.op_name + " " + str(tuple(self.args))
+    return "for {} . sum {} . {} {}".format(
+      self.for_idxs, self.sum_idxs, self.op_name, tuple(self.args))
 
 def array_ty(x):
   return Ty(x.shape, dtype_basetype(x.dtype))
@@ -269,39 +278,44 @@ def des_op_and_args(obj):
 global_env = {}
 
 def eval_op(op):
+  broadcast_ans = eval_for(op)
+  axes = tuple(range(len(op.for_idxs), len(op.all_idxs)))
+  summed_ans = np.sum(broadcast_ans, axis=axes)
+  return Atom("Lit", summed_ans)
+
+def eval_for(op):
   if op.op_name in ("IAdd", "IMul", "FAdd", "FMul"):
     x, y = op.args
-    x_bc = broadcast_dims(op.for_idxs, x.idxs, x.atom.val)
-    y_bc = broadcast_dims(op.for_idxs, y.idxs, y.atom.val)
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, x.atom.val)
+    y_bc = broadcast_dims(op.all_idxs, y.idxs, y.atom.val)
     if op.op_name in ("IAdd", "FAdd"):
-      ans = x_bc + y_bc
-    elif op.op_name == ("IMul", "FMul"):
-      ans = x_bc * y_bc
+      return x_bc + y_bc
+    elif op.op_name in ("IMul", "FMul"):
+      return x_bc * y_bc
     else:
-      assert False
-    return Atom("Lit", ans)
+      raise Exception("Not implemented: " + str(op.op_name))
   elif op.op_name == "Iota":
     n, = op.size_args
     val = np.arange(n)
-    val_bc = broadcast_dims(op.for_idxs, [], val)
-    return Atom("Lit", val_bc)
+    val_bc = broadcast_dims(op.all_idxs, [], val)
+    return val_bc
   elif op.op_name == "Id":
     x, = op.args
-    x_bc = broadcast_dims(op.for_idxs, x.idxs, x.atom.val)
-    return Atom("Lit", x_bc)
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, x.atom.val)
+    return x_bc
   elif op.op_name == "Get":
     x, idx = op.args
-    out_shape = [i.size for i in op.for_idxs]
-    x_idxs_used = get_stack_idxs_used(op.for_idxs, x.idxs)
+    out_shape = [i.size for i in op.all_idxs]
+    x_idxs_used = get_stack_idxs_used(op.all_idxs, x.idxs)
     leading_idx_arrays = []
     for i, idx_used in enumerate(x_idxs_used):
       if idx_used:
         leading_idx_arrays.append(nth_iota(out_shape, i))
       else:
         pass
-    payload_idx_array = broadcast_dims(op.for_idxs, idx.idxs, idx.atom.val)
+    payload_idx_array = broadcast_dims(op.all_idxs, idx.idxs, idx.atom.val)
     out = x.atom.val[tuple(leading_idx_arrays) + (payload_idx_array,)]
-    return Atom("Lit", out)
+    return out
   else:
     raise Exception("Unrecognized op: {}".format(op.op_name))
 
@@ -383,8 +397,15 @@ def eval_function_application(top_arg):
   for v, arg in zip(f.binders, args_subst):
     env[v] = arg
   for (v, op) in f.decls:
-    env[v] = eval_op(subst_op(env, op))
+    ans =  eval_op(subst_op(env, op))
+    if not (v.ty == ans.ty):
+      print(op)
+      raise Exception("Unexpected type. Expected {}, got {}".format(v.ty, ans.ty))
+    env[v] = ans
   return [atom_as_var(subst_atom(env, r)).ser() for r in f.results]
+
+def check_type(ty, val):
+  assert isinstance(ty, Ty)
 
 def retrieve_arrays(arrs):
   vs = map(Var.des, arrs)

@@ -62,7 +62,7 @@ scalarFromArray (Array ([], b) vec) = case b of
   BoolType -> BoolLit $ xs V.! 0 /= 0  where IntVec    xs = vec
   RealType -> RealLit $ xs V.! 0       where DoubleVec xs = vec
   _ -> error "Not implemented"
-scalarFromArray _ = error "Array must be rank-0"
+scalarFromArray x = error $ "Not a rank-zero array: " ++ show x
 
 arrayFromScalar :: LitVal -> Array
 arrayFromScalar val = case val of

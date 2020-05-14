@@ -64,7 +64,7 @@ data JFor = JFor [IdxVar] [IdxVar] (JOpP IdxAtom)
 
 type JEmbedEnv = (Scope, [JDecl])
 type JSubstEnv = Env TmpAtom
-type EffectState = Env TmpAtom
+type EffectState = Env (Int, TmpAtom)
 type IdxEnv = [IdxVar]  -- for i j. --> [i, j]
 type JaxM = ReaderT IdxEnv (StateT EffectState (Cat JEmbedEnv))
 
@@ -138,19 +138,21 @@ toJaxOp' expr = case expr of
   ScalarUnOp IndexAsInt x -> liftM toScalarAtom $
     emitOp $ JId (fromScalarAtom x)
   RunWriter (LamExpr refVar body, env) -> do
+    idxEnvDepth <- asks length
     let (RefTy wTy) = varAnn refVar
     wInit <- zerosAt wTy
-    modify (<> refVar @> wInit)
+    modify (<> refVar @> (idxEnvDepth, wInit))
     aResult <- toJaxExpr env body
-    wFinal <- gets $ (! refVar)
+    wFinal <- gets $ snd . (! refVar)
     modify $ envDelete (varName refVar)
     return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
   PrimEffect (TmpRefName refVar) m -> do
     case m of
       MTell x -> do
-        curAccum <- gets (! refVar)
-        newAccum <- addPoly curAccum x
-        modify (<> refVar @> newAccum)
+        (depth, curAccum) <- gets (! refVar)
+        xSum <- sumPoly depth x
+        newAccum <- local (take depth) $ addPoly curAccum xSum
+        modify (<> refVar @> (depth, newAccum))
         return $ TmpCon $ RecCon $ Tup []
       _ -> error $ "Not implemented: " ++ show expr
   RecGet x i -> do
@@ -160,7 +162,7 @@ toJaxOp' expr = case expr of
   _ -> error $ "Not implemented: " ++ show expr
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
-iotaVarAsIdx n x = TmpCon $ AsIdx n $ TmpLeaf x
+iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x
 
 fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
@@ -201,11 +203,19 @@ zerosAt ty = case ty of
   BaseTy RealType -> return $ tmpAtomScalarLit $ RealLit 0.0
   _ -> error "Not implemented"
 
-addPoly ::   TmpAtom -> TmpAtom -> JaxM TmpAtom
+addPoly :: TmpAtom -> TmpAtom -> JaxM TmpAtom
 addPoly x y = case getType x of
   BaseTy RealType -> liftM toScalarAtom $
     emitOp $ JScalarBinOp FAdd (fromScalarAtom x) (fromScalarAtom y)
   ty -> error $ "Not implemented: " ++ pprint ty
+
+sumPoly :: Int -> TmpAtom -> JaxM TmpAtom
+sumPoly depth atom = do
+  idxEnv <- ask
+  let (forIdxs, sumIdxs) = splitAt depth idxEnv
+  traverseArrayLeaves atom $ \x -> do
+     v <- emitJFor $ JFor forIdxs sumIdxs $ JId x
+     return $ IdxAtom (JVar v) forIdxs
 
 tmpAtomScalarLit :: LitVal -> TmpAtom
 tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit $ arrayFromScalar x) []
@@ -249,7 +259,7 @@ simplifyJaxDecl (JLet v jfor) = do
       extend $ (v @> JVar vOut, vOut @> jfor')
 
 simplifyJFor :: Env JFor -> JFor -> JFor
-simplifyJFor env (JFor forIdxs _ op) =
+simplifyJFor env (JFor forIdxs [] op) =
   case op' of
     JGet (IdxAtom x xIdxs) idx -> case matchIota env idx of
       Just i -> simplifyJFor env $
@@ -261,6 +271,7 @@ simplifyJFor env (JFor forIdxs _ op) =
   where
     op' = fmap (simpFix $ simplifyIdxAtom env) op
     jfor' = JFor forIdxs [] op'
+simplifyJFor _ jfor = jfor
 
 matchIota :: Env JFor -> IdxAtom -> Maybe IdxVar
 matchIota env (IdxAtom (JVar v) idxs) = do
