@@ -325,6 +325,10 @@ def eval_for(op):
     real_val = np.array(x.atom.val, dtype="float32")
     x_bc = broadcast_dims(op.all_idxs, x.idxs, real_val)
     return x_bc
+  elif op.op_name in ("FNeg", "INeg"):
+    x, = op.args
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, -x.atom.val)
+    return x_bc
   else:
     raise Exception("Unrecognized op: {}".format(op.op_name))
 
