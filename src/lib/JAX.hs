@@ -20,7 +20,6 @@ import Control.Monad.Writer
 import Control.Monad.State.Strict
 import Data.Aeson  hiding (Array)
 import Data.Text.Prettyprint.Doc
-import Data.Foldable
 import GHC.Generics
 import GHC.Stack
 
@@ -265,19 +264,18 @@ simplifyJaxDecl (JLet v jfor) = do
       extend $ (v @> JVar vOut, vOut @> jfor')
 
 simplifyJFor :: Env JFor -> JFor -> JFor
-simplifyJFor env (JFor forIdxs [] op) =
+simplifyJFor env (JFor forIdxs sumIdxs op) =
   case op' of
     JGet (IdxAtom x xIdxs) idx -> case matchIota env idx of
       Just i -> simplifyJFor env $
                   JFor forIdxs [] $ JId $ IdxAtom x $ xIdxs ++ [i]
       Nothing -> jfor'
-    JId (IdxAtom x xIdxs) -> JFor forIdxs' [] $ JId $ IdxAtom x xIdxs'
+    JId (IdxAtom x xIdxs) -> JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
       where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
     _ -> jfor'
   where
     op' = fmap (simpFix $ simplifyIdxAtom env) op
-    jfor' = JFor forIdxs [] op'
-simplifyJFor _ jfor = jfor
+    jfor' = JFor forIdxs sumIdxs op'
 
 matchIota :: Env JFor -> IdxAtom -> Maybe IdxVar
 matchIota env (IdxAtom (JVar v) idxs) = do
@@ -308,23 +306,46 @@ applyIdxs (JFor idxBinders [] op) idxs | length idxs >= length idxBinders = do
     (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
 applyIdxs _ _ = Nothing
 
--- === DCE pass on JAX IR ===
+-- === variable usage pass ===
+
+data VarUsage = Unused | UsedOnceInId | ArbitraryUse  deriving (Show, Eq)
+
+type UsageEnv = MonMap Name VarUsage
+
+collectUsage :: JExpr -> UsageEnv
+collectUsage (JExpr decls result) = snd $ flip runCat mempty $ do
+  extend $ useFreeVars ArbitraryUse result
+  forM_ (reverse decls) $ \(JLet v jfor@(JFor _ _ op)) -> do
+    use <- looks $ flip lookupUse v
+    case use of
+      Unused -> return ()
+      _ -> case op of
+        JId _ -> extend $ useFreeVars UsedOnceInId jfor
+        _     -> extend $ useFreeVars ArbitraryUse jfor
+
+lookupUse :: UsageEnv -> VarP ann -> VarUsage
+lookupUse env (v:>_) = monMapLookup env v
+
+useFreeVars :: HasJVars a => VarUsage -> a -> UsageEnv
+useFreeVars use x = foldMap (useVar use) $ envNames $ freeJVars x
+
+useVar :: VarUsage -> Name -> UsageEnv
+useVar use v = monMapSingle v use
+
+instance Semigroup VarUsage where
+  Unused <> use = use
+  use <> Unused = use
+  _ <> _ = ArbitraryUse
+
+instance Monoid VarUsage where
+  mempty = Unused
 
 dceJaxFunction :: JaxFunction -> JaxFunction
-dceJaxFunction (JaxFunction vs (JExpr decls results)) =
-  fst $ flip runCat mempty $ do
-    extend $ freeJVars results
-    decls' <- reverse <$> fold <$> mapM dceJDecl (reverse decls)
-    return $ JaxFunction vs $ JExpr decls' results
-
-dceJDecl :: JDecl -> Cat (Env ()) [JDecl]
-dceJDecl decl@(JLet v jfor) = do
-  usedVars <- look
-  if v `isin` usedVars
-    then do
-      extend $ freeJVars jfor
-      return [decl]
-    else return []
+dceJaxFunction (JaxFunction vs expr@(JExpr decls result)) =
+  JaxFunction vs (JExpr decls' result)
+  where
+    decls' = filter (\(JLet v _) -> lookupUse useEnv v /= Unused) decls
+    useEnv = collectUsage expr
 
 -- === JAX IR builder ===
 
