@@ -376,7 +376,7 @@ def get_stack_idxs_used(for_idxs, idxs):
       stack_vars.append(Discard)
   return stack_vars
 
-arrayish_types = (np.ndarray, np.int64, np.float64)
+arrayish_types = (np.ndarray, np.int64, np.float64, np.float32)
 
 def subst_op(env, op):
   args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]
