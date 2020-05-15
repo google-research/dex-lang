@@ -49,6 +49,7 @@ data JOpP e = JId e
             | JIota AxisSize
             | JGet e e
             | JScalarBinOp ScalarBinOp e e
+            | JThreeFry2x32 e e
             | JScalarUnOp  ScalarUnOp e
               deriving (Generic, Functor, Foldable, Traversable, Show, Eq)
 
@@ -161,7 +162,13 @@ toJaxOp' expr = case expr of
     case x of
       TmpCon (RecCon r) -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
+  FFICall s _ _ args | s == "threefry2x32" -> liftM toScalarAtom $
+      emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
+        where (x, y) = unpack2 args
   _ -> error $ "Not implemented: " ++ show expr
+
+unpack2 :: [a] -> (a, a)
+unpack2 [x, y] = (x, y)
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
 iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x
@@ -437,6 +444,7 @@ traverseJOpType jop = case jop of
   JScalarUnOp  op _   ->
     return $ JType [] outTy
     where (_,    outTy) = unOpType  op
+  JThreeFry2x32 _ _ -> return $ JType [] IntType
   JId ty   -> return $ ty
   JIota n  -> return $ JType [n] IntType
   JGet (JType (_:shape) b) _ -> return $ JType shape b
@@ -518,6 +526,7 @@ prettyOpName :: JOpP a -> Doc ann
 prettyOpName jop = case jop of
   JScalarBinOp op _ _ -> pretty $ show op
   JScalarUnOp  op _   -> pretty $ show op
+  JThreeFry2x32 _ _   -> "threefry2x32"
   JIota n  -> "iota@" <> pretty n
   JGet _ _ -> "get"
   JId _    -> "id"
