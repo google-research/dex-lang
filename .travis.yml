@@ -16,6 +16,7 @@ addons:
       - llvm-9-tools
       - llvm-9-dev
       - python3-numpy
+      - python3-pip
       - haskell-stack
 jobs:
   include:
@@ -27,6 +28,9 @@ jobs:
         - stack upgrade
         - hash -r
         - stack setup
+    - stage: Install Python dependencies
+      script:
+        - pip install --upgrade jax jaxlib
     - stage: Build dependencies
       script:
         - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
