@@ -7,6 +7,7 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
@@ -133,12 +134,11 @@ toJaxOp' expr = case expr of
       return $ IdxAtom (JVar ansVar) idxEnv
   TabGet ~(TmpCon (AFor _ tab)) i -> do
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
-  ScalarBinOp op x y -> liftM toScalarAtom $
-    emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
-  IndexAsInt x -> liftM toScalarAtom $
-    emitOp $ JId (fromScalarAtom x)
-  ScalarUnOp op x -> liftM toScalarAtom $
-    emitOp $ JScalarUnOp op (fromScalarAtom x)
+  IndexAsInt x                    -> cast (emitOp . JId) x
+  ScalarUnOp op x                 -> cast (emitOp . JScalarUnOp op) x
+  ScalarBinOp op x y              -> cast (emitOp ... JScalarBinOp op) x y
+  FFICall "threefry2x32" _ _ args -> cast (emitOp ... JThreeFry2x32) x y
+    where [x, y] = args
   RunWriter (LamExpr refVar body, env) -> do
     idxEnvDepth <- asks length
     let (RefTy wTy) = varAnn refVar
@@ -161,9 +161,6 @@ toJaxOp' expr = case expr of
     case x of
       TmpCon (RecCon r) -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ show val
-  FFICall s _ _ args | s == "threefry2x32" -> liftM toScalarAtom $
-      emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
-        where x:y:[] = args
   _ -> error $ "Not implemented: " ++ show expr
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
@@ -210,8 +207,7 @@ zerosAt ty = case ty of
 
 addPoly :: TmpAtom -> TmpAtom -> JaxM TmpAtom
 addPoly x y = case getType x of
-  BaseTy RealType -> liftM toScalarAtom $
-    emitOp $ JScalarBinOp FAdd (fromScalarAtom x) (fromScalarAtom y)
+  BaseTy RealType -> cast (emitOp ... JScalarBinOp FAdd) x y
   ty -> error $ "Not implemented: " ++ pprint ty
 
 sumPoly :: Int -> TmpAtom -> JaxM TmpAtom
@@ -606,3 +602,24 @@ instance FromJSON Array
 
 instance ToJSON   Vec
 instance FromJSON Vec
+
+(...) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+(...) g f x y = g (f x y)
+
+class Castable a b where
+  cast :: a -> b
+
+instance Castable a a where
+  cast = id
+
+instance Castable IdxAtom TmpAtom where
+  cast = toScalarAtom
+
+instance Castable TmpAtom IdxAtom where
+  cast = fromScalarAtom
+
+instance (Castable a b, Castable c d) => Castable (b -> c) (a -> d) where
+  cast f = cast . f . cast
+
+instance (Functor f, Castable a b) => Castable (f a) (f b) where
+  cast = fmap cast
