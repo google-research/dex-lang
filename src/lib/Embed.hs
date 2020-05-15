@@ -221,6 +221,7 @@ mapScalars f ty xs = case ty of
     liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'
   BaseTy _           -> f ty xs
   TC con -> case con of
+    -- NOTE: Sum types not implemented, because they don't have a total zipping function!
     IntRange _ _     -> f ty xs
     IndexRange _ _ _ -> f ty xs
     _ -> error $ "Not implemented " ++ pprint ty
