@@ -10,11 +10,12 @@
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, embedScope, withIndexed,
-              nRecGet, nTabGet, add, mul, sub, neg, div',
-              selectAt, freshVar, unitBinder, unpackRec,
+              nRecGet, nTabGet, add, mul, sub, neg, div', andE,
+              select, selectAt, freshVar, unitBinder, unpackRec,
               substEmbed, fromPair, buildLamExprAux,
               emitExpr, unzipTab, buildFor, isSingletonType,
-              singletonTypeVal) where
+              singletonTypeVal, mapScalars,
+              boolToInt, intToReal, boolToReal) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -152,13 +153,18 @@ neg :: MonadCat EmbedEnv m => Atom -> m Atom
 neg x = emit $ ScalarUnOp FNeg x
 
 add :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
-add x y = emit $ ScalarBinOp FAdd x y
+add (RealVal 0) y = return y
+add x y           = emit $ ScalarBinOp FAdd x y
 
 mul :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 mul x y = emit $ ScalarBinOp FMul x y
 
 sub :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
 sub x y = emit $ ScalarBinOp FSub x y
+
+andE :: MonadCat EmbedEnv m => Atom -> Atom -> m Atom
+andE (BoolVal True) y = return y
+andE x y              = emit $ ScalarBinOp And x y
 
 select :: MonadCat EmbedEnv m => Type -> Atom -> Atom -> Atom -> m Atom
 select ty p x y = emit $ Select ty p x y
@@ -203,19 +209,21 @@ unzipTab tab = do
   return (fsts, snds)
   where (TabTy n _) = getType tab
 
-mapScalars :: MonadCat EmbedEnv m
-           => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
+mapScalars :: MonadCat EmbedEnv m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  FixedIntRange _ _ -> f ty xs
-  BaseTy _  -> f ty xs
   TabTy n a -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
     emit $ For Fwd lam
-  RecTy r -> do
+  RecTy r   -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
     liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'
+  BaseTy _           -> f ty xs
+  TC con -> case con of
+    IntRange _ _     -> f ty xs
+    IndexRange _ _ _ -> f ty xs
+    _ -> error $ "Not implemented " ++ pprint ty
   _ -> error $ "Not implemented " ++ pprint ty
 
 transposeRecord :: Record b -> [Record a] -> Record [a]
@@ -242,3 +250,12 @@ singletonTypeVal (TC con) = case con of
   RecType r   -> liftM RecVal $ traverse singletonTypeVal r
   _           -> Nothing
 singletonTypeVal _ = Nothing
+
+boolToInt :: MonadCat EmbedEnv m => Atom -> m Atom
+boolToInt b = emit $ ScalarUnOp BoolToInt b
+
+intToReal :: MonadCat EmbedEnv m => Atom -> m Atom
+intToReal i = emit $ ScalarUnOp IntToReal i
+
+boolToReal :: MonadCat EmbedEnv m => Atom -> m Atom
+boolToReal = boolToInt >=> intToReal

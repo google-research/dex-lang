@@ -573,7 +573,30 @@ unflatten params =
   ( for i. for j. params.(Left (i,j))
   , for i.        params.(Right i)    )
 
-:p (w, b)
-> ([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [-1.0, -2.0])
-:p unflatten (flatten (w, b))
-> ([[0.0, 1.0, 2.0], [3.0, 4.0, 5.0]], [-1.0, -2.0])
+:p unflatten (flatten (w, b)) == (w, b)
+> True
+
+:p (1, 2) == (1, 2)
+> True
+
+:p (for i:4. (1.0, asint i)) == (for i:4. (1.0, asint i))
+> True
+
+:p (1, 1) == (1, 2)
+> False
+
+:p (for i:4. 1.0) == (for i:4. 2.0)
+> False
+
+-- Needed to avoid ambiguous type variables if both sides use the same constructor
+cmpEither : Either Int Int -> Either Int Int -> Bool
+cmpEither x y = x == y
+
+:p cmpEither (Left 1) (Left 1)
+> True
+
+:p cmpEither (Left 1) (Left 2)
+> False
+
+:p cmpEither (Left 1) (Right 1)
+> False

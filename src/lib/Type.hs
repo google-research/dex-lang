@@ -260,6 +260,8 @@ checkClassConstraint c ty = do
     VSpace -> checkVSpace env ty
     IdxSet -> checkIdxSet env ty
     Data   -> checkData   env ty
+    Eq     -> checkEq     env ty
+    Ord    -> checkOrd    env ty
 
 checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 checkVSpace env ty = case ty of
@@ -275,27 +277,44 @@ checkIdxSet env ty = case ty of
   TypeVar v             -> checkVarClass env IdxSet v
   RecTy r               -> mapM_ recur r
   SumTy l r             -> recur l >> recur r
-  TC (BaseType BoolType) -> return ()
+  BoolTy                -> return ()
   TC (IntRange _ _)     -> return ()
   TC (IndexRange _ _ _) -> return ()
   _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
   where recur = checkIdxSet env
 
-checkData :: MonadError Err m => ClassEnv -> Type -> m ()
-checkData env ty = case ty of
+checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
+checkDataLike msg env ty = case ty of
   -- This is an implicit `instance IdxSet a => Data a`
   TypeVar v          -> checkVarClass env IdxSet v `catchError`
                            const (checkVarClass env Data v)
-  TabTy _ b        -> recur b
+  TabTy _ b          -> recur b
   TC con -> case con of
     BaseType _       -> return ()
     RecType r        -> mapM_ recur r
+    SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
-    _ -> throw TypeErr $ " Not serializable data: " ++ pprint ty
-  _   -> throw TypeErr $ " Not serializable data: " ++ pprint ty
-  where recur = checkData env
+    _ -> throw TypeErr $ pprint ty ++ msg
+  _   -> throw TypeErr $ pprint ty ++ msg
+  where recur x = checkDataLike msg env x
 
+checkData :: MonadError Err m => ClassEnv -> Type -> m ()
+checkData = checkDataLike " is not serializable"
+
+checkEq :: MonadError Err m => ClassEnv -> Type -> m ()
+checkEq   = checkDataLike " is not equatable"
+
+checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
+checkOrd env ty = case ty of
+  TypeVar v             -> checkVarClass env Ord v
+  IntTy                 -> return ()
+  RealTy                -> return ()
+  TC (IntRange _ _ )    -> return ()
+  TC (IndexRange _ _ _) -> return ()
+  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
+
+-- TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool
 isData ty = case checkData mempty ty of Left _ -> False
                                         Right _ -> True
@@ -536,13 +555,13 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     return $ pureType $ BaseTy tOut
     where (t1', t2', tOut) = binOpType binop
   -- TODO: check index set constraint
-  ScalarUnOp IndexAsInt _ -> return $ pureType IntTy
   ScalarUnOp unop ty -> eq (BaseTy ty') ty >> return (pureType (BaseTy outTy))
     where (ty', outTy) = unOpType unop
   -- -- TODO: check vspace constraints
   VSpaceOp ty VZero        -> inClass VSpace ty >> return (pureType ty)
   VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureType ty)
-  Cmp _  ty   a b -> eq ty a >> eq ty b >> return (pureType BoolTy)
+  Cmp Equal ty a b -> eq ty a >> eq ty b >> inClass Eq ty  >> return (pureType BoolTy)
+  Cmp _     ty a b -> eq ty a >> eq ty b >> inClass Ord ty >> return (pureType BoolTy)
   Select ty p a b -> eq ty a >> eq ty b >> eq BoolTy p >> return (pureType ty)
   RunReader r ~(Pi (RefTy r') (Effect row tailVar, a)) -> do
     row' <- popRow eq row (Reader, RefTy r)
@@ -562,6 +581,7 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     eq noEffect eff
     return $ pureType $ b --@ a
   IntAsIndex ty i  -> eq IntTy i >> return (pureType ty)
+  IndexAsInt t     -> inClass IdxSet t >> return (pureType IntTy)
   IdxSetSize _     -> return $ pureType IntTy
   NewtypeCast ty _ -> return $ pureType ty
   FFICall _ argTys ansTy argTys' ->
@@ -618,7 +638,6 @@ unOpType op = case op of
   IntToReal       -> (IntType, RealType)
   BoolToInt       -> (BoolType, IntType)
   UnsafeIntToBool -> (IntType, BoolType)
-  _ -> error $ show op
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of

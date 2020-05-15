@@ -135,7 +135,7 @@ toJaxOp' expr = case expr of
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
   ScalarBinOp op x y -> liftM toScalarAtom $
     emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
-  ScalarUnOp IndexAsInt x -> liftM toScalarAtom $
+  IndexAsInt x -> liftM toScalarAtom $
     emitOp $ JId (fromScalarAtom x)
   ScalarUnOp op x -> liftM toScalarAtom $
     emitOp $ JScalarUnOp op (fromScalarAtom x)

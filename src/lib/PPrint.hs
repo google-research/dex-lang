@@ -243,6 +243,8 @@ instance Pretty ClassName where
     Data   -> "Data"
     VSpace -> "VS"
     IdxSet -> "Ix"
+    Eq     -> "Eq"
+    Ord    -> "Ord"
 
 instance Pretty Decl where
   pretty decl = case decl of

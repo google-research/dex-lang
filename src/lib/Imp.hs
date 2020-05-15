@@ -20,7 +20,6 @@ import Control.Monad.Writer
 import Data.Foldable
 import Data.Functor.Reverse
 import Data.Text.Prettyprint.Doc
-import Data.Maybe (fromJust)
 
 import Syntax
 import Env
@@ -132,15 +131,9 @@ toImpCExpr' op = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
     return $ toScalarAtom resultTy ans
-  Cmp cmpOp ty x y -> do
-    x' <- fromScalarAtom x
-    y' <- fromScalarAtom y
-    ans <- emitInstr $ IPrimOp $ ScalarBinOp (op' cmpOp) x' y'
-    return $ toScalarAtom resultTy ans
-    where op' = case ty of BaseTy RealType -> FCmp
-                           _               -> ICmp
+  Cmp _ _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
-  ScalarUnOp IndexAsInt i -> return i
+  IndexAsInt i -> toScalarAtom IntTy <$> indexToInt (getType i) i
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -258,7 +251,7 @@ indexToInt ty idx = case ty of
   RecTy rt -> do
     case idx of
       (RecVal rv) -> do
-        rWithStrides <- getStrides $ fromJust $ zipWithRecord (,) rv rt
+        rWithStrides <- getStrides $ recZipWith (,) rv rt
         foldrM f (IIntVal 0) rWithStrides
         where
         f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr

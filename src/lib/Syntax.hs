@@ -40,7 +40,8 @@ module Syntax (
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal, pattern RealVal)
+    pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal,
+    pattern RealVal, pattern BoolVal)
   where
 
 import qualified Data.Map.Strict as M
@@ -108,7 +109,7 @@ type Dep    = Type
 type Effect = Type
 type EffectiveType = (Effect, Type)
 
-data ClassName = Data | VSpace | IdxSet  deriving (Show, Eq, Generic)
+data ClassName = Data | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
 
 data Limit a = InclusiveLim a
              | ExclusiveLim a
@@ -214,18 +215,26 @@ data PrimOp ty e lam =
       | ArrayGep e e
       | LoadScalar e
       | TabCon ty ty [e]
-      | ScalarBinOp ScalarBinOp e e | ScalarUnOp ScalarUnOp e
-      | VSpaceOp ty (VSpaceOp e) | Cmp CmpOp ty e e | Select ty e e e
+      | ScalarBinOp ScalarBinOp e e
+      | ScalarUnOp ScalarUnOp e
+      | VSpaceOp ty (VSpaceOp e)
+      | Select ty e e e
       | PrimEffect e (PrimEffect e)
       | RunReader e  lam
       | RunWriter    lam
       | RunState  e  lam
       | IndexEff EffectName e e lam
       | Linearize lam | Transpose lam
-      | IntAsIndex ty e | IdxSetSize ty
       | FFICall String [ty] ty [e]
       | NewtypeCast ty e
       | Inject e
+      -- Typeclass operations
+      -- Eq and Ord (should get eliminated during simplification)
+      | Cmp CmpOp ty e e
+      -- Idx (survives simplification, because we allow it to be backend-dependent)
+      | IntAsIndex ty e
+      | IndexAsInt e
+      | IdxSetSize ty
         deriving (Show, Eq, Generic)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
@@ -237,7 +246,7 @@ data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
                  | And | Or | Rem
                    deriving (Show, Eq, Generic)
 
-data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool | IndexAsInt
+data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool
                   deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
@@ -258,7 +267,7 @@ builtinNames = M.fromList
   , ("fneg", unOp  FNeg)
   , ("inttoreal", unOp IntToReal)
   , ("booltoint", unOp BoolToInt)
-  , ("asint"    , unOp IndexAsInt)
+  , ("asint"           , OpExpr $ IndexAsInt ())
   , ("idxSetSize"      , OpExpr $ IdxSetSize ())
   , ("linearize"       , OpExpr $ Linearize ())
   , ("linearTranspose" , OpExpr $ Transpose ())
@@ -704,6 +713,7 @@ instance TraversableExpr PrimOp where
     Linearize lam        -> liftA  Linearize (fL lam)
     Transpose lam        -> liftA  Transpose (fL lam)
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
+    IndexAsInt e         -> liftA  IndexAsInt (fE e)
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
     NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
@@ -793,6 +803,9 @@ pattern IntVal x = Con (Lit (IntLit x))
 
 pattern RealVal :: Double -> Atom
 pattern RealVal x = Con (Lit (RealLit x))
+
+pattern BoolVal :: Bool -> Atom
+pattern BoolVal x = Con (Lit (BoolLit x))
 
 pattern RecVal :: Record Atom -> Atom
 pattern RecVal r = Con (RecCon r)
