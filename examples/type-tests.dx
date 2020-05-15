@@ -230,19 +230,19 @@ f2 : Real -> Real
 f2 x = x + x
 
 :t [f1, f2]
-> Type error: Not serializable data: (Real -> Real)
+> Type error:(Real -> Real) is not serializable
 >
 > :t [f1, f2]
 >    ^^^^^^^^
 
 :t select True f1 f2
-> Type error: Not serializable data: (Real -> Real)
+> Type error:(Real -> Real) is not serializable
 >
 > :t select True f1 f2
 >    ^^^^^^^
 
 :t fold f1 \i:3 g. (\x. g (g x))
-> Type error: Not serializable data: (Real -> Real)
+> Type error:(Real -> Real) is not serializable
 >
 > :t fold f1 \i:3 g. (\x. g (g x))
 >    ^^^^^

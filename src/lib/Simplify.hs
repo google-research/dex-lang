@@ -20,6 +20,8 @@ import Embed
 import Record
 import Subst
 import Type
+import PPrint
+import Util (uncurry3)
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
@@ -149,6 +151,8 @@ simplifyCExpr expr = do
         projApp body isLeft = do
           cComp <- simplRec $ SumGet c isLeft
           simplRec $ App NonLin (Con $ Lam NonLin noEffect body) cComp
+    Cmp Equal t a b  -> resolveEq     t a b
+    Cmp op    t  a b -> resolveOrd op t a b
     App _ (Con (Lam _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b @> L x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
@@ -158,6 +162,66 @@ simplifyCExpr expr = do
     SumTag (SumVal s _ _) -> return $ s
     Select ty p x y -> selectAt ty p x y
     _ -> emit $ fmapExpr expr' id id fst
+
+resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
+resolveEq t x y = case t of
+  IntTy     -> emit $ ScalarBinOp (ICmp Equal) x y
+  RealTy    -> emit $ ScalarBinOp (FCmp Equal) x y
+  RecTy ts  -> do
+    xs <- unpackRec x
+    ys <- unpackRec y
+    equals <- mapM (uncurry3 resolveEq) $ recZipWith3 (,,) ts xs ys
+    foldM andE (BoolVal True) equals
+  -- instance Eq a => Eq n=>a
+  TabTy ixty elty -> do
+    writerLam <- buildLamExpr ("ref":> RefTy RealTy) $ \ref -> do
+      forLam <- buildLamExpr ("i":>ixty) $ \i -> do
+        (x', y') <- (,) <$> nTabGet x i <*> nTabGet y i
+        eqReal <- boolToReal =<< resolveEq elty x' y'
+        emit $ PrimEffect ref $ MTell eqReal
+      emit $ For Fwd forLam
+    idxSetSize <- intToReal =<< emit (IdxSetSize ixty)
+    total <- snd <$> (fromPair =<< emit (RunWriter writerLam))
+    emit $ Cmp Equal RealTy total idxSetSize
+  -- instance (Eq a, Eq b) => Eq (Either a b)
+  SumTy lty rty -> do
+    xt <- emit $ SumTag x
+    yt <- emit $ SumTag y
+    tagsEq <- resolveEq BoolTy xt yt
+    lEq <- compareSide True
+    rEq <- compareSide False
+    sideEq <- select BoolTy xt lEq rEq
+    andE tagsEq sideEq
+    where
+      compareSide isLeft = do
+        xe <- emit $ SumGet x isLeft
+        ye <- emit $ SumGet y isLeft
+        resolveEq (if isLeft then lty else rty) xe ye
+  -- instance Idx a => Eq a
+  BoolTy                -> idxEq
+  TC (IntRange _ _)     -> idxEq
+  TC (IndexRange _ _ _) -> idxEq
+  _ -> error $ pprint t ++ " doesn't implement Eq"
+  where
+    idxEq = do
+      xi <- emit $ IndexAsInt x
+      yi <- emit $ IndexAsInt y
+      emit $ ScalarBinOp (ICmp Equal) xi yi
+
+resolveOrd :: CmpOp -> Type -> Atom -> Atom -> SimplifyM Atom
+resolveOrd op t x y = case t of
+  IntTy  -> emit $ ScalarBinOp (ICmp op) x y
+  RealTy -> emit $ ScalarBinOp (FCmp op) x y
+  TC con -> case con of
+    IntRange _ _     -> idxOrd
+    IndexRange _ _ _ -> idxOrd
+    _ -> error $ pprint t ++ " doesn't implement Ord"
+  _ -> error $ pprint t ++ " doesn't implement Ord"
+  where
+    idxOrd = do
+      xi <- emit $ IndexAsInt x
+      yi <- emit $ IndexAsInt y
+      emit $ ScalarBinOp (ICmp op) xi yi
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of

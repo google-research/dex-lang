@@ -306,7 +306,6 @@ compilePrimOp (ScalarUnOp op x) = case op of
   BoolToInt -> return x -- bools stored as ints
   UnsafeIntToBool -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
-  _ -> error "Not implemented"
 compilePrimOp (Select ty p x y) = do
   p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
   emitInstr ty $ L.Select p' x y []

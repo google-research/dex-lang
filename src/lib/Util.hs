@@ -10,7 +10,7 @@ module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt) where
+             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -186,3 +186,6 @@ asState f = do
   let (ans, s') = f s
   put s'
   return ans
+
+uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
+uncurry3 f (x, y, z) = f x y z
