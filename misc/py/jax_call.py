@@ -10,6 +10,7 @@ import sys
 import pprint as pp
 import traceback
 import numpy as np
+from jax import random
 
 scary_map = map
 
@@ -276,6 +277,11 @@ def des_op_and_args(obj):
     x = IndexedAtom.des(x_ser)
     y = IndexedAtom.des(y_ser)
     return "Get", [], [x, y]
+  elif tag == "JThreeFry2x32":
+    x_ser, y_ser = obj["contents"]
+    x = IndexedAtom.des(x_ser)
+    y = IndexedAtom.des(y_ser)
+    return "ThreeFry2x32", [], [x, y]
   else:
     raise Exception("Not implemented: " + str(tag))
 
@@ -329,6 +335,14 @@ def eval_for(op):
     x, = op.args
     x_bc = broadcast_dims(op.all_idxs, x.idxs, -x.atom.val)
     return x_bc
+  elif op.op_name == "ThreeFry2x32":
+    convert_64_to_32s = lambda x: np.array([x]).view(np.uint32)
+    convert_32s_to_64 = lambda x: np.int64(np.array(x).view(np.int64).item())
+    x, y = op.args
+    key, count = convert_64_to_32s(x.atom.val), convert_64_to_32s(y.atom.val)
+    result = convert_32s_to_64(random.threefry_2x32(key, count))
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, result)
+    return x_bc
   else:
     raise Exception("Unrecognized op: {}".format(op.op_name))
 
@@ -362,7 +376,7 @@ def get_stack_idxs_used(for_idxs, idxs):
       stack_vars.append(Discard)
   return stack_vars
 
-arrayish_types = (np.float32, np.ndarray, np.int64, np.float64)
+arrayish_types = (np.ndarray, np.int64, np.float64)
 
 def subst_op(env, op):
   args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]
@@ -383,7 +397,7 @@ def dtype_basetype(x):
   elif x in [np.float32, np.float64]:
     return "RealType"
   else:
-    assert False
+    assert False, x
 
 def basetype_dtype(x):
   if x == "IntType":
