@@ -164,11 +164,8 @@ toJaxOp' expr = case expr of
       val -> error $ "Expected a record, got: " ++ show val
   FFICall s _ _ args | s == "threefry2x32" -> liftM toScalarAtom $
       emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
-        where (x, y) = unpack2 args
+        where (x, y) = (\[a, b] -> (a, b)) args
   _ -> error $ "Not implemented: " ++ show expr
-
-unpack2 :: [a] -> (a, a)
-unpack2 [x, y] = (x, y)
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
 iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x
