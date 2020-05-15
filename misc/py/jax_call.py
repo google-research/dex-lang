@@ -126,7 +126,7 @@ class Atom(object):
       assert isinstance(data, Var)
       self.var = data
     elif case == "Lit":
-      assert isinstance(data, arrayish_types)
+      assert isinstance(data, arrayish_types), type(data)
       self.val = data
     else:
       assert False
@@ -259,6 +259,10 @@ def des_op_and_args(obj):
     x = IndexedAtom.des(x_ser)
     y = IndexedAtom.des(y_ser)
     return binop_name["tag"], [], [x, y]
+  if tag == "JScalarUnOp":
+    unop_name, x_ser = obj["contents"]
+    x = IndexedAtom.des(x_ser)
+    return unop_name, [], [x]
   elif tag == "JIota":
     size = obj["contents"]
     assert isinstance(size, int)
@@ -316,6 +320,11 @@ def eval_for(op):
     payload_idx_array = broadcast_dims(op.all_idxs, idx.idxs, idx.atom.val)
     out = x.atom.val[tuple(leading_idx_arrays) + (payload_idx_array,)]
     return out
+  elif op.op_name == "IntToReal":
+    x, = op.args
+    real_val = np.array(x.atom.val, dtype="float32")
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, real_val)
+    return x_bc
   else:
     raise Exception("Unrecognized op: {}".format(op.op_name))
 
@@ -349,7 +358,7 @@ def get_stack_idxs_used(for_idxs, idxs):
       stack_vars.append(Discard)
   return stack_vars
 
-arrayish_types = (np.ndarray, np.int64, np.float64)
+arrayish_types = (np.float32, np.ndarray, np.int64, np.float64)
 
 def subst_op(env, op):
   args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]

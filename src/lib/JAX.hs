@@ -137,6 +137,8 @@ toJaxOp' expr = case expr of
     emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
   ScalarUnOp IndexAsInt x -> liftM toScalarAtom $
     emitOp $ JId (fromScalarAtom x)
+  ScalarUnOp IntToReal x -> liftM toScalarAtom $
+    emitOp $ JScalarUnOp IntToReal (fromScalarAtom x)
   RunWriter (LamExpr refVar body, env) -> do
     idxEnvDepth <- asks length
     let (RefTy wTy) = varAnn refVar
