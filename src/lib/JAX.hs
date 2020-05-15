@@ -234,7 +234,8 @@ instance HasType TmpAtom where
 
 -- === Simplification pass on JAX IR ===
 
-type SimpEnv = (Env JAtom, Env JFor)
+type BindingEnv = Env (VarUsage, JFor)
+type SimpEnv = (Env JAtom, BindingEnv)
 type SimpM = Cat JEmbedEnv
 
 pattern JForId :: JAtom -> JFor
@@ -248,53 +249,75 @@ simplifyJaxFunction (JaxFunction vs expr) = fst $ flip runCat mempty $ do
   return $ JaxFunction vs' $ JExpr decls' result'
 
 simplifyJaxExpr :: SimpEnv -> JExpr -> SimpM [JAtom]
-simplifyJaxExpr env (JExpr decls results) = do
-  (_, env') <- flip runCatT env $ mapM simplifyJaxDecl decls
+simplifyJaxExpr env expr@(JExpr decls results) = do
+  let usageEnv = collectUsage expr
+  (_, env') <- flip runCatT env $ mapM (simplifyJaxDecl usageEnv) decls
   let (substEnv, _) = env <> env'
   return $ fmap (jSubst substEnv) results
 
-simplifyJaxDecl :: JDecl -> CatT SimpEnv SimpM ()
-simplifyJaxDecl (JLet v jfor) = do
+simplifyJaxDecl :: UsageEnv -> JDecl -> CatT SimpEnv SimpM ()
+simplifyJaxDecl usageEnv (JLet v jfor) = do
   (substEnv, bindingEnv) <- look
+  let usage = lookupUse usageEnv v
   let jfor' = simplifyJFor bindingEnv $ jSubst substEnv jfor
   case jfor' of
     JForId x -> extend $ asFst (v @> x)
     _ -> do
       vOut <- lift $ emitJFor jfor'
-      extend $ (v @> JVar vOut, vOut @> jfor')
+      extend $ (v @> JVar vOut, vOut @> (usage, jfor'))
 
-simplifyJFor :: Env JFor -> JFor -> JFor
+simplifyJFor :: BindingEnv -> JFor -> JFor
 simplifyJFor env (JFor forIdxs sumIdxs op) =
   case op' of
     JGet (IdxAtom x xIdxs) idx -> case matchIota env idx of
       Just i -> simplifyJFor env $
                   JFor forIdxs [] $ JId $ IdxAtom x $ xIdxs ++ [i]
       Nothing -> jfor'
-    JId (IdxAtom x xIdxs) -> JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
-      where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
-    _ -> jfor'
+    JId (IdxAtom (JVar v) xIdxs) ->
+      case envLookup env v of
+        Just (UsedOnce, vDef) -> inlineId forIdxs sumIdxs vDef xIdxs
+        _ -> etaReduce jfor'
+    _ -> etaReduce jfor'
   where
     op' = fmap (simpFix $ simplifyIdxAtom env) op
     jfor' = JFor forIdxs sumIdxs op'
 
-matchIota :: Env JFor -> IdxAtom -> Maybe IdxVar
+etaReduce :: JFor -> JFor
+etaReduce (JFor forIdxs sumIdxs (JId (IdxAtom x xIdxs))) =
+  JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
+    where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
+etaReduce jfor = jfor
+
+matchIota :: BindingEnv -> IdxAtom -> Maybe IdxVar
 matchIota env (IdxAtom (JVar v) idxs) = do
-  jfor <- envLookup env v
+  (_, jfor) <- envLookup env v
   result <- applyIdxs jfor idxs
   case result of
     (JIota _, [i]) -> Just i
     _ -> Nothing
 matchIota _ _ = Nothing
 
-simplifyIdxAtom :: Env JFor -> IdxAtom -> Maybe IdxAtom
+simplifyIdxAtom :: BindingEnv -> IdxAtom -> Maybe IdxAtom
 simplifyIdxAtom env idxAtom = case idxAtom of
   IdxAtom (JVar v) idxs -> do
-    jfor <- envLookup env v
+    (_, jfor) <- envLookup env v
     result <- applyIdxs jfor idxs
     case result of
       (JId (IdxAtom x idxs'), idxs'') -> return $ IdxAtom x (idxs' <> idxs'')
       _ -> Nothing
   _     -> Nothing
+
+inlineId :: [IdxVar] -> [IdxVar] -> JFor -> [IdxVar] -> JFor
+inlineId forIdxs sumIdxs (JFor forIdxs' sumIdxs' op) appIdxs =
+  JFor (forIdxs <> forIdxs'') (sumIdxs <> sumIdxs'') op'
+  where
+    -- The complexity here is all in the variable renaming.
+    -- Stack-based indices would be much simpler.
+    idxScope = foldMap (@>()) $ forIdxs <> sumIdxs
+    (forIdxs'', idxScope') = renames (drop (length appIdxs) forIdxs') idxScope
+    (sumIdxs'', _) = renames sumIdxs' (idxScope <> idxScope')
+    ~(Just (op', [])) = applyIdxs (JFor (forIdxs' <> sumIdxs') [] op) $
+                          appIdxs <> forIdxs'' <> sumIdxs''
 
 applyIdxs :: JFor -> [IdxVar] -> Maybe (JOpP IdxAtom, [IdxVar])
 applyIdxs (JFor idxBinders [] op) idxs | length idxs >= length idxBinders = do
@@ -308,20 +331,18 @@ applyIdxs _ _ = Nothing
 
 -- === variable usage pass ===
 
-data VarUsage = Unused | UsedOnceInId | ArbitraryUse  deriving (Show, Eq)
+data VarUsage = Unused | UsedOnce | ArbitraryUse  deriving (Show, Eq)
 
 type UsageEnv = MonMap Name VarUsage
 
 collectUsage :: JExpr -> UsageEnv
 collectUsage (JExpr decls result) = snd $ flip runCat mempty $ do
   extend $ useFreeVars ArbitraryUse result
-  forM_ (reverse decls) $ \(JLet v jfor@(JFor _ _ op)) -> do
+  forM_ (reverse decls) $ \(JLet v jfor) -> do
     use <- looks $ flip lookupUse v
     case use of
       Unused -> return ()
-      _ -> case op of
-        JId _ -> extend $ useFreeVars UsedOnceInId jfor
-        _     -> extend $ useFreeVars ArbitraryUse jfor
+      _ -> extend $ useFreeVars UsedOnce jfor
 
 lookupUse :: UsageEnv -> VarP ann -> VarUsage
 lookupUse env (v:>_) = monMapLookup env v
