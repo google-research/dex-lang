@@ -14,11 +14,13 @@ module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
             JExpr, JaxFunction, toJaxFunction, simplifyJaxFunction,
             dceJaxFunction) where
 
+import Control.Applicative
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.State.Strict
 import Data.Aeson  hiding (Array)
+import Data.Maybe
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import GHC.Stack
@@ -44,6 +46,7 @@ data IdxAtom = IdxAtom JAtom [IdxVar]       deriving (Generic, Show, Eq)
 data JType = JType [AxisSize] BaseType      deriving (Generic, Show, Eq)
 data JaxFunction = JaxFunction [JVar] JExpr deriving (Generic, Show, Eq)
 
+type JOp = JOpP IdxAtom
 data JOpP e = JId e
             | JIota AxisSize
             | JGet e e
@@ -107,9 +110,7 @@ toJaxDecl env (Let v rhs) = do
 toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
 toJaxAtom env atom = case atom of
   Var v@(_:>RefTy _) -> TmpRefName v
-  Var v -> case envLookup env v of
-    Just x  -> x
-    Nothing -> error "lookup failed"
+  Var v -> fromMaybe (error "lookup failed") $ envLookup env v
   Con (Lit x) -> tmpAtomScalarLit x
   Con con -> TmpCon $ fmapExpr con id (toJaxAtom env) (error "unexpected lambda")
   _ -> error $ "Not implemented: " ++ pprint atom
@@ -259,75 +260,46 @@ simplifyJaxDecl :: UsageEnv -> JDecl -> CatT SimpEnv SimpM ()
 simplifyJaxDecl usageEnv (JLet v jfor) = do
   (substEnv, bindingEnv) <- look
   let usage = lookupUse usageEnv v
-  let jfor' = simplifyJFor bindingEnv $ jSubst substEnv jfor
+  let jfor' = simpFix (simplifyJFor bindingEnv) $ jSubst substEnv jfor
   case jfor' of
     JForId x -> extend $ asFst (v @> x)
     _ -> do
       vOut <- lift $ emitJFor jfor'
       extend $ (v @> JVar vOut, vOut @> (usage, jfor'))
 
-simplifyJFor :: BindingEnv -> JFor -> JFor
-simplifyJFor env (JFor forIdxs sumIdxs op) =
-  case op' of
-    JGet (IdxAtom x xIdxs) idx -> case matchIota env idx of
-      Just i -> simplifyJFor env $
-                  JFor forIdxs [] $ JId $ IdxAtom x $ xIdxs ++ [i]
-      Nothing -> jfor'
-    JId (IdxAtom (JVar v) xIdxs) ->
-      case envLookup env v of
-        Just (UsedOnce, vDef) -> inlineId forIdxs sumIdxs vDef xIdxs
-        _ -> etaReduce jfor'
-    _ -> etaReduce jfor'
+simplifyJFor :: BindingEnv -> JFor -> Maybe JFor
+simplifyJFor env jfor@(JFor forIdxs sumIdxs op) =
+       wrapFor (mapParallel (inlineFromId env) op)
+   <|> wrapFor (inlineGetIota env op)
+   <|> inlineIntoId env jfor
+   <|> checkProgress etaReduce jfor
   where
-    op' = fmap (simpFix $ simplifyIdxAtom env) op
-    jfor' = JFor forIdxs sumIdxs op'
+    wrapFor = liftM (JFor forIdxs sumIdxs)
 
-etaReduce :: JFor -> JFor
-etaReduce (JFor forIdxs sumIdxs (JId (IdxAtom x xIdxs))) =
-  JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
-    where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
-etaReduce jfor = jfor
+inlineGetIota :: BindingEnv -> JOp -> Maybe JOp
+inlineGetIota env op = do
+  JGet (IdxAtom x xIdxs) (IdxAtom (JVar v) idxs) <- return op
+  (_, varDef) <- envLookup env v
+  (JFor [] [] (JIota _), [i]) <- return $ betaReduce varDef idxs
+  return $ JId $ IdxAtom x $ xIdxs ++ [i]
 
-matchIota :: BindingEnv -> IdxAtom -> Maybe IdxVar
-matchIota env (IdxAtom (JVar v) idxs) = do
+inlineIntoId :: BindingEnv -> JFor -> Maybe JFor
+inlineIntoId env (JFor forIdxs sumIdxs op) = do
+  JId (IdxAtom (JVar v) appIdxs) <- return op
+  (UsedOnce, jfor) <- envLookup env v
+  let idxScope = foldMap (@>()) $ forIdxs <> sumIdxs
+  let jforFresh = refreshIdxVars idxScope jfor
+  (jfor', []) <- return $ betaReduce jforFresh appIdxs
+  -- this extra freshening might be over-cautious
+  let (JFor forIdxs' sumIdxs' op') = refreshIdxVars idxScope jfor'
+  return $ JFor (forIdxs <> forIdxs') (sumIdxs <> sumIdxs') op'
+
+inlineFromId :: BindingEnv -> IdxAtom -> Maybe IdxAtom
+inlineFromId env idxAtom = do
+  IdxAtom (JVar v) idxs <- return idxAtom
   (_, jfor) <- envLookup env v
-  result <- applyIdxs jfor idxs
-  case result of
-    (JIota _, [i]) -> Just i
-    _ -> Nothing
-matchIota _ _ = Nothing
-
-simplifyIdxAtom :: BindingEnv -> IdxAtom -> Maybe IdxAtom
-simplifyIdxAtom env idxAtom = case idxAtom of
-  IdxAtom (JVar v) idxs -> do
-    (_, jfor) <- envLookup env v
-    result <- applyIdxs jfor idxs
-    case result of
-      (JId (IdxAtom x idxs'), idxs'') -> return $ IdxAtom x (idxs' <> idxs'')
-      _ -> Nothing
-  _     -> Nothing
-
-inlineId :: [IdxVar] -> [IdxVar] -> JFor -> [IdxVar] -> JFor
-inlineId forIdxs sumIdxs (JFor forIdxs' sumIdxs' op) appIdxs =
-  JFor (forIdxs <> forIdxs'') (sumIdxs <> sumIdxs'') op'
-  where
-    -- The complexity here is all in the variable renaming.
-    -- Stack-based indices would be much simpler.
-    idxScope = foldMap (@>()) $ forIdxs <> sumIdxs
-    (forIdxs'', idxScope') = renames (drop (length appIdxs) forIdxs') idxScope
-    (sumIdxs'', _) = renames sumIdxs' (idxScope <> idxScope')
-    ~(Just (op', [])) = applyIdxs (JFor (forIdxs' <> sumIdxs') [] op) $
-                          appIdxs <> forIdxs'' <> sumIdxs''
-
-applyIdxs :: JFor -> [IdxVar] -> Maybe (JOpP IdxAtom, [IdxVar])
-applyIdxs (JFor idxBinders [] op) idxs | length idxs >= length idxBinders = do
-  let op' = flip fmap op $ \(IdxAtom x atomIdxs) ->
-              IdxAtom x $ map (substEnv !) atomIdxs
-  return (op', remIdxs)
-  where
-    substEnv = newEnv idxBinders appIdxs
-    (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
-applyIdxs _ _ = Nothing
+  (JFor [] [] (JId (IdxAtom x idxs')), idxs'') <- return $ betaReduce jfor idxs
+  return $ IdxAtom x (idxs' <> idxs'')
 
 -- === variable usage pass ===
 
@@ -516,6 +488,36 @@ instance (Traversable f, HasJVars a) => HasJVars (f a) where
   freeJVars xs = foldMap freeJVars xs
   jSubst env op = fmap (jSubst env) op
 
+etaReduce :: JFor -> JFor
+etaReduce (JFor forIdxs sumIdxs (JId (IdxAtom x xIdxs))) =
+  JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
+    where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
+etaReduce jfor = jfor
+
+betaReduce :: JFor -> [IdxVar] -> (JFor, [IdxVar])
+betaReduce jfor@(JFor _ [] _) idxs = do
+  let freeVs = foldMap (@>()) idxs
+  let (JFor idxBinders [] op) = refreshIdxVars freeVs jfor
+  let (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
+  let (appBinders, remBinders) = splitAt (length appIdxs) idxBinders
+  let substEnv = newEnv appBinders appIdxs
+  let op' = substOp substEnv op
+  (JFor remBinders [] op', remIdxs)
+betaReduce jfor idxs = (jfor, idxs)
+
+refreshIdxVars :: Scope -> JFor -> JFor
+refreshIdxVars scope (JFor forIdxs sumIdxs op) = do
+  let (forIdxs', scope') = renames forIdxs scope
+  let (sumIdxs', _)      = renames sumIdxs (scope <> scope')
+  let substEnv = newEnv forIdxs forIdxs' <> newEnv sumIdxs sumIdxs'
+  JFor forIdxs' sumIdxs' $ substOp substEnv op
+
+-- TODO: extend `HasJVars` to handle index var substitution too
+substOp :: Env IdxVar -> JOp -> JOp
+substOp env op = flip fmap op $ \(IdxAtom x atomIdxs) ->
+                                    IdxAtom x $ map trySubst atomIdxs
+  where trySubst v = fromMaybe v (envLookup env v)
+
 -- === utils ===
 
 dropCommonTail :: Eq a => [a] -> [a] -> ([a], [a])
@@ -526,10 +528,24 @@ dropCommonPrefix :: Eq a => [a] -> [a] -> ([a], [a])
 dropCommonPrefix (x:xs) (y:ys) | x == y = dropCommonPrefix xs ys
 dropCommonPrefix xs ys = (xs, ys)
 
-simpFix :: (a -> Maybe a) -> a -> a
+-- === simplification combinators ===
+
+-- Simplifiers must only produce `Just` if some progress was made.
+-- (e.g. avoid `mySimp x = trySimp x <|> pure x`)
+
+simpFix :: Eq a => (a -> Maybe a) -> a -> a
 simpFix f x = case f x of
   Nothing -> x
   Just x' -> simpFix f x'
+
+-- TODO: more efficient implementation without using Eq
+mapParallel :: (Eq a, Eq (f a), Functor f) => (a -> Maybe a) -> f a -> Maybe (f a)
+mapParallel f = checkProgress (fmap (\x -> fromMaybe x (f x)))
+
+checkProgress :: Eq a => (a -> a) -> a -> Maybe a
+checkProgress f x | x' == x = Nothing
+                  | otherwise = Just x'
+  where x' = f x
 
 -- === instances ===
 
