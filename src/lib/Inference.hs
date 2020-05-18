@@ -170,12 +170,39 @@ checkTLam ~(Forall tbs qs tyBody) (FTLam _ _ tlamBody) = do
     check tlamBody (noEffect, tyBody)
 
 checkLam :: FLamExpr -> PiType EffectiveType -> InferM FLamExpr
-checkLam (FLamExpr p body) piTy@(Pi a _) = do
+checkLam (FLamExpr p body) piTy@(Pi a (eff, b)) = do
   p' <- checkPat p a
-  piTy' <- zonk piTy
-  effTy <- maybeApplyPi piTy' (Just (Var (getPatName p :> a)))
-  body' <- extendR (foldMap lbind p') $ check body effTy
-  return $ FLamExpr p' body'
+  case p' of
+    RecLeaf v -> do  -- Dependent case
+      -- TODO: This is a very hacky way for determining whether we are in checking or
+      --       inference mode. In particular, we don't have any guarantees as to whether
+      --       the non-variable type doesn't contain inference variables inside. In that
+      --       situation some leaks might occur, as we might end up unifying types in the
+      --       body with them.
+      b' <- zonk b
+      case b' of
+        TypeVar _ -> do
+          bodyValTyVar <- freshQ
+          bodyEffTyVar <- freshInferenceVar EffectKind
+          body' <- extendR (foldMap lbind p') $ check body (bodyEffTyVar, bodyValTyVar)
+          bodyEffType <- (,) <$> zonk bodyEffTyVar <*> zonk bodyValTyVar
+          let (Pi _ (effTy, resTy)) = makePi v bodyEffType
+          constrainEq b   resTy (pprint body)
+          constrainEq eff effTy (pprint body)
+          return $ FLamExpr p' body'
+        _ -> do
+          -- XXX: Ideally we could put this in here, but this invariant is violated. For now
+          --      we just cross our fingers and hope that the leaks don't occur...
+          -- unless (noInferenceVars b') $
+          --   throw CompilerErr $ "Inference vars found in checking mode: " ++ (pprint b')
+          piTy' <- zonk piTy
+          effTy <- maybeApplyPi piTy' $ Just $ Var v
+          body' <- extendR (foldMap lbind p') $ check body effTy
+          return $ FLamExpr p' body'
+    _ -> do          -- Regular function
+      body' <- extendR (foldMap lbind p') $ check body (eff, b)
+      -- TODO: Make sure that the pattern variables are not leaking?
+      return $ FLamExpr p' body'
 
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
