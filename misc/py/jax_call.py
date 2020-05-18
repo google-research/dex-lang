@@ -10,6 +10,10 @@ import sys
 import pprint as pp
 import traceback
 import numpy as np
+import jax.numpy as jnp
+from jax import jit, make_jaxpr, xla_computation
+from jax import random
+from jax import lax
 
 scary_map = map
 
@@ -288,6 +292,7 @@ def des_op_and_args(obj):
 global_env = {}
 
 def eval_op(op):
+  # TODO handle FMul/IMul in a single einsum
   broadcast_ans = eval_for(op)
   sum_axes = tuple(i for (i, (_, fl)) in enumerate(op.binders) if fl == SumIdx)
   summed_ans = np.sum(broadcast_ans, axis=sum_axes)
@@ -300,14 +305,14 @@ def eval_for(op):
     x_bc = broadcast_dims(op.all_idxs, x.idxs, x.atom.val)
     y_bc = broadcast_dims(op.all_idxs, y.idxs, y.atom.val)
     if op.op_name in ("IAdd", "FAdd"):
-      return x_bc + y_bc
+      return jnp.add(x_bc, y_bc)
     elif op.op_name in ("IMul", "FMul"):
-      return x_bc * y_bc
+      return jnp.multiply(x_bc, y_bc)
     else:
       raise Exception("Not implemented: " + str(op.op_name))
   elif op.op_name == "Iota":
     n, = op.size_args
-    val = np.arange(n)
+    val = jnp.arange(n)
     val_bc = broadcast_dims(op.all_idxs, [], val)
     return val_bc
   elif op.op_name == "Id":
@@ -329,15 +334,14 @@ def eval_for(op):
     return out
   elif op.op_name == "IntToReal":
     x, = op.args
-    real_val = np.array(x.atom.val, dtype="float32")
+    real_val = jnp.array(x.atom.val, dtype="float32")
     x_bc = broadcast_dims(op.all_idxs, x.idxs, real_val)
     return x_bc
   elif op.op_name in ("FNeg", "INeg"):
     x, = op.args
-    x_bc = broadcast_dims(op.all_idxs, x.idxs, -x.atom.val)
+    x_bc = broadcast_dims(op.all_idxs, x.idxs, jnp.negative(x.atom.val))
     return x_bc
   elif op.op_name == "ThreeFry2x32":
-    from jax import random  # TODO(mattjj); fix travis jax installation
     convert_64_to_32s = lambda x: np.array([x]).view(np.uint32)
     convert_32s_to_64 = lambda x: np.int64(np.array(x).view(np.int64).item())
     x, y = op.args
@@ -349,18 +353,20 @@ def eval_for(op):
     raise Exception("Unrecognized op: {}".format(op.op_name))
 
 def broadcast_dims(for_idxs, idxs, x):
+  shape = [i.size for i in for_idxs]
   idxs_used = get_stack_idxs_used(for_idxs, idxs)
-  return broadcast_with(x, [i.size for i in for_idxs], idxs_used)
+  bcast_dims = [i for i, b in enumerate(idxs_used) if b]
+  return lax.broadcast_in_dim(x, shape, bcast_dims)
 
 def broadcast_with(x, final_shape, idxs_used):
   rem_shape = list(x.shape[sum(idxs_used):])
   reshape_shape = [size if use else 1 for (size, use) in zip(final_shape, idxs_used)]
-  x_singletons = np.reshape(x, reshape_shape + rem_shape)
-  return np.broadcast_to(x_singletons, final_shape + rem_shape)
+  x_singletons = jnp.reshape(x, reshape_shape + rem_shape)
+  return jnp.broadcast_to(x_singletons, final_shape + rem_shape)
 
 def nth_iota(shape, i):
   size = shape[i]
-  iota = np.arange(size)
+  iota = jnp.arange(size)
   idxs_used = [Discard for _ in shape]
   idxs_used[i] = Use
   return broadcast_with(iota, shape, idxs_used)
@@ -378,7 +384,7 @@ def get_stack_idxs_used(for_idxs, idxs):
       stack_vars.append(Discard)
   return stack_vars
 
-arrayish_types = (np.ndarray, np.int64, np.float64, np.float32)
+arrayish_types = (jnp.ndarray, np.ndarray, np.int64, np.float64, np.float32)
 
 def subst_op(env, op):
   args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]
@@ -419,20 +425,23 @@ def atom_as_var(x):
   return v
 
 def eval_function_application(top_arg):
-  f = JaxFunction.des(top_arg[0])
-  args = [Atom("Var", Var.des(x)) for x in top_arg[1]]
-  env = global_env.copy()
-  args_subst = [subst_atom(env, arg) for arg in args]
-  for v, arg in zip(f.binders, args_subst):
-    env[v] = arg
-  for (v, op) in f.decls:
-    ans =  eval_op(subst_op(env, op))
-    if not (v.ty == ans.ty):
-      print(op)
-      raise Exception("Unexpected type. Expected {}, got {}".format(v.ty, ans.ty))
-    env[v] = ans
-  irdump = "<this is not a jaxpr>"
-  return [atom_as_var(subst_atom(env, r)).ser() for r in f.results], irdump
+  def run():
+    f = JaxFunction.des(top_arg[0])
+    args = [Atom("Var", Var.des(x)) for x in top_arg[1]]
+    env = global_env.copy()
+    args_subst = [subst_atom(env, arg) for arg in args]
+    for v, arg in zip(f.binders, args_subst):
+      env[v] = arg
+    for (v, op) in f.decls:
+      ans = eval_op(subst_op(env, op))
+      if not (v.ty == ans.ty):
+        print(op)
+        raise Exception("Unexpected type. Expected {}, got {}".format(v.ty, ans.ty))
+      env[v] = ans
+    return [subst_atom(env, r).val for r in f.results]
+  outs = run()
+  irdump = str(make_jaxpr(run)())
+  return [atom_as_var(Atom("Lit", out)).ser() for out in outs], irdump
 
 def check_type(ty, val):
   assert isinstance(ty, Ty)

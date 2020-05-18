@@ -53,7 +53,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep quine-tests jax-tests repl-test
+tests: test-prep quine-tests repl-test
 
 test-prep:
 	rm -rf test-scratch/
