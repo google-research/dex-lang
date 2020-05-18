@@ -38,6 +38,7 @@ import Array
 type AxisSize = Int
 type JVar   = VarP JType
 type IdxVar = VarP AxisSize
+data IdxFlavor = MapIdx | SumIdx            deriving (Generic, Show, Eq)
 
 data JDecl = JLet JVar JFor                 deriving (Generic, Show, Eq)
 data JExpr = JExpr [JDecl] [JAtom]          deriving (Generic, Show, Eq)
@@ -60,7 +61,7 @@ data TmpAtom = TmpLeaf IdxAtom
              | TmpCon (PrimCon Type TmpAtom ())
                deriving (Generic, Show, Eq)
 
-data JFor = JFor [IdxVar] [IdxVar] (JOpP IdxAtom)
+data JFor = JFor [(IdxVar, IdxFlavor)] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
 -- === lowering from Expr ===
@@ -125,12 +126,12 @@ toJaxOp' expr = case expr of
     idxEnv <- ask
     -- TODO: scope this to avoid burning through names
     i' <-freshIdxVar n
-    iotaVar <- emitJFor $ JFor [] [] $ JIota n
+    iotaVar <- emitJFor $ JFor [] $ JIota n
     let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ IdxAtom (JVar iotaVar) [i']
     let env' = env <> i @> iotaAtom
     ans <- extendR [i'] $ toJaxExpr env' body
     liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
-      ansVar <- emitJFor $ JFor (idxEnv ++ [i']) [] $ JId x
+      ansVar <- emitJFor $ JFor (map (,MapIdx) (idxEnv ++ [i'])) $ JId x
       return $ IdxAtom (JVar ansVar) idxEnv
   TabGet ~(TmpCon (AFor _ tab)) i -> do
     traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
@@ -201,7 +202,7 @@ jTypeToType ty = case ty of
 emitOp :: JOpP IdxAtom -> JaxM IdxAtom
 emitOp op = do
   idxEnv <- ask
-  v <- emitJFor $ JFor idxEnv [] op
+  v <- emitJFor $ JFor (map (,MapIdx) idxEnv) op
   return $ IdxAtom (JVar v) idxEnv
 
 zerosAt :: Type -> JaxM TmpAtom
@@ -219,8 +220,10 @@ sumPoly :: Int -> TmpAtom -> JaxM TmpAtom
 sumPoly depth atom = do
   idxEnv <- ask
   let (forIdxs, sumIdxs) = splitAt depth idxEnv
+  let idxBinders =  zip forIdxs (repeat MapIdx)
+                 <> zip sumIdxs (repeat SumIdx)
   traverseArrayLeaves atom $ \x -> do
-     v <- emitJFor $ JFor forIdxs sumIdxs $ JId x
+     v <- emitJFor $ JFor idxBinders $ JId x
      return $ IdxAtom (JVar v) forIdxs
 
 tmpAtomScalarLit :: LitVal -> TmpAtom
@@ -240,7 +243,7 @@ type SimpEnv = (Env JAtom, BindingEnv)
 type SimpM = Cat JEmbedEnv
 
 pattern JForId :: JAtom -> JFor
-pattern JForId x = JFor [] [] (JId (IdxAtom x []))
+pattern JForId x = JFor [] (JId (IdxAtom x []))
 
 simplifyJaxFunction :: JaxFunction -> JaxFunction
 simplifyJaxFunction (JaxFunction vs expr) = fst $ flip runCat mempty $ do
@@ -268,37 +271,34 @@ simplifyJaxDecl usageEnv (JLet v jfor) = do
       extend $ (v @> JVar vOut, vOut @> (usage, jfor'))
 
 simplifyJFor :: BindingEnv -> JFor -> Maybe JFor
-simplifyJFor env jfor@(JFor forIdxs sumIdxs op) =
-       wrapFor (mapParallel (inlineFromId env) op)
-   <|> wrapFor (inlineGetIota env op)
+simplifyJFor env jfor@(JFor idxs op) =
+       liftM (JFor idxs) (mapParallel (inlineFromId env) op)
+   <|> liftM (JFor idxs) (inlineGetIota env op)
    <|> inlineIntoId env jfor
    <|> checkProgress etaReduce jfor
-  where
-    wrapFor = liftM (JFor forIdxs sumIdxs)
 
 inlineGetIota :: BindingEnv -> JOp -> Maybe JOp
 inlineGetIota env op = do
   JGet (IdxAtom x xIdxs) (IdxAtom (JVar v) idxs) <- return op
   (_, varDef) <- envLookup env v
-  (JFor [] [] (JIota _), [i]) <- return $ betaReduce varDef idxs
+  (JFor [] (JIota _), [i]) <- return $ betaReduce varDef idxs
   return $ JId $ IdxAtom x $ xIdxs ++ [i]
 
 inlineIntoId :: BindingEnv -> JFor -> Maybe JFor
-inlineIntoId env (JFor forIdxs sumIdxs op) = do
+inlineIntoId env (JFor idxs op) = do
   JId (IdxAtom (JVar v) appIdxs) <- return op
   (UsedOnce, jfor) <- envLookup env v
-  let idxScope = foldMap (@>()) $ forIdxs <> sumIdxs
+  let idxScope = foldMap ((@>()) . fst) idxs
   let jforFresh = refreshIdxVars idxScope jfor
   (jfor', []) <- return $ betaReduce jforFresh appIdxs
-  -- this extra freshening might be over-cautious
-  let (JFor forIdxs' sumIdxs' op') = refreshIdxVars idxScope jfor'
-  return $ JFor (forIdxs <> forIdxs') (sumIdxs <> sumIdxs') op'
+  let (JFor idxs' op') = refreshIdxVars idxScope jfor'
+  return $ JFor (idxs <> idxs') op'
 
 inlineFromId :: BindingEnv -> IdxAtom -> Maybe IdxAtom
 inlineFromId env idxAtom = do
   IdxAtom (JVar v) idxs <- return idxAtom
   (_, jfor) <- envLookup env v
-  (JFor [] [] (JId (IdxAtom x idxs')), idxs'') <- return $ betaReduce jfor idxs
+  (JFor [] (JId (IdxAtom x idxs')), idxs'') <- return $ betaReduce jfor idxs
   return $ IdxAtom x (idxs' <> idxs'')
 
 -- === variable usage pass ===
@@ -388,15 +388,18 @@ class HasJType a where
   checkJType :: MonadError Err m => JTypeEnv -> a -> m JType
 
 instance HasJType JFor where
-  getJType (JFor idxs _ op) = JType (map varAnn idxs ++ shape) b
-    where (JType shape b) = getJType op
+  getJType (JFor idxs op) = JType (shape ++ shape') b
+    where
+      shape = [n | (_:>n, MapIdx) <- idxs]
+      (JType shape' b) = getJType op
 
-  checkJType env (JFor idxs sumIdxs op) = do
-    checkBinders env idxs
-    checkBinders env sumIdxs
-    let env' = env <> foldMap tbind idxs <> foldMap tbind sumIdxs
-    (JType shape b) <- checkJType env' op
-    return (JType (map varAnn idxs ++ shape) b)
+  checkJType env (JFor idxs op) = do
+    let idxBinders = map fst idxs
+    checkBinders env idxBinders
+    let env' = env <> foldMap tbind idxBinders
+    let shape = [n | (_:>n, MapIdx) <- idxs]
+    (JType shape' b) <- checkJType env' op
+    return (JType (shape ++ shape') b)
 
 assertNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
                     => f (VarP b) -> m ()
@@ -441,24 +444,33 @@ instance HasJType JAtom where
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
     JLit (Array (shape, b) _) -> return $ JType shape b
 
-instance HasJType a => HasJType (JOpP a) where
-  getJType op = ignoreExcept $ traverseJOpType $ fmap getJType op
+instance (Pretty a, HasJType a) => HasJType (JOpP a) where
+  getJType op = ignoreExcept $ addContext ("Getting type of: " ++ pprint op) $
+                  traverseJOpType $ fmap getJType op
   checkJType env op = do
     op' <- traverse (checkJType env) op
     traverseJOpType op'
 
 traverseJOpType :: MonadError Err m => JOpP JType -> m JType
 traverseJOpType jop = case jop of
-  JScalarBinOp op _ _ ->
+  JScalarBinOp op xTy' yTy' -> do
+    assertEq (JType [] xTy) xTy' "Arg type mismatch"
+    assertEq (JType [] yTy) yTy' "Arg type mismatch"
     return $ JType [] outTy
-    where (_, _, outTy) = binOpType op
-  JScalarUnOp  op _   ->
+    where (xTy, yTy, outTy) = binOpType op
+  JScalarUnOp  op xTy' -> do
+    assertEq (JType [] xTy) xTy' "Arg type mismatch"
     return $ JType [] outTy
-    where (_,    outTy) = unOpType  op
-  JThreeFry2x32 _ _ -> return $ JType [] IntType
+    where (xTy, outTy) = unOpType  op
+  JThreeFry2x32 xTy yTy -> do
+    assertEq (JType [] IntType) xTy "Arg type mismatch"
+    assertEq (JType [] IntType) yTy "Arg type mismatch"
+    return $ JType [] IntType
   JId ty   -> return $ ty
   JIota n  -> return $ JType [n] IntType
-  JGet (JType (_:shape) b) _ -> return $ JType shape b
+  JGet (JType (_:shape) b) idxTy -> do
+    assertEq (JType [] IntType) idxTy "Arg type mismatch"
+    return $ JType shape b
   JGet (JType [] _) _ -> error "Attempting to index zero-dim array"
 
 -- === free vars and substitutions ===
@@ -468,9 +480,8 @@ class HasJVars a where
   jSubst :: Env JAtom -> a -> a
 
 instance HasJVars JFor where
-  freeJVars (JFor _ _ op) = freeJVars op
-  jSubst env (JFor forIdxs sumIdxs op) =
-    JFor forIdxs sumIdxs $ jSubst env op
+  freeJVars (JFor _ op) = freeJVars op
+  jSubst env (JFor idxs op) = JFor idxs $ jSubst env op
 
 instance HasJVars JAtom where
   freeJVars x = case x of
@@ -489,28 +500,38 @@ instance (Traversable f, HasJVars a) => HasJVars (f a) where
   jSubst env op = fmap (jSubst env) op
 
 etaReduce :: JFor -> JFor
-etaReduce (JFor forIdxs sumIdxs (JId (IdxAtom x xIdxs))) =
-  JFor forIdxs' sumIdxs $ JId $ IdxAtom x xIdxs'
-    where (forIdxs', xIdxs') = dropCommonTail forIdxs xIdxs
-etaReduce jfor = jfor
+etaReduce (JFor [] op) = JFor [] op
+etaReduce (JFor (b:bs) op) = do
+  let (JFor bs' op') = etaReduce (JFor bs op)
+  fromMaybe (JFor (b:bs') op') $ do
+    (i, MapIdx) <- return b
+    [] <- return bs'
+    JId (IdxAtom x idxs) <- return op'
+    (idxs', i') <- unsnoc idxs
+    unless (i == i') Nothing
+    return $ JFor bs' $ JId $ IdxAtom x idxs'
 
 betaReduce :: JFor -> [IdxVar] -> (JFor, [IdxVar])
-betaReduce jfor@(JFor _ [] _) idxs = do
+betaReduce jfor idxs = do
   let freeVs = foldMap (@>()) idxs
-  let (JFor idxBinders [] op) = refreshIdxVars freeVs jfor
-  let (appIdxs, remIdxs) = splitAt (length idxBinders) idxs
-  let (appBinders, remBinders) = splitAt (length appIdxs) idxBinders
-  let substEnv = newEnv appBinders appIdxs
-  let op' = substOp substEnv op
-  (JFor remBinders [] op', remIdxs)
-betaReduce jfor idxs = (jfor, idxs)
+  let jfor' = refreshIdxVars freeVs jfor
+  betaReduceRec jfor' idxs
+
+betaReduceRec :: JFor -> [IdxVar] -> (JFor, [IdxVar])
+betaReduceRec jfor [] = (jfor, [])
+betaReduceRec jfor idxs = do
+  let Just (rest, i) = unsnoc idxs
+  let (jfor', idxs') = betaReduceRec jfor rest
+  fromMaybe (jfor', idxs' ++ [i]) $ do
+    [] <- return idxs'
+    JFor ((b,MapIdx):bs) op <- return jfor'
+    return (JFor bs $ substOp (b @> i) op, [])
 
 refreshIdxVars :: Scope -> JFor -> JFor
-refreshIdxVars scope (JFor forIdxs sumIdxs op) = do
-  let (forIdxs', scope') = renames forIdxs scope
-  let (sumIdxs', _)      = renames sumIdxs (scope <> scope')
-  let substEnv = newEnv forIdxs forIdxs' <> newEnv sumIdxs sumIdxs'
-  JFor forIdxs' sumIdxs' $ substOp substEnv op
+refreshIdxVars scope (JFor binders op) = do
+  let (idxs, flavors) = unzip binders
+  let idxs' = fst $ renames idxs scope
+  JFor (zip idxs' flavors) $ substOp (newEnv idxs idxs') op
 
 -- TODO: extend `HasJVars` to handle index var substitution too
 substOp :: Env IdxVar -> JOp -> JOp
@@ -518,15 +539,11 @@ substOp env op = flip fmap op $ \(IdxAtom x atomIdxs) ->
                                     IdxAtom x $ map trySubst atomIdxs
   where trySubst v = fromMaybe v (envLookup env v)
 
--- === utils ===
-
-dropCommonTail :: Eq a => [a] -> [a] -> ([a], [a])
-dropCommonTail xs ys = (reverse xs', reverse ys')
-  where (xs', ys') = dropCommonPrefix (reverse xs) (reverse ys)
-
-dropCommonPrefix :: Eq a => [a] -> [a] -> ([a], [a])
-dropCommonPrefix (x:xs) (y:ys) | x == y = dropCommonPrefix xs ys
-dropCommonPrefix xs ys = (xs, ys)
+-- TODO: make a right-appending list we can actually pattern-match on
+unsnoc :: [a] -> Maybe ([a], a)
+unsnoc xs = case reverse xs of
+  []     -> Nothing
+  x:rest -> Just (reverse rest, x)
 
 -- === simplification combinators ===
 
@@ -573,9 +590,21 @@ instance Pretty JType where
   pretty (JType s b) = pretty b <> pretty s
 
 instance Pretty JFor where
-  pretty (JFor idxs sumIdxs op) = prettyIdxBinders "for" idxs
-                               <> prettyIdxBinders "sum" sumIdxs
-                               <> pretty op
+  pretty (JFor [] op) = pretty op
+  pretty jfor@(JFor ((_,flavor):_) _) =
+    pretty s <+> prettyJForCtx flavor jfor
+    where
+      s :: String
+      s = case flavor of MapIdx -> "for"
+                         SumIdx -> "sum"
+
+prettyJForCtx :: IdxFlavor -> JFor -> Doc ann
+prettyJForCtx flavor jfor@(JFor idxs op) = case idxs of
+  [] -> " . " <> pretty op
+  (i, flavor'):rest
+    | flavor == flavor' -> pretty (varName i) <+>
+                            prettyJForCtx flavor (JFor rest op)
+    | otherwise -> pretty jfor
 
 prettyOpName :: JOpP a -> Doc ann
 prettyOpName jop = case jop of
@@ -585,10 +614,6 @@ prettyOpName jop = case jop of
   JIota n  -> "iota@" <> pretty n
   JGet _ _ -> "get"
   JId _    -> "id"
-
-prettyIdxBinders :: Doc ann -> [IdxVar] -> Doc ann
-prettyIdxBinders _ [] = mempty
-prettyIdxBinders s idxs = s <+> hsep (map (pretty . varName) idxs) <> " . "
 
 instance ToJSON   JDecl
 instance FromJSON JDecl
@@ -607,6 +632,9 @@ instance FromJSON JAtom
 
 instance ToJSON   IdxAtom
 instance FromJSON IdxAtom
+
+instance ToJSON   IdxFlavor
+instance FromJSON IdxFlavor
 
 instance (ToJSON   ann) => ToJSON   (VarP ann)
 instance (FromJSON ann) => FromJSON (VarP ann)

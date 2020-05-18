@@ -203,39 +203,40 @@ class Ty(object):
   def __str__(self):
     return self.basetype + str(self.shape)
 
+MapIdx = "MapIdx"
+SumIdx = "SumIdx"
 class Operation(object):
-  def __init__(self, for_idxs, sum_idxs, op_name, size_args, args):
-    for i in for_idxs: assert isinstance(i, IdxVar)
-    for i in sum_idxs: assert isinstance(i, IdxVar)
+  def __init__(self, binders, op_name, size_args, args):
+    for (i, flavor) in binders:
+      assert isinstance(i, IdxVar)
+      assert flavor in (MapIdx, SumIdx)
+
     assert isinstance(op_name, str)
     for size in size_args: assert isinstance(size, int)
     for arg in args: assert isinstance(arg, IndexedAtom)
-    self.for_idxs = for_idxs
-    self.sum_idxs = sum_idxs
+    self.binders = binders
     self.op_name = op_name
     self.size_args = size_args
     self.args = args
 
   @property
   def all_idxs(self):
-    return self.for_idxs + self.sum_idxs
+    return [i for i, _ in self.binders]
 
   def ser(self):
     assert False
 
   @staticmethod
   def des(obj):
-    for_idxs_ser, sum_idxs_ser, op_and_args_ser = obj
-    for_idxs = map(IdxVar.des, for_idxs_ser)
-    sum_idxs = map(IdxVar.des, sum_idxs_ser)
+    binders_ser, op_and_args_ser = obj
+    binders = [(IdxVar.des(i), fl) for i, fl in binders_ser]
     op_name, size_args, args = des_op_and_args(op_and_args_ser)
-    return Operation(for_idxs, sum_idxs, op_name, size_args, args)
-    assert False
+    return Operation(binders, op_name, size_args, args)
 
   def __repr__(self): return str(self)
   def __str__(self):
-    return "for {} . sum {} . {} {}".format(
-      self.for_idxs, self.sum_idxs, self.op_name, tuple(self.args))
+    return "for {} . {} {}".format(
+      self.binders, self.op_name, tuple(self.args))
 
 def array_ty(x):
   return Ty(x.shape, dtype_basetype(x.dtype))
@@ -288,8 +289,9 @@ global_env = {}
 
 def eval_op(op):
   broadcast_ans = eval_for(op)
-  axes = tuple(range(len(op.for_idxs), len(op.all_idxs)))
-  summed_ans = np.sum(broadcast_ans, axis=axes)
+  sum_axes = tuple(i for (i, (_, fl)) in enumerate(op.binders) if fl == SumIdx)
+  summed_ans = np.sum(broadcast_ans, axis=sum_axes)
+  print(sum_axes, broadcast_ans.shape, summed_ans.shape)
   return Atom("Lit", summed_ans)
 
 def eval_for(op):
@@ -380,7 +382,7 @@ arrayish_types = (np.ndarray, np.int64, np.float64, np.float32)
 
 def subst_op(env, op):
   args = [IndexedAtom(subst_atom(env, x.atom), x.idxs) for x in op.args]
-  return Operation(op.for_idxs, op.sum_idxs, op.op_name, op.size_args, args)
+  return Operation(op.binders, op.op_name, op.size_args, args)
 
 def subst_atom(env, x):
   assert isinstance(x, Atom)
