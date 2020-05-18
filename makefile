@@ -67,15 +67,15 @@ quine-tests-interp: runinterp-eval-tests runinterp-ad-tests-interp runinterp-int
 run-%: examples/%.dx build
 	misc/check-quine $< $(dex) script --allow-errors
 
-runinterp-%: examples/%.dx
-	misc/check-quine $^ $(dex) --interp script --allow-errors
+runinterp-%: examples/%.dx build
+	misc/check-quine $< $(dex) --interp script --allow-errors
 
 # Run these with profiling on while they're catching lots of crashes
 prop-tests: cbits/libdex.so
 	$(STACK) test $(PROF)
 
-update-%: examples/%.dx
-	$(dex) script --allow-errors $^ > $^.tmp
+update-%: examples/%.dx build
+	$(dex) script --allow-errors $< > $<.tmp
 	mv $^.tmp $^
 
 jax-tests:

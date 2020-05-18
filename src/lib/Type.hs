@@ -239,17 +239,21 @@ instance HasType FExpr where
       return (eff, ty')
 
 instance HasType FLamExpr where
-  -- TODO: Should we assert that pattern is trivial if we want to use makePi?
-  -- TODO: Is hardcoding NonLin ok (same in checkEffType)
-  getEffType (FLamExpr p body) = pureType $ ArrowType NonLin $ makePi v $ getEffType body
-    where v = getPatName p :> getType p
+  getEffType (FLamExpr (RecLeaf v) body) = pureType $ ArrowType NonLin $ makePi v $ getEffType body
+  getEffType (FLamExpr p body) = pureType $ ArrowType NonLin $ Pi (getType p) $ getEffType body
 
-  checkEffType (FLamExpr p body) = do
-    void $ checkKind pTy
-    bodyTy <- extendR (foldMap lbind p) $ checkEffType body
+  checkEffType (FLamExpr (RecLeaf v) body) = do
+    void $ checkKind (varAnn v)
+    bodyTy <- extendR (lbind v) $ checkEffType body
     return $ pureType $ ArrowType NonLin $ makePi v bodyTy
-    where pTy = getType p
-          v = getPatName p :> pTy
+  checkEffType (FLamExpr p body) = do
+    void $ checkKind pty
+    bodyTy <- extendR penv $ checkEffType body
+    unless (null $ penv `envIntersect` freeVars bodyTy) $
+      throw TypeErr "Function's result type cannot depend on a variable bound in an argument pattern"
+    return $ pureType $ ArrowType NonLin $ Pi pty bodyTy
+    where pty = getType p
+          penv = foldMap lbind p
 
 -- === Built-in typeclasses ===
 
@@ -642,7 +646,7 @@ unOpType op = case op of
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
-  TC (BaseType BoolType) -> Just 2
+  BoolTy  -> Just 2
   RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 

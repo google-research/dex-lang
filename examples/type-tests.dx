@@ -1,28 +1,28 @@
 :t \x. x
-> Type error:Ambiguous type variables: [?_3]
+> Type error:Ambiguous type variables: [?_4]
 >
-> ([*ans*:? = (\x:?_5 . x)], (*ans* @> L ?))
+> ([*ans*:?_1 = (\x:?_6 . x)], (*ans* @> L ?_1))
 
 :t \x. sum for i. x.i
-> Type error:Ambiguous type variables: [?_10]
+> Type error:Ambiguous type variables: [?_13]
 >
-> ([*ans*:? = (\x:?_5 . ((sum @?_10) (for i:?_15 .  (x.i))))], (*ans* @> L ?))
+> ([*ans*:?_1 = (\x:?_6 . ((sum @?_13) (for i:?_18 .  (x.i))))], (*ans* @> L ?_1))
 
 :t \f x y. f y x
-> Type error:Ambiguous type variables: [?_13, ?_17, ?_21]
+> Type error:Ambiguous type variables: [?_18, ?_24, ?_28]
 >
-> ([*ans*:? = (\f:?_5 . (\x:?_10 . (\y:?_15 . ((f y) x))))], (*ans* @> L ?))
+> ([*ans*:?_1 = (\f:?_6 . (\x:?_13 . (\y:?_20 . ((f y) x))))], (*ans* @> L ?_1))
 
 :t \x. for i j. x.j.i
-> Type error:Ambiguous type variables: [?_11, ?_14, ?_16]
+> Type error:Ambiguous type variables: [?_16, ?_21, ?_23]
 >
-> ( [*ans*:? = (\x:?_5 . (for i:?_9 .  (for j:?_13 .  ((x.j).i))))]
-> , (*ans* @> L ?) )
+> ( [*ans*:?_1 = (\x:?_6 . (for i:?_12 .  (for j:?_18 .  ((x.j).i))))]
+> , (*ans* @> L ?_1) )
 
 :t \f x. f x
-> Type error:Ambiguous type variables: [?_8, ?_12]
+> Type error:Ambiguous type variables: [?_11, ?_17]
 >
-> ([*ans*:? = (\f:?_5 . (\x:?_10 . (f x)))], (*ans* @> L ?))
+> ([*ans*:?_1 = (\f:?_6 . (\x:?_13 . (f x)))], (*ans* @> L ?_1))
 
 :t
    myid : a -> a
@@ -91,9 +91,9 @@ xr = map real arr
 > (3=>Int)
 
 :t []
-> Type error:Ambiguous type variables: [?_1]
+> Type error:Ambiguous type variables: [?_2]
 >
-> ([*ans*:? = ([])], (*ans* @> L ?))
+> ([*ans*:?_1 = ([])], (*ans* @> L ?_1))
 
 :t [1, [2]]
 > Type error:
@@ -132,9 +132,9 @@ p2 = 1
 >      ^
 
 :t \x. for (i,j). x.i.j
-> Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
+> Type error:Ambiguous type variables: [?_10, ?_14, ?_16]
 >
-> ([*ans*:? = (\x:?_5 . (for (i:?_9, j:?_10) .  ((x.i).j)))], (*ans* @> L ?))
+> ([*ans*:?_1 = (\x:?_6 . (for (i:?_12, j:?_13) .  ((x.i).j)))], (*ans* @> L ?_1))
 
 idfun : a -> a
 idfun x = x
@@ -375,8 +375,14 @@ caseEffects ref x = case x
     Right r -> tell ref r
 > Type error:
 > Expected: { }
->   Actual: {Writer ref | ?_36:Effect}
+>   Actual: {Writer ref | ?_39:Effect}
 > In: ((tell ref) r)
 >
 > caseEffects ref x = case x
 >                     ^^^^^^^
+
+:p (\(u,v). for i:0...u. 1.0) (2, 3)
+> Type error:Function's result type cannot depend on a variable bound in an argument pattern
+>
+> :p (\(u,v). for i:0...u. 1.0) (2, 3)
+>     ^^^^^^^^^^^^^^^^^^^^^^^^
