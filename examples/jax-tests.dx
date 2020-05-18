@@ -18,9 +18,6 @@ xs = for i:4. 2.0
 :p sum for i. xs.i * xs.i
 > 16.0
 
-:p hash 0 0
-> -7369490985612476071
-
 :p real 1
 > 1.0
 

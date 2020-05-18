@@ -10,7 +10,6 @@ import sys
 import pprint as pp
 import traceback
 import numpy as np
-from jax import random
 
 scary_map = map
 
@@ -336,6 +335,7 @@ def eval_for(op):
     x_bc = broadcast_dims(op.all_idxs, x.idxs, -x.atom.val)
     return x_bc
   elif op.op_name == "ThreeFry2x32":
+    from jax import random  # TODO(mattjj); fix travis jax installation
     convert_64_to_32s = lambda x: np.array([x]).view(np.uint32)
     convert_32s_to_64 = lambda x: np.int64(np.array(x).view(np.int64).item())
     x, y = op.args
