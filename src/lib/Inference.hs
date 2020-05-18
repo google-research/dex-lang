@@ -74,11 +74,11 @@ inferDecl :: Effect -> FDecl -> InferM (FDecl, TypeEnv)
 inferDecl eff decl = case decl of
   LetMono p bound -> do
     -- TOOD: better errors - infer polymorphic type to suggest annotation
-    liftEither $ checkPatShadow p
-    p' <- annotPat p
+    p' <- checkPat p =<< freshQ
     bound' <- check bound (eff, getType p')
-    return (LetMono p' bound', foldMap asEnv p')
+    return (LetMono p' bound', foldMap lbind p')
   LetPoly b@(v:>ty) tlam -> do
+    constrainEq eff noEffect (pprint decl)
     ty' <- inferKinds TyKind ty
     tlam' <- checkTLam ty' tlam
     return (LetPoly (v:>ty') tlam', b @> L ty')
@@ -95,17 +95,17 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     case ty of
       Forall _ _ _ -> check (fTyApp v []) reqEffTy
       _ -> constrainReq ty >> return (FVar (varName v :> ty))
-  FPrimExpr (OpExpr (TApp (FVar v) ts)) -> do
+  FPrimExpr (OpExpr (TApp (FVar v) headTyArgs)) -> do
     ty <- asks $ fromL . (! v)
     case ty of
-      Forall bs _ body -> do
-        let kinds = map varAnn bs
-        ts' <- zipWithM inferKinds kinds ts
-        vs <- mapM freshInferenceVar (drop (length ts) kinds)
-        let ts'' = ts' ++ vs
-        let env = newTEnv bs ts''
+      Forall tyFormals _ body -> do
+        let reqKinds = map varAnn tyFormals
+        headTyArgs' <- zipWithM inferKinds reqKinds headTyArgs
+        tailTyArgs <- mapM freshInferenceVar (drop (length headTyArgs) reqKinds)
+        let tyArgs = headTyArgs' ++ tailTyArgs
+        let env = newTEnv tyFormals tyArgs
         constrainReq (subst (env, mempty) body)
-        return $ fTyApp (varName v :> ty) ts''
+        return $ fTyApp (varName v :> ty) tyArgs
       _ -> throw TypeErr "Unexpected type application"
   FPrimExpr (OpExpr (App l f x)) -> do
     l'  <- inferKinds MultKind l
@@ -174,15 +174,27 @@ checkLam (FLamExpr p body) piTy@(Pi a _) = do
   p' <- checkPat p a
   piTy' <- zonk piTy
   effTy <- maybeApplyPi piTy' (Just (Var (getPatName p :> a)))
-  body' <- extendR (foldMap asEnv p') $ check body effTy
+  body' <- extendR (foldMap lbind p') $ check body effTy
   return $ FLamExpr p' body'
 
 checkPat :: Pat -> Type -> InferM Pat
 checkPat p ty = do
   liftEither $ checkPatShadow p
-  p' <- annotPat p
+  p' <- traverse annotBinder p
   constrainEq ty (getType p') (pprint p)
   return p'
+  where
+    annotBinder (v:>ann) = (v:>) <$> (inferKinds TyKind ann)
+
+    checkPatShadow :: Pat -> Except ()
+    checkPatShadow pat = do
+      let dups = filter (/= NoName) $ findDups $ map varName $ toList pat
+      unless (null dups) $ throw RepeatedVarErr $ pprintList dups
+
+    findDups :: Eq a => [a] -> [a]
+    findDups [] = []
+    findDups (x:xs) | x `elem` xs = x : findDups xs
+                    | otherwise   =     findDups xs
 
 checkAtom :: Atom -> Type -> InferM Atom
 checkAtom atom ty = do
@@ -193,16 +205,6 @@ checkAtom atom ty = do
 
 fTyApp :: Var -> [Type] -> FExpr
 fTyApp v tys = FPrimExpr $ OpExpr $ TApp (FVar v) tys
-
-checkPatShadow :: Pat -> Except ()
-checkPatShadow pat = do
-  let dups = filter (/= NoName) $ findDups $ map varName $ toList pat
-  unless (null dups) $ throw RepeatedVarErr $ pprintList dups
-
-findDups :: Eq a => [a] -> [a]
-findDups [] = []
-findDups (x:xs) | x `elem` xs = x : findDups xs
-                | otherwise   =     findDups xs
 
 openEffect :: Effect -> InferM Effect
 openEffect eff = do
@@ -275,15 +277,6 @@ freshLamType = do
 
 doMSnd :: Monad m => m b -> a -> m (a, b)
 doMSnd m x = do { y <- m; return (x, y) }
-
-annotPat :: Pat -> InferM Pat
-annotPat pat = traverse annotBinder pat
-
-annotBinder :: Var -> InferM Var
-annotBinder (v:>ann) = liftM (v:>) (inferKinds TyKind ann)
-
-asEnv :: Var -> TypeEnv
-asEnv b = b @> L (varAnn b)
 
 -- === kind inference ===
 
