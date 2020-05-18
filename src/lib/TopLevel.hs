@@ -55,7 +55,7 @@ data BackendEngine = LLVMEngine LLVMEngine
                    | InterpEngine
 
 type LLVMEngine = MVar (Env ArrayRef)
-type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> [JVar]
+type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
                            ,( [JVar] -> [Array]
                            ,( Array -> ()  -- for debugging
                            ,())))
@@ -204,7 +204,8 @@ evalBackend expr = do
       let jfunDCE = dceJaxFunction jfunSimp
       checkPass JAXSimpPass jfunDCE
       let inVars' = map (fmap typeToJType) inVars
-      outVars <- callPipeServer server (jfunDCE, inVars')
+      (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
+      logPass JaxprAndHLO jaxprDump
       let outVars' = map (fmap jTypeToType) outVars
       return $ reStructureArrays (getType expr) $ map Var outVars'
     InterpEngine -> return $ evalExpr mempty expr

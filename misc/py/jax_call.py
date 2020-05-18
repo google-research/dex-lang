@@ -431,7 +431,8 @@ def eval_function_application(top_arg):
       print(op)
       raise Exception("Unexpected type. Expected {}, got {}".format(v.ty, ans.ty))
     env[v] = ans
-  return [atom_as_var(subst_atom(env, r)).ser() for r in f.results]
+  irdump = "<this is not a jaxpr>"
+  return [atom_as_var(subst_atom(env, r)).ser() for r in f.results], irdump
 
 def check_type(ty, val):
   assert isinstance(ty, Ty)
