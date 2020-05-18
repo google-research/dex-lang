@@ -273,16 +273,21 @@ simplifyJaxDecl usageEnv (JLet v jfor) = do
 simplifyJFor :: BindingEnv -> JFor -> Maybe JFor
 simplifyJFor env jfor@(JFor idxs op) =
        liftM (JFor idxs) (mapParallel (inlineFromId env) op)
-   <|> liftM (JFor idxs) (inlineGetIota env op)
+   <|> inlineGetIota env jfor
    <|> inlineIntoId env jfor
    <|> checkProgress etaReduce jfor
 
-inlineGetIota :: BindingEnv -> JOp -> Maybe JOp
-inlineGetIota env op = do
+inlineGetIota :: BindingEnv -> JFor -> Maybe JFor
+inlineGetIota env (JFor idxBinders op) = do
+  let idxEnv = map fst idxBinders
   JGet (IdxAtom x xIdxs) (IdxAtom (JVar v) idxs) <- return op
   (_, varDef) <- envLookup env v
   (JFor [] (JIota _), [i]) <- return $ betaReduce varDef idxs
-  return $ JId $ IdxAtom x $ xIdxs ++ [i]
+  let idxs' = xIdxs ++ [i]
+  -- TODO: have a more direct way to check index ordering condition
+  case checkIdxEnv idxs' idxEnv of
+    Left _   -> Nothing
+    Right () -> return $ JFor idxBinders $ JId $ IdxAtom x idxs'
 
 inlineIntoId :: BindingEnv -> JFor -> Maybe JFor
 inlineIntoId env (JFor idxs op) = do
@@ -365,12 +370,13 @@ freshIdxVar n = do
 
 -- === JAXy IR Types ===
 
-type JTypeEnv = FullEnv JType AxisSize
+type IdxTyEnv = [IdxVar]
+type JTypeEnv = (Env JType, IdxEnv)
 
 instance Checkable JaxFunction where
   checkValid (JaxFunction vs body) = do
     let argTys = map varAnn vs
-    void $ checkJExprType (newLEnv vs argTys) body
+    void $ checkJExprType (newEnv vs argTys, []) body
 
 checkJExprType :: JTypeEnv -> JExpr -> Except [JType]
 checkJExprType initEnv (JExpr decls results) =
@@ -379,7 +385,7 @@ checkJExprType initEnv (JExpr decls results) =
       env <- look
       ty <- checkJType env jfor
       assertEq reqTy ty "Annotation"
-      extend (v @> L ty)
+      extend (v @> ty, [])
     env <- look
     forM results $ checkJType env
 
@@ -393,13 +399,14 @@ instance HasJType JFor where
       shape = [n | (_:>n, MapIdx) <- idxs]
       (JType shape' b) = getJType op
 
-  checkJType env (JFor idxs op) = do
-    let idxBinders = map fst idxs
-    checkBinders env idxBinders
-    let env' = env <> foldMap tbind idxBinders
-    let shape = [n | (_:>n, MapIdx) <- idxs]
-    (JType shape' b) <- checkJType env' op
-    return (JType (shape ++ shape') b)
+  checkJType env jfor@(JFor idxs op) =
+    addContext ("\nChecking: " ++ pprint jfor) $ do
+      let idxBinders = map fst idxs
+      checkBinders env idxBinders
+      let env' = env <> (mempty, idxBinders)
+      let shape = [n | (_:>n, MapIdx) <- idxs]
+      (JType shape' b) <- checkJType env' op
+      return (JType (shape ++ shape') b)
 
 assertNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
                     => f (VarP b) -> m ()
@@ -411,34 +418,40 @@ assertNoMutualShadows bs =
 
 checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
 checkBinders env bs = do
-  mapM_ (assertNoShadow env) bs
+  mapM_ (assertNoShadow (fst env)) bs
   assertNoMutualShadows bs
 
 instance HasJType IdxAtom where
   getJType (IdxAtom x idxs) = JType (drop (length idxs) shape) b
     where JType shape b = getJType x
 
-  checkJType env (IdxAtom x idxs) = do
-    JType shape b <- checkJType env x
+  checkJType (env, idxEnv) (IdxAtom x idxs) = do
+    JType shape b <- checkJType (env, []) x
     throwIf (length idxs > length shape) CompilerErr $
         "Too many indices: " ++ pprint idxs
-    forM_ (zip idxs shape) $ \(i@(_:>nAnn), nArr) ->
-      case envLookup env i of
-        Just (T nEnv) -> do
-          assertEq nEnv nAnn "Index size doesn't match binder"
-          assertEq nArr nAnn "Index size doesn't match array shape"
-        _ -> throw CompilerErr $ "Lookup failed: " ++ pprint i
+    forM_ (zip idxs shape) $ \((_:>nAnn), nArr) ->
+      assertEq nArr nAnn "Index size doesn't match array shape"
+    checkIdxEnv idxs idxEnv
     return $ JType (drop (length idxs) shape) b
+
+checkIdxEnv :: MonadError Err m => [IdxVar] -> IdxTyEnv -> m ()
+checkIdxEnv [] _ = return ()
+checkIdxEnv (i:_) [] = throw CompilerErr $ "Index not in env " ++ pprint i
+checkIdxEnv (i:idxs) (i':idxEnv)
+  | varName i == varName i' = do
+      assertEq i' i "Index size doesn't match index env"
+      checkIdxEnv idxs idxEnv
+  | otherwise = checkIdxEnv (i:idxs) idxEnv
 
 instance HasJType JAtom where
   getJType atom = case atom of
     JVar (_:> ty) -> ty
     JLit (Array (shape, b) _) -> JType shape b
 
-  checkJType env atom = case atom of
+  checkJType (env,_) atom = case atom of
     JVar v@(_:> ty) -> do
       case envLookup env v of
-        Just (L reqTy) -> do
+        Just reqTy -> do
           assertEq reqTy ty "JVar"
           return ty
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
