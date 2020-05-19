@@ -299,8 +299,11 @@ def eval_op(op):
   else:
     broadcast_ans = eval_for(op)
     sum_axes = tuple(i for (i, (_, fl)) in enumerate(op.binders) if fl == SumIdx)
-    summed_ans = np.sum(broadcast_ans, axis=sum_axes)
-    return Atom("Lit", summed_ans)
+    if sum_axes == ():
+      return Atom("Lit", broadcast_ans)
+    else:
+      summed_ans = np.sum(broadcast_ans, axis=sum_axes)
+      return Atom("Lit", summed_ans)
 
 def eval_einsum(op):
   assert op.op_name in ("FMul", "IMul")
@@ -311,7 +314,7 @@ def eval_einsum(op):
   return jnp.einsum(x.atom.val, x_axes, y.atom.val, y_axes, out_axes)
 
 def eval_for(op):
-  if op.op_name in ("IAdd", "IMul", "FAdd", "FMul"):
+  if op.op_name in ("IAdd", "IMul", "FAdd", "FMul", "FDiv"):
     x, y = op.args
     x_bc = broadcast_dims(op.all_idxs, x.idxs, x.atom.val)
     y_bc = broadcast_dims(op.all_idxs, y.idxs, y.atom.val)
@@ -319,6 +322,8 @@ def eval_for(op):
       return jnp.add(x_bc, y_bc)
     elif op.op_name in ("IMul", "FMul"):
       return jnp.multiply(x_bc, y_bc)
+    if op.op_name in ("FDiv",):
+      return jnp.divide(x_bc, y_bc)
     else:
       raise Exception("Not implemented: " + str(op.op_name))
   elif op.op_name == "Iota":
