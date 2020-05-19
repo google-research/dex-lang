@@ -56,13 +56,13 @@ subArray i (Array ((_:shape), b) vec) = Array (shape, b) vec'
                  DoubleVec xs -> DoubleVec $ V.slice offset size xs
 subArray _ _ = error "Can't get subarray of rank-0 array"
 
-scalarFromArray :: Array -> LitVal
-scalarFromArray (Array ([], b) vec) = case b of
+scalarFromArray :: Array -> Maybe LitVal
+scalarFromArray (Array ([], b) vec) = Just $ case b of
   IntType  -> IntLit  $ xs V.! 0       where IntVec    xs = vec
   BoolType -> BoolLit $ xs V.! 0 /= 0  where IntVec    xs = vec
   RealType -> RealLit $ xs V.! 0       where DoubleVec xs = vec
   _ -> error "Not implemented"
-scalarFromArray x = error $ "Not a rank-zero array: " ++ show x
+scalarFromArray _ = Nothing
 
 arrayFromScalar :: LitVal -> Array
 arrayFromScalar val = case val of

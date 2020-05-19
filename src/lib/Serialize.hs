@@ -22,6 +22,7 @@ import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.Foldable
+import Data.Maybe
 
 import Array
 import Type
@@ -189,7 +190,8 @@ prettyVal (Con con) = case con of
       (Just n') = indexSetConcreteSize n
       idxSetStr = case n of FixedIntRange 0 _ -> mempty
                             _                 -> "@" <> pretty n
-  AGet (Con (ArrayLit arr)) -> return $ pretty $ scalarFromArray arr
+  AGet (Con (ArrayLit arr)) ->
+    return $ pretty $ fromMaybe (error "not a scalar") $ scalarFromArray arr
   AsIdx n i -> do
     i' <- prettyVal i
     return $ i' <> "@" <> pretty n

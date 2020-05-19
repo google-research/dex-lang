@@ -275,6 +275,7 @@ simplifyJFor env jfor@(JFor idxs op) =
        liftM (JFor idxs) (mapParallel (inlineFromId env) op)
    <|> inlineGetIota env jfor
    <|> inlineIntoId env jfor
+   <|> liftM (JFor idxs) (algebraicSimp op)
    <|> checkProgress etaReduce jfor
 
 inlineGetIota :: BindingEnv -> JFor -> Maybe JFor
@@ -305,6 +306,17 @@ inlineFromId env idxAtom = do
   (_, jfor) <- envLookup env v
   (JFor [] (JId (IdxAtom x idxs')), idxs'') <- return $ betaReduce jfor idxs
   return $ IdxAtom x (idxs' <> idxs'')
+
+algebraicSimp :: JOp -> Maybe JOp
+algebraicSimp op = case op of
+  JScalarBinOp FAdd x y
+      | fromScalarLit x == Just (RealLit 0) -> Just $ JId y
+      | fromScalarLit y == Just (RealLit 0) -> Just $ JId x
+  _ -> Nothing
+
+fromScalarLit :: IdxAtom -> Maybe LitVal
+fromScalarLit (IdxAtom (JLit x) []) = scalarFromArray x
+fromScalarLit _ = Nothing
 
 -- === variable usage pass ===
 
