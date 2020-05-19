@@ -36,7 +36,25 @@ import Cat
 import Subst
 
 type ClassEnv = MonMap Name [ClassName]
-type TypeM a = ReaderT TypeEnv (ReaderT ClassEnv (Either Err)) a
+
+-- A joint env for type and kind checking
+data JointTypeEnv = JointTypeEnv { namedEnv :: TypeEnv, deBruijnEnv :: [Type] }
+
+fromNamedEnv :: TypeEnv -> JointTypeEnv
+fromNamedEnv env = JointTypeEnv env []
+
+jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe (LorT Type Kind)
+jointEnvLookup jenv v = case varName v of
+  DeBruijn idx -> Just $ L $ deBruijnEnv jenv !! idx
+  _            -> envLookup (namedEnv jenv) v
+
+extendNamed :: MonadReader JointTypeEnv m => TypeEnv -> m a -> m a
+extendNamed env m = local (\jenv -> jenv { namedEnv = namedEnv jenv <> env }) m
+
+extendDeBruijn :: MonadReader JointTypeEnv m => Type -> m a -> m a
+extendDeBruijn t m = local (\jenv -> jenv { deBruijnEnv = t : deBruijnEnv jenv }) m
+
+type TypeM a = ReaderT JointTypeEnv (ReaderT ClassEnv (Either Err)) a
 
 getType :: HasType a => a -> Type
 getType x = snd $ getEffType x
@@ -55,7 +73,7 @@ class HasType a where
   getEffType   :: a ->       EffectiveType
 
 runTypeM :: TypeEnv -> TypeM a -> Except a
-runTypeM env m = runReaderT (runReaderT m env) mempty
+runTypeM env m = runReaderT (runReaderT m (fromNamedEnv env)) mempty
 
 pureType :: Type -> EffectiveType
 pureType ty = (noEffect, ty)
@@ -121,7 +139,7 @@ tyConKind con = case con of
 checkKind :: Type -> TypeM Kind
 checkKind ty = case ty of
   TypeVar v@(_:>k) -> do
-    x <- asks $ flip envLookup v
+    x <- asks $ flip jointEnvLookup v
     case x of
       Just (T k') -> do
         assertEq k k' "Kind annotation"
@@ -131,17 +149,17 @@ checkKind ty = case ty of
     checkKindIs MultKind m
     checkKindIs TyKind a
     checkKindIs EffectKind e
-    checkKindIs TyKind b
+    extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
   TabType (Pi a b) -> do
     checkKindIs TyKind a
-    checkKindIs TyKind b
+    extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
   Forall vs _ body -> do
-    extendR (foldMap tbind vs) (checkKindIs TyKind body)
+    extendNamed (foldMap tbind vs) (checkKindIs TyKind body)
     return TyKind
   TypeAlias vs body -> do
-    bodyKind <- extendR (foldMap tbind vs) (checkKind body)
+    bodyKind <- extendNamed (foldMap tbind vs) (checkKind body)
     return $ ArrowKind (map varAnn vs) bodyKind
   Effect eff tailVar -> do
     mapM_ (mapM_ (checkKindIs TyKind)) eff
@@ -154,7 +172,7 @@ checkKind ty = case ty of
   TC con -> do
     let (conKind, resultKind) = tyConKind con
     void $ traverseTyCon conKind (\(t,k) -> checkKindIs k t)
-                                 (\(e,t) -> checkType e >>= checkTypeEq t)
+                                 (\(e,t) -> checkPureType e >>= checkTypeEq t)
     return resultKind
 
 checkKindIs :: Kind -> Type -> TypeM ()
@@ -171,12 +189,12 @@ instance HasType Var where
   getEffType = pureType . varAnn
 
   checkEffType v@(_:>annTy) = do
-    x <- asks $ flip envLookup v
+    x <- asks $ flip jointEnvLookup v
     case x of
       Just (L ty) -> do
         assertEq annTy ty "Var annotation"
         return $ pureType ty
-      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+      _ -> error $ "Lookup failed:" ++ pprint v
 
 instance HasType (RecTree Var) where
   getEffType tree = case tree of
@@ -215,12 +233,12 @@ instance HasType FExpr where
             assertEq (getType p) ty "LetMono"
             return (eff, foldMap lbind p)
           LetPoly b@(_:>ty) (FTLam tbs qs body) -> do
-            body' <- extendClassEnv qs $ extendR (foldMap tbind tbs) $ checkPureType body
+            body' <- extendClassEnv qs $ extendNamed (foldMap tbind tbs) $ checkPureType body
             let ty' = Forall tbs qs body'
             assertEq ty ty' "TLam"
             return (noEffect, lbind b)
           TyDef tv _ -> return (noEffect, tbind tv)
-      (contEff, ty) <- extendR env $ checkEffType cont
+      (contEff, ty) <- extendNamed env $ checkEffType cont
       eff <- combineEffects declEff contEff
       return (eff, ty)
       where
@@ -244,11 +262,11 @@ instance HasType FLamExpr where
 
   checkEffType (FLamExpr (RecLeaf v) body) = do
     void $ checkKind (varAnn v)
-    bodyTy <- extendR (lbind v) $ checkEffType body
+    bodyTy <- extendNamed (lbind v) $ checkEffType body
     return $ pureType $ ArrowType NonLin $ makePi v bodyTy
   checkEffType (FLamExpr p body) = do
     void $ checkKind pty
-    bodyTy <- extendR penv $ checkEffType body
+    bodyTy <- extendNamed penv $ checkEffType body
     unless (null $ penv `envIntersect` freeVars bodyTy) $
       throw TypeErr "Function's result type cannot depend on a variable bound in an argument pattern"
     return $ pureType $ ArrowType NonLin $ Pi pty bodyTy
@@ -347,7 +365,7 @@ instance HasType Atom where
   checkEffType atom = liftM pureType $ case atom of
     Var v -> checkPureType v
     TLam tvs qs body -> do
-      bodyTy <- extendClassEnv qs $ extendR (foldMap tbind tvs) (checkPureType body)
+      bodyTy <- extendClassEnv qs $ extendNamed (foldMap tbind tvs) (checkPureType body)
       return $ Forall tvs qs bodyTy
     Con con -> traverseExpr con return checkType checkPiType >>= checkConType
 
@@ -362,7 +380,7 @@ instance HasType Expr where
   checkEffType expr = case expr of
     Decl (Let b bexpr) body -> do
       declEff <- checkDecl
-      (bodyEff, ty) <- extendR (lbind b) $ checkEffType body
+      (bodyEff, ty) <- extendNamed (lbind b) $ checkEffType body
       eff <- combineEffects declEff bodyEff
       return (eff, ty)
       where
@@ -374,7 +392,7 @@ instance HasType Expr where
         checkBinder = do
           kind <- checkKind $ varAnn b
           assertEq TyKind kind "kind error"
-          env <- ask
+          (JointTypeEnv env _) <- ask
           assertNoShadow env b
           return $ varAnn b
     CExpr e -> checkEffType e
@@ -392,7 +410,7 @@ instance HasType LamExpr where
   getEffType (LamExpr b body) = pureType $ ArrowType NonLin $ makePi b $ getEffType body
 
   checkEffType (LamExpr b@(_:>a) body) = do
-    bodyTy <- extendR (b @> L a) $ checkEffType body
+    bodyTy <- extendNamed (b @> L a) $ checkEffType body
     return $ pureType $ ArrowType NonLin $ makePi b bodyTy
 
 -- -- === Effects ===

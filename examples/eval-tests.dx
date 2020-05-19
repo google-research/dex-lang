@@ -601,4 +601,5 @@ cmpEither x y = x == y
 :p cmpEither (Left 1) (Right 1)
 > False
 
-triangle = for i:4. for j:...i. 1.0
+-- This crashes the compiler in Imp
+-- triangle = for i:4. for j:...i. 1.0
