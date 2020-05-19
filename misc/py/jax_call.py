@@ -4,6 +4,7 @@
 # license that can be found in the LICENSE file or at
 # https://developers.google.com/open-source/licenses/bsd
 
+import collections
 import json
 import pprint
 import sys
@@ -292,12 +293,22 @@ def des_op_and_args(obj):
 global_env = {}
 
 def eval_op(op):
-  # TODO handle FMul/IMul in a single einsum
-  broadcast_ans = eval_for(op)
-  sum_axes = tuple(i for (i, (_, fl)) in enumerate(op.binders) if fl == SumIdx)
-  summed_ans = np.sum(broadcast_ans, axis=sum_axes)
-  print(sum_axes, broadcast_ans.shape, summed_ans.shape)
-  return Atom("Lit", summed_ans)
+  if op.op_name in ("FMul", "IMul"):
+    ans = eval_einsum(op)
+    return Atom("Lit", ans)
+  else:
+    broadcast_ans = eval_for(op)
+    sum_axes = tuple(i for (i, (_, fl)) in enumerate(op.binders) if fl == SumIdx)
+    summed_ans = np.sum(broadcast_ans, axis=sum_axes)
+    return Atom("Lit", summed_ans)
+
+def eval_einsum(op):
+  assert op.op_name in ("FMul", "IMul")
+  x, y = op.args
+  x_axes = [str(i.name) for i in x.idxs]
+  y_axes = [str(i.name) for i in y.idxs]
+  out_axes = [str(i.name) for i, f in op.binders if f != SumIdx]
+  return jnp.einsum(x.atom.val, x_axes, y.atom.val, y_axes, out_axes)
 
 def eval_for(op):
   if op.op_name in ("IAdd", "IMul", "FAdd", "FMul"):
