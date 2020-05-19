@@ -12,6 +12,7 @@ module LiveOutput (runWeb, runTerminal) where
 import Control.Concurrent
 import Control.Monad
 import Control.Monad.Reader
+import Control.Monad.State.Strict
 
 import Data.Binary.Builder (fromByteString, Builder)
 import Data.List (nub, sort)
@@ -26,6 +27,7 @@ import Data.Aeson hiding (Result, Null, Value)
 import qualified Data.Aeson as A
 import System.Console.ANSI
 import System.Directory
+import System.IO
 
 import Cat
 import Syntax
@@ -185,24 +187,42 @@ toHtmlFragment x = [([], pprintHtml x)]
 
 -- === serving results via terminal ===
 
-type TermDisplayM = CatT RFragment (Actor RFragment)
+type DisplayPos = Int
+data KeyboardCommand = ScrollUp | ScrollDown | ResetDisplay
+
+type TermDisplayM = StateT DisplayPos
+                      (CatT RFragment
+                         (Actor (Either RFragment KeyboardCommand)))
 
 displayResultsTerm :: ReqChan RFragment -> IO ()
-displayResultsTerm reqChan = void $ runActor $ evalCatT $ do
-  subscribe reqChan
-  forever termDisplayLoop
+displayResultsTerm reqChan =
+  void $ runActor $ evalCatT $ flip evalStateT 0 $ do
+     c <- myChan
+     send reqChan $ subChan Left c
+     void $ spawn Trap $ monitorKeyboard $ subChan Right c
+     forever $ termDisplayLoop
 
 termDisplayLoop :: TermDisplayM ()
 termDisplayLoop = do
-  r <- receive
-  extend r
+  req <- receive
+  case req of
+    Left result -> extend result
+    Right command -> case command of
+      ScrollUp     -> modify (+ 4)
+      ScrollDown   -> modify (\p -> max 0 (p - 4))
+      ResetDisplay -> put 0
   results <- look
+  pos <- get
   case renderResults results of
     Nothing -> return ()
     Just s  -> liftIO $ do
-      clearScreen
+      let cropped = cropTrailingLines pos s
       setCursorPosition 0 0
-      putStr s
+      clearScreen -- TODO: clean line-by-line instead
+      putStr cropped
+
+cropTrailingLines :: Int -> String -> String
+cropTrailingLines n s = unlines $ reverse $ drop n $ reverse $ lines s
 
 -- TODO: show incremental results
 renderResults :: RFragment -> Maybe String
@@ -212,6 +232,17 @@ renderResults (RFragment (Set ids) blocks results) =
     b <- M.lookup i blocks
     r <- M.lookup i results
     return $ printLitBlock True b r
+
+monitorKeyboard :: PChan KeyboardCommand -> Actor () ()
+monitorKeyboard chan = do
+  liftIO $ hSetBuffering stdin NoBuffering
+  forever $ do
+    c <- liftIO $ getChar
+    case c of
+      'k' -> send chan ScrollUp
+      'j' -> send chan ScrollDown
+      'q' -> send chan ResetDisplay
+      _   -> return ()
 
 -- === watching files ===
 
