@@ -38,14 +38,20 @@ import Array
 type AxisSize = Int
 type JVar   = VarP JType
 type IdxVar = VarP AxisSize
-data IdxFlavor = MapIdx | SumIdx            deriving (Generic, Show, Eq)
 
-data JDecl = JLet JVar JFor                 deriving (Generic, Show, Eq)
-data JExpr = JExpr [JDecl] [JAtom]          deriving (Generic, Show, Eq)
-data JAtom = JLit Array | JVar JVar         deriving (Generic, Show, Eq)
-data IdxAtom = IdxAtom JAtom [IdxVar]       deriving (Generic, Show, Eq)
-data JType = JType [AxisSize] BaseType      deriving (Generic, Show, Eq)
-data JaxFunction = JaxFunction [JVar] JExpr deriving (Generic, Show, Eq)
+data JDecl = JLet [JVar] JExpr               deriving (Generic, Show, Eq)
+data JBlock = JDecl JDecl JBlock
+            | JExpr JExpr
+            | JAtoms [JAtom]
+              deriving (Generic, Show, Eq)
+data JExpr = JOp (JOpP IdxAtom)
+           | JFor IdxVar JBlock
+           | JSum IdxVar JBlock
+             deriving (Generic, Show, Eq)
+data JAtom = JLit Array | JVar JVar          deriving (Generic, Show, Eq)
+data IdxAtom = IdxAtom JAtom [IdxVar]        deriving (Generic, Show, Eq)
+data JType = JType [AxisSize] BaseType       deriving (Generic, Show, Eq)
+data JaxFunction = JaxFunction [JVar] JBlock deriving (Generic, Show, Eq)
 
 type JOp = JOpP IdxAtom
 data JOpP e = JId e
@@ -60,9 +66,6 @@ data TmpAtom = TmpLeaf IdxAtom
              | TmpRefName Var
              | TmpCon (PrimCon Type TmpAtom ())
                deriving (Generic, Show, Eq)
-
-data JFor = JFor [(IdxVar, IdxFlavor)] (JOpP IdxAtom)
-            deriving (Generic, Show, Eq)
 
 -- === lowering from Expr ===
 
