@@ -36,24 +36,6 @@ import Cat
 import Subst
 
 type ClassEnv = MonMap Name [ClassName]
-
--- A joint env for type and kind checking
-data JointTypeEnv = JointTypeEnv { namedEnv :: TypeEnv, deBruijnEnv :: [Type] }
-
-fromNamedEnv :: TypeEnv -> JointTypeEnv
-fromNamedEnv env = JointTypeEnv env []
-
-jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe (LorT Type Kind)
-jointEnvLookup jenv v = case varName v of
-  DeBruijn idx -> Just $ L $ deBruijnEnv jenv !! idx
-  _            -> envLookup (namedEnv jenv) v
-
-extendNamed :: MonadReader JointTypeEnv m => TypeEnv -> m a -> m a
-extendNamed env m = local (\jenv -> jenv { namedEnv = namedEnv jenv <> env }) m
-
-extendDeBruijn :: MonadReader JointTypeEnv m => Type -> m a -> m a
-extendDeBruijn t m = local (\jenv -> jenv { deBruijnEnv = t : deBruijnEnv jenv }) m
-
 type TypeM a = ReaderT JointTypeEnv (ReaderT ClassEnv (Either Err)) a
 
 getType :: HasType a => a -> Type

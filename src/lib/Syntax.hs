@@ -36,6 +36,8 @@ module Syntax (
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, newLEnv, newTEnv, Direction (..), ArrayRef, Array,
     fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
+    JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
+    jointEnvGet,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -50,9 +52,11 @@ import Control.Exception hiding (throw)
 import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Reader
 import qualified Data.Vector.Unboxed as V
 import Data.Foldable (fold)
 import Data.Tuple (swap)
+import Data.Maybe (fromJust)
 import Control.Applicative (liftA3)
 import Data.Bifunctor
 import GHC.Generics
@@ -151,6 +155,8 @@ type Pat = RecTree Var
 data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
 type SrcPos = (Int, Int)
 
+-- TODO: Unify LetMono and LetPoly. The only real difference is having a type
+--       annotation attached and we can handle this with bidirectional try inference.
 data FDecl = LetMono Pat FExpr
            | LetPoly Var FTLam
            | TyDef TVar Type
@@ -397,6 +403,28 @@ monMapSingle k v = MonMap (M.singleton k v)
 monMapLookup :: (Monoid v, Ord k) => MonMap k v -> k -> v
 monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
                                                  Just v  -> v
+
+
+-- === Environment for type and kind checking ===
+
+data JointTypeEnv = JointTypeEnv { namedEnv :: TypeEnv, deBruijnEnv :: [Type] }
+
+fromNamedEnv :: TypeEnv -> JointTypeEnv
+fromNamedEnv env = JointTypeEnv env []
+
+jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe (LorT Type Kind)
+jointEnvLookup jenv v = case varName v of
+  DeBruijn idx -> Just $ L $ deBruijnEnv jenv !! idx
+  _            -> envLookup (namedEnv jenv) v
+
+jointEnvGet :: JointTypeEnv -> VarP ann -> LorT Type Kind
+jointEnvGet jenv v = fromJust $ jointEnvLookup jenv v
+
+extendNamed :: MonadReader JointTypeEnv m => TypeEnv -> m a -> m a
+extendNamed env m = local (\jenv -> jenv { namedEnv = namedEnv jenv <> env }) m
+
+extendDeBruijn :: MonadReader JointTypeEnv m => Type -> m a -> m a
+extendDeBruijn t m = local (\jenv -> jenv { deBruijnEnv = t : deBruijnEnv jenv }) m
 
 -- === passes ===
 
