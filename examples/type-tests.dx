@@ -372,14 +372,14 @@ inferEither x = case x
 caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
 caseEffects ref x = case x
     Left  i -> ()
-    Right r -> tell ref r
+    Right r -> ref := r
 > Type error:
 > Expected: { }
->   Actual: {Writer ref | ?_39:Effect}
-> In: ((tell ref) r)
+>   Actual: {State ref | ?_28:Effect}
+> In: (ref := r)
 >
-> caseEffects ref x = case x
->                     ^^^^^^^
+>     Right r -> ref := r
+>                    ^^^
 
 :p (\(u,v). for i:0...u. 1.0) (2, 3)
 > Type error:Function's result type cannot depend on a variable bound in an argument pattern

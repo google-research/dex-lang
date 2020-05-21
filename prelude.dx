@@ -162,14 +162,8 @@ slice xs start = for i. xs.(asidx (asint i `iadd` start))
 ask : rRef:(Ref r) -> {Reader rRef} r
 ask r = %ask(r)
 
-tell : wRef:(Ref w) -> w -> {Writer wRef} ()
-tell w x = %tell(w, x)
-
 get : sRef:(Ref s) -> {State sRef} s
 get s = %get(s)
-
-put : sRef:(Ref s) -> s -> {State sRef} ()
-put s x = %put(s, x)
 
 runReader : rt -> (r:(Ref rt) -> {Reader r |eff} a) -> {|eff} a
 runReader r f = %runReader(r, \r'. f r')
@@ -200,7 +194,7 @@ indexState : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {State s |eff} a) -> {State
 indexState s i f = %indexState(s, i, \s'. f s')
 
 putAt : s:(Ref (i=>a)) -> i -> a -> {State s} ()
-putAt ref i x = indexState ref i \ref'. put ref' x
+putAt ref i x = indexState ref i \ref'. ref' := x
 
 getAt : s:(Ref (i=>a)) -> i -> {State s} a
 getAt ref i = indexState ref i \ref'. get ref'
@@ -217,7 +211,7 @@ scan : A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
 scan x0 fs = swap $ runState x0 \s. for i.
    c = get s
    (c', y) = fs i c
-   _ = put s c'
+   s := c'
    y
 
 fold : A n a | Ix n, Data a . a -> (n->a->a) -> a
@@ -236,11 +230,11 @@ scan' x0 fs = snd $ scan x0 \i x. dup (fs i x)
 -- 'More misc functions
 
 sum : n=>Real -> Real
-sum xs = snd $ runWriter \ref. for i. tell ref xs.i
+sum xs = snd $ runWriter \ref. for i. ref += xs.i
 
 -- Should this version of `sum` be the main one?
 fsum : A n | Ix n . (n->Real) -> Real
-fsum xs = snd $ runWriter \ref. for i. tell ref $ xs i
+fsum xs = snd $ runWriter \ref. for i. ref += xs i
 
 isum : n=>Int -> Int
 isum xs = fold 0 \i c. iadd c xs.i

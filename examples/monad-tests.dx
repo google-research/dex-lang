@@ -7,7 +7,7 @@
 
 :p
    m : s:(Ref Int) -> {State s} ()
-   m s = put s 3
+   m s = s := 3
    runState 0 m
 > ((), 3)
 
@@ -21,9 +21,9 @@
   stateAction : s:(Ref Real) -> {State s} ()
   stateAction s =
      x = get s
-     y = put s (x + 2.0)
+     s := (x + 2.0)
      z = get s
-     put s (z * 3.0)
+     s := (z * 3.0)
   --
   runState 1.0 stateAction
 > ((), 9.0)
@@ -32,10 +32,10 @@
   rwsAction : r:(Ref Int) -> w:(Ref Real) -> s:(Ref Bool) -> {Reader r, Writer w, State s} Int
   rwsAction r w s =
     x = get  s
-    tell w 2.0
-    put  s (not x)
+    w += 2.0
+    s := not x
     r = ask  r
-    tell w 4.0
+    w += 4.0
     (r `iadd` 2)
   --
   runReader 2 \r.
@@ -47,10 +47,10 @@
 :p
    m : s:(Ref (3=>Int)) -> {State s} ()
    m s =
-     indexState s 0@3 \s'. put s' 10
-     indexState s 2@3 \s'. put s' 20
+     indexState s 0@3 \s'. s' := 10
+     indexState s 2@3 \s'. s' := 20
      x = indexState s 0@3 \s'. get s'
-     indexState     s 1@3 \s'. put s' x
+     indexState     s 1@3 \s'. s' := x
    runState [0,0,0] m
 > ((), [10, 10, 20])
 
@@ -69,15 +69,15 @@
   m : w:(Ref Real) -> s:(Ref Real) -> {Writer w, State s} ()
   m w s =
     x = get s
-    tell w x
+    w += x
   runState 1.0 \s. runWriter \w . m w s
 > (((), 1.0), 1.0)
 
 myAction: w:(Ref Real) -> r:(Ref Real) -> {Reader r, Writer w} ()
 myAction w r =
   x = ask r
-  tell w x
-  tell w 2.0
+  w += x
+  w += 2.0
 
 :p runReader 1.5 \r. runWriter \w. myAction w r
 > ((), 3.5)
@@ -85,16 +85,16 @@ myAction w r =
 :p
   m : w1:(Ref Real) -> w2:(Ref Real) -> {Writer w1, Writer w2} ()
   m w1 w2 =
-    tell w1 1.0
-    tell w2 3.0
-    tell w1 1.0
+    w1 += 1.0
+    w2 += 3.0
+    w1 += 1.0
   runWriter \w1. runWriter \w2. m w1 w2
 > (((), 3.0), 2.0)
 
 foom : s:(Ref (3=>Int)) -> {State s} ()
 foom s =
-  indexState s (0@3) $ \s'. put s' 1
-  indexState s (2@3) $ \s'. put s' 2
+  indexState s (0@3) $ \s'. s' := 1
+  indexState s (2@3) $ \s'. s' := 2
 
 :p runState [0,0,0] foom
 > ((), [1, 0, 2])
@@ -125,7 +125,7 @@ foom s =
   foo : Real -> (Real, Real)
   foo x =
      (f, ans) = runWriter \s.
-        tell s x
+        s += x
         \y. 10.0 * x + y
      (f 1.0, ans)
 
@@ -139,9 +139,9 @@ foom s =
         runState 3 \s.
           x = ask r
           y = get s
-          tell w  x
-          tell w' (x + x)
-          put s 4
+          w += x
+          w' += x + x
+          s := 4
           (x, y)
 > ((((2.0, 3), 4), 4.0), 2.0)
 
@@ -173,17 +173,17 @@ symmetrizeInPlace [[1.,2.],[3.,4.]]
 
 :p snd $ runWriter \w.
   for i:2.
-    tell w 1.0
-    tell w 1.0
+    w += 1.0
+    w += 1.0
 > 4.0
 
 :p snd $ runWriter \w.
   for i:2.
-    tell w 1.0
-  tell w 1.0
+    w += 1.0
+  w += 1.0
 > 3.0
 
 :p snd $ runWriter \ref.
-     tell ref [1.,2.,3.]
-     tell ref [2.,4.,5.]
+     ref += [1.,2.,3.]
+     ref += [2.,4.,5.]
 > [3.0, 6.0, 8.0]

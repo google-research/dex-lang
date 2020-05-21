@@ -521,14 +521,14 @@ litArr = [10, 5, 3]
 :p
   runState 0.0 \ref. for i:4.
       c = get ref
-      put ref $ c + 1.0
+      ref := c + 1.0
       c
 > ([0.0, 1.0, 2.0, 3.0], 4.0)
 
 :p
   runState 0.0 \ref. rof i:4.
       c = get ref
-      put ref $ c + 1.0
+      ref := c + 1.0
       c
 > ([3.0, 2.0, 1.0, 0.0], 4.0)
 

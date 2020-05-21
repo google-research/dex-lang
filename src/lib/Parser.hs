@@ -182,7 +182,7 @@ envToVarList env = map (uncurry (:>)) $ envPairs env
 
 letPoly :: Parser FDecl
 letPoly = do
-  v <- try $ lowerName <* symbol ":"
+  v <- try $ lowerName <* (symbol ":" *> notFollowedBy (symbol "="))
   (ty, tlam) <- letPolyTail (pprint v)
   return $ letPolyToMono (LetPoly (v:>ty) tlam)
 
@@ -452,18 +452,22 @@ backtickRule = InfixL $ do
   char '`' >> sc
   return $ \x y -> (v `app` x) `app ` y
 
+effRule :: String -> (FExpr -> PrimEffect FExpr) -> Operator Parser FExpr
+effRule opstr eff = binOpRule opstr $ \x y -> FPrimExpr $ OpExpr $ PrimEffect x $ eff y
+
 ops :: [[Operator Parser FExpr]]
 ops = [ [binOpRule "." (\x i -> FPrimExpr $ OpExpr $ TabGet x i)]
       , [appRule]
       , [scalarBinOpRule "^" Pow]
       , [scalarBinOpRule "*" FMul, scalarBinOpRule "/" FDiv]
-      -- trailing space after "-" to distinguish from negation
-      , [scalarBinOpRule "+" FAdd, scalarBinOpRule "- " FSub]
+      -- trailing space after "-" to distinguish from negation and "+" to distinguish from +=
+      , [scalarBinOpRule "+ " FAdd, scalarBinOpRule "- " FSub]
       , [cmpRule "==" Equal, cmpRule "<=" LessEqual, cmpRule ">=" GreaterEqual,
          cmpRule "<" Less, cmpRule ">" Greater]
       , [scalarBinOpRule "&&" And, scalarBinOpRule "||" Or]
       , [backtickRule]
       , [InfixR (mayBreak (symbol "$") >> return (\x y -> app x y))]
+      , [effRule "+=" MTell, effRule ":=" MPut]
        ]
 
 rawVar :: Parser FExpr

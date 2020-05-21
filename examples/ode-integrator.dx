@@ -10,7 +10,7 @@ eulerStep sRef dyn dt =
   s = get sRef
   dsdt = dyn s
   s' = for i. s.i + dsdt.i * dt
-  put sRef s'
+  sRef := s'
 
 euler : Dynamics d -> EState d -> Time -> EState d
 euler f x0 dt =

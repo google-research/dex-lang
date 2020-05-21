@@ -172,6 +172,10 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (SumGet e isLeft) = parens $ (if isLeft then "projLeft" else "projRight") <+> p e
   pretty (SumTag e)        = parens $ "projTag" <+> p e
   pretty (SumCase c l r) = "case (" <+> p c <> ")" <> nest 2 ("\n" <> prettyL l) <+> nest 2 ("\n" <> prettyL r)
+  pretty (PrimEffect ref (MPut val))  = p ref <+> ":=" <+> p val
+  pretty (PrimEffect ref (MTell val)) = p ref <+> "+=" <+> p val
+  pretty (PrimEffect ref MAsk) = "ask" <+> p ref
+  pretty (PrimEffect ref MGet) = "get" <+> p ref
   pretty op = prettyExprDefault (OpExpr op)
 
 prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
