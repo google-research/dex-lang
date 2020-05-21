@@ -26,14 +26,15 @@ import PPrint
 import Cat
 import Subst
 
-type InferM = ReaderT TypeEnv (SolverT (Either Err))
+type InferM = ReaderT JointTypeEnv (SolverT (Either Err))
 
 inferModule :: TopInfEnv -> FModule -> Except (FModule, TopInfEnv)
 inferModule (tyEnv, tySubEnv) m = do
   let (Module bid (imports, exports) body) = m
   checkImports tyEnv m
   (body', tySubEnvOut) <- expandTyAliases tySubEnv body
-  (body'', tyEnvOut) <- runInferM tyEnv $ catTraverse (inferDecl noEffect) body'
+  (body'', tyEnvOut) <- runInferM tyEnv $
+    catTraverse (inferDecl noEffect) fromNamedEnv body' tyEnv
   let tyEnvOut' = tyEnvOut <> fmap (T . getKind) tySubEnvOut
   let imports' = map (addTopVarAnn  tyEnv              ) imports
   let exports' = map (addTopVarAnn (tyEnv <> tyEnvOut')) exports
@@ -41,7 +42,7 @@ inferModule (tyEnv, tySubEnv) m = do
   return (m', (tyEnvOut', tySubEnvOut))
 
 runInferM :: (TySubst a, Pretty a) => TypeEnv -> InferM a -> Except a
-runInferM env m = runSolverT (runReaderT m env)
+runInferM env m = runSolverT (runReaderT m (fromNamedEnv env))
 
 expandTyAliases :: Env Type -> [FDecl] -> Except ([FDecl], Env Type)
 expandTyAliases envInit decls =
@@ -53,6 +54,9 @@ expandTyAliasDecl decl = do
   case decl of
     TyDef v ty -> do
       let ty' = tySubst env ty
+      -- TODO: A type alias only has a type kind if it takes no arguments. This is
+      --       incorrect and it only works, because we ignore the "expected kind"
+      --       argument in the case for type aliases...
       ty'' <- liftEither $ runInferKinds mempty TyKind ty'
       extend ([], v @> ty'')
     _ -> extend ([tySubst env decl], mempty)
@@ -88,15 +92,15 @@ check :: FExpr -> EffectiveType -> InferM FExpr
 check expr reqEffTy@(allowedEff, reqTy) = case expr of
   FDecl decl body -> do
     (decl', env') <- inferDecl allowedEff decl
-    body' <- extendR env' $ check body reqEffTy
+    body' <- extendNamed env' $ check body reqEffTy
     return $ FDecl decl' body'
   FVar v -> do
-    ty <- asks $ fromL . (! v)
+    ty <- asks $ fromL . (flip jointEnvGet v)
     case ty of
       Forall _ _ _ -> check (fTyApp v []) reqEffTy
       _ -> constrainReq ty >> return (FVar (varName v :> ty))
   FPrimExpr (OpExpr (TApp (FVar v) headTyArgs)) -> do
-    ty <- asks $ fromL . (! v)
+    ty <- asks $ fromL . (flip jointEnvGet v)
     case ty of
       Forall tyFormals _ body -> do
         let reqKinds = map varAnn tyFormals
@@ -166,7 +170,7 @@ checkPure expr ty = check expr (noEffect, ty)
 checkTLam :: Type -> FTLam -> InferM FTLam
 checkTLam ~(Forall tbs qs tyBody) (FTLam _ _ tlamBody) = do
   let env = foldMap tbind tbs
-  liftM (FTLam tbs qs) $ checkLeaks tbs $ extendR env $
+  liftM (FTLam tbs qs) $ checkLeaks tbs $ extendNamed env $
     check tlamBody (noEffect, tyBody)
 
 checkLam :: FLamExpr -> PiType EffectiveType -> InferM FLamExpr
@@ -177,24 +181,24 @@ checkLam (FLamExpr p body) piTy@(Pi a (eff, b)) = do
       -- TODO: This is a very hacky way for determining whether we are in checking or
       --       inference mode.
       b' <- zonk b
-      let noInferenceVars = null $ [() | (Name InferenceName _ _) <- envNames $ freeVars b']
+      noInferenceVars <- looks $ null . envIntersect (freeVars b') . solverVars
       if noInferenceVars
         then do  -- Checking
           piTy' <- zonk piTy
           effTy <- maybeApplyPi piTy' $ Just $ Var v
-          body' <- extendR (foldMap lbind p') $ check body effTy
+          body' <- extendNamed (foldMap lbind p') $ check body effTy
           return $ FLamExpr p' body'
         else do  -- Inference
           bodyValTyVar <- freshQ
           bodyEffTyVar <- freshInferenceVar EffectKind
-          body' <- extendR (foldMap lbind p') $ check body (bodyEffTyVar, bodyValTyVar)
+          body' <- extendNamed (foldMap lbind p') $ check body (bodyEffTyVar, bodyValTyVar)
           bodyEffType <- (,) <$> zonk bodyEffTyVar <*> zonk bodyValTyVar
           let (Pi _ (effTy, resTy)) = makePi v bodyEffType
           constrainEq b   resTy (pprint body)
           constrainEq eff effTy (pprint body)
           return $ FLamExpr p' body'
     _ -> do          -- Regular function
-      body' <- extendR (foldMap lbind p') $ check body (eff, b)
+      body' <- extendNamed (foldMap lbind p') $ check body (eff, b)
       -- TODO: Make sure that the pattern variables are not leaking?
       return $ FLamExpr p' body'
 
@@ -301,20 +305,23 @@ doMSnd m x = do { y <- m; return (x, y) }
 
 -- === kind inference ===
 
-type InferKindM a = ReaderT [Type] (CatT TypeEnv InferM) a
+-- TODO: The outer CatT plays a role of SolverT for kinds. It should
+--       get folded into SolverT instead, so that we can keep all inference
+--       in a single monad!
+type InferKindM a = CatT TypeEnv InferM a
 
 inferKinds :: Kind -> Type -> InferM Type
 inferKinds kind ty = do
-  env <- ask
-  liftM fst $ runCatT (runReaderT (inferKindsM kind ty) []) env
+  env <- asks $ namedEnv
+  liftM fst $ runCatT (inferKindsM kind ty) env
 
 runInferKinds :: TypeEnv -> Kind -> Type -> Except Type
 runInferKinds env kind ty = liftM fst $ runInferM env $
-  runCatT (runReaderT (inferKindsM kind ty) []) env
+  runCatT (inferKindsM kind ty) env
 
 inferKindsM :: Kind -> Type -> InferKindM Type
 inferKindsM kind ty = case ty of
-  NoAnn -> lift $ lift $ freshInferenceVar kind
+  NoAnn -> lift $ freshInferenceVar kind
   TypeVar tv@(v:>_) -> do
     x <- looks $ flip envLookup tv
     case x of
@@ -323,46 +330,56 @@ inferKindsM kind ty = case ty of
       _                  -> error "Lookup failed"
     return $ TypeVar (v:>kind)
   Forall vs qs body -> liftM fst $ scoped $ do
+    checkKindEq kind TyKind
     extend (foldMap tbind vs)
     body' <- inferKindsM TyKind body
     vs' <- mapM addKindAnn vs
     let substEnv = newTEnv vs (map TypeVar vs')
     let qs' = map (subst (substEnv, mempty)) $ qs ++ impliedClasses body
     return $ Forall vs' qs' body'
-  TypeAlias vs body -> do
+  TypeAlias vs body -> liftM fst $ scoped $ do
     extend (foldMap tbind vs)
     body' <- inferKindsM TyKind body
     vs' <- mapM addKindAnn vs
+    -- TODO: Verify that kind is ArrowKind or TyKind. Can't uncomment this just
+    --       yet, because the call site has no way of calling this in inference mode
+    --       at the moment.
+    -- case vs of
+    --   [] -> checkKindEq kind TyKind
+    --   _  -> checkKindEq kind $ ArrowKind (map varAnn vs) TyKind
     return $ TypeAlias vs' body'
   ArrowType m (Pi a (eff, b)) -> do
+    checkKindEq kind TyKind
     m' <- inferKindsM MultKind m
     a' <- inferKindsM TyKind   a
-    local ([a'] <>) $ do
+    extendDeBruijn a' $ do
       eff' <- inferKindsM EffectKind eff
       b'   <- inferKindsM TyKind     b
       return $ ArrowType m' $ Pi a' (eff', b')
   TabType (Pi a b) -> do
+    checkKindEq kind TyKind
     a' <- inferKindsM TyKind a
-    local ([a'] <>) $ do
+    extendDeBruijn a' $ do
       b' <- inferKindsM TyKind b
       return $ TabType $ Pi a' b'
   Effect row tailVar -> do
     checkKindEq kind EffectKind
     row' <- liftM fold $ forM (envPairs row) $ \(v, (eff, NoAnn)) -> do
       let v' = v:>()
-      t <- case v of
-             DeBruijn i -> asks (!! i)
-             _          -> looks $ fromL . (! v')
+      t <- asks $ fromL . flip jointEnvGet v'
       return (v' @> (eff, t))
     tailVar' <- traverse (inferKindsM EffectKind) tailVar
     return $ Effect row' tailVar'
-  TC con -> liftM TC $ do
+  TC LinCon    -> checkKindEq kind MultKind >> return ty
+  TC NonLinCon -> checkKindEq kind MultKind >> return ty
+  TC con -> do
+    checkKindEq kind TyKind
     con' <- traverseTyCon (fst $ tyConKind con)
-              (\(t,k) -> inferKindsM k t)
-              (return . fst)
-    traverseTyCon (fst $ tyConKind con')
-              (return . fst)
-              (\(x,t) -> lift $ lift $ checkAtom x t)
+                          (\(t,k) -> inferKindsM k t)
+                          (return . fst)
+    TC <$> traverseTyCon (fst $ tyConKind con')
+                         (return . fst)
+                         (\(x,t) -> lift $ checkAtom x t)
 
 addKindAnn :: TVar -> InferKindM TVar
 addKindAnn tv@(v:>_) = do

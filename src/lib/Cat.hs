@@ -78,6 +78,14 @@ instance (Monoid env, MonadError e m) => MonadError e (CatT env m) where
     extend env'
     return ans
 
+instance (Monoid env, MonadReader r m) => MonadReader r (CatT env m) where
+  ask = lift ask
+  local f m = do
+    env <- look
+    (ans, env') <- lift $ local f $ runCatT m env
+    extend env'
+    return ans
+
 runCatT :: (Monoid env, Monad m) => CatT env m a -> env -> m (a, env)
 runCatT (CatT m) initEnv = do
   (ans, (_, newEnv)) <- runStateT m (initEnv, mempty)
@@ -114,21 +122,19 @@ extendLocal x m = do
 
 -- Not part of the cat monad, but related utils for monoidal envs
 
-catTraverse :: (Monoid env, MonadReader env m, Traversable f)
-                  => (a -> m (b, env)) -> f a -> m (f b, env)
-catTraverse f xs = do
-  env <- ask
-  runCatT (traverse (asCat f) xs) env
+catTraverse :: (Monoid menv, MonadReader env m, Traversable f)
+                  => (a -> m (b, menv)) -> (menv -> env) -> f a -> menv -> m (f b, menv)
+catTraverse f inj xs env = runCatT (traverse (asCat f inj) xs) env
 
 catFold :: (Monoid env, MonadReader env m, Traversable f)
         => (a -> m env) -> f a -> m env
-catFold f xs = liftM snd $ catTraverse (liftM ((,) ()) . f) xs
+catFold f xs = snd <$> (ask >>= catTraverse (liftM ((),) . f) id xs)
 
-asCat :: (Monoid env, MonadReader env m)
-            => (a -> m (b, env)) -> a -> CatT env m b
-asCat f x = do
+asCat :: (Monoid menv, MonadReader env m)
+      => (a -> m (b, menv)) -> (menv -> env) -> a -> CatT menv m b
+asCat f inj x = do
   env' <- look
-  (x', env'') <- lift $ local (const env') (f x)
+  (x', env'') <- lift $ local (const $ inj env') (f x)
   extend env''
   return x'
 
