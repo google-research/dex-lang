@@ -12,7 +12,7 @@ mmadd x y = for i j. x.i.j + y.i.j
 ' ## Cholesky Algorithm
 
 chol : (n=>n=>Real) -> (n=>n=>Real)
-chol x = snd $ runState (for _ _. 0.0) \buf.
+chol x = getState (for _ _. 0.0) \buf.
   for i.
     for j':(...i).
       j = %inject(j')
@@ -26,14 +26,14 @@ chol x = snd $ runState (for _ _. 0.0) \buf.
 ' ## PSD solver based on Cholesky decomposition
 
 trisolveL : n=>n=>Real -> n=>Real -> n=>Real
-trisolveL mat b = execState (for _. 0.0) \buf.
+trisolveL mat b = getState (for _. 0.0) \buf.
   for i.
     row   = for j:(..<i). mat.i.%inject(j)
     xPrev = for j:(..<i). getAt buf %inject(j)
     putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
 
 trisolveU : n=>n=>Real -> n=>Real -> n=>Real
-trisolveU mat b = execState (for _. 0.0) \buf.
+trisolveU mat b = getState (for _. 0.0) \buf.
   rof i.
     row   = for j:(i...). mat.i.%inject(j)
     xPrev = for j:(i...). getAt buf %inject(j)

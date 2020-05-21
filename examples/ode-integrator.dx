@@ -14,7 +14,7 @@ eulerStep sRef dyn dt =
 
 euler : Dynamics d -> EState d -> Time -> EState d
 euler f x0 dt =
-  snd $ runState x0 \sRef.
+  getState x0 \sRef.
     for i:N. eulerStep sRef f dt
 
 myDyn : Dynamics d

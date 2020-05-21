@@ -168,20 +168,20 @@ get s = %get(s)
 runReader : rt -> (r:(Ref rt) -> {Reader r |eff} a) -> {|eff} a
 runReader r f = %runReader(r, \r'. f r')
 
-runWriter : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
-runWriter f = %runWriter(\w. f w)
+withAccumulator : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
+withAccumulator f = %runWriter(\w. f w)
 
-execWriter : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} wt
-execWriter f =
-  (_, ans) = runWriter f
+getAccumulator : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} wt
+getAccumulator f =
+  (_, ans) = withAccumulator f
   ans
 
-runState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
-runState s f = %runState(s, \s'. f s')
+withState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
+withState s f = %runState(s, \s'. f s')
 
-execState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} st
-execState s f =
-  (_, ans) = runState s f
+getState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} st
+getState s f =
+  (_, ans) = withState s f
   ans
 
 indexReader : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
@@ -208,7 +208,7 @@ getAt2 ref i j = indexState ref i \ref'. getAt ref' j
 'State-carrying loop constructs
 
 scan : A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
-scan x0 fs = swap $ runState x0 \s. for i.
+scan x0 fs = swap $ withState x0 \s. for i.
    c = get s
    (c', y) = fs i c
    s := c'
@@ -230,11 +230,11 @@ scan' x0 fs = snd $ scan x0 \i x. dup (fs i x)
 -- 'More misc functions
 
 sum : n=>Real -> Real
-sum xs = snd $ runWriter \ref. for i. ref += xs.i
+sum xs = snd $ withAccumulator \ref. for i. ref += xs.i
 
 -- Should this version of `sum` be the main one?
 fsum : A n | Ix n . (n->Real) -> Real
-fsum xs = snd $ runWriter \ref. for i. ref += xs i
+fsum xs = snd $ withAccumulator \ref. for i. ref += xs i
 
 isum : n=>Int -> Int
 isum xs = fold 0 \i c. iadd c xs.i

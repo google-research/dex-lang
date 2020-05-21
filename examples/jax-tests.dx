@@ -5,7 +5,7 @@ x = 1.0 + 2.0
 > 6.0
 
 :p
-  snd $ runWriter \ref.
+  getAccumulator \ref.
     ref += 1.0
     ref += 2.0
 > 3.0
