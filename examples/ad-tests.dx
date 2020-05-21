@@ -178,7 +178,7 @@ tripleit x = %runReader(x, \r.
 -- > 6.0
 
 -- myOtherSquare : Real -> Real
--- myOtherSquare x = snd $ runWriter \w. tell w (x * x)
+-- myOtherSquare x = snd $ runWriter \w. w += x * x
 
 -- :p myOtherSquare 3.0
 -- > 9.0
@@ -246,7 +246,7 @@ vec = [1.]
   f x =
     y = x * 2.0
     execWriter \ref.
-      tell ref (x * 2.0)
-      tell ref y
+      ref += x * 2.0
+      ref += y
   grad f 1.0
 > 4.0

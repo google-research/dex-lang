@@ -76,7 +76,7 @@ prop-tests: cbits/libdex.so
 
 update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
-	mv $^.tmp $^
+	mv $<.tmp $<
 
 jax-tests:
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script

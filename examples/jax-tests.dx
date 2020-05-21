@@ -6,8 +6,8 @@ x = 1.0 + 2.0
 
 :p
   snd $ runWriter \ref.
-    tell ref 1.0
-    tell ref 2.0
+    ref += 1.0
+    ref += 2.0
 > 3.0
 
 :p for i:3. x + 1.0
