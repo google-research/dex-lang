@@ -33,18 +33,18 @@ newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 linearize :: RuleEnv -> Scope -> LamExpr -> Atom
 linearize env scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
   buildLam NonLin b $ \x -> do
-    ((y, yt), _) <- flip runReaderT (b @> L x) $ runWriterT $
+    ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
                       runLinA (linearizeExpr env expr)
     -- TODO: check linearity
     fLin <- buildLam Lin b $ \xt ->do
-              ans <- runReaderT yt (b @> L xt)
+              ans <- runReaderT yt (b@>xt)
               return (ans, noEffect)
     return (PairVal y fLin, noEffect)
 
 linearizeExpr :: RuleEnv -> Expr -> LinA Atom
 linearizeExpr ruleEnv expr = case expr of
   Decl (Let b bound) body -> LinA $ do
-    (env, tEnvM) <- runLinA $ liftA (\x -> b @> L x) $ linearizeCExpr ruleEnv bound
+    (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeCExpr ruleEnv bound
     (ans, fLin) <- extendR env $ runLinA $ linearizeExpr ruleEnv body
     return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
@@ -55,19 +55,19 @@ linearizeLamExpr :: RuleEnv -> LamExpr
                  -> EmbedSubM (LamExpr, [Type], Atom -> [Atom] -> EmbedSubM Atom)
 linearizeLamExpr ruleEnv (LamExpr v body) = do
   (lam, (v', residualVs, tBuilder)) <- buildLamExprAux v $ \v'@(Var iVar) ->
-    extendR (v @> L v') $ do
+    extendR (v@>v') $ do
        (((ans, ansT), embedEnv), fvs) <- runWriterT $ scoped $ runLinA $
                                            linearizeExpr ruleEnv body
        let localScope = fst embedEnv
        extend embedEnv
-       let residualVs = [rv :> ty | (rv, L ty) <- envPairs $ localScope `envIntersect` fvs]
+       let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
        return (ansWithResiduals, (iVar, residualVs, ansT))
   extend $ asFst (foldMap (@>()) (v':residualVs))
   return (lam, map varAnn residualVs, \v'' residuals -> do
      scope <- looks fst
-     (ansT', (_, decls)) <- extendR (v @> L (Var v')) $ scoped tBuilder
-     let env = (v' @> L v'') <> newLEnv residualVs residuals
+     (ansT', (_, decls)) <- extendR (v @> Var v') $ scoped tBuilder
+     let env = (v'@>v'') <> newEnv residualVs residuals
      emitExpr $ subst (env, scope) $ wrapDecls decls ansT')
 
 unpackResiduals :: Monad m => (ty -> a -> m (a, a)) -> [ty] -> a -> m (a, [a])
@@ -170,14 +170,13 @@ linearizeVar :: Var -> LinA Atom
 linearizeVar v = LinA $ do
   maybeVal <- asks $ flip envLookup v
   case maybeVal of
-    Just (L x) -> return (x, do
+    Just x -> return (x, do
       maybeTVal <- asks $ flip envLookup v
       -- TODO: consider having separate primal-subst and tangent envs
       case maybeTVal of
-        Just ~(L t) -> return t
+        Just t -> return t
         Nothing    -> error "Tangent lookup failed")
     Nothing    -> return (withZeroTangent (Var v))
-    _ -> error "unexpected lookup"
 
 withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
 withZeroTangent x = (x, zeroAt (tangentType (getType x)))
@@ -258,7 +257,7 @@ transposeExpr expr ct = case expr of
         transposeCExpr bound ct'
       else do
         x <- substTranspose bound >>= emitTo b
-        extendR (asSnd (b @> L x)) $ transposeExpr body ct
+        extendR (asSnd (b@>x)) $ transposeExpr body ct
   CExpr e -> transposeCExpr e ct
   Atom x  -> transposeAtom x ct
 
@@ -296,7 +295,7 @@ transposeCExpr expr ct = case expr of
   For d (LamExpr v body) -> do
     lam <- buildLamExpr v $ \i -> do
       ct' <- nTabGet ct i
-      extendR (asSnd (v @> L i)) $ transposeExpr body ct'
+      extendR (asSnd (v@>i)) $ transposeExpr body ct'
       return UnitVal
     void $ emit $ For (flipDir d) lam
   TabGet ~(Var x) i -> do
@@ -311,14 +310,14 @@ transposeCExpr expr ct = case expr of
       return UnitVal
   RunReader r (LamExpr v body) -> do
     lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v @> L x)) $ transposeExpr body ct
+             extendR (asSnd (v@>x)) $ transposeExpr body ct
              return UnitVal
     (_, ctr) <- emit (RunWriter lam) >>= fromPair
     transposeAtom r ctr
   RunWriter (LamExpr v body) -> do
     (ctBody, ctEff) <- fromPair ct
     lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v @> L x)) $ transposeExpr body ctBody
+             extendR (asSnd (v@>x)) $ transposeExpr body ctBody
              return UnitVal
     void $ emit $ RunReader ctEff lam
   PrimEffect refArg m -> do
@@ -349,7 +348,7 @@ transposeAtom atom ct = case atom of
 freeLinVars :: HasVars a => a -> TransposeM [Var]
 freeLinVars x = do
   linVs <- asks fst
-  return [v:>ty | (v, L ty) <- envPairs $ envIntersect linVs (freeVars x)]
+  return $ map (uncurry (:>)) $ envPairs $ envIntersect linVs (freeVars x)
 
 isLin :: HasVars a => a -> TransposeM Bool
 isLin x = liftM (not . null) $ freeLinVars x

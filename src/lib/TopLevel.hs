@@ -101,8 +101,8 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
     ShowPass _ -> void $ evalModule env m
     TimeIt     -> void $ evalModule env m
   GetNameType v -> case envLookup typeEnv v of
-    Just (L ty) -> logTop (TextOut $ pprint ty) >> return mempty
-    _           -> liftEitherIO $ throw UnboundVarErr $ pprint v
+    Just ty -> logTop (TextOut $ pprint ty) >> return mempty
+    _       -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     evalSourceBlocks env $ parseProg source
@@ -110,18 +110,18 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
     source <- liftIO $ readFile fname
     let val = ignoreExcept $ parseData source
     let decl = LetMono p val
-    let outVars = map (\(v:>ty) -> v:>L ty) $ toList p
+    let outVars = toList p
     evalModule env $ Module (sbId block) ([], outVars) [decl]
   LoadData p DexBinaryObject fname -> do
     val <- liftIO $ loadDataFile fname
     -- TODO: handle patterns and type annotations in binder
     let (RecLeaf b) = p
-    let outEnv = b @> L val
-    return $ TopEnv (fmap getTyOrKind outEnv, mempty) outEnv mempty
+    let outEnv = b @> val
+    return $ TopEnv (fmap getType outEnv, mempty) outEnv mempty
   RuleDef ann@(LinearizationDef v) ~(Forall [] [] ty) ~(FTLam [] [] expr) -> do
     let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
     let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr
-    let m = Module (sbId block) (imports, [fmap L v']) [LetMono (RecLeaf v') expr]
+    let m = Module (sbId block) (imports, [v']) [LetMono (RecLeaf v') expr]
     env' <- evalModule env m
     return $ env' <> TopEnv mempty mempty ((v:>()) @> Var v')
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
@@ -150,16 +150,16 @@ evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
 evalModuleVal env v m = do
   env' <- evalModule env m
   let (TopEnv _ simpEnv _) = env <> env'
-  let (L val) = simpEnv ! v
-  let val' = subst (simpEnv, mempty) val
+  let val = subst (simpEnv, mempty) $ simpEnv ! v
   backend <- asks evalEngine
-  liftIO $ substArrayLiterals backend val'
+  liftIO $ substArrayLiterals backend val
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalModule :: TopEnv -> FModule -> TopPassM TopEnv
-evalModule (TopEnv infEnv simpEnv ruleEnv) untyped = do
+evalModule env@(TopEnv infEnv simpEnv ruleEnv) untyped = do
+  logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
   (typed, infEnv') <- typePass infEnv untyped
   checkPass TypePass typed
@@ -173,7 +173,7 @@ evalModule (TopEnv infEnv simpEnv ruleEnv) untyped = do
       return $ TopEnv infEnv' simpEnv' mempty
     _ -> do
       ~(TupVal results) <- evalBackend dfExpr
-      let simpEnv'' = subst (newLEnv outVars results, mempty) simpEnv'
+      let simpEnv'' = subst (newEnv outVars results, mempty) simpEnv'
       return $ TopEnv infEnv' simpEnv'' mempty
 
 initializeBackend :: Backend -> IO BackendEngine
@@ -225,14 +225,14 @@ requestArrays backend vs = case backend of
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
-arrayVars x = [v:>ty | (v@(Name ArrayName _ _), L ty) <- envPairs (freeVars x)]
+arrayVars x = [v:>ty | (v@(Name ArrayName _ _), ty) <- envPairs (freeVars x)]
 
 substArrayLiterals :: (HasVars a, Subst a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
   let vs = arrayVars x
   arrays <- requestArrays backend vs
   let arrayAtoms = map (Con . ArrayLit) arrays
-  return $ subst (newLEnv vs arrayAtoms, mempty) x
+  return $ subst (newEnv vs arrayAtoms, mempty) x
 
 -- TODO: think carefully about whether this is thread-safe
 execLLVM :: Logger [Output] -> LLVMEngine -> LLVMFunction -> [Var] -> IO [Var]

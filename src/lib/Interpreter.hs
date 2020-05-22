@@ -30,7 +30,7 @@ evalExpr env expr = case expr of
   Atom x -> subst (env, mempty) x
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> L (evalCExpr rhs')
+evalDecl env (Let v rhs) = v @> evalCExpr rhs'
   where rhs' = subst (env, mempty) rhs
 
 evalCExpr :: CExpr -> Atom

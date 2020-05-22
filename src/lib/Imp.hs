@@ -49,7 +49,7 @@ toImpExpr env expr = case expr of
   Decl (Let b bound) body -> do
     b' <- traverse (impSubst env) b
     ans <- toImpCExpr env bound
-    toImpExpr (env <> b'@> L ans) body
+    toImpExpr (env <> b'@> ans) body
   CExpr op -> toImpCExpr env op
   Atom atom -> impSubst env atom
 
@@ -83,7 +83,7 @@ toImpCExpr' op = case op of
     emitLoop d n' $ \i -> do
       i' <- intToIndex idxTy i
       ithDest <- impTabGet dest i'
-      ans <- toImpExpr (env <> b @> L i') body
+      ans <- toImpExpr (env <> b @> i') body
       copyAtom ithDest ans
     return dest
   TabGet x i -> impTabGet x i
@@ -100,22 +100,22 @@ toImpCExpr' op = case op of
       RecVal r -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ pprint val
   RunReader r (LamExpr ref body, env) -> do
-    toImpExpr (env <> ref @> L r) body
+    toImpExpr (env <> ref @> r) body
   RunWriter (LamExpr ref body, env) -> do
     wDest <- alloc wTy
     initializeAtomZero wDest
-    aResult <- toImpExpr (env <> ref @> L wDest) body
+    aResult <- toImpExpr (env <> ref @> wDest) body
     return $ PairVal aResult wDest
     where (PairTy _ wTy) = resultTy
   RunState s (LamExpr ref body, env) -> do
     sDest <- alloc sTy
     copyAtom sDest s
-    aResult <- toImpExpr (env <> ref @> L sDest) body
+    aResult <- toImpExpr (env <> ref @> sDest) body
     return $ PairVal aResult sDest
     where (PairTy _ sTy) = resultTy
   IndexEff _ ref i (LamExpr b body, env) -> do
     ref' <- impTabGet ref i
-    toImpExpr (env <> b @> L ref') body
+    toImpExpr (env <> b @> ref') body
   PrimEffect ref m -> do
     case m of
       MAsk    -> return ref

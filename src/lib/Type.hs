@@ -13,7 +13,7 @@
 module Type (
     getType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
-    isData, Checkable (..), popRow, getTyOrKind, moduleType,
+    isData, Checkable (..), popRow, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     getConType, checkEffType, HasType, indexSetConcreteSize,
     maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
@@ -23,9 +23,9 @@ import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable
-import Data.Bifunctor
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
+import GHC.Stack
 
 import Array
 import Syntax
@@ -51,8 +51,8 @@ checkPureType x = do
   return ty
 
 class HasType a where
-  checkEffType :: a -> TypeM EffectiveType
-  getEffType   :: a ->       EffectiveType
+  checkEffType :: HasCallStack => a -> TypeM EffectiveType
+  getEffType   :: HasCallStack => a ->       EffectiveType
 
 runTypeM :: TypeEnv -> TypeM a -> Except a
 runTypeM env m = runReaderT (runReaderT m (fromNamedEnv env)) mempty
@@ -85,21 +85,19 @@ asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
-getTyOrKind :: LorT Atom Type -> LorT Type Kind
-getTyOrKind = bimap getType getKind
-
 -- === kind checking ===
 
 getKind :: Type -> Kind
 getKind ty = case ty of
-  TypeVar v        -> varAnn v
+  Var v            -> varAnn v
   ArrowType _ _    -> TyKind
   TabType _        -> TyKind
   Forall _ _ _     -> TyKind
-  TypeAlias vs rhs -> ArrowKind (map varAnn vs) (getKind rhs)
-  Effect _ _       -> EffectKind
-  NoAnn            -> NoKindAnn
+  TypeAlias vs rhs -> TC $ ArrowKind (map varAnn vs) (getKind rhs)
+  Effect _ _       -> TC EffectKind
+  NoAnn            -> NoAnn
   TC con           -> snd $ tyConKind con
+  _ -> error "Not a type"
 
 -- TODO: add class constraints
 tyConKind :: TyCon Type e -> (TyCon (Type, Kind) (e, Type), Kind)
@@ -114,23 +112,24 @@ tyConKind con = case con of
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
   RefType t         -> (RefType (t, TyKind), TyKind)
   TypeApp t xs      -> (TypeApp (t, tk) (map (,TyKind) xs), TyKind)
-    where tk = ArrowKind (map (const TyKind) xs) TyKind
-  LinCon            -> (LinCon   , MultKind)
-  NonLinCon         -> (NonLinCon, MultKind)
+    where tk = TC $ ArrowKind (map (const TyKind) xs) TyKind
+  LinCon            -> (LinCon   , TC MultKind)
+  NonLinCon         -> (NonLinCon, TC MultKind)
+  _ -> error "Not implemented"
 
 checkKind :: Type -> TypeM Kind
 checkKind ty = case ty of
-  TypeVar v@(_:>k) -> do
+  Var v@(_:>k) -> do
     x <- asks $ flip jointEnvLookup v
     case x of
-      Just (T k') -> do
+      Just k' -> do
         assertEq k k' "Kind annotation"
       _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
     return k
   ArrowType m (Pi a (e, b)) -> do
-    checkKindIs MultKind m
+    checkKindIs (TC MultKind) m
     checkKindIs TyKind a
-    checkKindIs EffectKind e
+    checkKindIs (TC EffectKind) e
     extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
   TabType (Pi a b) -> do
@@ -138,24 +137,25 @@ checkKind ty = case ty of
     extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
   Forall vs _ body -> do
-    extendNamed (foldMap tbind vs) (checkKindIs TyKind body)
+    extendNamed (foldMap bind vs) (checkKindIs TyKind body)
     return TyKind
   TypeAlias vs body -> do
-    bodyKind <- extendNamed (foldMap tbind vs) (checkKind body)
-    return $ ArrowKind (map varAnn vs) bodyKind
+    bodyKind <- extendNamed (foldMap bind vs) (checkKind body)
+    return $ TC $ ArrowKind (map varAnn vs) bodyKind
   Effect eff tailVar -> do
     mapM_ (mapM_ (checkKindIs TyKind)) eff
     case tailVar of
       Nothing -> return ()
-      Just tv@(TypeVar _) -> checkKindIs EffectKind tv
+      Just tv@(Var _) -> checkKindIs (TC EffectKind) tv
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
-    return EffectKind
+    return $ TC EffectKind
   NoAnn -> error "Shouldn't have NoAnn left"
   TC con -> do
     let (conKind, resultKind) = tyConKind con
     void $ traverseTyCon conKind (\(t,k) -> checkKindIs k t)
                                  (\(e,t) -> checkPureType e >>= checkTypeEq t)
     return resultKind
+  _ -> error "Not a type"
 
 checkKindIs :: Kind -> Type -> TypeM ()
 checkKindIs k ty = checkKind ty >>= checkKindEq k
@@ -173,7 +173,7 @@ instance HasType Var where
   checkEffType v@(_:>annTy) = do
     x <- asks $ flip jointEnvLookup v
     case x of
-      Just (L ty) -> do
+      Just ty -> do
         assertEq annTy ty "Var annotation"
         return $ pureType ty
       _ -> error $ "Lookup failed:" ++ pprint v
@@ -213,13 +213,13 @@ instance HasType FExpr where
           LetMono p body -> do
             (eff, ty) <- checkEffType body
             assertEq (getType p) ty "LetMono"
-            return (eff, foldMap lbind p)
+            return (eff, foldMap bind p)
           LetPoly b@(_:>ty) (FTLam tbs qs body) -> do
-            body' <- extendClassEnv qs $ extendNamed (foldMap tbind tbs) $ checkPureType body
+            body' <- extendClassEnv qs $ extendNamed (foldMap bind tbs) $ checkPureType body
             let ty' = Forall tbs qs body'
             assertEq ty ty' "TLam"
-            return (noEffect, lbind b)
-          TyDef tv _ -> return (noEffect, tbind tv)
+            return (noEffect, bind b)
+          TyDef tv _ -> return (noEffect, bind tv)
       (contEff, ty) <- extendNamed env $ checkEffType cont
       eff <- combineEffects declEff contEff
       return (eff, ty)
@@ -244,7 +244,7 @@ instance HasType FLamExpr where
 
   checkEffType (FLamExpr (RecLeaf v) body) = do
     void $ checkKind (varAnn v)
-    bodyTy <- extendNamed (lbind v) $ checkEffType body
+    bodyTy <- extendNamed (bind v) $ checkEffType body
     return $ pureType $ ArrowType NonLin $ makePi v bodyTy
   checkEffType (FLamExpr p body) = do
     void $ checkKind pty
@@ -253,7 +253,7 @@ instance HasType FLamExpr where
       throw TypeErr "Function's result type cannot depend on a variable bound in an argument pattern"
     return $ pureType $ ArrowType NonLin $ Pi pty bodyTy
     where pty = getType p
-          penv = foldMap lbind p
+          penv = foldMap bind p
 
 -- === Built-in typeclasses ===
 
@@ -269,7 +269,7 @@ checkClassConstraint c ty = do
 
 checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 checkVSpace env ty = case ty of
-  TypeVar v -> checkVarClass env VSpace v
+  Var v     -> checkVarClass env VSpace v
   RealTy    -> return ()
   TabTy _ b -> recur b
   RecTy r   -> mapM_ recur r
@@ -278,7 +278,7 @@ checkVSpace env ty = case ty of
 
 checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
 checkIdxSet env ty = case ty of
-  TypeVar v             -> checkVarClass env IdxSet v
+  Var v                 -> checkVarClass env IdxSet v
   RecTy r               -> mapM_ recur r
   SumTy l r             -> recur l >> recur r
   BoolTy                -> return ()
@@ -290,7 +290,7 @@ checkIdxSet env ty = case ty of
 checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
 checkDataLike msg env ty = case ty of
   -- This is an implicit `instance IdxSet a => Data a`
-  TypeVar v          -> checkVarClass env IdxSet v `catchError`
+  Var v              -> checkVarClass env IdxSet v `catchError`
                            const (checkVarClass env Data v)
   TabTy _ b          -> recur b
   TC con -> case con of
@@ -311,7 +311,7 @@ checkEq   = checkDataLike " is not equatable"
 
 checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
 checkOrd env ty = case ty of
-  TypeVar v             -> checkVarClass env Ord v
+  Var v                 -> checkVarClass env Ord v
   IntTy                 -> return ()
   RealTy                -> return ()
   TC (IntRange _ _ )    -> return ()
@@ -323,7 +323,7 @@ isData :: Type -> Bool
 isData ty = case checkData mempty ty of Left _ -> False
                                         Right _ -> True
 
-checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> TVar -> m ()
+checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> Var -> m ()
 checkVarClass env c (v:>k) = do
   unless (k == TyKind) $ throw KindErr $ " Only types can belong to type classes"
   unless (c `elem` cs) $ throw TypeErr $
@@ -343,13 +343,15 @@ instance HasType Atom where
     Var (_:>ty) -> ty
     TLam vs qs body -> Forall vs qs $ getType body
     Con con -> getConType $ fmapExpr con id getType getPiType
+    _ -> error "not implemented"
 
   checkEffType atom = liftM pureType $ case atom of
     Var v -> checkPureType v
     TLam tvs qs body -> do
-      bodyTy <- extendClassEnv qs $ extendNamed (foldMap tbind tvs) (checkPureType body)
+      bodyTy <- extendClassEnv qs $ extendNamed (foldMap bind tvs) (checkPureType body)
       return $ Forall tvs qs bodyTy
     Con con -> traverseExpr con return checkType checkPiType >>= checkConType
+    _ -> error "not implemented"
 
 instance HasType Expr where
   getEffType expr = case expr of
@@ -362,7 +364,7 @@ instance HasType Expr where
   checkEffType expr = case expr of
     Decl (Let b bexpr) body -> do
       declEff <- checkDecl
-      (bodyEff, ty) <- extendNamed (lbind b) $ checkEffType body
+      (bodyEff, ty) <- extendNamed (bind b) $ checkEffType body
       eff <- combineEffects declEff bodyEff
       return (eff, ty)
       where
@@ -391,8 +393,8 @@ instance HasType CExpr where
 instance HasType LamExpr where
   getEffType (LamExpr b body) = pureType $ ArrowType NonLin $ makePi b $ getEffType body
 
-  checkEffType (LamExpr b@(_:>a) body) = do
-    bodyTy <- extendNamed (b @> L a) $ checkEffType body
+  checkEffType (LamExpr b body) = do
+    bodyTy <- extendNamed (bind b) $ checkEffType body
     return $ pureType $ ArrowType NonLin $ makePi b bodyTy
 
 -- -- === Effects ===
@@ -521,9 +523,9 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
     assertEq (length bs) (length ts) "Number of type args"
     zipWithM_ (kindIs . varAnn) bs ts
     sequence_ [inClass c t | (t, b) <- zip ts bs, c <- requiredClasses b]
-    return $ pureType $ subst (newTEnv bs ts, mempty) body
+    return $ pureType $ subst (newEnv bs ts, mempty) body
     where
-      requiredClasses :: TVar -> [ClassName]
+      requiredClasses :: Var -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For _ (Pi n (eff, a)) ->
     inClass IdxSet n >> inClass Data a >> return (eff, TabTy n a)
@@ -685,7 +687,7 @@ class PiAbstractable t where
 
 instance PiAbstractable Type where
   instantiateDepType d x ty = case ty of
-    TypeVar _ -> ty
+    Var _ -> ty
     ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
       Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (instantiateDepType (d+1) x b)
@@ -694,9 +696,10 @@ instance PiAbstractable Type where
       where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
                         | (v, (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-      where env = (DeBruijn d :>()) @> L x
+      where env = (DeBruijn d :>()) @> x
     NoAnn -> NoAnn
     TypeAlias _ _ -> error "Shouldn't have type alias left"
+    _ -> error "Not a type"
     where
       recur ::Type -> Type
       recur = instantiateDepType d x
@@ -707,7 +710,7 @@ instance PiAbstractable Type where
         _                   -> v
 
   abstractDepType v d ty = case ty of
-    TypeVar _ -> ty
+    Var _ -> ty
     ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
       Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (abstractDepType v (d+1) b)
@@ -716,9 +719,10 @@ instance PiAbstractable Type where
       where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
                         | (v', (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-      where env = v @> L (Var (DeBruijn d :> varAnn v))
+      where env = v @> Var (DeBruijn d :> varAnn v)
     NoAnn -> NoAnn
     TypeAlias _ _ -> error "Shouldn't have type alias left"
+    _ -> error "Not a type"
     where
       recur ::Type -> Type
       recur = abstractDepType v d

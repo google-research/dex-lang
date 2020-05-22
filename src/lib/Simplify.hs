@@ -35,11 +35,11 @@ simplifyModule substEnv rulesEnv m = (mOut', subst (envOut', mempty) envOut)
 simplifyModuleOpts :: SimpOpts -> (SubstEnv, RuleEnv)
                    -> Module -> (Module, SubstEnv)
 simplifyModuleOpts opts env (Module bid (_, exports) expr) =
-  (Module bid (imports', (fmap (fmap L) exports')) expr', outEnv)
+  (Module bid (imports', exports') expr', outEnv)
   where
     (exports', expr', results) = runSimplifyM opts env $ simplifyTop expr
     imports' = map (uncurry (:>)) $ envPairs $ freeVars expr'
-    outEnv = newLEnv exports results
+    outEnv = newEnv exports results
 
 runSimplifyM :: SimpOpts -> (SubstEnv, RuleEnv) -> SimplifyM a -> a
 runSimplifyM opts env m =
@@ -49,7 +49,7 @@ runSimplifyM opts env m =
 simplifyTop :: Expr -> SimplifyM ([Var], Expr, [Atom])
 simplifyTop expr = do
   ~(ans@(TupVal results), (scope, decls)) <- scoped $ simplify expr
-  let vs = [v:>ty | (v, L ty) <- envPairs $ scope `envIntersect` freeVars ans]
+  let vs = map (uncurry (:>)) $ envPairs $ scope `envIntersect` freeVars ans
   let expr' = wrapDecls decls $ TupVal $ map Var vs
   return (vs, expr', results)  -- no need to choose fresh names
 
@@ -68,9 +68,9 @@ simplifyAtom atom = case atom of
     ((topEnv, rulesEnv), opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
-      Just ~(L x) -> deShadow x <$> embedScope
+      Just x -> deShadow x <$> embedScope
       Nothing -> case envLookup topEnv v of
-        Just ~(L x)
+        Just x
           | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
@@ -83,6 +83,7 @@ simplifyAtom atom = case atom of
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
   Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
                        $ error "Shouldn't have lambda left"
+  _ -> error "Not implemented"
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
@@ -91,10 +92,10 @@ simplifyLam (LamExpr b body) = do
   b' <- substEmbed b
   if isData (getType body)
     then do
-      lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ simplify body
+      lam <- buildLamExpr b' $ \x -> extendR (b@>x) $ simplify body
       return (lam, Nothing)
     else do
-      (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b @> L x) $ do
+      (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b@>x) $ do
         (body', (scope, decls)) <- scoped $ simplify body
         extend (mempty, decls)
         return $ separateDataComponent scope body'
@@ -104,12 +105,12 @@ separateDataComponent :: (MonadCat EmbedEnv m)
                       => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
   where
-    vs = [v:>ty | (v, L ty) <- envPairs $ localVars `envIntersect` freeVars atom]
+    vs = map (uncurry (:>)) $ envPairs $ localVars `envIntersect` freeVars atom
     recon :: MonadCat EmbedEnv m => Atom -> m Atom
     recon xs = do
       ~(Tup xs') <- unpackRec xs
       scope <- looks fst
-      return $ subst (newLEnv vs xs', scope) atom
+      return $ subst (newEnv vs xs', scope) atom
 
 reconstructAtom :: MonadCat EmbedEnv m
                 => Maybe (Atom -> m Atom) -> Atom -> m Atom
@@ -154,9 +155,9 @@ simplifyCExpr expr = do
     Cmp Equal t a b  -> resolveEq     t a b
     Cmp op    t  a b -> resolveOrd op t a b
     App _ (Con (Lam _ _ (LamExpr b body))) x -> do
-      dropSub $ extendR (b @> L x) $ simplify body
+      dropSub $ extendR (b@>x) $ simplify body
     TApp (TLam tbs _ body) ts -> do
-      dropSub $ extendR (newTEnv tbs ts) $ simplify body
+      dropSub $ extendR (newEnv tbs ts) $ simplify body
     RecGet (RecVal r) i -> return $ recGet r i
     SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
     SumTag (SumVal s _ _) -> return $ s
@@ -227,7 +228,7 @@ simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
   Let b bound -> do
     x <- simplifyCExpr bound
-    return $ b @> L x
+    return $ b @> x
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m

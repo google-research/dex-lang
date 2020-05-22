@@ -1,4 +1,4 @@
--- Copyright 2019 Google LL
+-- Copyright 2019 Google LLC
 --
 -- Use of this source code is governed by a BSD-style
 -- license that can be found in the LICENSE file or at
@@ -15,10 +15,10 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
-    Type (..), BaseType (..), Effect, EffectiveType, Mult,
-    Kind (..), ClassName (..), TyQual (..),
+    Type, Kind, BaseType (..), Effect, EffectiveType, Mult,
+    ClassName (..), TyQual (..),
     FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var, Dep,
-    TVar, FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
+    FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
@@ -28,14 +28,14 @@ module Syntax (
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
-    addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>), LorT (..),
-    fromL, fromT, FullEnv, sourceBlockBoundVars, PassName (..), parsePassName,
+    addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
+    sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
-    strToName, nameToStr, unzipExpr, lbind, tbind, fDeclBoundVars,
+    strToName, nameToStr, unzipExpr, bind, fDeclBoundVars,
     noEffect, isPure, EffectName (..), EffectRow, Vars, wrapFDecls,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, newLEnv, newTEnv, Direction (..), ArrayRef, Array,
-    fromAtomicFExpr, toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
+    newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
+    toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
     jointEnvGet,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
@@ -43,7 +43,7 @@ module Syntax (
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal,
-    pattern RealVal, pattern BoolVal)
+    pattern RealVal, pattern BoolVal, pattern TyKind)
   where
 
 import qualified Data.Map.Strict as M
@@ -58,7 +58,6 @@ import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
 import Control.Applicative (liftA3)
-import Data.Bifunctor
 import GHC.Generics
 
 import Record
@@ -67,15 +66,20 @@ import Array
 
 -- === types ===
 
-data Type = TypeVar TVar
-          | ArrowType Mult (PiType EffectiveType)
-          | TabType (PiType Type)
-          | Forall [TVar] [TyQual] Type
-          | TypeAlias [TVar] Type
+data Atom = Var Var
+          | Con (PrimCon Type Atom LamExpr)
           | TC (TyCon Type Atom)
+          | ArrowType Mult (PiType EffectiveType)
+          | TabType (PiType Type)        -- TODO: merge with ArrowType
+          | TLam [Var] [TyQual] Expr    -- TODO: remove
+          | Forall [Var] [TyQual] Type  -- TODO: remove
+          | TypeAlias [Var] Type        -- TODO: remove
           | Effect (EffectRow Type) (Maybe Type) -- (Maybe Type) for the optional row tail variable
           | NoAnn
             deriving (Show, Eq, Generic)
+
+type Type = Atom
+type Kind = Type
 
 data TyCon ty e = BaseType BaseType
                 | IntRange e e
@@ -87,14 +91,11 @@ data TyCon ty e = BaseType BaseType
                 | TypeApp ty [ty]
                 | LinCon
                 | NonLinCon
+                | TypeKind
+                | ArrowKind [ty] ty  -- TODO: remove
+                | MultKind
+                | EffectKind
                   deriving (Show, Eq, Generic)
-
-data Kind = TyKind
-          | ArrowKind [Kind] Kind
-          | MultKind
-          | EffectKind
-          | NoKindAnn
-            deriving (Eq, Show, Generic)
 
 -- This represents a row like {Writer (x :: Ref t), Reader (y :: Ref t')}
 -- as the following map: {x: (Writer, t), y: (Reader, t')}.
@@ -105,9 +106,8 @@ data EffectName = Reader | Writer | State  deriving (Eq, Show, Generic)
 -- TODO: Make a functor over EffectiveType (TabType doesn't have effects)
 data PiType b = Pi Type b  deriving (Eq, Show)
 
-data TyQual = TyQual TVar ClassName  deriving (Eq, Show)
+data TyQual = TyQual Var ClassName  deriving (Eq, Show)
 
-type TVar = VarP Kind
 type Mult   = Type
 type Dep    = Type
 type Effect = Type
@@ -120,8 +120,8 @@ data Limit a = InclusiveLim a
              | Unlimited
                deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-type TypeEnv  = FullEnv Type Kind
-type SubstEnv = FullEnv Atom Type
+type TypeEnv  = Env Type
+type SubstEnv = Env Atom
 
 type TopInfEnv  = (TypeEnv, Env Type)
 type TopSimpEnv = SubstEnv
@@ -138,8 +138,7 @@ isPure :: Effect -> Bool
 isPure (Effect eff Nothing) | eff == mempty = True
 isPure _ = False
 
-type LTVar = VarP (LorT Type Kind)
-type ModuleType = ([LTVar], [LTVar])
+type ModuleType = ([Var], [Var])
 data ModuleP body = Module (Maybe BlockId) ModuleType body  deriving (Show, Eq)
 
 -- === front-end language AST ===
@@ -159,11 +158,11 @@ type SrcPos = (Int, Int)
 --       annotation attached and we can handle this with bidirectional try inference.
 data FDecl = LetMono Pat FExpr
            | LetPoly Var FTLam
-           | TyDef TVar Type
+           | TyDef Var Type
              deriving (Show, Eq, Generic)
 
 type Var  = VarP Type
-data FTLam = FTLam [TVar] [TyQual] FExpr  deriving (Show, Eq, Generic)
+data FTLam = FTLam [Var] [TyQual] FExpr  deriving (Show, Eq, Generic)
 type FModule = ModuleP [FDecl]
 
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
@@ -180,17 +179,12 @@ data Decl = Let Var CExpr  deriving (Show, Eq, Generic)
 type CExpr = PrimOp  Type Atom LamExpr
 type Con   = PrimCon Type Atom LamExpr
 
-data Atom = Var Var
-          | TLam [TVar] [TyQual] Expr
-          | Con Con
-            deriving (Show, Eq, Generic)
-
-data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
-
 type Module = ModuleP Expr
 type Val = Atom
 
 -- === primitive constructors and operators ===
+
+data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
 data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
                        | ConExpr (PrimCon ty e lam)
@@ -412,12 +406,12 @@ data JointTypeEnv = JointTypeEnv { namedEnv :: TypeEnv, deBruijnEnv :: [Type] }
 fromNamedEnv :: TypeEnv -> JointTypeEnv
 fromNamedEnv env = JointTypeEnv env []
 
-jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe (LorT Type Kind)
+jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe Type
 jointEnvLookup jenv v = case varName v of
-  DeBruijn idx -> Just $ L $ deBruijnEnv jenv !! idx
+  DeBruijn idx -> Just $ deBruijnEnv jenv !! idx
   _            -> envLookup (namedEnv jenv) v
 
-jointEnvGet :: JointTypeEnv -> VarP ann -> LorT Type Kind
+jointEnvGet :: JointTypeEnv -> VarP ann -> Type
 jointEnvGet jenv v = fromJust $ jointEnvLookup jenv v
 
 extendNamed :: MonadReader JointTypeEnv m => TypeEnv -> m a -> m a
@@ -518,22 +512,6 @@ liftEitherIO (Right x ) = return x
 
 -- === misc ===
 
-data LorT a b = L a | T b  deriving (Show, Eq)
-
-fromL :: LorT a b -> a
-fromL (L x) = x
-fromL _ = error "Not a let-bound thing"
-
-fromT :: LorT a b -> b
-fromT (T x) = x
-fromT _ = error "Not a type-ish thing"
-
-instance Bifunctor LorT where
-  bimap f _ (L x) = L $ f x
-  bimap _ f (T x) = T $ f x
-
-type FullEnv v t = Env (LorT v t)
-
 fromAtomicFExpr :: FExpr -> Maybe Atom
 fromAtomicFExpr expr = case expr of
   FDecl _ _ -> Nothing
@@ -547,28 +525,19 @@ fromAtomicFExpr expr = case expr of
 toAtomicFExpr :: Atom -> FExpr
 toAtomicFExpr atom = case atom of
   Var v -> FVar v
-  TLam _ _ _ -> error "Not an FExpr atom"
   Con con -> FPrimExpr $ ConExpr $
     fmapExpr con id toAtomicFExpr (error "Unexpected lambda")
+  _ -> error "Not an FExpr atom"
 
 -- === substitutions ===
 
 type Vars = TypeEnv
 
-lbind :: VarP a -> FullEnv a b
-lbind v@(_:>ty) = v @> L ty
-
-tbind :: VarP b -> FullEnv a b
-tbind v@(_:>k) = v @> T k
+bind :: VarP a -> Env a
+bind v@(_:>ty) = v @> ty
 
 newEnv :: [VarP ann] -> [a] -> Env a
 newEnv vs xs = fold $ zipWith (@>) vs xs
-
-newLEnv :: [VarP ann] -> [a] -> FullEnv a b
-newLEnv vs xs = fold [v @> L x | (v, x) <- zip vs xs]
-
-newTEnv :: [VarP ann] -> [b] -> FullEnv a b
-newTEnv vs xs = fold [v @> T x | (v, x) <- zip vs xs]
 
 wrapFDecls :: [FDecl] -> FExpr -> FExpr
 wrapFDecls decls result = foldr FDecl result decls
@@ -586,34 +555,21 @@ instance HasVars FExpr where
 
 fDeclBoundVars :: FDecl -> Vars
 fDeclBoundVars decl = case decl of
-  LetMono p _    -> foldMap lbind p
-  LetPoly v _    -> lbind v
-  TyDef v _      -> tbind v
+  LetMono p _    -> foldMap bind p
+  LetPoly v _    -> bind v
+  TyDef v _      -> bind v
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
   RunModule (Module _ (_,vs) _) -> foldMap varAsEnv vs
-  LoadData p _ _           -> foldMap lbind p
+  LoadData p _ _           -> foldMap bind p
   _                        -> mempty
 
 instance HasVars FLamExpr where
   freeVars (FLamExpr p body) = binderFTVs <> (freeVars body `envDiff` binderVs)
     where
       binderFTVs = foldMap freeBinderTypeVars p
-      binderVs   = foldMap lbind p
-
-instance HasVars Type where
-  freeVars ty = case ty of
-    ArrowType l p -> freeVars l <> freeVars p
-    TabType p -> freeVars p
-    TypeVar v  -> tbind v
-    Forall    tbs _ body -> freeVars body `envDiff` foldMap tbind tbs
-    TypeAlias tbs   body -> freeVars body `envDiff` foldMap tbind tbs
-    Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
-                        <> foldMap freeVars tailVar
-    NoAnn -> mempty
-    TC con -> execWriter $ traverseTyCon con (\t -> t <$ tell (freeVars t))
-                                             (\e -> e <$ tell (freeVars e))
+      binderVs   = foldMap bind p
 
 instance HasVars b => HasVars (PiType b) where
   freeVars (Pi a b) = freeVars a <> freeVars b
@@ -625,7 +581,7 @@ freeBinderTypeVars (_ :> t) = freeVars t
 
 varFreeVars :: Var -> Vars
 varFreeVars (DeBruijn _ :> t) = freeVars t
-varFreeVars v@(_ :> t) = lbind v <> freeVars t
+varFreeVars v@(_ :> t) = bind v <> freeVars t
 
 instance HasVars () where
   freeVars () = mempty
@@ -636,14 +592,10 @@ instance HasVars FDecl where
    freeVars (TyDef _ ty)       = freeVars ty
 
 instance HasVars RuleAnn where
-  freeVars (LinearizationDef v) = (v:>()) @> L UnitTy
+  freeVars (LinearizationDef v) = (v:>()) @> UnitTy
 
 instance HasVars FTLam where
-  freeVars (FTLam tbs _ expr) = freeVars expr `envDiff` foldMap tbind tbs
-
-instance (HasVars a, HasVars b) => HasVars (LorT a b) where
-  freeVars (L x) = freeVars x
-  freeVars (T x) = freeVars x
+  freeVars (FTLam tbs _ expr) = freeVars expr `envDiff` foldMap bind tbs
 
 instance (HasVars a, HasVars b) => HasVars (a, b) where
   freeVars (x, y) = freeVars x <> freeVars y
@@ -652,7 +604,7 @@ instance HasVars SourceBlock where
   freeVars block = case sbContents block of
     RunModule (   Module _ (vs, _) _) -> foldMap varAsEnv vs
     Command _ (_, Module _ (vs, _) _) -> foldMap varAsEnv vs
-    GetNameType v                     -> v @> L (varAnn v)
+    GetNameType v                     -> v @> varAnn v
     RuleDef ann ty body -> freeVars ann <> freeVars ty <> freeVars body
     _ -> mempty
 
@@ -673,9 +625,15 @@ instance HasVars Atom where
     Var v -> varFreeVars v
     TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
-
-instance HasVars Kind where
-  freeVars _ = mempty
+    ArrowType l p -> freeVars l <> freeVars p
+    TabType p -> freeVars p
+    Forall    tbs _ body -> freeVars body `envDiff` foldMap bind tbs
+    TypeAlias tbs   body -> freeVars body `envDiff` foldMap bind tbs
+    Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
+                        <> foldMap freeVars tailVar
+    NoAnn -> mempty
+    TC con -> execWriter $ traverseTyCon con (\t -> t <$ tell (freeVars t))
+                                             (\e -> e <$ tell (freeVars e))
 
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
@@ -808,6 +766,10 @@ traverseTyCon con fTy fE = case con of
   TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
   LinCon            -> pure LinCon
   NonLinCon         -> pure NonLinCon
+  TypeKind          -> pure TypeKind
+  ArrowKind as b    -> liftA2 ArrowKind (traverse fTy as) (fTy b)
+  MultKind          -> pure MultKind
+  EffectKind        -> pure EffectKind
 
 fmapTyCon :: TyCon ty e -> (ty -> ty') -> (e -> e') -> TyCon ty' e'
 fmapTyCon con fT fE = runIdentity $ traverseTyCon con (return . fT) (return . fE)
@@ -892,6 +854,9 @@ pattern BoolTy = TC (BaseType BoolType)
 
 pattern RealTy :: Type
 pattern RealTy = TC (BaseType RealType)
+
+pattern TyKind :: Kind
+pattern TyKind = TC TypeKind
 
 pattern FixedIntRange :: Int -> Int -> Type
 pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))

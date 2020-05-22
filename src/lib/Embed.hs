@@ -101,12 +101,12 @@ buildLamExprAux b f = do
   return (LamExpr b' (wrapDecls decls ans), aux)
 
 buildTLam :: (MonadCat EmbedEnv m)
-          => [TVar] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
+          => [Var] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
 buildTLam bs f = do
   -- TODO: refresh type vars in qs
   (((qs, body), bs'), (_, decls)) <- scoped $ do
       bs' <- mapM freshVar bs
-      ans <- f (map TypeVar bs')
+      ans <- f (map Var bs')
       return (ans, bs')
   return $ TLam bs' qs (wrapDecls decls body)
 
@@ -231,7 +231,7 @@ transposeRecord :: Record b -> [Record a] -> Record [a]
 transposeRecord r [] = fmap (const []) r
 transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
 
-substEmbed :: (MonadCat EmbedEnv m, MonadReader (FullEnv Atom Type) m, Subst a)
+substEmbed :: (MonadCat EmbedEnv m, MonadReader SubstEnv m, Subst a)
            => a -> m a
 substEmbed x = do
   env <- ask

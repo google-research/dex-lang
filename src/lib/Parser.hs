@@ -173,9 +173,9 @@ exprAsModule e = (v, Module Nothing modTy body)
   where
     v = "*ans*" :> NoAnn
     body = [LetMono (RecLeaf v) e]
-    modTy = (envToVarList $ freeVars e, [fmap L v])
+    modTy = (envToVarList $ freeVars e, [v])
 
-envToVarList :: TypeEnv -> [VarP (LorT Type Kind)]
+envToVarList :: TypeEnv -> [Var]
 envToVarList env = map (uncurry (:>)) $ envPairs env
 
 -- === Parsing decls ===
@@ -537,21 +537,21 @@ explicitSigmaType = do
 implicitSigmaType :: Parser Type
 implicitSigmaType = do
   ty <- tauType
-  let tbs =  [v:>NoKindAnn | v <- envNames (freeVars ty)
-                           , nameSpace v == LocalTVName]
+  let tbs =  [v:>NoAnn | v <- envNames (freeVars ty)
+                       , nameSpace v == LocalTVName]
   return $ Forall tbs [] ty
 
-typeBinder :: Parser TVar
+typeBinder :: Parser Var
 typeBinder = do
   (v:>_) <- typeVar <|> localTypeVar
   k <-  (symbol ":" >> kindName)
-    <|> return NoKindAnn
+    <|> return NoAnn
   return $ v :> k
 
 kindName :: Parser Kind
 kindName =   (symbol "Ty"     >> return TyKind)
-         <|> (symbol "Mult"   >> return MultKind)
-         <|> (symbol "Effect" >> return EffectKind)
+         <|> (symbol "Mult"   >> return (TC MultKind))
+         <|> (symbol "Effect" >> return (TC EffectKind))
          <?> "kind"
 
 qual :: Parser TyQual
@@ -569,7 +569,7 @@ className = do
     "Ix"   -> return IdxSet
     _ -> fail $ "Unrecognized class constraint: " ++ s
 
--- addClassVars :: ClassName -> [Name] -> TVar -> TVar
+-- addClassVars :: ClassName -> [Name] -> Var -> Var
 -- addClassVars c vs ~b@(v:>(TyKind cs))
 --   | v `elem` vs && not (c `elem` cs) = v:>(TyKind (c:cs))
 --   | otherwise = b
@@ -581,8 +581,8 @@ tauTypeAtomic =   parenTy
               <|> typeName
               <|> intRangeType
               <|> indexRangeType
-              <|> liftM TypeVar typeVar
-              <|> liftM TypeVar localTypeVar
+              <|> liftM Var typeVar
+              <|> liftM Var localTypeVar
               <|> idxSetLit
               <?> "type"
 
@@ -670,7 +670,7 @@ effectType =  bracketed "{" "}" $ do
   tailVar <- optional $ do
                symbol "|"
                localTypeVar
-  return $ Effect (fold effects) (fmap TypeVar tailVar)
+  return $ Effect (fold effects) (fmap Var tailVar)
 
 tyAppRule :: Operator Parser Type
 tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
@@ -678,19 +678,20 @@ tyAppRule = InfixL (sc *> notFollowedBy (choice . map symbol $ tyOpNames)
   where tyOpNames = ["=>", "->", "--o"]
 
 applyType :: Type -> Type -> Type
-applyType (TC (TypeApp (TypeVar (Name SourceTypeName "Either" 0 :> _)) [l])) r = TC $ SumType (l, r)
+applyType (TC (TypeApp (Var (Name SourceTypeName "Either" 0 :> _)) [l])) r =
+  TC $ SumType (l, r)
 applyType (TC (TypeApp ty args)) arg = TC $ TypeApp ty (args ++ [arg])
 applyType ty arg = TC $ TypeApp ty [arg]
 
-typeVar :: Parser TVar
+typeVar :: Parser Var
 typeVar = do
   v <- name SourceTypeName upperStr
-  return (v:> NoKindAnn)
+  return (v:> NoAnn)
 
-localTypeVar :: Parser TVar
+localTypeVar :: Parser Var
 localTypeVar = do
   v <- name LocalTVName identifier
-  return (v:> NoKindAnn)
+  return (v:> NoAnn)
 
 idxSetLit :: Parser Type
 idxSetLit = do

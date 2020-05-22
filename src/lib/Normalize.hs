@@ -28,7 +28,7 @@ normalizeModule :: FModule -> Module
 normalizeModule (Module bid sig@(_, exports) decls) =
   Module bid sig $ wrapDecls decls' ans
   where
-    outFVars = [FVar (v:>ty) | (v:>L ty) <- exports]
+    outFVars = [FVar (v:>ty) | (v:>ty) <- exports]
     outTuple = FPrimExpr $ ConExpr $ RecCon $ Tup outFVars
     (ans, decls') = runNormM $ normalize $ wrapFDecls decls outTuple
 
@@ -53,9 +53,8 @@ lookupVar :: Var -> NormM Atom
 lookupVar v = do
   env <- ask
   case envLookup env v of
-     Nothing    -> Var <$> traverse substNorm v
-     Just (L x) -> return x
-     Just (T _) -> error $ "Lookup failed: " ++ pprint v
+     Nothing -> Var <$> traverse substNorm v
+     Just x  -> return x
 
 normalizeLam :: FLamExpr -> NormM LamExpr
 normalizeLam (FLamExpr p body) = do
@@ -72,7 +71,7 @@ normalizePat p = do
   return $ v':>ty
 
 bindPat :: Pat -> Atom -> NormM SubstEnv
-bindPat (RecLeaf v) x = return $ v @> L x
+bindPat (RecLeaf v) x = return $ v @> x
 bindPat (RecTree r) xs =
   liftM fold $ flip traverse (recNameVals r) $ \(i, p) -> do
     x <- nRecGet xs i
@@ -85,14 +84,14 @@ normalizeDecl decl = case decl of
     bindPat p xs
   LetPoly v tlam -> do
     x <- normalizeTLam tlam
-    return $ v @> L x
+    return $ v @> x
   _ -> error $ "Shouldn't this left: " ++ pprint decl
 
 normalizeTLam ::FTLam -> NormM Atom
 normalizeTLam (FTLam tvs qs body) =
   buildTLam tvs $ \tys -> do
     qs' <- mapM substNorm qs
-    let env = fold [tv @> T ty | (tv, ty) <- zip tvs tys]
+    let env = fold $ zipWith (@>) tvs tys
     body' <- extendR env $ normalize body
     return (qs', body')
 

@@ -56,33 +56,6 @@ instance Pretty ErrType where
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
 
-instance Pretty Type where
-  pretty ty = case ty of
-    TypeVar v   -> p v
-    ArrowType l (Pi a (eff, b))
-      | isPure eff -> parens $ p a <+> arrStr l <+>           p b
-      | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
-    TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
-    Forall bs qs body -> header <+> p body
-      where
-        header = "A" <+> hsep (map p bs) <> qual <> "."
-        qual = case qs of
-                 [] -> mempty
-                 _  -> " |" <+> hsep (punctuate "," (map p qs))
-    TypeAlias _ _ -> "<type alias>"  -- TODO
-    Effect row t -> "{" <> row' <+> tailVar <> "}"
-      where
-        row' = hsep $ punctuate "," $
-                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
-        tailVar = case t of Nothing -> mempty
-                            Just v  -> "|" <+> p v
-    NoAnn  -> "-"
-    TC con -> p con
-    where
-      arrStr :: Type -> Doc ann
-      arrStr Lin = "--o"
-      arrStr _        = "->"
-
 instance Pretty ty => Pretty (TyCon ty Atom) where
   pretty con = case con of
     BaseType b     -> p b
@@ -102,8 +75,12 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
-    LinCon    -> "Lin"
-    NonLinCon -> "NonLin"
+    LinCon     -> "Lin"
+    NonLinCon  -> "NonLin"
+    TypeKind   -> "Type"
+    MultKind   -> "Mult"
+    EffectKind -> "Effect"
+    ArrowKind _ _ -> "ArrowKind"
 
 instance Pretty b => Pretty (PiType b) where
   pretty (Pi a b) = "Pi" <+> p a <+> p b
@@ -228,12 +205,6 @@ instance PrettyLam (PiType EffectiveType) where
 instance PrettyLam (PiType Type) where
   prettyLam (Pi a b) = (p a, p b)
 
-instance Pretty Kind where
-  pretty TyKind      = "Type"
-  pretty MultKind    = "Mult"
-  pretty EffectKind  = "Effect"
-  pretty k = p $ show k
-
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =
     case asStr ann' of
@@ -260,6 +231,29 @@ instance Pretty Atom where
     Var (x:>_)  -> p x
     TLam vs qs body -> "tlam" <+> p vs <+> "|" <+> p qs <+> "." <+> p body
     Con con -> p (ConExpr con)
+    ArrowType l (Pi a (eff, b))
+      | isPure eff -> parens $ p a <+> arrStr l <+>           p b
+      | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
+    TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
+    Forall bs qs body -> header <+> p body
+      where
+        header = "A" <+> hsep (map p bs) <> qual <> "."
+        qual = case qs of
+                 [] -> mempty
+                 _  -> " |" <+> hsep (punctuate "," (map p qs))
+    TypeAlias _ _ -> "<type alias>"  -- TODO
+    Effect row t -> "{" <> row' <+> tailVar <> "}"
+      where
+        row' = hsep $ punctuate "," $
+                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
+        tailVar = case t of Nothing -> mempty
+                            Just v  -> "|" <+> p v
+    NoAnn  -> "-"
+    TC con -> p con
+    where
+      arrStr :: Type -> Doc ann
+      arrStr Lin = "--o"
+      arrStr _        = "->"
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x
@@ -305,10 +299,6 @@ instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
-instance (Pretty a, Pretty b) => Pretty (LorT a b) where
-  pretty (L x) = "L" <+> p x
-  pretty (T x) = "T" <+> p x
-
 instance Pretty Output where
   pretty (TextOut s) = pretty s
   pretty (HeatmapOut _ _ _) = "<graphical output>"
@@ -335,6 +325,12 @@ instance Pretty body => Pretty (ModuleP body) where
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x
+
+instance Pretty TopEnv where
+  pretty (TopEnv infEnv simpEnv ruleEnv) =
+    "Inference env:     " <+> p infEnv  <> hardline <>
+    "Simplification env:" <+> p simpEnv <> hardline <>
+    "RuleEnv env:       " <+> p ruleEnv <> hardline
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =
