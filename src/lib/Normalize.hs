@@ -33,8 +33,7 @@ normalizeModule (Module bid sig@(_, exports) decls) =
     (ans, decls') = runNormM $ normalize $ wrapFDecls decls outTuple
 
 runNormM :: NormM a -> (a, [Decl])
-runNormM m = (ans, decls)
-  where (ans, (_, decls)) = runEmbed (runReaderT m mempty) mempty
+runNormM m = runEmbed (runReaderT m mempty) mempty
 
 normalize :: FExpr -> NormM Atom
 normalize expr = case expr of
@@ -98,5 +97,5 @@ normalizeTLam (FTLam tvs qs body) =
 substNorm :: Subst a => a -> NormM a
 substNorm x = do
   env <- ask
-  scope <- embedScope
+  scope <- getScope
   return $ subst (env, scope) x

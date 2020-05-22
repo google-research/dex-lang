@@ -56,17 +56,17 @@ linearizeLamExpr :: RuleEnv -> LamExpr
 linearizeLamExpr ruleEnv (LamExpr v body) = do
   (lam, (v', residualVs, tBuilder)) <- buildLamExprAux v $ \v'@(Var iVar) ->
     extendR (v@>v') $ do
-       (((ans, ansT), embedEnv), fvs) <- runWriterT $ scoped $ runLinA $
-                                           linearizeExpr ruleEnv body
-       let localScope = fst embedEnv
-       extend embedEnv
+       (((ans, ansT), (localScope, decls)), fvs) <-
+           runWriterT $ embedScoped $ runLinA $ linearizeExpr ruleEnv body
+       extendScope localScope
+       mapM_ emitDecl decls
        let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
        return (ansWithResiduals, (iVar, residualVs, ansT))
-  extend $ asFst (foldMap (@>()) (v':residualVs))
+  extendScope $ foldMap (@>()) (v':residualVs)
   return (lam, map varAnn residualVs, \v'' residuals -> do
-     scope <- looks fst
-     (ansT', (_, decls)) <- extendR (v @> Var v') $ scoped tBuilder
+     scope <- getScope
+     (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
      let env = (v'@>v'') <> newEnv residualVs residuals
      emitExpr $ subst (env, scope) $ wrapDecls decls ansT')
 
@@ -370,7 +370,7 @@ emitCTToRef ref ct = void $ emit $ PrimEffect (Var ref) (MTell ct)
 substTranspose :: Subst a => a -> TransposeM a
 substTranspose x = do
   env <- asks snd
-  scope <- looks fst
+  scope <- getScope
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom

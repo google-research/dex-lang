@@ -48,7 +48,7 @@ runSimplifyM opts env m =
 
 simplifyTop :: Expr -> SimplifyM ([Var], Expr, [Atom])
 simplifyTop expr = do
-  ~(ans@(TupVal results), (scope, decls)) <- scoped $ simplify expr
+  ~(ans@(TupVal results), (scope, decls)) <- embedScoped $ simplify expr
   let vs = map (uncurry (:>)) $ envPairs $ scope `envIntersect` freeVars ans
   let expr' = wrapDecls decls $ TupVal $ map Var vs
   return (vs, expr', results)  -- no need to choose fresh names
@@ -68,7 +68,7 @@ simplifyAtom atom = case atom of
     ((topEnv, rulesEnv), opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
-      Just x -> deShadow x <$> embedScope
+      Just x -> deShadow x <$> getScope
       Nothing -> case envLookup topEnv v of
         Just x
           | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
@@ -96,23 +96,22 @@ simplifyLam (LamExpr b body) = do
       return (lam, Nothing)
     else do
       (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b@>x) $ do
-        (body', (scope, decls)) <- scoped $ simplify body
-        extend (mempty, decls)
+        (body', (scope, decls)) <- embedScoped $ simplify body
+        mapM_ emitDecl decls
         return $ separateDataComponent scope body'
       return $ (lam, Just recon)
 
-separateDataComponent :: (MonadCat EmbedEnv m)
-                      => Scope -> Atom -> (Atom, Atom -> m Atom)
+separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
   where
     vs = map (uncurry (:>)) $ envPairs $ localVars `envIntersect` freeVars atom
-    recon :: MonadCat EmbedEnv m => Atom -> m Atom
+    recon :: MonadEmbed m => Atom -> m Atom
     recon xs = do
       ~(Tup xs') <- unpackRec xs
-      scope <- looks fst
+      scope <- getScope
       return $ subst (newEnv vs xs', scope) atom
 
-reconstructAtom :: MonadCat EmbedEnv m
+reconstructAtom :: MonadEmbed m
                 => Maybe (Atom -> m Atom) -> Atom -> m Atom
 reconstructAtom recon x = case recon of
   Nothing -> return x
@@ -125,11 +124,11 @@ simplifyCExpr expr = do
   case expr' of
     Linearize (lam, _) -> do
       rulesEnv <- lift $ asks (snd . fst)
-      scope <- looks fst
+      scope <- getScope
       -- TODO: simplify the result to remove functions introduced by linearization
       return $ linearize rulesEnv scope lam
     Transpose (lam, _) -> do
-      scope <- looks fst
+      scope <- getScope
       return $ transposeMap scope lam
     RunReader r (lam, recon) -> do
       ans <- emit $ RunReader r lam
