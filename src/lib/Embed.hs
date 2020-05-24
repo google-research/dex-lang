@@ -5,8 +5,11 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
@@ -19,6 +22,8 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               boolToInt, intToReal, boolToReal) where
 
 import Control.Monad
+import Control.Monad.Fail
+import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Identity
@@ -32,7 +37,7 @@ import Record
 import PPrint
 
 newtype EmbedT m a = EmbedT (CatT EmbedEnv m a)
-  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadFail)
 
 type Embed = EmbedT Identity
 type EmbedEnv = (Scope, [Decl])
@@ -284,6 +289,16 @@ instance MonadEmbed m => MonadEmbed (ReaderT r m) where
     r <- ask
     lift $ embedScoped $ runReaderT m r
 
+instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
+  look = lift look
+  extend x = lift $ extend x
+  scoped m = undefined
+
+instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
+  embedLook = undefined
+  embedExtend _ = error "not implemented"
+  embedScoped _ = error "not implemented"
+
 instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
   embedLook = lift embedLook
   embedExtend x = lift $ embedExtend x
@@ -291,6 +306,17 @@ instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
     ((x, w), env) <- lift $ embedScoped $ runWriterT m
     tell w
     return (x, env)
+
+instance MonadError e m => MonadError e (EmbedT m) where
+  throwError = lift . throwError
+  catchError m catch = do
+    env <- embedLook
+    (ans, env') <- lift $ runEmbedT' m env `catchError` (\e -> runEmbedT' (catch e) env)
+    embedExtend env'
+    return ans
+
+runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnv)
+runEmbedT' (EmbedT m) env = runCatT m env
 
 getScope :: MonadEmbed m => m Scope
 getScope = fst <$> embedLook

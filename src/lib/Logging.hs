@@ -30,8 +30,7 @@ logThis (Logger log maybeLogHandle) x = liftIO $ do
   forM_ maybeLogHandle $ \h -> do
     hPutStrLn h $ pprint x
     hFlush h
-  cur <- takeMVar log
-  putMVar log $ cur <> x
+  modifyMVar_ log $ \cur -> return (cur <> x)
 
 readLog :: MonadIO m => Logger l -> m l
 readLog (Logger log _) = liftIO $ readMVar log

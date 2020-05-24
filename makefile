@@ -53,7 +53,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep quine-tests repl-test
+tests: test-prep uexpr-tests quine-tests repl-test
 
 test-prep:
 	rm -rf test-scratch/
@@ -81,6 +81,9 @@ update-%: examples/%.dx build
 jax-tests:
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script
 
+uexpr-tests:
+	misc/check-quine examples/uexpr-tests.dx \
+          $(dex) --frontend uexpr --prelude /dev/null script
 repl-test:
 	misc/check-no-diff \
 	  examples/repl-multiline-test-expected-output \

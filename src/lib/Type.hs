@@ -343,6 +343,7 @@ instance HasType Atom where
     Var (_:>ty) -> ty
     TLam vs qs body -> Forall vs qs $ getType body
     Con con -> getConType $ fmapExpr con id getType getPiType
+    TC _ -> TyKind -- TODO: think about effects, multiplicity etc
     _ -> error "not implemented"
 
   checkEffType atom = liftM pureType $ case atom of
@@ -351,7 +352,7 @@ instance HasType Atom where
       bodyTy <- extendClassEnv qs $ extendNamed (foldMap bind tvs) (checkPureType body)
       return $ Forall tvs qs bodyTy
     Con con -> traverseExpr con return checkType checkPiType >>= checkConType
-    _ -> error "not implemented"
+    TC _ -> return TyKind -- TODO: check!
 
 instance HasType Expr where
   getEffType expr = case expr of

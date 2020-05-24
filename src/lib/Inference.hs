@@ -9,7 +9,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 
-module Inference (inferModule) where
+module Inference (inferModule, inferUModule) where
 
 import Control.Monad
 import Control.Monad.Reader
@@ -19,12 +19,144 @@ import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
 import Syntax
+import Embed  hiding (sub)
 import Env
 import Record
 import Type
 import PPrint
 import Cat
 import Subst
+
+type InfEnv = Env (Atom, Type)
+type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
+
+data RequiredTy = Check Type | Infer
+data InferredTy = Checked | Inferred Type
+
+inferUModule :: TopEnv -> UModule -> Except (Module, TopInfEnv)
+inferUModule topEnv (UModule imports exports decls) = do
+  let env = infEnvFromTopEnv topEnv
+  (env', decls') <- runUInferM (inferUDecls noEffect decls) env
+  let combinedEnv = env <> env'
+  let imports' = [v :> snd (env         ! (v:>())) | v <- imports]
+  let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
+  let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
+  let body = wrapDecls decls' $ TupVal resultVals
+  return (Module Nothing (imports', exports') body, (fmap snd env', mempty))
+
+runUInferM :: (TySubst a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
+runUInferM m env = runSolverT $ runEmbedT (runReaderT m env) scope
+  where scope = fmap (const ()) env
+
+infEnvFromTopEnv :: TopEnv -> InfEnv
+infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
+  fold [v' @> (substEnv ! v', ty) | (v, ty) <- envPairs tyEnv, let v' = v:>()]
+
+checkUExpr :: UExpr -> Effect -> Type -> UInferM Atom
+checkUExpr expr eff ty = do
+  (val, Checked) <- checkOrInferUExpr expr eff (Check ty)
+  return val
+
+inferUExpr :: UExpr -> Effect -> UInferM (Atom, Type)
+inferUExpr expr eff = do
+  (val, Inferred ty) <- checkOrInferUExpr expr eff Infer
+  return (val, ty)
+
+checkOrInferUExpr :: UExpr -> Effect -> RequiredTy -> UInferM (Atom, InferredTy)
+checkOrInferUExpr expr eff reqTy = case expr of
+  UVar v -> do
+    (x, ty) <- asks (! v)
+    ty' <- matchRequired reqTy ty
+    return (x, ty')
+  ULam (ULamExpr (RecLeaf b@(v:>ann)) body) -> do
+    argTy <- checkAnn ann
+    case reqTy of
+      Check ty -> do
+        piTy@(Pi argTy' _) <- fromPiType ty
+        constrainEq argTy' argTy "Lambda binder"
+        lam <- buildLam NonLin (v:>argTy) $ \x -> do
+          let (lamEff, resultTy) = applyPi piTy x
+          extendR (b @> (x, argTy')) $ do
+            resultVal <- checkUExpr body lamEff resultTy
+            return (resultVal, lamEff)
+        return (lam, Checked)
+      Infer -> error "todo"
+  UApp f x -> do
+    (fVal, fTy) <- inferUExpr f eff
+    piTy@(Pi argTy _) <- fromPiType fTy
+    xVal <- checkUExpr x eff argTy
+    let (appEff, resultTy) = applyPi piTy xVal
+    checkEffect eff appEff
+    ansTy <- matchRequired reqTy resultTy
+    ansVal <- emit $ App NonLin fVal xVal
+    return (ansVal, ansTy)
+  UPi a b -> do
+    ty <- matchRequired reqTy TyKind
+    a' <- checkUType a
+    b' <- checkUType b
+    return (ArrowType NonLin $ Pi a' (noEffect, b'), ty)
+  UDecl decl body -> do
+    env <- inferUDecl eff decl
+    extendR env $ checkOrInferUExpr body eff reqTy
+  UPrimExpr prim -> do
+    prim' <- traverseExpr prim lookupName lookupName (error "not implemented")
+    val <- case prim' of
+      OpExpr  op  -> emit op
+      ConExpr con -> return $ Con con
+      TyExpr  con -> return $ TC con
+    ty <- matchRequired reqTy $ getType val
+    return (val, ty)
+    where lookupName v = fst <$> asks (! (v:>()))
+
+inferUDecl :: Effect -> UDecl -> UInferM InfEnv
+inferUDecl eff (ULet (RecLeaf b@(_:>ann)) rhs) = case ann of
+  Nothing -> do
+    valAndTy <- inferUExpr rhs eff
+    return $ b@>valAndTy
+  Just ty -> do
+    ty' <- checkUType ty
+    val <- checkUExpr rhs eff ty'
+    return $ b@>(val, ty')
+
+inferUDecls :: Effect -> [UDecl] -> UInferM InfEnv
+inferUDecls eff decls = do
+  initEnv <- ask
+  liftM snd $ flip runCatT initEnv $ forM_ decls $ \decl -> do
+    cur <- look
+    new <- lift $ local (const cur) $ inferUDecl eff decl
+    extend new
+
+fromPiType :: Type -> UInferM (PiType EffectiveType)
+fromPiType (ArrowType _ piTy) = return piTy
+fromPiType ty = error $ "Not a pi type: " ++ pprint ty
+
+matchRequired :: RequiredTy -> Type -> UInferM InferredTy
+matchRequired Infer ty = return $ Inferred ty
+matchRequired (Check reqTy) ty = constrainEq reqTy ty "" >> return Checked
+
+checkAnn :: Maybe UType -> UInferM Type
+checkAnn ann = case ann of
+  Just ty -> checkUType ty
+  Nothing -> do
+    v <- freshInfVar
+    return $ Var (v:>TyKind)
+
+checkUType :: UType -> UInferM Type
+checkUType ty = checkUExpr ty noEffect TyKind
+
+checkEffect :: Effect -> Effect -> UInferM ()
+checkEffect allowedEff eff = do
+  eff' <- openUEffect eff
+  constrainEq allowedEff eff' ""
+
+freshInfVar :: UInferM Name
+freshInfVar = do
+  (tv:>()) <- looks $ rename (rawName InferenceName "?" :> ()) . solverVars
+  extend $ SolverEnv ((tv:>()) @> TyKind) mempty
+  return tv
+
+openUEffect :: Effect -> UInferM Effect
+openUEffect eff = return eff -- TODO!
 
 type InferM = ReaderT JointTypeEnv (SolverT (Either Err))
 
@@ -164,7 +296,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
     e' <- addSrcContext (Just pos) $ check e reqEffTy
     return $ SrcAnnot e' pos
   where
-    constrainReq ty = constrainEq reqTy  ty       (pprint expr)
+    constrainReq ty = constrainEq reqTy ty (pprint expr)
 
 checkPure :: FExpr -> Type -> InferM FExpr
 checkPure expr ty = check expr (noEffect, ty)
@@ -568,6 +700,9 @@ instance TySubst FExpr where
     FPrimExpr e -> FPrimExpr $ tySubst env e
 
 instance TySubst Atom where
+  tySubst env atom = subst (env, mempty) atom
+
+instance TySubst Decl where
   tySubst env atom = subst (env, mempty) atom
 
 instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)

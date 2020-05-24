@@ -9,7 +9,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module TopLevel (evalBlock, EvalConfig (..), initializeBackend,
-                 Backend (..)) where
+                 Backend (..), Frontend (..)) where
 
 import Control.Concurrent.MVar
 import Control.Monad.State
@@ -42,9 +42,11 @@ import Subst
 import JAX
 import Util (highlightRegion)
 
-data Backend = LLVM | Interp | JAX
+data Backend = LLVM | Interp | JAX  deriving (Show, Eq)
+data Frontend = FExprFE | UExprFE   deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
+  , frontendName :: Frontend
   , preludeFile :: FilePath
   , logFile     :: Maybe FilePath
   , evalEngine  :: BackendEngine
@@ -77,10 +79,18 @@ runTopPassM opts m = runLogger (logFile opts) $ \logger ->
 
 evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
 evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
-  RunModule m -> evalModule env m
+  RunUModule m -> evalUModule env m
+  UCommand cmd (v, m) -> mempty <$ case cmd of
+    EvalExpr _ -> do
+      val <- evalUModuleVal env v m
+      s <- liftIO $ pprintVal val
+      logTop $ TextOut s
+    ShowPasses -> void $ evalUModule env m
+    ShowPass _ -> void $ evalUModule env m
+  RunModule m -> evalFModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
-      val <- evalModuleVal env v m
+      val <- evalFModuleVal env v m
       case fmt of
         Printed -> do
           s <- liftIO $ pprintVal val
@@ -88,18 +98,18 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
         Heatmap -> logTop $ valToHeatmap val
         Scatter -> logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalModuleVal env v m
+      val <- evalFModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
     Dump DexObject fname -> do
-      val <- evalModuleVal env v m
+      val <- evalFModuleVal env v m
       s <- liftIO $ pprintVal val
       liftIO $ writeFile fname s
     Dump DexBinaryObject fname -> do
-      val <- evalModuleVal env v m
+      val <- evalFModuleVal env v m
       liftIO $ dumpDataFile fname val
-    ShowPasses -> void $ evalModule env m
-    ShowPass _ -> void $ evalModule env m
-    TimeIt     -> void $ evalModule env m
+    ShowPasses -> void $ evalFModule env m
+    ShowPass _ -> void $ evalFModule env m
+    TimeIt     -> void $ evalFModule env m
   GetNameType v -> case envLookup typeEnv v of
     Just ty -> logTop (TextOut $ pprint ty) >> return mempty
     _       -> liftEitherIO $ throw UnboundVarErr $ pprint v
@@ -111,7 +121,7 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
     let val = ignoreExcept $ parseData source
     let decl = LetMono p val
     let outVars = toList p
-    evalModule env $ Module (sbId block) ([], outVars) [decl]
+    evalFModule env $ Module (sbId block) ([], outVars) [decl]
   LoadData p DexBinaryObject fname -> do
     val <- liftIO $ loadDataFile fname
     -- TODO: handle patterns and type annotations in binder
@@ -122,7 +132,7 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
     let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
     let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr
     let m = Module (sbId block) (imports, [v']) [LetMono (RecLeaf v') expr]
-    env' <- evalModule env m
+    env' <- evalFModule env m
     return $ env' <> TopEnv mempty mempty ((v:>()) @> Var v')
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
@@ -133,6 +143,8 @@ keepOutput block output = case output of
     Command (ShowPasses)     _ -> True
     Command (ShowPass name') _ -> name == name'
     Command (TimeIt)         _ -> name == LLVMEval
+    UCommand (ShowPasses)     _ -> True
+    UCommand (ShowPass name') _ -> name == name'
     _                          -> False
   MiscLog _ -> case sbContents block of
     Command (ShowPasses) _ -> True
@@ -146,9 +158,33 @@ evalSourceBlocks env blocks =
     env'' <- lift $ evalSourceBlock env' block
     extend env''
 
-evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
-evalModuleVal env v m = do
-  env' <- evalModule env m
+evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
+evalUModuleVal env v m = do
+  env' <- evalUModule env m
+  let (TopEnv _ simpEnv _) = env <> env'
+  let val = subst (simpEnv, mempty) $ simpEnv ! (v:>())
+  backend <- asks evalEngine
+  liftIO $ substArrayLiterals backend val
+
+evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
+evalUModule env@(TopEnv _ _ _) untyped = do
+  logTop $ MiscLog $ "\n" ++ pprint env
+  logPass Parse untyped
+  (typed, infEnv) <- uExprTypePass env untyped
+  checkPass TypePass typed
+  env' <- evalModule env typed
+  return $ TopEnv infEnv mempty mempty <> env'
+
+-- TODO: check here for upstream errors
+uExprTypePass :: TopEnv -> UModule -> TopPassM (Module, TopInfEnv)
+uExprTypePass env m = do
+  (typed, envOut) <- liftEitherIO $ inferUModule env m
+  liftEitherIO $ checkValid typed
+  return (typed, envOut)
+
+evalFModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
+evalFModuleVal env v m = do
+  env' <- evalFModule env m
   let (TopEnv _ simpEnv _) = env <> env'
   let val = subst (simpEnv, mempty) $ simpEnv ! v
   backend <- asks evalEngine
@@ -157,24 +193,29 @@ evalModuleVal env v m = do
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalModule :: TopEnv -> FModule -> TopPassM TopEnv
-evalModule env@(TopEnv infEnv simpEnv ruleEnv) untyped = do
+evalFModule :: TopEnv -> FModule -> TopPassM TopEnv
+evalFModule env@(TopEnv infEnv _ _) untyped = do
   logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
   (typed, infEnv') <- typePass infEnv untyped
   checkPass TypePass typed
   let normalized = normalizeModule typed
   checkPass NormPass normalized
+  env' <- evalModule env normalized
+  return $ TopEnv infEnv' mempty mempty <> env'
+
+evalModule :: TopEnv -> Module -> TopPassM TopEnv
+evalModule (TopEnv _ simpEnv ruleEnv) normalized = do
   let (defunctionalized, simpEnv') = simplifyModule simpEnv ruleEnv normalized
   checkPass SimpPass defunctionalized
   let (Module _ (_, outVars) dfExpr) = defunctionalized
   case dfExpr of
     Atom UnitVal -> do
-      return $ TopEnv infEnv' simpEnv' mempty
+      return $ TopEnv mempty simpEnv' mempty
     _ -> do
       ~(TupVal results) <- evalBackend dfExpr
       let simpEnv'' = subst (newEnv outVars results, mempty) simpEnv'
-      return $ TopEnv infEnv' simpEnv'' mempty
+      return $ TopEnv mempty simpEnv'' mempty
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of

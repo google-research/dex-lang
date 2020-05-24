@@ -56,7 +56,7 @@ instance Pretty ErrType where
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
 
-instance Pretty ty => Pretty (TyCon ty Atom) where
+instance (Pretty ty, Pretty atom) => Pretty (TyCon ty atom) where
   pretty con = case con of
     BaseType b     -> p b
     RecType r      -> p $ fmap (asStr . p) r
@@ -65,8 +65,11 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     TypeApp f xs   -> p f <+> hsep (map p xs)
     ArrayType (shape, b) -> p b <> p shape
     -- This rule forces us to specialize to Atom. Is there a better way?
-    IntRange (IntVal 0) (IntVal n) -> p n
-    IntRange a b -> p a <> "...<" <> p b
+    -- IntRange (IntVal 0) (IntVal n) -> p n
+    -- TODO: fix this hack
+    IntRange a b -> if s1 == "0...<" then p s2 else ans
+      where ans = p a <> "...<" <> p b
+            (s1, s2) = splitAt 5 (asStr ans)
     IndexRange _ low high -> low' <> "." <> high'
       where
         low'  = case low  of InclusiveLim x -> p x <> "."
@@ -132,6 +135,7 @@ instance Pretty FDecl where
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (OpExpr  op ) = p op
   pretty (ConExpr con) = p con
+  pretty (TyExpr  con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (App _ e1 e2) = p e1 <+> p e2
@@ -331,6 +335,29 @@ instance Pretty TopEnv where
     "Inference env:     " <+> p infEnv  <> hardline <>
     "Simplification env:" <+> p simpEnv <> hardline <>
     "RuleEnv env:       " <+> p ruleEnv <> hardline
+
+instance Pretty UModule where
+  pretty (UModule imports exports decls) =
+                     "imports:" <+> p imports
+       <> hardline <> foldMap (\decl -> p decl <> hardline) decls
+       <> hardline <> "exports:" <+> p exports
+
+instance Pretty UExpr where
+  pretty expr = case expr of
+    UVar (v:>_) -> p v
+    ULam lam -> p lam
+    UApp f x -> p f <+> p x
+    UPi a b -> parens $ p a <+> "->" <+> p b
+    UDecl decl body -> p decl <> hardline <> p body
+    UPrimExpr prim -> parens $ p prim'
+      where prim' = fmapExpr prim id id $
+                      const (error "not implemented" :: LamExpr)
+
+instance Pretty ULamExpr where
+  pretty (ULamExpr pat body) = "\\" <> p pat <+> "." <> nest 3 (line <> p body)
+
+instance Pretty UDecl where
+  pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

@@ -1,0 +1,8 @@
+
+Int = %Int
+
+iadd : (Int -> Int -> Int) =
+  \x. \y. %iadd x y
+
+:p iadd 3 (iadd 4 5)
+> 12

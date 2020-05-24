@@ -83,7 +83,7 @@ simplifyAtom atom = case atom of
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
   Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
                        $ error "Shouldn't have lambda left"
-  _ -> error "Not implemented"
+  TC _ -> substEmbed atom
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.

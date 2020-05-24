@@ -8,7 +8,7 @@
 
 module Parser (Parser, parseit, parseProg, parseData, runTheParser,
                parseTopDeclRepl, parseTopDecl, uint, withSource,
-               emptyLines, brackets, tauType, symbol) where
+               emptyLines, brackets, tauType, symbol, parseUProg) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -775,13 +775,14 @@ mayNotBreak :: Parser a -> Parser a
 mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
 
 num :: Parser (Either Double Int)
-num =    liftM Left (try (L.signed (return ()) L.float) <* sc)
+num = notFollowedBy (symbol "->") >>  -- TODO: clean this up
+     (   liftM Left (try (L.signed (return ()) L.float) <* sc)
      <|> (do x <- L.signed (return ()) L.decimal
              trailingPeriod <- optional $ try $ char '.' >> notFollowedBy (char '.')
              sc
              return $ case trailingPeriod of
                Just _  -> Left (fromIntegral x)
-               Nothing -> Right x)
+               Nothing -> Right x))
 
 uint :: Parser Int
 uint = L.decimal <* sc
@@ -827,3 +828,166 @@ withIndent n p = local (\ctx -> ctx { curIndent = curIndent ctx + n }) $ p
 failIf :: Bool -> String -> Parser ()
 failIf True s = fail s
 failIf False _ = return ()
+
+-- === uexpr ===
+
+parseUProg :: String -> [SourceBlock]
+parseUProg s = mustParseit s $ manyTill (uSourceBlock <* outputLines) eof
+
+uSourceBlock :: Parser SourceBlock
+uSourceBlock = do
+  offset <- getOffset
+  pos <- getSourcePos
+  (src, b) <- withSource $ withRecovery recover $ uSourceBlock'
+  return $ SourceBlock (unPos (sourceLine pos)) offset src b Nothing
+
+uSourceBlock' :: Parser SourceBlock'
+uSourceBlock' =
+      (some eol >> return EmptyLines)
+  <|> (sc >> eol >> return CommentLine)
+  <|> uExplicitCommand
+  <|> (liftM (RunUModule . uDeclAsModule) (uDecl <* eol))
+
+uDeclAsModule :: UDecl -> UModule
+uDeclAsModule decl = UModule imports exports [decl]
+ where
+   imports = envNames $ freeVars decl
+   exports = envNames $ uDeclBoundVars decl
+
+uExprAsModule :: UExpr -> (Name, UModule)
+uExprAsModule e = (v, UModule imports [v] body)
+  where
+    v = "*ans*"
+    body = [ULet (RecLeaf (v:>Nothing)) e]
+    imports = envNames $ freeVars e
+
+uExplicitCommand :: Parser SourceBlock'
+uExplicitCommand = do
+  cmdName <- char ':' >> identifier
+  cmd <- case cmdName of
+    "p"       -> return $ EvalExpr Printed
+    "passes"  -> return $ ShowPasses
+  e <- uBlockOrExpr <*eol
+  return $ UCommand cmd (uExprAsModule e)
+
+uExpr :: Parser UExpr
+uExpr = makeExprParser uExpr' uops
+
+uExpr' :: Parser UExpr
+uExpr' =   uPiType
+       <|> leafUExpr
+       <|> uLamExpr
+       <|> uPrim
+       <?> "expression"
+
+leafUExpr :: Parser UExpr
+leafUExpr =   parens uExpr
+          <|> uvar
+          <|> liftM (UPrimExpr . ConExpr . Lit) literal
+
+uvar :: Parser UExpr
+uvar = do
+  v <- name SourceName anyCaseIdentifier
+  return $ UVar $ v :> ()
+
+anyCaseIdentifier :: Parser String
+anyCaseIdentifier = lexeme . try $ do
+  w <- (:) <$> letterChar <*> many (alphaNumChar <|> char '\'')
+  failIf (w `elem` resNames) $ show w ++ " is a reserved word"
+  return w
+  where resNames = ["for", "rof", "llam", "case"]
+
+uops :: [[Operator Parser UExpr]]
+uops = [[uAppRule]
+       ,[InfixR (symbol "->" >> return UPi)]]
+
+uAppRule :: Operator Parser UExpr
+uAppRule = InfixL (sc >> return (\x y -> UApp x y))
+
+uDecl :: Parser UDecl
+uDecl = do
+  p <- try $ uPat <* equalSign
+  body <- uBlockOrExpr
+  return $ ULet p body
+
+uBlockOrExpr :: Parser UExpr
+uBlockOrExpr =  uBlock <|> uExpr
+
+uPat :: Parser UPat
+uPat = RecLeaf <$> uBinder
+
+uBinder :: Parser UBinder
+uBinder = do
+  v <- name SourceName anyCaseIdentifier
+  ann <- optional $ symbol ":" >> leafUExpr
+  return $ v :> ann
+
+uAnnBinder :: Parser (VarP UType)
+uAnnBinder = do
+  v <- name SourceName anyCaseIdentifier
+  ann <- symbol ":" >> leafUExpr
+  return $ v :> ann
+
+type UStatement = Either UDecl UExpr
+
+uBlock :: Parser UExpr
+uBlock = do
+  nextLine
+  indent <- liftM length $ some (char ' ')
+  withIndent indent $ do
+    statements <- mayNotBreak $ uStatement `sepBy1` (symbol ";" <|> try nextLine)
+    case last statements of
+      Left _ -> fail "Last statement in a block must be an expression."
+      _      -> return $ wrapUStatements statements
+
+wrapUStatements :: [UStatement] -> UExpr
+wrapUStatements statements = case statements of
+  [Right e] -> e
+  s:rest -> UDecl s' (wrapUStatements rest)
+    where s' = case s of
+                 Left  d -> d
+                 Right e -> ULet (RecLeaf (NoName:>Nothing)) e
+  [] -> error "Shouldn't be reachable"
+
+uStatement :: Parser UStatement
+uStatement =  liftM Left  uDecl
+          <|> liftM Right uExpr
+          <?> "decl or expr"
+
+uLamExpr :: Parser UExpr
+uLamExpr = do
+  symbol "\\"
+  p <- uPat
+  argTerm
+  body <- uBlockOrExpr
+  return $ ULam $ ULamExpr p body
+
+uPiType :: Parser UExpr
+uPiType = do
+  v <- try $ uAnnBinder <* symbol "->"
+  resultTy <- uExpr
+  return $ makeUPi v resultTy
+
+makeUPi :: VarP UType -> UType -> UType
+makeUPi v@(_:>a) b = UPi a $ abstractUDepType (varName v) 0 b
+
+abstractUDepType :: Name -> Int -> UType -> UType
+abstractUDepType absVar d ty = case ty of
+  UVar v   -> UVar $ substWithDBVar v
+  UApp f x -> UApp (recur f) (recur x)
+  UPi a b  -> UPi (recur a) (abstractUDepType absVar (d+1) b)
+  _ -> error "Not implemented"
+  where
+    recur :: UType -> UType
+    recur = abstractUDepType absVar d
+
+    substWithDBVar :: VarP ann -> VarP ann
+    substWithDBVar (v:>ann) | v == absVar = DeBruijn d :> ann
+                            | otherwise   = v :> ann
+
+uPrim :: Parser UExpr
+uPrim = do
+  s <- symbol "%" >> anyCaseIdentifier
+  Just prim <- return $ strToName s
+  UPrimExpr <$> traverseExpr prim primArg primArg primArg
+  where primArg = const $ name SourceName anyCaseIdentifier

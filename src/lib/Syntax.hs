@@ -31,13 +31,14 @@ module Syntax (
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
-    strToName, nameToStr, unzipExpr, bind, fDeclBoundVars,
+    strToName, nameToStr, unzipExpr, bind, fDeclBoundVars, uDeclBoundVars,
     noEffect, isPure, EffectName (..), EffectRow, Vars, wrapFDecls,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
     toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
     jointEnvGet,
+    UExpr (..), UType, UBinder, UVar, UPat, UModule (..), UDecl (..), ULamExpr (..),
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -49,6 +50,7 @@ module Syntax (
 import qualified Data.Map.Strict as M
 import Control.Applicative
 import Control.Exception hiding (throw)
+import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
@@ -167,6 +169,26 @@ type FModule = ModuleP [FDecl]
 
 data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 
+-- === experimental alternative front-end AST ===
+
+data UExpr = UVar UVar
+           | ULam ULamExpr
+           | UApp UExpr UExpr
+           | UPi UType UType
+           | UDecl UDecl UExpr
+           | UPrimExpr (PrimExpr Name Name Name)
+             deriving (Show, Eq, Generic)
+
+data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
+data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
+
+type UType = UExpr
+type UVar    = VarP ()
+type UBinder = VarP (Maybe UType)
+type UPat = RecTree UBinder
+
+data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
+
 -- === normalized core IR ===
 
 data Expr = Decl Decl Expr
@@ -188,6 +210,7 @@ data LamExpr = LamExpr Var Expr  deriving (Show, Eq, Generic)
 
 data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
                        | ConExpr (PrimCon ty e lam)
+                       | TyExpr  (TyCon ty e)
                          deriving (Show, Eq, Generic)
 
 data PrimCon ty e lam =
@@ -287,7 +310,12 @@ builtinNames = M.fromList
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
-  , ("inject"     , OpExpr $ Inject ())                        ]
+  , ("inject"     , OpExpr $ Inject ())
+  , ("Int"    , TyExpr $ BaseType IntType)
+  , ("Real"   , TyExpr $ BaseType RealType)
+  , ("Bool"   , TyExpr $ BaseType BoolType)
+  , ("TyKind" , TyExpr $ TypeKind)
+  ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
@@ -312,7 +340,9 @@ data SourceBlock = SourceBlock
 type BlockId = Int
 type ReachedEOF = Bool
 data SourceBlock' = RunModule FModule
+                  | RunUModule UModule
                   | Command CmdName (Var, FModule)
+                  | UCommand CmdName (Name, UModule)
                   | GetNameType Var
                   | IncludeSourceFile String
                   | LoadData Pat DataFormat String
@@ -510,6 +540,9 @@ liftEitherIO :: (Exception e, MonadIO m) => Either e a -> m a
 liftEitherIO (Left err) = liftIO $ throwIO err
 liftEitherIO (Right x ) = return x
 
+instance MonadFail (Either Err) where
+  fail s = Left $ Err CompilerErr Nothing s
+
 -- === misc ===
 
 fromAtomicFExpr :: FExpr -> Maybe Atom
@@ -544,6 +577,33 @@ wrapFDecls decls result = foldr FDecl result decls
 
 class HasVars a where
   freeVars :: a -> Vars
+
+instance HasVars UExpr where
+  freeVars expr = case expr of
+    UVar v -> uVarFreeVars v
+    ULam lam -> freeVars lam
+    UApp f x -> freeVars f <> freeVars x
+    UPi a b -> freeVars a <> freeVars b
+    UDecl decl body ->
+      freeVars decl <> (freeVars body `envDiff` uDeclBoundVars decl)
+    _ -> mempty
+
+instance HasVars UDecl where
+  freeVars (ULet p expr) = foldMap uBinderFreeVars p <> freeVars expr
+
+instance HasVars ULamExpr where
+  freeVars (ULamExpr p expr) =
+    foldMap uBinderFreeVars p <> (freeVars expr `envDiff` foldMap (@>()) p)
+
+uDeclBoundVars :: UDecl -> Scope
+uDeclBoundVars (ULet p _) = foldMap (@>()) p
+
+uBinderFreeVars :: UBinder -> Vars
+uBinderFreeVars (_:>ann) = foldMap freeVars ann
+
+uVarFreeVars :: UVar -> Vars
+uVarFreeVars (DeBruijn _ :> ann) = freeVars ann
+uVarFreeVars v@(_:>ann) = v @> UnitTy <> freeVars ann
 
 instance HasVars FExpr where
   freeVars expr = case expr of
@@ -666,8 +726,9 @@ class TraversableExpr expr where
                -> f (expr ty' e' lam')
 
 instance TraversableExpr PrimExpr where
-  traverseExpr (OpExpr  e) fT fE fL = liftA OpExpr  $ traverseExpr e fT fE fL
-  traverseExpr (ConExpr e) fT fE fL = liftA ConExpr $ traverseExpr e fT fE fL
+  traverseExpr (OpExpr  e) fT fE fL = OpExpr  <$> traverseExpr e fT fE fL
+  traverseExpr (ConExpr e) fT fE fL = ConExpr <$> traverseExpr e fT fE fL
+  traverseExpr (TyExpr  e) fT fE _  = TyExpr  <$> traverseTyCon e fT fE
 
 instance TraversableExpr PrimOp where
   traverseExpr primop fT fE fL = case primop of
