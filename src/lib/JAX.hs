@@ -53,7 +53,6 @@ data IdxAtom = IdxAtom JAtom [IdxVar]        deriving (Generic, Show, Eq)
 data JType = JType [AxisSize] BaseType       deriving (Generic, Show, Eq)
 data JaxFunction = JaxFunction [JVar] JBlock deriving (Generic, Show, Eq)
 
-type JOp = JOpP IdxAtom
 data JOpP e = JId e
             | JIota AxisSize
             | JGet e e
