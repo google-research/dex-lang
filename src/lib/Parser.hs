@@ -4,8 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
-
 module Parser (Parser, parseit, parseProg, parseData, runTheParser,
                parseTopDeclRepl, parseTopDecl, uint, withSource,
                emptyLines, brackets, tauType, symbol, parseUProg) where
@@ -445,8 +443,8 @@ binOpRule opchar f = InfixL $ do
   ((), pos) <- (withPos $ mayBreak $ symbol opchar) <* (optional eol >> sc)
   return $ \e1 e2 -> SrcAnnot (f e1 e2) pos
 
-backtickRule :: Operator Parser FExpr
-backtickRule = InfixL $ do
+backquoteRule :: Operator Parser FExpr
+backquoteRule = InfixL $ do
   void $ char '`'
   v <- rawVar
   char '`' >> sc
@@ -465,7 +463,7 @@ ops = [ [binOpRule "." (\x i -> FPrimExpr $ OpExpr $ TabGet x i)]
       , [cmpRule "==" Equal, cmpRule "<=" LessEqual, cmpRule ">=" GreaterEqual,
          cmpRule "<" Less, cmpRule ">" Greater]
       , [scalarBinOpRule "&&" And, scalarBinOpRule "||" Or]
-      , [backtickRule]
+      , [backquoteRule]
       , [InfixR (mayBreak (symbol "$") >> return (\x y -> app x y))]
       , [effRule "+=" MTell, effRule ":=" MPut]
        ]
@@ -665,7 +663,7 @@ effectName =
 
 -- TODO: linearity
 effectType :: Parser Effect
-effectType =  bracketed "{" "}" $ do
+effectType =  bracketed lBrace rBrace $ do
   effects <- effectRow `sepBy` comma
   tailVar <- optional $ do
                symbol "|"
@@ -711,9 +709,6 @@ typeName = liftM BaseTy $
    <|> (symbol "Real" >> return RealType)
    <|> (symbol "Bool" >> return BoolType)
    <|> (symbol "Str"  >> return StrType)
-
-comma :: Parser ()
-comma = symbol ","
 
 period :: Parser ()
 period = symbol "."
@@ -793,14 +788,14 @@ lexeme = L.lexeme sc
 symbol :: String -> Parser ()
 symbol s = void $ L.symbol sc s
 
-bracketed :: String -> String -> Parser a -> Parser a
-bracketed left right p = between (symbol left) (symbol right) $ mayBreak p
+bracketed :: Parser () -> Parser () -> Parser a -> Parser a
+bracketed left right p = between left right $ mayBreak p
 
 parens :: Parser a -> Parser a
-parens p = bracketed "(" ")" p
+parens p = bracketed lParen rParen p
 
 brackets :: Parser a -> Parser a
-brackets p = bracketed "[" "]" p
+brackets p = bracketed lBracket rBracket p
 
 withPos :: Parser a -> Parser (a, (Int, Int))
 withPos p = do
@@ -883,30 +878,18 @@ uExpr' =   uPiType
 leafUExpr :: Parser UExpr
 leafUExpr =   parens uExpr
           <|> uvar
-          <|> liftM (UPrimExpr . ConExpr . Lit) literal
+          <|> liftM (UPrimExpr . ConExpr . Lit) uLit
+
+uLit :: Parser LitVal
+uLit =   (IntLit  <$> intLit)
+     <|> (RealLit <$> doubleLit)
 
 uvar :: Parser UExpr
-uvar = do
-  v <- name SourceName anyCaseIdentifier
-  return $ UVar $ v :> ()
-
-anyCaseIdentifier :: Parser String
-anyCaseIdentifier = lexeme . try $ do
-  w <- (:) <$> letterChar <*> many (alphaNumChar <|> char '\'')
-  failIf (w `elem` resNames) $ show w ++ " is a reserved word"
-  return w
-  where resNames = ["for", "rof", "llam", "case"]
-
-uops :: [[Operator Parser UExpr]]
-uops = [[uAppRule]
-       ,[InfixR (symbol "->" >> return UArrow)]]
-
-uAppRule :: Operator Parser UExpr
-uAppRule = InfixL (sc >> return (\x y -> UApp x y))
+uvar = UVar <$> (:>()) <$> uName
 
 uDecl :: Parser UDecl
 uDecl = do
-  p <- try $ uPat <* equalSign
+  p <- try $ uPat <* sym "="
   body <- uBlockOrExpr
   return $ ULet p body
 
@@ -918,14 +901,8 @@ uPat = RecLeaf <$> uBinder
 
 uBinder :: Parser UBinder
 uBinder = do
-  v <- name SourceName anyCaseIdentifier
-  ann <- optional $ symbol ":" >> leafUExpr
-  return $ v :> ann
-
-uAnnBinder :: Parser (VarP UType)
-uAnnBinder = do
-  v <- name SourceName anyCaseIdentifier
-  ann <- symbol ":" >> leafUExpr
+  v <- uName
+  ann <- optional $ sym ":" >> leafUExpr
   return $ v :> ann
 
 type UStatement = Either UDecl UExpr
@@ -935,7 +912,7 @@ uBlock = do
   nextLine
   indent <- liftM length $ some (char ' ')
   withIndent indent $ do
-    statements <- mayNotBreak $ uStatement `sepBy1` (symbol ";" <|> try nextLine)
+    statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
     case last statements of
       Left _ -> fail "Last statement in a block must be an expression."
       _      -> return $ wrapUStatements statements
@@ -956,7 +933,7 @@ uStatement =  liftM Left  uDecl
 
 uLamExpr :: Parser UExpr
 uLamExpr = do
-  symbol "\\"
+  sym "\\"
   p <- uPat
   argTerm
   body <- uBlockOrExpr
@@ -964,13 +941,121 @@ uLamExpr = do
 
 uPiType :: Parser UExpr
 uPiType = do
-  v <- try $ uAnnBinder <* symbol "->"
+  v <- try $ uPiBinder <* sym "->"
   resultTy <- uExpr
   return $ UPi v resultTy
 
+uPiBinder :: Parser (VarP UType)
+uPiBinder = do
+  v <- uName
+  ann <- sym ":" >> leafUExpr
+  return $ v :> ann
+
+uName :: Parser Name
+uName = textName <|> symName
+
 uPrim :: Parser UExpr
 uPrim = do
-  s <- symbol "%" >> anyCaseIdentifier
+  s <- primName
   Just prim <- return $ strToName s
   UPrimExpr <$> traverseExpr prim primArg primArg primArg
-  where primArg = const $ name SourceName anyCaseIdentifier
+  where primArg = const textName
+
+-- literal symbols here must only use chars from `symChars`
+uops :: [[Operator Parser UExpr]]
+uops =
+  [ [symOp "."]
+  , [InfixL (sc $> UApp)]
+  , [symOp "^"]
+  , [symOp "*", symOp "/" ]
+  , [symOp "+", symOp "-"]
+  , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
+  , [symOp "&&", symOp "||"]
+  , [InfixL $ backquoteName >>= (return . binApp)]
+  , [InfixL (sym "$" $> UApp)]
+  , [symOp "+=", symOp ":="]
+  , [InfixR (sym "->" $> UArrow)]]
+
+symOp :: String -> Operator Parser UExpr
+symOp s = InfixL $ label "infix operator" (sym s) >> return (binApp f)
+  where f = rawName SourceName $ "(" <> s <> ")"
+
+binApp :: Name -> UExpr -> UExpr -> UExpr
+binApp f x y = (UVar (f:>()) `UApp` x) `UApp` y
+
+-- === lexemes ===
+
+-- These `Lexer` actions must be non-overlapping and never consume input on failure
+
+type Lexer = Parser
+
+data KeyWord = ForKW | RofKW | CaseKW | LLamKW
+
+textName :: Lexer Name
+textName = liftM (rawName SourceName) $ lexeme $ try $ do
+  w <- (:) <$> letterChar <*> many nameTailChar
+  failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
+  return w
+  where
+    keyWordStrs :: [String]
+    keyWordStrs = ["for", "rof", "case", "llam"]
+
+keyWord :: KeyWord -> Lexer ()
+keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
+  where
+    s = case kw of
+      ForKW  -> "for"
+      RofKW  -> "rof"
+      CaseKW -> "case"
+      LLamKW -> "llam"
+
+primName :: Lexer String
+primName = lexeme $ try $ char '%' >> some letterChar
+
+intLit :: Lexer Int
+intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
+
+doubleLit :: Lexer Double
+doubleLit = lexeme $
+      try L.float
+  <|> try (fromIntegral <$> ((L.decimal :: Parser Int) <* char '.'))
+
+-- string must only contain characters from the list `symChars`
+sym :: String -> Lexer ()
+sym s = lexeme $ try $ string s >> notFollowedBy symChar
+
+symName :: Lexer Name
+symName = lexeme $ try $ do
+  s <- char '(' *> some symChar <* char ')'
+  return $ rawName SourceName $ "(" <> s <> ")"
+
+backquoteName :: Lexer Name
+backquoteName = label "backquoted name" $
+  lexeme $ try $ char '`' >> textName <* char '`'
+
+-- brackets and punctuation
+-- (can't treat as sym because e.g. `((` is two separate lexemes)
+lParen, rParen, lBracket, rBracket, lBrace, rBrace, comma, semicolon :: Lexer ()
+
+lParen    = notFollowedBy symName >> charLexeme '('
+rParen    = charLexeme ')'
+lBracket  = charLexeme '['
+rBracket  = charLexeme ']'
+lBrace    = charLexeme '{'
+rBrace    = charLexeme '}'
+comma     = charLexeme ','
+semicolon = charLexeme ';'
+
+charLexeme :: Char -> Parser ()
+charLexeme c = void $ lexeme $ char c
+
+-- === lexing utils ===
+
+nameTailChar :: Parser Char
+nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
+
+symChar :: Parser Char
+symChar = choice $ map char symChars
+
+symChars :: [Char]
+symChars = ".!$^&*:-~+/=<>|?\\"
