@@ -100,7 +100,7 @@ getKind ty = case ty of
   _ -> error "Not a type"
 
 -- TODO: add class constraints
-tyConKind :: TyCon Type e -> (TyCon (Type, Kind) (e, Type), Kind)
+tyConKind :: Show e => TyCon Type e -> (TyCon (Type, Kind) (e, Type), Kind)
 tyConKind con = case con of
   BaseType b        -> (BaseType b, TyKind)
   IntRange a b      -> (IntRange (a, IntTy) (b, IntTy), TyKind)
@@ -115,7 +115,8 @@ tyConKind con = case con of
     where tk = TC $ ArrowKind (map (const TyKind) xs) TyKind
   LinCon            -> (LinCon   , TC MultKind)
   NonLinCon         -> (NonLinCon, TC MultKind)
-  _ -> error "Not implemented"
+  TypeKind          -> (TypeKind, TC TypeKind)
+  _ -> error $ "Not implemented: " ++ show con
 
 checkKind :: Type -> TypeM Kind
 checkKind ty = case ty of
@@ -688,13 +689,13 @@ class PiAbstractable t where
 
 instance PiAbstractable Type where
   instantiateDepType d x ty = case ty of
-    Var _ -> ty
+    Var v -> lookupDBVar v
     ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
       Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (instantiateDepType (d+1) x b)
     Forall tbs cs body -> Forall tbs cs $ recur body
     Effect row tailVar -> Effect row' tailVar
-      where row' = fold [ (lookupDBVar v :>()) @> (eff, recur ann)
+      where row' = fold [ (lookupDBVarName v :>()) @> (eff, recur ann)
                         | (v, (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
       where env = (DeBruijn d :>()) @> x
@@ -705,13 +706,18 @@ instance PiAbstractable Type where
       recur ::Type -> Type
       recur = instantiateDepType d x
 
-      lookupDBVar :: Name -> Name
-      lookupDBVar v = case v of
+      lookupDBVarName :: Name -> Name
+      lookupDBVarName v = case v of
         DeBruijn i | i == d -> v'  where (Var (v':>_)) = x
         _                   -> v
 
+      lookupDBVar :: Var -> Type
+      lookupDBVar (v:>ann) = case v of
+        DeBruijn i | i == d -> x
+        _                   -> Var $ v:>ann
+
   abstractDepType v d ty = case ty of
-    Var _ -> ty
+    Var (v':>ann) -> Var $ substWithDBVar v' :> ann
     ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
       Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (abstractDepType v (d+1) b)

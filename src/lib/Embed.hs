@@ -292,7 +292,7 @@ instance MonadEmbed m => MonadEmbed (ReaderT r m) where
 instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
   look = lift look
   extend x = lift $ extend x
-  scoped m = undefined
+  scoped _ = undefined
 
 instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
   embedLook = undefined

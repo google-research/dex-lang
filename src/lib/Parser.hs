@@ -899,7 +899,7 @@ anyCaseIdentifier = lexeme . try $ do
 
 uops :: [[Operator Parser UExpr]]
 uops = [[uAppRule]
-       ,[InfixR (symbol "->" >> return UPi)]]
+       ,[InfixR (symbol "->" >> return UArrow)]]
 
 uAppRule :: Operator Parser UExpr
 uAppRule = InfixL (sc >> return (\x y -> UApp x y))
@@ -966,24 +966,7 @@ uPiType :: Parser UExpr
 uPiType = do
   v <- try $ uAnnBinder <* symbol "->"
   resultTy <- uExpr
-  return $ makeUPi v resultTy
-
-makeUPi :: VarP UType -> UType -> UType
-makeUPi v@(_:>a) b = UPi a $ abstractUDepType (varName v) 0 b
-
-abstractUDepType :: Name -> Int -> UType -> UType
-abstractUDepType absVar d ty = case ty of
-  UVar v   -> UVar $ substWithDBVar v
-  UApp f x -> UApp (recur f) (recur x)
-  UPi a b  -> UPi (recur a) (abstractUDepType absVar (d+1) b)
-  _ -> error "Not implemented"
-  where
-    recur :: UType -> UType
-    recur = abstractUDepType absVar d
-
-    substWithDBVar :: VarP ann -> VarP ann
-    substWithDBVar (v:>ann) | v == absVar = DeBruijn d :> ann
-                            | otherwise   = v :> ann
+  return $ UPi v resultTy
 
 uPrim :: Parser UExpr
 uPrim = do

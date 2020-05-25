@@ -1,8 +1,21 @@
 
 Int = %Int
+Real = %Real
+Type = %TyKind
 
 iadd : (Int -> Int -> Int) =
   \x. \y. %iadd x y
 
 :p iadd 3 (iadd 4 5)
 > 12
+
+depId : (a:Type -> a -> a) = \a. \x. x
+
+:p depId Int 1
+> 1
+
+returnFirstArg : (a:Type -> b:Type -> a -> b -> a) =
+  \a. \b. \x. \y. x
+
+:p returnFirstArg Int Real 1 2.0
+> 1

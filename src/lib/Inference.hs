@@ -27,6 +27,7 @@ import PPrint
 import Cat
 import Subst
 
+-- TODO: consider just carrying an `Atom` (since the type is easily recovered)
 type InfEnv = Env (Atom, Type)
 type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
 
@@ -90,11 +91,13 @@ checkOrInferUExpr expr eff reqTy = case expr of
     ansTy <- matchRequired reqTy resultTy
     ansVal <- emit $ App NonLin fVal xVal
     return (ansVal, ansTy)
-  UPi a b -> do
+  UPi (v:>a) b -> do
     ty <- matchRequired reqTy TyKind
     a' <- checkUType a
-    b' <- checkUType b
-    return (ArrowType NonLin $ Pi a' (noEffect, b'), ty)
+    -- TODO: freshen as we go under the binder
+    b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ checkUType b
+    let piTy = ArrowType NonLin $ makePi (v:>a') (noEffect, b')
+    return (piTy, ty)
   UDecl decl body -> do
     env <- inferUDecl eff decl
     extendR env $ checkOrInferUExpr body eff reqTy
@@ -665,6 +668,7 @@ matchTail t ~eff@(Effect row t') = do
     (_, Just (Var v)) | v `isin` vs && row == mempty -> zonk (Effect mempty t) >>= bindQ v
     _ -> throw TypeErr ""
 
+-- TODO: check we're not unifying with deBruijn/skolem vars
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
           | otherwise = extend $ mempty { solverSub = v @> t }

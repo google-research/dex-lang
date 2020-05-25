@@ -39,6 +39,7 @@ module Syntax (
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
     jointEnvGet,
     UExpr (..), UType, UBinder, UVar, UPat, UModule (..), UDecl (..), ULamExpr (..),
+    pattern UArrow,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -174,7 +175,7 @@ data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 data UExpr = UVar UVar
            | ULam ULamExpr
            | UApp UExpr UExpr
-           | UPi UType UType
+           | UPi UPiBinder UType
            | UDecl UDecl UExpr
            | UPrimExpr (PrimExpr Name Name Name)
              deriving (Show, Eq, Generic)
@@ -185,9 +186,13 @@ data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
 type UType = UExpr
 type UVar    = VarP ()
 type UBinder = VarP (Maybe UType)
+type UPiBinder = VarP UType
 type UPat = RecTree UBinder
 
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
+
+pattern UArrow :: UType -> UType -> UType
+pattern UArrow a b = UPi (NoName:>a) b
 
 -- === normalized core IR ===
 
@@ -583,7 +588,7 @@ instance HasVars UExpr where
     UVar v -> uVarFreeVars v
     ULam lam -> freeVars lam
     UApp f x -> freeVars f <> freeVars x
-    UPi a b -> freeVars a <> freeVars b
+    UPi v@(_:>ann) b -> freeVars ann <> (freeVars b `envDiff` (v@>()))
     UDecl decl body ->
       freeVars decl <> (freeVars body `envDiff` uDeclBoundVars decl)
     _ -> mempty
