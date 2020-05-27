@@ -343,6 +343,9 @@ instance Pretty UModule where
        <> hardline <> "exports:" <+> p exports
 
 instance Pretty UExpr where
+  pretty (UPos _ expr) = p expr
+
+instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
     ULam im (ULamExpr pat body) ->

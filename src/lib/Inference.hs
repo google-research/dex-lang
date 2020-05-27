@@ -65,12 +65,14 @@ checkSigma expr eff ty = case ty of
   _ -> checkRho expr eff ty
 
 inferSigma :: UExpr -> Effect -> UInferM (Atom, SigmaType)
-inferSigma (ULam im@(ImplicitArg _) lamExpr) _ = do
-  -- TODO: effects
-  (lamExpr, piTy) <- inferULam lamExpr
-  let lam = Con $ Lam im NonLin noEffect lamExpr
-  return (lam, ArrowType im NonLin piTy)
-inferSigma expr eff = inferRho expr eff
+inferSigma (UPos pos expr) eff = case expr of
+  ULam im@(ImplicitArg _) lamExpr -> addSrcContext (Just pos) $ do
+    -- TODO: effects
+    (lamExpr, piTy) <- inferULam lamExpr
+    let lam = Con $ Lam im NonLin noEffect lamExpr
+    return (lam, ArrowType im NonLin piTy)
+  _ ->
+    inferRho (UPos pos expr) eff
 
 checkRho :: UExpr -> Effect -> RhoType -> UInferM Atom
 checkRho expr eff ty = do
@@ -98,7 +100,7 @@ instantiateSigma (x, ty) = return (x, ty)
 
 checkOrInferRho :: UExpr -> Effect -> RequiredTy RhoType
                 -> UInferM (Atom, InferredTy RhoType)
-checkOrInferRho expr eff reqTy = case expr of
+checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr of
   UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
   ULam (ImplicitArg _) (ULamExpr (RecLeaf b) body) -> do
     argTy <- checkAnn $ varAnn b
@@ -151,7 +153,7 @@ checkOrInferRho expr eff reqTy = case expr of
       case reqTy of
         Infer -> return $ Inferred ty
         Check req -> do
-          constrainEq req ty ""
+          constrainUEq req ty
           return Checked
 
 inferUDecl :: Effect -> UDecl -> UInferM InfEnv
@@ -183,7 +185,7 @@ inferULam (ULamExpr (RecLeaf b@(v:>ann)) body) = do
 checkULam :: ULamExpr -> PiType EffectiveType -> UInferM LamExpr
 checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy@(Pi argTy' _) = do
   argTy <- checkAnn ann
-  constrainEq argTy' argTy "Lambda binder"
+  constrainUEq argTy' argTy
   buildLamExpr (v:>argTy) $ \x -> do
     let (lamEff, resultTy) = applyPi piTy x
     extendR (b @> (x, argTy')) $ do
@@ -205,7 +207,7 @@ checkUType ty = checkRho ty noEffect TyKind
 checkEffect :: Effect -> Effect -> UInferM ()
 checkEffect allowedEff eff = do
   eff' <- openUEffect eff
-  constrainEq allowedEff eff' ""
+  constrainUEq allowedEff eff'
 
 freshInfVar :: Type -> UInferM Atom
 freshInfVar ty = do
@@ -215,6 +217,15 @@ freshInfVar ty = do
 
 openUEffect :: Effect -> UInferM Effect
 openUEffect eff = return eff -- TODO!
+
+constrainUEq :: (MonadCat SolverEnv m, MonadError Err m)
+             => Type -> Type -> m ()
+constrainUEq t1 t2 = do
+  t1' <- zonk t1
+  t2' <- zonk t2
+  let msg = "\nExpected: " ++ pprint t1'
+         ++ "\n  Actual: " ++ pprint t2'
+  addContext msg $ unify t1' t2'
 
 type InferM = ReaderT JointTypeEnv (SolverT (Either Err))
 

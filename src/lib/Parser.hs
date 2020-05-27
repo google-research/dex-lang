@@ -800,7 +800,7 @@ brackets p = bracketed lBracket rBracket p
 braces :: Parser a -> Parser a
 braces p = bracketed lBrace rBrace p
 
-withPos :: Parser a -> Parser (a, (Int, Int))
+withPos :: Parser a -> Parser (a, SrcPos)
 withPos p = do
   n <- getOffset
   x <- p
@@ -871,34 +871,32 @@ uExplicitCommand = do
 
 uExpr :: Parser UExpr
 uExpr = makeExprParser uExpr' uops
-
-uExpr' :: Parser UExpr
-uExpr' =   uArrow
-       <|> leafUExpr
-       <|> uLamExpr
-       <|> uPrim
-       <?> "expression"
+  where
+    uExpr' :: Parser UExpr
+    uExpr' =   uArrow
+           <|> leafUExpr
+           <|> uLamExpr
+           <|> uPrim
+           <?> "expression"
 
 leafUExpr :: Parser UExpr
 leafUExpr =   parens uExpr
           <|> uvar
-          <|> liftM (UPrimExpr . ConExpr . Lit) uLit
+          <|> withSrc (liftM (UPrimExpr . ConExpr . Lit) uLit)
+  where
+    uLit :: Parser LitVal
+    uLit =   (IntLit  <$> intLit)
+         <|> (RealLit <$> doubleLit)
 
-uLit :: Parser LitVal
-uLit =   (IntLit  <$> intLit)
-     <|> (RealLit <$> doubleLit)
-
-uvar :: Parser UExpr
-uvar = UVar <$> (:>()) <$> uName
+    uvar :: Parser UExpr
+    uvar = withSrc $ (UVar . (:>())) <$> uName
 
 uDecl :: Parser UDecl
 uDecl = do
   lhs <- simpleLet <|> funDefLet
   rhs <- sym "=" >> uBlockOrExpr
   return $ lhs rhs
-
   where
-
     simpleLet :: Parser (UExpr -> UDecl)
     simpleLet = do
       v <- try $ uName <* lookAhead (sym ":" <|> sym "=")
@@ -920,17 +918,17 @@ uLamExpr = do
            <*> (argTerm >> uBlockOrExpr)
 
 buildLam :: [(UBinder, Implicity)] -> Maybe UExpr -> UExpr -> UExpr
-buildLam decls ann body = case decls of
+buildLam decls ann body@(UPos pos _) = case decls of
   [] -> case ann of
     Nothing -> body
-    Just ty -> UAnnot body ty
-  ((b,im):bs) ->
+    Just ty -> UPos pos $ UAnnot body ty
+  (b,im):bs -> UPos pos $  -- TODO: join with source position of binders too
     ULam im $ ULamExpr (RecLeaf b) $ buildLam bs ann body
 
 uBlockOrExpr :: Parser UExpr
 uBlockOrExpr =  uBlock <|> uExpr
 
-type UStatement = Either UDecl UExpr
+type UStatement = (Either UDecl UExpr, SrcPos)
 
 uBlock :: Parser UExpr
 uBlock = do
@@ -939,25 +937,24 @@ uBlock = do
   withIndent indent $ do
     statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
     case last statements of
-      Left _ -> fail "Last statement in a block must be an expression."
-      _      -> return $ wrapUStatements statements
+      (Left _, _) -> fail "Last statement in a block must be an expression."
+      _           -> return $ wrapUStatements statements
 
 wrapUStatements :: [UStatement] -> UExpr
 wrapUStatements statements = case statements of
-  [Right e] -> e
-  s:rest -> UDecl s' (wrapUStatements rest)
-    where s' = case s of
-                 Left  d -> d
-                 Right e -> ULet (RecLeaf (NoName:>Nothing)) e
+  [(Right e, _)] -> e
+  (s, pos):rest -> UPos pos $ case s of
+    Left  d -> UDecl d $ wrapUStatements rest
+    Right e -> UDecl d $ wrapUStatements rest
+      where d = ULet (RecLeaf (NoName:>Nothing)) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
-uStatement =  liftM Left  uDecl
-          <|> liftM Right uExpr
-          <?> "decl or expr"
+uStatement = withPos $   liftM Left  uDecl
+                     <|> liftM Right uExpr
 
 uArrow :: Parser UExpr
-uArrow = do
+uArrow = withSrc $ do
   (v, im) <- try $ uPiBinder <* sym "->"
   resultTy <- uExpr
   return $ UArrow im (UPi v resultTy)
@@ -999,7 +996,7 @@ uPiBinder = rawPiBinder <|> parenPiBinder <|> implicitPiBinder
       return (b, ImplicitArg "<todo>")
 
 uPrim :: Parser UExpr
-uPrim = do
+uPrim = withSrc $ do
   s <- primName
   Just prim <- return $ strToName s
   UPrimExpr <$> traverseExpr prim primArg primArg primArg
@@ -1009,23 +1006,46 @@ uPrim = do
 uops :: [[Operator Parser UExpr]]
 uops =
   [ [symOp "."]
-  , [InfixL (sc $> UApp)]
+  , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
   , [symOp "+", symOp "-"]
   , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
-  , [InfixL $ backquoteName >>= (return . binApp)]
-  , [InfixL (sym "$" $> UApp)]
+  , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
+  , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
-  , [InfixR (sym "->" $> (\a b -> UArrow Expl (UPi (NoName:>a) b)))]]
+  , [InfixR $ sym "->" $> mkArrow]]
+
+opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
+          -> Parser (UExpr -> UExpr -> UExpr)
+opWithSrc p = do
+  (f, pos) <- withPos p
+  return $ f pos
 
 symOp :: String -> Operator Parser UExpr
-symOp s = InfixL $ label "infix operator" (sym s) >> return (binApp f)
+symOp s = InfixL $ opWithSrc $ do
+  label "infix operator" (sym s)
+  return $ binApp f
   where f = rawName SourceName $ "(" <> s <> ")"
 
-binApp :: Name -> UExpr -> UExpr -> UExpr
-binApp f x y = (UVar (f:>()) `UApp` x) `UApp` y
+binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
+binApp f pos x y = (f' `mkApp` x) `mkApp` y
+  where f' = UPos pos $ UVar (f:>())
+
+mkApp :: UExpr -> UExpr -> UExpr
+mkApp f x = UPos (joinPos f x) $ UApp f x
+
+mkArrow :: UExpr -> UExpr -> UExpr
+mkArrow a b = UPos (joinPos a b) $ UArrow Expl $ UPi (NoName:>a) b
+
+withSrc :: Parser UExpr' -> Parser UExpr
+withSrc p = do
+  (e, pos) <- withPos p
+  return $ UPos pos e
+
+joinPos :: UExpr -> UExpr -> SrcPos
+joinPos (UPos (l, h) _) (UPos (l', h') _) = (min l l', max h h')
 
 -- === lexemes ===
 

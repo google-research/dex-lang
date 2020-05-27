@@ -47,3 +47,27 @@ def idImplicit2 : ({a:Type} -> a -> a) = \x. x
 
 :p (\x y. x + y) 1.0 2.0
 > 3.0
+
+:p 1.0 + 1
+> Type error:
+> Expected: Real
+>   Actual: Int
+>
+> :p 1.0 + 1
+>          ^
+
+:p iadd 1 (1.0 + 2.0)
+> Type error:
+> Expected: Int
+>   Actual: Real
+>
+> :p iadd 1 (1.0 + 2.0)
+>            ^^^^^^^^^
+
+:p 1.0 + (iadd 2 3)
+> Type error:
+> Expected: Real
+>   Actual: Int
+>
+> :p 1.0 + (iadd 2 3)
+>           ^^^^^^^^

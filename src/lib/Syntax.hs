@@ -37,7 +37,7 @@ module Syntax (
     newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
     toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
-    jointEnvGet, Implicity (..), UExpr (..), UType, UBinder, UVar,
+    jointEnvGet, Implicity (..), UExpr (..), UExpr' (..), UType, UBinder, UVar,
     UPat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
@@ -173,18 +173,20 @@ data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 
 -- === experimental alternative front-end AST ===
 
-data UExpr = UVar UVar
-           | ULam Implicity ULamExpr
-           | UApp UExpr UExpr
-           | UArrow Implicity UPiType
-           | UDecl UDecl UExpr
-           | UPrimExpr (PrimExpr Name Name Name)
-           | UAnnot UExpr UType
-             deriving (Show, Eq, Generic)
+data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
+
+data UExpr' = UVar UVar
+            | ULam Implicity ULamExpr
+            | UApp UExpr UExpr
+            | UArrow Implicity UPiType
+            | UDecl UDecl UExpr
+            | UPrimExpr (PrimExpr Name Name Name)
+            | UAnnot UExpr UType
+              deriving (Show, Eq, Generic)
 
 data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
 data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
-data UPiType  = UPi UPiBinder UType       deriving (Show, Eq, Generic)
+data UPiType  = UPi UPiBinder UType  deriving (Show, Eq, Generic)
 
 type UType = UExpr
 type UVar    = VarP ()
@@ -584,6 +586,9 @@ class HasVars a where
   freeVars :: a -> Vars
 
 instance HasVars UExpr where
+  freeVars (UPos _ e) = freeVars e
+
+instance HasVars UExpr' where
   freeVars expr = case expr of
     UVar v -> uVarFreeVars v
     ULam _ lam -> freeVars lam
