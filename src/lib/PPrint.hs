@@ -353,6 +353,7 @@ instance Pretty UExpr where
     UPrimExpr prim -> parens $ p prim'
       where prim' = fmapExpr prim id id $
                       const (error "not implemented" :: LamExpr)
+    UAnnot e ann -> parens (p e) <+> ":" <+> parens (p ann)
 
 instance Pretty ULamExpr where
   pretty (ULamExpr pat body) = "\\" <> p pat <+> "." <> nest 3 (line <> p body)

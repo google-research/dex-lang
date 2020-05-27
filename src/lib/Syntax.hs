@@ -179,6 +179,7 @@ data UExpr = UVar UVar
            | UArrow Implicity UPiType
            | UDecl UDecl UExpr
            | UPrimExpr (PrimExpr Name Name Name)
+           | UAnnot UExpr UType
              deriving (Show, Eq, Generic)
 
 data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
@@ -590,6 +591,7 @@ instance HasVars UExpr where
     UArrow _ piTy -> freeVars piTy
     UDecl decl body ->
       freeVars decl <> (freeVars body `envDiff` uDeclBoundVars decl)
+    UAnnot expr ann -> freeVars expr <> freeVars ann
     _ -> mempty
 
 instance HasVars UDecl where

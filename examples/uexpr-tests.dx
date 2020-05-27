@@ -2,22 +2,19 @@ Int = %Int
 Real = %Real
 Type = %TyKind
 
-(+) : (Real -> Real -> Real) =
-  \x. \y. %fadd x y
+def (+) (x:Real) (y:Real) : Real = %fadd x y
 
-iadd : (Int -> Int -> Int) =
-  \x. \y. %iadd x y
+def iadd (x:Int) (y:Int) : Int = %iadd x y
 
 :p iadd 3 (iadd 4 5)
 > 12
 
-depId : (a:Type -> a -> a) = \a. \x. x
+def depId (a:Type) (x:a) : a = x
 
 :p depId Int 1
 > 1
 
-returnFirstArg : (a:Type -> b:Type -> a -> b -> a) =
-  \a. \b. \x. \y. x
+def returnFirstArg (a:Type) (b:Type) (x:a) (y:b) : a = x
 
 :p returnFirstArg Int Real 1 2.0
 > 1
@@ -25,21 +22,21 @@ returnFirstArg : (a:Type -> b:Type -> a -> b -> a) =
 :p 1.0 + 2.0
 > 3.0
 
-:p (+) 1.0 2.0
+def triple (x:Real) : Real = x + x + x
+
+:p triple 1.0
 > 3.0
 
-:p 1 `iadd` 3
-> 4
+def idExplicit (a:Type) (x:a) : a = x
 
-idExplicit = \a:Type. \x:a. x
 :p idExplicit Int 1
 > 1
 
-idImplicit = \{a:Type}. \x:a. x
+def idImplicit {a:Type} (x:a) : a = x
 :p idImplicit 1
 > 1
 
-idImplicit2 : ({a:Type} -> a -> a) = \x. x
+def idImplicit2 : ({a:Type} -> a -> a) = \x. x
 :p idImplicit2 1
 > 1
 
@@ -47,3 +44,6 @@ idImplicit2 : ({a:Type} -> a -> a) = \x. x
   idImplicit3 : ({a:Type} -> a -> a) = \x. x
   idImplicit3 1
 > 1
+
+:p (\x y. x + y) 1.0 2.0
+> 3.0

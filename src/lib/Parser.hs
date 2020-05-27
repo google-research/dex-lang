@@ -797,6 +797,9 @@ parens p = bracketed lParen rParen p
 brackets :: Parser a -> Parser a
 brackets p = bracketed lBracket rBracket p
 
+braces :: Parser a -> Parser a
+braces p = bracketed lBrace rBrace p
+
 withPos :: Parser a -> Parser (a, (Int, Int))
 withPos p = do
   n <- getOffset
@@ -890,21 +893,42 @@ uvar = UVar <$> (:>()) <$> uName
 
 uDecl :: Parser UDecl
 uDecl = do
-  p <- try $ uPat <* sym "="
-  body <- uBlockOrExpr
-  return $ ULet p body
+  lhs <- simpleLet <|> funDefLet
+  rhs <- sym "=" >> uBlockOrExpr
+  return $ lhs rhs
+
+  where
+
+    simpleLet :: Parser (UExpr -> UDecl)
+    simpleLet = do
+      v <- try $ uName <* lookAhead (sym ":" <|> sym "=")
+      ann <- optional $ annot uExpr
+      return $ ULet (RecLeaf (v:>ann))
+
+    funDefLet :: Parser (UExpr -> UDecl)
+    funDefLet = label "function definition" $ do
+      keyWord DefKW
+      v <- uName
+      lam <- buildLam <$> many uLamBinder <*> optional (annot uExpr)
+      return $ \body -> ULet (RecLeaf (v:>Nothing)) (lam body)
+
+uLamExpr :: Parser UExpr
+uLamExpr = do
+  sym "\\"
+  buildLam <$> some uLamBinder
+           <*> (return Nothing)
+           <*> (argTerm >> uBlockOrExpr)
+
+buildLam :: [(UBinder, Implicity)] -> Maybe UExpr -> UExpr -> UExpr
+buildLam decls ann body = case decls of
+  [] -> case ann of
+    Nothing -> body
+    Just ty -> UAnnot body ty
+  ((b,im):bs) ->
+    ULam im $ ULamExpr (RecLeaf b) $ buildLam bs ann body
 
 uBlockOrExpr :: Parser UExpr
 uBlockOrExpr =  uBlock <|> uExpr
-
-uPat :: Parser UPat
-uPat = RecLeaf <$> uBinder
-
-uBinder :: Parser UBinder
-uBinder = do
-  v <- uName
-  ann <- optional $ sym ":" >> leafUExpr
-  return $ v :> ann
 
 type UStatement = Either UDecl UExpr
 
@@ -932,33 +956,47 @@ uStatement =  liftM Left  uDecl
           <|> liftM Right uExpr
           <?> "decl or expr"
 
-uLamExpr :: Parser UExpr
-uLamExpr = do
-  sym "\\"
-  (p, im) <- withImplicity uPat
-  argTerm
-  body <- uBlockOrExpr
-  return $ ULam im $ ULamExpr p body
-
 uArrow :: Parser UExpr
 uArrow = do
-  (v, im) <- try $ withImplicity uPiBinder <* sym "->"
+  (v, im) <- try $ uPiBinder <* sym "->"
   resultTy <- uExpr
   return $ UArrow im (UPi v resultTy)
-
-uPiBinder :: Parser (VarP UType)
-uPiBinder = do
-  v <- uName
-  ann <- sym ":" >> leafUExpr
-  return $ v :> ann
 
 uName :: Parser Name
 uName = textName <|> symName
 
-withImplicity :: Parser a -> Parser (a, Implicity)
-withImplicity p =
-     (between lBrace rBrace p >>= \v -> return (v, ImplicitArg ("<todo>")))
- <|> (p                       >>= \v -> return (v, Expl))
+annot :: Parser a -> Parser a
+annot p = sym ":" >> p
+
+uLamBinder :: Parser (UBinder, Implicity)
+uLamBinder = rawLamBinder <|> parenLamBinder <|> implicitLamBinder
+  where
+    rawLamBinder = do
+      b <- (:>) <$> uName <*> (optional $ annot leafUExpr)
+      return (b, Expl)
+
+    parenLamBinder = parens $ do
+      b <- (:>) <$> uName <*> (optional $ annot uExpr)
+      return (b, Expl)
+
+    implicitLamBinder = braces $ do
+      b <- (:>) <$> uName <*> (optional $ annot uExpr)
+      return (b, ImplicitArg "<todo>")
+
+uPiBinder :: Parser (VarP UType, Implicity)
+uPiBinder = rawPiBinder <|> parenPiBinder <|> implicitPiBinder
+  where
+    rawPiBinder = do
+      b <- (:>) <$> uName <*> annot leafUExpr
+      return (b, Expl)
+
+    parenPiBinder = parens $ do
+      b <- (:>) <$> uName <*> annot uExpr
+      return (b, Expl)
+
+    implicitPiBinder = braces $ do
+      b <- (:>) <$> uName <*> annot uExpr
+      return (b, ImplicitArg "<todo>")
 
 uPrim :: Parser UExpr
 uPrim = do
@@ -995,7 +1033,7 @@ binApp f x y = (UVar (f:>()) `UApp` x) `UApp` y
 
 type Lexer = Parser
 
-data KeyWord = ForKW | RofKW | CaseKW | LLamKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW | LLamKW
 
 textName :: Lexer Name
 textName = liftM (rawName SourceName) $ lexeme $ try $ do
@@ -1004,12 +1042,13 @@ textName = liftM (rawName SourceName) $ lexeme $ try $ do
   return w
   where
     keyWordStrs :: [String]
-    keyWordStrs = ["for", "rof", "case", "llam"]
+    keyWordStrs = ["def", "for", "rof", "case", "llam"]
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
   where
     s = case kw of
+      DefKW  -> "def"
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"

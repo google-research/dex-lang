@@ -141,6 +141,10 @@ checkOrInferRho expr eff reqTy = case expr of
       TyExpr  con -> return $ TC con
     matchRequirement (val, getType val)
     where lookupName v = fst <$> asks (! (v:>()))
+  UAnnot e ty -> do
+    ty' <- checkUType ty
+    val <- checkSigma e eff ty'
+    matchRequirement (val, ty')
   where
     matchRequirement :: (Atom, Type) -> UInferM (Atom, InferredTy RhoType)
     matchRequirement (x, ty) = liftM (x,) $
