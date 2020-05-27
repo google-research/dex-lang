@@ -15,18 +15,19 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, withIndexed,
               nRecGet, nTabGet, add, mul, sub, neg, div', andE,
-              select, selectAt, freshVar, unitBinder, unpackRec,
-              substEmbed, fromPair, buildLamExprAux,
+              select, selectAt, unpackRec, substEmbed, fromPair, buildLamExprAux,
               emitExpr, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
-              boolToInt, intToReal, boolToReal) where
+              boolToInt, intToReal, boolToReal, reduceAtom) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Identity
+import Data.Maybe
 
 import Env
 import Syntax
@@ -73,7 +74,7 @@ emitTo (v:>_) expr = case singletonTypeVal ty of
 -- Assumes the decl binders are already fresh wrt current scope
 emitExpr :: MonadEmbed m => Expr -> m Atom
 emitExpr (Decl decl@(Let v _) body) = do
-  extendScope (v@>())
+  extendScope (v@>Nothing)
   emitDecl decl
   emitExpr body
 emitExpr (Atom atom) = return atom
@@ -83,18 +84,17 @@ freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
 freshVar v = do
   scope <- getScope
   let v' = rename v scope
-  extendScope $ v' @> ()
   return v'
 
 -- Runs second argument on a fresh binder variable and returns its result,
 -- the fresh variable name and the EmbedEnv accumulated during its execution.
 -- The first argument specifies the type of the binder variable, and is used
 -- as a hint for its name.
-withBinder :: (MonadEmbed m)
-            => Var -> (Atom -> m a) -> m (a, Var, [Decl])
+withBinder :: (MonadEmbed m) => Var -> (Atom -> m a) -> m (a, Var, [Decl])
 withBinder b f = do
   ((ans, b'), decls) <- scopedDecls $ do
       b' <- freshVar b
+      embedExtend $ asFst (b' @> Nothing)
       ans <- f $ Var b'
       return (ans, b')
   return (ans, b', decls)
@@ -123,6 +123,7 @@ buildTLam bs f = do
   -- TODO: refresh type vars in qs
   (((qs, body), bs'), decls) <- scopedDecls $ do
       bs' <- mapM freshVar bs
+      embedExtend $ asFst (newEnv bs' (repeat Nothing))
       ans <- f (map Var bs')
       return (ans, bs')
   return $ TLam bs' qs (wrapDecls decls body)
@@ -182,9 +183,6 @@ select ty p x y = emit $ Select ty p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
 div' x y = emit $ ScalarBinOp FDiv x y
-
-unitBinder :: MonadEmbed m => m Var
-unitBinder = freshVar (NoName:>UnitTy)
 
 nRecGet :: MonadEmbed m => Atom -> RecField -> m Atom
 nRecGet (RecVal r) i = return $ recGet r i
@@ -325,9 +323,34 @@ extendScope :: MonadEmbed m => Scope -> m ()
 extendScope scope = embedExtend $ asFst scope
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl = embedExtend $ asSnd [decl]
+emitDecl decl@(Let v expr) = embedExtend (v @> Just (Right expr), [decl])
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
+
+-- === partial evaluation using definitions in scope ===
+
+reduceAtom :: Scope -> Atom -> Atom
+reduceAtom scope x = case x of
+  Var v -> case scope ! v of
+    Nothing -> x
+    Just (Left val)   -> reduceAtom scope val
+    Just (Right expr) -> fromMaybe x $ reduceCExpr scope expr
+  _ -> x
+
+reduceCExpr :: Scope -> CExpr -> Maybe Atom
+reduceCExpr scope expr = case expr of
+  App _ f x -> do
+    let f' = reduceAtom scope f
+    let x' = reduceAtom scope x
+    Con (Lam _ _ eff (LamExpr b body)) <- return f'
+    when (eff /= noEffect) Nothing
+    -- TODO: Worry about variable capture. Should really carry a substitution.
+    let body' = scopelessSubst (b@>x') body
+    case body' of
+      Decl _ _ -> Nothing  -- TODO: Reduce bodies with let bindings
+      CExpr expr -> reduceCExpr scope expr
+      Atom  val  -> return $ reduceAtom scope val
+  _ -> Nothing

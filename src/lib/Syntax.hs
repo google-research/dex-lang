@@ -133,7 +133,8 @@ data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
 
 data Implicity = ImplicitArg Name | Expl  deriving (Show, Eq, Generic)
 
-type Scope = Env ()
+-- TODO: allow `Atom` under `CExpr`
+type Scope = Env (Maybe (Either Atom CExpr))
 
 noEffect :: Effect
 noEffect = Effect mempty Nothing
@@ -610,7 +611,7 @@ instance HasVars UPiType where
   freeVars (UPi v@(_:>ann) b) = freeVars ann <> (freeVars b `envDiff` (v@>()))
 
 uDeclBoundVars :: UDecl -> Scope
-uDeclBoundVars (ULet p _) = foldMap (@>()) p
+uDeclBoundVars (ULet p _) = foldMap (@>Nothing) p
 
 uBinderFreeVars :: UBinder -> Vars
 uBinderFreeVars (_:>ann) = foldMap freeVars ann

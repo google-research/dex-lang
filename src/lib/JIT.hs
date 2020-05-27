@@ -42,7 +42,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
                                  , blockName :: L.Name
-                                 , usedNames :: Scope
+                                 , usedNames :: Env ()
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 

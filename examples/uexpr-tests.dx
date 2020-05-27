@@ -77,3 +77,15 @@ def idImplicit2 : ({a:Type} -> a -> a) = \x. x
 
 iadd = 1
 > Error: variable already defined: iadd
+
+def TyId (a:Type) : Type = a
+:p
+  x : TyId Int = 1
+  x
+> 1
+
+:p
+  def TyId2 (a:Type) : Type = a
+  x : TyId2 Int = 1
+  x
+> 1

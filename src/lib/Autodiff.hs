@@ -63,7 +63,7 @@ linearizeLamExpr ruleEnv (LamExpr v body) = do
        let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
        return (ansWithResiduals, (iVar, residualVs, ansT))
-  extendScope $ foldMap (@>()) (v':residualVs)
+  extendScope $ foldMap (@>Nothing) (v':residualVs)
   return (lam, map varAnn residualVs, \v'' residuals -> do
      scope <- getScope
      (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder

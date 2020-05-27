@@ -127,8 +127,8 @@ renameChoice vs scope =
   minimumBy (\v1 v2 -> nameTag v1 `compare` nameTag v2) vs'
   where vs' = [varName $ rename (v:>()) scope | v <- vs]
 
-renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
-renames vs scope = runCat (traverse (freshCat ()) vs) scope
+renames :: Traversable f => f (VarP ann) -> a -> Env a -> (f (VarP ann), Env a)
+renames vs x scope = runCat (traverse (freshCat x) vs) scope
 
 nameItems :: Traversable f => Name -> Env a -> f a -> (f Name, Env a)
 nameItems v env xs = flip runCat env $ forM xs $ \x ->

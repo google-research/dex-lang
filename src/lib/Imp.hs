@@ -445,7 +445,7 @@ freshVar :: IVar -> ImpM IVar
 freshVar v = do
   scope <- looks (fst . snd)
   let v' = rename v scope
-  extend $ asSnd $ asFst (v' @> ())
+  extend $ asSnd $ asFst (v' @> Nothing)
   return v'
 
 emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()

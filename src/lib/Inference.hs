@@ -55,7 +55,7 @@ inferUModule topEnv (UModule imports exports decls) = do
 
 runUInferM :: (TySubst a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
 runUInferM m env = runSolverT $ runEmbedT (runReaderT m env) scope
-  where scope = fmap (const ()) env
+  where scope = fmap (const Nothing) env
 
 infEnvFromTopEnv :: TopEnv -> InfEnv
 infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
@@ -135,7 +135,9 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
     -- TODO: make sure there's no effect if it's an implicit arrow
     a' <- checkUType a
     -- TODO: freshen as we go under the binder
-    b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ checkUType b
+    b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ do
+            extendScope ((v:>())@>Nothing)
+            checkUType b
     let piTy = ArrowType im NonLin $ makePi (v:>a') (noEffect, b')
     matchRequirement (piTy, TyKind)
   UDecl decl body -> do
@@ -208,7 +210,10 @@ checkAnn ann = case ann of
   Nothing -> freshInfVar TyKind
 
 checkUType :: UType -> UInferM Type
-checkUType ty = checkRho ty noEffect TyKind
+checkUType ty = do
+  ty' <- checkRho ty noEffect TyKind
+  scope <- getScope
+  return $ reduceAtom scope ty'
 
 checkEffect :: Effect -> Effect -> UInferM ()
 checkEffect allowedEff eff = do

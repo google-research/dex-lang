@@ -64,9 +64,11 @@ data TmpAtom = TmpLeaf IdxAtom
 data JFor = JFor [(IdxVar, IdxFlavor)] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
+type JScope = Env ()  -- TODO: put bindings here too
+
 -- === lowering from Expr ===
 
-type JEmbedEnv = (Scope, [JDecl])
+type JEmbedEnv = (JScope, [JDecl])
 type JSubstEnv = Env TmpAtom
 type EffectState = Env (Int, TmpAtom)
 type IdxEnv = [IdxVar]  -- for i j. --> [i, j]
@@ -552,10 +554,10 @@ betaReduceRec jfor idxs = do
     JFor ((b,MapIdx):bs) op <- return jfor'
     return (JFor bs $ substOp (b @> i) op, [])
 
-refreshIdxVars :: Scope -> JFor -> JFor
+refreshIdxVars :: JScope -> JFor -> JFor
 refreshIdxVars scope (JFor binders op) = do
   let (idxs, flavors) = unzip binders
-  let idxs' = fst $ renames idxs scope
+  let idxs' = fst $ renames idxs () scope
   JFor (zip idxs' flavors) $ substOp (newEnv idxs idxs') op
 
 -- TODO: extend `HasJVars` to handle index var substitution too

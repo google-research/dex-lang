@@ -16,7 +16,7 @@ import PPrint
 
 scopelessSubst :: Subst a => SubstEnv -> a -> a
 scopelessSubst env x = subst (env, scope) x
-  where scope = fmap (const ()) $ foldMap freeVars env
+  where scope = fmap (const Nothing) $ foldMap freeVars env
 
 class Subst a where
   -- NOTE: Scope is here only to allow the substitution to generate fresh variables
@@ -73,19 +73,19 @@ instance Subst TyQual where
   subst env (TyQual tv c) = TyQual tv' c
     where (Var tv') = subst env (Var tv)
 
-refreshDecl :: Env () -> Decl -> (Decl, (SubstEnv, Scope))
+refreshDecl :: Scope -> Decl -> (Decl, (SubstEnv, Scope))
 refreshDecl scope decl = case decl of
   Let b bound -> (Let b' bound, env)
     where (b', env) = refreshBinder scope (subst env b)
 
-refreshBinder :: Env () -> Var -> (Var, (SubstEnv, Scope))
+refreshBinder :: Scope -> Var -> (Var, (SubstEnv, Scope))
 refreshBinder scope b = (b', env')
   where b' = rename b scope
-        env' = (b@>Var b', b'@>())
+        env' = (b@>Var b', b'@>Nothing)
 
-refreshTBinders :: Env () -> [Var] -> ([Var], (SubstEnv, Scope))
+refreshTBinders :: Scope -> [Var] -> ([Var], (SubstEnv, Scope))
 refreshTBinders scope bs = (bs', env')
-  where (bs', scope') = renames bs scope
+  where (bs', scope') = renames bs Nothing scope
         env' = (newEnv bs (map Var bs'), scope')
 
 instance Subst b => Subst (PiType b) where
