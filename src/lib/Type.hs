@@ -90,7 +90,7 @@ asCompilerErr (Right x) = Right x
 getKind :: Type -> Kind
 getKind ty = case ty of
   Var v            -> varAnn v
-  ArrowType _ _    -> TyKind
+  ArrowType _ _ _  -> TyKind
   TabType _        -> TyKind
   Forall _ _ _     -> TyKind
   TypeAlias vs rhs -> TC $ ArrowKind (map varAnn vs) (getKind rhs)
@@ -127,7 +127,7 @@ checkKind ty = case ty of
         assertEq k k' "Kind annotation"
       _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
     return k
-  ArrowType m (Pi a (e, b)) -> do
+  ArrowType _ m (Pi a (e, b)) -> do
     checkKindIs (TC MultKind) m
     checkKindIs TyKind a
     checkKindIs (TC EffectKind) e
@@ -240,19 +240,21 @@ instance HasType FExpr where
       return (eff, ty')
 
 instance HasType FLamExpr where
-  getEffType (FLamExpr (RecLeaf v) body) = pureType $ ArrowType NonLin $ makePi v $ getEffType body
-  getEffType (FLamExpr p body) = pureType $ ArrowType NonLin $ Pi (getType p) $ getEffType body
+  getEffType (FLamExpr (RecLeaf v) body) =
+    pureType $ ArrowType Expl NonLin $ makePi v $ getEffType body
+  getEffType (FLamExpr p body) =
+    pureType $ ArrowType Expl NonLin $ Pi (getType p) $ getEffType body
 
   checkEffType (FLamExpr (RecLeaf v) body) = do
     void $ checkKind (varAnn v)
     bodyTy <- extendNamed (bind v) $ checkEffType body
-    return $ pureType $ ArrowType NonLin $ makePi v bodyTy
+    return $ pureType $ ArrowType Expl NonLin $ makePi v bodyTy
   checkEffType (FLamExpr p body) = do
     void $ checkKind pty
     bodyTy <- extendNamed penv $ checkEffType body
     unless (null $ penv `envIntersect` freeVars bodyTy) $
       throw TypeErr "Function's result type cannot depend on a variable bound in an argument pattern"
-    return $ pureType $ ArrowType NonLin $ Pi pty bodyTy
+    return $ pureType $ ArrowType Expl NonLin $ Pi pty bodyTy
     where pty = getType p
           penv = foldMap bind p
 
@@ -393,11 +395,12 @@ instance HasType CExpr where
     where addType x = liftM (Just x,) (checkType x)
 
 instance HasType LamExpr where
-  getEffType (LamExpr b body) = pureType $ ArrowType NonLin $ makePi b $ getEffType body
+  getEffType (LamExpr b body) =
+    pureType $ ArrowType Expl NonLin $ makePi b $ getEffType body
 
   checkEffType (LamExpr b body) = do
     bodyTy <- extendNamed (bind b) $ checkEffType body
-    return $ pureType $ ArrowType NonLin $ makePi b bodyTy
+    return $ pureType $ ArrowType Expl NonLin $ makePi b bodyTy
 
 -- -- === Effects ===
 
@@ -497,7 +500,7 @@ traverseOpType :: MonadError Err m
                -> (ClassName -> Type -> m ()) -- add class constraint
                -> m EffectiveType
 traverseOpType op eq _ _ | isDependentOp op = case op of
-  App l (_, ArrowType l' piTy@(Pi a _)) (x, a') -> do
+  App l (_, ArrowType _ l' piTy@(Pi a _)) (x, a') -> do
     eq a a'
     eq l l'
     maybeApplyPi piTy x
@@ -606,9 +609,9 @@ traverseConType :: MonadError Err m
 traverseConType con eq kindIs _ = case con of
   Lit l    -> return $ BaseTy $ litType l
   ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
-  Lam l eff (Pi a (eff', b)) -> do
+  Lam im l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
-    return $ ArrowType l (Pi a (eff, b))
+    return $ ArrowType im l (Pi a (eff, b))
   AnyValue t   -> return $ t
   SumCon _ l r -> return $ SumTy l r
   RecCon r -> return $ RecTy r
@@ -657,10 +660,10 @@ indexSetConcreteSize ty = case ty of
 -- === Pi types ===
 
 getPiType :: HasType lam => lam -> PiType EffectiveType
-getPiType lam = let (ArrowType _ pit) = getType lam in pit
+getPiType lam = let (ArrowType _ _ pit) = getType lam in pit
 
 checkPiType :: HasType lam => lam -> TypeM (PiType EffectiveType)
-checkPiType lam = checkType lam >>= \(ArrowType _ pit) -> return pit
+checkPiType lam = checkType lam >>= \(ArrowType _ _ pit) -> return pit
 
 maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => (PiType t) -> Maybe Atom -> m t
 maybeApplyPi piTy maybeAtom
@@ -690,7 +693,7 @@ class PiAbstractable t where
 instance PiAbstractable Type where
   instantiateDepType d x ty = case ty of
     Var v -> lookupDBVar v
-    ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+    ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
       Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (instantiateDepType (d+1) x b)
     Forall tbs cs body -> Forall tbs cs $ recur body
@@ -718,7 +721,7 @@ instance PiAbstractable Type where
 
   abstractDepType v d ty = case ty of
     Var (v':>ann) -> Var $ substWithDBVar v' :> ann
-    ArrowType m (Pi a (e, b)) -> ArrowType (recur m) $
+    ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
       Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (abstractDepType v (d+1) b)
     Forall tbs cs body -> Forall tbs cs $ recur body
@@ -806,8 +809,8 @@ checkLinOp e = case e of
 
 checkLinCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
 checkLinCon e = case e of
-  Lam NonLin _ lam -> checkLinFLam lam
-  Lam Lin    _ (FLamExpr p body) -> do
+  Lam _ NonLin _ lam -> checkLinFLam lam
+  Lam _ Lin    _ (FLamExpr p body) -> do
     let v = getPatName p
     let s = asSpent v
     withLocalLinVar v $ extendR (foldMap (@>s) p) $ checkLinFExpr body

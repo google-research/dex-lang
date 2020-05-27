@@ -103,7 +103,7 @@ buildLam :: MonadEmbed m
          => Mult -> Var -> (Atom -> m (Atom, Effect)) -> m Atom
 buildLam l v f = do
   (lam, eff) <- buildLamExprAux v $ \v' -> f v'
-  return $ Con $ Lam l eff lam
+  return $ Con $ Lam Expl l eff lam
 
 buildLamExpr :: (MonadEmbed m)
              => Var -> (Atom -> m Atom) -> m LamExpr

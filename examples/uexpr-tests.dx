@@ -30,3 +30,20 @@ returnFirstArg : (a:Type -> b:Type -> a -> b -> a) =
 
 :p 1 `iadd` 3
 > 4
+
+idExplicit = \a:Type. \x:a. x
+:p idExplicit Int 1
+> 1
+
+idImplicit = \{a:Type}. \x:a. x
+:p idImplicit 1
+> 1
+
+idImplicit2 : ({a:Type} -> a -> a) = \x. x
+:p idImplicit2 1
+> 1
+
+:p
+  idImplicit3 : ({a:Type} -> a -> a) = \x. x
+  idImplicit3 1
+> 1

@@ -162,7 +162,7 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
 prettyPrimCon (Lit l)       = p l
 prettyPrimCon (ArrayLit array) = p array
-prettyPrimCon (Lam _ _ lam) = parens $ prettyL lam
+prettyPrimCon (Lam _ _ _ lam) = parens $ prettyL lam
 prettyPrimCon (RecCon r)    = p r
 prettyPrimCon (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
 prettyPrimCon (AGet e)      = "aget" <+> p e
@@ -235,9 +235,9 @@ instance Pretty Atom where
     Var (x:>_)  -> p x
     TLam vs qs body -> "tlam" <+> p vs <+> "|" <+> p qs <+> "." <+> p body
     Con con -> p (ConExpr con)
-    ArrowType l (Pi a (eff, b))
-      | isPure eff -> parens $ p a <+> arrStr l <+>           p b
-      | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
+    ArrowType im l (Pi a (eff, b))
+      | isPure eff -> parens $ annImplicity im (p a) <+> arrStr l <+>           p b
+      | otherwise  -> parens $ annImplicity im (p a) <+> arrStr l <+> p eff <+> p b
     TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
     Forall bs qs body -> header <+> p body
       where
@@ -345,9 +345,10 @@ instance Pretty UModule where
 instance Pretty UExpr where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam lam -> p lam
+    ULam im (ULamExpr pat body) ->
+       "\\" <> annImplicity im (p pat) <+> "." <> nest 3 (line <> p body)
     UApp f x -> p f <+> p x
-    UPi a b -> parens $ p a <+> "->" <+> p b
+    UArrow im (UPi a b) -> parens $ annImplicity im (p a) <+> "->" <+> p b
     UDecl decl body -> p decl <> hardline <> p body
     UPrimExpr prim -> parens $ p prim'
       where prim' = fmapExpr prim id id $
@@ -358,6 +359,10 @@ instance Pretty ULamExpr where
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
+
+annImplicity :: Implicity -> Doc ann -> Doc ann
+annImplicity Expl x = x
+annImplicity (ImplicitArg _) x = "{" <> x <> "}"
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

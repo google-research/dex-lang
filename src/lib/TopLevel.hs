@@ -87,6 +87,9 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
       logTop $ TextOut s
     ShowPasses -> void $ evalUModule env m
     ShowPass _ -> void $ evalUModule env m
+    GetType -> do  -- TODO: don't actually evaluate it
+      val <- evalUModuleVal env v m
+      logTop $ TextOut $ pprint $ getType val
   RunModule m -> evalFModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do

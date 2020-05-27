@@ -504,7 +504,7 @@ argTerm :: Parser ()
 argTerm = mayNotBreak $ symbol "."
 
 fLam :: Type -> Pat -> FExpr -> FExpr
-fLam l p body = fPrimCon $ Lam l NoAnn $ FLamExpr p body
+fLam l p body = fPrimCon $ Lam Expl l NoAnn $ FLamExpr p body
 
 fFor :: Direction -> Pat -> FExpr -> FExpr
 fFor d p body = fPrimOp $ For d $ FLamExpr p body
@@ -633,7 +633,7 @@ arrowType = do
   lin <-  NonLin <$ symbol "->"
       <|> Lin    <$ symbol "--o"
   eff <- effectType <|> return noEffect
-  return $ \a b -> ArrowType lin $ Pi a (eff, b)
+  return $ \a b -> ArrowType Expl lin $ Pi a (eff, b)
 
 dependentArrow :: Parser Type
 dependentArrow = do
@@ -645,7 +645,7 @@ dependentArrow = do
     then do
       eff <- (effectType <|> return noEffect)
       b <- tauType
-      return $ ArrowType NonLin $ makePi (v:>a) (eff, b)
+      return $ ArrowType Expl NonLin $ makePi (v:>a) (eff, b)
     else do
       TabType . makePi (v:>a) <$> tauType
 
@@ -862,6 +862,7 @@ uExplicitCommand = do
   cmd <- case cmdName of
     "p"       -> return $ EvalExpr Printed
     "passes"  -> return $ ShowPasses
+    "t"       -> return $ GetType
   e <- uBlockOrExpr <*eol
   return $ UCommand cmd (uExprAsModule e)
 
@@ -869,7 +870,7 @@ uExpr :: Parser UExpr
 uExpr = makeExprParser uExpr' uops
 
 uExpr' :: Parser UExpr
-uExpr' =   uPiType
+uExpr' =   uArrow
        <|> leafUExpr
        <|> uLamExpr
        <|> uPrim
@@ -934,16 +935,16 @@ uStatement =  liftM Left  uDecl
 uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
-  p <- uPat
+  (p, im) <- withImplicity uPat
   argTerm
   body <- uBlockOrExpr
-  return $ ULam $ ULamExpr p body
+  return $ ULam im $ ULamExpr p body
 
-uPiType :: Parser UExpr
-uPiType = do
-  v <- try $ uPiBinder <* sym "->"
+uArrow :: Parser UExpr
+uArrow = do
+  (v, im) <- try $ withImplicity uPiBinder <* sym "->"
   resultTy <- uExpr
-  return $ UPi v resultTy
+  return $ UArrow im (UPi v resultTy)
 
 uPiBinder :: Parser (VarP UType)
 uPiBinder = do
@@ -953,6 +954,11 @@ uPiBinder = do
 
 uName :: Parser Name
 uName = textName <|> symName
+
+withImplicity :: Parser a -> Parser (a, Implicity)
+withImplicity p =
+     (between lBrace rBrace p >>= \v -> return (v, ImplicitArg ("<todo>")))
+ <|> (p                       >>= \v -> return (v, Expl))
 
 uPrim :: Parser UExpr
 uPrim = do
@@ -974,7 +980,7 @@ uops =
   , [InfixL $ backquoteName >>= (return . binApp)]
   , [InfixL (sym "$" $> UApp)]
   , [symOp "+=", symOp ":="]
-  , [InfixR (sym "->" $> UArrow)]]
+  , [InfixR (sym "->" $> (\a b -> UArrow Expl (UPi (NoName:>a) b)))]]
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ label "infix operator" (sym s) >> return (binApp f)
@@ -1026,12 +1032,12 @@ sym s = lexeme $ try $ string s >> notFollowedBy symChar
 
 symName :: Lexer Name
 symName = lexeme $ try $ do
-  s <- char '(' *> some symChar <* char ')'
+  s <- between (char '(') (char ')') $ some symChar
   return $ rawName SourceName $ "(" <> s <> ")"
 
 backquoteName :: Lexer Name
 backquoteName = label "backquoted name" $
-  lexeme $ try $ char '`' >> textName <* char '`'
+  lexeme $ try $ between (char '`') (char '`') textName
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)

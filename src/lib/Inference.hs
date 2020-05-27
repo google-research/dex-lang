@@ -31,8 +31,10 @@ import Subst
 type InfEnv = Env (Atom, Type)
 type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
 
-data RequiredTy = Check Type | Infer
-data InferredTy = Checked | Inferred Type
+type SigmaType = Type  -- may     start with an implicit lambda
+type RhoType   = Type  -- doesn't start with an implicit lambda
+data RequiredTy a = Check a | Infer
+data InferredTy a = Checked | Inferred a
 
 inferUModule :: TopEnv -> UModule -> Except (Module, TopInfEnv)
 inferUModule topEnv (UModule imports exports decls) = do
@@ -53,72 +55,109 @@ infEnvFromTopEnv :: TopEnv -> InfEnv
 infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
   fold [v' @> (substEnv ! v', ty) | (v, ty) <- envPairs tyEnv, let v' = v:>()]
 
-checkUExpr :: UExpr -> Effect -> Type -> UInferM Atom
-checkUExpr expr eff ty = do
-  (val, Checked) <- checkOrInferUExpr expr eff (Check ty)
+-- TODO: think about effects
+checkSigma :: UExpr -> Effect -> SigmaType -> UInferM Atom
+checkSigma expr eff ty = case ty of
+  ArrowType im@(ImplicitArg _) _ piTy@(Pi a _) -> do
+    lamExpr <- buildLamExpr ("a":>a) $ \x ->
+                 checkSigma expr eff $ snd $ applyPi piTy x
+    return $ Con $ Lam im NonLin noEffect lamExpr
+  _ -> checkRho expr eff ty
+
+inferSigma :: UExpr -> Effect -> UInferM (Atom, SigmaType)
+inferSigma (ULam im@(ImplicitArg _) lamExpr) _ = do
+  -- TODO: effects
+  (lamExpr, piTy) <- inferULam lamExpr
+  let lam = Con $ Lam im NonLin noEffect lamExpr
+  return (lam, ArrowType im NonLin piTy)
+inferSigma expr eff = inferRho expr eff
+
+checkRho :: UExpr -> Effect -> RhoType -> UInferM Atom
+checkRho expr eff ty = do
+  (val, Checked) <- checkOrInferRho expr eff (Check ty)
   return val
 
-inferUExpr :: UExpr -> Effect -> UInferM (Atom, Type)
-inferUExpr expr eff = do
-  (val, Inferred ty) <- checkOrInferUExpr expr eff Infer
+inferRho :: UExpr -> Effect -> UInferM (Atom, RhoType)
+inferRho expr eff = do
+  (val, Inferred ty) <- checkOrInferRho expr eff Infer
   return (val, ty)
 
-checkOrInferUExpr :: UExpr -> Effect -> RequiredTy -> UInferM (Atom, InferredTy)
-checkOrInferUExpr expr eff reqTy = case expr of
-  UVar v -> do
-    (x, ty) <- asks (! v)
-    ty' <- matchRequired reqTy ty
-    return (x, ty')
-  ULam (ULamExpr (RecLeaf b@(v:>ann)) body) -> do
-    argTy <- checkAnn ann
-    case reqTy of
-      Check ty -> do
-        piTy@(Pi argTy' _) <- fromPiType ty
-        constrainEq argTy' argTy "Lambda binder"
-        lam <- buildLam NonLin (v:>argTy) $ \x -> do
-          let (lamEff, resultTy) = applyPi piTy x
-          extendR (b @> (x, argTy')) $ do
-            resultVal <- checkUExpr body lamEff resultTy
-            return (resultVal, lamEff)
-        return (lam, Checked)
-      Infer -> error "todo"
+-- This is necessary so that embed's `getType` doesn't get confused
+-- TODO: figure out a better way. It's probably enough to just solve locally as
+-- part of leak checking when we construct dependent lambdas.
+emitZonked :: CExpr -> UInferM Atom
+emitZonked expr = zonk expr >>= emit
+
+instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
+instantiateSigma (f,  ArrowType (ImplicitArg _) _ piTy@(Pi argTy _)) = do
+  x <- freshInfVar argTy
+  ans <- emitZonked $ App NonLin f x
+  let (_, ansTy) = applyPi piTy x
+  return (ans, ansTy)
+instantiateSigma (x, ty) = return (x, ty)
+
+checkOrInferRho :: UExpr -> Effect -> RequiredTy RhoType
+                -> UInferM (Atom, InferredTy RhoType)
+checkOrInferRho expr eff reqTy = case expr of
+  UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
+  ULam (ImplicitArg _) (ULamExpr (RecLeaf b) body) -> do
+    argTy <- checkAnn $ varAnn b
+    x <- freshInfVar argTy
+    extendR (b@>(x, argTy)) $ checkOrInferRho body eff reqTy
+  ULam Expl lamExpr -> case reqTy of
+    -- TODO: effects
+    Check ty -> do
+      piTy <- fromPiType ty
+      lamExpr' <- checkULam lamExpr piTy
+      let lam = Con $ Lam Expl NonLin noEffect lamExpr'
+      return (lam, Checked)
+    Infer -> do
+      (lamExpr', piTy) <- inferULam lamExpr
+      let lam = Con $ Lam Expl NonLin noEffect lamExpr'
+      return (lam, Inferred $ ArrowType Expl NonLin piTy)
   UApp f x -> do
-    (fVal, fTy) <- inferUExpr f eff
+    (fVal, fTy) <- inferRho f eff
     piTy@(Pi argTy _) <- fromPiType fTy
-    xVal <- checkUExpr x eff argTy
-    let (appEff, resultTy) = applyPi piTy xVal
+    xVal <- checkSigma x eff argTy
+    let (appEff, appTy) = applyPi piTy xVal
     checkEffect eff appEff
-    ansTy <- matchRequired reqTy resultTy
-    ansVal <- emit $ App NonLin fVal xVal
-    return (ansVal, ansTy)
-  UPi (v:>a) b -> do
-    ty <- matchRequired reqTy TyKind
+    appVal <- emitZonked $ App NonLin fVal xVal
+    instantiateSigma (appVal, appTy) >>= matchRequirement
+  UArrow im (UPi (v:>a) b) -> do
+    -- TODO: make sure there's no effect if it's an implicit arrow
     a' <- checkUType a
     -- TODO: freshen as we go under the binder
     b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ checkUType b
-    let piTy = ArrowType NonLin $ makePi (v:>a') (noEffect, b')
-    return (piTy, ty)
+    let piTy = ArrowType im NonLin $ makePi (v:>a') (noEffect, b')
+    matchRequirement (piTy, TyKind)
   UDecl decl body -> do
     env <- inferUDecl eff decl
-    extendR env $ checkOrInferUExpr body eff reqTy
+    extendR env $ checkOrInferRho body eff reqTy
   UPrimExpr prim -> do
     prim' <- traverseExpr prim lookupName lookupName (error "not implemented")
     val <- case prim' of
-      OpExpr  op  -> emit op
+      OpExpr  op  -> emitZonked op
       ConExpr con -> return $ Con con
       TyExpr  con -> return $ TC con
-    ty <- matchRequired reqTy $ getType val
-    return (val, ty)
+    matchRequirement (val, getType val)
     where lookupName v = fst <$> asks (! (v:>()))
+  where
+    matchRequirement :: (Atom, Type) -> UInferM (Atom, InferredTy RhoType)
+    matchRequirement (x, ty) = liftM (x,) $
+      case reqTy of
+        Infer -> return $ Inferred ty
+        Check req -> do
+          constrainEq req ty ""
+          return Checked
 
 inferUDecl :: Effect -> UDecl -> UInferM InfEnv
 inferUDecl eff (ULet (RecLeaf b@(_:>ann)) rhs) = case ann of
   Nothing -> do
-    valAndTy <- inferUExpr rhs eff
+    valAndTy <- inferSigma rhs eff
     return $ b@>valAndTy
   Just ty -> do
     ty' <- checkUType ty
-    val <- checkUExpr rhs eff ty'
+    val <- checkSigma rhs eff ty'
     return $ b@>(val, ty')
 
 inferUDecls :: Effect -> [UDecl] -> UInferM InfEnv
@@ -129,34 +168,46 @@ inferUDecls eff decls = do
     new <- lift $ local (const cur) $ inferUDecl eff decl
     extend new
 
-fromPiType :: Type -> UInferM (PiType EffectiveType)
-fromPiType (ArrowType _ piTy) = return piTy
-fromPiType ty = error $ "Not a pi type: " ++ pprint ty
+inferULam :: ULamExpr -> UInferM (LamExpr, PiType EffectiveType)
+inferULam (ULamExpr (RecLeaf b@(v:>ann)) body) = do
+  argTy <- checkAnn ann
+  buildLamExprAux (v:>argTy) $ \x@(Var v') -> do
+    extendR (b @> (x, argTy)) $ do
+      (resultVal, resultTy) <- inferRho body noEffect
+      return (resultVal, makePi v' (noEffect, resultTy))
 
-matchRequired :: RequiredTy -> Type -> UInferM InferredTy
-matchRequired Infer ty = return $ Inferred ty
-matchRequired (Check reqTy) ty = constrainEq reqTy ty "" >> return Checked
+checkULam :: ULamExpr -> PiType EffectiveType -> UInferM LamExpr
+checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy@(Pi argTy' _) = do
+  argTy <- checkAnn ann
+  constrainEq argTy' argTy "Lambda binder"
+  buildLamExpr (v:>argTy) $ \x -> do
+    let (lamEff, resultTy) = applyPi piTy x
+    extendR (b @> (x, argTy')) $ do
+      resultVal <- checkSigma body lamEff resultTy
+      return resultVal
+
+fromPiType :: Type -> UInferM (PiType EffectiveType)
+fromPiType (ArrowType _ _ piTy) = return piTy
+fromPiType ty = error $ "Not a pi type: " ++ pprint ty
 
 checkAnn :: Maybe UType -> UInferM Type
 checkAnn ann = case ann of
   Just ty -> checkUType ty
-  Nothing -> do
-    v <- freshInfVar
-    return $ Var (v:>TyKind)
+  Nothing -> freshInfVar TyKind
 
 checkUType :: UType -> UInferM Type
-checkUType ty = checkUExpr ty noEffect TyKind
+checkUType ty = checkRho ty noEffect TyKind
 
 checkEffect :: Effect -> Effect -> UInferM ()
 checkEffect allowedEff eff = do
   eff' <- openUEffect eff
   constrainEq allowedEff eff' ""
 
-freshInfVar :: UInferM Name
-freshInfVar = do
+freshInfVar :: Type -> UInferM Atom
+freshInfVar ty = do
   (tv:>()) <- looks $ rename (rawName InferenceName "?" :> ()) . solverVars
   extend $ SolverEnv ((tv:>()) @> TyKind) mempty
-  return tv
+  return $ Var $ tv:>ty
 
 openUEffect :: Effect -> UInferM Effect
 openUEffect eff = return eff -- TODO!
@@ -251,7 +302,7 @@ check expr reqEffTy@(allowedEff, reqTy) = case expr of
   FPrimExpr (OpExpr (App l f x)) -> do
     l'  <- inferKinds (TC MultKind) l
     piTy@(Pi a _) <- freshLamType
-    f' <- checkPure f $ ArrowType l' piTy
+    f' <- checkPure f $ ArrowType Expl l' piTy
     x' <- checkPure x a
     piTy' <- zonk piTy
     (eff, b) <- maybeApplyPi piTy' (fromAtomicFExpr x')
@@ -378,10 +429,10 @@ openEffect eff = do
 generateConSubExprTypes :: PrimCon Type e lam
   -> InferM (PrimCon Type (e, Type) (lam, PiType EffectiveType))
 generateConSubExprTypes con = case con of
-  Lam l _ lam -> do
+  Lam im l _ lam -> do
     l' <- inferKinds (TC MultKind) l
     lam'@(Pi _ (eff,_)) <- freshLamType
-    return $ Lam l' eff (lam, lam')
+    return $ Lam im l' eff (lam, lam')
   _ -> traverseExpr con (inferKinds TyKind) (doMSnd freshQ) (doMSnd freshLamType)
 
 generateOpSubExprTypes :: PrimOp Type FExpr FLamExpr
@@ -485,14 +536,14 @@ inferKindsM kind ty = case ty of
     --   [] -> checkKindEq kind TyKind
     --   _  -> checkKindEq kind $ ArrowKind (map varAnn vs) TyKind
     return $ TypeAlias vs' body'
-  ArrowType m (Pi a (eff, b)) -> do
+  ArrowType im m (Pi a (eff, b)) -> do
     checkKindEq kind TyKind
     m' <- inferKindsM (TC MultKind) m
     a' <- inferKindsM TyKind   a
     extendDeBruijn a' $ do
       eff' <- inferKindsM (TC EffectKind) eff
       b'   <- inferKindsM TyKind     b
-      return $ ArrowType m' $ Pi a' (eff', b')
+      return $ ArrowType im m' $ Pi a' (eff', b')
   TabType (Pi a b) -> do
     checkKindEq kind TyKind
     a' <- inferKindsM TyKind a
@@ -535,7 +586,7 @@ impliedClasses ty =  map (flip TyQual Data  ) (dataVars   ty)
 
 idxSetVars :: Type -> [Var]
 idxSetVars ty = case ty of
-  ArrowType _ (Pi a (_, b)) -> recur a <> recur b
+  ArrowType _ _ (Pi a (_, b)) -> recur a <> recur b
   TabTy a b -> map (:>NoAnn) (envNames (freeVars a)) <> recur b
   RecTy r   -> foldMap recur r
   _         -> []
@@ -543,7 +594,7 @@ idxSetVars ty = case ty of
 
 dataVars :: Type -> [Var]
 dataVars ty = case ty of
-  ArrowType _ (Pi a (_, b)) -> recur a <> recur b
+  ArrowType _ _ (Pi a (_, b)) -> recur a <> recur b
   TabTy _ b -> map (:>NoAnn) (envNames (freeVars b))
   RecTy r   -> foldMap recur r
   _         -> []
@@ -630,9 +681,10 @@ unify t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, Var v) | v `isin` vs -> bindQ v t
     (Var v, t) | v `isin` vs -> bindQ v t
-    (ArrowType l (Pi a (eff, b)), ArrowType l' (Pi a' (eff', b'))) -> do
-      -- TODO: think very hard about the leak checks we need to add here
-      unify l l' >> unify a a' >> unify b b' >> unify eff eff'
+    (ArrowType im l (Pi a (eff, b)), ArrowType im' l' (Pi a' (eff', b')))
+      | im == im' -> do
+        -- TODO: think very hard about the leak checks we need to add here
+        unify l l' >> unify a a' >> unify b b' >> unify eff eff'
     (Effect r t, Effect r' t') -> do
       let shared = rowMeet r r'
       forM_ shared $ \((e, et), (e', et')) -> do
@@ -706,8 +758,11 @@ instance TySubst FExpr where
 instance TySubst Atom where
   tySubst env atom = subst (env, mempty) atom
 
+instance TySubst LamExpr where
+  tySubst env expr = subst (env, mempty) expr
+
 instance TySubst Decl where
-  tySubst env atom = subst (env, mempty) atom
+  tySubst env expr = subst (env, mempty) expr
 
 instance (TraversableExpr expr, TySubst ty, TySubst e, TySubst lam)
          => TySubst (expr ty e lam) where

@@ -37,9 +37,8 @@ module Syntax (
     newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
     toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
-    jointEnvGet,
-    UExpr (..), UType, UBinder, UVar, UPat, UModule (..), UDecl (..), ULamExpr (..),
-    pattern UArrow,
+    jointEnvGet, Implicity (..), UExpr (..), UType, UBinder, UVar,
+    UPat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -72,7 +71,7 @@ import Array
 data Atom = Var Var
           | Con (PrimCon Type Atom LamExpr)
           | TC (TyCon Type Atom)
-          | ArrowType Mult (PiType EffectiveType)
+          | ArrowType Implicity Mult (PiType EffectiveType)
           | TabType (PiType Type)        -- TODO: merge with ArrowType
           | TLam [Var] [TyQual] Expr    -- TODO: remove
           | Forall [Var] [TyQual] Type  -- TODO: remove
@@ -132,6 +131,8 @@ type RuleEnv = Env Atom
 data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
               deriving (Show, Eq, Generic)
 
+data Implicity = ImplicitArg Name | Expl  deriving (Show, Eq, Generic)
+
 type Scope = Env ()
 
 noEffect :: Effect
@@ -173,15 +174,16 @@ data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 -- === experimental alternative front-end AST ===
 
 data UExpr = UVar UVar
-           | ULam ULamExpr
+           | ULam Implicity ULamExpr
            | UApp UExpr UExpr
-           | UPi UPiBinder UType
+           | UArrow Implicity UPiType
            | UDecl UDecl UExpr
            | UPrimExpr (PrimExpr Name Name Name)
              deriving (Show, Eq, Generic)
 
 data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
 data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
+data UPiType  = UPi UPiBinder UType       deriving (Show, Eq, Generic)
 
 type UType = UExpr
 type UVar    = VarP ()
@@ -190,9 +192,6 @@ type UPiBinder = VarP UType
 type UPat = RecTree UBinder
 
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
-
-pattern UArrow :: UType -> UType -> UType
-pattern UArrow a b = UPi (NoName:>a) b
 
 -- === normalized core IR ===
 
@@ -221,7 +220,7 @@ data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
 data PrimCon ty e lam =
         Lit LitVal
       | ArrayLit Array
-      | Lam ty ty lam      -- First type for linearity, second for effects
+      | Lam Implicity ty ty lam  -- First type for linearity, second for effects
       | AnyValue ty        -- Produces an arbitrary value of a given type
       | SumCon e e e       -- (bool constructor tag (True is Left), left value, right value)
       | RecCon (Record e)
@@ -586,9 +585,9 @@ class HasVars a where
 instance HasVars UExpr where
   freeVars expr = case expr of
     UVar v -> uVarFreeVars v
-    ULam lam -> freeVars lam
+    ULam _ lam -> freeVars lam
     UApp f x -> freeVars f <> freeVars x
-    UPi v@(_:>ann) b -> freeVars ann <> (freeVars b `envDiff` (v@>()))
+    UArrow _ piTy -> freeVars piTy
     UDecl decl body ->
       freeVars decl <> (freeVars body `envDiff` uDeclBoundVars decl)
     _ -> mempty
@@ -599,6 +598,9 @@ instance HasVars UDecl where
 instance HasVars ULamExpr where
   freeVars (ULamExpr p expr) =
     foldMap uBinderFreeVars p <> (freeVars expr `envDiff` foldMap (@>()) p)
+
+instance HasVars UPiType where
+  freeVars (UPi v@(_:>ann) b) = freeVars ann <> (freeVars b `envDiff` (v@>()))
 
 uDeclBoundVars :: UDecl -> Scope
 uDeclBoundVars (ULet p _) = foldMap (@>()) p
@@ -683,14 +685,15 @@ declBoundVars :: Decl -> Env ()
 declBoundVars (Let b _) = b@>()
 
 instance HasVars LamExpr where
-  freeVars (LamExpr b body) = freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
+  freeVars (LamExpr b body) =
+    freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
 
 instance HasVars Atom where
   freeVars atom = case atom of
     Var v -> varFreeVars v
     TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
-    ArrowType l p -> freeVars l <> freeVars p
+    ArrowType _ l p -> freeVars l <> freeVars p
     TabType p -> freeVars p
     Forall    tbs _ body -> freeVars body `envDiff` foldMap bind tbs
     TypeAlias tbs   body -> freeVars body `envDiff` foldMap bind tbs
@@ -777,7 +780,7 @@ instance TraversableExpr PrimCon where
   traverseExpr op fT fE fL = case op of
     Lit l        -> pure $ Lit l
     ArrayLit arr -> pure $ ArrayLit arr
-    Lam lin eff lam -> liftA3 Lam (fT lin) (fT eff) (fL lam)
+    Lam im lin eff lam -> liftA3 (Lam im) (fT lin) (fT eff) (fL lam)
     AFor n e     -> liftA2 AFor (fT n) (fE e)
     AGet e       -> liftA  AGet (fE e)
     AsIdx n e    -> liftA2 AsIdx (fT n) (fE e)
@@ -847,10 +850,10 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = ArrowType NonLin $ Pi a (noEffect, b)
+a --> b = ArrowType Expl NonLin $ Pi a (noEffect, b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = ArrowType Lin $ Pi a (noEffect, b)
+a --@ b = ArrowType Expl Lin $ Pi a (noEffect, b)
 
 (==>) :: Type -> Type -> Type
 a ==> b = TabType $ Pi a b

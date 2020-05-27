@@ -42,7 +42,7 @@ instance Subst Atom where
             env'' = env <> env'
             qs' = map (subst env'') qs
     Con con -> Con $ subst env con
-    ArrowType l p -> ArrowType (recur l) (subst env p)
+    ArrowType im l p -> ArrowType im (recur l) (subst env p)
     TabType p -> TabType (subst env p)
     Forall    ks con body -> Forall    ks con (recur body)
     TypeAlias ks     body -> TypeAlias ks     (recur body)
