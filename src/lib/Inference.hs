@@ -39,6 +39,12 @@ data InferredTy a = Checked | Inferred a
 inferUModule :: TopEnv -> UModule -> Except (Module, TopInfEnv)
 inferUModule topEnv (UModule imports exports decls) = do
   let env = infEnvFromTopEnv topEnv
+  let unboundVars = filter (\v -> not $ (v:>()) `isin` env) imports
+  unless (null unboundVars) $
+    throw UnboundVarErr $ pprintList unboundVars
+  let shadowedVars = filter (\v -> (v:>()) `isin` env) exports
+  unless (null shadowedVars) $
+    throw RepeatedVarErr $ pprintList shadowedVars
   (env', decls') <- runUInferM (inferUDecls noEffect decls) env
   let combinedEnv = env <> env'
   let imports' = [v :> snd (env         ! (v:>())) | v <- imports]
