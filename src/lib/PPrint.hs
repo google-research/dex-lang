@@ -132,6 +132,9 @@ instance Pretty FDecl where
     p v <+> "="  <+> p body
   pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
 
+instance Pretty FLamExpr where
+  pretty = error "to(not)do"
+
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (OpExpr  op ) = p op
   pretty (ConExpr con) = p con
@@ -187,6 +190,9 @@ prettyExprDefault expr =
 prettyL :: PrettyLam a => a -> Doc ann
 prettyL lam = "\\" <> v <+> "." <> nest 3 (line <> body)
   where (v, body) = prettyLam lam
+
+instance Pretty LamExpr where
+  pretty lam = prettyL lam
 
 class PrettyLam a where
   prettyLam :: a -> (Doc ann, Doc ann)
@@ -348,10 +354,16 @@ instance Pretty UExpr where
 instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam im (ULamExpr pat body) ->
-       "\\" <> annImplicity im (p pat) <+> "." <> nest 3 (line <> p body)
-    UApp f x -> p f <+> p x
-    UArrow im (UPi a b) -> parens $ annImplicity im (p a) <+> "->" <+> p b
+    ULam ah (ULamExpr pat body) ->
+       "\\" <> annImplicity (arrowHeadImplicity ah) (p pat) <+> "."
+       <> nest 3 (line <> p body)
+    UApp TabArrow f x -> parens (p f) <> "." <> parens (p x)
+    UApp _ f x -> p f <+> p x
+    UFor dir lam -> kw <+> p lam
+      where kw = case dir of Fwd -> "for"
+                             Rev -> "rof"
+    UArrow ah (UPi a b) ->
+      parens $ annImplicity (arrowHeadImplicity ah) (p a) <+> "->" <+> p b
     UDecl decl body -> p decl <> hardline <> p body
     UPrimExpr prim -> parens $ p prim'
       where prim' = fmapExpr prim id id $
@@ -363,6 +375,21 @@ instance Pretty ULamExpr where
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
+
+instance Pretty ArrowHead where
+  pretty ah = prettyArrow ah mempty mempty
+
+prettyArrow :: ArrowHead -> Doc ann -> Doc ann -> Doc ann
+prettyArrow ah a b = case ah of
+  PlainArrow    -> a <> "->"  <> b
+  TabArrow      -> a <> "=>"  <> b
+  LinArrow      -> a <> "--o" <> b
+  ImplicitArrow -> "{" <> a <> "} ->" <> b
+
+-- TODO: delete once we use ArrowHead everywhere
+arrowHeadImplicity :: ArrowHead -> Implicity
+arrowHeadImplicity ImplicitArrow = ImplicitArg "<todo>"
+arrowHeadImplicity _ = Expl
 
 annImplicity :: Implicity -> Doc ann -> Doc ann
 annImplicity Expl x = x

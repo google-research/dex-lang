@@ -624,6 +624,8 @@ instance Pretty JFor where
       s :: String
       s = case flavor of MapIdx -> "for"
                          SumIdx -> "sum"
+instance Pretty TmpAtom where
+  pretty _ = "<todo>"
 
 prettyJForCtx :: IdxFlavor -> JFor -> Doc ann
 prettyJForCtx flavor jfor@(JFor idxs op) = case idxs of

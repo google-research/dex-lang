@@ -89,3 +89,14 @@ def TyId (a:Type) : Type = a
   x : TyId2 Int = 1
   x
 > 1
+
+def IntRange (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = IntRange 0 n
+
+def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
+
+-- bug: this doesn't work if we split it across top-level decls
+:p
+  xs = for (i: Fin 3) . 1
+  tabId xs
+> [1, 1, 1]

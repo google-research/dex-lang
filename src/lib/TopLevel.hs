@@ -182,7 +182,6 @@ evalUModule env@(TopEnv _ _ _) untyped = do
 uExprTypePass :: TopEnv -> UModule -> TopPassM (Module, TopInfEnv)
 uExprTypePass env m = do
   (typed, envOut) <- liftEitherIO $ inferUModule env m
-  liftEitherIO $ checkValid typed
   return (typed, envOut)
 
 evalFModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val

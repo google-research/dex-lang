@@ -72,11 +72,12 @@ checkSigma expr eff ty = case ty of
 
 inferSigma :: UExpr -> Effect -> UInferM (Atom, SigmaType)
 inferSigma (UPos pos expr) eff = case expr of
-  ULam im@(ImplicitArg _) lamExpr -> addSrcContext (Just pos) $ do
+  ULam ImplicitArrow lamExpr -> addSrcContext (Just pos) $ do
     -- TODO: effects
     (lamExpr, piTy) <- inferULam lamExpr
-    let lam = Con $ Lam im NonLin noEffect lamExpr
-    return (lam, ArrowType im NonLin piTy)
+    let lam = lamWithArrowHead ImplicitArrow lamExpr
+    let ty = arrowTyWithArrowHead ImplicitArrow piTy
+    return (lam, ty)
   _ ->
     inferRho (UPos pos expr) eff
 
@@ -108,38 +109,57 @@ checkOrInferRho :: UExpr -> Effect -> RequiredTy RhoType
                 -> UInferM (Atom, InferredTy RhoType)
 checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr of
   UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
-  ULam (ImplicitArg _) (ULamExpr (RecLeaf b) body) -> do
+  ULam ImplicitArrow (ULamExpr (RecLeaf b) body) -> do
     argTy <- checkAnn $ varAnn b
     x <- freshInfVar argTy
     extendR (b@>(x, argTy)) $ checkOrInferRho body eff reqTy
-  ULam Expl lamExpr -> case reqTy of
+  ULam ah lamExpr -> case reqTy of
     -- TODO: effects
     Check ty -> do
-      piTy <- fromPiType ty
+      (ahReq, piTy) <- fromArrowType ty
+      checkArrowHead ahReq ah
       lamExpr' <- checkULam lamExpr piTy
-      let lam = Con $ Lam Expl NonLin noEffect lamExpr'
+      let lam = lamWithArrowHead ahReq lamExpr'
       return (lam, Checked)
     Infer -> do
       (lamExpr', piTy) <- inferULam lamExpr
-      let lam = Con $ Lam Expl NonLin noEffect lamExpr'
-      return (lam, Inferred $ ArrowType Expl NonLin piTy)
-  UApp f x -> do
+      let lam = lamWithArrowHead ah lamExpr'
+      let ty = arrowTyWithArrowHead ah piTy
+      return (lam, Inferred ty)
+  -- This looks like it needs de-duping with ULam case, but it might look quite
+  -- different once we have effects
+  UFor dir lamExpr -> case reqTy of
+    Check ty -> do
+      (ahReq, piTy) <- fromArrowType ty
+      checkArrowHead ahReq TabArrow
+      lamExpr' <- checkULam lamExpr piTy
+      result <- emitZonked $ For dir lamExpr'
+      return (result, Checked)
+    Infer -> do
+      (lamExpr', piTy) <- inferULam lamExpr
+      let ty = arrowTyWithArrowHead TabArrow piTy
+      result <- emitZonked $ For dir lamExpr'
+      return (result, Inferred ty)
+  -- Feels like it needs de-duping with ULam case, but it's going to look quite
+  -- different once we have effects
+  UApp ah f x -> do
     (fVal, fTy) <- inferRho f eff
-    piTy@(Pi argTy _) <- fromPiType fTy
+    (ahReq, piTy@(Pi argTy _)) <- fromArrowType fTy
+    checkArrowHead ahReq ah
     xVal <- checkSigma x eff argTy
     let (appEff, appTy) = applyPi piTy xVal
     checkEffect eff appEff
-    appVal <- emitZonked $ App NonLin fVal xVal
+    appVal <- emitZonked $ appWithArrowHead ahReq fVal xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
-  UArrow im (UPi (v:>a) b) -> do
-    -- TODO: make sure there's no effect if it's an implicit arrow
+  UArrow ah (UPi (v:>a) b) -> do
+    -- TODO: make sure there's no effect if it's an implicit or table arrow
     a' <- checkUType a
     -- TODO: freshen as we go under the binder
     b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ do
             extendScope ((v:>())@>Nothing)
             checkUType b
-    let piTy = ArrowType im NonLin $ makePi (v:>a') (noEffect, b')
-    matchRequirement (piTy, TyKind)
+    let ty = arrowTyWithArrowHead ah $ makePi (v:>a') (noEffect, b')
+    matchRequirement (ty, TyKind)
   UDecl decl body -> do
     env <- inferUDecl eff decl
     extendR env $ checkOrInferRho body eff reqTy
@@ -200,10 +220,6 @@ checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy@(Pi argTy' _) = do
       resultVal <- checkSigma body lamEff resultTy
       return resultVal
 
-fromPiType :: Type -> UInferM (PiType EffectiveType)
-fromPiType (ArrowType _ _ piTy) = return piTy
-fromPiType ty = error $ "Not a pi type: " ++ pprint ty
-
 checkAnn :: Maybe UType -> UInferM Type
 checkAnn ann = case ann of
   Just ty -> checkUType ty
@@ -228,6 +244,50 @@ freshInfVar ty = do
 
 openUEffect :: Effect -> UInferM Effect
 openUEffect eff = return eff -- TODO!
+
+checkArrowHead :: ArrowHead -> ArrowHead -> UInferM ()
+checkArrowHead ahReq ahOff = case (ahReq, ahOff) of
+  (PlainArrow, PlainArrow) -> return ()
+  (LinArrow,   PlainArrow) -> return ()
+  (TabArrow,   TabArrow)   -> return ()
+  _ -> throw TypeErr $   "Wrong arrow type:" ++
+                       "\nExpected: " ++ pprint ahReq ++
+                       "\nActual:   " ++ pprint ahOff
+
+-- These *withArrowHead functions are adapters for `Expr` which doesn't use
+-- arrowheads yet. TODO: remove them once we switch
+lamWithArrowHead :: ArrowHead -> LamExpr -> Atom
+lamWithArrowHead ah lam = case ah of
+  PlainArrow    -> Con $ Lam Expl NonLin noEffect lam
+  LinArrow      -> Con $ Lam Expl Lin    noEffect lam
+  ImplicitArrow -> Con $ Lam (ImplicitArg "") NonLin noEffect lam
+  TabArrow      -> error "should have table lambda in source program"
+
+arrowTyWithArrowHead :: ArrowHead -> PiType EffectiveType -> Type
+arrowTyWithArrowHead ah piTy = case ah of
+  PlainArrow    -> ArrowType Expl NonLin piTy
+  LinArrow      -> ArrowType Expl Lin    piTy
+  ImplicitArrow -> ArrowType (ImplicitArg "") NonLin piTy
+  TabArrow      -> TabType $ Pi a b
+    where Pi a (eff,b) = piTy
+
+appWithArrowHead :: ArrowHead -> Atom -> Atom -> CExpr
+appWithArrowHead ah a b = case ah of
+  PlainArrow    -> App NonLin a b
+  LinArrow      -> App Lin    a b
+  ImplicitArrow -> App NonLin a b
+  TabArrow      -> TabGet a b
+
+fromArrowType :: Type -> UInferM (ArrowHead, PiType EffectiveType)
+fromArrowType (ArrowType im m piTy) = return (ah, piTy)
+  where
+    ah = case (im, m) of
+      (Expl, NonLin)          -> PlainArrow
+      (Expl, Lin)             -> LinArrow
+      (ImplicitArg _, NonLin) -> ImplicitArrow
+      _ -> error "Unexpected arrow"
+fromArrowType (TabType (Pi a b)) = return (TabArrow, Pi a (noEffect, b))
+fromArrowType ty = error $ "Not a pi type: " ++ pprint ty
 
 constrainUEq :: (MonadCat SolverEnv m, MonadError Err m)
              => Type -> Type -> m ()

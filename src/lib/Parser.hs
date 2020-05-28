@@ -262,7 +262,7 @@ sumCon = do
   v <- expr
   let isLeftExpr = FPrimExpr $ ConExpr $ Lit $ BoolLit $ isLeft
   return $ makeSum isLeftExpr $ if isLeft then (v, anyValue) else (anyValue, v)
-  where conParse sym val = try $ symbol sym *> pure val
+  where conParse symb val = try $ symbol symb *> pure val
         makeSum isLeftExpr (l, r) = FPrimExpr $ ConExpr $ SumCon isLeftExpr l r
         anyValue = FPrimExpr $ ConExpr $ AnyValue NoAnn
 
@@ -874,8 +874,10 @@ uExpr = makeExprParser uExpr' uops
   where
     uExpr' :: Parser UExpr
     uExpr' =   uArrow
+           <|> uImplicitArrow
            <|> leafUExpr
            <|> uLamExpr
+           <|> uForExpr
            <|> uPrim
            <?> "expression"
 
@@ -917,13 +919,29 @@ uLamExpr = do
            <*> (return Nothing)
            <*> (argTerm >> uBlockOrExpr)
 
-buildLam :: [(UBinder, Implicity)] -> Maybe UExpr -> UExpr -> UExpr
-buildLam decls ann body@(UPos pos _) = case decls of
+buildLam :: [(UBinder, ArrowHead)]
+         -> Maybe UExpr -> UExpr -> UExpr
+buildLam binders ann body@(UPos pos _) = case binders of
   [] -> case ann of
     Nothing -> body
     Just ty -> UPos pos $ UAnnot body ty
-  (b,im):bs -> UPos pos $  -- TODO: join with source position of binders too
-    ULam im $ ULamExpr (RecLeaf b) $ buildLam bs ann body
+  (b,ah):bs -> UPos pos $  -- TODO: join with source position of binders too
+    ULam ah $ ULamExpr (RecLeaf b) $ buildLam bs ann body
+
+buildFor :: Direction -> [UBinder] -> UExpr -> UExpr
+buildFor dir binders body@(UPos pos _) = case binders of
+  [] -> body
+  b:bs -> UPos pos $ UFor dir $ ULamExpr (RecLeaf b) $ buildFor dir bs body
+
+uForBinder :: Parser UBinder
+uForBinder = rawLamBinder <|> parenLamBinder
+
+uForExpr :: Parser UExpr
+uForExpr =
+  buildFor <$> (     (keyWord ForKW $> Fwd)
+                 <|> (keyWord RofKW $> Rev))
+           <*> (some uForBinder <* argTerm)
+           <*> uBlockOrExpr
 
 uBlockOrExpr :: Parser UExpr
 uBlockOrExpr =  uBlock <|> uExpr
@@ -955,9 +973,18 @@ uStatement = withPos $   liftM Left  uDecl
 
 uArrow :: Parser UExpr
 uArrow = withSrc $ do
-  (v, im) <- try $ uPiBinder <* sym "->"
+  (v, ah) <- try $ (,) <$> (rawPiBinder <|> parenPiBinder) <*> arrowHead
   resultTy <- uExpr
-  return $ UArrow im (UPi v resultTy)
+  return $ UArrow ah (UPi v resultTy)
+
+uImplicitArrow :: Parser UExpr
+uImplicitArrow = withSrc $ do
+  v <- try $ implicitPiBinder <* sym "->"
+  resultTy <- uExpr
+  return $ UArrow ImplicitArrow (UPi v resultTy)
+
+arrowHead :: Parser ArrowHead
+arrowHead = (sym "->" $> PlainArrow) <|> (sym "=>" $> TabArrow)
 
 uName :: Parser Name
 uName = textName <|> symName
@@ -965,35 +992,28 @@ uName = textName <|> symName
 annot :: Parser a -> Parser a
 annot p = sym ":" >> p
 
-uLamBinder :: Parser (UBinder, Implicity)
-uLamBinder = rawLamBinder <|> parenLamBinder <|> implicitLamBinder
-  where
-    rawLamBinder = do
-      b <- (:>) <$> uName <*> (optional $ annot leafUExpr)
-      return (b, Expl)
+uLamBinder :: Parser (UBinder, ArrowHead)
+uLamBinder =   liftM (,PlainArrow   ) rawLamBinder
+           <|> liftM (,PlainArrow   ) parenLamBinder
+           <|> liftM (,ImplicitArrow) implicitLamBinder
 
-    parenLamBinder = parens $ do
-      b <- (:>) <$> uName <*> (optional $ annot uExpr)
-      return (b, Expl)
+rawLamBinder :: Parser UBinder
+rawLamBinder = (:>) <$> uName <*> (optional $ annot leafUExpr)
 
-    implicitLamBinder = braces $ do
-      b <- (:>) <$> uName <*> (optional $ annot uExpr)
-      return (b, ImplicitArg "<todo>")
+parenLamBinder :: Parser UBinder
+parenLamBinder = parens $ (:>) <$> uName <*> (optional $ annot uExpr)
 
-uPiBinder :: Parser (VarP UType, Implicity)
-uPiBinder = rawPiBinder <|> parenPiBinder <|> implicitPiBinder
-  where
-    rawPiBinder = do
-      b <- (:>) <$> uName <*> annot leafUExpr
-      return (b, Expl)
+implicitLamBinder :: Parser UBinder
+implicitLamBinder = braces $ (:>) <$> uName <*> (optional $ annot uExpr)
 
-    parenPiBinder = parens $ do
-      b <- (:>) <$> uName <*> annot uExpr
-      return (b, Expl)
+rawPiBinder :: Parser (VarP UType)
+rawPiBinder = (:>) <$> uName <*> annot leafUExpr
 
-    implicitPiBinder = braces $ do
-      b <- (:>) <$> uName <*> annot uExpr
-      return (b, ImplicitArg "<todo>")
+parenPiBinder :: Parser (VarP UType)
+parenPiBinder = parens $ (:>) <$> uName <*> annot uExpr
+
+implicitPiBinder :: Parser (VarP UType)
+implicitPiBinder = braces $ (:>) <$> uName <*> annot uExpr
 
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
@@ -1005,17 +1025,18 @@ uPrim = withSrc $ do
 -- literal symbols here must only use chars from `symChars`
 uops :: [[Operator Parser UExpr]]
 uops =
-  [ [symOp "."]
+  [ [InfixL $ sym "." $> mkGenApp TabArrow]
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
   , [symOp "+", symOp "-"]
+  , [InfixR $ sym "=>" $> mkArrow TabArrow]
   , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
-  , [InfixR $ sym "->" $> mkArrow]]
+  , [InfixR $ sym "->" $> mkArrow PlainArrow]]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
           -> Parser (UExpr -> UExpr -> UExpr)
@@ -1033,11 +1054,14 @@ binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
   where f' = UPos pos $ UVar (f:>())
 
-mkApp :: UExpr -> UExpr -> UExpr
-mkApp f x = UPos (joinPos f x) $ UApp f x
+mkGenApp :: ArrowHead -> UExpr -> UExpr -> UExpr
+mkGenApp ah f x = UPos (joinPos f x) $ UApp ah f x
 
-mkArrow :: UExpr -> UExpr -> UExpr
-mkArrow a b = UPos (joinPos a b) $ UArrow Expl $ UPi (NoName:>a) b
+mkApp :: UExpr -> UExpr -> UExpr
+mkApp = mkGenApp PlainArrow
+
+mkArrow :: ArrowHead -> UExpr -> UExpr -> UExpr
+mkArrow ah a b = UPos (joinPos a b) $ UArrow ah $ UPi (NoName:>a) b
 
 withSrc :: Parser UExpr' -> Parser UExpr
 withSrc p = do
@@ -1047,13 +1071,17 @@ withSrc p = do
 joinPos :: UExpr -> UExpr -> SrcPos
 joinPos (UPos (l, h) _) (UPos (l', h') _) = (min l l', max h h')
 
+_appPreludeName :: SrcPos -> String -> UExpr -> UExpr
+_appPreludeName fPos f x = mkApp f' x
+  where f' = UPos fPos $ UVar $ rawName SourceName f :> ()
+
 -- === lexemes ===
 
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW | LLamKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW
 
 textName :: Lexer Name
 textName = liftM (rawName SourceName) $ lexeme $ try $ do
@@ -1072,7 +1100,6 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"
-      LLamKW -> "llam"
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some letterChar

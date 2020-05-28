@@ -35,7 +35,7 @@ module Syntax (
     noEffect, isPure, EffectName (..), EffectRow, Vars, wrapFDecls,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
-    toAtomicFExpr, Limit (..), TyCon (..), addBlockId,
+    toAtomicFExpr, Limit (..), TyCon (..), addBlockId, ArrowHead (..),
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
     jointEnvGet, Implicity (..), UExpr (..), UExpr' (..), UType, UBinder, UVar,
     UPat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
@@ -90,6 +90,7 @@ data TyCon ty e = BaseType BaseType
                 | RecType (Record ty)
                 | SumType (ty, ty)
                 | RefType ty
+                | TabTypeCon ty
                 | TypeApp ty [ty]
                 | LinCon
                 | NonLinCon
@@ -177,13 +178,20 @@ data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
 data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
 
 data UExpr' = UVar UVar
-            | ULam Implicity ULamExpr
-            | UApp UExpr UExpr
-            | UArrow Implicity UPiType
+            | ULam   ArrowHead ULamExpr
+            | UApp   ArrowHead UExpr UExpr
+            | UArrow ArrowHead UPiType
+            | UFor Direction ULamExpr
             | UDecl UDecl UExpr
             | UPrimExpr (PrimExpr Name Name Name)
             | UAnnot UExpr UType
               deriving (Show, Eq, Generic)
+
+data ArrowHead = PlainArrow
+               | ImplicitArrow
+               | TabArrow
+               | LinArrow
+                 deriving (Show, Eq, Generic)
 
 data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
 data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
@@ -323,6 +331,8 @@ builtinNames = M.fromList
   , ("Real"   , TyExpr $ BaseType RealType)
   , ("Bool"   , TyExpr $ BaseType BoolType)
   , ("TyKind" , TyExpr $ TypeKind)
+  , ("IntRange", TyExpr $ IntRange () ())
+  , ("TabType" , TyExpr $ TabTypeCon ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
@@ -593,7 +603,8 @@ instance HasVars UExpr' where
   freeVars expr = case expr of
     UVar v -> uVarFreeVars v
     ULam _ lam -> freeVars lam
-    UApp f x -> freeVars f <> freeVars x
+    UFor _ lam -> freeVars lam
+    UApp _ f x -> freeVars f <> freeVars x
     UArrow _ piTy -> freeVars piTy
     UDecl decl body ->
       freeVars decl <> (freeVars body `envDiff` uDeclBoundVars decl)
@@ -781,6 +792,7 @@ instance TraversableExpr PrimOp where
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
     NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
+
       liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
     Inject e             -> liftA Inject (fE e)
 
@@ -840,6 +852,7 @@ traverseTyCon con fTy fE = case con of
   SumType (l, r)    -> liftA SumType $ liftA2 (,) (fTy l) (fTy r)
   RecType r         -> liftA RecType $ traverse fTy r
   RefType t         -> liftA RefType (fTy t)
+  TabTypeCon t      -> liftA TabTypeCon (fTy t)
   TypeApp t xs      -> liftA2 TypeApp (fTy t) (traverse fTy xs)
   LinCon            -> pure LinCon
   NonLinCon         -> pure NonLinCon

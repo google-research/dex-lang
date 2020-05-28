@@ -44,13 +44,13 @@ getType x = snd $ getEffType x
 checkType :: HasType a => a -> TypeM Type
 checkType x = liftM snd $ checkEffType x
 
-checkPureType :: HasType a => a -> TypeM Type
-checkPureType x = do
+checkPureType :: (Pretty a, HasType a) => a -> TypeM Type
+checkPureType x = addContext ("\nchecking: \n" ++ pprint x) $ do
   (eff, ty) <- checkEffType x
   assertEq noEffect eff "Unexpected effect"
   return ty
 
-class HasType a where
+class Pretty a => HasType a where
   checkEffType :: HasCallStack => a -> TypeM EffectiveType
   getEffType   :: HasCallStack => a ->       EffectiveType
 
@@ -177,7 +177,7 @@ instance HasType Var where
       Just ty -> do
         assertEq annTy ty "Var annotation"
         return $ pureType ty
-      _ -> error $ "Lookup failed:" ++ pprint v
+      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
 
 instance HasType (RecTree Var) where
   getEffType tree = case tree of
@@ -533,7 +533,9 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
       requiredClasses :: Var -> [ClassName]
       requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For _ (Pi n (eff, a)) ->
-    inClass IdxSet n >> inClass Data a >> return (eff, TabTy n a)
+    -- TODO: re-enable once we have a typeclass story for UExpr
+    -- inClass IdxSet n >> inClass Data a
+    return (eff, TabTy n a)
   TabCon n ty xs -> do
     case indexSetConcreteSize n of
       Nothing -> throw TypeErr $
