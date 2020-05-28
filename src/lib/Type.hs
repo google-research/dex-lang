@@ -14,7 +14,7 @@ module Type (
     getType, PrimOpType, PrimConType,
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     isData, Checkable (..), popRow, moduleType,
-    getKind, checkKindEq, getEffType, getPatName, tyConKind,
+    getKind, checkKindEq, getEffType, tyConKind,
     getConType, checkEffType, HasType, indexSetConcreteSize,
     maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
     pureType) where
@@ -69,13 +69,6 @@ moduleType (Module _ (imports, exports) _) = ( foldMap varAsEnv imports
 class Checkable a where
   checkValid :: a -> Except ()
 
-instance Checkable FModule where
-  checkValid m@(Module _ _ decls) = do
-    let expr = wrapFDecls decls $ FPrimExpr $ ConExpr $ RecCon $ Tup []
-    void $ runTypeM imports $ checkPureType expr
-    void $ runLinCheck $ checkLinFExpr expr
-    where (imports, _) = moduleType m
-
 instance Checkable Module where
   checkValid m@(Module _ _ expr) = asCompilerErr $
     void $ runTypeM imports $ checkPureType expr
@@ -92,8 +85,6 @@ getKind ty = case ty of
   Var v            -> varAnn v
   ArrowType _ _ _  -> TyKind
   TabType _        -> TyKind
-  Forall _ _ _     -> TyKind
-  TypeAlias vs rhs -> TC $ ArrowKind (map varAnn vs) (getKind rhs)
   Effect _ _       -> TC EffectKind
   NoAnn            -> NoAnn
   TC con           -> snd $ tyConKind con
@@ -137,12 +128,6 @@ checkKind ty = case ty of
     checkKindIs TyKind a
     extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
-  Forall vs _ body -> do
-    extendNamed (foldMap bind vs) (checkKindIs TyKind body)
-    return TyKind
-  TypeAlias vs body -> do
-    bodyKind <- extendNamed (foldMap bind vs) (checkKind body)
-    return $ TC $ ArrowKind (map varAnn vs) bodyKind
   Effect eff tailVar -> do
     mapM_ (mapM_ (checkKindIs TyKind)) eff
     case tailVar of
@@ -165,98 +150,6 @@ checkKindEq :: MonadError Err m => Kind -> Kind -> m ()
 checkKindEq k1 k2 | k1 == k2  = return ()
                   | otherwise = throw KindErr $ "\nExpected: " ++ pprint k1
                                              ++ "\n  Actual: " ++ pprint k2
-
--- === type-checking pass on FExpr ===
-
-instance HasType Var where
-  getEffType = pureType . varAnn
-
-  checkEffType v@(_:>annTy) = do
-    x <- asks $ flip jointEnvLookup v
-    case x of
-      Just ty -> do
-        assertEq annTy ty "Var annotation"
-        return $ pureType ty
-      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
-
-instance HasType (RecTree Var) where
-  getEffType tree = case tree of
-    RecLeaf v -> getEffType v
-    RecTree r -> pureType . RecTy $ fmap getType r
-
-  checkEffType tree = case tree of
-    RecLeaf v -> checkEffType v
-    RecTree r -> pureType . RecTy <$> traverse checkType r
-
-instance HasType FExpr where
-  getEffType expr = case expr of
-    FVar v          -> getEffType v
-    FDecl decl body -> (eff, bodyTy)
-      where (bodyEff, bodyTy) = getEffType body
-            declEff = case decl of
-              LetMono _ rhs -> fst $ getEffType rhs
-              _             -> noEffect
-            eff = ignoreExcept $ combineEffects bodyEff declEff
-    FPrimExpr e -> case e of
-      ConExpr con -> pureType $ getConType $ fmapExpr con id getType getPiType
-      OpExpr  op  -> getOpType $ fmapExpr op id getTypeAndAtom getPiType
-      where getTypeAndAtom x = (fromAtomicFExpr x, getType x)
-    SrcAnnot e _ -> getEffType e
-    -- The annotation only specifies the type of the result of e,
-    -- not the effects e might produce!
-    Annot e _    -> getEffType e
-
-  checkEffType expr = case expr of
-    FVar v -> liftM pureType $ checkPureType v
-    FDecl decl cont -> do
-      -- Get the eff of rhs and extend the env with binders
-      (declEff, env) <- case decl of
-          LetMono p body -> do
-            (eff, ty) <- checkEffType body
-            assertEq (getType p) ty "LetMono"
-            return (eff, foldMap bind p)
-          LetPoly b@(_:>ty) (FTLam tbs qs body) -> do
-            body' <- extendClassEnv qs $ extendNamed (foldMap bind tbs) $ checkPureType body
-            let ty' = Forall tbs qs body'
-            assertEq ty ty' "TLam"
-            return (noEffect, bind b)
-          TyDef tv _ -> return (noEffect, bind tv)
-      (contEff, ty) <- extendNamed env $ checkEffType cont
-      eff <- combineEffects declEff contEff
-      return (eff, ty)
-      where
-    FPrimExpr e -> case e of
-      ConExpr con -> do
-        eTy <- traverseExpr con return checkPureType checkPiType
-        liftM pureType $ checkConType eTy
-      OpExpr op -> do
-        eTy <- traverseExpr op return checkTypeAndAtom checkPiType
-        checkOpType eTy
-      where checkTypeAndAtom x = liftM (fromAtomicFExpr x,) (checkPureType x)
-    SrcAnnot e pos -> addSrcContext (Just pos) $ checkEffType e
-    Annot e ty -> do
-      (eff, ty') <- checkEffType e
-      assertEq ty ty' "Annot"
-      return (eff, ty')
-
-instance HasType FLamExpr where
-  getEffType (FLamExpr (RecLeaf v) body) =
-    pureType $ ArrowType Expl NonLin $ makePi v $ getEffType body
-  getEffType (FLamExpr p body) =
-    pureType $ ArrowType Expl NonLin $ Pi (getType p) $ getEffType body
-
-  checkEffType (FLamExpr (RecLeaf v) body) = do
-    void $ checkKind (varAnn v)
-    bodyTy <- extendNamed (bind v) $ checkEffType body
-    return $ pureType $ ArrowType Expl NonLin $ makePi v bodyTy
-  checkEffType (FLamExpr p body) = do
-    void $ checkKind pty
-    bodyTy <- extendNamed penv $ checkEffType body
-    unless (null $ penv `envIntersect` freeVars bodyTy) $
-      throw TypeErr "Function's result type cannot depend on a variable bound in an argument pattern"
-    return $ pureType $ ArrowType Expl NonLin $ Pi pty bodyTy
-    where pty = getType p
-          penv = foldMap bind p
 
 -- === Built-in typeclasses ===
 
@@ -344,16 +237,12 @@ extendClassEnv qs m = do
 instance HasType Atom where
   getEffType atom = pureType $ case atom of
     Var (_:>ty) -> ty
-    TLam vs qs body -> Forall vs qs $ getType body
     Con con -> getConType $ fmapExpr con id getType getPiType
     TC _ -> TyKind -- TODO: think about effects, multiplicity etc
     _ -> error "not implemented"
 
   checkEffType atom = liftM pureType $ case atom of
     Var v -> checkPureType v
-    TLam tvs qs body -> do
-      bodyTy <- extendClassEnv qs $ extendNamed (foldMap bind tvs) (checkPureType body)
-      return $ Forall tvs qs bodyTy
     Con con -> traverseExpr con return checkType checkPiType >>= checkConType
     TC _ -> return TyKind -- TODO: check!
 
@@ -401,6 +290,17 @@ instance HasType LamExpr where
   checkEffType (LamExpr b body) = do
     bodyTy <- extendNamed (bind b) $ checkEffType body
     return $ pureType $ ArrowType Expl NonLin $ makePi b bodyTy
+
+instance HasType Var where
+  getEffType = pureType . varAnn
+
+  checkEffType v@(_:>annTy) = do
+    x <- asks $ flip jointEnvLookup v
+    case x of
+      Just ty -> do
+        assertEq annTy ty "Var annotation"
+        return $ pureType ty
+      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
 
 -- -- === Effects ===
 
@@ -524,14 +424,6 @@ traverseOpType op eq _ _ | isDependentOp op = case op of
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 
 traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
-  TApp (Forall bs quals body) ts -> do
-    assertEq (length bs) (length ts) "Number of type args"
-    zipWithM_ (kindIs . varAnn) bs ts
-    sequence_ [inClass c t | (t, b) <- zip ts bs, c <- requiredClasses b]
-    return $ pureType $ subst (newEnv bs ts, mempty) body
-    where
-      requiredClasses :: Var -> [ClassName]
-      requiredClasses v = [c | TyQual v' c <- quals, v == v']
   For _ (Pi n (eff, a)) ->
     -- TODO: re-enable once we have a typeclass story for UExpr
     -- inClass IdxSet n >> inClass Data a
@@ -698,14 +590,12 @@ instance PiAbstractable Type where
     ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
       Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (instantiateDepType (d+1) x b)
-    Forall tbs cs body -> Forall tbs cs $ recur body
     Effect row tailVar -> Effect row' tailVar
       where row' = fold [ (lookupDBVarName v :>()) @> (eff, recur ann)
                         | (v, (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
       where env = (DeBruijn d :>()) @> x
     NoAnn -> NoAnn
-    TypeAlias _ _ -> error "Shouldn't have type alias left"
     _ -> error "Not a type"
     where
       recur ::Type -> Type
@@ -726,14 +616,12 @@ instance PiAbstractable Type where
     ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
       Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
     TabType (Pi a b) -> TabType $ Pi (recur a) (abstractDepType v (d+1) b)
-    Forall tbs cs body -> Forall tbs cs $ recur body
     Effect row tailVar -> Effect row' tailVar
       where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
                         | (v', (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
       where env = v @> Var (DeBruijn d :> varAnn v)
     NoAnn -> NoAnn
-    TypeAlias _ _ -> error "Shouldn't have type alias left"
     _ -> error "Not a type"
     where
       recur ::Type -> Type
@@ -748,161 +636,3 @@ instance PiAbstractable EffectiveType where
                                     , instantiateDepType d x b)
   abstractDepType v d (eff, b) = ( abstractDepType v d eff
                                  , abstractDepType v d b)
-
--- === linearity ===
-
-type Spent = Env ()
-newtype LinCheckM a = LinCheckM
-  { runLinCheckM :: (ReaderT (Env Spent) (Either Err)) (a, (Spent, Env Spent)) }
-
-runLinCheck :: LinCheckM a -> Except ()
-runLinCheck m = void $ runReaderT (runLinCheckM m) mempty
-
-checkLinFExpr :: FExpr -> LinCheckM ()
-checkLinFExpr expr = case expr of
-  FVar v -> checkLinVar v
-  FDecl decl body -> do
-    env <- checkLinFDecl decl
-    extendR env (checkLinFExpr body)
-  FPrimExpr (OpExpr  op ) -> checkLinOp op
-  FPrimExpr (ConExpr con) -> checkLinCon con
-  SrcAnnot e pos -> addSrcContext (Just pos) $ checkLinFExpr e
-  Annot e _      -> checkLinFExpr e
-
-checkLinFLam :: FLamExpr -> LinCheckM ()
-checkLinFLam (FLamExpr _ body) = checkLinFExpr body
-
-checkLinFDecl :: FDecl -> LinCheckM (Env Spent)
-checkLinFDecl decl = case decl of
-  LetMono p rhs -> do
-    ((), spent) <- captureSpent $ checkLinFExpr rhs
-    return $ foldMap (@>spent) p
-  LetPoly _ (FTLam _ _ expr) -> do
-    void $ checkLinFExpr expr
-    return mempty
-  _ -> return mempty
-
-checkLinOp :: PrimOp Type FExpr FLamExpr -> LinCheckM ()
-checkLinOp e = case e of
-  ScalarUnOp  FNeg x    -> check x
-  ScalarBinOp FAdd x y  -> check x >> check y
-  ScalarBinOp FSub x y  -> check x >> check y
-  ScalarBinOp FDiv x y  -> tensCheck (check x) (withoutLin (check y))
-  ScalarBinOp FMul x y  -> tensCheck (check x) (check y)
-  App Lin    fun x -> tensCheck (check fun) (check x)
-  App NonLin fun x -> tensCheck (check fun) (withoutLin (check x))
-  For _ (FLamExpr _ body) -> checkLinFExpr body
-  TabGet x i -> tensCheck (check x) (withoutLin (check i))
-  RunReader r (FLamExpr ~(RecLeaf v) body) -> do
-    ((), spent) <- captureSpent $ checkLinFExpr r
-    extendR (v @> spent) $ checkLinFExpr body
-  RunWriter (FLamExpr ~(RecLeaf v) body) -> do
-    ((), spent) <- captureEffSpent v $ checkLinFExpr body
-    spend spent
-  PrimEffect ref m -> case m of
-    MAsk -> checkLinVar ref'
-    MTell x -> do
-      ((), s) <- captureSpent $ checkLinFExpr x
-      spendEff ref' s
-    _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
-    where (Just (Var ref')) = fromAtomicFExpr ref
-  _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
-  where check = checkLinFExpr
-
-checkLinCon :: PrimCon Type FExpr FLamExpr -> LinCheckM ()
-checkLinCon e = case e of
-  Lam _ NonLin _ lam -> checkLinFLam lam
-  Lam _ Lin    _ (FLamExpr p body) -> do
-    let v = getPatName p
-    let s = asSpent v
-    withLocalLinVar v $ extendR (foldMap (@>s) p) $ checkLinFExpr body
-  RecCon r -> mapM_ check r
-  _ -> void $ withoutLin $ traverseExpr e pure check checkLinFLam
-  where check = checkLinFExpr
-
-withLocalLinVar :: Name -> LinCheckM a -> LinCheckM a
-withLocalLinVar v m = do
-  (ans, vs) <- captureSpent m
-  spend $ vs `envDiff` (v'@>())
-  return ans
-  where v' = v:>()
-
-withoutLin :: LinCheckM a -> LinCheckM a
-withoutLin (LinCheckM m) = LinCheckM $ do
-  (ans, (vs, sEff)) <- m
-  unless (null vs) $ throw LinErr $
-    "nonlinear function consumed linear data: " ++ showSpent vs
-  return (ans, (mempty, sEff))
-
-tensCheck :: LinCheckM () -> LinCheckM () -> LinCheckM ()
-tensCheck x y = LinCheckM $ do
-  ((), (sx, sxEff)) <- runLinCheckM x
-  ((), (sy, syEff)) <- runLinCheckM y
-  sxy    <- liftEither $ tensCat sx sy
-  return ((), (sxy, sxEff <> syEff))
-
-checkLinVar :: VarP a -> LinCheckM ()
-checkLinVar v = do
-  env <- ask
-  case envLookup env v of
-    Nothing -> spend mempty
-    Just s  -> spend s
-
-getPatName :: Pat -> Name
-getPatName (RecLeaf (v:>_)) = v
-getPatName p = case toList p of (v:>_):_ -> v
-                                _        -> NoName
-
-spend :: Spent -> LinCheckM ()
-spend s = LinCheckM $ return ((), (s, mempty))
-
-spendEff :: VarP a -> Spent -> LinCheckM ()
-spendEff v s = LinCheckM $ return ((), (mempty, v@>s))
-
-asSpent :: Name -> Spent
-asSpent v = (v:>())@>()
-
-tensCat :: Spent -> Spent -> Except Spent
-tensCat vs vs' = do
-  let overlap = envIntersect vs vs'
-  unless (null overlap) $ throw LinErr $ "pattern spent twice: "
-                                       ++ showSpent overlap
-  return $ vs <> vs'
-
-captureSpent :: LinCheckM a -> LinCheckM (a, Spent)
-captureSpent m = LinCheckM $ do
-  (x, (s, sEff)) <- runLinCheckM m
-  return ((x, s), (mempty, sEff))
-
-captureEffSpent :: VarP ann ->  LinCheckM a -> LinCheckM (a, Spent)
-captureEffSpent (v:>_) m = LinCheckM $ do
-  (x, (s, sEff)) <- runLinCheckM m
-  let varSpent = sEff ! (v:>())
-  let sEff' = envDelete v sEff
-  return ((x, varSpent), (s, sEff'))
-
-showSpent :: Spent -> String
-showSpent vs = pprint $ envNames vs
-
-instance Functor LinCheckM where
-  fmap = liftM
-
-instance Applicative LinCheckM where
-  pure x = LinCheckM $ return (x, (mempty, mempty))
-  (<*>) = ap
-
-instance Monad LinCheckM where
-  m >>= f = LinCheckM $ do
-    (x, s1) <- runLinCheckM m
-    (y, s2) <- runLinCheckM (f x)
-    return (y, (s1 <> s2))
-
-instance MonadReader (Env Spent) LinCheckM where
-  ask = LinCheckM $ do
-    env <- ask
-    return (env, (mempty, mempty))
-  local env (LinCheckM m) = LinCheckM $ local env m
-
-instance MonadError Err LinCheckM where
-  throwError err = LinCheckM $ throwError err
-  catchError (LinCheckM m) f = LinCheckM $ catchError m (runLinCheckM . f)

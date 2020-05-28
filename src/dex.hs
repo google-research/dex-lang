@@ -58,9 +58,7 @@ evalDecl opts block = do
 evalFile :: EvalConfig -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
 evalFile opts fname = do
   source <- liftIO $ readFile fname
-  let sourceBlocks = case frontendName opts of
-        FExprFE -> parseProg source
-        UExprFE -> parseUProg source
+  let sourceBlocks = parseProg source
   results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
@@ -135,9 +133,6 @@ parseEvalOpts = EvalConfig
   <$> (option
          (optionList [("LLVM", LLVM), ("JAX", JAX), ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
-  <*> (option
-         (optionList [("fexpr", FExprFE), ("uexpr", UExprFE)])
-         (long "frontend" <> value FExprFE <> help "Frontend (fexpr|uexpr)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"

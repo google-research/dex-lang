@@ -16,14 +16,13 @@
 
 module Syntax (
     Type, Kind, BaseType (..), Effect, EffectiveType, Mult,
-    ClassName (..), TyQual (..),
-    FExpr (..), FLamExpr (..), SrcPos, Pat, FDecl (..), Var, Dep,
-    FTLam (..), Expr (..), Decl (..), CExpr, Con, Atom (..), LamExpr (..),
+    ClassName (..), TyQual (..), SrcPos, Pat, Var, Dep, Expr (..), Decl (..),
+    CExpr, Con, Atom (..), LamExpr (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
-    RuleAnn (..), CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..),
-    ModuleP (..), ModuleType, Module, FModule, ImpFunction (..),
+    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..),
+    ModuleP (..), ModuleType, Module, ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -31,14 +30,14 @@ module Syntax (
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, PassName (..), parsePassName,
     TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars, declBoundVars,
-    strToName, nameToStr, unzipExpr, bind, fDeclBoundVars, uDeclBoundVars,
-    noEffect, isPure, EffectName (..), EffectRow, Vars, wrapFDecls,
+    strToName, nameToStr, unzipExpr, bind, uDeclBoundVars,
+    noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
-    newEnv, Direction (..), ArrayRef, Array, fromAtomicFExpr,
-    toAtomicFExpr, Limit (..), TyCon (..), addBlockId, ArrowHead (..),
+    newEnv, Direction (..), ArrayRef, Array,
+    Limit (..), TyCon (..), addBlockId, ArrowHead (..),
     JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
     jointEnvGet, Implicity (..), UExpr (..), UExpr' (..), UType, UBinder, UVar,
-    UPat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
+    Pat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -73,9 +72,6 @@ data Atom = Var Var
           | TC (TyCon Type Atom)
           | ArrowType Implicity Mult (PiType EffectiveType)
           | TabType (PiType Type)        -- TODO: merge with ArrowType
-          | TLam [Var] [TyQual] Expr    -- TODO: remove
-          | Forall [Var] [TyQual] Type  -- TODO: remove
-          | TypeAlias [Var] Type        -- TODO: remove
           | Effect (EffectRow Type) (Maybe Type) -- (Maybe Type) for the optional row tail variable
           | NoAnn
             deriving (Show, Eq, Generic)
@@ -99,6 +95,8 @@ data TyCon ty e = BaseType BaseType
                 | MultKind
                 | EffectKind
                   deriving (Show, Eq, Generic)
+
+type Var  = VarP Type
 
 -- This represents a row like {Writer (x :: Ref t), Reader (y :: Ref t')}
 -- as the following map: {x: (Writer, t), y: (Reader, t')}.
@@ -134,6 +132,8 @@ data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
 
 data Implicity = ImplicitArg Name | Expl  deriving (Show, Eq, Generic)
 
+type SrcPos = (Int, Int)
+
 -- TODO: allow `Atom` under `CExpr`
 type Scope = Env (Maybe (Either Atom CExpr))
 
@@ -148,32 +148,6 @@ type ModuleType = ([Var], [Var])
 data ModuleP body = Module (Maybe BlockId) ModuleType body  deriving (Show, Eq)
 
 -- === front-end language AST ===
-
-data FExpr = FDecl FDecl FExpr
-           | FVar Var
-           | FPrimExpr (PrimExpr Type FExpr FLamExpr)
-           | Annot FExpr Type
-           | SrcAnnot FExpr SrcPos -- TODO: make mandatory?
-             deriving (Eq, Show, Generic)
-
-type Pat = RecTree Var
-data FLamExpr = FLamExpr Pat FExpr  deriving (Show, Eq, Generic)
-type SrcPos = (Int, Int)
-
--- TODO: Unify LetMono and LetPoly. The only real difference is having a type
---       annotation attached and we can handle this with bidirectional try inference.
-data FDecl = LetMono Pat FExpr
-           | LetPoly Var FTLam
-           | TyDef Var Type
-             deriving (Show, Eq, Generic)
-
-type Var  = VarP Type
-data FTLam = FTLam [Var] [TyQual] FExpr  deriving (Show, Eq, Generic)
-type FModule = ModuleP [FDecl]
-
-data RuleAnn = LinearizationDef Name    deriving (Show, Eq, Generic)
-
--- === experimental alternative front-end AST ===
 
 data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
 
@@ -193,15 +167,15 @@ data ArrowHead = PlainArrow
                | LinArrow
                  deriving (Show, Eq, Generic)
 
-data UDecl = ULet UPat UExpr         deriving (Show, Eq, Generic)
-data ULamExpr = ULamExpr UPat UExpr  deriving (Show, Eq, Generic)
+data UDecl = ULet Pat UExpr         deriving (Show, Eq, Generic)
+data ULamExpr = ULamExpr Pat UExpr  deriving (Show, Eq, Generic)
 data UPiType  = UPi UPiBinder UType  deriving (Show, Eq, Generic)
 
 type UType = UExpr
 type UVar    = VarP ()
 type UBinder = VarP (Maybe UType)
 type UPiBinder = VarP UType
-type UPat = RecTree UBinder
+type Pat = RecTree UBinder
 
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
 
@@ -357,14 +331,11 @@ data SourceBlock = SourceBlock
 
 type BlockId = Int
 type ReachedEOF = Bool
-data SourceBlock' = RunModule FModule
-                  | RunUModule UModule
-                  | Command CmdName (Var, FModule)
-                  | UCommand CmdName (Name, UModule)
+data SourceBlock' = RunModule UModule
+                  | Command CmdName (Name, UModule)
                   | GetNameType Var
                   | IncludeSourceFile String
                   | LoadData Pat DataFormat String
-                  | RuleDef RuleAnn Type FTLam
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -379,8 +350,7 @@ addBlockId :: BlockId -> SourceBlock -> SourceBlock
 addBlockId bid block = block {sbContents = contents', sbId = Just bid}
   where
     contents' = case sbContents block of
-      RunModule m -> RunModule $ addBlockIdModule bid m
-      Command cmd (v, m) -> Command cmd (v, addBlockIdModule bid m)
+      -- TODO: add blockId here if we end up needing it
       contents -> contents
 
 addBlockIdModule :: BlockId -> ModuleP body -> ModuleP body
@@ -561,25 +531,6 @@ liftEitherIO (Right x ) = return x
 instance MonadFail (Either Err) where
   fail s = Left $ Err CompilerErr Nothing s
 
--- === misc ===
-
-fromAtomicFExpr :: FExpr -> Maybe Atom
-fromAtomicFExpr expr = case expr of
-  FDecl _ _ -> Nothing
-  FVar v -> Just $ Var v
-  FPrimExpr (OpExpr _) -> Nothing
-  FPrimExpr (ConExpr con) -> liftM Con $
-    traverseExpr con return fromAtomicFExpr (const Nothing)
-  Annot    e _ -> fromAtomicFExpr e
-  SrcAnnot e _ -> fromAtomicFExpr e
-
-toAtomicFExpr :: Atom -> FExpr
-toAtomicFExpr atom = case atom of
-  Var v -> FVar v
-  Con con -> FPrimExpr $ ConExpr $
-    fmapExpr con id toAtomicFExpr (error "Unexpected lambda")
-  _ -> error "Not an FExpr atom"
-
 -- === substitutions ===
 
 type Vars = TypeEnv
@@ -589,9 +540,6 @@ bind v@(_:>ty) = v @> ty
 
 newEnv :: [VarP ann] -> [a] -> Env a
 newEnv vs xs = fold $ zipWith (@>) vs xs
-
-wrapFDecls :: [FDecl] -> FExpr -> FExpr
-wrapFDecls decls result = foldr FDecl result decls
 
 class HasVars a where
   freeVars :: a -> Vars
@@ -631,31 +579,14 @@ uVarFreeVars :: UVar -> Vars
 uVarFreeVars (DeBruijn _ :> ann) = freeVars ann
 uVarFreeVars v@(_:>ann) = v @> UnitTy <> freeVars ann
 
-instance HasVars FExpr where
-  freeVars expr = case expr of
-    FDecl decl body -> freeVars decl <> (freeVars body `envDiff` fDeclBoundVars decl)
-    FVar v       -> varFreeVars v
-    FPrimExpr e  -> freeVars e
-    Annot e ty   -> freeVars e <> freeVars ty
-    SrcAnnot e _ -> freeVars e
-
-fDeclBoundVars :: FDecl -> Vars
-fDeclBoundVars decl = case decl of
-  LetMono p _    -> foldMap bind p
-  LetPoly v _    -> bind v
-  TyDef v _      -> bind v
+nameAsEnv :: Name -> Vars
+nameAsEnv v = (v:>())@>UnitTy
 
 sourceBlockBoundVars :: SourceBlock -> Vars
 sourceBlockBoundVars block = case sbContents block of
-  RunModule (Module _ (_,vs) _) -> foldMap varAsEnv vs
-  LoadData p _ _           -> foldMap bind p
-  _                        -> mempty
-
-instance HasVars FLamExpr where
-  freeVars (FLamExpr p body) = binderFTVs <> (freeVars body `envDiff` binderVs)
-    where
-      binderFTVs = foldMap freeBinderTypeVars p
-      binderVs   = foldMap bind p
+  RunModule (UModule _ vs _) -> foldMap nameAsEnv vs
+  -- LoadData p _ _             -> foldMap nameAsEnv p
+  _                          -> mempty
 
 instance HasVars b => HasVars (PiType b) where
   freeVars (Pi a b) = freeVars a <> freeVars b
@@ -672,26 +603,14 @@ varFreeVars v@(_ :> t) = bind v <> freeVars t
 instance HasVars () where
   freeVars () = mempty
 
-instance HasVars FDecl where
-   freeVars (LetMono p expr)   = foldMap freeBinderTypeVars p <> freeVars expr
-   freeVars (LetPoly b tlam)   = freeBinderTypeVars b <> freeVars tlam
-   freeVars (TyDef _ ty)       = freeVars ty
-
-instance HasVars RuleAnn where
-  freeVars (LinearizationDef v) = (v:>()) @> UnitTy
-
-instance HasVars FTLam where
-  freeVars (FTLam tbs _ expr) = freeVars expr `envDiff` foldMap bind tbs
-
 instance (HasVars a, HasVars b) => HasVars (a, b) where
   freeVars (x, y) = freeVars x <> freeVars y
 
 instance HasVars SourceBlock where
   freeVars block = case sbContents block of
-    RunModule (   Module _ (vs, _) _) -> foldMap varAsEnv vs
-    Command _ (_, Module _ (vs, _) _) -> foldMap varAsEnv vs
+    RunModule (   UModule vs _ _) -> foldMap nameAsEnv vs
+    Command _ (_, UModule vs _ _) -> foldMap nameAsEnv vs
     GetNameType v                     -> v @> varAnn v
-    RuleDef ann ty body -> freeVars ann <> freeVars ty <> freeVars body
     _ -> mempty
 
 instance HasVars Expr where
@@ -710,12 +629,9 @@ instance HasVars LamExpr where
 instance HasVars Atom where
   freeVars atom = case atom of
     Var v -> varFreeVars v
-    TLam tvs _ body -> freeVars body `envDiff` foldMap (@>()) tvs
     Con con   -> freeVars con
     ArrowType _ l p -> freeVars l <> freeVars p
     TabType p -> freeVars p
-    Forall    tbs _ body -> freeVars body `envDiff` foldMap bind tbs
-    TypeAlias tbs   body -> freeVars body `envDiff` foldMap bind tbs
     Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
                         <> foldMap freeVars tailVar
     NoAnn -> mempty

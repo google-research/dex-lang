@@ -115,26 +115,6 @@ instance Pretty Expr where
   pretty (CExpr expr) = p (OpExpr expr)
   pretty (Atom atom) = p atom
 
-instance Pretty FExpr where
-  pretty expr = case expr of
-    FVar (v:>_) -> p v
-    FDecl decl body -> p decl <> hardline <> p body
-    FPrimExpr (OpExpr  e) -> parens $ p e
-    FPrimExpr (ConExpr e) -> p e
-    SrcAnnot subexpr _ -> p subexpr
-    Annot subexpr ty -> p subexpr <+> ":" <+> p ty
-
-instance Pretty FDecl where
-  -- TODO: special-case annotated leaf var (print type on own line)
-  pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
-  pretty (LetPoly (v:>ty) (FTLam _ _ body)) =
-    p v <+> ":" <+> p ty <> line <>
-    p v <+> "="  <+> p body
-  pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
-
-instance Pretty FLamExpr where
-  pretty = error "to(not)do"
-
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (OpExpr  op ) = p op
   pretty (ConExpr con) = p con
@@ -200,9 +180,6 @@ class PrettyLam a where
 instance PrettyLam LamExpr where
   prettyLam (LamExpr b e) = (p b, p e)
 
-instance PrettyLam FLamExpr where
-  prettyLam (FLamExpr pat e) = (p pat, p e)
-
 instance PrettyLam () where
   prettyLam () = ("", "")
 
@@ -239,19 +216,11 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
-    TLam vs qs body -> "tlam" <+> p vs <+> "|" <+> p qs <+> "." <+> p body
     Con con -> p (ConExpr con)
     ArrowType im l (Pi a (eff, b))
       | isPure eff -> parens $ annImplicity im (p a) <+> arrStr l <+>           p b
       | otherwise  -> parens $ annImplicity im (p a) <+> arrStr l <+> p eff <+> p b
     TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
-    Forall bs qs body -> header <+> p body
-      where
-        header = "A" <+> hsep (map p bs) <> qual <> "."
-        qual = case qs of
-                 [] -> mempty
-                 _  -> " |" <+> hsep (punctuate "," (map p qs))
-    TypeAlias _ _ -> "<type alias>"  -- TODO
     Effect row t -> "{" <> row' <+> tailVar <> "}"
       where
         row' = hsep $ punctuate "," $

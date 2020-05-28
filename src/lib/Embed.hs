@@ -11,7 +11,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
+module Embed (emit, emitTo, buildLamExpr, buildLam,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, withIndexed,
               nRecGet, nTabGet, add, mul, sub, neg, div', andE,
@@ -20,7 +20,6 @@ module Embed (emit, emitTo, buildLamExpr, buildLam, buildTLam,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               boolToInt, intToReal, boolToReal, reduceAtom) where
 
-import Control.Applicative
 import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
@@ -116,17 +115,6 @@ buildLamExprAux :: (MonadEmbed m)
 buildLamExprAux b f = do
   ((ans, aux), b', decls) <- withBinder b f
   return (LamExpr b' (wrapDecls decls ans), aux)
-
-buildTLam :: (MonadEmbed m)
-          => [Var] -> ([Type] -> m ([TyQual], Atom)) -> m Atom
-buildTLam bs f = do
-  -- TODO: refresh type vars in qs
-  (((qs, body), bs'), decls) <- scopedDecls $ do
-      bs' <- mapM freshVar bs
-      embedExtend $ asFst (newEnv bs' (repeat Nothing))
-      ans <- f (map Var bs')
-      return (ans, bs')
-  return $ TLam bs' qs (wrapDecls decls body)
 
 buildScoped :: (MonadEmbed m) => m Atom -> m Expr
 buildScoped m = do

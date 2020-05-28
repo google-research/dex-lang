@@ -37,15 +37,9 @@ instance Subst Expr where
 instance Subst Atom where
   subst env@(sub, scope) atom = case atom of
     Var v -> substVar env v
-    TLam tvs qs body -> TLam tvs' qs' $ subst env'' body
-      where (tvs', env') = refreshTBinders scope tvs
-            env'' = env <> env'
-            qs' = map (subst env'') qs
     Con con -> Con $ subst env con
     ArrowType im l p -> ArrowType im (recur l) (subst env p)
     TabType p -> TabType (subst env p)
-    Forall    ks con body -> Forall    ks con (recur body)
-    TypeAlias ks     body -> TypeAlias ks     (recur body)
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
@@ -53,7 +47,6 @@ instance Subst Atom where
                      [ (substName sub v :> (), (eff, recur effTy))
                      | (v, (eff, effTy)) <- envPairs row]
     NoAnn -> NoAnn
-    TC (TypeApp f args) -> reduceTypeApp (recur f) (map recur args)
     TC con -> TC $ fmapTyCon con (subst env) (subst env)
     where recur = subst env
 
@@ -82,11 +75,6 @@ refreshBinder :: Scope -> Var -> (Var, (SubstEnv, Scope))
 refreshBinder scope b = (b', env')
   where b' = rename b scope
         env' = (b@>Var b', b'@>Nothing)
-
-refreshTBinders :: Scope -> [Var] -> ([Var], (SubstEnv, Scope))
-refreshTBinders scope bs = (bs', env')
-  where (bs', scope') = renames bs Nothing scope
-        env' = (newEnv bs (map Var bs'), scope')
 
 instance Subst b => Subst (PiType b) where
   subst env (Pi a b) = Pi (subst env a) (subst env b)
@@ -125,12 +113,8 @@ instance (Subst a, Subst b) => Subst (Either a b)where
   subst env (Left  x) = Left  (subst env x)
   subst env (Right x) = Right (subst env x)
 
--- TODO: check kinds before alias expansion
-reduceTypeApp :: Type -> [Type] -> Type
-reduceTypeApp (TypeAlias bs ty) xs
-  | length bs == length xs = subst (newEnv bs xs, mempty) ty
-  | otherwise = error "Kind error"
-reduceTypeApp f xs = TC $ TypeApp f xs
+instance Subst a => Subst [a] where
+  subst env xs = map (subst env) xs
 
 deShadow :: Subst a => a -> Scope -> a
 deShadow x scope = subst (mempty, scope) x

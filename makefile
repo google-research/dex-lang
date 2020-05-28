@@ -83,7 +83,7 @@ jax-tests:
 
 uexpr-tests:
 	misc/check-quine examples/uexpr-tests.dx \
-          $(dex) --frontend uexpr --prelude /dev/null script
+          $(dex) --prelude /dev/null script
 repl-test:
 	misc/check-no-diff \
 	  examples/repl-multiline-test-expected-output \

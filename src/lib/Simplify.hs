@@ -74,8 +74,7 @@ simplifyAtom atom = case atom of
           | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
-  -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
-  TLam _ _ _        -> substEmbed atom
+  -- We don't simplify body of lam because we'll beta-reduce it soon.
   Con (Lam _ _ _ _) -> substEmbed atom
   Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
   Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
@@ -155,8 +154,6 @@ simplifyCExpr expr = do
     Cmp op    t  a b -> resolveOrd op t a b
     App _ (Con (Lam _ _ _ (LamExpr b body))) x -> do
       dropSub $ extendR (b@>x) $ simplify body
-    TApp (TLam tbs _ body) ts -> do
-      dropSub $ extendR (newEnv tbs ts) $ simplify body
     RecGet (RecVal r) i -> return $ recGet r i
     SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
     SumTag (SumVal s _ _) -> return $ s
