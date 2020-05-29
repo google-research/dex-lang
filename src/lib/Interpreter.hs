@@ -4,8 +4,9 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Interpreter (evalExpr) where
+module Interpreter (evalBlock) where
 
+import Cat
 import Syntax
 import Env
 import PPrint
@@ -22,19 +23,21 @@ foreign import ccall "pow"  c_pow  :: Double -> Double -> Double
 foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
-evalExpr :: SubstEnv -> Expr -> Atom
-evalExpr env expr = case expr of
-  Decl decl body -> evalExpr (env <> env') body
-    where env' = evalDecl env decl
-  CExpr op -> evalCExpr $ subst (env, mempty) op
-  Atom x -> subst (env, mempty) x
+evalBlock :: SubstEnv -> Block -> Atom
+evalBlock env (Block decls result _) = do
+  let env' = catFold evalDecl env decls
+  evalExpr $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> evalCExpr rhs'
+evalDecl env (Let v rhs) = v @> evalExpr rhs'
   where rhs' = subst (env, mempty) rhs
 
-evalCExpr :: CExpr -> Atom
-evalCExpr expr = case expr of
+evalExpr :: Expr -> Atom
+evalExpr expr = case expr of
+  Op op -> evalOp op
+
+evalOp :: Op -> Atom
+evalOp expr = case expr of
   ScalarBinOp op x y -> case op of
     IAdd -> IntVal $ x' + y'      where (IntVal x') = x; (IntVal y') = y
     ISub -> IntVal $ x' - y'      where (IntVal x') = x; (IntVal y') = y

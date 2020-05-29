@@ -62,7 +62,6 @@ instance (Pretty ty, Pretty atom) => Pretty (TyCon ty atom) where
     RecType r      -> p $ fmap (asStr . p) r
     SumType (l, r) -> "Either" <+> p l <+> p r
     RefType t      -> "Ref" <+> p t
-    TypeApp f xs   -> p f <+> hsep (map p xs)
     ArrayType (shape, b) -> p b <> p shape
     -- This rule forces us to specialize to Atom. Is there a better way?
     -- IntRange (IntVal 0) (IntVal n) -> p n
@@ -78,12 +77,8 @@ instance (Pretty ty, Pretty atom) => Pretty (TyCon ty atom) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
-    LinCon     -> "Lin"
-    NonLinCon  -> "NonLin"
     TypeKind   -> "Type"
-    MultKind   -> "Mult"
     EffectKind -> "Effect"
-    ArrowKind _ _ -> "ArrowKind"
 
 instance Pretty b => Pretty (PiType b) where
   pretty (Pi a b) = "Pi" <+> p a <+> p b
@@ -110,10 +105,17 @@ instance Pretty LitVal where
   pretty (StrLit x ) = p x
   pretty (BoolLit b) = if b then "True" else "False"
 
+instance Pretty Block where
+  pretty (Block [] expr _) = p expr
+  pretty (Block decls expr _) = nest 2 $
+    hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
+
 instance Pretty Expr where
-  pretty (Decl decl body) = p decl <> hardline <> p body
-  pretty (CExpr expr) = p (OpExpr expr)
+  pretty (TabGet f x) = parens (p f) <> "." <> parens (p x)
+  pretty (App _ f x) = parens (p f) <+> parens (p x)
+  pretty (For dir lam) = dirStr dir <+> p lam
   pretty (Atom atom) = p atom
+  pretty (Op op) = p op
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
   pretty (OpExpr  op ) = p op
@@ -121,12 +123,6 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) wher
   pretty (TyExpr  con) = p con
 
 instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (App _ e1 e2) = p e1 <+> p e2
-  pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
-  pretty (For d lam) = dirStr d <+> i <+> "." <+> nest 3 (line <> body)
-    where (i, body) = prettyLam lam
-  pretty (TabCon _ _ xs) = list (map pretty xs)
-  pretty (TabGet   x i) = p x <> "." <> p i
   pretty (RecGet   x i) = p x <> "#" <> p i
   pretty (ArrayGep x i) = p x <> "." <> p i
   pretty (LoadScalar x) = "load(" <> p x <> ")"
@@ -145,7 +141,6 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
 prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
 prettyPrimCon (Lit l)       = p l
 prettyPrimCon (ArrayLit array) = p array
-prettyPrimCon (Lam _ _ _ lam) = parens $ prettyL lam
 prettyPrimCon (RecCon r)    = p r
 prettyPrimCon (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
 prettyPrimCon (AGet e)      = "aget" <+> p e
@@ -172,7 +167,7 @@ prettyL lam = "\\" <> v <+> "." <> nest 3 (line <> body)
   where (v, body) = prettyLam lam
 
 instance Pretty LamExpr where
-  pretty lam = prettyL lam
+  pretty (LamExpr b body) = "\\" <> p b <+> "." <+> p body
 
 class PrettyLam a where
   prettyLam :: a -> (Doc ann, Doc ann)
@@ -210,29 +205,24 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let (NoName:>_) bound -> p (OpExpr bound)
-    Let b bound -> p b <+> "=" <+> p (OpExpr bound)
+    Let (NoName:>_) bound -> p bound
+    Let b bound -> p b <+> "=" <+> p bound
 
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
+    Lam _ lam -> p lam
+    Arrow h (Pi a (eff, b))
+      | isPure eff -> parens $ prettyArrow h (parens (p a)) (parens (p b))
+      | otherwise  -> parens $ prettyArrow h (parens (p a)) (p eff <+> parens (p b))
+    TC con -> p con
     Con con -> p (ConExpr con)
-    ArrowType im l (Pi a (eff, b))
-      | isPure eff -> parens $ annImplicity im (p a) <+> arrStr l <+>           p b
-      | otherwise  -> parens $ annImplicity im (p a) <+> arrStr l <+> p eff <+> p b
-    TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
     Effect row t -> "{" <> row' <+> tailVar <> "}"
       where
         row' = hsep $ punctuate "," $
                  [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
         tailVar = case t of Nothing -> mempty
                             Just v  -> "|" <+> p v
-    NoAnn  -> "-"
-    TC con -> p con
-    where
-      arrStr :: Type -> Doc ann
-      arrStr Lin = "--o"
-      arrStr _        = "->"
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x
@@ -296,10 +286,11 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
-instance Pretty body => Pretty (ModuleP body) where
-  pretty (Module _ (imports, exports) body) = "imports:" <+> p imports
-                             <> hardline <> p body
-                             <> hardline <> "exports:" <+> p exports
+instance Pretty Module where
+  pretty (Module _ imports exports body) =
+       "imports:" <+> p imports
+    <> hardline <> p body
+    <> hardline <> "exports:" <+> p exports
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
@@ -323,16 +314,14 @@ instance Pretty UExpr where
 instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam ah (ULamExpr pat body) ->
-       "\\" <> annImplicity (arrowHeadImplicity ah) (p pat) <+> "."
-       <> nest 3 (line <> p body)
+    ULam h (ULamExpr pat body) ->
+       "\\" <> annImplicity h (p pat) <+> "." <> nest 2 (hardline <> p body)
     UApp TabArrow f x -> parens (p f) <> "." <> parens (p x)
     UApp _ f x -> p f <+> p x
     UFor dir lam -> kw <+> p lam
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UArrow ah (UPi a b) ->
-      parens $ annImplicity (arrowHeadImplicity ah) (p a) <+> "->" <+> p b
+    UArrow h (UPi a b) -> prettyArrow h (parens (p a)) (parens (p b))
     UDecl decl body -> p decl <> hardline <> p body
     UPrimExpr prim -> parens $ p prim'
       where prim' = fmapExpr prim id id $
@@ -348,21 +337,16 @@ instance Pretty UDecl where
 instance Pretty ArrowHead where
   pretty ah = prettyArrow ah mempty mempty
 
+annImplicity :: ArrowHead -> Doc ann -> Doc ann
+annImplicity ImplicitArrow x = "{" <> x <> "}"
+annImplicity _ x = x
+
 prettyArrow :: ArrowHead -> Doc ann -> Doc ann -> Doc ann
 prettyArrow ah a b = case ah of
   PlainArrow    -> a <> "->"  <> b
   TabArrow      -> a <> "=>"  <> b
   LinArrow      -> a <> "--o" <> b
   ImplicitArrow -> "{" <> a <> "} ->" <> b
-
--- TODO: delete once we use ArrowHead everywhere
-arrowHeadImplicity :: ArrowHead -> Implicity
-arrowHeadImplicity ImplicitArrow = ImplicitArg "<todo>"
-arrowHeadImplicity _ = Expl
-
-annImplicity :: Implicity -> Doc ann -> Doc ann
-annImplicity Expl x = x
-annImplicity (ImplicitArg _) x = "{" <> x <> "}"
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

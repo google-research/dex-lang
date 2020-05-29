@@ -11,12 +11,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitTo, buildLamExpr, buildLam,
+module Embed (emit, emitTo, emitOp, buildLamExpr, buildLam,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, zeroAt, addAt, sumAt, getScope, withIndexed,
+              runEmbed, zeroAt, addAt, sumAt, getScope,
               nRecGet, nTabGet, add, mul, sub, neg, div', andE,
               select, selectAt, unpackRec, substEmbed, fromPair, buildLamExprAux,
-              emitExpr, unzipTab, buildFor, isSingletonType, emitDecl,
+              emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               boolToInt, intToReal, boolToReal, reduceAtom) where
 
@@ -51,11 +51,11 @@ runEmbed :: Embed a -> Scope -> (a, [Decl])
 runEmbed m scope = runIdentity $ runEmbedT m scope
 
 -- TODO: use suggestive names based on types (e.g. "f" for function)
-emit :: MonadEmbed m => CExpr -> m Atom
-emit expr = emitTo ("v":>NoAnn) expr
+emit :: MonadEmbed m => Expr -> m Atom
+emit expr = emitTo ("v":> error "not set") expr
 
 -- Promises to make a new decl with given names (maybe with different counter).
-emitTo :: MonadEmbed m => Var -> CExpr -> m Atom
+emitTo :: MonadEmbed m => Var -> Expr -> m Atom
 emitTo (v:>_) expr = case singletonTypeVal ty of
   Nothing -> do
     expr' <- deShadow expr <$> getScope
@@ -70,14 +70,12 @@ emitTo (v:>_) expr = case singletonTypeVal ty of
         return x
   where (eff, ty) = getEffType expr
 
+emitOp :: MonadEmbed m => PrimOp Type Atom LamExpr -> m Atom
+emitOp op = emit $ Op op
+
 -- Assumes the decl binders are already fresh wrt current scope
-emitExpr :: MonadEmbed m => Expr -> m Atom
-emitExpr (Decl decl@(Let v _) body) = do
-  extendScope (v@>Nothing)
-  emitDecl decl
-  emitExpr body
-emitExpr (Atom atom) = return atom
-emitExpr (CExpr expr) = emit expr
+emitBlock :: MonadEmbed m => Block -> m Atom
+emitBlock (Block decls result _) = mapM_ emitDecl decls >> emit result
 
 freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
 freshVar v = do
@@ -98,12 +96,6 @@ withBinder b f = do
       return (ans, b')
   return (ans, b', decls)
 
-buildLam :: MonadEmbed m
-         => Mult -> Var -> (Atom -> m (Atom, Effect)) -> m Atom
-buildLam l v f = do
-  (lam, eff) <- buildLamExprAux v $ \v' -> f v'
-  return $ Con $ Lam Expl l eff lam
-
 buildLamExpr :: (MonadEmbed m)
              => Var -> (Atom -> m Atom) -> m LamExpr
 buildLamExpr b f = do
@@ -116,21 +108,17 @@ buildLamExprAux b f = do
   ((ans, aux), b', decls) <- withBinder b f
   return (LamExpr b' (wrapDecls decls ans), aux)
 
-buildScoped :: (MonadEmbed m) => m Atom -> m Expr
+buildLam :: MonadEmbed m => ArrowHead -> Var -> (Atom -> m Atom) -> m Atom
+buildLam h v f = Lam h <$> buildLamExpr v f
+
+buildScoped :: (MonadEmbed m) => m Atom -> m Block
 buildScoped m = do
   (ans, decls) <- scopedDecls m
   return $ wrapDecls decls ans
 
-withIndexed :: (MonadEmbed m)
-            => EffectName -> Atom -> Atom -> (Atom -> m Atom) -> m Atom
-withIndexed eff ref i f = do
-  lam <- buildLamExpr ("ref":> RefTy a) $ \ref' -> f ref'
-  emit $ IndexEff eff ref i lam
-  where (RefTy (TabTy _ a)) = getType ref
-
-wrapDecls :: [Decl] -> Atom -> Expr
-wrapDecls [Let v expr] (Var v') | v == v' = CExpr expr  -- optimization
-wrapDecls decls result = foldr Decl (Atom result) decls
+-- TODO: simple decluttering optimizations like DCE and let-var final pair
+wrapDecls :: [Decl] -> Atom -> Block
+wrapDecls decls atom = Block decls (Atom atom) noEffect
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadEmbed m => Type -> m Atom
@@ -150,31 +138,31 @@ sumAt ty (x:xs) = do
   addAt ty xsSum x
 
 neg :: MonadEmbed m => Atom -> m Atom
-neg x = emit $ ScalarUnOp FNeg x
+neg x = emitOp $ ScalarUnOp FNeg x
 
 add :: MonadEmbed m => Atom -> Atom -> m Atom
 add (RealVal 0) y = return y
-add x y           = emit $ ScalarBinOp FAdd x y
+add x y           = emitOp $ ScalarBinOp FAdd x y
 
 mul :: MonadEmbed m => Atom -> Atom -> m Atom
-mul x y = emit $ ScalarBinOp FMul x y
+mul x y = emitOp $ ScalarBinOp FMul x y
 
 sub :: MonadEmbed m => Atom -> Atom -> m Atom
-sub x y = emit $ ScalarBinOp FSub x y
+sub x y = emitOp $ ScalarBinOp FSub x y
 
 andE :: MonadEmbed m => Atom -> Atom -> m Atom
 andE (BoolVal True) y = return y
-andE x y              = emit $ ScalarBinOp And x y
+andE x y              = emit $ Op $ ScalarBinOp And x y
 
 select :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
-select ty p x y = emit $ Select ty p x y
+select ty p x y = emitOp $ Select ty p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
-div' x y = emit $ ScalarBinOp FDiv x y
+div' x y = emitOp $ ScalarBinOp FDiv x y
 
 nRecGet :: MonadEmbed m => Atom -> RecField -> m Atom
 nRecGet (RecVal r) i = return $ recGet r i
-nRecGet x i = emit $ RecGet x i
+nRecGet x i = emit $ Op $ RecGet x i
 
 nTabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 nTabGet x i = emit $ TabGet x i
@@ -204,11 +192,11 @@ unzipTab tab = do
   snds <- buildFor Fwd ("i":>n) $ \i ->
             liftM snd $ emit (TabGet tab i) >>= fromPair
   return (fsts, snds)
-  where (TabTy n _) = getType tab
+  where (TabTy n _ _) = getType tab
 
 mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  TabTy n a -> do
+  TabTy n a _ -> do
     lam <- buildLamExpr ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
@@ -241,7 +229,7 @@ isSingletonType ty = case singletonTypeVal ty of
   Just _  -> True
 
 singletonTypeVal :: Type -> Maybe Atom
-singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
+singletonTypeVal (TabTy n a _) = liftM (Con . AFor n) $ singletonTypeVal a
 singletonTypeVal (TC con) = case con of
   -- XXX: This returns Nothing if it's a record that is not an empty tuple (or contains
   --      anything else than only empty tuples inside)!
@@ -250,10 +238,10 @@ singletonTypeVal (TC con) = case con of
 singletonTypeVal _ = Nothing
 
 boolToInt :: MonadEmbed m => Atom -> m Atom
-boolToInt b = emit $ ScalarUnOp BoolToInt b
+boolToInt b = emitOp $ ScalarUnOp BoolToInt b
 
 intToReal :: MonadEmbed m => Atom -> m Atom
-intToReal i = emit $ ScalarUnOp IntToReal i
+intToReal i = emitOp $ ScalarUnOp IntToReal i
 
 boolToReal :: MonadEmbed m => Atom -> m Atom
 boolToReal = boolToInt >=> intToReal
@@ -311,7 +299,7 @@ extendScope :: MonadEmbed m => Scope -> m ()
 extendScope scope = embedExtend $ asFst scope
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let v expr) = embedExtend (v @> Just (Right expr), [decl])
+emitDecl decl@(Let v expr) = embedExtend (v @> Just expr, [decl])
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -324,21 +312,18 @@ reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
   Var v -> case scope ! v of
     Nothing -> x
-    Just (Left val)   -> reduceAtom scope val
-    Just (Right expr) -> fromMaybe x $ reduceCExpr scope expr
+    Just expr -> fromMaybe x $ reduceExpr scope expr
   _ -> x
 
-reduceCExpr :: Scope -> CExpr -> Maybe Atom
-reduceCExpr scope expr = case expr of
+reduceExpr :: Scope -> Expr -> Maybe Atom
+reduceExpr scope expr = case expr of
+  Atom  val  -> return $ reduceAtom scope val
   App _ f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
-    Con (Lam _ _ eff (LamExpr b body)) <- return f'
+    -- TODO: Reduce bodies with let bindings
+    Lam _ (LamExpr b (Block [] result eff)) <- return f'
     when (eff /= noEffect) Nothing
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    let body' = scopelessSubst (b@>x') body
-    case body' of
-      Decl _ _ -> Nothing  -- TODO: Reduce bodies with let bindings
-      CExpr expr -> reduceCExpr scope expr
-      Atom  val  -> return $ reduceAtom scope val
+    reduceExpr scope $ scopelessSubst (b@>x') result
   _ -> Nothing

@@ -32,11 +32,11 @@ import Record
 type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
-toImpFunction :: ([Var], Expr) -> ImpFunction
+toImpFunction :: ([Var], Block) -> ImpFunction
 toImpFunction (vsIn, expr) = runImpM $ do
   (outDest, vsOut) <- makeDest "out" $ getType expr
   ((), prog) <- scopedBlock $ do
-    ans <- toImpExpr mempty expr
+    ans <- toImpBlock mempty expr
     copyAtom outDest ans
   let vsIn' = map (fmap typeToIType) vsIn
   return $ ImpFunction vsOut vsIn' prog
@@ -44,19 +44,37 @@ toImpFunction (vsIn, expr) = runImpM $ do
 runImpM :: ImpM a -> a
 runImpM m = fst $ runCat m mempty
 
+toImpBlock :: SubstEnv -> Block -> ImpM Atom
+toImpBlock env (Block decls result _) = do
+  env' <- catFoldM toImpDecl env decls
+  toImpExpr (env <> env') result
+
+toImpDecl ::  SubstEnv -> Decl -> ImpM SubstEnv
+toImpDecl env (Let b bound) = do
+  b' <- traverse (impSubst env) b
+  ans <- toImpExpr env bound
+  return $ b' @> ans
+
 toImpExpr :: SubstEnv -> Expr -> ImpM Atom
 toImpExpr env expr = case expr of
-  Decl (Let b bound) body -> do
-    b' <- traverse (impSubst env) b
-    ans <- toImpCExpr env bound
-    toImpExpr (env <> b'@> ans) body
-  CExpr op -> toImpCExpr env op
-  Atom atom -> impSubst env atom
-
-toImpCExpr :: SubstEnv -> CExpr -> ImpM Atom
-toImpCExpr env op = do
-  op' <- traverseExpr op (impSubst env) (impSubst env) (substLamPartial env)
-  toImpCExpr' op'
+  TabGet x i -> do
+    x' <- impSubst env x
+    i' <- impSubst env i
+    impTabGet x' i'
+  For d (LamExpr b@(_:>idxTy) body) -> do
+    idxTy' <- impSubst env idxTy
+    n' <- indexSetSize idxTy'
+    dest <- alloc $ getType expr
+    emitLoop d n' $ \i -> do
+      i' <- intToIndex idxTy i
+      ithDest <- impTabGet dest i'
+      ans <- toImpBlock (env <> b @> i') body
+      copyAtom ithDest ans
+    return dest
+  Op op -> do
+    op' <- traverseExpr op (impSubst env) (impSubst env) (substLamPartial env)
+    toImpOp op'
+  Atom x -> impSubst env x
 
 substLamPartial :: SubstEnv -> LamExpr -> ImpM (LamExpr, SubstEnv)
 substLamPartial env (LamExpr b body) = do
@@ -68,8 +86,8 @@ impSubst env x = do
   scope <- looks (fst . snd)
   return $ subst (env, scope) x
 
-toImpCExpr' :: PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM Atom
-toImpCExpr' op = case op of
+toImpOp :: PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM Atom
+toImpOp op = case op of
   TabCon n _ rows -> do
     dest <- alloc resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
@@ -77,16 +95,6 @@ toImpCExpr' op = case op of
       ithDest <- impTabGet dest i'
       copyAtom ithDest row
     return dest
-  For d (LamExpr b@(_:>idxTy) body, env) -> do
-    n' <-  indexSetSize idxTy
-    dest <- alloc resultTy
-    emitLoop d n' $ \i -> do
-      i' <- intToIndex idxTy i
-      ithDest <- impTabGet dest i'
-      ans <- toImpExpr (env <> b @> i') body
-      copyAtom ithDest ans
-    return dest
-  TabGet x i -> impTabGet x i
   SumGet x getLeft ->
     case x of
       SumVal _ l r -> return $ if getLeft then l else r
@@ -100,22 +108,19 @@ toImpCExpr' op = case op of
       RecVal r -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ pprint val
   RunReader r (LamExpr ref body, env) -> do
-    toImpExpr (env <> ref @> r) body
+    toImpBlock (env <> ref @> r) body
   RunWriter (LamExpr ref body, env) -> do
     wDest <- alloc wTy
     initializeAtomZero wDest
-    aResult <- toImpExpr (env <> ref @> wDest) body
+    aResult <- toImpBlock (env <> ref @> wDest) body
     return $ PairVal aResult wDest
     where (PairTy _ wTy) = resultTy
   RunState s (LamExpr ref body, env) -> do
     sDest <- alloc sTy
     copyAtom sDest s
-    aResult <- toImpExpr (env <> ref @> sDest) body
+    aResult <- toImpBlock (env <> ref @> sDest) body
     return $ PairVal aResult sDest
     where (PairTy _ sTy) = resultTy
-  IndexEff _ ref i (LamExpr b body, env) -> do
-    ref' <- impTabGet ref i
-    toImpExpr (env <> b @> ref') body
   PrimEffect ref m -> do
     case m of
       MAsk    -> return ref
@@ -148,7 +153,7 @@ toImpCExpr' op = case op of
     liftM (toScalarAtom resultTy) $ emitInstr (IPrimOp op')
   where
     resultTy :: Type
-    resultTy = getType $ CExpr $ fmapExpr op id id fst
+    resultTy = getType $ Op $ fmapExpr op id id fst
 
 toScalarAtom :: Type -> IExpr -> Atom
 toScalarAtom _  (ILit v) = Con $ Lit v
@@ -197,7 +202,7 @@ makeDest :: Name-> Type -> ImpM (Atom, [IVar])
 makeDest name ty = runWriterT $ makeDest' name [] ty
 
 makeDest' :: Name-> [IExpr] -> Type -> WriterT [IVar] ImpM Atom
-makeDest' name shape (TabTy n b) = do
+makeDest' name shape (TabTy n b _) = do
   n'  <- lift $ indexSetSize n
   liftM (Con . AFor n) $ makeDest' name (shape ++ [n']) b
 makeDest' name shape ty@(TC con) = case con of
@@ -309,7 +314,7 @@ typeToIType ty = case ty of
   _ -> error $ "Not a valid Imp type: " ++ pprint ty
 
 toImpBaseType :: Type -> BaseType
-toImpBaseType (TabTy _ a) = toImpBaseType a
+toImpBaseType (TabTy _ a _) = toImpBaseType a
 toImpBaseType (TC con) = case con of
   BaseType b       -> b
   IntRange _ _     -> IntType

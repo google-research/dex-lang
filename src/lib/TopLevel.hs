@@ -8,14 +8,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module TopLevel (evalBlock, EvalConfig (..), initializeBackend,
+module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
                  Backend (..)) where
 
 import Control.Concurrent.MVar
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc
 
 import Array
@@ -60,9 +59,9 @@ type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
 type TopPassM a = ReaderT EvalConfig IO a
 
 -- TODO: handle errors due to upstream modules failing
-evalBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
-evalBlock opts env block = do
-  (ans, outs) <- runTopPassM opts $ evalSourceBlock env block
+evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
+evalSourceBlock opts env block = do
+  (ans, outs) <- runTopPassM opts $ evalSourceBlockM env block
   let outs' = filter (keepOutput block) outs
   case ans of
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
@@ -72,8 +71,8 @@ runTopPassM :: EvalConfig -> TopPassM a -> IO (Except a, [Output])
 runTopPassM opts m = runLogger (logFile opts) $ \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
 
-evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
+evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
+evalSourceBlockM env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
   RunModule m -> evalUModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -131,11 +130,7 @@ keepOutput block output = case output of
   _ -> True
 
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
-evalSourceBlocks env blocks =
-  liftM snd $ flip runCatT env $ flip mapM_ blocks $ \block -> do
-    env' <- look
-    env'' <- lift $ evalSourceBlock env' block
-    extend env''
+evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 
 evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do
@@ -161,9 +156,9 @@ evalModule :: TopEnv -> Module -> TopPassM TopEnv
 evalModule (TopEnv _ simpEnv ruleEnv) normalized = do
   let (defunctionalized, simpEnv') = simplifyModule simpEnv ruleEnv normalized
   checkPass SimpPass defunctionalized
-  let (Module _ (_, outVars) dfExpr) = defunctionalized
+  let (Module _ _ outVars dfExpr) = defunctionalized
   case dfExpr of
-    Atom UnitVal -> do
+    Block [] (Atom UnitVal) _  -> do
       return $ TopEnv mempty simpEnv' mempty
     _ -> do
       ~(TupVal results) <- evalBackend dfExpr
@@ -176,7 +171,7 @@ initializeBackend backend = case backend of
   JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
-evalBackend :: Expr -> TopPassM Atom
+evalBackend :: Block -> TopPassM Atom
 evalBackend expr = do
   backend <- asks evalEngine
   logger  <- asks logService
@@ -202,7 +197,7 @@ evalBackend expr = do
       logPass JaxprAndHLO jaxprDump
       let outVars' = map (fmap jTypeToType) outVars
       return $ reStructureArrays (getType expr) $ map Var outVars'
-    InterpEngine -> return $ evalExpr mempty expr
+    InterpEngine -> return $ evalBlock mempty expr
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
 requestArrays _ [] = return []

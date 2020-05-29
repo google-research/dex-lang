@@ -123,10 +123,10 @@ explicitCommand = do
   return $ Command cmd (exprAsModule e)
 
 declAsModule :: UDecl -> UModule
-declAsModule decl = UModule imports exports [decl]
+declAsModule decl@(ULet pat _) = UModule imports exports [decl]
  where
    imports = envNames $ freeVars decl
-   exports = envNames $ uDeclBoundVars decl
+   exports = envNames $ foldMap (@>()) pat
 
 exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (v, UModule imports [v] body)

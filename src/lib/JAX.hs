@@ -78,12 +78,12 @@ runJaxM :: JaxM a -> a
 runJaxM m = fst $ flip runCat mempty $
   flip evalStateT mempty $ flip runReaderT mempty m
 
-toJaxFunction :: ([Var], Expr) -> JaxFunction
-toJaxFunction (vs, expr) = runJaxM $ do
+toJaxFunction :: ([Var], Block) -> JaxFunction
+toJaxFunction (vs, block) = runJaxM $ do
   vs' <- mapM freshVar vs
   let env = newEnv vs $ map varToTmpAtom vs
   (result, (_, decls)) <- scoped $ do
-    result <- toJaxExpr env expr
+    result <- toJaxBlock env block
     return $ flattenAtom result
   let jvs = map (fmap typeToJType) vs'
   return $ JaxFunction jvs $ JExpr decls result
@@ -97,17 +97,16 @@ flattenAtom atom =
     tell [x]
     return $ IdxAtom x []
 
-toJaxExpr :: JSubstEnv -> Expr -> JaxM TmpAtom
-toJaxExpr env expr = case expr of
-  Decl decl body -> do
-    env' <- toJaxDecl env decl
-    toJaxExpr (env <> env') body
-  CExpr op -> toJaxOp env op
-  Atom x -> return $ toJaxAtom env x
+toJaxBlock :: JSubstEnv -> Block -> JaxM TmpAtom
+toJaxBlock env (Block [] result _) = toJaxExpr env result
+toJaxBlock env (Block (decl:decls) result eff) = do
+  env' <- toJaxDecl env decl
+  toJaxBlock (env <> env') body
+  where body = Block decls result eff
 
 toJaxDecl :: JSubstEnv -> Decl -> JaxM JSubstEnv
 toJaxDecl env (Let v rhs) = do
-  ans <- toJaxOp env rhs
+  ans <- toJaxExpr env rhs
   return $ v @> ans
 
 toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
@@ -118,25 +117,28 @@ toJaxAtom env atom = case atom of
   Con con -> TmpCon $ fmapExpr con id (toJaxAtom env) (error "unexpected lambda")
   _ -> error $ "Not implemented: " ++ pprint atom
 
-toJaxOp :: JSubstEnv -> CExpr -> JaxM TmpAtom
-toJaxOp env cexpr = toJaxOp' cexpr'
-  where cexpr' = fmapExpr cexpr id (toJaxAtom env) (,env)
-
-toJaxOp' :: PrimOp Type TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
-toJaxOp' expr = case expr of
-  For _ (LamExpr i@(_ :> FixedIntRange 0 n) body, env) -> do
+toJaxExpr :: JSubstEnv -> Expr -> JaxM TmpAtom
+toJaxExpr env expr = case expr of
+  For _ (LamExpr i@(_ :> FixedIntRange 0 n) body) -> do
     idxEnv <- ask
     -- TODO: scope this to avoid burning through names
     i' <-freshIdxVar n
     iotaVar <- emitJFor $ JFor [] $ JIota n
     let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ IdxAtom (JVar iotaVar) [i']
     let env' = env <> i @> iotaAtom
-    ans <- extendR [i'] $ toJaxExpr env' body
+    ans <- extendR [i'] $ toJaxBlock env' body
     liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
       ansVar <- emitJFor $ JFor (map (,MapIdx) (idxEnv ++ [i'])) $ JId x
       return $ IdxAtom (JVar ansVar) idxEnv
-  TabGet ~(TmpCon (AFor _ tab)) i -> do
-    traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
+  TabGet xs i -> do
+    let (TmpCon (AFor _ tab)) = toJaxAtom env xs
+    let i' = toJaxAtom env i
+    traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i'
+  Op op -> toJaxOp op'
+    where op' = fmapExpr op id (toJaxAtom env) (,env)
+
+toJaxOp :: PrimOp Type TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
+toJaxOp op = case op of
   ScalarBinOp op x y -> liftM toScalarAtom $
     emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
   IndexAsInt x -> liftM toScalarAtom $
@@ -148,7 +150,7 @@ toJaxOp' expr = case expr of
     let (RefTy wTy) = varAnn refVar
     wInit <- zerosAt wTy
     modify (<> refVar @> (idxEnvDepth, wInit))
-    aResult <- toJaxExpr env body
+    aResult <- toJaxBlock env body
     wFinal <- gets $ snd . (! refVar)
     modify $ envDelete (varName refVar)
     return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
@@ -160,7 +162,7 @@ toJaxOp' expr = case expr of
         newAccum <- local (take depth) $ addPoly curAccum xSum
         modify (<> refVar @> (depth, newAccum))
         return $ TmpCon $ RecCon $ Tup []
-      _ -> error $ "Not implemented: " ++ show expr
+      _ -> error $ "Not implemented: " ++ show op
   RecGet x i -> do
     case x of
       TmpCon (RecCon r) -> return $ recGet r i
@@ -168,7 +170,7 @@ toJaxOp' expr = case expr of
   FFICall s _ _ args | s == "threefry2x32" -> liftM toScalarAtom $
       emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
         where x:y:[] = args
-  _ -> error $ "Not implemented: " ++ show expr
+  _ -> error $ "Not implemented: " ++ show op
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
 iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x

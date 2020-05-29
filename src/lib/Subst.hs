@@ -27,27 +27,28 @@ instance (TraversableExpr expr, Subst ty, Subst e, Subst lam)
          => Subst (expr ty e lam) where
   subst env expr = fmapExpr expr (subst env) (subst env) (subst env)
 
-instance Subst Expr where
-  subst env@(_, scope) expr = case expr of
-    Decl decl body -> Decl decl' (subst (env <> env') body)
-      where (decl', env') = refreshDecl scope (subst env decl)
-    CExpr e  -> CExpr $ subst env e
-    Atom  x  -> Atom  $ subst env x
+instance Subst Block where
+  -- TODO: effects
+  subst env (Block [] result eff) = Block [] (subst env result) eff
+  subst env@(_, scope) (Block (decl:decls) result eff) =
+    Block (decl':decls') result' eff'
+    where
+      (decl', env') = refreshDecl scope (subst env decl)
+      Block decls' result' eff' = subst (env <> env') $ Block decls result eff
 
 instance Subst Atom where
-  subst env@(sub, scope) atom = case atom of
+  subst env@(sub, _) atom = case atom of
     Var v -> substVar env v
-    Con con -> Con $ subst env con
-    ArrowType im l p -> ArrowType im (recur l) (subst env p)
-    TabType p -> TabType (subst env p)
+    Lam   h lam  -> Lam   h $ subst env lam
+    Arrow h piTy -> Arrow h $ subst env piTy
     Effect row t -> case t of
       Nothing -> Effect row' Nothing
       Just v  -> substTail row' (recur v)
       where row' = foldMap (uncurry (@>))
                      [ (substName sub v :> (), (eff, recur effTy))
                      | (v, (eff, effTy)) <- envPairs row]
-    NoAnn -> NoAnn
     TC con -> TC $ fmapTyCon con (subst env) (subst env)
+    Con con -> Con $ subst env con
     where recur = subst env
 
 
@@ -90,8 +91,14 @@ substTail row (Effect row' t) = Effect (row <> row') t
 substTail row t = Effect row (Just t)
 
 instance Subst Decl where
-  subst env decl = case decl of
-    Let    b    bound -> Let    (subst env b)    (subst env bound)
+  subst env (Let b bound) = Let (subst env b) (subst env bound)
+
+instance Subst Expr where
+  subst env expr = case expr of
+    App h f x   -> App h (subst env f) (subst env x)
+    For dir lam -> For dir $ subst env lam
+    Atom x      -> Atom $ subst env x
+    Op op       -> Op $ fmapExpr op (subst env) (subst env) (subst env)
 
 instance Subst Var where
   subst env (v:>ty) = v:> subst env ty

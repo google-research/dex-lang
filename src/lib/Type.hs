@@ -62,16 +62,16 @@ pureType ty = (noEffect, ty)
 
 -- === Module interfaces ===
 
-moduleType :: ModuleP body -> (TypeEnv, TypeEnv)
-moduleType (Module _ (imports, exports) _) = ( foldMap varAsEnv imports
-                                             , foldMap varAsEnv exports )
+moduleType :: Module -> (TypeEnv, TypeEnv)
+moduleType (Module _ imports exports _) = ( foldMap varAsEnv imports
+                                          , foldMap varAsEnv exports )
 
 class Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ _ expr) = asCompilerErr $
-    void $ runTypeM imports $ checkPureType expr
+  checkValid m@(Module _ _ _ block) = asCompilerErr $
+    void $ runTypeM imports $ checkPureType block
     where (imports, _) = moduleType m
 
 asCompilerErr :: Except a -> Except a
@@ -83,10 +83,8 @@ asCompilerErr (Right x) = Right x
 getKind :: Type -> Kind
 getKind ty = case ty of
   Var v            -> varAnn v
-  ArrowType _ _ _  -> TyKind
-  TabType _        -> TyKind
+  Arrow _ _        -> TyKind
   Effect _ _       -> TC EffectKind
-  NoAnn            -> NoAnn
   TC con           -> snd $ tyConKind con
   _ -> error "Not a type"
 
@@ -102,10 +100,6 @@ tyConKind con = case con of
   SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
   RefType t         -> (RefType (t, TyKind), TyKind)
-  TypeApp t xs      -> (TypeApp (t, tk) (map (,TyKind) xs), TyKind)
-    where tk = TC $ ArrowKind (map (const TyKind) xs) TyKind
-  LinCon            -> (LinCon   , TC MultKind)
-  NonLinCon         -> (NonLinCon, TC MultKind)
   TypeKind          -> (TypeKind, TC TypeKind)
   _ -> error $ "Not implemented: " ++ show con
 
@@ -118,14 +112,9 @@ checkKind ty = case ty of
         assertEq k k' "Kind annotation"
       _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
     return k
-  ArrowType _ m (Pi a (e, b)) -> do
-    checkKindIs (TC MultKind) m
+  Arrow _ (Pi a (e, b)) -> do
     checkKindIs TyKind a
     checkKindIs (TC EffectKind) e
-    extendDeBruijn a $ checkKindIs TyKind b
-    return TyKind
-  TabType (Pi a b) -> do
-    checkKindIs TyKind a
     extendDeBruijn a $ checkKindIs TyKind b
     return TyKind
   Effect eff tailVar -> do
@@ -135,7 +124,6 @@ checkKind ty = case ty of
       Just tv@(Var _) -> checkKindIs (TC EffectKind) tv
       _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
     return $ TC EffectKind
-  NoAnn -> error "Shouldn't have NoAnn left"
   TC con -> do
     let (conKind, resultKind) = tyConKind con
     void $ traverseTyCon conKind (\(t,k) -> checkKindIs k t)
@@ -167,7 +155,6 @@ checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 checkVSpace env ty = case ty of
   Var v     -> checkVarClass env VSpace v
   RealTy    -> return ()
-  TabTy _ b -> recur b
   RecTy r   -> mapM_ recur r
   _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
   where recur = checkVSpace env
@@ -188,7 +175,6 @@ checkDataLike msg env ty = case ty of
   -- This is an implicit `instance IdxSet a => Data a`
   Var v              -> checkVarClass env IdxSet v `catchError`
                            const (checkVarClass env Data v)
-  TabTy _ b          -> recur b
   TC con -> case con of
     BaseType _       -> return ()
     RecType r        -> mapM_ recur r
@@ -237,59 +223,78 @@ extendClassEnv qs m = do
 instance HasType Atom where
   getEffType atom = pureType $ case atom of
     Var (_:>ty) -> ty
+    Lam h lam -> Arrow h piTy
+      where Arrow _ piTy = getType lam
+    Arrow _ _ -> TyKind
     Con con -> getConType $ fmapExpr con id getType getPiType
     TC _ -> TyKind -- TODO: think about effects, multiplicity etc
     _ -> error "not implemented"
 
   checkEffType atom = liftM pureType $ case atom of
     Var v -> checkPureType v
+    Lam h lam -> do
+      Arrow _ piTy <-checkType lam
+      return $ Arrow h piTy
+    Arrow h _ -> return TyKind -- TODO: check!
     Con con -> traverseExpr con return checkType checkPiType >>= checkConType
     TC _ -> return TyKind -- TODO: check!
 
+instance HasType Block where
+  getEffType (Block _ result eff) = (eff, getType result)
+
+  checkEffType (Block (decl@(Let b bexpr):decls) result eff) = do
+    declEff <- addContext ("\nchecking: \n" ++ pprint decl) $ checkDecl
+    (bodyEff, ty) <- extendNamed (bind b) $ checkEffType body
+    eff <- combineEffects declEff bodyEff
+    return (eff, ty)
+    where
+      body = Block decls result eff
+      checkDecl = do
+        (declEff, bt) <- checkEffType bexpr
+        bt' <- checkBinder
+        assertEq bt bt' "Decl"
+        return declEff
+      checkBinder = do
+        kind <- checkKind $ varAnn b
+        assertEq TyKind kind "kind error"
+        (JointTypeEnv env _) <- ask
+        assertNoShadow env b
+        return $ varAnn b
+  checkEffType (Block [] result _) = checkEffType result
+
 instance HasType Expr where
   getEffType expr = case expr of
-    Decl (Let _ rhs) e -> (ignoreExcept $ combineEffects eff eff', ty)
-      where (eff , ty) = getEffType e
-            (eff', _ ) = getEffType rhs
-    CExpr e  -> getEffType e
-    Atom x   -> getEffType x
+    App _ f x -> applyPi piTy x
+      where Arrow _ piTy = getType f
+    For _ lam -> (eff, Arrow TabArrow (Pi a (pureType b)))
+      where Arrow _ (Pi a (eff, b)) = getType lam
+    Atom x -> pureType $ getType x
+    Op op -> getOpType $ fmapExpr op id addType getPiType
+      where addType x = (Just x, getType x)
 
   checkEffType expr = case expr of
-    Decl (Let b bexpr) body -> do
-      declEff <- checkDecl
-      (bodyEff, ty) <- extendNamed (bind b) $ checkEffType body
-      eff <- combineEffects declEff bodyEff
-      return (eff, ty)
-      where
-        checkDecl = do
-          (declEff, bt) <- checkEffType bexpr
-          bt' <- checkBinder
-          assertEq bt bt' "Decl"
-          return declEff
-        checkBinder = do
-          kind <- checkKind $ varAnn b
-          assertEq TyKind kind "kind error"
-          (JointTypeEnv env _) <- ask
-          assertNoShadow env b
-          return $ varAnn b
-    CExpr e -> checkEffType e
-    Atom x  -> checkEffType x
-
-instance HasType CExpr where
-  getEffType   op = getOpType $ fmapExpr op id addType getPiType
-    where addType x = (Just x, getType x)
-  checkEffType op = do
-    op' <- traverseExpr op return addType checkPiType
-    checkOpType op'
-    where addType x = liftM (Just x,) (checkType x)
+    App h f x -> do
+      a <- checkType x
+      Arrow h' piTy@(Pi a' _) <- checkType f
+      assertEq a' a "app argument"
+      assertEq h' h "arrow head mismatch"
+      return $ applyPi piTy x
+    For _ lam -> do
+      Arrow PlainArrow (Pi a (eff, b)) <- checkType lam
+      return (eff, Arrow TabArrow $ Pi a (pureType b))
+    Atom x -> checkEffType x
+    Op op -> do
+      op' <- traverseExpr op return addType checkPiType
+      checkOpType op'
+      where addType x = liftM (Just x,) (checkType x)
 
 instance HasType LamExpr where
   getEffType (LamExpr b body) =
-    pureType $ ArrowType Expl NonLin $ makePi b $ getEffType body
+    pureType $ Arrow PlainArrow $ makePi b $ getEffType body
 
   checkEffType (LamExpr b body) = do
     bodyTy <- extendNamed (bind b) $ checkEffType body
-    return $ pureType $ ArrowType Expl NonLin $ makePi b bodyTy
+    return $ pureType $ Arrow PlainArrow $ makePi b bodyTy
 
 instance HasType Var where
   getEffType = pureType . varAnn
@@ -302,7 +307,7 @@ instance HasType Var where
         return $ pureType ty
       _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
 
--- -- === Effects ===
+-- === Effects ===
 
 combineEffects :: MonadError Err m => Effect -> Effect -> m Effect
 combineEffects ~eff@(Effect row t) ~eff'@(Effect row' t') = case (t, t') of
@@ -381,16 +386,13 @@ ignoreArgs :: Monad m => a -> b -> m ()
 ignoreArgs _ _ = return ()
 
 checkTypeEq :: Type -> Type -> TypeM ()
-checkTypeEq ty1 ty2 | ty1 == ty2 = return ()
-                        | otherwise  = throw TypeErr $
-                                         pprint ty1 ++ " != " ++ pprint ty2
+checkTypeEq ty1 ty2
+  | ty1 == ty2 = return ()
+  | otherwise  = throw TypeErr $ pprint ty1 ++ " != " ++ pprint ty2
 
 isDependentOp :: PrimOp ty e lam -> Bool
 isDependentOp op = case op of
-  App _ _ _        -> True
   PrimEffect _ _   -> True
-  IndexEff _ _ _ _ -> True
-  TabGet _ _       -> True
   _                -> False
 
 traverseOpType :: MonadError Err m
@@ -400,11 +402,6 @@ traverseOpType :: MonadError Err m
                -> (ClassName -> Type -> m ()) -- add class constraint
                -> m EffectiveType
 traverseOpType op eq _ _ | isDependentOp op = case op of
-  App l (_, ArrowType _ l' piTy@(Pi a _)) (x, a') -> do
-    eq a a'
-    eq l l'
-    maybeApplyPi piTy x
-  TabGet (_, TabType piTy@(Pi i _)) (x, i') -> eq i i' >> maybeApplyPi piTy x >>= return . pureType
   PrimEffect ~(Just val, ty) m -> do
     let (ref, x) = case (val, ty) of
           (Var ref', RefTy x') -> (ref', x')
@@ -416,18 +413,9 @@ traverseOpType op eq _ _ | isDependentOp op = case op of
       MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, RefTy x)) Nothing, UnitTy)
       MGet         ->            return (Effect (ref @> (State , RefTy x)) Nothing, x)
       MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , RefTy x)) Nothing, UnitTy)
-  IndexEff eff ~(Just (Var ref), tabRef) (_, i) ~(Pi (RefTy x) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (eff, RefTy x)
-    eq tabRef (RefTy (TabTy i x))
-    let row'' = row' <> (ref @> (eff, RefTy (TabTy i x)))
-    return (Effect row'' tailVar, a)
   _ -> error $ "Unexpected primitive type: " ++ pprint op
 
 traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
-  For _ (Pi n (eff, a)) ->
-    -- TODO: re-enable once we have a typeclass story for UExpr
-    -- inClass IdxSet n >> inClass Data a
-    return (eff, TabTy n a)
   TabCon n ty xs -> do
     case indexSetConcreteSize n of
       Nothing -> throw TypeErr $
@@ -503,13 +491,10 @@ traverseConType :: MonadError Err m
 traverseConType con eq kindIs _ = case con of
   Lit l    -> return $ BaseTy $ litType l
   ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
-  Lam im l eff (Pi a (eff', b)) -> do
-    checkExtends eff eff'
-    return $ ArrowType im l (Pi a (eff, b))
   AnyValue t   -> return $ t
   SumCon _ l r -> return $ SumTy l r
   RecCon r -> return $ RecTy r
-  AFor n a -> return $ TabTy n a
+  AFor n a -> return $ TabTy n a noEffect
   AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
   AsIdx n e -> eq e (BaseTy IntType) >> return n
   Todo ty -> kindIs TyKind ty >> return ty
@@ -554,10 +539,10 @@ indexSetConcreteSize ty = case ty of
 -- === Pi types ===
 
 getPiType :: HasType lam => lam -> PiType EffectiveType
-getPiType lam = let (ArrowType _ _ pit) = getType lam in pit
+getPiType lam = let (Arrow _ pit) = getType lam in pit
 
 checkPiType :: HasType lam => lam -> TypeM (PiType EffectiveType)
-checkPiType lam = checkType lam >>= \(ArrowType _ _ pit) -> return pit
+checkPiType lam = checkType lam >>= \(Arrow _ pit) -> return pit
 
 maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => (PiType t) -> Maybe Atom -> m t
 maybeApplyPi piTy maybeAtom
@@ -587,15 +572,13 @@ class PiAbstractable t where
 instance PiAbstractable Type where
   instantiateDepType d x ty = case ty of
     Var v -> lookupDBVar v
-    ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
+    Arrow h (Pi a (e, b)) -> Arrow h $
       Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
-    TabType (Pi a b) -> TabType $ Pi (recur a) (instantiateDepType (d+1) x b)
     Effect row tailVar -> Effect row' tailVar
       where row' = fold [ (lookupDBVarName v :>()) @> (eff, recur ann)
                         | (v, (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
       where env = (DeBruijn d :>()) @> x
-    NoAnn -> NoAnn
     _ -> error "Not a type"
     where
       recur ::Type -> Type
@@ -613,15 +596,13 @@ instance PiAbstractable Type where
 
   abstractDepType v d ty = case ty of
     Var (v':>ann) -> Var $ substWithDBVar v' :> ann
-    ArrowType im m (Pi a (e, b)) -> ArrowType im (recur m) $
+    Arrow h (Pi a (e, b)) -> Arrow h $
       Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
-    TabType (Pi a b) -> TabType $ Pi (recur a) (abstractDepType v (d+1) b)
     Effect row tailVar -> Effect row' tailVar
       where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
                         | (v', (eff, ann)) <- envPairs row]
     TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
       where env = v @> Var (DeBruijn d :> varAnn v)
-    NoAnn -> NoAnn
     _ -> error "Not a type"
     where
       recur ::Type -> Type

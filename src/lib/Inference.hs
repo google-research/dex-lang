@@ -51,7 +51,7 @@ inferModule topEnv (UModule imports exports decls) = do
   let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
   let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
   let body = wrapDecls decls' $ TupVal resultVals
-  return (Module Nothing (imports', exports') body, (fmap snd env', mempty))
+  return (Module Nothing imports' exports' body, (fmap snd env', mempty))
 
 runUInferM :: (Subst a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
 runUInferM m env = runSolverT $ runEmbedT (runReaderT m env) scope
@@ -64,10 +64,10 @@ infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
 -- TODO: think about effects
 checkSigma :: UExpr -> Effect -> SigmaType -> UInferM Atom
 checkSigma expr eff ty = case ty of
-  ArrowType im@(ImplicitArg _) _ piTy@(Pi a _) -> do
+  Arrow ImplicitArrow piTy@(Pi a _) -> do
     lamExpr <- buildLamExpr ("a":>a) $ \x ->
                  checkSigma expr eff $ snd $ applyPi piTy x
-    return $ Con $ Lam im NonLin noEffect lamExpr
+    return $ Lam ImplicitArrow lamExpr
   _ -> checkRho expr eff ty
 
 inferSigma :: UExpr -> Effect -> UInferM (Atom, SigmaType)
@@ -75,9 +75,7 @@ inferSigma (UPos pos expr) eff = case expr of
   ULam ImplicitArrow lamExpr -> addSrcContext (Just pos) $ do
     -- TODO: effects
     (lamExpr', piTy) <- inferULam lamExpr
-    let lam = lamWithArrowHead ImplicitArrow lamExpr'
-    let ty = arrowTyWithArrowHead ImplicitArrow piTy
-    return (lam, ty)
+    return (Lam ImplicitArrow lamExpr', Arrow ImplicitArrow piTy)
   _ ->
     inferRho (UPos pos expr) eff
 
@@ -94,13 +92,13 @@ inferRho expr eff = do
 -- This is necessary so that embed's `getType` doesn't get confused
 -- TODO: figure out a better way. It's probably enough to just solve locally as
 -- part of leak checking when we construct dependent lambdas.
-emitZonked :: CExpr -> UInferM Atom
+emitZonked :: Expr -> UInferM Atom
 emitZonked expr = zonk expr >>= emit
 
 instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
-instantiateSigma (f,  ArrowType (ImplicitArg _) _ piTy@(Pi argTy _)) = do
+instantiateSigma (f,  Arrow ImplicitArrow piTy@(Pi argTy _)) = do
   x <- freshInfVar argTy
-  ans <- emitZonked $ App NonLin f x
+  ans <- emitZonked $ App ImplicitArrow f x
   let (_, ansTy) = applyPi piTy x
   return (ans, ansTy)
 instantiateSigma (x, ty) = return (x, ty)
@@ -113,52 +111,48 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
     argTy <- checkAnn $ varAnn b
     x <- freshInfVar argTy
     extendR (b@>(x, argTy)) $ checkOrInferRho body eff reqTy
-  ULam ah lamExpr -> case reqTy of
+  ULam h lamExpr -> case reqTy of
     -- TODO: effects
     Check ty -> do
-      (ahReq, piTy) <- fromArrowType ty
-      checkArrowHead ahReq ah
+      (hReq, piTy) <- fromArrowType ty
+      checkArrowHead hReq h
       lamExpr' <- checkULam lamExpr piTy
-      let lam = lamWithArrowHead ahReq lamExpr'
-      return (lam, Checked)
+      return (Lam hReq lamExpr', Checked)
     Infer -> do
       (lamExpr', piTy) <- inferULam lamExpr
-      let lam = lamWithArrowHead ah lamExpr'
-      let ty = arrowTyWithArrowHead ah piTy
-      return (lam, Inferred ty)
+      return (Lam h lamExpr', Inferred $ Arrow h piTy)
   -- This looks like it needs de-duping with ULam case, but it might look quite
   -- different once we have effects
   UFor dir lamExpr -> case reqTy of
     Check ty -> do
-      (ahReq, piTy) <- fromArrowType ty
-      checkArrowHead ahReq TabArrow
+      (hReq, piTy) <- fromArrowType ty
+      checkArrowHead hReq TabArrow
       lamExpr' <- checkULam lamExpr piTy
       result <- emitZonked $ For dir lamExpr'
       return (result, Checked)
     Infer -> do
       (lamExpr', piTy) <- inferULam lamExpr
-      let ty = arrowTyWithArrowHead TabArrow piTy
       result <- emitZonked $ For dir lamExpr'
-      return (result, Inferred ty)
+      return (result, Inferred $ Arrow TabArrow piTy)
   -- Feels like it needs de-duping with ULam case, but it's going to look quite
   -- different once we have effects
-  UApp ah f x -> do
+  UApp h f x -> do
     (fVal, fTy) <- inferRho f eff
-    (ahReq, piTy@(Pi argTy _)) <- fromArrowType fTy
-    checkArrowHead ahReq ah
+    (hReq, piTy@(Pi argTy _)) <- fromArrowType fTy
+    checkArrowHead hReq h
     xVal <- checkSigma x eff argTy
     let (appEff, appTy) = applyPi piTy xVal
     checkEffect eff appEff
-    appVal <- emitZonked $ appWithArrowHead ahReq fVal xVal
+    appVal <- emitZonked $ App hReq fVal xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
-  UArrow ah (UPi (v:>a) b) -> do
+  UArrow h (UPi (v:>a) b) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     a' <- checkUType a
     -- TODO: freshen as we go under the binder
     b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ do
             extendScope ((v:>())@>Nothing)
             checkUType b
-    let ty = arrowTyWithArrowHead ah $ makePi (v:>a') (noEffect, b')
+    let ty = Arrow h $ makePi (v:>a') (noEffect, b')
     matchRequirement (ty, TyKind)
   UDecl decl body -> do
     env <- inferUDecl eff decl
@@ -166,7 +160,7 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
   UPrimExpr prim -> do
     prim' <- traverseExpr prim lookupName lookupName (error "not implemented")
     val <- case prim' of
-      OpExpr  op  -> emitZonked op
+      OpExpr  op  -> emitZonked $ Op op
       ConExpr con -> return $ Con con
       TyExpr  con -> return $ TC con
     matchRequirement (val, getType val)
@@ -254,40 +248,9 @@ checkArrowHead ahReq ahOff = case (ahReq, ahOff) of
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint ahOff
 
--- These *withArrowHead functions are adapters for `Expr` which doesn't use
--- arrowheads yet. TODO: remove them once we switch
-lamWithArrowHead :: ArrowHead -> LamExpr -> Atom
-lamWithArrowHead ah lam = case ah of
-  PlainArrow    -> Con $ Lam Expl NonLin noEffect lam
-  LinArrow      -> Con $ Lam Expl Lin    noEffect lam
-  ImplicitArrow -> Con $ Lam (ImplicitArg "") NonLin noEffect lam
-  TabArrow      -> error "should have table lambda in source program"
-
-arrowTyWithArrowHead :: ArrowHead -> PiType EffectiveType -> Type
-arrowTyWithArrowHead ah piTy = case ah of
-  PlainArrow    -> ArrowType Expl NonLin piTy
-  LinArrow      -> ArrowType Expl Lin    piTy
-  ImplicitArrow -> ArrowType (ImplicitArg "") NonLin piTy
-  TabArrow      -> TabType $ Pi a b
-    where Pi a (eff,b) = piTy
-
-appWithArrowHead :: ArrowHead -> Atom -> Atom -> CExpr
-appWithArrowHead ah a b = case ah of
-  PlainArrow    -> App NonLin a b
-  LinArrow      -> App Lin    a b
-  ImplicitArrow -> App NonLin a b
-  TabArrow      -> TabGet a b
-
 fromArrowType :: Type -> UInferM (ArrowHead, PiType EffectiveType)
-fromArrowType (ArrowType im m piTy) = return (ah, piTy)
-  where
-    ah = case (im, m) of
-      (Expl, NonLin)          -> PlainArrow
-      (Expl, Lin)             -> LinArrow
-      (ImplicitArg _, NonLin) -> ImplicitArrow
-      _ -> error "Unexpected arrow"
-fromArrowType (TabType (Pi a b)) = return (TabArrow, Pi a (noEffect, b))
-fromArrowType ty = error $ "Not a pi type: " ++ pprint ty
+fromArrowType (Arrow h piTy) = return (h, piTy)
+fromArrowType ty = error $ "Not an arrow type: " ++ pprint ty
 
 -- === constraint solver ===
 
@@ -310,7 +273,6 @@ applyDefaults :: MonadCat SolverEnv m => m ()
 applyDefaults = do
   vs <- looks unsolved
   forM_ (envPairs vs) $ \(v, k) -> case k of
-    TC MultKind   -> addSub v NonLin
     TC EffectKind -> addSub v noEffect
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
@@ -366,10 +328,9 @@ unify t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, Var v) | v `isin` vs -> bindQ v t
     (Var v, t) | v `isin` vs -> bindQ v t
-    (ArrowType im l (Pi a (eff, b)), ArrowType im' l' (Pi a' (eff', b')))
-      | im == im' -> do
+    (Arrow h (Pi a (eff, b)), Arrow h' (Pi a' (eff', b'))) | h == h' -> do
         -- TODO: think very hard about the leak checks we need to add here
-        unify l l' >> unify a a' >> unify b b' >> unify eff eff'
+        unify a a' >> unify b b' >> unify eff eff'
     (Effect r t, Effect r' t') -> do
       let shared = rowMeet r r'
       forM_ shared $ \((e, et), (e', et')) -> do
@@ -378,7 +339,7 @@ unify t1 t2 = do
       newTail <- liftM Just $ freshInferenceVar $ TC EffectKind
       matchTail t  $ Effect (envDiff r' shared) newTail
       matchTail t' $ Effect (envDiff r  shared) newTail
-    (TabTy a b, TabTy a' b') -> unify a a' >> unify b b'
+    -- (TabTy a b, TabTy a' b') -> unify a a' >> unify b b'
     (TC con, TC con') -> case (con, con') of
       (RefType a, RefType a') -> unify a a'
       (RecType r, RecType r') ->
@@ -386,8 +347,6 @@ unify t1 t2 = do
           Nothing -> throw TypeErr ""
           Just unifiers -> void $ sequence unifiers
       (SumType (l, r), SumType (l', r')) -> unify l l' >> unify r r'
-      (TypeApp f xs, TypeApp f' xs') | length xs == length xs' ->
-        unify f f' >> zipWithM_ unify xs xs'
       _   -> throw TypeErr ""
     _   -> throw TypeErr ""
 
