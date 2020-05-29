@@ -6,23 +6,18 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TupleSections #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
 
 module Type (
-    getType, PrimOpType, PrimConType,
-    litType, traverseOpType, traverseConType, binOpType, unOpType,
-    isData, Checkable (..), popRow, moduleType,
-    getKind, checkKindEq, getEffType, tyConKind,
-    getConType, checkEffType, HasType, indexSetConcreteSize,
-    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
-    pureType) where
+  getType, getEffType, checkEffType, HasType (..), Checkable (..), litType,
+  binOpType, unOpType, isData, indexSetConcreteSize, maybeApplyPi, makePi,
+  applyPi, pureType, checkNoShadow) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable
+import Data.Functor
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 import GHC.Stack
@@ -36,469 +31,226 @@ import Cat
 import Subst
 
 type ClassEnv = MonMap Name [ClassName]
-type TypeM a = ReaderT JointTypeEnv (ReaderT ClassEnv (Either Err)) a
+
+data TypeCheckEnv = SkipChecks | CheckWith JointTypeEnv
+-- TODO: put the effects in a writer/cat monad here
+type TypeM = ReaderT TypeCheckEnv Except
 
 getType :: HasType a => a -> Type
 getType x = snd $ getEffType x
 
-checkType :: HasType a => a -> TypeM Type
-checkType x = liftM snd $ checkEffType x
+getEffType :: HasType a => a -> EffectiveType
+getEffType x = ignoreExcept $ runTypeCheck SkipChecks x
 
-checkPureType :: (Pretty a, HasType a) => a -> TypeM Type
-checkPureType x = addContext ("\nchecking: \n" ++ pprint x) $ do
-  (eff, ty) <- checkEffType x
-  assertEq noEffect eff "Unexpected effect"
-  return ty
+checkEffType :: HasType a => TypeEnv -> a -> Except EffectiveType
+checkEffType env x = runTypeCheck (CheckWith (fromNamedEnv env)) x
 
 class Pretty a => HasType a where
-  checkEffType :: HasCallStack => a -> TypeM EffectiveType
-  getEffType   :: HasCallStack => a ->       EffectiveType
+  typeCheck :: a -> TypeM Type
 
-runTypeM :: TypeEnv -> TypeM a -> Except a
-runTypeM env m = runReaderT (runReaderT m (fromNamedEnv env)) mempty
-
-pureType :: Type -> EffectiveType
-pureType ty = (noEffect, ty)
+runTypeCheck :: HasType a => TypeCheckEnv -> a -> Except EffectiveType
+runTypeCheck env x = do
+  ty <- addContext ctxStr $ runReaderT (typeCheck x) env
+  return (noEffect, ty) -- TODO: effects!
+  where ctxStr = "\nChecking:\n" ++ pprint x
 
 -- === Module interfaces ===
 
-moduleType :: Module -> (TypeEnv, TypeEnv)
-moduleType (Module _ imports exports _) = ( foldMap varAsEnv imports
-                                          , foldMap varAsEnv exports )
-
-class Checkable a where
+class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ _ _ block) = asCompilerErr $
-    void $ runTypeM imports $ checkPureType block
-    where (imports, _) = moduleType m
+  checkValid m@(Module _ imports exports block) =
+    asCompilerErr $ do
+      let env = fromNamedEnv $ foldMap varAsEnv imports
+      (eff, TupTy outTys) <- runTypeCheck (CheckWith env) block
+      assertEq noEffect eff "module effect"
+      assertEq (map varAnn exports) outTys "export types"
+    where ctxStr = "\nChecking:\n" ++ pprint m
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
--- === kind checking ===
-
-getKind :: Type -> Kind
-getKind ty = case ty of
-  Var v            -> varAnn v
-  Arrow _ _        -> TyKind
-  Effect _ _       -> TC EffectKind
-  TC con           -> snd $ tyConKind con
-  _ -> error "Not a type"
-
--- TODO: add class constraints
-tyConKind :: Show e => TyCon Type e -> (TyCon (Type, Kind) (e, Type), Kind)
-tyConKind con = case con of
-  BaseType b        -> (BaseType b, TyKind)
-  IntRange a b      -> (IntRange (a, IntTy) (b, IntTy), TyKind)
-  -- This forces us to specialize to `TyCon Type e` instead of `TyCon ty e`
-  IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
-                                               (fmap (,t) b), TyKind)
-  ArrayType t       -> (ArrayType t, TyKind)
-  SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
-  RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
-  RefType t         -> (RefType (t, TyKind), TyKind)
-  TypeKind          -> (TypeKind, TC TypeKind)
-  _ -> error $ "Not implemented: " ++ show con
-
-checkKind :: Type -> TypeM Kind
-checkKind ty = case ty of
-  Var v@(_:>k) -> do
-    x <- asks $ flip jointEnvLookup v
-    case x of
-      Just k' -> do
-        assertEq k k' "Kind annotation"
-      _ -> throw KindErr $ "Kind lookup failed: " ++ pprint v
-    return k
-  Arrow _ (Pi a (e, b)) -> do
-    checkKindIs TyKind a
-    checkKindIs (TC EffectKind) e
-    extendDeBruijn a $ checkKindIs TyKind b
-    return TyKind
-  Effect eff tailVar -> do
-    mapM_ (mapM_ (checkKindIs TyKind)) eff
-    case tailVar of
-      Nothing -> return ()
-      Just tv@(Var _) -> checkKindIs (TC EffectKind) tv
-      _ -> throw TypeErr $ "Effect tail must be a variable " ++ pprint tailVar
-    return $ TC EffectKind
-  TC con -> do
-    let (conKind, resultKind) = tyConKind con
-    void $ traverseTyCon conKind (\(t,k) -> checkKindIs k t)
-                                 (\(e,t) -> checkPureType e >>= checkTypeEq t)
-    return resultKind
-  _ -> error "Not a type"
-
-checkKindIs :: Kind -> Type -> TypeM ()
-checkKindIs k ty = checkKind ty >>= checkKindEq k
-
-checkKindEq :: MonadError Err m => Kind -> Kind -> m ()
-checkKindEq k1 k2 | k1 == k2  = return ()
-                  | otherwise = throw KindErr $ "\nExpected: " ++ pprint k1
-                                             ++ "\n  Actual: " ++ pprint k2
-
--- === Built-in typeclasses ===
-
-checkClassConstraint :: ClassName -> Type -> TypeM ()
-checkClassConstraint c ty = do
-  env <- lift ask
-  case c of
-    VSpace -> checkVSpace env ty
-    IdxSet -> checkIdxSet env ty
-    Data   -> checkData   env ty
-    Eq     -> checkEq     env ty
-    Ord    -> checkOrd    env ty
-
-checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
-checkVSpace env ty = case ty of
-  Var v     -> checkVarClass env VSpace v
-  RealTy    -> return ()
-  RecTy r   -> mapM_ recur r
-  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
-  where recur = checkVSpace env
-
-checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
-checkIdxSet env ty = case ty of
-  Var v                 -> checkVarClass env IdxSet v
-  RecTy r               -> mapM_ recur r
-  SumTy l r             -> recur l >> recur r
-  BoolTy                -> return ()
-  TC (IntRange _ _)     -> return ()
-  TC (IndexRange _ _ _) -> return ()
-  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
-  where recur = checkIdxSet env
-
-checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
-checkDataLike msg env ty = case ty of
-  -- This is an implicit `instance IdxSet a => Data a`
-  Var v              -> checkVarClass env IdxSet v `catchError`
-                           const (checkVarClass env Data v)
-  TC con -> case con of
-    BaseType _       -> return ()
-    RecType r        -> mapM_ recur r
-    SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r
-    IntRange _ _     -> return ()
-    IndexRange _ _ _ -> return ()
-    _ -> throw TypeErr $ pprint ty ++ msg
-  _   -> throw TypeErr $ pprint ty ++ msg
-  where recur x = checkDataLike msg env x
-
-checkData :: MonadError Err m => ClassEnv -> Type -> m ()
-checkData = checkDataLike " is not serializable"
-
-checkEq :: MonadError Err m => ClassEnv -> Type -> m ()
-checkEq   = checkDataLike " is not equatable"
-
-checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
-checkOrd env ty = case ty of
-  Var v                 -> checkVarClass env Ord v
-  IntTy                 -> return ()
-  RealTy                -> return ()
-  TC (IntRange _ _ )    -> return ()
-  TC (IndexRange _ _ _) -> return ()
-  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
-
--- TODO: Make this work even if the type has type variables!
-isData :: Type -> Bool
-isData ty = case checkData mempty ty of Left _ -> False
-                                        Right _ -> True
-
-checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> Var -> m ()
-checkVarClass env c (v:>k) = do
-  unless (k == TyKind) $ throw KindErr $ " Only types can belong to type classes"
-  unless (c `elem` cs) $ throw TypeErr $
-              " Type variable \"" ++ pprint v ++ "\" not in class: " ++ pprint c
-  where cs = monMapLookup env v
-
-extendClassEnv :: [TyQual] -> TypeM a -> TypeM a
-extendClassEnv qs m = do
-  r <- ask
-  let classEnv = fold [monMapSingle v [c] | TyQual (v:>_) c <- qs]
-  lift $ extendR classEnv $ runReaderT m r
-
 -- === Normalized IR ===
 
 instance HasType Atom where
-  getEffType atom = pureType $ case atom of
-    Var (_:>ty) -> ty
-    Lam h lam -> Arrow h piTy
-      where Arrow _ piTy = getType lam
-    Arrow _ _ -> TyKind
-    Con con -> getConType $ fmapExpr con id getType getPiType
-    TC _ -> TyKind -- TODO: think about effects, multiplicity etc
-    _ -> error "not implemented"
-
-  checkEffType atom = liftM pureType $ case atom of
-    Var v -> checkPureType v
-    Lam h lam -> do
-      Arrow _ piTy <-checkType lam
-      return $ Arrow h piTy
-    Arrow h _ -> return TyKind -- TODO: check!
-    Con con -> traverseExpr con return checkType checkPiType >>= checkConType
-    TC _ -> return TyKind -- TODO: check!
-
-instance HasType Block where
-  getEffType (Block _ result eff) = (eff, getType result)
-
-  checkEffType (Block (decl@(Let b bexpr):decls) result eff) = do
-    declEff <- addContext ("\nchecking: \n" ++ pprint decl) $ checkDecl
-    (bodyEff, ty) <- extendNamed (bind b) $ checkEffType body
-    eff <- combineEffects declEff bodyEff
-    return (eff, ty)
-    where
-      body = Block decls result eff
-      checkDecl = do
-        (declEff, bt) <- checkEffType bexpr
-        bt' <- checkBinder
-        assertEq bt bt' "Decl"
-        return declEff
-      checkBinder = do
-        kind <- checkKind $ varAnn b
-        assertEq TyKind kind "kind error"
-        (JointTypeEnv env _) <- ask
-        assertNoShadow env b
-        return $ varAnn b
-  checkEffType (Block [] result _) = checkEffType result
+  typeCheck atom = case atom of
+    Var v@(_:>annTy) -> do
+      annTy |: TyKind
+      env <- ask
+      case env of
+        SkipChecks -> return ()
+        CheckWith tyEnv -> case jointEnvLookup tyEnv v of
+          Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+          Just ty -> assertEq annTy ty "Var annotation"
+      return annTy
+    Lam h lam -> Arrow h <$> typeCheckLamExpr lam
+    -- TODO: check effect is empty unless arrowhead is PlainArrow
+    Arrow _ piTy -> typeCheckPiType piTy $> TyKind
+    Con con -> typeCheckCon con
+    TC tyCon -> typeCheckTyCon tyCon $> TyKind
 
 instance HasType Expr where
-  getEffType expr = case expr of
-    App _ f x -> applyPi piTy x
-      where Arrow _ piTy = getType f
-    For _ lam -> (eff, Arrow TabArrow (Pi a (pureType b)))
-      where Arrow _ (Pi a (eff, b)) = getType lam
-    Atom x -> pureType $ getType x
-    Op op -> getOpType $ fmapExpr op id addType getPiType
-      where addType x = (Just x, getType x)
-
-  checkEffType expr = case expr of
+  typeCheck expr = case expr of
     App h f x -> do
-      a <- checkType x
-      Arrow h' piTy@(Pi a' _) <- checkType f
-      assertEq a' a "app argument"
+      Arrow h' piTy@(Pi a _) <- typeCheck f
+      x |: a
       assertEq h' h "arrow head mismatch"
-      return $ applyPi piTy x
+      return $ snd $ applyPi piTy x
     For _ lam -> do
-      Arrow PlainArrow (Pi a (eff, b)) <- checkType lam
-      return (eff, Arrow TabArrow $ Pi a (pureType b))
-    Atom x -> checkEffType x
-    Op op -> do
-      op' <- traverseExpr op return addType checkPiType
-      checkOpType op'
-      where addType x = liftM (Just x,) (checkType x)
+      Pi a (eff, b) <- typeCheckLamExpr lam
+      -- TODO: check pi binder isn't free in `eff`
+      return $ Arrow TabArrow $ Pi a (pureType b)
+    Atom x -> typeCheck x
+    Op op -> typeCheckOp op
 
-instance HasType LamExpr where
-  getEffType (LamExpr b body) =
-    pureType $ Arrow PlainArrow $ makePi b $ getEffType body
+instance HasType Block where
+  typeCheck (Block decls result _) = do
+    checkingEnv <- ask
+    case checkingEnv of
+      SkipChecks -> typeCheck result
+      CheckWith (JointTypeEnv env _) -> do
+        env' <- catFoldM checkDecl env decls
+        withNamedEnv (env <> env') $ typeCheck result
 
-  checkEffType (LamExpr b body) = do
-    bodyTy <- extendNamed (bind b) $ checkEffType body
-    return $ pureType $ Arrow PlainArrow $ makePi b bodyTy
+checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
+checkDecl env decl@(Let b@(_:>annTy) rhs) =
+  withNamedEnv env $ addContext ctxStr $ do
+    -- TODO: effects
+    checkNoShadow env b
+    annTy |: TyKind
+    ty <- typeCheck rhs
+    return $ b @> ty
+  where ctxStr = "\nchecking decl: \n" ++ pprint decl
 
-instance HasType Var where
-  getEffType = pureType . varAnn
+typeCheckLamExpr :: LamExpr -> TypeM (PiType EffectiveType)
+typeCheckLamExpr (LamExpr b@(_:>a) body) = do
+  bodyTy <- local (updateTypeCheckEnv (b @> a)) $ typeCheck body
+  return $ makePi b (noEffect, bodyTy)
 
-  checkEffType v@(_:>annTy) = do
-    x <- asks $ flip jointEnvLookup v
-    case x of
-      Just ty -> do
-        assertEq annTy ty "Var annotation"
-        return $ pureType ty
-      _ -> throw CompilerErr $ "Lookup failed:" ++ pprint v
+typeCheckPiType :: PiType EffectiveType -> TypeM ()
+typeCheckPiType (Pi a b) = return () -- TODO!
 
--- === Effects ===
+withNamedEnv :: TypeEnv -> TypeM a -> TypeM a
+withNamedEnv env m = local (const (CheckWith (fromNamedEnv env))) m
 
-combineEffects :: MonadError Err m => Effect -> Effect -> m Effect
-combineEffects ~eff@(Effect row t) ~eff'@(Effect row' t') = case (t, t') of
-  (Nothing, Nothing) -> do
-    row'' <- rowUnion row row'
-    return $ Effect row'' Nothing
-  (Just _ , Nothing) -> checkRowExtends row  row' >> return eff
-  (Nothing, Just _ ) -> checkRowExtends row' row  >> return eff'
-  (Just _ , Just _)
-    | eff == eff' -> return eff
-    | otherwise -> throw TypeErr $ "Effect mismatch "
-                                 ++ pprint eff ++ " != " ++ pprint eff'
+checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
+checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
 
-checkExtends :: MonadError Err m => Effect -> Effect -> m ()
-checkExtends (Effect row _) (Effect row' Nothing) = checkRowExtends row row'
-checkExtends eff eff' | eff == eff' = return ()
-                      | otherwise   = throw TypeErr $ "Effect mismatch: "
-                           ++ pprint eff ++ " doesn't extend " ++ pprint eff'
+addType :: Atom -> TypeM (Atom, Type)
+addType x = do
+  ty <- typeCheck x
+  return (x, ty)
 
-checkRowExtends :: MonadError Err m => EffectRow Type -> EffectRow Type -> m ()
-checkRowExtends superRow row = do
-  mapM_ (\(t,t') -> assertEq t t' "Effect type mismatch") $ rowMeet superRow row
-  let extraEffects = rowJoin superRow row `envDiff` superRow
-  when (extraEffects /= mempty) $
-    throw TypeErr $ "Extra effects: " ++ pprint extraEffects
+pureType :: Type -> EffectiveType
+pureType ty = (noEffect, ty)
 
-rowUnion :: MonadError Err m
-         => EffectRow Type -> EffectRow Type -> m (EffectRow Type)
-rowUnion (Env m) (Env m') = liftM Env $ sequence $
-  M.unionWith consensusValsErr (fmap return m) (fmap return m')
+infixr 7 |:
+(|:) :: Atom -> Type -> TypeM ()
+(|:) x reqTy = do
+  ty <- typeCheck x
+  checkEq reqTy ty
 
-consensusValsErr :: (Eq a, Pretty a, MonadError Err m) => m a -> m a -> m a
-consensusValsErr x y = do
-  x' <- x
-  y' <- y
-  assertEq x' y' "Map merge"
-  return x'
+-- TODO: consider skipping the checks if the env is Nothing
+checkEq :: Type -> Type -> TypeM ()
+checkEq reqTy ty = assertEq reqTy ty ""
 
-rowMeet :: Env a -> Env b -> Env (a, b)
-rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
-
-rowJoin :: Env a -> Env b -> Env ()
-rowJoin (Env m) (Env m') =
-  Env $ M.unionWith (\() () -> ()) (fmap (const ()) m) (fmap (const ()) m')
-
-popRow :: MonadError Err m
-       => (a -> a -> m ())
-       -> EffectRow a -> (EffectName, a) -> m (EffectRow a)
-popRow eq env (eff, x) = case envLookup env (v:>()) of
-  Nothing -> return env'
-  Just (eff', x') -> do
-    assertEq eff eff' "Effect"
-    eq x x'
-    return env'
-  where v = DeBruijn 0
-        env' = envDelete v env
+updateTypeCheckEnv :: Env Type -> TypeCheckEnv -> TypeCheckEnv
+updateTypeCheckEnv env tcEnv = case tcEnv of
+  SkipChecks -> SkipChecks
+  CheckWith prev -> CheckWith $ prev {namedEnv = namedEnv prev <> env}
 
 -- === primitive ops and constructors ===
 
-type PrimOpType  = PrimOp  Type (Maybe Atom, Type) (PiType EffectiveType)
-type PrimConType = PrimCon Type Type (PiType EffectiveType)
+typeCheckTyCon :: TyCon Type Atom -> TypeM ()
+typeCheckTyCon tc = case tc of
+  BaseType _       -> return ()
+  IntRange a b     -> a|:IntTy >> b|:IntTy
+  IndexRange t a b -> t|:TyKind >> mapM_ (|:TyKind) a >> mapM_ (|:TyKind) b
+  ArrayType _      -> return ()
+  SumType (l, r)   -> l|:TyKind >> r|:TyKind
+  RecType r        -> mapM_ (|:TyKind) r
+  RefType a        -> a|:TyKind
+  TypeKind         -> return ()
 
-getOpType :: PrimOpType -> EffectiveType
-getOpType e = ignoreExcept $ traverseOpType e ignoreArgs ignoreArgs ignoreArgs
-
-getConType :: PrimConType -> Type
-getConType e = ignoreExcept $ traverseConType e ignoreArgs ignoreArgs ignoreArgs
-
-checkOpType :: PrimOpType -> TypeM EffectiveType
-checkOpType e = traverseOpType e checkTypeEq checkKindIs checkClassConstraint
-
-checkConType :: PrimConType -> TypeM Type
-checkConType e = traverseConType e checkTypeEq checkKindIs checkClassConstraint
-
-ignoreArgs :: Monad m => a -> b -> m ()
-ignoreArgs _ _ = return ()
-
-checkTypeEq :: Type -> Type -> TypeM ()
-checkTypeEq ty1 ty2
-  | ty1 == ty2 = return ()
-  | otherwise  = throw TypeErr $ pprint ty1 ++ " != " ++ pprint ty2
-
-isDependentOp :: PrimOp ty e lam -> Bool
-isDependentOp op = case op of
-  PrimEffect _ _   -> True
-  _                -> False
-
-traverseOpType :: MonadError Err m
-               => PrimOpType
-               -> (Type      -> Type -> m ()) -- add equality constraint
-               -> (Kind      -> Type -> m ()) -- add kind constraint
-               -> (ClassName -> Type -> m ()) -- add class constraint
-               -> m EffectiveType
-traverseOpType op eq _ _ | isDependentOp op = case op of
-  PrimEffect ~(Just val, ty) m -> do
-    let (ref, x) = case (val, ty) of
-          (Var ref', RefTy x') -> (ref', x')
-          -- This case is a hack for the Imp lowering, which does a dodgy substitution here
-          -- TODO: something better!
-          _ -> ("###":>UnitTy, ty)
-    case m of
-      MAsk         ->            return (Effect (ref @> (Reader, RefTy x)) Nothing, x)
-      MTell (_,x') -> eq x x' >> return (Effect (ref @> (Writer, RefTy x)) Nothing, UnitTy)
-      MGet         ->            return (Effect (ref @> (State , RefTy x)) Nothing, x)
-      MPut  (_,x') -> eq x x' >> return (Effect (ref @> (State , RefTy x)) Nothing, UnitTy)
-  _ -> error $ "Unexpected primitive type: " ++ pprint op
-
-traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
-  TabCon n ty xs -> do
-    case indexSetConcreteSize n of
-      Nothing -> throw TypeErr $
-         "Literal table must have a concrete index set.\nGot: " ++ pprint n
-      Just n' | n' == length xs -> do inClass Data ty >> mapM_ (eq ty) xs
-                                      return (pureType (n ==> ty))
-              | otherwise -> throw TypeErr $
-                  "Index set size mismatch: " ++
-                     show n' ++ " != " ++ show (length xs)
-  SumCase st lp@(Pi la (leff, lb)) lr@(Pi ra (reff, rb)) -> do
-    unless (not $ any isDependentType [lp, lr]) $ throw TypeErr $
-        "Return type of cases cannot depend on the matched value"
-    eq st (SumTy la ra)
-    inClass Data la
-    inClass Data ra
-    eq leff noEffect
-    eq reff noEffect
-    eq lb rb
-    return $ pureType $ lb
-  RecGet (RecTy r) i -> return $ pureType $ recGet r i
-  SumGet (SumTy l r) isLeft -> return $ pureType $ if isLeft then l else r
-  SumTag (SumTy _ _) -> return $ pureType $ TC $ BaseType BoolType
-  ArrayGep (ArrayTy (_:shape) b) i -> do
-    eq IntTy i
-    return $ pureType $ ArrayTy shape b
-  LoadScalar (ArrayTy [] b) -> return $ pureType $ BaseTy b
-  ScalarBinOp binop t1 t2 -> do
-    eq (BaseTy t1') t1
-    eq (BaseTy t2') t2
-    return $ pureType $ BaseTy tOut
-    where (t1', t2', tOut) = binOpType binop
-  -- TODO: check index set constraint
-  ScalarUnOp unop ty -> eq (BaseTy ty') ty >> return (pureType (BaseTy outTy))
-    where (ty', outTy) = unOpType unop
-  -- -- TODO: check vspace constraints
-  VSpaceOp ty VZero        -> inClass VSpace ty >> return (pureType ty)
-  VSpaceOp ty (VAdd e1 e2) -> inClass VSpace ty >> eq ty e1 >> eq ty e2 >> return (pureType ty)
-  Cmp Equal ty a b -> eq ty a >> eq ty b >> inClass Eq ty  >> return (pureType BoolTy)
-  Cmp _     ty a b -> eq ty a >> eq ty b >> inClass Ord ty >> return (pureType BoolTy)
-  Select ty p a b -> eq ty a >> eq ty b >> eq BoolTy p >> return (pureType ty)
-  RunReader r ~(Pi (RefTy r') (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (Reader, RefTy r)
-    eq r r'
-    return (Effect row' tailVar, a)
-  RunWriter ~(Pi (RefTy w) (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (Writer, RefTy w)
-    return (Effect row' tailVar, PairTy a w)
-  RunState s ~(Pi (RefTy s') (Effect row tailVar, a)) -> do
-    row' <- popRow eq row (State, RefTy s)
-    eq s s'
-    return (Effect row' tailVar, PairTy a s)
-  Linearize (Pi a (eff, b)) -> do
-    eq noEffect eff
-    return $ pureType $ a --> PairTy b (a --@ b)
-  Transpose (Pi a (eff, b)) -> do
-    eq noEffect eff
-    return $ pureType $ b --@ a
-  IntAsIndex ty i  -> eq IntTy i >> return (pureType ty)
-  IndexAsInt t     -> inClass IdxSet t >> return (pureType IntTy)
-  IdxSetSize _     -> return $ pureType IntTy
-  NewtypeCast ty _ -> return $ pureType ty
-  FFICall _ argTys ansTy argTys' ->
-    zipWithM_ eq argTys argTys' >> return (pureType ansTy)
-  Inject (TC (IndexRange ty _ _)) -> return $ pureType ty
-  _ -> error $ "Unexpected primitive type: " ++ pprint op
-
-traverseConType :: MonadError Err m
-                     => PrimConType
-                     -> (Type      -> Type -> m ()) -- add equality constraint
-                     -> (Kind      -> Type -> m ()) -- add kind constraint
-                     -> (ClassName -> Type -> m ()) -- add class constraint
-                     -> m Type
-traverseConType con eq kindIs _ = case con of
-  Lit l    -> return $ BaseTy $ litType l
+typeCheckCon :: Con -> TypeM Type
+typeCheckCon con = case con of
+  Lit l -> return $ BaseTy $ litType l
   ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
-  AnyValue t   -> return $ t
-  SumCon _ l r -> return $ SumTy l r
-  RecCon r -> return $ RecTy r
-  AFor n a -> return $ TabTy n a noEffect
-  AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
-  AsIdx n e -> eq e (BaseTy IntType) >> return n
-  Todo ty -> kindIs TyKind ty >> return ty
-  _ -> error $ "Unexpected primitive type: " ++ pprint con
+  AnyValue t -> t|:TyKind $> t
+  SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
+  RecCon r -> RecTy <$> mapM typeCheck r
+  AFor n a -> TabTy <$> typeCheck n <*> typeCheck a <*> return noEffect
+  AGet x -> do
+    -- TODO: check shape matches AFor scope
+    ArrayTy _ b <- typeCheck x
+    return $ BaseTy b
+  AsIdx n e -> n|:TyKind >> e|:IntTy $> n
+  Todo ty -> ty|:TyKind $> ty
+
+typeCheckOp :: Op -> TypeM Type
+typeCheckOp op = case op of
+  TabCon n ty xs -> do
+    n|:TyKind >> ty|:TyKind >> mapM_ (|:ty) xs
+    Just n' <- return $ indexSetConcreteSize n
+    assertEq n' (length xs) "Index set size mismatch"
+    return (n==>ty)
+  SumCase st l r -> do
+    lp@(Pi la (leff, lb)) <- typeCheckLamExpr l
+    rp@(Pi ra (reff, rb)) <- typeCheckLamExpr r
+    when (any isDependentType [lp, rp]) $ throw TypeErr $
+      "Return type of cases cannot depend on the matched value"
+    checkEq leff noEffect
+    checkEq reff noEffect
+    checkEq lb rb
+    st |: SumTy la ra
+    return lb
+  RecGet x i -> do
+    RecTy r <- typeCheck x
+    return $ recGet r i  -- TODO: make a total version of recGet
+  SumGet x isLeft -> do
+    SumTy l r <- typeCheck x
+    l|:TyKind >> r|:TyKind
+    return $ if isLeft then l else r
+  SumTag x -> do
+    SumTy l r <- typeCheck x
+    l|:TyKind >> r|:TyKind
+    return $ TC $ BaseType BoolType
+  ArrayGep x i -> do
+    ArrayTy (_:shape) b <- typeCheck x
+    i|:IntTy
+    return $ ArrayTy shape b
+  LoadScalar x -> do
+    ArrayTy [] b <- typeCheck x
+    return $ BaseTy b
+  ScalarBinOp binop x1 x2 ->
+    x1 |: BaseTy t1 >> x2 |: BaseTy t2 $> BaseTy tOut
+    where (t1, t2, tOut) = binOpType binop
+  -- TODO: check index set constraint
+  ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
+    where (ty, outTy) = unOpType unop
+  Cmp _ ty x y    -> ty|:TyKind >> x|:ty >> y|:ty $> BoolTy
+  Select ty p x y -> ty|:TyKind >> p|:BoolTy >> x|:ty >> y|:ty $> ty
+  IntAsIndex ty i -> ty|:TyKind >> i|:ty $> ty
+  IndexAsInt i -> typeCheck i $> IntTy
+  IdxSetSize i -> typeCheck i $> IntTy
+  FFICall _ argTys ansTy args -> do
+    mapM_ (|:TyKind) argTys >> ansTy|:TyKind
+    zipWithM_ (|:) args argTys
+    return ansTy
+  Inject i -> do
+    TC (IndexRange ty _ _) <- typeCheck i
+    return ty
+  Linearize lam -> do
+    Pi a (eff, b) <- typeCheckLamExpr lam
+    checkEq noEffect eff
+    return $ a --> PairTy b (a --@ b)
+  Transpose lam -> do
+    Pi a (eff, b) <- typeCheckLamExpr lam
+    checkEq noEffect eff
+    return $ b --@ a
+  _ -> error "not implemented"
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -537,12 +289,6 @@ indexSetConcreteSize ty = case ty of
   _ -> Nothing
 
 -- === Pi types ===
-
-getPiType :: HasType lam => lam -> PiType EffectiveType
-getPiType lam = let (Arrow _ pit) = getType lam in pit
-
-checkPiType :: HasType lam => lam -> TypeM (PiType EffectiveType)
-checkPiType lam = checkType lam >>= \(Arrow _ pit) -> return pit
 
 maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => (PiType t) -> Maybe Atom -> m t
 maybeApplyPi piTy maybeAtom
@@ -617,3 +363,134 @@ instance PiAbstractable EffectiveType where
                                     , instantiateDepType d x b)
   abstractDepType v d (eff, b) = ( abstractDepType v d eff
                                  , abstractDepType v d b)
+
+-- === Effects (CURRENTLY NOT USED) ===
+
+combineEffects :: MonadError Err m => Effect -> Effect -> m Effect
+combineEffects ~eff@(Effect row t) ~eff'@(Effect row' t') = case (t, t') of
+  (Nothing, Nothing) -> do
+    row'' <- rowUnion row row'
+    return $ Effect row'' Nothing
+  (Just _ , Nothing) -> checkRowExtends row  row' >> return eff
+  (Nothing, Just _ ) -> checkRowExtends row' row  >> return eff'
+  (Just _ , Just _)
+    | eff == eff' -> return eff
+    | otherwise -> throw TypeErr $ "Effect mismatch "
+                                 ++ pprint eff ++ " != " ++ pprint eff'
+
+checkExtends :: MonadError Err m => Effect -> Effect -> m ()
+checkExtends (Effect row _) (Effect row' Nothing) = checkRowExtends row row'
+checkExtends eff eff' | eff == eff' = return ()
+                      | otherwise   = throw TypeErr $ "Effect mismatch: "
+                           ++ pprint eff ++ " doesn't extend " ++ pprint eff'
+
+checkRowExtends :: MonadError Err m => EffectRow Type -> EffectRow Type -> m ()
+checkRowExtends superRow row = do
+  mapM_ (\(t,t') -> assertEq t t' "Effect type mismatch") $ rowMeet superRow row
+  let extraEffects = rowJoin superRow row `envDiff` superRow
+  when (extraEffects /= mempty) $
+    throw TypeErr $ "Extra effects: " ++ pprint extraEffects
+
+rowUnion :: MonadError Err m
+         => EffectRow Type -> EffectRow Type -> m (EffectRow Type)
+rowUnion (Env m) (Env m') = liftM Env $ sequence $
+  M.unionWith consensusValsErr (fmap return m) (fmap return m')
+
+consensusValsErr :: (Eq a, Pretty a, MonadError Err m) => m a -> m a -> m a
+consensusValsErr x y = do
+  x' <- x
+  y' <- y
+  assertEq x' y' "Map merge"
+  return x'
+
+rowMeet :: Env a -> Env b -> Env (a, b)
+rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
+
+rowJoin :: Env a -> Env b -> Env ()
+rowJoin (Env m) (Env m') =
+  Env $ M.unionWith (\() () -> ()) (fmap (const ()) m) (fmap (const ()) m')
+
+popRow :: MonadError Err m
+       => (a -> a -> m ())
+       -> EffectRow a -> (EffectName, a) -> m (EffectRow a)
+popRow eq env (eff, x) = case envLookup env (v:>()) of
+  Nothing -> return env'
+  Just (eff', x') -> do
+    assertEq eff eff' "Effect"
+    eq x x'
+    return env'
+  where v = DeBruijn 0
+        env' = envDelete v env
+
+-- === Built-in typeclasses (CURRENTLY NOT USED) ===
+
+checkClassConstraint :: ClassName -> Type -> TypeM ()
+checkClassConstraint c ty = do
+  env <- error "currently broken" -- lift ask
+  case c of
+    VSpace -> checkVSpace env ty
+    IdxSet -> checkIdxSet env ty
+    Data   -> checkData   env ty
+    Eq     -> checkInEq   env ty
+    Ord    -> checkOrd    env ty
+
+checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
+checkVSpace env ty = case ty of
+  Var v     -> checkVarClass env VSpace v
+  RealTy    -> return ()
+  RecTy r   -> mapM_ recur r
+  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
+  where recur = checkVSpace env
+
+checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
+checkIdxSet env ty = case ty of
+  Var v                 -> checkVarClass env IdxSet v
+  RecTy r               -> mapM_ recur r
+  SumTy l r             -> recur l >> recur r
+  BoolTy                -> return ()
+  TC (IntRange _ _)     -> return ()
+  TC (IndexRange _ _ _) -> return ()
+  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
+  where recur = checkIdxSet env
+
+checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
+checkDataLike msg env ty = case ty of
+  -- This is an implicit `instance IdxSet a => Data a`
+  Var v              -> checkVarClass env IdxSet v `catchError`
+                           const (checkVarClass env Data v)
+  TC con -> case con of
+    BaseType _       -> return ()
+    RecType r        -> mapM_ recur r
+    SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r
+    IntRange _ _     -> return ()
+    IndexRange _ _ _ -> return ()
+    _ -> throw TypeErr $ pprint ty ++ msg
+  _   -> throw TypeErr $ pprint ty ++ msg
+  where recur x = checkDataLike msg env x
+
+checkData :: MonadError Err m => ClassEnv -> Type -> m ()
+checkData = checkDataLike " is not serializable"
+
+checkInEq :: MonadError Err m => ClassEnv -> Type -> m ()
+checkInEq = checkDataLike " is not equatable"
+
+checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
+checkOrd env ty = case ty of
+  Var v                 -> checkVarClass env Ord v
+  IntTy                 -> return ()
+  RealTy                -> return ()
+  TC (IntRange _ _ )    -> return ()
+  TC (IndexRange _ _ _) -> return ()
+  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
+
+-- TODO: Make this work even if the type has type variables!
+isData :: Type -> Bool
+isData ty = case checkData mempty ty of Left _ -> False
+                                        Right _ -> True
+
+checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> Var -> m ()
+checkVarClass env c (v:>k) = do
+  unless (k == TyKind) $ throw KindErr $ " Only types can belong to type classes"
+  unless (c `elem` cs) $ throw TypeErr $
+              " Type variable \"" ++ pprint v ++ "\" not in class: " ++ pprint c
+  where cs = monMapLookup env v

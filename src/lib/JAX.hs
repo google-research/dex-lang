@@ -234,11 +234,10 @@ tmpAtomScalarLit :: LitVal -> TmpAtom
 tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit $ arrayFromScalar x) []
 
 instance HasType TmpAtom where
-  getEffType atom = pureType $ case atom of
-    TmpLeaf idxAtom -> jTypeToType $ getJType idxAtom
+  typeCheck atom = case atom of
+    TmpLeaf idxAtom -> return $ jTypeToType $ getJType idxAtom
     TmpRefName _ -> undefined
-    TmpCon con -> getConType $ fmapExpr con id getType $ error "unexpected lambda"
-  checkEffType = error "Not implemented"
+    TmpCon con -> undefined
 
 -- === Simplification pass on JAX IR ===
 
@@ -429,12 +428,12 @@ assertNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
 assertNoMutualShadows bs =
   void $ flip runCatT mempty $ forM bs $ \b -> do
     env <- look
-    assertNoShadow env b
+    checkNoShadow env b
     extend (b@>())
 
 checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
 checkBinders env bs = do
-  mapM_ (assertNoShadow (fst env)) bs
+  mapM_ (checkNoShadow (fst env)) bs
   assertNoMutualShadows bs
 
 instance HasJType IdxAtom where

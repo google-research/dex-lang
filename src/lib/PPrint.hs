@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintList, printLitBlock, asStr,
-               assertEq, assertNoShadow, ignoreExcept) where
+               assertEq, ignoreExcept) where
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
@@ -375,12 +375,6 @@ assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
   where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y ++ "\n"
-
-assertNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
-assertNoShadow env v = do
-  if v `isin` env
-    then throw CompilerErr $ pprint v ++ " shadowed"
-    else return ()
 
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e

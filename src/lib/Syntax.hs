@@ -19,7 +19,7 @@ module Syntax (
     ClassName (..), TyQual (..), SrcPos, Pat, Var, Block (..), Decl (..),
     Expr (..), Atom (..), LamExpr (..), ArrowHead (..), TyCon (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    VSpaceOp (..), ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
+    ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
     CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con,
     Module (..), Module, ImpFunction (..),
@@ -200,7 +200,6 @@ data PrimOp ty e lam =
       | TabCon ty ty [e]
       | ScalarBinOp ScalarBinOp e e
       | ScalarUnOp ScalarUnOp e
-      | VSpaceOp ty (VSpaceOp e)
       | Select ty e e e
       | PrimEffect e (PrimEffect e)
       | RunReader e  lam
@@ -208,7 +207,6 @@ data PrimOp ty e lam =
       | RunState  e  lam
       | Linearize lam | Transpose lam
       | FFICall String [ty] ty [e]
-      | NewtypeCast ty e
       | Inject e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
@@ -222,7 +220,6 @@ data PrimOp ty e lam =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data VSpaceOp e = VZero | VAdd e e deriving (Show, Eq, Generic)
 data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
                  | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
                  | And | Or | Rem
@@ -263,9 +260,6 @@ builtinNames = M.fromList
   , ("linearize"       , OpExpr $ Linearize ())
   , ("linearTranspose" , OpExpr $ Transpose ())
   , ("asidx"           , OpExpr $ IntAsIndex () ())
-  , ("vzero"           , OpExpr $ VSpaceOp () $ VZero)
-  , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
-  , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
   , ("runReader"       , OpExpr $ RunReader () ())
   , ("runWriter"       , OpExpr $ RunWriter    ())
@@ -458,7 +452,7 @@ data ErrType = NoErr
              | MiscErr
   deriving (Show, Eq)
 
-type Except a = Either Err a
+type Except = Either Err
 
 throw :: MonadError Err m => ErrType -> String -> m a
 throw e s = throwError $ Err e Nothing s
@@ -650,8 +644,6 @@ instance TraversableExpr PrimOp where
     LoadScalar e         -> liftA  LoadScalar (fE e)
     ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
     ScalarUnOp  op e     -> liftA  (ScalarUnOp  op) (fE e)
-    VSpaceOp ty VZero    -> liftA2 VSpaceOp (fT ty) (pure VZero)
-    VSpaceOp ty (VAdd e1 e2) -> liftA2 VSpaceOp (fT ty) (liftA2 VAdd (fE e1) (fE e2))
     Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
     Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
     PrimEffect ref m     -> liftA2 PrimEffect (fE ref) $ case m of
@@ -667,7 +659,6 @@ instance TraversableExpr PrimOp where
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
     IndexAsInt e         -> liftA  IndexAsInt (fE e)
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
-    NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
 
       liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
