@@ -6,7 +6,6 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE LambdaCase #-}
 
 module Inference (inferModule) where
@@ -25,7 +24,6 @@ import Record
 import Type
 import PPrint
 import Cat
-import Subst
 
 -- TODO: consider just carrying an `Atom` (since the type is easily recovered)
 type InfEnv = Env (Atom, Type)
@@ -53,7 +51,7 @@ inferModule topEnv (UModule imports exports decls) = do
   let body = wrapDecls decls' $ TupVal resultVals
   return (Module Nothing imports' exports' body, (fmap snd env', mempty))
 
-runUInferM :: (Subst a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
+runUInferM :: (HasVars a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
 runUInferM m env = runSolverT $ runEmbedT (runReaderT m env) scope
   where scope = fmap (const Nothing) env
 
@@ -64,8 +62,8 @@ infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
 -- TODO: think about effects
 checkSigma :: UExpr -> Effect -> SigmaType -> UInferM Atom
 checkSigma expr eff ty = case ty of
-  Arrow ImplicitArrow piTy@(Pi a _) -> do
-    lamExpr <- buildLamExpr ("a":>a) $ \x ->
+  Arrow ImplicitArrow piTy -> do
+    lamExpr <- buildLamExpr ("a":> piArgType piTy) $ \x ->
                  checkSigma expr eff $ snd $ applyPi piTy x
     return $ Lam ImplicitArrow lamExpr
   _ -> checkRho expr eff ty
@@ -96,8 +94,8 @@ emitZonked :: Expr -> UInferM Atom
 emitZonked expr = zonk expr >>= emit
 
 instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
-instantiateSigma (f,  Arrow ImplicitArrow piTy@(Pi argTy _)) = do
-  x <- freshInfVar argTy
+instantiateSigma (f,  Arrow ImplicitArrow piTy) = do
+  x <- freshInfVar $ piArgType piTy
   ans <- emitZonked $ App ImplicitArrow f x
   let (_, ansTy) = applyPi piTy x
   return (ans, ansTy)
@@ -134,13 +132,11 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
       (lamExpr', piTy) <- inferULam lamExpr
       result <- emitZonked $ For dir lamExpr'
       return (result, Inferred $ Arrow TabArrow piTy)
-  -- Feels like it needs de-duping with ULam case, but it's going to look quite
-  -- different once we have effects
   UApp h f x -> do
     (fVal, fTy) <- inferRho f eff
-    (hReq, piTy@(Pi argTy _)) <- fromArrowType fTy
+    (hReq, piTy) <- fromArrowType fTy
     checkArrowHead hReq h
-    xVal <- checkSigma x eff argTy
+    xVal <- checkSigma x eff (piArgType piTy)
     let (appEff, appTy) = applyPi piTy xVal
     checkEffect eff appEff
     appVal <- emitZonked $ App hReq fVal xVal
@@ -152,7 +148,8 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
     b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ do
             extendScope ((v:>())@>Nothing)
             checkUType b
-    let ty = Arrow h $ makePi (v:>a') (noEffect, b')
+    -- TODO: check leaks, and check if v is free
+    let ty = Arrow h $ Pi (v:>a') (noEffect, b')
     matchRequirement (ty, TyKind)
   UDecl decl body -> do
     env <- inferUDecl eff decl
@@ -196,21 +193,22 @@ inferUDecls eff decls = do
     new <- lift $ local (const cur) $ inferUDecl eff decl
     extend new
 
-inferULam :: ULamExpr -> UInferM (LamExpr, PiType EffectiveType)
+inferULam :: ULamExpr -> UInferM (LamExpr, PiType)
 inferULam (ULamExpr (RecLeaf b@(v:>ann)) body) = do
   argTy <- checkAnn ann
   buildLamExprAux (v:>argTy) $ \x@(Var v') -> do
     extendR (b @> (x, argTy)) $ do
       (resultVal, resultTy) <- inferRho body noEffect
-      return (resultVal, makePi v' (noEffect, resultTy))
+      return (resultVal, Pi v' (noEffect, resultTy))
 
-checkULam :: ULamExpr -> PiType EffectiveType -> UInferM LamExpr
-checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy@(Pi argTy' _) = do
+checkULam :: ULamExpr -> PiType -> UInferM LamExpr
+checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy = do
+  let reqArgTy = piArgType piTy
   argTy <- checkAnn ann
-  constrainEq argTy' argTy
+  constrainEq reqArgTy argTy
   buildLamExpr (v:>argTy) $ \x -> do
     let (lamEff, resultTy) = applyPi piTy x
-    extendR (b @> (x, argTy')) $ do
+    extendR (b @> (x, reqArgTy)) $ do
       resultVal <- checkSigma body lamEff resultTy
       return resultVal
 
@@ -248,7 +246,7 @@ checkArrowHead ahReq ahOff = case (ahReq, ahOff) of
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint ahOff
 
-fromArrowType :: Type -> UInferM (ArrowHead, PiType EffectiveType)
+fromArrowType :: Type -> UInferM (ArrowHead, PiType)
 fromArrowType (Arrow h piTy) = return (h, piTy)
 fromArrowType ty = error $ "Not an arrow type: " ++ pprint ty
 
@@ -258,7 +256,7 @@ data SolverEnv = SolverEnv { solverVars :: Env Kind
                            , solverSub  :: Env Type }
 type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, Subst a, Pretty a)
+runSolverT :: (MonadError Err m, HasVars a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m
@@ -277,14 +275,14 @@ applyDefaults = do
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
-solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, Subst a)
+solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
            => m a -> m a
 solveLocal m = do
   (ans, env@(SolverEnv freshVars sub)) <- scoped (m >>= zonk)
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, Subst a)
+checkLeaks :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
            => [Var] -> m a -> m a
 checkLeaks tvs m = do
   (ans, env) <- scoped $ solveLocal m
@@ -312,7 +310,7 @@ constrainEq t1 t2 = do
          ++ "\n  Actual: " ++ pprint t2'
   addContext msg $ unify t1' t2'
 
-zonk :: (Subst a, MonadCat SolverEnv m) => a -> m a
+zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a
 zonk x = do
   s <- looks solverSub
   return $ tySubst s x
@@ -328,9 +326,14 @@ unify t1 t2 = do
     _ | t1' == t2' -> return ()
     (t, Var v) | v `isin` vs -> bindQ v t
     (Var v, t) | v `isin` vs -> bindQ v t
-    (Arrow h (Pi a (eff, b)), Arrow h' (Pi a' (eff', b'))) | h == h' -> do
-        -- TODO: think very hard about the leak checks we need to add here
-        unify a a' >> unify b b' >> unify eff eff'
+    (Arrow h piTy, Arrow h' piTy') | h == h' -> do
+       unify (piArgType piTy) (piArgType piTy')
+       let v = Var $ freshSkolemVar (piTy, piTy') (piArgType piTy)
+       -- TODO: think very hard about the leak checks we need to add here
+       let (eff , resultTy ) = applyPi piTy  v
+       let (eff', resultTy') = applyPi piTy' v
+       unify resultTy resultTy'
+       unify eff eff'
     (Effect r t, Effect r' t') -> do
       let shared = rowMeet r r'
       forM_ shared $ \((e, et), (e', et')) -> do
@@ -339,7 +342,6 @@ unify t1 t2 = do
       newTail <- liftM Just $ freshInferenceVar $ TC EffectKind
       matchTail t  $ Effect (envDiff r' shared) newTail
       matchTail t' $ Effect (envDiff r  shared) newTail
-    -- (TabTy a b, TabTy a' b') -> unify a a' >> unify b b'
     (TC con, TC con') -> case (con, con') of
       (RefType a, RefType a') -> unify a a'
       (RecType r, RecType r') ->
@@ -364,10 +366,13 @@ matchTail t ~eff@(Effect row t') = do
     (_, Just (Var v)) | v `isin` vs && row == mempty -> zonk (Effect mempty t) >>= bindQ v
     _ -> throw TypeErr ""
 
--- TODO: check we're not unifying with deBruijn/skolem vars
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
+          | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
           | otherwise = extend $ mempty { solverSub = v @> t }
+
+hasSkolems :: HasVars a => a -> Bool
+hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
 
 occursIn :: Var -> Type -> Bool
 occursIn v t = v `isin` freeVars t
@@ -383,5 +388,5 @@ instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
 
-tySubst :: Subst a => Env Type -> a -> a
+tySubst :: HasVars a => Env Type -> a -> a
 tySubst env atom = subst (env, mempty) atom

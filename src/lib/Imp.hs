@@ -26,7 +26,6 @@ import Env
 import Type
 import PPrint
 import Cat
-import Subst
 import Record
 
 type EmbedEnv = ([IVar], (Scope, ImpProg))
@@ -81,7 +80,7 @@ substLamPartial env (LamExpr b body) = do
   b' <- traverse (impSubst env) b
   return (LamExpr b' body, env)
 
-impSubst :: Subst a => SubstEnv -> a -> ImpM a
+impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
   scope <- looks (fst . snd)
   return $ subst (env, scope) x

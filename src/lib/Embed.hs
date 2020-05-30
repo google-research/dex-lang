@@ -32,7 +32,6 @@ import Env
 import Syntax
 import Cat
 import Type
-import Subst
 import Record
 import PPrint
 
@@ -216,7 +215,7 @@ transposeRecord :: Record b -> [Record a] -> Record [a]
 transposeRecord r [] = fmap (const []) r
 transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
 
-substEmbed :: (MonadEmbed m, MonadReader SubstEnv m, Subst a)
+substEmbed :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
            => a -> m a
 substEmbed x = do
   env <- ask

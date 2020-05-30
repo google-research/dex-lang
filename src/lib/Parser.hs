@@ -125,7 +125,7 @@ explicitCommand = do
 declAsModule :: UDecl -> UModule
 declAsModule decl@(ULet pat _) = UModule imports exports [decl]
  where
-   imports = envNames $ freeVars decl
+   imports = envNames $ freeUVars decl
    exports = envNames $ foldMap (@>()) pat
 
 exprAsModule :: UExpr -> (Name, UModule)
@@ -133,7 +133,7 @@ exprAsModule e = (v, UModule imports [v] body)
   where
     v = "*ans*"
     body = [ULet (RecLeaf (v:>Nothing)) e]
-    imports = envNames $ freeVars e
+    imports = envNames $ freeUVars e
 
 tauType :: Parser Type
 tauType = undefined

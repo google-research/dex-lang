@@ -29,14 +29,14 @@ module Syntax (
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, PassName (..), parsePassName,
-    TraversableExpr, traverseExpr, fmapExpr, freeVars, HasVars,
-    strToName, nameToStr, unzipExpr, bind,
+    TraversableExpr, traverseExpr, fmapExpr, freeVars, freeUVars, HasVars,
+    strToName, nameToStr, unzipExpr,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
     traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
     newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    JointTypeEnv(..), fromNamedEnv, jointEnvLookup, extendNamed, extendDeBruijn,
-    jointEnvGet, UExpr (..), UExpr' (..), UType, UBinder, UVar,
+    UExpr (..), UExpr' (..), UType, UBinder, UVar,
     Pat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
+    subst, deShadow, scopelessSubst, piArgType, applyPi, freshSkolemVar,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
@@ -59,6 +59,7 @@ import Data.Maybe (fromJust)
 import Control.Applicative (liftA3)
 import GHC.Generics
 
+import Cat
 import Record
 import Env
 import Array
@@ -67,7 +68,7 @@ import Array
 
 data Atom = Var Var
           | Lam   ArrowHead LamExpr
-          | Arrow ArrowHead (PiType EffectiveType)
+          | Arrow ArrowHead PiType
           -- (Maybe Type) for the optional row tail variable
           | Effect (EffectRow Type) (Maybe Type)
           | Con (PrimCon Type Atom LamExpr)
@@ -86,8 +87,7 @@ data Block = Block [Decl] Expr Effect
 type Var  = VarP Type
 data Decl = Let Var Expr  deriving (Show, Eq, Generic)
 data LamExpr = LamExpr Var Block  deriving (Show, Eq, Generic)
--- TODO: skip the whole de Bruijn business and just work with skolems
-data PiType b = Pi Type b  deriving (Eq, Show)
+data PiType = Pi Var EffectiveType  deriving (Show)
 
 data ArrowHead = PlainArrow
                | ImplicitArrow
@@ -103,9 +103,6 @@ type Op  = PrimOp  Type Atom LamExpr
 type Con = PrimCon Type Atom LamExpr
 
 type TypeEnv  = Env Type
-type SubstEnv = Env Atom
-type Scope    = Env (Maybe Expr)
-
 type SrcPos = (Int, Int)
 
 data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
@@ -374,27 +371,6 @@ monMapLookup :: (Monoid v, Ord k) => MonMap k v -> k -> v
 monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
                                                  Just v  -> v
 
--- === Environment for type and kind checking ===
-
-data JointTypeEnv = JointTypeEnv { namedEnv :: TypeEnv, deBruijnEnv :: [Type] }
-
-fromNamedEnv :: TypeEnv -> JointTypeEnv
-fromNamedEnv env = JointTypeEnv env []
-
-jointEnvLookup :: JointTypeEnv -> VarP ann -> Maybe Type
-jointEnvLookup jenv v = case varName v of
-  DeBruijn idx -> Just $ deBruijnEnv jenv !! idx
-  _            -> envLookup (namedEnv jenv) v
-
-jointEnvGet :: JointTypeEnv -> VarP ann -> Type
-jointEnvGet jenv v = fromJust $ jointEnvLookup jenv v
-
-extendNamed :: MonadReader JointTypeEnv m => TypeEnv -> m a -> m a
-extendNamed env m = local (\jenv -> jenv { namedEnv = namedEnv jenv <> env }) m
-
-extendDeBruijn :: MonadReader JointTypeEnv m => Type -> m a -> m a
-extendDeBruijn t m = local (\jenv -> jenv { deBruijnEnv = t : deBruijnEnv jenv }) m
-
 -- === passes ===
 
 data PassName = Parse | TypePass | NormPass | SimpPass | ImpPass | JitPass
@@ -488,97 +464,111 @@ liftEitherIO (Right x ) = return x
 instance MonadFail (Either Err) where
   fail s = Left $ Err CompilerErr Nothing s
 
--- === substitutions ===
+-- === UExpr free variables ===
+
+type UVars = Env ()
+
+class HasUVars a where
+  freeUVars :: a -> UVars
+
+instance HasUVars UExpr where
+  freeUVars (UPos _ e) = freeUVars e
+
+instance HasUVars UExpr' where
+  freeUVars expr = case expr of
+    UVar v -> v@>()
+    ULam _ lam -> freeUVars lam
+    UFor _ lam -> freeUVars lam
+    UApp _ f x -> freeUVars f <> freeUVars x
+    UArrow _ piTy -> freeUVars piTy
+    UDecl decl@(ULet p _) body ->
+      freeUVars decl <> (freeUVars body `envDiff` boundVars)
+      where boundVars = foldMap (@>()) p
+    UAnnot expr ann -> freeUVars expr <> freeUVars ann
+    _ -> mempty
+
+instance HasUVars UDecl where
+  freeUVars (ULet p expr) = foldMap uBinderFreeVars p <> freeUVars expr
+
+instance HasUVars ULamExpr where
+  freeUVars (ULamExpr p expr) =
+    foldMap uBinderFreeVars p <> (freeUVars expr `envDiff` foldMap (@>()) p)
+
+instance HasUVars UPiType where
+  freeUVars (UPi v@(_:>ann) b) = freeUVars ann <> (freeUVars b `envDiff` (v@>()))
+
+instance HasUVars SourceBlock where
+  freeUVars block = case sbContents block of
+    RunModule (   UModule vs _ _) -> foldMap nameAsEnv vs
+    Command _ (_, UModule vs _ _) -> foldMap nameAsEnv vs
+    GetNameType v                 -> v @> ()
+    _ -> mempty
+
+uBinderFreeVars :: UBinder -> UVars
+uBinderFreeVars (_:>ann) = foldMap freeUVars ann
+
+sourceBlockBoundVars :: SourceBlock -> UVars
+sourceBlockBoundVars block = case sbContents block of
+  RunModule (UModule _ vs _) -> foldMap nameAsEnv vs
+  LoadData p _ _             -> foldMap (@>()) p
+  _                          -> mempty
+
+nameAsEnv :: Name -> UVars
+nameAsEnv v = (v:>())@>()
+
+-- === Expr free variables and substitutions ===
 
 type Vars = TypeEnv
+type SubstEnv = Env Atom
+type Scope    = Env (Maybe Expr)
+type ScopedSubstEnv = (SubstEnv, Scope)
 
-bind :: VarP a -> Env a
-bind v@(_:>ty) = v @> ty
-
-newEnv :: [VarP ann] -> [a] -> Env a
-newEnv vs xs = fold $ zipWith (@>) vs xs
+scopelessSubst :: HasVars a => SubstEnv -> a -> a
+scopelessSubst env x = subst (env, scope) x
+  where scope = fmap (const Nothing) $
+          foldMap freeVars env <> (freeVars x `envDiff` env)
 
 class HasVars a where
   freeVars :: a -> Vars
+  subst :: ScopedSubstEnv -> a -> a
 
-instance HasVars UExpr where
-  freeVars (UPos _ e) = freeVars e
+instance HasVars PiType where
+  freeVars (Pi b@(_:>ty) body) = freeVars ty <> (freeVars body `envDiff` (b@>()))
+  subst env (Pi (v:>ty) body) = Pi b body'
+    where (b, env') = refreshBinder env (v:> subst env ty)
+          body' = subst (env <> env') body
 
-instance HasVars UExpr' where
-  freeVars expr = case expr of
-    UVar v -> uVarFreeVars v
-    ULam _ lam -> freeVars lam
-    UFor _ lam -> freeVars lam
-    UApp _ f x -> freeVars f <> freeVars x
-    UArrow _ piTy -> freeVars piTy
-    UDecl decl@(ULet p _) body ->
-      freeVars decl <> (freeVars body `envDiff` boundVars)
-      where boundVars = foldMap (@>Nothing) p
-    UAnnot expr ann -> freeVars expr <> freeVars ann
-    _ -> mempty
+instance Eq PiType where
+  Pi (NoName:>a) b == Pi (NoName:>a') b' = a == a' && b == b'
+  piTy@(Pi (_:>a) _) == piTy'@(Pi (_:>a') _) =
+    a == a' && applyPi piTy v == applyPi piTy' v
+    where v = Var $ freshSkolemVar (piTy, piTy') a
 
-instance HasVars UDecl where
-  freeVars (ULet p expr) = foldMap uBinderFreeVars p <> freeVars expr
-
-instance HasVars ULamExpr where
-  freeVars (ULamExpr p expr) =
-    foldMap uBinderFreeVars p <> (freeVars expr `envDiff` foldMap (@>()) p)
-
-instance HasVars UPiType where
-  freeVars (UPi v@(_:>ann) b) = freeVars ann <> (freeVars b `envDiff` (v@>()))
-
-
-uBinderFreeVars :: UBinder -> Vars
-uBinderFreeVars (_:>ann) = foldMap freeVars ann
-
-uVarFreeVars :: UVar -> Vars
-uVarFreeVars (DeBruijn _ :> ann) = freeVars ann
-uVarFreeVars v@(_:>ann) = v @> UnitTy <> freeVars ann
-
-nameAsEnv :: Name -> Vars
-nameAsEnv v = (v:>())@>UnitTy
-
-sourceBlockBoundVars :: SourceBlock -> Vars
-sourceBlockBoundVars block = case sbContents block of
-  RunModule (UModule _ vs _) -> foldMap nameAsEnv vs
-  -- LoadData p _ _             -> foldMap nameAsEnv p
-  _                          -> mempty
-
-instance HasVars b => HasVars (PiType b) where
-  freeVars (Pi a b) = freeVars a <> freeVars b
+freshSkolemVar :: HasVars a => a -> Type -> Var
+freshSkolemVar x ty = rename (rawName Skolem "x" :> ty) (freeVars x)
 
 -- NOTE: We don't have an instance for VarP, because it's used to represent
 --       both binders and regular variables, but each requires different treatment
 freeBinderTypeVars :: Var -> Vars
 freeBinderTypeVars (_ :> t) = freeVars t
 
+applyPi :: PiType -> Atom -> EffectiveType
+applyPi (Pi v body) x = scopelessSubst (v@>x) body
+
+piArgType :: PiType -> Type
+piArgType (Pi (_:>ty) _) = ty
+
+isDependentType :: PiType -> Bool
+isDependentType (Pi v body) = v `isin` freeVars body
+
 varFreeVars :: Var -> Vars
-varFreeVars (DeBruijn _ :> t) = freeVars t
 varFreeVars v@(_ :> t) = bind v <> freeVars t
 
-instance HasVars () where
-  freeVars () = mempty
+bind :: VarP a -> Env a
+bind v@(_:>ty) = v @> ty
 
-instance (HasVars a, HasVars b) => HasVars (a, b) where
-  freeVars (x, y) = freeVars x <> freeVars y
-
-instance HasVars SourceBlock where
-  freeVars block = case sbContents block of
-    RunModule (   UModule vs _ _) -> foldMap nameAsEnv vs
-    Command _ (_, UModule vs _ _) -> foldMap nameAsEnv vs
-    GetNameType v                     -> v @> varAnn v
-    _ -> mempty
-
-instance HasVars Block where
-  -- TODO: effects
-  freeVars (Block [] result _) = freeVars result
-  freeVars (Block (decl@(Let b _):decls) result eff) =
-    freeVars decl <> (freeVars body `envDiff` (b@>()))
-    where body = Block decls result eff
-
-instance HasVars LamExpr where
-  freeVars (LamExpr b body) =
-    freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
+newEnv :: [VarP ann] -> [a] -> Env a
+newEnv vs xs = fold $ zipWith (@>) vs xs
 
 instance HasVars Atom where
   freeVars atom = case atom of
@@ -591,6 +581,22 @@ instance HasVars Atom where
     TC ty -> execWriter $ traverseTyCon ty (\t -> t <$ tell (freeVars t))
                                            (\e -> e <$ tell (freeVars e))
 
+  subst env@(sub, _) atom = case atom of
+    Var v -> substVar env v
+    Lam   h lam  -> Lam   h $ subst env lam
+    Arrow h piTy -> Arrow h $ subst env piTy
+    Effect _ _ -> noEffect
+    TC con -> TC $ fmapTyCon con (subst env) (subst env)
+    Con con -> Con $ subst env con
+
+substVar :: (SubstEnv, Scope) -> Var -> Atom
+substVar env@(sub, scope) v = case envLookup sub v of
+  Nothing -> Var $ fmap (subst env) v
+  Just x' -> deShadow x' scope
+
+deShadow :: HasVars a => a -> Scope -> a
+deShadow x scope = subst (mempty, scope) x
+
 instance HasVars Expr where
   freeVars expr = case expr of
     App _ f x -> freeVars f <> freeVars x
@@ -598,18 +604,72 @@ instance HasVars Expr where
     Atom atom -> freeVars atom
     Op op -> freeVars op
 
+  subst env expr = case expr of
+    App h f x   -> App h (subst env f) (subst env x)
+    For dir lam -> For dir $ subst env lam
+    Atom x      -> Atom $ subst env x
+    Op op       -> Op $ fmapExpr op (subst env) (subst env) (subst env)
+
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
+  subst env (Let (v:>ty) bound) = Let (v:> subst env ty) (subst env bound)
 
-instance HasVars a => HasVars (Env a) where
-  freeVars env = foldMap freeVars env
+instance HasVars Block where
+  -- TODO: effects
+  freeVars (Block [] result _) = freeVars result
+  freeVars (Block (decl@(Let b _):decls) result eff) =
+    freeVars decl <> (freeVars body `envDiff` (b@>()))
+    where body = Block decls result eff
+
+  -- TODO: effects
+  subst env (Block decls result eff) = do
+    let (decls', env') = catMap substDecl env decls
+    let result' = subst (env <> env') result
+    Block decls' result' eff
+
+instance HasVars LamExpr where
+  freeVars (LamExpr b body) =
+    freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
+
+  subst env (LamExpr (v:>ty) body) = LamExpr b body'
+    where (b, env') = refreshBinder env (v:> subst env ty)
+          body' = subst (env <> env') body
+
+substDecl :: ScopedSubstEnv -> Decl -> (Decl, ScopedSubstEnv)
+substDecl env (Let (v:>ty) bound) = (Let b (subst env bound), env')
+  where (b, env') = refreshBinder env (v:> subst env ty)
+
+refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
+refreshBinder (_, scope) b = (b', env')
+  where b' = rename b scope
+        env' = (b@>Var b', b'@>Nothing)
 
 instance HasVars TopEnv where
   freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
 
+instance HasVars () where
+  freeVars () = mempty
+  subst _ () = ()
+
+instance (HasVars a, HasVars b) => HasVars (a, b) where
+  freeVars (x, y) = freeVars x <> freeVars y
+  subst env (x, y) = (subst env x, subst env y)
+
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
   freeVars (Right x) = freeVars x
+
+instance HasVars a => HasVars (Env a) where
+  freeVars x = foldMap freeVars x
+  subst env x = fmap (subst env) x
+
+instance HasVars a => HasVars (RecTree a) where
+  freeVars x = foldMap freeVars x
+  subst env x = fmap (subst env) x
+
+instance HasVars a => HasVars [a] where
+  freeVars x = foldMap freeVars x
+  subst env x = fmap (subst env) x
 
 fmapExpr :: TraversableExpr expr
          => expr ty e lam
@@ -680,6 +740,7 @@ instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
          => HasVars (expr ty e lam) where
   freeVars expr = execWriter $
     traverseExpr expr (tell . freeVars) (tell . freeVars) (tell . freeVars)
+  subst env expr = fmapExpr expr (subst env) (subst env) (subst env)
 
 unzipExpr :: TraversableExpr expr
           => expr ty e lam -> (expr () () (), ([ty], [e], [lam]))
@@ -732,13 +793,13 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = Arrow PlainArrow $ Pi a (noEffect, b)
+a --> b = Arrow PlainArrow $ Pi (NoName:>a) (noEffect, b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = Arrow LinArrow $ Pi a (noEffect, b)
+a --@ b = Arrow LinArrow $ Pi (NoName:>a) (noEffect, b)
 
 (==>) :: Type -> Type -> Type
-a ==> b = Arrow TabArrow $ Pi a (noEffect, b)
+a ==> b = Arrow TabArrow $ Pi (NoName:>a) (noEffect, b)
 
 pattern IntVal :: Int -> Atom
 pattern IntVal x = Con (Lit (IntLit x))
@@ -809,7 +870,7 @@ pattern TabGet xs i = App TabArrow xs i
 -- we want to pattern-match against the empty effect too, but our current
 -- representation doesn't allow that
 pattern TabTy :: Atom -> Atom -> Effect -> Type
-pattern TabTy xs i eff = Arrow TabArrow (Pi xs (eff, i))
+pattern TabTy xs i eff = Arrow TabArrow (Pi (NoName:>xs) (eff, i))
 
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}

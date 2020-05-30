@@ -20,7 +20,6 @@ import Env
 import Syntax
 import Cat
 import PPrint
-import Subst
 import Embed
 import Record
 
@@ -366,7 +365,7 @@ emitCT v ct = do
 emitCTToRef :: Var -> Atom -> TransposeM ()
 emitCTToRef ref ct = void $ emitOp $ PrimEffect (Var ref) (MTell ct)
 
-substTranspose :: Subst a => a -> TransposeM a
+substTranspose :: HasVars a => a -> TransposeM a
 substTranspose x = do
   env <- asks snd
   scope <- getScope

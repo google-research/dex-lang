@@ -34,7 +34,6 @@ import LLVMExec
 import PPrint
 import Parser
 import PipeRPC
-import Subst
 import JAX
 import Util (highlightRegion)
 
@@ -216,7 +215,7 @@ requestArrays backend vs = case backend of
 arrayVars :: HasVars a => a -> [Var]
 arrayVars x = [v:>ty | (v@(Name ArrayName _ _), ty) <- envPairs (freeVars x)]
 
-substArrayLiterals :: (HasVars a, Subst a) => BackendEngine -> a -> IO a
+substArrayLiterals :: HasVars a => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
   let vs = arrayVars x
   arrays <- requestArrays backend vs

@@ -19,7 +19,7 @@ library
   exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, PPrint, Array,
                        Actor, Cat, Flops, Embed, Serialize,
-                       RenderHtml, Plot, LiveOutput, Subst, Simplify, TopLevel,
+                       RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, JAX, Interpreter, Logging, PipeRPC
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,

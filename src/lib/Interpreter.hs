@@ -10,7 +10,6 @@ import Cat
 import Syntax
 import Env
 import PPrint
-import Subst
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double

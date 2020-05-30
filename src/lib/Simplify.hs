@@ -18,7 +18,6 @@ import Syntax
 import Cat
 import Embed
 import Record
-import Subst
 import Type
 import PPrint
 import Util (uncurry3)
@@ -87,7 +86,7 @@ simplifyAtom atom = case atom of
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
 simplifyLam (LamExpr b body) = do
-  b' <- substEmbed b
+  b' <- mapM substEmbed b
   if isData (getType body)
     then do
       lam <- buildLamExpr b' $ \x -> extendR (b@>x) $ simplifyBlock body

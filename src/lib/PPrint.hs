@@ -80,8 +80,9 @@ instance (Pretty ty, Pretty atom) => Pretty (TyCon ty atom) where
     TypeKind   -> "Type"
     EffectKind -> "Effect"
 
-instance Pretty b => Pretty (PiType b) where
-  pretty (Pi a b) = "Pi" <+> p a <+> p b
+instance Pretty PiType where
+  pretty (Pi (NoName:>a) b) = p a <+> "-->" <+> p b
+  pretty (Pi v b) = parens (p v) <+> "-->" <+> p b
 
 instance Pretty EffectName where
   pretty x = p (show x)
@@ -180,12 +181,6 @@ instance PrettyLam () where
 
 instance (Pretty a, Pretty b) => PrettyLam (a, b) where
   prettyLam (x, y) = (p x, p y)
-
-instance PrettyLam (PiType EffectiveType) where
-  prettyLam (Pi a (eff, b)) = (p a, p eff <+> p b)
-
-instance PrettyLam (PiType Type) where
-  prettyLam (Pi a b) = (p a, p b)
 
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =

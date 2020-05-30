@@ -12,7 +12,8 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd, capture, asCat, evalCatT,
-            Cat, runCat, newCatT, catTraverse, catFold, catFoldM) where
+            Cat, runCat, newCatT, catTraverse,
+            catFold, catFoldM, catMap, catMapM) where
 
 -- Monad for tracking monoidal state
 
@@ -137,6 +138,18 @@ catFoldM f env xs = liftM snd $ flip runCatT env $ forM_ xs $ \x -> do
 catFold :: (Monoid env, Traversable t)
         => (env -> a -> env) -> env -> t a -> env
 catFold f env xs = runIdentity $ catFoldM (\e x -> Identity $ f e x) env xs
+
+catMapM :: (Monoid env, Traversable t, Monad m)
+        => (env -> a -> m (b, env)) -> env -> t a -> m (t b, env)
+catMapM f env xs = flip runCatT env $ forM xs $ \x -> do
+  cur <- look
+  (y, new) <- lift $ f cur x
+  extend new
+  return y
+
+catMap :: (Monoid env, Traversable t)
+        => (env -> a -> (b, env)) -> env -> t a -> (t b, env)
+catMap f env xs = runIdentity $ catMapM (\e x -> Identity $ f e x) env xs
 
 asCat :: (Monoid menv, MonadReader env m)
       => (a -> m (b, menv)) -> (menv -> env) -> a -> CatT menv m b

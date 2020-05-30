@@ -10,8 +10,8 @@
 
 module Type (
   getType, getEffType, checkEffType, HasType (..), Checkable (..), litType,
-  binOpType, unOpType, isData, indexSetConcreteSize, maybeApplyPi, makePi,
-  applyPi, pureType, checkNoShadow) where
+  binOpType, unOpType, isData, indexSetConcreteSize, applyPi, piArgType,
+  pureType, checkNoShadow) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -28,11 +28,10 @@ import Env
 import Record
 import PPrint
 import Cat
-import Subst
 
 type ClassEnv = MonMap Name [ClassName]
 
-data TypeCheckEnv = SkipChecks | CheckWith JointTypeEnv
+data TypeCheckEnv = SkipChecks | CheckWith TypeEnv
 -- TODO: put the effects in a writer/cat monad here
 type TypeM = ReaderT TypeCheckEnv Except
 
@@ -43,7 +42,7 @@ getEffType :: HasType a => a -> EffectiveType
 getEffType x = ignoreExcept $ runTypeCheck SkipChecks x
 
 checkEffType :: HasType a => TypeEnv -> a -> Except EffectiveType
-checkEffType env x = runTypeCheck (CheckWith (fromNamedEnv env)) x
+checkEffType env x = runTypeCheck (CheckWith env) x
 
 class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
@@ -62,7 +61,7 @@ class Pretty a => Checkable a where
 instance Checkable Module where
   checkValid m@(Module _ imports exports block) =
     asCompilerErr $ do
-      let env = fromNamedEnv $ foldMap varAsEnv imports
+      let env = foldMap varAsEnv imports
       (eff, TupTy outTys) <- runTypeCheck (CheckWith env) block
       assertEq noEffect eff "module effect"
       assertEq (map varAnn exports) outTys "export types"
@@ -81,7 +80,7 @@ instance HasType Atom where
       env <- ask
       case env of
         SkipChecks -> return ()
-        CheckWith tyEnv -> case jointEnvLookup tyEnv v of
+        CheckWith tyEnv -> case envLookup tyEnv v of
           Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
           Just ty -> assertEq annTy ty "Var annotation"
       return annTy
@@ -94,8 +93,8 @@ instance HasType Atom where
 instance HasType Expr where
   typeCheck expr = case expr of
     App h f x -> do
-      Arrow h' piTy@(Pi a _) <- typeCheck f
-      x |: a
+      Arrow h' piTy <- typeCheck f
+      x |: piArgType piTy
       assertEq h' h "arrow head mismatch"
       return $ snd $ applyPi piTy x
     For _ lam -> do
@@ -110,13 +109,13 @@ instance HasType Block where
     checkingEnv <- ask
     case checkingEnv of
       SkipChecks -> typeCheck result
-      CheckWith (JointTypeEnv env _) -> do
+      CheckWith env -> do
         env' <- catFoldM checkDecl env decls
-        withNamedEnv (env <> env') $ typeCheck result
+        withEnv (env <> env') $ typeCheck result
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
 checkDecl env decl@(Let b@(_:>annTy) rhs) =
-  withNamedEnv env $ addContext ctxStr $ do
+  withEnv env $ addContext ctxStr $ do
     -- TODO: effects
     checkNoShadow env b
     annTy |: TyKind
@@ -124,16 +123,19 @@ checkDecl env decl@(Let b@(_:>annTy) rhs) =
     return $ b @> ty
   where ctxStr = "\nchecking decl: \n" ++ pprint decl
 
-typeCheckLamExpr :: LamExpr -> TypeM (PiType EffectiveType)
+typeCheckLamExpr :: LamExpr -> TypeM PiType
 typeCheckLamExpr (LamExpr b@(_:>a) body) = do
   bodyTy <- local (updateTypeCheckEnv (b @> a)) $ typeCheck body
-  return $ makePi b (noEffect, bodyTy)
+  let effTy = (noEffect, bodyTy)
+   -- A pi type must have `NoName` binder to be considered non-dependent arrow
+  let piBinder = if b `isin` freeVars effTy then b else NoName:> varAnn b
+  return $ Pi piBinder effTy
 
-typeCheckPiType :: PiType EffectiveType -> TypeM ()
+typeCheckPiType :: PiType -> TypeM ()
 typeCheckPiType (Pi a b) = return () -- TODO!
 
-withNamedEnv :: TypeEnv -> TypeM a -> TypeM a
-withNamedEnv env m = local (const (CheckWith (fromNamedEnv env))) m
+withEnv :: TypeEnv -> TypeM a -> TypeM a
+withEnv env m = local (const (CheckWith env)) m
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
 checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
@@ -157,9 +159,9 @@ checkEq :: Type -> Type -> TypeM ()
 checkEq reqTy ty = assertEq reqTy ty ""
 
 updateTypeCheckEnv :: Env Type -> TypeCheckEnv -> TypeCheckEnv
-updateTypeCheckEnv env tcEnv = case tcEnv of
+updateTypeCheckEnv new tcEnv = case tcEnv of
   SkipChecks -> SkipChecks
-  CheckWith prev -> CheckWith $ prev {namedEnv = namedEnv prev <> env}
+  CheckWith prev -> CheckWith $ prev <> new
 
 -- === primitive ops and constructors ===
 
@@ -197,10 +199,8 @@ typeCheckOp op = case op of
     assertEq n' (length xs) "Index set size mismatch"
     return (n==>ty)
   SumCase st l r -> do
-    lp@(Pi la (leff, lb)) <- typeCheckLamExpr l
-    rp@(Pi ra (reff, rb)) <- typeCheckLamExpr r
-    when (any isDependentType [lp, rp]) $ throw TypeErr $
-      "Return type of cases cannot depend on the matched value"
+    lp@(Pi (NoName:>la) (leff, lb)) <- typeCheckLamExpr l
+    rp@(Pi (NoName:>ra) (reff, rb)) <- typeCheckLamExpr r
     checkEq leff noEffect
     checkEq reff noEffect
     checkEq lb rb
@@ -243,11 +243,11 @@ typeCheckOp op = case op of
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
   Linearize lam -> do
-    Pi a (eff, b) <- typeCheckLamExpr lam
+    Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
     checkEq noEffect eff
     return $ a --> PairTy b (a --@ b)
   Transpose lam -> do
-    Pi a (eff, b) <- typeCheckLamExpr lam
+    Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
     checkEq noEffect eff
     return $ b --@ a
   _ -> error "not implemented"
@@ -287,82 +287,6 @@ indexSetConcreteSize ty = case ty of
   BoolTy  -> Just 2
   RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
-
--- === Pi types ===
-
-maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => (PiType t) -> Maybe Atom -> m t
-maybeApplyPi piTy maybeAtom
-  | isDependentType piTy = do
-      case maybeAtom of
-        Just atom -> return $ applyPi piTy atom
-        Nothing -> throw TypeErr $ "Dependent argument must be fully-reduced"
-  | otherwise = return b  where (Pi _ b) = piTy
-
-
-makePi :: PiAbstractable t => Var -> t -> PiType t
-makePi v@(_:>a) b = Pi a $ abstractDepType v 0 b
-
-applyPi :: PiAbstractable t => PiType t -> Atom -> t
-applyPi (Pi _ b) x = instantiateDepType 0 x b
-
-isDependentType :: (HasVars t, PiAbstractable t) => PiType t -> Bool
-isDependentType (Pi _ b) = usesPiVar b
-  where
-    usesPiVar t = dummyVar `isin` freeVars (instantiateDepType 0 (Var dummyVar) t)
-    dummyVar ="__dummy_type_variable_that_should_be_unused!" :> UnitTy
-
-class PiAbstractable t where
-  instantiateDepType :: Int -> Atom -> t -> t
-  abstractDepType :: Var -> Int -> t -> t
-
-instance PiAbstractable Type where
-  instantiateDepType d x ty = case ty of
-    Var v -> lookupDBVar v
-    Arrow h (Pi a (e, b)) -> Arrow h $
-      Pi (recur a) (instantiateDepType (d+1) x e, instantiateDepType (d+1) x b)
-    Effect row tailVar -> Effect row' tailVar
-      where row' = fold [ (lookupDBVarName v :>()) @> (eff, recur ann)
-                        | (v, (eff, ann)) <- envPairs row]
-    TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-      where env = (DeBruijn d :>()) @> x
-    _ -> error "Not a type"
-    where
-      recur ::Type -> Type
-      recur = instantiateDepType d x
-
-      lookupDBVarName :: Name -> Name
-      lookupDBVarName v = case v of
-        DeBruijn i | i == d -> v'  where (Var (v':>_)) = x
-        _                   -> v
-
-      lookupDBVar :: Var -> Type
-      lookupDBVar (v:>ann) = case v of
-        DeBruijn i | i == d -> x
-        _                   -> Var $ v:>ann
-
-  abstractDepType v d ty = case ty of
-    Var (v':>ann) -> Var $ substWithDBVar v' :> ann
-    Arrow h (Pi a (e, b)) -> Arrow h $
-      Pi (recur a) (abstractDepType v (d+1) e, abstractDepType v (d+1) b)
-    Effect row tailVar -> Effect row' tailVar
-      where row' = fold [ (substWithDBVar v' :>()) @> (eff, recur ann)
-                        | (v', (eff, ann)) <- envPairs row]
-    TC con -> TC $ fmapTyCon con recur (subst (env, mempty))
-      where env = v @> Var (DeBruijn d :> varAnn v)
-    _ -> error "Not a type"
-    where
-      recur ::Type -> Type
-      recur = abstractDepType v d
-
-      substWithDBVar :: Name -> Name
-      substWithDBVar v' | varName v == v' = DeBruijn d
-                        | otherwise       = v'
-
-instance PiAbstractable EffectiveType where
-  instantiateDepType d x (eff, b) = ( instantiateDepType d x eff
-                                    , instantiateDepType d x b)
-  abstractDepType v d (eff, b) = ( abstractDepType v d eff
-                                 , abstractDepType v d b)
 
 -- === Effects (CURRENTLY NOT USED) ===
 
@@ -413,14 +337,7 @@ rowJoin (Env m) (Env m') =
 popRow :: MonadError Err m
        => (a -> a -> m ())
        -> EffectRow a -> (EffectName, a) -> m (EffectRow a)
-popRow eq env (eff, x) = case envLookup env (v:>()) of
-  Nothing -> return env'
-  Just (eff', x') -> do
-    assertEq eff eff' "Effect"
-    eq x x'
-    return env'
-  where v = DeBruijn 0
-        env' = envDelete v env
+popRow eq env (eff, x) = undefined
 
 -- === Built-in typeclasses (CURRENTLY NOT USED) ===
 
