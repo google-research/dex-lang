@@ -96,7 +96,7 @@ compileProg (ImpProg ((maybeName, instr):prog)) = do
 compileInstr :: ImpInstr -> CompileM (Maybe Operand)
 compileInstr instr = case instr of
   IPrimOp op -> do
-    op' <- traverseExpr op (return . scalarTy) compileExpr (return . const ())
+    op' <- traverse compileExpr op
     liftM Just $ compilePrimOp op'
   Load ref -> do
     ref' <- compileExpr ref
@@ -283,7 +283,7 @@ compileFFICall name argTys retTy xs = do
   emitInstr retTy $ externCall f xs
   where f = ExternFunSpec (L.Name (fromString name)) retTy argTys
 
-compilePrimOp :: PrimOp L.Type Operand () -> CompileM Operand
+compilePrimOp :: PrimOp Operand -> CompileM Operand
 compilePrimOp (ScalarBinOp op x y) = case op of
   IAdd   -> emitInstr longTy $ L.Add False False x y []
   ISub   -> emitInstr longTy $ L.Sub False False x y []
@@ -306,11 +306,11 @@ compilePrimOp (ScalarUnOp op x) = case op of
   BoolToInt -> return x -- bools stored as ints
   UnsafeIntToBool -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
-compilePrimOp (Select ty p x y) = do
+compilePrimOp (Select p x y) = do
   p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
-  emitInstr ty $ L.Select p' x y []
+  emitInstr (L.typeOf x) $ L.Select p' x y []
 compilePrimOp (FFICall name argTys ansTy xs) =
-  compileFFICall name argTys ansTy xs
+  compileFFICall name (map scalarTy argTys) (scalarTy ansTy) xs
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate

@@ -17,6 +17,8 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer
+import Data.Bifunctor
+import Data.Bitraversable
 import Data.Foldable
 import Data.Functor.Reverse
 import Data.Text.Prettyprint.Doc
@@ -70,9 +72,8 @@ toImpExpr env expr = case expr of
       ans <- toImpBlock (env <> b @> i') body
       copyAtom ithDest ans
     return dest
-  Op op -> do
-    op' <- traverseExpr op (impSubst env) (impSubst env) (substLamPartial env)
-    toImpOp op'
+  Op op -> toImpOp =<< traverse (impSubst env) op
+  Hof hof -> toImpHof =<< bitraverse (impSubst env) (substLamPartial env) hof
   Atom x -> impSubst env x
 
 substLamPartial :: SubstEnv -> LamExpr -> ImpM (LamExpr, SubstEnv)
@@ -85,7 +86,7 @@ impSubst env x = do
   scope <- looks (fst . snd)
   return $ subst (env, scope) x
 
-toImpOp :: PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM Atom
+toImpOp :: PrimOp Atom -> ImpM Atom
 toImpOp op = case op of
   TabCon n _ rows -> do
     dest <- alloc resultTy
@@ -106,20 +107,6 @@ toImpOp op = case op of
     case x of
       RecVal r -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ pprint val
-  RunReader r (LamExpr ref body, env) -> do
-    toImpBlock (env <> ref @> r) body
-  RunWriter (LamExpr ref body, env) -> do
-    wDest <- alloc wTy
-    initializeAtomZero wDest
-    aResult <- toImpBlock (env <> ref @> wDest) body
-    return $ PairVal aResult wDest
-    where (PairTy _ wTy) = resultTy
-  RunState s (LamExpr ref body, env) -> do
-    sDest <- alloc sTy
-    copyAtom sDest s
-    aResult <- toImpBlock (env <> ref @> sDest) body
-    return $ PairVal aResult sDest
-    where (PairTy _ sTy) = resultTy
   PrimEffect ref m -> do
     case m of
       MAsk    -> return ref
@@ -148,11 +135,31 @@ toImpOp op = case op of
     idx <- impAdd restrictIdx offset
     intToIndex t idx
   _ -> do
-    op' <- traverseExpr op (return . toImpBaseType) fromScalarAtom (const (return ()))
-    liftM (toScalarAtom resultTy) $ emitInstr (IPrimOp op')
+    op' <- traverse fromScalarAtom op
+    toScalarAtom resultTy <$> emitInstr (IPrimOp op')
   where
     resultTy :: Type
-    resultTy = getType $ Op $ fmapExpr op id id fst
+    resultTy = getType $ Op op
+
+toImpHof :: PrimHof Atom (LamExpr, SubstEnv) -> ImpM Atom
+toImpHof hof = case hof of
+  RunReader r (LamExpr ref body, env) -> do
+    toImpBlock (env <> ref @> r) body
+  RunWriter (LamExpr ref body, env) -> do
+    wDest <- alloc wTy
+    initializeAtomZero wDest
+    aResult <- toImpBlock (env <> ref @> wDest) body
+    return $ PairVal aResult wDest
+    where (PairTy _ wTy) = resultTy
+  RunState s (LamExpr ref body, env) -> do
+    sDest <- alloc sTy
+    copyAtom sDest s
+    aResult <- toImpBlock (env <> ref @> sDest) body
+    return $ PairVal aResult sDest
+    where (PairTy _ sTy) = resultTy
+  where
+    resultTy :: Type
+    resultTy = getType $ Hof $ bimap id fst hof
 
 toScalarAtom :: Type -> IExpr -> Atom
 toScalarAtom _  (ILit v) = Con $ Lit v
@@ -431,8 +438,7 @@ impCmp op x y = emitBinOp (ICmp op) x y
 
 -- Precondition: x and y don't have array types
 impSelect :: IExpr -> IExpr -> IExpr -> ImpM IExpr
-impSelect p x y = emitInstr $ IPrimOp $ Select t p x y
-  where (IValType t) = impExprType x
+impSelect p x y = emitInstr $ IPrimOp $ Select p x y
 
 -- === Imp embedding ===
 
@@ -575,10 +581,7 @@ checkInt expr = do
 
 checkImpOp :: IPrimOp -> ImpCheckM IType
 checkImpOp op = do
-  op' <- traverseExpr op
-           return
-           (\x  -> checkIExpr x)
-           (error "shouldn't have lambda")
+  op' <- traverse checkIExpr op
   case op' of
     ScalarBinOp scalarOp x y -> do
       checkEq x (IValType x')
@@ -589,10 +592,7 @@ checkImpOp op = do
       checkEq x (IValType x')
       return $ IValType ty
       where (x', ty) = unOpType scalarOp
-    Select ty _ x y -> do
-      checkEq (IValType ty) x
-      checkEq (IValType ty) y
-      return $ IValType ty
+    Select _ x y -> checkEq x y >> return x
     FFICall _ _ ty _   -> return $ IValType ty -- TODO: check
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
@@ -625,11 +625,10 @@ instrType instr = case instr of
     IRefType (b, (_:shape)) -> return $ Just $ IRefType (b, shape)
     ty -> error $ "Can't index into: " ++ pprint ty
 
-
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op
 impOpType (ScalarUnOp  op _  ) = IValType ty  where (_,    ty) = unOpType  op
-impOpType (Select ty _ _ _   ) = IValType ty
+impOpType (Select _ x _    )   = impExprType x
 impOpType (FFICall _ _ ty _  ) = IValType ty
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 

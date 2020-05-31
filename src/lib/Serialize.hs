@@ -161,8 +161,6 @@ valFromPtrs ty ptrs = do
   return $ reStructureArrays ty arrays
   where arrTys = flattenType ty
 
-type PrimConVal = PrimCon Type Atom LamExpr
-
 valToScatter :: Val -> Output
 valToScatter ~(Con (AFor _ body)) = ScatterOut xs ys
   where
@@ -202,16 +200,16 @@ prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 litIndexSubst :: Int -> Atom -> Atom
 litIndexSubst i atom = case atom of
   Con (ArrayLit x) -> Con $ ArrayLit $ subArray i x
-  Con con -> Con $ fmapExpr con id (litIndexSubst i) (error "unexpected lambda")
+  Con con -> Con $ fmap (litIndexSubst i) con
   _ -> error "Unused index"
 
-traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
+traverseVal :: Monad m => (Con -> m (Maybe Con)) -> Val -> m Val
 traverseVal f val = case val of
   Con con -> do
     ans <- f con
     liftM Con $ case ans of
       Just con' -> return con'
-      Nothing   -> traverseExpr con return (traverseVal f) return
+      Nothing   -> mapM (traverseVal f) con
   atom -> return atom
 
 getValArrays :: Val -> [Array]

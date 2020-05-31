@@ -13,6 +13,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
+import Data.Bifunctor
 import Data.Foldable
 
 import Type
@@ -100,7 +101,7 @@ linearizeExpr ruleEnv expr = case expr of
     return (y, liftM (App LinArrow f) t >>= emit )
 
 linearizeOp :: RuleEnv -> Op -> LinA Atom
-linearizeOp ruleEnv op = case op' of
+linearizeOp ruleEnv op = case fmap linearizeAtom op of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emitOp
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emitOp
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emitOp
@@ -113,23 +114,6 @@ linearizeOp ruleEnv op = case op' of
     return (ans, do tx' <- tx
                     ty' <- ty
                     linearizedDiv x' y' tx' ty')
-  RunReader r lam@(LamExpr ref _) -> LinA $ do
-    (r', rt) <- runLinA r
-    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
-    ansRes <- emitOp $ RunReader r' lam'
-    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
-    mapM_ saveVars residuals
-    return (ans , do rt' <- rt
-                     lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                     emitOp $ RunReader rt' lam'')
-  RunWriter lam@(LamExpr ref _) -> LinA $ do
-    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
-    (ansRes, w) <- fromPair =<< emitOp (RunWriter lam')
-    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
-    mapM_ saveVars residuals
-    return ( PairVal ans w
-           , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                emitOp $ RunWriter lam'')
   PrimEffect refArg m ->
     liftA2 PrimEffect refArg
       (case m of
@@ -138,7 +122,26 @@ linearizeOp ruleEnv op = case op' of
          _       -> error "Not implemented") `bindLin` emitOp
   RecGet x i -> liftA (flip RecGet i) x `bindLin` emitOp
   _ -> error $ "not implemented: " ++ pprint op
-  where op' = fmapExpr op id linearizeAtom id
+
+linearizeHof :: RuleEnv -> Hof -> LinA Atom
+linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
+  RunReader r lam@(LamExpr ref _) -> LinA $ do
+    (r', rt) <- runLinA r
+    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
+    ansRes <- emit $ Hof $ RunReader r' lam'
+    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
+    mapM_ saveVars residuals
+    return (ans , do rt' <- rt
+                     lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
+                     emit $ Hof $ RunReader rt' lam'')
+  RunWriter lam@(LamExpr ref _) -> LinA $ do
+    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
+    (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
+    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
+    mapM_ saveVars residuals
+    return ( PairVal ans w
+           , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
+                emit $ Hof $ RunWriter lam'')
 
 linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
 linearizedDiv x y tx ty = do
@@ -306,18 +309,6 @@ transposeOp op ct = case op of
     ~(RecVal rZeros) <- zeroAt (getType x)
     let ct' = RecVal $ recUpdate i ct rZeros
     transposeAtom x ct'
-  RunReader r (LamExpr v body) -> do
-    lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v@>x)) $ transposeBlock body ct
-             return UnitVal
-    (_, ctr) <- emitOp (RunWriter lam) >>= fromPair
-    transposeAtom r ctr
-  RunWriter (LamExpr v body) -> do
-    (ctBody, ctEff) <- fromPair ct
-    lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v@>x)) $ transposeBlock body ctBody
-             return UnitVal
-    void $ emitOp $ RunReader ctEff lam
   PrimEffect refArg m -> do
     refArg' <- substTranspose refArg
     case m of
@@ -327,6 +318,23 @@ transposeOp op ct = case op of
        transposeAtom x ct'
       _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint op
+
+
+transposeHof :: Hof -> Atom -> TransposeM ()
+transposeHof hof ct = case hof of
+  RunReader r (LamExpr v body) -> do
+    lam <- buildLamExpr v $ \x -> do
+             extendR (asSnd (v@>x)) $ transposeBlock body ct
+             return UnitVal
+    (_, ctr) <- emit (Hof $ RunWriter lam) >>= fromPair
+    transposeAtom r ctr
+  RunWriter (LamExpr v body) -> do
+    (ctBody, ctEff) <- fromPair ct
+    lam <- buildLamExpr v $ \x -> do
+             extendR (asSnd (v@>x)) $ transposeBlock body ctBody
+             return UnitVal
+    void $ emit $ Hof $ RunReader ctEff lam
+
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
@@ -380,7 +388,7 @@ extractCT v@(_:>ty) m = do
     extendR (asFst (v @> ctRef)) $ do
       ans <- m
       return (UnitVal, ans)
-  (_, w) <- emitOp (RunWriter lam) >>= fromPair
+  (_, w) <- emit (Hof (RunWriter lam)) >>= fromPair
   return (w, ans)
 
 flipDir :: Direction -> Direction

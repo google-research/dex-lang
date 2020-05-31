@@ -165,7 +165,7 @@ updateTypeCheckEnv new tcEnv = case tcEnv of
 
 -- === primitive ops and constructors ===
 
-typeCheckTyCon :: TyCon Type Atom -> TypeM ()
+typeCheckTyCon :: TC -> TypeM ()
 typeCheckTyCon tc = case tc of
   BaseType _       -> return ()
   IntRange a b     -> a|:IntTy >> b|:IntTy
@@ -198,14 +198,6 @@ typeCheckOp op = case op of
     Just n' <- return $ indexSetConcreteSize n
     assertEq n' (length xs) "Index set size mismatch"
     return (n==>ty)
-  SumCase st l r -> do
-    lp@(Pi (NoName:>la) (leff, lb)) <- typeCheckLamExpr l
-    rp@(Pi (NoName:>ra) (reff, rb)) <- typeCheckLamExpr r
-    checkEq leff noEffect
-    checkEq reff noEffect
-    checkEq lb rb
-    st |: SumTy la ra
-    return lb
   RecGet x i -> do
     RecTy r <- typeCheck x
     return $ recGet r i  -- TODO: make a total version of recGet
@@ -231,17 +223,31 @@ typeCheckOp op = case op of
   ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
     where (ty, outTy) = unOpType unop
   Cmp _ ty x y    -> ty|:TyKind >> x|:ty >> y|:ty $> BoolTy
-  Select ty p x y -> ty|:TyKind >> p|:BoolTy >> x|:ty >> y|:ty $> ty
+  Select p x y -> do
+    p|:BoolTy
+    ty <- typeCheck x
+    y |:ty
+    return ty
   IntAsIndex ty i -> ty|:TyKind >> i|:ty $> ty
   IndexAsInt i -> typeCheck i $> IntTy
   IdxSetSize i -> typeCheck i $> IntTy
   FFICall _ argTys ansTy args -> do
-    mapM_ (|:TyKind) argTys >> ansTy|:TyKind
-    zipWithM_ (|:) args argTys
-    return ansTy
+    zipWithM_ (|:) args (map BaseTy argTys)
+    return $ BaseTy ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
+
+typeCheckHof :: Hof -> TypeM Type
+typeCheckHof hof = case hof of
+  SumCase st l r -> do
+    lp@(Pi (NoName:>la) (leff, lb)) <- typeCheckLamExpr l
+    rp@(Pi (NoName:>ra) (reff, rb)) <- typeCheckLamExpr r
+    checkEq leff noEffect
+    checkEq reff noEffect
+    checkEq lb rb
+    st |: SumTy la ra
+    return lb
   Linearize lam -> do
     Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
     checkEq noEffect eff
@@ -250,7 +256,6 @@ typeCheckOp op = case op of
     Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
     checkEq noEffect eff
     return $ b --@ a
-  _ -> error "not implemented"
 
 litType :: LitVal -> BaseType
 litType v = case v of

@@ -69,7 +69,7 @@ emitTo (v:>_) expr = case singletonTypeVal ty of
         return x
   where (eff, ty) = getEffType expr
 
-emitOp :: MonadEmbed m => PrimOp Type Atom LamExpr -> m Atom
+emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
 -- Assumes the decl binders are already fresh wrt current scope
@@ -127,7 +127,7 @@ addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
 addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
 
 selectAt :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
-selectAt ty p xs ys = mapScalars (\t [x, y] -> select t p x y) ty [xs, ys]
+selectAt ty p xs ys = mapScalars (\_ [x, y] -> select p x y) ty [xs, ys]
 
 sumAt :: MonadEmbed m => Type -> [Atom] -> m Atom
 sumAt ty [] = zeroAt ty
@@ -153,8 +153,8 @@ andE :: MonadEmbed m => Atom -> Atom -> m Atom
 andE (BoolVal True) y = return y
 andE x y              = emit $ Op $ ScalarBinOp And x y
 
-select :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
-select ty p x y = emitOp $ Select ty p x y
+select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
+select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
 div' x y = emitOp $ ScalarBinOp FDiv x y

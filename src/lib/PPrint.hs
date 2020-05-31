@@ -15,6 +15,8 @@ module PPrint (pprint, pprintList, printLitBlock, asStr,
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
+import Data.Bifunctor
+import Data.Bifoldable
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -56,30 +58,6 @@ instance Pretty ErrType where
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
 
-instance (Pretty ty, Pretty atom) => Pretty (TyCon ty atom) where
-  pretty con = case con of
-    BaseType b     -> p b
-    RecType r      -> p $ fmap (asStr . p) r
-    SumType (l, r) -> "Either" <+> p l <+> p r
-    RefType t      -> "Ref" <+> p t
-    ArrayType (shape, b) -> p b <> p shape
-    -- This rule forces us to specialize to Atom. Is there a better way?
-    -- IntRange (IntVal 0) (IntVal n) -> p n
-    -- TODO: fix this hack
-    IntRange a b -> if s1 == "0...<" then p s2 else ans
-      where ans = p a <> "...<" <> p b
-            (s1, s2) = splitAt 5 (asStr ans)
-    IndexRange _ low high -> low' <> "." <> high'
-      where
-        low'  = case low  of InclusiveLim x -> p x <> "."
-                             ExclusiveLim x -> p x <> "<"
-                             Unlimited      ->        "."
-        high' = case high of InclusiveLim x -> "." <> p x
-                             ExclusiveLim x -> "<" <> p x
-                             Unlimited      -> "."
-    TypeKind   -> "Type"
-    EffectKind -> "Effect"
-
 instance Pretty PiType where
   pretty (Pi (NoName:>a) b) = p a <+> "-->" <+> p b
   pretty (Pi v b) = parens (p v) <+> "-->" <+> p b
@@ -118,69 +96,67 @@ instance Pretty Expr where
   pretty (Atom atom) = p atom
   pretty (Op op) = p op
 
-instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
-  pretty (OpExpr  op ) = p op
-  pretty (ConExpr con) = p con
-  pretty (TyExpr  con) = p con
-
-instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (RecGet   x i) = p x <> "#" <> p i
-  pretty (ArrayGep x i) = p x <> "." <> p i
-  pretty (LoadScalar x) = "load(" <> p x <> ")"
-  pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
-  pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
-  pretty (FFICall s _ _ xs) = "%%" <> p s <+> tup xs
-  pretty (SumGet e isLeft) = parens $ (if isLeft then "projLeft" else "projRight") <+> p e
-  pretty (SumTag e)        = parens $ "projTag" <+> p e
-  pretty (SumCase c l r) = "case (" <+> p c <> ")" <> nest 2 ("\n" <> prettyL l) <+> nest 2 ("\n" <> prettyL r)
-  pretty (PrimEffect ref (MPut val))  = p ref <+> ":=" <+> p val
-  pretty (PrimEffect ref (MTell val)) = p ref <+> "+=" <+> p val
-  pretty (PrimEffect ref MAsk) = "ask" <+> p ref
-  pretty (PrimEffect ref MGet) = "get" <+> p ref
-  pretty op = prettyExprDefault (OpExpr op)
-
-prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
-prettyPrimCon (Lit l)       = p l
-prettyPrimCon (ArrayLit array) = p array
-prettyPrimCon (RecCon r)    = p r
-prettyPrimCon (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
-prettyPrimCon (AGet e)      = "aget" <+> p e
-prettyPrimCon (AsIdx n i)   = p i <> "@" <> p n
-prettyPrimCon (AnyValue t)  = parens $ "AnyValue @" <> p t
-prettyPrimCon (SumCon c l r) = parens $ "SumCon" <+> p c <+> p l <+> p r
-prettyPrimCon con = prettyExprDefault (ConExpr con)
-
-instance {-# OVERLAPPABLE #-} (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
-  pretty = prettyPrimCon
-
-instance (Pretty ty, PrettyLam lam) => Pretty (PrimCon ty Atom lam) where
-  pretty (SumCon (Con (Lit (BoolLit True)))  l _) = "Left"  <+> p l
-  pretty (SumCon (Con (Lit (BoolLit False))) _ r) = "Right" <+> p r
-  pretty con = prettyPrimCon con
-
-prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
+prettyExprDefault :: (Pretty e, Pretty lam) => PrimExpr e lam -> Doc ann
 prettyExprDefault expr =
-  p ("%" ++ nameToStr blankExpr) <+> hsep (map p xs ++ map (nest 2 . ("\n"<>) . prettyL) lams)
-  where (blankExpr, (_, xs, lams)) = unzipExpr expr
+  p ("%" ++ showPrimName expr) <> bifoldMap (\x -> " " <> p x)
+                                            (\l -> " " <> p l)
+                                            expr
 
-prettyL :: PrettyLam a => a -> Doc ann
-prettyL lam = "\\" <> v <+> "." <> nest 3 (line <> body)
-  where (v, body) = prettyLam lam
+instance (Pretty e, Pretty lam) => Pretty (PrimExpr e lam) where
+  pretty (TCExpr  e) = p e
+  pretty (ConExpr e) = p e
+  pretty (OpExpr  e) = p e
+  pretty (HofExpr e) = p e
+
+instance Pretty e => Pretty (PrimTC e) where
+  pretty con = case con of
+    BaseType b     -> p b
+    RecType r      -> p $ fmap (asStr . p) r
+    ArrayType (shape, b) -> p b <> p shape
+    IntRange a b -> if s1 == "0...<" then p s2 else ans
+      where ans = p a <> "...<" <> p b
+            (s1, s2) = splitAt 5 (asStr ans)
+    IndexRange _ low high -> low' <> "." <> high'
+      where
+        low'  = case low  of InclusiveLim x -> p x <> "."
+                             ExclusiveLim x -> p x <> "<"
+                             Unlimited      ->        "."
+        high' = case high of InclusiveLim x -> "." <> p x
+                             ExclusiveLim x -> "<" <> p x
+                             Unlimited      -> "."
+    TypeKind   -> "Type"
+    EffectKind -> "Effect"
+
+instance Pretty e => Pretty (PrimCon e) where
+  pretty con = case con of
+    Lit l       -> p l
+    ArrayLit array -> p array
+    RecCon r    -> p r
+    AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
+    AGet e      -> "aget" <+> p e
+    AsIdx n i   -> p i <> "@" <> p n
+    AnyValue t  -> parens $ "AnyValue @" <> p t
+    SumCon c l r -> parens $ "SumCon" <+> p c <+> p l <+> p r
+
+instance Pretty e => Pretty (PrimOp e) where
+  pretty op = case op of
+    ArrayGep x i ->  p x <> "." <> p i
+    FFICall s _ _ xs -> "%%" <> p s <+> tup xs
+    SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
+    SumTag e        -> parens $ "projTag" <+> p e
+    PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
+    PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
+    _ -> prettyExprDefault $ bimap id (const ()) $ OpExpr op
+
+instance (Pretty e, Pretty lam) => Pretty (PrimHof e lam) where
+  pretty hof = case hof of
+    SumCase c l r -> "case" <+> parens (p c) <> hardline
+                  <> nest 2 (p l)            <> hardline
+                  <> nest 2 (p r)
+    _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty LamExpr where
   pretty (LamExpr b body) = "\\" <> p b <+> "." <+> p body
-
-class PrettyLam a where
-  prettyLam :: a -> (Doc ann, Doc ann)
-
-instance PrettyLam LamExpr where
-  prettyLam (LamExpr b e) = (p b, p e)
-
-instance PrettyLam () where
-  prettyLam () = ("", "")
-
-instance (Pretty a, Pretty b) => PrettyLam (a, b) where
-  prettyLam (x, y) = (p x, p y)
 
 instance Pretty a => Pretty (VarP a) where
   pretty (v :> ann) =
@@ -210,8 +186,8 @@ instance Pretty Atom where
     Arrow h (Pi a (eff, b))
       | isPure eff -> parens $ prettyArrow h (parens (p a)) (parens (p b))
       | otherwise  -> parens $ prettyArrow h (parens (p a)) (p eff <+> parens (p b))
-    TC con -> p con
-    Con con -> p (ConExpr con)
+    TC  e -> p e
+    Con e -> p e
     Effect row t -> "{" <> row' <+> tailVar <> "}"
       where
         row' = hsep $ punctuate "," $
@@ -318,9 +294,7 @@ instance Pretty UExpr' where
                              Rev -> "rof"
     UArrow h (UPi a b) -> prettyArrow h (parens (p a)) (parens (p b))
     UDecl decl body -> p decl <> hardline <> p body
-    UPrimExpr prim -> parens $ p prim'
-      where prim' = fmapExpr prim id id $
-                      const (error "not implemented" :: LamExpr)
+    UPrimExpr prim -> p prim
     UAnnot e ann -> parens (p e) <+> ":" <+> parens (p ann)
 
 instance Pretty ULamExpr where

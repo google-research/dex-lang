@@ -13,6 +13,7 @@ module Inference (inferModule) where
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Data.Bitraversable
 import Data.Foldable (fold)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
@@ -155,11 +156,12 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
     env <- inferUDecl eff decl
     extendR env $ checkOrInferRho body eff reqTy
   UPrimExpr prim -> do
-    prim' <- traverseExpr prim lookupName lookupName (error "not implemented")
+    prim' <- bitraverse lookupName (error "not implemented") prim
     val <- case prim' of
-      OpExpr  op  -> emitZonked $ Op op
-      ConExpr con -> return $ Con con
-      TyExpr  con -> return $ TC con
+      TCExpr  e -> return $ TC e
+      ConExpr e -> return $ Con e
+      OpExpr  e -> emitZonked $ Op e
+      HofExpr e -> emitZonked $ Hof e
     matchRequirement (val, getType val)
     where lookupName v = fst <$> asks (! (v:>()))
   UAnnot e ty -> do

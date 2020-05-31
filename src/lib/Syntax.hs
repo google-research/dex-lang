@@ -17,11 +17,12 @@
 module Syntax (
     Type, Kind, BaseType (..), Effect, EffectiveType,
     ClassName (..), TyQual (..), SrcPos, Pat, Var, Block (..), Decl (..),
-    Expr (..), Atom (..), LamExpr (..), ArrowHead (..), TyCon (..),
+    Expr (..), Atom (..), LamExpr (..), ArrowHead (..), PrimTC (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
+    PrimHof (..),
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
-    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con,
+    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con, Hof, TC,
     Module (..), Module, ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
@@ -29,10 +30,9 @@ module Syntax (
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, PassName (..), parsePassName,
-    TraversableExpr, traverseExpr, fmapExpr, freeVars, freeUVars, HasVars,
-    strToName, nameToStr, unzipExpr,
+    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
     noEffect, isPure, EffectName (..), EffectRow, Vars,
-    traverseTyCon, fmapTyCon, monMapSingle, monMapLookup, PiType (..),
+    monMapSingle, monMapLookup, PiType (..),
     newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr (..), UExpr' (..), UType, UBinder, UVar,
     Pat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
@@ -53,6 +53,9 @@ import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import qualified Data.Vector.Unboxed as V
+import Data.Bifunctor
+import Data.Bifoldable
+import Data.Bitraversable
 import Data.Foldable (fold)
 import Data.Tuple (swap)
 import Data.Maybe (fromJust)
@@ -71,14 +74,15 @@ data Atom = Var Var
           | Arrow ArrowHead PiType
           -- (Maybe Type) for the optional row tail variable
           | Effect (EffectRow Type) (Maybe Type)
-          | Con (PrimCon Type Atom LamExpr)
-          | TC (TyCon Type Atom)
+          | Con Con
+          | TC  TC
             deriving (Show, Eq, Generic)
 
 data Expr = App ArrowHead Atom Atom
-          | For Direction LamExpr
+          | For Direction LamExpr  -- TODO: put in hofs?
           | Atom Atom
-          | Op (PrimOp Type Atom LamExpr)
+          | Op  Op
+          | Hof Hof
             deriving (Show, Eq, Generic)
 
 data Block = Block [Decl] Expr Effect
@@ -99,8 +103,10 @@ type Val  = Atom
 type Type = Atom
 type Kind = Type
 
-type Op  = PrimOp  Type Atom LamExpr
-type Con = PrimCon Type Atom LamExpr
+type TC  = PrimTC  Atom
+type Con = PrimCon Atom
+type Op  = PrimOp  Atom
+type Hof = PrimHof Atom LamExpr
 
 type TypeEnv  = Env Type
 type SrcPos = (Int, Int)
@@ -141,7 +147,7 @@ data UExpr' = UVar UVar
             | UArrow ArrowHead UPiType
             | UFor Direction ULamExpr
             | UDecl UDecl UExpr
-            | UPrimExpr (PrimExpr Name Name Name)
+            | UPrimExpr (PrimExpr Name Name)
             | UAnnot UExpr UType
               deriving (Show, Eq, Generic)
 
@@ -159,59 +165,66 @@ data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
 
 -- === primitive constructors and operators ===
 
-data PrimExpr ty e lam = OpExpr  (PrimOp ty e lam)
-                       | ConExpr (PrimCon ty e lam)
-                       | TyExpr  (TyCon ty e)
-                         deriving (Show, Eq, Generic)
-
-data TyCon ty e = BaseType BaseType
-                | IntRange e e
-                | IndexRange ty (Limit e) (Limit e)
-                | ArrayType ArrayType
-                | RecType (Record ty)
-                | SumType (ty, ty)
-                | RefType ty
-                | TypeKind
-                | EffectKind
-                  deriving (Show, Eq, Generic)
-
-data PrimCon ty e lam =
-        Lit LitVal
-      | ArrayLit Array
-      | AnyValue ty        -- Produces an arbitrary value of a given type
-      | SumCon e e e       -- (bool constructor tag (True is Left), left value, right value)
-      | RecCon (Record e)
-      | AsIdx ty e         -- Construct an index from its ordinal index (zero-based int)
-      | AFor ty e
-      | AGet e
-      | Todo ty
+data PrimExpr e lam =
+        TCExpr  (PrimTC  e)
+      | ConExpr (PrimCon e)
+      | OpExpr  (PrimOp  e)
+      | HofExpr (PrimHof e lam)
         deriving (Show, Eq, Generic)
 
-data PrimOp ty e lam =
-        SumCase e lam lam
-      | RecGet e RecField
+data PrimTC e =
+        BaseType BaseType
+      | IntRange e e
+      | IndexRange e (Limit e) (Limit e)
+      | ArrayType ArrayType
+      | RecType (Record e)
+      | SumType (e, e)
+      | RefType e
+      | TypeKind
+      | EffectKind
+        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+data PrimCon e =
+        Lit LitVal
+      | ArrayLit Array
+      | AnyValue e        -- Produces an arbitrary value of a given type
+      | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
+      | RecCon (Record e)
+      | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
+      | AFor e e
+      | AGet e
+      | Todo e
+        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+data PrimOp e =
+        RecGet e RecField
       | SumGet e Bool
       | SumTag e
       | ArrayGep e e
       | LoadScalar e
-      | TabCon ty ty [e]
+      | TabCon e e [e]               -- index set, element type, elements
       | ScalarBinOp ScalarBinOp e e
       | ScalarUnOp ScalarUnOp e
-      | Select ty e e e
+      | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
-      | RunReader e  lam
-      | RunWriter    lam
-      | RunState  e  lam
-      | Linearize lam | Transpose lam
-      | FFICall String [ty] ty [e]
+      | FFICall String [BaseType] BaseType [e]
       | Inject e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
-      | Cmp CmpOp ty e e
+      | Cmp CmpOp e e e  -- type, left, right
       -- Idx (survives simplification, because we allow it to be backend-dependent)
-      | IntAsIndex ty e
+      | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
-      | IdxSetSize ty
+      | IdxSetSize e
+        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+data PrimHof e lam =
+        SumCase e lam lam
+      | RunReader e  lam
+      | RunWriter    lam
+      | RunState  e  lam
+      | Linearize lam
+      | Transpose lam
         deriving (Show, Eq, Generic)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
@@ -239,43 +252,7 @@ data ClassName = Data | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
 
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
-type PrimName = PrimExpr () () ()
-
-builtinNames :: M.Map String PrimName
-builtinNames = M.fromList
-  [ ("iadd", binOp IAdd), ("isub", binOp ISub)
-  , ("imul", binOp IMul), ("fdiv", binOp FDiv)
-  , ("fadd", binOp FAdd), ("fsub", binOp FSub)
-  , ("fmul", binOp FMul), ("idiv", binOp IDiv)
-  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
-  , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
-  , ("fneg", unOp  FNeg)
-  , ("inttoreal", unOp IntToReal)
-  , ("booltoint", unOp BoolToInt)
-  , ("asint"           , OpExpr $ IndexAsInt ())
-  , ("idxSetSize"      , OpExpr $ IdxSetSize ())
-  , ("linearize"       , OpExpr $ Linearize ())
-  , ("linearTranspose" , OpExpr $ Transpose ())
-  , ("asidx"           , OpExpr $ IntAsIndex () ())
-  , ("select"          , OpExpr $ Select () () () ())
-  , ("runReader"       , OpExpr $ RunReader () ())
-  , ("runWriter"       , OpExpr $ RunWriter    ())
-  , ("runState"        , OpExpr $ RunState  () ())
-  , ("todo"       , ConExpr $ Todo ())
-  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
-  , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
-  , ("get"        , OpExpr $ PrimEffect () $ MGet)
-  , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
-  , ("inject"     , OpExpr $ Inject ())
-  , ("Int"    , TyExpr $ BaseType IntType)
-  , ("Real"   , TyExpr $ BaseType RealType)
-  , ("Bool"   , TyExpr $ BaseType BoolType)
-  , ("TyKind" , TyExpr $ TypeKind)
-  , ("IntRange", TyExpr $ IntRange () ())
-  ]
-  where
-    binOp op = OpExpr $ ScalarBinOp op () ()
-    unOp  op = OpExpr $ ScalarUnOp  op ()
+type PrimName = PrimExpr () ()
 
 strToName :: String -> Maybe PrimName
 strToName s = M.lookup s builtinNames
@@ -284,6 +261,9 @@ nameToStr :: PrimName -> String
 nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
   Just s  -> s
   Nothing -> show prim
+
+showPrimName :: PrimExpr e lam -> String
+showPrimName prim = nameToStr $ bimap (const ()) (const ()) prim
 
 -- === top-level constructs ===
 
@@ -334,7 +314,7 @@ data IExpr = ILit LitVal
            | IVar IVar
              deriving (Show, Eq)
 
-type IPrimOp = PrimOp BaseType IExpr ()
+type IPrimOp = PrimOp IExpr
 type IVal = IExpr  -- only ILit and IRef constructors
 type IVar = VarP IType
 data IType = IValType BaseType
@@ -577,17 +557,16 @@ instance HasVars Atom where
     Arrow _ pi -> freeVars pi
     Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
                         <> foldMap freeVars tailVar
-    Con con -> freeVars con
-    TC ty -> execWriter $ traverseTyCon ty (\t -> t <$ tell (freeVars t))
-                                           (\e -> e <$ tell (freeVars e))
+    Con con -> foldMap freeVars con
+    TC  tc  -> foldMap freeVars tc
 
   subst env@(sub, _) atom = case atom of
     Var v -> substVar env v
     Lam   h lam  -> Lam   h $ subst env lam
     Arrow h piTy -> Arrow h $ subst env piTy
     Effect _ _ -> noEffect
-    TC con -> TC $ fmapTyCon con (subst env) (subst env)
-    Con con -> Con $ subst env con
+    TC  tc  -> TC  $ fmap (subst env) tc
+    Con con -> Con $ fmap (subst env) con
 
 substVar :: (SubstEnv, Scope) -> Var -> Atom
 substVar env@(sub, scope) v = case envLookup sub v of
@@ -602,13 +581,15 @@ instance HasVars Expr where
     App _ f x -> freeVars f <> freeVars x
     For _ lam -> freeVars lam
     Atom atom -> freeVars atom
-    Op op -> freeVars op
+    Op  e     -> foldMap freeVars e
+    Hof e     -> bifoldMap freeVars freeVars e
 
   subst env expr = case expr of
     App h f x   -> App h (subst env f) (subst env x)
     For dir lam -> For dir $ subst env lam
     Atom x      -> Atom $ subst env x
-    Op op       -> Op $ fmapExpr op (subst env) (subst env) (subst env)
+    Op  e       -> Op  $ fmap (subst env) e
+    Hof e       -> Hof $ bimap (subst env) (subst env) e
 
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
@@ -671,87 +652,6 @@ instance HasVars a => HasVars [a] where
   freeVars x = foldMap freeVars x
   subst env x = fmap (subst env) x
 
-fmapExpr :: TraversableExpr expr
-         => expr ty e lam
-         -> (ty  -> ty')
-         -> (e   -> e')
-         -> (lam -> lam')
-         -> expr ty' e' lam'
-fmapExpr e fT fE fL =
-  runIdentity $ traverseExpr e (return . fT) (return . fE) (return . fL)
-
-class TraversableExpr expr where
-  traverseExpr :: Applicative f
-               => expr ty e lam
-               -> (ty  -> f ty')
-               -> (e   -> f e')
-               -> (lam -> f lam')
-               -> f (expr ty' e' lam')
-
-instance TraversableExpr PrimExpr where
-  traverseExpr (OpExpr  e) fT fE fL = OpExpr  <$> traverseExpr e fT fE fL
-  traverseExpr (ConExpr e) fT fE fL = ConExpr <$> traverseExpr e fT fE fL
-  traverseExpr (TyExpr  e) fT fE _  = TyExpr  <$> traverseTyCon e fT fE
-
-instance TraversableExpr PrimOp where
-  traverseExpr primop fT fE fL = case primop of
-    TabCon n ty xs       -> liftA3 TabCon (fT n) (fT ty) (traverse fE xs)
-    SumCase e l r        -> liftA3 SumCase (fE e) (fL l) (fL r)
-    RecGet e i           -> liftA2 RecGet (fE e) (pure i)
-    SumGet e s           -> liftA2 SumGet (fE e) (pure s)
-    SumTag e             -> liftA  SumTag (fE e)
-    ArrayGep e i         -> liftA2 ArrayGep (fE e) (fE i)
-    LoadScalar e         -> liftA  LoadScalar (fE e)
-    ScalarBinOp op e1 e2 -> liftA2 (ScalarBinOp op) (fE e1) (fE e2)
-    ScalarUnOp  op e     -> liftA  (ScalarUnOp  op) (fE e)
-    Cmp op ty e1 e2      -> liftA3 (Cmp op) (fT ty) (fE e1) (fE e2)
-    Select ty p x y      -> liftA3 Select (fT ty) (fE p) (fE x) <*> fE y
-    PrimEffect ref m     -> liftA2 PrimEffect (fE ref) $ case m of
-       MAsk    -> pure  MAsk
-       MTell e -> liftA MTell (fE e)
-       MGet    -> pure  MGet
-       MPut  e -> liftA MPut  (fE e)
-    RunReader r  lam    -> liftA2 RunReader (fE r ) (fL lam)
-    RunWriter    lam    -> liftA  RunWriter         (fL lam)
-    RunState  s  lam    -> liftA2 RunState  (fE s ) (fL lam)
-    Linearize lam        -> liftA  Linearize (fL lam)
-    Transpose lam        -> liftA  Transpose (fL lam)
-    IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
-    IndexAsInt e         -> liftA  IndexAsInt (fE e)
-    IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
-    FFICall s argTys ansTy args ->
-
-      liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
-    Inject e             -> liftA Inject (fE e)
-
-instance TraversableExpr PrimCon where
-  traverseExpr op fT fE fL = case op of
-    Lit l        -> pure $ Lit l
-    ArrayLit arr -> pure $ ArrayLit arr
-    AFor n e     -> liftA2 AFor (fT n) (fE e)
-    AGet e       -> liftA  AGet (fE e)
-    AsIdx n e    -> liftA2 AsIdx (fT n) (fE e)
-    AnyValue t   -> AnyValue <$> fT t
-    SumCon c l r -> SumCon <$> fE c <*> fE l <*> fE r
-    RecCon r     -> liftA  RecCon (traverse fE r)
-    Todo ty      -> liftA  Todo (fT ty)
-
-instance (TraversableExpr expr, HasVars ty, HasVars e, HasVars lam)
-         => HasVars (expr ty e lam) where
-  freeVars expr = execWriter $
-    traverseExpr expr (tell . freeVars) (tell . freeVars) (tell . freeVars)
-  subst env expr = fmapExpr expr (subst env) (subst env) (subst env)
-
-unzipExpr :: TraversableExpr expr
-          => expr ty e lam -> (expr () () (), ([ty], [e], [lam]))
-unzipExpr expr = (blankExpr, xs)
-  where
-    blankExpr = fmapExpr expr (const ()) (const ()) (const ())
-    xs = execWriter $ traverseExpr expr
-            (\ty  -> tell ([ty], [] , []   ))
-            (\e   -> tell ([]  , [e], []   ))
-            (\lam -> tell ([]  , [] , [lam]))
-
 instance RecTreeZip Type where
   recTreeZip (RecTree r) (TC (RecType r')) = RecTree $ recZipWith recTreeZip r r'
   recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
@@ -769,22 +669,6 @@ instance Eq SourceBlock where
 
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
-
-traverseTyCon :: Applicative m
-              => TyCon ty e -> (ty -> m ty') -> (e -> m e') -> m (TyCon ty' e')
-traverseTyCon con fTy fE = case con of
-  BaseType b        -> pure $ BaseType b
-  IntRange a b      -> liftA2 IntRange (fE a) (fE b)
-  IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
-  ArrayType t       -> pure $ ArrayType t
-  SumType (l, r)    -> liftA SumType $ liftA2 (,) (fTy l) (fTy r)
-  RecType r         -> liftA RecType $ traverse fTy r
-  RefType t         -> liftA RefType (fTy t)
-  TypeKind          -> pure TypeKind
-  EffectKind        -> pure EffectKind
-
-fmapTyCon :: TyCon ty e -> (ty -> ty') -> (e -> e') -> TyCon ty' e'
-fmapTyCon con fT fE = runIdentity $ traverseTyCon con (return . fT) (return . fE)
 
 -- === Synonyms ===
 
@@ -874,3 +758,63 @@ pattern TabTy xs i eff = Arrow TabArrow (Pi (NoName:>xs) (eff, i))
 
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
+
+-- TODO: Can we derive these generically? Or use Show/Read?
+--       (These prelude-only names don't have to be pretty.)
+builtinNames :: M.Map String PrimName
+builtinNames = M.fromList
+  [ ("iadd", binOp IAdd), ("isub", binOp ISub)
+  , ("imul", binOp IMul), ("fdiv", binOp FDiv)
+  , ("fadd", binOp FAdd), ("fsub", binOp FSub)
+  , ("fmul", binOp FMul), ("idiv", binOp IDiv)
+  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
+  , ("fneg", unOp  FNeg)
+  , ("inttoreal", unOp IntToReal)
+  , ("booltoint", unOp BoolToInt)
+  , ("asint"       , OpExpr $ IndexAsInt ())
+  , ("idxSetSize"  , OpExpr $ IdxSetSize ())
+  , ("asidx"       , OpExpr $ IntAsIndex () ())
+  , ("select"      , OpExpr $ Select () () ())
+  , ("todo"       , ConExpr $ Todo ())
+  , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
+  , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
+  , ("get"        , OpExpr $ PrimEffect () $ MGet)
+  , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
+  , ("inject"     , OpExpr $ Inject ())
+  , ("linearize"       , HofExpr $ Linearize ())
+  , ("linearTranspose" , HofExpr $ Transpose ())
+  , ("runReader"       , HofExpr $ RunReader () ())
+  , ("runWriter"       , HofExpr $ RunWriter    ())
+  , ("runState"        , HofExpr $ RunState  () ())
+  , ("Int"     , TCExpr $ BaseType IntType)
+  , ("Real"    , TCExpr $ BaseType RealType)
+  , ("Bool"    , TCExpr $ BaseType BoolType)
+  , ("TyKind"  , TCExpr $ TypeKind)
+  , ("IntRange", TCExpr $ IntRange () ())
+  ]
+  where
+    binOp op = OpExpr $ ScalarBinOp op () ()
+    unOp  op = OpExpr $ ScalarUnOp  op ()
+
+instance Bifunctor  PrimHof where bimap     = bimapDefault
+instance Bifoldable PrimHof where bifoldMap = bifoldMapDefault
+
+instance Bitraversable PrimHof  where
+  bitraverse f g hof = case hof of
+    SumCase e lam1 lam2 -> SumCase <$> f e <*> g lam1 <*> g lam2
+    RunReader e  lam -> RunReader <$> f e <*> g lam
+    RunWriter    lam -> RunWriter <$>         g lam
+    RunState  e  lam -> RunState  <$> f e <*> g lam
+    Linearize lam -> Linearize <$> g lam
+    Transpose lam -> Transpose <$> g lam
+
+instance Bifunctor  PrimExpr where bimap     = bimapDefault
+instance Bifoldable PrimExpr where bifoldMap = bifoldMapDefault
+
+instance Bitraversable PrimExpr where
+  bitraverse f g expr = case expr of
+    TCExpr  e -> TCExpr  <$> traverse f e
+    ConExpr e -> ConExpr <$> traverse f e
+    OpExpr  e -> OpExpr  <$> traverse f e
+    HofExpr e -> HofExpr <$> bitraverse f g e

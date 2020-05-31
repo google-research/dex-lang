@@ -9,6 +9,7 @@
 
 module Simplify (simplifyModule) where
 
+import Data.Bitraversable
 import Control.Monad
 import Control.Monad.Reader
 
@@ -78,9 +79,8 @@ simplifyAtom atom = case atom of
   Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
-  Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
-                       $ error "Shouldn't have lambda left"
-  TC _ -> substEmbed atom
+  Con con -> Con <$> mapM simplifyAtom con
+  TC tc -> TC <$> mapM substEmbed tc
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
@@ -126,53 +126,53 @@ simplifyExpr expr = case expr of
   For d lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     emit $ For d lam'
-  Op op -> do
-    op' <- traverseExpr op substEmbed simplifyAtom simplifyLam
-    simplifyOp op'
-  Atom x -> simplifyAtom x
+  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Hof hof -> bitraverse simplifyAtom simplifyLam hof >>= simplifyHof
+  Atom x  -> simplifyAtom x
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyOp :: PrimOp Type Atom (LamExpr, Maybe (Atom -> SimplifyM Atom))
-           -> SimplifyM Atom
-simplifyOp op = do
-  case op of
-    Linearize (lam, _) -> do
-      rulesEnv <- lift $ asks (snd . fst)
-      scope <- getScope
-      -- TODO: simplify the result to remove functions introduced by linearization
-      return $ linearize rulesEnv scope lam
-    Transpose (lam, _) -> do
-      scope <- getScope
-      return $ transposeMap scope lam
-    RunReader r (lam, recon) -> do
-      ans <- emitOp $ RunReader r lam
-      reconstructAtom recon ans
-    RunWriter (lam, recon) -> do
-      (ans, w) <- fromPair =<< emitOp (RunWriter lam)
-      ans' <- reconstructAtom recon ans
-      return $ PairVal ans' w
-    RunState s (lam, recon) -> do
-      (ans, s') <- fromPair =<< emitOp (RunState s lam)
-      ans' <- reconstructAtom recon ans
-      return $ PairVal ans' s'
-    SumCase c (lBody, _) (rBody, _) -> do
-      l <- projApp lBody True
-      r <- projApp rBody False
-      isLeft <- simplRec $ Op $ SumTag c
-      emitOp $ Select (getType l) isLeft l r
-      where
-        simplRec :: Expr -> SimplifyM Atom
-        simplRec = dropSub . simplifyExpr
-        projApp body isLeft = do
-          cComp <- simplRec $ Op $ SumGet c isLeft
-          simplRec $ App PlainArrow (Lam PlainArrow body) cComp
-    Cmp Equal t a b -> resolveEq t a b
-    Cmp cmpOp t a b -> resolveOrd cmpOp t a b
-    RecGet (RecVal r) i -> return $ recGet r i
-    SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
-    SumTag (SumVal s _ _) -> return $ s
-    Select ty p x y -> selectAt ty p x y
-    _ -> emitOp $ fmapExpr op id id fst
+simplifyOp :: Op -> SimplifyM Atom
+simplifyOp op = case op of
+  Cmp Equal t a b -> resolveEq t a b
+  Cmp cmpOp t a b -> resolveOrd cmpOp t a b
+  RecGet (RecVal r) i -> return $ recGet r i
+  SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
+  SumTag (SumVal s _ _) -> return $ s
+  Select p x y -> selectAt (getType x) p x y
+  _ -> emitOp op
+
+simplifyHof :: PrimHof Atom (LamExpr, Maybe (Atom -> SimplifyM Atom)) -> SimplifyM Atom
+simplifyHof hof = case hof of
+  Linearize (lam, _) -> do
+    rulesEnv <- lift $ asks (snd . fst)
+    scope <- getScope
+    -- TODO: simplify the result to remove functions introduced by linearization
+    return $ linearize rulesEnv scope lam
+  Transpose (lam, _) -> do
+    scope <- getScope
+    return $ transposeMap scope lam
+  RunReader r (lam, recon) -> do
+    ans <- emit $ Hof $ RunReader r lam
+    reconstructAtom recon ans
+  RunWriter (lam, recon) -> do
+    (ans, w) <- fromPair =<< emit (Hof $ RunWriter lam)
+    ans' <- reconstructAtom recon ans
+    return $ PairVal ans' w
+  RunState s (lam, recon) -> do
+    (ans, s') <- fromPair =<< emit (Hof $ RunState s lam)
+    ans' <- reconstructAtom recon ans
+    return $ PairVal ans' s'
+  SumCase c (lBody, _) (rBody, _) -> do
+    l <- projApp lBody True
+    r <- projApp rBody False
+    isLeft <- simplRec $ Op $ SumTag c
+    emitOp $ Select isLeft l r
+    where
+      simplRec :: Expr -> SimplifyM Atom
+      simplRec = dropSub . simplifyExpr
+      projApp body isLeft = do
+        cComp <- simplRec $ Op $ SumGet c isLeft
+        simplRec $ App PlainArrow (Lam PlainArrow body) cComp
 
 resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
 resolveEq t x y = case t of
@@ -192,7 +192,7 @@ resolveEq t x y = case t of
         emitOp $ PrimEffect ref $ MTell eqReal
       emit $ For Fwd forLam
     idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
-    total <- snd <$> (fromPair =<< emitOp (RunWriter writerLam))
+    total <- snd <$> (fromPair =<< emit (Hof $ RunWriter writerLam))
     emitOp $ Cmp Equal RealTy total idxSetSize
   -- instance (Eq a, Eq b) => Eq (Either a b)
   SumTy lty rty -> do
@@ -201,7 +201,7 @@ resolveEq t x y = case t of
     tagsEq <- resolveEq BoolTy xt yt
     lEq <- compareSide True
     rEq <- compareSide False
-    sideEq <- select BoolTy xt lEq rEq
+    sideEq <- select xt lEq rEq
     andE tagsEq sideEq
     where
       compareSide isLeft = do

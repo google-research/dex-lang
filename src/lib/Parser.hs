@@ -13,6 +13,7 @@ import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space)
+import Data.Bitraversable
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
@@ -294,9 +295,9 @@ implicitPiBinder = braces $ (:>) <$> uName <*> annot uExpr
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
   s <- primName
-  Just prim <- return $ strToName s
-  UPrimExpr <$> traverseExpr prim primArg primArg primArg
-  where primArg = const textName
+  case strToName s of
+    Just prim -> UPrimExpr <$> bitraverse (const textName) (const textName) prim
+    Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 -- literal symbols here must only use chars from `symChars`
 uops :: [[Operator Parser UExpr]]
