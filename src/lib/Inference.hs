@@ -14,7 +14,7 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Bitraversable
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
@@ -99,7 +99,7 @@ instantiateSigma (f,  Arrow ImplicitArrow piTy) = do
   x <- freshInfVar $ piArgType piTy
   ans <- emitZonked $ App ImplicitArrow f x
   let (_, ansTy) = applyPi piTy x
-  return (ans, ansTy)
+  instantiateSigma (ans, ansTy)
 instantiateSigma (x, ty) = return (x, ty)
 
 checkOrInferRho :: UExpr -> Effect -> RequiredTy RhoType
@@ -200,7 +200,7 @@ inferULam (ULamExpr (RecLeaf b@(v:>ann)) body) = do
   argTy <- checkAnn ann
   buildLamExprAux (v:>argTy) $ \x@(Var v') -> do
     extendR (b @> (x, argTy)) $ do
-      (resultVal, resultTy) <- inferRho body noEffect
+      (resultVal, resultTy) <- inferSigma body noEffect
       return (resultVal, Pi v' (noEffect, resultTy))
 
 checkULam :: ULamExpr -> PiType -> UInferM LamExpr
@@ -234,6 +234,7 @@ freshInfVar :: Type -> UInferM Atom
 freshInfVar ty = do
   (tv:>()) <- looks $ rename (rawName InferenceName "?" :> ()) . solverVars
   extend $ SolverEnv ((tv:>()) @> TyKind) mempty
+  extendScope ((tv:>())@>Nothing)
   return $ Var $ tv:>ty
 
 openUEffect :: Effect -> UInferM Effect
@@ -344,14 +345,8 @@ unify t1 t2 = do
       newTail <- liftM Just $ freshInferenceVar $ TC EffectKind
       matchTail t  $ Effect (envDiff r' shared) newTail
       matchTail t' $ Effect (envDiff r  shared) newTail
-    (TC con, TC con') -> case (con, con') of
-      (RefType a, RefType a') -> unify a a'
-      (RecType r, RecType r') ->
-        case zipWithRecord unify r r' of
-          Nothing -> throw TypeErr ""
-          Just unifiers -> void $ sequence unifiers
-      (SumType (l, r), SumType (l', r')) -> unify l l' >> unify r r'
-      _   -> throw TypeErr ""
+    (TC con, TC con') | void con == void con' ->
+      zipWithM_ unify (toList con) (toList con')
     _   -> throw TypeErr ""
 
 rowMeet :: Env a -> Env b -> Env (a, b)

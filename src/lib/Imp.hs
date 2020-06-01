@@ -107,6 +107,8 @@ toImpOp op = case op of
     case x of
       RecVal r -> return $ recGet r i
       val -> error $ "Expected a record, got: " ++ pprint val
+  Fst ~(PairVal x _) -> return x
+  Snd ~(PairVal _ y) -> return y
   PrimEffect ref m -> do
     case m of
       MAsk    -> return ref
@@ -364,6 +366,7 @@ traverseLeaves f atom = case atom of
     AsIdx n idx -> liftA (AsIdx n) $ recur idx
     AFor n body -> liftA (AFor  n) $ recur body
     RecCon r    -> liftA RecCon    $ traverse recur r
+    PairCon x y -> liftA2 PairCon (recur x) (recur y)
     _ -> error $ "Not a valid Imp atom: " ++ pprint atom
   _ ->   error $ "Not a valid Imp atom: " ++ pprint atom
   where recur = traverseLeaves f

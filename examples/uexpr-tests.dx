@@ -3,8 +3,11 @@ Real = %Real
 Type = %TyKind
 
 def (+) (x:Real) (y:Real) : Real = %fadd x y
-
 def iadd (x:Int) (y:Int) : Int = %iadd x y
+def (**) (a:Type) (b:Type) : Type = %PairType a b
+def (,) {a:Type} {b:Type} (x:a) (y:b) : a ** b = %pair x y
+def fst {a:Type} {b:Type} (p:a**b) : a = %fst p
+def snd {a:Type} {b:Type} (p:a**b) : b = %snd p
 
 :p iadd 3 (iadd 4 5)
 > 12
@@ -100,3 +103,8 @@ def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
   xs = for (i: Fin 3) . 1
   tabId xs
 > [1, 1, 1]
+
+myPair = (1, 2.3)
+
+:p fst myPair
+> 1

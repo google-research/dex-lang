@@ -172,6 +172,7 @@ typeCheckTyCon tc = case tc of
   IndexRange t a b -> t|:TyKind >> mapM_ (|:TyKind) a >> mapM_ (|:TyKind) b
   ArrayType _      -> return ()
   SumType (l, r)   -> l|:TyKind >> r|:TyKind
+  PairType a b     -> a|:TyKind >> b|:TyKind
   RecType r        -> mapM_ (|:TyKind) r
   RefType a        -> a|:TyKind
   TypeKind         -> return ()
@@ -182,6 +183,7 @@ typeCheckCon con = case con of
   ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
   AnyValue t -> t|:TyKind $> t
   SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
+  PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   RecCon r -> RecTy <$> mapM typeCheck r
   AFor n a -> TabTy <$> typeCheck n <*> typeCheck a <*> return noEffect
   AGet x -> do
@@ -198,6 +200,8 @@ typeCheckOp op = case op of
     Just n' <- return $ indexSetConcreteSize n
     assertEq n' (length xs) "Index set size mismatch"
     return (n==>ty)
+  Fst p -> do { PairTy x _ <- typeCheck p; return x}
+  Snd p -> do { PairTy _ y <- typeCheck p; return y}
   RecGet x i -> do
     RecTy r <- typeCheck x
     return $ recGet r i  -- TODO: make a total version of recGet

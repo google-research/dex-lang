@@ -111,6 +111,7 @@ instance (Pretty e, Pretty lam) => Pretty (PrimExpr e lam) where
 instance Pretty e => Pretty (PrimTC e) where
   pretty con = case con of
     BaseType b     -> p b
+    PairType a b   -> parens $ p a <+> "**" <+> p b
     RecType r      -> p $ fmap (asStr . p) r
     ArrayType (shape, b) -> p b <> p shape
     IntRange a b -> if s1 == "0...<" then p s2 else ans
@@ -131,6 +132,7 @@ instance Pretty e => Pretty (PrimCon e) where
   pretty con = case con of
     Lit l       -> p l
     ArrayLit array -> p array
+    PairCon x y -> parens $ p x <+> "," <+> p y
     RecCon r    -> p r
     AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
     AGet e      -> "aget" <+> p e

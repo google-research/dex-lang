@@ -159,6 +159,14 @@ select p x y = emitOp $ Select p x y
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
 div' x y = emitOp $ ScalarBinOp FDiv x y
 
+getFst :: MonadEmbed m => Atom -> m Atom
+getFst (PairVal x _) = return x
+getFst p = emitOp $ Fst p
+
+getSnd :: MonadEmbed m => Atom -> m Atom
+getSnd (PairVal _ y) = return y
+getSnd p = emitOp $ Snd p
+
 nRecGet :: MonadEmbed m => Atom -> RecField -> m Atom
 nRecGet (RecVal r) i = return $ recGet r i
 nRecGet x i = emit $ Op $ RecGet x i
@@ -173,11 +181,8 @@ unpackRec x = case getType x of
   ty -> error $ "Not a tuple: " ++ pprint ty
 
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
-fromPair pair = do
-  r <- unpackRec pair
-  case r of
-    Tup [x, y] -> return (x, y)
-    _          -> error $ "Not a pair: " ++ pprint pair
+fromPair (PairVal x y) = return (x, y)
+fromPair pair          = error $ "Not a pair: " ++ pprint pair
 
 buildFor :: (MonadEmbed m) => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do

@@ -177,6 +177,7 @@ data PrimTC e =
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | ArrayType ArrayType
+      | PairType e e
       | RecType (Record e)
       | SumType (e, e)
       | RefType e
@@ -189,6 +190,7 @@ data PrimCon e =
       | ArrayLit Array
       | AnyValue e        -- Produces an arbitrary value of a given type
       | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
+      | PairCon e e
       | RecCon (Record e)
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
       | AFor e e
@@ -198,6 +200,7 @@ data PrimCon e =
 
 data PrimOp e =
         RecGet e RecField
+      | Fst e | Snd e
       | SumGet e Bool
       | SumTag e
       | ArrayGep e e
@@ -704,10 +707,10 @@ pattern TupVal :: [Atom] -> Atom
 pattern TupVal xs = RecVal (Tup xs)
 
 pattern PairVal :: Atom -> Atom -> Atom
-pattern PairVal x y = TupVal [x, y]
+pattern PairVal x y = Con (PairCon x y)
 
 pattern PairTy :: Type -> Type -> Type
-pattern PairTy x y = TC (RecType (Tup [x, y]))
+pattern PairTy x y = TC (PairType x y)
 
 pattern TupTy :: [Type] -> Type
 pattern TupTy xs = TC (RecType (Tup xs))
@@ -792,6 +795,10 @@ builtinNames = M.fromList
   , ("Bool"    , TCExpr $ BaseType BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("IntRange", TCExpr $ IntRange () ())
+  , ("PairType", TCExpr $ PairType () ())
+  , ("pair", ConExpr $ PairCon () ())
+  , ("fst", OpExpr $ Fst ())
+  , ("snd", OpExpr $ Snd ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()

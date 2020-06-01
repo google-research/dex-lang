@@ -313,7 +313,9 @@ uops =
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
-  , [InfixR $ sym "->" $> mkArrow PlainArrow]]
+  , [InfixR $ sym "->" $> mkArrow PlainArrow]
+  , [symOp ","], [symOp "**"]
+  ]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
           -> Parser (UExpr -> UExpr -> UExpr)
@@ -403,7 +405,7 @@ backquoteName = label "backquoted name" $
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
-lParen, rParen, lBracket, rBracket, lBrace, rBrace, comma, semicolon :: Lexer ()
+lParen, rParen, lBracket, rBracket, lBrace, rBrace, semicolon :: Lexer ()
 
 lParen    = notFollowedBy symName >> charLexeme '('
 rParen    = charLexeme ')'
@@ -411,7 +413,6 @@ lBracket  = charLexeme '['
 rBracket  = charLexeme ']'
 lBrace    = charLexeme '{'
 rBrace    = charLexeme '}'
-comma     = charLexeme ','
 semicolon = charLexeme ';'
 
 charLexeme :: Char -> Parser ()
@@ -424,7 +425,7 @@ symChar :: Parser Char
 symChar = choice $ map char symChars
 
 symChars :: [Char]
-symChars = ".!$^&*:-~+/=<>|?\\"
+symChars = ".,!$^&*:-~+/=<>|?\\"
 
 -- === Util ===
 
