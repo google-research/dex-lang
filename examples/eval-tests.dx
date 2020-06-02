@@ -590,5 +590,9 @@ cmpEither x y = x == y
 :p cmpEither (Left 1) (Right 1)
 > False
 
--- This crashes the compiler in Imp
--- triangle = for i:4. for j:...i. 1.0
+upperBound = isum $ for i:4. 1
+for j:0...<upperBound. 1.0
+> [1.0, 1.0, 1.0, 1.0]@0...<aget Int[1]@vec
+
+(for i:0...<upperBound. 1, for j:2. 2)
+> ([1, 1, 1, 1]@0...<aget Int[1]@vec, [2, 2])

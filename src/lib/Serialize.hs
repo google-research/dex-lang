@@ -7,8 +7,10 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
-                 valToHeatmap, valToScatter, reStructureArrays) where
+                 valToHeatmap, valToScatter, reStructureArrays, flattenType,
+                 flattenVal) where
 
+import Prelude hiding (unzip)
 import Control.Monad
 import Control.Monad.Writer
 import Control.Monad.State
@@ -24,6 +26,7 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.Foldable
 import Data.Maybe
 
+import Env
 import Array
 import Type
 import Syntax
@@ -42,11 +45,11 @@ preHeaderStart = "-- dex-object-file-v0.0.1 num-header-bytes "
 
 dumpDataFile :: FilePath -> Val -> IO ()
 dumpDataFile fname val = do
-  arrayRefs <- mapM storeArrayNew $ getValArrays val
+  let arrays = getValArrays val
   let ty = getType val
   withFile fname WriteMode $ \h -> do
-    putBytes h $ serializeFullHeader $ createHeader ty arrayRefs
-    mapM_ (writeArrayToFile h) arrayRefs
+    putBytes h $ serializeFullHeader $ createHeader ty arrays
+    mapM_ (writeArrayToFile h) arrays
 
 loadDataFile :: FilePath -> IO Val
 loadDataFile fname = do
@@ -84,9 +87,9 @@ serializeHeader :: DBOHeader -> String
 serializeHeader (DBOHeader ty sizes) =  "type: "        <> pprint ty    <> "\n"
                                      <> "bufferSizes: " <> show sizes   <> "\n"
 
-createHeader :: Type -> [ArrayRef] -> DBOHeader
+createHeader :: Type -> [Array] -> DBOHeader
 createHeader ty arrays = DBOHeader ty sizes
-  where sizes = [8 * product shape | ArrayRef (shape, _) _ <- arrays]
+  where sizes = [sizeOf b * elems | (elems, b) <- map arrayType arrays]
 
 putBytes :: Handle -> String -> IO ()
 putBytes h s = B.hPut h $ B.pack s
@@ -113,14 +116,14 @@ parseHeader = do
   emptyLines
   return $ DBOHeader ty sizes
 
-writeArrayToFile :: Handle -> ArrayRef -> IO ()
-writeArrayToFile h (ArrayRef (shape, _) ptr) = hPutBuf h ptr (size * 8)
-  where size = product shape
+writeArrayToFile :: Handle -> Array -> IO ()
+writeArrayToFile h arr = unsafeWithArrayPointer arr (\ptr -> hPutBuf h ptr (size * sizeOf b))
+  where (size, b) = arrayType arr
 
 validateFile :: Int -> Int -> DBOHeader -> Except ()
 validateFile headerLength fileLength header@(DBOHeader ty sizes) =
   addContext ctx $ do
-     let minSizes = [product shape * 8 | (_, shape) <- flattenType ty]
+     let minSizes = [size * (sizeOf b) | (size, b) <- flattenType ty]
      when (length minSizes /= length sizes) $ throw DataIOErr $
        "unexpected number of buffers: " <> show minSizes <> " vs " <> show sizes <> "\n"
      zipWithM_ checkBufferSize minSizes sizes
@@ -150,13 +153,16 @@ reStructureArrays' ty@(TC con) = case con of
   RecType r -> liftM (Con . RecCon) $ traverse reStructureArrays' r
   IntRange _ _ -> do
     liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
+  IndexRange _ _ _ -> do
+    liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
+  -- TODO: How to restructure into a sum type?
   _ -> error $ "Not implemented: " ++ pprint ty
 reStructureArrays' ty = error $ "Not implemented: " ++ pprint ty
 
 valFromPtrs :: Type -> [Ptr ()] -> IO Val
 valFromPtrs ty ptrs = do
-  arrays <- forM (zip ptrs arrTys) $ \(ptr, (b, shape)) -> do
-              x <- loadArray $ ArrayRef (shape, b) ptr
+  arrays <- forM (zip ptrs arrTys) $ \(ptr, arrTy) -> do
+              x <- loadArray $ ArrayRef arrTy ptr
               return $ Con $ ArrayLit x
   return $ reStructureArrays ty arrays
   where arrTys = flattenType ty
@@ -166,44 +172,46 @@ type PrimConVal = PrimCon Type Atom LamExpr
 valToScatter :: Val -> Output
 valToScatter ~(Con (AFor _ body)) = ScatterOut xs ys
   where
-    ~(PairVal (Con (AGet (Con (ArrayLit (Array _ (DoubleVec xs))))))
-              (Con (AGet (Con (ArrayLit (Array _ (DoubleVec ys))))))) = body
+    ~(PairVal (Con (AGet (Con (ArrayLit (Array (DoubleVec xs))))))
+              (Con (AGet (Con (ArrayLit (Array (DoubleVec ys))))))) = body
 
 valToHeatmap :: Val -> Output
 valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = HeatmapOut h w xs
   where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet arr)))) = body
-        ~(Con (ArrayLit (Array _ (DoubleVec xs)))) = arr
+        ~(Con (ArrayLit (Array (DoubleVec xs)))) = arr
         h = hh - hl
         w = wh - wl
 
-pprintVal :: Val -> IO String
-pprintVal val = liftM asStr $ prettyVal val
+pprintVal :: Val -> String
+pprintVal val = asStr $ fst $ prettyVal val
+-- TODO: Assert all arrays are empty?
 
-prettyVal :: Val -> IO (Doc ann)
+-- TODO: Implement as a traversal?
+prettyVal :: Val -> ((Doc ann), Val)
 prettyVal (Con con) = case con of
-  RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
-  AFor n body -> do
-    xs <- flip mapM [0..n'-1] $ \i ->
-      liftM asStr $ prettyVal $ litIndexSubst i body
-    return $ pretty xs <> idxSetStr
-    where
-      (Just n') = indexSetConcreteSize n
-      idxSetStr = case n of FixedIntRange 0 _ -> mempty
-                            _                 -> "@" <> pretty n
+  RecCon r -> (pretty docs, Con $ RecCon $ r')
+    where (docs, r') = unzip $ fmap (appFst asStr . prettyVal) r
+  AFor n body -> (pretty elems <> idxSetStr, Con $ AFor n $ last bodies)
+    where n' = indexSetSize n
+          -- TODO(ragged): Substitute i in the types that appear in a!
+          (elems, bodies) = unzip $ tail $ scanl (\(_, b) _ -> appFst asStr $ prettyVal b)
+                                                 (undefined, body)
+                                                 [0..n'-1]
+          idxSetStr = case n of FixedIntRange 0 _ -> mempty
+                                _                 -> "@" <> pretty n
   AGet (Con (ArrayLit arr)) ->
-    return $ pretty $ fromMaybe (error "not a scalar") $ scalarFromArray arr
-  AsIdx n i -> do
-    i' <- prettyVal i
-    return $ i' <> "@" <> pretty n
-  Lit x -> return $ pretty x
-  _ -> return $ pretty con
+    (pretty $ arrayHead arr, Con $ AGet $ Con $ ArrayLit $ arrayTail arr)
+  AsIdx n i -> (doc <> "@" <> pretty n, Con $ AsIdx n i')
+    where (doc, i') = prettyVal i
+  Lit x -> (pretty x, Con $ Lit x)
+  _ -> (pretty con, Con $ con)
+  where
+    appFst :: (a -> b) -> (a, c) -> (b, c)
+    appFst f (x, y) = (f x, y)
 prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 
-litIndexSubst :: Int -> Atom -> Atom
-litIndexSubst i atom = case atom of
-  Con (ArrayLit x) -> Con $ ArrayLit $ subArray i x
-  Con con -> Con $ fmapExpr con id (litIndexSubst i) (error "unexpected lambda")
-  _ -> error "Unused index"
+unzip :: Functor f => f (a, b) -> (f a, f b)
+unzip f = (fmap fst f, fmap snd f)
 
 traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
 traverseVal f val = case val of
@@ -224,14 +232,68 @@ liftExceptIO :: Except a -> IO a
 liftExceptIO (Left e ) = throwIO e
 liftExceptIO (Right x) = return x
 
-flattenType :: Type -> [(BaseType, [Int])]
-flattenType (FixedIntRange _ _) = [(IntType, [])]
-flattenType (TabTy (FixedIntRange low high) a) =
-    [(b, (high - low):shape) | (b, shape) <- flattenType a]
--- temporary hack. TODO: fix
-flattenType (TabTy _ a) = [(b, 0:shape) | (b, shape) <- flattenType a]
+indexSetSize :: Type -> Int
+indexSetSize t = fromMaybe fail' $ indexSetConcreteSize t
+  where
+    fail' = (error $ "Can't determine dimension size: " ++ pprint t)
+    indexSetConcreteSize :: Type -> Maybe Int
+    indexSetConcreteSize ty = case ty of
+      TC (IntRange low high) -> do
+        l <- loadBound low
+        h <- loadBound high
+        Just $ h - l
+      TC (IndexRange n low high) -> do
+        low' <- case low of
+          InclusiveLim x -> loadBound x
+          ExclusiveLim x -> (+1) <$> loadBound x
+          Unlimited      -> Just 0
+        high' <- case high of
+          InclusiveLim x -> (+1) <$> loadBound x
+          ExclusiveLim x -> loadBound x
+          Unlimited      -> indexSetConcreteSize n
+        Just $ high' - low'
+      BoolTy  -> Just 2
+      RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
+      SumTy l r -> (+) <$> indexSetConcreteSize l <*> indexSetConcreteSize r
+      _ -> Nothing
+      where
+        loadBound :: Atom -> Maybe Int
+        loadBound (IntVal n) = Just n
+        loadBound (Con (AGet (Con (ArrayLit arr)))) = do
+          (IntLit n) <- scalarFromArray arr
+          Just n
+        loadBound _ = Nothing
+
+-- Similar to flattenType, except it only returns the missing arrays
+flattenVal :: Val -> [(Var, ArrayType)]
+flattenVal = flattenVal' 1
+
+flattenVal' :: Int -> Val -> [(Var, ArrayType)]
+-- TODO: Make the JAX backend return atoms with only ArrayTy
+flattenVal' size (Var v@(_ :> JArrayTy _ b)) = [(v, (size, b))]
+flattenVal' size (Var v@(_ :> ArrayTy b)) = [(v, (size, b))]
+flattenVal' size (Con con) = case con of
+  SumCon b l r -> rec b ++ rec l ++ rec r
+  RecCon r     -> concat $ map rec $ toList r
+  AsIdx _ e    -> rec e
+  -- TODO(ragged): Don't assume that the dimension is uniform!
+  AFor n e     -> flattenVal' (size * indexSetSize n) e
+  AGet e       -> rec e
+  _            -> []
+  where rec = flattenVal' size
+flattenVal' _ val = error $ "Unexpected val: " ++ show val
+
+flattenType :: Type -> [ArrayType]
+flattenType (TabTy n a) = do
+  let n' = indexSetSize n
+  (subCount, b) <- flattenType a
+  -- TODO(ragged): Don't assume that the dimension is uniform
+  return (n' * subCount, b)
 flattenType (TC con) = case con of
-  BaseType b  -> [(b, [])]
-  RecType r -> concat $ map flattenType $ toList r
+  BaseType b       -> [(1, b)]
+  IntRange _ _     -> [(1, IntType)]
+  IndexRange _ _ _ -> [(1, IntType)]
+  RecType r        -> concat $ map flattenType $ toList r
+  SumType _        -> undefined
   _ -> error $ "Unexpected type: " ++ show con
 flattenType ty = error $ "Unexpected type: " ++ show ty

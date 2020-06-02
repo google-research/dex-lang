@@ -16,7 +16,7 @@ import Data.Text (pack)
 import CMark (commonmarkToHtml)
 
 import Control.Monad
-import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Storable as V
 import Text.Megaparsec hiding (chunk)
 import Text.Megaparsec.Char as C
 

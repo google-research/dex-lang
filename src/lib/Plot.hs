@@ -16,7 +16,7 @@ import Diagrams.Prelude
 import Diagrams.Backend.Rasterific
 import Data.ByteString.Lazy (toStrict)
 import Data.Text.Encoding (decodeUtf8)
-import qualified Data.Vector.Unboxed as V
+import qualified Data.Vector.Storable as V
 import qualified Data.ByteString.Base64 as Base64
 import qualified Text.Blaze.Html5 as H
 import qualified Text.Blaze.Html5.Attributes as At

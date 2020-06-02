@@ -10,7 +10,8 @@ module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
-             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3) where
+             onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
+             bindM2) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -189,3 +190,9 @@ asState f = do
 
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (x, y, z) = f x y z
+
+bindM2 :: Monad m => (a -> b -> m c) -> m a -> m b -> m c
+bindM2 f ma mb = do
+  a <- ma
+  b <- mb
+  f a b
