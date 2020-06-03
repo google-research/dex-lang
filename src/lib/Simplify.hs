@@ -25,6 +25,11 @@ import Util (uncurry3)
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
+-- The outer SimpEnv is for local variables, while the nested (SubstEnv, RuleEnv) is for globals.
+-- Note that you _have to_ apply the local substitution everywhere, because the binders for those
+-- variables have been eliminated. In principle the substitution with global env is optional, but
+-- in practice it also has to happen sooner or later, because the Imp pass assumes that only array
+-- variables are imported.
 type SimplifyM a = ReaderT SimpEnv (ReaderT ((SubstEnv, RuleEnv), SimpOpts) Embed) a
 
 simplifyModule :: SubstEnv -> RuleEnv -> Module -> (Module, SubstEnv)
@@ -88,7 +93,7 @@ simplifyAtom atom = case atom of
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
 simplifyLam (LamExpr b body) = do
-  b' <- substEmbed b
+  b' <- traverse simplifyType b
   if isData (getType body)
     then do
       lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ simplify body
@@ -117,10 +122,16 @@ reconstructAtom recon x = case recon of
   Nothing -> return x
   Just f  -> f x
 
+simplifyType :: Type -> SimplifyM Type
+simplifyType (TC con) = do
+  t <- TC <$> traverseTyCon con simplifyType simplifyAtom
+  return t
+simplifyType t = substEmbed t -- NOTE: Types that are not TCs don't contain atoms
+
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyCExpr :: CExpr -> SimplifyM Atom
 simplifyCExpr expr = do
-  expr' <- traverseExpr expr substEmbed simplifyAtom simplifyLam
+  expr' <- traverseExpr expr simplifyType simplifyAtom simplifyLam
   case expr' of
     Linearize (lam, _) -> do
       rulesEnv <- lift $ asks (snd . fst)
