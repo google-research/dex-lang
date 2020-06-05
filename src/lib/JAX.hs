@@ -130,10 +130,10 @@ toJaxExpr env expr = case expr of
   --   liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
   --     ansVar <- emitJFor $ JFor (map (,MapIdx) (idxEnv ++ [i'])) $ JId x
   --     return $ IdxAtom (JVar ansVar) idxEnv
-  TabGet xs i -> do
-    let (TmpCon (AFor _ tab)) = toJaxAtom env xs
-    let i' = toJaxAtom env i
-    traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i'
+  -- TabGet xs i -> do
+  --   let (TmpCon (AFor _ tab)) = toJaxAtom env xs
+  --   let i' = toJaxAtom env i
+  --   traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i'
   Op op -> toJaxOp $ fmap (toJaxAtom env) op
 
 toJaxOp :: PrimOp TmpAtom -> JaxM TmpAtom

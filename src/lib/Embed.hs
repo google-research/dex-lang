@@ -14,7 +14,7 @@
 module Embed (emit, emitTo, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              nRecGet, nTabGet, add, mul, sub, neg, div', andE, reduceScoped,
+              nRecGet, app, add, mul, sub, neg, div', andE, reduceScoped,
               select, selectAt, unpackRec, substEmbed, fromPair,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
@@ -104,16 +104,14 @@ buildAbs b f = do
   return $ makeAbs b' ans
 
 buildLam :: MonadEmbed m
-         => ArrowHead -> Var -> (Atom -> m (Effective Atom)) -> m Atom
-buildLam ah b f = liftM fst $ buildLamAux ah b $ \x -> (,()) <$> f x
+         => Var -> (Atom -> m (Arrow, Atom)) -> m Atom
+buildLam b f = liftM fst $ buildLamAux b $ \x -> (,()) <$> f x
 
 buildLamAux :: MonadEmbed m
-            => ArrowHead -> Var -> (Atom -> m (Effective Atom, a)) -> m (Atom, a)
-buildLamAux ah v f = do
-  ((ans, (eff, aux)), b, decls) <- withBinder v $ \x -> do
-     ((eff, ans), aux) <- f x
-     return (ans, (eff, aux))
-  return (Lam ah $ Abs b (eff, wrapDecls decls ans), aux)
+            => Var -> (Atom -> m ((Arrow, Atom), a)) -> m (Atom, a)
+buildLamAux b f = do
+  (((arr, ans), aux), b, decls) <- withBinder b f
+  return (Lam (Abs b (arr, wrapDecls decls ans)), aux)
 
 buildScoped :: (MonadEmbed m) => m Atom -> m Block
 buildScoped m = do
@@ -176,8 +174,8 @@ nRecGet :: MonadEmbed m => Atom -> RecField -> m Atom
 nRecGet (RecVal r) i = return $ recGet r i
 nRecGet x i = emit $ Op $ RecGet x i
 
-nTabGet :: MonadEmbed m => Atom -> Atom -> m Atom
-nTabGet x i = emit $ TabGet x i
+app :: MonadEmbed m => Atom -> Atom -> m Atom
+app x i = emit $ App x i
 
 unpackRec :: MonadEmbed m => Atom -> m (Record Atom)
 unpackRec (RecVal r) = return r
@@ -192,15 +190,15 @@ fromPair pair          = error $ "Not a pair: " ++ pprint pair
 buildFor :: (MonadEmbed m) => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
-  lam <- buildLam PlainArrow i $ \i' -> PureTy <$> body i'
+  lam <- buildLam i $ \i' -> (PureArrow,) <$> body i'
   emit $ Hof $ For d lam
 
 unzipTab :: (MonadEmbed m) => Atom -> m (Atom, Atom)
 unzipTab tab = do
   fsts <- buildFor Fwd ("i":>n) $ \i ->
-            liftM fst $ emit (TabGet tab i) >>= fromPair
+            liftM fst $ app tab i >>= fromPair
   snds <- buildFor Fwd ("i":>n) $ \i ->
-            liftM snd $ emit (TabGet tab i) >>= fromPair
+            liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy n _ = getType tab
 
@@ -208,7 +206,7 @@ mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m 
 mapScalars f ty xs = case ty of
   TabTy n a -> do
     buildFor Fwd ("i":>n) $ \i -> do
-      xs' <- mapM (flip nTabGet i) xs
+      xs' <- mapM (flip app i) xs
       mapScalars f a xs'
   RecTy r   -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
@@ -343,10 +341,10 @@ reduceAtom scope x = case x of
 reduceExpr :: Scope -> Expr -> Maybe Atom
 reduceExpr scope expr = case expr of
   Atom  val  -> return $ reduceAtom scope val
-  App _ f x -> do
+  App f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    Lam _ (Abs b (Pure, block)) <- return f'
+    Lam (Abs b (PureArrow, block)) <- return f'
     reduceBlock scope $ scopelessSubst (b@>x') block
   _ -> Nothing

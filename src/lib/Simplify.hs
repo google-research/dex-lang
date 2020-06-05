@@ -74,7 +74,7 @@ simplifyAtom atom = case atom of
           | otherwise -> dropSub $ simplifyAtom x
         _             -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
-  Lam _ _ -> substEmbed atom
+  Lam _ -> substEmbed atom
   Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
   Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
   Con (AnyValue (SumTy l r)) -> do
@@ -85,22 +85,20 @@ simplifyAtom atom = case atom of
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
 simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
-simplifyLam (Lam ah (Abs b (eff, body))) = do
+simplifyLam (Lam (Abs b (arr, body))) = do
   b' <- mapM substEmbed b
   if isData (getType body)
-    then do
-      lam <- buildLam ah b' $ \x -> extendR (b@>x) $ simplifyEffBlock eff body
-      return (lam, Nothing)
+    then liftM (,Nothing) $ do
+      buildLam b' $ \x -> extendR (b@>x) $ (,) <$> substEmbed arr
+                                               <*> simplifyBlock body
     else do
-      (lam, recon) <- buildLamAux ah b' $ \x -> extendR (b@>x) $ do
-        ((eff', body'), (scope, decls)) <- embedScoped $ simplifyEffBlock eff body
+      (lam, recon) <- buildLamAux b' $ \x -> extendR (b@>x) $ do
+        ((eff', body'), (scope, decls)) <- embedScoped $ (,) <$> substEmbed arr
+                                                             <*> simplifyBlock body
         mapM_ emitDecl decls
         let (result, recon) = separateDataComponent scope body'
         return ((eff', result), recon)
       return $ (lam, Just recon)
-
-simplifyEffBlock :: Effects -> Block -> SimplifyM (Effects, Atom)
-simplifyEffBlock eff block = (,) <$> substEmbed eff <*> simplifyBlock block
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
@@ -120,13 +118,13 @@ reconstructAtom recon x = case recon of
 
 simplifyExpr :: Expr -> SimplifyM Atom
 simplifyExpr expr = case expr of
-  App h f x -> do
+  App f x -> do
     x' <- simplifyAtom x
     f' <- simplifyAtom f
     case f' of
-      Lam _ (Abs b (_, body)) ->
+      Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
-      _ -> emit $ App h f' x'
+      _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
@@ -166,11 +164,14 @@ simplifyHof hof = case hof of
     s' <- simplifyAtom s
     let ~(BinaryFunVal regionBinder refBinder eff body) = lam
     regionBinder' <- mapM substEmbed regionBinder
-    lam' <- buildLam PlainArrow regionBinder' $ \region ->
-      extendR (regionBinder'@>region) $ liftM (Pure,) $ do
+    lam' <- buildLam regionBinder' $ \region ->
+      extendR (regionBinder'@>region) $ liftM (PureArrow,) $ do
         refBinder' <- mapM substEmbed refBinder
-        buildLam PlainArrow refBinder' $ \ref -> do
-          extendR (refBinder'@>ref) $ simplifyEffBlock eff body
+        buildLam refBinder' $ \ref -> do
+          extendR (refBinder'@>ref) $ do
+            body' <- simplifyBlock body
+            eff' <- substEmbed eff
+            return (PlainArrow eff', body')
     emit $ Hof $ RunState s' lam'
 
 -- simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))

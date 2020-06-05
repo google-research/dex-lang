@@ -81,11 +81,10 @@ instance Pretty Block where
     hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
 
 instance Pretty Expr where
-  pretty (TabGet f x) = parens (p f) <> "." <> parens (p x)
-  pretty (App _ f x) = parens (p f) <+> parens (p x)
-  pretty (Atom atom) = p atom
-  pretty (Op   op  ) = p op
-  pretty (Hof  hof ) = p hof
+  pretty (App f x) = parens (p f) <+> parens (p x)
+  pretty (Atom x ) = p x
+  pretty (Op  op ) = p op
+  pretty (Hof hof) = p hof
 
 prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
@@ -173,15 +172,8 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
-    Lam _ (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
-    Arrow h (Abs a (eff, b)) -> parens $ prettyArrow h a' (eff' <> p b)
-      where
-        a' = case a of
-               NoName :> ann -> p ann
-               _             -> p a
-        eff' = case eff of
-                 Pure -> mempty
-                 _ -> braces (p eff) <> " "
+    Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
+    Pi  (Abs a (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
@@ -281,20 +273,22 @@ instance Pretty UExpr where
 instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam h pat body -> "\\" <> annImplicity h (p pat) <> "." <> nest 2 (p body)
-    UApp TabArrow f x -> parens (p f) <> "." <> parens (p x)
-    UApp _ f x -> p f <+> p x
+    ULam pat h body -> "\\" <> annImplicity h (p pat) <> "." <> nest 2 (p body)
+    UApp f x -> p f <+> p x
     UFor dir pat body -> kw <+> p pat <+> "." <+> p body
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UArrow h a (eff,b) -> prettyArrow h (parens (p a)) (p eff <> p b)
+    UPi a arr b -> prettyArrow arr (parens (p a)) (eff' <> p b)
+       where eff' = case arr of PlainArrow UPure -> mempty
+                                PlainArrow eff   -> p eff
+                                _ -> mempty
     UDecl decl body -> p decl <> hardline <> p body
     UPrimExpr prim -> p prim
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
 
-instance Pretty ArrowHead where
+instance Pretty Arrow where
   pretty ah = prettyArrow ah mempty mempty
 
 instance Pretty UEffects where
@@ -313,13 +307,13 @@ instance Pretty EffectName where
     Writer -> "Accum"
     State  -> "State"
 
-annImplicity :: ArrowHead -> Doc ann -> Doc ann
+annImplicity :: ArrowP a -> Doc ann -> Doc ann
 annImplicity ImplicitArrow x = braces x
 annImplicity _ x = x
 
-prettyArrow :: ArrowHead -> Doc ann -> Doc ann -> Doc ann
-prettyArrow ah a b = case ah of
-  PlainArrow    -> a <> "->"  <> b
+prettyArrow :: ArrowP a -> Doc ann -> Doc ann -> Doc ann
+prettyArrow arr a b = case arr of
+  PlainArrow _  -> a <> "->"  <> b
   TabArrow      -> a <> "=>"  <> b
   LinArrow      -> a <> "--o" <> b
   ImplicitArrow -> "{" <> a <> "} ->" <> b

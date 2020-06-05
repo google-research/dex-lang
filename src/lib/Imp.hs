@@ -56,14 +56,15 @@ toImpDecl env (Let b bound) = do
 
 toImpExpr :: SubstEnv -> Expr -> ImpM Atom
 toImpExpr env expr = case expr of
-  TabGet x i -> do
-    x' <- impSubst env x
-    i' <- impSubst env i
-    impTabGet x' i'
+  App x i -> case getType x of
+    TabTy _ _ -> do
+      x' <- impSubst env x
+      i' <- impSubst env i
+      impTabGet x' i'
+    _ -> error $ "shouldn't have non-table app left"
   Atom x   -> impSubst env x
   Op   op  -> toImpOp =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env hof
-  App _ _ _ -> error $ "shouldn't have app left"
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -129,7 +130,7 @@ toImpOp op = case op of
 
 toImpHof :: SubstEnv -> Hof -> ImpM Atom
 toImpHof env hof = case hof of
-  For d (Lam _ (Abs b@(_:>idxTy) (_, body))) -> do
+  For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
     idxTy' <- impSubst env idxTy
     n' <- indexSetSize idxTy'
     dest <- alloc resultTy

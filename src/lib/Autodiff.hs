@@ -90,17 +90,17 @@ linearizeExpr ruleEnv expr = case expr of
   --   return (ans, buildFor d i $ \i' -> do
   --                  residuals' <- forM residuals $ \r -> emit $ TabGet r i'
   --                  lin i' residuals')
-  TabGet x i -> LinA $ do
+  App x i | isTabTy (getType x) -> LinA $ do
     (i', _)  <- runLinA $ linearizeAtom i
     (x', tx) <- runLinA $ linearizeAtom x
-    ans <- emit $ TabGet x' i'
+    ans <- emit $ App x' i'
     return (ans, do tx' <- tx
-                    emit $ TabGet tx' i')
-  App _ (Var v) arg | v `isin` ruleEnv -> LinA $ do
+                    emit $ App tx' i')
+  App (Var v) arg | v `isin` ruleEnv -> LinA $ do
     (x, t) <- runLinA $ linearizeAtom arg
-    (y, f) <- emit (App PlainArrow (ruleEnv ! v) x) >>= fromPair
+    (y, f) <- emit (App (ruleEnv ! v) x) >>= fromPair
     saveVars f
-    return (y, liftM (App LinArrow f) t >>= emit )
+    return (y, liftM (App f) t >>= emit )
 
 linearizeOp :: RuleEnv -> Op -> LinA Atom
 linearizeOp ruleEnv op = case fmap linearizeAtom op of

@@ -77,24 +77,23 @@ instance HasType Atom where
           Just ty -> assertEq annTy ty "Var annotation"
       return annTy
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
-    Lam h (Abs v (eff, body)) -> withBinder v $ do
-      eff |: TC EffectsKind
-      bodyTy <- withAllowedEff eff $ typeCheck body
-      return $ Arrow h $ makeAbs v (eff, bodyTy)
-    Arrow _ (Abs v (eff, resultTy)) -> withBinder v $
-      eff |: TC EffectsKind >> resultTy|:TyKind $> TyKind
+    Lam (Abs b (arr, body)) -> withBinder b $ do
+      checkArrow arr
+      bodyTy <- withAllowedEff (arrowEff arr) $ typeCheck body
+      return $ Pi $ makeAbs b (arr, bodyTy)
+    Pi (Abs b (arr, resultTy)) -> withBinder b $
+      checkArrow arr >> resultTy|:TyKind $> TyKind
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon $> TyKind
     Eff eff  -> typeCheckEff eff $> TC EffectsKind
 
 instance HasType Expr where
   typeCheck expr = case expr of
-    App h f x -> do
-      Arrow h' piTy <- typeCheck f
+    App f x -> do
+      Pi piTy <- typeCheck f
       x |: absArgType piTy
-      assertEq h' h "arrow head mismatch"
-      let (eff, resultTy) = applyAbs piTy x
-      declareEffs eff
+      let (arr, resultTy) = applyAbs piTy x
+      declareEffs $ arrowEff arr
       return resultTy
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
@@ -104,8 +103,8 @@ instance HasType Expr where
 isPure :: Expr -> Bool
 isPure expr = case expr of
   Atom _ -> True
-  App _ f x -> case getType f of
-    Arrow _ (Abs _ (Pure, _)) -> True
+  App f x -> case getType f of
+    Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
     _ -> False
   _ -> False
 
@@ -126,6 +125,9 @@ checkDecl env decl@(Let b@(_:>annTy) rhs) =
     ty <- typeCheck rhs
     return $ b @> ty
   where ctxStr = "\nchecking decl: \n" ++ pprint decl
+
+checkArrow :: Arrow -> TypeM ()
+checkArrow arr = mapM_ (|: TC EffectsKind) arr
 
 infixr 7 |:
 (|:) :: Atom -> Type -> TypeM ()
@@ -305,10 +307,10 @@ typeCheckOp op = case op of
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
   For _ f -> do
-    Arrow PlainArrow (Abs n (eff, a)) <- typeCheck f
+    Pi (Abs n (arr, a)) <- typeCheck f
     -- TODO: check `n` isn't free in `eff`
-    declareEffs eff
-    return $ Arrow TabArrow $ Abs n (Pure, a)
+    declareEffs $ arrowEff arr
+    return $ Pi $ Abs n (TabArrow, a)
   -- SumCase st l r -> do
   --   (la, lb) <- pureNonDepAbsBlock l
   --   (ra, rb) <- pureNonDepAbsBlock r

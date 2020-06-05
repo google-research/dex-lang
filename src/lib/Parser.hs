@@ -144,8 +144,7 @@ uExpr :: Parser UExpr
 uExpr = makeExprParser uExpr' uops
   where
     uExpr' :: Parser UExpr
-    uExpr' =   uArrow
-           <|> uImplicitArrow
+    uExpr' =   uPiType
            <|> leafUExpr
            <|> uLamExpr
            <|> uForExpr
@@ -180,16 +179,28 @@ uDecl = do
       keyWord DefKW
       v <- uName
       bs <- some $ label "binder" uPiBinder
-      effTy <- label "result annotation" $ annot effectiveType
-      let letBinder = RecLeaf $ v:> Just (buildPiType bs effTy)
+      (eff, ty) <- label "result annotation" $ annot effectiveType
+      let letBinder = RecLeaf $ v:> Just (buildPiType bs eff ty)
       let lamBinders = flip map bs $ \(b, ah) -> (varName b :> Nothing, ah)
       return $ \body -> ULet letBinder (buildLam lamBinders body)
+
+    buildPiType :: [(UPiBinder, ULamArrow)] -> UEffects -> UType -> UType
+    buildPiType [] _ _ = error "shouldn't be possible"
+    buildPiType ((b,arr):bs) eff ty = UPos pos $ case bs of
+      [] -> UPi b (fmap (const eff  ) arr) ty
+      _  -> UPi b (fmap (const UPure) arr) $ buildPiType bs eff ty
+      where UPos pos _ = varAnn b
+
+    uPiBinder :: Parser (UPiBinder, ULamArrow)
+    uPiBinder =   liftM (,PlainArrow ()) rawPiBinder
+              <|> liftM (,PlainArrow ()) parenPiBinder
+              <|> liftM (,ImplicitArrow) implicitPiBinder
 
 effectiveType :: Parser (UEffects, UType)
 effectiveType = (,) <$> effects <*> uExpr
 
 effects :: Parser UEffects
-effects = braces someEffects <|> return uPure
+effects = braces someEffects <|> return UPure
   where
     someEffects = do
       effs <- liftM2 (,) effectName uvar `sepBy` symbol ","
@@ -213,23 +224,11 @@ uLamExpr = do
   buildLam <$> some uLamBinder
            <*> (argTerm >> blockOrExpr)
 
-buildPiType :: [(UPiBinder, ArrowHead)] -> (UEffects, UType) -> UType
-buildPiType [] _ = error "shouldn't be possible"
-buildPiType ((b,ah):bs) effTy = UPos pos $ UArrow ah b resultTy
-  where
-    UPos pos _ = varAnn b
-    resultTy = case bs of
-      [] -> effTy
-      _  -> (uPure, buildPiType bs effTy)
-
-uPure :: UEffects
-uPure = UEffects [] Nothing
-
-buildLam :: [(UBinder, ArrowHead)] -> UExpr -> UExpr
+buildLam :: [(UBinder, ULamArrow)] -> UExpr -> UExpr
 buildLam binders body@(UPos pos _) = case binders of
   [] -> body
   -- TODO: join with source position of binders too
-  (b,ah):bs -> UPos pos $ ULam ah (RecLeaf b) $ buildLam bs body
+  (b,arr):bs -> UPos pos $ ULam (RecLeaf b) arr $ buildLam bs body
 
 buildFor :: Direction -> [UBinder] -> UExpr -> UExpr
 buildFor dir binders body@(UPos pos _) = case binders of
@@ -274,20 +273,27 @@ uStatement :: Parser UStatement
 uStatement = withPos $   liftM Left  uDecl
                      <|> liftM Right uExpr
 
-uArrow :: Parser UExpr
-uArrow = withSrc $ do
-  (b, ah) <- try $ (,) <$> (rawPiBinder <|> parenPiBinder) <*> arrowHead
-  resultTy <- effectiveType
-  return $ UArrow ah b resultTy
+uPiType :: Parser UExpr
+uPiType = uExplicitPi <|> uImplicitPi
 
-uImplicitArrow :: Parser UExpr
-uImplicitArrow = withSrc $ do
+uExplicitPi :: Parser UExpr
+uExplicitPi = withSrc $ do
+  b <- try $ piBinder <* lookAhead (arrow (return ()))
+  UPi b <$> arrow effects <*> uExpr
+
+piBinder :: Parser UPiBinder
+piBinder = rawPiBinder <|> parenPiBinder
+
+arrow :: Parser eff -> Parser (ArrowP eff)
+arrow p =   (sym "->"  >> liftM PlainArrow p)
+        <|> (sym "=>"  $> TabArrow)
+        <|> (sym "--o" $> LinArrow)
+
+uImplicitPi :: Parser UExpr
+uImplicitPi = withSrc $ do
   v <- try $ implicitPiBinder <* sym "->"
-  effTy <- effectiveType
-  return $ UArrow ImplicitArrow v effTy
-
-arrowHead :: Parser ArrowHead
-arrowHead = (sym "->" $> PlainArrow) <|> (sym "=>" $> TabArrow)
+  ty <- uExpr
+  return $ UPi v ImplicitArrow ty
 
 uName :: Parser Name
 uName = textName <|> symName
@@ -295,14 +301,9 @@ uName = textName <|> symName
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
 
-uPiBinder :: Parser (UPiBinder, ArrowHead)
-uPiBinder =   liftM (,PlainArrow   ) rawPiBinder
-          <|> liftM (,PlainArrow   ) parenPiBinder
-          <|> liftM (,ImplicitArrow) implicitPiBinder
-
-uLamBinder :: Parser (UBinder, ArrowHead)
-uLamBinder =   liftM (,PlainArrow   ) rawLamBinder
-           <|> liftM (,PlainArrow   ) parenLamBinder
+uLamBinder :: Parser (UBinder, ULamArrow)
+uLamBinder =   liftM (,PlainArrow ()) rawLamBinder
+           <|> liftM (,PlainArrow ()) parenLamBinder
            <|> liftM (,ImplicitArrow) implicitLamBinder
 
 rawLamBinder :: Parser UBinder
@@ -333,7 +334,7 @@ uPrim = withSrc $ do
 -- literal symbols here must only use chars from `symChars`
 uops :: [[Operator Parser UExpr]]
 uops =
-  [ [InfixL $ sym "." $> mkGenApp TabArrow]
+  [ [InfixL $ sym "." $> mkApp]
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
@@ -364,20 +365,17 @@ binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
   where f' = UPos pos $ UVar (f:>())
 
-mkGenApp :: ArrowHead -> UExpr -> UExpr -> UExpr
-mkGenApp ah f x = UPos (joinPos f x) $ UApp ah f x
-
 mkApp :: UExpr -> UExpr -> UExpr
-mkApp = mkGenApp PlainArrow
+mkApp f x = UPos (joinPos f x) $ UApp f x
 
 infixEffArrow :: Parser (UType -> UType -> UType)
 infixEffArrow = do
   ((), pos) <- withPos $ sym "->"
   eff <- effects
-  return $ \a b -> UPos pos $ UArrow PlainArrow (NoName:>a) (eff, b)
+  return $ \a b -> UPos pos $ UPi (NoName:>a) (PlainArrow eff) b
 
-mkArrow :: ArrowHead -> UExpr -> UExpr -> UExpr
-mkArrow ah a b = UPos (joinPos a b) $ UArrow ah (NoName:>a) (uPure, b)
+mkArrow :: UPiArrow -> UExpr -> UExpr -> UExpr
+mkArrow arr a b = UPos (joinPos a b) $ UPi (NoName:>a) arr b
 
 withSrc :: Parser UExpr' -> Parser UExpr
 withSrc p = do
