@@ -1,6 +1,12 @@
 Int = %Int
 Real = %Real
 Type = %TyKind
+Region = %Region
+UnitTy = %UnitType
+
+def IntRange (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = IntRange 0 n
+def Ref (r:Region) (a:Type) : Type = %Ref r a
 
 def (+) (x:Real) (y:Real) : Real = %fadd x y
 def iadd (x:Int) (y:Int) : Int = %iadd x y
@@ -8,6 +14,17 @@ def (**) (a:Type) (b:Type) : Type = %PairType a b
 def (,) {a:Type} {b:Type} (x:a) (y:b) : a ** b = %pair x y
 def fst {a:Type} {b:Type} (p:a**b) : a = %fst p
 def snd {a:Type} {b:Type} (p:a**b) : b = %snd p
+
+def get  {s:Type} {r:Region} (ref:Ref r s)       : {State r} s      = %get ref
+def (:=) {s:Type} {r:Region} (ref:Ref r s) (x:s) : {State r} UnitTy = %put ref x
+
+def withState
+    {a:Type} {s:Type}
+    (init:s)
+    (action: {r:Region} -> Ref r s -> {State r} a)
+    : (a ** s) =
+    def explicitAction (reg:Region) (ref:Ref reg s) : {State reg} a = action ref
+    %runState init explicitAction
 
 :p iadd 3 (iadd 4 5)
 > 12
@@ -39,7 +56,7 @@ def idImplicit {a:Type} (x:a) : a = x
 :p idImplicit 1
 > 1
 
-def idImplicit2 : ({a:Type} -> a -> a) = \x. x
+idImplicit2 : ({a:Type} -> a -> a) = \x. x
 :p idImplicit2 1
 > 1
 
@@ -93,9 +110,6 @@ def TyId (a:Type) : Type = a
   x
 > 1
 
-def IntRange (low:Int) (high:Int) : Type = %IntRange low high
-def Fin (n:Int) : Type = IntRange 0 n
-
 def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
 
 -- bug: this doesn't work if we split it across top-level decls
@@ -108,3 +122,9 @@ myPair = (1, 2.3)
 
 :p fst myPair
 > 1
+
+:p
+   snd $ withState 2 \s.
+     x = get s
+     s := iadd x 3
+> 5

@@ -157,7 +157,7 @@ evalModule (TopEnv _ simpEnv ruleEnv) normalized = do
   checkPass SimpPass defunctionalized
   let (Module _ _ outVars dfExpr) = defunctionalized
   case dfExpr of
-    Block [] (Atom UnitVal) _  -> do
+    Block [] (Atom UnitVal) -> do
       return $ TopEnv mempty simpEnv' mempty
     _ -> do
       ~(TupVal results) <- evalBackend dfExpr

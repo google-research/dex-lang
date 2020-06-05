@@ -17,8 +17,6 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer
-import Data.Bifunctor
-import Data.Bitraversable
 import Data.Foldable
 import Data.Functor.Reverse
 import Data.Text.Prettyprint.Doc
@@ -46,7 +44,7 @@ runImpM :: ImpM a -> a
 runImpM m = fst $ runCat m mempty
 
 toImpBlock :: SubstEnv -> Block -> ImpM Atom
-toImpBlock env (Block decls result _) = do
+toImpBlock env (Block decls result) = do
   env' <- catFoldM toImpDecl env decls
   toImpExpr (env <> env') result
 
@@ -62,24 +60,10 @@ toImpExpr env expr = case expr of
     x' <- impSubst env x
     i' <- impSubst env i
     impTabGet x' i'
-  For d (LamExpr b@(_:>idxTy) body) -> do
-    idxTy' <- impSubst env idxTy
-    n' <- indexSetSize idxTy'
-    dest <- alloc $ getType expr
-    emitLoop d n' $ \i -> do
-      i' <- intToIndex idxTy i
-      ithDest <- impTabGet dest i'
-      ans <- toImpBlock (env <> b @> i') body
-      copyAtom ithDest ans
-    return dest
-  Op op -> toImpOp =<< traverse (impSubst env) op
-  Hof hof -> toImpHof =<< bitraverse (impSubst env) (substLamPartial env) hof
-  Atom x -> impSubst env x
-
-substLamPartial :: SubstEnv -> LamExpr -> ImpM (LamExpr, SubstEnv)
-substLamPartial env (LamExpr b body) = do
-  b' <- traverse (impSubst env) b
-  return (LamExpr b' body, env)
+  Atom x   -> impSubst env x
+  Op   op  -> toImpOp =<< traverse (impSubst env) op
+  Hof  hof -> toImpHof env hof
+  App _ _ _ -> error $ "shouldn't have app left"
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -109,7 +93,7 @@ toImpOp op = case op of
       val -> error $ "Expected a record, got: " ++ pprint val
   Fst ~(PairVal x _) -> return x
   Snd ~(PairVal _ y) -> return y
-  PrimEffect ref m -> do
+  PrimEffect ~(Con (RefCon _ ref)) m -> do
     case m of
       MAsk    -> return ref
       MTell x -> addToAtom ref x >> return UnitVal
@@ -143,25 +127,36 @@ toImpOp op = case op of
     resultTy :: Type
     resultTy = getType $ Op op
 
-toImpHof :: PrimHof Atom (LamExpr, SubstEnv) -> ImpM Atom
-toImpHof hof = case hof of
-  RunReader r (LamExpr ref body, env) -> do
-    toImpBlock (env <> ref @> r) body
-  RunWriter (LamExpr ref body, env) -> do
-    wDest <- alloc wTy
-    initializeAtomZero wDest
-    aResult <- toImpBlock (env <> ref @> wDest) body
-    return $ PairVal aResult wDest
-    where (PairTy _ wTy) = resultTy
-  RunState s (LamExpr ref body, env) -> do
+toImpHof :: SubstEnv -> Hof -> ImpM Atom
+toImpHof env hof = case hof of
+  For d (Lam _ (Abs b@(_:>idxTy) (_, body))) -> do
+    idxTy' <- impSubst env idxTy
+    n' <- indexSetSize idxTy'
+    dest <- alloc resultTy
+    emitLoop d n' $ \i -> do
+      i' <- intToIndex idxTy i
+      ithDest <- impTabGet dest i'
+      ans <- toImpBlock (env <> b @> i') body
+      copyAtom ithDest ans
+    return dest
+--   RunReader r (Abs ref body, env) -> do
+--     toImpBlock (env <> ref @> r) body
+--   RunWriter (Abs ref body, env) -> do
+--     wDest <- alloc wTy
+--     initializeAtomZero wDest
+--     aResult <- toImpBlock (env <> ref @> wDest) body
+--     return $ PairVal aResult wDest
+--     where (PairTy _ wTy) = resultTy
+  RunState s (BinaryFunVal region ref _ body) -> do
+    s' <- impSubst env s
     sDest <- alloc sTy
-    copyAtom sDest s
-    aResult <- toImpBlock (env <> ref @> sDest) body
+    copyAtom sDest s'
+    aResult <- toImpBlock (env <> ref @> Con (RefCon (Var region) sDest)) body
     return $ PairVal aResult sDest
     where (PairTy _ sTy) = resultTy
   where
     resultTy :: Type
-    resultTy = getType $ Hof $ bimap id fst hof
+    resultTy = getType $ Hof hof
 
 toScalarAtom :: Type -> IExpr -> Atom
 toScalarAtom _  (ILit v) = Con $ Lit v
@@ -170,7 +165,6 @@ toScalarAtom ty x@(IVar (v:>_)) = case ty of
   TC (IntRange       _ _) -> Con $ AsIdx ty $ toScalarAtom IntTy x
   TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' x
   _ -> error $ "Not a scalar type: " ++ pprint ty
-
 
 anyValue :: Type -> IExpr
 anyValue (TC (BaseType RealType))   = ILit $ RealLit 1.0
@@ -210,7 +204,7 @@ makeDest :: Name-> Type -> ImpM (Atom, [IVar])
 makeDest name ty = runWriterT $ makeDest' name [] ty
 
 makeDest' :: Name-> [IExpr] -> Type -> WriterT [IVar] ImpM Atom
-makeDest' name shape (TabTy n b _) = do
+makeDest' name shape (TabTy n b) = do
   n'  <- lift $ indexSetSize n
   liftM (Con . AFor n) $ makeDest' name (shape ++ [n']) b
 makeDest' name shape ty@(TC con) = case con of
@@ -219,6 +213,8 @@ makeDest' name shape ty@(TC con) = case con of
     tell [v]
     return $ Con $ AGet $ Var (fmap impTypeToType v)
   RecType r   -> liftM RecVal $ traverse (makeDest' name shape) r
+  PairType a b -> PairVal <$> makeDest' name shape a <*> makeDest' name shape b
+  UnitType -> return UnitVal
   IntRange   _ _   -> scalarIndexSet ty
   IndexRange _ _ _ -> scalarIndexSet ty
   _ -> error $ "Can't lower type to imp: " ++ pprint con
@@ -322,7 +318,7 @@ typeToIType ty = case ty of
   _ -> error $ "Not a valid Imp type: " ++ pprint ty
 
 toImpBaseType :: Type -> BaseType
-toImpBaseType (TabTy _ a _) = toImpBaseType a
+toImpBaseType (TabTy _ a) = toImpBaseType a
 toImpBaseType (TC con) = case con of
   BaseType b       -> b
   IntRange _ _     -> IntType
@@ -367,6 +363,7 @@ traverseLeaves f atom = case atom of
     AFor n body -> liftA (AFor  n) $ recur body
     RecCon r    -> liftA RecCon    $ traverse recur r
     PairCon x y -> liftA2 PairCon (recur x) (recur y)
+    UnitCon     -> pure UnitCon
     _ -> error $ "Not a valid Imp atom: " ++ pprint atom
   _ ->   error $ "Not a valid Imp atom: " ++ pprint atom
   where recur = traverseLeaves f

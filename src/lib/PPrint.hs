@@ -15,8 +15,6 @@ module PPrint (pprint, pprintList, printLitBlock, asStr,
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
-import Data.Bifunctor
-import Data.Bifoldable
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -58,13 +56,6 @@ instance Pretty ErrType where
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
 
-instance Pretty PiType where
-  pretty (Pi (NoName:>a) b) = p a <+> "-->" <+> p b
-  pretty (Pi v b) = parens (p v) <+> "-->" <+> p b
-
-instance Pretty EffectName where
-  pretty x = p (show x)
-
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
 
@@ -85,24 +76,25 @@ instance Pretty LitVal where
   pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty Block where
-  pretty (Block [] expr _) = p expr
-  pretty (Block decls expr _) = nest 2 $
+  pretty (Block [] expr) = p expr
+  pretty (Block decls expr) = nest 2 $
     hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
 
 instance Pretty Expr where
   pretty (TabGet f x) = parens (p f) <> "." <> parens (p x)
   pretty (App _ f x) = parens (p f) <+> parens (p x)
-  pretty (For dir lam) = dirStr dir <+> p lam
   pretty (Atom atom) = p atom
-  pretty (Op op) = p op
+  pretty (Op   op  ) = p op
+  pretty (Hof  hof ) = p hof
 
-prettyExprDefault :: (Pretty e, Pretty lam) => PrimExpr e lam -> Doc ann
+prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
-  p ("%" ++ showPrimName expr) <> bifoldMap (\x -> " " <> p x)
-                                            (\l -> " " <> p l)
-                                            expr
+  p ("%" ++ showPrimName expr) <> foldMap (\x -> " " <> p x) expr
 
-instance (Pretty e, Pretty lam) => Pretty (PrimExpr e lam) where
+instance Pretty e => Pretty (Abs e) where
+  pretty (Abs binder body) = "\\" <> p binder <> "." <> p body
+
+instance Pretty e => Pretty (PrimExpr e) where
   pretty (TCExpr  e) = p e
   pretty (ConExpr e) = p e
   pretty (OpExpr  e) = p e
@@ -125,20 +117,24 @@ instance Pretty e => Pretty (PrimTC e) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
-    TypeKind   -> "Type"
-    EffectKind -> "Effect"
+    TypeKind -> "Type"
+    EffectsKind -> "EffectKind"
+    _ -> prettyExprDefault $ TCExpr con
 
 instance Pretty e => Pretty (PrimCon e) where
   pretty con = case con of
     Lit l       -> p l
     ArrayLit array -> p array
     PairCon x y -> parens $ p x <+> "," <+> p y
+    UnitCon     -> "()"
+    RefCon _ _  -> "RefCon"
     RecCon r    -> p r
     AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
     AGet e      -> "aget" <+> p e
     AsIdx n i   -> p i <> "@" <> p n
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ "SumCon" <+> p c <+> p l <+> p r
+
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
@@ -148,25 +144,18 @@ instance Pretty e => Pretty (PrimOp e) where
     SumTag e        -> parens $ "projTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
-    _ -> prettyExprDefault $ bimap id (const ()) $ OpExpr op
+    _ -> prettyExprDefault $ OpExpr op
 
-instance (Pretty e, Pretty lam) => Pretty (PrimHof e lam) where
+instance Pretty e => Pretty (PrimHof e) where
   pretty hof = case hof of
+    For dir lam -> dirStr dir <+> p lam
     SumCase c l r -> "case" <+> parens (p c) <> hardline
                   <> nest 2 (p l)            <> hardline
                   <> nest 2 (p r)
     _ -> prettyExprDefault $ HofExpr hof
 
-instance Pretty LamExpr where
-  pretty (LamExpr b body) = "\\" <> p b <+> "." <+> p body
-
 instance Pretty a => Pretty (VarP a) where
-  pretty (v :> ann) =
-    case asStr ann' of
-      "-"    -> p v
-      "Type" -> p v
-      _      -> p v <> ":" <> ann'
-    where ann' = p ann
+  pretty (v :> ann) = p v <> ":" <> p ann
 
 instance Pretty ClassName where
   pretty name = case name of
@@ -184,18 +173,23 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
-    Lam _ lam -> p lam
-    Arrow h (Pi a (eff, b))
-      | isPure eff -> parens $ prettyArrow h (parens (p a)) (parens (p b))
-      | otherwise  -> parens $ prettyArrow h (parens (p a)) (p eff <+> parens (p b))
+    Lam _ (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
+    Arrow h (Abs a (eff, b)) -> parens $ prettyArrow h a' (eff' <> p b)
+      where
+        a' = case a of
+               NoName :> ann -> p ann
+               _             -> p a
+        eff' = case eff of
+                 Pure -> mempty
+                 _ -> braces (p eff) <> " "
     TC  e -> p e
     Con e -> p e
-    Effect row t -> "{" <> row' <+> tailVar <> "}"
-      where
-        row' = hsep $ punctuate "," $
-                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
-        tailVar = case t of Nothing -> mempty
-                            Just v  -> "|" <+> p v
+    Eff e -> p e
+
+instance Pretty e => Pretty (PrimEff e) where
+  pretty PureEff = "|"
+  pretty (ExtendEff (effName, region) rest) =
+    p effName <+> p region <> "," <+> p rest
 
 tup :: Pretty a => [a] -> Doc ann
 tup [x] = p x
@@ -287,20 +281,15 @@ instance Pretty UExpr where
 instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam h (ULamExpr pat body) ->
-       "\\" <> annImplicity h (p pat) <+> "." <> nest 2 (hardline <> p body)
+    ULam h pat body -> "\\" <> annImplicity h (p pat) <> "." <> nest 2 (p body)
     UApp TabArrow f x -> parens (p f) <> "." <> parens (p x)
     UApp _ f x -> p f <+> p x
-    UFor dir lam -> kw <+> p lam
+    UFor dir pat body -> kw <+> p pat <+> "." <+> p body
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UArrow h (UPi a b) -> prettyArrow h (parens (p a)) (parens (p b))
+    UArrow h a (eff,b) -> prettyArrow h (parens (p a)) (p eff <> p b)
     UDecl decl body -> p decl <> hardline <> p body
     UPrimExpr prim -> p prim
-    UAnnot e ann -> parens (p e) <+> ":" <+> parens (p ann)
-
-instance Pretty ULamExpr where
-  pretty (ULamExpr pat body) = "\\" <> p pat <+> "." <> nest 3 (line <> p body)
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
@@ -308,8 +297,24 @@ instance Pretty UDecl where
 instance Pretty ArrowHead where
   pretty ah = prettyArrow ah mempty mempty
 
+instance Pretty UEffects where
+  pretty (UEffects [] Nothing) = mempty
+  pretty (UEffects effs tailVar) =
+    braces $ hsep (punctuate "," (map prettyEff effs)) <> tailStr
+    where
+      prettyEff (effName, region) = p effName <+> p region
+      tailStr = case tailVar of
+        Nothing -> mempty
+        Just v  -> "|" <> p v
+
+instance Pretty EffectName where
+  pretty eff = case eff of
+    Reader -> "Read"
+    Writer -> "Accum"
+    State  -> "State"
+
 annImplicity :: ArrowHead -> Doc ann -> Doc ann
-annImplicity ImplicitArrow x = "{" <> x <> "}"
+annImplicity ImplicitArrow x = braces x
 annImplicity _ x = x
 
 prettyArrow :: ArrowHead -> Doc ann -> Doc ann -> Doc ann

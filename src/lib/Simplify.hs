@@ -54,11 +54,11 @@ simplifyTop block = do
   return (vs, expr', results)  -- no need to choose fresh names
 
 simplifyBlock :: Block -> SimplifyM Atom
-simplifyBlock (Block (decl:decls) result eff) = do
+simplifyBlock (Block (decl:decls) result) = do
    env <- simplifyDecl decl
    extendR env $ simplifyBlock body
-   where body = Block decls result eff
-simplifyBlock (Block [] result _) = simplifyExpr result
+   where body = Block decls result
+simplifyBlock (Block [] result) = simplifyExpr result
 
 simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
@@ -75,7 +75,7 @@ simplifyAtom atom = case atom of
         _             -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ _ -> substEmbed atom
-  Con (AnyValue (TabTy a b _)) -> Con . AFor a <$> mkAny b
+  Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
   Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
@@ -84,19 +84,23 @@ simplifyAtom atom = case atom of
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
-simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
-simplifyLam (LamExpr b body) = do
+simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
+simplifyLam (Lam ah (Abs b (eff, body))) = do
   b' <- mapM substEmbed b
   if isData (getType body)
     then do
-      lam <- buildLamExpr b' $ \x -> extendR (b@>x) $ simplifyBlock body
+      lam <- buildLam ah b' $ \x -> extendR (b@>x) $ simplifyEffBlock eff body
       return (lam, Nothing)
     else do
-      (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b@>x) $ do
-        (body', (scope, decls)) <- embedScoped $ simplifyBlock body
+      (lam, recon) <- buildLamAux ah b' $ \x -> extendR (b@>x) $ do
+        ((eff', body'), (scope, decls)) <- embedScoped $ simplifyEffBlock eff body
         mapM_ emitDecl decls
-        return $ separateDataComponent scope body'
+        let (result, recon) = separateDataComponent scope body'
+        return ((eff', result), recon)
       return $ (lam, Just recon)
+
+simplifyEffBlock :: Effects -> Block -> SimplifyM (Effects, Atom)
+simplifyEffBlock eff block = (,) <$> substEmbed eff <*> simplifyBlock block
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
@@ -120,14 +124,11 @@ simplifyExpr expr = case expr of
     x' <- simplifyAtom x
     f' <- simplifyAtom f
     case f' of
-      Lam _ (LamExpr b body) ->
+      Lam _ (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
       _ -> emit $ App h f' x'
-  For d lam -> do
-    ~(lam', Nothing) <- simplifyLam lam
-    emit $ For d lam'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
-  Hof hof -> bitraverse simplifyAtom simplifyLam hof >>= simplifyHof
+  Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
@@ -141,38 +142,59 @@ simplifyOp op = case op of
   Select p x y -> selectAt (getType x) p x y
   _ -> emitOp op
 
-simplifyHof :: PrimHof Atom (LamExpr, Maybe (Atom -> SimplifyM Atom)) -> SimplifyM Atom
+simplifyHof :: Hof -> SimplifyM Atom
 simplifyHof hof = case hof of
-  Linearize (lam, _) -> do
-    rulesEnv <- lift $ asks (snd . fst)
-    scope <- getScope
-    -- TODO: simplify the result to remove functions introduced by linearization
-    return $ linearize rulesEnv scope lam
-  Transpose (lam, _) -> do
-    scope <- getScope
-    return $ transposeMap scope lam
-  RunReader r (lam, recon) -> do
-    ans <- emit $ Hof $ RunReader r lam
-    reconstructAtom recon ans
-  RunWriter (lam, recon) -> do
-    (ans, w) <- fromPair =<< emit (Hof $ RunWriter lam)
-    ans' <- reconstructAtom recon ans
-    return $ PairVal ans' w
-  RunState s (lam, recon) -> do
-    (ans, s') <- fromPair =<< emit (Hof $ RunState s lam)
-    ans' <- reconstructAtom recon ans
-    return $ PairVal ans' s'
-  SumCase c (lBody, _) (rBody, _) -> do
-    l <- projApp lBody True
-    r <- projApp rBody False
-    isLeft <- simplRec $ Op $ SumTag c
-    emitOp $ Select isLeft l r
-    where
-      simplRec :: Expr -> SimplifyM Atom
-      simplRec = dropSub . simplifyExpr
-      projApp body isLeft = do
-        cComp <- simplRec $ Op $ SumGet c isLeft
-        simplRec $ App PlainArrow (Lam PlainArrow body) cComp
+  For d lam -> do
+    ~(lam', Nothing) <- simplifyLam lam
+    emit $ Hof $ For d lam'
+--   Linearize (lam, _) -> do
+--     rulesEnv <- lift $ asks (snd . fst)
+--     scope <- getScope
+--     -- TODO: simplify the result to remove functions introduced by linearization
+--     return $ linearize rulesEnv scope lam
+--   -- Transpose (lam, _) -> do
+--   --   scope <- getScope
+--   --   return $ transposeMap scope lam
+--   RunReader r (lam, recon) -> do
+--     ans <- emit $ Hof $ RunReader r lam
+--     reconstructAtom recon ans
+--   RunWriter (lam, recon) -> do
+--     (ans, w) <- fromPair =<< emit (Hof $ RunWriter lam)
+--     ans' <- reconstructAtom recon ans
+--     return $ PairVal ans' w
+  RunState s lam -> do
+    s' <- simplifyAtom s
+    let ~(BinaryFunVal regionBinder refBinder eff body) = lam
+    regionBinder' <- mapM substEmbed regionBinder
+    lam' <- buildLam PlainArrow regionBinder' $ \region ->
+      extendR (regionBinder'@>region) $ liftM (Pure,) $ do
+        refBinder' <- mapM substEmbed refBinder
+        buildLam PlainArrow refBinder' $ \ref -> do
+          extendR (refBinder'@>ref) $ simplifyEffBlock eff body
+    emit $ Hof $ RunState s' lam'
+
+-- simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
+-- simplifyLam (Lam ah (Abs b (eff, body))) = do
+--   b' <- mapM substEmbed b
+--   if isData (getType body)
+--     then do
+--       lam <- buildLam ah b' $ \x -> extendR (b@>x) $ simplifyEffBlock eff body
+--       return (lam, Nothing)
+
+    -- (ans, s') <- fromPair =<< emit (Hof $ RunState s lam)
+    -- ans' <- reconstructAtom recon ans
+    -- return $ PairVal ans' s'
+--   -- SumCase c (lBody, _) (rBody, _) -> do
+--   --   l <- projApp lBody True
+--   --   r <- projApp rBody False
+--   --   isLeft <- simplRec $ Op $ SumTag c
+--   --   emitOp $ Select isLeft l r
+--   --   where
+--   --     simplRec :: Expr -> SimplifyM Atom
+--   --     simplRec = dropSub . simplifyExpr
+--   --     projApp body isLeft = do
+--   --       cComp <- simplRec $ Op $ SumGet c isLeft
+--   --       simplRec $ App PlainArrow (Lam PlainArrow body) cComp
 
 resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
 resolveEq t x y = case t of
@@ -184,16 +206,16 @@ resolveEq t x y = case t of
     equals <- mapM (uncurry3 resolveEq) $ recZipWith3 (,,) ts xs ys
     foldM andE (BoolVal True) equals
   -- instance Eq a => Eq n=>a
-  TabTy ixty elty _ -> do
-    writerLam <- buildLamExpr ("ref":> RefTy RealTy) $ \ref -> do
-      forLam <- buildLamExpr ("i":>ixty) $ \i -> do
-        (x', y') <- (,) <$> nTabGet x i <*> nTabGet y i
-        eqReal <- boolToReal =<< resolveEq elty x' y'
-        emitOp $ PrimEffect ref $ MTell eqReal
-      emit $ For Fwd forLam
-    idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
-    total <- snd <$> (fromPair =<< emit (Hof $ RunWriter writerLam))
-    emitOp $ Cmp Equal RealTy total idxSetSize
+  -- TabTy ixty elty -> do
+  --   writerLam <- buildAbsBlock ("ref":> RefTy RealTy) $ \ref -> do
+  --     forLam <- buildAbsBlock ("i":>ixty) $ \i -> do
+  --       (x', y') <- (,) <$> nTabGet x i <*> nTabGet y i
+  --       eqReal <- boolToReal =<< resolveEq elty x' y'
+  --       emitOp $ PrimEffect ref $ MTell eqReal
+  --     emit $ For Fwd forLam
+  --   idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
+  --   total <- snd <$> (fromPair =<< emit (Hof $ RunWriter writerLam))
+  --   emitOp $ Cmp Equal RealTy total idxSetSize
   -- instance (Eq a, Eq b) => Eq (Either a b)
   SumTy lty rty -> do
     xt <- emitOp $ SumTag x

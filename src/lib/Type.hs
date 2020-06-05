@@ -7,15 +7,16 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, getEffType, checkEffType, HasType (..), Checkable (..), litType,
-  binOpType, unOpType, isData, indexSetConcreteSize, applyPi, piArgType,
-  pureType, checkNoShadow) where
+  getType, HasType (..), Checkable (..), litType, isPure, forbiddenEffects,
+  binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Control.Monad.Writer
 import Data.Foldable
 import Data.Functor
 import qualified Data.Map.Strict as M
@@ -31,26 +32,18 @@ import Cat
 
 type ClassEnv = MonMap Name [ClassName]
 
-data TypeCheckEnv = SkipChecks | CheckWith TypeEnv
--- TODO: put the effects in a writer/cat monad here
+data OptionalEnv env = SkipChecks | CheckWith env  deriving Functor
+type TypeCheckEnv = OptionalEnv (TypeEnv, Effects)
 type TypeM = ReaderT TypeCheckEnv Except
-
-getType :: HasType a => a -> Type
-getType x = snd $ getEffType x
-
-getEffType :: HasType a => a -> EffectiveType
-getEffType x = ignoreExcept $ runTypeCheck SkipChecks x
-
-checkEffType :: HasType a => TypeEnv -> a -> Except EffectiveType
-checkEffType env x = runTypeCheck (CheckWith env) x
 
 class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
-runTypeCheck :: HasType a => TypeCheckEnv -> a -> Except EffectiveType
-runTypeCheck env x = do
-  ty <- addContext ctxStr $ runReaderT (typeCheck x) env
-  return (noEffect, ty) -- TODO: effects!
+getType :: HasType a => a -> Type
+getType x = ignoreExcept $ runTypeCheck SkipChecks x
+
+runTypeCheck :: HasType a => TypeCheckEnv -> a -> Except Type
+runTypeCheck env x = addContext ctxStr $ runReaderT (typeCheck x) env
   where ctxStr = "\nChecking:\n" ++ pprint x
 
 -- === Module interfaces ===
@@ -61,9 +54,8 @@ class Pretty a => Checkable a where
 instance Checkable Module where
   checkValid m@(Module _ imports exports block) =
     asCompilerErr $ do
-      let env = foldMap varAsEnv imports
-      (eff, TupTy outTys) <- runTypeCheck (CheckWith env) block
-      assertEq noEffect eff "module effect"
+      let env = (foldMap varAsEnv imports, Pure)
+      TupTy outTys <- runTypeCheck (CheckWith env) block
       assertEq (map varAnn exports) outTys "export types"
     where ctxStr = "\nChecking:\n" ++ pprint m
 
@@ -80,73 +72,60 @@ instance HasType Atom where
       env <- ask
       case env of
         SkipChecks -> return ()
-        CheckWith tyEnv -> case envLookup tyEnv v of
+        CheckWith (tyEnv, _) -> case envLookup tyEnv v of
           Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
           Just ty -> assertEq annTy ty "Var annotation"
       return annTy
-    Lam h lam -> Arrow h <$> typeCheckLamExpr lam
-    -- TODO: check effect is empty unless arrowhead is PlainArrow
-    Arrow _ piTy -> typeCheckPiType piTy $> TyKind
-    Con con -> typeCheckCon con
+    -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
+    Lam h (Abs v (eff, body)) -> withBinder v $ do
+      eff |: TC EffectsKind
+      bodyTy <- withAllowedEff eff $ typeCheck body
+      return $ Arrow h $ makeAbs v (eff, bodyTy)
+    Arrow _ (Abs v (eff, resultTy)) -> withBinder v $
+      eff |: TC EffectsKind >> resultTy|:TyKind $> TyKind
+    Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon $> TyKind
+    Eff eff  -> typeCheckEff eff $> TC EffectsKind
 
 instance HasType Expr where
   typeCheck expr = case expr of
     App h f x -> do
       Arrow h' piTy <- typeCheck f
-      x |: piArgType piTy
+      x |: absArgType piTy
       assertEq h' h "arrow head mismatch"
-      return $ snd $ applyPi piTy x
-    For _ lam -> do
-      Pi a (eff, b) <- typeCheckLamExpr lam
-      -- TODO: check pi binder isn't free in `eff`
-      return $ Arrow TabArrow $ Pi a (pureType b)
-    Atom x -> typeCheck x
-    Op op -> typeCheckOp op
+      let (eff, resultTy) = applyAbs piTy x
+      declareEffs eff
+      return resultTy
+    Atom x   -> typeCheck x
+    Op   op  -> typeCheckOp op
+    Hof  hof -> typeCheckHof hof
+
+-- TODO: replace with something more precise (this is too cautious)
+isPure :: Expr -> Bool
+isPure expr = case expr of
+  Atom _ -> True
+  App _ f x -> case getType f of
+    Arrow _ (Abs _ (Pure, _)) -> True
+    _ -> False
+  _ -> False
 
 instance HasType Block where
-  typeCheck (Block decls result _) = do
+  typeCheck (Block decls result) = do
     checkingEnv <- ask
     case checkingEnv of
       SkipChecks -> typeCheck result
-      CheckWith env -> do
+      CheckWith (env, _) -> do
         env' <- catFoldM checkDecl env decls
-        withEnv (env <> env') $ typeCheck result
+        withTypeEnv (env <> env') $ typeCheck result
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
 checkDecl env decl@(Let b@(_:>annTy) rhs) =
-  withEnv env $ addContext ctxStr $ do
+  withTypeEnv env $ addContext ctxStr $ do
     -- TODO: effects
-    checkNoShadow env b
-    annTy |: TyKind
+    checkBinder b
     ty <- typeCheck rhs
     return $ b @> ty
   where ctxStr = "\nchecking decl: \n" ++ pprint decl
-
-typeCheckLamExpr :: LamExpr -> TypeM PiType
-typeCheckLamExpr (LamExpr b@(_:>a) body) = do
-  bodyTy <- local (updateTypeCheckEnv (b @> a)) $ typeCheck body
-  let effTy = (noEffect, bodyTy)
-   -- A pi type must have `NoName` binder to be considered non-dependent arrow
-  let piBinder = if b `isin` freeVars effTy then b else NoName:> varAnn b
-  return $ Pi piBinder effTy
-
-typeCheckPiType :: PiType -> TypeM ()
-typeCheckPiType (Pi a b) = return () -- TODO!
-
-withEnv :: TypeEnv -> TypeM a -> TypeM a
-withEnv env m = local (const (CheckWith env)) m
-
-checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
-checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
-
-addType :: Atom -> TypeM (Atom, Type)
-addType x = do
-  ty <- typeCheck x
-  return (x, ty)
-
-pureType :: Type -> EffectiveType
-pureType ty = (noEffect, ty)
 
 infixr 7 |:
 (|:) :: Atom -> Type -> TypeM ()
@@ -158,10 +137,77 @@ infixr 7 |:
 checkEq :: Type -> Type -> TypeM ()
 checkEq reqTy ty = assertEq reqTy ty ""
 
-updateTypeCheckEnv :: Env Type -> TypeCheckEnv -> TypeCheckEnv
-updateTypeCheckEnv new tcEnv = case tcEnv of
-  SkipChecks -> SkipChecks
-  CheckWith prev -> CheckWith $ prev <> new
+withBinder :: Binder -> TypeM a -> TypeM a
+withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>ty) m
+
+checkBinder :: Binder -> TypeM ()
+checkBinder b@(_:>ty) = do
+  env <- ask
+  checkWithEnv $ \(env, _) -> checkNoShadow env b
+  ty |: TyKind
+
+checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
+checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
+
+declareEff :: Effect Atom -> TypeM ()
+declareEff eff = declareEffs $ Eff $ ExtendEff eff Pure
+
+declareEffs :: Effects -> TypeM ()
+declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
+  case forbiddenEffects allowedEffects effs of
+    Pure -> return ()
+    extraEffs -> throw TypeErr $ "Unexpected effects: " ++ pprint extraEffs
+
+forbiddenEffects :: Effects -> Effects -> Effects
+forbiddenEffects allowed checked = wrapEffects extraConcrete extraTail
+  where
+    (effsAllowed, effTailAllowed) = flattenEffects allowed
+    (effsChecked, effTailChecked) = flattenEffects checked
+    extraConcrete = filter (\e -> not (e `elem` effsAllowed)) effsChecked
+    extraTail = case effTailChecked of
+      Pure -> Pure
+      _ | effTailChecked  == effTailAllowed -> Pure
+        | otherwise -> effTailChecked
+
+removeEffect :: Effects -> Effect Atom -> Effects
+removeEffect effects e = wrapEffects (filter (/= e) concreteEffs) effTail
+  where (concreteEffs, effTail) = flattenEffects effects
+
+flattenEffects :: Effects -> ([Effect Atom], Type)
+flattenEffects (Eff (ExtendEff eff rest)) = (eff:effs, effTail)
+  where (effs, effTail) = flattenEffects rest
+flattenEffects effs = ([], effs)
+
+wrapEffects :: [Effect Atom] -> Type -> Effects
+wrapEffects [] effTail = effTail
+wrapEffects (eff:rest) effTail = Eff $ ExtendEff eff $ wrapEffects rest effTail
+
+-- === type checker monad combinators ===
+
+checkWithEnv :: ((TypeEnv, Effects) -> TypeM ()) -> TypeM ()
+checkWithEnv check = do
+  optEnv <- ask
+  case optEnv of
+    SkipChecks -> return ()
+    CheckWith env -> check env
+
+updateAllowedEff :: (Effects -> Effects) -> TypeM a -> TypeM a
+updateAllowedEff f m = flip local m $ fmap $ \(env, eff) -> (env, f eff)
+
+withAllowedEff :: Effects -> TypeM a -> TypeM a
+withAllowedEff eff m = updateAllowedEff (const eff) m
+
+extendAllowedEff :: Effect Atom -> TypeM a -> TypeM a
+extendAllowedEff newEff m = updateAllowedEff (Eff . ExtendEff newEff) m
+
+updateTypeEnv :: (Env Type -> Env Type) -> TypeM a -> TypeM a
+updateTypeEnv f m = flip local m $ fmap $ \(env, eff) -> (f env, eff)
+
+extendTypeEnv :: Env Type -> TypeM a -> TypeM a
+extendTypeEnv new m = updateTypeEnv (<> new) m
+
+withTypeEnv :: Env Type -> TypeM a -> TypeM a
+withTypeEnv new m = updateTypeEnv (const new) m
 
 -- === primitive ops and constructors ===
 
@@ -173,9 +219,17 @@ typeCheckTyCon tc = case tc of
   ArrayType _      -> return ()
   SumType (l, r)   -> l|:TyKind >> r|:TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind
+  UnitType         -> return ()
   RecType r        -> mapM_ (|:TyKind) r
-  RefType a        -> a|:TyKind
+  RefType r a      -> r|: TC RegionType >> a|:TyKind
+  RegionType       -> return ()
   TypeKind         -> return ()
+
+typeCheckEff :: Eff -> TypeM ()
+typeCheckEff PureEff = return ()
+typeCheckEff (ExtendEff (_, r) rest) = do
+  r    |: TC RegionType
+  rest |: TC EffectsKind
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -185,7 +239,8 @@ typeCheckCon con = case con of
   SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   RecCon r -> RecTy <$> mapM typeCheck r
-  AFor n a -> TabTy <$> typeCheck n <*> typeCheck a <*> return noEffect
+  RefCon r x -> r|:(TC RegionType) >> RefTy r <$> typeCheck x
+  AFor n a -> TabTy <$> typeCheck n <*> typeCheck a
   AGet x -> do
     -- TODO: check shape matches AFor scope
     ArrayTy _ b <- typeCheck x
@@ -241,25 +296,46 @@ typeCheckOp op = case op of
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
+  PrimEffect ref m -> do
+    RefTy r s <- typeCheck ref
+    case m of
+      MGet   ->           declareEff (State, r) $> s
+      MPut x -> x |: s >> declareEff (State, r) $> UnitTy
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
-  SumCase st l r -> do
-    lp@(Pi (NoName:>la) (leff, lb)) <- typeCheckLamExpr l
-    rp@(Pi (NoName:>ra) (reff, rb)) <- typeCheckLamExpr r
-    checkEq leff noEffect
-    checkEq reff noEffect
-    checkEq lb rb
-    st |: SumTy la ra
-    return lb
-  Linearize lam -> do
-    Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
-    checkEq noEffect eff
-    return $ a --> PairTy b (a --@ b)
-  Transpose lam -> do
-    Pi (NoName:>a) (eff, b) <- typeCheckLamExpr lam
-    checkEq noEffect eff
-    return $ b --@ a
+  For _ f -> do
+    Arrow PlainArrow (Abs n (eff, a)) <- typeCheck f
+    -- TODO: check `n` isn't free in `eff`
+    declareEffs eff
+    return $ Arrow TabArrow $ Abs n (Pure, a)
+  -- SumCase st l r -> do
+  --   (la, lb) <- pureNonDepAbsBlock l
+  --   (ra, rb) <- pureNonDepAbsBlock r
+  --   checkEq lb rb
+  --   st |: SumTy la ra
+  --   return lb
+  -- Linearize lam -> do
+  --   (a, b) <- pureNonDepAbsBlock lam
+  --   return $ a --> PairTy b (a --@ b)
+  -- Transpose lam -> do
+  --   (a, b) <- pureNonDepAbsBlock lam
+  --   return $ b --@ a
+  RunState s f -> do
+    stateTy <- typeCheck s
+    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
+    let region = Var regionBinder
+    declareEffs $ eff `removeEffect` (State, region)
+    checkEq (varAnn regionBinder) (TC RegionType)
+    checkEq (varAnn refBinder) $ RefTy region stateTy
+    return $ PairTy resultTy stateTy
+
+pureNonDepAbsBlock :: Abs Block -> TypeM (Type, Type)
+pureNonDepAbsBlock (Abs b body) = withBinder b $ withAllowedEff Pure $ do
+  resultTy <- typeCheck body
+  case makeAbs b resultTy of
+    Abs (NoName:>a) b -> return (a, b)
+    _ -> throw CompilerErr "Unexpectedly dependent function"
 
 litType :: LitVal -> BaseType
 litType v = case v of
@@ -296,57 +372,6 @@ indexSetConcreteSize ty = case ty of
   BoolTy  -> Just 2
   RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
-
--- === Effects (CURRENTLY NOT USED) ===
-
-combineEffects :: MonadError Err m => Effect -> Effect -> m Effect
-combineEffects ~eff@(Effect row t) ~eff'@(Effect row' t') = case (t, t') of
-  (Nothing, Nothing) -> do
-    row'' <- rowUnion row row'
-    return $ Effect row'' Nothing
-  (Just _ , Nothing) -> checkRowExtends row  row' >> return eff
-  (Nothing, Just _ ) -> checkRowExtends row' row  >> return eff'
-  (Just _ , Just _)
-    | eff == eff' -> return eff
-    | otherwise -> throw TypeErr $ "Effect mismatch "
-                                 ++ pprint eff ++ " != " ++ pprint eff'
-
-checkExtends :: MonadError Err m => Effect -> Effect -> m ()
-checkExtends (Effect row _) (Effect row' Nothing) = checkRowExtends row row'
-checkExtends eff eff' | eff == eff' = return ()
-                      | otherwise   = throw TypeErr $ "Effect mismatch: "
-                           ++ pprint eff ++ " doesn't extend " ++ pprint eff'
-
-checkRowExtends :: MonadError Err m => EffectRow Type -> EffectRow Type -> m ()
-checkRowExtends superRow row = do
-  mapM_ (\(t,t') -> assertEq t t' "Effect type mismatch") $ rowMeet superRow row
-  let extraEffects = rowJoin superRow row `envDiff` superRow
-  when (extraEffects /= mempty) $
-    throw TypeErr $ "Extra effects: " ++ pprint extraEffects
-
-rowUnion :: MonadError Err m
-         => EffectRow Type -> EffectRow Type -> m (EffectRow Type)
-rowUnion (Env m) (Env m') = liftM Env $ sequence $
-  M.unionWith consensusValsErr (fmap return m) (fmap return m')
-
-consensusValsErr :: (Eq a, Pretty a, MonadError Err m) => m a -> m a -> m a
-consensusValsErr x y = do
-  x' <- x
-  y' <- y
-  assertEq x' y' "Map merge"
-  return x'
-
-rowMeet :: Env a -> Env b -> Env (a, b)
-rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
-
-rowJoin :: Env a -> Env b -> Env ()
-rowJoin (Env m) (Env m') =
-  Env $ M.unionWith (\() () -> ()) (fmap (const ()) m) (fmap (const ()) m')
-
-popRow :: MonadError Err m
-       => (a -> a -> m ())
-       -> EffectRow a -> (EffectName, a) -> m (EffectRow a)
-popRow eq env (eff, x) = undefined
 
 -- === Built-in typeclasses (CURRENTLY NOT USED) ===
 

@@ -23,7 +23,7 @@ foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
 evalBlock :: SubstEnv -> Block -> Atom
-evalBlock env (Block decls result _) = do
+evalBlock env (Block decls result) = do
   let env' = catFold evalDecl env decls
   evalExpr $ subst (env <> env', mempty) result
 

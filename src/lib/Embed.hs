@@ -11,11 +11,11 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitTo, emitOp, buildLamExpr, buildLam,
+module Embed (emit, emitTo, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, zeroAt, addAt, sumAt, getScope,
-              nRecGet, nTabGet, add, mul, sub, neg, div', andE,
-              select, selectAt, unpackRec, substEmbed, fromPair, buildLamExprAux,
+              runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
+              nRecGet, nTabGet, add, mul, sub, neg, div', andE, reduceScoped,
+              select, selectAt, unpackRec, substEmbed, fromPair,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               boolToInt, intToReal, boolToReal, reduceAtom) where
@@ -26,6 +26,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer
 import Control.Monad.Identity
+import Data.Foldable (toList)
 import Data.Maybe
 
 import Env
@@ -62,19 +63,19 @@ emitTo (v:>_) expr = case singletonTypeVal ty of
     emitDecl $ Let v' expr'
     return $ Var v'
   Just x
-    | eff == noEffect -> return x
+    | isPure expr -> return x
     | otherwise -> do
         expr' <- deShadow expr <$> getScope
         emitDecl $ Let (NoName:>ty) expr'
         return x
-  where (eff, ty) = getEffType expr
+  where ty = getType expr
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
-emitBlock (Block decls result _) = mapM_ emitDecl decls >> emit result
+emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
 freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
 freshVar v = do
@@ -95,20 +96,24 @@ withBinder b f = do
       return (ans, b')
   return (ans, b', decls)
 
-buildLamExpr :: (MonadEmbed m)
-             => Var -> (Atom -> m Atom) -> m LamExpr
-buildLamExpr b f = do
+buildAbs :: (MonadError Err m, HasVars a, MonadEmbed m)
+         => Var -> (Atom -> m a) -> m (Abs a)
+buildAbs b f = do
   (ans, b', decls) <- withBinder b f
-  return $ LamExpr b' (wrapDecls decls ans)
+  unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
+  return $ makeAbs b' ans
 
-buildLamExprAux :: (MonadEmbed m)
-                => Var -> (Atom -> m (Atom, a)) -> m (LamExpr, a)
-buildLamExprAux b f = do
-  ((ans, aux), b', decls) <- withBinder b f
-  return (LamExpr b' (wrapDecls decls ans), aux)
+buildLam :: MonadEmbed m
+         => ArrowHead -> Var -> (Atom -> m (Effective Atom)) -> m Atom
+buildLam ah b f = liftM fst $ buildLamAux ah b $ \x -> (,()) <$> f x
 
-buildLam :: MonadEmbed m => ArrowHead -> Var -> (Atom -> m Atom) -> m Atom
-buildLam h v f = Lam h <$> buildLamExpr v f
+buildLamAux :: MonadEmbed m
+            => ArrowHead -> Var -> (Atom -> m (Effective Atom, a)) -> m (Atom, a)
+buildLamAux ah v f = do
+  ((ans, (eff, aux)), b, decls) <- withBinder v $ \x -> do
+     ((eff, ans), aux) <- f x
+     return (ans, (eff, aux))
+  return (Lam ah $ Abs b (eff, wrapDecls decls ans), aux)
 
 buildScoped :: (MonadEmbed m) => m Atom -> m Block
 buildScoped m = do
@@ -117,7 +122,7 @@ buildScoped m = do
 
 -- TODO: simple decluttering optimizations like DCE and let-var final pair
 wrapDecls :: [Decl] -> Atom -> Block
-wrapDecls decls atom = Block decls (Atom atom) noEffect
+wrapDecls decls atom = Block decls (Atom atom)
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadEmbed m => Type -> m Atom
@@ -186,8 +191,9 @@ fromPair pair          = error $ "Not a pair: " ++ pprint pair
 
 buildFor :: (MonadEmbed m) => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
-  lam <- buildLamExpr i body
-  emit $ For d lam
+  -- TODO: track effects in the embedding env so we can add them here
+  lam <- buildLam PlainArrow i $ \i' -> PureTy <$> body i'
+  emit $ Hof $ For d lam
 
 unzipTab :: (MonadEmbed m) => Atom -> m (Atom, Atom)
 unzipTab tab = do
@@ -196,15 +202,14 @@ unzipTab tab = do
   snds <- buildFor Fwd ("i":>n) $ \i ->
             liftM snd $ emit (TabGet tab i) >>= fromPair
   return (fsts, snds)
-  where (TabTy n _ _) = getType tab
+  where TabTy n _ = getType tab
 
 mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  TabTy n a _ -> do
-    lam <- buildLamExpr ("i":>n) $ \i -> do
+  TabTy n a -> do
+    buildFor Fwd ("i":>n) $ \i -> do
       xs' <- mapM (flip nTabGet i) xs
       mapScalars f a xs'
-    emit $ For Fwd lam
   RecTy r   -> do
     xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
     liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'
@@ -233,7 +238,7 @@ isSingletonType ty = case singletonTypeVal ty of
   Just _  -> True
 
 singletonTypeVal :: Type -> Maybe Atom
-singletonTypeVal (TabTy n a _) = liftM (Con . AFor n) $ singletonTypeVal a
+singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
 singletonTypeVal (TC con) = case con of
   -- XXX: This returns Nothing if it's a record that is not an empty tuple (or contains
   --      anything else than only empty tuples inside)!
@@ -310,7 +315,23 @@ scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
 
+declAsScope :: Decl -> Scope
+declAsScope (Let v expr) = v @> Just expr
+
 -- === partial evaluation using definitions in scope ===
+
+reduceScoped :: MonadEmbed m => m Atom -> m (Maybe Atom)
+reduceScoped m = do
+  block <- buildScoped m
+  scope <- getScope
+  return $ reduceBlock scope block
+
+reduceBlock :: Scope -> Block -> Maybe Atom
+reduceBlock scope (Block decls result) = do
+  let localScope = foldMap declAsScope decls
+  ans <- reduceExpr (scope <> localScope) result
+  [] <- return $ toList $ localScope `envIntersect` freeVars ans
+  return ans
 
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
@@ -325,9 +346,7 @@ reduceExpr scope expr = case expr of
   App _ f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
-    -- TODO: Reduce bodies with let bindings
-    Lam _ (LamExpr b (Block [] result eff)) <- return f'
-    when (eff /= noEffect) Nothing
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    reduceExpr scope $ scopelessSubst (b@>x') result
+    Lam _ (Abs b (Pure, block)) <- return f'
+    reduceBlock scope $ scopelessSubst (b@>x') block
   _ -> Nothing

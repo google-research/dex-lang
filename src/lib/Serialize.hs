@@ -141,7 +141,7 @@ reStructureArrays :: Type -> [Val] -> Val
 reStructureArrays ty xs = evalState (reStructureArrays' ty) xs
 
 reStructureArrays' :: Type -> State [Val] Val
-reStructureArrays' (TabTy n a _) = liftM (Con . AFor n) $ reStructureArrays' a
+reStructureArrays' (TabTy n a) = liftM (Con . AFor n) $ reStructureArrays' a
 reStructureArrays' ty@(TC con) = case con of
   BaseType _ -> do
     ~(x:xs) <- get
@@ -224,10 +224,10 @@ liftExceptIO (Right x) = return x
 
 flattenType :: Type -> [(BaseType, [Int])]
 flattenType (FixedIntRange _ _) = [(IntType, [])]
-flattenType (TabTy (FixedIntRange low high) a _) =
+flattenType (TabTy (FixedIntRange low high) a) =
     [(b, (high - low):shape) | (b, shape) <- flattenType a]
 -- temporary hack. TODO: fix
-flattenType (TabTy _ a _) = [(b, 0:shape) | (b, shape) <- flattenType a]
+flattenType (TabTy _ a) = [(b, 0:shape) | (b, shape) <- flattenType a]
 flattenType (TC con) = case con of
   BaseType b  -> [(b, [])]
   RecType r -> concat $ map flattenType $ toList r

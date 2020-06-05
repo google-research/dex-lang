@@ -6,7 +6,6 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
-{-# LANGUAGE LambdaCase #-}
 
 module Inference (inferModule) where
 
@@ -28,7 +27,7 @@ import Cat
 
 -- TODO: consider just carrying an `Atom` (since the type is easily recovered)
 type InfEnv = Env (Atom, Type)
-type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
+type UInferM = ReaderT InfEnv (ReaderT Effects (EmbedT (SolverT (Either Err))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -44,7 +43,7 @@ inferModule topEnv (UModule imports exports decls) = do
   let shadowedVars = filter (\v -> (v:>()) `isin` env) exports
   unless (null shadowedVars) $
     throw RepeatedVarErr $ pprintList shadowedVars
-  (env', decls') <- runUInferM (inferUDecls noEffect decls) env
+  (env', decls') <- runUInferM (inferUDecls decls) env
   let combinedEnv = env <> env'
   let imports' = [v :> snd (env         ! (v:>())) | v <- imports]
   let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
@@ -53,39 +52,41 @@ inferModule topEnv (UModule imports exports decls) = do
   return (Module Nothing imports' exports' body, (fmap snd env', mempty))
 
 runUInferM :: (HasVars a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
-runUInferM m env = runSolverT $ runEmbedT (runReaderT m env) scope
+runUInferM m env =
+  runSolverT $ runEmbedT (runReaderT (runReaderT m env) Pure) scope
   where scope = fmap (const Nothing) env
 
 infEnvFromTopEnv :: TopEnv -> InfEnv
 infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
   fold [v' @> (substEnv ! v', ty) | (v, ty) <- envPairs tyEnv, let v' = v:>()]
 
--- TODO: think about effects
-checkSigma :: UExpr -> Effect -> SigmaType -> UInferM Atom
-checkSigma expr eff ty = case ty of
-  Arrow ImplicitArrow piTy -> do
-    lamExpr <- buildLamExpr ("a":> piArgType piTy) $ \x ->
-                 checkSigma expr eff $ snd $ applyPi piTy x
-    return $ Lam ImplicitArrow lamExpr
-  _ -> checkRho expr eff ty
+checkSigma :: UExpr -> SigmaType -> UInferM Atom
+checkSigma expr sTy = case sTy of
+  Arrow ImplicitArrow piTy -> case expr of
+    UPos _ (ULam ImplicitArrow pat body) ->
+      checkULam ImplicitArrow pat body piTy
+    _ -> do
+      buildLam ImplicitArrow ("a":> absArgType piTy) $ \x ->
+        case applyAbs piTy x of
+          (Pure, ty) -> (Pure,) <$> checkSigma expr ty
+          _ -> throw TypeErr "Implicit functions must not have effects"
+  _ -> checkRho expr sTy
 
-inferSigma :: UExpr -> Effect -> UInferM (Atom, SigmaType)
-inferSigma (UPos pos expr) eff = case expr of
-  ULam ImplicitArrow lamExpr -> addSrcContext (Just pos) $ do
-    -- TODO: effects
-    (lamExpr', piTy) <- inferULam lamExpr
-    return (Lam ImplicitArrow lamExpr', Arrow ImplicitArrow piTy)
+inferSigma :: UExpr -> UInferM (Atom, SigmaType)
+inferSigma (UPos pos expr) = case expr of
+  ULam ImplicitArrow pat body -> addSrcContext (Just pos) $
+    inferULam Pure ImplicitArrow pat body
   _ ->
-    inferRho (UPos pos expr) eff
+    inferRho (UPos pos expr)
 
-checkRho :: UExpr -> Effect -> RhoType -> UInferM Atom
-checkRho expr eff ty = do
-  (val, Checked) <- checkOrInferRho expr eff (Check ty)
+checkRho :: UExpr -> RhoType -> UInferM Atom
+checkRho expr ty = do
+  (val, Checked) <- checkOrInferRho expr (Check ty)
   return val
 
-inferRho :: UExpr -> Effect -> UInferM (Atom, RhoType)
-inferRho expr eff = do
-  (val, Inferred ty) <- checkOrInferRho expr eff Infer
+inferRho :: UExpr -> UInferM (Atom, RhoType)
+inferRho expr = do
+  (val, Inferred ty) <- checkOrInferRho expr Infer
   return (val, ty)
 
 -- This is necessary so that embed's `getType` doesn't get confused
@@ -96,78 +97,73 @@ emitZonked expr = zonk expr >>= emit
 
 instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
 instantiateSigma (f,  Arrow ImplicitArrow piTy) = do
-  x <- freshInfVar $ piArgType piTy
+  x <- freshInfVar $ absArgType piTy
   ans <- emitZonked $ App ImplicitArrow f x
-  let (_, ansTy) = applyPi piTy x
+  let (_, ansTy) = applyAbs piTy x
   instantiateSigma (ans, ansTy)
 instantiateSigma (x, ty) = return (x, ty)
 
-checkOrInferRho :: UExpr -> Effect -> RequiredTy RhoType
+checkOrInferRho :: UExpr -> RequiredTy RhoType
                 -> UInferM (Atom, InferredTy RhoType)
-checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr of
+checkOrInferRho (UPos pos expr) reqTy =
+ addSrcContext (Just pos) $ case expr of
   UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
-  ULam ImplicitArrow (ULamExpr (RecLeaf b) body) -> do
+  ULam ImplicitArrow (RecLeaf b) body -> do
     argTy <- checkAnn $ varAnn b
     x <- freshInfVar argTy
-    extendR (b@>(x, argTy)) $ checkOrInferRho body eff reqTy
-  ULam h lamExpr -> case reqTy of
-    -- TODO: effects
+    extendR (b@>(x, argTy)) $ checkOrInferRho body reqTy
+  ULam ah pat body -> case reqTy of
     Check ty -> do
-      (hReq, piTy) <- fromArrowType ty
-      checkArrowHead hReq h
-      lamExpr' <- checkULam lamExpr piTy
-      return (Lam hReq lamExpr', Checked)
+      (ahReq, piTy) <- fromArrowType ty
+      checkArrowHead ahReq ah
+      lam <- checkULam ahReq pat body piTy
+      return (lam, Checked)
     Infer -> do
-      (lamExpr', piTy) <- inferULam lamExpr
-      return (Lam h lamExpr', Inferred $ Arrow h piTy)
-  -- This looks like it needs de-duping with ULam case, but it might look quite
-  -- different once we have effects
-  UFor dir lamExpr -> case reqTy of
+      (lam, ty) <- inferULam Pure ah pat body
+      return (lam, Inferred ty)
+  UFor dir pat body -> case reqTy of
     Check ty -> do
-      (hReq, piTy) <- fromArrowType ty
-      checkArrowHead hReq TabArrow
-      lamExpr' <- checkULam lamExpr piTy
-      result <- emitZonked $ For dir lamExpr'
+      (ah, Abs n (eff, a)) <- fromArrowType ty
+      unless (ah == TabArrow && eff == Pure) $
+        throw TypeErr $ "Not an table arrow type: " ++ pprint ty
+      allowedEff <- lift ask
+      lam <- checkULam PlainArrow pat body $ Abs n (allowedEff, a)
+      result <- emitZonked $ Hof $ For dir lam
       return (result, Checked)
     Infer -> do
-      (lamExpr', piTy) <- inferULam lamExpr
-      result <- emitZonked $ For dir lamExpr'
-      return (result, Inferred $ Arrow TabArrow piTy)
+      allowedEff <- lift ask
+      (lam, ty) <- inferULam allowedEff PlainArrow pat body
+      (PlainArrow, Abs n (Pure, a)) <- fromArrowType ty
+      result <- emitZonked $ Hof $ For dir lam
+      return (result, Inferred $ Arrow TabArrow $ Abs n (Pure, a))
   UApp h f x -> do
-    (fVal, fTy) <- inferRho f eff
+    (fVal, fTy) <- inferRho f
     (hReq, piTy) <- fromArrowType fTy
     checkArrowHead hReq h
-    xVal <- checkSigma x eff (piArgType piTy)
-    let (appEff, appTy) = applyPi piTy xVal
-    checkEffect eff appEff
+    xVal <- checkSigma x (absArgType piTy)
+    let (appEff, appTy) = applyAbs piTy xVal
+    checkEffectsAllowed appEff
     appVal <- emitZonked $ App hReq fVal xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
-  UArrow h (UPi (v:>a) b) -> do
+  UArrow h b@(v:>a) (eff, ty) -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
-    a' <- checkUType a
-    -- TODO: freshen as we go under the binder
-    b' <- extendR ((v:>())@>(Var (v:>a'), a')) $ do
-            extendScope ((v:>())@>Nothing)
-            checkUType b
-    -- TODO: check leaks, and check if v is free
-    let ty = Arrow h $ Pi (v:>a') (noEffect, b')
-    matchRequirement (ty, TyKind)
+    -- TODO: check leaks
+    a'  <- checkUType a
+    abs <- buildAbs (v:>a') $ \x -> extendR (b@>(x, a')) $
+             (,) <$> checkUEff  eff <*> checkUType ty
+    matchRequirement (Arrow h abs, TyKind)
   UDecl decl body -> do
-    env <- inferUDecl eff decl
-    extendR env $ checkOrInferRho body eff reqTy
+    env <- inferUDecl decl
+    extendR env $ checkOrInferRho body reqTy
   UPrimExpr prim -> do
-    prim' <- bitraverse lookupName (error "not implemented") prim
+    prim' <- traverse lookupName prim
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
       OpExpr  e -> emitZonked $ Op e
       HofExpr e -> emitZonked $ Hof e
     matchRequirement (val, getType val)
-    where lookupName v = fst <$> asks (! (v:>()))
-  UAnnot e ty -> do
-    ty' <- checkUType ty
-    val <- checkSigma e eff ty'
-    matchRequirement (val, ty')
+    where lookupName  v = fst <$> asks (! (v:>()))
   where
     matchRequirement :: (Atom, Type) -> UInferM (Atom, InferredTy RhoType)
     matchRequirement (x, ty) = liftM (x,) $
@@ -177,42 +173,52 @@ checkOrInferRho (UPos pos expr) eff reqTy = addSrcContext (Just pos) $ case expr
           constrainEq req ty
           return Checked
 
-inferUDecl :: Effect -> UDecl -> UInferM InfEnv
-inferUDecl eff (ULet (RecLeaf b@(_:>ann)) rhs) = case ann of
+inferUDecl :: UDecl -> UInferM InfEnv
+inferUDecl (ULet (RecLeaf b@(_:>ann)) rhs) = case ann of
   Nothing -> do
-    valAndTy <- inferSigma rhs eff
+    valAndTy <- inferSigma rhs
     return $ b@>valAndTy
   Just ty -> do
     ty' <- checkUType ty
-    val <- checkSigma rhs eff ty'
+    val <- checkSigma rhs ty'
     return $ b@>(val, ty')
 
-inferUDecls :: Effect -> [UDecl] -> UInferM InfEnv
-inferUDecls eff decls = do
+inferUDecls :: [UDecl] -> UInferM InfEnv
+inferUDecls decls = do
   initEnv <- ask
   liftM snd $ flip runCatT initEnv $ forM_ decls $ \decl -> do
     cur <- look
-    new <- lift $ local (const cur) $ inferUDecl eff decl
+    new <- lift $ local (const cur) $ inferUDecl decl
     extend new
 
-inferULam :: ULamExpr -> UInferM (LamExpr, PiType)
-inferULam (ULamExpr (RecLeaf b@(v:>ann)) body) = do
+inferULam :: Effects -> ArrowHead -> UPat -> UExpr -> UInferM (Atom, Type)
+inferULam eff ah (RecLeaf b@(v:>ann)) body = do
   argTy <- checkAnn ann
-  buildLamExprAux (v:>argTy) $ \x@(Var v') -> do
+  buildLamAux ah (v:>argTy) $ \x@(Var v') -> do
     extendR (b @> (x, argTy)) $ do
-      (resultVal, resultTy) <- inferSigma body noEffect
-      return (resultVal, Pi v' (noEffect, resultTy))
+      (resultVal, resultTy) <- withEffects eff $ inferSigma body
+      let ty = Arrow ah $ makeAbs v' (eff, resultTy)
+      return ((Pure, resultVal), ty)
 
-checkULam :: ULamExpr -> PiType -> UInferM LamExpr
-checkULam (ULamExpr (RecLeaf b@(v:>ann)) body) piTy = do
-  let reqArgTy = piArgType piTy
-  argTy <- checkAnn ann
-  constrainEq reqArgTy argTy
-  buildLamExpr (v:>argTy) $ \x -> do
-    let (lamEff, resultTy) = applyPi piTy x
-    extendR (b @> (x, reqArgTy)) $ do
-      resultVal <- checkSigma body lamEff resultTy
-      return resultVal
+checkULam :: ArrowHead -> UPat -> UExpr -> PiType -> UInferM Atom
+checkULam ah (RecLeaf b@(v:>ann)) body piTy = do
+  let argTy = absArgType piTy
+  checkAnn ann >>= constrainEq argTy
+  buildLam ah (v:>argTy) $ \x -> do
+    let (eff, resultTy) = applyAbs piTy x
+    extendR (b @> (x, argTy)) $ withEffects eff $ do
+      result <- checkSigma body resultTy
+      return (eff, result)
+
+checkUEff :: UEffects -> UInferM Effects
+checkUEff (UEffects effs tailVar) = case effs of
+  [] -> case tailVar of
+    Nothing -> return Pure
+    Just v  -> checkRho v (TC EffectsKind)
+  (effName, region):rest -> do
+    region' <- checkRho region (TC RegionType)
+    rest' <- checkUEff (UEffects rest tailVar)
+    return $ Eff $ ExtendEff (effName, region') rest'
 
 checkAnn :: Maybe UType -> UInferM Type
 checkAnn ann = case ann of
@@ -221,14 +227,8 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
-  ty' <- checkRho ty noEffect TyKind
-  scope <- getScope
-  return $ reduceAtom scope ty'
-
-checkEffect :: Effect -> Effect -> UInferM ()
-checkEffect allowedEff eff = do
-  eff' <- openUEffect eff
-  constrainEq allowedEff eff'
+  Just ty' <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
+  return ty'
 
 freshInfVar :: Type -> UInferM Atom
 freshInfVar ty = do
@@ -236,9 +236,6 @@ freshInfVar ty = do
   extend $ SolverEnv ((tv:>()) @> TyKind) mempty
   extendScope ((tv:>())@>Nothing)
   return $ Var $ tv:>ty
-
-openUEffect :: Effect -> UInferM Effect
-openUEffect eff = return eff -- TODO!
 
 checkArrowHead :: ArrowHead -> ArrowHead -> UInferM ()
 checkArrowHead ahReq ahOff = case (ahReq, ahOff) of
@@ -253,6 +250,22 @@ fromArrowType :: Type -> UInferM (ArrowHead, PiType)
 fromArrowType (Arrow h piTy) = return (h, piTy)
 fromArrowType ty = error $ "Not an arrow type: " ++ pprint ty
 
+checkEffectsAllowed :: Effects -> UInferM ()
+checkEffectsAllowed eff = do
+  eff' <- zonk eff
+  allowedEffects <- lift ask
+  case forbiddenEffects allowedEffects eff' of
+    Pure -> return ()
+    extraEffs -> throw TypeErr $ "Unexpected effects: " ++ pprint extraEffs
+
+withEffects :: Effects -> UInferM a -> UInferM a
+withEffects effs m = modifyAllowedEffects (const effs) m
+
+modifyAllowedEffects :: (Effects -> Effects) -> UInferM a -> UInferM a
+modifyAllowedEffects f m = do
+  env <- ask
+  lift $ local f (runReaderT m env)
+
 -- === constraint solver ===
 
 data SolverEnv = SolverEnv { solverVars :: Env Kind
@@ -262,21 +275,11 @@ type SolverT m = CatT SolverEnv m
 runSolverT :: (MonadError Err m, HasVars a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
-   ans <- m
-   applyDefaults
-   ans' <- zonk ans
+   ans <- m >>= zonk
    vs <- looks $ envNames . unsolved
    throwIf (not (null vs)) TypeErr $ "Ambiguous type variables: "
                                    ++ pprint vs ++ "\n\n" ++ pprint ans
-   return ans'
-
-applyDefaults :: MonadCat SolverEnv m => m ()
-applyDefaults = do
-  vs <- looks unsolved
-  forM_ (envPairs vs) $ \(v, k) -> case k of
-    TC EffectKind -> addSub v noEffect
-    _ -> return ()
-  where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
+   return ans
 
 solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
            => m a -> m a
@@ -318,7 +321,6 @@ zonk x = do
   s <- looks solverSub
   return $ tySubst s x
 
--- TODO: check kinds
 unify :: (MonadCat SolverEnv m, MonadError Err m)
        => Type -> Type -> m ()
 unify t1 t2 = do
@@ -330,38 +332,20 @@ unify t1 t2 = do
     (t, Var v) | v `isin` vs -> bindQ v t
     (Var v, t) | v `isin` vs -> bindQ v t
     (Arrow h piTy, Arrow h' piTy') | h == h' -> do
-       unify (piArgType piTy) (piArgType piTy')
-       let v = Var $ freshSkolemVar (piTy, piTy') (piArgType piTy)
+       unify (absArgType piTy) (absArgType piTy')
+       let v = Var $ freshSkolemVar (piTy, piTy') (absArgType piTy)
        -- TODO: think very hard about the leak checks we need to add here
-       let (eff , resultTy ) = applyPi piTy  v
-       let (eff', resultTy') = applyPi piTy' v
+       let (eff , resultTy ) = applyAbs piTy  v
+       let (eff', resultTy') = applyAbs piTy' v
        unify resultTy resultTy'
        unify eff eff'
-    (Effect r t, Effect r' t') -> do
-      let shared = rowMeet r r'
-      forM_ shared $ \((e, et), (e', et')) -> do
-        when (e /= e') $ throw TypeErr "Effect mismatch"
-        unify et et'
-      newTail <- liftM Just $ freshInferenceVar $ TC EffectKind
-      matchTail t  $ Effect (envDiff r' shared) newTail
-      matchTail t' $ Effect (envDiff r  shared) newTail
+    -- (Effect r t, Effect r' t') ->
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
     _   -> throw TypeErr ""
 
 rowMeet :: Env a -> Env b -> Env (a, b)
 rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
-
--- TODO: can we make this less complicated?
-matchTail :: (MonadCat SolverEnv m, MonadError Err m)
-          => Maybe Type -> Effect -> m ()
-matchTail t ~eff@(Effect row t') = do
-  vs <- looks solverVars
-  case (t, t') of
-    _                     | t == t' && row == mempty     -> return ()
-    (Just (Var v), _) | v `isin` vs                  -> zonk eff               >>= bindQ v
-    (_, Just (Var v)) | v `isin` vs && row == mempty -> zonk (Effect mempty t) >>= bindQ v
-    _ -> throw TypeErr ""
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))

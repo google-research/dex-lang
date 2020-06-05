@@ -15,51 +15,44 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), Effect, EffectiveType,
-    ClassName (..), TyQual (..), SrcPos, Pat, Var, Block (..), Decl (..),
-    Expr (..), Atom (..), LamExpr (..), ArrowHead (..), PrimTC (..),
+    Type, Kind, BaseType (..), Effects, Effect, EffectName (..),
+    ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
+    Expr (..), Atom (..), ArrowHead (..), PrimTC (..), PrimEff (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    PrimHof (..),
+    PrimHof (..), LamExpr, PiType,
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
-    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con, Hof, TC,
-    Module (..), Module, ImpFunction (..),
+    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con, Hof, TC, Eff,
+    Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, PassName (..), parsePassName,
-    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
-    noEffect, isPure, EffectName (..), EffectRow, Vars,
-    monMapSingle, monMapLookup, PiType (..),
+    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName, Vars,
+    monMapSingle, monMapLookup, Effective,
     newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    UExpr (..), UExpr' (..), UType, UBinder, UVar,
-    Pat, UModule (..), UDecl (..), ULamExpr (..), UPiType (..),
-    subst, deShadow, scopelessSubst, piArgType, applyPi, freshSkolemVar,
+    UExpr (..), UExpr' (..), UType, UEffects (..), UBinder, UPiBinder, UVar,
+    UPat, UModule (..), UDecl (..),
+    subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
     pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal,
-    pattern RealVal, pattern BoolVal, pattern TyKind, pattern TabGet, pattern TabTy)
+    pattern RealVal, pattern BoolVal, pattern TyKind, pattern TabGet, pattern TabTy,
+    pattern Pure, pattern PureTy, pattern BinaryFunTy, pattern BinaryFunVal)
   where
 
 import qualified Data.Map.Strict as M
-import Control.Applicative
 import Control.Exception hiding (throw)
 import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Reader
 import qualified Data.Vector.Unboxed as V
-import Data.Bifunctor
-import Data.Bifoldable
-import Data.Bitraversable
 import Data.Foldable (fold)
 import Data.Tuple (swap)
-import Data.Maybe (fromJust)
-import Control.Applicative (liftA3)
 import GHC.Generics
 
 import Cat
@@ -72,26 +65,25 @@ import Array
 data Atom = Var Var
           | Lam   ArrowHead LamExpr
           | Arrow ArrowHead PiType
-          -- (Maybe Type) for the optional row tail variable
-          | Effect (EffectRow Type) (Maybe Type)
           | Con Con
           | TC  TC
+          | Eff Eff
             deriving (Show, Eq, Generic)
 
 data Expr = App ArrowHead Atom Atom
-          | For Direction LamExpr  -- TODO: put in hofs?
           | Atom Atom
           | Op  Op
           | Hof Hof
             deriving (Show, Eq, Generic)
 
-data Block = Block [Decl] Expr Effect
-             deriving (Show, Eq, Generic)
+data Decl  = Let Binder Expr    deriving (Show, Eq, Generic)
+data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
+data Abs a = Abs Binder a       deriving (Show, Generic)
 
-type Var  = VarP Type
-data Decl = Let Var Expr  deriving (Show, Eq, Generic)
-data LamExpr = LamExpr Var Block  deriving (Show, Eq, Generic)
-data PiType = Pi Var EffectiveType  deriving (Show)
+type Var    = VarP Type
+type Binder = VarP Type
+type LamExpr  = Abs (Effective Block)
+type PiType   = Abs (Effective Type)
 
 data ArrowHead = PlainArrow
                | ImplicitArrow
@@ -102,11 +94,14 @@ data ArrowHead = PlainArrow
 type Val  = Atom
 type Type = Atom
 type Kind = Type
+type Effects = Atom
+type Effective a = (Effects, a)
 
 type TC  = PrimTC  Atom
 type Con = PrimCon Atom
 type Op  = PrimOp  Atom
-type Hof = PrimHof Atom LamExpr
+type Eff = PrimEff Atom
+type Hof = PrimHof Atom
 
 type TypeEnv  = Env Type
 type SrcPos = (Int, Int)
@@ -120,57 +115,39 @@ type RuleEnv    = Env Atom
 
 data Module = Module (Maybe BlockId) [Var] [Var] Block  deriving (Show, Eq)
 
--- === effects ===
-
--- This represents a row like {Writer (x :: Ref t), Reader (y :: Ref t')}
--- as the following map: {x: (Writer, t), y: (Reader, t')}.
-type EffectRow a = Env (EffectName, a)
-data EffectName = Reader | Writer | State  deriving (Eq, Show, Generic)
-
-type Effect = Type
-type EffectiveType = (Effect, Type)
-
-noEffect :: Effect
-noEffect = Effect mempty Nothing
-
-isPure :: Effect -> Bool
-isPure (Effect eff Nothing) | eff == mempty = True
-isPure _ = False
-
 -- === front-end language AST ===
 
 data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
 
 data UExpr' = UVar UVar
-            | ULam   ArrowHead ULamExpr
+            | ULam   ArrowHead UPat UExpr
+            | UArrow ArrowHead UPiBinder UEffectiveType
             | UApp   ArrowHead UExpr UExpr
-            | UArrow ArrowHead UPiType
-            | UFor Direction ULamExpr
+            | UFor Direction UPat UExpr
             | UDecl UDecl UExpr
-            | UPrimExpr (PrimExpr Name Name)
-            | UAnnot UExpr UType
+            | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
-data UDecl = ULet Pat UExpr         deriving (Show, Eq, Generic)
-data ULamExpr = ULamExpr Pat UExpr  deriving (Show, Eq, Generic)
-data UPiType  = UPi UPiBinder UType  deriving (Show, Eq, Generic)
+data UDecl = ULet UPat UExpr  deriving (Show, Eq, Generic)
 
 type UType = UExpr
-type UVar    = VarP ()
-type UBinder = VarP (Maybe UType)
+type UEffectiveType = (UEffects, UType)
+type UVar      = VarP ()
+type UBinder   = VarP (Maybe UType)
 type UPiBinder = VarP UType
-type Pat = RecTree UBinder
-
+type UPat = RecTree UBinder
+data UEffects = UEffects [(EffectName, UExpr)] (Maybe UExpr)  deriving (Show, Eq)
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
 
 -- === primitive constructors and operators ===
 
-data PrimExpr e lam =
+data PrimExpr e =
         TCExpr  (PrimTC  e)
+      | EffExpr (PrimEff e)
       | ConExpr (PrimCon e)
       | OpExpr  (PrimOp  e)
-      | HofExpr (PrimHof e lam)
-        deriving (Show, Eq, Generic)
+      | HofExpr (PrimHof e)
+        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimTC e =
         BaseType BaseType
@@ -178,12 +155,19 @@ data PrimTC e =
       | IndexRange e (Limit e) (Limit e)
       | ArrayType ArrayType
       | PairType e e
+      | UnitType
       | RecType (Record e)
       | SumType (e, e)
-      | RefType e
+      | RefType e e
+      | RegionType
       | TypeKind
-      | EffectKind
+      | EffectsKind
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+
+data PrimEff e = PureEff | ExtendEff (Effect e) e
+                 deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+type Effect e = (EffectName, e)
+data EffectName = Reader | Writer | State  deriving (Show, Eq, Generic)
 
 data PrimCon e =
         Lit LitVal
@@ -191,6 +175,8 @@ data PrimCon e =
       | AnyValue e        -- Produces an arbitrary value of a given type
       | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
       | PairCon e e
+      | UnitCon
+      | RefCon e e
       | RecCon (Record e)
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
       | AFor e e
@@ -221,14 +207,15 @@ data PrimOp e =
       | IdxSetSize e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data PrimHof e lam =
-        SumCase e lam lam
-      | RunReader e  lam
-      | RunWriter    lam
-      | RunState  e  lam
-      | Linearize lam
-      | Transpose lam
-        deriving (Show, Eq, Generic)
+data PrimHof e =
+        For Direction e
+      | SumCase e e e
+      | RunReader e e
+      | RunWriter e
+      | RunState  e e
+      | Linearize e
+      | Transpose e
+        deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -255,7 +242,7 @@ data ClassName = Data | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
 
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
-type PrimName = PrimExpr () ()
+type PrimName = PrimExpr ()
 
 strToName :: String -> Maybe PrimName
 strToName s = M.lookup s builtinNames
@@ -265,8 +252,8 @@ nameToStr prim = case lookup prim $ map swap $ M.toList builtinNames of
   Just s  -> s
   Nothing -> show prim
 
-showPrimName :: PrimExpr e lam -> String
-showPrimName prim = nameToStr $ bimap (const ()) (const ()) prim
+showPrimName :: PrimExpr e -> String
+showPrimName prim = nameToStr $ fmap (const ()) prim
 
 -- === top-level constructs ===
 
@@ -283,7 +270,7 @@ data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Var
                   | IncludeSourceFile String
-                  | LoadData Pat DataFormat String
+                  | LoadData UPat DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -460,25 +447,16 @@ instance HasUVars UExpr where
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
-    ULam _ lam -> freeUVars lam
-    UFor _ lam -> freeUVars lam
+    ULam   _ p body -> uAbsFreeVars p body
+    UArrow _ b (eff, ty) ->
+      freeUVars (varAnn b) <> ((freeUVars eff <> freeUVars ty) `envDiff` (b@>()))
     UApp _ f x -> freeUVars f <> freeUVars x
-    UArrow _ piTy -> freeUVars piTy
-    UDecl decl@(ULet p _) body ->
-      freeUVars decl <> (freeUVars body `envDiff` boundVars)
-      where boundVars = foldMap (@>()) p
-    UAnnot expr ann -> freeUVars expr <> freeUVars ann
-    _ -> mempty
+    UFor _ p body -> uAbsFreeVars p body
+    UDecl (ULet p rhs) body -> freeUVars rhs <> uAbsFreeVars p body
+    UPrimExpr _ -> mempty
 
 instance HasUVars UDecl where
   freeUVars (ULet p expr) = foldMap uBinderFreeVars p <> freeUVars expr
-
-instance HasUVars ULamExpr where
-  freeUVars (ULamExpr p expr) =
-    foldMap uBinderFreeVars p <> (freeUVars expr `envDiff` foldMap (@>()) p)
-
-instance HasUVars UPiType where
-  freeUVars (UPi v@(_:>ann) b) = freeUVars ann <> (freeUVars b `envDiff` (v@>()))
 
 instance HasUVars SourceBlock where
   freeUVars block = case sbContents block of
@@ -486,6 +464,14 @@ instance HasUVars SourceBlock where
     Command _ (_, UModule vs _ _) -> foldMap nameAsEnv vs
     GetNameType v                 -> v @> ()
     _ -> mempty
+
+instance HasUVars UEffects where
+  freeUVars (UEffects effs tailVar) =
+    foldMap (freeUVars . snd) effs <> foldMap freeUVars tailVar
+
+uAbsFreeVars :: UPat -> UExpr -> UVars
+uAbsFreeVars pat body =  foldMap uBinderFreeVars pat
+                      <> (freeUVars body `envDiff` foldMap (@>()) pat)
 
 uBinderFreeVars :: UBinder -> UVars
 uBinderFreeVars (_:>ann) = foldMap freeUVars ann
@@ -515,17 +501,11 @@ class HasVars a where
   freeVars :: a -> Vars
   subst :: ScopedSubstEnv -> a -> a
 
-instance HasVars PiType where
-  freeVars (Pi b@(_:>ty) body) = freeVars ty <> (freeVars body `envDiff` (b@>()))
-  subst env (Pi (v:>ty) body) = Pi b body'
-    where (b, env') = refreshBinder env (v:> subst env ty)
-          body' = subst (env <> env') body
-
-instance Eq PiType where
-  Pi (NoName:>a) b == Pi (NoName:>a') b' = a == a' && b == b'
-  piTy@(Pi (_:>a) _) == piTy'@(Pi (_:>a') _) =
-    a == a' && applyPi piTy v == applyPi piTy' v
-    where v = Var $ freshSkolemVar (piTy, piTy') a
+instance (HasVars a, Eq a) => Eq (Abs a) where
+  Abs (NoName:>a) b == Abs (NoName:>a') b' = a == a' && b == b'
+  ab@(Abs (_:>a) _) == ab'@(Abs (_:>a') _) =
+    a == a' && applyAbs ab v == applyAbs ab' v
+    where v = Var $ freshSkolemVar (ab, ab') a
 
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = rename (rawName Skolem "x" :> ty) (freeVars x)
@@ -535,14 +515,15 @@ freshSkolemVar x ty = rename (rawName Skolem "x" :> ty) (freeVars x)
 freeBinderTypeVars :: Var -> Vars
 freeBinderTypeVars (_ :> t) = freeVars t
 
-applyPi :: PiType -> Atom -> EffectiveType
-applyPi (Pi v body) x = scopelessSubst (v@>x) body
+applyAbs :: HasVars a => Abs a -> Atom -> a
+applyAbs (Abs v body) x = scopelessSubst (v@>x) body
 
-piArgType :: PiType -> Type
-piArgType (Pi (_:>ty) _) = ty
+makeAbs :: HasVars a => Var -> a -> Abs a
+makeAbs v body | v `isin` freeVars body = Abs v body
+               | otherwise              = Abs (NoName:> varAnn v) body
 
-isDependentType :: PiType -> Bool
-isDependentType (Pi v body) = v `isin` freeVars body
+absArgType :: Abs a -> Type
+absArgType (Abs (_:>ty) _) = ty
 
 varFreeVars :: Var -> Vars
 varFreeVars v@(_ :> t) = bind v <> freeVars t
@@ -557,19 +538,18 @@ instance HasVars Atom where
   freeVars atom = case atom of
     Var v      -> varFreeVars v
     Lam _  lam -> freeVars lam
-    Arrow _ pi -> freeVars pi
-    Effect row tailVar ->  foldMap (varFreeVars . \(v, (_,t)) -> v:>t) (envPairs row)
-                        <> foldMap freeVars tailVar
+    Arrow _ ab -> freeVars ab
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
+    Eff eff -> foldMap freeVars eff
 
-  subst env@(sub, _) atom = case atom of
+  subst env atom = case atom of
     Var v -> substVar env v
     Lam   h lam  -> Lam   h $ subst env lam
     Arrow h piTy -> Arrow h $ subst env piTy
-    Effect _ _ -> noEffect
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
+    Eff eff -> Eff $ fmap (subst env) eff
 
 substVar :: (SubstEnv, Scope) -> Var -> Atom
 substVar env@(sub, scope) v = case envLookup sub v of
@@ -582,40 +562,36 @@ deShadow x scope = subst (mempty, scope) x
 instance HasVars Expr where
   freeVars expr = case expr of
     App _ f x -> freeVars f <> freeVars x
-    For _ lam -> freeVars lam
     Atom atom -> freeVars atom
     Op  e     -> foldMap freeVars e
-    Hof e     -> bifoldMap freeVars freeVars e
+    Hof e     -> foldMap freeVars e
 
   subst env expr = case expr of
     App h f x   -> App h (subst env f) (subst env x)
-    For dir lam -> For dir $ subst env lam
     Atom x      -> Atom $ subst env x
     Op  e       -> Op  $ fmap (subst env) e
-    Hof e       -> Hof $ bimap (subst env) (subst env) e
+    Hof e       -> Hof $ fmap (subst env) e
 
 instance HasVars Decl where
   freeVars (Let bs expr) = foldMap freeVars bs <> freeVars expr
   subst env (Let (v:>ty) bound) = Let (v:> subst env ty) (subst env bound)
 
 instance HasVars Block where
-  -- TODO: effects
-  freeVars (Block [] result _) = freeVars result
-  freeVars (Block (decl@(Let b _):decls) result eff) =
+  freeVars (Block [] result) = freeVars result
+  freeVars (Block (decl@(Let b _):decls) result) =
     freeVars decl <> (freeVars body `envDiff` (b@>()))
-    where body = Block decls result eff
+    where body = Block decls result
 
-  -- TODO: effects
-  subst env (Block decls result eff) = do
+  subst env (Block decls result) = do
     let (decls', env') = catMap substDecl env decls
     let result' = subst (env <> env') result
-    Block decls' result' eff
+    Block decls' result'
 
-instance HasVars LamExpr where
-  freeVars (LamExpr b body) =
+instance HasVars a => HasVars (Abs a) where
+  freeVars (Abs b body) =
     freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
 
-  subst env (LamExpr (v:>ty) body) = LamExpr b body'
+  subst env (Abs (v:>ty) body) = Abs b body'
     where (b, env') = refreshBinder env (v:> subst env ty)
           body' = subst (env <> env') body
 
@@ -630,6 +606,7 @@ refreshBinder (_, scope) b = (b', env')
 
 instance HasVars TopEnv where
   freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
+  subst = error "not implemented"
 
 instance HasVars () where
   freeVars () = mempty
@@ -642,6 +619,7 @@ instance (HasVars a, HasVars b) => HasVars (a, b) where
 instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Left  x) = freeVars x
   freeVars (Right x) = freeVars x
+  subst = error "not implemented"
 
 instance HasVars a => HasVars (Env a) where
   freeVars x = foldMap freeVars x
@@ -680,13 +658,13 @@ infixr 1 --@
 infixr 2 ==>
 
 (-->) :: Type -> Type -> Type
-a --> b = Arrow PlainArrow $ Pi (NoName:>a) (noEffect, b)
+a --> b = Arrow PlainArrow $ Abs (NoName:>a) (PureTy b)
 
 (--@) :: Type -> Type -> Type
-a --@ b = Arrow LinArrow $ Pi (NoName:>a) (noEffect, b)
+a --@ b = Arrow LinArrow $ Abs (NoName:>a) (PureTy b)
 
 (==>) :: Type -> Type -> Type
-a ==> b = Arrow TabArrow $ Pi (NoName:>a) (noEffect, b)
+a ==> b = Arrow TabArrow $ Abs (NoName:>a) (PureTy b)
 
 pattern IntVal :: Int -> Atom
 pattern IntVal x = Con (Lit (IntLit x))
@@ -716,10 +694,10 @@ pattern TupTy :: [Type] -> Type
 pattern TupTy xs = TC (RecType (Tup xs))
 
 pattern UnitVal :: Atom
-pattern UnitVal = TupVal []
+pattern UnitVal = Con UnitCon
 
 pattern UnitTy :: Type
-pattern UnitTy = TupTy []
+pattern UnitTy = TC UnitType
 
 pattern ArrayTy :: [Int] -> BaseType -> Type
 pattern ArrayTy shape b = TC (ArrayType (shape, b))
@@ -733,8 +711,8 @@ pattern RecTy a = TC (RecType a)
 pattern SumTy :: Type -> Type -> Type
 pattern SumTy l r = TC (SumType (l, r))
 
-pattern RefTy :: Type -> Type
-pattern RefTy a = TC (RefType a)
+pattern RefTy :: Atom -> Type -> Type
+pattern RefTy r a = TC (RefType r a)
 
 pattern IntTy :: Type
 pattern IntTy = TC (BaseType IntType)
@@ -754,10 +732,24 @@ pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))
 pattern TabGet :: Atom -> Atom -> Expr
 pattern TabGet xs i = App TabArrow xs i
 
+pattern Pure :: Effects
+pattern Pure = Eff PureEff
+
+pattern PureTy :: Type -> Effective Type
+pattern PureTy ty = (Pure, ty)
+
 -- we want to pattern-match against the empty effect too, but our current
 -- representation doesn't allow that
-pattern TabTy :: Atom -> Atom -> Effect -> Type
-pattern TabTy xs i eff = Arrow TabArrow (Pi (NoName:>xs) (eff, i))
+pattern TabTy :: Type -> Type -> Type
+pattern TabTy xs i = Arrow TabArrow (Abs (NoName:>xs) (PureTy i))
+
+pattern BinaryFunTy :: Binder -> Binder -> Effects -> Type -> Type
+pattern BinaryFunTy b1 b2 eff bodyTy =
+          Arrow PlainArrow (Abs b1 (Pure, (Arrow PlainArrow (Abs b2 (eff, bodyTy)))))
+
+pattern BinaryFunVal :: Binder -> Binder -> Effects -> Block -> Type
+pattern BinaryFunVal b1 b2 eff body =
+          Lam PlainArrow (Abs b1 (Pure, Block [] (Atom (Lam PlainArrow (Abs b2 (eff, body))))))
 
 -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}
@@ -795,7 +787,10 @@ builtinNames = M.fromList
   , ("Bool"    , TCExpr $ BaseType BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("IntRange", TCExpr $ IntRange () ())
+  , ("Ref"     , TCExpr $ RefType () ())
+  , ("Region"  , TCExpr $ RegionType)
   , ("PairType", TCExpr $ PairType () ())
+  , ("UnitType", TCExpr $ UnitType)
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())
   , ("snd", OpExpr $ Snd ())
@@ -803,25 +798,3 @@ builtinNames = M.fromList
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
-
-instance Bifunctor  PrimHof where bimap     = bimapDefault
-instance Bifoldable PrimHof where bifoldMap = bifoldMapDefault
-
-instance Bitraversable PrimHof  where
-  bitraverse f g hof = case hof of
-    SumCase e lam1 lam2 -> SumCase <$> f e <*> g lam1 <*> g lam2
-    RunReader e  lam -> RunReader <$> f e <*> g lam
-    RunWriter    lam -> RunWriter <$>         g lam
-    RunState  e  lam -> RunState  <$> f e <*> g lam
-    Linearize lam -> Linearize <$> g lam
-    Transpose lam -> Transpose <$> g lam
-
-instance Bifunctor  PrimExpr where bimap     = bimapDefault
-instance Bifoldable PrimExpr where bifoldMap = bifoldMapDefault
-
-instance Bitraversable PrimExpr where
-  bitraverse f g expr = case expr of
-    TCExpr  e -> TCExpr  <$> traverse f e
-    ConExpr e -> ConExpr <$> traverse f e
-    OpExpr  e -> OpExpr  <$> traverse f e
-    HofExpr e -> HofExpr <$> bitraverse f g e

@@ -13,7 +13,6 @@ import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space)
-import Data.Bitraversable
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
@@ -162,8 +161,8 @@ leafUExpr =   parens uExpr
     uLit =   (IntLit  <$> intLit)
          <|> (RealLit <$> doubleLit)
 
-    uvar :: Parser UExpr
-    uvar = withSrc $ (UVar . (:>())) <$> uName
+uvar :: Parser UExpr
+uvar = withSrc $ (UVar . (:>())) <$> uName
 
 uDecl :: Parser UDecl
 uDecl = do
@@ -177,11 +176,30 @@ uDecl = do
       return $ ULet (RecLeaf b)
 
     funDefLet :: Parser (UExpr -> UDecl)
-    funDefLet = label "function definition" $ do
+    funDefLet = label "function definition" $ mayBreak $ do
       keyWord DefKW
       v <- uName
-      lam <- buildLam <$> many uLamBinder <*> optional (annot uExpr)
-      return $ \body -> ULet (RecLeaf (v:>Nothing)) (lam body)
+      bs <- some $ label "binder" uPiBinder
+      effTy <- label "result annotation" $ annot effectiveType
+      let letBinder = RecLeaf $ v:> Just (buildPiType bs effTy)
+      let lamBinders = flip map bs $ \(b, ah) -> (varName b :> Nothing, ah)
+      return $ \body -> ULet letBinder (buildLam lamBinders body)
+
+effectiveType :: Parser (UEffects, UType)
+effectiveType = (,) <$> effects <*> uExpr
+
+effects :: Parser UEffects
+effects = braces someEffects <|> return uPure
+  where
+    someEffects = do
+      effs <- liftM2 (,) effectName uvar `sepBy` symbol ","
+      v <- optional $ symbol "|" >> uvar
+      return $ UEffects effs v
+
+effectName :: Parser EffectName
+effectName =     (symbol "Accum" $> Writer)
+             <|> (symbol "Read"  $> Reader)
+             <|> (symbol "State" $> State)
 
 uLetBinder :: Parser UBinder
 uLetBinder = do
@@ -193,22 +211,30 @@ uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
   buildLam <$> some uLamBinder
-           <*> (return Nothing)
            <*> (argTerm >> blockOrExpr)
 
-buildLam :: [(UBinder, ArrowHead)]
-         -> Maybe UExpr -> UExpr -> UExpr
-buildLam binders ann body@(UPos pos _) = case binders of
-  [] -> case ann of
-    Nothing -> body
-    Just ty -> UPos pos $ UAnnot body ty
-  (b,ah):bs -> UPos pos $  -- TODO: join with source position of binders too
-    ULam ah $ ULamExpr (RecLeaf b) $ buildLam bs ann body
+buildPiType :: [(UPiBinder, ArrowHead)] -> (UEffects, UType) -> UType
+buildPiType [] _ = error "shouldn't be possible"
+buildPiType ((b,ah):bs) effTy = UPos pos $ UArrow ah b resultTy
+  where
+    UPos pos _ = varAnn b
+    resultTy = case bs of
+      [] -> effTy
+      _  -> (uPure, buildPiType bs effTy)
+
+uPure :: UEffects
+uPure = UEffects [] Nothing
+
+buildLam :: [(UBinder, ArrowHead)] -> UExpr -> UExpr
+buildLam binders body@(UPos pos _) = case binders of
+  [] -> body
+  -- TODO: join with source position of binders too
+  (b,ah):bs -> UPos pos $ ULam ah (RecLeaf b) $ buildLam bs body
 
 buildFor :: Direction -> [UBinder] -> UExpr -> UExpr
 buildFor dir binders body@(UPos pos _) = case binders of
   [] -> body
-  b:bs -> UPos pos $ UFor dir $ ULamExpr (RecLeaf b) $ buildFor dir bs body
+  b:bs -> UPos pos $ UFor dir (RecLeaf b) $ buildFor dir bs body
 
 uForBinder :: Parser UBinder
 uForBinder = rawLamBinder <|> parenLamBinder
@@ -250,15 +276,15 @@ uStatement = withPos $   liftM Left  uDecl
 
 uArrow :: Parser UExpr
 uArrow = withSrc $ do
-  (v, ah) <- try $ (,) <$> (rawPiBinder <|> parenPiBinder) <*> arrowHead
-  resultTy <- uExpr
-  return $ UArrow ah (UPi v resultTy)
+  (b, ah) <- try $ (,) <$> (rawPiBinder <|> parenPiBinder) <*> arrowHead
+  resultTy <- effectiveType
+  return $ UArrow ah b resultTy
 
 uImplicitArrow :: Parser UExpr
 uImplicitArrow = withSrc $ do
   v <- try $ implicitPiBinder <* sym "->"
-  resultTy <- uExpr
-  return $ UArrow ImplicitArrow (UPi v resultTy)
+  effTy <- effectiveType
+  return $ UArrow ImplicitArrow v effTy
 
 arrowHead :: Parser ArrowHead
 arrowHead = (sym "->" $> PlainArrow) <|> (sym "=>" $> TabArrow)
@@ -267,7 +293,12 @@ uName :: Parser Name
 uName = textName <|> symName
 
 annot :: Parser a -> Parser a
-annot p = sym ":" >> p
+annot p = label "type annotation" $ sym ":" >> p
+
+uPiBinder :: Parser (UPiBinder, ArrowHead)
+uPiBinder =   liftM (,PlainArrow   ) rawPiBinder
+          <|> liftM (,PlainArrow   ) parenPiBinder
+          <|> liftM (,ImplicitArrow) implicitPiBinder
 
 uLamBinder :: Parser (UBinder, ArrowHead)
 uLamBinder =   liftM (,PlainArrow   ) rawLamBinder
@@ -296,7 +327,7 @@ uPrim :: Parser UExpr
 uPrim = withSrc $ do
   s <- primName
   case strToName s of
-    Just prim -> UPrimExpr <$> bitraverse (const textName) (const textName) prim
+    Just prim -> UPrimExpr <$> traverse (const textName) prim
     Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 -- literal symbols here must only use chars from `symChars`
@@ -313,7 +344,7 @@ uops =
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
-  , [InfixR $ sym "->" $> mkArrow PlainArrow]
+  , [InfixR infixEffArrow]
   , [symOp ","], [symOp "**"]
   ]
 
@@ -339,8 +370,14 @@ mkGenApp ah f x = UPos (joinPos f x) $ UApp ah f x
 mkApp :: UExpr -> UExpr -> UExpr
 mkApp = mkGenApp PlainArrow
 
+infixEffArrow :: Parser (UType -> UType -> UType)
+infixEffArrow = do
+  ((), pos) <- withPos $ sym "->"
+  eff <- effects
+  return $ \a b -> UPos pos $ UArrow PlainArrow (NoName:>a) (eff, b)
+
 mkArrow :: ArrowHead -> UExpr -> UExpr -> UExpr
-mkArrow ah a b = UPos (joinPos a b) $ UArrow ah $ UPi (NoName:>a) b
+mkArrow ah a b = UPos (joinPos a b) $ UArrow ah (NoName:>a) (uPure, b)
 
 withSrc :: Parser UExpr' -> Parser UExpr
 withSrc p = do
@@ -362,7 +399,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | RofKW | CaseKW
 
 textName :: Lexer Name
-textName = liftM (rawName SourceName) $ lexeme $ try $ do
+textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
   w <- (:) <$> letterChar <*> many nameTailChar
   failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
   return w

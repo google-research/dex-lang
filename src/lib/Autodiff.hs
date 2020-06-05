@@ -30,43 +30,45 @@ type EmbedSubM = ReaderT SubstEnv Embed
 type PrimalM = WriterT Vars EmbedSubM
 newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
-linearize :: RuleEnv -> Scope -> LamExpr -> Atom
-linearize env scope (LamExpr b block) = fst $ flip runEmbed scope $ do
-  buildLam PlainArrow b $ \x -> do
-    ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
-                      runLinA (linearizeBlock env block)
-    -- TODO: check linearity
-    fLin <- buildLam LinArrow b $ \xt -> runReaderT yt (b@>xt)
-    return $ PairVal y fLin
+linearize :: RuleEnv -> Scope -> Atom -> Atom
+linearize = undefined
+-- linearize env scope (AbsBlock b block) = fst $ flip runEmbed scope $ do
+--   buildLam PlainArrow b $ \x -> do
+--     ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
+--                       runLinA (linearizeBlock env block)
+--     -- TODO: check linearity
+--     fLin <- buildLam LinArrow b $ \xt -> runReaderT yt (b@>xt)
+--     return $ PairVal y fLin
 
 linearizeBlock :: RuleEnv -> Block -> LinA Atom
-linearizeBlock ruleEnv (Block decls result eff) = case decls of
+linearizeBlock ruleEnv (Block decls result) = case decls of
   [] -> linearizeExpr ruleEnv result
   Let b bound : rest -> LinA $ do
     (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeExpr ruleEnv bound
     (ans, fLin) <- extendR env $ runLinA $ linearizeBlock ruleEnv body
     return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
-    where body = Block rest result eff
+    where body = Block rest result
 
-linearizeLamExpr :: RuleEnv -> LamExpr
-                 -> EmbedSubM (LamExpr, [Type], Atom -> [Atom] -> EmbedSubM Atom)
-linearizeLamExpr ruleEnv (LamExpr v body) = do
-  (lam, (v', residualVs, tBuilder)) <- buildLamExprAux v $ \v'@(Var iVar) ->
-    extendR (v@>v') $ do
-       (((ans, ansT), (localScope, decls)), fvs) <-
-           runWriterT $ embedScoped $ runLinA $ linearizeBlock ruleEnv body
-       extendScope localScope
-       mapM_ emitDecl decls
-       let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
-       let ansWithResiduals = foldr PairVal ans $ map Var residualVs
-       return (ansWithResiduals, (iVar, residualVs, ansT))
-  extendScope $ foldMap (@>Nothing) (v':residualVs)
-  return (lam, map varAnn residualVs, \v'' residuals -> do
-     scope <- getScope
-     (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
-     let env = (v'@>v'') <> newEnv residualVs residuals
-     emitBlock $ subst (env, scope) $ wrapDecls decls ansT')
+-- linearizeLam :: RuleEnv -> AbsBlock
+--                  -> EmbedSubM (AbsBlock, [Type], Atom -> [Atom] -> EmbedSubM Atom)
+-- linearizeabsblock = undefined
+-- linearizeAbsBlock ruleEnv (AbsBlock v body) = do
+--   (lam, (v', residualVs, tBuilder)) <- buildAbsBlockAux v $ \v'@(Var iVar) ->
+--     extendR (v@>v') $ do
+--        (((ans, ansT), (localScope, decls)), fvs) <-
+--            runWriterT $ embedScoped $ runLinA $ linearizeBlock ruleEnv body
+--        extendScope localScope
+--        mapM_ emitDecl decls
+--        let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
+--        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
+--        return (ansWithResiduals, (iVar, residualVs, ansT))
+--   extendScope $ foldMap (@>Nothing) (v':residualVs)
+--   return (lam, map varAnn residualVs, \v'' residuals -> do
+--      scope <- getScope
+--      (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
+--      let env = (v'@>v'') <> newEnv residualVs residuals
+--      emitBlock $ subst (env, scope) $ wrapDecls decls ansT')
 
 unpackResiduals :: Monad m => (ty -> a -> m (a, a)) -> [ty] -> a -> m (a, [a])
 unpackResiduals _ [] ans = return (ans, [])
@@ -80,14 +82,14 @@ linearizeExpr ruleEnv expr = case expr of
   _ | hasDiscreteType expr -> LinA $ do
     ans <- substEmbed expr >>= emit
     return $ withZeroTangent ans
-  For d lam@(LamExpr i _) -> LinA $ do
-    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
-    ansRes <- emit $ For d lam'
-    (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
-    mapM_ saveVars residuals
-    return (ans, buildFor d i $ \i' -> do
-                   residuals' <- forM residuals $ \r -> emit $ TabGet r i'
-                   lin i' residuals')
+  -- For d lam@(AbsBlock i _) -> LinA $ do
+  --   (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
+  --   ansRes <- emit $ For d lam'
+  --   (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
+  --   mapM_ saveVars residuals
+  --   return (ans, buildFor d i $ \i' -> do
+  --                  residuals' <- forM residuals $ \r -> emit $ TabGet r i'
+  --                  lin i' residuals')
   TabGet x i -> LinA $ do
     (i', _)  <- runLinA $ linearizeAtom i
     (x', tx) <- runLinA $ linearizeAtom x
@@ -124,24 +126,25 @@ linearizeOp ruleEnv op = case fmap linearizeAtom op of
   _ -> error $ "not implemented: " ++ pprint op
 
 linearizeHof :: RuleEnv -> Hof -> LinA Atom
-linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
-  RunReader r lam@(LamExpr ref _) -> LinA $ do
-    (r', rt) <- runLinA r
-    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
-    ansRes <- emit $ Hof $ RunReader r' lam'
-    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
-    mapM_ saveVars residuals
-    return (ans , do rt' <- rt
-                     lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                     emit $ Hof $ RunReader rt' lam'')
-  RunWriter lam@(LamExpr ref _) -> LinA $ do
-    (lam', rTys, lin) <- lift $ linearizeLamExpr ruleEnv lam
-    (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
-    (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
-    mapM_ saveVars residuals
-    return ( PairVal ans w
-           , do lam'' <- buildLamExpr ref $ \ref' -> lin ref' residuals
-                emit $ Hof $ RunWriter lam'')
+linearizeHof = undefined
+-- linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
+--   RunReader r lam@(AbsBlock ref _) -> LinA $ do
+--     (r', rt) <- runLinA r
+--     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
+--     ansRes <- emit $ Hof $ RunReader r' lam'
+--     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
+--     mapM_ saveVars residuals
+--     return (ans , do rt' <- rt
+--                      lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
+--                      emit $ Hof $ RunReader rt' lam'')
+--   RunWriter lam@(AbsBlock ref _) -> LinA $ do
+--     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
+--     (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
+--     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
+--     mapM_ saveVars residuals
+--     return ( PairVal ans w
+--            , do lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
+--                 emit $ Hof $ RunWriter lam'')
 
 linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
 linearizedDiv x y tx ty = do
@@ -182,23 +185,23 @@ withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
 withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 
 tangentType :: Type -> Type
-tangentType (TabTy n a _) = TabTy n (tangentType a) noEffect
+tangentType (TabTy n a) = TabTy n (tangentType a)
 tangentType (TC con) = case con of
   BaseType RealType  -> TC $ BaseType RealType
   BaseType   _       -> UnitTy
   IntRange   _ _     -> UnitTy
   IndexRange _ _ _   -> UnitTy
   RecType r          -> RecTy $ fmap tangentType r
-  RefType a          -> RefTy $ tangentType a
+  -- RefType a          -> RefTy $ tangentType a
   _           -> error $ "Can't differentiate wrt type " ++ pprint con
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 
 hasDiscreteType :: HasType e => e -> Bool
-hasDiscreteType expr = case tailVar of
-  Nothing | null eff -> isSingletonType tangentTy
-  _ -> False
-  where (Effect eff tailVar, ty) = getEffType expr
-        tangentTy = tangentType ty
+hasDiscreteType = undefined
+  -- Nothing | null eff -> isSingletonType tangentTy
+  -- _ -> False
+  -- where (Effects eff tailVar, ty) = getEffType expr
+  --       tangentTy = tangentType ty
 
 tensLiftA2 :: (HasVars a, HasVars b)
            => (a -> b -> Op) -> LinA a -> LinA b -> LinA Atom
@@ -238,35 +241,38 @@ instance Applicative LinA where
 type LinVars = Env Atom
 type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
-transposeMap :: Scope -> LamExpr -> Atom
-transposeMap scope (LamExpr b expr) = fst $ flip runEmbed scope $ do
-  buildLam LinArrow ("ct" :> getType expr) $ \ct -> do
-    flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
+transposeMap :: Scope -> Atom -> Atom
+transposeMap = undefined
+-- transposeMap scope (AbsBlock b expr) = fst $ flip runEmbed scope $ do
+--   buildLam LinArrow ("ct" :> getType expr) $ \ct -> do
+--     flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
 
 transposeBlock :: Block -> Atom -> TransposeM ()
-transposeBlock (Block decls result eff) ct = case decls of
-  [] -> transposeExpr result ct
-  Let b bound : rest -> do
-    let (eff, _) = getEffType bound
-    linEff <- isLinEff eff
-    lin <- isLin bound
-    if lin || linEff
-      then do
-        ct' <- withLinVar b $ transposeBlock body ct
-        transposeExpr bound ct'
-      else do
-        x <- substTranspose bound >>= emitTo b
-        extendR (asSnd (b@>x)) $ transposeBlock body ct
-    where body = Block rest result eff
+transposeBlock = undefined
+-- transposeBlock (Block decls result) ct = case decls of
+--   [] -> transposeExpr result ct
+--   Let b bound : rest -> do
+--     let (eff, _) = getEffType bound
+--     linEff <- isLinEff eff
+--     lin <- isLin bound
+--     if lin || linEff
+--       then do
+--         ct' <- withLinVar b $ transposeBlock body ct
+--         transposeExpr bound ct'
+--       else do
+--         x <- substTranspose bound >>= emitTo b
+--         extendR (asSnd (b@>x)) $ transposeBlock body ct
+--     where body = Block rest result
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
-transposeExpr expr ct = case expr of
-  For d (LamExpr v body) -> do
-    lam <- buildLamExpr v $ \i -> do
-      ct' <- nTabGet ct i
-      extendR (asSnd (v@>i)) $ transposeBlock body ct'
-      return UnitVal
-    void $ emit $ For (flipDir d) lam
+transposeExpr = undefined
+-- transposeExpr expr ct = case expr of
+--   For d (AbsBlock v body) -> do
+--     lam <- buildAbsBlock v $ \i -> do
+--       ct' <- nTabGet ct i
+--       extendR (asSnd (v@>i)) $ transposeBlock body ct'
+--       return UnitVal
+--     void $ emit $ For (flipDir d) lam
   -- TabGet ~(Var x) i -> do
   --   i' <- substTranspose i
   --   linVars <- asks fst
@@ -321,19 +327,20 @@ transposeOp op ct = case op of
 
 
 transposeHof :: Hof -> Atom -> TransposeM ()
-transposeHof hof ct = case hof of
-  RunReader r (LamExpr v body) -> do
-    lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v@>x)) $ transposeBlock body ct
-             return UnitVal
-    (_, ctr) <- emit (Hof $ RunWriter lam) >>= fromPair
-    transposeAtom r ctr
-  RunWriter (LamExpr v body) -> do
-    (ctBody, ctEff) <- fromPair ct
-    lam <- buildLamExpr v $ \x -> do
-             extendR (asSnd (v@>x)) $ transposeBlock body ctBody
-             return UnitVal
-    void $ emit $ Hof $ RunReader ctEff lam
+transposeHof = undefined
+-- transposeHof hof ct = case hof of
+--   RunReader r (AbsBlock v body) -> do
+--     lam <- buildAbsBlock v $ \x -> do
+--              extendR (asSnd (v@>x)) $ transposeBlock body ct
+--              return UnitVal
+--     (_, ctr) <- emit (Hof $ RunWriter lam) >>= fromPair
+--     transposeAtom r ctr
+--   RunWriter (AbsBlock v body) -> do
+--     (ctBody, ctEff) <- fromPair ct
+--     lam <- buildAbsBlock v $ \x -> do
+--              extendR (asSnd (v@>x)) $ transposeBlock body ctBody
+--              return UnitVal
+--     void $ emit $ Hof $ RunReader ctEff lam
 
 
 transposeCon :: Con -> Atom -> TransposeM ()
@@ -360,8 +367,9 @@ isLin :: HasVars a => a -> TransposeM Bool
 isLin x = liftM (not . null) $ freeLinVars x
 
 -- TODO: allow nonlinear effects
-isLinEff :: Effect -> TransposeM Bool
-isLinEff ~(Effect row _) = return $ not $ null $ toList row
+isLinEff :: Effects -> TransposeM Bool
+isLinEff = undefined
+-- isLinEff ~(Effect row _) = return $ not $ null $ toList row
 
 emitCT :: Var -> Atom -> TransposeM ()
 emitCT v ct = do
@@ -383,13 +391,14 @@ withLinVar :: Var -> TransposeM () -> TransposeM Atom
 withLinVar v m = liftM fst $ extractCT v m
 
 extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
-extractCT v@(_:>ty) m = do
-  (lam, ans) <- buildLamExprAux ("ctRef":> RefTy ty) $ \ctRef -> do
-    extendR (asFst (v @> ctRef)) $ do
-      ans <- m
-      return (UnitVal, ans)
-  (_, w) <- emit (Hof (RunWriter lam)) >>= fromPair
-  return (w, ans)
+extractCT = undefined
+-- extractCT v@(_:>ty) m = do
+--   (lam, ans) <- buildAbsBlockAux ("ctRef":> RefTy ty) $ \ctRef -> do
+--     extendR (asFst (v @> ctRef)) $ do
+--       ans <- m
+--       return (UnitVal, ans)
+--   (_, w) <- emit (Hof (RunWriter lam)) >>= fromPair
+--   return (w, ans)
 
 flipDir :: Direction -> Direction
 flipDir Fwd = Rev

@@ -98,11 +98,11 @@ flattenAtom atom =
     return $ IdxAtom x []
 
 toJaxBlock :: JSubstEnv -> Block -> JaxM TmpAtom
-toJaxBlock env (Block [] result _) = toJaxExpr env result
-toJaxBlock env (Block (decl:decls) result eff) = do
+toJaxBlock env (Block [] result) = toJaxExpr env result
+toJaxBlock env (Block (decl:decls) result) = do
   env' <- toJaxDecl env decl
   toJaxBlock (env <> env') body
-  where body = Block decls result eff
+  where body = Block decls result
 
 toJaxDecl :: JSubstEnv -> Decl -> JaxM JSubstEnv
 toJaxDecl env (Let v rhs) = do
@@ -111,7 +111,7 @@ toJaxDecl env (Let v rhs) = do
 
 toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
 toJaxAtom env atom = case atom of
-  Var v@(_:>RefTy _) -> TmpRefName v
+  Var v@(_:>RefTy _ _) -> TmpRefName v
   Var v -> fromMaybe (error "lookup failed") $ envLookup env v
   Con (Lit x) -> tmpAtomScalarLit x
   Con con -> TmpCon $ fmap (toJaxAtom env) con
@@ -162,18 +162,18 @@ toJaxOp op = case op of
         where x:y:[] = args
   _ -> error $ "Not implemented: " ++ show op
 
-toJaxHof :: PrimHof TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
-toJaxHof hof = case hof of
-  RunWriter (LamExpr refVar body, env) -> do
-    idxEnvDepth <- asks length
-    let (RefTy wTy) = varAnn refVar
-    wInit <- zerosAt wTy
-    modify (<> refVar @> (idxEnvDepth, wInit))
-    aResult <- toJaxBlock env body
-    wFinal <- gets $ snd . (! refVar)
-    modify $ envDelete (varName refVar)
-    return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
-  _ -> error $ "Not implemented: " ++ show hof
+-- toJaxHof :: PrimHof TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
+-- toJaxHof hof = case hof of
+--   RunWriter (LamExpr refVar _ body, env) -> do
+--     idxEnvDepth <- asks length
+--     let (RefTy wTy) = varAnn refVar
+--     wInit <- zerosAt wTy
+--     modify (<> refVar @> (idxEnvDepth, wInit))
+--     aResult <- toJaxBlock env body
+--     wFinal <- gets $ snd . (! refVar)
+--     modify $ envDelete (varName refVar)
+--     return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
+--   _ -> error $ "Not implemented: " ++ show hof
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
 iotaVarAsIdx = undefined
