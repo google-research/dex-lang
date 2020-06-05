@@ -173,7 +173,8 @@ instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
     Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
-    Pi  (Abs a (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
+    Pi  (Abs (NoName:>a) (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
+    Pi  (Abs a           (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
@@ -273,9 +274,12 @@ instance Pretty UExpr where
 instance Pretty UExpr' where
   pretty expr = case expr of
     UVar (v:>_) -> p v
-    ULam pat h body -> "\\" <> annImplicity h (p pat) <> "." <> nest 2 (p body)
-    UApp f x -> p f <+> p x
-    UFor dir pat body -> kw <+> p pat <+> "." <+> p body
+    ULam pat h body ->
+      "\\" <> annImplicity h (p pat) <> "." <> nest 2 (hardline <> p body)
+    UApp TabArrow f x -> p f <> "." <> p x
+    UApp _        f x -> p f <+> p x
+    UFor dir pat body ->
+      kw <+> p pat <+> "." <> nest 2 (hardline <> p body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi a arr b -> prettyArrow arr (parens (p a)) (eff' <> p b)

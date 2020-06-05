@@ -112,7 +112,7 @@ checkOrInferRho (UPos pos expr) reqTy =
     extendR (b@>(x, argTy)) $ checkOrInferRho body reqTy
   ULam pat arr body -> case reqTy of
     Check ty -> do
-      piTy@(Abs _ (arrReq, _)) <- fromPiType ty
+      piTy@(Abs _ (arrReq, _)) <- fromPiType arr ty
       checkArrow arrReq arr
       lam <- checkULam pat body piTy
       return (lam, Checked)
@@ -121,7 +121,7 @@ checkOrInferRho (UPos pos expr) reqTy =
       return (lam, Inferred ty)
   UFor dir pat body -> case reqTy of
     Check ty -> do
-      Abs n (arr, a) <- fromPiType ty
+      Abs n (arr, a) <- fromPiType TabArrow ty
       unless (arr == TabArrow) $
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- lift ask
@@ -130,16 +130,15 @@ checkOrInferRho (UPos pos expr) reqTy =
       return (result, Checked)
     Infer -> do
       allowedEff <- lift ask
-      (lam, ty) <- inferULam pat (PlainArrow allowedEff) body
-      Abs n (_, a) <- fromPiType ty
+      ~(lam, Pi (Abs n (_, a))) <- inferULam pat (PlainArrow allowedEff) body
       result <- emitZonked $ Hof $ For dir lam
       return (result, Inferred $ Pi $ Abs n (TabArrow, a))
-  UApp f x -> do
+  UApp arr f x -> do
     (fVal, fTy) <- inferRho f
-    piTy <- fromPiType fTy
+    piTy <- fromPiType arr fTy
     xVal <- checkSigma x (absArgType piTy)
-    let (arr, appTy) = applyAbs piTy xVal
-    checkEffectsAllowed $ arrowEff arr
+    let (arr', appTy) = applyAbs piTy xVal
+    checkEffectsAllowed $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
   UPi b@(v:>a) arr ty -> do
@@ -243,9 +242,14 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
 
-fromPiType :: Type -> UInferM PiType
-fromPiType (Pi piTy) = return piTy
-fromPiType ty = error $ "Not an arrow type: " ++ pprint ty
+fromPiType :: ULamArrow -> Type -> UInferM PiType
+fromPiType _ (Pi piTy) = return piTy -- TODO: check arrow
+fromPiType arr ty = do
+  a <- freshInfVar TyKind
+  b <- freshInfVar TyKind
+  let piTy = Abs (NoName:>a) (fmap (const Pure) arr, b)
+  constrainEq (Pi piTy) ty
+  return piTy
 
 checkEffectsAllowed :: Effects -> UInferM ()
 checkEffectsAllowed eff = do

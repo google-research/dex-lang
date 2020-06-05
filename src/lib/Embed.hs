@@ -187,7 +187,7 @@ fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair (PairVal x y) = return (x, y)
 fromPair pair          = error $ "Not a pair: " ++ pprint pair
 
-buildFor :: (MonadEmbed m) => Direction -> Var -> (Atom -> m Atom) -> m Atom
+buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
   lam <- buildLam i $ \i' -> (PureArrow,) <$> body i'

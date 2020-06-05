@@ -120,7 +120,7 @@ data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
 data UExpr' = UVar UVar
             | ULam UPat      ULamArrow UExpr
             | UPi  UPiBinder UPiArrow  UType
-            | UApp UExpr UExpr
+            | UApp ULamArrow UExpr UExpr
             | UFor Direction UPat UExpr
             | UDecl UDecl UExpr
             | UPrimExpr (PrimExpr Name)
@@ -452,7 +452,7 @@ instance HasUVars UExpr' where
       freeUVars (varAnn b) <> ((freeUVars arr <> freeUVars ty) `envDiff` (b@>()))
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
-    UApp f x -> freeUVars f <> freeUVars x
+    UApp _ f x -> freeUVars f <> freeUVars x
     UFor _ p body -> uAbsFreeVars p body
     UDecl (ULet p rhs) body -> freeUVars rhs <> uAbsFreeVars p body
     UPrimExpr _ -> mempty

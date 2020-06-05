@@ -230,20 +230,20 @@ buildLam binders body@(UPos pos _) = case binders of
   -- TODO: join with source position of binders too
   (b,arr):bs -> UPos pos $ ULam (RecLeaf b) arr $ buildLam bs body
 
-buildFor :: Direction -> [UBinder] -> UExpr -> UExpr
-buildFor dir binders body@(UPos pos _) = case binders of
+buildFor :: SrcPos -> Direction -> [UBinder] -> UExpr -> UExpr
+buildFor pos dir binders body = case binders of
   [] -> body
-  b:bs -> UPos pos $ UFor dir (RecLeaf b) $ buildFor dir bs body
+  b:bs -> UPos pos $ UFor dir (RecLeaf b) $ buildFor pos dir bs body
 
 uForBinder :: Parser UBinder
 uForBinder = rawLamBinder <|> parenLamBinder
 
 uForExpr :: Parser UExpr
-uForExpr =
-  buildFor <$> (     (keyWord ForKW $> Fwd)
-                 <|> (keyWord RofKW $> Rev))
-           <*> (some uForBinder <* argTerm)
-           <*> blockOrExpr
+uForExpr = do
+  (dir, pos) <- withPos $   (keyWord ForKW $> Fwd)
+                        <|> (keyWord RofKW $> Rev)
+  buildFor pos dir <$> (some uForBinder <* argTerm)
+                   <*> blockOrExpr
 
 blockOrExpr :: Parser UExpr
 blockOrExpr =  block <|> uExpr
@@ -334,7 +334,7 @@ uPrim = withSrc $ do
 -- literal symbols here must only use chars from `symChars`
 uops :: [[Operator Parser UExpr]]
 uops =
-  [ [InfixL $ sym "." $> mkApp]
+  [ [InfixL $ sym "." $> mkGenApp TabArrow]
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
@@ -365,8 +365,11 @@ binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
   where f' = UPos pos $ UVar (f:>())
 
+mkGenApp :: ULamArrow -> UExpr -> UExpr -> UExpr
+mkGenApp arr f x = UPos (joinPos f x) $ UApp arr f x
+
 mkApp :: UExpr -> UExpr -> UExpr
-mkApp f x = UPos (joinPos f x) $ UApp f x
+mkApp f x = UPos (joinPos f x) $ UApp (PlainArrow ()) f x
 
 infixEffArrow :: Parser (UType -> UType -> UType)
 infixEffArrow = do

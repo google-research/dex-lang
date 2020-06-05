@@ -128,3 +128,10 @@ myPair = (1, 2.3)
      x = get s
      s := iadd x 3
 > 5
+
+:p
+   snd $ withState 1 \s.
+     for (i: Fin 10).
+       x = get s
+       s := iadd x x
+> 1024

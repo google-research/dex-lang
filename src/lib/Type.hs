@@ -414,6 +414,8 @@ checkDataLike msg env ty = case ty of
   TC con -> case con of
     BaseType _       -> return ()
     RecType r        -> mapM_ recur r
+    PairType a b     -> recur a >> recur b
+    UnitType         -> return ()
     SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
