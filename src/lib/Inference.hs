@@ -212,7 +212,7 @@ checkUEff (UEffects effs tailVar) = case effs of
     Nothing -> return Pure
     Just v  -> checkRho v (TC EffectsKind)
   (effName, region):rest -> do
-    region' <- checkRho region (TC RegionType)
+    region' <- checkRho region TyKind
     rest' <- checkUEff (UEffects rest tailVar)
     return $ Eff $ ExtendEff (effName, region') rest'
 

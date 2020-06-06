@@ -159,7 +159,6 @@ data PrimTC e =
       | RecType (Record e)
       | SumType (e, e)
       | RefType e e
-      | RegionType
       | TypeKind
       | EffectsKind
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -811,7 +810,6 @@ builtinNames = M.fromList
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType () ())
-  , ("Region"  , TCExpr $ RegionType)
   , ("PairType", TCExpr $ PairType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("pair", ConExpr $ PairCon () ())

@@ -11,7 +11,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
             rawName, nameSpace, rename, renames, nameItems, renameWithNS,
-            renameChoice) where
+            renameChoice, tagToStr) where
 
 import Control.Monad
 import Data.List (minimumBy)

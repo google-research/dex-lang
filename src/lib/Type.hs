@@ -223,14 +223,13 @@ typeCheckTyCon tc = case tc of
   PairType a b     -> a|:TyKind >> b|:TyKind
   UnitType         -> return ()
   RecType r        -> mapM_ (|:TyKind) r
-  RefType r a      -> r|: TC RegionType >> a|:TyKind
-  RegionType       -> return ()
+  RefType r a      -> r|:TyKind >> a|:TyKind
   TypeKind         -> return ()
 
 typeCheckEff :: Eff -> TypeM ()
 typeCheckEff PureEff = return ()
 typeCheckEff (ExtendEff (_, r) rest) = do
-  r    |: TC RegionType
+  r    |: TyKind
   rest |: TC EffectsKind
 
 typeCheckCon :: Con -> TypeM Type
@@ -241,7 +240,7 @@ typeCheckCon con = case con of
   SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   RecCon r -> RecTy <$> mapM typeCheck r
-  RefCon r x -> r|:(TC RegionType) >> RefTy r <$> typeCheck x
+  RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   AFor n a -> TabTy <$> typeCheck n <*> typeCheck a
   AGet x -> do
     -- TODO: check shape matches AFor scope
@@ -328,7 +327,7 @@ typeCheckHof hof = case hof of
     BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
     let region = Var regionBinder
     declareEffs $ eff `removeEffect` (State, region)
-    checkEq (varAnn regionBinder) (TC RegionType)
+    checkEq (varAnn regionBinder) TyKind
     checkEq (varAnn refBinder) $ RefTy region stateTy
     return $ PairTy resultTy stateTy
 

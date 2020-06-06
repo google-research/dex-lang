@@ -13,6 +13,7 @@ import Control.Monad.Combinators.Expr
 import Control.Monad.Reader
 import Text.Megaparsec hiding (Label, State)
 import Text.Megaparsec.Char hiding (space)
+import Data.Char (isLower)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
@@ -77,7 +78,7 @@ sourceBlock' =
   <|> loadData
   <|> dumpData
   <|> explicitCommand
-  <|> (liftM (RunModule . declAsModule) (uDecl <* eol))
+  <|> (liftM (RunModule . declAsModule) (uTopDecl <* eol))
 
 loadData :: Parser SourceBlock'
 loadData = do
@@ -163,6 +164,25 @@ leafUExpr =   parens uExpr
 uvar :: Parser UExpr
 uvar = withSrc $ (UVar . (:>())) <$> uName
 
+uTopDecl :: Parser UDecl
+uTopDecl = do
+  ~(ULet (RecLeaf (v:>ann)) rhs, pos) <- withPos uDecl
+  let ann' = fmap (addImplicitImplicitArgs pos) ann
+  return $ ULet (RecLeaf (v:>ann')) rhs
+  where
+    addImplicitImplicitArgs :: SrcPos -> UType -> UType
+    addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars
+      where
+        implicitVars = filter isLowerCaseName $ envNames $ freeUVars ty
+        isLowerCaseName :: Name -> Bool
+        isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
+        isLowerCaseName _ = False
+
+    addImplicitArg :: SrcPos -> Name -> UType -> UType
+    addImplicitArg pos v ty = UPos pos $ UPi (v :> uTyKind) ImplicitArrow ty
+      where uTyKind = UPos pos $ UPrimExpr $ TCExpr TypeKind
+
+
 uDecl :: Parser UDecl
 uDecl = do
   lhs <- simpleLet <|> funDefLet
@@ -180,7 +200,8 @@ uDecl = do
       v <- uName
       bs <- some $ label "binder" uPiBinder
       (eff, ty) <- label "result annotation" $ annot effectiveType
-      let letBinder = RecLeaf $ v:> Just (buildPiType bs eff ty)
+      let funTy = buildPiType bs eff ty
+      let letBinder = RecLeaf $ v:> Just funTy
       let lamBinders = flip map bs $ \(b, ah) -> (varName b :> Nothing, ah)
       return $ \body -> ULet letBinder (buildLam lamBinders body)
 
@@ -346,7 +367,7 @@ uops =
   , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
   , [InfixR infixEffArrow]
-  , [symOp ","], [symOp "**"]
+  , [symOp ","], [symOp "&"]
   ]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
