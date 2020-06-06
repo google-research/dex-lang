@@ -151,6 +151,7 @@ checkOrInferRho (UPos pos expr) reqTy =
   UDecl decl body -> do
     env <- inferUDecl decl
     extendR env $ checkOrInferRho body reqTy
+  UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UPrimExpr prim -> do
     prim' <- traverse lookupName prim
     val <- case prim' of
@@ -241,6 +242,30 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
   _ -> throw TypeErr $   "Wrong arrow type:" ++
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
+
+inferTabCon :: [UExpr] -> Maybe UType -> UInferM (Atom, Type)
+inferTabCon xs ann = do
+  (n, ty) <- inferTabTy xs ann
+  let tabTy = n==>ty
+  xs' <- mapM (flip checkRho ty) xs
+  ans <- emitOp $ TabCon tabTy xs'
+  return (ans, tabTy)
+
+inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
+inferTabTy xs ann = case ann of
+  Just ty -> do
+    ty' <- checkUType ty
+    case ty' of
+      TabTy n a -> do
+        unless (indexSetConcreteSize n == Just (length xs)) $
+           throw TypeErr $ "Table size doesn't match annotation"
+        return (n, a)
+      _ -> throw TypeErr $ "Table constructor annotation must be a table type"
+  Nothing -> case xs of
+   [] -> throw TypeErr $ "Empty table constructor must have type annotation"
+   (x:_) -> do
+    (_, ty) <- inferRho x
+    return (FixedIntRange 0 (length xs), ty)
 
 fromPiType :: ULamArrow -> Type -> UInferM PiType
 fromPiType _ (Pi piTy) = return piTy -- TODO: check arrow

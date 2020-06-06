@@ -103,6 +103,7 @@ instance Pretty e => Pretty (PrimTC e) where
   pretty con = case con of
     BaseType b     -> p b
     PairType a b   -> parens $ p a <+> "**" <+> p b
+    UnitType       -> "Unit"
     RecType r      -> p $ fmap (asStr . p) r
     ArrayType (shape, b) -> p b <> p shape
     IntRange a b -> if s1 == "0...<" then p s2 else ans
@@ -287,7 +288,11 @@ instance Pretty UExpr' where
                                 PlainArrow eff   -> p eff
                                 _ -> mempty
     UDecl decl body -> p decl <> hardline <> p body
+    UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
     UPrimExpr prim -> p prim
+
+prettyAnn :: Doc ann -> Doc ann
+prettyAnn ty = ":" <+> ty
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs

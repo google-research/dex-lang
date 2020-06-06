@@ -25,6 +25,7 @@ import Syntax
 import PPrint
 
 data ParseCtx = ParseCtx { curIndent :: Int
+                         , canPair   :: Bool
                          , canBreak  :: Bool }
 type Parser = ReaderT ParseCtx (Parsec Void String)
 
@@ -124,9 +125,9 @@ explicitCommand = do
   return $ Command cmd (exprAsModule e)
 
 declAsModule :: UDecl -> UModule
-declAsModule decl@(ULet pat _) = UModule imports exports [decl]
+declAsModule dec@(ULet pat _) = UModule imports exports [dec]
  where
-   imports = envNames $ freeUVars decl
+   imports = envNames $ freeUVars dec
    exports = envNames $ foldMap (@>()) pat
 
 exprAsModule :: UExpr -> (Name, UModule)
@@ -141,32 +142,38 @@ tauType = undefined
 
 -- === uexpr ===
 
-uExpr :: Parser UExpr
-uExpr = makeExprParser uExpr' uops
-  where
-    uExpr' :: Parser UExpr
-    uExpr' =   uPiType
-           <|> leafUExpr
-           <|> uLamExpr
-           <|> uForExpr
-           <|> uPrim
-           <?> "expression"
+expr :: Parser UExpr
+expr = mayNotPair $ makeExprParser leafExpr ops
 
-leafUExpr :: Parser UExpr
-leafUExpr =   parens uExpr
-          <|> uvar
-          <|> withSrc (liftM (UPrimExpr . ConExpr . Lit) uLit)
-  where
-    uLit :: Parser LitVal
-    uLit =   (IntLit  <$> intLit)
-         <|> (RealLit <$> doubleLit)
+typeExpr :: Parser UType
+typeExpr = expr
 
-uvar :: Parser UExpr
-uvar = withSrc $ (UVar . (:>())) <$> uName
+-- expression without exposed infix operators
+leafExpr :: Parser UExpr
+leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
+         <|> uTabCon
+         <|> uVar
+         <|> uLit
+         <|> uPiType
+         <|> uLamExpr
+         <|> uForExpr
+         <|> uPrim
+         <|> unitCon
+         <?> "expression"
+
+uLit :: Parser UExpr
+uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
+
+litVal :: Parser LitVal
+litVal =   (IntLit  <$> intLit)
+       <|> (RealLit <$> doubleLit)
+
+uVar :: Parser UExpr
+uVar = withSrc $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  ~(ULet (RecLeaf (v:>ann)) rhs, pos) <- withPos uDecl
+  ~(ULet (RecLeaf (v:>ann)) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
   return $ ULet (RecLeaf (v:>ann')) rhs
   where
@@ -183,8 +190,8 @@ uTopDecl = do
       where uTyKind = UPos pos $ UPrimExpr $ TCExpr TypeKind
 
 
-uDecl :: Parser UDecl
-uDecl = do
+decl :: Parser UDecl
+decl = do
   lhs <- simpleLet <|> funDefLet
   rhs <- sym "=" >> blockOrExpr
   return $ lhs rhs
@@ -218,14 +225,14 @@ uDecl = do
               <|> liftM (,ImplicitArrow) implicitPiBinder
 
 effectiveType :: Parser (UEffects, UType)
-effectiveType = (,) <$> effects <*> uExpr
+effectiveType = (,) <$> effects <*> typeExpr
 
 effects :: Parser UEffects
 effects = braces someEffects <|> return UPure
   where
     someEffects = do
-      effs <- liftM2 (,) effectName uvar `sepBy` symbol ","
-      v <- optional $ symbol "|" >> uvar
+      effs <- liftM2 (,) effectName uVar `sepBy` sym ","
+      v <- optional $ symbol "|" >> uVar
       return $ UEffects effs v
 
 effectName :: Parser EffectName
@@ -236,7 +243,7 @@ effectName =     (symbol "Accum" $> Writer)
 uLetBinder :: Parser UBinder
 uLetBinder = do
   v <- try $ uName <* lookAhead (sym ":" <|> sym "=")
-  ann <- optional $ annot uExpr
+  ann <- optional $ annot typeExpr
   return $ v:>ann
 
 uLamExpr :: Parser UExpr
@@ -267,7 +274,16 @@ uForExpr = do
                    <*> blockOrExpr
 
 blockOrExpr :: Parser UExpr
-blockOrExpr =  block <|> uExpr
+blockOrExpr =  block <|> expr
+
+unitCon :: Parser UExpr
+unitCon = withSrc $ symbol "()" $> (UPrimExpr $ ConExpr $ UnitCon)
+
+uTabCon :: Parser UExpr
+uTabCon = withSrc $ do
+  xs <- brackets $ expr `sepBy` sym ","
+  ty <- optional (annot typeExpr)
+  return $ UTabCon xs ty
 
 type UStatement = (Either UDecl UExpr, SrcPos)
 
@@ -291,8 +307,8 @@ wrapUStatements statements = case statements of
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
-uStatement = withPos $   liftM Left  uDecl
-                     <|> liftM Right uExpr
+uStatement = withPos $   liftM Left  decl
+                     <|> liftM Right expr
 
 uPiType :: Parser UExpr
 uPiType = uExplicitPi <|> uImplicitPi
@@ -300,7 +316,7 @@ uPiType = uExplicitPi <|> uImplicitPi
 uExplicitPi :: Parser UExpr
 uExplicitPi = withSrc $ do
   b <- try $ piBinder <* lookAhead (arrow (return ()))
-  UPi b <$> arrow effects <*> uExpr
+  UPi b <$> arrow effects <*> typeExpr
 
 piBinder :: Parser UPiBinder
 piBinder = rawPiBinder <|> parenPiBinder
@@ -313,7 +329,7 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
 uImplicitPi :: Parser UExpr
 uImplicitPi = withSrc $ do
   v <- try $ implicitPiBinder <* sym "->"
-  ty <- uExpr
+  ty <- typeExpr
   return $ UPi v ImplicitArrow ty
 
 uName :: Parser Name
@@ -328,22 +344,22 @@ uLamBinder =   liftM (,PlainArrow ()) rawLamBinder
            <|> liftM (,ImplicitArrow) implicitLamBinder
 
 rawLamBinder :: Parser UBinder
-rawLamBinder = (:>) <$> uName <*> (optional $ annot leafUExpr)
+rawLamBinder = (:>) <$> uName <*> (optional $ annot leafExpr)
 
 parenLamBinder :: Parser UBinder
-parenLamBinder = parens $ (:>) <$> uName <*> (optional $ annot uExpr)
+parenLamBinder = parens $ (:>) <$> uName <*> (optional $ annot typeExpr)
 
 implicitLamBinder :: Parser UBinder
-implicitLamBinder = braces $ (:>) <$> uName <*> (optional $ annot uExpr)
+implicitLamBinder = braces $ (:>) <$> uName <*> (optional $ annot typeExpr)
 
 rawPiBinder :: Parser (VarP UType)
-rawPiBinder = (:>) <$> uName <*> annot leafUExpr
+rawPiBinder = (:>) <$> uName <*> annot leafExpr
 
 parenPiBinder :: Parser (VarP UType)
-parenPiBinder = parens $ (:>) <$> uName <*> annot uExpr
+parenPiBinder = parens $ (:>) <$> uName <*> annot typeExpr
 
 implicitPiBinder :: Parser (VarP UType)
-implicitPiBinder = braces $ (:>) <$> uName <*> annot uExpr
+implicitPiBinder = braces $ (:>) <$> uName <*> annot typeExpr
 
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
@@ -353,8 +369,8 @@ uPrim = withSrc $ do
     Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 -- literal symbols here must only use chars from `symChars`
-uops :: [[Operator Parser UExpr]]
-uops =
+ops :: [[Operator Parser UExpr]]
+ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow]
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
@@ -367,7 +383,7 @@ uops =
   , [InfixL $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
   , [InfixR infixEffArrow]
-  , [symOp ","], [symOp "&"]
+  , [symOp "&", pairOp]
   ]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
@@ -375,6 +391,14 @@ opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
 opWithSrc p = do
   (f, pos) <- withPos p
   return $ f pos
+
+pairOp :: Operator Parser UExpr
+pairOp = InfixR $ opWithSrc $ do
+  allowed <- asks canPair
+  if allowed
+    then sym "," >> return (binApp f)
+    else fail "Unexpected comma"
+  where f = rawName SourceName $ "(,)"
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ opWithSrc $ do
@@ -466,7 +490,7 @@ backquoteName = label "backquoted name" $
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
 lParen, rParen, lBracket, rBracket, lBrace, rBrace, semicolon :: Lexer ()
 
-lParen    = notFollowedBy symName >> charLexeme '('
+lParen    = notFollowedBy symName >> notFollowedBy unitCon >> charLexeme '('
 rParen    = charLexeme ')'
 lBracket  = charLexeme '['
 rBracket  = charLexeme ']'
@@ -489,7 +513,7 @@ symChars = ".,!$^&*:-~+/=<>|?\\"
 -- === Util ===
 
 runTheParser :: String -> Parser a -> Either (ParseErrorBundle String Void) a
-runTheParser s p =  parse (runReaderT p (ParseCtx 0 False)) "" s
+runTheParser s p = parse (runReaderT p (ParseCtx 0 False False)) "" s
 
 sc :: Parser ()
 sc = L.space space lineComment empty
@@ -520,6 +544,12 @@ mayBreak p = local (\ctx -> ctx { canBreak = True }) p
 
 mayNotBreak :: Parser a -> Parser a
 mayNotBreak p = local (\ctx -> ctx { canBreak = False }) p
+
+mayPair :: Parser a -> Parser a
+mayPair p = local (\ctx -> ctx { canPair = True }) p
+
+mayNotPair :: Parser a -> Parser a
+mayNotPair p = local (\ctx -> ctx { canPair = False }) p
 
 nameString :: Parser String
 nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar

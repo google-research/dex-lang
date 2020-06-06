@@ -1,7 +1,7 @@
 Int = %Int
 Real = %Real
 Type = %TyKind
-UnitTy = %UnitType
+Unit = %UnitType
 
 def IntRange (low:Int) (high:Int) : Type = %IntRange low high
 def Fin (n:Int) : Type = IntRange 0 n
@@ -14,8 +14,8 @@ def (,) (x:a) (y:b) : a & b = %pair x y
 def fst (p: a & b) : a = %fst p
 def snd (p: a & b) : b = %snd p
 
-def get  (ref:Ref r s)       : {State r} s      = %get ref
-def (:=) (ref:Ref r s) (x:s) : {State r} UnitTy = %put ref x
+def get  (ref:Ref r s)       : {State r} s    = %get ref
+def (:=) (ref:Ref r s) (x:s) : {State r} Unit = %put ref x
 
 def withState
     {a:Type} {s:Type}
@@ -134,3 +134,14 @@ myPair = (1, 2.3)
        x = get s
        s := iadd x x
 > 1024
+
+:p
+ x:Unit = ()
+ x
+> ()
+
+:p [1,2,3]
+> [1, 2, 3]
+
+:p [] : Fin 0 => Int
+> []

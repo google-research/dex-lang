@@ -73,7 +73,7 @@ impSubst env x = do
 
 toImpOp :: PrimOp Atom -> ImpM Atom
 toImpOp op = case op of
-  TabCon n _ rows -> do
+  TabCon (TabTy n _) rows -> do
     dest <- alloc resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
       i' <- intToIndex n $ IIntVal i

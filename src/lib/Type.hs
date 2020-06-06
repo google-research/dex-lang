@@ -239,6 +239,7 @@ typeCheckCon con = case con of
   AnyValue t -> t|:TyKind $> t
   SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
+  UnitCon -> return UnitTy
   RecCon r -> RecTy <$> mapM typeCheck r
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   AFor n a -> TabTy <$> typeCheck n <*> typeCheck a
@@ -251,11 +252,13 @@ typeCheckCon con = case con of
 
 typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
-  TabCon n ty xs -> do
-    n|:TyKind >> ty|:TyKind >> mapM_ (|:ty) xs
+  TabCon ty xs -> do
+    ty |: TyKind
+    TabTy n a <- return ty
+    mapM_ (|:a) xs
     Just n' <- return $ indexSetConcreteSize n
     assertEq n' (length xs) "Index set size mismatch"
-    return (n==>ty)
+    return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}
   RecGet x i -> do

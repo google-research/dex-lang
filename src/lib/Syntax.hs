@@ -121,8 +121,9 @@ data UExpr' = UVar UVar
             | ULam UPat      ULamArrow UExpr
             | UPi  UPiBinder UPiArrow  UType
             | UApp ULamArrow UExpr UExpr
-            | UFor Direction UPat UExpr
             | UDecl UDecl UExpr
+            | UFor Direction UPat UExpr
+            | UTabCon [UExpr] (Maybe UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
@@ -190,7 +191,7 @@ data PrimOp e =
       | SumTag e
       | ArrayGep e e
       | LoadScalar e
-      | TabCon e e [e]               -- index set, element type, elements
+      | TabCon e [e]                 -- table type, element type, elements
       | ScalarBinOp ScalarBinOp e e
       | ScalarUnOp ScalarUnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
@@ -452,8 +453,9 @@ instance HasUVars UExpr' where
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UFor _ p body -> uAbsFreeVars p body
     UDecl (ULet p rhs) body -> freeUVars rhs <> uAbsFreeVars p body
+    UFor _ p body -> uAbsFreeVars p body
+    UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UPrimExpr _ -> mempty
 
 instance HasUVars UDecl where
