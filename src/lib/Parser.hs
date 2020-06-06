@@ -72,14 +72,15 @@ consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
-      (char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak))
-  <|> (some eol >> return EmptyLines)
-  <|> (sc >> eol >> return CommentLine)
-  <|> (liftM IncludeSourceFile includeSourceFile)
-  <|> loadData
-  <|> dumpData
-  <|> explicitCommand
-  <|> (liftM (RunModule . declAsModule) (uTopDecl <* eol))
+      proseBlock
+  <|> topLevelCommand
+  <|> liftM (RunModule . declAsModule) (uTopDecl <* eol)
+  <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
+  <|> hidden (some eol >> return EmptyLines)
+  <|> hidden (sc >> eol >> return CommentLine)
+
+proseBlock :: Parser SourceBlock'
+proseBlock = label "prose block" $ char '\'' >> liftM (ProseBlock . fst) (withSource consumeTillBreak)
 
 loadData :: Parser SourceBlock'
 loadData = do
@@ -90,6 +91,14 @@ loadData = do
   b <- uLetBinder
   void eol
   return $ LoadData (RecLeaf b) fmt s
+
+topLevelCommand :: Parser SourceBlock'
+topLevelCommand =
+      (liftM IncludeSourceFile includeSourceFile)
+  <|> loadData
+  <|> dumpData
+  <|> explicitCommand
+  <?> "top-level command"
 
 dataFormat :: Parser DataFormat
 dataFormat = do
@@ -167,6 +176,7 @@ uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
 litVal :: Parser LitVal
 litVal =   (IntLit  <$> intLit)
        <|> (RealLit <$> doubleLit)
+       <?> "literal"
 
 uVar :: Parser UExpr
 uVar = withSrc $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
@@ -197,7 +207,7 @@ decl = do
   return $ lhs rhs
   where
     simpleLet :: Parser (UExpr -> UDecl)
-    simpleLet = do
+    simpleLet = label "let binding" $ do
       b <- uLetBinder
       return $ ULet (RecLeaf b)
 
@@ -205,7 +215,7 @@ decl = do
     funDefLet = label "function definition" $ mayBreak $ do
       keyWord DefKW
       v <- uName
-      bs <- some $ label "binder" uPiBinder
+      bs <- some uPiBinder
       (eff, ty) <- label "result annotation" $ annot effectiveType
       let funTy = buildPiType bs eff ty
       let letBinder = RecLeaf $ v:> Just funTy
@@ -223,6 +233,7 @@ decl = do
     uPiBinder =   liftM (,PlainArrow ()) rawPiBinder
               <|> liftM (,PlainArrow ()) parenPiBinder
               <|> liftM (,ImplicitArrow) implicitPiBinder
+              <?> "binder"
 
 effectiveType :: Parser (UEffects, UType)
 effectiveType = (,) <$> effects <*> typeExpr
@@ -239,6 +250,7 @@ effectName :: Parser EffectName
 effectName =     (symbol "Accum" $> Writer)
              <|> (symbol "Read"  $> Reader)
              <|> (symbol "State" $> State)
+             <?> "effect name"
 
 uLetBinder :: Parser UBinder
 uLetBinder = do
@@ -325,6 +337,7 @@ arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "=>"  $> TabArrow)
         <|> (sym "--o" $> LinArrow)
+        <?> "arrow"
 
 uImplicitPi :: Parser UExpr
 uImplicitPi = withSrc $ do
@@ -342,6 +355,7 @@ uLamBinder :: Parser (UBinder, ULamArrow)
 uLamBinder =   liftM (,PlainArrow ()) rawLamBinder
            <|> liftM (,PlainArrow ()) parenLamBinder
            <|> liftM (,ImplicitArrow) implicitLamBinder
+           <?> "lambda binder"
 
 rawLamBinder :: Parser UBinder
 rawLamBinder = (:>) <$> uName <*> (optional $ annot leafExpr)
@@ -478,7 +492,7 @@ sym :: String -> Lexer ()
 sym s = lexeme $ try $ string s >> notFollowedBy symChar
 
 symName :: Lexer Name
-symName = lexeme $ try $ do
+symName = label "symbol name" $ lexeme $ try $ do
   s <- between (char '(') (char ')') $ some symChar
   return $ rawName SourceName $ "(" <> s <> ")"
 

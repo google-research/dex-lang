@@ -15,6 +15,7 @@ import Control.Monad.Except hiding (Except)
 import Data.Bitraversable
 import Data.Foldable (fold, toList)
 import qualified Data.Map.Strict as M
+import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -338,8 +339,10 @@ constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
 constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
-  let msg = "\nExpected: " ++ pprint t1'
-         ++ "\n  Actual: " ++ pprint t2'
+  let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
+  let msg = "\nExpected: " ++ pprint t1Pretty
+         ++ "\n  Actual: " ++ pprint t2Pretty
+         ++ "\nSolving for: " ++ pprint infVars
   addContext msg $ unify t1' t2'
 
 zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a
@@ -383,6 +386,16 @@ hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
 
 occursIn :: Var -> Type -> Bool
 occursIn v t = v `isin` freeVars t
+
+renameForPrinting :: HasVars a => a -> (a, [Var])
+renameForPrinting x = (scopelessSubst substEnv x, newNames)
+  where
+    fvs = freeVars x
+    infVars = filter ((==InferenceName) . nameSpace . varName) $ envAsVars fvs
+    newNames = [ rename (fromString name:> varAnn v) fvs
+               | (v, name) <- zip infVars nameList]
+    substEnv = fold $ zipWith (\v v' -> v@>Var v') infVars newNames
+    nameList = map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
 
 instance Semigroup SolverEnv where
   -- TODO: as an optimization, don't do the subst when sub2 is empty
