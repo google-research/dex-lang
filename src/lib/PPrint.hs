@@ -139,7 +139,6 @@ instance Pretty e => Pretty (PrimCon e) where
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
     ArrayGep x i ->  p x <> "." <> p i
-    FFICall s _ _ xs -> "%%" <> p s <+> tup xs
     SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
     SumTag e        -> parens $ "projTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val

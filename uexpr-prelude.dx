@@ -1,0 +1,70 @@
+'## Dex prelude
+
+'Runs before every Dex program unless an alternative is provided with `--prelude`.
+
+'Wrappers around primitives
+
+Int  = %Int
+Real = %Real
+Bool = %Bool
+Unit = %UnitType
+Type = %TyKind
+
+def (&) (a:Type) (b:Type) : Type = %PairType a b
+def (,) (x:a) (y:b) : a & b = %pair x y
+def fst (p: a & b) : a = %fst p
+def snd (p: a & b) : b = %snd p
+
+def iadd (x:Int) (y:Int) : Int = %iadd x y
+def isub (x:Int) (y:Int) : Int = %isub x y
+def imul (x:Int) (y:Int) : Int = %imul x y
+def idiv (x:Int) (y:Int) : Int = %idiv x y
+def rem  (x:Int) (y:Int) : Int = %rem  x y
+def ipow (x:Int) (y:Int) : Int = %pow  x y
+
+def (+) (x:Real) (y:Real) : Real = %fadd x y
+def (-) (x:Real) (y:Real) : Real = %fsub x y
+def (*) (x:Real) (y:Real) : Real = %fmul x y
+def (/) (x:Real) (y:Real) : Real = %fdiv x y
+def neg (x:Real)          : Real = %fneg x
+
+True  = %True
+False = %False
+def (&&) (x:Bool) (y:Bool) : Bool = %and x y
+def (||) (x:Bool) (y:Bool) : Bool = %or  x y
+def not  (x:Bool)          : Bool = %not x
+
+def Ref (r:Type) (a:Type) : Type = %Ref r a
+def get  (ref:Ref h s)       : {State h} s    = %get  ref
+def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
+def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
+def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
+
+def withReader {a:Type} {r:Type}
+      (init:r) (action: {h:Type} -> Ref h r -> {Read h} a) : a =
+    def explicitAction (h':Type) (ref:Ref h' r) : {Read h'} a = action ref
+    %runReader init explicitAction
+
+def withAccum {a:Type} {w:Type}
+      (action: {h:Type} -> Ref h w -> {Accum h} a) : (a & w) =
+    def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'} a = action ref
+    %runWriter explicitAction
+
+def withState {a:Type} {s:Type}
+      (init:s) (action: {h:Type} -> Ref h s -> {State h} a) : (a & s) =
+    def explicitAction (h':Type) (ref:Ref h' s) : {State h'} a = action ref
+    %runState init explicitAction
+
+'Wrappers around C library functions
+
+def exp (x:Real) : Real = %ffi exp Real x
+def log (x:Real) : Real = %ffi log Real x
+def sin (x:Real) : Real = %ffi sin Real x
+def cos (x:Real) : Real = %ffi cos Real x
+def tan (x:Real) : Real = %ffi tan Real x
+def floor (x:Real) : Int = %ffi floorDex Int x
+
+'Working with index sets
+
+def Range (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = Range 0 n

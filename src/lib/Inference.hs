@@ -342,7 +342,7 @@ constrainEq t1 t2 = do
   let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
   let msg = "\nExpected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
-         ++ "\nSolving for: " ++ pprint infVars
+         ++ (if null infVars then "" else "\nSolving for: " ++ pprint infVars)
   addContext msg $ unify t1' t2'
 
 zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a

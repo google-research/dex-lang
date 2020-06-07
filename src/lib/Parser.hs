@@ -378,9 +378,20 @@ implicitPiBinder = braces $ (:>) <$> uName <*> annot typeExpr
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
   s <- primName
-  case strToName s of
-    Just prim -> UPrimExpr <$> traverse (const textName) prim
-    Nothing -> fail $ "Unrecognized primitive: " ++ s
+  case s of
+    "ffi" -> do
+      f <- lexeme $ some letterChar
+      retTy <- baseType
+      args <- some textName
+      return $ UPrimExpr $ OpExpr $ FFICall f retTy args
+    _ -> case strToName s of
+      Just prim -> UPrimExpr <$> traverse (const textName) prim
+      Nothing -> fail $ "Unrecognized primitive: " ++ s
+
+baseType :: Parser BaseType
+baseType =   (symbol "Int"  $> IntType)
+         <|> (symbol "Real" $> RealType)
+         <|> (symbol "Bool" $> BoolType)
 
 -- literal symbols here must only use chars from `symChars`
 ops :: [[Operator Parser UExpr]]

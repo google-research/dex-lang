@@ -277,11 +277,11 @@ scalarTy ty = case ty of
 extendOneBit :: Operand -> CompileM Operand
 extendOneBit x = emitInstr boolTy (L.ZExt x boolTy [])
 
-compileFFICall :: String -> [L.Type] -> L.Type -> [Operand] -> CompileM Operand
-compileFFICall name argTys retTy xs = do
+compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
+compileFFICall name retTy xs = do
   modify $ setFunSpecs (f:)
   emitInstr retTy $ externCall f xs
-  where f = ExternFunSpec (L.Name (fromString name)) retTy argTys
+  where f = ExternFunSpec (L.Name (fromString name)) retTy (map L.typeOf xs)
 
 compilePrimOp :: PrimOp Operand -> CompileM Operand
 compilePrimOp (ScalarBinOp op x y) = case op of
@@ -309,8 +309,8 @@ compilePrimOp (ScalarUnOp op x) = case op of
 compilePrimOp (Select p x y) = do
   p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
   emitInstr (L.typeOf x) $ L.Select p' x y []
-compilePrimOp (FFICall name argTys ansTy xs) =
-  compileFFICall name (map scalarTy argTys) (scalarTy ansTy) xs
+compilePrimOp (FFICall name ansTy xs) =
+  compileFFICall name (scalarTy ansTy) xs
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate

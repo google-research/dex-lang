@@ -50,7 +50,7 @@ evalOp expr = case expr of
   ScalarUnOp op x -> case op of
     FNeg -> RealVal (-x')  where (RealVal x') = x
     _ -> error $ "Not implemented: " ++ pprint expr
-  FFICall name _ _ args -> case name of
+  FFICall name _ args -> case name of
     "sqrt" -> RealVal $ c_sqrt x   where [RealVal x] = args
     "sin"  -> RealVal $ c_sin  x   where [RealVal x] = args
     "cos"  -> RealVal $ c_cos  x   where [RealVal x] = args

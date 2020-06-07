@@ -196,7 +196,7 @@ data PrimOp e =
       | ScalarUnOp ScalarUnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
-      | FFICall String [BaseType] BaseType [e]
+      | FFICall String BaseType [e]
       | Inject e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
@@ -789,6 +789,8 @@ builtinNames = M.fromList
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
+  , ("True" , ConExpr $ Lit $ BoolLit True)
+  , ("False", ConExpr $ Lit $ BoolLit False)
   , ("inttoreal", unOp IntToReal)
   , ("booltoint", unOp BoolToInt)
   , ("asint"       , OpExpr $ IndexAsInt ())

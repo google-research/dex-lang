@@ -1,29 +1,3 @@
-Int = %Int
-Real = %Real
-Type = %TyKind
-Unit = %UnitType
-
-def IntRange (low:Int) (high:Int) : Type = %IntRange low high
-def Fin (n:Int) : Type = IntRange 0 n
-def Ref (r:Type) (a:Type) : Type = %Ref r a
-def (&) (a:Type) (b:Type) : Type = %PairType a b
-
-def (+) (x:Real) (y:Real) : Real = %fadd x y
-def iadd (x:Int) (y:Int) : Int = %iadd x y
-def (,) (x:a) (y:b) : a & b = %pair x y
-def fst (p: a & b) : a = %fst p
-def snd (p: a & b) : b = %snd p
-
-def get  (ref:Ref r s)       : {State r} s    = %get ref
-def (:=) (ref:Ref r s) (x:s) : {State r} Unit = %put ref x
-
-def withState
-    {a:Type} {s:Type}
-    (init:s)
-    (action: {r:Type} -> Ref r s -> {State r} a)
-    : (a & s) =
-    def explicitAction (reg:Type) (ref:Ref reg s) : {State reg} a = action ref
-    %runState init explicitAction
 
 :p iadd 3 (iadd 4 5)
 > 12
@@ -145,3 +119,6 @@ myPair = (1, 2.3)
 
 :p [] : Fin 0 => Int
 > []
+
+:p sin 1.0
+> 0.84147096

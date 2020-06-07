@@ -294,17 +294,19 @@ typeCheckOp op = case op of
   IntAsIndex ty i -> ty|:TyKind >> i|:ty $> ty
   IndexAsInt i -> typeCheck i $> IntTy
   IdxSetSize i -> typeCheck i $> IntTy
-  FFICall _ argTys ansTy args -> do
-    zipWithM_ (|:) args (map BaseTy argTys)
+  FFICall _ ansTy args -> do
+    argTys <- mapM typeCheck args
     return $ BaseTy ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
   PrimEffect ref m -> do
-    RefTy r s <- typeCheck ref
+    RefTy h s <- typeCheck ref
     case m of
-      MGet   ->           declareEff (State, r) $> s
-      MPut x -> x |: s >> declareEff (State, r) $> UnitTy
+      MGet    ->         declareEff (State , h) $> s
+      MPut  x -> x|:s >> declareEff (State , h) $> UnitTy
+      MAsk    ->         declareEff (Reader, h) $> s
+      MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
@@ -325,6 +327,22 @@ typeCheckHof hof = case hof of
   -- Transpose lam -> do
   --   (a, b) <- pureNonDepAbsBlock lam
   --   return $ b --@ a
+  RunReader r f -> do
+    readerTy <- typeCheck r
+    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
+    let region = Var regionBinder
+    declareEffs $ eff `removeEffect` (Reader, region)
+    checkEq (varAnn regionBinder) TyKind
+    checkEq (varAnn refBinder) $ RefTy region readerTy
+    return resultTy
+  RunWriter f -> do
+    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
+    let region = Var regionBinder
+    declareEffs $ eff `removeEffect` (Writer, region)
+    checkEq (varAnn regionBinder) TyKind
+    RefTy region' accumTy <- return $ varAnn refBinder
+    checkEq region' region
+    return $ PairTy resultTy accumTy
   RunState s f -> do
     stateTy <- typeCheck s
     BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f

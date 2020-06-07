@@ -107,7 +107,7 @@ toImpOp op = case op of
     i' <- fromScalarAtom i
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
-             FFICall "int_to_index_set" [IntType, IntType] IntType [i', n']
+             FFICall "int_to_index_set" IntType [i', n']
     return $ toScalarAtom resultTy ans
   Cmp _ _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
@@ -594,7 +594,7 @@ checkImpOp op = do
       return $ IValType ty
       where (x', ty) = unOpType scalarOp
     Select _ x y -> checkEq x y >> return x
-    FFICall _ _ ty _   -> return $ IValType ty -- TODO: check
+    FFICall _ ty _ -> return $ IValType ty -- TODO: check
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Eq a) => a -> a -> ImpCheckM ()
@@ -630,7 +630,7 @@ impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op
 impOpType (ScalarUnOp  op _  ) = IValType ty  where (_,    ty) = unOpType  op
 impOpType (Select _ x _    )   = impExprType x
-impOpType (FFICall _ _ ty _  ) = IValType ty
+impOpType (FFICall _ ty _ ) = IValType ty
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
 pattern IIntTy :: IType
