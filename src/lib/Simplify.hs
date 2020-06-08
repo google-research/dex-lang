@@ -9,7 +9,6 @@
 
 module Simplify (simplifyModule) where
 
-import Data.Bitraversable
 import Control.Monad
 import Control.Monad.Reader
 
@@ -18,10 +17,8 @@ import Env
 import Syntax
 import Cat
 import Embed
-import Record
 import Type
 import PPrint
-import Util (uncurry3)
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
@@ -48,9 +45,10 @@ runSimplifyM opts env m =
 
 simplifyTop :: Block -> SimplifyM ([Var], Block, [Atom])
 simplifyTop block = do
-  ~(ans@(TupVal results), (scope, decls)) <- embedScoped $ simplifyBlock block
+  (ans, (scope, decls)) <- embedScoped $ simplifyBlock block
+  let results = ignoreExcept $ fromConsList ans
   let vs = map (uncurry (:>)) $ envPairs $ scope `envIntersect` freeVars ans
-  let expr' = wrapDecls decls $ TupVal $ map Var vs
+  let expr' = wrapDecls decls $ mkConsList $ map Var vs
   return (vs, expr', results)  -- no need to choose fresh names
 
 simplifyBlock :: Block -> SimplifyM Atom
@@ -77,7 +75,7 @@ simplifyAtom atom = case atom of
   Lam _ -> substEmbed atom
   Pi  _ -> substEmbed atom
   Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
-  Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
+  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
   Con con -> Con <$> mapM simplifyAtom con
@@ -113,20 +111,14 @@ simplifyBinaryLam (BinaryFunVal b1 b2 eff body) = do
       return (PlainArrow eff', body')
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
-separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
+separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
   where
     vs = map (uncurry (:>)) $ envPairs $ localVars `envIntersect` freeVars atom
     recon :: MonadEmbed m => Atom -> m Atom
     recon xs = do
-      ~(Tup xs') <- unpackRec xs
+      xs' <- unpackConsList xs
       scope <- getScope
       return $ subst (newEnv vs xs', scope) atom
-
-reconstructAtom :: MonadEmbed m
-                => Maybe (Atom -> m Atom) -> Atom -> m Atom
-reconstructAtom recon x = case recon of
-  Nothing -> return x
-  Just f  -> f x
 
 simplifyExpr :: Expr -> SimplifyM Atom
 simplifyExpr expr = case expr of
@@ -146,7 +138,8 @@ simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
   Cmp Equal t a b -> resolveEq t a b
   Cmp cmpOp t a b -> resolveOrd cmpOp t a b
-  RecGet (RecVal r) i -> return $ recGet r i
+  Fst (PairVal x _) -> return x
+  Snd (PairVal _ y) -> return y
   SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
   SumTag (SumVal s _ _) -> return $ s
   Select p x y -> selectAt (getType x) p x y
@@ -196,11 +189,12 @@ resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
 resolveEq t x y = case t of
   IntTy     -> emitOp $ ScalarBinOp (ICmp Equal) x y
   RealTy    -> emitOp $ ScalarBinOp (FCmp Equal) x y
-  RecTy ts  -> do
-    xs <- unpackRec x
-    ys <- unpackRec y
-    equals <- mapM (uncurry3 resolveEq) $ recZipWith3 (,,) ts xs ys
-    foldM andE (BoolVal True) equals
+  PairTy t1 t2 -> do
+    (x1, x2) <- fromPair x
+    (y1, y2) <- fromPair y
+    p1 <- resolveEq t1 x1 y1
+    p2 <- resolveEq t2 x2 y2
+    andE p1 p2
   -- instance Eq a => Eq n=>a
   -- TabTy ixty elty -> do
   --   writerLam <- buildLam ("ref":> RefTy RealTy) $ \ref -> liftM (PureArrow,) $ do

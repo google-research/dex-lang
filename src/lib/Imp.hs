@@ -26,7 +26,6 @@ import Env
 import Type
 import PPrint
 import Cat
-import Record
 
 type EmbedEnv = ([IVar], (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
@@ -88,10 +87,6 @@ toImpOp op = case op of
     case x of
       SumVal t _ _ -> return t
       val -> error $ "Expected a sum type, got: " ++ pprint val
-  RecGet x i -> do
-    case x of
-      RecVal r -> return $ recGet r i
-      val -> error $ "Expected a record, got: " ++ pprint val
   Fst ~(PairVal x _) -> return x
   Snd ~(PairVal _ y) -> return y
   PrimEffect ~(Con (RefCon _ ref)) m -> do
@@ -213,7 +208,6 @@ makeDest' name shape ty@(TC con) = case con of
     v <- lift $ freshVar (name :> IRefType (b, shape))
     tell [v]
     return $ Con $ AGet $ Var (fmap impTypeToType v)
-  RecType r   -> liftM RecVal $ traverse (makeDest' name shape) r
   PairType a b -> PairVal <$> makeDest' name shape a <*> makeDest' name shape b
   UnitType -> return UnitVal
   IntRange   _ _   -> scalarIndexSet ty
@@ -235,15 +229,15 @@ intToIndex ty@(TC con) i = case con of
   IntRange _ _      -> iAsIdx
   IndexRange _ _ _  -> iAsIdx
   BaseType BoolType -> impExprToAtom <$> emitUnOp UnsafeIntToBool i
-  RecType r -> do
-    strides <- getStrides $ fmap (\t->(t,t)) r
-    liftM RecVal $
-      flip evalStateT i $ forM strides $ \(ty', _, stride) -> do
-        i' <- get
-        iCur  <- lift $ impDiv i' stride
-        iRest <- lift $ impRem i' stride
-        put iRest
-        lift $ intToIndex ty' iCur
+  -- RecType r -> do
+  --   strides <- getStrides $ fmap (\t->(t,t)) r
+  --   liftM RecVal $
+  --     flip evalStateT i $ forM strides $ \(ty', _, stride) -> do
+  --       i' <- get
+  --       iCur  <- lift $ impDiv i' stride
+  --       iRest <- lift $ impRem i' stride
+  --       put iRest
+  --       lift $ intToIndex ty' iCur
   SumType (l, r) -> do
     ls <- indexSetSize l
     isLeft <- impCmp Less i ls
@@ -258,18 +252,18 @@ intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 indexToInt :: Type -> Atom -> ImpM IExpr
 indexToInt ty idx = case ty of
   BoolTy  -> emitUnOp BoolToInt =<< fromScalarAtom idx
-  RecTy rt -> do
-    case idx of
-      (RecVal rv) -> do
-        rWithStrides <- getStrides $ recZipWith (,) rv rt
-        foldrM f (IIntVal 0) rWithStrides
-        where
-        f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr
-        f (i, it, stride) cumIdx = do
-          i' <- indexToInt it i
-          iDelta  <- impMul i' stride
-          impAdd cumIdx iDelta
-      _ -> error $ "Expected a record, got: " ++ pprint idx
+  -- RecTy rt -> do
+  --   case idx of
+  --     (RecVal rv) -> do
+  --       rWithStrides <- getStrides $ recZipWith (,) rv rt
+  --       foldrM f (IIntVal 0) rWithStrides
+  --       where
+  --       f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr
+  --       f (i, it, stride) cumIdx = do
+  --         i' <- indexToInt it i
+  --         iDelta  <- impMul i' stride
+  --         impAdd cumIdx iDelta
+  --     _ -> error $ "Expected a record, got: " ++ pprint idx
   SumTy lType rType     -> do
     case idx of
       (SumVal con lVal rVal) -> do
@@ -343,9 +337,10 @@ indexSetSize (TC con) = case con of
       ExclusiveLim x -> indexToInt n x
       Unlimited      -> indexSetSize n
     impSub high' low'
-  RecType r -> do
-    sizes <- traverse indexSetSize r
-    impProd $ toList sizes
+  PairType a b -> do
+    a' <- indexSetSize a
+    b' <- indexSetSize b
+    impMul a' b'
   BaseType BoolType -> return $ IIntVal 2
   SumType (l, r) -> do
     ls <- indexSetSize l
@@ -362,7 +357,6 @@ traverseLeaves f atom = case atom of
   Con destCon -> liftA Con $ case destCon of
     AsIdx n idx -> liftA (AsIdx n) $ recur idx
     AFor n body -> liftA (AFor  n) $ recur body
-    RecCon r    -> liftA RecCon    $ traverse recur r
     PairCon x y -> liftA2 PairCon (recur x) (recur y)
     UnitCon     -> pure UnitCon
     _ -> error $ "Not a valid Imp atom: " ++ pprint atom

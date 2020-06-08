@@ -16,17 +16,12 @@ module Type (
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.Writer
-import Data.Foldable
 import Data.Functor
-import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
-import GHC.Stack
 
 import Array
 import Syntax
 import Env
-import Record
 import PPrint
 import Cat
 
@@ -55,7 +50,7 @@ instance Checkable Module where
   checkValid m@(Module _ imports exports block) =
     asCompilerErr $ do
       let env = (foldMap varAsEnv imports, Pure)
-      TupTy outTys <- runTypeCheck (CheckWith env) block
+      outTys <- fromConsListTy =<< runTypeCheck (CheckWith env) block
       assertEq (map varAnn exports) outTys "export types"
     where ctxStr = "\nChecking:\n" ++ pprint m
 
@@ -222,7 +217,6 @@ typeCheckTyCon tc = case tc of
   SumType (l, r)   -> l|:TyKind >> r|:TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind
   UnitType         -> return ()
-  RecType r        -> mapM_ (|:TyKind) r
   RefType r a      -> r|:TyKind >> a|:TyKind
   TypeKind         -> return ()
 
@@ -240,9 +234,8 @@ typeCheckCon con = case con of
   SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
-  RecCon r -> RecTy <$> mapM typeCheck r
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
-  AFor n a -> TabTy <$> typeCheck n <*> typeCheck a
+  AFor n a -> n|:TyKind >> TabTy n <$> typeCheck a
   AGet x -> do
     -- TODO: check shape matches AFor scope
     ArrayTy _ b <- typeCheck x
@@ -261,9 +254,6 @@ typeCheckOp op = case op of
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}
-  RecGet x i -> do
-    RecTy r <- typeCheck x
-    return $ recGet r i  -- TODO: make a total version of recGet
   SumGet x isLeft -> do
     SumTy l r <- typeCheck x
     l|:TyKind >> r|:TyKind
@@ -392,7 +382,6 @@ indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
   BoolTy  -> Just 2
-  RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
   _ -> Nothing
 
 -- === Built-in typeclasses (CURRENTLY NOT USED) ===
@@ -411,14 +400,11 @@ checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 checkVSpace env ty = case ty of
   Var v     -> checkVarClass env VSpace v
   RealTy    -> return ()
-  RecTy r   -> mapM_ recur r
   _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
-  where recur = checkVSpace env
 
 checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
 checkIdxSet env ty = case ty of
   Var v                 -> checkVarClass env IdxSet v
-  RecTy r               -> mapM_ recur r
   SumTy l r             -> recur l >> recur r
   BoolTy                -> return ()
   TC (IntRange _ _)     -> return ()
@@ -433,7 +419,6 @@ checkDataLike msg env ty = case ty of
                            const (checkVarClass env Data v)
   TC con -> case con of
     BaseType _       -> return ()
-    RecType r        -> mapM_ recur r
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
     SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r

@@ -16,7 +16,7 @@ flag inotify
   default:             False
 
 library
-  exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
+  exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, PPrint, Array,
                        Actor, Cat, Flops, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,

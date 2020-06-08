@@ -21,7 +21,6 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
-import Data.Foldable
 import Data.Maybe
 
 import Array
@@ -147,9 +146,10 @@ reStructureArrays' ty@(TC con) = case con of
     ~(x:xs) <- get
     put xs
     return $ Con $ AGet x
-  RecType r -> liftM (Con . RecCon) $ traverse reStructureArrays' r
   IntRange _ _ -> do
     liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
+  PairType a b -> liftM2 PairVal (reStructureArrays' a) (reStructureArrays' b)
+  UnitType -> return UnitVal
   _ -> error $ "Not implemented: " ++ pprint ty
 reStructureArrays' ty = error $ "Not implemented: " ++ pprint ty
 
@@ -179,7 +179,6 @@ pprintVal val = liftM asStr $ prettyVal val
 
 prettyVal :: Val -> IO (Doc ann)
 prettyVal (Con con) = case con of
-  RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
   PairCon x y -> liftM pretty $ liftM2 (,) (asStr <$> prettyVal x)
                                            (asStr <$> prettyVal y)
   AFor n body -> do
@@ -232,6 +231,5 @@ flattenType (TabTy (FixedIntRange low high) a) =
 flattenType (TabTy _ a) = [(b, 0:shape) | (b, shape) <- flattenType a]
 flattenType (TC con) = case con of
   BaseType b  -> [(b, [])]
-  RecType r -> concat $ map flattenType $ toList r
   _ -> error $ "Unexpected type: " ++ show con
 flattenType ty = error $ "Unexpected type: " ++ show ty

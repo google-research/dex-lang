@@ -35,10 +35,11 @@ module Syntax (
     UExpr, UExpr' (..), UType, UEffects (..), UBinder, UPiBinder, UVar,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), ULamArrow, UPiArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
-    pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
+    mkConsList, mkConsListTy, fromConsList, fromConsListTy,
+    pattern IntVal, pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
-    pattern RecTy, pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern TupVal, pattern RecVal, pattern SumVal, pattern PureArrow,
+    pattern SumTy, pattern ArrayTy, pattern BaseTy, pattern UnitVal,
+    pattern PairVal, pattern SumVal, pattern PureArrow,
     pattern RealVal, pattern BoolVal, pattern TyKind, pattern TabTy, isTabTy,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern UPure)
   where
@@ -55,7 +56,6 @@ import Data.Tuple (swap)
 import GHC.Generics
 
 import Cat
-import Record
 import Env
 import Array
 
@@ -170,7 +170,6 @@ data PrimTC e =
       | ArrayType ArrayType
       | PairType e e
       | UnitType
-      | RecType (Record e)
       | SumType (e, e)
       | RefType e e
       | TypeKind
@@ -190,7 +189,6 @@ data PrimCon e =
       | PairCon e e
       | UnitCon
       | RefCon e e
-      | RecCon (Record e)
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
       | AFor e e
       | AGet e
@@ -198,8 +196,8 @@ data PrimCon e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
-        RecGet e RecField
-      | Fst e | Snd e
+        Fst e
+      | Snd e
       | SumGet e Bool
       | SumTag e
       | ArrayGep e e
@@ -659,18 +657,9 @@ instance HasVars a => HasVars (Env a) where
   freeVars x = foldMap freeVars x
   subst env x = fmap (subst env) x
 
-instance HasVars a => HasVars (RecTree a) where
-  freeVars x = foldMap freeVars x
-  subst env x = fmap (subst env) x
-
 instance HasVars a => HasVars [a] where
   freeVars x = foldMap freeVars x
   subst env x = fmap (subst env) x
-
-instance RecTreeZip Type where
-  recTreeZip (RecTree r) (TC (RecType r')) = RecTree $ recZipWith recTreeZip r r'
-  recTreeZip (RecLeaf x) x' = RecLeaf (x, x')
-  recTreeZip (RecTree _) _ = error "Bad zip"
 
 instance Semigroup TopEnv where
   TopEnv e1 e2 e3 <> TopEnv e1' e2' e3'=
@@ -709,23 +698,14 @@ pattern RealVal x = Con (Lit (RealLit x))
 pattern BoolVal :: Bool -> Atom
 pattern BoolVal x = Con (Lit (BoolLit x))
 
-pattern RecVal :: Record Atom -> Atom
-pattern RecVal r = Con (RecCon r)
-
 pattern SumVal :: Atom -> Atom -> Atom -> Atom
 pattern SumVal t l r = Con (SumCon t l r)
-
-pattern TupVal :: [Atom] -> Atom
-pattern TupVal xs = RecVal (Tup xs)
 
 pattern PairVal :: Atom -> Atom -> Atom
 pattern PairVal x y = Con (PairCon x y)
 
 pattern PairTy :: Type -> Type -> Type
 pattern PairTy x y = TC (PairType x y)
-
-pattern TupTy :: [Type] -> Type
-pattern TupTy xs = TC (RecType (Tup xs))
 
 pattern UnitVal :: Atom
 pattern UnitVal = Con UnitCon
@@ -738,9 +718,6 @@ pattern ArrayTy shape b = TC (ArrayType (shape, b))
 
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
-
-pattern RecTy :: Record Type -> Type
-pattern RecTy a = TC (RecType a)
 
 pattern SumTy :: Type -> Type -> Type
 pattern SumTy l r = TC (SumType (l, r))
@@ -778,6 +755,24 @@ pattern TabTy xs i = Pi (Abs (NoName:>xs) (TabArrow, i))
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True
 isTabTy _ = False
+
+mkConsListTy :: [Type] -> Type
+mkConsListTy tys = foldr PairTy UnitTy tys
+
+mkConsList :: [Atom] -> Atom
+mkConsList xs = foldr PairVal UnitVal xs
+
+fromConsListTy :: MonadError Err m => Type -> m [Type]
+fromConsListTy ty = case ty of
+  UnitTy         -> return []
+  PairTy t rest -> (t:) <$> fromConsListTy rest
+  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show ty
+
+fromConsList :: MonadError Err m => Atom -> m [Atom]
+fromConsList xs = case xs of
+  UnitVal        -> return []
+  PairVal x rest -> (x:) <$> fromConsList rest
+  _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
 
 pattern BinaryFunTy :: Binder -> Binder -> Effects -> Type -> Type
 pattern BinaryFunTy b1 b2 eff bodyTy =

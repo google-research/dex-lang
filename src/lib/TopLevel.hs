@@ -160,7 +160,7 @@ evalModule (TopEnv _ simpEnv ruleEnv) normalized = do
     Block [] (Atom UnitVal) -> do
       return $ TopEnv mempty simpEnv' mempty
     _ -> do
-      ~(TupVal results) <- evalBackend dfExpr
+      results <- (ignoreExcept . fromConsList) <$> evalBackend dfExpr
       let simpEnv'' = subst (newEnv outVars results, mempty) simpEnv'
       return $ TopEnv mempty simpEnv'' mempty
 

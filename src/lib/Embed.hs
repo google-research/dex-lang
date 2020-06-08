@@ -14,11 +14,11 @@
 module Embed (emit, emitTo, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              nRecGet, app, add, mul, sub, neg, div', andE, reduceScoped,
-              select, selectAt, unpackRec, substEmbed, fromPair, getFst, getSnd,
+              app, add, mul, sub, neg, div', andE, reduceScoped,
+              select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
-              boolToInt, intToReal, boolToReal, reduceAtom) where
+              boolToInt, intToReal, boolToReal, reduceAtom, unpackConsList) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -33,7 +33,6 @@ import Env
 import Syntax
 import Cat
 import Type
-import Record
 import PPrint
 
 newtype EmbedT m a = EmbedT (CatT EmbedEnv m a)
@@ -170,22 +169,15 @@ getSnd :: MonadEmbed m => Atom -> m Atom
 getSnd (PairVal _ y) = return y
 getSnd p = emitOp $ Snd p
 
-nRecGet :: MonadEmbed m => Atom -> RecField -> m Atom
-nRecGet (RecVal r) i = return $ recGet r i
-nRecGet x i = emit $ Op $ RecGet x i
-
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
-
-unpackRec :: MonadEmbed m => Atom -> m (Record Atom)
-unpackRec (RecVal r) = return r
-unpackRec x = case getType x of
-  RecTy r -> mapM (nRecGet x . fst) $ recNameVals r
-  ty -> error $ "Not a tuple: " ++ pprint ty
 
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair (PairVal x y) = return (x, y)
 fromPair pair          = error $ "Not a pair: " ++ pprint pair
+
+unpackConsList :: MonadEmbed m => Atom -> m [Atom]
+unpackConsList = undefined
 
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
@@ -208,9 +200,6 @@ mapScalars f ty xs = case ty of
     buildFor Fwd ("i":>n) $ \i -> do
       xs' <- mapM (flip app i) xs
       mapScalars f a xs'
-  RecTy r   -> do
-    xs' <- liftM (transposeRecord r) $ mapM unpackRec xs
-    liftM RecVal $ sequence $ recZipWith (mapScalars f) r xs'
   BaseTy _           -> f ty xs
   TC con -> case con of
     -- NOTE: Sum types not implemented, because they don't have a total zipping function!
@@ -218,10 +207,6 @@ mapScalars f ty xs = case ty of
     IndexRange _ _ _ -> f ty xs
     _ -> error $ "Not implemented " ++ pprint ty
   _ -> error $ "Not implemented " ++ pprint ty
-
-transposeRecord :: Record b -> [Record a] -> Record [a]
-transposeRecord r [] = fmap (const []) r
-transposeRecord r (x:xs) = recZipWith (:) x $ transposeRecord r xs
 
 substEmbed :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
            => a -> m a
@@ -240,8 +225,9 @@ singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
 singletonTypeVal (TC con) = case con of
   -- XXX: This returns Nothing if it's a record that is not an empty tuple (or contains
   --      anything else than only empty tuples inside)!
-  RecType r   -> liftM RecVal $ traverse singletonTypeVal r
-  _           -> Nothing
+  PairType a b -> liftM2 PairVal (singletonTypeVal a) (singletonTypeVal b)
+  UnitType     -> return UnitVal
+  _            -> Nothing
 singletonTypeVal _ = Nothing
 
 boolToInt :: MonadEmbed m => Atom -> m Atom

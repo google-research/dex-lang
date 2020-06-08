@@ -30,7 +30,6 @@ import Syntax
 import PPrint
 import Type
 import Cat
-import Record
 import Array
 
 -- === JAXish IR ===
@@ -151,12 +150,12 @@ toJaxOp op = case op of
         xSum <- sumPoly depth x
         newAccum <- local (take depth) $ addPoly curAccum xSum
         modify (<> refVar @> (depth, newAccum))
-        return $ TmpCon $ RecCon $ Tup []
+        return $ TmpCon $ UnitCon
       _ -> error $ "Not implemented: " ++ show op
-  RecGet x i -> do
-    case x of
-      TmpCon (RecCon r) -> return $ recGet r i
-      val -> error $ "Expected a record, got: " ++ show val
+  -- RecGet x i -> do
+  --   case x of
+  --     TmpCon (RecCon r) -> return $ recGet r i
+  --     val -> error $ "Expected a record, got: " ++ show val
   FFICall s _ args | s == "threefry2x32" -> liftM toScalarAtom $
       emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
         where x:y:[] = args
@@ -191,7 +190,6 @@ toScalarAtom x = TmpCon $ AGet $ TmpLeaf x
 traverseArrayLeaves :: HasCallStack => Monad m => TmpAtom -> (IdxAtom -> m IdxAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
   TmpCon con         -> liftM TmpCon $ case con of
-    RecCon r         -> liftM (RecCon) $ traverse (flip traverseArrayLeaves f) r
     AFor n body      -> liftM (AFor n) $ traverseArrayLeaves body f
     AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
     _ -> error $ "Not implemented: " ++ show atom

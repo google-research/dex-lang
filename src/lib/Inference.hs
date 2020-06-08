@@ -9,12 +9,9 @@
 
 module Inference (inferModule) where
 
-import Parser -- TODO: remove
-
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Bitraversable
 import Data.Foldable (fold, toList)
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
@@ -23,7 +20,6 @@ import Data.Text.Prettyprint.Doc
 import Syntax
 import Embed  hiding (sub)
 import Env
-import Record
 import Type
 import PPrint
 import Cat
@@ -51,7 +47,7 @@ inferModule topEnv (UModule imports exports decls) = do
   let imports' = [v :> snd (env         ! (v:>())) | v <- imports]
   let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
   let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
-  let body = wrapDecls decls' $ TupVal resultVals
+  let body = wrapDecls decls' $ mkConsList resultVals
   return (Module Nothing imports' exports' body, (fmap snd env', mempty))
 
 runUInferM :: (HasVars a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])

@@ -104,7 +104,6 @@ instance Pretty e => Pretty (PrimTC e) where
     BaseType b     -> p b
     PairType a b   -> parens $ p a <+> "**" <+> p b
     UnitType       -> "Unit"
-    RecType r      -> p $ fmap (asStr . p) r
     ArrayType (shape, b) -> p b <> p shape
     IntRange a b -> if s1 == "0...<" then p s2 else ans
       where ans = p a <> "...<" <> p b
@@ -128,7 +127,6 @@ instance Pretty e => Pretty (PrimCon e) where
     PairCon x y -> parens $ p x <+> "," <+> p y
     UnitCon     -> "()"
     RefCon _ _  -> "RefCon"
-    RecCon r    -> p r
     AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
     AGet e      -> "aget" <+> p e
     AsIdx n i   -> p i <> "@" <> p n

@@ -13,8 +13,6 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Writer
-import Data.Bifunctor
-import Data.Foldable
 
 import Type
 import Env
@@ -22,7 +20,6 @@ import Syntax
 import Cat
 import PPrint
 import Embed
-import Record
 
 -- -- === linearization ===
 
@@ -122,7 +119,8 @@ linearizeOp ruleEnv op = case fmap linearizeAtom op of
          MAsk    -> pure MAsk
          MTell x -> liftA MTell x
          _       -> error "Not implemented") `bindLin` emitOp
-  RecGet x i -> liftA (flip RecGet i) x `bindLin` emitOp
+  Fst x -> liftA Fst x `bindLin` emitOp
+  Snd x -> liftA Snd x `bindLin` emitOp
   _ -> error $ "not implemented: " ++ pprint op
 
 linearizeHof :: RuleEnv -> Hof -> LinA Atom
@@ -158,7 +156,7 @@ linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
   AFor _ _ -> LinA $ return (withZeroTangent x)  where x = Con con
-  RecCon r -> liftA RecVal $ sequenceA $ fmap linearizeAtom r
+  PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
   _ -> error $ "not implemented: " ++ pprint con
 
 linearizeAtom :: Atom -> LinA Atom
@@ -191,7 +189,7 @@ tangentType (TC con) = case con of
   BaseType   _       -> UnitTy
   IntRange   _ _     -> UnitTy
   IndexRange _ _ _   -> UnitTy
-  RecType r          -> RecTy $ fmap tangentType r
+  PairType a b       -> PairTy (tangentType a) (tangentType b)
   -- RefType a          -> RefTy $ tangentType a
   _           -> error $ "Can't differentiate wrt type " ++ pprint con
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
@@ -311,10 +309,10 @@ transposeOp op ct = case op of
     y' <- substTranspose y
     ct' <- div' ct y'
     transposeAtom x ct'
-  RecGet x i -> do
-    ~(RecVal rZeros) <- zeroAt (getType x)
-    let ct' = RecVal $ recUpdate i ct rZeros
-    transposeAtom x ct'
+  -- RecGet x i -> do
+  --   ~(RecVal rZeros) <- zeroAt (getType x)
+  --   let ct' = RecVal $ recUpdate i ct rZeros
+  --   transposeAtom x ct'
   PrimEffect refArg m -> do
     refArg' <- substTranspose refArg
     case m of
@@ -347,9 +345,9 @@ transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
 transposeCon con ct = case con of
   Lit _ -> return ()
-  RecCon r -> do
-    rCT <- unpackRec ct
-    sequence_ $ recZipWith transposeAtom r rCT
+  -- RecCon r -> do
+  --   rCT <- unpackRec ct
+  --   sequence_ $ recZipWith transposeAtom r rCT
   _ -> error $ "not implemented: transposition for: " ++ pprint con
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
