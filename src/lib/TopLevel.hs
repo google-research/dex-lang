@@ -88,7 +88,7 @@ evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
         Heatmap -> logTop $ valToHeatmap val
         Scatter -> logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalModuleVal env v m
+      val <- evalModuleValSkeleton env v m
       logTop $ TextOut $ pprint $ getType val
     Dump DexObject fname -> do
       val <- evalModuleVal env v m
@@ -145,14 +145,19 @@ evalSourceBlocks env blocks =
     env'' <- lift $ evalSourceBlock env' block
     extend env''
 
-evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
-evalModuleVal env v m = do
+evalModuleValSkeleton :: TopEnv -> Var -> FModule -> TopPassM Val
+evalModuleValSkeleton env v m = do
   env' <- evalModule env m
   let (TopEnv _ simpEnv _) = env <> env'
   let (L val) = simpEnv ! v
   let val' = subst (simpEnv, mempty) val
+  return val'
+
+evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
+evalModuleVal env v m = do
+  val <- evalModuleValSkeleton env v m
   backend <- asks evalEngine
-  liftIO $ substArrayLiterals backend val'
+  liftIO $ substArrayLiterals backend val
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -248,15 +253,18 @@ substArrayLiterals backend x = do
     substAtomTypes :: Atom -> IO Atom
     substAtomTypes a = case a of
       Var v -> Var <$> traverse substInType v
-      -- XXX: No substitutions under lambdas. It's not like they're going to be
-      --      executed anyway.
+      -- No substitutions under lambdas. This might cause some issues if we wanted
+      -- to print their body, but it's questionable whether we even want to do that.
       Con c -> Con <$> traverseExpr c substInType substAtomTypes return
       _     -> error $ "Unexpected atom: " ++ pprint x
 
     substInType :: Type -> IO Type
     substInType (TC con) = TC <$> traverseTyCon con substInType (substArrayLiterals backend)
-    substInType (TabTy n a) = TabTy <$> substInType n <*> substInType a
-    substInType t = error $ "Expected a TC or a table: " ++ pprint t
+    -- The reason to sequence type substitution to happen before the general one is so that
+    -- we can resolve the sizes of the AFor domains, which might contain atoms. However, all
+    -- types that are valid index sets are TCs, and so there is nothing we have to do for all
+    -- other cases.
+    substInType t = return t
 
 -- TODO: check here for upstream errors
 typePass :: TopInfEnv -> FModule -> TopPassM (FModule, TopInfEnv)
