@@ -40,18 +40,18 @@ def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
 def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
 
-def withReader {a:Type} {r:Type}
-      (init:r) (action: {h:Type} -> Ref h r -> {Read h} a) : a =
+def withReader (a:Type) ?-> (r:Type) ?->
+      (init:r) (action: (h:Type ?-> Ref h r -> {Read h} a)) : a =
     def explicitAction (h':Type) (ref:Ref h' r) : {Read h'} a = action ref
     %runReader init explicitAction
 
-def withAccum {a:Type} {w:Type}
-      (action: {h:Type} -> Ref h w -> {Accum h} a) : (a & w) =
+def withAccum (a:Type) ?-> (w:Type) ?->
+      (action: (h:Type ?-> Ref h w -> {Accum h} a)) : (a & w) =
     def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'} a = action ref
     %runWriter explicitAction
 
-def withState {a:Type} {s:Type}
-      (init:s) (action: {h:Type} -> Ref h s -> {State h} a) : (a & s) =
+def withState (a:Type) ?-> (s:Type) ?->
+      (init:s) (action: (h:Type ?-> Ref h s -> {State h} a)) : (a & s) =
     def explicitAction (h':Type) (ref:Ref h' s) : {State h'} a = action ref
     %runState init explicitAction
 

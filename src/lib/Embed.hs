@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
               nRecGet, app, add, mul, sub, neg, div', andE, reduceScoped,
-              select, selectAt, unpackRec, substEmbed, fromPair,
+              select, selectAt, unpackRec, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               boolToInt, intToReal, boolToReal, reduceAtom) where

@@ -25,16 +25,16 @@ def idExplicit (a:Type) (x:a) : a = x
 :p idExplicit Int 1
 > 1
 
-def idImplicit {a:Type} (x:a) : a = x
+def idImplicit (a:Type) ?-> (x:a) : a = x
 :p idImplicit 1
 > 1
 
-idImplicit2 : ({a:Type} -> a -> a) = \x. x
+idImplicit2 : (a:Type ?-> a -> a) = \x. x
 :p idImplicit2 1
 > 1
 
 :p
-  idImplicit3 : ({a:Type} -> a -> a) = \x. x
+  idImplicit3 : (a:Type ?-> a -> a) = \x. x
   idImplicit3 1
 > 1
 
@@ -73,21 +73,21 @@ iadd = 1
 
 def TyId (a:Type) : Type = a
 :p
-  x : TyId Int = 1
+  x:(TyId Int) = 1
   x
 > 1
 
 :p
   def TyId2 (a:Type) : Type = a
-  x : TyId2 Int = 1
+  x:(TyId2 Int) = 1
   x
 > 1
 
-def tabId {n:Type} (x:n=>Int) : n=>Int = for i. x.i
+def tabId (n:Type) ?-> (x:n=>Int) : n=>Int = for i. x.i
 
 -- bug: this doesn't work if we split it across top-level decls
 :p
-  xs = for (i: Fin 3) . 1
+  xs = for i:(Fin 3) . 1
   tabId xs
 > [1, 1, 1]
 
@@ -104,7 +104,7 @@ myPair = (1, 2.3)
 
 :p
    snd $ withState 1 \s.
-     for (i: Fin 10).
+     for i:(Fin 10).
        x = get s
        s := iadd x x
 > 1024
@@ -122,3 +122,40 @@ myPair = (1, 2.3)
 
 :p sin 1.0
 > 0.84147096
+
+:p
+  (x,y) = (1,2)
+  (x,y)
+> (1, 2)
+
+:p
+  (x,y,z) = (1,2,3)
+  (x,y,z)
+> (1, (2, 3))
+
+:p
+  ((x,y),z) = (1,2,3)
+  ((x,y),z)
+> Type error:
+> Expected: (a ** b)
+>   Actual: Int
+> Solving for: [a:Type, b:Type]
+>
+>   ((x,y),z) = (1,2,3)
+>     ^^^
+
+:p
+  (x,(y,z)) = (1,2,3)
+  (x,(y,z))
+> (1, (2, 3))
+
+:p
+  (x,y) = 1
+  (x,y)
+> Type error:
+> Expected: (a ** b)
+>   Actual: Int
+> Solving for: [a:Type, b:Type]
+>
+>   (x,y) = 1
+>    ^^^

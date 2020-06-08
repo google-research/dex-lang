@@ -268,8 +268,8 @@ instance Pretty UModule where
        <> hardline <> foldMap (\decl -> p decl <> hardline) decls
        <> hardline <> "exports:" <+> p exports
 
-instance Pretty UExpr where
-  pretty (UPos _ expr) = p expr
+instance Pretty a => Pretty (WithSrc a) where
+  pretty (WithSrc _ x) = p x
 
 instance Pretty UExpr' where
   pretty expr = case expr of
@@ -298,6 +298,12 @@ instance Pretty UDecl where
 
 instance Pretty Arrow where
   pretty ah = prettyArrow ah mempty mempty
+
+instance Pretty a => Pretty (PatP' a) where
+  pretty pat = case pat of
+    PatBind x -> p x
+    PatPair x y -> parens $ p x <> ", " <> p y
+    PatUnit -> "()"
 
 instance Pretty UEffects where
   pretty (UEffects [] Nothing) = mempty

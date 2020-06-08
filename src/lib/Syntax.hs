@@ -19,7 +19,7 @@ module Syntax (
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), PrimEff (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
-    PrimHof (..), LamExpr, PiType,
+    PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos,
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
     CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con, Hof, TC, Eff,
@@ -32,8 +32,8 @@ module Syntax (
     sourceBlockBoundVars, PassName (..), parsePassName,
     freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName, Vars,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    UExpr (..), UExpr' (..), UType, UEffects (..), UBinder, UPiBinder, UVar,
-    UPat, UModule (..), UDecl (..), ULamArrow, UPiArrow, arrowEff,
+    UExpr, UExpr' (..), UType, UEffects (..), UBinder, UPiBinder, UVar,
+    UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), ULamArrow, UPiArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
@@ -115,30 +115,43 @@ data Module = Module (Maybe BlockId) [Var] [Var] Block  deriving (Show, Eq)
 
 -- === front-end language AST ===
 
-data UExpr = UPos SrcPos UExpr'  deriving (Show, Eq, Generic)
-
+type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
-            | ULam UPat      ULamArrow UExpr
+            | ULam UBinder   ULamArrow UExpr
             | UPi  UPiBinder UPiArrow  UType
             | UApp ULamArrow UExpr UExpr
             | UDecl UDecl UExpr
-            | UFor Direction UPat UExpr
+            | UFor Direction UBinder UExpr
             | UTabCon [UExpr] (Maybe UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
-data UDecl = ULet UPat UExpr  deriving (Show, Eq, Generic)
+data UDecl = ULet UBinder UExpr  deriving (Show, Eq, Generic)
 
 type UType = UExpr
 type ULamArrow = ArrowP ()
 type UPiArrow  = ArrowP UEffects
 type UVar      = VarP ()
-type UBinder   = VarP (Maybe UType)
-type UPiBinder = VarP UType
-type UPat = RecTree UBinder
+
+type UPat    = PatP  UVar
+type UPat'   = PatP' UVar
+type UBinder   = (UPat, Maybe UType)
+type UPiBinder = (UPat, UType)
+
 data UEffects = UEffects [(EffectName, UExpr)] (Maybe UExpr)  deriving (Show, Eq)
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
 type SrcPos = (Int, Int)
+
+type PatP  a = WithSrc (PatP' a)
+data PatP' a = PatBind a
+             | PatPair (PatP a) (PatP a)
+             | PatUnit  deriving (Show, Eq, Functor, Foldable, Traversable)
+
+data WithSrc a = WithSrc SrcPos a
+                 deriving (Show, Eq, Functor, Foldable, Traversable)
+
+srcPos :: WithSrc a -> SrcPos
+srcPos (WithSrc pos _) = pos
 
 -- === primitive constructors and operators ===
 
@@ -270,7 +283,7 @@ data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Var
                   | IncludeSourceFile String
-                  | LoadData UPat DataFormat String
+                  | LoadData UBinder DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -441,25 +454,26 @@ type UVars = Env ()
 class HasUVars a where
   freeUVars :: a -> UVars
 
-instance HasUVars UExpr where
-  freeUVars (UPos _ e) = freeUVars e
+instance HasUVars a => HasUVars (WithSrc a) where
+  freeUVars (WithSrc _ e) = freeUVars e
 
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
-    ULam p _ body -> uAbsFreeVars p body
-    UPi  b arr ty ->
-      freeUVars (varAnn b) <> ((freeUVars arr <> freeUVars ty) `envDiff` (b@>()))
+    ULam b _ body -> uAbsFreeVars b body
+    UPi (WithSrc _ pat, argTy) arr ty ->
+      freeUVars argTy <>
+      ((freeUVars arr <> freeUVars ty) `envDiff` foldMap (@>()) pat)
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl (ULet p rhs) body -> freeUVars rhs <> uAbsFreeVars p body
-    UFor _ p body -> uAbsFreeVars p body
+    UDecl (ULet b rhs) body -> freeUVars rhs <> uAbsFreeVars b body
+    UFor _ b body -> uAbsFreeVars b body
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UPrimExpr _ -> mempty
 
 instance HasUVars UDecl where
-  freeUVars (ULet p expr) = foldMap uBinderFreeVars p <> freeUVars expr
+  freeUVars (ULet p expr) = uBinderFreeVars p <> freeUVars expr
 
 instance HasUVars SourceBlock where
   freeUVars block = case sbContents block of
@@ -476,18 +490,18 @@ instance HasUVars eff => HasUVars (ArrowP eff) where
   freeUVars (PlainArrow eff) = freeUVars eff
   freeUVars _ = mempty
 
-uAbsFreeVars :: UPat -> UExpr -> UVars
-uAbsFreeVars pat body =  foldMap uBinderFreeVars pat
-                      <> (freeUVars body `envDiff` foldMap (@>()) pat)
+uAbsFreeVars :: UBinder -> UExpr -> UVars
+uAbsFreeVars (WithSrc _ pat, ann) body =
+  foldMap freeUVars ann <> (freeUVars body `envDiff` foldMap (@>()) pat)
 
 uBinderFreeVars :: UBinder -> UVars
-uBinderFreeVars (_:>ann) = foldMap freeUVars ann
+uBinderFreeVars (_, ann) = foldMap freeUVars ann
 
 sourceBlockBoundVars :: SourceBlock -> UVars
 sourceBlockBoundVars block = case sbContents block of
-  RunModule (UModule _ vs _) -> foldMap nameAsEnv vs
-  LoadData p _ _             -> foldMap (@>()) p
-  _                          -> mempty
+  RunModule (UModule _ vs _)    -> foldMap nameAsEnv vs
+  LoadData (WithSrc _ p, _) _ _ -> foldMap (@>()) p
+  _                             -> mempty
 
 nameAsEnv :: Name -> UVars
 nameAsEnv v = (v:>())@>()

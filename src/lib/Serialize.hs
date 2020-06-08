@@ -180,6 +180,8 @@ pprintVal val = liftM asStr $ prettyVal val
 prettyVal :: Val -> IO (Doc ann)
 prettyVal (Con con) = case con of
   RecCon r -> liftM pretty $ traverse (liftM asStr . prettyVal) r
+  PairCon x y -> liftM pretty $ liftM2 (,) (asStr <$> prettyVal x)
+                                           (asStr <$> prettyVal y)
   AFor n body -> do
     xs <- flip mapM [0..n'-1] $ \i ->
       liftM asStr $ prettyVal $ litIndexSubst i body

@@ -20,7 +20,6 @@ import Data.Void
 import qualified Text.Megaparsec.Char.Lexer as L
 
 import Env
-import Record
 import Syntax
 import PPrint
 
@@ -88,9 +87,9 @@ loadData = do
   fmt <- dataFormat
   s <- stringLiteral
   symbol "as"
-  b <- uLetBinder
+  b <- uBinder
   void eol
-  return $ LoadData (RecLeaf b) fmt s
+  return $ LoadData b fmt s
 
 topLevelCommand :: Parser SourceBlock'
 topLevelCommand =
@@ -134,7 +133,7 @@ explicitCommand = do
   return $ Command cmd (exprAsModule e)
 
 declAsModule :: UDecl -> UModule
-declAsModule dec@(ULet pat _) = UModule imports exports [dec]
+declAsModule dec@(ULet (WithSrc _ pat,_) _) = UModule imports exports [dec]
  where
    imports = envNames $ freeUVars dec
    exports = envNames $ foldMap (@>()) pat
@@ -143,7 +142,7 @@ exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (v, UModule imports [v] body)
   where
     v = "*ans*"
-    body = [ULet (RecLeaf (v:>Nothing)) e]
+    body = [ULet (WithSrc (srcPos e) (namePat v), Nothing) e]
     imports = envNames $ freeUVars e
 
 tauType :: Parser Type
@@ -153,9 +152,6 @@ tauType = undefined
 
 expr :: Parser UExpr
 expr = mayNotPair $ makeExprParser leafExpr ops
-
-typeExpr :: Parser UType
-typeExpr = expr
 
 -- expression without exposed infix operators
 leafExpr :: Parser UExpr
@@ -170,6 +166,14 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> unitCon
          <?> "expression"
 
+containedExpr :: Parser UExpr
+containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
+              <|> uVar
+              <?> "contained expression"
+
+uType :: Parser UType
+uType = expr
+
 uLit :: Parser UExpr
 uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
 
@@ -179,13 +183,13 @@ litVal =   (IntLit  <$> intLit)
        <?> "literal"
 
 uVar :: Parser UExpr
-uVar = withSrc $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
+uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  ~(ULet (RecLeaf (v:>ann)) rhs, pos) <- withPos decl
+  ~(ULet (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
-  return $ ULet (RecLeaf (v:>ann')) rhs
+  return $ ULet (p, ann') rhs
   where
     addImplicitImplicitArgs :: SrcPos -> UType -> UType
     addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars
@@ -196,47 +200,46 @@ uTopDecl = do
         isLowerCaseName _ = False
 
     addImplicitArg :: SrcPos -> Name -> UType -> UType
-    addImplicitArg pos v ty = UPos pos $ UPi (v :> uTyKind) ImplicitArrow ty
-      where uTyKind = UPos pos $ UPrimExpr $ TCExpr TypeKind
-
+    addImplicitArg pos v ty =
+      WithSrc pos $ UPi (WithSrc pos (namePat v), uTyKind) ImplicitArrow ty
+      where uTyKind = WithSrc pos $ UPrimExpr $ TCExpr TypeKind
 
 decl :: Parser UDecl
 decl = do
   lhs <- simpleLet <|> funDefLet
   rhs <- sym "=" >> blockOrExpr
   return $ lhs rhs
+
+simpleLet :: Parser (UExpr -> UDecl)
+simpleLet = label "let binding" $ ULet <$> try (uBinder <* lookAhead (sym "="))
+
+funDefLet :: Parser (UExpr -> UDecl)
+funDefLet = label "function definition" $ mayBreak $ do
+  keyWord DefKW
+  v <- withSrc $ namePat <$> uName
+  bs <- some arg
+  (eff, ty) <- label "result annotation" $ annot effectiveType
+  let funTy = buildPiType bs eff ty
+  let letBinder = (v, Just funTy)
+  let lamBinders = flip map bs $ \((p,_), arr) -> ((p,Nothing), arr)
+  return $ \body -> ULet letBinder (buildLam lamBinders body)
   where
-    simpleLet :: Parser (UExpr -> UDecl)
-    simpleLet = label "let binding" $ do
-      b <- uLetBinder
-      return $ ULet (RecLeaf b)
+    arg :: Parser (UPiBinder, ULamArrow)
+    arg = label "def arg" $ do
+      b <-(            ((,) <$> uVarPat <*> annot containedExpr)
+            <|> parens ((,) <$> uPat    <*> annot uType))
+      arr <- arrow (return ()) <|> return (PlainArrow ())
+      return (b, arr)
 
-    funDefLet :: Parser (UExpr -> UDecl)
-    funDefLet = label "function definition" $ mayBreak $ do
-      keyWord DefKW
-      v <- uName
-      bs <- some uPiBinder
-      (eff, ty) <- label "result annotation" $ annot effectiveType
-      let funTy = buildPiType bs eff ty
-      let letBinder = RecLeaf $ v:> Just funTy
-      let lamBinders = flip map bs $ \(b, ah) -> (varName b :> Nothing, ah)
-      return $ \body -> ULet letBinder (buildLam lamBinders body)
-
-    buildPiType :: [(UPiBinder, ULamArrow)] -> UEffects -> UType -> UType
-    buildPiType [] _ _ = error "shouldn't be possible"
-    buildPiType ((b,arr):bs) eff ty = UPos pos $ case bs of
-      [] -> UPi b (fmap (const eff  ) arr) ty
-      _  -> UPi b (fmap (const UPure) arr) $ buildPiType bs eff ty
-      where UPos pos _ = varAnn b
-
-    uPiBinder :: Parser (UPiBinder, ULamArrow)
-    uPiBinder =   liftM (,PlainArrow ()) rawPiBinder
-              <|> liftM (,PlainArrow ()) parenPiBinder
-              <|> liftM (,ImplicitArrow) implicitPiBinder
-              <?> "binder"
+buildPiType :: [(UPiBinder, ULamArrow)] -> UEffects -> UType -> UType
+buildPiType [] _ _ = error "shouldn't be possible"
+buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
+  [] -> UPi b (fmap (const eff  ) arr) ty
+  _  -> UPi b (fmap (const UPure) arr) $ buildPiType bs eff ty
+  where WithSrc pos _ = snd b
 
 effectiveType :: Parser (UEffects, UType)
-effectiveType = (,) <$> effects <*> typeExpr
+effectiveType = (,) <$> effects <*> uType
 
 effects :: Parser UEffects
 effects = braces someEffects <|> return UPure
@@ -252,38 +255,29 @@ effectName =     (symbol "Accum" $> Writer)
              <|> (symbol "State" $> State)
              <?> "effect name"
 
-uLetBinder :: Parser UBinder
-uLetBinder = do
-  v <- try $ uName <* lookAhead (sym ":" <|> sym "=")
-  ann <- optional $ annot typeExpr
-  return $ v:>ann
-
 uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
-  buildLam <$> some uLamBinder
-           <*> (argTerm >> blockOrExpr)
+  bs <- some uBinder
+  body <- argTerm >> blockOrExpr
+  return $ buildLam (map (,PlainArrow ()) bs) body
 
 buildLam :: [(UBinder, ULamArrow)] -> UExpr -> UExpr
-buildLam binders body@(UPos pos _) = case binders of
+buildLam binders body@(WithSrc pos _) = case binders of
   [] -> body
   -- TODO: join with source position of binders too
-  (b,arr):bs -> UPos pos $ ULam (RecLeaf b) arr $ buildLam bs body
+  (b,arr):bs -> WithSrc pos $ ULam b arr $ buildLam bs body
 
 buildFor :: SrcPos -> Direction -> [UBinder] -> UExpr -> UExpr
 buildFor pos dir binders body = case binders of
   [] -> body
-  b:bs -> UPos pos $ UFor dir (RecLeaf b) $ buildFor pos dir bs body
-
-uForBinder :: Parser UBinder
-uForBinder = rawLamBinder <|> parenLamBinder
+  b:bs -> WithSrc pos $ UFor dir b $ buildFor pos dir bs body
 
 uForExpr :: Parser UExpr
 uForExpr = do
   (dir, pos) <- withPos $   (keyWord ForKW $> Fwd)
                         <|> (keyWord RofKW $> Rev)
-  buildFor pos dir <$> (some uForBinder <* argTerm)
-                   <*> blockOrExpr
+  buildFor pos dir <$> (some uBinder <* argTerm) <*> blockOrExpr
 
 blockOrExpr :: Parser UExpr
 blockOrExpr =  block <|> expr
@@ -294,7 +288,7 @@ unitCon = withSrc $ symbol "()" $> (UPrimExpr $ ConExpr $ UnitCon)
 uTabCon :: Parser UExpr
 uTabCon = withSrc $ do
   xs <- brackets $ expr `sepBy` sym ","
-  ty <- optional (annot typeExpr)
+  ty <- optional (annot uType)
   return $ UTabCon xs ty
 
 type UStatement = (Either UDecl UExpr, SrcPos)
@@ -312,38 +306,32 @@ block = do
 wrapUStatements :: [UStatement] -> UExpr
 wrapUStatements statements = case statements of
   [(Right e, _)] -> e
-  (s, pos):rest -> UPos pos $ case s of
+  (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet (RecLeaf (NoName:>Nothing)) e
+      where d = ULet (WithSrc pos (namePat NoName), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
 uStatement = withPos $   liftM Left  decl
                      <|> liftM Right expr
 
+-- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser UExpr
-uPiType = uExplicitPi <|> uImplicitPi
-
-uExplicitPi :: Parser UExpr
-uExplicitPi = withSrc $ do
-  b <- try $ piBinder <* lookAhead (arrow (return ()))
-  UPi b <$> arrow effects <*> typeExpr
-
-piBinder :: Parser UPiBinder
-piBinder = rawPiBinder <|> parenPiBinder
+uPiType = withSrc $ UPi <$> uPiBinder <*> arrow effects <*> uType
+  where
+    uPiBinder :: Parser UPiBinder
+    uPiBinder = label "pi binder" $ do
+      p <- try $ withSrc $ liftM namePat uName <* sym ":"
+      ty <- containedExpr
+      return (p, ty)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "=>"  $> TabArrow)
         <|> (sym "--o" $> LinArrow)
+        <|> (sym "?->"  $> ImplicitArrow)
         <?> "arrow"
-
-uImplicitPi :: Parser UExpr
-uImplicitPi = withSrc $ do
-  v <- try $ implicitPiBinder <* sym "->"
-  ty <- typeExpr
-  return $ UPi v ImplicitArrow ty
 
 uName :: Parser Name
 uName = textName <|> symName
@@ -351,29 +339,26 @@ uName = textName <|> symName
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
 
-uLamBinder :: Parser (UBinder, ULamArrow)
-uLamBinder =   liftM (,PlainArrow ()) rawLamBinder
-           <|> liftM (,PlainArrow ()) parenLamBinder
-           <|> liftM (,ImplicitArrow) implicitLamBinder
-           <?> "lambda binder"
+uVarPat :: Parser UPat
+uVarPat = withSrc $ namePat <$> uName
 
-rawLamBinder :: Parser UBinder
-rawLamBinder = (:>) <$> uName <*> (optional $ annot leafExpr)
+uPat :: Parser UPat
+uPat =      uVarPat
+     <|> withSrc (symbol "()" $> PatUnit)
+     <|> parens uPat'
+     <?> "pattern"
 
-parenLamBinder :: Parser UBinder
-parenLamBinder = parens $ (:>) <$> uName <*> (optional $ annot typeExpr)
+uPat' :: Parser UPat
+uPat' = do
+  p1 <- uPat
+  (   (do sym ","
+          p2 <- uPat'
+          return $ joinSrc p1 p2 $ PatPair p1 p2)
+   <|> return p1)
 
-implicitLamBinder :: Parser UBinder
-implicitLamBinder = braces $ (:>) <$> uName <*> (optional $ annot typeExpr)
 
-rawPiBinder :: Parser (VarP UType)
-rawPiBinder = (:>) <$> uName <*> annot leafExpr
-
-parenPiBinder :: Parser (VarP UType)
-parenPiBinder = parens $ (:>) <$> uName <*> annot typeExpr
-
-implicitPiBinder :: Parser (VarP UType)
-implicitPiBinder = braces $ (:>) <$> uName <*> annot typeExpr
+uBinder :: Parser UBinder
+uBinder =  label "binder" $ (,) <$> uPat <*> optional (annot containedExpr)
 
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
@@ -392,6 +377,8 @@ baseType :: Parser BaseType
 baseType =   (symbol "Int"  $> IntType)
          <|> (symbol "Real" $> RealType)
          <|> (symbol "Bool" $> BoolType)
+
+-- === infix ops ===
 
 -- literal symbols here must only use chars from `symChars`
 ops :: [[Operator Parser UExpr]]
@@ -433,34 +420,39 @@ symOp s = InfixL $ opWithSrc $ do
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
-  where f' = UPos pos $ UVar (f:>())
+  where f' = WithSrc pos $ UVar (f:>())
 
 mkGenApp :: ULamArrow -> UExpr -> UExpr -> UExpr
-mkGenApp arr f x = UPos (joinPos f x) $ UApp arr f x
+mkGenApp arr f x = joinSrc f x $ UApp arr f x
 
 mkApp :: UExpr -> UExpr -> UExpr
-mkApp f x = UPos (joinPos f x) $ UApp (PlainArrow ()) f x
+mkApp f x = joinSrc f x $ UApp (PlainArrow ()) f x
 
 infixEffArrow :: Parser (UType -> UType -> UType)
 infixEffArrow = do
   ((), pos) <- withPos $ sym "->"
   eff <- effects
-  return $ \a b -> UPos pos $ UPi (NoName:>a) (PlainArrow eff) b
+  return $ \a b -> WithSrc pos $ UPi (typeAsPiBinder a) (PlainArrow eff) b
 
 mkArrow :: UPiArrow -> UExpr -> UExpr -> UExpr
-mkArrow arr a b = UPos (joinPos a b) $ UPi (NoName:>a) arr b
+mkArrow arr a b = joinSrc a b $ UPi (typeAsPiBinder a) arr b
 
-withSrc :: Parser UExpr' -> Parser UExpr
+namePat :: Name -> UPat'
+namePat v = PatBind (v:>())
+
+typeAsPiBinder :: UType -> UPiBinder
+typeAsPiBinder ty = (WithSrc (srcPos ty) (namePat NoName), ty)
+
+withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
-  (e, pos) <- withPos p
-  return $ UPos pos e
+  (x, pos) <- withPos p
+  return $ WithSrc pos x
 
-joinPos :: UExpr -> UExpr -> SrcPos
-joinPos (UPos (l, h) _) (UPos (l', h') _) = (min l l', max h h')
+joinSrc :: WithSrc a -> WithSrc b -> c -> WithSrc c
+joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
 
-_appPreludeName :: SrcPos -> String -> UExpr -> UExpr
-_appPreludeName fPos f x = mkApp f' x
-  where f' = UPos fPos $ UVar $ rawName SourceName f :> ()
+joinPos :: SrcPos -> SrcPos -> SrcPos
+joinPos (l, h) (l', h') =(min l l', max h h')
 
 -- === lexemes ===
 
