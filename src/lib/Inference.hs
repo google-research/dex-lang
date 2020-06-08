@@ -173,11 +173,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
 inferUDecl :: UDecl -> UInferM InfEnv
 inferUDecl (ULet (p, ann) rhs) = case ann of
   Nothing -> do
-    valAndTy <- inferSigma rhs
+    valAndTy <- withPatHint p $ inferSigma rhs
     bindPat p valAndTy
   Just ty -> do
     ty' <- checkUType ty
-    val <- checkSigma rhs ty'
+    val <- withPatHint p $ checkSigma rhs ty'
     bindPat p (val, ty')
 
 inferUDecls :: [UDecl] -> UInferM InfEnv
@@ -227,6 +227,9 @@ bindPat (WithSrc pos pat) (val,ty) = addSrcContext (Just pos) $ case pat of
 patNameHint :: UPat -> Name
 patNameHint (WithSrc _ (PatBind (v:>()))) = v
 patNameHint _ = "pat"
+
+withPatHint :: UPat -> UInferM a -> UInferM a
+withPatHint p m = withNameHint (patNameHint p) m
 
 checkUEff :: UEffects -> UInferM Effects
 checkUEff (UEffects effs tailVar) = case effs of

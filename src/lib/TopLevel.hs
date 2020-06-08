@@ -143,7 +143,7 @@ evalUModuleVal env v m = do
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
 evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
-evalUModule env@(TopEnv _ _ _) untyped = do
+evalUModule env untyped = do
   logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
   (typed, infEnv) <- typePass env untyped

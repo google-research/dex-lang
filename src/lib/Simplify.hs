@@ -248,7 +248,7 @@ resolveOrd op t x y = case t of
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
   Let b bound -> do
-    x <- simplifyExpr bound
+    x <- withNameHint (varName b) $ simplifyExpr bound
     return $ b @> x
 
 dropSub :: SimplifyM a -> SimplifyM a

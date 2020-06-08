@@ -76,7 +76,7 @@ instance Pretty LitVal where
   pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty Block where
-  pretty (Block [] expr) = p expr
+  pretty (Block [] expr) = " " <> p expr
   pretty (Block decls expr) = nest 2 $
     hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
 

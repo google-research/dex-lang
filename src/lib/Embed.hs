@@ -11,12 +11,12 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitTo, emitOp, buildLam, buildLamAux, buildAbs,
+module Embed (emit, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
               app, add, mul, sub, neg, div', andE, reduceScoped,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
-              emitBlock, unzipTab, buildFor, isSingletonType, emitDecl,
+              emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               boolToInt, intToReal, boolToReal, reduceAtom, unpackConsList) where
 
@@ -35,15 +35,15 @@ import Cat
 import Type
 import PPrint
 
-newtype EmbedT m a = EmbedT (CatT EmbedEnv m a)
-  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadFail)
+newtype EmbedT m a = EmbedT (ReaderT Name (CatT EmbedEnv m) a)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail)
 
 type Embed = EmbedT Identity
 type EmbedEnv = (Scope, [Decl])
 
 runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, [Decl])
 runEmbedT (EmbedT m) scope = do
-  (ans, (_, decls)) <- runCatT m (scope, [])
+  (ans, (_, decls)) <- runCatT (runReaderT m "tmp") (scope, [])
   return (ans, decls)
 
 runEmbed :: Embed a -> Scope -> (a, [Decl])
@@ -51,23 +51,21 @@ runEmbed m scope = runIdentity $ runEmbedT m scope
 
 -- TODO: use suggestive names based on types (e.g. "f" for function)
 emit :: MonadEmbed m => Expr -> m Atom
-emit expr = emitTo ("v":> error "not set") expr
-
--- Promises to make a new decl with given names (maybe with different counter).
-emitTo :: MonadEmbed m => Var -> Expr -> m Atom
-emitTo (v:>_) expr = case singletonTypeVal ty of
-  Nothing -> do
-    expr' <- deShadow expr <$> getScope
-    v' <- freshVar (v:>ty)
-    emitDecl $ Let v' expr'
-    return $ Var v'
-  Just x
-    | isPure expr -> return x
-    | otherwise -> do
-        expr' <- deShadow expr <$> getScope
-        emitDecl $ Let (NoName:>ty) expr'
-        return x
-  where ty = getType expr
+emit expr = do
+  v <- getNameHint
+  let ty = getType expr
+  case singletonTypeVal ty of
+    Nothing -> do
+      expr' <- deShadow expr <$> getScope
+      v' <- freshVar (v:>ty)
+      emitDecl $ Let v' expr'
+      return $ Var v'
+    Just x
+      | isPure expr -> return x
+      | otherwise -> do
+          expr' <- deShadow expr <$> getScope
+          emitDecl $ Let (NoName:>ty) expr'
+          return x
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
@@ -109,17 +107,19 @@ buildLam b f = liftM fst $ buildLamAux b $ \x -> (,()) <$> f x
 buildLamAux :: MonadEmbed m
             => Var -> (Atom -> m ((Arrow, Atom), a)) -> m (Atom, a)
 buildLamAux b f = do
-  (((arr, ans), aux), b, decls) <- withBinder b f
-  return (Lam (Abs b (arr, wrapDecls decls ans)), aux)
+  (((arr, ans), aux), b', decls) <- withBinder b f
+  return (Lam (Abs b' (arr, wrapDecls decls ans)), aux)
 
 buildScoped :: (MonadEmbed m) => m Atom -> m Block
 buildScoped m = do
   (ans, decls) <- scopedDecls m
   return $ wrapDecls decls ans
 
--- TODO: simple decluttering optimizations like DCE and let-var final pair
 wrapDecls :: [Decl] -> Atom -> Block
-wrapDecls decls atom = Block decls (Atom atom)
+wrapDecls decls atom = case reverse decls of
+  -- decluttering optimization
+  Let v expr:rest | atom == Var v -> Block (reverse rest) expr
+  _ -> Block decls (Atom atom)
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadEmbed m => Type -> m Atom
@@ -239,32 +239,36 @@ intToReal i = emitOp $ ScalarUnOp IntToReal i
 boolToReal :: MonadEmbed m => Atom -> m Atom
 boolToReal = boolToInt >=> intToReal
 
+instance MonadTrans EmbedT where
+  lift m = EmbedT $ lift $ lift m
+
 class Monad m => MonadEmbed m where
   embedLook   :: m EmbedEnv
   embedExtend :: EmbedEnv -> m ()
   embedScoped :: m a -> m (a, EmbedEnv)
+  getNameHint  :: m Name
+  withNameHint :: Name -> m a -> m a
 
 instance Monad m => MonadEmbed (EmbedT m) where
   embedLook = EmbedT look
   embedExtend env = EmbedT $ extend env
   embedScoped (EmbedT m) = EmbedT $ scoped m
+  getNameHint = EmbedT ask
+  withNameHint v (EmbedT m) = EmbedT $ local (const v) m
 
 instance MonadEmbed m => MonadEmbed (ReaderT r m) where
   embedLook = lift embedLook
   embedExtend x = lift $ embedExtend x
-  embedScoped m = do
-    r <- ask
-    lift $ embedScoped $ runReaderT m r
-
-instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
-  look = lift look
-  extend x = lift $ extend x
-  scoped _ = undefined
+  embedScoped m = ReaderT $ \r -> embedScoped $ runReaderT m r
+  getNameHint = lift getNameHint
+  withNameHint v m = ReaderT $ \r -> withNameHint v $ runReaderT m r
 
 instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
   embedLook = undefined
   embedExtend _ = error "not implemented"
   embedScoped _ = error "not implemented"
+  getNameHint = lift getNameHint
+  withNameHint = undefined
 
 instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
   embedLook = lift embedLook
@@ -273,17 +277,26 @@ instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
     ((x, w), env) <- lift $ embedScoped $ runWriterT m
     tell w
     return (x, env)
+  getNameHint = lift getNameHint
+  withNameHint v m = WriterT $ withNameHint v $ runWriterT m
+
+instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
+  look = lift look
+  extend x = lift $ extend x
+  scoped _ = undefined
 
 instance MonadError e m => MonadError e (EmbedT m) where
   throwError = lift . throwError
   catchError m catch = do
     env <- embedLook
-    (ans, env') <- lift $ runEmbedT' m env `catchError` (\e -> runEmbedT' (catch e) env)
+    hint <- getNameHint
+    (ans, env') <- lift $ runEmbedT' m hint env
+                     `catchError` (\e -> runEmbedT' (catch e) hint env)
     embedExtend env'
     return ans
 
-runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnv)
-runEmbedT' (EmbedT m) env = runCatT m env
+runEmbedT' :: Monad m => EmbedT m a -> Name -> EmbedEnv -> m (a, EmbedEnv)
+runEmbedT' (EmbedT m) name env = runCatT (runReaderT m name) env
 
 getScope :: MonadEmbed m => m Scope
 getScope = fst <$> embedLook

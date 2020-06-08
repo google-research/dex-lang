@@ -141,7 +141,7 @@ declAsModule dec@(ULet (WithSrc _ pat,_) _) = UModule imports exports [dec]
 exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (v, UModule imports [v] body)
   where
-    v = "*ans*"
+    v = "_ans_"
     body = [ULet (WithSrc (srcPos e) (namePat v), Nothing) e]
     imports = envNames $ freeUVars e
 
