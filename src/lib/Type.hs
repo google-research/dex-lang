@@ -297,6 +297,10 @@ typeCheckOp op = case op of
       MPut  x -> x|:s >> declareEff (State , h) $> UnitTy
       MAsk    ->         declareEff (Reader, h) $> s
       MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
+  IndexRef ref i -> do
+    RefTy h (TabTy n a) <- typeCheck ref
+    i|:n
+    return $ RefTy h a
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

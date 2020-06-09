@@ -116,6 +116,8 @@ toImpOp op = case op of
     restrictIdx <- indexToInt rt e
     idx <- impAdd restrictIdx offset
     intToIndex t idx
+  IndexRef ~(Con (RefCon h ref)) i ->
+    liftM (Con . RefCon h) $ impTabGet ref i
   _ -> do
     op' <- traverse fromScalarAtom op
     toScalarAtom resultTy <$> emitInstr (IPrimOp op')

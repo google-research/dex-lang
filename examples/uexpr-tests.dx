@@ -159,3 +159,9 @@ myPair = (1, 2.3)
 >
 >   (x,y) = 1
 >    ^^^
+
+:p
+  snd $ withState [1,2,3] \xsRef.
+    for i:(Fin 3).
+      xsRef!i := asint i
+> [0, 1, 2]

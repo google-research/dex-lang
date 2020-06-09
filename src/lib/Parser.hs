@@ -383,7 +383,7 @@ baseType =   (symbol "Int"  $> IntType)
 -- literal symbols here must only use chars from `symChars`
 ops :: [[Operator Parser UExpr]]
 ops =
-  [ [InfixL $ sym "." $> mkGenApp TabArrow]
+  [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]

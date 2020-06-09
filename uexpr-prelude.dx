@@ -34,11 +34,15 @@ def (&&) (x:Bool) (y:Bool) : Bool = %and x y
 def (||) (x:Bool) (y:Bool) : Bool = %or  x y
 def not  (x:Bool)          : Bool = %not x
 
+-- TODO: typeclasses
+def asint (i:a) : Int = %asint i
+
 def Ref (r:Type) (a:Type) : Type = %Ref r a
 def get  (ref:Ref h s)       : {State h} s    = %get  ref
 def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
 def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
+def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 
 def withReader (a:Type) ?-> (r:Type) ?->
       (init:r) (action: (h:Type ?-> Ref h r -> {Read h} a)) : a =

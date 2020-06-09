@@ -207,6 +207,7 @@ data PrimOp e =
       | ScalarUnOp ScalarUnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
+      | IndexRef e e
       | FFICall String BaseType [e]
       | Inject e
       -- Typeclass operations
@@ -811,6 +812,7 @@ builtinNames = M.fromList
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
+  , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
