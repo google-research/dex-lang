@@ -47,6 +47,7 @@ statementFlops (_, instr) = case instr of
   Alloc _   -> return ()
   Free _    -> return ()
   IGet _ _  -> return ()
+  CastArray _ _       -> return ()
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block

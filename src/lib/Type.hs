@@ -15,7 +15,7 @@ module Type (
     litType, traverseOpType, traverseConType, binOpType, unOpType,
     isData, Checkable (..), popRow, getTyOrKind, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
-    getConType, checkEffType, HasType, indexSetConcreteSize,
+    getConType, checkEffType, HasType,
     maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
     pureType) where
 
@@ -109,6 +109,8 @@ tyConKind con = case con of
   -- This forces us to specialize to `TyCon Type e` instead of `TyCon ty e`
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
+  IArrayType t      -> (IArrayType t, TyKind)
+  JArrayType s b    -> (JArrayType s b, TyKind)
   ArrayType t       -> (ArrayType t, TyKind)
   SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
@@ -549,10 +551,6 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
   RecGet (RecTy r) i -> return $ pureType $ recGet r i
   SumGet (SumTy l r) isLeft -> return $ pureType $ if isLeft then l else r
   SumTag (SumTy _ _) -> return $ pureType $ TC $ BaseType BoolType
-  ArrayGep (ArrayTy (_:shape) b) i -> do
-    eq IntTy i
-    return $ pureType $ ArrayTy shape b
-  LoadScalar (ArrayTy [] b) -> return $ pureType $ BaseTy b
   ScalarBinOp binop t1 t2 -> do
     eq (BaseTy t1') t1
     eq (BaseTy t2') t2
@@ -600,18 +598,21 @@ traverseConType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
 traverseConType con eq kindIs _ = case con of
-  Lit l    -> return $ BaseTy $ litType l
-  ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
+  Lit l        -> return $ BaseTy $ litType l
+  ArrayLit arr -> return $ ArrayTy b
+    where (_, b) = arrayType arr
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
-  AnyValue t   -> return $ t
-  SumCon _ l r -> return $ SumTy l r
-  RecCon r -> return $ RecTy r
-  AFor n a -> return $ TabTy n a
-  AGet (ArrayTy _ b) -> return $ BaseTy b  -- TODO: check shape matches AFor scope
-  AsIdx n e -> eq e (BaseTy IntType) >> return n
-  Todo ty -> kindIs TyKind ty >> return ty
+  AnyValue t          -> return $ t
+  SumCon _ l r        -> return $ SumTy l r
+  RecCon r            -> return $ RecTy r
+  AFor n a            -> return $ TabTy n a
+  AGet (ArrayTy b)    -> return $ BaseTy b
+  AGet (IArrayTy _ b) -> return $ BaseTy b
+  AGet (JArrayTy _ b) -> return $ BaseTy b
+  AsIdx n e           -> eq e (BaseTy IntType) >> return n
+  Todo ty             -> kindIs TyKind ty >> return ty
   _ -> error $ "Unexpected primitive type: " ++ pprint con
 
 litType :: LitVal -> BaseType
@@ -648,6 +649,7 @@ indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
   BoolTy  -> Just 2
   RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
+  SumTy l r -> (+) <$> indexSetConcreteSize l <*> indexSetConcreteSize r
   _ -> Nothing
 
 -- === Pi types ===

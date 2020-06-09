@@ -21,6 +21,7 @@ import Data.Text (unpack)
 import System.Console.ANSI
 
 import Env
+import Array
 import Syntax
 
 pprint :: Pretty a => a -> String
@@ -90,7 +91,9 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     SumType (l, r) -> "Either" <+> p l <+> p r
     RefType t      -> "Ref" <+> p t
     TypeApp f xs   -> p f <+> hsep (map p xs)
-    ArrayType (shape, b) -> p b <> p shape
+    IArrayType (dims, b) -> p b <> p dims <> "i"
+    JArrayType dims b    -> p b <> p dims <> "j"
+    ArrayType  b         -> p b <> "*"
     -- This rule forces us to specialize to Atom. Is there a better way?
     IntRange (IntVal 0) (IntVal n) -> p n
     IntRange a b -> p a <> "...<" <> p b
@@ -164,8 +167,6 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty (TabCon _ _ xs) = list (map pretty xs)
   pretty (TabGet   x i) = p x <> "." <> p i
   pretty (RecGet   x i) = p x <> "#" <> p i
-  pretty (ArrayGep x i) = p x <> "." <> p i
-  pretty (LoadScalar x) = "load(" <> p x <> ")"
   pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
   pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
   pretty (FFICall s _ _ xs) = "%%" <> p s <+> tup xs
@@ -270,16 +271,21 @@ instance Pretty IExpr where
   pretty (IVar (v:>_)) = p v
 
 instance Pretty IType where
-  pretty (IRefType (ty, shape)) = "Ptr (" <> p ty <> p shape <> ")"
+  pretty (IRefType (dimTypes, ty)) = "Ptr (" <> p ty <> p dimTypes <> ")"
   pretty (IValType b) = p b
+
+instance Pretty IDimType where
+  pretty (IUniform (ILit (IntLit sz))) = p sz
+  pretty (IUniform _)     = "<uniform, dependent>"
+  pretty (IPrecomputed _) = "<precomptued>"
 
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
 
 instance Pretty ImpFunction where
   pretty (ImpFunction vsOut vsIn body) =
-                   "in:  " <> p vsIn
-    <> hardline <> "out: " <> p vsOut
+                   "in:        " <> p vsIn
+    <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
 
 prettyStatement :: (Maybe IVar, ImpInstr) -> Doc ann
@@ -291,6 +297,7 @@ instance Pretty ImpInstr where
   pretty (Load ref)         = "load"  <+> p ref
   pretty (Store dest val)   = "store" <+> p dest <+> p val
   pretty (Copy dest source) = "copy"  <+> p dest <+> p source
+  pretty (CastArray v t)    = "cast"  <+> p v <+> "as" <+> p t
   pretty (Alloc ty)         = "alloc" <+> p ty
   pretty (IGet expr idx)    = p expr <> "." <> p idx
   pretty (Free (v:>_))      = "free"  <+> p v
@@ -335,6 +342,13 @@ instance Pretty body => Pretty (ModuleP body) where
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x
+
+instance Pretty Array where
+  pretty a = p b <> "[" <> p size <> "]@vec"
+    where (size, b) = arrayType a
+
+instance Pretty ArrayRef where
+  pretty (ArrayRef (size, b) ptr) = p b <> "[" <> p size <> "]@" <> (pretty $ show ptr)
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

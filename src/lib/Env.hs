@@ -9,7 +9,7 @@
 
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
             rawName, nameSpace, rename, renames, nameItems, renameWithNS,
             renameChoice) where
 
@@ -88,6 +88,9 @@ envIntersect (Env m) (Env m') = Env $ M.intersection m' m
 
 envDiff :: Env a -> Env b -> Env a
 envDiff (Env m) (Env m') = Env $ M.difference m m'
+
+zipEnv :: [VarP a] -> [b] -> Env b
+zipEnv ns vs = Env $ M.fromList $ zip (map varName ns) vs
 
 isin :: VarP ann -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
