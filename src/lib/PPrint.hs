@@ -91,7 +91,6 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     SumType (l, r) -> "Either" <+> p l <+> p r
     RefType t      -> "Ref" <+> p t
     TypeApp f xs   -> p f <+> hsep (map p xs)
-    IArrayType (dims, b) -> p b <> p dims <> "i"
     JArrayType dims b    -> p b <> p dims <> "j"
     ArrayType  b         -> p b <> "*"
     -- This rule forces us to specialize to Atom. Is there a better way?
