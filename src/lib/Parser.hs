@@ -224,30 +224,30 @@ funDefLet = label "function definition" $ mayBreak $ do
   let lamBinders = flip map bs $ \((p,_), arr) -> ((p,Nothing), arr)
   return $ \body -> ULet letBinder (buildLam lamBinders body)
   where
-    arg :: Parser (UPiBinder, ULamArrow)
+    arg :: Parser (UPiBinder, UArrow)
     arg = label "def arg" $ do
       b <-(            ((,) <$> uVarPat <*> annot containedExpr)
             <|> parens ((,) <$> uPat    <*> annot uType))
       arr <- arrow (return ()) <|> return (PlainArrow ())
       return (b, arr)
 
-buildPiType :: [(UPiBinder, ULamArrow)] -> UEffects -> UType -> UType
+buildPiType :: [(UPiBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
-  [] -> UPi b (fmap (const eff  ) arr) ty
-  _  -> UPi b (fmap (const UPure) arr) $ buildPiType bs eff ty
+  [] -> UPi b (fmap (const eff ) arr) ty
+  _  -> UPi b (fmap (const Pure) arr) $ buildPiType bs eff ty
   where WithSrc pos _ = snd b
 
-effectiveType :: Parser (UEffects, UType)
+effectiveType :: Parser (EffectRow, UType)
 effectiveType = (,) <$> effects <*> uType
 
-effects :: Parser UEffects
-effects = braces someEffects <|> return UPure
+effects :: Parser EffectRow
+effects = braces someEffects <|> return Pure
   where
     someEffects = do
-      effs <- liftM2 (,) effectName uVar `sepBy` sym ","
-      v <- optional $ symbol "|" >> uVar
-      return $ UEffects effs v
+      effs <- liftM2 (,) effectName uName `sepBy` sym ","
+      v <- optional $ symbol "|" >> uName
+      return $ EffectRow effs v
 
 effectName :: Parser EffectName
 effectName =     (symbol "Accum" $> Writer)
@@ -262,7 +262,7 @@ uLamExpr = do
   body <- argTerm >> blockOrExpr
   return $ buildLam (map (,PlainArrow ()) bs) body
 
-buildLam :: [(UBinder, ULamArrow)] -> UExpr -> UExpr
+buildLam :: [(UBinder, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
   [] -> body
   -- TODO: join with source position of binders too
@@ -422,7 +422,7 @@ binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
   where f' = WithSrc pos $ UVar (f:>())
 
-mkGenApp :: ULamArrow -> UExpr -> UExpr -> UExpr
+mkGenApp :: UArrow -> UExpr -> UExpr -> UExpr
 mkGenApp arr f x = joinSrc f x $ UApp arr f x
 
 mkApp :: UExpr -> UExpr -> UExpr
@@ -434,7 +434,7 @@ infixEffArrow = do
   eff <- effects
   return $ \a b -> WithSrc pos $ UPi (typeAsPiBinder a) (PlainArrow eff) b
 
-mkArrow :: UPiArrow -> UExpr -> UExpr -> UExpr
+mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (typeAsPiBinder a) arr b
 
 namePat :: Name -> UPat'

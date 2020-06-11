@@ -365,7 +365,7 @@ isLin :: HasVars a => a -> TransposeM Bool
 isLin x = liftM (not . null) $ freeLinVars x
 
 -- TODO: allow nonlinear effects
-isLinEff :: Effects -> TransposeM Bool
+isLinEff :: EffectRow -> TransposeM Bool
 isLinEff = undefined
 -- isLinEff ~(Effect row _) = return $ not $ null $ toList row
 

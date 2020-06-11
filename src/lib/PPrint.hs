@@ -117,7 +117,7 @@ instance Pretty e => Pretty (PrimTC e) where
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
     TypeKind -> "Type"
-    EffectsKind -> "EffectKind"
+    EffectRowKind -> "EffKind"
     _ -> prettyExprDefault $ TCExpr con
 
 instance Pretty e => Pretty (PrimCon e) where
@@ -165,6 +165,7 @@ instance Pretty ClassName where
 instance Pretty Decl where
   pretty decl = case decl of
     Let (NoName:>_) bound -> p bound
+    Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let b bound -> p b <+> "=" <+> p bound
 
 instance Pretty Atom where
@@ -176,15 +177,6 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
-
-instance Pretty e => Pretty (PrimEff e) where
-  pretty PureEff = "|"
-  pretty (ExtendEff (effName, region) rest) =
-    p effName <+> p region <> "," <+> p rest
-
-tup :: Pretty a => [a] -> Doc ann
-tup [x] = p x
-tup xs  = tupled $ map p xs
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -281,8 +273,8 @@ instance Pretty UExpr' where
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi a arr b -> prettyArrow arr (parens (p a)) (eff' <> p b)
-       where eff' = case arr of PlainArrow UPure -> mempty
-                                PlainArrow eff   -> p eff
+       where eff' = case arr of PlainArrow Pure -> mempty
+                                PlainArrow eff  -> p eff
                                 _ -> mempty
     UDecl decl body -> p decl <> hardline <> p body
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
@@ -303,9 +295,9 @@ instance Pretty a => Pretty (PatP' a) where
     PatPair x y -> parens $ p x <> ", " <> p y
     PatUnit -> "()"
 
-instance Pretty UEffects where
-  pretty (UEffects [] Nothing) = mempty
-  pretty (UEffects effs tailVar) =
+instance Pretty EffectRow where
+  pretty (EffectRow [] Nothing) = mempty
+  pretty (EffectRow effs tailVar) =
     braces $ hsep (punctuate "," (map prettyEff effs)) <> tailStr
     where
       prettyEff (effName, region) = p effName <+> p region
@@ -323,12 +315,12 @@ annImplicity :: ArrowP a -> Doc ann -> Doc ann
 annImplicity ImplicitArrow x = braces x
 annImplicity _ x = x
 
-prettyArrow :: ArrowP a -> Doc ann -> Doc ann -> Doc ann
+prettyArrow :: Pretty eff => ArrowP eff -> Doc ann -> Doc ann -> Doc ann
 prettyArrow arr a b = case arr of
-  PlainArrow _  -> a <> "->"  <> b
-  TabArrow      -> a <> "=>"  <> b
-  LinArrow      -> a <> "--o" <> b
-  ImplicitArrow -> "{" <> a <> "} ->" <> b
+  PlainArrow eff -> a <> "->" <> p eff <> b
+  TabArrow       -> a <> "=>"  <> b
+  LinArrow       -> a <> "--o" <> b
+  ImplicitArrow  -> "{" <> a <> "} ->" <> b
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =
@@ -353,10 +345,11 @@ addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
   ++ s ++ setSGRCode [Reset]
 
-assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq :: (MonadError Err m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
-  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y ++ "\n"
+  where msg = "assertion failure (" ++ s ++ "):\n"
+              ++ pprint x ++ " != " ++ pprint y ++ "\n"
 
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e

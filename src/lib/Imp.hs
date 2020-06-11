@@ -593,7 +593,7 @@ checkImpOp op = do
     FFICall _ ty _ -> return $ IValType ty -- TODO: check
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
-    checkEq :: (Pretty a, Eq a) => a -> a -> ImpCheckM ()
+    checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
 
 fromRefType :: MonadError Err m => IType -> m IArrayType

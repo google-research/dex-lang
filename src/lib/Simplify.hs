@@ -80,6 +80,7 @@ simplifyAtom atom = case atom of
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbed tc
+  Eff eff -> Eff <$> substEmbed eff
   _ -> error $ "not implemented: " ++ pprint atom
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 

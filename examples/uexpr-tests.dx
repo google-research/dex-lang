@@ -165,3 +165,17 @@ myPair = (1, 2.3)
     for i:(Fin 3).
       xsRef!i := asint i
 > [0, 1, 2]
+
+def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
+
+:p
+  snd $ withState 1 \ref.
+    passthrough (\(). ref := 10) ()
+> 10
+
+:p
+  withState 0 \r1.
+    withState 0 \r2.
+      r1 := 1
+      r2 := 2
+> (((), 2), 1)

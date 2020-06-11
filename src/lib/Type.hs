@@ -10,7 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, HasType (..), Checkable (..), litType, isPure, forbiddenEffects,
+  getType, HasType (..), Checkable (..), litType, isPure,
   binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
 
 import Control.Monad
@@ -28,7 +28,7 @@ import Cat
 type ClassEnv = MonMap Name [ClassName]
 
 data OptionalEnv env = SkipChecks | CheckWith env  deriving Functor
-type TypeCheckEnv = OptionalEnv (TypeEnv, Effects)
+type TypeCheckEnv = OptionalEnv (TypeEnv, EffectRow)
 type TypeM = ReaderT TypeCheckEnv Except
 
 class Pretty a => HasType a where
@@ -64,12 +64,11 @@ instance HasType Atom where
   typeCheck atom = case atom of
     Var v@(_:>annTy) -> do
       annTy |: TyKind
-      env <- ask
-      case env of
-        SkipChecks -> return ()
-        CheckWith (tyEnv, _) -> case envLookup tyEnv v of
-          Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-          Just ty -> assertEq annTy ty "Var annotation"
+      when (annTy == EffKind) $
+        throw CompilerErr "Effect variables should only occur in effect rows"
+      checkWithEnv $ \(env, _) -> case envLookup env v of
+        Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+        Just ty -> assertEq annTy ty "Var annotation"
       return annTy
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
@@ -80,7 +79,7 @@ instance HasType Atom where
       checkArrow arr >> resultTy|:TyKind $> TyKind
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon $> TyKind
-    Eff eff  -> typeCheckEff eff $> TC EffectsKind
+    Eff eff  -> checkEffRow eff $> EffKind
 
 instance HasType Expr where
   typeCheck expr = case expr of
@@ -122,7 +121,7 @@ checkDecl env decl@(Let b@(_:>annTy) rhs) =
   where ctxStr = "\nchecking decl: \n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
-checkArrow arr = mapM_ (|: TC EffectsKind) arr
+checkArrow arr = mapM_ checkEffRow arr
 
 infixr 7 |:
 (|:) :: Atom -> Type -> TypeM ()
@@ -146,56 +145,44 @@ checkBinder b@(_:>ty) = do
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
 checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
 
-declareEff :: Effect Atom -> TypeM ()
-declareEff eff = declareEffs $ Eff $ ExtendEff eff Pure
+-- === effects ===
 
-declareEffs :: Effects -> TypeM ()
+checkEffRow :: EffectRow -> TypeM ()
+checkEffRow (EffectRow effs effTail) = do
+  forM_ effs $ \(_, v) -> Var (v:>TyKind) |: TyKind
+  forM_ effTail $ \v -> do
+    checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
+      Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+      Just ty -> assertEq EffKind ty "Effect var"
+
+declareEff :: Effect -> TypeM ()
+declareEff (effName, h) = declareEffs $ EffectRow [(effName, h)] Nothing
+
+declareEffs :: EffectRow -> TypeM ()
 declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
-  case forbiddenEffects allowedEffects effs of
-    Pure -> return ()
-    extraEffs -> throw TypeErr $ "Unexpected effects: " ++ pprint extraEffs
+  checkExtends allowedEffects effs
 
-forbiddenEffects :: Effects -> Effects -> Effects
-forbiddenEffects allowed checked = wrapEffects extraConcrete extraTail
-  where
-    (effsAllowed, effTailAllowed) = flattenEffects allowed
-    (effsChecked, effTailChecked) = flattenEffects checked
-    extraConcrete = filter (\e -> not (e `elem` effsAllowed)) effsChecked
-    extraTail = case effTailChecked of
-      Pure -> Pure
-      _ | effTailChecked  == effTailAllowed -> Pure
-        | otherwise -> effTailChecked
+checkExtends :: MonadError Err m => EffectRow -> EffectRow -> m ()
+checkExtends allowed (EffectRow effs effTail) = do
+  let (EffectRow allowedEffs allowedEffTail) = allowed
+  case effTail of
+    Just _ -> assertEq allowedEffTail effTail ""
+    Nothing -> return ()
+  forM_ effs $ \eff -> unless (eff `elem` allowedEffs) $
+    throw CompilerErr $ "Unexpected effect: " ++ pprint eff ++
+                      "\nAllowed: " ++ pprint allowed
 
-removeEffect :: Effects -> Effect Atom -> Effects
-removeEffect effects e = wrapEffects (filter (/= e) concreteEffs) effTail
-  where (concreteEffs, effTail) = flattenEffects effects
-
-flattenEffects :: Effects -> ([Effect Atom], Type)
-flattenEffects (Eff (ExtendEff eff rest)) = (eff:effs, effTail)
-  where (effs, effTail) = flattenEffects rest
-flattenEffects effs = ([], effs)
-
-wrapEffects :: [Effect Atom] -> Type -> Effects
-wrapEffects [] effTail = effTail
-wrapEffects (eff:rest) effTail = Eff $ ExtendEff eff $ wrapEffects rest effTail
+extendEffect :: Effect -> EffectRow -> EffectRow
+extendEffect eff (EffectRow effs t) = EffectRow (eff:effs) t
 
 -- === type checker monad combinators ===
 
-checkWithEnv :: ((TypeEnv, Effects) -> TypeM ()) -> TypeM ()
+checkWithEnv :: ((TypeEnv, EffectRow) -> TypeM ()) -> TypeM ()
 checkWithEnv check = do
   optEnv <- ask
   case optEnv of
     SkipChecks -> return ()
     CheckWith env -> check env
-
-updateAllowedEff :: (Effects -> Effects) -> TypeM a -> TypeM a
-updateAllowedEff f m = flip local m $ fmap $ \(env, eff) -> (env, f eff)
-
-withAllowedEff :: Effects -> TypeM a -> TypeM a
-withAllowedEff eff m = updateAllowedEff (const eff) m
-
-extendAllowedEff :: Effect Atom -> TypeM a -> TypeM a
-extendAllowedEff newEff m = updateAllowedEff (Eff . ExtendEff newEff) m
 
 updateTypeEnv :: (Env Type -> Env Type) -> TypeM a -> TypeM a
 updateTypeEnv f m = flip local m $ fmap $ \(env, eff) -> (f env, eff)
@@ -205,6 +192,15 @@ extendTypeEnv new m = updateTypeEnv (<> new) m
 
 withTypeEnv :: Env Type -> TypeM a -> TypeM a
 withTypeEnv new m = updateTypeEnv (const new) m
+
+extendAllowedEffect :: Effect -> TypeM () -> TypeM ()
+extendAllowedEffect eff m = updateAllowedEff (extendEffect eff) m
+
+updateAllowedEff :: (EffectRow -> EffectRow) -> TypeM a -> TypeM a
+updateAllowedEff f m = flip local m $ fmap $ \(env, eff) -> (env, f eff)
+
+withAllowedEff :: EffectRow -> TypeM a -> TypeM a
+withAllowedEff eff m = updateAllowedEff (const eff) m
 
 -- === primitive ops and constructors ===
 
@@ -219,12 +215,7 @@ typeCheckTyCon tc = case tc of
   UnitType         -> return ()
   RefType r a      -> r|:TyKind >> a|:TyKind
   TypeKind         -> return ()
-
-typeCheckEff :: Eff -> TypeM ()
-typeCheckEff PureEff = return ()
-typeCheckEff (ExtendEff (_, r) rest) = do
-  r    |: TyKind
-  rest |: TC EffectsKind
+  EffectRowKind    -> return ()
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -291,7 +282,7 @@ typeCheckOp op = case op of
     TC (IndexRange ty _ _) <- typeCheck i
     return ty
   PrimEffect ref m -> do
-    RefTy h s <- typeCheck ref
+    RefTy (Var (h:>TyKind)) s <- typeCheck ref
     case m of
       MGet    ->         declareEff (State , h) $> s
       MPut  x -> x|:s >> declareEff (State , h) $> UnitTy
@@ -322,29 +313,25 @@ typeCheckHof hof = case hof of
   --   (a, b) <- pureNonDepAbsBlock lam
   --   return $ b --@ a
   RunReader r f -> do
-    readerTy <- typeCheck r
-    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
-    let region = Var regionBinder
-    declareEffs $ eff `removeEffect` (Reader, region)
-    checkEq (varAnn regionBinder) TyKind
-    checkEq (varAnn refBinder) $ RefTy region readerTy
+    (resultTy, readTy) <- checkAction Reader f
+    r |: readTy
     return resultTy
-  RunWriter f -> do
-    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
-    let region = Var regionBinder
-    declareEffs $ eff `removeEffect` (Writer, region)
-    checkEq (varAnn regionBinder) TyKind
-    RefTy region' accumTy <- return $ varAnn refBinder
-    checkEq region' region
-    return $ PairTy resultTy accumTy
+  RunWriter f -> uncurry PairTy <$> checkAction Writer f
   RunState s f -> do
-    stateTy <- typeCheck s
-    BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
-    let region = Var regionBinder
-    declareEffs $ eff `removeEffect` (State, region)
-    checkEq (varAnn regionBinder) TyKind
-    checkEq (varAnn refBinder) $ RefTy region stateTy
+    (resultTy, stateTy) <- checkAction State f
+    s |: stateTy
     return $ PairTy resultTy stateTy
+
+checkAction :: EffectName -> Atom -> TypeM (Type, Type)
+checkAction effName f = do
+  BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
+  regionName:>_ <- return regionBinder
+  let region = Var regionBinder
+  extendAllowedEffect (effName, regionName) $ declareEffs eff
+  checkEq (varAnn regionBinder) TyKind
+  RefTy region' referentTy <- return $ varAnn refBinder
+  checkEq region' region
+  return (resultTy, referentTy)
 
 pureNonDepAbsBlock :: Abs Block -> TypeM (Type, Type)
 pureNonDepAbsBlock (Abs b body) = withBinder b $ withAllowedEff Pure $ do

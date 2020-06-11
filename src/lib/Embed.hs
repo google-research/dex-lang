@@ -43,7 +43,7 @@ type EmbedEnv = (Scope, [Decl])
 
 runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, [Decl])
 runEmbedT (EmbedT m) scope = do
-  (ans, (_, decls)) <- runCatT (runReaderT m "tmp") (scope, [])
+  (ans, (_, decls)) <- runCatT (runReaderT m NoName) (scope, [])
   return (ans, decls)
 
 runEmbed :: Embed a -> Scope -> (a, [Decl])
@@ -253,7 +253,11 @@ instance Monad m => MonadEmbed (EmbedT m) where
   embedLook = EmbedT look
   embedExtend env = EmbedT $ extend env
   embedScoped (EmbedT m) = EmbedT $ scoped m
-  getNameHint = EmbedT ask
+  getNameHint = EmbedT $ do
+    v <- ask
+    return $ case v of
+      NoName -> "tmp"
+      _      -> v
   withNameHint v (EmbedT m) = EmbedT $ local (const v) m
 
 instance MonadEmbed m => MonadEmbed (ReaderT r m) where

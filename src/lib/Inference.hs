@@ -13,7 +13,6 @@ import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (fold, toList)
-import qualified Data.Map.Strict as M
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
@@ -26,7 +25,7 @@ import Cat
 
 -- TODO: consider just carrying an `Atom` (since the type is easily recovered)
 type InfEnv = Env (Atom, Type)
-type UInferM = ReaderT InfEnv (ReaderT Effects (EmbedT (SolverT (Either Err))))
+type UInferM = ReaderT InfEnv (ReaderT EffectRow (EmbedT (SolverT (Either Err))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -94,7 +93,7 @@ emitZonked expr = zonk expr >>= emit
 
 instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
 instantiateSigma (f, Pi piTy@(Abs _ (ImplicitArrow, _))) = do
-  x <- freshInfVar $ absArgType piTy
+  x <- freshType $ absArgType piTy
   ans <- emitZonked $ App f x
   let (_, ansTy) = applyAbs piTy x
   instantiateSigma (ans, ansTy)
@@ -107,7 +106,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
-    x <- freshInfVar argTy
+    x <- freshType argTy
     withBindPat p (x, argTy) $ checkOrInferRho body reqTy
   ULam b arr body -> case reqTy of
     Check ty -> do
@@ -137,7 +136,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     piTy <- fromPiType arr fTy
     xVal <- checkSigma x (absArgType piTy)
     let (arr', appTy) = applyAbs piTy xVal
-    checkEffectsAllowed $ arrowEff arr'
+    addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
   UPi (p, a) arr ty -> do
@@ -207,6 +206,19 @@ checkULam (p, ann) body piTy = do
       result <- checkSigma body resultTy
       return (arr, result)
 
+checkUEff :: EffectRow -> UInferM EffectRow
+checkUEff (EffectRow effs t) = do
+   effs' <- forM effs $ \(effName, region) -> (effName,) <$> lookupVarName TyKind region
+   t'    <- forM t $ \tv -> lookupVarName EffKind tv
+   return $ EffectRow effs' t'
+   where
+     lookupVarName :: Type -> Name -> UInferM Name
+     lookupVarName ty v = do
+       -- TODO: more graceful errors on error
+       (Var (v':>_), ty') <- asks (!(v:>()))
+       constrainEq ty ty'
+       return v'
+
 withBindPat :: UPat -> (Atom, Type) -> UInferM a -> UInferM a
 withBindPat pat valTy m = do
   env <- bindPat pat valTy
@@ -231,34 +243,17 @@ patNameHint _ = "pat"
 withPatHint :: UPat -> UInferM a -> UInferM a
 withPatHint p m = withNameHint (patNameHint p) m
 
-checkUEff :: UEffects -> UInferM Effects
-checkUEff (UEffects effs tailVar) = case effs of
-  [] -> case tailVar of
-    Nothing -> return Pure
-    Just v  -> checkRho v (TC EffectsKind)
-  (effName, region):rest -> do
-    region' <- checkRho region TyKind
-    rest' <- checkUEff (UEffects rest tailVar)
-    return $ Eff $ ExtendEff (effName, region') rest'
-
 checkAnn :: Maybe UType -> UInferM Type
 checkAnn ann = case ann of
   Just ty -> checkUType ty
-  Nothing -> freshInfVar TyKind
+  Nothing -> freshType TyKind
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
   Just ty' <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
   return ty'
 
-freshInfVar :: Type -> UInferM Atom
-freshInfVar ty = do
-  (tv:>()) <- looks $ rename (rawName InferenceName "?" :> ()) . solverVars
-  extend $ SolverEnv ((tv:>()) @> TyKind) mempty
-  extendScope ((tv:>())@>Nothing)
-  return $ Var $ tv:>ty
-
-checkArrow :: Arrow -> ULamArrow -> UInferM ()
+checkArrow :: Arrow -> UArrow -> UInferM ()
 checkArrow ahReq ahOff = case (ahReq, ahOff) of
   (PlainArrow _, PlainArrow ()) -> return ()
   (LinArrow,     PlainArrow ()) -> return ()
@@ -291,11 +286,11 @@ inferTabTy xs ann = case ann of
     (_, ty) <- inferRho x
     return (FixedIntRange 0 (length xs), ty)
 
-fromPiType :: ULamArrow -> Type -> UInferM PiType
+fromPiType :: UArrow -> Type -> UInferM PiType
 fromPiType _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType arr ty = do
-  a <- freshInfVar TyKind
-  b <- freshInfVar TyKind
+  a <- freshType TyKind
+  b <- freshType TyKind
   let piTy = Abs (NoName:>a) (fmap (const Pure) arr, b)
   constrainEq (Pi piTy) ty
   return piTy
@@ -303,23 +298,25 @@ fromPiType arr ty = do
 fromPairType :: Type -> UInferM (Type, Type)
 fromPairType (PairTy t1 t2) = return (t1, t2)
 fromPairType ty = do
-  a <- freshInfVar TyKind
-  b <- freshInfVar TyKind
+  a <- freshType TyKind
+  b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
 
-checkEffectsAllowed :: Effects -> UInferM ()
-checkEffectsAllowed eff = do
-  eff' <- zonk eff
+addEffects :: EffectRow -> UInferM ()
+addEffects eff = do
+  eff' <- openEffectRow eff
   allowedEffects <- lift ask
-  case forbiddenEffects allowedEffects eff' of
-    Pure -> return ()
-    extraEffs -> throw TypeErr $ "Unexpected effects: " ++ pprint extraEffs
+  constrainEq (Eff allowedEffects) (Eff eff')
 
-withEffects :: Effects -> UInferM a -> UInferM a
+openEffectRow :: EffectRow -> UInferM EffectRow
+openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
+openEffectRow effRow = return effRow
+
+withEffects :: EffectRow -> UInferM a -> UInferM a
 withEffects effs m = modifyAllowedEffects (const effs) m
 
-modifyAllowedEffects :: (Effects -> Effects) -> UInferM a -> UInferM a
+modifyAllowedEffects :: (EffectRow -> EffectRow) -> UInferM a -> UInferM a
 modifyAllowedEffects f m = do
   env <- ask
   lift $ local f (runReaderT m env)
@@ -334,10 +331,20 @@ runSolverT :: (MonadError Err m, HasVars a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m >>= zonk
+   applyDefaults
+   ans' <- zonk ans
    vs <- looks $ envNames . unsolved
    throwIf (not (null vs)) TypeErr $ "Ambiguous type variables: "
-                                   ++ pprint vs ++ "\n\n" ++ pprint ans
-   return ans
+                                   ++ pprint vs ++ "\n\n" ++ pprint ans'
+   return ans'
+
+applyDefaults :: MonadCat SolverEnv m => m ()
+applyDefaults = do
+  vs <- looks unsolved
+  forM_ (envPairs vs) $ \(v, k) -> case k of
+    EffKind -> addSub v $ Eff Pure
+    _ -> return ()
+  where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
 solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
            => m a -> m a
@@ -359,11 +366,21 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshInferenceVar :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
-freshInferenceVar k = do
-  tv <- looks $ rename (rawName InferenceName "?" :> k) . solverVars
+freshType :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
+freshType EffKind = Eff <$> freshEff
+freshType k = do
+  tv <- freshVar k
   extend $ SolverEnv (tv @> k) mempty
-  return (Var tv)
+  return $ Var tv
+
+freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
+freshEff = do
+  v <- freshVar ()
+  extend $ SolverEnv (v@>EffKind) mempty
+  return $ EffectRow [] $ Just $ varName v
+
+freshVar :: MonadCat SolverEnv m => ann -> m (VarP ann)
+freshVar ann = looks $ rename (rawName InferenceName "?" :> ann) . solverVars
 
 constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
              => Type -> Type -> m ()
@@ -398,24 +415,42 @@ unify t1 t2 = do
        let (arr , resultTy ) = applyAbs piTy  v
        let (arr', resultTy') = applyAbs piTy' v
        unify resultTy resultTy'
-       unify (arrowEff arr) (arrowEff arr')
-    -- (Effect r t, Effect r' t') ->
+       unifyEff (arrowEff arr) (arrowEff arr')
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
-    _   -> throw TypeErr ""
+    (Eff eff, Eff eff') -> unifyEff eff eff'
+    _ -> throw TypeErr ""
 
-rowMeet :: Env a -> Env b -> Env (a, b)
-rowMeet (Env m) (Env m') = Env $ M.intersectionWith (,) m m'
+unifyEff :: (MonadCat SolverEnv m, MonadError Err m)
+         => EffectRow -> EffectRow -> m ()
+unifyEff r1 r2 = do
+  r1' <- zonk r1
+  r2' <- zonk r2
+  vs <- looks solverVars
+  case (r1', r2') of
+    _ | r1 == r2 -> return ()
+    (r, EffectRow [] (Just v)) | (v:>()) `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (EffectRow [] (Just v), r) | (v:>()) `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (EffectRow effs1@(_:_) t1, EffectRow effs2@(_:_) t2) -> do
+      let extras1 = effs1 `setDiff` effs2
+      let extras2 = effs2 `setDiff` effs1
+      newRow <- freshEff
+      unifyEff (EffectRow [] t1) (extendEffRow extras2 newRow)
+      unifyEff (extendEffRow extras1 newRow) (EffectRow [] t2)
+    _ -> throw TypeErr ""
+
+setDiff :: Eq a => [a] -> [a] -> [a]
+setDiff xs ys = filter (`notElem` ys) xs
 
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
-bindQ v t | v `occursIn` t = throw TypeErr (pprint (v, t))
+bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
           | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
           | otherwise = extend $ mempty { solverSub = v @> t }
 
 hasSkolems :: HasVars a => a -> Bool
 hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
 
-occursIn :: Var -> Type -> Bool
+occursIn :: HasVars a => Var -> a -> Bool
 occursIn v t = v `isin` freeVars t
 
 renameForPrinting :: HasVars a => a -> (a, [Var])
