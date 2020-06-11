@@ -18,7 +18,8 @@ module Embed (emit, emitOp, buildLam, buildLamAux, buildAbs,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
-              boolToInt, intToReal, boolToReal, reduceAtom, unpackConsList) where
+              embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
+              unpackConsList) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -287,7 +288,12 @@ instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
 instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
   look = lift look
   extend x = lift $ extend x
-  scoped _ = undefined
+  scoped (EmbedT m) = EmbedT $ do
+    name <- ask
+    env <- look
+    ((ans, env'), scopeEnv) <- lift $ lift $ scoped $ runCatT (runReaderT m name) env
+    extend env'
+    return (ans, scopeEnv)
 
 instance MonadError e m => MonadError e (EmbedT m) where
   throwError = lift . throwError

@@ -129,9 +129,8 @@ infixr 7 |:
   ty <- typeCheck x
   checkEq reqTy ty
 
--- TODO: consider skipping the checks if the env is Nothing
 checkEq :: Type -> Type -> TypeM ()
-checkEq reqTy ty = assertEq reqTy ty ""
+checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
 withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>ty) m

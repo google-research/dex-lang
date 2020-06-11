@@ -179,3 +179,15 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
       r1 := 1
       r2 := 2
 > (((), 2), 1)
+
+:p (\f x y. f x y) (+) 1.0 2.0
+> 3.0
+
+:p
+  myId = fst (\x. x, 2)
+  f : (a:Type -> a -> a) = \a. \x. myId x
+  f Int 1
+> Type error:Leaked type variable: a:Type
+>
+>   f : (a:Type -> a -> a) = \a. \x. myId x
+>                                    ^^^^^^

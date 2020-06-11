@@ -686,6 +686,10 @@ instance (HasVars a, HasVars b) => HasVars (Either a b)where
   freeVars (Right x) = freeVars x
   subst = error "not implemented"
 
+instance HasVars a => HasVars (Maybe a) where
+  freeVars x = foldMap freeVars x
+  subst env x = fmap (subst env) x
+
 instance HasVars a => HasVars (Env a) where
   freeVars x = foldMap freeVars x
   subst env x = fmap (subst env) x

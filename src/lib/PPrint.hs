@@ -165,7 +165,8 @@ instance Pretty ClassName where
 instance Pretty Decl where
   pretty decl = case decl of
     Let (NoName:>_) bound -> p bound
-    Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
+    -- This is just to reduce clutter a bit. We can comment it out when needed.
+    -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let b bound -> p b <+> "=" <+> p bound
 
 instance Pretty Atom where

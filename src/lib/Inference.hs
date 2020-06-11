@@ -85,16 +85,10 @@ inferRho expr = do
   (val, Inferred ty) <- checkOrInferRho expr Infer
   return (val, ty)
 
--- This is necessary so that embed's `getType` doesn't get confused
--- TODO: figure out a better way. It's probably enough to just solve locally as
--- part of leak checking when we construct dependent lambdas.
-emitZonked :: Expr -> UInferM Atom
-emitZonked expr = zonk expr >>= emit
-
 instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
 instantiateSigma (f, Pi piTy@(Abs _ (ImplicitArrow, _))) = do
   x <- freshType $ absArgType piTy
-  ans <- emitZonked $ App f x
+  ans <- emit $ App f x
   let (_, ansTy) = applyAbs piTy x
   instantiateSigma (ans, ansTy)
 instantiateSigma (x, ty) = return (x, ty)
@@ -124,12 +118,12 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- lift ask
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      result <- emitZonked $ Hof $ For dir lam
+      result <- emit $ Hof $ For dir lam
       return (result, Checked)
     Infer -> do
       allowedEff <- lift ask
       ~(lam, Pi (Abs n (_, a))) <- inferULam b (PlainArrow allowedEff) body
-      result <- emitZonked $ Hof $ For dir lam
+      result <- emit $ Hof $ For dir lam
       return (result, Inferred $ Pi $ Abs n (TabArrow, a))
   UApp arr f x -> do
     (fVal, fTy) <- inferRho f
@@ -137,7 +131,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     xVal <- checkSigma x (absArgType piTy)
     let (arr', appTy) = applyAbs piTy xVal
     addEffects $ arrowEff arr'
-    appVal <- emitZonked $ App fVal xVal
+    fVal' <- zonk fVal
+    appVal <- emit $ App fVal' xVal
     instantiateSigma (appVal, appTy) >>= matchRequirement
   UPi (p, a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -156,8 +151,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> emitZonked $ Op e
-      HofExpr e -> emitZonked $ Hof e
+      OpExpr  e -> emit $ Op e
+      HofExpr e -> emit $ Hof e
     matchRequirement (val, getType val)
     where lookupName  v = fst <$> asks (! (v:>()))
   where
@@ -191,6 +186,7 @@ inferULam :: UBinder -> Arrow -> UExpr -> UInferM (Atom, Type)
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   buildLamAux (patNameHint p :> argTy) $ \x@(Var v') -> do
+    -- TODO: check leaks here too
     withBindPat p (x, argTy) $ do
       (resultVal, resultTy) <- withEffects (arrowEff arr) $ inferSigma body
       let ty = Pi $ makeAbs v' (arr, resultTy)
@@ -200,11 +196,12 @@ checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
-  buildLam (patNameHint p :> argTy) $ \x -> do
-    let (arr, resultTy) = applyAbs piTy x
-    withBindPat p (x, argTy) $ withEffects (arrowEff arr) $ do
-      result <- checkSigma body resultTy
-      return (arr, result)
+  buildLam (patNameHint p :> argTy) $ \x@(Var v) ->
+    checkLeaks [v] $ do
+      let (arr, resultTy) = applyAbs piTy x
+      withBindPat p (x, argTy) $ withEffects (arrowEff arr) $ do
+        result <- checkSigma body resultTy
+        return (arr, result)
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
@@ -230,8 +227,9 @@ bindPat (WithSrc pos pat) (val,ty) = addSrcContext (Just pos) $ case pat of
   PatUnit -> constrainEq UnitTy ty >> return mempty
   PatPair p1 p2 -> do
     (t1, t2) <- fromPairType ty
-    x1 <- getFst val
-    x2 <- getSnd val
+    val' <- zonk val  -- ensure it has a pair type before unpacking
+    x1 <- getFst val'
+    x2 <- getSnd val'
     env1 <- bindPat p1 (x1,t1)
     env2 <- bindPat p2 (x2,t2)
     return $ env1 <> env2
@@ -346,17 +344,19 @@ applyDefaults = do
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
-solveLocal :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
-           => m a -> m a
+solveLocal :: HasVars a => UInferM a -> UInferM a
 solveLocal m = do
-  (ans, env@(SolverEnv freshVars sub)) <- scoped (m >>= zonk)
+  (ans, env@(SolverEnv freshVars sub)) <- scoped $ do
+    -- This might get expensive. TODO: revisit once we can measure performance.
+    (ans, embedEnv) <- zonk =<< embedScoped m
+    embedExtend embedEnv
+    return ans
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: (Pretty a, MonadCat SolverEnv m, MonadError Err m, HasVars a)
-           => [Var] -> m a -> m a
+checkLeaks :: HasVars a => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
-  (ans, env) <- scoped $ solveLocal m
+  (ans, env) <- scoped $ solveLocal $ m
   forM_ (solverSub env) $ \ty ->
     forM_ tvs $ \tv ->
       throwIf (tv `occursIn` ty) TypeErr $ "Leaked type variable: " ++ pprint tv
@@ -396,7 +396,7 @@ constrainEq t1 t2 = do
 zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a
 zonk x = do
   s <- looks solverSub
-  return $ tySubst s x
+  return $ scopelessSubst s x
 
 unify :: (MonadCat SolverEnv m, MonadError Err m)
        => Type -> Type -> m ()
@@ -468,11 +468,8 @@ instance Semigroup SolverEnv where
   -- TODO: make concatenation more efficient by maintaining a reverse-lookup map
   SolverEnv scope1 sub1 <> SolverEnv scope2 sub2 =
     SolverEnv (scope1 <> scope2) (sub1' <> sub2)
-    where sub1' = fmap (tySubst sub2) sub1
+    where sub1' = fmap (scopelessSubst sub2) sub1
 
 instance Monoid SolverEnv where
   mempty = SolverEnv mempty mempty
   mappend = (<>)
-
-tySubst :: HasVars a => Env Type -> a -> a
-tySubst env atom = subst (env, mempty) atom
