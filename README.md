@@ -34,7 +34,7 @@ development. We welcome contributions. There's plenty of work to do!
 
  * Build Dex: `make`
  * Run tests: `make tests`
- * Set up alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
+ * Set up a `dex` alias (e.g. in .bashrc) `alias dex="stack exec dex --"`
 
 ## Running
 
