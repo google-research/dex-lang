@@ -109,7 +109,6 @@ tyConKind con = case con of
   -- This forces us to specialize to `TyCon Type e` instead of `TyCon ty e`
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
-  IArrayType t      -> (IArrayType t, TyKind)
   JArrayType s b    -> (JArrayType s b, TyKind)
   ArrayType t       -> (ArrayType t, TyKind)
   SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
@@ -585,7 +584,6 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
   IntAsIndex ty i  -> eq IntTy i >> return (pureType ty)
   IndexAsInt t     -> inClass IdxSet t >> return (pureType IntTy)
   IdxSetSize _     -> return $ pureType IntTy
-  NewtypeCast ty _ -> return $ pureType ty
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureType ansTy)
   Inject (TC (IndexRange ty _ _)) -> return $ pureType ty
@@ -609,7 +607,6 @@ traverseConType con eq kindIs _ = case con of
   RecCon r            -> return $ RecTy r
   AFor n a            -> return $ TabTy n a
   AGet (ArrayTy b)    -> return $ BaseTy b
-  AGet (IArrayTy _ b) -> return $ BaseTy b
   AGet (JArrayTy _ b) -> return $ BaseTy b
   AsIdx n e           -> eq e (BaseTy IntType) >> return n
   Todo ty             -> kindIs TyKind ty >> return ty

@@ -32,10 +32,10 @@ import Record
 import Util (bindM2)
 
 type EmbedEnv = ([IVar], (Scope, ImpProg))
-type ImpM = Cat EmbedEnv
+type ImpM = ReaderT Scope (Cat EmbedEnv)
 
 toImpFunction :: ([Var], Expr) -> ImpFunction
-toImpFunction (vsIn, expr) = runImpM $ do
+toImpFunction (vsIn, expr) = runImpM vsIn $ do
   (vsOut, prog) <- scopedBlock $ materializeResult
   let arrIn  = flip fmap vsIn  (\(v :> ArrayTy b)        -> v :> b)
   let arrOut = flip fmap vsOut (\(v :> IRefType (_, b))  -> v :> b)
@@ -47,8 +47,11 @@ toImpFunction (vsIn, expr) = runImpM $ do
       copyAtom outDest ans
       return vsOut
 
-runImpM :: ImpM a -> a
-runImpM m = fst $ runCat m mempty
+runImpM :: [Var] -> ImpM a -> a
+runImpM inVars m = fst $ runCat (runReaderT m inVarScope) (mempty, (inVarScope, mempty))
+  where
+    inVarScope :: Scope
+    inVarScope = foldMap varAsEnv $ fmap (fmap $ const ()) inVars
 
 toImpExpr :: SubstEnv -> Expr -> ImpM Atom
 toImpExpr env expr = case expr of
@@ -71,8 +74,10 @@ substLamPartial env (LamExpr b body) = do
 
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
-  scope <- looks (fst . snd)
-  return $ subst (env, scope) x
+  -- We already assume that the expression is de-shadowed, so there's no need
+  -- to pass in the scope. We don't even maintain one for the Expr we're traversing.
+  -- The one in ImpM only keeps the scope for the Imp program!
+  return $ subst (env, mempty) x
 
 toImpCExpr' :: PrimOp Type Atom (LamExpr, SubstEnv) -> ImpM Atom
 toImpCExpr' op = case op of
@@ -150,19 +155,21 @@ toImpCExpr' op = case op of
     idx <- impAdd restrictIdx offset
     intToIndex t idx
   _ -> do
-    op' <- traverseExpr op (return . toImpBaseType) fromScalarAtom (const (return ()))
-    liftM (toScalarAtom resultTy) $ emitInstr (IPrimOp op')
+    -- For scalar primitive operators only!
+    op' <- traverseExpr op (return . toImpBaseType) fromScalarAtom (error "Unexpected lambda")
+    toScalarAtom resultTy <$> emitInstr (IPrimOp op')
   where
     resultTy :: Type
     resultTy = getType $ CExpr $ fmapExpr op id id fst
 
-toScalarAtom :: Type -> IExpr -> Atom
-toScalarAtom _  (ILit v) = Con $ Lit v
-toScalarAtom ty x@(IVar (v:>_)) = case ty of
-  BaseTy _                -> Var (v:>ty)
-  TC (IntRange       _ _) -> Con $ AsIdx ty $ toScalarAtom IntTy x
-  TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' x
-  _ -> error $ "Not a scalar type: " ++ pprint ty
+    toImpBaseType :: Type -> BaseType
+    toImpBaseType ty = case ty of
+      TC con -> case con of
+        BaseType b         -> b
+        IntRange _ _       -> IntType
+        IndexRange ty' _ _ -> toImpBaseType ty'
+        _ -> error $ "Unexpected type: " ++ show ty
+      _ -> error $ "Unexpected type: " ++ show ty
 
 
 anyValue :: Type -> IExpr
@@ -188,10 +195,29 @@ fromScalarAtom atom = case atom of
 
 fromArrayAtom :: Atom -> [IDimType] -> ImpM IExpr
 fromArrayAtom atom dims = case atom of
-  -- TODO: Assert dims match?
-  Var   (v:>IArrayTy dims' b) -> return $ IVar $ v :> IRefType (dims', b)
-  Var v@(_:>ArrayTy _)        -> castArray v dims
+  Var v@(n:>ArrayTy b) -> do
+    isInput <- asks (v `isin`)
+    if isInput
+      then castArray v dims
+      else return $ IVar (n :> IRefType (dims, b))
   _ -> error $ "Expected array, got: " ++ pprint atom
+
+toScalarAtom :: Type -> IExpr -> Atom
+toScalarAtom ty ie = case ie of
+  ILit l -> Con $ Lit l
+  IVar (v :> IValType b) -> case ty of
+    BaseTy b' | b == b'     -> Var (v :> ty)
+    TC (IntRange _ _)       -> Con $ AsIdx ty $ toScalarAtom IntTy ie
+    TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' ie
+    _ -> unreachable
+  _ -> unreachable
+  where
+    unreachable = error $ "Cannot convert " ++ show ie ++ " to " ++ show ty
+
+toArrayAtom :: IExpr -> Atom
+toArrayAtom ie = case ie of
+  IVar (v :> IRefType (_, b)) -> Var $ v :> ArrayTy b
+  _                           -> error $ "Not an array atom: " ++ show ie
 
 data AllocType = Managed | Unmanaged
 
@@ -237,7 +263,7 @@ makeDest' name dims ty@(TC con) = case con of
   BaseType b  -> do
     v <- lift $ freshVar (name :> IRefType (dims, b))
     tell [v]
-    return $ Con $ AGet $ Var (fmap impTypeToType v)
+    return $ Con $ AGet $ toArrayAtom (IVar v)
   RecType r   -> liftM RecVal $ traverse (makeDest' name dims) r
   IntRange   _ _   -> scalarIndexSet ty
   IndexRange _ _ _ -> scalarIndexSet ty
@@ -249,11 +275,11 @@ makeDest' _ _ ty = error $ "Can't lower type to imp: " ++ pprint ty
 impTabGet :: Atom -> Atom -> ImpM Atom
 impTabGet a@(Con (AFor it _)) i = do
   i' <- indexToInt it i
-  -- XXX: We traverse the full atom to include the it in dims
+  -- We traverse the full atom to include the outer AFor dimension in dims
   ~(Con (AFor _ b)) <- flip traverseLeaves a $ \(~(Con (AGet arr))) dims -> do
     arr' <- fromArrayAtom arr dims
     ans  <- emitInstr $ IGet arr' i'
-    return $ Con $ AGet $ impExprToAtom ans
+    return $ Con $ AGet $ toArrayAtom ans
   return b
 impTabGet _ _ = error "Expected an array atom in impTabGet"
 
@@ -261,7 +287,7 @@ intToIndex :: Type -> IExpr -> ImpM Atom
 intToIndex ty@(TC con) i = case con of
   IntRange _ _      -> iAsIdx
   IndexRange _ _ _  -> iAsIdx
-  BaseType BoolType -> impExprToAtom <$> emitUnOp UnsafeIntToBool i
+  BaseType BoolType -> toScalarAtom BoolTy <$> emitUnOp UnsafeIntToBool i
   RecType r -> do
     strides <- getStrides $ fmap (\t->(t,t)) r
     liftM RecVal $
@@ -279,7 +305,7 @@ intToIndex ty@(TC con) i = case con of
     return $ Con $ SumCon (toScalarAtom BoolTy isLeft) li ri
   _ -> error $ "Unexpected type " ++ pprint con
   where
-    iAsIdx = return $ Con $ AsIdx ty $ impExprToAtom i
+    iAsIdx = return $ Con $ AsIdx ty $ toScalarAtom IntTy i
 intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 
 indexToInt :: Type -> Atom -> ImpM IExpr
@@ -319,24 +345,6 @@ getStrides xs =
       stride' <- lift $ impMul stride size
       put stride'
       return (x, ty, stride)
-
-impExprToAtom :: IExpr -> Atom
-impExprToAtom e = case e of
-  IVar (v:>ty) -> Var (v:> impTypeToType ty)
-  ILit x       -> Con $ Lit x
-
-impTypeToType :: IType -> Type
-impTypeToType (IValType b)     = BaseTy b
-impTypeToType (IRefType arrTy) = TC $ IArrayType arrTy
-
-toImpBaseType :: Type -> BaseType
-toImpBaseType (TabTy _ a) = toImpBaseType a
-toImpBaseType (TC con) = case con of
-  BaseType b       -> b
-  IntRange _ _     -> IntType
-  IndexRange _ _ _ -> IntType
-  _ -> error $ "Unexpected type: " ++ pprint con
-toImpBaseType ty = error $ "Unexpected type: " ++ pprint ty
 
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (TC con) = case con of
@@ -579,8 +587,10 @@ instrTypeChecked instr = case instr of
     return Nothing
   CastArray v (dims, b) -> case v of
     _ :> ArrayTy b' -> do
-      env <- get
-      when (not $ v `isin` env) $ throw CompilerErr $ "Unbound array variable: " ++ pprint v
+      scope <- get
+      when (not $ v `isin` scope) $ throw CompilerErr $ "Unbound array variable: " ++ pprint v
+      env <- ask
+      when (v `isin` env) $ throw CompilerErr $ "Casting a non-input variable: " ++ pprint v
       assertEq b b' "Type mismatch in cast array"
       return $ Just $ IRefType (dims, b)
     _ -> throw CompilerErr $ "Casting a non-array variable to array"
@@ -598,8 +608,8 @@ instrTypeChecked instr = case instr of
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do
-  env <- get
-  when (v `isin` env) $ throw CompilerErr $ "shadows: " ++ pprint v
+  scope <- get
+  when (v `isin` scope) $ throw CompilerErr $ "shadows: " ++ pprint v
   modify (<>(v@>()))
 
 checkValidType :: IType -> ImpCheckM ()

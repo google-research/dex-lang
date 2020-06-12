@@ -41,7 +41,7 @@ module Syntax (
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern TupTy,
     pattern TabTy, pattern NonLin, pattern Lin, pattern FixedIntRange,
     pattern RefTy, pattern BoolTy, pattern IntTy, pattern RealTy,
-    pattern RecTy, pattern SumTy, pattern IArrayTy, pattern ArrayTy, pattern JArrayTy,
+    pattern RecTy, pattern SumTy, pattern ArrayTy, pattern JArrayTy,
     pattern BaseTy, pattern UnitVal, pattern PairVal, pattern TupVal,
     pattern RecVal, pattern SumVal, pattern RealVal, pattern BoolVal)
   where
@@ -83,11 +83,10 @@ data TyCon ty e = BaseType BaseType
                 -- NOTE: This is just a hack so that we can construct an Atom from an Imp or Jax expression.
                 --       In the future it might make sense to parametrize Atoms by the types
                 --       of values they can hold.
-                | IArrayType IArrayType
                 -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
                 | JArrayType [Int] BaseType
-                -- NOTE: Similarly to IArrayType, this is only used in TopLevel, to store the
-                --       output arrays wrapped in atoms.
+                -- This is only used in TopLevel, to store the output arrays wrapped in atoms.
+                -- The indexing structure for the array is given by the AFors that surround it.
                 | ArrayType BaseType
                 | RecType (Record ty)
                 | SumType (ty, ty)
@@ -238,7 +237,6 @@ data PrimOp ty e lam =
       | IndexEff EffectName e e lam
       | Linearize lam | Transpose lam
       | FFICall String [ty] ty [e]
-      | NewtypeCast ty e
       | Inject e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
@@ -286,7 +284,6 @@ builtinNames = M.fromList
   , ("asidx"           , OpExpr $ IntAsIndex () ())
   , ("vzero"           , OpExpr $ VSpaceOp () $ VZero)
   , ("vadd"            , OpExpr $ VSpaceOp () $ VAdd () ())
-  , ("newtypecast"     , OpExpr $ NewtypeCast () ())
   , ("select"          , OpExpr $ Select () () () ())
   , ("runReader"       , OpExpr $ RunReader () ())
   , ("runWriter"       , OpExpr $ RunWriter    ())
@@ -751,7 +748,6 @@ instance TraversableExpr PrimOp where
     IntAsIndex ty e      -> liftA2 IntAsIndex (fT ty) (fE e)
     IndexAsInt e         -> liftA  IndexAsInt (fE e)
     IdxSetSize ty        -> liftA  IdxSetSize (fT ty)
-    NewtypeCast ty e     -> liftA2 NewtypeCast (fT ty) (fE e)
     FFICall s argTys ansTy args ->
       liftA3 (FFICall s) (traverse fT argTys) (fT ansTy) (traverse fE args)
     Inject e             -> liftA Inject (fE e)
@@ -808,7 +804,6 @@ traverseTyCon con fTy fE = case con of
   BaseType b        -> pure $ BaseType b
   IntRange a b      -> liftA2 IntRange (fE a) (fE b)
   IndexRange t a b  -> liftA3 IndexRange (fTy t) (traverse fE a) (traverse fE b)
-  IArrayType t      -> pure $ IArrayType t
   JArrayType s b    -> pure $ JArrayType s b
   ArrayType t       -> pure $ ArrayType t
   SumType (l, r)    -> liftA SumType $ liftA2 (,) (fTy l) (fTy r)
@@ -871,9 +866,6 @@ pattern UnitTy = TupTy []
 
 pattern TabTy :: Type -> Type -> Type
 pattern TabTy a b = TabType (Pi a b)
-
-pattern IArrayTy :: [IDimType] -> BaseType -> Type
-pattern IArrayTy shape b = TC (IArrayType (shape, b))
 
 pattern JArrayTy :: [Int] -> BaseType -> Type
 pattern JArrayTy shape b = TC (JArrayType shape b)
