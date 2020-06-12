@@ -29,7 +29,6 @@ import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
 import Data.Text.Prettyprint.Doc
-import GHC.Stack
 
 import LLVMExec
 import Syntax
@@ -66,8 +65,8 @@ runCompileM env m = evalState (runReaderT m env) initState
 compileTopProg :: ImpFunction -> CompileM LLVMFunction
 compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
   -- Set up the argument list. Note that all outputs are pointers to pointers.
-  let inVarTypes  = map (        L.ptr . scalarTy . varAnn) inVars
-  let outVarTypes = map (L.ptr . L.ptr . scalarTy . varAnn) outVars
+  let inVarTypes  = map (        L.ptr . scalarTy . scalarTableBaseType . varAnn) inVars
+  let outVarTypes = map (L.ptr . L.ptr . scalarTy . scalarTableBaseType . varAnn) outVars
   (inParams, inOperands)   <- unzip <$> mapM freshParamOpPair inVarTypes
   (outParams, outOperands) <- unzip <$> mapM freshParamOpPair outVarTypes
 
@@ -105,8 +104,8 @@ compileProg ((maybeName, instr):prog) = do
   if isOutput
     then do
       case instr of
-        Alloc _ -> return ()
-        _       -> error $ "Non-alloc instruction writing to a program output: " ++ pprint instr
+        Alloc _ _ -> return ()
+        _         -> error $ "Non-alloc instruction writing to a program output: " ++ pprint instr
       store (outputs ! (fromJust maybeName)) (fromJust maybeAns)
     else return ()
   extendR env $ compileProg prog
@@ -124,35 +123,33 @@ compileInstr allowAlloca instr = case instr of
     val'  <- compileExpr val
     store dest' val'
     return Nothing
-  Copy dest source -> do
-    let (IRefType (dims, _)) = impExprType source
+  Copy dest source numel -> do
+    let (IRefType t) = impExprType source
     dest'   <- compileExpr dest
     source' <- compileExpr source
-    case dims of
-      [] -> do
+    case t of
+      (BaseTy _) -> do
         x <- load source'
         store dest' x
       _  -> do
-        numBytes <- mul (litInt 8) =<< elemCount dims
+        numBytes <- mul (litInt 8) =<< compileExpr numel
         copy numBytes dest' source'
     return Nothing
-  CastArray src _ -> Just <$> asks (! src)
-  Alloc (dims, ty) -> Just <$> case dims of
-    [] | allowAlloca -> alloca ty
+  Alloc t numel -> Just <$> case t of
+    BaseTy b | allowAlloca -> alloca b
     _  -> do
-      bytes <- mul (litInt 8) =<< elemCount dims
-      malloc ty bytes
-  Free (_:> IRefType ([], _)) -> return Nothing  -- Don't free allocas
+      bytes <- mul (litInt 8) =<< compileExpr numel
+      malloc (scalarTableBaseType t) bytes
+  Free (_:> IRefType (BaseTy _)) -> return Nothing  -- Don't free allocas
   Free v -> do
     v' <- lookupImpVar v
     ptr' <- castLPtr charTy v'
     addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
-  IGet x i -> do
-    let (IRefType (dims, _)) = impExprType x
+  IOffset x off -> do
     x' <- compileExpr x
-    i' <- compileExpr i
-    Just <$> indexPtr x' dims i'
+    off' <- compileExpr off
+    Just <$> gep x' off'
   Loop d i n body -> do
     n' <- compileExpr n
     compileLoop d i n' body
@@ -165,9 +162,6 @@ compileExpr expr = case expr of
 
 lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)
-
-indexPtr :: Operand -> [IDimType] -> Operand -> CompileM Operand
-indexPtr ptr dims i = dims `offsetTo` i >>= gep ptr
 
 gep :: Operand -> Operand -> CompileM Operand
 gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
@@ -268,19 +262,6 @@ malloc ty bytes = do
 
 castLPtr :: L.Type -> Operand -> CompileM Operand
 castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
-
-elemCount :: [IDimType] -> CompileM Operand
-elemCount (d:td) = case d of
-  IUniform sizeExpr -> do
-    size <- compileExpr sizeExpr
-    mul size =<< elemCount td
-  IPrecomputed _ -> undefined
-elemCount [] = return $ litInt 1
-
-offsetTo :: HasCallStack => [IDimType] -> Operand -> CompileM Operand
-offsetTo dims i = case head dims of
-  IUniform _     -> elemCount (tail dims) >>= mul i
-  IPrecomputed _ -> undefined
 
 mul :: Operand -> Operand -> CompileM Operand
 mul x y = emitInstr longTy $ L.Mul False False x y []

@@ -110,7 +110,6 @@ tyConKind con = case con of
   IndexRange t a b  -> (IndexRange (t, TyKind) (fmap (,t) a)
                                                (fmap (,t) b), TyKind)
   JArrayType s b    -> (JArrayType s b, TyKind)
-  ArrayType t       -> (ArrayType t, TyKind)
   SumType (l, r)    -> (SumType ((l, TyKind), (r, TyKind)), TyKind)
   RecType r         -> (RecType (fmap (,TyKind) r), TyKind)
   RefType t         -> (RefType (t, TyKind), TyKind)
@@ -515,7 +514,7 @@ traverseOpType op eq _ _ | isDependentOp op = case op of
     eq tabRef (RefTy (TabTy i x))
     let row'' = row' <> (ref @> (eff, RefTy (TabTy i x)))
     return (Effect row'' tailVar, a)
-  _ -> error $ "Unexpected primitive type: " ++ pprint op
+  _ -> error $ "Unexpected dependent primitive operator type: " ++ pprint op
 
 traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
   TApp (Forall bs quals body) ts -> do
@@ -587,7 +586,7 @@ traverseOpType op eq kindIs inClass = case fmapExpr op id snd id of
   FFICall _ argTys ansTy argTys' ->
     zipWithM_ eq argTys argTys' >> return (pureType ansTy)
   Inject (TC (IndexRange ty _ _)) -> return $ pureType ty
-  _ -> error $ "Unexpected primitive type: " ++ pprint op
+  _ -> error $ "Unexpected primitive operator type: " ++ pprint op
 
 traverseConType :: MonadError Err m
                      => PrimConType
@@ -596,9 +595,8 @@ traverseConType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
 traverseConType con eq kindIs _ = case con of
-  Lit l        -> return $ BaseTy $ litType l
-  ArrayLit arr -> return $ ArrayTy b
-    where (_, b) = arrayType arr
+  Lit l         -> return $ BaseTy $ litType l
+  ArrayLit ty _ -> return $ ty
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
@@ -606,11 +604,10 @@ traverseConType con eq kindIs _ = case con of
   SumCon _ l r        -> return $ SumTy l r
   RecCon r            -> return $ RecTy r
   AFor n a            -> return $ TabTy n a
-  AGet (ArrayTy b)    -> return $ BaseTy b
-  AGet (JArrayTy _ b) -> return $ BaseTy b
+  AGet (JArrayTy _ b) -> return $ BaseTy b -- TODO: Remove!
+  AGet st             -> return $ BaseTy $ scalarTableBaseType st
   AsIdx n e           -> eq e (BaseTy IntType) >> return n
   Todo ty             -> kindIs TyKind ty >> return ty
-  _ -> error $ "Unexpected primitive type: " ++ pprint con
 
 litType :: LitVal -> BaseType
 litType v = case v of

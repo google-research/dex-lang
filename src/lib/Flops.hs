@@ -39,15 +39,14 @@ statementFlops (_, instr) = case instr of
     n <- ask
     let (blankOp, _) =  unzipExpr op
     tell $ Profile $ M.singleton (nameToStr (OpExpr blankOp)) [n]
-  Load _    -> return ()
-  Store _ _ -> return ()
-  Copy  _ _ -> do
+  Load _      -> return ()
+  Store _ _   -> return ()
+  Copy  _ _ _ -> do
     n <- ask
     tell $ Profile $ M.singleton "copy" [n]
-  Alloc _   -> return ()
-  Free _    -> return ()
-  IGet _ _  -> return ()
-  CastArray _ _       -> return ()
+  Alloc _ _   -> return ()
+  Free _      -> return ()
+  IOffset _ _ -> return ()
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block
