@@ -21,9 +21,8 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos,
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, RuleEnv,
-    CmdName (..), Val, TopInfEnv, TopSimpEnv, TopEnv (..), Op, Con, Hof, TC,
-    Module (..), ImpFunction (..),
+    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, CmdName (..),
+    Val, TopEnv (..), Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, IArrayType, SetVal (..), MonMap (..), LitProg,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -103,14 +102,10 @@ type Con = PrimCon Atom
 type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
-data TopEnv = TopEnv TopInfEnv TopSimpEnv RuleEnv
+data TopEnv = TopEnv SubstEnv
               deriving (Show, Eq, Generic)
 
-type TypeEnv    = Env Type
-type TopInfEnv  = (TypeEnv, Env Type)
-type TopSimpEnv = SubstEnv
-type RuleEnv    = Env Atom
-
+type TypeEnv = Env Type
 data Module = Module (Maybe BlockId) [Var] [Var] Block  deriving (Show, Eq)
 
 -- === front-end language AST ===
@@ -670,7 +665,7 @@ refreshBinder (_, scope) b = (b', env')
         env' = (b@>Var b', b'@>Nothing)
 
 instance HasVars TopEnv where
-  freeVars (TopEnv e1 e2 e3) = freeVars e1 <> freeVars e2 <> freeVars e3
+  freeVars (TopEnv e1) = freeVars e1
   subst = error "not implemented"
 
 instance HasVars () where
@@ -699,11 +694,10 @@ instance HasVars a => HasVars [a] where
   subst env x = fmap (subst env) x
 
 instance Semigroup TopEnv where
-  TopEnv e1 e2 e3 <> TopEnv e1' e2' e3'=
-    TopEnv (e1 <> e1') (e2 <> e2') (e3 <> e3')
+  TopEnv e1 <> TopEnv e1'= TopEnv (e1 <> e1')
 
 instance Monoid TopEnv where
-  mempty = TopEnv mempty mempty mempty
+  mempty = TopEnv mempty
 
 instance Eq SourceBlock where
   x == y = sbText x == sbText y

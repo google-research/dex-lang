@@ -14,7 +14,7 @@
 module Embed (emit, emitOp, buildLam, buildLamAux, buildAbs,
               EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              app, add, mul, sub, neg, div', andE, reduceScoped,
+              app, add, mul, sub, neg, div', andE, reduceScoped, declAsScope,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
@@ -322,6 +322,7 @@ scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
 
+-- TODO: consider checking for effects here
 declAsScope :: Decl -> Scope
 declAsScope (Let v expr) = v @> Just expr
 

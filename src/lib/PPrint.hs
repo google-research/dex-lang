@@ -248,10 +248,7 @@ instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Right x) = "Right" <+> p x
 
 instance Pretty TopEnv where
-  pretty (TopEnv infEnv simpEnv ruleEnv) =
-    "Inference env:     " <+> p infEnv  <> hardline <>
-    "Simplification env:" <+> p simpEnv <> hardline <>
-    "RuleEnv env:       " <+> p ruleEnv <> hardline
+  pretty (TopEnv env) = p env
 
 instance Pretty UModule where
   pretty (UModule imports exports decls) =

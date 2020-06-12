@@ -22,15 +22,12 @@ import PPrint
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
-type SimplifyM a = ReaderT SimpEnv (ReaderT ((SubstEnv, RuleEnv), SimpOpts) Embed) a
+type SimplifyM a = ReaderT SimpEnv (ReaderT (SubstEnv, SimpOpts) Embed) a
 
-simplifyModule :: SubstEnv -> RuleEnv -> Module -> (Module, SubstEnv)
-simplifyModule substEnv rulesEnv m = (mOut', subst (envOut', mempty) envOut)
-  where (mOut , envOut ) = simplifyModuleOpts (SimpOpts True ) (substEnv, rulesEnv) m
-        (mOut', envOut') = simplifyModuleOpts (SimpOpts False) (substEnv, rulesEnv) mOut
+simplifyModule :: SubstEnv -> Module -> (Module, SubstEnv)
+simplifyModule substEnv m = simplifyModuleOpts (SimpOpts False) substEnv m
 
-simplifyModuleOpts :: SimpOpts -> (SubstEnv, RuleEnv)
-                   -> Module -> (Module, SubstEnv)
+simplifyModuleOpts :: SimpOpts -> SubstEnv -> Module -> (Module, SubstEnv)
 simplifyModuleOpts opts env (Module bid _ exports expr) =
   (Module bid imports' exports' expr', outEnv)
   where
@@ -38,7 +35,7 @@ simplifyModuleOpts opts env (Module bid _ exports expr) =
     imports' = map (uncurry (:>)) $ envPairs $ freeVars expr'
     outEnv = newEnv exports results
 
-runSimplifyM :: SimpOpts -> (SubstEnv, RuleEnv) -> SimplifyM a -> a
+runSimplifyM :: SimpOpts -> SubstEnv -> SimplifyM a -> a
 runSimplifyM opts env m =
   fst $ flip runEmbed mempty $ flip runReaderT (env, opts) $
     flip runReaderT mempty m
@@ -62,15 +59,13 @@ simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
   Var v -> do
     -- TODO: simplify this by requiring different namespaces for top/local vars
-    ((topEnv, rulesEnv), opts) <- lift ask
+    (topEnv, opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
       Just x -> deShadow x <$> getScope
       Nothing -> case envLookup topEnv v of
-        Just x
-          | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
-          | otherwise -> dropSub $ simplifyAtom x
-        _             -> substEmbed atom
+        Just x -> dropSub $ simplifyAtom x
+        _      -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbed atom
   Pi  _ -> substEmbed atom
@@ -85,8 +80,12 @@ simplifyAtom atom = case atom of
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
+
 simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
-simplifyLam (Lam (Abs b (arr, body))) = do
+simplifyLam atom = substEmbed atom >>= (dropSub . simplifyLam')
+
+simplifyLam' :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
+simplifyLam' (Lam (Abs b (arr, body))) = do
   b' <- mapM substEmbed b
   if isData (getType body)
     then liftM (,Nothing) $ do
@@ -102,7 +101,10 @@ simplifyLam (Lam (Abs b (arr, body))) = do
       return $ (lam, Just recon)
 
 simplifyBinaryLam :: Atom -> SimplifyM Atom
-simplifyBinaryLam (BinaryFunVal b1 b2 eff body) = do
+simplifyBinaryLam atom = substEmbed atom >>= (dropSub . simplifyBinaryLam')
+
+simplifyBinaryLam' :: Atom -> SimplifyM Atom
+simplifyBinaryLam' (BinaryFunVal b1 b2 eff body) = do
   b1' <- mapM substEmbed b1
   buildLam b1' $ \x1 -> extendR (b1'@>x1) $ liftM (PureArrow,) $ do
     b2' <- mapM substEmbed b2
@@ -153,10 +155,9 @@ simplifyHof hof = case hof of
     emit $ Hof $ For d lam'
   Linearize lam -> do
     ~(lam', Nothing) <- simplifyLam lam
-    rulesEnv <- lift $ asks (snd . fst)
     scope <- getScope
     -- TODO: simplify the result to remove functions introduced by linearization
-    return $ linearize rulesEnv scope lam'
+    return $ linearize scope lam'
   Transpose lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     scope <- getScope

@@ -32,31 +32,32 @@ type RhoType   = Type  -- doesn't start with an implicit lambda
 data RequiredTy a = Check a | Infer
 data InferredTy a = Checked | Inferred a
 
-inferModule :: TopEnv -> UModule -> Except (Module, TopInfEnv)
-inferModule topEnv (UModule imports exports decls) = do
-  let env = infEnvFromTopEnv topEnv
+inferModule :: TopEnv -> UModule -> Except Module
+inferModule (TopEnv topEnv) m@(UModule imports exports decls) = do
+  checkVars topEnv m
+  let infEnv = fold [(v:>()) @> (Var (v:>getType x), getType x) | (v, x) <- envPairs topEnv]
+  let scope  = fold [(v:>()) @> Just (Atom x)  | (v, x) <- envPairs topEnv]
+  (infEnv', decls') <- runUInferM (inferUDecls decls) infEnv scope
+  let combinedEnv = infEnv <> infEnv'
+  let imports' = [v :> snd (infEnv      ! (v:>())) | v <- imports]
+  let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
+  let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
+  let body = wrapDecls decls' $ mkConsList resultVals
+  return $ Module Nothing imports' exports' body
+
+checkVars :: Env a -> UModule -> Except ()
+checkVars env (UModule imports exports _) = do
   let unboundVars = filter (\v -> not $ (v:>()) `isin` env) imports
   unless (null unboundVars) $
     throw UnboundVarErr $ pprintList unboundVars
   let shadowedVars = filter (\v -> (v:>()) `isin` env) exports
   unless (null shadowedVars) $
     throw RepeatedVarErr $ pprintList shadowedVars
-  (env', decls') <- runUInferM (inferUDecls decls) env
-  let combinedEnv = env <> env'
-  let imports' = [v :> snd (env         ! (v:>())) | v <- imports]
-  let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
-  let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
-  let body = wrapDecls decls' $ mkConsList resultVals
-  return (Module Nothing imports' exports' body, (fmap snd env', mempty))
 
-runUInferM :: (HasVars a, Pretty a) => UInferM a -> InfEnv -> Except (a, [Decl])
-runUInferM m env =
+runUInferM :: (HasVars a, Pretty a)
+           => UInferM a -> InfEnv -> Scope -> Except (a, [Decl])
+runUInferM m env scope =
   runSolverT $ runEmbedT (runReaderT (runReaderT m env) Pure) scope
-  where scope = fmap (const Nothing) env
-
-infEnvFromTopEnv :: TopEnv -> InfEnv
-infEnvFromTopEnv (TopEnv (tyEnv, _) substEnv _) =
-  fold [v' @> (substEnv ! v', ty) | (v, ty) <- envPairs tyEnv, let v' = v:>()]
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -128,11 +129,16 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UApp arr f x -> do
     (fVal, fTy) <- inferRho f
     piTy <- fromPiType arr fTy
-    xVal <- checkSigma x (absArgType piTy)
-    let (arr', appTy) = applyAbs piTy xVal
-    addEffects $ arrowEff arr'
     fVal' <- zonk fVal
-    appVal <- emit $ App fVal' xVal
+    xVal <- checkSigma x (absArgType piTy)
+    ((arr', appTy), xVal') <- case piTy of
+      Abs (NoName:>_) rhs -> return (rhs, xVal)
+      _ -> do
+        scope <- getScope
+        let xVal' = reduceAtom scope xVal
+        return (applyAbs piTy xVal', xVal')
+    addEffects $ arrowEff arr'
+    appVal <- emit $ App fVal' xVal'
     instantiateSigma (appVal, appTy) >>= matchRequirement
   UPi (p, a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -165,14 +171,15 @@ checkOrInferRho (WithSrc pos expr) reqTy =
           return Checked
 
 inferUDecl :: UDecl -> UInferM InfEnv
-inferUDecl (ULet (p, ann) rhs) = case ann of
-  Nothing -> do
-    valAndTy <- withPatHint p $ inferSigma rhs
-    bindPat p valAndTy
-  Just ty -> do
-    ty' <- checkUType ty
-    val <- withPatHint p $ checkSigma rhs ty'
-    bindPat p (val, ty')
+inferUDecl (ULet (p, ann) rhs) = do
+  (val,ty) <- case ann of
+    Nothing -> inferSigma rhs
+    Just ty -> do
+      ty' <- checkUType ty
+      val <- checkSigma rhs ty'
+      return (val, ty')
+  val' <- withPatHint p $ emit $ Atom val
+  bindPat p (val', ty)
 
 inferUDecls :: [UDecl] -> UInferM InfEnv
 inferUDecls decls = do

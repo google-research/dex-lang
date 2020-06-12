@@ -27,7 +27,7 @@ type EmbedSubM = ReaderT SubstEnv Embed
 type PrimalM = WriterT Vars EmbedSubM
 newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
-linearize :: RuleEnv -> Scope -> Atom -> Atom
+linearize :: Scope -> Atom -> Atom
 linearize = undefined
 -- linearize env scope (AbsBlock b block) = fst $ flip runEmbed scope $ do
 --   buildLam PlainArrow b $ \x -> do
@@ -37,12 +37,12 @@ linearize = undefined
 --     fLin <- buildLam LinArrow b $ \xt -> runReaderT yt (b@>xt)
 --     return $ PairVal y fLin
 
-linearizeBlock :: RuleEnv -> Block -> LinA Atom
-linearizeBlock ruleEnv (Block decls result) = case decls of
-  [] -> linearizeExpr ruleEnv result
+linearizeBlock :: Block -> LinA Atom
+linearizeBlock (Block decls result) = case decls of
+  [] -> linearizeExpr result
   Let b bound : rest -> LinA $ do
-    (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeExpr ruleEnv bound
-    (ans, fLin) <- extendR env $ runLinA $ linearizeBlock ruleEnv body
+    (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeExpr bound
+    (ans, fLin) <- extendR env $ runLinA $ linearizeBlock body
     return (ans, do tEnv <- tEnvM
                     extendR tEnv fLin)
     where body = Block rest result
@@ -74,8 +74,8 @@ unpackResiduals f (t:ts) packed = do
   (ans, rs) <- unpackResiduals f ts packed'
   return (ans, r:rs)
 
-linearizeExpr :: RuleEnv -> Expr -> LinA Atom
-linearizeExpr ruleEnv expr = case expr of
+linearizeExpr :: Expr -> LinA Atom
+linearizeExpr expr = case expr of
   _ | hasDiscreteType expr -> LinA $ do
     ans <- substEmbed expr >>= emit
     return $ withZeroTangent ans
@@ -87,20 +87,20 @@ linearizeExpr ruleEnv expr = case expr of
   --   return (ans, buildFor d i $ \i' -> do
   --                  residuals' <- forM residuals $ \r -> emit $ TabGet r i'
   --                  lin i' residuals')
-  App x i | isTabTy (getType x) -> LinA $ do
-    (i', _)  <- runLinA $ linearizeAtom i
-    (x', tx) <- runLinA $ linearizeAtom x
-    ans <- emit $ App x' i'
-    return (ans, do tx' <- tx
-                    emit $ App tx' i')
-  App (Var v) arg | v `isin` ruleEnv -> LinA $ do
-    (x, t) <- runLinA $ linearizeAtom arg
-    (y, f) <- emit (App (ruleEnv ! v) x) >>= fromPair
-    saveVars f
-    return (y, liftM (App f) t >>= emit )
+  -- App x i | isTabTy (getType x) -> LinA $ do
+  --   (i', _)  <- runLinA $ linearizeAtom i
+  --   (x', tx) <- runLinA $ linearizeAtom x
+  --   ans <- emit $ App x' i'
+  --   return (ans, do tx' <- tx
+  --                   emit $ App tx' i')
+  -- App (Var v) arg | v `isin` ruleEnv -> LinA $ do
+  --   (x, t) <- runLinA $ linearizeAtom arg
+  --   (y, f) <- emit (App (ruleEnv ! v) x) >>= fromPair
+  --   saveVars f
+  --   return (y, liftM (App f) t >>= emit )
 
-linearizeOp :: RuleEnv -> Op -> LinA Atom
-linearizeOp ruleEnv op = case fmap linearizeAtom op of
+linearizeOp :: Op -> LinA Atom
+linearizeOp op = case fmap linearizeAtom op of
   ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emitOp
   ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emitOp
   ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emitOp
@@ -123,7 +123,7 @@ linearizeOp ruleEnv op = case fmap linearizeAtom op of
   Snd x -> liftA Snd x `bindLin` emitOp
   _ -> error $ "not implemented: " ++ pprint op
 
-linearizeHof :: RuleEnv -> Hof -> LinA Atom
+linearizeHof :: Hof -> LinA Atom
 linearizeHof = undefined
 -- linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
 --   RunReader r lam@(AbsBlock ref _) -> LinA $ do
