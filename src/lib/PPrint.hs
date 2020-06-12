@@ -92,7 +92,6 @@ instance Pretty ty => Pretty (TyCon ty Atom) where
     RefType t      -> "Ref" <+> p t
     TypeApp f xs   -> p f <+> hsep (map p xs)
     JArrayType dims b    -> p b <> p dims <> "j"
-    ArrayType  b         -> p b <> "*"
     -- This rule forces us to specialize to Atom. Is there a better way?
     IntRange (IntVal 0) (IntVal n) -> p n
     IntRange a b -> p a <> "...<" <> p b
@@ -179,14 +178,14 @@ instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
   pretty op = prettyExprDefault (OpExpr op)
 
 prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
-prettyPrimCon (Lit l)       = p l
-prettyPrimCon (ArrayLit array) = p array
-prettyPrimCon (Lam _ _ lam) = parens $ prettyL lam
-prettyPrimCon (RecCon r)    = p r
-prettyPrimCon (AFor n body) = parens $ "afor *:" <> p n <+> "." <+> p body
-prettyPrimCon (AGet e)      = "aget" <+> p e
-prettyPrimCon (AsIdx n i)   = p i <> "@" <> p n
-prettyPrimCon (AnyValue t)  = parens $ "AnyValue @" <> p t
+prettyPrimCon (Lit l)        = p l
+prettyPrimCon (ArrayLit t a) = p a <> "@" <> p t
+prettyPrimCon (Lam _ _ lam)  = parens $ prettyL lam
+prettyPrimCon (RecCon r)     = p r
+prettyPrimCon (AFor n body)  = parens $ "afor *:" <> p n <+> "." <+> p body
+prettyPrimCon (AGet e)       = parens $ "aget" <+> p e
+prettyPrimCon (AsIdx n i)    = p i <> "@" <> p n
+prettyPrimCon (AnyValue t)   = parens $ "AnyValue @" <> p t
 prettyPrimCon (SumCon c l r) = parens $ "SumCon" <+> p c <+> p l <+> p r
 prettyPrimCon con = prettyExprDefault (ConExpr con)
 
@@ -270,7 +269,7 @@ instance Pretty IExpr where
   pretty (IVar (v:>_)) = p v
 
 instance Pretty IType where
-  pretty (IRefType (dimTypes, ty)) = "Ptr (" <> p ty <> p dimTypes <> ")"
+  pretty (IRefType t) = "Ref" <+> (parens $ p t)
   pretty (IValType b) = p b
 
 instance Pretty IDimType where
@@ -292,16 +291,15 @@ prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)       = p op
-  pretty (Load ref)         = "load"  <+> p ref
-  pretty (Store dest val)   = "store" <+> p dest <+> p val
-  pretty (Copy dest source) = "copy"  <+> p dest <+> p source
-  pretty (CastArray v t)    = "cast"  <+> p v <+> "as" <+> p t
-  pretty (Alloc ty)         = "alloc" <+> p ty
-  pretty (IGet expr idx)    = p expr <> "." <> p idx
-  pretty (Free (v:>_))      = "free"  <+> p v
-  pretty (Loop d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
-                              nest 4 (hardline <> p block)
+  pretty (IPrimOp op)         = p op
+  pretty (Load ref)           = "load"  <+> p ref
+  pretty (Store dest val)     = "store" <+> p dest <+> p val
+  pretty (Copy dest source s) = "copy"  <+> p dest <+> p source <+> parens (p s <+> "elems")
+  pretty (Alloc t s)          = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (IOffset expr idx)   = p expr <+> "+>" <+> p idx
+  pretty (Free (v:>_))        = "free"  <+> p v
+  pretty (Loop d i n block)   = dirStr d <+> p i <+> "<" <+> p n <>
+                                nest 4 (hardline <> p block)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
@@ -343,7 +341,7 @@ instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Right x) = "Right" <+> p x
 
 instance Pretty Array where
-  pretty a = p b <> "[" <> p size <> "]@vec"
+  pretty a = p b <> "[" <> p size <> "]"
     where (size, b) = arrayType a
 
 instance Pretty ArrayRef where

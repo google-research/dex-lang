@@ -592,7 +592,7 @@ cmpEither x y = x == y
 
 upperBound = isum $ for i:4. 1
 for j:0...<upperBound. 1.0
-> [1.0, 1.0, 1.0, 1.0]@0...<aget Int[1]@vec
+> [1.0, 1.0, 1.0, 1.0]@0...<(aget Int[1]@Int)
 
 (for i:0...<upperBound. 1, for j:2. 2)
-> ([1, 1, 1, 1]@0...<aget Int[1]@vec, [2, 2])
+> ([1, 1, 1, 1]@0...<(aget Int[1]@Int), [2, 2])

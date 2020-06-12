@@ -204,10 +204,10 @@ evalBackend expr = do
       lift $ modifyMVar engine $ \env -> do
         let inPtrs = fmap (env !) inVars
         outPtrs <- callLLVM logger llvmFunc inPtrs
-        let outTys = flattenType exprType
-        -- TODO: Assert length of outPtrs equal to outTys
+        -- TODO: Assert length of outPtrs/outNames/outTys are equal?
+        let (ImpFunction impOutVars _ _) = impFunction
         let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outPtrs
-        let outVars = zipWith (\v (_, b) -> v :> ArrayTy b) outNames outTys
+        let outVars = zipWith (:>) outNames (fmap varAnn impOutVars)
         -- XXX: This assumes that the implementation of flattenType and makeDest in Imp yield the same order!
         let result = reStructureArrays exprType $ map Var outVars
         return (env <> env', result)
@@ -227,14 +227,14 @@ evalBackend expr = do
     InterpEngine -> return $ evalExpr mempty expr
 
 
-requestArrays :: BackendEngine -> [Var] -> [ArrayType] -> IO [Array]
-requestArrays _ [] [] = return []
-requestArrays backend vs arrTys = case backend of
+requestArrays :: BackendEngine -> [Var] -> IO [Array]
+requestArrays _ [] = return []
+requestArrays backend vs = case backend of
   LLVMEngine env -> do
     env' <- readMVar env
-    forM (zip vs arrTys) $ \(v, arrTy) -> do
+    forM vs $ \v@(_ :> ty) -> do
       case envLookup env' v of
-        Just ref -> loadArray (ArrayRef arrTy ref)
+        Just ref -> loadArray (ArrayRef (typeToArrayType ty) ref)
         Nothing -> error "Array lookup failed"
   JaxServer server -> do
     let vs' = map (fmap typeToJType) vs
@@ -243,13 +243,14 @@ requestArrays backend vs arrTys = case backend of
 
 substArrayLiterals :: BackendEngine -> Atom -> IO Atom
 substArrayLiterals backend x = do
-  -- Substitute all arrays appearing in the type annotations inside x
   x' <- substAtomTypes x
-  let (vs, arrTys) = unzip $ flattenVal x'
-  arrays <- requestArrays backend vs arrTys
-  let arrayAtoms = map (Con . ArrayLit) arrays
+  let vs = arrayVars x'
+  arrays <- requestArrays backend vs
+  let arrayTypes = fmap varAnn vs
+  let arrayAtoms = fmap (Con . uncurry ArrayLit) $ zip arrayTypes arrays
   return $ subst (newLEnv vs arrayAtoms, mempty) x'
   where
+    -- Substitutes all arrays appearing in the type annotations inside x
     substAtomTypes :: Atom -> IO Atom
     substAtomTypes a = case a of
       Var v -> Var <$> traverse substInType v
@@ -259,11 +260,12 @@ substArrayLiterals backend x = do
       _     -> error $ "Unexpected atom: " ++ pprint x
 
     substInType :: Type -> IO Type
-    substInType (TC con) = TC <$> traverseTyCon con substInType (substArrayLiterals backend)
+    substInType (TabTy n b) = TabTy <$> substInType n <*> substInType b
+    substInType (TC con)    = TC <$> traverseTyCon con substInType (substArrayLiterals backend)
     -- The reason to sequence type substitution to happen before the general one is so that
-    -- we can resolve the sizes of the AFor domains, which might contain atoms. However, all
-    -- types that are valid index sets are TCs, and so there is nothing we have to do for all
-    -- other cases.
+    -- we can resolve the sizes of the AFor domains and index sets in table types, which might
+    -- contain atoms. However, all types that are valid index sets are TCs, and so there is
+    -- nothing we have to do for all other cases.
     substInType t = return t
 
 -- TODO: check here for upstream errors
