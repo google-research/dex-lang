@@ -595,7 +595,8 @@ traverseConType :: MonadError Err m
                      -> (ClassName -> Type -> m ()) -- add class constraint
                      -> m Type
 traverseConType con eq kindIs _ = case con of
-  Lit l        -> return $ BaseTy $ litType l
+  Lit l         -> return $ BaseTy $ litType l
+  ArrayLit ty _ -> return $ ty
   Lam l eff (Pi a (eff', b)) -> do
     checkExtends eff eff'
     return $ ArrowType l (Pi a (eff, b))
@@ -607,7 +608,6 @@ traverseConType con eq kindIs _ = case con of
   AGet st             -> return $ BaseTy $ scalarTableBaseType st
   AsIdx n e           -> eq e (BaseTy IntType) >> return n
   Todo ty             -> kindIs TyKind ty >> return ty
-  _ -> error $ "Unexpected primitive constructor type: " ++ show con
 
 litType :: LitVal -> BaseType
 litType v = case v of
