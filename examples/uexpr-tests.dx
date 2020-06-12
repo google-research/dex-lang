@@ -137,7 +137,7 @@ myPair = (1, 2.3)
   ((x,y),z) = (1,2,3)
   ((x,y),z)
 > Type error:
-> Expected: (a ** b)
+> Expected: (a & b)
 >   Actual: Int
 > Solving for: [a:Type, b:Type]
 >
@@ -153,7 +153,7 @@ myPair = (1, 2.3)
   (x,y) = 1
   (x,y)
 > Type error:
-> Expected: (a ** b)
+> Expected: (a & b)
 >   Actual: Int
 > Solving for: [a:Type, b:Type]
 >

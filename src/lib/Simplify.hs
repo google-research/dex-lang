@@ -139,8 +139,8 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Cmp Equal t a b -> resolveEq t a b
-  Cmp cmpOp t a b -> resolveOrd cmpOp t a b
+  Cmp Equal a b -> resolveEq (getType a) a b
+  Cmp cmpOp a b -> resolveOrd cmpOp (getType a) a b
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
   SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r

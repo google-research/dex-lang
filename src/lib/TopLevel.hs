@@ -144,7 +144,9 @@ evalUModuleVal env v m = do
 -- errors, but there could still be internal shadowing errors.
 evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
 evalUModule env untyped = do
-  logTop $ MiscLog $ "\n" ++ pprint env
+  -- TODO: it's handy to log the env, but we need to filter out just the
+  --       relevant part (transitive closure of free vars)
+  -- logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
   typed <- typePass env untyped
   checkPass TypePass typed

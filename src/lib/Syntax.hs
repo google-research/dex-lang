@@ -199,7 +199,7 @@ data PrimOp e =
       | Inject e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
-      | Cmp CmpOp e e e  -- type, left, right
+      | Cmp CmpOp e e
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -826,6 +826,9 @@ builtinNames = M.fromList
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
+  , ("eq", cmpOp Equal)
+  , ("less"    , cmpOp Less   ), ("lessEq"    , cmpOp LessEqual   )
+  , ("greater" , cmpOp Greater), ("greaterEq" , cmpOp GreaterEqual)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)
   , ("inttoreal", unOp IntToReal)
@@ -862,3 +865,4 @@ builtinNames = M.fromList
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
+    cmpOp op = OpExpr $ Cmp op () ()

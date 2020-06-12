@@ -202,7 +202,9 @@ uTopDecl = do
     addImplicitArg :: SrcPos -> Name -> UType -> UType
     addImplicitArg pos v ty =
       WithSrc pos $ UPi (WithSrc pos (namePat v), uTyKind) ImplicitArrow ty
-      where uTyKind = WithSrc pos $ UPrimExpr $ TCExpr TypeKind
+      where
+        k = if v == rawName SourceName "eff" then EffectRowKind else TypeKind
+        uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
 
 decl :: Parser UDecl
 decl = do
@@ -218,7 +220,7 @@ funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
   v <- withSrc $ namePat <$> uName
   bs <- some arg
-  (eff, ty) <- label "result annotation" $ annot effectiveType
+  (eff, ty) <- label "result type annotation" $ annot effectiveType
   let funTy = buildPiType bs eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \((p,_), arr) -> ((p,Nothing), arr)
@@ -365,7 +367,7 @@ uPrim = withSrc $ do
   s <- primName
   case s of
     "ffi" -> do
-      f <- lexeme $ some letterChar
+      f <- lexeme $ some nameTailChar
       retTy <- baseType
       args <- some textName
       return $ UPrimExpr $ OpExpr $ FFICall f retTy args
@@ -392,10 +394,10 @@ ops =
   , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
-  , [InfixL $ sym "$" $> mkApp]
+  , [InfixR $ sym "$" $> mkApp]
   , [symOp "+=", symOp ":="]
-  , [InfixR infixEffArrow]
-  , [symOp "&", pairOp]
+  , [InfixR infixEffArrow, InfixR infixLinArrow]
+  , [InfixR $ symOpP "&", pairOp]
   ]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
@@ -413,7 +415,10 @@ pairOp = InfixR $ opWithSrc $ do
   where f = rawName SourceName $ "(,)"
 
 symOp :: String -> Operator Parser UExpr
-symOp s = InfixL $ opWithSrc $ do
+symOp s = InfixL $ symOpP s
+
+symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
+symOpP s = opWithSrc $ do
   label "infix operator" (sym s)
   return $ binApp f
   where f = rawName SourceName $ "(" <> s <> ")"
@@ -427,6 +432,11 @@ mkGenApp arr f x = joinSrc f x $ UApp arr f x
 
 mkApp :: UExpr -> UExpr -> UExpr
 mkApp f x = joinSrc f x $ UApp (PlainArrow ()) f x
+
+infixLinArrow :: Parser (UType -> UType -> UType)
+infixLinArrow = do
+  ((), pos) <- withPos $ sym "--o"
+  return $ \a b -> WithSrc pos $ UPi (typeAsPiBinder a) LinArrow b
 
 infixEffArrow :: Parser (UType -> UType -> UType)
 infixEffArrow = do

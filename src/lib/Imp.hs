@@ -104,7 +104,7 @@ toImpOp op = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" IntType [i', n']
     return $ toScalarAtom resultTy ans
-  Cmp _ _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
+  Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
   IndexAsInt i -> toScalarAtom IntTy <$> indexToInt (getType i) i
   Inject e -> do

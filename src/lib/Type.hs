@@ -265,13 +265,16 @@ typeCheckOp op = case op of
   -- TODO: check index set constraint
   ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
     where (ty, outTy) = unOpType unop
-  Cmp _ ty x y    -> ty|:TyKind >> x|:ty >> y|:ty $> BoolTy
+  Cmp _ x y -> do
+    ty <- typeCheck x
+    y |: ty
+    return BoolTy
   Select p x y -> do
     p|:BoolTy
     ty <- typeCheck x
     y |:ty
     return ty
-  IntAsIndex ty i -> ty|:TyKind >> i|:ty $> ty
+  IntAsIndex ty i -> ty|:TyKind >> i|:IntTy $> ty
   IndexAsInt i -> typeCheck i $> IntTy
   IdxSetSize i -> typeCheck i $> IntTy
   FFICall _ ansTy args -> do
@@ -305,12 +308,12 @@ typeCheckHof hof = case hof of
   --   checkEq lb rb
   --   st |: SumTy la ra
   --   return lb
-  -- Linearize lam -> do
-  --   (a, b) <- pureNonDepAbsBlock lam
-  --   return $ a --> PairTy b (a --@ b)
-  -- Transpose lam -> do
-  --   (a, b) <- pureNonDepAbsBlock lam
-  --   return $ b --@ a
+  Linearize f -> do
+    Pi (Abs (NoName:>a) (PlainArrow Pure, b)) <- typeCheck f
+    return $ a --> PairTy b (a --@ b)
+  Transpose f -> do
+    Pi (Abs (NoName:>a) (LinArrow, b)) <- typeCheck f
+    return $ b --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkAction Reader f
     r |: readTy

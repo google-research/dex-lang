@@ -102,7 +102,7 @@ instance Pretty e => Pretty (PrimExpr e) where
 instance Pretty e => Pretty (PrimTC e) where
   pretty con = case con of
     BaseType b     -> p b
-    PairType a b   -> parens $ p a <+> "**" <+> p b
+    PairType a b   -> parens $ p a <+> "&" <+> p b
     UnitType       -> "Unit"
     ArrayType (shape, b) -> p b <> p shape
     IntRange a b -> if s1 == "0...<" then p s2 else ans
@@ -132,7 +132,7 @@ instance Pretty e => Pretty (PrimCon e) where
     AsIdx n i   -> p i <> "@" <> p n
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ "SumCon" <+> p c <+> p l <+> p r
-
+    Todo e -> "<undefined " <> p e <> ""
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of

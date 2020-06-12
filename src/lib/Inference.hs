@@ -242,9 +242,10 @@ checkUType ty = do
 checkArrow :: Arrow -> UArrow -> UInferM ()
 checkArrow ahReq ahOff = case (ahReq, ahOff) of
   (PlainArrow _, PlainArrow ()) -> return ()
-  (LinArrow,     PlainArrow ()) -> return ()
+  (LinArrow    , PlainArrow ()) -> return ()
+  (LinArrow    , LinArrow     ) -> return ()
   (TabArrow, TabArrow) -> return ()
-  _ -> throw TypeErr $   "Wrong arrow type:" ++
+  _ -> throw TypeErr $  " Wrong arrow type:" ++
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
 
