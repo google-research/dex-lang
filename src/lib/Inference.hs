@@ -23,25 +23,23 @@ import Type
 import PPrint
 import Cat
 
--- TODO: consider just carrying an `Atom` (since the type is easily recovered)
-type InfEnv = Env (Atom, Type)
+type InfEnv = Env Atom
 type UInferM = ReaderT InfEnv (ReaderT EffectRow (EmbedT (SolverT (Either Err))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
 data RequiredTy a = Check a | Infer
-data InferredTy a = Checked | Inferred a
 
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule (TopEnv topEnv) m@(UModule imports exports decls) = do
   checkVars topEnv m
-  let infEnv = fold [(v:>()) @> (Var (v:>getType x), getType x) | (v, x) <- envPairs topEnv]
-  let scope  = fold [(v:>()) @> Just (Atom x)  | (v, x) <- envPairs topEnv]
+  let infEnv = fold [(v:>()) @> (Var (v:>getType x)) | (v, x) <- envPairs topEnv]
+  let scope  = fold [(v:>()) @> Just (Atom x)        | (v, x) <- envPairs topEnv]
   (infEnv', decls') <- runUInferM (inferUDecls decls) infEnv scope
   let combinedEnv = infEnv <> infEnv'
-  let imports' = [v :> snd (infEnv      ! (v:>())) | v <- imports]
-  let exports' = [v :> snd (combinedEnv ! (v:>())) | v <- exports]
-  let resultVals = [fst    (combinedEnv ! (v:>())) | v <- exports]
+  let imports' = [v :> getType (infEnv      ! (v:>())) | v <- imports]
+  let exports' = [v :> getType (combinedEnv ! (v:>())) | v <- exports]
+  let resultVals = [           (combinedEnv ! (v:>())) | v <- exports]
   let body = wrapDecls decls' $ mkConsList resultVals
   return $ Module Nothing imports' exports' body
 
@@ -69,7 +67,7 @@ checkSigma expr sTy = case sTy of
         liftM (ImplicitArrow,) $ checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
-inferSigma :: UExpr -> UInferM (Atom, SigmaType)
+inferSigma :: UExpr -> UInferM Atom
 inferSigma (WithSrc pos expr) = case expr of
   ULam pat ImplicitArrow body -> addSrcContext (Just pos) $
     inferULam pat ImplicitArrow body
@@ -77,41 +75,33 @@ inferSigma (WithSrc pos expr) = case expr of
     inferRho (WithSrc pos expr)
 
 checkRho :: UExpr -> RhoType -> UInferM Atom
-checkRho expr ty = do
-  (val, Checked) <- checkOrInferRho expr (Check ty)
-  return val
+checkRho expr ty = checkOrInferRho expr (Check ty)
 
-inferRho :: UExpr -> UInferM (Atom, RhoType)
-inferRho expr = do
-  (val, Inferred ty) <- checkOrInferRho expr Infer
-  return (val, ty)
+inferRho :: UExpr -> UInferM Atom
+inferRho expr = checkOrInferRho expr Infer
 
-instantiateSigma :: (Atom, SigmaType) -> UInferM (Atom, RhoType)
-instantiateSigma (f, Pi piTy@(Abs _ (ImplicitArrow, _))) = do
-  x <- freshType $ absArgType piTy
-  ans <- emit $ App f x
-  let (_, ansTy) = applyAbs piTy x
-  instantiateSigma (ans, ansTy)
-instantiateSigma (x, ty) = return (x, ty)
+instantiateSigma :: Atom -> UInferM Atom
+instantiateSigma f = case getType f of
+  Pi piTy@(Abs _ (ImplicitArrow, _)) -> do
+    x <- freshType $ absArgType piTy
+    ans <- emit $ App f x
+    instantiateSigma ans
+  _ -> return f
 
-checkOrInferRho :: UExpr -> RequiredTy RhoType
-                -> UInferM (Atom, InferredTy RhoType)
+checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy =
  addSrcContext (Just pos) $ case expr of
   UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
     x <- freshType argTy
-    withBindPat p (x, argTy) $ checkOrInferRho body reqTy
+    withBindPat p x $ checkOrInferRho body reqTy
   ULam b arr body -> case reqTy of
     Check ty -> do
       piTy@(Abs _ (arrReq, _)) <- fromPiType arr ty
       checkArrow arrReq arr
-      lam <- checkULam b body piTy
-      return (lam, Checked)
-    Infer -> do
-      (lam, ty) <- inferULam b (fmap (const Pure) arr) body
-      return (lam, Inferred ty)
+      checkULam b body piTy
+    Infer -> inferULam b (fmap (const Pure) arr) body
   UFor dir b body -> case reqTy of
     Check ty -> do
       Abs n (arr, a) <- fromPiType TabArrow ty
@@ -119,35 +109,32 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- lift ask
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      result <- emit $ Hof $ For dir lam
-      return (result, Checked)
+      emit $ Hof $ For dir lam
     Infer -> do
       allowedEff <- lift ask
-      ~(lam, Pi (Abs n (_, a))) <- inferULam b (PlainArrow allowedEff) body
-      result <- emit $ Hof $ For dir lam
-      return (result, Inferred $ Pi $ Abs n (TabArrow, a))
+      lam <- inferULam b (PlainArrow allowedEff) body
+      emit $ Hof $ For dir lam
   UApp arr f x -> do
-    (fVal, fTy) <- inferRho f
-    piTy <- fromPiType arr fTy
+    fVal <- inferRho f
+    piTy <- fromPiType arr $ getType fVal
     fVal' <- zonk fVal
     xVal <- checkSigma x (absArgType piTy)
-    ((arr', appTy), xVal') <- case piTy of
-      Abs (NoName:>_) rhs -> return (rhs, xVal)
+    (arr', xVal') <- case piTy of
+      Abs (NoName:>_) (arr', _) -> return (arr', xVal)
       _ -> do
         scope <- getScope
         let xVal' = reduceAtom scope xVal
-        return (applyAbs piTy xVal', xVal')
+        return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
     appVal <- emit $ App fVal' xVal'
-    instantiateSigma (appVal, appTy) >>= matchRequirement
+    instantiateSigma appVal >>= matchRequirement
   UPi (p, a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
     a'  <- checkUType a
-    abs <- buildAbs (patNameHint p :> a') $ \x ->
-             withBindPat p (x, a') $
-               (,) <$> mapM checkUEff arr <*> checkUType ty
-    matchRequirement (Pi abs, TyKind)
+    piTy <- buildAbs (patNameHint p :> a') $ \x ->
+              withBindPat p x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+    matchRequirement (Pi piTy)
   UDecl decl body -> do
     env <- inferUDecl decl
     extendR env $ checkOrInferRho body reqTy
@@ -159,27 +146,22 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       ConExpr e -> return $ Con e
       OpExpr  e -> emit $ Op e
       HofExpr e -> emit $ Hof e
-    matchRequirement (val, getType val)
-    where lookupName  v = fst <$> asks (! (v:>()))
+    matchRequirement val
+    where lookupName v = asks (! (v:>()))
   where
-    matchRequirement :: (Atom, Type) -> UInferM (Atom, InferredTy RhoType)
-    matchRequirement (x, ty) = liftM (x,) $
+    matchRequirement :: Atom -> UInferM Atom
+    matchRequirement x = return x <*
       case reqTy of
-        Infer -> return $ Inferred ty
-        Check req -> do
-          constrainEq req ty
-          return Checked
+        Infer -> return ()
+        Check req -> constrainEq req (getType x)
 
 inferUDecl :: UDecl -> UInferM InfEnv
 inferUDecl (ULet (p, ann) rhs) = do
-  (val,ty) <- case ann of
+  val <- case ann of
     Nothing -> inferSigma rhs
-    Just ty -> do
-      ty' <- checkUType ty
-      val <- checkSigma rhs ty'
-      return (val, ty')
+    Just ty -> checkUType ty >>= checkSigma rhs
   val' <- withPatHint p $ emit $ Atom val
-  bindPat p (val', ty)
+  bindPat p val'
 
 inferUDecls :: [UDecl] -> UInferM InfEnv
 inferUDecls decls = do
@@ -189,15 +171,14 @@ inferUDecls decls = do
     new <- lift $ local (const cur) $ inferUDecl decl
     extend new
 
-inferULam :: UBinder -> Arrow -> UExpr -> UInferM (Atom, Type)
+inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
-  buildLamAux (patNameHint p :> argTy) $ \x@(Var v') -> do
+  buildLam (patNameHint p :> argTy) $ \x -> do
     -- TODO: check leaks here too
-    withBindPat p (x, argTy) $ do
-      (resultVal, resultTy) <- withEffects (arrowEff arr) $ inferSigma body
-      let ty = Pi $ makeAbs v' (arr, resultTy)
-      return ((arr, resultVal), ty)
+    withBindPat p x $ do
+      result <- withEffects (arrowEff arr) $ inferSigma body
+      return (arr, result)
 
 checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
@@ -206,7 +187,7 @@ checkULam (p, ann) body piTy = do
   buildLam (patNameHint p :> argTy) $ \x@(Var v) ->
     checkLeaks [v] $ do
       let (arr, resultTy) = applyAbs piTy x
-      withBindPat p (x, argTy) $ withEffects (arrowEff arr) $ do
+      withBindPat p x $ withEffects (arrowEff arr) $ do
         result <- checkSigma body resultTy
         return (arr, result)
 
@@ -219,26 +200,26 @@ checkUEff (EffectRow effs t) = do
      lookupVarName :: Type -> Name -> UInferM Name
      lookupVarName ty v = do
        -- TODO: more graceful errors on error
-       (Var (v':>_), ty') <- asks (!(v:>()))
+       Var (v':>ty') <- asks (!(v:>()))
        constrainEq ty ty'
        return v'
 
-withBindPat :: UPat -> (Atom, Type) -> UInferM a -> UInferM a
-withBindPat pat valTy m = do
-  env <- bindPat pat valTy
+withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
+withBindPat pat val m = do
+  env <- bindPat pat val
   extendR env m
 
-bindPat :: UPat -> (Atom, Type) -> UInferM InfEnv
-bindPat (WithSrc pos pat) (val,ty) = addSrcContext (Just pos) $ case pat of
-  PatBind b -> return (b @> (val, ty))
-  PatUnit -> constrainEq UnitTy ty >> return mempty
+bindPat :: UPat -> Atom -> UInferM InfEnv
+bindPat (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
+  PatBind b -> return (b @> val)
+  PatUnit -> constrainEq UnitTy (getType val) >> return mempty
   PatPair p1 p2 -> do
-    (t1, t2) <- fromPairType ty
+    _ <- fromPairType (getType val)
     val' <- zonk val  -- ensure it has a pair type before unpacking
     x1 <- getFst val'
     x2 <- getSnd val'
-    env1 <- bindPat p1 (x1,t1)
-    env2 <- bindPat p2 (x2,t2)
+    env1 <- bindPat p1 x1
+    env2 <- bindPat p2 x2
     return $ env1 <> env2
 
 patNameHint :: UPat -> Name
@@ -267,13 +248,12 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
 
-inferTabCon :: [UExpr] -> Maybe UType -> UInferM (Atom, Type)
+inferTabCon :: [UExpr] -> Maybe UType -> UInferM Atom
 inferTabCon xs ann = do
   (n, ty) <- inferTabTy xs ann
   let tabTy = n==>ty
   xs' <- mapM (flip checkRho ty) xs
-  ans <- emitOp $ TabCon tabTy xs'
-  return (ans, tabTy)
+  emitOp $ TabCon tabTy xs'
 
 inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
 inferTabTy xs ann = case ann of
@@ -288,7 +268,7 @@ inferTabTy xs ann = case ann of
   Nothing -> case xs of
    [] -> throw TypeErr $ "Empty table constructor must have type annotation"
    (x:_) -> do
-    (_, ty) <- inferRho x
+    ty <- getType <$> inferRho x
     return (FixedIntRange 0 (length xs), ty)
 
 fromPiType :: UArrow -> Type -> UInferM PiType
