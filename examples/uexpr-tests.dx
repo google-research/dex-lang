@@ -191,3 +191,16 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 >
 >   f : (a:Type -> a -> a) = \a. \x. myId x
 >                                    ^^^^^^
+
+def myFst (p:a&b) : a =
+  (x, _) = p
+  x
+:p myFst (1,2)
+> 1
+
+def myOtherFst ((x, _):a&b) : a = x
+:p myOtherFst (1,2)
+> 1
+
+:p sum [1.,2.]
+> 3.0

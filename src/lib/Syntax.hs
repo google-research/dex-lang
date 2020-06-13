@@ -112,8 +112,8 @@ data Module = Module (Maybe BlockId) [Var] [Var] Block  deriving (Show, Eq)
 
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
-            | ULam UBinder   UArrow UExpr
-            | UPi  UPiBinder Arrow  UType
+            | ULam UBinder UArrow UExpr
+            | UPi  UPiBinder Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UBinder UExpr
@@ -130,7 +130,7 @@ type UVar   = VarP ()
 type UPat    = PatP  UVar
 type UPat'   = PatP' UVar
 type UBinder   = (UPat, Maybe UType)
-type UPiBinder = (UPat, UType)
+type UPiBinder = VarP UType
 
 data UModule = UModule [Name] [Name] [UDecl]  deriving (Show, Eq)
 type SrcPos = (Int, Int)
@@ -461,9 +461,9 @@ instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
     ULam b _ body -> uAbsFreeVars b body
-    UPi (WithSrc _ pat, argTy) arr ty ->
-      freeUVars argTy <>
-      ((freeUVars arr <> freeUVars ty) `envDiff` foldMap (@>()) pat)
+    UPi b arr ty ->
+      freeUVars (varAnn b) <>
+      ((freeUVars arr <> freeUVars ty) `envDiff` (b@>()))
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x

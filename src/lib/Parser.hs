@@ -201,7 +201,7 @@ uTopDecl = do
 
     addImplicitArg :: SrcPos -> Name -> UType -> UType
     addImplicitArg pos v ty =
-      WithSrc pos $ UPi (WithSrc pos (namePat v), uTyKind) ImplicitArrow ty
+      WithSrc pos $ UPi (v:>uTyKind) ImplicitArrow ty
       where
         k = if v == rawName SourceName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
@@ -221,24 +221,29 @@ funDefLet = label "function definition" $ mayBreak $ do
   v <- withSrc $ namePat <$> uName
   bs <- some arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
-  let funTy = buildPiType bs eff ty
+  let piBinders = flip map bs $ \(p, ann, arr) -> (patName p:>ann, arr)
+  let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
-  let lamBinders = flip map bs $ \((p,_), arr) -> ((p,Nothing), arr)
+  let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
   return $ \body -> ULet letBinder (buildLam lamBinders body)
   where
-    arg :: Parser (UPiBinder, UArrow)
+    arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
-      b <-(            ((,) <$> uVarPat <*> annot containedExpr)
-            <|> parens ((,) <$> uPat    <*> annot uType))
+      (p, ty) <-(            ((,) <$> uVarPat <*> annot containedExpr)
+                  <|> parens ((,) <$> uPat    <*> annot uType))
       arr <- arrow (return ()) <|> return (PlainArrow ())
-      return (b, arr)
+      return (p, ty, arr)
+
+patName :: UPat -> Name
+patName (WithSrc _ (PatBind (v:>()))) = v
+patName _ = NoName
 
 buildPiType :: [(UPiBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
   [] -> UPi b (fmap (const eff ) arr) ty
   _  -> UPi b (fmap (const Pure) arr) $ buildPiType bs eff ty
-  where WithSrc pos _ = snd b
+  where WithSrc pos _ = varAnn b
 
 effectiveType :: Parser (EffectRow, UType)
 effectiveType = (,) <$> effects <*> uType
@@ -324,9 +329,9 @@ uPiType = withSrc $ UPi <$> uPiBinder <*> arrow effects <*> uType
   where
     uPiBinder :: Parser UPiBinder
     uPiBinder = label "pi binder" $ do
-      p <- try $ withSrc $ liftM namePat uName <* sym ":"
+      v <- try $ uBinderName <* sym ":"
       ty <- containedExpr
-      return (p, ty)
+      return (v:>ty)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
@@ -335,6 +340,9 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "?->"  $> ImplicitArrow)
         <?> "arrow"
 
+uBinderName :: Parser Name
+uBinderName = uName <|> (sym "_" >> return NoName)
+
 uName :: Parser Name
 uName = textName <|> symName
 
@@ -342,10 +350,10 @@ annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
 
 uVarPat :: Parser UPat
-uVarPat = withSrc $ namePat <$> uName
+uVarPat = withSrc $ namePat <$> uBinderName
 
 uPat :: Parser UPat
-uPat =      uVarPat
+uPat =   uVarPat
      <|> withSrc (symbol "()" $> PatUnit)
      <|> parens uPat'
      <?> "pattern"
@@ -436,22 +444,19 @@ mkApp f x = joinSrc f x $ UApp (PlainArrow ()) f x
 infixLinArrow :: Parser (UType -> UType -> UType)
 infixLinArrow = do
   ((), pos) <- withPos $ sym "--o"
-  return $ \a b -> WithSrc pos $ UPi (typeAsPiBinder a) LinArrow b
+  return $ \a b -> WithSrc pos $ UPi (NoName:>a) LinArrow b
 
 infixEffArrow :: Parser (UType -> UType -> UType)
 infixEffArrow = do
   ((), pos) <- withPos $ sym "->"
   eff <- effects
-  return $ \a b -> WithSrc pos $ UPi (typeAsPiBinder a) (PlainArrow eff) b
+  return $ \a b -> WithSrc pos $ UPi (NoName:>a) (PlainArrow eff) b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
-mkArrow arr a b = joinSrc a b $ UPi (typeAsPiBinder a) arr b
+mkArrow arr a b = joinSrc a b $ UPi (NoName:>a) arr b
 
 namePat :: Name -> UPat'
 namePat v = PatBind (v:>())
-
-typeAsPiBinder :: UType -> UPiBinder
-typeAsPiBinder ty = (WithSrc (srcPos ty) (namePat NoName), ty)
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do

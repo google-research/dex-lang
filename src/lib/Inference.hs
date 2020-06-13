@@ -128,12 +128,12 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     addEffects $ arrowEff arr'
     appVal <- emit $ App fVal' xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi (p, a) arr ty -> do
+  UPi (v:>a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
     a'  <- checkUType a
-    piTy <- buildAbs (patNameHint p :> a') $ \x ->
-              withBindPat p x $ (,) <$> mapM checkUEff arr <*> checkUType ty
+    piTy <- buildAbs (v:>a') $ \x -> extendR ((v:>())@>x) $
+              (,) <$> mapM checkUEff arr <*> checkUType ty
     matchRequirement (Pi piTy)
   UDecl decl body -> do
     env <- inferUDecl decl

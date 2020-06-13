@@ -137,24 +137,28 @@ toImpHof env hof = case hof of
       ans <- toImpBlock (env <> b @> i') body
       copyAtom ithDest ans
     return dest
---   RunReader r (Abs ref body, env) -> do
---     toImpBlock (env <> ref @> r) body
---   RunWriter (Abs ref body, env) -> do
---     wDest <- alloc wTy
---     initializeAtomZero wDest
---     aResult <- toImpBlock (env <> ref @> wDest) body
---     return $ PairVal aResult wDest
---     where (PairTy _ wTy) = resultTy
+  RunReader r (BinaryFunVal region ref _ body) -> do
+    r' <- impSubst env r
+    toImpBlock (env <> ref @> refVal region r') body
+  RunWriter (BinaryFunVal region ref _ body) -> do
+    wDest <- alloc wTy
+    initializeAtomZero wDest
+    aResult <- toImpBlock (env <> ref @> refVal region wDest) body
+    return $ PairVal aResult wDest
+    where (PairTy _ wTy) = resultTy
   RunState s (BinaryFunVal region ref _ body) -> do
     s' <- impSubst env s
     sDest <- alloc sTy
     copyAtom sDest s'
-    aResult <- toImpBlock (env <> ref @> Con (RefCon (Var region) sDest)) body
+    aResult <- toImpBlock (env <> ref @> refVal region sDest) body
     return $ PairVal aResult sDest
     where (PairTy _ sTy) = resultTy
   where
     resultTy :: Type
     resultTy = getType $ Hof hof
+
+refVal :: Var -> Atom -> Atom
+refVal region ref = Con (RefCon (Var region) ref)
 
 toScalarAtom :: Type -> IExpr -> Atom
 toScalarAtom _  (ILit v) = Con $ Lit v
@@ -231,15 +235,6 @@ intToIndex ty@(TC con) i = case con of
   IntRange _ _      -> iAsIdx
   IndexRange _ _ _  -> iAsIdx
   BaseType BoolType -> impExprToAtom <$> emitUnOp UnsafeIntToBool i
-  -- RecType r -> do
-  --   strides <- getStrides $ fmap (\t->(t,t)) r
-  --   liftM RecVal $
-  --     flip evalStateT i $ forM strides $ \(ty', _, stride) -> do
-  --       i' <- get
-  --       iCur  <- lift $ impDiv i' stride
-  --       iRest <- lift $ impRem i' stride
-  --       put iRest
-  --       lift $ intToIndex ty' iCur
   SumType (l, r) -> do
     ls <- indexSetSize l
     isLeft <- impCmp Less i ls
@@ -254,18 +249,6 @@ intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 indexToInt :: Type -> Atom -> ImpM IExpr
 indexToInt ty idx = case ty of
   BoolTy  -> emitUnOp BoolToInt =<< fromScalarAtom idx
-  -- RecTy rt -> do
-  --   case idx of
-  --     (RecVal rv) -> do
-  --       rWithStrides <- getStrides $ recZipWith (,) rv rt
-  --       foldrM f (IIntVal 0) rWithStrides
-  --       where
-  --       f :: (Atom, Type, IExpr) -> IExpr -> ImpM IExpr
-  --       f (i, it, stride) cumIdx = do
-  --         i' <- indexToInt it i
-  --         iDelta  <- impMul i' stride
-  --         impAdd cumIdx iDelta
-  --     _ -> error $ "Expected a record, got: " ++ pprint idx
   SumTy lType rType     -> do
     case idx of
       (SumVal con lVal rVal) -> do
