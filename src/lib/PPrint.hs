@@ -275,6 +275,7 @@ instance Pretty UExpr' where
                                 PlainArrow eff  -> p eff
                                 _ -> mempty
     UDecl decl body -> p decl <> hardline <> p body
+    UHole -> "_"
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
     UPrimExpr prim -> p prim
 

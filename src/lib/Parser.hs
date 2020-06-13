@@ -158,6 +158,7 @@ leafExpr :: Parser UExpr
 leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uTabCon
          <|> uVar
+         <|> uHole
          <|> uLit
          <|> uPiType
          <|> uLamExpr
@@ -184,6 +185,9 @@ litVal =   (IntLit  <$> intLit)
 
 uVar :: Parser UExpr
 uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
+
+uHole :: Parser UExpr
+uHole = withSrc $ sym "_" $> UHole
 
 uTopDecl :: Parser UDecl
 uTopDecl = do

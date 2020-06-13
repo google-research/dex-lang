@@ -204,3 +204,8 @@ def myOtherFst ((x, _):a&b) : a = x
 
 :p sum [1.,2.]
 > 3.0
+
+:p
+  xs = fanout _ 1.0
+  for i:(Fin 3). xs.i + xs.i
+> [2.0, 2.0, 2.0]

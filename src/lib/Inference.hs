@@ -139,6 +139,9 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     env <- inferUDecl decl
     extendR env $ checkOrInferRho body reqTy
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
+  UHole -> case reqTy of
+    Infer -> throw MiscErr "Can't infer type of hole"
+    Check ty -> freshType ty
   UPrimExpr prim -> do
     prim' <- traverse lookupName prim
     val <- case prim' of
@@ -354,11 +357,12 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshType :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
+freshType :: Kind -> UInferM Type
 freshType EffKind = Eff <$> freshEff
 freshType k = do
   tv <- freshVar k
   extend $ SolverEnv (tv @> k) mempty
+  extendScope $ tv @> Nothing
   return $ Var tv
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow

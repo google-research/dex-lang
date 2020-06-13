@@ -117,6 +117,7 @@ data UExpr' = UVar UVar
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UBinder UExpr
+            | UHole
             | UTabCon [UExpr] (Maybe UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
@@ -469,6 +470,7 @@ instance HasUVars UExpr' where
     UApp _ f x -> freeUVars f <> freeUVars x
     UDecl (ULet b rhs) body -> freeUVars rhs <> uAbsFreeVars b body
     UFor _ b body -> uAbsFreeVars b body
+    UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UPrimExpr _ -> mempty
 

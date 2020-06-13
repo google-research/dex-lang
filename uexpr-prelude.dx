@@ -110,7 +110,7 @@ def swap (p:a&b) : (b&a) = (snd p, fst p)
 def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
 def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
-def fanout (n:Type) ?-> (x:a) : n=>a = for i. x
+def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (x:Real) : Real = x * x
 def abs (x:Real) : Real = select (x > 0.0) x (0.0 - x)
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
