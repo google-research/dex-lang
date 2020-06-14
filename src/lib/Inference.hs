@@ -24,7 +24,7 @@ import PPrint
 import Cat
 
 type InfEnv = Env Atom
-type UInferM = ReaderT InfEnv (ReaderT EffectRow (EmbedT (SolverT (Either Err))))
+type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -55,7 +55,7 @@ checkVars env (UModule imports exports _) = do
 runUInferM :: (HasVars a, Pretty a)
            => UInferM a -> InfEnv -> Scope -> Except (a, [Decl])
 runUInferM m env scope =
-  runSolverT $ runEmbedT (runReaderT (runReaderT m env) Pure) scope
+  runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -63,8 +63,8 @@ checkSigma expr sTy = case sTy of
     WithSrc _ (ULam b ImplicitArrow body) ->
       checkULam b body piTy
     _ -> do
-      buildLam ("a":> absArgType piTy) $ \x ->
-        liftM (ImplicitArrow,) $ checkSigma expr $ snd $ applyAbs piTy x
+      buildLam ("a":> absArgType piTy) (const (return ImplicitArrow)) $ \x ->
+        checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
 inferSigma :: UExpr -> UInferM Atom
@@ -107,11 +107,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       Abs n (arr, a) <- fromPiType TabArrow ty
       unless (arr == TabArrow) $
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
-      allowedEff <- lift ask
+      allowedEff <- getAllowedEffects
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
       emit $ Hof $ For dir lam
     Infer -> do
-      allowedEff <- lift ask
+      allowedEff <- getAllowedEffects
       lam <- inferULam b (PlainArrow allowedEff) body
       emit $ Hof $ For dir lam
   UApp arr f x -> do
@@ -177,22 +177,17 @@ inferUDecls decls = do
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
-  buildLam (patNameHint p :> argTy) $ \x -> do
-    -- TODO: check leaks here too
-    withBindPat p x $ do
-      result <- withEffects (arrowEff arr) $ inferSigma body
-      return (arr, result)
+  buildLam (patNameHint p :> argTy) (const (return arr))
+    $ \x -> withBindPat p x $ inferSigma body
 
 checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
-  buildLam (patNameHint p :> argTy) $ \x@(Var v) ->
-    checkLeaks [v] $ do
-      let (arr, resultTy) = applyAbs piTy x
-      withBindPat p x $ withEffects (arrowEff arr) $ do
-        result <- checkSigma body resultTy
-        return (arr, result)
+  buildLam (patNameHint p :> argTy)
+    ( \x -> return $ fst $ applyAbs piTy x)
+    $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
+                      checkSigma body $ snd $ applyAbs piTy x
 
 checkUEff :: EffectRow -> UInferM EffectRow
 checkUEff (EffectRow effs t) = do
@@ -295,20 +290,12 @@ fromPairType ty = do
 addEffects :: EffectRow -> UInferM ()
 addEffects eff = do
   eff' <- openEffectRow eff
-  allowedEffects <- lift ask
+  allowedEffects <- getAllowedEffects
   constrainEq (Eff allowedEffects) (Eff eff')
 
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
-
-withEffects :: EffectRow -> UInferM a -> UInferM a
-withEffects effs m = modifyAllowedEffects (const effs) m
-
-modifyAllowedEffects :: (EffectRow -> EffectRow) -> UInferM a -> UInferM a
-modifyAllowedEffects f m = do
-  env <- ask
-  lift $ local f (runReaderT m env)
 
 -- === constraint solver ===
 

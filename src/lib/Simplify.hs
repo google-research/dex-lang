@@ -89,15 +89,15 @@ simplifyLam' (Lam (Abs b (arr, body))) = do
   b' <- mapM substEmbed b
   if isData (getType body)
     then liftM (,Nothing) $ do
-      buildLam b' $ \x -> extendR (b@>x) $ (,) <$> substEmbed arr
-                                               <*> simplifyBlock body
+      buildLam b' (\x -> extendR (b@>x) $ substEmbed arr)
+                  (\x -> extendR (b@>x) $ simplifyBlock body)
     else do
-      (lam, recon) <- buildLamAux b' $ \x -> extendR (b@>x) $ do
-        ((eff', body'), (scope, decls)) <- embedScoped $ (,) <$> substEmbed arr
-                                                             <*> simplifyBlock body
-        mapM_ emitDecl decls
-        let (result, recon) = separateDataComponent scope body'
-        return ((eff', result), recon)
+      (lam, recon) <- buildLamAux b'
+        ( \x -> extendR (b@>x) $ substEmbed arr)
+        $ \x -> extendR (b@>x) $ do
+          (body', (scope, decls)) <- embedScoped $ simplifyBlock body
+          mapM_ emitDecl decls
+          return $ separateDataComponent scope body'
       return $ (lam, Just recon)
 
 simplifyBinaryLam :: Atom -> SimplifyM Atom
@@ -106,12 +106,11 @@ simplifyBinaryLam atom = substEmbed atom >>= (dropSub . simplifyBinaryLam')
 simplifyBinaryLam' :: Atom -> SimplifyM Atom
 simplifyBinaryLam' (BinaryFunVal b1 b2 eff body) = do
   b1' <- mapM substEmbed b1
-  buildLam b1' $ \x1 -> extendR (b1'@>x1) $ liftM (PureArrow,) $ do
-    b2' <- mapM substEmbed b2
-    buildLam b2' $ \x2 -> extendR (b2'@>x2) $ do
-      body' <- simplifyBlock body
-      eff' <- substEmbed eff
-      return (PlainArrow eff', body')
+  buildLam b1' (const (return PureArrow)) $ \x1 ->
+    extendR (b1'@>x1) $ do
+      b2' <- mapM substEmbed b2
+      buildLam b2' (\x2 -> extendR (b2'@>x2) $ substEmbed (PlainArrow eff))
+                   (\x2 -> extendR (b2'@>x2) $ simplifyBlock body)
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)

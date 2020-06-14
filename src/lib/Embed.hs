@@ -12,7 +12,8 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Embed (emit, emitOp, buildLam, buildLamAux, buildAbs,
-              EmbedT, Embed, EmbedEnv, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
+              getAllowedEffects, withEffects, modifyAllowedEffects,
+              EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
               app, add, mul, sub, neg, div', andE, reduceScoped, declAsScope,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
@@ -36,15 +37,17 @@ import Cat
 import Type
 import PPrint
 
-newtype EmbedT m a = EmbedT (ReaderT Name (CatT EmbedEnv m) a)
+newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadFail)
 
 type Embed = EmbedT Identity
-type EmbedEnv = (Scope, [Decl])
+type EmbedEnv = (EmbedEnvR, EmbedEnvC)
+type EmbedEnvC = (Scope, [Decl])
+type EmbedEnvR = (Name, EffectRow)
 
 runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, [Decl])
 runEmbedT (EmbedT m) scope = do
-  (ans, (_, decls)) <- runCatT (runReaderT m NoName) (scope, [])
+  (ans, (_, decls)) <- runCatT (runReaderT m (NoName, Pure)) (scope, [])
   return (ans, decls)
 
 runEmbed :: Embed a -> Scope -> (a, [Decl])
@@ -102,13 +105,16 @@ buildAbs b f = do
   return $ makeAbs b' ans
 
 buildLam :: MonadEmbed m
-         => Var -> (Atom -> m (Arrow, Atom)) -> m Atom
-buildLam b f = liftM fst $ buildLamAux b $ \x -> (,()) <$> f x
+         => Var -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
+buildLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> fBody x
 
 buildLamAux :: MonadEmbed m
-            => Var -> (Atom -> m ((Arrow, Atom), a)) -> m (Atom, a)
-buildLamAux b f = do
-  (((arr, ans), aux), b', decls) <- withBinder b f
+            => Var -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
+buildLamAux b fArr fBody = do
+  ((arr, (ans, aux)), b', decls) <- withBinder b $ \x -> do
+    arr <- fArr x
+    (ansAux) <- withEffects (arrowEff arr) $ fBody x
+    return (arr, ansAux)
   return (Lam (Abs b' (arr, wrapDecls decls ans)), aux)
 
 buildScoped :: (MonadEmbed m) => m Atom -> m Block
@@ -183,7 +189,7 @@ unpackConsList = undefined
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
-  lam <- buildLam i $ \i' -> (PureArrow,) <$> body i'
+  lam <- buildLam i (const (return TabArrow)) body
   emit $ Hof $ For d lam
 
 unzipTab :: (MonadEmbed m) => Atom -> m (Atom, Atom)
@@ -244,36 +250,32 @@ instance MonadTrans EmbedT where
   lift m = EmbedT $ lift $ lift m
 
 class Monad m => MonadEmbed m where
-  embedLook   :: m EmbedEnv
-  embedExtend :: EmbedEnv -> m ()
-  embedScoped :: m a -> m (a, EmbedEnv)
-  getNameHint  :: m Name
-  withNameHint :: Name -> m a -> m a
+  embedLook   :: m EmbedEnvC
+  embedExtend :: EmbedEnvC -> m ()
+  embedScoped :: m a -> m (a, EmbedEnvC)
+  embedAsk    :: m EmbedEnvR
+  embedLocal  :: (EmbedEnvR -> EmbedEnvR) -> m a -> m a
 
 instance Monad m => MonadEmbed (EmbedT m) where
   embedLook = EmbedT look
   embedExtend env = EmbedT $ extend env
   embedScoped (EmbedT m) = EmbedT $ scoped m
-  getNameHint = EmbedT $ do
-    v <- ask
-    return $ case v of
-      NoName -> "tmp"
-      _      -> v
-  withNameHint v (EmbedT m) = EmbedT $ local (const v) m
+  embedAsk = EmbedT ask
+  embedLocal f (EmbedT m) = EmbedT $ local f m
 
 instance MonadEmbed m => MonadEmbed (ReaderT r m) where
   embedLook = lift embedLook
   embedExtend x = lift $ embedExtend x
   embedScoped m = ReaderT $ \r -> embedScoped $ runReaderT m r
-  getNameHint = lift getNameHint
-  withNameHint v m = ReaderT $ \r -> withNameHint v $ runReaderT m r
+  embedAsk = lift embedAsk
+  embedLocal v m = ReaderT $ \r -> embedLocal v $ runReaderT m r
 
 instance (Monoid env, MonadEmbed m) => MonadEmbed (CatT env m) where
   embedLook = undefined
   embedExtend _ = error "not implemented"
   embedScoped _ = error "not implemented"
-  getNameHint = lift getNameHint
-  withNameHint = undefined
+  embedAsk = lift embedAsk
+  embedLocal = undefined
 
 instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
   embedLook = lift embedLook
@@ -282,8 +284,8 @@ instance (Monoid w, MonadEmbed m) => MonadEmbed (WriterT w m) where
     ((x, w), env) <- lift $ embedScoped $ runWriterT m
     tell w
     return (x, env)
-  getNameHint = lift getNameHint
-  withNameHint v m = WriterT $ withNameHint v $ runWriterT m
+  embedAsk = lift embedAsk
+  embedLocal v m = WriterT $ embedLocal v $ runWriterT m
 
 instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
   look = lift look
@@ -298,21 +300,40 @@ instance (Monoid env, MonadCat env m) => MonadCat env (EmbedT m) where
 instance MonadError e m => MonadError e (EmbedT m) where
   throwError = lift . throwError
   catchError m catch = do
-    env <- embedLook
-    hint <- getNameHint
-    (ans, env') <- lift $ runEmbedT' m hint env
-                     `catchError` (\e -> runEmbedT' (catch e) hint env)
-    embedExtend env'
+    envC <- embedLook
+    envR <- embedAsk
+    (ans, envC') <- lift $ runEmbedT' m (envR, envC)
+                     `catchError` (\e -> runEmbedT' (catch e) (envR, envC))
+    embedExtend envC'
     return ans
 
-runEmbedT' :: Monad m => EmbedT m a -> Name -> EmbedEnv -> m (a, EmbedEnv)
-runEmbedT' (EmbedT m) name env = runCatT (runReaderT m name) env
+getNameHint :: MonadEmbed m => m Name
+getNameHint = do
+  v <- fst <$> embedAsk
+  return $ case v of
+    NoName -> "tmp"
+    _      -> v
+
+withNameHint :: MonadEmbed m => Name -> m a -> m a
+withNameHint name m = embedLocal (\(_, eff) -> (name, eff)) m
+
+runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnvC)
+runEmbedT' (EmbedT m) (envR, envC) = runCatT (runReaderT m envR) envC
 
 getScope :: MonadEmbed m => m Scope
 getScope = fst <$> embedLook
 
 extendScope :: MonadEmbed m => Scope -> m ()
 extendScope scope = embedExtend $ asFst scope
+
+getAllowedEffects :: MonadEmbed m => m EffectRow
+getAllowedEffects = snd <$> embedAsk
+
+withEffects :: MonadEmbed m => EffectRow -> m a -> m a
+withEffects effs m = modifyAllowedEffects (const effs) m
+
+modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
+modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
 emitDecl decl@(Let v expr) = embedExtend (v @> Just expr, [decl])
