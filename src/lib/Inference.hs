@@ -63,7 +63,7 @@ checkSigma expr sTy = case sTy of
     WithSrc _ (ULam b ImplicitArrow body) ->
       checkULam b body piTy
     _ -> do
-      buildLam ("a":> absArgType piTy) (const (return ImplicitArrow)) $ \x ->
+      buildLam ("a":> absArgType piTy) ImplicitArrow $ \x ->
         checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
@@ -177,14 +177,15 @@ inferUDecls decls = do
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
-  buildLam (patNameHint p :> argTy) (const (return arr))
+  -- TODO: worry about binder appearing in arrow?
+  buildLam (patNameHint p :> argTy) arr
     $ \x -> withBindPat p x $ inferSigma body
 
 checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
-  buildLam (patNameHint p :> argTy)
+  buildDepEffLam (patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body $ snd $ applyAbs piTy x

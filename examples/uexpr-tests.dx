@@ -209,3 +209,14 @@ def myOtherFst ((x, _):a&b) : a = x
   xs = fanout _ 1.0
   for i:(Fin 3). xs.i + xs.i
 > [2.0, 2.0, 2.0]
+
+:p
+   f = \x. x * x * x
+   jvp f 2.0 1.5
+> 18.0
+
+:p
+   f : (Real --o Real) =
+     \x. 2.0 * (x + x)
+   transposeLinear f 1.0
+> 4.0

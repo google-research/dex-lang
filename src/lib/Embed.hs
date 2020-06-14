@@ -11,16 +11,16 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitOp, buildLam, buildLamAux, buildAbs,
+module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
               getAllowedEffects, withEffects, modifyAllowedEffects,
-              EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
+              buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
               app, add, mul, sub, neg, div', andE, reduceScoped, declAsScope,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList) where
+              unpackConsList, emitRunWriter) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -104,9 +104,12 @@ buildAbs b f = do
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return $ makeAbs b' ans
 
-buildLam :: MonadEmbed m
-         => Var -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
-buildLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> fBody x
+buildLam :: MonadEmbed m => Var -> Arrow -> (Atom -> m Atom) -> m Atom
+buildLam b arr body = buildDepEffLam b (const (return arr)) body
+
+buildDepEffLam :: MonadEmbed m
+               => Var -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
+buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> fBody x
 
 buildLamAux :: MonadEmbed m
             => Var -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
@@ -186,10 +189,18 @@ fromPair pair          = error $ "Not a pair: " ++ pprint pair
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList = undefined
 
+emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
+emitRunWriter v ty body = do
+  eff <- getAllowedEffects
+  lam <- buildLam ("r":>TyKind) PureArrow $ \r@(Var (rName:>_)) -> do
+    let arr = PlainArrow $ extendEffect (Writer, rName) eff
+    buildLam (v:> RefTy r ty) arr body
+  emit $ Hof $ RunWriter lam
+
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
-  lam <- buildLam i (const (return TabArrow)) body
+  lam <- buildLam i TabArrow body
   emit $ Hof $ For d lam
 
 unzipTab :: (MonadEmbed m) => Atom -> m (Atom, Atom)

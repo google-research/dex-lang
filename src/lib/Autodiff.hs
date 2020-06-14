@@ -28,14 +28,13 @@ type PrimalM = WriterT Vars EmbedSubM
 newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
 linearize :: Scope -> Atom -> Atom
-linearize = undefined
--- linearize env scope (AbsBlock b block) = fst $ flip runEmbed scope $ do
---   buildLam PlainArrow b $ \x -> do
---     ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
---                       runLinA (linearizeBlock env block)
---     -- TODO: check linearity
---     fLin <- buildLam LinArrow b $ \xt -> runReaderT yt (b@>xt)
---     return $ PairVal y fLin
+linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+  buildLam b PureArrow $ \x -> do
+    ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
+                      runLinA (linearizeBlock block)
+    -- TODO: check linearity
+    fLin <- buildLam b LinArrow $ \xt -> runReaderT yt (b@>xt)
+    return $ PairVal y fLin
 
 linearizeBlock :: Block -> LinA Atom
 linearizeBlock (Block decls result) = case decls of
@@ -93,11 +92,8 @@ linearizeExpr expr = case expr of
   --   ans <- emit $ App x' i'
   --   return (ans, do tx' <- tx
   --                   emit $ App tx' i')
-  -- App (Var v) arg | v `isin` ruleEnv -> LinA $ do
-  --   (x, t) <- runLinA $ linearizeAtom arg
-  --   (y, f) <- emit (App (ruleEnv ! v) x) >>= fromPair
-  --   saveVars f
-  --   return (y, liftM (App f) t >>= emit )
+  Op op -> linearizeOp op
+
 
 linearizeOp :: Op -> LinA Atom
 linearizeOp op = case fmap linearizeAtom op of
@@ -189,17 +185,15 @@ tangentType (TC con) = case con of
   BaseType   _       -> UnitTy
   IntRange   _ _     -> UnitTy
   IndexRange _ _ _   -> UnitTy
+  UnitType           -> UnitTy
   PairType a b       -> PairTy (tangentType a) (tangentType b)
-  -- RefType a          -> RefTy $ tangentType a
   _           -> error $ "Can't differentiate wrt type " ++ pprint con
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 
+-- TODO: consider effects!
 hasDiscreteType :: HasType e => e -> Bool
-hasDiscreteType = undefined
-  -- Nothing | null eff -> isSingletonType tangentTy
-  -- _ -> False
-  -- where (Effects eff tailVar, ty) = getEffType expr
-  --       tangentTy = tangentType ty
+hasDiscreteType expr = isSingletonType tangentTy
+  where tangentTy = tangentType $ getType expr
 
 tensLiftA2 :: (HasVars a, HasVars b)
            => (a -> b -> Op) -> LinA a -> LinA b -> LinA Atom
@@ -240,31 +234,29 @@ type LinVars = Env Atom
 type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> Atom -> Atom
-transposeMap = undefined
--- transposeMap scope (AbsBlock b expr) = fst $ flip runEmbed scope $ do
---   buildLam LinArrow ("ct" :> getType expr) $ \ct -> do
---     flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
+transposeMap scope (Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
+  buildLam ("ct" :> getType expr) LinArrow $ \ct -> do
+    flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
 
 transposeBlock :: Block -> Atom -> TransposeM ()
-transposeBlock = undefined
--- transposeBlock (Block decls result) ct = case decls of
---   [] -> transposeExpr result ct
---   Let b bound : rest -> do
---     let (eff, _) = getEffType bound
---     linEff <- isLinEff eff
---     lin <- isLin bound
---     if lin || linEff
---       then do
---         ct' <- withLinVar b $ transposeBlock body ct
---         transposeExpr bound ct'
---       else do
---         x <- substTranspose bound >>= emitTo b
---         extendR (asSnd (b@>x)) $ transposeBlock body ct
---     where body = Block rest result
+transposeBlock (Block decls result) ct = case decls of
+  [] -> transposeExpr result ct
+  Let b bound : rest -> do
+    -- let (eff, _) = getEffType bound
+    -- linEff <- isLinEff eff
+    lin <- isLin bound
+    if lin -- || linEff
+      then do
+        ct' <- withLinVar b $ transposeBlock body ct
+        transposeExpr bound ct'
+      else do
+        bound' <- substTranspose bound
+        x <- withNameHint (varName b) $ emit bound'
+        extendR (asSnd (b@>x)) $ transposeBlock body ct
+    where body = Block rest result
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
-transposeExpr = undefined
--- transposeExpr expr ct = case expr of
+transposeExpr expr ct = case expr of
 --   For d (AbsBlock v body) -> do
 --     lam <- buildAbsBlock v $ \i -> do
 --       ct' <- nTabGet ct i
@@ -281,6 +273,7 @@ transposeExpr = undefined
   --   void $ withIndexed Writer ref i' $ \(Var ref') -> do
   --     emitCTToRef ref' ct
   --     return UnitVal
+  Op op -> transposeOp op ct
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
@@ -309,10 +302,6 @@ transposeOp op ct = case op of
     y' <- substTranspose y
     ct' <- div' ct y'
     transposeAtom x ct'
-  -- RecGet x i -> do
-  --   ~(RecVal rZeros) <- zeroAt (getType x)
-  --   let ct' = RecVal $ recUpdate i ct rZeros
-  --   transposeAtom x ct'
   PrimEffect refArg m -> do
     refArg' <- substTranspose refArg
     case m of
@@ -345,9 +334,6 @@ transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
 transposeCon con ct = case con of
   Lit _ -> return ()
-  -- RecCon r -> do
-  --   rCT <- unpackRec ct
-  --   sequence_ $ recZipWith transposeAtom r rCT
   _ -> error $ "not implemented: transposition for: " ++ pprint con
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
@@ -386,17 +372,10 @@ substTranspose x = do
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v m = liftM fst $ extractCT v m
-
-extractCT :: Var -> TransposeM a -> TransposeM (Atom, a)
-extractCT = undefined
--- extractCT v@(_:>ty) m = do
---   (lam, ans) <- buildAbsBlockAux ("ctRef":> RefTy ty) $ \ctRef -> do
---     extendR (asFst (v @> ctRef)) $ do
---       ans <- m
---       return (UnitVal, ans)
---   (_, w) <- emit (Hof (RunWriter lam)) >>= fromPair
---   return (w, ans)
+withLinVar v m = do
+  ans <- emitRunWriter "ref" (varAnn v) $ \ref -> do
+    extendR (asFst (v@>ref)) (m >> return UnitVal)
+  getSnd ans
 
 flipDir :: Direction -> Direction
 flipDir Fwd = Rev

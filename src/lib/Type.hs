@@ -10,7 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, HasType (..), Checkable (..), litType, isPure,
+  getType, HasType (..), Checkable (..), litType, isPure, extendEffect,
   binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
 
 import Control.Monad
