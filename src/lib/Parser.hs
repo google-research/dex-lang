@@ -277,7 +277,8 @@ buildLam :: [(UBinder, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
   [] -> body
   -- TODO: join with source position of binders too
-  (b,arr):bs -> WithSrc pos $ ULam b arr $ buildLam bs body
+  (b,arr):bs -> WithSrc (joinPos pos' pos) $ ULam b arr $ buildLam bs body
+     where (WithSrc pos' _, _) = b
 
 buildFor :: SrcPos -> Direction -> [UBinder] -> UExpr -> UExpr
 buildFor pos dir binders body = case binders of

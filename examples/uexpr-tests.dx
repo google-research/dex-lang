@@ -139,7 +139,7 @@ myPair = (1, 2.3)
 > Type error:
 > Expected: (a & b)
 >   Actual: Int
-> Solving for: [a:Type, b:Type]
+> (Solving for: [a:Type, b:Type])
 >
 >   ((x,y),z) = (1,2,3)
 >     ^^^
@@ -155,7 +155,7 @@ myPair = (1, 2.3)
 > Type error:
 > Expected: (a & b)
 >   Actual: Int
-> Solving for: [a:Type, b:Type]
+> (Solving for: [a:Type, b:Type])
 >
 >   (x,y) = 1
 >    ^^^
@@ -190,7 +190,7 @@ def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 > Type error:Leaked type variable: a:Type
 >
 >   f : (a:Type -> a -> a) = \a. \x. myId x
->                                    ^^^^^^
+>                             ^^^^^^^^^^^^^
 
 def myFst (p:a&b) : a =
   (x, _) = p
@@ -220,3 +220,14 @@ def myOtherFst ((x, _):a&b) : a = x
      \x. 2.0 * (x + x)
    transposeLinear f 1.0
 > 4.0
+
+def transpose' (x:n=>m=>Real) --o : m=>n=>Real = for i j. x.j.i
+
+:p transposeLinear transpose' [[1.0, 2.0, 3.0]]
+> [[1.0], [2.0], [3.0]]
+
+:p
+   f : (Real --o (Fin 3=>Real)) =
+     \x. for i. x * 2.0
+   transposeLinear f [1.0, 2.0, 3.0]
+> 12.0

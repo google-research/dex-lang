@@ -98,13 +98,13 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     withBindPat p x $ checkOrInferRho body reqTy
   ULam b arr body -> case reqTy of
     Check ty -> do
-      piTy@(Abs _ (arrReq, _)) <- fromPiType arr ty
+      piTy@(Abs _ (arrReq, _)) <- fromPiType False arr ty
       checkArrow arrReq arr
       checkULam b body piTy
     Infer -> inferULam b (fmap (const Pure) arr) body
   UFor dir b body -> case reqTy of
     Check ty -> do
-      Abs n (arr, a) <- fromPiType TabArrow ty
+      Abs n (arr, a) <- fromPiType False TabArrow ty
       unless (arr == TabArrow) $
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- getAllowedEffects
@@ -116,8 +116,10 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       emit $ Hof $ For dir lam
   UApp arr f x -> do
     fVal <- inferRho f
-    piTy <- fromPiType arr $ getType fVal
     fVal' <- zonk fVal
+    piTy <- addSrcContext (Just (srcPos f)) $ fromPiType True arr $ getType fVal'
+    -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
+    fVal'' <- zonk fVal
     xVal <- checkSigma x (absArgType piTy)
     (arr', xVal') <- case piTy of
       Abs (NoName:>_) (arr', _) -> return (arr', xVal)
@@ -126,7 +128,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         let xVal' = reduceAtom scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
-    appVal <- emit $ App fVal' xVal'
+    appVal <- emit $ App fVal'' xVal'
     instantiateSigma appVal >>= matchRequirement
   UPi (v:>a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -271,13 +273,14 @@ inferTabTy xs ann = case ann of
     ty <- getType <$> inferRho x
     return (FixedIntRange 0 (length xs), ty)
 
-fromPiType :: UArrow -> Type -> UInferM PiType
-fromPiType _ (Pi piTy) = return piTy -- TODO: check arrow
-fromPiType arr ty = do
+fromPiType :: Bool -> UArrow -> Type -> UInferM PiType
+fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
+fromPiType expectPi arr ty = do
   a <- freshType TyKind
   b <- freshType TyKind
   let piTy = Abs (NoName:>a) (fmap (const Pure) arr, b)
-  constrainEq (Pi piTy) ty
+  if expectPi then  constrainEq (Pi piTy) ty
+              else  constrainEq ty (Pi piTy)
   return piTy
 
 fromPairType :: Type -> UInferM (Type, Type)
@@ -370,7 +373,8 @@ constrainEq t1 t2 = do
   let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
   let msg = "\nExpected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
-         ++ (if null infVars then "" else "\nSolving for: " ++ pprint infVars)
+         ++ (if null infVars then "" else
+               "\n(Solving for: " ++ pprint infVars ++ ")")
   addContext msg $ unify t1' t2'
 
 zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a
@@ -394,6 +398,7 @@ unify t1 t2 = do
        -- TODO: think very hard about the leak checks we need to add here
        let (arr , resultTy ) = applyAbs piTy  v
        let (arr', resultTy') = applyAbs piTy' v
+       when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
     (TC con, TC con') | void con == void con' ->

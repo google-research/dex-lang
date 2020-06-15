@@ -20,7 +20,7 @@ module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter) where
+              unpackConsList, emitRunWriter, tabGet) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -200,10 +200,14 @@ emitRunWriter v ty body = do
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
-  lam <- buildLam i TabArrow body
+  eff <- getAllowedEffects
+  lam <- buildLam i (PlainArrow eff) body
   emit $ Hof $ For d lam
 
-unzipTab :: (MonadEmbed m) => Atom -> m (Atom, Atom)
+tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
+tabGet x i = emit $ App x i
+
+unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
   fsts <- buildFor Fwd ("i":>n) $ \i ->
             liftM fst $ app tab i >>= fromPair

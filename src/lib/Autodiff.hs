@@ -257,22 +257,18 @@ transposeBlock (Block decls result) ct = case decls of
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
---   For d (AbsBlock v body) -> do
---     lam <- buildAbsBlock v $ \i -> do
---       ct' <- nTabGet ct i
---       extendR (asSnd (v@>i)) $ transposeBlock body ct'
---       return UnitVal
---     void $ emit $ For (flipDir d) lam
-  -- TabGet ~(Var x) i -> do
-  --   i' <- substTranspose i
-  --   linVars <- asks fst
-  --   ref <- case envLookup linVars x of
-  --            Just ref -> return ref
-  --            -- might be possible to reach here indexing into a literal zero array
-  --            _ -> error "Not implemented"
-  --   void $ withIndexed Writer ref i' $ \(Var ref') -> do
-  --     emitCTToRef ref' ct
-  --     return UnitVal
+  App ~(Var x) i -> case varAnn x of
+    TabTy _ _ -> do
+      i' <- substTranspose i
+      linVars <- asks fst
+      ref <- case envLookup linVars x of
+               Just ref -> return ref
+               -- might be possible to reach here indexing into a literal zero array
+               _ -> error "Not implemented"
+      ref' <- emitOp $ IndexRef ref i'
+      emitCTToRef ref' ct
+    _ -> error $ "shouldn't have non-table app left"
+  Hof hof -> transposeHof hof ct
   Op op -> transposeOp op ct
 
 transposeOp :: Op -> Atom -> TransposeM ()
@@ -314,7 +310,12 @@ transposeOp op ct = case op of
 
 
 transposeHof :: Hof -> Atom -> TransposeM ()
-transposeHof = undefined
+transposeHof hof ct = case hof of
+  For d (Lam (Abs b (_, body))) ->
+    void $ buildFor (flipDir d) b $ \i -> do
+      ct' <- tabGet ct i
+      extendR (asSnd (b@>i)) $ transposeBlock body ct'
+      return UnitVal
 -- transposeHof hof ct = case hof of
 --   RunReader r (AbsBlock v body) -> do
 --     lam <- buildAbsBlock v $ \x -> do
@@ -359,11 +360,11 @@ emitCT :: Var -> Atom -> TransposeM ()
 emitCT v ct = do
   linVars <- asks fst
   case envLookup linVars v of
-    Just ~(Var ref) -> emitCTToRef ref ct
+    Just ref -> emitCTToRef ref ct
     _ -> return ()
 
-emitCTToRef :: Var -> Atom -> TransposeM ()
-emitCTToRef ref ct = void $ emitOp $ PrimEffect (Var ref) (MTell ct)
+emitCTToRef :: Atom -> Atom -> TransposeM ()
+emitCTToRef ref ct = void $ emitOp $ PrimEffect ref (MTell ct)
 
 substTranspose :: HasVars a => a -> TransposeM a
 substTranspose x = do

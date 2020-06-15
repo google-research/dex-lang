@@ -408,8 +408,9 @@ checkIdxSet env ty = case ty of
 checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
 checkDataLike msg env ty = case ty of
   -- This is an implicit `instance IdxSet a => Data a`
-  Var v              -> checkVarClass env IdxSet v `catchError`
-                           const (checkVarClass env Data v)
+  Var v -> checkVarClass env IdxSet v `catchError`
+             const (checkVarClass env Data v)
+  TabTy _ b -> recur b
   TC con -> case con of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b

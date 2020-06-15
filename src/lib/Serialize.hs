@@ -175,34 +175,29 @@ valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = HeatmapOut h w xs
         w = wh - wl
 
 pprintVal :: Val -> IO String
-pprintVal val = liftM asStr $ prettyVal val
+pprintVal val = liftM asStr $ prettyVal [] val
 
-prettyVal :: Val -> IO (Doc ann)
-prettyVal (Con con) = case con of
-  PairCon x y -> liftM pretty $ liftM2 (,) (asStr <$> prettyVal x)
-                                           (asStr <$> prettyVal y)
+prettyVal :: [Int] -> Val -> IO (Doc ann)
+prettyVal idxs (Con con) = case con of
+  PairCon x y -> liftM pretty $ liftM2 (,) (asStr <$> prettyVal idxs x)
+                                           (asStr <$> prettyVal idxs y)
   AFor n body -> do
     xs <- flip mapM [0..n'-1] $ \i ->
-      liftM asStr $ prettyVal $ litIndexSubst i body
+      liftM asStr $ prettyVal (idxs ++ [i]) body
     return $ pretty xs <> idxSetStr
     where
       (Just n') = indexSetConcreteSize n
       idxSetStr = case n of FixedIntRange 0 _ -> mempty
                             _                 -> "@" <> pretty n
-  AGet (Con (ArrayLit arr)) ->
-    return $ pretty $ fromMaybe (error "not a scalar") $ scalarFromArray arr
+  AGet (Con (ArrayLit arr)) -> do
+    let arr' = foldl (flip subArray) arr idxs
+    return $ pretty $ fromMaybe (error "not a scalar") $ scalarFromArray arr'
   AsIdx n i -> do
-    i' <- prettyVal i
+    i' <- prettyVal idxs i
     return $ i' <> "@" <> pretty n
   Lit x -> return $ pretty x
   _ -> return $ pretty con
-prettyVal atom = error $ "Unexpected value: " ++ pprint atom
-
-litIndexSubst :: Int -> Atom -> Atom
-litIndexSubst i atom = case atom of
-  Con (ArrayLit x) -> Con $ ArrayLit $ subArray i x
-  Con con -> Con $ fmap (litIndexSubst i) con
-  _ -> error "Unused index"
+prettyVal _ atom = error $ "Unexpected value: " ++ pprint atom
 
 traverseVal :: Monad m => (Con -> m (Maybe Con)) -> Val -> m Val
 traverseVal f val = case val of

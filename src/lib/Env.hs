@@ -166,7 +166,7 @@ instance Pretty Name where
   pretty NoName = "_"
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
-                                     _ -> "_" <> pretty n
+                                     _ -> pretty n
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0
