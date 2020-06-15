@@ -184,7 +184,7 @@ app x i = emit $ App x i
 
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair (PairVal x y) = return (x, y)
-fromPair pair          = error $ "Not a pair: " ++ pprint pair
+fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList = undefined
@@ -223,6 +223,10 @@ mapScalars f ty xs = case ty of
       xs' <- mapM (flip app i) xs
       mapScalars f a xs'
   BaseTy _           -> f ty xs
+  UnitTy -> return UnitVal
+  PairTy a b -> do
+    (ys, zs) <- unzip <$> mapM fromPair xs
+    PairVal <$> mapScalars f a ys <*> mapScalars f b zs
   TC con -> case con of
     -- NOTE: Sum types not implemented, because they don't have a total zipping function!
     IntRange _ _     -> f ty xs
@@ -392,5 +396,5 @@ reduceExpr scope expr = case expr of
     let x' = reduceAtom scope x
     -- TODO: Worry about variable capture. Should really carry a substitution.
     Lam (Abs b (PureArrow, block)) <- return f'
-    reduceBlock scope $ scopelessSubst (b@>x') block
+    reduceBlock scope $ subst (b@>x', scope) block
   _ -> Nothing

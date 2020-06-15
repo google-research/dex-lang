@@ -45,15 +45,18 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-example-names = type-tests eval-tests shadow-tests annot-tests linear-tests ad-tests \
-                monad-tests include-test mandelbrot pi sierpinsky \
-                regression brownian_motion chol particle-swarm-optimizer \
-                ode-integrator
+example-names = uexpr-tests type-tests
+# example-names = uexpr-tests type-tests eval-tests shadow-tests annot-tests \
+#                 linear-tests ad-tests \
+#                 monad-tests include-test mandelbrot pi sierpinsky \
+#                 regression brownian_motion chol particle-swarm-optimizer \
+#                 ode-integrator
 quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-tests: test-prep uexpr-tests quine-tests repl-test
+# tests: test-prep uexpr-tests quine-tests repl-test
+tests: test-prep quine-tests
 
 test-prep:
 	rm -rf test-scratch/

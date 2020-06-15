@@ -133,7 +133,7 @@ parseEvalOpts = EvalConfig
   <$> (option
          (optionList [("LLVM", LLVM), ("JAX", JAX), ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
-  <*> (strOption $ long "prelude" <> value "uexpr-prelude.dx" <> metavar "FILE"
+  <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"
                     <> metavar "FILE"

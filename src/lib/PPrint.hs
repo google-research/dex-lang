@@ -105,7 +105,7 @@ instance Pretty e => Pretty (PrimTC e) where
     PairType a b   -> parens $ p a <+> "&" <+> p b
     UnitType       -> "Unit"
     ArrayType (shape, b) -> p b <> p shape
-    IntRange a b -> if s1 == "0...<" then p s2 else ans
+    IntRange a b -> if s1 == "0...<" then "Fin" <+> p s2 else ans
       where ans = p a <> "...<" <> p b
             (s1, s2) = splitAt 5 (asStr ans)
     IndexRange _ low high -> low' <> "." <> high'
@@ -129,7 +129,7 @@ instance Pretty e => Pretty (PrimCon e) where
     RefCon _ _  -> "RefCon"
     AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
     AGet e      -> "aget" <+> p e
-    AsIdx n i   -> p i <> "@" <> p n
+    AsIdx n i   -> p i <> "@" <> parens (p n)
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ "SumCon" <+> p c <+> p l <+> p r
     Todo e -> "<undefined " <> p e <> ""

@@ -187,7 +187,7 @@ uVar :: Parser UExpr
 uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 
 uHole :: Parser UExpr
-uHole = withSrc $ sym "_" $> UHole
+uHole = withSrc $ underscore $> UHole
 
 uTopDecl :: Parser UDecl
 uTopDecl = do
@@ -217,7 +217,10 @@ decl = do
   return $ lhs rhs
 
 simpleLet :: Parser (UExpr -> UDecl)
-simpleLet = label "let binding" $ ULet <$> try (uBinder <* lookAhead (sym "="))
+simpleLet = label "let binding" $ do
+  pat <- try $ uPat <* lookAhead (sym "=" <|> sym ":")
+  ann <- optional $ annot uType
+  return $ ULet (pat, ann)
 
 funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
@@ -346,7 +349,7 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
         <?> "arrow"
 
 uBinderName :: Parser Name
-uBinderName = uName <|> (sym "_" >> return NoName)
+uBinderName = uName <|> (underscore >> return NoName)
 
 uName :: Parser Name
 uName = textName <|> symName
@@ -525,7 +528,7 @@ backquoteName = label "backquoted name" $
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
-lParen, rParen, lBracket, rBracket, lBrace, rBrace, semicolon :: Lexer ()
+lParen, rParen, lBracket, rBracket, lBrace, rBrace, semicolon, underscore :: Lexer ()
 
 lParen    = notFollowedBy symName >> notFollowedBy unitCon >> charLexeme '('
 rParen    = charLexeme ')'
@@ -534,9 +537,11 @@ rBracket  = charLexeme ']'
 lBrace    = charLexeme '{'
 rBrace    = charLexeme '}'
 semicolon = charLexeme ';'
+underscore = charLexeme '_'
 
 charLexeme :: Char -> Parser ()
 charLexeme c = void $ lexeme $ char c
+
 
 nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'

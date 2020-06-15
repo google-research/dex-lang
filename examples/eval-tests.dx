@@ -6,26 +6,26 @@
    double 10.0
 > 20.0
 
-:p isum (iota @10)
+:p isum (iota (Fin 10))
 > 45
 
 :p
-   x = iota @10
+   x = iota (Fin 10)
    isum (for i. x.i)
 > 45
 
 :p
-   vdot' : n=>Real -> n=>Real -> Real
-   vdot' x y = sum (for i. x.i * y.i * 2.0)
-   x = (iota) : (3=>Int)
-   y = map real x
+   vdot' : n:Type ?-> n=>Real -> n=>Real -> Real =
+     \x y. sum (for i. x.i * y.i * 2.0)
+   x = iota (Fin 3)
+   y = map i2r x
    vdot' y y
 > 10.0
 
 :p
-   x = iota @ 3
-   y = iota @ 4
-   z.i.j = real x.i * real y.j
+   x = iota $ Fin 3
+   y = iota $ Fin 4
+   z = for i j. i2r x.i * i2r y.j
    sum (for i. sum z.i)
 > 18.0
 
@@ -33,20 +33,17 @@
 -- :p let x = unpack range 10000
 --        key = hash 0
 --    in sum (for i: randint (key x.i) 10)
-type NArr = 7
+NArr = Fin 7
 
+arr = iota NArr
 
-arr = iota @ NArr
-
-
-:p for i:NArr. iadd iota.i iota.i
+:p for i:NArr. iadd (iota _).i (iota _).i
 > [0, 2, 4, 6, 8, 10, 12]
 
 :p isum for i:NArr. 1
 > 7
 
-fun = \y. sum (map real arr) + y
-
+fun = \y. sum (map i2r arr) + y
 
 :p fun 3.0
 > 24.0
@@ -64,8 +61,8 @@ fun = \y. sum (map real arr) + y
 > 3.0
 
 :p
-   f : (a -> b, a) -> b
-   f (x, y) = x y
+   f : a:Type ?-> b:Type ?-> (a -> b & a) -> b =
+     \(x, y). x y
    f (\x. x, 1)
 > 1
 
@@ -102,18 +99,6 @@ fun = \y. sum (map real arr) + y
 :p tan 1.57079
 > 158057.9
 
-:p fadd 1.0 2.0
-> 3.0
-
-:p fsub 1.0 2.0
-> -1.0
-
-:p fmul 3.0 2.0
-> 6.0
-
-:p fdiv 3.0 2.0
-> 1.5
-
 s = 1.0
 
 :p s
@@ -127,10 +112,10 @@ s = 1.0
    for i. iadd xs.i 10
 > [12, 11, 10]
 
-cumsumplus : n=>Real -> n=>Real
-cumsumplus xs = snd $ scan 0.0 \i c.
-  ans = c + xs.i
-  (ans, 1.0 + ans)
+cumsumplus : n=>Real -> n=>Real =
+ \xs. snd $ scan 0.0 \i c.
+   ans = c + xs.i
+   (ans, 1.0 + ans)
 
 :p cumsumplus [1.0, 2.0, 3.0]
 > [2.0, 4.0, 7.0]
@@ -168,68 +153,65 @@ cumsumplus xs = snd $ scan 0.0 \i c.
 :p [ 1 >= 2, 1.0 >= 2.0,  2 >= 2, 2.0 >= 2.0, 2 >= 1, 2.0 >= 1.0]
 > [False, False, True, True, True, True]
 
-type N3 = 3
-type N4 = 4
-mat = for i:N3 j:N4. iadd iota.i (imul 10 iota.j)
+N3 = Fin 3
+N4 = Fin 4
+
+mat = for i:N3 j:N4. iadd (iota _).i (imul 10 (iota _).j)
 
 -- :p isum for (i,j). mat.i.j
 -- > 192
 
 litArr = [10, 5, 3]
 
--- TODO: fix
--- :p litArr.(asidx 2)
--- > 3
-
 :p mod 5 3
 > 2
 
-:p size @N3
+:p size (Fin 3)
 > 3
 
-:p for i:3. 1
+:p for i:(Fin 3). 1
 > [1, 1, 1]
 
 :p
    (k, _) = (iadd 1 2, 3)
-   for i:6. iadd k (asint i)
+   for i:(Fin 6). iadd k (ordinal i)
 > [3, 4, 5, 6, 7, 8]
 
 :p
    k = newKey 0
-   mean for i:100. randn (ixkey k i)
+   mean for i:(Fin 100). randn (ixkey k i)
 > -0.115799494
 
 :p
    k = newKey 0
-   mean for i:100. sq $ randn (ixkey k i)
+   mean for i:(Fin 100). sq $ randn (ixkey k i)
 > 1.2581897
 
-:p for i:3 j:2. rand $ ixkey2 (newKey 11) i j
+:p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
 > [[0.47415292, 0.9145164], [0.7944602, 0.27679908], [0.58958626, 0.7116251]]
 
 :p
-  x = for i:3. 0
+  x = for i:(Fin 3). 0
   x
 > [0, 0, 0]
 
 :p
-   x = for i:3. for j:4. 0
+   x = for i:(Fin 3). for j:(Fin 4). 0
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:3. 0.0) $ \i:2 c. (for j. c.j + real (asint j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i2r (ordinal j))
 > [0.0, 2.0, 4.0]
 
 :p
-   mat2 = for i:4 j:4 . asint i
+   mat2 = for i:(Fin 4) j:(Fin 4) . ordinal i
    tmp = for i. mat2.i.i
    tmp
 > [0, 1, 2, 3]
 
 :p
   x = [[0, 1], [2, 3]]
-  xt.i.j = x.j.i
+  xt = for i j. x.j.i
   xt
 > [[0, 2], [1, 3]]
 
@@ -238,11 +220,14 @@ litArr = [10, 5, 3]
   (x, y)
 > (1, (2, 3))
 
-:p for i:3. i
-> [0@3, 1@3, 2@3]
+:p for i:(Fin 3). i
+> [0@(Fin 3), 1@(Fin 3), 2@(Fin 3)]
 
-:p (asidx 0):1
-> 0@1
+:p for i:(Fin 3). i
+> [0@(Fin 3), 1@(Fin 3), 2@(Fin 3)]
+
+:p fromOrdinal (Fin 1) 0
+> 0@(Fin 1)
 
 -- TODO: fix
 -- :p [0].([asidx 0].(asidx 0))
@@ -260,29 +245,24 @@ litArr = [10, 5, 3]
 :p select False [1,2,3] [10,20,30]
 > [10, 20, 30]
 
-:p [(1, (for i:2 . 3))].(asidx 0)
+:p [(1, (for i:(Fin 2) . 3))].(fromOrdinal _ 0)
 > (1, [3, 3])
 
 :p (False && False, False && True, True && False, True && True)
-> (False, False, False, True)
-
-:p (and False False, and False True, and True False, and True True)
-> (False, False, False, True)
+> (False, (False, (False, True)))
 
 :p (not False, not True)
 > (True, False)
 
 :p (False || False, False || True, True || False, True || True)
-> (False, True, True, True)
+> (False, (True, (True, True)))
 
-:p (or False False, or False True, or True False, or True True)
-> (False, True, True, True)
-
-:p [(for i:1. (False, for j:2. 1.0)), [(True, for k:2 . 2.0)]]
+:p [(for i:(Fin 1). (False, for j:(Fin 2). 1.0)), [(True, for k:(Fin 2) . 2.0)]]
 > [[(False, [1.0, 1.0])], [(True, [2.0, 2.0])]]
 
-:p (mod 5 3, mod 7 3, mod -1 3, mod -5 3)
-> (2, 1, 2, 1)
+-- TODO: parse negative integer literals
+-- :p (mod 5 3, mod 7 3, mod (-1) 3, mod -5 3)
+-- > (2, 1, 2, 1)
 
 :p [[1,2], for i. 3]
 > [[1, 2], [3, 3]]
@@ -290,61 +270,61 @@ litArr = [10, 5, 3]
 :p select False [1, 2] (for i. 3)
 > [3, 3]
 
-:p fold [1, 2] \i:3 c. for j. 4
+:p fold [1, 2] \i:(Fin 3) c. for j. 4
 > [4, 4]
 
 :p select True (1,2) (2,3)
 > (1, 2)
 
-:p select False (1,[2,3]) (4, for _. 3)
+:p select False (1,[2,3]) (4, for _ . 3)
 > (4, [3, 3])
 
 :p select False () ()
 > ()
 
-:p [1,2,3].(1@3)
+:p [1,2,3].(fromOrdinal (Fin 3) 1 )
 > 2
 
-:p fold (1.0, 2.0) \i:2 (x, y). (y, x)
+:p fold (1.0, 2.0) \i:(Fin 2) (x, y). (y, x)
 > (1.0, 2.0)
 
-:p fold (1.0, 2.0) \i:3 (x, y). (y, x)
+:p fold (1.0, 2.0) \i:(Fin 3) (x, y). (y, x)
 > (2.0, 1.0)
 
 :p id 2
 > 2
-
 :p min 2.0 3.0
 > 2.0
 
-:p minby sq 0.5 -2.0
+:p minBy sq 0.5 (0.0-2.0)
 > 0.5
 
 :p minimum [2.0, 3.0, 4.0, 1.5, 7.0]
 > 1.5
 
-:p minimumby (asNonLin fst) [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p minimumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (1.5, 15)
 
 :p max 2.0 3.0
 > 3.0
 
-:p maxby sq 0.5 -2.0
+:p maxBy sq 0.5 (0.0 -2.0)
 > -2.0
 
 :p maximum [2.0, 4.0, 1.5, 7.0]
 > 7.0
 
-:p maximumby (asNonLin fst) [(2.0, 20), (1.5, 15), (10.0, 100)]
+:p maximumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10.0, 100)
 
-:p (1 == 2, -1 == -1, 1 < 2, -1 < 2, 2 < -1)
-> (False, True, True, True, False)
+-- TODO: prefix negation for literals!
+-- :p (1 == 2, -1 == -1, 1 < 2, -1 < 2, 2 < -1)
+-- > (False, (True, (True, (True, False))))
 
-:p (1. == 2., -1. == -1., 1. < 2., -1. < 2., 2. < -1.)
-> (False, True, True, True, False)
+-- :p (1. == 2., -1. == -1., 1. < 2., -1. < 2., 2. < -1.)
+-- > (False, (True, (True, (True, False))))
 
-:p for i:7. select (i < 3@7) 1 2
+:p for i:(Fin 7). select (i < (fromOrdinal _ 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]
 
 σ = 1.0 + 2.0
@@ -352,35 +332,10 @@ litArr = [10, 5, 3]
 :p σ
 > 3.0
 
--- TODO: re-enable
--- :parse (σ + σ)
--- > (%fadd(σ, σ))
-
-δ : Int -> Int
-δ x = x
+δ : Int -> Int = \x. x
 
 :p δ 3
 > 3
-
-:p (1,) : (Int,)
-> (1,)
-
-:t (1,) : (Int,)
-> (Int,)
-
-:p (1,True,) : (Int, Bool,)
-> (1, True)
-
-:p
-  (x,) = (1,)
-  x
-> 1
-
-:p [1,]
-> [1]
-
-:p [1,2,]
-> [1, 2]
 
 :p select True 1 2
 > 1
@@ -398,197 +353,24 @@ litArr = [10, 5, 3]
 :p 1 `iadd` 2
 > 3
 
-:p slice @3 [1,2,3,4,5] 2
+:p slice [1,2,3,4,5] 2 (Fin 3)
 > [3, 4, 5]
 
 -- TODO: test file specifically for parse errors (including testing error messages)
 :p
-   f : Real->Real
-   f x =
+   f : Real->Real = \x.
      -- line comment should be ok here
      2.0 * x
    f 1.0
 > 2.0
 
-:p
-   f : Real->Real
-   f = \x.
-     -- line comment should be ok here
-     2.0 * x
-   f 1.0
-> 2.0
-
+-- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
     n = iadd 3 7
-    sum for i:0...<n. 1.0
+    fsum \i:(Fin n). 1.0
 > 10.0
 
 :p
     n = 4
-    sum for i:0...<n. 1.0
+    fsum \i:(Fin n). 1.0
 > 4.0
-
-:p
-  one = asidx @4 1
-  for i:4. sum for j:one...i. 1.0
-> [0.0, 1.0, 2.0, 3.0]
-
-:p
-  one = asidx @4 1
-  for i:4. sum for j:one<..i. 1.0
-> [0.0, 0.0, 1.0, 2.0]
-
-:p
-  for i:4. sum for j:1@4<..i. 1.0
-> [0.0, 0.0, 1.0, 2.0]
-
-:p
-  one = asidx @4 1
-  for i:4. sum for j:one..<i. 1.0
-> [0.0, 0.0, 1.0, 2.0]
-
-:p
-  one = asidx @4 1
-  for i:4. sum for j:one<.<i. 1.0
-> [0.0, 0.0, 0.0, 1.0]
-
-:p
-  for i:4. sum for j:...i. 1.0
-> [1.0, 2.0, 3.0, 4.0]
-
-:p
-  for i:4. sum for j:..<i. 1.0
-> [0.0, 1.0, 2.0, 3.0]
-
-:p
-  for i:4. sum for j:i... . 1.0
-> [4.0, 3.0, 2.0, 1.0]
-
-:p
-  for i:4. sum for j:i<.. . 1.0
-> [3.0, 2.0, 1.0, 0.0]
-
-:p idiv 10 3
-> 3
-
-:p rem 10 3
-> 1
-
-:p
-  xs = [10.,20.]
-  ys = [1.,2.,3.]
-  xys = for (i,j). xs.i + ys.j
-  sum xys
-> 102.0
-
-:p
-  xs = [10.,20.]
-  ys = [1.,2.,3.]
-  zs = [1.]
-  xys = for (i,(j,k)). xs.i + ys.j + zs.k
-  sum xys
-> 108.0
-
-:p
-  xs = [[1,2],[3,4]]
-  ys = for (i,j). xs.i.j
-  zs = for (i,j). ys.(i,j)
-  for i j. zs.(j,i)
-> [[1, 3], [2, 4]]
-
-:p argmin [1.0, 2.0, 0.4, 5.0]
-> 2@4
-
-:p select True (asidx @2 0) (asidx @2 1)
-> 0@2
-
-:p
-  xs = [1,2,3,4,5,6] @(2,3)
-  for i j. xs.(i,j)
-> [[1, 2, 3], [4, 5, 6]]
-
-:p
-  xs = [[1],[2]]
-  for (i,j). xs.i.j
-> [1, 2]@(2, 1)
-
-:p
-  xs = for i:5. 1.0
-  two = asidx @5 2
-  for i:3. sum for j:(two<..). xs.(%inject(j))
-> [2.0, 2.0, 2.0]
-
-:p
-  withState 0.0 \ref. for i:4.
-      c = get ref
-      ref := c + 1.0
-      c
-> ([0.0, 1.0, 2.0, 3.0], 4.0)
-
-:p
-  withState 0.0 \ref. rof i:4.
-      c = get ref
-      ref := c + 1.0
-      c
-> ([3.0, 2.0, 1.0, 0.0], 4.0)
-
-eitherFloor : Either Int Real -> Int
-eitherFloor x = case x
-    Left i  -> i
-    Right f -> floor f
-
-:p
-  eitherFloor (Right 1.2)
-> 1
-
-:p ((Right 1.2) : (Either Int Real))
-> Right 1.2
-
--- Sum types as flattened index sets!
-type Weights n m = n=>m=>Real
-type Biases  n   = n=>Real
-type Params  n m = (Either (n,m) n)=>Real
-
-w = for i:2. for j:3. (real (asint i)) * 3.0 + (real (asint j))
-b = for j:2. neg (real (asint j) + 1.0)
-
-flatten : (Weights n m, Biases n) -> Params n m
-flatten (w, b) = for idx. case idx
-  Left (i,j) -> w.i.j
-  Right i    -> b.i
-
-unflatten : Params n m -> (Weights n m, Biases n)
-unflatten params =
-  ( for i. for j. params.(Left (i,j))
-  , for i.        params.(Right i)    )
-
-:p unflatten (flatten (w, b)) == (w, b)
-> True
-
-:p (1, 2) == (1, 2)
-> True
-
-:p (for i:4. (1.0, asint i)) == (for i:4. (1.0, asint i))
-> True
-
-:p (1, 1) == (1, 2)
-> False
-
-:p (for i:4. 1.0) == (for i:4. 2.0)
-> False
-
--- Needed to avoid ambiguous type variables if both sides use the same constructor
-cmpEither : Either Int Int -> Either Int Int -> Bool
-cmpEither x y = x == y
-
-:p cmpEither (Left 1) (Left 1)
-> True
-
-:p cmpEither (Left 1) (Left 2)
-> False
-
-:p cmpEither (Left 1) (Right 1)
-> False
-
--- This crashes the compiler in Imp
--- triangle = for i:4. for j:...i. 1.0

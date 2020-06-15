@@ -63,8 +63,8 @@ checkSigma expr sTy = case sTy of
     WithSrc _ (ULam b ImplicitArrow body) ->
       checkULam b body piTy
     _ -> do
-      buildLam ("a":> absArgType piTy) ImplicitArrow $ \x ->
-        checkSigma expr $ snd $ applyAbs piTy x
+      buildLam ("a":> absArgType piTy) ImplicitArrow $ \x@(Var v) ->
+        checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
 inferSigma :: UExpr -> UInferM Atom
@@ -84,7 +84,7 @@ instantiateSigma :: Atom -> UInferM Atom
 instantiateSigma f = case getType f of
   Pi piTy@(Abs _ (ImplicitArrow, _)) -> do
     x <- freshType $ absArgType piTy
-    ans <- emit $ App f x
+    ans <- emitZonked $ App f x
     instantiateSigma ans
   _ -> return f
 
@@ -109,11 +109,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- getAllowedEffects
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      emit $ Hof $ For dir lam
+      emitZonked $ Hof $ For dir lam
     Infer -> do
       allowedEff <- getAllowedEffects
       lam <- inferULam b (PlainArrow allowedEff) body
-      emit $ Hof $ For dir lam
+      emitZonked $ Hof $ For dir lam
   UApp arr f x -> do
     fVal <- inferRho f
     fVal' <- zonk fVal
@@ -128,7 +128,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         let xVal' = reduceAtom scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
-    appVal <- emit $ App fVal'' xVal'
+    appVal <- emitZonked $ App fVal'' xVal'
     instantiateSigma appVal >>= matchRequirement
   UPi (v:>a) arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
@@ -149,8 +149,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> emit $ Op e
-      HofExpr e -> emit $ Hof e
+      OpExpr  e -> emitZonked $ Op e
+      HofExpr e -> emitZonked $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
   where
@@ -165,7 +165,7 @@ inferUDecl (ULet (p, ann) rhs) = do
   val <- case ann of
     Nothing -> inferSigma rhs
     Just ty -> checkUType ty >>= checkSigma rhs
-  val' <- withPatHint p $ emit $ Atom val
+  val' <- withPatHint p $ emitZonked $ Atom val
   bindPat p val'
 
 inferUDecls :: [UDecl] -> UInferM InfEnv
@@ -255,7 +255,7 @@ inferTabCon xs ann = do
   (n, ty) <- inferTabTy xs ann
   let tabTy = n==>ty
   xs' <- mapM (flip checkRho ty) xs
-  emitOp $ TabCon tabTy xs'
+  emitZonked $ Op $ TabCon tabTy xs'
 
 inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
 inferTabTy xs ann = case ann of
@@ -290,6 +290,9 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
+
+emitZonked :: Expr -> UInferM Atom
+emitZonked expr = zonk expr >>= emit
 
 addEffects :: EffectRow -> UInferM ()
 addEffects eff = do

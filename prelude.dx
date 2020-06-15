@@ -2,414 +2,230 @@
 
 'Runs before every Dex program unless an alternative is provided with `--prelude`.
 
-'Curried wrappers around built-in functions
+'Wrappers around primitives
 
-iadd : Int -> Int -> Int
-iadd x y = %iadd(x, y)
+Int  = %Int
+Real = %Real
+Bool = %Bool
+Unit = %UnitType
+Type = %TyKind
+Effects = %EffKind
 
-isub : Int -> Int -> Int
-isub x y = %isub(x, y)
+def (&) (a:Type) (b:Type) : Type = %PairType a b
+def (,) (x:a) (y:b) : a & b = %pair x y
+def fst (p: a & b) : a = %fst p
+def snd (p: a & b) : b = %snd p
 
-imul : Int -> Int -> Int
-imul x y = %imul(x, y)
+def iadd (x:Int) (y:Int) : Int = %iadd x y
+def isub (x:Int) (y:Int) : Int = %isub x y
+def imul (x:Int) (y:Int) : Int = %imul x y
+def idiv (x:Int) (y:Int) : Int = %idiv x y
+def rem  (x:Int) (y:Int) : Int = %rem  x y
+def ipow (x:Int) (y:Int) : Int = %pow  x y
 
-idiv : Int -> Int -> Int
-idiv x y = %idiv(x, y)
+def (+) (x:Real) (y:Real) : Real = %fadd x y
+def (-) (x:Real) (y:Real) : Real = %fsub x y
+def (*) (x:Real) (y:Real) : Real = %fmul x y
+def (/) (x:Real) (y:Real) : Real = %fdiv x y
+def neg (x:Real)          : Real = %fneg x
 
-rem : Int -> Int -> Int
-rem x y = %rem(x, y)
+-- TODO: typeclasses!
+def (==) (x:a) (y:a) : Bool = %eq        x y
+def (<)  (x:a) (y:a) : Bool = %less      x y
+def (<=) (x:a) (y:a) : Bool = %lessEq    x y
+def (>)  (x:a) (y:a) : Bool = %greater   x y
+def (>=) (x:a) (y:a) : Bool = %greaterEq x y
 
-mod : Int -> Int -> Int
-mod x y = rem (iadd y (rem x y)) y
+def select (p:Bool) (x:a) (y:a) : a = %select p x y
 
-neg : Real --o Real
-neg x = %fneg(x)
+True  = %True
+False = %False
+def (&&) (x:Bool) (y:Bool) : Bool = %and x y
+def (||) (x:Bool) (y:Bool) : Bool = %or  x y
+def not  (x:Bool)          : Bool = %not x
 
-fadd : Real -> Real -> Real
-fadd x y = %fadd(x, y)
+def i2r (x:Int ) : Real = %inttoreal x
+def b2i (x:Bool) : Int  = %booltoint x
+def todo (a:Type) ?-> : a = %todo a
 
-fsub : Real -> Real -> Real
-fsub x y = %fsub(x, y)
+'Effects
 
-fmul : Real --o Real --o Real
-fmul x y = %fmul(x, y)
+def Ref (r:Type) (a:Type) : Type = %Ref r a
+def get  (ref:Ref h s)       : {State h} s    = %get  ref
+def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
+def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
+def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
+def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
 
-fdiv : Real --o Real -> Real
-fdiv x y = %fdiv(x, y)
+def withReader
+      (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->
+      (init:r) (action: (h:Type ?-> Ref h r -> {Read h|eff} a))
+      : {|eff} a =
+    def explicitAction (h':Type) (ref:Ref h' r) : {Read h'|eff} a = action ref
+    %runReader init explicitAction
 
-ipow : Int -> Int -> Int
-ipow x y = %pow(x, y)
+def withAccum
+      (eff:Effects) ?-> (a:Type) ?-> (w:Type) ?->
+      (action: (h:Type ?-> Ref h w -> {Accum h|eff} a))
+      : {|eff} (a & w) =
+    def explicitAction (h':Type) (ref:Ref h' w) : {Accum h'|eff} a = action ref
+    %runWriter explicitAction
 
-pow : Real -> Real -> Real
-pow x y = %%pow(x, y)
-
-asint : A i | Ix i . i -> Int
-asint i = %asint(i)
-
-asidx : A i | Ix i . Int -> i
-asidx i = %asidx(i)
-
-real : Int -> Real
-real x = %inttoreal(x)
-
-b2i : Bool -> Int
-b2i x = %booltoint(x)
-
-not : Bool -> Bool
-not x = %not(x)
-
-and : Bool -> Bool -> Bool
-and x y = %and(x, y)
-
-or : Bool -> Bool -> Bool
-or x y = %or(x, y)
-
--- `todo` is like `undefined` in Haskell
-todo : a
-todo = %todo()
+def withState
+      (eff:Effects) ?-> (a:Type) ?-> (s:Type) ?->
+      (init:s)
+      (action: (h:Type ?-> Ref h s -> {State h |eff} a))
+      : {|eff} (a & s) =
+    def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
+    %runState init explicitAction
 
 'Wrappers around C library functions
 
-exp : Real -> Real
-exp x = %%exp(x)
+def exp (x:Real) : Real = %ffi exp Real x
+def log (x:Real) : Real = %ffi log Real x
+def sin (x:Real) : Real = %ffi sin Real x
+def cos (x:Real) : Real = %ffi cos Real x
+def tan (x:Real) : Real = %ffi tan Real x
+def sqrt (x:Real) : Real = %ffi sqrt Real x
+def floor (x:Real) : Int = %ffi floorDex Int x
 
-log : Real -> Real
-log x = %%log(x)
+'Working with index sets
 
-sqrt : Real -> Real
-sqrt x = %%sqrt(x)
+def Range (low:Int) (high:Int) : Type = %IntRange low high
+def Fin (n:Int) : Type = Range 0 n
+def ordinal (i:a) : Int = %asint i
+def size (n:Type) : Int = %idxSetSize n
+def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
+def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
+def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
 
-sin : Real -> Real
-sin x = %%sin(x)
+def iota (n:Type) : n=>Int = for i. ordinal i
 
-cos : Real -> Real
-cos x = %%cos(x)
+'Misc
 
-tan : Real -> Real
-tan x = %%tan(x)
+pi : Real = 3.141592653589793
 
-floor : Real -> Int
-floor x = %%floorDex(x)
+def id (x:a) : a = x
+def dup (x:a) : (a & a) = (x, x)
+-- TODO: unpack pair in args once we fix the bug
+def swap (p:a&b) : (b&a) = (snd p, fst p)
+def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
+def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
+def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
+def fanout (n:Type) (x:a) : n=>a = for i. x
+def sq (x:Real) : Real = x * x
+def abs (x:Real) : Real = select (x > 0.0) x (0.0 - x)
+def mod (x:Int) (y:Int) : Int = rem (iadd y (rem x y)) y
+def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
-'Misc functions
+def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
+  for i. xs.(fromOrdinal _ (ordinal i `iadd` start))
 
-fst : (a, b) --o a
-fst (x, y) = x
+def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
+  swap $ withState init \s. for i.
+    c = get s
+    (c', y) = body i c
+    s := c'
+    y
 
-snd : (a, b) --o b
-snd (x, y) = y
-
-swap : (a, b) -> (b, a)
-swap (x, y) = (y, x)
-
--- Hope to need this less with linearity polymoprhism
-asNonLin : (a --o b) -> a -> b
-asNonLin f x = f x
-
-b2r : Bool -> Real
-b2r x = real $ b2i x
-
-pi : Real
-pi = 3.141592653589793
-
-ixadd : A i | Ix i . i -> Int -> i
-ixadd i n = asidx $ iadd (asint i) n
-
-ixsub : A i | Ix i . i -> Int -> i
-ixsub i n = asidx $ isub (asint i) n
-
-iota : n=>Int
-iota = for i. asint i
-
-id : a -> a
-id x = x
-
-dup : a -> (a, a)
-dup x = (x, x)
-
-map : (a -> b) -> n=>a -> n=>b
-map f xs = for i. f xs.i
-
-map2 : (a -> b) -> n=>m=>a -> n=>m=>b
-map2 f xs = for i j. f xs.i.j
-
-zip : n=>a -> n=>b -> n=>(a,b)
-zip xs ys = for i. (xs.i, ys.i)
-
-unzip : n=>(a, b) -> (n=>a, n=>b)
-unzip xys = (map (asNonLin fst) xys, map (asNonLin snd) xys)
-
-fanout : A n a. a -> n=>a
-fanout x = for i. x
-
-sq : Real -> Real
-sq x = x * x
-
-select : A a | Data a . Bool -> a -> a -> a
-select p x y = %select(p, x, y)
-
-abs : Real -> Real
-abs x = select (x > 0.0) x (0.0 - x)
-
-compose : (b -> c) -> (a -> b) -> a -> c
-compose f g x = f (g x)
-
-slice : A n m a . m=>a -> Int -> n=>a
-slice xs start = for i. xs.(asidx (asint i `iadd` start))
-
-'Effective primitives
-
-ask : rRef:(Ref r) -> {Reader rRef} r
-ask r = %ask(r)
-
-get : sRef:(Ref s) -> {State sRef} s
-get s = %get(s)
-
-runReader : rt -> (r:(Ref rt) -> {Reader r |eff} a) -> {|eff} a
-runReader r f = %runReader(r, \r'. f r')
-
-withAccumulator : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} (a, wt)
-withAccumulator f = %runWriter(\w. f w)
-
-getAccumulator : A wt a eff | VS w . (w:(Ref wt) -> {Writer w |eff} a) -> {|eff} wt
-getAccumulator f =
-  (_, ans) = withAccumulator f
-  ans
-
-withState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} (a, st)
-withState s f = %runState(s, \s'. f s')
-
-getState : A st eff a . st -> (s:(Ref st) -> {State s |eff} a) -> {|eff} st
-getState s f =
-  (_, ans) = withState s f
-  ans
-
-indexReader : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Reader s |eff} a) -> {Reader s' |eff} a
-indexReader s i f = %indexReader(s, i, \s'. f s')
-
-indexWriter : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {Writer s |eff} a) -> {Writer s' |eff} a
-indexWriter s i f = %indexWriter(s, i, \s'. f s')
-
-indexState : s':(Ref (n=>st)) -> n -> (s:(Ref st) -> {State s |eff} a) -> {State s' |eff} a
-indexState s i f = %indexState(s, i, \s'. f s')
-
-putAt : s:(Ref (i=>a)) -> i -> a -> {State s} ()
-putAt ref i x = indexState ref i \ref'. ref' := x
-
-getAt : s:(Ref (i=>a)) -> i -> {State s} a
-getAt ref i = indexState ref i \ref'. get ref'
-
-putAt2 : s:(Ref (i=>j=>a)) -> i -> j -> a -> {State s} ()
-putAt2 ref i j x = indexState ref i \ref'. putAt ref' j x
-
-getAt2 : s:(Ref (i=>j=>a)) -> i -> j -> {State s} a
-getAt2 ref i j = indexState ref i \ref'. getAt ref' j
-
-'State-carrying loop constructs
-
-scan : A n a b | Ix n, Data a .  a -> (n->a->(a, b)) -> (a, n=>b)
-scan x0 fs = swap $ withState x0 \s. for i.
-   c = get s
-   (c', y) = fs i c
-   s := c'
-   y
-
-fold : A n a | Ix n, Data a . a -> (n->a->a) -> a
-fold x0 fs = fst $ scan x0 \i x. (fs i x, ())
-
+def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
 -- TODO: call this `scan` and call the current `scan` something else
-scan' : A n a | Ix n, Data a . a -> (n->a->a) -> n=>a
-scan' x0 fs = snd $ scan x0 \i x. dup (fs i x)
+def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
+-- TODO: allow tables-via-lambda and get rid of this
+def fsum (xs:n->Real) : Real = snd $ withAccum \ref. for i. ref += xs i
+def sum  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
+def isum (xs:n=>Int) : Int = fold 0 \i c. iadd c xs.i
+def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
+def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
 
--- scanlin : A n:Ix c:Data a b . (n -> (c,a) --o (c,b)) -> (c, n=>a) --o (c, n=>b)
--- scanlin fs (c0, xs) = scan c0 \i c. fs i (c, xs.i)
+def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
+  dx = (high - low) / i2r (size n)
+  for i:n. low + i2r (ordinal i) * dx
 
--- foldlin : A n:Ix c:Data a . (n-> (c, a) --o c) -> (c, n=>a) --o c
--- foldlin fs (c0, xs) = fst $ scanlin (\i (c,x). (fs i (c, x), ())) (c0, xs)
+def transpose (x:n=>m=>Real) : m=>n=>Real = for i j. x.j.i
+def vdot (x:n=>Real) (y:n=>Real) : Real = fsum \i. x.i * y.i
 
--- 'More misc functions
+def mmp (x:l=>m=>Real) (y:m=>n=>Real) : (l=>n=>Real) =
+  y' = transpose y
+  for i k. fsum \j. x.i.j * y'.k.j
 
-sum : n=>Real -> Real
-sum xs = snd $ withAccumulator \ref. for i. ref += xs.i
+def mvp (mat:n=>m=>Real) (v:m=>Real) : n=>Real =
+  for i. vdot mat.i v
 
--- Should this version of `sum` be the main one?
-fsum : A n | Ix n . (n->Real) -> Real
-fsum xs = snd $ withAccumulator \ref. for i. ref += xs i
+def inner (x:n=>Real) (mat:n=>m=>Real) (y:m=>Real) : Real =
+  fsum \(i,j). x.i * mat.i.j * y.j
 
-isum : n=>Int -> Int
-isum xs = fold 0 \i c. iadd c xs.i
+'Functions for working with the pseudorandom number generator
 
-size : A n:Ty. Int
-size = %idxSetSize(@n)
+-- TODO: newtype
+Key = Int
 
--- -- range : Int -> E i. ()
--- -- range n = %range(n)
-
-mean : A n. n=>Real -> Real
-mean xs = sum xs / real (size @n)
-
-std : A n. n=>Real -> Real
-std xs = sqrt $ mean (map sq xs) - sq (mean xs)
-
-linspace : A n. Real -> Real -> n=>Real
-linspace low high =
-  dx = (high - low) / real (size @n)
-  for i:n. low + real (asint i) * dx
-
--- 'Functions for working with the pseudorandom number generator
-
--- TODO: implement newtypes again (maybe fake them with records)
--- newtype Key = Int
-type Key = Int
-
-hash : Key -> Int -> Key
-hash x y = %%threefry2x32(x, y)
-
-newKey : Int -> Key
-newKey x = hash 0 x
-
-splitKey : Key -> (Key, Key)
-splitKey key = (hash key 0, hash key 1)
-
-splitKey3 : Key -> (Key, Key, Key)
-splitKey3 key =
-  (k1, key') = splitKey key
-  (k2, k3) = splitKey key'
+def hash (x:Key) (y:Int) : Key = %ffi threefry2x32 Int x y
+def newKey (x:Int) : Key = hash 0 x
+def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
+def splitKey3 (k:Key) : (Key & Key & Key) =
+  (k1, k') = splitKey k
+  (k2, k3) = splitKey k'
   (k1, k2, k3)
 
-many : A n a | Ix n . (Key -> a) -> Key -> n -> a
-many f key i = f (hash key (asint i))
+def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
+def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
+def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
+def rand (k:Key) : Real = %ffi randunif Real k
 
-ixkey : A n | Ix n . Key -> n -> Key
-ixkey x i = hash x (asint i)
-
-ixkey2 : A n m | Ix n, Ix m . Key -> n -> m -> Key
-ixkey2 x i = ixkey $ ixkey x i
-
-rand : Key -> Real
-rand x = %%randunif(x)
-
-randn : Key -> Real
-randn k =
+def randn (k:Key) : Real =
   (k1, k2) = splitKey k
   u1 = rand k1
   u2 = rand k2
-  sqrt (-2.0 * log u1) * cos (2.0 * pi * u2)
+  -- TODO: parsing negative numbers
+  sqrt ((0.0-2.0) * log u1) * cos (2.0 * pi * u2)
 
-randIdx : A n | Ix n . Key -> n
-randIdx key =
-  unif = rand key
-  asidx $ floor $ unif * real (size @n)
+def randIdx (n:Type) ?-> (k:Key) : n =
+  unif = rand k
+  fromOrdinal n $ floor $ unif * i2r (size n)
 
-'min / max etc
+'min / max etc  (TODO: implement with a monoid-parameterized writer)
 
-minby : A a | Data a . (a->Real)->a->a->a
-minby f x y = select ((f x) < (f y)) x y
+def minBy (f:a->Real) (x:a) (y:a) : a = select ((f x) < (f y)) x y
+def maxBy (f:a->Real) : a -> a -> a = minBy (neg `compose` f)
 
-min : Real -> Real -> Real
-min = minby id
+min : Real -> Real -> Real = minBy id
+max : Real -> Real -> Real = maxBy id
 
-minimumby : A n a | Data a . (a->Real)->(n=>a)->a
-minimumby f xs = fold xs.(asidx 0) (\i. minby f xs.i)
+def minimumBy (f:a->Real) (xs:n=>a) : a = fold xs.(fromOrdinal _ 0) (\i. minBy f xs.i)
+def maximumBy (f:a->Real) (xs:n=>a) : a = minimumBy (neg `compose` f) xs
 
-minimum : A n . (n=>Real)->Real
-minimum = minimumby id
+def minimum (xs:n=>Real) : Real = minimumBy id xs
+def maximum (xs:n=>Real) : Real = maximumBy id xs
 
-maxby : A a | Data a . (a->Real)->a->a->a
-maxby f = minby (asNonLin neg `compose` f)
+def argmin (xs:n=>Real) : n =
+  fst $ fold (fromOrdinal _ 0, xs.(fromOrdinal _ 0)) \i (bestIx, bestDist).
+    select (xs.i < bestDist) (i, xs.i) (bestIx, bestDist)
 
-max : Real -> Real -> Real
-max x y = maxby id x y
+'Automatic differentiation
 
-maximumby : A p q | Data q . (q->Real)->(p=>q)->q
-maximumby f = minimumby (asNonLin neg `compose` f)
+def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
+def jvp (f:a->b) (x:a) (t:a) --o : b = snd (linearize f x) t
+def transposeLinear (f:a --o b) : b --o a = %linearTranspose f
 
-maximum : A p. (p=>Real)->Real
-maximum xs = maximumby id xs
-
-argmin : n=>Real -> n
-argmin ds = fst $ fold (asidx 0, ds.(asidx 0)) \i (bestIx, bestDist).
-               select (ds.i < bestDist) (i, ds.i) (bestIx, bestDist)
-
-'Vector spaces and automatic differentiation.
-
-vzero : A a | VS a . a
-vzero = %vzero()
-
-vadd : A a | VS a . a -> a -> a
-vadd x y = %vadd(x, y)
-
-linearize : A a b | VS a, VS b . (a -> b) -> a -> (b, a --o b)
-linearize f x0 = %linearize(\x. f x) x0
-
-jvp : A a b | VS a, VS b . (a -> b) -> a -> a --o b
-jvp f x t = snd (linearize f x) t
-
-transposeLinear : A a b | VS a, VS b . (a --o b) -> b --o a
-transposeLinear f ct = %linearTranspose(\t. f t) ct
-
-vjp : A a b | VS a, VS b . (a -> b) -> a -> (b, b --o a)
-vjp f x =
+def vjp (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
   (y, transposeLinear df)
 
-grad : A a | VS a . (a -> Real) -> a -> a
-grad f x =
-  (_, pullback) = vjp f x
-  pullback 1.0
+def grad (f:a->Real) (x:a) : a = snd (vjp f x) 1.0
 
-deriv : (Real -> Real) -> Real -> Real
-deriv f x = jvp f x 1.0
+def deriv (f:Real->Real) (x:Real) : Real = jvp f x 1.0
 
-derivRev : (Real -> Real) -> Real -> Real
-derivRev f x = snd (vjp f x) 1.0
+def derivRev (f:Real->Real) (x:Real) : Real = snd (vjp f x) 1.0
 
-checkDerivBase : (Real -> Real) -> Real -> Bool
-checkDerivBase f x =
-  eps = 1e-5
+def checkDerivBase (f:Real->Real) (x:Real) : Bool =
+  -- TODO: parse 1e-5
+  eps = 0.00005
   ansFwd  = deriv    f x
   ansRev  = derivRev f x
   ansNumeric = (f (x + eps) - f (x - eps)) / (2. * eps)
-  isClose a b = abs (a - b) < 1e-3
+  isClose = \a b. abs (a - b) < 0.001
   isClose ansFwd ansNumeric && isClose ansRev ansNumeric
 
-checkDeriv : (Real -> Real) -> Real -> Bool
-checkDeriv f x = checkDerivBase f x && checkDerivBase (deriv f) x
-
-sin#lin : Real -> (Real, Real --o Real)
-sin#lin x = (sin x, \t. t * cos x)
-
-cos#lin : Real -> (Real, Real --o Real)
-cos#lin x = (cos x, \t. t * (neg (sin x)))
-
-exp#lin : Real -> (Real, Real --o Real)
-exp#lin x =
-  ans = exp x
-  (ans, \t. t * ans)
-
-log#lin : Real -> (Real, Real --o Real)
-log#lin x = (log x, \t. t / x)
-
-sqrt#lin : Real -> (Real, Real --o Real)
-sqrt#lin x =
-  ans = sqrt x
-  (ans, \t. 0.5 * t / ans)
-
-'Some general linear algebra routines.
-
-transpose : n=>m=>Real -> m=>n=>Real
-transpose x = for i j. x.j.i
-
-vdot : n=>Real -> n=>Real -> Real
-vdot x y = fsum \i. x.i * y.i
-
-mmp : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
-mmp m1 m2 =
-  m2' = transpose m2
-  for i k. fsum \j. m1.i.j * m2'.k.j
-
-mvp : n=>m=>Real -> m=>Real -> n=>Real
-mvp m v = for i. vdot m.i v
-
-inner : n=>Real -> n=>m=>Real -> m=>Real -> Real
-inner x m y = fsum \(i,j). x.i * m.i.j * y.j
+def checkDeriv (f:Real->Real) (x:Real) : Bool =
+  checkDerivBase f x && checkDerivBase (deriv f) x

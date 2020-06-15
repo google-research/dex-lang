@@ -1,0 +1,164 @@
+:p
+  one = asidx @4 1
+  for i:4. sum for j:one...i. 1.0
+> [0.0, 1.0, 2.0, 3.0]
+
+:p
+  one = asidx @4 1
+  for i:4. sum for j:one<..i. 1.0
+> [0.0, 0.0, 1.0, 2.0]
+
+:p
+  for i:4. sum for j:1@4<..i. 1.0
+> [0.0, 0.0, 1.0, 2.0]
+
+:p
+  one = asidx @4 1
+  for i:4. sum for j:one..<i. 1.0
+> [0.0, 0.0, 1.0, 2.0]
+
+:p
+  one = asidx @4 1
+  for i:4. sum for j:one<.<i. 1.0
+> [0.0, 0.0, 0.0, 1.0]
+
+:p
+  for i:4. sum for j:...i. 1.0
+> [1.0, 2.0, 3.0, 4.0]
+
+:p
+  for i:4. sum for j:..<i. 1.0
+> [0.0, 1.0, 2.0, 3.0]
+
+:p
+  for i:4. sum for j:i... . 1.0
+> [4.0, 3.0, 2.0, 1.0]
+
+:p
+  for i:4. sum for j:i<.. . 1.0
+> [3.0, 2.0, 1.0, 0.0]
+
+:p idiv 10 3
+> 3
+
+:p rem 10 3
+> 1
+
+:p
+  xs = [10.,20.]
+  ys = [1.,2.,3.]
+  xys = for (i,j). xs.i + ys.j
+  sum xys
+> 102.0
+
+:p
+  xs = [10.,20.]
+  ys = [1.,2.,3.]
+  zs = [1.]
+  xys = for (i,(j,k)). xs.i + ys.j + zs.k
+  sum xys
+> 108.0
+
+:p
+  xs = [[1,2],[3,4]]
+  ys = for (i,j). xs.i.j
+  zs = for (i,j). ys.(i,j)
+  for i j. zs.(j,i)
+> [[1, 3], [2, 4]]
+
+:p argmin [1.0, 2.0, 0.4, 5.0]
+> 2@4
+
+:p select True (asidx @2 0) (asidx @2 1)
+> 0@2
+
+:p
+  xs = [1,2,3,4,5,6] @(2,3)
+  for i j. xs.(i,j)
+> [[1, 2, 3], [4, 5, 6]]
+
+:p
+  xs = [[1],[2]]
+  for (i,j). xs.i.j
+> [1, 2]@(2, 1)
+
+:p
+  xs = for i:5. 1.0
+  two = asidx @5 2
+  for i:3. sum for j:(two<..). xs.(%inject(j))
+> [2.0, 2.0, 2.0]
+
+:p
+  withState 0.0 \ref. for i:4.
+      c = get ref
+      ref := c + 1.0
+      c
+> ([0.0, 1.0, 2.0, 3.0], 4.0)
+
+:p
+  withState 0.0 \ref. rof i:4.
+      c = get ref
+      ref := c + 1.0
+      c
+> ([3.0, 2.0, 1.0, 0.0], 4.0)
+
+eitherFloor : Either Int Real -> Int
+eitherFloor x = case x
+    Left i  -> i
+    Right f -> floor f
+
+:p
+  eitherFloor (Right 1.2)
+> 1
+
+:p ((Right 1.2) : (Either Int Real))
+> Right 1.2
+
+-- Sum types as flattened index sets!
+type Weights n m = n=>m=>Real
+type Biases  n   = n=>Real
+type Params  n m = (Either (n,m) n)=>Real
+
+w = for i:2. for j:3. (real (asint i)) * 3.0 + (real (asint j))
+b = for j:2. neg (real (asint j) + 1.0)
+
+flatten : (Weights n m, Biases n) -> Params n m
+flatten (w, b) = for idx. case idx
+  Left (i,j) -> w.i.j
+  Right i    -> b.i
+
+unflatten : Params n m -> (Weights n m, Biases n)
+unflatten params =
+  ( for i. for j. params.(Left (i,j))
+  , for i.        params.(Right i)    )
+
+:p unflatten (flatten (w, b)) == (w, b)
+> True
+
+:p (1, 2) == (1, 2)
+> True
+
+:p (for i:4. (1.0, asint i)) == (for i:4. (1.0, asint i))
+> True
+
+:p (1, 1) == (1, 2)
+> False
+
+:p (for i:4. 1.0) == (for i:4. 2.0)
+> False
+
+-- Needed to avoid ambiguous type variables if both sides use the same constructor
+cmpEither : Either Int Int -> Either Int Int -> Bool
+cmpEither x y = x == y
+
+:p cmpEither (Left 1) (Left 1)
+> True
+
+:p cmpEither (Left 1) (Left 2)
+> False
+
+:p cmpEither (Left 1) (Right 1)
+> False
+
+-- This crashes the compiler in Imp
+-- triangle = for i:4. for j:...i. 1.0

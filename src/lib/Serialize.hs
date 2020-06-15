@@ -194,7 +194,7 @@ prettyVal idxs (Con con) = case con of
     return $ pretty $ fromMaybe (error "not a scalar") $ scalarFromArray arr'
   AsIdx n i -> do
     i' <- prettyVal idxs i
-    return $ i' <> "@" <> pretty n
+    return $ i' <> "@" <> parens (pretty n)
   Lit x -> return $ pretty x
   _ -> return $ pretty con
 prettyVal _ atom = error $ "Unexpected value: " ++ pprint atom
