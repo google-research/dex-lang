@@ -101,6 +101,15 @@ def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
 
 def iota (n:Type) : n=>Int = for i. ordinal i
 
+'Sum types
+
+def (|) (a:Type) (b:Type) : Type = %SumType a b
+def anyVal (a:Type) ?-> : a = %anyVal a
+def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
+def Left  (x:a) : (a|b) = sumCon True  x      anyVal
+def Right (x:b) : (a|b) = sumCon False anyVal x
+def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+
 'Misc
 
 pi : Real = 3.141592653589793

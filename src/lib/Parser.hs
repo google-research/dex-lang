@@ -17,6 +17,7 @@ import Data.Char (isLower)
 import Data.Functor
 import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
+import Data.String (fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
 
 import Env
@@ -163,6 +164,7 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uPiType
          <|> uLamExpr
          <|> uForExpr
+         <|> uCaseExpr
          <|> uPrim
          <|> unitCon
          <?> "expression"
@@ -348,6 +350,29 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "?->"  $> ImplicitArrow)
         <?> "arrow"
 
+uCaseExpr :: Parser UExpr
+uCaseExpr = do
+  ((), pos) <- withPos $ keyWord CaseKW
+  e <- expr
+  nextLine
+  indent <- liftM length $ some $ char ' '
+  withIndent indent $ do
+    l <- lexeme (string "Left") >> caseLam
+    nextLine
+    r <- lexeme (string "Right") >> caseLam
+    return $ applyNamed pos "caseAnalysis" [e, l, r]
+
+caseLam :: Parser UExpr
+caseLam = do
+  p <- uPat
+  sym "->"
+  body <- blockOrExpr
+  return $ WithSrc (srcPos body) $ ULam (p, Nothing) (PlainArrow ()) body
+
+applyNamed :: SrcPos -> String -> [UExpr] -> UExpr
+applyNamed pos name args = foldl mkApp f args
+  where f = WithSrc pos $ UVar (Name SourceName (fromString name) 0:>())
+
 uBinderName :: Parser Name
 uBinderName = uName <|> (underscore >> return NoName)
 
@@ -356,9 +381,6 @@ uName = textName <|> symName
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
-
-uVarPat :: Parser UPat
-uVarPat = withSrc $ namePat <$> uBinderName
 
 uPat :: Parser UPat
 uPat =   uVarPat
@@ -374,6 +396,8 @@ uPat' = do
           return $ joinSrc p1 p2 $ PatPair p1 p2)
    <|> return p1)
 
+uVarPat :: Parser UPat
+uVarPat = withSrc $ namePat <$> uBinderName
 
 uBinder :: Parser UBinder
 uBinder =  label "binder" $ (,) <$> uPat <*> optional (annot containedExpr)
@@ -411,7 +435,7 @@ ops =
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ sym "$" $> mkApp]
-  , [symOp "+=", symOp ":="]
+  , [symOp "+=", symOp ":=", symOp "|"]
   , [InfixR infixEffArrow, InfixR infixLinArrow]
   , [InfixR $ symOpP "&", pairOp]
   ]

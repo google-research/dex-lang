@@ -209,7 +209,7 @@ typeCheckTyCon tc = case tc of
   IntRange a b     -> a|:IntTy >> b|:IntTy
   IndexRange t a b -> t|:TyKind >> mapM_ (|:TyKind) a >> mapM_ (|:TyKind) b
   ArrayType _      -> return ()
-  SumType (l, r)   -> l|:TyKind >> r|:TyKind
+  SumType  l r     -> l|:TyKind >> r|:TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind
   UnitType         -> return ()
   RefType r a      -> r|:TyKind >> a|:TyKind
@@ -221,7 +221,7 @@ typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
   AnyValue t -> t|:TyKind $> t
-  SumCon _ l r -> (TC . SumType) <$> ((,) <$> typeCheck l <*> typeCheck r)
+  SumCon _ l r -> SumTy <$> typeCheck l <*> typeCheck r
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
@@ -302,12 +302,12 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
-  -- SumCase st l r -> do
-  --   (la, lb) <- pureNonDepAbsBlock l
-  --   (ra, rb) <- pureNonDepAbsBlock r
-  --   checkEq lb rb
-  --   st |: SumTy la ra
-  --   return lb
+  SumCase st l r -> do
+    Pi (Abs (NoName:>la) (PlainArrow Pure, lb)) <- typeCheck l
+    Pi (Abs (NoName:>ra) (PlainArrow Pure, rb)) <- typeCheck r
+    checkEq lb rb
+    st |: SumTy la ra
+    return lb
   Linearize f -> do
     Pi (Abs (NoName:>a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
@@ -415,7 +415,7 @@ checkDataLike msg env ty = case ty of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
-    SumType (l, r)   -> checkDataLike msg env l >> checkDataLike msg env r
+    SumType l r      -> checkDataLike msg env l >> checkDataLike msg env r
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg

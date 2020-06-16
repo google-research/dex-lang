@@ -163,7 +163,7 @@ data PrimTC e =
       | ArrayType ArrayType
       | PairType e e
       | UnitType
-      | SumType (e, e)
+      | SumType e e
       | RefType e e
       | TypeKind
       | EffectRowKind
@@ -753,7 +753,7 @@ pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
 
 pattern SumTy :: Type -> Type -> Type
-pattern SumTy l r = TC (SumType (l, r))
+pattern SumTy l r = TC (SumType l r)
 
 pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
@@ -851,6 +851,7 @@ builtinNames = M.fromList
   , ("runReader"       , HofExpr $ RunReader () ())
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
+  , ("caseAnalysis"    , HofExpr $ SumCase () () ())
   , ("Int"     , TCExpr $ BaseType IntType)
   , ("Real"    , TCExpr $ BaseType RealType)
   , ("Bool"    , TCExpr $ BaseType BoolType)
@@ -858,11 +859,14 @@ builtinNames = M.fromList
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType () ())
   , ("PairType", TCExpr $ PairType () ())
+  , ("SumType" , TCExpr $ SumType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())
   , ("snd", OpExpr $ Snd ())
+  , ("sumCon", ConExpr $ SumCon () () ())
+  , ("anyVal", ConExpr $ AnyValue ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()

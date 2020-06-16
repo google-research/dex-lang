@@ -235,7 +235,7 @@ intToIndex ty@(TC con) i = case con of
   IntRange _ _      -> iAsIdx
   IndexRange _ _ _  -> iAsIdx
   BaseType BoolType -> impExprToAtom <$> emitUnOp UnsafeIntToBool i
-  SumType (l, r) -> do
+  SumType l r -> do
     ls <- indexSetSize l
     isLeft <- impCmp Less i ls
     li <- intToIndex l i
@@ -327,7 +327,7 @@ indexSetSize (TC con) = case con of
     b' <- indexSetSize b
     impMul a' b'
   BaseType BoolType -> return $ IIntVal 2
-  SumType (l, r) -> do
+  SumType l r -> do
     ls <- indexSetSize l
     rs <- indexSetSize r
     impAdd ls rs

@@ -10,7 +10,7 @@
     ("^'\\(.\\|\n.\\)*\n\n"  . font-lock-comment-face)
     ("\\w+:"                 . font-lock-comment-face)
     ("^:\\w*"                . font-lock-preprocessor-face)
-    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b" . font-lock-keyword-face)
+    ("\\bdef\\b\\|\\bfor\\b\\|\\brof\\b\\|\\bcase\\b" . font-lock-keyword-face)
     ("--o"                               . font-lock-variable-name-face)
     ("[-.,!$^&*:~+/=<>|?\\\\]"           . font-lock-variable-name-face)
     ("\\b[[:upper:]][[:alnum:]]*\\b"     . font-lock-type-face)

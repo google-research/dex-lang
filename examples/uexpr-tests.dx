@@ -233,3 +233,10 @@ def transpose' (x:n=>m=>Real) --o : m=>n=>Real = for i j. x.j.i
 > 12.0
 
 id'' : b -> b = id
+
+def eitherFloor (x:(Int|Real)) : Int = case x
+  Left  i -> i
+  Right f -> floor f
+
+:p (eitherFloor (Left 1), eitherFloor (Right 2.3))
+> (1, 2)
