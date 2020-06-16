@@ -126,36 +126,35 @@ toImpOp op = case op of
     resultTy = getType $ Op op
 
 toImpHof :: SubstEnv -> Hof -> ImpM Atom
-toImpHof env hof = case hof of
-  For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
-    idxTy' <- impSubst env idxTy
-    n' <- indexSetSize idxTy'
-    dest <- alloc resultTy
-    emitLoop d n' $ \i -> do
-      i' <- intToIndex idxTy i
-      ithDest <- impTabGet dest i'
-      ans <- toImpBlock (env <> b @> i') body
-      copyAtom ithDest ans
-    return dest
-  RunReader r (BinaryFunVal region ref _ body) -> do
-    r' <- impSubst env r
-    toImpBlock (env <> ref @> refVal region r') body
-  RunWriter (BinaryFunVal region ref _ body) -> do
-    wDest <- alloc wTy
-    initializeAtomZero wDest
-    aResult <- toImpBlock (env <> ref @> refVal region wDest) body
-    return $ PairVal aResult wDest
-    where (PairTy _ wTy) = resultTy
-  RunState s (BinaryFunVal region ref _ body) -> do
-    s' <- impSubst env s
-    sDest <- alloc sTy
-    copyAtom sDest s'
-    aResult <- toImpBlock (env <> ref @> refVal region sDest) body
-    return $ PairVal aResult sDest
-    where (PairTy _ sTy) = resultTy
-  where
-    resultTy :: Type
-    resultTy = getType $ Hof hof
+toImpHof env hof = do
+  resultTy <- impSubst env $ getType $ Hof hof
+  case hof of
+    For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
+      idxTy' <- impSubst env idxTy
+      n' <- indexSetSize idxTy'
+      dest <- alloc resultTy
+      emitLoop d n' $ \i -> do
+        i' <- intToIndex idxTy i
+        ithDest <- impTabGet dest i'
+        ans <- toImpBlock (env <> b @> i') body
+        copyAtom ithDest ans
+      return dest
+    RunReader r (BinaryFunVal region ref _ body) -> do
+      r' <- impSubst env r
+      toImpBlock (env <> ref @> refVal region r') body
+    RunWriter (BinaryFunVal region ref _ body) -> do
+      wDest <- alloc wTy
+      initializeAtomZero wDest
+      aResult <- toImpBlock (env <> ref @> refVal region wDest) body
+      return $ PairVal aResult wDest
+      where (PairTy _ wTy) = resultTy
+    RunState s (BinaryFunVal region ref _ body) -> do
+      s' <- impSubst env s
+      sDest <- alloc sTy
+      copyAtom sDest s'
+      aResult <- toImpBlock (env <> ref @> refVal region sDest) body
+      return $ PairVal aResult sDest
+      where (PairTy _ sTy) = resultTy
 
 refVal :: Var -> Atom -> Atom
 refVal region ref = Con (RefCon (Var region) ref)

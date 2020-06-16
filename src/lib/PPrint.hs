@@ -277,10 +277,16 @@ instance Pretty UExpr' where
     UDecl decl body -> p decl <> hardline <> p body
     UHole -> "_"
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
+    UIndexRange low high -> "IndexRange" <+> p low <+> p high
     UPrimExpr prim -> p prim
 
 prettyAnn :: Doc ann -> Doc ann
 prettyAnn ty = ":" <+> ty
+
+instance Pretty a => Pretty (Limit a) where
+  pretty Unlimited = "unlimited"
+  pretty (ExclusiveLim x) = "excLim" <+> p x
+  pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs

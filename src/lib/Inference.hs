@@ -141,6 +141,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     env <- inferUDecl decl
     extendR env $ checkOrInferRho body reqTy
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
+  UIndexRange low high -> do
+    n <- freshType TyKind
+    low'  <- mapM (flip checkRho n) low
+    high' <- mapM (flip checkRho n) high
+    return $ TC $ IndexRange n low' high'
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
@@ -181,7 +186,7 @@ inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (patNameHint p :> argTy) arr
-    $ \x -> withBindPat p x $ inferSigma body
+    $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
 checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do

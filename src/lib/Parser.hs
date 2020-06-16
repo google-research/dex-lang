@@ -438,6 +438,7 @@ ops =
   , [symOp "+=", symOp ":=", symOp "|"]
   , [InfixR infixEffArrow, InfixR infixLinArrow]
   , [InfixR $ symOpP "&", pairOp]
+  , indexRangeOps
   ]
 
 opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
@@ -500,6 +501,31 @@ joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
 
 joinPos :: SrcPos -> SrcPos -> SrcPos
 joinPos (l, h) (l', h') =(min l l', max h h')
+
+indexRangeOps :: [Operator Parser UExpr]
+indexRangeOps =
+  [ Prefix    $ symPos ".."   <&> \pos h   -> range pos  Unlimited       (InclusiveLim h)
+  , inpostfix $ symPos ".."   <&> \pos l h -> range pos (InclusiveLim l) (limFromMaybe h)
+  , inpostfix $ symPos "<.."  <&> \pos l h -> range pos (ExclusiveLim l) (limFromMaybe h)
+  , Prefix    $ symPos "..<"  <&> \pos h   -> range pos  Unlimited       (ExclusiveLim h)
+  , InfixL    $ symPos "..<"  <&> \pos l h -> range pos (InclusiveLim l) (ExclusiveLim h)
+  , InfixL    $ symPos "<..<" <&> \pos l h -> range pos (ExclusiveLim l) (ExclusiveLim h) ]
+  where
+    range pos l h = WithSrc pos $ UIndexRange l h
+    symPos s = snd <$> withPos (sym s)
+
+limFromMaybe :: Maybe a -> Limit a
+limFromMaybe Nothing = Unlimited
+limFromMaybe (Just x) = InclusiveLim x
+
+inpostfix :: Parser (UExpr -> Maybe UExpr -> UExpr) -> Operator Parser UExpr
+inpostfix = inpostfix' expr
+
+inpostfix' :: Parser a -> Parser (a -> Maybe a -> a) -> Operator Parser a
+inpostfix' p op = Postfix $ do
+  f <- op
+  rest <- optional p
+  return $ \x -> f x rest
 
 -- === lexemes ===
 

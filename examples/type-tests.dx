@@ -32,8 +32,8 @@ help make the errors more local.
 >
 > ( (_ans_ @> _ans_)
 > , [ _ans_:((?3=>(?6=>?7))->(?6=>(?3=>?7))) = \x:(?3=>(?6=>?7)). for \i:?6. for \j:?3.
->   tmp:(?6=>?7) = (x) (j)
->   (tmp) (i) ] )
+>   tmp1:(?6=>?7) = (x) (j)
+>   (tmp1) (i) ] )
 
 :t \f x. f x
 > Type error:Ambiguous type variables: [?2, ?3]
@@ -118,10 +118,10 @@ xr = map i2r arr
 >
 > ( (_ans_ @> _ans_)
 > , [ _ans_:((?4=>(?7=>?8))->((?4 & ?7)=>?8)) = \x:(?4=>(?7=>?8)). for \pat:(?4 & ?7).
->   tmp:?4 = %fst pat
->   tmp1:?7 = %snd pat
->   tmp2:(?7=>?8) = (x) (tmp)
->   (tmp2) (tmp1) ] )
+>   tmp1:?4 = %fst pat
+>   tmp2:?7 = %snd pat
+>   tmp3:(?7=>?8) = (x) (tmp1)
+>   (tmp3) (tmp2) ] )
 
 f : Int -> Real =
  \x.

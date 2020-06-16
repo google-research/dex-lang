@@ -119,6 +119,7 @@ data UExpr' = UVar UVar
             | UFor Direction UBinder UExpr
             | UHole
             | UTabCon [UExpr] (Maybe UExpr)
+            | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
@@ -472,6 +473,7 @@ instance HasUVars UExpr' where
     UFor _ b body -> uAbsFreeVars b body
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
+    UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
 
 instance HasUVars UDecl where
