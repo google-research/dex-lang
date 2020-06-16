@@ -45,7 +45,7 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-example-names = uexpr-tests type-tests
+example-names = uexpr-tests type-tests eval-tests shadow-tests
 # example-names = uexpr-tests type-tests eval-tests shadow-tests annot-tests \
 #                 linear-tests ad-tests \
 #                 monad-tests include-test mandelbrot pi sierpinsky \

@@ -131,7 +131,10 @@ instance Pretty e => Pretty (PrimCon e) where
     AGet e      -> "aget" <+> p e
     AsIdx n i   -> p i <> "@" <> parens (p n)
     AnyValue t  -> parens $ "AnyValue @" <> p t
-    SumCon c l r -> parens $ "SumCon" <+> p c <+> p l <+> p r
+    SumCon c l r -> parens $ case pprint c of
+      "True"  -> "Left"  <+> p l
+      "False" -> "Right" <+> p r
+      _ -> "SumCon" <+> p c <+> p l <+> p r
     Todo e -> "<undefined " <> p e <> ""
 
 instance Pretty e => Pretty (PrimOp e) where

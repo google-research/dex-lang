@@ -15,10 +15,8 @@ module Imp (toImpFunction, impExprToAtom, impExprType, impTypeToArrayType) where
 import Control.Applicative
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Control.Monad.State
 import Control.Monad.Writer
 import Data.Foldable
-import Data.Functor.Reverse
 import Data.Text.Prettyprint.Doc
 
 import Syntax
@@ -240,6 +238,11 @@ intToIndex ty@(TC con) i = case con of
     li <- intToIndex l i
     ri <- intToIndex r =<< impSub i ls
     return $ Con $ SumCon (toScalarAtom BoolTy isLeft) li ri
+  PairType a b -> do
+    bSize <- indexSetSize b
+    iA <- intToIndex a =<< impDiv i bSize
+    iB <- intToIndex b =<< impRem i bSize
+    return $ PairVal iA iB
   _ -> error $ "Unexpected type " ++ pprint con
   where
     iAsIdx = return $ Con $ AsIdx ty $ impExprToAtom i
@@ -248,28 +251,24 @@ intToIndex ty _ = error $ "Unexpected type " ++ pprint ty
 indexToInt :: Type -> Atom -> ImpM IExpr
 indexToInt ty idx = case ty of
   BoolTy  -> emitUnOp BoolToInt =<< fromScalarAtom idx
-  SumTy lType rType     -> do
-    case idx of
-      (SumVal con lVal rVal) -> do
-        lTypeSize <- indexSetSize lType
-        lInt <- indexToInt lType lVal
-        rInt <- impAdd lTypeSize =<< indexToInt rType rVal
-        conExpr <- fromScalarAtom con
-        impSelect conExpr lInt rInt
-      _ -> error $ "Expected a sum constructor, got: " ++ pprint idx
+  SumTy lType rType -> case idx of
+    SumVal con lVal rVal -> do
+      lTypeSize <- indexSetSize lType
+      lInt <- indexToInt lType lVal
+      rInt <- impAdd lTypeSize =<< indexToInt rType rVal
+      conExpr <- fromScalarAtom con
+      impSelect conExpr lInt rInt
+    _ -> error $ "Expected a sum constructor, got: " ++ pprint idx
+  PairTy a b -> case idx of
+    PairVal aIdx bIdx -> do
+      aIdx' <- indexToInt a aIdx
+      bIdx' <- indexToInt b bIdx
+      bSize <- indexSetSize b
+      impMul bSize aIdx' >>= impAdd bIdx'
+    _ -> error $ "Expected a pair constructor, got: " ++ pprint idx
   TC (IntRange _ _)     -> fromScalarAtom idx
   TC (IndexRange _ _ _) -> fromScalarAtom idx
   _ -> error $ "Unexpected type " ++ pprint ty
-
-getStrides :: Traversable f => f (a, Type) -> ImpM (f (a, Type, IExpr))
-getStrides xs =
-  liftM getReverse $ flip evalStateT (IIntVal 1) $
-    forM (Reverse xs) $ \(x, ty) -> do
-      stride  <- get
-      size    <- lift $ indexSetSize ty
-      stride' <- lift $ impMul stride size
-      put stride'
-      return (x, ty, stride)
 
 impExprToAtom :: IExpr -> Atom
 impExprToAtom e = case e of

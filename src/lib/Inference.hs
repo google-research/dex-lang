@@ -216,16 +216,25 @@ withBindPat pat val m = do
   extendR env m
 
 bindPat :: UPat -> Atom -> UInferM InfEnv
-bindPat (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
-  PatBind b -> return (b @> val)
-  PatUnit -> constrainEq UnitTy (getType val) >> return mempty
+bindPat pat val = evalCatT $ bindPat' pat val
+
+bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM InfEnv
+bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
+  PatBind b -> do
+    usedVars <- look
+    when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint (varName b)
+    extend (b@>())
+    return (b @> val)
+  PatUnit -> do
+    lift $ constrainEq UnitTy (getType val)
+    return mempty
   PatPair p1 p2 -> do
-    _ <- fromPairType (getType val)
-    val' <- zonk val  -- ensure it has a pair type before unpacking
-    x1 <- getFst val'
-    x2 <- getSnd val'
-    env1 <- bindPat p1 x1
-    env2 <- bindPat p2 x2
+    _    <- lift $ fromPairType (getType val)
+    val' <- lift $ zonk val  -- ensure it has a pair type before unpacking
+    x1   <- lift $ getFst val'
+    x2   <- lift $ getSnd val'
+    env1 <- bindPat' p1 x1
+    env2 <- bindPat' p2 x2
     return $ env1 <> env2
 
 patNameHint :: UPat -> Name

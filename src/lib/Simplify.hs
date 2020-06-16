@@ -198,15 +198,16 @@ resolveEq t x y = case t of
     p2 <- resolveEq t2 x2 y2
     andE p1 p2
   -- instance Eq a => Eq n=>a
-  -- TabTy ixty elty -> do
-  --   writerLam <- buildLam ("ref":> RefTy RealTy) $ \ref -> liftM (PureArrow,) $ do
-  --     buildFor Fwd ("i":>ixty) $ \i -> do
-  --       (x', y') <- (,) <$> app x i <*> app y i
-  --       eqReal <- boolToReal =<< resolveEq elty x' y'
-  --       emitOp $ PrimEffect ref $ MTell eqReal
-  --   idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
-  --   total <- snd <$> (fromPair =<< emit (Hof $ RunWriter writerLam))
-  --   emitOp $ Cmp Equal RealTy total idxSetSize
+  -- TODO: writer with other monoids to avoid this
+  TabTy ixty elty -> do
+    writerAns <- emitRunWriter "ref" RealTy $ \ref -> do
+      buildFor Fwd ("i":>ixty) $ \i -> do
+        (x', y') <- (,) <$> app x i <*> app y i
+        eqReal <- boolToReal =<< resolveEq elty x' y'
+        emitOp $ PrimEffect ref $ MTell eqReal
+    total <- getSnd writerAns
+    idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
+    emitOp $ ScalarBinOp (FCmp Equal) total idxSetSize
   -- instance (Eq a, Eq b) => Eq (Either a b)
   SumTy lty rty -> do
     xt <- emitOp $ SumTag x

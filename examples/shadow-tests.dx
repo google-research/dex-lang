@@ -4,11 +4,17 @@
   (x, x) = (1, 1)
   x
 > Error: variable already defined: x
+>
+>   (x, x) = (1, 1)
+>       ^
 
 :p
-  f (x, x) = x
+  f = \(x, x). x
   f (1, 1)
 > Error: variable already defined: x
+>
+>   f = \(x, x). x
+>            ^
 
 -- TODO: re-enable if we choose to allow non-peer shadowing
 -- -- shouldn't cause error even though it shadows x elsewhere
@@ -31,8 +37,7 @@ arr = 20
 > 10
 
 -- testing top-level shadowing
-f : a -> a
-f x = x
+f : a -> a = \x. x
 
 x = 1
 
