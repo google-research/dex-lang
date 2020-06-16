@@ -46,6 +46,7 @@ def not  (x:Bool)          : Bool = %not x
 
 def i2r (x:Int ) : Real = %inttoreal x
 def b2i (x:Bool) : Int  = %booltoint x
+def b2r (x:Bool) : Real = i2r (b2i x)
 def todo (a:Type) ?-> : a = %todo a
 
 'Effects
@@ -88,6 +89,7 @@ def cos (x:Real) : Real = %ffi cos Real x
 def tan (x:Real) : Real = %ffi tan Real x
 def sqrt (x:Real) : Real = %ffi sqrt Real x
 def floor (x:Real) : Int = %ffi floorDex Int x
+def pow (x:Real) (y:Real) : Real = %ffi pow Real x y
 
 'Working with index sets
 
@@ -123,7 +125,7 @@ def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (x:Real) : Real = x * x
-def abs (x:Real) : Real = select (x > 0.0) x (0.0 - x)
+def abs (x:Real) : Real = select (x > 0.0) x (-x)
 def mod (x:Int) (y:Int) : Int = rem (iadd y (rem x y)) y
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
@@ -187,7 +189,7 @@ def randn (k:Key) : Real =
   u1 = rand k1
   u2 = rand k2
   -- TODO: parsing negative numbers
-  sqrt ((0.0-2.0) * log u1) * cos (2.0 * pi * u2)
+  sqrt ((-2.0) * log u1) * cos (2.0 * pi * u2)
 
 def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k

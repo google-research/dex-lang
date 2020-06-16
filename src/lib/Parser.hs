@@ -131,7 +131,9 @@ explicitCommand = do
       Just p -> return $ ShowPass p
       _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <*eol
-  return $ Command cmd (exprAsModule e)
+  return $ case (e, cmd) of
+    (WithSrc _ (UVar (v:>())), GetType) -> GetNameType v
+    _ -> Command cmd (exprAsModule e)
 
 declAsModule :: UDecl -> UModule
 declAsModule dec@(ULet (WithSrc _ pat,_) _) = UModule imports exports [dec]
@@ -266,10 +268,10 @@ effects = braces someEffects <|> return Pure
       return $ EffectRow effs v
 
 effectName :: Parser EffectName
-effectName =     (symbol "Accum" $> Writer)
-             <|> (symbol "Read"  $> Reader)
-             <|> (symbol "State" $> State)
-             <?> "effect name"
+effectName =     (keyWord WriteKW $> Writer)
+             <|> (keyWord ReadKW  $> Reader)
+             <|> (keyWord StateKW $> State)
+             <?> "effect name (Accum|Read|State)"
 
 uLamExpr :: Parser UExpr
 uLamExpr = do
@@ -429,12 +431,12 @@ ops =
   , [InfixL $ sc $> mkApp]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
-  , [symOp "+", symOp "-"]
+  , [symOp "+", prefixNegOp, negOp]
   , [InfixR $ sym "=>" $> mkArrow TabArrow]
   , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
-  , [InfixR $ sym "$" $> mkApp]
+  , [InfixR $ mayBreak (sym "$") $> mkApp]
   , [symOp "+=", symOp ":=", symOp "|"]
   , [InfixR infixEffArrow, InfixR infixLinArrow]
   , [InfixR $ symOpP "&", pairOp]
@@ -463,6 +465,16 @@ symOpP s = opWithSrc $ do
   label "infix operator" (sym s)
   return $ binApp f
   where f = rawName SourceName $ "(" <> s <> ")"
+
+-- Requires special handling because `-1` is a negative literal
+negOp :: Operator Parser UExpr
+negOp = InfixL $ opWithSrc $ neg $> binApp (rawName SourceName "(-)")
+
+prefixNegOp :: Operator Parser UExpr
+prefixNegOp = Prefix $ do
+  ((), pos) <- withPos neg
+  let f = WithSrc pos $ UVar $ rawName SourceName "neg" :> ()
+  return $ mkApp f
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
@@ -532,7 +544,7 @@ inpostfix' p op = Postfix $ do
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW | ReadKW | WriteKW | StateKW
 
 textName :: Lexer Name
 textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
@@ -541,7 +553,7 @@ textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
   return w
   where
     keyWordStrs :: [String]
-    keyWordStrs = ["def", "for", "rof", "case", "llam"]
+    keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
@@ -551,17 +563,24 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"
+      ReadKW  -> "Read"
+      WriteKW -> "Accum"
+      StateKW -> "State"
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some letterChar
 
 intLit :: Lexer Int
-intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
+intLit = lexeme $ try $ signedNum L.decimal <* notFollowedBy (char '.')
 
 doubleLit :: Lexer Double
 doubleLit = lexeme $
-      try L.float
-  <|> try (fromIntegral <$> ((L.decimal :: Parser Int) <* char '.'))
+      try (signedNum L.float)
+  <|> try (signedNum $ fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
+
+
+signedNum :: Num a => Lexer a -> Lexer a
+signedNum p = L.signed (return ()) p
 
 -- string must only contain characters from the list `symChars`
 sym :: String -> Lexer ()
@@ -589,9 +608,11 @@ rBrace    = charLexeme '}'
 semicolon = charLexeme ';'
 underscore = charLexeme '_'
 
+neg :: Lexer ()
+neg = lexeme $ try $ char '-' >> notFollowedBy (digitChar <|> symChar)
+
 charLexeme :: Char -> Parser ()
 charLexeme c = void $ lexeme $ char c
-
 
 nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'

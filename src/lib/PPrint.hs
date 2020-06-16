@@ -176,8 +176,8 @@ instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
     Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
-    Pi  (Abs (NoName:>a) (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
-    Pi  (Abs a           (arr, b)) -> parens $ prettyArrow arr (p a) (p b)
+    Pi  (Abs (NoName:>a) (arr, b)) -> parens $ p a <> p arr <> p b
+    Pi  (Abs a           (arr, b)) -> parens $ p a <> p arr <> p b
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
@@ -273,10 +273,7 @@ instance Pretty UExpr' where
       kw <+> p pat <+> "." <> nest 2 (hardline <> p body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> prettyArrow arr (parens (p a)) (eff' <> p b)
-       where eff' = case arr of PlainArrow Pure -> mempty
-                                PlainArrow eff  -> p eff
-                                _ -> mempty
+    UPi a arr b -> parens (p a) <> pretty arr <> p b
     UDecl decl body -> p decl <> hardline <> p body
     UHole -> "_"
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
@@ -293,9 +290,6 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
-
-instance Pretty Arrow where
-  pretty ah = prettyArrow ah mempty mempty
 
 instance Pretty a => Pretty (PatP' a) where
   pretty pat = case pat of
@@ -323,12 +317,12 @@ annImplicity :: ArrowP a -> Doc ann -> Doc ann
 annImplicity ImplicitArrow x = braces x
 annImplicity _ x = x
 
-prettyArrow :: Pretty eff => ArrowP eff -> Doc ann -> Doc ann -> Doc ann
-prettyArrow arr a b = case arr of
-  PlainArrow eff -> a <> "->" <> p eff <> b
-  TabArrow       -> a <> "=>"  <> b
-  LinArrow       -> a <> "--o" <> b
-  ImplicitArrow  -> "{" <> a <> "} ->" <> b
+instance Pretty eff => Pretty (ArrowP eff) where
+  pretty arr = case arr of
+    PlainArrow eff -> "->" <> p eff
+    TabArrow       -> "=>"
+    LinArrow       -> "--o"
+    ImplicitArrow  -> "?->"
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

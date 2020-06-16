@@ -2,47 +2,39 @@
 
 'First, we implement complex arithmetic
 
-type Complex = (Real, Real)
+Complex : Type = (Real & Real)
 
-cadd : Complex -> Complex -> Complex
-cadd (x1, y1) (x2, y2) = (x1 + x2, y1 + y2)
+cadd : Complex -> Complex -> Complex =
+  \(x1, y1) (x2, y2). (x1 + x2, y1 + y2)
 
-cmul : Complex -> Complex -> Complex
-cmul (x1, y1) (x2, y2) = (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
+cmul : Complex -> Complex -> Complex =
+  \(x1, y1) (x2, y2). (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
 
-cabs : Complex -> Real
-cabs (x, y) = x * x + y * y
+cabs : Complex -> Real =
+  \(x, y). x * x + y * y
 
-czero : Complex
-czero = (0.0, 0.0)
-
-'Parameters
-
-tol = 2.0
-type Niters = 1000
-type Nx = 300
-type Ny = 200
+czero : Complex = (0.0, 0.0)
 
 'The actual escape time algorithm
 
-update : Complex -> Complex -> Complex
-update c z = cadd c (cmul z z)
+update : Complex -> Complex -> Complex =
+  \c z. cadd c (cmul z z)
 
-inBounds : Complex -> Bool
-inBounds z = cabs z < tol
+tol = 2.0
+inBounds : Complex -> Bool =
+  \z. cabs z < tol
 
-escapeTime : Complex -> Real
-escapeTime c = fst $ fold (0.0, czero) $
-  \i:Niters  (n, z).
-    z' = update c z
-    (n + b2r (inBounds z'), z')
+escapeTime : Complex -> Real =
+  \c. fst $ fold (0.0, czero) $ \i:(Fin 1000) (n, z).
+     z' = update c z
+     (n + b2r (inBounds z'), z')
 
 'Evaluate on a grid and plot the results
 
-xs = linspace @Nx -2.0 1.0
-ys = linspace @Ny -1.0 1.0
+xs = linspace (Fin 300) -2.0 1.0
+ys = linspace (Fin 200) -1.0 1.0
 
-grid.j.i = (xs.i, ys.j)
+escapeGrid = for j i. escapeTime (xs.i, ys.j)
 
-:plotmat map2 escapeTime grid
+:plotmat escapeGrid
 > <graphical output>

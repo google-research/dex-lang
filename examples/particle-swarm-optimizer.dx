@@ -2,17 +2,16 @@
 
 ' ## Fitness function
 
-rosenbrock: Real -> Real -> Real
-rosenbrock x y = sq (1.0 - x) + 80.0*sq (y - x*x)
-
+rosenbrock : Real -> Real -> Real =
+  \x y. sq (1.0 - x) + 80.0*sq (y - x*x)
 
 ' We write one that uses vector for input
 
-rosenbrock2: (2=>Real) -> Real
-rosenbrock2 xs =
-  x = xs.(0@2)
-  y = xs.(1@2)
-  rosenbrock x y
+rosenbrock2 : ((Fin 2)=>Real) -> Real =
+  \xs.
+    x = xs.(fromOrdinal _ 0)
+    y = xs.(fromOrdinal _ 1)
+    rosenbrock x y
 
 ' Min should be at 1.0, 1.0
 
@@ -31,24 +30,20 @@ rosenbrock2 xs =
 
 ' ## Helper functions
 
-minbyfst: A a | Data a . (Real, a)->(Real, a)->(Real, a)
-minbyfst = minby (asNonLin fst)
+minbyfst : (Real & a) -> (Real & a) -> (Real & a) = minBy fst
 
-minimumbyfst: A n a | Data a . (n=>(Real, a))->(Real, a)
-minimumbyfst = minimumby (asNonLin fst)
+minimumbyfst : (n=>(Real & a)) -> (Real & a) = minimumBy fst
 
 ' ### Rand helpers
 
 ' make a random vector uniformly distributed between `lb` and `ub`
 
-randBounded: Key -> (d=>Real)->(d=>Real)->(d=>Real)
-randBounded key lb ub =
+randBounded : Key -> (d=>Real)->(d=>Real)->(d=>Real) =
+  \key lb ub.
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
 :p randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
 > [-0.3510105, 1.4935503]
-
-
 
 ' ## The Optimizer itself.
 We have **arguments**:
@@ -61,18 +56,26 @@ We have **arguments**:
 
 ' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
-optimize: A np:Ty niter:Ty d | Ix np, Ix niter, Ix d . Key->((d=>Real)->Real) -> (d=>Real,d=>Real) -> (Real,Real,Real) -> (d=>Real)
-optimize key f (lb,ub) (momentum,gRate,pRate) =
-    optStep (keyL, gbest, pbests, positions, velocities) =
+def optimize
+      (d:Type) ?->
+      (np':Int)                                        -- number of particles
+      (niter:Int)                                      -- number of iterations
+      (key:Key)                                        -- random seed
+      (f:(d=>Real)->Real)                              -- function to optimize
+      ((lb,ub):(d=>Real & d=>Real))                    -- bounds
+      ((momentum, gRate, pRate):(Real & Real & Real))  -- momentum/pRate/gRate
+      : (d=>Real) =
+    np = Fin np'
+    optStep = \(keyL, gbest, pbests, positions, velocities).
         newPositions:(np=>d=>Real) = for p i.
             positions.p.i + velocities.p.i
-        newPbests:(np=>(Real, d=>Real)) = for p.
+        newPbests:(np=>(Real & d=>Real)) = for p.
             minbyfst pbests.p (f newPositions.p, newPositions.p)
-        newGbest:(Real, d=>Real) =
+        newGbest:(Real & d=>Real) =
             minbyfst gbest (minimumbyfst newPbests)
         (keyG, keyP, keyNext) = splitKey3 keyL
         (gscore, gloc) = gbest
-        plocs = map (asNonLin snd) pbests
+        plocs = map snd pbests
         gVel:(np=>d=>Real) = for p i.
             weight = rand $ (ixkey2 keyG p i)
             dir = gloc.i - positions.p.i
@@ -84,15 +87,15 @@ optimize key f (lb,ub) (momentum,gRate,pRate) =
         newVelocities:(np=>d=>Real) = for p i.
             momentum*velocities.p.i + gRate*gVel.p.i + pRate*gVel.p.i
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
-    randInit1 keyI1 = randBounded keyI1 lb ub
-    randInit keyI = for p:np. randInit1 $ ixkey keyI p
+    randInit1 = \keyI1. randBounded keyI1 lb ub
+    randInit  = \keyI. for p:np. randInit1 $ ixkey keyI p
     (keyPos, keyVel, keyLoop) = splitKey3 key
     initPositions:(np=>d=>Real) = randInit keyPos
     initVelocities:(np=>d=>Real) = randInit keyVel
-    initPs:(np=>(Real, d=>Real)) = for p. (f initPositions.p, initPositions.p)
-    initG:(Real, d=>Real) = minimumbyfst initPs
+    initPs:(np=>(Real & d=>Real)) = for p. (f initPositions.p, initPositions.p)
+    initG:(Real & d=>Real) = minimumbyfst initPs
     inits = (keyLoop,initG,initPs,initPositions,initVelocities)
-    res = fold inits (\iter:niter. optStep)
+    res = fold inits (\iter:(Fin niter). optStep)
     (dc0,(finalGscore, finalGloc),dc1,dc2,dc3) = res
     finalGloc
 
@@ -101,45 +104,14 @@ Lets see how it goes.
 Run it for more iterations and result should improve.
 Which it indeed does.
 
-:p (optimize
-    @50  -- number of particles
-    @10  -- number of iterations
-    (newKey 0)  -- random seed
-    rosenbrock2  -- function to optimize
-    ([-10.0, -10.0],[20.0, 20.0])  -- bounds
-    (0.5,0.3,0.4)  -- momentum/pRate/gRate
-)
+:p optimize 50 10 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [3.7902775, 14.911414]
 
-
-:p (optimize
-    @50  -- number of particles
-    @20  -- number of iterations
-    (newKey 0)  -- random seed
-    rosenbrock2  -- function to optimize
-    ([-10.0, -10.0],[20.0, 20.0])  -- bounds
-    (0.5,0.3,0.4) -- momentum/pRate/gRate
-)
+:p optimize 50 20 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.737736, 3.1227164]
 
-:p (optimize
-    @50  -- number of particles
-    @100  -- number of iterations
-    (newKey 0)  -- random seed
-    rosenbrock2  -- function to optimize
-    ([-10.0, -10.0],[20.0, 20.0])  -- bounds
-    (0.5,0.3,0.4) -- momentum/pRate/gRate
-)
+:p optimize 50 100 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.0062338, 1.0128839]
 
-:p (optimize
-    @50  -- number of particles
-    @1000  -- number of iterations
-    (newKey 0)  -- random seed
-    rosenbrock2  -- function to optimize
-    ([-10.0, -10.0],[20.0, 20.0])  -- bounds
-    (0.5,0.3,0.4) -- momentum/pRate/gRate
-)
+:p optimize 50 1000 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.0, 1.0]
-
-' ---

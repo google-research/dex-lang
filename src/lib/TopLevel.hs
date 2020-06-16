@@ -71,7 +71,7 @@ runTopPassM opts m = runLogger (logFile opts) $ \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlockM env block = case sbContents block of
+evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
   RunModule m -> evalUModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -95,9 +95,9 @@ evalSourceBlockM env block = case sbContents block of
     ShowPasses -> void $ evalUModule env m
     ShowPass _ -> void $ evalUModule env m
     TimeIt     -> void $ evalUModule env m
-  -- GetNameType v -> case envLookup typeEnv v of
-  --   Just ty -> logTop (TextOut $ pprint ty) >> return mempty
-  --   _       -> liftEitherIO $ throw UnboundVarErr $ pprint v
+  GetNameType v -> case envLookup substEnv (v:>()) of
+    Just x -> logTop (TextOut $ pprint (getType x)) >> return mempty
+    _      -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     evalSourceBlocks env $ parseProg source

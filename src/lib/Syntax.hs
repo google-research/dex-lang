@@ -283,7 +283,7 @@ type BlockId = Int
 type ReachedEOF = Bool
 data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
-                  | GetNameType Var
+                  | GetNameType Name
                   | IncludeSourceFile String
                   | LoadData UBinder DataFormat String
                   | ProseBlock String
@@ -483,7 +483,7 @@ instance HasUVars SourceBlock where
   freeUVars block = case sbContents block of
     RunModule (   UModule vs _ _) -> foldMap nameAsEnv vs
     Command _ (_, UModule vs _ _) -> foldMap nameAsEnv vs
-    GetNameType v                 -> v @> ()
+    GetNameType v                 -> (v:>()) @> ()
     _ -> mempty
 
 instance HasUVars EffectRow where

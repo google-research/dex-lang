@@ -202,3 +202,49 @@ fEff : Unit -> {| a} a = todo
 -- >
 -- > :p (\(u,v). for i:0...u. 1.0) (2, 3)
 -- >     ^^^^^^^^^^^^^^^^^^^^^^^^
+
+g : a -> a = \x. x
+
+:t g
+> (a:Type?->(a->a))
+
+:t
+  f = \x:Int. x
+  f 1
+> Int
+
+:t
+   f = \x:Real. x
+   f 1
+> Type error:
+> Expected: Real
+>   Actual: Int
+>
+>    f 1
+>      ^
+
+g1 : (a -> Int) -> (a -> Int) = \x. x
+
+:t g1
+> (a:Type?->((a->Int)->(a->Int)))
+
+g2 : a -> a = \x. iadd x x
+> Type error:
+> Expected: Int
+>   Actual: a
+>
+> g2 : a -> a = \x. iadd x x
+>                        ^^
+
+h : (a -> b) -> (a -> b) = \x. x
+
+:t h
+> (a:Type?->(a1:Type?->((a->a1)->(a->a1))))
+
+fun : a -> a = \x. sin x
+> Type error:
+> Expected: Real
+>   Actual: a
+>
+> fun : a -> a = \x. sin x
+>                        ^

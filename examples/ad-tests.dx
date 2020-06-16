@@ -1,78 +1,27 @@
-:p
-   f : Real -> Real
-   f x = x
-   jvp f 3.0 2.0
-> 2.0
 
 :p
-   f x = x * x
-   jvp f 3.0 1.5
-> 9.0
-
-:p
-   f x = x + x
-   jvp f 3.0 2.0
-> 4.0
-
-:p
-   f x = x * x * x
-   jvp f 2.0 1.5
-> 18.0
-
-:p
-   f x = x * x * x
+   f = \x. x * x * x
    jvp (\x. jvp f x 1.0) 2.0 1.0
 > 12.0
 
 :p
-   f x = 4.0 * x * x * x
+   f = \x. 4.0 * x * x * x
    deriv (deriv (deriv f)) 1.234
 > 24.0
 
+-- TODO: handle pairs and re-enable
 :p
-   f : Real --o Real
-   f x = x
-   transposeLinear f 2.0
-> 2.0
-
-:p
-   f : Real --o Real
-   f x = x + x
-   transposeLinear f 1.0
-> 2.0
-
-:p
-   f : Real --o Real
-   f x = x + (x + x) * 2.0
-   transposeLinear f 1.0
-> 5.0
-
-:p
-   f : Real --o Real
-   f x = x * 2.0
-   transposeLinear f 1.0
-> 2.0
-
-:p
-   f : Real --o Real
-   f x = 2.0 * x
-   transposeLinear f 1.0
-> 2.0
-
-:p
-   f : Real --o (Real, Real)
-   f x = (x, 2.0 * x)
+   f : Real --o (Real & Real) = \x. (x, 2.0 * x)
    transposeLinear f (1.0, 3.0)
 > 7.0
 
+-- TODO: handle pairs and re-enable
 :p
-   f : (Real, Real) --o Real
-   f (x,y) = x + 2.0 * y
+   f : (Real & Real) --o Real = \(x,y). x + 2.0 * y
    transposeLinear f 1.0
 > (1.0, 2.0)
 
-:p grad (\x. x * x) 1.0
-> 2.0
+-- TODO: handle user-defined linearity rules an re-enable
 
 :p deriv cos 0.0
 > 0.0
@@ -109,12 +58,6 @@
 
 :p checkDeriv (deriv cos) 1.0
 > True
-
-:p deriv (fdiv 3.0) 2.0
-> -0.75
-
-:p deriv (\x. x / 2.0) 3.0
-> 0.5
 
 badDerivFun : Real -> Real
 badDerivFun x = x

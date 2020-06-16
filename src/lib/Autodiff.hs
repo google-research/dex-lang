@@ -93,6 +93,8 @@ linearizeExpr expr = case expr of
   --   return (ans, do tx' <- tx
   --                   emit $ App tx' i')
   Op op -> linearizeOp op
+  Atom atom -> linearizeAtom atom
+  _ -> error $ "Not implemented: " ++ pprint expr
 
 
 linearizeOp :: Op -> LinA Atom
@@ -270,6 +272,7 @@ transposeExpr expr ct = case expr of
     _ -> error $ "shouldn't have non-table app left"
   Hof hof -> transposeHof hof ct
   Op op -> transposeOp op ct
+  Atom atom -> transposeAtom atom ct
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
