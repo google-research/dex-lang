@@ -26,11 +26,13 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.Foldable
 import Data.Maybe
 
+import Env
 import Array
 import Type
 import Syntax
 import PPrint
 import Parser
+import Record
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -181,35 +183,58 @@ valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = HeatmapOut h w xs
         h = hh - hl
         w = wh - wl
 
+type Counters = RecTree Int
+
 pprintVal :: Val -> String
-pprintVal val = asStr $ fst $ prettyVal val
+pprintVal val = asStr $ evalState (prettyVal val) (makeCounters val)
 -- TODO: Assert all arrays are empty?
 
--- TODO: Implement as a traversal?
-prettyVal :: Val -> ((Doc ann), Val)
+makeCounters :: Val -> RecTree Int
+makeCounters val = case val of
+  Con con -> case con of
+    RecCon r -> RecTree $ fmap makeCounters r
+    AFor _ b -> makeCounters b
+    AGet _   -> RecLeaf 0
+    AsIdx _ i -> makeCounters i
+    Lit _    -> RecTree $ Tup []
+    _ -> unreachable
+  _ -> unreachable
+  where unreachable = error $ "Not a Val: " ++ pprint val
+
+prettyVal :: Val -> State Counters (Doc ann)
 prettyVal (Con con) = case con of
-  RecCon r -> (pretty docs, Con $ RecCon $ r')
-    where (docs, r') = unzip $ fmap (appFst asStr . prettyVal) r
-  AFor n body -> (pretty elems <> idxSetStr, Con $ AFor n $ last bodies)
-    where n' = indexSetSize n
-          -- TODO(ragged): Substitute i in the types that appear in a!
-          (elems, bodies) = unzip $ tail $ scanl (\(_, b) _ -> appFst asStr $ prettyVal b)
-                                                 (undefined, body)
-                                                 [0..n'-1]
+  RecCon r -> do
+    ~(RecTree rc) <- get
+    let (compDescs, rc') = unzip $ recZipWith prettyComponent r rc
+    put $ RecTree rc'
+    return $ pretty compDescs
+    where
+      prettyComponent :: Val -> Counters -> (String, Counters)
+      prettyComponent compVal compCounters = runState (asStr <$> prettyVal compVal) compCounters
+  AFor n body -> do
+    elems <- forM [0..len-1] $ \i -> asStr <$> (prettyVal $ instantiateAFors i body)
+    return $ pretty elems <> idxSetStr
+    where len = indexSetSize n
           idxSetStr = case n of FixedIntRange 0 _ -> mempty
                                 _                 -> "@" <> pretty n
-  AGet (Con (ArrayLit t arr)) ->
-    -- Technically the type of the array should no longer be t, as it has
-    -- been shifted, but replacing it with undefined seems to blow up for some reason...
-    (pretty $ arrayHead arr, Con $ AGet $ Con $ ArrayLit t $ arrayTail arr)
-  AsIdx n i -> (doc <> "@" <> pretty n, Con $ AsIdx n i')
-    where (doc, i') = prettyVal i
-  Lit x -> (pretty x, Con $ Lit x)
-  _ -> (pretty con, Con $ con)
-  where
-    appFst :: (a -> b) -> (a, c) -> (b, c)
-    appFst f (x, y) = (f x, y)
+  AGet (Con (ArrayLit _ arr)) -> do
+    ~(RecLeaf i) <- get
+    put $ RecLeaf (i + 1)
+    return $ pretty $ arrayGet arr i
+  AsIdx n i -> (<> "@" <> pretty n) <$> prettyVal i
+  Lit x -> return $ pretty x
+  _ -> return $ pretty con
 prettyVal atom = error $ "Unexpected value: " ++ pprint atom
+
+instantiateAFors :: Int -> Val -> Val
+instantiateAFors i val = case val of
+  Con con -> Con $ case con of
+    AFor n b -> AFor (sub n) (rec b)
+    _        -> fmapExpr con id rec (error "Unexpected lambda")
+  _ -> error $ "Not a Val: " ++ pprint val
+  where
+    sub = instantiateDepType 0 (IntVal i)
+    rec = instantiateAFors i
 
 unzip :: Functor f => f (a, b) -> (f a, f b)
 unzip f = (fmap fst f, fmap snd f)
@@ -278,6 +303,9 @@ flattenType ty = error $ "Unexpected type: " ++ show ty
 
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
+  TabTy idx (TabTy (TC (IndexRange _ Unlimited (InclusiveLim (Var ((DeBruijn 0) :> _))))) (BaseTy b)) ->
+    ((n * (n + 1)) `div` 2, b)
+    where n = indexSetSize idx
   TabType pi | isDependentType pi ->
     error $ "Tables with dependent dimensions not supported: " ++ pprint t
   TabTy n body -> (indexSetSize n * s, b)

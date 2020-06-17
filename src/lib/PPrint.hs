@@ -296,7 +296,7 @@ instance Pretty ImpInstr where
   pretty (Store dest val)     = "store" <+> p dest <+> p val
   pretty (Copy dest source s) = "copy"  <+> p dest <+> p source <+> parens (p s <+> "elems")
   pretty (Alloc t s)          = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr idx)   = p expr <+> "+>" <+> p idx
+  pretty (IOffset e off idx)  = p e <> "." <> p idx <+> (parens $ p off <+> "elems")
   pretty (Free (v:>_))        = "free"  <+> p v
   pretty (Loop d i n block)   = dirStr d <+> p i <+> "<" <+> p n <>
                                 nest 4 (hardline <> p block)

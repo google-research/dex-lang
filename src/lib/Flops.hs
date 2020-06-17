@@ -46,7 +46,7 @@ statementFlops (_, instr) = case instr of
     tell $ Profile $ M.singleton "copy" [n]
   Alloc _ _   -> return ()
   Free _      -> return ()
-  IOffset _ _ -> return ()
+  IOffset _ _ _ -> return ()
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block

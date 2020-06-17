@@ -368,7 +368,8 @@ data ImpInstr = Load  IExpr
               | Copy  IExpr IExpr Size  -- destination first
               | Alloc ScalarTableType Size  -- Second argument is the size of the table
               | Free IVar
-              | IOffset IExpr Index
+              | IOffset IExpr IExpr Index -- The index is used only for type checking
+                                          -- Second parameter is the linear offset to be used during code generation
               | Loop Direction IVar Size ImpProg
               | IPrimOp IPrimOp
                 deriving (Show, Eq)

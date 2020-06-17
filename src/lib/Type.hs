@@ -16,7 +16,7 @@ module Type (
     isData, Checkable (..), popRow, getTyOrKind, moduleType,
     getKind, checkKindEq, getEffType, getPatName, tyConKind,
     getConType, checkEffType, HasType,
-    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable,
+    maybeApplyPi, makePi, applyPi, isDependentType, PiAbstractable (..),
     pureType) where
 
 import Control.Monad
@@ -654,7 +654,7 @@ getPiType lam = let (ArrowType _ pit) = getType lam in pit
 checkPiType :: HasType lam => lam -> TypeM (PiType EffectiveType)
 checkPiType lam = checkType lam >>= \(ArrowType _ pit) -> return pit
 
-maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => (PiType t) -> Maybe Atom -> m t
+maybeApplyPi :: (HasVars t, PiAbstractable t, MonadError Err m) => PiType t -> Maybe Atom -> m t
 maybeApplyPi piTy maybeAtom
   | isDependentType piTy = do
       case maybeAtom of

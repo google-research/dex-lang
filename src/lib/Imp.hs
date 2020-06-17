@@ -346,19 +346,30 @@ indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 elemCount :: ScalarTableType -> ImpM IExpr
 elemCount t = case t of
+  TabTy idx (TabTy (TC (IndexRange _ Unlimited (InclusiveLim (Var ((DeBruijn 0) :> _))))) (BaseTy _)) ->
+    triangularSum =<< indexSetSize idx
   TabType pi | isDependentType pi ->
-    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint t
+    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ show t
   TabTy n b -> bindM2 impMul (indexSetSize n) (elemCount b)
   BaseTy _  -> return IOne
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
 offsetTo :: ScalarTableType -> IExpr -> ImpM IExpr
 offsetTo t i = case t of
+  TabTy _ (TabTy (TC (IndexRange _ Unlimited (InclusiveLim (Var ((DeBruijn 0) :> _))))) (BaseTy _)) ->
+    triangularSum i
   TabType pi | isDependentType pi ->
     error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint t
   TabTy _ b -> impMul i =<< elemCount b
   BaseTy _  -> error "Indexing into a scalar!"
   _ -> error $ "Not a scalar table type: " ++ pprint t
+
+-- Computes \sum_{i=1}^n i for a given n
+triangularSum :: IExpr -> ImpM IExpr
+triangularSum n = do
+  n1 <- impAdd n IOne
+  num <- impMul n n1
+  impDiv num $ IIntVal 2
 
 traverseLeaves :: Applicative m => (Atom -> m Atom) -> Atom -> m Atom
 traverseLeaves f atom = case atom of
@@ -424,15 +435,16 @@ impMul (IIntVal x) (IIntVal y) = return $ IIntVal $ x * y
 impMul x y = emitBinOp IMul x y
 
 impDiv :: IExpr -> IExpr -> ImpM IExpr
+impDiv (IIntVal a) (IIntVal b) = return $ IIntVal $ a `div` b
 impDiv x IOne = return x
-impDiv x y = emitBinOp IDiv x y
+impDiv x y    = emitBinOp IDiv x y
 
 impRem :: IExpr -> IExpr -> ImpM IExpr
 impRem _ IOne = return IZero
 impRem x y = emitBinOp Rem x y
 
 impSub :: IExpr -> IExpr -> ImpM IExpr
-impSub (IIntVal a) (IIntVal b)  = return $ IIntVal $ a - b
+impSub (IIntVal a) (IIntVal b) = return $ IIntVal $ a - b
 impSub a IZero = return a
 impSub x y = emitBinOp ISub x y
 
@@ -447,7 +459,9 @@ impSelect p x y = emitInstr $ IPrimOp $ Select t p x y
 
 impGet :: IExpr -> IExpr -> ImpM IExpr
 impGet ref i = case ref of
-  (IVar (_ :> IRefType t)) -> emitInstr . IOffset ref =<< (t `offsetTo` i)
+  (IVar (_ :> IRefType t)) -> do
+    off <- (t `offsetTo` i)
+    emitInstr $ IOffset ref off i
   _ -> error $ "impGet called with non-ref: " ++ show ref
 
 copy :: IExpr -> IExpr -> ImpM ()
@@ -571,10 +585,11 @@ instrTypeChecked instr = case instr of
     checkBinder i
     extendR (i @> IIntTy) $ checkProg block
     return Nothing
-  IOffset e i -> do
-    ~(IRefType (TabTy _ b)) <- checkIExpr e
-    checkInt i
-    return $ Just $ IRefType b
+  IOffset e off idx -> do
+    ~(IRefType (TabType pi@(Pi idxTy _))) <- checkIExpr e
+    checkInt off
+    checkInt idx
+    return $ Just $ IRefType $ applyPi pi (toScalarAtom idxTy idx)
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do
@@ -647,10 +662,9 @@ instrType instr = case instr of
   Alloc ty _      -> return $ Just $ IRefType ty
   Free _          -> return Nothing
   Loop _ _ _ _    -> return Nothing
-  IOffset e _     -> case impExprType e of
-    IRefType (TabTy _ b) -> return $ Just $ IRefType b
+  IOffset e _ idx -> case impExprType e of
+    IRefType (TabType pi@(Pi idxTy _)) -> return $ Just $ IRefType $ applyPi pi (toScalarAtom idxTy idx)
     ty -> error $ "Can't index into: " ++ pprint ty
-
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op

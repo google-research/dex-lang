@@ -10,7 +10,7 @@
 
 module Array (
   BaseType (..), LitVal (..), ArrayType, Array (..), ArrayRef (..),
-  Vec (..), scalarFromArray, arrayFromScalar, arrayTail, arrayHead,
+  Vec (..), scalarFromArray, arrayFromScalar, arrayGet,
   loadArray, storeArray, sizeOf, arrayType, unsafeWithArrayPointer) where
 
 import Control.Monad
@@ -64,11 +64,8 @@ scalarFromArray arr@(Array vec) = case size of
   where
     (size, b) = arrayType arr
 
-arrayTail :: Array -> Array
-arrayTail arr = modifyVec arr V.tail
-
-arrayHead :: Array -> LitVal
-arrayHead arr = fromJust $ scalarFromArray $ modifyVec arr (V.slice 0 1)
+arrayGet :: Array -> Int -> LitVal
+arrayGet arr i = fromJust $ scalarFromArray $ modifyVec arr (V.slice i 1)
 
 arrayFromScalar :: LitVal -> Array
 arrayFromScalar val = case val of
