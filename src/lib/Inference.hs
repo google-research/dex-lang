@@ -31,16 +31,19 @@ type RhoType   = Type  -- doesn't start with an implicit lambda
 data RequiredTy a = Check a | Infer
 
 inferModule :: TopEnv -> UModule -> Except Module
-inferModule (TopEnv topEnv) m@(UModule imports exports decls) = do
+inferModule (TopEnv topEnv) m@(UModule _ exports decls) = do
   checkVars topEnv m
   let infEnv = fold [(v:>()) @> (Var (v:>getType x)) | (v, x) <- envPairs topEnv]
   let scope  = fold [(v:>()) @> Just (Atom x)        | (v, x) <- envPairs topEnv]
   (infEnv', decls') <- runUInferM (inferUDecls decls) infEnv scope
   let combinedEnv = infEnv <> infEnv'
-  let imports' = [v :> getType (infEnv      ! (v:>())) | v <- imports]
-  let exports' = [v :> getType (combinedEnv ! (v:>())) | v <- exports]
-  let resultVals = [           (combinedEnv ! (v:>())) | v <- exports]
+  let resultVals = [(combinedEnv ! (v:>())) | v <- exports]
   let body = wrapDecls decls' $ mkConsList resultVals
+  -- TODO: think about this. We can't just add types to current imoprts because
+  -- inlining type expressions can introduce new free variables.
+  -- let imports' = [v :> getType (infEnv      ! (v:>())) | v <- imports]
+  let imports' = envAsVars $ freeVars body
+  let exports' = [v :> getType (combinedEnv ! (v:>())) | v <- exports]
   return $ Module Nothing imports' exports' body
 
 checkVars :: Env a -> UModule -> Except ()

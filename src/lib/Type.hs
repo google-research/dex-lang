@@ -219,17 +219,14 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  ArrayLit (Array (shape, b) _) -> return $ ArrayTy shape b
+  ArrayLit ty _ -> return $ ty
   AnyValue t -> t|:TyKind $> t
   SumCon _ l r -> SumTy <$> typeCheck l <*> typeCheck r
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   AFor n a -> n|:TyKind >> TabTy n <$> typeCheck a
-  AGet x -> do
-    -- TODO: check shape matches AFor scope
-    ArrayTy _ b <- typeCheck x
-    return $ BaseTy b
+  AGet st -> (BaseTy . scalarTableBaseType) <$> typeCheck st
   AsIdx n e -> n|:TyKind >> e|:IntTy $> n
   Todo ty -> ty|:TyKind $> ty
 
@@ -252,13 +249,6 @@ typeCheckOp op = case op of
     SumTy l r <- typeCheck x
     l|:TyKind >> r|:TyKind
     return $ TC $ BaseType BoolType
-  ArrayGep x i -> do
-    ArrayTy (_:shape) b <- typeCheck x
-    i|:IntTy
-    return $ ArrayTy shape b
-  LoadScalar x -> do
-    ArrayTy [] b <- typeCheck x
-    return $ BaseTy b
   ScalarBinOp binop x1 x2 ->
     x1 |: BaseTy t1 >> x2 |: BaseTy t2 $> BaseTy tOut
     where (t1, t2, tOut) = binOpType binop

@@ -41,7 +41,7 @@ data IdxFlavor = MapIdx | SumIdx            deriving (Generic, Show, Eq)
 
 data JDecl = JLet JVar JFor                 deriving (Generic, Show, Eq)
 data JExpr = JExpr [JDecl] [JAtom]          deriving (Generic, Show, Eq)
-data JAtom = JLit Array | JVar JVar         deriving (Generic, Show, Eq)
+data JAtom = JLit [Int] Array | JVar JVar   deriving (Generic, Show, Eq)
 data IdxAtom = IdxAtom JAtom [IdxVar]       deriving (Generic, Show, Eq)
 data JType = JType [AxisSize] BaseType      deriving (Generic, Show, Eq)
 data JaxFunction = JaxFunction [JVar] JExpr deriving (Generic, Show, Eq)
@@ -198,12 +198,12 @@ traverseArrayLeaves atom f = case atom of
 
 typeToJType :: Type -> JType
 typeToJType ty = case ty of
-  ArrayTy shape b -> JType shape b
+  TC (JArrayType dims b) -> JType dims b
   _ -> error $ "Not a jax type: " ++ pprint ty
 
 jTypeToType :: JType -> Type
 jTypeToType ty = case ty of
-  JType shape b -> ArrayTy shape b
+  JType shape b -> TC $ JArrayType shape b
 
 emitOp :: JOpP IdxAtom -> JaxM IdxAtom
 emitOp op = do
@@ -233,7 +233,7 @@ sumPoly depth atom = do
      return $ IdxAtom (JVar v) forIdxs
 
 tmpAtomScalarLit :: LitVal -> TmpAtom
-tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit $ arrayFromScalar x) []
+tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit [] $ arrayFromScalar x) []
 
 instance HasType TmpAtom where
   typeCheck atom = case atom of
@@ -320,7 +320,7 @@ algebraicSimp op = case op of
   _ -> Nothing
 
 fromScalarLit :: IdxAtom -> Maybe LitVal
-fromScalarLit (IdxAtom (JLit x) []) = scalarFromArray x
+fromScalarLit (IdxAtom (JLit [] x) []) = scalarFromArray x
 fromScalarLit _ = Nothing
 
 -- === variable usage pass ===
@@ -463,7 +463,8 @@ checkIdxEnv (i:idxs) (i':idxEnv)
 instance HasJType JAtom where
   getJType atom = case atom of
     JVar (_:> ty) -> ty
-    JLit (Array (shape, b) _) -> JType shape b
+    JLit shape arr -> JType shape b
+      where (_, b) = arrayType arr
 
   checkJType (env,_) atom = case atom of
     JVar v@(_:> ty) -> do
@@ -472,7 +473,8 @@ instance HasJType JAtom where
           assertEq reqTy ty "JVar"
           return ty
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-    JLit (Array (shape, b) _) -> return $ JType shape b
+    JLit shape arr -> return $ JType shape b
+      where (_, b) = arrayType arr
 
 instance (Pretty a, HasJType a) => HasJType (JOpP a) where
   getJType op = ignoreExcept $ addContext ("Getting type of: " ++ pprint op) $
@@ -515,10 +517,10 @@ instance HasJVars JFor where
 
 instance HasJVars JAtom where
   freeJVars x = case x of
-    JLit _ -> mempty
+    JLit _ _ -> mempty
     JVar v -> v @> ()
   jSubst env x = case x of
-    JLit _ -> x
+    JLit _ _ -> x
     JVar v -> env ! v
 
 instance HasJVars IdxAtom where
@@ -607,7 +609,7 @@ instance Pretty IdxAtom where
   pretty (IdxAtom x idxs) = pretty x <> foldMap (\(i:>_) -> "." <> pretty i) idxs
 
 instance Pretty JAtom where
-  pretty (JLit x)      = pretty $ scalarFromArray x
+  pretty (JLit _ x)    = pretty $ scalarFromArray x
   pretty (JVar (v:>_)) = pretty v
 
 instance Pretty JDecl where

@@ -81,7 +81,7 @@ update-%: examples/%.dx build
 	$(dex) script --allow-errors $< > $<.tmp
 	mv $<.tmp $<
 
-jax-tests:
+jax-tests: build
 	misc/check-quine examples/jax-tests.dx $(dex) --backend JAX script
 
 uexpr-tests:

@@ -61,8 +61,8 @@ help make the errors more local.
    y = iota (Fin 3)
    sum for i. iadd x.i y.i
 > Type error:
-> Expected: Fin 3
->   Actual: Fin 10
+> Expected: (Fin 3)
+>   Actual: (Fin 10)
 >
 >    sum for i. iadd x.i y.i
 >                          ^
@@ -74,7 +74,7 @@ arr  = iota Narr
 xr = map i2r arr
 
 :t arr
-> (Fin 10=>Int)
+> ((Fin 10)=>Int)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Real
@@ -86,7 +86,7 @@ xr = map i2r arr
 > Real
 
 :t [1, 2, 3]
-> (Fin 3=>Int)
+> ((Fin 3)=>Int)
 
 :t []
 > Type error:Empty table constructor must have type annotation
@@ -97,18 +97,18 @@ xr = map i2r arr
 :t [1, [2]]
 > Type error:
 > Expected: Int
->   Actual: (Fin 1=>Int)
+>   Actual: ((Fin 1)=>Int)
 >
 > :t [1, [2]]
 >        ^^^
 
 :t [[1, 2], [3, 4]]
-> (Fin 2=>(Fin 2=>Int))
+> ((Fin 2)=>((Fin 2)=>Int))
 
 :t [[1, 2], [3]]
 > Type error:
-> Expected: (Fin 2=>Int)
->   Actual: (Fin 1=>Int)
+> Expected: ((Fin 2)=>Int)
+>   Actual: ((Fin 1)=>Int)
 >
 > :t [[1, 2], [3]]
 >             ^^^

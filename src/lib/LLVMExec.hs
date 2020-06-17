@@ -28,7 +28,6 @@ import Data.Maybe (fromMaybe)
 
 import Logging
 import Syntax
-import Array
 
 -- This forces the linker to link libdex.so. TODO: something better
 foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
@@ -36,19 +35,21 @@ foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 foreign import ccall "dynamic"
   callFunPtr :: FunPtr (Ptr () -> IO ()) -> Ptr () -> IO ()
 
-data LLVMFunction = LLVMFunction [ArrayType] [ArrayType] L.Module  -- outputs first
+-- First element holds the number of outputs
+data LLVMFunction = LLVMFunction Int L.Module
 
--- TODO: check arg types
-callLLVM :: Logger [Output] -> LLVMFunction -> [ArrayRef] -> [ArrayRef] -> IO ()
-callLLVM logger (LLVMFunction _ _ ast) outArrays inArrays = do
-  let ioArgs = outArrays ++ inArrays
-  argsPtr <- mallocBytes $ length ioArgs * ptrSize
-  forM_ (zip [0..] ioArgs) $ \(i, ArrayRef _ p) -> do
+callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
+callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
+  argsPtr <- mallocBytes $ (numOutputs + numInputs) * ptrSize
+  forM_ (zip [numOutputs..] inArrays) $ \(i, p) -> do
     poke (argsPtr `plusPtr` (i * ptrSize)) p
-  logs <- evalLLVM logger ast argsPtr
+  evalLLVM logger ast argsPtr
+  outputPtrs <- forM [0..numOutputs - 1] $ \i -> peek (argsPtr `plusPtr` (i * ptrSize))
   free argsPtr
-  return logs
-  where ptrSize = 8
+  return outputPtrs
+  where
+    numInputs = length inArrays
+    ptrSize = 8 -- TODO: Get this from LLVM instead of hardcoding!
 
 evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ()
 evalLLVM logger ast argPtr = do

@@ -21,6 +21,7 @@ import Data.Text (unpack)
 import System.Console.ANSI
 
 import Env
+import Array
 import Syntax
 
 pprint :: Pretty a => a -> String
@@ -105,7 +106,7 @@ instance Pretty e => Pretty (PrimTC e) where
     PairType a b   -> parens $ p a <+> "&" <+> p b
     UnitType       -> "Unit"
     ArrayType (shape, b) -> p b <> p shape
-    IntRange a b -> if s1 == "0...<" then "Fin" <+> p s2 else ans
+    IntRange a b -> if s1 == "0...<" then parens ("Fin" <+> p s2) else ans
       where ans = p a <> "...<" <> p b
             (s1, s2) = splitAt 5 (asStr ans)
     IndexRange _ low high -> low' <> "." <> high'
@@ -123,7 +124,7 @@ instance Pretty e => Pretty (PrimTC e) where
 instance Pretty e => Pretty (PrimCon e) where
   pretty con = case con of
     Lit l       -> p l
-    ArrayLit array -> p array
+    ArrayLit _ array -> p array
     PairCon x y -> parens $ p x <+> "," <+> p y
     UnitCon     -> "()"
     RefCon _ _  -> "RefCon"
@@ -139,7 +140,6 @@ instance Pretty e => Pretty (PrimCon e) where
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
-    ArrayGep x i ->  p x <> "." <> p i
     SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
     SumTag e        -> parens $ "projTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
@@ -187,16 +187,21 @@ instance Pretty IExpr where
   pretty (IVar (v:>_)) = p v
 
 instance Pretty IType where
-  pretty (IRefType (ty, shape)) = "Ptr (" <> p ty <> p shape <> ")"
+  pretty (IRefType t) = "Ref" <+> (parens $ p t)
   pretty (IValType b) = p b
+
+instance Pretty IDimType where
+  pretty (IUniform (ILit (IntLit sz))) = p sz
+  pretty (IUniform _)     = "<uniform, dependent>"
+  pretty (IPrecomputed _) = "<precomptued>"
 
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
 
 instance Pretty ImpFunction where
   pretty (ImpFunction vsOut vsIn body) =
-                   "in:  " <> p vsIn
-    <> hardline <> "out: " <> p vsOut
+                   "in:        " <> p vsIn
+    <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
 
 prettyStatement :: (Maybe IVar, ImpInstr) -> Doc ann
@@ -204,15 +209,15 @@ prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)       = p op
-  pretty (Load ref)         = "load"  <+> p ref
-  pretty (Store dest val)   = "store" <+> p dest <+> p val
-  pretty (Copy dest source) = "copy"  <+> p dest <+> p source
-  pretty (Alloc ty)         = "alloc" <+> p ty
-  pretty (IGet expr idx)    = p expr <> "." <> p idx
-  pretty (Free (v:>_))      = "free"  <+> p v
-  pretty (Loop d i n block) = dirStr d <+> p i <+> "<" <+> p n <>
-                              nest 4 (hardline <> p block)
+  pretty (IPrimOp op)         = p op
+  pretty (Load ref)           = "load"  <+> p ref
+  pretty (Store dest val)     = "store" <+> p dest <+> p val
+  pretty (Copy dest source s) = "copy"  <+> p dest <+> p source <+> parens (p s <+> "elems")
+  pretty (Alloc t s)          = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (IOffset expr idx)   = p expr <+> "+>" <+> p idx
+  pretty (Free (v:>_))        = "free"  <+> p v
+  pretty (Loop d i n block)   = dirStr d <+> p i <+> "<" <+> p n <>
+                                nest 4 (hardline <> p block)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
@@ -323,6 +328,13 @@ instance Pretty eff => Pretty (ArrowP eff) where
     TabArrow       -> "=>"
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
+
+instance Pretty Array where
+  pretty a = p b <> "[" <> p size <> "]"
+    where (size, b) = arrayType a
+
+instance Pretty ArrayRef where
+  pretty (ArrayRef (size, b) ptr) = p b <> "[" <> p size <> "]@" <> (pretty $ show ptr)
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

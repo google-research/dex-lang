@@ -16,6 +16,7 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
+import Foreign.Ptr
 
 import Array
 import Syntax
@@ -49,7 +50,7 @@ data BackendEngine = LLVMEngine LLVMEngine
                    | JaxServer JaxServer
                    | InterpEngine
 
-type LLVMEngine = MVar (Env ArrayRef)
+type LLVMEngine = MVar (Env (Ptr ()))
 type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
                            ,( [JVar] -> [Array]
                            ,( Array -> ()  -- for debugging
@@ -78,8 +79,7 @@ evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
       val <- evalUModuleVal env v m
       case fmt of
         Printed -> do
-          s <- liftIO $ pprintVal val
-          logTop $ TextOut s
+          logTop $ TextOut $ pprintVal val
         Heatmap -> logTop $ valToHeatmap val
         Scatter -> logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
@@ -171,22 +171,34 @@ initializeBackend backend = case backend of
   JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
+arrayVars :: HasVars a => a -> [Var]
+arrayVars x = [v:>ty | (v@(Name ArrayName _ _), ty) <- envPairs (freeVars x)]
+
 evalBackend :: Block -> TopPassM Atom
-evalBackend expr = do
+evalBackend block = do
   backend <- asks evalEngine
   logger  <- asks logService
-  let inVars = arrayVars expr
+  let inVars = arrayVars block
   case backend of
     LLVMEngine engine -> do
-      let impFunction = toImpFunction (inVars, expr)
+      let impFunction = toImpFunction (inVars, block)
       checkPass ImpPass impFunction
       logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
-      outVars <- liftIO $ execLLVM logger engine llvmFunc inVars
-      return $ reStructureArrays (getType expr) $ map Var outVars
+      let exprType = getType block
+      lift $ modifyMVar engine $ \env -> do
+        let inPtrs = fmap (env !) inVars
+        outPtrs <- callLLVM logger llvmFunc inPtrs
+        -- TODO: Assert length of outPtrs/outNames/outTys are equal?
+        let (ImpFunction impOutVars _ _) = impFunction
+        let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outPtrs
+        let outVars = zipWith (:>) outNames (fmap varAnn impOutVars)
+        -- XXX: This assumes that the implementation of flattenType and makeDest in Imp yield the same order!
+        let result = reStructureArrays exprType $ map Var outVars
+        return (env <> env', result)
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
-      let jfun = toJaxFunction (inVars, expr)
+      let jfun = toJaxFunction (inVars, block)
       checkPass JAXPass jfun
       let jfunSimp = simplifyJaxFunction jfun
       checkPass JAXSimpPass jfunSimp
@@ -196,46 +208,34 @@ evalBackend expr = do
       (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
       logPass JaxprAndHLO jaxprDump
       let outVars' = map (fmap jTypeToType) outVars
-      return $ reStructureArrays (getType expr) $ map Var outVars'
-    InterpEngine -> return $ evalBlock mempty expr
+      return $ reStructureArrays (getType block) $ map Var outVars'
+    InterpEngine -> return $ evalBlock mempty block
+
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
 requestArrays _ [] = return []
 requestArrays backend vs = case backend of
   LLVMEngine env -> do
     env' <- readMVar env
-    forM vs $ \v -> do
+    forM vs $ \v@(_ :> ty) -> do
       case envLookup env' v of
-        Just ref -> loadArray ref
+        Just ref -> loadArray (ArrayRef (typeToArrayType ty) ref)
         Nothing -> error "Array lookup failed"
   JaxServer server -> do
     let vs' = map (fmap typeToJType) vs
     callPipeServer (psPop server) vs'
   _ -> error "Not implemented"
 
-arrayVars :: HasVars a => a -> [Var]
-arrayVars x = [v:>ty | (v@(Name ArrayName _ _), ty) <- envPairs (freeVars x)]
-
-substArrayLiterals :: HasVars a => BackendEngine -> a -> IO a
+substArrayLiterals :: (HasVars a, HasType a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
-  let vs = arrayVars x
-  arrays <- requestArrays backend vs
-  let arrayAtoms = map (Con . ArrayLit) arrays
-  return $ subst (newEnv vs arrayAtoms, mempty) x
+  x' <- substArrayLiterals' backend (arrayVars (getType x)) x
+  substArrayLiterals' backend (arrayVars x') x'
 
--- TODO: think carefully about whether this is thread-safe
-execLLVM :: Logger [Output] -> LLVMEngine -> LLVMFunction -> [Var] -> IO [Var]
-execLLVM logger envRef fun@(LLVMFunction outTys _ _) inVars = do
-  modifyMVar envRef $ \env -> do
-    outRefs <- mapM newArrayRef outTys
-    let inRefs = flip map inVars $ \v ->
-                   case envLookup env v of
-                     Just ref -> ref
-                     Nothing  -> error "Array lookup failed"
-    let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outRefs
-    let outVars = zipWith (\v (b,shape) -> v :> ArrayTy b shape) outNames outTys
-    callLLVM logger fun outRefs inRefs
-    return (env <> env', outVars)
+substArrayLiterals' :: HasVars a => BackendEngine -> [Var] -> a -> IO a
+substArrayLiterals' backend vs x = do
+  arrays <- requestArrays backend vs
+  let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]
+  return $ subst (newEnv vs arrayAtoms, mempty) x
 
 -- TODO: check here for upstream errors
 typePass :: TopEnv -> UModule -> TopPassM Module

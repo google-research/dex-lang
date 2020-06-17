@@ -22,6 +22,11 @@ import PPrint
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
+-- The outer SimpEnv is for local variables, while the nested (SubstEnv, RuleEnv) is for globals.
+-- Note that you _have to_ apply the local substitution everywhere, because the binders for those
+-- variables have been eliminated. In principle the substitution with global env is optional, but
+-- in practice it also has to happen sooner or later, because the Imp pass assumes that only array
+-- variables are imported.
 type SimplifyM a = ReaderT SimpEnv (ReaderT (SubstEnv, SimpOpts) Embed) a
 
 simplifyModule :: SubstEnv -> Module -> (Module, SubstEnv)
@@ -80,7 +85,6 @@ simplifyAtom atom = case atom of
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
-
 simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
 simplifyLam atom = substEmbed atom >>= (dropSub . simplifyLam')
 

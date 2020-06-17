@@ -161,8 +161,8 @@ class Atom(object):
       val = obj["contents"]
       return Atom("Var", Var.des(val))
     elif obj["tag"] == "JLit":
-      (shape, b), vec = obj["contents"]
-      val = np.array(vec["contents"], dtype=basetype_dtype(b)).reshape(shape)
+      shape, vec = obj["contents"]
+      val = np.array(vec["contents"], dtype=vec_dtype(vec)).reshape(shape)
       return Atom("Lit", val)
 
 class IndexedAtom(object):
@@ -248,7 +248,7 @@ def array_ty(x):
 
 def ser_array(arr):
   assert isinstance(arr, arrayish_types)
-  return [array_ty(arr).ser(), ser_flat_vec(arr.ravel())]
+  return ser_flat_vec(arr.ravel())
 
 def ser_flat_vec(vec):
   if vec.dtype in [np.int32, np.int64]:
@@ -423,10 +423,10 @@ def dtype_basetype(x):
   else:
     assert False, x
 
-def basetype_dtype(x):
-  if x == "IntType":
+def vec_dtype(vec):
+  if vec["tag"] == "IntVec":
     return np.int64
-  if x == "RealType":
+  elif vec["tag"] == "DoubleVec":
     return np.float64
   else:
     assert False
@@ -480,7 +480,7 @@ def run_server(functions):
         ans = {"Right" : f(arg)}
       except Exception as e:
         traceback.print_exc()
-        ans = {"Left": str(e)}
+        ans = {"Left": traceback.format_exc()}
       w.write(json.dumps(ans) + "\n")
       w.flush()
 

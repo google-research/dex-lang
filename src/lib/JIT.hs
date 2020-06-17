@@ -24,6 +24,7 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Data.List (nub)
+import Data.Maybe (fromJust)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
@@ -41,8 +42,9 @@ type CompileEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
-                                 , blockName :: L.Name
-                                 , usedNames :: Env ()
+                                 , blockName   :: L.Name
+                                 , usedNames   :: Env ()
+                                 , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
 
@@ -58,43 +60,58 @@ impToLLVM f = runCompileM mempty (compileTopProg f)
 
 runCompileM :: CompileEnv -> CompileM a -> a
 runCompileM env m = evalState (runReaderT m env) initState
-  where initState = CompileState [] [] [] "start_block" mempty []
+  where initState = CompileState [] [] [] "start_block" mempty mempty []
 
 compileTopProg :: ImpFunction -> CompileM LLVMFunction
-compileTopProg (ImpFunction outVars inVars prog) = do
-  let ioVars = outVars ++ inVars
-  let ioVarTypes = map (impRefTypeAsPtrType . varAnn) ioVars
-  (params, operands) <- liftM unzip $ mapM freshParamOpPair ioVarTypes
-  let paramEnv = newEnv ioVars operands
+compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
+  -- Set up the argument list. Note that all outputs are pointers to pointers.
+  let inVarTypes  = map (        L.ptr . scalarTy . scalarTableBaseType . varAnn) inVars
+  let outVarTypes = map (L.ptr . L.ptr . scalarTy . scalarTableBaseType . varAnn) outVars
+  (inParams, inOperands)   <- unzip <$> mapM freshParamOpPair inVarTypes
+  (outParams, outOperands) <- unzip <$> mapM freshParamOpPair outVarTypes
+
+  -- Emit the program
+  let paramEnv = newEnv inVars inOperands
+  modify (\s -> s { progOutputs = zipEnv outVars outOperands })
   extendR paramEnv $ compileProg prog
   finishBlock (L.Ret Nothing []) "<ignored>"
+
+  -- Grab the current state and construct LLVMFunction
   specs <- gets funSpecs
   decls <- gets scalarDecls
   blocks <- gets (reverse . curBlocks)
-  return $ LLVMFunction (map (impTypeToArrayType . varAnn) outVars)
-                        (map (impTypeToArrayType . varAnn) inVars )
-                        (makeModule params decls blocks specs)
-
-impRefTypeAsPtrType :: IType -> L.Type
-impRefTypeAsPtrType ty = L.ptr $ scalarTy $ snd $ impTypeToArrayType ty
+  return $ LLVMFunction numOutputs $ makeModule (outParams ++ inParams) decls blocks specs
+  where
+    numOutputs = length outVars
 
 freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
 freshParamOpPair ty = do
   v <- freshName "arg"
   return (L.Parameter ty v [], L.LocalReference ty v)
 
-compileProg :: ImpProg -> CompileM ()
-compileProg (ImpProg []) = return ()
-compileProg (ImpProg ((maybeName, instr):prog)) = do
-  maybeAns <- compileInstr instr
+compileProg :: [ImpStatement] -> CompileM ()
+compileProg [] = return ()
+compileProg ((maybeName, instr):prog) = do
+  outputs <- gets progOutputs
+  let isOutput = case maybeName of
+                    Just name -> name `isin` outputs
+                    Nothing   -> False
+  maybeAns <- compileInstr (not isOutput) instr
   let env = case (maybeName, maybeAns) of
-              (Nothing, Nothing)         -> mempty
+              (Nothing, Nothing) -> mempty
               (Just v, Just ans) -> v @> ans
               _ -> error "Void mismatch"
-  extendR env $ compileProg $ ImpProg prog
+  if isOutput
+    then do
+      case instr of
+        Alloc _ _ -> return ()
+        _         -> error $ "Non-alloc instruction writing to a program output: " ++ pprint instr
+      store (outputs ! (fromJust maybeName)) (fromJust maybeAns)
+    else return ()
+  extendR env $ compileProg prog
 
-compileInstr :: ImpInstr -> CompileM (Maybe Operand)
-compileInstr instr = case instr of
+compileInstr :: Bool -> ImpInstr -> CompileM (Maybe Operand)
+compileInstr allowAlloca instr = case instr of
   IPrimOp op -> do
     op' <- traverse compileExpr op
     liftM Just $ compilePrimOp op'
@@ -106,37 +123,33 @@ compileInstr instr = case instr of
     val'  <- compileExpr val
     store dest' val'
     return Nothing
-  Copy dest source -> do
-    let (IRefType (_, shape)) = impExprType source
-    shape' <- mapM compileExpr shape
-    dest'    <- compileExpr dest
-    source'  <- compileExpr source
-    case shape of
-      [] -> do
+  Copy dest source numel -> do
+    let (IRefType t) = impExprType source
+    dest'   <- compileExpr dest
+    source' <- compileExpr source
+    case t of
+      (BaseTy _) -> do
         x <- load source'
         store dest' x
       _  -> do
-        numScalars <- sizeOf shape'
-        numBytes <- mul (litInt 8) numScalars
+        numBytes <- mul (litInt 8) =<< compileExpr numel
         copy numBytes dest' source'
     return Nothing
-  Alloc (ty, shape) -> liftM Just $ case shape of
-    [] -> alloca ty
+  Alloc t numel -> Just <$> case t of
+    BaseTy b | allowAlloca -> alloca b
     _  -> do
-      shape' <- mapM compileExpr shape
-      malloc ty shape' ""
-  Free (_:> IRefType (_, [])) -> return Nothing  -- Don't free allocas
+      bytes <- mul (litInt 8) =<< compileExpr numel
+      malloc (scalarTableBaseType t) bytes
+  Free (_:> IRefType (BaseTy _)) -> return Nothing  -- Don't free allocas
   Free v -> do
     v' <- lookupImpVar v
     ptr' <- castLPtr charTy v'
     addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
-  IGet x i -> do
-    let (IRefType (_, (_:shape))) = impExprType x
-    shape' <- mapM compileExpr shape
+  IOffset x off -> do
     x' <- compileExpr x
-    i' <- compileExpr i
-    liftM Just $ indexPtr x' shape' i'
+    off' <- compileExpr off
+    Just <$> gep x' off'
   Loop d i n body -> do
     n' <- compileExpr n
     compileLoop d i n' body
@@ -149,12 +162,6 @@ compileExpr expr = case expr of
 
 lookupImpVar :: IVar -> CompileM Operand
 lookupImpVar v = asks (! v)
-
-indexPtr :: Operand -> [Operand] -> Operand -> CompileM Operand
-indexPtr ptr shape i = do
-  stride <- foldM mul (litInt 1) shape
-  n <- mul stride i
-  gep ptr n
 
 gep :: Operand -> Operand -> CompileM Operand
 gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
@@ -169,7 +176,7 @@ finishBlock term newName = do
          . setBlockName (const newName)
 
 compileLoop :: Direction -> IVar -> Operand -> ImpProg -> CompileM ()
-compileLoop d iVar n body = do
+compileLoop d iVar n (ImpProg body) = do
   loopBlock <- freshName "loop"
   nextBlock <- freshName "cont"
   i <- alloca IntType
@@ -248,18 +255,13 @@ alloca ty = do
   where ty' = scalarTy ty
         instr = L.Alloca ty' Nothing 0 []
 
-malloc :: BaseType -> [Operand] -> Tag -> CompileM Operand
-malloc ty shape _ = do
-    size <- sizeOf shape
-    n <- mul (litInt 8) size
-    voidPtr <- emitInstr charPtrTy (externCall mallocFun [n])
-    castLPtr (scalarTy ty) voidPtr
+malloc :: BaseType -> Operand -> CompileM Operand
+malloc ty bytes = do
+  voidPtr <- emitInstr charPtrTy (externCall mallocFun [bytes])
+  castLPtr (scalarTy ty) voidPtr
 
 castLPtr :: L.Type -> Operand -> CompileM Operand
 castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
-
-sizeOf :: [Operand] -> CompileM Operand
-sizeOf shape = foldM mul (litInt 1) shape
 
 mul :: Operand -> Operand -> CompileM Operand
 mul x y = emitInstr longTy $ L.Mul False False x y []
@@ -386,7 +388,10 @@ wrapVariadic argTypes f = runCompileM mempty $ do
   (argParam, argOperand) <- freshParamOpPair (L.ptr charPtrTy)
   args <- forM (zip [0..] argTypes) $ \(i, ty) -> do
     curPtr <- gep argOperand $ litInt i
-    arg <- load curPtr
+    arg <- case ty of
+      L.PointerType (L.PointerType _ _) _ -> return curPtr
+      L.PointerType _ _                   -> load curPtr
+      _                                   -> error "Expected a pointer type"
     emitInstr ty $ L.BitCast arg ty []
   addInstr $ L.Do $ callInstr f args
   instrs <- liftM reverse $ gets curInstrs
