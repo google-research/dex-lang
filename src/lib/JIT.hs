@@ -42,8 +42,8 @@ type CompileEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , curInstrs   :: [NInstr]
                                  , scalarDecls :: [NInstr]
-                                 , blockName :: L.Name
-                                 , usedNames :: Scope
+                                 , blockName   :: L.Name
+                                 , usedNames   :: Env ()
                                  , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
                                  , funSpecs :: [ExternFunSpec] -- TODO: use a set
                                  }
@@ -113,7 +113,7 @@ compileProg ((maybeName, instr):prog) = do
 compileInstr :: Bool -> ImpInstr -> CompileM (Maybe Operand)
 compileInstr allowAlloca instr = case instr of
   IPrimOp op -> do
-    op' <- traverseExpr op (return . scalarTy) compileExpr (return . const ())
+    op' <- traverse compileExpr op
     liftM Just $ compilePrimOp op'
   Load ref -> do
     ref' <- compileExpr ref
@@ -279,13 +279,13 @@ scalarTy ty = case ty of
 extendOneBit :: Operand -> CompileM Operand
 extendOneBit x = emitInstr boolTy (L.ZExt x boolTy [])
 
-compileFFICall :: String -> [L.Type] -> L.Type -> [Operand] -> CompileM Operand
-compileFFICall name argTys retTy xs = do
+compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
+compileFFICall name retTy xs = do
   modify $ setFunSpecs (f:)
   emitInstr retTy $ externCall f xs
-  where f = ExternFunSpec (L.Name (fromString name)) retTy argTys
+  where f = ExternFunSpec (L.Name (fromString name)) retTy (map L.typeOf xs)
 
-compilePrimOp :: PrimOp L.Type Operand () -> CompileM Operand
+compilePrimOp :: PrimOp Operand -> CompileM Operand
 compilePrimOp (ScalarBinOp op x y) = case op of
   IAdd   -> emitInstr longTy $ L.Add False False x y []
   ISub   -> emitInstr longTy $ L.Sub False False x y []
@@ -308,11 +308,11 @@ compilePrimOp (ScalarUnOp op x) = case op of
   BoolToInt -> return x -- bools stored as ints
   UnsafeIntToBool -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
-compilePrimOp (Select ty p x y) = do
+compilePrimOp (Select p x y) = do
   p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
-  emitInstr ty $ L.Select p' x y []
-compilePrimOp (FFICall name argTys ansTy xs) =
-  compileFFICall name argTys ansTy xs
+  emitInstr (L.typeOf x) $ L.Select p' x y []
+compilePrimOp (FFICall name ansTy xs) =
+  compileFFICall name (scalarTy ansTy) xs
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate

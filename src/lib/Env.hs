@@ -11,7 +11,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
             rawName, nameSpace, rename, renames, nameItems, renameWithNS,
-            renameChoice) where
+            renameChoice, tagToStr) where
 
 import Control.Monad
 import Data.List (minimumBy)
@@ -29,9 +29,11 @@ infixr 7 :>
 newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord, Functor, Foldable, Traversable)
 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
-data Name = Name NameSpace Tag Int | NoName | DeBruijn Int
+-- `NoName` is used in binders (e.g. `_ = <expr>`) but never in occurrences.
+-- TODO: Consider putting it under a separate `Binder` type instead.
+data Name = Name NameSpace Tag Int | NoName
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | SourceTypeName | JaxIdx
+data NameSpace = GenName | SourceName | SourceTypeName | JaxIdx | Skolem
                | InferenceName | LocalTVName | NoNameSpace | ArrayName
                  deriving  (Show, Ord, Eq, Generic)
 
@@ -44,7 +46,6 @@ rawName s t = Name s (fromString t) 0
 nameSpace :: Name -> NameSpace
 nameSpace (Name s _ _) = s
 nameSpace NoName       = NoNameSpace
-nameSpace (DeBruijn _) = NoNameSpace
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -103,13 +104,11 @@ env ! v = case envLookup env v of
 
 genFresh :: Name-> Env a -> Name
 genFresh NoName _ = NoName
-genFresh (DeBruijn _) _ = error "Renaming de Bruijn indices"
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
                 Nothing -> 0
                 Just (NoName, _) -> 0
-                Just (DeBruijn _, _) -> error "Renaming de Bruijn indices"
                 Just (Name ns' tag' i, _)
                   | ns' /= ns || tag' /= tag -> 0
                   | i < bigInt  -> i + 1
@@ -119,7 +118,6 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
 renameWithNS :: NameSpace -> VarP ann -> Env a -> VarP ann
 renameWithNS _  (NoName       :> ann) _     = NoName :> ann
 renameWithNS ns (Name _ tag _ :> ann) scope = rename (Name ns tag 0 :> ann) scope
-renameWithNS _  (DeBruijn _ :> _) _ = error "Renaming de Bruijn indices"
 
 rename :: VarP ann -> Env a -> VarP ann
 rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
@@ -130,8 +128,8 @@ renameChoice vs scope =
   minimumBy (\v1 v2 -> nameTag v1 `compare` nameTag v2) vs'
   where vs' = [varName $ rename (v:>()) scope | v <- vs]
 
-renames :: Traversable f => f (VarP ann) -> Env () -> (f (VarP ann), Env ())
-renames vs scope = runCat (traverse (freshCat ()) vs) scope
+renames :: Traversable f => f (VarP ann) -> a -> Env a -> (f (VarP ann), Env a)
+renames vs x scope = runCat (traverse (freshCat x) vs) scope
 
 nameItems :: Traversable f => Name -> Env a -> f a -> (f Name, Env a)
 nameItems v env xs = flip runCat env $ forM xs $ \x ->
@@ -169,10 +167,9 @@ instance Eq (VarP a) where
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
   pretty NoName = "_"
-  pretty (DeBruijn i) = "!" <> pretty i
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
-                                     _ -> "_" <> pretty n
+                                     _ -> pretty n
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0

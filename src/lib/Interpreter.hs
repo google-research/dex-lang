@@ -4,12 +4,12 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Interpreter (evalExpr) where
+module Interpreter (evalBlock) where
 
+import Cat
 import Syntax
 import Env
 import PPrint
-import Subst
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -22,19 +22,21 @@ foreign import ccall "pow"  c_pow  :: Double -> Double -> Double
 foreign import ccall "randunif"      c_unif     :: Int -> Double
 foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 
-evalExpr :: SubstEnv -> Expr -> Atom
-evalExpr env expr = case expr of
-  Decl decl body -> evalExpr (env <> env') body
-    where env' = evalDecl env decl
-  CExpr op -> evalCExpr $ subst (env, mempty) op
-  Atom x -> subst (env, mempty) x
+evalBlock :: SubstEnv -> Block -> Atom
+evalBlock env (Block decls result) = do
+  let env' = catFold evalDecl env decls
+  evalExpr $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> L (evalCExpr rhs')
+evalDecl env (Let v rhs) = v @> evalExpr rhs'
   where rhs' = subst (env, mempty) rhs
 
-evalCExpr :: CExpr -> Atom
-evalCExpr expr = case expr of
+evalExpr :: Expr -> Atom
+evalExpr expr = case expr of
+  Op op -> evalOp op
+
+evalOp :: Op -> Atom
+evalOp expr = case expr of
   ScalarBinOp op x y -> case op of
     IAdd -> IntVal $ x' + y'      where (IntVal x') = x; (IntVal y') = y
     ISub -> IntVal $ x' - y'      where (IntVal x') = x; (IntVal y') = y
@@ -48,7 +50,7 @@ evalCExpr expr = case expr of
   ScalarUnOp op x -> case op of
     FNeg -> RealVal (-x')  where (RealVal x') = x
     _ -> error $ "Not implemented: " ++ pprint expr
-  FFICall name _ _ args -> case name of
+  FFICall name _ args -> case name of
     "sqrt" -> RealVal $ c_sqrt x   where [RealVal x] = args
     "sin"  -> RealVal $ c_sin  x   where [RealVal x] = args
     "cos"  -> RealVal $ c_cos  x   where [RealVal x] = args

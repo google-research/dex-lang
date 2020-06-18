@@ -51,7 +51,7 @@ runMode evalMode opts = do
 evalDecl :: EvalConfig -> SourceBlock -> StateT EvalState IO Result
 evalDecl opts block = do
   (n, env) <- get
-  (env', ans) <- liftIO $ evalBlock opts env $ addBlockId n block
+  (env', ans) <- liftIO $ evalSourceBlock opts env $ block
   put (n+1, env <> env')
   return ans
 

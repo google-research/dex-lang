@@ -1,26 +1,24 @@
 
-type EState d = d=>Real
-type Time = Real
-type Dynamics d = EState d -> EState d
+EState : Type -> Type = \d. d=>Real
+Time :Type = Real
+Dynamics : Type -> Type = \d. EState d -> EState d
 
-type N = 100000
 
-eulerStep : s:(Ref (EState d)) -> Dynamics d -> Time -> {State s} ()
-eulerStep sRef dyn dt =
-  s = get sRef
-  dsdt = dyn s
-  s' = for i. s.i + dsdt.i * dt
-  sRef := s'
+eulerStep : Ref h (EState d) -> Dynamics d -> Time -> {State h} Unit =
+  \sRef dyn dt.
+    s = get sRef
+    dsdt = dyn s
+    s' = for i. s.i + dsdt.i * dt
+    sRef := s'
 
-euler : Dynamics d -> EState d -> Time -> EState d
-euler f x0 dt =
-  getState x0 \sRef.
-    for i:N. eulerStep sRef f dt
+euler : Int -> Dynamics d -> EState d -> Time -> EState d =
+  \n f x0 dt.
+    snd $ withState x0 \sRef.
+      for i:(Fin n). eulerStep sRef f dt
 
-myDyn : Dynamics d
-myDyn x = x
+myDyn : Dynamics d = \d. d
 
 s0 = [1.0]
 
-:p euler myDyn s0 0.00001
+:p euler 100000 myDyn s0 0.00001
 > [2.7182682]

@@ -1,141 +1,132 @@
 
 :p
-   m : s:(Ref Int) -> {State s} Int
-   m s = get s
+   def m (h:Type) ?-> (ref:Ref h Int) : {State h} Int = get ref
    withState 2 m
 > (2, 2)
 
 :p
-   m : s:(Ref Int) -> {State s} ()
-   m s = s := 3
+   def m (h:Type) ?-> (ref:Ref h Int) : {State h} Unit = ref := 3
    withState 0 m
 > ((), 3)
 
 :p
-   m : r:(Ref Int) -> {Reader r} Int
-   m r = ask r
-   runReader 5 m
+   def m (h:Type) ?-> (ref:Ref h Int) : {Read h} Int = ask ref
+   withReader 5 m
 > 5
 
 :p
-  stateAction : s:(Ref Real) -> {State s} ()
-  stateAction s =
-     x = get s
-     s := (x + 2.0)
-     z = get s
-     s := (z * 3.0)
-  --
+  def stateAction (h:Type) ?-> (ref:Ref h Real) : {State h} Unit =
+     x = get ref
+     ref := (x + 2.0)
+     z = get ref
+     ref := (z * 3.0)
+
   withState 1.0 stateAction
 > ((), 9.0)
 
 :p
-  rwsAction : r:(Ref Int) -> w:(Ref Real) -> s:(Ref Bool) -> {Reader r, Writer w, State s} Int
-  rwsAction r w s =
-    x = get  s
+  def rwsAction
+        (rh:Type) ?-> (wh:Type) ?-> (sh:Type) ?->
+        (r:Ref rh Int) (w:Ref wh Real) (s:Ref sh Bool)
+        : {Read rh, Accum wh, State sh} Int =
+    x = get s
     w += 2.0
     s := not x
-    r = ask  r
+    r = ask r
     w += 4.0
     (r `iadd` 2)
-  --
-  runReader 2 \r.
+
+  withReader 2 \r.
     withState True \s.
-      withAccumulator \w.
+      withAccum \w.
         rwsAction r w s
 > ((4, 6.0), False)
 
 :p
-   m : s:(Ref (3=>Int)) -> {State s} ()
-   m s =
-     indexState s 0@3 \s'. s' := 10
-     indexState s 2@3 \s'. s' := 20
-     x = indexState s 0@3 \s'. get s'
-     indexState     s 1@3 \s'. s' := x
+   def m (h:Type) ?-> (s:Ref h (Fin 3=>Int)) : {State h} Unit =
+     s!(fromOrdinal _ 0) := 10
+     s!(fromOrdinal _ 2) := 20
+     x = get (s!(fromOrdinal _ 0))
+     s!(fromOrdinal _ 1) := x
    withState [0,0,0] m
 > ((), [10, 10, 20])
 
-:p withState [0,0,0] \s.
-     putAt s 0@3 10
-     putAt s 2@3 20
-     x = getAt s 0@3
-     putAt s 1@3 x
-> ((), [10, 10, 20])
-
-:p runReader [1,2,3] \r .
-     indexReader r (1@3) \r'. ask r'
+:p withReader [1,2,3] \r . ask r!(fromOrdinal _ 1)
 > 2
 
 :p
-  m : w:(Ref Real) -> s:(Ref Real) -> {Writer w, State s} ()
-  m w s =
+  def m (wh:Type) ?-> (sh:Type) ?->
+        (w:Ref wh Real) (s:Ref sh Real)
+        : {Accum wh, State sh} Unit =
     x = get s
     w += x
-  withState 1.0 \s. withAccumulator \w . m w s
+  withState 1.0 \s. withAccum \w . m w s
 > (((), 1.0), 1.0)
 
-myAction: w:(Ref Real) -> r:(Ref Real) -> {Reader r, Writer w} ()
-myAction w r =
+def myAction  (w:Ref hw Real) (r:Ref hr Real) : {Read hr, Accum hw} Unit =
   x = ask r
   w += x
   w += 2.0
 
-:p runReader 1.5 \r. withAccumulator \w. myAction w r
+:p withReader 1.5 \r. withAccum \w. myAction w r
 > ((), 3.5)
 
 :p
-  m : w1:(Ref Real) -> w2:(Ref Real) -> {Writer w1, Writer w2} ()
-  m w1 w2 =
+  def m (h1:Type) ?-> (h2:Type) ?->
+        (w1:Ref h1 Real) (w2:Ref h2 Real)
+        : {Accum h1, Accum h2} Unit =
     w1 += 1.0
     w2 += 3.0
     w1 += 1.0
-  withAccumulator \w1. withAccumulator \w2. m w1 w2
+  withAccum \w1. withAccum \w2. m w1 w2
 > (((), 3.0), 2.0)
 
-foom : s:(Ref (3=>Int)) -> {State s} ()
-foom s =
-  indexState s (0@3) $ \s'. s' := 1
-  indexState s (2@3) $ \s'. s' := 2
+def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
+  s!(fromOrdinal _ 0) := 1
+  s!(fromOrdinal _ 2) := 2
 
 :p withState [0,0,0] foom
 > ((), [1, 0, 2])
 
+-- TODO: handle effects returning functions
+-- :p
+--   def foo (x:Real) : Real =
+--      f = withReader x \r.
+--            y = ask r
+--            \z. 100.0 * x + 10.0 * y + z
+--      f 1.0
+
+--   foo 3.0
+-- > 331.0
+
+-- :p
+--   foo : Real -> (Real, Real)
+--   foo x =
+--      (f, ans) = withState x \s.
+--          y = get s
+--          \z. 100.0 * x + 10.0 * y + z
+--      (f 1.0, ans)
+
+--   foo 3.0
+-- > (331.0, 3.0)
+
+-- :p
+--   foo : Real -> (Real, Real)
+--   foo x =
+--      (f, ans) = withAccumulator \s.
+--         s += x
+--         \y. 10.0 * x + y
+--      (f 1.0, ans)
+
+--   foo 3.0
+-- > (31.0, 3.0)
+
+-- TODO: some way to explicitly give type to `withAccum`
+--       (maybe just explicit implicit args)
 :p
-  foo : Real -> Real
-  foo x =
-     f = runReader x \r.
-           y = ask r
-           \z. 100.0 * x + 10.0 * y + z
-     f 1.0
-
-  foo 3.0
-> 331.0
-
-:p
-  foo : Real -> (Real, Real)
-  foo x =
-     (f, ans) = withState x \s.
-         y = get s
-         \z. 100.0 * x + 10.0 * y + z
-     (f 1.0, ans)
-
-  foo 3.0
-> (331.0, 3.0)
-
-:p
-  foo : Real -> (Real, Real)
-  foo x =
-     (f, ans) = withAccumulator \s.
-        s += x
-        \y. 10.0 * x + y
-     (f 1.0, ans)
-
-  foo 3.0
-> (31.0, 3.0)
-
-:p
-  runReader 2.0 \r:(Ref Real).
-    withAccumulator \w:(Ref Real).
-      withAccumulator \w':(Ref Real).
+  withReader 2.0 \r.
+    withAccum \w.
+      withAccum \w'.
         withState 3 \s.
           x = ask r
           y = get s
@@ -145,45 +136,34 @@ foom s =
           (x, y)
 > ((((2.0, 3), 4), 4.0), 2.0)
 
--- TODO: this should be a type error!
-:p
-   m : r:(Ref (3=>Int)) -> {Reader r} (3=>Int)
-   m r = indexReader r (1@3) \r'. ask r
-   runReader [1,2,3] m
-> [1, 2, 3]
-
-symmetrizeInPlace : n=>n=>Real -> n=>n=>Real
-symmetrizeInPlace mat =
+def symmetrizeInPlace (mat:n=>n=>Real) : n=>n=>Real =
   snd $ withState mat \ref.
     for i j.
-       x = getAt2 ref i j
-       y = getAt2 ref j i
+       x = get ref!i!j
+       y = get ref!j!i
        avg = (x + y) / 2.0
-       putAt2 ref i j avg
-       putAt2 ref j i avg
+       ref!i!j := avg
+       ref!j!i := avg
 
 symmetrizeInPlace [[1.,2.],[3.,4.]]
 > [[1.0, 2.5], [2.5, 4.0]]
 
-:p runReader 5 \r. ()
+:p withReader 5 \r. ()
 > ()
 
-:p  %runReader(5, \r. ())
-> ()
-
-:p snd $ withAccumulator \w.
-  for i:2.
+:p snd $ withAccum \w.
+  for i:(Fin 2).
     w += 1.0
     w += 1.0
 > 4.0
 
-:p snd $ withAccumulator \w.
-  for i:2.
+:p snd $ withAccum \w.
+  for i:(Fin 2).
     w += 1.0
   w += 1.0
 > 3.0
 
-:p snd $ withAccumulator \ref.
+:p snd $ withAccum \ref.
      ref += [1.,2.,3.]
      ref += [2.,4.,5.]
 > [3.0, 6.0, 8.0]

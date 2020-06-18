@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintList, printLitBlock, asStr,
-               assertEq, assertNoShadow, ignoreExcept) where
+               assertEq, ignoreExcept) where
 
 import Control.Monad.Except hiding (Except)
 import GHC.Float
@@ -57,61 +57,6 @@ instance Pretty ErrType where
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
 
-instance Pretty Type where
-  pretty ty = case ty of
-    TypeVar v   -> p v
-    ArrowType l (Pi a (eff, b))
-      | isPure eff -> parens $ p a <+> arrStr l <+>           p b
-      | otherwise  -> parens $ p a <+> arrStr l <+> p eff <+> p b
-    TabType (Pi a b)  -> parens $ p a <> "=>" <> p b
-    Forall bs qs body -> header <+> p body
-      where
-        header = "A" <+> hsep (map p bs) <> qual <> "."
-        qual = case qs of
-                 [] -> mempty
-                 _  -> " |" <+> hsep (punctuate "," (map p qs))
-    TypeAlias _ _ -> "<type alias>"  -- TODO
-    Effect row t -> "{" <> row' <+> tailVar <> "}"
-      where
-        row' = hsep $ punctuate "," $
-                 [(p eff <+> p v) | (v, (eff,_)) <- envPairs row]
-        tailVar = case t of Nothing -> mempty
-                            Just v  -> "|" <+> p v
-    NoAnn  -> "-"
-    TC con -> p con
-    where
-      arrStr :: Type -> Doc ann
-      arrStr Lin = "--o"
-      arrStr _        = "->"
-
-instance Pretty ty => Pretty (TyCon ty Atom) where
-  pretty con = case con of
-    BaseType b     -> p b
-    RecType r      -> p $ fmap (asStr . p) r
-    SumType (l, r) -> "Either" <+> p l <+> p r
-    RefType t      -> "Ref" <+> p t
-    TypeApp f xs   -> p f <+> hsep (map p xs)
-    JArrayType dims b    -> p b <> p dims <> "j"
-    -- This rule forces us to specialize to Atom. Is there a better way?
-    IntRange (IntVal 0) (IntVal n) -> p n
-    IntRange a b -> p a <> "...<" <> p b
-    IndexRange _ low high -> low' <> "." <> high'
-      where
-        low'  = case low  of InclusiveLim x -> p x <> "."
-                             ExclusiveLim x -> p x <> "<"
-                             Unlimited      ->        "."
-        high' = case high of InclusiveLim x -> "." <> p x
-                             ExclusiveLim x -> "<" <> p x
-                             Unlimited      -> "."
-    LinCon    -> "Lin"
-    NonLinCon -> "NonLin"
-
-instance Pretty b => Pretty (PiType b) where
-  pretty (Pi a b) = "Pi" <+> p a <+> p b
-
-instance Pretty EffectName where
-  pretty x = p (show x)
-
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
 
@@ -131,115 +76,85 @@ instance Pretty LitVal where
   pretty (StrLit x ) = p x
   pretty (BoolLit b) = if b then "True" else "False"
 
+instance Pretty Block where
+  pretty (Block [] expr) = " " <> p expr
+  pretty (Block decls expr) = nest 2 $
+    hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
+
 instance Pretty Expr where
-  pretty (Decl decl body) = p decl <> hardline <> p body
-  pretty (CExpr expr) = p (OpExpr expr)
-  pretty (Atom atom) = p atom
+  pretty (App f x) = parens (p f) <+> parens (p x)
+  pretty (Atom x ) = p x
+  pretty (Op  op ) = p op
+  pretty (Hof hof) = p hof
 
-instance Pretty FExpr where
-  pretty expr = case expr of
-    FVar (v:>_) -> p v
-    FDecl decl body -> p decl <> hardline <> p body
-    FPrimExpr (OpExpr  e) -> parens $ p e
-    FPrimExpr (ConExpr e) -> p e
-    SrcAnnot subexpr _ -> p subexpr
-    Annot subexpr ty -> p subexpr <+> ":" <+> p ty
-
-instance Pretty FDecl where
-  -- TODO: special-case annotated leaf var (print type on own line)
-  pretty (LetMono pat expr) = p pat <+> "=" <+> p expr
-  pretty (LetPoly (v:>ty) (FTLam _ _ body)) =
-    p v <+> ":" <+> p ty <> line <>
-    p v <+> "="  <+> p body
-  pretty (TyDef v ty) = "type" <+> p v <+> "=" <+> p ty
-
-instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimExpr ty e lam) where
-  pretty (OpExpr  op ) = p op
-  pretty (ConExpr con) = p con
-
-instance (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimOp ty e lam) where
-  pretty (App _ e1 e2) = p e1 <+> p e2
-  pretty (TApp e ts) = p e <+> hsep (map (\t -> "@" <> p t) ts)
-  pretty (For d lam) = dirStr d <+> i <+> "." <+> nest 3 (line <> body)
-    where (i, body) = prettyLam lam
-  pretty (TabCon _ _ xs) = list (map pretty xs)
-  pretty (TabGet   x i) = p x <> "." <> p i
-  pretty (RecGet   x i) = p x <> "#" <> p i
-  pretty (Cmp cmpOp _ x y) = "%cmp" <> p (show cmpOp) <+> p x <+> p y
-  pretty (Select ty b x y) = "%select @" <> p ty <+> p b <+> p x <+> p y
-  pretty (FFICall s _ _ xs) = "%%" <> p s <+> tup xs
-  pretty (SumGet e isLeft) = parens $ (if isLeft then "projLeft" else "projRight") <+> p e
-  pretty (SumTag e)        = parens $ "projTag" <+> p e
-  pretty (SumCase c l r) = "case (" <+> p c <> ")" <> nest 2 ("\n" <> prettyL l) <+> nest 2 ("\n" <> prettyL r)
-  pretty (PrimEffect ref (MPut val))  = p ref <+> ":=" <+> p val
-  pretty (PrimEffect ref (MTell val)) = p ref <+> "+=" <+> p val
-  pretty (PrimEffect ref MAsk) = "ask" <+> p ref
-  pretty (PrimEffect ref MGet) = "get" <+> p ref
-  pretty op = prettyExprDefault (OpExpr op)
-
-prettyPrimCon :: (Pretty ty, Pretty e, PrettyLam lam) => PrimCon ty e lam -> Doc ann
-prettyPrimCon (Lit l)        = p l
-prettyPrimCon (ArrayLit t a) = p a <> "@" <> p t
-prettyPrimCon (Lam _ _ lam)  = parens $ prettyL lam
-prettyPrimCon (RecCon r)     = p r
-prettyPrimCon (AFor n body)  = parens $ "afor *:" <> p n <+> "." <+> p body
-prettyPrimCon (AGet e)       = parens $ "aget" <+> p e
-prettyPrimCon (AsIdx n i)    = p i <> "@" <> p n
-prettyPrimCon (AnyValue t)   = parens $ "AnyValue @" <> p t
-prettyPrimCon (SumCon c l r) = parens $ "SumCon" <+> p c <+> p l <+> p r
-prettyPrimCon con = prettyExprDefault (ConExpr con)
-
-instance {-# OVERLAPPABLE #-} (Pretty ty, Pretty e, PrettyLam lam) => Pretty (PrimCon ty e lam) where
-  pretty = prettyPrimCon
-
-instance (Pretty ty, PrettyLam lam) => Pretty (PrimCon ty Atom lam) where
-  pretty (SumCon (Con (Lit (BoolLit True)))  l _) = "Left"  <+> p l
-  pretty (SumCon (Con (Lit (BoolLit False))) _ r) = "Right" <+> p r
-  pretty con = prettyPrimCon con
-
-prettyExprDefault :: (Pretty e, PrettyLam lam) => PrimExpr ty e lam -> Doc ann
+prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
-  p ("%" ++ nameToStr blankExpr) <+> hsep (map p xs ++ map (nest 2 . ("\n"<>) . prettyL) lams)
-  where (blankExpr, (_, xs, lams)) = unzipExpr expr
+  p ("%" ++ showPrimName expr) <> foldMap (\x -> " " <> p x) expr
 
-prettyL :: PrettyLam a => a -> Doc ann
-prettyL lam = "\\" <> v <+> "." <> nest 3 (line <> body)
-  where (v, body) = prettyLam lam
+instance Pretty e => Pretty (Abs e) where
+  pretty (Abs binder body) = "\\" <> p binder <> "." <> p body
 
-class PrettyLam a where
-  prettyLam :: a -> (Doc ann, Doc ann)
+instance Pretty e => Pretty (PrimExpr e) where
+  pretty (TCExpr  e) = p e
+  pretty (ConExpr e) = p e
+  pretty (OpExpr  e) = p e
+  pretty (HofExpr e) = p e
 
-instance PrettyLam LamExpr where
-  prettyLam (LamExpr b e) = (p b, p e)
+instance Pretty e => Pretty (PrimTC e) where
+  pretty con = case con of
+    BaseType b     -> p b
+    PairType a b   -> parens $ p a <+> "&" <+> p b
+    UnitType       -> "Unit"
+    IntRange a b -> if s1 == "0...<" then parens ("Fin" <+> p s2) else ans
+      where ans = p a <> "...<" <> p b
+            (s1, s2) = splitAt 5 (asStr ans)
+    IndexRange _ low high -> low' <> "." <> high'
+      where
+        low'  = case low  of InclusiveLim x -> p x <> "."
+                             ExclusiveLim x -> p x <> "<"
+                             Unlimited      ->        "."
+        high' = case high of InclusiveLim x -> "." <> p x
+                             ExclusiveLim x -> "<" <> p x
+                             Unlimited      -> "."
+    TypeKind -> "Type"
+    EffectRowKind -> "EffKind"
+    _ -> prettyExprDefault $ TCExpr con
 
-instance PrettyLam FLamExpr where
-  prettyLam (FLamExpr pat e) = (p pat, p e)
+instance Pretty e => Pretty (PrimCon e) where
+  pretty con = case con of
+    Lit l       -> p l
+    ArrayLit _ array -> p array
+    PairCon x y -> parens $ p x <+> "," <+> p y
+    UnitCon     -> "()"
+    RefCon _ _  -> "RefCon"
+    AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
+    AGet e      -> "aget" <+> p e
+    AsIdx n i   -> p i <> "@" <> parens (p n)
+    AnyValue t  -> parens $ "AnyValue @" <> p t
+    SumCon c l r -> parens $ case pprint c of
+      "True"  -> "Left"  <+> p l
+      "False" -> "Right" <+> p r
+      _ -> "SumCon" <+> p c <+> p l <+> p r
+    Todo e -> "<undefined " <> p e <> ""
 
-instance PrettyLam () where
-  prettyLam () = ("", "")
+instance Pretty e => Pretty (PrimOp e) where
+  pretty op = case op of
+    SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
+    SumTag e        -> parens $ "projTag" <+> p e
+    PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
+    PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
+    _ -> prettyExprDefault $ OpExpr op
 
-instance (Pretty a, Pretty b) => PrettyLam (a, b) where
-  prettyLam (x, y) = (p x, p y)
-
-instance PrettyLam (PiType EffectiveType) where
-  prettyLam (Pi a (eff, b)) = (p a, p eff <+> p b)
-
-instance PrettyLam (PiType Type) where
-  prettyLam (Pi a b) = (p a, p b)
-
-instance Pretty Kind where
-  pretty TyKind      = "Type"
-  pretty MultKind    = "Mult"
-  pretty EffectKind  = "Effect"
-  pretty k = p $ show k
+instance Pretty e => Pretty (PrimHof e) where
+  pretty hof = case hof of
+    For dir lam -> dirStr dir <+> p lam
+    SumCase c l r -> "case" <+> parens (p c) <> hardline
+                  <> nest 2 (p l)            <> hardline
+                  <> nest 2 (p r)
+    _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where
-  pretty (v :> ann) =
-    case asStr ann' of
-      "-"    -> p v
-      "Type" -> p v
-      _      -> p v <> ":" <> ann'
-    where ann' = p ann
+  pretty (v :> ann) = p v <> ":" <> p ann
 
 instance Pretty ClassName where
   pretty name = case name of
@@ -251,18 +166,20 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let (NoName:>_) bound -> p (OpExpr bound)
-    Let b bound -> p b <+> "=" <+> p (OpExpr bound)
+    Let (NoName:>_) bound -> p bound
+    -- This is just to reduce clutter a bit. We can comment it out when needed.
+    -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
+    Let b bound -> p b <+> "=" <+> p bound
 
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
-    TLam vs qs body -> "tlam" <+> p vs <+> "|" <+> p qs <+> "." <+> p body
-    Con con -> p (ConExpr con)
-
-tup :: Pretty a => [a] -> Doc ann
-tup [x] = p x
-tup xs  = tupled $ map p xs
+    Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
+    Pi  (Abs (NoName:>a) (arr, b)) -> parens $ p a <> p arr <> p b
+    Pi  (Abs a           (arr, b)) -> parens $ p a <> p arr <> p b
+    TC  e -> p e
+    Con e -> p e
+    Eff e -> p e
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -309,10 +226,6 @@ instance Pretty a => Pretty (SetVal a) where
   pretty NotSet = ""
   pretty (Set a) = p a
 
-instance (Pretty a, Pretty b) => Pretty (LorT a b) where
-  pretty (L x) = "L" <+> p x
-  pretty (T x) = "T" <+> p x
-
 instance Pretty Output where
   pretty (TextOut s) = pretty s
   pretty (HeatmapOut _ _ _) = "<graphical output>"
@@ -331,14 +244,89 @@ instance Pretty Result where
     where maybeErr = case r of Left err -> p err
                                Right () -> mempty
 
-instance Pretty body => Pretty (ModuleP body) where
-  pretty (Module _ (imports, exports) body) = "imports:" <+> p imports
-                             <> hardline <> p body
-                             <> hardline <> "exports:" <+> p exports
+instance Pretty Module where
+  pretty (Module _ imports exports body) =
+       "imports:" <+> p imports
+    <> hardline <> p body
+    <> hardline <> "exports:" <+> p exports
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x
+
+instance Pretty TopEnv where
+  pretty (TopEnv env) = p env
+
+instance Pretty UModule where
+  pretty (UModule imports exports decls) =
+                     "imports:" <+> p imports
+       <> hardline <> foldMap (\decl -> p decl <> hardline) decls
+       <> hardline <> "exports:" <+> p exports
+
+instance Pretty a => Pretty (WithSrc a) where
+  pretty (WithSrc _ x) = p x
+
+instance Pretty UExpr' where
+  pretty expr = case expr of
+    UVar (v:>_) -> p v
+    ULam pat h body ->
+      "\\" <> annImplicity h (p pat) <> "." <> nest 2 (hardline <> p body)
+    UApp TabArrow f x -> p f <> "." <> p x
+    UApp _        f x -> p f <+> p x
+    UFor dir pat body ->
+      kw <+> p pat <+> "." <> nest 2 (hardline <> p body)
+      where kw = case dir of Fwd -> "for"
+                             Rev -> "rof"
+    UPi a arr b -> parens (p a) <> pretty arr <> p b
+    UDecl decl body -> p decl <> hardline <> p body
+    UHole -> "_"
+    UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
+    UIndexRange low high -> "IndexRange" <+> p low <+> p high
+    UPrimExpr prim -> p prim
+
+prettyAnn :: Doc ann -> Doc ann
+prettyAnn ty = ":" <+> ty
+
+instance Pretty a => Pretty (Limit a) where
+  pretty Unlimited = "unlimited"
+  pretty (ExclusiveLim x) = "excLim" <+> p x
+  pretty (InclusiveLim x) = "incLim" <+> p x
+
+instance Pretty UDecl where
+  pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
+
+instance Pretty a => Pretty (PatP' a) where
+  pretty pat = case pat of
+    PatBind x -> p x
+    PatPair x y -> parens $ p x <> ", " <> p y
+    PatUnit -> "()"
+
+instance Pretty EffectRow where
+  pretty (EffectRow [] Nothing) = mempty
+  pretty (EffectRow effs tailVar) =
+    braces $ hsep (punctuate "," (map prettyEff effs)) <> tailStr
+    where
+      prettyEff (effName, region) = p effName <+> p region
+      tailStr = case tailVar of
+        Nothing -> mempty
+        Just v  -> "|" <> p v
+
+instance Pretty EffectName where
+  pretty eff = case eff of
+    Reader -> "Read"
+    Writer -> "Accum"
+    State  -> "State"
+
+annImplicity :: ArrowP a -> Doc ann -> Doc ann
+annImplicity ImplicitArrow x = braces x
+annImplicity _ x = x
+
+instance Pretty eff => Pretty (ArrowP eff) where
+  pretty arr = case arr of
+    PlainArrow eff -> "->" <> p eff
+    TabArrow       -> "=>"
+    LinArrow       -> "--o"
+    ImplicitArrow  -> "?->"
 
 instance Pretty Array where
   pretty a = p b <> "[" <> p size <> "]"
@@ -370,16 +358,11 @@ addColor True c s =
   setSGRCode [SetConsoleIntensity BoldIntensity, SetColor Foreground Vivid c]
   ++ s ++ setSGRCode [Reset]
 
-assertEq :: (MonadError Err m, Pretty a, Eq a) => a -> a -> String -> m ()
+assertEq :: (MonadError Err m, Show a, Pretty a, Eq a) => a -> a -> String -> m ()
 assertEq x y s = if x == y then return ()
                            else throw CompilerErr msg
-  where msg = s ++ ": " ++ pprint x ++ " != " ++ pprint y ++ "\n"
-
-assertNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
-assertNoShadow env v = do
-  if v `isin` env
-    then throw CompilerErr $ pprint v ++ " shadowed"
-    else return ()
+  where msg = "assertion failure (" ++ s ++ "):\n"
+              ++ pprint x ++ " != " ++ pprint y ++ "\n"
 
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e

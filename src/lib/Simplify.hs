@@ -17,11 +17,8 @@ import Env
 import Syntax
 import Cat
 import Embed
-import Record
-import Subst
 import Type
 import PPrint
-import Util (uncurry3)
 
 type SimpEnv = SubstEnv
 data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
@@ -30,183 +27,204 @@ data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
 -- variables have been eliminated. In principle the substitution with global env is optional, but
 -- in practice it also has to happen sooner or later, because the Imp pass assumes that only array
 -- variables are imported.
-type SimplifyM a = ReaderT SimpEnv (ReaderT ((SubstEnv, RuleEnv), SimpOpts) Embed) a
+type SimplifyM a = ReaderT SimpEnv (ReaderT (SubstEnv, SimpOpts) Embed) a
 
-simplifyModule :: SubstEnv -> RuleEnv -> Module -> (Module, SubstEnv)
-simplifyModule substEnv rulesEnv m = (mOut', subst (envOut', mempty) envOut)
-  where (mOut , envOut ) = simplifyModuleOpts (SimpOpts True ) (substEnv, rulesEnv) m
-        (mOut', envOut') = simplifyModuleOpts (SimpOpts False) (substEnv, rulesEnv) mOut
+simplifyModule :: SubstEnv -> Module -> (Module, SubstEnv)
+simplifyModule substEnv m = simplifyModuleOpts (SimpOpts False) substEnv m
 
-simplifyModuleOpts :: SimpOpts -> (SubstEnv, RuleEnv)
-                   -> Module -> (Module, SubstEnv)
-simplifyModuleOpts opts env (Module bid (_, exports) expr) =
-  (Module bid (imports', (fmap (fmap L) exports')) expr', outEnv)
+simplifyModuleOpts :: SimpOpts -> SubstEnv -> Module -> (Module, SubstEnv)
+simplifyModuleOpts opts env (Module bid _ exports expr) =
+  (Module bid imports' exports' expr', outEnv)
   where
     (exports', expr', results) = runSimplifyM opts env $ simplifyTop expr
     imports' = map (uncurry (:>)) $ envPairs $ freeVars expr'
-    outEnv = newLEnv exports results
+    outEnv = newEnv exports results
 
-runSimplifyM :: SimpOpts -> (SubstEnv, RuleEnv) -> SimplifyM a -> a
+runSimplifyM :: SimpOpts -> SubstEnv -> SimplifyM a -> a
 runSimplifyM opts env m =
   fst $ flip runEmbed mempty $ flip runReaderT (env, opts) $
     flip runReaderT mempty m
 
-simplifyTop :: Expr -> SimplifyM ([Var], Expr, [Atom])
-simplifyTop expr = do
-  ~(ans@(TupVal results), (scope, decls)) <- scoped $ simplify expr
-  let vs = [v:>ty | (v, L ty) <- envPairs $ scope `envIntersect` freeVars ans]
-  let expr' = wrapDecls decls $ TupVal $ map Var vs
+simplifyTop :: Block -> SimplifyM ([Var], Block, [Atom])
+simplifyTop block = do
+  (ans, (scope, decls)) <- embedScoped $ simplifyBlock block
+  let results = ignoreExcept $ fromConsList ans
+  let vs = map (uncurry (:>)) $ envPairs $ scope `envIntersect` freeVars ans
+  let expr' = wrapDecls decls $ mkConsList $ map Var vs
   return (vs, expr', results)  -- no need to choose fresh names
 
-simplify :: Expr -> SimplifyM Atom
-simplify expr = case expr of
-  Decl decl body -> do
-    env <- simplifyDecl decl
-    extendR env $ simplify body
-  CExpr e -> simplifyCExpr e
-  Atom x -> simplifyAtom x
+simplifyBlock :: Block -> SimplifyM Atom
+simplifyBlock (Block (decl:decls) result) = do
+   env <- simplifyDecl decl
+   extendR env $ simplifyBlock body
+   where body = Block decls result
+simplifyBlock (Block [] result) = simplifyExpr result
 
 simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
   Var v -> do
     -- TODO: simplify this by requiring different namespaces for top/local vars
-    ((topEnv, rulesEnv), opts) <- lift ask
+    (topEnv, opts) <- lift ask
     localEnv <- ask
     case envLookup localEnv v of
-      Just ~(L x) -> deShadow x <$> embedScope
+      Just x -> deShadow x <$> getScope
       Nothing -> case envLookup topEnv v of
-        Just ~(L x)
-          | preserveDerivRules opts && v `isin` rulesEnv -> substEmbed atom
-          | otherwise -> dropSub $ simplifyAtom x
-        _             -> substEmbed atom
-  -- We don't simplify bodies of lam/tlam because we'll beta-reduce them soon.
-  TLam _ _ _      -> substEmbed atom
-  Con (Lam _ _ _) -> substEmbed atom
+        Just x -> dropSub $ simplifyAtom x
+        _      -> substEmbed atom
+  -- We don't simplify body of lam because we'll beta-reduce it soon.
+  Lam _ -> substEmbed atom
+  Pi  _ -> substEmbed atom
   Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
-  Con (AnyValue (RecTy r))   -> RecVal <$> mapM mkAny r
+  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
-  Con con -> liftM Con $ traverseExpr con substEmbed simplifyAtom
-                       $ error "Shouldn't have lambda left"
+  Con con -> Con <$> mapM simplifyAtom con
+  TC tc -> TC <$> mapM substEmbed tc
+  Eff eff -> Eff <$> substEmbed eff
+  _ -> error $ "not implemented: " ++ pprint atom
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
-simplifyLam :: LamExpr -> SimplifyM (LamExpr, Maybe (Atom -> SimplifyM Atom))
-simplifyLam (LamExpr b body) = do
-  b' <- traverse simplifyType b
+simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
+simplifyLam atom = substEmbed atom >>= (dropSub . simplifyLam')
+
+simplifyLam' :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
+simplifyLam' (Lam (Abs b (arr, body))) = do
+  b' <- mapM substEmbed b
   if isData (getType body)
-    then do
-      lam <- buildLamExpr b' $ \x -> extendR (b @> L x) $ simplify body
-      return (lam, Nothing)
+    then liftM (,Nothing) $ do
+      buildDepEffLam b' (\x -> extendR (b@>x) $ substEmbed arr)
+                        (\x -> extendR (b@>x) $ simplifyBlock body)
     else do
-      (lam, recon) <- buildLamExprAux b' $ \x -> extendR (b @> L x) $ do
-        (body', (scope, decls)) <- scoped $ simplify body
-        extend (mempty, decls)
-        return $ separateDataComponent scope body'
+      (lam, recon) <- buildLamAux b'
+        ( \x -> extendR (b@>x) $ substEmbed arr)
+        $ \x -> extendR (b@>x) $ do
+          (body', (scope, decls)) <- embedScoped $ simplifyBlock body
+          mapM_ emitDecl decls
+          return $ separateDataComponent scope body'
       return $ (lam, Just recon)
 
-separateDataComponent :: (MonadCat EmbedEnv m)
-                      => Scope -> Atom -> (Atom, Atom -> m Atom)
-separateDataComponent localVars atom = (TupVal $ map Var vs, recon)
+simplifyBinaryLam :: Atom -> SimplifyM Atom
+simplifyBinaryLam atom = substEmbed atom >>= (dropSub . simplifyBinaryLam')
+
+simplifyBinaryLam' :: Atom -> SimplifyM Atom
+simplifyBinaryLam' (BinaryFunVal b1 b2 eff body) = do
+  b1' <- mapM substEmbed b1
+  buildLam b1' PureArrow $ \x1 ->
+    extendR (b1'@>x1) $ do
+      b2' <- mapM substEmbed b2
+      buildDepEffLam b2'
+        (\x2 -> extendR (b2'@>x2) $ substEmbed (PlainArrow eff))
+        (\x2 -> extendR (b2'@>x2) $ simplifyBlock body)
+
+separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
+separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
   where
-    vs = [v:>ty | (v, L ty) <- envPairs $ localVars `envIntersect` freeVars atom]
-    recon :: MonadCat EmbedEnv m => Atom -> m Atom
+    vs = map (uncurry (:>)) $ envPairs $ localVars `envIntersect` freeVars atom
+    recon :: MonadEmbed m => Atom -> m Atom
     recon xs = do
-      ~(Tup xs') <- unpackRec xs
-      scope <- looks fst
-      return $ subst (newLEnv vs xs', scope) atom
+      xs' <- unpackConsList xs
+      scope <- getScope
+      return $ subst (newEnv vs xs', scope) atom
 
-reconstructAtom :: MonadCat EmbedEnv m
-                => Maybe (Atom -> m Atom) -> Atom -> m Atom
-reconstructAtom recon x = case recon of
-  Nothing -> return x
-  Just f  -> f x
-
-simplifyType :: Type -> SimplifyM Type
-simplifyType (TC con) = do
-  t <- TC <$> traverseTyCon con simplifyType simplifyAtom
-  return t
-simplifyType t = substEmbed t -- NOTE: Types that are not TCs don't contain atoms
+simplifyExpr :: Expr -> SimplifyM Atom
+simplifyExpr expr = case expr of
+  App f x -> do
+    x' <- simplifyAtom x
+    f' <- simplifyAtom f
+    case f' of
+      Lam (Abs b (_, body)) ->
+        dropSub $ extendR (b@>x') $ simplifyBlock body
+      _ -> emit $ App f' x'
+  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Hof hof -> simplifyHof hof
+  Atom x  -> simplifyAtom x
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyCExpr :: CExpr -> SimplifyM Atom
-simplifyCExpr expr = do
-  expr' <- traverseExpr expr simplifyType simplifyAtom simplifyLam
-  case expr' of
-    Linearize (lam, _) -> do
-      rulesEnv <- lift $ asks (snd . fst)
-      scope <- looks fst
-      -- TODO: simplify the result to remove functions introduced by linearization
-      return $ linearize rulesEnv scope lam
-    Transpose (lam, _) -> do
-      scope <- looks fst
-      return $ transposeMap scope lam
-    RunReader r (lam, recon) -> do
-      ans <- emit $ RunReader r lam
-      reconstructAtom recon ans
-    RunWriter (lam, recon) -> do
-      (ans, w) <- fromPair =<< emit (RunWriter lam)
-      ans' <- reconstructAtom recon ans
-      return $ PairVal ans' w
-    RunState s (lam, recon) -> do
-      (ans, s') <- fromPair =<< emit (RunState s lam)
-      ans' <- reconstructAtom recon ans
-      return $ PairVal ans' s'
-    SumCase c (lBody, _) (rBody, _) -> do
-      l <- projApp lBody True
-      r <- projApp rBody False
-      isLeft <- simplRec $ SumTag c
-      emit $ Select (getType l) isLeft l r
-      where
-        simplRec = dropSub . simplifyCExpr
-        projApp body isLeft = do
-          cComp <- simplRec $ SumGet c isLeft
-          simplRec $ App NonLin (Con $ Lam NonLin noEffect body) cComp
-    Cmp Equal t a b  -> resolveEq     t a b
-    Cmp op    t  a b -> resolveOrd op t a b
-    App _ (Con (Lam _ _ (LamExpr b body))) x -> do
-      dropSub $ extendR (b @> L x) $ simplify body
-    TApp (TLam tbs _ body) ts -> do
-      dropSub $ extendR (newTEnv tbs ts) $ simplify body
-    RecGet (RecVal r) i -> return $ recGet r i
-    SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
-    SumTag (SumVal s _ _) -> return $ s
-    Select ty p x y -> selectAt ty p x y
-    _ -> emit $ fmapExpr expr' id id fst
+simplifyOp :: Op -> SimplifyM Atom
+simplifyOp op = case op of
+  Cmp Equal a b -> resolveEq (getType a) a b
+  Cmp cmpOp a b -> resolveOrd cmpOp (getType a) a b
+  Fst (PairVal x _) -> return x
+  Snd (PairVal _ y) -> return y
+  SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
+  SumTag (SumVal s _ _) -> return $ s
+  Select p x y -> selectAt (getType x) p x y
+  _ -> emitOp op
+
+simplifyHof :: Hof -> SimplifyM Atom
+simplifyHof hof = case hof of
+  For d lam -> do
+    ~(lam', Nothing) <- simplifyLam lam
+    emit $ Hof $ For d lam'
+  Linearize lam -> do
+    ~(lam', Nothing) <- simplifyLam lam
+    scope <- getScope
+    -- TODO: simplify the result to remove functions introduced by linearization
+    return $ linearize scope lam'
+  Transpose lam -> do
+    ~(lam', Nothing) <- simplifyLam lam
+    scope <- getScope
+    return $ transposeMap scope lam'
+  RunReader r lam -> do
+    r' <- simplifyAtom r
+    lam' <- simplifyBinaryLam lam
+    emit $ Hof $ RunReader r' lam'
+  RunWriter lam -> do
+    lam' <- simplifyBinaryLam lam
+    emit $ Hof $ RunWriter lam'
+  RunState s lam -> do
+    s' <- simplifyAtom s
+    lam' <- simplifyBinaryLam lam
+    emit $ Hof $ RunState s' lam'
+  SumCase c lBody rBody -> do
+    ~(lBody', Nothing) <- simplifyLam lBody
+    ~(rBody', Nothing) <- simplifyLam rBody
+    l <- projApp lBody' True
+    r <- projApp rBody' False
+    isLeft <- simplRec $ Op $ SumTag c
+    emitOp $ Select isLeft l r
+    where
+      simplRec :: Expr -> SimplifyM Atom
+      simplRec = dropSub . simplifyExpr
+      projApp f isLeft = do
+        cComp <- simplRec $ Op $ SumGet c isLeft
+        simplRec $ App f cComp
 
 resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
 resolveEq t x y = case t of
-  IntTy     -> emit $ ScalarBinOp (ICmp Equal) x y
-  RealTy    -> emit $ ScalarBinOp (FCmp Equal) x y
-  RecTy ts  -> do
-    xs <- unpackRec x
-    ys <- unpackRec y
-    equals <- mapM (uncurry3 resolveEq) $ recZipWith3 (,,) ts xs ys
-    foldM andE (BoolVal True) equals
+  IntTy     -> emitOp $ ScalarBinOp (ICmp Equal) x y
+  RealTy    -> emitOp $ ScalarBinOp (FCmp Equal) x y
+  PairTy t1 t2 -> do
+    (x1, x2) <- fromPair x
+    (y1, y2) <- fromPair y
+    p1 <- resolveEq t1 x1 y1
+    p2 <- resolveEq t2 x2 y2
+    andE p1 p2
   -- instance Eq a => Eq n=>a
+  -- TODO: writer with other monoids to avoid this
   TabTy ixty elty -> do
-    writerLam <- buildLamExpr ("ref":> RefTy RealTy) $ \ref -> do
-      forLam <- buildLamExpr ("i":>ixty) $ \i -> do
-        (x', y') <- (,) <$> nTabGet x i <*> nTabGet y i
+    writerAns <- emitRunWriter "ref" RealTy $ \ref -> do
+      buildFor Fwd ("i":>ixty) $ \i -> do
+        (x', y') <- (,) <$> app x i <*> app y i
         eqReal <- boolToReal =<< resolveEq elty x' y'
-        emit $ PrimEffect ref $ MTell eqReal
-      emit $ For Fwd forLam
-    idxSetSize <- intToReal =<< emit (IdxSetSize ixty)
-    total <- snd <$> (fromPair =<< emit (RunWriter writerLam))
-    emit $ Cmp Equal RealTy total idxSetSize
+        emitOp $ PrimEffect ref $ MTell eqReal
+    total <- getSnd writerAns
+    idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
+    emitOp $ ScalarBinOp (FCmp Equal) total idxSetSize
   -- instance (Eq a, Eq b) => Eq (Either a b)
   SumTy lty rty -> do
-    xt <- emit $ SumTag x
-    yt <- emit $ SumTag y
+    xt <- emitOp $ SumTag x
+    yt <- emitOp $ SumTag y
     tagsEq <- resolveEq BoolTy xt yt
     lEq <- compareSide True
     rEq <- compareSide False
-    sideEq <- select BoolTy xt lEq rEq
+    sideEq <- select xt lEq rEq
     andE tagsEq sideEq
     where
       compareSide isLeft = do
-        xe <- emit $ SumGet x isLeft
-        ye <- emit $ SumGet y isLeft
+        xe <- emitOp $ SumGet x isLeft
+        ye <- emitOp $ SumGet y isLeft
         resolveEq (if isLeft then lty else rty) xe ye
   -- instance Idx a => Eq a
   BoolTy                -> idxEq
@@ -215,14 +233,14 @@ resolveEq t x y = case t of
   _ -> error $ pprint t ++ " doesn't implement Eq"
   where
     idxEq = do
-      xi <- emit $ IndexAsInt x
-      yi <- emit $ IndexAsInt y
-      emit $ ScalarBinOp (ICmp Equal) xi yi
+      xi <- emitOp $ IndexAsInt x
+      yi <- emitOp $ IndexAsInt y
+      emitOp $ ScalarBinOp (ICmp Equal) xi yi
 
 resolveOrd :: CmpOp -> Type -> Atom -> Atom -> SimplifyM Atom
 resolveOrd op t x y = case t of
-  IntTy  -> emit $ ScalarBinOp (ICmp op) x y
-  RealTy -> emit $ ScalarBinOp (FCmp op) x y
+  IntTy  -> emitOp $ ScalarBinOp (ICmp op) x y
+  RealTy -> emitOp $ ScalarBinOp (FCmp op) x y
   TC con -> case con of
     IntRange _ _     -> idxOrd
     IndexRange _ _ _ -> idxOrd
@@ -230,15 +248,15 @@ resolveOrd op t x y = case t of
   _ -> error $ pprint t ++ " doesn't implement Ord"
   where
     idxOrd = do
-      xi <- emit $ IndexAsInt x
-      yi <- emit $ IndexAsInt y
-      emit $ ScalarBinOp (ICmp op) xi yi
+      xi <- emitOp $ IndexAsInt x
+      yi <- emitOp $ IndexAsInt y
+      emitOp $ ScalarBinOp (ICmp op) xi yi
 
 simplifyDecl :: Decl -> SimplifyM SimpEnv
 simplifyDecl decl = case decl of
   Let b bound -> do
-    x <- simplifyCExpr bound
-    return $ b @> L x
+    x <- withNameHint (varName b) $ simplifyExpr bound
+    return $ b @> x
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m

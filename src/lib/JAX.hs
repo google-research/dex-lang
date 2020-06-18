@@ -30,7 +30,6 @@ import Syntax
 import PPrint
 import Type
 import Cat
-import Record
 import Array
 
 -- === JAXish IR ===
@@ -58,15 +57,17 @@ data JOpP e = JId e
 
 data TmpAtom = TmpLeaf IdxAtom
              | TmpRefName Var
-             | TmpCon (PrimCon Type TmpAtom ())
+             | TmpCon (PrimCon TmpAtom)
                deriving (Generic, Show, Eq)
 
 data JFor = JFor [(IdxVar, IdxFlavor)] (JOpP IdxAtom)
             deriving (Generic, Show, Eq)
 
+type JScope = Env ()  -- TODO: put bindings here too
+
 -- === lowering from Expr ===
 
-type JEmbedEnv = (Scope, [JDecl])
+type JEmbedEnv = (JScope, [JDecl])
 type JSubstEnv = Env TmpAtom
 type EffectState = Env (Int, TmpAtom)
 type IdxEnv = [IdxVar]  -- for i j. --> [i, j]
@@ -76,12 +77,12 @@ runJaxM :: JaxM a -> a
 runJaxM m = fst $ flip runCat mempty $
   flip evalStateT mempty $ flip runReaderT mempty m
 
-toJaxFunction :: ([Var], Expr) -> JaxFunction
-toJaxFunction (vs, expr) = runJaxM $ do
+toJaxFunction :: ([Var], Block) -> JaxFunction
+toJaxFunction (vs, block) = runJaxM $ do
   vs' <- mapM freshVar vs
   let env = newEnv vs $ map varToTmpAtom vs
   (result, (_, decls)) <- scoped $ do
-    result <- toJaxExpr env expr
+    result <- toJaxBlock env block
     return $ flattenAtom result
   let jvs = map (fmap typeToJType) vs'
   return $ JaxFunction jvs $ JExpr decls result
@@ -95,61 +96,53 @@ flattenAtom atom =
     tell [x]
     return $ IdxAtom x []
 
-toJaxExpr :: JSubstEnv -> Expr -> JaxM TmpAtom
-toJaxExpr env expr = case expr of
-  Decl decl body -> do
-    env' <- toJaxDecl env decl
-    toJaxExpr (env <> env') body
-  CExpr op -> toJaxOp env op
-  Atom x -> return $ toJaxAtom env x
+toJaxBlock :: JSubstEnv -> Block -> JaxM TmpAtom
+toJaxBlock env (Block [] result) = toJaxExpr env result
+toJaxBlock env (Block (decl:decls) result) = do
+  env' <- toJaxDecl env decl
+  toJaxBlock (env <> env') body
+  where body = Block decls result
 
 toJaxDecl :: JSubstEnv -> Decl -> JaxM JSubstEnv
 toJaxDecl env (Let v rhs) = do
-  ans <- toJaxOp env rhs
+  ans <- toJaxExpr env rhs
   return $ v @> ans
 
 toJaxAtom :: JSubstEnv -> Atom -> TmpAtom
 toJaxAtom env atom = case atom of
-  Var v@(_:>RefTy _) -> TmpRefName v
+  Var v@(_:>RefTy _ _) -> TmpRefName v
   Var v -> fromMaybe (error "lookup failed") $ envLookup env v
   Con (Lit x) -> tmpAtomScalarLit x
-  Con con -> TmpCon $ fmapExpr con id (toJaxAtom env) (error "unexpected lambda")
+  Con con -> TmpCon $ fmap (toJaxAtom env) con
   _ -> error $ "Not implemented: " ++ pprint atom
 
-toJaxOp :: JSubstEnv -> CExpr -> JaxM TmpAtom
-toJaxOp env cexpr = toJaxOp' cexpr'
-  where cexpr' = fmapExpr cexpr id (toJaxAtom env) (,env)
+toJaxExpr :: JSubstEnv -> Expr -> JaxM TmpAtom
+toJaxExpr env expr = case expr of
+  -- For _ (LamExpr i@(_ :> FixedIntRange 0 n) body) -> do
+  --   idxEnv <- ask
+  --   -- TODO: scope this to avoid burning through names
+  --   i' <-freshIdxVar n
+  --   iotaVar <- emitJFor $ JFor [] $ JIota n
+  --   let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ IdxAtom (JVar iotaVar) [i']
+  --   let env' = env <> i @> iotaAtom
+  --   ans <- extendR [i'] $ toJaxBlock env' body
+  --   liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
+  --     ansVar <- emitJFor $ JFor (map (,MapIdx) (idxEnv ++ [i'])) $ JId x
+  --     return $ IdxAtom (JVar ansVar) idxEnv
+  -- TabGet xs i -> do
+  --   let (TmpCon (AFor _ tab)) = toJaxAtom env xs
+  --   let i' = toJaxAtom env i
+  --   traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i'
+  Op op -> toJaxOp $ fmap (toJaxAtom env) op
 
-toJaxOp' :: PrimOp Type TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
-toJaxOp' expr = case expr of
-  For _ (LamExpr i@(_ :> FixedIntRange 0 n) body, env) -> do
-    idxEnv <- ask
-    -- TODO: scope this to avoid burning through names
-    i' <-freshIdxVar n
-    iotaVar <- emitJFor $ JFor [] $ JIota n
-    let iotaAtom = iotaVarAsIdx (FixedIntRange 0 n) $ IdxAtom (JVar iotaVar) [i']
-    let env' = env <> i @> iotaAtom
-    ans <- extendR [i'] $ toJaxExpr env' body
-    liftM (TmpCon . AFor (varAnn i)) $ traverseArrayLeaves ans $ \x -> do
-      ansVar <- emitJFor $ JFor (map (,MapIdx) (idxEnv ++ [i'])) $ JId x
-      return $ IdxAtom (JVar ansVar) idxEnv
-  TabGet ~(TmpCon (AFor _ tab)) i -> do
-    traverseArrayLeaves tab $ \x -> emitOp $ JGet x $ fromScalarAtom i
+toJaxOp :: PrimOp TmpAtom -> JaxM TmpAtom
+toJaxOp op = case op of
   ScalarBinOp op x y -> liftM toScalarAtom $
     emitOp $ JScalarBinOp op (fromScalarAtom x) (fromScalarAtom y)
   IndexAsInt x -> liftM toScalarAtom $
     emitOp $ JId (fromScalarAtom x)
   ScalarUnOp op x -> liftM toScalarAtom $
     emitOp $ JScalarUnOp op (fromScalarAtom x)
-  RunWriter (LamExpr refVar body, env) -> do
-    idxEnvDepth <- asks length
-    let (RefTy wTy) = varAnn refVar
-    wInit <- zerosAt wTy
-    modify (<> refVar @> (idxEnvDepth, wInit))
-    aResult <- toJaxExpr env body
-    wFinal <- gets $ snd . (! refVar)
-    modify $ envDelete (varName refVar)
-    return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
   PrimEffect (TmpRefName refVar) m -> do
     case m of
       MTell x -> do
@@ -157,19 +150,33 @@ toJaxOp' expr = case expr of
         xSum <- sumPoly depth x
         newAccum <- local (take depth) $ addPoly curAccum xSum
         modify (<> refVar @> (depth, newAccum))
-        return $ TmpCon $ RecCon $ Tup []
-      _ -> error $ "Not implemented: " ++ show expr
-  RecGet x i -> do
-    case x of
-      TmpCon (RecCon r) -> return $ recGet r i
-      val -> error $ "Expected a record, got: " ++ show val
-  FFICall s _ _ args | s == "threefry2x32" -> liftM toScalarAtom $
+        return $ TmpCon $ UnitCon
+      _ -> error $ "Not implemented: " ++ show op
+  -- RecGet x i -> do
+  --   case x of
+  --     TmpCon (RecCon r) -> return $ recGet r i
+  --     val -> error $ "Expected a record, got: " ++ show val
+  FFICall s _ args | s == "threefry2x32" -> liftM toScalarAtom $
       emitOp $ JThreeFry2x32 (fromScalarAtom x) (fromScalarAtom y)
         where x:y:[] = args
-  _ -> error $ "Not implemented: " ++ show expr
+  _ -> error $ "Not implemented: " ++ show op
+
+-- toJaxHof :: PrimHof TmpAtom (LamExpr, JSubstEnv) -> JaxM TmpAtom
+-- toJaxHof hof = case hof of
+--   RunWriter (LamExpr refVar _ body, env) -> do
+--     idxEnvDepth <- asks length
+--     let (RefTy wTy) = varAnn refVar
+--     wInit <- zerosAt wTy
+--     modify (<> refVar @> (idxEnvDepth, wInit))
+--     aResult <- toJaxBlock env body
+--     wFinal <- gets $ snd . (! refVar)
+--     modify $ envDelete (varName refVar)
+--     return $ TmpCon $ RecCon $ Tup [aResult, wFinal]
+--   _ -> error $ "Not implemented: " ++ show hof
 
 iotaVarAsIdx :: Type -> IdxAtom -> TmpAtom
-iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x
+iotaVarAsIdx = undefined
+-- iotaVarAsIdx n x = TmpCon $ AsIdx n $ toScalarAtom x
 
 fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
@@ -183,7 +190,6 @@ toScalarAtom x = TmpCon $ AGet $ TmpLeaf x
 traverseArrayLeaves :: HasCallStack => Monad m => TmpAtom -> (IdxAtom -> m IdxAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
   TmpCon con         -> liftM TmpCon $ case con of
-    RecCon r         -> liftM (RecCon) $ traverse (flip traverseArrayLeaves f) r
     AFor n body      -> liftM (AFor n) $ traverseArrayLeaves body f
     AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
     _ -> error $ "Not implemented: " ++ show atom
@@ -230,11 +236,10 @@ tmpAtomScalarLit :: LitVal -> TmpAtom
 tmpAtomScalarLit x = toScalarAtom $ IdxAtom (JLit [] $ arrayFromScalar x) []
 
 instance HasType TmpAtom where
-  getEffType atom = pureType $ case atom of
-    TmpLeaf idxAtom -> jTypeToType $ getJType idxAtom
+  typeCheck atom = case atom of
+    TmpLeaf idxAtom -> return $ jTypeToType $ getJType idxAtom
     TmpRefName _ -> undefined
-    TmpCon con -> getConType $ fmapExpr con id getType $ error "unexpected lambda"
-  checkEffType = error "Not implemented"
+    TmpCon con -> undefined
 
 -- === Simplification pass on JAX IR ===
 
@@ -425,12 +430,12 @@ assertNoMutualShadows :: (MonadError Err m, Pretty b, Traversable f)
 assertNoMutualShadows bs =
   void $ flip runCatT mempty $ forM bs $ \b -> do
     env <- look
-    assertNoShadow env b
+    checkNoShadow env b
     extend (b@>())
 
 checkBinders :: (MonadError Err m, Pretty ann) => JTypeEnv -> [VarP ann] -> m ()
 checkBinders env bs = do
-  mapM_ (assertNoShadow (fst env)) bs
+  mapM_ (checkNoShadow (fst env)) bs
   assertNoMutualShadows bs
 
 instance HasJType IdxAtom where
@@ -554,10 +559,10 @@ betaReduceRec jfor idxs = do
     JFor ((b,MapIdx):bs) op <- return jfor'
     return (JFor bs $ substOp (b @> i) op, [])
 
-refreshIdxVars :: Scope -> JFor -> JFor
+refreshIdxVars :: JScope -> JFor -> JFor
 refreshIdxVars scope (JFor binders op) = do
   let (idxs, flavors) = unzip binders
-  let idxs' = fst $ renames idxs scope
+  let idxs' = fst $ renames idxs () scope
   JFor (zip idxs' flavors) $ substOp (newEnv idxs idxs') op
 
 -- TODO: extend `HasJVars` to handle index var substitution too
@@ -624,6 +629,8 @@ instance Pretty JFor where
       s :: String
       s = case flavor of MapIdx -> "for"
                          SumIdx -> "sum"
+instance Pretty TmpAtom where
+  pretty _ = "<todo>"
 
 prettyJForCtx :: IdxFlavor -> JFor -> Doc ann
 prettyJForCtx flavor jfor@(JFor idxs op) = case idxs of

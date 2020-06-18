@@ -88,7 +88,7 @@ sourceBlockToDag :: SourceBlock -> CatT (Env NodeId) DriverM NodeId
 sourceBlockToDag block = do
   varMap <- look
   let parents = sort $ nub $ toList $
-                  (sourceBlockBoundVars block <> freeVars block) `envIntersect` varMap
+                  (sourceBlockBoundVars block <> freeUVars block) `envIntersect` varMap
   n <- lift $ addToBlockDag (block, parents)
   extend $ foldMap (\v -> (v:>()) @> n) $ envNames $ sourceBlockBoundVars block
   return n
@@ -102,14 +102,13 @@ launchBlockEval n = do
   let chan = subChan (oneResult n) resultsChan
   envMap <- looks snd
   let parentEnvLocs = map (envMap M.!) parents
-  let block' = addBlockId n block
-  void $ liftIO $ forkIO $ blockEval cfg block' parentEnvLocs envLoc chan
+  void $ liftIO $ forkIO $ blockEval cfg block parentEnvLocs envLoc chan
 
 blockEval :: (EvalConfig, TopEnv) -> SourceBlock
           -> [MVar TopEnv] -> MVar TopEnv -> PChan Result -> IO ()
 blockEval (opts, topEnv) block parentLocs loc resultChan = do
   parentEnv <- liftM fold $ mapM readMVar parentLocs
-  (env', ans) <- liftIO $ evalBlock opts (topEnv <> parentEnv) block
+  (env', ans) <- liftIO $ evalSourceBlock opts (topEnv <> parentEnv) block
   putMVar loc (parentEnv <> env')
   sendFromIO resultChan ans
 

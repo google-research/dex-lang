@@ -16,10 +16,10 @@ flag inotify
   default:             False
 
 library
-  exposed-modules:     Record, Env, Syntax, Type, Inference, JIT, LLVMExec,
+  exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, PPrint, Array,
-                       Actor, Cat, Flops, Normalize, Embed, Serialize,
-                       RenderHtml, Plot, LiveOutput, Subst, Simplify, TopLevel,
+                       Actor, Cat, Flops, Embed, Serialize,
+                       RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, JAX, Interpreter, Logging, PipeRPC
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,

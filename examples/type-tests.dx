@@ -1,388 +1,250 @@
+
+'TODO: improve these "ambiguous type" error messages. The problem is that they
+expose the core IR to show where the ambiguous types appear. We might be able to
+improve things by recording source information when we create fresh inference
+variables. Solving fully (insisting on no ambiguity) at each decl might also
+help make the errors more local.
+
 :t \x. x
-> Type error:Ambiguous type variables: [?_4]
+> Type error:Ambiguous type variables: [?]
 >
-> ([*ans*:?_1 = (\x:?_6 . x)], (*ans* @> L ?_1))
+> ((_ans_ @> _ans_), [_ans_:(?->?) = \x:?. x])
 
 :t \x. sum for i. x.i
-> Type error:Ambiguous type variables: [?_13]
+> Type error:Ambiguous type variables: [?3]
 >
-> ([*ans*:?_1 = (\x:?_6 . ((sum @?_13) (for i:?_18 .  (x.i))))], (*ans* @> L ?_1))
+> ( (_ans_ @> _ans_)
+> , [ _ans_:((?3=>Real)->Real) = \x:(?3=>Real).
+>   tmp:((?3=>Real)->Real) = (sum) (?3)
+>   tmp1:(?3=>Real) = for \i:?3. (x) (i)
+>   (tmp) (tmp1) ] )
 
 :t \f x y. f y x
-> Type error:Ambiguous type variables: [?_18, ?_24, ?_28]
+> Type error:Ambiguous type variables: [?3, ?6, ?7]
 >
-> ([*ans*:?_1 = (\f:?_6 . (\x:?_13 . (\y:?_20 . ((f y) x))))], (*ans* @> L ?_1))
+> ( (_ans_ @> _ans_)
+> , [ _ans_:((?3->(?6->?7))->(?6->(?3->?7))) = \f:(?3->(?6->?7)). \x:?6. \y:?3.
+>   tmp:(?6->?7) = (f) (y)
+>   (tmp) (x) ] )
 
 :t \x. for i j. x.j.i
-> Type error:Ambiguous type variables: [?_16, ?_21, ?_23]
+> Type error:Ambiguous type variables: [?3, ?6, ?7]
 >
-> ( [*ans*:?_1 = (\x:?_6 . (for i:?_12 .  (for j:?_18 .  ((x.j).i))))]
-> , (*ans* @> L ?_1) )
+> ( (_ans_ @> _ans_)
+> , [ _ans_:((?3=>(?6=>?7))->(?6=>(?3=>?7))) = \x:(?3=>(?6=>?7)). for \i:?6. for \j:?3.
+>   tmp1:(?6=>?7) = (x) (j)
+>   (tmp1) (i) ] )
 
 :t \f x. f x
-> Type error:Ambiguous type variables: [?_11, ?_17]
+> Type error:Ambiguous type variables: [?2, ?3]
 >
-> ([*ans*:?_1 = (\f:?_6 . (\x:?_13 . (f x)))], (*ans* @> L ?_1))
+> ((_ans_ @> _ans_), [_ans_:((?2->?3)->(?2->?3)) = \f:(?2->?3). \x:?2. (f) (x)])
 
 :t
-   myid : a -> a
-   myid x = x
+   myid : a:Type ?-> a -> a = \x. x
    myid (myid) (myid 1)
 > Int
 
 :t
-   x = (iota):(10=>Int)
+   x = iota (Fin 10)
    isum x
 > Int
 
 :t
-   x = iota @ 10
-   y = (iota):(3=>Int)
-   real (isum for i. x.i) + real (isum for j. y.j)
+   x = iota (Fin 10)
+   y = iota (Fin 3)
+   i2r (isum for i. x.i) + i2r (isum for j. y.j)
 > Real
 
 :t
-   x = iota @ 10
-   y = (iota) : (3=>Int)
+   x = iota (Fin 10)
+   y = iota (Fin 3)
    sum for i. iadd x.i y.i
 > Type error:
-> Expected: 3
->   Actual: 10
-> In: i
+> Expected: (Fin 3)
+>   Actual: (Fin 10)
 >
 >    sum for i. iadd x.i y.i
 >                          ^
 
-type Narr = 10
+Narr = Fin 10
 
-arr = iota @ Narr
+arr  = iota Narr
 
-xr = map real arr
+xr = map i2r arr
 
 :t arr
-> (10=>Int)
+> ((Fin 10)=>Int)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Real
 
 :t
-   f (x, y) = x + 2.0 * y
-   z.i = (xr.i, xr.i * xr.i)
+   f = \(x, y). x + 2.0 * y
+   z = for i. (xr.i, xr.i * xr.i)
    sum (for i. f z.i)
 > Real
 
--- yields 'compiler bug'. Should be a different sort of error
--- :t unpack x = iota 3
---    in let y = for i j. x.i * x.i
---       in sum (for i. sum (y.i))
-:t (1) : Int
-> Int
-
-:t (1.0) : Int
-> Type error:
-> Expected: Int
->   Actual: Real
-> In: 1.0
->
-> :t (1.0) : Int
->     ^^^
-
 :t [1, 2, 3]
-> (3=>Int)
+> ((Fin 3)=>Int)
 
 :t []
-> Type error:Ambiguous type variables: [?_2]
+> Type error:Empty table constructor must have type annotation
 >
-> ([*ans*:?_1 = ([])], (*ans* @> L ?_1))
+> :t []
+>    ^^
 
 :t [1, [2]]
 > Type error:
 > Expected: Int
->   Actual: (1=>Int)
-> In: ([2])
+>   Actual: ((Fin 1)=>Int)
 >
 > :t [1, [2]]
 >        ^^^
 
 :t [[1, 2], [3, 4]]
-> (2=>(2=>Int))
+> ((Fin 2)=>((Fin 2)=>Int))
 
 :t [[1, 2], [3]]
 > Type error:
-> Expected: (2=>Int)
->   Actual: (1=>Int)
-> In: ([3])
+> Expected: ((Fin 2)=>Int)
+>   Actual: ((Fin 1)=>Int)
 >
 > :t [[1, 2], [3]]
 >             ^^^
 
-type Pair = (Int, Int)
-
-p1 : Pair
-p1 = (1, 2)
-
-p2 : Pair
-p2 = 1
-> Type error:
-> Expected: (Int, Int)
->   Actual: Int
-> In: 1
->
-> p2 = 1
->      ^
-
 :t \x. for (i,j). x.i.j
-> Type error:Ambiguous type variables: [?_10, ?_14, ?_16]
+> Type error:Ambiguous type variables: [?4, ?7, ?8]
 >
-> ([*ans*:?_1 = (\x:?_6 . (for (i:?_12, j:?_13) .  ((x.i).j)))], (*ans* @> L ?_1))
+> ( (_ans_ @> _ans_)
+> , [ _ans_:((?4=>(?7=>?8))->((?4 & ?7)=>?8)) = \x:(?4=>(?7=>?8)). for \pat:(?4 & ?7).
+>   tmp1:?4 = %fst pat
+>   tmp2:?7 = %snd pat
+>   tmp3:(?7=>?8) = (x) (tmp1)
+>   (tmp3) (tmp2) ] )
 
-idfun : a -> a
-idfun x = x
-
-:t idfun @ Real
-> (Real -> Real)
-
-:t \x.
-     f : a -> a
-     f y = x
-     ()
-> Type error:Leaked type variable: a
->
-> :t \x.
->    ^^^^
-
--- :t (todo):(Int -> Real) 1
--- > Real
-
-f : Int -> Real
-f x =
-  z = x + 1.0
-  x
+f : Int -> Real =
+ \x.
+   z = x + 1.0
+   x
 > Type error:
 > Expected: Real
 >   Actual: Int
-> In: x
 >
->   z = x + 1.0
->       ^^
+>    z = x + 1.0
+>        ^^
+
 :t
    x = 3
    for i:Foo. 0
 > Error: variable not in scope: Foo
 
-:p \x:Real. x
-> (\x:Real .
->    x)
 
-vspaceid : A a | VS a . a -> a
-vspaceid x = x
+MyInt = Int
+MyInt2 = MyInt
 
-:t vspaceid (1.0, [2.0, 3.0])
-> (Real, (2=>Real))
+x : MyInt2 = 1
 
-:t vspaceid 0
-> Type error: Not a vector space: Int
->
-> :t vspaceid 0
->    ^^^^^^^^^
-
-:t
-   g : A a | VS a . a -> a
-   g x = vspaceid x
-   g @Real
-> (Real -> Real)
-
-:t
-   g : a -> a
-   g x = vspaceid x
-   g @Real
-> Type error: Type variable "a" not in class: VS
->
->    g x = vspaceid x
->          ^^^^^^^^^
-
-:t for i:Int. 1
-> Type error: Not a valid index set: Int
->
-> :t for i:Int. 1
->    ^^^^^^^^^^^^
-
-:t grad (\x:Int. real x) 1
-> Type error: Not a vector space: Int
->
-> :t grad (\x:Int. real x) 1
->    ^^^^^
-
-:t
-   vadd' : a -> a -> a
-   vadd' x y = %vadd(x, y)
-
-   vadd' @Real
-> Type error: Type variable "a" not in class: VS
->
->    vadd' x y = %vadd(x, y)
->                ^^^^^^^^^^^
-
-f1 : Real -> Real
-f1 x = x
-
-f2 : Real -> Real
-f2 x = x + x
-
-:t [f1, f2]
-> Type error:(Real -> Real) is not serializable
->
-> :t [f1, f2]
->    ^^^^^^^^
-
-:t select True f1 f2
-> Type error:(Real -> Real) is not serializable
->
-> :t select True f1 f2
->    ^^^^^^^
-
-:t fold f1 \i:3 g. (\x. g (g x))
-> Type error:(Real -> Real) is not serializable
->
-> :t fold f1 \i:3 g. (\x. g (g x))
->    ^^^^^
-
-:t [1,2,3].(3@4)
-> Type error:
-> Expected: 3
->   Actual: 4
-> In: 3@4
->
-> :t [1,2,3].(3@4)
->             ^^^
-
-type MyInt = Int
-type MyInt2 = MyInt
-
-x : MyInt2
-x = 1
-
-type MyPair a = (a, a)
+MyPair : Type -> Type =
+  \a. (a & a)
 
 :p
-  pairs : (MyPair Int, MyPair Real)
-  pairs = ((1, 2), (1.0, 2.0))
-  --
+  pairs : (MyPair Int & MyPair Real) =
+    ((1, 2), (1.0, 2.0))
+
   pairs
 > ((1, 2), (1.0, 2.0))
 
-fEff : () -> {| a} a
-fEff = todo
-> Kind error:
-> Expected: Type
->   Actual: Effect
 
-fAmb : A a. ()
-fAmb = ()
-> Kind error:Ambiguous kind for type variable: a:NoKindAnn
-
-:p
-  fEff2 : () -> {|eff} ()
-  fEff2 = todo
-  fEff2 @Int ()
-> Kind error:
-> Expected: Effect
+-- TODO: put source annotation on effect for a better message here
+fEff : Unit -> {| a} a = todo
+> Type error:
+> Expected: EffKind
 >   Actual: Type
 >
->   fEff2 @Int ()
->   ^^^^^^^^^^^
+> fEff : Unit -> {| a} a = todo
+>             ^^^
 
 :p
-    for i:7. sum for j:0...<unboundName. 1.0
+    for i:(Fin 7). sum for j:(Fin unboundName). 1.0
 > Error: variable not in scope: unboundName
 
-:p
-    x = "123"
-    for i:7. sum for j:0...<x. 1.0
-> Type error:
-> Expected: Int
->   Actual: Str
-> In: x
->
->     for i:7. sum for j:0...<x. 1.0
->                  ^^^^^^^^^^^^^^^^^
+-- differentCaseResultTypes : Either Int Real -> Real
+-- differentCaseResultTypes x = case x
+--   Left f -> f
+--   Right i -> i
+-- > Type error:
+-- > Expected: Int
+-- >   Actual: Real
+-- > In: i
+-- >
+-- >   Right i -> i
+-- >              ^
 
-:p [1,2,3]@Int
-> Type error:Literal table must have a concrete index set.
-> Got: Int
->
-> :p [1,2,3]@Int
->    ^^^^^^^^^^^
+-- inferEither x = case x
+--     Left i -> iadd i 1
+--     Right f -> floor f
 
-:p [1,2,3]@2
-> Type error:Index set size mismatch: 2 != 3
->
-> :p [1,2,3]@2
->    ^^^^^^^^^
+-- caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
+-- caseEffects ref x = case x
+--     Left  i -> ()
+--     Right r -> ref := r
+-- > Type error:
+-- > Expected: { }
+-- >   Actual: {State ref | ?_28}
+-- > In: (ref := r)
+-- >
+-- >     Right r -> ref := r
+-- >                    ^^^
 
-:p
-  one = asidx @4 1
-  for i:4. sum for j:one..<i. 1.0
-> [0.0, 0.0, 1.0, 2.0]
+-- :p (\(u,v). for i:0...u. 1.0) (2, 3)
+-- > Type error:Function's result type cannot depend on a variable bound in an argument pattern
+-- >
+-- > :p (\(u,v). for i:0...u. 1.0) (2, 3)
+-- >     ^^^^^^^^^^^^^^^^^^^^^^^^
 
--- TODO: Fix the kind error!
-:p
-  for i:4. sum for j:1..<i. 1.0
-> Type error:
-> Expected: Int
->   Actual: 4
-> In: i
->
->   for i:4. sum for j:1..<i. 1.0
->                ^^^^^^^^^^^^^^^^
+g : a -> a = \x. x
 
--- TODO: Implement a dependent arrow type
--- :p
---   zero = asidx @4 0
---   for i:4. for j:zero..<i. 1.0
+:t g
+> (a:Type?->(a->a))
 
-badCaseOrder : Either Int Real -> Int
-badCaseOrder x = case x
-  Left f  -> floor f
-  Right i -> i
+:t
+  f = \x:Int. x
+  f 1
+> Int
+
+:t
+   f = \x:Real. x
+   f 1
 > Type error:
 > Expected: Real
 >   Actual: Int
-> In: f
 >
->   Left f  -> floor f
->                    ^
+>    f 1
+>      ^
 
-differentCaseResultTypes : Either Int Real -> Real
-differentCaseResultTypes x = case x
-  Left f -> f
-  Right i -> i
+g1 : (a -> Int) -> (a -> Int) = \x. x
+
+:t g1
+> (a:Type?->((a->Int)->(a->Int)))
+
+g2 : a -> a = \x. iadd x x
 > Type error:
 > Expected: Int
->   Actual: Real
-> In: i
+>   Actual: a
 >
->   Right i -> i
->              ^
+> g2 : a -> a = \x. iadd x x
+>                        ^^
 
-inferEither x = case x
-    Left i -> iadd i 1
-    Right f -> floor f
+h : (a -> b) -> (a -> b) = \x. x
 
-caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
-caseEffects ref x = case x
-    Left  i -> ()
-    Right r -> ref := r
+:t h
+> (a:Type?->(a1:Type?->((a->a1)->(a->a1))))
+
+fun : a -> a = \x. sin x
 > Type error:
-> Expected: { }
->   Actual: {State ref | ?_28:Effect}
-> In: (ref := r)
+> Expected: Real
+>   Actual: a
 >
->     Right r -> ref := r
->                    ^^^
-
-:p (\(u,v). for i:0...u. 1.0) (2, 3)
-> Type error:Function's result type cannot depend on a variable bound in an argument pattern
->
-> :p (\(u,v). for i:0...u. 1.0) (2, 3)
->     ^^^^^^^^^^^^^^^^^^^^^^^^
+> fun : a -> a = \x. sin x
+>                        ^

@@ -8,15 +8,13 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module TopLevel (evalBlock, EvalConfig (..), initializeBackend,
+module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
                  Backend (..)) where
 
 import Control.Concurrent.MVar
 import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable (toList)
-import Data.String
 import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
 
@@ -26,7 +24,6 @@ import Cat
 import Env
 import Type
 import Inference
-import Normalize
 import Simplify
 import Serialize
 import Imp
@@ -38,12 +35,10 @@ import LLVMExec
 import PPrint
 import Parser
 import PipeRPC
-import Record
-import Subst
 import JAX
 import Util (highlightRegion)
 
-data Backend = LLVM | Interp | JAX
+data Backend = LLVM | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
@@ -64,9 +59,9 @@ type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
 type TopPassM a = ReaderT EvalConfig IO a
 
 -- TODO: handle errors due to upstream modules failing
-evalBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
-evalBlock opts env block = do
-  (ans, outs) <- runTopPassM opts $ evalSourceBlock env block
+evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
+evalSourceBlock opts env block = do
+  (ans, outs) <- runTopPassM opts $ evalSourceBlockM env block
   let outs' = filter (keepOutput block) outs
   case ans of
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
@@ -76,53 +71,48 @@ runTopPassM :: EvalConfig -> TopPassM a -> IO (Except a, [Output])
 runTopPassM opts m = runLogger (logFile opts) $ \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
 
-evalSourceBlock :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlock env@(TopEnv (typeEnv, _) _ _) block = case sbContents block of
-  RunModule m -> evalModule env m
+evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
+evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
+  RunModule m -> evalUModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
-      val <- evalModuleVal env v m
+      val <- evalUModuleVal env v m
       case fmt of
         Printed -> do
           logTop $ TextOut $ pprintVal val
         Heatmap -> logTop $ valToHeatmap val
         Scatter -> logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
-      val <- evalModuleValSkeleton env v m
+      val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
-    Dump DexObject fname -> do
-      val <- evalModuleVal env v m
-      liftIO $ writeFile fname $ pprintVal val
-    Dump DexBinaryObject fname -> do
-      val <- evalModuleVal env v m
-      liftIO $ dumpDataFile fname val
-    ShowPasses -> void $ evalModule env m
-    ShowPass _ -> void $ evalModule env m
-    TimeIt     -> void $ evalModule env m
-  GetNameType v -> case envLookup typeEnv v of
-    Just (L ty) -> logTop (TextOut $ pprint ty) >> return mempty
-    _           -> liftEitherIO $ throw UnboundVarErr $ pprint v
+    -- Dump DexObject fname -> do
+    --   val <- evalUModuleVal env v m
+    --   s <- liftIO $ pprintVal val
+    --   liftIO $ writeFile fname s
+    -- Dump DexBinaryObject fname -> do
+    --   val <- evalUModuleVal env v m
+    --   liftIO $ dumpDataFile fname val
+    ShowPasses -> void $ evalUModule env m
+    ShowPass _ -> void $ evalUModule env m
+    TimeIt     -> void $ evalUModule env m
+  GetNameType v -> case envLookup substEnv (v:>()) of
+    Just x -> logTop (TextOut $ pprint (getType x)) >> return mempty
+    _      -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     evalSourceBlocks env $ parseProg source
-  LoadData p DexObject fname -> do
-    source <- liftIO $ readFile fname
-    let val = ignoreExcept $ parseData source
-    let decl = LetMono p val
-    let outVars = map (\(v:>ty) -> v:>L ty) $ toList p
-    evalModule env $ Module (sbId block) ([], outVars) [decl]
-  LoadData p DexBinaryObject fname -> do
-    val <- liftIO $ loadDataFile fname
-    -- TODO: handle patterns and type annotations in binder
-    let (RecLeaf b) = p
-    let outEnv = b @> L val
-    return $ TopEnv (fmap getTyOrKind outEnv, mempty) outEnv mempty
-  RuleDef ann@(LinearizationDef v) ~(Forall [] [] ty) ~(FTLam [] [] expr) -> do
-    let v' = fromString (pprint v ++ "!lin") :> ty  -- TODO: name it properly
-    let imports = map (uncurry (:>)) $ envPairs $ freeVars ann <> freeVars ty <> freeVars expr
-    let m = Module (sbId block) (imports, [fmap L v']) [LetMono (RecLeaf v') expr]
-    env' <- evalModule env m
-    return $ env' <> TopEnv mempty mempty ((v:>()) @> Var v')
+  -- LoadData p DexObject fname -> do
+  --   source <- liftIO $ readFile fname
+  --   let val = ignoreExcept $ parseData source
+  --   let decl = LetMono p val
+  --   let outVars = toList p
+  --   evalUModule env $ Module (sbId block) ([], outVars) [decl]
+  -- LoadData p DexBinaryObject fname -> do
+  --   val <- liftIO $ loadDataFile fname
+  --   -- TODO: handle patterns and type annotations in binder
+  --   let (RecLeaf b) = p
+  --   let outEnv = b @> val
+  --   return $ TopEnv (fmap getType outEnv, mempty) outEnv mempty
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
@@ -139,46 +129,41 @@ keepOutput block output = case output of
   _ -> True
 
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
-evalSourceBlocks env blocks =
-  liftM snd $ flip runCatT env $ flip mapM_ blocks $ \block -> do
-    env' <- look
-    env'' <- lift $ evalSourceBlock env' block
-    extend env''
+evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 
-evalModuleValSkeleton :: TopEnv -> Var -> FModule -> TopPassM Val
-evalModuleValSkeleton env v m = do
-  env' <- evalModule env m
-  let (TopEnv _ simpEnv _) = env <> env'
-  let (L val) = simpEnv ! v
-  let val' = subst (simpEnv, mempty) val
-  return val'
-
-evalModuleVal :: TopEnv -> Var -> FModule -> TopPassM Val
-evalModuleVal env v m = do
-  val <- evalModuleValSkeleton env v m
+evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
+evalUModuleVal env v m = do
+  env' <- evalUModule env m
+  let (TopEnv simpEnv) = env <> env'
+  let val = subst (simpEnv, mempty) $ simpEnv ! (v:>())
   backend <- asks evalEngine
   liftIO $ substArrayLiterals backend val
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
 -- errors, but there could still be internal shadowing errors.
-evalModule :: TopEnv -> FModule -> TopPassM TopEnv
-evalModule (TopEnv infEnv simpEnv ruleEnv) untyped = do
+evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
+evalUModule env untyped = do
+  -- TODO: it's handy to log the env, but we need to filter out just the
+  --       relevant part (transitive closure of free vars)
+  -- logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
-  (typed, infEnv') <- typePass infEnv untyped
+  typed <- typePass env untyped
   checkPass TypePass typed
-  let normalized = normalizeModule typed
-  checkPass NormPass normalized
-  let (defunctionalized, simpEnv') = simplifyModule simpEnv ruleEnv normalized
+  evalModule env typed
+
+evalModule :: TopEnv -> Module -> TopPassM TopEnv
+evalModule (TopEnv simpEnv) normalized = do
+  let (defunctionalized, simpEnv') = simplifyModule simpEnv normalized
   checkPass SimpPass defunctionalized
-  let (Module _ (_, outVars) dfExpr) = defunctionalized
+  let (Module _ _ outVars dfExpr) = defunctionalized
   case dfExpr of
-    Atom UnitVal -> do
-      return $ TopEnv infEnv' simpEnv' mempty
+    Block [] (Atom UnitVal) -> do
+      return $ TopEnv simpEnv'
     _ -> do
-      ~(TupVal results) <- evalBackend dfExpr
-      let simpEnv'' = subst (newLEnv outVars results, mempty) simpEnv'
-      return $ TopEnv infEnv' simpEnv'' mempty
+      results <- (ignoreExcept . fromConsList) <$> evalBackend dfExpr
+      let simpEnv'' = subst (newEnv outVars results, mempty) simpEnv'
+      return $ TopEnv simpEnv''
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
@@ -187,20 +172,20 @@ initializeBackend backend = case backend of
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
-arrayVars x = map (\(v@(Name ArrayName _ _), L ty) -> v :> ty) $ envPairs (freeVars x)
+arrayVars x = map (\(v@(Name ArrayName _ _), ty) -> v :> ty) $ envPairs (freeVars x)
 
-evalBackend :: Expr -> TopPassM Atom
-evalBackend expr = do
+evalBackend :: Block -> TopPassM Atom
+evalBackend block = do
   backend <- asks evalEngine
   logger  <- asks logService
-  let inVars = arrayVars expr
+  let inVars = arrayVars block
   case backend of
     LLVMEngine engine -> do
-      let impFunction = toImpFunction (inVars, expr)
+      let impFunction = toImpFunction (inVars, block)
       checkPass ImpPass impFunction
       logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
-      let exprType = getType expr
+      let exprType = getType block
       lift $ modifyMVar engine $ \env -> do
         let inPtrs = fmap (env !) inVars
         outPtrs <- callLLVM logger llvmFunc inPtrs
@@ -213,7 +198,7 @@ evalBackend expr = do
         return (env <> env', result)
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
-      let jfun = toJaxFunction (inVars, expr)
+      let jfun = toJaxFunction (inVars, block)
       checkPass JAXPass jfun
       let jfunSimp = simplifyJaxFunction jfun
       checkPass JAXSimpPass jfunSimp
@@ -223,8 +208,8 @@ evalBackend expr = do
       (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
       logPass JaxprAndHLO jaxprDump
       let outVars' = map (fmap jTypeToType) outVars
-      return $ reStructureArrays (getType expr) $ map Var outVars'
-    InterpEngine -> return $ evalExpr mempty expr
+      return $ reStructureArrays (getType block) $ map Var outVars'
+    InterpEngine -> return $ evalBlock mempty block
 
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
@@ -241,39 +226,23 @@ requestArrays backend vs = case backend of
     callPipeServer (psPop server) vs'
   _ -> error "Not implemented"
 
-substArrayLiterals :: BackendEngine -> Atom -> IO Atom
+substArrayLiterals :: (HasVars a, HasType a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
-  x' <- substAtomTypes x
-  let vs = arrayVars x'
-  arrays <- requestArrays backend vs
-  let arrayTypes = fmap varAnn vs
-  let arrayAtoms = fmap (Con . uncurry ArrayLit) $ zip arrayTypes arrays
-  return $ subst (newLEnv vs arrayAtoms, mempty) x'
-  where
-    -- Substitutes all arrays appearing in the type annotations inside x
-    substAtomTypes :: Atom -> IO Atom
-    substAtomTypes a = case a of
-      Var v -> Var <$> traverse substInType v
-      -- No substitutions under lambdas. This might cause some issues if we wanted
-      -- to print their body, but it's questionable whether we even want to do that.
-      Con c -> Con <$> traverseExpr c substInType substAtomTypes return
-      _     -> error $ "Unexpected atom: " ++ pprint x
+  -- We first need to substitute the arrays used in the types. Our atom types
+  -- are monotonic, so it's enough to ask for the arrays used in the type of the
+  -- atom as a whole, without worrying about types hidden within the atom.
+  x' <- substArrayLiterals' backend (arrayVars (getType x)) x
+  substArrayLiterals' backend (arrayVars x') x'
 
-    substInType :: Type -> IO Type
-    substInType (TabTy n b) = TabTy <$> substInType n <*> substInType b
-    substInType (TC con)    = TC <$> traverseTyCon con substInType (substArrayLiterals backend)
-    -- The reason to sequence type substitution to happen before the general one is so that
-    -- we can resolve the sizes of the AFor domains and index sets in table types, which might
-    -- contain atoms. However, all types that are valid index sets are TCs, and so there is
-    -- nothing we have to do for all other cases.
-    substInType t = return t
+substArrayLiterals' :: HasVars a => BackendEngine -> [Var] -> a -> IO a
+substArrayLiterals' backend vs x = do
+  arrays <- requestArrays backend vs
+  let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]
+  return $ subst (newEnv vs arrayAtoms, mempty) x
 
 -- TODO: check here for upstream errors
-typePass :: TopInfEnv -> FModule -> TopPassM (FModule, TopInfEnv)
-typePass env m = do
-  (typed, envOut) <- liftEitherIO $ inferModule env m
-  liftEitherIO $ checkValid typed
-  return (typed, envOut)
+typePass :: TopEnv -> UModule -> TopPassM Module
+typePass env m = liftEitherIO $ inferModule env m
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
 checkPass name x = do

@@ -12,10 +12,12 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd, capture, asCat, evalCatT,
-            Cat, runCat, newCatT, catTraverse, catFold) where
+            Cat, runCat, newCatT, catTraverse,
+            catFold, catFoldM, catMap, catMapM) where
 
 -- Monad for tracking monoidal state
 
+import Control.Monad.Fail
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Writer
@@ -23,7 +25,7 @@ import Control.Monad.Identity
 import Control.Monad.Except hiding (Except)
 
 newtype CatT env m a = CatT (StateT (env, env) m a)
-  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO)
+  deriving (Functor, Applicative, Monad, MonadTrans, MonadIO, MonadFail)
 
 type Cat env = CatT env Identity
 
@@ -126,9 +128,28 @@ catTraverse :: (Monoid menv, MonadReader env m, Traversable f)
                   => (a -> m (b, menv)) -> (menv -> env) -> f a -> menv -> m (f b, menv)
 catTraverse f inj xs env = runCatT (traverse (asCat f inj) xs) env
 
-catFold :: (Monoid env, MonadReader env m, Traversable f)
-        => (a -> m env) -> f a -> m env
-catFold f xs = snd <$> (ask >>= catTraverse (liftM ((),) . f) id xs)
+catFoldM :: (Monoid env, Traversable t, Monad m)
+        => (env -> a -> m env) -> env -> t a -> m env
+catFoldM f env xs = liftM snd $ flip runCatT env $ forM_ xs $ \x -> do
+  cur <- look
+  new <- lift $ f cur x
+  extend new
+
+catFold :: (Monoid env, Traversable t)
+        => (env -> a -> env) -> env -> t a -> env
+catFold f env xs = runIdentity $ catFoldM (\e x -> Identity $ f e x) env xs
+
+catMapM :: (Monoid env, Traversable t, Monad m)
+        => (env -> a -> m (b, env)) -> env -> t a -> m (t b, env)
+catMapM f env xs = flip runCatT env $ forM xs $ \x -> do
+  cur <- look
+  (y, new) <- lift $ f cur x
+  extend new
+  return y
+
+catMap :: (Monoid env, Traversable t)
+        => (env -> a -> (b, env)) -> env -> t a -> (t b, env)
+catMap f env xs = runIdentity $ catMapM (\e x -> Identity $ f e x) env xs
 
 asCat :: (Monoid menv, MonadReader env m)
       => (a -> m (b, menv)) -> (menv -> env) -> a -> CatT menv m b

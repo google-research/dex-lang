@@ -23,7 +23,6 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
-import Data.Foldable
 import Data.Maybe
 
 import Array
@@ -149,9 +148,10 @@ reStructureArrays' ty@(TC con) = case con of
     ~(x:xs) <- get
     put xs
     return $ Con $ AGet x
-  RecType r -> liftM (Con . RecCon) $ traverse reStructureArrays' r
   IntRange _ _ -> do
     liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
+  PairType a b -> liftM2 PairVal (reStructureArrays' a) (reStructureArrays' b)
+  UnitType -> return UnitVal
   IndexRange _ _ _ -> do
     liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
   -- TODO: How to restructure into a sum type?
@@ -165,8 +165,6 @@ valFromPtrs ty ptrs = do
               return $ Con $ ArrayLit litTy x
   return $ reStructureArrays ty arrays
   where litTys = flattenType ty
-
-type PrimConVal = PrimCon Type Atom LamExpr
 
 valToScatter :: Val -> Output
 valToScatter ~(Con (AFor _ body)) = ScatterOut xs ys
@@ -186,10 +184,11 @@ pprintVal val = asStr $ fst $ prettyVal val
 -- TODO: Assert all arrays are empty?
 
 -- TODO: Implement as a traversal?
-prettyVal :: Val -> ((Doc ann), Val)
+prettyVal :: Val -> (Doc ann, Val)
 prettyVal (Con con) = case con of
-  RecCon r -> (pretty docs, Con $ RecCon $ r')
-    where (docs, r') = unzip $ fmap (appFst asStr . prettyVal) r
+  PairCon x y -> (pretty (d1, d2), Con $ PairCon r1 r2)
+    where (d1, r1) = appFst asStr $ prettyVal x
+          (d2, r2) = appFst asStr $ prettyVal y
   AFor n body -> (pretty elems <> idxSetStr, Con $ AFor n $ last bodies)
     where n' = indexSetSize n
           -- TODO(ragged): Substitute i in the types that appear in a!
@@ -214,13 +213,13 @@ prettyVal atom = error $ "Unexpected value: " ++ pprint atom
 unzip :: Functor f => f (a, b) -> (f a, f b)
 unzip f = (fmap fst f, fmap snd f)
 
-traverseVal :: Monad m => (PrimConVal -> m (Maybe PrimConVal)) -> Val -> m Val
+traverseVal :: Monad m => (Con -> m (Maybe Con)) -> Val -> m Val
 traverseVal f val = case val of
   Con con -> do
     ans <- f con
     liftM Con $ case ans of
       Just con' -> return con'
-      Nothing   -> traverseExpr con return (traverseVal f) return
+      Nothing   -> mapM (traverseVal f) con
   atom -> return atom
 
 getValArrays :: Val -> [Array]
@@ -254,7 +253,6 @@ indexSetSize t = fromMaybe fail' $ indexSetConcreteSize t
           Unlimited      -> indexSetConcreteSize n
         Just $ high' - low'
       BoolTy  -> Just 2
-      RecTy r -> liftM product $ mapM indexSetConcreteSize $ toList r
       SumTy l r -> (+) <$> indexSetConcreteSize l <*> indexSetConcreteSize r
       _ -> Nothing
       where
@@ -271,15 +269,12 @@ flattenType (TC con) = case con of
   BaseType b       -> [BaseTy b]
   IntRange _ _     -> [IntTy]
   IndexRange _ _ _ -> [IntTy]
-  RecType r        -> concat $ map flattenType $ toList r
-  SumType _        -> undefined
+  SumType _ _      -> undefined
   _ -> error $ "Unexpected type: " ++ show con
 flattenType ty = error $ "Unexpected type: " ++ show ty
 
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
-  TabType pi | isDependentType pi ->
-    error $ "Tables with dependent dimensions not supported: " ++ pprint t
   TabTy n body -> (indexSetSize n * s, b)
     where (s, b) = typeToArrayType body
   BaseTy b -> (1, b)
