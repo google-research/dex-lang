@@ -38,9 +38,8 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
   return $ ImpFunction vsOut' vsIn prog
   where
     materializeResult = do
-      ans <- toImpBlock mempty block
-      (outDest, vsOut) <- allocDest Unmanaged $ getType block
-      copyAtom outDest ans
+      (outDest, vsOut) <- allocVars Unmanaged $ getType block
+      void $ toImpBlock mempty (Just outDest, block)
       return vsOut
 
 runImpM :: [ScalarTableVar] -> ImpM a -> a
@@ -49,28 +48,30 @@ runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
     inVarScope :: Scope
     inVarScope = foldMap varAsEnv $ fmap (fmap $ const Nothing) inVars
 
-toImpBlock :: SubstEnv -> Block -> ImpM Atom
-toImpBlock env (Block decls result) = do
-  env' <- catFoldM toImpDecl env decls
-  toImpExpr (env <> env') result
+toImpBlock :: SubstEnv -> WithDest Block -> ImpM Atom
+toImpBlock env destBlock = do
+  (decls, result, copies) <- splitDest destBlock
+  env' <- (env<>) <$> catFoldM toImpDecl env decls
+  forM_ copies $ \(dest, atom) -> copyAtom dest =<< impSubst env' atom
+  toImpExpr env' result
 
-toImpDecl ::  SubstEnv -> Decl -> ImpM SubstEnv
-toImpDecl env (Let b bound) = do
+toImpDecl :: SubstEnv -> WithDest Decl -> ImpM SubstEnv
+toImpDecl env (maybeDest, (Let b bound)) = do
   b' <- traverse (impSubst env) b
-  ans <- toImpExpr env bound
+  ans <- toImpExpr env (maybeDest, bound)
   return $ b' @> ans
 
-toImpExpr :: SubstEnv -> Expr -> ImpM Atom
-toImpExpr env expr = case expr of
+toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
+toImpExpr env (maybeDest, expr) = case expr of
   App x i -> case getType x of
     TabTy _ _ -> do
       x' <- impSubst env x
       i' <- impSubst env i
-      impTabGet x' i'
+      copyDest maybeDest =<< impTabGet x' i'
     _ -> error $ "shouldn't have non-table app left"
-  Atom x   -> impSubst env x
-  Op   op  -> toImpOp =<< traverse (impSubst env) op
-  Hof  hof -> toImpHof env hof
+  Atom x   -> copyDest maybeDest =<< impSubst env x
+  Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
+  Hof  hof -> toImpHof env (maybeDest, hof)
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -79,32 +80,26 @@ impSubst env x = do
   -- The one in ImpM only keeps the scope for the Imp program!
   return $ subst (env, mempty) x
 
-toImpOp :: PrimOp Atom -> ImpM Atom
-toImpOp op = case op of
+toImpOp :: WithDest (PrimOp Atom) -> ImpM Atom
+toImpOp (maybeDest, op) = case op of
   TabCon (TabTy n _) rows -> do
-    dest <- alloc resultTy
+    dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
       i' <- intToIndex n $ IIntVal i
       ithDest <- impTabGet dest i'
       copyAtom ithDest row
     return dest
-  SumGet x getLeft ->
-    case x of
-      SumVal _ l r -> return $ if getLeft then l else r
-      val -> error $ "Expected a sum type, got: " ++ pprint val
-  SumTag x ->
-    case x of
-      SumVal t _ _ -> return t
-      val -> error $ "Expected a sum type, got: " ++ pprint val
-  Fst ~(PairVal x _) -> return x
-  Snd ~(PairVal _ y) -> return y
+  SumGet ~(SumVal  _ l r) getLeft -> returnVal $ if getLeft then l else r
+  SumTag ~(SumVal  t _ _)         -> returnVal t
+  Fst    ~(PairVal x _)           -> returnVal x
+  Snd    ~(PairVal _ y)           -> returnVal y
   PrimEffect ~(Con (RefCon _ ref)) m -> do
     case m of
-      MAsk    -> return ref
-      MTell x -> addToAtom ref x >> return UnitVal
-      MPut x  -> copyAtom  ref x >> return UnitVal
+      MAsk    -> returnVal ref
+      MTell x -> addToAtom ref x >> returnVal UnitVal
+      MPut x  -> copyAtom  ref x >> returnVal UnitVal
       MGet -> do
-        dest <- alloc resultTy
+        dest <- allocDest maybeDest resultTy
         copyAtom dest ref
         return dest
   IntAsIndex n i -> do
@@ -112,10 +107,9 @@ toImpOp op = case op of
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" IntType [i', n']
-    return $ toScalarAtom resultTy ans
-  Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
-  IdxSetSize n -> liftM (toScalarAtom resultTy) $ indexSetSize n
-  IndexAsInt i -> toScalarAtom IntTy <$> indexToInt (getType i) i
+    returnVal $ toScalarAtom resultTy ans
+  IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
+  IndexAsInt i -> returnVal . toScalarAtom IntTy    =<< indexToInt (getType i) i
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -124,49 +118,108 @@ toImpOp op = case op of
       Unlimited      -> return IZero
     restrictIdx <- indexToInt rt e
     idx <- impAdd restrictIdx offset
-    intToIndex t idx
+    returnVal =<< intToIndex t idx
   IndexRef ~(Con (RefCon h ref)) i ->
-    liftM (Con . RefCon h) $ impTabGet ref i
+    returnVal . (Con . RefCon h) =<< impTabGet ref i
+  Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   _ -> do
     op' <- traverse fromScalarAtom op
-    toScalarAtom resultTy <$> emitInstr (IPrimOp op')
+    returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp op')
   where
     resultTy :: Type
     resultTy = getType $ Op op
 
-toImpHof :: SubstEnv -> Hof -> ImpM Atom
-toImpHof env hof = do
+    returnVal :: Atom -> ImpM Atom
+    returnVal atom = case maybeDest of
+      Nothing   -> return atom
+      Just dest -> copyAtom dest atom >> return atom
+
+toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
+toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
     For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
       idxTy' <- impSubst env idxTy
       n' <- indexSetSize idxTy'
-      dest <- alloc resultTy
+      dest <- allocDest maybeDest resultTy
       emitLoop d n' $ \i -> do
         i' <- intToIndex idxTy i
         ithDest <- impTabGet dest i'
-        ans <- toImpBlock (env <> b @> i') body
-        copyAtom ithDest ans
+        void $ toImpBlock (env <> b @> i') (Just ithDest, body)
       return dest
     RunReader r (BinaryFunVal region ref _ body) -> do
       r' <- impSubst env r
-      toImpBlock (env <> ref @> refVal region r') body
+      toImpBlock (env <> ref @> refVal region r') (maybeDest, body)
     RunWriter (BinaryFunVal region ref _ body) -> do
-      wDest <- alloc wTy
+      ~(PairVal aDest wDest) <- allocDest maybeDest resultTy
       initializeAtomZero wDest
-      aResult <- toImpBlock (env <> ref @> refVal region wDest) body
-      return $ PairVal aResult wDest
-      where (PairTy _ wTy) = resultTy
+      void $ toImpBlock (env <> ref @> refVal region wDest) (Just aDest, body)
+      return $ PairVal aDest wDest
     RunState s (BinaryFunVal region ref _ body) -> do
+      ~(PairVal aDest sDest) <- allocDest maybeDest resultTy
       s' <- impSubst env s
-      sDest <- alloc sTy
       copyAtom sDest s'
-      aResult <- toImpBlock (env <> ref @> refVal region sDest) body
-      return $ PairVal aResult sDest
-      where (PairTy _ sTy) = resultTy
+      void $ toImpBlock (env <> ref @> refVal region sDest) (Just aDest, body)
+      return $ PairVal aDest sDest
+  where
+    refVal :: Var -> Atom -> Atom
+    refVal region ref = Con (RefCon (Var region) ref)
 
-refVal :: Var -> Atom -> Atom
-refVal region ref = Con (RefCon (Var region) ref)
+type Dest = Atom
+type WithDest a = (Maybe Dest, a)
+
+splitDest :: WithDest Block -> ImpM ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
+splitDest (maybeDest, (Block decls ans)) = do
+  case (maybeDest, ans) of
+    (Just dest, Atom atom) -> do
+      (repeatCopies, varDests) <- runStateT (execWriterT $ gatherVarDests [] dest atom) mempty
+      -- If any variable appearing in the ans atom is not defined in the
+      -- current block (e.g. it comes from the surrounding block), then we need
+      -- to do the copy explicitly, as there is no let binding that will use it
+      -- as the destination.
+      let blockVars = foldMap (\(Let v _) -> v @> ()) decls
+      let closureCopies = fmap (\(n, d) -> (d, Var $ n :> getType d))
+                               (envPairs $ varDests `envDiff` blockVars)
+      return $ ( fmap (\d@(Let v _) -> (varDests `envLookup` v, d)) decls
+               , (Nothing, ans)
+               , repeatCopies ++ closureCopies)
+    _ -> return $ (fmap (Nothing,) decls, (maybeDest, ans), [])
+  where
+    -- Maps all variables used in the result atom to their respective destinations.
+    gatherVarDests :: [Type] -> Dest -> Atom -> WriterT [(Dest, Atom)] (StateT (Env Dest) ImpM) ()
+    gatherVarDests afors dest result = case (dest, result) of
+      -- The `null afors` check is there just because a variable that is
+      -- embedded in an AFor, but does not use an AGet (we don't handle
+      -- those in the Con case!) would have to be broadcast to match the output
+      -- shape, so so it would require some special handling. However, those don't
+      -- seem to be emitted anywhere right now, so we leave the implementation as is.
+      (_, Var v) | null afors -> do
+        dests <- get
+        case dests `envLookup` v of
+          Nothing -> put $ dests <> (v @> dest)
+          Just _  -> tell [(dest, result)]
+      (Con dCon, Con rCon) -> case (dCon, rCon) of
+        (_, Lit _) -> lift $ lift $ copyAtom (prependAFors dest) (prependAFors result)
+        (PairCon ld rd, PairCon lr rr) -> gatherVarDests afors ld lr >> gatherVarDests afors rd rr
+        (UnitCon      , UnitCon      ) -> return ()
+        (AFor n db    , AFor _ rb    ) -> gatherVarDests (n : afors) db rb
+        (AsIdx _ db   , AsIdx _ rb   ) -> gatherVarDests afors       db rb
+        (SumCon _ _ _, _) -> error "Propagation of destinations through sum constructors is not implemented"
+        _ -> unreachable
+      _ -> unreachable
+      where
+        unreachable = error $ "Invalid result-atom pair:\n" ++ show result ++ "\n  and:\n" ++ show dest
+        prependAFors a = foldl (\b t -> Con $ AFor t b) a (reverse afors)
+
+copyDest :: Maybe Dest -> Atom -> ImpM Atom
+copyDest maybeDest atom = case maybeDest of
+  Nothing   -> return atom
+  Just dest -> copyAtom dest atom >> return atom
+
+allocDest :: Maybe Dest -> Type -> ImpM Dest
+allocDest maybeDest t = case maybeDest of
+  Nothing   -> alloc t
+  Just dest -> return dest
 
 anyValue :: Type -> IExpr
 anyValue (TC (BaseType RealType))   = ILit $ RealLit 1.0
@@ -214,10 +267,10 @@ toArrayAtom ie = case ie of
 data AllocType = Managed | Unmanaged
 
 alloc :: Type -> ImpM Atom
-alloc ty = fst <$> allocDest Managed ty
+alloc ty = fst <$> allocVars Managed ty
 
-allocDest :: AllocType -> Type -> ImpM (Atom, [IVar])
-allocDest allocTy ty = do
+allocVars :: AllocType -> Type -> ImpM (Atom, [IVar])
+allocVars allocTy ty = do
   (dest, vs) <- makeDest "v" ty
   flip mapM_ vs $ \v@(_:>IRefType refTy) -> do
     numel <- elemCount refTy
@@ -361,7 +414,6 @@ leavesList atom = execWriter $ flip traverseLeaves atom $ \l -> tell [l] >> retu
 copyAtom :: Atom -> Atom -> ImpM ()
 copyAtom dest src = zipWithM_ copyLeaf (leavesList dest) (leavesList src)
 
--- TODO: Assert dims are equal?
 copyLeaf :: Atom -> Atom -> ImpM ()
 copyLeaf ~(Con (AGet dest)) src = case src of
   Con (AGet src') -> bindM2 copy  dest' (fromArrayAtom src' )

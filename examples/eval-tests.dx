@@ -547,3 +547,16 @@ for j:(Fin upperBound). 1.0
 
 (for i:(Fin upperBound). 1, for j:(Fin 2). 2)
 > ([1, 1, 1, 1]@(Fin aget Int[1]), [2, 2])
+
+for i:(Fin 4).
+  x = iadd 1 1
+  (x, x)
+> [(2, 2), (2, 2), (2, 2), (2, 2)]
+
+:p
+  x = 2
+  z = for i:(Fin 4).
+        y = iadd 2 3
+        (x, y)
+  (x, z)
+> (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
