@@ -1,248 +1,230 @@
 <!DOCTYPE HTML>
-<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> x
-</div><div class="err-block">Type error:Ambiguous type variables: [?_2]
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="prose-block"><p>TODO: improve these &quot;ambiguous type&quot; error messages. The problem is that they
+expose the core IR to show where the ambiguous types appear. We might be able to
+improve things by recording source information when we create fresh inference
+variables. Solving fully (insisting on no ambiguity) at each decl might also
+help make the errors more local.</p>
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div><div class="err-block">Type error:Ambiguous type variables: [?]
 
-((?_2 -&gt; ?_2), (lam x::?_2 . x))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i
-</div><div class="err-block">Type error:Ambiguous type variables: [?_11]
+((_ans_ @&gt; _ans_), [_ans_:(?-&gt;?) = \x:?. x])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>x<span class="symbol">.</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i
+</div><div class="err-block">Type error:Ambiguous type variables: [?3]
 
-( ((?_11=&gt;Real) -&gt; Real)
-, (lam x::(?_11=&gt;Real) .
-   (sum @?_11 (for  i::?_11 .
-       x.i))) )</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> f x y<span class="symbol">.</span> f y x
-</div><div class="err-block">Type error:Ambiguous type variables: [?_6, ?_9, ?_11]
+( (_ans_ @&gt; _ans_)
+, [ _ans_:((?3=&gt;Real)-&gt;Real) = \x:(?3=&gt;Real).
+  tmp:((?3=&gt;Real)-&gt;Real) = (sum) (?3)
+  tmp1:(?3=&gt;Real) = for \i:?3. (x) (i)
+  (tmp) (tmp1) ] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>f x y<span class="symbol">.</span> f y x
+</div><div class="err-block">Type error:Ambiguous type variables: [?3, ?6, ?7]
 
-( ((?_9 -&gt; (?_11 -&gt; ?_6)) -&gt; (?_11 -&gt; (?_9 -&gt; ?_6)))
-, (lam f::(?_9 -&gt; (?_11 -&gt; ?_6)) . (lam x::?_11 . (lam y::?_9 . ((f y) x)))) )</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
-</div><div class="err-block">Type error:Ambiguous type variables: [?_7, ?_11, ?_13]
+( (_ans_ @&gt; _ans_)
+, [ _ans_:((?3-&gt;(?6-&gt;?7))-&gt;(?6-&gt;(?3-&gt;?7))) = \f:(?3-&gt;(?6-&gt;?7)). \x:?6. \y:?3.
+  tmp:(?6-&gt;?7) = (f) (y)
+  (tmp) (x) ] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div><div class="err-block">Type error:Ambiguous type variables: [?3, ?6, ?7]
 
-( ((?_11=&gt;(?_13=&gt;?_7)) -&gt; (?_13=&gt;(?_11=&gt;?_7)))
-, (lam x::(?_11=&gt;(?_13=&gt;?_7)) .
-   (for  i::?_13 .
-       (for  j::?_11 .
-           x.j.i))) )</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> f x<span class="symbol">.</span> f x
-</div><div class="err-block">Type error:Ambiguous type variables: [?_4, ?_6]
+( (_ans_ @&gt; _ans_)
+, [ _ans_:((?3=&gt;(?6=&gt;?7))-&gt;(?6=&gt;(?3=&gt;?7))) = \x:(?3=&gt;(?6=&gt;?7)). for \i:?6. for \j:?3.
+  tmp1:(?6=&gt;?7) = (x) (j)
+  (tmp1) (i) ] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>f x<span class="symbol">.</span> f x
+</div><div class="err-block">Type error:Ambiguous type variables: [?2, ?3]
 
-(((?_6 -&gt; ?_4) -&gt; (?_6 -&gt; ?_4)), (lam f::(?_6 -&gt; ?_4) . (lam x::?_6 . (f x))))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> myid <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-   myid x <span class="symbol">=</span> x
+((_ans_ @&gt; _ans_), [_ans_:((?2-&gt;?3)-&gt;(?2-&gt;?3)) = \f:(?2-&gt;?3). \x:?2. (f) (x)])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   myid <span class="symbol">:</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
    myid (myid) (myid 1)
 </div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">N</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
-   x <span class="symbol">=</span> (iota)<span class="symbol">::</span>(<span class="type-name">N</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   x <span class="symbol">=</span> iota (<span class="type-name">Fin</span> 10)
    isum x
 </div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
-   _, <span class="type-name">Ny</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
-   x <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Nx</span>
-   y <span class="symbol">=</span> (iota)<span class="symbol">::</span>(<span class="type-name">Ny</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
-   real (isum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i) <span class="symbol">+</span> real (isum <span class="keyword">for</span> j<span class="symbol">.</span> y<span class="symbol">.</span>j)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   x <span class="symbol">=</span> iota (<span class="type-name">Fin</span> 10)
+   y <span class="symbol">=</span> iota (<span class="type-name">Fin</span> 3)
+   i2r (isum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i) <span class="symbol">+</span> i2r (isum <span class="keyword">for</span> j<span class="symbol">.</span> y<span class="symbol">.</span>j)
 </div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
-   _, <span class="type-name">Ny</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 3
-   x <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Nx</span>
-   y <span class="symbol">=</span> (iota) <span class="symbol">::</span> (<span class="type-name">Ny</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   x <span class="symbol">=</span> iota (<span class="type-name">Fin</span> 10)
+   y <span class="symbol">=</span> iota (<span class="type-name">Fin</span> 3)
    sum <span class="keyword">for</span> i<span class="symbol">.</span> iadd x<span class="symbol">.</span>i y<span class="symbol">.</span>i
 </div><div class="err-block">Type error:
-Expected: Ny
-  Actual: Nx
-In: i
+Expected: (Fin 3)
+  Actual: (Fin 10)
 
    sum for i. iadd x.i y.i
                          ^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> _, <span class="type-name">Nx</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
-   (iota)<span class="symbol">::</span>(<span class="type-name">Nx</span><span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>)
-</div><div class="err-block">Type error:
-Leaked type variable: Nx</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">_, <span class="type-name">Narr</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 10
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Narr</span> <span class="symbol">=</span> <span class="type-name">Fin</span> 10
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">arr <span class="symbol">=</span> iota <span class="symbol">@</span> <span class="type-name">Narr</span>
+</div></div><div class="cell"><div class="code-block">arr  <span class="symbol">=</span> iota <span class="type-name">Narr</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">xr <span class="symbol">=</span> map real arr
+</div></div><div class="cell"><div class="code-block">xr <span class="symbol">=</span> map i2r arr
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> arr
-</div><div class="result-block">(Narr=&gt;Int)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">lam</span> (x, y)<span class="symbol">.</span> x <span class="symbol">+</span> y) (1<span class="symbol">.</span>0, 2<span class="symbol">.</span>0)
+</div><div class="result-block">((Fin 10)=&gt;Int)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="symbol">\</span>(x<span class="symbol">,</span> y)<span class="symbol">.</span> x <span class="symbol">+</span> y) (1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0)
 </div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> f (x, y) <span class="symbol">=</span> x <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> y
-   z<span class="symbol">.</span>i <span class="symbol">=</span> (xr<span class="symbol">.</span>i, xr<span class="symbol">.</span>i <span class="symbol">*</span> xr<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   f <span class="symbol">=</span> <span class="symbol">\</span>(x<span class="symbol">,</span> y)<span class="symbol">.</span> x <span class="symbol">+</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> y
+   z <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (xr<span class="symbol">.</span>i<span class="symbol">,</span> xr<span class="symbol">.</span>i <span class="symbol">*</span> xr<span class="symbol">.</span>i)
    sum (<span class="keyword">for</span> i<span class="symbol">.</span> f z<span class="symbol">.</span>i)
 </div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- yields &#39;compiler bug&#39;. Should be a different sort of error
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :t unpack x = iota 3
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--    in let y = for i j. x.i * x.i
-</span></div></div><div class="cell"><div class="code-block"><span class="comment">--       in sum (for i. sum (y.i))
-</span></div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (1) <span class="symbol">::</span> <span class="type-name">Int</span>
-</div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (1<span class="symbol">.</span>0) <span class="symbol">::</span> <span class="type-name">Int</span>
-</div><div class="err-block">Type error:
-Expected: Int
-  Actual: Real
-In: 1.0
-
-:t (1.0) :: Int
-    ^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1, 2, 3]
-</div><div class="result-block">(3=&gt;Int)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1<span class="symbol">,</span> 2<span class="symbol">,</span> 3]
+</div><div class="result-block">((Fin 3)=&gt;Int)</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> []
-</div><div class="err-block">Type error:Ambiguous type variables: [?_2]
+</div><div class="err-block">Type error:Empty table constructor must have type annotation
 
-((0=&gt;?_2), [])</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1, [2]]
+:t []
+   ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1<span class="symbol">,</span> [2]]
 </div><div class="err-block">Type error:
 Expected: Int
-  Actual: (?_3=&gt;?_4)
-In: [2]
+  Actual: ((Fin 1)=&gt;Int)
 
 :t [1, [2]]
        ^^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1, 2], [3, 4]]
-</div><div class="result-block">(2=&gt;(2=&gt;Int))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1, 2], [3]]
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1<span class="symbol">,</span> 2]<span class="symbol">,</span> [3<span class="symbol">,</span> 4]]
+</div><div class="result-block">((Fin 2)=&gt;((Fin 2)=&gt;Int))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [[1<span class="symbol">,</span> 2]<span class="symbol">,</span> [3]]
 </div><div class="err-block">Type error:
-Expected: (2=&gt;Int)
-  Actual: (1=&gt;Int)
-In: [3]
+Expected: ((Fin 2)=&gt;Int)
+  Actual: ((Fin 1)=&gt;Int)
 
 :t [[1, 2], [3]]
             ^^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">type</span> <span class="type-name">Pair</span> <span class="symbol">=</span> (<span class="type-name">Int</span>, <span class="type-name">Int</span>)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">p1 <span class="symbol">::</span> <span class="type-name">Pair</span>
-p1 <span class="symbol">=</span> (1, 2)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">p2 <span class="symbol">::</span> <span class="type-name">Pair</span>
-p2 <span class="symbol">=</span> 1
-</div><div class="err-block">Type error:
-Expected: (Int, Int)
-  Actual: Int
-In: 1
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j
+</div><div class="err-block">Type error:Ambiguous type variables: [?4, ?7, ?8]
 
-p2 = 1
-     ^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> <span class="keyword">for</span> (i,j)<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j
-</div><div class="err-block">Type error:Ambiguous type variables: [?_4, ?_9, ?_11]
-
-( ((?_9=&gt;(?_11=&gt;?_4)) -&gt; ((?_9, ?_11)=&gt;?_4))
-, (lam x::(?_9=&gt;(?_11=&gt;?_4)) .
-   (for  (i::?_9, j::?_11) .
-       x.i.j)) )</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">_, <span class="type-name">M</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range 5
-</div></div><div class="cell"><div class="code-block">
-
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">M</span><span class="symbol">.</span> _, <span class="type-name">N</span> <span class="symbol">=</span> <span class="keyword">unpack</span> range (asint i)
-             x <span class="symbol">=</span> <span class="keyword">for</span> j<span class="symbol">::</span><span class="type-name">N</span><span class="symbol">.</span> asint j
-             <span class="keyword">pack</span> x, <span class="type-name">N</span>, <span class="keyword">E </span>n<span class="symbol">.</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>
-</div><div class="result-block">(M=&gt;(Ea.(a=&gt;Int)))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">idfun <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-idfun x <span class="symbol">=</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> idfun <span class="symbol">@</span> <span class="type-name">Real</span>
-</div><div class="result-block">(Real -&gt; Real)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">lam</span> x<span class="symbol">.</span> f <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a<span class="symbol">;</span> f y <span class="symbol">=</span> x<span class="symbol">;</span> ()
-</div><div class="err-block">Type error:
-Leaked type variable: a</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> (<span class="keyword">todo</span>)<span class="symbol">::</span>(<span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) 1
-</div><div class="result-block">Real</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">f <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-f x <span class="symbol">=</span>
-  z <span class="symbol">=</span> x <span class="symbol">+</span> 1<span class="symbol">.</span>0
-  x
+( (_ans_ @&gt; _ans_)
+, [ _ans_:((?4=&gt;(?7=&gt;?8))-&gt;((?4 &amp; ?7)=&gt;?8)) = \x:(?4=&gt;(?7=&gt;?8)). for \pat:(?4 &amp; ?7).
+  tmp1:?4 = %fst pat
+  tmp2:?7 = %snd pat
+  tmp3:(?7=&gt;?8) = (x) (tmp1)
+  (tmp3) (tmp2) ] )</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">f <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span> <span class="symbol">=</span>
+ <span class="symbol">\</span>x<span class="symbol">.</span>
+   z <span class="symbol">=</span> x <span class="symbol">+</span> 1<span class="symbol">.</span>0
+   x
 </div><div class="err-block">Type error:
 Expected: Real
   Actual: Int
-In: x
 
-  z = x + 1.0
-      ^^
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> x <span class="symbol">=</span> 3
-   <span class="keyword">for</span> i<span class="symbol">::</span>x<span class="symbol">.</span> 0
-</div><div class="err-block">Error: variable not in scope: type variable &quot;x&quot; (a term variable of the same name is in scope)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">lam</span> x<span class="symbol">::</span><span class="type-name">Real</span><span class="symbol">.</span> x
-</div><div class="err-block">Type error: Can&#39;t print values of type: (Real -&gt; Real)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">vspaceid <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-vspaceid x <span class="symbol">=</span> x
+   z = x + 1.0
+       ^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> vspaceid (1<span class="symbol">.</span>0, [2<span class="symbol">.</span>0, 3<span class="symbol">.</span>0])
-</div><div class="result-block">(Real, (2=&gt;Real))</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> vspaceid 0
-</div><div class="err-block">Type error: Not a vector space: Int
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   x <span class="symbol">=</span> 3
+   <span class="keyword">for</span> i<span class="symbol">:</span><span class="type-name">Foo</span><span class="symbol">.</span> 0
+</div><div class="err-block">Error: variable not in scope: Foo</div></div><div class="cell"><div class="code-block">
 
-:t vspaceid 0
-   ^^^^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="type-name">MyInt</span> <span class="symbol">=</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">MyInt2</span> <span class="symbol">=</span> <span class="type-name">MyInt</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-   g x <span class="symbol">=</span> vspaceid x
-   g <span class="symbol">@</span><span class="type-name">Real</span>
-</div><div class="result-block">(Real -&gt; Real)</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-   g x <span class="symbol">=</span> vspaceid x
-   g <span class="symbol">@</span><span class="type-name">Real</span>
-</div><div class="err-block">Type error: Type variable &quot;a&quot; not in class: VS
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">:</span> <span class="type-name">MyInt2</span> <span class="symbol">=</span> 1
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">MyPair</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="symbol">\</span>a<span class="symbol">.</span> (a <span class="symbol">&amp;</span> a)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  pairs <span class="symbol">:</span> (<span class="type-name">MyPair</span> <span class="type-name">Int</span> <span class="symbol">&amp;</span> <span class="type-name">MyPair</span> <span class="type-name">Real</span>) <span class="symbol">=</span>
+    ((1<span class="symbol">,</span> 2)<span class="symbol">,</span> (1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0))
 
-   g x = vspaceid x
-         ^^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> <span class="keyword">for</span> i<span class="symbol">::</span><span class="type-name">Int</span><span class="symbol">.</span> 1
-</div><div class="err-block">Type error: Not a valid index set: Int
+  pairs
+</div><div class="result-block">((1, 2), (1.0, 2.0))</div></div><div class="cell"><div class="code-block">
 
-:t for i::Int. 1
-   ^^^^^^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> grad (<span class="keyword">lam</span> x<span class="symbol">::</span><span class="type-name">Int</span><span class="symbol">.</span> real x) 1
-</div><div class="err-block">Type error: Not a vector space: Int
-
-:t grad (lam x::Int. real x) 1
-   ^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> vadd&#39; <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-         vadd&#39; x y <span class="symbol">=</span> %vadd(x, y)
-         vadd&#39; <span class="symbol">@</span><span class="type-name">Real</span>
-</div><div class="err-block">Type error: Type variable &quot;a&quot; not in class: VS
-
-         vadd&#39; x y = %vadd(x, y)
-                     ^^^^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">f1 <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-f1 x <span class="symbol">=</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">f2 <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-f2 x <span class="symbol">=</span> x <span class="symbol">+</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [f1, f2]
-</div><div class="err-block">Type error: Not serializable data: (Real -&gt; Real)
-
-:t [f1, f2]
-   ^^^^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> select <span class="type-name">True</span> f1 f2
-</div><div class="err-block">Type error: Not serializable data: (Real -&gt; Real)
-
-:t select True f1 f2
-   ^^^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> fold f1 <span class="keyword">for</span> i<span class="symbol">::</span>3<span class="symbol">.</span> <span class="keyword">lam</span> g<span class="symbol">.</span> (<span class="keyword">lam</span> x<span class="symbol">.</span> g (g x))
-</div><div class="err-block">Type error: Not serializable data: (Real -&gt; Real)
-
-:t fold f1 for i::3. lam g. (lam x. g (g x))
-   ^^^^^
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1,2,3]<span class="symbol">.</span>(3<span class="symbol">@</span>3)
-</div><div class="err-block">Type error:Index out of bounds: 3 of 3</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> [1,2,3]<span class="symbol">.</span>(3<span class="symbol">@</span>4)
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: put source annotation on effect for a better message here
+</span></div></div><div class="cell"><div class="code-block">fEff <span class="symbol">:</span> <span class="type-name">Unit</span> <span class="symbol">-&gt;</span> {<span class="symbol">|</span> a} a <span class="symbol">=</span> todo
 </div><div class="err-block">Type error:
-Expected: 3
-  Actual: 4
-In: 3@4
+Expected: EffKind
+  Actual: Type
 
-:t [1,2,3].(3@4)
+fEff : Unit -&gt; {| a} a = todo
             ^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+    <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 7)<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">:</span>(<span class="type-name">Fin</span> unboundName)<span class="symbol">.</span> 1<span class="symbol">.</span>0
+</div><div class="err-block">Error: variable not in scope: unboundName</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- differentCaseResultTypes : Either Int Real -&gt; Real
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- differentCaseResultTypes x = case x
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   Left f -&gt; f
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   Right i -&gt; i
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; Type error:
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; Expected: Int
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;   Actual: Real
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; In: i
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;   Right i -&gt; i
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;              ^
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- inferEither x = case x
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     Left i -&gt; iadd i 1
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     Right f -&gt; floor f
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- caseEffects : wRef:(Ref Real) -&gt; (Either Int Real) -&gt; {Writer wRef} ()
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- caseEffects ref x = case x
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     Left  i -&gt; ()
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--     Right r -&gt; ref := r
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; Type error:
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; Expected: { }
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;   Actual: {State ref | ?_28}
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; In: (ref := r)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;     Right r -&gt; ref := r
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;                    ^^^
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p (\(u,v). for i:0...u. 1.0) (2, 3)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; Type error:Function&#39;s result type cannot depend on a variable bound in an argument pattern
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; :p (\(u,v). for i:0...u. 1.0) (2, 3)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt;     ^^^^^^^^^^^^^^^^^^^^^^^^
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">g <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g
+</div><div class="result-block">(a:Type?-&gt;(a-&gt;a))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+  f <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Int</span><span class="symbol">.</span> x
+  f 1
+</div><div class="result-block">Int</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span>
+   f <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">:</span><span class="type-name">Real</span><span class="symbol">.</span> x
+   f 1
+</div><div class="err-block">Type error:
+Expected: Real
+  Actual: Int
+
+   f 1
+     ^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">g1 <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> <span class="type-name">Int</span>) <span class="symbol">-&gt;</span> (a <span class="symbol">-&gt;</span> <span class="type-name">Int</span>) <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> g1
+</div><div class="result-block">(a:Type?-&gt;((a-&gt;Int)-&gt;(a-&gt;Int)))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">g2 <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> iadd x x
+</div><div class="err-block">Type error:
+Expected: Int
+  Actual: a
+
+g2 : a -&gt; a = \x. iadd x x
+                       ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">h <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> b) <span class="symbol">-&gt;</span> (a <span class="symbol">-&gt;</span> b) <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> h
+</div><div class="result-block">(a:Type?-&gt;(a1:Type?-&gt;((a-&gt;a1)-&gt;(a-&gt;a1))))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">fun <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> <span class="symbol">\</span>x<span class="symbol">.</span> sin x
+</div><div class="err-block">Type error:
+Expected: Real
+  Actual: a
+
+fun : a -&gt; a = \x. sin x
+                       ^
 </div></div></div></body></html>

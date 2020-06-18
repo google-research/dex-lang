@@ -1,0 +1,154 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+   <span class="keyword">def</span> m (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Int</span> <span class="symbol">=</span> get ref
+   withState 2 m
+</div><div class="result-block">(2, 2)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+   <span class="keyword">def</span> m (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> ref <span class="symbol">:=</span> 3
+   withState 0 m
+</div><div class="result-block">((), 3)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+   <span class="keyword">def</span> m (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Int</span>) <span class="symbol">:</span> {<span class="type-name">Read</span> h} <span class="type-name">Int</span> <span class="symbol">=</span> ask ref
+   withReader 5 m
+</div><div class="result-block">5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">def</span> stateAction (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (ref<span class="symbol">:</span><span class="type-name">Ref</span> h <span class="type-name">Real</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+     x <span class="symbol">=</span> get ref
+     ref <span class="symbol">:=</span> (x <span class="symbol">+</span> 2<span class="symbol">.</span>0)
+     z <span class="symbol">=</span> get ref
+     ref <span class="symbol">:=</span> (z <span class="symbol">*</span> 3<span class="symbol">.</span>0)
+
+  withState 1<span class="symbol">.</span>0 stateAction
+</div><div class="result-block">((), 9.0)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">def</span> rwsAction
+        (rh<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (wh<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (sh<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+        (r<span class="symbol">:</span><span class="type-name">Ref</span> rh <span class="type-name">Int</span>) (w<span class="symbol">:</span><span class="type-name">Ref</span> wh <span class="type-name">Real</span>) (s<span class="symbol">:</span><span class="type-name">Ref</span> sh <span class="type-name">Bool</span>)
+        <span class="symbol">:</span> {<span class="type-name">Read</span> rh<span class="symbol">,</span> <span class="type-name">Accum</span> wh<span class="symbol">,</span> <span class="type-name">State</span> sh} <span class="type-name">Int</span> <span class="symbol">=</span>
+    x <span class="symbol">=</span> get s
+    w <span class="symbol">+=</span> 2<span class="symbol">.</span>0
+    s <span class="symbol">:=</span> not x
+    r <span class="symbol">=</span> ask r
+    w <span class="symbol">+=</span> 4<span class="symbol">.</span>0
+    (r `iadd` 2)
+
+  withReader 2 <span class="symbol">\</span>r<span class="symbol">.</span>
+    withState <span class="type-name">True</span> <span class="symbol">\</span>s<span class="symbol">.</span>
+      withAccum <span class="symbol">\</span>w<span class="symbol">.</span>
+        rwsAction r w s
+</div><div class="result-block">((4, 6.0), False)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+   <span class="keyword">def</span> m (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (s<span class="symbol">:</span><span class="type-name">Ref</span> h (<span class="type-name">Fin</span> 3<span class="symbol">=&gt;</span><span class="type-name">Int</span>)) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+     s<span class="symbol">!</span>(fromOrdinal _ 0) <span class="symbol">:=</span> 10
+     s<span class="symbol">!</span>(fromOrdinal _ 2) <span class="symbol">:=</span> 20
+     x <span class="symbol">=</span> get (s<span class="symbol">!</span>(fromOrdinal _ 0))
+     s<span class="symbol">!</span>(fromOrdinal _ 1) <span class="symbol">:=</span> x
+   withState [0<span class="symbol">,</span>0<span class="symbol">,</span>0] m
+</div><div class="result-block">((), [10, 10, 20])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> withReader [1<span class="symbol">,</span>2<span class="symbol">,</span>3] <span class="symbol">\</span>r <span class="symbol">.</span> ask r<span class="symbol">!</span>(fromOrdinal _ 1)
+</div><div class="result-block">2</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">def</span> m (wh<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (sh<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+        (w<span class="symbol">:</span><span class="type-name">Ref</span> wh <span class="type-name">Real</span>) (s<span class="symbol">:</span><span class="type-name">Ref</span> sh <span class="type-name">Real</span>)
+        <span class="symbol">:</span> {<span class="type-name">Accum</span> wh<span class="symbol">,</span> <span class="type-name">State</span> sh} <span class="type-name">Unit</span> <span class="symbol">=</span>
+    x <span class="symbol">=</span> get s
+    w <span class="symbol">+=</span> x
+  withState 1<span class="symbol">.</span>0 <span class="symbol">\</span>s<span class="symbol">.</span> withAccum <span class="symbol">\</span>w <span class="symbol">.</span> m w s
+</div><div class="result-block">(((), 1.0), 1.0)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> myAction  (w<span class="symbol">:</span><span class="type-name">Ref</span> hw <span class="type-name">Real</span>) (r<span class="symbol">:</span><span class="type-name">Ref</span> hr <span class="type-name">Real</span>) <span class="symbol">:</span> {<span class="type-name">Read</span> hr<span class="symbol">,</span> <span class="type-name">Accum</span> hw} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  x <span class="symbol">=</span> ask r
+  w <span class="symbol">+=</span> x
+  w <span class="symbol">+=</span> 2<span class="symbol">.</span>0
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> withReader 1<span class="symbol">.</span>5 <span class="symbol">\</span>r<span class="symbol">.</span> withAccum <span class="symbol">\</span>w<span class="symbol">.</span> myAction w r
+</div><div class="result-block">((), 3.5)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">def</span> m (h1<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (h2<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+        (w1<span class="symbol">:</span><span class="type-name">Ref</span> h1 <span class="type-name">Real</span>) (w2<span class="symbol">:</span><span class="type-name">Ref</span> h2 <span class="type-name">Real</span>)
+        <span class="symbol">:</span> {<span class="type-name">Accum</span> h1<span class="symbol">,</span> <span class="type-name">Accum</span> h2} <span class="type-name">Unit</span> <span class="symbol">=</span>
+    w1 <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+    w2 <span class="symbol">+=</span> 3<span class="symbol">.</span>0
+    w1 <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+  withAccum <span class="symbol">\</span>w1<span class="symbol">.</span> withAccum <span class="symbol">\</span>w2<span class="symbol">.</span> m w1 w2
+</div><div class="result-block">(((), 3.0), 2.0)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> foom (h<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (s<span class="symbol">:</span><span class="type-name">Ref</span> h ((<span class="type-name">Fin</span> 3)<span class="symbol">=&gt;</span><span class="type-name">Int</span>)) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  s<span class="symbol">!</span>(fromOrdinal _ 0) <span class="symbol">:=</span> 1
+  s<span class="symbol">!</span>(fromOrdinal _ 2) <span class="symbol">:=</span> 2
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> withState [0<span class="symbol">,</span>0<span class="symbol">,</span>0] foom
+</div><div class="result-block">((), [1, 0, 2])</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: handle effects returning functions
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- :p
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   def foo (x:Real) : Real =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      f = withReader x \r.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--            y = ask r
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--            \z. 100.0 * x + 10.0 * y + z
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      f 1.0
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">--   foo 3.0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; 331.0
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   foo : Real -&gt; (Real, Real)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   foo x =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      (f, ans) = withState x \s.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--          y = get s
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--          \z. 100.0 * x + 10.0 * y + z
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      (f 1.0, ans)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">--   foo 3.0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; (331.0, 3.0)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- :p
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   foo : Real -&gt; (Real, Real)
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--   foo x =
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      (f, ans) = withAccumulator \s.
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--         s += x
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--         \y. 10.0 * x + y
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--      (f 1.0, ans)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">--   foo 3.0
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">-- &gt; (31.0, 3.0)
+</span></div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: some way to explicitly give type to `withAccum`
+</span></div></div><div class="cell"><div class="code-block"><span class="comment">--       (maybe just explicit implicit args)
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  withReader 2<span class="symbol">.</span>0 <span class="symbol">\</span>r<span class="symbol">.</span>
+    withAccum <span class="symbol">\</span>w<span class="symbol">.</span>
+      withAccum <span class="symbol">\</span>w&#39;<span class="symbol">.</span>
+        withState 3 <span class="symbol">\</span>s<span class="symbol">.</span>
+          x <span class="symbol">=</span> ask r
+          y <span class="symbol">=</span> get s
+          w <span class="symbol">+=</span> x
+          w&#39; <span class="symbol">+=</span> x <span class="symbol">+</span> x
+          s <span class="symbol">:=</span> 4
+          (x<span class="symbol">,</span> y)
+</div><div class="result-block">((((2.0, 3), 4), 4.0), 2.0)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> symmetrizeInPlace (mat<span class="command">:n</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span>
+  snd <span class="symbol">$</span> withState mat <span class="symbol">\</span>ref<span class="symbol">.</span>
+    <span class="keyword">for</span> i j<span class="symbol">.</span>
+       x <span class="symbol">=</span> get ref<span class="symbol">!</span>i<span class="symbol">!</span>j
+       y <span class="symbol">=</span> get ref<span class="symbol">!</span>j<span class="symbol">!</span>i
+       avg <span class="symbol">=</span> (x <span class="symbol">+</span> y) <span class="symbol">/</span> 2<span class="symbol">.</span>0
+       ref<span class="symbol">!</span>i<span class="symbol">!</span>j <span class="symbol">:=</span> avg
+       ref<span class="symbol">!</span>j<span class="symbol">!</span>i <span class="symbol">:=</span> avg
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">symmetrizeInPlace [[1<span class="symbol">.,</span>2<span class="symbol">.</span>]<span class="symbol">,</span>[3<span class="symbol">.,</span>4<span class="symbol">.</span>]]
+</div><div class="result-block">[[1.0, 2.5], [2.5, 4.0]]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> withReader 5 <span class="symbol">\</span>r<span class="symbol">.</span> ()
+</div><div class="result-block">()</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>w<span class="symbol">.</span>
+  <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 2)<span class="symbol">.</span>
+    w <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+    w <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+</div><div class="result-block">4.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>w<span class="symbol">.</span>
+  <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 2)<span class="symbol">.</span>
+    w <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+  w <span class="symbol">+=</span> 1<span class="symbol">.</span>0
+</div><div class="result-block">3.0</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span>
+     ref <span class="symbol">+=</span> [1<span class="symbol">.,</span>2<span class="symbol">.,</span>3<span class="symbol">.</span>]
+     ref <span class="symbol">+=</span> [2<span class="symbol">.,</span>4<span class="symbol">.,</span>5<span class="symbol">.</span>]
+</div><div class="result-block">[3.0, 6.0, 8.0]</div></div></div></body></html>

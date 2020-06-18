@@ -1,353 +1,232 @@
 <!DOCTYPE HTML>
 <html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="prose-block"><h2>Dex prelude</h2>
 </div></div><div class="cell"><div class="prose-block"><p>Runs before every Dex program unless an alternative is provided with <code>--prelude</code>.</p>
-</div></div><div class="cell"><div class="prose-block"><p>Curried wrappers around built-in functions</p>
-</div></div><div class="cell"><div class="code-block">iadd <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-iadd x y <span class="symbol">=</span> %iadd(x, y)
+</div></div><div class="cell"><div class="prose-block"><p>Wrappers around primitives</p>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Int</span>  <span class="symbol">=</span> %<span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Real</span> <span class="symbol">=</span> %<span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Bool</span> <span class="symbol">=</span> %<span class="type-name">Bool</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Unit</span> <span class="symbol">=</span> %<span class="type-name">UnitType</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">TyKind</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Effects</span> <span class="symbol">=</span> %<span class="type-name">EffKind</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">isub <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-isub x y <span class="symbol">=</span> %isub(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&amp;</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">PairType</span> a b
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">,</span>) (x<span class="command">:a</span>) (y<span class="command">:b</span>) <span class="symbol">:</span> a <span class="symbol">&amp;</span> b <span class="symbol">=</span> %pair x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fst (p<span class="symbol">:</span> a <span class="symbol">&amp;</span> b) <span class="symbol">:</span> a <span class="symbol">=</span> %fst p
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> snd (p<span class="symbol">:</span> a <span class="symbol">&amp;</span> b) <span class="symbol">:</span> b <span class="symbol">=</span> %snd p
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">imul <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-imul x y <span class="symbol">=</span> %imul(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iadd (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %iadd x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isub (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %isub x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> imul (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %imul x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> idiv (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %idiv x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rem  (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %rem  x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ipow (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %pow  x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rem <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-rem x y <span class="symbol">=</span> %rem(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) (y<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %fadd x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">-</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) (y<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %fsub x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">*</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) (y<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %fmul x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">/</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) (y<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %fdiv x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> neg (x<span class="symbol">:</span><span class="type-name">Real</span>)          <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %fneg x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">mod <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-mod x y <span class="symbol">=</span> rem (iadd y (rem x y)) y
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: typeclasses!
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">==</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %eq        x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;</span>)  (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %less      x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&lt;=</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %lessEq    x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&gt;</span>)  (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %greater   x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&gt;=</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %greaterEq x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">neg <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
-neg x <span class="symbol">=</span> %fneg(x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> select (p<span class="symbol">:</span><span class="type-name">Bool</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> %select p x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fadd <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-fadd x y <span class="symbol">=</span> %fadd(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="type-name">True</span>  <span class="symbol">=</span> %<span class="type-name">True</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">False</span> <span class="symbol">=</span> %<span class="type-name">False</span>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">&amp;&amp;</span>) (x<span class="symbol">:</span><span class="type-name">Bool</span>) (y<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %and x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">||</span>) (x<span class="symbol">:</span><span class="type-name">Bool</span>) (y<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %or  x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> not  (x<span class="symbol">:</span><span class="type-name">Bool</span>)          <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span> %not x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fsub <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-fsub x y <span class="symbol">=</span> %fsub(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> i2r (x<span class="symbol">:</span><span class="type-name">Int</span> ) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %inttoreal x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> b2i (x<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Int</span>  <span class="symbol">=</span> %booltoint x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> b2r (x<span class="symbol">:</span><span class="type-name">Bool</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> i2r (b2i x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> todo (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> a <span class="symbol">=</span> %todo a
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fmul <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
-fmul x y <span class="symbol">=</span> %fmul(x, y)
+</div></div><div class="cell"><div class="prose-block"><p>Effects</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Ref</span> (r<span class="symbol">:</span><span class="type-name">Type</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">Ref</span> r a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> get  (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s)       <span class="symbol">:</span> {<span class="type-name">State</span> h} s    <span class="symbol">=</span> %get  ref
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">:=</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h s) (x<span class="command">:s</span>) <span class="symbol">:</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> %put  ref x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ask  (ref<span class="symbol">:</span><span class="type-name">Ref</span> h r)       <span class="symbol">:</span> {<span class="type-name">Read</span>  h} r    <span class="symbol">=</span> %ask  ref
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">+=</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h w) (x<span class="command">:w</span>) <span class="symbol">:</span> {<span class="type-name">Accum</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span> %tell ref x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">!</span>)  (ref<span class="symbol">:</span><span class="type-name">Ref</span> h (n<span class="symbol">=&gt;</span>a)) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Ref</span> h a <span class="symbol">=</span> %indexRef ref i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fdiv <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-fdiv x y <span class="symbol">=</span> %fdiv(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withReader
+      (eff<span class="symbol">:</span><span class="type-name">Effects</span>) <span class="symbol">?-&gt;</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (r<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+      (init<span class="command">:r</span>) (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h r <span class="symbol">-&gt;</span> {<span class="type-name">Read</span> h<span class="symbol">|</span>eff} a))
+      <span class="symbol">:</span> {<span class="symbol">|</span>eff} a <span class="symbol">=</span>
+    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; r) <span class="symbol">:</span> {<span class="type-name">Read</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
+    %runReader init explicitAction
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">ipow <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-ipow x y <span class="symbol">=</span> %pow(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withAccum
+      (eff<span class="symbol">:</span><span class="type-name">Effects</span>) <span class="symbol">?-&gt;</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (w<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h w <span class="symbol">-&gt;</span> {<span class="type-name">Accum</span> h<span class="symbol">|</span>eff} a))
+      <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> w) <span class="symbol">=</span>
+    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; w) <span class="symbol">:</span> {<span class="type-name">Accum</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
+    %runWriter explicitAction
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">pow <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-pow x y <span class="symbol">=</span> %%pow(x, y)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">asint <span class="symbol">::</span> <span class="keyword">A </span>i<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> i <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-asint i <span class="symbol">=</span> %asint(i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">asidx <span class="symbol">::</span> <span class="keyword">A </span>i<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> i
-asidx i <span class="symbol">=</span> %asidx(i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">real <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-real x <span class="symbol">=</span> %inttoreal(x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">b2i <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-b2i x <span class="symbol">=</span> %booltoint(x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">filter <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="keyword">E </span>m<span class="symbol">.</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>a
-filter f x <span class="symbol">=</span> %filter(f, x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">not <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-not x <span class="symbol">=</span> %not(x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">and <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-and x y <span class="symbol">=</span> %and(x, y)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">or <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-or x y <span class="symbol">=</span> %or(x, y)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- `todo` is like `undefined` in Haskell
-</span></div></div><div class="cell"><div class="code-block"><span class="keyword">todo</span> <span class="symbol">::</span> a
-<span class="keyword">todo</span> <span class="symbol">=</span> %<span class="keyword">todo</span>()
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> withState
+      (eff<span class="symbol">:</span><span class="type-name">Effects</span>) <span class="symbol">?-&gt;</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (s<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span>
+      (init<span class="command">:s</span>)
+      (action<span class="symbol">:</span> (h<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">?-&gt;</span> <span class="type-name">Ref</span> h s <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h <span class="symbol">|</span>eff} a))
+      <span class="symbol">:</span> {<span class="symbol">|</span>eff} (a <span class="symbol">&amp;</span> s) <span class="symbol">=</span>
+    <span class="keyword">def</span> explicitAction (h&#39;<span class="symbol">:</span><span class="type-name">Type</span>) (ref<span class="symbol">:</span><span class="type-name">Ref</span> h&#39; s) <span class="symbol">:</span> {<span class="type-name">State</span> h&#39;<span class="symbol">|</span>eff} a <span class="symbol">=</span> action ref
+    %runState init explicitAction
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Wrappers around C library functions</p>
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
-exp <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-exp x <span class="symbol">=</span> %%exp(x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> exp (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi exp <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> log (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi log <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sin (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi sin <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> cos (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi cos <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> tan (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi tan <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sqrt (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi sqrt <span class="type-name">Real</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> floor (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %ffi floorDex <span class="type-name">Int</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> pow (x<span class="symbol">:</span><span class="type-name">Real</span>) (y<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi pow <span class="type-name">Real</span> x y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
-log <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-log x <span class="symbol">=</span> %%log(x)
+</div></div><div class="cell"><div class="prose-block"><p>Working with index sets</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Range</span> (low<span class="symbol">:</span><span class="type-name">Int</span>) (high<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">IntRange</span> low high
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Fin</span> (n<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Range</span> 0 n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ordinal (i<span class="command">:a</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %asint i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> size (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> %idxSetSize n
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fromOrdinal (n<span class="symbol">:</span><span class="type-name">Type</span>) (i<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> %asidx n i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixadd (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (i<span class="command">:n</span>) (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n <span class="symbol">$</span> iadd (ordinal i) x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixsub (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (i<span class="command">:n</span>) (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> n <span class="symbol">=</span> fromOrdinal n <span class="symbol">$</span> isub (ordinal i) x
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
-sqrt <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-sqrt x <span class="symbol">=</span> %%sqrt(x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> iota (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> ordinal i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
-sin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-sin x <span class="symbol">=</span> %%sin(x)
+</div></div><div class="cell"><div class="prose-block"><p>Sum types</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> (<span class="symbol">|</span>) (a<span class="symbol">:</span><span class="type-name">Type</span>) (b<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> %<span class="type-name">SumType</span> a b
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> anyVal (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> <span class="symbol">:</span> a <span class="symbol">=</span> %anyVal a
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sumCon (isLeft<span class="symbol">:</span><span class="type-name">Bool</span>) (l<span class="command">:a</span>) (r<span class="command">:b</span>) <span class="symbol">:</span> (a<span class="symbol">|</span>b) <span class="symbol">=</span> %sumCon isLeft l r
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Left</span>  (x<span class="command">:a</span>) <span class="symbol">:</span> (a<span class="symbol">|</span>b) <span class="symbol">=</span> sumCon <span class="type-name">True</span>  x      anyVal
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">Right</span> (x<span class="command">:b</span>) <span class="symbol">:</span> (a<span class="symbol">|</span>b) <span class="symbol">=</span> sumCon <span class="type-name">False</span> anyVal x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> caseAnalysis (x<span class="command">:a</span><span class="symbol">|</span>b) (l<span class="command">:a</span><span class="symbol">-&gt;</span>c) (r<span class="command">:b</span><span class="symbol">-&gt;</span>c) <span class="symbol">:</span> c <span class="symbol">=</span> %caseAnalysis x l r
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="symbol">@</span>primitive
-cos <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-cos x <span class="symbol">=</span> %%cos(x)
+</div></div><div class="cell"><div class="prose-block"><p>Misc</p>
+</div></div><div class="cell"><div class="code-block">pi <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> 3<span class="symbol">.</span>141592653589793
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">tan <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-tan x <span class="symbol">=</span> %%tan(x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> id (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> dup (x<span class="command">:a</span>) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> a) <span class="symbol">=</span> (x<span class="symbol">,</span> x)
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: unpack pair in args once we fix the bug
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> swap (p<span class="command">:a</span><span class="symbol">&amp;</span>b) <span class="symbol">:</span> (b<span class="symbol">&amp;</span>a) <span class="symbol">=</span> (snd p<span class="symbol">,</span> fst p)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> map (f<span class="command">:a</span><span class="symbol">-&gt;</span>{<span class="symbol">|</span>eff} b) (xs<span class="symbol">:</span> n<span class="symbol">=&gt;</span>a) <span class="symbol">:</span> {<span class="symbol">|</span>eff} (n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> f xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> zip (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (ys<span class="command">:n</span><span class="symbol">=&gt;</span>b) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (xs<span class="symbol">.</span>i<span class="symbol">,</span> ys<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> unzip (xys<span class="command">:n</span><span class="symbol">=&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (n<span class="symbol">=&gt;</span>a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span> (map fst xys<span class="symbol">,</span> map snd xys)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fanout (n<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sq (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> x <span class="symbol">*</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> abs (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> select (x <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) x (<span class="symbol">-</span>x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mod (x<span class="symbol">:</span><span class="type-name">Int</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> rem (iadd y (rem x y)) y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> compose (f<span class="command">:b</span><span class="symbol">-&gt;</span>c) (g<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> c <span class="symbol">=</span> f (g x)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">floor <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-floor x <span class="symbol">=</span> %%floorDex(x)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> slice (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) (start<span class="symbol">:</span><span class="type-name">Int</span>) (m<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>a <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(fromOrdinal _ (ordinal i `iadd` start))
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Misc functions</p>
-</div></div><div class="cell"><div class="code-block">fst <span class="symbol">::</span> (a, b) <span class="symbol">--o</span> a
-fst (x, y) <span class="symbol">=</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>(a<span class="symbol">&amp;</span>b)) <span class="symbol">:</span> (a <span class="symbol">&amp;</span> n<span class="symbol">=&gt;</span>b) <span class="symbol">=</span>
+  swap <span class="symbol">$</span> withState init <span class="symbol">\</span>s<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span>
+    c <span class="symbol">=</span> get s
+    (c&#39;<span class="symbol">,</span> y) <span class="symbol">=</span> body i c
+    s <span class="symbol">:=</span> c&#39;
+    y
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">snd <span class="symbol">::</span> (a, b) <span class="symbol">--o</span> b
-snd (x, y) <span class="symbol">=</span> y
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- Hope to need this less with linearity polymoprhism
-</span></div></div><div class="cell"><div class="code-block">asNonLin <span class="symbol">::</span> (a <span class="symbol">--o</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> b
-asNonLin f x <span class="symbol">=</span> f x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">b2r <span class="symbol">::</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-b2r x <span class="symbol">=</span> real <span class="symbol">$</span> b2i x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">pi <span class="symbol">::</span> <span class="type-name">Real</span>
-pi <span class="symbol">=</span> 3<span class="symbol">.</span>141592653589793
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">ixadd <span class="symbol">::</span> <span class="keyword">A </span>i<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> i <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> i
-ixadd i n <span class="symbol">=</span> asidx <span class="symbol">$</span> iadd (asint i) n
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">ixsub <span class="symbol">::</span> <span class="keyword">A </span>i<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> i <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> i
-ixsub i n <span class="symbol">=</span> asidx <span class="symbol">$</span> isub (asint i) n
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">iota <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span>
-iota <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> asint i
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">id <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-id x <span class="symbol">=</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">dup <span class="symbol">::</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> (a, a)
-dup x <span class="symbol">=</span> (x, x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">map <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>b
-map f xs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> f xs<span class="symbol">.</span>i
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">map2 <span class="symbol">::</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span>b
-map2 f xs <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> f xs<span class="symbol">.</span>i<span class="symbol">.</span>j
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">zip <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>b <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(a,b)
-zip xs ys <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> (xs<span class="symbol">.</span>i, ys<span class="symbol">.</span>i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">unzip <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(a, b) <span class="symbol">-</span><span class="symbol">&gt;</span> (n<span class="symbol">=</span><span class="symbol">&gt;</span>a, n<span class="symbol">=</span><span class="symbol">&gt;</span>b)
-unzip xys <span class="symbol">=</span> (map (asNonLin fst) xys, map (asNonLin snd) xys)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fanout <span class="symbol">::</span> <span class="keyword">A </span>n a<span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-fanout x <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">sq <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-sq x <span class="symbol">=</span> x <span class="symbol">*</span> x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">select <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">Data</span><span class="symbol">.</span> <span class="type-name">Bool</span> <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-select p x y <span class="symbol">=</span> %select(p, x, y)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">abs <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-abs x <span class="symbol">=</span> select (x <span class="symbol">&gt;</span> 0<span class="symbol">.</span>0) x (0<span class="symbol">.</span>0 <span class="symbol">-</span> x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">compose <span class="symbol">::</span> (b <span class="symbol">-</span><span class="symbol">&gt;</span> c) <span class="symbol">-</span><span class="symbol">&gt;</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> c
-compose f g x <span class="symbol">=</span> f (g x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">slice <span class="symbol">::</span> <span class="keyword">A </span>n m a <span class="symbol">.</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-slice xs start <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>(asidx (asint i `iadd` start))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>State-carrying loop constructs</p>
-</div></div><div class="cell"><div class="code-block">scan <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span> a<span class="symbol">::</span><span class="type-name">Data</span> b <span class="symbol">.</span>  a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(a<span class="symbol">-</span><span class="symbol">&gt;</span>(a, b)) <span class="symbol">-</span><span class="symbol">&gt;</span> (a, n<span class="symbol">=</span><span class="symbol">&gt;</span>b)
-scan x0 fs <span class="symbol">=</span> %scan(x0, <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> x<span class="symbol">.</span> fs<span class="symbol">.</span>i x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">fold <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span> a<span class="symbol">::</span><span class="type-name">Data</span> <span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(a<span class="symbol">-</span><span class="symbol">&gt;</span>a) <span class="symbol">-</span><span class="symbol">&gt;</span> a
-fold x0 fs <span class="symbol">=</span> fst <span class="symbol">$</span> scan x0 <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> x<span class="symbol">.</span> (fs<span class="symbol">.</span>i x, ())
-</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fold (init<span class="command">:a</span>) (body<span class="symbol">:</span>(n<span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a)) <span class="symbol">:</span> a <span class="symbol">=</span> fst <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> (body i x<span class="symbol">,</span> ())
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: call this `scan` and call the current `scan` something else
-</span></div></div><div class="cell"><div class="code-block">scan&#39; <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span> a<span class="symbol">::</span><span class="type-name">Data</span> <span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(a<span class="symbol">-</span><span class="symbol">&gt;</span>a) <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-scan&#39; x0 fs <span class="symbol">=</span> snd <span class="symbol">$</span> scan x0 <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> x<span class="symbol">.</span> dup (fs<span class="symbol">.</span>i x)
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> scan&#39; (init<span class="command">:a</span>) (body<span class="command">:n</span><span class="symbol">-&gt;</span>a<span class="symbol">-&gt;</span>a) <span class="symbol">:</span> n<span class="symbol">=&gt;</span>a <span class="symbol">=</span> snd <span class="symbol">$</span> scan init <span class="symbol">\</span>i x<span class="symbol">.</span> dup (body i x)
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: allow tables-via-lambda and get rid of this
+</span></div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> fsum (xs<span class="command">:n</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> sum  (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> ref <span class="symbol">+=</span> xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> isum (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> fold 0 <span class="symbol">\</span>i c<span class="symbol">.</span> iadd c xs<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mean (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> sum xs <span class="symbol">/</span> i2r (size n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> std (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> sqrt <span class="symbol">$</span> mean (map sq xs) <span class="symbol">-</span> sq (mean xs)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">scanlin <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span> c<span class="symbol">::</span><span class="type-name">Data</span> a b <span class="symbol">.</span> (n <span class="symbol">=</span><span class="symbol">&gt;</span>((c,a) <span class="symbol">--o</span> (c,b))) <span class="symbol">-</span><span class="symbol">&gt;</span> (c, n<span class="symbol">=</span><span class="symbol">&gt;</span>a) <span class="symbol">--o</span> (c, n<span class="symbol">=</span><span class="symbol">&gt;</span>b)
-scanlin fs (c0, xs) <span class="symbol">=</span> %scan(c0, <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> c<span class="symbol">.</span> fs<span class="symbol">.</span>i (c, xs<span class="symbol">.</span>i) )
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linspace (n<span class="symbol">:</span><span class="type-name">Type</span>) (low<span class="symbol">:</span><span class="type-name">Real</span>) (high<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span>
+  dx <span class="symbol">=</span> (high <span class="symbol">-</span> low) <span class="symbol">/</span> i2r (size n)
+  <span class="keyword">for</span> i<span class="command">:n</span><span class="symbol">.</span> low <span class="symbol">+</span> i2r (ordinal i) <span class="symbol">*</span> dx
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">foldlin <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span> c<span class="symbol">::</span><span class="type-name">Data</span> a <span class="symbol">.</span> (n<span class="symbol">=</span><span class="symbol">&gt;</span>((c, a) <span class="symbol">--o</span> c)) <span class="symbol">-</span><span class="symbol">&gt;</span> (c, n<span class="symbol">=</span><span class="symbol">&gt;</span>a) <span class="symbol">--o</span> c
-foldlin fs (c0, xs) <span class="symbol">=</span> fst <span class="symbol">$</span> scanlin (<span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">llam</span> (c,x)<span class="symbol">.</span> (fs<span class="symbol">.</span>i (c, x), ())) (c0, xs)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vdot (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) (y<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> fsum <span class="symbol">\</span>i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>More misc functions</p>
-</div></div><div class="cell"><div class="code-block">sum <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
-sum xs <span class="symbol">=</span> foldlin (<span class="keyword">for</span> _<span class="symbol">.</span> <span class="keyword">llam</span> (c,x)<span class="symbol">.</span> c <span class="symbol">+</span> x) (0<span class="symbol">.</span>0, xs)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mmp (x<span class="command">:l</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> (l<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span>
+  y&#39; <span class="symbol">=</span> transpose y
+  <span class="keyword">for</span> i k<span class="symbol">.</span> fsum <span class="symbol">\</span>j<span class="symbol">.</span> x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y&#39;<span class="symbol">.</span>k<span class="symbol">.</span>j
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">isum <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span>
-isum xs <span class="symbol">=</span> fold 0 <span class="keyword">for</span> i<span class="symbol">.</span> x <span class="symbol">=</span> xs<span class="symbol">.</span>i<span class="symbol">;</span> <span class="keyword">lam</span> c<span class="symbol">.</span> iadd c x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> mvp (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) (v<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span>
+  <span class="keyword">for</span> i<span class="symbol">.</span> vdot mat<span class="symbol">.</span>i v
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: make this a builtin for efficiency
-</span></div></div><div class="cell"><div class="code-block">size <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> <span class="type-name">Int</span>
-size <span class="symbol">=</span> %idxSetSize(<span class="symbol">@</span>n)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">range <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="keyword">E </span>i<span class="symbol">.</span> ()
-range n <span class="symbol">=</span> %range(n)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">mean <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">.</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>
-mean xs <span class="symbol">=</span> sum xs <span class="symbol">/</span> real (size <span class="symbol">@</span>n)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">std <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">.</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-std xs <span class="symbol">=</span> sqrt <span class="symbol">$</span> mean (map sq xs) <span class="symbol">-</span> sq (mean xs)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">linspace <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">.</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-linspace low high <span class="symbol">=</span> dx <span class="symbol">=</span> (high <span class="symbol">-</span> low) <span class="symbol">/</span> real (size <span class="symbol">@</span>n)
-                    <span class="keyword">for</span> i<span class="symbol">::</span>n<span class="symbol">.</span> low <span class="symbol">+</span> real (asint i) <span class="symbol">*</span> dx
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> inner (x<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) (mat<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) (y<span class="command">:m</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span>
+  fsum <span class="symbol">\</span>(i<span class="symbol">,</span>j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> mat<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="prose-block"><p>Functions for working with the pseudorandom number generator</p>
-</div></div><div class="cell"><div class="code-block"><span class="keyword">newtype</span> <span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: newtype
+</span></div></div><div class="cell"><div class="code-block"><span class="type-name">Key</span> <span class="symbol">=</span> <span class="type-name">Int</span>
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">hash <span class="symbol">::</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Key</span>
-hash x y <span class="symbol">=</span> %%threefry2x32(x, y)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> hash (x<span class="symbol">:</span><span class="type-name">Key</span>) (y<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> %ffi threefry2x32 <span class="type-name">Int</span> x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> newKey (x<span class="symbol">:</span><span class="type-name">Int</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash 0 x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> splitKey (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> (<span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span>) <span class="symbol">=</span> (hash k 0<span class="symbol">,</span> hash k 1)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> splitKey3 (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> (<span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span> <span class="symbol">&amp;</span> <span class="type-name">Key</span>) <span class="symbol">=</span>
+  (k1<span class="symbol">,</span> k&#39;) <span class="symbol">=</span> splitKey k
+  (k2<span class="symbol">,</span> k3) <span class="symbol">=</span> splitKey k&#39;
+  (k1<span class="symbol">,</span> k2<span class="symbol">,</span> k3)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">newKey <span class="symbol">::</span> <span class="type-name">Int</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Key</span>
-newKey x <span class="symbol">=</span> hash %newtypecast(0) x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> many (f<span class="symbol">:</span><span class="type-name">Key</span><span class="symbol">-&gt;</span>a) (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> a <span class="symbol">=</span> f (hash k (ordinal i))
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixkey (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash k (ordinal i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> ixkey2 (k<span class="symbol">:</span><span class="type-name">Key</span>) (i<span class="command">:n</span>) (j<span class="command">:m</span>) <span class="symbol">:</span> <span class="type-name">Key</span> <span class="symbol">=</span> hash (hash k (ordinal i)) (ordinal j)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> rand (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> %ffi randunif <span class="type-name">Real</span> k
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">splitKey <span class="symbol">::</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Key</span>, <span class="type-name">Key</span>)
-splitKey key <span class="symbol">=</span> (hash key 0, hash key 1)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">splitKey3 <span class="symbol">::</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Key</span>, <span class="type-name">Key</span>, <span class="type-name">Key</span>)
-splitKey3 key <span class="symbol">=</span>
-  (k1, key&#39;) <span class="symbol">=</span> splitKey key
-  (k2, k3) <span class="symbol">=</span> splitKey key&#39;
-  (k1, k2, k3)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">many <span class="symbol">::</span> <span class="keyword">A </span>n a<span class="symbol">.</span> (<span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> a) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-many f key <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> f (hash key (asint i))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">ixkey <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Key</span>
-ixkey x i <span class="symbol">=</span> hash x (asint i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">rand <span class="symbol">::</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-rand x <span class="symbol">=</span> %%randunif(x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">randn <span class="symbol">::</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-randn k <span class="symbol">=</span>
-  (k1, k2) <span class="symbol">=</span> splitKey k
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randn (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span>
+  (k1<span class="symbol">,</span> k2) <span class="symbol">=</span> splitKey k
   u1 <span class="symbol">=</span> rand k1
   u2 <span class="symbol">=</span> rand k2
-  sqrt (<span class="symbol">-</span>2<span class="symbol">.</span>0 <span class="symbol">*</span> log u1) <span class="symbol">*</span> cos (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> u2)
+  sqrt ((<span class="symbol">-</span>2<span class="symbol">.</span>0) <span class="symbol">*</span> log u1) <span class="symbol">*</span> cos (2<span class="symbol">.</span>0 <span class="symbol">*</span> pi <span class="symbol">*</span> u2)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">randIdx <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">::</span><span class="type-name">Ix</span><span class="symbol">.</span> <span class="type-name">Key</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n
-randIdx key <span class="symbol">=</span>
-  unif <span class="symbol">=</span> rand key
-  asidx <span class="symbol">$</span> floor <span class="symbol">$</span> unif <span class="symbol">*</span> real (size <span class="symbol">@</span>n)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> randIdx (n<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">?-&gt;</span> (k<span class="symbol">:</span><span class="type-name">Key</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  unif <span class="symbol">=</span> rand k
+  fromOrdinal n <span class="symbol">$</span> floor <span class="symbol">$</span> unif <span class="symbol">*</span> i2r (size n)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>min / max etc</p>
-</div></div><div class="cell"><div class="code-block">minby <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">Data</span><span class="symbol">.</span> (a<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span>a<span class="symbol">-</span><span class="symbol">&gt;</span>a<span class="symbol">-</span><span class="symbol">&gt;</span>a
-minby f x y <span class="symbol">=</span> select ((f x) <span class="symbol">&lt;</span> (f y)) x y
+</div></div><div class="cell"><div class="prose-block"><p>min / max etc  (TODO: implement with a monoid-parameterized writer)</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minBy (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="command">:a</span>) (y<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> select ((f x) <span class="symbol">&lt;</span> (f y)) x y
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maxBy (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> a <span class="symbol">=</span> minBy (neg `compose` f)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">min <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-min <span class="symbol">=</span> minby id
+</div></div><div class="cell"><div class="code-block">min <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span> <span class="symbol">=</span> minBy id
+</div></div><div class="cell"><div class="code-block">max <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span> <span class="symbol">=</span> maxBy id
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">minimumby <span class="symbol">::</span> <span class="keyword">A </span>n a<span class="symbol">::</span><span class="type-name">Data</span><span class="symbol">.</span> (a<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span>(n<span class="symbol">=</span><span class="symbol">&gt;</span>a)<span class="symbol">-</span><span class="symbol">&gt;</span>a
-minimumby f xs <span class="symbol">=</span> fold xs<span class="symbol">.</span>(asidx 0) (<span class="keyword">for</span> i<span class="symbol">.</span> minby f xs<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimumBy (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span> fold xs<span class="symbol">.</span>(fromOrdinal _ 0) (<span class="symbol">\</span>i<span class="symbol">.</span> minBy f xs<span class="symbol">.</span>i)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximumBy (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (xs<span class="command">:n</span><span class="symbol">=&gt;</span>a) <span class="symbol">:</span> a <span class="symbol">=</span> minimumBy (neg `compose` f) xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">minimum <span class="symbol">::</span> <span class="keyword">A </span>n<span class="symbol">.</span> (n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-minimum <span class="symbol">=</span> minimumby id
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> minimum (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> minimumBy id xs
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> maximum (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> maximumBy id xs
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">maxby <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">Data</span><span class="symbol">.</span> (a<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span>a<span class="symbol">-</span><span class="symbol">&gt;</span>a<span class="symbol">-</span><span class="symbol">&gt;</span>a
-maxby f <span class="symbol">=</span> minby (asNonLin neg `compose` f)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> argmin (xs<span class="command">:n</span><span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">:</span> n <span class="symbol">=</span>
+  fst <span class="symbol">$</span> fold (fromOrdinal _ 0<span class="symbol">,</span> xs<span class="symbol">.</span>(fromOrdinal _ 0)) <span class="symbol">\</span>i (bestIx<span class="symbol">,</span> bestDist)<span class="symbol">.</span>
+    select (xs<span class="symbol">.</span>i <span class="symbol">&lt;</span> bestDist) (i<span class="symbol">,</span> xs<span class="symbol">.</span>i) (bestIx<span class="symbol">,</span> bestDist)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">max <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-max x y <span class="symbol">=</span> maxby id x y
+</div></div><div class="cell"><div class="prose-block"><p>Automatic differentiation</p>
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> linearize (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> a <span class="symbol">--</span>o b) <span class="symbol">=</span> %linearize f x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> jvp (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) (t<span class="command">:a</span>) <span class="symbol">--</span>o <span class="symbol">:</span> b <span class="symbol">=</span> snd (linearize f x) t
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transposeLinear (f<span class="command">:a</span> <span class="symbol">--</span>o b) <span class="symbol">:</span> b <span class="symbol">--</span>o a <span class="symbol">=</span> %linearTranspose f
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">maximumby <span class="symbol">::</span> <span class="keyword">A </span>p q<span class="symbol">::</span><span class="type-name">Data</span><span class="symbol">.</span> (q<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span>(p<span class="symbol">=</span><span class="symbol">&gt;</span>q)<span class="symbol">-</span><span class="symbol">&gt;</span>q
-maximumby f <span class="symbol">=</span> minimumby (asNonLin neg `compose` f)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> vjp (f<span class="command">:a</span><span class="symbol">-&gt;</span>b) (x<span class="command">:a</span>) <span class="symbol">:</span> (b <span class="symbol">&amp;</span> b <span class="symbol">--</span>o a) <span class="symbol">=</span>
+  (y<span class="symbol">,</span> df) <span class="symbol">=</span> linearize f x
+  (y<span class="symbol">,</span> transposeLinear df)
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">maximum <span class="symbol">::</span> <span class="keyword">A </span>p<span class="symbol">.</span> (p<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>)<span class="symbol">-</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-maximum xs <span class="symbol">=</span> maximumby id xs
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> grad (f<span class="command">:a</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">argmin <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n
-argmin ds <span class="symbol">=</span> fst <span class="symbol">$</span> fold (asidx 0, ds<span class="symbol">.</span>(asidx 0)) <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">lam</span> (bestIx, bestDist)<span class="symbol">.</span>
-               select (ds<span class="symbol">.</span>i <span class="symbol">&lt;</span> bestDist) (i, ds<span class="symbol">.</span>i) (bestIx, bestDist)
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> deriv (f<span class="symbol">:</span><span class="type-name">Real</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> jvp f x 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Vector spaces and automatic differentiation.</p>
-</div></div><div class="cell"><div class="code-block">vzero <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a
-vzero <span class="symbol">=</span> %vzero()
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> derivRev (f<span class="symbol">:</span><span class="type-name">Real</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">vadd <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-vadd x y <span class="symbol">=</span> %vadd(x, y)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">vsingle <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> n<span class="symbol">.</span> n <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a
-vsingle i x <span class="symbol">=</span> %vsingle(i, x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">vsum <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> n<span class="symbol">.</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-vsum xs <span class="symbol">=</span> %vsum(<span class="keyword">for</span> i<span class="symbol">.</span> xs<span class="symbol">.</span>i)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">linearize <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> (b, a <span class="symbol">--o</span> b)
-linearize f x0 <span class="symbol">=</span> %linearize(<span class="keyword">lam</span> x<span class="symbol">.</span> f x, x0)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">jvp <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">--o</span> b
-jvp f x <span class="symbol">=</span> <span class="keyword">llam</span> t<span class="symbol">.</span> snd (linearize f x) t
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">transposeLinear <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">--o</span> b) <span class="symbol">--o</span> b <span class="symbol">--o</span> a
-transposeLinear <span class="symbol">=</span> <span class="keyword">llam</span> f ct<span class="symbol">.</span> %linearTranspose(<span class="keyword">llam</span> t<span class="symbol">.</span> f t) ct
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">vjp <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span> b<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> (b, b <span class="symbol">--o</span> a)
-vjp f x <span class="symbol">=</span> (y, df) <span class="symbol">=</span> linearize f x
-          (y, transposeLinear df)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">grad <span class="symbol">::</span> <span class="keyword">A </span>a<span class="symbol">::</span><span class="type-name">VS</span><span class="symbol">.</span> (a <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> a <span class="symbol">-</span><span class="symbol">&gt;</span> a
-grad f x <span class="symbol">=</span> (_, pullback) <span class="symbol">=</span> vjp f x
-           pullback 1<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">deriv <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-deriv f x <span class="symbol">=</span> jvp f x 1<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">derivRev <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-derivRev f x <span class="symbol">=</span> snd (vjp f x) 1<span class="symbol">.</span>0
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">checkDerivBase <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-checkDerivBase f x <span class="symbol">=</span>
-  eps <span class="symbol">=</span> 1e<span class="symbol">-</span>5
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> checkDerivBase (f<span class="symbol">:</span><span class="type-name">Real</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  <span class="comment">-- TODO: parse 1e-5
+</span>  eps <span class="symbol">=</span> 0<span class="symbol">.</span>00005
   ansFwd  <span class="symbol">=</span> deriv    f x
   ansRev  <span class="symbol">=</span> derivRev f x
   ansNumeric <span class="symbol">=</span> (f (x <span class="symbol">+</span> eps) <span class="symbol">-</span> f (x <span class="symbol">-</span> eps)) <span class="symbol">/</span> (2<span class="symbol">.</span> <span class="symbol">*</span> eps)
-  isClose a b <span class="symbol">=</span> abs (a <span class="symbol">-</span> b) <span class="symbol">&lt;</span> 1e<span class="symbol">-</span>3
-  isClose ansFwd ansNumeric &amp;&amp; isClose ansRev ansNumeric
+  isClose <span class="symbol">=</span> <span class="symbol">\</span>a b<span class="symbol">.</span> abs (a <span class="symbol">-</span> b) <span class="symbol">&lt;</span> 0<span class="symbol">.</span>001
+  isClose ansFwd ansNumeric <span class="symbol">&amp;&amp;</span> isClose ansRev ansNumeric
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">checkDeriv <span class="symbol">::</span> (<span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Bool</span>
-checkDeriv f x <span class="symbol">=</span> checkDerivBase f x &amp;&amp; checkDerivBase (deriv f) x
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">forUnzip <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>(b, a <span class="symbol">-</span><span class="symbol">&gt;</span> b) <span class="symbol">-</span><span class="symbol">&gt;</span> (n<span class="symbol">=</span><span class="symbol">&gt;</span>b, a <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>b)
-forUnzip xfs <span class="symbol">=</span> (xs, fs) <span class="symbol">=</span> unzip xfs
-               (xs, <span class="keyword">lam</span> t<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> fs<span class="symbol">.</span>i t)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">sin<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-sin<span class="symbol">#</span>lin x <span class="symbol">=</span> (sin x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> cos x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">cos<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-cos<span class="symbol">#</span>lin x <span class="symbol">=</span> (cos x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> (neg (sin x)))
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">exp<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-exp<span class="symbol">#</span>lin x <span class="symbol">=</span>
-  ans <span class="symbol">=</span> exp x
-  (ans, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">*</span> ans)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">log<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-log<span class="symbol">#</span>lin x <span class="symbol">=</span> (log x, <span class="keyword">llam</span> t<span class="symbol">.</span> t <span class="symbol">/</span> x)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">sqrt<span class="symbol">#</span>lin <span class="symbol">::</span> <span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> (<span class="type-name">Real</span>, <span class="type-name">Real</span> <span class="symbol">--o</span> <span class="type-name">Real</span>)
-sqrt<span class="symbol">#</span>lin x <span class="symbol">=</span>
-  ans <span class="symbol">=</span> sqrt x
-  (ans, <span class="keyword">llam</span> t<span class="symbol">.</span> 0<span class="symbol">.</span>5 <span class="symbol">*</span> t <span class="symbol">/</span> ans)
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="prose-block"><p>Some general linear algebra routines.</p>
-</div></div><div class="cell"><div class="code-block">vdot <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-vdot x y <span class="symbol">=</span> sum <span class="keyword">for</span> i<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> y<span class="symbol">.</span>i
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">mmp <span class="symbol">::</span> l<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> l<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-mmp m1 m2 <span class="symbol">=</span> <span class="keyword">for</span> i k<span class="symbol">.</span> sum <span class="keyword">for</span> j<span class="symbol">.</span> m1<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> m2<span class="symbol">.</span>j<span class="symbol">.</span>k
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">mvp <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-mvp m v <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> vdot m<span class="symbol">.</span>i v
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">transpose <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span>n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span>
-transpose x <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
-</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">inner <span class="symbol">::</span> n<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> n<span class="symbol">=</span><span class="symbol">&gt;</span>m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> m<span class="symbol">=</span><span class="symbol">&gt;</span><span class="type-name">Real</span> <span class="symbol">-</span><span class="symbol">&gt;</span> <span class="type-name">Real</span>
-inner x m y <span class="symbol">=</span> sum <span class="keyword">for</span> (i,j)<span class="symbol">.</span> x<span class="symbol">.</span>i <span class="symbol">*</span> m<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">*</span> y<span class="symbol">.</span>j
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> checkDeriv (f<span class="symbol">:</span><span class="type-name">Real</span><span class="symbol">-&gt;</span><span class="type-name">Real</span>) (x<span class="symbol">:</span><span class="type-name">Real</span>) <span class="symbol">:</span> <span class="type-name">Bool</span> <span class="symbol">=</span>
+  checkDerivBase f x <span class="symbol">&amp;&amp;</span> checkDerivBase (deriv f) x
 </div></div></div></body></html>

@@ -1,0 +1,25 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="type-name">EState</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="symbol">\</span>d<span class="symbol">.</span> d<span class="symbol">=&gt;</span><span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Time</span> <span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span> <span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block"><span class="type-name">Dynamics</span> <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">-&gt;</span> <span class="type-name">Type</span> <span class="symbol">=</span> <span class="symbol">\</span>d<span class="symbol">.</span> <span class="type-name">EState</span> d <span class="symbol">-&gt;</span> <span class="type-name">EState</span> d
+</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block">eulerStep <span class="symbol">:</span> <span class="type-name">Ref</span> h (<span class="type-name">EState</span> d) <span class="symbol">-&gt;</span> <span class="type-name">Dynamics</span> d <span class="symbol">-&gt;</span> <span class="type-name">Time</span> <span class="symbol">-&gt;</span> {<span class="type-name">State</span> h} <span class="type-name">Unit</span> <span class="symbol">=</span>
+  <span class="symbol">\</span>sRef dyn dt<span class="symbol">.</span>
+    s <span class="symbol">=</span> get sRef
+    dsdt <span class="symbol">=</span> dyn s
+    s&#39; <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">.</span> s<span class="symbol">.</span>i <span class="symbol">+</span> dsdt<span class="symbol">.</span>i <span class="symbol">*</span> dt
+    sRef <span class="symbol">:=</span> s&#39;
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">euler <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">-&gt;</span> <span class="type-name">Dynamics</span> d <span class="symbol">-&gt;</span> <span class="type-name">EState</span> d <span class="symbol">-&gt;</span> <span class="type-name">Time</span> <span class="symbol">-&gt;</span> <span class="type-name">EState</span> d <span class="symbol">=</span>
+  <span class="symbol">\</span>n f x0 dt<span class="symbol">.</span>
+    snd <span class="symbol">$</span> withState x0 <span class="symbol">\</span>sRef<span class="symbol">.</span>
+      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> n)<span class="symbol">.</span> eulerStep sRef f dt
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">myDyn <span class="symbol">:</span> <span class="type-name">Dynamics</span> d <span class="symbol">=</span> <span class="symbol">\</span>d<span class="symbol">.</span> d
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">s0 <span class="symbol">=</span> [1<span class="symbol">.</span>0]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> euler 100000 myDyn s0 0<span class="symbol">.</span>00001
+</div><div class="result-block">[2.7182682]</div></div></div></body></html>
