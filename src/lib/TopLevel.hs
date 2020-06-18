@@ -85,13 +85,12 @@ evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
-    -- Dump DexObject fname -> do
-    --   val <- evalUModuleVal env v m
-    --   s <- liftIO $ pprintVal val
-    --   liftIO $ writeFile fname s
-    -- Dump DexBinaryObject fname -> do
-    --   val <- evalUModuleVal env v m
-    --   liftIO $ dumpDataFile fname val
+    Dump DexObject fname -> do
+      val <- evalUModuleVal env v m
+      liftIO $ writeFile fname $ pprintVal val
+    Dump DexBinaryObject fname -> do
+      val <- evalUModuleVal env v m
+      liftIO $ dumpDataFile fname val
     ShowPasses -> void $ evalUModule env m
     ShowPass _ -> void $ evalUModule env m
     TimeIt     -> void $ evalUModule env m
@@ -101,18 +100,17 @@ evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     evalSourceBlocks env $ parseProg source
-  -- LoadData p DexObject fname -> do
-  --   source <- liftIO $ readFile fname
-  --   let val = ignoreExcept $ parseData source
-  --   let decl = LetMono p val
-  --   let outVars = toList p
-  --   evalUModule env $ Module (sbId block) ([], outVars) [decl]
-  -- LoadData p DexBinaryObject fname -> do
-  --   val <- liftIO $ loadDataFile fname
-  --   -- TODO: handle patterns and type annotations in binder
-  --   let (RecLeaf b) = p
-  --   let outEnv = b @> val
-  --   return $ TopEnv (fmap getType outEnv, mempty) outEnv mempty
+  LoadData pat DexObject fname -> do
+    source <- liftIO $ readFile fname
+    let val = ignoreExcept $ parseData source
+    let (WithSrc _ (PatBind b), _) = pat
+    evalUModule env $ UModule [] [varName b] [ULet pat val]
+  LoadData pat DexBinaryObject fname -> do
+    val <- liftIO $ loadDataFile fname
+    -- TODO: handle patterns and type annotations in binder
+    let (WithSrc _ (PatBind b), _) = pat
+    let outEnv = b @> val
+    return $ TopEnv outEnv
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 

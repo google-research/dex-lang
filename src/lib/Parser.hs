@@ -4,9 +4,9 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Parser (Parser, parseit, parseProg, runTheParser,
+module Parser (Parser, parseit, parseProg, runTheParser, parseData,
                parseTopDeclRepl, uint, withSource, tauType,
-               emptyLines, brackets, symbol) where
+               emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
 import Control.Monad
 import Control.Monad.Combinators.Expr
@@ -31,6 +31,9 @@ type Parser = ReaderT ParseCtx (Parsec Void String)
 
 parseProg :: String -> [SourceBlock]
 parseProg s = mustParseit s $ manyTill (sourceBlock <* outputLines) eof
+
+parseData :: String -> Except UExpr
+parseData s = parseit s $ expr <* (optional eol >> eof)
 
 parseTopDeclRepl :: String -> Maybe SourceBlock
 parseTopDeclRepl s = case sbContents b of
@@ -551,9 +554,6 @@ textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
   w <- (:) <$> letterChar <*> many nameTailChar
   failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
   return w
-  where
-    keyWordStrs :: [String]
-    keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
@@ -566,6 +566,9 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ReadKW  -> "Read"
       WriteKW -> "Accum"
       StateKW -> "State"
+
+keyWordStrs :: [String]
+keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some letterChar

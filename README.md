@@ -11,14 +11,12 @@ To learn more, check out our
 [workshop paper](https://openreview.net/pdf?id=rJxd7vsWPS)
 or these example programs:
 
-  * [Tutorial](https://google-research.github.io/dex-lang/tutorial.html)
   * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
   * [Mandelbrot set](https://google-research.github.io/dex-lang/mandelbrot.html)
   * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
   * [Sierpinsky triangle](https://google-research.github.io/dex-lang/sierpinsky.html)
   * [Basis function regression](https://google-research.github.io/dex-lang/regression.html)
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
-  * [MNIST nearest-neighbor classifier](https://google-research.github.io/dex-lang/mnist-nearest-neighbors.html)
 
 Please note that Dex is an experimental research project at an early stage of
 development. We welcome contributions. There's plenty of work to do!

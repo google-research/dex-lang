@@ -93,15 +93,10 @@ classify =
        (try (char ':' >> lowerWord) >> return CommandStr)
    <|> (symbol "-- " >> manyTill anySingle (void eol <|> eof) >> return CommentStr)
    <|> (do s <- lowerWord
-           return $ if s `elem` keywords then KeywordStr else NormalStr)
-   <|> (symbol "A " >> return KeywordStr)
-   <|> (symbol "E " >> return KeywordStr)
+           return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
    <|> (upperWord >> return TypeNameStr)
-   <|> (choice (map C.string symbols ) >> return SymbolStr)
+   <|> (some symChar >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
-  where
-   keywords = ["for", "lam", "llam", "let", "in", "unpack", "pack", "type", "newtype", "todo"]
-   symbols = ["--o", "+", "*", "/", "-", "^", "$", "@", ".", ":", ";", "=", ">", "<", "#"]
 
 lowerWord :: Parser String
 lowerWord = (:) <$> lowerChar <*> many alphaNumChar

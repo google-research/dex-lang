@@ -45,7 +45,7 @@ libdex: cbits/libdex.so
 
 # --- running tets ---
 
-# TODO: re-anble linear-tests ad-tests include-test chol
+# TODO: re-enable linear-tests ad-tests include-test chol
 example-names = uexpr-tests type-tests eval-tests shadow-tests monad-tests \
                 easy-ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
@@ -55,8 +55,7 @@ quine-test-targets = $(example-names:%=run-%)
 
 doc-names = $(example-names:%=doc/%.html)
 
-# TODO: re-enable repl-test
-tests: test-prep quine-tests
+tests: test-prep quine-tests repl-test
 
 test-prep:
 	rm -rf test-scratch/
