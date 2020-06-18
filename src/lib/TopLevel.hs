@@ -172,7 +172,7 @@ initializeBackend backend = case backend of
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
-arrayVars x = [v:>ty | (v@(Name ArrayName _ _), ty) <- envPairs (freeVars x)]
+arrayVars x = map (\(v@(Name ArrayName _ _), ty) -> v :> ty) $ envPairs (freeVars x)
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
@@ -228,6 +228,9 @@ requestArrays backend vs = case backend of
 
 substArrayLiterals :: (HasVars a, HasType a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
+  -- We first need to substitute the arrays used in the types. Our atom types
+  -- are monotonic, so it's enough to ask for the arrays used in the type of the
+  -- atom as a whole, without worrying about types hidden within the atom.
   x' <- substArrayLiterals' backend (arrayVars (getType x)) x
   substArrayLiterals' backend (arrayVars x') x'
 

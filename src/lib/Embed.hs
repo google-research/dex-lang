@@ -42,7 +42,10 @@ newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
 
 type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)
+
+-- Carries the vars in scope (with optional definitions) and the emitted decls
 type EmbedEnvC = (Scope, [Decl])
+-- Carries a name suggestion and the allowable effects
 type EmbedEnvR = (Name, EffectRow)
 
 runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, [Decl])

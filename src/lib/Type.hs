@@ -208,7 +208,6 @@ typeCheckTyCon tc = case tc of
   BaseType _       -> return ()
   IntRange a b     -> a|:IntTy >> b|:IntTy
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b
-  ArrayType _      -> return ()
   SumType  l r     -> l|:TyKind >> r|:TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind
   UnitType         -> return ()

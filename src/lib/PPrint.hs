@@ -105,7 +105,6 @@ instance Pretty e => Pretty (PrimTC e) where
     BaseType b     -> p b
     PairType a b   -> parens $ p a <+> "&" <+> p b
     UnitType       -> "Unit"
-    ArrayType (shape, b) -> p b <> p shape
     IntRange a b -> if s1 == "0...<" then parens ("Fin" <+> p s2) else ans
       where ans = p a <> "...<" <> p b
             (s1, s2) = splitAt 5 (asStr ans)

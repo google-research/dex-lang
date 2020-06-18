@@ -47,8 +47,7 @@ runImpM :: [ScalarTableVar] -> ImpM a -> a
 runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
   where
     inVarScope :: Scope
-    inVarScope = fmap (const Nothing) $
-      foldMap varAsEnv $ fmap (fmap $ const ()) inVars
+    inVarScope = foldMap varAsEnv $ fmap (fmap $ const Nothing) inVars
 
 toImpBlock :: SubstEnv -> Block -> ImpM Atom
 toImpBlock env (Block decls result) = do
@@ -304,19 +303,6 @@ indexToInt ty idx = case ty of
   TC (IndexRange _ _ _) -> fromScalarAtom idx
   _ -> error $ "Unexpected type " ++ pprint ty
 
-fromILitInt :: IExpr -> Int
-fromILitInt (ILit (IntLit x)) = x
-fromILitInt expr = error $ "Not an int: " ++ pprint expr
-
-toImpBaseType :: Type -> BaseType
-toImpBaseType (TabTy _ a) = toImpBaseType a
-toImpBaseType (TC con) = case con of
-  BaseType b       -> b
-  IntRange _ _     -> IntType
-  IndexRange _ _ _ -> IntType
-  _ -> error $ "Unexpected type: " ++ pprint con
-toImpBaseType ty = error $ "Unexpected type: " ++ pprint ty
-
 indexSetSize :: Type -> ImpM IExpr
 indexSetSize (TC con) = case con of
   IntRange low high -> do
@@ -333,10 +319,7 @@ indexSetSize (TC con) = case con of
       ExclusiveLim x -> indexToInt n x
       Unlimited      -> indexSetSize n
     impSub high' low'
-  PairType a b -> do
-    a' <- indexSetSize a
-    b' <- indexSetSize b
-    impMul a' b'
+  PairType a b -> bindM2 impMul (indexSetSize a) (indexSetSize b)
   BaseType BoolType -> return $ IIntVal 2
   SumType l r -> bindM2 impAdd (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
@@ -345,12 +328,16 @@ indexSetSize ty = error $ "Not implemented " ++ pprint ty
 elemCount :: ScalarTableType -> ImpM IExpr
 elemCount t = case t of
   TabTy n b -> bindM2 impMul (indexSetSize n) (elemCount b)
+  Pi (Abs _ (TabArrow, _)) ->
+    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint t
   BaseTy _  -> return IOne
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
 offsetTo :: ScalarTableType -> IExpr -> ImpM IExpr
 offsetTo t i = case t of
   TabTy _ b -> impMul i =<< elemCount b
+  Pi (Abs _ (TabArrow, _)) ->
+    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint t
   BaseTy _  -> error "Indexing into a scalar!"
   _ -> error $ "Not a scalar table type: " ++ pprint t
 

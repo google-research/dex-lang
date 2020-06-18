@@ -174,7 +174,6 @@ data PrimTC e =
         BaseType BaseType
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
-      | ArrayType ArrayType
       | PairType e e
       | UnitType
       | SumType e e
