@@ -98,6 +98,8 @@ def Fin (n:Int) : Type = Range 0 n
 def ordinal (i:a) : Int = %asint i
 def size (n:Type) : Int = %idxSetSize n
 def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
+def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
+def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
 def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
 

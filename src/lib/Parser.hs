@@ -432,6 +432,7 @@ ops :: [[Operator Parser UExpr]]
 ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
+  , [symOp "@"]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
   , [symOp "+", prefixNegOp, negOp]
@@ -624,7 +625,7 @@ symChar :: Parser Char
 symChar = choice $ map char symChars
 
 symChars :: [Char]
-symChars = ".,!$^&*:-~+/=<>|?\\"
+symChars = ".,!$^&*:-~+/=<>|?\\@"
 
 -- === Util ===
 
