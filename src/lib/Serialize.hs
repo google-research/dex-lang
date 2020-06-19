@@ -208,7 +208,10 @@ prettyVal (Con con) = case con of
   where
     appFst :: (a -> b) -> (a, c) -> (b, c)
     appFst f (x, y) = (f x, y)
-prettyVal atom = error $ "Unexpected value: " ++ pprint atom
+prettyVal atom = (
+  "-- Unexpected prettyVal argument, falling back to Haskell pretty-printer:"
+    <> hardline <> pretty atom,
+  atom)
 
 unzip :: Functor f => f (a, b) -> (f a, f b)
 unzip f = (fmap fst f, fmap snd f)
