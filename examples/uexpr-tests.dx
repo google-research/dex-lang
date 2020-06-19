@@ -25,7 +25,7 @@ def idExplicit (a:Type) (x:a) : a = x
 :p idExplicit Int 1
 > 1
 
-def idImplicit (a:Type) ?-> (x:a) : a = x
+def idImplicit (a:Type)? (x:a) : a = x
 :p idImplicit 1
 > 1
 
@@ -83,7 +83,7 @@ def TyId (a:Type) : Type = a
   x
 > 1
 
-def tabId (n:Type) ?-> (x:n=>Int) : n=>Int = for i. x.i
+def tabId (n:Type)? (x:n=>Int) : n=>Int = for i. x.i
 
 -- bug: this doesn't work if we split it across top-level decls
 :p
@@ -166,7 +166,7 @@ myPair = (1, 2.3)
       xsRef!i := ordinal i
 > [0, 1, 2]
 
-def passthrough (eff:Effects) ?-> (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
+def passthrough (eff:Effects)? (f:(a -> {|eff} b)) (x:a) : {|eff} b = f x
 
 :p
   snd $ withState 1 \ref.

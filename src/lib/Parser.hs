@@ -245,7 +245,9 @@ funDefLet = label "function definition" $ mayBreak $ do
     arg = label "def arg" $ do
       (p, ty) <-(            ((,) <$> uVarPat <*> annot containedExpr)
                   <|> parens ((,) <$> uPat    <*> annot uType))
-      arr <- arrow (return ()) <|> return (PlainArrow ())
+      arr <-      arrow (return ())
+              <|> (sym "?" >> return ImplicitArrow)
+              <|> return (PlainArrow ())
       return (p, ty, arr)
 
 patName :: UPat -> Name

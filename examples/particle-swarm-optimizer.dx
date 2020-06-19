@@ -57,7 +57,7 @@ We have **arguments**:
 ' **Returns**: the optimal point found with-in the bounds on the input domain of `f`.
 
 def optimize
-      (d:Type) ?->
+      (d:Type)?
       (np':Int)                                        -- number of particles
       (niter:Int)                                      -- number of iterations
       (key:Key)                                        -- random seed
