@@ -174,6 +174,7 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
+    Lam (Abs b (ImplicitArrow, body)) -> "\\" <> p b <> "?" <> p body
     Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
     Pi  (Abs (NoName:>a) (arr, b)) -> parens $ p a <> p arr <> p b
     Pi  (Abs a           (arr, b)) -> parens $ p a <> p arr <> p b

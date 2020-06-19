@@ -280,8 +280,10 @@ uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
   bs <- some uBinder
-  body <- argTerm >> blockOrExpr
-  return $ buildLam (map (,PlainArrow ()) bs) body
+  bindarrow <-      (argTerm >> return (PlainArrow ()))
+                <|> (argTermImplicit >> return ImplicitArrow)
+  body <- blockOrExpr
+  return $ buildLam (map (,bindarrow) bs) body
 
 buildLam :: [(UBinder, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
@@ -682,6 +684,9 @@ symbol s = void $ L.symbol sc s
 
 argTerm :: Parser ()
 argTerm = mayNotBreak $ sym "."
+
+argTermImplicit :: Parser ()
+argTermImplicit = mayNotBreak $ sym "?"
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
 bracketed left right p = between left right $ mayBreak p
