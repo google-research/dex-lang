@@ -34,6 +34,7 @@ evalDecl env (Let v rhs) = v @> evalExpr rhs'
 evalExpr :: Expr -> Atom
 evalExpr expr = case expr of
   Op op -> evalOp op
+  _     -> undefined
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of

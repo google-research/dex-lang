@@ -26,7 +26,7 @@ import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.Maybe
 
 import Array
-import Type
+import Type hiding (indexSetConcreteSize)
 import Syntax
 import PPrint
 import Parser

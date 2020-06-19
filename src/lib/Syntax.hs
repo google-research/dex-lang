@@ -36,7 +36,7 @@ module Syntax (
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    scalarTableBaseType,
+    scalarTableBaseType, varType,
     pattern IntVal, pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
@@ -206,7 +206,6 @@ data PrimOp e =
       | Snd e
       | SumGet e Bool
       | SumTag e
-      | LoadScalar e
       | TabCon e [e]                 -- table type elements
       | ScalarBinOp ScalarBinOp e e
       | ScalarUnOp ScalarUnOp e
@@ -727,6 +726,9 @@ instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
 
 -- === Synonyms ===
+
+varType :: Var -> Type
+varType = varAnn
 
 infixr 1 -->
 infixr 1 --@
