@@ -12,9 +12,11 @@ module Inference (inferModule) where
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
+import Control.Monad.Writer
 import Data.Foldable (fold, toList)
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
+import Data.Either (rights)
 
 import Syntax
 import Embed  hiding (sub)
@@ -34,7 +36,7 @@ inferModule :: TopEnv -> UModule -> Except Module
 inferModule (TopEnv topEnv) m@(UModule _ exports decls) = do
   checkVars topEnv m
   let infEnv = fold [(v:>()) @> (Var (v:>getType x)) | (v, x) <- envPairs topEnv]
-  let scope  = fold [(v:>()) @> Just (Atom x)        | (v, x) <- envPairs topEnv]
+  let scope  = fold [(v:>()) @> Right (Atom x)       | (v, x) <- envPairs topEnv]
   (infEnv', decls') <- runUInferM (inferUDecls decls) infEnv scope
   let combinedEnv = infEnv <> infEnv'
   let resultVals = [(combinedEnv ! (v:>())) | v <- exports]
@@ -42,9 +44,10 @@ inferModule (TopEnv topEnv) m@(UModule _ exports decls) = do
   -- TODO: think about this. We can't just add types to current imoprts because
   -- inlining type expressions can introduce new free variables.
   -- let imports' = [v :> getType (infEnv      ! (v:>())) | v <- imports]
-  let imports' = envAsVars $ freeVars body
+  body' <- synthBlockTop scope body
+  let imports' = envAsVars $ freeVars body'
   let exports' = [v :> getType (combinedEnv ! (v:>())) | v <- exports]
-  return $ Module Nothing imports' exports' body
+  return $ Module Nothing imports' exports' body'
 
 checkVars :: Env a -> UModule -> Except ()
 checkVars env (UModule imports exports _) = do
@@ -85,10 +88,12 @@ inferRho expr = checkOrInferRho expr Infer
 
 instantiateSigma :: Atom -> UInferM Atom
 instantiateSigma f = case getType f of
-  Pi piTy@(Abs _ (ImplicitArrow, _)) -> do
-    x <- freshType $ absArgType piTy
+  Pi (Abs (_:>ty) (ImplicitArrow, _)) -> do
+    x <- freshType ty
     ans <- emitZonked $ App f x
     instantiateSigma ans
+  Pi (Abs (_:>ty) (ClassArrow, _)) ->
+    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ty))
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
@@ -262,7 +267,8 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
   (PlainArrow _, PlainArrow ()) -> return ()
   (LinArrow    , PlainArrow ()) -> return ()
   (LinArrow    , LinArrow     ) -> return ()
-  (TabArrow, TabArrow) -> return ()
+  (TabArrow  , TabArrow  ) -> return ()
+  (ClassArrow, ClassArrow) -> return ()
   _ -> throw TypeErr $  " Wrong arrow type:" ++
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
@@ -321,6 +327,60 @@ openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
 
+-- === typeclass dictionary synthesizer ===
+
+-- The writer just tracks whether we found any holes
+type SynthM = WriterT [()] (SubstEmbedT (Either Err))
+
+synthBlockTop :: Scope -> Block -> Except Block
+synthBlockTop scope block = do
+  ((block', holeCount), _) <- runSubstEmbedT (runWriterT (traverseBlock synthTraversal block)) scope
+  -- We could choose to searach only up to a maximum depth here
+  if null holeCount
+    then return block'
+    else synthBlockTop scope block'
+
+synthTraversal :: TraversalDef SynthM
+synthTraversal = (traverseExpr synthTraversal, synthAtom)
+
+synthAtom :: Atom -> SynthM Atom
+synthAtom atom = case atom of
+  -- TODO: add source information to these holes
+  Con (ClassDictHole ty) -> do
+    tell [()]
+    scope <- getScope
+    let candidates = filter (isInstanceCandidate . varAnn) $ scopeVars scope
+    let solutions = rights $ map (instantiateAndCheck scope ty) candidates
+    case solutions of
+      [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+      [block] -> emitBlock block
+      blocks -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+                    ++ "\n" ++ pprint blocks
+  _ -> traverseAtom synthTraversal atom
+
+isInstanceCandidate :: Type -> Bool
+isInstanceCandidate ty = case ty of
+  TC (ClassDictType _ _) -> True
+  Pi (Abs _ (_, resultTy)) -> isInstanceCandidate resultTy
+  _ -> False
+
+scopeVars :: Scope -> [Var]
+scopeVars scope = flip map (envPairs scope) $ \(v, x) -> case x of
+  Left ty    -> v :> ty
+  Right expr -> v :> getType expr
+
+-- mini version of type inference
+instantiateAndCheck :: Scope -> Type -> Var -> Except Block
+instantiateAndCheck scope ty v = do
+  (x, decls) <- runUInferM (instantiateAndCheck' ty v) mempty scope
+  return $ wrapDecls decls x
+
+instantiateAndCheck' :: Type -> Var -> UInferM Atom
+instantiateAndCheck' ty v = do
+  x <- instantiateSigma (Var v)
+  constrainEq ty (getType x)
+  return x
+
 -- === constraint solver ===
 
 data SolverEnv = SolverEnv { solverVars :: Env Kind
@@ -373,7 +433,7 @@ freshType EffKind = Eff <$> freshEff
 freshType k = do
   tv <- freshVar k
   extend $ SolverEnv (tv @> k) mempty
-  extendScope $ tv @> Nothing
+  extendScope $ tv @> Left k
   return $ Var tv
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow

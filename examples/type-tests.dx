@@ -163,7 +163,7 @@ fEff : Unit -> {| a} a = todo
 >   Actual: Type
 >
 > fEff : Unit -> {| a} a = todo
->             ^^^
+>             ^^^^^^^^^
 
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0

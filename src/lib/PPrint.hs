@@ -135,6 +135,8 @@ instance Pretty e => Pretty (PrimCon e) where
       "True"  -> "Left"  <+> p l
       "False" -> "Right" <+> p r
       _ -> "SumCon" <+> p c <+> p l <+> p r
+    ClassDict _ _ _ -> "<dictionary>"
+    ClassDictHole _ -> "_"
     Todo e -> "<undefined " <> p e <> ""
 
 instance Pretty e => Pretty (PrimOp e) where
@@ -327,6 +329,7 @@ instance Pretty eff => Pretty (ArrowP eff) where
     TabArrow       -> "=>"
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
+    ClassArrow     -> "?=>"
 
 instance Pretty Array where
   pretty a = p b <> "[" <> p size <> "]"

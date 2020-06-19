@@ -27,7 +27,7 @@ import PPrint
 import Cat
 import Util (bindM2)
 
-type EmbedEnv = ([IVar], (Scope, ImpProg))
+type EmbedEnv = ([IVar], (Env (), ImpProg))
 type ImpM = Cat EmbedEnv
 
 toImpFunction :: ([ScalarTableVar], Block) -> ImpFunction
@@ -44,8 +44,8 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
 runImpM :: [ScalarTableVar] -> ImpM a -> a
 runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
   where
-    inVarScope :: Scope
-    inVarScope = foldMap varAsEnv $ fmap (fmap $ const Nothing) inVars
+    inVarScope :: Env ()
+    inVarScope = foldMap varAsEnv $ fmap (fmap $ const ()) inVars
 
 toImpBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 toImpBlock env destBlock = do
@@ -491,7 +491,7 @@ freshVar :: IVar -> ImpM IVar
 freshVar v = do
   scope <- looks (fst . snd)
   let v' = rename v scope
-  extend $ asSnd $ asFst (v' @> Nothing)
+  extend $ asSnd $ asFst (v' @> ())
   return v'
 
 emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()

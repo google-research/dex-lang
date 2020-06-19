@@ -352,7 +352,8 @@ arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "=>"  $> TabArrow)
         <|> (sym "--o" $> LinArrow)
-        <|> (sym "?->"  $> ImplicitArrow)
+        <|> (sym "?->" $> ImplicitArrow)
+        <|> (sym "?=>" $> ClassArrow)
         <?> "arrow"
 
 uCaseExpr :: Parser UExpr
@@ -441,7 +442,7 @@ ops =
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ mayBreak (sym "$") $> mkApp]
   , [symOp "+=", symOp ":=", symOp "|"]
-  , [InfixR infixEffArrow, InfixR infixLinArrow]
+  , [InfixR infixArrow]
   , [InfixR $ symOpP "&", pairOp]
   , indexRangeOps
   ]
@@ -489,16 +490,11 @@ mkGenApp arr f x = joinSrc f x $ UApp arr f x
 mkApp :: UExpr -> UExpr -> UExpr
 mkApp f x = joinSrc f x $ UApp (PlainArrow ()) f x
 
-infixLinArrow :: Parser (UType -> UType -> UType)
-infixLinArrow = do
-  ((), pos) <- withPos $ sym "--o"
-  return $ \a b -> WithSrc pos $ UPi (NoName:>a) LinArrow b
-
-infixEffArrow :: Parser (UType -> UType -> UType)
-infixEffArrow = do
-  ((), pos) <- withPos $ sym "->"
-  eff <- effects
-  return $ \a b -> WithSrc pos $ UPi (NoName:>a) (PlainArrow eff) b
+infixArrow :: Parser (UType -> UType -> UType)
+infixArrow = do
+  notFollowedBy (sym "=>")  -- table arrows have special fixity
+  (arr, pos) <- withPos $ arrow effects
+  return $ \a b -> WithSrc pos $ UPi (NoName:>a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (NoName:>a) arr b

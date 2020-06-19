@@ -20,7 +20,8 @@ module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter, tabGet) where
+              unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
+              TraversalDef, traverseBlock, traverseExpr, traverseAtom) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -43,6 +44,8 @@ newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
 type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)
 
+type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
+
 -- Carries the vars in scope (with optional definitions) and the emitted decls
 type EmbedEnvC = (Scope, [Decl])
 -- Carries a name suggestion and the allowable effects
@@ -55,6 +58,9 @@ runEmbedT (EmbedT m) scope = do
 
 runEmbed :: Embed a -> Scope -> (a, [Decl])
 runEmbed m scope = runIdentity $ runEmbedT m scope
+
+runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, [Decl])
+runSubstEmbedT m scope = runEmbedT (runReaderT m mempty) scope
 
 -- TODO: use suggestive names based on types (e.g. "f" for function)
 emit :: MonadEmbed m => Expr -> m Atom
@@ -95,7 +101,7 @@ withBinder :: (MonadEmbed m) => Var -> (Atom -> m a) -> m (a, Var, [Decl])
 withBinder b f = do
   ((ans, b'), decls) <- scopedDecls $ do
       b' <- freshVar b
-      embedExtend $ asFst (b' @> Nothing)
+      embedExtend $ asFst (b' @> Left (varAnn b'))
       ans <- f $ Var b'
       return (ans, b')
   return (ans, b', decls)
@@ -358,7 +364,7 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let v expr) = embedExtend (v @> Just expr, [decl])
+emitDecl decl@(Let v expr) = embedExtend (v @> Right expr, [decl])
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -367,7 +373,47 @@ scopedDecls m = do
 
 -- TODO: consider checking for effects here
 declAsScope :: Decl -> Scope
-declAsScope (Let v expr) = v @> Just expr
+declAsScope (Let v expr) = v @> Right expr
+
+-- === generic traversal ===
+
+type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
+
+-- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
+traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
+              => TraversalDef m -> Block -> m Block
+traverseBlock def block = buildScoped $ traverseBlock' def block
+
+traverseBlock' :: (MonadEmbed m, MonadReader SubstEnv m)
+               => TraversalDef m -> Block -> m Atom
+traverseBlock' def@(fExpr, _) block = case block of
+  Block [] expr -> emit =<< fExpr expr
+  Block (Let b expr : decls) result -> do
+    expr' <- fExpr expr
+    x <- withNameHint (varName b) $ emit expr'
+    extendR (b @> x) $ traverseBlock' def body
+    where body = Block decls result
+
+traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Expr -> m Expr
+traverseExpr (_, fAtom) expr = case expr of
+  App g x -> App  <$> fAtom g <*> fAtom x
+  Atom x  -> Atom <$> fAtom x
+  Op  op  -> Op   <$> traverse fAtom op
+  Hof hof -> Hof  <$> traverse fAtom hof
+
+traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Atom -> m Atom
+traverseAtom def@(_, fAtom) atom = case atom of
+  Var v -> substEmbed atom
+  Lam (Abs b (arr, body)) ->
+    buildDepEffLam b
+      (\x -> extendR (b@>x) (substEmbed arr))
+      (\x -> extendR (b@>x) (traverseBlock' def body))
+  Pi _ -> substEmbed atom
+  Con con -> Con <$> traverse fAtom con
+  TC  tc  -> TC  <$> traverse fAtom tc
+  Eff _   -> substEmbed atom
 
 -- === partial evaluation using definitions in scope ===
 
@@ -387,8 +433,8 @@ reduceBlock scope (Block decls result) = do
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
   Var v -> case scope ! v of
-    Nothing -> x
-    Just expr -> fromMaybe x $ reduceExpr scope expr
+    Left _ -> x
+    Right expr -> fromMaybe x $ reduceExpr scope expr
   _ -> x
 
 reduceExpr :: Scope -> Expr -> Maybe Atom

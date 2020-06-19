@@ -1,0 +1,24 @@
+
+
+def Eq (a:Type) : Type = %EqClassDictTy a
+def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
+def eq (d:Eq a)?=> : (a -> a -> Bool) = %fromEqClassDict d
+
+intEq  : Eq Int  = EqDict \x y. %ieq x y
+realEq : Eq Real = EqDict \x y. %feq x y
+
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
+  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+:p 1 `eq` 2
+> False
+
+:p 1.1 `eq` 1.1
+> True
+
+:p (1, 2.0) `eq` (1, 2.0)
+> True
+
+:p (1, 2) `eq` (1, 2)
+> Type error:Multiple candidate class dictionaries for: %EqClassDictTy Int
+> [ tmp3,  intEq]

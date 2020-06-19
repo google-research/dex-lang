@@ -91,6 +91,7 @@ type PiType  = Abs (Arrow, Type)
 type Arrow = ArrowP EffectRow
 data ArrowP eff = PlainArrow eff
                 | ImplicitArrow
+                | ClassArrow
                 | TabArrow
                 | LinArrow
                   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -178,6 +179,7 @@ data PrimTC e =
       | UnitType
       | SumType e e
       | RefType e e
+      | ClassDictType ClassName e
       | TypeKind
       | EffectRowKind
         -- NOTE: This is just a hack so that we can construct an Atom from an Imp or Jax expression.
@@ -189,7 +191,7 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | ArrayLit e Array -- Used to store results of module evaluation
+      | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
       | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
       | PairCon e e
@@ -198,6 +200,8 @@ data PrimCon e =
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
       | AFor e e
       | AGet e
+      | ClassDict ClassName e e  -- Type parameter, payload
+      | ClassDictHole e          -- Only used during type inference
       | Todo e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -221,6 +225,7 @@ data PrimOp e =
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
+      | FromClassDict e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -530,13 +535,12 @@ nameAsEnv v = (v:>())@>()
 
 type Vars = TypeEnv
 type SubstEnv = Env Atom
-type Scope    = Env (Maybe Expr)
+type Scope    = Env (Either Type Expr)
 type ScopedSubstEnv = (SubstEnv, Scope)
 
 scopelessSubst :: HasVars a => SubstEnv -> a -> a
 scopelessSubst env x = subst (env, scope) x
-  where scope = fmap (const Nothing) $
-          foldMap freeVars env <> (freeVars x `envDiff` env)
+  where scope = fmap Left $ foldMap freeVars env <> (freeVars x `envDiff` env)
 
 class HasVars a where
   freeVars :: a -> Vars
@@ -682,7 +686,7 @@ substDecl env (Let (v:>ty) bound) = (Let b (subst env bound), env')
 refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
 refreshBinder (_, scope) b = (b', env')
   where b' = rename b scope
-        env' = (b@>Var b', b'@>Nothing)
+        env' = (b@>Var b', b'@>Left (varAnn b'))
 
 instance HasVars TopEnv where
   freeVars (TopEnv e1) = freeVars e1
@@ -847,6 +851,8 @@ builtinNames = M.fromList
   , ("fadd", binOp FAdd), ("fsub", binOp FSub)
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  , ("ieq" , binOp (ICmp Equal)), ("feq", binOp (FCmp Equal))
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
   , ("eq", cmpOp Equal)
@@ -888,6 +894,9 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
+  , ("EqClassDictTy", TCExpr  $ ClassDictType Eq ())
+  , ("EqClassDict"  , ConExpr $ ClassDict Eq () ())
+  , ("fromEqClassDict"  , OpExpr $ FromClassDict ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
