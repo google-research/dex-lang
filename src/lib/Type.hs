@@ -48,7 +48,7 @@ class Pretty a => Checkable a where
 
 instance Checkable Module where
   checkValid m@(Module _ imports exports block) =
-    asCompilerErr $ do
+    addContext ctxStr $ asCompilerErr $ do
       let env = (foldMap varAsEnv imports, Pure)
       outTys <- fromConsListTy =<< runTypeCheck (CheckWith env) block
       assertEq (map varAnn exports) outTys "export types"
@@ -97,7 +97,7 @@ instance HasType Expr where
 isPure :: Expr -> Bool
 isPure expr = case expr of
   Atom _ -> True
-  App f x -> case getType f of
+  App f _ -> case getType f of
     Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
     _ -> False
   _ -> False
@@ -112,11 +112,12 @@ instance HasType Block where
         withTypeEnv (env <> env') $ typeCheck result
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
-checkDecl env decl@(Let b@(_:>annTy) rhs) =
+checkDecl env decl@(Let b rhs) =
   withTypeEnv env $ addContext ctxStr $ do
     -- TODO: effects
     checkBinder b
     ty <- typeCheck rhs
+    checkEq (varType b) ty
     return $ b @> ty
   where ctxStr = "\nchecking decl: \n" ++ pprint decl
 
@@ -137,7 +138,6 @@ withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>ty) m
 
 checkBinder :: Binder -> TypeM ()
 checkBinder b@(_:>ty) = do
-  env <- ask
   checkWithEnv $ \(env, _) -> checkNoShadow env b
   ty |: TyKind
 
@@ -214,6 +214,7 @@ typeCheckTyCon tc = case tc of
   RefType r a      -> r|:TyKind >> a|:TyKind
   TypeKind         -> return ()
   EffectRowKind    -> return ()
+  JArrayType _ _   -> undefined
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -267,7 +268,8 @@ typeCheckOp op = case op of
   IndexAsInt i -> typeCheck i $> IntTy
   IdxSetSize i -> typeCheck i $> IntTy
   FFICall _ ansTy args -> do
-    argTys <- mapM typeCheck args
+    -- We have no signatures for FFI functions so we just assume that the types are ok
+    mapM_ typeCheck args
     return $ BaseTy ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
@@ -324,13 +326,6 @@ checkAction effName f = do
   checkEq region' region
   return (resultTy, referentTy)
 
-pureNonDepAbsBlock :: Abs Block -> TypeM (Type, Type)
-pureNonDepAbsBlock (Abs b body) = withBinder b $ withAllowedEff Pure $ do
-  resultTy <- typeCheck body
-  case makeAbs b resultTy of
-    Abs (NoName:>a) b -> return (a, b)
-    _ -> throw CompilerErr "Unexpectedly dependent function"
-
 litType :: LitVal -> BaseType
 litType v = case v of
   IntLit  _ -> IntType
@@ -368,31 +363,31 @@ indexSetConcreteSize ty = case ty of
 
 -- === Built-in typeclasses (CURRENTLY NOT USED) ===
 
-checkClassConstraint :: ClassName -> Type -> TypeM ()
-checkClassConstraint c ty = do
-  env <- error "currently broken" -- lift ask
-  case c of
-    VSpace -> checkVSpace env ty
-    IdxSet -> checkIdxSet env ty
-    Data   -> checkData   env ty
-    Eq     -> checkInEq   env ty
-    Ord    -> checkOrd    env ty
-
-checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
-checkVSpace env ty = case ty of
-  Var v     -> checkVarClass env VSpace v
-  RealTy    -> return ()
-  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
-
-checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
-checkIdxSet env ty = case ty of
-  Var v                 -> checkVarClass env IdxSet v
-  SumTy l r             -> recur l >> recur r
-  BoolTy                -> return ()
-  TC (IntRange _ _)     -> return ()
-  TC (IndexRange _ _ _) -> return ()
-  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
-  where recur = checkIdxSet env
+--checkClassConstraint :: ClassName -> Type -> TypeM ()
+--checkClassConstraint c ty = do
+--  env <- error "currently broken" -- lift ask
+--  case c of
+--    VSpace -> checkVSpace env ty
+--    IdxSet -> checkIdxSet env ty
+--    Data   -> checkData   env ty
+--    Eq     -> checkInEq   env ty
+--    Ord    -> checkOrd    env ty
+--
+--checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
+--checkVSpace env ty = case ty of
+--  Var v     -> checkVarClass env VSpace v
+--  RealTy    -> return ()
+--  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
+--
+--checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
+--checkIdxSet env ty = case ty of
+--  Var v                 -> checkVarClass env IdxSet v
+--  SumTy l r             -> recur l >> recur r
+--  BoolTy                -> return ()
+--  TC (IntRange _ _)     -> return ()
+--  TC (IndexRange _ _ _) -> return ()
+--  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
+--  where recur = checkIdxSet env
 
 checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
 checkDataLike msg env ty = case ty of
@@ -414,19 +409,19 @@ checkDataLike msg env ty = case ty of
 checkData :: MonadError Err m => ClassEnv -> Type -> m ()
 checkData = checkDataLike " is not serializable"
 
-checkInEq :: MonadError Err m => ClassEnv -> Type -> m ()
-checkInEq = checkDataLike " is not equatable"
+--checkInEq :: MonadError Err m => ClassEnv -> Type -> m ()
+--checkInEq = checkDataLike " is not equatable"
+--
+--checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
+--checkOrd env ty = case ty of
+--  Var v                 -> checkVarClass env Ord v
+--  IntTy                 -> return ()
+--  RealTy                -> return ()
+--  TC (IntRange _ _ )    -> return ()
+--  TC (IndexRange _ _ _) -> return ()
+--  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
 
-checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
-checkOrd env ty = case ty of
-  Var v                 -> checkVarClass env Ord v
-  IntTy                 -> return ()
-  RealTy                -> return ()
-  TC (IntRange _ _ )    -> return ()
-  TC (IndexRange _ _ _) -> return ()
-  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
-
--- TODO: Make this work even if the type has type variables!
+--TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool
 isData ty = case checkData mempty ty of Left _ -> False
                                         Right _ -> True

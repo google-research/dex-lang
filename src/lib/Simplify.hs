@@ -81,7 +81,6 @@ simplifyAtom atom = case atom of
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbed tc
   Eff eff -> Eff <$> substEmbed eff
-  _ -> error $ "not implemented: " ++ pprint atom
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
 -- Unlike `substEmbed`, this simplifies under the binder too.
@@ -103,6 +102,7 @@ simplifyLam' (Lam (Abs b (arr, body))) = do
           mapM_ emitDecl decls
           return $ separateDataComponent scope body'
       return $ (lam, Just recon)
+simplifyLam' atom = error $ "Not a lambda: " ++ pprint atom
 
 simplifyBinaryLam :: Atom -> SimplifyM Atom
 simplifyBinaryLam atom = substEmbed atom >>= (dropSub . simplifyBinaryLam')
@@ -116,6 +116,7 @@ simplifyBinaryLam' (BinaryFunVal b1 b2 eff body) = do
       buildDepEffLam b2'
         (\x2 -> extendR (b2'@>x2) $ substEmbed (PlainArrow eff))
         (\x2 -> extendR (b2'@>x2) $ simplifyBlock body)
+simplifyBinaryLam' atom = error $ "Not a binary lambda: " ++ pprint atom
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)

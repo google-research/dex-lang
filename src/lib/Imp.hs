@@ -17,7 +17,6 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer
-import Data.Foldable
 import Data.Text.Prettyprint.Doc
 
 import Array
@@ -161,6 +160,7 @@ toImpHof env (maybeDest, hof) = do
       copyAtom sDest s'
       void $ toImpBlock (env <> ref @> refVal region sDest) (Just aDest, body)
       return $ PairVal aDest sDest
+    _ -> error $ "Invalid higher order function primitive: " ++ pprint hof
   where
     refVal :: Var -> Atom -> Atom
     refVal region ref = Con (RefCon (Var region) ref)
@@ -324,11 +324,6 @@ intToIndex ty@(TC con) i = case con of
     li <- intToIndex l i
     ri <- intToIndex r =<< impSub i ls
     return $ Con $ SumCon (toScalarAtom BoolTy isLeft) li ri
-  PairType a b -> do
-    bSize <- indexSetSize b
-    iA <- intToIndex a =<< impDiv i bSize
-    iB <- intToIndex b =<< impRem i bSize
-    return $ PairVal iA iB
   _ -> error $ "Unexpected type " ++ pprint con
   where
     iAsIdx = return $ Con $ AsIdx ty $ toScalarAtom IntTy i
@@ -434,10 +429,6 @@ addToAtomLeaf ~(Con (AGet dest)) src = case src of
   where dest' = fromArrayAtom dest
 
 -- === Imp embedding ===
-
-impProd :: [IExpr] -> ImpM IExpr
-impProd []     = return $ IOne
-impProd (x:xs) = foldrM impMul x xs
 
 emitUnOp :: ScalarUnOp -> IExpr -> ImpM IExpr
 emitUnOp op x = emitInstr $ IPrimOp $ ScalarUnOp op x
