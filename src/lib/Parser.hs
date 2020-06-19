@@ -437,7 +437,7 @@ ops =
   , [symOp "@"]
   , [symOp "^"]
   , [symOp "*", symOp "/" ]
-  , [symOp "+", prefixNegOp, negOp]
+  , [symOp "+", prefixNegOp, symOp "-"]
   , [InfixR $ sym "=>" $> mkArrow TabArrow]
   , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
@@ -472,15 +472,17 @@ symOpP s = opWithSrc $ do
   return $ binApp f
   where f = rawName SourceName $ "(" <> s <> ")"
 
--- Requires special handling because `-1` is a negative literal
-negOp :: Operator Parser UExpr
-negOp = InfixL $ opWithSrc $ neg $> binApp (rawName SourceName "(-)")
-
 prefixNegOp :: Operator Parser UExpr
-prefixNegOp = Prefix $ do
-  ((), pos) <- withPos neg
+prefixNegOp = Prefix $ label "negation" $ do
+  ((), pos) <- withPos $ sym "-"
   let f = WithSrc pos $ UVar $ rawName SourceName "neg" :> ()
-  return $ mkApp f
+  return $ \case
+    -- Special case: negate literals directly
+    WithSrc litpos (IntLitExpr i)
+      -> WithSrc (joinPos pos litpos) (IntLitExpr (-i))
+    WithSrc litpos (RealLitExpr i)
+      -> WithSrc (joinPos pos litpos) (RealLitExpr (-i))
+    x -> mkApp f x
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
@@ -577,16 +579,12 @@ primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some letterChar
 
 intLit :: Lexer Int
-intLit = lexeme $ try $ signedNum L.decimal <* notFollowedBy (char '.')
+intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
 
 doubleLit :: Lexer Double
 doubleLit = lexeme $
-      try (signedNum L.float)
-  <|> try (signedNum $ fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
-
-
-signedNum :: Num a => Lexer a -> Lexer a
-signedNum p = L.signed (return ()) p
+      try L.float
+  <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
 
 -- string must only contain characters from the list `symChars`
 sym :: String -> Lexer ()
@@ -613,9 +611,6 @@ lBrace    = charLexeme '{'
 rBrace    = charLexeme '}'
 semicolon = charLexeme ';'
 underscore = charLexeme '_'
-
-neg :: Lexer ()
-neg = lexeme $ try $ char '-' >> notFollowedBy (digitChar <|> symChar)
 
 charLexeme :: Char -> Parser ()
 charLexeme c = void $ lexeme $ char c

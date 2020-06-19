@@ -37,6 +37,7 @@ module Syntax (
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType,
+    pattern IntLitExpr, pattern RealLitExpr,
     pattern IntVal, pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
@@ -742,6 +743,12 @@ a --@ b = Pi (Abs (NoName:>a) (LinArrow, b))
 
 (==>) :: Type -> Type -> Type
 a ==> b = Pi (Abs (NoName:>a) (TabArrow, b))
+
+pattern IntLitExpr :: Int -> UExpr'
+pattern IntLitExpr x = UPrimExpr (ConExpr (Lit (IntLit x)))
+
+pattern RealLitExpr :: Double -> UExpr'
+pattern RealLitExpr x = UPrimExpr (ConExpr (Lit (RealLit x)))
 
 pattern IntVal :: Int -> Atom
 pattern IntVal x = Con (Lit (IntLit x))
