@@ -10,10 +10,8 @@ module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
                  valToHeatmap, valToScatter, reStructureArrays, flattenType,
                  typeToArrayType) where
 
-import Prelude hiding (unzip, pi)
+import Prelude hiding (pi, abs)
 import Control.Monad
-import Control.Monad.Writer
-import Control.Monad.State
 import Control.Exception (throwIO)
 import Foreign.Ptr
 import qualified Data.ByteString.Char8 as B
@@ -23,13 +21,16 @@ import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
 import Data.Text.Prettyprint.Doc  hiding (brackets)
-import Data.Maybe
+import Data.List (transpose)
 
+import Env
 import Array
+import Interpreter
 import Type hiding (indexSetConcreteSize)
 import Syntax
 import PPrint
 import Parser
+import Interpreter (indices, indexSetSize)
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -60,6 +61,10 @@ loadDataFile fname = do
   let ptrs = init $ scanl plusPtr firstPtr sizes
   -- TODO: typecheck result
   valFromPtrs ty ptrs
+  where
+    liftExceptIO :: Except a -> IO a
+    liftExceptIO (Left e ) = throwIO e
+    liftExceptIO (Right x) = return x
 
 memmap :: FilePath -> IO (Ptr ())
 memmap fname = do
@@ -139,24 +144,7 @@ checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
    "buffer too small: " <> show size <> " < " <> show minSize
 
 reStructureArrays :: Type -> [Val] -> Val
-reStructureArrays ty xs = evalState (reStructureArrays' ty) xs
-
-reStructureArrays' :: Type -> State [Val] Val
-reStructureArrays' (TabTy n a) = liftM (Con . AFor n) $ reStructureArrays' a
-reStructureArrays' ty@(TC con) = case con of
-  BaseType _ -> do
-    ~(x:xs) <- get
-    put xs
-    return $ Con $ AGet x
-  IntRange _ _ -> do
-    liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
-  PairType a b -> liftM2 PairVal (reStructureArrays' a) (reStructureArrays' b)
-  UnitType -> return UnitVal
-  IndexRange _ _ _ -> do
-    liftM (Con . AsIdx ty) $ reStructureArrays' $ TC $ BaseType IntType
-  -- TODO: How to restructure into a sum type?
-  _ -> error $ "Not implemented: " ++ pprint ty
-reStructureArrays' ty = error $ "Not implemented: " ++ pprint ty
+reStructureArrays _ _ = undefined
 
 valFromPtrs :: Type -> [Ptr ()] -> IO Val
 valFromPtrs ty ptrs = do
@@ -166,102 +154,51 @@ valFromPtrs ty ptrs = do
   return $ reStructureArrays ty arrays
   where litTys = flattenType ty
 
+-- TODO: Optimize this!
+-- Turns a fully evaluated table value into a bunch of arrays
+materializeScalarTables :: Atom -> [Array]
+materializeScalarTables atom = case atom of
+  Con (ArrayLit _ arr) -> [arr]
+  Con (Lit l)          -> [arrayFromScalar l]
+  Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
+  Con (UnitCon)        -> []
+  Lam a@(Abs (_:>idxTy) (TabArrow, _)) -> fmap arrayConcat $ transpose $ fmap evalBody $ indices idxTy
+    where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
+  _ -> error $ "Not a scalar table: " ++ pprint atom
+
 valToScatter :: Val -> Output
-valToScatter ~(Con (AFor _ body)) = ScatterOut xs ys
-  where
-    ~(PairVal (Con (AGet (Con (ArrayLit _ (Array (DoubleVec xs))))))
-              (Con (AGet (Con (ArrayLit _ (Array (DoubleVec ys))))))) = body
+valToScatter val = case getType val of
+  TabTy _ (PairTy RealTy RealTy) -> ScatterOut xs ys
+  _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
+  where [Array (DoubleVec xs), Array (DoubleVec ys)] = materializeScalarTables val
 
 valToHeatmap :: Val -> Output
-valToHeatmap ~(Con (AFor (FixedIntRange hl hh) body)) = HeatmapOut h w xs
-  where ~(Con (AFor (FixedIntRange wl wh) (Con (AGet arr)))) = body
-        ~(Con (ArrayLit _ (Array (DoubleVec xs)))) = arr
-        h = hh - hl
-        w = wh - wl
+valToHeatmap val = case val of
+  TabValA hv (TabVal wv _) ->
+    HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) xs
+  _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
+  where [(Array (DoubleVec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String
-pprintVal val = asStr $ fst $ prettyVal val
--- TODO: Assert all arrays are empty?
+pprintVal val = asStr $ prettyVal val
 
--- TODO: Implement as a traversal?
-prettyVal :: Val -> (Doc ann, Val)
-prettyVal (Con con) = case con of
-  PairCon x y -> (pretty (d1, d2), Con $ PairCon r1 r2)
-    where (d1, r1) = appFst asStr $ prettyVal x
-          (d2, r2) = appFst asStr $ prettyVal y
-  AFor n body -> (pretty elems <> idxSetStr, Con $ AFor n $ last bodies)
-    where n' = indexSetSize n
-          -- TODO(ragged): Substitute i in the types that appear in a!
-          (elems, bodies) = unzip $ tail $ scanl (\(_, b) _ -> appFst asStr $ prettyVal b)
-                                                 (undefined, body)
-                                                 [0..n'-1]
-          idxSetStr = case n of FixedIntRange 0 _ -> mempty
-                                _                 -> "@" <> pretty n
-  AGet (Con (ArrayLit t arr)) ->
-    -- Technically the type of the array should no longer be t, as it has
-    -- been shifted, but replacing it with undefined seems to blow up for some reason...
-    (pretty $ arrayHead arr, Con $ AGet $ Con $ ArrayLit t $ arrayTail arr)
-  AsIdx n i -> (doc <> "@" <> pretty n, Con $ AsIdx n i')
-    where (doc, i') = prettyVal i
-  Lit x -> (pretty x, Con $ Lit x)
-  _ -> (pretty con, Con $ con)
-  where
-    appFst :: (a -> b) -> (a, c) -> (b, c)
-    appFst f (x, y) = (f x, y)
-prettyVal atom = error $ "Unexpected value: " ++ pprint atom
-
-unzip :: Functor f => f (a, b) -> (f a, f b)
-unzip f = (fmap fst f, fmap snd f)
-
-traverseVal :: Monad m => (Con -> m (Maybe Con)) -> Val -> m Val
-traverseVal f val = case val of
-  Con con -> do
-    ans <- f con
-    liftM Con $ case ans of
-      Just con' -> return con'
-      Nothing   -> mapM (traverseVal f) con
-  atom -> return atom
+prettyVal :: Val -> Doc ann
+prettyVal val = case val of
+  Lam abs@(Abs v (TabArrow, _)) -> pretty elems <> idxSetStr
+    where idxSet = varType v
+          elems = flip fmap (indices idxSet) $ \idx ->
+            asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
+          idxSetStr = case idxSet of FixedIntRange 0 _ -> mempty
+                                     _                 -> "@" <> pretty idxSet
+  Con con -> case con of
+    PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
+    AsIdx n i   -> pretty i <> "@" <> pretty n
+    Lit x       -> pretty x
+    _           -> pretty con
+  _ -> error $ "Unexpected value: " ++ pprint val
 
 getValArrays :: Val -> [Array]
-getValArrays val = execWriter $ flip traverseVal val $ \con -> case con of
-  ArrayLit _ arr -> tell [arr]               >> return (Just con)
-  Lit x          -> tell [arrayFromScalar x] >> return (Just con)
-  _ -> return Nothing
-
-liftExceptIO :: Except a -> IO a
-liftExceptIO (Left e ) = throwIO e
-liftExceptIO (Right x) = return x
-
-indexSetSize :: Type -> Int
-indexSetSize t = fromMaybe fail' $ indexSetConcreteSize t
-  where
-    fail' = (error $ "Can't determine dimension size: " ++ pprint t)
-    indexSetConcreteSize :: Type -> Maybe Int
-    indexSetConcreteSize ty = case ty of
-      TC (IntRange low high) -> do
-        l <- loadBound low
-        h <- loadBound high
-        Just $ h - l
-      TC (IndexRange n low high) -> do
-        low' <- case low of
-          InclusiveLim x -> loadBound x
-          ExclusiveLim x -> (+1) <$> loadBound x
-          Unlimited      -> Just 0
-        high' <- case high of
-          InclusiveLim x -> (+1) <$> loadBound x
-          ExclusiveLim x -> loadBound x
-          Unlimited      -> indexSetConcreteSize n
-        Just $ high' - low'
-      BoolTy  -> Just 2
-      SumTy l r -> (+) <$> indexSetConcreteSize l <*> indexSetConcreteSize r
-      _ -> Nothing
-      where
-        loadBound :: Atom -> Maybe Int
-        loadBound (IntVal n) = Just n
-        loadBound (Con (AGet (Con (ArrayLit (BaseTy _) arr)))) = do
-          (IntLit n) <- scalarFromArray arr
-          Just n
-        loadBound _ = Nothing
+getValArrays = undefined
 
 flattenType :: Type -> [Type]
 flattenType (TabTy n a) = TabTy n <$> flattenType a
@@ -275,7 +212,8 @@ flattenType ty = error $ "Unexpected type: " ++ show ty
 
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
-  TabTy n body -> (indexSetSize n * s, b)
+  TabTy (NoName:>n) body -> (indexSetSize n * s, b)
     where (s, b) = typeToArrayType body
+  TabTy _ _ -> error "Dependent tables not supported yet"
   BaseTy b -> (1, b)
   _ -> error $ "Not a scalar table type: " ++ pprint t

@@ -40,9 +40,6 @@ statementFlops (_, instr) = case instr of
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]
   Load _      -> return ()
   Store _ _   -> return ()
-  Copy  _ _ _ -> do
-    n <- ask
-    tell $ Profile $ M.singleton "copy" [n]
   Alloc _ _   -> return ()
   Free _      -> return ()
   IOffset _ _ -> return ()

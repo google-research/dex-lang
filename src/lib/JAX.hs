@@ -181,17 +181,17 @@ iotaVarAsIdx = undefined
 fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
   TmpCon (AsIdx _ x) -> fromScalarAtom x
-  TmpCon (AGet (TmpLeaf x)) -> x
+  --TmpCon (AGet (TmpLeaf x)) -> x
   _ -> error $ "Not a scalar atom: " ++ show atom
 
 toScalarAtom :: IdxAtom -> TmpAtom
-toScalarAtom x = TmpCon $ AGet $ TmpLeaf x
+toScalarAtom x = undefined --TmpCon $ AGet $ TmpLeaf x
 
 traverseArrayLeaves :: HasCallStack => Monad m => TmpAtom -> (IdxAtom -> m IdxAtom) -> m TmpAtom
 traverseArrayLeaves atom f = case atom of
   TmpCon con         -> liftM TmpCon $ case con of
-    AFor n body      -> liftM (AFor n) $ traverseArrayLeaves body f
-    AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
+    --AFor n body      -> liftM (AFor n) $ traverseArrayLeaves body f
+    --AGet (TmpLeaf x) -> liftM (AGet . TmpLeaf) $ f x
     _ -> error $ "Not implemented: " ++ show atom
   TmpLeaf x -> liftM TmpLeaf $ f x
   TmpRefName _ -> error "Unexpected reference name"

@@ -153,7 +153,7 @@ linearizedDiv x y tx ty = do
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
-  AFor _ _ -> LinA $ return (withZeroTangent x)  where x = Con con
+  --AFor _ _ -> LinA $ return (withZeroTangent x)  where x = Con con
   PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
   _ -> error $ "not implemented: " ++ pprint con
 

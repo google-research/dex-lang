@@ -74,7 +74,7 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbed atom
   Pi  _ -> substEmbed atom
-  Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
+  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
@@ -148,7 +148,7 @@ simplifyOp op = case op of
   Cmp cmpOp a b -> resolveOrd cmpOp (getType a) a b
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
-  SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
+  SumGet (SumVal _ l r) left -> return $ if left then l else r
   SumTag (SumVal s _ _) -> return $ s
   Select p x y -> selectAt (getType x) p x y
   _ -> emitOp op
@@ -204,14 +204,14 @@ resolveEq t x y = case t of
     andE p1 p2
   -- instance Eq a => Eq n=>a
   -- TODO: writer with other monoids to avoid this
-  TabTy ixty elty -> do
+  TabTy v elty -> do
     writerAns <- emitRunWriter "ref" RealTy $ \ref -> do
-      buildFor Fwd ("i":>ixty) $ \i -> do
+      buildFor Fwd ("i":>varType v) $ \i -> do
         (x', y') <- (,) <$> app x i <*> app y i
         eqReal <- boolToReal =<< resolveEq elty x' y'
         emitOp $ PrimEffect ref $ MTell eqReal
     total <- getSnd writerAns
-    idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
+    idxSetSize <- intToReal =<< (emitOp $ IdxSetSize $ varType v)
     emitOp $ ScalarBinOp (FCmp Equal) total idxSetSize
   -- instance (Eq a, Eq b) => Eq (Either a b)
   SumTy lty rty -> do
