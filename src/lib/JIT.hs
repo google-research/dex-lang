@@ -335,7 +335,7 @@ mallocFun :: ExternFunSpec
 mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex"      charPtrTy [charPtrTy]
+freeFun = ExternFunSpec "free_dex" L.VoidType [charPtrTy]
 
 memcpyFun :: ExternFunSpec
 memcpyFun  = ExternFunSpec "memcpy_dex" L.VoidType [charPtrTy, charPtrTy, longTy]

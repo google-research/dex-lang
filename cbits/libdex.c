@@ -14,7 +14,7 @@ char* malloc_dex(long nbytes) {
   return malloc(nbytes);
 }
 
-char* free_dex(char* ptr) {
+void free_dex(char* ptr) {
   free(ptr);
 }
 
