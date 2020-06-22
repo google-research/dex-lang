@@ -29,20 +29,32 @@ def (*) (x:Real) (y:Real) : Real = %fmul x y
 def (/) (x:Real) (y:Real) : Real = %fdiv x y
 def neg (x:Real)          : Real = %fneg x
 
--- TODO: typeclasses!
-def (==) (x:a) (y:a) : Bool = %eq        x y
+True  = %True
+False = %False
+def (&&) (x:Bool) (y:Bool) : Bool = %and x y
+def (||) (x:Bool) (y:Bool) : Bool = %or  x y
+def not  (x:Bool)          : Bool = %not x
+
+def Eq (a:Type) : Type = %EqClassDictTy a
+def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (%fromEqClassDict d) x y
+def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
+
+'Sum types
+
+def (|) (a:Type) (b:Type) : Type = %SumType a b
+def anyVal (a:Type) ?-> : a = %anyVal a
+def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
+def Left  (x:a) : (a|b) = sumCon True  x      anyVal
+def Right (x:b) : (a|b) = sumCon False anyVal x
+def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+
 def (<)  (x:a) (y:a) : Bool = %less      x y
 def (<=) (x:a) (y:a) : Bool = %lessEq    x y
 def (>)  (x:a) (y:a) : Bool = %greater   x y
 def (>=) (x:a) (y:a) : Bool = %greaterEq x y
 
 def select (p:Bool) (x:a) (y:a) : a = %select p x y
-
-True  = %True
-False = %False
-def (&&) (x:Bool) (y:Bool) : Bool = %and x y
-def (||) (x:Bool) (y:Bool) : Bool = %or  x y
-def not  (x:Bool)          : Bool = %not x
 
 def i2r (x:Int ) : Real = %inttoreal x
 def b2i (x:Bool) : Int  = %booltoint x
@@ -102,15 +114,6 @@ def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
 def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
 
 def iota (n:Type) : n=>Int = for i. ordinal i
-
-'Sum types
-
-def (|) (a:Type) (b:Type) : Type = %SumType a b
-def anyVal (a:Type) ?-> : a = %anyVal a
-def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
-def Left  (x:a) : (a|b) = sumCon True  x      anyVal
-def Right (x:b) : (a|b) = sumCon False anyVal x
-def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
 
 'Misc
 
@@ -239,3 +242,34 @@ def checkDerivBase (f:Real->Real) (x:Real) : Bool =
 
 def checkDeriv (f:Real->Real) (x:Real) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
+
+'Type classes
+
+@instance
+intEq  : Eq Int  = EqDict \x y. %ieq x y
+
+@instance
+realEq : Eq Real = EqDict \x y. %feq x y
+
+@instance
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
+  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+@instance
+def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
+  \x y. case x
+    Left  xVal -> case y
+      Left  yVal -> xVal == yVal
+      Right yVal -> False
+    Right xVal -> case y
+      Left  yVal -> False
+      Right yVal -> xVal == yVal
+
+-- TODO: accumulate using the True/&& monoid
+@instance
+def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
+  \xs ys.
+    numDifferent : Real =
+      snd $ withAccum \ref. for i.
+        ref += (i2r (b2i (xs.i /= ys.i)))
+    numDifferent == 0.0

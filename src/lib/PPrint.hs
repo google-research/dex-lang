@@ -106,6 +106,7 @@ instance Pretty e => Pretty (PrimTC e) where
   pretty con = case con of
     BaseType b     -> p b
     PairType a b   -> parens $ p a <+> "&" <+> p b
+    SumType  a b   -> parens $ p a <+> "|" <+> p b
     UnitType       -> "Unit"
     IntRange a b -> if s1 == "0...<" then parens ("Fin" <+> p s2) else ans
       where ans = p a <> "...<" <> p b

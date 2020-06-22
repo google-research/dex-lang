@@ -144,7 +144,6 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Cmp Equal a b -> resolveEq (getType a) a b
   Cmp cmpOp a b -> resolveOrd cmpOp (getType a) a b
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
@@ -192,52 +191,6 @@ simplifyHof hof = case hof of
       projApp f isLeft = do
         cComp <- simplRec $ Op $ SumGet c isLeft
         simplRec $ App f cComp
-
-resolveEq :: Type -> Atom -> Atom -> SimplifyM Atom
-resolveEq t x y = case t of
-  IntTy     -> emitOp $ ScalarBinOp (ICmp Equal) x y
-  RealTy    -> emitOp $ ScalarBinOp (FCmp Equal) x y
-  PairTy t1 t2 -> do
-    (x1, x2) <- fromPair x
-    (y1, y2) <- fromPair y
-    p1 <- resolveEq t1 x1 y1
-    p2 <- resolveEq t2 x2 y2
-    andE p1 p2
-  -- instance Eq a => Eq n=>a
-  -- TODO: writer with other monoids to avoid this
-  TabTy ixty elty -> do
-    writerAns <- emitRunWriter "ref" RealTy $ \ref -> do
-      buildFor Fwd ("i":>ixty) $ \i -> do
-        (x', y') <- (,) <$> app x i <*> app y i
-        eqReal <- boolToReal =<< resolveEq elty x' y'
-        emitOp $ PrimEffect ref $ MTell eqReal
-    total <- getSnd writerAns
-    idxSetSize <- intToReal =<< emitOp (IdxSetSize ixty)
-    emitOp $ ScalarBinOp (FCmp Equal) total idxSetSize
-  -- instance (Eq a, Eq b) => Eq (Either a b)
-  SumTy lty rty -> do
-    xt <- emitOp $ SumTag x
-    yt <- emitOp $ SumTag y
-    tagsEq <- resolveEq BoolTy xt yt
-    lEq <- compareSide True
-    rEq <- compareSide False
-    sideEq <- select xt lEq rEq
-    andE tagsEq sideEq
-    where
-      compareSide isLeft = do
-        xe <- emitOp $ SumGet x isLeft
-        ye <- emitOp $ SumGet y isLeft
-        resolveEq (if isLeft then lty else rty) xe ye
-  -- instance Idx a => Eq a
-  BoolTy                -> idxEq
-  TC (IntRange _ _)     -> idxEq
-  TC (IndexRange _ _ _) -> idxEq
-  _ -> error $ pprint t ++ " doesn't implement Eq"
-  where
-    idxEq = do
-      xi <- emitOp $ IndexAsInt x
-      yi <- emitOp $ IndexAsInt y
-      emitOp $ ScalarBinOp (ICmp Equal) xi yi
 
 resolveOrd :: CmpOp -> Type -> Atom -> Atom -> SimplifyM Atom
 resolveOrd op t x y = case t of

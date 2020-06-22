@@ -318,11 +318,11 @@ litArr = [10, 5, 3]
 > (10.0, 100)
 
 -- TODO: prefix negation for literals!
--- :p (1 == 2, -1 == -1, 1 < 2, -1 < 2, 2 < -1)
--- > (False, (True, (True, (True, False))))
+:p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
+> (False, (True, (True, (True, False))))
 
--- :p (1. == 2., -1. == -1., 1. < 2., -1. < 2., 2. < -1.)
--- > (False, (True, (True, (True, False))))
+:p (1. == 2., (-1.) == (-1.), 1. < 2., (-1.) < 2., 2. < (-1.))
+> (False, (True, (True, (True, False))))
 
 :p for i:(Fin 7). select (i < (fromOrdinal _ 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]

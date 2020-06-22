@@ -434,7 +434,7 @@ ops =
   , [symOp "*", symOp "/" ]
   , [symOp "+", prefixNegOp, negOp]
   , [InfixR $ sym "=>" $> mkArrow TabArrow]
-  , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
+  , [symOp "/=", symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ mayBreak (sym "$") $> mkApp]
