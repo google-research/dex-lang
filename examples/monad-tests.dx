@@ -1,21 +1,21 @@
 
 :p
-   def m (h:Type)? (ref:Ref h Int) : {State h} Int = get ref
+   def m (h:Type) ?-> (ref:Ref h Int) : {State h} Int = get ref
    withState 2 m
 > (2, 2)
 
 :p
-   def m (h:Type)? (ref:Ref h Int) : {State h} Unit = ref := 3
+   def m (h:Type) ?-> (ref:Ref h Int) : {State h} Unit = ref := 3
    withState 0 m
 > ((), 3)
 
 :p
-   def m (h:Type)? (ref:Ref h Int) : {Read h} Int = ask ref
+   def m (h:Type) ?-> (ref:Ref h Int) : {Read h} Int = ask ref
    withReader 5 m
 > 5
 
 :p
-  def stateAction (h:Type)? (ref:Ref h Real) : {State h} Unit =
+  def stateAction (h:Type) ?-> (ref:Ref h Real) : {State h} Unit =
      x = get ref
      ref := (x + 2.0)
      z = get ref
@@ -26,7 +26,7 @@
 
 :p
   def rwsAction
-        (rh:Type)? (wh:Type)? (sh:Type)?
+        (rh:Type) ?-> (wh:Type) ?-> (sh:Type) ?->
         (r:Ref rh Int) (w:Ref wh Real) (s:Ref sh Bool)
         : {Read rh, Accum wh, State sh} Int =
     x = get s
@@ -43,7 +43,7 @@
 > ((4, 6.0), False)
 
 :p
-   def m (h:Type)? (s:Ref h (Fin 3=>Int)) : {State h} Unit =
+   def m (h:Type) ?-> (s:Ref h (Fin 3=>Int)) : {State h} Unit =
      s!(fromOrdinal _ 0) := 10
      s!(fromOrdinal _ 2) := 20
      x = get (s!(fromOrdinal _ 0))
@@ -55,7 +55,7 @@
 > 2
 
 :p
-  def m (wh:Type)? (sh:Type)?
+  def m (wh:Type) ?-> (sh:Type) ?->
         (w:Ref wh Real) (s:Ref sh Real)
         : {Accum wh, State sh} Unit =
     x = get s
@@ -72,7 +72,7 @@ def myAction  (w:Ref hw Real) (r:Ref hr Real) : {Read hr, Accum hw} Unit =
 > ((), 3.5)
 
 :p
-  def m (h1:Type)? (h2:Type)?
+  def m (h1:Type) ?-> (h2:Type) ?->
         (w1:Ref h1 Real) (w2:Ref h2 Real)
         : {Accum h1, Accum h2} Unit =
     w1 += 1.0
@@ -81,7 +81,7 @@ def myAction  (w:Ref hw Real) (r:Ref hr Real) : {Read hr, Accum hw} Unit =
   withAccum \w1. withAccum \w2. m w1 w2
 > (((), 3.0), 2.0)
 
-def foom (h:Type)? (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
+def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
   s!(fromOrdinal _ 0) := 1
   s!(fromOrdinal _ 2) := 2
 

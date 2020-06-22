@@ -245,9 +245,7 @@ funDefLet = label "function definition" $ mayBreak $ do
     arg = label "def arg" $ do
       (p, ty) <-(            ((,) <$> uVarPat <*> annot containedExpr)
                   <|> parens ((,) <$> uPat    <*> annot uType))
-      arr <-      arrow (return ())
-              <|> (sym "?" >> return ImplicitArrow)
-              <|> return (PlainArrow ())
+      arr <- arrow (return ()) <|> return (PlainArrow ())
       return (p, ty, arr)
 
 patName :: UPat -> Name
@@ -282,10 +280,8 @@ uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
   bs <- some uBinder
-  bindarrow <-      (argTerm >> return (PlainArrow ()))
-                <|> (argTermImplicit >> return ImplicitArrow)
-  body <- blockOrExpr
-  return $ buildLam (map (,bindarrow) bs) body
+  body <- argTerm >> blockOrExpr
+  return $ buildLam (map (,PlainArrow ()) bs) body
 
 buildLam :: [(UBinder, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
@@ -681,9 +677,6 @@ symbol s = void $ L.symbol sc s
 
 argTerm :: Parser ()
 argTerm = mayNotBreak $ sym "."
-
-argTermImplicit :: Parser ()
-argTermImplicit = mayNotBreak $ sym "?"
 
 bracketed :: Parser () -> Parser () -> Parser a -> Parser a
 bracketed left right p = between left right $ mayBreak p
