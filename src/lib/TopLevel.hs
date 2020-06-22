@@ -22,12 +22,12 @@ import Array
 import Syntax
 import Cat
 import Env
+import Embed
 import Type
 import Inference
 import Simplify
 import Serialize
 import Imp
-import Flops
 import Interpreter
 import JIT
 import Logging
@@ -72,7 +72,7 @@ runTopPassM opts m = runLogger (logFile opts) $ \logger ->
   runExceptT $ catchIOExcept $ runReaderT m $ opts {logService = logger}
 
 evalSourceBlockM :: TopEnv -> SourceBlock -> TopPassM TopEnv
-evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
+evalSourceBlockM env block = case sbContents block of
   RunModule m -> evalUModule env m
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
@@ -94,7 +94,7 @@ evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
     ShowPasses -> void $ evalUModule env m
     ShowPass _ -> void $ evalUModule env m
     TimeIt     -> void $ evalUModule env m
-  GetNameType v -> case envLookup substEnv (v:>()) of
+  GetNameType v -> case envLookup env (v:>()) of
     Just x -> logTop (TextOut $ pprint (getType x)) >> return mempty
     _      -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
@@ -103,14 +103,13 @@ evalSourceBlockM env@(TopEnv substEnv) block = case sbContents block of
   LoadData pat DexObject fname -> do
     source <- liftIO $ readFile fname
     let val = ignoreExcept $ parseData source
-    let (WithSrc _ (PatBind b), _) = pat
-    evalUModule env $ UModule [] [varName b] [ULet pat val]
-  LoadData pat DexBinaryObject fname -> do
-    val <- liftIO $ loadDataFile fname
-    -- TODO: handle patterns and type annotations in binder
-    let (WithSrc _ (PatBind b), _) = pat
-    let outEnv = b @> val
-    return $ TopEnv outEnv
+    evalUModule env $ UModule [ULet PlainLet pat val]
+  -- LoadData pat DexBinaryObject fname -> do
+  --   val <- liftIO $ loadDataFile fname
+  --   -- TODO: handle patterns and type annotations in binder
+  --   let (WithSrc _ (PatBind b), _) = pat
+  --   let outEnv = b @> val
+  --   return $ TopEnv mempty outEnv
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
@@ -132,10 +131,13 @@ evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do
   env' <- evalUModule env m
-  let (TopEnv simpEnv) = env <> env'
-  let val = subst (simpEnv, mempty) $ simpEnv ! (v:>())
+  let val = lookupBindings (env <> env') (v:>())
   backend <- asks evalEngine
   liftIO $ substArrayLiterals backend val
+
+lookupBindings :: Scope -> VarP ann -> Atom
+lookupBindings scope v = reduceAtom scope x
+  where (LetBound _ (Atom x)) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -146,22 +148,23 @@ evalUModule env untyped = do
   --       relevant part (transitive closure of free vars)
   -- logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
-  typed <- typePass env untyped
+  typed <- liftEitherIO $ inferModule env untyped
   checkPass TypePass typed
-  evalModule env typed
+  synthed <- liftEitherIO $ synthModule env typed
+  -- TODO: check that the type of module exports doesn't change from here on
+  checkPass SynthPass typed
+  evalModule env synthed
 
 evalModule :: TopEnv -> Module -> TopPassM TopEnv
-evalModule (TopEnv simpEnv) normalized = do
-  let (defunctionalized, simpEnv') = simplifyModule simpEnv normalized
+evalModule simpEnv normalized = do
+  logTop $ MiscLog $ "Simp env names:" ++ pprint (envNames simpEnv)
+  let defunctionalized = simplifyModule simpEnv normalized
   checkPass SimpPass defunctionalized
-  let (Module _ _ outVars dfExpr) = defunctionalized
-  case dfExpr of
-    Block [] (Atom UnitVal) -> do
-      return $ TopEnv simpEnv'
-    _ -> do
-      results <- (ignoreExcept . fromConsList) <$> evalBackend dfExpr
-      let simpEnv'' = subst (newEnv outVars results, mempty) simpEnv'
-      return $ TopEnv simpEnv''
+  evaluated <- evalSimplified defunctionalized evalBackend
+  checkPass ResultPass evaluated
+  -- TODO: check evaluatedDecls
+  let (Module evaluatedDecls) = evaluated
+  return $ foldMap declAsScope evaluatedDecls
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
@@ -181,7 +184,7 @@ evalBackend block = do
     LLVMEngine engine -> do
       let impFunction = toImpFunction (inVars, block)
       checkPass ImpPass impFunction
-      logPass Flops $ impFunctionFlops impFunction
+      -- logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
       let exprType = getType block
       lift $ modifyMVar engine $ \env -> do
@@ -208,7 +211,6 @@ evalBackend block = do
       let outVars' = map (fmap jTypeToType) outVars
       return $ reStructureArrays (getType block) $ map Var outVars'
     InterpEngine -> return $ evalBlock mempty block
-
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
 requestArrays _ [] = return []
@@ -237,10 +239,6 @@ substArrayLiterals' backend vs x = do
   arrays <- requestArrays backend vs
   let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]
   return $ subst (newEnv vs arrayAtoms, mempty) x
-
--- TODO: check here for upstream errors
-typePass :: TopEnv -> UModule -> TopPassM Module
-typePass env m = liftEitherIO $ inferModule env m
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
 checkPass name x = do

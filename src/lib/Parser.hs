@@ -77,7 +77,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (RunModule . declAsModule) (uTopDecl <* eol)
+  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eol)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -135,21 +135,14 @@ explicitCommand = do
       _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <*eol
   return $ case (e, cmd) of
-    (WithSrc _ (UVar (v:>())), GetType) -> GetNameType v
+    (WithSrc _ (UVar (v:>())), GetType) -> GetNameType (asGlobal v)
     _ -> Command cmd (exprAsModule e)
 
-declAsModule :: UDecl -> UModule
-declAsModule dec@(ULet (WithSrc _ pat,_) _) = UModule imports exports [dec]
- where
-   imports = envNames $ freeUVars dec
-   exports = envNames $ foldMap (@>()) pat
-
 exprAsModule :: UExpr -> (Name, UModule)
-exprAsModule e = (v, UModule imports [v] body)
+exprAsModule e = (asGlobal v, UModule [d])
   where
-    v = "_ans_"
-    body = [ULet (WithSrc (srcPos e) (namePat v), Nothing) e]
-    imports = envNames $ freeUVars e
+    v = mkName "_ans_"
+    d = ULet PlainLet (WithSrc (srcPos e) (namePat v), Nothing) e
 
 tauType :: Parser Type
 tauType = undefined
@@ -196,11 +189,15 @@ uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 uHole :: Parser UExpr
 uHole = withSrc $ underscore $> UHole
 
+letAnnotion :: Parser LetAnn
+letAnnotion = char '@' >> string "instance" >> eol $> InstanceLet
+
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  ~(ULet (p, ann) rhs, pos) <- withPos decl
+  letAnn <- letAnnotion <|> return PlainLet
+  ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
-  return $ ULet (p, ann') rhs
+  return $ ULet letAnn (p, ann') rhs
   where
     addImplicitImplicitArgs :: SrcPos -> UType -> UType
     addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars
@@ -214,7 +211,7 @@ uTopDecl = do
     addImplicitArg pos v ty =
       WithSrc pos $ UPi (v:>uTyKind) ImplicitArrow ty
       where
-        k = if v == rawName SourceName "eff" then EffectRowKind else TypeKind
+        k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
 
 decl :: Parser UDecl
@@ -227,7 +224,7 @@ simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
   pat <- try $ uPat <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
-  return $ ULet (pat, ann)
+  return $ ULet PlainLet (pat, ann)
 
 funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
@@ -239,7 +236,7 @@ funDefLet = label "function definition" $ mayBreak $ do
   let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
-  return $ \body -> ULet letBinder (buildLam lamBinders body)
+  return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
     arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
@@ -331,7 +328,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet (WithSrc pos (namePat NoName), Nothing) e
+      where d = ULet PlainLet (WithSrc pos (namePat NoName), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -459,7 +456,7 @@ pairOp = InfixR $ opWithSrc $ do
   if allowed
     then sym "," >> return (binApp f)
     else fail "Unexpected comma"
-  where f = rawName SourceName $ "(,)"
+  where f = mkName $ "(,)"
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ symOpP s
@@ -468,16 +465,16 @@ symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
   label "infix operator" (sym s)
   return $ binApp f
-  where f = rawName SourceName $ "(" <> s <> ")"
+  where f = mkName $ "(" <> s <> ")"
 
 -- Requires special handling because `-1` is a negative literal
 negOp :: Operator Parser UExpr
-negOp = InfixL $ opWithSrc $ neg $> binApp (rawName SourceName "(-)")
+negOp = InfixL $ opWithSrc $ neg $> binApp (mkName "(-)")
 
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ do
   ((), pos) <- withPos neg
-  let f = WithSrc pos $ UVar $ rawName SourceName "neg" :> ()
+  let f = WithSrc pos $ UVar $ mkName "neg" :> ()
   return $ mkApp f
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
@@ -538,6 +535,9 @@ inpostfix' p op = Postfix $ do
   rest <- optional p
   return $ \x -> f x rest
 
+mkName :: String -> Name
+mkName s = Name SourceName (fromString s) 0
+
 -- === lexemes ===
 
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
@@ -546,7 +546,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | ReadKW | WriteKW | StateKW
 
 textName :: Lexer Name
-textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
+textName = liftM mkName $ label "identifier" $ lexeme $ try $ do
   w <- (:) <$> letterChar <*> many nameTailChar
   failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
   return w
@@ -588,7 +588,7 @@ sym s = lexeme $ try $ string s >> notFollowedBy symChar
 symName :: Lexer Name
 symName = label "symbol name" $ lexeme $ try $ do
   s <- between (char '(') (char ')') $ some symChar
-  return $ rawName SourceName $ "(" <> s <> ")"
+  return $ mkName $ "(" <> s <> ")"
 
 backquoteName :: Lexer Name
 backquoteName = label "backquoted name" $

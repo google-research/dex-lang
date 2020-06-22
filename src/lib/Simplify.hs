@@ -5,12 +5,13 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 
-module Simplify (simplifyModule) where
+module Simplify (simplifyModule, evalSimplified) where
 
 import Control.Monad
+import Control.Monad.Identity
 import Control.Monad.Reader
+import Data.Functor
 
 import Autodiff
 import Env
@@ -20,56 +21,55 @@ import Embed
 import Type
 import PPrint
 
-type SimpEnv = SubstEnv
-data SimpOpts = SimpOpts { preserveDerivRules :: Bool }
--- The outer SimpEnv is for local variables, while the nested (SubstEnv, RuleEnv) is for globals.
--- Note that you _have to_ apply the local substitution everywhere, because the binders for those
--- variables have been eliminated. In principle the substitution with global env is optional, but
--- in practice it also has to happen sooner or later, because the Imp pass assumes that only array
--- variables are imported.
-type SimplifyM a = ReaderT SimpEnv (ReaderT (SubstEnv, SimpOpts) Embed) a
+type SimplifyM = SubstEmbedT Identity
 
-simplifyModule :: SubstEnv -> Module -> (Module, SubstEnv)
-simplifyModule substEnv m = simplifyModuleOpts (SimpOpts False) substEnv m
+simplifyModule :: TopEnv -> Module -> Module
+simplifyModule scope (Module decls) =
+  Module $ snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
 
-simplifyModuleOpts :: SimpOpts -> SubstEnv -> Module -> (Module, SubstEnv)
-simplifyModuleOpts opts env (Module bid _ exports expr) =
-  (Module bid imports' exports' expr', outEnv)
-  where
-    (exports', expr', results) = runSimplifyM opts env $ simplifyTop expr
-    imports' = map (uncurry (:>)) $ envPairs $ freeVars expr'
-    outEnv = newEnv exports results
+evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
+evalSimplified (Module decls) evalBlock = do
+  let (declsNotDone, declsDone) = flip foldMap decls $ \decl -> case decl of
+                                    Let _ _ (Atom _) -> ([]    , [decl])
+                                    _                -> ([decl], []    )
+  case declsNotDone of
+    [] -> return $ Module decls
+    _ -> do
+      let localVars = filter (not . isGlobal) $ envAsVars $
+                        freeVars $ Module declsDone
+      let block = Block declsNotDone $ Atom $ mkConsList $ map Var localVars
+      vals <- (ignoreExcept . fromConsList) <$> evalBlock block
+      return $ scopelessSubst (zipEnv localVars vals) $ Module declsDone
 
-runSimplifyM :: SimpOpts -> SubstEnv -> SimplifyM a -> a
-runSimplifyM opts env m =
-  fst $ flip runEmbed mempty $ flip runReaderT (env, opts) $
-    flip runReaderT mempty m
+simplifyDecls :: [Decl] -> SimplifyM SubstEnv
+simplifyDecls [] = return mempty
+simplifyDecls (decl:rest) = do
+  substEnv <- simplifyDecl decl
+  substEnv' <- extendR substEnv $ simplifyDecls rest
+  return (substEnv <> substEnv')
 
-simplifyTop :: Block -> SimplifyM ([Var], Block, [Atom])
-simplifyTop block = do
-  (ans, (scope, decls)) <- embedScoped $ simplifyBlock block
-  let results = ignoreExcept $ fromConsList ans
-  let vs = map (uncurry (:>)) $ envPairs $ scope `envIntersect` freeVars ans
-  let expr' = wrapDecls decls $ mkConsList $ map Var vs
-  return (vs, expr', results)  -- no need to choose fresh names
+simplifyDecl :: Decl -> SimplifyM SubstEnv
+simplifyDecl (Let ann b expr) = do
+  x <- simplifyExpr expr
+  if isGlobal b
+    then emitTo (varName b) ann (Atom x) $> mempty
+    else return $ b @> x
 
 simplifyBlock :: Block -> SimplifyM Atom
-simplifyBlock (Block (decl:decls) result) = do
-   env <- simplifyDecl decl
-   extendR env $ simplifyBlock body
-   where body = Block decls result
-simplifyBlock (Block [] result) = simplifyExpr result
+simplifyBlock (Block decls result) = do
+  substEnv <- simplifyDecls decls
+  extendR substEnv $ simplifyExpr result
 
 simplifyAtom :: Atom -> SimplifyM Atom
 simplifyAtom atom = case atom of
   Var v -> do
-    -- TODO: simplify this by requiring different namespaces for top/local vars
-    (topEnv, opts) <- lift ask
-    localEnv <- ask
-    case envLookup localEnv v of
-      Just x -> deShadow x <$> getScope
-      Nothing -> case envLookup topEnv v of
-        Just x -> dropSub $ simplifyAtom x
+    substEnv <- ask
+    scope <- getScope
+    case envLookup substEnv v of
+      Just x -> return $ deShadow x scope
+      Nothing -> case envLookup scope v of
+        -- TODO: check scope?
+        Just (LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
         _      -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbed atom
@@ -253,12 +253,6 @@ resolveOrd op t x y = case t of
       xi <- emitOp $ IndexAsInt x
       yi <- emitOp $ IndexAsInt y
       emitOp $ ScalarBinOp (ICmp op) xi yi
-
-simplifyDecl :: Decl -> SimplifyM SimpEnv
-simplifyDecl decl = case decl of
-  Let b bound -> do
-    x <- withNameHint (varName b) $ simplifyExpr bound
-    return $ b @> x
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m

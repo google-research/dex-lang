@@ -78,8 +78,10 @@ instance Pretty LitVal where
 
 instance Pretty Block where
   pretty (Block [] expr) = " " <> p expr
-  pretty (Block decls expr) = nest 2 $
-    hardline <> foldMap (\d -> p d <> hardline) decls <> p expr
+  pretty (Block decls expr) = nest 2 $ hardline <> prettyLines decls <> p expr
+
+prettyLines :: Pretty a => [a] -> Doc ann
+prettyLines xs = foldMap (\d -> p d <> hardline) xs
 
 instance Pretty Expr where
   pretty (App f x) = parens (p f) <+> parens (p x)
@@ -168,10 +170,10 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let (NoName:>_) bound -> p bound
+    Let _ (NoName:>_) bound -> p bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let b bound -> p b <+> "=" <+> p bound
+    Let _ b bound -> p b <+> "=" <+> p bound
 
 instance Pretty Atom where
   pretty atom = case atom of
@@ -247,23 +249,21 @@ instance Pretty Result where
                                Right () -> mempty
 
 instance Pretty Module where
-  pretty (Module _ imports exports body) =
-       "imports:" <+> p imports
-    <> hardline <> p body
-    <> hardline <> "exports:" <+> p exports
+  pretty (Module decls) = prettyLines decls
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x
   pretty (Right x) = "Right" <+> p x
 
-instance Pretty TopEnv where
-  pretty (TopEnv env) = p env
+instance Pretty BinderInfo where
+  pretty b = case b of
+    LamBound _ _  -> "(lambda binder)"
+    LetBound _ e  -> p e
+    PiBound _     -> "(pi binder)"
+    UnknownBinder -> "(unknown)"
 
 instance Pretty UModule where
-  pretty (UModule imports exports decls) =
-                     "imports:" <+> p imports
-       <> hardline <> foldMap (\decl -> p decl <> hardline) decls
-       <> hardline <> "exports:" <+> p exports
+  pretty (UModule decls) = prettyLines decls
 
 instance Pretty a => Pretty (WithSrc a) where
   pretty (WithSrc _ x) = p x
@@ -295,7 +295,7 @@ instance Pretty a => Pretty (Limit a) where
   pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
-  pretty (ULet pat rhs) = p pat <+> "=" <+> p rhs
+  pretty (ULet _ pat rhs) = p pat <+> "=" <+> p rhs
 
 instance Pretty a => Pretty (PatP' a) where
   pretty pat = case pat of

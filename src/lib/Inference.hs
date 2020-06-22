@@ -7,16 +7,18 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 
-module Inference (inferModule) where
+module Inference (inferModule, synthModule) where
 
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Writer
 import Data.Foldable (fold, toList)
+import Data.Functor
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 import Data.Either (rights)
+import Data.Maybe (catMaybes)
 
 import Syntax
 import Embed  hiding (sub)
@@ -25,43 +27,20 @@ import Type
 import PPrint
 import Cat
 
-type InfEnv = Env Atom
-type UInferM = ReaderT InfEnv (EmbedT (SolverT (Either Err)))
+type UInferM = ReaderT SubstEnv (EmbedT (SolverT (Either Err)))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
 data RequiredTy a = Check a | Infer
 
 inferModule :: TopEnv -> UModule -> Except Module
-inferModule (TopEnv topEnv) m@(UModule _ exports decls) = do
-  checkVars topEnv m
-  let infEnv = fold [(v:>()) @> (Var (v:>getType x)) | (v, x) <- envPairs topEnv]
-  let scope  = fold [(v:>()) @> Right (Atom x)       | (v, x) <- envPairs topEnv]
-  (infEnv', decls') <- runUInferM (inferUDecls decls) infEnv scope
-  let combinedEnv = infEnv <> infEnv'
-  let resultVals = [(combinedEnv ! (v:>())) | v <- exports]
-  let body = wrapDecls decls' $ mkConsList resultVals
-  -- TODO: think about this. We can't just add types to current imoprts because
-  -- inlining type expressions can introduce new free variables.
-  -- let imports' = [v :> getType (infEnv      ! (v:>())) | v <- imports]
-  body' <- synthBlockTop scope body
-  let imports' = envAsVars $ freeVars body'
-  let exports' = [v :> getType (combinedEnv ! (v:>())) | v <- exports]
-  return $ Module Nothing imports' exports' body'
-
-checkVars :: Env a -> UModule -> Except ()
-checkVars env (UModule imports exports _) = do
-  let unboundVars = filter (\v -> not $ (v:>()) `isin` env) imports
-  unless (null unboundVars) $
-    throw UnboundVarErr $ pprintList unboundVars
-  let shadowedVars = filter (\v -> (v:>()) `isin` env) exports
-  unless (null shadowedVars) $
-    throw RepeatedVarErr $ pprintList shadowedVars
+inferModule scope (UModule decls) = do
+  ((), (_, decls')) <- runUInferM (mapM_ (inferUDecl True) decls) mempty scope
+  return $ Module decls'
 
 runUInferM :: (HasVars a, Pretty a)
-           => UInferM a -> InfEnv -> Scope -> Except (a, [Decl])
-runUInferM m env scope =
-  runSolverT $ runEmbedT (runReaderT m env) scope
+           => UInferM a -> SubstEnv -> Scope -> Except (a, (Scope, [Decl]))
+runUInferM m env scope = runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -99,7 +78,7 @@ instantiateSigma f = case getType f of
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy =
  addSrcContext (Just pos) $ case expr of
-  UVar v -> asks (! v) >>= instantiateSigma >>= matchRequirement
+  UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
     x <- freshType argTy
@@ -142,11 +121,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
     a'  <- checkUType a
-    piTy <- buildAbs (v:>a') $ \x -> extendR ((v:>())@>x) $
+    piTy <- buildPi (v:>a') $ \x -> extendR ((v:>())@>x) $
               (,) <$> mapM checkUEff arr <*> checkUType ty
-    matchRequirement (Pi piTy)
+    matchRequirement piTy
   UDecl decl body -> do
-    env <- inferUDecl decl
+    env <- inferUDecl False decl
     extendR env $ checkOrInferRho body reqTy
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
@@ -173,21 +152,45 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         Infer -> return ()
         Check req -> constrainEq req (getType x)
 
-inferUDecl :: UDecl -> UInferM InfEnv
-inferUDecl (ULet (p, ann) rhs) = do
+lookupSourceVar :: UVar -> UInferM Atom
+lookupSourceVar v = do
+  substEnv <- ask
+  case envLookup substEnv v of
+    Just x -> return x
+    Nothing -> do
+      scope <- getScope
+      let v' = asGlobal $ varName v
+      case envLookup scope (v':>()) of
+        Just binding -> return $ Var $ v' :> getType binding
+        Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
+
+unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
+unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
+  PatBind (v:>()) -> do
+    let v' = asGlobal v
+    scope <- getScope
+    when ((v':>()) `isin` scope) $ throw RepeatedVarErr $ pprint v'
+    void $ emitTo v' letAnn expr
+  PatUnit -> return () -- TODO: change if we allow effects at the top level
+  PatPair p1 p2 -> do
+    val  <- emit expr
+    x1   <- lift $ getFst val
+    x2   <- lift $ getSnd val
+    unpackTopPat letAnn p1 (Atom x1)
+    unpackTopPat letAnn p2 (Atom x2)
+
+inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
+inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   val <- case ann of
     Nothing -> inferSigma rhs
     Just ty -> checkUType ty >>= checkSigma rhs
-  val' <- withPatHint p $ emitZonked $ Atom val
-  bindPat p val'
-
-inferUDecls :: [UDecl] -> UInferM InfEnv
-inferUDecls decls = do
-  initEnv <- ask
-  liftM snd $ flip runCatT initEnv $ forM_ decls $ \decl -> do
-    cur <- look
-    new <- lift $ local (const cur) $ inferUDecl decl
-    extend new
+  expr <- zonk $ Atom val
+  if topLevel
+    then unpackTopPat letAnn p expr $> mempty
+    else do
+      -- TODO: non-top-level annotations?
+      val' <- withPatHint p $ emitAnn PlainLet expr
+      bindPat p val'
 
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -223,10 +226,10 @@ withBindPat pat val m = do
   env <- bindPat pat val
   extendR env m
 
-bindPat :: UPat -> Atom -> UInferM InfEnv
+bindPat :: UPat -> Atom -> UInferM SubstEnv
 bindPat pat val = evalCatT $ bindPat' pat val
 
-bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM InfEnv
+bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
   PatBind b -> do
     usedVars <- look
@@ -332,13 +335,14 @@ openEffectRow effRow = return effRow
 -- The writer just tracks whether we found any holes
 type SynthM = WriterT [()] (SubstEmbedT (Either Err))
 
-synthBlockTop :: Scope -> Block -> Except Block
-synthBlockTop scope block = do
-  ((block', holeCount), _) <- runSubstEmbedT (runWriterT (traverseBlock synthTraversal block)) scope
-  -- We could choose to searach only up to a maximum depth here
+synthModule :: TopEnv -> Module -> Except Module
+synthModule scope m = do
+  (m', holeCount) <- liftM fst $ flip runSubstEmbedT scope $ runWriterT $
+                       traverseModule synthTraversal m
+  -- We could choose to search only up to a maximum depth here
   if null holeCount
-    then return block'
-    else synthBlockTop scope block'
+    then return m'
+    else synthModule scope m'
 
 synthTraversal :: TraversalDef SynthM
 synthTraversal = (traverseExpr synthTraversal, synthAtom)
@@ -349,7 +353,7 @@ synthAtom atom = case atom of
   Con (ClassDictHole ty) -> do
     tell [()]
     scope <- getScope
-    let candidates = filter (isInstanceCandidate . varAnn) $ scopeVars scope
+    let candidates = synthCandidates scope
     let solutions = rights $ map (instantiateAndCheck scope ty) candidates
     case solutions of
       [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
@@ -358,21 +362,17 @@ synthAtom atom = case atom of
                     ++ "\n" ++ pprint blocks
   _ -> traverseAtom synthTraversal atom
 
-isInstanceCandidate :: Type -> Bool
-isInstanceCandidate ty = case ty of
-  TC (ClassDictType _ _) -> True
-  Pi (Abs _ (_, resultTy)) -> isInstanceCandidate resultTy
-  _ -> False
-
-scopeVars :: Scope -> [Var]
-scopeVars scope = flip map (envPairs scope) $ \(v, x) -> case x of
-  Left ty    -> v :> ty
-  Right expr -> v :> getType expr
+synthCandidates :: Scope -> [Var]
+synthCandidates scope = catMaybes $ flip map (envPairs scope) $ \(v, binding) ->
+  case binding of
+    LetBound InstanceLet expr -> Just $ v :> getType expr
+    LamBound ClassArrow ty    -> Just $ v :> ty
+    _ -> Nothing
 
 -- mini version of type inference
 instantiateAndCheck :: Scope -> Type -> Var -> Except Block
 instantiateAndCheck scope ty v = do
-  (x, decls) <- runUInferM (instantiateAndCheck' ty v) mempty scope
+  (x, (_, decls)) <- runUInferM (instantiateAndCheck' ty v) mempty scope
   return $ wrapDecls decls x
 
 instantiateAndCheck' :: Type -> Var -> UInferM Atom
@@ -433,7 +433,7 @@ freshType EffKind = Eff <$> freshEff
 freshType k = do
   tv <- freshVar k
   extend $ SolverEnv (tv @> k) mempty
-  extendScope $ tv @> Left k
+  extendScope $ tv @> UnknownBinder
   return $ Var tv
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow

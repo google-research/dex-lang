@@ -47,11 +47,11 @@ class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ imports exports block) =
+  checkValid m@(Module decls) =
     addContext ctxStr $ asCompilerErr $ do
-      let env = (foldMap varAsEnv imports, Pure)
-      outTys <- fromConsListTy =<< runTypeCheck (CheckWith env) block
-      assertEq (map varAnn exports) outTys "export types"
+      let env = (freeVars m, Pure)
+      let block = Block decls $ Atom $ UnitVal
+      void $ runTypeCheck (CheckWith env) block
     where ctxStr = "\nChecking:\n" ++ pprint m
 
 asCompilerErr :: Except a -> Except a
@@ -111,8 +111,15 @@ instance HasType Block where
         env' <- catFoldM checkDecl env decls
         withTypeEnv (env <> env') $ typeCheck result
 
+instance HasType BinderInfo where
+  typeCheck binding = case binding of
+    LamBound _ ty -> ty |: TyKind $> ty
+    LetBound _ expr -> typeCheck expr
+    PiBound ty -> ty |: TyKind $> ty
+    UnknownBinder -> error "Unknown type"
+
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
-checkDecl env decl@(Let b rhs) =
+checkDecl env decl@(Let _ b rhs) =
   withTypeEnv env $ addContext ctxStr $ do
     -- TODO: effects
     checkBinder b

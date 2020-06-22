@@ -55,7 +55,7 @@ toImpBlock env destBlock = do
   toImpExpr env' result
 
 toImpDecl :: SubstEnv -> WithDest Decl -> ImpM SubstEnv
-toImpDecl env (maybeDest, (Let b bound)) = do
+toImpDecl env (maybeDest, (Let _ b bound)) = do
   b' <- traverse (impSubst env) b
   ans <- toImpExpr env (maybeDest, bound)
   return $ b' @> ans
@@ -177,10 +177,10 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- current block (e.g. it comes from the surrounding block), then we need
       -- to do the copy explicitly, as there is no let binding that will use it
       -- as the destination.
-      let blockVars = foldMap (\(Let v _) -> v @> ()) decls
+      let blockVars = foldMap (\(Let _ v _) -> v @> ()) decls
       let closureCopies = fmap (\(n, d) -> (d, Var $ n :> getType d))
                                (envPairs $ varDests `envDiff` blockVars)
-      return $ ( fmap (\d@(Let v _) -> (varDests `envLookup` v, d)) decls
+      return $ ( fmap (\d@(Let _ v _) -> (varDests `envLookup` v, d)) decls
                , (Nothing, ans)
                , repeatCopies ++ closureCopies)
     _ -> return $ (fmap (Nothing,) decls, (maybeDest, ans), [])

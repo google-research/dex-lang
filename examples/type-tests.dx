@@ -5,40 +5,50 @@ improve things by recording source information when we create fresh inference
 variables. Solving fully (insisting on no ambiguity) at each decl might also
 help make the errors more local.
 
-:t \x. x
-> Type error:Ambiguous type variables: [?]
->
-> ((_ans_ @> _ans_), [_ans_:(?->?) = \x:?. x])
+-- :t \x. x
+-- > Type error:Ambiguous type variables: [?]
+-- >
+-- > ((_ans_ @> _ans_), [_ans_:(?->?) = \x:?. x])
 
-:t \x. sum for i. x.i
-> Type error:Ambiguous type variables: [?3]
->
-> ( (_ans_ @> _ans_)
-> , [ _ans_:((?3=>Real)->Real) = \x:(?3=>Real).
->   tmp:((?3=>Real)->Real) = (sum) (?3)
->   tmp1:(?3=>Real) = for \i:?3. (x) (i)
->   (tmp) (tmp1) ] )
+-- :t \x. sum for i. x.i
+-- > Type error:Ambiguous type variables: [?3]
+-- >
+-- > ( (_ans_ @> _ans_)
+-- > , [ _ans_:((?3=>Real)->Real) = \x:(?3=>Real).
+-- >   tmp:((?3=>Real)->Real) = (sum) (?3)
+-- >   tmp1:(?3=>Real) = for \i:?3. (x) (i)
+-- >   (tmp) (tmp1) ] )
 
-:t \f x y. f y x
-> Type error:Ambiguous type variables: [?3, ?6, ?7]
->
-> ( (_ans_ @> _ans_)
-> , [ _ans_:((?3->(?6->?7))->(?6->(?3->?7))) = \f:(?3->(?6->?7)). \x:?6. \y:?3.
->   tmp:(?6->?7) = (f) (y)
->   (tmp) (x) ] )
+-- :t \f x y. f y x
+-- > Type error:Ambiguous type variables: [?3, ?6, ?7]
+-- >
+-- > ( (_ans_ @> _ans_)
+-- > , [ _ans_:((?3->(?6->?7))->(?6->(?3->?7))) = \f:(?3->(?6->?7)). \x:?6. \y:?3.
+-- >   tmp:(?6->?7) = (f) (y)
+-- >   (tmp) (x) ] )
 
-:t \x. for i j. x.j.i
-> Type error:Ambiguous type variables: [?3, ?6, ?7]
->
-> ( (_ans_ @> _ans_)
-> , [ _ans_:((?3=>(?6=>?7))->(?6=>(?3=>?7))) = \x:(?3=>(?6=>?7)). for \i:?6. for \j:?3.
->   tmp1:(?6=>?7) = (x) (j)
->   (tmp1) (i) ] )
+-- :t \x. for i j. x.j.i
+-- > Type error:Ambiguous type variables: [?3, ?6, ?7]
+-- >
+-- > ( (_ans_ @> _ans_)
+-- > , [ _ans_:((?3=>(?6=>?7))->(?6=>(?3=>?7))) = \x:(?3=>(?6=>?7)). for \i:?6. for \j:?3.
+-- >   tmp1:(?6=>?7) = (x) (j)
+-- >   (tmp1) (i) ] )
 
-:t \f x. f x
-> Type error:Ambiguous type variables: [?2, ?3]
->
-> ((_ans_ @> _ans_), [_ans_:((?2->?3)->(?2->?3)) = \f:(?2->?3). \x:?2. (f) (x)])
+-- :t \f x. f x
+-- > Type error:Ambiguous type variables: [?2, ?3]
+-- >
+-- > ((_ans_ @> _ans_), [_ans_:((?2->?3)->(?2->?3)) = \f:(?2->?3). \x:?2. (f) (x)])
+
+-- :t \x. for (i,j). x.i.j
+-- > Type error:Ambiguous type variables: [?4, ?7, ?8]
+-- >
+-- > ( (_ans_ @> _ans_)
+-- > , [ _ans_:((?4=>(?7=>?8))->((?4 & ?7)=>?8)) = \x:(?4=>(?7=>?8)). for \pat:(?4 & ?7).
+-- >   tmp1:?4 = %fst pat
+-- >   tmp2:?7 = %snd pat
+-- >   tmp3:(?7=>?8) = (x) (tmp1)
+-- >   (tmp3) (tmp2) ] )
 
 :t
    myid : a:Type ?-> a -> a = \x. x
@@ -113,16 +123,6 @@ xr = map i2r arr
 > :t [[1, 2], [3]]
 >             ^^^
 
-:t \x. for (i,j). x.i.j
-> Type error:Ambiguous type variables: [?4, ?7, ?8]
->
-> ( (_ans_ @> _ans_)
-> , [ _ans_:((?4=>(?7=>?8))->((?4 & ?7)=>?8)) = \x:(?4=>(?7=>?8)). for \pat:(?4 & ?7).
->   tmp1:?4 = %fst pat
->   tmp2:?7 = %snd pat
->   tmp3:(?7=>?8) = (x) (tmp1)
->   (tmp3) (tmp2) ] )
-
 f : Int -> Real =
  \x.
    z = x + 1.0
@@ -138,6 +138,9 @@ f : Int -> Real =
    x = 3
    for i:Foo. 0
 > Error: variable not in scope: Foo
+>
+>    for i:Foo. 0
+>          ^^^
 
 
 MyInt = Int
@@ -168,6 +171,9 @@ fEff : Unit -> {| a} a = todo
 :p
     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
 > Error: variable not in scope: unboundName
+>
+>     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
+>                                   ^^^^^^^^^^^
 
 -- differentCaseResultTypes : Either Int Real -> Real
 -- differentCaseResultTypes x = case x

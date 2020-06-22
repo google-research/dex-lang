@@ -39,7 +39,7 @@ linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
 linearizeBlock :: Block -> LinA Atom
 linearizeBlock (Block decls result) = case decls of
   [] -> linearizeExpr result
-  Let b bound : rest -> LinA $ do
+  Let _ b bound : rest -> LinA $ do
     (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeExpr bound
     (ans, fLin) <- extendR env $ runLinA $ linearizeBlock body
     return (ans, do tEnv <- tEnvM
@@ -243,7 +243,7 @@ transposeMap scope (Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
 transposeBlock :: Block -> Atom -> TransposeM ()
 transposeBlock (Block decls result) ct = case decls of
   [] -> transposeExpr result ct
-  Let b bound : rest -> do
+  Let _ b bound : rest -> do
     -- let (eff, _) = getEffType bound
     -- linEff <- isLinEff eff
     lin <- isLin bound

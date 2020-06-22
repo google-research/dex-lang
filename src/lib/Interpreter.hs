@@ -28,7 +28,7 @@ evalBlock env (Block decls result) = do
   evalExpr $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> evalExpr rhs'
+evalDecl env (Let _ v rhs) = v @> evalExpr rhs'
   where rhs' = subst (env, mempty) rhs
 
 evalExpr :: Expr -> Atom
