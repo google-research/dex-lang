@@ -42,7 +42,7 @@ module Syntax (
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern SumVal, pattern PureArrow, pattern ArrayVal,
     pattern RealVal, pattern BoolVal, pattern TyKind,
-    pattern TabTy, pattern TabVal, pattern TabValA,
+    pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy)
   where
@@ -214,7 +214,8 @@ data PrimOp e =
       | IndexRef e e
       | FFICall String BaseType [e]
       | Inject e
-      | ArrayOffset e e
+      | ArrayOffset e e e            -- Second argument is the index for type checking,
+                                     -- Third argument is the linear offset for evaluation
       | ArrayLoad e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
@@ -325,7 +326,8 @@ data ImpInstr = Load  IExpr
               | Store IExpr IExpr           -- Destination first
               | Alloc ScalarTableType Size  -- Second argument is the size of the table
               | Free IVar
-              | IOffset IExpr Index
+              | IOffset IExpr Index IExpr   -- Second argument is the index for type checking
+                                            -- Third argument is the linear offset for code generation
               | Loop Direction IVar Size ImpProg
               | IPrimOp IPrimOp
                 deriving (Show, Eq)
@@ -805,6 +807,9 @@ pattern ArrayTy t = TC (ArrayType t)
 
 pattern TabTy :: Var -> Type -> Type
 pattern TabTy v i = Pi (Abs v (TabArrow, i))
+
+pattern TabTyAbs :: PiType -> Type
+pattern TabTyAbs a <- Pi a@(Abs _ (TabArrow, _))
 
 pattern TabVal :: Var -> Block -> Atom
 pattern TabVal v b = Lam (Abs v (TabArrow, b))

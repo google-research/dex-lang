@@ -151,8 +151,10 @@ toImpOp (maybeDest, op) = case op of
     subrefVar  <- freshVar (varName refVar :> RefTy h (snd $ applyAbs a i))
     extend ((subrefVar @> subrefDest, mempty), mempty)
     returnVal $ Var subrefVar
-  ArrayOffset arr off -> returnVal . toArrayAtom =<< impOffset (fromArrayAtom arr) (fromScalarAtom off)
-  ArrayLoad arr       -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
+  ArrayOffset arr idx off -> do
+    arrSlice <- impOffset (fromArrayAtom arr) (fromScalarAtom idx) (fromScalarAtom off)
+    returnVal $ toArrayAtom arrSlice
+  ArrayLoad arr -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
   Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
@@ -267,11 +269,11 @@ destToAtomScalarAction fScalar dest = do
 
 destToAtom' :: (IVar -> ImpM Atom) -> [Var] -> Dest -> EmbedT ImpM Atom
 destToAtom' fScalar forVars dest = case dest of
-  DFor (Abs v d) -> do
+  DFor a@(Abs v _) -> do
     v' <- lift $ case v of
       (NoName :> t) -> freshVar ("idx" :> t)
       _             -> freshVar v
-    block <- buildScoped $ destToAtom' fScalar (v' : forVars) d
+    block <- buildScoped $ destToAtom' fScalar (v' : forVars) (applyAbs a (Var v'))
     return $ Lam $ makeAbs v' (TabArrow, block)
   DRef ref       -> case forVars of
     [] -> lift $ fScalar ref
@@ -284,7 +286,7 @@ destToAtom' fScalar forVars dest = case dest of
           ordinal <- indexToIntE (getType idx) idx
           let (ArrayTy tabTy) = getType arr
           offset <- tabTy `offsetToE` ordinal
-          arrOffset arr offset
+          arrOffset arr idx offset
   DPair dl dr    -> PairVal <$> rec dl <*> rec dr
   DUnit          -> return $ UnitVal
   DAsIdx t d     -> Con . AsIdx t <$> rec d
@@ -418,6 +420,8 @@ elemCountE :: MonadEmbed m => ScalarTableType -> m Atom
 elemCountE ty = case ty of
   BaseTy _  -> return $ IntVal 1
   TabTy (NoName:>idxTy) b -> bindM2 imul (indexSetSizeE idxTy) (elemCountE b)
+  TabTy v (TabTy (NoName :> TC (IndexRange _ Unlimited (InclusiveLim (Var v')))) (BaseTy _)) | v == v' ->
+    triangularSum =<< indexSetSizeE (varType v)
   TabTy _ _ ->
     error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint ty
   _ -> error $ "Not a scalar table type: " ++ pprint ty
@@ -426,10 +430,18 @@ elemCountE ty = case ty of
 offsetToE :: MonadEmbed m => ScalarTableType -> Atom -> m Atom
 offsetToE ty i = case ty of
   TabTy (NoName:>_) b -> imul i =<< elemCountE b
+  TabTy v (TabTy (NoName :> TC (IndexRange _ Unlimited (InclusiveLim (Var v')))) (BaseTy _)) | v == v' ->
+    triangularSum i
   TabTy _ _ ->
     error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint ty
   BaseTy _  -> error "Indexing into a scalar!"
   _ -> error $ "Not a scalar table type: " ++ pprint ty
+
+triangularSum :: MonadEmbed m => Atom -> m Atom
+triangularSum n = do
+  n1 <- iadd n (IntVal 1)
+  num <- imul n n1
+  num `idiv` (IntVal 2)
 
 zipWithDest :: Dest -> Atom -> (IExpr -> IExpr -> ImpM ()) -> ImpM ()
 zipWithDest dest atom f = case (dest, atom) of
@@ -492,12 +504,12 @@ impAdd x y = emitBinOp IAdd x y
 
 impGet :: IExpr -> IExpr -> ImpM IExpr
 impGet ref i = case ref of
-  (IVar (_ :> IRefType t)) -> emitInstr . IOffset ref =<< (t `offsetTo` i)
+  (IVar (_ :> IRefType t)) -> emitInstr . IOffset ref i =<< (t `offsetTo` i)
   _ -> error $ "impGet called with non-ref: " ++ show ref
 
-impOffset :: IExpr -> IExpr -> ImpM IExpr
-impOffset ref off = case ref of
-  (IVar (_ :> IRefType _)) -> emitInstr $ IOffset ref off
+impOffset :: IExpr -> IExpr -> IExpr -> ImpM IExpr
+impOffset ref idx off = case ref of
+  (IVar (_ :> IRefType _)) -> emitInstr $ IOffset ref idx off
   _ -> error $ "impOffset called with non-ref: " ++ show ref
 
 load :: IExpr -> ImpM IExpr
@@ -601,10 +613,10 @@ instrTypeChecked instr = case instr of
     checkBinder i
     extendR (i @> IIntTy) $ checkProg block
     return Nothing
-  IOffset e i -> do
-    ~(IRefType (TabTy _ b)) <- checkIExpr e
+  IOffset e i _ -> do
+    IRefType (TabTyAbs a) <- checkIExpr e
     checkInt i
-    return $ Just $ IRefType b
+    return $ Just $ IRefType $ snd $ applyAbs a (toScalarAtom (absArgType a) i)
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do
@@ -666,8 +678,8 @@ instrType instr = case instr of
   Alloc ty _      -> return $ Just $ IRefType ty
   Free _          -> return Nothing
   Loop _ _ _ _    -> return Nothing
-  IOffset e _     -> case impExprType e of
-    IRefType (TabTy _ b) -> return $ Just $ IRefType b
+  IOffset e i _   -> case impExprType e of
+    IRefType (TabTyAbs a) -> return $ Just $ IRefType $ snd $ applyAbs a (toScalarAtom (absArgType a) i)
     ty -> error $ "Can't index into: " ++ pprint ty
 
 impOpType :: IPrimOp -> IType
