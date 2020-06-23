@@ -293,13 +293,6 @@ typeCheckOp op = case op of
   ArrayLoad arr -> do
     ArrayTy (BaseTy b)  <- typeCheck arr
     return $ BaseTy b
-  UnwrapIndex idx -> do
-    ty <- typeCheck idx
-    case ty of
-      TC (IntRange _ _)     -> return IntTy
-      TC (IndexRange _ _ _) -> return IntTy
-      _                     -> throw TypeErr $ "UnwrapIndex on non-index type: " ++ pprint ty
-
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

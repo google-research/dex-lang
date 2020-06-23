@@ -12,6 +12,7 @@ import Syntax
 import Env
 import PPrint
 import Embed
+import Type
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -71,7 +72,10 @@ evalOp expr = case expr of
   ArrayOffset arrArg offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
     where (ArrayVal (ArrayTy (TabTy _ b)) arr, IntVal off) = (arrArg, offArg)
   ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
-  UnwrapIndex idxArg -> e                       where (Con (AsIdx _ e)) = idxArg
+  IndexAsInt idxArg -> case idxArg of
+    Con (AsIdx _ i)  -> i
+    Con (AnyValue t) -> anyValue t
+    _                -> evalEmbed (indexToIntE (getType idxArg) idxArg)
   _ -> error $ "Not implemented: " ++ pprint expr
 
 indices :: Type -> [Atom]
@@ -88,6 +92,8 @@ indices ty = case ty of
 
 indexSetSize :: Type -> Int
 indexSetSize ty = i
-  where
-    (atom, decls) = runEmbed (indexSetSizeE ty) mempty
-    (IntVal i) = evalBlock mempty $ Block decls (Atom atom)
+  where (IntVal i) = evalEmbed (indexSetSizeE ty)
+
+evalEmbed :: Embed Atom -> Atom
+evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
+  where (atom, decls) = runEmbed embed mempty

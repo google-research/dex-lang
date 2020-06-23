@@ -216,7 +216,6 @@ data PrimOp e =
       | Inject e
       | ArrayOffset e e
       | ArrayLoad e
-      | UnwrapIndex e                -- drops AsIdx from the atom
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
       | Cmp CmpOp e e

@@ -132,7 +132,10 @@ toImpOp (maybeDest, op) = case op of
              FFICall "int_to_index_set" IntType [i', n']
     returnVal $ toScalarAtom resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
-  IndexAsInt i -> returnVal . toScalarAtom IntTy    =<< indexToInt (getType i) i
+  IndexAsInt idx -> case idx of
+    Con (AsIdx _ i)  -> returnVal $ i
+    Con (AnyValue t) -> returnVal $ anyValue t
+    _                -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -150,11 +153,6 @@ toImpOp (maybeDest, op) = case op of
     returnVal $ Var subrefVar
   ArrayOffset arr off -> returnVal . toArrayAtom =<< impOffset (fromArrayAtom arr) (fromScalarAtom off)
   ArrayLoad arr       -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
-  UnwrapIndex idx -> case idx of
-    (Con (AsIdx _ e))  -> returnVal e
-    -- TODO: Handle the AnyValue instance for index sets in simplification instead of here.
-    (Con (AnyValue t)) -> returnVal $ toScalarAtom resultTy (anyValue t)
-    _                  -> error $ "Unsupported UnwrapIndex argument: " ++ pprint idx
   Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
@@ -372,7 +370,7 @@ fromScalarAtom atom = case atom of
   Var (v:>BaseTy b) -> IVar (v :> IValType b)
   Con (Lit x)       -> ILit x
   Con (AsIdx _ x)   -> fromScalarAtom x
-  Con (AnyValue ty) -> anyValue ty
+  Con (AnyValue ty) -> fromScalarAtom $ anyValue ty
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 toScalarAtom :: Type -> IExpr -> Atom
@@ -399,47 +397,25 @@ toArrayAtom ie = case ie of
 
 -- === Type classes ===
 
-anyValue :: Type -> IExpr
-anyValue (TC (BaseType RealType))   = ILit $ RealLit 1.0
-anyValue (TC (BaseType IntType))    = ILit $ IntLit 1
-anyValue (TC (BaseType BoolType))   = ILit $ BoolLit False
-anyValue (TC (BaseType StrType))    = ILit $ StrLit ""
--- XXX: This is not strictly correct, because those types might not have any
---      inhabitants. We might want to consider emitting some run-time code that
---      aborts the program if this really ends up being the case.
-anyValue (TC (IntRange _ _))        = ILit $ IntLit 0
-anyValue (TC (IndexRange _ _ _))    = ILit $ IntLit 0
-anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t
+fromEmbed :: Embed Atom -> ImpM Atom
+fromEmbed m = do
+  scope <- looks $ fst . snd
+  toImpBlock mempty (Nothing, fst $ runEmbed (buildScoped m) scope)
 
 intToIndex :: Type -> IExpr -> ImpM Atom
-intToIndex ty i = do
-  scope <- looks $ fst . snd
-  let (atom, decls) = runEmbed (intToIndexE ty (toScalarAtom IntTy i)) scope
-  toImpBlock mempty (Nothing, Block decls (Atom atom))
+intToIndex ty i   = fromEmbed (intToIndexE ty (toScalarAtom IntTy i))
 
 indexToInt :: Type -> Atom -> ImpM IExpr
-indexToInt ty idx = do
-  scope <- looks $ fst . snd
-  let (atom, decls) = runEmbed (indexToIntE ty idx) scope
-  fromScalarAtom <$> toImpBlock mempty (Nothing, Block decls (Atom atom))
+indexToInt ty idx = fromScalarAtom <$> fromEmbed (indexToIntE ty idx)
 
 indexSetSize :: Type -> ImpM IExpr
-indexSetSize ty = do
-  scope <- looks $ fst . snd
-  let (atom, decls) = runEmbed (indexSetSizeE ty) scope
-  fromScalarAtom <$> toImpBlock mempty (Nothing, Block decls (Atom atom))
+indexSetSize ty   = fromScalarAtom <$> fromEmbed (indexSetSizeE ty)
 
 elemCount :: ScalarTableType -> ImpM IExpr
-elemCount ty = do
-  scope <- looks $ fst . snd
-  let (atom, decls) = runEmbed (elemCountE ty) scope
-  fromScalarAtom <$> toImpBlock mempty (Nothing, Block decls (Atom atom))
+elemCount ty      = fromScalarAtom <$> fromEmbed (elemCountE ty)
 
 offsetTo :: ScalarTableType -> IExpr -> ImpM IExpr
-offsetTo ty i = do
-  scope <- looks $ fst . snd
-  let (atom, decls) = runEmbed (offsetToE ty (toScalarAtom IntTy i)) scope
-  fromScalarAtom <$> toImpBlock mempty (Nothing, Block decls (Atom atom))
+offsetTo ty i     = fromScalarAtom <$> fromEmbed (offsetToE ty (toScalarAtom IntTy i))
 
 elemCountE :: MonadEmbed m => ScalarTableType -> m Atom
 elemCountE ty = case ty of

@@ -144,7 +144,6 @@ instance Pretty e => Pretty (PrimOp e) where
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
     ArrayOffset arr off -> p arr <+> "+>" <+> p off
     ArrayLoad arr       -> "load" <+> p arr
-    UnwrapIndex idx     -> "unwrap_index" <+> p idx
     _ -> prettyExprDefault $ OpExpr op
 
 instance Pretty e => Pretty (PrimHof e) where
