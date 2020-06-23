@@ -142,7 +142,7 @@ instance Pretty e => Pretty (PrimOp e) where
     SumTag e        -> parens $ "projTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
-    ArrayOffset arr off -> p arr <+> "+>" <+> p off
+    ArrayOffset arr idx off -> p arr <+> "+>" <+> p off <+> (parens $ "index:" <+> p idx)
     ArrayLoad arr       -> "load" <+> p arr
     _ -> prettyExprDefault $ OpExpr op
 
@@ -205,14 +205,14 @@ prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)         = p op
-  pretty (Load ref)           = "load"  <+> p ref
-  pretty (Store dest val)     = "store" <+> p dest <+> p val
-  pretty (Alloc t s)          = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr idx)   = p expr <+> "+>" <+> p idx
-  pretty (Free (v:>_))        = "free"  <+> p v
-  pretty (Loop d i n block)   = dirStr d <+> p i <+> "<" <+> p n <>
-                                nest 4 (hardline <> p block)
+  pretty (IPrimOp op)            = p op
+  pretty (Load ref)              = "load"  <+> p ref
+  pretty (Store dest val)        = "store" <+> p dest <+> p val
+  pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (IOffset expr idx lidx) = p expr <+> "+>" <+> p lidx <+> (parens $ "index:" <+> p idx)
+  pretty (Free (v:>_))           = "free"  <+> p v
+  pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
+                                   nest 4 (hardline <> p block)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"

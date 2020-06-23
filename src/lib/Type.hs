@@ -285,11 +285,12 @@ typeCheckOp op = case op of
     RefTy h (TabTy v a) <- typeCheck ref
     i |: (varType v)
     return $ RefTy h a
-  ArrayOffset arr off -> do
+  ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!
-    ArrayTy (TabTy _ b) <- typeCheck arr
+    ArrayTy (TabTyAbs a) <- typeCheck arr
     off |: IntTy
-    return $ ArrayTy b
+    idx |: absArgType a
+    return $ ArrayTy $ snd $ applyAbs a idx
   ArrayLoad arr -> do
     ArrayTy (BaseTy b)  <- typeCheck arr
     return $ BaseTy b

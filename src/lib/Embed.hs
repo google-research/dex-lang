@@ -15,7 +15,7 @@ module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              app, add, iadd, mul, imul, sub, isub, neg, div', andE, reduceScoped, declAsScope,
+              app, add, iadd, mul, imul, sub, isub, neg, div', idiv, andE, reduceScoped, declAsScope,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
@@ -216,8 +216,8 @@ getSnd p = emitOp $ Snd p
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
 
-arrOffset :: MonadEmbed m => Atom -> Atom -> m Atom
-arrOffset x i = emitOp $ ArrayOffset x i
+arrOffset :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
+arrOffset x idx off = emitOp $ ArrayOffset x idx off
 
 arrLoad :: MonadEmbed m => Atom -> m Atom
 arrLoad x = emitOp $ ArrayLoad x

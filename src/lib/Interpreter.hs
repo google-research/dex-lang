@@ -49,6 +49,7 @@ evalOp expr = case expr of
     IAdd -> IntVal $ x' + y'      where (IntVal x') = x; (IntVal y') = y
     ISub -> IntVal $ x' - y'      where (IntVal x') = x; (IntVal y') = y
     IMul -> IntVal $ x' * y'      where (IntVal x') = x; (IntVal y') = y
+    IDiv -> IntVal $ x' `div` y'  where (IntVal x') = x; (IntVal y') = y
     Rem  -> IntVal $ x' `rem` y'  where (IntVal x') = x; (IntVal y') = y
     FAdd -> RealVal $ x' + y'  where (RealVal x') = x; (RealVal y') = y
     FSub -> RealVal $ x' - y'  where (RealVal x') = x; (RealVal y') = y
@@ -69,7 +70,7 @@ evalOp expr = case expr of
     "randunif" -> RealVal $ c_unif x  where [IntVal x] = args
     "threefry2x32" -> IntVal $ c_threefry x y  where [IntVal x, IntVal y] = args
     _ -> error $ "FFI function not recognized: " ++ name
-  ArrayOffset arrArg offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
+  ArrayOffset arrArg _ offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
     where (ArrayVal (ArrayTy (TabTy _ b)) arr, IntVal off) = (arrArg, offArg)
   ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
   IndexAsInt idxArg -> case idxArg of
