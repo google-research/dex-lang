@@ -239,7 +239,8 @@ typeCheckCon con = case con of
   ClassDict c a d -> do
     a |: TyKind
     case c of
-      Eq -> d |: (a --> a --> BoolTy)
+      Eq  -> d |: (a --> a --> BoolTy)
+      Ord -> d |: PairTy (TC (ClassDictType Eq a)) (a --> a --> BoolTy)
       _  -> error "Not implemented"
     return $ TC $ ClassDictType c a
   ClassDictHole ty -> ty |: TyKind >> return ty
@@ -270,10 +271,6 @@ typeCheckOp op = case op of
   -- TODO: check index set constraint
   ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
     where (ty, outTy) = unOpType unop
-  Cmp _ x y -> do
-    ty <- typeCheck x
-    y |: ty
-    return BoolTy
   Select p x y -> do
     p|:BoolTy
     ty <- typeCheck x
@@ -303,7 +300,8 @@ typeCheckOp op = case op of
   FromClassDict d -> do
     TC (ClassDictType c a) <- typeCheck d
     case c of
-      Eq -> return $ a --> a --> BoolTy
+      Eq  -> return $ a --> a --> BoolTy
+      Ord -> return $ PairTy (TC (ClassDictType Eq a)) (a --> a --> BoolTy)
       _ -> error "Not implemented"
 
 typeCheckHof :: Hof -> TypeM Type
@@ -390,8 +388,6 @@ indexSetConcreteSize ty = case ty of
 --    VSpace -> checkVSpace env ty
 --    IdxSet -> checkIdxSet env ty
 --    Data   -> checkData   env ty
---    Eq     -> checkInEq   env ty
---    Ord    -> checkOrd    env ty
 --
 --checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 --checkVSpace env ty = case ty of
@@ -428,18 +424,6 @@ checkDataLike msg env ty = case ty of
 
 checkData :: MonadError Err m => ClassEnv -> Type -> m ()
 checkData = checkDataLike " is not serializable"
-
---checkInEq :: MonadError Err m => ClassEnv -> Type -> m ()
---checkInEq = checkDataLike " is not equatable"
---
---checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
---checkOrd env ty = case ty of
---  Var v                 -> checkVarClass env Ord v
---  IntTy                 -> return ()
---  RealTy                -> return ()
---  TC (IntRange _ _ )    -> return ()
---  TC (IndexRange _ _ _) -> return ()
---  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
 
 --TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool

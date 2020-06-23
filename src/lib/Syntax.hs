@@ -220,9 +220,6 @@ data PrimOp e =
       | IndexRef e e
       | FFICall String BaseType [e]
       | Inject e
-      -- Typeclass operations
-      -- Eq and Ord (should get eliminated during simplification)
-      | Cmp CmpOp e e
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -890,12 +887,10 @@ builtinNames = M.fromList
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
-  , ("ieq" , binOp (ICmp Equal)), ("feq", binOp (FCmp Equal))
+  , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
+  , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
-  , ("eq", cmpOp Equal)
-  , ("less"    , cmpOp Less   ), ("lessEq"    , cmpOp LessEqual   )
-  , ("greater" , cmpOp Greater), ("greaterEq" , cmpOp GreaterEqual)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)
   , ("inttoreal", unOp IntToReal)
@@ -932,11 +927,12 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
-  , ("EqClassDictTy", TCExpr  $ ClassDictType Eq ())
-  , ("EqClassDict"  , ConExpr $ ClassDict Eq () ())
-  , ("fromEqClassDict"  , OpExpr $ FromClassDict ())
+  , ("fromClassDict" , OpExpr $ FromClassDict ())
+  , ("EqClassDictTy" , TCExpr  $ ClassDictType Eq  ())
+  , ("OrdClassDictTy", TCExpr  $ ClassDictType Ord ())
+  , ("EqClassDict"   , ConExpr $ ClassDict Eq  () ())
+  , ("OrdClassDict"  , ConExpr $ ClassDict Ord () ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
-    cmpOp op = OpExpr $ Cmp op () ()

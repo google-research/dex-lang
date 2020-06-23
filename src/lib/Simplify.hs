@@ -144,7 +144,6 @@ simplifyExpr expr = case expr of
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
-  Cmp cmpOp a b -> resolveOrd cmpOp (getType a) a b
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
   SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
@@ -191,21 +190,6 @@ simplifyHof hof = case hof of
       projApp f isLeft = do
         cComp <- simplRec $ Op $ SumGet c isLeft
         simplRec $ App f cComp
-
-resolveOrd :: CmpOp -> Type -> Atom -> Atom -> SimplifyM Atom
-resolveOrd op t x y = case t of
-  IntTy  -> emitOp $ ScalarBinOp (ICmp op) x y
-  RealTy -> emitOp $ ScalarBinOp (FCmp op) x y
-  TC con -> case con of
-    IntRange _ _     -> idxOrd
-    IndexRange _ _ _ -> idxOrd
-    _ -> error $ pprint t ++ " doesn't implement Ord"
-  _ -> error $ pprint t ++ " doesn't implement Ord"
-  where
-    idxOrd = do
-      xi <- emitOp $ IndexAsInt x
-      yi <- emitOp $ IndexAsInt y
-      emitOp $ ScalarBinOp (ICmp op) xi yi
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m

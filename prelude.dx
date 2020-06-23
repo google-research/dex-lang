@@ -1,3 +1,4 @@
+
 '## Dex prelude
 
 'Runs before every Dex program unless an alternative is provided with `--prelude`.
@@ -35,11 +36,6 @@ def (&&) (x:Bool) (y:Bool) : Bool = %and x y
 def (||) (x:Bool) (y:Bool) : Bool = %or  x y
 def not  (x:Bool)          : Bool = %not x
 
-def Eq (a:Type) : Type = %EqClassDictTy a
-def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
-def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (%fromEqClassDict d) x y
-def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
-
 'Sum types
 
 def (|) (a:Type) (b:Type) : Type = %SumType a b
@@ -48,11 +44,6 @@ def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
 def Left  (x:a) : (a|b) = sumCon True  x      anyVal
 def Right (x:b) : (a|b) = sumCon False anyVal x
 def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
-
-def (<)  (x:a) (y:a) : Bool = %less      x y
-def (<=) (x:a) (y:a) : Bool = %lessEq    x y
-def (>)  (x:a) (y:a) : Bool = %greater   x y
-def (>=) (x:a) (y:a) : Bool = %greaterEq x y
 
 def select (p:Bool) (x:a) (y:a) : a = %select p x y
 
@@ -92,6 +83,69 @@ def withState
     def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
     %runState init explicitAction
 
+'Type classes
+
+def Eq (a:Type) : Type = %EqClassDictTy a
+def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
+
+def Ord (a:Type) : Type = %OrdClassDictTy a
+def OrdDict (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
+  eqAndGt = (eq, gt)
+  %OrdClassDict a eqAndGt
+
+@instance
+def eqFromOrd (d:Ord a) ?=> : Eq a = fst (%fromClassDict d)
+
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (%fromClassDict d) x y
+def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
+
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (%fromClassDict d) x y
+def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y
+def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y || x==y
+def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
+
+intEq : Eq Int = EqDict \x y. %ieq x y
+@instance
+intGt : Ord Int = OrdDict intEq \x y. %igt x y
+
+realEq : Eq Real = EqDict \x y. %feq x y
+@instance
+realGt : Ord Real = OrdDict realEq \x y. %fgt x y
+
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
+  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+@instance
+def pairGt (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) = OrdDict pairEq $
+  \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+
+@instance
+def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
+  \x y. case x
+    Left  xVal -> case y
+      Left  yVal -> xVal == yVal
+      Right yVal -> False
+    Right xVal -> case y
+      Left  yVal -> False
+      Right yVal -> xVal == yVal
+
+-- TODO: accumulate using the True/&& monoid
+def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
+  \xs ys.
+    numDifferent : Real =
+      snd $ withAccum \ref. for i.
+        ref += (i2r (b2i (xs.i /= ys.i)))
+    numDifferent == 0.0
+
+@instance
+def tabGt (n:Type) ?-> (ordA: Ord a) ?=> : Ord (n=>a) = OrdDict tabEq $
+  \xs ys.
+    numDifferent : Real =
+      snd $ withAccum \ref. for i.
+        -- This is completely wrong, of course. Just here as a placeholder
+        ref += (i2r (b2i (xs.i /= ys.i)))
+    numDifferent == 0.0
+
 'Wrappers around C library functions
 
 def exp (x:Real) : Real = %ffi exp Real x
@@ -112,8 +166,12 @@ def size (n:Type) : Int = %idxSetSize n
 def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
 def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
-
 def iota (n:Type) : n=>Int = for i. ordinal i
+
+-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
+def finEq (n:Int) ?-> : Eq (Fin n) = EqDict \x y. ordinal x == ordinal y
+@instance
+def finOrd (n:Int) ?-> : Ord (Fin n) = OrdDict finEq \x y. ordinal x > ordinal y
 
 'Misc
 
@@ -242,34 +300,3 @@ def checkDerivBase (f:Real->Real) (x:Real) : Bool =
 
 def checkDeriv (f:Real->Real) (x:Real) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
-
-'Type classes
-
-@instance
-intEq  : Eq Int  = EqDict \x y. %ieq x y
-
-@instance
-realEq : Eq Real = EqDict \x y. %feq x y
-
-@instance
-def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
-  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
-
-@instance
-def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
-  \x y. case x
-    Left  xVal -> case y
-      Left  yVal -> xVal == yVal
-      Right yVal -> False
-    Right xVal -> case y
-      Left  yVal -> False
-      Right yVal -> xVal == yVal
-
--- TODO: accumulate using the True/&& monoid
-@instance
-def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
-  \xs ys.
-    numDifferent : Real =
-      snd $ withAccum \ref. for i.
-        ref += (i2r (b2i (xs.i /= ys.i)))
-    numDifferent == 0.0

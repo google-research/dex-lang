@@ -120,7 +120,6 @@ toImpOp (maybeDest, op) = case op of
     returnVal =<< intToIndex t idx
   IndexRef ~(Con (RefCon h ref)) i ->
     returnVal . (Con . RefCon h) =<< impTabGet ref i
-  Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   _ -> do
     op' <- traverse fromScalarAtom op
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp op')

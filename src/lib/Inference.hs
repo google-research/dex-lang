@@ -12,7 +12,6 @@ module Inference (inferModule, synthModule) where
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Control.Monad.Writer
 import Data.Foldable (fold, toList)
 import Data.Functor
 import Data.String (fromString)
@@ -333,16 +332,16 @@ openEffectRow effRow = return effRow
 -- === typeclass dictionary synthesizer ===
 
 -- The writer just tracks whether we found any holes
-type SynthM = WriterT [()] (SubstEmbedT (Either Err))
+type SynthM = SubstEmbedT (Either Err)
 
-synthModule :: TopEnv -> Module -> Except Module
-synthModule scope m = do
-  (m', holeCount) <- liftM fst $ flip runSubstEmbedT scope $ runWriterT $
-                       traverseModule synthTraversal m
-  -- We could choose to search only up to a maximum depth here
-  if null holeCount
-    then return m'
-    else synthModule scope m'
+synthModule :: Scope -> Module -> Except Module
+synthModule scope m = runSynthM scope $ traverseModule synthTraversal m
+
+synthBlock :: Scope -> Block -> Except Block
+synthBlock scope block = runSynthM scope $ traverseBlock synthTraversal block
+
+runSynthM :: Scope -> SynthM a -> Except a
+runSynthM scope m = liftM fst $ runSubstEmbedT m scope
 
 synthTraversal :: TraversalDef SynthM
 synthTraversal = (traverseExpr synthTraversal, synthAtom)
@@ -351,15 +350,14 @@ synthAtom :: Atom -> SynthM Atom
 synthAtom atom = case atom of
   -- TODO: add source information to these holes
   Con (ClassDictHole ty) -> do
-    tell [()]
     scope <- getScope
     let candidates = synthCandidates scope
     let solutions = rights $ map (instantiateAndCheck scope ty) candidates
     case solutions of
       [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
       [block] -> emitBlock block
-      blocks -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-                    ++ "\n" ++ pprint blocks
+      _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+             ++ "\n" ++ pprint solutions
   _ -> traverseAtom synthTraversal atom
 
 synthCandidates :: Scope -> [Var]
@@ -373,7 +371,7 @@ synthCandidates scope = catMaybes $ flip map (envPairs scope) $ \(v, binding) ->
 instantiateAndCheck :: Scope -> Type -> Var -> Except Block
 instantiateAndCheck scope ty v = do
   (x, (_, decls)) <- runUInferM (instantiateAndCheck' ty v) mempty scope
-  return $ wrapDecls decls x
+  synthBlock scope $ wrapDecls decls x
 
 instantiateAndCheck' :: Type -> Var -> UInferM Atom
 instantiateAndCheck' ty v = do
