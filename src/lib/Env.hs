@@ -34,7 +34,7 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord, Functor, Foldable, 
 data Name = Name NameSpace Tag Int | GlobalName Tag | NoName
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | JaxIdx | Skolem
-               | InferenceName | NoNameSpace | ArrayName
+               | InferenceName | NoNameSpace | ArrayName | SumName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text

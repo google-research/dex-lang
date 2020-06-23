@@ -29,7 +29,7 @@ import Env
 import Type
 import PPrint
 import Cat
-import Util (bindM2)
+import qualified Algebra as A
 
 -- Note [Valid Imp atoms]
 --
@@ -418,29 +418,16 @@ offsetTo ty i     = fromScalarAtom <$> fromEmbed (offsetToE ty (toScalarAtom Int
 elemCountE :: MonadEmbed m => ScalarTableType -> m Atom
 elemCountE ty = case ty of
   BaseTy _  -> return $ IntVal 1
-  TabTy (NoName:>idxTy) b -> bindM2 imul (indexSetSizeE idxTy) (elemCountE b)
-  TabTy v (TabTy (NoName :> TC (IndexRange _ Unlimited (InclusiveLim (Var v')))) (BaseTy _)) | v == v' ->
-    triangularSum =<< indexSetSizeE (varType v)
-  TabTy _ _ ->
-    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint ty
+  TabTy v _ -> offsetToE ty =<< indexSetSizeE (varType v)
   _ -> error $ "Not a scalar table type: " ++ pprint ty
 
 -- TODO: Accept an index instead of an ordinal?
 offsetToE :: MonadEmbed m => ScalarTableType -> Atom -> m Atom
 offsetToE ty i = case ty of
-  TabTy (NoName:>_) b -> imul i =<< elemCountE b
-  TabTy v (TabTy (NoName :> TC (IndexRange _ Unlimited (InclusiveLim (Var v')))) (BaseTy _)) | v == v' ->
-    triangularSum i
-  TabTy _ _ ->
-    error $ "Tables with sizes of dimensions dependent on previous dimensions are not supported: " ++ pprint ty
   BaseTy _  -> error "Indexing into a scalar!"
+  TabTy (NoName :> _) b -> imul i =<< elemCountE b
+  TabTy _ _             -> A.evalSumPolynomial (A.offsetTo ty) i
   _ -> error $ "Not a scalar table type: " ++ pprint ty
-
-triangularSum :: MonadEmbed m => Atom -> m Atom
-triangularSum n = do
-  n1 <- iadd n (IntVal 1)
-  num <- imul n n1
-  num `idiv` (IntVal 2)
 
 zipWithDest :: Dest -> Atom -> (IExpr -> IExpr -> ImpM ()) -> ImpM ()
 zipWithDest dest atom f = case (dest, atom) of

@@ -17,7 +17,7 @@ flag inotify
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, PPrint, Array,
+                       Parser, Util, Imp, PPrint, Array, Algebra,
                        Actor, Cat, Flops, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, JAX, Interpreter, Logging, PipeRPC
