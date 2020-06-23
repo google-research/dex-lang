@@ -189,6 +189,7 @@ andE (BoolVal True) y = return y
 andE x y              = emit $ Op $ ScalarBinOp And x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
+select (BoolVal b) x y = return $ if b then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
@@ -203,6 +204,7 @@ irem :: MonadEmbed m => Atom -> Atom -> m Atom
 irem x y = emitOp $ ScalarBinOp Rem x y
 
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
+ilt (IntVal x) (IntVal y) = return $ BoolVal $ x < y
 ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
 
 getFst :: MonadEmbed m => Atom -> m Atom
@@ -460,7 +462,7 @@ reduceExpr scope expr = case expr of
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
   BaseType BoolType -> return $ IntVal 2
-  IntRange low high -> high `isub` low
+  IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
     low' <- case low of
       InclusiveLim x -> indexToIntE n x
@@ -470,10 +472,14 @@ indexSetSizeE (TC con) = case con of
       InclusiveLim x -> indexToIntE n x >>= iadd (IntVal 1)
       ExclusiveLim x -> indexToIntE n x
       Unlimited      -> indexSetSizeE n
-    high' `isub` low'
+    clampPositive =<< high' `isub` low'
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
   SumType l r -> bindM2 iadd (indexSetSizeE l) (indexSetSizeE r)
   _ -> error $ "Not implemented " ++ pprint con
+  where
+    clampPositive x = do
+      isNegative <- x `ilt` (IntVal 0)
+      select isNegative (IntVal 0) x
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
 
 -- XXX: Be careful if you use this function as an interpretation for
