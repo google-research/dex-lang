@@ -152,7 +152,8 @@ toImpOp (maybeDest, op) = case op of
     extend ((subrefVar @> subrefDest, mempty), mempty)
     returnVal $ Var subrefVar
   ArrayOffset arr idx off -> do
-    arrSlice <- impOffset (fromArrayAtom arr) (fromScalarAtom idx) (fromScalarAtom off)
+    i <- indexToInt (getType idx) idx
+    arrSlice <- impOffset (fromArrayAtom arr) i (fromScalarAtom off)
     returnVal $ toArrayAtom arrSlice
   ArrayLoad arr -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
   Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
