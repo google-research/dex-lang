@@ -260,7 +260,6 @@ destToAtom dest = destToAtomScalarAction loadScalarRef dest
 destToAtomScalarAction :: (IVar -> ImpM Atom) -> Dest -> ImpM Atom
 destToAtomScalarAction fScalar dest = do
   scope <- looks $ fst . snd
-  -- FIXME: This does not propagate the scope back!
   (atom, decls) <- runEmbedT (destToAtom' fScalar [] dest) scope
   case decls of
     [] -> return $ atom
@@ -269,13 +268,11 @@ destToAtomScalarAction fScalar dest = do
 destToAtom' :: (IVar -> ImpM Atom) -> [Var] -> Dest -> EmbedT ImpM Atom
 destToAtom' fScalar forVars dest = case dest of
   DFor (Abs v d) -> do
-    scope <- looks $ fst . snd
     v' <- lift $ case v of
       (NoName :> t) -> freshVar ("idx" :> t)
       _             -> freshVar v
-    -- FIXME: This does not propagate the scope back!
-    (res, decls) <- lift $ runEmbedT (destToAtom' fScalar (v' : forVars) d) scope
-    return $ Lam $ makeAbs v' (TabArrow, Block decls (Atom res))
+    block <- buildScoped $ destToAtom' fScalar (v' : forVars) d
+    return $ Lam $ makeAbs v' (TabArrow, block)
   DRef ref       -> case forVars of
     [] -> lift $ fScalar ref
     _  -> do
