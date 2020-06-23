@@ -4,12 +4,15 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-module Interpreter (evalBlock) where
+module Interpreter (evalBlock, indices, indexSetSize) where
 
+import Array
 import Cat
 import Syntax
 import Env
 import PPrint
+import Embed
+import Type
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -25,16 +28,20 @@ foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
 evalBlock :: SubstEnv -> Block -> Atom
 evalBlock env (Block decls result) = do
   let env' = catFold evalDecl env decls
-  evalExpr $ subst (env <> env', mempty) result
+  evalExpr env $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> evalExpr rhs'
+evalDecl env (Let v rhs) = v @> evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
 
-evalExpr :: Expr -> Atom
-evalExpr expr = case expr of
-  Op op -> evalOp op
-  _     -> undefined
+evalExpr :: SubstEnv -> Expr -> Atom
+evalExpr env expr = case expr of
+  App f x   -> case f of
+    Lam a -> evalBlock env $ snd $ applyAbs a x
+    _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
+  Atom atom -> atom
+  Op op     -> evalOp op
+  Hof _     -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of
@@ -62,4 +69,31 @@ evalOp expr = case expr of
     "randunif" -> RealVal $ c_unif x  where [IntVal x] = args
     "threefry2x32" -> IntVal $ c_threefry x y  where [IntVal x, IntVal y] = args
     _ -> error $ "FFI function not recognized: " ++ name
+  ArrayOffset arrArg offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
+    where (ArrayVal (ArrayTy (TabTy _ b)) arr, IntVal off) = (arrArg, offArg)
+  ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
+  IndexAsInt idxArg -> case idxArg of
+    Con (AsIdx _ i)  -> i
+    Con (AnyValue t) -> anyValue t
+    _                -> evalEmbed (indexToIntE (getType idxArg) idxArg)
   _ -> error $ "Not implemented: " ++ pprint expr
+
+indices :: Type -> [Atom]
+indices ty = case ty of
+  TC (BaseType BoolType) -> [BoolVal False, BoolVal True]
+  TC (IntRange _ _)      -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
+  TC (IndexRange _ _ _)  -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
+  TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
+  TC (UnitType)          -> [UnitVal]
+  TC (SumType lt rt)     -> fmap (\l -> SumVal (BoolVal True)  l (Con (AnyValue rt))) (indices lt) ++
+                            fmap (\r -> SumVal (BoolVal False) (Con (AnyValue lt)) r) (indices rt)
+  _ -> error $ "Not implemented: " ++ pprint ty
+  where n = indexSetSize ty
+
+indexSetSize :: Type -> Int
+indexSetSize ty = i
+  where (IntVal i) = evalEmbed (indexSetSizeE ty)
+
+evalEmbed :: Embed Atom -> Atom
+evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
+  where (atom, decls) = runEmbed embed mempty

@@ -25,7 +25,7 @@ module Syntax (
     Val, TopEnv (..), Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    IDimType (..), ScalarTableType, ScalarTableVar,
+    ScalarTableType, ScalarTableVar,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -36,14 +36,15 @@ module Syntax (
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    scalarTableBaseType, varType,
+    scalarTableBaseType, varType, isTabTy,
     pattern IntVal, pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern SumVal, pattern PureArrow,
-    pattern RealVal, pattern BoolVal, pattern TyKind, pattern TabTy, isTabTy,
+    pattern PairVal, pattern SumVal, pattern PureArrow, pattern ArrayVal,
+    pattern RealVal, pattern BoolVal, pattern TyKind,
+    pattern TabTy, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
-    pattern EffKind, pattern JArrayTy)
+    pattern EffKind, pattern JArrayTy, pattern ArrayTy)
   where
 
 import qualified Data.Map.Strict as M
@@ -84,7 +85,7 @@ data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
 type Var    = VarP Type
 type Binder = VarP Type
 
-data Abs a = Abs Binder a  deriving (Show, Generic)
+data Abs a = Abs Binder a  deriving (Show, Generic, Functor, Foldable, Traversable)
 type LamExpr = Abs (Arrow, Block)
 type PiType  = Abs (Arrow, Type)
 
@@ -171,7 +172,8 @@ data PrimExpr e =
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimTC e =
-        BaseType BaseType
+        BaseType  BaseType
+      | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
       | PairType e e
@@ -189,15 +191,13 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | ArrayLit e Array -- Used to store results of module evaluation
+      | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
       | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
       | PairCon e e
       | UnitCon
       | RefCon e e
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
-      | AFor e e
-      | AGet e
       | Todo e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -214,6 +214,8 @@ data PrimOp e =
       | IndexRef e e
       | FFICall String BaseType [e]
       | Inject e
+      | ArrayOffset e e
+      | ArrayLoad e
       -- Typeclass operations
       -- Eq and Ord (should get eliminated during simplification)
       | Cmp CmpOp e e
@@ -320,8 +322,7 @@ newtype ImpProg = ImpProg [ImpStatement]
 type ImpStatement = (Maybe IVar, ImpInstr)
 
 data ImpInstr = Load  IExpr
-              | Store IExpr IExpr       -- destination first
-              | Copy  IExpr IExpr Size  -- destination first
+              | Store IExpr IExpr           -- Destination first
               | Alloc ScalarTableType Size  -- Second argument is the size of the table
               | Free IVar
               | IOffset IExpr Index
@@ -337,12 +338,8 @@ type IPrimOp = PrimOp IExpr
 type IVal = IExpr  -- only ILit and IRef constructors
 type IVar = VarP IType
 data IType = IValType BaseType
-           | IRefType ScalarTableType
+           | IRefType ScalarTableType -- This represents ArrayType (ScalarTableType)
              deriving (Show, Eq)
-
-data IDimType = IUniform IExpr
-              | IPrecomputed IVar -- IVar with type IRefType ([IUniform n], IntType)
-                deriving (Show, Eq)
 
 type Size  = IExpr
 type Index = IExpr
@@ -752,6 +749,9 @@ pattern RealVal x = Con (Lit (RealLit x))
 pattern BoolVal :: Bool -> Atom
 pattern BoolVal x = Con (Lit (BoolLit x))
 
+pattern ArrayVal :: Type -> Array -> Atom
+pattern ArrayVal t arr = Con (ArrayLit t arr)
+
 pattern SumVal :: Atom -> Atom -> Atom -> Atom
 pattern SumVal t l r = Con (SumCon t l r)
 
@@ -800,8 +800,17 @@ pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))
 pattern PureArrow :: Arrow
 pattern PureArrow = PlainArrow Pure
 
-pattern TabTy :: Type -> Type -> Type
-pattern TabTy xs i = Pi (Abs (NoName:>xs) (TabArrow, i))
+pattern ArrayTy :: Type -> Type
+pattern ArrayTy t = TC (ArrayType t)
+
+pattern TabTy :: Var -> Type -> Type
+pattern TabTy v i = Pi (Abs v (TabArrow, i))
+
+pattern TabVal :: Var -> Block -> Atom
+pattern TabVal v b = Lam (Abs v (TabArrow, b))
+
+pattern TabValA :: Var -> Atom -> Atom
+pattern TabValA v a = Lam (Abs v (TabArrow, (Block [] (Atom a))))
 
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True

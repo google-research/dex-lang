@@ -543,10 +543,10 @@ def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
 -- TODO: within-module version of this (currently fails in Imp checking)
 upperBound = isum $ for i:(Fin 4). 1
 for j:(Fin upperBound). 1.0
-> [1.0, 1.0, 1.0, 1.0]@(Fin aget Int[1])
+> [1.0, 1.0, 1.0, 1.0]
 
 (for i:(Fin upperBound). 1, for j:(Fin 2). 2)
-> ([1, 1, 1, 1]@(Fin aget Int[1]), [2, 2])
+> ([1, 1, 1, 1], [2, 2])
 
 for i:(Fin 4).
   x = iadd 1 1

@@ -15,12 +15,14 @@ module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              app, add, mul, sub, neg, div', andE, reduceScoped, declAsScope,
+              app, add, iadd, mul, imul, sub, isub, neg, div', andE, reduceScoped, declAsScope,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter, tabGet) where
+              unpackConsList, emitRunWriter, tabGet, arrOffset, arrLoad,
+              sumTag, getLeft, getRight, fromSum,
+              indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Monad
 import Control.Monad.Fail
@@ -36,6 +38,7 @@ import Syntax
 import Cat
 import Type
 import PPrint
+import Util (bindM2)
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadFail)
@@ -123,7 +126,7 @@ buildLamAux b fArr fBody = do
     return (arr, ansAux)
   return (Lam (Abs b' (arr, wrapDecls decls ans)), aux)
 
-buildScoped :: (MonadEmbed m) => m Atom -> m Block
+buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
   (ans, decls) <- scopedDecls m
   return $ wrapDecls decls ans
@@ -158,11 +161,28 @@ add :: MonadEmbed m => Atom -> Atom -> m Atom
 add (RealVal 0) y = return y
 add x y           = emitOp $ ScalarBinOp FAdd x y
 
+iadd :: MonadEmbed m => Atom -> Atom -> m Atom
+iadd (IntVal 0) y          = return y
+iadd x          (IntVal 0) = return x
+iadd (IntVal x) (IntVal y) = return $ IntVal $ x + y
+iadd x y          = emitOp $ ScalarBinOp IAdd x y
+
 mul :: MonadEmbed m => Atom -> Atom -> m Atom
 mul x y = emitOp $ ScalarBinOp FMul x y
 
+imul :: MonadEmbed m => Atom -> Atom -> m Atom
+imul (IntVal 1) y          = return y
+imul x          (IntVal 1) = return x
+imul (IntVal x) (IntVal y) = return $ IntVal $ x * y
+imul x y = emitOp $ ScalarBinOp IMul x y
+
 sub :: MonadEmbed m => Atom -> Atom -> m Atom
 sub x y = emitOp $ ScalarBinOp FSub x y
+
+isub :: MonadEmbed m => Atom -> Atom -> m Atom
+isub x          (IntVal 0) = return x
+isub (IntVal x) (IntVal y) = return $ IntVal $ x - y
+isub x y = emitOp $ ScalarBinOp ISub x y
 
 andE :: MonadEmbed m => Atom -> Atom -> m Atom
 andE (BoolVal True) y = return y
@@ -173,6 +193,17 @@ select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
 div' x y = emitOp $ ScalarBinOp FDiv x y
+
+idiv :: MonadEmbed m => Atom -> Atom -> m Atom
+idiv x          (IntVal 1) = return x
+idiv (IntVal x) (IntVal y) = return $ IntVal $ x `div` y
+idiv x y = emitOp $ ScalarBinOp IDiv x y
+
+irem :: MonadEmbed m => Atom -> Atom -> m Atom
+irem x y = emitOp $ ScalarBinOp Rem x y
+
+ilt :: MonadEmbed m => Atom -> Atom -> m Atom
+ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
 
 getFst :: MonadEmbed m => Atom -> m Atom
 getFst (PairVal x _) = return x
@@ -185,12 +216,32 @@ getSnd p = emitOp $ Snd p
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
 
+arrOffset :: MonadEmbed m => Atom -> Atom -> m Atom
+arrOffset x i = emitOp $ ArrayOffset x i
+
+arrLoad :: MonadEmbed m => Atom -> m Atom
+arrLoad x = emitOp $ ArrayLoad x
+
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
-fromPair (PairVal x y) = return (x, y)
 fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
 unpackConsList = undefined
+
+sumTag :: MonadEmbed m => Atom -> m Atom
+sumTag (SumVal t _ _) = return t
+sumTag s = emitOp $ SumTag s
+
+getLeft :: MonadEmbed m => Atom -> m Atom
+getLeft (SumVal _ l _) = return l
+getLeft s = emitOp $ SumGet s True
+
+getRight :: MonadEmbed m => Atom -> m Atom
+getRight (SumVal _ _ r) = return r
+getRight s = emitOp $ SumGet s False
+
+fromSum :: MonadEmbed m => Atom -> m (Atom, Atom, Atom)
+fromSum s = (,,) <$> sumTag s <*> getLeft s <*> getRight s
 
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
@@ -212,17 +263,17 @@ tabGet x i = emit $ App x i
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildFor Fwd ("i":>n) $ \i ->
+  fsts <- buildFor Fwd ("i":>varType v) $ \i ->
             liftM fst $ app tab i >>= fromPair
-  snds <- buildFor Fwd ("i":>n) $ \i ->
+  snds <- buildFor Fwd ("i":>varType v) $ \i ->
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
-  where TabTy n _ = getType tab
+  where TabTy v _ = getType tab
 
 mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  TabTy n a -> do
-    buildFor Fwd ("i":>n) $ \i -> do
+  TabTy v a -> do
+    buildFor Fwd ("i":>varType v) $ \i -> do
       xs' <- mapM (flip app i) xs
       mapScalars f a xs'
   BaseTy _           -> f ty xs
@@ -250,10 +301,8 @@ isSingletonType ty = case singletonTypeVal ty of
   Just _  -> True
 
 singletonTypeVal :: Type -> Maybe Atom
-singletonTypeVal (TabTy n a) = liftM (Con . AFor n) $ singletonTypeVal a
+singletonTypeVal (TabTy v a) = TabValA v <$> singletonTypeVal a
 singletonTypeVal (TC con) = case con of
-  -- XXX: This returns Nothing if it's a record that is not an empty tuple (or contains
-  --      anything else than only empty tuples inside)!
   PairType a b -> liftM2 PairVal (singletonTypeVal a) (singletonTypeVal b)
   UnitType     -> return UnitVal
   _            -> Nothing
@@ -267,6 +316,12 @@ intToReal i = emitOp $ ScalarUnOp IntToReal i
 
 boolToReal :: MonadEmbed m => Atom -> m Atom
 boolToReal = boolToInt >=> intToReal
+
+unsafeIntToBool :: MonadEmbed m => Atom -> m Atom
+unsafeIntToBool b = emitOp $ ScalarUnOp UnsafeIntToBool b
+
+indexAsInt :: MonadEmbed m => Atom -> m Atom
+indexAsInt idx = emitOp $ IndexAsInt idx
 
 instance MonadTrans EmbedT where
   lift m = EmbedT $ lift $ lift m
@@ -401,3 +456,77 @@ reduceExpr scope expr = case expr of
     Lam (Abs b (PureArrow, block)) <- return f'
     reduceBlock scope $ subst (b@>x', scope) block
   _ -> Nothing
+
+indexSetSizeE :: MonadEmbed m => Type -> m Atom
+indexSetSizeE (TC con) = case con of
+  BaseType BoolType -> return $ IntVal 2
+  IntRange low high -> high `isub` low
+  IndexRange n low high -> do
+    low' <- case low of
+      InclusiveLim x -> indexToIntE n x
+      ExclusiveLim x -> indexToIntE n x >>= iadd (IntVal 1)
+      Unlimited      -> return $ IntVal 0
+    high' <- case high of
+      InclusiveLim x -> indexToIntE n x >>= iadd (IntVal 1)
+      ExclusiveLim x -> indexToIntE n x
+      Unlimited      -> indexSetSizeE n
+    high' `isub` low'
+  PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
+  SumType l r -> bindM2 iadd (indexSetSizeE l) (indexSetSizeE r)
+  _ -> error $ "Not implemented " ++ pprint con
+indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
+
+-- XXX: Be careful if you use this function as an interpretation for
+--      IndexAsInt instruction, as for Int and IndexRanges it will
+--      generate the same instruction again, potentially leading to an
+--      infinite loop.
+indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
+indexToIntE ty idx = case ty of
+  BoolTy  -> boolToInt idx
+  SumTy lType rType -> do
+    (tag, lVal, rVal) <- fromSum idx
+    lTypeSize <- indexSetSizeE lType
+    lInt      <- indexToIntE lType lVal
+    rInt      <- iadd lTypeSize =<< indexToIntE rType rVal
+    select tag lInt rInt
+  PairTy lType rType -> do
+    (lVal, rVal) <- fromPair idx
+    lIdx  <- indexToIntE lType lVal
+    rIdx  <- indexToIntE rType rVal
+    rSize <- indexSetSizeE rType
+    imul rSize lIdx >>= iadd rIdx
+  TC (IntRange _ _)     -> indexAsInt idx
+  TC (IndexRange _ _ _) -> indexAsInt idx
+  _ -> error $ "Unexpected type " ++ pprint ty
+
+intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
+intToIndexE ty@(TC con) i = case con of
+  IntRange _ _      -> iAsIdx
+  IndexRange _ _ _  -> iAsIdx
+  BaseType BoolType -> unsafeIntToBool i
+  PairType a b -> do
+    bSize <- indexSetSizeE b
+    iA <- intToIndexE a =<< idiv i bSize
+    iB <- intToIndexE b =<< irem i bSize
+    return $ PairVal iA iB
+  SumType l r -> do
+    lSize <- indexSetSizeE l
+    isLeft <- i `ilt` lSize
+    li <- intToIndexE l i
+    ri <- intToIndexE r =<< i `isub` lSize
+    return $ Con $ SumCon isLeft li ri
+  _ -> error $ "Unexpected type " ++ pprint con
+  where iAsIdx = return $ Con $ AsIdx ty i
+intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
+
+anyValue :: Type -> Atom
+anyValue (TC (BaseType RealType))     = RealVal 1.0
+anyValue (TC (BaseType IntType))      = IntVal 1
+anyValue (TC (BaseType BoolType))     = BoolVal False
+anyValue (TC (BaseType StrType))      = Con $ Lit $ StrLit ""
+-- XXX: This is not strictly correct, because those types might not have any
+--      inhabitants. We might want to consider emitting some run-time code that
+--      aborts the program if this really ends up being the case.
+anyValue t@(TC (IntRange _ _))        = Con $ AsIdx t $ IntVal 0
+anyValue t@(TC (IndexRange _ _ _))    = Con $ AsIdx t $ IntVal 0
+anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t
