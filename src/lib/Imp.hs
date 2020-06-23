@@ -268,18 +268,18 @@ destToAtomScalarAction fScalar dest = do
     [] -> return $ atom
     _  -> error "Unexpected decls"
 
-destToAtom' :: (IVar -> ImpM Atom) -> [Var] -> Dest -> EmbedT ImpM Atom
+destToAtom' :: (IVar -> ImpM Atom) -> [Atom] -> Dest -> EmbedT ImpM Atom
 destToAtom' fScalar forVars dest = case dest of
   DFor a@(Abs v _) -> do
-    v' <- lift $ case v of
-      (NoName :> t) -> freshVar ("idx" :> t)
-      _             -> freshVar v
-    block <- buildScoped $ destToAtom' fScalar (v' : forVars) (applyAbs a (Var v'))
-    return $ Lam $ makeAbs v' (TabArrow, block)
+    -- FIXME: buildLam does not maintain the NoName convention, so we have to
+    --        fix it up locally
+    ~(Lam (Abs v'' b)) <- buildLam ("idx" :> varType v) TabArrow $ \v' ->
+      destToAtom' fScalar (v' : forVars) (applyAbs a v')
+    return $ Lam $ makeAbs v'' b
   DRef ref       -> case forVars of
     [] -> lift $ fScalar ref
     _  -> do
-      scalarArray <- foldM arrIndex (toArrayAtom $ IVar ref) $ fmap Var (reverse forVars)
+      scalarArray <- foldM arrIndex (toArrayAtom $ IVar ref) $ reverse forVars
       arrLoad scalarArray
       where
         arrIndex :: Atom -> Atom -> EmbedT ImpM Atom
@@ -352,7 +352,7 @@ makeDest nameHint destType = go id destType
         --       Once might be ok, but the type will have aliasing binders!
         TabTy v b -> DFor . Abs v <$> go (\t -> mkTy $ TabTy v t) b
         TC con    -> case con of
-          BaseType b       -> DRef <$> freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
+          BaseType b       -> DRef  <$> freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
           PairType a b     -> DPair <$> go mkTy a <*> go mkTy b
           UnitType         -> return DUnit
           IntRange   _ _   -> scalarIndexSet ty
