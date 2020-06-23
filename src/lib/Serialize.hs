@@ -31,6 +31,7 @@ import Syntax
 import PPrint
 import Parser
 import Interpreter (indices, indexSetSize)
+import qualified Algebra as A
 
 data DBOHeader = DBOHeader
   { objectType     :: Type
@@ -216,9 +217,7 @@ typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
   TabTy (NoName:>n) body -> (indexSetSize n * s, b)
     where (s, b) = typeToArrayType body
-  TabTy v (TabTy (NoName :> TC (IndexRange _ Unlimited (InclusiveLim (Var v')))) (BaseTy b)) | v == v' ->
-    ((n * (n + 1)) `div` 2, b)
-    where n = indexSetSize $ varType v
-  TabTy _ _ -> error "Dependent tables not supported yet"
+  TabTy _ _ -> (size, scalarTableBaseType t)
+    where (IntVal size) = evalEmbed $ A.evalPolynomial (A.elemCount t)
   BaseTy b -> (1, b)
   _ -> error $ "Not a scalar table type: " ++ pprint t

@@ -579,3 +579,20 @@ for i:(Fin 2 & Fin 2). 1.0
 
 1@(Fin 2 & Fin 2)
 > (0@(Fin 2), 1@(Fin 2))
+
+for i:(Fin 5). for j:(..i).
+  ir = i2r $ ordinal i
+  jr = i2r $ ordinal j
+  ir * (ir + 1.0) / 2.0 + jr
+> [ [0.0]@...0@((Fin 5))
+> , [1.0, 2.0]@...1@((Fin 5))
+> , [3.0, 4.0, 5.0]@...2@((Fin 5))
+> , [6.0, 7.0, 8.0, 9.0]@...3@((Fin 5))
+> , [10.0, 11.0, 12.0, 13.0, 14.0]@...4@((Fin 5)) ]
+
+-- Exercise the use of free variables in the sum solver
+:p
+  n = iadd 2 2
+  x = for i:(Fin n). for j:(..i). 1.0
+  sum $ for i. sum x.i
+> 10.0
