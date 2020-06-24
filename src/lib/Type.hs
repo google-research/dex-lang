@@ -219,7 +219,6 @@ typeCheckTyCon tc = case tc of
   PairType a b     -> a|:TyKind >> b|:TyKind
   UnitType         -> return ()
   RefType r a      -> r|:TyKind >> a|:TyKind
-  ClassDictType _ a -> a|:TyKind
   TypeKind         -> return ()
   EffectRowKind    -> return ()
   JArrayType _ _   -> undefined
@@ -238,13 +237,6 @@ typeCheckCon con = case con of
   AGet st -> (BaseTy . scalarTableBaseType) <$> typeCheck st
   AsIdx n e -> n|:TyKind >> e|:IntTy $> n
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
-  ClassDict c a d -> do
-    a |: TyKind
-    case c of
-      Eq  -> d |: (a --> a --> BoolTy)
-      Ord -> d |: PairTy (TC (ClassDictType Eq a)) (a --> a --> BoolTy)
-      _  -> error "Not implemented"
-    return $ TC $ ClassDictType c a
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty
 
@@ -299,12 +291,6 @@ typeCheckOp op = case op of
     RefTy h (TabTy n a) <- typeCheck ref
     i|:n
     return $ RefTy h a
-  FromClassDict d -> do
-    TC (ClassDictType c a) <- typeCheck d
-    case c of
-      Eq  -> return $ a --> a --> BoolTy
-      Ord -> return $ PairTy (TC (ClassDictType Eq a)) (a --> a --> BoolTy)
-      _ -> error "Not implemented"
   FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
 
 typeCheckHof :: Hof -> TypeM Type

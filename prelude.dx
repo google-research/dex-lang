@@ -88,48 +88,50 @@ def withState
 
 'Type classes
 
+@newtype
+def Eq (a:Type) : Type = a -> a -> Bool
+def MkEq (a:Type) ?-> (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
+def fromEq (d:Eq a) : a -> a -> Bool = unsafeFromNewtypeCon d
 
-def Eq (a:Type) : Type = %EqClassDictTy a
-def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
-
-def Ord (a:Type) : Type = %OrdClassDictTy a
-def OrdDict (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
-  eqAndGt = (eq, gt)
-  %OrdClassDict a eqAndGt
+@newtype
+def Ord (a:Type) : Type = (Eq a & a -> a -> Bool)
+def MkOrd (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
+  unsafeNewtypeCon (eq, gt)
+def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool) = unsafeFromNewtypeCon d
 
 @superclass
-def eqFromOrd (d:Ord a) : Eq a = fst (%fromClassDict d)
+def eqFromOrd (d:Ord a) : Eq a = fst (fromOrd d)
 
-def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (%fromClassDict d) x y
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (fromEq d) x y
 def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
 
-def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (%fromClassDict d) x y
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (fromOrd d) x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y
 def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
 @instance
-intEq : Eq Int = EqDict \x y. %ieq x y
+intEq : Eq Int = MkEq \x y. %ieq x y
 
 @instance
-intGt : Ord Int = OrdDict intEq \x y. %igt x y
+intGt : Ord Int = MkOrd intEq \x y. %igt x y
 
 @instance
-realEq : Eq Real = EqDict \x y. %feq x y
+realEq : Eq Real = MkEq \x y. %feq x y
 
 @instance
-realGt : Ord Real = OrdDict realEq \x y. %fgt x y
+realGt : Ord Real = MkOrd realEq \x y. %fgt x y
 
 @instance
-def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
   \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
 
 @instance
-def pairGt (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) = OrdDict pairEq $
+def pairGt (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) = MkOrd pairEq $
   \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
 
 @instance
-def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
+def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = MkEq $
   \x y. case x
     Left  xVal -> case y
       Left  yVal -> xVal == yVal
@@ -140,7 +142,7 @@ def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
 
 -- TODO: accumulate using the True/&& monoid
 @instance
-def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
+def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
   \xs ys.
     numDifferent : Real =
       snd $ withAccum \ref. for i.
@@ -148,7 +150,7 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
     numDifferent == 0.0
 
 @instance
-def tabGt (n:Type) ?-> (ordA: Ord a) ?=> : Ord (n=>a) = OrdDict tabEq $
+def tabGt (n:Type) ?-> (ordA: Ord a) ?=> : Ord (n=>a) = MkOrd tabEq $
   \xs ys.
     numDifferent : Real =
       snd $ withAccum \ref. for i.
@@ -179,9 +181,11 @@ def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
 def iota (n:Type) : n=>Int = for i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
-def finEq (n:Int) ?-> : Eq (Fin n) = EqDict \x y. ordinal x == ordinal y
 @instance
-def finOrd (n:Int) ?-> : Ord (Fin n) = OrdDict finEq \x y. ordinal x > ordinal y
+def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
+
+@instance
+def finOrd (n:Int) ?-> : Ord (Fin n) = MkOrd finEq \x y. ordinal x > ordinal y
 
 'Misc
 

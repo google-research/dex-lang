@@ -183,7 +183,6 @@ data PrimTC e =
       | UnitType
       | SumType e e
       | RefType e e
-      | ClassDictType ClassName e
       | TypeKind
       | EffectRowKind
         -- NOTE: This is just a hack so that we can construct an Atom from an Imp or Jax expression.
@@ -206,8 +205,7 @@ data PrimCon e =
       | AFor e e
       | AGet e
       | NewtypeCon e e    -- result type, argument
-      | ClassDict ClassName e e  -- Type parameter, payload
-      | ClassDictHole e          -- Only used during type inference
+      | ClassDictHole e   -- Only used during type inference
       | Todo e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -228,7 +226,6 @@ data PrimOp e =
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
-      | FromClassDict e
       | FromNewtypeCon e e  -- result type, argument
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -934,11 +931,6 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
-  , ("fromClassDict" , OpExpr $ FromClassDict ())
-  , ("EqClassDictTy" , TCExpr  $ ClassDictType Eq  ())
-  , ("OrdClassDictTy", TCExpr  $ ClassDictType Ord ())
-  , ("EqClassDict"   , ConExpr $ ClassDict Eq  () ())
-  , ("OrdClassDict"  , ConExpr $ ClassDict Ord () ())
   ]
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
