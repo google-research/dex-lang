@@ -103,6 +103,7 @@ instance Pretty e => Pretty (PrimExpr e) where
 instance Pretty e => Pretty (PrimTC e) where
   pretty con = case con of
     BaseType b     -> p b
+    ArrayType ty   -> "Arr[" <> p ty <> "]"
     PairType a b   -> parens $ p a <+> "&" <+> p b
     UnitType       -> "Unit"
     IntRange a b -> if s1 == "0...<" then parens ("Fin" <+> p s2) else ans
@@ -127,8 +128,6 @@ instance Pretty e => Pretty (PrimCon e) where
     PairCon x y -> parens $ p x <+> "," <+> p y
     UnitCon     -> "()"
     RefCon _ _  -> "RefCon"
-    AFor n body -> parens $ "afor *:" <> p n <+> "." <+> p body
-    AGet e      -> "aget" <+> p e
     AsIdx n i   -> p i <> "@" <> parens (p n)
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ case pprint c of
@@ -143,6 +142,8 @@ instance Pretty e => Pretty (PrimOp e) where
     SumTag e        -> parens $ "projTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
+    ArrayOffset arr idx off -> p arr <+> "+>" <+> p off <+> (parens $ "index:" <+> p idx)
+    ArrayLoad arr       -> "load" <+> p arr
     _ -> prettyExprDefault $ OpExpr op
 
 instance Pretty e => Pretty (PrimHof e) where
@@ -174,6 +175,7 @@ instance Pretty Decl where
 instance Pretty Atom where
   pretty atom = case atom of
     Var (x:>_)  -> p x
+    Lam (Abs b (TabArrow, body))   -> "for " <> p b <> "." <> p body
     Lam (Abs b (_, body)) -> "\\" <> p b <> "." <> p body
     Pi  (Abs (NoName:>a) (arr, b)) -> parens $ p a <> p arr <> p b
     Pi  (Abs a           (arr, b)) -> parens $ p a <> p arr <> p b
@@ -189,11 +191,6 @@ instance Pretty IType where
   pretty (IRefType t) = "Ref" <+> (parens $ p t)
   pretty (IValType b) = p b
 
-instance Pretty IDimType where
-  pretty (IUniform (ILit (IntLit sz))) = p sz
-  pretty (IUniform _)     = "<uniform, dependent>"
-  pretty (IPrecomputed _) = "<precomptued>"
-
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
 
@@ -208,15 +205,14 @@ prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)         = p op
-  pretty (Load ref)           = "load"  <+> p ref
-  pretty (Store dest val)     = "store" <+> p dest <+> p val
-  pretty (Copy dest source s) = "copy"  <+> p dest <+> p source <+> parens (p s <+> "elems")
-  pretty (Alloc t s)          = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr idx)   = p expr <+> "+>" <+> p idx
-  pretty (Free (v:>_))        = "free"  <+> p v
-  pretty (Loop d i n block)   = dirStr d <+> p i <+> "<" <+> p n <>
-                                nest 4 (hardline <> p block)
+  pretty (IPrimOp op)            = p op
+  pretty (Load ref)              = "load"  <+> p ref
+  pretty (Store dest val)        = "store" <+> p dest <+> p val
+  pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (IOffset expr idx lidx) = p expr <+> "+>" <+> p lidx <+> (parens $ "index:" <+> p idx)
+  pretty (Free (v:>_))           = "free"  <+> p v
+  pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
+                                   nest 4 (hardline <> p block)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"

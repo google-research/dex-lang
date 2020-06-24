@@ -279,10 +279,10 @@ inferTabTy xs ann = case ann of
   Just ty -> do
     ty' <- checkUType ty
     case ty' of
-      TabTy n a -> do
-        unless (indexSetConcreteSize n == Just (length xs)) $
+      TabTy v a -> do
+        unless (indexSetConcreteSize (varType v) == Just (length xs)) $
            throw TypeErr $ "Table size doesn't match annotation"
-        return (n, a)
+        return (varType v, a)
       _ -> throw TypeErr $ "Table constructor annotation must be a table type"
   Nothing -> case xs of
    [] -> throw TypeErr $ "Empty table constructor must have type annotation"

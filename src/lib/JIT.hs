@@ -35,7 +35,6 @@ import Syntax
 import Env
 import PPrint
 import Cat
-import Imp
 
 type CompileEnv = Env Operand
 -- TODO: consider using LLVM.IRBuilder.Monad instead of rolling our own here
@@ -65,8 +64,8 @@ runCompileM env m = evalState (runReaderT m env) initState
 compileTopProg :: ImpFunction -> CompileM LLVMFunction
 compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
   -- Set up the argument list. Note that all outputs are pointers to pointers.
-  let inVarTypes  = map (        L.ptr . scalarTy . scalarTableBaseType . varAnn) inVars
-  let outVarTypes = map (L.ptr . L.ptr . scalarTy . scalarTableBaseType . varAnn) outVars
+  let inVarTypes  = map (        L.ptr . scalarTy . arrayBaseType . varAnn) inVars
+  let outVarTypes = map (L.ptr . L.ptr . scalarTy . arrayBaseType . varAnn) outVars
   (inParams, inOperands)   <- unzip <$> mapM freshParamOpPair inVarTypes
   (outParams, outOperands) <- unzip <$> mapM freshParamOpPair outVarTypes
 
@@ -82,6 +81,7 @@ compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
   blocks <- gets (reverse . curBlocks)
   return $ LLVMFunction numOutputs $ makeModule (outParams ++ inParams) decls blocks specs
   where
+    arrayBaseType = scalarTableBaseType . (\(ArrayTy t) -> t)
     numOutputs = length outVars
 
 freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
@@ -123,18 +123,6 @@ compileInstr allowAlloca instr = case instr of
     val'  <- compileExpr val
     store dest' val'
     return Nothing
-  Copy dest source numel -> do
-    let (IRefType t) = impExprType source
-    dest'   <- compileExpr dest
-    source' <- compileExpr source
-    case t of
-      (BaseTy _) -> do
-        x <- load source'
-        store dest' x
-      _  -> do
-        numBytes <- mul (litInt 8) =<< compileExpr numel
-        copy numBytes dest' source'
-    return Nothing
   Alloc t numel -> Just <$> case t of
     BaseTy b | allowAlloca -> alloca b
     _  -> do
@@ -146,7 +134,7 @@ compileInstr allowAlloca instr = case instr of
     ptr' <- castLPtr charTy v'
     addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
-  IOffset x off -> do
+  IOffset x _ off -> do
     x' <- compileExpr x
     off' <- compileExpr off
     Just <$> gep x' off'
@@ -200,12 +188,6 @@ freshName v = do
   let v'@(name:>_) = rename (v:>()) used
   modify $ \s -> s { usedNames = used <> v'@>() }
   return $ nameToLName name
-
-copy :: Operand -> Operand -> Operand -> CompileM ()
-copy numBytes dest src = do
-  src'  <- castLPtr charTy src
-  dest' <- castLPtr charTy dest
-  addInstr $ L.Do (externCall memcpyFun [dest', src', numBytes])
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
@@ -335,13 +317,10 @@ mallocFun :: ExternFunSpec
 mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex"      charPtrTy [charPtrTy]
-
-memcpyFun :: ExternFunSpec
-memcpyFun  = ExternFunSpec "memcpy_dex" L.VoidType [charPtrTy, charPtrTy, longTy]
+freeFun = ExternFunSpec "free_dex" L.VoidType [charPtrTy]
 
 builtinFFISpecs :: [ExternFunSpec]
-builtinFFISpecs = [mallocFun, freeFun, memcpyFun]
+builtinFFISpecs = [mallocFun, freeFun]
 
 charPtrTy :: L.Type
 charPtrTy = L.ptr charTy

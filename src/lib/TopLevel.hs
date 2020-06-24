@@ -17,6 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
+import Data.Maybe (fromJust)
 
 import Array
 import Syntax
@@ -36,7 +37,7 @@ import PPrint
 import Parser
 import PipeRPC
 import JAX
-import Util (highlightRegion)
+import Util (highlightRegion, foldMapM)
 
 data Backend = LLVM | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
@@ -179,21 +180,26 @@ evalBackend block = do
   let inVars = arrayVars block
   case backend of
     LLVMEngine engine -> do
-      let impFunction = toImpFunction (inVars, block)
+      let (impFunction, impAtom) = toImpFunction (inVars, block)
       checkPass ImpPass impFunction
       logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
-      let exprType = getType block
       lift $ modifyMVar engine $ \env -> do
         let inPtrs = fmap (env !) inVars
         outPtrs <- callLLVM logger llvmFunc inPtrs
-        -- TODO: Assert length of outPtrs/outNames/outTys are equal?
         let (ImpFunction impOutVars _ _) = impFunction
         let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outPtrs
-        let outVars = zipWith (:>) outNames (fmap varAnn impOutVars)
-        -- XXX: This assumes that the implementation of flattenType and makeDest in Imp yield the same order!
-        let result = reStructureArrays exprType $ map Var outVars
-        return (env <> env', result)
+        substEnv <- foldMapM mkSubstEnv $ zip3 outNames impOutVars outPtrs
+        return (env <> env', subst (substEnv, mempty) impAtom)
+      where
+        mkSubstEnv :: (Name, Var, Ptr ()) -> IO SubstEnv
+        mkSubstEnv (outName, impVar, outPtr) = case varType impVar of
+          ArrayTy (BaseTy b) -> do
+            lit <- loadScalar b outPtr
+            return $ impVar @> (Con $ Lit $ lit)
+          _        -> return $ impVar @> (Var $ (outName :> varType impVar))
+        loadScalar :: BaseType -> Ptr () -> IO LitVal
+        loadScalar b ptr = fromJust . scalarFromArray <$> (loadArray $ ArrayRef (1, b) ptr)
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, block)
@@ -215,7 +221,7 @@ requestArrays _ [] = return []
 requestArrays backend vs = case backend of
   LLVMEngine env -> do
     env' <- readMVar env
-    forM vs $ \v@(_ :> ty) -> do
+    forM vs $ \v@(_ :> ArrayTy ty) -> do
       case envLookup env' v of
         Just ref -> loadArray (ArrayRef (typeToArrayType ty) ref)
         Nothing -> error "Array lookup failed"
