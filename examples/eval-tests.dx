@@ -229,9 +229,14 @@ litArr = [10, 5, 3]
 :p fromOrdinal (Fin 1) 0
 > 0@(Fin 1)
 
--- TODO: fix
--- :p [0].([asidx 0].(asidx 0))
--- > 0
+:p 0@(Fin 1)
+> 0@(Fin 1)
+
+:p [1, 2, 3].(0@_)
+> 1
+
+:p [0].([asidx 0].(asidx 0))
+> 0
 
 :p select True 1 2
 > 1
