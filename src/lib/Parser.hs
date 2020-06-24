@@ -473,7 +473,7 @@ symOpP s = opWithSrc $ do
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
-  let f = WithSrc pos $ UVar $ mkName "(-)" :> ()
+  let f = WithSrc pos $ UVar $ mkName "neg" :> ()
   return $ \case
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)

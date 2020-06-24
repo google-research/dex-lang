@@ -25,8 +25,10 @@
 > -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
 > Int
 
-:p \x. x + 0.0
+:p Fin 10
 > -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
-> \x:Real.
->   tmp:(Real->Real) = (\x1:Real. \y:Real. %fadd x1 y) (x)
->   (tmp) (0.0)
+> (Fin 10)
+
+:p Fin 10 & Fin 20
+> -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
+> ((Fin 10) & (Fin 20))
