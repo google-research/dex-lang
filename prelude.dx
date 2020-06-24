@@ -85,6 +85,7 @@ def withState
 
 'Type classes
 
+
 def Eq (a:Type) : Type = %EqClassDictTy a
 def EqDict (a:Type) ?-> (f: a -> a -> Bool) : Eq a = %EqClassDict a f
 
@@ -93,8 +94,8 @@ def OrdDict (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
   eqAndGt = (eq, gt)
   %OrdClassDict a eqAndGt
 
-@instance
-def eqFromOrd (d:Ord a) ?=> : Eq a = fst (%fromClassDict d)
+@superclass
+def eqFromOrd (d:Ord a) : Eq a = fst (%fromClassDict d)
 
 def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (%fromClassDict d) x y
 def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
@@ -104,14 +105,19 @@ def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y
 def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
+@instance
 intEq : Eq Int = EqDict \x y. %ieq x y
+
 @instance
 intGt : Ord Int = OrdDict intEq \x y. %igt x y
 
+@instance
 realEq : Eq Real = EqDict \x y. %feq x y
+
 @instance
 realGt : Ord Real = OrdDict realEq \x y. %fgt x y
 
+@instance
 def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = EqDict $
   \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
 
@@ -130,6 +136,7 @@ def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = EqDict $
       Right yVal -> xVal == yVal
 
 -- TODO: accumulate using the True/&& monoid
+@instance
 def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = EqDict $
   \xs ys.
     numDifferent : Real =

@@ -24,6 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               TraversalDef, traverseModule, traverseBlock, traverseExpr,
               traverseAtom) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
@@ -40,7 +41,7 @@ import Type
 import PPrint
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
 
 type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)

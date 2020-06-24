@@ -98,6 +98,7 @@ data ArrowP eff = PlainArrow eff
 
 data LetAnn = PlainLet
             | InstanceLet
+            | SuperclassLet
               deriving (Show, Eq, Generic)
 
 type Val  = Atom
@@ -431,7 +432,7 @@ data ErrType = NoErr
              | NotImplementedErr
              | DataIOErr
              | MiscErr
-  deriving (Show, Eq)
+               deriving (Show, Eq)
 
 type Except = Either Err
 

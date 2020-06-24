@@ -189,15 +189,16 @@ uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 uHole :: Parser UExpr
 uHole = withSrc $ underscore $> UHole
 
-letAnnotion :: Parser LetAnn
-letAnnotion = char '@' >> string "instance" >> eol $> InstanceLet
+letAnnStr :: Parser LetAnn
+letAnnStr =   (string "instance"   $> InstanceLet)
+          <|> (string "superclass" $> SuperclassLet)
 
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  letAnn <- letAnnotion <|> return PlainLet
+  lAnn <- (char '@' >> letAnnStr <* eol) <|> return PlainLet
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
-  return $ ULet letAnn (p, ann') rhs
+  return $ ULet lAnn (p, ann') rhs
   where
     addImplicitImplicitArgs :: SrcPos -> UType -> UType
     addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars

@@ -9,15 +9,14 @@
 
 module Inference (inferModule, synthModule) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
-import Data.Foldable (fold, toList)
+import Data.Foldable (fold, toList, asum)
 import Data.Functor
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
-import Data.Either (rights)
-import Data.Maybe (catMaybes)
 
 import Syntax
 import Embed  hiding (sub)
@@ -298,6 +297,7 @@ inferTabTy xs ann = case ann of
     ty <- getType <$> inferRho x
     return (FixedIntRange 0 (length xs), ty)
 
+-- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType
 fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType expectPi arr ty = do
@@ -331,53 +331,80 @@ openEffectRow effRow = return effRow
 
 -- === typeclass dictionary synthesizer ===
 
--- The writer just tracks whether we found any holes
-type SynthM = SubstEmbedT (Either Err)
+-- We have two variants here because at the top level we want error messages and
+-- internally we want to consider all alternatives.
+type SynthPassM = SubstEmbedT (Either Err)
+type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
-synthModule scope m = runSynthM scope $ traverseModule synthTraversal m
+synthModule scope m = fst <$> runSubstEmbedT
+  (traverseModule (traverseHoles synthDictTop) m) scope
 
-synthBlock :: Scope -> Block -> Except Block
-synthBlock scope block = runSynthM scope $ traverseBlock synthTraversal block
+synthDictTop :: Type -> SynthPassM Atom
+synthDictTop ty = do
+  scope <- getScope
+  let solutions = runSubstEmbedT (synthDict ty) scope
+  case solutions of
+    [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
+    [(ans, env)] -> embedExtend env $> ans
+    _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
+           ++ "\n" ++ pprint solutions
 
-runSynthM :: Scope -> SynthM a -> Except a
-runSynthM scope m = liftM fst $ runSubstEmbedT m scope
+traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
+              => (Type -> m Atom) -> TraversalDef m
+traverseHoles fillHole = (traverseExpr recur, synthPassAtom)
+  where
+    synthPassAtom atom = case atom of
+      Con (ClassDictHole ty) -> fillHole ty
+      _ -> traverseAtom recur atom
+    recur = traverseHoles fillHole
 
-synthTraversal :: TraversalDef SynthM
-synthTraversal = (traverseExpr synthTraversal, synthAtom)
+synthDict :: Type -> SynthDictM Atom
+synthDict ty = do
+  (d, bindingInfo) <- getBinding
+  case bindingInfo of
+    LetBound InstanceLet _ -> do
+      block <- buildScoped $ inferToSynth $ instantiateAndCheck ty d
+      traverseBlock (traverseHoles synthDict) block >>= emitBlock
+    LamBound ClassArrow  _ -> do
+      d' <- superclass d
+      inferToSynth $ instantiateAndCheck ty d'
+    _ -> empty
 
-synthAtom :: Atom -> SynthM Atom
-synthAtom atom = case atom of
-  -- TODO: add source information to these holes
-  Con (ClassDictHole ty) -> do
-    scope <- getScope
-    let candidates = synthCandidates scope
-    let solutions = rights $ map (instantiateAndCheck scope ty) candidates
-    case solutions of
-      [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
-      [block] -> emitBlock block
-      _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
-             ++ "\n" ++ pprint solutions
-  _ -> traverseAtom synthTraversal atom
+-- TODO: this doesn't de-dup, so we'll get multiple results if we have a
+-- diamond-shaped hierarchy.
+superclass :: Atom -> SynthDictM Atom
+superclass dict = return dict <|> do
+  (f, LetBound SuperclassLet _) <- getBinding
+  inferToSynth $ tryApply f dict
 
-synthCandidates :: Scope -> [Var]
-synthCandidates scope = catMaybes $ flip map (envPairs scope) $ \(v, binding) ->
-  case binding of
-    LetBound InstanceLet expr -> Just $ v :> getType expr
-    LamBound ClassArrow ty    -> Just $ v :> ty
-    _ -> Nothing
+getBinding :: SynthDictM (Atom, BinderInfo)
+getBinding = do
+  scope <- getScope
+  (v, bindingInfo) <- asum $ map return $ envPairs scope
+  return (Var (v:> getType bindingInfo), bindingInfo)
 
--- mini version of type inference
-instantiateAndCheck :: Scope -> Type -> Var -> Except Block
-instantiateAndCheck scope ty v = do
-  (x, (_, decls)) <- runUInferM (instantiateAndCheck' ty v) mempty scope
-  synthBlock scope $ wrapDecls decls x
+inferToSynth :: (Pretty a, HasVars a) => UInferM a -> SynthDictM a
+inferToSynth m = do
+  scope <- getScope
+  case runUInferM m mempty scope of
+    Left _ -> empty
+    Right (x, (_, decls)) -> do
+      mapM_ emitDecl decls
+      return x
 
-instantiateAndCheck' :: Type -> Var -> UInferM Atom
-instantiateAndCheck' ty v = do
-  x <- instantiateSigma (Var v)
-  constrainEq ty (getType x)
-  return x
+tryApply :: Atom -> Atom -> UInferM Atom
+tryApply f x = do
+  f' <- instantiateSigma f
+  Pi (Abs (_:>a) _) <- return $ getType f'
+  constrainEq a (getType x)
+  emitZonked $ App f' x
+
+instantiateAndCheck :: Type -> Atom -> UInferM Atom
+instantiateAndCheck ty x = do
+  x' <- instantiateSigma x
+  constrainEq ty (getType x')
+  return x'
 
 -- === constraint solver ===
 
