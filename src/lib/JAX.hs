@@ -104,7 +104,7 @@ toJaxBlock env (Block (decl:decls) result) = do
   where body = Block decls result
 
 toJaxDecl :: JSubstEnv -> Decl -> JaxM JSubstEnv
-toJaxDecl env (Let v rhs) = do
+toJaxDecl env (Let _ v rhs) = do
   ans <- toJaxExpr env rhs
   return $ v @> ans
 

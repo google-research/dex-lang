@@ -323,11 +323,11 @@ litArr = [10, 5, 3]
 > (10.0, 100)
 
 -- TODO: prefix negation for literals!
--- :p (1 == 2, -1 == -1, 1 < 2, -1 < 2, 2 < -1)
--- > (False, (True, (True, (True, False))))
+:p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
+> (False, (True, (True, (True, False))))
 
--- :p (1. == 2., -1. == -1., 1. < 2., -1. < 2., 2. < -1.)
--- > (False, (True, (True, (True, False))))
+:p (1. == 2., (-1.) == (-1.), 1. < 2., (-1.) < 2., 2. < (-1.))
+> (False, (True, (True, (True, False))))
 
 :p for i:(Fin 7). select (i < (fromOrdinal _ 3)) 1 2
 > [1, 1, 1, 2, 2, 2, 2]
@@ -547,10 +547,10 @@ def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
 
 -- TODO: within-module version of this (currently fails in Imp checking)
 upperBound = isum $ for i:(Fin 4). 1
-for j:(Fin upperBound). 1.0
+:p for j:(Fin upperBound). 1.0
 > [1.0, 1.0, 1.0, 1.0]
 
-(for i:(Fin upperBound). 1, for j:(Fin 2). 2)
+:p (for i:(Fin upperBound). 1, for j:(Fin 2). 2)
 > ([1, 1, 1, 1], [2, 2])
 
 for i:(Fin 4).

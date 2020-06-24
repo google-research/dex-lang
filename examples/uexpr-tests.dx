@@ -67,6 +67,9 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 
 :p x + x
 > Error: variable not in scope: x
+>
+> :p x + x
+>    ^^
 
 iadd = 1
 > Error: variable already defined: iadd

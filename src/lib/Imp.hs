@@ -31,7 +31,6 @@ import PPrint
 import Cat
 import Util (bindM2)
 
-
 -- Note [Valid Imp atoms]
 --
 -- The Imp translation functions as an interpreter for the core IR, which has a side effect
@@ -66,7 +65,7 @@ runImpM :: [ScalarTableVar] -> ImpM a -> a
 runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
   where
     inVarScope :: Scope
-    inVarScope = foldMap varAsEnv $ fmap (fmap $ const Nothing) inVars
+    inVarScope = foldMap varAsEnv $ fmap (fmap $ const UnknownBinder) inVars
 
 toImpBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 toImpBlock env destBlock = do
@@ -76,7 +75,7 @@ toImpBlock env destBlock = do
   toImpExpr env' result
 
 toImpDecl :: SubstEnv -> WithDest Decl -> ImpM SubstEnv
-toImpDecl env (maybeDest, (Let b bound)) = do
+toImpDecl env (maybeDest, (Let _ b bound)) = do
   b' <- traverse (impSubst env) b
   ans <- toImpExpr env (maybeDest, bound)
   return $ b' @> ans
@@ -156,7 +155,6 @@ toImpOp (maybeDest, op) = case op of
     arrSlice <- impOffset (fromArrayAtom arr) i (fromScalarAtom off)
     returnVal $ toArrayAtom arrSlice
   ArrayLoad arr -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
-  Cmp _ _ _ -> error $ "All instances of Cmp should get resolved in simplification"
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -263,7 +261,7 @@ destToAtom dest = destToAtomScalarAction loadScalarRef dest
 destToAtomScalarAction :: (IVar -> ImpM Atom) -> Dest -> ImpM Atom
 destToAtomScalarAction fScalar dest = do
   scope <- looks $ fst . snd
-  (atom, decls) <- runEmbedT (destToAtom' fScalar [] dest) scope
+  (atom, (_, decls)) <- runEmbedT (destToAtom' fScalar [] dest) scope
   case decls of
     [] -> return $ atom
     _  -> error "Unexpected decls"
@@ -302,10 +300,10 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- current block (e.g. it comes from the surrounding block), then we need
       -- to do the copy explicitly, as there is no let binding that will use it
       -- as the destination.
-      let blockVars = foldMap (\(Let v _) -> v @> ()) decls
+      let blockVars = foldMap (\(Let _ v _) -> v @> ()) decls
       let closureCopies = fmap (\(n, (d, t)) -> (d, Var $ n :> t))
                                (envPairs $ varDests `envDiff` blockVars)
-      return $ ( fmap (\d@(Let v _) -> (fst <$> varDests `envLookup` v, d)) decls
+      return $ ( fmap (\d@(Let _ v _) -> (fst <$> varDests `envLookup` v, d)) decls
                , (Nothing, ans)
                , gatherCopies ++ closureCopies)
     _ -> return $ (fmap (Nothing,) decls, (maybeDest, ans), [])
@@ -540,7 +538,7 @@ freshVar :: VarP a -> ImpM (VarP a)
 freshVar v = do
   scope <- looks (fst . snd)
   let v' = rename v scope
-  extend $ asSnd $ asFst (v' @> Nothing)
+  extend $ asSnd $ asFst (v' @> UnknownBinder)
   return v'
 
 emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()

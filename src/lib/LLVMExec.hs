@@ -73,6 +73,7 @@ evalLLVM logger ast argPtr = do
 jit :: Context -> (EE.MCJIT -> IO a) -> IO a
 jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
 
+-- TODO: re-enable!!
 logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
 

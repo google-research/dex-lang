@@ -77,7 +77,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (RunModule . declAsModule) (uTopDecl <* eol)
+  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eol)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -135,21 +135,14 @@ explicitCommand = do
       _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <*eol
   return $ case (e, cmd) of
-    (WithSrc _ (UVar (v:>())), GetType) -> GetNameType v
+    (WithSrc _ (UVar (v:>())), GetType) -> GetNameType (asGlobal v)
     _ -> Command cmd (exprAsModule e)
 
-declAsModule :: UDecl -> UModule
-declAsModule dec@(ULet (WithSrc _ pat,_) _) = UModule imports exports [dec]
- where
-   imports = envNames $ freeUVars dec
-   exports = envNames $ foldMap (@>()) pat
-
 exprAsModule :: UExpr -> (Name, UModule)
-exprAsModule e = (v, UModule imports [v] body)
+exprAsModule e = (asGlobal v, UModule [d])
   where
-    v = "_ans_"
-    body = [ULet (WithSrc (srcPos e) (namePat v), Nothing) e]
-    imports = envNames $ freeUVars e
+    v = mkName "_ans_"
+    d = ULet PlainLet (WithSrc (srcPos e) (namePat v), Nothing) e
 
 tauType :: Parser Type
 tauType = undefined
@@ -196,11 +189,17 @@ uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
 uHole :: Parser UExpr
 uHole = withSrc $ underscore $> UHole
 
+letAnnStr :: Parser LetAnn
+letAnnStr =   (string "instance"   $> InstanceLet)
+          <|> (string "superclass" $> SuperclassLet)
+          <|> (string "newtype"    $> NewtypeLet)
+
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  ~(ULet (p, ann) rhs, pos) <- withPos decl
+  lAnn <- (char '@' >> letAnnStr <* eol) <|> return PlainLet
+  ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
-  return $ ULet (p, ann') rhs
+  return $ ULet lAnn (p, ann') rhs
   where
     addImplicitImplicitArgs :: SrcPos -> UType -> UType
     addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars
@@ -214,7 +213,7 @@ uTopDecl = do
     addImplicitArg pos v ty =
       WithSrc pos $ UPi (v:>uTyKind) ImplicitArrow ty
       where
-        k = if v == rawName SourceName "eff" then EffectRowKind else TypeKind
+        k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
 
 decl :: Parser UDecl
@@ -227,7 +226,7 @@ simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
   pat <- try $ uPat <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
-  return $ ULet (pat, ann)
+  return $ ULet PlainLet (pat, ann)
 
 funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
@@ -239,7 +238,7 @@ funDefLet = label "function definition" $ mayBreak $ do
   let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
-  return $ \body -> ULet letBinder (buildLam lamBinders body)
+  return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
   where
     arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
@@ -331,7 +330,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet (WithSrc pos (namePat NoName), Nothing) e
+      where d = ULet PlainLet (WithSrc pos (namePat NoName), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -352,7 +351,8 @@ arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "=>"  $> TabArrow)
         <|> (sym "--o" $> LinArrow)
-        <|> (sym "?->"  $> ImplicitArrow)
+        <|> (sym "?->" $> ImplicitArrow)
+        <|> (sym "?=>" $> ClassArrow)
         <?> "arrow"
 
 uCaseExpr :: Parser UExpr
@@ -437,12 +437,12 @@ ops =
   , [symOp "*", symOp "/" ]
   , [symOp "+", prefixNegOp, symOp "-"]
   , [InfixR $ sym "=>" $> mkArrow TabArrow]
-  , [symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
+  , [symOp "/=", symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
   , [symOp "&&", symOp "||"]
   , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ mayBreak (sym "$") $> mkApp]
   , [symOp "+=", symOp ":=", symOp "|"]
-  , [InfixR infixEffArrow, InfixR infixLinArrow]
+  , [InfixR infixArrow]
   , [InfixR $ symOpP "&", pairOp]
   , indexRangeOps
   ]
@@ -459,7 +459,7 @@ pairOp = InfixR $ opWithSrc $ do
   if allowed
     then sym "," >> return (binApp f)
     else fail "Unexpected comma"
-  where f = rawName SourceName $ "(,)"
+  where f = mkName $ "(,)"
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ symOpP s
@@ -468,12 +468,12 @@ symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
   label "infix operator" (sym s)
   return $ binApp f
-  where f = rawName SourceName $ "(" <> s <> ")"
+  where f = mkName $ "(" <> s <> ")"
 
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
-  let f = WithSrc pos $ UVar $ rawName SourceName "neg" :> ()
+  let f = WithSrc pos $ UVar $ mkName "(-)" :> ()
   return $ \case
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)
@@ -492,16 +492,11 @@ mkGenApp arr f x = joinSrc f x $ UApp arr f x
 mkApp :: UExpr -> UExpr -> UExpr
 mkApp f x = joinSrc f x $ UApp (PlainArrow ()) f x
 
-infixLinArrow :: Parser (UType -> UType -> UType)
-infixLinArrow = do
-  ((), pos) <- withPos $ sym "--o"
-  return $ \a b -> WithSrc pos $ UPi (NoName:>a) LinArrow b
-
-infixEffArrow :: Parser (UType -> UType -> UType)
-infixEffArrow = do
-  ((), pos) <- withPos $ sym "->"
-  eff <- effects
-  return $ \a b -> WithSrc pos $ UPi (NoName:>a) (PlainArrow eff) b
+infixArrow :: Parser (UType -> UType -> UType)
+infixArrow = do
+  notFollowedBy (sym "=>")  -- table arrows have special fixity
+  (arr, pos) <- withPos $ arrow effects
+  return $ \a b -> WithSrc pos $ UPi (NoName:>a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (NoName:>a) arr b
@@ -545,6 +540,9 @@ inpostfix' p op = Postfix $ do
   rest <- optional p
   return $ \x -> f x rest
 
+mkName :: String -> Name
+mkName s = Name SourceName (fromString s) 0
+
 -- === lexemes ===
 
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
@@ -553,7 +551,7 @@ type Lexer = Parser
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | ReadKW | WriteKW | StateKW
 
 textName :: Lexer Name
-textName = liftM (rawName SourceName) $ label "identifier" $ lexeme $ try $ do
+textName = liftM mkName $ label "identifier" $ lexeme $ try $ do
   w <- (:) <$> letterChar <*> many nameTailChar
   failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
   return w
@@ -591,7 +589,7 @@ sym s = lexeme $ try $ string s >> notFollowedBy symChar
 symName :: Lexer Name
 symName = label "symbol name" $ lexeme $ try $ do
   s <- between (char '(') (char ')') $ some symChar
-  return $ rawName SourceName $ "(" <> s <> ")"
+  return $ mkName $ "(" <> s <> ")"
 
 backquoteName :: Lexer Name
 backquoteName = label "backquoted name" $

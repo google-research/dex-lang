@@ -46,7 +46,8 @@ libdex: cbits/libdex.so
 # --- running tets ---
 
 # TODO: re-enable linear-tests ad-tests include-test chol
-example-names = uexpr-tests type-tests eval-tests shadow-tests monad-tests \
+example-names = uexpr-tests type-tests eval-tests \
+                shadow-tests monad-tests \
                 easy-ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests

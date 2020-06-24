@@ -31,7 +31,7 @@ evalBlock env (Block decls result) = do
   evalExpr env $ subst (env <> env', mempty) result
 
 evalDecl :: SubstEnv -> Decl -> SubstEnv
-evalDecl env (Let v rhs) = v @> evalExpr env rhs'
+evalDecl env (Let _ v rhs) = v @> evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
 
 evalExpr :: SubstEnv -> Expr -> Atom
@@ -97,4 +97,4 @@ indexSetSize ty = i
 
 evalEmbed :: Embed Atom -> Atom
 evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
-  where (atom, decls) = runEmbed embed mempty
+  where (atom, (_, decls)) = runEmbed embed mempty
