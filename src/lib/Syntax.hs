@@ -99,6 +99,7 @@ data ArrowP eff = PlainArrow eff
 data LetAnn = PlainLet
             | InstanceLet
             | SuperclassLet
+            | NewtypeLet
               deriving (Show, Eq, Generic)
 
 type Val  = Atom
@@ -190,6 +191,7 @@ data PrimTC e =
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
       | JArrayType [Int] BaseType
+      | NewtypeApp e [e]
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -203,6 +205,7 @@ data PrimCon e =
       | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
       | AFor e e
       | AGet e
+      | NewtypeCon e e    -- result type, argument
       | ClassDict ClassName e e  -- Type parameter, payload
       | ClassDictHole e          -- Only used during type inference
       | Todo e
@@ -226,6 +229,7 @@ data PrimOp e =
       | IndexAsInt e
       | IdxSetSize e
       | FromClassDict e
+      | FromNewtypeCon e e  -- result type, argument
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -907,6 +911,8 @@ builtinNames = M.fromList
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
+  , ("newtypeCon"      , ConExpr $ NewtypeCon     () ())
+  , ("fromNewtypeCon"  , OpExpr  $ FromNewtypeCon () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())

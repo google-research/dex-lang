@@ -462,18 +462,23 @@ reduceBlock scope (Block decls result) = do
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
   Var v -> case scope ! v of
-    -- TODO: worry about effects?
-    LetBound _ expr -> fromMaybe x $ reduceExpr scope expr
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
+    LetBound NewtypeLet _ -> TC $ NewtypeApp x []
     _ -> x
   _ -> x
 
 reduceExpr :: Scope -> Expr -> Maybe Atom
 reduceExpr scope expr = case expr of
-  Atom  val  -> return $ reduceAtom scope val
+  Atom val -> return $ reduceAtom scope val
   App f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    Lam (Abs b (PureArrow, block)) <- return f'
-    reduceBlock scope $ subst (b@>x', scope) block
+    case f' of
+      Lam (Abs b (PureArrow, block)) ->
+        reduceBlock scope $ subst (b@>x', scope) block
+      TC (NewtypeApp ty xs) ->
+        Just $ TC $ NewtypeApp ty (xs ++ [x'])
+      _ -> Nothing
   _ -> Nothing

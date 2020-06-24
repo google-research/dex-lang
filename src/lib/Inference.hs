@@ -260,8 +260,10 @@ checkAnn ann = case ann of
 
 checkUType :: UType -> UInferM Type
 checkUType ty = do
-  Just ty' <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
-  return ty'
+  reduced <- reduceScoped $ withEffects Pure $ checkRho ty TyKind
+  case reduced of
+    Just ty' -> return $ ty'
+    Nothing  -> throw TypeErr $ "Can't reduce type expression: " ++ pprint ty
 
 checkArrow :: Arrow -> UArrow -> UInferM ()
 checkArrow ahReq ahOff = case (ahReq, ahOff) of

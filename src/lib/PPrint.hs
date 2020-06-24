@@ -121,6 +121,7 @@ instance Pretty e => Pretty (PrimTC e) where
                              Unlimited      -> "."
     TypeKind -> "Type"
     EffectRowKind -> "EffKind"
+    NewtypeApp f xs -> p f <> foldMap (\x -> " " <> p x) xs
     _ -> prettyExprDefault $ TCExpr con
 
 instance Pretty e => Pretty (PrimCon e) where
@@ -138,6 +139,7 @@ instance Pretty e => Pretty (PrimCon e) where
       "True"  -> "Left"  <+> p l
       "False" -> "Right" <+> p r
       _ -> "SumCon" <+> p c <+> p l <+> p r
+    NewtypeCon _ _ -> "<todo: printing newtypes>"
     ClassDict _ _ _ -> "<dictionary>"
     ClassDictHole _ -> "_"
     Todo e -> "<undefined " <> p e <> ""

@@ -223,6 +223,7 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return ()
   EffectRowKind    -> return ()
   JArrayType _ _   -> undefined
+  NewtypeApp _ _ -> return () -- TODO!
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -236,6 +237,7 @@ typeCheckCon con = case con of
   AFor n a -> n|:TyKind >> TabTy n <$> typeCheck a
   AGet st -> (BaseTy . scalarTableBaseType) <$> typeCheck st
   AsIdx n e -> n|:TyKind >> e|:IntTy $> n
+  NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDict c a d -> do
     a |: TyKind
     case c of
@@ -303,6 +305,7 @@ typeCheckOp op = case op of
       Eq  -> return $ a --> a --> BoolTy
       Ord -> return $ PairTy (TC (ClassDictType Eq a)) (a --> a --> BoolTy)
       _ -> error "Not implemented"
+  FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

@@ -150,6 +150,7 @@ simplifyOp op = case op of
   SumTag (SumVal s _ _) -> return $ s
   Select p x y -> selectAt (getType x) p x y
   FromClassDict (Con (ClassDict _ _ e)) -> return e
+  FromNewtypeCon _ (Con (NewtypeCon _ x)) -> return x
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom

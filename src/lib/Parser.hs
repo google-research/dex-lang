@@ -192,6 +192,7 @@ uHole = withSrc $ underscore $> UHole
 letAnnStr :: Parser LetAnn
 letAnnStr =   (string "instance"   $> InstanceLet)
           <|> (string "superclass" $> SuperclassLet)
+          <|> (string "newtype"    $> NewtypeLet)
 
 uTopDecl :: Parser UDecl
 uTopDecl = do

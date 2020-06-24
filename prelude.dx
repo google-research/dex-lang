@@ -12,6 +12,9 @@ Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
 
+def unsafeNewtypeCon     (a:Type)?-> (b:Type) ?-> (x:a) : b = %newtypeCon b x
+def unsafeFromNewtypeCon (a:Type)?-> (b:Type) ?-> (x:a) : b = %fromNewtypeCon b x
+
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : a & b = %pair x y
 def fst (p: a & b) : a = %fst p
