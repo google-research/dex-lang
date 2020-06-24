@@ -38,14 +38,11 @@ statementFlops (_, instr) = case instr of
   IPrimOp op -> do
     n <- ask
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]
-  Load _      -> return ()
-  Store _ _   -> return ()
-  Copy  _ _ _ -> do
-    n <- ask
-    tell $ Profile $ M.singleton "copy" [n]
-  Alloc _ _   -> return ()
-  Free _      -> return ()
-  IOffset _ _ -> return ()
+  Load _        -> return ()
+  Store _ _     -> return ()
+  Alloc _ _     -> return ()
+  Free _        -> return ()
+  IOffset _ _ _ -> return ()
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block

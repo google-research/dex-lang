@@ -74,7 +74,7 @@ simplifyAtom atom = case atom of
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbed atom
   Pi  _ -> substEmbed atom
-  Con (AnyValue (TabTy a b)) -> Con . AFor a <$> mkAny b
+  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
@@ -146,7 +146,7 @@ simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
-  SumGet (SumVal _ l r) getLeft -> return $ if getLeft then l else r
+  SumGet (SumVal _ l r) left -> return $ if left then l else r
   SumTag (SumVal s _ _) -> return $ s
   Select p x y -> selectAt (getType x) p x y
   FromNewtypeCon _ (Con (NewtypeCon _ x)) -> return x

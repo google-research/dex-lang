@@ -213,6 +213,7 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 typeCheckTyCon :: TC -> TypeM ()
 typeCheckTyCon tc = case tc of
   BaseType _       -> return ()
+  ArrayType t      -> t|:TyKind
   IntRange a b     -> a|:IntTy >> b|:IntTy
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b
   SumType  l r     -> l|:TyKind >> r|:TyKind
@@ -227,14 +228,12 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  ArrayLit ty _ -> return $ ty
+  ArrayLit ty _ -> return $ ArrayTy ty
   AnyValue t -> t|:TyKind $> t
   SumCon _ l r -> SumTy <$> typeCheck l <*> typeCheck r
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
-  AFor n a -> n|:TyKind >> TabTy n <$> typeCheck a
-  AGet st -> (BaseTy . scalarTableBaseType) <$> typeCheck st
   AsIdx n e -> n|:TyKind >> e|:IntTy $> n
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
@@ -244,10 +243,11 @@ typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
   TabCon ty xs -> do
     ty |: TyKind
-    TabTy n a <- return ty
+    TabTy v a <- return ty
+    -- TODO: Propagate the binder to support dependently typed dimensions?
     mapM_ (|:a) xs
-    Just n' <- return $ indexSetConcreteSize n
-    assertEq n' (length xs) "Index set size mismatch"
+    Just n <- return $ indexSetConcreteSize $ varType v
+    assertEq n (length xs) "Index set size mismatch"
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}
@@ -288,10 +288,19 @@ typeCheckOp op = case op of
       MAsk    ->         declareEff (Reader, h) $> s
       MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
   IndexRef ref i -> do
-    RefTy h (TabTy n a) <- typeCheck ref
-    i|:n
+    RefTy h (TabTy v a) <- typeCheck ref
+    i |: (varType v)
     return $ RefTy h a
   FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
+  ArrayOffset arr idx off -> do
+    -- TODO: b should be applied!!
+    ArrayTy (TabTyAbs a) <- typeCheck arr
+    off |: IntTy
+    idx |: absArgType a
+    return $ ArrayTy $ snd $ applyAbs a idx
+  ArrayLoad arr -> do
+    ArrayTy (BaseTy b)  <- typeCheck arr
+    return $ BaseTy b
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

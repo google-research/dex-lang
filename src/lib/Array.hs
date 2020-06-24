@@ -10,19 +10,19 @@
 
 module Array (
   BaseType (..), LitVal (..), ArrayType, Array (..), ArrayRef (..),
-  Vec (..), scalarFromArray, arrayFromScalar, arrayTail, arrayHead,
+  Vec (..), scalarFromArray, arrayFromScalar, arrayOffset, arrayHead, arrayConcat,
   loadArray, storeArray, sizeOf, arrayType, unsafeWithArrayPointer) where
 
 import Control.Monad
-import Control.Monad.Primitive (PrimState)
 import qualified Data.Vector.Storable as V
 import Data.Maybe (fromJust)
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
+import Data.Coerce
 import GHC.Generics
 
-data Array    = Array    Vec                 deriving (Show, Eq, Generic)
+newtype Array = Array    Vec                 deriving (Show, Eq, Generic)
 data ArrayRef = ArrayRef ArrayType (Ptr ())  deriving (Show, Eq, Generic)
 
 data LitVal = IntLit  Int
@@ -35,10 +35,6 @@ data Vec = IntVec    (V.Vector Int)
          | BoolVec   (V.Vector Int)
          | DoubleVec (V.Vector Double)
            deriving (Show, Eq, Generic)
-
-data VecRef = IntVecRef    (V.MVector (PrimState IO) Int)
-            | DoubleVecRef (V.MVector (PrimState IO) Double)
-              deriving (Generic)
 
 data BaseType = IntType | BoolType | RealType | StrType
                 deriving (Show, Eq, Generic)
@@ -64,8 +60,8 @@ scalarFromArray arr@(Array vec) = case size of
   where
     (size, b) = arrayType arr
 
-arrayTail :: Array -> Array
-arrayTail arr = modifyVec arr V.tail
+arrayOffset :: Array -> Int -> Array
+arrayOffset arr off = modifyVec arr (V.drop off)
 
 arrayHead :: Array -> LitVal
 arrayHead arr = fromJust $ scalarFromArray $ modifyVec arr (V.slice 0 1)
@@ -78,6 +74,18 @@ arrayFromScalar val = case val of
                          True  -> 1
   RealLit x -> Array $ DoubleVec $ V.fromList [x]
   _ -> error "Not implemented"
+
+arrayConcat :: [Array] -> Array
+arrayConcat arrs = Array $ choose intVecs boolVecs doubleVecs
+  where
+    intVecs    = [v | IntVec v    <- coerce arrs]
+    boolVecs   = [v | BoolVec v   <- coerce arrs]
+    doubleVecs = [v | DoubleVec v <- coerce arrs]
+
+    choose l [] [] = IntVec    $ V.concat l
+    choose [] l [] = BoolVec   $ V.concat l
+    choose [] [] l = DoubleVec $ V.concat l
+    choose _  _  _ = error "Can't concatenate heterogenous vectors!"
 
 loadArray :: ArrayRef -> IO Array
 loadArray (ArrayRef (size, b) ptr) = Array <$> case b of

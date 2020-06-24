@@ -149,15 +149,6 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
         ref += (i2r (b2i (xs.i /= ys.i)))
     numDifferent == 0.0
 
-@instance
-def tabGt (n:Type) ?-> (ordA: Ord a) ?=> : Ord (n=>a) = MkOrd tabEq $
-  \xs ys.
-    numDifferent : Real =
-      snd $ withAccum \ref. for i.
-        -- This is completely wrong, of course. Just here as a placeholder
-        ref += (i2r (b2i (xs.i /= ys.i)))
-    numDifferent == 0.0
-
 'Wrappers around C library functions
 
 def exp (x:Real) : Real = %ffi exp Real x
