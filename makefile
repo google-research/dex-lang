@@ -50,7 +50,7 @@ example-names = uexpr-tests type-tests eval-tests \
                 shadow-tests monad-tests \
                 easy-ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
-                ode-integrator
+                ode-integrator parser-tests serialize-tests
 
 quine-test-targets = $(example-names:%=run-%)
 
