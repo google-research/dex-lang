@@ -92,9 +92,6 @@ evalSourceBlockM env block = case sbContents block of
     Dump DexBinaryObject fname -> do
       val <- evalUModuleVal env v m
       liftIO $ dumpDataFile fname val
-    ShowPasses -> void $ evalUModule env m
-    ShowPass _ -> void $ evalUModule env m
-    TimeIt     -> void $ evalUModule env m
   GetNameType v -> case envLookup env (v:>()) of
     Just x -> logTop (TextOut $ pprint (getType x)) >> return mempty
     _      -> liftEitherIO $ throw UnboundVarErr $ pprint v
@@ -116,14 +113,14 @@ evalSourceBlockM env block = case sbContents block of
 
 keepOutput :: SourceBlock -> Output -> Bool
 keepOutput block output = case output of
-  PassInfo name _ -> case sbContents block of
-    Command (ShowPasses)     _ -> True
-    Command (ShowPass name') _ -> name == name'
-    Command (TimeIt)         _ -> name == LLVMEval
-    _                          -> False
-  MiscLog _ -> case sbContents block of
-    Command (ShowPasses) _ -> True
-    _                      -> False
+  PassInfo pass _ -> case sbLogLevel block of
+    LogNothing -> False
+    LogAll     -> True
+    LogPasses passes | pass `elem` passes -> True
+                     | otherwise          -> False
+  MiscLog _ -> case sbLogLevel block of
+    LogAll -> True
+    _      -> False
   _ -> True
 
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
@@ -158,7 +155,6 @@ evalUModule env untyped = do
 
 evalModule :: TopEnv -> Module -> TopPassM TopEnv
 evalModule simpEnv normalized = do
-  logTop $ MiscLog $ "Simp env names:" ++ pprint (envNames simpEnv)
   let defunctionalized = simplifyModule simpEnv normalized
   checkPass SimpPass defunctionalized
   evaluated <- evalSimplified defunctionalized evalBackend

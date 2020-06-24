@@ -29,14 +29,14 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    sourceBlockBoundVars, uModuleBoundVars, PassName (..), parsePassName,
+    sourceBlockBoundVars, uModuleBoundVars, PassName (..),
     freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName, Vars,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UBinder, UPiBinder, UVar,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
-    scalarTableBaseType, varType, isTabTy,
+    scalarTableBaseType, varType, isTabTy, LogLevel (..),
     pattern IntLitExpr, pattern RealLitExpr,
     pattern IntVal, pattern UnitTy, pattern PairTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
@@ -300,6 +300,7 @@ instance Eq EffectRow where
 data SourceBlock = SourceBlock
   { sbLine     :: Int
   , sbOffset   :: Int
+  , sbLogLevel :: LogLevel
   , sbText     :: String
   , sbContents :: SourceBlock'
   , sbId       :: Maybe BlockId }  deriving (Show)
@@ -317,8 +318,10 @@ data SourceBlock' = RunModule UModule
                   | UnParseable ReachedEOF String
                     deriving (Show, Eq, Generic)
 
-data CmdName = GetType | ShowPasses | ShowPass PassName
-             | TimeIt | EvalExpr OutFormat | Dump DataFormat String
+data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
+                deriving  (Show, Eq, Generic)
+
+data LogLevel = LogNothing | LogPasses [PassName] | LogAll
                 deriving  (Show, Eq, Generic)
 
 -- === imperative IR ===
@@ -385,12 +388,6 @@ data PassName = Parse | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | ResultPass | JaxprAndHLO
                 deriving (Ord, Eq, Bounded, Enum)
 
-passNameMap :: M.Map String PassName
-passNameMap = buildNameMap
-
-parsePassName :: String -> Maybe PassName
-parsePassName s = M.lookup s passNameMap
-
 instance Show PassName where
   show p = case p of
     Parse    -> "parse" ; TypePass -> "typed"   ; SynthPass -> "synth"
@@ -398,10 +395,6 @@ instance Show PassName where
     Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
     LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
-
--- TODO: consider using this for builtins too
-buildNameMap :: (Show a, Enum a, Bounded a) => M.Map String a
-buildNameMap = M.fromList [(show x, x) | x <- [minBound..maxBound]]
 
 -- === outputs ===
 

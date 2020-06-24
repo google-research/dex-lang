@@ -58,8 +58,9 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
+  level <- logLevel <|> return LogNothing
   (src, b) <- withSource $ withRecovery recover $ sourceBlock'
-  return $ SourceBlock (unPos (sourceLine pos)) offset src b Nothing
+  return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
 
 recover :: ParseError String Void -> Parser SourceBlock'
 recover e = do
@@ -72,6 +73,21 @@ recover e = do
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
+
+logLevel :: Parser LogLevel
+logLevel = do
+  void $ lexeme $ char '%' >> string "passes"
+  passes <- many passName
+  void eol
+  case passes of
+    [] -> return $ LogAll
+    _ -> return $ LogPasses passes
+
+passName :: Parser PassName
+passName = choice [thisNameString s $> x | (s, x) <- passNames]
+
+passNames :: [(String, PassName)]
+passNames = [(show x, x) | x <- [minBound..maxBound]]
 
 sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
@@ -128,11 +144,7 @@ explicitCommand = do
     "t"       -> return $ GetType
     "plot"    -> return $ EvalExpr Scatter
     "plotmat" -> return $ EvalExpr Heatmap
-    "time"    -> return $ TimeIt
-    "passes"  -> return $ ShowPasses
-    _ -> case parsePassName cmdName of
-      Just p -> return $ ShowPass p
-      _ -> fail $ "unrecognized command: " ++ show cmdName
+    _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <*eol
   return $ case (e, cmd) of
     (WithSrc _ (UVar (v:>())), GetType) -> GetNameType (asGlobal v)
@@ -663,6 +675,9 @@ mayNotPair p = local (\ctx -> ctx { canPair = False }) p
 
 nameString :: Parser String
 nameString = lexeme . try $ (:) <$> lowerChar <*> many alphaNumChar
+
+thisNameString :: String -> Parser ()
+thisNameString s = lexeme $ try $ string s >> notFollowedBy alphaNumChar
 
 uint :: Parser Int
 uint = L.decimal <* sc

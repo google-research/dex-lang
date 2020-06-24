@@ -122,7 +122,6 @@ buildPi b f = do
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return piTy
 
--- buildAbs :: (MonadError Err m, HasVars a, MonadEmbed m)
 buildLam :: MonadEmbed m => Var -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
 
