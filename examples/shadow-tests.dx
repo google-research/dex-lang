@@ -46,6 +46,9 @@ x = 1
 
 :p y
 > Error: variable not in scope: y
+>
+> :p y
+>    ^
 
 (_, _, z) = (1,2,3)
 

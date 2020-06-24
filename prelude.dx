@@ -1,3 +1,4 @@
+
 '## Dex prelude
 
 'Runs before every Dex program unless an alternative is provided with `--prelude`.
@@ -10,6 +11,9 @@ Bool = %Bool
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
+
+def unsafeNewtypeCon     (a:Type)?-> (b:Type) ?-> (x:a) : b = %newtypeCon b x
+def unsafeFromNewtypeCon (a:Type)?-> (b:Type) ?-> (x:a) : b = %fromNewtypeCon b x
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : a & b = %pair x y
@@ -29,20 +33,22 @@ def (*) (x:Real) (y:Real) : Real = %fmul x y
 def (/) (x:Real) (y:Real) : Real = %fdiv x y
 def neg (x:Real)          : Real = %fneg x
 
--- TODO: typeclasses!
-def (==) (x:a) (y:a) : Bool = %eq        x y
-def (<)  (x:a) (y:a) : Bool = %less      x y
-def (<=) (x:a) (y:a) : Bool = %lessEq    x y
-def (>)  (x:a) (y:a) : Bool = %greater   x y
-def (>=) (x:a) (y:a) : Bool = %greaterEq x y
-
-def select (p:Bool) (x:a) (y:a) : a = %select p x y
-
 True  = %True
 False = %False
 def (&&) (x:Bool) (y:Bool) : Bool = %and x y
 def (||) (x:Bool) (y:Bool) : Bool = %or  x y
 def not  (x:Bool)          : Bool = %not x
+
+'Sum types
+
+def (|) (a:Type) (b:Type) : Type = %SumType a b
+def anyVal (a:Type) ?-> : a = %anyVal a
+def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
+def Left  (x:a) : (a|b) = sumCon True  x      anyVal
+def Right (x:b) : (a|b) = sumCon False anyVal x
+def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+
+def select (p:Bool) (x:a) (y:a) : a = %select p x y
 
 def i2r (x:Int ) : Real = %inttoreal x
 def b2i (x:Bool) : Int  = %booltoint x
@@ -80,6 +86,69 @@ def withState
     def explicitAction (h':Type) (ref:Ref h' s) : {State h'|eff} a = action ref
     %runState init explicitAction
 
+'Type classes
+
+@newtype
+def Eq (a:Type) : Type = a -> a -> Bool
+def MkEq (a:Type) ?-> (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
+def fromEq (d:Eq a) : a -> a -> Bool = unsafeFromNewtypeCon d
+
+@newtype
+def Ord (a:Type) : Type = (Eq a & a -> a -> Bool)
+def MkOrd (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
+  unsafeNewtypeCon (eq, gt)
+def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool) = unsafeFromNewtypeCon d
+
+@superclass
+def eqFromOrd (d:Ord a) : Eq a = fst (fromOrd d)
+
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (fromEq d) x y
+def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
+
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (fromOrd d) x y
+def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y
+def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y || x==y
+def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
+
+@instance
+intEq : Eq Int = MkEq \x y. %ieq x y
+
+@instance
+intGt : Ord Int = MkOrd intEq \x y. %igt x y
+
+@instance
+realEq : Eq Real = MkEq \x y. %feq x y
+
+@instance
+realGt : Ord Real = MkOrd realEq \x y. %fgt x y
+
+@instance
+def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
+  \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
+
+@instance
+def pairGt (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) = MkOrd pairEq $
+  \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+
+@instance
+def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = MkEq $
+  \x y. case x
+    Left  xVal -> case y
+      Left  yVal -> xVal == yVal
+      Right yVal -> False
+    Right xVal -> case y
+      Left  yVal -> False
+      Right yVal -> xVal == yVal
+
+-- TODO: accumulate using the True/&& monoid
+@instance
+def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
+  \xs ys.
+    numDifferent : Real =
+      snd $ withAccum \ref. for i.
+        ref += (i2r (b2i (xs.i /= ys.i)))
+    numDifferent == 0.0
+
 'Wrappers around C library functions
 
 def exp (x:Real) : Real = %ffi exp Real x
@@ -100,17 +169,14 @@ def size (n:Type) : Int = %idxSetSize n
 def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
 def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
-
 def iota (n:Type) : n=>Int = for i. ordinal i
 
-'Sum types
+-- TODO: we want Eq and Ord for all index sets, not just `Fin n`
+@instance
+def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
 
-def (|) (a:Type) (b:Type) : Type = %SumType a b
-def anyVal (a:Type) ?-> : a = %anyVal a
-def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
-def Left  (x:a) : (a|b) = sumCon True  x      anyVal
-def Right (x:b) : (a|b) = sumCon False anyVal x
-def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+@instance
+def finOrd (n:Int) ?-> : Ord (Fin n) = MkOrd finEq \x y. ordinal x > ordinal y
 
 'Misc
 

@@ -47,11 +47,11 @@ class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ imports exports block) =
+  checkValid m@(Module decls) =
     addContext ctxStr $ asCompilerErr $ do
-      let env = (foldMap varAsEnv imports, Pure)
-      outTys <- fromConsListTy =<< runTypeCheck (CheckWith env) block
-      assertEq (map varAnn exports) outTys "export types"
+      let env = (freeVars m, Pure)
+      let block = Block decls $ Atom $ UnitVal
+      void $ runTypeCheck (CheckWith env) block
     where ctxStr = "\nChecking:\n" ++ pprint m
 
 asCompilerErr :: Except a -> Except a
@@ -111,8 +111,15 @@ instance HasType Block where
         env' <- catFoldM checkDecl env decls
         withTypeEnv (env <> env') $ typeCheck result
 
+instance HasType BinderInfo where
+  typeCheck binding = case binding of
+    LamBound _ ty -> ty |: TyKind $> ty
+    LetBound _ expr -> typeCheck expr
+    PiBound ty -> ty |: TyKind $> ty
+    UnknownBinder -> error "Unknown type"
+
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
-checkDecl env decl@(Let b rhs) =
+checkDecl env decl@(Let _ b rhs) =
   withTypeEnv env $ addContext ctxStr $ do
     -- TODO: effects
     checkBinder b
@@ -216,6 +223,7 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return ()
   EffectRowKind    -> return ()
   JArrayType _ _   -> undefined
+  NewtypeApp _ _ -> return () -- TODO!
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -227,6 +235,8 @@ typeCheckCon con = case con of
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   AsIdx n e -> n|:TyKind >> e|:IntTy $> n
+  NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
+  ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty
 
 typeCheckOp :: Op -> TypeM Type
@@ -255,10 +265,6 @@ typeCheckOp op = case op of
   -- TODO: check index set constraint
   ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
     where (ty, outTy) = unOpType unop
-  Cmp _ x y -> do
-    ty <- typeCheck x
-    y |: ty
-    return BoolTy
   Select p x y -> do
     p|:BoolTy
     ty <- typeCheck x
@@ -285,6 +291,7 @@ typeCheckOp op = case op of
     RefTy h (TabTy v a) <- typeCheck ref
     i |: (varType v)
     return $ RefTy h a
+  FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!
     ArrayTy (TabTyAbs a) <- typeCheck arr
@@ -379,8 +386,6 @@ indexSetConcreteSize ty = case ty of
 --    VSpace -> checkVSpace env ty
 --    IdxSet -> checkIdxSet env ty
 --    Data   -> checkData   env ty
---    Eq     -> checkInEq   env ty
---    Ord    -> checkOrd    env ty
 --
 --checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
 --checkVSpace env ty = case ty of
@@ -417,18 +422,6 @@ checkDataLike msg env ty = case ty of
 
 checkData :: MonadError Err m => ClassEnv -> Type -> m ()
 checkData = checkDataLike " is not serializable"
-
---checkInEq :: MonadError Err m => ClassEnv -> Type -> m ()
---checkInEq = checkDataLike " is not equatable"
---
---checkOrd :: MonadError Err m => ClassEnv -> Type -> m ()
---checkOrd env ty = case ty of
---  Var v                 -> checkVarClass env Ord v
---  IntTy                 -> return ()
---  RealTy                -> return ()
---  TC (IntRange _ _ )    -> return ()
---  TC (IndexRange _ _ _) -> return ()
---  _ -> throw TypeErr $ pprint ty ++ " doesn't define an ordering"
 
 --TODO: Make this work even if the type has type variables!
 isData :: Type -> Bool

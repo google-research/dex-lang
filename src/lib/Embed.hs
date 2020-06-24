@@ -11,19 +11,23 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitOp, buildDepEffLam, buildLamAux, buildAbs,
+module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
-              runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock, withBinder,
-              app, add, iadd, mul, imul, sub, isub, neg, div', idiv, andE, reduceScoped, declAsScope,
+              runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
+              app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv,
+              declAsScope, reduceScoped,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter, tabGet, arrOffset, arrLoad,
+              unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
+              TraversalDef, traverseModule, traverseBlock, traverseExpr,
+              traverseAtom, arrOffset, arrLoad,
               sumTag, getLeft, getRight, fromSum,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
+import Control.Applicative
 import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
@@ -41,41 +45,58 @@ import PPrint
 import Util (bindM2)
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
-  deriving (Functor, Applicative, Monad, MonadIO, MonadFail)
+  deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
 
 type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)
 
+type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
+
 -- Carries the vars in scope (with optional definitions) and the emitted decls
 type EmbedEnvC = (Scope, [Decl])
 -- Carries a name suggestion and the allowable effects
-type EmbedEnvR = (Name, EffectRow)
+type EmbedEnvR = (Tag, EffectRow)
 
-runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, [Decl])
+runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, EmbedEnvC)
 runEmbedT (EmbedT m) scope = do
-  (ans, (_, decls)) <- runCatT (runReaderT m (NoName, Pure)) (scope, [])
-  return (ans, decls)
+  (ans, env) <- runCatT (runReaderT m ("tmp", Pure)) (scope, [])
+  return (ans, env)
 
-runEmbed :: Embed a -> Scope -> (a, [Decl])
+runEmbed :: Embed a -> Scope -> (a, EmbedEnvC)
 runEmbed m scope = runIdentity $ runEmbedT m scope
 
--- TODO: use suggestive names based on types (e.g. "f" for function)
+runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, EmbedEnvC)
+runSubstEmbedT m scope = runEmbedT (runReaderT m mempty) scope
+
+runSubstEmbed :: SubstEmbedT Identity a -> Scope -> (a, EmbedEnvC)
+runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
+
 emit :: MonadEmbed m => Expr -> m Atom
-emit expr = do
+emit = emitAnn PlainLet
+
+emitAnn :: MonadEmbed m => LetAnn -> Expr -> m Atom
+emitAnn ann expr = do
   v <- getNameHint
+  emitTo v ann expr
+
+-- Guarantees that the name will be used, possibly with a modified counter
+emitTo :: MonadEmbed m => Name -> LetAnn -> Expr -> m Atom
+emitTo v ann expr = do
   let ty = getType expr
-  case singletonTypeVal ty of
-    Nothing -> do
-      expr' <- deShadow expr <$> getScope
-      v' <- freshVar (v:>ty)
-      emitDecl $ Let v' expr'
-      return $ Var v'
-    Just x
-      | isPure expr -> return x
-      | otherwise -> do
-          expr' <- deShadow expr <$> getScope
-          emitDecl $ Let (NoName:>ty) expr'
-          return x
+  expr' <- deShadow expr <$> getScope
+  v' <- freshVar (v:>ty)
+  emitDecl $ Let ann v' expr'
+  return $ Var v'
+
+-- Disabling this path for now because we need to be more careful to not throw
+-- away global names
+  -- case singletonTypeVal ty of
+  --   Just x
+  --     | isPure expr -> return x
+  --     | otherwise -> do
+  --         expr' <- deShadow expr <$> getScope
+  --         emitDecl $ Let ann (NoName:>ty) expr'
+  --         return x
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
@@ -90,26 +111,18 @@ freshVar v = do
   let v' = rename v scope
   return v'
 
--- Runs second argument on a fresh binder variable and returns its result,
--- the fresh variable name and the EmbedEnv accumulated during its execution.
--- The first argument specifies the type of the binder variable, and is used
--- as a hint for its name.
-withBinder :: (MonadEmbed m) => Var -> (Atom -> m a) -> m (a, Var, [Decl])
-withBinder b f = do
-  ((ans, b'), decls) <- scopedDecls $ do
-      b' <- freshVar b
-      embedExtend $ asFst (b' @> Nothing)
-      ans <- f $ Var b'
-      return (ans, b')
-  return (ans, b', decls)
-
-buildAbs :: (MonadError Err m, HasVars a, MonadEmbed m)
-         => Var -> (Atom -> m a) -> m (Abs a)
-buildAbs b f = do
-  (ans, b', decls) <- withBinder b f
+buildPi :: (MonadError Err m, MonadEmbed m)
+        => Var -> (Atom -> m (Arrow, Type)) -> m Atom
+buildPi b f = do
+  (piTy, decls) <- scopedDecls $ do
+     b' <- freshVar b
+     embedExtend $ asFst $ b' @> PiBound (varAnn b')
+     (arr, ans) <- f $ Var b'
+     return $ Pi $ Abs b' (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
-  return $ makeAbs b' ans
+  return piTy
 
+-- buildAbs :: (MonadError Err m, HasVars a, MonadEmbed m)
 buildLam :: MonadEmbed m => Var -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
 
@@ -120,11 +133,18 @@ buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> f
 buildLamAux :: MonadEmbed m
             => Var -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildLamAux b fArr fBody = do
-  ((arr, (ans, aux)), b', decls) <- withBinder b $ \x -> do
-    arr <- fArr x
-    (ansAux) <- withEffects (arrowEff arr) $ fBody x
-    return (arr, ansAux)
-  return (Lam (Abs b' (arr, wrapDecls decls ans)), aux)
+  ((b', arr, ans, aux), decls) <- scopedDecls $ do
+     b' <- freshVar b
+     -- TODO: we can't extend the scope until we know the arrow, but we really
+     -- ought to extend it before we run fArr. Since effects don't contain
+     -- binders, we're probably ok. But it would be cleaner if we just
+     -- decoupled arrow from effect.
+     let x = Var b'
+     arr <- fArr x
+     embedExtend $ asFst $ b' @> LamBound (void arr) (varAnn b')
+     (ans, aux) <- withEffects (arrowEff arr) $ fBody x
+     return (b', arr, ans, aux)
+  return (Lam $ Abs b' (arr, wrapDecls decls ans), aux)
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -134,7 +154,7 @@ buildScoped m = do
 wrapDecls :: [Decl] -> Atom -> Block
 wrapDecls decls atom = case reverse decls of
   -- decluttering optimization
-  Let v expr:rest | atom == Var v -> Block (reverse rest) expr
+  Let _ v expr:rest | atom == Var v -> Block (reverse rest) expr
   _ -> Block decls (Atom atom)
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
@@ -388,13 +408,17 @@ instance MonadError e m => MonadError e (EmbedT m) where
 
 getNameHint :: MonadEmbed m => m Name
 getNameHint = do
-  v <- fst <$> embedAsk
-  return $ case v of
-    NoName -> "tmp"
-    _      -> v
+  tag <- fst <$> embedAsk
+  return $ Name GenName tag 0
 
+-- This is purely for human readability. `const id` would be a valid implementation.
 withNameHint :: MonadEmbed m => Name -> m a -> m a
-withNameHint name m = embedLocal (\(_, eff) -> (name, eff)) m
+withNameHint name m = embedLocal (\(_, eff) -> (tag, eff)) m
+  where
+    tag = case name of
+      Name _ t _   -> t
+      GlobalName t -> t
+      NoName       -> "tmp"
 
 runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnvC)
 runEmbedT' (EmbedT m) (envR, envC) = runCatT (runReaderT m envR) envC
@@ -415,7 +439,7 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let v expr) = embedExtend (v @> Just expr, [decl])
+emitDecl decl@(Let ann v expr) = embedExtend (v @> LetBound ann expr, [decl])
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -424,7 +448,59 @@ scopedDecls m = do
 
 -- TODO: consider checking for effects here
 declAsScope :: Decl -> Scope
-declAsScope (Let v expr) = v @> Just expr
+declAsScope (Let ann v expr) = v @> LetBound ann expr
+
+-- === generic traversal ===
+
+type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
+
+-- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
+traverseModule :: (MonadEmbed m, MonadReader SubstEnv m)
+               => TraversalDef m -> Module -> m Module
+traverseModule def (Module decls) = do
+  (_, decls') <- scopedDecls $ traverseDecls def decls
+  return $ Module decls'
+
+traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
+               => TraversalDef m -> [Decl] -> m SubstEnv
+traverseDecls _ [] = return mempty
+traverseDecls def@(fExpr, _) (Let letAnn b expr : decls) = do
+    expr' <- fExpr expr
+    x <- emitTo (varName b) letAnn expr'
+    let env = b @> x
+    env' <- extendR env $ traverseDecls def decls
+    return (env <> env')
+
+traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
+              => TraversalDef m -> Block -> m Block
+traverseBlock def block = buildScoped $ traverseBlock' def block
+
+traverseBlock' :: (MonadEmbed m, MonadReader SubstEnv m)
+              => TraversalDef m -> Block -> m Atom
+traverseBlock' def@(fExpr, _) (Block decls result) = do
+  env <- traverseDecls def decls
+  extendR env $ fExpr result >>= emit
+
+traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Expr -> m Expr
+traverseExpr (_, fAtom) expr = case expr of
+  App g x -> App  <$> fAtom g <*> fAtom x
+  Atom x  -> Atom <$> fAtom x
+  Op  op  -> Op   <$> traverse fAtom op
+  Hof hof -> Hof  <$> traverse fAtom hof
+
+traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Atom -> m Atom
+traverseAtom def@(_, fAtom) atom = case atom of
+  Var _ -> substEmbed atom
+  Lam (Abs b (arr, body)) ->
+    buildDepEffLam b
+      (\x -> extendR (b@>x) (substEmbed arr))
+      (\x -> extendR (b@>x) (traverseBlock' def body))
+  Pi _ -> substEmbed atom
+  Con con -> Con <$> traverse fAtom con
+  TC  tc  -> TC  <$> traverse fAtom tc
+  Eff _   -> substEmbed atom
 
 -- === partial evaluation using definitions in scope ===
 
@@ -444,19 +520,25 @@ reduceBlock scope (Block decls result) = do
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
   Var v -> case scope ! v of
-    Nothing -> x
-    Just expr -> fromMaybe x $ reduceExpr scope expr
+    -- TODO: worry about effects!
+    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
+    LetBound NewtypeLet _ -> TC $ NewtypeApp x []
+    _ -> x
   _ -> x
 
 reduceExpr :: Scope -> Expr -> Maybe Atom
 reduceExpr scope expr = case expr of
-  Atom  val  -> return $ reduceAtom scope val
+  Atom val -> return $ reduceAtom scope val
   App f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
     -- TODO: Worry about variable capture. Should really carry a substitution.
-    Lam (Abs b (PureArrow, block)) <- return f'
-    reduceBlock scope $ subst (b@>x', scope) block
+    case f' of
+      Lam (Abs b (PureArrow, block)) ->
+        reduceBlock scope $ subst (b@>x', scope) block
+      TC (NewtypeApp ty xs) ->
+        Just $ TC $ NewtypeApp ty (xs ++ [x'])
+      _ -> Nothing
   _ -> Nothing
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom

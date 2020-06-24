@@ -10,8 +10,8 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
-            rawName, nameSpace, rename, renames, nameItems, renameWithNS,
-            renameChoice, tagToStr) where
+            rawName, nameSpace, rename, renames, nameItems,
+            renameChoice, tagToStr, isGlobal, asGlobal) where
 
 import Control.Monad
 import Data.List (minimumBy)
@@ -31,10 +31,10 @@ newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord, Functor, Foldable, 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 -- `NoName` is used in binders (e.g. `_ = <expr>`) but never in occurrences.
 -- TODO: Consider putting it under a separate `Binder` type instead.
-data Name = Name NameSpace Tag Int | NoName
+data Name = Name NameSpace Tag Int | GlobalName Tag | NoName
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | SourceTypeName | JaxIdx | Skolem
-               | InferenceName | LocalTVName | NoNameSpace | ArrayName
+data NameSpace = GenName | SourceName | JaxIdx | Skolem
+               | InferenceName | NoNameSpace | ArrayName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
@@ -43,9 +43,15 @@ data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Trav
 rawName :: NameSpace -> String -> Name
 rawName s t = Name s (fromString t) 0
 
+asGlobal :: Name -> Name
+asGlobal (Name SourceName tag 0) = GlobalName tag
+asGlobal NoName = NoName
+asGlobal v = error $ "Can't treat as global name: " ++ show v
+
 nameSpace :: Name -> NameSpace
 nameSpace (Name s _ _) = s
 nameSpace NoName       = NoNameSpace
+nameSpace (GlobalName _) = NoNameSpace
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -53,9 +59,9 @@ varAnn (_:>ann) = ann
 varName :: VarP a -> Name
 varName (v:>_) = v
 
-nameTag :: Name -> Int
-nameTag (Name _ _ tag) = tag
-nameTag _ = 0
+nameCounter :: Name -> Int
+nameCounter (Name _ _ c) = c
+nameCounter _ = 0
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
@@ -102,22 +108,24 @@ env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
 
+isGlobal :: VarP ann -> Bool
+isGlobal (GlobalName _ :> _) = True
+isGlobal _ = False
+
 genFresh :: Name-> Env a -> Name
 genFresh NoName _ = NoName
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
-                Nothing -> 0
-                Just (NoName, _) -> 0
                 Just (Name ns' tag' i, _)
                   | ns' /= ns || tag' /= tag -> 0
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
+                _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
-
-renameWithNS :: NameSpace -> VarP ann -> Env a -> VarP ann
-renameWithNS _  (NoName       :> ann) _     = NoName :> ann
-renameWithNS ns (Name _ tag _ :> ann) scope = rename (Name ns tag 0 :> ann) scope
+genFresh v@(GlobalName _) env
+  | (v:>()) `isin` env = error $ "Can't rename global: " ++ show v
+  | otherwise          = v
 
 rename :: VarP ann -> Env a -> VarP ann
 rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
@@ -125,7 +133,7 @@ rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
 
 renameChoice :: [Name] -> Env a -> Name
 renameChoice vs scope =
-  minimumBy (\v1 v2 -> nameTag v1 `compare` nameTag v2) vs'
+  minimumBy (\v1 v2 -> nameCounter v1 `compare` nameCounter v2) vs'
   where vs' = [varName $ rename (v:>()) scope | v <- vs]
 
 renames :: Traversable f => f (VarP ann) -> a -> Env a -> (f (VarP ann), Env a)
@@ -170,6 +178,7 @@ instance Pretty Name where
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> pretty n
+  pretty (GlobalName tag) = pretty (tagToStr tag)
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0
