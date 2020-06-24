@@ -468,6 +468,9 @@ instance MonadFail (Either Err) where
 
 type UVars = Env ()
 
+uVarsAsGlobal :: UVars -> UVars
+uVarsAsGlobal vs = foldMap (\v -> (asGlobal v :>()) @> ()) $ envNames vs
+
 class HasUVars a where
   freeUVars :: a -> UVars
 
@@ -500,11 +503,12 @@ instance HasUVars UModule where
     freeUVars rhs <> uAbsFreeVars b (UModule rest)
 
 instance HasUVars SourceBlock where
-  freeUVars block = case sbContents block of
-    RunModule (   m) -> freeUVars m
-    Command _ (_, m) -> freeUVars m
-    GetNameType v -> (v:>()) @> ()
-    _ -> mempty
+  freeUVars block = uVarsAsGlobal $
+    case sbContents block of
+      RunModule (   m) -> freeUVars m
+      Command _ (_, m) -> freeUVars m
+      GetNameType v -> (v:>()) @> ()
+      _ -> mempty
 
 instance HasUVars EffectRow where
   freeUVars (EffectRow effs tailVar) =
@@ -515,21 +519,25 @@ instance HasUVars eff => HasUVars (ArrowP eff) where
   freeUVars _ = mempty
 
 uAbsFreeVars :: HasUVars a => UBinder -> a -> UVars
-uAbsFreeVars (WithSrc _ pat, ann) body =
-  foldMap freeUVars ann <> (freeUVars body `envDiff` foldMap (@>()) pat)
+uAbsFreeVars (pat, ann) body =
+  foldMap freeUVars ann <> (freeUVars body `envDiff` uPatBoundVars pat)
 
 uBinderFreeVars :: UBinder -> UVars
 uBinderFreeVars (_, ann) = foldMap freeUVars ann
 
 sourceBlockBoundVars :: SourceBlock -> UVars
-sourceBlockBoundVars = undefined
--- sourceBlockBoundVars block = case sbContents block of
---   RunModule (UModule _ vs _)    -> foldMap nameAsEnv vs
---   LoadData (WithSrc _ p, _) _ _ -> foldMap (@>()) p
---   _                             -> mempty
+sourceBlockBoundVars block = uVarsAsGlobal $
+  case sbContents block of
+    RunModule m -> uModuleBoundVars m
+    LoadData (WithSrc _ p, _) _ _ -> foldMap (@>()) p
+    _                             -> mempty
+
+uPatBoundVars :: UPat -> UVars
+uPatBoundVars (WithSrc _ pat) = foldMap (@>()) pat
 
 uModuleBoundVars :: UModule -> UVars
-uModuleBoundVars = undefined
+uModuleBoundVars (UModule decls) =
+  foldMap (\(ULet _ (p,_) _) -> uPatBoundVars p) decls
 
 nameAsEnv :: Name -> UVars
 nameAsEnv v = (v:>())@>()
