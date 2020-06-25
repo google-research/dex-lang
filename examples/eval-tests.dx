@@ -572,3 +572,10 @@ for i:(Range 4 1). 1.0
 x = isub 2 4
 for i:(Range 0 x). 1.0
 > []
+
+-- Make sure that we can construct and print an array using a pair index set
+for i:(Fin 2 & Fin 2). 1.0
+> [1.0, 1.0, 1.0, 1.0]@((Fin 2) & (Fin 2))
+
+1@(Fin 2 & Fin 2)
+> (0@(Fin 2), 1@(Fin 2))
