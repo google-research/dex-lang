@@ -106,13 +106,6 @@ evalSumClampPolynomial :: MonadEmbed m => SumClampPolynomial -> Atom -> m Atom
 evalSumClampPolynomial (SumClampPolynomial cp summedVar) a = evalPolynomialP (evalClampMonomial varVal) cp
   where varVal v = if MVar v == sumVar summedVar then a else Var v
 
-evalPolynomial :: MonadEmbed m => Polynomial -> m Atom
-evalPolynomial p = evalPolynomialP (evalMonomial Var) p
-
-evalSumPolynomial :: MonadEmbed m => SumPolynomial -> Atom -> m Atom
-evalSumPolynomial (SumPolynomial p summedVar) a = evalPolynomialP (evalMonomial varVal) p
-  where varVal v = if MVar v == sumVar summedVar then a else Var v
-
 -- We have to be extra careful here, because we're evaluating a polynomial
 -- that we know is guaranteed to return an integral number, but it has rational
 -- coefficients. This is why we have to find the least common multiples and do the
@@ -149,10 +142,6 @@ ipow x i = foldM imul (IntVal 1) (replicate i x)
 
 -- === Polynomial math ===
 
-mul :: Polynomial -> Polynomial -> Polynomial
-mul x y = poly [(cx * cy, mulMono mx my) | (mx, cx) <- toList x, (my, cy) <- toList y]
-  where mulMono = unionWith (+) -- + because monomials store variable powers
-
 mulC :: ClampPolynomial -> ClampPolynomial -> ClampPolynomial
 mulC x y = cpoly [(cx * cy, mulMono mx my) | (mx, cx) <- toList x, (my, cy) <- toList y]
   where mulMono (ClampMonomial cx mx) (ClampMonomial cy my) = ClampMonomial (cx ++ cy) (unionWith (+) mx my)
@@ -168,12 +157,6 @@ sumPolys = unionsWith (+)
 
 mulConst :: Ord mono => Constant -> PolynomialP mono -> PolynomialP mono
 mulConst c p = (*c) <$> p
-
-sum :: Var -> Polynomial -> SumPolynomial
-sum v p = SumPolynomial sp v
-  where
-    sp = sumPolys $ fmap sumMono' $ toList p
-    sumMono' (m, c) = let (SumPolynomial sm _) = sumMono v m in mulConst c sm
 
 -- (Lazy) infinite list of powers of p
 powersL :: (a -> a -> a) -> a -> a -> [a]
