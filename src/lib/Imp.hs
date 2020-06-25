@@ -425,8 +425,7 @@ elemCountE ty = case ty of
 offsetToE :: MonadEmbed m => ScalarTableType -> Atom -> m Atom
 offsetToE ty i = case ty of
   BaseTy _  -> error "Indexing into a scalar!"
-  TabTy (NoName :> _) b -> imul i =<< elemCountE b
-  TabTy _ _             -> A.evalSumPolynomial (A.offsetTo ty) i
+  TabTy _ _ -> A.evalSumClampPolynomial (A.offsets ty) i
   _ -> error $ "Not a scalar table type: " ++ pprint ty
 
 zipWithDest :: Dest -> Atom -> (IExpr -> IExpr -> ImpM ()) -> ImpM ()
