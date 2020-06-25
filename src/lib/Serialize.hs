@@ -215,9 +215,7 @@ flattenType ty = error $ "Unexpected type: " ++ show ty
 
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
-  TabTy (NoName:>n) body -> (indexSetSize n * s, b)
-    where (s, b) = typeToArrayType body
+  BaseTy b  -> (1, b)
   TabTy _ _ -> (size, scalarTableBaseType t)
-    where (IntVal size) = evalEmbed $ A.evalPolynomial (A.elemCount t)
-  BaseTy b -> (1, b)
+    where (IntVal size) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t

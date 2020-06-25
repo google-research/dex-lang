@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
               TraversalDef, traverseModule, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad,
-              sumTag, getLeft, getRight, fromSum,
+              sumTag, getLeft, getRight, fromSum, clampPositive,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Applicative
@@ -558,10 +558,12 @@ indexSetSizeE (TC con) = case con of
   SumType l r -> bindM2 iadd (indexSetSizeE l) (indexSetSizeE r)
   _ -> error $ "Not implemented " ++ pprint con
   where
-    clampPositive x = do
-      isNegative <- x `ilt` (IntVal 0)
-      select isNegative (IntVal 0) x
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
+
+clampPositive :: MonadEmbed m => Atom -> m Atom
+clampPositive x = do
+  isNegative <- x `ilt` (IntVal 0)
+  select isNegative (IntVal 0) x
 
 -- XXX: Be careful if you use this function as an interpretation for
 --      IndexAsInt instruction, as for Int and IndexRanges it will
