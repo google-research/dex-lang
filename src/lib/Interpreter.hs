@@ -77,6 +77,8 @@ evalOp expr = case expr of
     Con (AsIdx _ i)  -> i
     Con (AnyValue t) -> anyValue t
     _                -> evalEmbed (indexToIntE (getType idxArg) idxArg)
+  Fst p -> x where (PairVal x _) = p
+  Snd p -> y where (PairVal _ y) = p
   _ -> error $ "Not implemented: " ++ pprint expr
 
 indices :: Type -> [Atom]

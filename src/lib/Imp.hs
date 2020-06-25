@@ -129,7 +129,7 @@ toImpOp (maybeDest, op) = case op of
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" IntType [i', n']
-    returnVal $ toScalarAtom resultTy ans
+    returnVal =<< intToIndex resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
   IndexAsInt idx -> case idx of
     Con (AsIdx _ i)  -> returnVal $ i
