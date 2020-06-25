@@ -55,6 +55,13 @@ evalOp expr = case expr of
     FSub -> RealVal $ x' - y'  where (RealVal x') = x; (RealVal y') = y
     FMul -> RealVal $ x' * y'  where (RealVal x') = x; (RealVal y') = y
     FDiv -> RealVal $ x' / y'  where (RealVal x') = x; (RealVal y') = y
+    ICmp cmp -> BoolVal $ case cmp of
+      Less         -> x' <  y'
+      Greater      -> x' >  y'
+      Equal        -> x' == y'
+      LessEqual    -> x' <= y'
+      GreaterEqual -> x' >= y'
+      where (IntVal x') = x; (IntVal y') = y
     _ -> error $ "Not implemented: " ++ pprint expr
   ScalarUnOp op x -> case op of
     FNeg -> RealVal (-x')  where (RealVal x') = x
@@ -79,6 +86,7 @@ evalOp expr = case expr of
     _                -> evalEmbed (indexToIntE (getType idxArg) idxArg)
   Fst p -> x where (PairVal x _) = p
   Snd p -> y where (PairVal _ y) = p
+  Select b t f -> if b' then t else f where (BoolVal b') = b
   _ -> error $ "Not implemented: " ++ pprint expr
 
 indices :: Type -> [Atom]
