@@ -1,4 +1,4 @@
-# Dex [![Test status](https://travis-ci.org/google-research/dex-lang.svg?branch=master)](https://travis-ci.org/google-research/dex-lang)
+# Dex [![Test status](https://travis-ci.org/google-research/dex-lang.svg?branch=main)](https://travis-ci.org/google-research/dex-lang)
 Dex (named for "index") is a research language for array processing in the
 Haskell/ML family. The goal of the project is to explore:
 
