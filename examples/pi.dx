@@ -4,7 +4,7 @@ estimatePiArea : Key -> Real = \key.
   (k1, k2) = splitKey key
   x = rand k1
   y = rand k2
-  inBounds = sq x + sq y < 1.0
+  inBounds = (sq x + sq y) < 1.0
   4.0 * b2r inBounds
 
 estimatePiAvgVal : Key -> Real = \key.

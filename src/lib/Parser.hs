@@ -93,7 +93,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eol)
+  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -145,7 +145,7 @@ explicitCommand = do
     "plot"    -> return $ EvalExpr Scatter
     "plotmat" -> return $ EvalExpr Heatmap
     _ -> fail $ "unrecognized command: " ++ show cmdName
-  e <- blockOrExpr <*eol
+  e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
     (WithSrc _ (UVar (v:>())), GetType) -> GetNameType (asGlobal v)
     _ -> Command cmd (exprAsModule e)
@@ -444,17 +444,13 @@ ops :: [[Operator Parser UExpr]]
 ops =
   [ [InfixL $ sym "." $> mkGenApp TabArrow, symOp "!"]
   , [InfixL $ sc $> mkApp]
-  , [symOp "@"]
-  , [symOp "^"]
-  , [symOp "*", symOp "/" ]
-  , [symOp "+", prefixNegOp, symOp "-"]
-  , [InfixR $ sym "=>" $> mkArrow TabArrow]
-  , [symOp "/=", symOp "==", symOp "<=", symOp ">=", symOp "<", symOp ">"]
-  , [symOp "&&", symOp "||"]
-  , [InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
+  , [prefixNegOp]
+  , [anySymOp] -- other ops with default fixity
+  , [symOp "+", symOp "-", symOp "||", symOp "&&",
+     InfixR $ sym "=>" $> mkArrow TabArrow,
+     InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ mayBreak (sym "$") $> mkApp]
-  , [symOp "+=", symOp ":=", symOp "|"]
-  , [InfixR infixArrow]
+  , [symOp "+=", symOp ":=", symOp "|", InfixR infixArrow]
   , [InfixR $ symOpP "&", pairOp]
   , indexRangeOps
   ]
@@ -473,14 +469,21 @@ pairOp = InfixR $ opWithSrc $ do
     else fail "Unexpected comma"
   where f = mkName $ "(,)"
 
+anySymOp :: Operator Parser UExpr
+anySymOp = InfixL $ opWithSrc $ do
+  s <- label "infix operator" anySym
+  return $ binApp $ mkSymName s
+
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ symOpP s
 
 symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
   label "infix operator" (sym s)
-  return $ binApp f
-  where f = mkName $ "(" <> s <> ")"
+  return $ binApp $ mkSymName s
+
+mkSymName :: String -> Name
+mkSymName s = mkName $ "(" <> s <> ")"
 
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
@@ -594,9 +597,21 @@ doubleLit = lexeme $
       try L.float
   <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
 
--- string must only contain characters from the list `symChars`
+knownSymStrs :: [String]
+knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", ",", "+=", ":=",
+                "->", "=>", "?->", "?=>", "--o", "--",
+                "..", "<..", "..<", "..<", "<..<"]
+
+-- string must be in `knownSymStrs`
 sym :: String -> Lexer ()
 sym s = lexeme $ try $ string s >> notFollowedBy symChar
+
+anySym :: Lexer String
+anySym = lexeme $ try $ do
+  s <- some symChar
+  -- TODO: consider something faster than linear search here
+  failIf (s `elem` knownSymStrs) ""
+  return s
 
 symName :: Lexer Name
 symName = label "symbol name" $ lexeme $ try $ do
@@ -725,6 +740,9 @@ withSource p = do
 
 withIndent :: Int -> Parser a -> Parser a
 withIndent n p = local (\ctx -> ctx { curIndent = curIndent ctx + n }) $ p
+
+eolf :: Parser ()
+eolf = void eol <|> eof
 
 failIf :: Bool -> String -> Parser ()
 failIf True s = fail s

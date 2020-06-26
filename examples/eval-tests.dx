@@ -322,7 +322,6 @@ litArr = [10, 5, 3]
 :p maximumBy fst [(2.0, 20), (1.5, 15), (10.0, 100)]
 > (10.0, 100)
 
--- TODO: prefix negation for literals!
 :p (1 == 2, (-1) == (-1), 1 < 2, -1 < 2, 2 < (-1))
 > (False, (True, (True, (True, False))))
 
