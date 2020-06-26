@@ -25,6 +25,7 @@ import Env
 import PPrint
 import Cat
 
+type TypeEnv = Bindings  -- Only care about type payload
 type ClassEnv = MonMap Name [ClassName]
 
 data OptionalEnv env = SkipChecks | CheckWith env  deriving Functor
@@ -55,9 +56,7 @@ instance Checkable Module where
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-        -- TODO: just merge type env and scope
-        let env' = env <> fmap getType (foldMap declAsScope decls)
-        checkBindings env' bindings
+        checkBindings (env <> foldMap declAsScope decls) bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
@@ -65,9 +64,8 @@ asCompilerErr (Right x) = Right x
 
 checkBindings :: TypeEnv -> Bindings -> Except ()
 checkBindings env bs = forM_ (envPairs bs) $ \binding -> do
-  (GlobalName _, LetBound _ (Atom atom)) <- return binding
-  void $ runTypeCheck (CheckWith (env', Pure)) $ typeCheck atom
-  where env' = env <> fmap getType bs
+  (GlobalName _, (ty, LetBound _ (Atom atom))) <- return binding
+  void $ runTypeCheck (CheckWith (env <> bs, Pure)) $ atom |: ty
 
 -- === Core IR ===
 
@@ -79,7 +77,7 @@ instance HasType Atom where
         throw CompilerErr "Effect variables should only occur in effect rows"
       checkWithEnv $ \(env, _) -> case envLookup env v of
         Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-        Just ty -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+        Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
       return annTy
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
@@ -122,13 +120,6 @@ instance HasType Block where
         env' <- catFoldM checkDecl env decls
         withTypeEnv (env <> env') $ typeCheck result
 
-instance HasType BinderInfo where
-  typeCheck binding = case binding of
-    LamBound _ ty -> ty |: TyKind $> ty
-    LetBound _ expr -> typeCheck expr
-    PiBound ty -> ty |: TyKind $> ty
-    UnknownBinder -> error "Unknown type"
-
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
 checkDecl env decl@(Let _ b rhs) =
   withTypeEnv env $ addContext ctxStr $ do
@@ -136,7 +127,7 @@ checkDecl env decl@(Let _ b rhs) =
     checkBinder b
     ty <- typeCheck rhs
     checkEq (varType b) ty
-    return $ b @> ty
+    return $ b @> (ty, UnknownBinder)
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
@@ -152,7 +143,7 @@ checkEq :: Type -> Type -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>ty) m
+withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>(ty, UnknownBinder)) m
 
 checkBinder :: Binder -> TypeM ()
 checkBinder b@(_:>ty) = do
@@ -266,7 +257,7 @@ checkEffRow (EffectRow effs effTail) = do
   forM_ effTail $ \v -> do
     checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
       Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-      Just ty -> assertEq EffKind ty "Effect var"
+      Just (ty, _) -> assertEq EffKind ty "Effect var"
 
 declareEff :: Effect -> TypeM ()
 declareEff (effName, h) = declareEffs $ EffectRow [(effName, h)] Nothing
@@ -297,13 +288,13 @@ checkWithEnv check = do
     SkipChecks -> return ()
     CheckWith env -> check env
 
-updateTypeEnv :: (Env Type -> Env Type) -> TypeM a -> TypeM a
+updateTypeEnv :: (TypeEnv -> TypeEnv) -> TypeM a -> TypeM a
 updateTypeEnv f m = flip local m $ fmap $ \(env, eff) -> (f env, eff)
 
-extendTypeEnv :: Env Type -> TypeM a -> TypeM a
+extendTypeEnv :: TypeEnv -> TypeM a -> TypeM a
 extendTypeEnv new m = updateTypeEnv (<> new) m
 
-withTypeEnv :: Env Type -> TypeM a -> TypeM a
+withTypeEnv :: TypeEnv -> TypeM a -> TypeM a
 withTypeEnv new m = updateTypeEnv (const new) m
 
 extendAllowedEffect :: Effect -> TypeM () -> TypeM ()

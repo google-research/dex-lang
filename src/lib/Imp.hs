@@ -46,6 +46,8 @@ import qualified Algebra as A
 --
 -- TODO: Use an ImpAtom type alias to better document the code
 
+-- TODO: use `Env ()` instead of `Scope`. The problem is that we're mixing up
+-- Imp and Core types in there.
 type EmbedEnv = ((Env Dest, [IVar]), (Scope, ImpProg))
 type ImpM = Cat EmbedEnv
 
@@ -64,8 +66,8 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
 runImpM :: [ScalarTableVar] -> ImpM a -> a
 runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
   where
-    inVarScope :: Scope
-    inVarScope = foldMap varAsEnv $ fmap (fmap $ const UnknownBinder) inVars
+    inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
+    inVarScope = foldMap varAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inVars
 
 toImpBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 toImpBlock env destBlock = do
@@ -524,7 +526,7 @@ freshVar :: VarP a -> ImpM (VarP a)
 freshVar v = do
   scope <- looks (fst . snd)
   let v' = rename v scope
-  extend $ asSnd $ asFst (v' @> UnknownBinder)
+  extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
 
 emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()

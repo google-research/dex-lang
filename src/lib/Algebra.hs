@@ -261,13 +261,13 @@ instance Pretty MVar where
 
 -- We deliberately skip the variables in the types, since we treat all variables
 -- with index set types as their ordinals.
-freeVarsM :: Monomial -> Vars
+freeVarsM :: Monomial -> Env Type
 freeVarsM m = foldMap (varAsEnv . coerce) $ keys m
 
-freeVarsP :: Polynomial -> Vars
+freeVarsP :: Polynomial -> Env Type
 freeVarsP p = foldMap freeVarsM $ keys p
 
-freeVarsC :: Clamp -> Vars
+freeVarsC :: Clamp -> Env Type
 freeVarsC (Clamp p) = freeVarsP p
 
 imapMonos :: (Ord mono, Ord mono') => (mono -> mono') -> PolynomialP mono -> PolynomialP mono'

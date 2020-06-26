@@ -8,7 +8,6 @@
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE MultiParamTypeClasses #-}
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
@@ -115,7 +114,7 @@ buildPi :: (MonadError Err m, MonadEmbed m)
 buildPi b f = do
   (piTy, decls) <- scopedDecls $ do
      b' <- freshVar b
-     embedExtend $ asFst $ b' @> PiBound (varAnn b')
+     embedExtend $ asFst $ b' @> (varType b', PiBound)
      (arr, ans) <- f $ Var b'
      return $ Pi $ Abs b' (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
@@ -139,7 +138,7 @@ buildLamAux b fArr fBody = do
      -- decoupled arrow from effect.
      let x = Var b'
      arr <- fArr x
-     embedExtend $ asFst $ b' @> LamBound (void arr) (varAnn b')
+     embedExtend $ asFst $ b' @> (varType b', LamBound (void arr))
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (b', arr, ans, aux)
   return (Lam $ Abs b' (arr, wrapDecls decls ans), aux)
@@ -437,7 +436,8 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let ann v expr) = embedExtend (v @> LetBound ann expr, [decl])
+emitDecl decl@(Let ann v expr) = embedExtend (bindings, [decl])
+  where bindings = v @> (varType v, LetBound ann expr)
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -511,7 +511,7 @@ reduceBlock scope (Block decls result) = do
 
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
-  Var v -> case scope ! v of
+  Var v -> case snd (scope ! v) of
     -- TODO: worry about effects!
     LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
     LetBound NewtypeLet _ -> TC $ NewtypeApp x []

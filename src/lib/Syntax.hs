@@ -21,7 +21,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), TypeEnv, SubstEnv, Scope, CmdName (..),
+    ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
@@ -29,8 +29,8 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    sourceBlockBoundVars, uModuleBoundVars, PassName (..),
-    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName, Vars,
+    sourceBlockBoundVars, uModuleBoundVars, PassName (..), bindingsAsVars,
+    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UBinder, UPiBinder, UVar, declAsScope,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
@@ -114,9 +114,7 @@ type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
 data Module = Module IRVariant [Decl] Bindings  deriving (Show, Eq)
-type Bindings = Scope
 type TopEnv = Scope
-type TypeEnv = Env Type
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
                  deriving (Show, Eq, Ord, Generic)
@@ -550,29 +548,31 @@ nameAsEnv v = (v:>())@>()
 -- === Expr free variables and substitutions ===
 
 data BinderInfo =
-        LamBound (ArrowP ()) Type
+        LamBound (ArrowP ())
         -- TODO: make the expression optional, for when it's effectful?
         -- (or we could put the effect tag on the let annotation)
       | LetBound LetAnn Expr
-      | PiBound Type
-      | UnknownBinder  -- TODO: could still have type information here
+      | PiBound
+      | UnknownBinder
         deriving (Show, Eq, Generic)
 
-type Vars = TypeEnv
 type SubstEnv = Env Atom
-type Scope    = Env BinderInfo
-type ScopedSubstEnv = (SubstEnv, Scope)
+type Bindings = Env (Type, BinderInfo)
+type Scope = Bindings  -- when we only care about the names, not the payloads
+type ScopedSubstEnv = (SubstEnv, Bindings)
 
 scopelessSubst :: HasVars a => SubstEnv -> a -> a
 scopelessSubst env x = subst (env, scope) x
-  where scope = fmap (const UnknownBinder) $
-                  foldMap freeVars env <> (freeVars x `envDiff` env)
+  where scope = foldMap freeVars env <> (freeVars x `envDiff` env)
 
 declAsScope :: Decl -> Scope
-declAsScope (Let ann v expr) = v @> LetBound ann expr
+declAsScope (Let ann v expr) = v @> (varType v, LetBound ann expr)
+
+bindingsAsVars :: Bindings -> [Var]
+bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
 
 class HasVars a where
-  freeVars :: a -> Vars
+  freeVars :: a -> Scope
   subst :: ScopedSubstEnv -> a -> a
 
 instance (Show a, HasVars a, Eq a) => Eq (Abs a) where
@@ -586,7 +586,7 @@ freshSkolemVar x ty = rename (rawName Skolem "skol" :> ty) (freeVars x)
 
 -- NOTE: We don't have an instance for VarP, because it's used to represent
 --       both binders and regular variables, but each requires different treatment
-freeBinderTypeVars :: Var -> Vars
+freeBinderTypeVars :: Var -> Scope
 freeBinderTypeVars (_ :> t) = freeVars t
 
 applyAbs :: HasVars a => Abs a -> Atom -> a
@@ -599,11 +599,8 @@ makeAbs v body | v `isin` freeVars body = Abs v body
 absArgType :: Abs a -> Type
 absArgType (Abs (_:>ty) _) = ty
 
-varFreeVars :: Var -> Vars
-varFreeVars v@(_ :> t) = bind v <> freeVars t
-
-bind :: VarP a -> Env a
-bind v@(_:>ty) = v @> ty
+varFreeVars :: Var -> Scope
+varFreeVars v@(_:>t) = (v@>(t, UnknownBinder)) <> freeVars t
 
 -- TODO: de-dup with `zipEnv`
 newEnv :: [VarP ann] -> [a] -> Env a
@@ -689,8 +686,8 @@ instance HasVars Module where
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
-       foldMap (\(_,v) -> (v:>())@>TyKind) row
-    <> foldMap (\v     -> (v:>())@>EffKind) t
+       foldMap (\(_,v) -> (v:>())@>(TyKind , UnknownBinder)) row
+    <> foldMap (\v     -> (v:>())@>(EffKind, UnknownBinder)) t
 
   subst (env, _) (EffectRow row t) = extendEffRow
     (fmap (\(effName, v) -> (effName, substName env v)) row)
@@ -698,16 +695,12 @@ instance HasVars EffectRow where
 
 instance HasVars BinderInfo where
   freeVars binfo = case binfo of
-   LamBound _ ty   -> freeVars ty
    LetBound _ expr -> freeVars expr
-   PiBound ty      -> freeVars ty
-   UnknownBinder   -> mempty
+   _ -> mempty
 
   subst env binfo = case binfo of
-   LamBound a ty   -> LamBound a $ subst env ty
    LetBound a expr -> LetBound a $ subst env expr
-   PiBound ty      -> PiBound $ subst env ty
-   UnknownBinder   -> UnknownBinder
+   _ -> binfo
 
 instance HasVars LetAnn where
   freeVars _ = mempty
@@ -745,7 +738,7 @@ substDecl env (Let ann (v:>ty) bound) = (Let ann b (subst env bound), env')
 refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
 refreshBinder (_, scope) b = (b', env')
   where b' = rename b scope
-        env' = (b@>Var b', b'@>UnknownBinder)
+        env' = (b@>Var b', b'@>(varType b, UnknownBinder))
 
 instance HasVars () where
   freeVars () = mempty

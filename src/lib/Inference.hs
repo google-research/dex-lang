@@ -159,7 +159,7 @@ lookupSourceVar v = do
       scope <- getScope
       let v' = asGlobal $ varName v
       case envLookup scope (v':>()) of
-        Just binding -> return $ Var $ v' :> getType binding
+        Just (ty, _) -> return $ Var $ v' :> ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
@@ -371,7 +371,7 @@ synthDict ty = do
     LetBound InstanceLet _ -> do
       block <- buildScoped $ inferToSynth $ instantiateAndCheck ty d
       traverseBlock (traverseHoles synthDict) block >>= emitBlock
-    LamBound ClassArrow  _ -> do
+    LamBound ClassArrow -> do
       d' <- superclass d
       inferToSynth $ instantiateAndCheck ty d'
     _ -> empty
@@ -386,8 +386,8 @@ superclass dict = return dict <|> do
 getBinding :: SynthDictM (Atom, BinderInfo)
 getBinding = do
   scope <- getScope
-  (v, bindingInfo) <- asum $ map return $ envPairs scope
-  return (Var (v:> getType bindingInfo), bindingInfo)
+  (v, (ty, bindingInfo)) <- asum $ map return $ envPairs scope
+  return (Var (v:>ty), bindingInfo)
 
 inferToSynth :: (Pretty a, HasVars a) => UInferM a -> SynthDictM a
 inferToSynth m = do
@@ -463,7 +463,7 @@ freshType EffKind = Eff <$> freshEff
 freshType k = do
   tv <- freshVar k
   extend $ SolverEnv (tv @> k) mempty
-  extendScope $ tv @> UnknownBinder
+  extendScope $ tv @> (k, UnknownBinder)
   return $ Var tv
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
@@ -553,7 +553,7 @@ renameForPrinting x = (scopelessSubst substEnv x, newNames)
   where
     fvs = freeVars x
     infVars = filter ((==InferenceName) . nameSpace . varName) $ envAsVars fvs
-    newNames = [ rename (fromString name:> varAnn v) fvs
+    newNames = [ rename (fromString name:> fst (varAnn v)) fvs
                | (v, name) <- zip infVars nameList]
     substEnv = fold $ zipWith (\v v' -> v@>Var v') infVars newNames
     nameList = map (:[]) ['a'..'z'] ++ map show [(0::Int)..]

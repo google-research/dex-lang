@@ -24,7 +24,7 @@ import Embed
 -- -- === linearization ===
 
 type EmbedSubM = ReaderT SubstEnv Embed
-type PrimalM = WriterT Vars EmbedSubM
+type PrimalM = WriterT (Env Type) EmbedSubM
 newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
 
 linearize :: Scope -> Atom -> Atom
@@ -218,7 +218,7 @@ bindLin (LinA m) f = LinA $ do
   return (x, t >>= f)
 
 saveVars :: HasVars a => a -> PrimalM ()
-saveVars x = tell $ freeVars x
+saveVars x = tell $ fmap fst $ freeVars x
 
 instance Functor LinA where
   fmap = liftA
@@ -349,7 +349,7 @@ transposeAtom atom ct = case atom of
 freeLinVars :: HasVars a => a -> TransposeM [Var]
 freeLinVars x = do
   linVs <- asks fst
-  return $ map (uncurry (:>)) $ envPairs $ envIntersect linVs (freeVars x)
+  return $ bindingsAsVars $ envIntersect linVs (freeVars x)
 
 isLin :: HasVars a => a -> TransposeM Bool
 isLin x = liftM (not . null) $ freeLinVars x

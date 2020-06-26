@@ -37,7 +37,7 @@ evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
 evalSimplified (Module Simp [] bindings) _ =
   return $ Module Evaluated [] bindings
 evalSimplified (Module Simp decls bindings) evalBlock = do
-  let localVars = filter (not . isGlobal) $ envAsVars $ freeVars bindings
+  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
   vals <- (ignoreExcept . fromConsList) <$> evalBlock block
   return $ Module Evaluated [] $ scopelessSubst (zipEnv localVars vals) bindings
@@ -72,7 +72,7 @@ simplifyAtom atom = case atom of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
         -- TODO: check scope?
-        Just (LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
+        Just (_, LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
         _      -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbed atom
@@ -124,7 +124,7 @@ simplifyBinaryLam' atom = error $ "Not a binary lambda: " ++ pprint atom
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
   where
-    vs = map (uncurry (:>)) $ envPairs $ localVars `envIntersect` freeVars atom
+    vs = bindingsAsVars $ localVars `envIntersect` freeVars atom
     recon :: MonadEmbed m => Atom -> m Atom
     recon xs = do
       xs' <- unpackConsList xs

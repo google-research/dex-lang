@@ -48,6 +48,7 @@ instance Pretty ErrType where
     TypeErr           -> "Type error:"
     KindErr           -> "Kind error:"
     LinErr            -> "Linearity error: "
+    IRVariantErr      -> "Internal IR validation error: "
     UnboundVarErr     -> "Error: variable not in scope: "
     RepeatedVarErr    -> "Error: variable already defined: "
     NotImplementedErr -> "Not implemented:"
@@ -261,10 +262,10 @@ instance (Pretty a, Pretty b) => Pretty (Either a b) where
 
 instance Pretty BinderInfo where
   pretty b = case b of
-    LamBound _ _  -> "(lambda binder)"
+    LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
-    PiBound _     -> "(pi binder)"
-    UnknownBinder -> "(unknown)"
+    PiBound       -> "<pi binder>"
+    UnknownBinder -> "<unknown binder>"
 
 instance Pretty UModule where
   pretty (UModule decls) = prettyLines decls
