@@ -34,7 +34,7 @@ data RequiredTy a = Check a | Infer
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
   ((), (_, decls')) <- runUInferM (mapM_ (inferUDecl True) decls) mempty scope
-  return $ Module decls'
+  return $ Module Typed decls' mempty
 
 runUInferM :: (HasVars a, Pretty a)
            => UInferM a -> SubstEnv -> Scope -> Except (a, (Scope, [Decl]))
@@ -339,8 +339,11 @@ type SynthPassM = SubstEmbedT (Either Err)
 type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
-synthModule scope m = fst <$> runSubstEmbedT
-  (traverseModule (traverseHoles synthDictTop) m) scope
+synthModule scope (Module Typed decls _) = do
+  decls' <- fst <$> runSubstEmbedT
+              (traverseDecls (traverseHoles synthDictTop) decls) scope
+  return $ Module Core decls' mempty
+synthModule _ _ = error $ "Unexpected IR variant"
 
 synthDictTop :: Type -> SynthPassM Atom
 synthDictTop ty = do
@@ -478,7 +481,7 @@ constrainEq t1 t2 = do
   t1' <- zonk t1
   t2' <- zonk t2
   let ((t1Pretty, t2Pretty), infVars) = renameForPrinting (t1', t2')
-  let msg = "\nExpected: " ++ pprint t1Pretty
+  let msg =   "Expected: " ++ pprint t1Pretty
          ++ "\n  Actual: " ++ pprint t2Pretty
          ++ (if null infVars then "" else
                "\n(Solving for: " ++ pprint infVars ++ ")")

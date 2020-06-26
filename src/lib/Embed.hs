@@ -15,14 +15,13 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
-              app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv,
-              declAsScope, reduceScoped,
+              app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
               select, selectAt, substEmbed, fromPair, getFst, getSnd,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
-              TraversalDef, traverseModule, traverseBlock, traverseExpr,
+              TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad,
               sumTag, getLeft, getRight, fromSum, clampPositive,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
@@ -445,29 +444,23 @@ scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
 
--- TODO: consider checking for effects here
-declAsScope :: Decl -> Scope
-declAsScope (Let ann v expr) = v @> LetBound ann expr
-
 -- === generic traversal ===
 
 type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
 
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
-traverseModule :: (MonadEmbed m, MonadReader SubstEnv m)
-               => TraversalDef m -> Module -> m Module
-traverseModule def (Module decls) = do
-  (_, decls') <- scopedDecls $ traverseDecls def decls
-  return $ Module decls'
-
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
+               => TraversalDef m -> [Decl] -> m [Decl]
+traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
+
+traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
                => TraversalDef m -> [Decl] -> m SubstEnv
-traverseDecls _ [] = return mempty
-traverseDecls def@(fExpr, _) (Let letAnn b expr : decls) = do
+traverseDeclsOpen _ [] = return mempty
+traverseDeclsOpen def@(fExpr, _) (Let letAnn b expr : decls) = do
     expr' <- fExpr expr
     x <- emitTo (varName b) letAnn expr'
     let env = b @> x
-    env' <- extendR env $ traverseDecls def decls
+    env' <- extendR env $ traverseDeclsOpen def decls
     return (env <> env')
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
@@ -477,7 +470,7 @@ traverseBlock def block = buildScoped $ traverseBlock' def block
 traverseBlock' :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Atom
 traverseBlock' def@(fExpr, _) (Block decls result) = do
-  env <- traverseDecls def decls
+  env <- traverseDeclsOpen def decls
   extendR env $ fExpr result >>= emit
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)

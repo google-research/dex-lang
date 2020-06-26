@@ -247,7 +247,13 @@ instance Pretty Result where
                                Right () -> mempty
 
 instance Pretty Module where
-  pretty (Module decls) = prettyLines decls
+  pretty (Module variant decls bindings) =
+    "Module" <+> parens (p (show variant)) <> nest 2 body
+    where
+      body = hardline <> "unevaluated decls:"
+          <> hardline <> prettyLines decls
+          <> hardline <> "evaluated bindings:"
+          <> hardline <> p bindings  -- TODO: print these like decls (need the type)
 
 instance (Pretty a, Pretty b) => Pretty (Either a b) where
   pretty (Left  x) = "Left"  <+> p x

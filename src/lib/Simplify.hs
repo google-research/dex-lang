@@ -12,6 +12,7 @@ import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
 import Data.Functor
+import Data.List (partition)
 
 import Autodiff
 import Env
@@ -24,22 +25,24 @@ import PPrint
 type SimplifyM = SubstEmbedT Identity
 
 simplifyModule :: TopEnv -> Module -> Module
-simplifyModule scope (Module decls) =
-  Module $ snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
+simplifyModule scope (Module Core decls _) = do
+  let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
+  let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
+  let (declsDone, declsNotDone) = partition isAtomDecl simpDecls
+  let bindings = foldMap declAsScope declsDone
+  Module Simp declsNotDone bindings
+simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
-evalSimplified (Module decls) evalBlock = do
-  let (declsNotDone, declsDone) = flip foldMap decls $ \decl -> case decl of
-                                    Let _ _ (Atom _) -> ([]    , [decl])
-                                    _                -> ([decl], []    )
-  case declsNotDone of
-    [] -> return $ Module decls
-    _ -> do
-      let localVars = filter (not . isGlobal) $ envAsVars $
-                        freeVars $ Module declsDone
-      let block = Block declsNotDone $ Atom $ mkConsList $ map Var localVars
-      vals <- (ignoreExcept . fromConsList) <$> evalBlock block
-      return $ scopelessSubst (zipEnv localVars vals) $ Module declsDone
+evalSimplified (Module Simp [] bindings) _ =
+  return $ Module Evaluated [] bindings
+evalSimplified (Module Simp decls bindings) evalBlock = do
+  let localVars = filter (not . isGlobal) $ envAsVars $ freeVars bindings
+  let block = Block decls $ Atom $ mkConsList $ map Var localVars
+  vals <- (ignoreExcept . fromConsList) <$> evalBlock block
+  return $ Module Evaluated [] $ scopelessSubst (zipEnv localVars vals) bindings
+evalSimplified (Module _ _ _) _ =
+  error "Not a simplified module"
 
 simplifyDecls :: [Decl] -> SimplifyM SubstEnv
 simplifyDecls [] = return mempty

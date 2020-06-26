@@ -35,11 +35,11 @@ class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
 getType :: HasType a => a -> Type
-getType x = ignoreExcept $ runTypeCheck SkipChecks x
+getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks (typeCheck x)
+  where ctx = addContext $ "Querying:\n" ++ pprint x
 
-runTypeCheck :: HasType a => TypeCheckEnv -> a -> Except Type
-runTypeCheck env x = addContext ctxStr $ runReaderT (typeCheck x) env
-  where ctxStr = "\nChecking:\n" ++ pprint x
+runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
+runTypeCheck env m = runReaderT m env
 
 -- === Module interfaces ===
 
@@ -47,28 +47,39 @@ class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module decls) =
-    addContext ctxStr $ asCompilerErr $ do
-      let env = (freeVars m, Pure)
-      let block = Block decls $ Atom $ UnitVal
-      void $ runTypeCheck (CheckWith env) block
-    where ctxStr = "\nChecking:\n" ++ pprint m
+  checkValid m@(Module _ decls bindings) =
+    addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
+      let env = freeVars m
+      addContext "Checking IR variant" $ checkModuleVariant m
+      addContext "Checking body types" $ do
+        let block = Block decls $ Atom $ UnitVal
+        void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
+      addContext "Checking evaluated bindings" $ do
+        -- TODO: just merge type env and scope
+        let env' = env <> fmap getType (foldMap declAsScope decls)
+        checkBindings env' bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
--- === Normalized IR ===
+checkBindings :: TypeEnv -> Bindings -> Except ()
+checkBindings env bs = forM_ (envPairs bs) $ \binding -> do
+  (GlobalName _, LetBound _ (Atom atom)) <- return binding
+  void $ runTypeCheck (CheckWith (env', Pure)) $ typeCheck atom
+  where env' = env <> fmap getType bs
+
+-- === Core IR ===
 
 instance HasType Atom where
   typeCheck atom = case atom of
-    Var v@(_:>annTy) -> do
+    Var v@(name:>annTy) -> do
       annTy |: TyKind
       when (annTy == EffKind) $
         throw CompilerErr "Effect variables should only occur in effect rows"
       checkWithEnv $ \(env, _) -> case envLookup env v of
         Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-        Just ty -> assertEq annTy ty "Var annotation"
+        Just ty -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
       return annTy
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
@@ -126,7 +137,7 @@ checkDecl env decl@(Let _ b rhs) =
     ty <- typeCheck rhs
     checkEq (varType b) ty
     return $ b @> ty
-  where ctxStr = "\nchecking decl: \n" ++ pprint decl
+  where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr
@@ -150,6 +161,102 @@ checkBinder b@(_:>ty) = do
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
 checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
+
+-- === Core IR syntactic variants ===
+
+type VariantM = ReaderT IRVariant Except
+
+checkModuleVariant :: Module -> Except ()
+checkModuleVariant (Module ir decls bindings) = do
+  when (ir < Simp       && not (null bindings)) $ throw CompilerErr "unexpected bindings"
+  when (ir == Evaluated && not (null decls))    $ throw CompilerErr "unexpected decls"
+  flip runReaderT ir $ mapM_ checkVariant decls
+
+class CoreVariant a where
+  checkVariant :: a -> VariantM ()
+
+instance CoreVariant Atom where
+  checkVariant atom = addExpr atom $ case atom of
+    Var v   -> checkVariantVar v
+    Lam (Abs b (_, body)) -> checkVariantVar b >> checkVariant body
+    Pi  (Abs b (arr, body)) -> do
+      case arr of
+        TabArrow -> alwaysAllowed
+        _        -> goneBy Simp
+      checkVariantVar b >> checkVariant body
+    Con e -> checkVariant e >> forM_ e checkVariant
+    TC  e -> checkVariant e >> forM_ e checkVariant
+    Eff _ -> alwaysAllowed
+
+instance CoreVariant Expr where
+  checkVariant expr = addExpr expr $ case expr of
+    App f x -> checkVariant f >> checkVariant x
+    Atom x  -> checkVariant x
+    Op  e   -> checkVariant e >> forM_ e checkVariant
+    Hof e   -> checkVariant e >> forM_ e checkVariant
+
+instance CoreVariant Decl where
+  -- let annotation restrictions?
+  checkVariant (Let _ b e) = checkVariantVar b >> checkVariant e
+
+instance CoreVariant Block where
+  checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
+
+-- TODO: consider adding namespace restrictions
+checkVariantVar :: Var ->  VariantM ()
+checkVariantVar (_:>ty) = checkVariant ty
+
+instance CoreVariant (PrimTC a) where
+  checkVariant e = case e of
+    -- TODO: only `TypeKind` past Simp is in the effect regions. We could make a
+    -- distinct tyep for those, so we can rule out this case.
+    TypeKind -> alwaysAllowed
+    EffectRowKind  -> alwaysAllowed
+    JArrayType _ _ -> neverAllowed
+    NewtypeApp _ _ -> goneBy Simp
+    _ -> alwaysAllowed
+
+instance CoreVariant (PrimOp a) where
+  checkVariant e = case e of
+    FromNewtypeCon _ _ -> goneBy Simp
+    Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
+    _ -> alwaysAllowed
+
+instance CoreVariant (PrimCon a) where
+  checkVariant e = case e of
+    ClassDictHole _ -> goneBy Core
+    NewtypeCon _ _  -> goneBy Simp
+    SumCon _ _ _    -> alwaysAllowed -- not sure what this should be
+    RefCon _ _      -> neverAllowed
+    Todo _          -> goneBy Simp
+    _ -> alwaysAllowed
+
+instance CoreVariant (PrimHof a) where
+  checkVariant e = case e of
+    For _ _       -> alwaysAllowed
+    SumCase _ _ _ -> goneBy Simp
+    RunReader _ _ -> alwaysAllowed
+    RunWriter _   -> alwaysAllowed
+    RunState  _ _ -> alwaysAllowed
+    Linearize _   -> goneBy Simp
+    Transpose _   -> goneBy Simp
+
+-- TODO: namespace restrictions?
+alwaysAllowed :: VariantM ()
+alwaysAllowed = return ()
+
+neverAllowed :: VariantM ()
+neverAllowed = throw IRVariantErr $ "should never appear in finalized expression"
+
+goneBy :: IRVariant -> VariantM ()
+goneBy ir = do
+  curIR <- ask
+  when (curIR >= ir) $ throw IRVariantErr $ "shouldn't appear after " ++ show ir
+
+addExpr :: (Pretty e, MonadError Err m) => e -> m a -> m a
+addExpr x m = modifyErr m $ \e -> case e of
+  Err IRVariantErr ctx s -> Err CompilerErr ctx (s ++ ": " ++ pprint x)
+  _ -> e
 
 -- === effects ===
 
@@ -376,32 +483,6 @@ indexSetConcreteSize ty = case ty of
   FixedIntRange low high -> Just $ high - low
   BoolTy  -> Just 2
   _ -> Nothing
-
--- === Built-in typeclasses (CURRENTLY NOT USED) ===
-
---checkClassConstraint :: ClassName -> Type -> TypeM ()
---checkClassConstraint c ty = do
---  env <- error "currently broken" -- lift ask
---  case c of
---    VSpace -> checkVSpace env ty
---    IdxSet -> checkIdxSet env ty
---    Data   -> checkData   env ty
---
---checkVSpace :: MonadError Err m => ClassEnv -> Type -> m ()
---checkVSpace env ty = case ty of
---  Var v     -> checkVarClass env VSpace v
---  RealTy    -> return ()
---  _ -> throw TypeErr $ " Not a vector space: " ++ pprint ty
---
---checkIdxSet :: MonadError Err m => ClassEnv -> Type -> m ()
---checkIdxSet env ty = case ty of
---  Var v                 -> checkVarClass env IdxSet v
---  SumTy l r             -> recur l >> recur r
---  BoolTy                -> return ()
---  TC (IntRange _ _)     -> return ()
---  TC (IndexRange _ _ _) -> return ()
---  _ -> throw TypeErr $ " Not a valid index set: " ++ pprint ty
---  where recur = checkIdxSet env
 
 checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
 checkDataLike msg env ty = case ty of

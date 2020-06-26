@@ -159,9 +159,8 @@ evalModule simpEnv normalized = do
   checkPass SimpPass defunctionalized
   evaluated <- evalSimplified defunctionalized evalBackend
   checkPass ResultPass evaluated
-  -- TODO: check evaluatedDecls
-  let (Module evaluatedDecls) = evaluated
-  return $ foldMap declAsScope evaluatedDecls
+  Module Evaluated [] bindings <- return evaluated
+  return bindings
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
