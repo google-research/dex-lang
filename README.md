@@ -1,6 +1,6 @@
 # Dex [![Test status](https://travis-ci.org/google-research/dex-lang.svg?branch=main)](https://travis-ci.org/google-research/dex-lang)
-Dex (named for "index") is a research language for array processing in the
-Haskell/ML family. The goal of the project is to explore:
+Dex (named for "index") is a research language for typed, functional array
+processing. The goal of the project is to explore:
 
   * Type systems for array programming
   * Mathematical program transformations like differentiation and integration
@@ -19,14 +19,13 @@ or these example programs:
   * [Brownian bridge](https://google-research.github.io/dex-lang/brownian_motion.html)
 
 Please note that Dex is an experimental research project at an early stage of
-development. We welcome contributions. There's plenty of work to do!
+development. Contributions welcome!
 
 ## Setup
 
   * Install [stack](https://www.haskellstack.org)
   * Install LLVM 9, e.g. `apt-get install llvm-9-dev` on Ubuntu/Debian.
-    On macOS, the best approach seems to be to build LLVM from source,
-    [as described here](https://github.com/google-research/dex-lang/issues/2#issuecomment-557793009).
+    For macOS, there's [some guidance here](https://github.com/google-research/dex-lang/issues/2#issuecomment-649896955).
 
 ## Building
 
@@ -37,8 +36,9 @@ development. We welcome contributions. There's plenty of work to do!
 ## Running
 
   * Traditional REPL: `dex repl`
-  * Execute script: `dex script examples/tutorial.dx`
-  * Notebook interface: `dex web examples/tutorial.dx`
+  * Execute script: `dex script examples/pi.dx`
+  * Live-updated notebook display `dex web examples/pi.dx` (html) or `dex watch
+    examples/pi.dx` (terminal).
 
 ## License
 
