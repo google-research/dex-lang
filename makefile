@@ -27,6 +27,10 @@ endif
 
 all: build
 
+# type-check only
+tc:
+	$(STACK) build --ghc-options -fno-code
+
 build: cbits/libdex.so
 	$(STACK) build
 

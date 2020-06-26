@@ -69,13 +69,13 @@ help make the errors more local.
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   sum for i. iadd x.i y.i
+   sum for i. x.i + y.i
 > Type error:
 > Expected: (Fin 3)
 >   Actual: (Fin 10)
 >
->    sum for i. iadd x.i y.i
->                          ^
+>    sum for i. x.i + y.i
+>                       ^
 
 Narr = Fin 10
 
@@ -128,11 +128,11 @@ f : Int -> Real =
    z = x + 1.0
    x
 > Type error:
-> Expected: Real
->   Actual: Int
+> Expected: Int
+>   Actual: Real
 >
 >    z = x + 1.0
->        ^^
+>            ^^^
 
 :t
    x = 3
@@ -188,7 +188,7 @@ fEff : Unit -> {| a} a = todo
 -- >              ^
 
 -- inferEither x = case x
---     Left i -> iadd i 1
+--     Left i -> i + 1
 --     Right f -> floor f
 
 -- caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
@@ -234,12 +234,12 @@ g1 : (a -> Int) -> (a -> Int) = \x. x
 :t g1
 > (a:Type?->((a->Int)->(a->Int)))
 
-g2 : a -> a = \x. iadd x x
+g2 : a -> a = \x. idiv x x
 > Type error:
 > Expected: Int
 >   Actual: a
 >
-> g2 : a -> a = \x. iadd x x
+> g2 : a -> a = \x. idiv x x
 >                        ^^
 
 h : (a -> b) -> (a -> b) = \x. x

@@ -208,7 +208,7 @@ letAnnStr =   (string "instance"   $> InstanceLet)
 
 uTopDecl :: Parser UDecl
 uTopDecl = do
-  lAnn <- (char '@' >> letAnnStr <* eol) <|> return PlainLet
+  lAnn <- (char '@' >> letAnnStr <* (void eol <|> sc)) <|> return PlainLet
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
   return $ ULet lAnn (p, ann') rhs

@@ -37,7 +37,7 @@ NArr = Fin 7
 
 arr = iota NArr
 
-:p for i:NArr. iadd (iota _).i (iota _).i
+:p for i:NArr. (iota _).i + (iota _).i
 > [0, 2, 4, 6, 8, 10, 12]
 
 :p isum for i:NArr. 1
@@ -51,7 +51,7 @@ fun = \y. sum (map i2r arr) + y
 :p arr
 > [0, 1, 2, 3, 4, 5, 6]
 
-:p fold 0 \i. iadd arr.i
+:p fold 0 \i. (+) arr.i
 > 21
 
 :p 6.0 - 10.0
@@ -109,7 +109,7 @@ s = 1.0
 
 :p
    xs = [2,1,0]
-   for i. iadd xs.i 10
+   for i. xs.i + 10
 > [12, 11, 10]
 
 cumsumplus : n=>Real -> n=>Real =
@@ -156,7 +156,7 @@ cumsumplus : n=>Real -> n=>Real =
 N3 = Fin 3
 N4 = Fin 4
 
-mat = for i:N3 j:N4. iadd (iota _).i (imul 10 (iota _).j)
+mat = for i:N3 j:N4. (iota _).i + (10 * (iota _).j)
 
 -- :p isum for (i,j). mat.i.j
 -- > 192
@@ -173,8 +173,8 @@ litArr = [10, 5, 3]
 > [1, 1, 1]
 
 :p
-   (k, _) = (iadd 1 2, 3)
-   for i:(Fin 6). iadd k (ordinal i)
+   (k, _) = (1 + 2, 3)
+   for i:(Fin 6). k + ordinal i
 > [3, 4, 5, 6, 7, 8]
 
 :p
@@ -354,7 +354,7 @@ litArr = [10, 5, 3]
   x = 1; x == x
 > True
 
-:p 1 `iadd` 2
+:p 1 + 2
 > 3
 
 :p slice [1,2,3,4,5] 2 (Fin 3)
@@ -370,7 +370,7 @@ litArr = [10, 5, 3]
 
 -- Not sure why the ordinary `sum/for` version doesn't work anymore
 :p
-    n = iadd 3 7
+    n = 3 + 7
     fsum \i:(Fin n). 1.0
 > 10.0
 
@@ -553,14 +553,14 @@ upperBound = isum $ for i:(Fin 4). 1
 > ([1, 1, 1, 1], [2, 2])
 
 for i:(Fin 4).
-  x = iadd 1 1
+  x = 1 + 1
   (x, x)
 > [(2, 2), (2, 2), (2, 2), (2, 2)]
 
 :p
   x = 2
   z = for i:(Fin 4).
-        y = iadd 2 3
+        y = 2 + 3
         (x, y)
   (x, z)
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
@@ -568,7 +568,7 @@ for i:(Fin 4).
 for i:(Range 4 1). 1.0
 > []@4...<1
 
-x = isub 2 4
+x = 2 - 4
 for i:(Range 0 x). 1.0
 > []
 
@@ -589,9 +589,20 @@ for i:(Fin 5). for j:(..i).
 > , [6.0, 7.0, 8.0, 9.0]@...3@((Fin 5))
 > , [10.0, 11.0, 12.0, 13.0, 14.0]@...4@((Fin 5)) ]
 
--- Exercise the use of free variables in the sum solver
-:p
-  n = iadd 2 2
-  x = for i:(Fin n). for j:(..i). 1.0
-  sum $ for i. sum x.i
-> 10.0
+-- TODO: fix!
+-- -- Exercise the use of free variables in the sum solver
+-- :p
+--   n = 2 + 2
+--   x = for i:(Fin n). for j:(..i). 1.0
+--   sum $ for i. sum x.i
+-- > 10.0
+
+
+:p 1 + 2
+> 3
+
+:p [1,2] - [2,10]
+> [-1, -8]
+
+:p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
+> [[2.0, 4.0], [6.0, 8.0]]

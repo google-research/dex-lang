@@ -67,8 +67,7 @@ def optimize
       : (d=>Real) =
     np = Fin np'
     optStep = \(keyL, gbest, pbests, positions, velocities).
-        newPositions:(np=>d=>Real) = for p i.
-            positions.p.i + velocities.p.i
+        newPositions:(np=>d=>Real) = positions + velocities
         newPbests:(np=>(Real & d=>Real)) = for p.
             minbyfst pbests.p (f newPositions.p, newPositions.p)
         newGbest:(Real & d=>Real) =
@@ -84,8 +83,7 @@ def optimize
             weight = rand $ (ixkey2 keyP p i)
             dir = plocs.p.i - positions.p.i
             weight * dir
-        newVelocities:(np=>d=>Real) = for p i.
-            momentum*velocities.p.i + gRate*gVel.p.i + pRate*gVel.p.i
+        newVelocities:(np=>d=>Real) = momentum .* velocities + gRate .* gVel + pRate .* gVel
         (keyNext,newGbest,newPbests,newPositions,newVelocities)
     randInit1 = \keyI1. randBounded keyI1 lb ub
     randInit  = \keyI. for p:np. randInit1 $ ixkey keyI p

@@ -1,5 +1,5 @@
 
-:p iadd 3 (iadd 4 5)
+:p 3 + (4 + 5)
 > 12
 
 def depId (a:Type) (x:a) : a = x
@@ -49,21 +49,21 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 > :p 1.0 + 1
 >          ^
 
-:p iadd 1 (1.0 + 2.0)
+:p 1 + (1.0 + 2.0)
 > Type error:
 > Expected: Int
 >   Actual: Real
 >
-> :p iadd 1 (1.0 + 2.0)
->            ^^^^^^^^^
+> :p 1 + (1.0 + 2.0)
+>         ^^^^^^^^^
 
-:p 1.0 + (iadd 2 3)
+:p 1.0 + (2 + 3)
 > Type error:
 > Expected: Real
 >   Actual: Int
 >
-> :p 1.0 + (iadd 2 3)
->           ^^^^^^^^
+> :p 1.0 + (2 + 3)
+>           ^^^^^
 
 :p x + x
 > Error: variable not in scope: x
@@ -71,8 +71,8 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 > :p x + x
 >    ^^
 
-iadd = 1
-> Error: variable already defined: iadd
+idiv = 1
+> Error: variable already defined: idiv
 
 def TyId (a:Type) : Type = a
 :p
@@ -102,14 +102,14 @@ myPair = (1, 2.3)
 :p
    snd $ withState 2 \s.
      x = get s
-     s := iadd x 3
+     s := x + 3
 > 5
 
 :p
    snd $ withState 1 \s.
      for i:(Fin 10).
        x = get s
-       s := iadd x x
+       s := x + x
 > 1024
 
 :p

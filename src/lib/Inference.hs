@@ -42,12 +42,13 @@ runUInferM m env scope = runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
-  Pi piTy@(Abs _ (ImplicitArrow, _)) -> case expr of
-    WithSrc _ (ULam b ImplicitArrow body) ->
-      checkULam b body piTy
-    _ -> do
-      buildLam ("a":> absArgType piTy) ImplicitArrow $ \x@(Var v) ->
-        checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
+  Pi piTy@(Abs _ (arrow, _))
+    | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
+        WithSrc _ (ULam b arrow' body) | arrow' == void arrow ->
+          checkULam b body piTy
+        _ -> do
+          buildLam ("a":> absArgType piTy) arrow $ \x@(Var v) ->
+            checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
 inferSigma :: UExpr -> UInferM Atom

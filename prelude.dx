@@ -20,18 +20,49 @@ def (,) (x:a) (y:b) : a & b = %pair x y
 def fst (p: a & b) : a = %fst p
 def snd (p: a & b) : b = %snd p
 
-def iadd (x:Int) (y:Int) : Int = %iadd x y
-def isub (x:Int) (y:Int) : Int = %isub x y
-def imul (x:Int) (y:Int) : Int = %imul x y
 def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %rem  x y
 def ipow (x:Int) (y:Int) : Int = %pow  x y
 
-def (+) (x:Real) (y:Real) : Real = %fadd x y
-def (-) (x:Real) (y:Real) : Real = %fsub x y
-def (*) (x:Real) (y:Real) : Real = %fmul x y
-def (/) (x:Real) (y:Real) : Real = %fdiv x y
+@newtype def Add (a:Type) : Type = (a->a->a & a->a->a & a)  -- add, sub, zero
+MkAdd   : (a->a->a & a->a->a & a) -> Add a = unsafeNewtypeCon
+fromAdd : Add a -> (a->a->a & a->a->a & a) = unsafeFromNewtypeCon
+
+def (+)  (d:Add a) ?=> : a -> a -> a =       fst $ fromAdd d
+def (-)  (d:Add a) ?=> : a -> a -> a = fst $ snd $ fromAdd d
+def zero (d:Add a) ?=> : a           = snd $ snd $ fromAdd d
+
+@instance realAdd : Add Real = MkAdd (\x y. %fadd x y, \x y. %fsub x y, 0.0)
+@instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y, \x y. %isub x y, 0)
+
+@instance tabAdd : Add a ?=> Add (n=>a) =
+  MkAdd ( \xs ys. for i. xs.i + ys.i
+        , \xs ys. for i. xs.i - ys.i
+        , for _. zero)
+
+@newtype def Mul (a:Type) : Type = a->a->a
+MkMul   : (a->a->a) -> Mul a = unsafeNewtypeCon
+fromMul : Mul a -> (a->a->a) = unsafeFromNewtypeCon
+
+def (*)  (d:Mul a) ?=> : a -> a -> a = fromMul d
+
+@instance realMul : Mul Real = MkMul \x y. %fmul x y
+@instance intMul  : Mul Int  = MkMul \x y. %imul x y
+
+@newtype def VSpace (a:Type) : Type = Real -> a -> a
+MkVSpace   : (Real->a->a) -> VSpace a = unsafeNewtypeCon
+fromVSpace : VSpace a -> (Real->a->a) = unsafeFromNewtypeCon
+
+flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
+
+def (.*)  (d:VSpace a) ?=> : Real -> a -> a = fromVSpace d
+(*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
+
+@instance realVS : VSpace Real = MkVSpace (*)
+@instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace \s xs. for i. s .* xs.i
+
 def neg (x:Real)          : Real = %fneg x
+def (/) (x:Real) (y:Real) : Real = %fdiv x y
 
 True  = %True
 False = %False
@@ -90,13 +121,12 @@ def withState
 
 @newtype
 def Eq (a:Type) : Type = a -> a -> Bool
-def MkEq (a:Type) ?-> (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
+def MkEq (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
 def fromEq (d:Eq a) : a -> a -> Bool = unsafeFromNewtypeCon d
 
 @newtype
 def Ord (a:Type) : Type = (Eq a & a -> a -> Bool)
-def MkOrd (a:Type) ?-> (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a =
-  unsafeNewtypeCon (eq, gt)
+def MkOrd (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a = unsafeNewtypeCon (eq, gt)
 def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool) = unsafeFromNewtypeCon d
 
 @superclass
@@ -169,8 +199,8 @@ def size (n:Type) : Int = %idxSetSize n
 def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
 def (@) (i:Int) (n:Type) : n = fromOrdinal n i
-def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ iadd (ordinal i) x
-def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ isub (ordinal i) x
+def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i + x
+def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i + x
 def iota (n:Type) : n=>Int = for i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
@@ -194,11 +224,11 @@ def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (x:Real) : Real = x * x
 def abs (x:Real) : Real = select (x > 0.0) x (-x)
-def mod (x:Int) (y:Int) : Int = rem (iadd y (rem x y)) y
+def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
-  for i. xs.(fromOrdinal _ (ordinal i `iadd` start))
+  for i. xs.(fromOrdinal _ (ordinal i + start))
 
 def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
   swap $ withState init \s. for i.
@@ -213,7 +243,7 @@ def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
 def fsum (xs:n->Real) : Real = snd $ withAccum \ref. for i. ref += xs i
 def sum  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
-def isum (xs:n=>Int) : Int = fold 0 \i c. iadd c xs.i
+def isum (xs:n=>Int) : Int = fold 0 \i c. c + xs.i
 def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
 def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
 
@@ -282,6 +312,7 @@ def argmin (xs:n=>Real) : n =
 
 'Automatic differentiation
 
+-- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
 def jvp (f:a->b) (x:a) (t:a) --o : b = snd (linearize f x) t
 def transposeLinear (f:a --o b) : b --o a = %linearTranspose f

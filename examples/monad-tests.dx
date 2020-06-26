@@ -34,7 +34,7 @@
     s := not x
     r = ask r
     w += 4.0
-    (r `iadd` 2)
+    r + 2
 
   withReader 2 \r.
     withState True \s.

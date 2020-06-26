@@ -7,9 +7,7 @@ Dynamics : Type -> Type = \d. EState d -> EState d
 eulerStep : Ref h (EState d) -> Dynamics d -> Time -> {State h} Unit =
   \sRef dyn dt.
     s = get sRef
-    dsdt = dyn s
-    s' = for i. s.i + dsdt.i * dt
-    sRef := s'
+    sRef := s + dt .* dyn s
 
 euler : Int -> Dynamics d -> EState d -> Time -> EState d =
   \n f x0 dt.
