@@ -4,16 +4,16 @@
 def solve (m:Type)?-> : m=>m=>Real -> m=>Real -> m=>Real =
   \mat b.
     x0 = for i:m. 0.0
-    ax = mvp mat x0
-    r0 = for i. b.i - ax.i
+    ax = mat **. x0
+    r0 = b - ax
     (xOut, _, _) = fold (x0, r0, r0) $
        \s:m (x, r, p).
-         ap = mvp mat p
+         ap = mat **. p
          alpha = vdot r r / vdot p ap
-         x' = for i. x.i + alpha * p.i
-         r' = for i. r.i - alpha * ap.i
+         x' = x + alpha .* p
+         r' = r - alpha .* ap
          beta = vdot r' r' / (vdot r r + 0.000001)
-         p' = for i. r'.i + beta * p.i
+         p' = r' + beta .* p
          (x', r', p')
     xOut
 
@@ -38,7 +38,7 @@ regress : (Real -> d=>Real) -> n=>Real -> n=>Real -> d=>Real =
   \featurize xRaw y.
     x = map featurize xRaw
     xT = transpose x
-    solve (mmp xT x) (mvp xT y)
+    solve (xT ** x) (xT **. y)
 
 'Fit a third-order polynomial
 

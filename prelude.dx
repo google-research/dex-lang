@@ -254,12 +254,13 @@ def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
 def transpose (x:n=>m=>Real) : m=>n=>Real = for i j. x.j.i
 def vdot (x:n=>Real) (y:n=>Real) : Real = fsum \i. x.i * y.i
 
-def mmp (x:l=>m=>Real) (y:m=>n=>Real) : (l=>n=>Real) =
+-- matmul. Better symbol to use? `@`?
+(**) : (l=>m=>Real) -> (m=>n=>Real) -> (l=>n=>Real) = \x y.
   y' = transpose y
   for i k. fsum \j. x.i.j * y'.k.j
 
-def mvp (mat:n=>m=>Real) (v:m=>Real) : n=>Real =
-  for i. vdot mat.i v
+(**.) : (n=>m=>Real) -> (m=>Real) -> (n=>Real) = \mat v. for i. vdot mat.i v
+(.**) : (m=>Real) -> (n=>m=>Real) -> (n=>Real) = flip (**.)
 
 def inner (x:n=>Real) (mat:n=>m=>Real) (y:m=>Real) : Real =
   fsum \(i,j). x.i * mat.i.j * y.j
