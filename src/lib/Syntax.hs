@@ -914,7 +914,6 @@ builtinNames = M.fromList
   , ("fadd", binOp FAdd), ("fsub", binOp FSub)
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
-  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
