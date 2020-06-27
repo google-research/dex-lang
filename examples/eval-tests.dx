@@ -617,3 +617,14 @@ for i:(Fin 5). for j:(..i).
 
 :p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
 > [[2.0, 4.0], [6.0, 8.0]]
+
+def newtonIter (f: Real -> Real) (x:Real) : Real =
+  x - (f x / deriv f x)
+
+def newtonSolve (tol:Real) (f : Real -> Real) (x0:Real) : Real =
+  snd $ withState x0 \x.
+    while (\(). abs (f $ get x) > tol) \().
+      x := newtonIter f $ get x
+
+:p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
+> 1.4142157

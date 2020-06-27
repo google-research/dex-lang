@@ -142,6 +142,9 @@ compileInstr allowAlloca instr = case instr of
     n' <- compileExpr n
     compileLoop d i n' body
     return Nothing
+  IWhile cond body -> do
+    compileWhile cond body
+    return Nothing
 
 compileExpr :: IExpr -> CompileM Operand
 compileExpr expr = case expr of
@@ -180,6 +183,17 @@ compileLoop d iVar n (ImpProg body) = do
   store i iValNew
   loopCond <- case d of Fwd -> iValNew `lessThan` n
                         Rev -> iValNew `greaterOrEq` litInt 0
+  finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
+
+compileWhile :: IExpr -> ImpProg -> CompileM ()
+compileWhile cond (ImpProg body) = do
+  cond' <- compileExpr cond
+  loopBlock <- freshName "whileLoop"
+  nextBlock <- freshName "whileCont"
+  entryCond <- load cond' >>= intToBool
+  finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
+  compileProg body
+  loopCond <- load cond' >>= intToBool
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
 freshName :: Name -> CompileM L.Name
@@ -261,6 +275,9 @@ scalarTy ty = case ty of
 extendOneBit :: Operand -> CompileM Operand
 extendOneBit x = emitInstr boolTy (L.ZExt x boolTy [])
 
+intToBool :: Operand -> CompileM Operand
+intToBool x = emitInstr (L.IntegerType 1) $ L.Trunc x (L.IntegerType 1) []
+
 compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
 compileFFICall name retTy xs = do
   modify $ setFunSpecs (f:)
@@ -291,7 +308,7 @@ compilePrimOp (ScalarUnOp op x) = case op of
   UnsafeIntToBool -> return x -- bools stored as ints
   IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
 compilePrimOp (Select p x y) = do
-  p' <- emitInstr (L.IntegerType 1) $ L.Trunc p (L.IntegerType 1) []
+  p' <- intToBool p
   emitInstr (L.typeOf x) $ L.Select p' x y []
 compilePrimOp (FFICall name ansTy xs) =
   compileFFICall name (scalarTy ansTy) xs

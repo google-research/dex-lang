@@ -237,6 +237,7 @@ data PrimOp e =
 
 data PrimHof e =
         For Direction e
+      | While e e
       | SumCase e e e
       | RunReader e e
       | RunWriter e
@@ -341,6 +342,7 @@ data ImpInstr = Load  IExpr
               | IOffset IExpr Index IExpr   -- Second argument is the index for type checking
                                             -- Third argument is the linear offset for code generation
               | Loop Direction IVar Size ImpProg
+              | IWhile IExpr ImpProg
               | IPrimOp IPrimOp
                 deriving (Show, Eq)
 
@@ -936,6 +938,7 @@ builtinNames = M.fromList
   , ("inject"     , OpExpr $ Inject ())
   , ("newtypeCon"      , ConExpr $ NewtypeCon     () ())
   , ("fromNewtypeCon"  , OpExpr  $ FromNewtypeCon () ())
+  , ("while"           , HofExpr $ While () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
   , ("runReader"       , HofExpr $ RunReader () ())

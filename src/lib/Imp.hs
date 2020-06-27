@@ -181,6 +181,14 @@ toImpHof env (maybeDest, hof) = do
         ithDest <- destGet dest i
         void $ toImpBlock (env <> b @> i') (Just ithDest, body)
       destToAtom dest
+    While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
+      ~condVarDest@(DRef condVar) <- allocDest Nothing BoolTy
+      toImpBlock env (Just condVarDest, cond)
+      (_, body') <- scopedBlock $do
+        toImpBlock env (Nothing, body)
+        toImpBlock env (Just condVarDest, cond)
+      emitStatement (Nothing, IWhile (IVar condVar) body')
+      return UnitVal
     RunReader r (BinaryFunVal _ ref _ body) -> do
       rDest <- alloc $ getType r
       rVar  <- freshVar ref
@@ -599,6 +607,11 @@ instrTypeChecked instr = case instr of
     checkInt size
     checkBinder i
     extendR (i @> IIntTy) $ checkProg block
+    return Nothing
+  IWhile cond (ImpProg body) -> do
+    condRefTy <- checkIExpr cond
+    assertEq (IRefType BoolTy) condRefTy $ "Not a bool ref: " ++ pprint cond
+    checkProg body
     return Nothing
   IOffset e i _ -> do
     IRefType (TabTyAbs a) <- checkIExpr e

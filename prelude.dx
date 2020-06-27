@@ -225,7 +225,7 @@ def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
 def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = for i. x
-def sq (x:Real) : Real = x * x
+def sq (d:Mul a) ?=> (x:a) : a = x * x
 def abs (x:Real) : Real = select (x > 0.0) x (-x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
@@ -342,3 +342,6 @@ def checkDerivBase (f:Real->Real) (x:Real) : Bool =
 
 def checkDeriv (f:Real->Real) (x:Real) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
+
+def while (cond: Unit -> {|eff} Bool) (body: Unit -> {|eff} Unit) : {|eff} Unit =
+  %while cond body

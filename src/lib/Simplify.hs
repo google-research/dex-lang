@@ -160,6 +160,10 @@ simplifyHof hof = case hof of
   For d lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     emit $ Hof $ For d lam'
+  While cond body -> do
+    ~(cond', Nothing) <- simplifyLam cond
+    ~(body', Nothing) <- simplifyLam body
+    emit $ Hof $ While cond' body'
   Linearize lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     scope <- getScope

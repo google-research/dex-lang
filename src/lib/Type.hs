@@ -225,6 +225,7 @@ instance CoreVariant (PrimCon a) where
 instance CoreVariant (PrimHof a) where
   checkVariant e = case e of
     For _ _       -> alwaysAllowed
+    While _ _     -> alwaysAllowed
     SumCase _ _ _ -> goneBy Simp
     RunReader _ _ -> alwaysAllowed
     RunWriter _   -> alwaysAllowed
@@ -407,6 +408,14 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
+  While cond body -> do
+    Pi (Abs (NoName:>UnitTy) (arr , condTy)) <- typeCheck cond
+    Pi (Abs (NoName:>UnitTy) (arr', bodyTy)) <- typeCheck body
+    declareEffs $ arrowEff arr
+    declareEffs $ arrowEff arr'
+    checkEq BoolTy condTy
+    checkEq UnitTy bodyTy
+    return UnitTy
   SumCase st l r -> do
     Pi (Abs (NoName:>la) (PlainArrow Pure, lb)) <- typeCheck l
     Pi (Abs (NoName:>ra) (PlainArrow Pure, rb)) <- typeCheck r

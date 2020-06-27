@@ -220,6 +220,9 @@ instance Pretty ImpInstr where
   pretty (Free (v:>_))           = "free"  <+> p v
   pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
                                    nest 4 (hardline <> p block)
+  pretty (IWhile cond body)      = "while" <+>
+                                     nest 2 (hardline <> p cond) <> "do" <>
+                                     nest 2 (hardline <> p body)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
