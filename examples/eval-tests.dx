@@ -153,6 +153,17 @@ cumsumplus : n=>Real -> n=>Real =
 :p [ 1 >= 2, 1.0 >= 2.0,  2 >= 2, 2.0 >= 2.0, 2 >= 1, 2.0 >= 1.0]
 > [False, False, True, True, True, True]
 
+infty = 1./0.
+:p infty
+> Infinity
+
+nan = 0./0.
+:p nan
+> NaN
+
+:p [ 0. < infty, 0. < nan, infty < 0., nan < 0., nan < nan, infty < infty ]
+> [True, False, False, False, False, False]
+
 N3 = Fin 3
 N4 = Fin 4
 

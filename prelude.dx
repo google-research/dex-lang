@@ -125,9 +125,9 @@ def MkEq (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
 def fromEq (d:Eq a) : a -> a -> Bool = unsafeFromNewtypeCon d
 
 @newtype
-def Ord (a:Type) : Type = (Eq a & a -> a -> Bool)
-def MkOrd (eq:Eq a) -> (gt: a -> a -> Bool) : Ord a = unsafeNewtypeCon (eq, gt)
-def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool) = unsafeFromNewtypeCon d
+def Ord (a:Type) : Type = (Eq a & a -> a -> Bool & a -> a -> Bool)  -- eq, gt, lt
+def MkOrd (eq:Eq a) -> (gt: a -> a -> Bool) -> (lt: a -> a -> Bool) : Ord a = unsafeNewtypeCon (eq, gt, lt)
+def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool & a -> a-> Bool) = unsafeFromNewtypeCon d
 
 @superclass
 def eqFromOrd (d:Ord a) : Eq a = fst (fromOrd d)
@@ -135,30 +135,32 @@ def eqFromOrd (d:Ord a) : Eq a = fst (fromOrd d)
 def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (fromEq d) x y
 def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
 
-def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (fromOrd d) x y
-def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y
-def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = not $ x>y || x==y
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = fst (snd (fromOrd d)) x y
+def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (snd (fromOrd d)) x y
+def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
 @instance
 intEq : Eq Int = MkEq \x y. %ieq x y
 
 @instance
-intGt : Ord Int = MkOrd intEq \x y. %igt x y
+intOrd : Ord Int = MkOrd intEq (\x y. %igt x y) (\x y. %ilt x y)
 
 @instance
 realEq : Eq Real = MkEq \x y. %feq x y
 
 @instance
-realGt : Ord Real = MkOrd realEq \x y. %fgt x y
+realOrd : Ord Real = MkOrd realEq (\x y. %fgt x y) (\x y. %flt x y)
 
 @instance
 def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
   \(x1,x2) (y1,y2). x1 == y1 && x2 == y2
 
 @instance
-def pairGt (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) = MkOrd pairEq $
-  \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
+  pairGt = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
+  pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
+  MkOrd pairEq pairGt pairLt
 
 @instance
 def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = MkEq $
@@ -208,7 +210,8 @@ def iota (n:Type) : n=>Int = for i. ordinal i
 def finEq (n:Int) ?-> : Eq (Fin n) = MkEq \x y. ordinal x == ordinal y
 
 @instance
-def finOrd (n:Int) ?-> : Ord (Fin n) = MkOrd finEq \x y. ordinal x > ordinal y
+def finOrd (n:Int) ?-> : Ord (Fin n) =
+  MkOrd finEq (\x y. ordinal x > ordinal y) (\x y. ordinal x < ordinal y)
 
 'Misc
 

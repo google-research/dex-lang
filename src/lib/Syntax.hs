@@ -916,6 +916,7 @@ builtinNames = M.fromList
   , ("pow" , binOp Pow ), ("rem" , binOp Rem )
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
+  , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
   , ("True" , ConExpr $ Lit $ BoolLit True)
