@@ -139,7 +139,7 @@ instance Pretty e => Pretty (PrimCon e) where
       "True"  -> "Left"  <+> p l
       "False" -> "Right" <+> p r
       _ -> "SumCon" <+> p c <+> p l <+> p r
-    NewtypeCon _ _ -> "<todo: printing newtypes>"
+    NewtypeCon f xs -> parens (p f <+> p xs)
     ClassDictHole _ -> "_"
     Todo e -> "<undefined " <> p e <> ""
 

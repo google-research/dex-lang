@@ -50,16 +50,20 @@ def (*)  (d:Mul a) ?=> : a -> a -> a = fromMul d
 @instance intMul  : Mul Int  = MkMul \x y. %imul x y
 
 @newtype def VSpace (a:Type) : Type = Real -> a -> a
-MkVSpace   : (Real->a->a) -> VSpace a = unsafeNewtypeCon
-fromVSpace : VSpace a -> (Real->a->a) = unsafeFromNewtypeCon
+MkVSpace   : Add a -> (Real->a->a) -> VSpace a = \d scale. unsafeNewtypeCon (d, scale)
+fromVSpace : VSpace a -> (Add a & Real->a->a) = unsafeFromNewtypeCon
+
+@superclass
+def addFromVSpace (d:VSpace a) : Add a = fst (fromVSpace d)
 
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 
-def (.*)  (d:VSpace a) ?=> : Real -> a -> a = fromVSpace d
+def (.*)  (d:VSpace a) ?=> : Real -> a -> a = snd $ fromVSpace d
 (*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
 
-@instance realVS : VSpace Real = MkVSpace (*)
-@instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace \s xs. for i. s .* xs.i
+@instance realVS : VSpace Real = MkVSpace realAdd (*)
+@instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
+
 
 def neg (x:Real)          : Real = %fneg x
 def (/) (x:Real) (y:Real) : Real = %fdiv x y
