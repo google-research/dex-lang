@@ -28,7 +28,7 @@ library
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
                        diagrams-rasterific, JuicyPixels, transformers,
                        base64-bytestring, vector, directory, mmap, unix,
-                       process, bytestring, primitive
+                       process, primitive, store
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         cbits/libdex.so
@@ -41,7 +41,7 @@ executable dex
   main-is:             dex.hs
   other-extensions:    OverloadedStrings
   build-depends:       dex, base, haskeline, prettyprinter, mtl,
-                       optparse-applicative, unix
+                       optparse-applicative, unix, store, bytestring
   default-language:    Haskell2010
   hs-source-dirs:      src
   -- this is clearly a hack. Can't figure out where else to put it

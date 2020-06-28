@@ -16,6 +16,7 @@ module Array (
 import Control.Monad
 import qualified Data.Vector.Storable as V
 import Data.Maybe (fromJust)
+import Data.Store (Store)
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
@@ -119,3 +120,8 @@ applyVec (Array vec) f = case vec of
   IntVec v    -> f v
   BoolVec v   -> f v
   DoubleVec v -> f v
+
+instance Store Array
+instance Store Vec
+instance Store BaseType
+instance Store LitVal

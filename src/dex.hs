@@ -4,7 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE DeriveGeneric #-}
 
 import System.Console.Haskeline
 import System.Exit
@@ -17,6 +17,7 @@ import System.Posix.IO (stdOutput)
 import Syntax
 import PPrint
 import RenderHtml
+import Serialize
 
 import TopLevel
 import Parser  hiding (Parser)
@@ -35,7 +36,7 @@ type EvalState = (BlockCounter, TopEnv)
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  (n, env) <- execStateT (evalPrelude opts) (0, mempty)
+  ((n, env),_) <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
   let runEnv m = evalStateT m (n, env)
   case evalMode of
     ReplMode prompt ->
@@ -62,9 +63,9 @@ evalFile opts fname = do
   results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude ::EvalConfig-> StateT EvalState IO ()
-evalPrelude opts = do
-  result <- evalFile opts (preludeFile opts)
+evalPrelude ::EvalConfig-> FilePath -> IO (EvalState, Int)
+evalPrelude opts fname = liftM (\x -> (x,1)) $ flip execStateT (0, mempty) $ do
+  result <- evalFile opts fname
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
 replLoop :: String -> EvalConfig -> InputT (StateT EvalState IO) ()

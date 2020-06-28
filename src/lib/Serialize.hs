@@ -5,21 +5,26 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE CPP #-}
 
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
                  valToHeatmap, valToScatter, reStructureArrays, flattenType,
-                 typeToArrayType) where
+                 typeToArrayType, memoizeFileEval) where
 
 import Prelude hiding (pi, abs)
 import Control.Monad
 import Control.Exception (throwIO)
 import Foreign.Ptr
+import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
+import System.Directory
 import System.IO
+import System.IO.Error
 import System.IO.MMap
 import System.Posix  hiding (ReadOnly)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
+import Data.Store
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
 
@@ -219,3 +224,26 @@ typeToArrayType t = case t of
   TabTy _ _ -> (size, scalarTableBaseType t)
     where (IntVal size) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t
+
+curCompilerVersion :: String
+curCompilerVersion = __TIME__
+
+memoizeFileEval :: Store a => FilePath -> (FilePath -> IO a) -> FilePath -> IO a
+memoizeFileEval cacheFile f fname = do
+  cacheFresh <- cacheFile `newerFileThan` fname
+  if cacheFresh
+    then do
+      decoded <- decode <$> BS.readFile cacheFile
+      case decoded of
+        Right (version, result) | version == curCompilerVersion -> return result
+        _ -> removeFile cacheFile >> memoizeFileEval cacheFile f fname
+    else do
+      result <- f fname
+      BS.writeFile cacheFile (encode (curCompilerVersion, result))
+      return result
+
+newerFileThan :: FilePath -> FilePath -> IO Bool
+newerFileThan f1 f2 = flip catchIOError (const $ return False) $ do
+  f1Mod <- getModificationTime f1
+  f2Mod <- getModificationTime f2
+  return $ f1Mod > f2Mod

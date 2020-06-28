@@ -15,6 +15,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
 
 import Control.Monad
 import Data.List (minimumBy)
+import Data.Store
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
@@ -26,7 +27,8 @@ import Cat
 
 infixr 7 :>
 
-newtype Env a = Env (M.Map Name a)  deriving (Show, Eq, Ord, Functor, Foldable, Traversable)
+newtype Env a = Env (M.Map Name a)
+                deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 -- `NoName` is used in binders (e.g. `_ = <expr>`) but never in occurrences.
@@ -185,3 +187,8 @@ instance IsString Name where
 
 tagToStr :: Tag -> String
 tagToStr s = T.unpack s
+
+instance Store Name
+instance Store NameSpace
+instance Store a => Store (VarP a)
+instance Store a => Store (Env a)

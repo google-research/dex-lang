@@ -16,3 +16,4 @@ scratch.dx
 scratch/
 test-scratch/
 dist-newstyle/
+*.cache

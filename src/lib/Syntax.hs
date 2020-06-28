@@ -57,6 +57,7 @@ import Control.Monad.Except hiding (Except)
 import qualified Data.Vector.Storable as V
 import Data.Foldable (fold)
 import Data.List (sort)
+import Data.Store (Store)
 import Data.Tuple (swap)
 import GHC.Generics
 
@@ -964,3 +965,24 @@ builtinNames = M.fromList
   where
     binOp op = OpExpr $ ScalarBinOp op () ()
     unOp  op = OpExpr $ ScalarUnOp  op ()
+
+instance Store a => Store (PrimOp  a)
+instance Store a => Store (PrimCon a)
+instance Store a => Store (PrimTC  a)
+instance Store a => Store (PrimHof a)
+instance Store a => Store (Abs a)
+instance Store a => Store (ArrowP a)
+instance Store a => Store (Limit a)
+instance Store a => Store (PrimEffect a)
+instance Store Atom
+instance Store Expr
+instance Store Block
+instance Store Decl
+instance Store EffectName
+instance Store EffectRow
+instance Store Direction
+instance Store ScalarUnOp
+instance Store ScalarBinOp
+instance Store CmpOp
+instance Store LetAnn
+instance Store BinderInfo
