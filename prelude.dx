@@ -202,7 +202,7 @@ def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
 def (@) (i:Int) (n:Type) : n = fromOrdinal n i
 def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i + x
-def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i + x
+def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i - x
 def iota (n:Type) : n=>Int = for i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
