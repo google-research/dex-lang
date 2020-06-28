@@ -1,0 +1,35 @@
+
+'## Stochastic Gradient Descent with Momentum
+
+def sgd_step (dict: VSpace a) ?=> (step_size: Real) (decay: Real) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
+  g = gradfunc x iter
+  new_m = decay .* m + g
+  new_x = x - step_size .* m
+  (new_x, new_m)
+
+-- In-place optimization loop.
+def sgd (dict: VSpace a) ?=> (step_size:Real) (decay:Real) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
+  m0 = zero
+  (x_final, m_final) = snd $ withState (x0, m0) \state.
+    for i:(Fin num_steps).
+      (x, m) = get state
+      state := sgd_step step_size decay gradient x m (ordinal i)
+  x_final
+
+
+'### Example quadratic optimization problem
+
+D = Fin 4
+optimum = for i:D. 1.1
+-- Hand-coded gradient until autodiff works
+def gradfunc (x:D=>Real) (iter:Int) : D=>Real = x - optimum
+
+'### Run optimizer
+
+x_init = for i:D. 0.0
+stepsize = 0.01
+decay = 0.9
+num_iters = 1000
+:p sgd stepsize decay num_iters gradfunc x_init
+
+:p optimum
