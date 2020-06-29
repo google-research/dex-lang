@@ -36,7 +36,7 @@ type EvalState = (BlockCounter, TopEnv)
 
 runMode :: EvalMode -> EvalConfig -> IO ()
 runMode evalMode opts = do
-  ((n, env),_) <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
+  (n, env) <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
   let runEnv m = evalStateT m (n, env)
   case evalMode of
     ReplMode prompt ->
@@ -63,8 +63,8 @@ evalFile opts fname = do
   results <- mapM (evalDecl opts) sourceBlocks
   return $ zip sourceBlocks results
 
-evalPrelude ::EvalConfig-> FilePath -> IO (EvalState, Int)
-evalPrelude opts fname = liftM (\x -> (x,1)) $ flip execStateT (0, mempty) $ do
+evalPrelude ::EvalConfig-> FilePath -> IO EvalState
+evalPrelude opts fname = flip execStateT (0, mempty) $ do
   result <- evalFile opts fname
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
