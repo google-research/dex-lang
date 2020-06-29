@@ -4,7 +4,7 @@
 def sgd_step (dict: VSpace a) ?=> (step_size: Real) (decay: Real) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
   g = gradfunc x iter
   new_m = decay .* m + g
-  new_x = x - step_size .* m
+  new_x = x - step_size .* new_m
   (new_x, new_m)
 
 -- In-place optimization loop.
