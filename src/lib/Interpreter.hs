@@ -91,7 +91,7 @@ evalOp expr = case expr of
 
 indices :: Type -> [Atom]
 indices ty = case ty of
-  TC (BaseType BoolType) -> [BoolVal False, BoolVal True]
+  BoolTy                 -> [BoolVal False, BoolVal True]
   TC (IntRange _ _)      -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
   TC (IndexRange _ _ _)  -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
   TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]

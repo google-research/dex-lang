@@ -15,7 +15,8 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), Effect, EffectName (..), EffectRow (..),
+    Type, Kind, BaseType (..), ScalarBaseType (..),
+    Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
@@ -195,7 +196,7 @@ data PrimTC e =
         --       In the future it might make sense to parametrize Atoms by the types
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
-      | JArrayType [Int] BaseType
+      | JArrayType [Int] ScalarBaseType
       | NewtypeApp e [e]
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
@@ -229,6 +230,9 @@ data PrimOp e =
       | ArrayOffset e e e            -- Second argument is the index for type checking,
                                      -- Third argument is the linear offset for evaluation
       | ArrayLoad e
+      -- SIMD operations
+      | VectorBinOp ScalarBinOp e e
+      | VectorBroadcast e
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -825,7 +829,7 @@ pattern UnitVal = Con UnitCon
 pattern UnitTy :: Type
 pattern UnitTy = TC UnitType
 
-pattern JArrayTy :: [Int] -> BaseType -> Type
+pattern JArrayTy :: [Int] -> ScalarBaseType -> Type
 pattern JArrayTy shape b = TC (JArrayType shape b)
 
 pattern BaseTy :: BaseType -> Type
@@ -838,13 +842,13 @@ pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
 
 pattern IntTy :: Type
-pattern IntTy = TC (BaseType IntType)
+pattern IntTy = TC (BaseType (Scalar IntType))
 
 pattern BoolTy :: Type
-pattern BoolTy = TC (BaseType BoolType)
+pattern BoolTy = TC (BaseType (Scalar BoolType))
 
 pattern RealTy :: Type
-pattern RealTy = TC (BaseType RealType)
+pattern RealTy = TC (BaseType (Scalar RealType))
 
 pattern TyKind :: Kind
 pattern TyKind = TC TypeKind
@@ -922,6 +926,7 @@ builtinNames = M.fromList
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
   , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
+  , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)
   , ("inttoreal", unOp IntToReal)
@@ -946,9 +951,9 @@ builtinNames = M.fromList
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("caseAnalysis"    , HofExpr $ SumCase () () ())
-  , ("Int"     , TCExpr $ BaseType IntType)
-  , ("Real"    , TCExpr $ BaseType RealType)
-  , ("Bool"    , TCExpr $ BaseType BoolType)
+  , ("Int"     , TCExpr $ BaseType $ Scalar IntType)
+  , ("Real"    , TCExpr $ BaseType $ Scalar RealType)
+  , ("Bool"    , TCExpr $ BaseType $ Scalar BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType () ())
@@ -961,10 +966,13 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
+  , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
+  , ("broadcastVector", OpExpr $ VectorBroadcast ())
   ]
   where
-    binOp op = OpExpr $ ScalarBinOp op () ()
-    unOp  op = OpExpr $ ScalarUnOp  op ()
+    vbinOp op = OpExpr $ VectorBinOp op () ()
+    binOp  op = OpExpr $ ScalarBinOp op () ()
+    unOp   op = OpExpr $ ScalarUnOp  op ()
 
 instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
