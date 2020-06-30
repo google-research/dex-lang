@@ -6,6 +6,7 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
+{-# OPTIONS_GHC -w #-} -- XXX: Disable once fixed
 
 module Autodiff (linearize, transposeMap) where
 

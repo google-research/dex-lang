@@ -21,10 +21,10 @@ import System.Directory
 import System.IO
 import System.IO.Error
 import System.IO.MMap
-import System.Posix  hiding (ReadOnly)
+import System.Posix hiding (ReadOnly, version)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
-import Data.Store
+import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
 

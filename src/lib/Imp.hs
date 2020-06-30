@@ -183,9 +183,9 @@ toImpHof env (maybeDest, hof) = do
       destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
       ~condVarDest@(DRef condVar) <- allocDest Nothing BoolTy
-      toImpBlock env (Just condVarDest, cond)
+      void $ toImpBlock env (Just condVarDest, cond)
       (_, body') <- scopedBlock $do
-        toImpBlock env (Nothing, body)
+        void $ toImpBlock env (Nothing, body)
         toImpBlock env (Just condVarDest, cond)
       emitStatement (Nothing, IWhile (IVar condVar) body')
       return UnitVal
@@ -678,6 +678,7 @@ instrType instr = case instr of
   Alloc ty _      -> return $ Just $ IRefType ty
   Free _          -> return Nothing
   Loop _ _ _ _    -> return Nothing
+  IWhile _ _      -> return Nothing
   IOffset e i _   -> case impExprType e of
     IRefType (TabTyAbs a) -> return $ Just $ IRefType $ snd $ applyAbs a (toScalarAtom (absArgType a) i)
     ty -> error $ "Can't index into: " ++ pprint ty

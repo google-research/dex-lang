@@ -8,6 +8,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE PatternSynonyms #-}
+{-# OPTIONS_GHC -w #-} -- XXX: Disable once fixed
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JAX (JAtom (..), JVar, typeToJType, jTypeToType,
