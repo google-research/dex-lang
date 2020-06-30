@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JIT (impToLLVM) where
@@ -19,6 +20,7 @@ import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.FloatingPointPredicate as L
 import qualified LLVM.AST.IntegerPredicate as L
+import qualified LLVM.AST.ParameterAttribute as L
 
 import Control.Monad
 import Control.Monad.State.Strict
@@ -49,7 +51,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  }
 
 type CompileM a = ReaderT CompileEnv (State CompileState) a
-data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
+data ExternFunSpec = ExternFunSpec L.Name L.Type [L.ParameterAttribute] [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
@@ -88,7 +90,8 @@ compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
 freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
 freshParamOpPair ty = do
   v <- freshName "arg"
-  return (L.Parameter ty v [], L.LocalReference ty v)
+  -- TODO: align? dereferenceable? nofree?
+  return (L.Parameter ty v [L.NoAlias, L.NoCapture, L.NonNull], L.LocalReference ty v)
 
 compileProg :: [ImpStatement] -> CompileM ()
 compileProg [] = return ()
@@ -295,7 +298,7 @@ compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
 compileFFICall name retTy xs = do
   modify $ setFunSpecs (f:)
   emitInstr retTy $ externCall f xs
-  where f = ExternFunSpec (L.Name (fromString name)) retTy (map L.typeOf xs)
+  where f = ExternFunSpec (L.Name (fromString name)) retTy [] (map L.typeOf xs)
 
 compilePrimOp :: PrimOp Operand -> CompileM Operand
 compilePrimOp (ScalarBinOp op x y) = compileBinOp op x y
@@ -353,10 +356,10 @@ intCmpOp op = case op of
   Equal        -> L.EQ
 
 mallocFun :: ExternFunSpec
-mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]
+mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [L.NoAlias] [longTy]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex" L.VoidType [charPtrTy]
+freeFun = ExternFunSpec "free_dex" L.VoidType [] [charPtrTy]
 
 builtinFFISpecs :: [ExternFunSpec]
 builtinFFISpecs = [mallocFun, freeFun]
@@ -422,7 +425,7 @@ callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys) xs = callInstr fun xs
+externCall (ExternFunSpec fname retTy _ argTys) xs = callInstr fun xs
   where fun = callableOperand (funTy retTy argTys) fname
 
 callInstr :: L.CallableOperand -> [L.Operand] -> L.Instruction
@@ -430,13 +433,14 @@ callInstr fun xs = L.Call Nothing L.C [] fun xs' [] []
  where xs' = [(x ,[]) | x <- xs]
 
 externDecl :: ExternFunSpec -> L.Definition
-externDecl (ExternFunSpec fname retTy argTys) =
+externDecl (ExternFunSpec fname retTy retAttrs argTys) =
   L.GlobalDefinition $ L.functionDefaults {
-    L.name        = fname
-  , L.parameters  = ([L.Parameter t (argName i) []
-                     | (i, t) <- zip [0::Int ..] argTys], False)
-  , L.returnType  = retTy
-  , L.basicBlocks = []
+    L.name             = fname
+  , L.parameters       = ([L.Parameter t (argName i) []
+                          | (i, t) <- zip [0::Int ..] argTys], False)
+  , L.returnType       = retTy
+  , L.basicBlocks      = []
+  , L.returnAttributes = retAttrs
   }
   where argName i = L.Name $ "arg" <> fromString (show i)
 
