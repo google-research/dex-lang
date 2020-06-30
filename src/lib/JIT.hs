@@ -446,7 +446,8 @@ externDecl (ExternFunSpec fname retTy retAttrs argTys) =
   where argName i = L.Name $ "arg" <> fromString (show i)
 
 nameToLName :: Name -> L.Name
-nameToLName v = L.Name (toShort $ pack (pprint v))
+nameToLName (Name GenName tag counter) = L.Name (toShort $ pack $ asStr $ pretty tag <> "." <> pretty counter)
+nameToLName _ = error $ "All names in JIT should be from the GenName namespace"
 
 setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }

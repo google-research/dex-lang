@@ -537,11 +537,12 @@ allocKind allocTy ty = do
   return dest
 
 freshVar :: VarP a -> ImpM (VarP a)
-freshVar v = do
+freshVar (hint:>t) = do
   scope <- looks (fst . snd)
-  let v' = rename v scope
+  let v' = rename (name:>t) scope
   extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
+  where name = rawName GenName $ nameTag hint
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop maybeHint d n body = do
@@ -550,10 +551,7 @@ emitLoop maybeHint d n body = do
     body $ IVar i
     return i
   emitStatement (Nothing, Loop d i n loopBody)
-  -- XXX: we go through string just to ensure that all those names have a GenName namespace.
-  --      Otherwise we might get shadowing in the future, because pprint doesn't differentiate
-  --      between namespaces...
-  where hint = case maybeHint of NoName -> "q"; _ -> fromString $ pprint maybeHint
+  where hint = case maybeHint of NoName -> "q"; _ -> maybeHint
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do
