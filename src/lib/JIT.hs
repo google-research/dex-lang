@@ -173,8 +173,9 @@ finishBlock term newName = do
 
 compileLoop :: Direction -> IVar -> Operand -> ImpProg -> CompileM ()
 compileLoop d iVar n (ImpProg body) = do
-  loopBlock <- freshName "loop"
-  nextBlock <- freshName "cont"
+  let loopName = "loop_" ++ (pprint $ varName iVar)
+  loopBlock <- freshName $ fromString $ loopName
+  nextBlock <- freshName $ fromString $ "cont_" ++ loopName
   i <- alloca (Scalar IntType)
   i0 <- case d of Fwd -> return $ litInt 0
                   Rev -> n `sub` litInt 1

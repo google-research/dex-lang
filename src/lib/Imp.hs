@@ -21,6 +21,7 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Text.Prettyprint.Doc
 import Data.Foldable
+import Data.String
 
 import Embed
 import Array
@@ -172,11 +173,11 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
+    For d (Lam (Abs b@(hint:>idxTy) (_, body))) -> do
       idxTy' <- impSubst env idxTy
       n' <- indexSetSize idxTy'
       dest <- allocDest maybeDest resultTy
-      emitLoop d n' $ \i -> do
+      emitLoop hint d n' $ \i -> do
         i' <- intToIndex idxTy i
         ithDest <- destGet dest i
         void $ toImpBlock (env <> b @> i') (Just ithDest, body)
@@ -443,7 +444,7 @@ zipWithDest dest atom f = case (dest, atom) of
   (DFor (Abs v _), Lam (Abs _ (TabArrow, _))) -> do
     let idxTy = varType v
     n <- indexSetSize idxTy
-    emitLoop Fwd n $ \i -> do
+    emitLoop NoName Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest i
@@ -475,7 +476,7 @@ zeroDest dest = traverse_ (initializeZero . IVar) dest
       IRefType (BaseTy (Vector RealType)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ RealLit 0.0)
       IRefType (TabTy v _) -> do
         n <- indexSetSize $ varType v
-        emitLoop Fwd n $ \i -> impGet ref i >>= initializeZero
+        emitLoop NoName Fwd n $ \i -> impGet ref i >>= initializeZero
       ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 addToAtom :: Dest -> Atom -> ImpM ()
@@ -542,13 +543,17 @@ freshVar v = do
   extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
 
-emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
-emitLoop d n body = do
+emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
+emitLoop maybeHint d n body = do
   (i, loopBody) <- scopedBlock $ do
-    i <- freshVar ("i":>IIntTy)
+    i <- freshVar (hint:>IIntTy)
     body $ IVar i
     return i
   emitStatement (Nothing, Loop d i n loopBody)
+  -- XXX: we go through string just to ensure that all those names have a GenName namespace.
+  --      Otherwise we might get shadowing in the future, because pprint doesn't differentiate
+  --      between namespaces...
+  where hint = case maybeHint of NoName -> "q"; _ -> fromString $ pprint maybeHint
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do
