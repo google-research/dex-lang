@@ -46,7 +46,7 @@ data BaseType = Scalar ScalarBaseType
 type ArrayType = (Int, BaseType)
 
 vectorWidth :: Int
-vectorWidth = 8
+vectorWidth = 4
 
 arrayLength :: Array -> Int
 arrayLength arr@(Array b _) = applyVec arr V.length `div` vecEntriesFor b
