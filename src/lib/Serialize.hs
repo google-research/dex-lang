@@ -201,9 +201,7 @@ prettyVal val = case val of
     AsIdx n i   -> pretty i <> "@" <> pretty n
     Lit x       -> pretty x
     _           -> pretty con
-  atom -> (
-    "-- Unexpected prettyVal argument, falling back to Haskell pretty-printer:"
-    <> hardline <> pretty atom)
+  atom -> pretty atom
 
 getValArrays :: Val -> [Array]
 getValArrays = undefined

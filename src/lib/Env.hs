@@ -46,6 +46,7 @@ rawName :: NameSpace -> String -> Name
 rawName s t = Name s (fromString t) 0
 
 asGlobal :: Name -> Name
+asGlobal (GlobalName tag) = GlobalName tag
 asGlobal (Name SourceName tag 0) = GlobalName tag
 asGlobal NoName = NoName
 asGlobal v = error $ "Can't treat as global name: " ++ show v

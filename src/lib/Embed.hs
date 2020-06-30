@@ -485,10 +485,11 @@ traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
 traverseAtom def@(_, fAtom) atom = case atom of
   Var _ -> substEmbed atom
-  Lam (Abs b (arr, body)) ->
-    buildDepEffLam b
-      (\x -> extendR (b@>x) (substEmbed arr))
-      (\x -> extendR (b@>x) (traverseBlock' def body))
+  Lam (Abs b (arr, body)) -> do
+    b' <- mapM fAtom b
+    buildDepEffLam b'
+      (\x -> extendR (b'@>x) (substEmbed arr))
+      (\x -> extendR (b'@>x) (traverseBlock' def body))
   Pi _ -> substEmbed atom
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc

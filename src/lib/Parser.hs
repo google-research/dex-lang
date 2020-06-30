@@ -58,18 +58,20 @@ sourceBlock :: Parser SourceBlock
 sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
-  level <- logLevel <|> return LogNothing
-  (src, b) <- withSource $ withRecovery recover $ sourceBlock'
+  (src, (level, b)) <- withSource $ withRecovery recover $ do
+    level <- logLevel <|> return LogNothing
+    b <- sourceBlock'
+    return (level, b)
   return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
 
-recover :: ParseError String Void -> Parser SourceBlock'
+recover :: ParseError String Void -> Parser (LogLevel, SourceBlock')
 recover e = do
   pos <- liftM statePosState getParserState
   reachedEOF <-  try (mayBreak sc >> eof >> return True)
              <|> return False
   consumeTillBreak
-  return $ UnParseable reachedEOF $
-    errorBundlePretty (ParseErrorBundle (e :| []) pos)
+  let errmsg = errorBundlePretty (ParseErrorBundle (e :| []) pos)
+  return (LogNothing, UnParseable reachedEOF errmsg)
 
 consumeTillBreak :: Parser ()
 consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))

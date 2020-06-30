@@ -22,13 +22,10 @@
 'Values without a pretty-printer (currently shows warning message):
 
 :p Int
-> -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
 > Int
 
 :p Fin 10
-> -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
 > (Fin 10)
 
 :p Fin 10 & Fin 20
-> -- Unexpected prettyVal argument, falling back to Haskell pretty-printer:
 > ((Fin 10) & (Fin 20))

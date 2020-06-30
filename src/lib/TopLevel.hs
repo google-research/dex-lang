@@ -150,7 +150,7 @@ evalUModule env untyped = do
   checkPass TypePass typed
   synthed <- liftEitherIO $ synthModule env typed
   -- TODO: check that the type of module exports doesn't change from here on
-  checkPass SynthPass typed
+  checkPass SynthPass synthed
   evalModule env synthed
 
 evalModule :: TopEnv -> Module -> TopPassM TopEnv
