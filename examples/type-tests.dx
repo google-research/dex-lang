@@ -274,3 +274,22 @@ newPair : NewPair Int Real = mkNewPair (1, 2.0)
 
 :p fst $ fromNewPair newPair
 > 1
+
+:p NewPair
+> NewPair
+
+:p NewPair Int
+> NewPair Int
+
+:p NewPair Int Real
+> NewPair Int Real
+
+NewPairIntReal = NewPair Int Real
+
+:p NewPairIntReal
+> NewPair Int Real
+
+newPair2 : NewPairIntReal = mkNewPair (1, 2.0)
+
+:p fst $ fromNewPair newPair
+> 1
