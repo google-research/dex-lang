@@ -321,6 +321,8 @@ compilePrimOp (VectorPack elems) = foldM fillElem undef $ zip elems [0..]
     resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
     fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (litInt i) []
     undef = L.ConstantOperand $ C.Undef resTy
+compilePrimOp (VectorIndex v i) = emitInstr resTy $ L.ExtractElement v i []
+  where (L.VectorType _ resTy) = L.typeOf v
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 compileBinOp :: ScalarBinOp -> Operand -> Operand -> CompileM Operand
