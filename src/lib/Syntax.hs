@@ -232,7 +232,7 @@ data PrimOp e =
       | ArrayLoad e
       -- SIMD operations
       | VectorBinOp ScalarBinOp e e
-      | VectorBroadcast e
+      | VectorPack [e]               -- List should have exactly vectorWidth elements
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -967,7 +967,8 @@ builtinNames = M.fromList
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
-  , ("broadcastVector", OpExpr $ VectorBroadcast ())
+  , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
+  , ("unsafeAsIndex", ConExpr $ AsIdx () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
