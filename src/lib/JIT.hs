@@ -316,10 +316,10 @@ compilePrimOp (Select p x y) = do
   emitInstr (L.typeOf x) $ L.Select p' x y []
 compilePrimOp (FFICall name ansTy xs) =
   compileFFICall name (scalarTy ansTy) xs
-compilePrimOp (VectorBroadcast x) = foldM fillElem undef [0..vectorWidth - 1]
+compilePrimOp (VectorPack elems) = foldM fillElem undef $ zip elems [0..]
   where
-    resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf x
-    fillElem v i = emitInstr resTy $ L.InsertElement v x (litInt i) []
+    resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
+    fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (litInt i) []
     undef = L.ConstantOperand $ C.Undef resTy
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 

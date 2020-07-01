@@ -406,9 +406,13 @@ typeCheckOp op = case op of
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop
-  VectorBroadcast v -> do
-    BaseTy (Scalar sb) <- typeCheck v
+  VectorPack xs -> do
+    unless (length xs == vectorWidth) $ throw TypeErr lengthMsg
+    (BaseTy (Scalar sb)) <- typeCheck $ head xs
+    mapM_ (|: (BaseTy (Scalar sb))) xs
     return $ BaseTy $ Vector sb
+    where lengthMsg = "VectorBroadcast should have exactly " ++ show vectorWidth ++
+                      " elements: " ++ pprint op
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
