@@ -10,7 +10,7 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
-            rawName, nameSpace, rename, renames, nameItems,
+            rawName, nameSpace, nameTag, rename, renames, nameItems,
             renameChoice, tagToStr, isGlobal, asGlobal) where
 
 import Control.Monad
@@ -42,8 +42,8 @@ data NameSpace = GenName | SourceName | JaxIdx | Skolem
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
 
-rawName :: NameSpace -> String -> Name
-rawName s t = Name s (fromString t) 0
+rawName :: NameSpace -> Tag -> Name
+rawName s t = Name s t 0
 
 asGlobal :: Name -> Name
 asGlobal (GlobalName tag) = GlobalName tag
@@ -65,6 +65,12 @@ varName (v:>_) = v
 nameCounter :: Name -> Int
 nameCounter (Name _ _ c) = c
 nameCounter _ = 0
+
+nameTag :: Name -> Tag
+nameTag name = case name of
+  Name _ t _   -> t
+  GlobalName t -> t
+  NoName       -> error "NoName has no tag"
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v

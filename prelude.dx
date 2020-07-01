@@ -349,3 +349,15 @@ def checkDeriv (f:Real->Real) (x:Real) : Bool =
 
 def while (cond: Unit -> {|eff} Bool) (body: Unit -> {|eff} Unit) : {|eff} Unit =
   %while cond body
+
+'Vector support
+
+VectorWidth = 8  -- XXX: Keep this synced with the constant defined in Array.hs
+VectorReal  = %VectorRealType
+def broadcastVector (v : Real) : VectorReal = %broadcastVector v
+
+@instance vectorRealAdd : Add (VectorReal) =
+  MkAdd ( \x y. %vfadd x y
+        , \x y. %vfsub x y
+        , broadcastVector zero )
+@instance vectorRealMul : Mul (VectorReal) = MkMul \x y. %vfmul x y

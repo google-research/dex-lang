@@ -42,7 +42,7 @@ import qualified Algebra as A
 -- only:
 --   * Variables of base type or array type
 --   * Table lambdas
---   * Constructors for: pairs, sum types, AnyValue, Unit and AsIdx
+--   * Constructors for: pairs, sum types, AnyValue, Unit and Coerce
 --
 -- TODO: Use an ImpAtom type alias to better document the code
 
@@ -130,13 +130,14 @@ toImpOp (maybeDest, op) = case op of
     let i' = fromScalarAtom i
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
-             FFICall "int_to_index_set" IntType [i', n']
+             FFICall "int_to_index_set" (Scalar IntType) [i', n']
     returnVal =<< intToIndex resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
   IndexAsInt idx -> case idx of
-    Con (AsIdx _ i)  -> returnVal $ i
-    Con (AnyValue t) -> returnVal $ anyValue t
-    _                -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
+    Con (Coerce (TC (IntRange   _ _  )) i) -> returnVal $ i
+    Con (Coerce (TC (IndexRange _ _ _)) i) -> returnVal $ i
+    Con (AnyValue t)                       -> returnVal $ anyValue t
+    _ -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -172,11 +173,11 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
+    For d (Lam (Abs b@(hint:>idxTy) (_, body))) -> do
       idxTy' <- impSubst env idxTy
       n' <- indexSetSize idxTy'
       dest <- allocDest maybeDest resultTy
-      emitLoop d n' $ \i -> do
+      emitLoop hint d n' $ \i -> do
         i' <- intToIndex idxTy i
         ithDest <- destGet dest i
         void $ toImpBlock (env <> b @> i') (Just ithDest, body)
@@ -230,7 +231,7 @@ data DestP ref = DFor   (Abs (DestP ref))
                | DPair  (DestP ref) (DestP ref)
                | DUnit
                | DRef   ref
-               | DAsIdx Type (DestP ref)
+               | DCoerce Type (DestP ref)
                  deriving (Show, Functor, Foldable, Traversable)
 type Dest = DestP IVar
 type WithDest a = (Maybe Dest, a)
@@ -242,7 +243,7 @@ instance HasVars Dest where
     DUnit                  -> mempty
     DRef (_ :> IValType _) -> mempty
     DRef (_ :> IRefType t) -> freeVars t
-    DAsIdx t d             -> freeVars t <> freeVars d
+    DCoerce t d            -> freeVars t <> freeVars d
 
   subst env dest = case dest of
     DFor abs               -> DFor (subst env abs)
@@ -250,7 +251,7 @@ instance HasVars Dest where
     DUnit                  -> dest
     DRef (_ :> IValType _) -> dest
     DRef (v :> IRefType t) -> DRef (v :> IRefType (subst env t))
-    DAsIdx t d             -> DAsIdx (subst env t) (subst env d)
+    DCoerce t d            -> DCoerce (subst env t) (subst env d)
 
 destGet :: Dest -> IExpr -> ImpM Dest
 destGet dest i = case dest of
@@ -298,7 +299,7 @@ destToAtom' fScalar forVars dest = case dest of
           arrOffset arr idx offset
   DPair dl dr    -> PairVal <$> rec dl <*> rec dr
   DUnit          -> return $ UnitVal
-  DAsIdx t d     -> Con . AsIdx t <$> rec d
+  DCoerce t d    -> Con . Coerce t <$> rec d
   where rec = destToAtom' fScalar forVars
 
 splitDest :: WithDest Block -> ImpM ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
@@ -329,11 +330,11 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (DFor _, TabVal _ _) -> tell [(dest, result)]
       (_, Con rCon) -> case (dest, rCon) of
-        (DRef _     , Lit _         ) -> tell [(dest, result)]
-        (DPair ld rd, PairCon lr rr ) -> gatherVarDests ld lr >> gatherVarDests rd rr
-        (DUnit      , UnitCon       ) -> return ()
-        (DAsIdx _ db, AsIdx _ rb    ) -> gatherVarDests db rb
-        (_          , SumCon _ _ _  ) -> error "Not implemented"
+        (DRef _      , Lit _         ) -> tell [(dest, result)]
+        (DPair ld rd , PairCon lr rr ) -> gatherVarDests ld lr >> gatherVarDests rd rr
+        (DUnit       , UnitCon       ) -> return ()
+        (DCoerce _ db, Coerce _ rb   ) -> gatherVarDests db rb
+        (_           , SumCon _ _ _  ) -> error "Not implemented"
         _ -> unreachable
       _ -> unreachable
       where
@@ -368,7 +369,7 @@ makeDest nameHint destType = go id destType
           _ -> unreachable
         _ -> unreachable
       where
-        scalarIndexSet t = DAsIdx t <$> go mkTy IntTy
+        scalarIndexSet t = DCoerce t <$> go mkTy IntTy
         unreachable = error $ "Can't lower type to imp: " ++ pprint ty
 
 -- === Atom <-> IExpr conversions ===
@@ -377,7 +378,7 @@ fromScalarAtom :: Atom -> IExpr
 fromScalarAtom atom = case atom of
   Var (v:>BaseTy b) -> IVar (v :> IValType b)
   Con (Lit x)       -> ILit x
-  Con (AsIdx _ x)   -> fromScalarAtom x
+  Con (Coerce _ x)  -> fromScalarAtom x
   Con (AnyValue ty) -> fromScalarAtom $ anyValue ty
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
@@ -386,8 +387,8 @@ toScalarAtom ty ie = case ie of
   ILit l -> Con $ Lit l
   IVar (v :> IValType b) -> case ty of
     BaseTy b' | b == b'     -> Var (v :> ty)
-    TC (IntRange _ _)       -> Con $ AsIdx ty $ toScalarAtom IntTy ie
-    TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' ie
+    TC (IntRange _ _)       -> Con $ Coerce ty $ toScalarAtom IntTy ie
+    TC (IndexRange ty' _ _) -> Con $ Coerce ty $ toScalarAtom ty' ie
     _ -> unreachable
   _ -> unreachable
   where
@@ -443,7 +444,7 @@ zipWithDest dest atom f = case (dest, atom) of
   (DFor (Abs v _), Lam (Abs _ (TabArrow, _))) -> do
     let idxTy = varType v
     n <- indexSetSize idxTy
-    emitLoop Fwd n $ \i -> do
+    emitLoop NoName Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest i
@@ -455,7 +456,7 @@ zipWithDest dest atom f = case (dest, atom) of
     (DRef r     , Lit _        ) -> f (IVar r) (fromScalarAtom atom)
     (DPair ld rd, PairCon la ra) -> rec ld la >> rec rd ra
     (DUnit      , UnitCon      ) -> return () -- We could call f in here as well I guess...
-    (DAsIdx _ d , AsIdx _ a    ) -> rec d a
+    (DCoerce _ d, Coerce _ a   ) -> rec d a
     (_          , SumCon _ _ _ ) -> error "Not implemented"
     _                            -> unreachable
   _ -> unreachable
@@ -471,10 +472,11 @@ zeroDest dest = traverse_ (initializeZero . IVar) dest
   where
     initializeZero :: IExpr -> ImpM ()
     initializeZero ref = case impExprType ref of
-      IRefType RealTy      -> store ref (ILit $ RealLit 0.0)
+      IRefType (BaseTy (Scalar RealType)) -> store ref (ILit $ RealLit 0.0)
+      IRefType (BaseTy (Vector RealType)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ RealLit 0.0)
       IRefType (TabTy v _) -> do
         n <- indexSetSize $ varType v
-        emitLoop Fwd n $ \i -> impGet ref i >>= initializeZero
+        emitLoop NoName Fwd n $ \i -> impGet ref i >>= initializeZero
       ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 addToAtom :: Dest -> Atom -> ImpM ()
@@ -483,7 +485,11 @@ addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar
     addToDestScalar :: IExpr -> IExpr -> ImpM ()
     addToDestScalar dest src = do
       cur     <- load dest
-      updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src
+      let op = case impExprType cur of
+                 IValType (Scalar _) -> ScalarBinOp
+                 IValType (Vector _) -> VectorBinOp
+                 _ -> error $ "The result of load cannot be a reference"
+      updated <- emitInstr $ IPrimOp $ op FAdd cur src
       store dest updated
 
 -- === Imp embedding ===
@@ -531,19 +537,21 @@ allocKind allocTy ty = do
   return dest
 
 freshVar :: VarP a -> ImpM (VarP a)
-freshVar v = do
+freshVar (hint:>t) = do
   scope <- looks (fst . snd)
-  let v' = rename v scope
+  let v' = rename (name:>t) scope
   extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
+  where name = rawName GenName $ nameTag hint
 
-emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
-emitLoop d n body = do
+emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
+emitLoop maybeHint d n body = do
   (i, loopBody) <- scopedBlock $ do
-    i <- freshVar ("i":>IIntTy)
+    i <- freshVar (hint:>IIntTy)
     body $ IVar i
     return i
   emitStatement (Nothing, Loop d i n loopBody)
+  where hint = case maybeHint of NoName -> "q"; _ -> maybeHint
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do
@@ -632,34 +640,39 @@ checkValidType t = throw CompilerErr $ "Invalid Imp type: " ++ show t
 
 checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
-  ILit val -> return $ IValType (litType val)
+  ILit val -> return $ IValType $ litType val
   -- TODO: check shape matches vector length
   IVar v -> asks $ (! v)
 
 checkInt :: IExpr -> ImpCheckM ()
 checkInt expr = do
   ty <- checkIExpr expr
-  assertEq (IValType IntType) ty $ "Not an int: " ++ pprint expr
+  assertEq (IValType $ Scalar IntType) ty $ "Not an int: " ++ pprint expr
 
 checkImpOp :: IPrimOp -> ImpCheckM IType
 checkImpOp op = do
   op' <- traverse checkIExpr op
   case op' of
-    ScalarBinOp scalarOp x y -> do
-      checkEq x (IValType x')
-      checkEq y (IValType y')
-      return $ IValType ty
-      where (x', y', ty) = binOpType scalarOp
+    ScalarBinOp binOp x y -> checkBinOp Scalar binOp x y
+    VectorBinOp binOp x y -> checkBinOp Vector binOp x y
     ScalarUnOp scalarOp x -> do
-      checkEq x (IValType x')
-      return $ IValType ty
+      checkEq x (IValType $ Scalar x')
+      return $ IValType $ Scalar ty
       where (x', ty) = unOpType scalarOp
     Select _ x y -> checkEq x y >> return x
-    FFICall _ ty _ -> return $ IValType ty -- TODO: check
+    FFICall _ ty _ -> return $ IValType ty
+    VectorBroadcast (IValType (Scalar ty)) -> return $ IValType $ Vector ty
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
+
+    checkBinOp :: (ScalarBaseType -> BaseType) -> ScalarBinOp -> IType -> IType -> ImpCheckM IType
+    checkBinOp toBase binOp x y = do
+      checkEq x (IValType $ toBase x')
+      checkEq y (IValType $ toBase y')
+      return $ IValType $ toBase ty
+      where (x', y', ty) = binOpType binOp
 
 fromScalarRefType :: MonadError Err m => IType -> m BaseType
 fromScalarRefType (IRefType (BaseTy b)) = return b
@@ -667,7 +680,7 @@ fromScalarRefType ty = throw CompilerErr $ "Not a scalar reference type: " ++ pp
 
 impExprType :: IExpr -> IType
 impExprType expr = case expr of
-  ILit v    -> IValType (litType v)
+  ILit v    -> IValType $ litType v
   IVar (_:>ty) -> ty
 
 instrType :: MonadError Err m => ImpInstr -> m (Maybe IType)
@@ -684,14 +697,17 @@ instrType instr = case instr of
     ty -> error $ "Can't index into: " ++ pprint ty
 
 impOpType :: IPrimOp -> IType
-impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op
-impOpType (ScalarUnOp  op _  ) = IValType ty  where (_,    ty) = unOpType  op
-impOpType (Select _ x _    )   = impExprType x
+impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op
+impOpType (ScalarUnOp  op _  ) = IValType $ Scalar ty  where (_,    ty) = unOpType  op
+impOpType (VectorBinOp op _ _) = IValType $ Vector ty  where (_, _, ty) = binOpType op
 impOpType (FFICall _ ty _ )    = IValType ty
+impOpType (Select _ x _    )   = impExprType x
+impOpType (VectorBroadcast x)  = IValType $ Vector ty
+  where (IValType (Scalar ty)) = impExprType x
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
 pattern IIntTy :: IType
-pattern IIntTy = IValType IntType
+pattern IIntTy = IValType (Scalar IntType)
 
 pattern IIntVal :: Int -> IExpr
 pattern IIntVal x = ILit (IntLit x)

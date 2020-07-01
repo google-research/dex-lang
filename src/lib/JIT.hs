@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module JIT (impToLLVM) where
@@ -19,6 +20,7 @@ import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
 import qualified LLVM.AST.FloatingPointPredicate as L
 import qualified LLVM.AST.IntegerPredicate as L
+import qualified LLVM.AST.ParameterAttribute as L
 
 import Control.Monad
 import Control.Monad.State.Strict
@@ -30,6 +32,7 @@ import Data.ByteString.Char8 (pack)
 import Data.String
 import Data.Text.Prettyprint.Doc
 
+import Array (vectorWidth)
 import LLVMExec
 import Syntax
 import Env
@@ -48,7 +51,7 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  }
 
 type CompileM a = ReaderT CompileEnv (State CompileState) a
-data ExternFunSpec = ExternFunSpec L.Name L.Type [L.Type] deriving (Ord, Eq)
+data ExternFunSpec = ExternFunSpec L.Name L.Type [L.ParameterAttribute] [L.Type] deriving (Ord, Eq)
 
 type Long = Operand
 type NInstr = Named Instruction
@@ -64,8 +67,8 @@ runCompileM env m = evalState (runReaderT m env) initState
 compileTopProg :: ImpFunction -> CompileM LLVMFunction
 compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
   -- Set up the argument list. Note that all outputs are pointers to pointers.
-  let inVarTypes  = map (        L.ptr . scalarTy . arrayBaseType . varAnn) inVars
-  let outVarTypes = map (L.ptr . L.ptr . scalarTy . arrayBaseType . varAnn) outVars
+  let inVarTypes  = map (        L.ptr . arrayBaseType . varAnn) inVars
+  let outVarTypes = map (L.ptr . L.ptr . arrayBaseType . varAnn) outVars
   (inParams, inOperands)   <- unzip <$> mapM freshParamOpPair inVarTypes
   (outParams, outOperands) <- unzip <$> mapM freshParamOpPair outVarTypes
 
@@ -81,13 +84,14 @@ compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
   blocks <- gets (reverse . curBlocks)
   return $ LLVMFunction numOutputs $ makeModule (outParams ++ inParams) decls blocks specs
   where
-    arrayBaseType = scalarTableBaseType . (\(ArrayTy t) -> t)
+    arrayBaseType = scalarTy . scalarTableBaseType . (\(ArrayTy t) -> t)
     numOutputs = length outVars
 
 freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
 freshParamOpPair ty = do
   v <- freshName "arg"
-  return (L.Parameter ty v [], L.LocalReference ty v)
+  -- TODO: align? dereferenceable? nofree?
+  return (L.Parameter ty v [L.NoAlias, L.NoCapture, L.NonNull], L.LocalReference ty v)
 
 compileProg :: [ImpStatement] -> CompileM ()
 compileProg [] = return ()
@@ -126,8 +130,9 @@ compileInstr allowAlloca instr = case instr of
   Alloc t numel -> Just <$> case t of
     BaseTy b | allowAlloca -> alloca b
     _  -> do
-      bytes <- mul (litInt 8) =<< compileExpr numel
-      malloc (scalarTableBaseType t) bytes
+      let elemTy = scalarTy $ scalarTableBaseType t
+      bytes <- mul (L.ConstantOperand $ C.ZExt (C.sizeof elemTy) longTy) =<< compileExpr numel
+      malloc elemTy bytes
   Free (_:> IRefType (BaseTy _)) -> return Nothing  -- Don't free allocas
   Free v -> do
     v' <- lookupImpVar v
@@ -168,9 +173,10 @@ finishBlock term newName = do
 
 compileLoop :: Direction -> IVar -> Operand -> ImpProg -> CompileM ()
 compileLoop d iVar n (ImpProg body) = do
-  loopBlock <- freshName "loop"
-  nextBlock <- freshName "cont"
-  i <- alloca IntType
+  let loopName = "loop_" ++ (showName $ varName iVar)
+  loopBlock <- freshName $ fromString $ loopName
+  nextBlock <- freshName $ fromString $ "cont_" ++ loopName
+  i <- alloca (Scalar IntType)
   i0 <- case d of Fwd -> return $ litInt 0
                   Rev -> n `sub` litInt 1
   store i i0
@@ -209,7 +215,16 @@ litVal lit = case lit of
   RealLit x -> litReal x
   BoolLit True  -> litInt 1
   BoolLit False -> litInt 0
+  VecLit l  -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
+    where
+      consts = fmap (operandToConst . litVal) l
+      undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
+      fillElem v (c, i) = C.InsertElement v c (C.Int 64 (fromIntegral i))
   StrLit _ -> error "Not implemented"
+
+operandToConst :: Operand -> C.Constant
+operandToConst (L.ConstantOperand c) = c
+operandToConst op = error $ "Not a constant: " ++ show op
 
 litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
@@ -221,8 +236,8 @@ store :: Operand -> Operand -> CompileM ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
 load :: Operand -> CompileM Operand
-load ptr = emitInstr valTy $ L.Load False ptr Nothing 0 []
-  where (L.PointerType valTy _) = L.typeOf ptr
+load ptr = emitInstr ty $ L.Load False ptr Nothing 0 []
+  where (L.PointerType ty _) = L.typeOf ptr
 
 lessThan :: Long -> Long -> CompileM Long
 lessThan x y = emitInstr longTy $ L.ICmp L.SLT x y []
@@ -251,10 +266,10 @@ alloca ty = do
   where ty' = scalarTy ty
         instr = L.Alloca ty' Nothing 0 []
 
-malloc :: BaseType -> Operand -> CompileM Operand
+malloc :: L.Type -> Operand -> CompileM Operand
 malloc ty bytes = do
   voidPtr <- emitInstr charPtrTy (externCall mallocFun [bytes])
-  castLPtr (scalarTy ty) voidPtr
+  castLPtr ty voidPtr
 
 castLPtr :: L.Type -> Operand -> CompileM Operand
 castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
@@ -266,11 +281,13 @@ addInstr :: Named Instruction -> CompileM ()
 addInstr instr = modify $ setCurInstrs (instr:)
 
 scalarTy :: BaseType -> L.Type
-scalarTy ty = case ty of
-  IntType  -> longTy
-  RealType -> realTy
-  BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
-  StrType  -> error "Not implemented"
+scalarTy b = case b of
+  Scalar sb -> case sb of
+    IntType  -> longTy
+    RealType -> realTy
+    BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
+    StrType  -> error "Not implemented"
+  Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
 
 extendOneBit :: Operand -> CompileM Operand
 extendOneBit x = emitInstr boolTy (L.ZExt x boolTy [])
@@ -282,10 +299,32 @@ compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
 compileFFICall name retTy xs = do
   modify $ setFunSpecs (f:)
   emitInstr retTy $ externCall f xs
-  where f = ExternFunSpec (L.Name (fromString name)) retTy (map L.typeOf xs)
+  where f = ExternFunSpec (L.Name (fromString name)) retTy [] (map L.typeOf xs)
 
 compilePrimOp :: PrimOp Operand -> CompileM Operand
-compilePrimOp (ScalarBinOp op x y) = case op of
+compilePrimOp (ScalarBinOp op x y) = compileBinOp op x y
+compilePrimOp (VectorBinOp op x y) = compileBinOp op x y
+compilePrimOp (ScalarUnOp op x) = case op of
+  -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
+  FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
+  Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
+  BoolToInt -> return x -- bools stored as ints
+  UnsafeIntToBool -> return x -- bools stored as ints
+  IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
+compilePrimOp (Select p x y) = do
+  p' <- intToBool p
+  emitInstr (L.typeOf x) $ L.Select p' x y []
+compilePrimOp (FFICall name ansTy xs) =
+  compileFFICall name (scalarTy ansTy) xs
+compilePrimOp (VectorBroadcast x) = foldM fillElem undef [0..vectorWidth - 1]
+  where
+    resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf x
+    fillElem v i = emitInstr resTy $ L.InsertElement v x (litInt i) []
+    undef = L.ConstantOperand $ C.Undef resTy
+compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
+
+compileBinOp :: ScalarBinOp -> Operand -> Operand -> CompileM Operand
+compileBinOp op x y = case op of
   IAdd   -> emitInstr longTy $ L.Add False False x y []
   ISub   -> emitInstr longTy $ L.Sub False False x y []
   IMul   -> emitInstr longTy $ L.Mul False False x y []
@@ -300,19 +339,6 @@ compilePrimOp (ScalarBinOp op x y) = case op of
   ICmp c -> emitInstr boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
   FCmp c -> emitInstr boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
   _ -> error "Not implemented"
-compilePrimOp (ScalarUnOp op x) = case op of
-  -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
-  Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
-  BoolToInt -> return x -- bools stored as ints
-  UnsafeIntToBool -> return x -- bools stored as ints
-  IntToReal -> emitInstr realTy $ L.SIToFP x realTy []
-compilePrimOp (Select p x y) = do
-  p' <- intToBool p
-  emitInstr (L.typeOf x) $ L.Select p' x y []
-compilePrimOp (FFICall name ansTy xs) =
-  compileFFICall name (scalarTy ansTy) xs
-compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate
 floatCmpOp op = case op of
@@ -331,10 +357,10 @@ intCmpOp op = case op of
   Equal        -> L.EQ
 
 mallocFun :: ExternFunSpec
-mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [longTy]
+mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [L.NoAlias] [longTy]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex" L.VoidType [charPtrTy]
+freeFun = ExternFunSpec "free_dex" L.VoidType [] [charPtrTy]
 
 builtinFFISpecs :: [ExternFunSpec]
 builtinFFISpecs = [mallocFun, freeFun]
@@ -400,7 +426,7 @@ callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
-externCall (ExternFunSpec fname retTy argTys) xs = callInstr fun xs
+externCall (ExternFunSpec fname retTy _ argTys) xs = callInstr fun xs
   where fun = callableOperand (funTy retTy argTys) fname
 
 callInstr :: L.CallableOperand -> [L.Operand] -> L.Instruction
@@ -408,18 +434,23 @@ callInstr fun xs = L.Call Nothing L.C [] fun xs' [] []
  where xs' = [(x ,[]) | x <- xs]
 
 externDecl :: ExternFunSpec -> L.Definition
-externDecl (ExternFunSpec fname retTy argTys) =
+externDecl (ExternFunSpec fname retTy retAttrs argTys) =
   L.GlobalDefinition $ L.functionDefaults {
-    L.name        = fname
-  , L.parameters  = ([L.Parameter t (argName i) []
-                     | (i, t) <- zip [0::Int ..] argTys], False)
-  , L.returnType  = retTy
-  , L.basicBlocks = []
+    L.name             = fname
+  , L.parameters       = ([L.Parameter t (argName i) []
+                          | (i, t) <- zip [0::Int ..] argTys], False)
+  , L.returnType       = retTy
+  , L.basicBlocks      = []
+  , L.returnAttributes = retAttrs
   }
   where argName i = L.Name $ "arg" <> fromString (show i)
 
+showName :: Name -> String
+showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter
+showName _ = error $ "All names in JIT should be from the GenName namespace"
+
 nameToLName :: Name -> L.Name
-nameToLName v = L.Name (toShort $ pack (pprint v))
+nameToLName name = L.Name $ toShort $ pack $ showName name
 
 setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }

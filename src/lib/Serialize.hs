@@ -176,14 +176,14 @@ valToScatter :: Val -> Output
 valToScatter val = case getType val of
   TabTy _ (PairTy RealTy RealTy) -> ScatterOut xs ys
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
-  where [Array (DoubleVec xs), Array (DoubleVec ys)] = materializeScalarTables val
+  where [Array _ (RealVec xs), Array _ (RealVec ys)] = materializeScalarTables val
 
 valToHeatmap :: Val -> Output
 valToHeatmap val = case val of
   TabValA hv (TabVal wv _) ->
     HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) xs
   _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
-  where [(Array (DoubleVec xs))] = materializeScalarTables val
+  where [(Array _ (RealVec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String
 pprintVal val = asStr $ prettyVal val
@@ -198,7 +198,7 @@ prettyVal val = case val of
                                      _                 -> "@" <> pretty idxSet
   Con con -> case con of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
-    AsIdx n i   -> pretty i <> "@" <> pretty n
+    Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
     _           -> pretty con
   atom -> pretty atom

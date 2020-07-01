@@ -536,7 +536,7 @@ reduceExpr scope expr = case expr of
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
-  BaseType BoolType -> return $ IntVal 2
+  BaseType (Scalar BoolType) -> return $ IntVal 2
   IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
     low' <- case low of
@@ -586,7 +586,7 @@ intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
 intToIndexE ty@(TC con) i = case con of
   IntRange _ _      -> iAsIdx
   IndexRange _ _ _  -> iAsIdx
-  BaseType BoolType -> unsafeIntToBool i
+  BaseType (Scalar BoolType) -> unsafeIntToBool i
   PairType a b -> do
     bSize <- indexSetSizeE b
     iA <- intToIndexE a =<< idiv i bSize
@@ -599,17 +599,17 @@ intToIndexE ty@(TC con) i = case con of
     ri <- intToIndexE r =<< i `isub` lSize
     return $ Con $ SumCon isLeft li ri
   _ -> error $ "Unexpected type " ++ pprint con
-  where iAsIdx = return $ Con $ AsIdx ty i
+  where iAsIdx = return $ Con $ Coerce ty i
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
-anyValue (TC (BaseType RealType))     = RealVal 1.0
-anyValue (TC (BaseType IntType))      = IntVal 1
-anyValue (TC (BaseType BoolType))     = BoolVal False
-anyValue (TC (BaseType StrType))      = Con $ Lit $ StrLit ""
+anyValue (TC (BaseType (Scalar RealType))) = RealVal 1.0
+anyValue (TC (BaseType (Scalar IntType)))  = IntVal 1
+anyValue (TC (BaseType (Scalar BoolType))) = BoolVal False
+anyValue (TC (BaseType (Scalar StrType)))  = Con $ Lit $ StrLit ""
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that
 --      aborts the program if this really ends up being the case.
-anyValue t@(TC (IntRange _ _))        = Con $ AsIdx t $ IntVal 0
-anyValue t@(TC (IndexRange _ _ _))    = Con $ AsIdx t $ IntVal 0
+anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ IntVal 0
+anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ IntVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t

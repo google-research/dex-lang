@@ -82,7 +82,7 @@ simplifyAtom atom = case atom of
   Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
-    Con <$> (SumCon <$> mkAny (TC $ BaseType BoolType) <*> mkAny l <*> mkAny r)
+    Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbed tc
   Eff eff -> Eff <$> substEmbed eff

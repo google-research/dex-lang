@@ -62,7 +62,12 @@ instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
 
 instance Pretty BaseType where
-  pretty t = case t of
+  pretty b = case b of
+    Scalar sb -> pretty sb
+    Vector sb -> "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
+
+instance Pretty ScalarBaseType where
+  pretty sb = case sb of
     IntType  -> "Int"
     BoolType -> "Bool"
     RealType -> "Real"
@@ -72,9 +77,10 @@ printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)
 
 instance Pretty LitVal where
-  pretty (IntLit x ) = p x
+  pretty (IntLit  x) = p x
   pretty (RealLit x) = printDouble x
-  pretty (StrLit x ) = p x
+  pretty (StrLit  x) = p x
+  pretty (VecLit  l) = encloseSep "<" ">" ", " $ fmap p l
   pretty (BoolLit b) = if b then "True" else "False"
 
 instance Pretty Block where
@@ -133,7 +139,7 @@ instance Pretty e => Pretty (PrimCon e) where
     PairCon x y -> parens $ p x <+> "," <+> p y
     UnitCon     -> "()"
     RefCon _ _  -> "RefCon"
-    AsIdx n i   -> p i <> "@" <> parens (p n)
+    Coerce t i  -> p i <> "@" <> parens (p t)
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ case pprint c of
       "True"  -> "Left"  <+> p l
@@ -196,7 +202,7 @@ instance Pretty IExpr where
 
 instance Pretty IType where
   pretty (IRefType t) = "Ref" <+> (parens $ p t)
-  pretty (IValType b) = p b
+  pretty (IValType t) = p t
 
 instance Pretty ImpProg where
   pretty (ImpProg block) = vcat (map prettyStatement block)
