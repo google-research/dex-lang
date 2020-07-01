@@ -173,7 +173,7 @@ finishBlock term newName = do
 
 compileLoop :: Direction -> IVar -> Operand -> ImpProg -> CompileM ()
 compileLoop d iVar n (ImpProg body) = do
-  let loopName = "loop_" ++ (pprint $ varName iVar)
+  let loopName = "loop_" ++ (showName $ varName iVar)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
   i <- alloca (Scalar IntType)
@@ -445,9 +445,12 @@ externDecl (ExternFunSpec fname retTy retAttrs argTys) =
   }
   where argName i = L.Name $ "arg" <> fromString (show i)
 
+showName :: Name -> String
+showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter
+showName _ = error $ "All names in JIT should be from the GenName namespace"
+
 nameToLName :: Name -> L.Name
-nameToLName (Name GenName tag counter) = L.Name (toShort $ pack $ asStr $ pretty tag <> "." <> pretty counter)
-nameToLName _ = error $ "All names in JIT should be from the GenName namespace"
+nameToLName name = L.Name $ toShort $ pack $ showName name
 
 setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }

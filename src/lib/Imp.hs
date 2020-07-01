@@ -21,7 +21,6 @@ import Control.Monad.State
 import Control.Monad.Writer
 import Data.Text.Prettyprint.Doc
 import Data.Foldable
-import Data.String
 
 import Embed
 import Array
