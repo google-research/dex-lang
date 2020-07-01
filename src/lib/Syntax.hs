@@ -233,6 +233,7 @@ data PrimOp e =
       -- SIMD operations
       | VectorBinOp ScalarBinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
+      | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -968,6 +969,7 @@ builtinNames = M.fromList
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
+  , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ AsIdx () ())
   ]
   where

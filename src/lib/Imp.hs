@@ -662,9 +662,13 @@ checkImpOp op = do
     Select _ x y -> checkEq x y >> return x
     FFICall _ ty _ -> return $ IValType ty
     VectorPack xs -> do
-      let (IValType (Scalar ty)) = head xs
+      IValType (Scalar ty) <- return $ head xs
       mapM_ (checkEq (IValType $ Scalar ty)) xs
       return $ IValType $ Vector ty
+    VectorIndex x i -> do
+      IValType (Vector ty) <- return x
+      assertEq (IValType $ Scalar IntType) i $ "Not an int: " ++ pprint i
+      return $ IValType $ Scalar ty
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
@@ -707,6 +711,8 @@ impOpType (FFICall _ ty _ )    = IValType ty
 impOpType (Select _ x _    )   = impExprType x
 impOpType (VectorPack xs)      = IValType $ Vector ty
   where (IValType (Scalar ty)) = impExprType $ head xs
+impOpType (VectorIndex x _)    = IValType $ Scalar ty
+  where (IValType (Vector ty)) = impExprType x
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
 pattern IIntTy :: IType
