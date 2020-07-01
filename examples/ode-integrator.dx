@@ -1,22 +1,41 @@
+'## Euler Integrator
+Using only generic vector operations.
 
-EState : Type -> Type = \d. d=>Real
-Time :Type = Real
-Dynamics : Type -> Type = \d. EState d -> EState d
+Time : Type = Real
 
+def eulerStep (dict: VSpace a) ?=>
+              (zref: Ref h a) ->
+              (dynamics: a -> Time -> a) ->
+              (dt: Time) ->
+              (t: Time)
+              : {State h} Unit =
+    z = get zref
+    zref := z + dt .* dynamics z t
 
-eulerStep : Ref h (EState d) -> Dynamics d -> Time -> {State h} Unit =
-  \sRef dyn dt.
-    s = get sRef
-    sRef := s + dt .* dyn s
+def euler (dict: VSpace a) ?=> 
+          (dynamics: a -> Time -> a) ->
+          (z0: a) ->
+          (t0: Time) ->
+          (t1: Time) ->
+          (dt: Time)
+          : a =
+     n = floor ((t1 - t0) / dt)
+     snd $ withState z0 \zref.
+       for i:(Fin n).
+         t = t0 + (i2r (ordinal i)) * dt
+         eulerStep zref dynamics dt t
 
-euler : Int -> Dynamics d -> EState d -> Time -> EState d =
-  \n f x0 dt.
-    snd $ withState x0 \sRef.
-      for i:(Fin n). eulerStep sRef f dt
+def myDyn (dict: VSpace a) ?=> 
+          (z : a) -> (t:Time) : a = z
 
-myDyn : Dynamics d = \d. d
+z0 = [1.0]
+t0 = 0.0
+t1 = 1.0
+dt = 0.0001
 
-s0 = [1.0]
-
-:p euler 100000 myDyn s0 0.00001
+:p euler myDyn z0 t0 t1 dt
 > [2.7182682]
+
+:plot
+  xsTest = linspace (Fin 100) 0.0 1.0
+  zip xsTest $ map (\t1. sum $ euler myDyn z0 t0 t1 dt) xsTest
