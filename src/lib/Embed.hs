@@ -599,7 +599,7 @@ intToIndexE ty@(TC con) i = case con of
     ri <- intToIndexE r =<< i `isub` lSize
     return $ Con $ SumCon isLeft li ri
   _ -> error $ "Unexpected type " ++ pprint con
-  where iAsIdx = return $ Con $ AsIdx ty i
+  where iAsIdx = return $ Con $ Coerce ty i
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
@@ -610,6 +610,6 @@ anyValue (TC (BaseType (Scalar StrType)))  = Con $ Lit $ StrLit ""
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that
 --      aborts the program if this really ends up being the case.
-anyValue t@(TC (IntRange _ _))             = Con $ AsIdx t $ IntVal 0
-anyValue t@(TC (IndexRange _ _ _))         = Con $ AsIdx t $ IntVal 0
+anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ IntVal 0
+anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ IntVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t

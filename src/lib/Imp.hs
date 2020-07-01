@@ -42,7 +42,7 @@ import qualified Algebra as A
 -- only:
 --   * Variables of base type or array type
 --   * Table lambdas
---   * Constructors for: pairs, sum types, AnyValue, Unit and AsIdx
+--   * Constructors for: pairs, sum types, AnyValue, Unit and Coerce
 --
 -- TODO: Use an ImpAtom type alias to better document the code
 
@@ -134,9 +134,10 @@ toImpOp (maybeDest, op) = case op of
     returnVal =<< intToIndex resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
   IndexAsInt idx -> case idx of
-    Con (AsIdx _ i)  -> returnVal $ i
-    Con (AnyValue t) -> returnVal $ anyValue t
-    _                -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
+    Con (Coerce (TC (IntRange   _ _  )) i) -> returnVal $ i
+    Con (Coerce (TC (IndexRange _ _ _)) i) -> returnVal $ i
+    Con (AnyValue t)                       -> returnVal $ anyValue t
+    _ -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
@@ -230,7 +231,7 @@ data DestP ref = DFor   (Abs (DestP ref))
                | DPair  (DestP ref) (DestP ref)
                | DUnit
                | DRef   ref
-               | DAsIdx Type (DestP ref)
+               | DCoerce Type (DestP ref)
                  deriving (Show, Functor, Foldable, Traversable)
 type Dest = DestP IVar
 type WithDest a = (Maybe Dest, a)
@@ -242,7 +243,7 @@ instance HasVars Dest where
     DUnit                  -> mempty
     DRef (_ :> IValType _) -> mempty
     DRef (_ :> IRefType t) -> freeVars t
-    DAsIdx t d             -> freeVars t <> freeVars d
+    DCoerce t d            -> freeVars t <> freeVars d
 
   subst env dest = case dest of
     DFor abs               -> DFor (subst env abs)
@@ -250,7 +251,7 @@ instance HasVars Dest where
     DUnit                  -> dest
     DRef (_ :> IValType _) -> dest
     DRef (v :> IRefType t) -> DRef (v :> IRefType (subst env t))
-    DAsIdx t d             -> DAsIdx (subst env t) (subst env d)
+    DCoerce t d            -> DCoerce (subst env t) (subst env d)
 
 destGet :: Dest -> IExpr -> ImpM Dest
 destGet dest i = case dest of
@@ -298,7 +299,7 @@ destToAtom' fScalar forVars dest = case dest of
           arrOffset arr idx offset
   DPair dl dr    -> PairVal <$> rec dl <*> rec dr
   DUnit          -> return $ UnitVal
-  DAsIdx t d     -> Con . AsIdx t <$> rec d
+  DCoerce t d    -> Con . Coerce t <$> rec d
   where rec = destToAtom' fScalar forVars
 
 splitDest :: WithDest Block -> ImpM ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
@@ -329,11 +330,11 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (DFor _, TabVal _ _) -> tell [(dest, result)]
       (_, Con rCon) -> case (dest, rCon) of
-        (DRef _     , Lit _         ) -> tell [(dest, result)]
-        (DPair ld rd, PairCon lr rr ) -> gatherVarDests ld lr >> gatherVarDests rd rr
-        (DUnit      , UnitCon       ) -> return ()
-        (DAsIdx _ db, AsIdx _ rb    ) -> gatherVarDests db rb
-        (_          , SumCon _ _ _  ) -> error "Not implemented"
+        (DRef _      , Lit _         ) -> tell [(dest, result)]
+        (DPair ld rd , PairCon lr rr ) -> gatherVarDests ld lr >> gatherVarDests rd rr
+        (DUnit       , UnitCon       ) -> return ()
+        (DCoerce _ db, Coerce _ rb   ) -> gatherVarDests db rb
+        (_           , SumCon _ _ _  ) -> error "Not implemented"
         _ -> unreachable
       _ -> unreachable
       where
@@ -368,7 +369,7 @@ makeDest nameHint destType = go id destType
           _ -> unreachable
         _ -> unreachable
       where
-        scalarIndexSet t = DAsIdx t <$> go mkTy IntTy
+        scalarIndexSet t = DCoerce t <$> go mkTy IntTy
         unreachable = error $ "Can't lower type to imp: " ++ pprint ty
 
 -- === Atom <-> IExpr conversions ===
@@ -377,7 +378,7 @@ fromScalarAtom :: Atom -> IExpr
 fromScalarAtom atom = case atom of
   Var (v:>BaseTy b) -> IVar (v :> IValType b)
   Con (Lit x)       -> ILit x
-  Con (AsIdx _ x)   -> fromScalarAtom x
+  Con (Coerce _ x)  -> fromScalarAtom x
   Con (AnyValue ty) -> fromScalarAtom $ anyValue ty
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
@@ -386,8 +387,8 @@ toScalarAtom ty ie = case ie of
   ILit l -> Con $ Lit l
   IVar (v :> IValType b) -> case ty of
     BaseTy b' | b == b'     -> Var (v :> ty)
-    TC (IntRange _ _)       -> Con $ AsIdx ty $ toScalarAtom IntTy ie
-    TC (IndexRange ty' _ _) -> Con $ AsIdx ty $ toScalarAtom ty' ie
+    TC (IntRange _ _)       -> Con $ Coerce ty $ toScalarAtom IntTy ie
+    TC (IndexRange ty' _ _) -> Con $ Coerce ty $ toScalarAtom ty' ie
     _ -> unreachable
   _ -> unreachable
   where
@@ -455,7 +456,7 @@ zipWithDest dest atom f = case (dest, atom) of
     (DRef r     , Lit _        ) -> f (IVar r) (fromScalarAtom atom)
     (DPair ld rd, PairCon la ra) -> rec ld la >> rec rd ra
     (DUnit      , UnitCon      ) -> return () -- We could call f in here as well I guess...
-    (DAsIdx _ d , AsIdx _ a    ) -> rec d a
+    (DCoerce _ d, Coerce _ a   ) -> rec d a
     (_          , SumCon _ _ _ ) -> error "Not implemented"
     _                            -> unreachable
   _ -> unreachable

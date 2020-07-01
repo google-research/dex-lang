@@ -81,9 +81,10 @@ evalOp expr = case expr of
     where (ArrayVal (ArrayTy (TabTy _ b)) arr, IntVal off) = (arrArg, offArg)
   ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
   IndexAsInt idxArg -> case idxArg of
-    Con (AsIdx _ i)  -> i
-    Con (AnyValue t) -> anyValue t
-    _                -> evalEmbed (indexToIntE (getType idxArg) idxArg)
+    Con (Coerce (TC (IntRange   _ _  )) i) -> i
+    Con (Coerce (TC (IndexRange _ _ _)) i) -> i
+    Con (AnyValue t)                       -> anyValue t
+    _ -> evalEmbed (indexToIntE (getType idxArg) idxArg)
   Fst p -> x where (PairVal x _) = p
   Snd p -> y where (PairVal _ y) = p
   Select b t f -> if b' then t else f where (BoolVal b') = b
@@ -92,8 +93,8 @@ evalOp expr = case expr of
 indices :: Type -> [Atom]
 indices ty = case ty of
   BoolTy                 -> [BoolVal False, BoolVal True]
-  TC (IntRange _ _)      -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
-  TC (IndexRange _ _ _)  -> fmap (Con . AsIdx ty . IntVal) [0..n - 1]
+  TC (IntRange _ _)      -> fmap (Con . Coerce ty . IntVal) [0..n - 1]
+  TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . IntVal) [0..n - 1]
   TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
   TC (UnitType)          -> [UnitVal]
   TC (SumType lt rt)     -> fmap (\l -> SumVal (BoolVal True)  l (Con (AnyValue rt))) (indices lt) ++

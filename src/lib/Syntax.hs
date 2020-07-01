@@ -208,7 +208,7 @@ data PrimCon e =
       | PairCon e e
       | UnitCon
       | RefCon e e
-      | AsIdx e e         -- Construct an index from its ordinal index (zero-based int)
+      | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
       | NewtypeCon e e    -- result type, argument
       | ClassDictHole e   -- Only used during type inference
       | Todo e

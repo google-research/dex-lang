@@ -198,7 +198,7 @@ prettyVal val = case val of
                                      _                 -> "@" <> pretty idxSet
   Con con -> case con of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
-    AsIdx n i   -> pretty i <> "@" <> pretty n
+    Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
     _           -> pretty con
   atom -> pretty atom

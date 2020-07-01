@@ -139,7 +139,7 @@ instance Pretty e => Pretty (PrimCon e) where
     PairCon x y -> parens $ p x <+> "," <+> p y
     UnitCon     -> "()"
     RefCon _ _  -> "RefCon"
-    AsIdx n i   -> p i <> "@" <> parens (p n)
+    Coerce t i  -> p i <> "@" <> parens (p t)
     AnyValue t  -> parens $ "AnyValue @" <> p t
     SumCon c l r -> parens $ case pprint c of
       "True"  -> "Left"  <+> p l

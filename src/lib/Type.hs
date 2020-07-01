@@ -333,7 +333,11 @@ typeCheckCon con = case con of
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
-  AsIdx n e -> n|:TyKind >> e|:IntTy $> n
+  Coerce t e -> case t of
+    TC (IntRange   _ _  ) -> coerceFrom IntTy
+    TC (IndexRange _ _ _) -> coerceFrom IntTy
+    _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
+    where coerceFrom f = e |: f $> t
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty

@@ -181,7 +181,7 @@ iotaVarAsIdx = undefined
 
 fromScalarAtom :: HasCallStack => TmpAtom -> IdxAtom
 fromScalarAtom atom = case atom of
-  TmpCon (AsIdx _ x) -> fromScalarAtom x
+  TmpCon (Coerce _ x) -> fromScalarAtom x
   --TmpCon (AGet (TmpLeaf x)) -> x
   _ -> error $ "Not a scalar atom: " ++ show atom
 
