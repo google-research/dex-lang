@@ -63,7 +63,7 @@ offsets t = case t of
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
-  BaseType BoolType     -> liftC $ toPolynomial $ IntVal 2
+  BaseType (Scalar BoolType) -> liftC $ toPolynomial $ IntVal 2
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
     -- When one bound is left unspecified, the size expressions are guaranteed

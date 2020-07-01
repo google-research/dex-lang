@@ -44,7 +44,7 @@ data JDecl = JLet JVar JFor                 deriving (Generic, Show, Eq)
 data JExpr = JExpr [JDecl] [JAtom]          deriving (Generic, Show, Eq)
 data JAtom = JLit [Int] Array | JVar JVar   deriving (Generic, Show, Eq)
 data IdxAtom = IdxAtom JAtom [IdxVar]       deriving (Generic, Show, Eq)
-data JType = JType [AxisSize] BaseType      deriving (Generic, Show, Eq)
+data JType = JType [AxisSize] ScalarBaseType deriving (Generic, Show, Eq)
 data JaxFunction = JaxFunction [JVar] JExpr deriving (Generic, Show, Eq)
 
 type JOp = JOpP IdxAtom
@@ -214,12 +214,12 @@ emitOp op = do
 
 zerosAt :: Type -> JaxM TmpAtom
 zerosAt ty = case ty of
-  BaseTy RealType -> return $ tmpAtomScalarLit $ RealLit 0.0
+  BaseTy (Scalar RealType) -> return $ tmpAtomScalarLit $ RealLit 0.0
   _ -> error "Not implemented"
 
 addPoly :: TmpAtom -> TmpAtom -> JaxM TmpAtom
 addPoly x y = case getType x of
-  BaseTy RealType -> liftM toScalarAtom $
+  BaseTy (Scalar RealType) -> liftM toScalarAtom $
     emitOp $ JScalarBinOp FAdd (fromScalarAtom x) (fromScalarAtom y)
   ty -> error $ "Not implemented: " ++ pprint ty
 
@@ -465,7 +465,7 @@ instance HasJType JAtom where
   getJType atom = case atom of
     JVar (_:> ty) -> ty
     JLit shape arr -> JType shape b
-      where (_, b) = arrayType arr
+      where (_, Scalar b) = arrayType arr
 
   checkJType (env,_) atom = case atom of
     JVar v@(_:> ty) -> do
@@ -475,7 +475,7 @@ instance HasJType JAtom where
           return ty
         _ -> throw CompilerErr $ "Lookup failed: " ++ pprint v
     JLit shape arr -> return $ JType shape b
-      where (_, b) = arrayType arr
+      where (_, Scalar b) = arrayType arr
 
 instance (Pretty a, HasJType a) => HasJType (JOpP a) where
   getJType op = ignoreExcept $ addContext ("Getting type of: " ++ pprint op) $
@@ -700,6 +700,9 @@ instance FromJSON LitVal
 
 instance ToJSON   BaseType
 instance FromJSON BaseType
+
+instance ToJSON   ScalarBaseType
+instance FromJSON ScalarBaseType
 
 instance ToJSON   Array
 instance FromJSON Array

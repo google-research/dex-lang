@@ -130,7 +130,7 @@ toImpOp (maybeDest, op) = case op of
     let i' = fromScalarAtom i
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
-             FFICall "int_to_index_set" IntType [i', n']
+             FFICall "int_to_index_set" (Scalar IntType) [i', n']
     returnVal =<< intToIndex resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
   IndexAsInt idx -> case idx of
@@ -471,7 +471,8 @@ zeroDest dest = traverse_ (initializeZero . IVar) dest
   where
     initializeZero :: IExpr -> ImpM ()
     initializeZero ref = case impExprType ref of
-      IRefType RealTy      -> store ref (ILit $ RealLit 0.0)
+      IRefType (BaseTy (Scalar RealType)) -> store ref (ILit $ RealLit 0.0)
+      IRefType (BaseTy (Vector RealType)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ RealLit 0.0)
       IRefType (TabTy v _) -> do
         n <- indexSetSize $ varType v
         emitLoop Fwd n $ \i -> impGet ref i >>= initializeZero
@@ -483,7 +484,11 @@ addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar
     addToDestScalar :: IExpr -> IExpr -> ImpM ()
     addToDestScalar dest src = do
       cur     <- load dest
-      updated <- emitInstr $ IPrimOp $ ScalarBinOp FAdd cur src
+      let op = case impExprType cur of
+                 IValType (Scalar _) -> ScalarBinOp
+                 IValType (Vector _) -> VectorBinOp
+                 _ -> error $ "The result of load cannot be a reference"
+      updated <- emitInstr $ IPrimOp $ op FAdd cur src
       store dest updated
 
 -- === Imp embedding ===
@@ -632,34 +637,39 @@ checkValidType t = throw CompilerErr $ "Invalid Imp type: " ++ show t
 
 checkIExpr :: IExpr -> ImpCheckM IType
 checkIExpr expr = case expr of
-  ILit val -> return $ IValType (litType val)
+  ILit val -> return $ IValType $ litType val
   -- TODO: check shape matches vector length
   IVar v -> asks $ (! v)
 
 checkInt :: IExpr -> ImpCheckM ()
 checkInt expr = do
   ty <- checkIExpr expr
-  assertEq (IValType IntType) ty $ "Not an int: " ++ pprint expr
+  assertEq (IValType $ Scalar IntType) ty $ "Not an int: " ++ pprint expr
 
 checkImpOp :: IPrimOp -> ImpCheckM IType
 checkImpOp op = do
   op' <- traverse checkIExpr op
   case op' of
-    ScalarBinOp scalarOp x y -> do
-      checkEq x (IValType x')
-      checkEq y (IValType y')
-      return $ IValType ty
-      where (x', y', ty) = binOpType scalarOp
+    ScalarBinOp binOp x y -> checkBinOp Scalar binOp x y
+    VectorBinOp binOp x y -> checkBinOp Vector binOp x y
     ScalarUnOp scalarOp x -> do
-      checkEq x (IValType x')
-      return $ IValType ty
+      checkEq x (IValType $ Scalar x')
+      return $ IValType $ Scalar ty
       where (x', ty) = unOpType scalarOp
     Select _ x y -> checkEq x y >> return x
-    FFICall _ ty _ -> return $ IValType ty -- TODO: check
+    FFICall _ ty _ -> return $ IValType ty
+    VectorBroadcast (IValType (Scalar ty)) -> return $ IValType $ Vector ty
     _ -> error $ "Not allowed in Imp IR: " ++ pprint op
   where
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
+
+    checkBinOp :: (ScalarBaseType -> BaseType) -> ScalarBinOp -> IType -> IType -> ImpCheckM IType
+    checkBinOp toBase binOp x y = do
+      checkEq x (IValType $ toBase x')
+      checkEq y (IValType $ toBase y')
+      return $ IValType $ toBase ty
+      where (x', y', ty) = binOpType binOp
 
 fromScalarRefType :: MonadError Err m => IType -> m BaseType
 fromScalarRefType (IRefType (BaseTy b)) = return b
@@ -667,7 +677,7 @@ fromScalarRefType ty = throw CompilerErr $ "Not a scalar reference type: " ++ pp
 
 impExprType :: IExpr -> IType
 impExprType expr = case expr of
-  ILit v    -> IValType (litType v)
+  ILit v    -> IValType $ litType v
   IVar (_:>ty) -> ty
 
 instrType :: MonadError Err m => ImpInstr -> m (Maybe IType)
@@ -684,14 +694,17 @@ instrType instr = case instr of
     ty -> error $ "Can't index into: " ++ pprint ty
 
 impOpType :: IPrimOp -> IType
-impOpType (ScalarBinOp op _ _) = IValType ty  where (_, _, ty) = binOpType op
-impOpType (ScalarUnOp  op _  ) = IValType ty  where (_,    ty) = unOpType  op
-impOpType (Select _ x _    )   = impExprType x
+impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op
+impOpType (ScalarUnOp  op _  ) = IValType $ Scalar ty  where (_,    ty) = unOpType  op
+impOpType (VectorBinOp op _ _) = IValType $ Vector ty  where (_, _, ty) = binOpType op
 impOpType (FFICall _ ty _ )    = IValType ty
+impOpType (Select _ x _    )   = impExprType x
+impOpType (VectorBroadcast x)  = IValType $ Vector ty
+  where (IValType (Scalar ty)) = impExprType x
 impOpType op = error $ "Not allowed in Imp IR: " ++ pprint op
 
 pattern IIntTy :: IType
-pattern IIntTy = IValType IntType
+pattern IIntTy = IValType (Scalar IntType)
 
 pattern IIntVal :: Int -> IExpr
 pattern IIntVal x = ILit (IntLit x)

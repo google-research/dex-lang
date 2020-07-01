@@ -184,12 +184,13 @@ withZeroTangent x = (x, zeroAt (tangentType (getType x)))
 tangentType :: Type -> Type
 tangentType (TabTy n a) = TabTy n (tangentType a)
 tangentType (TC con) = case con of
-  BaseType RealType  -> TC $ BaseType RealType
-  BaseType   _       -> UnitTy
-  IntRange   _ _     -> UnitTy
-  IndexRange _ _ _   -> UnitTy
-  UnitType           -> UnitTy
-  PairType a b       -> PairTy (tangentType a) (tangentType b)
+  BaseType (Scalar RealType) -> TC con
+  BaseType (Vector RealType) -> TC con
+  BaseType   _               -> UnitTy
+  IntRange   _ _             -> UnitTy
+  IndexRange _ _ _           -> UnitTy
+  UnitType                   -> UnitTy
+  PairType a b               -> PairTy (tangentType a) (tangentType b)
   _           -> error $ "Can't differentiate wrt type " ++ pprint con
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 

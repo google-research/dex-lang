@@ -357,12 +357,11 @@ typeCheckOp op = case op of
   SumTag x -> do
     SumTy l r <- typeCheck x
     l|:TyKind >> r|:TyKind
-    return $ TC $ BaseType BoolType
+    return $ TC $ BaseType $ Scalar BoolType
   ScalarBinOp binop x1 x2 ->
-    x1 |: BaseTy t1 >> x2 |: BaseTy t2 $> BaseTy tOut
+    x1 |: BaseTy (Scalar t1) >> x2 |: BaseTy (Scalar t2) $> BaseTy (Scalar tOut)
     where (t1, t2, tOut) = binOpType binop
-  -- TODO: check index set constraint
-  ScalarUnOp unop x -> x |: BaseTy ty $> BaseTy outTy
+  ScalarUnOp unop x -> x |: BaseTy (Scalar ty) $> BaseTy (Scalar outTy)
     where (ty, outTy) = unOpType unop
   Select p x y -> do
     p|:BoolTy
@@ -400,6 +399,12 @@ typeCheckOp op = case op of
   ArrayLoad arr -> do
     ArrayTy (BaseTy b)  <- typeCheck arr
     return $ BaseTy b
+  VectorBinOp binop x1 x2 ->
+    x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
+    where (t1, t2, tOut) = binOpType binop
+  VectorBroadcast v -> do
+    BaseTy (Scalar sb) <- typeCheck v
+    return $ BaseTy $ Vector sb
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
@@ -451,12 +456,14 @@ checkAction effName f = do
 
 litType :: LitVal -> BaseType
 litType v = case v of
-  IntLit  _ -> IntType
-  RealLit _ -> RealType
-  StrLit  _ -> StrType
-  BoolLit _ -> BoolType
+  IntLit  _ -> Scalar IntType
+  RealLit _ -> Scalar RealType
+  StrLit  _ -> Scalar StrType
+  BoolLit _ -> Scalar BoolType
+  VecLit  l -> Vector sb
+    where (Scalar sb) = litType $ head l
 
-binOpType :: ScalarBinOp -> (BaseType, BaseType, BaseType)
+binOpType :: ScalarBinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
 binOpType op = case op of
   IAdd   -> (i, i, i);  ISub   -> (i, i, i)
   IMul   -> (i, i, i);  ICmp _ -> (i, i, b)
@@ -470,7 +477,7 @@ binOpType op = case op of
         i = IntType
         r = RealType
 
-unOpType :: ScalarUnOp -> (BaseType, BaseType)
+unOpType :: ScalarUnOp -> (ScalarBaseType, ScalarBaseType)
 unOpType op = case op of
   Not             -> (BoolType, BoolType)
   FNeg            -> (RealType, RealType)

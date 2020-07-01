@@ -435,9 +435,9 @@ uPrim = withSrc $ do
       Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 baseType :: Parser BaseType
-baseType =   (symbol "Int"  $> IntType)
-         <|> (symbol "Real" $> RealType)
-         <|> (symbol "Bool" $> BoolType)
+baseType =   (symbol "Int"  $> Scalar IntType)
+         <|> (symbol "Real" $> Scalar RealType)
+         <|> (symbol "Bool" $> Scalar BoolType)
 
 -- === infix ops ===
 

@@ -9,9 +9,9 @@
 {-# LANGUAGE RankNTypes #-}
 
 module Array (
-  BaseType (..), LitVal (..), ArrayType, Array (..), ArrayRef (..),
+  BaseType (..), ScalarBaseType (..), LitVal (..), ArrayType, Array (..), ArrayRef (..),
   Vec (..), scalarFromArray, arrayFromScalar, arrayOffset, arrayHead, arrayConcat,
-  loadArray, storeArray, sizeOf, arrayType, unsafeWithArrayPointer) where
+  loadArray, storeArray, sizeOf, arrayType, unsafeWithArrayPointer, vectorWidth) where
 
 import Control.Monad
 import qualified Data.Vector.Storable as V
@@ -20,80 +20,101 @@ import Data.Store (Store)
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
-import Data.Coerce
 import GHC.Generics
 
-newtype Array = Array    Vec                 deriving (Show, Eq, Generic)
+data Array    = Array    BaseType  Vec       deriving (Show, Eq, Generic)
 data ArrayRef = ArrayRef ArrayType (Ptr ())  deriving (Show, Eq, Generic)
 
 data LitVal = IntLit  Int
             | RealLit Double
             | BoolLit Bool
             | StrLit  String
+            | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Generic)
 
 data Vec = IntVec    (V.Vector Int)
          | BoolVec   (V.Vector Int)
-         | DoubleVec (V.Vector Double)
+         | RealVec   (V.Vector Double)
            deriving (Show, Eq, Generic)
 
-data BaseType = IntType | BoolType | RealType | StrType
+data ScalarBaseType = IntType | BoolType | RealType | StrType
+                      deriving (Show, Eq, Generic)
+data BaseType = Scalar ScalarBaseType
+              | Vector ScalarBaseType
                 deriving (Show, Eq, Generic)
 
 type ArrayType = (Int, BaseType)
 
+vectorWidth :: Int
+vectorWidth = 4
+
+arrayLength :: Array -> Int
+arrayLength arr@(Array b _) = applyVec arr V.length `div` vecEntriesFor b
+
 arrayType :: Array -> ArrayType
-arrayType (Array (IntVec v))    = (V.length v, IntType)
-arrayType (Array (BoolVec v))   = (V.length v, BoolType)
-arrayType (Array (DoubleVec v)) = (V.length v, RealType)
+arrayType arr@(Array b _) = (arrayLength arr, b)
+
+vecEntriesFor :: BaseType -> Int
+vecEntriesFor t = case t of
+  Scalar _ -> 1
+  Vector _ -> vectorWidth
 
 sizeOf :: BaseType -> Int
-sizeOf _ = 8
+sizeOf t = vecEntriesFor t * 8
 
 scalarFromArray :: Array -> Maybe LitVal
-scalarFromArray arr@(Array vec) = case size of
+scalarFromArray arr@(Array b vec) = case arrayLength arr of
     1 -> Just $ case b of
-      IntType  -> IntLit  $ xs V.! 0       where IntVec    xs = vec
-      BoolType -> BoolLit $ xs V.! 0 /= 0  where BoolVec   xs = vec
-      RealType -> RealLit $ xs V.! 0       where DoubleVec xs = vec
-      _ -> error "Not implemented"
+      Scalar _ -> scalarFromVec vec
+      Vector _ -> VecLit $ fmap (\i -> scalarFromVec $ modifyVec vec (V.drop i)) [0..vectorWidth - 1]
     _ -> Nothing
   where
-    (size, b) = arrayType arr
+    scalarFromVec :: Vec -> LitVal
+    scalarFromVec v = case v of
+      IntVec    xs -> IntLit  $ xs V.! 0
+      BoolVec   xs -> BoolLit $ xs V.! 0 /= 0
+      RealVec   xs -> RealLit $ xs V.! 0
 
 arrayOffset :: Array -> Int -> Array
-arrayOffset arr off = modifyVec arr (V.drop off)
+arrayOffset (Array b vec) off = Array b $ modifyVec vec $ V.drop (off * vecEntriesFor b)
 
 arrayHead :: Array -> LitVal
-arrayHead arr = fromJust $ scalarFromArray $ modifyVec arr (V.slice 0 1)
+arrayHead (Array b vec) = fromJust $ scalarFromArray $ Array b $ modifyVec vec $ V.slice 0 (vecEntriesFor b)
 
 arrayFromScalar :: LitVal -> Array
 arrayFromScalar val = case val of
-  IntLit  x -> Array $ IntVec $ V.fromList [x]
-  BoolLit x -> Array $ IntVec $ V.fromList [x']
+  IntLit  x -> Array (Scalar IntType)  $ IntVec $ V.fromList [x]
+  BoolLit x -> Array (Scalar BoolType) $ BoolVec $ V.fromList [x']
     where x' = case x of False -> 0
                          True  -> 1
-  RealLit x -> Array $ DoubleVec $ V.fromList [x]
+  RealLit x -> Array (Scalar RealType) $ RealVec $ V.fromList [x]
   _ -> error "Not implemented"
 
 arrayConcat :: [Array] -> Array
-arrayConcat arrs = Array $ choose intVecs boolVecs doubleVecs
+arrayConcat arrs = Array b $ choose intVecs boolVecs doubleVecs
   where
-    intVecs    = [v | IntVec v    <- coerce arrs]
-    boolVecs   = [v | BoolVec v   <- coerce arrs]
-    doubleVecs = [v | DoubleVec v <- coerce arrs]
+    (Array b _) = head arrs
 
-    choose l [] [] = IntVec    $ V.concat l
-    choose [] l [] = BoolVec   $ V.concat l
-    choose [] [] l = DoubleVec $ V.concat l
+    intVecs    = [v | (Array _ (IntVec v )) <- arrs]
+    boolVecs   = [v | (Array _ (BoolVec v)) <- arrs]
+    doubleVecs = [v | (Array _ (RealVec v)) <- arrs]
+
+    choose l [] [] = IntVec  $ V.concat l
+    choose [] l [] = BoolVec $ V.concat l
+    choose [] [] l = RealVec $ V.concat l
     choose _  _  _ = error "Can't concatenate heterogenous vectors!"
 
 loadArray :: ArrayRef -> IO Array
-loadArray (ArrayRef (size, b) ptr) = Array <$> case b of
-  IntType  -> liftM IntVec    $ peekVec size $ castPtr ptr
-  BoolType -> liftM BoolVec   $ peekVec size $ castPtr ptr
-  RealType -> liftM DoubleVec $ peekVec size $ castPtr ptr
-  _ -> error "Not implemented"
+loadArray (ArrayRef (size, b) ptr) = Array b <$> case b of
+    Scalar sb -> loadVec sb 1
+    Vector sb -> loadVec sb vectorWidth
+  where
+    loadVec :: ScalarBaseType -> Int -> IO Vec
+    loadVec sb width = case sb of
+      IntType  -> liftM IntVec  $ peekVec (size * width) $ castPtr ptr
+      BoolType -> liftM BoolVec $ peekVec (size * width) $ castPtr ptr
+      RealType -> liftM RealVec $ peekVec (size * width) $ castPtr ptr
+      StrType  -> error "Not implemented"
 
 storeArray :: ArrayRef -> Array -> IO ()
 storeArray (ArrayRef _ ptr) arr = applyVec arr (pokeVec (castPtr ptr))
@@ -109,19 +130,20 @@ pokeVec ptr v = forM_ [0..(V.length v - 1)] $ \i -> do
 unsafeWithArrayPointer :: Array -> (Ptr () -> IO a) -> IO a
 unsafeWithArrayPointer arr f = applyVec arr (\v -> V.unsafeWith v (f. castPtr))
 
-modifyVec :: Array -> (forall a. Storable a => V.Vector a -> V.Vector a) -> Array
-modifyVec (Array vec) f = case vec of
-  IntVec v    -> Array $ IntVec    $ f v
-  BoolVec v   -> Array $ BoolVec   $ f v
-  DoubleVec v -> Array $ DoubleVec $ f v
+modifyVec :: Vec -> (forall a. Storable a => V.Vector a -> V.Vector a) -> Vec
+modifyVec vec f = case vec of
+  IntVec v  -> IntVec  $ f v
+  BoolVec v -> BoolVec $ f v
+  RealVec v -> RealVec $ f v
 
 applyVec :: Array -> (forall a. Storable a => V.Vector a -> b) -> b
-applyVec (Array vec) f = case vec of
-  IntVec v    -> f v
-  BoolVec v   -> f v
-  DoubleVec v -> f v
+applyVec (Array _ vec) f = case vec of
+  IntVec v  -> f v
+  BoolVec v -> f v
+  RealVec v -> f v
 
 instance Store Array
 instance Store Vec
 instance Store BaseType
+instance Store ScalarBaseType
 instance Store LitVal
