@@ -172,11 +172,11 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (Lam (Abs b@(_:>idxTy) (_, body))) -> do
+    For d (Lam (Abs b@(hint:>idxTy) (_, body))) -> do
       idxTy' <- impSubst env idxTy
       n' <- indexSetSize idxTy'
       dest <- allocDest maybeDest resultTy
-      emitLoop d n' $ \i -> do
+      emitLoop hint d n' $ \i -> do
         i' <- intToIndex idxTy i
         ithDest <- destGet dest i
         void $ toImpBlock (env <> b @> i') (Just ithDest, body)
@@ -443,7 +443,7 @@ zipWithDest dest atom f = case (dest, atom) of
   (DFor (Abs v _), Lam (Abs _ (TabArrow, _))) -> do
     let idxTy = varType v
     n <- indexSetSize idxTy
-    emitLoop Fwd n $ \i -> do
+    emitLoop NoName Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest i
@@ -475,7 +475,7 @@ zeroDest dest = traverse_ (initializeZero . IVar) dest
       IRefType (BaseTy (Vector RealType)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ RealLit 0.0)
       IRefType (TabTy v _) -> do
         n <- indexSetSize $ varType v
-        emitLoop Fwd n $ \i -> impGet ref i >>= initializeZero
+        emitLoop NoName Fwd n $ \i -> impGet ref i >>= initializeZero
       ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 addToAtom :: Dest -> Atom -> ImpM ()
@@ -536,19 +536,21 @@ allocKind allocTy ty = do
   return dest
 
 freshVar :: VarP a -> ImpM (VarP a)
-freshVar v = do
+freshVar (hint:>t) = do
   scope <- looks (fst . snd)
-  let v' = rename v scope
+  let v' = rename (name:>t) scope
   extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
+  where name = rawName GenName $ nameTag hint
 
-emitLoop :: Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
-emitLoop d n body = do
+emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
+emitLoop maybeHint d n body = do
   (i, loopBody) <- scopedBlock $ do
-    i <- freshVar ("i":>IIntTy)
+    i <- freshVar (hint:>IIntTy)
     body $ IVar i
     return i
   emitStatement (Nothing, Loop d i n loopBody)
+  where hint = case maybeHint of NoName -> "q"; _ -> maybeHint
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do

@@ -47,7 +47,6 @@ statementFlops (_, instr) = case instr of
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block
-  IWhile _ _    -> return () -- TODO: This is incorrect!
 
 evalSizeExpr :: IExpr -> Term
 evalSizeExpr (ILit (IntLit n)) = litTerm n
