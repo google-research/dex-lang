@@ -164,6 +164,10 @@ simplifyHof hof = case hof of
   For d lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     emit $ Hof $ For d lam'
+  Tile fT fS -> do
+    ~(fT', Nothing) <- simplifyLam fT
+    ~(fS', Nothing) <- simplifyLam fS
+    emit $ Hof $ Tile fT' fS'
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body
