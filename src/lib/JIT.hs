@@ -139,7 +139,7 @@ compileInstr allowAlloca instr = case instr of
     ptr' <- castLPtr charTy v'
     addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
-  IOffset x _ off -> do
+  IOffset x off _ -> do
     x' <- compileExpr x
     off' <- compileExpr off
     Just <$> gep x' off'

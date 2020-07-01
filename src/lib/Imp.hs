@@ -142,10 +142,10 @@ toImpOp (maybeDest, op) = case op of
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
       InclusiveLim a -> indexToInt t a
-      ExclusiveLim a -> indexToInt t a >>= impAdd IOne
+      ExclusiveLim a -> indexToInt t a >>= iaddI IOne
       Unlimited      -> return IZero
     restrictIdx <- indexToInt rt e
-    idx <- impAdd restrictIdx offset
+    idx <- iaddI restrictIdx offset
     returnVal =<< intToIndex t idx
   IndexRef ~(Var refVar@(_:>(RefTy h (Pi a)))) i -> do
     refDest    <- looks $ (! refVar) . fst . fst
@@ -155,9 +155,15 @@ toImpOp (maybeDest, op) = case op of
     returnVal $ Var subrefVar
   ArrayOffset arr idx off -> do
     i <- indexToInt (getType idx) idx
-    arrSlice <- impOffset (fromArrayAtom arr) i (fromScalarAtom off)
+    let (TC (ArrayType t)) = getType arr
+    let resTy = tabTypeGet t i
+    arrSlice <- impOffset (fromArrayAtom arr) (fromScalarAtom off) resTy
     returnVal $ toArrayAtom arrSlice
   ArrayLoad arr -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
+  SliceOffset ~(Con (Coerce (TC (IndexSlice n l)) tileOffset)) idx -> do
+    i' <- indexToInt (TC (IntRange (IntVal 0) l)) idx
+    i <- iaddI (fromScalarAtom tileOffset) i'
+    returnVal =<< intToIndex n i
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -173,14 +179,34 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (Lam (Abs b@(hint:>idxTy) (_, body))) -> do
-      idxTy' <- impSubst env idxTy
-      n' <- indexSetSize idxTy'
+    For d (LamVal b@(hint:>idxTy') body) -> do
+      idxTy <- impSubst env idxTy'
+      n' <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy
       emitLoop hint d n' $ \i -> do
-        i' <- intToIndex idxTy i
+        idx <- intToIndex idxTy i
         ithDest <- destGet dest i
-        void $ toImpBlock (env <> b @> i') (Just ithDest, body)
+        void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
+      destToAtom dest
+    Tile (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
+      ~tileTy@(TC (IndexSlice idxTy tileLenAtom)) <- impSubst env tileTy'
+      n <- indexSetSize idxTy
+      dest <- allocDest maybeDest resultTy
+      let tileLen = fromScalarAtom tileLenAtom
+      nTiles      <- n `idivI` tileLen
+      epilogueOff <- nTiles `imulI` tileLen
+      nEpilogue   <- n `isubI` epilogueOff
+      let tileDimType = TC $ IntRange (IntVal 0) tileLenAtom
+      emitLoop tHint Fwd nTiles $ \iTile -> do
+        tileOffset <- iTile `imulI` tileLen
+        let tileAtom = Con $ Coerce tileTy (toScalarAtom IntTy tileOffset)
+        tileDest <- destSlice dest tileOffset tileDimType
+        void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
+      emitLoop sHint Fwd nEpilogue $ \iEpi -> do
+        i <- iEpi `iaddI` epilogueOff
+        idx <- intToIndex idxTy i
+        ithDest <- destGet dest i
+        void $ toImpBlock (env <> sb @> idx) (Just ithDest, sBody)
       destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
       ~condVarDest@(DRef condVar) <- allocDest Nothing BoolTy
@@ -257,9 +283,22 @@ destGet :: Dest -> IExpr -> ImpM Dest
 destGet dest i = case dest of
   DFor a@(Abs v _) -> do
     idx <- intToIndex (varType v) i
-    traverse (\ref -> toIVar <$> (IVar ref) `impGet` i) $ applyAbs a idx
-  _ -> error $ "Indexing into a non-array dest"
-  where toIVar ~(IVar v) = v
+    traverse (\ref -> fromIVar <$> (IVar ref) `impGet` i) $ applyAbs a idx
+  _ -> error "Indexing into a non-array dest"
+  where fromIVar ~(IVar v) = v
+
+destSlice :: Dest -> IExpr -> Type -> ImpM Dest
+destSlice dest from idxTy = case dest of
+  DFor (Abs v d) -> do
+    when (v `isin` freeVars d) $ error "destSlice doesn't support dependent dimensions!"
+    DFor . Abs (NoName:>idxTy) <$> traverse sliceRef d
+  _ -> error "Slicing a non-array dest"
+  where
+    fromIVar ~(IVar v) = v
+    sliceRef ~ref@(_:>IRefType t@(TabTy dv b)) = do
+      when (dv `isin` freeVars b) $ error "destSlice doesn't support dependent dimension!"
+      off <- t `offsetTo` from
+      fromIVar <$> impOffset (IVar ref) off (TabTy (NoName:>idxTy) b)
 
 -- XXX: This should only be called when it is known that the dest will _never_
 --      be modified again, because it doesn't copy the state!
@@ -441,7 +480,10 @@ offsetToE ty i = case ty of
 
 zipWithDest :: Dest -> Atom -> (IExpr -> IExpr -> ImpM ()) -> ImpM ()
 zipWithDest dest atom f = case (dest, atom) of
-  (DFor (Abs v _), Lam (Abs _ (TabArrow, _))) -> do
+  (DFor (Abs v _), Lam (Abs lv (TabArrow, _))) -> do
+    -- This check is quite important, because Imp type checking has no way to
+    -- figure out if the loop length we've generated here makes sense or not.
+    unless (varType v == varType lv) $ error "Mismatched dimensions in zipWithDest!"
     let idxTy = varType v
     n <- indexSetSize idxTy
     emitLoop NoName Fwd n $ \i -> do
@@ -494,23 +536,36 @@ addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar
 
 -- === Imp embedding ===
 
-emitBinOp :: ScalarBinOp -> IExpr -> IExpr -> ImpM IExpr
-emitBinOp op x y = emitInstr $ IPrimOp $ ScalarBinOp op x y
+embedBinOp :: (Atom -> Atom -> Embed Atom) -> Type -> Type -> (IExpr -> IExpr -> ImpM IExpr)
+embedBinOp f xt yt x y = fromScalarAtom <$> fromEmbed (f (toScalarAtom xt x) (toScalarAtom yt y))
 
-impAdd :: IExpr -> IExpr -> ImpM IExpr
-impAdd IZero y = return y
-impAdd x IZero = return x
-impAdd (IIntVal x) (IIntVal y) = return $ IIntVal $ x + y
-impAdd x y = emitBinOp IAdd x y
+iaddI :: IExpr -> IExpr -> ImpM IExpr
+iaddI = embedBinOp iadd IntTy IntTy
+
+isubI :: IExpr -> IExpr -> ImpM IExpr
+isubI = embedBinOp isub IntTy IntTy
+
+imulI :: IExpr -> IExpr -> ImpM IExpr
+imulI = embedBinOp imul IntTy IntTy
+
+idivI :: IExpr -> IExpr -> ImpM IExpr
+idivI = embedBinOp idiv IntTy IntTy
 
 impGet :: IExpr -> IExpr -> ImpM IExpr
 impGet ref i = case ref of
-  (IVar (_ :> IRefType t)) -> emitInstr . IOffset ref i =<< (t `offsetTo` i)
+  (IVar (_ :> IRefType t)) -> do
+    off <- t `offsetTo` i
+    let resTy = tabTypeGet t i
+    emitInstr $ IOffset ref off resTy
   _ -> error $ "impGet called with non-ref: " ++ show ref
 
-impOffset :: IExpr -> IExpr -> IExpr -> ImpM IExpr
-impOffset ref idx off = case ref of
-  (IVar (_ :> IRefType _)) -> emitInstr $ IOffset ref idx off
+tabTypeGet :: ScalarTableType -> IExpr -> ScalarTableType
+tabTypeGet (TabTyAbs a) i = snd $ applyAbs a (toScalarAtom (absArgType a) i)
+tabTypeGet t _ = error $ "Not a non-scalar scalar table: " ++ pprint t
+
+impOffset :: IExpr -> IExpr -> ScalarTableType -> ImpM IExpr
+impOffset ref off ty = case ref of
+  (IVar (_ :> IRefType _)) -> emitInstr $ IOffset ref off ty
   _ -> error $ "impOffset called with non-ref: " ++ show ref
 
 load :: IExpr -> ImpM IExpr
@@ -621,10 +676,10 @@ instrTypeChecked instr = case instr of
     assertEq (IRefType BoolTy) condRefTy $ "Not a bool ref: " ++ pprint cond
     checkProg body
     return Nothing
-  IOffset e i _ -> do
-    IRefType (TabTyAbs a) <- checkIExpr e
+  IOffset e i t -> do
+    IRefType (TabTy _ _) <- checkIExpr e
     checkInt i
-    return $ Just $ IRefType $ snd $ applyAbs a (toScalarAtom (absArgType a) i)
+    return $ Just $ IRefType $ t
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do
@@ -699,9 +754,7 @@ instrType instr = case instr of
   Free _          -> return Nothing
   Loop _ _ _ _    -> return Nothing
   IWhile _ _      -> return Nothing
-  IOffset e i _   -> case impExprType e of
-    IRefType (TabTyAbs a) -> return $ Just $ IRefType $ snd $ applyAbs a (toScalarAtom (absArgType a) i)
-    ty -> error $ "Can't index into: " ++ pprint ty
+  IOffset _ _ ty  -> return $ Just $ IRefType ty
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op

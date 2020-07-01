@@ -222,7 +222,7 @@ instance Pretty ImpInstr where
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
   pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr idx lidx) = p expr <+> "+>" <+> p lidx <+> (parens $ "index:" <+> p idx)
+  pretty (IOffset expr lidx t)   = p expr <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
   pretty (Free (v:>_))           = "free"  <+> p v
   pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
                                    nest 4 (hardline <> p block)

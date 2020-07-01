@@ -139,7 +139,7 @@ infixr 7 |:
   ty <- typeCheck x
   checkEq reqTy ty
 
-checkEq :: Type -> Type -> TypeM ()
+checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
@@ -232,6 +232,7 @@ instance CoreVariant (PrimHof a) where
     RunState  _ _ -> alwaysAllowed
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
+    Tile _ _      -> alwaysAllowed
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -314,8 +315,8 @@ typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
   ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
-  IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b
-                          >> return TyKind
+  IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
+  IndexSlice n l   -> n|:TyKind >> l|:IntTy >> return TyKind
   SumType  l r     -> l|:TyKind >> r|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
@@ -344,8 +345,9 @@ typeCheckCon con = case con of
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   Coerce t e -> case t of
-    TC (IntRange   _ _  ) -> coerceFrom IntTy
-    TC (IndexRange _ _ _) -> coerceFrom IntTy
+    TC (IntRange   _ _  ) -> coerceFrom IntTy -- from ordinal
+    TC (IndexRange _ _ _) -> coerceFrom IntTy -- from ordinal
+    TC (IndexSlice _ _  ) -> coerceFrom IntTy -- from ordinal of the first slice element
     Var _                 -> t |: TyKind $> t
     _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
     where coerceFrom f = e |: f $> t
@@ -414,6 +416,11 @@ typeCheckOp op = case op of
   ArrayLoad arr -> do
     ArrayTy (BaseTy b)  <- typeCheck arr
     return $ BaseTy b
+  SliceOffset s i -> do
+    TC (IndexSlice n l) <- typeCheck s
+    TC (IntRange (IntVal 0) l') <- typeCheck i
+    checkEq l l'
+    return n
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop
@@ -436,6 +443,19 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
+  Tile fT fS -> do
+    Pi (Abs tv (arr, TabTy dv b)) <- typeCheck fT
+    TC (IndexSlice n l) <- return $ varType tv
+    checkEq (TC $ IntRange (IntVal 0) l) (varType dv)
+    Pi (Abs sv (arr', b')) <- typeCheck fS
+    checkEq n (varType sv)
+    when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+    when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+    checkEq b b'
+    checkEq arr arr'
+    -- TODO: check `tv` isn't free in `eff`
+    declareEffs $ arrowEff arr
+    return $ Pi $ Abs sv (TabArrow, b')
   While cond body -> do
     Pi (Abs (NoName:>UnitTy) (arr , condTy)) <- typeCheck cond
     Pi (Abs (NoName:>UnitTy) (arr', bodyTy)) <- typeCheck body
