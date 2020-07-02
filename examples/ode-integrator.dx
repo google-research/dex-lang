@@ -2,6 +2,8 @@
 Using only generic vector operations.
 
 Time : Type = Real
+
+-- State of Euler solver: (old state, old time, new state, new time)
 def Eulerstate (a:Type) : Type = (a & Time & a & Time)
 
 def eulerStep
