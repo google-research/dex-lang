@@ -129,7 +129,7 @@ instance Pretty e => Pretty (PrimTC e) where
                              Unlimited      -> "."
     TypeKind -> "Type"
     EffectRowKind -> "EffKind"
-    NewtypeApp f _ xs -> p f <> foldMap (\x -> " " <> p x) xs
+    NewtypeApp f xs -> p f <> foldMap (\x -> " " <> p x) xs
     _ -> prettyExprDefault $ TCExpr con
 
 instance Pretty e => Pretty (PrimCon e) where

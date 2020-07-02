@@ -197,7 +197,7 @@ data PrimTC e =
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
       | JArrayType [Int] ScalarBaseType
-      | NewtypeApp e e [e]  -- binding var, wrapped type, args
+      | NewtypeApp e [e]  -- binding var args
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =

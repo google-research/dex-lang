@@ -204,7 +204,7 @@ instance CoreVariant (PrimTC a) where
     TypeKind -> alwaysAllowed
     EffectRowKind  -> alwaysAllowed
     JArrayType _ _ -> neverAllowed
-    NewtypeApp _ _ _ -> goneBy Simp
+    NewtypeApp _ _ -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimOp a) where
@@ -323,13 +323,16 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   JArrayType _ _   -> undefined
-  NewtypeApp _ wrapTy xs -> foldM checkApp wrapTy xs where
-    checkApp :: Atom -> Atom -> TypeM Type
-    checkApp (Pi piTy) x = do
-      x |: absArgType piTy
-      -- Newtype arrows should be pure.
-      let (PlainArrow Pure, resultTy) = applyAbs piTy x
-      return resultTy
+  NewtypeApp f xs -> do
+    fTy <- typeCheck f
+    foldM checkApp fTy xs
+    where
+      checkApp :: Atom -> Atom -> TypeM Type
+      checkApp (Pi piTy) x = do
+        x |: absArgType piTy
+        -- Newtype arrows should be pure.
+        let (PlainArrow Pure, resultTy) = applyAbs piTy x
+        return resultTy
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
