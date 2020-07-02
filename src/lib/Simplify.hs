@@ -72,6 +72,8 @@ simplifyAtom atom = case atom of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
         -- TODO: check scope?
+        Just (wrapTy, LetBound NewtypeLet _) ->
+            pure $ TC $ NewtypeApp atom wrapTy []
         Just (_, LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
         _      -> substEmbed atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
@@ -139,6 +141,8 @@ simplifyExpr expr = case expr of
     case f' of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
+      TC (NewtypeApp wrapper wrapTy xs) ->
+        return $ TC $ NewtypeApp wrapper wrapTy (xs ++ [x'])
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof

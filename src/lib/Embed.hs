@@ -512,10 +512,10 @@ reduceBlock scope (Block decls result) = do
 
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
-  Var v -> case snd (scope ! v) of
+  Var v -> case scope ! v of
     -- TODO: worry about effects!
-    LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    LetBound NewtypeLet _ -> TC $ NewtypeApp x []
+    (_, LetBound PlainLet expr) -> fromMaybe x $ reduceExpr scope expr
+    (wrapTy, LetBound NewtypeLet _) -> TC $ NewtypeApp x wrapTy []
     _ -> x
   _ -> x
 
@@ -529,8 +529,8 @@ reduceExpr scope expr = case expr of
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
-      TC (NewtypeApp ty xs) ->
-        Just $ TC $ NewtypeApp ty (xs ++ [x'])
+      TC (NewtypeApp wrapper wrapTy xs) ->
+        Just $ TC $ NewtypeApp wrapper wrapTy (xs ++ [x'])
       _ -> Nothing
   _ -> Nothing
 
