@@ -336,6 +336,7 @@ typeCheckCon con = case con of
   Coerce t e -> case t of
     TC (IntRange   _ _  ) -> coerceFrom IntTy
     TC (IndexRange _ _ _) -> coerceFrom IntTy
+    Var _                 -> t |: TyKind $> t
     _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
     where coerceFrom f = e |: f $> t
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy

@@ -970,7 +970,7 @@ builtinNames = M.fromList
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
-  , ("unsafeAsIndex", ConExpr $ AsIdx () ())
+  , ("unsafeAsIndex", ConExpr $ Coerce () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
