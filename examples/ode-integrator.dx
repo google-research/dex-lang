@@ -3,40 +3,58 @@ Using only generic vector operations.
 
 Time : Type = Real
 
-def eulerStep (dict: VSpace a) ?=>
-              (zref: Ref h a) ->
-              (dynamics: a -> Time -> a) ->
-              (dt: Time) ->
-              (t: Time)
-              : {State h} Unit =
-    z = get zref
-    zref := z + dt .* dynamics z t
+-- State of Euler solver: (old state, old time, new state, new time)
+def Eulerstate (a:Type) : Type = (a & Time & a & Time)
 
-def euler (dict: VSpace a) ?=> 
-          (dynamics: a -> Time -> a) ->
-          (z0: a) ->
-          (t0: Time) ->
-          (t1: Time) ->
-          (dt: Time)
-          : a =
-     n = floor ((t1 - t0) / dt)
-     snd $ withState z0 \zref.
-       for i:(Fin n).
-         t = t0 + (i2r (ordinal i)) * dt
-         eulerStep zref dynamics dt t
+def eulerStep
+  (dict: VSpace a) ?=> (zt: Eulerstate a)
+  (dynamics: a -> Time -> a) (dt: Time)
+  : (Eulerstate a) =
+  (z_old, t_old, z, t) = zt
+  (z, t, z + dt .* dynamics z t, t + dt)
 
-def myDyn (dict: VSpace a) ?=> 
-          (z : a) -> (t:Time) : a = z
+def singleEuler (dict: VSpace a) ?=> (dynamics: a -> Time -> a)
+(zt:Eulerstate a) (t1: Time) (dt: Time) : (Eulerstate a) =
+  -- Take steps until we pass t1
+  snd $ withState zt \ztref.
+    while ( \().
+      (_, _, _, t) = get ztref
+      (t < t1)) \().  -- stopping condition
+        ztref := eulerStep (get ztref) dynamics dt
+
+def linear_interp
+  (dict: VSpace a) ?=> (z0: a) --o (z1: a) --o (t0: Time) (t1: Time) (t: Time) --o : a =
+  z0 + ((t - t0) / ((t1 - t0) + 0.000000001)) .* (z1 - z0)
+
+def odeint (dict: VSpace a) ?=> (dynamics: a -> Time -> a)
+  (z0: a) (t0: Time) (times: n=>Time) (dt: Time) : n=>a =
+  -- todo: assert / enforce that times is monotonically increasing
+  -- todo: never go past final time
+
+  init = (z0, t0, z0, t0)
+  
+  body = \i state.
+    t = times.i
+    (za, ta, zb, tb) = singleEuler dynamics state t dt
+    zt = linear_interp za zb ta tb t
+    ((za, ta, zb, tb), zt)
+  snd $ scan init body
+
+'#### Example: Linear dynamics
+
+def myDyn (dict: VSpace a) ?=> (z : a) -> (t:Time) : a = z
 
 z0 = [1.0]
 t0 = 0.0
-t1 = 1.0
-dt = 0.0001
+t1 = [1.0]
+dt = 0.001
 
-:p euler myDyn z0 t0 t1 dt
-> [2.7181458]
+:p odeint myDyn z0 t0 t1 dt
+> [[2.716924]]
 
 :plot
-  xsTest = linspace (Fin 100) 0.0 1.0
-  zip xsTest $ map (\t1. sum $ euler myDyn z0 t0 t1 dt) xsTest
+  xs = linspace (Fin 100) 0.0 1.0
+  ys = odeint myDyn z0 t0 xs dt
+  ys' = for i. ys.i.(fromOrdinal _ 0)
+  zip xs ys'
 > <graphical output>
