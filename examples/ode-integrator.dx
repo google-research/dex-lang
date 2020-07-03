@@ -57,3 +57,4 @@ dt = 0.001
   ys = odeint myDyn z0 t0 xs dt
   ys' = for i. ys.i.(fromOrdinal _ 0)
   zip xs ys'
+> <graphical output>
