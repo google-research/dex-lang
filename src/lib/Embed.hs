@@ -21,7 +21,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
-              traverseAtom, arrOffset, arrLoad,
+              traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               sumTag, getLeft, getRight, fromSum, clampPositive,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
@@ -70,7 +70,8 @@ runSubstEmbed :: SubstEmbedT Identity a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
-emit = emitAnn PlainLet
+emit (Atom a) = return a
+emit expr     = emitAnn PlainLet expr
 
 emitAnn :: MonadEmbed m => LetAnn -> Expr -> m Atom
 emitAnn ann expr = do
@@ -104,9 +105,12 @@ emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
 freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
-freshVar v = do
+freshVar (n:>ty) = do
+  name <- case n of
+    NoName -> getNameHint
+    _      -> return n
   scope <- getScope
-  let v' = rename v scope
+  let v' = rename (name:>ty) scope
   return v'
 
 buildPi :: (MonadError Err m, MonadEmbed m)
@@ -116,7 +120,7 @@ buildPi b f = do
      b' <- freshVar b
      embedExtend $ asFst $ b' @> (varType b', PiBound)
      (arr, ans) <- f $ Var b'
-     return $ Pi $ Abs b' (arr, ans)
+     return $ Pi $ makeAbs b' (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return piTy
 
@@ -141,7 +145,7 @@ buildLamAux b fArr fBody = do
      embedExtend $ asFst $ b' @> (varType b', LamBound (void arr))
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (b', arr, ans, aux)
-  return (Lam $ Abs b' (arr, wrapDecls decls ans), aux)
+  return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -448,6 +452,9 @@ scopedDecls m = do
 
 type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
 
+substTraversalDef :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m
+substTraversalDef = (traverseExpr substTraversalDef, traverseAtom substTraversalDef)
+
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
                => TraversalDef m -> [Decl] -> m [Decl]
@@ -465,11 +472,11 @@ traverseDeclsOpen def@(fExpr, _) (Let letAnn b expr : decls) = do
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
-traverseBlock def block = buildScoped $ traverseBlock' def block
+traverseBlock def block = buildScoped $ evalBlockE def block
 
-traverseBlock' :: (MonadEmbed m, MonadReader SubstEnv m)
+evalBlockE :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Atom
-traverseBlock' def@(fExpr, _) (Block decls result) = do
+evalBlockE def@(fExpr, _) (Block decls result) = do
   env <- traverseDeclsOpen def decls
   extendR env $ fExpr result >>= emit
 
@@ -489,7 +496,7 @@ traverseAtom def@(_, fAtom) atom = case atom of
     b' <- mapM fAtom b
     buildDepEffLam b'
       (\x -> extendR (b'@>x) (substEmbed arr))
-      (\x -> extendR (b'@>x) (traverseBlock' def body))
+      (\x -> extendR (b'@>x) (evalBlockE def body))
   Pi _ -> substEmbed atom
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
