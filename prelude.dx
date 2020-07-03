@@ -352,9 +352,29 @@ def while (cond: Unit -> {|eff} Bool) (body: Unit -> {|eff} Unit) : {|eff} Unit 
 
 'Vector support
 
-VectorWidth = 8  -- XXX: Keep this synced with the constant defined in Array.hs
+def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
+
+VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
 VectorReal  = %VectorRealType
-def broadcastVector (v : Real) : VectorReal = %broadcastVector v
+
+def packVector (a : Real) (b : Real) (c : Real) (d : Real) : VectorReal = %vectorPack a b c d
+def indexVector (v : VectorReal) (i : Fin VectorWidth) : Real = %vectorIndex v i
+
+-- NB: Backends should be smart enough to optimize this to a vector load from v
+def loadVector (v : (Fin VectorWidth)=>Real) : VectorReal =
+  idx = Fin VectorWidth
+  (packVector v.(UNSAFEFromOrdinal idx 0)
+              v.(UNSAFEFromOrdinal idx 1)
+              v.(UNSAFEFromOrdinal idx 2)
+              v.(UNSAFEFromOrdinal idx 3))
+def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
+  idx = Fin VectorWidth
+  [ indexVector v (UNSAFEFromOrdinal idx 0)
+  , indexVector v (UNSAFEFromOrdinal idx 1)
+  , indexVector v (UNSAFEFromOrdinal idx 2)
+  , indexVector v (UNSAFEFromOrdinal idx 3) ]
+
+def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
 @instance vectorRealAdd : Add (VectorReal) =
   MkAdd ( \x y. %vfadd x y

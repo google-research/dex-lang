@@ -87,7 +87,7 @@ instance HasType Atom where
     Pi (Abs b (arr, resultTy)) -> withBinder b $
       checkArrow arr >> resultTy|:TyKind $> TyKind
     Con con  -> typeCheckCon con
-    TC tyCon -> typeCheckTyCon tyCon $> TyKind
+    TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
 
 instance HasType Expr where
@@ -309,20 +309,30 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 
 -- === primitive ops and constructors ===
 
-typeCheckTyCon :: TC -> TypeM ()
+typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
-  BaseType _       -> return ()
-  ArrayType t      -> t|:TyKind
-  IntRange a b     -> a|:IntTy >> b|:IntTy
+  BaseType _       -> return TyKind
+  ArrayType t      -> t|:TyKind >> return TyKind
+  IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b
-  SumType  l r     -> l|:TyKind >> r|:TyKind
-  PairType a b     -> a|:TyKind >> b|:TyKind
-  UnitType         -> return ()
-  RefType r a      -> r|:TyKind >> a|:TyKind
-  TypeKind         -> return ()
-  EffectRowKind    -> return ()
+                          >> return TyKind
+  SumType  l r     -> l|:TyKind >> r|:TyKind >> return TyKind
+  PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
+  UnitType         -> return TyKind
+  RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
+  TypeKind         -> return TyKind
+  EffectRowKind    -> return TyKind
   JArrayType _ _   -> undefined
-  NewtypeApp _ _ -> return () -- TODO!
+  NewtypeApp f xs -> do
+    fTy <- typeCheck f
+    foldM checkApp fTy xs
+    where
+      checkApp :: Atom -> Atom -> TypeM Type
+      checkApp (Pi piTy) x = do
+        x |: absArgType piTy
+        -- Newtype arrows should be pure.
+        let (PlainArrow Pure, resultTy) = applyAbs piTy x
+        return resultTy
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -336,6 +346,7 @@ typeCheckCon con = case con of
   Coerce t e -> case t of
     TC (IntRange   _ _  ) -> coerceFrom IntTy
     TC (IndexRange _ _ _) -> coerceFrom IntTy
+    Var _                 -> t |: TyKind $> t
     _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
     where coerceFrom f = e |: f $> t
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
@@ -406,9 +417,17 @@ typeCheckOp op = case op of
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop
-  VectorBroadcast v -> do
-    BaseTy (Scalar sb) <- typeCheck v
+  VectorPack xs -> do
+    unless (length xs == vectorWidth) $ throw TypeErr lengthMsg
+    BaseTy (Scalar sb) <- typeCheck $ head xs
+    mapM_ (|: (BaseTy (Scalar sb))) xs
     return $ BaseTy $ Vector sb
+    where lengthMsg = "VectorBroadcast should have exactly " ++ show vectorWidth ++
+                      " elements: " ++ pprint op
+  VectorIndex x i -> do
+    BaseTy (Vector sb) <- typeCheck x
+    i |: TC (IntRange (IntVal 0) (IntVal vectorWidth))
+    return $ BaseTy $ Scalar sb
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

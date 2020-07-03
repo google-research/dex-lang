@@ -306,7 +306,7 @@ compilePrimOp (ScalarBinOp op x y) = compileBinOp op x y
 compilePrimOp (VectorBinOp op x y) = compileBinOp op x y
 compilePrimOp (ScalarUnOp op x) = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg      -> emitInstr realTy $ L.FSub L.noFastMathFlags (litReal 0.0) x []
+  FNeg      -> emitInstr realTy $ L.FSub mathFlags (litReal 0.0) x []
   Not       -> emitInstr boolTy $ L.Xor x (litInt 1) []
   BoolToInt -> return x -- bools stored as ints
   UnsafeIntToBool -> return x -- bools stored as ints
@@ -316,11 +316,13 @@ compilePrimOp (Select p x y) = do
   emitInstr (L.typeOf x) $ L.Select p' x y []
 compilePrimOp (FFICall name ansTy xs) =
   compileFFICall name (scalarTy ansTy) xs
-compilePrimOp (VectorBroadcast x) = foldM fillElem undef [0..vectorWidth - 1]
+compilePrimOp (VectorPack elems) = foldM fillElem undef $ zip elems [0..]
   where
-    resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf x
-    fillElem v i = emitInstr resTy $ L.InsertElement v x (litInt i) []
+    resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
+    fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (litInt i) []
     undef = L.ConstantOperand $ C.Undef resTy
+compilePrimOp (VectorIndex v i) = emitInstr resTy $ L.ExtractElement v i []
+  where (L.VectorType _ resTy) = L.typeOf v
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
 compileBinOp :: ScalarBinOp -> Operand -> Operand -> CompileM Operand
@@ -330,15 +332,19 @@ compileBinOp op x y = case op of
   IMul   -> emitInstr longTy $ L.Mul False False x y []
   IDiv   -> emitInstr longTy $ L.SDiv False x y []
   Rem    -> emitInstr longTy $ L.SRem x y []
-  FAdd   -> emitInstr realTy $ L.FAdd L.noFastMathFlags x y []
-  FSub   -> emitInstr realTy $ L.FSub L.noFastMathFlags x y []
-  FMul   -> emitInstr realTy $ L.FMul L.noFastMathFlags x y []
-  FDiv   -> emitInstr realTy $ L.FDiv L.noFastMathFlags x y []
+  FAdd   -> emitInstr realTy $ L.FAdd mathFlags x y []
+  FSub   -> emitInstr realTy $ L.FSub mathFlags x y []
+  FMul   -> emitInstr realTy $ L.FMul mathFlags x y []
+  FDiv   -> emitInstr realTy $ L.FDiv mathFlags x y []
   And    -> emitInstr boolTy $ L.And x y []
   Or     -> emitInstr boolTy $ L.Or  x y []
   ICmp c -> emitInstr boolTy (L.ICmp (intCmpOp   c) x y []) >>= extendOneBit
   FCmp c -> emitInstr boolTy (L.FCmp (floatCmpOp c) x y []) >>= extendOneBit
   _ -> error "Not implemented"
+
+-- FP contractions should only lead to fewer rounding points, so we allow those
+mathFlags :: L.FastMathFlags
+mathFlags = L.noFastMathFlags { L.allowContract = True }
 
 floatCmpOp :: CmpOp -> L.FloatingPointPredicate
 floatCmpOp op = case op of

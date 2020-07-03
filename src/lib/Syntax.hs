@@ -197,7 +197,7 @@ data PrimTC e =
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
       | JArrayType [Int] ScalarBaseType
-      | NewtypeApp e [e]
+      | NewtypeApp e [e]  -- binding var args
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -232,7 +232,8 @@ data PrimOp e =
       | ArrayLoad e
       -- SIMD operations
       | VectorBinOp ScalarBinOp e e
-      | VectorBroadcast e
+      | VectorPack [e]               -- List should have exactly vectorWidth elements
+      | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
@@ -967,7 +968,9 @@ builtinNames = M.fromList
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
-  , ("broadcastVector", OpExpr $ VectorBroadcast ())
+  , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
+  , ("vectorIndex", OpExpr $ VectorIndex () ())
+  , ("unsafeAsIndex", ConExpr $ Coerce () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()

@@ -135,7 +135,7 @@ evalUModuleVal env v m = do
 
 lookupBindings :: Scope -> VarP ann -> Atom
 lookupBindings scope v = reduceAtom scope x
-  where (_, LetBound _ (Atom x)) = scope ! v
+  where (_, LetBound PlainLet (Atom x)) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable
@@ -169,7 +169,10 @@ initializeBackend backend = case backend of
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
-arrayVars x = map (\(v@(Name ArrayName _ _), (ty, _)) -> v :> ty) $ envPairs (freeVars x)
+arrayVars x = foldMap go $ envPairs (freeVars x)
+  where go :: (Name, (Type, BinderInfo)) -> [Var]
+        go (v@(Name ArrayName _ _), (ty, _)) = [v :> ty]
+        go _ = []
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
