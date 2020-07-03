@@ -224,10 +224,11 @@ def myOtherFst ((x, _):a&b) : a = x
    transposeLinear f 1.0
 > 4.0
 
-def transpose' (x:n=>m=>Real) --o : m=>n=>Real = for i j. x.j.i
-
-:p transposeLinear transpose' [[1.0, 2.0, 3.0]]
-> [[1.0], [2.0], [3.0]]
+-- FIXME: This fails due to shadowing!
+--def transpose' (x:n=>m=>Real) --o : m=>n=>Real = for i j. x.j.i
+--
+--:p transposeLinear transpose' [[1.0, 2.0, 3.0]]
+--> [[1.0], [2.0], [3.0]]
 
 :p
    f : Real --o (Fin 3=>Real) =

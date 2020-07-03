@@ -10,6 +10,8 @@
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE FlexibleInstances #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE DerivingVia #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module Imp (toImpFunction, impExprType) where
@@ -20,7 +22,6 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Text.Prettyprint.Doc
-import Data.Foldable
 
 import Embed
 import Array
@@ -61,7 +62,7 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
       outDest <- allocKind Unmanaged $ getType block
       void $ toImpBlock mempty (Just outDest, block)
       atomOut <- destToAtomScalarAction (return . toArrayAtom . IVar) outDest
-      return (toList outDest, atomOut)
+      return (destArrays outDest, atomOut)
 
 runImpM :: [ScalarTableVar] -> ImpM a -> a
 runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
@@ -198,8 +199,8 @@ toImpHof env (maybeDest, hof) = do
       nEpilogue   <- n `isubI` epilogueOff
       let tileDimType = TC $ IntRange (IntVal 0) tileLenAtom
       emitLoop tHint Fwd nTiles $ \iTile -> do
-        tileOffset <- iTile `imulI` tileLen
-        let tileAtom = Con $ Coerce tileTy (toScalarAtom IntTy tileOffset)
+        tileOffset <- toScalarAtom IntTy <$> iTile `imulI` tileLen
+        let tileAtom = Con $ Coerce tileTy tileOffset
         tileDest <- destSlice dest tileOffset tileDimType
         void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
       emitLoop sHint Fwd nEpilogue $ \iEpi -> do
@@ -209,12 +210,12 @@ toImpHof env (maybeDest, hof) = do
         void $ toImpBlock (env <> sb @> idx) (Just ithDest, sBody)
       destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
-      ~condVarDest@(DRef condVar) <- allocDest Nothing BoolTy
+      ~condVarDest@(Dest condVar) <- allocDest Nothing BoolTy
       void $ toImpBlock env (Just condVarDest, cond)
       (_, body') <- scopedBlock $do
         void $ toImpBlock env (Nothing, body)
         toImpBlock env (Just condVarDest, cond)
-      emitStatement (Nothing, IWhile (IVar condVar) body')
+      emitStatement (Nothing, IWhile (fromArrayAtom condVar) body')
       return UnitVal
     RunReader r (BinaryFunVal _ ref _ body) -> do
       rDest <- alloc $ getType r
@@ -223,14 +224,14 @@ toImpHof env (maybeDest, hof) = do
       withRefScope rVar rDest $
         toImpBlock (env <> ref @> Var rVar) (maybeDest, body)
     RunWriter (BinaryFunVal _ ref _ body) -> do
-      ~(DPair aDest wDest) <- allocDest maybeDest resultTy
-      zeroDest wDest
+      (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
+      zeroDest $ wDest
       wVar <- freshVar ref
       void $ withRefScope wVar wDest $
         toImpBlock (env <> ref @> Var wVar) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom wDest
     RunState s (BinaryFunVal _ ref _ body) -> do
-      ~(DPair aDest sDest) <- allocDest maybeDest resultTy
+      (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       copyAtom sDest =<< impSubst env s
       sVar <- freshVar ref
       void $ withRefScope sVar sDest $
@@ -246,59 +247,60 @@ toImpHof env (maybeDest, hof) = do
 
 -- === Destination type ===
 --
--- Desinations are an analog to regular Atoms, except they guarantee that the "leaf"
--- elements are scalar tables with non-aliasing memory. The Dest data structure is a
--- view that reverses the structure-of-arrays transformation we apply. When we go to
--- the atom world, we use table lambdas for the same purpose, but destinations are
--- a little easier to work with, since they can't contain arbitrary code.
+-- How is a destination different from a regular table? The fundamental distinction is
+-- that destinations can be _written to_, and so just like tables yield scalars when
+-- fully indexed, destinations simply yield _memory addresses_!
+--
+-- Based on that observation, we represent destinations using regular Imp atoms, with the
+-- restriction that all atoms that terminate blocks appearing in the dest have to represent
+-- dests or arrays. This allows us to nicely separate the logical layout, which is
+-- encoded in table lambdas, from the physical layout of the data, which is encoded in the
+-- array offset calculations that are based on the logical indices (i.e. lambda binders).
+--
+-- Note that we use a newtype to help distinguish between regular atoms and dests, since
+-- it should only be allowed to convert from a dest to a regular atom (by simply issuing a
+-- load instruction for each fully offset array), but not in the other direction.
 
--- This takes a type parameter only so that we can derive Traversalbe. Use Dest instead.
-data DestP ref = DFor   (Abs (DestP ref))
-               | DPair  (DestP ref) (DestP ref)
-               | DUnit
-               | DRef   ref
-               | DCoerce Type (DestP ref)
-                 deriving (Show, Functor, Foldable, Traversable)
-type Dest = DestP IVar
+newtype Dest = Dest Atom deriving (Show)
 type WithDest a = (Maybe Dest, a)
 
-instance HasVars Dest where
-  freeVars dest = case dest of
-    DFor abs               -> freeVars abs
-    DPair l r              -> freeVars l <> freeVars r
-    DUnit                  -> mempty
-    DRef (_ :> IValType _) -> mempty
-    DRef (_ :> IRefType t) -> freeVars t
-    DCoerce t d            -> freeVars t <> freeVars d
+deriving via Atom instance HasVars Dest
 
-  subst env dest = case dest of
-    DFor abs               -> DFor (subst env abs)
-    DPair l r              -> DPair (subst env l) (subst env r)
-    DUnit                  -> dest
-    DRef (_ :> IValType _) -> dest
-    DRef (v :> IRefType t) -> DRef (v :> IRefType (subst env t))
-    DCoerce t d            -> DCoerce (subst env t) (subst env d)
+pattern TabValAbs :: LamExpr -> Atom
+pattern TabValAbs a <- Lam a@(Abs _ (TabArrow, _))
+
+destPairUnpack :: Dest -> (Dest, Dest)
+destPairUnpack (Dest (PairVal l r)) = (Dest l, Dest r)
+destPairUnpack (Dest a) = error $ "Not a pair destination: " ++ pprint a
+
+destArrays :: Dest -> [IVar]
+destArrays dest = [fromIVar (fromArrayAtom (Var v)) | v@(_ :> ArrayTy _) <- free]
+  where free = envAsVars $ fmap fst $ freeVars dest
+
+-- TODO: Maybe just make fromArrayAtom return an IVar?
+fromIVar :: IExpr -> IVar
+fromIVar ~(IVar v) = v
 
 destGet :: Dest -> IExpr -> ImpM Dest
-destGet dest i = case dest of
-  DFor a@(Abs v _) -> do
-    idx <- intToIndex (varType v) i
-    traverse (\ref -> fromIVar <$> (IVar ref) `impGet` i) $ applyAbs a idx
-  _ -> error "Indexing into a non-array dest"
-  where fromIVar ~(IVar v) = v
+destGet (Dest destAtom) i = case destAtom of
+  TabValAbs a -> do
+    idx <- intToIndex (absArgType a) i
+    Dest <$> toImpBlock mempty (Nothing, snd $ applyAbs a idx)
+  _ -> error $ "Indexing into a non-array dest: " ++ pprint destAtom
 
-destSlice :: Dest -> IExpr -> Type -> ImpM Dest
-destSlice dest from idxTy = case dest of
-  DFor (Abs v d) -> do
-    when (v `isin` freeVars d) $ error "destSlice doesn't support dependent dimensions!"
-    DFor . Abs (NoName:>idxTy) <$> traverse sliceRef d
+destSlice :: Dest -> Atom -> Type -> ImpM Dest
+destSlice (Dest destAtom) from idxTy = case destAtom of
+  TabVal v b -> do
+    scope <- looks $ fst . snd
+    (destAtomSlice, (_, decls)) <- flip runSubstEmbedT scope $ do
+      buildLam (varName v :> idxTy) TabArrow $ \idx -> do
+        i <- indexToIntE idxTy idx
+        ioff <- iadd i from
+        vidx <- intToIndexE (varType v) ioff
+        extendR (v @> vidx) $ evalBlockE substTraversalDef b
+    unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
+    return $ Dest destAtomSlice
   _ -> error "Slicing a non-array dest"
-  where
-    fromIVar ~(IVar v) = v
-    sliceRef ~ref@(_:>IRefType t@(TabTy dv b)) = do
-      when (dv `isin` freeVars b) $ error "destSlice doesn't support dependent dimension!"
-      off <- t `offsetTo` from
-      fromIVar <$> impOffset (IVar ref) off (TabTy (NoName:>idxTy) b)
 
 -- XXX: This should only be called when it is known that the dest will _never_
 --      be modified again, because it doesn't copy the state!
@@ -311,35 +313,34 @@ destToAtom dest = destToAtomScalarAction loadScalarRef dest
 destToAtomScalarAction :: (IVar -> ImpM Atom) -> Dest -> ImpM Atom
 destToAtomScalarAction fScalar dest = do
   scope <- looks $ fst . snd
-  (atom, (_, decls)) <- runEmbedT (destToAtom' fScalar [] dest) scope
-  case decls of
-    [] -> return $ atom
-    _  -> error "Unexpected decls"
+  (atom, (_, decls)) <- runSubstEmbedT (destToAtom' fScalar True dest) scope
+  unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
+  return atom
 
-destToAtom' :: (IVar -> ImpM Atom) -> [Atom] -> Dest -> EmbedT ImpM Atom
-destToAtom' fScalar forVars dest = case dest of
-  DFor a@(Abs v _) -> do
-    -- FIXME: buildLam does not maintain the NoName convention, so we have to
-    --        fix it up locally
-    ~(Lam (Abs v'' b)) <- buildLam ("idx" :> varType v) TabArrow $ \v' ->
-      destToAtom' fScalar (v' : forVars) (applyAbs a v')
-    return $ Lam $ makeAbs v'' b
-  DRef ref       -> case forVars of
-    [] -> lift $ fScalar ref
-    _  -> do
-      scalarArray <- foldM arrIndex (toArrayAtom $ IVar ref) $ reverse forVars
-      arrLoad scalarArray
-      where
-        arrIndex :: Atom -> Atom -> EmbedT ImpM Atom
-        arrIndex arr idx = do
-          ordinal <- indexToIntE (getType idx) idx
-          let (ArrayTy tabTy) = getType arr
-          offset <- tabTy `offsetToE` ordinal
-          arrOffset arr idx offset
-  DPair dl dr    -> PairVal <$> rec dl <*> rec dr
-  DUnit          -> return $ UnitVal
-  DCoerce t d    -> Con . Coerce t <$> rec d
-  where rec = destToAtom' fScalar forVars
+destToAtom' :: (IVar -> ImpM Atom) -> Bool -> Dest -> SubstEmbedT ImpM Atom
+destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
+  TabVal v b ->
+    buildLam v TabArrow $ \v' -> do
+      -- XXX: We need a guarantee that this will not bind lambdas and cons to variables,
+      --      because the blocks given to Imp are supposed to have all atoms inlined...
+      --      This is true of the implementation at the time of writing, and if anything
+      --      changes, the Var case below should trap the compiler, because it asserts that
+      --      all vars have to have an array type.
+      elemDestAtom <- extendR (v @> v') $ evalBlockE substTraversalDef b
+      destToAtom' fScalar False (Dest elemDestAtom)
+  Var _ -> if scalar
+    then lift $ lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
+    else arrLoad $ assertIsArray $ destAtom
+    where assertIsArray = toArrayAtom . fromArrayAtom
+  Con destCon -> Con <$> case destCon of
+    PairCon dl dr -> PairCon <$> rec dl <*> rec dr
+    UnitCon       -> return $ UnitCon
+    Coerce t d    -> Coerce t <$> rec d
+    _             -> unreachable
+  _ -> unreachable
+  where
+    rec = destToAtom' fScalar scalar . Dest
+    unreachable = error $ "Not a valid destination: " ++ pprint destAtom
 
 splitDest :: WithDest Block -> ImpM ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
@@ -367,13 +368,14 @@ splitDest (maybeDest, (Block decls ans)) = do
           Nothing -> modify $ (<> (v @> (dest, varType v)))
           Just _  -> tell [(dest, result)]
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
-      (DFor _, TabVal _ _) -> tell [(dest, result)]
-      (_, Con rCon) -> case (dest, rCon) of
-        (DRef _      , Lit _         ) -> tell [(dest, result)]
-        (DPair ld rd , PairCon lr rr ) -> gatherVarDests ld lr >> gatherVarDests rd rr
-        (DUnit       , UnitCon       ) -> return ()
-        (DCoerce _ db, Coerce _ rb   ) -> gatherVarDests db rb
-        (_           , SumCon _ _ _  ) -> error "Not implemented"
+      (_, TabVal _ _)  -> tell [(dest, result)]
+      (_, Con (Lit _)) -> tell [(dest, result)]
+      (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
+        (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
+                                            gatherVarDests (Dest rd) rr
+        (UnitCon       , UnitCon       ) -> return ()
+        (Coerce _ db   , Coerce _ rb   ) -> gatherVarDests (Dest db) rb
+        (_             , SumCon _ _ _  ) -> error "Not implemented"
         _ -> unreachable
       _ -> unreachable
       where
@@ -392,23 +394,37 @@ allocDest maybeDest t = case maybeDest of
 -- Create a destination for a given type. Note that this doesn't actually allocate anything,
 -- so make sure to call alloc for any variables in the dest.
 makeDest :: Name -> Type -> ImpM Dest
-makeDest nameHint destType = go id destType
+makeDest nameHint destType = do
+  scope <- looks $ fst . snd
+  (destAtom, (_, decls)) <- runEmbedT (go id [] destType) scope
+  unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
+  return $ Dest destAtom
   where
-    go :: (ScalarTableType -> ScalarTableType) -> Type -> ImpM Dest
-    go mkTy ty = case ty of
-        -- TODO: Is it ok to reuse the variables here?
-        --       Once might be ok, but the type will have aliasing binders!
-        TabTy v b -> DFor . Abs v <$> go (\t -> mkTy $ TabTy v t) b
+    go :: (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
+    go mkTy idxVars ty = case ty of
+        TabTy v bt ->
+          buildLam v TabArrow $ \v' -> go (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
-          BaseType b       -> DRef  <$> freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
-          PairType a b     -> DPair <$> go mkTy a <*> go mkTy b
-          UnitType         -> return DUnit
+          BaseType b -> do
+            iv <- lift $ freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
+            foldM arrIndex (toArrayAtom $ IVar iv) $ reverse idxVars
+            where
+              arrIndex :: Atom -> Atom -> EmbedT ImpM Atom
+              arrIndex arr idx = do
+                ordinal <- indexToIntE (getType idx) idx
+                let (ArrayTy tabTy) = getType arr
+                offset <- tabTy `offsetToE` ordinal
+                arrOffset arr idx offset
+            -- TODO: Reduce to a base type array!
+          PairType a b     -> PairVal <$> rec a <*> rec b
+          UnitType         -> return UnitVal
           IntRange   _ _   -> scalarIndexSet ty
           IndexRange _ _ _ -> scalarIndexSet ty
           _ -> unreachable
         _ -> unreachable
       where
-        scalarIndexSet t = DCoerce t <$> go mkTy IntTy
+        scalarIndexSet t = Con . Coerce t <$> rec IntTy
+        rec = go mkTy idxVars
         unreachable = error $ "Can't lower type to imp: " ++ pprint ty
 
 -- === Atom <-> IExpr conversions ===
@@ -479,27 +495,26 @@ offsetToE ty i = case ty of
   _ -> error $ "Not a scalar table type: " ++ pprint ty
 
 zipWithDest :: Dest -> Atom -> (IExpr -> IExpr -> ImpM ()) -> ImpM ()
-zipWithDest dest atom f = case (dest, atom) of
-  (DFor (Abs v _), Lam (Abs lv (TabArrow, _))) -> do
+zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
+  (TabValAbs da, TabValAbs aa) -> do
     -- This check is quite important, because Imp type checking has no way to
     -- figure out if the loop length we've generated here makes sense or not.
-    unless (varType v == varType lv) $ error "Mismatched dimensions in zipWithDest!"
-    let idxTy = varType v
+    unless (absArgType da == absArgType aa) $ error "Mismatched dimensions in zipWithDest!"
+    let idxTy = absArgType da
     n <- indexSetSize idxTy
     emitLoop NoName Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest i
       rec di ai
-  (DRef r, Var v) -> case varType v of
-    BaseTy _  -> f (IVar r) (fromScalarAtom atom)
-    _         -> error $ "Type error"
-  (_, Con con) -> case (dest, con) of
-    (DRef r     , Lit _        ) -> f (IVar r) (fromScalarAtom atom)
-    (DPair ld rd, PairCon la ra) -> rec ld la >> rec rd ra
-    (DUnit      , UnitCon      ) -> return () -- We could call f in here as well I guess...
-    (DCoerce _ d, Coerce _ a   ) -> rec d a
-    (_          , SumCon _ _ _ ) -> error "Not implemented"
+  -- TODO: Check array type?
+  (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
+  (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
+  (Con dcon, Con acon) -> case (dcon, acon) of
+    (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
+    (UnitCon      , UnitCon      ) -> return ()
+    (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
+    (SumCon _ _ _ , SumCon _ _ _ ) -> error "Not implemented"
     _                            -> unreachable
   _ -> unreachable
   where
@@ -510,7 +525,7 @@ copyAtom :: Dest -> Atom -> ImpM ()
 copyAtom dest src = zipWithDest dest src store
 
 zeroDest :: Dest -> ImpM ()
-zeroDest dest = traverse_ (initializeZero . IVar) dest
+zeroDest dest = mapM_ (initializeZero . IVar) (destArrays dest)
   where
     initializeZero :: IExpr -> ImpM ()
     initializeZero ref = case impExprType ref of
@@ -582,7 +597,7 @@ alloc ty = allocKind Managed ty
 allocKind :: AllocType -> Type -> ImpM Dest
 allocKind allocTy ty = do
   dest <- makeDest "v" ty
-  let vs = toList dest
+  let vs = destArrays dest
   flip mapM_ vs $ \v@(_:>IRefType refTy) -> do
     numel <- elemCount refTy
     emitStatement (Just v, Alloc refTy numel)
