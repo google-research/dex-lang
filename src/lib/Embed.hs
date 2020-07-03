@@ -19,7 +19,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
+              unpackConsList, emitRunWriter, emitRunReader, tabGet,
+              SubstEmbedT, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad,
               sumTag, getLeft, getRight, fromSum, clampPositive,
@@ -269,6 +270,14 @@ emitRunWriter v ty body = do
     let arr = PlainArrow $ extendEffect (Writer, rName) eff
     buildLam (v:> RefTy r ty) arr body
   emit $ Hof $ RunWriter lam
+
+emitRunReader :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
+emitRunReader v x0 body = do
+  eff <- getAllowedEffects
+  lam <- buildLam ("r":>TyKind) PureArrow $ \r@(Var (rName:>_)) -> do
+    let arr = PlainArrow $ extendEffect (Reader, rName) eff
+    buildLam (v:> RefTy r (getType x0)) arr body
+  emit $ Hof $ RunReader x0 lam
 
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do

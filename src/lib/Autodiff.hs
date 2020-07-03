@@ -22,7 +22,7 @@ import Cat
 import PPrint
 import Embed
 
--- -- === linearization ===
+-- === linearization ===
 
 type EmbedSubM = ReaderT SubstEnv Embed
 type PrimalM = WriterT (Env Type) EmbedSubM
@@ -47,25 +47,24 @@ linearizeBlock (Block decls result) = case decls of
                     extendR tEnv fLin)
     where body = Block rest result
 
--- linearizeLam :: RuleEnv -> AbsBlock
---                  -> EmbedSubM (AbsBlock, [Type], Atom -> [Atom] -> EmbedSubM Atom)
--- linearizeabsblock = undefined
--- linearizeAbsBlock ruleEnv (AbsBlock v body) = do
---   (lam, (v', residualVs, tBuilder)) <- buildAbsBlockAux v $ \v'@(Var iVar) ->
---     extendR (v@>v') $ do
---        (((ans, ansT), (localScope, decls)), fvs) <-
---            runWriterT $ embedScoped $ runLinA $ linearizeBlock ruleEnv body
---        extendScope localScope
---        mapM_ emitDecl decls
---        let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
---        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
---        return (ansWithResiduals, (iVar, residualVs, ansT))
---   extendScope $ foldMap (@>Nothing) (v':residualVs)
---   return (lam, map varAnn residualVs, \v'' residuals -> do
---      scope <- getScope
---      (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
---      let env = (v'@>v'') <> newEnv residualVs residuals
---      emitBlock $ subst (env, scope) $ wrapDecls decls ansT')
+linearizeLam :: Atom -> EmbedSubM (Atom, [Type], Atom -> [Atom] -> EmbedSubM Atom)
+linearizeLam ~(Lam (Abs v (arr, body))) = do
+  (lam, (v', residualVs, tBuilder)) <- buildLamAux v
+    (\x -> extendR (v@>x) $ substEmbed arr) $
+    \v'@(Var iVar) -> extendR (v@>v') $ do
+         (((ans, ansT), (localScope, decls)), fvs) <-
+             runWriterT $ embedScoped $ runLinA $ linearizeBlock body
+         extendScope localScope
+         mapM_ emitDecl decls
+         let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
+         let ansWithResiduals = foldr PairVal ans $ map Var residualVs
+         return (ansWithResiduals, (iVar, residualVs, ansT))
+  extendScope $ foldMap (\v -> v@>(varType v, UnknownBinder)) (v':residualVs)
+  return (lam, map varAnn residualVs, \v'' residuals -> do
+     scope <- getScope
+     (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
+     let env = (v'@>v'') <> newEnv residualVs residuals
+     emitBlock $ subst (env, scope) $ wrapDecls decls ansT')
 
 unpackResiduals :: Monad m => (ty -> a -> m (a, a)) -> [ty] -> a -> m (a, [a])
 unpackResiduals _ [] ans = return (ans, [])
@@ -79,22 +78,15 @@ linearizeExpr expr = case expr of
   _ | hasDiscreteType expr -> LinA $ do
     ans <- substEmbed expr >>= emit
     return $ withZeroTangent ans
-  -- For d lam@(AbsBlock i _) -> LinA $ do
-  --   (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
-  --   ansRes <- emit $ For d lam'
-  --   (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
-  --   mapM_ saveVars residuals
-  --   return (ans, buildFor d i $ \i' -> do
-  --                  residuals' <- forM residuals $ \r -> emit $ TabGet r i'
-  --                  lin i' residuals')
-  -- App x i | isTabTy (getType x) -> LinA $ do
-  --   (i', _)  <- runLinA $ linearizeAtom i
-  --   (x', tx) <- runLinA $ linearizeAtom x
-  --   ans <- emit $ App x' i'
-  --   return (ans, do tx' <- tx
-  --                   emit $ App tx' i')
-  Op op -> linearizeOp op
-  Atom atom -> linearizeAtom atom
+  App x i | isTabTy (getType x) -> LinA $ do
+    (i', _)  <- runLinA $ linearizeAtom i
+    (x', tx) <- runLinA $ linearizeAtom x
+    ans <- emit $ App x' i'
+    return (ans, do tx' <- tx
+                    emit $ App tx' i')
+  Op   e -> linearizeOp   e
+  Atom e -> linearizeAtom e
+  Hof  e -> linearizeHof  e
   _ -> error $ "Not implemented: " ++ pprint expr
 
 
@@ -123,8 +115,24 @@ linearizeOp op = case fmap linearizeAtom op of
   _ -> error $ "not implemented: " ++ pprint op
 
 linearizeHof :: Hof -> LinA Atom
-linearizeHof = undefined
--- linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
+linearizeHof hof = case hof of
+  For d ~lam@(Lam (Abs i _)) -> LinA $ do
+    (lam', rTys, lin) <- lift $ linearizeLam lam
+    ansRes <- emit $ Hof $ For d lam'
+    (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
+    mapM_ saveVars residuals
+    return (ans, buildFor d i $ \i' -> do
+                   residuals' <- forM residuals $ \r -> emit $ App r i'
+                   lin i' residuals')
+  -- RunWriter lam@(AbsBlock ref _) -> LinA $ do
+  --   (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
+  --   (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
+  --   (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
+  --   mapM_ saveVars residuals
+  --   return ( PairVal ans w
+  --          , do lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
+  --               emit $ Hof $ RunWriter lam'')
+
 --   RunReader r lam@(AbsBlock ref _) -> LinA $ do
 --     (r', rt) <- runLinA r
 --     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
@@ -134,14 +142,6 @@ linearizeHof = undefined
 --     return (ans , do rt' <- rt
 --                      lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
 --                      emit $ Hof $ RunReader rt' lam'')
---   RunWriter lam@(AbsBlock ref _) -> LinA $ do
---     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
---     (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
---     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
---     mapM_ saveVars residuals
---     return ( PairVal ans w
---            , do lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
---                 emit $ Hof $ RunWriter lam'')
 
 linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
 linearizedDiv x y tx ty = do
@@ -248,8 +248,9 @@ transposeBlock (Block decls result) ct = case decls of
   Let _ b bound : rest -> do
     -- let (eff, _) = getEffType bound
     -- linEff <- isLinEff eff
+    let linEff = not $ isPure bound
     lin <- isLin bound
-    if lin -- || linEff
+    if lin || linEff
       then do
         ct' <- withLinVar b $ transposeBlock body ct
         transposeExpr bound ct'
@@ -278,6 +279,14 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
+  Fst x -> do
+    let (PairTy _ b) = getType x
+    bZero <- zeroAt b
+    transposeAtom x $ PairVal ct bZero
+  Snd x -> do
+    let (PairTy a _) = getType x
+    aZero <- zeroAt a
+    transposeAtom x $ PairVal aZero ct
   ScalarUnOp FNeg x -> do
     ctNeg <- neg ct
     transposeAtom x ctNeg
@@ -313,28 +322,23 @@ transposeOp op ct = case op of
       _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint op
 
-
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
-  For d (Lam (Abs b (_, body))) ->
+  For d ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
       extendR (asSnd (b@>i)) $ transposeBlock body ct'
       return UnitVal
--- transposeHof hof ct = case hof of
---   RunReader r (AbsBlock v body) -> do
---     lam <- buildAbsBlock v $ \x -> do
---              extendR (asSnd (v@>x)) $ transposeBlock body ct
---              return UnitVal
---     (_, ctr) <- emit (Hof $ RunWriter lam) >>= fromPair
---     transposeAtom r ctr
---   RunWriter (AbsBlock v body) -> do
---     (ctBody, ctEff) <- fromPair ct
---     lam <- buildAbsBlock v $ \x -> do
---              extendR (asSnd (v@>x)) $ transposeBlock body ctBody
---              return UnitVal
---     void $ emit $ Hof $ RunReader ctEff lam
-
+  RunReader r ~(BinaryFunVal _ b _ body) -> do
+    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) $ \ref -> do
+      extendR (asSnd (b@>ref)) $ transposeBlock body ct
+      return UnitVal
+    transposeAtom r ctr
+  RunWriter ~(BinaryFunVal _ b _ body) -> do
+    (ctBody, ctEff) <- fromPair ct
+    void $ emitRunReader "r" ctEff $ \ref -> do
+      extendR (asSnd (b@>ref)) $ transposeBlock body ctBody
+      return UnitVal
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
