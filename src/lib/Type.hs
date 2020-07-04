@@ -236,7 +236,7 @@ instance CoreVariant (PrimHof a) where
     RunState  _ _ -> alwaysAllowed
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
-    Tile _ _      -> alwaysAllowed
+    Tile _ _ _    -> alwaysAllowed
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -452,19 +452,36 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
-  Tile fT fS -> do
-    Pi (Abs tv (arr, TabTy dv b)) <- typeCheck fT
+  Tile dim fT fS -> do
+    FunTy tv eff  tr <- typeCheck fT
+    FunTy sv eff' sr <- typeCheck fS
     TC (IndexSlice n l) <- return $ varType tv
+    (dv, b, b')      <- zipExtractDim dim tr sr
     checkEq (TC $ IntRange (IntVal 0) l) (varType dv)
-    Pi (Abs sv (arr', b')) <- typeCheck fS
     checkEq n (varType sv)
     when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
     when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
     checkEq b b'
-    checkEq arr arr'
-    -- TODO: check `tv` isn't free in `eff`
-    declareEffs $ arrowEff arr
-    return $ Pi $ Abs sv (TabArrow, b')
+    checkEq eff eff'
+    -- TODO: check `tv` and `sv` isn't free in `eff`
+    declareEffs eff
+    return $ replaceDim dim tr n
+    where
+      zipExtractDim 0 (TabTy dv b) b' = return (dv, b, b')
+      zipExtractDim d (TabTy dv b) (TabTy sv b') =
+        if varType dv == varType sv
+          then zipExtractDim (d-1) b b'
+          else throw TypeErr $ "Result type of tiled and non-tiled bodies differ along " ++
+                               "dimension " ++ show (dim - d + 1) ++ ": " ++
+                               pprint b ++ " and " ++ pprint b'
+      zipExtractDim d _ _ = throw TypeErr $
+        "Tiling over dimension " ++ show dim ++ " has to produce a result with at least " ++
+        show (dim + 1) ++ " dimensions, but it has only " ++ show (dim - d)
+
+      replaceDim 0 (TabTy _ b) n  = TabTy (NoName:>n) b
+      replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
+      replaceDim _ _ _ = error "This should be checked before"
+
   While cond body -> do
     Pi (Abs (NoName:>UnitTy) (arr , condTy)) <- typeCheck cond
     Pi (Abs (NoName:>UnitTy) (arr', bodyTy)) <- typeCheck body
