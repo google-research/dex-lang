@@ -293,3 +293,14 @@ newPair2 : NewPairIntReal = mkNewPair (1, 2.0)
 
 :p fst $ fromNewPair newPair
 > 1
+
+
+good_range : Type = (1@Fin 3)..(2@_)
+
+bad_range : Int = (1@Fin 3)..(2@_)
+> Type error:
+> Expected: Int
+>   Actual: Type
+>
+> bad_range : Int = (1@Fin 3)..(2@_)
+>                            ^^
