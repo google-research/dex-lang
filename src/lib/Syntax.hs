@@ -39,7 +39,7 @@ module Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
     pattern IntLitExpr, pattern RealLitExpr,
-    pattern IntVal, pattern UnitTy, pattern PairTy,
+    pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern SumVal, pattern PureArrow, pattern ArrayVal,
@@ -245,7 +245,7 @@ data PrimOp e =
 
 data PrimHof e =
         For Direction e
-      | Tile e e
+      | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
       | SumCase e e e
       | RunReader e e
@@ -906,10 +906,11 @@ fromConsList xs = case xs of
   PairVal x rest -> (x:) <$> fromConsList rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
 
+pattern FunTy :: Binder -> EffectRow -> Type -> Type
+pattern FunTy b eff bodyTy = Pi (Abs b (PlainArrow eff, bodyTy))
+
 pattern BinaryFunTy :: Binder -> Binder -> EffectRow -> Type -> Type
-pattern BinaryFunTy b1 b2 eff bodyTy =
-          Pi (Abs b1 (PureArrow,
-          Pi (Abs b2 (PlainArrow eff, bodyTy))))
+pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
 pattern BinaryFunVal b1 b2 eff body =
@@ -958,7 +959,8 @@ builtinNames = M.fromList
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("caseAnalysis"    , HofExpr $ SumCase () () ())
-  , ("tile"            , HofExpr $ Tile () ())
+  , ("tiled"           , HofExpr $ Tile 0 () ())
+  , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("Int"     , TCExpr $ BaseType $ Scalar IntType)
   , ("Real"    , TCExpr $ BaseType $ Scalar RealType)
   , ("Bool"    , TCExpr $ BaseType $ Scalar BoolType)

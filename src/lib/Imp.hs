@@ -22,6 +22,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer
 import Data.Text.Prettyprint.Doc
+import Data.Coerce
 
 import Embed
 import Array
@@ -105,10 +106,10 @@ impSubst env x = do
 
 toImpOp :: WithDest (PrimOp Atom) -> ImpM Atom
 toImpOp (maybeDest, op) = case op of
-  TabCon (TabTy _ _) rows -> do
+  TabCon (TabTy v _) rows -> do
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
-      ithDest <- destGet dest $ IIntVal i
+      ithDest <- destGet dest =<< intToIndex (varType v) (IIntVal i)
       copyAtom ithDest row
     destToAtom dest
   SumGet ~(SumVal  _ l r) left -> returnVal $ if left then l else r
@@ -150,7 +151,7 @@ toImpOp (maybeDest, op) = case op of
     returnVal =<< intToIndex t idx
   IndexRef ~(Var refVar@(_:>(RefTy h (Pi a)))) i -> do
     refDest    <- looks $ (! refVar) . fst . fst
-    subrefDest <- destGet refDest =<< indexToInt (getType i) i
+    subrefDest <- destGet refDest i
     subrefVar  <- freshVar (varName refVar :> RefTy h (snd $ applyAbs a i))
     extend ((subrefVar @> subrefDest, mempty), mempty)
     returnVal $ Var subrefVar
@@ -186,10 +187,10 @@ toImpHof env (maybeDest, hof) = do
       dest <- allocDest maybeDest resultTy
       emitLoop hint d n' $ \i -> do
         idx <- intToIndex idxTy i
-        ithDest <- destGet dest i
+        ithDest <- destGet dest idx
         void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
       destToAtom dest
-    Tile (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
+    Tile d (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
       ~tileTy@(TC (IndexSlice idxTy tileLenAtom)) <- impSubst env tileTy'
       n <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy
@@ -201,13 +202,13 @@ toImpHof env (maybeDest, hof) = do
       emitLoop tHint Fwd nTiles $ \iTile -> do
         tileOffset <- toScalarAtom IntTy <$> iTile `imulI` tileLen
         let tileAtom = Con $ Coerce tileTy tileOffset
-        tileDest <- destSlice dest tileOffset tileDimType
+        tileDest <- destSliceDim dest d tileOffset tileDimType
         void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
       emitLoop sHint Fwd nEpilogue $ \iEpi -> do
         i <- iEpi `iaddI` epilogueOff
         idx <- intToIndex idxTy i
-        ithDest <- destGet dest i
-        void $ toImpBlock (env <> sb @> idx) (Just ithDest, sBody)
+        sDest <- destGetDim dest d idx
+        void $ toImpBlock (env <> sb @> idx) (Just sDest, sBody)
       destToAtom dest
     While (Lam (Abs _ (_, cond))) (Lam (Abs _ (_, body))) -> do
       ~condVarDest@(Dest condVar) <- allocDest Nothing BoolTy
@@ -283,26 +284,34 @@ destArrays dest = [fromIVar (fromArrayAtom (Var v)) | v@(_ :> ArrayTy _) <- free
 fromIVar :: IExpr -> IVar
 fromIVar ~(IVar v) = v
 
-destGet :: Dest -> IExpr -> ImpM Dest
-destGet (Dest destAtom) i = case destAtom of
-  TabValAbs a -> do
-    idx <- intToIndex (absArgType a) i
-    Dest <$> toImpBlock mempty (Nothing, snd $ applyAbs a idx)
-  _ -> error $ "Indexing into a non-array dest: " ++ pprint destAtom
+destGet :: Dest -> Atom -> ImpM Dest
+destGet dest idx = destGetDim dest 0 idx
 
-destSlice :: Dest -> Atom -> Type -> ImpM Dest
-destSlice (Dest destAtom) from idxTy = case destAtom of
+destGetDim :: Dest -> Int -> Atom -> ImpM Dest
+destGetDim dest dim idx = indexDest dest dim $ \(Dest d) -> Dest <$> appReduce d idx
+
+destSliceDim :: Dest -> Int -> Atom -> Type -> ImpM Dest
+destSliceDim dest dim fromIdx idxTy = indexDest dest dim $ \(Dest d) -> case d of
   TabVal v _ -> do
-    scope <- looks $ fst . snd
-    (destAtomSlice, (_, decls)) <- flip runEmbedT scope $ do
-      buildLam (varName v :> idxTy) TabArrow $ \idx -> do
-        i <- indexToIntE idxTy idx
-        ioff <- iadd i from
-        vidx <- intToIndexE (varType v) ioff
-        appReduce destAtom vidx
-    unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
-    return $ Dest destAtomSlice
+    lam <- buildLam (varName v :> idxTy) TabArrow $ \idx -> do
+      i <- indexToIntE idxTy idx
+      ioff <- iadd i fromIdx
+      vidx <- intToIndexE (varType v) ioff
+      appReduce d vidx
+    return $ Dest $ lam
   _ -> error "Slicing a non-array dest"
+
+indexDest :: Dest -> Int -> (Dest -> EmbedT ImpM Dest) -> ImpM Dest
+indexDest (Dest destAtom) dim f = do
+  scope <- looks $ fst . snd
+  (block, _) <- runEmbedT (buildScoped $ go dim destAtom) scope
+  Dest <$> toImpBlock mempty (Nothing, block)
+  where
+    go :: Int -> Atom -> EmbedT ImpM Atom
+    go 0 dest = coerce <$> f (Dest dest)
+    go d da@(TabVal v _) = buildLam v TabArrow $ \v' ->
+      go (d-1) =<< appReduce da v'
+    go _ _ = error $ "Indexing a non-array dest"
 
 -- XXX: This should only be called when it is known that the dest will _never_
 --      be modified again, because it doesn't copy the state!
@@ -415,7 +424,6 @@ makeDest nameHint destType = do
                 let (ArrayTy tabTy) = getType arr
                 offset <- tabTy `offsetToE` ordinal
                 arrOffset arr idx offset
-            -- TODO: Reduce to a base type array!
           PairType a b     -> PairVal <$> rec a <*> rec b
           UnitType         -> return UnitVal
           IntRange   _ _   -> scalarIndexSet ty
@@ -505,7 +513,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     emitLoop NoName Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
-      di  <- destGet dest i
+      di  <- destGet dest idx
       rec di ai
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
