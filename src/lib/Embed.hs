@@ -246,7 +246,11 @@ fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
-unpackConsList = undefined
+unpackConsList xs = case getType xs of
+  UnitTy -> return []
+  _ -> do
+    (x, rest) <- fromPair xs
+    liftM (x:) $ unpackConsList rest
 
 sumTag :: MonadEmbed m => Atom -> m Atom
 sumTag (SumVal t _ _) = return t

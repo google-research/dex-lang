@@ -88,40 +88,37 @@ simplifyAtom atom = case atom of
   Eff eff -> Eff <$> substEmbed eff
   where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
 
+
+-- `Nothing` is equivalent to `Just return` but we can pattern-match on it
+type Recon m a = Maybe (a -> m a)
+
+simplifyLam :: Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyLam = simplifyLams 1
+
+simplifyBinaryLam :: Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyBinaryLam = simplifyLams 2
+
 -- Unlike `substEmbed`, this simplifies under the binder too.
-simplifyLam :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
-simplifyLam atom = substEmbed atom >>= (dropSub . simplifyLam')
+simplifyLams :: Int -> Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyLams numArgs lam = do
+  lam' <- substEmbed lam
+  dropSub $ simplifyLams' numArgs mempty $ Block [] $ Atom lam'
 
-simplifyLam' :: Atom -> SimplifyM (Atom, Maybe (Atom -> SimplifyM Atom))
-simplifyLam' (Lam (Abs b (arr, body))) = do
+simplifyLams' :: Int -> Scope -> Block -> SimplifyM (Atom, Recon SimplifyM Atom)
+-- this case is an optimization
+simplifyLams' 0 scope block
+  | isData (getType block) = liftM (,Nothing) $ simplifyBlock block
+  | otherwise = do
+      (block', (scope', decls)) <- embedScoped $ simplifyBlock block
+      mapM_ emitDecl decls
+      let (dataVals, recon) = separateDataComponent (scope <> scope') block'
+      return (dataVals, Just recon)
+simplifyLams' n scope (Block [] (Atom (Lam (Abs b (arr, body))))) = do
   b' <- mapM substEmbed b
-  if isData (getType body)
-    then liftM (,Nothing) $ do
-      buildDepEffLam b' (\x -> extendR (b@>x) $ substEmbed arr)
-                        (\x -> extendR (b@>x) $ simplifyBlock body)
-    else do
-      (lam, recon) <- buildLamAux b'
-        ( \x -> extendR (b@>x) $ substEmbed arr)
-        $ \x -> extendR (b@>x) $ do
-          (body', (scope, decls)) <- embedScoped $ simplifyBlock body
-          mapM_ emitDecl decls
-          return $ separateDataComponent scope body'
-      return $ (lam, Just recon)
-simplifyLam' atom = error $ "Not a lambda: " ++ pprint atom
-
-simplifyBinaryLam :: Atom -> SimplifyM Atom
-simplifyBinaryLam atom = substEmbed atom >>= (dropSub . simplifyBinaryLam')
-
-simplifyBinaryLam' :: Atom -> SimplifyM Atom
-simplifyBinaryLam' (BinaryFunVal b1 b2 eff body) = do
-  b1' <- mapM substEmbed b1
-  buildLam b1' PureArrow $ \x1 ->
-    extendR (b1'@>x1) $ do
-      b2' <- mapM substEmbed b2
-      buildDepEffLam b2'
-        (\x2 -> extendR (b2'@>x2) $ substEmbed (PlainArrow eff))
-        (\x2 -> extendR (b2'@>x2) $ simplifyBlock body)
-simplifyBinaryLam' atom = error $ "Not a binary lambda: " ++ pprint atom
+  buildLamAux b' (\x -> extendR (b@>x) $ substEmbed arr) $ \x@(Var v) -> do
+    let scope' = scope <> v @> (varType v, LamBound (void arr))
+    extendR (b@>x) $ simplifyLams' (n-1) scope' body
+simplifyLams' _ _ _ = error "Expected n lambdas"
 
 separateDataComponent :: MonadEmbed m => Scope -> Atom -> (Atom, Atom -> m Atom)
 separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
@@ -132,6 +129,10 @@ separateDataComponent localVars atom = (mkConsList $ map Var vs, recon)
       xs' <- unpackConsList xs
       scope <- getScope
       return $ subst (newEnv vs xs', scope) atom
+
+applyRecon :: MonadEmbed m => Maybe (Atom -> m Atom) -> Atom -> m Atom
+applyRecon Nothing x = return x
+applyRecon (Just f) x = f x
 
 simplifyExpr :: Expr -> SimplifyM Atom
 simplifyExpr expr = case expr of
@@ -162,8 +163,11 @@ simplifyOp op = case op of
 simplifyHof :: Hof -> SimplifyM Atom
 simplifyHof hof = case hof of
   For d lam -> do
-    ~(lam', Nothing) <- simplifyLam lam
-    emit $ Hof $ For d lam'
+    ~(lam'@(Lam (Abs i _)), recon) <- simplifyLam lam
+    ans <- emit $ Hof $ For d lam'
+    case recon of
+      Nothing -> return ans
+      Just f  -> buildLam i TabArrow $ \i' -> app ans i' >>= f
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body
@@ -179,15 +183,19 @@ simplifyHof hof = case hof of
     return $ transposeMap scope lam'
   RunReader r lam -> do
     r' <- simplifyAtom r
-    lam' <- simplifyBinaryLam lam
-    emit $ Hof $ RunReader r' lam'
+    ~(lam', recon) <- simplifyBinaryLam lam
+    applyRecon recon =<< (emit $ Hof $ RunReader r' lam')
   RunWriter lam -> do
-    lam' <- simplifyBinaryLam lam
-    emit $ Hof $ RunWriter lam'
+    ~(lam', recon) <- simplifyBinaryLam lam
+    (ans, w) <- fromPair =<< (emit $ Hof $ RunWriter lam')
+    ans' <- applyRecon recon ans
+    return $ PairVal ans' w
   RunState s lam -> do
     s' <- simplifyAtom s
-    lam' <- simplifyBinaryLam lam
-    emit $ Hof $ RunState s' lam'
+    ~(lam', recon) <- simplifyBinaryLam lam
+    (ans, sOut) <- fromPair =<< (emit $ Hof $ RunState s' lam')
+    ans' <- applyRecon recon ans
+    return $ PairVal ans' sOut
   SumCase c lBody rBody -> do
     ~(lBody', Nothing) <- simplifyLam lBody
     ~(rBody', Nothing) <- simplifyLam rBody
