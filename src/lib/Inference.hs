@@ -131,7 +131,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     n <- freshType TyKind
     low'  <- mapM (flip checkRho n) low
     high' <- mapM (flip checkRho n) high
-    return $ TC $ IndexRange n low' high'
+    matchRequirement $ TC $ IndexRange n low' high'
   UHole -> case reqTy of
     Infer -> throw MiscErr "Can't infer type of hole"
     Check ty -> freshType ty
