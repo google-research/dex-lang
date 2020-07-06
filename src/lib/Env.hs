@@ -10,7 +10,7 @@
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
-            rawName, nameSpace, nameTag, rename, renames, nameItems,
+            rawName, nameSpace, nameTag, rename, renames, nameItems, envMaxName,
             renameChoice, tagToStr, isGlobal, asGlobal) where
 
 import Control.Monad
@@ -33,10 +33,10 @@ newtype Env a = Env (M.Map Name a)
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
 -- `NoName` is used in binders (e.g. `_ = <expr>`) but never in occurrences.
 -- TODO: Consider putting it under a separate `Binder` type instead.
-data Name = Name NameSpace Tag Int | GlobalName Tag | NoName
+data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int | NoName
             deriving (Show, Ord, Eq, Generic)
 data NameSpace = GenName | SourceName | JaxIdx | Skolem
-               | InferenceName | NoNameSpace | ArrayName | SumName
+               | InferenceName | NoNameSpace | SumName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
@@ -55,6 +55,7 @@ nameSpace :: Name -> NameSpace
 nameSpace (Name s _ _) = s
 nameSpace NoName       = NoNameSpace
 nameSpace (GlobalName _) = NoNameSpace
+nameSpace (GlobalArrayName _) = NoNameSpace
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
@@ -68,9 +69,10 @@ nameCounter _ = 0
 
 nameTag :: Name -> Tag
 nameTag name = case name of
-  Name _ t _   -> t
-  GlobalName t -> t
-  NoName       -> error "NoName has no tag"
+  Name _ t _        -> t
+  GlobalName t      -> t
+  NoName            -> error "NoName has no tag"
+  GlobalArrayName _ -> error "GlobalArrayName has no tag"
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
@@ -112,6 +114,9 @@ isin :: VarP ann -> Env a -> Bool
 isin v env = case envLookup env v of Just _  -> True
                                      Nothing -> False
 
+envMaxName :: Env a -> Maybe Name
+envMaxName (Env m) = if M.null m then Nothing else Just $ fst $ M.findMax m
+
 (!) :: HasCallStack => Env a -> VarP ann -> a
 env ! v = case envLookup env v of
   Just x -> x
@@ -119,6 +124,7 @@ env ! v = case envLookup env v of
 
 isGlobal :: VarP ann -> Bool
 isGlobal (GlobalName _ :> _) = True
+isGlobal (GlobalArrayName _ :> _) = True
 isGlobal _ = False
 
 genFresh :: Name-> Env a -> Name
@@ -134,6 +140,9 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 genFresh v@(GlobalName _) env
   | (v:>()) `isin` env = error $ "Can't rename global: " ++ show v
+  | otherwise          = v
+genFresh v@(GlobalArrayName _) env
+  | (v:>()) `isin` env = error $ "Can't rename global array: " ++ show v
   | otherwise          = v
 
 rename :: VarP ann -> Env a -> VarP ann
@@ -188,6 +197,7 @@ instance Pretty Name where
             where suffix = case n of 0 -> ""
                                      _ -> pretty n
   pretty (GlobalName tag) = pretty (tagToStr tag)
+  pretty (GlobalArrayName i) = "<array " <> pretty i <> ">"
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0

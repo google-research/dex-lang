@@ -17,7 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
-import Data.Maybe (fromJust)
+import Data.Maybe (fromJust, fromMaybe)
 
 import Array
 import Syntax
@@ -171,7 +171,7 @@ initializeBackend backend = case backend of
 arrayVars :: HasVars a => a -> [Var]
 arrayVars x = foldMap go $ envPairs (freeVars x)
   where go :: (Name, (Type, BinderInfo)) -> [Var]
-        go (v@(Name ArrayName _ _), (ty, _)) = [v :> ty]
+        go (v@(GlobalArrayName _), (ty, _)) = [v :> ty]
         go _ = []
 
 evalBackend :: Block -> TopPassM Atom
@@ -185,11 +185,13 @@ evalBackend block = do
       checkPass ImpPass impFunction
       -- logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
-      lift $ modifyMVar engine $ \env -> do
+      liftIO $ modifyMVar engine $ \env -> do
         let inPtrs = fmap (env !) inVars
         outPtrs <- callLLVM logger llvmFunc inPtrs
         let (ImpFunction impOutVars _ _) = impFunction
-        let (outNames, env') = nameItems (Name ArrayName "arr" 0) env outPtrs
+        let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
+        let outNames = GlobalArrayName <$> [i+1..]
+        let env' = foldMap varAsEnv $ zipWith (:>) outNames outPtrs
         substEnv <- foldMapM mkSubstEnv $ zip3 outNames impOutVars outPtrs
         return (env <> env', subst (substEnv, mempty) impAtom)
       where

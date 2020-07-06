@@ -421,9 +421,10 @@ withNameHint :: MonadEmbed m => Name -> m a -> m a
 withNameHint name m = embedLocal (\(_, eff) -> (tag, eff)) m
   where
     tag = case name of
-      Name _ t _   -> t
-      GlobalName t -> t
-      NoName       -> "tmp"
+      Name _ t _        -> t
+      GlobalName t      -> t
+      GlobalArrayName _ -> "arr"
+      NoName            -> "tmp"
 
 runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnvC)
 runEmbedT' (EmbedT m) (envR, envC) = runCatT (runReaderT m envR) envC

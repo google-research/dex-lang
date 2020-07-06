@@ -48,7 +48,7 @@ class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ decls bindings) =
+  checkValid m@(Module ir decls bindings) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
       let env = freeVars m
       addContext "Checking IR variant" $ checkModuleVariant m
@@ -56,16 +56,20 @@ instance Checkable Module where
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-        checkBindings (env <> foldMap declAsScope decls) bindings
+        checkBindings (env <> foldMap declAsScope decls) ir bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
-checkBindings :: TypeEnv -> Bindings -> Except ()
-checkBindings env bs = forM_ (envPairs bs) $ \binding -> do
+checkBindings :: TypeEnv -> IRVariant -> Bindings -> Except ()
+checkBindings env ir bs = forM_ (envPairs bs) $ \binding -> do
   (GlobalName _, (ty, LetBound _ (Atom atom))) <- return binding
   void $ runTypeCheck (CheckWith (env <> bs, Pure)) $ atom |: ty
+  case ir of
+    Evaluated -> unless (all isGlobal $ envAsVars $ freeVars atom) $
+      throw CompilerErr "Non-global name in a fully evaluated atom"
+    _ -> return ()
 
 -- === Core IR ===
 
