@@ -344,13 +344,18 @@ typeCheckCon con = case con of
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
-  Coerce t e -> case t of
-    TC (IntRange   _ _  ) -> coerceFrom IntTy -- from ordinal
-    TC (IndexRange _ _ _) -> coerceFrom IntTy -- from ordinal
-    TC (IndexSlice _ _  ) -> coerceFrom IntTy -- from ordinal of the first slice element
-    Var _                 -> t |: TyKind $> t
-    _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
-    where coerceFrom f = e |: f $> t
+  Coerce t@(Var _) _ -> t |: TyKind $> t
+  Coerce t e -> do
+    sourceTy <- coercionSourceType t
+    e |: sourceTy $> t
+    where
+      coercionSourceType :: Type -> TypeM Type
+      coercionSourceType ty = case ty of
+        TC (ArrayType  st   ) -> ArrayTy <$> coercionSourceType st
+        TC (IntRange   _ _  ) -> return IntTy -- from ordinal
+        TC (IndexRange _ _ _) -> return IntTy -- from ordinal
+        TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
+        _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty

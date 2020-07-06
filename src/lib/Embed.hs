@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, fromPair, getFst, getSnd,
+              select, selectAt, substEmbed, fromPair, getFst, getSnd, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
@@ -70,7 +70,6 @@ runSubstEmbed :: SubstEmbedT Identity a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
-emit (Atom a) = return a
 emit expr     = emitAnn PlainLet expr
 
 emitAnn :: MonadEmbed m => LetAnn -> Expr -> m Atom
@@ -238,6 +237,11 @@ getSnd p = emitOp $ Snd p
 
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
+
+appReduce :: MonadEmbed m => Atom -> Atom -> m Atom
+appReduce (Lam (Abs v (_, b))) a =
+  runReaderT (evalBlockE substTraversalDef b) (v @> a)
+appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
 arrOffset :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
 arrOffset x idx off = emitOp $ ArrayOffset x idx off
@@ -478,7 +482,10 @@ evalBlockE :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Atom
 evalBlockE def@(fExpr, _) (Block decls result) = do
   env <- traverseDeclsOpen def decls
-  extendR env $ fExpr result >>= emit
+  resultExpr <- extendR env $ fExpr result
+  case resultExpr of
+    Atom a -> return a
+    _      -> emit resultExpr
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Expr -> m Expr
