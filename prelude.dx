@@ -253,6 +253,8 @@ def sum  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
 def isum (xs:n=>Int) : Int = fold 0 \i c. c + xs.i
 def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
 def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
+def any (xs:n=>Bool) : Bool = fold False \i c. c || xs.i
+def all (xs:n=>Bool) : Bool = fold True  \i c. c && xs.i
 
 def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
   dx = (high - low) / i2r (size n)
