@@ -15,12 +15,12 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, fromPair, getFst, getSnd,
+              select, selectAt, substEmbed, fromPair, getFst, getSnd, naryApp,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
-              SubstEmbedT, runSubstEmbedT,
+              SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad,
               sumTag, getLeft, getRight, fromSum, clampPositive,
@@ -50,6 +50,7 @@ type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)
 
 type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
+type SubstEmbed    = SubstEmbedT Identity
 
 -- Carries the vars in scope (with optional definitions) and the emitted decls
 type EmbedEnvC = (Scope, [Decl])
@@ -67,7 +68,7 @@ runEmbed m scope = runIdentity $ runEmbedT m scope
 runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, EmbedEnvC)
 runSubstEmbedT m scope = runEmbedT (runReaderT m mempty) scope
 
-runSubstEmbed :: SubstEmbedT Identity a -> Scope -> (a, EmbedEnvC)
+runSubstEmbed :: SubstEmbed a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
@@ -235,6 +236,12 @@ getSnd p = emitOp $ Snd p
 
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
+
+naryApp :: MonadEmbed m => Atom -> [Atom] -> m Atom
+naryApp f [] = return f
+naryApp f (x:xs) = do
+  f' <- app f x
+  naryApp f' xs
 
 arrOffset :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
 arrOffset x idx off = emitOp $ ArrayOffset x idx off
