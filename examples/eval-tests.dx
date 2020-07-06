@@ -660,3 +660,6 @@ toAdd = for _:(Fin 10). 1.0
 add toAdd toAdd
 > [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
 
+arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
+arr2d.(1@_)
+> [2, 3]
