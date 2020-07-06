@@ -260,6 +260,8 @@ toImpHof env (maybeDest, hof) = do
 -- Note that we use a newtype to help distinguish between regular atoms and dests, since
 -- it should only be allowed to convert from a dest to a regular atom (by simply issuing a
 -- load instruction for each fully offset array), but not in the other direction.
+-- Also, Dests should also always be fully simplified (i.e. no beta-redexes are allowed,
+-- even under lambdas).
 
 newtype Dest = Dest Atom deriving (Show)
 type WithDest a = (Maybe Dest, a)
@@ -290,14 +292,14 @@ destGet (Dest destAtom) i = case destAtom of
 
 destSlice :: Dest -> Atom -> Type -> ImpM Dest
 destSlice (Dest destAtom) from idxTy = case destAtom of
-  TabVal v b -> do
+  TabVal v _ -> do
     scope <- looks $ fst . snd
-    (destAtomSlice, (_, decls)) <- flip runSubstEmbedT scope $ do
+    (destAtomSlice, (_, decls)) <- flip runEmbedT scope $ do
       buildLam (varName v :> idxTy) TabArrow $ \idx -> do
         i <- indexToIntE idxTy idx
         ioff <- iadd i from
         vidx <- intToIndexE (varType v) ioff
-        extendR (v @> vidx) $ evalBlockE substTraversalDef b
+        appReduce destAtom vidx
     unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
     return $ Dest destAtomSlice
   _ -> error "Slicing a non-array dest"
@@ -313,30 +315,28 @@ destToAtom dest = destToAtomScalarAction loadScalarRef dest
 destToAtomScalarAction :: (IVar -> ImpM Atom) -> Dest -> ImpM Atom
 destToAtomScalarAction fScalar dest = do
   scope <- looks $ fst . snd
-  (atom, (_, decls)) <- runSubstEmbedT (destToAtom' fScalar True dest) scope
+  (atom, (_, decls)) <- runEmbedT (destToAtom' fScalar True dest) scope
   unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
   return atom
 
-destToAtom' :: (IVar -> ImpM Atom) -> Bool -> Dest -> SubstEmbedT ImpM Atom
+destToAtom' :: (IVar -> ImpM Atom) -> Bool -> Dest -> EmbedT ImpM Atom
 destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
-  TabVal v b ->
+  TabVal v _ ->
     buildLam v TabArrow $ \v' -> do
-      -- XXX: We need a guarantee that this will not bind lambdas and cons to variables,
-      --      because the blocks given to Imp are supposed to have all atoms inlined...
-      --      This is true of the implementation at the time of writing, and if anything
-      --      changes, the Var case below should trap the compiler, because it asserts that
-      --      all vars have to have an array type.
-      elemDestAtom <- extendR (v @> v') $ evalBlockE substTraversalDef b
+      -- XXX: We need a guarantee that appReduce will not unnecessarily cause the result
+      --      be bound to a temporary value, because that will make it impossible to
+      --      maintain the fully-reduced invariant.
+      elemDestAtom <- appReduce destAtom v'
       destToAtom' fScalar False (Dest elemDestAtom)
   Var _ -> if scalar
-    then lift $ lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
+    then lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
   Con destCon -> Con <$> case destCon of
-    PairCon dl dr -> PairCon <$> rec dl <*> rec dr
-    UnitCon       -> return $ UnitCon
-    Coerce t d    -> Coerce t <$> rec d
-    _             -> unreachable
+    PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
+    UnitCon              -> return $ UnitCon
+    Coerce (ArrayTy t) d -> Coerce t <$> rec d
+    _                    -> unreachable
   _ -> unreachable
   where
     rec = destToAtom' fScalar scalar . Dest
@@ -423,7 +423,7 @@ makeDest nameHint destType = do
           _ -> unreachable
         _ -> unreachable
       where
-        scalarIndexSet t = Con . Coerce t <$> rec IntTy
+        scalarIndexSet t = Con . Coerce (ArrayTy t) <$> rec IntTy
         rec = go mkTy idxVars
         unreachable = error $ "Can't lower type to imp: " ++ pprint ty
 
