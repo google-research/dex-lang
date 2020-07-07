@@ -551,6 +551,7 @@ reduceExpr scope expr = case expr of
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
+  UnitType                   -> return $ IntVal 1
   BaseType (Scalar BoolType) -> return $ IntVal 2
   IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
@@ -580,6 +581,7 @@ clampPositive x = do
 --      infinite loop.
 indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
 indexToIntE ty idx = case ty of
+  UnitTy  -> return $ IntVal 0
   BoolTy  -> boolToInt idx
   SumTy lType rType -> do
     (tag, lVal, rVal) <- fromSum idx
@@ -599,8 +601,9 @@ indexToIntE ty idx = case ty of
 
 intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
 intToIndexE ty@(TC con) i = case con of
-  IntRange _ _      -> iAsIdx
-  IndexRange _ _ _  -> iAsIdx
+  IntRange   _ _             -> iAsIdx
+  IndexRange _ _ _           -> iAsIdx
+  UnitType                   -> return $ UnitVal
   BaseType (Scalar BoolType) -> unsafeIntToBool i
   PairType a b -> do
     bSize <- indexSetSizeE b

@@ -151,8 +151,8 @@ instance Pretty e => Pretty (PrimCon e) where
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
-    SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
-    SumTag e        -> parens $ "projTag" <+> p e
+    SumGet e isLeft -> parens $ (if isLeft then "getLeft" else "getRight") <+> p e
+    SumTag e        -> parens $ "getTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
     ArrayOffset arr idx off -> p arr <+> "+>" <+> p off <+> (parens $ "index:" <+> p idx)
