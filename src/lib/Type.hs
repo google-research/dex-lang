@@ -321,7 +321,7 @@ typeCheckTyCon tc = case tc of
   ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
-  IndexSlice n l   -> n|:TyKind >> l|:IntTy >> return TyKind
+  IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   SumType  l r     -> l|:TyKind >> r|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
@@ -429,7 +429,7 @@ typeCheckOp op = case op of
     return $ BaseTy b
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
-    TC (IntRange (IntVal 0) l') <- typeCheck i
+    l' <- typeCheck i
     checkEq l l'
     return n
   VectorBinOp binop x1 x2 ->
@@ -455,11 +455,11 @@ typeCheckHof hof = case hof of
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
   Tile dim fT fS -> do
-    FunTy tv eff  tr <- typeCheck fT
-    FunTy sv eff' sr <- typeCheck fS
+    FunTy tv eff  tr    <- typeCheck fT
+    FunTy sv eff' sr    <- typeCheck fS
     TC (IndexSlice n l) <- return $ varType tv
-    (dv, b, b')      <- zipExtractDim dim tr sr
-    checkEq (TC $ IntRange (IntVal 0) l) (varType dv)
+    (dv, b, b')         <- zipExtractDim dim tr sr
+    checkEq l (varType dv)
     checkEq n (varType sv)
     when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
     when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"

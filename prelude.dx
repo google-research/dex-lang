@@ -386,20 +386,20 @@ def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
 'Tiling
 
-def Tile (n : Type) (len : Int) : Type = %IndexSlice n len
+def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 
 -- TODO: It would be nice to make fTile return t=>a, but t is _not_ of type Type,
 --       so the current type inference and checking machinery complains!
-def tile  (l : Int) ?->
-          (fTile : (t:(Tile n l) -> {|eff} (Fin l)=>a))
+def tile  (l : Type) ?->
+          (fTile : (t:(Tile n l) -> {|eff} l=>a))
           (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
-def tile1 (n : Type) ?-> (l : Int) ?-> (m : Type) ?->
-          (fTile : (t:(Tile n l) -> {|eff} m=>(Fin l)=>a))
+def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
+          (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
           (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
-def (+>) (l : Int) ?-> (t:Tile n l) (i : Fin l) : n = %sliceOffset t i
+def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
-def loadTile (t : Tile n VectorWidth) (arr : n=>Real) : VectorReal =
+def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
   idx = Fin VectorWidth
   (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
               arr.(t +> UNSAFEFromOrdinal idx 1)
