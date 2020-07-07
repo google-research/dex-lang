@@ -13,6 +13,7 @@ module Type (
   getType, HasType (..), Checkable (..), litType, isPure, extendEffect,
   binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
 
+import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -333,10 +334,11 @@ typeCheckTyCon tc = case tc of
     foldM checkApp fTy xs
     where
       checkApp :: Atom -> Atom -> TypeM Type
-      checkApp (Pi piTy) x = do
+      checkApp pi x = do
+        Pi piTy <- return pi
         x |: absArgType piTy
         -- Newtype arrows should be pure.
-        let (PlainArrow Pure, resultTy) = applyAbs piTy x
+        (PureArrow, resultTy) <- return $ applyAbs piTy x
         return resultTy
 
 typeCheckCon :: Con -> TypeM Type
