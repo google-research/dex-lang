@@ -10,7 +10,7 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, HasType (..), Checkable (..), litType, isPure, extendEffect,
+  getType, checkType, HasType (..), Checkable (..), litType, isPure, extendEffect,
   binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
 
 import Control.Monad
@@ -36,8 +36,12 @@ class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
 getType :: HasType a => a -> Type
-getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks (typeCheck x)
+getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
+
+checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
+checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
+  where ctx = addContext $ "Checking:\n" ++ pprint x
 
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env

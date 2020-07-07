@@ -15,9 +15,9 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, fromPair, getFst, getSnd, naryApp,
+              select, selectAt, substEmbed, substEmbedR, fromPair, getFst, getSnd, naryApp,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
-              singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
+              singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT,
@@ -35,6 +35,7 @@ import Control.Monad.Writer
 import Control.Monad.Identity
 import Data.Foldable (toList)
 import Data.Maybe
+import GHC.Stack
 
 import Env
 import Syntax
@@ -327,12 +328,25 @@ mapScalars f ty xs = case ty of
     _ -> error $ "Not implemented " ++ pprint ty
   _ -> error $ "Not implemented " ++ pprint ty
 
-substEmbed :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
+substEmbedR :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
            => a -> m a
-substEmbed x = do
+substEmbedR x = do
   env <- ask
+  substEmbed env x
+
+substEmbed :: (MonadEmbed m, HasVars a)
+           => SubstEnv -> a -> m a
+substEmbed env x = do
   scope <- getScope
   return $ subst (env, scope) x
+
+checkEmbed :: (HasCallStack, MonadEmbed m, HasType a) => a -> m a
+checkEmbed  x = do
+  scope <- getScope
+  eff <- getAllowedEffects
+  case checkType scope eff x of
+    Left e   -> error $ pprint e
+    Right () -> return x
 
 isSingletonType :: Type -> Bool
 isSingletonType ty = case singletonTypeVal ty of
@@ -504,16 +518,16 @@ traverseExpr (_, fAtom) expr = case expr of
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
 traverseAtom def@(_, fAtom) atom = case atom of
-  Var _ -> substEmbed atom
+  Var _ -> substEmbedR atom
   Lam (Abs b (arr, body)) -> do
     b' <- mapM fAtom b
     buildDepEffLam b'
-      (\x -> extendR (b'@>x) (substEmbed arr))
+      (\x -> extendR (b'@>x) (substEmbedR arr))
       (\x -> extendR (b'@>x) (traverseBlock' def body))
-  Pi _ -> substEmbed atom
+  Pi _ -> substEmbedR atom
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
-  Eff _   -> substEmbed atom
+  Eff _   -> substEmbedR atom
 
 -- === partial evaluation using definitions in scope ===
 

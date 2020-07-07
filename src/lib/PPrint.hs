@@ -127,6 +127,7 @@ instance Pretty e => Pretty (PrimTC e) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
+    RefType h a -> parens $ "Ref" <+> p h <+> p a
     TypeKind -> "Type"
     EffectRowKind -> "EffKind"
     NewtypeApp f xs -> p f <> foldMap (\x -> " " <> p x) xs

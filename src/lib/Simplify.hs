@@ -75,18 +75,18 @@ simplifyAtom atom = case atom of
         Just (_, LetBound NewtypeLet _) ->
             pure $ TC $ NewtypeApp atom []
         Just (_, LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
-        _      -> substEmbed atom
+        _      -> substEmbedR atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
-  Lam _ -> substEmbed atom
-  Pi  _ -> substEmbed atom
+  Lam _ -> substEmbedR atom
+  Pi  _ -> substEmbedR atom
   Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
   Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM substEmbed tc
-  Eff eff -> Eff <$> substEmbed eff
-  where mkAny t = Con . AnyValue <$> substEmbed t >>= simplifyAtom
+  TC tc -> TC <$> mapM substEmbedR tc
+  Eff eff -> Eff <$> substEmbedR eff
+  where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
@@ -98,10 +98,10 @@ simplifyLam = simplifyLams 1
 simplifyBinaryLam :: Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
 simplifyBinaryLam = simplifyLams 2
 
--- Unlike `substEmbed`, this simplifies under the binder too.
+-- Unlike `substEmbedR`, this simplifies under the binder too.
 simplifyLams :: Int -> Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
 simplifyLams numArgs lam = do
-  lam' <- substEmbed lam
+  lam' <- substEmbedR lam
   dropSub $ simplifyLams' numArgs mempty $ Block [] $ Atom lam'
 
 simplifyLams' :: Int -> Scope -> Block -> SimplifyM (Atom, Recon SimplifyM Atom)
@@ -114,8 +114,8 @@ simplifyLams' 0 scope block
       let (dataVals, recon) = separateDataComponent (scope <> scope') block'
       return (dataVals, Just recon)
 simplifyLams' n scope (Block [] (Atom (Lam (Abs b (arr, body))))) = do
-  b' <- mapM substEmbed b
-  buildLamAux b' (\x -> extendR (b@>x) $ substEmbed arr) $ \x@(Var v) -> do
+  b' <- mapM substEmbedR b
+  buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
     let scope' = scope <> v @> (varType v, LamBound (void arr))
     extendR (b@>x) $ simplifyLams' (n-1) scope' body
 simplifyLams' _ _ _ = error "Expected n lambdas"
