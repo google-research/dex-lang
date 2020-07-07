@@ -17,15 +17,13 @@ def matmul (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
   colTile = (colVectors & vectorTile)
   (tile2d (\nt:(Tile n rowTile). \mt:(Tile m colTile).
              ct = snd $ withAccum \acc.
-               for l.
+               for l:k.
                  for i:rowTile.
                    ail = broadcastVector a.(nt +> i).l
                    for j:colVectors.
-                     blj = loadVector $ for j':(Fin VectorWidth). b.l.(mt +> (j, j'))
-                     acc!i!j += ail * blj
-             for i:rowTile. for j:colTile.
-               (j', j'') = j
-               (indexVector ct.i.j' j''))
+                     acc!i!j += ail * loadTile (mt ++> j) b.l
+             for i:rowTile. for (j, j'):colTile.
+               indexVector ct.i.j j')
           (\i:n. \j:m. fsum \l. a.i.l * b.l.j))
 
 a = for i:(Fin 5). for j:(Fin 8). i2r $ (iota _).(i,j)

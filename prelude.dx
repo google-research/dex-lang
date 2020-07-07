@@ -388,15 +388,21 @@ def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
 def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 
--- TODO: It would be nice to make fTile return t=>a, but t is _not_ of type Type,
---       so the current type inference and checking machinery complains!
+-- One can think of instances of `Tile n m` as injective functions `m -> n`,
+-- with the special property that consecutive elements of m map to consecutive
+-- elements of n. In this view (+>) is just function application, while ++>
+-- is currying followed by function application. We cannot represent currying
+-- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u & v)`.
+def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+def (++>) (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
+
 def tile  (l : Type) ?->
           (fTile : (t:(Tile n l) -> {|eff} l=>a))
           (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
 def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
           (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
           (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
-def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
 def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
