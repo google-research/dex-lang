@@ -163,7 +163,7 @@ toImpOp (maybeDest, op) = case op of
     returnVal $ toArrayAtom arrSlice
   ArrayLoad arr -> returnVal . toScalarAtom resultTy =<< load (fromArrayAtom arr)
   SliceOffset ~(Con (Coerce (TC (IndexSlice n l)) tileOffset)) idx -> do
-    i' <- indexToInt (TC (IntRange (IntVal 0) l)) idx
+    i' <- indexToInt l idx
     i <- iaddI (fromScalarAtom tileOffset) i'
     returnVal =<< intToIndex n i
   _ -> do
@@ -191,18 +191,17 @@ toImpHof env (maybeDest, hof) = do
         void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
       destToAtom dest
     Tile d (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
-      ~tileTy@(TC (IndexSlice idxTy tileLenAtom)) <- impSubst env tileTy'
+      ~tileTy@(TC (IndexSlice idxTy tileIdxTy)) <- impSubst env tileTy'
       n <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy
-      let tileLen = fromScalarAtom tileLenAtom
+      tileLen <- indexSetSize tileIdxTy
       nTiles      <- n `idivI` tileLen
       epilogueOff <- nTiles `imulI` tileLen
       nEpilogue   <- n `isubI` epilogueOff
-      let tileDimType = TC $ IntRange (IntVal 0) tileLenAtom
       emitLoop tHint Fwd nTiles $ \iTile -> do
         tileOffset <- toScalarAtom IntTy <$> iTile `imulI` tileLen
         let tileAtom = Con $ Coerce tileTy tileOffset
-        tileDest <- destSliceDim dest d tileOffset tileDimType
+        tileDest <- destSliceDim dest d tileOffset tileIdxTy
         void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
       emitLoop sHint Fwd nEpilogue $ \iEpi -> do
         i <- iEpi `iaddI` epilogueOff
