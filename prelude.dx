@@ -356,10 +356,10 @@ def while (cond: Unit -> {|eff} Bool) (body: Unit -> {|eff} Unit) : {|eff} Unit 
 
 def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
 
-VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
+VectorWidth = 8  -- XXX: Keep this synced with the constant defined in Array.hs
 VectorReal  = %VectorRealType
 
-def packVector (a : Real) (b : Real) (c : Real) (d : Real) : VectorReal = %vectorPack a b c d
+def packVector (a : Real) (b : Real) (c : Real) (d : Real) (e : Real) (f : Real) (g : Real) (h : Real): VectorReal = %vectorPack a b c d e f g h
 def indexVector (v : VectorReal) (i : Fin VectorWidth) : Real = %vectorIndex v i
 
 -- NB: Backends should be smart enough to optimize this to a vector load from v
@@ -368,15 +368,23 @@ def loadVector (v : (Fin VectorWidth)=>Real) : VectorReal =
   (packVector v.(UNSAFEFromOrdinal idx 0)
               v.(UNSAFEFromOrdinal idx 1)
               v.(UNSAFEFromOrdinal idx 2)
-              v.(UNSAFEFromOrdinal idx 3))
+              v.(UNSAFEFromOrdinal idx 3)
+              v.(UNSAFEFromOrdinal idx 4)
+              v.(UNSAFEFromOrdinal idx 5)
+              v.(UNSAFEFromOrdinal idx 6)
+              v.(UNSAFEFromOrdinal idx 7))
 def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
   idx = Fin VectorWidth
   [ indexVector v (UNSAFEFromOrdinal idx 0)
   , indexVector v (UNSAFEFromOrdinal idx 1)
   , indexVector v (UNSAFEFromOrdinal idx 2)
-  , indexVector v (UNSAFEFromOrdinal idx 3) ]
+  , indexVector v (UNSAFEFromOrdinal idx 3)
+  , indexVector v (UNSAFEFromOrdinal idx 4)
+  , indexVector v (UNSAFEFromOrdinal idx 5)
+  , indexVector v (UNSAFEFromOrdinal idx 6)
+  , indexVector v (UNSAFEFromOrdinal idx 7) ]
 
-def broadcastVector (v : Real) : VectorReal = packVector v v v v
+def broadcastVector (v : Real) : VectorReal = packVector v v v v v v v v
 
 @instance vectorRealAdd : Add (VectorReal) =
   MkAdd ( \x y. %vfadd x y
@@ -410,4 +418,8 @@ def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
   (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
               arr.(t +> UNSAFEFromOrdinal idx 1)
               arr.(t +> UNSAFEFromOrdinal idx 2)
-              arr.(t +> UNSAFEFromOrdinal idx 3))
+              arr.(t +> UNSAFEFromOrdinal idx 3)
+              arr.(t +> UNSAFEFromOrdinal idx 4)
+              arr.(t +> UNSAFEFromOrdinal idx 5)
+              arr.(t +> UNSAFEFromOrdinal idx 6)
+              arr.(t +> UNSAFEFromOrdinal idx 7))

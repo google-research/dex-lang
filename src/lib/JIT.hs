@@ -230,7 +230,7 @@ litInt :: Int -> Operand
 litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
 
 litReal :: Double -> Operand
-litReal x = L.ConstantOperand $ C.Float $ L.Double x
+litReal x = L.ConstantOperand $ C.Float $ L.Single $ realToFrac x
 
 store :: Operand -> Operand -> CompileM ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
@@ -384,7 +384,7 @@ longTy :: L.Type
 longTy = L.IntegerType 64
 
 realTy :: L.Type
-realTy = L.FloatingPointType L.DoubleFP
+realTy = L.FloatingPointType L.FloatFP
 
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
