@@ -432,6 +432,11 @@ typeCheckOp op = case op of
     l' <- typeCheck i
     checkEq l l'
     return n
+  SliceCurry s i -> do
+    TC (IndexSlice n (PairTy u v)) <- typeCheck s
+    u' <- typeCheck i
+    checkEq u u'
+    return $ TC $ IndexSlice n v
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop

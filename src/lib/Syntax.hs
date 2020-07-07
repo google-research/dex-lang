@@ -232,6 +232,7 @@ data PrimOp e =
                                      -- Third argument is the linear offset for evaluation
       | ArrayLoad e
       | SliceOffset e e              -- Index slice first, inner index second
+      | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
       | VectorBinOp ScalarBinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
@@ -982,6 +983,7 @@ builtinNames = M.fromList
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ Coerce () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
+  , ("sliceCurry", OpExpr $ SliceCurry () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
