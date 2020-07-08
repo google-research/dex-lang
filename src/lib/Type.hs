@@ -113,6 +113,8 @@ isPure expr = case expr of
   App f _ -> case getType f of
     Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
     _ -> False
+  Op (Fst _) -> True
+  Op (Snd _) -> True
   _ -> False
 
 instance HasType Block where

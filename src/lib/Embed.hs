@@ -12,7 +12,7 @@
 
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
-              buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
+              buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
               select, selectAt, substEmbed, substEmbedR, fromPair, getFst, getSnd, naryApp,
@@ -20,7 +20,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
-              SubstEmbedT, SubstEmbed, runSubstEmbedT,
+              SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad,
               sumTag, getLeft, getRight, fromSum, clampPositive,
@@ -89,16 +89,6 @@ emitTo v ann expr = do
   emitDecl $ Let ann v' expr'
   return $ Var v'
 
--- Disabling this path for now because we need to be more careful to not throw
--- away global names
-  -- case singletonTypeVal ty of
-  --   Just x
-  --     | isPure expr -> return x
-  --     | otherwise -> do
-  --         expr' <- deShadow expr <$> getScope
-  --         emitDecl $ Let ann (NoName:>ty) expr'
-  --         return x
-
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
@@ -152,10 +142,7 @@ buildScoped m = do
   return $ wrapDecls decls ans
 
 wrapDecls :: [Decl] -> Atom -> Block
-wrapDecls decls atom = case reverse decls of
-  -- decluttering optimization
-  Let _ v expr:rest | atom == Var v -> Block (reverse rest) expr
-  _ -> Block decls (Atom atom)
+wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
 -- TODO: consider broadcasted literals as atoms, so we don't need the monad here
 zeroAt :: MonadEmbed m => Type -> m Atom
@@ -528,6 +515,36 @@ traverseAtom def@(_, fAtom) atom = case atom of
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substEmbedR atom
+
+-- === DCE ===
+
+dceBlock :: Block -> Block
+dceBlock (Block decls result) = Block decls' result'
+  where
+    (declsRev, result') = inlineLastDecl (reverse decls) result
+    decls' = reverse $ fst $ flip runCat (freeVars result') $
+               execWriterT $ mapM dceDecl declsRev
+
+inlineLastDecl :: [Decl] -> Expr -> ([Decl], Expr)
+inlineLastDecl (Let _ v expr:rest) (Atom atom)
+  | atom == Var v || sameSingletonVal (varType v) (getType atom) = (rest,  expr)
+inlineLastDecl declsRev result = (declsRev, result)
+
+dceDecl :: Decl -> WriterT [Decl] (Cat Scope) ()
+dceDecl decl@(Let ann b expr) = do
+  varsNeeded <- look
+  if b `isin` varsNeeded
+    then tell [decl] >> extend (freeVars expr)
+    else if isPure expr
+      then return ()
+      else tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+
+sameSingletonVal :: Type -> Type -> Bool
+sameSingletonVal t1 t2 = case singletonTypeVal t1 of
+  Just x1 -> case singletonTypeVal t2 of
+    Just x2 | x1 == x2 -> True
+    _ -> False
+  _ -> False
 
 -- === partial evaluation using definitions in scope ===
 

@@ -404,10 +404,13 @@ substTranspose x = do
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v m = do
-  ans <- emitRunWriter "ref" (varAnn v) $ \ref -> do
-    extendR (asFst (v@>ref)) (m >> return UnitVal)
-  getSnd ans
+withLinVar v body = case
+  singletonTypeVal (varType v) of
+    Nothing -> do
+      ans <- emitRunWriter "ref" (varType v) $ \ref -> do
+        extendR (asFst (v@>ref)) (body >> return UnitVal)
+      getSnd ans
+    Just x -> body >> return x  -- optimization to avoid accumulating into unit
 
 flipDir :: Direction -> Direction
 flipDir Fwd = Rev
