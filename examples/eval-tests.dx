@@ -687,3 +687,13 @@ add toAdd toAdd
 arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
 arr2d.(1@_)
 > [2, 3]
+
+:p
+  withState (1,2) \ref.
+    r1 = fstRef ref
+    r2 = sndRef ref
+    x = get r1
+    y = get r2
+    r2 := x
+    r1 := y
+> ((), (2, 1))

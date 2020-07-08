@@ -227,6 +227,8 @@ data PrimOp e =
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
       | IndexRef e e
+      | FstRef e
+      | SndRef e
       | FFICall String BaseType [e]
       | Inject e
       | ArrayOffset e e e            -- Second argument is the index for type checking,
@@ -985,6 +987,8 @@ builtinNames = M.fromList
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())
   , ("snd", OpExpr $ Snd ())
+  , ("fstRef", OpExpr $ FstRef ())
+  , ("sndRef", OpExpr $ SndRef ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)

@@ -448,6 +448,12 @@ typeCheckOp op = case op of
     RefTy h (TabTy v a) <- typeCheck ref
     i |: (varType v)
     return $ RefTy h a
+  FstRef ref -> do
+    RefTy h (PairTy a _) <- typeCheck ref
+    return $ RefTy h a
+  SndRef ref -> do
+    RefTy h (PairTy _ b) <- typeCheck ref
+    return $ RefTy h b
   FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!

@@ -98,6 +98,8 @@ def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
 def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
 def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
+def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def withReader
       (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->

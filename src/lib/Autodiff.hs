@@ -281,14 +281,11 @@ transposeBlock (Block decls result) ct = case decls of
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
-  App ~(Var x) i -> case varAnn x of
+  App x i -> case getType x of
     TabTy _ _ -> do
       i' <- substTranspose i
       linVars <- asks fst
-      ref <- case envLookup linVars x of
-               Just ref -> return ref
-               -- might be possible to reach here indexing into a literal zero array
-               _ -> error "Not implemented"
+      ref <- linAtomRef x
       ref' <- emitOp $ IndexRef ref i'
       emitCTToRef ref' ct
     _ -> error $ "shouldn't have non-table app left"
@@ -299,9 +296,13 @@ transposeExpr expr ct = case expr of
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
   Fst x -> do
-    let (PairTy _ b) = getType x
-    bZero <- zeroAt b
-    transposeAtom x $ PairVal ct bZero
+    ref <- linAtomRef x
+    ref' <- emitOp $ FstRef ref
+    emitCTToRef ref' ct
+  Snd x -> do
+    ref <- linAtomRef x
+    ref' <- emitOp $ SndRef ref
+    emitCTToRef ref' ct
   Snd x -> do
     let (PairTy a _) = getType x
     aZero <- zeroAt a
@@ -340,6 +341,14 @@ transposeOp op ct = case op of
        transposeAtom x ct'
       _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint op
+
+linAtomRef :: Atom -> TransposeM Atom
+linAtomRef (Var x) = do
+  linVars <- asks fst
+  case envLookup linVars x of
+    Just ref -> return ref
+    _ -> error "Not a linear var"
+linAtomRef _ = error "Not a linear var"
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
