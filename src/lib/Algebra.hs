@@ -63,6 +63,7 @@ offsets t = case t of
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
+  UnitType                   -> liftC $ toPolynomial $ IntVal 1
   BaseType (Scalar BoolType) -> liftC $ toPolynomial $ IntVal 2
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
@@ -93,6 +94,7 @@ toPolynomial atom = case atom of
   Var v -> poly [(1, mono [(v, 1)])]
   Con con -> case con of
     Lit (IntLit l) -> poly [((toInteger l) % 1, mono [])]
+    -- TODO: Coercions? Unit constructor?
     _ -> unreachable
   _ -> unreachable
   where unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom

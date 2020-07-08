@@ -14,6 +14,7 @@ module Type (
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
   indexSetConcreteSize, checkNoShadow) where
 
+import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
@@ -53,7 +54,7 @@ class Pretty a => Checkable a where
   checkValid :: a -> Except ()
 
 instance Checkable Module where
-  checkValid m@(Module _ decls bindings) =
+  checkValid m@(Module ir decls bindings) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
       let env = freeVars m
       addContext "Checking IR variant" $ checkModuleVariant m
@@ -61,16 +62,20 @@ instance Checkable Module where
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-        checkBindings (env <> foldMap declAsScope decls) bindings
+        checkBindings (env <> foldMap declAsScope decls) ir bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
-checkBindings :: TypeEnv -> Bindings -> Except ()
-checkBindings env bs = forM_ (envPairs bs) $ \binding -> do
+checkBindings :: TypeEnv -> IRVariant -> Bindings -> Except ()
+checkBindings env ir bs = forM_ (envPairs bs) $ \binding -> do
   (GlobalName _, (ty, LetBound _ (Atom atom))) <- return binding
   void $ runTypeCheck (CheckWith (env <> bs, Pure)) $ atom |: ty
+  case ir of
+    Evaluated -> unless (all isGlobal $ envAsVars $ freeVars atom) $
+      throw CompilerErr "Non-global name in a fully evaluated atom"
+    _ -> return ()
 
 -- === Core IR ===
 
@@ -170,7 +175,7 @@ infixr 7 |:
   ty <- typeCheck x
   checkEq reqTy ty
 
-checkEq :: Type -> Type -> TypeM ()
+checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
@@ -263,6 +268,7 @@ instance CoreVariant (PrimHof a) where
     RunState  _ _ -> alwaysAllowed
     Linearize _   -> goneBy Simp
     Transpose _   -> goneBy Simp
+    Tile _ _ _    -> alwaysAllowed
 
 -- TODO: namespace restrictions?
 alwaysAllowed :: VariantM ()
@@ -345,8 +351,8 @@ typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
   ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
-  IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b
-                          >> return TyKind
+  IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
+  IndexSlice n l   -> n|:TyKind >> l|:IntTy >> return TyKind
   SumType  l r     -> l|:TyKind >> r|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
@@ -359,11 +365,11 @@ typeCheckTyCon tc = case tc of
     foldM checkApp fTy xs
     where
       checkApp :: Atom -> Atom -> TypeM Type
-      checkApp fTy x = do
-        Pi piTy <- return fTy
+      checkApp pi x = do
+        Pi piTy <- return pi
         x |: absArgType piTy
         -- Newtype arrows should be pure.
-        let (PlainArrow Pure, resultTy) = applyAbs piTy x
+        (PureArrow, resultTy) <- return $ applyAbs piTy x
         return resultTy
 
 typeCheckCon :: Con -> TypeM Type
@@ -375,12 +381,18 @@ typeCheckCon con = case con of
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
-  Coerce t e -> case t of
-    TC (IntRange   _ _  ) -> coerceFrom IntTy
-    TC (IndexRange _ _ _) -> coerceFrom IntTy
-    Var _                 -> t |: TyKind $> t
-    _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
-    where coerceFrom f = e |: f $> t
+  Coerce t@(Var _) _ -> t |: TyKind $> t
+  Coerce t e -> do
+    sourceTy <- coercionSourceType t
+    e |: sourceTy $> t
+    where
+      coercionSourceType :: Type -> TypeM Type
+      coercionSourceType ty = case ty of
+        TC (ArrayType  st   ) -> ArrayTy <$> coercionSourceType st
+        TC (IntRange   _ _  ) -> return IntTy -- from ordinal
+        TC (IndexRange _ _ _) -> return IntTy -- from ordinal
+        TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
+        _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty
@@ -446,6 +458,11 @@ typeCheckOp op = case op of
   ArrayLoad arr -> do
     ArrayTy (BaseTy b)  <- typeCheck arr
     return $ BaseTy b
+  SliceOffset s i -> do
+    TC (IndexSlice n l) <- typeCheck s
+    TC (IntRange (IntVal 0) l') <- typeCheck i
+    checkEq l l'
+    return n
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop
@@ -468,6 +485,36 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
+  Tile dim fT fS -> do
+    FunTy tv eff  tr <- typeCheck fT
+    FunTy sv eff' sr <- typeCheck fS
+    TC (IndexSlice n l) <- return $ varType tv
+    (dv, b, b')      <- zipExtractDim dim tr sr
+    checkEq (TC $ IntRange (IntVal 0) l) (varType dv)
+    checkEq n (varType sv)
+    when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+    when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
+    checkEq b b'
+    checkEq eff eff'
+    -- TODO: check `tv` and `sv` isn't free in `eff`
+    declareEffs eff
+    return $ replaceDim dim tr n
+    where
+      zipExtractDim 0 (TabTy dv b) b' = return (dv, b, b')
+      zipExtractDim d (TabTy dv b) (TabTy sv b') =
+        if varType dv == varType sv
+          then zipExtractDim (d-1) b b'
+          else throw TypeErr $ "Result type of tiled and non-tiled bodies differ along " ++
+                               "dimension " ++ show (dim - d + 1) ++ ": " ++
+                               pprint b ++ " and " ++ pprint b'
+      zipExtractDim d _ _ = throw TypeErr $
+        "Tiling over dimension " ++ show dim ++ " has to produce a result with at least " ++
+        show (dim + 1) ++ " dimensions, but it has only " ++ show (dim - d)
+
+      replaceDim 0 (TabTy _ b) n  = TabTy (NoName:>n) b
+      replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
+      replaceDim _ _ _ = error "This should be checked before"
+
   While cond body -> do
     Pi (Abs (NoName:>UnitTy) (arr , condTy)) <- typeCheck cond
     Pi (Abs (NoName:>UnitTy) (arr', bodyTy)) <- typeCheck body

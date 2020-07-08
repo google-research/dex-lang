@@ -13,6 +13,7 @@ import Env
 import PPrint
 import Embed
 import Type
+import Data.Foldable
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -45,6 +46,18 @@ evalExpr env expr = case expr of
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of
+  -- Any ops that might have a defined result even with AnyValue arguments
+  -- should be implemented here.
+  Select (BoolVal b) t f -> if b then t else f
+  _ -> if any isUndefined (toList expr)
+         then Con $ AnyValue (getType $ Op expr)
+         else evalOpDefined expr
+  where
+    isUndefined (Con (AnyValue _)) = True
+    isUndefined _                  = False
+
+evalOpDefined :: Op -> Atom
+evalOpDefined expr = case expr of
   ScalarBinOp op x y -> case op of
     IAdd -> IntVal $ x' + y'      where (IntVal x') = x; (IntVal y') = y
     ISub -> IntVal $ x' - y'      where (IntVal x') = x; (IntVal y') = y
@@ -85,9 +98,10 @@ evalOp expr = case expr of
     Con (Coerce (TC (IndexRange _ _ _)) i) -> i
     Con (AnyValue t)                       -> anyValue t
     _ -> evalEmbed (indexToIntE (getType idxArg) idxArg)
-  Fst p -> x where (PairVal x _) = p
-  Snd p -> y where (PairVal _ y) = p
-  Select b t f -> if b' then t else f where (BoolVal b') = b
+  Fst p         -> x                     where (PairVal x _) = p
+  Snd p         -> y                     where (PairVal _ y) = p
+  SumTag s      -> t                     where (SumVal t _ _) = s
+  SumGet s left -> if left then l else r where (SumVal _ l r) = s
   _ -> error $ "Not implemented: " ++ pprint expr
 
 indices :: Type -> [Atom]

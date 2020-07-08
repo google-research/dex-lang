@@ -1,0 +1,72 @@
+-- We definitely want to improve this in the future, but it's fine if we only care
+-- about matrices that tile perfectly.
+def tile2d (n : Type) ?-> (m : Type) ?-> (b : Type) ?-> (nl : Int) ?-> (ml : Int) ?->
+           (fTile : Tile n nl -> Tile m ml -> (Fin nl)=>(Fin ml)=>b)
+           (fScalar : n -> m -> b) : n=>m=>b =
+  (tile
+    (\nt:(Tile n nl).
+      (tile1 (\mt:(Tile m ml). fTile nt mt)
+             (\mi:m. for ni:(Fin nl). fScalar (nt +> ni) mi)))
+    (\ni:n. for mi:m. fScalar ni mi))
+
+def matmul (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
+           (a : n=>k=>Real) (b : k=>m=>Real) : n=>m=>Real =
+  mkRows = 3
+  mkColVectors = 3
+  mkCols = mkColVectors * VectorWidth
+  (tile2d (\nt:(Tile n mkRows). \mt:(Tile m mkCols).
+             idxTy = Fin mkCols
+             ct = snd $ withAccum \acc.
+               for l.
+                 for i:(Fin mkRows).
+                   ail = broadcastVector a.(nt +> i).l
+                   for j:(Fin mkColVectors).
+                     -- TODO: Implement coercions so that we can split the last dim easily
+                     blj = (packVector b.l.(mt +> (UNSAFEFromOrdinal idxTy $ (ordinal j) * VectorWidth + 0))
+                                       b.l.(mt +> (UNSAFEFromOrdinal idxTy $ (ordinal j) * VectorWidth + 1))
+                                       b.l.(mt +> (UNSAFEFromOrdinal idxTy $ (ordinal j) * VectorWidth + 2))
+                                       b.l.(mt +> (UNSAFEFromOrdinal idxTy $ (ordinal j) * VectorWidth + 3)))
+                     acc!i!j += ail * blj
+             -- TODO: Another coercion required for unpacking the vector accumulator!
+             for i:(Fin mkRows). for j:(Fin mkCols).
+               vj = ordinal j `idiv` VectorWidth
+               ji = ordinal j `rem`  VectorWidth
+               (indexVector ct.i.(UNSAFEFromOrdinal (Fin mkColVectors) vj)
+                            (UNSAFEFromOrdinal (Fin VectorWidth) ji)))
+          (\i:n. \j:m. fsum \l. a.i.l * b.l.j))
+
+a = for i:(Fin 5). for j:(Fin 8). i2r $ (iota _).(i,j)
+b = for i:(Fin 8). for j:(Fin 15). i2r $ (iota _).(i,j)
+c = matmul a b
+c.(0@_)
+> [ 2100.0
+> , 2128.0
+> , 2156.0
+> , 2184.0
+> , 2212.0
+> , 2240.0
+> , 2268.0
+> , 2296.0
+> , 2324.0
+> , 2352.0
+> , 2380.0
+> , 2408.0
+> , 2436.0
+> , 2464.0
+> , 2492.0 ]
+c.(4@_)
+> [ 15540.0
+> , 15824.0
+> , 16108.0
+> , 16392.0
+> , 16676.0
+> , 16960.0
+> , 17244.0
+> , 17528.0
+> , 17812.0
+> , 18096.0
+> , 18380.0
+> , 18664.0
+> , 18948.0
+> , 19232.0
+> , 19516.0 ]

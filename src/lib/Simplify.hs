@@ -168,6 +168,10 @@ simplifyHof hof = case hof of
     case recon of
       Nothing -> return ans
       Just f  -> buildLam i TabArrow $ \i' -> app ans i' >>= f
+  Tile d fT fS -> do
+    ~(fT', Nothing) <- simplifyLam fT
+    ~(fS', Nothing) <- simplifyLam fS
+    emit $ Hof $ Tile d fT' fS'
   While cond body -> do
     ~(cond', Nothing) <- simplifyLam cond
     ~(body', Nothing) <- simplifyLam body

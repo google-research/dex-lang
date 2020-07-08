@@ -676,3 +676,14 @@ def newtonSolve (tol:Real) (f : Real -> Real) (x0:Real) : Real =
     \z. z + w
   (f 5, w)
 > (7, 2.0)
+
+def add (n : Type) ?-> (a : n=>Real) (b : n=>Real) : n=>Real =
+  (tile (\t:(Tile n VectorWidth). storeVector $ loadTile t a + loadTile t b)
+        (\i:n. a.i + b.i))
+toAdd = for _:(Fin 10). 1.0
+add toAdd toAdd
+> [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+
+arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
+arr2d.(1@_)
+> [2, 3]

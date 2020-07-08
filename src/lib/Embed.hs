@@ -15,14 +15,15 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR, fromPair, getFst, getSnd, naryApp,
+              select, selectAt, substEmbed, substEmbedR,
+              fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
-              traverseAtom, arrOffset, arrLoad,
+              traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               sumTag, getLeft, getRight, fromSum, clampPositive,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
@@ -73,7 +74,7 @@ runSubstEmbed :: SubstEmbed a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
-emit = emitAnn PlainLet
+emit expr     = emitAnn PlainLet expr
 
 emitAnn :: MonadEmbed m => LetAnn -> Expr -> m Atom
 emitAnn ann expr = do
@@ -97,9 +98,12 @@ emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
 freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
-freshVar v = do
+freshVar (n:>ty) = do
+  name <- case n of
+    NoName -> getNameHint
+    _      -> return n
   scope <- getScope
-  let v' = rename v scope
+  let v' = rename (name:>ty) scope
   return v'
 
 buildPi :: (MonadError Err m, MonadEmbed m)
@@ -109,7 +113,7 @@ buildPi b f = do
      b' <- freshVar b
      embedExtend $ asFst $ b' @> (varType b', PiBound)
      (arr, ans) <- f $ Var b'
-     return $ Pi $ Abs b' (arr, ans)
+     return $ Pi $ makeAbs b' (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return piTy
 
@@ -134,7 +138,7 @@ buildLamAux b fArr fBody = do
      embedExtend $ asFst $ b' @> (varType b', LamBound (void arr))
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (b', arr, ans, aux)
-  return (Lam $ Abs b' (arr, wrapDecls decls ans), aux)
+  return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -230,6 +234,11 @@ naryApp f [] = return f
 naryApp f (x:xs) = do
   f' <- app f x
   naryApp f' xs
+
+appReduce :: MonadEmbed m => Atom -> Atom -> m Atom
+appReduce (Lam (Abs v (_, b))) a =
+  runReaderT (evalBlockE substTraversalDef b) (v @> a)
+appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
 arrOffset :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
 arrOffset x idx off = emitOp $ ArrayOffset x idx off
@@ -434,9 +443,10 @@ withNameHint :: MonadEmbed m => Name -> m a -> m a
 withNameHint name m = embedLocal (\(_, eff) -> (tag, eff)) m
   where
     tag = case name of
-      Name _ t _   -> t
-      GlobalName t -> t
-      NoName       -> "tmp"
+      Name _ t _        -> t
+      GlobalName t      -> t
+      GlobalArrayName _ -> "arr"
+      NoName            -> "tmp"
 
 runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnvC)
 runEmbedT' (EmbedT m) (envR, envC) = runCatT (runReaderT m envR) envC
@@ -469,6 +479,9 @@ scopedDecls m = do
 
 type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
 
+substTraversalDef :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m
+substTraversalDef = (traverseExpr substTraversalDef, traverseAtom substTraversalDef)
+
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
                => TraversalDef m -> [Decl] -> m [Decl]
@@ -486,13 +499,16 @@ traverseDeclsOpen def@(fExpr, _) (Let letAnn b expr : decls) = do
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
-traverseBlock def block = buildScoped $ traverseBlock' def block
+traverseBlock def block = buildScoped $ evalBlockE def block
 
-traverseBlock' :: (MonadEmbed m, MonadReader SubstEnv m)
+evalBlockE :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Atom
-traverseBlock' def@(fExpr, _) (Block decls result) = do
+evalBlockE def@(fExpr, _) (Block decls result) = do
   env <- traverseDeclsOpen def decls
-  extendR env $ fExpr result >>= emit
+  resultExpr <- extendR env $ fExpr result
+  case resultExpr of
+    Atom a -> return a
+    _      -> emit resultExpr
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Expr -> m Expr
@@ -510,7 +526,7 @@ traverseAtom def@(_, fAtom) atom = case atom of
     b' <- mapM fAtom b
     buildDepEffLam b'
       (\x -> extendR (b'@>x) (substEmbedR arr))
-      (\x -> extendR (b'@>x) (traverseBlock' def body))
+      (\x -> extendR (b'@>x) (evalBlockE def body))
   Pi _ -> substEmbedR atom
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
@@ -587,6 +603,7 @@ reduceExpr scope expr = case expr of
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
+  UnitType                   -> return $ IntVal 1
   BaseType (Scalar BoolType) -> return $ IntVal 2
   IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
@@ -616,6 +633,7 @@ clampPositive x = do
 --      infinite loop.
 indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
 indexToIntE ty idx = case ty of
+  UnitTy  -> return $ IntVal 0
   BoolTy  -> boolToInt idx
   SumTy lType rType -> do
     (tag, lVal, rVal) <- fromSum idx
@@ -635,8 +653,9 @@ indexToIntE ty idx = case ty of
 
 intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
 intToIndexE ty@(TC con) i = case con of
-  IntRange _ _      -> iAsIdx
-  IndexRange _ _ _  -> iAsIdx
+  IntRange   _ _             -> iAsIdx
+  IndexRange _ _ _           -> iAsIdx
+  UnitType                   -> return $ UnitVal
   BaseType (Scalar BoolType) -> unsafeIntToBool i
   PairType a b -> do
     bSize <- indexSetSizeE b

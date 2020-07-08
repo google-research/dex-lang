@@ -152,8 +152,8 @@ instance Pretty e => Pretty (PrimCon e) where
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
-    SumGet e isLeft -> parens $ (if isLeft then "projLeft" else "projRight") <+> p e
-    SumTag e        -> parens $ "projTag" <+> p e
+    SumGet e isLeft -> parens $ (if isLeft then "getLeft" else "getRight") <+> p e
+    SumTag e        -> parens $ "getTag" <+> p e
     PrimEffect ref (MPut val ) ->  p ref <+> ":=" <+> p val
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
     ArrayOffset arr idx off -> p arr <+> "+>" <+> p off <+> (parens $ "index:" <+> p idx)
@@ -223,7 +223,7 @@ instance Pretty ImpInstr where
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
   pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr idx lidx) = p expr <+> "+>" <+> p lidx <+> (parens $ "index:" <+> p idx)
+  pretty (IOffset expr lidx t)   = p expr <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
   pretty (Free (v:>_))           = "free"  <+> p v
   pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
                                    nest 4 (hardline <> p block)

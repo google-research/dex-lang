@@ -179,8 +179,8 @@ valToScatter val = case getType val of
   where [Array _ (RealVec xs), Array _ (RealVec ys)] = materializeScalarTables val
 
 valToHeatmap :: Val -> Output
-valToHeatmap val = case val of
-  TabValA hv (TabVal wv _) ->
+valToHeatmap val = case getType val of
+  TabTy hv (TabTy wv RealTy) ->
     HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) xs
   _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
   where [(Array _ (RealVec xs))] = materializeScalarTables val

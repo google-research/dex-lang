@@ -40,11 +40,11 @@ module Syntax (
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
     pattern IntLitExpr, pattern RealLitExpr,
-    pattern IntVal, pattern UnitTy, pattern PairTy,
+    pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern SumVal, pattern PureArrow, pattern ArrayVal,
-    pattern RealVal, pattern BoolVal, pattern TyKind,
+    pattern RealVal, pattern BoolVal, pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy)
@@ -187,6 +187,7 @@ data PrimTC e =
       | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
+      | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | PairType e e
       | UnitType
       | SumType e e
@@ -231,6 +232,7 @@ data PrimOp e =
       | ArrayOffset e e e            -- Second argument is the index for type checking,
                                      -- Third argument is the linear offset for evaluation
       | ArrayLoad e
+      | SliceOffset e e              -- Index slice first, inner index second
       -- SIMD operations
       | VectorBinOp ScalarBinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
@@ -244,6 +246,7 @@ data PrimOp e =
 
 data PrimHof e =
         For Direction e
+      | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
       | SumCase e e e
       | RunReader e e
@@ -355,8 +358,9 @@ data ImpInstr = Load  IExpr
               | Store IExpr IExpr           -- Destination first
               | Alloc ScalarTableType Size  -- Second argument is the size of the table
               | Free IVar
-              | IOffset IExpr Index IExpr   -- Second argument is the index for type checking
-                                            -- Third argument is the linear offset for code generation
+                                            -- Second argument is the linear offset for code generation
+                                            -- Third argument is the result type for type checking
+              | IOffset IExpr IExpr ScalarTableType
               | Loop Direction IVar Size ImpProg
               | IWhile IExpr ImpProg
               | IPrimOp IPrimOp
@@ -374,7 +378,6 @@ data IType = IValType BaseType
              deriving (Show, Eq)
 
 type Size  = IExpr
-type Index = IExpr
 
 -- === some handy monoids ===
 
@@ -882,6 +885,9 @@ pattern TabTy v i = Pi (Abs v (TabArrow, i))
 pattern TabTyAbs :: PiType -> Type
 pattern TabTyAbs a <- Pi a@(Abs _ (TabArrow, _))
 
+pattern LamVal :: Var -> Block -> Atom
+pattern LamVal v b <- Lam (Abs v (_, b))
+
 pattern TabVal :: Var -> Block -> Atom
 pattern TabVal v b = Lam (Abs v (TabArrow, b))
 
@@ -910,10 +916,11 @@ fromConsList xs = case xs of
   PairVal x rest -> (x:) <$> fromConsList rest
   _              -> throw CompilerErr $ "Not a pair or unit: " ++ show xs
 
+pattern FunTy :: Binder -> EffectRow -> Type -> Type
+pattern FunTy b eff bodyTy = Pi (Abs b (PlainArrow eff, bodyTy))
+
 pattern BinaryFunTy :: Binder -> Binder -> EffectRow -> Type -> Type
-pattern BinaryFunTy b1 b2 eff bodyTy =
-          Pi (Abs b1 (PureArrow,
-          Pi (Abs b2 (PlainArrow eff, bodyTy))))
+pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
 pattern BinaryFunVal b1 b2 eff body =
@@ -962,6 +969,8 @@ builtinNames = M.fromList
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
   , ("caseAnalysis"    , HofExpr $ SumCase () () ())
+  , ("tiled"           , HofExpr $ Tile 0 () ())
+  , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("Int"     , TCExpr $ BaseType $ Scalar IntType)
   , ("Real"    , TCExpr $ BaseType $ Scalar RealType)
   , ("Bool"    , TCExpr $ BaseType $ Scalar BoolType)
@@ -972,6 +981,7 @@ builtinNames = M.fromList
   , ("SumType" , TCExpr $ SumType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)
+  , ("IndexSlice", TCExpr $ IndexSlice () ())
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())
   , ("snd", OpExpr $ Snd ())
@@ -981,6 +991,7 @@ builtinNames = M.fromList
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ Coerce () ())
+  , ("sliceOffset", OpExpr $ SliceOffset () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()

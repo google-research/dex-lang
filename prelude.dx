@@ -253,6 +253,8 @@ def sum  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
 def isum (xs:n=>Int) : Int = fold 0 \i c. c + xs.i
 def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
 def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
+def any (xs:n=>Bool) : Bool = fold False \i c. c || xs.i
+def all (xs:n=>Bool) : Bool = fold True  \i c. c && xs.i
 
 def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
   dx = (high - low) / i2r (size n)
@@ -381,3 +383,25 @@ def broadcastVector (v : Real) : VectorReal = packVector v v v v
         , \x y. %vfsub x y
         , broadcastVector zero )
 @instance vectorRealMul : Mul (VectorReal) = MkMul \x y. %vfmul x y
+
+'Tiling
+
+def Tile (n : Type) (len : Int) : Type = %IndexSlice n len
+
+-- TODO: It would be nice to make fTile return t=>a, but t is _not_ of type Type,
+--       so the current type inference and checking machinery complains!
+def tile  (l : Int) ?->
+          (fTile : (t:(Tile n l) -> {|eff} (Fin l)=>a))
+          (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
+def tile1 (n : Type) ?-> (l : Int) ?-> (m : Type) ?->
+          (fTile : (t:(Tile n l) -> {|eff} m=>(Fin l)=>a))
+          (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
+def (+>) (l : Int) ?-> (t:Tile n l) (i : Fin l) : n = %sliceOffset t i
+-- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
+--       once we are able to eliminate temporary arrays. Until then, we inline for performance...
+def loadTile (t : Tile n VectorWidth) (arr : n=>Real) : VectorReal =
+  idx = Fin VectorWidth
+  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
+              arr.(t +> UNSAFEFromOrdinal idx 1)
+              arr.(t +> UNSAFEFromOrdinal idx 2)
+              arr.(t +> UNSAFEFromOrdinal idx 3))
