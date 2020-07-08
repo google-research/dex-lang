@@ -10,8 +10,9 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, checkType, HasType (..), Checkable (..), litType, isPure, extendEffect,
-  binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
+  getType, checkType, HasType (..), Checkable (..), litType,
+  isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
+  indexSetConcreteSize, checkNoShadow) where
 
 import Control.Monad
 import Control.Monad.Except hiding (Except)
@@ -107,15 +108,39 @@ instance HasType Expr where
     Hof  hof -> typeCheckHof hof
 
 -- TODO: replace with something more precise (this is too cautious)
+
+blockEffs :: Block -> EffectSummary
+blockEffs (Block decls result) =
+  foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
+
 isPure :: Expr -> Bool
-isPure expr = case expr of
-  Atom _ -> True
-  App f _ -> case getType f of
-    Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
-    _ -> False
-  Op (Fst _) -> True
-  Op (Snd _) -> True
-  _ -> False
+isPure expr = case exprEffs expr of
+  NoEffects   -> True
+  SomeEffects -> False
+
+exprEffs :: Expr -> EffectSummary
+exprEffs expr = case expr of
+  Atom _ -> NoEffects
+  App f _ -> functionEffs f
+  Op op -> case op of
+    PrimEffect _ _ -> SomeEffects
+    _ -> NoEffects
+  Hof hof -> case hof of
+    For _ f -> functionEffs f
+    SumCase _ l r -> functionEffs l <> functionEffs r
+    While cond body -> functionEffs cond <> functionEffs body
+    Linearize _ -> NoEffects
+    Transpose _ -> NoEffects
+    -- These are more convservative than necessary.
+    -- TODO: make them more precise by de-duping with type checker
+    RunReader _ _ -> SomeEffects
+    RunWriter _   -> SomeEffects
+    RunState _ _  -> SomeEffects
+
+functionEffs :: Atom -> EffectSummary
+functionEffs f = case getType f of
+  Pi (Abs _ (arr, _)) | arrowEff arr == Pure -> NoEffects
+  _ -> SomeEffects
 
 instance HasType Block where
   typeCheck (Block decls result) = do
@@ -334,7 +359,8 @@ typeCheckTyCon tc = case tc of
     foldM checkApp fTy xs
     where
       checkApp :: Atom -> Atom -> TypeM Type
-      checkApp (Pi piTy) x = do
+      checkApp fTy x = do
+        Pi piTy <- return fTy
         x |: absArgType piTy
         -- Newtype arrows should be pure.
         let (PlainArrow Pure, resultTy) = applyAbs piTy x

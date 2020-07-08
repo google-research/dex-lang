@@ -535,9 +535,9 @@ dceDecl decl@(Let ann b expr) = do
   varsNeeded <- look
   if b `isin` varsNeeded
     then tell [decl] >> extend (freeVars expr)
-    else if isPure expr
-      then return ()
-      else tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+    else case exprEffs expr of
+      NoEffects   -> return ()
+      SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
 
 sameSingletonVal :: Type -> Type -> Bool
 sameSingletonVal t1 t2 = case singletonTypeVal t1 of

@@ -19,7 +19,8 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
+    PrimExpr (..), PrimCon (..), LitVal (..),
+    PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
@@ -297,12 +298,21 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
                  deriving (Show, Generic)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
+data EffectSummary = NoEffects | SomeEffects  deriving (Show, Eq, Ord, Generic)
+
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
 
 instance Eq EffectRow where
   EffectRow effs t == EffectRow effs' t' =
     sort effs == sort effs' && t == t'
+
+instance Semigroup EffectSummary where
+  NoEffects <> NoEffects = NoEffects
+  _ <> _ = SomeEffects
+
+instance Monoid EffectSummary where
+  mempty = NoEffects
 
 -- === top-level constructs ===
 
