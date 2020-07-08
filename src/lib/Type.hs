@@ -229,6 +229,7 @@ instance CoreVariant (PrimCon a) where
 instance CoreVariant (PrimHof a) where
   checkVariant e = case e of
     For _ _       -> alwaysAllowed
+    CFor _        -> alwaysAllowed
     While _ _     -> alwaysAllowed
     SumCase _ _ _ -> goneBy Simp
     RunReader _ _ -> alwaysAllowed
@@ -457,6 +458,11 @@ typeCheckHof hof = case hof of
     -- TODO: check `n` isn't free in `eff`
     declareEffs $ arrowEff arr
     return $ Pi $ Abs n (TabArrow, a)
+  CFor f -> do
+    Pi (Abs (NoName:>u) (arr, Pi (Abs (NoName:>v) (_, a)))) <- typeCheck f
+    -- TODO: check `n` isn't free in `eff`
+    declareEffs $ arrowEff arr
+    return $ Pi $ Abs (NoName:>(PairTy u v)) (TabArrow, a)
   Tile dim fT fS -> do
     FunTy tv eff  tr    <- typeCheck fT
     FunTy sv eff' sr    <- typeCheck fS

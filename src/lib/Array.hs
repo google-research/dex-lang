@@ -34,7 +34,7 @@ data LitVal = IntLit  Int
 
 data Vec = IntVec    (V.Vector Int)
          | BoolVec   (V.Vector Int)
-         | RealVec   (V.Vector Double)
+         | RealVec   (V.Vector Float)
            deriving (Show, Eq, Generic)
 
 data ScalarBaseType = IntType | BoolType | RealType | StrType
@@ -73,7 +73,7 @@ scalarFromArray arr@(Array b vec) = case arrayLength arr of
     scalarFromVec v = case v of
       IntVec    xs -> IntLit  $ xs V.! 0
       BoolVec   xs -> BoolLit $ xs V.! 0 /= 0
-      RealVec   xs -> RealLit $ xs V.! 0
+      RealVec   xs -> RealLit $ realToFrac $ xs V.! 0
 
 arrayOffset :: Array -> Int -> Array
 arrayOffset (Array b vec) off = Array b $ modifyVec vec $ V.drop (off * vecEntriesFor b)
@@ -87,7 +87,7 @@ arrayFromScalar val = case val of
   BoolLit x -> Array (Scalar BoolType) $ BoolVec $ V.fromList [x']
     where x' = case x of False -> 0
                          True  -> 1
-  RealLit x -> Array (Scalar RealType) $ RealVec $ V.fromList [x]
+  RealLit x -> Array (Scalar RealType) $ RealVec $ V.fromList [realToFrac x]
   _ -> error "Not implemented"
 
 arrayConcat :: [Array] -> Array

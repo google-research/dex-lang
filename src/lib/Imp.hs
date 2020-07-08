@@ -132,7 +132,7 @@ toImpOp (maybeDest, op) = case op of
     let i' = fromScalarAtom i
     n' <- indexSetSize n
     ans <- emitInstr $ IPrimOp $
-             FFICall "int_to_index_set" (Scalar IntType) [i', n']
+            FFICall "int_to_index_set" (Scalar IntType) [i', n']
     returnVal =<< intToIndex resultTy ans
   IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
   IndexAsInt idx -> case idx of
@@ -193,6 +193,20 @@ toImpHof env (maybeDest, hof) = do
       emitLoop hint d n' $ \i -> do
         idx <- intToIndex idxTy i
         ithDest <- destGet dest idx
+        void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
+      destToAtom dest
+    CFor (LamVal b@(hint:>idxTy') body) -> do
+      let (TabTy (_:>bodyIdxTy') _) = getType body
+      idxTy <- impSubst env idxTy'
+      bodyIdxTy <- impSubst env bodyIdxTy'
+      n' <- indexSetSize idxTy
+      dest <- allocDest maybeDest resultTy
+      emitLoop hint Fwd n' $ \i -> do
+        idx <- intToIndex idxTy i
+        bz <- intToIndex bodyIdxTy $ IIntVal 0
+        offset <- toScalarAtom IntTy <$> indexToInt (PairTy idxTy bodyIdxTy) (PairVal idx bz)
+        -- TODO: Do currying instead of offsetting and unsafe casts
+        ithDest <- destSliceDim dest 0 offset bodyIdxTy
         void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
       destToAtom dest
     Tile d (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
@@ -295,11 +309,11 @@ destGetDim :: Dest -> Int -> Atom -> ImpM Dest
 destGetDim dest dim idx = indexDest dest dim $ \(Dest d) -> Dest <$> appReduce d idx
 
 destSliceDim :: Dest -> Int -> Atom -> Type -> ImpM Dest
-destSliceDim dest dim fromIdx idxTy = indexDest dest dim $ \(Dest d) -> case d of
+destSliceDim dest dim fromOrdinal idxTy = indexDest dest dim $ \(Dest d) -> case d of
   TabVal v _ -> do
     lam <- buildLam (varName v :> idxTy) TabArrow $ \idx -> do
       i <- indexToIntE idxTy idx
-      ioff <- iadd i fromIdx
+      ioff <- iadd i fromOrdinal
       vidx <- intToIndexE (varType v) ioff
       appReduce d vidx
     return $ Dest $ lam

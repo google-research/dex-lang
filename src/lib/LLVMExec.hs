@@ -13,6 +13,7 @@ import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
 import qualified LLVM.Module as Mod
 import qualified LLVM.PassManager as P
+import qualified LLVM.Transforms as P
 import qualified LLVM.ExecutionEngine as EE
 import qualified LLVM.Target as T
 import LLVM.Context
@@ -78,7 +79,17 @@ logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
 
 runPasses :: Mod.Module -> IO ()
-runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+runPasses m = do
+  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+  -- TODO:
+  -- TODO: Comment
+  (T.withHostTargetMachineDefault $ \t -> do
+    dl <- T.getTargetMachineDataLayout t
+    let slp = P.PassSetSpec extraPasses (Just dl) Nothing (Just t)
+    P.withPassManager slp $ \pm -> void $ P.runPassManager pm m)
+  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+  where
+    extraPasses = [ P.SuperwordLevelParallelismVectorize ]
 
 showLLVM :: L.Module -> IO String
 showLLVM m = do

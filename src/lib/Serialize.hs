@@ -27,6 +27,7 @@ import Text.Megaparsec.Char
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
+import qualified Data.Vector.Storable as V
 
 import Env
 import Array
@@ -174,14 +175,14 @@ materializeScalarTables atom = case atom of
 
 valToScatter :: Val -> Output
 valToScatter val = case getType val of
-  TabTy _ (PairTy RealTy RealTy) -> ScatterOut xs ys
+  TabTy _ (PairTy RealTy RealTy) -> ScatterOut (V.map realToFrac xs) (V.map realToFrac ys)
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
   where [Array _ (RealVec xs), Array _ (RealVec ys)] = materializeScalarTables val
 
 valToHeatmap :: Val -> Output
 valToHeatmap val = case getType val of
   TabTy hv (TabTy wv RealTy) ->
-    HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) xs
+    HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) (V.map realToFrac xs)
   _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
   where [(Array _ (RealVec xs))] = materializeScalarTables val
 

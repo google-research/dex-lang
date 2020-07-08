@@ -246,6 +246,7 @@ data PrimOp e =
 
 data PrimHof e =
         For Direction e
+      | CFor e
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
       | SumCase e e e
@@ -959,6 +960,7 @@ builtinNames = M.fromList
   , ("runReader"       , HofExpr $ RunReader () ())
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
+  , ("cfor"            , HofExpr $ CFor ())
   , ("caseAnalysis"    , HofExpr $ SumCase () () ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())

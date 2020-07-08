@@ -164,6 +164,9 @@ simplifyHof hof = case hof of
   For d lam -> do
     ~(lam', Nothing) <- simplifyLam lam
     emit $ Hof $ For d lam'
+  CFor lam -> do
+    ~(lam', Nothing) <- simplifyLam lam
+    emit $ Hof $ CFor lam'
   Tile d fT fS -> do
     ~(fT', Nothing) <- simplifyLam fT
     ~(fS', Nothing) <- simplifyLam fS
