@@ -30,7 +30,7 @@ simplifyModule scope (Module Core decls _) = do
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
   let (declsDone, declsNotDone) = partition isAtomDecl simpDecls
   let bindings = foldMap declAsScope declsDone
-  Module Simp declsNotDone bindings
+  dceModule $ Module Simp declsNotDone bindings
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module

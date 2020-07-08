@@ -21,7 +21,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
-              SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock,
+              SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               sumTag, getLeft, getRight, fromSum, clampPositive,
@@ -299,9 +299,9 @@ tabGet x i = emit $ App x i
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildFor Fwd ("i":>varType v) $ \i ->
+  fsts <- buildLam ("i":>varType v) TabArrow $ \i ->
             liftM fst $ app tab i >>= fromPair
-  snds <- buildFor Fwd ("i":>varType v) $ \i ->
+  snds <- buildLam ("i":>varType v) TabArrow $ \i ->
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy v _ = getType tab
@@ -534,19 +534,27 @@ traverseAtom def@(_, fAtom) atom = case atom of
 
 -- === DCE ===
 
+type DceM = WriterT [Decl] (Cat Scope)
+
+dceModule :: Module -> Module
+dceModule (Module ir decls bindings) =
+  Module ir (dceDecls (freeVars bindings) decls) bindings
+
 dceBlock :: Block -> Block
-dceBlock (Block decls result) = Block decls' result'
-  where
-    (declsRev, result') = inlineLastDecl (reverse decls) result
-    decls' = reverse $ fst $ flip runCat (freeVars result') $
-               execWriterT $ mapM dceDecl declsRev
+dceBlock (Block decls result) =
+  inlineLastDecl $ Block (dceDecls (freeVars result) decls) result
 
-inlineLastDecl :: [Decl] -> Expr -> ([Decl], Expr)
-inlineLastDecl (Let _ v expr:rest) (Atom atom)
-  | atom == Var v || sameSingletonVal (varType v) (getType atom) = (rest,  expr)
-inlineLastDecl declsRev result = (declsRev, result)
+dceDecls :: Scope -> [Decl] -> [Decl]
+dceDecls varsNeeded decls = reverse $
+  fst $ flip runCat varsNeeded $ execWriterT $ mapM dceDecl $ reverse decls
 
-dceDecl :: Decl -> WriterT [Decl] (Cat Scope) ()
+inlineLastDecl :: Block -> Block
+inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
+  (Let _ v expr:rest, Atom atom)
+    | atom == Var v || sameSingletonVal (varType v) (getType atom) -> Block (reverse rest) expr
+  _ -> block
+
+dceDecl :: Decl -> DceM ()
 dceDecl decl@(Let ann b expr) = do
   varsNeeded <- look
   if b `isin` varsNeeded
