@@ -6,25 +6,31 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (LLVMFunction (..), showLLVM, evalLLVM, callLLVM,
+module LLVMExec (LLVMFunction (..), callLLVM,
                  linking_hack) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
+import qualified LLVM.Relocation as R
+import qualified LLVM.CodeModel as CM
+import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
 import qualified LLVM.PassManager as P
-import qualified LLVM.ExecutionEngine as EE
+import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
+import qualified LLVM.Linking as Linking
+import qualified LLVM.OrcJIT as JIT
+import LLVM.Internal.OrcJIT.CompileLayer as JIT
 import LLVM.Context
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.Storable
-import Control.Exception
 import Control.Monad
 import Data.ByteString.Char8 (unpack)
-import Data.Maybe (fromMaybe)
+import Data.IORef
+import qualified Data.Map as M
 
 import Logging
 import Syntax
@@ -53,56 +59,68 @@ callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
 
 evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ()
 evalLLVM logger ast argPtr = do
-  T.initializeAllTargets
-  withContext $ \c ->
-    Mod.withModuleFromAST c ast $ \m -> do
-      showModule m >>= logPass logger JitPass
-      L.verify m
-      runPasses m
-      showModule m >>= logPass logger LLVMOpt
-      showAsm    m >>= logPass logger AsmPass
-      jit c $ \ee -> do
-        EE.withModuleInEngine ee m $ \eee -> do
-          f <- liftM (fromMaybe (error "failed to fetch function")) $
-                 EE.getFunction eee (L.Name "entryFun")
-          t1 <- getCurrentTime
-          callFunPtr (castFunPtr f :: FunPtr (Ptr () -> IO ())) argPtr
-          t2 <- getCurrentTime
-          logPass logger LLVMEval $ show (t2 `diffUTCTime` t1)
+  resolvers <- newIORef M.empty
+  withContext $ \c -> do
+    void $ Linking.loadLibraryPermanently Nothing
+    Mod.withModuleFromAST c ast $ \m ->
+      T.withHostTargetMachine R.PIC CM.Default CGO.Aggressive $ \tm -> do
+        showModule    m >>= logPass logger JitPass
+        L.verify      m
+        runPasses  tm m
+        showModule    m >>= logPass logger LLVMOpt
+        showAsm    tm m >>= logPass logger AsmPass
+        JIT.withExecutionSession $ \exe ->
+          JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
+            JIT.withIRCompileLayer linkLayer tm $ \compileLayer -> do
+              JIT.withModuleKey exe $ \moduleKey ->
+                JIT.withSymbolResolver exe (makeResolver compileLayer) $ \resolver -> do
+                  modifyIORef resolvers (M.insert moduleKey resolver)
+                  JIT.withModule compileLayer moduleKey m $ do
+                    entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
+                    Right (JIT.JITSymbol f _) <- JIT.findSymbol compileLayer entryFunSymbol False
+                    t1 <- getCurrentTime
+                    callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
+                    t2 <- getCurrentTime
+                    logPass logger LLVMEval $ show (t2 `diffUTCTime` t1)
+  where
+    makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
+    makeResolver cl = JIT.SymbolResolver $ \sym -> do
+      rsym <- JIT.findSymbol cl sym False
+      -- We look up functions like malloc in the current process
+      -- TODO: Use JITDylibs to avoid inlining addresses as constants:
+      -- https://releases.llvm.org/9.0.0/docs/ORCv2.html#how-to-add-process-and-library-symbols-to-the-jitdylibs
+      case rsym of
+        Right _ -> return rsym
+        Left  _ -> Right . externSym <$> Linking.getSymbolAddressInProcess sym
+    externSym ptr =
+      JIT.JITSymbol { JIT.jitSymbolAddress = ptr
+                    , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }
+                    }
 
-jit :: Context -> (EE.MCJIT -> IO a) -> IO a
-jit c = EE.withMCJIT c (Just 3) Nothing Nothing Nothing
-
--- TODO: re-enable!!
 logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
 
-runPasses :: Mod.Module -> IO ()
-runPasses m = P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
-
-showLLVM :: L.Module -> IO String
-showLLVM m = do
-  T.initializeAllTargets
-  withContext $ \c ->
-    Mod.withModuleFromAST c m $ \m' -> do
-      verifyErr <- verifyAndRecover m'
-      prePass <- showModule m'
-      runPasses m'
-      postPass <- showModule m'
-      return $ verifyErr ++ "Input LLVM:\n\n" ++ prePass
-            ++ "\nAfter passes:\n\n" ++ postPass
-
 showModule :: Mod.Module -> IO String
-showModule m = liftM unpack $ Mod.moduleLLVMAssembly m
+showModule m = unpack <$> Mod.moduleLLVMAssembly m
 
-verifyAndRecover :: Mod.Module -> IO String
-verifyAndRecover m =
-  (L.verify m >> return  "") `catch`
-    (\e -> return ("\nVerification error:\n" ++ show (e::SomeException) ++ "\n"))
+runPasses :: T.TargetMachine -> Mod.Module -> IO ()
+runPasses t m = do
+  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+  -- We are highly dependent on LLVM when it comes to some optimizations such as
+  -- turning a sequence of scalar stores into a vector store, so we execute some
+  -- extra passes to make sure they get simplified correctly.
+  dl <- T.getTargetMachineDataLayout t
+  let slp = P.PassSetSpec extraPasses (Just dl) Nothing (Just t)
+  P.withPassManager slp $ \pm -> void $ P.runPassManager pm m
+  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+  where
+    extraPasses = [ P.SuperwordLevelParallelismVectorize ]
 
-showAsm :: Mod.Module -> IO String
-showAsm m = T.withHostTargetMachineDefault $ \t ->
-              liftM unpack $ Mod.moduleTargetAssembly t m
+showAsm :: T.TargetMachine -> Mod.Module -> IO String
+showAsm t m = do
+  -- Uncomment this to dump assembly to a file that can be linked to a C benchmark suite:
+  -- Mod.writeObjectToFile t (Mod.File "asm.o") m
+  liftM unpack $ Mod.moduleTargetAssembly t m
 
 passes :: P.PassSetSpec
 passes = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
