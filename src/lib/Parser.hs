@@ -451,7 +451,7 @@ ops =
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
      InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
-  , [InfixR $ mayBreak (sym "$") $> mkApp]
+  , [InfixR $ mayBreak (infixSym "$") $> mkApp]
   , [symOp "+=", symOp ":=", symOp "|", InfixR infixArrow]
   , [InfixR $ symOpP "&", pairOp]
   , indexRangeOps
@@ -467,21 +467,24 @@ pairOp :: Operator Parser UExpr
 pairOp = InfixR $ opWithSrc $ do
   allowed <- asks canPair
   if allowed
-    then sym "," >> return (binApp f)
+    then infixSym "," >> return (binApp f)
     else fail "Unexpected comma"
   where f = mkName $ "(,)"
 
 anySymOp :: Operator Parser UExpr
 anySymOp = InfixL $ opWithSrc $ do
-  s <- label "infix operator" anySym
+  s <- label "infix operator" (mayBreak anySym)
   return $ binApp $ mkSymName s
+
+infixSym :: String -> Parser ()
+infixSym s = mayBreak $ sym s
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ symOpP s
 
 symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
-  label "infix operator" (sym s)
+  label "infix operator" (infixSym s)
   return $ binApp $ mkSymName s
 
 mkSymName :: String -> Name

@@ -125,6 +125,7 @@ linearizeOp op = case op of
   ArrayOffset _ _ _      -> emitWithZero
   ArrayLoad _            -> emitWithZero
   ScalarUnOp IntToReal _ -> emitWithZero
+  TabCon ty xs -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
   _ | hasDiscreteType (Op op) -> emitWithZero
   _ -> error $ "not implemented: " ++ pprint op
   where

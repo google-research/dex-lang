@@ -1,0 +1,105 @@
+
+-- === General MCMC utilities ===
+
+LogProb : Type = Real
+
+def runChain
+      (initialize: Key -> a)
+      (step: Key -> a -> a)
+      (numSamples: Int)
+      (k:Key)
+      : Fin numSamples => a =
+  (k1, k2) = splitKey k
+  fst $ withState (initialize k) \s.
+    for i:(Fin numSamples).
+      x = step (ixkey k2 i) (get s)
+      s := x
+      x
+
+def propose
+      (logDensity : a -> LogProb)
+      (cur      : a)
+      (proposal : a)
+      (k : Key)
+      : a =
+  acceptProb = exp (logDensity proposal) / exp (logDensity cur)
+  select (bern acceptProb k) proposal cur
+
+def meanAndCovariance (n:Type) ?-> (d:Type) ?->
+      (xs:n=>d=>Real) : (d=>Real & d=>d=>Real) =
+   xsMean :    d=>Real = (for i. sum for j. xs.j.i) / i2r (size n)
+   xsCov  : d=>d=>Real = (for i i'. sum for j.
+                           (xs.j.i' - xsMean.i') *
+                           (xs.j.i  - xsMean.i )   ) / i2r (size n - 1)
+   (xsMean, xsCov)
+
+-- === Metropolis-Hastings implementation ===
+
+MHParams : Type = Real  -- step size
+
+def mhStep
+      (stepSize: MHParams)
+      (logProb: (d=>Real) -> LogProb)
+      (k:Key)
+      (x:d=>Real)
+      : d=>Real =
+  (k1, k2) = splitKey k
+  proposal = x + stepSize .* randnVec k1
+  propose logProb x proposal k2
+
+-- === HMC implementation ===
+
+HMCParams : Type = (Int & Real)  -- leapfrog steps, step size
+
+def leapfrogIntegrate
+      (_:VSpace a) ?=>
+      ((nsteps, dt): HMCParams)
+      (logProb: a -> LogProb)
+      ((x, p): a & a)
+      : (a & a) =
+  x = x + (0.5 * dt) .* p
+  (x, p) = applyN nsteps (x, p) \(xOld, pOld).
+    pNew = pOld + dt .* grad logProb xOld
+    xNew = xOld + dt .* pNew
+    (xNew, pNew)
+  p = p + (0.5 * dt) .* grad logProb x
+  (x, p)
+
+def hmcStep
+      (params: HMCParams)
+      (logProb: (d=>Real) -> LogProb)
+      (k:Key)
+      (x:d=>Real)
+      : d=>Real =
+  hamiltonian = \(x, p). logProb x - 0.5 * vdot p p
+  (k1, k2) = splitKey k
+  p = randnVec k1
+  proposal = leapfrogIntegrate params logProb (x, p)
+  fst $ propose hamiltonian (x, p) proposal k2
+
+-- === test it out ===
+
+def myLogProb (x:(Fin 2)=>Real) : LogProb =
+  x' = x - [1.5, 2.5]
+  neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
+
+hmcParams = (10, 0.1)
+mhParams = 0.1
+numSamples = 500
+k0 = newKey 1
+
+hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
+mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
+
+:p meanAndCovariance hmcSamples
+> ( [1.4443606, 2.4944878]
+> , [[1.0735196, 2.0377817e-2], [2.0377817e-2, 5.288914e-2]] )
+
+:plot for i. (i2r (ordinal i), hmcSamples.i.(0@_))
+> <graphical output>
+
+:p meanAndCovariance mhSamples
+> ([0.17566945, 2.4387398], [[1.0037098, 0.23710543], [0.23710543, 0.15966101]])
+
+:plot for i. (i2r (ordinal i), mhSamples.i.(0@_))
+> <graphical output>
