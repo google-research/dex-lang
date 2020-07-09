@@ -81,7 +81,7 @@ evalLLVM logger ast argPtr = do
                     t1 <- getCurrentTime
                     callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
                     t2 <- getCurrentTime
-                    logPass logger LLVMEval $ show (t2 `diffUTCTime` t1)
+                    logThis logger [EvalTime $ realToFrac $ t2 `diffUTCTime` t1]
   where
     makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
     makeResolver cl = JIT.SymbolResolver $ \sym -> do

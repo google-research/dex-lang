@@ -17,7 +17,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
-import Data.Maybe (fromJust, fromMaybe)
+import Data.Maybe (fromJust, fromMaybe, mapMaybe)
 
 import Array
 import Syntax
@@ -63,7 +63,7 @@ type TopPassM a = ReaderT EvalConfig IO a
 evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
 evalSourceBlock opts env block = do
   (ans, outs) <- runTopPassM opts $ evalSourceBlockM env block
-  let outs' = filter (keepOutput block) outs
+  let outs' = mapMaybe (filterOutput block) outs
   case ans of
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
     Right env' -> return (env'  , Result outs' (Right ()))
@@ -111,17 +111,22 @@ evalSourceBlockM env block = case sbContents block of
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
-keepOutput :: SourceBlock -> Output -> Bool
-keepOutput block output = case output of
-  PassInfo pass _ -> case sbLogLevel block of
-    LogNothing -> False
-    LogAll     -> True
-    LogPasses passes | pass `elem` passes -> True
-                     | otherwise          -> False
-  MiscLog _ -> case sbLogLevel block of
-    LogAll -> True
-    _      -> False
-  _ -> True
+filterOutput :: SourceBlock -> Output -> Maybe Output
+filterOutput block output = case (output, sbLogLevel block) of
+  -- Everything goes under LogAll
+  (_              , LogAll          )                      -> Just output
+  -- Filter out all logs under LogNothing
+  (PassInfo _    _, LogNothing      )                      -> Nothing
+  (MiscLog  _     , LogNothing      )                      -> Nothing
+  (EvalTime _     , LogNothing      )                      -> Nothing
+  -- PrintEvalTime removes all output and converts EvalTime into text
+  (EvalTime t     , PrintEvalTime   )                      -> Just $ TextOut $ show t
+  (_              , PrintEvalTime   )                      -> Nothing
+  -- LogPasses filters out pass info
+  (PassInfo pass _, LogPasses passes) | pass `elem` passes -> Just output
+  (PassInfo _    _, LogPasses _     )                      -> Nothing
+  (MiscLog  _     , LogPasses _     )                      -> Nothing
+  (_              , _               )                      -> Just output
 
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
 evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
