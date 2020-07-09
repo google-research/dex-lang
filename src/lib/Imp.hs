@@ -290,11 +290,11 @@ destGetDim :: Dest -> Int -> Atom -> ImpM Dest
 destGetDim dest dim idx = indexDest dest dim $ \(Dest d) -> Dest <$> appReduce d idx
 
 destSliceDim :: Dest -> Int -> Atom -> Type -> ImpM Dest
-destSliceDim dest dim fromIdx idxTy = indexDest dest dim $ \(Dest d) -> case d of
+destSliceDim dest dim fromOrdinal idxTy = indexDest dest dim $ \(Dest d) -> case d of
   TabVal v _ -> do
     lam <- buildLam (varName v :> idxTy) TabArrow $ \idx -> do
       i <- indexToIntE idxTy idx
-      ioff <- iadd i fromIdx
+      ioff <- iadd i fromOrdinal
       vidx <- intToIndexE (varType v) ioff
       appReduce d vidx
     return $ Dest $ lam
