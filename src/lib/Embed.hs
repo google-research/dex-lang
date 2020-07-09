@@ -155,7 +155,6 @@ zeroAt ty = case ty of
     Lam $ Abs (NoName:>n) (TabArrow,  Block [] $ Atom $ zeroAt a)
   UnitTy -> UnitVal
   PairTy a b -> PairVal (zeroAt a) (zeroAt b)
- -- FIXME: this assumes the base type is RealType
   _ -> error $ "Not implemented: " ++ pprint ty
 
 addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
@@ -236,10 +235,7 @@ app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
 
 naryApp :: MonadEmbed m => Atom -> [Atom] -> m Atom
-naryApp f [] = return f
-naryApp f (x:xs) = do
-  f' <- app f x
-  naryApp f' xs
+naryApp f xs = foldM app f xs
 
 appReduce :: MonadEmbed m => Atom -> Atom -> m Atom
 appReduce (Lam (Abs v (_, b))) a =

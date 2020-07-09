@@ -90,22 +90,22 @@ simplifyAtom atom = case atom of
 
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
-type Recon m a = Maybe (a -> m a)
+type Reconstruct m a = Maybe (a -> m a)
 
-simplifyLam :: Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLam = simplifyLams 1
 
-simplifyBinaryLam :: Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyBinaryLam :: Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyBinaryLam = simplifyLams 2
 
 -- Unlike `substEmbedR`, this simplifies under the binder too.
-simplifyLams :: Int -> Atom -> SimplifyM (Atom, Recon SimplifyM Atom)
+simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substEmbedR lam
   dropSub $ simplifyLams' numArgs mempty $ Block [] $ Atom lam'
 
-simplifyLams' :: Int -> Scope -> Block -> SimplifyM (Atom, Recon SimplifyM Atom)
--- this case is an optimization
+simplifyLams' :: Int -> Scope -> Block
+              -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams' 0 scope block
   | isData (getType block) = liftM (,Nothing) $ simplifyBlock block
   | otherwise = do

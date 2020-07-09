@@ -10,7 +10,7 @@ def runChain
       (k:Key)
       : Fin numSamples => a =
   (k1, k2) = splitKey k
-  fst $ withState (initialize k) \s.
+  fst $ withState (initialize k1) \s.
     for i:(Fin numSamples).
       x = step (ixkey k2 i) (get s)
       s := x
@@ -92,14 +92,14 @@ hmcSamples = runChain randnVec (hmcStep hmcParams myLogProb) numSamples k0
 mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 
 :p meanAndCovariance hmcSamples
-> ( [1.4443606, 2.4944878]
-> , [[1.0735196, 2.0377817e-2], [2.0377817e-2, 5.288914e-2]] )
+> ( [1.4468334, 2.4944708]
+> , [[1.0656763, 2.0475943e-2], [2.0475943e-2, 5.2884966e-2]] )
 
 :plot for i. (i2r (ordinal i), hmcSamples.i.(0@_))
 > <graphical output>
 
 :p meanAndCovariance mhSamples
-> ([0.17566945, 2.4387398], [[1.0037098, 0.23710543], [0.23710543, 0.15966101]])
+> ([0.64555407, 2.4140553], [[0.38236168, 0.1794119], [0.1794119, 0.22895665]])
 
 :plot for i. (i2r (ordinal i), mhSamples.i.(0@_))
 > <graphical output>
