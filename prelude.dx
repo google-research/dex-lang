@@ -326,7 +326,7 @@ def argmin (xs:n=>Real) : n =
 
 -- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
-def jvp (f:a->b) (x:a) (t:a) --o : b = snd (linearize f x) t
+def jvp (f:a->b) (x:a) : a --o b = snd (linearize f x)
 def transposeLinear (f:a --o b) : b --o a = %linearTranspose f
 
 def vjp (f:a->b) (x:a) : (b & b --o a) =

@@ -148,9 +148,15 @@ buildScoped m = do
 wrapDecls :: [Decl] -> Atom -> Block
 wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
--- TODO: consider broadcasted literals as atoms, so we don't need the monad here
-zeroAt :: MonadEmbed m => Type -> m Atom
-zeroAt ty = mapScalars (\_ _ -> return $ Con $ Lit (RealLit 0.0)) ty []
+zeroAt :: Type -> Atom
+zeroAt ty = case ty of
+  RealTy -> Con $ Lit $ RealLit 0.0
+  TabTy (NoName:>n) a ->
+    Lam $ Abs (NoName:>n) (TabArrow,  Block [] $ Atom $ zeroAt a)
+  UnitTy -> UnitVal
+  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+ -- FIXME: this assumes the base type is RealType
+  _ -> error $ "Not implemented: " ++ pprint ty
 
 addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
 addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
@@ -159,7 +165,7 @@ selectAt :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
 selectAt ty p xs ys = mapScalars (\_ [x, y] -> select p x y) ty [xs, ys]
 
 sumAt :: MonadEmbed m => Type -> [Atom] -> m Atom
-sumAt ty [] = zeroAt ty
+sumAt ty [] = return $ zeroAt ty
 sumAt _ [x] = return x
 sumAt ty (x:xs) = do
   xsSum <- sumAt ty xs
