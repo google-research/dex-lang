@@ -25,12 +25,13 @@ import qualified LLVM.AST.ParameterAttribute as L
 import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
-import Data.List (nub)
 import Data.Maybe (fromJust)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
+import Data.Foldable
 import Data.Text.Prettyprint.Doc
+import qualified Data.Set as S
 
 import Array (vectorWidth)
 import LLVMExec
@@ -47,7 +48,8 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , blockName   :: L.Name
                                  , usedNames   :: Env ()
                                  , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
-                                 , funSpecs :: [ExternFunSpec] -- TODO: use a set
+                                 , funSpecs    :: S.Set ExternFunSpec
+                                 , allocas     :: S.Set L.Name
                                  }
 
 type CompileM a = ReaderT CompileEnv (State CompileState) a
@@ -62,7 +64,7 @@ impToLLVM f = runCompileM mempty (compileTopProg f)
 
 runCompileM :: CompileEnv -> CompileM a -> a
 runCompileM env m = evalState (runReaderT m env) initState
-  where initState = CompileState [] [] [] "start_block" mempty mempty []
+  where initState = CompileState [] [] [] "start_block" mempty mempty mempty mempty
 
 compileTopProg :: ImpFunction -> CompileM LLVMFunction
 compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
@@ -128,17 +130,18 @@ compileInstr allowAlloca instr = case instr of
     val'  <- compileExpr val
     store dest' val'
     return Nothing
-  Alloc t numel -> Just <$> case t of
-    BaseTy b | allowAlloca -> alloca b
-    _  -> do
-      let elemTy = scalarTy $ scalarTableBaseType t
-      bytes <- mul (L.ConstantOperand $ C.ZExt (C.sizeof elemTy) longTy) =<< compileExpr numel
-      malloc elemTy bytes
-  Free (_:> IRefType (BaseTy _)) -> return Nothing  -- Don't free allocas
-  Free v -> do
-    v' <- lookupImpVar v
-    ptr' <- castLPtr charTy v'
-    addInstr $ L.Do (externCall freeFun [ptr'])
+  Alloc t numel -> Just <$> case numel of
+    ILit (IntLit n) | allowAlloca && n <= 256 -> alloca n elemTy
+    _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
+    where elemTy = scalarTy $ scalarTableBaseType t
+  Free v' -> do
+    ~v@(L.LocalReference _ vn) <- lookupImpVar v'
+    stackAllocated <- gets allocas
+    if vn `S.member` stackAllocated
+      then return ()
+      else do
+        ptr' <- castLPtr charTy v
+        addInstr $ L.Do (externCall freeFun [ptr'])
     return Nothing
   IOffset x off _ -> do
     x' <- compileExpr x
@@ -177,7 +180,7 @@ compileLoop d iVar n (ImpProg body) = do
   let loopName = "loop_" ++ (showName $ varName iVar)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
-  i <- alloca (Scalar IntType)
+  i <- alloca 1 longTy
   i0 <- case d of Fwd -> return $ litInt 0
                   Rev -> n `sub` litInt 1
   store i i0
@@ -259,13 +262,16 @@ emitInstr ty instr = do
   addInstr $ v L.:= instr
   return $ L.LocalReference ty v
 
-alloca :: BaseType -> CompileM Operand
-alloca ty = do
+sizeof :: L.Type -> Operand
+sizeof t = (L.ConstantOperand $ C.ZExt (C.sizeof t) longTy)
+
+alloca :: Int -> L.Type -> CompileM Operand
+alloca elems ty = do
   v <- freshName "v"
   modify $ setScalarDecls ((v L.:= instr):)
-  return $ L.LocalReference (L.ptr ty') v
-  where ty' = scalarTy ty
-        instr = L.Alloca ty' Nothing 0 []
+  modify $ setAllocas (S.insert v)
+  return $ L.LocalReference (L.ptr ty) v
+  where instr = L.Alloca ty (Just $ litInt elems) 0 []
 
 malloc :: L.Type -> Operand -> CompileM Operand
 malloc ty bytes = do
@@ -298,7 +304,7 @@ intToBool x = emitInstr (L.IntegerType 1) $ L.Trunc x (L.IntegerType 1) []
 
 compileFFICall :: String -> L.Type -> [Operand] -> CompileM Operand
 compileFFICall name retTy xs = do
-  modify $ setFunSpecs (f:)
+  modify $ setFunSpecs (S.insert f)
   emitInstr retTy $ externCall f xs
   where f = ExternFunSpec (L.Name (fromString name)) retTy [] (map L.typeOf xs)
 
@@ -390,12 +396,12 @@ realTy = L.FloatingPointType L.DoubleFP
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
-makeModule :: [Parameter] -> [NInstr] -> [BasicBlock] -> [ExternFunSpec] -> L.Module
+makeModule :: [Parameter] -> [NInstr] -> [BasicBlock] -> S.Set ExternFunSpec -> L.Module
 makeModule params decls (fstBlock:blocks) userSpecs = m
   where
     L.BasicBlock name instrs term = fstBlock
     fstBlock' = L.BasicBlock name (decls ++ instrs) term
-    ffiSpecs = nub $ userSpecs ++ builtinFFISpecs
+    ffiSpecs = toList $ foldl (flip S.insert) userSpecs builtinFFISpecs
     paramTypes = map L.typeOf params
     mainFun = L.functionDefaults
       { L.name        = "mainFun"
@@ -462,6 +468,9 @@ nameToLName name = L.Name $ toShort $ pack $ showName name
 setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }
 
+setAllocas :: (S.Set L.Name -> S.Set L.Name) -> CompileState -> CompileState
+setAllocas update s = s { allocas = update (allocas s) }
+
 setCurInstrs :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
 setCurInstrs update s = s { curInstrs = update (curInstrs s) }
 
@@ -471,7 +480,7 @@ setCurBlocks update s = s { curBlocks   = update (curBlocks s) }
 setBlockName :: (L.Name -> L.Name) -> CompileState -> CompileState
 setBlockName update s = s { blockName = update (blockName s) }
 
-setFunSpecs :: ([ExternFunSpec] -> [ExternFunSpec]) -> CompileState -> CompileState
+setFunSpecs :: (S.Set ExternFunSpec -> S.Set ExternFunSpec) -> CompileState -> CompileState
 setFunSpecs update s = s { funSpecs = update (funSpecs s) }
 
 instance Pretty L.Operand where
