@@ -24,6 +24,9 @@ def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %rem  x y
 def ipow (x:Int) (y:Int) : Int = %pow  x y
 
+def neg  (x:Real)          : Real = %fneg x
+def fdiv (x:Real) (y:Real) : Real = %fdiv x y
+
 @newtype def Add (a:Type) : Type = (a->a->a & a->a->a & a)  -- add, sub, zero
 MkAdd   : (a->a->a & a->a->a & a) -> Add a = unsafeNewtypeCon
 fromAdd : Add a -> (a->a->a & a->a->a & a) = unsafeFromNewtypeCon
@@ -57,16 +60,15 @@ fromVSpace : VSpace a -> (Add a & Real->a->a) = unsafeFromNewtypeCon
 def addFromVSpace (d:VSpace a) : Add a = fst (fromVSpace d)
 
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
+uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
+const : a -> b -> a = \x _. x
 
 def (.*)  (d:VSpace a) ?=> : Real -> a -> a = snd $ fromVSpace d
 (*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
+def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 
 @instance realVS : VSpace Real = MkVSpace realAdd (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
-
-
-def neg (x:Real)          : Real = %fneg x
-def (/) (x:Real) (y:Real) : Real = %fdiv x y
 
 True  = %True
 False = %False
@@ -98,6 +100,8 @@ def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
 def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
 def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
+def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def withReader
       (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->
@@ -256,6 +260,10 @@ def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = fold False \i c. c || xs.i
 def all (xs:n=>Bool) : Bool = fold True  \i c. c && xs.i
 
+def applyN (n:Int) (x:a) (f:a -> a) : a =
+  snd $ withState x \ref. for _:(Fin n).
+    ref := f (get ref)
+
 def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
   dx = (high - low) / i2r (size n)
   for i:n. low + i2r (ordinal i) * dx
@@ -302,6 +310,11 @@ def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k
   fromOrdinal n $ floor $ unif * i2r (size n)
 
+def bern (p:Real) (k:Key) : Bool = rand k < p
+
+def randnVec (n:Type) ?-> (k:Key) : n=>Real =
+  for i. randn (ixkey k i)
+
 'min / max etc  (TODO: implement with a monoid-parameterized writer)
 
 def minBy (f:a->Real) (x:a) (y:a) : a = select ((f x) < (f y)) x y
@@ -324,7 +337,7 @@ def argmin (xs:n=>Real) : n =
 
 -- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
-def jvp (f:a->b) (x:a) (t:a) --o : b = snd (linearize f x) t
+def jvp (f:a->b) (x:a) : a --o b = snd (linearize f x)
 def transposeLinear (f:a --o b) : b --o a = %linearTranspose f
 
 def vjp (f:a->b) (x:a) : (b & b --o a) =

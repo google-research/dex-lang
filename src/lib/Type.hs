@@ -10,8 +10,9 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, HasType (..), Checkable (..), litType, isPure, extendEffect,
-  binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
+  getType, checkType, HasType (..), Checkable (..), litType,
+  isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
+  indexSetConcreteSize, checkNoShadow) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -37,8 +38,12 @@ class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
 getType :: HasType a => a -> Type
-getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks (typeCheck x)
+getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
+
+checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
+checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
+  where ctx = addContext $ "Checking:\n" ++ pprint x
 
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env
@@ -108,13 +113,39 @@ instance HasType Expr where
     Hof  hof -> typeCheckHof hof
 
 -- TODO: replace with something more precise (this is too cautious)
+
+blockEffs :: Block -> EffectSummary
+blockEffs (Block decls result) =
+  foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
+
 isPure :: Expr -> Bool
-isPure expr = case expr of
-  Atom _ -> True
-  App f _ -> case getType f of
-    Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
-    _ -> False
-  _ -> False
+isPure expr = case exprEffs expr of
+  NoEffects   -> True
+  SomeEffects -> False
+
+exprEffs :: Expr -> EffectSummary
+exprEffs expr = case expr of
+  Atom _ -> NoEffects
+  App f _ -> functionEffs f
+  Op op -> case op of
+    PrimEffect _ _ -> SomeEffects
+    _ -> NoEffects
+  Hof hof -> case hof of
+    For _ f -> functionEffs f
+    SumCase _ l r -> functionEffs l <> functionEffs r
+    While cond body -> functionEffs cond <> functionEffs body
+    Linearize _ -> NoEffects
+    Transpose _ -> NoEffects
+    -- These are more convservative than necessary.
+    -- TODO: make them more precise by de-duping with type checker
+    RunReader _ _ -> SomeEffects
+    RunWriter _   -> SomeEffects
+    RunState _ _  -> SomeEffects
+
+functionEffs :: Atom -> EffectSummary
+functionEffs f = case getType f of
+  Pi (Abs _ (arr, _)) | arrowEff arr == Pure -> NoEffects
+  _ -> SomeEffects
 
 instance HasType Block where
   typeCheck (Block decls result) = do
@@ -417,6 +448,12 @@ typeCheckOp op = case op of
     RefTy h (TabTy v a) <- typeCheck ref
     i |: (varType v)
     return $ RefTy h a
+  FstRef ref -> do
+    RefTy h (PairTy a _) <- typeCheck ref
+    return $ RefTy h a
+  SndRef ref -> do
+    RefTy h (PairTy _ b) <- typeCheck ref
+    return $ RefTy h b
   FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!

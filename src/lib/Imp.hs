@@ -155,6 +155,16 @@ toImpOp (maybeDest, op) = case op of
     subrefVar  <- freshVar (varName refVar :> RefTy h (snd $ applyAbs a i))
     extend ((subrefVar @> subrefDest, mempty), mempty)
     returnVal $ Var subrefVar
+  FstRef ~(Var refVar@(_:>(RefTy h (PairTy a _)))) -> do
+    ~(Dest (PairVal ref _))  <- looks $ (! refVar) . fst . fst
+    subrefVar <- freshVar (varName refVar :> RefTy h a)
+    extend ((subrefVar @> Dest ref, mempty), mempty)
+    returnVal $ Var subrefVar
+  SndRef ~(Var refVar@(_:>(RefTy h (PairTy _ b)))) -> do
+    ~(Dest (PairVal _ ref))  <- looks $ (! refVar) . fst . fst
+    subrefVar <- freshVar (varName refVar :> RefTy h b)
+    extend ((subrefVar @> Dest ref, mempty), mempty)
+    returnVal $ Var subrefVar
   ArrayOffset arr idx off -> do
     i <- indexToInt (getType idx) idx
     let (TC (ArrayType t)) = getType arr

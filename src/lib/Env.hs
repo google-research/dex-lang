@@ -71,7 +71,7 @@ nameTag :: Name -> Tag
 nameTag name = case name of
   Name _ t _        -> t
   GlobalName t      -> t
-  NoName            -> error "NoName has no tag"
+  NoName            -> "tmp"
   GlobalArrayName _ -> error "GlobalArrayName has no tag"
 
 varAsEnv :: VarP a -> Env a
