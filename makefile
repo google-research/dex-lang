@@ -43,7 +43,7 @@ build-inotify: cbits/libdex.so
 	$(STACK) build --flag dex:inotify $(PROF)
 
 %.so: %.c
-	gcc -fPIC -shared $^ -o $@
+	gcc -std=c11 -fPIC -shared $^ -o $@
 
 libdex: cbits/libdex.so
 

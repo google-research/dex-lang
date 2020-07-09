@@ -90,8 +90,9 @@ compileTopProg (ImpFunction outVars inVars (ImpProg prog)) = do
 freshParamOpPair :: L.Type -> CompileM (Parameter, Operand)
 freshParamOpPair ty = do
   v <- freshName "arg"
-  -- TODO: align? dereferenceable? nofree?
-  return (L.Parameter ty v [L.NoAlias, L.NoCapture, L.NonNull], L.LocalReference ty v)
+  return (L.Parameter ty v attrs, L.LocalReference ty v)
+  -- TODO: Add nofree once we bump the LLVM version
+  where attrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
 
 compileProg :: [ImpStatement] -> CompileM ()
 compileProg [] = return ()
@@ -363,7 +364,7 @@ intCmpOp op = case op of
   Equal        -> L.EQ
 
 mallocFun :: ExternFunSpec
-mallocFun  = ExternFunSpec "malloc_dex"    charPtrTy [L.NoAlias] [longTy]
+mallocFun  = ExternFunSpec "malloc_dex" charPtrTy [L.NoAlias] [longTy]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [charPtrTy]
