@@ -59,7 +59,7 @@ sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
   (src, (level, b)) <- withSource $ withRecovery recover $ do
-    level <- logLevel <|> return LogNothing
+    level <- logLevel <|> logTime <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
   return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
@@ -78,12 +78,18 @@ consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 logLevel :: Parser LogLevel
 logLevel = do
-  void $ lexeme $ char '%' >> string "passes"
+  void $ try $ lexeme $ char '%' >> string "passes"
   passes <- many passName
   void eol
   case passes of
     [] -> return $ LogAll
     _ -> return $ LogPasses passes
+
+logTime :: Parser LogLevel
+logTime = do
+  void $ try $ lexeme $ char '%' >> string "time"
+  void eol
+  return PrintEvalTime
 
 passName :: Parser PassName
 passName = choice [thisNameString s $> x | (s, x) <- passNames]

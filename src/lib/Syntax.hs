@@ -346,7 +346,7 @@ data SourceBlock' = RunModule UModule
 data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
-data LogLevel = LogNothing | LogPasses [PassName] | LogAll
+data LogLevel = LogNothing | PrintEvalTime | LogPasses [PassName] | LogAll
                 deriving  (Show, Eq, Generic)
 
 -- === imperative IR ===
@@ -432,6 +432,7 @@ data Output = TextOut String
             | HeatmapOut Int Int (V.Vector Double)
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
+            | EvalTime Double
             | MiscLog String
               deriving (Show, Eq, Generic)
 
