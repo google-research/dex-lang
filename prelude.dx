@@ -391,11 +391,13 @@ def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
 
 def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
-@instance vectorRealAdd : Add (VectorReal) =
+@instance vectorRealAdd : Add VectorReal =
   MkAdd ( \x y. %vfadd x y
         , \x y. %vfsub x y
         , broadcastVector zero )
-@instance vectorRealMul : Mul (VectorReal) = MkMul \x y. %vfmul x y
+@instance vectorRealMul : Mul VectorReal = MkMul \x y. %vfmul x y
+@instance vectorRealVSpace : VSpace VectorReal =
+  MkVSpace vectorRealAdd \x v. broadcastVector x * v
 
 'Tiling
 

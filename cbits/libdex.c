@@ -23,10 +23,6 @@ void free_dex(char* ptr) {
   free(ptr);
 }
 
-void memcpy_dex(char* dest, const char* src, long nbytes) {
-  memcpy(dest, src, nbytes);
-}
-
 long int_to_index_set(long i, long n) {
   if (i < 0 || i >= n) {
     printf("Index out of bounds. %ld not in [0, %ld)\n", i, n);
