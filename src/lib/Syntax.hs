@@ -262,12 +262,14 @@ data PrimHof e =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
-           | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
-           | And | Or | Rem
+data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
+           | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
+           | BAnd | BOr | IRem
              deriving (Show, Eq, Generic)
 
-data UnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool
+data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
+          | Exp  | Log | Sin | Cos | Tan | Sqrt
+          | Floor | FNeg | BNot
             deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
@@ -942,12 +944,17 @@ builtinNames = M.fromList
   , ("imul", binOp IMul), ("fdiv", binOp FDiv)
   , ("fadd", binOp FAdd), ("fsub", binOp FSub)
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
-  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  , ("ipow", binOp IPow), ("irem", binOp IRem)
+  , ("fpow", binOp FPow)
+  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot)
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
-  , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
+  , ("exp" , unOp  Exp ), ("log" , unOp Log )
+  , ("sin" , unOp  Sin ), ("cos" , unOp Cos )
+  , ("tan" , unOp  Tan ), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)

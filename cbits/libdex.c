@@ -137,10 +137,6 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-long floorDex(double x) {
-  return x;
-}
-
 int testit() {
   printf("%" PRIx64 "\n", threefry2x32(0,0));   // expected: 0x6b2001590x99ba4efe
   printf("%" PRIx64 "\n", threefry2x32(-1,-1)); // expected: 0x1cb996fc0xbb002be7

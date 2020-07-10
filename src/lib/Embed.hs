@@ -202,7 +202,7 @@ isub x y = emitOp $ ScalarBinOp ISub x y
 
 andE :: MonadEmbed m => Atom -> Atom -> m Atom
 andE (BoolVal True) y = return y
-andE x y              = emit $ Op $ ScalarBinOp And x y
+andE x y              = emit $ Op $ ScalarBinOp BAnd x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
 select (BoolVal b) x y = return $ if b then x else y
@@ -217,7 +217,7 @@ idiv (IntVal x) (IntVal y) = return $ IntVal $ x `div` y
 idiv x y = emitOp $ ScalarBinOp IDiv x y
 
 irem :: MonadEmbed m => Atom -> Atom -> m Atom
-irem x y = emitOp $ ScalarBinOp Rem x y
+irem x y = emitOp $ ScalarBinOp IRem x y
 
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
 ilt (IntVal x) (IntVal y) = return $ BoolVal $ x < y
