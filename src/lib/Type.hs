@@ -576,7 +576,7 @@ litType v = case v of
   VecLit  l -> Vector sb
     where (Scalar sb) = litType $ head l
 
-binOpType :: ScalarBinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
+binOpType :: BinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
 binOpType op = case op of
   IAdd   -> (i, i, i);  ISub   -> (i, i, i)
   IMul   -> (i, i, i);  ICmp _ -> (i, i, b)
@@ -590,7 +590,7 @@ binOpType op = case op of
         i = IntType
         r = RealType
 
-unOpType :: ScalarUnOp -> (ScalarBaseType, ScalarBaseType)
+unOpType :: UnOp -> (ScalarBaseType, ScalarBaseType)
 unOpType op = case op of
   Not             -> (BoolType, BoolType)
   FNeg            -> (RealType, RealType)

@@ -332,7 +332,7 @@ compilePrimOp (VectorIndex v i) = emitInstr resTy $ L.ExtractElement v i []
   where (L.VectorType _ resTy) = L.typeOf v
 compilePrimOp op = error $ "Can't JIT primop: " ++ pprint op
 
-compileBinOp :: ScalarBinOp -> Operand -> Operand -> CompileM Operand
+compileBinOp :: BinOp -> Operand -> Operand -> CompileM Operand
 compileBinOp op x y = case op of
   IAdd   -> emitInstr longTy $ L.Add False False x y []
   ISub   -> emitInstr longTy $ L.Sub False False x y []

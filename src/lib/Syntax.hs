@@ -22,7 +22,7 @@ module Syntax (
     PrimExpr (..), PrimCon (..), LitVal (..),
     PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
-    ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -222,8 +222,8 @@ data PrimOp e =
       | SumGet e Bool
       | SumTag e
       | TabCon e [e]                 -- table type elements
-      | ScalarBinOp ScalarBinOp e e
-      | ScalarUnOp ScalarUnOp e
+      | ScalarBinOp BinOp e e
+      | ScalarUnOp UnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
       | IndexRef e e
@@ -237,7 +237,7 @@ data PrimOp e =
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
-      | VectorBinOp ScalarBinOp e e
+      | VectorBinOp BinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
@@ -262,13 +262,13 @@ data PrimHof e =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
-                 | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
-                 | And | Or | Rem
-                   deriving (Show, Eq, Generic)
+data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
+           | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
+           | And | Or | Rem
+             deriving (Show, Eq, Generic)
 
-data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool
-                  deriving (Show, Eq, Generic)
+data UnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool
+            deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
@@ -1020,8 +1020,8 @@ instance Store Decl
 instance Store EffectName
 instance Store EffectRow
 instance Store Direction
-instance Store ScalarUnOp
-instance Store ScalarBinOp
+instance Store UnOp
+instance Store BinOp
 instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo

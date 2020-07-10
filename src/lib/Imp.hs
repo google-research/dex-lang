@@ -767,7 +767,7 @@ checkImpOp op = do
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
 
-    checkBinOp :: (ScalarBaseType -> BaseType) -> ScalarBinOp -> IType -> IType -> ImpCheckM IType
+    checkBinOp :: (ScalarBaseType -> BaseType) -> BinOp -> IType -> IType -> ImpCheckM IType
     checkBinOp toBase binOp x y = do
       checkEq x (IValType $ toBase x')
       checkEq y (IValType $ toBase y')
