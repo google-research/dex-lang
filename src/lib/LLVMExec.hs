@@ -91,7 +91,11 @@ evalLLVM logger ast argPtr = do
       -- https://releases.llvm.org/9.0.0/docs/ORCv2.html#how-to-add-process-and-library-symbols-to-the-jitdylibs
       case rsym of
         Right _ -> return rsym
-        Left  _ -> Right . externSym <$> Linking.getSymbolAddressInProcess sym
+        Left  _ -> do
+          ptr <- Linking.getSymbolAddressInProcess sym
+          if ptr == 0
+            then error $ "Missing symbol: " ++ show sym
+            else return $ Right $ externSym ptr
     externSym ptr =
       JIT.JITSymbol { JIT.jitSymbolAddress = ptr
                     , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }

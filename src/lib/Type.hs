@@ -579,24 +579,32 @@ litType v = case v of
 binOpType :: BinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
 binOpType op = case op of
   IAdd   -> (i, i, i);  ISub   -> (i, i, i)
-  IMul   -> (i, i, i);  ICmp _ -> (i, i, b)
-  IDiv   -> (i, i, i)
-  Pow    -> (i, i, i);  Rem    -> (i, i, i)
+  IMul   -> (i, i, i);  IDiv   -> (i, i, i)
+  IRem   -> (i, i, i);  IPow   -> (i, i, i)
+  ICmp _ -> (i, i, b)
   FAdd   -> (r, r, r);  FSub   -> (r, r, r)
-  FMul   -> (r, r, r);  FCmp _ -> (r, r, b)
-  FDiv   -> (r, r, r);  And    -> (b, b, b)
-  Or     -> (b, b, b)
+  FMul   -> (r, r, r);  FDiv   -> (r, r, r);
+  FPow   -> (r, r, r)
+  FCmp _ -> (r, r, b)
+  BAnd   -> (b, b, b);  BOr    -> (b, b, b)
   where b = BoolType
         i = IntType
         r = RealType
 
 unOpType :: UnOp -> (ScalarBaseType, ScalarBaseType)
 unOpType op = case op of
-  Not             -> (BoolType, BoolType)
-  FNeg            -> (RealType, RealType)
-  IntToReal       -> (IntType, RealType)
+  IntToReal       -> (IntType , RealType)
   BoolToInt       -> (BoolType, IntType)
-  UnsafeIntToBool -> (IntType, BoolType)
+  UnsafeIntToBool -> (IntType , BoolType)
+  Exp             -> (RealType, RealType)
+  Log             -> (RealType, RealType)
+  Sin             -> (RealType, RealType)
+  Cos             -> (RealType, RealType)
+  Tan             -> (RealType, RealType)
+  Sqrt            -> (RealType, RealType)
+  Floor           -> (RealType, IntType )
+  FNeg            -> (RealType, RealType)
+  BNot            -> (BoolType, BoolType)
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of

@@ -63,7 +63,7 @@ evalOpDefined expr = case expr of
     ISub -> IntVal $ x' - y'      where (IntVal x') = x; (IntVal y') = y
     IMul -> IntVal $ x' * y'      where (IntVal x') = x; (IntVal y') = y
     IDiv -> IntVal $ x' `div` y'  where (IntVal x') = x; (IntVal y') = y
-    Rem  -> IntVal $ x' `rem` y'  where (IntVal x') = x; (IntVal y') = y
+    IRem -> IntVal $ x' `rem` y'  where (IntVal x') = x; (IntVal y') = y
     FAdd -> RealVal $ x' + y'  where (RealVal x') = x; (RealVal y') = y
     FSub -> RealVal $ x' - y'  where (RealVal x') = x; (RealVal y') = y
     FMul -> RealVal $ x' * y'  where (RealVal x') = x; (RealVal y') = y
