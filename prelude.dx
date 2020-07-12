@@ -192,12 +192,20 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
 'Wrappers around C library functions
 
 def exp (x:Real) : Real = %exp x
+def exp2 (x:Real) : Real = %exp2 x
 def log (x:Real) : Real = %log x
+def log2 (x:Real) : Real = %log2 x
+def log10 (x:Real) : Real = %log10 x
+
 def sin (x:Real) : Real = %sin x
 def cos (x:Real) : Real = %cos x
 def tan (x:Real) : Real = %tan x
-def sqrt (x:Real) : Real = %sqrt x
+
 def floor (x:Real) : Int = %floor x
+def ceil (x:Real) : Int = %ceil x
+def round (x:Real) : Int = %round x
+
+def sqrt (x:Real) : Real = %sqrt x
 def pow (x:Real) (y:Real) : Real = %fpow x y
 
 'Working with index sets

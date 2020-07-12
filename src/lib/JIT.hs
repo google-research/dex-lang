@@ -315,13 +315,22 @@ compilePrimOp (ScalarUnOp op x) = case op of
   BoolToInt       -> return x -- bools stored as ints
   UnsafeIntToBool -> return x -- bools stored as ints
   Exp             -> callRealIntrinsic "llvm.exp.f64"
+  Exp2            -> callRealIntrinsic "llvm.exp2.f64"
   Log             -> callRealIntrinsic "llvm.log.f64"
+  Log2            -> callRealIntrinsic "llvm.log2.f64"
+  Log10           -> callRealIntrinsic "llvm.log10.f64"
   Sin             -> callRealIntrinsic "llvm.sin.f64"
   Cos             -> callRealIntrinsic "llvm.cos.f64"
   Tan             -> callRealIntrinsic "tan"  -- Technically not an intrinsic, but it works!
   Sqrt            -> callRealIntrinsic "llvm.sqrt.f64"
   Floor           -> do
     x' <- callRealIntrinsic "llvm.floor.f64"
+    emitInstr longTy $ L.FPToSI x' longTy []
+  Ceil            -> do
+    x' <- callRealIntrinsic "llvm.ceil.f64"
+    emitInstr longTy $ L.FPToSI x' longTy []
+  Round           -> do
+    x' <- callRealIntrinsic "llvm.round.f64"
     emitInstr longTy $ L.FPToSI x' longTy []
   IntToReal       -> emitInstr realTy $ L.SIToFP x realTy []
   FNeg            -> emitInstr realTy $ L.FSub mathFlags (litReal 0.0) x []

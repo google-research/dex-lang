@@ -268,8 +268,11 @@ data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
              deriving (Show, Eq, Generic)
 
 data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
-          | Exp  | Log | Sin | Cos | Tan | Sqrt
-          | Floor | FNeg | BNot
+          | Exp | Exp2
+          | Log | Log2 | Log10
+          | Sin | Cos | Tan | Sqrt
+          | Floor | Ceil| Round
+          | FNeg | BNot
             deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
@@ -951,10 +954,11 @@ builtinNames = M.fromList
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
   , ("fneg", unOp  FNeg)
-  , ("exp" , unOp  Exp ), ("log" , unOp Log )
-  , ("sin" , unOp  Sin ), ("cos" , unOp Cos )
-  , ("tan" , unOp  Tan ), ("sqrt", unOp Sqrt)
-  , ("floor", unOp Floor)
+  , ("exp" , unOp  Exp), ("exp2"  , unOp  Exp2)
+  , ("log" , unOp Log), ("log2" , unOp Log2 ), ("log10" , unOp Log10)
+  , ("sin" , unOp  Sin), ("cos" , unOp Cos)
+  , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)
