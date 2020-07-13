@@ -155,6 +155,16 @@ toImpOp (maybeDest, op) = case op of
     subrefVar  <- freshVar (varName refVar :> RefTy h (snd $ applyAbs a i))
     extend ((subrefVar @> subrefDest, mempty), mempty)
     returnVal $ Var subrefVar
+  FstRef ~(Var refVar@(_:>(RefTy h (PairTy a _)))) -> do
+    ~(Dest (PairVal ref _))  <- looks $ (! refVar) . fst . fst
+    subrefVar <- freshVar (varName refVar :> RefTy h a)
+    extend ((subrefVar @> Dest ref, mempty), mempty)
+    returnVal $ Var subrefVar
+  SndRef ~(Var refVar@(_:>(RefTy h (PairTy _ b)))) -> do
+    ~(Dest (PairVal _ ref))  <- looks $ (! refVar) . fst . fst
+    subrefVar <- freshVar (varName refVar :> RefTy h b)
+    extend ((subrefVar @> Dest ref, mempty), mempty)
+    returnVal $ Var subrefVar
   ArrayOffset arr idx off -> do
     i <- indexToInt (getType idx) idx
     let (TC (ArrayType t)) = getType arr
@@ -166,6 +176,11 @@ toImpOp (maybeDest, op) = case op of
     i' <- indexToInt l idx
     i <- iaddI (fromScalarAtom tileOffset) i'
     returnVal =<< intToIndex n i
+  SliceCurry ~(Con (Coerce (TC (IndexSlice _ (PairTy u v))) tileOffset)) idx -> do
+    vz <- intToIndex v $ IIntVal 0
+    extraOffset <- indexToInt (PairTy u v) (PairVal idx vz)
+    tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
+    returnVal $ toScalarAtom resultTy tileOffset'
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -451,6 +466,7 @@ toScalarAtom ty ie = case ie of
     BaseTy b' | b == b'     -> Var (v :> ty)
     TC (IntRange _ _)       -> Con $ Coerce ty $ toScalarAtom IntTy ie
     TC (IndexRange ty' _ _) -> Con $ Coerce ty $ toScalarAtom ty' ie
+    TC (IndexSlice _ _)     -> Con $ Coerce ty $ toScalarAtom IntTy ie
     _ -> unreachable
   _ -> unreachable
   where
@@ -751,7 +767,7 @@ checkImpOp op = do
     checkEq :: (Pretty a, Show a, Eq a) => a -> a -> ImpCheckM ()
     checkEq t t' = assertEq t t' (pprint op)
 
-    checkBinOp :: (ScalarBaseType -> BaseType) -> ScalarBinOp -> IType -> IType -> ImpCheckM IType
+    checkBinOp :: (ScalarBaseType -> BaseType) -> BinOp -> IType -> IType -> ImpCheckM IType
     checkBinOp toBase binOp x y = do
       checkEq x (IValType $ toBase x')
       checkEq y (IValType $ toBase y')

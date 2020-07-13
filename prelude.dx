@@ -21,8 +21,11 @@ def fst (p: a & b) : a = %fst p
 def snd (p: a & b) : b = %snd p
 
 def idiv (x:Int) (y:Int) : Int = %idiv x y
-def rem  (x:Int) (y:Int) : Int = %rem  x y
-def ipow (x:Int) (y:Int) : Int = %pow  x y
+def rem  (x:Int) (y:Int) : Int = %irem x y
+def ipow (x:Int) (y:Int) : Int = %ipow x y
+
+def neg  (x:Real)          : Real = %fneg x
+def fdiv (x:Real) (y:Real) : Real = %fdiv x y
 
 @newtype def Add (a:Type) : Type = (a->a->a & a->a->a & a)  -- add, sub, zero
 MkAdd   : (a->a->a & a->a->a & a) -> Add a = unsafeNewtypeCon
@@ -59,16 +62,16 @@ fromVSpace : VSpace a -> (Add a & Real->a->a) = unsafeFromNewtypeCon
 def addFromVSpace (d:VSpace a) : Add a = fst (fromVSpace d)
 
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
+uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
+const : a -> b -> a = \x _. x
 
 def (.*)  (d:VSpace a) ?=> : Real -> a -> a = snd $ fromVSpace d
 (*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
+def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 
 @instance realVS : VSpace Real = MkVSpace realAdd (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
-
-def neg (x:Real)          : Real = %fneg x
-def (/) (x:Real) (y:Real) : Real = %fdiv x y
 
 True  = %True
 False = %False
@@ -100,6 +103,8 @@ def (:=) (ref:Ref h s) (x:s) : {State h} Unit = %put  ref x
 def ask  (ref:Ref h r)       : {Read  h} r    = %ask  ref
 def (+=) (ref:Ref h w) (x:w) : {Accum h} Unit = %tell ref x
 def (!)  (ref:Ref h (n=>a)) (i:n) : Ref h a = %indexRef ref i
+def fstRef (ref: Ref h (a & b)) : Ref h a = %fstRef ref
+def sndRef (ref: Ref h (a & b)) : Ref h b = %sndRef ref
 
 def withReader
       (eff:Effects) ?-> (a:Type) ?-> (r:Type) ?->
@@ -185,14 +190,14 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
 
 'Wrappers around C library functions
 
-def exp (x:Real) : Real = %ffi exp Real x
-def log (x:Real) : Real = %ffi log Real x
-def sin (x:Real) : Real = %ffi sin Real x
-def cos (x:Real) : Real = %ffi cos Real x
-def tan (x:Real) : Real = %ffi tan Real x
-def sqrt (x:Real) : Real = %ffi sqrt Real x
-def floor (x:Real) : Int = %ffi floorDex Int x
-def pow (x:Real) (y:Real) : Real = %ffi pow Real x y
+def exp (x:Real) : Real = %exp x
+def log (x:Real) : Real = %log x
+def sin (x:Real) : Real = %sin x
+def cos (x:Real) : Real = %cos x
+def tan (x:Real) : Real = %tan x
+def sqrt (x:Real) : Real = %sqrt x
+def floor (x:Real) : Int = %floor x
+def pow (x:Real) (y:Real) : Real = %fpow x y
 
 'Working with index sets
 
@@ -254,6 +259,10 @@ def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = fold False \i c. c || xs.i
 def all (xs:n=>Bool) : Bool = fold True  \i c. c && xs.i
 
+def applyN (n:Int) (x:a) (f:a -> a) : a =
+  snd $ withState x \ref. for _:(Fin n).
+    ref := f (get ref)
+
 def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
   dx = (high - low) / i2r (size n)
   for i:n. low + i2r (ordinal i) * dx
@@ -300,6 +309,11 @@ def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k
   fromOrdinal n $ floor $ unif * i2r (size n)
 
+def bern (p:Real) (k:Key) : Bool = rand k < p
+
+def randnVec (n:Type) ?-> (k:Key) : n=>Real =
+  for i. randn (ixkey k i)
+
 'min / max etc  (TODO: implement with a monoid-parameterized writer)
 
 def minBy (f:a->Real) (x:a) (y:a) : a = select ((f x) < (f y)) x y
@@ -322,7 +336,7 @@ def argmin (xs:n=>Real) : n =
 
 -- TODO: add vector space constraints
 def linearize (f:a->b) (x:a) : (b & a --o b) = %linearize f x
-def jvp (f:a->b) (x:a) (t:a) --o : b = snd (linearize f x) t
+def jvp (f:a->b) (x:a) : a --o b = snd (linearize f x)
 def transposeLinear (f:a --o b) : b --o a = %linearTranspose f
 
 def vjp (f:a->b) (x:a) : (b & b --o a) =
@@ -376,25 +390,33 @@ def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
 
 def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
-@instance vectorRealAdd : Add (VectorReal) =
+@instance vectorRealAdd : Add VectorReal =
   MkAdd ( \x y. %vfadd x y
         , \x y. %vfsub x y
         , broadcastVector zero )
-@instance vectorRealMul : Mul (VectorReal) = MkMul \x y. %vfmul x y
+@instance vectorRealMul : Mul VectorReal = MkMul \x y. %vfmul x y
+@instance vectorRealVSpace : VSpace VectorReal =
+  MkVSpace vectorRealAdd \x v. broadcastVector x * v
 
 'Tiling
 
 def Tile (n : Type) (m : Type) : Type = %IndexSlice n m
 
--- TODO: It would be nice to make fTile return t=>a, but t is _not_ of type Type,
---       so the current type inference and checking machinery complains!
+-- One can think of instances of `Tile n m` as injective functions `m -> n`,
+-- with the special property that consecutive elements of m map to consecutive
+-- elements of n. In this view (+>) is just function application, while ++>
+-- is currying followed by function application. We cannot represent currying
+-- in isolation, because `Tile n (Tile u v)` does not make sense, unlike `Tile n (u & v)`.
+def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+def (++>) (t : Tile n (u & v)) (i : u) : Tile n v = %sliceCurry t i
+
 def tile  (l : Type) ?->
           (fTile : (t:(Tile n l) -> {|eff} l=>a))
           (fScalar : n -> {|eff} a) : {|eff} n=>a = %tiled fTile fScalar
 def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
           (fTile : (t:(Tile n l) -> {|eff} m=>l=>a))
           (fScalar : n -> {|eff} m=>a) : {|eff} m=>n=>a = %tiledd fTile fScalar
-def (+>) (l : Type) ?-> (t:Tile n l) (i : l) : n = %sliceOffset t i
+
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
 def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =

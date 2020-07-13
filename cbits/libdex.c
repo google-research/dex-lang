@@ -10,16 +10,17 @@
 #include "string.h"
 #include "inttypes.h"
 
-char* malloc_dex(long nbytes) {
-  return malloc(nbytes);
+char* malloc_dex(int64_t nbytes) {
+  // XXX: Changes to this value might require additional changes to parameter attributes in LLVM
+  static const int64_t alignment = 64;
+  // Round nbytes up to the nearest multiple of alignment, as required by the C11 standard.
+  nbytes = ((nbytes + alignment - 1) / alignment) * alignment;
+  char* result = aligned_alloc(alignment, nbytes);
+  return result;
 }
 
 void free_dex(char* ptr) {
   free(ptr);
-}
-
-void memcpy_dex(char* dest, const char* src, long nbytes) {
-  memcpy(dest, src, nbytes);
 }
 
 long int_to_index_set(long i, long n) {
@@ -134,10 +135,6 @@ double randunif(uint64_t keypair) {
 
   double out = *(double*)&bits;
   return out - 1;
-}
-
-long floorDex(double x) {
-  return x;
 }
 
 int testit() {

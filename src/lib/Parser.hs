@@ -59,7 +59,7 @@ sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
   (src, (level, b)) <- withSource $ withRecovery recover $ do
-    level <- logLevel <|> return LogNothing
+    level <- logLevel <|> logTime <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
   return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
@@ -78,12 +78,18 @@ consumeTillBreak = void $ manyTill anySingle $ eof <|> void (try (eol >> eol))
 
 logLevel :: Parser LogLevel
 logLevel = do
-  void $ lexeme $ char '%' >> string "passes"
+  void $ try $ lexeme $ char '%' >> string "passes"
   passes <- many passName
   void eol
   case passes of
     [] -> return $ LogAll
     _ -> return $ LogPasses passes
+
+logTime :: Parser LogLevel
+logTime = do
+  void $ try $ lexeme $ char '%' >> string "time"
+  void eol
+  return PrintEvalTime
 
 passName :: Parser PassName
 passName = choice [thisNameString s $> x | (s, x) <- passNames]
@@ -451,7 +457,7 @@ ops =
   , [symOp "+", symOp "-", symOp "||", symOp "&&",
      InfixR $ sym "=>" $> mkArrow TabArrow,
      InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
-  , [InfixR $ mayBreak (sym "$") $> mkApp]
+  , [InfixR $ mayBreak (infixSym "$") $> mkApp]
   , [symOp "+=", symOp ":=", symOp "|", InfixR infixArrow]
   , [InfixR $ symOpP "&", pairOp]
   , indexRangeOps
@@ -467,21 +473,24 @@ pairOp :: Operator Parser UExpr
 pairOp = InfixR $ opWithSrc $ do
   allowed <- asks canPair
   if allowed
-    then sym "," >> return (binApp f)
+    then infixSym "," >> return (binApp f)
     else fail "Unexpected comma"
   where f = mkName $ "(,)"
 
 anySymOp :: Operator Parser UExpr
 anySymOp = InfixL $ opWithSrc $ do
-  s <- label "infix operator" anySym
+  s <- label "infix operator" (mayBreak anySym)
   return $ binApp $ mkSymName s
+
+infixSym :: String -> Parser ()
+infixSym s = mayBreak $ sym s
 
 symOp :: String -> Operator Parser UExpr
 symOp s = InfixL $ symOpP s
 
 symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
-  label "infix operator" (sym s)
+  label "infix operator" (infixSym s)
   return $ binApp $ mkSymName s
 
 mkSymName :: String -> Name

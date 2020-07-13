@@ -10,8 +10,9 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Type (
-  getType, HasType (..), Checkable (..), litType, isPure, extendEffect,
-  binOpType, unOpType, isData, indexSetConcreteSize, checkNoShadow) where
+  getType, checkType, HasType (..), Checkable (..), litType,
+  isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
+  indexSetConcreteSize, checkNoShadow) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -37,8 +38,12 @@ class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
 getType :: HasType a => a -> Type
-getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks (typeCheck x)
+getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
+
+checkType :: HasType a => TypeEnv -> EffectRow -> a -> Except ()
+checkType env eff x = void $ ctx $ runTypeCheck (CheckWith (env, eff)) $ typeCheck x
+  where ctx = addContext $ "Checking:\n" ++ pprint x
 
 runTypeCheck :: TypeCheckEnv -> TypeM a -> Except a
 runTypeCheck env m = runReaderT m env
@@ -108,13 +113,39 @@ instance HasType Expr where
     Hof  hof -> typeCheckHof hof
 
 -- TODO: replace with something more precise (this is too cautious)
+
+blockEffs :: Block -> EffectSummary
+blockEffs (Block decls result) =
+  foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
+
 isPure :: Expr -> Bool
-isPure expr = case expr of
-  Atom _ -> True
-  App f _ -> case getType f of
-    Pi (Abs _ (arr, _)) -> arrowEff arr == Pure
-    _ -> False
-  _ -> False
+isPure expr = case exprEffs expr of
+  NoEffects   -> True
+  SomeEffects -> False
+
+exprEffs :: Expr -> EffectSummary
+exprEffs expr = case expr of
+  Atom _ -> NoEffects
+  App f _ -> functionEffs f
+  Op op -> case op of
+    PrimEffect _ _ -> SomeEffects
+    _ -> NoEffects
+  Hof hof -> case hof of
+    For _ f -> functionEffs f
+    SumCase _ l r -> functionEffs l <> functionEffs r
+    While cond body -> functionEffs cond <> functionEffs body
+    Linearize _ -> NoEffects
+    Transpose _ -> NoEffects
+    -- These are more convservative than necessary.
+    -- TODO: make them more precise by de-duping with type checker
+    RunReader _ _ -> SomeEffects
+    RunWriter _   -> SomeEffects
+    RunState _ _  -> SomeEffects
+
+functionEffs :: Atom -> EffectSummary
+functionEffs f = case getType f of
+  Pi (Abs _ (arr, _)) | arrowEff arr == Pure -> NoEffects
+  _ -> SomeEffects
 
 instance HasType Block where
   typeCheck (Block decls result) = do
@@ -417,6 +448,12 @@ typeCheckOp op = case op of
     RefTy h (TabTy v a) <- typeCheck ref
     i |: (varType v)
     return $ RefTy h a
+  FstRef ref -> do
+    RefTy h (PairTy a _) <- typeCheck ref
+    return $ RefTy h a
+  SndRef ref -> do
+    RefTy h (PairTy _ b) <- typeCheck ref
+    return $ RefTy h b
   FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!
@@ -432,6 +469,11 @@ typeCheckOp op = case op of
     l' <- typeCheck i
     checkEq l l'
     return n
+  SliceCurry s i -> do
+    TC (IndexSlice n (PairTy u v)) <- typeCheck s
+    u' <- typeCheck i
+    checkEq u u'
+    return $ TC $ IndexSlice n v
   VectorBinOp binop x1 x2 ->
     x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
     where (t1, t2, tOut) = binOpType binop
@@ -534,27 +576,35 @@ litType v = case v of
   VecLit  l -> Vector sb
     where (Scalar sb) = litType $ head l
 
-binOpType :: ScalarBinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
+binOpType :: BinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
 binOpType op = case op of
   IAdd   -> (i, i, i);  ISub   -> (i, i, i)
-  IMul   -> (i, i, i);  ICmp _ -> (i, i, b)
-  IDiv   -> (i, i, i)
-  Pow    -> (i, i, i);  Rem    -> (i, i, i)
+  IMul   -> (i, i, i);  IDiv   -> (i, i, i)
+  IRem   -> (i, i, i);  IPow   -> (i, i, i)
+  ICmp _ -> (i, i, b)
   FAdd   -> (r, r, r);  FSub   -> (r, r, r)
-  FMul   -> (r, r, r);  FCmp _ -> (r, r, b)
-  FDiv   -> (r, r, r);  And    -> (b, b, b)
-  Or     -> (b, b, b)
+  FMul   -> (r, r, r);  FDiv   -> (r, r, r);
+  FPow   -> (r, r, r)
+  FCmp _ -> (r, r, b)
+  BAnd   -> (b, b, b);  BOr    -> (b, b, b)
   where b = BoolType
         i = IntType
         r = RealType
 
-unOpType :: ScalarUnOp -> (ScalarBaseType, ScalarBaseType)
+unOpType :: UnOp -> (ScalarBaseType, ScalarBaseType)
 unOpType op = case op of
-  Not             -> (BoolType, BoolType)
-  FNeg            -> (RealType, RealType)
-  IntToReal       -> (IntType, RealType)
+  IntToReal       -> (IntType , RealType)
   BoolToInt       -> (BoolType, IntType)
-  UnsafeIntToBool -> (IntType, BoolType)
+  UnsafeIntToBool -> (IntType , BoolType)
+  Exp             -> (RealType, RealType)
+  Log             -> (RealType, RealType)
+  Sin             -> (RealType, RealType)
+  Cos             -> (RealType, RealType)
+  Tan             -> (RealType, RealType)
+  Sqrt            -> (RealType, RealType)
+  Floor           -> (RealType, IntType )
+  FNeg            -> (RealType, RealType)
+  BNot            -> (BoolType, BoolType)
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of

@@ -43,7 +43,7 @@ build-inotify: cbits/libdex.so
 	$(STACK) build --flag dex:inotify $(PROF)
 
 %.so: %.c
-	gcc -fPIC -shared $^ -o $@
+	gcc -std=c11 -fPIC -shared $^ -o $@
 
 libdex: cbits/libdex.so
 
@@ -52,9 +52,10 @@ libdex: cbits/libdex.so
 # TODO: re-enable linear-tests ad-tests include-test chol
 example-names = uexpr-tests type-tests eval-tests \
                 shadow-tests monad-tests \
-                easy-ad-tests mandelbrot pi sierpinsky \
+                ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
-                ode-integrator parser-tests serialize-tests tiled-matmul
+                ode-integrator parser-tests serialize-tests tiled-matmul \
+                mcmc
 
 quine-test-targets = $(example-names:%=run-%)
 

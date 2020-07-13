@@ -19,9 +19,10 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..), PrimEffect (..), PrimOp (..),
+    PrimExpr (..), PrimCon (..), LitVal (..),
+    PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
-    ScalarBinOp (..), ScalarUnOp (..), CmpOp (..), SourceBlock (..),
+    BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
@@ -221,19 +222,22 @@ data PrimOp e =
       | SumGet e Bool
       | SumTag e
       | TabCon e [e]                 -- table type elements
-      | ScalarBinOp ScalarBinOp e e
-      | ScalarUnOp ScalarUnOp e
+      | ScalarBinOp BinOp e e
+      | ScalarUnOp UnOp e
       | Select e e e                 -- predicate, val-if-true, val-if-false
       | PrimEffect e (PrimEffect e)
       | IndexRef e e
+      | FstRef e
+      | SndRef e
       | FFICall String BaseType [e]
       | Inject e
       | ArrayOffset e e e            -- Second argument is the index for type checking,
                                      -- Third argument is the linear offset for evaluation
       | ArrayLoad e
       | SliceOffset e e              -- Index slice first, inner index second
+      | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
-      | VectorBinOp ScalarBinOp e e
+      | VectorBinOp BinOp e e
       | VectorPack [e]               -- List should have exactly vectorWidth elements
       | VectorIndex e e              -- Vector first, index second
       -- Idx (survives simplification, because we allow it to be backend-dependent)
@@ -258,13 +262,15 @@ data PrimHof e =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data ScalarBinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
-                 | FAdd | FSub | FMul | FDiv | FCmp CmpOp | Pow
-                 | And | Or | Rem
-                   deriving (Show, Eq, Generic)
+data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
+           | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
+           | BAnd | BOr | IRem
+             deriving (Show, Eq, Generic)
 
-data ScalarUnOp = Not | FNeg | IntToReal | BoolToInt | UnsafeIntToBool
-                  deriving (Show, Eq, Generic)
+data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
+          | Exp  | Log | Sin | Cos | Tan | Sqrt
+          | Floor | FNeg | BNot
+            deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
              deriving (Show, Eq, Generic)
@@ -300,12 +306,21 @@ data EffectRow = EffectRow [Effect] (Maybe Name)
                  deriving (Show, Generic)
 data EffectName = Reader | Writer | State  deriving (Show, Eq, Ord, Generic)
 
+data EffectSummary = NoEffects | SomeEffects  deriving (Show, Eq, Ord, Generic)
+
 pattern Pure :: EffectRow
 pattern Pure = EffectRow [] Nothing
 
 instance Eq EffectRow where
   EffectRow effs t == EffectRow effs' t' =
     sort effs == sort effs' && t == t'
+
+instance Semigroup EffectSummary where
+  NoEffects <> NoEffects = NoEffects
+  _ <> _ = SomeEffects
+
+instance Monoid EffectSummary where
+  mempty = NoEffects
 
 -- === top-level constructs ===
 
@@ -333,7 +348,7 @@ data SourceBlock' = RunModule UModule
 data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Eq, Generic)
 
-data LogLevel = LogNothing | LogPasses [PassName] | LogAll
+data LogLevel = LogNothing | PrintEvalTime | LogPasses [PassName] | LogAll
                 deriving  (Show, Eq, Generic)
 
 -- === imperative IR ===
@@ -419,6 +434,7 @@ data Output = TextOut String
             | HeatmapOut Int Int (V.Vector Double)
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
+            | EvalTime Double
             | MiscLog String
               deriving (Show, Eq, Generic)
 
@@ -928,12 +944,17 @@ builtinNames = M.fromList
   , ("imul", binOp IMul), ("fdiv", binOp FDiv)
   , ("fadd", binOp FAdd), ("fsub", binOp FSub)
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
-  , ("pow" , binOp Pow ), ("rem" , binOp Rem )
+  , ("ipow", binOp IPow), ("irem", binOp IRem)
+  , ("fpow", binOp FPow)
+  , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot)
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
-  , ("and" , binOp And ), ("or"  , binOp Or  ), ("not" , unOp  Not )
   , ("fneg", unOp  FNeg)
+  , ("exp" , unOp  Exp ), ("log" , unOp Log )
+  , ("sin" , unOp  Sin ), ("cos" , unOp Cos )
+  , ("tan" , unOp  Tan ), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)
@@ -975,6 +996,8 @@ builtinNames = M.fromList
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())
   , ("snd", OpExpr $ Snd ())
+  , ("fstRef", OpExpr $ FstRef ())
+  , ("sndRef", OpExpr $ SndRef ())
   , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
@@ -982,6 +1005,7 @@ builtinNames = M.fromList
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ Coerce () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
+  , ("sliceCurry", OpExpr $ SliceCurry () ())
   ]
   where
     vbinOp op = OpExpr $ VectorBinOp op () ()
@@ -1003,8 +1027,8 @@ instance Store Decl
 instance Store EffectName
 instance Store EffectRow
 instance Store Direction
-instance Store ScalarUnOp
-instance Store ScalarBinOp
+instance Store UnOp
+instance Store BinOp
 instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo

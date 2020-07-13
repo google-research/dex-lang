@@ -12,14 +12,16 @@
 
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
-              buildLam, EmbedT, Embed, MonadEmbed, buildScoped, wrapDecls, runEmbedT,
+              buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, fromPair, getFst, getSnd, appReduce,
+              select, selectAt, substEmbed, substEmbedR,
+              fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
-              singletonTypeVal, mapScalars, scopedDecls, embedScoped, extendScope,
+              singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
-              unpackConsList, emitRunWriter, tabGet, SubstEmbedT, runSubstEmbedT,
+              unpackConsList, emitRunWriter, emitRunReader, tabGet,
+              SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               sumTag, getLeft, getRight, fromSum, clampPositive,
@@ -34,6 +36,7 @@ import Control.Monad.Writer
 import Control.Monad.Identity
 import Data.Foldable (toList)
 import Data.Maybe
+import GHC.Stack
 
 import Env
 import Syntax
@@ -49,6 +52,7 @@ type Embed = EmbedT Identity
 type EmbedEnv = (EmbedEnvR, EmbedEnvC)
 
 type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
+type SubstEmbed    = SubstEmbedT Identity
 
 -- Carries the vars in scope (with optional definitions) and the emitted decls
 type EmbedEnvC = (Scope, [Decl])
@@ -66,7 +70,7 @@ runEmbed m scope = runIdentity $ runEmbedT m scope
 runSubstEmbedT :: Monad m => SubstEmbedT m a -> Scope -> m (a, EmbedEnvC)
 runSubstEmbedT m scope = runEmbedT (runReaderT m mempty) scope
 
-runSubstEmbed :: SubstEmbedT Identity a -> Scope -> (a, EmbedEnvC)
+runSubstEmbed :: SubstEmbed a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
@@ -85,16 +89,6 @@ emitTo v ann expr = do
   v' <- freshVar (v:>ty)
   emitDecl $ Let ann v' expr'
   return $ Var v'
-
--- Disabling this path for now because we need to be more careful to not throw
--- away global names
-  -- case singletonTypeVal ty of
-  --   Just x
-  --     | isPure expr -> return x
-  --     | otherwise -> do
-  --         expr' <- deShadow expr <$> getScope
-  --         emitDecl $ Let ann (NoName:>ty) expr'
-  --         return x
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
@@ -152,14 +146,16 @@ buildScoped m = do
   return $ wrapDecls decls ans
 
 wrapDecls :: [Decl] -> Atom -> Block
-wrapDecls decls atom = case reverse decls of
-  -- decluttering optimization
-  Let _ v expr:rest | atom == Var v -> Block (reverse rest) expr
-  _ -> Block decls (Atom atom)
+wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
--- TODO: consider broadcasted literals as atoms, so we don't need the monad here
-zeroAt :: MonadEmbed m => Type -> m Atom
-zeroAt ty = mapScalars (\_ _ -> return $ Con $ Lit (RealLit 0.0)) ty []
+zeroAt :: Type -> Atom
+zeroAt ty = case ty of
+  RealTy -> Con $ Lit $ RealLit 0.0
+  TabTy (NoName:>n) a ->
+    Lam $ Abs (NoName:>n) (TabArrow,  Block [] $ Atom $ zeroAt a)
+  UnitTy -> UnitVal
+  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  _ -> error $ "Not implemented: " ++ pprint ty
 
 addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
 addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
@@ -168,7 +164,7 @@ selectAt :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
 selectAt ty p xs ys = mapScalars (\_ [x, y] -> select p x y) ty [xs, ys]
 
 sumAt :: MonadEmbed m => Type -> [Atom] -> m Atom
-sumAt ty [] = zeroAt ty
+sumAt ty [] = return $ zeroAt ty
 sumAt _ [x] = return x
 sumAt ty (x:xs) = do
   xsSum <- sumAt ty xs
@@ -206,7 +202,7 @@ isub x y = emitOp $ ScalarBinOp ISub x y
 
 andE :: MonadEmbed m => Atom -> Atom -> m Atom
 andE (BoolVal True) y = return y
-andE x y              = emit $ Op $ ScalarBinOp And x y
+andE x y              = emit $ Op $ ScalarBinOp BAnd x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
 select (BoolVal b) x y = return $ if b then x else y
@@ -221,7 +217,7 @@ idiv (IntVal x) (IntVal y) = return $ IntVal $ x `div` y
 idiv x y = emitOp $ ScalarBinOp IDiv x y
 
 irem :: MonadEmbed m => Atom -> Atom -> m Atom
-irem x y = emitOp $ ScalarBinOp Rem x y
+irem x y = emitOp $ ScalarBinOp IRem x y
 
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
 ilt (IntVal x) (IntVal y) = return $ BoolVal $ x < y
@@ -238,6 +234,9 @@ getSnd p = emitOp $ Snd p
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
 
+naryApp :: MonadEmbed m => Atom -> [Atom] -> m Atom
+naryApp f xs = foldM app f xs
+
 appReduce :: MonadEmbed m => Atom -> Atom -> m Atom
 appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
@@ -253,7 +252,11 @@ fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair pair = (,) <$> getFst pair <*> getSnd pair
 
 unpackConsList :: MonadEmbed m => Atom -> m [Atom]
-unpackConsList = undefined
+unpackConsList xs = case getType xs of
+  UnitTy -> return []
+  _ -> do
+    (x, rest) <- fromPair xs
+    liftM (x:) $ unpackConsList rest
 
 sumTag :: MonadEmbed m => Atom -> m Atom
 sumTag (SumVal t _ _) = return t
@@ -278,6 +281,14 @@ emitRunWriter v ty body = do
     buildLam (v:> RefTy r ty) arr body
   emit $ Hof $ RunWriter lam
 
+emitRunReader :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
+emitRunReader v x0 body = do
+  eff <- getAllowedEffects
+  lam <- buildLam ("r":>TyKind) PureArrow $ \r@(Var (rName:>_)) -> do
+    let arr = PlainArrow $ extendEffect (Reader, rName) eff
+    buildLam (v:> RefTy r (getType x0)) arr body
+  emit $ Hof $ RunReader x0 lam
+
 buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
@@ -290,9 +301,9 @@ tabGet x i = emit $ App x i
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildFor Fwd ("i":>varType v) $ \i ->
+  fsts <- buildLam ("i":>varType v) TabArrow $ \i ->
             liftM fst $ app tab i >>= fromPair
-  snds <- buildFor Fwd ("i":>varType v) $ \i ->
+  snds <- buildLam ("i":>varType v) TabArrow $ \i ->
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy v _ = getType tab
@@ -315,12 +326,25 @@ mapScalars f ty xs = case ty of
     _ -> error $ "Not implemented " ++ pprint ty
   _ -> error $ "Not implemented " ++ pprint ty
 
-substEmbed :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
+substEmbedR :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
            => a -> m a
-substEmbed x = do
+substEmbedR x = do
   env <- ask
+  substEmbed env x
+
+substEmbed :: (MonadEmbed m, HasVars a)
+           => SubstEnv -> a -> m a
+substEmbed env x = do
   scope <- getScope
   return $ subst (env, scope) x
+
+checkEmbed :: (HasCallStack, MonadEmbed m, HasType a) => a -> m a
+checkEmbed  x = do
+  scope <- getScope
+  eff <- getAllowedEffects
+  case checkType scope eff x of
+    Left e   -> error $ pprint e
+    Right () -> return x
 
 isSingletonType :: Type -> Bool
 isSingletonType ty = case singletonTypeVal ty of
@@ -499,16 +523,54 @@ traverseExpr (_, fAtom) expr = case expr of
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
 traverseAtom def@(_, fAtom) atom = case atom of
-  Var _ -> substEmbed atom
+  Var _ -> substEmbedR atom
   Lam (Abs b (arr, body)) -> do
     b' <- mapM fAtom b
     buildDepEffLam b'
-      (\x -> extendR (b'@>x) (substEmbed arr))
+      (\x -> extendR (b'@>x) (substEmbedR arr))
       (\x -> extendR (b'@>x) (evalBlockE def body))
-  Pi _ -> substEmbed atom
+  Pi _ -> substEmbedR atom
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
-  Eff _   -> substEmbed atom
+  Eff _   -> substEmbedR atom
+
+-- === DCE ===
+
+type DceM = WriterT [Decl] (Cat Scope)
+
+dceModule :: Module -> Module
+dceModule (Module ir decls bindings) =
+  Module ir (dceDecls (freeVars bindings) decls) bindings
+
+dceBlock :: Block -> Block
+dceBlock (Block decls result) =
+  inlineLastDecl $ Block (dceDecls (freeVars result) decls) result
+
+dceDecls :: Scope -> [Decl] -> [Decl]
+dceDecls varsNeeded decls = reverse $
+  fst $ flip runCat varsNeeded $ execWriterT $ mapM dceDecl $ reverse decls
+
+inlineLastDecl :: Block -> Block
+inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
+  (Let _ v expr:rest, Atom atom)
+    | atom == Var v || sameSingletonVal (varType v) (getType atom) -> Block (reverse rest) expr
+  _ -> block
+
+dceDecl :: Decl -> DceM ()
+dceDecl decl@(Let ann b expr) = do
+  varsNeeded <- look
+  if b `isin` varsNeeded
+    then tell [decl] >> extend (freeVars expr)
+    else case exprEffs expr of
+      NoEffects   -> return ()
+      SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+
+sameSingletonVal :: Type -> Type -> Bool
+sameSingletonVal t1 t2 = case singletonTypeVal t1 of
+  Just x1 -> case singletonTypeVal t2 of
+    Just x2 | x1 == x2 -> True
+    _ -> False
+  _ -> False
 
 -- === partial evaluation using definitions in scope ===
 

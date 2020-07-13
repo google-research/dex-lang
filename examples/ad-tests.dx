@@ -1,3 +1,73 @@
+:p
+   f : Real -> Real = \x. x
+   jvp f 3.0 2.0
+> 2.0
+
+:p
+   f = \x. x * x
+   jvp f 3.0 1.5
+> 9.0
+
+:p
+   f = \x. x + x
+   jvp f 3.0 2.0
+> 4.0
+
+:p
+   f = \x. x * x * x
+   jvp f 2.0 1.5
+> 18.0
+
+:p
+   f : Real --o Real = \x. x
+   transposeLinear f 2.0
+> 2.0
+
+:p
+   f : Real --o Real = \x. x + x
+   transposeLinear f 1.0
+> 2.0
+
+:p
+   f : Real --o Real = \x. x + (x + x) * 2.0
+   transposeLinear f 1.0
+> 5.0
+
+:p
+   f : Real --o Real = \x. x * 2.0
+   transposeLinear f 1.0
+> 2.0
+
+:p
+   f : Real --o Real = \x. 2.0 * x
+   transposeLinear f 1.0
+> 2.0
+
+:p grad (\x. x * x) 1.0
+> 2.0
+
+:p deriv (\x. 3.0 / x) 2.0
+> -0.75
+
+:p deriv (\x. x / 2.0) 3.0
+> 0.5
+
+:p
+  f : n:Type ?-> n=>Real -> n=>Real =
+   \xs. for i. xs.i * xs.i
+
+  jvp f [1.,2.] [3.,4.]
+> [6.0, 16.0]
+
+:p jvp transpose [[1.,2.], [3.,4.]] [[10.,20.], [30.,40.]]
+> [[10.0, 30.0], [20.0, 40.0]]
+
+:p jvp sum [1., 2.] [10.0, 20.0]
+> 30.0
+
+f : Real -> Real = \x. snd $ withAccum \ref. ref += x
+:p jvp f 1.0 1.0
+> 1.0
 
 :p
    f = \x. x * x * x
@@ -23,65 +93,61 @@
 
 -- TODO: handle user-defined linearity rules an re-enable
 
-:p deriv cos 0.0
-> 0.0
+-- :p deriv cos 0.0
+-- > 0.0
 
-:p deriv sin 0.0
-> 1.0
+-- :p deriv sin 0.0
+-- > 1.0
 
-:p (sin 1.0, deriv (deriv sin) 1.0)
-> (0.84147096, -0.84147096)
+-- :p (sin 1.0, deriv (deriv sin) 1.0)
+-- > (0.84147096, -0.84147096)
 
-:p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
-> (0.5403023, -0.5403023)
+-- :p (cos 1.0, deriv (deriv (deriv sin)) 1.0)
+-- > (0.5403023, -0.5403023)
 
-:p checkDeriv sin 1.0
-> True
+-- :p checkDeriv sin 1.0
+-- > True
 
-:p checkDeriv cos 1.0
-> True
+-- :p checkDeriv cos 1.0
+-- > True
 
-:p checkDeriv exp 2.0
-> True
+-- :p checkDeriv exp 2.0
+-- > True
 
-:p checkDeriv log 2.0
-> True
+-- :p checkDeriv log 2.0
+-- > True
 
-:p checkDeriv sqrt 2.0
-> True
+-- :p checkDeriv sqrt 2.0
+-- > True
 
-:p checkDeriv (\x. cos (sin (exp x))) 2.0
-> True
+-- :p checkDeriv (\x. cos (sin (exp x))) 2.0
+-- > True
 
-:p checkDeriv (deriv sin) 1.0
-> True
+-- :p checkDeriv (deriv sin) 1.0
+-- > True
 
-:p checkDeriv (deriv cos) 1.0
-> True
+-- :p checkDeriv (deriv cos) 1.0
+-- > True
 
-badDerivFun : Real -> Real
-badDerivFun x = x
+-- badDerivFun : Real -> Real
+-- badDerivFun x = x
 
-badDerivFun#lin : Real -> (Real, Real --o Real)
-badDerivFun#lin x = (x, llam t. 2. * t)
+-- badDerivFun#lin : Real -> (Real, Real --o Real)
+-- badDerivFun#lin x = (x, llam t. 2. * t)
 
-:p checkDeriv badDerivFun 1.0
-> False
+-- :p checkDeriv badDerivFun 1.0
+-- > False
 
 -- Perturbation confusion test suggested by Barak Pearlmutter
 -- https://github.com/HIPS/autograd/issues/4
 :p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.0
 
-sinn#lin : Real -> Real
-sinn#lin x = x
-> Error: variable not in scope: sinn
+-- sinn#lin : Real -> Real
+-- sinn#lin x = x
+-- > Error: variable not in scope: sinn
 
-tripleit : Real --o Real
-tripleit x = %runReader(x, \r.
-   y = %ask(r)
-   z = %ask(r)
-   y + z + x)
+tripleit : Real --o Real = \x. x + x + x
 
 :p tripleit 1.0
 > 3.0
@@ -93,81 +159,63 @@ tripleit x = %runReader(x, \r.
 > 3.0
 
 :p
-  f : Real --o n=>Real
-  f x = for i. x
+  f : n:Type ?->  Real --o n=>Real = \x. for i. x
 
   transposeLinear f [1.0, 2.0]
 > 3.0
 
 :p
-  f : n=>Real --o n=>Real
-  f x = for i. x.i * 2.0
+  f : n:Type ?-> n=>Real --o n=>Real = \x. for i. x.i * 2.0
 
   transposeLinear f [1.0, 2.0]
 > [2.0, 4.0]
 
--- mySquare : Real -> Real
--- mySquare x = runReader x \r.
---   y = ask r
---   x * y
+myOtherSquare : Real -> Real =
+  \x. snd $ withAccum \w. w += x * x
 
--- :p mySquare 3.0
--- > 9.0
+:p myOtherSquare 3.0
+> 9.0
 
--- :p jvp mySquare 3.0 1.0
--- > 6.0
+:p jvp myOtherSquare 3.0 1.0
+> 6.0
 
--- :p transposeLinear (jvp mySquare 3.0) 1.0
--- > 6.0
-
--- myOtherSquare : Real -> Real
--- myOtherSquare x = getAccumulator \w. w += x * x
-
--- :p myOtherSquare 3.0
--- > 9.0
-
--- :p jvp myOtherSquare 3.0 1.0
--- > 6.0
-
--- :p transposeLinear (jvp myOtherSquare 3.0) 1.0
--- > 6.0
+:p transposeLinear (jvp myOtherSquare 3.0) 1.0
+> 6.0
 
 :p
-  f : Real -> Real
-  f x = fst (x * x, iadd 2 1)
+  f : Real -> Real =
+    \x. fst (x * x, 2 + 1)
 
   jvp f 1.0 3.0
 > 6.0
 
 :p
-  f : 2=>Real -> Real
-  f xs = xs.(0@2) * xs.(1@2)
+  f : Real -> Real = \x.
+    x * i2r (1 + 1)
+
+  jvp f 1.0 2.0
+> 4.0
+
+:p
+  f : (Fin 2)=>Real -> Real =
+    \xs. xs.(0 @ Fin 2) * xs.(1 @ Fin 2)
 
   jvp f [1., 2.] [3.0, 4.0]
 > 10.0
 
 :p
-  f : (Real,Real) -> Real
-  f (x,y) = x * y
+  f : (Real & Real) -> Real =
+    \(x,y). x * y
 
   jvp f (1., 2.) (3.0, 4.0)
 > 10.0
 
 :p
-  f : n=>Real -> n=>Real
-  f xs = for i. xs.i * xs.i
+  f : n:Type ?-> n=>Real -> n=>Real =
+    \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
 > [6.0, 16.0]
-
-:p
-  f : Real -> Real
-  f xs = runReader xs \ref.
-            y = ask ref
-            y * y * y
-
-  jvp f 2. 3.
-> 36.0
 
 :p jvp sum [1., 2.] [3.0, 4.0]
 > 7.0
@@ -185,10 +233,9 @@ vec = [1.]
 > ([3.0, 4.0], [1.0, 2.0])
 
 :p
-  f : Real -> Real
-  f x =
+  f : Real -> Real = \x.
     y = x * 2.0
-    getAccumulator \a.
+    snd $ withAccum \a.
       a += x * 2.0
       a += y
   grad f 1.0
