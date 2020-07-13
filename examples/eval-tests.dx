@@ -109,13 +109,13 @@ fun = \y. sum (map i2r arr) + y
 > 158057.9
 
 :p floor 3.6
-> 3.0
+> 3
 
 :p ceil 3.6
-> 4.0
+> 4
 
 :p round 3.6
-> 4.0
+> 4
 
 s = 1.0
 
