@@ -598,7 +598,7 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
 
 primName :: Lexer String
-primName = lexeme $ try $ char '%' >> some letterChar
+primName = lexeme $ try $ char '%' >> some alphaNumChar
 
 intLit :: Lexer Int
 intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')
