@@ -37,6 +37,7 @@ def zero (d:Add a) ?=> : a           = snd $ snd $ fromAdd d
 
 @instance realAdd : Add Real = MkAdd (\x y. %fadd x y, \x y. %fsub x y, 0.0)
 @instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y, \x y. %isub x y, 0)
+@instance unitAdd : Add Unit = MkAdd (\x y. (), \x y. (), ())
 
 @instance tabAdd : Add a ?=> Add (n=>a) =
   MkAdd ( \xs ys. for i. xs.i + ys.i
@@ -51,6 +52,7 @@ def (*)  (d:Mul a) ?=> : a -> a -> a = fromMul d
 
 @instance realMul : Mul Real = MkMul \x y. %fmul x y
 @instance intMul  : Mul Int  = MkMul \x y. %imul x y
+@instance unitMul : Mul Unit = MkMul \x y. ()
 
 @newtype def VSpace (a:Type) : Type = Real -> a -> a
 MkVSpace   : Add a -> (Real->a->a) -> VSpace a = \d scale. unsafeNewtypeCon (d, scale)
@@ -69,6 +71,7 @@ def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 
 @instance realVS : VSpace Real = MkVSpace realAdd (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
+@instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
 True  = %True
 False = %False
@@ -148,17 +151,13 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (snd (fromOrd d)) x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance
-intEq : Eq Int = MkEq \x y. %ieq x y
+@instance intEq  : Eq Int  = MkEq \x y. %ieq x y
+@instance realEq : Eq Real = MkEq \x y. %feq x y
+@instance unitEq : Eq Unit = MkEq \x y. True
 
-@instance
-intOrd : Ord Int = MkOrd intEq (\x y. %igt x y) (\x y. %ilt x y)
-
-@instance
-realEq : Eq Real = MkEq \x y. %feq x y
-
-@instance
-realOrd : Ord Real = MkOrd realEq (\x y. %fgt x y) (\x y. %flt x y)
+@instance intOrd  : Ord Int  = MkOrd intEq  (\x y. %igt x y) (\x y. %ilt x y)
+@instance realOrd : Ord Real = MkOrd realEq (\x y. %fgt x y) (\x y. %flt x y)
+@instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False)    (\x y. False)
 
 @instance
 def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
