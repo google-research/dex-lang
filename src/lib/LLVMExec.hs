@@ -63,7 +63,15 @@ evalLLVM logger ast argPtr = do
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
     Mod.withModuleFromAST c ast $ \m ->
-      T.withHostTargetMachine R.PIC CM.Default CGO.Aggressive $ \tm -> do
+      -- XXX: We need to use the large code model for macOS, because the libC functions
+      --      are loaded very far away from the JITed code. This does not prevent the
+      --      runtime linker from attempting to shove their offsets into 32-bit values
+      --      which cannot represent them, leading to segfaults that are very fun to debug.
+      --      It would be good to find a better solution, because larger code models might
+      --      hurt performance if we were to end up doing a lot of function calls.
+      -- TODO: Consider changing the linking layer, as suggested in:
+      --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
+      T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
         showModule    m >>= logPass logger JitPass
         L.verify      m
         runPasses  tm m
