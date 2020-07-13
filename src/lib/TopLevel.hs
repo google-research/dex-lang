@@ -29,6 +29,7 @@ import Inference
 import Simplify
 import Serialize
 import Imp
+import MDImp
 import Interpreter
 import JIT
 import Logging
@@ -39,7 +40,7 @@ import PipeRPC
 import JAX
 import Util (highlightRegion, foldMapM)
 
-data Backend = LLVM | Interp | JAX  deriving (Show, Eq)
+data Backend = LLVM | LLVMCUDA | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
@@ -169,8 +170,9 @@ evalModule simpEnv normalized = do
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
-  LLVM -> liftM LLVMEngine $ newMVar mempty
-  JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
+  LLVM     -> LLVMEngine <$> newMVar mempty
+  LLVMCUDA -> LLVMEngine <$> newMVar mempty
+  JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
@@ -181,17 +183,24 @@ arrayVars x = foldMap go $ envPairs (freeVars x)
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
-  backend <- asks evalEngine
+  backend <- asks backendName
+  engine  <- asks evalEngine
   logger  <- asks logService
   let inVars = arrayVars block
-  case backend of
-    LLVMEngine engine -> do
+  case engine of
+    LLVMEngine llvmEnv -> do
       let (impFunction, impAtom) = toImpFunction (inVars, block)
       checkPass ImpPass impFunction
       -- logPass Flops $ impFunctionFlops impFunction
-      let llvmFunc = impToLLVM impFunction
-      liftIO $ modifyMVar engine $ \env -> do
+      liftIO $ modifyMVar llvmEnv $ \env -> do
         let inPtrs = fmap (env !) inVars
+        llvmFunc <- case backend of
+          LLVM -> return $ impToLLVM impFunction
+          LLVMCUDA -> do
+            let mdImpFunction = impToMDImp impFunction
+            ptxFunction <- traverse compileKernel mdImpFunction
+            return $ mdImpToLLVM ptxFunction
+          _ -> error $ "Unexpected backend: " ++ show backend
         outPtrs <- callLLVM logger llvmFunc inPtrs
         let (ImpFunction impOutVars _ _) = impFunction
         let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
@@ -208,6 +217,12 @@ evalBackend block = do
           _        -> return $ impVar @> (Var $ (outName :> varType impVar))
         loadScalar :: BaseType -> Ptr () -> IO LitVal
         loadScalar b ptr = fromJust . scalarFromArray <$> (loadArray $ ArrayRef (1, b) ptr)
+
+        compileKernel :: ImpKernel -> IO PTXKernel
+        compileKernel k = do
+          let llvmKernel = impKernelToLLVM k
+          putStrLn $ show llvmKernel
+          compilePTX logger llvmKernel
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, block)

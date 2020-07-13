@@ -27,6 +27,8 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
+    MDImpFunction (..), MDImpProg (..), MDImpStatement (..), MDImpInstr (..),
+    ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -386,6 +388,33 @@ data IType = IValType BaseType
              deriving (Show, Eq)
 
 type Size  = IExpr
+
+-- === multi-device imperative IR ===
+
+-- destinations first
+data MDImpFunction k = MDImpFunction [ScalarTableVar] [ScalarTableVar] (MDImpProg k)
+                       deriving (Show, Eq, Functor, Foldable, Traversable)
+data MDImpProg k = MDImpProg [MDImpStatement k]
+                   deriving (Show, Eq, Functor, Foldable, Traversable)
+newtype MDImpStatement k = MDImpStatement (Maybe IVar, MDImpInstr k)
+                           deriving (Show, Eq, Functor, Foldable, Traversable)
+
+-- NB: No loads/stores since we're dealing with device pointers.
+--     No loops, because loops are kernels!
+-- TODO: Maybe scalar loads actually do make sense? What if someone wants to
+--       index a single element to print a table?
+data MDImpInstr k = MDLaunch Size [IVar] k
+                  | MDAlloc ScalarTableType Size
+                  | MDFree IVar
+                  | MDPrimOp IPrimOp
+                    deriving (Show, Eq, Functor, Foldable, Traversable)
+
+-- The kernel program can only contain Alloc instructions of statically known size
+-- (and they are expected to be small!).
+data ImpKernel = ImpKernel [IVar] IVar ImpProg -- parameters, linear thread index, kernel body
+                 deriving (Show, Eq)
+newtype PTXKernel = PTXKernel String
+                    deriving (Show, Eq)
 
 -- === some handy monoids ===
 
@@ -800,6 +829,45 @@ instance Eq SourceBlock where
 
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
+
+type IScope = Env IType
+
+class HasIVars a where
+  freeIVars :: a -> IScope
+
+-- XXX: Only for ScalarTableType!
+instance HasIVars Type where
+  freeIVars t = do
+    if null $ freeVars t
+      then mempty
+      else error "Not implemented!" -- TODO need fromScalarAtom here!
+
+instance HasIVars IExpr where
+  freeIVars e = case e of
+    ILit _        -> mempty
+    IVar v@(_:>t) -> v @> t <> freeIVars t
+
+instance HasIVars IType where
+  freeIVars t = case t of
+    IValType _  -> mempty
+    IRefType rt -> freeIVars rt
+
+instance HasIVars ImpInstr where
+  freeIVars i = case i of
+    Load  e       -> freeIVars e
+    Store d e     -> freeIVars d <> freeIVars e
+    Alloc t s     -> freeIVars t <> freeIVars s
+    Free  v       -> varAsEnv v
+    IOffset a o t -> freeIVars a <> freeIVars o <> freeIVars t
+    Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
+    IWhile c p    -> freeIVars c <> freeIVars p
+    IPrimOp op    -> foldMap freeIVars op
+
+instance HasIVars ImpProg where
+  freeIVars (ImpProg stmts) = case stmts of
+    [] -> mempty
+    (Just v , expr):cont -> freeIVars expr <> (freeIVars (ImpProg cont) `envDiff` (v @> ()))
+    (Nothing, expr):cont -> freeIVars expr <>  freeIVars (ImpProg cont)
 
 -- === Synonyms ===
 
