@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR,
+              select, selectAt, substEmbed, substEmbedR, buildAlt,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -32,7 +32,7 @@ import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Data.Foldable (toList)
 import Data.Maybe
@@ -296,6 +296,15 @@ buildFor d i body = do
   lam <- buildLam i (PlainArrow eff) body
   emit $ Hof $ For d lam
 
+buildAlt :: MonadEmbed m => Var -> [Var] -> ([Atom] -> m Atom) -> m Alt
+buildAlt con bs body = do
+  ((bs', ans), decls) <- scopedDecls $ do
+     bs' <- mapM freshVar bs
+     embedExtend $ asFst $ foldMap (\b -> b @> (varType b, PatBound)) bs'
+     ans <- body $ map Var bs'
+     return (bs', ans)
+  return $ Alt (con, bs') $ wrapDecls decls ans
+
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 tabGet x i = emit $ App x i
 
@@ -514,11 +523,18 @@ evalBlockE def@(fExpr, _) (Block decls result) = do
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Expr -> m Expr
-traverseExpr (_, fAtom) expr = case expr of
+traverseExpr def@(_, fAtom) expr = case expr of
   App g x -> App  <$> fAtom g <*> fAtom x
   Atom x  -> Atom <$> fAtom x
   Op  op  -> Op   <$> traverse fAtom op
   Hof hof -> Hof  <$> traverse fAtom hof
+  Case e alts -> Case <$> fAtom e <*> mapM (traverseAlt def) alts
+
+traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Alt -> m Alt
+traverseAlt def@(_, fAtom) (Alt (con, bs) body) = do
+  bs' <- mapM (mapM fAtom) bs
+  buildAlt con bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
@@ -533,6 +549,7 @@ traverseAtom def@(_, fAtom) atom = case atom of
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substEmbedR atom
+  ConApp f xs -> ConApp f <$> traverse fAtom xs
 
 -- === DCE ===
 

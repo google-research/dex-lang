@@ -20,21 +20,22 @@ module Syntax (
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..),
-    PrimEffect (..), PrimOp (..), EffectSummary (..),
+    PrimEffect (..), PrimOp (..), EffectSummary (..), UConPat,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings,
+    ScalarTableType, ScalarTableVar, BinderInfo (..),
+    Bindings, UAlt (..), Alt (..), varBinding,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     sourceBlockBoundVars, uModuleBoundVars, PassName (..), bindingsAsVars,
     freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    UExpr, UExpr' (..), UType, UBinder, UPiBinder, UVar, declAsScope,
+    UExpr, UExpr' (..), UType, UBinder, UAnnBinder, UVar, declAsScope,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
@@ -54,7 +55,7 @@ import qualified Data.Map.Strict as M
 import Control.Exception hiding (throw)
 import Control.Monad.Fail
 import Control.Monad.Identity
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.Vector.Storable as V
 import Data.Foldable (fold)
@@ -72,19 +73,26 @@ import Array
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
+          | ConApp ConName [Atom]  -- TODO: de-dup with App?
           | Con Con
           | TC  TC
           | Eff EffectRow
             deriving (Show, Eq, Generic)
 
 data Expr = App Atom Atom
+          | Case Atom [Alt]
           | Atom Atom
           | Op  Op
           | Hof Hof
             deriving (Show, Eq, Generic)
 
-data Decl  = Let LetAnn Binder Expr    deriving (Show, Eq, Generic)
+data Decl  = Let LetAnn Binder Expr
+           | Unpack ConPat Expr  deriving (Show, Eq, Generic)
+
 data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
+data Alt = Alt ConPat Block     deriving (Show, Eq, Generic)
+type ConPat = (ConName, [Binder])
+type ConName = Var
 
 type Var    = VarP Type
 type Binder = VarP Type
@@ -138,17 +146,20 @@ scalarTableBaseType t = case t of
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
             | ULam UBinder UArrow UExpr
-            | UPi  UPiBinder Arrow UType
+            | UPi  UAnnBinder Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
             | UFor Direction UBinder UExpr
+            | UCase UExpr [UAlt]
             | UHole
             | UTabCon [UExpr] (Maybe UExpr)
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
-data UDecl = ULet LetAnn UBinder UExpr  deriving (Show, Eq, Generic)
+data UDecl = ULet LetAnn UBinder UExpr
+           | UData UAnnBinder [UAnnBinder]
+             deriving (Show, Eq, Generic)
 
 type UType  = UExpr
 type UArrow = ArrowP ()
@@ -157,7 +168,13 @@ type UVar   = VarP ()
 type UPat    = PatP  UVar
 type UPat'   = PatP' UVar
 type UBinder   = (UPat, Maybe UType)
-type UPiBinder = VarP UType
+type UAnnBinder = VarP UType
+
+data UAlt = UAlt UConPat UExpr
+            deriving (Show, Eq, Generic)
+
+-- TODO: nested patterns
+type UConPat = (Name, [Name])
 
 data UModule = UModule [UDecl]  deriving (Show, Eq)
 type SrcPos = (Int, Int)
@@ -282,7 +299,7 @@ data Limit a = InclusiveLim a
              | Unlimited
                deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data ClassName = Data | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
+data ClassName = DataClass | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
 
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
@@ -578,7 +595,10 @@ data BinderInfo =
         LamBound (ArrowP ())
         -- TODO: make the expression optional, for when it's effectful?
         -- (or we could put the effect tag on the let annotation)
+      | PatBound
       | LetBound LetAnn Expr
+      | DataBoundTyCon [ConName]
+      | DataBoundDataCon
       | PiBound
       | UnknownBinder
         deriving (Show, Eq, Generic)
@@ -597,6 +617,9 @@ declAsScope (Let ann v expr) = v @> (varType v, LetBound ann expr)
 
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
+
+varBinding :: Var -> Bindings
+varBinding v = v @> (varType v, UnknownBinder)
 
 class HasVars a where
   freeVars :: a -> Scope
@@ -660,12 +683,14 @@ instance HasVars Expr where
     Atom x  -> freeVars x
     Op  e   -> foldMap freeVars e
     Hof e   -> foldMap freeVars e
+    Case e alts -> freeVars e <> foldMap freeVars alts
 
   subst env expr = case expr of
     App f x -> App (subst env f) (subst env x)
     Atom x  -> Atom $ subst env x
     Op  e   -> Op  $ fmap (subst env) e
     Hof e   -> Hof $ fmap (subst env) e
+    Case e alts -> Case (subst env e) $ map (subst env) alts
 
 instance HasVars Decl where
   freeVars (Let _ bs expr) = foldMap freeVars bs <> freeVars expr
@@ -691,6 +716,7 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
+    ConApp con xs -> varFreeVars con <> foldMap freeVars xs
 
   subst env atom = case atom of
     Var v   -> substVar env v
@@ -699,6 +725,7 @@ instance HasVars Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
+    ConApp con xs -> ConApp con $ map (subst env) xs
 
 instance HasVars Module where
   freeVars (Module variant decls bindings) = case decls of
@@ -710,6 +737,24 @@ instance HasVars Module where
     where
       (decls', env') = catMap substDecl env decls
       bindings' = subst (env <> env') bindings
+
+instance HasVars Alt where
+  freeVars (Alt (con, bs) body) =
+    varFreeVars con <> freeVarsAltRec bs body
+  -- Constructor name should be global and never substituted
+  subst env (Alt (con, bs) body) = Alt (fmap (subst env) con, bs') body'
+    where (bs', body') = substAltRec env bs body
+
+freeVarsAltRec :: [Binder] -> Block -> Scope
+freeVarsAltRec [] body = freeVars body
+freeVarsAltRec (b:bs) body =
+  freeBinderTypeVars b <> (freeVarsAltRec bs body `envDiff` (b@>()))
+
+substAltRec :: ScopedSubstEnv -> [Binder] -> Block -> ([Binder], Block)
+substAltRec env [] body = ([], subst env body)
+substAltRec env (b:bs) body = (b':bs', body')
+  where (b', env') = refreshBinder env $ fmap (subst env) b
+        (bs', body') = substAltRec (env <> env') bs body
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
@@ -1032,3 +1077,4 @@ instance Store BinOp
 instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo
+instance Store Alt

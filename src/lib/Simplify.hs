@@ -25,12 +25,12 @@ import PPrint
 type SimplifyM = SubstEmbedT Identity
 
 simplifyModule :: TopEnv -> Module -> Module
-simplifyModule scope (Module Core decls _) = do
+simplifyModule scope (Module Core decls bindings) = do
   let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
   let (declsDone, declsNotDone) = partition isAtomDecl simpDecls
-  let bindings = foldMap declAsScope declsDone
-  dceModule $ Module Simp declsNotDone bindings
+  let bindings' = foldMap declAsScope declsDone
+  dceModule $ Module Simp declsNotDone (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
@@ -71,11 +71,13 @@ simplifyAtom atom = case atom of
     case envLookup substEnv v of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
-        -- TODO: check scope?
-        Just (_, LetBound NewtypeLet _) ->
-            pure $ TC $ NewtypeApp atom []
-        Just (_, LetBound _ (Atom x)) -> dropSub $ simplifyAtom x
-        _      -> substEmbedR atom
+        Just (_, info) -> case info of
+          LetBound NewtypeLet _ -> pure $ TC $ NewtypeApp atom []
+          LetBound _ (Atom x) -> dropSub $ simplifyAtom x
+          DataBoundTyCon _ -> pure $ ConApp v []
+          DataBoundDataCon -> pure $ ConApp v []
+          _ -> substEmbedR atom
+        _   -> substEmbedR atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
   Lam _ -> substEmbedR atom
   Pi  _ -> substEmbedR atom
@@ -86,8 +88,8 @@ simplifyAtom atom = case atom of
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
+  ConApp f xs -> ConApp f <$> mapM simplifyAtom xs
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
-
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
@@ -142,12 +144,21 @@ simplifyExpr expr = case expr of
     case f' of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
-      TC (NewtypeApp wrapper xs) ->
-        return $ TC $ NewtypeApp wrapper (xs ++ [x'])
+      TC (NewtypeApp wrapper xs) -> return $ TC $ NewtypeApp wrapper (xs ++ [x'])
+      ConApp f xs -> return $ ConApp f $ xs ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
   Atom x  -> simplifyAtom x
+  Case e alts -> do
+    e' <- simplifyAtom e
+    case e' of
+      ConApp con args -> case alts of
+        [Alt (con', bs) body]
+          | con == con' && length bs == length args -> do
+             extendR (newEnv bs args) $ simplifyBlock body
+        _ -> error "Not implemented"
+      _ -> error "Not implemented"
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom

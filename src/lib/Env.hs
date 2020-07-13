@@ -11,7 +11,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
             rawName, nameSpace, nameTag, rename, renames, nameItems, envMaxName,
-            renameChoice, tagToStr, isGlobal, asGlobal) where
+            renameChoice, tagToStr, isGlobal, asGlobal, envFilter) where
 
 import Control.Monad
 import Data.List (minimumBy)
@@ -106,6 +106,9 @@ envIntersect (Env m) (Env m') = Env $ M.intersection m' m
 
 envDiff :: Env a -> Env b -> Env a
 envDiff (Env m) (Env m') = Env $ M.difference m m'
+
+envFilter :: Env a -> (a -> Bool) -> Env a
+envFilter (Env m) f = Env $ M.filter f m
 
 zipEnv :: [VarP a] -> [b] -> Env b
 zipEnv ns vs = Env $ M.fromList $ zip (map varName ns) vs

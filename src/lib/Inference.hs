@@ -33,12 +33,17 @@ data RequiredTy a = Check a | Infer
 
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
-  ((), (_, decls')) <- runUInferM (mapM_ (inferUDecl True) decls) mempty scope
-  return $ Module Typed decls' mempty
+  ((), (bindings, decls')) <- runUInferM mempty scope $
+                                mapM_ (inferUDecl True) decls
+  let bindings' = envFilter bindings $ \(_, b) -> case b of
+                    DataBoundTyCon _ -> True
+                    DataBoundDataCon -> True
+                    _ -> False
+  return $ Module Typed decls' bindings'
 
 runUInferM :: (HasVars a, Pretty a)
-           => UInferM a -> SubstEnv -> Scope -> Except (a, (Scope, [Decl]))
-runUInferM m env scope = runSolverT $ runEmbedT (runReaderT m env) scope
+           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, [Decl]))
+runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -126,6 +131,12 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UDecl decl body -> do
     env <- inferUDecl False decl
     extendR env $ checkOrInferRho body reqTy
+  UCase e ~(alt:alts) -> do
+    e' <- inferRho e
+    let eTy = getType e'
+    alt'@(Alt _ altBody) <- checkCaseAlt reqTy eTy alt
+    alts' <- mapM (checkCaseAlt (Check (getType altBody)) eTy) alts
+    emit $ Case e' $ alt' : alts'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -160,7 +171,9 @@ lookupSourceVar v = do
       scope <- getScope
       let v' = asGlobal $ varName v
       case envLookup scope (v':>()) of
-        Just (ty, _) -> return $ Var $ v' :> ty
+        Just (ty, DataBoundTyCon _) -> return $ ConApp (v':>ty) []
+        Just (ty, DataBoundDataCon) -> return $ ConApp (v':>ty) []
+        Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
@@ -190,6 +203,21 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       -- TODO: non-top-level annotations?
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
+inferUDecl True (UData tc dcs) = do
+  -- TODO: check that the data constructors actually produce the right type
+  -- TODO: check it's not recursive
+  -- TODO: check mutual shadows
+  tc' <- inferCon tc
+  (dcs', _) <- embedScoped $ do
+                 extendScope $ varBinding tc'
+                 mapM inferCon dcs
+  extendScope $ tc' @> (varType tc', DataBoundTyCon dcs')
+  forM_ dcs' $ \dc -> extendScope $ dc @> (varType dc, DataBoundDataCon)
+  return mempty
+inferUDecl False (UData _ _) = error "data definitions should be top-level"
+
+inferCon :: UAnnBinder -> UInferM Binder
+inferCon (v:>ty) = (asGlobal v :>) <$> checkUType ty
 
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -219,6 +247,35 @@ checkUEff (EffectRow effs t) = do
        Var (v':>ty') <- asks (!(v:>()))
        constrainEq ty ty'
        return v'
+
+checkCaseAlt :: RequiredTy RhoType -> Type -> UAlt -> UInferM Alt
+checkCaseAlt reqTy scrutineeTy (UAlt (conName, vs) body) = do
+  let conName' = asGlobal conName
+  scope <- getScope
+  conTy <- case envLookup scope (conName':>()) of
+    Nothing -> throw UnboundVarErr $ pprint conName'
+    Just (ty, DataBoundDataCon) -> return ty
+    Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
+  (patTy, bs) <- addBinderTypes conTy vs
+  constrainEq scrutineeTy patTy
+  buildAlt (conName':>conTy) bs $ \xs ->
+    extendR (newEnv bs xs) $ checkOrInferRho body reqTy
+
+addBinderTypes :: MonadError Err m => Type -> [Name] -> m (Type, [Var])
+addBinderTypes ty [] = return (ty, mempty)
+-- TODO: data constructors with dependent args
+-- TODO: data constructors with implicit args
+addBinderTypes (Pi (Abs (NoName:>a) (PureArrow, resultTy))) (v:vs) = do
+  (ty, bs) <- addBinderTypes resultTy vs
+  return (ty, (v:>a) : bs)
+-- TODO: better error messages
+bindAltBinders _ _ = error "Not implemented"
+
+  -- TODO:
+  --   * look at scrutinee type
+  --   * bind binder names against con type recursively (and dependently)
+  --   * eval body
+
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
@@ -340,10 +397,10 @@ type SynthPassM = SubstEmbedT (Either Err)
 type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
-synthModule scope (Module Typed decls _) = do
+synthModule scope (Module Typed decls bindings) = do
   decls' <- fst <$> runSubstEmbedT
               (traverseDecls (traverseHoles synthDictTop) decls) scope
-  return $ Module Core decls' mempty
+  return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"
 
 synthDictTop :: Type -> SynthPassM Atom
@@ -393,7 +450,7 @@ getBinding = do
 inferToSynth :: (Pretty a, HasVars a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
-  case runUInferM m mempty scope of
+  case runUInferM mempty scope m of
     Left _ -> empty
     Right (x, (_, decls)) -> do
       mapM_ emitDecl decls

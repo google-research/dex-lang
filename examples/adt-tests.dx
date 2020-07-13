@@ -1,0 +1,13 @@
+
+data IntReal : Type where
+  MkIntReal : Int -> Real -> IntReal
+
+z = MkIntReal 1 2.3
+
+:p z
+> (MkIntReal 1 2.3)
+
+:p
+  case z
+    MkIntReal x y -> (x, y)
+> (1, 2.3)

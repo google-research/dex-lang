@@ -172,11 +172,11 @@ def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
 
 @instance
 def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = MkEq $
-  \x y. case x
-    Left  xVal -> case y
+  \x y. oldcase x
+    Left  xVal -> oldcase y
       Left  yVal -> xVal == yVal
       Right yVal -> False
-    Right xVal -> case y
+    Right xVal -> oldcase y
       Left  yVal -> False
       Right yVal -> xVal == yVal
 

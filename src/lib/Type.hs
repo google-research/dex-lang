@@ -62,6 +62,7 @@ instance Checkable Module where
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
+
         checkBindings (env <> foldMap declAsScope decls) ir bindings
 
 asCompilerErr :: Except a -> Except a
@@ -69,26 +70,24 @@ asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
 checkBindings :: TypeEnv -> IRVariant -> Bindings -> Except ()
-checkBindings env ir bs = forM_ (envPairs bs) $ \binding -> do
-  (GlobalName _, (ty, LetBound _ (Atom atom))) <- return binding
-  void $ runTypeCheck (CheckWith (env <> bs, Pure)) $ atom |: ty
-  case ir of
-    Evaluated -> unless (all isGlobal $ envAsVars $ freeVars atom) $
-      throw CompilerErr "Non-global name in a fully evaluated atom"
+checkBindings env ir bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
+  mapM_ (checkBinding ir) $ envPairs bs
+
+checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
+checkBinding ir (GlobalName _, binding@(ty, info)) = do
+  ty |: TyKind
+  when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars binding)) $
+    throw CompilerErr "Non-global name in a fully evaluated atom"
+  case info of
+    LetBound _ atom -> atom |: ty
     _ -> return ()
+checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
 
 -- === Core IR ===
 
 instance HasType Atom where
   typeCheck atom = case atom of
-    Var v@(name:>annTy) -> do
-      annTy |: TyKind
-      when (annTy == EffKind) $
-        throw CompilerErr "Effect variables should only occur in effect rows"
-      checkWithEnv $ \(env, _) -> case envLookup env v of
-        Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-        Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
-      return annTy
+    Var v -> typeCheckVar v
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
       checkArrow arr
@@ -99,6 +98,28 @@ instance HasType Atom where
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
+    ConApp v xs -> do
+      GlobalName _ <- return $ varName v
+      conTy <- typeCheckVar v
+      foldM checkUnaryConApp conTy xs
+      where
+        checkUnaryConApp :: Type -> Atom -> TypeM Type
+        checkUnaryConApp fTy x = do
+          Pi piTy <- return fTy
+          x |: absArgType piTy
+          let (arr, resultTy) = applyAbs piTy x
+          Pure <- return $ arrowEff arr
+          return resultTy
+
+typeCheckVar :: Var -> TypeM Type
+typeCheckVar v@(name:>annTy) = do
+  annTy |: TyKind
+  when (annTy == EffKind) $
+    throw CompilerErr "Effect variables should only occur in effect rows"
+  checkWithEnv $ \(env, _) -> case envLookup env v of
+    Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+    Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+  return annTy
 
 instance HasType Expr where
   typeCheck expr = case expr of
@@ -111,9 +132,31 @@ instance HasType Expr where
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
+    Case e (alt:alts) -> do
+      scrutTy <- typeCheck e
+      resultTy <- typeCheckAlt scrutTy alt
+      forM_ alts $ \alt'-> do
+        resultTy' <- typeCheckAlt scrutTy alt'
+        checkEq resultTy resultTy'
+      return resultTy
+
+typeCheckAlt :: Type -> Alt -> TypeM Type
+typeCheckAlt scrutTy (Alt (con, bs) body) = do
+  conTy <- typeCheckVar con
+  let (argTys, patTy) = asNaryFunType conTy
+  when (length argTys /= length bs) $
+    throw CompilerErr "Unexpected numer of pattern binders"
+  checkEq scrutTy patTy
+  foldr withBinder (typeCheck body) bs
+
+-- TODO: use this in inference too (and add arrow flavors)
+asNaryFunType :: Type -> ([Type], Type)
+asNaryFunType ty = case ty of
+  Pi (Abs (_:>argTy) (_, rest)) -> (argTy:argTys, resultTy)
+    where (argTys, resultTy) = asNaryFunType rest
+  _ -> ([], ty)
 
 -- TODO: replace with something more precise (this is too cautious)
-
 blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
   foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
@@ -163,14 +206,14 @@ checkDecl env decl@(Let _ b rhs) =
     checkBinder b
     ty <- typeCheck rhs
     checkEq (varType b) ty
-    return $ b @> (ty, UnknownBinder)
+    return $ varBinding b
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr
 
 infixr 7 |:
-(|:) :: Atom -> Type -> TypeM ()
+(|:) :: HasType a => a -> Type -> TypeM ()
 (|:) x reqTy = do
   ty <- typeCheck x
   checkEq reqTy ty
@@ -179,7 +222,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>(ty, UnknownBinder)) m
+withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (varBinding b) m
 
 checkBinder :: Binder -> TypeM ()
 checkBinder b@(_:>ty) = do
@@ -195,9 +238,8 @@ type VariantM = ReaderT IRVariant Except
 
 checkModuleVariant :: Module -> Except ()
 checkModuleVariant (Module ir decls bindings) = do
-  when (ir < Simp       && not (null bindings)) $ throw CompilerErr "unexpected bindings"
-  when (ir == Evaluated && not (null decls))    $ throw CompilerErr "unexpected decls"
   flip runReaderT ir $ mapM_ checkVariant decls
+  flip runReaderT ir $ mapM_ (checkVariant . snd) bindings
 
 class CoreVariant a where
   checkVariant :: a -> VariantM ()
@@ -211,9 +253,17 @@ instance CoreVariant Atom where
         TabArrow -> alwaysAllowed
         _        -> goneBy Simp
       checkVariantVar b >> checkVariant body
+    ConApp _ xs -> forM_ xs checkVariant
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
+
+instance CoreVariant BinderInfo where
+  checkVariant info = case info of
+    DataBoundTyCon _ -> alwaysAllowed
+    DataBoundDataCon -> alwaysAllowed
+    LetBound _ _     -> absentUntil Simp
+    _                -> neverAllowed
 
 instance CoreVariant Expr where
   checkVariant expr = addExpr expr $ case expr of
@@ -221,6 +271,10 @@ instance CoreVariant Expr where
     Atom x  -> checkVariant x
     Op  e   -> checkVariant e >> forM_ e checkVariant
     Hof e   -> checkVariant e >> forM_ e checkVariant
+    Case e alts -> do
+      goneBy Simp
+      checkVariant e
+      forM_ alts $ \(Alt _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -276,6 +330,11 @@ alwaysAllowed = return ()
 
 neverAllowed :: VariantM ()
 neverAllowed = throw IRVariantErr $ "should never appear in finalized expression"
+
+absentUntil :: IRVariant -> VariantM ()
+absentUntil ir = do
+  curIR <- ask
+  when (curIR < ir) $ throw IRVariantErr $ "shouldn't appear until " ++ show ir
 
 goneBy :: IRVariant -> VariantM ()
 goneBy ir = do
@@ -616,7 +675,7 @@ checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
 checkDataLike msg env ty = case ty of
   -- This is an implicit `instance IdxSet a => Data a`
   Var v -> checkVarClass env IdxSet v `catchError`
-             const (checkVarClass env Data v)
+             const (checkVarClass env DataClass v)
   TabTy _ b -> recur b
   TC con -> case con of
     BaseType _       -> return ()

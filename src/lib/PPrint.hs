@@ -95,6 +95,12 @@ instance Pretty Expr where
   pretty (Atom x ) = p x
   pretty (Op  op ) = p op
   pretty (Hof hof) = p hof
+  pretty (Case e alts) = "case" <+> p e <>
+    nest 2 (hardline <> prettyLines alts)
+
+instance Pretty Alt where
+  pretty (Alt (con, bs) body) =
+    p (varName con) <+> hsep (map (p . varName) bs) <+> "->" <+> p body
 
 prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
@@ -173,7 +179,7 @@ instance Pretty a => Pretty (VarP a) where
 
 instance Pretty ClassName where
   pretty name = case name of
-    Data   -> "Data"
+    DataClass -> "Data"
     VSpace -> "VS"
     IdxSet -> "Ix"
     Eq     -> "Eq"
@@ -196,6 +202,7 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
+    ConApp f xs -> parens $ p (varName f) <+> hsep (map p xs)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -276,7 +283,10 @@ instance Pretty BinderInfo where
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
     PiBound       -> "<pi binder>"
+    DataBoundTyCon _ -> "<type constructor>"
+    DataBoundDataCon -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
+
 
 instance Pretty UModule where
   pretty (UModule decls) = prettyLines decls
@@ -297,10 +307,15 @@ instance Pretty UExpr' where
                              Rev -> "rof"
     UPi a arr b -> parens (p a) <> pretty arr <> p b
     UDecl decl body -> p decl <> hardline <> p body
+    UCase e alts -> "case" <> p e <> nest 2 (hardline <> prettyLines alts)
     UHole -> "_"
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
     UIndexRange low high -> "IndexRange" <+> p low <+> p high
     UPrimExpr prim -> p prim
+
+instance Pretty UAlt where
+  pretty (UAlt (con, args) body) =
+    p con <+> hsep (map p args) <+> "->" <+> p body
 
 prettyAnn :: Doc ann -> Doc ann
 prettyAnn ty = ":" <+> ty
@@ -312,6 +327,8 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet _ pat rhs) = p pat <+> "=" <+> p rhs
+  pretty (UData tyCon dataCons) =
+    "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
 
 instance Pretty a => Pretty (PatP' a) where
   pretty pat = case pat of

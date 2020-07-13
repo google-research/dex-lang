@@ -101,7 +101,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eolf)
+  <|> liftM (\d -> RunModule $ UModule [d]) (topDecl <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -182,6 +182,7 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uPiType
          <|> uLamExpr
          <|> uForExpr
+         <|> caseExpr
          <|> uCaseExpr
          <|> uPrim
          <|> unitCon
@@ -214,8 +215,11 @@ letAnnStr =   (string "instance"   $> InstanceLet)
           <|> (string "superclass" $> SuperclassLet)
           <|> (string "newtype"    $> NewtypeLet)
 
-uTopDecl :: Parser UDecl
-uTopDecl = do
+topDecl :: Parser UDecl
+topDecl = dataDef <|> topLet
+
+topLet :: Parser UDecl
+topLet = do
   lAnn <- (char '@' >> letAnnStr <* (void eol <|> sc)) <|> return PlainLet
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
@@ -235,6 +239,18 @@ uTopDecl = do
       where
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
+
+dataDef :: Parser UDecl
+dataDef = do
+  keyWord DataKW
+  tyCon <- conDef
+  keyWord WhereKW
+  withIndent $ do
+    dataCons <- mayNotBreak $ conDef `sepBy1` try nextLine
+    return $ UData tyCon dataCons
+
+conDef :: Parser UAnnBinder
+conDef = (:>) <$> uBinderName <*> annot uType
 
 decl :: Parser UDecl
 decl = do
@@ -271,7 +287,7 @@ patName :: UPat -> Name
 patName (WithSrc _ (PatBind (v:>()))) = v
 patName _ = NoName
 
-buildPiType :: [(UPiBinder, UArrow)] -> EffectRow -> UType -> UType
+buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
   [] -> UPi b (fmap (const eff ) arr) ty
@@ -335,14 +351,11 @@ uTabCon = withSrc $ do
 type UStatement = (Either UDecl UExpr, SrcPos)
 
 block :: Parser UExpr
-block = do
-  nextLine
-  indent <- liftM length $ some (char ' ')
-  withIndent indent $ do
-    statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
-    case last statements of
-      (Left _, _) -> fail "Last statement in a block must be an expression."
-      _           -> return $ wrapUStatements statements
+block = withIndent $ do
+  statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
+  case last statements of
+    (Left _, _) -> fail "Last statement in a block must be an expression."
+    _           -> return $ wrapUStatements statements
 
 wrapUStatements :: [UStatement] -> UExpr
 wrapUStatements statements = case statements of
@@ -359,13 +372,13 @@ uStatement = withPos $   liftM Left  decl
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser UExpr
-uPiType = withSrc $ UPi <$> uPiBinder <*> arrow effects <*> uType
-  where
-    uPiBinder :: Parser UPiBinder
-    uPiBinder = label "pi binder" $ do
-      v <- try $ uBinderName <* sym ":"
-      ty <- containedExpr
-      return (v:>ty)
+uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
+
+annBinder :: Parser UAnnBinder
+annBinder = label "annoted binder" $ do
+  v <- try $ uBinderName <* sym ":"
+  ty <- containedExpr
+  return (v:>ty)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
@@ -375,13 +388,25 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "?=>" $> ClassArrow)
         <?> "arrow"
 
+caseExpr :: Parser UExpr
+caseExpr = withSrc $ do
+  keyWord CaseKW
+  e <- expr
+  withIndent $ do
+    alts <- mayNotBreak $ caseAlt `sepBy1` try nextLine
+    return $ UCase e alts
+
+caseAlt :: Parser UAlt
+caseAlt = UAlt <$> conPat <*> (sym "->" *> blockOrExpr)
+
+conPat :: Parser UConPat
+conPat = (,) <$> uName <*> many uName
+
 uCaseExpr :: Parser UExpr
 uCaseExpr = do
-  ((), pos) <- withPos $ keyWord CaseKW
+  ((), pos) <- withPos $ keyWord OldCaseKW
   e <- expr
-  nextLine
-  indent <- liftM length $ some $ char ' '
-  withIndent indent $ do
+  withIndent $ do
     l <- lexeme (string "Left") >> caseLam
     nextLine
     r <- lexeme (string "Right") >> caseLam
@@ -574,7 +599,8 @@ mkName s = Name SourceName (fromString s) 0
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW | ReadKW | WriteKW | StateKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW
+             | ReadKW | WriteKW | StateKW | OldCaseKW | DataKW | WhereKW
 
 textName :: Lexer Name
 textName = liftM mkName $ label "identifier" $ lexeme $ try $ do
@@ -593,9 +619,13 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ReadKW  -> "Read"
       WriteKW -> "Accum"
       StateKW -> "State"
+      DataKW -> "data"
+      WhereKW -> "where"
+      OldCaseKW -> "oldcase"
 
 keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
+keyWordStrs = ["def", "for", "rof", "case", "llam",
+               "Read", "Write", "Accum", "oldcase", "data", "where"]
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some letterChar
@@ -749,8 +779,11 @@ withSource p = do
   (x, (start, end)) <- withPos p
   return (take (end - start) s, x)
 
-withIndent :: Int -> Parser a -> Parser a
-withIndent n p = local (\ctx -> ctx { curIndent = curIndent ctx + n }) $ p
+withIndent :: Parser a -> Parser a
+withIndent p = do
+  nextLine
+  indent <- liftM length $ some (char ' ')
+  local (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ p
 
 eolf :: Parser ()
 eolf = void eol <|> eof
