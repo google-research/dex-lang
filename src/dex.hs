@@ -136,8 +136,11 @@ optionList opts = eitherReader $ \s -> case lookup s opts of
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
   <$> (option
-         (optionList [("LLVM", LLVM), ("JAX", JAX), ("interp", Interp)])
-         (long "backend" <> value LLVM <> help "Backend (LLVM|JAX|interp)"))
+         (optionList [ ("LLVM", LLVM)
+                     , ("LLVM-CUDA", LLVMCUDA)
+                     , ("JAX", JAX)
+                     , ("interp", Interp)])
+         (long "backend" <> value LLVM <> help "Backend (LLVM|LLVM-CUDA|JAX|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"
