@@ -1,13 +1,33 @@
 
-data IntReal : Type where
-  MkIntReal : Int -> Real -> IntReal
+data IntReal =
+  MkIntReal Int Real
 
-z = MkIntReal 1 2.3
+:p
+  case MkIntReal 1 2.3
+    MkIntReal x y -> (x, y)
+> (1, 2.3)
+
+data MyPair a:Type b:Type =
+   MkMyPair a b
+
+z = MkMyPair 1 2.3
 
 :p z
-> (MkIntReal 1 2.3)
+> (MkMyPair 1 2.3)
+
+:t z
+> (MyPair Int Real)
 
 :p
   case z
-    MkIntReal x y -> (x, y)
+    MkMyPair x y -> (x, y)
 > (1, 2.3)
+
+data Dual a:Type =
+   MkDual a a
+
+:p
+  d = MkDual 1 2
+  case d
+    MkDual x y -> (x, y)
+> (1, 2)

@@ -12,7 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
-  indexSetConcreteSize, checkNoShadow) where
+  indexSetConcreteSize, checkNoShadow, makeConType, unpackConType) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -57,12 +57,13 @@ instance Checkable Module where
   checkValid m@(Module ir decls bindings) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
       let env = freeVars m
+      forM_ (envNames env) $ \v -> when (not $ isGlobal $ v:>()) $
+        throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-
         checkBindings (env <> foldMap declAsScope decls) ir bindings
 
 asCompilerErr :: Except a -> Except a
@@ -74,13 +75,14 @@ checkBindings env ir bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
   mapM_ (checkBinding ir) $ envPairs bs
 
 checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
-checkBinding ir (GlobalName _, binding@(ty, info)) = do
-  ty |: TyKind
-  when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars binding)) $
-    throw CompilerErr "Non-global name in a fully evaluated atom"
-  case info of
-    LetBound _ atom -> atom |: ty
-    _ -> return ()
+checkBinding ir (GlobalName v, b@(ty, info)) =
+  addContext ("binding: " ++ pprint (v, b)) $ do
+    ty |: TyKind
+    when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars b)) $
+      throw CompilerErr "Non-global name in a fully evaluated atom"
+    case info of
+      LetBound _ atom -> atom |: ty
+      _ -> return ()
 checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
 
 -- === Core IR ===
@@ -133,28 +135,34 @@ instance HasType Expr where
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
     Case e (alt:alts) -> do
-      scrutTy <- typeCheck e
-      resultTy <- typeCheckAlt scrutTy alt
+      ty <- typeCheck e
+      ConApp con tyParams <- typeCheck e
+      resultTy <- typeCheckAlt con tyParams alt
       forM_ alts $ \alt'-> do
-        resultTy' <- typeCheckAlt scrutTy alt'
+        resultTy' <- typeCheckAlt con tyParams alt'
         checkEq resultTy resultTy'
       return resultTy
 
-typeCheckAlt :: Type -> Alt -> TypeM Type
-typeCheckAlt scrutTy (Alt (con, bs) body) = do
-  conTy <- typeCheckVar con
-  let (argTys, patTy) = asNaryFunType conTy
-  when (length argTys /= length bs) $
-    throw CompilerErr "Unexpected numer of pattern binders"
-  checkEq scrutTy patTy
-  foldr withBinder (typeCheck body) bs
+typeCheckAlt :: ConName -> [Type] -> Alt -> TypeM Type
+typeCheckAlt tyCon tyParams (Alt (dataCon, bs) body) = do
+  flip (foldr withBinder) bs $ do
+     ConApp dataCon (tyParams ++ map Var bs) |: ConApp tyCon tyParams
+     typeCheck body
 
--- TODO: use this in inference too (and add arrow flavors)
-asNaryFunType :: Type -> ([Type], Type)
-asNaryFunType ty = case ty of
-  Pi (Abs (_:>argTy) (_, rest)) -> (argTy:argTys, resultTy)
-    where (argTys, resultTy) = asNaryFunType rest
-  _ -> ([], ty)
+-- TODO: just store constructor types in this form?
+unpackConType :: Type -> ([Binder], [Binder], Type)
+unpackConType (Pi (Abs b (ImplicitArrow, resultTy))) = (b:imBs, exBs, resultTy')
+  where (imBs, exBs, resultTy') = unpackConType resultTy
+unpackConType (Pi (Abs b (PureArrow, resultTy))) = (imBs, b:exBs, resultTy')
+  where (imBs, exBs, resultTy') = unpackConType resultTy
+unpackConType ty = ([], [], ty)
+
+makeConType :: [Binder] -> [Binder] -> Type -> Type
+makeConType imBs exBs resultTy =
+  foldr (mkArrow ImplicitArrow) (foldr (mkArrow PureArrow) resultTy exBs) imBs
+  where
+    mkArrow :: Arrow -> Binder -> Type -> Type
+    mkArrow arr b ty = Pi (Abs b (arr, ty))
 
 -- TODO: replace with something more precise (this is too cautious)
 blockEffs :: Block -> EffectSummary

@@ -27,8 +27,8 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    ScalarTableType, ScalarTableVar, BinderInfo (..),
-    Bindings, UAlt (..), Alt (..), varBinding,
+    ScalarTableType, ScalarTableVar, BinderInfo (..), UConDef,
+    Bindings, UAlt (..), Alt (..), ConName, varBinding,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -158,7 +158,7 @@ data UExpr' = UVar UVar
               deriving (Show, Eq, Generic)
 
 data UDecl = ULet LetAnn UBinder UExpr
-           | UData UAnnBinder [UAnnBinder]
+           | UData UConDef [UConDef]
              deriving (Show, Eq, Generic)
 
 type UType  = UExpr
@@ -169,6 +169,7 @@ type UPat    = PatP  UVar
 type UPat'   = PatP' UVar
 type UBinder   = (UPat, Maybe UType)
 type UAnnBinder = VarP UType
+type UConDef = (Name, [UAnnBinder])
 
 data UAlt = UAlt UConPat UExpr
             deriving (Show, Eq, Generic)
@@ -725,7 +726,7 @@ instance HasVars Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
-    ConApp con xs -> ConApp con $ map (subst env) xs
+    ConApp con xs -> ConApp (fmap (subst env) con) $ map (subst env) xs
 
 instance HasVars Module where
   freeVars (Module variant decls bindings) = case decls of

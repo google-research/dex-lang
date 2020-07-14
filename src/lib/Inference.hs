@@ -204,20 +204,30 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
-  -- TODO: check that the data constructors actually produce the right type
-  -- TODO: check it's not recursive
-  -- TODO: check mutual shadows
-  tc' <- inferCon tc
-  (dcs', _) <- embedScoped $ do
-                 extendScope $ varBinding tc'
-                 mapM inferCon dcs
+  (tc', tcArgs) <- inferTyCon tc
+  (dcs', _) <- embedScoped $
+    extendR (newEnv tcArgs (map Var tcArgs)) $ do
+      extendScope (foldMap varBinding tcArgs)
+      mapM (inferDataCon tc' tcArgs) dcs
   extendScope $ tc' @> (varType tc', DataBoundTyCon dcs')
   forM_ dcs' $ \dc -> extendScope $ dc @> (varType dc, DataBoundDataCon)
   return mempty
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
-inferCon :: UAnnBinder -> UInferM Binder
-inferCon (v:>ty) = (asGlobal v :>) <$> checkUType ty
+-- TODO: freshen type binders?
+inferTyCon :: UConDef -> UInferM (Binder, [Binder])
+inferTyCon (v, bs) = do
+  let v' = asGlobal v
+  bs' <- mapM (mapM checkUType) bs
+  let conTy = makeConType [] bs' TyKind
+  return (v':>conTy, bs')
+
+inferDataCon :: ConName -> [Binder] -> UConDef -> UInferM Binder
+inferDataCon tyConName tyParams (v, bs) = do
+  let v' = asGlobal v
+  bs' <- mapM (mapM checkUType) bs
+  let conTy = makeConType tyParams bs' $ ConApp tyConName (map Var tyParams)
+  return $ v':>conTy
 
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -248,6 +258,7 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
+-- TODO: make this less complicated!
 checkCaseAlt :: RequiredTy RhoType -> Type -> UAlt -> UInferM Alt
 checkCaseAlt reqTy scrutineeTy (UAlt (conName, vs) body) = do
   let conName' = asGlobal conName
@@ -256,26 +267,17 @@ checkCaseAlt reqTy scrutineeTy (UAlt (conName, vs) body) = do
     Nothing -> throw UnboundVarErr $ pprint conName'
     Just (ty, DataBoundDataCon) -> return ty
     Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
-  (patTy, bs) <- addBinderTypes conTy vs
+  let (imArgs, exArgs, resultTy) = unpackConType conTy
+  when (length exArgs /= length vs) $ throw TypeErr $
+    "Unexpected number of pattern binders. Expected " ++ show (length exArgs)
+                                           ++ " got " ++ show (length vs)
+  imArgs' <- mapM (freshType . varType) imArgs
+  let exArgTys = map varType exArgs
+  let (exArgTys', patTy) = subst (newEnv imArgs imArgs', scope) (exArgTys, resultTy)
   constrainEq scrutineeTy patTy
+  let bs = zipWith (:>) vs exArgTys'
   buildAlt (conName':>conTy) bs $ \xs ->
     extendR (newEnv bs xs) $ checkOrInferRho body reqTy
-
-addBinderTypes :: MonadError Err m => Type -> [Name] -> m (Type, [Var])
-addBinderTypes ty [] = return (ty, mempty)
--- TODO: data constructors with dependent args
--- TODO: data constructors with implicit args
-addBinderTypes (Pi (Abs (NoName:>a) (PureArrow, resultTy))) (v:vs) = do
-  (ty, bs) <- addBinderTypes resultTy vs
-  return (ty, (v:>a) : bs)
--- TODO: better error messages
-bindAltBinders _ _ = error "Not implemented"
-
-  -- TODO:
-  --   * look at scrutinee type
-  --   * bind binder names against con type recursively (and dependently)
-  --   * eval body
-
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
@@ -569,6 +571,9 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
+    (ConApp f xs, ConApp f' xs')
+      | varName f == varName f' && length xs == length xs' ->
+          zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
     (Eff eff, Eff eff') -> unifyEff eff eff'

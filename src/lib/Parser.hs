@@ -243,14 +243,19 @@ topLet = do
 dataDef :: Parser UDecl
 dataDef = do
   keyWord DataKW
-  tyCon <- conDef
-  keyWord WhereKW
+  tyCon <- tyConDef
+  sym "="
   withIndent $ do
-    dataCons <- mayNotBreak $ conDef `sepBy1` try nextLine
+    dataCons <- mayNotBreak $ dataConDef `sepBy1` try nextLine
     return $ UData tyCon dataCons
 
-conDef :: Parser UAnnBinder
-conDef = (:>) <$> uBinderName <*> annot uType
+-- TODO: default to `Type` if unannoted
+tyConDef :: Parser UConDef
+tyConDef = (,) <$> uBinderName <*> many annBinder
+
+-- TODO: dependent types
+dataConDef :: Parser UConDef
+dataConDef = (,) <$> uBinderName <*> many ((NoName:>) <$> containedExpr)
 
 decl :: Parser UDecl
 decl = do
@@ -396,6 +401,7 @@ caseExpr = withSrc $ do
     alts <- mayNotBreak $ caseAlt `sepBy1` try nextLine
     return $ UCase e alts
 
+-- TODO: add source locations
 caseAlt :: Parser UAlt
 caseAlt = UAlt <$> conPat <*> (sym "->" *> blockOrExpr)
 

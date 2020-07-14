@@ -100,7 +100,7 @@ instance Pretty Expr where
 
 instance Pretty Alt where
   pretty (Alt (con, bs) body) =
-    p (varName con) <+> hsep (map (p . varName) bs) <+> "->" <+> p body
+    p (varName con) <+> hsep (map p bs) <+> "->" <+> p body
 
 prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
@@ -202,7 +202,12 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
-    ConApp f xs -> parens $ p (varName f) <+> hsep (map p xs)
+    ConApp f xs -> prettyConApp f xs
+
+prettyConApp :: Var -> [Atom] -> Doc ann
+prettyConApp (v:>(Pi (Abs _ (ImplicitArrow, resultTy)))) (_:xs) =
+  prettyConApp (v:>resultTy) xs
+prettyConApp f xs = parens $ p (varName f) <+> hsep (map p xs)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -283,7 +288,8 @@ instance Pretty BinderInfo where
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
     PiBound       -> "<pi binder>"
-    DataBoundTyCon _ -> "<type constructor>"
+    DataBoundTyCon cons ->
+      "<type constructor (data constructors: " <> p (map varName cons) <> ")>"
     DataBoundDataCon -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
 
@@ -307,7 +313,7 @@ instance Pretty UExpr' where
                              Rev -> "rof"
     UPi a arr b -> parens (p a) <> pretty arr <> p b
     UDecl decl body -> p decl <> hardline <> p body
-    UCase e alts -> "case" <> p e <> nest 2 (hardline <> prettyLines alts)
+    UCase e alts -> "case" <+> p e <> nest 2 (hardline <> prettyLines alts)
     UHole -> "_"
     UTabCon xs ann -> p xs <> foldMap (prettyAnn . p) ann
     UIndexRange low high -> "IndexRange" <+> p low <+> p high

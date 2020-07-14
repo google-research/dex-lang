@@ -549,7 +549,7 @@ traverseAtom def@(_, fAtom) atom = case atom of
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substEmbedR atom
-  ConApp f xs -> ConApp f <$> traverse fAtom xs
+  ConApp f xs -> ConApp <$> traverse fAtom f <*> traverse fAtom xs
 
 -- === DCE ===
 
@@ -625,6 +625,7 @@ reduceExpr scope expr = case expr of
         reduceBlock scope $ subst (b@>x', scope) block
       TC (NewtypeApp wrapper xs) ->
         Just $ TC $ NewtypeApp wrapper (xs ++ [x'])
+      ConApp f xs -> Just $ ConApp f $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing
 
