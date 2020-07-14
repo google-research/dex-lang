@@ -31,3 +31,15 @@ data Dual a:Type =
   case d
     MkDual x y -> (x, y)
 > (1, 2)
+
+:p for i:(Fin 3). MkMyPair (ordinal i) (ordinal i + 1)
+> [(MkMyPair 0 1), (MkMyPair 1 2), (MkMyPair 2 3)]
+
+
+:p
+  tabOfPairs = for i:(Fin 3). MkMyPair (ordinal i) (ordinal i + 1)
+  for i.
+   case tabOfPairs.i
+     -- TODO: investigate shadowing bug if we call these a and b
+     MkMyPair x y -> (x + y, y)
+> [(1, 1), (3, 2), (5, 3)]

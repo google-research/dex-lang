@@ -20,7 +20,7 @@ import Prelude hiding (pi, abs)
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.State
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Coerce
 
@@ -51,10 +51,10 @@ import qualified Algebra as A
 -- TODO: use `Env ()` instead of `Scope`. The problem is that we're mixing up
 -- Imp and Core types in there.
 type EmbedEnv = ((Env Dest, [IVar]), (Scope, ImpProg))
-type ImpM = Cat EmbedEnv
+type ImpM = ReaderT Bindings (Cat EmbedEnv)
 
-toImpFunction :: ([ScalarTableVar], Block) -> (ImpFunction, Atom)
-toImpFunction (vsIn, block) = runImpM vsIn $ do
+toImpFunction :: Bindings -> ([ScalarTableVar], Block) -> (ImpFunction, Atom)
+toImpFunction bindings (vsIn, block) = runImpM bindings vsIn $ do
   ((vsOut, atomOut), prog) <- scopedBlock $ materializeResult
   return $ (ImpFunction (fmap toVar vsOut) vsIn prog, atomOut)
   where
@@ -65,8 +65,9 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
       atomOut <- destToAtomScalarAction (return . toArrayAtom . IVar) outDest
       return (destArrays outDest, atomOut)
 
-runImpM :: [ScalarTableVar] -> ImpM a -> a
-runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
+runImpM :: Bindings -> [ScalarTableVar] -> ImpM a -> a
+runImpM bindings inVars m =
+  fst $ runCat (runReaderT m bindings) (mempty, (inVarScope, mempty))
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
     inVarScope = foldMap varAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inVars
@@ -98,6 +99,17 @@ toImpExpr env (maybeDest, expr) = case expr of
   Atom x   -> copyDest maybeDest =<< impSubst env x
   Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env (maybeDest, hof)
+  Case e [Alt (con, bs) body] -> do
+    e' <- impSubst env e
+    case e' of
+      ConApp con' args
+        | con == con' && length bs == length exArgs -> do
+            toImpBlock (env <> newEnv bs exArgs) (maybeDest, body)
+        | otherwise -> error "Not implemented"
+        where
+          (imArgTys, _, _) = unpackConType $ varType con
+          exArgs = drop (length imArgTys) args
+      _ -> error "Not implemented"
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -355,6 +367,10 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     then lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
+  ConApp con args -> do
+    let (params, args') = splitDataConParams con args
+    args' <- mapM rec args'
+    return $ ConApp con $ params ++ args'
   Con destCon -> Con <$> case destCon of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
@@ -393,6 +409,11 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (_, TabVal _ _)  -> tell [(dest, result)]
       (_, Con (Lit _)) -> tell [(dest, result)]
+      (Dest (ConApp con args), ConApp con' args')
+        | con == con' && length args == length args' -> do
+            let (_, dataArgs ) = splitDataConParams con  args
+            let (_, dataArgs') = splitDataConParams con' args'
+            zipWithM_ gatherVarDests (map Dest dataArgs) dataArgs'
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
                                             gatherVarDests (Dest rd) rr
@@ -402,7 +423,8 @@ splitDest (maybeDest, (Block decls ans)) = do
         _ -> unreachable
       _ -> unreachable
       where
-        unreachable = error $ "Invalid dest-result pair:\n" ++ show dest ++ "\n  and:\n" ++ show result
+        unreachable = error $ "Invalid dest-result pair:\n"
+                        ++ pprint dest ++ "\n  and:\n" ++ pprint result
 
 copyDest :: Maybe Dest -> Atom -> ImpM Atom
 copyDest maybeDest atom = case maybeDest of
@@ -418,15 +440,23 @@ allocDest maybeDest t = case maybeDest of
 -- so make sure to call alloc for any variables in the dest.
 makeDest :: Name -> Type -> ImpM Dest
 makeDest nameHint destType = do
+  bindings <- ask
   scope <- looks $ fst . snd
-  (destAtom, (_, decls)) <- runEmbedT (go id [] destType) scope
+  (destAtom, (_, decls)) <- runEmbedT (go bindings id [] destType) scope
   unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
   return $ Dest destAtom
   where
-    go :: (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
-    go mkTy idxVars ty = case ty of
+    go :: Bindings -> (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
+    go bindings mkTy idxVars ty = case ty of
+        ConApp con params -> do
+          let dataCons = getDataCons bindings con params
+          case dataCons of
+            [(dataCon, conArgs)] -> do
+              dests <- mapM (rec . varType) conArgs
+              return $ ConApp dataCon $ params ++ dests
+            _ -> error "Sum types via ADTs not implemented"
         TabTy v bt ->
-          buildLam v TabArrow $ \v' -> go (\t -> mkTy $ TabTy v t) (v':idxVars) bt
+          buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
           BaseType b -> do
             iv <- lift $ freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
@@ -446,7 +476,7 @@ makeDest nameHint destType = do
         _ -> unreachable
       where
         scalarIndexSet t = Con . Coerce (ArrayTy t) <$> rec IntTy
-        rec = go mkTy idxVars
+        rec = go bindings mkTy idxVars
         unreachable = error $ "Can't lower type to imp: " ++ pprint ty
 
 -- === Atom <-> IExpr conversions ===
@@ -530,6 +560,11 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest idx
       rec di ai
+  (ConApp con args, ConApp con' args')
+    | con == con' && length args == length args' -> do
+       let (_, dataArgs ) = splitDataConParams con  args
+       let (_, dataArgs') = splitDataConParams con' args'
+       zipWithM_ rec (map Dest dataArgs) dataArgs'
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
@@ -542,7 +577,8 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   _ -> unreachable
   where
     rec x y = zipWithDest x y f
-    unreachable = error $ "Not an imp atom, or mismatched dest: " ++ show dest ++ ", and " ++ show atom
+    unreachable = error $ "Not an imp atom, or mismatched dest: "
+                             ++ pprint dest ++ ", and " ++ pprint atom
 
 copyAtom :: Dest -> Atom -> ImpM ()
 copyAtom dest src = zipWithDest dest src store
@@ -817,3 +853,6 @@ pattern IZero = IIntVal 0
 
 pattern IOne :: IExpr
 pattern IOne = IIntVal 1
+
+instance Pretty Dest where
+  pretty (Dest atom) = "Dest" <+> pretty atom

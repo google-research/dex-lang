@@ -108,9 +108,11 @@ simplifyLams numArgs lam = do
 
 simplifyLams' :: Int -> Scope -> Block
               -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
-simplifyLams' 0 scope block
-  | isData (getType block) = liftM (,Nothing) $ simplifyBlock block
-  | otherwise = do
+simplifyLams' 0 scope block = do
+  topScope <- getScope
+  if isData topScope (getType block)
+    then liftM (,Nothing) $ simplifyBlock block
+    else do
       (block', (scope', decls)) <- embedScoped $ simplifyBlock block
       mapM_ emitDecl decls
       let (dataVals, recon) = separateDataComponent (scope <> scope') block'
@@ -162,7 +164,13 @@ simplifyExpr expr = case expr of
           -- TODO: separate params and args in ConApp?
           (imArgTys, _, _) = unpackConType $ varType con
           exArgs = drop (length imArgTys) args
-      _ -> error "Not implemented"
+      _ -> do
+        alts' <- forM alts $ \(Alt (con, bs) body) -> do
+          con' <- mapM substEmbedR con
+          bs' <-  mapM (mapM substEmbedR) bs
+          buildAlt con' bs' $ \xs ->
+            extendR (newEnv bs' xs) $ simplifyBlock body
+        emit $ Case e' alts'
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom

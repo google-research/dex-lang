@@ -12,7 +12,8 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
-  indexSetConcreteSize, checkNoShadow, makeConType, unpackConType) where
+  indexSetConcreteSize, checkNoShadow, makeConType, unpackConType,
+  getDataCons, splitDataConParams) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -149,6 +150,20 @@ typeCheckAlt tyCon tyParams (Alt (dataCon, bs) body) = do
      ConApp dataCon (tyParams ++ map Var bs) |: ConApp tyCon tyParams
      typeCheck body
 
+getDataCons :: Bindings -> ConName -> [Type] -> [(ConName, [Binder])]
+getDataCons bindings tyCon params =
+  case envLookup bindings tyCon of
+    Just (_, DataBoundTyCon dataCons) -> flip map dataCons $ \dataCon ->
+      let (imBs, exBs, _) = unpackConType $ varType dataCon
+          substEnv = newEnv imBs params
+          exBs' = map (fmap (subst (substEnv, bindings))) exBs
+      in (dataCon, exBs')
+    _ -> error "Lookup failed"
+
+splitDataConParams :: ConName -> [Atom] -> ([Atom], [Atom])
+splitDataConParams con xs = splitAt (length imBs) xs
+  where (imBs, _, _) = unpackConType $ varType con
+
 -- TODO: just store constructor types in this form?
 unpackConType :: Type -> ([Binder], [Binder], Type)
 unpackConType (Pi (Abs b (ImplicitArrow, resultTy))) = (b:imBs, exBs, resultTy')
@@ -280,7 +295,6 @@ instance CoreVariant Expr where
     Op  e   -> checkVariant e >> forM_ e checkVariant
     Hof e   -> checkVariant e >> forM_ e checkVariant
     Case e alts -> do
-      goneBy Simp
       checkVariant e
       forM_ alts $ \(Alt _ body) -> checkVariant body
 
@@ -679,12 +693,15 @@ indexSetConcreteSize ty = case ty of
   BoolTy  -> Just 2
   _ -> Nothing
 
-checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
+checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
-  -- This is an implicit `instance IdxSet a => Data a`
-  Var v -> checkVarClass env IdxSet v `catchError`
-             const (checkVarClass env DataClass v)
+  Var v -> error "Not implemented"
   TabTy _ b -> recur b
+  ConApp con args -> case envLookup env con of
+    Just (_, DataBoundTyCon _) -> do
+      -- TODO: check that data constructor arguments are data-like, and so on
+      return ()
+    _ -> error $ "Lookup failed " ++ pprint (ty, env)
   TC con -> case con of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b
@@ -696,17 +713,11 @@ checkDataLike msg env ty = case ty of
   _   -> throw TypeErr $ pprint ty ++ msg
   where recur x = checkDataLike msg env x
 
-checkData :: MonadError Err m => ClassEnv -> Type -> m ()
+checkData :: MonadError Err m => Bindings -> Type -> m ()
 checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
-isData :: Type -> Bool
-isData ty = case checkData mempty ty of Left _ -> False
-                                        Right _ -> True
-
-checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> Var -> m ()
-checkVarClass env c (v:>k) = do
-  unless (k == TyKind) $ throw KindErr $ " Only types can belong to type classes"
-  unless (c `elem` cs) $ throw TypeErr $
-              " Type variable \"" ++ pprint v ++ "\" not in class: " ++ pprint c
-  where cs = monMapLookup env v
+isData :: Bindings -> Type -> Bool
+isData bindings ty = case checkData bindings ty of
+  Left  _ -> False
+  Right _ -> True
