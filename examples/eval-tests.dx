@@ -670,9 +670,6 @@ arr2d.(1@_)
 easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
 hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 
-:p (logaddexp 100.0 1.0) - log (exp 100.0 + exp 1.0)
-> 0.0
-
 :p logsumexp easy - (log $ sum for j. exp easy.j)
 > 0.0
 
