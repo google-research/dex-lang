@@ -412,10 +412,6 @@ def logsumexp (x: n=>Real) : Real =
   m = maximum x
   m + (log $ sum for i. exp (x.i - m))
 
-def logaddexp (x:Real) (y:Real) : Real =
-  m = max x y
-  m + ( log ( (exp (x - m) + exp (y - m))))
-
 def logsoftmax (x: n=>Real) : n=>Real =
   lse = logsumexp x
   for i. x.i - lse
