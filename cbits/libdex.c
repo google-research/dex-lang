@@ -148,3 +148,19 @@ int testit() {
 int main(int argc, const char* argv[]) {
   testit();
 }
+
+#ifdef DEX_CUDA
+#include <cuda.h>
+
+void check_result(const char *msg, int result) {
+  if (result != 0) {
+    printf("CUDA API error at %s: %d\n", msg, result);
+  }
+}
+
+void* load_cuda_array(void* device_ptr, int64_t bytes) {
+  void* host_ptr = malloc_dex(bytes);
+  check_result("cuMemcpyDtoH", cuMemcpyDtoH(host_ptr, (CUdeviceptr)device_ptr, bytes));
+  return host_ptr;
+}
+#endif

@@ -11,7 +11,7 @@ module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              composeN, mapMaybe, lookup, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             bindM2, foldMapM) where
+             bindM2, foldMapM, (...)) where
 
 import Data.List (sort)
 import Prelude hiding (lookup)
@@ -196,6 +196,9 @@ bindM2 f ma mb = do
   a <- ma
   b <- mb
   f a b
+
+(...) :: (c -> d) -> (a -> b -> c) -> a -> b -> d
+f ... g = \x y -> f $ g x y
 
 foldMapM :: (Monad m, Monoid w, Foldable t) => (a -> m w) -> t a -> m w
 foldMapM f xs = foldM (\acc x -> (acc<>) <$> f x ) mempty xs

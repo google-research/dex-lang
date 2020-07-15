@@ -24,10 +24,10 @@ module Syntax (
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    MDImpFunction (..), MDImpProg (..), MDImpStatement (..), MDImpInstr (..),
+    MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
@@ -362,6 +362,7 @@ data ImpFunction = ImpFunction [ScalarTableVar] [ScalarTableVar] ImpProg  -- des
                    deriving (Show, Eq)
 newtype ImpProg = ImpProg [ImpStatement]
                   deriving (Show, Eq, Generic, Semigroup, Monoid)
+type Statement instr = (Maybe IVar, instr)
 type ImpStatement = (Maybe IVar, ImpInstr)
 
 data ImpInstr = Load  IExpr
@@ -396,8 +397,7 @@ data MDImpFunction k = MDImpFunction [ScalarTableVar] [ScalarTableVar] (MDImpPro
                        deriving (Show, Eq, Functor, Foldable, Traversable)
 data MDImpProg k = MDImpProg [MDImpStatement k]
                    deriving (Show, Eq, Functor, Foldable, Traversable)
-newtype MDImpStatement k = MDImpStatement (Maybe IVar, MDImpInstr k)
-                           deriving (Show, Eq, Functor, Foldable, Traversable)
+type MDImpStatement k = Statement (MDImpInstr k)
 
 -- NB: No loads/stores since we're dealing with device pointers.
 --     No loops, because loops are kernels!

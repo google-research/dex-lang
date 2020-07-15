@@ -17,7 +17,7 @@ impToMDImp :: ImpFunction -> MDImpFunction ImpKernel
 impToMDImp (ImpFunction dests args prog) = MDImpFunction dests args $ progToMD prog
 
 progToMD :: ImpProg -> MDImpProg ImpKernel
-progToMD (ImpProg stmts) = MDImpProg $ fmap (\(b, instr) -> MDImpStatement (b, instrToMD instr)) stmts
+progToMD (ImpProg stmts) = MDImpProg $ fmap (\(b, instr) -> (b, instrToMD instr)) stmts
 
 -- TODO: Collapse loops, hoist allocations, etc.
 instrToMD :: ImpInstr -> MDImpInstr ImpKernel
