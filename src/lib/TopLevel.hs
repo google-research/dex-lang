@@ -253,9 +253,10 @@ requestArrays backend vs = case backend of
       let arrTy@(size, _) = typeToArrayType ty
       case envLookup env' v of
         Just ref -> do
-          hostRef <- if isCuda
-            then loadCUDAArray ref (fromIntegral $ size * 8)
-            else return ref
+          hostRef <- case (isCuda, ty) of
+            (True , BaseTy _) -> return ref  -- Scalar references are stored on the host
+            (True , _       ) -> loadCUDAArray ref (fromIntegral $ size * 8)
+            (False, _       ) -> return ref
           loadArray (ArrayRef arrTy hostRef)
         Nothing  -> error "Array lookup failed"
   JaxServer server -> do

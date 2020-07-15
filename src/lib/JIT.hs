@@ -665,8 +665,11 @@ showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counte
 showName _ = error $ "All names in JIT should be from the GenName namespace"
 
 freshParamOpPair :: Monad m => [L.ParameterAttribute] -> L.Type -> CompileT m (Parameter, Operand)
-freshParamOpPair attrs ty = do
+freshParamOpPair ptrAttrs ty = do
   v <- freshName "arg"
+  let attrs = case ty of
+                L.PointerType _ _ -> ptrAttrs
+                _ -> []
   return (L.Parameter ty v attrs, L.LocalReference ty v)
 
 externDecl :: ExternFunSpec -> L.Definition
