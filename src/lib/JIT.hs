@@ -21,8 +21,8 @@ import qualified LLVM.AST.Type as L
 import qualified LLVM.AST.Typed as L
 import qualified LLVM.AST.Float as L
 import qualified LLVM.AST.Constant as C
-import qualified LLVM.AST.FloatingPointPredicate as L
-import qualified LLVM.AST.IntegerPredicate as L
+import qualified LLVM.AST.FloatingPointPredicate as FPP
+import qualified LLVM.AST.IntegerPredicate as IP
 import qualified LLVM.AST.ParameterAttribute as L
 import qualified LLVM.AST.FunctionAttribute as FA
 import LLVM.IRBuilder.Instruction       (globalStringPtr)
@@ -225,35 +225,34 @@ compileBinOp op x y = case op of
   where
     realIntrinsic name = ExternFunSpec name realTy [] [] [realTy, realTy]
 
-    floatCmpOp :: CmpOp -> L.FloatingPointPredicate
+    floatCmpOp :: CmpOp -> FPP.FloatingPointPredicate
     floatCmpOp cmpOp = case cmpOp of
-      Less         -> L.OLT
-      LessEqual    -> L.OLE
-      Greater      -> L.OGT
-      GreaterEqual -> L.OGE
-      Equal        -> L.OEQ
+      Less         -> FPP.OLT
+      LessEqual    -> FPP.OLE
+      Greater      -> FPP.OGT
+      GreaterEqual -> FPP.OGE
+      Equal        -> FPP.OEQ
 
-    intCmpOp :: CmpOp -> L.IntegerPredicate
+    intCmpOp :: CmpOp -> IP.IntegerPredicate
     intCmpOp cmpOp = case cmpOp of
-      Less         -> L.SLT
-      LessEqual    -> L.SLE
-      Greater      -> L.SGT
-      GreaterEqual -> L.SGE
-      Equal        -> L.EQ
+      Less         -> IP.SLT
+      LessEqual    -> IP.SLE
+      Greater      -> IP.SGT
+      GreaterEqual -> IP.SGE
+      Equal        -> IP.EQ
 
 -- === MDImp to LLVM ===
 
-data CUDAContext = CUDAContext Operand | CUDANotInitialized
-type MDHostCompile = CompileT (State CUDAContext)
+type CUDAContextInitialized = Bool
+type MDHostCompile = CompileT (State CUDAContextInitialized)
 
 mdImpToLLVM :: MDImpFunction PTXKernel -> LLVMFunction
 mdImpToLLVM (MDImpFunction outVars inVars (MDImpProg prog)) =
-  -- TODO: Append a teardown instruction
-  evalState (compileFunction [] compileMDImpInstr outVars inVars prog) CUDANotInitialized
+  evalState (compileFunction [] compileMDImpInstr outVars inVars prog) False
 
 compileMDImpInstr :: Bool -> MDImpInstr PTXKernel -> MDHostCompile (Maybe Operand)
 compileMDImpInstr _ instr = do
-  _ <- getCUDAContext
+  getCUDAContext
   case instr of
     MDLaunch size args (PTXKernel ptx) -> do
       m      <- cuModuleLoadData ptx
@@ -299,20 +298,24 @@ cuStreamType = L.ptr L.VoidType
 cuDefaultStream :: Operand
 cuDefaultStream = L.ConstantOperand $ C.IntToPtr (C.Int 64 1) cuStreamType
 
-getCUDAContext :: MDHostCompile Operand
+getCUDAContext :: MDHostCompile ()
 getCUDAContext = do
-  maybeCtx <- lift $ lift $ get
-  case maybeCtx of
-    CUDAContext op     -> return op
-    CUDANotInitialized -> do
-      --let spec = ExternFunSpec "initCuda" L.VoidType [] [] []
-      --emitVoidExternCall spec []
+  contextInitialized <- lift $ lift $ get
+  if contextInitialized
+    then return ()
+    else do
       cuInit
-      dev <- cuDeviceGet (L.ConstantOperand $ C.Int 32 0)
-      ctx <- cuDevicePrimaryCtxRetain dev
-      cuCtxPushCurrent ctx
-      lift $ lift $ put $ CUDAContext undefined
-      return undefined
+      hasCtx <- threadHasCUDAContext
+      compileIf hasCtx (return ()) $ do
+        dev <- cuDeviceGet (L.ConstantOperand $ C.Int 32 0)
+        ctx <- cuDevicePrimaryCtxRetain dev
+        cuCtxPushCurrent ctx
+
+threadHasCUDAContext :: MDHostCompile Operand
+threadHasCUDAContext = do
+  currentCtx <- cuCtxGetCurrent
+  currentCtxInt <- emitInstr i64 $ L.PtrToInt currentCtx i64 []
+  emitInstr i1 $ L.ICmp IP.UGT currentCtxInt (litInt 0) []
 
 cuInit :: MDHostCompile ()
 cuInit = checkCuResult "cuInit" =<< emitExternCall spec [L.ConstantOperand $ C.Int 32 0]
@@ -321,6 +324,13 @@ cuInit = checkCuResult "cuInit" =<< emitExternCall spec [L.ConstantOperand $ C.I
 cuCtxPushCurrent :: Operand -> MDHostCompile ()
 cuCtxPushCurrent ctx = checkCuResult "cuCtxPushCurrent" =<< emitExternCall spec [ctx]
   where spec = ExternFunSpec "cuCtxPushCurrent" cuResultType [] [] [cuContextType]
+
+cuCtxGetCurrent :: MDHostCompile Operand
+cuCtxGetCurrent = do
+  ctxPtr <- alloca 1 cuContextType
+  checkCuResult "cuCtxGetCurrent" =<< emitExternCall spec [ctxPtr]
+  load ctxPtr
+  where spec = ExternFunSpec "cuCtxGetCurrent" cuResultType [] [] [L.ptr cuContextType]
 
 cuDeviceGet :: Operand -> MDHostCompile Operand
 cuDeviceGet ord = do
@@ -411,7 +421,7 @@ declareStringConst nameHint str = do
 
 checkCuResult :: String -> Operand -> MDHostCompile ()
 checkCuResult msg result = do
-  isOk <- emitInstr i1 $ L.ICmp L.EQ result okResult []
+  isOk <- emitInstr i1 $ L.ICmp IP.EQ result okResult []
   compileIf isOk (return ()) $ do
     msgConst <- declareStringConst "checkFailMsg" msg
     _ <- emitExternCall putsSpec [msgConst]
@@ -563,10 +573,10 @@ load ptr = emitInstr ty $ L.Load False ptr Nothing 0 []
   where (L.PointerType ty _) = L.typeOf ptr
 
 lessThan :: Monad m => Long -> Long -> CompileT m Long
-lessThan x y = emitInstr longTy $ L.ICmp L.SLT x y []
+lessThan x y = emitInstr longTy $ L.ICmp IP.SLT x y []
 
 greaterOrEq :: Monad m => Long -> Long -> CompileT m Long
-greaterOrEq x y = emitInstr longTy $ L.ICmp L.SGE x y []
+greaterOrEq x y = emitInstr longTy $ L.ICmp IP.SGE x y []
 
 add :: Monad m => Long -> Long -> CompileT m Long
 add x y = emitInstr longTy $ L.Add False False x y []
