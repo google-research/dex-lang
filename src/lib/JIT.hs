@@ -75,8 +75,8 @@ type Function = L.Global
 
 impToLLVM :: ImpFunction -> LLVMFunction
 impToLLVM (ImpFunction outVars inVars (ImpProg stmts)) =
-  runIdentity $ compileFunction extraAttrs compileImpInstr outVars inVars stmts
-  where extraAttrs = [L.Alignment 64, L.Dereferenceable 64]
+  runIdentity $ compileFunction paramAttrs compileImpInstr outVars inVars stmts
+  where paramAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
 
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
@@ -263,9 +263,9 @@ compileMDImpInstr _ instr = do
       sizeOp' <- sizeOp `add` (litInt $ blockSizeX - 1)
       gridSizeX <- sizeOp' `div'` (litInt blockSizeX)
       cuLaunchKernel kernel
-                    (gridSizeX        , litInt 1, litInt 1)
-                    (litInt blockSizeX, litInt 1, litInt 1)
-                    kernelArgs
+                     (gridSizeX        , litInt 1, litInt 1)
+                     (litInt blockSizeX, litInt 1, litInt 1)
+                     (sizeOp : kernelArgs)
       -- TODO: cuModuleUnload
       return Nothing
     MDAlloc  t s           -> Just <$> (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< compileExpr s)
@@ -435,22 +435,25 @@ checkCuResult msg result = do
 
 impKernelToLLVM :: ImpKernel -> LLVMKernel
 impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile mempty $ do
-  (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair [L.Alignment 256]) argTypes
+  (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
+  (sizeParam, sizeOperand) <- freshParamOpPair [] longTy
   tidx <- threadIdxX
   bidx <- blockIdxX
   bsz  <- blockDimX
   lidx <- mul bidx bsz >>= (add tidx)
-  let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
-  -- TODO: Use a restricted form of compileProg that e.g. never emits FFI calls!
-  extendR (paramEnv <> lvar @> lidx) $ compileProg compileImpInstr prog
-  kernel <- makeFunction "kernel" argParams
+  outOfBounds <- emitInstr i1 $ L.ICmp IP.UGE lidx sizeOperand []
+  compileIf outOfBounds (return ()) $ do
+    let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
+    -- TODO: Use a restricted form of compileProg that e.g. never emits FFI calls!
+    extendR (paramEnv <> lvar @> lidx) $ compileProg compileImpInstr prog
+  kernel <- makeFunction "kernel" (sizeParam : argParams)
   LLVMKernel <$> makeModuleEx ptxDataLayout targetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
-
   where
+    ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     argTypes = fmap ((fromIType $ L.AddrSpace 1). varAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
-      [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType argTypes) "kernel"
+      [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (longTy : argTypes)) "kernel"
       , Just $ L.MDString "kernel"
       , Just $ L.MDValue $ L.ConstantOperand $ C.Int 32 1
       ]
@@ -497,12 +500,12 @@ compileFunction :: Monad m
                 => [L.ParameterAttribute]
                 -> (Bool -> instr -> CompileT m (Maybe Operand))
                 -> [ScalarTableVar] -> [ScalarTableVar] -> [Statement instr] -> m LLVMFunction
-compileFunction extraAttrs compileInstr outVars inVars stmts = runCompileT mempty $ do
+compileFunction attrs compileInstr outVars inVars stmts = runCompileT mempty $ do
   -- Set up the argument list. Note that all outputs are pointers to pointers.
   let inVarTypes  = map (        fromArrType . varAnn) inVars
   let outVarTypes = map (L.ptr . fromArrType . varAnn) outVars
-  (inParams, inOperands)   <- unzip <$> mapM (freshParamOpPair extraAttrs) inVarTypes
-  (outParams, outOperands) <- unzip <$> mapM (freshParamOpPair extraAttrs) outVarTypes
+  (inParams, inOperands)   <- unzip <$> mapM (freshParamOpPair attrs) inVarTypes
+  (outParams, outOperands) <- unzip <$> mapM (freshParamOpPair attrs) outVarTypes
 
   -- Emit the program
   let paramEnv = newEnv inVars inOperands
@@ -662,11 +665,9 @@ showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counte
 showName _ = error $ "All names in JIT should be from the GenName namespace"
 
 freshParamOpPair :: Monad m => [L.ParameterAttribute] -> L.Type -> CompileT m (Parameter, Operand)
-freshParamOpPair extraAttrs ty = do
+freshParamOpPair attrs ty = do
   v <- freshName "arg"
   return (L.Parameter ty v attrs, L.LocalReference ty v)
-  -- TODO: Add nofree once we bump the LLVM version
-  where attrs = extraAttrs ++ [L.NoAlias, L.NoCapture, L.NonNull]
 
 externDecl :: ExternFunSpec -> L.Definition
 externDecl (ExternFunSpec fname retTy retAttrs funAttrs argTys) =
