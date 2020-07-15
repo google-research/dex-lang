@@ -675,7 +675,7 @@ emptyLines :: Parser ()
 emptyLines = void $ many (sc >> eol)
 
 outputLines :: Parser ()
-outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> eol)
+outputLines = void $ many (symbol ">" >> takeWhileP Nothing (/= '\n') >> ((eol >> return ()) <|> eof))
 
 stringLiteral :: Parser String
 stringLiteral = char '"' >> manyTill L.charLiteral (char '"') <* sc
