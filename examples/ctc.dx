@@ -1,0 +1,134 @@
+'## Connectionist Temporal Classification
+By Alex Graves et alia.
+
+'[Link to paper](https://www.cs.toronto.edu/~graves/icml_2006.pdf).
+
+' This dynamic programming algorithm computes the probability of a particular sequences of labels
+(without pauses included) given another sequence of label probabilities
+(with pauses included), marginalizing over all possible combination of
+pause lengths.
+It's used for training speech-to-text models on unaligned training data.
+
+'Most implementations of CTC compute the marginal logprob
+and its gradients combining a forward and a backward pass.
+However, as mentioned in the original paper, we should only
+need the last step of the forward pass to compute the marginal
+probability, and Dex's autodiff should produce the backward
+pass automatically.  That makes this code much shorter than
+most implementations.
+
+
+def interleave (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
+  -- Turns "text" into "t e x t " by first pairing each letter with a blank,
+  -- then flattening the pairs back into a single-index table.
+  pairs = for i. [labels.i, blank]
+  for (i, j). pairs.i.j
+
+def prepend (first: v) (seq: m=>v) : (Unit|m)=>v =
+  -- Concatenates a single element to the beginning of a sequence.
+  for idx. case idx
+    Left () -> first
+    Right i -> seq.i
+
+def prepend_and_interleave (blank:v) (seq: m=>v) : 
+  ((Unit | (m & (Fin 2)))=>v) =
+  -- Turns "text" into " t e x t".
+  -- The output of this function has a slightly complicated output type, which
+  -- has size 1 + 2 * (size m).
+  interleaved = interleave blank seq
+  prepend blank interleaved
+
+def clipidx (n:Type) -> (i:Int) : n =
+  -- Returns element at 0 if less than zero.
+  -- Ideally we could have an alternative
+  -- to Fin that just clips the index at its bounds.
+  fromOrdinal n (select (i < 0) 0 i)
+
+def logaddexp (x:Real) (y:Real) : Real =
+  m = max x y
+  m + ( log ( (exp (x - m) + exp (y - m))))
+
+def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
+        (dict: Eq vocab) ?=> (dict2: Eq position) ?=> (dict3: Eq time) ?=> (blank: vocab)
+        (logits: time=>vocab=>Real) (labels: position=>vocab) : Real =
+  -- Computes log p(labels | logits), marginalizing over possible alignments.
+  -- Todo: remove unnecessary implicit type annotations once
+  -- Dex starts putting implicit types in scope.
+
+  ilabels = prepend_and_interleave blank labels
+
+  normalized_logits = for t. logsoftmax logits.t
+
+  -- Initialization rules
+  logprob_start_with_blank = normalized_logits.(0@_).blank
+  logprob_of_first_label   = normalized_logits.(0@_).(labels.(0@_))
+  log_prob_seq_t0 = for pos.
+    select  (pos == (0@_)) logprob_start_with_blank (select (pos == (1@_)) logprob_of_first_label (log 0.000001))
+
+  same_as_last = \ilabels s.
+    o = ordinal s
+    select (o >= 2) (ilabels.s == ilabels.(clipidx _ (o - 2))) False
+
+  safe_idx = \prev s.
+    select (s >= 0) prev.(clipidx _ s) (log 0.0)
+
+  -- Todo: As suggested by Adam Paske, we could get rid of these
+  -- logaddexp calls with a newtype that overloads + and *
+  update = \t prev.
+    select (t == (0@_)) log_prob_seq_t0 for s.
+      cond = ilabels.s == blank || same_as_last ilabels s
+      labar = logaddexp prev.s (safe_idx prev ((ordinal s) - 1))
+      other = logaddexp labar  (safe_idx prev ((ordinal s) - 2))
+      ans = select cond labar other
+      ans + normalized_logits.t.(ilabels.s)
+
+  log_prob_seq_final = fold log_prob_seq_t0 update
+
+  -- Todo: nicer way to get last two elements of log_prob_seq_final.
+  padded_positions = Unit | (position & (Fin 2))
+  seq_length = size padded_positions
+  endlabel = log_prob_seq_final.((seq_length - 2)@_)
+  endspace = log_prob_seq_final.((seq_length - 1)@_)
+  logaddexp endlabel endspace
+
+
+
+'### Demo
+
+def randIdxNoZero (n:Type) -> (k:Key) : n =
+  unif = rand k
+  fromOrdinal n $ (1 + floor ( unif * i2r ((size n) - 1)))
+
+vocab = Fin 6
+position = Fin 3
+blank = 0@vocab
+
+-- Create random logits
+time = Fin 4
+logits = for i:time j:vocab. (randn $ ixkey2 (newKey 0) i j)
+
+-- Create random labels
+labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
+:p labels
+
+-- Evaluate marginal probability of labels given logits
+:p exp $ ctc blank logits labels
+
+
+
+'### Test
+
+-- Check that the sum of p(labels|logits) sums to 1.0 over all possible labels.
+-- They don't yet sum to one, however I'm not 100% sure about the
+-- semantics of the marginal likelihood being computed, and whether
+-- e.g. the summed-over labels should include blanks.
+
+
+:p sum for i:vocab.
+  exp $ ctc blank logits [i]
+
+:p sum for (i, j):(vocab & vocab).
+  exp $ ctc blank logits [i, j]
+
+:p sum for (i, j, k):(vocab & vocab & vocab).
+  exp $ ctc blank logits [i, j, k]
