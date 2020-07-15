@@ -715,3 +715,23 @@ arr2d.(1@_)
     r2 := x
     r1 := y
 > ((), (2, 1))
+
+'Tests for numerical utilies
+
+easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
+hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
+
+:p logsumexp easy - (log $ sum for j. exp easy.j)
+> 0.0
+
+:p sum $ softmax hard
+> 1.0
+
+:p all for i. ((softmax hard).i >= 0.0)
+> True
+
+:p sum for i. exp $ (logsoftmax hard).i
+> 1.0
+
+:p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0000001
+> True

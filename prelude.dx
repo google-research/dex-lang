@@ -433,3 +433,19 @@ def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
               arr.(t +> UNSAFEFromOrdinal idx 1)
               arr.(t +> UNSAFEFromOrdinal idx 2)
               arr.(t +> UNSAFEFromOrdinal idx 3))
+
+'Numerical utilities
+
+def logsumexp (x: n=>Real) : Real =
+  m = maximum x
+  m + (log $ sum for i. exp (x.i - m))
+
+def logsoftmax (x: n=>Real) : n=>Real =
+  lse = logsumexp x
+  for i. x.i - lse
+
+def softmax (x: n=>Real) : n=>Real =
+  m = maximum x
+  e =  for i. exp (x.i - m)
+  s = sum e
+  for i. e.i / s
