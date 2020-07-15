@@ -51,9 +51,9 @@ type JOp = JOpP IdxAtom
 data JOpP e = JId e
             | JIota AxisSize
             | JGet e e
-            | JScalarBinOp ScalarBinOp e e
+            | JScalarBinOp BinOp e e
             | JThreeFry2x32 e e
-            | JScalarUnOp  ScalarUnOp e
+            | JScalarUnOp  UnOp e
               deriving (Generic, Functor, Foldable, Traversable, Show, Eq)
 
 data TmpAtom = TmpLeaf IdxAtom
@@ -686,11 +686,11 @@ instance FromJSON Name
 instance ToJSON   NameSpace
 instance FromJSON NameSpace
 
-instance ToJSON   ScalarBinOp
-instance FromJSON ScalarBinOp
+instance ToJSON   BinOp
+instance FromJSON BinOp
 
-instance ToJSON   ScalarUnOp
-instance FromJSON ScalarUnOp
+instance ToJSON   UnOp
+instance FromJSON UnOp
 
 instance ToJSON   CmpOp
 instance FromJSON CmpOp

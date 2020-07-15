@@ -7,9 +7,9 @@ mmp'' : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
 mmp'' m1 m2 =
   snd (vjp (mmp (transpose m1)) (for _ _. 0.0)) m2
 
-type Nx = 1000
+n = 1000
 
-mat : Nx=>Nx=>Real
+mat : (Fin n)=>(Fin n)=>Real
 mat = for i j. rand $ ixkey2 (newKey 0) i j
 
 :time mmp mat mat

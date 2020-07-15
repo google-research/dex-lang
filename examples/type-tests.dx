@@ -304,3 +304,27 @@ bad_range : Int = (1@Fin 3)..(2@_)
 >
 > bad_range : Int = (1@Fin 3)..(2@_)
 >                            ^^
+
+
+-- Tests for the Unit index set
+
+() == ()
+> True
+
+() < ()
+> False
+
+() > ()
+> False
+
+() + ()
+> ()
+
+() - ()
+> ()
+
+() * ()
+> ()
+
+5.0 .* ()
+> ()

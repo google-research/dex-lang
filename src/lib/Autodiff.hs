@@ -4,7 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -w #-} -- XXX: Disable once fixed
 
@@ -13,7 +12,7 @@ module Autodiff (linearize, transposeMap) where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Data.List (elemIndex)
 
 import Type
 import Env
@@ -22,128 +21,155 @@ import Cat
 import PPrint
 import Embed
 
--- -- === linearization ===
+import Data.Text.Prettyprint.Doc
 
-type EmbedSubM = ReaderT SubstEnv Embed
-type PrimalM = WriterT (Env Type) EmbedSubM
-newtype LinA a = LinA { runLinA :: PrimalM (a, EmbedSubM a) }
+-- === linearization ===
+
+-- `DerivWrt` holds the (out-expr) variables that we're differentiating with
+-- respect to (including refs but not regions). `Tangents` holds the tangent
+-- values and the region variables that are arguments to the linearized
+-- function.
+-- TODO: use something with O(1) lookups.
+type DerivWrt = ([Var], EffectRow)
+type Tangents = ([Atom], [Name])
+
+type PrimalM  = ReaderT DerivWrt Embed
+type TangentM = ReaderT Tangents Embed
+newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
 linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
-  buildLam b PureArrow $ \x -> do
-    ((y, yt), _) <- flip runReaderT (b@>x) $ runWriterT $
-                      runLinA (linearizeBlock block)
+  buildLam b PureArrow $ \x@(Var v) -> do
+    (y, yt) <- flip runReaderT ([v], Pure) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
-    fLin <- buildLam b LinArrow $ \xt -> runReaderT yt (b@>xt)
-    return $ PairVal y fLin
+    fLin <- buildLam b LinArrow $ \xt -> runReaderT yt ([xt], [])
+    fLinChecked <- checkEmbed fLin
+    return $ PairVal y fLinChecked
 
-linearizeBlock :: Block -> LinA Atom
-linearizeBlock (Block decls result) = case decls of
-  [] -> linearizeExpr result
+linearizeBlock :: SubstEnv -> Block -> LinA Atom
+linearizeBlock env (Block decls result) = case decls of
+  [] -> linearizeExpr env result
   Let _ b bound : rest -> LinA $ do
-    (env, tEnvM) <- runLinA $ liftA (\x -> b@>x) $ linearizeExpr bound
-    (ans, fLin) <- extendR env $ runLinA $ linearizeBlock body
-    return (ans, do tEnv <- tEnvM
-                    extendR tEnv fLin)
+    -- TODO: handle discrete case specially.
+    (x, boundLin) <- runLinA $ linearizeExpr env bound
+    ~x'@(Var v) <- emit $ Atom x
+    (ans, bodyLin) <- extendWrt ([v], Pure) $ runLinA $
+                        linearizeBlock (env <> b@>x') body
+    return (ans, do t <- boundLin
+                    extendR ([t], []) bodyLin)
     where body = Block rest result
 
--- linearizeLam :: RuleEnv -> AbsBlock
---                  -> EmbedSubM (AbsBlock, [Type], Atom -> [Atom] -> EmbedSubM Atom)
--- linearizeabsblock = undefined
--- linearizeAbsBlock ruleEnv (AbsBlock v body) = do
---   (lam, (v', residualVs, tBuilder)) <- buildAbsBlockAux v $ \v'@(Var iVar) ->
---     extendR (v@>v') $ do
---        (((ans, ansT), (localScope, decls)), fvs) <-
---            runWriterT $ embedScoped $ runLinA $ linearizeBlock ruleEnv body
---        extendScope localScope
---        mapM_ emitDecl decls
---        let residualVs = [rv :> ty | (rv, ty) <- envPairs $ localScope `envIntersect` fvs]
---        let ansWithResiduals = foldr PairVal ans $ map Var residualVs
---        return (ansWithResiduals, (iVar, residualVs, ansT))
---   extendScope $ foldMap (@>Nothing) (v':residualVs)
---   return (lam, map varAnn residualVs, \v'' residuals -> do
---      scope <- getScope
---      (ansT', decls) <- extendR (v @> Var v') $ scopedDecls tBuilder
---      let env = (v'@>v'') <> newEnv residualVs residuals
---      emitBlock $ subst (env, scope) $ wrapDecls decls ansT')
+-- TODO: curried linear functions somehow?
+tangentFunAsLambda :: LinA Atom -> PrimalM Atom
+tangentFunAsLambda m = do
+  (ans, tanFun) <- runLinA m
+  (vs, EffectRow effs _) <- ask
+  let hs = map ((:>TyKind) . snd) effs
+  liftM (PairVal ans) $ lift $ do
+    buildNestedLam hs $ \hVals -> do
+      let hVarNames = map (\(Var (v:>_)) -> v) hVals
+      let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
+      -- want to use tangents here, not the original binders
+      let regionMap = newEnv (map ((:>()) . snd) effs) hVals
+      let vs' = map (fmap (tangentRefRegion regionMap)) vs
+      buildNestedLam vs' $ \xs ->
+        buildLam ("dummy":>UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
+          runReaderT tanFun (xs, hVarNames)
 
-unpackResiduals :: Monad m => (ty -> a -> m (a, a)) -> [ty] -> a -> m (a, [a])
-unpackResiduals _ [] ans = return (ans, [])
-unpackResiduals f (t:ts) packed = do
-  (r, packed') <- f t packed
-  (ans, rs) <- unpackResiduals f ts packed'
-  return (ans, r:rs)
+-- This doesn't work if we have references inside pairs, tables etc.
+-- TODO: something more general and cleaner.
+tangentRefRegion :: Env Atom -> Type -> Type
+tangentRefRegion subst ty = case ty of
+  RefTy ~(Var h) a -> RefTy (subst ! h) $ tangentType a
+  _ -> tangentType ty
 
-linearizeExpr :: Expr -> LinA Atom
-linearizeExpr expr = case expr of
-  _ | hasDiscreteType expr -> LinA $ do
-    ans <- substEmbed expr >>= emit
-    return $ withZeroTangent ans
-  -- For d lam@(AbsBlock i _) -> LinA $ do
-  --   (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
-  --   ansRes <- emit $ For d lam'
-  --   (ans, residuals) <- unpackResiduals (const unzipTab) rTys ansRes
-  --   mapM_ saveVars residuals
-  --   return (ans, buildFor d i $ \i' -> do
-  --                  residuals' <- forM residuals $ \r -> emit $ TabGet r i'
-  --                  lin i' residuals')
-  -- App x i | isTabTy (getType x) -> LinA $ do
-  --   (i', _)  <- runLinA $ linearizeAtom i
-  --   (x', tx) <- runLinA $ linearizeAtom x
-  --   ans <- emit $ App x' i'
-  --   return (ans, do tx' <- tx
-  --                   emit $ App tx' i')
-  Op op -> linearizeOp op
-  Atom atom -> linearizeAtom atom
-  _ -> error $ "Not implemented: " ++ pprint expr
+buildNestedLam :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m Atom
+buildNestedLam [] f = f []
+buildNestedLam (b:bs) f =
+  buildLam b PureArrow $ \x -> buildNestedLam bs $ \xs -> f (x:xs)
+
+linearizeExpr :: SubstEnv -> Expr -> LinA Atom
+linearizeExpr env expr = case expr of
+  Hof  e -> linearizeHof env e
+  _ -> LinA $ do
+    expr' <- substEmbed env expr
+    runLinA $ case expr' of
+      App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x)
+                                         `bindLin` emit
+      Op   e -> linearizeOp   e
+      Atom e -> linearizeAtom e
+      _ -> error $ "Not implemented: " ++ pprint expr
 
 
 linearizeOp :: Op -> LinA Atom
-linearizeOp op = case fmap linearizeAtom op of
-  ScalarUnOp  FNeg x     ->     liftA  (ScalarUnOp  FNeg) x     `bindLin` emitOp
-  ScalarBinOp FAdd x1 x2 ->     liftA2 (ScalarBinOp FAdd) x1 x2 `bindLin` emitOp
-  ScalarBinOp FSub x1 x2 ->     liftA2 (ScalarBinOp FSub) x1 x2 `bindLin` emitOp
-  ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) x1 x2
+linearizeOp op = case op of
+  ScalarUnOp  FNeg x     -> liftA  (ScalarUnOp  FNeg) (la x)          `bindLin` emitOp
+  ScalarBinOp FAdd x1 x2 -> liftA2 (ScalarBinOp FAdd) (la x1) (la x2) `bindLin` emitOp
+  ScalarBinOp FSub x1 x2 -> liftA2 (ScalarBinOp FSub) (la x1) (la x2) `bindLin` emitOp
+  ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) (la x1) (la x2)
   ScalarBinOp FDiv x y -> LinA $ do
-    (x', tx) <- runLinA x
-    (y', ty) <- runLinA y
+    (x', tx) <- runLinA $ la x
+    (y', ty) <- runLinA $ la y
     ans <- div' x' y'
-    saveVars (x', y')
     return (ans, do tx' <- tx
                     ty' <- ty
                     linearizedDiv x' y' tx' ty')
   PrimEffect refArg m ->
-    liftA2 PrimEffect refArg
+    liftA2 PrimEffect (la refArg)
       (case m of
          MAsk    -> pure MAsk
-         MTell x -> liftA MTell x
+         MTell x -> liftA MTell $ la x
          _       -> error "Not implemented") `bindLin` emitOp
-  Fst x -> liftA Fst x `bindLin` emitOp
-  Snd x -> liftA Snd x `bindLin` emitOp
+  Fst x -> liftA Fst (la x) `bindLin` emitOp
+  Snd x -> liftA Snd (la x) `bindLin` emitOp
+  ArrayOffset _ _ _      -> emitWithZero
+  ArrayLoad _            -> emitWithZero
+  ScalarUnOp IntToReal _ -> emitWithZero
+  TabCon ty xs -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
+  _ | hasDiscreteType (Op op) -> emitWithZero
   _ -> error $ "not implemented: " ++ pprint op
+  where
+    la = linearizeAtom
+    emitWithZero :: LinA Atom
+    emitWithZero = LinA $ withZeroTangent <$> emitOp op
 
-linearizeHof :: Hof -> LinA Atom
-linearizeHof = undefined
--- linearizeHof ruleEnv hof = case bimap linearizeAtom id hof of
---   RunReader r lam@(AbsBlock ref _) -> LinA $ do
---     (r', rt) <- runLinA r
---     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
---     ansRes <- emit $ Hof $ RunReader r' lam'
---     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
---     mapM_ saveVars residuals
---     return (ans , do rt' <- rt
---                      lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
---                      emit $ Hof $ RunReader rt' lam'')
---   RunWriter lam@(AbsBlock ref _) -> LinA $ do
---     (lam', rTys, lin) <- lift $ linearizeAbsBlock ruleEnv lam
---     (ansRes, w) <- fromPair =<< emit (Hof $ RunWriter lam')
---     (ans, residuals) <- unpackResiduals (const fromPair) rTys ansRes
---     mapM_ saveVars residuals
---     return ( PairVal ans w
---            , do lam'' <- buildAbsBlock ref $ \ref' -> lin ref' residuals
---                 emit $ Hof $ RunWriter lam'')
+linearizeHof :: SubstEnv -> Hof -> LinA Atom
+linearizeHof env hof = case hof of
+  For d (Lam (Abs i (_, body))) -> LinA $ do
+    i' <- mapM (substEmbed env) i
+    (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i'' ->
+       tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
+    return (ans, buildFor d i' $ \i'' -> do
+                   lin <- app linTab i''
+                   applyLinToTangents lin)
+  RunWriter lam -> LinA $ do
+    lam' <- linearizeEffectFun Writer env lam
+    (ansLin, w) <- fromPair =<< emit (Hof $ RunWriter lam')
+    (ans, lin) <- fromPair ansLin
+    let (BinaryFunTy _ (_:>RefTy _ wTy) _ _) = getType lam'
+    let lin' = emitRunWriter "w" wTy $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
+                 extendR ([ref], [h]) $ applyLinToTangents lin
+    return (PairVal ans w, lin')
 
-linearizedDiv :: Atom -> Atom -> Atom -> Atom -> EmbedSubM Atom
+applyLinToTangents :: Atom -> TangentM Atom
+applyLinToTangents f = do
+  (tangents, hs) <- ask
+  let hs' = map (Var . (:>TyKind)) hs
+  let args = hs' ++ tangents ++ [UnitVal]
+  naryApp f args
+
+linearizeEffectFun :: EffectName -> SubstEnv -> Atom -> PrimalM Atom
+linearizeEffectFun effName env (BinaryFunVal h ref eff body) = do
+  h' <- mapM (substEmbed env) h
+  buildLam h' PureArrow $ \h''@(Var hVar) -> do
+    let env' = env <> h@>h''
+    eff' <- substEmbed env' eff
+    ref' <- mapM (substEmbed env') ref
+    buildLam ref' (PlainArrow eff') $ \ref''@(Var refVar) ->
+      extendWrt ([refVar], EffectRow [(effName, varName hVar)] Nothing) $
+        tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body
+
+linearizedDiv :: Atom -> Atom -> Atom -> Atom -> TangentM Atom
 linearizedDiv x y tx ty = do
   tx'  <- div' tx y
   ty'  <- mul ty x
@@ -154,32 +180,31 @@ linearizedDiv x y tx ty = do
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
-  --AFor _ _ -> LinA $ return (withZeroTangent x)  where x = Con con
   PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
   _ -> error $ "not implemented: " ++ pprint con
 
 linearizeAtom :: Atom -> LinA Atom
-linearizeAtom atom | hasDiscreteType atom =
-  LinA $ liftM withZeroTangent $ substEmbed atom
 linearizeAtom atom = case atom of
-  Var v -> linearizeVar v
+  Var v -> LinA $ do
+    derivWrt <- asks (map varName . fst)  -- TODO: something more efficient
+    case elemIndex (varName v) derivWrt of
+      Nothing -> return $ withZeroTangent atom
+      Just i -> return (atom, asks $ (!!i) . fst)
   Con con -> linearizePrimCon con
-  _ -> error "Not implemented"
+  Lam (Abs i (TabArrow, body)) -> LinA $ do
+    wrt <- ask
+    return (atom, buildLam i TabArrow $ \i' ->
+                    rematPrimal wrt $ linearizeBlock (i@>i') body)
+  _ | hasDiscreteType atom -> LinA $ return $ withZeroTangent atom
+  _ -> error $ "Not implemented: " ++ pprint atom
 
-linearizeVar :: Var -> LinA Atom
-linearizeVar v = LinA $ do
-  maybeVal <- asks $ flip envLookup v
-  case maybeVal of
-    Just x -> return (x, do
-      maybeTVal <- asks $ flip envLookup v
-      -- TODO: consider having separate primal-subst and tangent envs
-      case maybeTVal of
-        Just t -> return t
-        Nothing    -> error "Tangent lookup failed")
-    Nothing    -> return (withZeroTangent (Var v))
+rematPrimal :: DerivWrt -> LinA a -> TangentM a
+rematPrimal wrt m = do
+  (_, lin) <- lift $ runReaderT (runLinA m) wrt
+  lin
 
-withZeroTangent :: Atom -> (Atom, EmbedSubM Atom)
-withZeroTangent x = (x, zeroAt (tangentType (getType x)))
+withZeroTangent :: Atom -> (Atom, TangentM Atom)
+withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))
 
 tangentType :: Type -> Type
 tangentType (TabTy n a) = TabTy n (tangentType a)
@@ -191,7 +216,9 @@ tangentType (TC con) = case con of
   IndexRange _ _ _           -> UnitTy
   UnitType                   -> UnitTy
   PairType a b               -> PairTy (tangentType a) (tangentType b)
-  _           -> error $ "Can't differentiate wrt type " ++ pprint con
+  -- XXX: This assume that arrays are always constants.
+  ArrayType _ -> UnitTy
+  ty -> error $ "Can't differentiate wrt type " ++ pprint ty
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 
 -- TODO: consider effects!
@@ -205,7 +232,6 @@ tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
   (x1, mt1) <- m1
   (x2, mt2) <- m2
   ans <- emitOp $ f x1 x2
-  saveVars (x1, x2)
   return ( ans
          , do t1 <- mt1
               t2 <- mt2
@@ -213,14 +239,11 @@ tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
               tOut2 <- emitOp $ f t1 x2
               add tOut1 tOut2)
 
-bindLin :: LinA a -> (a -> EmbedSubM b) -> LinA b
+bindLin :: LinA a -> (a -> Embed b) -> LinA b
 bindLin (LinA m) f = LinA $ do
   (e, t) <- m
   x <- lift $ f e
-  return (x, t >>= f)
-
-saveVars :: HasVars a => a -> PrimalM ()
-saveVars x = tell $ fmap fst $ freeVars x
+  return (x, t >>= (lift . f))
 
 instance Functor LinA where
   fmap = liftA
@@ -231,6 +254,12 @@ instance Applicative LinA where
     (x1, t1) <- m1
     (x2, t2) <- m2
     return (f x1 x2, liftM2 f t1 t2)
+
+extendWrt :: DerivWrt -> PrimalM a -> PrimalM a
+extendWrt (vs, EffectRow effs Nothing) m = local update m
+  where update (vs', (EffectRow effs' Nothing)) =
+          (vs' <> vs, EffectRow (effs' <> effs) Nothing)
+extendWrt _ _ = error "not implemented"
 
 -- -- === transposition ===
 
@@ -248,8 +277,9 @@ transposeBlock (Block decls result) ct = case decls of
   Let _ b bound : rest -> do
     -- let (eff, _) = getEffType bound
     -- linEff <- isLinEff eff
+    let linEff = not $ isPure bound
     lin <- isLin bound
-    if lin -- || linEff
+    if lin || linEff
       then do
         ct' <- withLinVar b $ transposeBlock body ct
         transposeExpr bound ct'
@@ -261,14 +291,11 @@ transposeBlock (Block decls result) ct = case decls of
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
-  App ~(Var x) i -> case varAnn x of
+  App x i -> case getType x of
     TabTy _ _ -> do
       i' <- substTranspose i
       linVars <- asks fst
-      ref <- case envLookup linVars x of
-               Just ref -> return ref
-               -- might be possible to reach here indexing into a literal zero array
-               _ -> error "Not implemented"
+      ref <- linAtomRef x
       ref' <- emitOp $ IndexRef ref i'
       emitCTToRef ref' ct
     _ -> error $ "shouldn't have non-table app left"
@@ -278,6 +305,14 @@ transposeExpr expr ct = case expr of
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
+  Fst x -> do
+    ref <- linAtomRef x
+    ref' <- emitOp $ FstRef ref
+    emitCTToRef ref' ct
+  Snd x -> do
+    ref <- linAtomRef x
+    ref' <- emitOp $ SndRef ref
+    emitCTToRef ref' ct
   ScalarUnOp FNeg x -> do
     ctNeg <- neg ct
     transposeAtom x ctNeg
@@ -313,33 +348,39 @@ transposeOp op ct = case op of
       _ -> error "Not implemented"
   _ -> error $ "not implemented: transposition for: " ++ pprint op
 
+linAtomRef :: Atom -> TransposeM Atom
+linAtomRef (Var x) = do
+  linVars <- asks fst
+  case envLookup linVars x of
+    Just ref -> return ref
+    _ -> error "Not a linear var"
+linAtomRef _ = error "Not a linear var"
 
 transposeHof :: Hof -> Atom -> TransposeM ()
 transposeHof hof ct = case hof of
-  For d (Lam (Abs b (_, body))) ->
+  For d ~(Lam (Abs b (_, body))) ->
     void $ buildFor (flipDir d) b $ \i -> do
       ct' <- tabGet ct i
       extendR (asSnd (b@>i)) $ transposeBlock body ct'
       return UnitVal
--- transposeHof hof ct = case hof of
---   RunReader r (AbsBlock v body) -> do
---     lam <- buildAbsBlock v $ \x -> do
---              extendR (asSnd (v@>x)) $ transposeBlock body ct
---              return UnitVal
---     (_, ctr) <- emit (Hof $ RunWriter lam) >>= fromPair
---     transposeAtom r ctr
---   RunWriter (AbsBlock v body) -> do
---     (ctBody, ctEff) <- fromPair ct
---     lam <- buildAbsBlock v $ \x -> do
---              extendR (asSnd (v@>x)) $ transposeBlock body ctBody
---              return UnitVal
---     void $ emit $ Hof $ RunReader ctEff lam
-
+  RunReader r ~(BinaryFunVal _ b _ body) -> do
+    (_, ctr) <- (fromPair =<<) $ emitRunWriter "w" (getType r) $ \ref -> do
+      extendR (asSnd (b@>ref)) $ transposeBlock body ct
+      return UnitVal
+    transposeAtom r ctr
+  RunWriter ~(BinaryFunVal _ b _ body) -> do
+    (ctBody, ctEff) <- fromPair ct
+    void $ emitRunReader "r" ctEff $ \ref -> do
+      extendR (asSnd (b@>ref)) $ transposeBlock body ctBody
+      return UnitVal
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
 transposeCon con ct = case con of
   Lit _ -> return ()
+  PairCon x y -> do
+    getFst ct >>= transposeAtom x
+    getSnd ct >>= transposeAtom y
   _ -> error $ "not implemented: transposition for: " ++ pprint con
 
 transposeAtom :: Atom -> Atom -> TransposeM ()
@@ -378,10 +419,13 @@ substTranspose x = do
   return $ subst (env, scope) x
 
 withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v m = do
-  ans <- emitRunWriter "ref" (varAnn v) $ \ref -> do
-    extendR (asFst (v@>ref)) (m >> return UnitVal)
-  getSnd ans
+withLinVar v body = case
+  singletonTypeVal (varType v) of
+    Nothing -> do
+      ans <- emitRunWriter "ref" (varType v) $ \ref -> do
+        extendR (asFst (v@>ref)) (body >> return UnitVal)
+      getSnd ans
+    Just x -> body >> return x  -- optimization to avoid accumulating into unit
 
 flipDir :: Direction -> Direction
 flipDir Fwd = Rev

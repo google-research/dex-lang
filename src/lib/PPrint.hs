@@ -127,6 +127,7 @@ instance Pretty e => Pretty (PrimTC e) where
         high' = case high of InclusiveLim x -> "." <> p x
                              ExclusiveLim x -> "<" <> p x
                              Unlimited      -> "."
+    RefType h a -> parens $ "Ref" <+> p h <+> p a
     TypeKind -> "Type"
     EffectRowKind -> "EffKind"
     NewtypeApp f xs -> p f <> foldMap (\x -> " " <> p x) xs
@@ -243,6 +244,7 @@ instance Pretty Output where
   pretty (HeatmapOut _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
+  pretty (EvalTime t) = "=== Eval time: " <+> p t <> "s ==="
   pretty (MiscLog s) = "===" <+> p s <+> "==="
 
 instance Pretty PassName where

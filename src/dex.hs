@@ -99,7 +99,10 @@ simpleInfo :: Parser a -> ParserInfo a
 simpleInfo p = info (p <**> helper) mempty
 
 printLitProg :: DocFmt -> LitProg -> IO ()
-printLitProg ResultOnly prog = putStr $ foldMap (pprint . snd) prog
+printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd) prog
+  where
+    nonEmptyNewline [] = []
+    nonEmptyNewline l  = l ++ ['\n']
 printLitProg HtmlDoc    prog = putStr $ progHtml prog
 printLitProg TextDoc    prog = do
   isatty <- queryTerminal stdOutput
@@ -117,6 +120,7 @@ parseMode = subparser $
   <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
   <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
     <*> (   flag' HtmlDoc (long "html" <> help "HTML literate program output")
+        <|> flag' ResultOnly (long "result-only" <> help "Only output program results")
         <|> pure TextDoc )
     <*> flag HaltOnErr ContinueOnErr (
                   long "allow-errors"
