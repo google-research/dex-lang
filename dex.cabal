@@ -15,12 +15,16 @@ flag inotify
   description:         Uses inotify to watch for source changes
   default:             False
 
+flag cuda
+  description:         Enables building with CUDA support
+  default:             False
+
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, MDImp, PPrint, Array, Algebra,
                        Actor, Cat, Flops, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
-                       Autodiff, JAX, Interpreter, Logging, PipeRPC
+                       Autodiff, JAX, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
                        aeson, megaparsec, warp, wai,
@@ -36,6 +40,8 @@ library
                        -O0
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase
+  if flag(cuda)
+    cpp-options: -DDEX_CUDA
 
 executable dex
   main-is:             dex.hs

@@ -31,19 +31,25 @@ all: build
 tc:
 	$(STACK) build --ghc-options -fno-code
 
-build: cbits/libdex.so
+build: libdex
 	$(STACK) build
 
-build-prof: cbits/libdex.so
+build-prof: libdex
 	$(STACK) build $(PROF)
+
+build-cuda: libdex-cuda
+	$(STACK) build --flag dex:cuda
 
 all-inotify: build-inotify
 
-build-inotify: cbits/libdex.so
+build-inotify: libdex
 	$(STACK) build --flag dex:inotify $(PROF)
 
 %.so: %.c
 	gcc -std=c11 -fPIC -shared $^ -o $@
+
+libdex-cuda: cbits/libdex.c
+	gcc -std=c11 -DDEX_CUDA -fPIC -shared cbits/libdex.c -I/usr/local/cuda/include -lcuda -o cbits/libdex.so
 
 libdex: cbits/libdex.so
 
