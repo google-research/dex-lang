@@ -12,8 +12,8 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
-  indexSetConcreteSize, checkNoShadow, makeConType, unpackConType,
-  getDataCons, splitDataConParams) where
+  indexSetConcreteSize, checkNoShadow, getDataCons,
+  applyDataConParams) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -21,6 +21,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Functor
 import Data.Text.Prettyprint.Doc
+import GHC.Stack
 
 import Array
 import Syntax
@@ -101,18 +102,26 @@ instance HasType Atom where
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
-    ConApp v xs -> do
-      GlobalName _ <- return $ varName v
-      conTy <- typeCheckVar v
-      foldM checkUnaryConApp conTy xs
-      where
-        checkUnaryConApp :: Type -> Atom -> TypeM Type
-        checkUnaryConApp fTy x = do
-          Pi piTy <- return fTy
-          x |: absArgType piTy
-          let (arr, resultTy) = applyAbs piTy x
-          Pure <- return $ arrowEff arr
-          return resultTy
+    DataCon con params args -> do
+      void $ typeCheckVar con
+      GlobalName _  <- return $ varName con
+      DataConTy tyCon paramBs argBs <- return $ varType con
+      let funTy = foldr
+            (\(arr, b) body -> Pi (Abs b (arr, body)))
+            (TypeCon tyCon (map Var paramBs))
+            (zip (repeat ImplicitArrow) paramBs ++ zip (repeat PureArrow) argBs)
+      foldM checkApp funTy $ params ++ args
+    TypeCon con params -> do
+      void $ typeCheckVar con
+      GlobalName _ <- return $ varName con
+      paramTys <- case varType con of
+        TypeConTy paramTys -> return paramTys
+        _ -> error $ "no good!" ++ pprint (varType con)
+      zipWithM_ (|:) params paramTys
+      let paramTysRemaining = drop (length params) paramTys
+      return $ foldr (-->) TyKind paramTysRemaining
+    DataConTy _ _ _ -> return TyKind  -- TODO: check
+    TypeConTy _     -> return TyKind  -- TODO: check
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -127,57 +136,50 @@ typeCheckVar v@(name:>annTy) = do
 instance HasType Expr where
   typeCheck expr = case expr of
     App f x -> do
-      Pi piTy <- typeCheck f
-      x |: absArgType piTy
-      let (arr, resultTy) = applyAbs piTy x
-      declareEffs $ arrowEff arr
-      return resultTy
+      fTy <- typeCheck f
+      checkApp fTy x
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
     Case e (alt:alts) -> do
       ty <- typeCheck e
-      ConApp con tyParams <- typeCheck e
-      resultTy <- typeCheckAlt con tyParams alt
+      TypeCon tyCon tyParams <- typeCheck e
+      resultTy <- typeCheckAlt tyCon tyParams alt
       forM_ alts $ \alt'-> do
-        resultTy' <- typeCheckAlt con tyParams alt'
+        resultTy' <- typeCheckAlt tyCon tyParams alt'
         checkEq resultTy resultTy'
       return resultTy
 
-typeCheckAlt :: ConName -> [Type] -> Alt -> TypeM Type
+checkApp :: Type -> Atom -> TypeM Type
+checkApp fTy x = do
+  Pi piTy <- return fTy
+  x |: absArgType piTy
+  let (arr, resultTy) = applyAbs piTy x
+  declareEffs $ arrowEff arr
+  return resultTy
+
+typeCheckAlt :: TypeConName -> [Type] -> Alt -> TypeM Type
 typeCheckAlt tyCon tyParams (Alt (dataCon, bs) body) = do
   flip (foldr withBinder) bs $ do
-     ConApp dataCon (tyParams ++ map Var bs) |: ConApp tyCon tyParams
+     DataCon dataCon tyParams (map Var bs) |: TypeCon tyCon tyParams
      typeCheck body
 
-getDataCons :: Bindings -> ConName -> [Type] -> [(ConName, [Binder])]
+getDataCons :: Bindings -> TypeConName -> [Type] -> [(DataConName, [Binder])]
 getDataCons bindings tyCon params =
   case envLookup bindings tyCon of
-    Just (_, DataBoundTyCon dataCons) -> flip map dataCons $ \dataCon ->
-      let (imBs, exBs, _) = unpackConType $ varType dataCon
-          substEnv = newEnv imBs params
-          exBs' = map (fmap (subst (substEnv, bindings))) exBs
-      in (dataCon, exBs')
+    Just (_, DataBoundTypeCon dataCons) -> flip map dataCons $ \dataCon ->
+      (dataCon, fst $ applyDataConParams dataCon params)
     _ -> error "Lookup failed"
 
-splitDataConParams :: ConName -> [Atom] -> ([Atom], [Atom])
-splitDataConParams con xs = splitAt (length imBs) xs
-  where (imBs, _, _) = unpackConType $ varType con
-
--- TODO: just store constructor types in this form?
-unpackConType :: Type -> ([Binder], [Binder], Type)
-unpackConType (Pi (Abs b (ImplicitArrow, resultTy))) = (b:imBs, exBs, resultTy')
-  where (imBs, exBs, resultTy') = unpackConType resultTy
-unpackConType (Pi (Abs b (PureArrow, resultTy))) = (imBs, b:exBs, resultTy')
-  where (imBs, exBs, resultTy') = unpackConType resultTy
-unpackConType ty = ([], [], ty)
-
-makeConType :: [Binder] -> [Binder] -> Type -> Type
-makeConType imBs exBs resultTy =
-  foldr (mkArrow ImplicitArrow) (foldr (mkArrow PureArrow) resultTy exBs) imBs
-  where
-    mkArrow :: Arrow -> Binder -> Type -> Type
-    mkArrow arr b ty = Pi (Abs b (arr, ty))
+applyDataConParams :: HasCallStack => DataConName -> [Type] -> ([Binder], Type)
+applyDataConParams (_:> DataConTy tyCon paramBs bs) params
+  | length paramBs == length params =
+    -- TODO: A distinct type for binders would let us give it a HasVars instance,
+    --       avoiding having to peel off the types here.
+    let bTys = applyNaryAbs (NAbs paramBs (map varType bs)) params
+    in (zipWith ((:>) . varName) bs bTys, TypeCon tyCon params)
+  | otherwise = error $ "wrong number of parameters: " ++ show (length params)
+                                      ++ " expected: " ++ show (length paramBs)
 
 -- TODO: replace with something more precise (this is too cautious)
 blockEffs :: Block -> EffectSummary
@@ -276,14 +278,17 @@ instance CoreVariant Atom where
         TabArrow -> alwaysAllowed
         _        -> goneBy Simp
       checkVariantVar b >> checkVariant body
-    ConApp _ xs -> forM_ xs checkVariant
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
+    DataCon _ _ _ -> alwaysAllowed
+    TypeCon _ _ -> alwaysAllowed
+    DataConTy _ _ _ -> alwaysAllowed
+    TypeConTy _     -> alwaysAllowed
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
-    DataBoundTyCon _ -> alwaysAllowed
+    DataBoundTypeCon _ -> alwaysAllowed
     DataBoundDataCon -> alwaysAllowed
     LetBound _ _     -> absentUntil Simp
     _                -> neverAllowed
@@ -697,8 +702,8 @@ checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
   Var v -> error "Not implemented"
   TabTy _ b -> recur b
-  ConApp con args -> case envLookup env con of
-    Just (_, DataBoundTyCon _) -> do
+  TypeCon con _ -> case envLookup env con of
+    Just (_, DataBoundTypeCon _) -> do
       -- TODO: check that data constructor arguments are data-like, and so on
       return ()
     _ -> error $ "Lookup failed " ++ pprint (ty, env)

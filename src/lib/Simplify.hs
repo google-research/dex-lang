@@ -74,8 +74,8 @@ simplifyAtom atom = case atom of
         Just (_, info) -> case info of
           LetBound NewtypeLet _ -> pure $ TC $ NewtypeApp atom []
           LetBound _ (Atom x) -> dropSub $ simplifyAtom x
-          DataBoundTyCon _ -> pure $ ConApp v []
-          DataBoundDataCon -> pure $ ConApp v []
+          DataBoundTypeCon _ -> error "unreachable?"  -- pure $ TyCon   v []
+          DataBoundDataCon   -> error "unreachable?"  -- pure $ DataCon v [] []
           _ -> substEmbedR atom
         _   -> substEmbedR atom
   -- We don't simplify body of lam because we'll beta-reduce it soon.
@@ -88,7 +88,8 @@ simplifyAtom atom = case atom of
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
-  ConApp f xs -> ConApp <$> mapM substEmbedR f <*> mapM simplifyAtom xs
+  DataCon f params args -> DataCon <$>
+    mapM substEmbedR f <*> mapM simplifyAtom params  <*> mapM simplifyAtom args
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
@@ -147,7 +148,9 @@ simplifyExpr expr = case expr of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
       TC (NewtypeApp wrapper xs) -> return $ TC $ NewtypeApp wrapper (xs ++ [x'])
-      ConApp con xs -> return $ ConApp con $ xs ++ [x']
+      DataCon con params xs -> return $ DataCon con params' xs'
+         where DataConTy _ paramBs _ = varType con
+               (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof
@@ -155,15 +158,11 @@ simplifyExpr expr = case expr of
   Case e alts -> do
     e' <- simplifyAtom e
     case e' of
-      ConApp con args -> case alts of
+      DataCon con _ args -> case alts of
         [Alt (con', bs) body]
-          | con == con' && length bs == length exArgs -> do
-             extendR (newEnv bs exArgs) $ simplifyBlock body
+          | con == con' && length bs == length args -> do
+             extendR (newEnv bs args) $ simplifyBlock body
         _ -> error "Not implemented"
-        where
-          -- TODO: separate params and args in ConApp?
-          (imArgTys, _, _) = unpackConType $ varType con
-          exArgs = drop (length imArgTys) args
       _ -> do
         alts' <- forM alts $ \(Alt (con, bs) body) -> do
           con' <- mapM substEmbedR con

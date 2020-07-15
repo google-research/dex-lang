@@ -19,7 +19,7 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..),
+    NaryAbs (..), PrimExpr (..), PrimCon (..), LitVal (..),
     PrimEffect (..), PrimOp (..), EffectSummary (..), UConPat,
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
@@ -28,7 +28,7 @@ module Syntax (
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     ScalarTableType, ScalarTableVar, BinderInfo (..), UConDef,
-    Bindings, UAlt (..), Alt (..), ConName, varBinding,
+    Bindings, UAlt (..), Alt (..), TypeConName, DataConName, varBinding,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -37,7 +37,8 @@ module Syntax (
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UBinder, UAnnBinder, UVar, declAsScope,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
-    subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
+    subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
+    applyNaryAbs, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
     pattern IntLitExpr, pattern RealLitExpr,
@@ -73,7 +74,10 @@ import Array
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
-          | ConApp ConName [Atom]  -- TODO: de-dup with App?
+          | DataCon DataConName [Atom] [Atom]
+          | TypeCon TypeConName [Atom]
+          | DataConTy TypeConName [Binder] [Binder]
+          | TypeConTy [Type]
           | Con Con
           | TC  TC
           | Eff EffectRow
@@ -91,13 +95,18 @@ data Decl  = Let LetAnn Binder Expr
 
 data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
 data Alt = Alt ConPat Block     deriving (Show, Eq, Generic)
-type ConPat = (ConName, [Binder])
-type ConName = Var
+type ConPat = (DataConName, [Binder])
+type DataConName = Var
+type TypeConName = Var
 
 type Var    = VarP Type
 type Binder = VarP Type
 
-data Abs a = Abs Binder a  deriving (Show, Generic, Functor, Foldable, Traversable)
+-- TODO: could merge Abs and NaryAbs by parameterizing with a functor
+data Abs a = Abs Binder a     deriving (Show, Generic, Functor, Foldable, Traversable)
+data NaryAbs a = NAbs [Binder] a
+                 deriving (Show, Generic, Functor, Foldable, Traversable)
+
 type LamExpr = Abs (Arrow, Block)
 type PiType  = Abs (Arrow, Type)
 
@@ -598,7 +607,7 @@ data BinderInfo =
         -- (or we could put the effect tag on the let annotation)
       | PatBound
       | LetBound LetAnn Expr
-      | DataBoundTyCon [ConName]
+      | DataBoundTypeCon [DataConName]
       | DataBoundDataCon
       | PiBound
       | UnknownBinder
@@ -642,6 +651,12 @@ freeBinderTypeVars (_ :> t) = freeVars t
 
 applyAbs :: HasVars a => Abs a -> Atom -> a
 applyAbs (Abs v body) x = scopelessSubst (v@>x) body
+
+applyNaryAbs :: HasVars a => NaryAbs a -> [Atom] -> a
+applyNaryAbs (NAbs [] body) [] = body
+applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs abs xs
+  where abs = applyAbs (Abs b (NAbs bs body)) x
+applyNaryAbs _ _ = error "wrong number of arguments"
 
 makeAbs :: HasVars a => Var -> a -> Abs a
 makeAbs v body | v `isin` freeVars body = Abs v body
@@ -717,7 +732,11 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
-    ConApp con xs -> varFreeVars con <> foldMap freeVars xs
+    DataCon con xs ys -> varFreeVars con <> freeVars xs <> freeVars ys
+    TypeCon con xs    -> varFreeVars con <> freeVars xs
+    DataConTy resultCon xsBs ysBs ->
+      varFreeVars resultCon <> (freeVars $ NAbs xsBs $ NAbs ysBs ())
+    TypeConTy paramTys -> foldMap freeVars paramTys
 
   subst env atom = case atom of
     Var v   -> substVar env v
@@ -726,7 +745,20 @@ instance HasVars Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
-    ConApp con xs -> ConApp (fmap (subst env) con) $ map (subst env) xs
+    DataCon con xs ys -> DataCon (fmap (subst env) con) (subst env xs) (subst env ys)
+    TypeCon con xs    -> TypeCon (fmap (subst env) con) (subst env xs)
+    DataConTy resultCon paramBs argBs -> DataConTy resultCon paramBs' argBs'
+      where NAbs paramBs' (NAbs argBs' ()) =
+              subst env $ NAbs paramBs $ NAbs argBs ()
+    TypeConTy tys -> TypeConTy $ subst env tys
+
+instance HasVars a => HasVars (NaryAbs a) where
+  freeVars (NAbs [] body) = freeVars body
+  freeVars (NAbs (b:bs) body) = freeVars $ Abs b $ NAbs bs body
+
+  subst env (NAbs [] body) = NAbs [] $ subst env body
+  subst env (NAbs (b:bs) body) = NAbs (b':bs') body'
+    where Abs b' (NAbs bs' body') = subst env $ Abs b $ NAbs bs body
 
 instance HasVars Module where
   freeVars (Module variant decls bindings) = case decls of

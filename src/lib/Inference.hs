@@ -36,8 +36,8 @@ inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
   let bindings' = envFilter bindings $ \(_, b) -> case b of
-                    DataBoundTyCon _ -> True
-                    DataBoundDataCon -> True
+                    DataBoundTypeCon _ -> True
+                    DataBoundDataCon   -> True
                     _ -> False
   return $ Module Typed decls' bindings'
 
@@ -171,8 +171,8 @@ lookupSourceVar v = do
       scope <- getScope
       let v' = asGlobal $ varName v
       case envLookup scope (v':>()) of
-        Just (ty, DataBoundTyCon _) -> return $ ConApp (v':>ty) []
-        Just (ty, DataBoundDataCon) -> return $ ConApp (v':>ty) []
+        Just (ty, DataBoundTypeCon _) -> return $ TypeCon (v':>ty) []
+        Just (ty, DataBoundDataCon  ) -> return $ DataCon (v':>ty) [] []
         Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
@@ -204,30 +204,28 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
-  (tc', tcArgs) <- inferTyCon tc
+  (tc', tcArgs) <- inferTyConDef tc
   (dcs', _) <- embedScoped $
     extendR (newEnv tcArgs (map Var tcArgs)) $ do
       extendScope (foldMap varBinding tcArgs)
-      mapM (inferDataCon tc' tcArgs) dcs
-  extendScope $ tc' @> (varType tc', DataBoundTyCon dcs')
+      mapM (inferDataConDef tc' tcArgs) dcs
+  extendScope $ tc' @> (varType tc', DataBoundTypeCon dcs')
   forM_ dcs' $ \dc -> extendScope $ dc @> (varType dc, DataBoundDataCon)
   return mempty
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
 -- TODO: freshen type binders?
-inferTyCon :: UConDef -> UInferM (Binder, [Binder])
-inferTyCon (v, bs) = do
+inferTyConDef :: UConDef -> UInferM (Binder, [Binder])
+inferTyConDef (v, bs) = do
   let v' = asGlobal v
   bs' <- mapM (mapM checkUType) bs
-  let conTy = makeConType [] bs' TyKind
+  let conTy = TypeConTy $ map varType bs'
   return (v':>conTy, bs')
 
-inferDataCon :: ConName -> [Binder] -> UConDef -> UInferM Binder
-inferDataCon tyConName tyParams (v, bs) = do
-  let v' = asGlobal v
+inferDataConDef :: TypeConName -> [Binder] -> UConDef -> UInferM DataConName
+inferDataConDef tyConName tyParams (v, bs) = do
   bs' <- mapM (mapM checkUType) bs
-  let conTy = makeConType tyParams bs' $ ConApp tyConName (map Var tyParams)
-  return $ v':>conTy
+  return $ asGlobal v :> DataConTy tyConName tyParams bs'
 
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -258,25 +256,23 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
--- TODO: make this less complicated!
 checkCaseAlt :: RequiredTy RhoType -> Type -> UAlt -> UInferM Alt
 checkCaseAlt reqTy scrutineeTy (UAlt (conName, vs) body) = do
   let conName' = asGlobal conName
   scope <- getScope
-  conTy <- case envLookup scope (conName':>()) of
-    Nothing -> throw UnboundVarErr $ pprint conName'
+  conTy@(DataConTy _ paramBs _) <- case envLookup scope (conName':>()) of
     Just (ty, DataBoundDataCon) -> return ty
-    Just _ -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
-  let (imArgs, exArgs, resultTy) = unpackConType conTy
-  when (length exArgs /= length vs) $ throw TypeErr $
-    "Unexpected number of pattern binders. Expected " ++ show (length exArgs)
+    Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
+    Nothing -> throw UnboundVarErr $ pprint conName'
+  let conName'' = conName' :> conTy
+  params <- mapM (freshType . varType) paramBs
+  let (argBs, patTy) = applyDataConParams conName'' params
+  when (length argBs /= length vs) $ throw TypeErr $
+    "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                            ++ " got " ++ show (length vs)
-  imArgs' <- mapM (freshType . varType) imArgs
-  let exArgTys = map varType exArgs
-  let (exArgTys', patTy) = subst (newEnv imArgs imArgs', scope) (exArgTys, resultTy)
+  let bs = zipWith (:>) vs $ map varType argBs
   constrainEq scrutineeTy patTy
-  let bs = zipWith (:>) vs exArgTys'
-  buildAlt (conName':>conTy) bs $ \xs ->
+  buildAlt conName'' bs $ \xs ->
     extendR (newEnv bs xs) $ checkOrInferRho body reqTy
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
@@ -571,9 +567,8 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
-    (ConApp f xs, ConApp f' xs')
-      | varName f == varName f' && length xs == length xs' ->
-          zipWithM_ unify xs xs'
+    (TypeCon f xs, TypeCon f' xs')
+      | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
     (Eff eff, Eff eff') -> unifyEff eff eff'

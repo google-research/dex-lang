@@ -102,13 +102,10 @@ toImpExpr env (maybeDest, expr) = case expr of
   Case e [Alt (con, bs) body] -> do
     e' <- impSubst env e
     case e' of
-      ConApp con' args
-        | con == con' && length bs == length exArgs -> do
-            toImpBlock (env <> newEnv bs exArgs) (maybeDest, body)
+      DataCon con' params args
+        | con == con' && length bs == length args -> do
+            toImpBlock (env <> newEnv bs args) (maybeDest, body)
         | otherwise -> error "Not implemented"
-        where
-          (imArgTys, _, _) = unpackConType $ varType con
-          exArgs = drop (length imArgTys) args
       _ -> error "Not implemented"
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
@@ -367,10 +364,9 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     then lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
-  ConApp con args -> do
-    let (params, args') = splitDataConParams con args
-    args' <- mapM rec args'
-    return $ ConApp con $ params ++ args'
+  DataCon con params args -> do
+    args' <- mapM rec args
+    return $ DataCon con params args'
   Con destCon -> Con <$> case destCon of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
@@ -409,11 +405,9 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (_, TabVal _ _)  -> tell [(dest, result)]
       (_, Con (Lit _)) -> tell [(dest, result)]
-      (Dest (ConApp con args), ConApp con' args')
+      (Dest (DataCon con _ args), DataCon con' _ args')
         | con == con' && length args == length args' -> do
-            let (_, dataArgs ) = splitDataConParams con  args
-            let (_, dataArgs') = splitDataConParams con' args'
-            zipWithM_ gatherVarDests (map Dest dataArgs) dataArgs'
+            zipWithM_ gatherVarDests (map Dest args) args'
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
                                             gatherVarDests (Dest rd) rr
@@ -448,12 +442,11 @@ makeDest nameHint destType = do
   where
     go :: Bindings -> (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
     go bindings mkTy idxVars ty = case ty of
-        ConApp con params -> do
-          let dataCons = getDataCons bindings con params
-          case dataCons of
+        TypeCon con params -> do
+          case getDataCons bindings con params of
             [(dataCon, conArgs)] -> do
               dests <- mapM (rec . varType) conArgs
-              return $ ConApp dataCon $ params ++ dests
+              return $ DataCon dataCon params dests
             _ -> error "Sum types via ADTs not implemented"
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
@@ -477,7 +470,7 @@ makeDest nameHint destType = do
       where
         scalarIndexSet t = Con . Coerce (ArrayTy t) <$> rec IntTy
         rec = go bindings mkTy idxVars
-        unreachable = error $ "Can't lower type to imp: " ++ pprint ty
+        unreachable = error $ "Can't lower type to imp: " ++ pprint destType
 
 -- === Atom <-> IExpr conversions ===
 
@@ -560,11 +553,9 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest idx
       rec di ai
-  (ConApp con args, ConApp con' args')
+  (DataCon con _ args, DataCon con' _ args')
     | con == con' && length args == length args' -> do
-       let (_, dataArgs ) = splitDataConParams con  args
-       let (_, dataArgs') = splitDataConParams con' args'
-       zipWithM_ rec (map Dest dataArgs) dataArgs'
+       zipWithM_ rec (map Dest args) args'
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)

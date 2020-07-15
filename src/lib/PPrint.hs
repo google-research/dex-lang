@@ -202,12 +202,11 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
-    ConApp f xs -> prettyConApp f xs
-
-prettyConApp :: Var -> [Atom] -> Doc ann
-prettyConApp (v:>(Pi (Abs _ (ImplicitArrow, resultTy)))) (_:xs) =
-  prettyConApp (v:>resultTy) xs
-prettyConApp f xs = parens $ p (varName f) <+> hsep (map p xs)
+    DataCon con _ xs  -> parens $ p (varName con) <+> hsep (map p xs)
+    TypeCon con xs    -> parens $ p (varName con) <+> hsep (map p xs)
+    DataConTy resultCon paramBs argBs ->
+      "DataConType" <+> p resultCon <+> p paramBs <+> p argBs
+    TypeConTy tys -> "TypeConType" <+> p tys
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -288,11 +287,10 @@ instance Pretty BinderInfo where
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
     PiBound       -> "<pi binder>"
-    DataBoundTyCon cons ->
-      "<type constructor (data constructors: " <> p (map varName cons) <> ")>"
+    DataBoundTypeCon cons -> "<type constructor (data constructors: "
+      <> p (map varName cons) <> ")>"
     DataBoundDataCon -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
-
 
 instance Pretty UModule where
   pretty (UModule decls) = prettyLines decls
