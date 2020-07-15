@@ -406,7 +406,7 @@ type MDImpStatement k = Statement (MDImpInstr k)
 data MDImpInstr k = MDLaunch Size [IVar] k
                   | MDAlloc ScalarTableType Size
                   | MDFree IVar
-                  | MDPrimOp IPrimOp
+                  | MDHostInstr ImpInstr
                     deriving (Show, Eq, Functor, Foldable, Traversable)
 
 -- The kernel program can only contain Alloc instructions of statically known size
