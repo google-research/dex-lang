@@ -11,7 +11,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
-            extendR, captureW, asFst, asSnd, capture, asCat, evalCatT,
+            extendR, captureW, asFst, asSnd, capture, asCat, evalCatT, evalCat,
             Cat, runCat, newCatT, catTraverse,
             catFold, catFoldM, catMap, catMapM) where
 
@@ -106,6 +106,9 @@ newCatT  f = do
 
 runCat :: Monoid env => Cat env a -> env -> (a, env)
 runCat m env = runIdentity $ runCatT m env
+
+evalCat :: Monoid env => Cat env a -> a
+evalCat m = runIdentity $ evalCatT m
 
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look

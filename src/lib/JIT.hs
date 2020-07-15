@@ -80,7 +80,7 @@ impToLLVM (ImpFunction outVars inVars (ImpProg stmts)) =
 
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
-compileImpInstr allowAlloca instr = case instr of
+compileImpInstr isLocal instr = case instr of
   IPrimOp op -> do
     op' <- traverse compileExpr op
     liftM Just $ compilePrimOp op'
@@ -93,7 +93,7 @@ compileImpInstr allowAlloca instr = case instr of
     store dest' val'
     return Nothing
   Alloc t numel -> Just <$> case numel of
-    ILit (IntLit n) | allowAlloca && n <= 256 -> alloca n elemTy
+    ILit (IntLit n) | isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
     where elemTy = scalarTy $ scalarTableBaseType t
   Free v' -> do
@@ -243,35 +243,39 @@ compileBinOp op x y = case op of
 
 -- === MDImp to LLVM ===
 
-type CUDAContextInitialized = Bool
-type MDHostCompile = CompileT (State CUDAContextInitialized)
+type MDHostCompile   = Compile
+data MDImpInstrCG    = EnsureHasContext -- code generation specific instructions
+type MDImpInstrExt k = Either MDImpInstrCG (MDImpInstr k)
 
 mdImpToLLVM :: MDImpFunction PTXKernel -> LLVMFunction
 mdImpToLLVM (MDImpFunction outVars inVars (MDImpProg prog)) =
-  evalState (compileFunction [] compileMDImpInstr outVars inVars prog) False
+  runIdentity $ compileFunction [] compileMDImpInstr outVars inVars prog'
+  where prog' = (Nothing, Left EnsureHasContext) : [(d, Right i) | (d, i) <- prog]
 
-compileMDImpInstr :: Bool -> MDImpInstr PTXKernel -> MDHostCompile (Maybe Operand)
-compileMDImpInstr _ instr = do
-  getCUDAContext
-  case instr of
-    MDLaunch size args (PTXKernel ptx) -> do
-      m      <- cuModuleLoadData ptx
-      kernel <- cuModuleGetFunction m "kernel"
-      kernelArgs <- traverse lookupImpVar args
-      let blockSizeX = 256
-      sizeOp <- compileExpr size
-      sizeOp' <- sizeOp `add` (litInt $ blockSizeX - 1)
-      gridSizeX <- sizeOp' `div'` (litInt blockSizeX)
-      cuLaunchKernel kernel
-                     (gridSizeX        , litInt 1, litInt 1)
-                     (litInt blockSizeX, litInt 1, litInt 1)
-                     (sizeOp : kernelArgs)
-      -- TODO: cuModuleUnload
-      return Nothing
-    MDAlloc  t s           -> Just <$> (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< compileExpr s)
-      where elemTy = scalarTy $ scalarTableBaseType t
-    MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing
-    MDPrimOp primOp        -> Just <$> (traverse compileExpr primOp >>= compilePrimOp)
+compileMDImpInstr :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
+compileMDImpInstr isLocal instrExt = do
+  case instrExt of
+    Left ext -> case ext of
+      EnsureHasContext -> ensureHasContext >> return Nothing
+    Right instr -> case instr of
+      MDLaunch size args (PTXKernel ptx) -> do
+        m      <- cuModuleLoadData ptx
+        kernel <- cuModuleGetFunction m "kernel"
+        kernelArgs <- traverse lookupImpVar args
+        let blockSizeX = 256
+        sizeOp <- compileExpr size
+        sizeOp' <- sizeOp `add` (litInt $ blockSizeX - 1)
+        gridSizeX <- sizeOp' `div'` (litInt blockSizeX)
+        cuLaunchKernel kernel
+                      (gridSizeX        , litInt 1, litInt 1)
+                      (litInt blockSizeX, litInt 1, litInt 1)
+                      (sizeOp : kernelArgs)
+        -- TODO: cuModuleUnload
+        return Nothing
+      MDAlloc  t s           -> Just <$> (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< compileExpr s)
+        where elemTy = scalarTy $ scalarTableBaseType t
+      MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing
+      MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
 
 cuContextType :: L.Type
 cuContextType = L.ptr L.VoidType
@@ -298,18 +302,14 @@ cuStreamType = L.ptr L.VoidType
 cuDefaultStream :: Operand
 cuDefaultStream = L.ConstantOperand $ C.IntToPtr (C.Int 64 1) cuStreamType
 
-getCUDAContext :: MDHostCompile ()
-getCUDAContext = do
-  contextInitialized <- lift $ lift $ get
-  if contextInitialized
-    then return ()
-    else do
-      cuInit
-      hasCtx <- threadHasCUDAContext
-      compileIf hasCtx (return ()) $ do
-        dev <- cuDeviceGet (L.ConstantOperand $ C.Int 32 0)
-        ctx <- cuDevicePrimaryCtxRetain dev
-        cuCtxPushCurrent ctx
+ensureHasContext :: MDHostCompile ()
+ensureHasContext = do
+  cuInit
+  hasCtx <- threadHasCUDAContext
+  compileIf hasCtx (return ()) $ do
+    dev <- cuDeviceGet (L.ConstantOperand $ C.Int 32 0)
+    ctx <- cuDevicePrimaryCtxRetain dev
+    cuCtxPushCurrent ctx
 
 threadHasCUDAContext :: MDHostCompile Operand
 threadHasCUDAContext = do
