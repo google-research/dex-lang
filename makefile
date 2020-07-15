@@ -6,7 +6,7 @@ STACK=$(shell command -v stack 2>/dev/null)
 ifeq (, $(STACK))
 	STACK=cabal
 
-  PROF := --enable-library-profiling --enable-executable-profiling
+	PROF := --enable-library-profiling --enable-executable-profiling
 
 	dex     := cabal exec dex --
 	dexprof := cabal exec $(PROF) dex -- +RTS -p -RTS
@@ -25,6 +25,12 @@ endif
 
 # --- building Dex ---
 
+ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
+STACK_FLAGS  = --flag dex:cuda
+LIBDEX_FLAGS = -I/usr/local/cuda/include -lcuda -DDEX_CUDA
+endif
+
+.PHONY: all
 all: build
 
 # type-check only
@@ -32,13 +38,10 @@ tc:
 	$(STACK) build --ghc-options -fno-code
 
 build: libdex
-	$(STACK) build
+	$(STACK) build $(STACK_FLAGS)
 
 build-prof: libdex
 	$(STACK) build $(PROF)
-
-build-cuda: libdex-cuda
-	$(STACK) build --flag dex:cuda
 
 all-inotify: build-inotify
 
@@ -46,10 +49,7 @@ build-inotify: libdex
 	$(STACK) build --flag dex:inotify $(PROF)
 
 %.so: %.c
-	gcc -std=c11 -fPIC -shared $^ -o $@
-
-libdex-cuda: cbits/libdex.c
-	gcc -std=c11 -DDEX_CUDA -fPIC -shared cbits/libdex.c -I/usr/local/cuda/include -lcuda -o cbits/libdex.so
+	gcc -std=c11 -fPIC -shared $^ $(LIBDEX_FLAGS) -o $@
 
 libdex: cbits/libdex.so
 
