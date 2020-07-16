@@ -200,6 +200,9 @@ prettyVal val = case val of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
     Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
+    SumAsProd tyCon (IntVal i) payload ->
+      parens $ pretty (varName dataCon) <+> hsep (map prettyVal xs)
+      where (dataCon, xs) = payload !! i
     _           -> pretty con
   atom -> pretty atom
 

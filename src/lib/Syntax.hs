@@ -240,6 +240,8 @@ data PrimCon e =
       | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
       | NewtypeCon e e    -- result type, argument
       | ClassDictHole e   -- Only used during type inference
+        -- type, tag, payload (only used during Imp lowering)
+      | SumAsProd e e [(DataConName, [e])]
       | Todo e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 

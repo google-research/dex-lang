@@ -12,8 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
-  indexSetConcreteSize, checkNoShadow, getDataCons,
-  applyDataConParams) where
+  indexSetConcreteSize, checkNoShadow, getDataCons, applyDataConParams) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -479,6 +478,7 @@ typeCheckCon con = case con of
         TC (IndexRange _ _ _) -> return IntTy -- from ordinal
         TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
         _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
+  SumAsProd ty _ _ -> return ty  -- TODO: check!
   NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty

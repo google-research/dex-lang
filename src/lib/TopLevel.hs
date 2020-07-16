@@ -78,6 +78,7 @@ evalSourceBlockM env block = case sbContents block of
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal env v m
+      logPass ImpPass (pprint val)
       case fmt of
         Printed -> do
           logTop $ TextOut $ pprintVal val
@@ -188,6 +189,7 @@ evalBackend bindings block = do
     LLVMEngine engine -> do
       let (impFunction, impAtom) = toImpFunction bindings (inVars, block)
       checkPass ImpPass impFunction
+      logPass ImpPass (pprint impAtom)
       -- logPass Flops $ impFunctionFlops impFunction
       let llvmFunc = impToLLVM impFunction
       liftIO $ modifyMVar engine $ \env -> do

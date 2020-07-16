@@ -31,6 +31,7 @@ import Env
 import Type
 import PPrint
 import Cat
+import Util (lookupWithIdx)
 import qualified Algebra as A
 
 -- Note [Valid Imp atoms]
@@ -99,14 +100,22 @@ toImpExpr env (maybeDest, expr) = case expr of
   Atom x   -> copyDest maybeDest =<< impSubst env x
   Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env (maybeDest, hof)
-  Case e [Alt (con, bs) body] -> do
+  Case e alts -> do
     e' <- impSubst env e
     case e' of
-      DataCon con' params args
-        | con == con' && length bs == length args -> do
+      DataCon con _ args -> do
+        case lookup con [(con', alt) | alt@(Alt (con',_) _) <- alts] of
+          Nothing -> error "Non-exhaustive patterns"
+          Just (Alt (con', bs) body) -> do
             toImpBlock (env <> newEnv bs args) (maybeDest, body)
-        | otherwise -> error "Not implemented"
-      _ -> error "Not implemented"
+      Con (SumAsProd _ tag payload) -> do
+        dest <- allocDest maybeDest $ getType expr
+        forM_ alts $ \(Alt (con, bs) body) -> do
+          let Just args = lookup con payload
+          -- XXX: this is wrong! We need to select against the tag. But rather
+          --      than make it right, let's just add a proper switch to Imp.
+          toImpBlock (env <> newEnv bs args) (Just dest, body)
+        destToAtom dest
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -371,7 +380,11 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
     Coerce (ArrayTy t) d -> Coerce t <$> rec d
-    _                    -> unreachable
+    SumAsProd ty tag payload -> do
+      payload' <- forM payload $ \(con, args) -> liftM (con,) $ mapM rec args
+      tag' <- rec tag
+      return $ SumAsProd ty tag' payload'
+    _ -> unreachable
   _ -> unreachable
   where
     rec = destToAtom' fScalar scalar . Dest
@@ -444,10 +457,15 @@ makeDest nameHint destType = do
     go bindings mkTy idxVars ty = case ty of
         TypeCon con params -> do
           case getDataCons bindings con params of
+            [] -> error "Void type not allowed"
             [(dataCon, conArgs)] -> do
               dests <- mapM (rec . varType) conArgs
               return $ DataCon dataCon params dests
-            _ -> error "Sum types via ADTs not implemented"
+            dataCons -> do
+              tag <- rec IntTy
+              payload <- forM dataCons $ \(con, bs) ->
+                           liftM (con,) $ forM bs $ \(_:>t) -> rec t
+              return $ Con $ SumAsProd ty tag payload
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
@@ -559,15 +577,28 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
+  (Con (SumAsProd _ tag payload), DataCon con _ x) -> do
+    case lookupWithIdx con payload of
+      Just (i, args) -> do
+        recDest tag (IntVal i)
+        zipWithM_ recDest args x
+      Nothing -> error "Non-exhaustive patterns"
   (Con dcon, Con acon) -> case (dcon, acon) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
     (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
     (SumCon _ _ _ , SumCon _ _ _ ) -> error "Not implemented"
-    _                            -> unreachable
+    (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
+      recDest tag tag'
+      zipWithM_ zipConstructors xs xs'
+      where
+        zipConstructors (con, args) (con', args') =
+          if con == con' then zipWithM_ recDest args args'
+                         else error "mismatched constructors"
   _ -> unreachable
   where
     rec x y = zipWithDest x y f
+    recDest x y = zipWithDest (Dest x) y f
     unreachable = error $ "Not an imp atom, or mismatched dest: "
                              ++ pprint dest ++ ", and " ++ pprint atom
 

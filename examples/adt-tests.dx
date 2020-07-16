@@ -43,3 +43,29 @@ data Dual a:Type =
      -- TODO: investigate shadowing bug if we call these a and b
      MkMyPair x y -> (x + y, y)
 > [(1, 1), (3, 2), (5, 3)]
+
+data MyEither a:Type b:Type =
+  MyLeft  a
+  MyRight b
+
+x : MyEither Int Real = MyLeft 1
+
+:p x
+> (MyLeft 1)
+
+:p
+  case x
+    MyLeft  val -> val
+    MyRight val -> floor val
+> 1
+
+-- %passes imp
+myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 453]
+
+:p myTab
+> [(MyLeft 1), (MyRight 3.5), (MyLeft 123), (MyLeft 453)]
+
+:p for i. case myTab.i
+  MyLeft  val -> val
+  MyRight val -> floor val
+> [1, 3, 123, 453]

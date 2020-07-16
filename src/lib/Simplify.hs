@@ -85,6 +85,13 @@ simplifyAtom atom = case atom of
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
+  -- TODO: handle DataConTy and TypeConTy instead of special-casing this?
+  Con (SumAsProd ty tag payload) -> do
+    ty' <- substEmbedR ty
+    tag' <- simplifyAtom tag
+    payload' <- forM payload $ \(con, args) ->
+                  (,) <$> mapM substEmbedR con <*> mapM simplifyAtom args
+    return $ Con $ SumAsProd ty' tag' payload'
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
@@ -158,11 +165,11 @@ simplifyExpr expr = case expr of
   Case e alts -> do
     e' <- simplifyAtom e
     case e' of
-      DataCon con _ args -> case alts of
-        [Alt (con', bs) body]
-          | con == con' && length bs == length args -> do
-             extendR (newEnv bs args) $ simplifyBlock body
-        _ -> error "Not implemented"
+      DataCon con _ args -> do
+        case lookup con [(con', alt) | alt@(Alt (con',_) _) <- alts] of
+          Nothing -> error "Non-exhaustive patterns"
+          Just (Alt (con', bs) body) ->
+            extendR (newEnv bs args) $ simplifyBlock body
       _ -> do
         alts' <- forM alts $ \(Alt (con, bs) body) -> do
           con' <- mapM substEmbedR con

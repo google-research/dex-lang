@@ -153,6 +153,7 @@ instance Pretty e => Pretty (PrimCon e) where
       "False" -> "Right" <+> p r
       _ -> "SumCon" <+> p c <+> p l <+> p r
     NewtypeCon f xs -> parens (p f <+> p xs)
+    SumAsProd ty tag payload -> "SumAsProd" <+> p ty <+> p tag <+> p payload
     ClassDictHole _ -> "_"
     Todo e -> "<undefined " <> p e <> ""
 
