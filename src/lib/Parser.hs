@@ -245,9 +245,8 @@ dataDef = do
   keyWord DataKW
   tyCon <- tyConDef
   sym "="
-  withIndent $ do
-    dataCons <- mayNotBreak $ dataConDef `sepBy1` try nextLine
-    return $ UData tyCon dataCons
+  dataCons <- onePerLine dataConDef
+  return $ UData tyCon dataCons
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
@@ -397,9 +396,13 @@ caseExpr :: Parser UExpr
 caseExpr = withSrc $ do
   keyWord CaseKW
   e <- expr
-  withIndent $ do
-    alts <- mayNotBreak $ caseAlt `sepBy1` try nextLine
-    return $ UCase e alts
+  keyWord OfKW
+  alts <- onePerLine caseAlt
+  return $ UCase e alts
+
+onePerLine :: Parser a -> Parser [a]
+onePerLine p =   liftM (:[]) p
+             <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
 
 -- TODO: add source locations
 caseAlt :: Parser UAlt
@@ -605,7 +608,7 @@ mkName s = Name SourceName (fromString s) 0
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | OldCaseKW | DataKW | WhereKW
 
 textName :: Lexer Name
@@ -622,6 +625,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"
+      OfKW   -> "of"
       ReadKW  -> "Read"
       WriteKW -> "Accum"
       StateKW -> "State"
@@ -630,7 +634,7 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       OldCaseKW -> "oldcase"
 
 keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "rof", "case", "llam",
+keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
                "Read", "Write", "Accum", "oldcase", "data", "where"]
 
 primName :: Lexer String
