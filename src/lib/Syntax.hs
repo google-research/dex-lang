@@ -397,6 +397,7 @@ data ImpInstr = Load  IExpr
               | IOffset IExpr IExpr ScalarTableType
               | Loop Direction IVar Size ImpProg
               | IWhile IExpr ImpProg
+              | If IExpr ImpProg ImpProg
               | IPrimOp IPrimOp
                 deriving (Show, Eq)
 

@@ -109,13 +109,23 @@ toImpExpr env (maybeDest, expr) = case expr of
           Just (Alt (con', bs) body) -> do
             toImpBlock (env <> newEnv bs args) (maybeDest, body)
       Con (SumAsProd _ tag payload) -> do
+        let tag' = fromScalarAtom tag
         dest <- allocDest maybeDest $ getType expr
-        forM_ alts $ \(Alt (con, bs) body) -> do
-          let Just args = lookup con payload
-          -- XXX: this is wrong! We need to select against the tag. But rather
-          --      than make it right, let's just add a proper switch to Imp.
-          toImpBlock (env <> newEnv bs args) (Just dest, body)
+        matchCases env dest tag' payload alts
         destToAtom dest
+
+matchCases :: SubstEnv -> Dest -> IExpr -> [(DataConName, [Atom])] -> [Alt] -> ImpM ()
+-- TODO: reaching the end of the alternatives should be a run-time error (and we
+-- might want to optimize away the last match evaluation if we're sure it can't
+-- occur).
+matchCases _ _ _ _ [] = return ()
+matchCases env dest tag dataVals (Alt (con,bs) body : alts) = do
+  let Just (i, args) = lookupWithIdx con dataVals
+  pred <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) tag (IIntVal i)
+  let env' = env <> newEnv bs args
+  thisCase   <- liftM snd $ scopedBlock $ toImpBlock env' (Just dest, body)
+  otherCases <- liftM snd $ scopedBlock $ matchCases env dest tag dataVals alts
+  emitStatement (Nothing, If pred thisCase otherCases)
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -771,6 +781,12 @@ instrTypeChecked instr = case instr of
     condRefTy <- checkIExpr cond
     assertEq (IRefType BoolTy) condRefTy $ "Not a bool ref: " ++ pprint cond
     checkProg body
+    return Nothing
+  If predicate (ImpProg consequent) (ImpProg alternative) -> do
+    predTy <- checkIExpr predicate
+    assertEq (IValType $ Scalar BoolType) predTy "Type mismatch in predicate"
+    checkProg consequent
+    checkProg alternative
     return Nothing
   IOffset e i t -> do
     IRefType (TabTy _ _) <- checkIExpr e

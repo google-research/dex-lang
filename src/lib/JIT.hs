@@ -151,6 +151,10 @@ compileInstr allowAlloca instr = case instr of
     n' <- compileExpr n
     compileLoop d i n' body
     return Nothing
+  If p cons alt -> do
+    p' <- compileExpr p >>= intToBool
+    compileCond p' cons alt
+    return Nothing
   IWhile cond body -> do
     compileWhile cond body
     return Nothing
@@ -194,6 +198,17 @@ compileLoop d iVar n (ImpProg body) = do
   loopCond <- case d of Fwd -> iValNew `lessThan` n
                         Rev -> iValNew `greaterOrEq` litInt 0
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
+
+compileCond :: Operand -> ImpProg -> ImpProg -> CompileM ()
+compileCond cond (ImpProg consequent) (ImpProg alternative) = do
+  consBlock <- freshName "ifTrue"
+  altBlock  <- freshName "ifFalse"
+  nextBlock <- freshName "conCont"
+  finishBlock (L.CondBr cond consBlock altBlock  []) consBlock
+  compileProg consequent
+  finishBlock (L.Br nextBlock []) altBlock
+  compileProg alternative
+  finishBlock (L.Br nextBlock []) nextBlock
 
 compileWhile :: IExpr -> ImpProg -> CompileM ()
 compileWhile cond (ImpProg body) = do

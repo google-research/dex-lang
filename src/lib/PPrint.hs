@@ -242,6 +242,9 @@ instance Pretty ImpInstr where
   pretty (IWhile cond body)      = "while" <+>
                                      nest 2 (hardline <> p cond) <> "do" <>
                                      nest 2 (hardline <> p body)
+  pretty (If predicate cons alt) =
+    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
+    hardline <> "else" <> nest 2 (hardline <> p alt)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
