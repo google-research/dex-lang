@@ -6,8 +6,8 @@
 
 {-# LANGUAGE OverloadedStrings #-}
 
-module LLVMExec (LLVMFunction (..), callLLVM,
-                 linking_hack) where
+module LLVMExec (LLVMFunction (..), LLVMKernel (..),
+                 callLLVM, compilePTX, linking_hack) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -23,6 +23,7 @@ import qualified LLVM.OrcJIT as JIT
 import LLVM.Internal.OrcJIT.CompileLayer as JIT
 import LLVM.Context
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import System.IO.Unsafe
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
@@ -41,8 +42,30 @@ foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 foreign import ccall "dynamic"
   callFunPtr :: FunPtr (Ptr () -> IO ()) -> Ptr () -> IO ()
 
--- First element holds the number of outputs
-data LLVMFunction = LLVMFunction Int L.Module
+type NumOutputs   = Int
+data LLVMFunction = LLVMFunction NumOutputs L.Module
+data LLVMKernel   = LLVMKernel L.Module
+
+compilePTX :: Logger [Output] -> LLVMKernel -> IO PTXKernel
+compilePTX logger (LLVMKernel ast) = do
+  T.initializeAllTargets
+  withContext $ \c ->
+    Mod.withModuleFromAST c ast $ \m -> do
+      (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
+      T.withTargetOptions $ \topt ->
+        T.withTargetMachine
+          tripleTarget
+          ptxTargetTriple
+          "sm_60"
+          (M.singleton (T.CPUFeature "ptx64") True)
+          topt
+          R.Default
+          CM.Default
+          CGO.Aggressive $ \tm -> do
+            compileModule logger tm m
+            PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
+  where
+    ptxTargetTriple = "nvptx64-nvidia-cuda"
 
 callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
 callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
@@ -63,12 +86,16 @@ evalLLVM logger ast argPtr = do
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
     Mod.withModuleFromAST c ast $ \m ->
-      T.withHostTargetMachine R.PIC CM.Default CGO.Aggressive $ \tm -> do
-        showModule    m >>= logPass logger JitPass
-        L.verify      m
-        runPasses  tm m
-        showModule    m >>= logPass logger LLVMOpt
-        showAsm    tm m >>= logPass logger AsmPass
+      -- XXX: We need to use the large code model for macOS, because the libC functions
+      --      are loaded very far away from the JITed code. This does not prevent the
+      --      runtime linker from attempting to shove their offsets into 32-bit values
+      --      which cannot represent them, leading to segfaults that are very fun to debug.
+      --      It would be good to find a better solution, because larger code models might
+      --      hurt performance if we were to end up doing a lot of function calls.
+      -- TODO: Consider changing the linking layer, as suggested in:
+      --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
+      T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
+        compileModule logger tm m
         JIT.withExecutionSession $ \exe ->
           JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
             JIT.withIRCompileLayer linkLayer tm $ \compileLayer -> do
@@ -101,6 +128,14 @@ evalLLVM logger ast argPtr = do
                     , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }
                     }
 
+compileModule :: Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
+compileModule logger tm m = do
+  showModule    m >>= logPass logger JitPass
+  L.verify      m
+  runPasses  tm m
+  showModule    m >>= logPass logger LLVMOpt
+  showAsm    tm m >>= logPass logger AsmPass
+
 logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
 
@@ -128,3 +163,6 @@ showAsm t m = do
 
 passes :: P.PassSetSpec
 passes = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
+
+instance Show LLVMKernel where
+  show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule

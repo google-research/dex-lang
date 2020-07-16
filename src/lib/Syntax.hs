@@ -24,11 +24,13 @@ module Syntax (
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    ScalarTableType, ScalarTableVar, BinderInfo (..), UConDef,
-    Bindings, UAlt (..), Alt (..), TypeConName, DataConName, varBinding,
+    UAlt (..), Alt (..), TypeConName, DataConName, varBinding,
+    MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
+    ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
+    ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings, UConDef,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -297,8 +299,11 @@ data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
              deriving (Show, Eq, Generic)
 
 data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
-          | Exp  | Log | Sin | Cos | Tan | Sqrt
-          | Floor | FNeg | BNot
+          | Exp | Exp2
+          | Log | Log2 | Log10
+          | Sin | Cos | Tan | Sqrt
+          | Floor | Ceil| Round
+          | FNeg | BNot
             deriving (Show, Eq, Generic)
 
 data CmpOp = Less | Greater | Equal | LessEqual | GreaterEqual
@@ -386,6 +391,7 @@ data ImpFunction = ImpFunction [ScalarTableVar] [ScalarTableVar] ImpProg  -- des
                    deriving (Show, Eq)
 newtype ImpProg = ImpProg [ImpStatement]
                   deriving (Show, Eq, Generic, Semigroup, Monoid)
+type Statement instr = (Maybe IVar, instr)
 type ImpStatement = (Maybe IVar, ImpInstr)
 
 data ImpInstr = Load  IExpr
@@ -413,6 +419,32 @@ data IType = IValType BaseType
              deriving (Show, Eq)
 
 type Size  = IExpr
+
+-- === multi-device imperative IR ===
+
+-- destinations first
+data MDImpFunction k = MDImpFunction [ScalarTableVar] [ScalarTableVar] (MDImpProg k)
+                       deriving (Show, Eq, Functor, Foldable, Traversable)
+data MDImpProg k = MDImpProg [MDImpStatement k]
+                   deriving (Show, Eq, Functor, Foldable, Traversable)
+type MDImpStatement k = Statement (MDImpInstr k)
+
+-- NB: No loads/stores since we're dealing with device pointers.
+--     No loops, because loops are kernels!
+-- TODO: Maybe scalar loads actually do make sense? What if someone wants to
+--       index a single element to print a table?
+data MDImpInstr k = MDLaunch Size [IVar] k
+                  | MDAlloc ScalarTableType Size
+                  | MDFree IVar
+                  | MDHostInstr ImpInstr
+                    deriving (Show, Eq, Functor, Foldable, Traversable)
+
+-- The kernel program can only contain Alloc instructions of statically known size
+-- (and they are expected to be small!).
+data ImpKernel = ImpKernel [IVar] IVar ImpProg -- parameters, linear thread index, kernel body
+                 deriving (Show, Eq)
+newtype PTXKernel = PTXKernel String
+                    deriving (Show, Eq)
 
 -- === some handy monoids ===
 
@@ -879,6 +911,45 @@ instance Eq SourceBlock where
 instance Ord SourceBlock where
   compare x y = compare (sbText x) (sbText y)
 
+type IScope = Env IType
+
+class HasIVars a where
+  freeIVars :: a -> IScope
+
+-- XXX: Only for ScalarTableType!
+instance HasIVars Type where
+  freeIVars t = do
+    if null $ freeVars t
+      then mempty
+      else error "Not implemented!" -- TODO need fromScalarAtom here!
+
+instance HasIVars IExpr where
+  freeIVars e = case e of
+    ILit _        -> mempty
+    IVar v@(_:>t) -> v @> t <> freeIVars t
+
+instance HasIVars IType where
+  freeIVars t = case t of
+    IValType _  -> mempty
+    IRefType rt -> freeIVars rt
+
+instance HasIVars ImpInstr where
+  freeIVars i = case i of
+    Load  e       -> freeIVars e
+    Store d e     -> freeIVars d <> freeIVars e
+    Alloc t s     -> freeIVars t <> freeIVars s
+    Free  v       -> varAsEnv v
+    IOffset a o t -> freeIVars a <> freeIVars o <> freeIVars t
+    Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
+    IWhile c p    -> freeIVars c <> freeIVars p
+    IPrimOp op    -> foldMap freeIVars op
+
+instance HasIVars ImpProg where
+  freeIVars (ImpProg stmts) = case stmts of
+    [] -> mempty
+    (Just v , expr):cont -> freeIVars expr <> (freeIVars (ImpProg cont) `envDiff` (v @> ()))
+    (Nothing, expr):cont -> freeIVars expr <>  freeIVars (ImpProg cont)
+
 -- === Synonyms ===
 
 varType :: Var -> Type
@@ -1032,10 +1103,11 @@ builtinNames = M.fromList
   , ("igt" , binOp (ICmp Greater)), ("fgt", binOp (FCmp Greater))
   , ("ilt" , binOp (ICmp Less)),    ("flt", binOp (FCmp Less))
   , ("fneg", unOp  FNeg)
-  , ("exp" , unOp  Exp ), ("log" , unOp Log )
-  , ("sin" , unOp  Sin ), ("cos" , unOp Cos )
-  , ("tan" , unOp  Tan ), ("sqrt", unOp Sqrt)
-  , ("floor", unOp Floor)
+  , ("exp" , unOp  Exp), ("exp2"  , unOp  Exp2)
+  , ("log" , unOp Log), ("log2" , unOp Log2 ), ("log10" , unOp Log10)
+  , ("sin" , unOp  Sin), ("cos" , unOp Cos)
+  , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
+  , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("True" , ConExpr $ Lit $ BoolLit True)
   , ("False", ConExpr $ Lit $ BoolLit False)

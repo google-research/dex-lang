@@ -29,6 +29,7 @@ import Inference
 import Simplify
 import Serialize
 import Imp
+import MDImp
 import Interpreter
 import JIT
 import Logging
@@ -37,9 +38,10 @@ import PPrint
 import Parser
 import PipeRPC
 import JAX
-import Util (highlightRegion, foldMapM)
+import Util (highlightRegion)
+import CUDA
 
-data Backend = LLVM | Interp | JAX  deriving (Show, Eq)
+data Backend = LLVM | LLVMCUDA | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
@@ -47,7 +49,8 @@ data EvalConfig = EvalConfig
   , evalEngine  :: BackendEngine
   , logService  :: Logger [Output] }
 
-data BackendEngine = LLVMEngine LLVMEngine
+type IsCuda = Bool
+data BackendEngine = LLVMEngine IsCuda LLVMEngine
                    | JaxServer JaxServer
                    | InterpEngine
 
@@ -170,8 +173,11 @@ evalModule bindings normalized = do
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
-  LLVM -> liftM LLVMEngine $ newMVar mempty
-  JAX  -> liftM JaxServer $ startPipeServer "python3" ["misc/py/jax_call.py"]
+  LLVM     -> LLVMEngine False <$> newMVar mempty
+  LLVMCUDA -> if hasCUDA
+                then LLVMEngine True  <$> newMVar mempty
+                else error "Dex built without CUDA support"
+  JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
 arrayVars :: HasVars a => a -> [Var]
@@ -186,30 +192,45 @@ evalBackend bindings block = do
   logger  <- asks logService
   let inVars = arrayVars block
   case backend of
-    LLVMEngine engine -> do
+    LLVMEngine isCuda llvmEnv -> do
       let (impFunction, impAtom) = toImpFunction bindings (inVars, block)
       checkPass ImpPass impFunction
       logPass ImpPass (pprint impAtom)
       -- logPass Flops $ impFunctionFlops impFunction
-      let llvmFunc = impToLLVM impFunction
-      liftIO $ modifyMVar engine $ \env -> do
+      resultAtom <- liftIO $ modifyMVar llvmEnv $ \env -> do
         let inPtrs = fmap (env !) inVars
+        llvmFunc <- if isCuda
+          then do
+            let mdImpFunction = impToMDImp impFunction
+            ptxFunction <- traverse compileKernel mdImpFunction
+            return $ mdImpToLLVM ptxFunction
+          else return $ impToLLVM impFunction
         outPtrs <- callLLVM logger llvmFunc inPtrs
         let (ImpFunction impOutVars _ _) = impFunction
         let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
         let outNames = GlobalArrayName <$> [i+1..]
         let env' = foldMap varAsEnv $ zipWith (:>) outNames outPtrs
-        substEnv <- foldMapM mkSubstEnv $ zip3 outNames impOutVars outPtrs
+        let substEnv = foldMap mkSubstEnv $ zip outNames impOutVars
         return (env <> env', subst (substEnv, mempty) impAtom)
+      -- resultAtom is ill typed because it might contain pointers to scalar arrays
+      -- in place of scalars. We fix it up by loading from each of those arrays in here.
+      let scalarVars = filter isScalarRef $ envAsVars $ fmap fst $ freeVars resultAtom
+      scalarArrs <- liftIO $ requestArrays backend scalarVars
+      let scalarVals = fmap (Con . Lit . fromJust . scalarFromArray) scalarArrs
+      let scalarSubstEnv = foldMap (uncurry (@>)) $ zip scalarVars scalarVals
+      return $ subst (scalarSubstEnv, mempty) resultAtom
       where
-        mkSubstEnv :: (Name, Var, Ptr ()) -> IO SubstEnv
-        mkSubstEnv (outName, impVar, outPtr) = case varType impVar of
-          ArrayTy (BaseTy b) -> do
-            lit <- loadScalar b outPtr
-            return $ impVar @> (Con $ Lit $ lit)
-          _        -> return $ impVar @> (Var $ (outName :> varType impVar))
-        loadScalar :: BaseType -> Ptr () -> IO LitVal
-        loadScalar b ptr = fromJust . scalarFromArray <$> (loadArray $ ArrayRef (1, b) ptr)
+        mkSubstEnv :: (Name, Var) -> SubstEnv
+        mkSubstEnv (outName, impVar) = impVar @> (Var $ (outName :> varType impVar))
+
+        isScalarRef (_ :> ArrayTy (BaseTy _)) = True
+        isScalarRef _ = False
+
+        compileKernel :: ImpKernel -> IO PTXKernel
+        compileKernel k = do
+          let llvmKernel = impKernelToLLVM k
+          putStrLn $ show llvmKernel
+          compilePTX logger llvmKernel
     JaxServer server -> do
       -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
       let jfun = toJaxFunction (inVars, block)
@@ -228,12 +249,18 @@ evalBackend bindings block = do
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
 requestArrays _ [] = return []
 requestArrays backend vs = case backend of
-  LLVMEngine env -> do
+  LLVMEngine isCuda env -> do
     env' <- readMVar env
     forM vs $ \v@(_ :> ArrayTy ty) -> do
+      let arrTy@(size, _) = typeToArrayType ty
       case envLookup env' v of
-        Just ref -> loadArray (ArrayRef (typeToArrayType ty) ref)
-        Nothing -> error "Array lookup failed"
+        Just ref -> do
+          hostRef <- case (isCuda, ty) of
+            (True , BaseTy _) -> return ref  -- Scalar references are stored on the host
+            (True , _       ) -> loadCUDAArray ref (fromIntegral $ size * 8)
+            (False, _       ) -> return ref
+          loadArray (ArrayRef arrTy hostRef)
+        Nothing  -> error "Array lookup failed"
   JaxServer server -> do
     let vs' = map (fmap typeToJType) vs
     callPipeServer (psPop server) vs'
