@@ -48,12 +48,12 @@ import Syntax
 import Env
 import PPrint
 import Cat
+import Util
 
-type CompileEnv = Env Operand
--- TODO: consider using LLVM.IRBuilder.Monad instead of rolling our own here
+type OperandEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
-                                 , curInstrs   :: [NInstr]
-                                 , scalarDecls :: [NInstr]
+                                 , curInstrs   :: [Named Instruction]
+                                 , scalarDecls :: [Named Instruction]
                                  , blockName   :: L.Name
                                  , usedNames   :: Env ()
                                  , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
@@ -62,13 +62,11 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , allocas     :: S.Set L.Name
                                  }
 
-type CompileT m = ReaderT CompileEnv (StateT CompileState m)
-type Compile    = CompileT Identity
+type CompileT m    = ReaderT OperandEnv (StateT CompileState m)
+type Compile       = CompileT Identity
 data ExternFunSpec = ExternFunSpec L.Name L.Type [L.ParameterAttribute] [FA.FunctionAttribute] [L.Type]
                      deriving (Ord, Eq)
 
-type Long = Operand
-type NInstr = Named Instruction
 type Function = L.Global
 
 -- === Imp to LLVM ===
@@ -76,45 +74,28 @@ type Function = L.Global
 impToLLVM :: ImpFunction -> LLVMFunction
 impToLLVM (ImpFunction outVars inVars (ImpProg stmts)) =
   runIdentity $ compileFunction paramAttrs compileImpInstr outVars inVars stmts
+  -- Alignment and dereferenceable attributes are guaranteed by malloc_dex
   where paramAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
-
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpInstr isLocal instr = case instr of
-  IPrimOp op -> do
-    op' <- traverse compileExpr op
-    liftM Just $ compilePrimOp op'
-  Load ref -> do
-    ref' <- compileExpr ref
-    liftM Just $ load ref'
-  Store dest val -> do
-    dest' <- compileExpr dest
-    val'  <- compileExpr val
-    store dest' val'
-    return Nothing
-  Alloc t numel -> Just <$> case numel of
+  IPrimOp op       -> Just    <$> (traverse compileExpr op >>= compilePrimOp)
+  Load ref         -> Just    <$> (load =<< compileExpr ref)
+  Store dest val   -> Nothing <$  bindM2 store (compileExpr dest) (compileExpr val)
+  IOffset x off _  -> Just    <$> bindM2 gep (compileExpr x) (compileExpr off)
+  IWhile cond body -> Nothing <$  compileWhile cond body
+  Alloc t numel  -> Just    <$> case numel of
     ILit (IntLit n) | isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
     where elemTy = scalarTy $ scalarTableBaseType t
   Free v' -> do
     ~v@(L.LocalReference _ vn) <- lookupImpVar v'
-    stackAllocated <- gets allocas
-    if vn `S.member` stackAllocated
-      then return ()
-      else do
-        ptr' <- castLPtr charTy v
-        emitVoidExternCall freeFun [ptr']
+    stackAllocated             <- gets allocas
+    if vn `S.member` stackAllocated then return () else free v
     return Nothing
-  IOffset x off _ -> do
-    x' <- compileExpr x
-    off' <- compileExpr off
-    Just <$> gep x' off'
   Loop d i n body -> do
     n' <- compileExpr n
     compileLoop d i n' body
-    return Nothing
-  IWhile cond body -> do
-    compileWhile cond body
     return Nothing
 
 compileLoop :: Direction -> IVar -> Operand -> ImpProg -> Compile ()
@@ -126,15 +107,15 @@ compileLoop d iVar n (ImpProg body) = do
   i0 <- case d of Fwd -> return $ litInt 0
                   Rev -> n `sub` litInt 1
   store i i0
-  entryCond <- litInt 0 `lessThan` n
+  entryCond <- litInt 0 `ilt` n
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
   extendR (iVar @> iVal) $ compileProg compileImpInstr body
   iValNew <- case d of Fwd -> add iVal $ litInt 1
                        Rev -> sub iVal $ litInt 1
   store i iValNew
-  loopCond <- case d of Fwd -> iValNew `lessThan` n
-                        Rev -> iValNew `greaterOrEq` litInt 0
+  loopCond <- case d of Fwd -> iValNew `ilt` n
+                        Rev -> iValNew `ige` litInt 0
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
 
 compileIf :: Monad m => Operand -> CompileT m () -> CompileT m () -> CompileT m ()
@@ -361,7 +342,7 @@ cuModuleGetFunction cuMod name = do
   nameConst <- declareStringConst "kernelName" name
   checkCuResult "cuModuleGetFunction" =<< emitExternCall spec [fptr, cuMod, nameConst]
   load fptr
-  where spec = ExternFunSpec "cuModuleGetFunction" cuResultType [] [] [L.ptr cuFunctionType, cuModuleType, charPtrTy]
+  where spec = ExternFunSpec "cuModuleGetFunction" cuResultType [] [] [L.ptr cuFunctionType, cuModuleType, L.ptr i8]
 
 cuLaunchKernel :: Operand -> (Operand, Operand, Operand) -> (Operand, Operand, Operand) -> [Operand] -> MDHostCompile ()
 cuLaunchKernel fun grid block args = do
@@ -429,7 +410,7 @@ checkCuResult msg result = do
   where
     okResult = L.ConstantOperand $ C.Int cuResultBitWidth 0
     abortSpec = ExternFunSpec "abort" L.VoidType [] [] []
-    putsSpec = ExternFunSpec "puts" i32 [] [] [L.ptr charTy]
+    putsSpec = ExternFunSpec "puts" i32 [] [] [L.ptr i8]
 
 -- === GPU Kernel compilation ===
 
@@ -484,15 +465,6 @@ blockDimX = emitExternCall spec [] >>= (`zeroExtendTo` longTy)
 
 ptxSpecialReg :: L.Name -> ExternFunSpec
 ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
-
-i64 :: L.Type
-i64 = L.IntegerType 64
-
-i32 :: L.Type
-i32 = L.IntegerType 32
-
-i1 :: L.Type
-i1 = L.IntegerType 1
 
 -- === Helpers for Imp and MDImp programs ===
 
@@ -560,6 +532,7 @@ litVal lit = case lit of
       consts = fmap (operandToConst . litVal) l
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 64 (fromIntegral i))
+      operandToConst ~(L.ConstantOperand c) = c
   StrLit _ -> error "Not implemented"
 
 litInt :: Int -> Operand
@@ -575,16 +548,16 @@ load :: Monad m => Operand -> CompileT m Operand
 load ptr = emitInstr ty $ L.Load False ptr Nothing 0 []
   where (L.PointerType ty _) = L.typeOf ptr
 
-lessThan :: Monad m => Long -> Long -> CompileT m Long
-lessThan x y = emitInstr longTy $ L.ICmp IP.SLT x y []
+ilt :: Monad m => Operand -> Operand -> CompileT m Operand
+ilt x y = emitInstr i1 $ L.ICmp IP.SLT x y []
 
-greaterOrEq :: Monad m => Long -> Long -> CompileT m Long
-greaterOrEq x y = emitInstr longTy $ L.ICmp IP.SGE x y []
+ige :: Monad m => Operand -> Operand -> CompileT m Operand
+ige x y = emitInstr i1 $ L.ICmp IP.SGE x y []
 
-add :: Monad m => Long -> Long -> CompileT m Long
+add :: Monad m => Operand -> Operand -> CompileT m Operand
 add x y = emitInstr longTy $ L.Add False False x y []
 
-sub :: Monad m => Long -> Long -> CompileT m Long
+sub :: Monad m => Operand -> Operand -> CompileT m Operand
 sub x y = emitInstr longTy $ L.Sub False False x y []
 
 mul :: Monad m => Operand -> Operand -> CompileT m Operand
@@ -609,8 +582,14 @@ alloca elems ty = do
 
 malloc :: Monad m => L.Type -> Operand -> CompileT m Operand
 malloc ty bytes = do
-  voidPtr <- emitExternCall mallocFun [bytes]
+  bytes64 <- asIntWidth bytes i64
+  voidPtr <- emitExternCall mallocFun [bytes64]
   castLPtr ty voidPtr
+
+free :: Monad m => Operand -> CompileT m ()
+free ptr = do
+  ptr' <- castLPtr i8 ptr
+  emitVoidExternCall freeFun [ptr']
 
 castLPtr :: Monad m => L.Type -> Operand -> CompileT m Operand
 castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
@@ -620,6 +599,10 @@ zeroExtendTo x t = emitInstr t $ L.ZExt x t []
 
 intToBool :: Monad m => Operand -> CompileT m Operand
 intToBool x = emitInstr (L.IntegerType 1) $ L.Trunc x (L.IntegerType 1) []
+
+callInstr :: L.CallableOperand -> [L.Operand] -> L.Instruction
+callInstr fun xs = L.Call Nothing L.C [] fun xs' [] []
+ where xs' = [(x ,[]) | x <- xs]
 
 externCall :: ExternFunSpec -> [L.Operand] -> L.Instruction
 externCall (ExternFunSpec fname retTy _ _ argTys) xs = callInstr fun xs
@@ -635,10 +618,6 @@ emitVoidExternCall f xs = do
   modify $ setFunSpecs (S.insert f)
   addInstr $ L.Do $ externCall f xs
 
-callInstr :: L.CallableOperand -> [L.Operand] -> L.Instruction
-callInstr fun xs = L.Call Nothing L.C [] fun xs' [] []
- where xs' = [(x ,[]) | x <- xs]
-
 scalarTy :: BaseType -> L.Type
 scalarTy b = case b of
   Scalar sb -> case sb of
@@ -653,16 +632,19 @@ fromIType addrSpace it = case it of
   IValType b -> scalarTy b
   IRefType t -> L.PointerType (scalarTy $ scalarTableBaseType t) addrSpace
 
-operandToConst :: Operand -> C.Constant
-operandToConst (L.ConstantOperand c) = c
-operandToConst op = error $ "Not a constant: " ++ show op
-
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
 showName :: Name -> String
 showName (Name GenName tag counter) = asStr $ pretty tag <> "." <> pretty counter
 showName _ = error $ "All names in JIT should be from the GenName namespace"
+
+asIntWidth :: Monad m => Operand -> L.Type -> CompileT m Operand
+asIntWidth op ~expTy@(L.IntegerType expWidth) = case compare expWidth opWidth of
+  LT -> emitInstr expTy $ L.Trunc op expTy []
+  EQ -> return op
+  GT -> emitInstr expTy $ L.ZExt  op expTy []
+  where ~(L.IntegerType opWidth) = L.typeOf op
 
 freshParamOpPair :: Monad m => [L.ParameterAttribute] -> L.Type -> CompileT m (Parameter, Operand)
 freshParamOpPair ptrAttrs ty = do
@@ -686,11 +668,11 @@ externDecl (ExternFunSpec fname retTy retAttrs funAttrs argTys) =
 
 -- === Compile monad utilities ===
 
-runCompileT :: Monad m => CompileEnv -> CompileT m a -> m a
-runCompileT env m = evalStateT (runReaderT m env) initState
+runCompileT :: Monad m => OperandEnv -> CompileT m a -> m a
+runCompileT env m = evalStateT (runReaderT m env ) initState
   where initState = CompileState [] [] [] "start_block" mempty mempty mempty mempty mempty
 
-runCompile :: CompileEnv -> Compile a -> a
+runCompile :: OperandEnv -> Compile a -> a
 runCompile env m = runIdentity $ runCompileT env m
 
 lookupImpVar :: Monad m => IVar -> CompileT m Operand
@@ -725,13 +707,13 @@ emitInstr ty instr = do
 addInstr :: Monad m => Named Instruction -> CompileT m ()
 addInstr instr = modify $ setCurInstrs (instr:)
 
-setScalarDecls :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
+setScalarDecls :: ([Named Instruction] -> [Named Instruction]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }
 
 setAllocas :: (S.Set L.Name -> S.Set L.Name) -> CompileState -> CompileState
 setAllocas update s = s { allocas = update (allocas s) }
 
-setCurInstrs :: ([NInstr] -> [NInstr]) -> CompileState -> CompileState
+setCurInstrs :: ([Named Instruction] -> [Named Instruction]) -> CompileState -> CompileState
 setCurInstrs update s = s { curInstrs = update (curInstrs s) }
 
 setCurBlocks :: ([BasicBlock] -> [BasicBlock]) -> CompileState -> CompileState
@@ -750,25 +732,34 @@ mathFlags :: L.FastMathFlags
 mathFlags = L.noFastMathFlags { L.allowContract = True }
 
 mallocFun :: ExternFunSpec
-mallocFun  = ExternFunSpec "malloc_dex" charPtrTy [L.NoAlias] [] [longTy]
+mallocFun = ExternFunSpec "malloc_dex" (L.ptr i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
-freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [charPtrTy]
-
-charPtrTy :: L.Type
-charPtrTy = L.ptr charTy
-
-charTy :: L.Type
-charTy = L.IntegerType 8
-
-boolTy :: L.Type
-boolTy = L.IntegerType 64
+freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
 
 longTy :: L.Type
-longTy = L.IntegerType 64
+longTy = i64
 
 realTy :: L.Type
-realTy = L.FloatingPointType L.DoubleFP
+realTy = fp64
+
+boolTy :: L.Type
+boolTy = i64
+
+fp64 :: L.Type
+fp64 = L.FloatingPointType L.DoubleFP
+
+i64 :: L.Type
+i64 = L.IntegerType 64
+
+i32 :: L.Type
+i32 = L.IntegerType 32
+
+i8 :: L.Type
+i8 = L.IntegerType 8
+
+i1 :: L.Type
+i1 = L.IntegerType 1
 
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
@@ -806,7 +797,7 @@ makeModuleEx dataLayout triple defs = do
 
 makeEntryPoint :: L.Name -> [L.Type] -> L.CallableOperand -> Function
 makeEntryPoint wrapperName argTypes f = runCompile mempty $ do
-  (argParam, argOperand) <- freshParamOpPair [] (L.ptr charPtrTy)
+  (argParam, argOperand) <- freshParamOpPair [] (L.ptr $ L.ptr i8)
   args <- forM (zip [0..] argTypes) $ \(i, ty) -> do
     curPtr <- gep argOperand $ litInt i
     arg <- case ty of
