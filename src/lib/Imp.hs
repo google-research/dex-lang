@@ -205,6 +205,9 @@ toImpOp (maybeDest, op) = case op of
     extraOffset <- indexToInt (PairTy u v) (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom resultTy tileOffset'
+  ThrowError ty -> do
+    emitStatement (Nothing, IThrowError)
+    return $ Con $ AnyValue ty
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where

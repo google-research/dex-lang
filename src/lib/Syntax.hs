@@ -241,7 +241,6 @@ data PrimCon e =
       | ClassDictHole e   -- Only used during type inference
         -- type, tag, payload (only used during Imp lowering)
       | SumAsProd e e [(DataConName, [e])]
-      | Todo e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -272,6 +271,7 @@ data PrimOp e =
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
+      | ThrowError e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -1115,7 +1115,7 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("asidx"       , OpExpr $ IntAsIndex () ())
   , ("select"      , OpExpr $ Select () () ())
-  , ("todo"       , ConExpr $ Todo ())
+  , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)

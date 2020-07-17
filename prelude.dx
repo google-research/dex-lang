@@ -85,7 +85,7 @@ def select (p:Bool) (x:a) (y:a) : a = %select p x y
 def i2r (x:Int ) : Real = %inttoreal x
 def b2i (x:Bool) : Int  = %booltoint x
 def b2r (x:Bool) : Real = i2r (b2i x)
-def todo (a:Type) ?-> : a = %todo a
+def todo (a:Type) ?-> : a = %throwError a
 
 'Effects
 

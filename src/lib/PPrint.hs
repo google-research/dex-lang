@@ -154,7 +154,6 @@ instance Pretty e => Pretty (PrimCon e) where
       _ -> "SumCon" <+> p c <+> p l <+> p r
     SumAsProd ty tag payload -> "SumAsProd" <+> p ty <+> p tag <+> p payload
     ClassDictHole _ -> "_"
-    Todo e -> "<undefined " <> p e <> ""
 
 instance Pretty e => Pretty (PrimOp e) where
   pretty op = case op of
@@ -164,6 +163,7 @@ instance Pretty e => Pretty (PrimOp e) where
     PrimEffect ref (MTell val) ->  p ref <+> "+=" <+> p val
     ArrayOffset arr idx off -> p arr <+> "+>" <+> p off <+> (parens $ "index:" <+> p idx)
     ArrayLoad arr       -> "load" <+> p arr
+    ThrowError e -> "<throw error>"
     _ -> prettyExprDefault $ OpExpr op
 
 instance Pretty e => Pretty (PrimHof e) where

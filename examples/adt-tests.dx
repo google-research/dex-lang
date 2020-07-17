@@ -75,6 +75,11 @@ myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
   MyLeft  val -> val
 > Runtime error
 
+:p for i. case myTab.i of
+  MyLeft  val -> val
+  MyRight _   -> todo
+> Runtime error
+
 :p
   snd $ withAccum \ref.
     for i. case myTab.i of

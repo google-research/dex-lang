@@ -336,7 +336,6 @@ instance CoreVariant (PrimCon a) where
     ClassDictHole _ -> goneBy Core
     SumCon _ _ _    -> alwaysAllowed -- not sure what this should be
     RefCon _ _      -> neverAllowed
-    Todo _          -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimHof a) where
@@ -470,7 +469,6 @@ typeCheckCon con = case con of
         _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
   SumAsProd ty _ _ -> return ty  -- TODO: check!
   ClassDictHole ty -> ty |: TyKind >> return ty
-  Todo ty -> ty|:TyKind $> ty
 
 typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
@@ -562,6 +560,7 @@ typeCheckOp op = case op of
     BaseTy (Vector sb) <- typeCheck x
     i |: TC (IntRange (IntVal 0) (IntVal vectorWidth))
     return $ BaseTy $ Scalar sb
+  ThrowError ty -> ty|:TyKind $> ty
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
