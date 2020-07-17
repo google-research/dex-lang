@@ -226,6 +226,7 @@ typeToArrayType t = case t of
     where (IntVal size) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
+-- TODO: this isn't enough, since this module's compilation might be cached
 curCompilerVersion :: String
 curCompilerVersion = __TIME__
 

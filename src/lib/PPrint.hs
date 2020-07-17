@@ -57,6 +57,7 @@ instance Pretty ErrType where
       "Please report this at github.com/google-research/dex-lang/issues\n" <> line
     DataIOErr         -> "IO error: "
     MiscErr           -> "Error:"
+    RuntimeErr        -> "Runtime error"
 
 instance Pretty TyQual where
   pretty (TyQual v c) = p c <+> p v
@@ -240,6 +241,7 @@ instance Pretty ImpInstr where
   pretty (IWhile cond body)      = "while" <+>
                                      nest 2 (hardline <> p cond) <> "do" <>
                                      nest 2 (hardline <> p body)
+  pretty IThrowError = "throwError"
   pretty (If predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)

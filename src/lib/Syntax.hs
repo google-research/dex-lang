@@ -400,6 +400,7 @@ data ImpInstr = Load  IExpr
               | Loop Direction IVar Size ImpProg
               | IWhile IExpr ImpProg
               | If IExpr ImpProg ImpProg
+              | IThrowError  -- TODO: parameterize by a run-time string
               | IPrimOp IPrimOp
                 deriving (Show, Eq)
 
@@ -514,6 +515,7 @@ data ErrType = NoErr
              | NotImplementedErr
              | DataIOErr
              | MiscErr
+             | RuntimeErr
                deriving (Show, Eq)
 
 type Except = Either Err

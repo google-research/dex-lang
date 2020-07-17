@@ -114,10 +114,7 @@ toImpExpr env (maybeDest, expr) = case expr of
         destToAtom dest
 
 matchCases :: SubstEnv -> Dest -> IExpr -> [(DataConName, [Atom])] -> [Alt] -> ImpM ()
--- TODO: reaching the end of the alternatives should be a run-time error (and we
--- might want to optimize away the last match evaluation if we're sure it can't
--- occur).
-matchCases _ _ _ _ [] = return ()
+matchCases _ _ _ _ [] = emitStatement (Nothing, IThrowError)
 matchCases env dest tag dataVals (Alt (con,bs) body : alts) = do
   let Just (i, args) = lookupWithIdx con dataVals
   pred <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) tag (IIntVal i)
@@ -791,6 +788,7 @@ instrTypeChecked instr = case instr of
     IRefType (TabTy _ _) <- checkIExpr e
     checkInt i
     return $ Just $ IRefType $ t
+  IThrowError -> return Nothing
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do

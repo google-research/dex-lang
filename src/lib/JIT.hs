@@ -84,6 +84,7 @@ compileImpInstr isLocal instr = case instr of
   Store dest val   -> Nothing <$  bindM2 store (compileExpr dest) (compileExpr val)
   IOffset x off _  -> Just    <$> bindM2 gep (compileExpr x) (compileExpr off)
   IWhile cond body -> Nothing <$  compileWhile cond body
+  IThrowError      -> Nothing <$  throwRuntimeError
   Alloc t numel  -> Just    <$> case numel of
     ILit (IntLit n) | isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
@@ -144,6 +145,11 @@ compileWhile cond (ImpProg body) = do
   compileProg compileImpInstr body
   loopCond <- load cond' >>= intToBool
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
+
+throwRuntimeError :: Compile ()
+throwRuntimeError = do
+  deadBlock <- freshName "deadBlock"
+  finishBlock (L.Ret (Just $ litInt 1) []) deadBlock
 
 compilePrimOp :: Monad m => PrimOp Operand -> CompileT m Operand
 compilePrimOp (ScalarBinOp op x y) = compileBinOp op x y
@@ -432,7 +438,7 @@ impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile mempty $ do
     let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
     -- TODO: Use a restricted form of compileProg that e.g. never emits FFI calls!
     extendR (paramEnv <> lvar @> lidx) $ compileProg compileImpInstr prog
-  kernel <- makeFunction "kernel" (sizeParam : argParams)
+  kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout targetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
@@ -489,11 +495,11 @@ compileFunction attrs compileInstr outVars inVars stmts = runCompileT mempty $ d
   modify (\s -> s { progOutputs = zipEnv outVars outOperands })
   extendR paramEnv $ compileProg compileInstr stmts
 
+
   let params = outParams ++ inParams
   let paramTypes = fmap L.typeOf params
-  mainFun <- makeFunction "mainFun" params
-
-  let mainFunOp = callableOperand (funTy L.VoidType paramTypes) "mainFun"
+  mainFun <- makeFunction "mainFun" params (Just $ litInt 0)
+  let mainFunOp = callableOperand (funTy longTy paramTypes) "mainFun"
   let entryFun = makeEntryPoint "entryFun" paramTypes mainFunOp
   LLVMFunction numOutputs <$> makeModule [L.GlobalDefinition mainFun,
                                           L.GlobalDefinition entryFun]
@@ -771,16 +777,18 @@ funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False
 
 -- === Module building ===
 
-makeFunction :: Monad m => L.Name -> [Parameter] -> CompileT m Function
-makeFunction name params = do
-  finishBlock (L.Ret Nothing []) "<ignored>"
+makeFunction :: Monad m => L.Name -> [Parameter] -> Maybe L.Operand -> CompileT m Function
+makeFunction name params returnVal = do
+  finishBlock (L.Ret returnVal []) "<ignored>"
   decls <- gets scalarDecls
   ~((L.BasicBlock bbname instrs term):blocksTail) <- gets (reverse . curBlocks)
   let blocks = (L.BasicBlock bbname (decls ++ instrs) term):blocksTail
+  let returnTy = case returnVal of Nothing -> L.VoidType
+                                   Just x  -> L.typeOf x
   return $ L.functionDefaults
     { L.name        = name
     , L.parameters  = (params, False)
-    , L.returnType  = L.VoidType
+    , L.returnType  = returnTy
     , L.basicBlocks = blocks }
 
 makeModule :: Monad m => [L.Definition] -> CompileT m L.Module
@@ -810,8 +818,8 @@ makeEntryPoint wrapperName argTypes f = runCompile mempty $ do
       L.PointerType _ _                   -> load curPtr
       _                                   -> error "Expected a pointer type"
     emitInstr ty $ L.BitCast arg ty []
-  addInstr $ L.Do $ callInstr f args
-  makeFunction wrapperName [argParam]
+  exitCode <- emitInstr longTy  $ callInstr f args
+  makeFunction wrapperName [argParam] (Just exitCode)
 
 instance Pretty L.Operand where
   pretty x = pretty (show x)

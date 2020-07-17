@@ -29,6 +29,7 @@ import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.Storable
 import Control.Monad
+import Control.Exception hiding (throw)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef
 import qualified Data.Map as M
@@ -40,8 +41,9 @@ import Syntax
 foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
 foreign import ccall "dynamic"
-  callFunPtr :: FunPtr (Ptr () -> IO ()) -> Ptr () -> IO ()
+  callFunPtr :: FunPtr (Ptr () -> IO ExitCode) -> Ptr () -> IO ExitCode
 
+type ExitCode = Int
 type NumOutputs   = Int
 data LLVMFunction = LLVMFunction NumOutputs L.Module
 data LLVMKernel   = LLVMKernel L.Module
@@ -72,15 +74,18 @@ callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
   argsPtr <- mallocBytes $ (numOutputs + numInputs) * ptrSize
   forM_ (zip [numOutputs..] inArrays) $ \(i, p) -> do
     poke (argsPtr `plusPtr` (i * ptrSize)) p
-  evalLLVM logger ast argsPtr
-  outputPtrs <- forM [0..numOutputs - 1] $ \i -> peek (argsPtr `plusPtr` (i * ptrSize))
-  free argsPtr
-  return outputPtrs
+  exitCode <- evalLLVM logger ast argsPtr
+  case exitCode of
+    0 -> do
+      outputPtrs <- forM [0..numOutputs - 1] $ \i -> peek (argsPtr `plusPtr` (i * ptrSize))
+      free argsPtr
+      return outputPtrs
+    _ -> throwIO $ Err RuntimeErr Nothing ""
   where
     numInputs = length inArrays
     ptrSize = 8 -- TODO: Get this from LLVM instead of hardcoding!
 
-evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ()
+evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ExitCode
 evalLLVM logger ast argPtr = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
@@ -106,9 +111,10 @@ evalLLVM logger ast argPtr = do
                     entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
                     Right (JIT.JITSymbol f _) <- JIT.findSymbol compileLayer entryFunSymbol False
                     t1 <- getCurrentTime
-                    callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
+                    exitCode <- callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
                     t2 <- getCurrentTime
                     logThis logger [EvalTime $ realToFrac $ t2 `diffUTCTime` t1]
+                    return exitCode
   where
     makeResolver :: JIT.IRCompileLayer JIT.ObjectLinkingLayer -> JIT.SymbolResolver
     makeResolver cl = JIT.SymbolResolver $ \sym -> do
