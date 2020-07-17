@@ -123,7 +123,6 @@ data ArrowP eff = PlainArrow eff
 data LetAnn = PlainLet
             | InstanceLet
             | SuperclassLet
-            | NewtypeLet
               deriving (Show, Eq, Generic)
 
 type Val  = Atom
@@ -228,7 +227,6 @@ data PrimTC e =
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
       | JArrayType [Int] ScalarBaseType
-      | NewtypeApp e [e]  -- binding var args
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -240,7 +238,6 @@ data PrimCon e =
       | UnitCon
       | RefCon e e
       | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
-      | NewtypeCon e e    -- result type, argument
       | ClassDictHole e   -- Only used during type inference
         -- type, tag, payload (only used during Imp lowering)
       | SumAsProd e e [(DataConName, [e])]
@@ -275,7 +272,6 @@ data PrimOp e =
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
-      | FromNewtypeCon e e  -- result type, argument
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -1124,8 +1120,6 @@ builtinNames = M.fromList
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
-  , ("newtypeCon"      , ConExpr $ NewtypeCon     () ())
-  , ("fromNewtypeCon"  , OpExpr  $ FromNewtypeCon () ())
   , ("while"           , HofExpr $ While () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())

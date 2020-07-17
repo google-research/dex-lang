@@ -140,14 +140,18 @@ instance HasType Expr where
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
-    Case e (alt:alts) -> do
-      ty <- typeCheck e
-      TypeCon tyCon tyParams <- typeCheck e
-      resultTy <- typeCheckAlt tyCon tyParams alt
-      forM_ alts $ \alt'-> do
-        resultTy' <- typeCheckAlt tyCon tyParams alt'
-        checkEq resultTy resultTy'
-      return resultTy
+    Case e (alt@(Alt _ body):alts) -> do
+      optEnv <- ask
+      case optEnv of
+        SkipChecks -> typeCheck body
+        CheckWith _ -> do
+          ty <- typeCheck e
+          TypeCon tyCon tyParams <- typeCheck e
+          resultTy <- typeCheckAlt tyCon tyParams alt
+          forM_ alts $ \alt'-> do
+            resultTy' <- typeCheckAlt tyCon tyParams alt'
+            checkEq resultTy resultTy'
+          return resultTy
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -320,19 +324,16 @@ instance CoreVariant (PrimTC a) where
     TypeKind -> alwaysAllowed
     EffectRowKind  -> alwaysAllowed
     JArrayType _ _ -> neverAllowed
-    NewtypeApp _ _ -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimOp a) where
   checkVariant e = case e of
-    FromNewtypeCon _ _ -> goneBy Simp
     Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimCon a) where
   checkVariant e = case e of
     ClassDictHole _ -> goneBy Core
-    NewtypeCon _ _  -> goneBy Simp
     SumCon _ _ _    -> alwaysAllowed -- not sure what this should be
     RefCon _ _      -> neverAllowed
     Todo _          -> goneBy Simp
@@ -445,17 +446,6 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   JArrayType _ _   -> undefined
-  NewtypeApp f xs -> do
-    fTy <- typeCheck f
-    foldM checkApp fTy xs
-    where
-      checkApp :: Atom -> Atom -> TypeM Type
-      checkApp pi x = do
-        Pi piTy <- return pi
-        x |: absArgType piTy
-        -- Newtype arrows should be pure.
-        (PureArrow, resultTy) <- return $ applyAbs piTy x
-        return resultTy
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -479,7 +469,6 @@ typeCheckCon con = case con of
         TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
         _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
   SumAsProd ty _ _ -> return ty  -- TODO: check!
-  NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ClassDictHole ty -> ty |: TyKind >> return ty
   Todo ty -> ty|:TyKind $> ty
 
@@ -540,7 +529,6 @@ typeCheckOp op = case op of
   SndRef ref -> do
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
-  FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!
     ArrayTy (TabTyAbs a) <- typeCheck arr

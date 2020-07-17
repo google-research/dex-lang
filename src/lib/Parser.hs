@@ -213,7 +213,6 @@ uHole = withSrc $ underscore $> UHole
 letAnnStr :: Parser LetAnn
 letAnnStr =   (string "instance"   $> InstanceLet)
           <|> (string "superclass" $> SuperclassLet)
-          <|> (string "newtype"    $> NewtypeLet)
 
 topDecl :: Parser UDecl
 topDecl = dataDef <|> topLet
@@ -409,7 +408,7 @@ caseAlt :: Parser UAlt
 caseAlt = UAlt <$> conPat <*> (sym "->" *> blockOrExpr)
 
 conPat :: Parser UConPat
-conPat = (,) <$> uName <*> many uName
+conPat = (,) <$> uName <*> many uBinderName
 
 uCaseExpr :: Parser UExpr
 uCaseExpr = do

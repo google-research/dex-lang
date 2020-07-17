@@ -33,7 +33,6 @@ import PPrint
 import Cat
 import Util (lookupWithIdx)
 import qualified Algebra as A
-
 -- Note [Valid Imp atoms]
 --
 -- The Imp translation functions as an interpreter for the core IR, which has a side effect
@@ -68,7 +67,7 @@ toImpFunction bindings (vsIn, block) = runImpM bindings vsIn $ do
 
 runImpM :: Bindings -> [ScalarTableVar] -> ImpM a -> a
 runImpM bindings inVars m =
-  fst $ runCat (runReaderT m bindings) (mempty, (inVarScope, mempty))
+  fst $ runCat (runReaderT m bindings) (mempty, (bindings <> inVarScope, mempty))
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
     inVarScope = foldMap varAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inVars

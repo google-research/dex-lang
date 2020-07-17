@@ -12,9 +12,6 @@ Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
 
-def unsafeNewtypeCon     (a:Type)?-> (b:Type) ?-> (x:a) : b = %newtypeCon b x
-def unsafeFromNewtypeCon (a:Type)?-> (b:Type) ?-> (x:a) : b = %fromNewtypeCon b x
-
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : a & b = %pair x y
 def fst (p: a & b) : a = %fst p
@@ -27,45 +24,40 @@ def ipow (x:Int) (y:Int) : Int = %ipow x y
 def neg  (x:Real)          : Real = %fneg x
 def fdiv (x:Real) (y:Real) : Real = %fdiv x y
 
-@newtype def Add (a:Type) : Type = (a->a->a & a->a->a & a)  -- add, sub, zero
-MkAdd   : (a->a->a & a->a->a & a) -> Add a = unsafeNewtypeCon
-fromAdd : Add a -> (a->a->a & a->a->a & a) = unsafeFromNewtypeCon
+data Add a:Type =
+  MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
 
-def (+)  (d:Add a) ?=> : a -> a -> a =       fst $ fromAdd d
-def (-)  (d:Add a) ?=> : a -> a -> a = fst $ snd $ fromAdd d
-def zero (d:Add a) ?=> : a           = snd $ snd $ fromAdd d
+def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
+def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
+def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
-@instance realAdd : Add Real = MkAdd (\x y. %fadd x y, \x y. %fsub x y, 0.0)
-@instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y, \x y. %isub x y, 0)
-@instance unitAdd : Add Unit = MkAdd (\x y. (), \x y. (), ())
+@instance realAdd : Add Real = MkAdd (\x y. %fadd x y) (\x y. %fsub x y) 0.0
+@instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y) (\x y. %isub x y) 0
+@instance unitAdd : Add Unit = MkAdd (\x y. ())        (\x y. ())        ()
 
 @instance tabAdd : Add a ?=> Add (n=>a) =
-  MkAdd ( \xs ys. for i. xs.i + ys.i
-        , \xs ys. for i. xs.i - ys.i
-        , for _. zero)
+  (MkAdd ( \xs ys. for i. xs.i + ys.i )
+         ( \xs ys. for i. xs.i - ys.i )
+         ( for _. zero ))
 
-@newtype def Mul (a:Type) : Type = a->a->a
-MkMul   : (a->a->a) -> Mul a = unsafeNewtypeCon
-fromMul : Mul a -> (a->a->a) = unsafeFromNewtypeCon
+data Mul a:Type = MkMul (a->a->a)
 
-def (*)  (d:Mul a) ?=> : a -> a -> a = fromMul d
+def (*)  (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul -> mul
 
 @instance realMul : Mul Real = MkMul \x y. %fmul x y
 @instance intMul  : Mul Int  = MkMul \x y. %imul x y
 @instance unitMul : Mul Unit = MkMul \x y. ()
 
-@newtype def VSpace (a:Type) : Type = Real -> a -> a
-MkVSpace   : Add a -> (Real->a->a) -> VSpace a = \d scale. unsafeNewtypeCon (d, scale)
-fromVSpace : VSpace a -> (Add a & Real->a->a) = unsafeFromNewtypeCon
+data VSpace a:Type = MkVSpace (Add a) (Real -> a -> a)
 
 @superclass
-def addFromVSpace (d:VSpace a) : Add a = fst (fromVSpace d)
+def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
 
 flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
 const : a -> b -> a = \x _. x
 
-def (.*)  (d:VSpace a) ?=> : Real -> a -> a = snd $ fromVSpace d
+def (.*)  (d:VSpace a) ?=> : Real -> a -> a = case d of MkVSpace _ scale -> scale
 (*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
 def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 
@@ -130,24 +122,17 @@ def withState
 
 'Type classes
 
-@newtype
-def Eq (a:Type) : Type = a -> a -> Bool
-def MkEq (f: a -> a -> Bool) : Eq a = unsafeNewtypeCon f
-def fromEq (d:Eq a) : a -> a -> Bool = unsafeFromNewtypeCon d
-
-@newtype
-def Ord (a:Type) : Type = (Eq a & a -> a -> Bool & a -> a -> Bool)  -- eq, gt, lt
-def MkOrd (eq:Eq a) -> (gt: a -> a -> Bool) -> (lt: a -> a -> Bool) : Ord a = unsafeNewtypeCon (eq, gt, lt)
-def fromOrd (d:Ord a) : (Eq a & a -> a -> Bool & a -> a-> Bool) = unsafeFromNewtypeCon d
+data Eq  a:Type = MkEq  (a -> a -> Bool)
+data Ord a:Type = MkOrd (Eq a) (a -> a -> Bool) (a -> a -> Bool)  -- eq, gt, lt
 
 @superclass
-def eqFromOrd (d:Ord a) : Eq a = fst (fromOrd d)
+def eqFromOrd (d:Ord a) : Eq a = case d of MkOrd eq _ _ -> eq
 
-def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = (fromEq d) x y
+def (==) (d:Eq a) ?=> (x:a) (y:a) : Bool = case d of MkEq eq -> eq x y
 def (/=) (d:Eq a) ?=> (x:a) (y:a) : Bool = not $ x == y
 
-def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = fst (snd (fromOrd d)) x y
-def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = snd (snd (fromOrd d)) x y
+def (>)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ gt _  -> gt x y
+def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
@@ -399,9 +384,9 @@ def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
 def broadcastVector (v : Real) : VectorReal = packVector v v v v
 
 @instance vectorRealAdd : Add VectorReal =
-  MkAdd ( \x y. %vfadd x y
-        , \x y. %vfsub x y
-        , broadcastVector zero )
+  (MkAdd ( \x y. %vfadd x y )
+         ( \x y. %vfsub x y )
+         ( broadcastVector zero ))
 @instance vectorRealMul : Mul VectorReal = MkMul \x y. %vfmul x y
 @instance vectorRealVSpace : VSpace VectorReal =
   MkVSpace vectorRealAdd \x v. broadcastVector x * v

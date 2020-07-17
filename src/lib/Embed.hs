@@ -613,7 +613,6 @@ reduceAtom scope x = case x of
   Var v -> case snd (scope ! v) of
     -- TODO: worry about effects!
     LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    LetBound NewtypeLet _  -> TC $ NewtypeApp x []
     _ -> x
   _ -> x
 
@@ -627,8 +626,6 @@ reduceExpr scope expr = case expr of
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
-      TC (NewtypeApp wrapper xs) ->
-        Just $ TC $ NewtypeApp wrapper (xs ++ [x'])
       TypeCon f xs -> Just $ TypeCon f $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing

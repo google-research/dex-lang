@@ -255,46 +255,6 @@ fun : a -> a = \x. sin x
 > fun : a -> a = \x. sin x
 >                        ^
 
-@newtype
-NewPair : Type -> Type -> Type = \a b. (a & b)
-
-mkNewPair   : (a & b) -> NewPair a b = unsafeNewtypeCon
-fromNewPair : NewPair a b -> (a & b) = unsafeFromNewtypeCon
-
-newPair : NewPair Int Real = mkNewPair (1, 2.0)
-
-:p fst newPair
-> Type error:
-> Expected: (a & b)
->   Actual: NewPair Int Real
-> (Solving for: [a:Type, b:Type])
->
-> :p fst newPair
->        ^^^^^^^
-
-:p fst $ fromNewPair newPair
-> 1
-
-:p NewPair
-> NewPair
-
-:p NewPair Int
-> NewPair Int
-
-:p NewPair Int Real
-> NewPair Int Real
-
-NewPairIntReal = NewPair Int Real
-
-:p NewPairIntReal
-> NewPair Int Real
-
-newPair2 : NewPairIntReal = mkNewPair (1, 2.0)
-
-:p fst $ fromNewPair newPair
-> 1
-
-
 good_range : Type = (1@Fin 3)..(2@_)
 
 bad_range : Int = (1@Fin 3)..(2@_)

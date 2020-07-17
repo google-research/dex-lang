@@ -72,7 +72,6 @@ simplifyAtom atom = case atom of
       Just x -> return $ deShadow x scope
       Nothing -> case envLookup scope v of
         Just (_, info) -> case info of
-          LetBound NewtypeLet _ -> pure $ TC $ NewtypeApp atom []
           LetBound _ (Atom x) -> dropSub $ simplifyAtom x
           DataBoundTypeCon _ -> error "unreachable?"  -- pure $ TyCon   v []
           DataBoundDataCon   -> error "unreachable?"  -- pure $ DataCon v [] []
@@ -85,18 +84,14 @@ simplifyAtom atom = case atom of
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
   Con (AnyValue (SumTy l r)) -> do
     Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
-  -- TODO: handle DataConTy and TypeConTy instead of special-casing this?
-  Con (SumAsProd ty tag payload) -> do
-    ty' <- substEmbedR ty
-    tag' <- simplifyAtom tag
-    payload' <- forM payload $ \(con, args) ->
-                  (,) <$> mapM substEmbedR con <*> mapM simplifyAtom args
-    return $ Con $ SumAsProd ty' tag' payload'
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
   DataCon f params args -> DataCon <$>
     mapM substEmbedR f <*> mapM simplifyAtom params  <*> mapM simplifyAtom args
+  TypeCon con xs -> TypeCon <$> mapM substEmbedR con <*> mapM simplifyAtom xs
+  DataConTy _ _ _ -> substEmbedR atom
+  TypeConTy _     -> substEmbedR atom
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
@@ -154,7 +149,6 @@ simplifyExpr expr = case expr of
     case f' of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
-      TC (NewtypeApp wrapper xs) -> return $ TC $ NewtypeApp wrapper (xs ++ [x'])
       DataCon con params xs -> return $ DataCon con params' xs'
          where DataConTy _ paramBs _ = varType con
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
@@ -186,7 +180,6 @@ simplifyOp op = case op of
   SumGet (SumVal _ l r) left -> return $ if left then l else r
   SumTag (SumVal s _ _) -> return $ s
   Select p x y -> selectAt (getType x) p x y
-  FromNewtypeCon _ (Con (NewtypeCon _ x)) -> return x
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom
