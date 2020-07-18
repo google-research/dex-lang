@@ -6,12 +6,12 @@
    double 10.0
 > 20.0
 
-:p isum (iota (Fin 10))
+:p sum (iota (Fin 10))
 > 45
 
 :p
    x = iota (Fin 10)
-   isum (for i. x.i)
+   sum (for i. x.i)
 > 45
 
 :p
@@ -40,7 +40,7 @@ arr = iota NArr
 :p for i:NArr. (iota _).i + (iota _).i
 > [0, 2, 4, 6, 8, 10, 12]
 
-:p isum for i:NArr. 1
+:p sum for i:NArr. 1
 > 7
 
 fun = \y. sum (map i2r arr) + y
@@ -187,7 +187,7 @@ N4 = Fin 4
 
 mat = for i:N3 j:N4. (iota _).i + (10 * (iota _).j)
 
--- :p isum for (i,j). mat.i.j
+-- :p sum for (i,j). mat.i.j
 -- > 192
 
 litArr = [10, 5, 3]
@@ -574,7 +574,7 @@ def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
 > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
-upperBound = isum $ for i:(Fin 4). 1
+upperBound = sum $ for i:(Fin 4). 1
 :p for j:(Fin upperBound). 1.0
 > [1.0, 1.0, 1.0, 1.0]
 
