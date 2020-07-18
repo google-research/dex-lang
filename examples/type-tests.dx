@@ -57,13 +57,13 @@ help make the errors more local.
 
 :t
    x = iota (Fin 10)
-   isum x
+   sum x
 > Int
 
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   i2r (isum for i. x.i) + i2r (isum for j. y.j)
+   i2r (sum for i. x.i) + i2r (sum for j. y.j)
 > Real
 
 :t
