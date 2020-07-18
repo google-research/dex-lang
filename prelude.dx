@@ -260,7 +260,7 @@ def reduce (identity:a) (binop:(a->a->a)) (xs:n=>a) : a =
   -- `binop` should be a commutative and associative, and form a
   -- commutative monoid with `identity`
   -- TODO: implement with a parallelizable monoid-parameterized writer
-  fold identity (\i c. body c xs.i)
+  fold identity (\i c. binop c xs.i)
 
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
