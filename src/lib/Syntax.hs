@@ -1,9 +1,3 @@
--- Copyright 2019 Google LLC
---
--- Use of this source code is governed by a BSD-style
--- license that can be found in the LICENSE file or at
--- https://developers.google.com/open-source/licenses/bsd
-
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -27,7 +21,7 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    UAlt (..), Alt (..), TypeConName, DataConName, varBinding,
+    UAlt (..), Alt, varBinding,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings, UConDef,
@@ -39,8 +33,9 @@ module Syntax (
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UBinder, UAnnBinder, UVar, declAsScope,
     UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
+    DataDef (..), DataConDef (..),
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
-    applyNaryAbs, freshSkolemVar,
+    applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
     pattern IntLitExpr, pattern RealLitExpr,
@@ -76,33 +71,31 @@ import Array
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
-          | DataCon DataConName [Atom] [Atom]
-          | TypeCon TypeConName [Atom]
-          | DataConTy TypeConName [Binder] [Binder]
-          | TypeConTy [Type]
+          | DataCon DataDef [Atom] Int [Atom]
+          | TypeCon DataDef [Atom]
           | Con Con
           | TC  TC
           | Eff EffectRow
             deriving (Show, Eq, Generic)
 
 data Expr = App Atom Atom
-          | Case Atom [Alt]
+          | Case Atom [Alt] Type
           | Atom Atom
           | Op  Op
           | Hof Hof
             deriving (Show, Eq, Generic)
 
 data Decl  = Let LetAnn Binder Expr
-           | Unpack ConPat Expr  deriving (Show, Eq, Generic)
+           | Unpack [Binder] Expr  deriving (Show, Eq, Generic)
 
 data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
-data Alt = Alt ConPat Block     deriving (Show, Eq, Generic)
-type ConPat = (DataConName, [Binder])
-type DataConName = Var
-type TypeConName = Var
+type Alt = NaryAbs Block
 
 type Var    = VarP Type
 type Binder = VarP Type
+
+data DataDef = DataDef Name [Binder] [DataConDef]  deriving (Show, Eq, Generic)
+data DataConDef = DataConDef Name [Binder]    deriving (Show, Eq, Generic)
 
 -- TODO: could merge Abs and NaryAbs by parameterizing with a functor
 data Abs a = Abs Binder a     deriving (Show, Generic, Functor, Foldable, Traversable)
@@ -239,8 +232,7 @@ data PrimCon e =
       | RefCon e e
       | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
       | ClassDictHole e   -- Only used during type inference
-        -- type, tag, payload (only used during Imp lowering)
-      | SumAsProd e e [(DataConName, [e])]
+      | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -640,8 +632,8 @@ data BinderInfo =
         -- (or we could put the effect tag on the let annotation)
       | PatBound
       | LetBound LetAnn Expr
-      | DataBoundTypeCon [DataConName]
-      | DataBoundDataCon
+      | DataBoundDataCon DataDef Int
+      | DataBoundTypeCon DataDef
       | PiBound
       | UnknownBinder
         deriving (Show, Eq, Generic)
@@ -674,6 +666,12 @@ instance (Show a, HasVars a, Eq a) => Eq (Abs a) where
     a == a' && applyAbs ab v == applyAbs ab' v
     where v = Var $ freshSkolemVar (ab, ab') a
 
+instance (Show a, HasVars a, Eq a) => Eq (NaryAbs a) where
+  (NAbs [] body) == (NAbs [] body') = body == body'
+  (NAbs (b:bs) body) == (NAbs (b':bs') body') =
+    (Abs b $ NAbs bs body) == (Abs b' $ NAbs bs' body')
+  _ == _ = False
+
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = rename (rawName Skolem "skol" :> ty) (freeVars x)
 
@@ -690,6 +688,13 @@ applyNaryAbs (NAbs [] body) [] = body
 applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs abs xs
   where abs = applyAbs (Abs b (NAbs bs body)) x
 applyNaryAbs _ _ = error "wrong number of arguments"
+
+getDataConDef :: DataDef -> Int -> DataConDef
+getDataConDef (DataDef _ _ cons) con = cons !! con
+
+applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
+applyDataDefParams (DataDef _ paramBs cons) params =
+  applyNaryAbs (NAbs paramBs cons) params
 
 makeAbs :: HasVars a => Var -> a -> Abs a
 makeAbs v body | v `isin` freeVars body = Abs v body
@@ -732,14 +737,16 @@ instance HasVars Expr where
     Atom x  -> freeVars x
     Op  e   -> foldMap freeVars e
     Hof e   -> foldMap freeVars e
-    Case e alts -> freeVars e <> foldMap freeVars alts
+    Case e alts resultTy ->
+      freeVars e <> freeVars alts <> freeVars resultTy
 
   subst env expr = case expr of
     App f x -> App (subst env f) (subst env x)
     Atom x  -> Atom $ subst env x
     Op  e   -> Op  $ fmap (subst env) e
     Hof e   -> Hof $ fmap (subst env) e
-    Case e alts -> Case (subst env e) $ map (subst env) alts
+    Case e alts resultTy ->
+      Case (subst env e) (subst env alts) (subst env resultTy)
 
 instance HasVars Decl where
   freeVars (Let _ bs expr) = foldMap freeVars bs <> freeVars expr
@@ -765,11 +772,10 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
-    DataCon con xs ys -> varFreeVars con <> freeVars xs <> freeVars ys
-    TypeCon con xs    -> varFreeVars con <> freeVars xs
-    DataConTy resultCon xsBs ysBs ->
-      varFreeVars resultCon <> (freeVars $ NAbs xsBs $ NAbs ysBs ())
-    TypeConTy paramTys -> foldMap freeVars paramTys
+    -- TODO: think about these cases. We don't want to needlessly traverse the
+    --       data definition but we might need to know the free Vars.
+    DataCon _ params _ args -> freeVars params <> freeVars args
+    TypeCon _ params        -> freeVars params
 
   subst env atom = case atom of
     Var v   -> substVar env v
@@ -778,12 +784,8 @@ instance HasVars Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
-    DataCon con xs ys -> DataCon (fmap (subst env) con) (subst env xs) (subst env ys)
-    TypeCon con xs    -> TypeCon (fmap (subst env) con) (subst env xs)
-    DataConTy resultCon paramBs argBs -> DataConTy resultCon paramBs' argBs'
-      where NAbs paramBs' (NAbs argBs' ()) =
-              subst env $ NAbs paramBs $ NAbs argBs ()
-    TypeConTy tys -> TypeConTy $ subst env tys
+    DataCon def params con args -> DataCon def (subst env params) con (subst env args)
+    TypeCon def params          -> TypeCon def (subst env params)
 
 instance HasVars a => HasVars (NaryAbs a) where
   freeVars (NAbs [] body) = freeVars body
@@ -803,24 +805,6 @@ instance HasVars Module where
     where
       (decls', env') = catMap substDecl env decls
       bindings' = subst (env <> env') bindings
-
-instance HasVars Alt where
-  freeVars (Alt (con, bs) body) =
-    varFreeVars con <> freeVarsAltRec bs body
-  -- Constructor name should be global and never substituted
-  subst env (Alt (con, bs) body) = Alt (fmap (subst env) con, bs') body'
-    where (bs', body') = substAltRec env bs body
-
-freeVarsAltRec :: [Binder] -> Block -> Scope
-freeVarsAltRec [] body = freeVars body
-freeVarsAltRec (b:bs) body =
-  freeBinderTypeVars b <> (freeVarsAltRec bs body `envDiff` (b@>()))
-
-substAltRec :: ScopedSubstEnv -> [Binder] -> Block -> ([Binder], Block)
-substAltRec env [] body = ([], subst env body)
-substAltRec env (b:bs) body = (b':bs', body')
-  where (b', env') = refreshBinder env $ fmap (subst env) b
-        (bs', body') = substAltRec (env <> env') bs body
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
@@ -843,6 +827,11 @@ instance HasVars BinderInfo where
 instance HasVars LetAnn where
   freeVars _ = mempty
   subst _ ann = ann
+
+instance HasVars DataConDef where
+  freeVars (DataConDef _ bs) = freeVars $ NAbs bs ()
+  subst env (DataConDef name bs) = DataConDef name bs'
+    where NAbs bs' () = subst env $ NAbs bs ()
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
 substEffTail _ Nothing = EffectRow [] Nothing
@@ -1182,3 +1171,5 @@ instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo
 instance Store Alt
+instance Store DataDef
+instance Store DataConDef

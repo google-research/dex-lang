@@ -36,8 +36,8 @@ inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
   let bindings' = envFilter bindings $ \(_, b) -> case b of
-                    DataBoundTypeCon _ -> True
-                    DataBoundDataCon   -> True
+                    DataBoundTypeCon _   -> True
+                    DataBoundDataCon _ _ -> True
                     _ -> False
   return $ Module Typed decls' bindings'
 
@@ -131,12 +131,21 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UDecl decl body -> do
     env <- inferUDecl False decl
     extendR env $ checkOrInferRho body reqTy
-  UCase e ~(alt:alts) -> do
-    e' <- inferRho e
-    let eTy = getType e'
-    alt'@(Alt _ altBody) <- checkCaseAlt reqTy eTy alt
-    alts' <- mapM (checkCaseAlt (Check (getType altBody)) eTy) alts
-    emit $ Case e' $ alt' : alts'
+  UCase scrut alts -> do
+    scrut' <- inferRho scrut
+    let scrutTy = getType scrut'
+    reqTy' <- case reqTy of
+      Infer -> freshType TyKind
+      Check req -> return req
+    alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
+    TypeCon def params <- zonk scrutTy
+    let conDefs = applyDataDefParams def params
+    altsSorted <- forM conDefs $ \(DataConDef conName bs) -> do
+      case lookup conName alts' of
+        Nothing  -> return $ NAbs (map ((NoName :>) . varType) bs) $
+                               Block [] $ Op $ ThrowError reqTy'
+        Just abs -> return abs
+    emit $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -171,8 +180,8 @@ lookupSourceVar v = do
       scope <- getScope
       let v' = asGlobal $ varName v
       case envLookup scope (v':>()) of
-        Just (ty, DataBoundTypeCon _) -> return $ TypeCon (v':>ty) []
-        Just (ty, DataBoundDataCon  ) -> return $ DataCon (v':>ty) [] []
+        Just (_, DataBoundTypeCon def    ) -> return $ TypeCon def []
+        Just (_, DataBoundDataCon def con) -> return $ DataCon def [] con []
         Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
@@ -204,28 +213,24 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
-  (tc', tcArgs) <- inferTyConDef tc
+  (tc', params) <- inferUConDef tc
   (dcs', _) <- embedScoped $
-    extendR (newEnv tcArgs (map Var tcArgs)) $ do
-      extendScope (foldMap varBinding tcArgs)
-      mapM (inferDataConDef tc' tcArgs) dcs
-  extendScope $ tc' @> (varType tc', DataBoundTypeCon dcs')
-  forM_ dcs' $ \dc -> extendScope $ dc @> (varType dc, DataBoundDataCon)
+    extendR (newEnv params (map Var params)) $ do
+      extendScope (foldMap varBinding params)
+      mapM inferUConDef dcs
+  let dataDef = DataDef tc' params $ map (uncurry DataConDef) dcs'
+  let tyConTy = getType $ TypeCon dataDef []
+  extendScope $ (tc':>()) @> (tyConTy, DataBoundTypeCon dataDef)
+  forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
+    let ty = getType $ DataCon dataDef [] i []
+    extendScope $ (dc:>()) @> (ty, DataBoundDataCon dataDef i)
   return mempty
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
--- TODO: freshen type binders?
-inferTyConDef :: UConDef -> UInferM (Binder, [Binder])
-inferTyConDef (v, bs) = do
-  let v' = asGlobal v
+inferUConDef :: UConDef -> UInferM (Name, [Binder])
+inferUConDef (v, bs) = do
   bs' <- mapM (mapM checkUType) bs
-  let conTy = TypeConTy $ map varType bs'
-  return (v':>conTy, bs')
-
-inferDataConDef :: TypeConName -> [Binder] -> UConDef -> UInferM DataConName
-inferDataConDef tyConName tyParams (v, bs) = do
-  bs' <- mapM (mapM checkUType) bs
-  return $ asGlobal v :> DataConTy tyConName tyParams bs'
+  return (asGlobal  v, bs')
 
 inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -256,24 +261,29 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
-checkCaseAlt :: RequiredTy RhoType -> Type -> UAlt -> UInferM Alt
-checkCaseAlt reqTy scrutineeTy (UAlt (conName, vs) body) = do
+checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Name, Alt)
+checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
+  (patTy, conName, bs) <- inferPat pat
+  constrainEq scrutineeTy patTy
+  alt <- buildNAbs bs $ \xs -> extendR (newEnv bs xs) $ checkRho body reqTy
+  return (conName, alt)
+
+inferPat :: UConPat -> UInferM (Type, Name, [Binder])
+inferPat (conName, vs) = do
   let conName' = asGlobal conName
   scope <- getScope
-  conTy@(DataConTy _ paramBs _) <- case envLookup scope (conName':>()) of
-    Just (ty, DataBoundDataCon) -> return ty
+  case envLookup scope (conName':>()) of
+    Just (_, DataBoundDataCon def@(DataDef _ paramBs cons) con) -> do
+      let (DataConDef _ argBs) = cons !! con
+      when (length argBs /= length vs) $ throw TypeErr $
+        "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                               ++ " got " ++ show (length vs)
+      params <- mapM (freshType . varType) paramBs
+      let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
+      let bs = zipWith (:>) vs argTys
+      return (TypeCon def params, conName', bs)
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
-  let conName'' = conName' :> conTy
-  params <- mapM (freshType . varType) paramBs
-  let (argBs, patTy) = applyDataConParams conName'' params
-  when (length argBs /= length vs) $ throw TypeErr $
-    "Unexpected number of pattern binders. Expected " ++ show (length argBs)
-                                           ++ " got " ++ show (length vs)
-  let bs = zipWith (:>) vs $ map varType argBs
-  constrainEq scrutineeTy patTy
-  buildAlt conName'' bs $ \xs ->
-    extendR (newEnv bs xs) $ checkOrInferRho body reqTy
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do

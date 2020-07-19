@@ -99,29 +99,19 @@ toImpExpr env (maybeDest, expr) = case expr of
   Atom x   -> copyDest maybeDest =<< impSubst env x
   Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env (maybeDest, hof)
-  Case e alts -> do
+  Case e alts _ -> do
     e' <- impSubst env e
     case e' of
-      DataCon con _ args -> do
-        case lookup con [(con', alt) | alt@(Alt (con',_) _) <- alts] of
-          Nothing -> error "Non-exhaustive patterns"
-          Just (Alt (con', bs) body) -> do
-            toImpBlock (env <> newEnv bs args) (maybeDest, body)
-      Con (SumAsProd _ tag payload) -> do
+      DataCon _ _ con args -> do
+        let NAbs bs body = alts !! con
+        toImpBlock (env <> newEnv bs args) (maybeDest, body)
+      Con (SumAsProd _ tag xss) -> do
         let tag' = fromScalarAtom tag
         dest <- allocDest maybeDest $ getType expr
-        matchCases env dest tag' payload alts
+        emitSwitch tag' $ flip map (zip xss alts) $
+          \(xs, NAbs bs body) ->
+             void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
         destToAtom dest
-
-matchCases :: SubstEnv -> Dest -> IExpr -> [(DataConName, [Atom])] -> [Alt] -> ImpM ()
-matchCases _ _ _ _ [] = emitStatement (Nothing, IThrowError)
-matchCases env dest tag dataVals (Alt (con,bs) body : alts) = do
-  let Just (i, args) = lookupWithIdx con dataVals
-  pred <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) tag (IIntVal i)
-  let env' = env <> newEnv bs args
-  thisCase   <- liftM snd $ scopedBlock $ toImpBlock env' (Just dest, body)
-  otherCases <- liftM snd $ scopedBlock $ matchCases env dest tag dataVals alts
-  emitStatement (Nothing, If pred thisCase otherCases)
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -382,17 +372,12 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     then lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
-  DataCon con params args -> do
-    args' <- mapM rec args
-    return $ DataCon con params args'
+  DataCon  def params con args -> DataCon def params con <$> mapM rec args
   Con destCon -> Con <$> case destCon of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
     Coerce (ArrayTy t) d -> Coerce t <$> rec d
-    SumAsProd ty tag payload -> do
-      payload' <- forM payload $ \(con, args) -> liftM (con,) $ mapM rec args
-      tag' <- rec tag
-      return $ SumAsProd ty tag' payload'
+    SumAsProd ty tag xs -> SumAsProd ty <$> rec tag <*> mapM (mapM rec) xs
     _ -> unreachable
   _ -> unreachable
   where
@@ -427,7 +412,7 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (_, TabVal _ _)  -> tell [(dest, result)]
       (_, Con (Lit _)) -> tell [(dest, result)]
-      (Dest (DataCon con _ args), DataCon con' _ args')
+      (Dest (DataCon _ _ con args), DataCon _ _ con' args')
         | con == con' && length args == length args' -> do
             zipWithM_ gatherVarDests (map Dest args) args'
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
@@ -462,19 +447,21 @@ makeDest nameHint destType = do
   unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
   return $ Dest destAtom
   where
-    go :: Bindings -> (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
+    go :: Bindings -> (ScalarTableType -> ScalarTableType) -> [Atom] -> Type
+       -> EmbedT ImpM Atom
     go bindings mkTy idxVars ty = case ty of
-        TypeCon con params -> do
-          case getDataCons bindings con params of
+        TypeCon def params -> do
+          let dcs = applyDataDefParams def params
+          case dcs of
             [] -> error "Void type not allowed"
-            [(dataCon, conArgs)] -> do
-              dests <- mapM (rec . varType) conArgs
-              return $ DataCon dataCon params dests
-            dataCons -> do
+            [DataConDef _ bs] -> do
+              dests <- mapM (rec . varType) bs
+              return $ DataCon def params 0 dests
+            _ -> do
               tag <- rec IntTy
-              payload <- forM dataCons $ \(con, bs) ->
-                           liftM (con,) $ forM bs $ \(_:>t) -> rec t
-              return $ Con $ SumAsProd ty tag payload
+              let dcs' = applyDataDefParams def params
+              contents <- forM dcs' $ \(DataConDef _ bs) -> forM bs  (rec . varType)
+              return $ Con $ SumAsProd ty tag contents
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
@@ -580,18 +567,15 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest idx
       rec di ai
-  (DataCon con _ args, DataCon con' _ args')
+  (DataCon _ _ con args, DataCon _ _ con' args')
     | con == con' && length args == length args' -> do
        zipWithM_ rec (map Dest args) args'
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
-  (Con (SumAsProd _ tag payload), DataCon con _ x) -> do
-    case lookupWithIdx con payload of
-      Just (i, args) -> do
-        recDest tag (IntVal i)
-        zipWithM_ recDest args x
-      Nothing -> error "Non-exhaustive patterns"
+  (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
+    recDest tag (IntVal con)
+    zipWithM_ recDest (payload !! con) x
   (Con dcon, Con acon) -> case (dcon, acon) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
@@ -599,11 +583,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     (SumCon _ _ _ , SumCon _ _ _ ) -> error "Not implemented"
     (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
       recDest tag tag'
-      zipWithM_ zipConstructors xs xs'
-      where
-        zipConstructors (con, args) (con', args') =
-          if con == con' then zipWithM_ recDest args args'
-                         else error "mismatched constructors"
+      zipWithM_ (zipWithM_ recDest) xs xs'
   _ -> unreachable
   where
     rec x y = zipWithDest x y f
@@ -703,6 +683,19 @@ freshVar (hint:>t) = do
   extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
   return v'
   where name = rawName GenName $ nameTag hint
+
+-- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
+emitSwitch :: IExpr -> [ImpM ()] -> ImpM ()
+emitSwitch testIdx = rec 0
+  where
+    rec :: Int -> [ImpM ()] -> ImpM ()
+    rec _ [] = error "Shouldn't have an empty list of alternatives"
+    rec _ [body] = body
+    rec curIdx (body:rest) = do
+      pred <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (IIntVal curIdx)
+      thisCase   <- liftM snd $ scopedBlock $ body
+      otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
+      emitStatement (Nothing, If pred thisCase otherCases)
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop maybeHint d n body = do

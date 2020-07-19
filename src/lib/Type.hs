@@ -12,7 +12,7 @@
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
   isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
-  indexSetConcreteSize, checkNoShadow, getDataCons, applyDataConParams) where
+  indexSetConcreteSize, checkNoShadow) where
 
 import Prelude hiding (pi)
 import Control.Monad
@@ -101,26 +101,18 @@ instance HasType Atom where
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
-    DataCon con params args -> do
-      void $ typeCheckVar con
-      GlobalName _  <- return $ varName con
-      DataConTy tyCon paramBs argBs <- return $ varType con
+    DataCon def@(DataDef _ paramBs cons) params con args -> do
+      let (DataConDef _ argBs) = cons !! con
       let funTy = foldr
             (\(arr, b) body -> Pi (Abs b (arr, body)))
-            (TypeCon tyCon (map Var paramBs))
+            (TypeCon def (map Var paramBs))
             (zip (repeat ImplicitArrow) paramBs ++ zip (repeat PureArrow) argBs)
       foldM checkApp funTy $ params ++ args
-    TypeCon con params -> do
-      void $ typeCheckVar con
-      GlobalName _ <- return $ varName con
-      paramTys <- case varType con of
-        TypeConTy paramTys -> return paramTys
-        _ -> error $ "no good!" ++ pprint (varType con)
+    TypeCon (DataDef _ bs _) params -> do
+      let paramTys = map varType bs
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
-    DataConTy _ _ _ -> return TyKind  -- TODO: check
-    TypeConTy _     -> return TyKind  -- TODO: check
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -140,18 +132,16 @@ instance HasType Expr where
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
-    Case e (alt@(Alt _ body):alts) -> do
-      optEnv <- ask
-      case optEnv of
-        SkipChecks -> typeCheck body
-        CheckWith _ -> do
-          ty <- typeCheck e
-          TypeCon tyCon tyParams <- typeCheck e
-          resultTy <- typeCheckAlt tyCon tyParams alt
-          forM_ alts $ \alt'-> do
-            resultTy' <- typeCheckAlt tyCon tyParams alt'
-            checkEq resultTy resultTy'
-          return resultTy
+    Case e alts resultTy -> do
+      checkWithEnv $ \_ -> do
+        TypeCon def params <- typeCheck e
+        let cons = applyDataDefParams def params
+        checkEq  (length cons) (length alts)
+        forM_ (zip cons alts) $ \((DataConDef _ bs'), (NAbs bs body)) -> do
+          checkEq  (map varType bs') (map varType bs)
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      return resultTy
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -160,29 +150,6 @@ checkApp fTy x = do
   let (arr, resultTy) = applyAbs piTy x
   declareEffs $ arrowEff arr
   return resultTy
-
-typeCheckAlt :: TypeConName -> [Type] -> Alt -> TypeM Type
-typeCheckAlt tyCon tyParams (Alt (dataCon, bs) body) = do
-  flip (foldr withBinder) bs $ do
-     DataCon dataCon tyParams (map Var bs) |: TypeCon tyCon tyParams
-     typeCheck body
-
-getDataCons :: Bindings -> TypeConName -> [Type] -> [(DataConName, [Binder])]
-getDataCons bindings tyCon params =
-  case envLookup bindings tyCon of
-    Just (_, DataBoundTypeCon dataCons) -> flip map dataCons $ \dataCon ->
-      (dataCon, fst $ applyDataConParams dataCon params)
-    _ -> error "Lookup failed"
-
-applyDataConParams :: HasCallStack => DataConName -> [Type] -> ([Binder], Type)
-applyDataConParams (_:> DataConTy tyCon paramBs bs) params
-  | length paramBs == length params =
-    -- TODO: A distinct type for binders would let us give it a HasVars instance,
-    --       avoiding having to peel off the types here.
-    let bTys = applyNaryAbs (NAbs paramBs (map varType bs)) params
-    in (zipWith ((:>) . varName) bs bTys, TypeCon tyCon params)
-  | otherwise = error $ "wrong number of parameters: " ++ show (length params)
-                                      ++ " expected: " ++ show (length paramBs)
 
 -- TODO: replace with something more precise (this is too cautious)
 blockEffs :: Block -> EffectSummary
@@ -250,7 +217,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (varBinding b) m
+withBinder b m = checkBinder b >> extendTypeEnv (varBinding b) m
 
 checkBinder :: Binder -> TypeM ()
 checkBinder b@(_:>ty) = do
@@ -284,15 +251,13 @@ instance CoreVariant Atom where
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
-    DataCon _ _ _ -> alwaysAllowed
-    TypeCon _ _ -> alwaysAllowed
-    DataConTy _ _ _ -> alwaysAllowed
-    TypeConTy _     -> alwaysAllowed
+    DataCon _ _ _ _ -> alwaysAllowed
+    TypeCon _ _     -> alwaysAllowed
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of
-    DataBoundTypeCon _ -> alwaysAllowed
-    DataBoundDataCon -> alwaysAllowed
+    DataBoundTypeCon _   -> alwaysAllowed
+    DataBoundDataCon _ _ -> alwaysAllowed
     LetBound _ _     -> absentUntil Simp
     _                -> neverAllowed
 
@@ -302,9 +267,9 @@ instance CoreVariant Expr where
     Atom x  -> checkVariant x
     Op  e   -> checkVariant e >> forM_ e checkVariant
     Hof e   -> checkVariant e >> forM_ e checkVariant
-    Case e alts -> do
+    Case e alts _ -> do
       checkVariant e
-      forM_ alts $ \(Alt _ body) -> checkVariant body
+      forM_ alts $ \(NAbs _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -694,11 +659,8 @@ checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
   Var v -> error "Not implemented"
   TabTy _ b -> recur b
-  TypeCon con _ -> case envLookup env con of
-    Just (_, DataBoundTypeCon _) -> do
-      -- TODO: check that data constructor arguments are data-like, and so on
-      return ()
-    _ -> error $ "Lookup failed " ++ pprint (ty, env)
+  -- TODO: check that data constructor arguments are data-like, and so on
+  TypeCon _ _ -> return ()
   TC con -> case con of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b

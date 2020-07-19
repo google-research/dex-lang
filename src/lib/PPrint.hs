@@ -96,12 +96,11 @@ instance Pretty Expr where
   pretty (Atom x ) = p x
   pretty (Op  op ) = p op
   pretty (Hof hof) = p hof
-  pretty (Case e alts) = "case" <+> p e <>
-    nest 2 (hardline <> prettyLines alts)
+  pretty (Case e alts _) = "case" <+> p e <+> "of" <>
+    nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
-instance Pretty Alt where
-  pretty (Alt (con, bs) body) =
-    p (varName con) <+> hsep (map p bs) <+> "->" <+> p body
+prettyAlt :: Alt -> Doc ann
+prettyAlt (NAbs bs body) = hsep (map (p . varName) bs) <+> "->" <> p body
 
 prettyExprDefault :: Pretty e => PrimExpr e -> Doc ann
 prettyExprDefault expr =
@@ -202,11 +201,9 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
-    DataCon con _ xs  -> parens $ p (varName con) <+> hsep (map p xs)
-    TypeCon con xs    -> parens $ p (varName con) <+> hsep (map p xs)
-    DataConTy resultCon paramBs argBs ->
-      "DataConType" <+> p resultCon <+> p paramBs <+> p argBs
-    TypeConTy tys -> "TypeConType" <+> p tys
+    DataCon (DataDef _ _ cons) _ con xs -> parens $ p name <+> hsep (map p xs)
+      where (DataConDef name _) = cons !! con
+    TypeCon (DataDef name _ _) params -> parens $ p name <+> hsep (map p params)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -291,9 +288,8 @@ instance Pretty BinderInfo where
     LamBound _    -> "<lambda binder>"
     LetBound _ e  -> p e
     PiBound       -> "<pi binder>"
-    DataBoundTypeCon cons -> "<type constructor (data constructors: "
-      <> p (map varName cons) <> ")>"
-    DataBoundDataCon -> "<data constructor>"
+    DataBoundTypeCon _   -> "<type constructor>"
+    DataBoundDataCon _ _ -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
 
 instance Pretty UModule where

@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR, buildAlt,
+              select, selectAt, substEmbed, substEmbedR,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
-              sumTag, getLeft, getRight, fromSum, clampPositive,
+              sumTag, getLeft, getRight, fromSum, clampPositive, buildNAbs,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Applicative
@@ -139,6 +139,15 @@ buildLamAux b fArr fBody = do
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (b', arr, ans, aux)
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
+
+buildNAbs :: MonadEmbed m => [Var] -> ([Atom] -> m Atom) -> m (NaryAbs Block)
+buildNAbs bs body = do
+  ((bs', ans), decls) <- scopedDecls $ do
+     bs' <- mapM freshVar bs
+     embedExtend $ asFst $ foldMap (\b -> b @> (varType b, PatBound)) bs
+     ans <- body $ map Var bs'
+     return (bs', ans)
+  return $ NAbs bs' $ wrapDecls decls ans
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -295,15 +304,6 @@ buildFor d i body = do
   eff <- getAllowedEffects
   lam <- buildLam i (PlainArrow eff) body
   emit $ Hof $ For d lam
-
-buildAlt :: MonadEmbed m => Var -> [Var] -> ([Atom] -> m Atom) -> m Alt
-buildAlt con bs body = do
-  ((bs', ans), decls) <- scopedDecls $ do
-     bs' <- mapM freshVar bs
-     embedExtend $ asFst $ foldMap (\b -> b @> (varType b, PatBound)) bs'
-     ans <- body $ map Var bs'
-     return (bs', ans)
-  return $ Alt (con, bs') $ wrapDecls decls ans
 
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 tabGet x i = emit $ App x i
@@ -528,13 +528,14 @@ traverseExpr def@(_, fAtom) expr = case expr of
   Atom x  -> Atom <$> fAtom x
   Op  op  -> Op   <$> traverse fAtom op
   Hof hof -> Hof  <$> traverse fAtom hof
-  Case e alts -> Case <$> fAtom e <*> mapM (traverseAlt def) alts
+  Case e alts ty ->
+    Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Alt -> m Alt
-traverseAlt def@(_, fAtom) (Alt (con, bs) body) = do
+traverseAlt def@(_, fAtom) (NAbs bs body) = do
   bs' <- mapM (mapM fAtom) bs
-  buildAlt con bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
+  buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
@@ -549,11 +550,9 @@ traverseAtom def@(_, fAtom) atom = case atom of
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substEmbedR atom
-  DataCon con params args ->
-    DataCon con <$> traverse fAtom params <*> traverse fAtom args
-  TypeCon con params -> TypeCon con <$> (traverse fAtom params)
-  DataConTy _ _ _ -> return atom
-  TypeConTy _     -> return atom
+  DataCon dataDef params con args -> DataCon dataDef <$>
+    traverse fAtom params <*> pure con <*> traverse fAtom args
+  TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
 
 -- === DCE ===
 
@@ -626,7 +625,7 @@ reduceExpr scope expr = case expr of
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
-      TypeCon f xs -> Just $ TypeCon f $ xs ++ [x']
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing
 
