@@ -187,13 +187,13 @@ lookupSourceVar v = do
 
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
-  PatBind (v:>()) -> do
+  UPatBinder (v:>()) -> do
     let v' = asGlobal v
     scope <- getScope
     when ((v':>()) `isin` scope) $ throw RepeatedVarErr $ pprint v'
     void $ emitTo v' letAnn expr
-  PatUnit -> return () -- TODO: change if we allow effects at the top level
-  PatPair p1 p2 -> do
+  UPatUnit -> return () -- TODO: change if we allow effects at the top level
+  UPatPair p1 p2 -> do
     val  <- emit expr
     x1   <- lift $ getFst val
     x2   <- lift $ getSnd val
@@ -232,14 +232,14 @@ inferUConDef (v, bs) = do
   bs' <- mapM (mapM checkUType) bs
   return (asGlobal  v, bs')
 
-inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
+inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (patNameHint p :> argTy) arr
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
-checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
+checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
@@ -268,8 +268,9 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- buildNAbs bs $ \xs -> extendR (newEnv bs xs) $ checkRho body reqTy
   return (conName, alt)
 
-inferPat :: UConPat -> UInferM (Type, Name, [Binder])
-inferPat (conName, vs) = do
+inferPat :: UPat -> UInferM (Type, Name, [Binder])
+inferPat (WithSrc pos (UPatCon conName ps)) = addSrcContext (Just pos) $ do
+  let vs = map (\(WithSrc _ (UPatBinder (v:>_))) -> v) ps
   let conName' = asGlobal conName
   scope <- getScope
   case envLookup scope (conName':>()) of
@@ -284,6 +285,7 @@ inferPat (conName, vs) = do
       return (TypeCon def params, conName', bs)
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
+inferPat _ = error "Not implemented"
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
@@ -295,15 +297,15 @@ bindPat pat val = evalCatT $ bindPat' pat val
 
 bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
-  PatBind b -> do
+  UPatBinder b -> do
     usedVars <- look
     when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint (varName b)
     extend (b@>())
     return (b @> val)
-  PatUnit -> do
+  UPatUnit -> do
     lift $ constrainEq UnitTy (getType val)
     return mempty
-  PatPair p1 p2 -> do
+  UPatPair p1 p2 -> do
     _    <- lift $ fromPairType (getType val)
     val' <- lift $ zonk val  -- ensure it has a pair type before unpacking
     x1   <- lift $ getFst val'
@@ -313,7 +315,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     return $ env1 <> env2
 
 patNameHint :: UPat -> Name
-patNameHint (WithSrc _ (PatBind (v:>()))) = v
+patNameHint (WithSrc _ (UPatBinder (v:>()))) = v
 patNameHint _ = "pat"
 
 withPatHint :: UPat -> UInferM a -> UInferM a

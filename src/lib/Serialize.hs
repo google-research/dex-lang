@@ -117,13 +117,13 @@ parsePreHeader = do
   return n
 
 parseHeader :: Parser DBOHeader
-parseHeader = do
-  emptyLines
-  ty <- symbol "type:" >> tauType <* eol
-  emptyLines
-  sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
-  emptyLines
-  return $ DBOHeader ty sizes
+parseHeader = undefined
+  -- emptyLines
+  -- ty <- symbol "type:" >> tauType <* eol
+  -- emptyLines
+  -- sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
+  -- emptyLines
+  -- return $ DBOHeader ty sizes
 
 writeArrayToFile :: Handle -> Array -> IO ()
 writeArrayToFile h arr = unsafeWithArrayPointer arr (\ptr -> hPutBuf h ptr (size * sizeOf b))

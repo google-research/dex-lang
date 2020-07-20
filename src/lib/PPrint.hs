@@ -318,8 +318,7 @@ instance Pretty UExpr' where
     UPrimExpr prim -> p prim
 
 instance Pretty UAlt where
-  pretty (UAlt (con, args) body) =
-    p con <+> hsep (map p args) <+> "->" <+> p body
+  pretty (UAlt pat body) = p pat <+> "->" <+> p body
 
 prettyAnn :: Doc ann -> Doc ann
 prettyAnn ty = ":" <+> ty
@@ -334,11 +333,11 @@ instance Pretty UDecl where
   pretty (UData tyCon dataCons) =
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
 
-instance Pretty a => Pretty (PatP' a) where
+instance Pretty UPat' where
   pretty pat = case pat of
-    PatBind x -> p x
-    PatPair x y -> parens $ p x <> ", " <> p y
-    PatUnit -> "()"
+    UPatBinder x -> p x
+    UPatPair x y -> parens $ p x <> ", " <> p y
+    UPatUnit -> "()"
 
 instance Pretty EffectRow where
   pretty (EffectRow [] Nothing) = mempty
