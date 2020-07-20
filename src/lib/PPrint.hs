@@ -233,7 +233,7 @@ instance Pretty Decl where
     Let _ (NoName:>_) bound -> pBinOp bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _ b bound -> align $ p b <> "=" <> (nest 2 $ softline <> pBinOp bound)
+    Let _ b bound -> align $ p b <+> "=" <> (nest 2 $ softline <> pBinOp bound)
 
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
@@ -345,16 +345,19 @@ instance Pretty UExpr' where pretty = prettyFromPrettyPrec
 instance PrettyPrec UExpr' where
   prettyPrec expr = case expr of
     UVar (v:>_) -> atPrec ArgPrec $ p v
-    ULam pat h body ->
-      atPrec BinOpPrec $ align $ "\\" <> annImplicity h (p pat) <> "." <+> nest 2 (pBinOp body)
+    ULam binder h body ->
+      atPrec BinOpPrec $ align $ "\\" <> annImplicity h (prettyUBinder binder)
+                                      <> "." <+> nest 2 (pBinOp body)
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
-    UFor dir pat body ->
-      atPrec BinOpPrec $ kw <+> p pat <+> "." <> nest 2 (hardline <> pBinOp body)
+    UFor dir binder body ->
+      atPrec BinOpPrec $ kw <+> prettyUBinder binder <+> "."
+                            <> nest 2 (hardline <> pBinOp body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> atPrec BinOpPrec $ parens (p a) <> pretty arr <> pBinOp b
-    UDecl decl body -> atPrec BinOpPrec $ align $ p decl <> hardline <> pBinOp body
+    UPi a arr b -> atPrec BinOpPrec $ p a <+> pretty arr <+> pBinOp b
+    UDecl decl body -> atPrec BinOpPrec $ align $ p decl <> hardline
+                                                         <> pBinOp body
     UHole -> atPrec ArgPrec "_"
     UTabCon xs ann -> atPrec ArgPrec $ p xs <> foldMap (prettyAnn . p) ann
     UIndexRange low high -> atPrec BinOpPrec $ low' <> ".." <> high'
@@ -376,14 +379,20 @@ instance Pretty a => Pretty (Limit a) where
   pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
-  pretty (ULet _ pat rhs) =
-    align $ p pat <+> "=" <> (nest 2 $ softline <> pBinOp rhs)
+  pretty (ULet _ b rhs) =
+    align $ prettyUBinder b <+> "=" <> (nest 2 $ softline <> pBinOp rhs)
 
-instance Pretty a => Pretty (PatP' a) where
+instance Pretty UPat' where
   pretty pat = case pat of
-    PatBind x -> p x
+    PatBind (x:>()) -> p x
     PatPair x y -> parens $ p x <> ", " <> p y
     PatUnit -> "()"
+
+prettyUBinder :: UBinder -> Doc ann
+prettyUBinder (pat, ann) = p pat <> annDoc where
+  annDoc = case ann of
+    Just ty -> ":" <> pApp ty
+    Nothing -> mempty
 
 instance Pretty EffectRow where
   pretty (EffectRow [] Nothing) = mempty
