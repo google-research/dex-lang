@@ -68,6 +68,8 @@ pApp a = prettyPrec a AppPrec
 prettyFromPrettyPrec :: PrettyPrec a => a -> Doc ann
 prettyFromPrettyPrec = pArg
 
+pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
+pAppArg name as = align $ name <> (nest 2 $ foldMap (\a -> softline <> pArg a) as)
 
 instance Pretty Err where
   pretty (Err e _ s) = p e <> p s
@@ -171,10 +173,10 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
         high' = case high of InclusiveLim x -> pApp x
                              ExclusiveLim x -> "<" <> pApp x
                              Unlimited      -> ""
-    RefType h a -> atPrec AppPrec $ "Ref" <+> pArg h <+> pArg a
+    RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     TypeKind -> atPrec ArgPrec "Type"
     EffectRowKind -> atPrec ArgPrec "EffKind"
-    NewtypeApp f xs -> atPrec AppPrec $ pApp f <> foldMap (\x -> " " <> pArg x) xs
+    NewtypeApp f xs -> atPrec AppPrec $ pAppArg (pApp f) xs
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
@@ -186,12 +188,12 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
     UnitCon     -> atPrec ArgPrec "()"
     RefCon _ _  -> atPrec ArgPrec "RefCon"
     Coerce t i  -> atPrec BinOpPrec $ pApp i <> "@" <> pApp t
-    AnyValue t  -> atPrec AppPrec $ "%anyVal" <+> pArg t
+    AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
     SumCon c l r -> atPrec AppPrec $ case asStr (pArg c) of
-      "True"  ->  "Left"  <+> pArg l
-      "False" -> "Right" <+> pArg r
-      _ -> "SumCon" <+> pArg c <+> pArg l <+> pArg r
-    NewtypeCon f xs -> atPrec AppPrec $ pApp f <> pArg xs
+      "True"  -> pAppArg "Left" [l]
+      "False" -> pAppArg "Right" [r]
+      _ -> pAppArg "SumCon" [c, l, r]
+    NewtypeCon f xs -> atPrec AppPrec $ pAppArg (pApp f) [xs]
     ClassDictHole _ -> atPrec ArgPrec "_"
     Todo e -> atPrec ArgPrec $ "<undefined " <> pArg e <> ">"
 
@@ -199,11 +201,11 @@ instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
     SumGet e isLeft -> atPrec AppPrec $ (if isLeft then "getLeft" else "getRight") <+> pArg e
-    SumTag e        -> atPrec AppPrec $ "getTag" <+> pArg e
+    SumTag e        -> atPrec AppPrec $ pAppArg "getTag" [e]
     PrimEffect ref (MPut val ) -> atPrec BinOpPrec $ pApp ref <+> ":=" <+> pApp val
     PrimEffect ref (MTell val) -> atPrec BinOpPrec $ pApp ref <+> "+=" <+> pApp val
     ArrayOffset arr idx off -> atPrec BinOpPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pBinOp idx)
-    ArrayLoad arr       -> atPrec AppPrec $ "load" <+> pArg arr
+    ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
     _ -> prettyExprDefault $ OpExpr op
 
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
@@ -231,7 +233,7 @@ instance Pretty Decl where
     Let _ (NoName:>_) bound -> pBinOp bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _ b bound -> p b <+> "=" <+> pBinOp bound
+    Let _ b bound -> align $ p b <> "=" <> (nest 2 $ softline <> pBinOp bound)
 
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
@@ -346,7 +348,7 @@ instance PrettyPrec UExpr' where
     ULam pat h body ->
       atPrec BinOpPrec $ align $ "\\" <> annImplicity h (p pat) <> "." <+> nest 2 (pBinOp body)
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
-    UApp _        f x -> atPrec AppPrec $ pApp f <+> pArg x
+    UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir pat body ->
       atPrec BinOpPrec $ kw <+> p pat <+> "." <> nest 2 (hardline <> pBinOp body)
       where kw = case dir of Fwd -> "for"
@@ -374,7 +376,8 @@ instance Pretty a => Pretty (Limit a) where
   pretty (InclusiveLim x) = "incLim" <+> p x
 
 instance Pretty UDecl where
-  pretty (ULet _ pat rhs) = p pat <+> "=" <+> pBinOp rhs
+  pretty (ULet _ pat rhs) =
+    align $ p pat <+> "=" <> (nest 2 $ softline <> pBinOp rhs)
 
 instance Pretty a => Pretty (PatP' a) where
   pretty pat = case pat of
