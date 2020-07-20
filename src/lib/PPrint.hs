@@ -69,7 +69,7 @@ prettyFromPrettyPrec :: PrettyPrec a => a -> Doc ann
 prettyFromPrettyPrec = pArg
 
 pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
-pAppArg name as = align $ name <> (nest 2 $ foldMap (\a -> softline <> pArg a) as)
+pAppArg name as = align $ name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
 
 instance Pretty Err where
   pretty (Err e _ s) = p e <> p s
@@ -122,8 +122,8 @@ instance PrettyPrec LitVal where
   prettyPrec (BoolLit b) = atPrec ArgPrec $ if b then "True" else "False"
 
 instance Pretty Block where
-  pretty (Block [] expr) = pBinOp expr
-  pretty (Block decls expr) = nest 2 $ hardline <> prettyLines decls <> pBinOp expr
+  pretty (Block [] expr) = group $ line <> pBinOp expr
+  pretty (Block decls expr) = hardline <> prettyLines decls <> pBinOp expr
 
 prettyLines :: Pretty a => [a] -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) xs
@@ -140,7 +140,7 @@ prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
 prettyExprDefault expr =
   case length expr of
     0 -> atPrec ArgPrec primName
-    _ -> atPrec AppPrec $ primName <> foldMap (\x -> " " <> pArg x) expr
+    _ -> atPrec AppPrec $ pAppArg primName expr
   where primName = p $ "%" ++ showPrimName expr
 
 instance PrettyPrec e => Pretty (Abs e) where pretty = prettyFromPrettyPrec
@@ -233,14 +233,14 @@ instance Pretty Decl where
     Let _ (NoName:>_) bound -> pBinOp bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _ b bound -> align $ p b <+> "=" <> (nest 2 $ softline <> pBinOp bound)
+    Let _ b bound -> align $ p b <+> "=" <> (nest 2 $ group $ line <> pBinOp bound)
 
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
   prettyPrec atom = case atom of
     Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec BinOpPrec $ "for " <> p b <> "." <> p body
-    Lam (Abs b (_, body)) -> atPrec BinOpPrec $ "\\" <> p b <> "." <> p body
+    Lam (Abs b (TabArrow, body))   -> atPrec BinOpPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
+    Lam (Abs b (_, body)) -> atPrec BinOpPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
     Pi  (Abs (NoName:>a) (arr, b)) -> atPrec BinOpPrec $ pArg a <+> p arr <+> pBinOp b
     Pi  (Abs a           (arr, b)) -> atPrec BinOpPrec $ parens (p a) <+> p arr <+> pBinOp b
     TC  e -> prettyPrec e
@@ -351,8 +351,8 @@ instance PrettyPrec UExpr' where
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir binder body ->
-      atPrec BinOpPrec $ kw <+> prettyUBinder binder <+> "."
-                            <> nest 2 (hardline <> pBinOp body)
+      atPrec BinOpPrec $ kw <+> prettyUBinder binder <> "."
+                            <+> nest 2 (pBinOp body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi a arr b -> atPrec BinOpPrec $ p a <+> pretty arr <+> pBinOp b
@@ -380,7 +380,7 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet _ b rhs) =
-    align $ prettyUBinder b <+> "=" <> (nest 2 $ softline <> pBinOp rhs)
+    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pBinOp rhs)
 
 instance Pretty UPat' where
   pretty pat = case pat of
