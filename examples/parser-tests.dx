@@ -30,7 +30,7 @@ f = \x. x + 10.
 
 :p f -1.0   -- parses as (-) f (-1.0)
 > Type error:
-> Expected: (Real->Real)
+> Expected: (Real -> Real)
 >   Actual: Real
 >
 > :p f -1.0   -- parses as (-) f (-1.0)
