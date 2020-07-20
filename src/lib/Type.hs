@@ -55,7 +55,7 @@ class Pretty a => Checkable a where
 
 instance Checkable Module where
   checkValid m@(Module ir decls bindings) =
-    addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
+    addContext ("Checking module:\n" ++ pprint m ++ "\nModule free vars:\n" ++ pprint (freeVars m)) $ asCompilerErr $ do
       let env = freeVars m
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
