@@ -201,7 +201,7 @@ prettyVal val = case val of
     Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
     _           -> pretty con
-  atom -> pretty atom
+  atom -> prettyPrec atom LowestPrec
 
 getValArrays :: Val -> [Array]
 getValArrays = undefined

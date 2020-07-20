@@ -28,7 +28,7 @@ import Syntax
 -- Specifies what kinds of operations are allowed to be printed at this point.
 -- Printing at AppPrec level means that applications can be printed
 -- with no parentheses, but binops must be parenthesized. 
-data PrecedenceLevel  = BinOpPrec
+data PrecedenceLevel  = LowestPrec
                       | AppPrec 
                       | ArgPrec  -- Only single symbols and parens allowed
                       deriving (Eq, Ord)
@@ -56,14 +56,14 @@ asStr doc = unpack $ renderStrict $ layoutPretty defaultLayoutOptions $ doc
 p :: Pretty a => a -> Doc ann
 p = pretty
 
-pBinOp :: PrettyPrec a => a -> Doc ann
-pBinOp a = prettyPrec a BinOpPrec
-
-pArg :: PrettyPrec a => a -> Doc ann
-pArg a = prettyPrec a ArgPrec
+pLowest :: PrettyPrec a => a -> Doc ann
+pLowest a = prettyPrec a LowestPrec
 
 pApp :: PrettyPrec a => a -> Doc ann
 pApp a = prettyPrec a AppPrec
+
+pArg :: PrettyPrec a => a -> Doc ann
+pArg a = prettyPrec a ArgPrec
 
 prettyFromPrettyPrec :: PrettyPrec a => a -> Doc ann
 prettyFromPrettyPrec = pArg
@@ -122,8 +122,8 @@ instance PrettyPrec LitVal where
   prettyPrec (BoolLit b) = atPrec ArgPrec $ if b then "True" else "False"
 
 instance Pretty Block where
-  pretty (Block [] expr) = group $ line <> pBinOp expr
-  pretty (Block decls expr) = hardline <> prettyLines decls <> pBinOp expr
+  pretty (Block [] expr) = group $ line <> pLowest expr
+  pretty (Block decls expr) = hardline <> prettyLines decls <> pLowest expr
 
 prettyLines :: Pretty a => [a] -> Doc ann
 prettyLines xs = foldMap (\d -> p d <> hardline) xs
@@ -145,7 +145,7 @@ prettyExprDefault expr =
 
 instance PrettyPrec e => Pretty (Abs e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (Abs e) where
-  prettyPrec (Abs binder body) = atPrec BinOpPrec $ "\\" <> p binder <> "." <> pBinOp body
+  prettyPrec (Abs binder body) = atPrec LowestPrec $ "\\" <> p binder <> "." <> pLowest body
 
 instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimExpr e) where
@@ -158,14 +158,14 @@ instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
-    ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pBinOp ty <> "]"
-    PairType a b   -> atPrec BinOpPrec $ pApp a <+> "&" <+> pApp b
-    SumType  a b   -> atPrec BinOpPrec $ pApp a <+> "|" <+> pApp b
+    ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
+    PairType a b   -> atPrec LowestPrec $ pApp a <+> "&" <+> pApp b
+    SumType  a b   -> atPrec LowestPrec $ pApp a <+> "|" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
       else prettyExprDefault $ TCExpr con
-    IndexRange _ low high -> atPrec BinOpPrec $ low' <> ".." <> high'
+    IndexRange _ low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where
         low'  = case low  of InclusiveLim x -> pApp x
                              ExclusiveLim x -> pApp x <> "<"
@@ -187,7 +187,7 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
     PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
     UnitCon     -> atPrec ArgPrec "()"
     RefCon _ _  -> atPrec ArgPrec "RefCon"
-    Coerce t i  -> atPrec BinOpPrec $ pApp i <> "@" <> pApp t
+    Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
     AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
     SumCon c l r -> atPrec AppPrec $ case asStr (pArg c) of
       "True"  -> pAppArg "Left" [l]
@@ -202,19 +202,19 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
     SumGet e isLeft -> atPrec AppPrec $ (if isLeft then "getLeft" else "getRight") <+> pArg e
     SumTag e        -> atPrec AppPrec $ pAppArg "getTag" [e]
-    PrimEffect ref (MPut val ) -> atPrec BinOpPrec $ pApp ref <+> ":=" <+> pApp val
-    PrimEffect ref (MTell val) -> atPrec BinOpPrec $ pApp ref <+> "+=" <+> pApp val
-    ArrayOffset arr idx off -> atPrec BinOpPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pBinOp idx)
+    PrimEffect ref (MPut val ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
+    PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
+    ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
     ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
     _ -> prettyExprDefault $ OpExpr op
 
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
-    For dir lam -> atPrec BinOpPrec $ dirStr dir <+> pArg lam
-    SumCase c l r -> atPrec BinOpPrec $ "case" <+> pArg c <> hardline
-                  <> nest 2 (pBinOp l)            <> hardline
-                  <> nest 2 (pBinOp r)
+    For dir lam -> atPrec LowestPrec $ dirStr dir <+> pArg lam
+    SumCase c l r -> atPrec LowestPrec $ "case" <+> pArg c <> hardline
+                  <> nest 2 (pLowest l)            <> hardline
+                  <> nest 2 (pLowest r)
     _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where
@@ -230,19 +230,19 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let _ (NoName:>_) bound -> pBinOp bound
+    Let _ (NoName:>_) bound -> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _ b bound -> align $ p b <+> "=" <> (nest 2 $ group $ line <> pBinOp bound)
+    Let _ b bound -> align $ p b <+> "=" <> (nest 2 $ group $ line <> pLowest bound)
 
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
   prettyPrec atom = case atom of
     Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec BinOpPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
-    Lam (Abs b (_, body)) -> atPrec BinOpPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
-    Pi  (Abs (NoName:>a) (arr, b)) -> atPrec BinOpPrec $ pArg a <+> p arr <+> pBinOp b
-    Pi  (Abs a           (arr, b)) -> atPrec BinOpPrec $ parens (p a) <+> p arr <+> pBinOp b
+    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
+    Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
+    Pi  (Abs (NoName:>a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
+    Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
@@ -273,7 +273,7 @@ prettyStatement (Nothing, instr) = p instr
 prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)            = pBinOp op
+  pretty (IPrimOp op)            = pLowest op
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
   pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
@@ -346,21 +346,21 @@ instance PrettyPrec UExpr' where
   prettyPrec expr = case expr of
     UVar (v:>_) -> atPrec ArgPrec $ p v
     ULam binder h body ->
-      atPrec BinOpPrec $ align $ "\\" <> annImplicity h (prettyUBinder binder)
-                                      <> "." <+> nest 2 (pBinOp body)
+      atPrec LowestPrec $ align $ "\\" <> annImplicity h (prettyUBinder binder)
+                                      <> "." <+> nest 2 (pLowest body)
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir binder body ->
-      atPrec BinOpPrec $ kw <+> prettyUBinder binder <> "."
-                            <+> nest 2 (pBinOp body)
+      atPrec LowestPrec $ kw <+> prettyUBinder binder <> "."
+                            <+> nest 2 (pLowest body)
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
-    UPi a arr b -> atPrec BinOpPrec $ p a <+> pretty arr <+> pBinOp b
-    UDecl decl body -> atPrec BinOpPrec $ align $ p decl <> hardline
-                                                         <> pBinOp body
+    UPi a arr b -> atPrec LowestPrec $ p a <+> pretty arr <+> pLowest b
+    UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
+                                                         <> pLowest body
     UHole -> atPrec ArgPrec "_"
     UTabCon xs ann -> atPrec ArgPrec $ p xs <> foldMap (prettyAnn . p) ann
-    UIndexRange low high -> atPrec BinOpPrec $ low' <> ".." <> high'
+    UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
       where
         low'  = case low of  InclusiveLim x -> pApp x
                              ExclusiveLim x -> pApp x <> "<"
@@ -380,7 +380,7 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet _ b rhs) =
-    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pBinOp rhs)
+    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 instance Pretty UPat' where
   pretty pat = case pat of

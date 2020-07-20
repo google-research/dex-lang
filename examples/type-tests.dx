@@ -84,7 +84,7 @@ arr  = iota Narr
 xr = map i2r arr
 
 :t arr
-> ((Fin 10)=>Int)
+> ((Fin 10) => Int)
 
 :t (\(x, y). x + y) (1.0, 2.0)
 > Real
@@ -96,7 +96,7 @@ xr = map i2r arr
 > Real
 
 :t [1, 2, 3]
-> ((Fin 3)=>Int)
+> ((Fin 3) => Int)
 
 :t []
 > Type error:Empty table constructor must have type annotation
@@ -107,18 +107,18 @@ xr = map i2r arr
 :t [1, [2]]
 > Type error:
 > Expected: Int
->   Actual: ((Fin 1)=>Int)
+>   Actual: ((Fin 1) => Int)
 >
 > :t [1, [2]]
 >        ^^^
 
 :t [[1, 2], [3, 4]]
-> ((Fin 2)=>((Fin 2)=>Int))
+> ((Fin 2) => (Fin 2) => Int)
 
 :t [[1, 2], [3]]
 > Type error:
-> Expected: ((Fin 2)=>Int)
->   Actual: ((Fin 1)=>Int)
+> Expected: ((Fin 2) => Int)
+>   Actual: ((Fin 1) => Int)
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -212,7 +212,7 @@ fEff : Unit -> {| a} a = todo
 g : a -> a = \x. x
 
 :t g
-> (a:Type?->(a->a))
+> ((a:Type) ?-> a -> a)
 
 :t
   f = \x:Int. x
@@ -232,7 +232,7 @@ g : a -> a = \x. x
 g1 : (a -> Int) -> (a -> Int) = \x. x
 
 :t g1
-> (a:Type?->((a->Int)->(a->Int)))
+> ((a:Type) ?-> (a -> Int) -> a -> Int)
 
 g2 : a -> a = \x. idiv x x
 > Type error:
@@ -245,7 +245,7 @@ g2 : a -> a = \x. idiv x x
 h : (a -> b) -> (a -> b) = \x. x
 
 :t h
-> (a:Type?->(a1:Type?->((a->a1)->(a->a1))))
+> ((a:Type) ?-> (a1:Type) ?-> (a -> a1) -> a -> a1)
 
 fun : a -> a = \x. sin x
 > Type error:
@@ -266,7 +266,7 @@ newPair : NewPair Int Real = mkNewPair (1, 2.0)
 :p fst newPair
 > Type error:
 > Expected: (a & b)
->   Actual: NewPair Int Real
+>   Actual: (NewPair Int Real)
 > (Solving for: [a:Type, b:Type])
 >
 > :p fst newPair
