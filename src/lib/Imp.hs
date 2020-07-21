@@ -203,6 +203,18 @@ toImpOp (maybeDest, op) = case op of
   ThrowError ty -> do
     emitStatement (Nothing, IThrowError)
     return $ Con $ AnyValue ty
+  CoerceOp destTy@PreludeBoolTy x -> case getType x of
+    BoolTy -> do
+      tag <- emitInstr $ IPrimOp $ ScalarUnOp BoolToInt $ fromScalarAtom x
+      returnVal $ Con $ SumAsProd destTy (toScalarAtom IntTy tag) [[], []]
+    ty -> error $ "unexpected type: " ++ pprint ty
+  CoerceOp BoolTy x -> case x of
+    DataCon _ [] 0 [] -> returnVal $ Con $ Lit $ BoolLit False
+    DataCon _ [] 1 [] -> returnVal $ Con $ Lit $ BoolLit True
+    Con (SumAsProd _ tag [[],[]]) -> do
+      ans <- emitInstr $ IPrimOp $ ScalarUnOp UnsafeIntToBool $ fromScalarAtom tag
+      returnVal $ toScalarAtom BoolTy ans
+    _ -> error $ "Not a prelude bool: " ++ pprint x
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -420,6 +432,7 @@ splitDest (maybeDest, (Block decls ans)) = do
       (Dest (DataCon _ _ con args), DataCon _ _ con' args')
         | con == con' && length args == length args' -> do
             zipWithM_ gatherVarDests (map Dest args) args'
+      (Dest (Con (SumAsProd _ _ _)), _) -> tell [(dest, result)]  -- TODO
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
                                             gatherVarDests (Dest rd) rr

@@ -202,9 +202,13 @@ instance Pretty Atom where
     TC  e -> p e
     Con e -> p e
     Eff e -> p e
-    DataCon (DataDef _ _ cons) _ con xs -> parens $ p name <+> hsep (map p xs)
+    DataCon (DataDef _ _ cons) _ con xs -> case xs of
+      [] -> p name
+      _ -> parens $ p name <+> hsep (map p xs)
       where (DataConDef name _) = cons !! con
-    TypeCon (DataDef name _ _) params -> parens $ p name <+> hsep (map p params)
+    TypeCon (DataDef name _ _) params -> case params of
+      [] -> p name
+      _  -> parens $ p name <+> hsep (map p params)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v

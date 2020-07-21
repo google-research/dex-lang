@@ -201,8 +201,12 @@ prettyVal val = case val of
     Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
     SumAsProd (TypeCon (DataDef _ _ dataCons) _) (IntVal i) payload ->
-      parens $ pretty conName <+> hsep (map prettyVal $ payload !! i)
-      where DataConDef conName _ = dataCons !! i
+      case args of
+        [] -> pretty conName
+        _  -> parens $ pretty conName <+> hsep (map prettyVal args)
+      where
+        DataConDef conName _ = dataCons !! i
+        args = payload !! i
     _           -> pretty con
   atom -> pretty atom
 

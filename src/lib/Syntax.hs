@@ -38,7 +38,7 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
-    pattern IntLitExpr, pattern RealLitExpr,
+    pattern IntLitExpr, pattern RealLitExpr, pattern PreludeBoolTy,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
@@ -231,7 +231,7 @@ data PrimCon e =
       | PairCon e e
       | UnitCon
       | RefCon e e
-      | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
+      | Coerce e e        -- Type, then value. See Type.hs for valid coercions.
       | ClassDictHole e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
@@ -265,6 +265,7 @@ data PrimOp e =
       | IndexAsInt e
       | IdxSetSize e
       | ThrowError e
+      | CoerceOp e e                 -- Type, then value. See Type.hs for valid coercions.
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -1023,6 +1024,9 @@ pattern IntTy = TC (BaseType (Scalar IntType))
 pattern BoolTy :: Type
 pattern BoolTy = TC (BaseType (Scalar BoolType))
 
+pattern PreludeBoolTy :: Type
+pattern PreludeBoolTy <- TypeCon (DataDef _ [] [DataConDef _ [], DataConDef _ []]) []
+
 pattern RealTy :: Type
 pattern RealTy = TC (BaseType (Scalar RealType))
 
@@ -1158,7 +1162,8 @@ builtinNames = M.fromList
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
-  , ("unsafeAsIndex", ConExpr $ Coerce () ())
+  , ("unsafeAsIndex", ConExpr $ Coerce   () ())
+  , ("unsafeCoerce" , OpExpr  $ CoerceOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
   ]

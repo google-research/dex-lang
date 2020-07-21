@@ -329,7 +329,7 @@ unzipTab tab = do
   return (fsts, snds)
   where TabTy v _ = getType tab
 
-mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
+mapScalars :: HasCallStack => MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
   TabTy v a -> do
     buildFor Fwd ("i":>varType v) $ \i -> do

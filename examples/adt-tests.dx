@@ -118,7 +118,7 @@ threeCaseTab : (Fin 4)=>ThreeCases =
   [TheIntCase 3, TheEmptyCase, ThePairCase 2 0.1, TheEmptyCase]
 
 :p threeCaseTab
-> [(TheIntCase 3), (TheEmptyCase ), (ThePairCase 2 0.1), (TheEmptyCase )]
+> [(TheIntCase 3), TheEmptyCase, (ThePairCase 2 0.1), TheEmptyCase]
 
 :p
   snd $ withAccum \ref.

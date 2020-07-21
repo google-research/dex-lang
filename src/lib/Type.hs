@@ -429,19 +429,27 @@ typeCheckCon con = case con of
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   Coerce t@(Var _) _ -> t |: TyKind $> t
-  Coerce t e -> do
-    sourceTy <- coercionSourceType t
-    e |: sourceTy $> t
-    where
-      coercionSourceType :: Type -> TypeM Type
-      coercionSourceType ty = case ty of
-        TC (ArrayType  st   ) -> ArrayTy <$> coercionSourceType st
-        TC (IntRange   _ _  ) -> return IntTy -- from ordinal
-        TC (IndexRange _ _ _) -> return IntTy -- from ordinal
-        TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
-        _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
+  Coerce destTy e -> do
+    sourceTy <- typeCheck e
+    destTy  |: TyKind
+    checkValidCoercion sourceTy destTy
+    return destTy
   SumAsProd ty _ _ -> return ty  -- TODO: check!
   ClassDictHole ty -> ty |: TyKind >> return ty
+
+checkValidCoercion :: Type -> Type -> TypeM ()
+checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
+ (ArrayTy st, ArrayTy dt) -> checkValidCoercion st dt
+ (IntTy, TC (IntRange   _ _  )) -> return () -- from ordinal
+ (IntTy, TC (IndexRange _ _ _)) -> return () -- from ordinal
+ (IntTy, TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
+ _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
+
+checkValidOpCoercion :: Type -> Type -> TypeM ()
+checkValidOpCoercion sourceTy destTy = case (sourceTy, destTy) of
+ (BoolTy, PreludeBoolTy) -> return ()
+ (PreludeBoolTy, BoolTy) -> return ()
+ _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
@@ -534,6 +542,12 @@ typeCheckOp op = case op of
     i |: TC (IntRange (IntVal 0) (IntVal vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
+  CoerceOp t@(Var _) _ -> t |: TyKind $> t
+  CoerceOp destTy e -> do
+    sourceTy <- typeCheck e
+    destTy  |: TyKind
+    checkValidOpCoercion sourceTy destTy
+    return destTy
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

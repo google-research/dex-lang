@@ -7,7 +7,6 @@
 
 Int  = %Int
 Real = %Real
-Bool = %Bool
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
@@ -65,23 +64,51 @@ def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
-def (&&) (x:Bool) (y:Bool) : Bool = %and x y
-def (||) (x:Bool) (y:Bool) : Bool = %or  x y
-def not  (x:Bool)          : Bool = %not x
+
+InternalBool = %Bool
+
+-- XXX: False must come before True for the later coercions to be correct.
+data Bool =
+  False
+  True
+
+def unsafeCoerce (b:Type) (x:a) : b = %unsafeCoerce b x
+
+def (&&) (x:Bool) (y:Bool) : Bool =
+  x' = unsafeCoerce InternalBool x
+  y' = unsafeCoerce InternalBool y
+  unsafeCoerce _ $ %and x' y'
+
+def (||) (x:Bool) (y:Bool) : Bool =
+  x' = unsafeCoerce InternalBool x
+  y' = unsafeCoerce InternalBool y
+  unsafeCoerce _ $ %or x' y'
+
+def not  (x:Bool) : Bool =
+  x' = unsafeCoerce InternalBool x
+  unsafeCoerce _ $ %not x'
 
 'Sum types
 
 def (|) (a:Type) (b:Type) : Type = %SumType a b
 def anyVal (a:Type) ?-> : a = %anyVal a
-def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) = %sumCon isLeft l r
+def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) =
+  isLeft' = unsafeCoerce InternalBool isLeft
+  %sumCon isLeft' l r
+
 def Left  (x:a) : (a|b) = sumCon True  x      anyVal
 def Right (x:b) : (a|b) = sumCon False anyVal x
 def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
 
-def select (p:Bool) (x:a) (y:a) : a = %select p x y
+def select (p:Bool) (x:a) (y:a) : a =
+  p' = unsafeCoerce InternalBool p
+  %select p' x y
+
+def b2i (x:Bool) : Int  =
+  x' = unsafeCoerce InternalBool x
+  %booltoint x'
 
 def i2r (x:Int ) : Real = %inttoreal x
-def b2i (x:Bool) : Int  = %booltoint x
 def b2r (x:Bool) : Real = i2r (b2i x)
 def todo (a:Type) ?-> : a = %throwError a
 
@@ -134,13 +161,15 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance intEq  : Eq Int  = MkEq \x y. %ieq x y
-@instance realEq : Eq Real = MkEq \x y. %feq x y
+@instance intEq  : Eq Int  = MkEq \x y. unsafeCoerce _ $ %ieq x y
+@instance realEq : Eq Real = MkEq \x y. unsafeCoerce _ $ %feq x y
 @instance unitEq : Eq Unit = MkEq \x y. True
 
-@instance intOrd  : Ord Int  = MkOrd intEq  (\x y. %igt x y) (\x y. %ilt x y)
-@instance realOrd : Ord Real = MkOrd realEq (\x y. %fgt x y) (\x y. %flt x y)
-@instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False)    (\x y. False)
+@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. unsafeCoerce _ $ %igt x y)
+                                             (\x y. unsafeCoerce _ $ %ilt x y))
+@instance realOrd : Ord Real = (MkOrd realEq (\x y. unsafeCoerce _ $ %fgt x y)
+                                             (\x y. unsafeCoerce _ $ %flt x y))
+@instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False) (\x y. False)
 
 @instance
 def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
@@ -352,8 +381,13 @@ def checkDerivBase (f:Real->Real) (x:Real) : Bool =
 def checkDeriv (f:Real->Real) (x:Real) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
 
-def while (cond: Unit -> {|eff} Bool) (body: Unit -> {|eff} Unit) : {|eff} Unit =
-  %while cond body
+def while
+    (eff:Effects) ?->
+    (cond: Unit -> {|eff} Bool)
+    (body: Unit -> {|eff} Unit)
+    : {|eff} Unit =
+  cond' : Unit -> {|eff} InternalBool = \_. unsafeCoerce _ $ cond ()
+  %while cond' body
 
 'Vector support
 

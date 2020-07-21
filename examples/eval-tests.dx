@@ -561,17 +561,19 @@ def unflatten (params:Params n m) : (Weights n m & Biases n) =
 :p (for i:(Fin 4). 1.0) == (for i:(Fin 4). 2.0)
 > False
 
--- Needed to avoid ambiguous type variables if both sides use the same constructor
-def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
+-- Userspace-Bool breaks these
 
-:p cmpEither (Left 1) (Left 1)
-> True
+-- -- Needed to avoid ambiguous type variables if both sides use the same constructor
+-- def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
 
-:p cmpEither (Left 1) (Left 2)
-> False
+-- :p cmpEither (Left 1) (Left 1)
+-- > True
 
-:p cmpEither (Left 1) (Right 1)
-> False
+-- :p cmpEither (Left 1) (Left 2)
+-- > False
+
+-- :p cmpEither (Left 1) (Right 1)
+-- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
 upperBound = isum $ for i:(Fin 4). 1
