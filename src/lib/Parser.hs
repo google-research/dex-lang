@@ -199,6 +199,8 @@ uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
 litVal :: Parser LitVal
 litVal =   (IntLit  <$> intLit)
        <|> (RealLit <$> doubleLit)
+       <|> (BoolLit <$> (keyWord TrueKW  $> True))
+       <|> (BoolLit <$> (keyWord FalseKW $> False))
        <?> "literal"
 
 uVarOcc :: Parser UExpr
@@ -597,6 +599,7 @@ type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
              | ReadKW | WriteKW | StateKW | OldCaseKW | DataKW | WhereKW
+             | TrueKW | FalseKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -627,9 +630,11 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       DataKW -> "data"
       WhereKW -> "where"
       OldCaseKW -> "oldcase"
+      TrueKW  -> "True"
+      FalseKW -> "False"
 
 keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
+keyWordStrs = ["def", "for", "rof", "case", "of", "llam", "True", "False",
                "Read", "Write", "Accum", "oldcase", "data", "where"]
 
 primName :: Lexer String

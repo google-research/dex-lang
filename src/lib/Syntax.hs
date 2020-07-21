@@ -85,8 +85,8 @@ data Expr = App Atom Atom
           | Hof Hof
             deriving (Show, Eq, Generic)
 
-data Decl  = Let LetAnn Binder Expr
-           | Unpack [Binder] Expr  deriving (Show, Eq, Generic)
+data Decl = Let LetAnn Binder Expr
+          | Unpack [Binder] Expr  deriving (Show, Eq, Generic)
 
 data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
 type Alt = NaryAbs Block
@@ -743,16 +743,20 @@ instance HasVars Expr where
       Case (subst env e) (subst env alts) (subst env resultTy)
 
 instance HasVars Decl where
-  freeVars (Let _ bs expr) = foldMap freeVars bs <> freeVars expr
-  subst env (Let ann (v:>ty) bound) =
-    Let ann (v:> subst env ty) (subst env bound)
+  freeVars decl = case decl of
+    Let _ b expr   -> foldMap freeVars b <> freeVars expr
+    Unpack bs expr -> foldMap (foldMap freeVars) bs <> freeVars expr
+
+  subst env decl = case decl of
+    Let ann (v:>ty) bound -> Let ann (v:> subst env ty) (subst env bound)
+    Unpack bs bound ->
+      Unpack (map (\(v:>ty) -> (v:> subst env ty)) bs) (subst env bound)
 
 instance HasVars Block where
   freeVars (Block [] result) = freeVars result
-  freeVars (Block (decl@(Let _ b _):decls) result) =
-    freeVars decl <> (freeVars body `envDiff` (b@>()))
+  freeVars (Block (decl:decls) result) =
+    freeVars decl <> (freeVars body `envDiff` declBoundVars decl)
     where body = Block decls result
-
   subst env (Block decls result) = do
     let (decls', env') = catMap substDecl env decls
     let result' = subst (env <> env') result
@@ -792,13 +796,19 @@ instance HasVars a => HasVars (NaryAbs a) where
 instance HasVars Module where
   freeVars (Module variant decls bindings) = case decls of
     [] -> freeVars bindings `envDiff` bindings
-    Let _ b rhs : rest -> freeVars rhs
-                       <> freeVars (Abs b (Module variant rest bindings))
+    decl : rest -> freeVars decl
+                 <> (freeVars moduleRest `envDiff` declBoundVars decl)
+      where moduleRest = Module variant rest bindings
 
   subst env (Module variant decls bindings) = Module variant decls' bindings'
     where
       (decls', env') = catMap substDecl env decls
       bindings' = subst (env <> env') bindings
+
+declBoundVars :: Decl -> Env ()
+declBoundVars decl = case decl of
+  Let _ b _ -> b @> ()
+  Unpack bs _ -> foldMap (@> ()) bs
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
@@ -855,6 +865,15 @@ instance HasVars a => HasVars (Abs a) where
 substDecl :: ScopedSubstEnv -> Decl -> (Decl, ScopedSubstEnv)
 substDecl env (Let ann (v:>ty) bound) = (Let ann b (subst env bound), env')
   where (b, env') = refreshBinder env (v:> subst env ty)
+substDecl env (Unpack bs bound) = (Unpack bs' (subst env bound), env')
+  -- TODO: handle dependence between binders properly
+  where (bs', env') = refreshBinders env (map (fmap (subst env)) bs)
+
+refreshBinders :: ScopedSubstEnv -> [Var] -> ([Var], ScopedSubstEnv)
+refreshBinders _ [] = ([], mempty)
+refreshBinders env (b:bs) = (b':bs', env' <> env'')
+  where (b', env') = refreshBinder env b
+        (bs', env'') = refreshBinders (env <> env') bs
 
 refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
 refreshBinder (_, scope) b = (b', env')

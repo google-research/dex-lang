@@ -65,8 +65,6 @@ def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
-True  = %True
-False = %False
 def (&&) (x:Bool) (y:Bool) : Bool = %and x y
 def (||) (x:Bool) (y:Bool) : Bool = %or  x y
 def not  (x:Bool)          : Bool = %not x

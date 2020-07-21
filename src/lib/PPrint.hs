@@ -190,6 +190,7 @@ instance Pretty Decl where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _ b bound -> p b <+> "=" <+> p bound
+    Unpack bs bound -> p bs <+> "=" <+> p bound
 
 instance Pretty Atom where
   pretty atom = case atom of
@@ -338,6 +339,8 @@ instance Pretty UPat' where
     UPatBinder x -> p x
     UPatPair x y -> parens $ p x <> ", " <> p y
     UPatUnit -> "()"
+    UPatCon con pats -> parens $ p con <+> hsep (map p pats)
+    UPatLit x -> p x
 
 instance Pretty EffectRow where
   pretty (EffectRow [] Nothing) = mempty

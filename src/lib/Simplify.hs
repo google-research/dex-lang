@@ -11,6 +11,7 @@ module Simplify (simplifyModule, evalSimplified) where
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
+import Data.Foldable (fold)
 import Data.Functor
 import Data.List (partition)
 
@@ -57,6 +58,12 @@ simplifyDecl (Let ann b expr) = do
   if isGlobal b
     then emitTo (varName b) ann (Atom x) $> mempty
     else return $ b @> x
+simplifyDecl (Unpack bs expr) = do
+  x <- simplifyExpr expr
+  xs <- case x of
+    DataCon _ _ _ xs -> return xs
+    _ -> emitUnpack $ Atom x
+  return $ fold $ zipWith (@>) bs xs
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do

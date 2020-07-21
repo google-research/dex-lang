@@ -195,13 +195,20 @@ instance HasType Block where
         withTypeEnv (env <> env') $ typeCheck result
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
-checkDecl env decl@(Let _ b rhs) =
-  withTypeEnv env $ addContext ctxStr $ do
+checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
+  Let _ b rhs -> do
     -- TODO: effects
     checkBinder b
     ty <- typeCheck rhs
     checkEq (varType b) ty
     return $ varBinding b
+  Unpack bs rhs -> do
+    mapM_ checkBinder bs
+    TypeCon def params <- typeCheck rhs
+    [DataConDef _ bs'] <- return $ applyDataDefParams def params
+    assertEq (length bs) (length bs') ""
+    zipWithM_ checkEq (map varType bs) (map varType bs')
+    return $ foldMap varBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
@@ -274,6 +281,7 @@ instance CoreVariant Expr where
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariantVar b >> checkVariant e
+  checkVariant (Unpack bs e) = mapM checkVariantVar bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e

@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR,
+              select, selectAt, substEmbed, substEmbedR, emitUnpack,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -34,7 +34,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Data.Maybe
 import GHC.Stack
 
@@ -92,6 +92,18 @@ emitTo v ann expr = do
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
+
+emitUnpack :: MonadEmbed m => Expr -> m [Atom]
+emitUnpack expr = do
+  let (TypeCon def params) = getType expr
+  let [DataConDef _ bs] = applyDataDefParams def params
+  expr' <- deShadow expr <$> getScope
+  bs' <- forM bs $ \b -> do
+    b' <- freshVar b
+    embedExtend $ asFst $ b' @> (varType b', PatBound)
+    return b'
+  emitDecl $ Unpack bs' expr'
+  return $ map Var bs'
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
@@ -478,8 +490,10 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let ann v expr) = embedExtend (bindings, [decl])
-  where bindings = v @> (varType v, LetBound ann expr)
+emitDecl decl = embedExtend (bindings, [decl])
+  where bindings = case decl of
+          Let ann v expr -> v @> (varType v, LetBound ann expr)
+          Unpack vs _ -> foldMap (\v -> v @> (varType v, PatBound)) vs
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -499,14 +513,24 @@ traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
 traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
 
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
-               => TraversalDef m -> [Decl] -> m SubstEnv
+                  => TraversalDef m -> [Decl] -> m SubstEnv
 traverseDeclsOpen _ [] = return mempty
-traverseDeclsOpen def@(fExpr, _) (Let letAnn b expr : decls) = do
+traverseDeclsOpen def (decl:decls) = do
+  env <- traverseDecl def decl
+  env' <- extendR env $ traverseDeclsOpen def decls
+  return (env <> env')
+
+traverseDecl :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Decl -> m SubstEnv
+traverseDecl (fExpr, _) decl = case decl of
+  Let letAnn b expr -> do
     expr' <- fExpr expr
     x <- emitTo (varName b) letAnn expr'
-    let env = b @> x
-    env' <- extendR env $ traverseDeclsOpen def decls
-    return (env <> env')
+    return $ b @> x
+  Unpack bs expr -> do
+    expr' <- fExpr expr
+    xs <- emitUnpack expr'
+    return $ fold $ zipWith (@>) bs xs
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
@@ -577,13 +601,19 @@ inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
   _ -> block
 
 dceDecl :: Decl -> DceM ()
-dceDecl decl@(Let ann b expr) = do
+dceDecl decl = do
   varsNeeded <- look
-  if b `isin` varsNeeded
-    then tell [decl] >> extend (freeVars expr)
-    else case exprEffs expr of
-      NoEffects   -> return ()
-      SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+  case decl of
+    Let ann b expr -> do
+      if b `isin` varsNeeded
+        then tell [decl] >> extend (freeVars expr)
+        else case exprEffs expr of
+          NoEffects   -> return ()
+          SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+    Unpack bs expr -> do
+      if any (`isin` varsNeeded) bs || (not $ isPure expr)
+        then tell [decl] >> extend (freeVars expr)
+        else return ()
 
 sameSingletonVal :: Type -> Type -> Bool
 sameSingletonVal t1 t2 = case singletonTypeVal t1 of

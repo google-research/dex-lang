@@ -22,6 +22,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
+import Data.Foldable (fold)
 import Data.Coerce
 
 import Embed
@@ -84,6 +85,10 @@ toImpDecl env (maybeDest, (Let _ b bound)) = do
   b' <- traverse (impSubst env) b
   ans <- toImpExpr env (maybeDest, bound)
   return $ b' @> ans
+toImpDecl env (maybeDest, (Unpack bs bound)) = do
+  bs' <- mapM (traverse (impSubst env)) bs
+  ~(DataCon _ _ _ ans) <- toImpExpr env (maybeDest, bound)
+  return $ fold $ zipWith (@>) bs' ans
 
 toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 toImpExpr env (maybeDest, expr) = case expr of

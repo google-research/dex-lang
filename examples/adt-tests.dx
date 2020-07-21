@@ -54,6 +54,14 @@ x : MyEither Int Real = MyLeft 1
 > (MyLeft 1)
 
 :p
+  (MyLeft x') = x
+  x
+> Type error:sum type constructor in can't-fail pattern
+>
+>   (MyLeft x') = x
+>    ^^^^^^^^^
+
+:p
   case x of
     MyLeft  val -> val
     MyRight val -> floor val
@@ -124,3 +132,17 @@ data MyIntish = MkIntish Int
 
 :p case MkIntish 1 of MkIntish x -> x
 > 1
+
+
+:p
+  f : MyPair Int Real -> Int =
+    \(MkMyPair x y). x + floor y
+  f (MkMyPair 1 2.3)
+> 3
+
+:p
+  pairs = [MkMyPair 2 z,  MkMyPair 2 (MkMyPair 4 3.4)]
+  for i.
+    (MkMyPair x (MkMyPair y z)) = pairs.i
+    x + y + floor z
+> [5, 9]

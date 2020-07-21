@@ -268,24 +268,27 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   alt <- buildNAbs bs $ \xs -> extendR (newEnv bs xs) $ checkRho body reqTy
   return (conName, alt)
 
-inferPat :: UPat -> UInferM (Type, Name, [Binder])
-inferPat (WithSrc pos (UPatCon conName ps)) = addSrcContext (Just pos) $ do
-  let vs = map (\(WithSrc _ (UPatBinder (v:>_))) -> v) ps
+lookupDataCon :: Name -> UInferM (DataDef, Int, Name)
+lookupDataCon conName = do
   let conName' = asGlobal conName
   scope <- getScope
   case envLookup scope (conName':>()) of
-    Just (_, DataBoundDataCon def@(DataDef _ paramBs cons) con) -> do
-      let (DataConDef _ argBs) = cons !! con
-      when (length argBs /= length vs) $ throw TypeErr $
-        "Unexpected number of pattern binders. Expected " ++ show (length argBs)
-                                               ++ " got " ++ show (length vs)
-      params <- mapM (freshType . varType) paramBs
-      let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
-      let bs = zipWith (:>) vs argTys
-      return (TypeCon def params, conName', bs)
+    Just (_, DataBoundDataCon def con) -> return (def, con, conName')
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
-inferPat _ = error "Not implemented"
+
+inferPat :: UPat -> UInferM (Type, Name, [Binder])
+inferPat (WithSrc pos (UPatCon conName ps)) = addSrcContext (Just pos) $ do
+  let vs = map (\(WithSrc _ (UPatBinder (v:>_))) -> v) ps
+  (def@(DataDef _ paramBs cons), con, conName') <- lookupDataCon conName
+  let (DataConDef _ argBs) = cons !! con
+  when (length argBs /= length vs) $ throw TypeErr $
+   "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                          ++ " got " ++ show (length vs)
+  params <- mapM (freshType . varType) paramBs
+  let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
+  let bs = zipWith (:>) vs argTys
+  return (TypeCon def params, conName', bs)
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
@@ -313,6 +316,18 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     env1 <- bindPat' p1 x1
     env2 <- bindPat' p2 x2
     return $ env1 <> env2
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, conName') <- lift $ lookupDataCon conName
+    when (length cons /= 1) $ throw TypeErr $
+      "sum type constructor in can't-fail pattern"
+    let (DataConDef _ argBs) = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                             ++ " got " ++ show (length ps)
+    params <- lift $ mapM (freshType . varType) paramBs
+    lift $ constrainEq (TypeCon def params) (getType val)
+    xs <- lift $ zonk (Atom val) >>= emitUnpack
+    fold <$> zipWithM bindPat' ps xs
 
 patNameHint :: UPat -> Name
 patNameHint (WithSrc _ (UPatBinder (v:>()))) = v
