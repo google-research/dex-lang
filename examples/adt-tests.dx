@@ -146,3 +146,10 @@ data MyIntish = MkIntish Int
     (MkMyPair x (MkMyPair y z)) = pairs.i
     x + y + floor z
 > [5, 9]
+
+:p
+  xs = [MyLeft 1.0, MyLeft 2.0, MyRight (MkMyPair 3 4.0)]
+  for i. case xs.i of
+    MyLeft x -> floor x
+    MyRight (MkMyPair x y) -> x + floor y
+> [1, 2, 7]

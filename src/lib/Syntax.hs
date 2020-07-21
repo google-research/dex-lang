@@ -21,7 +21,7 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    UAlt (..), Alt, varBinding,
+    UAlt (..), Alt, varBinding, patName,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings, UConDef,
@@ -190,6 +190,10 @@ data WithSrc a = WithSrc SrcPos a
 
 srcPos :: WithSrc a -> SrcPos
 srcPos (WithSrc pos _) = pos
+
+patName :: UPat -> Name
+patName (WithSrc _ (UPatBinder (v:>()))) = v
+patName _ = NoName
 
 -- === primitive constructors and operators ===
 

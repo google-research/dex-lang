@@ -291,10 +291,6 @@ funDefLet = label "function definition" $ mayBreak $ do
 nameAsPat :: Parser Name -> Parser UPat
 nameAsPat p = withSrc $ UPatBinder <$> (:>()) <$> p
 
-patName :: UPat -> Name
-patName (WithSrc _ (UPatBinder (v:>()))) = v
-patName _ = NoName
-
 buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of

@@ -263,9 +263,12 @@ checkUEff (EffectRow effs t) = do
 
 checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Name, Alt)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
-  (patTy, conName, bs) <- inferPat pat
+  (patTy, conName, patTys) <- inferPat pat
+  let (subPats, subPatTys) = unzip patTys
   constrainEq scrutineeTy patTy
-  alt <- buildNAbs bs $ \xs -> extendR (newEnv bs xs) $ checkRho body reqTy
+  let bs = zipWith (\pat ty -> patName pat :> ty) subPats subPatTys
+  alt <- buildNAbs bs $ \xs ->
+           withBindPats (zip subPats xs) $ checkRho body reqTy
   return (conName, alt)
 
 lookupDataCon :: Name -> UInferM (DataDef, Int, Name)
@@ -277,18 +280,21 @@ lookupDataCon conName = do
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
 
-inferPat :: UPat -> UInferM (Type, Name, [Binder])
-inferPat (WithSrc pos (UPatCon conName ps)) = addSrcContext (Just pos) $ do
-  let vs = map (\(WithSrc _ (UPatBinder (v:>_))) -> v) ps
-  (def@(DataDef _ paramBs cons), con, conName') <- lookupDataCon conName
-  let (DataConDef _ argBs) = cons !! con
-  when (length argBs /= length vs) $ throw TypeErr $
-   "Unexpected number of pattern binders. Expected " ++ show (length argBs)
-                                          ++ " got " ++ show (length vs)
-  params <- mapM (freshType . varType) paramBs
-  let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
-  let bs = zipWith (:>) vs argTys
-  return (TypeCon def params, conName', bs)
+inferPat :: UPat -> UInferM (Type, Name, [(UPat, Type)])
+inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, conName') <- lookupDataCon conName
+    let (DataConDef _ argBs) = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+     "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                            ++ " got " ++ show (length ps)
+    params <- mapM (freshType . varType) paramBs
+    let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
+    return (TypeCon def params, conName', zip ps argTys)
+  _ -> throw TypeErr $ "Case patterns must start with a data constructor"
+
+withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
+withBindPats pats body = foldr (uncurry withBindPat) body pats
 
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
