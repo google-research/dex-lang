@@ -39,13 +39,14 @@ def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
          ( \xs ys. for i. xs.i - ys.i )
          ( for _. zero ))
 
-data Mul a:Type = MkMul (a->a->a)
+data Mul a:Type = MkMul (a->a->a) a  -- multiply, one
 
-def (*)  (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul -> mul
+def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
+def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
 
-@instance realMul : Mul Real = MkMul \x y. %fmul x y
-@instance intMul  : Mul Int  = MkMul \x y. %imul x y
-@instance unitMul : Mul Unit = MkMul \x y. ()
+@instance realMul : Mul Real = MkMul (\x y. %fmul x y) 1.0
+@instance intMul  : Mul Int  = MkMul (\x y. %imul x y) 1
+@instance unitMul : Mul Unit = MkMul (\x y. ()) ()
 
 data VSpace a:Type = MkVSpace (Add a) (Real -> a -> a)
 
@@ -279,8 +280,7 @@ def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
 def fsum (xs:n->Real) : Real = snd $ withAccum \ref. for i. ref += xs i
 def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
--- TODO: Add 'one' to Mul typeclass when adts branch is merged, then add prod
--- def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
+def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
 def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
 def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
@@ -435,7 +435,8 @@ def broadcastVector (v : Real) : VectorReal = packVector v v v v
   (MkAdd ( \x y. %vfadd x y )
          ( \x y. %vfsub x y )
          ( broadcastVector zero ))
-@instance vectorRealMul : Mul VectorReal = MkMul \x y. %vfmul x y
+@instance vectorRealMul : Mul VectorReal =
+  MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
 @instance vectorRealVSpace : VSpace VectorReal =
   MkVSpace vectorRealAdd \x v. broadcastVector x * v
 

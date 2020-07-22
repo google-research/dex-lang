@@ -15,6 +15,11 @@
 > 45
 
 :p
+   x = iota (Fin 3)
+   prod (for i. x.i + 1)
+> 6
+
+:p
    vdot' : n:Type ?-> n=>Real -> n=>Real -> Real =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
