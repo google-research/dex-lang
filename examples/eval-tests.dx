@@ -718,6 +718,22 @@ arr2d.(1@_)
     r1 := y
 > ((), (2, 1))
 
+
+:p any [True, False]
+> True
+:p any [False, False]
+> False
+:p any []:(Fin 0)=>Bool
+> False
+
+:p all [True, True]
+> True
+:p all [False, True]
+> False
+:p all []:(Fin 0)=>Bool
+> True
+
+
 'Tests for numerical utilies
 
 easy = [(-2.0), 3.0, 3.0, 0.1, 0.0]
@@ -737,3 +753,6 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 
 :p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0000001
 > True
+
+:p evalpoly [2.0, 3.0, 4.0] 10.0
+> 234.0
