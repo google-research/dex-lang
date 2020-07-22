@@ -409,6 +409,9 @@ instance Pretty UDecl where
   pretty (UData tyCon dataCons) =
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
 
+instance Pretty UConDef where
+  pretty (UConDef con bs) = p con <+> hsep (map p bs)
+
 instance Pretty UPat' where
   pretty pat = case pat of
     UPatBinder x -> p x

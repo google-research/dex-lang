@@ -24,16 +24,16 @@ module Syntax (
     UAlt (..), Alt, varBinding, patName,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
-    ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings, UConDef,
+    ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    sourceBlockBoundVars, uModuleBoundVars, PassName (..), bindingsAsVars,
+    boundUVars, PassName (..), bindingsAsVars,
     freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar, declAsScope,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
-    DataDef (..), DataConDef (..),
+    DataDef (..), DataConDef (..), UConDef (..),
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
@@ -160,7 +160,7 @@ data UExpr' = UVar UVar
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
-type UConDef = (Name, [UAnnBinder])
+data UConDef = UConDef Name [UAnnBinder]  deriving (Show, Eq, Generic)
 data UDecl = ULet LetAnn UPatAnn UExpr
            | UData UConDef [UConDef]
              deriving (Show, Eq, Generic)
@@ -558,37 +558,93 @@ uVarsAsGlobal vs = foldMap (\v -> (asGlobal v :>()) @> ()) $ envNames vs
 class HasUVars a where
   freeUVars :: a -> UVars
 
+class BindsUVars a where
+  boundUVars :: a -> UVars
+
+-- wrappers to dispatch to a particular typeclass instance
+newtype FlatList   a = FlatList   [a]
+-- each element's bound vars are in scope for the rest of the list
+newtype NestedList a = NestedList [a]
+newtype WrapAsBinder a = WrapAsBinder (VarP a)
+data UAbs b body = UAbs b body
+
+instance HasUVars a => HasUVars (FlatList a) where
+  freeUVars (FlatList xs) = foldMap freeUVars xs
+
+instance (BindsUVars a, HasUVars a) => HasUVars (NestedList a) where
+  freeUVars (NestedList []) = mempty
+  freeUVars (NestedList (x:xs)) =
+    freeUVars x <> (freeUVars (NestedList xs) `envDiff` boundUVars x)
+
+instance BindsUVars a => BindsUVars (NestedList a) where
+  boundUVars (NestedList xs) = foldMap boundUVars xs
+
+instance (HasUVars b, BindsUVars b, HasUVars body) => HasUVars (UAbs b body) where
+  freeUVars (UAbs b body) =
+    freeUVars b <> (freeUVars body `envDiff` boundUVars b)
+
+instance HasUVars a => HasUVars (WrapAsBinder a) where
+  freeUVars (WrapAsBinder (_:>x)) = freeUVars x
+
+instance BindsUVars (WrapAsBinder a) where
+  boundUVars (WrapAsBinder v) = v@>()
+
 instance HasUVars a => HasUVars (WithSrc a) where
   freeUVars (WithSrc _ e) = freeUVars e
 
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
-    ULam b _ body -> uAbsFreeVars b body
-    UPi b arr ty ->
-      freeUVars (varAnn b) <>
-      ((freeUVars arr <> freeUVars ty) `envDiff` (b@>()))
+    ULam b _ body -> freeUVars $ UAbs b body
+    UPi b arr ty -> freeUVars $ UAbs (WrapAsBinder b) (arr, ty)
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl decl body -> case decl of
-      ULet _ b rhs -> freeUVars rhs <> uAbsFreeVars b body
-      UData _ _ -> error "Not implemented"
-    UFor _ b body -> uAbsFreeVars b body
+    UDecl decl body -> freeUVars $ UAbs decl body
+    UFor _ b body -> freeUVars $ UAbs b body
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
-    UCase _ _ -> error "Not implemented"
+    UCase e alts -> freeUVars e <> foldMap freeUVars alts
+
+instance HasUVars UAlt where
+  freeUVars (UAlt p body) = freeUVars $ UAbs p body
+
+instance HasUVars () where
+  freeUVars = mempty
+
+instance HasUVars UPat' where
+  freeUVars pat = case pat of
+    UPatBinder _   -> mempty
+    UPatCon con ps -> (con:>()) @> () <> foldMap freeUVars ps
+    UPatLit _      -> mempty
+    UPatPair p1 p2 -> freeUVars p1 <> freeUVars p2
+    UPatUnit       -> mempty
+
+instance BindsUVars UPat' where
+  boundUVars pat = case pat of
+    UPatBinder v   -> v @> ()
+    UPatCon _ ps   -> foldMap boundUVars ps
+    UPatLit _      -> mempty
+    UPatPair p1 p2 -> boundUVars p1 <> boundUVars p2
+    UPatUnit       -> mempty
 
 instance HasUVars UDecl where
-  freeUVars = undefined -- (ULet _ p expr) = freeUVars p <> freeUVars expr
+  freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
+  freeUVars (UData (UConDef _ bs) dataCons) =
+    freeUVars (UAbs (NestedList (map WrapAsBinder bs)) (FlatList dataCons))
+
+instance BindsUVars UDecl where
+  boundUVars decl = case decl of
+   ULet _ (p,_) _ -> boundUVars p
+   UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
 
 instance HasUVars UModule where
-  freeUVars (UModule []) = mempty
-  freeUVars (UModule (decl : rest)) = case decl of
-    ULet _ b rhs -> freeUVars rhs <> uAbsFreeVars b (UModule rest)
-    UData _ _ -> error "not implemented"
+  freeUVars (UModule decls) = freeUVars $ NestedList decls
+
+instance BindsUVars UModule where
+  boundUVars (UModule decls) = boundUVars $ NestedList decls
 
 instance HasUVars SourceBlock where
   freeUVars block = uVarsAsGlobal $
@@ -596,6 +652,12 @@ instance HasUVars SourceBlock where
       RunModule (   m) -> freeUVars m
       Command _ (_, m) -> freeUVars m
       GetNameType v -> (v:>()) @> ()
+      _ -> mempty
+
+instance BindsUVars SourceBlock where
+  boundUVars block = uVarsAsGlobal $
+    case sbContents block of
+      RunModule (   m) -> boundUVars m
       _ -> mempty
 
 instance HasUVars EffectRow where
@@ -606,23 +668,24 @@ instance HasUVars eff => HasUVars (ArrowP eff) where
   freeUVars (PlainArrow eff) = freeUVars eff
   freeUVars _ = mempty
 
-uAbsFreeVars :: HasUVars a => UPatAnn -> a -> UVars
-uAbsFreeVars (pat, ann) body =
-  foldMap freeUVars ann <> (freeUVars body `envDiff` uPatBoundVars pat)
+instance (HasUVars a, HasUVars b) => HasUVars (a, b) where
+  freeUVars (x, y) = freeUVars x <> freeUVars y
 
-sourceBlockBoundVars :: SourceBlock -> UVars
-sourceBlockBoundVars block = uVarsAsGlobal $
-  case sbContents block of
-    RunModule m -> uModuleBoundVars m
-    -- LoadData (WithSrc _ p, _) _ _ -> foldMap (@>()) p
-    _                             -> mempty
+instance HasUVars a => HasUVars (Maybe a) where
+  freeUVars Nothing = mempty
+  freeUVars (Just x) = freeUVars x
 
-uPatBoundVars :: UPat -> UVars
-uPatBoundVars (WithSrc _ _) = undefined -- foldMap (@>()) pat
+instance BindsUVars UPatAnn where
+  boundUVars (pat, _) = boundUVars pat
 
-uModuleBoundVars :: UModule -> UVars
-uModuleBoundVars (UModule decls) =
-  foldMap (\(ULet _ (p,_) _) -> uPatBoundVars p) decls
+instance HasUVars UConDef where
+  freeUVars (UConDef _ bs) = freeUVars $ NestedList $ map WrapAsBinder bs
+
+instance BindsUVars UConDef where
+  boundUVars (UConDef con _) = (con:>())@>()
+
+instance BindsUVars a => BindsUVars (WithSrc a) where
+  boundUVars (WithSrc _ x) = boundUVars x
 
 nameAsEnv :: Name -> UVars
 nameAsEnv v = (v:>())@>()

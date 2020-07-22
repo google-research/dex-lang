@@ -35,6 +35,12 @@ data Dual a:Type =
 :p for i:(Fin 3). MkMyPair (ordinal i) (ordinal i + 1)
 > [MkMyPair 0 1, MkMyPair 1 2, MkMyPair 2 3]
 
+zz = MkMyPair 1 (MkMyPair True 2.3)
+
+(MkMyPair z1 (MkMyPair z2 z3)) = zz
+
+:p (z1, z2, z3)
+> (1, (True, 2.3))
 
 :p
   tabOfPairs = for i:(Fin 3). MkMyPair (ordinal i) (ordinal i + 1)

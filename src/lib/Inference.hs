@@ -185,6 +185,7 @@ lookupSourceVar v = do
         Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
+-- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
   UPatBinder (v:>()) -> do
@@ -199,7 +200,19 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     x2   <- lift $ getSnd val
     unpackTopPat letAnn p1 (Atom x1)
     unpackTopPat letAnn p2 (Atom x2)
-  _ -> throw NotImplementedErr $ "Top-level unpacking"
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, _) <- lookupDataCon conName
+    when (length cons /= 1) $ throw TypeErr $
+      "sum type constructor in can't-fail pattern"
+    let DataConDef _ argBs = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                             ++ " got " ++ show (length ps)
+    params <- mapM (freshType . varType) paramBs
+    constrainEq (TypeCon def params) (getType expr)
+    xs <- zonk expr >>= emitUnpack
+    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) ps xs
+  UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
@@ -229,7 +242,7 @@ inferUDecl True (UData tc dcs) = do
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
 inferUConDef :: UConDef -> UInferM (Name, [Binder])
-inferUConDef (v, bs) = do
+inferUConDef (UConDef v bs) = do
   bs' <- mapM (mapM checkUType) bs
   return (asGlobal  v, bs')
 

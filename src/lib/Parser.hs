@@ -247,11 +247,11 @@ dataDef = do
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
-tyConDef = (,) <$> upperName <*> many annBinder
+tyConDef = UConDef <$> upperName <*> many annBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
-dataConDef = (,) <$> upperName <*> many ((NoName:>) <$> containedExpr)
+dataConDef = UConDef <$> upperName <*> many ((NoName:>) <$> containedExpr)
 
 decl :: Parser UDecl
 decl = do
