@@ -261,9 +261,9 @@ decl = do
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
-  pat <- try $ (letPat <|> parens pat) <* lookAhead (sym "=" <|> sym ":")
+  p <- try $ (letPat <|> parens pat) <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
-  return $ ULet PlainLet (pat, ann)
+  return $ ULet PlainLet (p, ann)
 
 letPat :: Parser UPat
 letPat = nameAsPat $ upperName <|> lowerName <|> symName

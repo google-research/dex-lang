@@ -61,7 +61,9 @@ stmtToMDInstr (~(Just d), instr) = case traceShowId instr of
   Store ~(IVar v) _  -> assertRef True v >> keep
   IOffset _ _ _      -> notAllowed -- Shouldn't need to offset pointers on the host.
   IWhile _ _         -> notAllowed -- TODO: Allow while loops? Those are not paralellizable anyway.
+  If _ _ _           -> notAllowed
   Loop _ _ _ _       -> notAllowed
+  IThrowError        -> notAllowed
   where
     keep :: Translate (MDImpInstr ImpKernel)
     keep = return $ MDHostInstr instr

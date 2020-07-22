@@ -116,6 +116,7 @@ toImpExpr env (maybeDest, expr) = case expr of
           \(xs, NAbs bs body) ->
              void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
         destToAtom dest
+      _ -> error $ "Unexpected scrutinee: " ++ pprint e'
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -601,6 +602,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
       recDest tag tag'
       zipWithM_ (zipWithM_ recDest) xs xs'
+    _ -> unreachable
   _ -> unreachable
   where
     rec x y = zipWithDest x y f
@@ -709,10 +711,10 @@ emitSwitch testIdx = rec 0
     rec _ [] = error "Shouldn't have an empty list of alternatives"
     rec _ [body] = body
     rec curIdx (body:rest) = do
-      pred <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (IIntVal curIdx)
+      cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (IIntVal curIdx)
       thisCase   <- liftM snd $ scopedBlock $ body
       otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
-      emitStatement (Nothing, If pred thisCase otherCases)
+      emitStatement (Nothing, If cond thisCase otherCases)
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop maybeHint d n body = do
@@ -877,6 +879,8 @@ instrType instr = case instr of
   Loop _ _ _ _    -> return Nothing
   IWhile _ _      -> return Nothing
   IOffset _ _ ty  -> return $ Just $ IRefType ty
+  If _ _ _        -> return Nothing
+  IThrowError     -> return Nothing
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op

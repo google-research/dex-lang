@@ -168,8 +168,8 @@ evalModule bindings normalized = do
   checkPass SimpPass defunctionalized
   evaluated <- evalSimplified defunctionalized (evalBackend bindings)
   checkPass ResultPass evaluated
-  Module Evaluated [] bindings <- return evaluated
-  return bindings
+  Module Evaluated [] newBindings <- return evaluated
+  return newBindings
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of

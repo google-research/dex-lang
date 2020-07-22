@@ -571,20 +571,24 @@ instance HasUVars UExpr' where
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl (ULet _ b rhs) body -> freeUVars rhs <> uAbsFreeVars b body
+    UDecl decl body -> case decl of
+      ULet _ b rhs -> freeUVars rhs <> uAbsFreeVars b body
+      UData _ _ -> error "Not implemented"
     UFor _ b body -> uAbsFreeVars b body
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
+    UCase _ _ -> error "Not implemented"
 
 instance HasUVars UDecl where
-  freeUVars (ULet _ p expr) = undefined -- freeUVars p <> freeUVars expr
+  freeUVars = undefined -- (ULet _ p expr) = freeUVars p <> freeUVars expr
 
 instance HasUVars UModule where
   freeUVars (UModule []) = mempty
-  freeUVars (UModule (ULet _ b rhs : rest)) =
-    freeUVars rhs <> uAbsFreeVars b (UModule rest)
+  freeUVars (UModule (decl : rest)) = case decl of
+    ULet _ b rhs -> freeUVars rhs <> uAbsFreeVars b (UModule rest)
+    UData _ _ -> error "not implemented"
 
 instance HasUVars SourceBlock where
   freeUVars block = uVarsAsGlobal $
@@ -614,7 +618,7 @@ sourceBlockBoundVars block = uVarsAsGlobal $
     _                             -> mempty
 
 uPatBoundVars :: UPat -> UVars
-uPatBoundVars (WithSrc _ pat) = undefined -- foldMap (@>()) pat
+uPatBoundVars (WithSrc _ _) = undefined -- foldMap (@>()) pat
 
 uModuleBoundVars :: UModule -> UVars
 uModuleBoundVars (UModule decls) =
@@ -648,6 +652,7 @@ scopelessSubst env x = subst (env, scope) x
 
 declAsScope :: Decl -> Scope
 declAsScope (Let ann v expr) = v @> (varType v, LetBound ann expr)
+declAsScope (Unpack _ _) = error "Not implemented"
 
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
@@ -684,12 +689,9 @@ applyAbs (Abs v body) x = scopelessSubst (v@>x) body
 
 applyNaryAbs :: HasVars a => NaryAbs a -> [Atom] -> a
 applyNaryAbs (NAbs [] body) [] = body
-applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs abs xs
-  where abs = applyAbs (Abs b (NAbs bs body)) x
+applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs ab xs
+  where ab = applyAbs (Abs b (NAbs bs body)) x
 applyNaryAbs _ _ = error "wrong number of arguments"
-
-getDataConDef :: DataDef -> Int -> DataConDef
-getDataConDef (DataDef _ _ cons) con = cons !! con
 
 applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
 applyDataDefParams (DataDef _ paramBs cons) params =
@@ -948,6 +950,8 @@ instance HasIVars ImpInstr where
     Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
     IWhile c p    -> freeIVars c <> freeIVars p
     IPrimOp op    -> foldMap freeIVars op
+    If p l r      -> freeIVars p <> freeIVars l <> freeIVars r
+    IThrowError   -> mempty
 
 instance HasIVars ImpProg where
   freeIVars (ImpProg stmts) = case stmts of

@@ -350,6 +350,7 @@ instance Pretty BinderInfo where
     DataBoundTypeCon _   -> "<type constructor>"
     DataBoundDataCon _ _ -> "<data constructor>"
     UnknownBinder -> "<unknown binder>"
+    PatBound      -> "<pattern binder>"
 
 instance Pretty UModule where
   pretty (UModule decls) = prettyLines decls

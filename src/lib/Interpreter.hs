@@ -34,6 +34,7 @@ evalBlock env (Block decls result) = do
 evalDecl :: SubstEnv -> Decl -> SubstEnv
 evalDecl env (Let _ v rhs) = v @> evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
+evalDecl _ (Unpack _ _) = error "Not implemented"
 
 evalExpr :: SubstEnv -> Expr -> Atom
 evalExpr env expr = case expr of
@@ -42,7 +43,7 @@ evalExpr env expr = case expr of
     _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
   Atom atom -> atom
   Op op     -> evalOp op
-  Hof _     -> error $ "Not implemented: " ++ pprint expr
+  _         -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of

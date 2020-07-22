@@ -20,7 +20,6 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Functor
 import Data.Text.Prettyprint.Doc
-import GHC.Stack
 
 import Array
 import Syntax
@@ -29,7 +28,6 @@ import PPrint
 import Cat
 
 type TypeEnv = Bindings  -- Only care about type payload
-type ClassEnv = MonMap Name [ClassName]
 
 data OptionalEnv env = SkipChecks | CheckWith env  deriving Functor
 type TypeCheckEnv = OptionalEnv (TypeEnv, EffectRow)
@@ -179,6 +177,8 @@ exprEffs expr = case expr of
     RunReader _ _ -> SomeEffects
     RunWriter _   -> SomeEffects
     RunState _ _  -> SomeEffects
+    Tile _ _ _ -> error "not implemented"
+  Case _ _ _ -> error "not implemented"
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
@@ -679,7 +679,7 @@ indexSetConcreteSize ty = case ty of
 
 checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
-  Var v -> error "Not implemented"
+  Var _ -> error "Not implemented"
   TabTy _ b -> recur b
   -- TODO: check that data constructor arguments are data-like, and so on
   TypeCon _ _ -> return ()

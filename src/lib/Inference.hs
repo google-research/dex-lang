@@ -144,7 +144,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       case lookup conName alts' of
         Nothing  -> return $ NAbs (map ((NoName :>) . varType) bs) $
                                Block [] $ Op $ ThrowError reqTy'
-        Just abs -> return abs
+        Just alt -> return alt
     emit $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
@@ -199,6 +199,7 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     x2   <- lift $ getSnd val
     unpackTopPat letAnn p1 (Atom x1)
     unpackTopPat letAnn p2 (Atom x2)
+  _ -> throw NotImplementedErr $ "Top-level unpacking"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
@@ -266,7 +267,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   (patTy, conName, patTys) <- inferPat pat
   let (subPats, subPatTys) = unzip patTys
   constrainEq scrutineeTy patTy
-  let bs = zipWith (\pat ty -> patName pat :> ty) subPats subPatTys
+  let bs = zipWith (\p ty -> patName p :> ty) subPats subPatTys
   alt <- buildNAbs bs $ \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
   return (conName, alt)
@@ -323,7 +324,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     env2 <- bindPat' p2 x2
     return $ env1 <> env2
   UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con, conName') <- lift $ lookupDataCon conName
+    (def@(DataDef _ paramBs cons), con, _) <- lift $ lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
       "sum type constructor in can't-fail pattern"
     let (DataConDef _ argBs) = cons !! con
@@ -334,6 +335,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' ps xs
+  UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 patNameHint :: UPat -> Name
 patNameHint (WithSrc _ (UPatBinder (v:>()))) = v
