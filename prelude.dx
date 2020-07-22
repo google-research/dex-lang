@@ -482,3 +482,7 @@ def softmax (x: n=>Real) : n=>Real =
   e =  for i. exp (x.i - m)
   s = sum e
   for i. e.i / s
+
+def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Real) : v =
+  -- Evaluate a polynomial at x.  Same as Numpy's polyval.
+  fold zero \i c. coefficients.i + x .* c
