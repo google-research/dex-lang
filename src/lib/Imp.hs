@@ -32,7 +32,6 @@ import Env
 import Type
 import PPrint
 import Cat
-import Util (lookupWithIdx)
 import qualified Algebra as A
 -- Note [Valid Imp atoms]
 --

@@ -1,3 +1,7 @@
+
+-- TODO: use prelude sum instead once we can differentiate state effect
+def sum'  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
+
 :p
    f : Real -> Real = \x. x
    jvp f 3.0 2.0
@@ -62,7 +66,7 @@
 :p jvp transpose [[1.,2.], [3.,4.]] [[10.,20.], [30.,40.]]
 > [[10.0, 30.0], [20.0, 40.0]]
 
-:p jvp sum [1., 2.] [10.0, 20.0]
+:p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.0
 
 f : Real -> Real = \x. snd $ withAccum \ref. ref += x
@@ -217,10 +221,10 @@ myOtherSquare : Real -> Real =
   jvp f [1.,2.] [3.,4.]
 > [6.0, 16.0]
 
-:p jvp sum [1., 2.] [3.0, 4.0]
+:p jvp sum' [1., 2.] [3.0, 4.0]
 > 7.0
 
-:p grad sum [1.,2.]
+:p grad sum' [1.,2.]
 > [1.0, 1.0]
 
 

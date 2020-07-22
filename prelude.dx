@@ -268,16 +268,24 @@ def scan (init:a) (body:n->a->(a&b)) : (a & n=>b) =
     y
 
 def fold (init:a) (body:(n->a->a)) : a = fst $ scan init \i x. (body i x, ())
+def reduce (identity:a) (binop:(a->a->a)) (xs:n=>a) : a =
+  -- `binop` should be a commutative and associative, and form a
+  -- commutative monoid with `identity`
+  -- TODO: implement with a parallelizable monoid-parameterized writer
+  fold identity (\i c. binop c xs.i)
+
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
 def fsum (xs:n->Real) : Real = snd $ withAccum \ref. for i. ref += xs i
-def sum  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
-def isum (xs:n=>Int) : Int = fold 0 \i c. c + xs.i
+def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
+-- TODO: Add 'one' to Mul typeclass when adts branch is merged, then add prod
+-- def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
 def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
 def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
-def any (xs:n=>Bool) : Bool = fold False \i c. c || xs.i
-def all (xs:n=>Bool) : Bool = fold True  \i c. c && xs.i
+def any (xs:n=>Bool) : Bool = reduce False (||) xs
+def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
+
 
 def applyN (n:Int) (x:a) (f:a -> a) : a =
   snd $ withState x \ref. for _:(Fin n).
@@ -334,23 +342,31 @@ def bern (p:Real) (k:Key) : Bool = rand k < p
 def randnVec (n:Type) ?-> (k:Key) : n=>Real =
   for i. randn (ixkey k i)
 
-'min / max etc  (TODO: implement with a monoid-parameterized writer)
+'min / max etc
 
-def minBy (f:a->Real) (x:a) (y:a) : a = select ((f x) < (f y)) x y
-def maxBy (f:a->Real) : a -> a -> a = minBy (neg `compose` f)
+def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a =
+  select ((f x) < (f y)) x y
+def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a =
+  select ((f x) > (f y)) x y
 
-min : Real -> Real -> Real = minBy id
-max : Real -> Real -> Real = maxBy id
+def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
+def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
 
-def minimumBy (f:a->Real) (xs:n=>a) : a = fold xs.(fromOrdinal _ 0) (\i. minBy f xs.i)
-def maximumBy (f:a->Real) (xs:n=>a) : a = minimumBy (neg `compose` f) xs
+def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (minBy f) xs
+def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (maxBy f) xs
 
-def minimum (xs:n=>Real) : Real = minimumBy id xs
-def maximum (xs:n=>Real) : Real = maximumBy id xs
+def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
+def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
 
-def argmin (xs:n=>Real) : n =
-  fst $ fold (fromOrdinal _ 0, xs.(fromOrdinal _ 0)) \i (bestIx, bestDist).
-    select (xs.i < bestDist) (i, xs.i) (bestIx, bestDist)
+def argmin (_:Ord o) ?=> (xs:n=>o) : n =
+  zeroth = (0@_, xs.(0@_))
+  compare = \(idx1, x1) (idx2, x2).
+    select (x1 < x2) (idx1, x1) (idx2, x2)
+  zipped = for i. (i, xs.i)
+  fst $ reduce zeroth compare zipped
+
 
 'Automatic differentiation
 

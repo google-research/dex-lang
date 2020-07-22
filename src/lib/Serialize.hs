@@ -208,7 +208,7 @@ prettyVal val = case val of
         DataConDef conName _ = dataCons !! i
         args = payload !! i
     _           -> pretty con
-  atom -> pretty atom
+  atom -> prettyPrec atom LowestPrec
 
 getValArrays :: Val -> [Array]
 getValArrays = undefined

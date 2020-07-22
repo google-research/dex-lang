@@ -824,5 +824,8 @@ makeEntryPoint wrapperName argTypes f = runCompile mempty $ do
 instance Pretty L.Operand where
   pretty x = pretty (show x)
 
+instance PrettyPrec L.Operand where
+  prettyPrec = atPrec AppPrec . pretty
+
 instance Pretty L.Type where
   pretty x = pretty (show x)

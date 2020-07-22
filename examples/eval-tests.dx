@@ -6,12 +6,12 @@
    double 10.0
 > 20.0
 
-:p isum (iota (Fin 10))
+:p sum (iota (Fin 10))
 > 45
 
 :p
    x = iota (Fin 10)
-   isum (for i. x.i)
+   sum (for i. x.i)
 > 45
 
 :p
@@ -40,7 +40,7 @@ arr = iota NArr
 :p for i:NArr. (iota _).i + (iota _).i
 > [0, 2, 4, 6, 8, 10, 12]
 
-:p isum for i:NArr. 1
+:p sum for i:NArr. 1
 > 7
 
 fun = \y. sum (map i2r arr) + y
@@ -187,7 +187,7 @@ N4 = Fin 4
 
 mat = for i:N3 j:N4. (iota _).i + (10 * (iota _).j)
 
--- :p isum for (i,j). mat.i.j
+-- :p sum for (i,j). mat.i.j
 -- > 192
 
 litArr = [10, 5, 3]
@@ -576,7 +576,7 @@ def unflatten (params:Params n m) : (Weights n m & Biases n) =
 -- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
-upperBound = isum $ for i:(Fin 4). 1
+upperBound = sum $ for i:(Fin 4). 1
 :p for j:(Fin upperBound). 1.0
 > [1.0, 1.0, 1.0, 1.0]
 
@@ -597,7 +597,7 @@ for i:(Fin 4).
 > (2, [(2, 5), (2, 5), (2, 5), (2, 5)])
 
 for i:(Range 4 1). 1.0
-> []@4...<1
+> []@(%IntRange 4 1)
 
 x = 2 - 4
 for i:(Range 0 x). 1.0
@@ -605,7 +605,7 @@ for i:(Range 0 x). 1.0
 
 -- Make sure that we can construct and print an array using a pair index set
 for i:(Fin 2 & Fin 2). 1.0
-> [1.0, 1.0, 1.0, 1.0]@((Fin 2) & (Fin 2))
+> [1.0, 1.0, 1.0, 1.0]@(Fin 2 & Fin 2)
 
 1@(Fin 2 & Fin 2)
 > (0@(Fin 2), 1@(Fin 2))
@@ -614,11 +614,11 @@ for i:(Fin 5). for j:(..i).
   ir = i2r $ ordinal i
   jr = i2r $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
-> [ [0.0]@...0@((Fin 5))
-> , [1.0, 2.0]@...1@((Fin 5))
-> , [3.0, 4.0, 5.0]@...2@((Fin 5))
-> , [6.0, 7.0, 8.0, 9.0]@...3@((Fin 5))
-> , [10.0, 11.0, 12.0, 13.0, 14.0]@...4@((Fin 5)) ]
+> [ [0.0]@(..(0@Fin 5))
+> , [1.0, 2.0]@(..(1@Fin 5))
+> , [3.0, 4.0, 5.0]@(..(2@Fin 5))
+> , [6.0, 7.0, 8.0, 9.0]@(..(3@Fin 5))
+> , [10.0, 11.0, 12.0, 13.0, 14.0]@(..(4@Fin 5)) ]
 
 -- TODO: fix!
 -- -- Exercise the use of free variables in the sum solver
