@@ -117,13 +117,13 @@ parsePreHeader = do
   return n
 
 parseHeader :: Parser DBOHeader
-parseHeader = do
-  emptyLines
-  ty <- symbol "type:" >> tauType <* eol
-  emptyLines
-  sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
-  emptyLines
-  return $ DBOHeader ty sizes
+parseHeader = undefined
+  -- emptyLines
+  -- ty <- symbol "type:" >> tauType <* eol
+  -- emptyLines
+  -- sizes <-  symbol "bufferSizes:" >> brackets (uint `sepBy1` symbol ",") <* eol
+  -- emptyLines
+  -- return $ DBOHeader ty sizes
 
 writeArrayToFile :: Handle -> Array -> IO ()
 writeArrayToFile h arr = unsafeWithArrayPointer arr (\ptr -> hPutBuf h ptr (size * sizeOf b))
@@ -200,6 +200,13 @@ prettyVal val = case val of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
     Coerce t i  -> pretty i <> "@" <> pretty t
     Lit x       -> pretty x
+    SumAsProd (TypeCon (DataDef _ _ dataCons) _) (IntVal i) payload ->
+      case args of
+        [] -> pretty conName
+        _  -> parens $ pretty conName <+> hsep (map prettyVal args)
+      where
+        DataConDef conName _ = dataCons !! i
+        args = payload !! i
     _           -> pretty con
   atom -> prettyPrec atom LowestPrec
 
@@ -223,6 +230,7 @@ typeToArrayType t = case t of
     where (IntVal size) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
+-- TODO: this isn't enough, since this module's compilation might be cached
 curCompilerVersion :: String
 curCompilerVersion = __TIME__
 

@@ -20,8 +20,9 @@ import Prelude hiding (pi, abs)
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Control.Monad.State
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
+import Data.Foldable (fold)
 import Data.Coerce
 
 import Embed
@@ -32,7 +33,6 @@ import Type
 import PPrint
 import Cat
 import qualified Algebra as A
-
 -- Note [Valid Imp atoms]
 --
 -- The Imp translation functions as an interpreter for the core IR, which has a side effect
@@ -51,10 +51,10 @@ import qualified Algebra as A
 -- TODO: use `Env ()` instead of `Scope`. The problem is that we're mixing up
 -- Imp and Core types in there.
 type EmbedEnv = ((Env Dest, [IVar]), (Scope, ImpProg))
-type ImpM = Cat EmbedEnv
+type ImpM = ReaderT Bindings (Cat EmbedEnv)
 
-toImpFunction :: ([ScalarTableVar], Block) -> (ImpFunction, Atom)
-toImpFunction (vsIn, block) = runImpM vsIn $ do
+toImpFunction :: Bindings -> ([ScalarTableVar], Block) -> (ImpFunction, Atom)
+toImpFunction bindings (vsIn, block) = runImpM bindings vsIn $ do
   ((vsOut, atomOut), prog) <- scopedBlock $ materializeResult
   return $ (ImpFunction (fmap toVar vsOut) vsIn prog, atomOut)
   where
@@ -65,8 +65,9 @@ toImpFunction (vsIn, block) = runImpM vsIn $ do
       atomOut <- destToAtomScalarAction (return . toArrayAtom . IVar) outDest
       return (destArrays outDest, atomOut)
 
-runImpM :: [ScalarTableVar] -> ImpM a -> a
-runImpM inVars m = fst $ runCat m (mempty, (inVarScope, mempty))
+runImpM :: Bindings -> [ScalarTableVar] -> ImpM a -> a
+runImpM bindings inVars m =
+  fst $ runCat (runReaderT m bindings) (mempty, (bindings <> inVarScope, mempty))
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
     inVarScope = foldMap varAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inVars
@@ -83,6 +84,10 @@ toImpDecl env (maybeDest, (Let _ b bound)) = do
   b' <- traverse (impSubst env) b
   ans <- toImpExpr env (maybeDest, bound)
   return $ b' @> ans
+toImpDecl env (maybeDest, (Unpack bs bound)) = do
+  bs' <- mapM (traverse (impSubst env)) bs
+  ~(DataCon _ _ _ ans) <- toImpExpr env (maybeDest, bound)
+  return $ fold $ zipWith (@>) bs' ans
 
 toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 toImpExpr env (maybeDest, expr) = case expr of
@@ -98,6 +103,20 @@ toImpExpr env (maybeDest, expr) = case expr of
   Atom x   -> copyDest maybeDest =<< impSubst env x
   Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env (maybeDest, hof)
+  Case e alts _ -> do
+    e' <- impSubst env e
+    case e' of
+      DataCon _ _ con args -> do
+        let NAbs bs body = alts !! con
+        toImpBlock (env <> newEnv bs args) (maybeDest, body)
+      Con (SumAsProd _ tag xss) -> do
+        let tag' = fromScalarAtom tag
+        dest <- allocDest maybeDest $ getType expr
+        emitSwitch tag' $ flip map (zip xss alts) $
+          \(xs, NAbs bs body) ->
+             void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
+        destToAtom dest
+      _ -> error $ "Unexpected scrutinee: " ++ pprint e'
 
 impSubst :: HasVars a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -181,6 +200,21 @@ toImpOp (maybeDest, op) = case op of
     extraOffset <- indexToInt (PairTy u v) (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom resultTy tileOffset'
+  ThrowError ty -> do
+    emitStatement (Nothing, IThrowError)
+    return $ Con $ AnyValue ty
+  CoerceOp destTy@PreludeBoolTy x -> case getType x of
+    BoolTy -> do
+      tag <- emitInstr $ IPrimOp $ ScalarUnOp BoolToInt $ fromScalarAtom x
+      returnVal $ Con $ SumAsProd destTy (toScalarAtom IntTy tag) [[], []]
+    ty -> error $ "unexpected type: " ++ pprint ty
+  CoerceOp BoolTy x -> case x of
+    DataCon _ [] 0 [] -> returnVal $ Con $ Lit $ BoolLit False
+    DataCon _ [] 1 [] -> returnVal $ Con $ Lit $ BoolLit True
+    Con (SumAsProd _ tag [[],[]]) -> do
+      ans <- emitInstr $ IPrimOp $ ScalarUnOp UnsafeIntToBool $ fromScalarAtom tag
+      returnVal $ toScalarAtom BoolTy ans
+    _ -> error $ "Not a prelude bool: " ++ pprint x
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -355,11 +389,13 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     then lift $ fScalar $ fromIVar $ fromArrayAtom destAtom
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
+  DataCon  def params con args -> DataCon def params con <$> mapM rec args
   Con destCon -> Con <$> case destCon of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
     Coerce (ArrayTy t) d -> Coerce t <$> rec d
-    _                    -> unreachable
+    SumAsProd ty tag xs -> SumAsProd ty <$> rec tag <*> mapM (mapM rec) xs
+    _ -> unreachable
   _ -> unreachable
   where
     rec = destToAtom' fScalar scalar . Dest
@@ -393,6 +429,10 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- If the result is a table lambda then there is nothing we can do, except for a copy.
       (_, TabVal _ _)  -> tell [(dest, result)]
       (_, Con (Lit _)) -> tell [(dest, result)]
+      (Dest (DataCon _ _ con args), DataCon _ _ con' args')
+        | con == con' && length args == length args' -> do
+            zipWithM_ gatherVarDests (map Dest args) args'
+      (Dest (Con (SumAsProd _ _ _)), _) -> tell [(dest, result)]  -- TODO
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
                                             gatherVarDests (Dest rd) rr
@@ -402,7 +442,8 @@ splitDest (maybeDest, (Block decls ans)) = do
         _ -> unreachable
       _ -> unreachable
       where
-        unreachable = error $ "Invalid dest-result pair:\n" ++ show dest ++ "\n  and:\n" ++ show result
+        unreachable = error $ "Invalid dest-result pair:\n"
+                        ++ pprint dest ++ "\n  and:\n" ++ pprint result
 
 copyDest :: Maybe Dest -> Atom -> ImpM Atom
 copyDest maybeDest atom = case maybeDest of
@@ -418,15 +459,29 @@ allocDest maybeDest t = case maybeDest of
 -- so make sure to call alloc for any variables in the dest.
 makeDest :: Name -> Type -> ImpM Dest
 makeDest nameHint destType = do
+  bindings <- ask
   scope <- looks $ fst . snd
-  (destAtom, (_, decls)) <- runEmbedT (go id [] destType) scope
+  (destAtom, (_, decls)) <- runEmbedT (go bindings id [] destType) scope
   unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
   return $ Dest destAtom
   where
-    go :: (ScalarTableType -> ScalarTableType) -> [Atom] -> Type -> EmbedT ImpM Atom
-    go mkTy idxVars ty = case ty of
+    go :: Bindings -> (ScalarTableType -> ScalarTableType) -> [Atom] -> Type
+       -> EmbedT ImpM Atom
+    go bindings mkTy idxVars ty = case ty of
+        TypeCon def params -> do
+          let dcs = applyDataDefParams def params
+          case dcs of
+            [] -> error "Void type not allowed"
+            [DataConDef _ bs] -> do
+              dests <- mapM (rec . varType) bs
+              return $ DataCon def params 0 dests
+            _ -> do
+              tag <- rec IntTy
+              let dcs' = applyDataDefParams def params
+              contents <- forM dcs' $ \(DataConDef _ bs) -> forM bs  (rec . varType)
+              return $ Con $ SumAsProd ty tag contents
         TabTy v bt ->
-          buildLam v TabArrow $ \v' -> go (\t -> mkTy $ TabTy v t) (v':idxVars) bt
+          buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
           BaseType b -> do
             iv <- lift $ freshVar (nameHint :> (IRefType $ mkTy $ BaseTy b))
@@ -446,8 +501,8 @@ makeDest nameHint destType = do
         _ -> unreachable
       where
         scalarIndexSet t = Con . Coerce (ArrayTy t) <$> rec IntTy
-        rec = go mkTy idxVars
-        unreachable = error $ "Can't lower type to imp: " ++ pprint ty
+        rec = go bindings mkTy idxVars
+        unreachable = error $ "Can't lower type to imp: " ++ pprint destType
 
 -- === Atom <-> IExpr conversions ===
 
@@ -530,19 +585,30 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest idx
       rec di ai
+  (DataCon _ _ con args, DataCon _ _ con' args')
+    | con == con' && length args == length args' -> do
+       zipWithM_ rec (map Dest args) args'
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
+  (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
+    recDest tag (IntVal con)
+    zipWithM_ recDest (payload !! con) x
   (Con dcon, Con acon) -> case (dcon, acon) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
     (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
     (SumCon _ _ _ , SumCon _ _ _ ) -> error "Not implemented"
-    _                            -> unreachable
+    (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
+      recDest tag tag'
+      zipWithM_ (zipWithM_ recDest) xs xs'
+    _ -> unreachable
   _ -> unreachable
   where
     rec x y = zipWithDest x y f
-    unreachable = error $ "Not an imp atom, or mismatched dest: " ++ show dest ++ ", and " ++ show atom
+    recDest x y = zipWithDest (Dest x) y f
+    unreachable = error $ "Not an imp atom, or mismatched dest: "
+                             ++ pprint dest ++ ", and " ++ pprint atom
 
 copyAtom :: Dest -> Atom -> ImpM ()
 copyAtom dest src = zipWithDest dest src store
@@ -637,6 +703,19 @@ freshVar (hint:>t) = do
   return v'
   where name = rawName GenName $ nameTag hint
 
+-- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
+emitSwitch :: IExpr -> [ImpM ()] -> ImpM ()
+emitSwitch testIdx = rec 0
+  where
+    rec :: Int -> [ImpM ()] -> ImpM ()
+    rec _ [] = error "Shouldn't have an empty list of alternatives"
+    rec _ [body] = body
+    rec curIdx (body:rest) = do
+      cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (IIntVal curIdx)
+      thisCase   <- liftM snd $ scopedBlock $ body
+      otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
+      emitStatement (Nothing, If cond thisCase otherCases)
+
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop maybeHint d n body = do
   (i, loopBody) <- scopedBlock $ do
@@ -714,10 +793,17 @@ instrTypeChecked instr = case instr of
     assertEq (IRefType BoolTy) condRefTy $ "Not a bool ref: " ++ pprint cond
     checkProg body
     return Nothing
+  If predicate (ImpProg consequent) (ImpProg alternative) -> do
+    predTy <- checkIExpr predicate
+    assertEq (IValType $ Scalar BoolType) predTy "Type mismatch in predicate"
+    checkProg consequent
+    checkProg alternative
+    return Nothing
   IOffset e i t -> do
     IRefType (TabTy _ _) <- checkIExpr e
     checkInt i
     return $ Just $ IRefType $ t
+  IThrowError -> return Nothing
 
 checkBinder :: IVar -> ImpCheckM ()
 checkBinder v = do
@@ -793,6 +879,8 @@ instrType instr = case instr of
   Loop _ _ _ _    -> return Nothing
   IWhile _ _      -> return Nothing
   IOffset _ _ ty  -> return $ Just $ IRefType ty
+  If _ _ _        -> return Nothing
+  IThrowError     -> return Nothing
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op
@@ -817,3 +905,6 @@ pattern IZero = IIntVal 0
 
 pattern IOne :: IExpr
 pattern IOne = IIntVal 1
+
+instance Pretty Dest where
+  pretty (Dest atom) = "Dest" <+> pretty atom

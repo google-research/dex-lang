@@ -28,7 +28,6 @@ import PPrint
 import Cat
 
 type TypeEnv = Bindings  -- Only care about type payload
-type ClassEnv = MonMap Name [ClassName]
 
 data OptionalEnv env = SkipChecks | CheckWith env  deriving Functor
 type TypeCheckEnv = OptionalEnv (TypeEnv, EffectRow)
@@ -57,6 +56,8 @@ instance Checkable Module where
   checkValid m@(Module ir decls bindings) =
     addContext ("Checking module:\n" ++ pprint m) $ asCompilerErr $ do
       let env = freeVars m
+      forM_ (envNames env) $ \v -> when (not $ isGlobal $ v:>()) $
+        throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
         let block = Block decls $ Atom $ UnitVal
@@ -69,26 +70,25 @@ asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
 asCompilerErr (Right x) = Right x
 
 checkBindings :: TypeEnv -> IRVariant -> Bindings -> Except ()
-checkBindings env ir bs = forM_ (envPairs bs) $ \binding -> do
-  (GlobalName _, (ty, LetBound _ (Atom atom))) <- return binding
-  void $ runTypeCheck (CheckWith (env <> bs, Pure)) $ atom |: ty
-  case ir of
-    Evaluated -> unless (all isGlobal $ envAsVars $ freeVars atom) $
+checkBindings env ir bs = void $ runTypeCheck (CheckWith (env <> bs, Pure)) $
+  mapM_ (checkBinding ir) $ envPairs bs
+
+checkBinding :: IRVariant -> (Name, (Type, BinderInfo)) -> TypeM ()
+checkBinding ir (GlobalName v, b@(ty, info)) =
+  addContext ("binding: " ++ pprint (v, b)) $ do
+    ty |: TyKind
+    when (ir >= Evaluated && any (not . isGlobal) (envAsVars $ freeVars b)) $
       throw CompilerErr "Non-global name in a fully evaluated atom"
-    _ -> return ()
+    case info of
+      LetBound _ atom -> atom |: ty
+      _ -> return ()
+checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
 
 -- === Core IR ===
 
 instance HasType Atom where
   typeCheck atom = case atom of
-    Var v@(name:>annTy) -> do
-      annTy |: TyKind
-      when (annTy == EffKind) $
-        throw CompilerErr "Effect variables should only occur in effect rows"
-      checkWithEnv $ \(env, _) -> case envLookup env v of
-        Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-        Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
-      return annTy
+    Var v -> typeCheckVar v
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
       checkArrow arr
@@ -99,21 +99,57 @@ instance HasType Atom where
     Con con  -> typeCheckCon con
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
+    DataCon def@(DataDef _ paramBs cons) params con args -> do
+      let (DataConDef _ argBs) = cons !! con
+      let funTy = foldr
+            (\(arr, b) body -> Pi (Abs b (arr, body)))
+            (TypeCon def (map Var paramBs))
+            (zip (repeat ImplicitArrow) paramBs ++ zip (repeat PureArrow) argBs)
+      foldM checkApp funTy $ params ++ args
+    TypeCon (DataDef _ bs _) params -> do
+      let paramTys = map varType bs
+      zipWithM_ (|:) params paramTys
+      let paramTysRemaining = drop (length params) paramTys
+      return $ foldr (-->) TyKind paramTysRemaining
+
+typeCheckVar :: Var -> TypeM Type
+typeCheckVar v@(name:>annTy) = do
+  annTy |: TyKind
+  when (annTy == EffKind) $
+    throw CompilerErr "Effect variables should only occur in effect rows"
+  checkWithEnv $ \(env, _) -> case envLookup env v of
+    Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+    Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+  return annTy
 
 instance HasType Expr where
   typeCheck expr = case expr of
     App f x -> do
-      Pi piTy <- typeCheck f
-      x |: absArgType piTy
-      let (arr, resultTy) = applyAbs piTy x
-      declareEffs $ arrowEff arr
-      return resultTy
+      fTy <- typeCheck f
+      checkApp fTy x
     Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
+    Case e alts resultTy -> do
+      checkWithEnv $ \_ -> do
+        TypeCon def params <- typeCheck e
+        let cons = applyDataDefParams def params
+        checkEq  (length cons) (length alts)
+        forM_ (zip cons alts) $ \((DataConDef _ bs'), (NAbs bs body)) -> do
+          checkEq  (map varType bs') (map varType bs)
+          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          checkEq resultTy resultTy'
+      return resultTy
+
+checkApp :: Type -> Atom -> TypeM Type
+checkApp fTy x = do
+  Pi piTy <- return fTy
+  x |: absArgType piTy
+  let (arr, resultTy) = applyAbs piTy x
+  declareEffs $ arrowEff arr
+  return resultTy
 
 -- TODO: replace with something more precise (this is too cautious)
-
 blockEffs :: Block -> EffectSummary
 blockEffs (Block decls result) =
   foldMap (\(Let _ _ expr) -> exprEffs expr) decls <> exprEffs result
@@ -141,6 +177,8 @@ exprEffs expr = case expr of
     RunReader _ _ -> SomeEffects
     RunWriter _   -> SomeEffects
     RunState _ _  -> SomeEffects
+    Tile _ _ _ -> error "not implemented"
+  Case _ _ _ -> error "not implemented"
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
@@ -157,20 +195,27 @@ instance HasType Block where
         withTypeEnv (env <> env') $ typeCheck result
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
-checkDecl env decl@(Let _ b rhs) =
-  withTypeEnv env $ addContext ctxStr $ do
+checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
+  Let _ b rhs -> do
     -- TODO: effects
     checkBinder b
     ty <- typeCheck rhs
     checkEq (varType b) ty
-    return $ b @> (ty, UnknownBinder)
+    return $ varBinding b
+  Unpack bs rhs -> do
+    mapM_ checkBinder bs
+    TypeCon def params <- typeCheck rhs
+    [DataConDef _ bs'] <- return $ applyDataDefParams def params
+    assertEq (length bs) (length bs') ""
+    zipWithM_ checkEq (map varType bs) (map varType bs')
+    return $ foldMap varBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr
 
 infixr 7 |:
-(|:) :: Atom -> Type -> TypeM ()
+(|:) :: HasType a => a -> Type -> TypeM ()
 (|:) x reqTy = do
   ty <- typeCheck x
   checkEq reqTy ty
@@ -179,7 +224,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b@(_:>ty) m = checkBinder b >> extendTypeEnv (b@>(ty, UnknownBinder)) m
+withBinder b m = checkBinder b >> extendTypeEnv (varBinding b) m
 
 checkBinder :: Binder -> TypeM ()
 checkBinder b@(_:>ty) = do
@@ -195,9 +240,8 @@ type VariantM = ReaderT IRVariant Except
 
 checkModuleVariant :: Module -> Except ()
 checkModuleVariant (Module ir decls bindings) = do
-  when (ir < Simp       && not (null bindings)) $ throw CompilerErr "unexpected bindings"
-  when (ir == Evaluated && not (null decls))    $ throw CompilerErr "unexpected decls"
   flip runReaderT ir $ mapM_ checkVariant decls
+  flip runReaderT ir $ mapM_ (checkVariant . snd) bindings
 
 class CoreVariant a where
   checkVariant :: a -> VariantM ()
@@ -214,6 +258,15 @@ instance CoreVariant Atom where
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
+    DataCon _ _ _ _ -> alwaysAllowed
+    TypeCon _ _     -> alwaysAllowed
+
+instance CoreVariant BinderInfo where
+  checkVariant info = case info of
+    DataBoundTypeCon _   -> alwaysAllowed
+    DataBoundDataCon _ _ -> alwaysAllowed
+    LetBound _ _     -> absentUntil Simp
+    _                -> neverAllowed
 
 instance CoreVariant Expr where
   checkVariant expr = addExpr expr $ case expr of
@@ -221,10 +274,14 @@ instance CoreVariant Expr where
     Atom x  -> checkVariant x
     Op  e   -> checkVariant e >> forM_ e checkVariant
     Hof e   -> checkVariant e >> forM_ e checkVariant
+    Case e alts _ -> do
+      checkVariant e
+      forM_ alts $ \(NAbs _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
   checkVariant (Let _ b e) = checkVariantVar b >> checkVariant e
+  checkVariant (Unpack bs e) = mapM checkVariantVar bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
@@ -240,22 +297,18 @@ instance CoreVariant (PrimTC a) where
     TypeKind -> alwaysAllowed
     EffectRowKind  -> alwaysAllowed
     JArrayType _ _ -> neverAllowed
-    NewtypeApp _ _ -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimOp a) where
   checkVariant e = case e of
-    FromNewtypeCon _ _ -> goneBy Simp
     Select _ _ _       -> alwaysAllowed  -- TODO: only scalar select after Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimCon a) where
   checkVariant e = case e of
     ClassDictHole _ -> goneBy Core
-    NewtypeCon _ _  -> goneBy Simp
     SumCon _ _ _    -> alwaysAllowed -- not sure what this should be
     RefCon _ _      -> neverAllowed
-    Todo _          -> goneBy Simp
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimHof a) where
@@ -276,6 +329,11 @@ alwaysAllowed = return ()
 
 neverAllowed :: VariantM ()
 neverAllowed = throw IRVariantErr $ "should never appear in finalized expression"
+
+absentUntil :: IRVariant -> VariantM ()
+absentUntil ir = do
+  curIR <- ask
+  when (curIR < ir) $ throw IRVariantErr $ "shouldn't appear until " ++ show ir
 
 goneBy :: IRVariant -> VariantM ()
 goneBy ir = do
@@ -360,17 +418,6 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   JArrayType _ _   -> undefined
-  NewtypeApp f xs -> do
-    fTy <- typeCheck f
-    foldM checkApp fTy xs
-    where
-      checkApp :: Atom -> Atom -> TypeM Type
-      checkApp pi x = do
-        Pi piTy <- return pi
-        x |: absArgType piTy
-        -- Newtype arrows should be pure.
-        (PureArrow, resultTy) <- return $ applyAbs piTy x
-        return resultTy
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
@@ -382,20 +429,27 @@ typeCheckCon con = case con of
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   Coerce t@(Var _) _ -> t |: TyKind $> t
-  Coerce t e -> do
-    sourceTy <- coercionSourceType t
-    e |: sourceTy $> t
-    where
-      coercionSourceType :: Type -> TypeM Type
-      coercionSourceType ty = case ty of
-        TC (ArrayType  st   ) -> ArrayTy <$> coercionSourceType st
-        TC (IntRange   _ _  ) -> return IntTy -- from ordinal
-        TC (IndexRange _ _ _) -> return IntTy -- from ordinal
-        TC (IndexSlice _ _  ) -> return IntTy -- from ordinal of the first slice element
-        _ -> throw TypeErr $ "Unexpected coercion destination type: " ++ pprint t
-  NewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
+  Coerce destTy e -> do
+    sourceTy <- typeCheck e
+    destTy  |: TyKind
+    checkValidCoercion sourceTy destTy
+    return destTy
+  SumAsProd ty _ _ -> return ty  -- TODO: check!
   ClassDictHole ty -> ty |: TyKind >> return ty
-  Todo ty -> ty|:TyKind $> ty
+
+checkValidCoercion :: Type -> Type -> TypeM ()
+checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
+ (ArrayTy st, ArrayTy dt) -> checkValidCoercion st dt
+ (IntTy, TC (IntRange   _ _  )) -> return () -- from ordinal
+ (IntTy, TC (IndexRange _ _ _)) -> return () -- from ordinal
+ (IntTy, TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
+ _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
+
+checkValidOpCoercion :: Type -> Type -> TypeM ()
+checkValidOpCoercion sourceTy destTy = case (sourceTy, destTy) of
+ (BoolTy, PreludeBoolTy) -> return ()
+ (PreludeBoolTy, BoolTy) -> return ()
+ _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
@@ -454,7 +508,6 @@ typeCheckOp op = case op of
   SndRef ref -> do
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
-  FromNewtypeCon toTy x -> toTy|:TyKind >> typeCheck x $> toTy
   ArrayOffset arr idx off -> do
     -- TODO: b should be applied!!
     ArrayTy (TabTyAbs a) <- typeCheck arr
@@ -488,6 +541,13 @@ typeCheckOp op = case op of
     BaseTy (Vector sb) <- typeCheck x
     i |: TC (IntRange (IntVal 0) (IntVal vectorWidth))
     return $ BaseTy $ Scalar sb
+  ThrowError ty -> ty|:TyKind $> ty
+  CoerceOp t@(Var _) _ -> t |: TyKind $> t
+  CoerceOp destTy e -> do
+    sourceTy <- typeCheck e
+    destTy  |: TyKind
+    checkValidOpCoercion sourceTy destTy
+    return destTy
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of
@@ -617,12 +677,12 @@ indexSetConcreteSize ty = case ty of
   BoolTy  -> Just 2
   _ -> Nothing
 
-checkDataLike :: MonadError Err m => String -> ClassEnv -> Type -> m ()
+checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
-  -- This is an implicit `instance IdxSet a => Data a`
-  Var v -> checkVarClass env IdxSet v `catchError`
-             const (checkVarClass env Data v)
+  Var _ -> error "Not implemented"
   TabTy _ b -> recur b
+  -- TODO: check that data constructor arguments are data-like, and so on
+  TypeCon _ _ -> return ()
   TC con -> case con of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b
@@ -634,17 +694,11 @@ checkDataLike msg env ty = case ty of
   _   -> throw TypeErr $ pprint ty ++ msg
   where recur x = checkDataLike msg env x
 
-checkData :: MonadError Err m => ClassEnv -> Type -> m ()
+checkData :: MonadError Err m => Bindings -> Type -> m ()
 checkData = checkDataLike " is not serializable"
 
 --TODO: Make this work even if the type has type variables!
-isData :: Type -> Bool
-isData ty = case checkData mempty ty of Left _ -> False
-                                        Right _ -> True
-
-checkVarClass :: MonadError Err m => ClassEnv -> ClassName -> Var -> m ()
-checkVarClass env c (v:>k) = do
-  unless (k == TyKind) $ throw KindErr $ " Only types can belong to type classes"
-  unless (c `elem` cs) $ throw TypeErr $
-              " Type variable \"" ++ pprint v ++ "\" not in class: " ++ pprint c
-  where cs = monMapLookup env v
+isData :: Bindings -> Type -> Bool
+isData bindings ty = case checkData bindings ty of
+  Left  _ -> False
+  Right _ -> True

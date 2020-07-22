@@ -1,9 +1,3 @@
--- Copyright 2019 Google LLC
---
--- Use of this source code is governed by a BSD-style
--- license that can be found in the LICENSE file or at
--- https://developers.google.com/open-source/licenses/bsd
-
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
@@ -19,7 +13,7 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    PrimExpr (..), PrimCon (..), LitVal (..),
+    NaryAbs (..), PrimExpr (..), PrimCon (..), LitVal (..),
     PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
@@ -27,21 +21,24 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
+    UAlt (..), Alt, varBinding, patName,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableVar, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    sourceBlockBoundVars, uModuleBoundVars, PassName (..), bindingsAsVars,
+    boundUVars, PassName (..), bindingsAsVars,
     freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    UExpr, UExpr' (..), UType, UBinder, UPiBinder, UVar, declAsScope,
-    UPat, UPat', PatP, PatP' (..), UModule (..), UDecl (..), UArrow, arrowEff,
-    subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs, freshSkolemVar,
+    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar, declAsScope,
+    UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
+    DataDef (..), DataConDef (..), UConDef (..),
+    subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
+    applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, isTabTy, LogLevel (..), IRVariant (..),
-    pattern IntLitExpr, pattern RealLitExpr,
+    pattern IntLitExpr, pattern RealLitExpr, pattern PreludeBoolTy,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
     pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
@@ -56,7 +53,7 @@ import qualified Data.Map.Strict as M
 import Control.Exception hiding (throw)
 import Control.Monad.Fail
 import Control.Monad.Identity
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.Vector.Storable as V
 import Data.Foldable (fold)
@@ -74,24 +71,37 @@ import Array
 data Atom = Var Var
           | Lam LamExpr
           | Pi  PiType
+          | DataCon DataDef [Atom] Int [Atom]
+          | TypeCon DataDef [Atom]
           | Con Con
           | TC  TC
           | Eff EffectRow
             deriving (Show, Eq, Generic)
 
 data Expr = App Atom Atom
+          | Case Atom [Alt] Type
           | Atom Atom
           | Op  Op
           | Hof Hof
             deriving (Show, Eq, Generic)
 
-data Decl  = Let LetAnn Binder Expr    deriving (Show, Eq, Generic)
+data Decl = Let LetAnn Binder Expr
+          | Unpack [Binder] Expr  deriving (Show, Eq, Generic)
+
 data Block = Block [Decl] Expr  deriving (Show, Eq, Generic)
+type Alt = NaryAbs Block
 
 type Var    = VarP Type
 type Binder = VarP Type
 
-data Abs a = Abs Binder a  deriving (Show, Generic, Functor, Foldable, Traversable)
+data DataDef = DataDef Name [Binder] [DataConDef]  deriving (Show, Eq, Generic)
+data DataConDef = DataConDef Name [Binder]    deriving (Show, Eq, Generic)
+
+-- TODO: could merge Abs and NaryAbs by parameterizing with a functor
+data Abs a = Abs Binder a     deriving (Show, Generic, Functor, Foldable, Traversable)
+data NaryAbs a = NAbs [Binder] a
+                 deriving (Show, Generic, Functor, Foldable, Traversable)
+
 type LamExpr = Abs (Arrow, Block)
 type PiType  = Abs (Arrow, Type)
 
@@ -106,7 +116,6 @@ data ArrowP eff = PlainArrow eff
 data LetAnn = PlainLet
             | InstanceLet
             | SuperclassLet
-            | NewtypeLet
               deriving (Show, Eq, Generic)
 
 type Val  = Atom
@@ -139,41 +148,52 @@ scalarTableBaseType t = case t of
 
 type UExpr = WithSrc UExpr'
 data UExpr' = UVar UVar
-            | ULam UBinder UArrow UExpr
-            | UPi  UPiBinder Arrow UType
+            | ULam UPatAnn UArrow UExpr
+            | UPi  UAnnBinder Arrow UType
             | UApp UArrow UExpr UExpr
             | UDecl UDecl UExpr
-            | UFor Direction UBinder UExpr
+            | UFor Direction UPatAnn UExpr
+            | UCase UExpr [UAlt]
             | UHole
             | UTabCon [UExpr] (Maybe UExpr)
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Eq, Generic)
 
-data UDecl = ULet LetAnn UBinder UExpr  deriving (Show, Eq, Generic)
+data UConDef = UConDef Name [UAnnBinder]  deriving (Show, Eq, Generic)
+data UDecl = ULet LetAnn UPatAnn UExpr
+           | UData UConDef [UConDef]
+             deriving (Show, Eq, Generic)
 
 type UType  = UExpr
 type UArrow = ArrowP ()
 type UVar   = VarP ()
 
-type UPat    = PatP  UVar
-type UPat'   = PatP' UVar
-type UBinder   = (UPat, Maybe UType)
-type UPiBinder = VarP UType
+type UPatAnn   = (UPat, Maybe UType)
+type UAnnBinder = VarP UType
+
+data UAlt = UAlt UPat UExpr deriving (Show, Eq, Generic)
 
 data UModule = UModule [UDecl]  deriving (Show, Eq)
 type SrcPos = (Int, Int)
 
-type PatP  a = WithSrc (PatP' a)
-data PatP' a = PatBind a
-             | PatPair (PatP a) (PatP a)
-             | PatUnit  deriving (Show, Eq, Functor, Foldable, Traversable)
+type UPat  = WithSrc UPat'
+data UPat' = UPatBinder UVar
+           | UPatCon Name [UPat]
+           | UPatLit LitVal
+           | UPatPair UPat UPat
+           | UPatUnit
+             deriving (Show, Eq)
 
 data WithSrc a = WithSrc SrcPos a
                  deriving (Show, Eq, Functor, Foldable, Traversable)
 
 srcPos :: WithSrc a -> SrcPos
 srcPos (WithSrc pos _) = pos
+
+patName :: UPat -> Name
+patName (WithSrc _ (UPatBinder (v:>()))) = v
+patName _ = NoName
 
 -- === primitive constructors and operators ===
 
@@ -201,7 +221,6 @@ data PrimTC e =
         --       of values they can hold.
         -- XXX: This one can temporarily also appear in the fully evaluated terms in TopLevel.
       | JArrayType [Int] ScalarBaseType
-      | NewtypeApp e [e]  -- binding var args
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimCon e =
@@ -212,10 +231,9 @@ data PrimCon e =
       | PairCon e e
       | UnitCon
       | RefCon e e
-      | Coerce e e        -- Type, then value. See Type.hs for valid coerctions.
-      | NewtypeCon e e    -- result type, argument
+      | Coerce e e        -- Type, then value. See Type.hs for valid coercions.
       | ClassDictHole e   -- Only used during type inference
-      | Todo e
+      | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimOp e =
@@ -246,7 +264,8 @@ data PrimOp e =
       | IntAsIndex e e   -- index set, ordinal index
       | IndexAsInt e
       | IdxSetSize e
-      | FromNewtypeCon e e  -- result type, argument
+      | ThrowError e
+      | CoerceOp e e                 -- Type, then value. See Type.hs for valid coercions.
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -287,7 +306,7 @@ data Limit a = InclusiveLim a
              | Unlimited
                deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data ClassName = Data | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
+data ClassName = DataClass | VSpace | IdxSet | Eq | Ord deriving (Show, Eq, Generic)
 
 data TyQual = TyQual Var ClassName  deriving (Show, Eq, Generic)
 
@@ -343,7 +362,7 @@ data SourceBlock' = RunModule UModule
                   | Command CmdName (Name, UModule)
                   | GetNameType Name
                   | IncludeSourceFile String
-                  | LoadData UBinder DataFormat String
+                  | LoadData UPatAnn DataFormat String
                   | ProseBlock String
                   | CommentLine
                   | EmptyLines
@@ -374,6 +393,8 @@ data ImpInstr = Load  IExpr
               | IOffset IExpr IExpr ScalarTableType
               | Loop Direction IVar Size ImpProg
               | IWhile IExpr ImpProg
+              | If IExpr ImpProg ImpProg
+              | IThrowError  -- TODO: parameterize by a run-time string
               | IPrimOp IPrimOp
                 deriving (Show, Eq)
 
@@ -488,6 +509,7 @@ data ErrType = NoErr
              | NotImplementedErr
              | DataIOErr
              | MiscErr
+             | RuntimeErr
                deriving (Show, Eq)
 
 type Except = Either Err
@@ -536,33 +558,93 @@ uVarsAsGlobal vs = foldMap (\v -> (asGlobal v :>()) @> ()) $ envNames vs
 class HasUVars a where
   freeUVars :: a -> UVars
 
+class BindsUVars a where
+  boundUVars :: a -> UVars
+
+-- wrappers to dispatch to a particular typeclass instance
+newtype FlatList   a = FlatList   [a]
+-- each element's bound vars are in scope for the rest of the list
+newtype NestedList a = NestedList [a]
+newtype WrapAsBinder a = WrapAsBinder (VarP a)
+data UAbs b body = UAbs b body
+
+instance HasUVars a => HasUVars (FlatList a) where
+  freeUVars (FlatList xs) = foldMap freeUVars xs
+
+instance (BindsUVars a, HasUVars a) => HasUVars (NestedList a) where
+  freeUVars (NestedList []) = mempty
+  freeUVars (NestedList (x:xs)) =
+    freeUVars x <> (freeUVars (NestedList xs) `envDiff` boundUVars x)
+
+instance BindsUVars a => BindsUVars (NestedList a) where
+  boundUVars (NestedList xs) = foldMap boundUVars xs
+
+instance (HasUVars b, BindsUVars b, HasUVars body) => HasUVars (UAbs b body) where
+  freeUVars (UAbs b body) =
+    freeUVars b <> (freeUVars body `envDiff` boundUVars b)
+
+instance HasUVars a => HasUVars (WrapAsBinder a) where
+  freeUVars (WrapAsBinder (_:>x)) = freeUVars x
+
+instance BindsUVars (WrapAsBinder a) where
+  boundUVars (WrapAsBinder v) = v@>()
+
 instance HasUVars a => HasUVars (WithSrc a) where
   freeUVars (WithSrc _ e) = freeUVars e
 
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
-    ULam b _ body -> uAbsFreeVars b body
-    UPi b arr ty ->
-      freeUVars (varAnn b) <>
-      ((freeUVars arr <> freeUVars ty) `envDiff` (b@>()))
+    ULam b _ body -> freeUVars $ UAbs b body
+    UPi b arr ty -> freeUVars $ UAbs (WrapAsBinder b) (arr, ty)
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl (ULet _ b rhs) body -> freeUVars rhs <> uAbsFreeVars b body
-    UFor _ b body -> uAbsFreeVars b body
+    UDecl decl body -> freeUVars $ UAbs decl body
+    UFor _ b body -> freeUVars $ UAbs b body
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
+    UCase e alts -> freeUVars e <> foldMap freeUVars alts
+
+instance HasUVars UAlt where
+  freeUVars (UAlt p body) = freeUVars $ UAbs p body
+
+instance HasUVars () where
+  freeUVars = mempty
+
+instance HasUVars UPat' where
+  freeUVars pat = case pat of
+    UPatBinder _   -> mempty
+    UPatCon con ps -> (con:>()) @> () <> foldMap freeUVars ps
+    UPatLit _      -> mempty
+    UPatPair p1 p2 -> freeUVars p1 <> freeUVars p2
+    UPatUnit       -> mempty
+
+instance BindsUVars UPat' where
+  boundUVars pat = case pat of
+    UPatBinder v   -> v @> ()
+    UPatCon _ ps   -> foldMap boundUVars ps
+    UPatLit _      -> mempty
+    UPatPair p1 p2 -> boundUVars p1 <> boundUVars p2
+    UPatUnit       -> mempty
 
 instance HasUVars UDecl where
-  freeUVars (ULet _ p expr) = uBinderFreeVars p <> freeUVars expr
+  freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
+  freeUVars (UData (UConDef _ bs) dataCons) =
+    freeUVars (UAbs (NestedList (map WrapAsBinder bs)) (FlatList dataCons))
+
+instance BindsUVars UDecl where
+  boundUVars decl = case decl of
+   ULet _ (p,_) _ -> boundUVars p
+   UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
 
 instance HasUVars UModule where
-  freeUVars (UModule []) = mempty
-  freeUVars (UModule (ULet _ b rhs : rest)) =
-    freeUVars rhs <> uAbsFreeVars b (UModule rest)
+  freeUVars (UModule decls) = freeUVars $ NestedList decls
+
+instance BindsUVars UModule where
+  boundUVars (UModule decls) = boundUVars $ NestedList decls
 
 instance HasUVars SourceBlock where
   freeUVars block = uVarsAsGlobal $
@@ -570,6 +652,12 @@ instance HasUVars SourceBlock where
       RunModule (   m) -> freeUVars m
       Command _ (_, m) -> freeUVars m
       GetNameType v -> (v:>()) @> ()
+      _ -> mempty
+
+instance BindsUVars SourceBlock where
+  boundUVars block = uVarsAsGlobal $
+    case sbContents block of
+      RunModule (   m) -> boundUVars m
       _ -> mempty
 
 instance HasUVars EffectRow where
@@ -580,26 +668,24 @@ instance HasUVars eff => HasUVars (ArrowP eff) where
   freeUVars (PlainArrow eff) = freeUVars eff
   freeUVars _ = mempty
 
-uAbsFreeVars :: HasUVars a => UBinder -> a -> UVars
-uAbsFreeVars (pat, ann) body =
-  foldMap freeUVars ann <> (freeUVars body `envDiff` uPatBoundVars pat)
+instance (HasUVars a, HasUVars b) => HasUVars (a, b) where
+  freeUVars (x, y) = freeUVars x <> freeUVars y
 
-uBinderFreeVars :: UBinder -> UVars
-uBinderFreeVars (_, ann) = foldMap freeUVars ann
+instance HasUVars a => HasUVars (Maybe a) where
+  freeUVars Nothing = mempty
+  freeUVars (Just x) = freeUVars x
 
-sourceBlockBoundVars :: SourceBlock -> UVars
-sourceBlockBoundVars block = uVarsAsGlobal $
-  case sbContents block of
-    RunModule m -> uModuleBoundVars m
-    LoadData (WithSrc _ p, _) _ _ -> foldMap (@>()) p
-    _                             -> mempty
+instance BindsUVars UPatAnn where
+  boundUVars (pat, _) = boundUVars pat
 
-uPatBoundVars :: UPat -> UVars
-uPatBoundVars (WithSrc _ pat) = foldMap (@>()) pat
+instance HasUVars UConDef where
+  freeUVars (UConDef _ bs) = freeUVars $ NestedList $ map WrapAsBinder bs
 
-uModuleBoundVars :: UModule -> UVars
-uModuleBoundVars (UModule decls) =
-  foldMap (\(ULet _ (p,_) _) -> uPatBoundVars p) decls
+instance BindsUVars UConDef where
+  boundUVars (UConDef con _) = (con:>())@>()
+
+instance BindsUVars a => BindsUVars (WithSrc a) where
+  boundUVars (WithSrc _ x) = boundUVars x
 
 nameAsEnv :: Name -> UVars
 nameAsEnv v = (v:>())@>()
@@ -610,7 +696,10 @@ data BinderInfo =
         LamBound (ArrowP ())
         -- TODO: make the expression optional, for when it's effectful?
         -- (or we could put the effect tag on the let annotation)
+      | PatBound
       | LetBound LetAnn Expr
+      | DataBoundDataCon DataDef Int
+      | DataBoundTypeCon DataDef
       | PiBound
       | UnknownBinder
         deriving (Show, Eq, Generic)
@@ -626,9 +715,13 @@ scopelessSubst env x = subst (env, scope) x
 
 declAsScope :: Decl -> Scope
 declAsScope (Let ann v expr) = v @> (varType v, LetBound ann expr)
+declAsScope (Unpack _ _) = error "Not implemented"
 
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
+
+varBinding :: Var -> Bindings
+varBinding v = v @> (varType v, UnknownBinder)
 
 class HasVars a where
   freeVars :: a -> Scope
@@ -640,6 +733,12 @@ instance (Show a, HasVars a, Eq a) => Eq (Abs a) where
     a == a' && applyAbs ab v == applyAbs ab' v
     where v = Var $ freshSkolemVar (ab, ab') a
 
+instance (Show a, HasVars a, Eq a) => Eq (NaryAbs a) where
+  (NAbs [] body) == (NAbs [] body') = body == body'
+  (NAbs (b:bs) body) == (NAbs (b':bs') body') =
+    (Abs b $ NAbs bs body) == (Abs b' $ NAbs bs' body')
+  _ == _ = False
+
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = rename (rawName Skolem "skol" :> ty) (freeVars x)
 
@@ -650,6 +749,16 @@ freeBinderTypeVars (_ :> t) = freeVars t
 
 applyAbs :: HasVars a => Abs a -> Atom -> a
 applyAbs (Abs v body) x = scopelessSubst (v@>x) body
+
+applyNaryAbs :: HasVars a => NaryAbs a -> [Atom] -> a
+applyNaryAbs (NAbs [] body) [] = body
+applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs ab xs
+  where ab = applyAbs (Abs b (NAbs bs body)) x
+applyNaryAbs _ _ = error "wrong number of arguments"
+
+applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
+applyDataDefParams (DataDef _ paramBs cons) params =
+  applyNaryAbs (NAbs paramBs cons) params
 
 makeAbs :: HasVars a => Var -> a -> Abs a
 makeAbs v body | v `isin` freeVars body = Abs v body
@@ -692,24 +801,32 @@ instance HasVars Expr where
     Atom x  -> freeVars x
     Op  e   -> foldMap freeVars e
     Hof e   -> foldMap freeVars e
+    Case e alts resultTy ->
+      freeVars e <> freeVars alts <> freeVars resultTy
 
   subst env expr = case expr of
     App f x -> App (subst env f) (subst env x)
     Atom x  -> Atom $ subst env x
     Op  e   -> Op  $ fmap (subst env) e
     Hof e   -> Hof $ fmap (subst env) e
+    Case e alts resultTy ->
+      Case (subst env e) (subst env alts) (subst env resultTy)
 
 instance HasVars Decl where
-  freeVars (Let _ bs expr) = foldMap freeVars bs <> freeVars expr
-  subst env (Let ann (v:>ty) bound) =
-    Let ann (v:> subst env ty) (subst env bound)
+  freeVars decl = case decl of
+    Let _ b expr   -> foldMap freeVars b <> freeVars expr
+    Unpack bs expr -> foldMap (foldMap freeVars) bs <> freeVars expr
+
+  subst env decl = case decl of
+    Let ann (v:>ty) bound -> Let ann (v:> subst env ty) (subst env bound)
+    Unpack bs bound ->
+      Unpack (map (\(v:>ty) -> (v:> subst env ty)) bs) (subst env bound)
 
 instance HasVars Block where
   freeVars (Block [] result) = freeVars result
-  freeVars (Block (decl@(Let _ b _):decls) result) =
-    freeVars decl <> (freeVars body `envDiff` (b@>()))
+  freeVars (Block (decl:decls) result) =
+    freeVars decl <> (freeVars body `envDiff` declBoundVars decl)
     where body = Block decls result
-
   subst env (Block decls result) = do
     let (decls', env') = catMap substDecl env decls
     let result' = subst (env <> env') result
@@ -723,6 +840,10 @@ instance HasVars Atom where
     Con con -> foldMap freeVars con
     TC  tc  -> foldMap freeVars tc
     Eff eff -> freeVars eff
+    -- TODO: think about these cases. We don't want to needlessly traverse the
+    --       data definition but we might need to know the free Vars.
+    DataCon _ params _ args -> freeVars params <> freeVars args
+    TypeCon _ params        -> freeVars params
 
   subst env atom = case atom of
     Var v   -> substVar env v
@@ -731,17 +852,33 @@ instance HasVars Atom where
     TC  tc  -> TC  $ fmap (subst env) tc
     Con con -> Con $ fmap (subst env) con
     Eff eff -> Eff $ subst env eff
+    DataCon def params con args -> DataCon def (subst env params) con (subst env args)
+    TypeCon def params          -> TypeCon def (subst env params)
+
+instance HasVars a => HasVars (NaryAbs a) where
+  freeVars (NAbs [] body) = freeVars body
+  freeVars (NAbs (b:bs) body) = freeVars $ Abs b $ NAbs bs body
+
+  subst env (NAbs [] body) = NAbs [] $ subst env body
+  subst env (NAbs (b:bs) body) = NAbs (b':bs') body'
+    where Abs b' (NAbs bs' body') = subst env $ Abs b $ NAbs bs body
 
 instance HasVars Module where
   freeVars (Module variant decls bindings) = case decls of
     [] -> freeVars bindings `envDiff` bindings
-    Let _ b rhs : rest -> freeVars rhs
-                       <> freeVars (Abs b (Module variant rest bindings))
+    decl : rest -> freeVars decl
+                 <> (freeVars moduleRest `envDiff` declBoundVars decl)
+      where moduleRest = Module variant rest bindings
 
   subst env (Module variant decls bindings) = Module variant decls' bindings'
     where
       (decls', env') = catMap substDecl env decls
       bindings' = subst (env <> env') bindings
+
+declBoundVars :: Decl -> Env ()
+declBoundVars decl = case decl of
+  Let _ b _ -> b @> ()
+  Unpack bs _ -> foldMap (@> ()) bs
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
@@ -764,6 +901,11 @@ instance HasVars BinderInfo where
 instance HasVars LetAnn where
   freeVars _ = mempty
   subst _ ann = ann
+
+instance HasVars DataConDef where
+  freeVars (DataConDef _ bs) = freeVars $ NAbs bs ()
+  subst env (DataConDef name bs) = DataConDef name bs'
+    where NAbs bs' () = subst env $ NAbs bs ()
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
 substEffTail _ Nothing = EffectRow [] Nothing
@@ -793,6 +935,15 @@ instance HasVars a => HasVars (Abs a) where
 substDecl :: ScopedSubstEnv -> Decl -> (Decl, ScopedSubstEnv)
 substDecl env (Let ann (v:>ty) bound) = (Let ann b (subst env bound), env')
   where (b, env') = refreshBinder env (v:> subst env ty)
+substDecl env (Unpack bs bound) = (Unpack bs' (subst env bound), env')
+  -- TODO: handle dependence between binders properly
+  where (bs', env') = refreshBinders env (map (fmap (subst env)) bs)
+
+refreshBinders :: ScopedSubstEnv -> [Var] -> ([Var], ScopedSubstEnv)
+refreshBinders _ [] = ([], mempty)
+refreshBinders env (b:bs) = (b':bs', env' <> env'')
+  where (b', env') = refreshBinder env b
+        (bs', env'') = refreshBinders (env <> env') bs
 
 refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
 refreshBinder (_, scope) b = (b', env')
@@ -862,6 +1013,8 @@ instance HasIVars ImpInstr where
     Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
     IWhile c p    -> freeIVars c <> freeIVars p
     IPrimOp op    -> foldMap freeIVars op
+    If p l r      -> freeIVars p <> freeIVars l <> freeIVars r
+    IThrowError   -> mempty
 
 instance HasIVars ImpProg where
   freeIVars (ImpProg stmts) = case stmts of
@@ -937,6 +1090,9 @@ pattern IntTy = TC (BaseType (Scalar IntType))
 
 pattern BoolTy :: Type
 pattern BoolTy = TC (BaseType (Scalar BoolType))
+
+pattern PreludeBoolTy :: Type
+pattern PreludeBoolTy <- TypeCon (DataDef _ [] [DataConDef _ [], DataConDef _ []]) []
 
 pattern RealTy :: Type
 pattern RealTy = TC (BaseType (Scalar RealType))
@@ -1036,15 +1192,13 @@ builtinNames = M.fromList
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("asidx"       , OpExpr $ IntAsIndex () ())
   , ("select"      , OpExpr $ Select () () ())
-  , ("todo"       , ConExpr $ Todo ())
+  , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())
   , ("get"        , OpExpr $ PrimEffect () $ MGet)
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
-  , ("newtypeCon"      , ConExpr $ NewtypeCon     () ())
-  , ("fromNewtypeCon"  , OpExpr  $ FromNewtypeCon () ())
   , ("while"           , HofExpr $ While () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
@@ -1075,7 +1229,8 @@ builtinNames = M.fromList
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
-  , ("unsafeAsIndex", ConExpr $ Coerce () ())
+  , ("unsafeAsIndex", ConExpr $ Coerce   () ())
+  , ("unsafeCoerce" , OpExpr  $ CoerceOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
   ]
@@ -1104,3 +1259,6 @@ instance Store BinOp
 instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo
+instance Store Alt
+instance Store DataDef
+instance Store DataConDef

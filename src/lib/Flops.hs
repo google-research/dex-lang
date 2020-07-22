@@ -43,7 +43,9 @@ statementFlops (_, instr) = case instr of
   Alloc _ _     -> return ()
   Free _        -> return ()
   IOffset _ _ _ -> return ()
+  IThrowError   -> return ()
   IWhile _ _    -> return () -- TODO: Implement
+  If _ _ _      -> return () -- TODO: Implement
   Loop _ _ size block -> do
     let n = evalSizeExpr size
     local (mulTerm n) $ flops block

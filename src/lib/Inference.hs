@@ -33,12 +33,17 @@ data RequiredTy a = Check a | Infer
 
 inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
-  ((), (_, decls')) <- runUInferM (mapM_ (inferUDecl True) decls) mempty scope
-  return $ Module Typed decls' mempty
+  ((), (bindings, decls')) <- runUInferM mempty scope $
+                                mapM_ (inferUDecl True) decls
+  let bindings' = envFilter bindings $ \(_, b) -> case b of
+                    DataBoundTypeCon _   -> True
+                    DataBoundDataCon _ _ -> True
+                    _ -> False
+  return $ Module Typed decls' bindings'
 
 runUInferM :: (HasVars a, Pretty a)
-           => UInferM a -> SubstEnv -> Scope -> Except (a, (Scope, [Decl]))
-runUInferM m env scope = runSolverT $ runEmbedT (runReaderT m env) scope
+           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, [Decl]))
+runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -126,6 +131,21 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UDecl decl body -> do
     env <- inferUDecl False decl
     extendR env $ checkOrInferRho body reqTy
+  UCase scrut alts -> do
+    scrut' <- inferRho scrut
+    let scrutTy = getType scrut'
+    reqTy' <- case reqTy of
+      Infer -> freshType TyKind
+      Check req -> return req
+    alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
+    TypeCon def params <- zonk scrutTy
+    let conDefs = applyDataDefParams def params
+    altsSorted <- forM conDefs $ \(DataConDef conName bs) -> do
+      case lookup conName alts' of
+        Nothing  -> return $ NAbs (map ((NoName :>) . varType) bs) $
+                               Block [] $ Op $ ThrowError reqTy'
+        Just alt -> return alt
+    emit $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -160,23 +180,39 @@ lookupSourceVar v = do
       scope <- getScope
       let v' = asGlobal $ varName v
       case envLookup scope (v':>()) of
-        Just (ty, _) -> return $ Var $ v' :> ty
+        Just (_, DataBoundTypeCon def    ) -> return $ TypeCon def []
+        Just (_, DataBoundDataCon def con) -> return $ DataCon def [] con []
+        Just (ty, _) -> return $ Var $ v':>ty
         Nothing -> throw UnboundVarErr $ pprint $ asGlobal $ varName v
 
+-- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
-  PatBind (v:>()) -> do
+  UPatBinder (v:>()) -> do
     let v' = asGlobal v
     scope <- getScope
     when ((v':>()) `isin` scope) $ throw RepeatedVarErr $ pprint v'
     void $ emitTo v' letAnn expr
-  PatUnit -> return () -- TODO: change if we allow effects at the top level
-  PatPair p1 p2 -> do
+  UPatUnit -> return () -- TODO: change if we allow effects at the top level
+  UPatPair p1 p2 -> do
     val  <- emit expr
     x1   <- lift $ getFst val
     x2   <- lift $ getSnd val
     unpackTopPat letAnn p1 (Atom x1)
     unpackTopPat letAnn p2 (Atom x2)
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, _) <- lookupDataCon conName
+    when (length cons /= 1) $ throw TypeErr $
+      "sum type constructor in can't-fail pattern"
+    let DataConDef _ argBs = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                             ++ " got " ++ show (length ps)
+    params <- mapM (freshType . varType) paramBs
+    constrainEq (TypeCon def params) (getType expr)
+    xs <- zonk expr >>= emitUnpack
+    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) ps xs
+  UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
@@ -190,15 +226,34 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       -- TODO: non-top-level annotations?
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
+inferUDecl True (UData tc dcs) = do
+  (tc', params) <- inferUConDef tc
+  (dcs', _) <- embedScoped $
+    extendR (newEnv params (map Var params)) $ do
+      extendScope (foldMap varBinding params)
+      mapM inferUConDef dcs
+  let dataDef = DataDef tc' params $ map (uncurry DataConDef) dcs'
+  let tyConTy = getType $ TypeCon dataDef []
+  extendScope $ (tc':>()) @> (tyConTy, DataBoundTypeCon dataDef)
+  forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
+    let ty = getType $ DataCon dataDef [] i []
+    extendScope $ (dc:>()) @> (ty, DataBoundDataCon dataDef i)
+  return mempty
+inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
-inferULam :: UBinder -> Arrow -> UExpr -> UInferM Atom
+inferUConDef :: UConDef -> UInferM (Name, [Binder])
+inferUConDef (UConDef v bs) = do
+  bs' <- mapM (mapM checkUType) bs
+  return (asGlobal  v, bs')
+
+inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (patNameHint p :> argTy) arr
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
-checkULam :: UBinder -> UExpr -> PiType -> UInferM Atom
+checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
@@ -220,6 +275,41 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
+checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Name, Alt)
+checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
+  (patTy, conName, patTys) <- inferPat pat
+  let (subPats, subPatTys) = unzip patTys
+  constrainEq scrutineeTy patTy
+  let bs = zipWith (\p ty -> patName p :> ty) subPats subPatTys
+  alt <- buildNAbs bs $ \xs ->
+           withBindPats (zip subPats xs) $ checkRho body reqTy
+  return (conName, alt)
+
+lookupDataCon :: Name -> UInferM (DataDef, Int, Name)
+lookupDataCon conName = do
+  let conName' = asGlobal conName
+  scope <- getScope
+  case envLookup scope (conName':>()) of
+    Just (_, DataBoundDataCon def con) -> return (def, con, conName')
+    Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
+    Nothing -> throw UnboundVarErr $ pprint conName'
+
+inferPat :: UPat -> UInferM (Type, Name, [(UPat, Type)])
+inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, conName') <- lookupDataCon conName
+    let (DataConDef _ argBs) = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+     "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                            ++ " got " ++ show (length ps)
+    params <- mapM (freshType . varType) paramBs
+    let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
+    return (TypeCon def params, conName', zip ps argTys)
+  _ -> throw TypeErr $ "Case patterns must start with a data constructor"
+
+withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
+withBindPats pats body = foldr (uncurry withBindPat) body pats
+
 withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
 withBindPat pat val m = do
   env <- bindPat pat val
@@ -230,15 +320,15 @@ bindPat pat val = evalCatT $ bindPat' pat val
 
 bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
-  PatBind b -> do
+  UPatBinder b -> do
     usedVars <- look
     when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint (varName b)
     extend (b@>())
     return (b @> val)
-  PatUnit -> do
+  UPatUnit -> do
     lift $ constrainEq UnitTy (getType val)
     return mempty
-  PatPair p1 p2 -> do
+  UPatPair p1 p2 -> do
     _    <- lift $ fromPairType (getType val)
     val' <- lift $ zonk val  -- ensure it has a pair type before unpacking
     x1   <- lift $ getFst val'
@@ -246,9 +336,22 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     env1 <- bindPat' p1 x1
     env2 <- bindPat' p2 x2
     return $ env1 <> env2
+  UPatCon conName ps -> do
+    (def@(DataDef _ paramBs cons), con, _) <- lift $ lookupDataCon conName
+    when (length cons /= 1) $ throw TypeErr $
+      "sum type constructor in can't-fail pattern"
+    let (DataConDef _ argBs) = cons !! con
+    when (length argBs /= length ps) $ throw TypeErr $
+      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
+                                             ++ " got " ++ show (length ps)
+    params <- lift $ mapM (freshType . varType) paramBs
+    lift $ constrainEq (TypeCon def params) (getType val)
+    xs <- lift $ zonk (Atom val) >>= emitUnpack
+    fold <$> zipWithM bindPat' ps xs
+  UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 patNameHint :: UPat -> Name
-patNameHint (WithSrc _ (PatBind (v:>()))) = v
+patNameHint (WithSrc _ (UPatBinder (v:>()))) = v
 patNameHint _ = "pat"
 
 withPatHint :: UPat -> UInferM a -> UInferM a
@@ -340,10 +443,10 @@ type SynthPassM = SubstEmbedT (Either Err)
 type SynthDictM = SubstEmbedT []
 
 synthModule :: Scope -> Module -> Except Module
-synthModule scope (Module Typed decls _) = do
+synthModule scope (Module Typed decls bindings) = do
   decls' <- fst <$> runSubstEmbedT
               (traverseDecls (traverseHoles synthDictTop) decls) scope
-  return $ Module Core decls' mempty
+  return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"
 
 synthDictTop :: Type -> SynthPassM Atom
@@ -393,7 +496,7 @@ getBinding = do
 inferToSynth :: (Pretty a, HasVars a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
-  case runUInferM m mempty scope of
+  case runUInferM mempty scope m of
     Left _ -> empty
     Right (x, (_, decls)) -> do
       mapM_ emitDecl decls
@@ -512,6 +615,8 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
+    (TypeCon f xs, TypeCon f' xs')
+      | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
     (Eff eff, Eff eff') -> unifyEff eff eff'

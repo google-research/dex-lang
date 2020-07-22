@@ -8,13 +8,13 @@
 
 module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
-             composeN, mapMaybe, lookup, uncons, repeated,
+             composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
-             bindM2, foldMapM, (...)) where
+             bindM2, foldMapM, lookupWithIdx, (...)) where
 
 import Data.List (sort)
-import Prelude hiding (lookup)
+import Prelude
 import qualified Data.Set as Set
 import qualified Data.Map.Strict as M
 import Control.Monad.State.Strict
@@ -107,13 +107,6 @@ mapMaybe f (x:xs) = let rest = mapMaybe f xs
 composeN :: Int -> (a -> a) -> a -> a
 composeN n f = foldr (.) id (replicate n f)
 
-lookup :: (Eq a) => a -> [a] -> Maybe Int
-lookup _ [] = Nothing
-lookup target (x:xs) | x == target = Just 0
-                     | otherwise = do
-                         ans <- lookup target xs
-                         return (ans + 1)
-
 repeated :: Ord a => [a] -> [a]
 repeated = repeatedSorted . sort
 
@@ -202,3 +195,6 @@ f ... g = \x y -> f $ g x y
 
 foldMapM :: (Monad m, Monoid w, Foldable t) => (a -> m w) -> t a -> m w
 foldMapM f xs = foldM (\acc x -> (acc<>) <$> f x ) mempty xs
+
+lookupWithIdx :: Eq a => a -> [(a, b)] -> Maybe (Int, b)
+lookupWithIdx k vals = lookup k $ [(x, (i, y)) | (i, (x, y)) <- zip [0..] vals]

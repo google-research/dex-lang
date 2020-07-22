@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR,
+              select, selectAt, substEmbed, substEmbedR, emitUnpack,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
-              sumTag, getLeft, getRight, fromSum, clampPositive,
+              sumTag, getLeft, getRight, fromSum, clampPositive, buildNAbs,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Applicative
@@ -32,9 +32,9 @@ import Control.Monad
 import Control.Monad.Fail
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
-import Control.Monad.Writer
+import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
-import Data.Foldable (toList)
+import Data.Foldable (toList, fold)
 import Data.Maybe
 import GHC.Stack
 
@@ -93,6 +93,18 @@ emitTo v ann expr = do
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
 
+emitUnpack :: MonadEmbed m => Expr -> m [Atom]
+emitUnpack expr = do
+  let (TypeCon def params) = getType expr
+  let [DataConDef _ bs] = applyDataDefParams def params
+  expr' <- deShadow expr <$> getScope
+  bs' <- forM bs $ \b -> do
+    b' <- freshVar b
+    embedExtend $ asFst $ b' @> (varType b', PatBound)
+    return b'
+  emitDecl $ Unpack bs' expr'
+  return $ map Var bs'
+
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
@@ -139,6 +151,15 @@ buildLamAux b fArr fBody = do
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (b', arr, ans, aux)
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
+
+buildNAbs :: MonadEmbed m => [Var] -> ([Atom] -> m Atom) -> m (NaryAbs Block)
+buildNAbs bs body = do
+  ((bs', ans), decls) <- scopedDecls $ do
+     bs' <- mapM freshVar bs
+     embedExtend $ asFst $ foldMap (\b -> b @> (varType b, PatBound)) bs
+     ans <- body $ map Var bs'
+     return (bs', ans)
+  return $ NAbs bs' $ wrapDecls decls ans
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
@@ -308,7 +329,7 @@ unzipTab tab = do
   return (fsts, snds)
   where TabTy v _ = getType tab
 
-mapScalars :: MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
+mapScalars :: HasCallStack => MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
   TabTy v a -> do
     buildFor Fwd ("i":>varType v) $ \i -> do
@@ -469,8 +490,10 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl@(Let ann v expr) = embedExtend (bindings, [decl])
-  where bindings = v @> (varType v, LetBound ann expr)
+emitDecl decl = embedExtend (bindings, [decl])
+  where bindings = case decl of
+          Let ann v expr -> v @> (varType v, LetBound ann expr)
+          Unpack vs _ -> foldMap (\v -> v @> (varType v, PatBound)) vs
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -490,14 +513,24 @@ traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
 traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
 
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
-               => TraversalDef m -> [Decl] -> m SubstEnv
+                  => TraversalDef m -> [Decl] -> m SubstEnv
 traverseDeclsOpen _ [] = return mempty
-traverseDeclsOpen def@(fExpr, _) (Let letAnn b expr : decls) = do
+traverseDeclsOpen def (decl:decls) = do
+  env <- traverseDecl def decl
+  env' <- extendR env $ traverseDeclsOpen def decls
+  return (env <> env')
+
+traverseDecl :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Decl -> m SubstEnv
+traverseDecl (fExpr, _) decl = case decl of
+  Let letAnn b expr -> do
     expr' <- fExpr expr
     x <- emitTo (varName b) letAnn expr'
-    let env = b @> x
-    env' <- extendR env $ traverseDeclsOpen def decls
-    return (env <> env')
+    return $ b @> x
+  Unpack bs expr -> do
+    expr' <- fExpr expr
+    xs <- emitUnpack expr'
+    return $ fold $ zipWith (@>) bs xs
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
@@ -514,11 +547,19 @@ evalBlockE def@(fExpr, _) (Block decls result) = do
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Expr -> m Expr
-traverseExpr (_, fAtom) expr = case expr of
+traverseExpr def@(_, fAtom) expr = case expr of
   App g x -> App  <$> fAtom g <*> fAtom x
   Atom x  -> Atom <$> fAtom x
   Op  op  -> Op   <$> traverse fAtom op
   Hof hof -> Hof  <$> traverse fAtom hof
+  Case e alts ty ->
+    Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
+
+traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
+             => TraversalDef m -> Alt -> m Alt
+traverseAlt def@(_, fAtom) (NAbs bs body) = do
+  bs' <- mapM (mapM fAtom) bs
+  buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
@@ -533,6 +574,9 @@ traverseAtom def@(_, fAtom) atom = case atom of
   Con con -> Con <$> traverse fAtom con
   TC  tc  -> TC  <$> traverse fAtom tc
   Eff _   -> substEmbedR atom
+  DataCon dataDef params con args -> DataCon dataDef <$>
+    traverse fAtom params <*> pure con <*> traverse fAtom args
+  TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
 
 -- === DCE ===
 
@@ -557,13 +601,19 @@ inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
   _ -> block
 
 dceDecl :: Decl -> DceM ()
-dceDecl decl@(Let ann b expr) = do
+dceDecl decl = do
   varsNeeded <- look
-  if b `isin` varsNeeded
-    then tell [decl] >> extend (freeVars expr)
-    else case exprEffs expr of
-      NoEffects   -> return ()
-      SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+  case decl of
+    Let ann b expr -> do
+      if b `isin` varsNeeded
+        then tell [decl] >> extend (freeVars expr)
+        else case exprEffs expr of
+          NoEffects   -> return ()
+          SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+    Unpack bs expr -> do
+      if any (`isin` varsNeeded) bs || (not $ isPure expr)
+        then tell [decl] >> extend (freeVars expr)
+        else return ()
 
 sameSingletonVal :: Type -> Type -> Bool
 sameSingletonVal t1 t2 = case singletonTypeVal t1 of
@@ -592,7 +642,6 @@ reduceAtom scope x = case x of
   Var v -> case snd (scope ! v) of
     -- TODO: worry about effects!
     LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
-    LetBound NewtypeLet _  -> TC $ NewtypeApp x []
     _ -> x
   _ -> x
 
@@ -606,8 +655,7 @@ reduceExpr scope expr = case expr of
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
-      TC (NewtypeApp wrapper xs) ->
-        Just $ TC $ NewtypeApp wrapper (xs ++ [x'])
+      TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
   _ -> Nothing
 

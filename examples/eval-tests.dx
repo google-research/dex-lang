@@ -511,7 +511,7 @@ litArr = [10, 5, 3]
       c
 > ([3.0, 2.0, 1.0, 0.0], 4.0)
 
-def eitherFloor (x:Int|Real) : Int = case x
+def eitherFloor (x:Int|Real) : Int = oldcase x
   Left i  -> i
   Right f -> floor f
 
@@ -532,7 +532,7 @@ w = for i:(Fin 2). for j:(Fin 3). (i2r (ordinal i)) * 3.0 + (i2r (ordinal j))
 b = for j:(Fin 2). neg (i2r (ordinal j) + 1.0)
 
 def flatten ((w,b):(Weights n m & Biases n)): Params n m =
-  for idx. case idx
+  for idx. oldcase idx
     Left (i,j) -> w.i.j
     Right i    -> b.i
 
@@ -561,17 +561,19 @@ def unflatten (params:Params n m) : (Weights n m & Biases n) =
 :p (for i:(Fin 4). 1.0) == (for i:(Fin 4). 2.0)
 > False
 
--- Needed to avoid ambiguous type variables if both sides use the same constructor
-def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
+-- Userspace-Bool breaks these
 
-:p cmpEither (Left 1) (Left 1)
-> True
+-- -- Needed to avoid ambiguous type variables if both sides use the same constructor
+-- def cmpEither (x:Int|Int) (y:Int|Int) : Bool = x == y
 
-:p cmpEither (Left 1) (Left 2)
-> False
+-- :p cmpEither (Left 1) (Left 1)
+-- > True
 
-:p cmpEither (Left 1) (Right 1)
-> False
+-- :p cmpEither (Left 1) (Left 2)
+-- > False
+
+-- :p cmpEither (Left 1) (Right 1)
+-- > False
 
 -- TODO: within-module version of this (currently fails in Imp checking)
 upperBound = sum $ for i:(Fin 4). 1

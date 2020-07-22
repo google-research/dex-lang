@@ -5,7 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 module Parser (Parser, parseit, parseProg, runTheParser, parseData,
-               parseTopDeclRepl, uint, withSource, tauType,
+               parseTopDeclRepl, uint, withSource,
                emptyLines, brackets, symbol, symChar, keyWordStrs) where
 
 import Control.Monad
@@ -101,7 +101,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (\d -> RunModule $ UModule [d]) (uTopDecl <* eolf)
+  <|> liftM (\d -> RunModule $ UModule [d]) (topDecl <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -115,7 +115,7 @@ loadData = do
   fmt <- dataFormat
   s <- stringLiteral
   symbol "as"
-  b <- uBinder
+  b <- patAnn
   void eol
   return $ LoadData b fmt s
 
@@ -162,10 +162,7 @@ exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (asGlobal v, UModule [d])
   where
     v = mkName "_ans_"
-    d = ULet PlainLet (WithSrc (srcPos e) (namePat v), Nothing) e
-
-tauType :: Parser Type
-tauType = undefined
+    d = ULet PlainLet (WithSrc (srcPos e) (UPatBinder (v:>())), Nothing) e
 
 -- === uexpr ===
 
@@ -176,12 +173,13 @@ expr = mayNotPair $ makeExprParser leafExpr ops
 leafExpr :: Parser UExpr
 leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uTabCon
-         <|> uVar
+         <|> uVarOcc
          <|> uHole
          <|> uLit
          <|> uPiType
          <|> uLamExpr
          <|> uForExpr
+         <|> caseExpr
          <|> uCaseExpr
          <|> uPrim
          <|> unitCon
@@ -189,7 +187,7 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
 
 containedExpr :: Parser UExpr
 containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
-              <|> uVar
+              <|> uVarOcc
               <?> "contained expression"
 
 uType :: Parser UType
@@ -203,8 +201,9 @@ litVal =   (IntLit  <$> intLit)
        <|> (RealLit <$> doubleLit)
        <?> "literal"
 
-uVar :: Parser UExpr
-uVar = withSrc $ try $ (UVar . (:>())) <$> (uName <* notFollowedBy (sym ":"))
+uVarOcc :: Parser UExpr
+uVarOcc = withSrc $ try $ (UVar . (:>())) <$> (occName <* notFollowedBy (sym ":"))
+  where occName = upperName <|> lowerName <|> symName
 
 uHole :: Parser UExpr
 uHole = withSrc $ underscore $> UHole
@@ -212,10 +211,12 @@ uHole = withSrc $ underscore $> UHole
 letAnnStr :: Parser LetAnn
 letAnnStr =   (string "instance"   $> InstanceLet)
           <|> (string "superclass" $> SuperclassLet)
-          <|> (string "newtype"    $> NewtypeLet)
 
-uTopDecl :: Parser UDecl
-uTopDecl = do
+topDecl :: Parser UDecl
+topDecl = dataDef <|> topLet
+
+topLet :: Parser UDecl
+topLet = do
   lAnn <- (char '@' >> letAnnStr <* (void eol <|> sc)) <|> return PlainLet
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
@@ -236,6 +237,22 @@ uTopDecl = do
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
 
+dataDef :: Parser UDecl
+dataDef = do
+  keyWord DataKW
+  tyCon <- tyConDef
+  sym "="
+  dataCons <- onePerLine dataConDef
+  return $ UData tyCon dataCons
+
+-- TODO: default to `Type` if unannoted
+tyConDef :: Parser UConDef
+tyConDef = UConDef <$> upperName <*> many annBinder
+
+-- TODO: dependent types
+dataConDef :: Parser UConDef
+dataConDef = UConDef <$> upperName <*> many ((NoName:>) <$> containedExpr)
+
 decl :: Parser UDecl
 decl = do
   lhs <- simpleLet <|> funDefLet
@@ -244,14 +261,17 @@ decl = do
 
 simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
-  pat <- try $ uPat <* lookAhead (sym "=" <|> sym ":")
+  p <- try $ (letPat <|> parens pat) <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
-  return $ ULet PlainLet (pat, ann)
+  return $ ULet PlainLet (p, ann)
+
+letPat :: Parser UPat
+letPat = nameAsPat $ upperName <|> lowerName <|> symName
 
 funDefLet :: Parser (UExpr -> UDecl)
 funDefLet = label "function definition" $ mayBreak $ do
   keyWord DefKW
-  v <- withSrc $ namePat <$> uName
+  v <- letPat
   bs <- some arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
   let piBinders = flip map bs $ \(p, ann, arr) -> (patName p:>ann, arr)
@@ -262,16 +282,14 @@ funDefLet = label "function definition" $ mayBreak $ do
   where
     arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
-      (p, ty) <-(            ((,) <$> uVarPat <*> annot containedExpr)
-                  <|> parens ((,) <$> uPat    <*> annot uType))
+      (p, ty) <-parens ((,) <$> pat <*> annot uType)
       arr <- arrow (return ()) <|> return (PlainArrow ())
       return (p, ty, arr)
 
-patName :: UPat -> Name
-patName (WithSrc _ (PatBind (v:>()))) = v
-patName _ = NoName
+nameAsPat :: Parser Name -> Parser UPat
+nameAsPat p = withSrc $ UPatBinder <$> (:>()) <$> p
 
-buildPiType :: [(UPiBinder, UArrow)] -> EffectRow -> UType -> UType
+buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
   [] -> UPi b (fmap (const eff ) arr) ty
@@ -285,8 +303,8 @@ effects :: Parser EffectRow
 effects = braces someEffects <|> return Pure
   where
     someEffects = do
-      effs <- liftM2 (,) effectName uName `sepBy` sym ","
-      v <- optional $ symbol "|" >> uName
+      effs <- liftM2 (,) effectName lowerName `sepBy` sym ","
+      v <- optional $ symbol "|" >> lowerName
       return $ EffectRow effs v
 
 effectName :: Parser EffectName
@@ -298,18 +316,18 @@ effectName =     (keyWord WriteKW $> Writer)
 uLamExpr :: Parser UExpr
 uLamExpr = do
   sym "\\"
-  bs <- some uBinder
+  bs <- some patAnn
   body <- argTerm >> blockOrExpr
   return $ buildLam (map (,PlainArrow ()) bs) body
 
-buildLam :: [(UBinder, UArrow)] -> UExpr -> UExpr
+buildLam :: [(UPatAnn, UArrow)] -> UExpr -> UExpr
 buildLam binders body@(WithSrc pos _) = case binders of
   [] -> body
   -- TODO: join with source position of binders too
   (b,arr):bs -> WithSrc (joinPos pos' pos) $ ULam b arr $ buildLam bs body
      where (WithSrc pos' _, _) = b
 
-buildFor :: SrcPos -> Direction -> [UBinder] -> UExpr -> UExpr
+buildFor :: SrcPos -> Direction -> [UPatAnn] -> UExpr -> UExpr
 buildFor pos dir binders body = case binders of
   [] -> body
   b:bs -> WithSrc pos $ UFor dir b $ buildFor pos dir bs body
@@ -318,7 +336,7 @@ uForExpr :: Parser UExpr
 uForExpr = do
   (dir, pos) <- withPos $   (keyWord ForKW $> Fwd)
                         <|> (keyWord RofKW $> Rev)
-  buildFor pos dir <$> (some uBinder <* argTerm) <*> blockOrExpr
+  buildFor pos dir <$> (some patAnn <* argTerm) <*> blockOrExpr
 
 blockOrExpr :: Parser UExpr
 blockOrExpr =  block <|> expr
@@ -335,14 +353,11 @@ uTabCon = withSrc $ do
 type UStatement = (Either UDecl UExpr, SrcPos)
 
 block :: Parser UExpr
-block = do
-  nextLine
-  indent <- liftM length $ some (char ' ')
-  withIndent indent $ do
-    statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
-    case last statements of
-      (Left _, _) -> fail "Last statement in a block must be an expression."
-      _           -> return $ wrapUStatements statements
+block = withIndent $ do
+  statements <- mayNotBreak $ uStatement `sepBy1` (semicolon <|> try nextLine)
+  case last statements of
+    (Left _, _) -> fail "Last statement in a block must be an expression."
+    _           -> return $ wrapUStatements statements
 
 wrapUStatements :: [UStatement] -> UExpr
 wrapUStatements statements = case statements of
@@ -350,7 +365,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (WithSrc pos (namePat NoName), Nothing) e
+      where d = ULet PlainLet (WithSrc pos (UPatBinder (NoName:>())), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -359,13 +374,13 @@ uStatement = withPos $   liftM Left  decl
 
 -- TODO: put the `try` only around the `x:` not the annotation itself
 uPiType :: Parser UExpr
-uPiType = withSrc $ UPi <$> uPiBinder <*> arrow effects <*> uType
-  where
-    uPiBinder :: Parser UPiBinder
-    uPiBinder = label "pi binder" $ do
-      v <- try $ uBinderName <* sym ":"
-      ty <- containedExpr
-      return (v:>ty)
+uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
+
+annBinder :: Parser UAnnBinder
+annBinder = label "annoted binder" $ do
+  v <- try $ (lowerName <|> ignored) <* sym ":"
+  ty <- containedExpr
+  return (v:>ty)
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
@@ -375,13 +390,38 @@ arrow p =   (sym "->"  >> liftM PlainArrow p)
         <|> (sym "?=>" $> ClassArrow)
         <?> "arrow"
 
+caseExpr :: Parser UExpr
+caseExpr = withSrc $ do
+  keyWord CaseKW
+  e <- expr
+  keyWord OfKW
+  alts <- onePerLine $ UAlt <$> pat <*> (sym "->" *> blockOrExpr)
+  return $ UCase e alts
+
+onePerLine :: Parser a -> Parser [a]
+onePerLine p =   liftM (:[]) p
+             <|> (withIndent $ mayNotBreak $ p `sepBy1` try nextLine)
+
+pat :: Parser UPat
+pat = makeExprParser leafPat patOps
+
+leafPat :: Parser UPat
+leafPat =
+      (withSrc (symbol "()" $> UPatUnit))
+  <|> parens pat <|> (withSrc $
+          (UPatBinder <$>  (:>()) <$> (lowerName <|> ignored))
+      <|> (UPatLit    <$> litVal)
+      <|> (UPatCon    <$> upperName <*> many pat))
+
+-- TODO: add user-defined patterns
+patOps :: [[Operator Parser UPat]]
+patOps = [[InfixR $ sym "," $> \x y -> joinSrc x y $ UPatPair x y]]
+
 uCaseExpr :: Parser UExpr
 uCaseExpr = do
-  ((), pos) <- withPos $ keyWord CaseKW
+  ((), pos) <- withPos $ keyWord OldCaseKW
   e <- expr
-  nextLine
-  indent <- liftM length $ some $ char ' '
-  withIndent indent $ do
+  withIndent $ do
     l <- lexeme (string "Left") >> caseLam
     nextLine
     r <- lexeme (string "Right") >> caseLam
@@ -389,7 +429,7 @@ uCaseExpr = do
 
 caseLam :: Parser UExpr
 caseLam = do
-  p <- uPat
+  p <- pat
   sym "->"
   body <- blockOrExpr
   return $ WithSrc (srcPos body) $ ULam (p, Nothing) (PlainArrow ()) body
@@ -398,34 +438,14 @@ applyNamed :: SrcPos -> String -> [UExpr] -> UExpr
 applyNamed pos name args = foldl mkApp f args
   where f = WithSrc pos $ UVar (Name SourceName (fromString name) 0:>())
 
-uBinderName :: Parser Name
-uBinderName = uName <|> (underscore >> return NoName)
-
-uName :: Parser Name
-uName = textName <|> symName
+ignored :: Parser Name
+ignored = underscore >> return NoName
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
 
-uPat :: Parser UPat
-uPat =   uVarPat
-     <|> withSrc (symbol "()" $> PatUnit)
-     <|> parens uPat'
-     <?> "pattern"
-
-uPat' :: Parser UPat
-uPat' = do
-  p1 <- uPat
-  (   (do sym ","
-          p2 <- uPat'
-          return $ joinSrc p1 p2 $ PatPair p1 p2)
-   <|> return p1)
-
-uVarPat :: Parser UPat
-uVarPat = withSrc $ namePat <$> uBinderName
-
-uBinder :: Parser UBinder
-uBinder =  label "binder" $ (,) <$> uPat <*> optional (annot containedExpr)
+patAnn :: Parser UPatAnn
+patAnn = label "pattern" $ (,) <$> pat <*> optional (annot containedExpr)
 
 uPrim :: Parser UExpr
 uPrim = withSrc $ do
@@ -434,10 +454,10 @@ uPrim = withSrc $ do
     "ffi" -> do
       f <- lexeme $ some nameTailChar
       retTy <- baseType
-      args <- some textName
+      args <- some lowerName
       return $ UPrimExpr $ OpExpr $ FFICall f retTy args
     _ -> case strToName s of
-      Just prim -> UPrimExpr <$> traverse (const textName) prim
+      Just prim -> UPrimExpr <$> traverse (const lowerName) prim
       Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 baseType :: Parser BaseType
@@ -463,8 +483,8 @@ ops =
   , indexRangeOps
   ]
 
-opWithSrc :: Parser (SrcPos -> UExpr -> UExpr -> UExpr)
-          -> Parser (UExpr -> UExpr -> UExpr)
+opWithSrc :: Parser (SrcPos -> a -> a -> a)
+          -> Parser (a -> a -> a)
 opWithSrc p = do
   (f, pos) <- withPos p
   return $ f pos
@@ -527,9 +547,6 @@ infixArrow = do
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (NoName:>a) arr b
 
-namePat :: Name -> UPat'
-namePat v = PatBind (v:>())
-
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
   (x, pos) <- withPos p
@@ -574,13 +591,22 @@ mkName s = Name SourceName (fromString s) 0
 -- These `Lexer` actions must be non-overlapping and never consume input on failure
 type Lexer = Parser
 
-data KeyWord = DefKW | ForKW | RofKW | CaseKW | ReadKW | WriteKW | StateKW
+data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
+             | ReadKW | WriteKW | StateKW | OldCaseKW | DataKW | WhereKW
 
-textName :: Lexer Name
-textName = liftM mkName $ label "identifier" $ lexeme $ try $ do
-  w <- (:) <$> letterChar <*> many nameTailChar
-  failIf (w `elem` keyWordStrs) $ show w ++ " is a reserved word"
-  return w
+upperName :: Lexer Name
+upperName = liftM mkName $ label "upper-case name" $ lexeme $
+  checkNotKeyword $ (:) <$> upperChar <*> many nameTailChar
+
+lowerName  :: Lexer Name
+lowerName = liftM mkName $ label "lower-case name" $ lexeme $
+  checkNotKeyword $ (:) <$> lowerChar <*> many nameTailChar
+
+checkNotKeyword :: Parser String -> Parser String
+checkNotKeyword p = try $ do
+  s <- p
+  failIf (s `elem` keyWordStrs) $ show s ++ " is a reserved word"
+  return s
 
 keyWord :: KeyWord -> Lexer ()
 keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
@@ -590,12 +616,17 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       ForKW  -> "for"
       RofKW  -> "rof"
       CaseKW -> "case"
+      OfKW   -> "of"
       ReadKW  -> "Read"
       WriteKW -> "Accum"
       StateKW -> "State"
+      DataKW -> "data"
+      WhereKW -> "where"
+      OldCaseKW -> "oldcase"
 
 keyWordStrs :: [String]
-keyWordStrs = ["def", "for", "rof", "case", "llam", "Read", "Write", "Accum"]
+keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
+               "Read", "Write", "Accum", "oldcase", "data", "where"]
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar
@@ -631,7 +662,7 @@ symName = label "symbol name" $ lexeme $ try $ do
 
 backquoteName :: Lexer Name
 backquoteName = label "backquoted name" $
-  lexeme $ try $ between (char '`') (char '`') textName
+  lexeme $ try $ between (char '`') (char '`') (upperName <|> lowerName)
 
 -- brackets and punctuation
 -- (can't treat as sym because e.g. `((` is two separate lexemes)
@@ -749,8 +780,11 @@ withSource p = do
   (x, (start, end)) <- withPos p
   return (take (end - start) s, x)
 
-withIndent :: Int -> Parser a -> Parser a
-withIndent n p = local (\ctx -> ctx { curIndent = curIndent ctx + n }) $ p
+withIndent :: Parser a -> Parser a
+withIndent p = do
+  nextLine
+  indent <- liftM length $ some (char ' ')
+  local (\ctx -> ctx { curIndent = curIndent ctx + indent }) $ p
 
 eolf :: Parser ()
 eolf = void eol <|> eof

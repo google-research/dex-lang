@@ -81,6 +81,7 @@ evalSourceBlockM env block = case sbContents block of
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal env v m
+      logPass ImpPass (pprint val)
       case fmt of
         Printed -> do
           logTop $ TextOut $ pprintVal val
@@ -162,13 +163,13 @@ evalUModule env untyped = do
   evalModule env synthed
 
 evalModule :: TopEnv -> Module -> TopPassM TopEnv
-evalModule simpEnv normalized = do
-  let defunctionalized = simplifyModule simpEnv normalized
+evalModule bindings normalized = do
+  let defunctionalized = simplifyModule bindings normalized
   checkPass SimpPass defunctionalized
-  evaluated <- evalSimplified defunctionalized evalBackend
+  evaluated <- evalSimplified defunctionalized (evalBackend bindings)
   checkPass ResultPass evaluated
-  Module Evaluated [] bindings <- return evaluated
-  return bindings
+  Module Evaluated [] newBindings <- return evaluated
+  return newBindings
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
@@ -185,15 +186,16 @@ arrayVars x = foldMap go $ envPairs (freeVars x)
         go (v@(GlobalArrayName _), (ty, _)) = [v :> ty]
         go _ = []
 
-evalBackend :: Block -> TopPassM Atom
-evalBackend block = do
+evalBackend :: Bindings -> Block -> TopPassM Atom
+evalBackend bindings block = do
   backend <- asks evalEngine
   logger  <- asks logService
   let inVars = arrayVars block
   case backend of
     LLVMEngine isCuda llvmEnv -> do
-      let (impFunction, impAtom) = toImpFunction (inVars, block)
+      let (impFunction, impAtom) = toImpFunction bindings (inVars, block)
       checkPass ImpPass impFunction
+      logPass ImpPass (pprint impAtom)
       -- logPass Flops $ impFunctionFlops impFunction
       resultAtom <- liftIO $ modifyMVar llvmEnv $ \env -> do
         let inPtrs = fmap (env !) inVars

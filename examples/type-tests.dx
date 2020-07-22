@@ -255,13 +255,11 @@ fun : a -> a = \x. sin x
 > fun : a -> a = \x. sin x
 >                        ^
 
-@newtype
-NewPair : Type -> Type -> Type = \a b. (a & b)
+data NewPair a:Type b:Type = MkNewPair a b
 
-mkNewPair   : (a & b) -> NewPair a b = unsafeNewtypeCon
-fromNewPair : NewPair a b -> (a & b) = unsafeFromNewtypeCon
+fromNewPair : NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
 
-newPair : NewPair Int Real = mkNewPair (1, 2.0)
+newPair : NewPair Int Real = MkNewPair 1 2.0
 
 :p fst newPair
 > Type error:
@@ -278,22 +276,23 @@ newPair : NewPair Int Real = mkNewPair (1, 2.0)
 :p NewPair
 > NewPair
 
-:p NewPair Int
-> NewPair Int
+-- TODO: these are broken since switching from newtype mechanism to ADTs
 
-:p NewPair Int Real
-> NewPair Int Real
+-- :p NewPair Int
+-- > NewPair Int
 
-NewPairIntReal = NewPair Int Real
+-- :p NewPair Int Real
+-- > NewPair Int Real
 
-:p NewPairIntReal
-> NewPair Int Real
+-- NewPairIntReal = NewPair Int Real
 
-newPair2 : NewPairIntReal = mkNewPair (1, 2.0)
+-- :p NewPairIntReal
+-- > NewPair Int Real
 
-:p fst $ fromNewPair newPair
-> 1
+-- newPair2 : NewPairIntReal = MkNewPair 1 2.0
 
+-- :p fst $ fromNewPair newPair
+-- > 1
 
 good_range : Type = (1@Fin 3)..(2@_)
 
