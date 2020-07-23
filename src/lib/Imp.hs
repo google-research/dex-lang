@@ -118,7 +118,7 @@ toImpExpr env (maybeDest, expr) = case expr of
         destToAtom dest
       _ -> error $ "Unexpected scrutinee: " ++ pprint e'
 
-impSubst :: HasVars a => SubstEnv -> a -> ImpM a
+impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
   scope <- looks $ fst . snd
   return $ subst (env, scope) x

@@ -412,7 +412,7 @@ emitCT v ct = do
 emitCTToRef :: Atom -> Atom -> TransposeM ()
 emitCTToRef ref ct = void $ emitOp $ PrimEffect ref (MTell ct)
 
-substTranspose :: HasVars a => a -> TransposeM a
+substTranspose :: Subst a => a -> TransposeM a
 substTranspose x = do
   env <- asks snd
   scope <- getScope

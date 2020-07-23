@@ -30,7 +30,7 @@ simplifyModule scope (Module Core decls bindings) = do
   let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
   let (declsDone, declsNotDone) = partition isAtomDecl simpDecls
-  let bindings' = foldMap declAsScope declsDone
+  let bindings' = foldMap boundVars declsDone
   dceModule $ Module Simp declsNotDone (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 

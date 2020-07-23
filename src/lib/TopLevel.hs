@@ -180,7 +180,7 @@ initializeBackend backend = case backend of
   JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
-arrayVars :: HasVars a => a -> [Var]
+arrayVars :: Subst a => a -> [Var]
 arrayVars x = foldMap go $ envPairs (freeVars x)
   where go :: (Name, (Type, BinderInfo)) -> [Var]
         go (v@(GlobalArrayName _), (ty, _)) = [v :> ty]
@@ -266,7 +266,7 @@ requestArrays backend vs = case backend of
     callPipeServer (psPop server) vs'
   _ -> error "Not implemented"
 
-substArrayLiterals :: (HasVars a, HasType a) => BackendEngine -> a -> IO a
+substArrayLiterals :: (Subst a, HasType a) => BackendEngine -> a -> IO a
 substArrayLiterals backend x = do
   -- We first need to substitute the arrays used in the types. Our atom types
   -- are monotonic, so it's enough to ask for the arrays used in the type of the
@@ -274,7 +274,7 @@ substArrayLiterals backend x = do
   x' <- substArrayLiterals' backend (arrayVars (getType x)) x
   substArrayLiterals' backend (arrayVars x') x'
 
-substArrayLiterals' :: HasVars a => BackendEngine -> [Var] -> a -> IO a
+substArrayLiterals' :: Subst a => BackendEngine -> [Var] -> a -> IO a
 substArrayLiterals' backend vs x = do
   arrays <- requestArrays backend vs
   let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]

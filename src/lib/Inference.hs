@@ -41,7 +41,7 @@ inferModule scope (UModule decls) = do
                     _ -> False
   return $ Module Typed decls' bindings'
 
-runUInferM :: (HasVars a, Pretty a)
+runUInferM :: (Subst a, Pretty a)
            => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, [Decl]))
 runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
 
@@ -243,8 +243,16 @@ inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
 inferUConDef :: UConDef -> UInferM (Name, [Binder])
 inferUConDef (UConDef v bs) = do
-  bs' <- mapM (mapM checkUType) bs
+  (bs', _) <- embedScoped $ checkNestedBinders bs
   return (asGlobal  v, bs')
+
+checkNestedBinders :: [UAnnBinder] -> UInferM [Binder]
+checkNestedBinders [] = return []
+checkNestedBinders (b:bs) = do
+  b' <- mapM checkUType b
+  extendScope (varBinding b')
+  bs' <- extendR (b' @> Var b') $ checkNestedBinders bs
+  return $ b' : bs'
 
 inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -493,7 +501,7 @@ getBinding = do
   (v, (ty, bindingInfo)) <- asum $ map return $ envPairs scope
   return (Var (v:>ty), bindingInfo)
 
-inferToSynth :: (Pretty a, HasVars a) => UInferM a -> SynthDictM a
+inferToSynth :: (Pretty a, Subst a) => UInferM a -> SynthDictM a
 inferToSynth m = do
   scope <- getScope
   case runUInferM mempty scope m of
@@ -521,7 +529,7 @@ data SolverEnv = SolverEnv { solverVars :: Env Kind
                            , solverSub  :: Env Type }
 type SolverT m = CatT SolverEnv m
 
-runSolverT :: (MonadError Err m, HasVars a, Pretty a)
+runSolverT :: (MonadError Err m, Subst a, Pretty a)
            => CatT SolverEnv m a -> m a
 runSolverT m = liftM fst $ flip runCatT mempty $ do
    ans <- m >>= zonk
@@ -540,7 +548,7 @@ applyDefaults = do
     _ -> return ()
   where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
 
-solveLocal :: HasVars a => UInferM a -> UInferM a
+solveLocal :: Subst a => UInferM a -> UInferM a
 solveLocal m = do
   (ans, env@(SolverEnv freshVars sub)) <- scoped $ do
     -- This might get expensive. TODO: revisit once we can measure performance.
@@ -550,7 +558,7 @@ solveLocal m = do
   extend $ SolverEnv (unsolved env) (sub `envDiff` freshVars)
   return ans
 
-checkLeaks :: HasVars a => [Var] -> UInferM a -> UInferM a
+checkLeaks :: Subst a => [Var] -> UInferM a -> UInferM a
 checkLeaks tvs m = do
   (ans, env) <- scoped $ solveLocal $ m
   forM_ (solverSub env) $ \ty ->
@@ -591,7 +599,7 @@ constrainEq t1 t2 = do
                "\n(Solving for: " ++ pprint infVars ++ ")")
   addContext msg $ unify t1' t2'
 
-zonk :: (HasVars a, MonadCat SolverEnv m) => a -> m a
+zonk :: (Subst a, MonadCat SolverEnv m) => a -> m a
 zonk x = do
   s <- looks solverSub
   return $ scopelessSubst s x
@@ -648,13 +656,13 @@ bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint 
           | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
           | otherwise = extend $ mempty { solverSub = v @> t }
 
-hasSkolems :: HasVars a => a -> Bool
+hasSkolems :: Subst a => a -> Bool
 hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
 
-occursIn :: HasVars a => Var -> a -> Bool
+occursIn :: Subst a => Var -> a -> Bool
 occursIn v t = v `isin` freeVars t
 
-renameForPrinting :: HasVars a => a -> (a, [Var])
+renameForPrinting :: Subst a => a -> (a, [Var])
 renameForPrinting x = (scopelessSubst substEnv x, newNames)
   where
     fvs = freeVars x
