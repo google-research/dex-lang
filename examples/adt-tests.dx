@@ -159,3 +159,19 @@ data MyIntish = MkIntish Int
     MyLeft x -> floor x
     MyRight (MkMyPair x y) -> x + floor y
 > [1, 2, 7]
+
+-- TODO: make the `n` an implicit argument
+data List a:Type =
+  AsList n:Int (Fin n => a)
+
+xs = AsList _ [1,2,3]
+
+:p
+  (AsList _ xsTab) = xs
+  sum xsTab
+> 6
+
+(AsList _ xsTab) = xs
+
+:p xsTab
+> [1, 2, 3]

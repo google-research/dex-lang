@@ -63,7 +63,7 @@ instance Checkable Module where
         let block = Block decls $ Atom $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
-        checkBindings (env <> foldMap declAsScope decls) ir bindings
+        checkBindings (env <> foldMap boundVars decls) ir bindings
 
 asCompilerErr :: Except a -> Except a
 asCompilerErr (Left (Err _ c msg)) = Left $ Err CompilerErr c msg
@@ -203,13 +203,19 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     checkEq (varType b) ty
     return $ varBinding b
   Unpack bs rhs -> do
-    mapM_ checkBinder bs
+    checkNestedBinders bs
     TypeCon def params <- typeCheck rhs
     [DataConDef _ bs'] <- return $ applyDataDefParams def params
     assertEq (length bs) (length bs') ""
     zipWithM_ checkEq (map varType bs) (map varType bs')
     return $ foldMap varBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
+
+checkNestedBinders :: [Binder] -> TypeM ()
+checkNestedBinders [] = return ()
+checkNestedBinders (b:bs) = do
+  checkBinder b
+  extendTypeEnv (varBinding b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr

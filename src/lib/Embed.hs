@@ -347,13 +347,13 @@ mapScalars f ty xs = case ty of
     _ -> error $ "Not implemented " ++ pprint ty
   _ -> error $ "Not implemented " ++ pprint ty
 
-substEmbedR :: (MonadEmbed m, MonadReader SubstEnv m, HasVars a)
+substEmbedR :: (MonadEmbed m, MonadReader SubstEnv m, Subst a)
            => a -> m a
 substEmbedR x = do
   env <- ask
   substEmbed env x
 
-substEmbed :: (MonadEmbed m, HasVars a)
+substEmbed :: (MonadEmbed m, Subst a)
            => SubstEnv -> a -> m a
 substEmbed env x = do
   scope <- getScope
@@ -632,7 +632,7 @@ reduceScoped m = do
 
 reduceBlock :: Scope -> Block -> Maybe Atom
 reduceBlock scope (Block decls result) = do
-  let localScope = foldMap declAsScope decls
+  let localScope = foldMap boundVars decls
   ans <- reduceExpr (scope <> localScope) result
   [] <- return $ toList $ localScope `envIntersect` freeVars ans
   return ans

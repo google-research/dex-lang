@@ -251,7 +251,10 @@ tyConDef = UConDef <$> upperName <*> many annBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
-dataConDef = UConDef <$> upperName <*> many ((NoName:>) <$> containedExpr)
+dataConDef = UConDef <$> upperName <*> many dataConDefBinder
+
+dataConDefBinder :: Parser UAnnBinder
+dataConDefBinder = annBinder <|> ((NoName:>) <$> containedExpr)
 
 decl :: Parser UDecl
 decl = do

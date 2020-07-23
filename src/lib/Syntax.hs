@@ -1,9 +1,7 @@
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE PatternSynonyms #-}
@@ -28,12 +26,12 @@ module Syntax (
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
-    boundUVars, PassName (..), bindingsAsVars,
-    freeVars, freeUVars, HasVars, strToName, nameToStr, showPrimName,
+    boundUVars, PassName (..), boundVars, bindingsAsVars,
+    freeVars, freeUVars, Subst, HasVars, strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, newEnv, Direction (..), ArrayRef, Array, Limit (..),
-    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar, declAsScope,
+    UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
-    DataDef (..), DataConDef (..), UConDef (..),
+    DataDef (..), DataConDef (..), UConDef (..), NestedList (..), WrapAbs (..),
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
@@ -62,7 +60,6 @@ import Data.Store (Store)
 import Data.Tuple (swap)
 import GHC.Generics
 
-import Cat
 import Env
 import Array
 
@@ -561,15 +558,8 @@ class HasUVars a where
 class BindsUVars a where
   boundUVars :: a -> UVars
 
--- wrappers to dispatch to a particular typeclass instance
-newtype FlatList   a = FlatList   [a]
--- each element's bound vars are in scope for the rest of the list
-newtype NestedList a = NestedList [a]
-newtype WrapAsBinder a = WrapAsBinder (VarP a)
-data UAbs b body = UAbs b body
-
-instance HasUVars a => HasUVars (FlatList a) where
-  freeUVars (FlatList xs) = foldMap freeUVars xs
+instance HasUVars a => HasUVars [a] where
+  freeUVars xs = foldMap freeUVars xs
 
 instance (BindsUVars a, HasUVars a) => HasUVars (NestedList a) where
   freeUVars (NestedList []) = mempty
@@ -579,8 +569,9 @@ instance (BindsUVars a, HasUVars a) => HasUVars (NestedList a) where
 instance BindsUVars a => BindsUVars (NestedList a) where
   boundUVars (NestedList xs) = foldMap boundUVars xs
 
-instance (HasUVars b, BindsUVars b, HasUVars body) => HasUVars (UAbs b body) where
-  freeUVars (UAbs b body) =
+instance (HasUVars b, BindsUVars b, HasUVars body)
+         => HasUVars (WrapAbs b body) where
+  freeUVars (WrapAbs b body) =
     freeUVars b <> (freeUVars body `envDiff` boundUVars b)
 
 instance HasUVars a => HasUVars (WrapAsBinder a) where
@@ -595,13 +586,13 @@ instance HasUVars a => HasUVars (WithSrc a) where
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v@>()
-    ULam b _ body -> freeUVars $ UAbs b body
-    UPi b arr ty -> freeUVars $ UAbs (WrapAsBinder b) (arr, ty)
+    ULam b _ body -> freeUVars $ WrapAbs b body
+    UPi b arr ty -> freeUVars $ WrapAbs (WrapAsBinder b) (arr, ty)
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl decl body -> freeUVars $ UAbs decl body
-    UFor _ b body -> freeUVars $ UAbs b body
+    UDecl decl body -> freeUVars $ WrapAbs decl body
+    UFor _ b body -> freeUVars $ WrapAbs b body
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
@@ -609,7 +600,7 @@ instance HasUVars UExpr' where
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
 
 instance HasUVars UAlt where
-  freeUVars (UAlt p body) = freeUVars $ UAbs p body
+  freeUVars (UAlt p body) = freeUVars $ WrapAbs p body
 
 instance HasUVars () where
   freeUVars = mempty
@@ -633,7 +624,7 @@ instance BindsUVars UPat' where
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
   freeUVars (UData (UConDef _ bs) dataCons) =
-    freeUVars (UAbs (NestedList (map WrapAsBinder bs)) (FlatList dataCons))
+    freeUVars (WrapAbs (NestedList (map WrapAsBinder bs)) dataCons)
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
@@ -692,6 +683,11 @@ nameAsEnv v = (v:>())@>()
 
 -- === Expr free variables and substitutions ===
 
+-- each element's bound vars are in scope for the rest of the list
+newtype NestedList a = NestedList [a]
+newtype WrapAsBinder a = WrapAsBinder { unwrapBinder :: (VarP a) }
+data WrapAbs b body = WrapAbs b body
+
 data BinderInfo =
         LamBound (ArrowP ())
         -- TODO: make the expression optional, for when it's effectful?
@@ -709,13 +705,9 @@ type Bindings = Env (Type, BinderInfo)
 type Scope = Bindings  -- when we only care about the names, not the payloads
 type ScopedSubstEnv = (SubstEnv, Bindings)
 
-scopelessSubst :: HasVars a => SubstEnv -> a -> a
+scopelessSubst :: Subst a => SubstEnv -> a -> a
 scopelessSubst env x = subst (env, scope) x
   where scope = foldMap freeVars env <> (freeVars x `envDiff` env)
-
-declAsScope :: Decl -> Scope
-declAsScope (Let ann v expr) = v @> (varType v, LetBound ann expr)
-declAsScope (Unpack _ _) = error "Not implemented"
 
 bindingsAsVars :: Bindings -> [Var]
 bindingsAsVars env = [v:>ty | (v, (ty, _)) <- envPairs env]
@@ -725,15 +717,65 @@ varBinding v = v @> (varType v, UnknownBinder)
 
 class HasVars a where
   freeVars :: a -> Scope
+
+class HasVars a => Subst a where
   subst :: ScopedSubstEnv -> a -> a
 
-instance (Show a, HasVars a, Eq a) => Eq (Abs a) where
+class HasVars a => BindsVars a where
+  boundVars :: a -> Scope
+  renamingSubst :: ScopedSubstEnv -> a -> (a, ScopedSubstEnv)
+
+instance (BindsVars b, HasVars body) => HasVars (WrapAbs b body) where
+  freeVars (WrapAbs b body) = freeVars b <> (freeVars body `envDiff` boundVars b)
+
+instance (BindsVars b, Subst body) => Subst (WrapAbs b body) where
+  subst env (WrapAbs b body) = WrapAbs b' body'
+    where (b', env') = renamingSubst env b
+          body' = subst (env <> env') body
+
+instance BindsVars a => HasVars (NestedList a) where
+  freeVars (NestedList xs) = case xs of
+    [] -> mempty
+    (x:rest) -> freeVars x <> (freeVars (NestedList rest) `envDiff` boundVars x)
+
+instance (Subst a, BindsVars a) => Subst (NestedList a) where
+  -- XXX: this doesn't rename the bound vars, so they must not be in scope
+  subst env (NestedList xs) = NestedList $ case xs of
+    [] -> []
+    (x:rest) -> x':rest'
+      where
+        x' = subst env x
+        env' = (mempty, boundVars x')
+        NestedList rest' = subst (env <> env') $ NestedList rest
+
+instance BindsVars a => BindsVars (NestedList a) where
+  boundVars (NestedList xs) = foldMap boundVars xs
+  renamingSubst env (NestedList xs) = case xs of
+    [] -> (NestedList [], mempty)
+    (x:rest) -> (NestedList (x':rest'), xEnv <> restEnv)
+      where
+        (x', xEnv) = renamingSubst env x
+        (NestedList rest', restEnv) = renamingSubst (env <> xEnv) $ NestedList rest
+
+instance HasVars (WrapAsBinder Type) where
+  freeVars (WrapAsBinder (_:>ty)) = freeVars ty
+
+instance Subst (WrapAsBinder Type) where
+  -- XXX: this doesn't rename the bound vars, so they must not be in scope
+  subst env (WrapAsBinder (v:>ty)) = WrapAsBinder $ v :> subst env ty
+
+instance BindsVars (WrapAsBinder Type) where
+  boundVars (WrapAsBinder v) = v @> (varType v, UnknownBinder)
+  renamingSubst env (WrapAsBinder (v:>ty)) = (WrapAsBinder v', env')
+    where (v', env') = refreshBinder env (v:> subst env ty)
+
+instance (Show a, Subst a, Eq a) => Eq (Abs a) where
   Abs (NoName:>a) b == Abs (NoName:>a') b' = a == a' && b == b'
   ab@(Abs (_:>a) _) == ab'@(Abs (_:>a') _) =
     a == a' && applyAbs ab v == applyAbs ab' v
     where v = Var $ freshSkolemVar (ab, ab') a
 
-instance (Show a, HasVars a, Eq a) => Eq (NaryAbs a) where
+instance (Show a, Subst a, Eq a) => Eq (NaryAbs a) where
   (NAbs [] body) == (NAbs [] body') = body == body'
   (NAbs (b:bs) body) == (NAbs (b':bs') body') =
     (Abs b $ NAbs bs body) == (Abs b' $ NAbs bs' body')
@@ -742,15 +784,10 @@ instance (Show a, HasVars a, Eq a) => Eq (NaryAbs a) where
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = rename (rawName Skolem "skol" :> ty) (freeVars x)
 
--- NOTE: We don't have an instance for VarP, because it's used to represent
---       both binders and regular variables, but each requires different treatment
-freeBinderTypeVars :: Var -> Scope
-freeBinderTypeVars (_ :> t) = freeVars t
-
-applyAbs :: HasVars a => Abs a -> Atom -> a
+applyAbs :: Subst a => Abs a -> Atom -> a
 applyAbs (Abs v body) x = scopelessSubst (v@>x) body
 
-applyNaryAbs :: HasVars a => NaryAbs a -> [Atom] -> a
+applyNaryAbs :: Subst a => NaryAbs a -> [Atom] -> a
 applyNaryAbs (NAbs [] body) [] = body
 applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs ab xs
   where ab = applyAbs (Abs b (NAbs bs body)) x
@@ -778,7 +815,7 @@ instance HasVars Arrow where
   freeVars arrow = case arrow of
     PlainArrow eff -> freeVars eff
     _ -> mempty
-
+instance Subst Arrow where
   subst env arrow = case arrow of
     PlainArrow eff -> PlainArrow $ subst env eff
     _ -> arrow
@@ -792,7 +829,7 @@ substVar env@(sub, scope) v = case envLookup sub v of
   Nothing -> Var $ fmap (subst env) v
   Just x' -> deShadow x' scope
 
-deShadow :: HasVars a => a -> Scope -> a
+deShadow :: Subst a => a -> Scope -> a
 deShadow x scope = subst (mempty, scope) x
 
 instance HasVars Expr where
@@ -804,6 +841,7 @@ instance HasVars Expr where
     Case e alts resultTy ->
       freeVars e <> freeVars alts <> freeVars resultTy
 
+instance Subst Expr where
   subst env expr = case expr of
     App f x -> App (subst env f) (subst env x)
     Atom x  -> Atom $ subst env x
@@ -814,23 +852,35 @@ instance HasVars Expr where
 
 instance HasVars Decl where
   freeVars decl = case decl of
-    Let _ b expr   -> foldMap freeVars b <> freeVars expr
-    Unpack bs expr -> foldMap (foldMap freeVars) bs <> freeVars expr
+    Let _ b expr   -> freeVars expr <> freeVars (varType b)
+    Unpack bs expr -> freeVars expr <> freeVars (NestedList $ map WrapAsBinder bs)
 
+instance Subst Decl where
+  -- XXX: this doesn't rename the bound vars, so they must not be in scope
   subst env decl = case decl of
-    Let ann (v:>ty) bound -> Let ann (v:> subst env ty) (subst env bound)
-    Unpack bs bound ->
-      Unpack (map (\(v:>ty) -> (v:> subst env ty)) bs) (subst env bound)
+    Let ann b expr -> Let ann (fmap (subst env) b) $ subst env expr
+    Unpack bs expr -> Unpack (map unwrapBinder bs') $ subst env expr
+      where NestedList bs' = subst env $ NestedList (map WrapAsBinder bs)
+
+instance BindsVars Decl where
+  boundVars decl = case decl of
+    Let ann b expr -> b @> (varType b, LetBound ann expr)
+    Unpack bs _ -> boundVars $ NestedList $ map WrapAsBinder bs
+
+  renamingSubst env decl = case decl of
+    Let ann b expr -> (Let ann b' expr', env')
+      where expr' = subst env expr
+            (WrapAsBinder b', env') = renamingSubst env $ WrapAsBinder b
+    Unpack bs expr -> (Unpack (map unwrapBinder bs') expr', env')
+      where expr' = subst env expr
+            (NestedList bs', env') = renamingSubst env $ NestedList $ map WrapAsBinder bs
 
 instance HasVars Block where
-  freeVars (Block [] result) = freeVars result
-  freeVars (Block (decl:decls) result) =
-    freeVars decl <> (freeVars body `envDiff` declBoundVars decl)
-    where body = Block decls result
-  subst env (Block decls result) = do
-    let (decls', env') = catMap substDecl env decls
-    let result' = subst (env <> env') result
-    Block decls' result'
+  freeVars (Block decls result) = freeVars $ WrapAbs (NestedList decls) result
+instance Subst Block where
+  subst env (Block decls result) = Block decls' result'
+    where WrapAbs (NestedList decls') result' =
+            subst env $ WrapAbs (NestedList decls) result
 
 instance HasVars Atom where
   freeVars atom = case atom of
@@ -845,6 +895,7 @@ instance HasVars Atom where
     DataCon _ params _ args -> freeVars params <> freeVars args
     TypeCon _ params        -> freeVars params
 
+instance Subst Atom where
   subst env atom = case atom of
     Var v   -> substVar env v
     Lam lam -> Lam $ subst env lam
@@ -856,35 +907,25 @@ instance HasVars Atom where
     TypeCon def params          -> TypeCon def (subst env params)
 
 instance HasVars a => HasVars (NaryAbs a) where
-  freeVars (NAbs [] body) = freeVars body
-  freeVars (NAbs (b:bs) body) = freeVars $ Abs b $ NAbs bs body
-
-  subst env (NAbs [] body) = NAbs [] $ subst env body
-  subst env (NAbs (b:bs) body) = NAbs (b':bs') body'
-    where Abs b' (NAbs bs' body') = subst env $ Abs b $ NAbs bs body
+  freeVars (NAbs bs body) =
+    freeVars $ WrapAbs (NestedList (map WrapAsBinder bs)) body
+instance Subst a => Subst (NaryAbs a) where
+  subst env (NAbs bs body) = NAbs (map unwrapBinder bs') body'
+    where WrapAbs (NestedList bs') body' =
+            subst env $ WrapAbs (NestedList (map WrapAsBinder bs)) body
 
 instance HasVars Module where
-  freeVars (Module variant decls bindings) = case decls of
-    [] -> freeVars bindings `envDiff` bindings
-    decl : rest -> freeVars decl
-                 <> (freeVars moduleRest `envDiff` declBoundVars decl)
-      where moduleRest = Module variant rest bindings
-
+  freeVars (Module _ decls bindings) = freeVars $ WrapAbs (NestedList decls) bindings
+instance Subst Module where
   subst env (Module variant decls bindings) = Module variant decls' bindings'
-    where
-      (decls', env') = catMap substDecl env decls
-      bindings' = subst (env <> env') bindings
-
-declBoundVars :: Decl -> Env ()
-declBoundVars decl = case decl of
-  Let _ b _ -> b @> ()
-  Unpack bs _ -> foldMap (@> ()) bs
+    where WrapAbs (NestedList decls') bindings' =
+            subst env $ WrapAbs (NestedList decls) bindings
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
        foldMap (\(_,v) -> (v:>())@>(TyKind , UnknownBinder)) row
     <> foldMap (\v     -> (v:>())@>(EffKind, UnknownBinder)) t
-
+instance Subst EffectRow where
   subst (env, _) (EffectRow row t) = extendEffRow
     (fmap (\(effName, v) -> (effName, substName env v)) row)
     (substEffTail env t)
@@ -894,16 +935,14 @@ instance HasVars BinderInfo where
    LetBound _ expr -> freeVars expr
    _ -> mempty
 
+instance Subst BinderInfo where
   subst env binfo = case binfo of
    LetBound a expr -> LetBound a $ subst env expr
    _ -> binfo
 
-instance HasVars LetAnn where
-  freeVars _ = mempty
-  subst _ ann = ann
-
 instance HasVars DataConDef where
   freeVars (DataConDef _ bs) = freeVars $ NAbs bs ()
+instance Subst DataConDef where
   subst env (DataConDef name bs) = DataConDef name bs'
     where NAbs bs' () = subst env $ NAbs bs ()
 
@@ -925,55 +964,33 @@ extendEffRow :: [Effect] -> EffectRow -> EffectRow
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 instance HasVars a => HasVars (Abs a) where
-  freeVars (Abs b body) =
-    freeBinderTypeVars b <> (freeVars body `envDiff` (b@>()))
-
-  subst env (Abs (v:>ty) body) = Abs b body'
-    where (b, env') = refreshBinder env (v:> subst env ty)
-          body' = subst (env <> env') body
-
-substDecl :: ScopedSubstEnv -> Decl -> (Decl, ScopedSubstEnv)
-substDecl env (Let ann (v:>ty) bound) = (Let ann b (subst env bound), env')
-  where (b, env') = refreshBinder env (v:> subst env ty)
-substDecl env (Unpack bs bound) = (Unpack bs' (subst env bound), env')
-  -- TODO: handle dependence between binders properly
-  where (bs', env') = refreshBinders env (map (fmap (subst env)) bs)
-
-refreshBinders :: ScopedSubstEnv -> [Var] -> ([Var], ScopedSubstEnv)
-refreshBinders _ [] = ([], mempty)
-refreshBinders env (b:bs) = (b':bs', env' <> env'')
-  where (b', env') = refreshBinder env b
-        (bs', env'') = refreshBinders (env <> env') bs
+  freeVars (Abs b body) = freeVars $ WrapAbs (WrapAsBinder b) body
+instance Subst a => Subst (Abs a) where
+  subst env (Abs b body) = Abs b' body'
+    where WrapAbs (WrapAsBinder b') body' =
+            subst env $ WrapAbs (WrapAsBinder b) body
 
 refreshBinder :: ScopedSubstEnv -> Var -> (Var, ScopedSubstEnv)
 refreshBinder (_, scope) b = (b', env')
   where b' = rename b scope
         env' = (b@>Var b', b'@>(varType b, UnknownBinder))
 
-instance HasVars () where
-  freeVars () = mempty
-  subst _ () = ()
+instance HasVars () where freeVars () = mempty
+instance Subst () where subst _ () = ()
 
 instance (HasVars a, HasVars b) => HasVars (a, b) where
   freeVars (x, y) = freeVars x <> freeVars y
+instance (Subst a, Subst b) => Subst (a, b) where
   subst env (x, y) = (subst env x, subst env y)
 
-instance (HasVars a, HasVars b) => HasVars (Either a b)where
-  freeVars (Left  x) = freeVars x
-  freeVars (Right x) = freeVars x
-  subst = error "not implemented"
+instance HasVars a => HasVars (Maybe a) where freeVars x = foldMap freeVars x
+instance Subst a => Subst (Maybe a) where subst env x = fmap (subst env) x
 
-instance HasVars a => HasVars (Maybe a) where
-  freeVars x = foldMap freeVars x
-  subst env x = fmap (subst env) x
+instance HasVars a => HasVars (Env a) where freeVars x = foldMap freeVars x
+instance Subst a => Subst (Env a) where subst env x = fmap (subst env) x
 
-instance HasVars a => HasVars (Env a) where
-  freeVars x = foldMap freeVars x
-  subst env x = fmap (subst env) x
-
-instance HasVars a => HasVars [a] where
-  freeVars x = foldMap freeVars x
-  subst env x = fmap (subst env) x
+instance HasVars a => HasVars [a] where freeVars x = foldMap freeVars x
+instance Subst a => Subst [a] where subst env x = fmap (subst env) x
 
 instance Eq SourceBlock where
   x == y = sbText x == sbText y
