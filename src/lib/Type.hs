@@ -139,7 +139,7 @@ instance HasType Expr where
         let cons = applyDataDefParams def params
         checkEq  (length cons) (length alts)
         forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
-          checkEq  (fmap binderType bs') (fmap binderType bs)
+          checkEq bs' bs
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
       return resultTy
@@ -216,8 +216,7 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     void $ checkNestedBinders bs
     TypeCon def params <- typeCheck rhs
     [DataConDef _ bs'] <- return $ applyDataDefParams def params
-    assertEq (length bs) (length bs') ""
-    zipWithM_ checkEq (toList $ fmap binderType bs) (toList $ fmap binderType bs')
+    checkEq bs bs'
     return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 

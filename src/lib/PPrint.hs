@@ -142,7 +142,7 @@ instance PrettyPrec Expr where
 
 prettyAlt :: Alt -> Doc ann
 prettyAlt (Abs bs body) =
-  hsep (map prettyBinderNoAnn $ toList bs) <+> "->" <> p body
+  hsep (map prettyBinderNoAnn $ toList bs) <+> "->" <> nest 2 (p body)
 
 prettyBinderNoAnn :: BinderP a -> Doc ann
 prettyBinderNoAnn (Ignore _) = "_"
