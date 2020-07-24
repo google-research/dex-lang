@@ -103,7 +103,7 @@ evalSourceBlockM env block = case sbContents block of
   LoadData pat DexObject fname -> do
     source <- liftIO $ readFile fname
     let val = ignoreExcept $ parseData source
-    evalUModule env $ UModule [ULet PlainLet pat val]
+    evalUModule env $ UModule $ toNest [ULet PlainLet pat val]
   -- LoadData pat DexBinaryObject fname -> do
   --   val <- liftIO $ loadDataFile fname
   --   -- TODO: handle patterns and type annotations in binder
@@ -166,7 +166,7 @@ evalModule bindings normalized = do
   checkPass SimpPass defunctionalized
   evaluated <- evalSimplified defunctionalized (evalBackend bindings)
   checkPass ResultPass evaluated
-  Module Evaluated [] newBindings <- return evaluated
+  Module Evaluated Empty newBindings <- return evaluated
   return newBindings
 
 initializeBackend :: Backend -> IO BackendEngine

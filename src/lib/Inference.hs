@@ -42,7 +42,7 @@ inferModule scope (UModule decls) = do
   return $ Module Typed decls' bindings'
 
 runUInferM :: (Subst a, Pretty a)
-           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, [Decl]))
+           => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
@@ -142,8 +142,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     let conDefs = applyDataDefParams def params
     altsSorted <- forM conDefs $ \(DataConDef conName bs) -> do
       case lookup conName alts' of
-        Nothing  -> return $ NAbs (map (Ignore . binderType) bs) $
-                               Block [] $ Op $ ThrowError reqTy'
+        Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
+                               Block Empty $ Op $ ThrowError reqTy'
         Just alt -> return alt
     emit $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
@@ -209,9 +209,9 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
     params <- mapM (freshType . binderType) paramBs
-    constrainEq (TypeCon def params) (getType expr)
+    constrainEq (TypeCon def $ toList params) (getType expr)
     xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) ps xs
+    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
@@ -227,13 +227,13 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       val' <- withPatHint p $ emitAnn PlainLet expr
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
-  (tc', params) <- inferUConDef tc
-  let paramVars = map (\(Bind v) -> v) params  -- TODO: refresh things properly
+  (tc', paramBs) <- inferUConDef tc
+  let paramVars = map (\(Bind v) -> v) $ toList paramBs  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
-    extendR (newEnv params (map Var paramVars)) $ do
-      extendScope (foldMap binderBinding params)
+    extendR (newEnv paramBs (map Var paramVars)) $ do
+      extendScope (foldMap binderBinding paramBs)
       mapM inferUConDef dcs
-  let dataDef = DataDef tc' params $ map (uncurry DataConDef) dcs'
+  let dataDef = DataDef tc' paramBs $ map (uncurry DataConDef) dcs'
   let tyConTy = getType $ TypeCon dataDef []
   extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
   forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
@@ -242,20 +242,20 @@ inferUDecl True (UData tc dcs) = do
   return mempty
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
-inferUConDef :: UConDef -> UInferM (Name, [Binder])
+inferUConDef :: UConDef -> UInferM (Name, Nest Binder)
 inferUConDef (UConDef v bs) = do
   (bs', _) <- embedScoped $ checkNestedBinders bs
   return (asGlobal  v, bs')
 
-checkNestedBinders :: [UAnnBinder] -> UInferM [Binder]
-checkNestedBinders [] = return []
-checkNestedBinders (b:bs) = do
+checkNestedBinders :: Nest UAnnBinder -> UInferM (Nest Binder)
+checkNestedBinders Empty = return Empty
+checkNestedBinders (Nest b bs) = do
   b' <- mapM checkUType b
   extendScope (binderBinding b')
   let env = case b' of Bind v   -> b' @> Var v
                        Ignore _ -> mempty
   bs' <- extendR env $ checkNestedBinders bs
-  return $ b' : bs'
+  return $ Nest b' bs'
 
 inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
@@ -292,7 +292,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   let (subPats, subPatTys) = unzip patTys
   constrainEq scrutineeTy patTy
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
-  alt <- buildNAbs bs $ \xs ->
+  alt <- buildNAbs (toNest bs) $ \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
   return (conName, alt)
 
@@ -313,9 +313,9 @@ inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
     when (length argBs /= length ps) $ throw TypeErr $
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                             ++ " got " ++ show (length ps)
-    params <- mapM (freshType . binderType) paramBs
-    let argTys = applyNaryAbs (NAbs paramBs $ map binderType argBs) params
-    return (TypeCon def params, conName', zip ps argTys)
+    params <- mapM (freshType . binderType) $ toList paramBs
+    let argTys = applyNaryAbs (Abs paramBs $ map binderType $ toList argBs) params
+    return (TypeCon def params, conName', zip (toList ps) argTys)
   _ -> throw TypeErr $ "Case patterns must start with a data constructor"
 
 withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
@@ -355,10 +355,10 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     when (length argBs /= length ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
-    params <- lift $ mapM (freshType . binderType) paramBs
+    params <- lift $ mapM (freshType . binderType) $ toList paramBs
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
-    fold <$> zipWithM bindPat' ps xs
+    fold <$> zipWithM bindPat' (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it

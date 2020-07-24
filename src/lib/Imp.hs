@@ -22,7 +22,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.State
 import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
-import Data.Foldable (fold)
+import Data.Foldable (toList)
 import Data.Coerce
 
 import Embed
@@ -87,7 +87,7 @@ toImpDecl env (maybeDest, (Let _ b bound)) = do
 toImpDecl env (maybeDest, (Unpack bs bound)) = do
   bs' <- mapM (traverse (impSubst env)) bs
   ~(DataCon _ _ _ ans) <- toImpExpr env (maybeDest, bound)
-  return $ fold $ zipWith (@>) bs' ans
+  return $ newEnv bs' ans
 
 toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 toImpExpr env (maybeDest, expr) = case expr of
@@ -107,13 +107,13 @@ toImpExpr env (maybeDest, expr) = case expr of
     e' <- impSubst env e
     case e' of
       DataCon _ _ con args -> do
-        let NAbs bs body = alts !! con
+        let Abs bs body = alts !! con
         toImpBlock (env <> newEnv bs args) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
         let tag' = fromScalarAtom tag
         dest <- allocDest maybeDest $ getType expr
         emitSwitch tag' $ flip map (zip xss alts) $
-          \(xs, NAbs bs body) ->
+          \(xs, Abs bs body) ->
              void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
         destToAtom dest
       _ -> error $ "Unexpected scrutinee: " ++ pprint e'
@@ -413,10 +413,10 @@ splitDest (maybeDest, (Block decls ans)) = do
       let blockVars = foldMap (\(Let _ b _) -> b @> ()) decls
       let closureCopies = fmap (\(n, (d, t)) -> (d, Var $ n :> t))
                                (envPairs $ varDests `envDiff` blockVars)
-      return $ ( fmap (\d@(Let _ b _) -> (fst <$> varDests `envLookup` b, d)) decls
+      return $ ( fmap (\d@(Let _ b _) -> (fst <$> varDests `envLookup` b, d)) $ toList decls
                , (Nothing, ans)
                , gatherCopies ++ closureCopies)
-    _ -> return $ (fmap (Nothing,) decls, (maybeDest, ans), [])
+    _ -> return $ (fmap (Nothing,) $ toList decls, (maybeDest, ans), [])
   where
     -- Maps all variables used in the result atom to their respective destinations.
     gatherVarDests :: Dest -> Atom -> WriterT [(Dest, Atom)] (State (Env (Dest, Type))) ()
@@ -473,12 +473,12 @@ makeDest nameHint destType = do
           case dcs of
             [] -> error "Void type not allowed"
             [DataConDef _ bs] -> do
-              dests <- mapM (rec . binderType) bs
+              dests <- mapM (rec . binderType) $ toList bs
               return $ DataCon def params 0 dests
             _ -> do
               tag <- rec IntTy
               let dcs' = applyDataDefParams def params
-              contents <- forM dcs' $ \(DataConDef _ bs) -> forM bs  (rec . binderType)
+              contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt

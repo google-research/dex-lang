@@ -48,8 +48,8 @@ linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
 
 linearizeBlock :: SubstEnv -> Block -> LinA Atom
 linearizeBlock env (Block decls result) = case decls of
-  [] -> linearizeExpr env result
-  Let _ b bound : rest -> LinA $ do
+  Empty -> linearizeExpr env result
+  Nest (Let _ b bound) rest -> LinA $ do
     -- TODO: handle discrete case specially.
     (x, boundLin) <- runLinA $ linearizeExpr env bound
     ~x'@(Var v) <- emit $ Atom x
@@ -274,8 +274,8 @@ transposeMap scope (Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
 
 transposeBlock :: Block -> Atom -> TransposeM ()
 transposeBlock (Block decls result) ct = case decls of
-  [] -> transposeExpr result ct
-  Let _ b bound : rest -> do
+  Empty -> transposeExpr result ct
+  Nest (Let _ b bound) rest -> do
     -- let (eff, _) = getEffType bound
     -- linEff <- isLinEff eff
     let linEff = not $ isPure bound

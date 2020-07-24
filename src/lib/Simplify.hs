@@ -11,7 +11,7 @@ module Simplify (simplifyModule, evalSimplified) where
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Data.Foldable (fold)
+import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition)
 
@@ -29,26 +29,26 @@ simplifyModule :: TopEnv -> Module -> Module
 simplifyModule scope (Module Core decls bindings) = do
   let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
-  let (declsDone, declsNotDone) = partition isAtomDecl simpDecls
+  let (declsDone, declsNotDone) = partition isAtomDecl $ toList simpDecls
   let bindings' = foldMap boundVars declsDone
-  dceModule $ Module Simp declsNotDone (bindings <> bindings')
+  dceModule $ Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
-evalSimplified (Module Simp [] bindings) _ =
-  return $ Module Evaluated [] bindings
+evalSimplified (Module Simp Empty bindings) _ =
+  return $ Module Evaluated Empty bindings
 evalSimplified (Module Simp decls bindings) evalBlock = do
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
   vals <- (ignoreExcept . fromConsList) <$> evalBlock block
-  return $ Module Evaluated [] $
+  return $ Module Evaluated Empty $
     scopelessSubst (newEnv localVars vals) bindings
 evalSimplified (Module _ _ _) _ =
   error "Not a simplified module"
 
-simplifyDecls :: [Decl] -> SimplifyM SubstEnv
-simplifyDecls [] = return mempty
-simplifyDecls (decl:rest) = do
+simplifyDecls :: Nest Decl -> SimplifyM SubstEnv
+simplifyDecls Empty = return mempty
+simplifyDecls (Nest decl rest) = do
   substEnv <- simplifyDecl decl
   substEnv' <- extendR substEnv $ simplifyDecls rest
   return (substEnv <> substEnv')
@@ -65,7 +65,7 @@ simplifyDecl (Unpack bs expr) = do
   xs <- case x of
     DataCon _ _ _ xs -> return xs
     _ -> emitUnpack $ Atom x
-  return $ fold $ zipWith (@>) bs xs
+  return $ newEnv bs xs
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
@@ -112,7 +112,7 @@ simplifyBinaryLam = simplifyLams 2
 simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substEmbedR lam
-  dropSub $ simplifyLams' numArgs mempty $ Block [] $ Atom lam'
+  dropSub $ simplifyLams' numArgs mempty $ Block Empty $ Atom lam'
 
 simplifyLams' :: Int -> Scope -> Block
               -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
@@ -125,7 +125,7 @@ simplifyLams' 0 scope block = do
       mapM_ emitDecl decls
       let (dataVals, recon) = separateDataComponent (scope <> scope') block'
       return (dataVals, Just recon)
-simplifyLams' n scope (Block [] (Atom (Lam (Abs b (arr, body))))) = do
+simplifyLams' n scope (Block Empty (Atom (Lam (Abs b (arr, body))))) = do
   b' <- mapM substEmbedR b
   buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
     let scope' = scope <> v @> (varType v, LamBound (void arr))
@@ -166,10 +166,10 @@ simplifyExpr expr = case expr of
     resultTy' <- substEmbedR resultTy
     case e' of
       DataCon _ _ con args -> do
-        let NAbs bs body = alts !! con
+        let Abs bs body = alts !! con
         extendR (newEnv bs args) $ simplifyBlock body
       _ -> do
-        alts' <- forM alts $ \(NAbs bs body) -> do
+        alts' <- forM alts $ \(Abs bs body) -> do
           bs' <-  mapM (mapM substEmbedR) bs
           buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
         emit $ Case e' alts' resultTy'

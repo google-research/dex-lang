@@ -11,7 +11,7 @@ module Syntax (
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
     Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
-    NaryAbs (..), PrimExpr (..), PrimCon (..), LitVal (..),
+    PrimExpr (..), PrimCon (..), LitVal (..),
     PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
@@ -27,11 +27,12 @@ module Syntax (
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, bindingsAsVars,
-    freeVars, freeUVars, Subst, HasVars, strToName, nameToStr, showPrimName,
+    freeVars, freeUVars, Subst, HasVars, BindsVars,
+    strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, Direction (..), ArrayRef, Array, Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
-    DataDef (..), DataConDef (..), UConDef (..), NestedList (..), WrapAbs (..),
+    DataDef (..), DataConDef (..), UConDef (..), Nest (..), toNest,
     subst, deShadow, scopelessSubst, absArgType, applyAbs, makeAbs,
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
@@ -57,6 +58,7 @@ import qualified Data.Vector.Storable as V
 import Data.List (sort)
 import Data.Store (Store)
 import Data.Tuple (swap)
+import Data.Foldable (toList)
 import GHC.Generics
 
 import Env
@@ -82,24 +84,23 @@ data Expr = App Atom Atom
             deriving (Show, Generic)
 
 data Decl = Let LetAnn Binder Expr
-          | Unpack [Binder] Expr  deriving (Show, Generic)
+          | Unpack (Nest Binder) Expr  deriving (Show, Generic)
 
-data Block = Block [Decl] Expr  deriving (Show, Generic)
-type Alt = NaryAbs Block
+data Block = Block (Nest Decl) Expr    deriving (Show, Generic)
+type Alt = Abs (Nest Binder) Block
 
 type Var    = VarP Type
 type Binder = BinderP Type
 
-data DataDef = DataDef Name [Binder] [DataConDef]  deriving (Show, Generic)
-data DataConDef = DataConDef Name [Binder]    deriving (Show, Generic)
+data DataDef = DataDef Name (Nest Binder) [DataConDef]  deriving (Show, Generic)
+data DataConDef = DataConDef Name (Nest Binder)    deriving (Show, Generic)
 
--- TODO: could merge Abs and NaryAbs by parameterizing with a functor
-data Abs a = Abs Binder a     deriving (Show, Generic, Functor, Foldable, Traversable)
-data NaryAbs a = NAbs [Binder] a
-                 deriving (Show, Generic, Functor, Foldable, Traversable)
+data Abs b body = Abs b body               deriving (Show, Generic)
+data Nest a = Nest a (Nest a) | Empty
+              deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-type LamExpr = Abs (Arrow, Block)
-type PiType  = Abs (Arrow, Type)
+type LamExpr = Abs Binder (Arrow, Block)
+type PiType  = Abs Binder (Arrow, Type)
 
 type Arrow = ArrowP EffectRow
 data ArrowP eff = PlainArrow eff
@@ -123,7 +124,7 @@ type Con = PrimCon Atom
 type Op  = PrimOp  Atom
 type Hof = PrimHof Atom
 
-data Module = Module IRVariant [Decl] Bindings  deriving Show
+data Module = Module IRVariant (Nest Decl) Bindings  deriving Show
 type TopEnv = Scope
 
 data IRVariant = Surface | Typed | Core | Simp | Evaluated
@@ -156,7 +157,7 @@ data UExpr' = UVar UVar
             | UPrimExpr (PrimExpr Name)
               deriving (Show, Generic)
 
-data UConDef = UConDef Name [UAnnBinder]  deriving (Show, Generic)
+data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
 data UDecl = ULet LetAnn UPatAnn UExpr
            | UData UConDef [UConDef]
              deriving (Show, Generic)
@@ -171,12 +172,12 @@ type UAnnBinder = BinderP UType
 
 data UAlt = UAlt UPat UExpr deriving (Show, Generic)
 
-data UModule = UModule [UDecl]  deriving (Show)
+data UModule = UModule (Nest UDecl)  deriving (Show)
 type SrcPos = (Int, Int)
 
 type UPat  = WithSrc UPat'
 data UPat' = UPatBinder UBinder
-           | UPatCon Name [UPat]
+           | UPatCon Name (Nest UPat)
            | UPatLit LitVal
            | UPatPair UPat UPat
            | UPatUnit
@@ -558,18 +559,16 @@ class BindsUVars a where
 instance HasUVars a => HasUVars [a] where
   freeUVars xs = foldMap freeUVars xs
 
-instance (BindsUVars a, HasUVars a) => HasUVars (NestedList a) where
-  freeUVars (NestedList []) = mempty
-  freeUVars (NestedList (x:xs)) =
-    freeUVars x <> (freeUVars (NestedList xs) `envDiff` boundUVars x)
+instance (BindsUVars a, HasUVars a) => HasUVars (Nest a) where
+  freeUVars Empty = mempty
+  freeUVars (Nest x xs) = freeUVars x <> (freeUVars xs `envDiff` boundUVars x)
 
-instance BindsUVars a => BindsUVars (NestedList a) where
-  boundUVars (NestedList xs) = foldMap boundUVars xs
+instance BindsUVars a => BindsUVars (Nest a) where
+  boundUVars xs = foldMap boundUVars xs
 
 instance (HasUVars b, BindsUVars b, HasUVars body)
-         => HasUVars (WrapAbs b body) where
-  freeUVars (WrapAbs b body) =
-    freeUVars b <> (freeUVars body `envDiff` boundUVars b)
+         => HasUVars (Abs b body) where
+  freeUVars (Abs b body) = freeUVars b <> (freeUVars body `envDiff` boundUVars b)
 
 instance HasUVars a => HasUVars (WithSrc a) where
   freeUVars (WithSrc _ e) = freeUVars e
@@ -577,13 +576,13 @@ instance HasUVars a => HasUVars (WithSrc a) where
 instance HasUVars UExpr' where
   freeUVars expr = case expr of
     UVar v -> v @>()
-    ULam (pat,ty) _ body -> freeUVars ty <> freeUVars (WrapAbs pat body)
-    UPi b arr ty -> freeUVars $ WrapAbs b (arr, ty)
+    ULam (pat,ty) _ body -> freeUVars ty <> freeUVars (Abs pat body)
+    UPi b arr ty -> freeUVars $ Abs b (arr, ty)
     -- TODO: maybe distinguish table arrow application
     -- (otherwise `x.i` and `x i` are the same)
     UApp _ f x -> freeUVars f <> freeUVars x
-    UDecl decl body -> freeUVars $ WrapAbs decl body
-    UFor _ (pat,ty) body -> freeUVars ty <> freeUVars (WrapAbs pat body)
+    UDecl decl body -> freeUVars $ Abs decl body
+    UFor _ (pat,ty) body -> freeUVars ty <> freeUVars (Abs pat body)
     UHole -> mempty
     UTabCon xs n -> foldMap freeUVars xs <> foldMap freeUVars n
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
@@ -591,7 +590,7 @@ instance HasUVars UExpr' where
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
 
 instance HasUVars UAlt where
-  freeUVars (UAlt p body) = freeUVars $ WrapAbs p body
+  freeUVars (UAlt p body) = freeUVars $ Abs p body
 
 instance HasUVars () where
   freeUVars = mempty
@@ -614,8 +613,7 @@ instance BindsUVars UPat' where
 
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
-  freeUVars (UData (UConDef _ bs) dataCons) =
-    freeUVars (WrapAbs (NestedList bs) dataCons)
+  freeUVars (UData (UConDef _ bs) dataCons) = freeUVars $ Abs bs dataCons
 
 instance BindsUVars UDecl where
   boundUVars decl = case decl of
@@ -623,10 +621,10 @@ instance BindsUVars UDecl where
    UData tyCon dataCons -> boundUVars tyCon <> foldMap boundUVars dataCons
 
 instance HasUVars UModule where
-  freeUVars (UModule decls) = freeUVars $ NestedList decls
+  freeUVars (UModule decls) = freeUVars decls
 
 instance BindsUVars UModule where
-  boundUVars (UModule decls) = boundUVars $ NestedList decls
+  boundUVars (UModule decls) = boundUVars decls
 
 instance HasUVars SourceBlock where
   freeUVars block = uVarsAsGlobal $
@@ -664,7 +662,7 @@ instance HasUVars a => BindsUVars (BinderP a) where
   boundUVars b = b @> ()
 
 instance HasUVars UConDef where
-  freeUVars (UConDef _ bs) = freeUVars $ NestedList bs
+  freeUVars (UConDef _ bs) = freeUVars bs
 
 instance BindsUVars UConDef where
   boundUVars (UConDef con _) = con @>()
@@ -676,10 +674,6 @@ nameAsEnv :: Name -> UVars
 nameAsEnv v = v@>()
 
 -- === Expr free variables and substitutions ===
-
--- each element's bound vars are in scope for the rest of the list
-newtype NestedList a = NestedList [a]
-data WrapAbs b body = WrapAbs b body
 
 data BinderInfo =
         LamBound (ArrowP ())
@@ -718,42 +712,42 @@ class HasVars a => BindsVars a where
   boundVars :: a -> Scope
   renamingSubst :: ScopedSubstEnv -> a -> (a, ScopedSubstEnv)
 
-instance (BindsVars b, HasVars body) => HasVars (WrapAbs b body) where
-  freeVars (WrapAbs b body) = freeVars b <> (freeVars body `envDiff` boundVars b)
+instance (BindsVars b, HasVars body) => HasVars (Abs b body) where
+  freeVars (Abs b body) = freeVars b <> (freeVars body `envDiff` boundVars b)
 
-instance (BindsVars b, Subst body) => Subst (WrapAbs b body) where
-  subst env (WrapAbs b body) = WrapAbs b' body'
+instance (BindsVars b, Subst body) => Subst (Abs b body) where
+  subst env (Abs b body) = Abs b' body'
     where (b', env') = renamingSubst env b
           body' = subst (env <> env') body
 
-instance BindsVars a => HasVars (NestedList a) where
-  freeVars (NestedList xs) = case xs of
-    [] -> mempty
-    (x:rest) -> freeVars x <> (freeVars (NestedList rest) `envDiff` boundVars x)
+instance BindsVars a => HasVars (Nest a) where
+  freeVars xs = case xs of
+    Empty -> mempty
+    Nest b rest -> freeVars b <> (freeVars rest `envDiff` boundVars b)
 
-instance (Subst a, BindsVars a) => Subst (NestedList a) where
-  -- XXX: this doesn't rename the bound vars, so they must not be in scope
-  subst env (NestedList xs) = NestedList $ case xs of
-    [] -> []
-    (x:rest) -> x':rest'
-      where
-        x' = subst env x
-        env' = (mempty, boundVars x')
-        NestedList rest' = subst (env <> env') $ NestedList rest
+instance (Subst a, BindsVars a) => Subst (Nest a) where
+  subst env xs = case xs of
+    Empty -> Empty
+    Nest x rest -> Nest x' rest'
+      where x' = subst env x
+            env' = (mempty, boundVars x')
+            rest' = subst (env <> env') rest
 
-instance BindsVars a => BindsVars (NestedList a) where
-  boundVars (NestedList xs) = foldMap boundVars xs
-  renamingSubst env (NestedList xs) = case xs of
-    [] -> (NestedList [], mempty)
-    (x:rest) -> (NestedList (x':rest'), xEnv <> restEnv)
+instance BindsVars a => BindsVars (Nest a) where
+  boundVars xs = foldMap boundVars xs
+  renamingSubst env xs = case xs of
+    Empty -> (Empty, mempty)
+    Nest x rest -> (Nest x' rest', xEnv <> restEnv)
       where
         (x', xEnv) = renamingSubst env x
-        (NestedList rest', restEnv) = renamingSubst (env <> xEnv) $ NestedList rest
+        (rest', restEnv) = renamingSubst (env <> xEnv) rest
 
 instance HasVars Binder where
   freeVars b = freeVars $ binderType b
 
 instance Subst Binder where
+  -- BUG: the following case should be unreachable but it shows up in tests
+  -- subst env@(_, scope) b | b `isin` scope = error $ "shadowed binder: " ++ show b
   -- XXX: this doesn't rename the bound vars, so they must not be in scope
   subst env b = fmap (subst env) b
 
@@ -780,40 +774,38 @@ instance Eq Atom where
 instance Eq DataDef where
   DataDef name _ _ == DataDef name' _ _ = name == name'
 
-instance (Show a, Subst a, Eq a) => Eq (Abs a) where
+instance (Show a, Subst a, Eq a) => Eq (Abs Binder a) where
   Abs (Ignore a) b == Abs (Ignore a') b' = a == a' && b == b'
   ab == ab' = absArgType ab == absArgType ab' && applyAbs ab v == applyAbs ab' v
     where v = Var $ freshSkolemVar (ab, ab') (absArgType ab)
-
-instance (Show a, Subst a, Eq a) => Eq (NaryAbs a) where
-  (NAbs [] body) == (NAbs [] body') = body == body'
-  (NAbs (b:bs) body) == (NAbs (b':bs') body') =
-    (Abs b $ NAbs bs body) == (Abs b' $ NAbs bs' body')
-  _ == _ = False
 
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = v :> ty
   where v = genFresh (rawName Skolem "skol") (freeVars x)
 
-applyAbs :: Subst a => Abs a -> Atom -> a
-applyAbs (Abs v body) x = scopelessSubst (v@>x) body
+applyAbs :: Subst a => Abs Binder a -> Atom -> a
+applyAbs (Abs b body) x = scopelessSubst (b@>x) body
 
-applyNaryAbs :: Subst a => NaryAbs a -> [Atom] -> a
-applyNaryAbs (NAbs [] body) [] = body
-applyNaryAbs (NAbs (b:bs) body) (x:xs) = applyNaryAbs ab xs
-  where ab = applyAbs (Abs b (NAbs bs body)) x
+applyNaryAbs :: Subst a => Abs (Nest Binder) a -> [Atom] -> a
+applyNaryAbs (Abs Empty body) [] = body
+applyNaryAbs (Abs (Nest b bs) body) (x:xs) = applyNaryAbs ab xs
+  where ab = applyAbs (Abs b (Abs bs body)) x
 applyNaryAbs _ _ = error "wrong number of arguments"
 
 applyDataDefParams :: DataDef -> [Type] -> [DataConDef]
 applyDataDefParams (DataDef _ paramBs cons) params =
-  applyNaryAbs (NAbs paramBs cons) params
+  applyNaryAbs (Abs paramBs cons) params
 
-makeAbs :: HasVars a => Binder -> a -> Abs a
+makeAbs :: HasVars a => Binder -> a -> Abs Binder a
 makeAbs b body | b `isin` freeVars body = Abs b body
                | otherwise = Abs (Ignore (binderType b)) body
 
-absArgType :: Abs a -> Type
+absArgType :: Abs Binder a -> Type
 absArgType (Abs b _) = binderType b
+
+toNest :: [a] -> Nest a
+toNest (x:xs) = Nest x $ toNest xs
+toNest [] = Empty
 
 instance HasVars Arrow where
   freeVars arrow = case arrow of
@@ -856,35 +848,32 @@ instance Subst Expr where
 
 instance HasVars Decl where
   freeVars decl = case decl of
-    Let _ b expr   -> freeVars expr <> freeVars (binderType b)
-    Unpack bs expr -> freeVars expr <> freeVars (NestedList bs)
+    Let _  b expr  -> freeVars expr <> freeVars b
+    Unpack bs expr -> freeVars expr <> freeVars bs
 
 instance Subst Decl where
-  -- XXX: this doesn't rename the bound vars, so they must not be in scope
   subst env decl = case decl of
     Let ann b expr -> Let ann (fmap (subst env) b) $ subst env expr
-    Unpack bs expr -> Unpack bs' $ subst env expr
-      where NestedList bs' = subst env $ NestedList bs
+    Unpack bs expr -> Unpack (subst env bs) $ subst env expr
 
 instance BindsVars Decl where
   boundVars decl = case decl of
     Let ann b expr -> b @> (binderType b, LetBound ann expr)
-    Unpack bs _ -> boundVars $ NestedList bs
+    Unpack bs _ -> boundVars bs
 
   renamingSubst env decl = case decl of
     Let ann b expr -> (Let ann b' expr', env')
       where expr' = subst env expr
-            (b', env') = renamingSubst env $ b
+            (b', env') = renamingSubst env b
     Unpack bs expr -> (Unpack bs' expr', env')
       where expr' = subst env expr
-            (NestedList bs', env') = renamingSubst env $ NestedList bs
+            (bs', env') = renamingSubst env bs
 
 instance HasVars Block where
-  freeVars (Block decls result) = freeVars $ WrapAbs (NestedList decls) result
+  freeVars (Block decls result) = freeVars $ Abs decls result
 instance Subst Block where
   subst env (Block decls result) = Block decls' result'
-    where WrapAbs (NestedList decls') result' =
-            subst env $ WrapAbs (NestedList decls) result
+    where Abs decls' result' = subst env $ Abs decls result
 
 instance HasVars Atom where
   freeVars atom = case atom of
@@ -910,19 +899,11 @@ instance Subst Atom where
     DataCon def params con args -> DataCon def (subst env params) con (subst env args)
     TypeCon def params          -> TypeCon def (subst env params)
 
-instance HasVars a => HasVars (NaryAbs a) where
-  freeVars (NAbs bs body) = freeVars $ WrapAbs (NestedList bs) body
-instance Subst a => Subst (NaryAbs a) where
-  subst env (NAbs bs body) = NAbs bs' body'
-    where WrapAbs (NestedList bs') body' =
-            subst env $ WrapAbs (NestedList bs) body
-
 instance HasVars Module where
-  freeVars (Module _ decls bindings) = freeVars $ WrapAbs (NestedList decls) bindings
+  freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
 instance Subst Module where
   subst env (Module variant decls bindings) = Module variant decls' bindings'
-    where WrapAbs (NestedList decls') bindings' =
-            subst env $ WrapAbs (NestedList decls) bindings
+    where Abs decls' bindings' = subst env $ Abs decls bindings
 
 instance HasVars EffectRow where
   freeVars (EffectRow row t) =
@@ -944,10 +925,10 @@ instance Subst BinderInfo where
    _ -> binfo
 
 instance HasVars DataConDef where
-  freeVars (DataConDef _ bs) = freeVars $ NAbs bs ()
+  freeVars (DataConDef _ bs) = freeVars $ Abs bs ()
 instance Subst DataConDef where
   subst env (DataConDef name bs) = DataConDef name bs'
-    where NAbs bs' () = subst env $ NAbs bs ()
+    where Abs bs' () = subst env $ Abs bs ()
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
 substEffTail _ Nothing = EffectRow [] Nothing
@@ -965,12 +946,6 @@ substName env v = case envLookup env (v:>()) of
 
 extendEffRow :: [Effect] -> EffectRow -> EffectRow
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
-
-instance HasVars a => HasVars (Abs a) where
-  freeVars (Abs b body) = freeVars $ WrapAbs b body
-instance Subst a => Subst (Abs a) where
-  subst env (Abs b body) = Abs b' body'
-    where WrapAbs b' body' = subst env $ WrapAbs b body
 
 instance HasVars () where freeVars () = mempty
 instance Subst () where subst _ () = ()
@@ -1035,6 +1010,14 @@ instance HasIVars ImpProg where
   freeIVars (ImpProg stmts) = case stmts of
     [] -> mempty
     (b, expr):cont -> freeIVars expr <> (freeIVars (ImpProg cont) `envDiff` (b @> ()))
+
+instance Semigroup (Nest a) where
+  (<>) = mappend
+
+-- TODO: think about performance. This is used with the Cat/Writer monad a lot.
+instance Monoid (Nest a) where
+  mempty = Empty
+  mappend xs ys = toNest $ toList xs ++ toList ys
 
 -- === Synonyms ===
 
@@ -1109,7 +1092,8 @@ pattern BoolTy :: Type
 pattern BoolTy = TC (BaseType (Scalar BoolType))
 
 pattern PreludeBoolTy :: Type
-pattern PreludeBoolTy <- TypeCon (DataDef _ [] [DataConDef _ [], DataConDef _ []]) []
+pattern PreludeBoolTy <-
+  TypeCon (DataDef _ Empty [DataConDef _ Empty, DataConDef _ Empty]) []
 
 pattern RealTy :: Type
 pattern RealTy = TC (BaseType (Scalar RealType))
@@ -1142,7 +1126,7 @@ pattern TabVal :: Binder -> Block -> Atom
 pattern TabVal v b = Lam (Abs v (TabArrow, b))
 
 pattern TabValA :: Binder -> Atom -> Atom
-pattern TabValA v a = Lam (Abs v (TabArrow, (Block [] (Atom a))))
+pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty (Atom a))))
 
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True
@@ -1174,7 +1158,7 @@ pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
 pattern BinaryFunVal b1 b2 eff body =
-          Lam (Abs b1 (PureArrow, Block [] (Atom (
+          Lam (Abs b1 (PureArrow, Block Empty (Atom (
           Lam (Abs b2 (PlainArrow eff, body))))))
 
 pattern IDo :: BinderP IType
@@ -1263,7 +1247,8 @@ instance Store a => Store (PrimOp  a)
 instance Store a => Store (PrimCon a)
 instance Store a => Store (PrimTC  a)
 instance Store a => Store (PrimHof a)
-instance Store a => Store (Abs a)
+instance (Store a, Store b) => Store (Abs a b)
+instance Store a => Store (Nest a)
 instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
@@ -1279,6 +1264,5 @@ instance Store BinOp
 instance Store CmpOp
 instance Store LetAnn
 instance Store BinderInfo
-instance Store Alt
 instance Store DataDef
 instance Store DataConDef

@@ -101,7 +101,7 @@ sourceBlock' :: Parser SourceBlock'
 sourceBlock' =
       proseBlock
   <|> topLevelCommand
-  <|> liftM (\d -> RunModule $ UModule [d]) (topDecl <* eolf)
+  <|> liftM (\d -> RunModule $ UModule (toNest [d])) (topDecl <* eolf)
   <|> liftM (Command (EvalExpr Printed) . exprAsModule) (expr <* eol)
   <|> hidden (some eol >> return EmptyLines)
   <|> hidden (sc >> eol >> return CommentLine)
@@ -159,7 +159,7 @@ explicitCommand = do
     _ -> Command cmd (exprAsModule e)
 
 exprAsModule :: UExpr -> (Name, UModule)
-exprAsModule e = (asGlobal v, UModule [d])
+exprAsModule e = (asGlobal v, UModule (toNest [d]))
   where
     v = mkName "_ans_"
     d = ULet PlainLet (WithSrc (srcPos e) (UPatBinder (Bind (v:>()))), Nothing) e
@@ -247,11 +247,11 @@ dataDef = do
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
-tyConDef = UConDef <$> upperName <*> many annBinder
+tyConDef = UConDef <$> upperName <*> manyNested annBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
-dataConDef = UConDef <$> upperName <*> many dataConDefBinder
+dataConDef = UConDef <$> upperName <*> manyNested dataConDefBinder
 
 dataConDefBinder :: Parser UAnnBinder
 dataConDefBinder = annBinder <|> (Ignore <$> containedExpr)
@@ -421,7 +421,7 @@ leafPat =
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
       <|> (UPatLit    <$> litVal)
-      <|> (UPatCon    <$> upperName <*> many pat))
+      <|> (UPatCon    <$> upperName <*> manyNested pat))
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
@@ -766,6 +766,9 @@ brackets p = bracketed lBracket rBracket p
 
 braces :: Parser a -> Parser a
 braces p = bracketed lBrace rBrace p
+
+manyNested :: Parser a -> Parser (Nest a)
+manyNested p = toNest <$> many p
 
 withPos :: Parser a -> Parser (a, SrcPos)
 withPos p = do

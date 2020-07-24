@@ -18,6 +18,7 @@ import Prelude hiding (pi)
 import Control.Monad
 import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
+import Data.Foldable (toList)
 import Data.Functor
 import Data.Text.Prettyprint.Doc
 
@@ -100,15 +101,16 @@ instance HasType Atom where
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
     DataCon def@(DataDef _ paramBs cons) params con args -> do
-      let paramVars = map (\(Bind v) -> v) paramBs
+      let paramVars = fmap (\(Bind v) -> v) paramBs
       let (DataConDef _ argBs) = cons !! con
       let funTy = foldr
             (\(arr, b) body -> Pi (Abs b (arr, body)))
-            (TypeCon def (map Var paramVars))
-            (zip (repeat ImplicitArrow) paramBs ++ zip (repeat PureArrow) argBs)
+            (TypeCon def (map Var $ toList paramVars))
+            (   zip (repeat ImplicitArrow) (toList paramBs)
+             ++ zip (repeat PureArrow    ) (toList argBs))
       foldM checkApp funTy $ params ++ args
     TypeCon (DataDef _ bs _) params -> do
-      let paramTys = map binderType bs
+      let paramTys = map binderType $ toList bs
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
@@ -136,8 +138,8 @@ instance HasType Expr where
         TypeCon def params <- typeCheck e
         let cons = applyDataDefParams def params
         checkEq  (length cons) (length alts)
-        forM_ (zip cons alts) $ \((DataConDef _ bs'), (NAbs bs body)) -> do
-          checkEq  (map binderType bs') (map binderType bs)
+        forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
+          checkEq  (fmap binderType bs') (fmap binderType bs)
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
       return resultTy
@@ -195,27 +197,34 @@ instance HasType Block where
         env' <- catFoldM checkDecl env decls
         withTypeEnv (env <> env') $ typeCheck result
 
+instance HasType Binder where
+  typeCheck b = do
+    checkWithEnv $ \(env, _) -> checkNoShadow env b
+    let ty = binderType b
+    ty |: TyKind
+    return ty
+
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
 checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
   Let _ b rhs -> do
     -- TODO: effects
-    checkBinder b
-    ty <- typeCheck rhs
-    checkEq (binderType b) ty
+    ty  <- typeCheck b
+    ty' <- typeCheck rhs
+    checkEq ty ty'
     return $ binderBinding b
   Unpack bs rhs -> do
-    checkNestedBinders bs
+    void $ checkNestedBinders bs
     TypeCon def params <- typeCheck rhs
     [DataConDef _ bs'] <- return $ applyDataDefParams def params
     assertEq (length bs) (length bs') ""
-    zipWithM_ checkEq (map binderType bs) (map binderType bs')
+    zipWithM_ checkEq (toList $ fmap binderType bs) (toList $ fmap binderType bs')
     return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
-checkNestedBinders :: [Binder] -> TypeM ()
-checkNestedBinders [] = return ()
-checkNestedBinders (b:bs) = do
-  checkBinder b
+checkNestedBinders :: Nest Binder -> TypeM (Nest Type)
+checkNestedBinders Empty = return Empty
+checkNestedBinders (Nest b bs) = do
+  void $ typeCheck b
   extendTypeEnv (binderBinding b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
@@ -231,12 +240,7 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b m = checkBinder b >> extendTypeEnv (binderBinding b) m
-
-checkBinder :: Binder -> TypeM ()
-checkBinder b = do
-  checkWithEnv $ \(env, _) -> checkNoShadow env b
-  binderType b |: TyKind
+withBinder b m = typeCheck b >> extendTypeEnv (binderBinding b) m
 
 checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
 checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
@@ -283,7 +287,7 @@ instance CoreVariant Expr where
     Hof e   -> checkVariant e >> forM_ e checkVariant
     Case e alts _ -> do
       checkVariant e
-      forM_ alts $ \(NAbs _ body) -> checkVariant body
+      forM_ alts $ \(Abs _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
