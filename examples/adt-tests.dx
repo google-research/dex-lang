@@ -160,18 +160,21 @@ data MyIntish = MkIntish Int
     MyRight (MkMyPair x y) -> x + floor y
 > [1, 2, 7]
 
--- TODO: make the `n` an implicit argument
-data List a:Type =
-  AsList n:Int (Fin n => a)
-
-xs = AsList _ [1,2,3]
+xsList = AsList _ [1,2,3]
 
 :p
-  (AsList _ xsTab) = xs
+  (AsList _ xsTab) = xsList
   sum xsTab
 > 6
 
-(AsList _ xsTab) = xs
+(AsList _ xsTab) = xsList
 
 :p xsTab
 > [1, 2, 3]
+
+:p
+  xs = AsList _ [1,2,3]
+  ys = AsList _ [4,5]
+  (AsList _ ans) = xs <> ys
+  sum ans
+> 15

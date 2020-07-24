@@ -84,10 +84,12 @@ emitAnn ann expr = do
 -- Guarantees that the name will be used, possibly with a modified counter
 emitTo :: MonadEmbed m => Name -> LetAnn -> Expr -> m Atom
 emitTo name ann expr = do
-  let ty = getType expr
-  expr' <- deShadow expr <$> getScope
-  v <- freshVar $ Bind (name:>ty)
-  emitDecl $ Let ann (Bind v) expr'
+  scope <- getScope
+  -- Deshadow type because types from DataDef may have binders that shadow local vars
+  let ty    = deShadow (getType expr) scope
+  let expr' = deShadow expr scope
+  v <- freshVar (LetBound ann expr') $ Bind (name:>ty)
+  embedExtend $ asSnd $ Nest (Let ann (Bind v) expr') Empty
   return $ Var v
 
 emitOp :: MonadEmbed m => Op -> m Atom
@@ -98,32 +100,40 @@ emitUnpack expr = do
   let (TypeCon def params) = getType expr
   let [DataConDef _ bs] = applyDataDefParams def params
   expr' <- deShadow expr <$> getScope
-  vs <- forM bs $ \b -> do
-    v <- freshVar b
-    embedExtend $ asFst $ v @> (varType v, PatBound)
-    return v
-  emitDecl $ Unpack (fmap Bind vs) expr'
+  vs <- freshNestedBinders bs
+  embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
   return $ map Var $ toList vs
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
-freshVar :: MonadEmbed m => BinderP ann -> m (VarP ann)
-freshVar b = do
+freshVar :: MonadEmbed m => BinderInfo -> Binder -> m Var
+freshVar bInfo b = do
   v <- case b of
     Ignore _    -> getNameHint
     Bind (v:>_) -> return v
   scope <- getScope
   let v' = genFresh v scope
-  return $ v' :> binderAnn b
+  embedExtend $ asFst $ v' @> (binderType b, bInfo)
+  return $ v' :> binderType b
+
+freshNestedBinders :: MonadEmbed m => Nest Binder -> m (Nest Var)
+freshNestedBinders bs = freshNestedBindersRec mempty bs
+
+freshNestedBindersRec :: MonadEmbed m => Env Atom -> Nest Binder -> m (Nest Var)
+freshNestedBindersRec _ Empty = return Empty
+freshNestedBindersRec substEnv (Nest b bs) = do
+  scope <- getScope
+  v  <- freshVar PatBound $ subst (substEnv, scope) b
+  vs <- freshNestedBindersRec (substEnv <> b@>Var v) bs
+  return $ Nest v vs
 
 buildPi :: (MonadError Err m, MonadEmbed m)
         => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
   (piTy, decls) <- scopedDecls $ do
-     v <- freshVar b
-     embedExtend $ asFst $ v @> (varType v, PiBound)
+     v <- freshVar PiBound b
      (arr, ans) <- f $ Var v
      return $ Pi $ makeAbs (Bind v) (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
@@ -140,13 +150,10 @@ buildLamAux :: MonadEmbed m
             => Binder -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildLamAux b fArr fBody = do
   ((b', arr, ans, aux), decls) <- scopedDecls $ do
-     v <- freshVar b
-     -- TODO: we can't extend the scope until we know the arrow, but we really
-     -- ought to extend it before we run fArr. Since effects don't contain
-     -- binders, we're probably ok. But it would be cleaner if we just
-     -- decoupled arrow from effect.
+     v <- freshVar UnknownBinder b
      let x = Var v
      arr <- fArr x
+     -- overwriting the previous binder info know that we know more
      embedExtend $ asFst $ v @> (varType v, LamBound (void arr))
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
      return (Bind v, arr, ans, aux)
@@ -156,8 +163,7 @@ buildNAbs :: MonadEmbed m
           => Nest Binder -> ([Atom] -> m Atom) -> m (Abs (Nest Binder) Block)
 buildNAbs bs body = do
   ((bs', ans), decls) <- scopedDecls $ do
-     vs <- mapM freshVar bs
-     embedExtend $ asFst $ foldMap (\v -> v @> (varType v, PatBound)) vs
+     vs <- freshNestedBinders bs
      ans <- body $ map Var $ toList vs
      return (fmap Bind vs, ans)
   return $ Abs bs' $ wrapDecls decls ans

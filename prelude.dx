@@ -487,3 +487,16 @@ def softmax (x: n=>Real) : n=>Real =
 def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Real) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
+
+data List a:Type =
+  AsList n:Int foo:(Fin n => a)
+
+def (<>) (x:List a) (y:List a) : List a =
+  (AsList nx xs) = x
+  (AsList ny ys) = y
+  nz = nx + ny
+  AsList _ $ for i:(Fin nz).
+    i' = ordinal i
+    case i' < nx of
+      True  -> xs.(fromOrdinal _ i')
+      False -> ys.(fromOrdinal _ (i' - nx))

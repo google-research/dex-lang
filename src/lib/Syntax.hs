@@ -97,7 +97,7 @@ data DataConDef = DataConDef Name (Nest Binder)    deriving (Show, Generic)
 
 data Abs b body = Abs b body               deriving (Show, Generic)
 data Nest a = Nest a (Nest a) | Empty
-              deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
+              deriving (Show, Generic, Functor, Foldable, Traversable)
 
 type LamExpr = Abs Binder (Arrow, Block)
 type PiType  = Abs Binder (Arrow, Type)
@@ -778,6 +778,11 @@ instance (Show a, Subst a, Eq a) => Eq (Abs Binder a) where
   Abs (Ignore a) b == Abs (Ignore a') b' = a == a' && b == b'
   ab == ab' = absArgType ab == absArgType ab' && applyAbs ab v == applyAbs ab' v
     where v = Var $ freshSkolemVar (ab, ab') (absArgType ab)
+
+instance Eq (Nest Binder) where
+  Empty == Empty = True
+  (Nest b bs) == (Nest b' bs') = Abs b bs == Abs b' bs'
+  _ == _ = False
 
 freshSkolemVar :: HasVars a => a -> Type -> Var
 freshSkolemVar x ty = v :> ty
