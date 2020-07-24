@@ -18,7 +18,7 @@ import Data.Store
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
-import Data.Foldable (fold)
+import Data.Foldable (fold, toList)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import GHC.Stack
@@ -51,8 +51,8 @@ nameSpace :: Name -> Maybe NameSpace
 nameSpace (Name s _ _) = Just s
 nameSpace _ = Nothing
 
-newEnv :: HasName a => [a] -> [b] -> Env b
-newEnv bs xs = fold $ zipWith (@>) bs xs
+newEnv :: (Foldable f, HasName a) => f a -> [b] -> Env b
+newEnv bs xs = fold $ zipWith (@>) (toList bs) xs
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann

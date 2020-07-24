@@ -16,6 +16,7 @@ module PPrint (pprint, pprintList, printLitBlock, asStr,
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
+import Data.Foldable (toList)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -123,11 +124,11 @@ instance PrettyPrec LitVal where
   prettyPrec (BoolLit b) = atPrec ArgPrec $ if b then "True" else "False"
 
 instance Pretty Block where
-  pretty (Block [] expr) = group $ line <> pLowest expr
+  pretty (Block Empty expr) = group $ line <> pLowest expr
   pretty (Block decls expr) = hardline <> prettyLines decls <> pLowest expr
 
-prettyLines :: Pretty a => [a] -> Doc ann
-prettyLines xs = foldMap (\d -> p d <> hardline) xs
+prettyLines :: (Foldable f, Pretty a) => f a -> Doc ann
+prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
 instance Pretty Expr where pretty = prettyFromPrettyPrec
 instance PrettyPrec Expr where
@@ -140,7 +141,8 @@ instance PrettyPrec Expr where
     nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
 prettyAlt :: Alt -> Doc ann
-prettyAlt (NAbs bs body) = hsep (map prettyBinderNoAnn  bs) <+> "->" <> p body
+prettyAlt (Abs bs body) =
+  hsep (map prettyBinderNoAnn $ toList bs) <+> "->" <> p body
 
 prettyBinderNoAnn :: BinderP a -> Doc ann
 prettyBinderNoAnn (Ignore _) = "_"
@@ -153,8 +155,8 @@ prettyExprDefault expr =
     _ -> atPrec AppPrec $ pAppArg primName expr
   where primName = p $ "%" ++ showPrimName expr
 
-instance PrettyPrec e => Pretty (Abs e) where pretty = prettyFromPrettyPrec
-instance PrettyPrec e => PrettyPrec (Abs e) where
+instance PrettyPrec e => Pretty (Abs Binder e) where pretty = prettyFromPrettyPrec
+instance PrettyPrec e => PrettyPrec (Abs Binder e) where
   prettyPrec (Abs binder body) = atPrec LowestPrec $ "\\" <> p binder <> "." <> pLowest body
 
 instance PrettyPrec e => Pretty (PrimExpr e) where pretty = prettyFromPrettyPrec
@@ -243,7 +245,7 @@ instance Pretty Decl where
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    Unpack bs rhs -> align $ p bs <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
@@ -415,14 +417,14 @@ instance Pretty UDecl where
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
 
 instance Pretty UConDef where
-  pretty (UConDef con bs) = p con <+> hsep (map p bs)
+  pretty (UConDef con bs) = p con <+> spaced bs
 
 instance Pretty UPat' where
   pretty pat = case pat of
     UPatBinder x -> p x
     UPatPair x y -> parens $ p x <> ", " <> p y
     UPatUnit -> "()"
-    UPatCon con pats -> parens $ p con <+> hsep (map p pats)
+    UPatCon con pats -> parens $ p con <+> spaced pats
     UPatLit x -> p x
 
 prettyUBinder :: UPatAnn -> Doc ann
@@ -431,10 +433,13 @@ prettyUBinder (pat, ann) = p pat <> annDoc where
     Just ty -> ":" <> pApp ty
     Nothing -> mempty
 
+spaced :: (Foldable f, Pretty a) => f a -> Doc ann
+spaced xs = hsep $ map p $ toList xs
+
 instance Pretty EffectRow where
   pretty (EffectRow [] Nothing) = mempty
   pretty (EffectRow effs tailVar) =
-    braces $ hsep (punctuate "," (map prettyEff effs)) <> tailStr
+    braces $ hsep (punctuate "," (fmap prettyEff effs)) <> tailStr
     where
       prettyEff (effName, region) = p effName <+> p region
       tailStr = case tailVar of
@@ -471,6 +476,9 @@ instance PrettyPrec Name where prettyPrec = atPrec ArgPrec . pretty
 
 instance PrettyPrec a => PrettyPrec [a] where
   prettyPrec xs = atPrec ArgPrec $ hsep $ map pLowest xs
+
+instance Pretty a => Pretty (Nest a) where
+  pretty xs = pretty $ toList xs
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =

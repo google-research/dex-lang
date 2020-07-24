@@ -34,7 +34,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
-import Data.Foldable (toList, fold)
+import Data.Foldable (toList)
 import Data.Maybe
 import GHC.Stack
 
@@ -55,13 +55,13 @@ type SubstEmbedT m = ReaderT SubstEnv (EmbedT m)
 type SubstEmbed    = SubstEmbedT Identity
 
 -- Carries the vars in scope (with optional definitions) and the emitted decls
-type EmbedEnvC = (Scope, [Decl])
+type EmbedEnvC = (Scope, Nest Decl)
 -- Carries a name suggestion and the allowable effects
 type EmbedEnvR = (Tag, EffectRow)
 
 runEmbedT :: Monad m => EmbedT m a -> Scope -> m (a, EmbedEnvC)
 runEmbedT (EmbedT m) scope = do
-  (ans, env) <- runCatT (runReaderT m ("tmp", Pure)) (scope, [])
+  (ans, env) <- runCatT (runReaderT m ("tmp", Pure)) (scope, Empty)
   return (ans, env)
 
 runEmbed :: Embed a -> Scope -> (a, EmbedEnvC)
@@ -102,8 +102,8 @@ emitUnpack expr = do
     v <- freshVar b
     embedExtend $ asFst $ v @> (varType v, PatBound)
     return v
-  emitDecl $ Unpack (map Bind vs) expr'
-  return $ map Var vs
+  emitDecl $ Unpack (fmap Bind vs) expr'
+  return $ map Var $ toList vs
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
@@ -152,28 +152,29 @@ buildLamAux b fArr fBody = do
      return (Bind v, arr, ans, aux)
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
-buildNAbs :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m (NaryAbs Block)
+buildNAbs :: MonadEmbed m
+          => Nest Binder -> ([Atom] -> m Atom) -> m (Abs (Nest Binder) Block)
 buildNAbs bs body = do
   ((bs', ans), decls) <- scopedDecls $ do
      vs <- mapM freshVar bs
      embedExtend $ asFst $ foldMap (\v -> v @> (varType v, PatBound)) vs
-     ans <- body $ map Var vs
-     return (map Bind vs, ans)
-  return $ NAbs bs' $ wrapDecls decls ans
+     ans <- body $ map Var $ toList vs
+     return (fmap Bind vs, ans)
+  return $ Abs bs' $ wrapDecls decls ans
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
 buildScoped m = do
   (ans, decls) <- scopedDecls m
   return $ wrapDecls decls ans
 
-wrapDecls :: [Decl] -> Atom -> Block
+wrapDecls :: Nest Decl -> Atom -> Block
 wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
   RealTy -> Con $ Lit $ RealLit 0.0
   TabTy (Ignore n) a ->
-    Lam $ Abs (Ignore n) (TabArrow,  Block [] $ Atom $ zeroAt a)
+    Lam $ Abs (Ignore n) (TabArrow,  Block Empty $ Atom $ zeroAt a)
   UnitTy -> UnitVal
   PairTy a b -> PairVal (zeroAt a) (zeroAt b)
   _ -> error $ "Not implemented: " ++ pprint ty
@@ -490,12 +491,12 @@ modifyAllowedEffects :: MonadEmbed m => (EffectRow -> EffectRow) -> m a -> m a
 modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 
 emitDecl :: MonadEmbed m => Decl -> m ()
-emitDecl decl = embedExtend (bindings, [decl])
+emitDecl decl = embedExtend (bindings, Nest decl Empty)
   where bindings = case decl of
           Let ann b expr -> b @> (binderType b, LetBound ann expr)
           Unpack bs _ -> foldMap (\b -> b @> (binderType b, PatBound)) bs
 
-scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
+scopedDecls :: MonadEmbed m => m a -> m (a, Nest Decl)
 scopedDecls m = do
   (ans, (_, decls)) <- embedScoped m
   return (ans, decls)
@@ -509,13 +510,13 @@ substTraversalDef = (traverseExpr substTraversalDef, traverseAtom substTraversal
 
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
-               => TraversalDef m -> [Decl] -> m [Decl]
+               => TraversalDef m -> Nest Decl -> m (Nest Decl)
 traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
 
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
-                  => TraversalDef m -> [Decl] -> m SubstEnv
-traverseDeclsOpen _ [] = return mempty
-traverseDeclsOpen def (decl:decls) = do
+                  => TraversalDef m -> Nest Decl -> m SubstEnv
+traverseDeclsOpen _ Empty = return mempty
+traverseDeclsOpen def (Nest decl decls) = do
   env <- traverseDecl def decl
   env' <- extendR env $ traverseDeclsOpen def decls
   return (env <> env')
@@ -530,7 +531,7 @@ traverseDecl (fExpr, _) decl = case decl of
   Unpack bs expr -> do
     expr' <- fExpr expr
     xs <- emitUnpack expr'
-    return $ fold $ zipWith (@>) bs xs
+    return $ newEnv bs xs
 
 traverseBlock :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Block
@@ -557,7 +558,7 @@ traverseExpr def@(_, fAtom) expr = case expr of
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Alt -> m Alt
-traverseAlt def@(_, fAtom) (NAbs bs body) = do
+traverseAlt def@(_, fAtom) (Abs bs body) = do
   bs' <- mapM (mapM fAtom) bs
   buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
@@ -590,15 +591,17 @@ dceBlock :: Block -> Block
 dceBlock (Block decls result) =
   inlineLastDecl $ Block (dceDecls (freeVars result) decls) result
 
-dceDecls :: Scope -> [Decl] -> [Decl]
-dceDecls varsNeeded decls = reverse $
-  fst $ flip runCat varsNeeded $ execWriterT $ mapM dceDecl $ reverse decls
+dceDecls :: Scope -> Nest Decl -> Nest Decl
+dceDecls varsNeeded decls = toNest $ reverse $ fst $ flip runCat varsNeeded $
+  execWriterT $ mapM dceDecl $ reverse $ toList decls
 
 inlineLastDecl :: Block -> Block
-inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
-  (Let _ (Bind v) expr:rest, Atom atom)
-    | atom == Var v || sameSingletonVal (varType v) (getType atom) -> Block (reverse rest) expr
-  _ -> block
+inlineLastDecl block@(Block decls result) =
+  case (reverse (toList decls), result) of
+    (Let _ (Bind v) expr:rest, Atom atom)
+      | atom == Var v || sameSingletonVal (varType v) (getType atom) ->
+          Block (toNest (reverse rest)) expr
+    _ -> block
 
 dceDecl :: Decl -> DceM ()
 dceDecl decl = do
