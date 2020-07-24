@@ -100,14 +100,15 @@ instance HasType Atom where
     TC tyCon -> typeCheckTyCon tyCon
     Eff eff  -> checkEffRow eff $> EffKind
     DataCon def@(DataDef _ paramBs cons) params con args -> do
+      let paramVars = map (\(Bind v) -> v) paramBs
       let (DataConDef _ argBs) = cons !! con
       let funTy = foldr
             (\(arr, b) body -> Pi (Abs b (arr, body)))
-            (TypeCon def (map Var paramBs))
+            (TypeCon def (map Var paramVars))
             (zip (repeat ImplicitArrow) paramBs ++ zip (repeat PureArrow) argBs)
       foldM checkApp funTy $ params ++ args
     TypeCon (DataDef _ bs _) params -> do
-      let paramTys = map varType bs
+      let paramTys = map binderType bs
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
@@ -136,7 +137,7 @@ instance HasType Expr where
         let cons = applyDataDefParams def params
         checkEq  (length cons) (length alts)
         forM_ (zip cons alts) $ \((DataConDef _ bs'), (NAbs bs body)) -> do
-          checkEq  (map varType bs') (map varType bs)
+          checkEq  (map binderType bs') (map binderType bs)
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
       return resultTy
@@ -200,22 +201,22 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     -- TODO: effects
     checkBinder b
     ty <- typeCheck rhs
-    checkEq (varType b) ty
-    return $ varBinding b
+    checkEq (binderType b) ty
+    return $ binderBinding b
   Unpack bs rhs -> do
     checkNestedBinders bs
     TypeCon def params <- typeCheck rhs
     [DataConDef _ bs'] <- return $ applyDataDefParams def params
     assertEq (length bs) (length bs') ""
-    zipWithM_ checkEq (map varType bs) (map varType bs')
-    return $ foldMap varBinding bs
+    zipWithM_ checkEq (map binderType bs) (map binderType bs')
+    return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
 
 checkNestedBinders :: [Binder] -> TypeM ()
 checkNestedBinders [] = return ()
 checkNestedBinders (b:bs) = do
   checkBinder b
-  extendTypeEnv (varBinding b) $ checkNestedBinders bs
+  extendTypeEnv (binderBinding b) $ checkNestedBinders bs
 
 checkArrow :: Arrow -> TypeM ()
 checkArrow arr = mapM_ checkEffRow arr
@@ -230,15 +231,15 @@ checkEq :: (Show a, Pretty a, Eq a) => a -> a -> TypeM ()
 checkEq reqTy ty = checkWithEnv $ \_ -> assertEq reqTy ty ""
 
 withBinder :: Binder -> TypeM a -> TypeM a
-withBinder b m = checkBinder b >> extendTypeEnv (varBinding b) m
+withBinder b m = checkBinder b >> extendTypeEnv (binderBinding b) m
 
 checkBinder :: Binder -> TypeM ()
-checkBinder b@(_:>ty) = do
+checkBinder b = do
   checkWithEnv $ \(env, _) -> checkNoShadow env b
-  ty |: TyKind
+  binderType b |: TyKind
 
-checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> VarP b -> m ()
-checkNoShadow env v = when (v `isin` env) $ throw CompilerErr $ pprint v ++ " shadowed"
+checkNoShadow :: (MonadError Err m, Pretty b) => Env a -> BinderP b -> m ()
+checkNoShadow env b = when (b `isin` env) $ throw CompilerErr $ pprint b ++ " shadowed"
 
 -- === Core IR syntactic variants ===
 
@@ -254,13 +255,13 @@ class CoreVariant a where
 
 instance CoreVariant Atom where
   checkVariant atom = addExpr atom $ case atom of
-    Var v   -> checkVariantVar v
-    Lam (Abs b (_, body)) -> checkVariantVar b >> checkVariant body
+    Var (_:>ty) -> checkVariant ty
+    Lam (Abs b (_, body)) -> checkVariant b >> checkVariant body
     Pi  (Abs b (arr, body)) -> do
       case arr of
         TabArrow -> alwaysAllowed
         _        -> goneBy Simp
-      checkVariantVar b >> checkVariant body
+      checkVariant b >> checkVariant body
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
@@ -286,15 +287,14 @@ instance CoreVariant Expr where
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
-  checkVariant (Let _ b e) = checkVariantVar b >> checkVariant e
-  checkVariant (Unpack bs e) = mapM checkVariantVar bs >> checkVariant e
+  checkVariant (Let _ b e) = checkVariant b >> checkVariant e
+  checkVariant (Unpack bs e) = mapM checkVariant bs >> checkVariant e
 
 instance CoreVariant Block where
   checkVariant (Block ds e) = mapM_ checkVariant ds >> checkVariant e
 
--- TODO: consider adding namespace restrictions
-checkVariantVar :: Var ->  VariantM ()
-checkVariantVar (_:>ty) = checkVariant ty
+instance CoreVariant Binder where
+  checkVariant b = checkVariant (binderType b)
 
 instance CoreVariant (PrimTC a) where
   checkVariant e = case e of
@@ -461,10 +461,10 @@ typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
   TabCon ty xs -> do
     ty |: TyKind
-    TabTy v a <- return ty
+    TabTy b a <- return ty
     -- TODO: Propagate the binder to support dependently typed dimensions?
     mapM_ (|:a) xs
-    Just n <- return $ indexSetConcreteSize $ varType v
+    Just n <- return $ indexSetConcreteSize $ binderType b
     assertEq n (length xs) "Index set size mismatch"
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
@@ -505,8 +505,8 @@ typeCheckOp op = case op of
       MAsk    ->         declareEff (Reader, h) $> s
       MTell x -> x|:s >> declareEff (Writer, h) $> UnitTy
   IndexRef ref i -> do
-    RefTy h (TabTy v a) <- typeCheck ref
-    i |: (varType v)
+    RefTy h (TabTy b a) <- typeCheck ref
+    i |: (binderType b)
     return $ RefTy h a
   FstRef ref -> do
     RefTy h (PairTy a _) <- typeCheck ref
@@ -565,10 +565,10 @@ typeCheckHof hof = case hof of
   Tile dim fT fS -> do
     FunTy tv eff  tr    <- typeCheck fT
     FunTy sv eff' sr    <- typeCheck fS
-    TC (IndexSlice n l) <- return $ varType tv
+    TC (IndexSlice n l) <- return $ binderType tv
     (dv, b, b')         <- zipExtractDim dim tr sr
-    checkEq l (varType dv)
-    checkEq n (varType sv)
+    checkEq l (binderType dv)
+    checkEq n (binderType sv)
     when (dv `isin` freeVars b ) $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
     when (sv `isin` freeVars b') $ throw TypeErr "Cannot tile dimensions that other dimensions depend on"
     checkEq b b'
@@ -579,7 +579,7 @@ typeCheckHof hof = case hof of
     where
       zipExtractDim 0 (TabTy dv b) b' = return (dv, b, b')
       zipExtractDim d (TabTy dv b) (TabTy sv b') =
-        if varType dv == varType sv
+        if binderType dv == binderType sv
           then zipExtractDim (d-1) b b'
           else throw TypeErr $ "Result type of tiled and non-tiled bodies differ along " ++
                                "dimension " ++ show (dim - d + 1) ++ ": " ++
@@ -588,29 +588,28 @@ typeCheckHof hof = case hof of
         "Tiling over dimension " ++ show dim ++ " has to produce a result with at least " ++
         show (dim + 1) ++ " dimensions, but it has only " ++ show (dim - d)
 
-      replaceDim 0 (TabTy _ b) n  = TabTy (NoName:>n) b
+      replaceDim 0 (TabTy _ b) n  = TabTy (Ignore n) b
       replaceDim d (TabTy dv b) n = TabTy dv $ replaceDim (d-1) b n
       replaceDim _ _ _ = error "This should be checked before"
-
   While cond body -> do
-    Pi (Abs (NoName:>UnitTy) (arr , condTy)) <- typeCheck cond
-    Pi (Abs (NoName:>UnitTy) (arr', bodyTy)) <- typeCheck body
+    Pi (Abs (Ignore UnitTy) (arr , condTy)) <- typeCheck cond
+    Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     declareEffs $ arrowEff arr'
     checkEq BoolTy condTy
     checkEq UnitTy bodyTy
     return UnitTy
   SumCase st l r -> do
-    Pi (Abs (NoName:>la) (PlainArrow Pure, lb)) <- typeCheck l
-    Pi (Abs (NoName:>ra) (PlainArrow Pure, rb)) <- typeCheck r
+    Pi (Abs (Ignore la) (PlainArrow Pure, lb)) <- typeCheck l
+    Pi (Abs (Ignore ra) (PlainArrow Pure, rb)) <- typeCheck r
     checkEq lb rb
     st |: SumTy la ra
     return lb
   Linearize f -> do
-    Pi (Abs (NoName:>a) (PlainArrow Pure, b)) <- typeCheck f
+    Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
   Transpose f -> do
-    Pi (Abs (NoName:>a) (LinArrow, b)) <- typeCheck f
+    Pi (Abs (Ignore a) (LinArrow, b)) <- typeCheck f
     return $ b --@ a
   RunReader r f -> do
     (resultTy, readTy) <- checkAction Reader f
@@ -624,12 +623,12 @@ typeCheckHof hof = case hof of
 
 checkAction :: EffectName -> Atom -> TypeM (Type, Type)
 checkAction effName f = do
-  BinaryFunTy regionBinder refBinder eff resultTy <- typeCheck f
+  BinaryFunTy (Bind regionBinder) refBinder eff resultTy <- typeCheck f
   regionName:>_ <- return regionBinder
   let region = Var regionBinder
   extendAllowedEffect (effName, regionName) $ declareEffs eff
   checkEq (varAnn regionBinder) TyKind
-  RefTy region' referentTy <- return $ varAnn refBinder
+  RefTy region' referentTy <- return $ binderAnn refBinder
   checkEq region' region
   return (resultTy, referentTy)
 

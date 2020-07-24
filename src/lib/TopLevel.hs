@@ -36,8 +36,6 @@ import Logging
 import LLVMExec
 import PPrint
 import Parser
-import PipeRPC
-import JAX
 import Util (highlightRegion)
 import CUDA
 
@@ -51,14 +49,14 @@ data EvalConfig = EvalConfig
 
 type IsCuda = Bool
 data BackendEngine = LLVMEngine IsCuda LLVMEngine
-                   | JaxServer JaxServer
+                   -- | JaxServer JaxServer
                    | InterpEngine
 
 type LLVMEngine = MVar (Env (Ptr ()))
-type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
-                           ,( [JVar] -> [Array]
-                           ,( Array -> ()  -- for debugging
-                           ,())))
+-- type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
+--                            ,( [JVar] -> [Array]
+--                            ,( Array -> ()  -- for debugging
+--                            ,())))
 
 type TopPassM a = ReaderT EvalConfig IO a
 
@@ -177,7 +175,7 @@ initializeBackend backend = case backend of
   LLVMCUDA -> if hasCUDA
                 then LLVMEngine True  <$> newMVar mempty
                 else error "Dex built without CUDA support"
-  JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
+  -- JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
 arrayVars :: Subst a => a -> [Var]
@@ -193,7 +191,7 @@ evalBackend bindings block = do
   let inVars = arrayVars block
   case backend of
     LLVMEngine isCuda llvmEnv -> do
-      let (impFunction, impAtom) = toImpFunction bindings (inVars, block)
+      let (impFunction, impAtom) = toImpFunction bindings (map Bind inVars, block)
       checkPass ImpPass impFunction
       logPass ImpPass (pprint impAtom)
       -- logPass Flops $ impFunctionFlops impFunction
@@ -220,8 +218,8 @@ evalBackend bindings block = do
       let scalarSubstEnv = foldMap (uncurry (@>)) $ zip scalarVars scalarVals
       return $ subst (scalarSubstEnv, mempty) resultAtom
       where
-        mkSubstEnv :: (Name, Var) -> SubstEnv
-        mkSubstEnv (outName, impVar) = impVar @> (Var $ (outName :> varType impVar))
+        mkSubstEnv :: (Name, Binder) -> SubstEnv
+        mkSubstEnv (outName, impVar) = impVar @> (Var $ (outName :> binderType impVar))
 
         isScalarRef (_ :> ArrayTy (BaseTy _)) = True
         isScalarRef _ = False
@@ -231,19 +229,19 @@ evalBackend bindings block = do
           let llvmKernel = impKernelToLLVM k
           putStrLn $ show llvmKernel
           compilePTX logger llvmKernel
-    JaxServer server -> do
-      -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
-      let jfun = toJaxFunction (inVars, block)
-      checkPass JAXPass jfun
-      let jfunSimp = simplifyJaxFunction jfun
-      checkPass JAXSimpPass jfunSimp
-      let jfunDCE = dceJaxFunction jfunSimp
-      checkPass JAXSimpPass jfunDCE
-      let inVars' = map (fmap typeToJType) inVars
-      (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
-      logPass JaxprAndHLO jaxprDump
-      let outVars' = map (fmap jTypeToType) outVars
-      return $ reStructureArrays (getType block) $ map Var outVars'
+    -- JaxServer server -> do
+    --   -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
+    --   let jfun = toJaxFunction (inVars, block)
+    --   checkPass JAXPass jfun
+    --   let jfunSimp = simplifyJaxFunction jfun
+    --   checkPass JAXSimpPass jfunSimp
+    --   let jfunDCE = dceJaxFunction jfunSimp
+    --   checkPass JAXSimpPass jfunDCE
+    --   let inVars' = map (fmap typeToJType) inVars
+    --   (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
+    --   logPass JaxprAndHLO jaxprDump
+    --   let outVars' = map (fmap jTypeToType) outVars
+    --   return $ reStructureArrays (getType block) $ map Var outVars'
     InterpEngine -> return $ evalBlock mempty block
 
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
@@ -261,9 +259,9 @@ requestArrays backend vs = case backend of
             (False, _       ) -> return ref
           loadArray (ArrayRef arrTy hostRef)
         Nothing  -> error "Array lookup failed"
-  JaxServer server -> do
-    let vs' = map (fmap typeToJType) vs
-    callPipeServer (psPop server) vs'
+  -- JaxServer server -> do
+  --   let vs' = map (fmap typeToJType) vs
+  --   callPipeServer (psPop server) vs'
   _ -> error "Not implemented"
 
 substArrayLiterals :: (Subst a, HasType a) => BackendEngine -> a -> IO a

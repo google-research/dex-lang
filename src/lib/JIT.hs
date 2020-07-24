@@ -104,9 +104,9 @@ compileImpInstr isLocal instr = case instr of
                  (compileProg compileImpInstr alt)
     return Nothing
 
-compileLoop :: Direction -> IVar -> Operand -> ImpProg -> Compile ()
-compileLoop d iVar n (ImpProg body) = do
-  let loopName = "loop_" ++ (showName $ varName iVar)
+compileLoop :: Direction -> IBinder -> Operand -> ImpProg -> Compile ()
+compileLoop d iBinder n (ImpProg body) = do
+  let loopName = "loop_" ++ (showName $ binderNameHint iBinder)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
   i <- alloca 1 longTy
@@ -116,7 +116,7 @@ compileLoop d iVar n (ImpProg body) = do
   entryCond <- litInt 0 `ilt` n
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
-  extendR (iVar @> iVal) $ compileProg compileImpInstr body
+  extendR (iBinder @> iVal) $ compileProg compileImpInstr body
   iValNew <- case d of Fwd -> add iVal $ litInt 1
                        Rev -> sub iVal $ litInt 1
   store i iValNew
@@ -242,7 +242,7 @@ type MDImpInstrExt k = Either MDImpInstrCG (MDImpInstr k)
 mdImpToLLVM :: MDImpFunction PTXKernel -> LLVMFunction
 mdImpToLLVM (MDImpFunction outVars inVars (MDImpProg prog)) =
   runIdentity $ compileFunction [] compileMDImpInstr outVars inVars prog'
-  where prog' = (Nothing, Left EnsureHasContext) : [(d, Right i) | (d, i) <- prog]
+  where prog' = (IDo, Left EnsureHasContext) : [(d, Right i) | (d, i) <- prog]
 
 compileMDImpInstr :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
 compileMDImpInstr isLocal instrExt = do
@@ -442,7 +442,7 @@ impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile mempty $ do
   LLVMKernel <$> makeModuleEx ptxDataLayout targetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
-    argTypes = fmap ((fromIType $ L.AddrSpace 1). varAnn) args
+    argTypes = fmap ((fromIType $ L.AddrSpace 1). binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
       [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (longTy : argTypes)) "kernel"
@@ -482,17 +482,17 @@ ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
 compileFunction :: Monad m
                 => [L.ParameterAttribute]
                 -> (Bool -> instr -> CompileT m (Maybe Operand))
-                -> [ScalarTableVar] -> [ScalarTableVar] -> [Statement instr] -> m LLVMFunction
-compileFunction attrs compileInstr outVars inVars stmts = runCompileT mempty $ do
+                -> [ScalarTableBinder] -> [ScalarTableBinder] -> [Statement instr] -> m LLVMFunction
+compileFunction attrs compileInstr outBinders inBinders stmts = runCompileT mempty $ do
   -- Set up the argument list. Note that all outputs are pointers to pointers.
-  let inVarTypes  = map (        fromArrType . varAnn) inVars
-  let outVarTypes = map (L.ptr . fromArrType . varAnn) outVars
+  let inVarTypes  = map (        fromArrType . binderAnn) inBinders
+  let outVarTypes = map (L.ptr . fromArrType . binderAnn) outBinders
   (inParams, inOperands)   <- unzip <$> mapM (freshParamOpPair attrs) inVarTypes
   (outParams, outOperands) <- unzip <$> mapM (freshParamOpPair attrs) outVarTypes
 
   -- Emit the program
-  let paramEnv = newEnv inVars inOperands
-  modify (\s -> s { progOutputs = zipEnv outVars outOperands })
+  let paramEnv = newEnv inBinders inOperands
+  modify (\s -> s { progOutputs = newEnv outBinders outOperands })
   extendR paramEnv $ compileProg compileInstr stmts
 
 
@@ -506,22 +506,19 @@ compileFunction attrs compileInstr outVars inVars stmts = runCompileT mempty $ d
   where
     dropArray t = case t of ArrayTy t' -> t'; _ -> t
     fromArrType = (fromIType $ L.AddrSpace 0) . IRefType . dropArray
-    numOutputs = length outVars
+    numOutputs = length outBinders
 
 compileProg :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand)) -> [Statement instr] -> CompileT m ()
 compileProg _ [] = return ()
-compileProg compileInstr ((maybeName, instr):prog) = do
+compileProg compileInstr ((b, instr):prog) = do
   outputs <- gets progOutputs
-  let isOutput = case maybeName of
-                    Just name -> name `isin` outputs
-                    Nothing   -> False
+  let isOutput = b `isin` outputs
   maybeAns <- compileInstr (not isOutput) instr
-  let env = case (maybeName, maybeAns) of
-              (Nothing, Nothing) -> mempty
-              (Just v, Just ans) -> v @> ans
-              _ -> error "Void mismatch"
+  let env = foldMap (b@>) maybeAns
   if isOutput
-    then store (outputs ! (fromJust maybeName)) (fromJust maybeAns)
+    then
+      let Bind name = b
+      in store (outputs ! name) (fromJust maybeAns)
     else return ()
   extendR env $ compileProg compileInstr prog
 
@@ -642,6 +639,7 @@ fromIType :: L.AddrSpace -> IType -> L.Type
 fromIType addrSpace it = case it of
   IValType b -> scalarTy b
   IRefType t -> L.PointerType (scalarTy $ scalarTableBaseType t) addrSpace
+  IVoidType  -> L.VoidType
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
@@ -701,9 +699,9 @@ finishBlock term newName = do
 freshName :: Monad m => Name -> CompileT m L.Name
 freshName v = do
   used <- gets usedNames
-  let v'@(name:>_) = rename (v:>()) used
-  modify $ \s -> s { usedNames = used <> v'@>() }
-  return $ nameToLName name
+  let v' = genFresh v used
+  modify $ \s -> s { usedNames = used <> v' @> () }
+  return $ nameToLName v'
   where
     nameToLName :: Name -> L.Name
     nameToLName name = L.Name $ toShort $ pack $ showName name

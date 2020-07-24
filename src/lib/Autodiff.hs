@@ -64,16 +64,16 @@ tangentFunAsLambda :: LinA Atom -> PrimalM Atom
 tangentFunAsLambda m = do
   (ans, tanFun) <- runLinA m
   (vs, EffectRow effs _) <- ask
-  let hs = map ((:>TyKind) . snd) effs
+  let hs = map (Bind . (:>TyKind) . snd) effs
   liftM (PairVal ans) $ lift $ do
     buildNestedLam hs $ \hVals -> do
       let hVarNames = map (\(Var (v:>_)) -> v) hVals
       let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
       -- want to use tangents here, not the original binders
       let regionMap = newEnv (map ((:>()) . snd) effs) hVals
-      let vs' = map (fmap (tangentRefRegion regionMap)) vs
+      let vs' = map (Bind . fmap (tangentRefRegion regionMap)) vs
       buildNestedLam vs' $ \xs ->
-        buildLam ("dummy":>UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
+        buildLam (Bind ("dummy":>UnitTy)) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
           runReaderT tanFun (xs, hVarNames)
 
 -- This doesn't work if we have references inside pairs, tables etc.
@@ -146,7 +146,8 @@ linearizeHof env hof = case hof of
     lam' <- linearizeEffectFun Writer env lam
     (ansLin, w) <- fromPair =<< emit (Hof $ RunWriter lam')
     (ans, lin) <- fromPair ansLin
-    let (BinaryFunTy _ (_:>RefTy _ wTy) _ _) = getType lam'
+    let (BinaryFunTy _ b _ _) = getType lam'
+    let RefTy _ wTy = binderType b
     let lin' = emitRunWriter "w" wTy $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
                  extendR ([ref], [h]) $ applyLinToTangents lin
     return (PairVal ans w, lin')
@@ -268,7 +269,7 @@ type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> Atom -> Atom
 transposeMap scope (Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
-  buildLam ("ct" :> getType expr) LinArrow $ \ct -> do
+  buildLam (Bind $ "ct" :> getType expr) LinArrow $ \ct -> do
     flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
 
 transposeBlock :: Block -> Atom -> TransposeM ()
@@ -285,7 +286,7 @@ transposeBlock (Block decls result) ct = case decls of
         transposeExpr bound ct'
       else do
         bound' <- substTranspose bound
-        x <- withNameHint (varName b) $ emit bound'
+        x <- withNameHint b $ emit bound'
         extendR (asSnd (b@>x)) $ transposeBlock body ct
     where body = Block rest result
 
@@ -418,12 +419,12 @@ substTranspose x = do
   scope <- getScope
   return $ subst (env, scope) x
 
-withLinVar :: Var -> TransposeM () -> TransposeM Atom
-withLinVar v body = case
-  singletonTypeVal (varType v) of
+withLinVar :: Binder -> TransposeM () -> TransposeM Atom
+withLinVar b body = case
+  singletonTypeVal (binderType b) of
     Nothing -> do
-      ans <- emitRunWriter "ref" (varType v) $ \ref -> do
-        extendR (asFst (v@>ref)) (body >> return UnitVal)
+      ans <- emitRunWriter "ref" (binderType b) $ \ref -> do
+        extendR (asFst (b@>ref)) (body >> return UnitVal)
       getSnd ans
     Just x -> body >> return x  -- optimization to avoid accumulating into unit
 

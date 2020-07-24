@@ -162,7 +162,7 @@ exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (asGlobal v, UModule [d])
   where
     v = mkName "_ans_"
-    d = ULet PlainLet (WithSrc (srcPos e) (UPatBinder (v:>())), Nothing) e
+    d = ULet PlainLet (WithSrc (srcPos e) (UPatBinder (Bind (v:>()))), Nothing) e
 
 -- === uexpr ===
 
@@ -232,7 +232,7 @@ topLet = do
 
     addImplicitArg :: SrcPos -> Name -> UType -> UType
     addImplicitArg pos v ty =
-      WithSrc pos $ UPi (v:>uTyKind) ImplicitArrow ty
+      WithSrc pos $ UPi (Bind (v:>uTyKind)) ImplicitArrow ty
       where
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
@@ -254,7 +254,7 @@ dataConDef :: Parser UConDef
 dataConDef = UConDef <$> upperName <*> many dataConDefBinder
 
 dataConDefBinder :: Parser UAnnBinder
-dataConDefBinder = annBinder <|> ((NoName:>) <$> containedExpr)
+dataConDefBinder = annBinder <|> (Ignore <$> containedExpr)
 
 decl :: Parser UDecl
 decl = do
@@ -277,7 +277,7 @@ funDefLet = label "function definition" $ mayBreak $ do
   v <- letPat
   bs <- some arg
   (eff, ty) <- label "result type annotation" $ annot effectiveType
-  let piBinders = flip map bs $ \(p, ann, arr) -> (patName p:>ann, arr)
+  let piBinders = flip map bs $ \(p, ann, arr) -> (patAsBinder p ann, arr)
   let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
@@ -289,15 +289,19 @@ funDefLet = label "function definition" $ mayBreak $ do
       arr <- arrow (return ()) <|> return (PlainArrow ())
       return (p, ty, arr)
 
+patAsBinder :: UPat -> UType -> UAnnBinder
+patAsBinder (WithSrc _ (UPatBinder (Bind (v:>())))) ty = Bind $ v:>ty
+patAsBinder _ ty = Ignore ty
+
 nameAsPat :: Parser Name -> Parser UPat
-nameAsPat p = withSrc $ UPatBinder <$> (:>()) <$> p
+nameAsPat p = withSrc $ (UPatBinder . Bind . (:>())) <$> p
 
 buildPiType :: [(UAnnBinder, UArrow)] -> EffectRow -> UType -> UType
 buildPiType [] _ _ = error "shouldn't be possible"
 buildPiType ((b,arr):bs) eff ty = WithSrc pos $ case bs of
   [] -> UPi b (fmap (const eff ) arr) ty
   _  -> UPi b (fmap (const Pure) arr) $ buildPiType bs eff ty
-  where WithSrc pos _ = varAnn b
+  where WithSrc pos _ = binderAnn b
 
 effectiveType :: Parser (EffectRow, UType)
 effectiveType = (,) <$> effects <*> uType
@@ -368,7 +372,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (WithSrc pos (UPatBinder (NoName:>())), Nothing) e
+      where d = ULet PlainLet (WithSrc pos (UPatBinder (Ignore ())), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -381,9 +385,11 @@ uPiType = withSrc $ UPi <$> annBinder <*> arrow effects <*> uType
 
 annBinder :: Parser UAnnBinder
 annBinder = label "annoted binder" $ do
-  v <- try $ (lowerName <|> ignored) <* sym ":"
+  v <- try $ ((Just <$> lowerName) <|> (underscore $> Nothing)) <* sym ":"
   ty <- containedExpr
-  return (v:>ty)
+  return $ case v of
+    Just v' -> Bind (v':>ty)
+    Nothing -> Ignore ty
 
 arrow :: Parser eff -> Parser (ArrowP eff)
 arrow p =   (sym "->"  >> liftM PlainArrow p)
@@ -412,7 +418,8 @@ leafPat :: Parser UPat
 leafPat =
       (withSrc (symbol "()" $> UPatUnit))
   <|> parens pat <|> (withSrc $
-          (UPatBinder <$>  (:>()) <$> (lowerName <|> ignored))
+          (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
+                           <|> (underscore $> Ignore ())))
       <|> (UPatLit    <$> litVal)
       <|> (UPatCon    <$> upperName <*> many pat))
 
@@ -440,9 +447,6 @@ caseLam = do
 applyNamed :: SrcPos -> String -> [UExpr] -> UExpr
 applyNamed pos name args = foldl mkApp f args
   where f = WithSrc pos $ UVar (Name SourceName (fromString name) 0:>())
-
-ignored :: Parser Name
-ignored = underscore >> return NoName
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
@@ -545,10 +549,10 @@ infixArrow :: Parser (UType -> UType -> UType)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
   (arr, pos) <- withPos $ arrow effects
-  return $ \a b -> WithSrc pos $ UPi (NoName:>a) arr b
+  return $ \a b -> WithSrc pos $ UPi (Ignore a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
-mkArrow arr a b = joinSrc a b $ UPi (NoName:>a) arr b
+mkArrow arr a b = joinSrc a b $ UPi (Ignore a) arr b
 
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do

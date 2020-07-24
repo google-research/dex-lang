@@ -90,7 +90,7 @@ sourceBlockToDag block = do
   let parents = sort $ nub $ toList $
                   (boundUVars block <> freeUVars block) `envIntersect` varMap
   n <- lift $ addToBlockDag (block, parents)
-  extend $ foldMap (@> n) $ envAsVars $ boundUVars block
+  extend $ foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block
   return n
 
 launchBlockEval :: NodeId -> DriverM ()

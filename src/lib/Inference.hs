@@ -52,7 +52,7 @@ checkSigma expr sTy = case sTy of
         WithSrc _ (ULam b arrow' body) | arrow' == void arrow ->
           checkULam b body piTy
         _ -> do
-          buildLam ("a":> absArgType piTy) arrow $ \x@(Var v) ->
+          buildLam (Bind ("a":> absArgType piTy)) arrow $ \x@(Var v) ->
             checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
@@ -71,12 +71,12 @@ inferRho expr = checkOrInferRho expr Infer
 
 instantiateSigma :: Atom -> UInferM Atom
 instantiateSigma f = case getType f of
-  Pi (Abs (_:>ty) (ImplicitArrow, _)) -> do
-    x <- freshType ty
+  Pi (Abs b (ImplicitArrow, _)) -> do
+    x <- freshType $ binderType b
     ans <- emitZonked $ App f x
     instantiateSigma ans
-  Pi (Abs (_:>ty) (ClassArrow, _)) ->
-    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ty))
+  Pi (Abs b (ClassArrow, _)) ->
+    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole $ binderType b))
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
@@ -113,7 +113,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     fVal'' <- zonk fVal
     xVal <- checkSigma x (absArgType piTy)
     (arr', xVal') <- case piTy of
-      Abs (NoName:>_) (arr', _) -> return (arr', xVal)
+      Abs (Ignore _) (arr', _) -> return (arr', xVal)
       _ -> do
         scope <- getScope
         let xVal' = reduceAtom scope xVal
@@ -121,11 +121,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal'' xVal'
     instantiateSigma appVal >>= matchRequirement
-  UPi (v:>a) arr ty -> do
+  UPi b arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
-    a'  <- checkUType a
-    piTy <- buildPi (v:>a') $ \x -> extendR ((v:>())@>x) $
+    b'  <- mapM checkUType b
+    piTy <- buildPi b' $ \x -> extendR (b@>x) $
               (,) <$> mapM checkUEff arr <*> checkUType ty
     matchRequirement piTy
   UDecl decl body -> do
@@ -142,7 +142,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     let conDefs = applyDataDefParams def params
     altsSorted <- forM conDefs $ \(DataConDef conName bs) -> do
       case lookup conName alts' of
-        Nothing  -> return $ NAbs (map ((NoName :>) . varType) bs) $
+        Nothing  -> return $ NAbs (map (Ignore . binderType) bs) $
                                Block [] $ Op $ ThrowError reqTy'
         Just alt -> return alt
     emit $ Case scrut' altsSorted reqTy'
@@ -188,11 +188,11 @@ lookupSourceVar v = do
 -- TODO: de-dup with `bindPat`
 unpackTopPat :: LetAnn -> UPat -> Expr -> UInferM ()
 unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
-  UPatBinder (v:>()) -> do
-    let v' = asGlobal v
+  UPatBinder b -> do
+    let b' = binderAsGlobal b
     scope <- getScope
-    when ((v':>()) `isin` scope) $ throw RepeatedVarErr $ pprint v'
-    void $ emitTo v' letAnn expr
+    when (b' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName b'
+    void $ emitTo (binderNameHint b') letAnn expr
   UPatUnit -> return () -- TODO: change if we allow effects at the top level
   UPatPair p1 p2 -> do
     val  <- emit expr
@@ -208,7 +208,7 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     when (length argBs /= length ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
-    params <- mapM (freshType . varType) paramBs
+    params <- mapM (freshType . binderType) paramBs
     constrainEq (TypeCon def params) (getType expr)
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) ps xs
@@ -228,16 +228,17 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
   (tc', params) <- inferUConDef tc
+  let paramVars = map (\(Bind v) -> v) params  -- TODO: refresh things properly
   (dcs', _) <- embedScoped $
-    extendR (newEnv params (map Var params)) $ do
-      extendScope (foldMap varBinding params)
+    extendR (newEnv params (map Var paramVars)) $ do
+      extendScope (foldMap binderBinding params)
       mapM inferUConDef dcs
   let dataDef = DataDef tc' params $ map (uncurry DataConDef) dcs'
   let tyConTy = getType $ TypeCon dataDef []
-  extendScope $ (tc':>()) @> (tyConTy, DataBoundTypeCon dataDef)
+  extendScope $ tc' @> (tyConTy, DataBoundTypeCon dataDef)
   forM_ (zip [0..] dcs') $ \(i, (dc,_)) -> do
     let ty = getType $ DataCon dataDef [] i []
-    extendScope $ (dc:>()) @> (ty, DataBoundDataCon dataDef i)
+    extendScope $ dc @> (ty, DataBoundDataCon dataDef i)
   return mempty
 inferUDecl False (UData _ _) = error "data definitions should be top-level"
 
@@ -250,22 +251,24 @@ checkNestedBinders :: [UAnnBinder] -> UInferM [Binder]
 checkNestedBinders [] = return []
 checkNestedBinders (b:bs) = do
   b' <- mapM checkUType b
-  extendScope (varBinding b')
-  bs' <- extendR (b' @> Var b') $ checkNestedBinders bs
+  extendScope (binderBinding b')
+  let env = case b' of Bind v   -> b' @> Var v
+                       Ignore _ -> mempty
+  bs' <- extendR env $ checkNestedBinders bs
   return $ b' : bs'
 
 inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
-  buildLam (patNameHint p :> argTy) arr
+  buildLam (Bind $ patNameHint p :> argTy) arr
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
 checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
-  buildDepEffLam (patNameHint p :> argTy)
+  buildDepEffLam (Bind $ patNameHint p :> argTy)
     ( \x -> return $ fst $ applyAbs piTy x)
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $
                       checkSigma body $ snd $ applyAbs piTy x
@@ -288,7 +291,7 @@ checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   (patTy, conName, patTys) <- inferPat pat
   let (subPats, subPatTys) = unzip patTys
   constrainEq scrutineeTy patTy
-  let bs = zipWith (\p ty -> patName p :> ty) subPats subPatTys
+  let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
   alt <- buildNAbs bs $ \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
   return (conName, alt)
@@ -310,8 +313,8 @@ inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
     when (length argBs /= length ps) $ throw TypeErr $
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                             ++ " got " ++ show (length ps)
-    params <- mapM (freshType . varType) paramBs
-    let argTys = applyNaryAbs (NAbs paramBs $ map varType argBs) params
+    params <- mapM (freshType . binderType) paramBs
+    let argTys = applyNaryAbs (NAbs paramBs $ map binderType argBs) params
     return (TypeCon def params, conName', zip ps argTys)
   _ -> throw TypeErr $ "Case patterns must start with a data constructor"
 
@@ -330,8 +333,8 @@ bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
   UPatBinder b -> do
     usedVars <- look
-    when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint (varName b)
-    extend (b@>())
+    when (b `isin` usedVars) $ throw RepeatedVarErr $ pprint $ getName b
+    extend (b @> ())
     return (b @> val)
   UPatUnit -> do
     lift $ constrainEq UnitTy (getType val)
@@ -352,14 +355,15 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     when (length argBs /= length ps) $ throw TypeErr $
       "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                              ++ " got " ++ show (length ps)
-    params <- lift $ mapM (freshType . varType) paramBs
+    params <- lift $ mapM (freshType . binderType) paramBs
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' ps xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
 
+-- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it
 patNameHint :: UPat -> Name
-patNameHint (WithSrc _ (UPatBinder (v:>()))) = v
+patNameHint (WithSrc _ (UPatBinder (Bind (v:>())))) = v
 patNameHint _ = "pat"
 
 withPatHint :: UPat -> UInferM a -> UInferM a
@@ -400,10 +404,10 @@ inferTabTy xs ann = case ann of
   Just ty -> do
     ty' <- checkUType ty
     case ty' of
-      TabTy v a -> do
-        unless (indexSetConcreteSize (varType v) == Just (length xs)) $
+      TabTy b a -> do
+        unless (indexSetConcreteSize (binderType b) == Just (length xs)) $
            throw TypeErr $ "Table size doesn't match annotation"
-        return (varType v, a)
+        return (binderType b, a)
       _ -> throw TypeErr $ "Table constructor annotation must be a table type"
   Nothing -> case xs of
    [] -> throw TypeErr $ "Empty table constructor must have type annotation"
@@ -417,7 +421,7 @@ fromPiType _ _ (Pi piTy) = return piTy -- TODO: check arrow
 fromPiType expectPi arr ty = do
   a <- freshType TyKind
   b <- freshType TyKind
-  let piTy = Abs (NoName:>a) (fmap (const Pure) arr, b)
+  let piTy = Abs (Ignore a) (fmap (const Pure) arr, b)
   if expectPi then  constrainEq (Pi piTy) ty
               else  constrainEq ty (Pi piTy)
   return piTy
@@ -442,6 +446,10 @@ addEffects eff = do
 openEffectRow :: EffectRow -> UInferM EffectRow
 openEffectRow (EffectRow effs Nothing) = extendEffRow effs <$> freshEff
 openEffectRow effRow = return effRow
+
+binderAsGlobal :: BinderP a -> BinderP a
+binderAsGlobal (Ignore ann) = Ignore ann
+binderAsGlobal (Bind (v:>ann)) = Bind $ asGlobal v :> ann
 
 -- === typeclass dictionary synthesizer ===
 
@@ -513,8 +521,8 @@ inferToSynth m = do
 tryApply :: Atom -> Atom -> UInferM Atom
 tryApply f x = do
   f' <- instantiateSigma f
-  Pi (Abs (_:>a) _) <- return $ getType f'
-  constrainEq a (getType x)
+  Pi (Abs b _) <- return $ getType f'
+  constrainEq (binderType b) (getType x)
   emitZonked $ App f' x
 
 instantiateAndCheck :: Type -> Atom -> UInferM Atom
@@ -546,7 +554,7 @@ applyDefaults = do
   forM_ (envPairs vs) $ \(v, k) -> case k of
     EffKind -> addSub v $ Eff Pure
     _ -> return ()
-  where addSub v ty = extend $ SolverEnv mempty ((v:>()) @> ty)
+  where addSub v ty = extend $ SolverEnv mempty (v@>ty)
 
 solveLocal :: Subst a => UInferM a -> UInferM a
 solveLocal m = do
@@ -574,8 +582,8 @@ freshType :: Kind -> UInferM Type
 freshType EffKind = Eff <$> freshEff
 freshType k = do
   tv <- freshVar k
-  extend $ SolverEnv (tv @> k) mempty
-  extendScope $ tv @> (k, UnknownBinder)
+  extend $ SolverEnv (tv@>k) mempty
+  extendScope $ tv@>(k, UnknownBinder)
   return $ Var tv
 
 freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
@@ -585,7 +593,10 @@ freshEff = do
   return $ EffectRow [] $ Just $ varName v
 
 freshVar :: MonadCat SolverEnv m => ann -> m (VarP ann)
-freshVar ann = looks $ rename (rawName InferenceName "?" :> ann) . solverVars
+freshVar ann = do
+  env <- look
+  let v = genFresh (rawName InferenceName "?") $ solverVars env
+  return $ v :> ann
 
 constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
              => Type -> Type -> m ()
@@ -638,8 +649,8 @@ unifyEff r1 r2 = do
   vs <- looks solverVars
   case (r1', r2') of
     _ | r1 == r2 -> return ()
-    (r, EffectRow [] (Just v)) | (v:>()) `isin` vs -> bindQ (v:>EffKind) (Eff r)
-    (EffectRow [] (Just v), r) | (v:>()) `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (r, EffectRow [] (Just v)) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
+    (EffectRow [] (Just v), r) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
     (EffectRow effs1@(_:_) t1, EffectRow effs2@(_:_) t2) -> do
       let extras1 = effs1 `setDiff` effs2
       let extras2 = effs2 `setDiff` effs1
@@ -654,7 +665,7 @@ setDiff xs ys = filter (`notElem` ys) xs
 bindQ :: (MonadCat SolverEnv m, MonadError Err m) => Var -> Type -> m ()
 bindQ v t | v `occursIn` t = throw TypeErr $ "Occurs check failure: " ++ pprint (v, t)
           | hasSkolems t = throw TypeErr "Can't unify with skolem vars"
-          | otherwise = extend $ mempty { solverSub = v @> t }
+          | otherwise = extend $ mempty { solverSub = v@>t }
 
 hasSkolems :: Subst a => a -> Bool
 hasSkolems x = not $ null [() | Name Skolem _ _ <- envNames $ freeVars x]
@@ -666,8 +677,8 @@ renameForPrinting :: Subst a => a -> (a, [Var])
 renameForPrinting x = (scopelessSubst substEnv x, newNames)
   where
     fvs = freeVars x
-    infVars = filter ((==InferenceName) . nameSpace . varName) $ envAsVars fvs
-    newNames = [ rename (fromString name:> fst (varAnn v)) fvs
+    infVars = filter ((== Just InferenceName) . nameSpace . varName) $ envAsVars fvs
+    newNames = [ genFresh (fromString name) fvs :> fst (varAnn v)
                | (v, name) <- zip infVars nameList]
     substEnv = fold $ zipWith (\v v' -> v@>Var v') infVars newNames
     nameList = map (:[]) ['a'..'z'] ++ map show [(0::Int)..]
