@@ -41,7 +41,8 @@ evalSimplified (Module Simp decls bindings) evalBlock = do
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
   let block = Block decls $ Atom $ mkConsList $ map Var localVars
   vals <- (ignoreExcept . fromConsList) <$> evalBlock block
-  return $ Module Evaluated [] $ scopelessSubst (zipEnv localVars vals) bindings
+  return $ Module Evaluated [] $
+    scopelessSubst (newEnv localVars vals) bindings
 evalSimplified (Module _ _ _) _ =
   error "Not a simplified module"
 
@@ -55,8 +56,9 @@ simplifyDecls (decl:rest) = do
 simplifyDecl :: Decl -> SimplifyM SubstEnv
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
-  if isGlobal b
-    then emitTo (varName b) ann (Atom x) $> mempty
+  let name = binderNameHint b
+  if isGlobal (name:>())
+    then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
 simplifyDecl (Unpack bs expr) = do
   x <- simplifyExpr expr

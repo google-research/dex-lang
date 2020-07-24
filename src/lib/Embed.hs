@@ -83,12 +83,12 @@ emitAnn ann expr = do
 
 -- Guarantees that the name will be used, possibly with a modified counter
 emitTo :: MonadEmbed m => Name -> LetAnn -> Expr -> m Atom
-emitTo v ann expr = do
+emitTo name ann expr = do
   let ty = getType expr
   expr' <- deShadow expr <$> getScope
-  v' <- freshVar (v:>ty)
-  emitDecl $ Let ann v' expr'
-  return $ Var v'
+  v <- freshVar $ Bind (name:>ty)
+  emitDecl $ Let ann (Bind v) expr'
+  return $ Var v
 
 emitOp :: MonadEmbed m => Op -> m Atom
 emitOp op = emit $ Op op
@@ -98,67 +98,67 @@ emitUnpack expr = do
   let (TypeCon def params) = getType expr
   let [DataConDef _ bs] = applyDataDefParams def params
   expr' <- deShadow expr <$> getScope
-  bs' <- forM bs $ \b -> do
-    b' <- freshVar b
-    embedExtend $ asFst $ b' @> (varType b', PatBound)
-    return b'
-  emitDecl $ Unpack bs' expr'
-  return $ map Var bs'
+  vs <- forM bs $ \b -> do
+    v <- freshVar b
+    embedExtend $ asFst $ v @> (varType v, PatBound)
+    return v
+  emitDecl $ Unpack (map Bind vs) expr'
+  return $ map Var vs
 
 -- Assumes the decl binders are already fresh wrt current scope
 emitBlock :: MonadEmbed m => Block -> m Atom
 emitBlock (Block decls result) = mapM_ emitDecl decls >> emit result
 
-freshVar :: MonadEmbed m => VarP ann -> m (VarP ann)
-freshVar (n:>ty) = do
-  name <- case n of
-    NoName -> getNameHint
-    _      -> return n
+freshVar :: MonadEmbed m => BinderP ann -> m (VarP ann)
+freshVar b = do
+  v <- case b of
+    Ignore _    -> getNameHint
+    Bind (v:>_) -> return v
   scope <- getScope
-  let v' = rename (name:>ty) scope
-  return v'
+  let v' = genFresh v scope
+  return $ v' :> binderAnn b
 
 buildPi :: (MonadError Err m, MonadEmbed m)
-        => Var -> (Atom -> m (Arrow, Type)) -> m Atom
+        => Binder -> (Atom -> m (Arrow, Type)) -> m Atom
 buildPi b f = do
   (piTy, decls) <- scopedDecls $ do
-     b' <- freshVar b
-     embedExtend $ asFst $ b' @> (varType b', PiBound)
-     (arr, ans) <- f $ Var b'
-     return $ Pi $ makeAbs b' (arr, ans)
+     v <- freshVar b
+     embedExtend $ asFst $ v @> (varType v, PiBound)
+     (arr, ans) <- f $ Var v
+     return $ Pi $ makeAbs (Bind v) (arr, ans)
   unless (null decls) $ throw CompilerErr $ "Unexpected decls: " ++ pprint decls
   return piTy
 
-buildLam :: MonadEmbed m => Var -> Arrow -> (Atom -> m Atom) -> m Atom
+buildLam :: MonadEmbed m => Binder -> Arrow -> (Atom -> m Atom) -> m Atom
 buildLam b arr body = buildDepEffLam b (const (return arr)) body
 
 buildDepEffLam :: MonadEmbed m
-               => Var -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
+               => Binder -> (Atom -> m Arrow) -> (Atom -> m Atom) -> m Atom
 buildDepEffLam b fArr fBody = liftM fst $ buildLamAux b fArr $ \x -> (,()) <$> fBody x
 
 buildLamAux :: MonadEmbed m
-            => Var -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
+            => Binder -> (Atom -> m Arrow) -> (Atom -> m (Atom, a)) -> m (Atom, a)
 buildLamAux b fArr fBody = do
   ((b', arr, ans, aux), decls) <- scopedDecls $ do
-     b' <- freshVar b
+     v <- freshVar b
      -- TODO: we can't extend the scope until we know the arrow, but we really
      -- ought to extend it before we run fArr. Since effects don't contain
      -- binders, we're probably ok. But it would be cleaner if we just
      -- decoupled arrow from effect.
-     let x = Var b'
+     let x = Var v
      arr <- fArr x
-     embedExtend $ asFst $ b' @> (varType b', LamBound (void arr))
+     embedExtend $ asFst $ v @> (varType v, LamBound (void arr))
      (ans, aux) <- withEffects (arrowEff arr) $ fBody x
-     return (b', arr, ans, aux)
+     return (Bind v, arr, ans, aux)
   return (Lam $ makeAbs b' (arr, wrapDecls decls ans), aux)
 
-buildNAbs :: MonadEmbed m => [Var] -> ([Atom] -> m Atom) -> m (NaryAbs Block)
+buildNAbs :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m (NaryAbs Block)
 buildNAbs bs body = do
   ((bs', ans), decls) <- scopedDecls $ do
-     bs' <- mapM freshVar bs
-     embedExtend $ asFst $ foldMap (\b -> b @> (varType b, PatBound)) bs
-     ans <- body $ map Var bs'
-     return (bs', ans)
+     vs <- mapM freshVar bs
+     embedExtend $ asFst $ foldMap (\v -> v @> (varType v, PatBound)) vs
+     ans <- body $ map Var vs
+     return (map Bind vs, ans)
   return $ NAbs bs' $ wrapDecls decls ans
 
 buildScoped :: MonadEmbed m => m Atom -> m Block
@@ -172,8 +172,8 @@ wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
   RealTy -> Con $ Lit $ RealLit 0.0
-  TabTy (NoName:>n) a ->
-    Lam $ Abs (NoName:>n) (TabArrow,  Block [] $ Atom $ zeroAt a)
+  TabTy (Ignore n) a ->
+    Lam $ Abs (Ignore n) (TabArrow,  Block [] $ Atom $ zeroAt a)
   UnitTy -> UnitVal
   PairTy a b -> PairVal (zeroAt a) (zeroAt b)
   _ -> error $ "Not implemented: " ++ pprint ty
@@ -297,20 +297,20 @@ fromSum s = (,,) <$> sumTag s <*> getLeft s <*> getRight s
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
   eff <- getAllowedEffects
-  lam <- buildLam ("r":>TyKind) PureArrow $ \r@(Var (rName:>_)) -> do
+  lam <- buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
     let arr = PlainArrow $ extendEffect (Writer, rName) eff
-    buildLam (v:> RefTy r ty) arr body
+    buildLam (Bind (v:> RefTy r ty)) arr body
   emit $ Hof $ RunWriter lam
 
 emitRunReader :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
 emitRunReader v x0 body = do
   eff <- getAllowedEffects
-  lam <- buildLam ("r":>TyKind) PureArrow $ \r@(Var (rName:>_)) -> do
+  lam <- buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
     let arr = PlainArrow $ extendEffect (Reader, rName) eff
-    buildLam (v:> RefTy r (getType x0)) arr body
+    buildLam (Bind (v:> RefTy r (getType x0))) arr body
   emit $ Hof $ RunReader x0 lam
 
-buildFor :: MonadEmbed m => Direction -> Var -> (Atom -> m Atom) -> m Atom
+buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do
   -- TODO: track effects in the embedding env so we can add them here
   eff <- getAllowedEffects
@@ -322,17 +322,17 @@ tabGet x i = emit $ App x i
 
 unzipTab :: MonadEmbed m => Atom -> m (Atom, Atom)
 unzipTab tab = do
-  fsts <- buildLam ("i":>varType v) TabArrow $ \i ->
+  fsts <- buildLam (Bind ("i":>binderType v)) TabArrow $ \i ->
             liftM fst $ app tab i >>= fromPair
-  snds <- buildLam ("i":>varType v) TabArrow $ \i ->
+  snds <- buildLam (Bind ("i":>binderType v)) TabArrow $ \i ->
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy v _ = getType tab
 
 mapScalars :: HasCallStack => MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
 mapScalars f ty xs = case ty of
-  TabTy v a -> do
-    buildFor Fwd ("i":>varType v) $ \i -> do
+  TabTy b a -> do
+    buildFor Fwd (Bind ("i":>binderType b)) $ \i -> do
       xs' <- mapM (flip app i) xs
       mapScalars f a xs'
   BaseTy _           -> f ty xs
@@ -462,14 +462,14 @@ getNameHint = do
   return $ Name GenName tag 0
 
 -- This is purely for human readability. `const id` would be a valid implementation.
-withNameHint :: MonadEmbed m => Name -> m a -> m a
+withNameHint :: (MonadEmbed m, HasName a) => a -> m b -> m b
 withNameHint name m = embedLocal (\(_, eff) -> (tag, eff)) m
   where
-    tag = case name of
-      Name _ t _        -> t
-      GlobalName t      -> t
-      GlobalArrayName _ -> "arr"
-      NoName            -> "tmp"
+    tag = case getName name of
+      Just (Name _ t _)        -> t
+      Just (GlobalName t)      -> t
+      Just (GlobalArrayName _) -> "arr"
+      Nothing                  -> "tmp"
 
 runEmbedT' :: Monad m => EmbedT m a -> EmbedEnv -> m (a, EmbedEnvC)
 runEmbedT' (EmbedT m) (envR, envC) = runCatT (runReaderT m envR) envC
@@ -492,8 +492,8 @@ modifyAllowedEffects f m = embedLocal (\(name, eff) -> (name, f eff)) m
 emitDecl :: MonadEmbed m => Decl -> m ()
 emitDecl decl = embedExtend (bindings, [decl])
   where bindings = case decl of
-          Let ann v expr -> v @> (varType v, LetBound ann expr)
-          Unpack vs _ -> foldMap (\v -> v @> (varType v, PatBound)) vs
+          Let ann b expr -> b @> (binderType b, LetBound ann expr)
+          Unpack bs _ -> foldMap (\b -> b @> (binderType b, PatBound)) bs
 
 scopedDecls :: MonadEmbed m => m a -> m (a, [Decl])
 scopedDecls m = do
@@ -525,7 +525,7 @@ traverseDecl :: (MonadEmbed m, MonadReader SubstEnv m)
 traverseDecl (fExpr, _) decl = case decl of
   Let letAnn b expr -> do
     expr' <- fExpr expr
-    x <- emitTo (varName b) letAnn expr'
+    x <- emitTo (binderNameHint b) letAnn expr'
     return $ b @> x
   Unpack bs expr -> do
     expr' <- fExpr expr
@@ -596,7 +596,7 @@ dceDecls varsNeeded decls = reverse $
 
 inlineLastDecl :: Block -> Block
 inlineLastDecl block@(Block decls result) = case (reverse decls, result) of
-  (Let _ v expr:rest, Atom atom)
+  (Let _ (Bind v) expr:rest, Atom atom)
     | atom == Var v || sameSingletonVal (varType v) (getType atom) -> Block (reverse rest) expr
   _ -> block
 
@@ -609,7 +609,9 @@ dceDecl decl = do
         then tell [decl] >> extend (freeVars expr)
         else case exprEffs expr of
           NoEffects   -> return ()
-          SomeEffects -> tell [Let ann (NoName:>varType b) expr] >> extend (freeVars expr)
+          SomeEffects -> do
+            tell [Let ann (Ignore (binderType b)) expr]
+            extend (freeVars expr)
     Unpack bs expr -> do
       if any (`isin` varsNeeded) bs || (not $ isPure expr)
         then tell [decl] >> extend (freeVars expr)

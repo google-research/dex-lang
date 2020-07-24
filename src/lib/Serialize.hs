@@ -28,7 +28,6 @@ import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
 
-import Env
 import Array
 import Interpreter
 import Type hiding (indexSetConcreteSize)
@@ -168,7 +167,8 @@ materializeScalarTables atom = case atom of
   Con (Lit l)          -> [arrayFromScalar l]
   Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
   Con (UnitCon)        -> []
-  Lam a@(Abs (_:>idxTy) (TabArrow, _)) -> fmap arrayConcat $ transpose $ fmap evalBody $ indices idxTy
+  Lam a@(Abs b (TabArrow, _)) ->
+    fmap arrayConcat $ transpose $ fmap evalBody $ indices $ binderType b
     where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
   _ -> error $ "Not a scalar table: " ++ pprint atom
 
@@ -181,7 +181,7 @@ valToScatter val = case getType val of
 valToHeatmap :: Val -> Output
 valToHeatmap val = case getType val of
   TabTy hv (TabTy wv RealTy) ->
-    HeatmapOut (indexSetSize $ varType hv) (indexSetSize $ varType wv) xs
+    HeatmapOut (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
   _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
   where [(Array _ (RealVec xs))] = materializeScalarTables val
 
@@ -190,8 +190,8 @@ pprintVal val = asStr $ prettyVal val
 
 prettyVal :: Val -> Doc ann
 prettyVal val = case val of
-  Lam abs@(Abs v (TabArrow, _)) -> pretty elems <> idxSetStr
-    where idxSet = varType v
+  Lam abs@(Abs b (TabArrow, _)) -> pretty elems <> idxSetStr
+    where idxSet = binderType b
           elems = flip fmap (indices idxSet) $ \idx ->
             asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
           idxSetStr = case idxSet of FixedIntRange 0 _ -> mempty

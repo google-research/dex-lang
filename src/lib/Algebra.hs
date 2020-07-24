@@ -53,12 +53,13 @@ data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show,
 elemCount :: ScalarTableType -> ClampPolynomial
 elemCount t = case t of
   BaseTy _  -> liftC $ poly [(1, mono [])]
-  TabTy v _ -> (offsets t) `psubstSumVar` (indexSetSize $ varType v)
+  TabTy b _ -> (offsets t) `psubstSumVar` (indexSetSize $ binderType b)
   _ -> error $ "Not a ScalarTableType: " ++ pprint t
 
 offsets :: ScalarTableType -> SumClampPolynomial
 offsets t = case t of
-  TabTy v body -> sumC v $ elemCount body
+  -- TODO: not sure about `fromBind` here`
+  TabTy b body -> sumC (fromBind "_" b) $ elemCount body
   _ -> error $ "Not a non-scalar ScalarTableType: " ++ pprint t
 
 indexSetSize :: Type -> ClampPolynomial
@@ -196,10 +197,11 @@ psubstSumVar :: SumClampPolynomial -> ClampPolynomial -> ClampPolynomial
 psubstSumVar (SumClampPolynomial p v) sp =
   sumPolys $ fmap (\(cm, c) -> mulConst c $ substNoClamp cm) $ toList p
   where
-    substNoClamp (ClampMonomial clamps m) = if (dropMVar $ sumVar v) `isin` foldMap freeVarsC clamps
-      then error "Sum variable should not appear under clamps"
-      else imapMonos (\(ClampMonomial clamps' m') -> ClampMonomial (clamps ++ clamps') m') mp
-        where mp = psubstSumVarMono m (coerce $ sumVar v, sp)
+    substNoClamp (ClampMonomial clamps m) =
+      if (dropMVar $ sumVar v) `isin` foldMap freeVarsC clamps
+        then error "Sum variable should not appear under clamps"
+        else imapMonos (\(ClampMonomial clamps' m') -> ClampMonomial (clamps ++ clamps') m') mp
+          where mp = psubstSumVarMono m (coerce $ sumVar v, sp)
 
 -- Substitutes v for sp in m
 psubstSumVarMono :: Monomial -> (Var, ClampPolynomial) -> ClampPolynomial

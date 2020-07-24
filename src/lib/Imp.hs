@@ -53,24 +53,24 @@ import qualified Algebra as A
 type EmbedEnv = ((Env Dest, [IVar]), (Scope, ImpProg))
 type ImpM = ReaderT Bindings (Cat EmbedEnv)
 
-toImpFunction :: Bindings -> ([ScalarTableVar], Block) -> (ImpFunction, Atom)
+toImpFunction :: Bindings -> ([ScalarTableBinder], Block) -> (ImpFunction, Atom)
 toImpFunction bindings (vsIn, block) = runImpM bindings vsIn $ do
   ((vsOut, atomOut), prog) <- scopedBlock $ materializeResult
-  return $ (ImpFunction (fmap toVar vsOut) vsIn prog, atomOut)
+  return $ (ImpFunction (fmap toBinder vsOut) vsIn prog, atomOut)
   where
-    toVar = (\(Var x) -> x) . toArrayAtom . IVar
+    toBinder = Bind . (\(Var x) -> x) . toArrayAtom . IVar
     materializeResult = do
       outDest <- allocKind Unmanaged $ getType block
       void $ toImpBlock mempty (Just outDest, block)
       atomOut <- destToAtomScalarAction (return . toArrayAtom . IVar) outDest
       return (destArrays outDest, atomOut)
 
-runImpM :: Bindings -> [ScalarTableVar] -> ImpM a -> a
-runImpM bindings inVars m =
+runImpM :: Bindings -> [ScalarTableBinder] -> ImpM a -> a
+runImpM bindings inBinders m =
   fst $ runCat (runReaderT m bindings) (mempty, (bindings <> inVarScope, mempty))
   where
     inVarScope :: Scope  -- TODO: fix (shouldn't use UnitTy)
-    inVarScope = foldMap varAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inVars
+    inVarScope = foldMap binderAsEnv $ fmap (fmap $ const (UnitTy, UnknownBinder)) inBinders
 
 toImpBlock :: SubstEnv -> WithDest Block -> ImpM Atom
 toImpBlock env destBlock = do
@@ -125,10 +125,10 @@ impSubst env x = do
 
 toImpOp :: WithDest (PrimOp Atom) -> ImpM Atom
 toImpOp (maybeDest, op) = case op of
-  TabCon (TabTy v _) rows -> do
+  TabCon (TabTy b _) rows -> do
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
-      ithDest <- destGet dest =<< intToIndex (varType v) (IIntVal i)
+      ithDest <- destGet dest =<< intToIndex (binderType b) (IIntVal i)
       copyAtom ithDest row
     destToAtom dest
   SumGet ~(SumVal  _ l r) left -> returnVal $ if left then l else r
@@ -201,7 +201,7 @@ toImpOp (maybeDest, op) = case op of
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom resultTy tileOffset'
   ThrowError ty -> do
-    emitStatement (Nothing, IThrowError)
+    emitStatement (IDo, IThrowError)
     return $ Con $ AnyValue ty
   CoerceOp destTy@PreludeBoolTy x -> case getType x of
     BoolTy -> do
@@ -230,29 +230,29 @@ toImpHof :: SubstEnv -> WithDest Hof -> ImpM Atom
 toImpHof env (maybeDest, hof) = do
   resultTy <- impSubst env $ getType $ Hof hof
   case hof of
-    For d (LamVal b@(hint:>idxTy') body) -> do
-      idxTy <- impSubst env idxTy'
+    For d (LamVal b body) -> do
+      idxTy <- impSubst env $ binderType b
       n' <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy
-      emitLoop hint d n' $ \i -> do
+      emitLoop (binderNameHint b) d n' $ \i -> do
         idx <- intToIndex idxTy i
         ithDest <- destGet dest idx
         void $ toImpBlock (env <> b @> idx) (Just ithDest, body)
       destToAtom dest
-    Tile d (LamVal tb@(tHint:>tileTy') tBody) (LamVal sb@(sHint:>_) sBody) -> do
-      ~tileTy@(TC (IndexSlice idxTy tileIdxTy)) <- impSubst env tileTy'
+    Tile d (LamVal tb tBody) (LamVal sb sBody) -> do
+      ~tileTy@(TC (IndexSlice idxTy tileIdxTy)) <- impSubst env $ binderType tb
       n <- indexSetSize idxTy
       dest <- allocDest maybeDest resultTy
       tileLen <- indexSetSize tileIdxTy
       nTiles      <- n `idivI` tileLen
       epilogueOff <- nTiles `imulI` tileLen
       nEpilogue   <- n `isubI` epilogueOff
-      emitLoop tHint Fwd nTiles $ \iTile -> do
+      emitLoop (binderNameHint tb) Fwd nTiles $ \iTile -> do
         tileOffset <- toScalarAtom IntTy <$> iTile `imulI` tileLen
         let tileAtom = Con $ Coerce tileTy tileOffset
         tileDest <- destSliceDim dest d tileOffset tileIdxTy
         void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
-      emitLoop sHint Fwd nEpilogue $ \iEpi -> do
+      emitLoop (binderNameHint sb) Fwd nEpilogue $ \iEpi -> do
         i <- iEpi `iaddI` epilogueOff
         idx <- intToIndex idxTy i
         sDest <- destGetDim dest d idx
@@ -264,25 +264,25 @@ toImpHof env (maybeDest, hof) = do
       (_, body') <- scopedBlock $do
         void $ toImpBlock env (Nothing, body)
         toImpBlock env (Just condVarDest, cond)
-      emitStatement (Nothing, IWhile (fromArrayAtom condVar) body')
+      emitStatement (IDo, IWhile (fromArrayAtom condVar) body')
       return UnitVal
     RunReader r (BinaryFunVal _ ref _ body) -> do
       rDest <- alloc $ getType r
-      rVar  <- freshVar ref
+      rVar  <- freshVar $ fromBind "ref" ref
       copyAtom rDest =<< impSubst env r
       withRefScope rVar rDest $
         toImpBlock (env <> ref @> Var rVar) (maybeDest, body)
     RunWriter (BinaryFunVal _ ref _ body) -> do
       (aDest, wDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       zeroDest $ wDest
-      wVar <- freshVar ref
+      wVar <- freshVar $ fromBind "ref" ref
       void $ withRefScope wVar wDest $
         toImpBlock (env <> ref @> Var wVar) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom wDest
     RunState s (BinaryFunVal _ ref _ body) -> do
       (aDest, sDest) <- destPairUnpack <$> allocDest maybeDest resultTy
       copyAtom sDest =<< impSubst env s
-      sVar <- freshVar ref
+      sVar <- freshVar $ fromBind "ref" ref
       void $ withRefScope sVar sDest $
         toImpBlock (env <> ref @> Var sVar) (Just aDest, body)
       PairVal <$> destToAtom aDest <*> destToAtom sDest
@@ -340,11 +340,11 @@ destGetDim dest dim idx = indexDest dest dim $ \(Dest d) -> Dest <$> appReduce d
 
 destSliceDim :: Dest -> Int -> Atom -> Type -> ImpM Dest
 destSliceDim dest dim fromOrdinal idxTy = indexDest dest dim $ \(Dest d) -> case d of
-  TabVal v _ -> do
-    lam <- buildLam (varName v :> idxTy) TabArrow $ \idx -> do
+  TabVal b _ -> do
+    lam <- buildLam (Bind (binderNameHint b :> idxTy)) TabArrow $ \idx -> do
       i <- indexToIntE idxTy idx
       ioff <- iadd i fromOrdinal
-      vidx <- intToIndexE (varType v) ioff
+      vidx <- intToIndexE (binderType b) ioff
       appReduce d vidx
     return $ Dest $ lam
   _ -> error "Slicing a non-array dest"
@@ -410,10 +410,10 @@ splitDest (maybeDest, (Block decls ans)) = do
       -- current block (e.g. it comes from the surrounding block), then we need
       -- to do the copy explicitly, as there is no let binding that will use it
       -- as the destination.
-      let blockVars = foldMap (\(Let _ v _) -> v @> ()) decls
+      let blockVars = foldMap (\(Let _ b _) -> b @> ()) decls
       let closureCopies = fmap (\(n, (d, t)) -> (d, Var $ n :> t))
                                (envPairs $ varDests `envDiff` blockVars)
-      return $ ( fmap (\d@(Let _ v _) -> (fst <$> varDests `envLookup` v, d)) decls
+      return $ ( fmap (\d@(Let _ b _) -> (fst <$> varDests `envLookup` b, d)) decls
                , (Nothing, ans)
                , gatherCopies ++ closureCopies)
     _ -> return $ (fmap (Nothing,) decls, (maybeDest, ans), [])
@@ -473,12 +473,12 @@ makeDest nameHint destType = do
           case dcs of
             [] -> error "Void type not allowed"
             [DataConDef _ bs] -> do
-              dests <- mapM (rec . varType) bs
+              dests <- mapM (rec . binderType) bs
               return $ DataCon def params 0 dests
             _ -> do
               tag <- rec IntTy
               let dcs' = applyDataDefParams def params
-              contents <- forM dcs' $ \(DataConDef _ bs) -> forM bs  (rec . varType)
+              contents <- forM dcs' $ \(DataConDef _ bs) -> forM bs  (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
@@ -562,7 +562,7 @@ offsetTo ty i     = fromScalarAtom <$> fromEmbed (offsetToE ty (toScalarAtom Int
 elemCountE :: MonadEmbed m => ScalarTableType -> m Atom
 elemCountE ty = case ty of
   BaseTy _  -> return $ IntVal 1
-  TabTy v _ -> offsetToE ty =<< indexSetSizeE (varType v)
+  TabTy b _ -> offsetToE ty =<< indexSetSizeE (binderType b)
   _ -> error $ "Not a scalar table type: " ++ pprint ty
 
 -- TODO: Accept an index instead of an ordinal?
@@ -580,7 +580,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     unless (absArgType da == absArgType aa) $ error "Mismatched dimensions in zipWithDest!"
     let idxTy = absArgType da
     n <- indexSetSize idxTy
-    emitLoop NoName Fwd n $ \i -> do
+    emitLoop "i" Fwd n $ \i -> do
       idx <- intToIndex idxTy i
       ai  <- toImpExpr mempty (Nothing, App atom idx)
       di  <- destGet dest idx
@@ -620,9 +620,9 @@ zeroDest dest = mapM_ (initializeZero . IVar) (destArrays dest)
     initializeZero ref = case impExprType ref of
       IRefType (BaseTy (Scalar RealType)) -> store ref (ILit $ RealLit 0.0)
       IRefType (BaseTy (Vector RealType)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ RealLit 0.0)
-      IRefType (TabTy v _) -> do
-        n <- indexSetSize $ varType v
-        emitLoop NoName Fwd n $ \i -> impGet ref i >>= initializeZero
+      IRefType (TabTy b _) -> do
+        n <- indexSetSize $ binderType b
+        emitLoop "i" Fwd n $ \i -> impGet ref i >>= initializeZero
       ty -> error $ "Zeros not implemented for type: " ++ pprint ty
 
 addToAtom :: Dest -> Atom -> ImpM ()
@@ -676,7 +676,7 @@ load :: IExpr -> ImpM IExpr
 load x = emitInstr $ Load x
 
 store :: IExpr -> IExpr -> ImpM ()
-store dest src = emitStatement (Nothing, Store dest src)
+store dest src = emitStatement (IDo, Store dest src)
 
 data AllocType = Managed | Unmanaged
 
@@ -689,7 +689,7 @@ allocKind allocTy ty = do
   let vs = destArrays dest
   flip mapM_ vs $ \v@(_:>IRefType refTy) -> do
     numel <- elemCount refTy
-    emitStatement (Just v, Alloc refTy numel)
+    emitStatement (Bind v, Alloc refTy numel)
   case allocTy of
     Managed   -> extend $ asFst $ asSnd vs
     Unmanaged -> return ()
@@ -698,10 +698,9 @@ allocKind allocTy ty = do
 freshVar :: VarP a -> ImpM (VarP a)
 freshVar (hint:>t) = do
   scope <- looks (fst . snd)
-  let v' = rename (name:>t) scope
-  extend $ asSnd $ asFst (v' @> (UnitTy, UnknownBinder)) -- TODO: fix!
-  return v'
-  where name = rawName GenName $ nameTag hint
+  let v = genFresh (rawName GenName $ nameTag hint) scope
+  extend $ asSnd $ asFst (v @> (UnitTy, UnknownBinder)) -- TODO: fix!
+  return $ v:>t
 
 -- TODO: Consider targeting LLVM's `switch` instead of chained conditionals.
 emitSwitch :: IExpr -> [ImpM ()] -> ImpM ()
@@ -714,22 +713,21 @@ emitSwitch testIdx = rec 0
       cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (IIntVal curIdx)
       thisCase   <- liftM snd $ scopedBlock $ body
       otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
-      emitStatement (Nothing, If cond thisCase otherCases)
+      emitStatement (IDo, If cond thisCase otherCases)
 
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
-emitLoop maybeHint d n body = do
+emitLoop hint d n body = do
   (i, loopBody) <- scopedBlock $ do
     i <- freshVar (hint:>IIntTy)
     body $ IVar i
     return i
-  emitStatement (Nothing, Loop d i n loopBody)
-  where hint = case maybeHint of NoName -> "q"; _ -> maybeHint
+  emitStatement (IDo, Loop d (Bind i) n loopBody)
 
 scopedBlock :: ImpM a -> ImpM (a, ImpProg)
 scopedBlock body = do
   (ans, ((_, allocs), (scope', prog))) <- scoped body
   extend (mempty, (scope', mempty))  -- Keep the scope extension to avoid reusing variable names
-  let frees = ImpProg [(Nothing, Free v) | v <- allocs]
+  let frees = ImpProg [(IDo, Free v) | v <- allocs]
   return (ans, prog <> frees)
 
 emitStatement :: ImpStatement -> ImpM ()
@@ -738,11 +736,11 @@ emitStatement statement = extend $ asSnd $ asSnd $ ImpProg [statement]
 emitInstr :: ImpInstr -> ImpM IExpr
 emitInstr instr = do
   case ignoreExcept (instrType instr) of
-    Just ty -> do
+    IVoidType -> error "Expected non-void result"
+    ty -> do
       v <- freshVar ("v":>ty)
-      emitStatement (Just v, instr)
+      emitStatement (Bind v, instr)
       return $ IVar v
-    Nothing -> error "Expected non-void result"
 
 -- === type checking imp programs ===
 
@@ -751,61 +749,60 @@ type ImpCheckM a = StateT (Env ()) (ReaderT (Env IType) (Either Err)) a
 
 instance Checkable ImpFunction where
   checkValid (ImpFunction _ vsIn (ImpProg prog)) = do
-    let scope = foldMap (varAsEnv . fmap (const ())) vsIn
-    let env   = foldMap (varAsEnv . fmap (IRefType . dropArray)) vsIn
+    let scope = foldMap (binderAsEnv . fmap (const ())) vsIn
+    let env   = foldMap (binderAsEnv . fmap (IRefType . dropArray)) vsIn
     void $ runReaderT (runStateT (checkProg prog) scope) env
     where dropArray ~(ArrayTy t) = t
 
 checkProg :: [ImpStatement] -> ImpCheckM ()
 checkProg [] = return ()
-checkProg ((maybeBinder, instr):prog) = do
-  maybeTy <- instrTypeChecked instr
-  case (maybeBinder, maybeTy) of
-    (Nothing, Nothing) -> checkProg prog
-    (Nothing, Just _ ) -> throw CompilerErr $ "Result of non-void instruction must be assigned"
-    (Just _ , Nothing) -> throw CompilerErr $ "Can't assign result of void instruction"
-    (Just v@(_:>ty), Just ty') -> do
-      checkBinder v
-      checkValidType ty
-      assertEq ty ty' "Type mismatch in instruction"
-      extendR (v@>ty) $ checkProg prog
+checkProg ((binder, instr):prog) = do
+  ty <- instrTypeChecked instr
+  case (binder, ty) of
+    (IDo    , IVoidType) -> checkProg prog
+    (Bind _ , IVoidType) -> throw CompilerErr $ "Can't assign result of void instruction"
+    (b, _) -> do
+      checkBinder b
+      checkValidType $ binderAnn b
+      assertEq (binderAnn b) ty "Type mismatch in instruction"
+      extendR (b@>ty) $ checkProg prog
 
-instrTypeChecked :: ImpInstr -> ImpCheckM (Maybe IType)
+instrTypeChecked :: ImpInstr -> ImpCheckM IType
 instrTypeChecked instr = case instr of
-  IPrimOp op -> liftM Just $ checkImpOp op
+  IPrimOp op -> checkImpOp op
   Load ref -> do
     b <- (checkIExpr >=> fromScalarRefType) ref
-    return $ Just $ IValType b
+    return $ IValType b
   Store dest val -> do
     b <- (checkIExpr >=> fromScalarRefType) dest
     valTy <- checkIExpr val
     assertEq (IValType b) valTy "Type mismatch in store"
-    return Nothing
-  Alloc ty _ -> return $ Just $ IRefType ty
-  Free _   -> return Nothing  -- TODO: check matched alloc/free
+    return IVoidType
+  Alloc ty _ -> return $ IRefType ty
+  Free _   -> return IVoidType  -- TODO: check matched alloc/free
   Loop _ i size (ImpProg block) -> do
     checkInt size
     checkBinder i
     extendR (i @> IIntTy) $ checkProg block
-    return Nothing
+    return IVoidType
   IWhile cond (ImpProg body) -> do
     condRefTy <- checkIExpr cond
     assertEq (IRefType BoolTy) condRefTy $ "Not a bool ref: " ++ pprint cond
     checkProg body
-    return Nothing
+    return IVoidType
   If predicate (ImpProg consequent) (ImpProg alternative) -> do
     predTy <- checkIExpr predicate
     assertEq (IValType $ Scalar BoolType) predTy "Type mismatch in predicate"
     checkProg consequent
     checkProg alternative
-    return Nothing
+    return IVoidType
   IOffset e i t -> do
     IRefType (TabTy _ _) <- checkIExpr e
     checkInt i
-    return $ Just $ IRefType $ t
-  IThrowError -> return Nothing
+    return $ IRefType $ t
+  IThrowError -> return IVoidType
 
-checkBinder :: IVar -> ImpCheckM ()
+checkBinder :: IBinder -> ImpCheckM ()
 checkBinder v = do
   scope <- get
   when (v `isin` scope) $ throw CompilerErr $ "shadows: " ++ pprint v
@@ -869,18 +866,18 @@ impExprType expr = case expr of
   ILit v    -> IValType $ litType v
   IVar (_:>ty) -> ty
 
-instrType :: MonadError Err m => ImpInstr -> m (Maybe IType)
+instrType :: MonadError Err m => ImpInstr -> m IType
 instrType instr = case instr of
-  IPrimOp op      -> return $ Just $ impOpType op
-  Load ref        -> Just . IValType <$> fromScalarRefType (impExprType ref)
-  Store _ _       -> return Nothing
-  Alloc ty _      -> return $ Just $ IRefType ty
-  Free _          -> return Nothing
-  Loop _ _ _ _    -> return Nothing
-  IWhile _ _      -> return Nothing
-  IOffset _ _ ty  -> return $ Just $ IRefType ty
-  If _ _ _        -> return Nothing
-  IThrowError     -> return Nothing
+  IPrimOp op      -> return $ impOpType op
+  Load ref        -> IValType <$> fromScalarRefType (impExprType ref)
+  Store _ _       -> return IVoidType
+  Alloc ty _      -> return $ IRefType ty
+  Free _          -> return IVoidType
+  Loop _ _ _ _    -> return IVoidType
+  IWhile _ _      -> return IVoidType
+  IOffset _ _ ty  -> return $ IRefType ty
+  If _ _ _        -> return IVoidType
+  IThrowError     -> return IVoidType
 
 impOpType :: IPrimOp -> IType
 impOpType (ScalarBinOp op _ _) = IValType $ Scalar ty  where (_, _, ty) = binOpType op

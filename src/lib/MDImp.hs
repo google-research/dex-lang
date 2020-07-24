@@ -4,7 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE DerivingVia #-}
 
@@ -17,7 +16,6 @@ import Env
 import Syntax
 import PPrint
 import Cat
-
 
 import Debug.Trace
 
@@ -36,9 +34,13 @@ progToMD (ImpProg stmts) = MDImpProg $ evalCat $ forM stmts (\s@(d, _) -> (d,) <
 
 -- TODO: Collapse loops, hoist allocations, etc.
 stmtToMDInstr :: ImpStatement -> Translate (MDImpInstr ImpKernel)
-stmtToMDInstr (~(Just d), instr) = case traceShowId instr of
+stmtToMDInstr (d, instr) = case traceShowId instr of
   Alloc t s -> case t of
-    BaseTy _ -> extend (S.singleton $ varName d) >> keep
+    BaseTy _ -> do
+      case d of
+        Bind (v:>_) -> extend (S.singleton v)
+        Ignore _ -> return ()
+      keep
     _        -> return $ MDAlloc t s
   Free v    -> do
     isHost <- isHostPtr v
@@ -55,7 +57,7 @@ stmtToMDInstr (~(Just d), instr) = case traceShowId instr of
     -- Anyway, if this ends up crashing the compiler at some point, then we will simply have
     -- to host some loads outside of the kernel.
     forM_ args (assertRef False)
-    return $ MDLaunch s args $ ImpKernel args v p
+    return $ MDLaunch s args $ ImpKernel (map Bind args) v p
     where args = envAsVars $ (freeIVars p `envDiff` (v @> ()))
   Load  ~(IVar v)    -> assertRef True v >> keep
   Store ~(IVar v) _  -> assertRef True v >> keep

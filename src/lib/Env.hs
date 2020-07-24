@@ -5,25 +5,23 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE DeriveGeneric #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
-            envPairs, envDelete, envSubset, (!), (@>), VarP (..), varAnn, varName,
-            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars, zipEnv,
-            rawName, nameSpace, nameTag, rename, renames, nameItems, envMaxName,
-            renameChoice, tagToStr, isGlobal, asGlobal, envFilter) where
+            envPairs, envDelete, envSubset, (!), (@>), VarP (..),
+            varAnn, varName, BinderP (..), binderAnn, binderNameHint,
+            envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
+            rawName, nameSpace, nameTag, envMaxName, genFresh,
+            tagToStr, isGlobal, asGlobal, envFilter, binderAsEnv,
+            fromBind, newEnv, HasName, getName) where
 
-import Control.Monad
-import Data.List (minimumBy)
 import Data.Store
 import Data.String
 import qualified Data.Text as T
 import qualified Data.Map.Strict as M
+import Data.Foldable (fold)
 import Data.Text.Prettyprint.Doc
 import GHC.Generics
 import GHC.Stack
-
-import Cat
 
 infixr 7 :>
 
@@ -31,16 +29,15 @@ newtype Env a = Env (M.Map Name a)
                 deriving (Show, Eq, Ord, Generic, Functor, Foldable, Traversable)
 
 -- TODO: consider parameterizing by namespace, for type-level namespace checks.
--- `NoName` is used in binders (e.g. `_ = <expr>`) but never in occurrences.
--- TODO: Consider putting it under a separate `Binder` type instead.
-data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int | NoName
+data Name = Name NameSpace Tag Int | GlobalName Tag | GlobalArrayName Int
             deriving (Show, Ord, Eq, Generic)
-data NameSpace = GenName | SourceName | JaxIdx | Skolem
-               | InferenceName | NoNameSpace | SumName
+data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName | SumName
                  deriving  (Show, Ord, Eq, Generic)
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
+data BinderP a = Ignore a | Bind (VarP a)
+                 deriving (Show, Generic, Functor, Foldable, Traversable)
 
 rawName :: NameSpace -> Tag -> Name
 rawName s t = Name s t 0
@@ -48,40 +45,52 @@ rawName s t = Name s t 0
 asGlobal :: Name -> Name
 asGlobal (GlobalName tag) = GlobalName tag
 asGlobal (Name SourceName tag 0) = GlobalName tag
-asGlobal NoName = NoName
 asGlobal v = error $ "Can't treat as global name: " ++ show v
 
-nameSpace :: Name -> NameSpace
-nameSpace (Name s _ _) = s
-nameSpace NoName       = NoNameSpace
-nameSpace (GlobalName _) = NoNameSpace
-nameSpace (GlobalArrayName _) = NoNameSpace
+nameSpace :: Name -> Maybe NameSpace
+nameSpace (Name s _ _) = Just s
+nameSpace _ = Nothing
+
+newEnv :: HasName a => [a] -> [b] -> Env b
+newEnv bs xs = fold $ zipWith (@>) bs xs
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann
 
+binderAnn :: BinderP a -> a
+binderAnn (Bind (_:>ann)) = ann
+binderAnn (Ignore ann) = ann
+
 varName :: VarP a -> Name
 varName (v:>_) = v
 
-nameCounter :: Name -> Int
-nameCounter (Name _ _ c) = c
-nameCounter _ = 0
+binderNameHint :: BinderP a -> Name
+binderNameHint (Ignore _) = "ignored"
+binderNameHint (Bind (v:>_)) = v
 
 nameTag :: Name -> Tag
 nameTag name = case name of
   Name _ t _        -> t
   GlobalName t      -> t
-  NoName            -> "tmp"
   GlobalArrayName _ -> error "GlobalArrayName has no tag"
 
 varAsEnv :: VarP a -> Env a
 varAsEnv v = v @> varAnn v
 
+fromBind :: Name -> BinderP a -> VarP a
+fromBind v (Ignore ty) = v :> ty
+fromBind _ (Bind v) = v
+
+binderAsEnv :: BinderP a -> Env a
+binderAsEnv b = b @> binderAnn b
+
 envAsVars :: Env a -> [VarP a]
 envAsVars env = map (uncurry (:>)) $ envPairs env
 
-envLookup :: Env a -> VarP ann -> Maybe a
-envLookup (Env m) v = M.lookup (varName v) m
+envLookup :: HasName a => Env b -> a -> Maybe b
+envLookup (Env m) x = case getName x of
+  Nothing -> Nothing
+  Just v  -> M.lookup v m
 
 envMapMaybe :: (a -> Maybe b) -> Env a -> Env b
 envMapMaybe f (Env m) = Env $ M.mapMaybe f m
@@ -110,12 +119,12 @@ envDiff (Env m) (Env m') = Env $ M.difference m m'
 envFilter :: Env a -> (a -> Bool) -> Env a
 envFilter (Env m) f = Env $ M.filter f m
 
-zipEnv :: [VarP a] -> [b] -> Env b
-zipEnv ns vs = Env $ M.fromList $ zip (map varName ns) vs
-
-isin :: VarP ann -> Env a -> Bool
-isin v env = case envLookup env v of Just _  -> True
-                                     Nothing -> False
+isin :: HasName a => a -> Env b -> Bool
+isin x env = case getName x of
+  Nothing -> False
+  Just v  -> case envLookup env v of
+    Just _  -> True
+    Nothing -> False
 
 envMaxName :: Env a -> Maybe Name
 envMaxName (Env m) = if M.null m then Nothing else Just $ fst $ M.findMax m
@@ -131,7 +140,6 @@ isGlobal (GlobalArrayName _ :> _) = True
 isGlobal _ = False
 
 genFresh :: Name-> Env a -> Name
-genFresh NoName _ = NoName
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
   where
     nextNum = case M.lookupLT (Name ns tag bigInt) m of
@@ -142,40 +150,31 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
                 _ -> 0
     bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
 genFresh v@(GlobalName _) env
-  | (v:>()) `isin` env = error $ "Can't rename global: " ++ show v
-  | otherwise          = v
+  | v `isin` env = error $ "Can't rename global: " ++ show v
+  | otherwise    = v
 genFresh v@(GlobalArrayName _) env
-  | (v:>()) `isin` env = error $ "Can't rename global array: " ++ show v
-  | otherwise          = v
-
-rename :: VarP ann -> Env a -> VarP ann
-rename v@(n:>ann) scope | v `isin` scope = genFresh n scope :> ann
-                        | otherwise      = v
-
-renameChoice :: [Name] -> Env a -> Name
-renameChoice vs scope =
-  minimumBy (\v1 v2 -> nameCounter v1 `compare` nameCounter v2) vs'
-  where vs' = [varName $ rename (v:>()) scope | v <- vs]
-
-renames :: Traversable f => f (VarP ann) -> a -> Env a -> (f (VarP ann), Env a)
-renames vs x scope = runCat (traverse (freshCat x) vs) scope
-
-nameItems :: Traversable f => Name -> Env a -> f a -> (f Name, Env a)
-nameItems v env xs = flip runCat env $ forM xs $ \x ->
-                       liftM varName $ freshCat x (v:>())
-
-freshCat :: a -> VarP ann -> Cat (Env a) (VarP ann)
-freshCat x v = do
-  v' <- looks $ rename v
-  extend (v' @> x)
-  return v'
+  | v `isin` env = error $ "Can't rename global array: " ++ show v
+  | otherwise    = v
 
 infixr 7 @>
 
-(@>) :: VarP b -> a -> Env a
-(v:>_) @> x = case v of
-  NoName -> mempty
-  _      -> Env $ M.singleton v x
+(@>) :: HasName a => a -> b -> Env b
+x @> y = case getName x of
+  Nothing -> mempty
+  Just v  -> Env $ M.singleton v y
+
+class HasName a where
+  getName :: a -> Maybe Name
+
+instance HasName Name where
+  getName x = Just x
+
+instance HasName (VarP ann) where
+  getName (v:>_) = Just v
+
+instance HasName (BinderP ann) where
+  getName (Ignore _)    = Nothing
+  getName (Bind (v:>_)) = Just v
 
 -- Note: Env is right-biased, so that we extend envs on the right
 instance Semigroup (Env a) where
@@ -195,12 +194,15 @@ instance Eq (VarP a) where
 -- TODO: this needs to be injective but it's currently not
 -- (needs to figure out acceptable tag strings)
 instance Pretty Name where
-  pretty NoName = "_"
   pretty (Name _ tag n) = pretty (tagToStr tag) <> suffix
             where suffix = case n of 0 -> ""
                                      _ -> pretty n
   pretty (GlobalName tag) = pretty (tagToStr tag)
   pretty (GlobalArrayName i) = "<array " <> pretty i <> ">"
+
+instance Pretty a => Pretty (BinderP a) where
+  pretty (Ignore ann) = "_:" <> pretty ann
+  pretty (Bind (v:>ann)) = pretty v <> ":" <> pretty ann
 
 instance IsString Name where
   fromString s = Name GenName (fromString s) 0
@@ -212,3 +214,4 @@ instance Store Name
 instance Store NameSpace
 instance Store a => Store (VarP a)
 instance Store a => Store (Env a)
+instance Store a => Store (BinderP a)

@@ -140,7 +140,11 @@ instance PrettyPrec Expr where
     nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
 prettyAlt :: Alt -> Doc ann
-prettyAlt (NAbs bs body) = hsep (map (p . varName) bs) <+> "->" <> p body
+prettyAlt (NAbs bs body) = hsep (map prettyBinderNoAnn  bs) <+> "->" <> p body
+
+prettyBinderNoAnn :: BinderP a -> Doc ann
+prettyBinderNoAnn (Ignore _) = "_"
+prettyBinderNoAnn (Bind (v:>_)) = p v
 
 prettyExprDefault :: PrettyPrec e => PrimExpr e -> DocPrec ann
 prettyExprDefault expr =
@@ -235,7 +239,7 @@ instance Pretty ClassName where
 
 instance Pretty Decl where
   pretty decl = case decl of
-    Let _ (NoName:>_) bound -> pLowest bound
+    Let _ (Ignore _) bound -> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
@@ -247,7 +251,7 @@ instance PrettyPrec Atom where
     Var (x:>_)  -> atPrec ArgPrec $ p x
     Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
     Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
-    Pi  (Abs (NoName:>a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
+    Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
     Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
@@ -269,6 +273,7 @@ instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 instance Pretty IType where
   pretty (IRefType t) = "Ref" <+> (parens $ p t)
   pretty (IValType t) = p t
+  pretty IVoidType = "Void"
 
 instance PrettyPrec IType where prettyPrec = atPrec ArgPrec . pretty
 
@@ -281,9 +286,9 @@ instance Pretty ImpFunction where
     <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
 
-prettyStatement :: (Maybe IVar, ImpInstr) -> Doc ann
-prettyStatement (Nothing, instr) = p instr
-prettyStatement (Just b , instr) = p b <+> "=" <+> p instr
+prettyStatement :: (IBinder, ImpInstr) -> Doc ann
+prettyStatement (Ignore _, instr) = p instr
+prettyStatement (b       , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
   pretty (IPrimOp op)            = pLowest op
