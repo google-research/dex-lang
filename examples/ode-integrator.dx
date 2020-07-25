@@ -8,15 +8,7 @@ Time = Real
 def norm (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
 def (./) (x: d=>Real) (y: d=>Real) : d=>Real = for i. x.i / y.i
 
--- Todo: Add this general operation to prelude?  In Jax this is just dot.
-def mydot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v =
-  sum for j. s.j .* vs.j
- 
--- TODO: Replace these with 1e-x when Dex can parse it.
-oneem3 = 0.001
-oneem5 = 0.00001
-oneem6 = 0.000001
-oneem15 = 0.000000000000001
+def dot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v = sum for j. s.j .* vs.j
 
 def fit_4th_order_polynomial (_:VSpace v) ?=>
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
@@ -33,7 +25,7 @@ dps_c_mid = [6025192743.0 / 30085553152.0 / 2.0, 0.0, 51252292925.0 / 6540082159
 
 def interp_fit_dopri (_:VSpace v) ?=> (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
   -- Fit a polynomial to the results of a Runge-Kutta step.
-  z_mid = z0 + dt .* (mydot dps_c_mid k)
+  z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k.(0@_) k.(1@_) dt
 
 def initial_step_size (fun:d=>Real -> Time -> d=>Real) (t0:Time) (z0:d=>Real)
@@ -43,45 +35,55 @@ def initial_step_size (fun:d=>Real -> Time -> d=>Real) (t0:Time) (z0:d=>Real)
   scale = for i. atol + ((abs z0.i) * rtol)
   d0 = norm (z0 ./ scale)
   d1 = norm (f0 ./ scale)
-  h0 = select ((d0 < oneem5) || (d1 < oneem5)) oneem6 (0.01 * (d0 / d1))
+  h0 = select ((d0 < 1.0e-5) || (d1 < 1.0e-5)) 1.0e-6 (0.01 * (d0 / d1))
   z1 = z0 + h0 .* f0
   f1 = fun z1 (t0 + h0)
   d2 = (norm ((f1 - f0) ./ scale)) / h0
-  left = max oneem6 (h0 * oneem3)
+  left = max 1.0e-6 (h0 * 1.0e-3)
   right = pow (0.01 / (d1 + d2)) (1.0 / ((i2r order) + 1.0))
-  h1 = select ((d1 <= oneem15) && (d2 <= oneem15)) left right
+  h1 = select ((d1 <= 1.0e-15) && (d2 <= 1.0e-15)) left right
   min (100.0 * h0) h1
 
 -- Dopri5 Butcher tableaux
 alpha = [1.0 / 5.0, 3.0 / 10.0, 4.0 / 5.0, 8.0 / 9.0, 1., 1.]
--- Todo: convert beta to triangular array.
-beta = [[1.0 / 5.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-       [3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-       [44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0, 0.0],
-       [19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0, 0.0, 0.0, 0.0],
-       [9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0, -5103.0 / 18656.0, 0.0, 0.0],
-       [35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0, 0.0]]
+
+-- Todo: Write as triangular array when concrete syntax supports it.
+beta' = [[1.0 / 5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+       [3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0],
+       [44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0],
+       [19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0, 0.0, 0.0],
+       [9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0, -5103.0 / 18656.0, 0.0],
+       [35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0]]
+
+-- Convert beta to a triangular array.
+beta = for i:(Fin 6). for j:(..i). beta'.i.((ordinal j)@(Fin 6))
+:t beta
+
 c_sol = [35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0, 0.0]
 c_error = [35.0 / 384.0 - 1951.0 / 21600.0, 0.0, 500.0 / 1113.0 - 22642.0 / 50085.0,
                       125.0 / 192.0 - 451.0 / 720.0, -2187.0 / 6784.0 + 12231.0 / 42400.0,
                       11.0 / 84.0 - 649.0 / 6300.0, -1.0 / 60.0]
 
-def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
+def runge_kutta_step (v:Type) ?-> (_:VSpace v) ?=> (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
+  --def runge_kutta_stage (m:Type) -> (k:m=>v) : v =
   runge_kutta_stage = \i k.
+    --i = (size m)@(Fin 6)
     ti = t0 + dt .* alpha.i
-    zi = z0 + dt .* (mydot beta.i k)
+    cur_b = beta.i -- for j:m. beta.i.j
+    zi = z0 + dt .* (dot cur_b k)
     func zi ti
 
   k_init = for i. select (i == (0@_)) f0 zero
 
-  k_filled = snd $ withState k_init \k. for i.
-    ft = runge_kutta_stage i (get k)
+  k_filled = snd $ withState k_init \k. for i:(Fin 6).
+    cur_k = for j:(..i). (get k).j
+    ft = runge_kutta_stage i cur_k
     k!(((ordinal i) + 1)@_) := ft
 
-  z_last =  z0 + dt .* (mydot c_sol   k_filled)
-  z_last_error = dt .* (mydot c_error k_filled)
+  z_last =  z0 + dt .* (dot c_sol   k_filled)
+  z_last_error = dt .* (dot c_error k_filled)
   f_last = k_filled.(6@_)
   (z_last, f_last, z_last_error, k_filled)
 
