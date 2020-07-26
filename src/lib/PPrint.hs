@@ -107,6 +107,7 @@ instance PrettyPrec BaseType where
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
+    CharType -> "Char"
     IntType  -> "Int"
     BoolType -> "Bool"
     RealType -> "Real"
@@ -117,6 +118,7 @@ printDouble x = p (double2Float x)
 
 instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
+  prettyPrec (CharLit x) = atPrec ArgPrec $ p $ show x
   prettyPrec (IntLit  x) = atPrec ArgPrec $ p x
   prettyPrec (RealLit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (StrLit  x) = atPrec ArgPrec $ p x

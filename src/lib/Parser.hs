@@ -175,6 +175,7 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uTabCon
          <|> uVarOcc
          <|> uHole
+         <|> uString
          <|> uLit
          <|> uPiType
          <|> uLamExpr
@@ -193,11 +194,18 @@ containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
 uType :: Parser UType
 uType = expr
 
+uString :: Lexer UExpr
+uString = do
+  (s, pos) <- withPos $ strLit
+  let cs = map (WithSrc pos . UPrimExpr . ConExpr . Lit . CharLit) s
+  return $ WithSrc pos $ UTabCon cs Nothing
+
 uLit :: Parser UExpr
 uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
 
 litVal :: Parser LitVal
-litVal =   (IntLit  <$> intLit)
+litVal =   (CharLit <$> charLit)
+       <|> (IntLit  <$> intLit)
        <|> (RealLit <$> doubleLit)
        <?> "literal"
 
@@ -637,6 +645,12 @@ keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar
+
+charLit :: Lexer Char
+charLit = lexeme $ char '\'' >> L.charLiteral <* char '\''
+
+strLit :: Lexer String
+strLit = lexeme $ char '"' >> manyTill L.charLiteral (char '"')
 
 intLit :: Lexer Int
 intLit = lexeme $ try $ L.decimal <* notFollowedBy (char '.')

@@ -637,6 +637,7 @@ checkAction effName f = do
 
 litType :: LitVal -> BaseType
 litType v = case v of
+  CharLit _ -> Scalar CharType
   IntLit  _ -> Scalar IntType
   RealLit _ -> Scalar RealType
   StrLit  _ -> Scalar StrType

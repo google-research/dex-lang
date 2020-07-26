@@ -17,6 +17,7 @@ import Control.Monad
 import qualified Data.Vector.Storable as V
 import Data.Maybe (fromJust)
 import Data.Store (Store)
+import Data.Word
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
@@ -26,18 +27,20 @@ data Array    = Array    BaseType  Vec       deriving (Show, Eq, Generic)
 data ArrayRef = ArrayRef ArrayType (Ptr ())  deriving (Show, Eq, Generic)
 
 data LitVal = IntLit  Int
+            | CharLit Char
             | RealLit Double
             | BoolLit Bool
             | StrLit  String
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Generic)
 
-data Vec = IntVec    (V.Vector Int)
+data Vec = CharVec   (V.Vector Word8)
+         | IntVec    (V.Vector Int)
          | BoolVec   (V.Vector Int)
          | RealVec   (V.Vector Double)
            deriving (Show, Eq, Generic)
 
-data ScalarBaseType = IntType | BoolType | RealType | StrType
+data ScalarBaseType = IntType | BoolType | RealType | StrType | CharType
                       deriving (Show, Eq, Generic)
 data BaseType = Scalar ScalarBaseType
               | Vector ScalarBaseType
@@ -71,6 +74,7 @@ scalarFromArray arr@(Array b vec) = case arrayLength arr of
   where
     scalarFromVec :: Vec -> LitVal
     scalarFromVec v = case v of
+      CharVec   xs -> CharLit $ toEnum $ fromIntegral $ xs V.! 0
       IntVec    xs -> IntLit  $ xs V.! 0
       BoolVec   xs -> BoolLit $ xs V.! 0 /= 0
       RealVec   xs -> RealLit $ xs V.! 0
@@ -111,6 +115,7 @@ loadArray (ArrayRef (size, b) ptr) = Array b <$> case b of
   where
     loadVec :: ScalarBaseType -> Int -> IO Vec
     loadVec sb width = case sb of
+      CharType -> liftM CharVec $ peekVec (size * width) $ castPtr ptr
       IntType  -> liftM IntVec  $ peekVec (size * width) $ castPtr ptr
       BoolType -> liftM BoolVec $ peekVec (size * width) $ castPtr ptr
       RealType -> liftM RealVec $ peekVec (size * width) $ castPtr ptr
@@ -132,13 +137,15 @@ unsafeWithArrayPointer arr f = applyVec arr (\v -> V.unsafeWith v (f. castPtr))
 
 modifyVec :: Vec -> (forall a. Storable a => V.Vector a -> V.Vector a) -> Vec
 modifyVec vec f = case vec of
-  IntVec v  -> IntVec  $ f v
+  CharVec v -> CharVec $ f v
+  IntVec  v -> IntVec  $ f v
   BoolVec v -> BoolVec $ f v
   RealVec v -> RealVec $ f v
 
 applyVec :: Array -> (forall a. Storable a => V.Vector a -> b) -> b
 applyVec (Array _ vec) f = case vec of
-  IntVec v  -> f v
+  CharVec v -> f v
+  IntVec  v -> f v
   BoolVec v -> f v
   RealVec v -> f v
 

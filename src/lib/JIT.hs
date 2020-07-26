@@ -531,6 +531,7 @@ compileExpr expr = case expr of
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
+  CharLit x ->  L.ConstantOperand $ C.Int 8 $ fromIntegral $ fromEnum x
   IntLit  x -> litInt x
   RealLit x -> litReal x
   BoolLit True  -> litInt 1
@@ -544,7 +545,7 @@ litVal lit = case lit of
   StrLit _ -> error "Not implemented"
 
 litInt :: Int -> Operand
-litInt x = L.ConstantOperand $ C.Int 64 (fromIntegral x)
+litInt x = L.ConstantOperand $ C.Int 64 $ fromIntegral x
 
 litReal :: Double -> Operand
 litReal x = L.ConstantOperand $ C.Float $ L.Double x
@@ -629,6 +630,7 @@ emitVoidExternCall f xs = do
 scalarTy :: BaseType -> L.Type
 scalarTy b = case b of
   Scalar sb -> case sb of
+    CharType -> charTy
     IntType  -> longTy
     RealType -> realTy
     BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
@@ -748,6 +750,9 @@ freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
 
 longTy :: L.Type
 longTy = i64
+
+charTy :: L.Type
+charTy = i8
 
 realTy :: L.Type
 realTy = fp64
