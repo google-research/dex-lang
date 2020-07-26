@@ -487,7 +487,7 @@ typeCheckOp op = case op of
     where (ty, outTy) = unOpType unop
   Select p x y -> do
     p|:BoolTy
-    ty <- typeCheck x
+    ty@(BaseTy _) <- typeCheck x
     y |:ty
     return ty
   IntAsIndex ty i -> ty|:TyKind >> i|:IntTy $> ty

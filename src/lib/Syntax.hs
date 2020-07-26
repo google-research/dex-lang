@@ -1200,7 +1200,6 @@ builtinNames = M.fromList
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("asidx"       , OpExpr $ IntAsIndex () ())
-  , ("select"      , OpExpr $ Select () () ())
   , ("throwError" , OpExpr $ ThrowError ())
   , ("ask"        , OpExpr $ PrimEffect () $ MAsk)
   , ("tell"       , OpExpr $ PrimEffect () $ MTell ())

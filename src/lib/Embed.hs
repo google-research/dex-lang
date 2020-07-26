@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, selectAt, substEmbed, substEmbedR, emitUnpack,
+              select, substEmbed, substEmbedR, emitUnpack,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -187,9 +187,6 @@ zeroAt ty = case ty of
 
 addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
 addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
-
-selectAt :: MonadEmbed m => Type -> Atom -> Atom -> Atom -> m Atom
-selectAt ty p xs ys = mapScalars (\_ [x, y] -> select p x y) ty [xs, ys]
 
 sumAt :: MonadEmbed m => Type -> [Atom] -> m Atom
 sumAt ty [] = return $ zeroAt ty

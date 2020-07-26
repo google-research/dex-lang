@@ -181,7 +181,6 @@ simplifyOp op = case op of
   Snd (PairVal _ y) -> return y
   SumGet (SumVal _ l r) left -> return $ if left then l else r
   SumTag (SumVal s _ _) -> return $ s
-  Select p x y -> selectAt (getType x) p x y
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom

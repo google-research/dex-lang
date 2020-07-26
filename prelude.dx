@@ -101,9 +101,9 @@ def Left  (x:a) : (a|b) = sumCon True  x      anyVal
 def Right (x:b) : (a|b) = sumCon False anyVal x
 def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
 
-def select (p:Bool) (x:a) (y:a) : a =
-  p' = unsafeCoerce InternalBool p
-  %select p' x y
+def select (p:Bool) (x:a) (y:a) : a = case p of
+  True  -> x
+  False -> y
 
 def b2i (x:Bool) : Int  =
   x' = unsafeCoerce InternalBool x
@@ -344,10 +344,8 @@ def randnVec (n:Type) ?-> (k:Key) : n=>Real =
 
 'min / max etc
 
-def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a =
-  select ((f x) < (f y)) x y
-def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a =
-  select ((f x) > (f y)) x y
+def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
 
 def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
 def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
