@@ -1,0 +1,156 @@
+<!DOCTYPE HTML>
+<html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">IntReal</span> <span class="symbol">=</span>
+  <span class="type-name">MkIntReal</span> <span class="type-name">Int</span> <span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">case</span> <span class="type-name">MkIntReal</span> 1 2<span class="symbol">.</span>3 <span class="keyword">of</span>
+    <span class="type-name">MkIntReal</span> x y <span class="symbol">-&gt;</span> (x<span class="symbol">,</span> y)
+</div><div class="result-block">(1, 2.3)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">MyPair</span> a<span class="symbol">:</span><span class="type-name">Type</span> b<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+   <span class="type-name">MkMyPair</span> a b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">z <span class="symbol">=</span> <span class="type-name">MkMyPair</span> 1 2<span class="symbol">.</span>3
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> z
+</div><div class="result-block">MkMyPair 1 2.3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:t</span> z
+</div><div class="result-block">(MyPair Int Real)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">case</span> z <span class="keyword">of</span>
+    <span class="type-name">MkMyPair</span> x y <span class="symbol">-&gt;</span> (x<span class="symbol">,</span> y)
+</div><div class="result-block">(1, 2.3)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">Dual</span> a<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+   <span class="type-name">MkDual</span> a a
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  d <span class="symbol">=</span> <span class="type-name">MkDual</span> 1 2
+  <span class="keyword">case</span> d <span class="keyword">of</span>
+    <span class="type-name">MkDual</span> x y <span class="symbol">-&gt;</span> (x<span class="symbol">,</span> y)
+</div><div class="result-block">(1, 2)</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 3)<span class="symbol">.</span> <span class="type-name">MkMyPair</span> (ordinal i) (ordinal i <span class="symbol">+</span> 1)
+</div><div class="result-block">[MkMyPair 0 1, MkMyPair 1 2, MkMyPair 2 3]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">zz <span class="symbol">=</span> <span class="type-name">MkMyPair</span> 1 (<span class="type-name">MkMyPair</span> <span class="type-name">True</span> 2<span class="symbol">.</span>3)
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">MkMyPair</span> z1 (<span class="type-name">MkMyPair</span> z2 z3)) <span class="symbol">=</span> zz
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> (z1<span class="symbol">,</span> z2<span class="symbol">,</span> z3)
+</div><div class="result-block">(1, (True, 2.3))</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  tabOfPairs <span class="symbol">=</span> <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 3)<span class="symbol">.</span> <span class="type-name">MkMyPair</span> (ordinal i) (ordinal i <span class="symbol">+</span> 1)
+  <span class="keyword">for</span> i<span class="symbol">.</span>
+   <span class="keyword">case</span> tabOfPairs<span class="symbol">.</span>i <span class="keyword">of</span>
+     <span class="comment">-- TODO: investigate shadowing bug if we call these a and b
+</span>     <span class="type-name">MkMyPair</span> x y <span class="symbol">-&gt;</span> (x <span class="symbol">+</span> y<span class="symbol">,</span> y)
+</div><div class="result-block">[(1, 1), (3, 2), (5, 3)]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">MyEither</span> a<span class="symbol">:</span><span class="type-name">Type</span> b<span class="symbol">:</span><span class="type-name">Type</span> <span class="symbol">=</span>
+  <span class="type-name">MyLeft</span>  a
+  <span class="type-name">MyRight</span> b
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">x <span class="symbol">:</span> <span class="type-name">MyEither</span> <span class="type-name">Int</span> <span class="type-name">Real</span> <span class="symbol">=</span> <span class="type-name">MyLeft</span> 1
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x
+</div><div class="result-block">MyLeft 1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  (<span class="type-name">MyLeft</span> x&#39;) <span class="symbol">=</span> x
+  x
+</div><div class="err-block">Type error:sum type constructor in can&#39;t-fail pattern
+
+  (MyLeft x&#39;) = x
+   ^^^^^^^^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="keyword">case</span> x <span class="keyword">of</span>
+    <span class="type-name">MyLeft</span>  val <span class="symbol">-&gt;</span> val
+    <span class="type-name">MyRight</span> val <span class="symbol">-&gt;</span> floor val
+</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- %passes imp
+</span></div></div><div class="cell"><div class="code-block">myTab <span class="symbol">=</span> [<span class="type-name">MyLeft</span> 1<span class="symbol">,</span> <span class="type-name">MyRight</span> 3<span class="symbol">.</span>5<span class="symbol">,</span> <span class="type-name">MyLeft</span> 123<span class="symbol">,</span> <span class="type-name">MyLeft</span> 456]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> myTab
+</div><div class="result-block">[(MyLeft 1), (MyRight 3.5), (MyLeft 123), (MyLeft 456)]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+  <span class="type-name">MyLeft</span>  val <span class="symbol">-&gt;</span> val
+  <span class="type-name">MyRight</span> val <span class="symbol">-&gt;</span> floor val
+</div><div class="result-block">[1, 3, 123, 456]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- check order independence
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+  <span class="type-name">MyRight</span> val <span class="symbol">-&gt;</span> floor val
+  <span class="type-name">MyLeft</span>  val <span class="symbol">-&gt;</span> val
+</div><div class="result-block">[1, 3, 123, 456]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- test non-exhaustive patterns
+</span></div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+  <span class="type-name">MyLeft</span>  val <span class="symbol">-&gt;</span> val
+</div><div class="err-block">Runtime error</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+  <span class="type-name">MyLeft</span>  val <span class="symbol">-&gt;</span> val
+  <span class="type-name">MyRight</span> _   <span class="symbol">-&gt;</span> todo
+</div><div class="err-block">Runtime error</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+      <span class="type-name">MyLeft</span> tmp <span class="symbol">-&gt;</span> ()
+      <span class="type-name">MyRight</span> val <span class="symbol">-&gt;</span> ref <span class="symbol">+=</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> val
+</div><div class="result-block">4.5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  <span class="comment">-- check that the order of the case alternatives doesn&#39;t matter
+</span>  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> myTab<span class="symbol">.</span>i <span class="keyword">of</span>
+      <span class="type-name">MyRight</span> val <span class="symbol">-&gt;</span> ref <span class="symbol">+=</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> val
+      <span class="type-name">MyLeft</span> tmp <span class="symbol">-&gt;</span> ()
+</div><div class="result-block">4.5</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">ThreeCases</span> <span class="symbol">=</span>
+  <span class="type-name">TheEmptyCase</span>
+  <span class="type-name">TheIntCase</span> <span class="type-name">Int</span>
+  <span class="type-name">ThePairCase</span> <span class="type-name">Int</span> <span class="type-name">Real</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">threeCaseTab <span class="symbol">:</span> (<span class="type-name">Fin</span> 4)<span class="symbol">=&gt;</span><span class="type-name">ThreeCases</span> <span class="symbol">=</span>
+  [<span class="type-name">TheIntCase</span> 3<span class="symbol">,</span> <span class="type-name">TheEmptyCase</span><span class="symbol">,</span> <span class="type-name">ThePairCase</span> 2 0<span class="symbol">.</span>1<span class="symbol">,</span> <span class="type-name">TheEmptyCase</span>]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> threeCaseTab
+</div><div class="result-block">[(TheIntCase 3), TheEmptyCase, (ThePairCase 2 0.1), TheEmptyCase]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  snd <span class="symbol">$</span> withAccum <span class="symbol">\</span>ref<span class="symbol">.</span>
+    <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> threeCaseTab<span class="symbol">.</span>i <span class="keyword">of</span>
+      <span class="type-name">TheEmptyCase</span>    <span class="symbol">-&gt;</span> ref <span class="symbol">+=</span> 1000<span class="symbol">.</span>0
+      <span class="type-name">ThePairCase</span> x y <span class="symbol">-&gt;</span> ref <span class="symbol">+=</span>  100<span class="symbol">.</span>0 <span class="symbol">+</span> y <span class="symbol">+</span> i2r x
+      <span class="type-name">TheIntCase</span> x    <span class="symbol">-&gt;</span> ref <span class="symbol">+=</span>   10<span class="symbol">.</span>0 <span class="symbol">+</span> i2r (x <span class="symbol">*</span> 2)
+</div><div class="result-block">2118.1</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="keyword">data</span> <span class="type-name">MyIntish</span> <span class="symbol">=</span> <span class="type-name">MkIntish</span> <span class="type-name">Int</span>
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> <span class="keyword">case</span> <span class="type-name">MkIntish</span> 1 <span class="keyword">of</span> <span class="type-name">MkIntish</span> x <span class="symbol">-&gt;</span> x
+</div><div class="result-block">1</div></div><div class="cell"><div class="code-block">
+
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  f <span class="symbol">:</span> <span class="type-name">MyPair</span> <span class="type-name">Int</span> <span class="type-name">Real</span> <span class="symbol">-&gt;</span> <span class="type-name">Int</span> <span class="symbol">=</span>
+    <span class="symbol">\</span>(<span class="type-name">MkMyPair</span> x y)<span class="symbol">.</span> x <span class="symbol">+</span> floor y
+  f (<span class="type-name">MkMyPair</span> 1 2<span class="symbol">.</span>3)
+</div><div class="result-block">3</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  pairs <span class="symbol">=</span> [<span class="type-name">MkMyPair</span> 2 z<span class="symbol">,</span>  <span class="type-name">MkMyPair</span> 2 (<span class="type-name">MkMyPair</span> 4 3<span class="symbol">.</span>4)]
+  <span class="keyword">for</span> i<span class="symbol">.</span>
+    (<span class="type-name">MkMyPair</span> x (<span class="type-name">MkMyPair</span> y z)) <span class="symbol">=</span> pairs<span class="symbol">.</span>i
+    x <span class="symbol">+</span> y <span class="symbol">+</span> floor z
+</div><div class="result-block">[5, 9]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  xs <span class="symbol">=</span> [<span class="type-name">MyLeft</span> 1<span class="symbol">.</span>0<span class="symbol">,</span> <span class="type-name">MyLeft</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> <span class="type-name">MyRight</span> (<span class="type-name">MkMyPair</span> 3 4<span class="symbol">.</span>0)]
+  <span class="keyword">for</span> i<span class="symbol">.</span> <span class="keyword">case</span> xs<span class="symbol">.</span>i <span class="keyword">of</span>
+    <span class="type-name">MyLeft</span> x <span class="symbol">-&gt;</span> floor x
+    <span class="type-name">MyRight</span> (<span class="type-name">MkMyPair</span> x y) <span class="symbol">-&gt;</span> x <span class="symbol">+</span> floor y
+</div><div class="result-block">[1, 2, 7]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">xsList <span class="symbol">=</span> <span class="type-name">AsList</span> _ [1<span class="symbol">,</span>2<span class="symbol">,</span>3]
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  (<span class="type-name">AsList</span> _ xsTab) <span class="symbol">=</span> xsList
+  sum xsTab
+</div><div class="result-block">6</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">(<span class="type-name">AsList</span> _ xsTab) <span class="symbol">=</span> xsList
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> xsTab
+</div><div class="result-block">[1, 2, 3]</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
+  xs <span class="symbol">=</span> <span class="type-name">AsList</span> _ [1<span class="symbol">,</span>2<span class="symbol">,</span>3]
+  ys <span class="symbol">=</span> <span class="type-name">AsList</span> _ [4<span class="symbol">,</span>5]
+  (<span class="type-name">AsList</span> _ ans) <span class="symbol">=</span> xs <span class="symbol">&lt;&gt;</span> ys
+  sum ans
+</div><div class="result-block">15</div></div></div></body></html>

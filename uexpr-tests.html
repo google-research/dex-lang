@@ -1,6 +1,6 @@
 <!DOCTYPE HTML>
 <html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> iadd 3 (iadd 4 5)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 3 <span class="symbol">+</span> (4 <span class="symbol">+</span> 5)
 </div><div class="result-block">12</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> depId (a<span class="symbol">:</span><span class="type-name">Type</span>) (x<span class="command">:a</span>) <span class="symbol">:</span> a <span class="symbol">=</span> x
 </div></div><div class="cell"><div class="code-block">
@@ -40,26 +40,30 @@ Expected: Real
 :p 1.0 + 1
          ^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> iadd 1 (1<span class="symbol">.</span>0 <span class="symbol">+</span> 2<span class="symbol">.</span>0)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1 <span class="symbol">+</span> (1<span class="symbol">.</span>0 <span class="symbol">+</span> 2<span class="symbol">.</span>0)
 </div><div class="err-block">Type error:
 Expected: Int
   Actual: Real
 
-:p iadd 1 (1.0 + 2.0)
-           ^^^^^^^^^
+:p 1 + (1.0 + 2.0)
+        ^^^^^^^^^
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> (iadd 2 3)
+</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> 1<span class="symbol">.</span>0 <span class="symbol">+</span> (2 <span class="symbol">+</span> 3)
 </div><div class="err-block">Type error:
 Expected: Real
   Actual: Int
 
-:p 1.0 + (iadd 2 3)
-          ^^^^^^^^
+:p 1.0 + (2 + 3)
+          ^^^^^
 </div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> x <span class="symbol">+</span> x
-</div><div class="err-block">Error: variable not in scope: x</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block">iadd <span class="symbol">=</span> 1
-</div><div class="err-block">Error: variable already defined: iadd</div></div><div class="cell"><div class="code-block">
+</div><div class="err-block">Error: variable not in scope: x
+
+:p x + x
+   ^^
+</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">idiv <span class="symbol">=</span> 1
+</div><div class="err-block">Error: variable already defined: idiv</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> <span class="type-name">TyId</span> (a<span class="symbol">:</span><span class="type-name">Type</span>) <span class="symbol">:</span> <span class="type-name">Type</span> <span class="symbol">=</span> a
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
   x<span class="symbol">:</span>(<span class="type-name">TyId</span> <span class="type-name">Int</span>) <span class="symbol">=</span> 1
@@ -84,13 +88,13 @@ Expected: Real
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
    snd <span class="symbol">$</span> withState 2 <span class="symbol">\</span>s<span class="symbol">.</span>
      x <span class="symbol">=</span> get s
-     s <span class="symbol">:=</span> iadd x 3
+     s <span class="symbol">:=</span> x <span class="symbol">+</span> 3
 </div><div class="result-block">5</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
    snd <span class="symbol">$</span> withState 1 <span class="symbol">\</span>s<span class="symbol">.</span>
      <span class="keyword">for</span> i<span class="symbol">:</span>(<span class="type-name">Fin</span> 10)<span class="symbol">.</span>
        x <span class="symbol">=</span> get s
-       s <span class="symbol">:=</span> iadd x x
+       s <span class="symbol">:=</span> x <span class="symbol">+</span> x
 </div><div class="result-block">1024</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
  x<span class="symbol">:</span><span class="type-name">Unit</span> <span class="symbol">=</span> ()
@@ -187,10 +191,12 @@ Expected: (a &amp; b)
      <span class="symbol">\</span>x<span class="symbol">.</span> 2<span class="symbol">.</span>0 <span class="symbol">*</span> (x <span class="symbol">+</span> x)
    transposeLinear f 1<span class="symbol">.</span>0
 </div><div class="result-block">4.0</div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> transpose&#39; (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">--</span>o <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="comment">-- FIXME: This fails due to shadowing!
+</span></div></div><div class="cell"><div class="code-block"><span class="symbol">--</span><span class="keyword">def</span> transpose&#39; (x<span class="command">:n</span><span class="symbol">=&gt;</span>m<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">--</span>o <span class="symbol">:</span> m<span class="symbol">=&gt;</span>n<span class="symbol">=&gt;</span><span class="type-name">Real</span> <span class="symbol">=</span> <span class="keyword">for</span> i j<span class="symbol">.</span> x<span class="symbol">.</span>j<span class="symbol">.</span>i
+</div></div><div class="cell"><div class="code-block"><span class="symbol">--</span>
+</div></div><div class="cell"><div class="code-block"><span class="symbol">--:</span>p transposeLinear transpose&#39; [[1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3<span class="symbol">.</span>0]]
+</div></div><div class="cell"><div class="code-block"><span class="symbol">--&gt;</span> [[1<span class="symbol">.</span>0]<span class="symbol">,</span> [2<span class="symbol">.</span>0]<span class="symbol">,</span> [3<span class="symbol">.</span>0]]
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="command">:p</span> transposeLinear transpose&#39; [[1<span class="symbol">.</span>0<span class="symbol">,</span> 2<span class="symbol">.</span>0<span class="symbol">,</span> 3<span class="symbol">.</span>0]]
-</div><div class="result-block">[[1.0], [2.0], [3.0]]</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span>
    f <span class="symbol">:</span> <span class="type-name">Real</span> <span class="symbol">--</span>o (<span class="type-name">Fin</span> 3<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span>
      <span class="symbol">\</span>x<span class="symbol">.</span> <span class="keyword">for</span> i<span class="symbol">.</span> x <span class="symbol">*</span> 2<span class="symbol">.</span>0
@@ -198,7 +204,7 @@ Expected: (a &amp; b)
 </div><div class="result-block">12.0</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">id&#39;&#39; <span class="symbol">:</span> b <span class="symbol">-&gt;</span> b <span class="symbol">=</span> id
 </div></div><div class="cell"><div class="code-block">
-</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eitherFloor (x<span class="symbol">:</span>(<span class="type-name">Int</span><span class="symbol">|</span><span class="type-name">Real</span>)) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">case</span> x
+</div></div><div class="cell"><div class="code-block"><span class="keyword">def</span> eitherFloor (x<span class="symbol">:</span>(<span class="type-name">Int</span><span class="symbol">|</span><span class="type-name">Real</span>)) <span class="symbol">:</span> <span class="type-name">Int</span> <span class="symbol">=</span> <span class="keyword">oldcase</span> x
   <span class="type-name">Left</span>  i <span class="symbol">-&gt;</span> i
   <span class="type-name">Right</span> f <span class="symbol">-&gt;</span> floor f
 </div></div><div class="cell"><div class="code-block">

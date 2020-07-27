@@ -56,8 +56,7 @@
 </span>      <span class="symbol">:</span> (d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span>
     np <span class="symbol">=</span> <span class="type-name">Fin</span> np&#39;
     optStep <span class="symbol">=</span> <span class="symbol">\</span>(keyL<span class="symbol">,</span> gbest<span class="symbol">,</span> pbests<span class="symbol">,</span> positions<span class="symbol">,</span> velocities)<span class="symbol">.</span>
-        newPositions<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
-            positions<span class="symbol">.</span>p<span class="symbol">.</span>i <span class="symbol">+</span> velocities<span class="symbol">.</span>p<span class="symbol">.</span>i
+        newPositions<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span> positions <span class="symbol">+</span> velocities
         newPbests<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>(<span class="type-name">Real</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Real</span>)) <span class="symbol">=</span> <span class="keyword">for</span> p<span class="symbol">.</span>
             minbyfst pbests<span class="symbol">.</span>p (f newPositions<span class="symbol">.</span>p<span class="symbol">,</span> newPositions<span class="symbol">.</span>p)
         newGbest<span class="symbol">:</span>(<span class="type-name">Real</span> <span class="symbol">&amp;</span> d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span>
@@ -73,8 +72,7 @@
             weight <span class="symbol">=</span> rand <span class="symbol">$</span> (ixkey2 keyP p i)
             dir <span class="symbol">=</span> plocs<span class="symbol">.</span>p<span class="symbol">.</span>i <span class="symbol">-</span> positions<span class="symbol">.</span>p<span class="symbol">.</span>i
             weight <span class="symbol">*</span> dir
-        newVelocities<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span> <span class="keyword">for</span> p i<span class="symbol">.</span>
-            momentum<span class="symbol">*</span>velocities<span class="symbol">.</span>p<span class="symbol">.</span>i <span class="symbol">+</span> gRate<span class="symbol">*</span>gVel<span class="symbol">.</span>p<span class="symbol">.</span>i <span class="symbol">+</span> pRate<span class="symbol">*</span>gVel<span class="symbol">.</span>p<span class="symbol">.</span>i
+        newVelocities<span class="symbol">:</span>(np<span class="symbol">=&gt;</span>d<span class="symbol">=&gt;</span><span class="type-name">Real</span>) <span class="symbol">=</span> momentum <span class="symbol">.*</span> velocities <span class="symbol">+</span> gRate <span class="symbol">.*</span> gVel <span class="symbol">+</span> pRate <span class="symbol">.*</span> gVel
         (keyNext<span class="symbol">,</span>newGbest<span class="symbol">,</span>newPbests<span class="symbol">,</span>newPositions<span class="symbol">,</span>newVelocities)
     randInit1 <span class="symbol">=</span> <span class="symbol">\</span>keyI1<span class="symbol">.</span> randBounded keyI1 lb ub
     randInit  <span class="symbol">=</span> <span class="symbol">\</span>keyI<span class="symbol">.</span> <span class="keyword">for</span> p<span class="command">:np</span><span class="symbol">.</span> randInit1 <span class="symbol">$</span> ixkey keyI p

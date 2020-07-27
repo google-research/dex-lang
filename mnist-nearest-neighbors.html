@@ -1,13 +1,7 @@
 <!DOCTYPE HTML>
 <html><head><link rel="stylesheet" href="style.css" type="text/css"><meta charset="UTF-8"></head><body><div id="main-output"><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">load dxbo &quot;scratch<span class="symbol">/</span>mnist<span class="symbol">.</span>dxbo&quot; as mnist
-</div><div class="err-block">Compiler bug!
-Please report this at github.com/google-research/dex-lang/issues
-
-Prelude.undefined
-CallStack (from HasCallStack):
-  error, called at libraries/base/GHC/Err.hs:78:14 in base:GHC.Err
-  undefined, called at src/lib/Parser.hs:155:11 in dex-0.1.0.0-HJSwFDIBGLApX0gaH8Fs9:Parser</div></div><div class="cell"><div class="code-block">
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="command">:t</span> mnist
 </div><div class="err-block">Error: variable not in scope: mnist</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- TODO: these should come from the data set itself
@@ -20,9 +14,13 @@ type <span class="type-name">NTest</span>  <span class="symbol">=</span> 10000
 7 | type Img = 28=&gt;28=&gt;Real
   |          ^^
 unexpected &quot;= &quot;
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;-&#39;, &#39;.&#39;, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">(xsTrain<span class="symbol">,</span> ysTrain<span class="symbol">,</span> xsTest<span class="symbol">,</span> ysTest) <span class="symbol">=</span> mnist
-</div><div class="err-block">Error: variable not in scope: mnist</div></div><div class="cell"><div class="code-block">
+</div><div class="err-block">Error: variable not in scope: mnist
+
+(xsTrain, ysTrain, xsTest, ysTest) = mnist
+                                     ^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block">findNearestNeighbor <span class="symbol">:</span> (a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> <span class="type-name">Real</span>) <span class="symbol">-&gt;</span> n<span class="symbol">=&gt;</span>a <span class="symbol">-&gt;</span> a <span class="symbol">-&gt;</span> n
 findNearestNeighbor metric xs x <span class="symbol">=</span>
   distances<span class="symbol">.</span>i <span class="symbol">=</span> metric xs<span class="symbol">.</span>i x
@@ -33,7 +31,7 @@ findNearestNeighbor metric xs x <span class="symbol">=</span>
 13 | findNearestNeighbor : (a -&gt; a -&gt; Real) -&gt; n=&gt;a -&gt; a -&gt; n
    |                                                         ^
 unexpected newline
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;-&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">imgDistance <span class="symbol">:</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Img</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span>
 imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</span> (i<span class="symbol">,</span>j)<span class="symbol">.</span> sq (x<span class="symbol">.</span>i<span class="symbol">.</span>j <span class="symbol">-</span> y<span class="symbol">.</span>i<span class="symbol">.</span>j)
 
@@ -42,7 +40,7 @@ imgDistance x y <span class="symbol">=</span> sum <span class="keyword">for</spa
 18 | imgDistance : Img -&gt; Img -&gt; Real
    |                                 ^
 unexpected newline
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;-&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">fracTrue <span class="symbol">:</span> n<span class="symbol">=&gt;</span><span class="type-name">Bool</span> <span class="symbol">-&gt;</span> <span class="type-name">Real</span>
 fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> i<span class="symbol">.</span> real (b2i xs<span class="symbol">.</span>i)
 
@@ -51,36 +49,44 @@ fracTrue xs <span class="symbol">=</span> mean <span class="keyword">for</span> 
 21 | fracTrue : n=&gt;Bool -&gt; Real
    |                           ^
 unexpected newline
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;-&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, backquoted name, expression, or infix operator
-</div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx @<span class="type-name">NTest</span> 123
-<span class="command">:plotmat</span> xsTest<span class="symbol">.</span>example
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, backquoted name, expression, or infix operator
+</div></div><div class="cell"><div class="code-block">example <span class="symbol">=</span> asidx <span class="symbol">@</span><span class="type-name">NTest</span> 123
+</div><div class="err-block">Type error:
+Expected: Int
+  Actual: (Int -&gt; a)
+(Solving for: [a:Type])
 
-</div><div class="err-block">Parse error:24:17:
-   |
-24 | example = asidx @NTest 123
-   |                 ^^
-unexpected &quot;@N&quot;
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;-&#39;, &#39;.&#39;, backquoted name, end of line, expression, or infix operator
+example = asidx @NTest 123
+          ^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTest<span class="symbol">.</span>example
+</div><div class="err-block">Error: variable not in scope: xsTest
+
+:plotmat xsTest.example
+         ^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- look at closest match in the training set
 </span></div></div><div class="cell"><div class="code-block">closest <span class="symbol">=</span> findNearestNeighbor imgDistance xsTrain (xsTest<span class="symbol">.</span>example)
-</div><div class="err-block">Error: variable not in scope: example,
-findNearestNeighbor,
-imgDistance,
-xsTest,
-xsTrain</div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTrain<span class="symbol">.</span>closest
-</div><div class="err-block">Error: variable not in scope: closest,
-xsTrain</div></div><div class="cell"><div class="code-block">
+</div><div class="err-block">Error: variable not in scope: findNearestNeighbor
+
+closest = findNearestNeighbor imgDistance xsTrain (xsTest.example)
+          ^^^^^^^^^^^^^^^^^^^^
+</div></div><div class="cell"><div class="code-block"><span class="command">:plotmat</span> xsTrain<span class="symbol">.</span>closest
+</div><div class="err-block">Error: variable not in scope: xsTrain
+
+:plotmat xsTrain.closest
+         ^^^^^^^
+</div></div><div class="cell"><div class="code-block">
 </div></div><div class="cell"><div class="code-block"><span class="comment">-- Make a subset of the test set (evaluating a single test example takes ~80ms)
 </span></div></div><div class="cell"><div class="code-block">type <span class="type-name">NTestSmall</span> <span class="symbol">=</span> 1000
-xsTest&#39; <span class="symbol">=</span> slice @<span class="type-name">NTestSmall</span> xsTest 0
-ysTest&#39; <span class="symbol">=</span> slice @<span class="type-name">NTestSmall</span> ysTest 0
+xsTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> xsTest 0
+ysTest&#39; <span class="symbol">=</span> slice <span class="symbol">@</span><span class="type-name">NTestSmall</span> ysTest 0
 
 </div><div class="err-block">Parse error:32:17:
    |
 32 | type NTestSmall = 1000
    |                 ^^
 unexpected &quot;= &quot;
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;-&#39;, &#39;.&#39;, backquoted name, end of line, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;.&#39;, arrow, backquoted name, end of line, expression, or infix operator
 </div></div><div class="cell"><div class="code-block">closestTrainExample <span class="symbol">:</span> <span class="type-name">NTestSmall</span> <span class="symbol">=&gt;</span> <span class="type-name">NTrain</span>
 closestTrainExample<span class="symbol">.</span>i <span class="symbol">=</span> findNearestNeighbor imgDistance xsTrain xsTest&#39;<span class="symbol">.</span>i
 
@@ -89,9 +95,10 @@ closestTrainExample<span class="symbol">.</span>i <span class="symbol">=</span> 
 36 | closestTrainExample : NTestSmall =&gt; NTrain
    |                                           ^
 unexpected newline
-expecting &quot;--o&quot;, &quot;-&gt;&quot;, &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;-&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, backquoted name, expression, or infix operator
+expecting &quot;..&quot;, &quot;..&lt;&quot;, &quot;&lt;..&quot;, &quot;&lt;..&lt;&quot;, &quot;=&gt;&quot;, &#39;$&#39;, &#39;&#39;&#39;, &#39;.&#39;, &#39;=&#39;, &#39;_&#39;, alphanumeric character, arrow, expression, or infix operator
 </div></div><div class="cell"><div class="code-block"><span class="command">:p</span> fracTrue <span class="keyword">for</span> i<span class="symbol">.</span> ysTrain<span class="symbol">.</span>(closestTrainExample<span class="symbol">.</span>i) <span class="symbol">==</span> ysTest&#39;<span class="symbol">.</span>i
-</div><div class="err-block">Error: variable not in scope: closestTrainExample,
-fracTrue,
-ysTest&#39;,
-ysTrain</div></div></div></body></html>
+</div><div class="err-block">Error: variable not in scope: fracTrue
+
+:p fracTrue for i. ysTrain.(closestTrainExample.i) == ysTest&#39;.i
+   ^^^^^^^^^
+</div></div></div></body></html>
