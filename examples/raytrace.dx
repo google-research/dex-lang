@@ -9,7 +9,6 @@ Specifically, it's based on his unrolled ```lax.scan``` version.
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
-I haven't settled on a consistent meaning for .+, .-, ./, etc.
 
 def relu (x:Real) : Real = max x 0.0
 def negvec (v:d=>Real) : d=>Real = for i. -v.i
@@ -33,15 +32,13 @@ def flipud (n:Type) ?-> (a:Type) ?-> (x: n=>m=>a) : n=>m=>a =
 
 
 ' ### 3D Helper Functions
-Some of these should probably go in prelude.
-I haven't settled on a consistent meaning for .+, .-, ./, etc.
-
-Vec3 = (Fin 3)=>Real
 
 def cross (a:(Fin 3)=>Real) (b:(Fin 3)=>Real) : (Fin 3)=>Real =
   (a1, a2, a3) = (a.(0@_), a.(1@_), a.(2@_))
   (b1, b2, b3) = (b.(0@_), b.(1@_), b.(2@_))
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
+
+Vec3 = (Fin 3)=>Real
 
 def unpackvec3 (p:Vec3) : (Real & Real & Real) =
   (p.(0@(Fin 3)), p.(1@(Fin 3)), p.(2@(Fin 3)))
@@ -139,8 +136,7 @@ def udBox (p: d=>Real) (halfwidths: d=>Real) : Distance =
 
 def sdScene (p:Vec3) : (Object & Distance) =
   -- Distance function for the whole scene.
-  -- Todo: make better use of the type system,
-  -- and don't define the scene in this function.
+  -- Todo: define the scene outside this function and pass it in.
   (px, py, pz) = unpackvec3(p)
 
   obj_floor = (Obj_Floor, py)
@@ -165,6 +161,7 @@ def sdScene (p:Vec3) : (Object & Distance) =
   objs = [obj_floor, obj_ceil, obj_bwall, obj_lwall, obj_rwall,
           obj_light, obj_tall_block, obj_short_block]
 
+  -- find closest object.
   minimumBy snd objs
 
 
@@ -188,7 +185,6 @@ def sampleCosineWeightedHemisphere (k:Key) (normal: Vec3) : Vec3 =
 MAX_ITERS = 50
 HORIZON = 20.0
 MAX_DEPTH = 3
-
 
 def raymarch (ro:Vec3) (rd: Vec3) : (Object & Distance) =
   -- Move along ray until we hit an obect.
@@ -229,7 +225,6 @@ def sample_light_point (key:Key) : Vec3 =
   [p_light_x, 3.9, p_light_z]
 
 
--- Todo: Make a BRDF type
 def direct_light (key:Key) (p:Vec3) (nor:Vec3) (brdf:Color) : Vec3 =
 
   -- Check for line-of-sight to a random point on the light.
@@ -289,8 +284,8 @@ def accumulate_outgoing (li_indirect:Vec3) (x:(Bool & Vec3 & Color)) : Vec3 =
 -- Main loop.
 def trace (rng:Key) (ro:Vec3) (rd:Vec3) (depth:(Fin MAX_DEPTH)) : Vec3 =
   init = (rng, ro, rd)
-  (carry, outputs) = scan init scatter_eye_rays              -- Forwards pass.
-  fold zero \i c. accumulate_outgoing c (reverse outputs).i  -- Backwards pass.
+  (carry, outputs) = scan init scatter_eye_rays              -- Forward pass.
+  fold zero \i c. accumulate_outgoing c (reverse outputs).i  -- Backward pass.
 
 
 ' Setup and draw image
