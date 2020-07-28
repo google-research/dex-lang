@@ -1,0 +1,327 @@
+' ## Multi-step Ray Tracer
+
+' Based on Eric Jang's
+[JAX implementation](https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb),
+described
+[here](https://blog.evjang.com/2019/11/jaxpt.html).
+Specifically, it's based on his unrolled ```lax.scan``` version.
+
+
+' ### Generic Helper Functions
+Some of these should probably go in prelude.
+I haven't settled on a consistent meaning for .+, .-, ./, etc.
+
+def relu (x:Real) : Real = max x 0.0
+def negvec (v:d=>Real) : d=>Real = for i. -v.i
+def (./) (x: d=>Real) (y: Real) : d=>Real = for i. x.i / y
+def (.-) (x: d=>Real) (y: d=>Real) : d=>Real = for i. x.i - y.i
+def length    (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
+def normalize (x: d=>Real) : d=>Real = x ./ (length x)
+def dot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v = sum for j. s.j .* vs.j
+def randuniform (k:Key) (lower:Real) (upper:Real) : Real =
+  lower + (rand k) * (upper - lower)
+
+def reverse (n:Type) ?-> (a:Type) ?-> (x:n=>a) : n=>a =
+  s = size n
+  for i. x.((s - 1 - (ordinal i))@_)
+
+def fliplr (n:Type) ?-> (a:Type) ?-> (x: n=>m=>a) : n=>m=>a =
+  for i. reverse for j. x.i.j
+
+def flipud (n:Type) ?-> (a:Type) ?-> (x: n=>m=>a) : n=>m=>a =
+  reverse for i. x.i
+
+
+' ### 3D Helper Functions
+Some of these should probably go in prelude.
+I haven't settled on a consistent meaning for .+, .-, ./, etc.
+
+Vec3 = (Fin 3)=>Real
+
+def cross (a:(Fin 3)=>Real) (b:(Fin 3)=>Real) : (Fin 3)=>Real =
+  (a1, a2, a3) = (a.(0@_), a.(1@_), a.(2@_))
+  (b1, b2, b3) = (b.(0@_), b.(1@_), b.(2@_))
+  [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
+
+def unpackvec3 (p:Vec3) : (Real & Real & Real) =
+  (p.(0@(Fin 3)), p.(1@(Fin 3)), p.(2@(Fin 3)))
+
+def rotateX (p:Vec3) (angle:Real) : Vec3 =
+  c = cos angle
+  s = sin angle
+  (px, py, pz) = unpackvec3(p)
+  [px, c*py - s*pz, s*py + c*pz]
+
+def rotateY (p:Vec3) (angle:Real) : Vec3 =
+  c = cos angle
+  s = sin angle
+  (px, py, pz) = unpackvec3(p)
+  [c*px + s*pz, py, - s*px+ c*pz]
+
+def rotateZ (p:Vec3) (angle:Real) : Vec3 =
+  c = cos angle
+  s = sin angle
+  (px, py, pz) = unpackvec3(p)
+  [c*px - s*py, s*px+c*py, pz]
+
+
+' ### Raytracer-specific data strutures
+This demo could make much better use of ADTs than it does.
+
+Color = (Fin 3)=>Real
+Distance = Real
+
+data Object =
+  Obj_None
+  Obj_Floor
+  Obj_Ceil
+  Obj_Wall_RD
+  Obj_Wall_WH
+  Obj_Wall_GR
+  Obj_Short_Block
+  Obj_Tall_Block
+  Obj_Light
+
+-- Todo: Find a better way to check which kind of thing an object is.
+def isnone (obj:Object) : Bool =
+  case obj of
+    Obj_None -> True
+    Obj_Floor -> False
+    Obj_Ceil -> False
+    Obj_Wall_RD -> False
+    Obj_Wall_WH -> False
+    Obj_Wall_GR -> False
+    Obj_Short_Block -> False
+    Obj_Tall_Block -> False
+    Obj_Light -> False
+
+def islight (obj:Object) : Bool =
+  case obj of
+    Obj_None -> False
+    Obj_Floor -> False
+    Obj_Ceil -> False
+    Obj_Wall_RD -> False
+    Obj_Wall_WH -> False
+    Obj_Wall_GR -> False
+    Obj_Short_Block -> False
+    Obj_Tall_Block -> False
+    Obj_Light -> True
+
+
+' ### Define the scene
+
+nor_light = [0.0, -1., 0.0]  -- Light points straight down.
+LIGHT_AREA = 1.0 * 1.0
+emissive_const = [25.0, 25.0, 25.0] -- Watts
+emittedRadiance = emissive_const ./ (pi * LIGHT_AREA)
+lightDiffuseColor = [0.2, 0.2, 0.2]
+leftWallColor = 1.5 .* [0.611, 0.0555, 0.062]
+rightWallColor = 1.5 .* [0.117, 0.4125, 0.115]
+whiteWallColor = [255.0, 239.0, 196.0] ./ 255.0
+
+
+def brdf_map (obj:Object) : Color =
+  case obj of
+    Obj_None -> zero
+    Obj_Ceil -> whiteWallColor
+    Obj_Floor -> whiteWallColor
+    Obj_Light -> lightDiffuseColor
+    Obj_Short_Block -> whiteWallColor
+    Obj_Tall_Block -> whiteWallColor
+    Obj_Wall_GR -> rightWallColor
+    Obj_Wall_RD -> leftWallColor
+    Obj_Wall_WH -> whiteWallColor
+
+
+def udBox (p: d=>Real) (halfwidths: d=>Real) : Distance =
+  -- distance function for an axis-aligned box.
+  length $ for i. max ((abs p.i) - halfwidths.i) 0.0
+
+def sdScene (p:Vec3) : (Object & Distance) =
+  -- Distance function for the whole scene.
+  -- Todo: make better use of the type system,
+  -- and don't define the scene in this function.
+  (px, py, pz) = unpackvec3(p)
+
+  obj_floor = (Obj_Floor, py)
+  obj_ceil  = (Obj_Ceil, 4.0 - py)
+  obj_bwall = (Obj_Wall_WH, 4.0 - pz)
+  obj_lwall = (Obj_Wall_RD, px + 2.0)
+  obj_rwall = (Obj_Wall_GR, 2.0 - px)
+  obj_light = (Obj_Light, udBox (p .- [0.0, 3.9, 2.0]) [0.5, 0.01, 0.5])
+  
+  -- tall block
+  block_height = 1.3
+  p2 = rotateY (p - [(-0.64), block_height, 2.6]) (0.15 * pi)
+  d = udBox p2 [0.6, block_height, 0.6]
+  obj_tall_block = (Obj_Tall_Block, d)
+  
+  -- short block
+  bw = 0.6
+  p2 = rotateY (p - [0.65, bw, 1.7]) ((-0.1) * pi)
+  d = udBox p2 [bw, bw, bw]
+  obj_short_block = (Obj_Short_Block, d)
+  
+  objs = [obj_floor, obj_ceil, obj_bwall, obj_lwall, obj_rwall,
+          obj_light, obj_tall_block, obj_short_block]
+
+  minimumBy snd objs
+
+
+' Rendering helper functions
+
+def sampleCosineWeightedHemisphere (k:Key) (normal: Vec3) : Vec3 =
+  (k1, k2) = splitKey k
+  u1 = rand k1
+  u2 = rand k2
+  uu = normalize $ cross normal [0.0, 1.1, 1.1]
+  vv = cross uu normal
+  ra = sqrt u2
+  rx = ra * cos (2.0 * pi * u1)
+  ry = ra * sin (2.0 * pi * u1)
+  rz = sqrt (1.0 - u2)
+  rr = (rx .* uu) + (ry .* vv) + (rz .* normal)
+  normalize rr
+
+
+-- Misc. rendering params.
+MAX_ITERS = 50
+HORIZON = 20.0
+MAX_DEPTH = 3
+
+
+def raymarch (ro:Vec3) (rd: Vec3) : (Object & Distance) =
+  -- Move along ray until we hit an obect.
+  def step (i:(Fin MAX_ITERS)) (pair:(Object & Distance)) : (Object & Distance) =
+    (_, t) = pair
+    (obj, distance) = sdScene (ro + (t .* rd))
+    (obj, t + distance)
+
+  (obj_id, t) = fold (Obj_None, 0.0) step
+  obj_id = select (t > HORIZON) Obj_None obj_id 
+  (obj_id, t)
+
+
+def calcNormal (p:Vec3) : Vec3 =
+  dist = \p. snd $ sdScene p
+  -- normalize(grad(dist)(p))
+
+  -- derivative approximation via midpoint rule.
+  -- Todo: Switch to autodiff when it works.
+  eps = 0.001
+  dx = [eps, 0.0, 0.0]
+  dy = [0.0, eps, 0.0]
+  dz = [0.0, 0.0, eps]
+  -- extract just the distance component
+  nor = [(dist(p+dx)) - (dist(p-dx)),
+         (dist(p+dy)) - (dist(p-dy)),
+         (dist(p+dz)) - (dist(p-dz))]
+  normalize nor
+
+
+def sample_light_point (key:Key) : Vec3 =
+  -- Samples a point uniformly from the surface of the light.
+  -- Todo: remove hardcoded values
+  -- Todo: Allow multiple lights
+  (key1, key2) = splitKey key
+  p_light_x = randuniform key1 (-0.25) (0.25)
+  p_light_z = randuniform key2 (2.0 - 0.25) (2.0 + 0.25)
+  [p_light_x, 3.9, p_light_z]
+
+
+-- Todo: Make a BRDF type
+def direct_light (key:Key) (p:Vec3) (nor:Vec3) (brdf:Color) : Vec3 =
+
+  -- Check for line-of-sight to a random point on the light.
+  p_light = sample_light_point key
+  wi_light = normalize (p_light - p)
+  (obj2, t2) = raymarch (p + 0.001 .* nor) wi_light
+
+  -- Compute radiance of light from this direction.
+  vis = islight obj2
+  cos1 = relu (vdot nor wi_light)
+  cos2 = relu (vdot nor_light (negvec wi_light))
+  pdf_A = 1.0 / LIGHT_AREA
+  square_distance = sum $ for i. sq (p_light.i - p.i)
+  scale = (cos1 * cos2) / (pdf_A * square_distance)
+  li = for i. scale * emittedRadiance.i * brdf.i
+
+  case vis of
+    False -> zero
+    True -> li
+
+
+def scatter_eye_rays
+    (depth:(Fin MAX_DEPTH)) (carry:(Key & Vec3 & Vec3)) :
+    ((Key & Vec3 & Vec3) & (Bool & Vec3 & Color)) =
+  (rng, ro, rd) = carry
+  (obj, t) = raymarch ro rd
+  brdf = brdf_map obj
+  
+  is_light = islight obj
+  did_intersect = not $ isnone obj
+
+  li_e = (relu ( vdot (negvec rd) nor_light)) .* emittedRadiance
+  radiance = select is_light li_e zero
+  
+  p = ro + t .* rd
+  nor = calcNormal p
+  
+  -- Contribution directly from light.
+  (rng, subkey) = splitKey rng  
+  li_direct = direct_light subkey p nor brdf
+  radiance = radiance + select did_intersect li_direct zero
+
+  -- Sample bounced ray for future indirect contributions.
+  (rng, subkey) = splitKey rng
+  rd2 = sampleCosineWeightedHemisphere subkey nor
+
+  carry = (rng, ro, rd)
+  outputs = (did_intersect, radiance, brdf)
+  (carry, outputs)
+
+
+-- Add light from each step if there was an intersection.
+def accumulate_outgoing (li_indirect:Vec3) (x:(Bool & Vec3 & Color)) : Vec3 =
+  (did_intersect, radiance, brdf) = x
+  radiance + select did_intersect (for d. brdf.d * li_indirect.d) zero 
+
+-- Main loop.
+def trace (rng:Key) (ro:Vec3) (rd:Vec3) (depth:(Fin MAX_DEPTH)) : Vec3 =
+  init = (rng, ro, rd)
+  (carry, outputs) = scan init scatter_eye_rays              -- Forwards pass.
+  fold zero \i c. accumulate_outgoing c (reverse outputs).i  -- Backwards pass.
+
+
+' Setup and draw image
+
+num_samples = 3
+N = 500  -- pixel width and height of image.
+
+xs = linspace (Fin N) 1.0 0.0  -- Reverse order because of pinhole camera
+rng = newKey 0
+
+%time
+rd = for i. for j. for k:(Fin num_samples).
+  px = -1.0 + 2.0 * xs.j
+  py = -1.0 + 2.0 * xs.i
+
+  -- Render a pinhole camera.
+  eye  = [0.0, 2.0, -3.5]
+  look = [0.0, 2.0, 0.0] -- straight ahead
+  w = normalize (look .- eye)
+  up = [0.0, 1.0, 0.0]
+  u = normalize $ cross w up
+  v = normalize $ cross u w
+  focal_distance = 2.2
+  rd = normalize $ (px .* u) + (py .* v) + (focal_distance .* w)
+  
+  trace (ixkey rng k) eye rd (0@_)
+
+avg_image = for i. for j. for c. mean (for k. rd.i.j.k.c)
+
+def to_black_and_white (im:n=>m=>Color) : (n=>m=>Real) =
+  -- need to do clipping here because of bright spots on edges.
+  for i. for j. 1.5 - (min 1.5 (mean for c. im.i.j.c))
+
+:plotmat to_black_and_white avg_image
