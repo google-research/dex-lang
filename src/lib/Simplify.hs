@@ -97,6 +97,11 @@ simplifyAtom atom = case atom of
   TypeCon def params          -> TypeCon def <$> substEmbedR params
   DataCon def params con args -> DataCon def <$> substEmbedR params
                                              <*> pure con <*> mapM simplifyAtom args
+  Record items -> Record <$> mapM simplifyAtom items
+  RecordTy items -> RecordTy <$> substEmbedR items
+  Variant types label i value -> Variant <$>
+    substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
+  VariantTy items -> VariantTy <$> substEmbedR items
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it

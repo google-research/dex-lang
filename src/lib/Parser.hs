@@ -19,11 +19,14 @@ import Data.List.NonEmpty (NonEmpty (..))
 import Data.Void
 import Data.String (fromString)
 import qualified Text.Megaparsec.Char.Lexer as L
+import qualified Text.Megaparsec.Debug
 
 import Env
 import Syntax
 import PPrint
 
+-- canPair is used for the ops (,) (|) (&) which should only appear inside
+-- parentheses (to avoid conflicts with records and other syntax)
 data ParseCtx = ParseCtx { curIndent :: Int
                          , canPair   :: Bool
                          , canBreak  :: Bool }
@@ -171,7 +174,7 @@ expr = mayNotPair $ makeExprParser leafExpr ops
 
 -- expression without exposed infix operators
 leafExpr :: Parser UExpr
-leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
+leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uTabCon
          <|> uVarOcc
          <|> uHole
@@ -184,6 +187,8 @@ leafExpr =   parens (mayPair $ makeExprParser leafExpr ops)
          <|> uCaseExpr
          <|> uPrim
          <|> unitCon
+         <|> uLabeledExprs
+         <|> uVariantExpr
          <?> "expression"
 
 containedExpr :: Parser UExpr
@@ -480,6 +485,43 @@ baseType =   (symbol "Int"  $> Scalar IntType)
          <|> (symbol "Real" $> Scalar RealType)
          <|> (symbol "Bool" $> Scalar BoolType)
 
+uVariantExpr :: Parser UExpr
+uVariantExpr = withSrc $ bracketed (sym "{|") (sym "|}") $ do
+  itemLabel <- some rowLabelChar
+  i <- (sym "#" >> uint) <|> return 0
+  sym "="
+  itemVal <- expr
+  return $ UVariant itemLabel i itemVal
+
+-- Note: this does a bit more backtracking than necessary to make the code
+-- simpler. Theoretically it should be possible to parse all of these at once
+-- without using try.
+uLabeledExprs :: Parser UExpr
+uLabeledExprs = withSrc $ do
+    notFollowedBy uVariantExpr
+    lBrace
+    URecord <$> build "," "=" <|> URecordTy <$> build "&" ":" <|> UVariantTy <$> build "|" ":"
+  where
+    build :: String -> String -> Parser (LabeledItems UExpr)
+    build sep bindwith = try $ bracketed (return ()) rBrace $ atBeginning
+      where
+        atBeginning = someItems
+                      <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
+                      <|> stopWithoutExtend
+        stopWithoutExtend = pure noLabeledItems
+        stopAndExtend = do
+          symbol "..."
+          _ <- containedExpr
+          fail "Extensible records and variants not implemented"
+        beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
+        afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
+        someItems = do
+          itemLabel <- some rowLabelChar
+          symbol bindwith
+          itemVal <- expr
+          items <- beforeSep
+          return $ labeledSingleton itemLabel itemVal <> items
+
 -- === infix ops ===
 
 -- literal symbols here must only use chars from `symChars`
@@ -493,8 +535,8 @@ ops =
      InfixR $ sym "=>" $> mkArrow TabArrow,
      InfixL $ opWithSrc $ backquoteName >>= (return . binApp)]
   , [InfixR $ mayBreak (infixSym "$") $> mkApp]
-  , [symOp "+=", symOp ":=", symOp "|", InfixR infixArrow]
-  , [InfixR $ symOpP "&", pairOp]
+  , [symOp "+=", symOp ":=", InfixL $ pairingSymOpP "|", InfixR infixArrow]
+  , [InfixR $ pairingSymOpP "&", InfixR $ pairingSymOpP ","]
   , indexRangeOps
   ]
 
@@ -503,14 +545,6 @@ opWithSrc :: Parser (SrcPos -> a -> a -> a)
 opWithSrc p = do
   (f, pos) <- withPos p
   return $ f pos
-
-pairOp :: Operator Parser UExpr
-pairOp = InfixR $ opWithSrc $ do
-  allowed <- asks canPair
-  if allowed
-    then infixSym "," >> return (binApp f)
-    else fail "Unexpected comma"
-  where f = mkName $ "(,)"
 
 anySymOp :: Operator Parser UExpr
 anySymOp = InfixL $ opWithSrc $ do
@@ -527,6 +561,13 @@ symOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
 symOpP s = opWithSrc $ do
   label "infix operator" (infixSym s)
   return $ binApp $ mkSymName s
+
+pairingSymOpP :: String -> Parser (UExpr -> UExpr -> UExpr)
+pairingSymOpP s = opWithSrc $ do
+  allowed <- asks canPair
+  if allowed
+    then infixSym s >> return (binApp (mkSymName s))
+    else fail $ "Unexpected delimiter " <> s
 
 mkSymName :: String -> Name
 mkSymName s = mkName $ "(" <> s <> ")"
@@ -661,7 +702,7 @@ doubleLit = lexeme $
   <|> try (fromIntegral <$> (L.decimal :: Parser Int) <* char '.')
 
 knownSymStrs :: [String]
-knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", ",", "+=", ":=",
+knownSymStrs = [".", ":", "!", "=", "-", "+", "||", "&&", "$", "&", "|", ",", "+=", ":=",
                 "->", "=>", "?->", "?=>", "--o", "--",
                 "..", "<..", "..<", "..<", "<..<"]
 
@@ -703,6 +744,9 @@ charLexeme c = void $ lexeme $ char c
 
 nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
+
+rowLabelChar :: Parser Char
+rowLabelChar = alphaNumChar <|> char '\'' <|> char '_'
 
 symChar :: Parser Char
 symChar = choice $ map char symChars
@@ -816,3 +860,6 @@ eolf = void eol <|> eof
 failIf :: Bool -> String -> Parser ()
 failIf True s = fail s
 failIf False _ = return ()
+
+debug :: Show a => String -> Parser a -> Parser a
+debug s m = mapReaderT (Text.Megaparsec.Debug.dbg s) m

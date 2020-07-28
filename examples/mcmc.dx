@@ -55,7 +55,7 @@ def leapfrogIntegrate
       (_:VSpace a) ?=>
       ((nsteps, dt): HMCParams)
       (logProb: a -> LogProb)
-      ((x, p): a & a)
+      ((x, p): (a & a))
       : (a & a) =
   x = x + (0.5 * dt) .* p
   (x, p) = applyN nsteps (x, p) \(xOld, pOld).

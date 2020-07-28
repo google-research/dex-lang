@@ -27,5 +27,5 @@
 :p Fin 10
 > Fin 10
 
-:p Fin 10 & Fin 20
-> Fin 10 & Fin 20
+:p (Fin 10 & Fin 20)
+> (Fin 10 & Fin 20)

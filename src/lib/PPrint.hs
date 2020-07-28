@@ -17,6 +17,7 @@ import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
@@ -173,8 +174,8 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
-    PairType a b   -> atPrec LowestPrec $ pApp a <+> "&" <+> pApp b
-    SumType  a b   -> atPrec LowestPrec $ pApp a <+> "|" <+> pApp b
+    PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
+    SumType  a b   -> atPrec ArgPrec $ parens $ pApp a <+> "|" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
@@ -267,6 +268,36 @@ instance PrettyPrec Atom where
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+    Record items -> prettyLabeledItems items (line' <> ",") " ="
+    Variant _ label i value -> atPrec ArgPrec $
+      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
+      where suffix = if i == 0 then "" else "#" <> p i
+    RecordTy items -> prettyLabeledItems items (line <> "&") ":"
+    VariantTy items -> prettyLabeledItems items (line <> "|") ":"
+
+-- Helper has support for extensible rows, although this is unused for now.
+prettyRowHelper :: (PrettyPrec a, PrettyPrec b)
+  => M.Map Label [a] -> Maybe b -> Doc ann -> Doc ann -> DocPrec ann
+prettyRowHelper row rest separator bindwith =
+  atPrec ArgPrec $ align $ group $ innerDoc
+  where
+    elems = concatMap (\(k, vs) -> map (k,) vs) (M.toAscList row)
+    fmtElem (label, v) = p label <> bindwith <+> pLowest v
+    docs = map fmtElem elems
+    final = case rest of
+      Just v -> separator <> " ..." <> pArg v
+      Nothing -> case length docs of
+        0 -> separator
+        _ -> mempty
+    innerDoc = "{"
+      <> line'
+      <> concatWith (surround (separator <> " ")) docs
+      <> final <> "}"
+
+prettyLabeledItems :: PrettyPrec a
+  => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
+prettyLabeledItems (LabeledItems row) =
+  prettyRowHelper row (Nothing :: Maybe ())
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -400,6 +431,12 @@ instance PrettyPrec UExpr' where
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
+    URecord items -> prettyLabeledItems items (line' <> ",") " ="
+    URecordTy items -> prettyLabeledItems items (line <> "&") ":"
+    UVariant label i value -> atPrec ArgPrec $
+      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
+      where suffix = if i == 0 then "" else "#" <> p i
+    UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
 
 instance Pretty UAlt where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body

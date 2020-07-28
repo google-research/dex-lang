@@ -20,6 +20,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
+import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
 import Array
@@ -114,6 +115,20 @@ instance HasType Atom where
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
+    Record items -> do
+      types <- mapM typeCheck items
+      return $ RecordTy types
+    RecordTy items -> do
+      mapM_ (|: TyKind) items
+      return TyKind
+    Variant vtys@(LabeledItems types) label i value -> do
+      value |: ((types M.! label) !! i)
+      let ty = VariantTy vtys
+      ty |: TyKind
+      return ty
+    VariantTy items -> do
+      mapM_ (|: TyKind) items
+      return TyKind
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -270,6 +285,10 @@ instance CoreVariant Atom where
     Eff _ -> alwaysAllowed
     DataCon _ _ _ _ -> alwaysAllowed
     TypeCon _ _     -> alwaysAllowed
+    Record _ -> alwaysAllowed
+    RecordTy _ -> alwaysAllowed
+    Variant _ _ _ _ -> alwaysAllowed
+    VariantTy _ -> alwaysAllowed
 
 instance CoreVariant BinderInfo where
   checkVariant info = case info of

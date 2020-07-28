@@ -581,6 +581,11 @@ traverseAtom def@(_, fAtom) atom = case atom of
   DataCon dataDef params con args -> DataCon dataDef <$>
     traverse fAtom params <*> pure con <*> traverse fAtom args
   TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
+  Record items -> Record <$> traverse fAtom items
+  RecordTy items -> RecordTy <$> traverse fAtom items
+  Variant types label i value -> Variant <$>
+    traverse fAtom types <*> pure label <*> pure i <*> fAtom value
+  VariantTy items -> VariantTy <$> traverse fAtom items
 
 -- === DCE ===
 

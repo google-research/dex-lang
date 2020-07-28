@@ -15,6 +15,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (fold, toList, asum)
 import Data.Functor
+import qualified Data.Map.Strict as M
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
@@ -164,6 +165,28 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       HofExpr e -> emitZonked $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
+  URecord (LabeledItems items) -> do
+    items' <- mapM (mapM inferRho) items
+    matchRequirement $ Record $ LabeledItems items'
+  UVariant label i value -> case reqTy of
+    Check (VariantTy vt@(LabeledItems items)) -> case M.lookup label items of
+      Just types -> if i < length types
+        then do
+          value' <- checkRho value $ types !! i
+          return $ Variant vt label i value'
+        else throw TypeErr $
+          "Label " <> show label <> " appears fewer than "
+                   <> show i <> " times in variant type annotation"
+      Nothing -> throw TypeErr $
+        "Label " <> show label <> " not in variant type annotation"
+    _ -> throw MiscErr ("Can't infer type of a variant expression, try using "
+                        <> "an explicit let annotation")
+  URecordTy (LabeledItems items) -> do
+    items' <- mapM (mapM checkUType) items
+    matchRequirement $ RecordTy $ LabeledItems items'
+  UVariantTy (LabeledItems items) -> do
+    items' <- mapM (mapM checkUType) items
+    matchRequirement $ VariantTy $ LabeledItems items'
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*

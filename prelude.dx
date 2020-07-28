@@ -12,9 +12,9 @@ Type = %TyKind
 Effects = %EffKind
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
-def (,) (x:a) (y:b) : a & b = %pair x y
-def fst (p: a & b) : a = %fst p
-def snd (p: a & b) : b = %snd p
+def (,) (x:a) (y:b) : (a & b) = %pair x y
+def fst (p: (a & b)) : a = %fst p
+def snd (p: (a & b)) : b = %snd p
 
 def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %irem x y
@@ -99,7 +99,7 @@ def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) =
 
 def Left  (x:a) : (a|b) = sumCon True  x      anyVal
 def Right (x:b) : (a|b) = sumCon False anyVal x
-def caseAnalysis (x:a|b) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+def caseAnalysis (x:(a|b)) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
 
 def select (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
@@ -248,7 +248,7 @@ pi : Real = 3.141592653589793
 def id (x:a) : a = x
 def dup (x:a) : (a & a) = (x, x)
 -- TODO: unpack pair in args once we fix the bug
-def swap (p:a&b) : (b&a) = (snd p, fst p)
+def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
 def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)

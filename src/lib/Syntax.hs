@@ -19,7 +19,8 @@ module Syntax (
     Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
-    UAlt (..), Alt, binderBinding,
+    UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
+    noLabeledItems,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
@@ -71,6 +72,10 @@ data Atom = Var Var
           | Pi  PiType
           | DataCon DataDef [Atom] Int [Atom]
           | TypeCon DataDef [Atom]
+          | Record (LabeledItems Atom)
+          | RecordTy (LabeledItems Type)
+          | Variant (LabeledItems Type) Label Int Atom
+          | VariantTy (LabeledItems Type)
           | Con Con
           | TC  TC
           | Eff EffectRow
@@ -141,6 +146,21 @@ scalarTableBaseType t = case t of
   BaseTy b  -> b
   _         -> error $ "Not a scalar table: " ++ show t
 
+
+type Label = String
+newtype LabeledItems a = LabeledItems (M.Map Label [a])
+  deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
+
+labeledSingleton :: Label -> a -> LabeledItems a
+labeledSingleton label value = LabeledItems $ M.singleton label [value]
+
+noLabeledItems :: LabeledItems a
+noLabeledItems = LabeledItems M.empty
+
+instance Semigroup (LabeledItems a) where
+  LabeledItems items <> LabeledItems items' =
+    LabeledItems $ M.unionWith (<>) items items'
+
 -- === front-end language AST ===
 
 type UExpr = WithSrc UExpr'
@@ -155,6 +175,10 @@ data UExpr' = UVar UVar
             | UTabCon [UExpr] (Maybe UExpr)
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
+            | URecord (LabeledItems UExpr)
+            | UVariant Label Int UExpr
+            | URecordTy (LabeledItems UExpr)
+            | UVariantTy (LabeledItems UExpr)
               deriving (Show, Generic)
 
 data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
@@ -588,6 +612,10 @@ instance HasUVars UExpr' where
     UIndexRange low high -> foldMap freeUVars low <> foldMap freeUVars high
     UPrimExpr _ -> mempty
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
+    URecord ulr -> freeUVars ulr
+    UVariant _ _ val -> freeUVars val
+    URecordTy ulr -> freeUVars ulr
+    UVariantTy ulr -> freeUVars ulr
 
 instance HasUVars UAlt where
   freeUVars (UAlt p body) = freeUVars $ Abs p body
@@ -643,6 +671,9 @@ instance BindsUVars SourceBlock where
 instance HasUVars EffectRow where
   freeUVars (EffectRow effs tailVar) =
     foldMap (nameAsEnv . snd) effs <> foldMap nameAsEnv tailVar
+
+instance HasUVars a => HasUVars (LabeledItems a) where
+  freeUVars (LabeledItems items) = foldMap freeUVars items
 
 instance HasUVars eff => HasUVars (ArrowP eff) where
   freeUVars (PlainArrow eff) = freeUVars eff
@@ -766,6 +797,10 @@ instance Eq Atom where
   DataCon def params con args == DataCon def' params' con' args' =
     def == def' && params == params' && con == con' && args == args'
   TypeCon def params == TypeCon def' params' = def == def' && params == params'
+  Record lr == Record lr' = lr == lr'
+  Variant lr l i v == Variant lr' l' i' v' = (lr, l, i, v) == (lr', l', i', v')
+  RecordTy lr == RecordTy lr' = lr == lr'
+  VariantTy lr == VariantTy lr' = lr == lr'
   Con con == Con con' = con == con'
   TC  con == TC  con' = con == con'
   Eff eff == Eff eff' = eff == eff'
@@ -892,6 +927,10 @@ instance HasVars Atom where
     --       data definition but we might need to know the free Vars.
     DataCon _ params _ args -> freeVars params <> freeVars args
     TypeCon _ params        -> freeVars params
+    Record la -> freeVars la
+    Variant la _ _ val -> freeVars la <> freeVars val
+    RecordTy row -> freeVars row
+    VariantTy row -> freeVars row
 
 instance Subst Atom where
   subst env atom = case atom of
@@ -903,6 +942,10 @@ instance Subst Atom where
     Eff eff -> Eff $ subst env eff
     DataCon def params con args -> DataCon def (subst env params) con (subst env args)
     TypeCon def params          -> TypeCon def (subst env params)
+    Record la -> Record $ subst env la
+    Variant la label i val -> Variant (subst env la) label i (subst env val)
+    RecordTy row -> RecordTy $ subst env row
+    VariantTy row -> VariantTy $ subst env row
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -934,6 +977,12 @@ instance HasVars DataConDef where
 instance Subst DataConDef where
   subst env (DataConDef name bs) = DataConDef name bs'
     where Abs bs' () = subst env $ Abs bs ()
+
+instance HasVars a => HasVars (LabeledItems a) where
+  freeVars (LabeledItems items) = foldMap freeVars items
+
+instance Subst a => Subst (LabeledItems a) where
+  subst env (LabeledItems items) = LabeledItems $ fmap (subst env) items
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
 substEffTail _ Nothing = EffectRow [] Nothing
@@ -1256,6 +1305,7 @@ instance Store a => Store (Nest a)
 instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
+instance Store a => Store (LabeledItems a)
 instance Store Atom
 instance Store Expr
 instance Store Block

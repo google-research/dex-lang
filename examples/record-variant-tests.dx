@@ -1,0 +1,126 @@
+
+'Record types
+
+:p {&}
+> { &}
+
+:p {a:Int & b:Real}
+> {a: Int & b: Real}
+
+:p {a:Int & b:Real &}
+> {a: Int & b: Real}
+
+:p {a:Int & a:Real}
+> {a: Int & a: Real}
+
+
+'Records
+
+:p {}
+> {,}
+:t {}
+> { &}
+
+:p {,}
+> {,}
+:t {,}
+> { &}
+
+:p {a=3, b=4}
+> {a = 3, b = 4}
+:t {a=3, b=4}
+> {a: Int & b: Int}
+
+:p {a=3, b=4,}
+> {a = 3, b = 4}
+:t {a=3, b=4,}
+> {a: Int & b: Int}
+
+:p {a=3, a=4}
+> {a = 3, a = 4}
+:t {a=3, a=4}
+> {a: Int & a: Int}
+
+
+'Variant (enum) types
+
+:p {|}
+> { |}
+
+:p {a:Int | b:Real}
+> {a: Int | b: Real}
+
+:p {a:Int | b:Real |}
+> {a: Int | b: Real}
+
+:p {a:Int | a:Real}
+> {a: Int | a: Real}
+
+
+'Variants (enums)
+:p {| a=3 |}
+
+:p
+  x : {a:Int | b:Real} = {| a=3 |}
+  x
+> {| a = 3 |}
+
+:p
+  x : {a:Int | a:Real | a:Int} = {| a#1 = 3.0 |}
+  x
+> {| a#1 = 3.0 |}
+
+:t
+  x : {a:Int | a:Real | a:Int} = {| a#1 = 3.0 |}
+  x
+> {a: Int | a: Real | a: Int}
+
+
+'Parse errors
+
+:p {a:Int & b:Real | c:Int }
+
+> Parse error:81:20:
+>    |
+> 81 | :p {a:Int & b:Real | c:Int }
+>    |                    ^
+> unexpected '|'
+> expecting "..", "..<", "<..", "<..<", "=>", '$', '&', '.', '}', arrow, backquoted name, expression, or infix operator
+:p {a:Int & b:Real & ...c}
+
+> Parse error:89:26:
+>    |
+> 89 | :p {a:Int & b:Real & ...c}
+>    |                          ^
+> Extensible records and variants not implemented
+:p {&...c}
+
+> Parse error:96:10:
+>    |
+> 96 | :p {&...c}
+>    |          ^
+> Extensible records and variants not implemented
+:p {a=3, b=4, ...c}
+
+> Parse error:103:19:
+>     |
+> 103 | :p {a=3, b=4, ...c}
+>     |                   ^
+> Extensible records and variants not implemented
+:p {a:Int | b:Real | ...c}
+
+> Parse error:110:26:
+>     |
+> 110 | :p {a:Int | b:Real | ...c}
+>     |                          ^
+> Extensible records and variants not implemented
+:p {|...c}> Parse error:70:10:
+>    |
+> 70 | :p {|...c}
+>    |          ^
+> Extensible records and variants not implemented
+> Parse error:117:10:
+>     |
+> 117 | :p {|...c}> Parse error:70:10:
+>     |          ^
+> Extensible records and variants not implemented
