@@ -25,6 +25,7 @@ import Env
 import Type
 import PPrint
 import Cat
+import Util
 
 type UInferM = ReaderT SubstEnv (EmbedT (SolverT (Either Err)))
 
@@ -139,14 +140,24 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       Infer -> freshType TyKind
       Check req -> return req
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
-    TypeCon def params <- zonk scrutTy
-    let conDefs = applyDataDefParams def params
-    altsSorted <- forM conDefs $ \(DataConDef conName bs) -> do
-      case lookup conName alts' of
-        Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
-                               Block Empty $ Op $ ThrowError reqTy'
-        Just alt -> return alt
-    emit $ Case scrut' altsSorted reqTy'
+    scrutTy' <- zonk scrutTy
+    case scrutTy' of
+      TypeCon def params -> do
+        let conDefs = applyDataDefParams def params
+        altsSorted <- forM (enumerate conDefs) $ \(i, DataConDef _ bs) -> do
+          case lookup i alts' of
+            Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
+                                  Block Empty $ Op $ ThrowError reqTy'
+            Just alt -> return alt
+        emit $ Case scrut' altsSorted reqTy'
+      VariantTy types -> do
+        altsSorted <- forM (toList (enumerate types)) $ \(i, ty) -> do
+          case lookup i alts' of
+            Nothing  -> return $ Abs (toNest [Ignore ty]) $
+                                  Block Empty $ Op $ ThrowError reqTy'
+            Just alt -> return alt
+        emit $ Case scrut' altsSorted reqTy'
+      _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -224,7 +235,7 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     unpackTopPat letAnn p1 (Atom x1)
     unpackTopPat letAnn p2 (Atom x2)
   UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con, _) <- lookupDataCon conName
+    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
       "sum type constructor in can't-fail pattern"
     let DataConDef _ argBs = cons !! con
@@ -317,37 +328,55 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
-checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Name, Alt)
+checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Int, Alt)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
-  (patTy, conName, patTys) <- inferPat pat
+  (conIdx, patTys) <- checkPat pat scrutineeTy
   let (subPats, subPatTys) = unzip patTys
-  constrainEq scrutineeTy patTy
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
   alt <- buildNAbs (toNest bs) $ \xs ->
            withBindPats (zip subPats xs) $ checkRho body reqTy
-  return (conName, alt)
+  return (conIdx, alt)
 
-lookupDataCon :: Name -> UInferM (DataDef, Int, Name)
+lookupDataCon :: Name -> UInferM (DataDef, Int)
 lookupDataCon conName = do
   let conName' = asGlobal conName
   scope <- getScope
   case envLookup scope (conName':>()) of
-    Just (_, DataBoundDataCon def con) -> return (def, con, conName')
+    Just (_, DataBoundDataCon def con) -> return (def, con)
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
 
-inferPat :: UPat -> UInferM (Type, Name, [(UPat, Type)])
-inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
+checkPat :: UPat -> Type -> UInferM (Int, [(UPat, Type)])
+checkPat (WithSrc pos pat) scrutineeTy = addSrcContext (Just pos) $ case pat of
   UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con, conName') <- lookupDataCon conName
+    (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
     when (length argBs /= length ps) $ throw TypeErr $
      "Unexpected number of pattern binders. Expected " ++ show (length argBs)
                                             ++ " got " ++ show (length ps)
     params <- mapM (freshType . binderType) $ toList paramBs
     let argTys = applyNaryAbs (Abs paramBs $ map binderType $ toList argBs) params
-    return (TypeCon def params, conName', zip (toList ps) argTys)
-  _ -> throw TypeErr $ "Case patterns must start with a data constructor"
+    constrainEq scrutineeTy (TypeCon def params)
+    return (con, zip (toList ps) argTys)
+  UPatVariant label i subpat -> do
+    -- We need to know the labels already to check variant patterns
+    ty <- zonk scrutineeTy
+    items <- case ty of
+      VariantTy items -> return items
+      -- TODO: it might be possible to infer this by looking at all alternatives
+      -- in the case statement first?
+      _ -> throw MiscErr "Can't infer labels of variant expression in case statement"
+    let (LabeledItems enumTypes) = enumerate items
+    case M.lookup label enumTypes of
+      Just types -> if i < length types
+        then let (index, argty) = types !! i
+          in return (index, [(subpat, argty)])
+        else throw TypeErr $
+          "Label " <> show label <> " appears fewer than "
+                   <> show i <> " times in variant type annotation"
+      Nothing -> throw TypeErr $
+        "Label " <> show label <> " not in variant type annotation"
+  _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
 withBindPats pats body = foldr (uncurry withBindPat) body pats
@@ -379,7 +408,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     env2 <- bindPat' p2 x2
     return $ env1 <> env2
   UPatCon conName ps -> do
-    (def@(DataDef _ paramBs cons), con, _) <- lift $ lookupDataCon conName
+    (def@(DataDef _ paramBs cons), con) <- lift $ lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
       "sum type constructor in can't-fail pattern"
     let (DataConDef _ argBs) = cons !! con

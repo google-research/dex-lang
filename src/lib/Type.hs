@@ -150,13 +150,22 @@ instance HasType Expr where
     Hof  hof -> typeCheckHof hof
     Case e alts resultTy -> do
       checkWithEnv $ \_ -> do
-        TypeCon def params <- typeCheck e
-        let cons = applyDataDefParams def params
-        checkEq  (length cons) (length alts)
-        forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
-          checkEq bs' bs
-          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
-          checkEq resultTy resultTy'
+        ety <- typeCheck e
+        case ety of
+          TypeCon def params -> do
+            let cons = applyDataDefParams def params
+            checkEq  (length cons) (length alts)
+            forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
+              checkEq bs' bs
+              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+              checkEq resultTy resultTy'
+          VariantTy types -> do
+            checkEq (length types) (length alts)
+            forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
+              [b] <- pure $ toList bs
+              checkEq (getType b) ty
+              resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+              checkEq resultTy resultTy'
       return resultTy
 
 checkApp :: Type -> Atom -> TypeM Type

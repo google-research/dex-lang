@@ -14,6 +14,7 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition)
+import qualified Data.Map.Strict as M
 
 import Autodiff
 import Env
@@ -22,6 +23,7 @@ import Cat
 import Embed
 import Type
 import PPrint
+import Util
 
 type SimplifyM = SubstEmbedT Identity
 
@@ -174,6 +176,11 @@ simplifyExpr expr = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         extendR (newEnv bs args) $ simplifyBlock body
+      Variant types label i value -> do
+        let LabeledItems ixtypes = enumerate types
+        let index = fst $ ixtypes M.! label !! i
+        let Abs bs body = alts !! index
+        extendR (newEnv bs [value]) $ simplifyBlock body
       _ -> do
         alts' <- forM alts $ \(Abs bs body) -> do
           bs' <-  mapM (mapM substEmbedR) bs
