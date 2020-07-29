@@ -205,6 +205,8 @@ data UPat' = UPatBinder UBinder
            | UPatLit LitVal
            | UPatPair UPat UPat
            | UPatUnit
+           | UPatRecord (LabeledItems UPat)
+           | UPatVariant Label Int UPat
              deriving (Show)
 
 data WithSrc a = WithSrc SrcPos a
@@ -630,6 +632,8 @@ instance HasUVars UPat' where
     UPatLit _      -> mempty
     UPatPair p1 p2 -> freeUVars p1 <> freeUVars p2
     UPatUnit       -> mempty
+    UPatRecord items -> freeUVars items
+    UPatVariant _ _ p -> freeUVars p
 
 instance BindsUVars UPat' where
   boundUVars pat = case pat of
@@ -638,6 +642,8 @@ instance BindsUVars UPat' where
     UPatLit _      -> mempty
     UPatPair p1 p2 -> boundUVars p1 <> boundUVars p2
     UPatUnit       -> mempty
+    UPatRecord items -> boundUVars items
+    UPatVariant _ _ p -> boundUVars p
 
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
@@ -700,6 +706,9 @@ instance BindsUVars UConDef where
 
 instance BindsUVars a => BindsUVars (WithSrc a) where
   boundUVars (WithSrc _ x) = boundUVars x
+
+instance BindsUVars a => BindsUVars (LabeledItems a) where
+  boundUVars items = foldMap boundUVars items
 
 nameAsEnv :: Name -> UVars
 nameAsEnv v = v@>()

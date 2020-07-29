@@ -269,9 +269,7 @@ instance PrettyPrec Atom where
       [] -> atPrec ArgPrec $ p name
       _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
     Record items -> prettyLabeledItems items (line' <> ",") " ="
-    Variant _ label i value -> atPrec ArgPrec $
-      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
-      where suffix = if i == 0 then "" else "#" <> p i
+    Variant _ label i value -> prettyVariant label i value
     RecordTy items -> prettyLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyLabeledItems items (line <> "|") ":"
 
@@ -298,6 +296,12 @@ prettyLabeledItems :: PrettyPrec a
   => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
 prettyLabeledItems (LabeledItems row) =
   prettyRowHelper row (Nothing :: Maybe ())
+
+prettyVariant :: PrettyPrec a
+  => Label -> Int -> a -> DocPrec ann
+prettyVariant label i value = atPrec ArgPrec $
+      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
+      where suffix = if i == 0 then "" else "#" <> p i
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -433,9 +437,7 @@ instance PrettyPrec UExpr' where
       nest 2 (hardline <> prettyLines alts)
     URecord items -> prettyLabeledItems items (line' <> ",") " ="
     URecordTy items -> prettyLabeledItems items (line <> "&") ":"
-    UVariant label i value -> atPrec ArgPrec $
-      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
-      where suffix = if i == 0 then "" else "#" <> p i
+    UVariant label i value -> prettyVariant label i value
     UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
 
 instance Pretty UAlt where
@@ -458,13 +460,16 @@ instance Pretty UDecl where
 instance Pretty UConDef where
   pretty (UConDef con bs) = p con <+> spaced bs
 
-instance Pretty UPat' where
-  pretty pat = case pat of
-    UPatBinder x -> p x
-    UPatPair x y -> parens $ p x <> ", " <> p y
-    UPatUnit -> "()"
-    UPatCon con pats -> parens $ p con <+> spaced pats
-    UPatLit x -> p x
+instance Pretty UPat' where pretty = prettyFromPrettyPrec
+instance PrettyPrec UPat' where
+  prettyPrec pat = case pat of
+    UPatBinder x -> atPrec ArgPrec $ p x
+    UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
+    UPatUnit -> atPrec ArgPrec $ "()"
+    UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
+    UPatLit x -> atPrec ArgPrec $ p x
+    UPatRecord pats -> prettyLabeledItems pats (line <> "&") ":"
+    UPatVariant label i value -> prettyVariant label i value
 
 prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where

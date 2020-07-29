@@ -434,7 +434,10 @@ leafPat =
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
       <|> (UPatLit    <$> litVal)
-      <|> (UPatCon    <$> upperName <*> manyNested pat))
+      <|> (UPatCon    <$> upperName <*> manyNested pat)
+      <|> parseVariant leafPat UPatVariant
+      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat)
+  )
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
@@ -486,12 +489,15 @@ baseType =   (symbol "Int"  $> Scalar IntType)
          <|> (symbol "Bool" $> Scalar BoolType)
 
 uVariantExpr :: Parser UExpr
-uVariantExpr = withSrc $ bracketed (sym "{|") (sym "|}") $ do
-  itemLabel <- some rowLabelChar
+uVariantExpr = withSrc $ parseVariant expr UVariant
+
+parseVariant :: Parser a -> (Label -> Int -> a -> b) -> Parser b
+parseVariant subparser f = bracketed (sym "{|") (sym "|}") $ do
+  itemLabel <- lexeme $ some rowLabelChar
   i <- (sym "#" >> uint) <|> return 0
   sym "="
-  itemVal <- expr
-  return $ UVariant itemLabel i itemVal
+  itemVal <- subparser
+  return $ f itemLabel i itemVal
 
 -- Note: this does a bit more backtracking than necessary to make the code
 -- simpler. Theoretically it should be possible to parse all of these at once
@@ -499,28 +505,31 @@ uVariantExpr = withSrc $ bracketed (sym "{|") (sym "|}") $ do
 uLabeledExprs :: Parser UExpr
 uLabeledExprs = withSrc $ do
     notFollowedBy uVariantExpr
-    lBrace
-    URecord <$> build "," "=" <|> URecordTy <$> build "&" ":" <|> UVariantTy <$> build "|" ":"
+    URecord <$> build "," "="
+      <|> URecordTy <$> build "&" ":"
+      <|> UVariantTy <$> build "|" ":"
+  where build sep bindwith = parseLabeledItems sep bindwith expr
+
+parseLabeledItems :: String -> String -> Parser a -> Parser (LabeledItems a)
+parseLabeledItems sep bindwith itemparser =
+  try $ bracketed lBrace rBrace $ atBeginning
   where
-    build :: String -> String -> Parser (LabeledItems UExpr)
-    build sep bindwith = try $ bracketed (return ()) rBrace $ atBeginning
-      where
-        atBeginning = someItems
-                      <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
-                      <|> stopWithoutExtend
-        stopWithoutExtend = pure noLabeledItems
-        stopAndExtend = do
-          symbol "..."
-          _ <- containedExpr
-          fail "Extensible records and variants not implemented"
-        beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
-        afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
-        someItems = do
-          itemLabel <- some rowLabelChar
-          symbol bindwith
-          itemVal <- expr
-          items <- beforeSep
-          return $ labeledSingleton itemLabel itemVal <> items
+    atBeginning = someItems
+                  <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
+                  <|> stopWithoutExtend
+    stopWithoutExtend = pure noLabeledItems
+    stopAndExtend = do
+      symbol "..."
+      _ <- itemparser
+      fail "Extensible records and variants not implemented"
+    beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
+    afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
+    someItems = do
+      itemLabel <- some rowLabelChar
+      symbol bindwith
+      itemVal <- itemparser
+      items <- beforeSep
+      return $ labeledSingleton itemLabel itemVal <> items
 
 -- === infix ops ===
 

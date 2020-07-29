@@ -97,8 +97,15 @@ emitOp op = emit $ Op op
 
 emitUnpack :: MonadEmbed m => Expr -> m [Atom]
 emitUnpack expr = do
-  let (TypeCon def params) = getType expr
-  let [DataConDef _ bs] = applyDataDefParams def params
+  bs <- case getType expr of
+    TypeCon def params -> do
+      let [DataConDef _ bs] = applyDataDefParams def params
+      return bs
+    RecordTy types -> do
+      -- TODO: is using Ignore here appropriate? We don't have any existing
+      -- binders to bind, but we still plan to use the results.
+      let bs = toNest $ map Ignore $ toList types
+      return bs
   expr' <- deShadow expr <$> getScope
   vs <- freshNestedBinders bs
   embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty

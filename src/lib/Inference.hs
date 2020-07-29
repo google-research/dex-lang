@@ -236,6 +236,14 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
+  UPatRecord items -> do
+    RecordTy types <- pure $ getType expr
+    when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
+      "Labels in record pattern do not match record type. Expected structure "
+      ++ pprint (RecordTy types)
+    xs <- zonk expr >>= emitUnpack
+    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
+  UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
 inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
@@ -383,6 +391,14 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
+  UPatRecord items -> do
+    RecordTy types <- pure $ getType val
+    when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
+      "Labels in record pattern do not match record type. Expected structure "
+      ++ pprint (RecordTy types)
+    xs <- lift $ zonk (Atom val) >>= emitUnpack
+    fold <$> zipWithM bindPat' (toList items) xs
+  UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it
 patNameHint :: UPat -> Name

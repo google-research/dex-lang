@@ -229,8 +229,12 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
     return $ binderBinding b
   Unpack bs rhs -> do
     void $ checkNestedBinders bs
-    TypeCon def params <- typeCheck rhs
-    [DataConDef _ bs'] <- return $ applyDataDefParams def params
+    ty <- typeCheck rhs
+    bs' <- case ty of
+      TypeCon def params -> do
+        [DataConDef _ bs'] <- return $ applyDataDefParams def params
+        return bs'
+      RecordTy types -> return $ toNest $ map Ignore $ toList types
     checkEq bs bs'
     return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl

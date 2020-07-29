@@ -64,6 +64,7 @@ simplifyDecl (Unpack bs expr) = do
   x <- simplifyExpr expr
   xs <- case x of
     DataCon _ _ _ xs -> return xs
+    Record items -> return $ toList items
     _ -> emitUnpack $ Atom x
   return $ newEnv bs xs
 
