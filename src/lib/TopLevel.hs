@@ -4,9 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
                  Backend (..)) where
@@ -141,8 +139,8 @@ evalUModuleVal env v m = do
   liftIO $ substArrayLiterals backend val
 
 lookupBindings :: Scope -> VarP ann -> Atom
-lookupBindings scope v = reduceAtom scope x
-  where (_, LetBound PlainLet (Atom x)) = scope ! v
+lookupBindings scope v = fromJust $ reduceExpr scope x
+  where (_, LetBound PlainLet x) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable

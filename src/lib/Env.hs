@@ -116,8 +116,8 @@ envIntersect (Env m) (Env m') = Env $ M.intersection m' m
 envDiff :: Env a -> Env b -> Env a
 envDiff (Env m) (Env m') = Env $ M.difference m m'
 
-envFilter :: Env a -> (a -> Bool) -> Env a
-envFilter (Env m) f = Env $ M.filter f m
+envFilter :: Env a -> (Name -> a -> Bool) -> Env a
+envFilter (Env m) f = Env $ M.filterWithKey f m
 
 isin :: HasName a => a -> Env b -> Bool
 isin x env = case getName x of
@@ -134,10 +134,13 @@ env ! v = case envLookup env v of
   Just x -> x
   Nothing -> error $ "Lookup of " ++ show (varName v) ++ " failed"
 
-isGlobal :: VarP ann -> Bool
-isGlobal (GlobalName _ :> _) = True
-isGlobal (GlobalArrayName _ :> _) = True
-isGlobal _ = False
+isGlobal :: HasName a => a -> Bool
+isGlobal x = case getName x of
+  Just v -> case v of
+    GlobalName _      -> True
+    GlobalArrayName _ -> True
+    _     -> False
+  Nothing -> False
 
 genFresh :: Name-> Env a -> Name
 genFresh (Name ns tag _) (Env m) = Name ns tag nextNum

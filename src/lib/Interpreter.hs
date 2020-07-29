@@ -41,9 +41,9 @@ evalExpr env expr = case expr of
   App f x   -> case f of
     Lam a -> evalBlock env $ snd $ applyAbs a x
     _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
-  Atom atom -> atom
   Op op     -> evalOp op
-  _         -> error $ "Not implemented: " ++ pprint expr
+  _ | isAtom expr -> expr
+    | otherwise -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of
@@ -122,5 +122,5 @@ indexSetSize ty = i
   where (IntVal i) = evalEmbed (indexSetSizeE ty)
 
 evalEmbed :: Embed Atom -> Atom
-evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
+evalEmbed embed = evalBlock mempty $ Block decls atom
   where (atom, (_, decls)) = runEmbed embed mempty

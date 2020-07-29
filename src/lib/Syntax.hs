@@ -1,3 +1,9 @@
+-- Copyright 2019 Google LLC
+--
+-- Use of this source code is governed by a BSD-style
+-- license that can be found in the LICENSE file or at
+-- https://developers.google.com/open-source/licenses/bsd
+
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE FlexibleInstances #-}
@@ -7,10 +13,10 @@
 {-# LANGUAGE PatternSynonyms #-}
 
 module Syntax (
-    Type, Kind, BaseType (..), ScalarBaseType (..),
+    Type, Kind, BaseType (..), ScalarBaseType (..), isAtom,
     Effect, EffectName (..), EffectRow (..),
     ClassName (..), TyQual (..), SrcPos, Var, Binder, Block (..), Decl (..),
-    Expr (..), Atom (..), ArrowP (..), Arrow, PrimTC (..), Abs (..),
+    Expr (..), Atom, ArrowP (..), Arrow, PrimTC (..), Abs (..),
     PrimExpr (..), PrimCon (..), LitVal (..),
     PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
@@ -66,23 +72,35 @@ import Array
 
 -- === core IR ===
 
-data Atom = Var Var
+data Expr = Var Var
           | Lam LamExpr
           | Pi  PiType
-          | DataCon DataDef [Atom] Int [Atom]
-          | TypeCon DataDef [Atom]
+          | DataCon DataDef [Expr] Int [Expr]
+          | TypeCon DataDef [Expr]
+          | App Expr Expr
+          | Case Expr [Alt] Type
           | Con Con
           | TC  TC
+          | Op  Op
+          | Hof Hof
           | Eff EffectRow
             deriving (Show, Generic)
 
-data Expr = App Atom Atom
-          | Case Atom [Alt] Type
-          | Atom Atom
-          | Op  Op
-          | Hof Hof
-            deriving (Show, Generic)
+-- This is a temporary hack to let us merge Atom and Expr without changing much.
+-- TODO: think hard about what we're doing here!
+isAtom :: Expr -> Bool
+isAtom expr = case expr of
+  Var _ -> True
+  Lam _ -> True
+  Pi  _ -> True
+  Con _ -> True
+  TC  _ -> True
+  Eff _ -> True
+  DataCon _ _ _ _ -> True
+  TypeCon _ _     -> True
+  _ -> False
 
+type Atom = Expr
 data Decl = Let LetAnn Binder Expr
           | Unpack (Nest Binder) Expr  deriving (Show, Generic)
 
@@ -835,21 +853,35 @@ deShadow x scope = subst (mempty, scope) x
 
 instance HasVars Expr where
   freeVars expr = case expr of
+    Var v@(_:>t) -> (v @> (t, UnknownBinder)) <> freeVars t
+    Lam lam -> freeVars lam
+    Pi  ty  -> freeVars ty
+    -- TODO: think about these cases. We don't want to needlessly traverse the
+    --       data definition but we might need to know the free Vars.
+    DataCon _ params _ args -> freeVars params <> freeVars args
+    TypeCon _ params        -> freeVars params
     App f x -> freeVars f <> freeVars x
-    Atom x  -> freeVars x
+    Case e alts resultTy -> freeVars e <> freeVars alts <> freeVars resultTy
+    TC  tc  -> foldMap freeVars tc
+    Con con -> foldMap freeVars con
     Op  e   -> foldMap freeVars e
+    Eff eff -> freeVars eff
     Hof e   -> foldMap freeVars e
-    Case e alts resultTy ->
-      freeVars e <> freeVars alts <> freeVars resultTy
 
 instance Subst Expr where
   subst env expr = case expr of
+    Var v   -> substVar env v
+    Lam lam -> Lam $ subst env lam
+    Pi  ty  -> Pi  $ subst env ty
+    DataCon def params con args -> DataCon def (subst env params) con (subst env args)
+    TypeCon def params          -> TypeCon def (subst env params)
     App f x -> App (subst env f) (subst env x)
-    Atom x  -> Atom $ subst env x
+    Case e alts resultTy -> Case (subst env e) (subst env alts) (subst env resultTy)
     Op  e   -> Op  $ fmap (subst env) e
     Hof e   -> Hof $ fmap (subst env) e
-    Case e alts resultTy ->
-      Case (subst env e) (subst env alts) (subst env resultTy)
+    TC  tc  -> TC  $ fmap (subst env) tc
+    Con con -> Con $ fmap (subst env) con
+    Eff eff -> Eff $ subst env eff
 
 instance HasVars Decl where
   freeVars decl = case decl of
@@ -879,30 +911,6 @@ instance HasVars Block where
 instance Subst Block where
   subst env (Block decls result) = Block decls' result'
     where Abs decls' result' = subst env $ Abs decls result
-
-instance HasVars Atom where
-  freeVars atom = case atom of
-    Var v@(_:>t) -> (v @> (t, UnknownBinder)) <> freeVars t
-    Lam lam -> freeVars lam
-    Pi  ty  -> freeVars ty
-    Con con -> foldMap freeVars con
-    TC  tc  -> foldMap freeVars tc
-    Eff eff -> freeVars eff
-    -- TODO: think about these cases. We don't want to needlessly traverse the
-    --       data definition but we might need to know the free Vars.
-    DataCon _ params _ args -> freeVars params <> freeVars args
-    TypeCon _ params        -> freeVars params
-
-instance Subst Atom where
-  subst env atom = case atom of
-    Var v   -> substVar env v
-    Lam lam -> Lam $ subst env lam
-    Pi  ty  -> Pi  $ subst env ty
-    TC  tc  -> TC  $ fmap (subst env) tc
-    Con con -> Con $ fmap (subst env) con
-    Eff eff -> Eff $ subst env eff
-    DataCon def params con args -> DataCon def (subst env params) con (subst env args)
-    TypeCon def params          -> TypeCon def (subst env params)
 
 instance HasVars Module where
   freeVars (Module _ decls bindings) = freeVars $ Abs decls bindings
@@ -1131,7 +1139,7 @@ pattern TabVal :: Binder -> Block -> Atom
 pattern TabVal v b = Lam (Abs v (TabArrow, b))
 
 pattern TabValA :: Binder -> Atom -> Atom
-pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty (Atom a))))
+pattern TabValA v a = Lam (Abs v (TabArrow, (Block Empty a)))
 
 isTabTy :: Type -> Bool
 isTabTy (TabTy _ _) = True
@@ -1163,8 +1171,8 @@ pattern BinaryFunTy b1 b2 eff bodyTy = FunTy b1 Pure (FunTy b2 eff bodyTy)
 
 pattern BinaryFunVal :: Binder -> Binder -> EffectRow -> Block -> Type
 pattern BinaryFunVal b1 b2 eff body =
-          Lam (Abs b1 (PureArrow, Block Empty (Atom (
-          Lam (Abs b2 (PlainArrow eff, body))))))
+          Lam (Abs b1 (PureArrow, Block Empty (
+          Lam (Abs b2 (PlainArrow eff, body)))))
 
 pattern IDo :: BinderP IType
 pattern IDo = Ignore IVoidType
@@ -1256,7 +1264,6 @@ instance Store a => Store (Nest a)
 instance Store a => Store (ArrowP a)
 instance Store a => Store (Limit a)
 instance Store a => Store (PrimEffect a)
-instance Store Atom
 instance Store Expr
 instance Store Block
 instance Store Decl

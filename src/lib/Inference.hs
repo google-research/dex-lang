@@ -35,7 +35,7 @@ inferModule :: TopEnv -> UModule -> Except Module
 inferModule scope (UModule decls) = do
   ((), (bindings, decls')) <- runUInferM mempty scope $
                                 mapM_ (inferUDecl True) decls
-  let bindings' = envFilter bindings $ \(_, b) -> case b of
+  let bindings' = envFilter bindings $ \_ (_, b) -> case b of
                     DataBoundTypeCon _   -> True
                     DataBoundDataCon _ _ -> True
                     _ -> False
@@ -116,7 +116,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       Abs (Ignore _) (arr', _) -> return (arr', xVal)
       _ -> do
         scope <- getScope
-        let xVal' = reduceAtom scope xVal
+        let xVal' = tryReduceExpr scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
     appVal <- emitZonked $ App fVal'' xVal'
@@ -198,8 +198,8 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     val  <- emit expr
     x1   <- lift $ getFst val
     x2   <- lift $ getSnd val
-    unpackTopPat letAnn p1 (Atom x1)
-    unpackTopPat letAnn p2 (Atom x2)
+    unpackTopPat letAnn p1 x1
+    unpackTopPat letAnn p2 x2
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con, _) <- lookupDataCon conName
     when (length cons /= 1) $ throw TypeErr $
@@ -211,7 +211,7 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     params <- mapM (freshType . binderType) paramBs
     constrainEq (TypeCon def $ toList params) (getType expr)
     xs <- zonk expr >>= emitUnpack
-    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
+    zipWithM_ (\p x -> unpackTopPat letAnn p x) (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
@@ -219,7 +219,7 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   val <- case ann of
     Nothing -> inferSigma rhs
     Just ty -> checkUType ty >>= checkSigma rhs
-  expr <- zonk $ Atom val
+  expr <- zonk val
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
     else do
@@ -357,7 +357,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
                                              ++ " got " ++ show (length ps)
     params <- lift $ mapM (freshType . binderType) $ toList paramBs
     lift $ constrainEq (TypeCon def params) (getType val)
-    xs <- lift $ zonk (Atom val) >>= emitUnpack
+    xs <- lift $ zonk val >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
 
@@ -477,11 +477,11 @@ synthDictTop ty = do
 
 traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
               => (Type -> m Atom) -> TraversalDef m
-traverseHoles fillHole = (traverseExpr recur, synthPassAtom)
+traverseHoles fillHole = synthPass
   where
-    synthPassAtom atom = case atom of
+    synthPass expr = case expr of
       Con (ClassDictHole ty) -> fillHole ty
-      _ -> traverseAtom recur atom
+      _ -> traverseExpr recur expr
     recur = traverseHoles fillHole
 
 synthDict :: Type -> SynthDictM Atom

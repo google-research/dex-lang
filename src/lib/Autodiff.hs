@@ -52,7 +52,7 @@ linearizeBlock env (Block decls result) = case decls of
   Nest (Let _ b bound) rest -> LinA $ do
     -- TODO: handle discrete case specially.
     (x, boundLin) <- runLinA $ linearizeExpr env bound
-    ~x'@(Var v) <- emit $ Atom x
+    ~x'@(Var v) <- emit x
     (ans, bodyLin) <- extendWrt ([v], Pure) $ runLinA $
                         linearizeBlock (env <> b@>x') body
     return (ans, do t <- boundLin
@@ -97,9 +97,8 @@ linearizeExpr env expr = case expr of
       App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x)
                                          `bindLin` emit
       Op   e -> linearizeOp   e
-      Atom e -> linearizeAtom e
-      _ -> error $ "Not implemented: " ++ pprint expr
-
+      _ | isAtom expr -> linearizeAtom expr
+        | otherwise -> error $ "Not implemented: " ++ pprint expr
 
 linearizeOp :: Op -> LinA Atom
 linearizeOp op = case op of
@@ -302,7 +301,7 @@ transposeExpr expr ct = case expr of
     _ -> error $ "shouldn't have non-table app left"
   Hof hof -> transposeHof hof ct
   Op op -> transposeOp op ct
-  Atom atom -> transposeAtom atom ct
+  _ | isAtom expr -> transposeAtom expr ct
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of

@@ -134,13 +134,27 @@ prettyLines xs = foldMap (\d -> p d <> hardline) $ toList xs
 
 instance Pretty Expr where pretty = prettyFromPrettyPrec
 instance PrettyPrec Expr where
-  prettyPrec (App f x) =
-    atPrec AppPrec $ pApp f <+> pArg x
-  prettyPrec (Atom x ) = prettyPrec x
-  prettyPrec (Op  op ) = prettyPrec op
-  prettyPrec (Hof hof) = prettyPrec hof
-  prettyPrec (Case e alts _) = atPrec LowestPrec $ "case" <+> p e <+> "of" <>
-    nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
+  prettyPrec expr = case expr of
+    Var (x:>_)  -> atPrec ArgPrec $ p x
+    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
+    Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
+    Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
+    Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
+    Eff e -> atPrec ArgPrec $ p e
+    DataCon (DataDef _ _ cons) _ con xs -> case xs of
+      [] -> atPrec ArgPrec $ p name
+      _ ->  atPrec LowestPrec $ p name <+> hsep (map p xs)
+      where (DataConDef name _) = cons !! con
+    TypeCon (DataDef name _ _) params -> case params of
+      [] -> atPrec ArgPrec $ p name
+      _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+    App f x -> atPrec AppPrec $ pApp f <+> pArg x
+    TC  e   -> prettyPrec e
+    Con e   -> prettyPrec e
+    Op  op  -> prettyPrec op
+    Hof hof -> prettyPrec hof
+    Case e alts _ -> atPrec LowestPrec $ "case" <+> p e <+> "of" <>
+      nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
 
 prettyAlt :: Alt -> Doc ann
 prettyAlt (Abs bs body) =
@@ -248,25 +262,6 @@ instance Pretty Decl where
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-
-instance Pretty Atom where pretty = prettyFromPrettyPrec
-instance PrettyPrec Atom where
-  prettyPrec atom = case atom of
-    Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
-    Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
-    Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
-    Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
-    TC  e -> prettyPrec e
-    Con e -> prettyPrec e
-    Eff e -> atPrec ArgPrec $ p e
-    DataCon (DataDef _ _ cons) _ con xs -> case xs of
-      [] -> atPrec ArgPrec $ p name
-      _ ->  atPrec LowestPrec $ p name <+> hsep (map p xs)
-      where (DataConDef name _) = cons !! con
-    TypeCon (DataDef name _ _) params -> case params of
-      [] -> atPrec ArgPrec $ p name
-      _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v

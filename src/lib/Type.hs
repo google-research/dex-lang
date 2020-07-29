@@ -61,7 +61,7 @@ instance Checkable Module where
         throw CompilerErr $ "Non-global free variable in module: " ++ pprint v
       addContext "Checking IR variant" $ checkModuleVariant m
       addContext "Checking body types" $ do
-        let block = Block decls $ Atom $ UnitVal
+        let block = Block decls $ UnitVal
         void $ runTypeCheck (CheckWith (env, Pure)) (typeCheck block)
       addContext "Checking evaluated bindings" $ do
         checkBindings (env <> foldMap boundVars decls) ir bindings
@@ -87,8 +87,8 @@ checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
 
 -- === Core IR ===
 
-instance HasType Atom where
-  typeCheck atom = case atom of
+instance HasType Expr where
+  typeCheck expr = case expr of
     Var v -> typeCheckVar v
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
@@ -114,23 +114,9 @@ instance HasType Atom where
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
-
-typeCheckVar :: Var -> TypeM Type
-typeCheckVar v@(name:>annTy) = do
-  annTy |: TyKind
-  when (annTy == EffKind) $
-    throw CompilerErr "Effect variables should only occur in effect rows"
-  checkWithEnv $ \(env, _) -> case envLookup env v of
-    Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
-    Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
-  return annTy
-
-instance HasType Expr where
-  typeCheck expr = case expr of
     App f x -> do
       fTy <- typeCheck f
       checkApp fTy x
-    Atom x   -> typeCheck x
     Op   op  -> typeCheckOp op
     Hof  hof -> typeCheckHof hof
     Case e alts resultTy -> do
@@ -143,6 +129,16 @@ instance HasType Expr where
           resultTy' <- flip (foldr withBinder) bs $ typeCheck body
           checkEq resultTy resultTy'
       return resultTy
+
+typeCheckVar :: Var -> TypeM Type
+typeCheckVar v@(name:>annTy) = do
+  annTy |: TyKind
+  when (annTy == EffKind) $
+    throw CompilerErr "Effect variables should only occur in effect rows"
+  checkWithEnv $ \(env, _) -> case envLookup env v of
+    Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+    Just (ty, _) -> assertEq annTy ty $ "Annotation on var: " ++ pprint name
+  return annTy
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -162,26 +158,27 @@ isPure expr = case exprEffs expr of
   NoEffects   -> True
   SomeEffects -> False
 
+-- These are more convservative than necessary.
+-- TODO: make them more precise by de-duping with type checker
 exprEffs :: Expr -> EffectSummary
 exprEffs expr = case expr of
-  Atom _ -> NoEffects
   App f _ -> functionEffs f
   Op op -> case op of
     PrimEffect _ _ -> SomeEffects
     _ -> NoEffects
+  Case _ _ _ -> SomeEffects
   Hof hof -> case hof of
     For _ f -> functionEffs f
     SumCase _ l r -> functionEffs l <> functionEffs r
     While cond body -> functionEffs cond <> functionEffs body
     Linearize _ -> NoEffects
     Transpose _ -> NoEffects
-    -- These are more convservative than necessary.
-    -- TODO: make them more precise by de-duping with type checker
     RunReader _ _ -> SomeEffects
     RunWriter _   -> SomeEffects
     RunState _ _  -> SomeEffects
     Tile _ _ _ -> error "not implemented"
-  Case _ _ _ -> error "not implemented"
+  _ | isAtom expr -> NoEffects
+    | otherwise -> error "unreachable?"
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
@@ -256,8 +253,8 @@ checkModuleVariant (Module ir decls bindings) = do
 class CoreVariant a where
   checkVariant :: a -> VariantM ()
 
-instance CoreVariant Atom where
-  checkVariant atom = addExpr atom $ case atom of
+instance CoreVariant Expr where
+  checkVariant expr = addExpr expr $ case expr of
     Var (_:>ty) -> checkVariant ty
     Lam (Abs b (_, body)) -> checkVariant b >> checkVariant body
     Pi  (Abs b (arr, body)) -> do
@@ -265,6 +262,12 @@ instance CoreVariant Atom where
         TabArrow -> alwaysAllowed
         _        -> goneBy Simp
       checkVariant b >> checkVariant body
+    App f x -> checkVariant f >> checkVariant x
+    Case e alts _ -> do
+      checkVariant e
+      forM_ alts $ \(Abs _ body) -> checkVariant body
+    Op  e   -> checkVariant e >> forM_ e checkVariant
+    Hof e   -> checkVariant e >> forM_ e checkVariant
     Con e -> checkVariant e >> forM_ e checkVariant
     TC  e -> checkVariant e >> forM_ e checkVariant
     Eff _ -> alwaysAllowed
@@ -277,16 +280,6 @@ instance CoreVariant BinderInfo where
     DataBoundDataCon _ _ -> alwaysAllowed
     LetBound _ _     -> absentUntil Simp
     _                -> neverAllowed
-
-instance CoreVariant Expr where
-  checkVariant expr = addExpr expr $ case expr of
-    App f x -> checkVariant f >> checkVariant x
-    Atom x  -> checkVariant x
-    Op  e   -> checkVariant e >> forM_ e checkVariant
-    Hof e   -> checkVariant e >> forM_ e checkVariant
-    Case e alts _ -> do
-      checkVariant e
-      forM_ alts $ \(Abs _ body) -> checkVariant body
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -372,6 +365,7 @@ declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
   checkExtends allowedEffects effs
 
 checkExtends :: MonadError Err m => EffectRow -> EffectRow -> m ()
+checkExtends allowed (EffectRow effs effTail) = return ()
 checkExtends allowed (EffectRow effs effTail) = do
   let (EffectRow allowedEffs allowedEffTail) = allowed
   case effTail of

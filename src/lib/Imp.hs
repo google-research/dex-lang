@@ -91,6 +91,7 @@ toImpDecl env (maybeDest, (Unpack bs bound)) = do
 
 toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 toImpExpr env (maybeDest, expr) = case expr of
+  _ | isAtom expr -> copyDest maybeDest =<< impSubst env expr
   App x' idx' -> case getType x' of
     TabTy _ _ -> do
       x <- impSubst env x'
@@ -100,7 +101,6 @@ toImpExpr env (maybeDest, expr) = case expr of
           toImpBlock mempty (maybeDest, snd $ applyAbs a idx)
         _ -> error $ "Invalid Imp atom: " ++ pprint x
     _ -> error $ "shouldn't have non-table app left"
-  Atom x   -> copyDest maybeDest =<< impSubst env x
   Op   op  -> toImpOp . (maybeDest,) =<< traverse (impSubst env) op
   Hof  hof -> toImpHof env (maybeDest, hof)
   Case e alts _ -> do
@@ -117,6 +117,7 @@ toImpExpr env (maybeDest, expr) = case expr of
              void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
         destToAtom dest
       _ -> error $ "Unexpected scrutinee: " ++ pprint e'
+  _ -> error $ "unexpected expression: " ++ pprint expr
 
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -404,7 +405,7 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
 splitDest :: WithDest Block -> ImpM ([WithDest Decl], WithDest Expr, [(Dest, Atom)])
 splitDest (maybeDest, (Block decls ans)) = do
   case (maybeDest, ans) of
-    (Just dest, Atom atom) -> do
+    (Just dest, atom) | isAtom atom -> do
       let (gatherCopies, varDests) = runState (execWriterT $ gatherVarDests dest atom) mempty
       -- If any variable appearing in the ans atom is not defined in the
       -- current block (e.g. it comes from the surrounding block), then we need

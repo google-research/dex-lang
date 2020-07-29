@@ -11,9 +11,7 @@ module Simplify (simplifyModule, evalSimplified) where
 import Control.Monad
 import Control.Monad.Identity
 import Control.Monad.Reader
-import Data.Foldable (toList)
 import Data.Functor
-import Data.List (partition)
 
 import Autodiff
 import Env
@@ -27,11 +25,10 @@ type SimplifyM = SubstEmbedT Identity
 
 simplifyModule :: TopEnv -> Module -> Module
 simplifyModule scope (Module Core decls bindings) = do
-  let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
-  let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
-  let (declsDone, declsNotDone) = partition isAtomDecl $ toList simpDecls
-  let bindings' = foldMap boundVars declsDone
-  dceModule $ Module Simp (toNest declsNotDone) (bindings <> bindings')
+  let (newBindings, decls')  = snd $ runSubstEmbed (simplifyDecls decls) scope
+  let newGlobalBindings = envFilter newBindings $ \v _ -> isGlobal v
+  Module Simp decls' (bindings <> newGlobalBindings)
+  -- dceModule $ Module Simp decls' (bindings <> newGlobalBindings)
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
@@ -39,7 +36,7 @@ evalSimplified (Module Simp Empty bindings) _ =
   return $ Module Evaluated Empty bindings
 evalSimplified (Module Simp decls bindings) evalBlock = do
   let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ mkConsList $ map Var localVars
+  let block = Block decls $ mkConsList $ map Var localVars
   vals <- (ignoreExcept . fromConsList) <$> evalBlock block
   return $ Module Evaluated Empty $
     scopelessSubst (newEnv localVars vals) bindings
@@ -57,47 +54,21 @@ simplifyDecl :: Decl -> SimplifyM SubstEnv
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
   let name = binderNameHint b
-  if isGlobal (name:>())
-    then emitTo name ann (Atom x) $> mempty
+  if isGlobal name
+    -- then emitTo name ann x $> mempty
+    then extendScope (b @> (getType x, LetBound ann x)) $> mempty
     else return $ b @> x
 simplifyDecl (Unpack bs expr) = do
   x <- simplifyExpr expr
   xs <- case x of
     DataCon _ _ _ xs -> return xs
-    _ -> emitUnpack $ Atom x
+    _ -> emitUnpack x
   return $ newEnv bs xs
 
 simplifyBlock :: Block -> SimplifyM Atom
 simplifyBlock (Block decls result) = do
   substEnv <- simplifyDecls decls
   extendR substEnv $ simplifyExpr result
-
-simplifyAtom :: Atom -> SimplifyM Atom
-simplifyAtom atom = case atom of
-  Var v -> do
-    substEnv <- ask
-    scope <- getScope
-    case envLookup substEnv v of
-      Just x -> return $ deShadow x scope
-      Nothing -> case envLookup scope v of
-        Just (_, info) -> case info of
-          LetBound _ (Atom x) -> dropSub $ simplifyAtom x
-          _ -> substEmbedR atom
-        _   -> substEmbedR atom
-  -- We don't simplify body of lam because we'll beta-reduce it soon.
-  Lam _ -> substEmbedR atom
-  Pi  _ -> substEmbedR atom
-  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
-  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
-  Con (AnyValue (SumTy l r)) -> do
-    Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
-  Con con -> Con <$> mapM simplifyAtom con
-  TC tc -> TC <$> mapM substEmbedR tc
-  Eff eff -> Eff <$> substEmbedR eff
-  TypeCon def params          -> TypeCon def <$> substEmbedR params
-  DataCon def params con args -> DataCon def <$> substEmbedR params
-                                             <*> pure con <*> mapM simplifyAtom args
-  where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
 type Reconstruct m a = Maybe (a -> m a)
@@ -112,7 +83,7 @@ simplifyBinaryLam = simplifyLams 2
 simplifyLams :: Int -> Atom -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
 simplifyLams numArgs lam = do
   lam' <- substEmbedR lam
-  dropSub $ simplifyLams' numArgs mempty $ Block Empty $ Atom lam'
+  dropSub $ simplifyLams' numArgs mempty $ Block Empty lam'
 
 simplifyLams' :: Int -> Scope -> Block
               -> SimplifyM (Atom, Reconstruct SimplifyM Atom)
@@ -125,7 +96,7 @@ simplifyLams' 0 scope block = do
       mapM_ emitDecl decls
       let (dataVals, recon) = separateDataComponent (scope <> scope') block'
       return (dataVals, Just recon)
-simplifyLams' n scope (Block Empty (Atom (Lam (Abs b (arr, body))))) = do
+simplifyLams' n scope (Block Empty (Lam (Abs b (arr, body)))) = do
   b' <- mapM substEmbedR b
   buildLamAux b' (\x -> extendR (b@>x) $ substEmbedR arr) $ \x@(Var v) -> do
     let scope' = scope <> v @> (varType v, LamBound (void arr))
@@ -148,9 +119,32 @@ applyRecon (Just f) x = f x
 
 simplifyExpr :: Expr -> SimplifyM Atom
 simplifyExpr expr = case expr of
+  Var v -> do
+    substEnv <- ask
+    scope <- getScope
+    case envLookup substEnv v of
+      Just x -> return $ deShadow x scope
+      Nothing -> case envLookup scope v of
+        Just (_, info) -> case info of
+          LetBound _ x | isAtom x -> dropSub $ simplifyExpr x
+          _ -> substEmbedR expr
+        _   -> substEmbedR expr
+  -- We don't simplify body of lam because we'll beta-reduce it soon.
+  Lam _ -> substEmbedR expr
+  Pi  _ -> substEmbedR expr
+  Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
+  Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
+  Con (AnyValue (SumTy l r)) -> do
+    Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
+  Con con -> Con <$> mapM simplifyExpr con
+  TC tc -> TC <$> mapM substEmbedR tc
+  Eff eff -> Eff <$> substEmbedR eff
+  TypeCon def params          -> TypeCon def <$> substEmbedR params
+  DataCon def params con args -> DataCon def <$> substEmbedR params
+                                             <*> pure con <*> mapM simplifyExpr args
   App f x -> do
-    x' <- simplifyAtom x
-    f' <- simplifyAtom f
+    x' <- simplifyExpr x
+    f' <- simplifyExpr f
     case f' of
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
@@ -158,11 +152,10 @@ simplifyExpr expr = case expr of
          where DataDef _ paramBs _ = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
       _ -> emit $ App f' x'
-  Op  op  -> mapM simplifyAtom op >>= simplifyOp
+  Op  op  -> mapM simplifyExpr op >>= simplifyOp
   Hof hof -> simplifyHof hof
-  Atom x  -> simplifyAtom x
   Case e alts resultTy -> do
-    e' <- simplifyAtom e
+    e' <- simplifyExpr e
     resultTy' <- substEmbedR resultTy
     case e' of
       DataCon _ _ con args -> do
@@ -173,6 +166,7 @@ simplifyExpr expr = case expr of
           bs' <-  mapM (mapM substEmbedR) bs
           buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
         emit $ Case e' alts' resultTy'
+  where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyExpr
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom
@@ -209,7 +203,7 @@ simplifyHof hof = case hof of
     scope <- getScope
     return $ transposeMap scope lam'
   RunReader r lam -> do
-    r' <- simplifyAtom r
+    r' <- simplifyExpr r
     ~(lam', recon) <- simplifyBinaryLam lam
     applyRecon recon =<< (emit $ Hof $ RunReader r' lam')
   RunWriter lam -> do
@@ -218,7 +212,7 @@ simplifyHof hof = case hof of
     ans' <- applyRecon recon ans
     return $ PairVal ans' w
   RunState s lam -> do
-    s' <- simplifyAtom s
+    s' <- simplifyExpr s
     ~(lam', recon) <- simplifyBinaryLam lam
     (ans, sOut) <- fromPair =<< (emit $ Hof $ RunState s' lam')
     ans' <- applyRecon recon ans
