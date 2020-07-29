@@ -179,19 +179,30 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   URecord (LabeledItems items) -> do
     items' <- mapM (mapM inferRho) items
     matchRequirement $ Record $ LabeledItems items'
-  UVariant label i value -> case reqTy of
-    Check (VariantTy vt@(LabeledItems items)) -> case M.lookup label items of
-      Just types -> if i < length types
-        then do
-          value' <- checkRho value $ types !! i
-          return $ Variant vt label i value'
-        else throw TypeErr $
-          "Label " <> show label <> " appears fewer than "
-                   <> show i <> " times in variant type annotation"
-      Nothing -> throw TypeErr $
-        "Label " <> show label <> " not in variant type annotation"
-    _ -> throw MiscErr ("Can't infer type of a variant expression, try using "
-                        <> "an explicit let annotation")
+  UVariant ann label i value -> do
+    varTy <- case (reqTy, ann) of
+      (Check ty, Just uty') -> do
+        ty' <- checkUType uty'
+        constrainEq ty ty'
+        zonk ty
+      (Check ty, Nothing) -> return ty
+      (Infer, Just uty') -> checkUType uty'
+      (Infer, Nothing) -> throw MiscErr $
+        "Can't infer type of a variant expression, try using "
+        <> "an explicit annotation"
+    case varTy of
+      VariantTy vt@(LabeledItems items) ->
+        case M.lookup label items of
+          Just types -> if i < length types
+            then do
+              value' <- checkRho value $ types !! i
+              return $ Variant vt label i value'
+            else throw TypeErr $
+              "Label " <> show label <> " appears fewer than "
+                      <> show i <> " times in variant type annotation"
+          Nothing -> throw TypeErr $
+            "Label " <> show label <> " not in variant type annotation"
+      _ -> throw TypeErr "Variant expression has incorrect type annotation"
   URecordTy (LabeledItems items) -> do
     items' <- mapM (mapM checkUType) items
     matchRequirement $ RecordTy $ LabeledItems items'

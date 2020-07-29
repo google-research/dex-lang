@@ -176,7 +176,7 @@ data UExpr' = UVar UVar
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
             | URecord (LabeledItems UExpr)
-            | UVariant Label Int UExpr
+            | UVariant (Maybe UExpr) Label Int UExpr
             | URecordTy (LabeledItems UExpr)
             | UVariantTy (LabeledItems UExpr)
               deriving (Show, Generic)
@@ -615,7 +615,7 @@ instance HasUVars UExpr' where
     UPrimExpr _ -> mempty
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
     URecord ulr -> freeUVars ulr
-    UVariant _ _ val -> freeUVars val
+    UVariant types _ _ val -> freeUVars types <> freeUVars val
     URecordTy ulr -> freeUVars ulr
     UVariantTy ulr -> freeUVars ulr
 

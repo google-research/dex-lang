@@ -489,7 +489,10 @@ baseType =   (symbol "Int"  $> Scalar IntType)
          <|> (symbol "Bool" $> Scalar BoolType)
 
 uVariantExpr :: Parser UExpr
-uVariantExpr = withSrc $ parseVariant expr UVariant
+uVariantExpr = withSrc $ do
+  (thelabel, i, value) <- parseVariant expr (,,)
+  ty <- optional (annot uType)
+  return $ UVariant ty thelabel i value
 
 parseVariant :: Parser a -> (Label -> Int -> a -> b) -> Parser b
 parseVariant subparser f = bracketed (symbol "{|") (symbol "|}") $ do

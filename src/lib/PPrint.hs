@@ -437,7 +437,9 @@ instance PrettyPrec UExpr' where
       nest 2 (hardline <> prettyLines alts)
     URecord items -> prettyLabeledItems items (line' <> ",") " ="
     URecordTy items -> prettyLabeledItems items (line <> "&") ":"
-    UVariant label i value -> prettyVariant label i value
+    UVariant Nothing label i value -> prettyVariant label i value
+    UVariant (Just ann) label i value -> atPrec ArgPrec $
+      prettyVariant label i value AppPrec <> prettyAnn (pApp ann)
     UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
 
 instance Pretty UAlt where
