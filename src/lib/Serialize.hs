@@ -24,9 +24,11 @@ import System.IO.MMap
 import System.Posix hiding (ReadOnly, version)
 import Text.Megaparsec hiding (State)
 import Text.Megaparsec.Char
+import Data.Foldable (toList)
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
+import qualified Data.Map.Strict as M
 
 import Array
 import Interpreter
@@ -207,6 +209,14 @@ prettyVal val = case val of
       where
         DataConDef conName _ = dataCons !! i
         args = payload !! i
+    SumAsProd (VariantTy ltys@(LabeledItems types)) (IntVal i) payload ->
+      pretty variant
+      where
+        [value] = payload !! i
+        reflect = LabeledItems $ flip M.mapWithKey types $ \k -> \xs ->
+          map (k,) [0..length xs - 1]
+        (theLabel, repeatNum) = toList reflect !! i
+        variant = Variant ltys theLabel repeatNum value 
     _           -> pretty con
   atom -> prettyPrec atom LowestPrec
 

@@ -24,6 +24,7 @@ import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Foldable (toList)
 import Data.Coerce
+import qualified Data.Map.Strict as M
 
 import Embed
 import Array
@@ -33,6 +34,8 @@ import Type
 import PPrint
 import Cat
 import qualified Algebra as A
+import Util
+
 -- Note [Valid Imp atoms]
 --
 -- The Imp translation functions as an interpreter for the core IR, which has a side effect
@@ -86,8 +89,10 @@ toImpDecl env (maybeDest, (Let _ b bound)) = do
   return $ b' @> ans
 toImpDecl env (maybeDest, (Unpack bs bound)) = do
   bs' <- mapM (traverse (impSubst env)) bs
-  ~(DataCon _ _ _ ans) <- toImpExpr env (maybeDest, bound)
-  return $ newEnv bs' ans
+  expr <- toImpExpr env (maybeDest, bound)
+  case expr of
+    DataCon _ _ _ ans -> return $ newEnv bs' ans
+    Record items -> return $ newEnv bs $ toList items
 
 toImpExpr :: SubstEnv -> WithDest Expr -> ImpM Atom
 toImpExpr env (maybeDest, expr) = case expr of
@@ -390,6 +395,8 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     else arrLoad $ assertIsArray $ destAtom
     where assertIsArray = toArrayAtom . fromArrayAtom
   DataCon  def params con args -> DataCon def params con <$> mapM rec args
+  Record items -> Record <$> mapM rec items
+  Variant types label i item -> Variant types label i <$> rec item
   Con destCon -> Con <$> case destCon of
     PairCon dl dr        -> PairCon <$> rec dl <*> rec dr
     UnitCon              -> return $ UnitCon
@@ -432,6 +439,9 @@ splitDest (maybeDest, (Block decls ans)) = do
       (Dest (DataCon _ _ con args), DataCon _ _ con' args')
         | con == con' && length args == length args' -> do
             zipWithM_ gatherVarDests (map Dest args) args'
+      (Dest (Record items), Record items')
+        | fmap (const ()) items == fmap (const ()) items' -> do
+            zipWithM_ gatherVarDests (map Dest (toList items)) (toList items')
       (Dest (Con (SumAsProd _ _ _)), _) -> tell [(dest, result)]  -- TODO
       (Dest (Con dCon), Con rCon) -> case (dCon, rCon) of
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
@@ -480,6 +490,11 @@ makeDest nameHint destType = do
               let dcs' = applyDataDefParams def params
               contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
+        RecordTy types -> Record <$> forM types rec
+        VariantTy types -> do
+          tag <- rec IntTy
+          contents <- forM (toList types) rec
+          return $ Con $ SumAsProd ty tag $ map (\x->[x]) contents
         TabTy v bt ->
           buildLam v TabArrow $ \v' -> go bindings (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
@@ -588,12 +603,20 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   (DataCon _ _ con args, DataCon _ _ con' args')
     | con == con' && length args == length args' -> do
        zipWithM_ rec (map Dest args) args'
+  (Record items, Record items')
+    | fmap (const ()) items == fmap (const ()) items' -> do
+        zipWithM_ rec (map Dest (toList items)) (toList items')
   -- TODO: Check array type?
   (Var _, Var _)       -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var _, Con (Lit _)) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
     recDest tag (IntVal con)
     zipWithM_ recDest (payload !! con) x
+  (Con (SumAsProd _ tag payload), Variant types label i x) -> do
+    let LabeledItems ixtypes = enumerate types
+    let index = fst $ ixtypes M.! label !! i
+    recDest tag (IntVal index)
+    zipWithM_ recDest (payload !! index) [x]
   (Con dcon, Con acon) -> case (dcon, acon) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()

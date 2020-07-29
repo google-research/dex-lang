@@ -492,10 +492,10 @@ uVariantExpr :: Parser UExpr
 uVariantExpr = withSrc $ parseVariant expr UVariant
 
 parseVariant :: Parser a -> (Label -> Int -> a -> b) -> Parser b
-parseVariant subparser f = bracketed (sym "{|") (sym "|}") $ do
+parseVariant subparser f = bracketed (symbol "{|") (symbol "|}") $ do
   itemLabel <- lexeme $ some rowLabelChar
-  i <- (sym "#" >> uint) <|> return 0
-  sym "="
+  i <- (symbol "#" >> uint) <|> return 0
+  symbol "="
   itemVal <- subparser
   return $ f itemLabel i itemVal
 
@@ -870,5 +870,5 @@ failIf :: Bool -> String -> Parser ()
 failIf True s = fail s
 failIf False _ = return ()
 
-debug :: Show a => String -> Parser a -> Parser a
-debug s m = mapReaderT (Text.Megaparsec.Debug.dbg s) m
+_debug :: Show a => String -> Parser a -> Parser a
+_debug s m = mapReaderT (Text.Megaparsec.Debug.dbg s) m

@@ -176,3 +176,30 @@ x : {a:Int | a:Real | a:Int} = {| a#1 = 3.0 |}
     {| a#1 = x |} -> x
     {| b = x |} -> i2r x
 > 3.0
+
+'Table values and imp lowering
+
+myRecordTable : (Fin 2)=>{a:Int & b:Real} =
+  [{a=1, b=2.0}, {a=3, b=4.0}]
+
+:p myRecordTable
+> [{a = 1, b = 2.0}, {a = 3, b = 4.0}]
+
+:p for i:(Fin 2).
+    ({a=a, b=b}) = myRecordTable.i
+    {a=b, b=a}
+> [{a = 2.0, b = 1}, {a = 4.0, b = 3}]
+
+myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
+:p myVariantTable
+> [{| a = 1 |}, {| b = 2.0 |}]
+ 
+:p for i:(Fin 2).
+    case myVariantTable.i of
+      {| a=a |} ->
+        res : {a:Real | b:Int} = {| b=a |}
+        res
+      {| b=b |} ->
+        res : {a:Real | b:Int} = {| a=b |}
+        res
+> [{| b = 1 |}, {| a = 2.0 |}]
