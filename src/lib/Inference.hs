@@ -45,7 +45,7 @@ runUInferM :: (Subst a, Pretty a)
            => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
 runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
 
-checkSigma :: UExpr -> SigmaType -> UInferM Atom
+checkSigma :: UExpr -> SigmaType -> UInferM Expr
 checkSigma expr sTy = case sTy of
   Pi piTy@(Abs _ (arrow, _))
     | arrow `elem` [ImplicitArrow, ClassArrow] -> case expr of
@@ -56,30 +56,29 @@ checkSigma expr sTy = case sTy of
             checkLeaks [v] $ checkSigma expr $ snd $ applyAbs piTy x
   _ -> checkRho expr sTy
 
-inferSigma :: UExpr -> UInferM Atom
+inferSigma :: UExpr -> UInferM Expr
 inferSigma (WithSrc pos expr) = case expr of
   ULam pat ImplicitArrow body -> addSrcContext (Just pos) $
     inferULam pat ImplicitArrow body
   _ ->
     inferRho (WithSrc pos expr)
 
-checkRho :: UExpr -> RhoType -> UInferM Atom
+checkRho :: UExpr -> RhoType -> UInferM Expr
 checkRho expr ty = checkOrInferRho expr (Check ty)
 
-inferRho :: UExpr -> UInferM Atom
+inferRho :: UExpr -> UInferM Expr
 inferRho expr = checkOrInferRho expr Infer
 
-instantiateSigma :: Atom -> UInferM Atom
+instantiateSigma :: Expr -> UInferM Expr
 instantiateSigma f = case getType f of
   Pi (Abs b (ImplicitArrow, _)) -> do
     x <- freshType $ binderType b
-    ans <- emitZonked $ App f x
-    instantiateSigma ans
+    instantiateSigma $ App f x
   Pi (Abs b (ClassArrow, _)) ->
-    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole $ binderType b))
+    instantiateSigma $ App f (Con $ ClassDictHole $ binderType b)
   _ -> return f
 
-checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
+checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Expr
 checkOrInferRho (WithSrc pos expr) reqTy =
  addSrcContext (Just pos) $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
@@ -100,11 +99,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- getAllowedEffects
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      emitZonked $ Hof $ For dir lam
+      return $ Hof $ For dir lam
     Infer -> do
       allowedEff <- getAllowedEffects
       lam <- inferULam b (PlainArrow allowedEff) body
-      emitZonked $ Hof $ For dir lam
+      return $ Hof $ For dir lam
   UApp arr f x -> do
     fVal <- inferRho f
     fVal' <- zonk fVal
@@ -119,8 +118,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         let xVal' = tryReduceExpr scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
-    appVal <- emitZonked $ App fVal'' xVal'
-    instantiateSigma appVal >>= matchRequirement
+    instantiateSigma (App fVal'' xVal') >>= matchRequirement
   UPi b arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
@@ -145,7 +143,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                Block Empty $ Op $ ThrowError reqTy'
         Just alt -> return alt
-    emit $ Case scrut' altsSorted reqTy'
+    return $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -160,12 +158,12 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> emitZonked $ Op e
-      HofExpr e -> emitZonked $ Hof e
+      OpExpr  e -> return $ Op e
+      HofExpr e -> return $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
   where
-    matchRequirement :: Atom -> UInferM Atom
+    matchRequirement :: Expr -> UInferM Expr
     matchRequirement x = return x <*
       case reqTy of
         Infer -> return ()
@@ -257,14 +255,14 @@ checkNestedBinders (Nest b bs) = do
   bs' <- extendR env $ checkNestedBinders bs
   return $ Nest b' bs'
 
-inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Atom
+inferULam :: UPatAnn -> Arrow -> UExpr -> UInferM Expr
 inferULam (p, ann) arr body = do
   argTy <- checkAnn ann
   -- TODO: worry about binder appearing in arrow?
   buildLam (Bind $ patNameHint p :> argTy) arr
     $ \x@(Var v) -> checkLeaks [v] $ withBindPat p x $ inferSigma body
 
-checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Atom
+checkULam :: UPatAnn -> UExpr -> PiType -> UInferM Expr
 checkULam (p, ann) body piTy = do
   let argTy = absArgType piTy
   checkAnn ann >>= constrainEq argTy
@@ -318,18 +316,18 @@ inferPat (WithSrc pos pat) = addSrcContext (Just pos) $ case pat of
     return (TypeCon def params, conName', zip (toList ps) argTys)
   _ -> throw TypeErr $ "Case patterns must start with a data constructor"
 
-withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
+withBindPats :: [(UPat, Expr)] -> UInferM a -> UInferM a
 withBindPats pats body = foldr (uncurry withBindPat) body pats
 
-withBindPat :: UPat -> Atom -> UInferM a -> UInferM a
+withBindPat :: UPat -> Expr -> UInferM a -> UInferM a
 withBindPat pat val m = do
   env <- bindPat pat val
   extendR env m
 
-bindPat :: UPat -> Atom -> UInferM SubstEnv
+bindPat :: UPat -> Expr -> UInferM SubstEnv
 bindPat pat val = evalCatT $ bindPat' pat val
 
-bindPat' :: UPat -> Atom -> CatT (Env ()) UInferM SubstEnv
+bindPat' :: UPat -> Expr -> CatT (Env ()) UInferM SubstEnv
 bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
   UPatBinder b -> do
     usedVars <- look
@@ -392,12 +390,12 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
 
-inferTabCon :: [UExpr] -> Maybe UType -> UInferM Atom
+inferTabCon :: [UExpr] -> Maybe UType -> UInferM Expr
 inferTabCon xs ann = do
   (n, ty) <- inferTabTy xs ann
   let tabTy = n==>ty
   xs' <- mapM (flip checkRho ty) xs
-  emitZonked $ Op $ TabCon tabTy xs'
+  return $ Op $ TabCon tabTy xs'
 
 inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
 inferTabTy xs ann = case ann of
@@ -433,9 +431,6 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
-
-emitZonked :: Expr -> UInferM Atom
-emitZonked expr = zonk expr >>= emit
 
 addEffects :: EffectRow -> UInferM ()
 addEffects eff = do
@@ -523,7 +518,7 @@ tryApply f x = do
   f' <- instantiateSigma f
   Pi (Abs b _) <- return $ getType f'
   constrainEq (binderType b) (getType x)
-  emitZonked $ App f' x
+  return $ App f' x
 
 instantiateAndCheck :: Type -> Atom -> UInferM Atom
 instantiateAndCheck ty x = do

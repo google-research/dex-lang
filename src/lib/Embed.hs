@@ -544,7 +544,7 @@ evalBlockE :: (MonadEmbed m, MonadReader SubstEnv m)
 evalBlockE f (Block decls result) = do
   env <- traverseDeclsOpen f decls
   result' <- extendR env $ f result
-  if isAtom result'
+  if isAtom result'  -- TODO: remove this once we handle Imp destinations differently
     then return result'
     else emit result'
 
