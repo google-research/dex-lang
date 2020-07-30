@@ -146,6 +146,7 @@ simplifyExpr expr = case expr of
     x' <- simplifyExpr x
     f' <- simplifyExpr f
     case f' of
+      -- TODO: try to avoid having a pass for each argument of curried application.
       Lam (Abs b (_, body)) ->
         dropSub $ extendR (b@>x') $ simplifyBlock body
       DataCon def params con xs -> return $ DataCon def params' con xs'

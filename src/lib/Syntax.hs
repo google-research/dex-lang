@@ -128,7 +128,7 @@ data ArrowP eff = PlainArrow eff
                 | LinArrow
                   deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data LetAnn = PlainLet
+data LetAnn = PlainLet EffectSummary
             | InstanceLet
             | SuperclassLet
               deriving (Show, Eq, Generic)
@@ -1273,6 +1273,7 @@ instance Store Direction
 instance Store UnOp
 instance Store BinOp
 instance Store CmpOp
+instance Store EffectSummary
 instance Store LetAnn
 instance Store BinderInfo
 instance Store DataDef

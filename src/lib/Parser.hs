@@ -162,7 +162,10 @@ exprAsModule :: UExpr -> (Name, UModule)
 exprAsModule e = (asGlobal v, UModule (toNest [d]))
   where
     v = mkName "_ans_"
-    d = ULet PlainLet (WithSrc (srcPos e) (UPatBinder (Bind (v:>()))), Nothing) e
+    d = sourceLet (WithSrc (srcPos e) (UPatBinder (Bind (v:>()))), Nothing) e
+
+sourceLet :: UPatAnn -> UExpr -> UDecl
+sourceLet = ULet (PlainLet SomeEffects)
 
 -- === uexpr ===
 
@@ -225,7 +228,8 @@ topDecl = dataDef <|> topLet
 
 topLet :: Parser UDecl
 topLet = do
-  lAnn <- (char '@' >> letAnnStr <* (void eol <|> sc)) <|> return PlainLet
+  lAnn <-  (char '@' >> letAnnStr <* (void eol <|> sc))
+       <|> return (PlainLet SomeEffects)
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
   let ann' = fmap (addImplicitImplicitArgs pos) ann
   return $ ULet lAnn (p, ann') rhs
@@ -274,7 +278,7 @@ simpleLet :: Parser (UExpr -> UDecl)
 simpleLet = label "let binding" $ do
   p <- try $ (letPat <|> parens pat) <* lookAhead (sym "=" <|> sym ":")
   ann <- optional $ annot uType
-  return $ ULet PlainLet (p, ann)
+  return $ sourceLet (p, ann)
 
 letPat :: Parser UPat
 letPat = nameAsPat $ upperName <|> lowerName <|> symName
@@ -289,7 +293,7 @@ funDefLet = label "function definition" $ mayBreak $ do
   let funTy = buildPiType piBinders eff ty
   let letBinder = (v, Just funTy)
   let lamBinders = flip map bs $ \(p,_, arr) -> ((p,Nothing), arr)
-  return $ \body -> ULet PlainLet letBinder (buildLam lamBinders body)
+  return $ \body -> sourceLet letBinder (buildLam lamBinders body)
   where
     arg :: Parser (UPat, UType, UArrow)
     arg = label "def arg" $ do
@@ -380,7 +384,7 @@ wrapUStatements statements = case statements of
   (s, pos):rest -> WithSrc pos $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (WithSrc pos (UPatBinder (Ignore ())), Nothing) e
+      where d = sourceLet (WithSrc pos (UPatBinder (Ignore ())), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement

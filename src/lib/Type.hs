@@ -35,7 +35,10 @@ type TypeCheckEnv = OptionalEnv (TypeEnv, EffectRow)
 type TypeM = ReaderT TypeCheckEnv Except
 
 class Pretty a => HasType a where
-  typeCheck :: a -> TypeM Type
+  typeCheckEff :: a -> TypeM Type
+
+typeCheck :: HasType a => a -> TypeM Type
+typeCheck x = checkPure $ typeCheckEff x
 
 getType :: HasType a => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
@@ -88,12 +91,12 @@ checkBinding _ _ = throw CompilerErr "Module bindings must have global names"
 -- === Core IR ===
 
 instance HasType Expr where
-  typeCheck expr = case expr of
+  typeCheckEff expr = case expr of
     Var v -> typeCheckVar v
     -- TODO: check arrowhead-specific effect constraints (both lam and arrow)
     Lam (Abs b (arr, body)) -> withBinder b $ do
       checkArrow arr
-      bodyTy <- withAllowedEff (arrowEff arr) $ typeCheck body
+      bodyTy <- withAllowedEff (arrowEff arr) $ typeCheckEff body
       return $ Pi $ makeAbs b (arr, bodyTy)
     Pi (Abs b (arr, resultTy)) -> withBinder b $
       checkArrow arr >> resultTy|:TyKind $> TyKind
@@ -126,7 +129,7 @@ instance HasType Expr where
         checkEq  (length cons) (length alts)
         forM_ (zip cons alts) $ \((DataConDef _ bs'), (Abs bs body)) -> do
           checkEq bs' bs
-          resultTy' <- flip (foldr withBinder) bs $ typeCheck body
+          resultTy' <- flip (foldr withBinder) bs $ typeCheckEff body
           checkEq resultTy resultTy'
       return resultTy
 
@@ -158,14 +161,15 @@ isPure expr = case exprEffs expr of
   NoEffects   -> True
   SomeEffects -> False
 
--- These are more convservative than necessary.
 -- TODO: make them more precise by de-duping with type checker
+-- TODO: this may miss effects if they're in subexpressions (though they shouldn't be!)
 exprEffs :: Expr -> EffectSummary
 exprEffs expr = case expr of
   App f _ -> functionEffs f
   Op op -> case op of
     PrimEffect _ _ -> SomeEffects
     _ -> NoEffects
+  -- TODO: Annotate case expressions with their effects so this is cheap
   Case _ _ _ -> SomeEffects
   Hof hof -> case hof of
     For _ f -> functionEffs f
@@ -176,7 +180,7 @@ exprEffs expr = case expr of
     RunReader _ _ -> SomeEffects
     RunWriter _   -> SomeEffects
     RunState _ _  -> SomeEffects
-    Tile _ _ _ -> error "not implemented"
+    Tile _ _ _ -> SomeEffects
   _ | isAtom expr -> NoEffects
     | otherwise -> error "unreachable?"
 
@@ -186,16 +190,16 @@ functionEffs f = case getType f of
   _ -> SomeEffects
 
 instance HasType Block where
-  typeCheck (Block decls result) = do
+  typeCheckEff (Block decls result) = do
     checkingEnv <- ask
     case checkingEnv of
       SkipChecks -> typeCheck result
       CheckWith (env, _) -> do
         env' <- catFoldM checkDecl env decls
-        withTypeEnv (env <> env') $ typeCheck result
+        withTypeEnv (env <> env') $ typeCheckEff result
 
 instance HasType Binder where
-  typeCheck b = do
+  typeCheckEff b = checkPure $ do
     checkWithEnv $ \(env, _) -> checkNoShadow env b
     let ty = binderType b
     ty |: TyKind
@@ -203,13 +207,15 @@ instance HasType Binder where
 
 checkDecl :: TypeEnv -> Decl -> TypeM TypeEnv
 checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
-  Let _ b rhs -> do
+  Let ann b rhs -> do
     -- TODO: effects
     ty  <- typeCheck b
-    ty' <- typeCheck rhs
+    ty' <- case ann of
+      PlainLet SomeEffects -> typeCheckEff rhs
+      _                    -> typeCheck    rhs
     checkEq ty ty'
     return $ binderBinding b
-  Unpack bs rhs -> do
+  Unpack bs rhs -> checkPure $ do
     void $ checkNestedBinders bs
     TypeCon def params <- typeCheck rhs
     [DataConDef _ bs'] <- return $ applyDataDefParams def params
@@ -365,7 +371,6 @@ declareEffs effs = checkWithEnv $ \(_, allowedEffects) ->
   checkExtends allowedEffects effs
 
 checkExtends :: MonadError Err m => EffectRow -> EffectRow -> m ()
-checkExtends allowed (EffectRow effs effTail) = return ()
 checkExtends allowed (EffectRow effs effTail) = do
   let (EffectRow allowedEffs allowedEffTail) = allowed
   case effTail of
@@ -404,6 +409,9 @@ updateAllowedEff f m = flip local m $ fmap $ \(env, eff) -> (env, f eff)
 
 withAllowedEff :: EffectRow -> TypeM a -> TypeM a
 withAllowedEff eff m = updateAllowedEff (const eff) m
+
+checkPure :: TypeM a -> TypeM a
+checkPure m = withAllowedEff Pure m
 
 -- === primitive ops and constructors ===
 

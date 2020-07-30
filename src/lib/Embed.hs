@@ -10,7 +10,7 @@
 {-# LANGUAGE MultiParamTypeClasses #-}
 {-# LANGUAGE UndecidableInstances #-}
 
-module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
+module Embed (emit, emitTo, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
@@ -74,12 +74,10 @@ runSubstEmbed :: SubstEmbed a -> Scope -> (a, EmbedEnvC)
 runSubstEmbed m scope = runIdentity $ runEmbedT (runReaderT m mempty) scope
 
 emit :: MonadEmbed m => Expr -> m Atom
-emit expr = emitAnn PlainLet expr
-
-emitAnn :: MonadEmbed m => LetAnn -> Expr -> m Atom
-emitAnn ann expr = do
+emit expr = do
+  let eff = exprEffs expr
   v <- getNameHint
-  emitTo v ann expr
+  emitTo v (PlainLet eff) expr
 
 -- Guarantees that the name will be used, possibly with a modified counter
 emitTo :: MonadEmbed m => Name -> LetAnn -> Expr -> m Atom
@@ -653,8 +651,7 @@ reduceExpr scope expr = case expr of
       TypeCon con xs -> Just $ TypeCon con $ xs ++ [x']
       _ -> Nothing
   Var v -> case snd (scope ! v) of
-    -- TODO: worry about effects!
-    LetBound PlainLet e -> reduceExpr scope e
+    LetBound (PlainLet NoEffects) e -> reduceExpr scope e
     _ -> Just expr
   _ | isAtom expr -> Just expr
     | otherwise   -> Nothing

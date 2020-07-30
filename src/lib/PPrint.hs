@@ -43,7 +43,7 @@ class PrettyPrec a where
 -- `prec` when running `doc`, wrapping with parentheses if needed.
 atPrec :: PrecedenceLevel -> Doc ann -> DocPrec ann
 atPrec prec doc requestedPrec =
-  if requestedPrec > prec then parens (align doc) else doc
+  if requestedPrec > prec then parens doc else doc
 
 pprint :: Pretty a => a -> String
 pprint x = asStr $ pretty x
@@ -70,7 +70,7 @@ prettyFromPrettyPrec :: PrettyPrec a => a -> Doc ann
 prettyFromPrettyPrec = pArg
 
 pAppArg :: (PrettyPrec a, Foldable f) => Doc ann -> f a -> Doc ann
-pAppArg name as = align $ name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
+pAppArg name as = name <> group (nest 2 $ foldMap (\a -> line <> pArg a) as)
 
 instance Pretty Err where
   pretty (Err e _ s) = p e <> p s
@@ -136,8 +136,8 @@ instance Pretty Expr where pretty = prettyFromPrettyPrec
 instance PrettyPrec Expr where
   prettyPrec expr = case expr of
     Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
-    Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
+    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ nest 2 $ "for " <> p b <> "." <+> p body
+    Lam (Abs b (_, body)) -> atPrec LowestPrec $ nest 2 $ "\\" <> p b <> "." <+> p body
     Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
     Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
     Eff e -> atPrec ArgPrec $ p e
@@ -260,8 +260,8 @@ instance Pretty Decl where
     Let _ (Ignore _) bound -> pLowest bound
     -- This is just to reduce clutter a bit. We can comment it out when needed.
     -- Let (v:>Pi _)   bound -> p v <+> "=" <+> p bound
-    Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
-    Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Let _  b  rhs -> p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    Unpack bs rhs -> p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -370,8 +370,8 @@ instance PrettyPrec UExpr' where
   prettyPrec expr = case expr of
     UVar (v:>_) -> atPrec ArgPrec $ p v
     ULam binder h body ->
-      atPrec LowestPrec $ align $ "\\" <> annImplicity h (prettyUBinder binder)
-                                      <> "." <+> nest 2 (pLowest body)
+      atPrec LowestPrec $ "\\" <> annImplicity h (prettyUBinder binder)
+                               <> "." <+> nest 2 (pLowest body)
     UApp TabArrow f x -> atPrec AppPrec $ pArg f <> "." <> pArg x
     UApp _        f x -> atPrec AppPrec $ pAppArg (pApp f) [x]
     UFor dir binder body ->
@@ -380,8 +380,8 @@ instance PrettyPrec UExpr' where
       where kw = case dir of Fwd -> "for"
                              Rev -> "rof"
     UPi a arr b -> atPrec LowestPrec $ p a <+> pretty arr <+> pLowest b
-    UDecl decl body -> atPrec LowestPrec $ align $ p decl <> hardline
-                                                         <> pLowest body
+    UDecl decl body -> atPrec LowestPrec $  p decl <> hardline
+                                                   <> pLowest body
     UHole -> atPrec ArgPrec "_"
     UTabCon xs ann -> atPrec ArgPrec $ p xs <> foldMap (prettyAnn . p) ann
     UIndexRange low high -> atPrec LowestPrec $ low' <> ".." <> high'
@@ -409,7 +409,7 @@ instance Pretty a => Pretty (Limit a) where
 
 instance Pretty UDecl where
   pretty (ULet _ b rhs) =
-    align $ prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
+    prettyUBinder b <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
   pretty (UData tyCon dataCons) =
     "data" <+> p tyCon <+> "where" <> nest 2 (hardline <> prettyLines dataCons)
 

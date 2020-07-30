@@ -101,7 +101,7 @@ evalSourceBlockM env block = case sbContents block of
   LoadData pat DexObject fname -> do
     source <- liftIO $ readFile fname
     let val = ignoreExcept $ parseData source
-    evalUModule env $ UModule $ toNest [ULet PlainLet pat val]
+    evalUModule env $ UModule $ toNest [ULet (PlainLet SomeEffects) pat val]
   -- LoadData pat DexBinaryObject fname -> do
   --   val <- liftIO $ loadDataFile fname
   --   -- TODO: handle patterns and type annotations in binder
@@ -140,7 +140,7 @@ evalUModuleVal env v m = do
 
 lookupBindings :: Scope -> VarP ann -> Atom
 lookupBindings scope v = fromJust $ reduceExpr scope x
-  where (_, LetBound PlainLet x) = scope ! v
+  where (_, LetBound (PlainLet NoEffects) x) = scope ! v
 
 -- TODO: extract only the relevant part of the env we can check for module-level
 -- unbound vars and upstream errors here. This should catch all unbound variable

@@ -99,11 +99,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         throw TypeErr $ "Not an table arrow type: " ++ pprint arr
       allowedEff <- getAllowedEffects
       lam <- checkULam b body $ Abs n (PlainArrow allowedEff, a)
-      return $ Hof $ For dir lam
+      maybeEmit $ Hof $ For dir lam
     Infer -> do
       allowedEff <- getAllowedEffects
       lam <- inferULam b (PlainArrow allowedEff) body
-      return $ Hof $ For dir lam
+      maybeEmit $ Hof $ For dir lam
   UApp arr f x -> do
     fVal <- inferRho f
     fVal' <- zonk fVal
@@ -118,7 +118,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         let xVal' = tryReduceExpr scope xVal
         return (fst $ applyAbs piTy xVal', xVal')
     addEffects $ arrowEff arr'
-    instantiateSigma (App fVal'' xVal') >>= matchRequirement
+    appVal <- maybeEmit $ App fVal'' xVal'
+    instantiateSigma appVal >>= matchRequirement
   UPi b arr ty -> do
     -- TODO: make sure there's no effect if it's an implicit or table arrow
     -- TODO: check leaks
@@ -143,7 +144,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                Block Empty $ Op $ ThrowError reqTy'
         Just alt -> return alt
-    return $ Case scrut' altsSorted reqTy'
+    maybeEmit $ Case scrut' altsSorted reqTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
     n <- freshType TyKind
@@ -158,8 +159,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     val <- case prim' of
       TCExpr  e -> return $ TC e
       ConExpr e -> return $ Con e
-      OpExpr  e -> return $ Op e
-      HofExpr e -> return $ Hof e
+      OpExpr  e -> maybeEmit $ Op e
+      HofExpr e -> maybeEmit $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
   where
@@ -190,7 +191,9 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     let b' = binderAsGlobal b
     scope <- getScope
     when (b' `isin` scope) $ throw RepeatedVarErr $ pprint $ getName b'
-    void $ emitTo (binderNameHint b') letAnn expr
+    let letAnn' = case letAnn of PlainLet SomeEffects -> PlainLet NoEffects
+                                 _ -> letAnn
+    void $ emitTo (binderNameHint b') letAnn' expr
   UPatUnit -> return () -- TODO: change if we allow effects at the top level
   UPatPair p1 p2 -> do
     val  <- emit expr
@@ -221,8 +224,7 @@ inferUDecl topLevel (ULet letAnn (p, ann) rhs) = do
   if topLevel
     then unpackTopPat letAnn p expr $> mempty
     else do
-      -- TODO: non-top-level annotations?
-      val' <- withPatHint p $ emitAnn PlainLet expr
+      val' <- withPatHint p $ emit expr
       bindPat p val'
 inferUDecl True (UData tc dcs) = do
   (tc', paramBs) <- inferUConDef tc
@@ -395,7 +397,7 @@ inferTabCon xs ann = do
   (n, ty) <- inferTabTy xs ann
   let tabTy = n==>ty
   xs' <- mapM (flip checkRho ty) xs
-  return $ Op $ TabCon tabTy xs'
+  maybeEmit $ Op $ TabCon tabTy xs'
 
 inferTabTy :: [UExpr] -> Maybe UType -> UInferM (Type, Type)
 inferTabTy xs ann = case ann of
@@ -431,6 +433,13 @@ fromPairType ty = do
   b <- freshType TyKind
   constrainEq (PairTy a b) ty
   return (a, b)
+
+maybeEmit :: Expr -> UInferM Expr
+maybeEmit expr = do
+  expr' <- zonk expr
+  case exprEffs expr' of
+    NoEffects -> return expr'
+    SomeEffects -> emit expr'
 
 addEffects :: EffectRow -> UInferM ()
 addEffects eff = do
