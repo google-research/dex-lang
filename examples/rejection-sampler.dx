@@ -1,0 +1,34 @@
+
+def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
+  ans = fst $ withState 0 \i.
+    snd $ withState Nothing \sample.
+      while (\(). isNothing (get sample)) \().
+        i := get i + 1
+        sample := try $ hash k (get i)
+  case ans of Just sample -> sample
+
+Prob    = Real
+LogProb = Real
+
+def binomialSample (n:Int) (p:Prob) (k:Key) : Int = todo
+
+def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
+  pSuccess = log p * i2r counts
+  pFailure = log1p (-p) * i2r (n - counts)
+  normConst = (lbeta (1. + i2r counts) (1. + i2r n - i2r counts) +
+               log (1. + i2r n))
+  pSuccess + pFailure - normConst
+
+def binomialProb (n:Int) (p:Prob) (count:Int) : Prob =
+  exp $ logBinomialProb n p count
+
+def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
+  (k1, k2) = splitKey k
+  proposal = floor $ rand k1 * i2r (n + 1)
+  acceptance = rand k2 < binomialProb n p proposal
+  case proposal < (n + 1) && acceptance of
+    True -> Just proposal
+    False -> Nothing
+
+:p randVec 10 (rejectionSample (trySampleBinomial 10 0.5)) (newKey 0)
+> [4, 2, 5, 4, 6, 7, 3, 6, 6, 3]
