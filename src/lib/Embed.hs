@@ -35,6 +35,7 @@ import Control.Monad.Reader
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Identity
 import Data.Foldable (toList)
+import qualified Data.Map.Strict as M
 import Data.Maybe
 import GHC.Stack
 
@@ -43,7 +44,7 @@ import Syntax
 import Cat
 import Type
 import PPrint
-import Util (bindM2)
+import Util (bindM2, traverseFunM, restructure)
 
 newtype EmbedT m a = EmbedT (ReaderT EmbedEnvR (CatT EmbedEnvC m) a)
   deriving (Functor, Applicative, Monad, MonadIO, MonadFail, Alternative)
@@ -263,6 +264,10 @@ getSnd :: MonadEmbed m => Atom -> m Atom
 getSnd (PairVal _ y) = return y
 getSnd p = emitOp $ Snd p
 
+getUnpacked :: MonadEmbed m => Atom -> m [Atom]
+getUnpacked (Record items) = return $ toList items
+getUnpacked a = emitUnpack (Atom a)
+
 app :: MonadEmbed m => Atom -> Atom -> m Atom
 app x i = emit $ App x i
 
@@ -405,6 +410,9 @@ unsafeIntToBool b = emitOp $ ScalarUnOp UnsafeIntToBool b
 
 indexAsInt :: MonadEmbed m => Atom -> m Atom
 indexAsInt idx = emitOp $ IndexAsInt idx
+
+unsafeCoerce :: MonadEmbed m => Type -> Atom -> m Atom
+unsafeCoerce ty x = emitOp $ CoerceOp ty x
 
 instance MonadTrans EmbedT where
   lift m = EmbedT $ lift $ lift m
@@ -698,6 +706,12 @@ indexSetSizeE (TC con) = case con of
   SumType l r -> bindM2 iadd (indexSetSizeE l) (indexSetSizeE r)
   _ -> error $ "Not implemented " ++ pprint con
   where
+indexSetSizeE (RecordTy types) = do
+  sizes <- traverse indexSetSizeE types
+  foldM imul (IntVal 1) sizes
+indexSetSizeE (VariantTy types) = do
+  sizes <- traverse indexSetSizeE types
+  foldM iadd (IntVal 0) sizes
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
 
 clampPositive :: MonadEmbed m => Atom -> m Atom
@@ -727,6 +741,25 @@ indexToIntE ty idx = case ty of
     imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
+  RecordTy types -> do
+    sizes <- traverse indexSetSizeE types
+    (strides, _) <- traverseFunM
+      (\sz prev -> do {v <- imul sz prev; return (prev, v)}) sizes (IntVal 1)
+    -- Unpack and sum the strided contributions
+    subindices <- getUnpacked idx
+    subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
+    scaled <- mapM (uncurry imul) $ zip (toList strides) subints
+    foldM iadd (IntVal 0) scaled
+  VariantTy types -> do
+    sizes <- traverse indexSetSizeE types
+    (offsets, _) <- traverseFunM
+      (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+    -- Build and apply a case expression
+    alts <- flip mapM (zip (toList offsets) (toList types)) $
+      \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
+        i <- indexToIntE subty subix
+        iadd offset i
+    emit $ Case idx alts IntTy
   _ -> error $ "Unexpected type " ++ pprint ty
 
 intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
@@ -748,6 +781,37 @@ intToIndexE ty@(TC con) i = case con of
     return $ Con $ SumCon isLeft li ri
   _ -> error $ "Unexpected type " ++ pprint con
   where iAsIdx = return $ Con $ Coerce ty i
+intToIndexE (RecordTy types) i = do
+  sizes <- traverse indexSetSizeE types
+  (strides, _) <- traverseFunM
+    (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IntVal 1)
+  offsets <- flip mapM (zip (toList types) (toList strides)) $
+    \(ty, (s1, s2)) -> do
+      x <- irem i s2
+      y <- idiv x s1
+      intToIndexE ty y
+  return $ Record (restructure offsets types)
+intToIndexE rty@(VariantTy types) i = do
+  sizes <- traverse indexSetSizeE types
+  (offsets, _) <- traverseFunM
+    (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+  let
+    reflect = reflectLabels types
+    -- Find the right index by looping through the possible offsets
+    -- TODO: is there a better way than generating a case statement? Select
+    -- doesn't work because variants aren't primitive types
+    go prev ((label, repeatNum), ty, offset) = do
+      beforeThis <- unsafeCoerce PreludeBoolTy =<< ilt i offset
+      hereCase <- buildNAbs Empty $ \[] -> do
+        shifted <- isub i offset
+        index <- intToIndexE ty shifted
+        return $ Variant types label repeatNum index
+      beforeCase <- buildNAbs Empty $ \[] -> return $ prev
+      emit $ Case beforeThis [hereCase, beforeCase] rty
+    ((l0, 0), ty0, _):zs = zip3 (toList reflect) (toList types) (toList offsets)
+  start <- Variant types l0 0 <$> intToIndexE ty0 i
+  choice <- foldM go start zs
+  return choice
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom

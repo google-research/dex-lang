@@ -14,6 +14,7 @@ import PPrint
 import Embed
 import Type
 import Data.Foldable
+import Util (restructure)
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "sqrt" c_sqrt :: Double -> Double
@@ -114,6 +115,15 @@ indices ty = case ty of
   TC (UnitType)          -> [UnitVal]
   TC (SumType lt rt)     -> fmap (\l -> SumVal (BoolVal True)  l (Con (AnyValue rt))) (indices lt) ++
                             fmap (\r -> SumVal (BoolVal False) (Con (AnyValue lt)) r) (indices rt)
+  RecordTy types         -> let
+    subindices = map indices (toList types)
+    products = foldl (\prevs curs -> [cur:prev | cur <- curs, prev <- prevs]) [[]] subindices
+    in map (\idxs -> Record $ restructure idxs types) products
+  VariantTy types        -> let
+    subindices = fmap indices types
+    reflect = reflectLabels types
+    zipped = zip (toList reflect) (toList subindices)
+    in concatMap (\((label, i), args) -> Variant types label i <$> args) zipped
   _ -> error $ "Not implemented: " ++ pprint ty
   where n = indexSetSize ty
 

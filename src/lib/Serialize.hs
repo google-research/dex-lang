@@ -209,14 +209,12 @@ prettyVal val = case val of
       where
         DataConDef conName _ = dataCons !! i
         args = payload !! i
-    SumAsProd (VariantTy ltys@(LabeledItems types)) (IntVal i) payload ->
+    SumAsProd (VariantTy types) (IntVal i) payload ->
       pretty variant
       where
         [value] = payload !! i
-        reflect = LabeledItems $ flip M.mapWithKey types $ \k -> \xs ->
-          map (k,) [0..length xs - 1]
-        (theLabel, repeatNum) = toList reflect !! i
-        variant = Variant ltys theLabel repeatNum value 
+        (theLabel, repeatNum) = toList (reflectLabels types) !! i
+        variant = Variant types theLabel repeatNum value
     _           -> pretty con
   atom -> prettyPrec atom LowestPrec
 

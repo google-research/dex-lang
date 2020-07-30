@@ -8,11 +8,12 @@
 
 module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
              insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
-             composeN, mapMaybe, uncons, repeated,
+             traverseFunM, composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
              bindM2, foldMapM, lookupWithIdx, (...)) where
 
+import Data.Functor.Identity (Identity(..))
 import Data.List (sort)
 import Prelude
 import qualified Data.Set as Set
@@ -174,12 +175,19 @@ findReplace old new s@(x:xs) =
 traverseFun :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
 traverseFun f xs s = runState (traverse (asState . f) xs) s
 
-asState :: (s -> (a, s)) -> State s a
-asState f = do
+traverseFunM :: (Monad m, Traversable t)
+  => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
+traverseFunM f xs s = runStateT (traverse (asStateT . f) xs) s
+
+asStateT :: Monad m => (s -> m (a, s)) -> StateT s m a
+asStateT f = do
   s <- get
-  let (ans, s') = f s
+  (ans, s') <- lift $ f s
   put s'
   return ans
+
+asState :: (s -> (a, s)) -> State s a
+asState f = asStateT (Identity . f)
 
 uncurry3 :: (a -> b -> c -> d) -> (a, b, c) -> d
 uncurry3 f (x, y, z) = f x y z

@@ -11,8 +11,9 @@ module Algebra (Constant, Monomial, Polynomial,
 
 import Prelude hiding (lookup, sum, pi)
 import Control.Monad
+import qualified Data.Foldable as F
 import Data.Ratio
-import Data.Map.Strict hiding (foldl)
+import Data.Map.Strict hiding (foldl, map)
 import Data.Text.Prettyprint.Doc
 import Data.List (intersperse)
 import Data.Tuple (swap)
@@ -88,6 +89,14 @@ indexSetSize (TC con) = case con of
   PairType l r -> mulC (indexSetSize l) (indexSetSize r)
   SumType l r  -> add  (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
+indexSetSize (RecordTy types) = let
+  sizes = map indexSetSize (F.toList types)
+  one = liftC $ toPolynomial $ IntVal 1
+  in foldl mulC one sizes
+indexSetSize (VariantTy types) = let
+  sizes = map indexSetSize (F.toList types)
+  zero = liftC $ toPolynomial $ IntVal 0
+  in foldl add zero sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 toPolynomial :: Atom -> Polynomial

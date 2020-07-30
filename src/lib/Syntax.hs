@@ -20,7 +20,7 @@ module Syntax (
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
-    noLabeledItems,
+    noLabeledItems, reflectLabels,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
@@ -156,6 +156,10 @@ labeledSingleton label value = LabeledItems $ M.singleton label [value]
 
 noLabeledItems :: LabeledItems a
 noLabeledItems = LabeledItems M.empty
+
+reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
+reflectLabels (LabeledItems items) = LabeledItems $
+  flip M.mapWithKey items $ \k xs -> map (k,) [0..length xs - 1]
 
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
@@ -1155,8 +1159,10 @@ pattern BoolTy :: Type
 pattern BoolTy = TC (BaseType (Scalar BoolType))
 
 pattern PreludeBoolTy :: Type
-pattern PreludeBoolTy <-
-  TypeCon (DataDef _ Empty [DataConDef _ Empty, DataConDef _ Empty]) []
+pattern PreludeBoolTy =
+  TypeCon (DataDef (GlobalName "Bool") Empty
+    [ DataConDef (GlobalName "False") Empty
+    , DataConDef (GlobalName "True") Empty]) []
 
 pattern RealTy :: Type
 pattern RealTy = TC (BaseType (Scalar RealType))

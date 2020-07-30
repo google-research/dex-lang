@@ -114,6 +114,11 @@ toImpExpr env (maybeDest, expr) = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         toImpBlock (env <> newEnv bs args) (maybeDest, body)
+      Variant types label i x -> do
+        let LabeledItems ixtypes = enumerate types
+        let index = fst $ ixtypes M.! label !! i
+        let Abs bs body = alts !! index
+        toImpBlock (env <> newEnv bs [x]) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
         let tag' = fromScalarAtom tag
         dest <- allocDest maybeDest $ getType expr
