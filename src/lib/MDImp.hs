@@ -17,8 +17,6 @@ import Syntax
 import PPrint
 import Cat
 
-import Debug.Trace
-
 impToMDImp :: ImpFunction -> MDImpFunction ImpKernel
 impToMDImp (ImpFunction dests args prog) = MDImpFunction dests args $ progToMD prog
 
@@ -34,7 +32,7 @@ progToMD (ImpProg stmts) = MDImpProg $ evalCat $ forM stmts (\s@(d, _) -> (d,) <
 
 -- TODO: Collapse loops, hoist allocations, etc.
 stmtToMDInstr :: ImpStatement -> Translate (MDImpInstr ImpKernel)
-stmtToMDInstr (d, instr) = case traceShowId instr of
+stmtToMDInstr (d, instr) = case instr of
   Alloc t s -> case t of
     BaseTy _ -> do
       case d of

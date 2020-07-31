@@ -227,7 +227,6 @@ evalBackend bindings block = do
         compileKernel :: ImpKernel -> IO PTXKernel
         compileKernel k = do
           let llvmKernel = impKernelToLLVM k
-          putStrLn $ show llvmKernel
           compilePTX logger llvmKernel
     -- JaxServer server -> do
     --   -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
