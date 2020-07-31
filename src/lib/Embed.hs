@@ -729,8 +729,7 @@ indexToIntE ty idx = case ty of
   TC (IndexRange _ _ _) -> indexAsInt idx
   RecordTy types -> do
     sizes <- traverse indexSetSizeE types
-    (strides, _) <- scanM
-      (\sz prev -> do {v <- imul sz prev; return (prev, v)}) sizes (IntVal 1)
+    (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IntVal 1)
     -- Unpack and sum the strided contributions
     subindices <- getUnpacked idx
     subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
@@ -738,8 +737,7 @@ indexToIntE ty idx = case ty of
     foldM iadd (IntVal 0) scaled
   VariantTy types -> do
     sizes <- traverse indexSetSizeE types
-    (offsets, _) <- scanM
-      (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+    (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IntVal 0)
     -- Build and apply a case expression
     alts <- flip mapM (zip (toList offsets) (toList types)) $
       \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
@@ -771,15 +769,12 @@ intToIndexE (RecordTy types) i = do
       y <- idiv x s1
       intToIndexE ty y
   return $ Record (restructure offsets types)
-intToIndexE rty@(VariantTy types) i = do
+intToIndexE (VariantTy types) i = do
   sizes <- traverse indexSetSizeE types
-  (offsets, _) <- scanM
-    (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+  (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IntVal 0)
   let
     reflect = reflectLabels types
     -- Find the right index by looping through the possible offsets
-    -- TODO: is there a better way than generating a case statement? Select
-    -- doesn't work because variants aren't primitive types
     go prev ((label, repeatNum), ty, offset) = do
       beforeThis <- ilt i offset
       boolCase beforeThis (return prev) $ do
