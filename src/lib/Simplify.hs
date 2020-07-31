@@ -178,7 +178,7 @@ simplifyExpr expr = case expr of
         extendR (newEnv bs args) $ simplifyBlock body
       Variant types label i value -> do
         let LabeledItems ixtypes = enumerate types
-        let index = fst $ ixtypes M.! label !! i
+        let index = fst $ (ixtypes M.! label) !! i
         let Abs bs body = alts !! index
         extendR (newEnv bs [value]) $ simplifyBlock body
       _ -> do

@@ -206,8 +206,6 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
 > 30
 :p ordinal {a=(7@Fin 10), b=(2@Fin 3)}
 > 27
-:p fromOrdinal (Fin 10 & Fin 3) 14
-> (4@(Fin 10), 2@(Fin 3))
 :p fromOrdinal {a:Fin 10 & b:Fin 3} 14
 > {a = 4@Fin 10, b = 1@Fin 3}
 
