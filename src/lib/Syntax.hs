@@ -254,7 +254,7 @@ data PrimCon e =
       | UnitCon
       | RefCon e e
       | Coerce e e        -- Type, then value. See Type.hs for valid coercions.
-      | ClassDictHole e   -- Only used during type inference
+      | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 

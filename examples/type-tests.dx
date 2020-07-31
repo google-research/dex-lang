@@ -327,3 +327,9 @@ bad_range : Int = (1@Fin 3)..(2@_)
 
 5.0 .* ()
 > ()
+
+:p (\x:Int. x) == (\x:Int. x)
+> Type error:Couldn't synthesize a class dictionary for: (Eq (Int -> Int))
+>
+> :p (\x:Int. x) == (\x:Int. x)
+>                ^^^

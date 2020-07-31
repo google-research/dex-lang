@@ -27,7 +27,7 @@ import PPrint
 import Cat
 import Util
 
-type UInferM = ReaderT SubstEnv (EmbedT (SolverT (Either Err)))
+type UInferM = ReaderT SubstEnv (ReaderT SrcCtx ((EmbedT (SolverT (Either Err)))))
 
 type SigmaType = Type  -- may     start with an implicit lambda
 type RhoType   = Type  -- doesn't start with an implicit lambda
@@ -45,7 +45,8 @@ inferModule scope (UModule decls) = do
 
 runUInferM :: (Subst a, Pretty a)
            => SubstEnv -> Scope -> UInferM a -> Except (a, (Scope, Nest Decl))
-runUInferM env scope m = runSolverT $ runEmbedT (runReaderT m env) scope
+runUInferM env scope m = runSolverT $
+  runEmbedT (runReaderT (runReaderT m env) Nothing) scope
 
 checkSigma :: UExpr -> SigmaType -> UInferM Atom
 checkSigma expr sTy = case sTy of
@@ -60,7 +61,7 @@ checkSigma expr sTy = case sTy of
 
 inferSigma :: UExpr -> UInferM Atom
 inferSigma (WithSrc pos expr) = case expr of
-  ULam pat ImplicitArrow body -> addSrcContext (Just pos) $
+  ULam pat ImplicitArrow body -> addSrcPos pos $
     inferULam pat ImplicitArrow body
   _ ->
     inferRho (WithSrc pos expr)
@@ -77,13 +78,14 @@ instantiateSigma f = case getType f of
     x <- freshType $ binderType b
     ans <- emitZonked $ App f x
     instantiateSigma ans
-  Pi (Abs b (ClassArrow, _)) ->
-    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole $ binderType b))
+  Pi (Abs b (ClassArrow, _)) -> do
+    ctx <- getSrcCtx
+    instantiateSigma =<< emitZonked (App f (Con $ ClassDictHole ctx $ binderType b))
   _ -> return f
 
 checkOrInferRho :: UExpr -> RequiredTy RhoType -> UInferM Atom
 checkOrInferRho (WithSrc pos expr) reqTy =
- addSrcContext (Just pos) $ case expr of
+ addSrcPos pos $ case expr of
   UVar v -> lookupSourceVar v >>= instantiateSigma >>= matchRequirement
   ULam (p, ann) ImplicitArrow body -> do
     argTy <- checkAnn ann
@@ -110,7 +112,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UApp arr f x -> do
     fVal <- inferRho f
     fVal' <- zonk fVal
-    piTy <- addSrcContext (Just (srcPos f)) $ fromPiType True arr $ getType fVal'
+    piTy <- addSrcPos (srcPos f) $ fromPiType True arr $ getType fVal'
     -- Zonking twice! Once for linearity and once for the embedding. Not ideal...
     fVal'' <- zonk fVal
     xVal <- checkSigma x (absArgType piTy)
@@ -358,7 +360,7 @@ lookupDataCon conName = do
     Nothing -> throw UnboundVarErr $ pprint conName'
 
 checkPat :: UPat -> Type -> UInferM (Int, [(UPat, Type)])
-checkPat (WithSrc pos pat) scrutineeTy = addSrcContext (Just pos) $ case pat of
+checkPat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
@@ -530,6 +532,15 @@ binderAsGlobal :: BinderP a -> BinderP a
 binderAsGlobal (Ignore ann) = Ignore ann
 binderAsGlobal (Bind (v:>ann)) = Bind $ asGlobal v :> ann
 
+addSrcPos :: SrcPos -> UInferM a -> UInferM a
+addSrcPos pos m = do
+  env <- ask
+  addSrcContext (Just pos) $ lift $
+    local (const (Just pos)) $ runReaderT m env
+
+getSrcCtx :: UInferM SrcCtx
+getSrcCtx = lift ask
+
 -- === typeclass dictionary synthesizer ===
 
 -- We have two variants here because at the top level we want error messages and
@@ -544,22 +555,22 @@ synthModule scope (Module Typed decls bindings) = do
   return $ Module Core decls' bindings
 synthModule _ _ = error $ "Unexpected IR variant"
 
-synthDictTop :: Type -> SynthPassM Atom
-synthDictTop ty = do
+synthDictTop :: SrcCtx -> Type -> SynthPassM Atom
+synthDictTop ctx ty = do
   scope <- getScope
   let solutions = runSubstEmbedT (synthDict ty) scope
-  case solutions of
+  addSrcContext ctx $ case solutions of
     [] -> throw TypeErr $ "Couldn't synthesize a class dictionary for: " ++ pprint ty
     [(ans, env)] -> embedExtend env $> ans
     _ -> throw TypeErr $ "Multiple candidate class dictionaries for: " ++ pprint ty
            ++ "\n" ++ pprint solutions
 
 traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
-              => (Type -> m Atom) -> TraversalDef m
+              => (SrcCtx -> Type -> m Atom) -> TraversalDef m
 traverseHoles fillHole = (traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
-      Con (ClassDictHole ty) -> fillHole ty
+      Con (ClassDictHole ctx ty) -> fillHole ctx ty
       _ -> traverseAtom recur atom
     recur = traverseHoles fillHole
 
@@ -569,7 +580,7 @@ synthDict ty = do
   case bindingInfo of
     LetBound InstanceLet _ -> do
       block <- buildScoped $ inferToSynth $ instantiateAndCheck ty d
-      traverseBlock (traverseHoles synthDict) block >>= emitBlock
+      traverseBlock (traverseHoles (const synthDict)) block >>= emitBlock
     LamBound ClassArrow -> do
       d' <- superclass d
       inferToSynth $ instantiateAndCheck ty d'

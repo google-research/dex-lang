@@ -346,8 +346,8 @@ instance CoreVariant (PrimOp a) where
 
 instance CoreVariant (PrimCon a) where
   checkVariant e = case e of
-    ClassDictHole _ -> goneBy Core
-    RefCon _ _      -> neverAllowed
+    ClassDictHole _ _ -> goneBy Core
+    RefCon _ _ -> neverAllowed
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimHof a) where
@@ -471,7 +471,7 @@ typeCheckCon con = case con of
     checkValidCoercion sourceTy destTy
     return destTy
   SumAsProd ty _ _ -> return ty  -- TODO: check!
-  ClassDictHole ty -> ty |: TyKind >> return ty
+  ClassDictHole _ ty -> ty |: TyKind >> return ty
 
 checkValidCoercion :: Type -> Type -> TypeM ()
 checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of

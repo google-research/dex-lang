@@ -204,7 +204,7 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
     AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
     SumAsProd ty tag payload -> atPrec LowestPrec $
       "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-    ClassDictHole _ -> atPrec ArgPrec "_"
+    ClassDictHole _ _ -> atPrec ArgPrec "_"
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
