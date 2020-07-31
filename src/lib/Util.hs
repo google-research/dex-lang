@@ -7,8 +7,8 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
 module Util (group, ungroup, pad, padLeft, delIdx, replaceIdx,
-             insertIdx, mvIdx, mapFst, mapSnd, splitOn, traverseFun,
-             traverseFunM, composeN, mapMaybe, uncons, repeated,
+             insertIdx, mvIdx, mapFst, mapSnd, splitOn, scan,
+             scanM, composeN, mapMaybe, uncons, repeated,
              showErr, listDiff, splitMap, enumerate, restructure,
              onSnd, onFst, highlightRegion, findReplace, swapAt, uncurry3,
              bindM2, foldMapM, lookupWithIdx, (...)) where
@@ -172,12 +172,12 @@ findReplace old new s@(x:xs) =
   where n = length old
         recur = findReplace old new
 
-traverseFun :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
-traverseFun f xs s = runState (traverse (asState . f) xs) s
+scan :: Traversable t => (a -> s -> (b, s)) -> t a -> s -> (t b, s)
+scan f xs s = runState (traverse (asState . f) xs) s
 
-traverseFunM :: (Monad m, Traversable t)
+scanM :: (Monad m, Traversable t)
   => (a -> s -> m (b, s)) -> t a -> s -> m (t b, s)
-traverseFunM f xs s = runStateT (traverse (asStateT . f) xs) s
+scanM f xs s = runStateT (traverse (asStateT . f) xs) s
 
 asStateT :: Monad m => (s -> m (a, s)) -> StateT s m a
 asStateT f = do

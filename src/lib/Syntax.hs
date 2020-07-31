@@ -810,10 +810,11 @@ instance Eq Atom where
   DataCon def params con args == DataCon def' params' con' args' =
     def == def' && params == params' && con == con' && args == args'
   TypeCon def params == TypeCon def' params' = def == def' && params == params'
-  Record lr == Record lr' = lr == lr'
-  Variant lr l i v == Variant lr' l' i' v' = (lr, l, i, v) == (lr', l', i', v')
-  RecordTy lr == RecordTy lr' = lr == lr'
-  VariantTy lr == VariantTy lr' = lr == lr'
+  Variant lr l i v == Variant lr' l' i' v' =
+    (lr, l, i, v) == (lr', l', i', v')
+  Record lr    == Record lr'      = lr == lr'
+  RecordTy lr  == RecordTy lr'    = lr == lr'
+  VariantTy lr == VariantTy lr'   = lr == lr'
   Con con == Con con' = con == con'
   TC  con == TC  con' = con == con'
   Eff eff == Eff eff' = eff == eff'

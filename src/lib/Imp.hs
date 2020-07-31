@@ -619,7 +619,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     zipWithM_ recDest (payload !! con) x
   (Con (SumAsProd _ tag payload), Variant types label i x) -> do
     let LabeledItems ixtypes = enumerate types
-    let index = fst $ ixtypes M.! label !! i
+    let index = fst $ (ixtypes M.! label) !! i
     recDest tag (IntVal index)
     zipWithM_ recDest (payload !! index) [x]
   (Con dcon, Con acon) -> case (dcon, acon) of
