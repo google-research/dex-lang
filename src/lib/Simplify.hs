@@ -92,8 +92,6 @@ simplifyAtom atom = case atom of
   Pi  _ -> substEmbedR atom
   Con (AnyValue (TabTy v b)) -> TabValA v <$> mkAny b
   Con (AnyValue (PairTy a b))-> PairVal <$> mkAny a <*> mkAny b
-  Con (AnyValue (SumTy l r)) -> do
-    Con <$> (SumCon <$> mkAny (TC $ BaseType $ Scalar BoolType) <*> mkAny l <*> mkAny r)
   Con con -> Con <$> mapM simplifyAtom con
   TC tc -> TC <$> mapM substEmbedR tc
   Eff eff -> Eff <$> substEmbedR eff
@@ -192,8 +190,6 @@ simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
-  SumGet (SumVal _ l r) left -> return $ if left then l else r
-  SumTag (SumVal s _ _) -> return $ s
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom
@@ -236,19 +232,6 @@ simplifyHof hof = case hof of
     (ans, sOut) <- fromPair =<< (emit $ Hof $ RunState s' lam')
     ans' <- applyRecon recon ans
     return $ PairVal ans' sOut
-  SumCase c lBody rBody -> do
-    ~(lBody', Nothing) <- simplifyLam lBody
-    ~(rBody', Nothing) <- simplifyLam rBody
-    l <- projApp lBody' True
-    r <- projApp rBody' False
-    isLeft <- simplRec $ Op $ SumTag c
-    emitOp $ Select isLeft l r
-    where
-      simplRec :: Expr -> SimplifyM Atom
-      simplRec = dropSub . simplifyExpr
-      projApp f isLeft = do
-        cComp <- simplRec $ Op $ SumGet c isLeft
-        simplRec $ App f cComp
 
 dropSub :: SimplifyM a -> SimplifyM a
 dropSub m = local mempty m

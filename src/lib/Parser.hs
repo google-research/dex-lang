@@ -184,7 +184,6 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uLamExpr
          <|> uForExpr
          <|> caseExpr
-         <|> uCaseExpr
          <|> uPrim
          <|> unitCon
          <|> uLabeledExprs
@@ -260,7 +259,7 @@ dataDef = do
 
 -- TODO: default to `Type` if unannoted
 tyConDef :: Parser UConDef
-tyConDef = UConDef <$> upperName <*> manyNested annBinder
+tyConDef = UConDef <$> (upperName <|> symName) <*> manyNested annBinder
 
 -- TODO: dependent types
 dataConDef :: Parser UConDef
@@ -442,27 +441,6 @@ leafPat =
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
 patOps = [[InfixR $ sym "," $> \x y -> joinSrc x y $ UPatPair x y]]
-
-uCaseExpr :: Parser UExpr
-uCaseExpr = do
-  ((), pos) <- withPos $ keyWord OldCaseKW
-  e <- expr
-  withIndent $ do
-    l <- lexeme (string "Left") >> caseLam
-    nextLine
-    r <- lexeme (string "Right") >> caseLam
-    return $ applyNamed pos "caseAnalysis" [e, l, r]
-
-caseLam :: Parser UExpr
-caseLam = do
-  p <- pat
-  sym "->"
-  body <- blockOrExpr
-  return $ WithSrc (srcPos body) $ ULam (p, Nothing) (PlainArrow ()) body
-
-applyNamed :: SrcPos -> String -> [UExpr] -> UExpr
-applyNamed pos name args = foldl mkApp f args
-  where f = WithSrc pos $ UVar (Name SourceName (fromString name) 0:>())
 
 annot :: Parser a -> Parser a
 annot p = label "type annotation" $ sym ":" >> p
@@ -660,7 +638,7 @@ mkName s = Name SourceName (fromString s) 0
 type Lexer = Parser
 
 data KeyWord = DefKW | ForKW | RofKW | CaseKW | OfKW
-             | ReadKW | WriteKW | StateKW | OldCaseKW | DataKW | WhereKW
+             | ReadKW | WriteKW | StateKW | DataKW | WhereKW
 
 upperName :: Lexer Name
 upperName = liftM mkName $ label "upper-case name" $ lexeme $
@@ -690,11 +668,10 @@ keyWord kw = lexeme $ try $ string s >> notFollowedBy nameTailChar
       StateKW -> "State"
       DataKW -> "data"
       WhereKW -> "where"
-      OldCaseKW -> "oldcase"
 
 keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
-               "Read", "Write", "Accum", "oldcase", "data", "where"]
+               "Read", "Write", "Accum", "data", "where"]
 
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar

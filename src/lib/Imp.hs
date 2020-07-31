@@ -141,10 +141,8 @@ toImpOp (maybeDest, op) = case op of
       ithDest <- destGet dest =<< intToIndex (binderType b) (IIntVal i)
       copyAtom ithDest row
     destToAtom dest
-  SumGet ~(SumVal  _ l r) left -> returnVal $ if left then l else r
-  SumTag ~(SumVal  t _ _)      -> returnVal t
-  Fst    ~(PairVal x _)        -> returnVal x
-  Snd    ~(PairVal _ y)        -> returnVal y
+  Fst ~(PairVal x _) -> returnVal x
+  Snd ~(PairVal _ y) -> returnVal y
   PrimEffect ~(Var refVar) m -> do
     refDest <- looks $ (! refVar) . fst . fst
     case m of
@@ -453,7 +451,6 @@ splitDest (maybeDest, (Block decls ans)) = do
                                             gatherVarDests (Dest rd) rr
         (UnitCon       , UnitCon       ) -> return ()
         (Coerce _ db   , Coerce _ rb   ) -> gatherVarDests (Dest db) rb
-        (_             , SumCon _ _ _  ) -> error "Not implemented"
         _ -> unreachable
       _ -> unreachable
       where
@@ -626,7 +623,6 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
     (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
-    (SumCon _ _ _ , SumCon _ _ _ ) -> error "Not implemented"
     (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
       recDest tag tag'
       zipWithM_ (zipWithM_ recDest) xs xs'

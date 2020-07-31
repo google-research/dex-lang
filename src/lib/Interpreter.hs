@@ -102,8 +102,6 @@ evalOpDefined expr = case expr of
     _ -> evalEmbed (indexToIntE (getType idxArg) idxArg)
   Fst p         -> x                     where (PairVal x _) = p
   Snd p         -> y                     where (PairVal _ y) = p
-  SumTag s      -> t                     where (SumVal t _ _) = s
-  SumGet s left -> if left then l else r where (SumVal _ l r) = s
   _ -> error $ "Not implemented: " ++ pprint expr
 
 indices :: Type -> [Atom]
@@ -113,8 +111,6 @@ indices ty = case ty of
   TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . IntVal) [0..n - 1]
   TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
   TC (UnitType)          -> [UnitVal]
-  TC (SumType lt rt)     -> fmap (\l -> SumVal (BoolVal True)  l (Con (AnyValue rt))) (indices lt) ++
-                            fmap (\r -> SumVal (BoolVal False) (Con (AnyValue lt)) r) (indices rt)
   RecordTy types         -> let
     subindices = map indices (toList types)
     products = foldl (\prevs curs -> [cur:prev | cur <- curs, prev <- prevs]) [[]] subindices

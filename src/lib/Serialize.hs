@@ -227,7 +227,6 @@ flattenType (TC con) = case con of
   BaseType b       -> [BaseTy b]
   IntRange _ _     -> [IntTy]
   IndexRange _ _ _ -> [IntTy]
-  SumType _ _      -> undefined
   _ -> error $ "Unexpected type: " ++ show con
 flattenType ty = error $ "Unexpected type: " ++ show ty
 
