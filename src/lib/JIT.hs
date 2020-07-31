@@ -9,7 +9,9 @@
 {-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM, mdImpToLLVM, impKernelToLLVM) where
+module JIT (impToLLVM, mdImpToLLVM, impKernelToLLVM,
+            LLVMFunction (..), LLVMKernel (..),
+            ptxTargetTriple, ptxDataLayout) where
 
 import LLVM.AST (Operand, BasicBlock, Instruction, Named, Parameter)
 import LLVM.Prelude (ShortByteString, Word32)
@@ -44,7 +46,6 @@ import qualified Data.Set as S
 import qualified Data.Map as M
 
 import Array (vectorWidth)
-import LLVMExec
 import Syntax
 import Env
 import PPrint
@@ -79,6 +80,10 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.ParameterAttribute] [FA.Func
                      deriving (Ord, Eq)
 
 type Function = L.Global
+
+type NumOutputs   = Int
+data LLVMFunction = LLVMFunction NumOutputs L.Module
+data LLVMKernel   = LLVMKernel L.Module
 
 -- === Imp to LLVM ===
 
@@ -421,7 +426,7 @@ impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile gpuInitCompile
     -- TODO: Use a restricted form of compileProg that e.g. never emits FFI calls!
     extendOperands (paramEnv <> lvar @> lidx) $ compileProg compileImpKernelInstr prog
   kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
-  LLVMKernel <$> makeModuleEx ptxDataLayout targetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
+  LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     argTypes = fmap ((fromIType $ L.AddrSpace 1). binderAnn) args
@@ -432,17 +437,21 @@ impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile gpuInitCompile
       , Just $ L.MDValue $ L.ConstantOperand $ C.Int 32 1
       ]
     nvvmAnnotations = L.NamedMetadataDefinition "nvvm.annotations" [kernelMetaId]
-    targetTriple = "nvptx64-nvidia-cuda"
-    ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
-      { L.endianness     = L.LittleEndian
-      , L.pointerLayouts = M.fromList [(L.AddrSpace 0, (64, L.AlignmentInfo 64 64))]
-      , L.typeLayouts    = M.fromList $
-          [ ((L.IntegerAlign, 1), L.AlignmentInfo 8 8) ] ++
-          [ ((L.IntegerAlign, w), L.AlignmentInfo w w) | w <- [8, 16, 32, 64] ] ++
-          [ ((L.FloatAlign,   w), L.AlignmentInfo w w) | w <- [32, 64] ] ++
-          [ ((L.VectorAlign,  w), L.AlignmentInfo w w) | w <- [16, 32, 64, 128] ]
-      , L.nativeSizes    = Just $ S.fromList [16, 32, 64]
-      }
+
+ptxTargetTriple :: ShortByteString
+ptxTargetTriple = "nvptx64-nvidia-cuda"
+
+ptxDataLayout :: L.DataLayout
+ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
+    { L.endianness     = L.LittleEndian
+    , L.pointerLayouts = M.fromList [(L.AddrSpace 0, (64, L.AlignmentInfo 64 64))]
+    , L.typeLayouts    = M.fromList $
+        [ ((L.IntegerAlign, 1), L.AlignmentInfo 8 8) ] ++
+        [ ((L.IntegerAlign, w), L.AlignmentInfo w w) | w <- [8, 16, 32, 64] ] ++
+        [ ((L.FloatAlign,   w), L.AlignmentInfo w w) | w <- [32, 64] ] ++
+        [ ((L.VectorAlign,  w), L.AlignmentInfo w w) | w <- [16, 32, 64, 128] ]
+    , L.nativeSizes    = Just $ S.fromList [16, 32, 64]
+    }
 
 threadIdxX :: Compile Operand
 threadIdxX = emitExternCall spec [] >>= (`zeroExtendTo` longTy)
@@ -462,12 +471,36 @@ ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
 gpuInitCompileEnv :: Monad m => CompileEnv m
 gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
   where
-    gpuUnaryIntrinsics op _ = case op of
-      Exp -> callRealIntrinsic "__nv_exp"
+    gpuUnaryIntrinsics op x = case op of
+      Exp   -> callRealIntrinsic "__nv_exp"
+      Exp2  -> callRealIntrinsic "__nv_exp2"
+      Log   -> callRealIntrinsic "__nv_log"
+      Log2  -> callRealIntrinsic "__nv_log2"
+      Log10 -> callRealIntrinsic "__nv_log10"
+      Sin   -> callRealIntrinsic "__nv_sin"
+      Cos   -> callRealIntrinsic "__nv_cos"
+      Tan   -> callRealIntrinsic "__nv_tan"
+      Sqrt  -> callRealIntrinsic "__nv_sqrt"
+      Floor -> do
+        x' <- callRealIntrinsic "__nv_floor"
+        emitInstr longTy $ L.FPToSI x' longTy []
+      Ceil  -> do
+        x' <- callRealIntrinsic "__nv_ceil"
+        emitInstr longTy $ L.FPToSI x' longTy []
+      Round -> do
+        x' <- callRealIntrinsic "__nv_round"
+        emitInstr longTy $ L.FPToSI x' longTy []
       _   -> error $ "Unsupported GPU operation: " ++ show op
+      where
+        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy]
+        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x]
 
-    gpuBinaryIntrinsics op _ _ = case op of
-      _ -> error $ "Unsupported GPU operation: " ++ show op
+    gpuBinaryIntrinsics op x y = case op of
+      FPow -> callRealIntrinsic "__nv_pow"
+      _    -> error $ "Unsupported GPU operation: " ++ show op
+      where
+        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy, realTy]
+        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x, y]
 
 compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpKernelInstr _ instr = case instr of
@@ -702,7 +735,7 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
       Log10           -> callRealIntrinsic "llvm.log10.f64"
       Sin             -> callRealIntrinsic "llvm.sin.f64"
       Cos             -> callRealIntrinsic "llvm.cos.f64"
-      Tan             -> callRealIntrinsic "tan"  -- Technically not an intrinsic, but it works!
+      Tan             -> callRealIntrinsic "tan"
       Sqrt            -> callRealIntrinsic "llvm.sqrt.f64"
       Floor           -> do
         x' <- callRealIntrinsic "llvm.floor.f64"
