@@ -24,14 +24,14 @@ def interleave (blank:v) (labels: m=>v) : (m & (Fin 2))=>v =
   pairs = for i. [labels.i, blank]
   for (i, j). pairs.i.j
 
-def prepend (first: v) (seq: m=>v) : (Unit|m)=>v =
+def prepend (first: v) (seq: m=>v) : ({head:Unit | tail:m }=>v) =
   -- Concatenates a single element to the beginning of a sequence.
-  for idx. case idx
-    Left () -> first
-    Right i -> seq.i
+  for idx. case idx of
+    {| head = () |} -> first
+    {| tail = i  |} -> seq.i
 
-def prepend_and_interleave (blank:v) (seq: m=>v) : 
-  ((Unit | (m & (Fin 2)))=>v) =
+def prepend_and_interleave (blank:v) (seq: m=>v) :
+  ({head:Unit | tail:(m & (Fin 2))}=>v) =
   -- Turns "text" into " t e x t".
   -- The output of this function has a slightly complicated output type, which
   -- has size 1 + 2 * (size m).
@@ -63,7 +63,12 @@ def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
   logprob_start_with_blank = normalized_logits.(0@_).blank
   logprob_of_first_label   = normalized_logits.(0@_).(labels.(0@_))
   log_prob_seq_t0 = for pos.
-    select  (pos == (0@_)) logprob_start_with_blank (select (pos == (1@_)) logprob_of_first_label (log 0.000001))
+    -- TODO: allow pattern-matching on integer literals
+    case ordinal pos == 0 of
+      True -> logprob_start_with_blank
+      False -> case ordinal pos == 1 of
+        True  -> logprob_of_first_label
+        False -> log 0.000001
 
   same_as_last = \ilabels s.
     o = ordinal s
@@ -75,22 +80,22 @@ def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
   -- Todo: As suggested by Adam Paske, we could get rid of these
   -- logaddexp calls with a newtype that overloads + and *
   update = \t prev.
-    select (t == (0@_)) log_prob_seq_t0 for s.
-      cond = ilabels.s == blank || same_as_last ilabels s
-      labar = logaddexp prev.s (safe_idx prev ((ordinal s) - 1))
-      other = logaddexp labar  (safe_idx prev ((ordinal s) - 2))
-      ans = select cond labar other
-      ans + normalized_logits.t.(ilabels.s)
+    case ordinal t == 0 of
+      True -> log_prob_seq_t0
+      False -> for s.
+        cond = ilabels.s == blank || same_as_last ilabels s
+        labar = logaddexp prev.s (safe_idx prev ((ordinal s) - 1))
+        other = logaddexp labar  (safe_idx prev ((ordinal s) - 2))
+        ans = select cond labar other
+        ans + normalized_logits.t.(ilabels.s)
 
   log_prob_seq_final = fold log_prob_seq_t0 update
 
   -- Todo: nicer way to get last two elements of log_prob_seq_final.
-  padded_positions = Unit | (position & (Fin 2))
-  seq_length = size padded_positions
+  seq_length = 1 + size (position & (Fin 2))
   endlabel = log_prob_seq_final.((seq_length - 2)@_)
   endspace = log_prob_seq_final.((seq_length - 1)@_)
   logaddexp endlabel endspace
-
 
 
 '### Demo
@@ -110,9 +115,11 @@ logits = for i:time j:vocab. (randn $ ixkey2 (newKey 0) i j)
 -- Create random labels
 labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
 :p labels
+> [1@(Fin 6), 5@(Fin 6), 5@(Fin 6)]
 
 -- Evaluate marginal probability of labels given logits
 :p exp $ ctc blank logits labels
+> 1.0398494e-3
 
 
 
@@ -126,9 +133,12 @@ labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
 
 :p sum for i:vocab.
   exp $ ctc blank logits [i]
+> 0.14146832
 
 :p sum for (i, j):(vocab & vocab).
   exp $ ctc blank logits [i, j]
+> 0.7091231
 
 :p sum for (i, j, k):(vocab & vocab & vocab).
   exp $ ctc blank logits [i, j, k]
+> 0.9251014
