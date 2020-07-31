@@ -1,0 +1,150 @@
+'## Fluid sim
+Fluid simulation code based on
+[Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
+
+def zeroedges (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (x: n=>m=>a) : n=>m=>a =
+  -- Todo: update in place without starting with a copy.
+  snd $ withState x \buf.
+    for i j.
+      edge = i==0 || j==0 || i==ordinal n || i==ordinal m
+      select edge (buf!(i@n)!(j@m) := zero) ()
+
+def wrapidx (n:Type) -> (i:Int) : n =
+  -- Index wrapping around at ends.
+  asidx $ mod i $ size n
+
+def incwrap (n:Type) ?-> (i:n) : n =
+  -- Increments index, wrapping around at ends.
+  asidx $ mod ((ordinal i) + 1) $ size n
+
+def decwrap (n:Type) ?-> (i:n) : n =
+  -- Decrements index, wrapping around at ends.
+  asidx $ mod ((ordinal i) - 1) $ size n
+
+def finite_difference_neighbours (n:Type) ?-> (x:n=>Real) : n=>Real = 
+  for i. x.(incwrap i) - x.(decwrap i)
+
+def add_neighbours (n:Type) ?-> (x:n=>Real) : n=>Real = 
+  for i. x.(incwrap i) + x.(decwrap i)
+
+def apply_along_axis1 (f : b=>Real -> b=>Real) (x : b=>c=>Real) : b=>c=>Real = 
+  transpose for j. f for i. x.i.j
+
+def apply_along_axis2 (f : c=>Real -> c=>Real) (x : b=>c=>Real) : b=>c=>Real = 
+  for i. f x.i
+
+def fdx (x : n=>m=>Real) : (n=>m=>Real) =
+  apply_along_axis1 finite_difference_neighbours x
+
+def fdy (x : n=>m=>Real) : (n=>m=>Real) =
+  apply_along_axis2 finite_difference_neighbours x
+
+def divergence (vx : n=>m=>Real) (vy : n=>m=>Real) : (n=>m=>Real) =
+  fdx vx + fdy vy
+
+def add_neighbours_2d (x : n=>m=>Real) : (n=>m=>Real) =
+  ax1 = apply_along_axis1 add_neighbours x
+  ax2 = apply_along_axis2 add_neighbours x
+  ax1 + ax2
+
+def project (v: n=>m=>(Fin 2)=>Real) : n=>m=>(Fin 2)=>Real =
+  -- Project the velocity field to be approximately mass-conserving,
+  -- using a few iterations of Gauss-Seidel.
+  h = 0.01  -- todo: work out units
+
+  -- unpack into two scalar fields
+  vx = for i j. v.i.j.(fromOrdinal _ 0)
+  vy = for i j. v.i.j.(fromOrdinal _ 1)
+
+  div = -0.5 .* h .* (divergence vx vy)
+
+  p_init = for i. for j. 0.0
+  p = snd $ withState p_init \state.
+    for i:(Fin 10).
+      p = get state
+      state := (1.0 / 4.0) .* (div + add_neighbours_2d p)
+
+  vx = vx - (0.5 / h) .* fdx(p)
+  vy = vy - (0.5 / h) .* fdy(p)
+  
+  for i j. [vx.i.j, vy.i.j]  -- pack back into a vector field
+  
+  -- zeroedges v  -- BUG: Crashes with "Not implemented Int"
+
+def bilinear_interp (dict:VSpace a) ?=> (right_weight:Real) --o (bottom_weight:Real) --o
+  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a = 
+  left  = (1.0 - right_weight) .* ((1.0 - bottom_weight) .* topleft  + bottom_weight .* bottomleft)
+  right =        right_weight  .* ((1.0 - bottom_weight) .* topright + bottom_weight .* bottomright)
+  left + right
+
+
+N = Fin 100
+M = Fin 100
+
+def clip (x:Real):Real = max 0.0 (min 1.0 x)
+
+-- BUG: Changing the order of implicit arguments causes an error further down.
+-- i.e. it doesn't work to start the next line with
+-- (n:Type) ?-> (m:Type) ?-> (dict:VSpace a) ?=>
+def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Real) : n=>m=>a =
+  -- Move field f according to x and y velocities (u and v)
+  -- using an implicit Euler integrator.
+
+  -- Create table of cell locations.
+  -- BUG: using n and m below causes a crash, so I hardcoded it for now.
+  numrows = 100.0 -- i2r $ ordinal n
+  numcols = 100.0 -- i2r $ ordinal m
+  
+  cell_xs = linspace n 0.0 numrows
+  cell_ys = linspace m 0.0 numcols
+
+  for i j.
+    -- Location of source of flow for this cell.  No meshgrid!
+    center_xs = cell_xs.i - v.i.j.(fromOrdinal _ 0)
+    center_ys = cell_ys.j - v.i.j.(fromOrdinal _ 1)
+
+    -- Index of source cell.
+    source_col = floor center_xs
+    source_row = floor center_ys
+  
+    -- Relative weight of right-hand and bottom cells.
+    -- TODO: clipping shouldn't be necessary here, find out why it is.
+    right_weight  = clip $ center_xs - i2r source_col
+    bottom_weight = clip $ center_ys - i2r source_row
+    
+    -- Cast back to indices, wrapping around edges.
+    l = wrapidx n  source_col
+    r = wrapidx n (source_col + 1)
+    t = wrapidx m  source_row
+    b = wrapidx m (source_row + 1)
+    
+    -- A convex weighting of the 4 surrounding cells.
+    bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
+
+def fluidsim (dict: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
+  (v: n=>m=>(Fin 2)=>Real) : n=>m=>a =
+  (color_final, v) = snd $ withState (color_init, v) \state.
+    for i:(Fin num_steps).
+      (color, v) = get state
+      v = advect v v          -- Move velocities
+      v = project v           -- Project to be volume-preserving
+      color = advect color v  -- Move color
+      state := (color, v)
+  color_final
+
+'### Demo
+
+-- Create random velocity field.
+def ixkey3 (k:Key) (i:n) (j:m) (k2:o) : Key =
+  hash (hash (hash k (ordinal i)) (ordinal j)) (ordinal k2)
+v = for i:N j:M k:(Fin 2). 3.0 * (randn $ ixkey3 (newKey 0) i j k)
+
+-- Create diagonally-striped color pattern.
+init_color = for i:N j:M.
+  b2r $ (sin $ (i2r $ (ordinal j) + (ordinal i)) / 8.0) > 0.0
+
+-- Run fluid sim and plot it.
+num_steps = 50
+final_color = fluidsim num_steps init_color v
+:plotmat final_color
+> <graphical output>

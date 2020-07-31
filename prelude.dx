@@ -91,6 +91,14 @@ def not  (x:Bool) : Bool =
 
 'Sum types
 
+data Maybe a:Type =
+  Nothing
+  Just a
+
+def isNothing (x:Maybe a) : Bool = case x of
+  Nothing -> True
+  Just _ -> False
+
 def (|) (a:Type) (b:Type) : Type = %SumType a b
 def anyVal (a:Type) ?-> : a = %anyVal a
 def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) =
@@ -220,6 +228,10 @@ def round (x:Real) : Int = %round x
 def sqrt (x:Real) : Real = %sqrt x
 def pow (x:Real) (y:Real) : Real = %fpow x y
 
+def lgamma (x:Real) : Real = %ffi lgamma Real x
+def log1p  (x:Real) : Real = %ffi log1p  Real x
+def lbeta (x:Real) (y:Real) : Real = lgamma x + lgamma y - lgamma (x + y)
+
 'Working with index sets
 
 def Range (low:Int) (high:Int) : Type = %IntRange low high
@@ -326,6 +338,8 @@ def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
 def rand (k:Key) : Real = %ffi randunif Real k
+def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
+  for i:(Fin n). f (ixkey k i)
 
 def randn (k:Key) : Real =
   (k1, k2) = splitKey k

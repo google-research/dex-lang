@@ -4,7 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module LiveOutput (runWeb, runTerminal) where
@@ -84,13 +83,16 @@ evalSource source = do
   mapM_ launchBlockEval unevaluatedNodes
   updateResultList nodes
 
-sourceBlockToDag :: SourceBlock -> CatT (Env NodeId) DriverM NodeId
+sourceBlockToDag :: SourceBlock -> CatT (Env NodeId, [NodeId]) DriverM NodeId
 sourceBlockToDag block = do
-  varMap <- look
+  (varMap, alwaysInScope) <- look
   let parents = sort $ nub $ toList $
                   (boundUVars block <> freeUVars block) `envIntersect` varMap
-  n <- lift $ addToBlockDag (block, parents)
-  extend $ foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block
+  n <- lift $ addToBlockDag (block, alwaysInScope <> parents)
+  extend $ asFst $ foldMap ((@>n) . Bind) $ envAsVars $ boundUVars block
+  case sbContents block of
+    IncludeSourceFile _ -> extend $ asSnd [n]
+    _ -> return ()
   return n
 
 launchBlockEval :: NodeId -> DriverM ()
