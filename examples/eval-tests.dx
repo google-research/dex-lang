@@ -516,7 +516,7 @@ litArr = [10, 5, 3]
       c
 > ([3.0, 2.0, 1.0, 0.0], 4.0)
 
-def eitherFloor (x:(Int|Real)) : Int = oldcase x
+def eitherFloor (x:(Int|Real)) : Int = case x of
   Left i  -> i
   Right f -> floor f
 
@@ -526,24 +526,24 @@ def eitherFloor (x:(Int|Real)) : Int = oldcase x
 :p
   x : (Int|Real) = Right 1.2
   x
-> (Right 1.2)
+> Right 1.2
 
 -- Sum types as flattened index sets!
 def Weights (n:Type) (m:Type) : Type = n=>m=>Real
 def Biases  (n:Type)          : Type = n=>Real
-def Params  (n:Type) (m:Type) : Type = ((n&m)|n)=>Real
+def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Real
 
 w = for i:(Fin 2). for j:(Fin 3). (i2r (ordinal i)) * 3.0 + (i2r (ordinal j))
 b = for j:(Fin 2). neg (i2r (ordinal j) + 1.0)
 
 def flatten ((w,b):(Weights n m & Biases n)): Params n m =
-  for idx. oldcase idx
-    Left (i,j) -> w.i.j
-    Right i    -> b.i
+  for idx. case idx of
+    {| weights = (i,j) |} -> w.i.j
+    {| biases  = i     |} -> b.i
 
 def unflatten (params:Params n m) : (Weights n m & Biases n) =
-  ( for i. for j. params.(Left (i,j))
-  , for i.        params.(Right i)    )
+  ( for i. for j. params.({| weights = (i,j)|})
+  , for i.        params.({| biases  = i    |}))
 
 :p unflatten (flatten (w, b)) == (w, b)
 > True

@@ -238,7 +238,7 @@ def myOtherFst ((x, _):(a&b)) : a = x
 
 id'' : b -> b = id
 
-def eitherFloor (x:(Int|Real)) : Int = oldcase x
+def eitherFloor (x:(Int|Real)) : Int = case x of
   Left  i -> i
   Right f -> floor f
 

@@ -175,7 +175,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b     -> prettyPrec b
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
-    SumType  a b   -> atPrec ArgPrec $ parens $ pApp a <+> "|" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
@@ -203,10 +202,6 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
     RefCon _ _  -> atPrec ArgPrec "RefCon"
     Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
     AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
-    SumCon c l r -> atPrec AppPrec $ case asStr (pArg c) of
-      "True"  -> pAppArg "Left" [l]
-      "False" -> pAppArg "Right" [r]
-      _ -> pAppArg "SumCon" [c, l, r]
     SumAsProd ty tag payload -> atPrec LowestPrec $
       "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
     ClassDictHole _ -> atPrec ArgPrec "_"
@@ -214,8 +209,6 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
-    SumGet e isLeft -> atPrec AppPrec $ (if isLeft then "getLeft" else "getRight") <+> pArg e
-    SumTag e        -> atPrec AppPrec $ pAppArg "getTag" [e]
     PrimEffect ref (MPut val ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
     PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
     ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
@@ -226,9 +219,6 @@ instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimHof e) where
   prettyPrec hof = case hof of
     For dir lam -> atPrec LowestPrec $ dirStr dir <+> pArg lam
-    SumCase c l r -> atPrec LowestPrec $ "case" <+> pArg c <> hardline
-                  <> nest 2 (pLowest l)            <> hardline
-                  <> nest 2 (pLowest r)
     _ -> prettyExprDefault $ HofExpr hof
 
 instance Pretty a => Pretty (VarP a) where

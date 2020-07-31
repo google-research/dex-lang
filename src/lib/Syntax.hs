@@ -41,8 +41,8 @@ module Syntax (
     pattern IntLitExpr, pattern RealLitExpr, pattern PreludeBoolTy,
     pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
-    pattern RealTy, pattern SumTy, pattern BaseTy, pattern UnitVal,
-    pattern PairVal, pattern SumVal, pattern PureArrow, pattern ArrayVal,
+    pattern RealTy, pattern BaseTy, pattern UnitVal,
+    pattern PairVal, pattern PureArrow, pattern ArrayVal,
     pattern RealVal, pattern BoolVal, pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal,
@@ -236,7 +236,6 @@ data PrimTC e =
       | IndexSlice e e      -- Sliced index set, slice length. Note that this is no longer an index set!
       | PairType e e
       | UnitType
-      | SumType e e
       | RefType e e
       | TypeKind
       | EffectRowKind
@@ -251,7 +250,6 @@ data PrimCon e =
         Lit LitVal
       | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
-      | SumCon e e e      -- (bool constructor tag (True is Left), left value, right value)
       | PairCon e e
       | UnitCon
       | RefCon e e
@@ -263,8 +261,6 @@ data PrimCon e =
 data PrimOp e =
         Fst e
       | Snd e
-      | SumGet e Bool
-      | SumTag e
       | TabCon e [e]                 -- table type elements
       | ScalarBinOp BinOp e e
       | ScalarUnOp UnOp e
@@ -296,7 +292,6 @@ data PrimHof e =
         For Direction e
       | Tile Int e e          -- dimension number, tiled body, scalar body
       | While e e
-      | SumCase e e e
       | RunReader e e
       | RunWriter e
       | RunState  e e
@@ -1126,9 +1121,6 @@ pattern BoolVal x = Con (Lit (BoolLit x))
 pattern ArrayVal :: Type -> Array -> Atom
 pattern ArrayVal t arr = Con (ArrayLit t arr)
 
-pattern SumVal :: Atom -> Atom -> Atom -> Atom
-pattern SumVal t l r = Con (SumCon t l r)
-
 pattern PairVal :: Atom -> Atom -> Atom
 pattern PairVal x y = Con (PairCon x y)
 
@@ -1146,9 +1138,6 @@ pattern JArrayTy shape b = TC (JArrayType shape b)
 
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
-
-pattern SumTy :: Type -> Type -> Type
-pattern SumTy l r = TC (SumType l r)
 
 pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
@@ -1278,7 +1267,6 @@ builtinNames = M.fromList
   , ("runReader"       , HofExpr $ RunReader () ())
   , ("runWriter"       , HofExpr $ RunWriter    ())
   , ("runState"        , HofExpr $ RunState  () ())
-  , ("caseAnalysis"    , HofExpr $ SumCase () () ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("Int"     , TCExpr $ BaseType $ Scalar IntType)
@@ -1288,7 +1276,6 @@ builtinNames = M.fromList
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType () ())
   , ("PairType", TCExpr $ PairType () ())
-  , ("SumType" , TCExpr $ SumType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
@@ -1297,7 +1284,6 @@ builtinNames = M.fromList
   , ("snd", OpExpr $ Snd ())
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
-  , ("sumCon", ConExpr $ SumCon () () ())
   , ("anyVal", ConExpr $ AnyValue ())
   , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())

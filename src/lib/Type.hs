@@ -195,7 +195,6 @@ exprEffs expr = case expr of
     _ -> NoEffects
   Hof hof -> case hof of
     For _ f -> functionEffs f
-    SumCase _ l r -> functionEffs l <> functionEffs r
     While cond body -> functionEffs cond <> functionEffs body
     Linearize _ -> NoEffects
     Transpose _ -> NoEffects
@@ -348,7 +347,6 @@ instance CoreVariant (PrimOp a) where
 instance CoreVariant (PrimCon a) where
   checkVariant e = case e of
     ClassDictHole _ -> goneBy Core
-    SumCon _ _ _    -> alwaysAllowed -- not sure what this should be
     RefCon _ _      -> neverAllowed
     _ -> alwaysAllowed
 
@@ -356,7 +354,6 @@ instance CoreVariant (PrimHof a) where
   checkVariant e = case e of
     For _ _       -> alwaysAllowed
     While _ _     -> alwaysAllowed
-    SumCase _ _ _ -> goneBy Simp
     RunReader _ _ -> alwaysAllowed
     RunWriter _   -> alwaysAllowed
     RunState  _ _ -> alwaysAllowed
@@ -452,7 +449,6 @@ typeCheckTyCon tc = case tc of
   IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
-  SumType  l r     -> l|:TyKind >> r|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
   UnitType         -> return TyKind
   RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
@@ -465,7 +461,6 @@ typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   ArrayLit ty _ -> return $ ArrayTy ty
   AnyValue t -> t|:TyKind $> t
-  SumCon _ l r -> SumTy <$> typeCheck l <*> typeCheck r
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
   RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
@@ -504,14 +499,6 @@ typeCheckOp op = case op of
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}
-  SumGet x isLeft -> do
-    SumTy l r <- typeCheck x
-    l|:TyKind >> r|:TyKind
-    return $ if isLeft then l else r
-  SumTag x -> do
-    SumTy l r <- typeCheck x
-    l|:TyKind >> r|:TyKind
-    return $ TC $ BaseType $ Scalar BoolType
   ScalarBinOp binop x1 x2 ->
     x1 |: BaseTy (Scalar t1) >> x2 |: BaseTy (Scalar t2) $> BaseTy (Scalar tOut)
     where (t1, t2, tOut) = binOpType binop
@@ -634,12 +621,6 @@ typeCheckHof hof = case hof of
     checkEq BoolTy condTy
     checkEq UnitTy bodyTy
     return UnitTy
-  SumCase st l r -> do
-    Pi (Abs (Ignore la) (PlainArrow Pure, lb)) <- typeCheck l
-    Pi (Abs (Ignore ra) (PlainArrow Pure, rb)) <- typeCheck r
-    checkEq lb rb
-    st |: SumTy la ra
-    return lb
   Linearize f -> do
     Pi (Abs (Ignore a) (PlainArrow Pure, b)) <- typeCheck f
     return $ a --> PairTy b (a --@ b)
@@ -728,7 +709,6 @@ checkDataLike msg env ty = case ty of
     BaseType _       -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
-    SumType l r      -> checkDataLike msg env l >> checkDataLike msg env r
     IntRange _ _     -> return ()
     IndexRange _ _ _ -> return ()
     _ -> throw TypeErr $ pprint ty ++ msg

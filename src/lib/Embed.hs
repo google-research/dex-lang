@@ -24,7 +24,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
-              sumTag, getLeft, getRight, fromSum, clampPositive, buildNAbs,
+              clampPositive, buildNAbs,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
 import Control.Applicative
@@ -294,21 +294,6 @@ unpackConsList xs = case getType xs of
   _ -> do
     (x, rest) <- fromPair xs
     liftM (x:) $ unpackConsList rest
-
-sumTag :: MonadEmbed m => Atom -> m Atom
-sumTag (SumVal t _ _) = return t
-sumTag s = emitOp $ SumTag s
-
-getLeft :: MonadEmbed m => Atom -> m Atom
-getLeft (SumVal _ l _) = return l
-getLeft s = emitOp $ SumGet s True
-
-getRight :: MonadEmbed m => Atom -> m Atom
-getRight (SumVal _ _ r) = return r
-getRight s = emitOp $ SumGet s False
-
-fromSum :: MonadEmbed m => Atom -> m (Atom, Atom, Atom)
-fromSum s = (,,) <$> sumTag s <*> getLeft s <*> getRight s
 
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
@@ -711,7 +696,6 @@ indexSetSizeE (TC con) = case con of
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
-  SumType l r -> bindM2 iadd (indexSetSizeE l) (indexSetSizeE r)
   _ -> error $ "Not implemented " ++ pprint con
   where
 indexSetSizeE (RecordTy types) = do
@@ -735,12 +719,6 @@ indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
 indexToIntE ty idx = case ty of
   UnitTy  -> return $ IntVal 0
   BoolTy  -> boolToInt idx
-  SumTy lType rType -> do
-    (tag, lVal, rVal) <- fromSum idx
-    lTypeSize <- indexSetSizeE lType
-    lInt      <- indexToIntE lType lVal
-    rInt      <- iadd lTypeSize =<< indexToIntE rType rVal
-    select tag lInt rInt
   PairTy lType rType -> do
     (lVal, rVal) <- fromPair idx
     lIdx  <- indexToIntE lType lVal
@@ -781,12 +759,6 @@ intToIndexE ty@(TC con) i = case con of
     iA <- intToIndexE a =<< idiv i bSize
     iB <- intToIndexE b =<< irem i bSize
     return $ PairVal iA iB
-  SumType l r -> do
-    lSize <- indexSetSizeE l
-    isLeft <- i `ilt` lSize
-    li <- intToIndexE l i
-    ri <- intToIndexE r =<< i `isub` lSize
-    return $ Con $ SumCon isLeft li ri
   _ -> error $ "Unexpected type " ++ pprint con
   where iAsIdx = return $ Con $ Coerce ty i
 intToIndexE (RecordTy types) i = do

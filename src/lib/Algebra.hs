@@ -87,7 +87,6 @@ indexSetSize (TC con) = case con of
         ExclusiveLim h -> toPolynomial h
         Unlimited      -> undefined
   PairType l r -> mulC (indexSetSize l) (indexSetSize r)
-  SumType l r  -> add  (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize (RecordTy types) = let
   sizes = map indexSetSize (F.toList types)

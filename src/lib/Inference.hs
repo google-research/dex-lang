@@ -713,12 +713,20 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
+    (RecordTy  items, RecordTy  items') -> unifyLabeledItems items items'
+    (VariantTy items, VariantTy items') -> unifyLabeledItems items items'
     (TypeCon f xs, TypeCon f' xs')
       | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
       zipWithM_ unify (toList con) (toList con')
     (Eff eff, Eff eff') -> unifyEff eff eff'
     _ -> throw TypeErr ""
+
+unifyLabeledItems :: (MonadCat SolverEnv m, MonadError Err m)
+                  => LabeledItems Type -> LabeledItems Type -> m ()
+unifyLabeledItems m m' = do
+  when (reflectLabels m /= reflectLabels m') $ throw TypeErr ""
+  zipWithM_ unify (toList m) (toList m')
 
 unifyEff :: (MonadCat SolverEnv m, MonadError Err m)
          => EffectRow -> EffectRow -> m ()

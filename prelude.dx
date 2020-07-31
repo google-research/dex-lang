@@ -99,15 +99,9 @@ def isNothing (x:Maybe a) : Bool = case x of
   Nothing -> True
   Just _ -> False
 
-def (|) (a:Type) (b:Type) : Type = %SumType a b
-def anyVal (a:Type) ?-> : a = %anyVal a
-def sumCon (isLeft:Bool) (l:a) (r:b) : (a|b) =
-  isLeft' = unsafeCoerce InternalBool isLeft
-  %sumCon isLeft' l r
-
-def Left  (x:a) : (a|b) = sumCon True  x      anyVal
-def Right (x:b) : (a|b) = sumCon False anyVal x
-def caseAnalysis (x:(a|b)) (l:a->c) (r:b->c) : c = %caseAnalysis x l r
+data (|) a:Type b:Type =
+  Left  a
+  Right b
 
 def select (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
@@ -189,16 +183,6 @@ def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
   pairGt = \(x1,x2) (y1,y2). x1 > y1 || (x1 == y1 && x2 > y2)
   pairLt = \(x1,x2) (y1,y2). x1 < y1 || (x1 == y1 && x2 < y2)
   MkOrd pairEq pairGt pairLt
-
-@instance
-def sumEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a | b) = MkEq $
-  \x y. oldcase x
-    Left  xVal -> oldcase y
-      Left  yVal -> xVal == yVal
-      Right yVal -> False
-    Right xVal -> oldcase y
-      Left  yVal -> False
-      Right yVal -> xVal == yVal
 
 -- TODO: accumulate using the True/&& monoid
 @instance
