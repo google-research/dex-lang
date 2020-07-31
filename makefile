@@ -61,7 +61,7 @@ example-names = uexpr-tests adt-tests type-tests eval-tests \
                 ad-tests mandelbrot pi sierpinsky \
                 regression brownian_motion particle-swarm-optimizer \
                 ode-integrator parser-tests serialize-tests tiled-matmul \
-                mcmc record-variant-tests simple-include-test
+                mcmc record-variant-tests simple-include-test ctc
 
 quine-test-targets = $(example-names:%=run-%)
 
