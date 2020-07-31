@@ -5,12 +5,19 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE RecordWildCards #-}
+{-# OPTIONS_GHC -Wno-orphans #-}
 
 module LLVMExec (LLVMFunction (..), LLVMKernel (..),
                  callLLVM, compilePTX, linking_hack) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
+import qualified LLVM.AST.Global as L
+import qualified LLVM.AST.AddrSpace as L
+import qualified LLVM.AST.Constant as C
+import qualified LLVM.AST.FunctionAttribute as FA
 import qualified LLVM.Relocation as R
 import qualified LLVM.CodeModel as CM
 import qualified LLVM.CodeGenOpt as CGO
@@ -24,50 +31,39 @@ import LLVM.Internal.OrcJIT.CompileLayer as JIT
 import LLVM.Context
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 import System.IO.Unsafe
+import System.Directory (listDirectory)
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
-import Foreign.Storable
+import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef
+import qualified Data.ByteString as BS
 import qualified Data.Map as M
 
 import Logging
 import Syntax
+import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
 
 -- This forces the linker to link libdex.so. TODO: something better
 foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
+type ExitCode = Int
+
 foreign import ccall "dynamic"
   callFunPtr :: FunPtr (Ptr () -> IO ExitCode) -> Ptr () -> IO ExitCode
-
-type ExitCode = Int
-type NumOutputs   = Int
-data LLVMFunction = LLVMFunction NumOutputs L.Module
-data LLVMKernel   = LLVMKernel L.Module
 
 compilePTX :: Logger [Output] -> LLVMKernel -> IO PTXKernel
 compilePTX logger (LLVMKernel ast) = do
   T.initializeAllTargets
-  withContext $ \c ->
-    Mod.withModuleFromAST c ast $ \m -> do
-      (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
-      T.withTargetOptions $ \topt ->
-        T.withTargetMachine
-          tripleTarget
-          ptxTargetTriple
-          "sm_60"
-          (M.singleton (T.CPUFeature "ptx64") True)
-          topt
-          R.Default
-          CM.Default
-          CGO.Aggressive $ \tm -> do
-            compileModule logger tm m
-            PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
-  where
-    ptxTargetTriple = "nvptx64-nvidia-cuda"
+  withContext $ \ctx ->
+    Mod.withModuleFromAST ctx ast $ \m -> do
+      withGPUTargetMachine "sm_60" $ \tm -> do
+        linkLibdevice ctx m
+        compileModule logger tm m
+        PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
 
 callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
 callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
@@ -136,11 +132,11 @@ evalLLVM logger ast argPtr = do
 
 compileModule :: Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
 compileModule logger tm m = do
-  showModule    m >>= logPass logger JitPass
-  L.verify      m
-  runPasses  tm m
-  showModule    m >>= logPass logger LLVMOpt
-  showAsm    tm m >>= logPass logger AsmPass
+  showModule          m >>= logPass logger JitPass
+  L.verify            m
+  runDefaultPasses tm m
+  showModule          m >>= logPass logger LLVMOpt
+  showAsm          tm m >>= logPass logger AsmPass
 
 logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
@@ -148,18 +144,26 @@ logPass logger passName s = logThis logger [PassInfo passName s]
 showModule :: Mod.Module -> IO String
 showModule m = unpack <$> Mod.moduleLLVMAssembly m
 
-runPasses :: T.TargetMachine -> Mod.Module -> IO ()
-runPasses t m = do
-  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+runDefaultPasses :: T.TargetMachine -> Mod.Module -> IO ()
+runDefaultPasses t m = do
+  P.withPassManager defaultPasses $ \pm -> void $ P.runPassManager pm m
   -- We are highly dependent on LLVM when it comes to some optimizations such as
   -- turning a sequence of scalar stores into a vector store, so we execute some
   -- extra passes to make sure they get simplified correctly.
-  dl <- T.getTargetMachineDataLayout t
-  let slp = P.PassSetSpec extraPasses (Just dl) Nothing (Just t)
-  P.withPassManager slp $ \pm -> void $ P.runPassManager pm m
-  P.withPassManager passes $ \pm -> void $ P.runPassManager pm m
+  runPasses extraPasses (Just t) m
+  P.withPassManager defaultPasses $ \pm -> void $ P.runPassManager pm m
   where
+    defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
     extraPasses = [ P.SuperwordLevelParallelismVectorize ]
+
+
+runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
+runPasses passes mt m = do
+  dl <- case mt of
+         Just t  -> Just <$> T.getTargetMachineDataLayout t
+         Nothing -> return Nothing
+  let passSpec = P.PassSetSpec passes dl Nothing mt
+  P.withPassManager passSpec $ \pm -> void $ P.runPassManager pm m
 
 showAsm :: T.TargetMachine -> Mod.Module -> IO String
 showAsm t m = do
@@ -167,8 +171,68 @@ showAsm t m = do
   -- Mod.writeObjectToFile t (Mod.File "asm.o") m
   liftM unpack $ Mod.moduleTargetAssembly t m
 
-passes :: P.PassSetSpec
-passes = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
-
 instance Show LLVMKernel where
   show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule
+
+withGPUTargetMachine :: BS.ByteString -> (T.TargetMachine -> IO a) -> IO a
+withGPUTargetMachine computeCapability next = do
+  (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
+  T.withTargetOptions $ \topt ->
+    T.withTargetMachine
+      tripleTarget
+      ptxTargetTriple
+      computeCapability
+      (M.singleton (T.CPUFeature "ptx64") True)
+      topt
+      R.Default
+      CM.Default
+      CGO.Aggressive
+      next
+
+-- === libdevice support ===
+
+{-# NOINLINE libdevice #-}
+libdevice :: L.Module
+libdevice = unsafePerformIO $ do
+  withContext $ \ctx -> do
+    let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
+    [libdeviceFileName] <- listDirectory libdeviceDirectory
+    let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
+    libdeviceBC <- BS.readFile libdevicePath
+    m <- Mod.withModuleFromBitcode ctx (libdevicePath, libdeviceBC) Mod.moduleAST
+    -- Override the data layout and target triple to avoid warnings when linking
+    return $ m { L.moduleDataLayout = Just ptxDataLayout
+               , L.moduleTargetTriple = Just ptxTargetTriple }
+
+linkLibdevice :: Context -> Mod.Module -> IO ()
+linkLibdevice ctx m =
+  Mod.withModuleFromAST ctx zeroNVVMReflect $ \reflectm ->
+    Mod.withModuleFromAST ctx libdevice $ \ldm -> do
+      Mod.linkModules m ldm
+      Mod.linkModules m reflectm
+      -- Inline libdevice functions and internalize the module to only export our kernel
+      runPasses [P.AlwaysInline True, P.InternalizeFunctions ["kernel"]] Nothing m
+
+-- llvm-hs does not expose the NVVM reflect pass, so we have to eliminate all calls to
+-- __nvvm_reflect by ourselves. Since we aren't really interested in setting any reflection
+-- flags to a value other than 0 for now, we eliminate the function by linking with this
+-- trivial module and forcing the definition to get inlined.
+zeroNVVMReflect :: L.Module
+zeroNVVMReflect =
+  L.Module { L.moduleName = "zero-nvvm-reflect"
+           , L.moduleSourceFileName = ""
+           , L.moduleDataLayout = Just ptxDataLayout
+           , L.moduleTargetTriple = Just ptxTargetTriple
+           , L.moduleDefinitions =
+               [ L.GlobalDefinition $ L.functionDefaults
+                   { L.name = "__nvvm_reflect"
+                   , L.returnType = L.IntegerType 32
+                   , L.parameters =
+                       ([ L.Parameter (L.PointerType (L.IntegerType 8) (L.AddrSpace 0)) "name" [] ], False)
+                   , L.functionAttributes = [ Right FA.AlwaysInline ]
+                   , L.basicBlocks = [
+                       L.BasicBlock "entry" [] $ L.Do $ L.Ret (Just $ L.ConstantOperand $ C.Int 32 0) []
+                     ]
+                   }
+               ]
+           }
