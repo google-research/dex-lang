@@ -4,12 +4,11 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE NoMonomorphismRestriction #-}
 {-# LANGUAGE FlexibleContexts          #-}
 {-# LANGUAGE TypeFamilies              #-}
 
-module Plot (scatterHtml, heatmapHtml) where
+module Plot (scatterHtml, heatmapHtml, colorHeatmapHtml) where
 
 import Prelude as P
 import Diagrams.Prelude
@@ -33,6 +32,15 @@ scatterHtml xs ys = diagramToHtml $
     spot = circle 0.005 # fc blue # lw 0
     xsc = LinearScale (minimum xs) (maximum xs)
     ysc = LinearScale (minimum ys) (maximum ys)
+
+colorHeatmapHtml :: Int -> Int -> (V.Vector Double) -> H.Html
+colorHeatmapHtml h w zs = pngToHtml $ generateImage getPix w h
+  where
+    getPix i j = PixelRGB8 r g b
+      where
+        r = fromIntegral $ doubleTo8Bit $ zs  V.! ((j * w + i) * 3 + 0)
+        g = fromIntegral $ doubleTo8Bit $ zs  V.! ((j * w + i) * 3 + 1)
+        b = fromIntegral $ doubleTo8Bit $ zs  V.! ((j * w + i) * 3 + 2)
 
 heatmapHtml :: Int -> Int -> (V.Vector Double) -> H.Html
 heatmapHtml h w zs = pngToHtml $ generateImage getPix w h

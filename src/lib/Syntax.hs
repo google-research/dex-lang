@@ -504,14 +504,15 @@ type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 data Output = TextOut String
-            | HeatmapOut Int Int (V.Vector Double)
+            | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
             | EvalTime Double
             | MiscLog String
               deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
+data OutFormat = Printed | Heatmap Bool | ColorHeatmap | Scatter
+                 deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
 data Err = Err ErrType SrcCtx String  deriving (Show, Eq)

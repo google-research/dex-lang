@@ -49,7 +49,8 @@ instance ToMarkup Result where
 
 instance ToMarkup Output where
   toMarkup out = case out of
-    HeatmapOut h w zs -> heatmapHtml h w zs
+    HeatmapOut False h w zs -> heatmapHtml h w zs
+    HeatmapOut True h w zs  -> colorHeatmapHtml h w zs
     ScatterOut xs ys  -> scatterHtml (V.toList xs) (V.toList ys)
     _ -> cdiv "result-block" $ toHtml $ pprint out
 
