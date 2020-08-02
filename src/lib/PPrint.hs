@@ -346,7 +346,7 @@ instance Pretty a => Pretty (SetVal a) where
 
 instance Pretty Output where
   pretty (TextOut s) = pretty s
-  pretty (HeatmapOut _ _ _) = "<graphical output>"
+  pretty (HeatmapOut _ _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
   pretty (EvalTime t) = "=== Eval time: " <+> p t <> "s ==="

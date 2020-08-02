@@ -4,7 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE CPP #-}
 
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
@@ -180,11 +179,16 @@ valToScatter val = case getType val of
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
   where [Array _ (RealVec xs), Array _ (RealVec ys)] = materializeScalarTables val
 
-valToHeatmap :: Val -> Output
-valToHeatmap val = case getType val of
-  TabTy hv (TabTy wv RealTy) ->
-    HeatmapOut (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
-  _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
+valToHeatmap :: Bool -> Val -> Output
+valToHeatmap color val = case color of
+  False -> case getType val of
+    TabTy hv (TabTy wv RealTy) ->
+       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+    _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
+  True -> case getType val of
+    TabTy hv (TabTy wv (TabTy _ RealTy)) ->
+       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+    _ -> error $ "Color Heatmap expects a 3D array of reals, but got: " ++ pprint (getType val)
   where [(Array _ (RealVec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String

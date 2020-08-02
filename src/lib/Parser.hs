@@ -154,7 +154,8 @@ explicitCommand = do
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
     "plot"    -> return $ EvalExpr Scatter
-    "plotmat" -> return $ EvalExpr Heatmap
+    "plotmat"      -> return $ EvalExpr (Heatmap False)
+    "plotmatcolor" -> return $ EvalExpr (Heatmap True)
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
