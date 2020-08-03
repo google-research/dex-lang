@@ -11,6 +11,9 @@ Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
 
+Int64 = %Int64
+Float64 = %Float64
+
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
 def fst (p: (a & b)) : a = %fst p
@@ -29,9 +32,9 @@ def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
 def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
 def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
-@instance realAdd : Add Real = MkAdd (\x y. %fadd x y) (\x y. %fsub x y) 0.0
-@instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y) (\x y. %isub x y) 0
-@instance unitAdd : Add Unit = MkAdd (\x y. ())        (\x y. ())        ()
+@instance realAdd : Add Real = MkAdd (\x:Real y:Real. %fadd x y) (\x y. %fsub x y) 0.0
+@instance intAdd  : Add Int  = MkAdd (\x:Int y:Int. %iadd x y)   (\x y. %isub x y) 0
+@instance unitAdd : Add Unit = MkAdd (\x y. ())                  (\x y. ())        ()
 
 @instance tabAdd : Add a ?=> Add (n=>a) =
   (MkAdd ( \xs ys. for i. xs.i + ys.i )
@@ -43,8 +46,8 @@ data Mul a:Type = MkMul (a->a->a) a  -- multiply, one
 def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
 def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
 
-@instance realMul : Mul Real = MkMul (\x y. %fmul x y) 1.0
-@instance intMul  : Mul Int  = MkMul (\x y. %imul x y) 1
+@instance realMul : Mul Real = MkMul (\x:Real y:Real. %fmul x y) 1.0
+@instance intMul  : Mul Int  = MkMul (\x:Int y:Int.   %imul x y) 1
 @instance unitMul : Mul Unit = MkMul (\x y. ()) ()
 
 data VSpace a:Type = MkVSpace (Add a) (Real -> a -> a)
@@ -73,21 +76,21 @@ data Bool =
   False
   True
 
-def unsafeCoerce (b:Type) (x:a) : b = %unsafeCoerce b x
+def internalCast (b:Type) (x:a) : b = %cast b x
 
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  y' = unsafeCoerce InternalBool y
-  unsafeCoerce _ $ %and x' y'
+  x' = internalCast InternalBool x
+  y' = internalCast InternalBool y
+  internalCast _ $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  y' = unsafeCoerce InternalBool y
-  unsafeCoerce _ $ %or x' y'
+  x' = internalCast InternalBool x
+  y' = internalCast InternalBool y
+  internalCast _ $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  unsafeCoerce _ $ %not x'
+  x' = internalCast InternalBool x
+  internalCast _ $ %not x'
 
 'Sum types
 
@@ -108,12 +111,15 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   False -> y
 
 def b2i (x:Bool) : Int  =
-  x' = unsafeCoerce InternalBool x
+  x' = internalCast InternalBool x
   %booltoint x'
 
 def i2r (x:Int ) : Real = %inttoreal x
 def b2r (x:Bool) : Real = i2r (b2i x)
 def todo (a:Type) ?-> : a = %throwError a
+
+def fp64ToFp (x : Float64) : Real = internalCast _ x
+def i64ToI (x : Int64) : Int      = internalCast _ x
 
 'Effects
 
@@ -164,14 +170,14 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance intEq  : Eq Int  = MkEq \x y. unsafeCoerce _ $ %ieq x y
-@instance realEq : Eq Real = MkEq \x y. unsafeCoerce _ $ %feq x y
+@instance intEq  : Eq Int  = MkEq \x:Int y:Int.   internalCast _ $ %ieq x y
+@instance realEq : Eq Real = MkEq \x:Real y:Real. internalCast _ $ %feq x y
 @instance unitEq : Eq Unit = MkEq \x y. True
 
-@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. unsafeCoerce _ $ %igt x y)
-                                             (\x y. unsafeCoerce _ $ %ilt x y))
-@instance realOrd : Ord Real = (MkOrd realEq (\x y. unsafeCoerce _ $ %fgt x y)
-                                             (\x y. unsafeCoerce _ $ %flt x y))
+@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. internalCast _ $ %igt x y)
+                                             (\x y. internalCast _ $ %ilt x y))
+@instance realOrd : Ord Real = (MkOrd realEq (\x y. internalCast _ $ %fgt x y)
+                                             (\x y. internalCast _ $ %flt x y))
 @instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False) (\x y. False)
 
 @instance
@@ -212,8 +218,8 @@ def round (x:Real) : Int = %round x
 def sqrt (x:Real) : Real = %sqrt x
 def pow (x:Real) (y:Real) : Real = %fpow x y
 
-def lgamma (x:Real) : Real = %ffi lgamma Real x
-def log1p  (x:Real) : Real = %ffi log1p  Real x
+def lgamma (x:Real) : Real = fp64ToFp $ %ffi lgamma Float64 x
+def log1p  (x:Real) : Real = fp64ToFp $ %ffi log1p  Float64 x
 def lbeta (x:Real) (y:Real) : Real = lgamma x + lgamma y - lgamma (x + y)
 
 'Working with index sets
@@ -310,7 +316,7 @@ def inner (x:n=>Real) (mat:n=>m=>Real) (y:m=>Real) : Real =
 -- TODO: newtype
 Key = Int
 
-def hash (x:Key) (y:Int) : Key = %ffi threefry2x32 Int x y
+def hash (x:Key) (y:Int) : Key = i64ToI $ %ffi threefry2x32 Int64 x y
 def newKey (x:Int) : Key = hash 0 x
 def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
 def splitKey3 (k:Key) : (Key & Key & Key) =
@@ -321,7 +327,7 @@ def splitKey3 (k:Key) : (Key & Key & Key) =
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def rand (k:Key) : Real = %ffi randunif Real k
+def rand (k:Key) : Real = fp64ToFp $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -398,43 +404,44 @@ def while
     (cond: Unit -> {|eff} Bool)
     (body: Unit -> {|eff} Unit)
     : {|eff} Unit =
-  cond' : Unit -> {|eff} InternalBool = \_. unsafeCoerce _ $ cond ()
+  cond' : Unit -> {|eff} InternalBool = \_. internalCast _ $ cond ()
   %while cond' body
 
 'Vector support
 
-def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
-
-VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
-VectorReal  = %VectorRealType
-
-def packVector (a : Real) (b : Real) (c : Real) (d : Real) : VectorReal = %vectorPack a b c d
-def indexVector (v : VectorReal) (i : Fin VectorWidth) : Real = %vectorIndex v i
-
--- NB: Backends should be smart enough to optimize this to a vector load from v
-def loadVector (v : (Fin VectorWidth)=>Real) : VectorReal =
-  idx = Fin VectorWidth
-  (packVector v.(UNSAFEFromOrdinal idx 0)
-              v.(UNSAFEFromOrdinal idx 1)
-              v.(UNSAFEFromOrdinal idx 2)
-              v.(UNSAFEFromOrdinal idx 3))
-def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
-  idx = Fin VectorWidth
-  [ indexVector v (UNSAFEFromOrdinal idx 0)
-  , indexVector v (UNSAFEFromOrdinal idx 1)
-  , indexVector v (UNSAFEFromOrdinal idx 2)
-  , indexVector v (UNSAFEFromOrdinal idx 3) ]
-
-def broadcastVector (v : Real) : VectorReal = packVector v v v v
-
-@instance vectorRealAdd : Add VectorReal =
-  (MkAdd ( \x y. %vfadd x y )
-         ( \x y. %vfsub x y )
-         ( broadcastVector zero ))
-@instance vectorRealMul : Mul VectorReal =
-  MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
-@instance vectorRealVSpace : VSpace VectorReal =
-  MkVSpace vectorRealAdd \x v. broadcastVector x * v
+-- TODO: Reenable vector suport once fixed-width types are supported.
+-- def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
+--
+-- VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
+-- VectorReal  = todo
+--
+-- def packVector (a : Real) (b : Real) (c : Real) (d : Real) : VectorReal = %vectorPack a b c d
+-- def indexVector (v : VectorReal) (i : Fin VectorWidth) : Real = %vectorIndex v i
+--
+-- -- NB: Backends should be smart enough to optimize this to a vector load from v
+-- def loadVector (v : (Fin VectorWidth)=>Real) : VectorReal =
+--   idx = Fin VectorWidth
+--   (packVector v.(UNSAFEFromOrdinal idx 0)
+--               v.(UNSAFEFromOrdinal idx 1)
+--               v.(UNSAFEFromOrdinal idx 2)
+--               v.(UNSAFEFromOrdinal idx 3))
+-- def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
+--   idx = Fin VectorWidth
+--   [ indexVector v (UNSAFEFromOrdinal idx 0)
+--   , indexVector v (UNSAFEFromOrdinal idx 1)
+--   , indexVector v (UNSAFEFromOrdinal idx 2)
+--   , indexVector v (UNSAFEFromOrdinal idx 3) ]
+--
+-- def broadcastVector (v : Real) : VectorReal = packVector v v v v
+--
+-- @instance vectorRealAdd : Add VectorReal =
+--   (MkAdd ( \x y. %vfadd x y )
+--          ( \x y. %vfsub x y )
+--          ( broadcastVector zero ))
+-- @instance vectorRealMul : Mul VectorReal =
+--   MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
+-- @instance vectorRealVSpace : VSpace VectorReal =
+--   MkVSpace vectorRealAdd \x v. broadcastVector x * v
 
 'Tiling
 
@@ -457,12 +464,12 @@ def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
 
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
-def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
-  idx = Fin VectorWidth
-  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
-              arr.(t +> UNSAFEFromOrdinal idx 1)
-              arr.(t +> UNSAFEFromOrdinal idx 2)
-              arr.(t +> UNSAFEFromOrdinal idx 3))
+--def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
+--  idx = Fin VectorWidth
+--  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
+--              arr.(t +> UNSAFEFromOrdinal idx 1)
+--              arr.(t +> UNSAFEFromOrdinal idx 2)
+--              arr.(t +> UNSAFEFromOrdinal idx 3))
 
 'Numerical utilities
 

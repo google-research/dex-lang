@@ -95,9 +95,9 @@ impToLLVM (ImpFunction outVars inVars (ImpProg stmts)) =
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpInstr isLocal instr = case instr of
-  IThrowError      -> Nothing <$  throwRuntimeError
-  Alloc t numel    -> Just    <$> case numel of
-    ILit (IntLit n) | isLocal && n <= 256 -> alloca n elemTy
+  IThrowError   -> Nothing <$  throwRuntimeError
+  Alloc t numel -> Just    <$> case numel of
+    ILit l | n <- getIntLit l, isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
     where elemTy = scalarTy $ scalarTableBaseType t
   Free v' -> do
@@ -114,20 +114,21 @@ compileLoop d iBinder n' compileBody = do
   let loopName = "loop_" ++ (showName $ binderNameHint iBinder)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
-  i <- alloca 1 longTy
-  i0 <- case d of Fwd -> return $ litInt 0
-                  Rev -> n `sub` litInt 1
+  i <- alloca 1 $ scalarTy iType
+  i0 <- case d of Fwd -> return $ (0 `withWidthOf` n)
+                  Rev -> n `sub` (1 `withWidthOf` n)
   store i i0
-  entryCond <- litInt 0 `ilt` n
+  entryCond <- (0 `withWidthOf` n) `ilt` n
   finishBlock (L.CondBr entryCond loopBlock nextBlock []) loopBlock
   iVal <- load i
   extendOperands (iBinder @> iVal) $ compileBody
-  iValNew <- case d of Fwd -> add iVal $ litInt 1
-                       Rev -> sub iVal $ litInt 1
+  iValNew <- case d of Fwd -> add iVal (1 `withWidthOf` iVal)
+                       Rev -> sub iVal (1 `withWidthOf` iVal)
   store i iValNew
   loopCond <- case d of Fwd -> iValNew `ilt` n
-                        Rev -> iValNew `ige` litInt 0
+                        Rev -> iValNew `ige` (0 `withWidthOf` iValNew)
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
+  where (IValType iType) = (binderAnn iBinder)
 
 compileIf :: Monad m => Operand -> CompileT m () -> CompileT m () -> CompileT m ()
 compileIf cond tb fb = do
@@ -154,7 +155,7 @@ compileWhile cond compileBody = do
 throwRuntimeError :: Compile ()
 throwRuntimeError = do
   deadBlock <- freshName "deadBlock"
-  finishBlock (L.Ret (Just $ litInt 1) []) deadBlock
+  finishBlock (L.Ret (Just $ 1 `withWidth` 64) []) deadBlock
 
 compilePrimOp :: Monad m => PrimOp Operand -> CompileT m Operand
 compilePrimOp pop = case pop of
@@ -170,7 +171,7 @@ compilePrimOp pop = case pop of
   VectorPack elems   -> foldM fillElem undef $ zip elems [0..]
     where
       resTy = L.VectorType (fromIntegral vectorWidth) $ L.typeOf $ head elems
-      fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (litInt i) []
+      fillElem v (e, i) = emitInstr resTy $ L.InsertElement v e (i `withWidth` 32) []
       undef = L.ConstantOperand $ C.Undef resTy
   VectorIndex v i    -> emitInstr resTy $ L.ExtractElement v i []
     where (L.VectorType _ resTy) = L.typeOf v
@@ -178,12 +179,12 @@ compilePrimOp pop = case pop of
 
 compileUnOp :: Monad m => UnOp -> Operand -> CompileT m Operand
 compileUnOp op x = case op of
-  BoolToInt       -> return x -- bools stored as ints
-  UnsafeIntToBool -> return x -- bools stored as ints
+  BoolToInt       -> x `asIntWidth` longTy
+  UnsafeIntToBool -> x `asIntWidth` boolTy
   IntToReal       -> emitInstr realTy $ L.SIToFP x realTy []
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg            -> emitInstr realTy $ L.FSub mathFlags (litReal 0.0) x []
-  BNot            -> emitInstr boolTy $ L.Xor x (litInt 1) []
+  FNeg            -> emitInstr realTy $ L.FSub mathFlags (litVal $ Float64Lit 0.0) x []
+  BNot            -> emitInstr boolTy $ L.Xor x (1 `withWidth` 8) []
   _               -> unaryIntrinsic op x
 
 compileBinOp :: Monad m => BinOp -> Operand -> Operand -> CompileT m Operand
@@ -201,8 +202,8 @@ compileBinOp op x y = case op of
   FDiv   -> emitInstr realTy $ L.FDiv mathFlags x y []
   BAnd   -> emitInstr boolTy $ L.And x y []
   BOr    -> emitInstr boolTy $ L.Or  x y []
-  ICmp c -> emitInstr boolTy (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
-  FCmp c -> emitInstr boolTy (L.FCmp (floatCmpOp c) x y []) >>= (`zeroExtendTo` boolTy)
+  ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
+  FCmp c -> emitInstr i1 (L.FCmp (floatCmpOp c) x y []) >>= (`zeroExtendTo` boolTy)
   where
     floatCmpOp :: CmpOp -> FPP.FloatingPointPredicate
     floatCmpOp cmpOp = case cmpOp of
@@ -243,11 +244,11 @@ compileMDImpInstr isLocal instrExt = do
         kernelArgs <- traverse lookupImpVar args
         let blockSizeX = 256
         sizeOp <- compileExpr size
-        sizeOp' <- sizeOp `add` (litInt $ blockSizeX - 1)
-        gridSizeX <- sizeOp' `div'` (litInt blockSizeX)
+        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidth` 32)
+        gridSizeX <- sizeOp' `div'` (blockSizeX `withWidth` 32)
         cuLaunchKernel kernel
-                      (gridSizeX        , litInt 1, litInt 1)
-                      (litInt blockSizeX, litInt 1, litInt 1)
+                      (gridSizeX                , 1 `withWidth` 32, 1 `withWidth` 32)
+                      (blockSizeX `withWidth` 32, 1 `withWidth` 32, 1 `withWidth` 32)
                       (sizeOp : kernelArgs)
         -- TODO: cuModuleUnload
         return Nothing
@@ -294,7 +295,7 @@ threadHasCUDAContext :: MDHostCompile Operand
 threadHasCUDAContext = do
   currentCtx <- cuCtxGetCurrent
   currentCtxInt <- emitInstr i64 $ L.PtrToInt currentCtx i64 []
-  emitInstr i1 $ L.ICmp IP.UGT currentCtxInt (litInt 0) []
+  emitInstr i1 $ L.ICmp IP.UGT currentCtxInt (0 `withWidth` 64) []
 
 cuInit :: MDHostCompile ()
 cuInit = checkCuResult "cuInit" =<< emitExternCall spec [L.ConstantOperand $ C.Int 32 0]
@@ -366,7 +367,7 @@ cuLaunchKernel fun grid block args = do
              , L.ptr $ L.ptr L.VoidType
              , L.ptr $ L.ptr L.VoidType ]
 
-    makeDimArgs (x, y, z) = mapM (\v -> emitInstr i32 $ L.Trunc v i32 []) [x, y, z]
+    makeDimArgs (x, y, z) = mapM (`asIntWidth` i32) [x, y, z]
 
     packArray :: Monad m => [Operand] -> CompileT m Operand
     packArray elems = do
@@ -374,7 +375,7 @@ cuLaunchKernel fun grid block args = do
       forM_ (zip [0..] elems) $ \(i, e) -> do
         eptr <- alloca 1 $ L.typeOf e
         store eptr e
-        earr <- gep arr $ litInt i
+        earr <- gep arr $ i `withWidth` 32
         store earr =<< castLPtr L.VoidType eptr
       return arr
 
@@ -507,7 +508,7 @@ compileImpKernelInstr _ instr = case instr of
   IThrowError      -> error $ "Throwing exceptions from GPU kernels is not supported yet"
   Free  _          -> return Nothing  -- Can only alloca inside a kernel
   Alloc t numel    -> Just    <$> case numel of
-    ILit (IntLit n) -> alloca n elemTy
+    ILit l | n <- getIntLit l, n <= 256 -> alloca n elemTy
     _ -> error $ "GPU kernels can only allocate statically known amounts of memory"
     where elemTy = scalarTy $ scalarTableBaseType t
   _ -> compileGenericInstr compileBlock instr
@@ -533,7 +534,7 @@ compileFunction attrs compileInstr outBinders inBinders stmts = runCompileT cpuI
 
   let params = outParams ++ inParams
   let paramTypes = fmap L.typeOf params
-  mainFun <- makeFunction "mainFun" params (Just $ litInt 0)
+  mainFun <- makeFunction "mainFun" params (Just $ 0 `withWidth` 64)
   let mainFunOp = callableOperand (funTy longTy paramTypes) "mainFun"
   let entryFun = makeEntryPoint "entryFun" paramTypes mainFunOp
   LLVMFunction numOutputs <$> makeModule [L.GlobalDefinition mainFun,
@@ -570,6 +571,16 @@ compileGenericInstr compileBlock instr = case instr of
   IOffset x off _  -> Just    <$> bindM2 gep   (compileExpr x)    (compileExpr off)
   IWhile cond body -> Nothing <$  compileWhile cond (compileBlock body)
   Loop d i n body  -> Nothing <$  compileLoop d i n (compileBlock body)
+  ICastOp idt ix   -> Just    <$> do
+    x <- compileExpr ix
+    let (xt, dt) = (L.typeOf x, fromIType undefined idt)
+    case (xt, dt) of
+      (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
+      (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
+        LT -> emitInstr dt $ L.FPExt x dt []
+        EQ -> return x
+        GT -> emitInstr dt $ L.FPTrunc x dt []
+      _ -> error $ "Unsupported cast"
   If p cons alt -> do
     p' <- compileExpr p >>= (`asIntWidth` i1)
     compileIf p' (compileBlock cons)
@@ -581,24 +592,26 @@ compileGenericInstr compileBlock instr = case instr of
 
 litVal :: LitVal -> Operand
 litVal lit = case lit of
-  CharLit x ->  L.ConstantOperand $ C.Int 8 $ fromIntegral $ fromEnum x
-  IntLit  x -> litInt x
-  RealLit x -> litReal x
-  BoolLit True  -> litInt 1
-  BoolLit False -> litInt 0
-  VecLit l  -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
+  Int64Lit x   -> (fromIntegral x) `withWidth` 64
+  Int32Lit x   -> (fromIntegral x) `withWidth` 32
+  Int8Lit  x   -> (fromIntegral x) `withWidth` 8
+  Float64Lit x -> L.ConstantOperand $ C.Float $ L.Double x
+  Float32Lit x -> L.ConstantOperand $ C.Float $ L.Single x
+  VecLit l     -> L.ConstantOperand $ foldl fillElem undef $ zip consts [0..length l - 1]
     where
       consts = fmap (operandToConst . litVal) l
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
-      fillElem v (c, i) = C.InsertElement v c (C.Int 64 (fromIntegral i))
+      fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
-  StrLit _ -> error "Not implemented"
 
-litInt :: Int -> Operand
-litInt x = L.ConstantOperand $ C.Int 64 $ fromIntegral x
+-- TODO: Assert that the integer can be represented in that number of bits!
+withWidth :: Integer -> Word32 -> Operand
+withWidth x bits = L.ConstantOperand $ C.Int bits x
 
-litReal :: Double -> Operand
-litReal x = L.ConstantOperand $ C.Float $ L.Double x
+withWidthOf :: Integer -> Operand -> Operand
+withWidthOf x template = case L.typeOf template of
+  L.IntegerType bits -> x `withWidth` (fromIntegral bits)
+  _ -> error $ "Expected an integer: " ++ show template
 
 store :: Monad m => Operand -> Operand -> CompileT m ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
@@ -637,7 +650,7 @@ alloca elems ty = do
   modify $ setScalarDecls ((v L.:= instr):)
   modify $ setAllocas (S.insert v)
   return $ L.LocalReference (L.ptr ty) v
-  where instr = L.Alloca ty (Just $ litInt elems) 0 []
+  where instr = L.Alloca ty (Just $ (fromIntegral elems) `withWidth` 32) 0 []
 
 malloc :: Monad m => L.Type -> Operand -> CompileT m Operand
 malloc ty bytes = do
@@ -677,11 +690,11 @@ emitVoidExternCall f xs = do
 scalarTy :: BaseType -> L.Type
 scalarTy b = case b of
   Scalar sb -> case sb of
-    CharType -> charTy
-    IntType  -> longTy
-    RealType -> realTy
-    BoolType -> boolTy -- Still storing in 64-bit arrays TODO: use 8 bits (or 1)
-    StrType  -> error "Not implemented"
+    Int64Type   -> i64
+    Int32Type   -> i32
+    Int8Type    -> i8
+    Float64Type -> fp64
+    Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
 
 fromIType :: L.AddrSpace -> IType -> L.Type
@@ -845,17 +858,17 @@ freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
 longTy :: L.Type
 longTy = i64
 
-charTy :: L.Type
-charTy = i8
-
 realTy :: L.Type
 realTy = fp64
 
 boolTy :: L.Type
-boolTy = i64
+boolTy = i8
 
 fp64 :: L.Type
 fp64 = L.FloatingPointType L.DoubleFP
+
+fp32 :: L.Type
+fp32 = L.FloatingPointType L.FloatFP
 
 i64 :: L.Type
 i64 = L.IntegerType 64
@@ -909,13 +922,13 @@ makeEntryPoint :: L.Name -> [L.Type] -> L.CallableOperand -> Function
 makeEntryPoint wrapperName argTypes f = runCompile cpuInitCompileEnv $ do
   (argParam, argOperand) <- freshParamOpPair [] (L.ptr $ L.ptr i8)
   args <- forM (zip [0..] argTypes) $ \(i, ty) -> do
-    curPtr <- gep argOperand $ litInt i
+    curPtr <- gep argOperand $ i `withWidth` 64
     arg <- case ty of
       L.PointerType (L.PointerType _ _) _ -> return curPtr
       L.PointerType _ _                   -> load curPtr
       _                                   -> error "Expected a pointer type"
     emitInstr ty $ L.BitCast arg ty []
-  exitCode <- emitInstr longTy  $ callInstr f args
+  exitCode <- emitInstr i64 $ callInstr f args
   makeFunction wrapperName [argParam] (Just exitCode)
 
 instance Pretty L.Operand where

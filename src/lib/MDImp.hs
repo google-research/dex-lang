@@ -43,7 +43,8 @@ stmtToMDInstr (d, instr) = case instr of
   Free v    -> do
     isHost <- isHostPtr v
     if isHost then keep else return $ MDFree v
-  IPrimOp _ -> keep
+  IPrimOp _   -> keep
+  ICastOp _ _ -> keep
   -- XXX: This is super unsafe! We have no guarantee that different iterations won't race!
   --      Now that Imp is not necessarily the last stop before codegen, we should make it
   --      emit some extra loop tags to ensure that transforms like this one are safe!

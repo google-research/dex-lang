@@ -180,7 +180,8 @@ linearizedDiv x y tx ty = do
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
-  Lit _    -> LinA $ return (withZeroTangent x)  where x = Con con
+  Lit _      -> LinA $ return $ withZeroTangent $ Con con
+  RealCon _  -> LinA $ return $ withZeroTangent $ Con con
   PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
   _ -> error $ "not implemented: " ++ pprint con
 
@@ -210,14 +211,18 @@ withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))
 tangentType :: Type -> Type
 tangentType (TabTy n a) = TabTy n (tangentType a)
 tangentType (TC con) = case con of
-  BaseType (Scalar RealType) -> TC con
-  BaseType (Vector RealType) -> TC con
-  BaseType   _               -> UnitTy
-  IntRange   _ _             -> UnitTy
-  IndexRange _ _ _           -> UnitTy
-  UnitType                   -> UnitTy
-  PairType a b               -> PairTy (tangentType a) (tangentType b)
-  -- XXX: This assume that arrays are always constants.
+  RealType                      -> TC con
+  BaseType (Scalar Float64Type) -> TC con
+  BaseType (Scalar Float32Type) -> TC con
+  BaseType (Vector Float64Type) -> TC con
+  BaseType (Vector Float32Type) -> TC con
+  IntType                       -> UnitTy
+  BaseType   _                  -> UnitTy
+  IntRange   _ _                -> UnitTy
+  IndexRange _ _ _              -> UnitTy
+  UnitType                      -> UnitTy
+  PairType a b                  -> PairTy (tangentType a) (tangentType b)
+  -- XXX: This assumes that arrays are always constants.
   ArrayType _ -> UnitTy
   ty -> error $ "Can't differentiate wrt type " ++ pprint ty
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty

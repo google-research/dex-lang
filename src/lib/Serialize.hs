@@ -27,7 +27,6 @@ import Data.Foldable (toList)
 import Data.Store hiding (size)
 import Data.Text.Prettyprint.Doc  hiding (brackets)
 import Data.List (transpose)
-import qualified Data.Map.Strict as M
 
 import Array
 import Interpreter
@@ -168,16 +167,19 @@ materializeScalarTables atom = case atom of
   Con (Lit l)          -> [arrayFromScalar l]
   Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
   Con (UnitCon)        -> []
+  Con (IntCon  (Con (Lit l))) | i <- getIntLit l  -> [arrayFromScalar $ Int64Lit (fromIntegral i)]
+  Con (RealCon (Con (Lit l))) | f <- getRealLit l -> [arrayFromScalar $ Float64Lit f]
   Lam a@(Abs b (TabArrow, _)) ->
     fmap arrayConcat $ transpose $ fmap evalBody $ indices $ binderType b
     where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
   _ -> error $ "Not a scalar table: " ++ pprint atom
 
+-- TODO: Support fp32 outputs too!
 valToScatter :: Val -> Output
 valToScatter val = case getType val of
   TabTy _ (PairTy RealTy RealTy) -> ScatterOut xs ys
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
-  where [Array _ (RealVec xs), Array _ (RealVec ys)] = materializeScalarTables val
+  where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
 
 valToHeatmap :: Bool -> Val -> Output
 valToHeatmap color val = case color of
@@ -189,7 +191,7 @@ valToHeatmap color val = case color of
     TabTy hv (TabTy wv (TabTy _ RealTy)) ->
        HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
     _ -> error $ "Color Heatmap expects a 3D array of reals, but got: " ++ pprint (getType val)
-  where [(Array _ (RealVec xs))] = materializeScalarTables val
+  where [(Array _ (Float64Vec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String
 pprintVal val = asStr $ prettyVal val
@@ -200,26 +202,29 @@ prettyVal val = case val of
     where idxSet = binderType b
           elems = flip fmap (indices idxSet) $ \idx ->
             asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
-          idxSetStr = case idxSet of FixedIntRange 0 _ -> mempty
-                                     _                 -> "@" <> pretty idxSet
+          idxSetStr = case idxSet of FixedIntRange l _ | getIntLit l == 0 -> mempty
+                                     _                                    -> "@" <> pretty idxSet
   Con con -> case con of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
     Coerce t i  -> pretty i <> "@" <> pretty t
-    Lit x       -> pretty x
-    SumAsProd (TypeCon (DataDef _ _ dataCons) _) (IntVal i) payload ->
-      case args of
-        [] -> pretty conName
-        _  -> parens $ pretty conName <+> hsep (map prettyVal args)
-      where
-        DataConDef conName _ = dataCons !! i
-        args = payload !! i
-    SumAsProd (VariantTy types) (IntVal i) payload ->
-      pretty variant
-      where
-        [value] = payload !! i
-        (theLabel, repeatNum) = toList (reflectLabels types) !! i
-        variant = Variant types theLabel repeatNum value
-    _           -> pretty con
+    SumAsProd ty (IntLit l) payload ->
+      case ty of
+        TypeCon (DataDef _ _ dataCons) _ ->
+          case args of
+            [] -> pretty conName
+            _  -> parens $ pretty conName <+> hsep (map prettyVal args)
+          where
+            i = getIntLit l
+            DataConDef conName _ = dataCons !! i
+            args = payload !! i
+        VariantTy types -> pretty variant
+          where
+            i = getIntLit l
+            [value] = payload !! i
+            (theLabel, repeatNum) = toList (reflectLabels types) !! i
+            variant = Variant types theLabel repeatNum value
+        _ -> error "SumAsProd with an unsupported type"
+    _ -> pretty con
   atom -> prettyPrec atom LowestPrec
 
 getValArrays :: Val -> [Array]
@@ -237,8 +242,8 @@ flattenType ty = error $ "Unexpected type: " ++ show ty
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
   BaseTy b  -> (1, b)
-  TabTy _ _ -> (size, scalarTableBaseType t)
-    where (IntVal size) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
+  TabTy _ _ -> (getIntLit sizeLit, scalarTableBaseType t)
+    where (IntLit sizeLit) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
 -- TODO: this isn't enough, since this module's compilation might be cached

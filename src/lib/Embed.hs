@@ -106,6 +106,7 @@ emitUnpack expr = do
       -- binders to bind, but we still plan to use the results.
       let bs = toNest $ map Ignore $ toList types
       return bs
+    _ -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint (getType expr)
   expr' <- deShadow expr <$> getScope
   vs <- freshNestedBinders bs
   embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
@@ -185,7 +186,7 @@ wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
-  RealTy -> Con $ Lit $ RealLit 0.0
+  RealTy -> asRealVal 0.0
   TabTy (Ignore n) a ->
     Lam $ Abs (Ignore n) (TabArrow,  Block Empty $ Atom $ zeroAt a)
   UnitTy -> UnitVal
@@ -206,53 +207,59 @@ neg :: MonadEmbed m => Atom -> m Atom
 neg x = emitOp $ ScalarUnOp FNeg x
 
 add :: MonadEmbed m => Atom -> Atom -> m Atom
-add (RealVal 0) y = return y
-add x y           = emitOp $ ScalarBinOp FAdd x y
+add (RealLit l) y | getRealLit l == 0.0 = return y
+add x y = emitOp $ ScalarBinOp FAdd x y
 
+-- TODO: We should be more careful about the precision in which we carry out
+--       constant-folded expressions, because we might not preserve the full
+--       program semantics.
+-- TODO: Implement constant folding for fixed-width integer types as well!
 iadd :: MonadEmbed m => Atom -> Atom -> m Atom
-iadd (IntVal 0) y          = return y
-iadd x          (IntVal 0) = return x
-iadd (IntVal x) (IntVal y) = return $ IntVal $ x + y
-iadd x y          = emitOp $ ScalarBinOp IAdd x y
+iadd (IntLit l)  y           | getIntLit l == 0                 = return y
+iadd x           (IntLit l)  | getIntLit l == 0                 = return x
+iadd (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asIntVal $ x + y
+iadd x y = emitOp $ ScalarBinOp IAdd x y
 
 mul :: MonadEmbed m => Atom -> Atom -> m Atom
 mul x y = emitOp $ ScalarBinOp FMul x y
 
 imul :: MonadEmbed m => Atom -> Atom -> m Atom
-imul (IntVal 1) y          = return y
-imul x          (IntVal 1) = return x
-imul (IntVal x) (IntVal y) = return $ IntVal $ x * y
+imul (IntLit l)  y           | getIntLit l == 1                 = return y
+imul x           (IntLit l)  | getIntLit l == 1                 = return x
+imul (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asIntVal $ x * y
 imul x y = emitOp $ ScalarBinOp IMul x y
 
 sub :: MonadEmbed m => Atom -> Atom -> m Atom
 sub x y = emitOp $ ScalarBinOp FSub x y
 
 isub :: MonadEmbed m => Atom -> Atom -> m Atom
-isub x          (IntVal 0) = return x
-isub (IntVal x) (IntVal y) = return $ IntVal $ x - y
+isub x           (IntLit l)  | getIntLit l == 0                 = return x
+isub (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asIntVal $ x - y
 isub x y = emitOp $ ScalarBinOp ISub x y
 
 andE :: MonadEmbed m => Atom -> Atom -> m Atom
-andE (BoolVal True) y = return y
-andE x y              = emit $ Op $ ScalarBinOp BAnd x y
+andE (BoolLit l)  y            | getBoolLit l                      = return y
+andE x            (BoolLit l)  | getBoolLit l                      = return x
+andE (BoolLit xl) (BoolLit yl) | [x, y] <- getBoolLit <$> [xl, yl] = return $ asBoolVal $ x && y
+andE x y = emit $ Op $ ScalarBinOp BAnd x y
 
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
-select (BoolVal b) x y = return $ if b then x else y
+select (BoolLit l) x y | b <- getBoolLit l = return $ if b then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
 div' x y = emitOp $ ScalarBinOp FDiv x y
 
 idiv :: MonadEmbed m => Atom -> Atom -> m Atom
-idiv x          (IntVal 1) = return x
-idiv (IntVal x) (IntVal y) = return $ IntVal $ x `div` y
+idiv x           (IntLit l)  | getIntLit l == 1                 = return x
+idiv (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asIntVal $ x `div` y
 idiv x y = emitOp $ ScalarBinOp IDiv x y
 
 irem :: MonadEmbed m => Atom -> Atom -> m Atom
 irem x y = emitOp $ ScalarBinOp IRem x y
 
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
-ilt (IntVal x) (IntVal y) = return $ BoolVal $ x < y
+ilt (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asBoolVal $ x < y
 ilt x y = emitOp $ ScalarBinOp (ICmp Less) x y
 
 getFst :: MonadEmbed m => Atom -> m Atom
@@ -390,18 +397,15 @@ intToReal i = emitOp $ ScalarUnOp IntToReal i
 boolToReal :: MonadEmbed m => Atom -> m Atom
 boolToReal = boolToInt >=> intToReal
 
-unsafeIntToBool :: MonadEmbed m => Atom -> m Atom
-unsafeIntToBool b = emitOp $ ScalarUnOp UnsafeIntToBool b
-
 indexAsInt :: MonadEmbed m => Atom -> m Atom
 indexAsInt idx = emitOp $ IndexAsInt idx
 
-unsafeCoerce :: MonadEmbed m => Type -> Atom -> m Atom
-unsafeCoerce ty x = emitOp $ CoerceOp ty x
+cast :: MonadEmbed m => Type -> Atom -> m Atom
+cast ty x = emitOp $ CastOp ty x
 
 boolCase :: MonadEmbed m => Atom -> m Atom -> m Atom -> m Atom
 boolCase baseBoolCond trueBlock falseBlock = do
-  preludeBoolCond <- unsafeCoerce PreludeBoolTy baseBoolCond
+  preludeBoolCond <- cast PreludeBoolTy baseBoolCond
   trueCase@(Abs _ trueBody) <- buildNAbs Empty $ \[] -> trueBlock
   falseCase <- buildNAbs Empty $ \[] -> falseBlock
   let ty = getType trueBody
@@ -682,16 +686,15 @@ reduceExpr scope expr = case expr of
 
 indexSetSizeE :: MonadEmbed m => Type -> m Atom
 indexSetSizeE (TC con) = case con of
-  UnitType                   -> return $ IntVal 1
-  BaseType (Scalar BoolType) -> return $ IntVal 2
+  UnitType                   -> return $ asIntVal 1
   IntRange low high -> clampPositive =<< high `isub` low
   IndexRange n low high -> do
     low' <- case low of
       InclusiveLim x -> indexToIntE n x
-      ExclusiveLim x -> indexToIntE n x >>= iadd (IntVal 1)
-      Unlimited      -> return $ IntVal 0
+      ExclusiveLim x -> indexToIntE n x >>= iadd (asIntVal 1)
+      Unlimited      -> return $ asIntVal 0
     high' <- case high of
-      InclusiveLim x -> indexToIntE n x >>= iadd (IntVal 1)
+      InclusiveLim x -> indexToIntE n x >>= iadd (asIntVal 1)
       ExclusiveLim x -> indexToIntE n x
       Unlimited      -> indexSetSizeE n
     clampPositive =<< high' `isub` low'
@@ -700,16 +703,16 @@ indexSetSizeE (TC con) = case con of
   where
 indexSetSizeE (RecordTy types) = do
   sizes <- traverse indexSetSizeE types
-  foldM imul (IntVal 1) sizes
+  foldM imul (asIntVal 1) sizes
 indexSetSizeE (VariantTy types) = do
   sizes <- traverse indexSetSizeE types
-  foldM iadd (IntVal 0) sizes
+  foldM iadd (asIntVal 0) sizes
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
 
 clampPositive :: MonadEmbed m => Atom -> m Atom
 clampPositive x = do
-  isNegative <- x `ilt` (IntVal 0)
-  select isNegative (IntVal 0) x
+  isNegative <- x `ilt` (asIntVal 0)
+  select isNegative (asIntVal 0) x
 
 -- XXX: Be careful if you use this function as an interpretation for
 --      IndexAsInt instruction, as for Int and IndexRanges it will
@@ -717,7 +720,7 @@ clampPositive x = do
 --      infinite loop.
 indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
 indexToIntE ty idx = case ty of
-  UnitTy  -> return $ IntVal 0
+  UnitTy  -> return $ asIntVal 0
   BoolTy  -> boolToInt idx
   PairTy lType rType -> do
     (lVal, rVal) <- fromPair idx
@@ -730,16 +733,16 @@ indexToIntE ty idx = case ty of
   RecordTy types -> do
     sizes <- traverse indexSetSizeE types
     (strides, _) <- scanM
-      (\sz prev -> do {v <- imul sz prev; return (prev, v)}) sizes (IntVal 1)
+      (\sz prev -> do {v <- imul sz prev; return (prev, v)}) sizes (asIntVal 1)
     -- Unpack and sum the strided contributions
     subindices <- getUnpacked idx
     subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
     scaled <- mapM (uncurry imul) $ zip (toList strides) subints
-    foldM iadd (IntVal 0) scaled
+    foldM iadd (asIntVal 0) scaled
   VariantTy types -> do
     sizes <- traverse indexSetSizeE types
     (offsets, _) <- scanM
-      (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+      (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (asIntVal 0)
     -- Build and apply a case expression
     alts <- flip mapM (zip (toList offsets) (toList types)) $
       \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
@@ -753,7 +756,6 @@ intToIndexE ty@(TC con) i = case con of
   IntRange   _ _             -> iAsIdx
   IndexRange _ _ _           -> iAsIdx
   UnitType                   -> return $ UnitVal
-  BaseType (Scalar BoolType) -> unsafeIntToBool i
   PairType a b -> do
     bSize <- indexSetSizeE b
     iA <- intToIndexE a =<< idiv i bSize
@@ -764,17 +766,17 @@ intToIndexE ty@(TC con) i = case con of
 intToIndexE (RecordTy types) i = do
   sizes <- traverse indexSetSizeE types
   (strides, _) <- scanM
-    (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IntVal 1)
+    (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (asIntVal 1)
   offsets <- flip mapM (zip (toList types) (toList strides)) $
     \(ty, (s1, s2)) -> do
       x <- irem i s2
       y <- idiv x s1
       intToIndexE ty y
   return $ Record (restructure offsets types)
-intToIndexE rty@(VariantTy types) i = do
+intToIndexE (VariantTy types) i = do
   sizes <- traverse indexSetSizeE types
   (offsets, _) <- scanM
-    (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IntVal 0)
+    (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (asIntVal 0)
   let
     reflect = reflectLabels types
     -- Find the right index by looping through the possible offsets
@@ -786,20 +788,20 @@ intToIndexE rty@(VariantTy types) i = do
         shifted <- isub i offset
         index <- intToIndexE ty shifted
         return $ Variant types label repeatNum index
-    ((l0, 0), ty0, IntVal 0):zs =
+    ((l0, 0), ty0, _):zs =
       zip3 (toList reflect) (toList types) (toList offsets)
   start <- Variant types l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
-anyValue (TC (BaseType (Scalar RealType))) = RealVal 1.0
-anyValue (TC (BaseType (Scalar IntType)))  = IntVal 1
-anyValue (TC (BaseType (Scalar BoolType))) = BoolVal False
-anyValue (TC (BaseType (Scalar StrType)))  = Con $ Lit $ StrLit ""
+anyValue (TC RealType) = asRealVal 1.0
+anyValue (TC IntType)  = asIntVal  1
+anyValue (TC BoolType) = asBoolVal False
+-- TODO: Base types!
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that
 --      aborts the program if this really ends up being the case.
-anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ IntVal 0
-anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ IntVal 0
+anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ asIntVal 0
+anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ asIntVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t
