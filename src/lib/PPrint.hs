@@ -108,23 +108,23 @@ instance PrettyPrec BaseType where
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
   prettyPrec sb = atPrec ArgPrec $ case sb of
-    CharType -> "Char"
-    IntType  -> "Int"
-    BoolType -> "Bool"
-    RealType -> "Real"
-    StrType  -> "Str"
+    Int64Type   -> "Int64"
+    Int32Type   -> "Int32"
+    Int8Type    -> "Int8"
+    Float64Type -> "Float64"
+    Float32Type -> "Float32"
 
 printDouble :: Double -> Doc ann
 printDouble x = p (double2Float x)
 
 instance Pretty LitVal where pretty = prettyFromPrettyPrec
 instance PrettyPrec LitVal where
-  prettyPrec (CharLit x) = atPrec ArgPrec $ p $ show x
-  prettyPrec (IntLit  x) = atPrec ArgPrec $ p x
-  prettyPrec (RealLit x) = atPrec ArgPrec $ printDouble x
-  prettyPrec (StrLit  x) = atPrec ArgPrec $ p x
+  prettyPrec (Int64Lit   x) = atPrec ArgPrec $ p x
+  prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
+  prettyPrec (Int8Lit    x) = atPrec ArgPrec $ p x
+  prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
+  prettyPrec (Float32Lit x) = atPrec ArgPrec $ printDouble $ realToFrac x
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
-  prettyPrec (BoolLit b) = atPrec ArgPrec $ if b then "True" else "False"
 
 instance Pretty Block where
   pretty (Block Empty expr) = group $ line <> pLowest expr
@@ -169,10 +169,15 @@ instance PrettyPrec e => PrettyPrec (PrimExpr e) where
   prettyPrec (OpExpr  e) = prettyPrec e
   prettyPrec (HofExpr e) = prettyPrec e
 
+
 instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
+    IntType        -> atPrec ArgPrec "Int"
+    BoolType       -> atPrec ArgPrec "Bool"
+    CharType       -> atPrec ArgPrec "Char"
+    RealType       -> atPrec ArgPrec "Real"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
@@ -193,18 +198,34 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
+instance {-# OVERLAPPING #-} Pretty (PrimCon Atom) where pretty = prettyFromPrettyPrec
+
 instance PrettyPrec e => PrettyPrec (PrimCon e) where
-  prettyPrec con = case con of
-    Lit l       -> prettyPrec l
-    ArrayLit _ array -> atPrec ArgPrec $ p array
-    PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
-    UnitCon     -> atPrec ArgPrec "()"
-    RefCon _ _  -> atPrec ArgPrec "RefCon"
-    Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
-    AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
-    SumAsProd ty tag payload -> atPrec LowestPrec $
-      "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
-    ClassDictHole _ _ -> atPrec ArgPrec "_"
+  prettyPrec = prettyPrecPrimCon
+
+instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
+  prettyPrec con = case (Con con) of
+    IntLit  l | i <- getIntLit  l -> atPrec ArgPrec $ p i
+    RealLit l | r <- getRealLit l -> atPrec ArgPrec $ printDouble r
+    BoolLit l | b <- getBoolLit l -> atPrec ArgPrec $ if b then "True" else "False"
+    CharLit l | c <- getIntLit  l -> atPrec ArgPrec $ p $ show $ toEnum @Char c
+    _                             -> prettyPrecPrimCon con
+
+prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
+prettyPrecPrimCon con = case con of
+  Lit l       -> prettyPrec l
+  BoolCon e   -> atPrec LowestPrec $ "Bool" <+> pApp e
+  CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
+  IntCon  e   -> atPrec LowestPrec $ "Int"  <+> pApp e
+  RealCon e   -> atPrec LowestPrec $ "Real" <+> pApp e
+  ArrayLit _ array -> atPrec ArgPrec $ p array
+  PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
+  UnitCon     -> atPrec ArgPrec "()"
+  Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
+  AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
+  SumAsProd ty tag payload -> atPrec LowestPrec $
+    "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
+  ClassDictHole _ _ -> atPrec ArgPrec "_"
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
@@ -321,6 +342,7 @@ prettyStatement (b       , instr) = p b <+> "=" <+> p instr
 
 instance Pretty ImpInstr where
   pretty (IPrimOp op)            = pLowest op
+  pretty (ICastOp t x)           = "cast"  <+> p x <+> "to" <+> p t
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
   pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
@@ -431,6 +453,9 @@ instance PrettyPrec UExpr' where
     UVariant (Just ann) label i value -> atPrec ArgPrec $
       prettyVariant label i value AppPrec <> prettyAnn (pApp ann)
     UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
+    UIntLit  v -> atPrec ArgPrec $ p v
+    UCharLit v -> atPrec ArgPrec $ p v
+    URealLit v -> atPrec ArgPrec $ p v
 
 instance Pretty UAlt where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
@@ -459,7 +484,6 @@ instance PrettyPrec UPat' where
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
-    UPatLit x -> atPrec ArgPrec $ p x
     UPatRecord pats -> prettyLabeledItems pats (line <> "&") ":"
     UPatVariant label i value -> prettyVariant label i value
 

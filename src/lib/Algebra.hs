@@ -65,8 +65,7 @@ offsets t = case t of
 
 indexSetSize :: Type -> ClampPolynomial
 indexSetSize (TC con) = case con of
-  UnitType                   -> liftC $ toPolynomial $ IntVal 1
-  BaseType (Scalar BoolType) -> liftC $ toPolynomial $ IntVal 2
+  UnitType                   -> liftC $ toPolynomial $ asIntVal 1
   IntRange low high     -> clamp $ toPolynomial high `sub` toPolynomial low
   IndexRange n low high -> case (low, high) of
     -- When one bound is left unspecified, the size expressions are guaranteed
@@ -90,21 +89,19 @@ indexSetSize (TC con) = case con of
   _ -> error $ "Not implemented " ++ pprint con
 indexSetSize (RecordTy types) = let
   sizes = map indexSetSize (F.toList types)
-  one = liftC $ toPolynomial $ IntVal 1
+  one = liftC $ toPolynomial $ asIntVal 1
   in foldl mulC one sizes
 indexSetSize (VariantTy types) = let
   sizes = map indexSetSize (F.toList types)
-  zero = liftC $ toPolynomial $ IntVal 0
+  zero = liftC $ toPolynomial $ asIntVal 0
   in foldl add zero sizes
 indexSetSize ty = error $ "Not implemented " ++ pprint ty
 
 toPolynomial :: Atom -> Polynomial
 toPolynomial atom = case atom of
   Var v -> poly [(1, mono [(v, 1)])]
-  Con con -> case con of
-    Lit (IntLit l) -> poly [((toInteger l) % 1, mono [])]
-    -- TODO: Coercions? Unit constructor?
-    _ -> unreachable
+  IntLit l -> poly [((fromIntegral $ getIntLit l) % 1, mono [])]
+  -- TODO: Coercions? Unit constructor?
   _ -> unreachable
   where unreachable = error $ "Unsupported or invalid atom in index set: " ++ pprint atom
 
@@ -129,27 +126,27 @@ evalPolynomialP evalMono p = do
     lcmFactor <- constLCM `idiv` (asAtom $ denominator c)
     constFactor <- imul (asAtom $ numerator c) lcmFactor
     imul constFactor =<< evalMono m
-  total <- foldM iadd (IntVal 0) monoAtoms
+  total <- foldM iadd (asIntVal 0) monoAtoms
   total `idiv` constLCM
   where
     -- TODO: Check for overflows. We might also want to bail out if the LCM is too large,
     --       because it might be causing overflows due to all arithmetic being shifted.
-    asAtom = IntVal . fromInteger
+    asAtom = asIntVal . fromInteger
 
 evalMonomial :: MonadEmbed m => (Var -> Atom) -> Monomial -> m Atom
 evalMonomial varVal m = do
   varAtoms <- traverse (\(MVar v, e) -> ipow (varVal v) e) $ toList m
-  foldM imul (IntVal 1) varAtoms
+  foldM imul (asIntVal 1) varAtoms
 
 evalClampMonomial :: MonadEmbed m => (Var -> Atom) -> ClampMonomial -> m Atom
 evalClampMonomial varVal (ClampMonomial clamps m) = do
   valuesToClamp <- traverse (evalPolynomialP (evalMonomial varVal) . coerce) clamps
-  clampsProduct <- foldM imul (IntVal 1) =<< traverse clampPositive valuesToClamp
+  clampsProduct <- foldM imul (asIntVal 1) =<< traverse clampPositive valuesToClamp
   mval <- evalMonomial varVal m
   imul clampsProduct mval
 
 ipow :: MonadEmbed m => Atom -> Int -> m Atom
-ipow x i = foldM imul (IntVal 1) (replicate i x)
+ipow x i = foldM imul (asIntVal 1) (replicate i x)
 
 -- === Polynomial math ===
 

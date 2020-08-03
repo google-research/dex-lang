@@ -202,17 +202,15 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc pos . UPrimExpr . ConExpr . Lit . CharLit) s
+  let cs = map (WithSrc pos . UCharLit) s
   return $ WithSrc pos $ UTabCon cs Nothing
 
 uLit :: Parser UExpr
-uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
-
-litVal :: Parser LitVal
-litVal =   (CharLit <$> charLit)
-       <|> (IntLit  <$> intLit)
-       <|> (RealLit <$> doubleLit)
-       <?> "literal"
+uLit = withSrc $ uLitParser
+  where uLitParser = UCharLit <$> charLit
+                 <|> UIntLit  <$> intLit
+                 <|> URealLit <$> doubleLit
+                 <?> "literal"
 
 uVarOcc :: Parser UExpr
 uVarOcc = withSrc $ try $ (UVar . (:>())) <$> (occName <* notFollowedBy (sym ":"))
@@ -433,7 +431,6 @@ leafPat =
   <|> parens pat <|> (withSrc $
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
-      <|> (UPatLit    <$> litVal)
       <|> (UPatCon    <$> upperName <*> manyNested pat)
       <|> parseVariant leafPat UPatVariant
       <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat)
@@ -463,9 +460,8 @@ uPrim = withSrc $ do
       Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 baseType :: Parser BaseType
-baseType =   (symbol "Int"  $> Scalar IntType)
-         <|> (symbol "Real" $> Scalar RealType)
-         <|> (symbol "Bool" $> Scalar BoolType)
+baseType =   (symbol "Int64"   $> Scalar Int64Type)
+         <|> (symbol "Float64" $> Scalar Float64Type)
 
 uVariantExpr :: Parser UExpr
 uVariantExpr = withSrc $ do

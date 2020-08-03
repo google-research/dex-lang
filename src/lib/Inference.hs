@@ -211,6 +211,10 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UVariantTy (LabeledItems items) -> do
     items' <- mapM (mapM checkUType) items
     matchRequirement $ VariantTy $ LabeledItems items'
+  UIntLit  x -> matchRequirement $ IntLit  $ Int64Lit $ fromIntegral x
+  -- TODO: Make sure that this conversion is not lossy!
+  UCharLit x -> matchRequirement $ CharLit $ Int8Lit  $ fromIntegral $ fromEnum x
+  URealLit x -> matchRequirement $ RealLit $ Float64Lit x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -259,7 +263,6 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     constrainEq (TypeCon def $ toList params) (getType expr)
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
-  UPatLit _ -> throw NotImplementedErr "literal patterns"
   UPatRecord items -> do
     RecordTy types <- pure $ getType expr
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
@@ -432,7 +435,6 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
-  UPatLit _ -> throw NotImplementedErr "literal patterns"
   UPatRecord items -> do
     RecordTy types <- pure $ getType val
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
@@ -494,7 +496,7 @@ inferTabTy xs ann = case ann of
    [] -> throw TypeErr $ "Empty table constructor must have type annotation"
    (x:_) -> do
     ty <- getType <$> inferRho x
-    return (FixedIntRange 0 (length xs), ty)
+    return (FixedIntRange (Int64Lit 0) (Int64Lit $ fromIntegral $ length xs), ty)
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType
