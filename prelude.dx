@@ -20,7 +20,6 @@ def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %irem x y
 def ipow (x:Int) (y:Int) : Int = %ipow x y
 
-def neg  (x:Real)          : Real = %fneg x
 def fdiv (x:Real) (y:Real) : Real = %fdiv x y
 
 data Add a:Type =
@@ -60,6 +59,7 @@ const : a -> b -> a = \x _. x
 def (.*)  (d:VSpace a) ?=> : Real -> a -> a = case d of MkVSpace _ scale -> scale
 (*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
 def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
+def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 
 @instance realVS : VSpace Real = MkVSpace realAdd (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
