@@ -1,29 +1,32 @@
 'Integrate systems of ordinary differential equations (ODEs) using the Dormand-Prince method for adaptive integration
 stepsize calculation.
-
+This version is a port of the [Jax implementation](https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py).
+A notable algorithmic difference is that it avoids zero-padding the butcher tableaux when computing the Runge-Kutta stages.
 
 Time = Real
 
 -- Should these go in the prelude?
-def norm (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
+def length (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
 def (./) (x: d=>Real) (y: d=>Real) : d=>Real = for i. x.i / y.i
 
 def dot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v = sum for j. s.j .* vs.j
 
 def fit_4th_order_polynomial (_:VSpace v) ?=>
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
-  a = -2.0 * dt .* dz0 + 2.0 * dt .* dz1 -  8.0 .* z0 -  8.0 .* z1 + 16.0 .* z_mid
-  b =  5.0 * dt .* dz0 - 3.0 * dt .* dz1 + 18.0 .* z0 + 14.0 .* z1 - 32.0 .* z_mid
-  c = -4.0 * dt .* dz0 +       dt .* dz1 - 11.0 .* z0 -  5.0 .* z1 + 16.0 .* z_mid
+  -- dz0 and dz1 are gradient evaluations.
+  a = -2. * dt .* dz0 + 2. * dt .* dz1 -  8. .* z0 -  8. .* z1 + 16. .* z_mid
+  b =  5. * dt .* dz0 - 3. * dt .* dz1 + 18. .* z0 + 14. .* z1 - 32. .* z_mid
+  c = -4. * dt .* dz0 +      dt .* dz1 - 11. .* z0 -  5. .* z1 + 16. .* z_mid
   d = dt .* dz0
   e = z0
-  [a, b, c, d, e]
+  [a, b, c, d, e]  -- polynomial coefficients.
 
-dps_c_mid = [6025192743.0 / 30085553152.0 / 2.0, 0.0, 51252292925.0 / 65400821598.0 / 2.0,
-            -2691868925.0 / 45128329728.0 / 2.0, 187940372067.0 / 1594534317056.0 / 2.0,
-            -1776094331.0 / 19743644256.0 / 2.0, 11237099.0 / 235043384.0 / 2.0]
+dps_c_mid = [6025192743. /30085553152. /2., 0., 51252292925. /65400821598. /2.,
+            -2691868925. /45128329728. /2., 187940372067. /1594534317056. /2.,
+            -1776094331. /19743644256. /2., 11237099. /235043384. /2.]
 
-def interp_fit_dopri (_:VSpace v) ?=> (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
+def interp_fit_dopri (_:VSpace v) ?=>
+    (z0:v) (z1:v) (k:(Fin 7)=>v) (dt:Time) : (Fin 5)=>v =
   -- Fit a polynomial to the results of a Runge-Kutta step.
   z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k.(0@_) k.(1@_) dt
@@ -33,59 +36,54 @@ def initial_step_size (fun:d=>Real -> Time -> d=>Real) (t0:Time) (z0:d=>Real)
   -- Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
   -- Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
   scale = for i. atol + ((abs z0.i) * rtol)
-  d0 = norm (z0 ./ scale)
-  d1 = norm (f0 ./ scale)
+  d0 = length (z0 ./ scale)
+  d1 = length (f0 ./ scale)
   h0 = select ((d0 < 1.0e-5) || (d1 < 1.0e-5)) 1.0e-6 (0.01 * (d0 / d1))
   z1 = z0 + h0 .* f0
   f1 = fun z1 (t0 + h0)
-  d2 = (norm ((f1 - f0) ./ scale)) / h0
+  d2 = (length ((f1 - f0) ./ scale)) / h0
   left = max 1.0e-6 (h0 * 1.0e-3)
-  right = pow (0.01 / (d1 + d2)) (1.0 / ((i2r order) + 1.0))
+  right = pow (0.01 / (d1 + d2)) (1. / ((i2r order) + 1.))
   h1 = select ((d1 <= 1.0e-15) && (d2 <= 1.0e-15)) left right
-  min (100.0 * h0) h1
+  min (100. * h0) h1
 
 -- Dopri5 Butcher tableaux
-alpha = [1.0 / 5.0, 3.0 / 10.0, 4.0 / 5.0, 8.0 / 9.0, 1., 1.]
+alpha = [1. / 5., 3. / 10., 4. / 5., 8. / 9., 1., 1.]
 
 -- Todo: Write as triangular array when concrete syntax supports it.
-beta' = [[1.0 / 5.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-       [3.0 / 40.0, 9.0 / 40.0, 0.0, 0.0, 0.0, 0.0],
-       [44.0 / 45.0, -56.0 / 15.0, 32.0 / 9.0, 0.0, 0.0, 0.0],
-       [19372.0 / 6561.0, -25360.0 / 2187.0, 64448.0 / 6561.0, -212.0 / 729.0, 0.0, 0.0],
-       [9017.0 / 3168.0, -355.0 / 33.0, 46732.0 / 5247.0, 49.0 / 176.0, -5103.0 / 18656.0, 0.0],
-       [35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0]]
+beta' = [[1. / 5., 0., 0., 0., 0., 0.],
+       [3. / 40., 9. / 40., 0., 0., 0., 0.],
+       [44. / 45., -56. / 15., 32.0 / 9., 0., 0., 0.],
+       [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729., 0., 0.],
+       [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656., 0.],
+       [35. / 384., 0., 500. / 1113., 125./192., -2187./6784., 11./84.]]
+-- Convert to triangular array.
+beta = for i. for j:(..i). beta'.i.((ordinal j)@(Fin 6))
 
--- Convert beta to a triangular array.
-beta = for i:(Fin 6). for j:(..i). beta'.i.((ordinal j)@(Fin 6))
-:t beta
+c_sol = [35. /384., 0., 500. /1113., 125. /192., -2187. /6784., 11. / 84., 0.]
+c_error = [35. / 384. - 1951. / 21600., 0., 500. / 1113. - 22642. / 50085.,
+           125. / 192. - 451. / 720., -2187. / 6784. + 12231. / 42400.,
+           11. / 84. - 649. / 6300., -1. / 60.]
 
-c_sol = [35.0 / 384.0, 0.0, 500.0 / 1113.0, 125.0 / 192.0, -2187.0 / 6784.0, 11.0 / 84.0, 0.0]
-c_error = [35.0 / 384.0 - 1951.0 / 21600.0, 0.0, 500.0 / 1113.0 - 22642.0 / 50085.0,
-                      125.0 / 192.0 - 451.0 / 720.0, -2187.0 / 6784.0 + 12231.0 / 42400.0,
-                      11.0 / 84.0 - 649.0 / 6300.0, -1.0 / 60.0]
-
-def runge_kutta_step (v:Type) ?-> (_:VSpace v) ?=> (func:v->Time->v)
+def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
     (z0:v) (f0:v) (t0:Time) (dt:Time) : (v & v & v & (Fin 7)=>v) =
 
-  --def runge_kutta_stage (m:Type) -> (k:m=>v) : v =
-  runge_kutta_stage = \i k.
-    --i = (size m)@(Fin 6)
+  runge_kutta_stage = \i func_evals.
     ti = t0 + dt .* alpha.i
-    cur_b = beta.i -- for j:m. beta.i.j
-    zi = z0 + dt .* (dot cur_b k)
+    zi = z0 + dt .* dot beta.i func_evals
     func zi ti
 
-  k_init = for i. select (i == (0@_)) f0 zero
+  evals_init = for i. select (i == (0@_)) f0 zero
 
-  k_filled = snd $ withState k_init \k. for i:(Fin 6).
-    cur_k = for j:(..i). (get k).j
-    ft = runge_kutta_stage i cur_k
-    k!(((ordinal i) + 1)@_) := ft
+  evals_filled = snd $ withState evals_init \func_evals. for i:(Fin 6).
+    cur_evals = for j:(..i). (get func_evals).((ordinal j)@_)
+    ft = runge_kutta_stage i cur_evals
+    func_evals!(((ordinal i) + 1)@_) := ft
 
-  z_last =  z0 + dt .* (dot c_sol   k_filled)
-  z_last_error = dt .* (dot c_error k_filled)
-  f_last = k_filled.(6@_)
-  (z_last, f_last, z_last_error, k_filled)
+  z_last =  z0 + dt .* dot c_sol   evals_filled
+  z_last_error = dt .* dot c_error evals_filled
+  f_last = evals_filled.(6@_)
+  (z_last, f_last, z_last_error, evals_filled)
 
 def error_ratio (error_estimates:d=>Real) (rtol:Real) (atol:Real)
                 (z0:d=>Real) (z1:d=>Real) : Real =
@@ -95,19 +93,15 @@ def error_ratio (error_estimates:d=>Real) (rtol:Real) (atol:Real)
 
 def optimal_step_size (last_step:Time) (mean_error_ratio:Real) : Time =
   safety = 0.9
-  ifactor = 10.0
+  ifactor = 10.
   dfactor = 0.2
-  order = 5.0
-  dfactor = select (mean_error_ratio < 1.0) 1.0 dfactor
+  order = 5.
+  dfactor = select (mean_error_ratio < 1.) 1. dfactor
   err_ratio = sqrt mean_error_ratio
-  factor = max (1.0 / ifactor) (min ( (pow err_ratio (1.0 / order)) / safety) (1.0 / dfactor))
-  select (mean_error_ratio == 0.0) (last_step * ifactor) (last_step / factor)
+  minfac = min ( (pow err_ratio (1. / order)) / safety) (1. / dfactor)
+  factor = max (1. / ifactor) minfac
+  select (mean_error_ratio == 0.) (last_step * ifactor) (last_step / factor)
 
-
--- State of solver: (next state, next f, next time, dt, t, interp coeffs)
--- def SolverState (v:Type) : Type = (v & v & Time & Time & Time & (Fin 5)=>v)
--- This ended up being unnecessary to spell anywhere, but was
--- useful for debugging.
 
 def odeint (func: d=>Real -> Time -> d=>Real)
            (z0: d=>Real) (t0: Time) (times: n=>Time) : n=>d=>Real =
@@ -118,14 +112,18 @@ def odeint (func: d=>Real -> Time -> d=>Real)
   --    t: times for evaluation. values must be strictly increasing.
   --  Returns:
   --    Values of the solution at each time point in times.
-  rtol = 0.000000014 -- relative local error tolerance for solver.
-  atol = 0.000000014 -- absolute local error tolerance for solver.
-  max_iters = 1000000
+  rtol = 1.4e-8 -- relative local error tolerance for solver.
+  atol = 1.4e-8 -- absolute local error tolerance for solver.
+  max_iters = 10000
 
   integrate_to_next_time = \iter init_carry.
     target_t = times.iter
 
     stopping_condition = \(_, _, t, dt, _, _).
+      -- State of solver: (next state, next f, next time, dt, t, interp coeffs)
+      -- def State (v:Type) : Type = (v & v & Time & Time & Time & (Fin 5)=>v)
+      -- This ended up being unnecessary to spell anywhere, but was
+      -- useful for debugging.
       (t < target_t) && (dt > 0.0) && (ordinal iter < max_iters)
 
     possible_step = \(z, f, t, dt, last_t, interp_coeff).
@@ -167,14 +165,12 @@ t1 = [1.0]
 
 approx_e = odeint myDyn z0 t0 t1
 :p approx_e
+> [[2.720203]]
 
 exact_e = [[exp 1.0]]
 
 :p (approx_e - exact_e)
-
-f0 = myDyn z0 t0
-:p runge_kutta_step myDyn z0 f0 t0 1.0
-
+> [[1.9211608e-3]]
 
 times = linspace (Fin 100) 0.00001 1.0
 ys = odeint myDyn z0 t0 times
@@ -182,4 +178,4 @@ ys = odeint myDyn z0 t0 times
 :plot
   ys' = for i. ys.i.(fromOrdinal _ 0)
   zip times ys'
-> <graphical output
+> <graphical output>
