@@ -209,12 +209,12 @@ prettyVal val = case val of
       where
         DataConDef conName _ = dataCons !! i
         args = payload !! i
-    SumAsProd (VariantTy types) (IntVal i) payload ->
+    SumAsProd (VariantTy (NoExt types)) (IntVal i) payload ->
       pretty variant
       where
         [value] = payload !! i
         (theLabel, repeatNum) = toList (reflectLabels types) !! i
-        variant = Variant types theLabel repeatNum value
+        variant = Variant (NoExt types) theLabel repeatNum value
     _           -> pretty con
   atom -> prettyPrec atom LowestPrec
 

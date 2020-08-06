@@ -142,6 +142,15 @@ instance PrettyPrec Expr where
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = atPrec LowestPrec $ "case" <+> p e <+> "of" <>
     nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
+  prettyPrec (RecordCons items rest) =
+    prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
+  prettyPrec (RecordSplit types val) = atPrec AppPrec $
+    "RecordSplit" <+> pArg (RecordTy $ Ext types Nothing) <+> pArg val
+  prettyPrec (VariantLift types val) = atPrec AppPrec $
+    "VariantLift" <+> pArg (VariantTy types) <+> pArg val
+  prettyPrec (VariantSplit types val) = atPrec AppPrec $
+    "VariantSplit" <+> pArg (VariantTy $ Ext types Nothing) <+> pArg val
+
 
 prettyAlt :: Alt -> Doc ann
 prettyAlt (Abs bs body) =
@@ -258,15 +267,15 @@ instance PrettyPrec Atom where
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+    LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant label i value
-    RecordTy items -> prettyLabeledItems items (line <> "&") ":"
-    VariantTy items -> prettyLabeledItems items (line <> "|") ":"
+    RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
+    VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
 
--- Helper has support for extensible rows, although this is unused for now.
-prettyRowHelper :: (PrettyPrec a, PrettyPrec b)
-  => M.Map Label [a] -> Maybe b -> Doc ann -> Doc ann -> DocPrec ann
-prettyRowHelper row rest separator bindwith =
+prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
+  => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
+prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
   atPrec ArgPrec $ align $ group $ innerDoc
   where
     elems = concatMap (\(k, vs) -> map (k,) vs) (M.toAscList row)
@@ -284,8 +293,8 @@ prettyRowHelper row rest separator bindwith =
 
 prettyLabeledItems :: PrettyPrec a
   => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
-prettyLabeledItems (LabeledItems row) =
-  prettyRowHelper row (Nothing :: Maybe ())
+prettyLabeledItems items =
+  prettyExtLabeledItems $ Ext items (Nothing :: Maybe ())
 
 prettyVariant :: PrettyPrec a
   => Label -> Int -> a -> DocPrec ann
@@ -425,12 +434,12 @@ instance PrettyPrec UExpr' where
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
-    URecord items -> prettyLabeledItems items (line' <> ",") " ="
-    URecordTy items -> prettyLabeledItems items (line <> "&") ":"
+    URecord items -> prettyExtLabeledItems items (line' <> ",") " ="
+    URecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     UVariant Nothing label i value -> prettyVariant label i value
     UVariant (Just ann) label i value -> atPrec ArgPrec $
       prettyVariant label i value AppPrec <> prettyAnn (pApp ann)
-    UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
+    UVariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
 
 instance Pretty UAlt where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body
@@ -460,7 +469,7 @@ instance PrettyPrec UPat' where
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
     UPatLit x -> atPrec ArgPrec $ p x
-    UPatRecord pats -> prettyLabeledItems pats (line <> "&") ":"
+    UPatRecord pats -> prettyExtLabeledItems pats (line <> "&") ":"
     UPatVariant label i value -> prettyVariant label i value
 
 prettyUBinder :: UPatAnn -> Doc ann

@@ -115,20 +115,17 @@ instance HasType Atom where
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
+    LabeledRow row -> checkLabeledRow row $> LabeledRowKind
     Record items -> do
       types <- mapM typeCheck items
-      return $ RecordTy types
-    RecordTy items -> do
-      mapM_ (|: TyKind) items
-      return TyKind
-    Variant vtys@(LabeledItems types) label i value -> do
+      return $ RecordTy (NoExt types)
+    RecordTy row -> checkLabeledRow row $> TyKind
+    Variant vtys@(Ext (LabeledItems types) _) label i value -> do
       value |: ((types M.! label) !! i)
       let ty = VariantTy vtys
       ty |: TyKind
       return ty
-    VariantTy items -> do
-      mapM_ (|: TyKind) items
-      return TyKind
+    VariantTy row -> checkLabeledRow row $> TyKind
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -159,14 +156,39 @@ instance HasType Expr where
               checkEq bs' bs
               resultTy' <- flip (foldr withBinder) bs $ typeCheck body
               checkEq resultTy resultTy'
-          VariantTy types -> do
+          VariantTy (NoExt types) -> do
             checkEq (length types) (length alts)
             forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
               [b] <- pure $ toList bs
               checkEq (getType b) ty
               resultTy' <- flip (foldr withBinder) bs $ typeCheck body
               checkEq resultTy resultTy'
+          VariantTy _ -> throw CompilerErr
+            "Can't pattern-match partially-known variants"
+          _ -> throw CompilerErr $ "Unexpected scrutinee: " <> pprint ety
       return resultTy
+    RecordCons items record -> do
+      types <- mapM typeCheck items
+      RecordTy rest <- typeCheck record
+      return $ RecordTy $ joinExtLabeledItems types rest
+    RecordSplit types record -> do
+      mapM_ (|: TyKind) types
+      RecordTy full <- typeCheck record
+      diff <- labeledRowDifference full (NoExt types)
+      return $ RecordTy $ NoExt $
+        Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
+    VariantLift liftedType variant -> do
+      VariantTy rest <- typeCheck variant
+      _ <- labeledRowDifference liftedType rest
+      let ty = VariantTy liftedType
+      ty |: TyKind
+      return ty
+    VariantSplit types variant -> do
+      mapM_ (|: TyKind) types
+      VariantTy full <- typeCheck variant
+      diff <- labeledRowDifference full (NoExt types)
+      return $ VariantTy $ NoExt $
+        Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -205,6 +227,10 @@ exprEffs expr = case expr of
     RunState _ _  -> SomeEffects
     Tile _ _ _ -> error "not implemented"
   Case _ _ _ -> error "not implemented"
+  RecordCons _ _    -> NoEffects
+  RecordSplit _ _   -> NoEffects
+  VariantLift _ _   -> NoEffects
+  VariantSplit _ _  -> NoEffects
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
@@ -242,7 +268,10 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
       TypeCon def params -> do
         [DataConDef _ bs'] <- return $ applyDataDefParams def params
         return bs'
-      RecordTy types -> return $ toNest $ map Ignore $ toList types
+      RecordTy (NoExt types) ->
+        return $ toNest $ map Ignore $ toList types
+      RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
+      _ -> throw CompilerErr $ "Can't unpack " ++ pprint ty
     checkEq bs bs'
     return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
@@ -297,6 +326,7 @@ instance CoreVariant Atom where
     Eff _ -> alwaysAllowed
     DataCon _ _ _ _ -> alwaysAllowed
     TypeCon _ _     -> alwaysAllowed
+    LabeledRow _ -> alwaysAllowed
     Record _ -> alwaysAllowed
     RecordTy _ -> alwaysAllowed
     Variant _ _ _ _ -> alwaysAllowed
@@ -318,6 +348,12 @@ instance CoreVariant Expr where
     Case e alts _ -> do
       checkVariant e
       forM_ alts $ \(Abs _ body) -> checkVariant body
+    -- TODO: is there a way to express "this will go away once types are
+    -- monomorphic"?
+    RecordCons _ _ -> alwaysAllowed
+    RecordSplit _ _ -> alwaysAllowed
+    VariantLift _ _ -> alwaysAllowed
+    VariantSplit _ _ -> alwaysAllowed
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -413,6 +449,41 @@ checkExtends allowed (EffectRow effs effTail) = do
 extendEffect :: Effect -> EffectRow -> EffectRow
 extendEffect eff (EffectRow effs t) = EffectRow (eff:effs) t
 
+-- === labeled row types ===
+
+checkLabeledRow :: ExtLabeledItems Type Name -> TypeM ()
+checkLabeledRow (Ext items rest) = do
+  mapM_ (|: TyKind) items
+  forM_ rest $ \v -> do
+    checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
+      Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+      Just (ty, _) -> assertEq LabeledRowKind ty "Labeled row var"
+
+labeledRowDifference :: ExtLabeledItems Type Name
+                     -> ExtLabeledItems Type Name
+                     -> TypeM (ExtLabeledItems Type Name)
+labeledRowDifference (Ext (LabeledItems items) rest)
+                     (Ext (LabeledItems subitems) subrest) = do
+  -- Check types in the right.
+  _ <- flip M.traverseWithKey subitems $ \label subtypes ->
+    case M.lookup label items of
+      Just types -> assertEq subtypes (take (length subtypes) types) $
+          "Row types for label " ++ show LabeledRowKind
+      Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
+  -- Extract remaining types from the left.
+  let
+    diffitems = flip M.mapWithKey items $ \label types ->
+      case M.lookup label subitems of
+        Just subtypes -> drop (length subtypes) types
+        Nothing -> types
+  -- Check tail.
+  diffrest <- case (subrest, rest) of
+    (Nothing, _) -> return rest
+    (Just v, Just v') | v == v' -> return Nothing
+    _ -> throw TypeErr $ "Row tail " ++ pprint subrest
+      ++ " is not known to be a subset of " ++ pprint rest
+  return $ Ext (LabeledItems diffitems) diffrest
+
 -- === type checker monad combinators ===
 
 checkWithEnv :: ((TypeEnv, EffectRow) -> TypeM ()) -> TypeM ()
@@ -454,6 +525,7 @@ typeCheckTyCon tc = case tc of
   RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
+  LabeledRowKind_  -> return TyKind
   JArrayType _ _   -> undefined
 
 typeCheckCon :: Con -> TypeM Type

@@ -491,26 +491,26 @@ uLabeledExprs = withSrc $ do
       <|> UVariantTy <$> build "|" ":"
   where build sep bindwith = parseLabeledItems sep bindwith expr
 
-parseLabeledItems :: String -> String -> Parser a -> Parser (LabeledItems a)
+parseLabeledItems :: String -> String -> Parser a -> Parser (ExtLabeledItems a a)
 parseLabeledItems sep bindwith itemparser =
   try $ bracketed lBrace rBrace $ atBeginning
   where
     atBeginning = someItems
                   <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
                   <|> stopWithoutExtend
-    stopWithoutExtend = pure noLabeledItems
+    stopWithoutExtend = return $ NoExt noLabeledItems
     stopAndExtend = do
       symbol "..."
-      _ <- itemparser
-      fail "Extensible records and variants not implemented"
+      rest <- itemparser
+      return $ Ext noLabeledItems (Just rest)
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
       itemLabel <- some rowLabelChar
       symbol bindwith
       itemVal <- itemparser
-      items <- beforeSep
-      return $ labeledSingleton itemLabel itemVal <> items
+      rest <- beforeSep
+      return $ joinExtLabeledItems (labeledSingleton itemLabel itemVal) rest
 
 -- === infix ops ===
 

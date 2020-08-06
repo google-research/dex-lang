@@ -101,7 +101,7 @@ emitUnpack expr = do
     TypeCon def params -> do
       let [DataConDef _ bs] = applyDataDefParams def params
       return bs
-    RecordTy types -> do
+    RecordTy (NoExt types) -> do
       -- TODO: is using Ignore here appropriate? We don't have any existing
       -- binders to bind, but we still plan to use the results.
       let bs = toNest $ map Ignore $ toList types
@@ -566,6 +566,12 @@ traverseExpr def@(_, fAtom) expr = case expr of
   Hof hof -> Hof  <$> traverse fAtom hof
   Case e alts ty ->
     Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
+  RecordCons    items a -> RecordCons   <$> traverse fAtom items <*> fAtom a
+  RecordSplit   items a -> RecordSplit  <$> traverse fAtom items <*> fAtom a
+  VariantLift   (Ext items rest) a -> do
+    items' <- traverse fAtom items
+    VariantLift (Ext items' rest) <$> fAtom a
+  VariantSplit  items a -> VariantSplit <$> traverse fAtom items <*> fAtom a
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Alt -> m Alt
@@ -589,11 +595,19 @@ traverseAtom def@(_, fAtom) atom = case atom of
   DataCon dataDef params con args -> DataCon dataDef <$>
     traverse fAtom params <*> pure con <*> traverse fAtom args
   TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
+  LabeledRow (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ LabeledRow $ Ext items' rest
   Record items -> Record <$> traverse fAtom items
-  RecordTy items -> RecordTy <$> traverse fAtom items
-  Variant types label i value -> Variant <$>
-    traverse fAtom types <*> pure label <*> pure i <*> fAtom value
-  VariantTy items -> VariantTy <$> traverse fAtom items
+  RecordTy (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ RecordTy $ Ext items' rest
+  Variant (Ext types rest) label i value -> do
+    types' <- traverse fAtom types
+    Variant (Ext types' rest) label i <$> fAtom value
+  VariantTy (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ VariantTy $ Ext items' rest
 
 -- === DCE ===
 
@@ -698,10 +712,10 @@ indexSetSizeE (TC con) = case con of
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
   _ -> error $ "Not implemented " ++ pprint con
   where
-indexSetSizeE (RecordTy types) = do
+indexSetSizeE (RecordTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM imul (IntVal 1) sizes
-indexSetSizeE (VariantTy types) = do
+indexSetSizeE (VariantTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM iadd (IntVal 0) sizes
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
@@ -727,7 +741,7 @@ indexToIntE ty idx = case ty of
     imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
-  RecordTy types -> do
+  RecordTy (NoExt types) -> do
     sizes <- traverse indexSetSizeE types
     (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IntVal 1)
     -- Unpack and sum the strided contributions
@@ -735,7 +749,7 @@ indexToIntE ty idx = case ty of
     subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
     scaled <- mapM (uncurry imul) $ zip (toList strides) subints
     foldM iadd (IntVal 0) scaled
-  VariantTy types -> do
+  VariantTy (NoExt types) -> do
     sizes <- traverse indexSetSizeE types
     (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IntVal 0)
     -- Build and apply a case expression
@@ -759,7 +773,7 @@ intToIndexE ty@(TC con) i = case con of
     return $ PairVal iA iB
   _ -> error $ "Unexpected type " ++ pprint con
   where iAsIdx = return $ Con $ Coerce ty i
-intToIndexE (RecordTy types) i = do
+intToIndexE (RecordTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types
   (strides, _) <- scanM
     (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IntVal 1)
@@ -769,7 +783,7 @@ intToIndexE (RecordTy types) i = do
       y <- idiv x s1
       intToIndexE ty y
   return $ Record (restructure offsets types)
-intToIndexE (VariantTy types) i = do
+intToIndexE (VariantTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types
   (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IntVal 0)
   let
@@ -780,10 +794,10 @@ intToIndexE (VariantTy types) i = do
       boolCase beforeThis (return prev) $ do
         shifted <- isub i offset
         index <- intToIndexE ty shifted
-        return $ Variant types label repeatNum index
+        return $ Variant (NoExt types) label repeatNum index
     ((l0, 0), ty0, IntVal 0):zs =
       zip3 (toList reflect) (toList types) (toList offsets)
-  start <- Variant types l0 0 <$> intToIndexE ty0 i
+  start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 

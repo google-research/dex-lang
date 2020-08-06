@@ -114,7 +114,7 @@ toImpExpr env (maybeDest, expr) = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         toImpBlock (env <> newEnv bs args) (maybeDest, body)
-      Variant types label i x -> do
+      Variant (NoExt types) label i x -> do
         let LabeledItems ixtypes = enumerate types
         let index = fst $ ixtypes M.! label !! i
         let Abs bs body = alts !! index
@@ -492,8 +492,8 @@ makeDest nameHint destType = do
               let dcs' = applyDataDefParams def params
               contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
-        RecordTy types -> Record <$> forM types rec
-        VariantTy types -> do
+        RecordTy (NoExt types) -> Record <$> forM types rec
+        VariantTy (NoExt types) -> do
           tag <- rec IntTy
           contents <- forM (toList types) rec
           return $ Con $ SumAsProd ty tag $ map (\x->[x]) contents
@@ -614,7 +614,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
     recDest tag (IntVal con)
     zipWithM_ recDest (payload !! con) x
-  (Con (SumAsProd _ tag payload), Variant types label i x) -> do
+  (Con (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
     let LabeledItems ixtypes = enumerate types
     let index = fst $ (ixtypes M.! label) !! i
     recDest tag (IntVal index)

@@ -152,7 +152,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
                                   Block Empty $ Op $ ThrowError reqTy'
             Just alt -> return alt
         emit $ Case scrut' altsSorted reqTy'
-      VariantTy types -> do
+      VariantTy (NoExt types) -> do
         altsSorted <- forM (toList (enumerate types)) $ \(i, ty) -> do
           case lookup i alts' of
             Nothing  -> return $ Abs (toNest [Ignore ty]) $
@@ -178,7 +178,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       HofExpr e -> emitZonked $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
-  URecord (LabeledItems items) -> do
+  URecord (NoExt (LabeledItems items)) -> do
     items' <- mapM (mapM inferRho) items
     matchRequirement $ Record $ LabeledItems items'
   UVariant ann label i value -> do
@@ -193,7 +193,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
         "Can't infer type of a variant expression, try using "
         <> "an explicit annotation"
     case varTy of
-      VariantTy vt@(LabeledItems items) ->
+      VariantTy vt@(NoExt (LabeledItems items)) ->
         case M.lookup label items of
           Just types -> if i < length types
             then do
@@ -205,12 +205,12 @@ checkOrInferRho (WithSrc pos expr) reqTy =
           Nothing -> throw TypeErr $
             "Label " <> show label <> " not in variant type annotation"
       _ -> throw TypeErr "Variant expression has incorrect type annotation"
-  URecordTy (LabeledItems items) -> do
-    items' <- mapM (mapM checkUType) items
-    matchRequirement $ RecordTy $ LabeledItems items'
-  UVariantTy (LabeledItems items) -> do
-    items' <- mapM (mapM checkUType) items
-    matchRequirement $ VariantTy $ LabeledItems items'
+  URecordTy (NoExt items) -> do
+    items' <- mapM checkUType items
+    matchRequirement $ RecordTy $ NoExt items'
+  UVariantTy (NoExt items) -> do
+    items' <- mapM checkUType items
+    matchRequirement $ VariantTy $ NoExt items'
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -260,11 +260,11 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
-  UPatRecord items -> do
-    RecordTy types <- pure $ getType expr
+  UPatRecord (NoExt items) -> do
+    RecordTy (NoExt types) <- pure $ getType expr
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
       "Labels in record pattern do not match record type. Expected structure "
-      ++ pprint (RecordTy types)
+      ++ pprint (RecordTy $ NoExt types)
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
@@ -375,7 +375,7 @@ checkPat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
     -- We need to know the labels already to check variant patterns
     ty <- zonk scrutineeTy
     items <- case ty of
-      VariantTy items -> return items
+      VariantTy (NoExt items) -> return items
       -- TODO: it might be possible to infer this by looking at all alternatives
       -- in the case statement first?
       _ -> throw MiscErr "Can't infer labels of variant expression in case statement"
@@ -433,11 +433,11 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
-  UPatRecord items -> do
-    RecordTy types <- pure $ getType val
+  UPatRecord (NoExt items) -> do
+    RecordTy (NoExt types) <- pure $ getType val
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
       "Labels in record pattern do not match record type. Expected structure "
-      ++ pprint (RecordTy types)
+      ++ pprint (RecordTy $ NoExt types)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList items) xs
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
@@ -724,8 +724,10 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
-    (RecordTy  items, RecordTy  items') -> unifyLabeledItems items items'
-    (VariantTy items, VariantTy items') -> unifyLabeledItems items items'
+    (RecordTy  (NoExt items), RecordTy  (NoExt items')) ->
+      unifyLabeledItems items items'
+    (VariantTy (NoExt items), VariantTy (NoExt items')) ->
+      unifyLabeledItems items items'
     (TypeCon f xs, TypeCon f' xs')
       | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
