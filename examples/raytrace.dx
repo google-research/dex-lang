@@ -14,7 +14,6 @@ def Vec (n:Int) : Type = Fin n => Real
 def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Real
 
 def relu (x:Real) : Real = max x 0.0
-def negvec (v:d=>Real) : d=>Real = for i. -v.i
 def length    (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
 -- TODO: make a newtype for normal vectors
 def normalize (x: d=>Real) : d=>Real = x / (length x)
@@ -30,12 +29,6 @@ def randuniform (lower:Real) (upper:Real) (k:Key) : Real =
 def reverse (n:Type) ?-> (a:Type) ?-> (x:n=>a) : n=>a =
   s = size n
   for i. x.((s - 1 - ordinal i)@_)
-
-def fliplr (n:Type) ?-> (a:Type) ?-> (x: n=>m=>a) : n=>m=>a =
-  for i. reverse for j. x.i.j
-
-def flipud (n:Type) ?-> (a:Type) ?-> (x: n=>m=>a) : n=>m=>a =
-  reverse for i. x.i
 
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
   snd $ withState zero \total.
@@ -159,8 +152,8 @@ Ray = (Position & Direction)
 Filter   = Color
 
 -- TODO: use a record
--- num samples, num bounces
-Params = (Int & Int)
+-- num samples, num bounces, share seed?
+Params = (Int & Int & Bool)
 
 -- TODO: use a list instead, once they work
 data Scene n:Type = MkScene (n=>Object)
@@ -279,7 +272,7 @@ def sampleLightRadiance
             radiance += coeff .* rayDirectRadiance scene outRay
 
 def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
-  (_, max_bounces) = params
+  (_, max_bounces, _) = params
   -- TODO: we ought to be able to use an accumulator here, but there's a bug
   noFilter = [1.0, 1.0, 1.0]
   iter (noFilter, zero, init_ray) $
@@ -299,30 +292,38 @@ def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
             newRadiance = radiance + applyFilter newFilter lightRadiance
             Continue (newFilter, newRadiance, outRayHemisphere)
 
-def avgRayColor (params:Params) (scene:Scene m) (ray:Ray) (k:Key) : Color =
-  (num_samples, _) = params
-  sampleAveraged (trace params scene ray) num_samples k
-
 -- TODO: add number of pixels once we can hide sizes
 -- sensor half-width, pinhole-sensor distance, pinhole position
 -- (Assumes we're looking towards -z.)
 Camera = (Position & Real & Real)
 
-def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => Ray =
+def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
   (pos, halfWidth, sensorDist) = camera
+  pixHalfWidth = halfWidth / i2r n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
-  for i j. (pos, normalize [xs.j, ys.i, neg sensorDist])
+  for i j. \key.
+    (kx, ky) = splitKey key
+    x = xs.j + randuniform (-pixHalfWidth) pixHalfWidth kx
+    y = ys.i + randuniform (-pixHalfWidth) pixHalfWidth ky
+    (pos, normalize [x, y, neg sensorDist])
 
 def takePicture
        (params:Params) (scene:Scene m) (n:Int) (camera:Camera)
       : ColorImage n n =
+  (numSamples, _, shareSeed) = params
   rays = cameraRays n camera
   rootKey = newKey 0
-  for i j.
-    k = ixkey (ixkey rootKey i) j
-    avgRayColor params scene rays.i.j k
+  image = for i j.
+    pixKey = case shareSeed of
+      True  -> rootKey
+      False -> ixkey (ixkey rootKey i) j
+    sampleRayColor : Key -> Color =  \k.
+      (k1, k2) = splitKey k
+      trace params scene (rays.i.j k1) k2
+    sampleAveraged sampleRayColor numSamples pixKey
+  image / mean (for (i,j,k). image.i.j.k)
 
 ' ### Define the scene and render it
 
@@ -344,14 +345,23 @@ theScene = MkScene $
     , PassiveObject (Sphere [ 2.0,  2.0, -2.0] 1.5) (Mirror)
     ]
 
-num_pix = 100
 camera = (10.0 .* zHat, 0.3, 1.0)
 
-num_samples = 5
-num_bounces = 5
-params = (num_samples, num_bounces)
+-- num_pix = 250
+num_pix = 10
+num_samples = 50
+num_bounces = 10
+share_prng = True
+params = (num_samples, num_bounces, share_prng)
 
-%time
+
+-- %time
 image = takePicture params theScene num_pix camera
 
-:plotmatcolor 1.0 .* (image / mean (for (i,j,k). image.i.j.k))
+:plotmatcolor image
+> <graphical output>
+
+'Just for fun, here's what we get with a single sample (sharing the PRNG
+key among pixels)
+
+-- :plotmatcolor takePicture (1, num_bounces, share_prng) theScene num_pix camera
