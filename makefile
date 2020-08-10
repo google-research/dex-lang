@@ -26,8 +26,7 @@ endif
 # --- building Dex ---
 
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
-STACK_FLAGS  = --flag dex:cuda
-LIBDEX_FLAGS = -I/usr/local/cuda/include -lcuda -DDEX_CUDA
+STACK_FLAGS = --flag dex:cuda
 endif
 
 .PHONY: all
@@ -35,23 +34,13 @@ all: build
 
 # type-check only
 tc:
-	$(STACK) build --ghc-options -fno-code
+	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
-build: libdex
+build:
 	$(STACK) build $(STACK_FLAGS)
 
-build-prof: libdex
+build-prof:
 	$(STACK) build $(PROF)
-
-all-inotify: build-inotify
-
-build-inotify: libdex
-	$(STACK) build --flag dex:inotify $(PROF)
-
-%.so: %.c
-	gcc -std=c11 -fPIC -shared $^ $(LIBDEX_FLAGS) -o $@
-
-libdex: cbits/libdex.so
 
 # --- running tets ---
 
@@ -115,13 +104,6 @@ doc/%.html: examples/%.dx
 
 doc/%.css: static/%.css
 	cp $^ $@
-
-benchmark:
-	python benchmarks/numpy-bench.py 1000
-	gcc -O3 -ffast-math benchmarks/cbench.c -o benchmarks/bench
-	benchmarks/bench 1000
-	$(dex) script benchmarks/time-tests.dx
-	rm benchmarks/bench
 
 clean:
 	$(STACK) clean
