@@ -59,10 +59,10 @@ evalOpDefined expr = case expr of
     IMul -> asIntVal  $ x' * y'       where x' = getInt x ; y' = getInt y
     IDiv -> asIntVal  $ x' `div` y'   where x' = getInt x ; y' = getInt y
     IRem -> asIntVal  $ x' `rem` y'   where x' = getInt x ; y' = getInt y
-    FAdd -> asRealVal $ x' + y'       where x' = getReal x; y' = getReal y
-    FSub -> asRealVal $ x' - y'       where x' = getReal x; y' = getReal y
-    FMul -> asRealVal $ x' * y'       where x' = getReal x; y' = getReal y
-    FDiv -> asRealVal $ x' / y'       where x' = getReal x; y' = getReal y
+    FAdd -> asFloatVal $ x' + y'       where x' = getFloat x; y' = getFloat y
+    FSub -> asFloatVal $ x' - y'       where x' = getFloat x; y' = getFloat y
+    FMul -> asFloatVal $ x' * y'       where x' = getFloat x; y' = getFloat y
+    FDiv -> asFloatVal $ x' / y'       where x' = getFloat x; y' = getFloat y
     ICmp cmp -> asBoolVal $ case cmp of
       Less         -> x' <  y'
       Greater      -> x' >  y'
@@ -72,10 +72,10 @@ evalOpDefined expr = case expr of
       where x' = getInt x; y' = getInt y
     _ -> error $ "Not implemented: " ++ pprint expr
   ScalarUnOp op x -> case op of
-    FNeg -> asRealVal (-x')  where x' = getReal x
+    FNeg -> asFloatVal (-x')  where x' = getFloat x
     _ -> error $ "Not implemented: " ++ pprint expr
   FFICall name _ args -> case name of
-    "randunif"     -> asRealVal $ c_unif x         where [x]    = getInt <$> args
+    "randunif"     -> asFloatVal $ c_unif x         where [x]    = getInt <$> args
     "threefry2x32" -> asIntVal  $ c_threefry x y   where [x, y] = getInt <$> args
     _ -> error $ "FFI function not recognized: " ++ name
   ArrayOffset arrArg _ offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
@@ -112,9 +112,9 @@ getInt :: Atom -> Int
 getInt (IntLit l) = getIntLit l
 getInt x = error $ "Expected an integer atom, got: " ++ pprint x
 
-getReal :: Atom -> Double
-getReal (RealLit l) = getRealLit l
-getReal x = error $ "Expected a real atom, got: " ++ pprint x
+getFloat :: Atom -> Double
+getFloat (FloatLit l) = getFloatLit l
+getFloat x = error $ "Expected a float atom, got: " ++ pprint x
 
 getBool :: Atom -> Bool
 getBool (BoolLit l) = getBoolLit l

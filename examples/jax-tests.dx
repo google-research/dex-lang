@@ -18,10 +18,10 @@ xs = for i:4. 2.0
 :p sum for i. xs.i * xs.i
 > 16.0
 
-:p real 1
+:p float 1
 > 1.0
 
-:p for i:3. neg (real 2)
+:p for i:3. neg (float 2)
 > [-2.0, -2.0, -2.0]
 
 :p 0.0 + (1.0 + (2.0 + 0.0))

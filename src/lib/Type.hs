@@ -451,7 +451,7 @@ typeCheckTyCon tc = case tc of
   IntType          -> return TyKind
   BoolType         -> return TyKind
   CharType         -> return TyKind
-  RealType         -> return TyKind
+  FloatType         -> return TyKind
   ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
@@ -469,7 +469,7 @@ typeCheckCon con = case con of
   BoolCon v -> checkIntBaseType   False (getType v) $> BoolTy
   CharCon v -> checkIntBaseType   False (getType v) $> CharTy
   IntCon  v -> checkIntBaseType   False (getType v) $> IntTy
-  RealCon v -> checkFloatBaseType False (getType v) $> RealTy
+  FloatCon v -> checkFloatBaseType False (getType v) $> FloatTy
   ArrayLit ty _ -> return $ ArrayTy ty
   AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
@@ -513,7 +513,7 @@ checkFloatBaseType allowVector t = case t of
 checkValidCoercion :: Type -> Type -> TypeM ()
 checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
   (ArrayTy st, ArrayTy IntTy)    -> checkIntBaseType   False st
-  (ArrayTy st, ArrayTy RealTy)   -> checkFloatBaseType False st
+  (ArrayTy st, ArrayTy FloatTy)   -> checkFloatBaseType False st
   (ArrayTy st, ArrayTy CharTy)   -> checkIntBaseType   False st
   (ArrayTy st, ArrayTy BoolTy)   -> checkIntBaseType   False st
   (ArrayTy st, ArrayTy dt)       -> checkValidCoercion st dt
@@ -527,7 +527,7 @@ checkValidOpCoercion sourceTy destTy = case (sourceTy, destTy) of
   (BoolTy, PreludeBoolTy) -> return ()
   (PreludeBoolTy, BoolTy) -> return ()
   (BaseTy (Scalar Int64Type  ), IntTy ) -> return ()
-  (BaseTy (Scalar Float64Type), RealTy) -> return ()
+  (BaseTy (Scalar Float64Type), FloatTy) -> return ()
   _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
@@ -551,7 +551,7 @@ typeCheckOp op = case op of
     case ty of
       BaseTy _ -> return ()
       IntTy    -> return ()
-      RealTy   -> return ()
+      FloatTy   -> return ()
       BoolTy   -> return ()
       CharTy   -> return ()
       _ -> throw TypeErr $ "Unsupported type in select: " ++ pprint ty
@@ -708,17 +708,17 @@ checkOpArgType argTy x =
   case (argTy, x) of
     (IntTy , IntTy ) -> return IntTy
     (IntTy , _     ) -> checkIntBaseType   True x $> x
-    (RealTy, RealTy) -> return RealTy
-    (RealTy, _     ) -> checkFloatBaseType True x $> x
+    (FloatTy, FloatTy) -> return FloatTy
+    (FloatTy, _     ) -> checkFloatBaseType True x $> x
     (BoolTy, BoolTy) -> return BoolTy
     (BoolTy, _     ) -> checkIntBaseType   True x $> x
     (_     , _     ) -> throw CompilerErr "Unexpected op argument type"
 
 checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
 checkBinOp op x y = do
-  realArgTy <- checkOpArgType argTy x
+  floatArgTy <- checkOpArgType argTy x
   assertEq x y ""
-  return $ if argTy == retTy then realArgTy else retTy
+  return $ if argTy == retTy then floatArgTy else retTy
   where
     (argTy, retTy) = case op of
       IAdd   -> (i, i);  ISub   -> (i, i)
@@ -730,15 +730,15 @@ checkBinOp op x y = do
       FPow   -> (r, r)
       FCmp _ -> (r, b)
       BAnd   -> (b, b);  BOr    -> (b, b)
-      where b = BoolTy; i = IntTy; r = RealTy
+      where b = BoolTy; i = IntTy; r = FloatTy
 
 checkUnOp :: MonadError Err m => UnOp -> Type -> m Type
 checkUnOp op x = do
-  realArgTy <- checkOpArgType argTy x
-  return $ if argTy == retTy then realArgTy else retTy
+  floatArgTy <- checkOpArgType argTy x
+  return $ if argTy == retTy then floatArgTy else retTy
   where
     (argTy, retTy) = case op of
-      IntToReal       -> (i, r)
+      IntToFloat       -> (i, r)
       BoolToInt       -> (b, i)
       UnsafeIntToBool -> (i, b)
       Exp             -> (r, r)
@@ -755,7 +755,7 @@ checkUnOp op x = do
       Round           -> (r, i)
       FNeg            -> (r, r)
       BNot            -> (b, b)
-      where b = BoolTy; i = IntTy; r = RealTy
+      where b = BoolTy; i = IntTy; r = FloatTy
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
@@ -773,7 +773,7 @@ checkDataLike msg env ty = case ty of
   TC con -> case con of
     BaseType _       -> return ()
     IntType          -> return ()
-    RealType         -> return ()
+    FloatType         -> return ()
     BoolType         -> return ()
     CharType         -> return ()
     PairType a b     -> recur a >> recur b

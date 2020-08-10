@@ -1,14 +1,14 @@
 
 '## Stochastic Gradient Descent with Momentum
 
-def sgd_step (dict: VSpace a) ?=> (step_size: Real) (decay: Real) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
+def sgd_step (dict: VSpace a) ?=> (step_size: Float) (decay: Float) (gradfunc: a -> Int -> a) (x: a) (m: a) (iter:Int) : (a & a) =
   g = gradfunc x iter
   new_m = decay .* m + g
   new_x = x - step_size .* new_m
   (new_x, new_m)
 
 -- In-place optimization loop.
-def sgd (dict: VSpace a) ?=> (step_size:Real) (decay:Real) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
+def sgd (dict: VSpace a) ?=> (step_size:Float) (decay:Float) (num_steps:Int) (gradient: a -> Int -> a) (x0: a) : a =
   m0 = zero
   (x_final, m_final) = snd $ withState (x0, m0) \state.
     for i:(Fin num_steps).
@@ -22,7 +22,7 @@ def sgd (dict: VSpace a) ?=> (step_size:Real) (decay:Real) (num_steps:Int) (grad
 D = Fin 4
 optimum = for i:D. 1.1
 -- Hand-coded gradient until autodiff works
-def gradfunc (x:D=>Real) (iter:Int) : D=>Real = x - optimum
+def gradfunc (x:D=>Float) (iter:Int) : D=>Float = x - optimum
 
 '### Run optimizer
 

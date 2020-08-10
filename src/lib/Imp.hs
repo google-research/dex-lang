@@ -227,7 +227,7 @@ toImpOp (maybeDest, op) = case op of
         returnVal $ toScalarAtom BoolTy ans
       _ -> error $ "Not a prelude bool: " ++ pprint x
     (BaseTy (Scalar Int64Type  ), IntTy ) -> castTo $ Scalar Int64Type
-    (BaseTy (Scalar Float64Type), RealTy) -> castTo $ Scalar Float64Type
+    (BaseTy (Scalar Float64Type), FloatTy) -> castTo $ Scalar Float64Type
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
     where
       castTo bt = do
@@ -414,7 +414,7 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
     PairCon dl dr             -> PairCon <$> rec dl <*> rec dr
     UnitCon                   -> return $ UnitCon
     Coerce (ArrayTy IntTy ) d -> IntCon   <$> rec d
-    Coerce (ArrayTy RealTy) d -> RealCon  <$> rec d
+    Coerce (ArrayTy FloatTy) d -> FloatCon  <$> rec d
     Coerce (ArrayTy BoolTy) d -> BoolCon  <$> rec d
     Coerce (ArrayTy CharTy) d -> CharCon  <$> rec d
     Coerce (ArrayTy t     ) d -> Coerce t <$> rec d
@@ -467,7 +467,7 @@ splitDest (maybeDest, (Block decls ans)) = do
         (Coerce (ArrayTy IntTy ) d, IntCon a ) -> case getType a of
           BaseTy (Scalar Int64Type)   -> gatherVarDests (Dest d) a
           _                           -> tell [(dest, result)]
-        (Coerce (ArrayTy RealTy) d, RealCon a) -> case getType a of
+        (Coerce (ArrayTy FloatTy) d, FloatCon a) -> case getType a of
           BaseTy (Scalar Float64Type) -> gatherVarDests (Dest d) a
           _                           -> tell [(dest, result)]
         (Coerce (ArrayTy BoolTy) d, BoolCon a) -> case getType a of
@@ -537,7 +537,7 @@ makeDest nameHint destType = do
                 offset <- tabTy `offsetToE` ordinal
                 arrOffset arr idx offset
           IntType          -> scalarCoerce Int64Type
-          RealType         -> scalarCoerce Float64Type
+          FloatType         -> scalarCoerce Float64Type
           BoolType         -> scalarCoerce Int8Type
           CharType         -> scalarCoerce Int8Type
           PairType a b     -> PairVal <$> rec a <*> rec b
@@ -562,11 +562,11 @@ fromScalarAtom atom = case atom of
   Con (AnyValue ty) -> fromScalarAtom $ anyValue ty
   -- TODO: Handle AnyValue inside the constructors?
   Con (IntCon  (Con (Lit l)))  -> ILit $ Int64Lit   $ fromIntegral $ getIntLit l
-  Con (RealCon (Con (Lit l)))  -> ILit $ Float64Lit $ getRealLit l
+  Con (FloatCon (Con (Lit l)))  -> ILit $ Float64Lit $ getFloatLit l
   Con (CharCon (Con (Lit l)))  -> ILit $ Int8Lit    $ fromIntegral $ getIntLit l
   Con (BoolCon (Con (Lit l)))  -> ILit $ Int8Lit    $ fromIntegral $ getIntLit l
   Con (IntCon  (Var (v :> (BaseTy (Scalar Int64Type)))))   -> IVar (v :> IValType (Scalar Int64Type))
-  Con (RealCon (Var (v :> (BaseTy (Scalar Float64Type))))) -> IVar (v :> IValType (Scalar Float64Type))
+  Con (FloatCon (Var (v :> (BaseTy (Scalar Float64Type))))) -> IVar (v :> IValType (Scalar Float64Type))
   Con (CharCon (Var (v :> (BaseTy (Scalar Int8Type)))))    -> IVar (v :> IValType (Scalar Int8Type))
   Con (BoolCon (Var (v :> (BaseTy (Scalar Int8Type)))))    -> IVar (v :> IValType (Scalar Int8Type))
   _ -> error $ "Expected scalar, got: " ++ pprint atom
@@ -578,7 +578,7 @@ toScalarAtom ty ie = case ty of
     IVar (v :> IValType b') | b == b' -> Var (v :> ty)
     _ -> unreachable
   IntTy  -> Con $ IntCon  $ toScalarAtom (BaseTy $ Scalar Int64Type  ) ie
-  RealTy -> Con $ RealCon $ toScalarAtom (BaseTy $ Scalar Float64Type) ie
+  FloatTy -> Con $ FloatCon $ toScalarAtom (BaseTy $ Scalar Float64Type) ie
   BoolTy -> Con $ BoolCon $ toScalarAtom (BaseTy $ Scalar Int8Type   ) ie
   CharTy -> Con $ CharCon $ toScalarAtom (BaseTy $ Scalar Int8Type   ) ie
   TC (IntRange _ _)     -> Con $ Coerce ty $ toScalarAtom IntTy ie
@@ -667,7 +667,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
     (Coerce (ArrayTy IntTy ) d, IntCon _ ) -> f (fromArrayAtom d) (fromScalarAtom atom)
-    (Coerce (ArrayTy RealTy) d, RealCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
+    (Coerce (ArrayTy FloatTy) d, FloatCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
     (Coerce (ArrayTy BoolTy) d, BoolCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
     (Coerce (ArrayTy CharTy) d, CharCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
     (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
@@ -972,7 +972,7 @@ checkImpUnOp op (IValType x) = do
   retTy <- checkUnOp op (BaseTy x)
   case retTy of
     IntTy     -> return $ IValType $ Scalar Int64Type
-    RealTy    -> return $ IValType $ Scalar Float64Type
+    FloatTy    -> return $ IValType $ Scalar Float64Type
     BoolTy    -> return $ IValType $ Scalar Int8Type
     CharTy    -> return $ IValType $ Scalar Int8Type
     BaseTy bt -> return $ IValType bt

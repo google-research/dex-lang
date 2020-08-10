@@ -21,33 +21,33 @@ def decwrap (n:Type) ?-> (i:n) : n =
   -- Decrements index, wrapping around at ends.
   asidx $ mod ((ordinal i) - 1) $ size n
 
-def finite_difference_neighbours (n:Type) ?-> (x:n=>Real) : n=>Real = 
+def finite_difference_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
   for i. x.(incwrap i) - x.(decwrap i)
 
-def add_neighbours (n:Type) ?-> (x:n=>Real) : n=>Real = 
+def add_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
   for i. x.(incwrap i) + x.(decwrap i)
 
-def apply_along_axis1 (f : b=>Real -> b=>Real) (x : b=>c=>Real) : b=>c=>Real = 
+def apply_along_axis1 (f : b=>Float -> b=>Float) (x : b=>c=>Float) : b=>c=>Float =
   transpose for j. f for i. x.i.j
 
-def apply_along_axis2 (f : c=>Real -> c=>Real) (x : b=>c=>Real) : b=>c=>Real = 
+def apply_along_axis2 (f : c=>Float -> c=>Float) (x : b=>c=>Float) : b=>c=>Float =
   for i. f x.i
 
-def fdx (x : n=>m=>Real) : (n=>m=>Real) =
+def fdx (x : n=>m=>Float) : (n=>m=>Float) =
   apply_along_axis1 finite_difference_neighbours x
 
-def fdy (x : n=>m=>Real) : (n=>m=>Real) =
+def fdy (x : n=>m=>Float) : (n=>m=>Float) =
   apply_along_axis2 finite_difference_neighbours x
 
-def divergence (vx : n=>m=>Real) (vy : n=>m=>Real) : (n=>m=>Real) =
+def divergence (vx : n=>m=>Float) (vy : n=>m=>Float) : (n=>m=>Float) =
   fdx vx + fdy vy
 
-def add_neighbours_2d (x : n=>m=>Real) : (n=>m=>Real) =
+def add_neighbours_2d (x : n=>m=>Float) : (n=>m=>Float) =
   ax1 = apply_along_axis1 add_neighbours x
   ax2 = apply_along_axis2 add_neighbours x
   ax1 + ax2
 
-def project (v: n=>m=>(Fin 2)=>Real) : n=>m=>(Fin 2)=>Real =
+def project (v: n=>m=>(Fin 2)=>Float) : n=>m=>(Fin 2)=>Float =
   -- Project the velocity field to be approximately mass-conserving,
   -- using a few iterations of Gauss-Seidel.
   h = 0.01  -- todo: work out units
@@ -66,13 +66,13 @@ def project (v: n=>m=>(Fin 2)=>Real) : n=>m=>(Fin 2)=>Real =
 
   vx = vx - (0.5 / h) .* fdx(p)
   vy = vy - (0.5 / h) .* fdy(p)
-  
+
   for i j. [vx.i.j, vy.i.j]  -- pack back into a vector field
-  
+
   -- zeroedges v  -- BUG: Crashes with "Not implemented Int"
 
-def bilinear_interp (dict:VSpace a) ?=> (right_weight:Real) --o (bottom_weight:Real) --o
-  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a = 
+def bilinear_interp (dict:VSpace a) ?=> (right_weight:Float) --o (bottom_weight:Float) --o
+  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a =
   left  = (1.0 - right_weight) .* ((1.0 - bottom_weight) .* topleft  + bottom_weight .* bottomleft)
   right =        right_weight  .* ((1.0 - bottom_weight) .* topright + bottom_weight .* bottomright)
   left + right
@@ -81,12 +81,12 @@ def bilinear_interp (dict:VSpace a) ?=> (right_weight:Real) --o (bottom_weight:R
 N = Fin 100
 M = Fin 100
 
-def clip (x:Real):Real = max 0.0 (min 1.0 x)
+def clip (x:Float):Float = max 0.0 (min 1.0 x)
 
 -- BUG: Changing the order of implicit arguments causes an error further down.
 -- i.e. it doesn't work to start the next line with
 -- (n:Type) ?-> (m:Type) ?-> (dict:VSpace a) ?=>
-def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Real) : n=>m=>a =
+def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   -- Move field f according to x and y velocities (u and v)
   -- using an implicit Euler integrator.
 
@@ -94,7 +94,7 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
   -- BUG: using n and m below causes a crash, so I hardcoded it for now.
   numrows = 100.0 -- i2r $ ordinal n
   numcols = 100.0 -- i2r $ ordinal m
-  
+
   cell_xs = linspace n 0.0 numrows
   cell_ys = linspace m 0.0 numcols
 
@@ -106,23 +106,23 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
     -- Index of source cell.
     source_col = floor center_xs
     source_row = floor center_ys
-  
+
     -- Relative weight of right-hand and bottom cells.
     -- TODO: clipping shouldn't be necessary here, find out why it is.
     right_weight  = clip $ center_xs - i2r source_col
     bottom_weight = clip $ center_ys - i2r source_row
-    
+
     -- Cast back to indices, wrapping around edges.
     l = wrapidx n  source_col
     r = wrapidx n (source_col + 1)
     t = wrapidx m  source_row
     b = wrapidx m (source_row + 1)
-    
+
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 
 def fluidsim (dict: VSpace a) ?=> (num_steps: Int) (color_init: n=>m=>a)
-  (v: n=>m=>(Fin 2)=>Real) : n=>m=>a =
+  (v: n=>m=>(Fin 2)=>Float) : n=>m=>a =
   (color_final, v) = snd $ withState (color_init, v) \state.
     for i:(Fin num_steps).
       (color, v) = get state

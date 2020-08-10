@@ -214,7 +214,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UIntLit  x -> matchRequirement $ IntLit  $ Int64Lit $ fromIntegral x
   -- TODO: Make sure that this conversion is not lossy!
   UCharLit x -> matchRequirement $ CharLit $ Int8Lit  $ fromIntegral $ fromEnum x
-  URealLit x -> matchRequirement $ RealLit $ Float64Lit x
+  UFloatLit x -> matchRequirement $ FloatLit $ Float64Lit x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*

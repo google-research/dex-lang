@@ -1,10 +1,10 @@
 
-data IntReal =
-  MkIntReal Int Real
+data IntFloat =
+  MkIntFloat Int Float
 
 :p
-  case MkIntReal 1 2.3 of
-    MkIntReal x y -> (x, y)
+  case MkIntFloat 1 2.3 of
+    MkIntFloat x y -> (x, y)
 > (1, 2.3)
 
 data MyPair a:Type b:Type =
@@ -16,7 +16,7 @@ z = MkMyPair 1 2.3
 > MkMyPair 1 2.3
 
 :t z
-> (MyPair Int Real)
+> (MyPair Int Float)
 
 :p
   case z of
@@ -54,7 +54,7 @@ data MyEither a:Type b:Type =
   MyLeft  a
   MyRight b
 
-x : MyEither Int Real = MyLeft 1
+x : MyEither Int Float = MyLeft 1
 
 :p x
 > MyLeft 1
@@ -118,7 +118,7 @@ myTab = [MyLeft 1, MyRight 3.5, MyLeft 123, MyLeft 456]
 data ThreeCases =
   TheEmptyCase
   TheIntCase Int
-  ThePairCase Int Real
+  ThePairCase Int Float
 
 threeCaseTab : (Fin 4)=>ThreeCases =
   [TheIntCase 3, TheEmptyCase, ThePairCase 2 0.1, TheEmptyCase]
@@ -141,7 +141,7 @@ data MyIntish = MkIntish Int
 
 
 :p
-  f : MyPair Int Real -> Int =
+  f : MyPair Int Float -> Int =
     \(MkMyPair x y). x + floor y
   f (MkMyPair 1 2.3)
 > 3

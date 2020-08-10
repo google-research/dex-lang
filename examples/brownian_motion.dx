@@ -1,8 +1,8 @@
 
 
-UnitInterval = Real
+UnitInterval = Float
 
-bmIter : (Key & Real & Real & UnitInterval) -> (Key & Real & Real & UnitInterval) =
+bmIter : (Key & Float & Float & UnitInterval) -> (Key & Float & Float & UnitInterval) =
   \(key, y, sigma, t).
     (kDraw, kL, kR) = splitKey3 key
     t' = abs (t - 0.5)
@@ -10,7 +10,7 @@ bmIter : (Key & Real & Real & UnitInterval) -> (Key & Real & Real & UnitInterval
     key' = select (t > 0.5) kL kR
     (key', y + y', sigma / sqrt 2.0, t' * 2.0)
 
-sampleBM : Key -> UnitInterval -> Real =
+sampleBM : Key -> UnitInterval -> Float =
   \key t.
     (_, y, _, _) = fold (key, 0.0, 1.0, t) \i:(Fin 10). bmIter
     y

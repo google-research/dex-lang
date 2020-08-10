@@ -1,7 +1,7 @@
 '# Basis function regression
 
 -- Conjugate gradients solver
-def solve (m:Type)?-> : m=>m=>Real -> m=>Real -> m=>Real =
+def solve (m:Type)?-> : m=>m=>Float -> m=>Float -> m=>Float =
   \mat b.
     x0 = for i:m. 0.0
     ax = mat **. x0
@@ -23,18 +23,18 @@ Nx = Fin 100
 noise = 0.1
 (k1, k2) = splitKey (newKey 0)
 
-trueFun : Real -> Real =
+trueFun : Float -> Float =
   \x. x + sin (5.0 * x)
 
-xs : Nx=>Real = for i. rand (ixkey k1 i)
-ys : Nx=>Real = for i. trueFun xs.i + noise * randn (ixkey k2 i)
+xs : Nx=>Float = for i. rand (ixkey k1 i)
+ys : Nx=>Float = for i. trueFun xs.i + noise * randn (ixkey k2 i)
 
 :plot zip xs ys
 > <graphical output>
 
 'Implement basis function regression
 
-regress : (Real -> d=>Real) -> n=>Real -> n=>Real -> d=>Real =
+regress : (Float -> d=>Float) -> n=>Float -> n=>Float -> d=>Float =
   \featurize xRaw y.
     x = map featurize xRaw
     xT = transpose x
@@ -42,12 +42,12 @@ regress : (Real -> d=>Real) -> n=>Real -> n=>Real -> d=>Real =
 
 'Fit a third-order polynomial
 
-poly : Real -> d=>Real =
+poly : Float -> d=>Float =
   \x. for i. pow x (i2r (ordinal i))
 
-params : (Fin 4)=>Real = regress poly xs ys
+params : (Fin 4)=>Float = regress poly xs ys
 
-predict : Real -> Real =
+predict : Float -> Float =
   \x. vdot params (poly x)
 
 :plot
@@ -57,7 +57,7 @@ predict : Real -> Real =
 
 'RMS error
 
-rmsErr : n=>Real -> n=>Real -> Real =
+rmsErr : n=>Float -> n=>Float -> Float =
   \truth pred. sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)

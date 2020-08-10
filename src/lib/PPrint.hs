@@ -177,7 +177,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     IntType        -> atPrec ArgPrec "Int"
     BoolType       -> atPrec ArgPrec "Bool"
     CharType       -> atPrec ArgPrec "Char"
-    RealType       -> atPrec ArgPrec "Real"
+    FloatType       -> atPrec ArgPrec "Float"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
@@ -206,7 +206,7 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
   prettyPrec con = case (Con con) of
     IntLit  l | i <- getIntLit  l -> atPrec ArgPrec $ p i
-    RealLit l | r <- getRealLit l -> atPrec ArgPrec $ printDouble r
+    FloatLit l | r <- getFloatLit l -> atPrec ArgPrec $ printDouble r
     BoolLit l | b <- getBoolLit l -> atPrec ArgPrec $ if b then "True" else "False"
     CharLit l | c <- getIntLit  l -> atPrec ArgPrec $ p $ show $ toEnum @Char c
     _                             -> prettyPrecPrimCon con
@@ -217,7 +217,7 @@ prettyPrecPrimCon con = case con of
   BoolCon e   -> atPrec LowestPrec $ "Bool" <+> pApp e
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
   IntCon  e   -> atPrec LowestPrec $ "Int"  <+> pApp e
-  RealCon e   -> atPrec LowestPrec $ "Real" <+> pApp e
+  FloatCon e   -> atPrec LowestPrec $ "Float" <+> pApp e
   ArrayLit _ array -> atPrec ArgPrec $ p array
   PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
@@ -455,7 +455,7 @@ instance PrettyPrec UExpr' where
     UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
     UIntLit  v -> atPrec ArgPrec $ p v
     UCharLit v -> atPrec ArgPrec $ p v
-    URealLit v -> atPrec ArgPrec $ p v
+    UFloatLit v -> atPrec ArgPrec $ p v
 
 instance Pretty UAlt where
   pretty (UAlt pat body) = p pat <+> "->" <+> p body

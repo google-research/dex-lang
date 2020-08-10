@@ -19,7 +19,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
+              embedExtend, boolToInt, intToFloat, boolToFloat, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
@@ -186,7 +186,7 @@ wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
-  RealTy -> asRealVal 0.0
+  FloatTy -> asFloatVal 0.0
   TabTy (Ignore n) a ->
     Lam $ Abs (Ignore n) (TabArrow,  Block Empty $ Atom $ zeroAt a)
   UnitTy -> UnitVal
@@ -207,7 +207,7 @@ neg :: MonadEmbed m => Atom -> m Atom
 neg x = emitOp $ ScalarUnOp FNeg x
 
 add :: MonadEmbed m => Atom -> Atom -> m Atom
-add (RealLit l) y | getRealLit l == 0.0 = return y
+add (FloatLit l) y | getFloatLit l == 0.0 = return y
 add x y = emitOp $ ScalarBinOp FAdd x y
 
 -- TODO: We should be more careful about the precision in which we carry out
@@ -391,11 +391,11 @@ singletonTypeVal _ = Nothing
 boolToInt :: MonadEmbed m => Atom -> m Atom
 boolToInt b = emitOp $ ScalarUnOp BoolToInt b
 
-intToReal :: MonadEmbed m => Atom -> m Atom
-intToReal i = emitOp $ ScalarUnOp IntToReal i
+intToFloat :: MonadEmbed m => Atom -> m Atom
+intToFloat i = emitOp $ ScalarUnOp IntToFloat i
 
-boolToReal :: MonadEmbed m => Atom -> m Atom
-boolToReal = boolToInt >=> intToReal
+boolToFloat :: MonadEmbed m => Atom -> m Atom
+boolToFloat = boolToInt >=> intToFloat
 
 indexAsInt :: MonadEmbed m => Atom -> m Atom
 indexAsInt idx = emitOp $ IndexAsInt idx
@@ -795,7 +795,7 @@ intToIndexE (VariantTy types) i = do
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
-anyValue (TC RealType) = asRealVal 1.0
+anyValue (TC FloatType) = asFloatVal 1.0
 anyValue (TC IntType)  = asIntVal  1
 anyValue (TC BoolType) = asBoolVal False
 -- TODO: Base types!
