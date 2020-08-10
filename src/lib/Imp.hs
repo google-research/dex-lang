@@ -42,7 +42,7 @@ import Util
 -- of emitting a low-level Imp program that would do the actual math. As an interpreter, each
 -- expression has to produce a valid result Atom, that can be used as an input to all later
 -- equations. However, because the Imp IR only supports a very limited selection of types
--- (floatly only base types and pointers to scalar tables), it is safe to assume that only
+-- (really only base types and pointers to scalar tables), it is safe to assume that only
 -- a subset of atoms can be returned by the impSubst. In particular, the atoms might contain
 -- only:
 --   * Variables of base type or array type

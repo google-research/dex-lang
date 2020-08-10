@@ -676,7 +676,7 @@ reduceExpr scope expr = case expr of
   App f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
-    -- TODO: Worry about variable capture. Should floatly carry a substitution.
+    -- TODO: Worry about variable capture. Should really carry a substitution.
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
@@ -801,7 +801,7 @@ anyValue (TC BoolType) = asBoolVal False
 -- TODO: Base types!
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that
---      aborts the program if this floatly ends up being the case.
+--      aborts the program if this really ends up being the case.
 anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ asIntVal 0
 anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ asIntVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t

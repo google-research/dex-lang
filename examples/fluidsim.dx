@@ -1,6 +1,6 @@
 '## Fluid sim
 Fluid simulation code based on
-[Float-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
+[Real-Time Fluid Dynamics for Games](https://www.josstam.com/publications) by Jos Stam
 
 def zeroedges (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (x: n=>m=>a) : n=>m=>a =
   -- Todo: update in place without starting with a copy.
@@ -21,16 +21,16 @@ def decwrap (n:Type) ?-> (i:n) : n =
   -- Decrements index, wrapping around at ends.
   asidx $ mod ((ordinal i) - 1) $ size n
 
-def finite_difference_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float = 
+def finite_difference_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
   for i. x.(incwrap i) - x.(decwrap i)
 
-def add_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float = 
+def add_neighbours (n:Type) ?-> (x:n=>Float) : n=>Float =
   for i. x.(incwrap i) + x.(decwrap i)
 
-def apply_along_axis1 (f : b=>Float -> b=>Float) (x : b=>c=>Float) : b=>c=>Float = 
+def apply_along_axis1 (f : b=>Float -> b=>Float) (x : b=>c=>Float) : b=>c=>Float =
   transpose for j. f for i. x.i.j
 
-def apply_along_axis2 (f : c=>Float -> c=>Float) (x : b=>c=>Float) : b=>c=>Float = 
+def apply_along_axis2 (f : c=>Float -> c=>Float) (x : b=>c=>Float) : b=>c=>Float =
   for i. f x.i
 
 def fdx (x : n=>m=>Float) : (n=>m=>Float) =
@@ -66,13 +66,13 @@ def project (v: n=>m=>(Fin 2)=>Float) : n=>m=>(Fin 2)=>Float =
 
   vx = vx - (0.5 / h) .* fdx(p)
   vy = vy - (0.5 / h) .* fdy(p)
-  
+
   for i j. [vx.i.j, vy.i.j]  -- pack back into a vector field
-  
+
   -- zeroedges v  -- BUG: Crashes with "Not implemented Int"
 
 def bilinear_interp (dict:VSpace a) ?=> (right_weight:Float) --o (bottom_weight:Float) --o
-  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a = 
+  (topleft: a) --o (bottomleft: a) --o (topright: a) --o (bottomright: a) --o : a =
   left  = (1.0 - right_weight) .* ((1.0 - bottom_weight) .* topleft  + bottom_weight .* bottomleft)
   right =        right_weight  .* ((1.0 - bottom_weight) .* topright + bottom_weight .* bottomright)
   left + right
@@ -94,7 +94,7 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
   -- BUG: using n and m below causes a crash, so I hardcoded it for now.
   numrows = 100.0 -- i2r $ ordinal n
   numcols = 100.0 -- i2r $ ordinal m
-  
+
   cell_xs = linspace n 0.0 numrows
   cell_ys = linspace m 0.0 numcols
 
@@ -106,18 +106,18 @@ def advect (dict:VSpace a) ?=> (n:Type) ?-> (m:Type) ?-> (f: n=>m=>a) (v: n=>m=>
     -- Index of source cell.
     source_col = floor center_xs
     source_row = floor center_ys
-  
+
     -- Relative weight of right-hand and bottom cells.
     -- TODO: clipping shouldn't be necessary here, find out why it is.
     right_weight  = clip $ center_xs - i2r source_col
     bottom_weight = clip $ center_ys - i2r source_row
-    
+
     -- Cast back to indices, wrapping around edges.
     l = wrapidx n  source_col
     r = wrapidx n (source_col + 1)
     t = wrapidx m  source_row
     b = wrapidx m (source_row + 1)
-    
+
     -- A convex weighting of the 4 surrounding cells.
     bilinear_interp right_weight bottom_weight f.l.t f.l.b f.r.t f.r.b
 

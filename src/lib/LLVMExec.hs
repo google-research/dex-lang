@@ -214,7 +214,7 @@ linkLibdevice ctx m =
       runPasses [P.AlwaysInline True, P.InternalizeFunctions ["kernel"]] Nothing m
 
 -- llvm-hs does not expose the NVVM reflect pass, so we have to eliminate all calls to
--- __nvvm_reflect by ourselves. Since we aren't floatly interested in setting any reflection
+-- __nvvm_reflect by ourselves. Since we aren't really interested in setting any reflection
 -- flags to a value other than 0 for now, we eliminate the function by linking with this
 -- trivial module and forcing the definition to get inlined.
 zeroNVVMReflect :: L.Module
