@@ -8,25 +8,25 @@
 -- * unpacking multiple type variables
 
 type ParamsIdx d = Either d () -- concrete syntax for sum types?
-type Params d = (ParamsIdx d)=>Real
+type Params d = (ParamsIdx d)=>Float
 
-logLogistic : Real -> Real
+logLogistic : Float -> Float
 logLogistic x = log $ 1 / (1 + exp (-x))
 
-bool2pm1 : Bool -> Real
+bool2pm1 : Bool -> Float
 bool2pm1 x = select x 1.0 -1.0
 
-evalLogreg : Params d -> d=>Real -> Real
+evalLogreg : Params d -> d=>Float -> Float
 evalLogreg params x =
   let w.i = x.(L i)  -- can we improve this unpacking?
       b   = x.(R ())
   in logLogistic $ b + vdot w x
 
-logRegLoss : Params d -> d=>Real -> Bool -> Real
+logRegLoss : Params d -> d=>Float -> Bool -> Float
 logRegLoss params x y = (evalLogReg params x) * (bool2pm1 y)
 
 -- what about looping until convergence? Need a different looping construct
-optimize : (n=>Real -> Real) -> (n=>Real)
+optimize : (n=>Float -> Float) -> (n=>Float)
 optimize f = ..
   let lr = 0.1
       scale = 0.1
@@ -35,7 +35,7 @@ optimize f = ..
   in loopN nIters x0 lam x. let dx = grad f x
                             in for i. x.i + lr * dx.ix'
 
-theData : E n d. (n=>d=>Real, n=>Bool)
+theData : E n d. (n=>d=>Float, n=>Bool)
 
 (xs, ys), N, D = unpack data
 

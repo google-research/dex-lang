@@ -19,7 +19,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, boolToInt, intToReal, boolToReal, reduceAtom,
+              embedExtend, boolToInt, intToFloat, boolToFloat, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
@@ -186,7 +186,7 @@ wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
-  RealTy -> asRealVal 0.0
+  FloatTy -> asFloatVal 0.0
   TabTy (Ignore n) a ->
     Lam $ Abs (Ignore n) (TabArrow,  Block Empty $ Atom $ zeroAt a)
   UnitTy -> UnitVal
@@ -207,7 +207,7 @@ neg :: MonadEmbed m => Atom -> m Atom
 neg x = emitOp $ ScalarUnOp FNeg x
 
 add :: MonadEmbed m => Atom -> Atom -> m Atom
-add (RealLit l) y | getRealLit l == 0.0 = return y
+add (FloatLit l) y | getFloatLit l == 0.0 = return y
 add x y = emitOp $ ScalarBinOp FAdd x y
 
 -- TODO: We should be more careful about the precision in which we carry out
@@ -391,11 +391,11 @@ singletonTypeVal _ = Nothing
 boolToInt :: MonadEmbed m => Atom -> m Atom
 boolToInt b = emitOp $ ScalarUnOp BoolToInt b
 
-intToReal :: MonadEmbed m => Atom -> m Atom
-intToReal i = emitOp $ ScalarUnOp IntToReal i
+intToFloat :: MonadEmbed m => Atom -> m Atom
+intToFloat i = emitOp $ ScalarUnOp IntToFloat i
 
-boolToReal :: MonadEmbed m => Atom -> m Atom
-boolToReal = boolToInt >=> intToReal
+boolToFloat :: MonadEmbed m => Atom -> m Atom
+boolToFloat = boolToInt >=> intToFloat
 
 indexAsInt :: MonadEmbed m => Atom -> m Atom
 indexAsInt idx = emitOp $ IndexAsInt idx
@@ -676,7 +676,7 @@ reduceExpr scope expr = case expr of
   App f x -> do
     let f' = reduceAtom scope f
     let x' = reduceAtom scope x
-    -- TODO: Worry about variable capture. Should really carry a substitution.
+    -- TODO: Worry about variable capture. Should floatly carry a substitution.
     case f' of
       Lam (Abs b (PureArrow, block)) ->
         reduceBlock scope $ subst (b@>x', scope) block
@@ -795,13 +795,13 @@ intToIndexE (VariantTy types) i = do
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
-anyValue (TC RealType) = asRealVal 1.0
+anyValue (TC FloatType) = asFloatVal 1.0
 anyValue (TC IntType)  = asIntVal  1
 anyValue (TC BoolType) = asBoolVal False
 -- TODO: Base types!
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that
---      aborts the program if this really ends up being the case.
+--      aborts the program if this floatly ends up being the case.
 anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ asIntVal 0
 anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ asIntVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t

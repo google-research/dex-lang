@@ -83,14 +83,14 @@ to exactly the same thing:
 
 :p 1 + 2
 > Type error:
-> Expected: Real
+> Expected: Float
 >   Actual: Int
 > In: 1
 >
 > :p 1 + 2
 >    ^^
 
-'The problem is that `1` is an integer whereas `+` operates on reals. (Note that
+'The problem is that `1` is an integer whereas `+` operates on floats. (Note that
 Haskell overloads `+` and literals using typeclasses. We could do the same,
 but we're keeping it simple for now.) We can query the *type* of an
 expression with `:t`.
@@ -99,10 +99,10 @@ expression with `:t`.
 > Int
 
 :t 1.
-> Real
+> Float
 
 :t lam x y. x + y
-> (Real -> (Real -> Real))
+> (Float -> (Float -> Float))
 
 'The type system is completely static. As a consequence, type errors appear at a
 function's call site rather than in its implementation.
@@ -111,7 +111,7 @@ function's call site rather than in its implementation.
    f x = x + x
    f 1
 > Type error:
-> Expected: Real
+> Expected: Float
 >   Actual: Int
 > In: 1
 >
@@ -128,20 +128,20 @@ annotated. We can look at the explicitly typed IR with `:typed`:
   f x = x * x
   z = 2.0
   f z
-> (f:(Real -> Real) = (lam x:Real . (%fmul(x, x)));
-> (z:Real = 2.0;
+> (f:(Float -> Float) = (lam x:Float . (%fmul(x, x)));
+> (z:Float = 2.0;
 > (f z)))
 
 'We can also add some explicit annotations if we like. Type inference then
 becomes type checking.
 
 :typed
-  f : Real -> Real
-  f x:Real = x * x
-  z:Real = 2.0
+  f : Float -> Float
+  f x:Float = x * x
+  z:Float = 2.0
   f z
-> (f:(Real -> Real) = (lam x:Real . (%fmul(x, x)));
-> (z:Real = 2.0;
+> (f:(Float -> Float) = (lam x:Float . (%fmul(x, x)));
+> (z:Float = 2.0;
 > (f z)))
 
 '## Polymorphism and let generalization
@@ -282,8 +282,8 @@ the same thing as if we'd annotated the binders manually.
    xs = [1., 2., 3.]
    ys.i = xs.i * xs.i
    ys
-> (xs:(3=>Real) = [1.0, 2.0, 3.0];
-> (ys:(3=>Real) = (for  i:3 .
+> (xs:(3=>Float) = [1.0, 2.0, 3.0];
+> (ys:(3=>Float) = (for  i:3 .
 >     (%fmul(xs.i, xs.i)));
 > ys))
 
@@ -292,7 +292,7 @@ type variables, is a very natural way to express shape constraints.
 For example, adding two vectors of the same size:
 
 :p
-   addVec : n=>Real -> n=>Real -> n=>Real
+   addVec : n=>Float -> n=>Float -> n=>Float
    addVec x y = for i. x.i + y.i
    --
    addVec [1.0, 2.0] [0.1, 0.2]

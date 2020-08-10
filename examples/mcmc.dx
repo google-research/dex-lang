@@ -1,7 +1,7 @@
 
 -- === General MCMC utilities ===
 
-LogProb : Type = Real
+LogProb : Type = Float
 
 def runChain
       (initialize: Key -> a)
@@ -26,30 +26,30 @@ def propose
   select (bern acceptProb k) proposal cur
 
 def meanAndCovariance (n:Type) ?-> (d:Type) ?->
-      (xs:n=>d=>Real) : (d=>Real & d=>d=>Real) =
-   xsMean :    d=>Real = (for i. sum for j. xs.j.i) / i2r (size n)
-   xsCov  : d=>d=>Real = (for i i'. sum for j.
+      (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
+   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / i2r (size n)
+   xsCov  : d=>d=>Float = (for i i'. sum for j.
                            (xs.j.i' - xsMean.i') *
                            (xs.j.i  - xsMean.i )   ) / i2r (size n - 1)
    (xsMean, xsCov)
 
 -- === Metropolis-Hastings implementation ===
 
-MHParams : Type = Real  -- step size
+MHParams : Type = Float  -- step size
 
 def mhStep
       (stepSize: MHParams)
-      (logProb: (d=>Real) -> LogProb)
+      (logProb: (d=>Float) -> LogProb)
       (k:Key)
-      (x:d=>Real)
-      : d=>Real =
+      (x:d=>Float)
+      : d=>Float =
   (k1, k2) = splitKey k
   proposal = x + stepSize .* randnVec k1
   propose logProb x proposal k2
 
 -- === HMC implementation ===
 
-HMCParams : Type = (Int & Real)  -- leapfrog steps, step size
+HMCParams : Type = (Int & Float)  -- leapfrog steps, step size
 
 def leapfrogIntegrate
       (_:VSpace a) ?=>
@@ -67,10 +67,10 @@ def leapfrogIntegrate
 
 def hmcStep
       (params: HMCParams)
-      (logProb: (d=>Real) -> LogProb)
+      (logProb: (d=>Float) -> LogProb)
       (k:Key)
-      (x:d=>Real)
-      : d=>Real =
+      (x:d=>Float)
+      : d=>Float =
   hamiltonian = \(x, p). logProb x - 0.5 * vdot p p
   (k1, k2) = splitKey k
   p = randnVec k1
@@ -79,7 +79,7 @@ def hmcStep
 
 -- === test it out ===
 
-def myLogProb (x:(Fin 2)=>Real) : LogProb =
+def myLogProb (x:(Fin 2)=>Float) : LogProb =
   x' = x - [1.5, 2.5]
   neg $ 0.5 * inner x' [[1.,0.],[0.,20.]] x'
 

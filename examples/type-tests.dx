@@ -14,9 +14,9 @@ help make the errors more local.
 -- > Type error:Ambiguous type variables: [?3]
 -- >
 -- > ( (_ans_ @> _ans_)
--- > , [ _ans_:((?3=>Real)->Real) = \x:(?3=>Real).
--- >   tmp:((?3=>Real)->Real) = (sum) (?3)
--- >   tmp1:(?3=>Real) = for \i:?3. (x) (i)
+-- > , [ _ans_:((?3=>Float)->Float) = \x:(?3=>Float).
+-- >   tmp:((?3=>Float)->Float) = (sum) (?3)
+-- >   tmp1:(?3=>Float) = for \i:?3. (x) (i)
 -- >   (tmp) (tmp1) ] )
 
 -- :t \f x y. f y x
@@ -64,7 +64,7 @@ help make the errors more local.
    x = iota (Fin 10)
    y = iota (Fin 3)
    i2r (sum for i. x.i) + i2r (sum for j. y.j)
-> Real
+> Float
 
 :t
    x = iota (Fin 10)
@@ -87,13 +87,13 @@ xr = map i2r arr
 > ((Fin 10) => Int)
 
 :t (\(x, y). x + y) (1.0, 2.0)
-> Real
+> Float
 
 :t
    f = \(x, y). x + 2.0 * y
    z = for i. (xr.i, xr.i * xr.i)
    sum (for i. f z.i)
-> Real
+> Float
 
 :t [1, 2, 3]
 > ((Fin 3) => Int)
@@ -123,13 +123,13 @@ xr = map i2r arr
 > :t [[1, 2], [3]]
 >             ^^^
 
-f : Int -> Real =
+f : Int -> Float =
  \x.
    z = x + 1.0
    x
 > Type error:
 > Expected: Int
->   Actual: Real
+>   Actual: Float
 >
 >    z = x + 1.0
 >            ^^^
@@ -152,7 +152,7 @@ MyPair : Type -> Type =
   \a. (a & a)
 
 :p
-  pairs : (MyPair Int & MyPair Real) =
+  pairs : (MyPair Int & MyPair Float) =
     ((1, 2), (1.0, 2.0))
 
   pairs
@@ -175,13 +175,13 @@ fEff : Unit -> {| a} a = todo
 >     for i:(Fin 7). sum for j:(Fin unboundName). 1.0
 >                                   ^^^^^^^^^^^
 
--- differentCaseResultTypes : Either Int Real -> Real
+-- differentCaseResultTypes : Either Int Float -> Float
 -- differentCaseResultTypes x = case x
 --   Left f -> f
 --   Right i -> i
 -- > Type error:
 -- > Expected: Int
--- >   Actual: Real
+-- >   Actual: Float
 -- > In: i
 -- >
 -- >   Right i -> i
@@ -191,7 +191,7 @@ fEff : Unit -> {| a} a = todo
 --     Left i -> i + 1
 --     Right f -> floor f
 
--- caseEffects : wRef:(Ref Real) -> (Either Int Real) -> {Writer wRef} ()
+-- caseEffects : wRef:(Ref Float) -> (Either Int Float) -> {Writer wRef} ()
 -- caseEffects ref x = case x
 --     Left  i -> ()
 --     Right r -> ref := r
@@ -220,10 +220,10 @@ g : a -> a = \x. x
 > Int
 
 :t
-   f = \x:Real. x
+   f = \x:Float. x
    f 1
 > Type error:
-> Expected: Real
+> Expected: Float
 >   Actual: Int
 >
 >    f 1
@@ -249,7 +249,7 @@ h : (a -> b) -> (a -> b) = \x. x
 
 fun : a -> a = \x. sin x
 > Type error:
-> Expected: Real
+> Expected: Float
 >   Actual: a
 >
 > fun : a -> a = \x. sin x
@@ -259,12 +259,12 @@ data NewPair a:Type b:Type = MkNewPair a b
 
 fromNewPair : NewPair a b -> (a & b) = \(MkNewPair x y). (x, y)
 
-newPair : NewPair Int Real = MkNewPair 1 2.0
+newPair : NewPair Int Float = MkNewPair 1 2.0
 
 :p fst newPair
 > Type error:
 > Expected: (a & b)
->   Actual: (NewPair Int Real)
+>   Actual: (NewPair Int Float)
 > (Solving for: [a:Type, b:Type])
 >
 > :p fst newPair
@@ -281,15 +281,15 @@ newPair : NewPair Int Real = MkNewPair 1 2.0
 -- :p NewPair Int
 -- > NewPair Int
 
--- :p NewPair Int Real
--- > NewPair Int Real
+-- :p NewPair Int Float
+-- > NewPair Int Float
 
--- NewPairIntReal = NewPair Int Real
+-- NewPairIntFloat = NewPair Int Float
 
--- :p NewPairIntReal
--- > NewPair Int Real
+-- :p NewPairIntFloat
+-- > NewPair Int Float
 
--- newPair2 : NewPairIntReal = MkNewPair 1 2.0
+-- newPair2 : NewPairIntFloat = MkNewPair 1 2.0
 
 -- :p fst $ fromNewPair newPair
 -- > 1

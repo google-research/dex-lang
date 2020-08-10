@@ -181,9 +181,9 @@ compileUnOp :: Monad m => UnOp -> Operand -> CompileT m Operand
 compileUnOp op x = case op of
   BoolToInt       -> x `asIntWidth` longTy
   UnsafeIntToBool -> x `asIntWidth` boolTy
-  IntToReal       -> emitInstr realTy $ L.SIToFP x realTy []
+  IntToFloat       -> emitInstr floatTy $ L.SIToFP x floatTy []
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg            -> emitInstr realTy $ L.FSub mathFlags (litVal $ Float64Lit 0.0) x []
+  FNeg            -> emitInstr floatTy $ L.FSub mathFlags (litVal $ Float64Lit 0.0) x []
   BNot            -> emitInstr boolTy $ L.Xor x (1 `withWidth` 8) []
   _               -> unaryIntrinsic op x
 
@@ -196,10 +196,10 @@ compileBinOp op x y = case op of
   IRem   -> emitInstr longTy $ L.SRem x y []
   IPow   -> binaryIntrinsic IPow x y
   FPow   -> binaryIntrinsic FPow x y
-  FAdd   -> emitInstr realTy $ L.FAdd mathFlags x y []
-  FSub   -> emitInstr realTy $ L.FSub mathFlags x y []
-  FMul   -> emitInstr realTy $ L.FMul mathFlags x y []
-  FDiv   -> emitInstr realTy $ L.FDiv mathFlags x y []
+  FAdd   -> emitInstr floatTy $ L.FAdd mathFlags x y []
+  FSub   -> emitInstr floatTy $ L.FSub mathFlags x y []
+  FMul   -> emitInstr floatTy $ L.FMul mathFlags x y []
+  FDiv   -> emitInstr floatTy $ L.FDiv mathFlags x y []
   BAnd   -> emitInstr boolTy $ L.And x y []
   BOr    -> emitInstr boolTy $ L.Or  x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
@@ -473,35 +473,35 @@ gpuInitCompileEnv :: Monad m => CompileEnv m
 gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
   where
     gpuUnaryIntrinsics op x = case op of
-      Exp   -> callRealIntrinsic "__nv_exp"
-      Exp2  -> callRealIntrinsic "__nv_exp2"
-      Log   -> callRealIntrinsic "__nv_log"
-      Log2  -> callRealIntrinsic "__nv_log2"
-      Log10 -> callRealIntrinsic "__nv_log10"
-      Sin   -> callRealIntrinsic "__nv_sin"
-      Cos   -> callRealIntrinsic "__nv_cos"
-      Tan   -> callRealIntrinsic "__nv_tan"
-      Sqrt  -> callRealIntrinsic "__nv_sqrt"
+      Exp   -> callFloatIntrinsic "__nv_exp"
+      Exp2  -> callFloatIntrinsic "__nv_exp2"
+      Log   -> callFloatIntrinsic "__nv_log"
+      Log2  -> callFloatIntrinsic "__nv_log2"
+      Log10 -> callFloatIntrinsic "__nv_log10"
+      Sin   -> callFloatIntrinsic "__nv_sin"
+      Cos   -> callFloatIntrinsic "__nv_cos"
+      Tan   -> callFloatIntrinsic "__nv_tan"
+      Sqrt  -> callFloatIntrinsic "__nv_sqrt"
       Floor -> do
-        x' <- callRealIntrinsic "__nv_floor"
+        x' <- callFloatIntrinsic "__nv_floor"
         emitInstr longTy $ L.FPToSI x' longTy []
       Ceil  -> do
-        x' <- callRealIntrinsic "__nv_ceil"
+        x' <- callFloatIntrinsic "__nv_ceil"
         emitInstr longTy $ L.FPToSI x' longTy []
       Round -> do
-        x' <- callRealIntrinsic "__nv_round"
+        x' <- callFloatIntrinsic "__nv_round"
         emitInstr longTy $ L.FPToSI x' longTy []
       _   -> error $ "Unsupported GPU operation: " ++ show op
       where
-        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy]
-        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x]
+        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
+        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x]
 
     gpuBinaryIntrinsics op x y = case op of
-      FPow -> callRealIntrinsic "__nv_pow"
+      FPow -> callFloatIntrinsic "__nv_pow"
       _    -> error $ "Unsupported GPU operation: " ++ show op
       where
-        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy, realTy]
-        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x, y]
+        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy, floatTy]
+        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x, y]
 
 compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpKernelInstr _ instr = case instr of
@@ -741,35 +741,35 @@ cpuInitCompileEnv :: Monad m => CompileEnv m
 cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
   where
     cpuUnaryIntrinsics op x = case op of
-      Exp             -> callRealIntrinsic "llvm.exp.f64"
-      Exp2            -> callRealIntrinsic "llvm.exp2.f64"
-      Log             -> callRealIntrinsic "llvm.log.f64"
-      Log2            -> callRealIntrinsic "llvm.log2.f64"
-      Log10           -> callRealIntrinsic "llvm.log10.f64"
-      Sin             -> callRealIntrinsic "llvm.sin.f64"
-      Cos             -> callRealIntrinsic "llvm.cos.f64"
-      Tan             -> callRealIntrinsic "tan"
-      Sqrt            -> callRealIntrinsic "llvm.sqrt.f64"
+      Exp             -> callFloatIntrinsic "llvm.exp.f64"
+      Exp2            -> callFloatIntrinsic "llvm.exp2.f64"
+      Log             -> callFloatIntrinsic "llvm.log.f64"
+      Log2            -> callFloatIntrinsic "llvm.log2.f64"
+      Log10           -> callFloatIntrinsic "llvm.log10.f64"
+      Sin             -> callFloatIntrinsic "llvm.sin.f64"
+      Cos             -> callFloatIntrinsic "llvm.cos.f64"
+      Tan             -> callFloatIntrinsic "tan"
+      Sqrt            -> callFloatIntrinsic "llvm.sqrt.f64"
       Floor           -> do
-        x' <- callRealIntrinsic "llvm.floor.f64"
+        x' <- callFloatIntrinsic "llvm.floor.f64"
         emitInstr longTy $ L.FPToSI x' longTy []
       Ceil            -> do
-        x' <- callRealIntrinsic "llvm.ceil.f64"
+        x' <- callFloatIntrinsic "llvm.ceil.f64"
         emitInstr longTy $ L.FPToSI x' longTy []
       Round           -> do
-        x' <- callRealIntrinsic "llvm.round.f64"
+        x' <- callFloatIntrinsic "llvm.round.f64"
         emitInstr longTy $ L.FPToSI x' longTy []
       _ -> error $ "Unsupported CPU operation: " ++ show op
       where
-        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy]
-        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x]
+        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
+        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x]
 
     cpuBinaryIntrinsics op x y = case op of
-      FPow -> callRealIntrinsic "llvm.pow.f64"
+      FPow -> callFloatIntrinsic "llvm.pow.f64"
       _ -> error $ "Unsupported CPU operation: " ++ show op
       where
-        realIntrinsic name = ExternFunSpec name realTy [] [] [realTy, realTy]
-        callRealIntrinsic name = emitExternCall (realIntrinsic name) [x, y]
+        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy, floatTy]
+        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x, y]
 
 -- === Compile monad utilities ===
 
@@ -858,8 +858,8 @@ freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
 longTy :: L.Type
 longTy = i64
 
-realTy :: L.Type
-realTy = fp64
+floatTy :: L.Type
+floatTy = fp64
 
 boolTy :: L.Type
 boolTy = i8

@@ -10,7 +10,7 @@ def tile2d (n : Type) ?-> (m : Type) ?-> (b : Type) ?-> (nl : Type) ?-> (ml : Ty
     (\ni:n. for mi:m. fScalar ni mi))
 
 def matmul (k : Type) ?-> (n : Type) ?-> (m : Type) ?->
-           (a : n=>k=>Real) (b : k=>m=>Real) : n=>m=>Real =
+           (a : n=>k=>Float) (b : k=>m=>Float) : n=>m=>Float =
   rowTile = Fin 3
   colVectors = Fin 3
   vectorTile = Fin VectorWidth

@@ -38,14 +38,14 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
-    getIntLit, asIntVal, getRealLit, asRealVal, getBoolLit, asBoolVal,
+    getIntLit, asIntVal, getFloatLit, asFloatVal, getBoolLit, asBoolVal,
     pattern CharLit,
-    pattern IntLitExpr, pattern RealLitExpr, pattern PreludeBoolTy,
+    pattern IntLitExpr, pattern FloatLitExpr, pattern PreludeBoolTy,
     pattern IntLit, pattern UnitTy, pattern PairTy, pattern FunTy,
     pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
-    pattern RealTy, pattern BaseTy, pattern UnitVal,
+    pattern FloatTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow, pattern ArrayVal,
-    pattern RealLit, pattern BoolLit, pattern TyKind, pattern LamVal,
+    pattern FloatLit, pattern BoolLit, pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
@@ -187,7 +187,7 @@ data UExpr' = UVar UVar
             | UVariantTy (LabeledItems UExpr)
             | UIntLit  Int
             | UCharLit Char
-            | URealLit Double
+            | UFloatLit Double
               deriving (Show, Generic)
 
 data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
@@ -237,7 +237,7 @@ data PrimTC e =
       | BoolType
       | CharType
       | IntType
-      | RealType
+      | FloatType
       | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
@@ -259,7 +259,7 @@ data PrimCon e =
       | BoolCon e         -- Lifts a fixed-precision integer literal into the generic bool type
       | CharCon e
       | IntCon  e         -- Lifts a fixed-precision integer literal into the generic integer type
-      | RealCon e         -- Lifts a fixed-precision floating-point literal into the generic float type
+      | FloatCon e         -- Lifts a fixed-precision floating-point literal into the generic float type
       | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
       | PairCon e e
@@ -318,7 +318,7 @@ data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
            | BAnd | BOr | IRem
              deriving (Show, Eq, Generic)
 
-data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
+data UnOp = IntToFloat | BoolToInt | UnsafeIntToBool
           | Exp | Exp2
           | Log | Log2 | Log10
           | Sin | Cos | Tan | Sqrt
@@ -632,7 +632,7 @@ instance HasUVars UExpr' where
     UVariantTy ulr -> freeUVars ulr
     UIntLit  _ -> mempty
     UCharLit _ -> mempty
-    URealLit _ -> mempty
+    UFloatLit _ -> mempty
 
 instance HasUVars UAlt where
   freeUVars (UAlt p body) = freeUVars $ Abs p body
@@ -1121,8 +1121,8 @@ a ==> b = Pi (Abs (Ignore a) (TabArrow, b))
 pattern IntLitExpr :: Int -> UExpr'
 pattern IntLitExpr x = UIntLit x
 
-pattern RealLitExpr :: Double -> UExpr'
-pattern RealLitExpr x = URealLit x
+pattern FloatLitExpr :: Double -> UExpr'
+pattern FloatLitExpr x = UFloatLit x
 
 pattern IntLit :: LitVal -> Atom
 pattern IntLit x = Con (IntCon (Con (Lit x)))
@@ -1137,17 +1137,17 @@ getIntLit l = case l of
 asIntVal :: Int -> Atom
 asIntVal x = IntLit $ Int64Lit $ fromIntegral x
 
-pattern RealLit :: LitVal -> Atom
-pattern RealLit x = Con (RealCon (Con (Lit x)))
+pattern FloatLit :: LitVal -> Atom
+pattern FloatLit x = Con (FloatCon (Con (Lit x)))
 
-getRealLit :: LitVal -> Double
-getRealLit l = case l of
+getFloatLit :: LitVal -> Double
+getFloatLit l = case l of
   Float64Lit f -> f
   Float32Lit f -> realToFrac f
   _ -> error $ "Expected a floating-point literal"
 
-asRealVal :: Double -> Atom
-asRealVal x = RealLit $ Float64Lit x
+asFloatVal :: Double -> Atom
+asFloatVal x = FloatLit $ Float64Lit x
 
 pattern BoolLit :: LitVal -> Atom
 pattern BoolLit x = Con (BoolCon (Con (Lit x)))
@@ -1191,8 +1191,8 @@ pattern IntTy = TC IntType
 pattern BoolTy :: Type
 pattern BoolTy = TC BoolType
 
-pattern RealTy :: Type
-pattern RealTy = TC RealType
+pattern FloatTy :: Type
+pattern FloatTy = TC FloatType
 
 pattern CharTy :: Type
 pattern CharTy = TC CharType
@@ -1293,7 +1293,7 @@ builtinNames = M.fromList
   , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("inttoreal", unOp IntToReal)
+  , ("inttofloat", unOp IntToFloat)
   , ("booltoint", unOp BoolToInt)
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
@@ -1314,7 +1314,7 @@ builtinNames = M.fromList
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("Int"     , TCExpr $ IntType)
-  , ("Real"    , TCExpr $ RealType)
+  , ("Float"    , TCExpr $ FloatType)
   , ("Bool"    , TCExpr $ BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("Float64" , TCExpr $ BaseType $ Scalar Float64Type)
@@ -1332,7 +1332,7 @@ builtinNames = M.fromList
   , ("sndRef", OpExpr $ SndRef ())
   , ("anyVal", ConExpr $ AnyValue ())
   -- TODO: Lift vectors to constructors
-  --, ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
+  --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ Coerce   () ())

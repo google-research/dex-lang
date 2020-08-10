@@ -1,6 +1,6 @@
 '# Sierpinsky triangle ("chaos game")
 
-Point : Type = (Real & Real)
+Point : Type = (Float & Float)
 
 update : n=>Point -> Key -> Point -> Point =
   \points key (x,y).

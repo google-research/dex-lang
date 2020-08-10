@@ -1,7 +1,7 @@
 deriv newprim 1.0
 > Not implemented: linearization for newprim
 
-:p f : 3=>Real -> 3=>Real
+:p f : 3=>Float -> 3=>Float
    f x = for i. sq x.i
    jvp f [1.0, 2.0, 3.0] [1.0, 10.0, 100.0]
 > [2.0, 40.0, 600.0]
@@ -9,7 +9,7 @@ deriv newprim 1.0
 :p jvp (asNonLin sum) [1.0, 2.0, 3.0] [1.0, 2.0, 3.0]
 > 6.0
 
-:p f : (Real, 3=>Real) -> (Real, 3=>Real)
+:p f : (Float, 3=>Float) -> (Float, 3=>Float)
    f (x0, xs) = scan x0 for i. lam c. (c * 2.0, c * xs.i)
    jvp f (10.0, [1., 2., 3.]) (10.0, [1., 2., 3.])
 > (80.0, [20.0, 80.0, 240.0])
@@ -26,7 +26,7 @@ deriv newprim 1.0
 :p transposeLinear (sum @4) 1.5
 > [1.5, 1.5, 1.5, 1.5]
 
-myscan : (Real, n=>Real) --o (Real, n=>Real)
+myscan : (Float, n=>Float) --o (Float, n=>Float)
 myscan (c0, xs) = scanlin (for _. llam (x, y). (y, x)) (c0, xs)
 
 cs = [1.0, 2.0, 3.0]
@@ -40,7 +40,7 @@ cs = [1.0, 2.0, 3.0]
 cs1 = [0.0, 1.0]
 cs2 = [1.0, 0.0]
 
-myNonCommutingFold : Real --o Real
+myNonCommutingFold : Float --o Float
 myNonCommutingFold y0 =
   fst $ foldlin (for i. llam ((x, y), ()). (cs1.i * x + cs2.i * y, 0.0)) $
                 ((0.0, y0), for _. ())
@@ -60,11 +60,11 @@ myNonCommutingFold y0 =
 :p vadd [1.,2.] [3.,4.]
 > [4.0, 6.0]
 
-:p vzero @Real
+:p vzero @Float
 > 0.0
 
-:p vzero @(Real, Real)
+:p vzero @(Float, Float)
 > (0.0, 0.0)
 
-:p vzero @(Real, 3=>(Real, Real))
+:p vzero @(Float, 3=>(Float, Float))
 > (0.0, [(0.0, 0.0), (0.0, 0.0), (0.0, 0.0)])

@@ -2,7 +2,7 @@
 
 'First, we implement complex arithmetic
 
-Complex : Type = (Real & Real)
+Complex : Type = (Float & Float)
 
 cadd : Complex -> Complex -> Complex =
   \(x1, y1) (x2, y2). (x1 + x2, y1 + y2)
@@ -10,7 +10,7 @@ cadd : Complex -> Complex -> Complex =
 cmul : Complex -> Complex -> Complex =
   \(x1, y1) (x2, y2). (x1 * x2 - y1 * y2, x1 * y2 + x2 * y1)
 
-cabs : Complex -> Real =
+cabs : Complex -> Float =
   \(x, y). x * x + y * y
 
 czero : Complex = (0.0, 0.0)
@@ -24,7 +24,7 @@ tol = 2.0
 inBounds : Complex -> Bool =
   \z. cabs z < tol
 
-escapeTime : Complex -> Real =
+escapeTime : Complex -> Float =
   \c. fst $ fold (0.0, czero) $ \i:(Fin 1000) (n, z).
      z' = update c z
      (n + b2r (inBounds z'), z')

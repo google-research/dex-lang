@@ -31,5 +31,5 @@ x = 1
   (z, y)
 > Type error:
 > Expected: Int
->   Actual: Real
+>   Actual: Float
 > In: From subst

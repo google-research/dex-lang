@@ -9,7 +9,7 @@ include "examples/included.dx"
 load dxo "examples/somedata.dxo" as dat
 
 :t dat
-> (Real, 2, (2=>(3=>Real)), (2=>(Int, Bool)))
+> (Float, 2, (2=>(3=>Float)), (2=>(Int, Bool)))
 
 :p dat
 > (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])
@@ -19,7 +19,7 @@ dump dxbo "test-scratch/bin-data-dump.dxbo" dat
 load dxbo  "test-scratch/bin-data-dump.dxbo" as dat2
 
 :t dat2
-> (Real, 2, (2=>(3=>Real)), (2=>(Int, Bool)))
+> (Float, 2, (2=>(3=>Float)), (2=>(Int, Bool)))
 
 :p dat2
 > (1.0, 1@2, [[2.0, 1.0, 3.0], [0.0, -10.0, 20.0]], [(1, True), (2, False)])
@@ -34,22 +34,22 @@ load dxbo  "examples/bad-binary-file.dxbo" as badData
 > Claimed total length:  152
 > Actual file length:    128
 > Header data:
-> type: ((2=>(1=>Real)), Int)
+> type: ((2=>(1=>Float)), Int)
 > bufferSizes: [8,8,8]
 
 load dxbo "test-scratch/pydata.dxbo" as pydata
 
 :t pydata
-> ( Real
+> ( Float
 > , Int
 > , ()
 > , Bool
 > , Bool
-> , (Int, (3=>Real))
-> , (2=>(3=>Real))
-> , (3=>(2=>Real))
-> , Real
-> , Real
+> , (Int, (3=>Float))
+> , (2=>(3=>Float))
+> , (3=>(2=>Float))
+> , Float
+> , Float
 > , (1=>(1=>(1=>Int)))
 > , (4=>Int)
 > , (3=>Bool) )
@@ -74,16 +74,16 @@ dump dxbo "/tmp/stuff.dxbo" pydata
 load dxbo "/tmp/stuff.dxbo" as xs
 
 :t xs
-> ( Real
+> ( Float
 > , Int
 > , ()
 > , Bool
 > , Bool
-> , (Int, (3=>Real))
-> , (2=>(3=>Real))
-> , (3=>(2=>Real))
-> , Real
-> , Real
+> , (Int, (3=>Float))
+> , (2=>(3=>Float))
+> , (3=>(2=>Float))
+> , Float
+> , Float
 > , (1=>(1=>(1=>Int)))
 > , (4=>Int)
 > , (3=>Bool) )

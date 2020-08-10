@@ -7,8 +7,8 @@ def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
         sample := try $ hash k (get i)
   case ans of Just sample -> sample
 
-Prob    = Real
-LogProb = Real
+Prob    = Float
+LogProb = Float
 
 def binomialSample (n:Int) (p:Prob) (k:Key) : Int = todo
 

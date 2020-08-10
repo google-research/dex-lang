@@ -148,7 +148,7 @@ genFresh (Name ns tag _) (Env m) = Name ns tag nextNum
                   | i < bigInt  -> i + 1
                   | otherwise   -> error "Ran out of numbers!"
                 _ -> 0
-    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a real sentinel value
+    bigInt = (10::Int) ^ (9::Int)  -- TODO: consider a float sentinel value
 genFresh v@(GlobalName _) env
   | v `isin` env = error $ "Can't rename global: " ++ show v
   | otherwise    = v

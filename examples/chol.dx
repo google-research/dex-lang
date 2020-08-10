@@ -3,15 +3,15 @@ https://en.wikipedia.org/wiki/Cholesky_decomposition
 
 ' ### Matrix Math
 
-eye : n=>n=>Real
+eye : n=>n=>Float
 eye = for i j. select (i == j) 1.0 0.0
 
-mmadd: (n=>m=>Real)->(n=>m=>Real)->(n=>m=>Real)
+mmadd: (n=>m=>Float)->(n=>m=>Float)->(n=>m=>Float)
 mmadd x y = for i j. x.i.j + y.i.j
 
 ' ## Cholesky Algorithm
 
-chol : (n=>n=>Real) -> (n=>n=>Real)
+chol : (n=>n=>Float) -> (n=>n=>Float)
 chol x = getState (for _ _. 0.0) \buf.
   for i.
     for j':(...i).
@@ -25,21 +25,21 @@ chol x = getState (for _ _. 0.0) \buf.
 
 ' ## PSD solver based on Cholesky decomposition
 
-trisolveL : n=>n=>Real -> n=>Real -> n=>Real
+trisolveL : n=>n=>Float -> n=>Float -> n=>Float
 trisolveL mat b = getState (for _. 0.0) \buf.
   for i.
     row   = for j:(..<i). mat.i.%inject(j)
     xPrev = for j:(..<i). getAt buf %inject(j)
     putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
 
-trisolveU : n=>n=>Real -> n=>Real -> n=>Real
+trisolveU : n=>n=>Float -> n=>Float -> n=>Float
 trisolveU mat b = getState (for _. 0.0) \buf.
   rof i.
     row   = for j:(i...). mat.i.%inject(j)
     xPrev = for j:(i...). getAt buf %inject(j)
     putAt buf i $ (b.i - vdot row xPrev) / mat.i.i
 
-psdsolve : n=>n=>Real -> n=>Real -> n=>Real
+psdsolve : n=>n=>Float -> n=>Float -> n=>Float
 psdsolve mat b =
   l = chol mat
   trisolveU (transpose l) $  trisolveL l b
@@ -49,13 +49,13 @@ psdsolve mat b =
 type N = 4
 (k1, k2) = splitKey $ newKey 0
 
-psd : N=>N=>Real
+psd : N=>N=>Float
 psd =
   a = for i:N j:N. randn $ ixkey2 k1 i j
   x = mmp a (transpose a)
   mmadd x eye
 
-l : N=>N=>Real
+l : N=>N=>Float
 l = chol psd
 
 :p l
@@ -69,7 +69,7 @@ psdReconstructed = l `mmp` transpose l
 :p sum for (i, j). sq (psd.i.j - psdReconstructed.i.j)
 > 2.4651903e-32
 
-vec : N=>Real
+vec : N=>Float
 vec = for i. randn $ ixkey k2 i
 
 :p (vec, mvp psd (psdsolve psd vec))

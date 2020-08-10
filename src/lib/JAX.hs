@@ -214,12 +214,12 @@ emitOp op = do
 
 zerosAt :: Type -> JaxM TmpAtom
 zerosAt ty = case ty of
-  BaseTy (Scalar RealType) -> return $ tmpAtomScalarLit $ RealLit 0.0
+  BaseTy (Scalar FloatType) -> return $ tmpAtomScalarLit $ FloatLit 0.0
   _ -> error "Not implemented"
 
 addPoly :: TmpAtom -> TmpAtom -> JaxM TmpAtom
 addPoly x y = case getType x of
-  BaseTy (Scalar RealType) -> liftM toScalarAtom $
+  BaseTy (Scalar FloatType) -> liftM toScalarAtom $
     emitOp $ JScalarBinOp FAdd (fromScalarAtom x) (fromScalarAtom y)
   ty -> error $ "Not implemented: " ++ pprint ty
 
@@ -316,8 +316,8 @@ inlineFromId env idxAtom = do
 algebraicSimp :: JOp -> Maybe JOp
 algebraicSimp op = case op of
   JScalarBinOp FAdd x y
-      | fromScalarLit x == Just (RealLit 0) -> Just $ JId y
-      | fromScalarLit y == Just (RealLit 0) -> Just $ JId x
+      | fromScalarLit x == Just (FloatLit 0) -> Just $ JId y
+      | fromScalarLit y == Just (FloatLit 0) -> Just $ JId x
   _ -> Nothing
 
 fromScalarLit :: IdxAtom -> Maybe LitVal

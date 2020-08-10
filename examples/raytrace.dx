@@ -10,19 +10,19 @@ Specifically, it's based on his unrolled ```lax.scan``` version.
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
 
-def Vec (n:Int) : Type = Fin n => Real
-def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Real
+def Vec (n:Int) : Type = Fin n => Float
+def Mat (n:Int) (m:Int) : Type = Fin n => Fin m => Float
 
-def relu (x:Real) : Real = max x 0.0
-def length    (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
+def relu (x:Float) : Float = max x 0.0
+def length    (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
 -- TODO: make a newtype for normal vectors
-def normalize (x: d=>Real) : d=>Real = x / (length x)
-def directionAndLength (x: d=>Real) : (d=>Real & Real) =
+def normalize (x: d=>Float) : d=>Float = x / (length x)
+def directionAndLength (x: d=>Float) : (d=>Float & Float) =
   l = length x
   (x / (length x), l)
 
-def dot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v = sum for j. s.j .* vs.j
-def randuniform (lower:Real) (upper:Real) (k:Key) : Real =
+def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
+def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
 -- TODO: put `n` and `a` in scope in body
@@ -35,14 +35,14 @@ def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
     for i:(Fin n).
       total := get total + sample (ixkey k i) / i2r n
 
-def positiveProjection (x:n=>Real) (y:n=>Real) : Bool = dot x y > 0.0
+def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
 def addAt (_:Eq n) ?=> (_:VSpace a) ?=> (xs:n=>a) (i:n) (x:a) : n=>a =
   for j. case i == j of
            True  -> xs.j + x
            False -> xs.j
 
-def gradNumerical (n:Int) ?-> (f:Vec n -> Real) (xs:Vec n) : Vec n =
+def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
   eps = 0.0001
   for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
 
@@ -70,7 +70,7 @@ def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
 ' ### 3D Helper Functions
 
 -- TODO: implement table unpacking
-def unpackvec3 (p:Vec 3) : (Real & Real & Real) =
+def unpackvec3 (p:Vec 3) : (Float & Float & Float) =
   (p.(0@(Fin 3)), p.(1@(Fin 3)), p.(2@(Fin 3)))
 
 def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
@@ -79,15 +79,15 @@ def cross (a:Vec 3) (b:Vec 3) : Vec 3 =
   [a2 * b3 - a3 * b2, a3 * b1 - a1 * b3, a1 * b2 - a2 * b1]
 
 -- TODO: Use `data Color = Red | Green | Blue` and ADTs for index sets
-Color = (Fin 3)=>Real
+Color = (Fin 3)=>Float
 def ColorImage     (height:Int) (width:Int) : Type = Fin height => Fin width => Color
-def GrayScaleImage (height:Int) (width:Int) : Type = Fin height => Fin width => Real
+def GrayScaleImage (height:Int) (width:Int) : Type = Fin height => Fin width => Float
 
 xHat : Vec 3 = [1., 0., 0.]
 yHat : Vec 3 = [0., 1., 0.]
 zHat : Vec 3 = [0., 0., 1.]
 
-Angle = Real  -- angle in radians
+Angle = Float  -- angle in radians
 
 def rotateX (p:Vec 3) (angle:Angle) : Vec 3 =
   c = cos angle
@@ -122,14 +122,14 @@ def sampleCosineWeightedHemisphere (normal: Vec 3) (k:Key) : Vec 3 =
 
 ' ### Raytracer
 
-Distance = Real
+Distance = Float
 def Image (n:Int) :Type = Fin n => Fin n => Color -- TODO: hide the size
 
 Position  = Vec 3
 Direction = Vec 3  -- Should be normalized. TODO: use a newtype wrapper
 
 BlockHalfWidths = Vec 3
-Radius = Real
+Radius = Float
 Radiance = Color
 
 data ObjectGeom =
@@ -146,7 +146,7 @@ OrientedSurface = (Direction & Surface)
 data Object =
   PassiveObject ObjectGeom Surface
   -- position, half-width, intensity (assumed to point down)
-  Light Position Real Radiance
+  Light Position Float Radiance
 
 Ray = (Position & Direction)
 Filter   = Color
@@ -166,7 +166,7 @@ def sampleReflection ((nor, surf):OrientedSurface) ((pos, dir):Ray) (k:Key) : Ra
     Mirror  -> dir - (2.0 * dot dir nor) .* nor
   (pos, newDir)
 
-def probReflection ((nor, surf):OrientedSurface) (_:Ray) ((_, outRayDir):Ray) : Real =
+def probReflection ((nor, surf):OrientedSurface) (_:Ray) ((_, outRayDir):Ray) : Float =
   case surf of
     Matte _ -> relu $ dot nor outRayDir
     Mirror  -> 0.0  -- TODO: this should be a delta function of some sort
@@ -246,7 +246,7 @@ def rayDirectRadiance (scene:Scene n) (ray:Ray) : Radiance =
     HitNothing -> zero
     HitObj _ _ -> zero
 
-def sampleSquare (hw:Real) (k:Key) : Position =
+def sampleSquare (hw:Float) (k:Key) : Position =
  (kx, kz) = splitKey k
  x = randuniform (- hw) hw kx
  z = randuniform (- hw) hw kz
@@ -295,7 +295,7 @@ def trace (params:Params) (scene:Scene n) (init_ray:Ray) (k:Key) : Color =
 -- TODO: add number of pixels once we can hide sizes
 -- sensor half-width, pinhole-sensor distance, pinhole position
 -- (Assumes we're looking towards -z.)
-Camera = (Position & Real & Real)
+Camera = (Position & Float & Float)
 
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left

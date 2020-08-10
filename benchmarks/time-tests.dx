@@ -1,15 +1,15 @@
 
-mmp' : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp' : l=>m=>Float -> m=>n=>Float -> l=>n=>Float
 mmp' m1 m2 =
   jvp (mmp m1) m2 m2
 
-mmp'' : l=>m=>Real -> m=>n=>Real -> l=>n=>Real
+mmp'' : l=>m=>Float -> m=>n=>Float -> l=>n=>Float
 mmp'' m1 m2 =
   snd (vjp (mmp (transpose m1)) (for _ _. 0.0)) m2
 
 n = 1000
 
-mat : (Fin n)=>(Fin n)=>Real
+mat : (Fin n)=>(Fin n)=>Float
 mat = for i j. rand $ ixkey2 (newKey 0) i j
 
 :time mmp mat mat

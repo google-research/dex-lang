@@ -44,13 +44,13 @@ def clipidx (n:Type) -> (i:Int) : n =
   -- to Fin that just clips the index at its bounds.
   fromOrdinal n (select (i < 0) 0 i)
 
-def logaddexp (x:Real) (y:Real) : Real =
+def logaddexp (x:Float) (y:Float) : Float =
   m = max x y
   m + ( log ( (exp (x - m) + exp (y - m))))
 
 def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
         (dict: Eq vocab) ?=> (dict2: Eq position) ?=> (dict3: Eq time) ?=> (blank: vocab)
-        (logits: time=>vocab=>Real) (labels: position=>vocab) : Real =
+        (logits: time=>vocab=>Float) (labels: position=>vocab) : Float =
   -- Computes log p(labels | logits), marginalizing over possible alignments.
   -- Todo: remove unnecessary implicit type annotations once
   -- Dex starts putting implicit types in scope.

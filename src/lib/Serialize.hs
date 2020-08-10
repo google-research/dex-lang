@@ -168,7 +168,7 @@ materializeScalarTables atom = case atom of
   Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
   Con (UnitCon)        -> []
   Con (IntCon  (Con (Lit l))) | i <- getIntLit l  -> [arrayFromScalar $ Int64Lit (fromIntegral i)]
-  Con (RealCon (Con (Lit l))) | f <- getRealLit l -> [arrayFromScalar $ Float64Lit f]
+  Con (FloatCon (Con (Lit l))) | f <- getFloatLit l -> [arrayFromScalar $ Float64Lit f]
   Lam a@(Abs b (TabArrow, _)) ->
     fmap arrayConcat $ transpose $ fmap evalBody $ indices $ binderType b
     where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
@@ -177,20 +177,20 @@ materializeScalarTables atom = case atom of
 -- TODO: Support fp32 outputs too!
 valToScatter :: Val -> Output
 valToScatter val = case getType val of
-  TabTy _ (PairTy RealTy RealTy) -> ScatterOut xs ys
+  TabTy _ (PairTy FloatTy FloatTy) -> ScatterOut xs ys
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
   where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
 
 valToHeatmap :: Bool -> Val -> Output
 valToHeatmap color val = case color of
   False -> case getType val of
-    TabTy hv (TabTy wv RealTy) ->
+    TabTy hv (TabTy wv FloatTy) ->
        HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
-    _ -> error $ "Heatmap expects a 2D array of reals, but got: " ++ pprint (getType val)
+    _ -> error $ "Heatmap expects a 2D array of floats, but got: " ++ pprint (getType val)
   True -> case getType val of
-    TabTy hv (TabTy wv (TabTy _ RealTy)) ->
+    TabTy hv (TabTy wv (TabTy _ FloatTy)) ->
        HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
-    _ -> error $ "Color Heatmap expects a 3D array of reals, but got: " ++ pprint (getType val)
+    _ -> error $ "Color Heatmap expects a 3D array of floats, but got: " ++ pprint (getType val)
   where [(Array _ (Float64Vec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String

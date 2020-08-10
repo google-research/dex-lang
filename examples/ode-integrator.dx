@@ -1,7 +1,7 @@
 '## Euler Integrator
 Using only generic vector operations.
 
-Time : Type = Real
+Time : Type = Float
 
 -- State of Euler solver: (old state, old time, new state, new time)
 def Eulerstate (a:Type) : Type = (a & Time & a & Time)

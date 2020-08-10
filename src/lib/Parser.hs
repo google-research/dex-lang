@@ -209,7 +209,7 @@ uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
   where uLitParser = UCharLit <$> charLit
                  <|> UIntLit  <$> intLit
-                 <|> URealLit <$> doubleLit
+                 <|> UFloatLit <$> doubleLit
                  <?> "literal"
 
 uVarOcc :: Parser UExpr
@@ -567,8 +567,8 @@ prefixNegOp = Prefix $ label "negation" $ do
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)
       -> WithSrc (joinPos pos litpos) (IntLitExpr (-i))
-    WithSrc litpos (RealLitExpr i)
-      -> WithSrc (joinPos pos litpos) (RealLitExpr (-i))
+    WithSrc litpos (FloatLitExpr i)
+      -> WithSrc (joinPos pos litpos) (FloatLitExpr (-i))
     x -> mkApp f x
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
