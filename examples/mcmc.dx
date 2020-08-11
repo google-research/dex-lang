@@ -27,10 +27,10 @@ def propose
 
 def meanAndCovariance (n:Type) ?-> (d:Type) ?->
       (xs:n=>d=>Float) : (d=>Float & d=>d=>Float) =
-   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / i2r (size n)
+   xsMean :    d=>Float = (for i. sum for j. xs.j.i) / IToF (size n)
    xsCov  : d=>d=>Float = (for i i'. sum for j.
                            (xs.j.i' - xsMean.i') *
-                           (xs.j.i  - xsMean.i )   ) / i2r (size n - 1)
+                           (xs.j.i  - xsMean.i )   ) / IToF (size n - 1)
    (xsMean, xsCov)
 
 -- === Metropolis-Hastings implementation ===
@@ -95,11 +95,11 @@ mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 > ( [1.4468334, 2.4944708]
 > , [[1.0656763, 2.0475943e-2], [2.0475943e-2, 5.2884966e-2]] )
 
-:plot for i. (i2r (ordinal i), hmcSamples.i.(0@_))
+:plot for i. (IToF (ordinal i), hmcSamples.i.(0@_))
 > <graphical output>
 
 :p meanAndCovariance mhSamples
 > ([0.64555407, 2.4140553], [[0.38236168, 0.1794119], [0.1794119, 0.22895665]])
 
-:plot for i. (i2r (ordinal i), mhSamples.i.(0@_))
+:plot for i. (IToF (ordinal i), mhSamples.i.(0@_))
 > <graphical output>

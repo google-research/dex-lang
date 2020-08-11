@@ -14,12 +14,12 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
-              app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
+              app, add, mul, sub, neg, div', iadd, imul, isub, idiv, reduceScoped,
               select, substEmbed, substEmbedR, emitUnpack,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
-              embedExtend, boolToInt, intToFloat, boolToFloat, reduceAtom,
+              embedExtend, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
@@ -237,14 +237,8 @@ isub x           (IntLit l)  | getIntLit l == 0                 = return x
 isub (IntLit xl) (IntLit yl) | [x, y] <- getIntLit <$> [xl, yl] = return $ asIntVal $ x - y
 isub x y = emitOp $ ScalarBinOp ISub x y
 
-andE :: MonadEmbed m => Atom -> Atom -> m Atom
-andE (BoolLit l)  y            | getBoolLit l                      = return y
-andE x            (BoolLit l)  | getBoolLit l                      = return x
-andE (BoolLit xl) (BoolLit yl) | [x, y] <- getBoolLit <$> [xl, yl] = return $ asBoolVal $ x && y
-andE x y = emit $ Op $ ScalarBinOp BAnd x y
-
 select :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
-select (BoolLit l) x y | b <- getBoolLit l = return $ if b then x else y
+select (Con (Lit (Int8Lit p))) x y = return $ if p /= 0 then x else y
 select p x y = emitOp $ Select p x y
 
 div' :: MonadEmbed m => Atom -> Atom -> m Atom
@@ -388,28 +382,8 @@ singletonTypeVal (TC con) = case con of
   _            -> Nothing
 singletonTypeVal _ = Nothing
 
-boolToInt :: MonadEmbed m => Atom -> m Atom
-boolToInt b = emitOp $ ScalarUnOp BoolToInt b
-
-intToFloat :: MonadEmbed m => Atom -> m Atom
-intToFloat i = emitOp $ ScalarUnOp IntToFloat i
-
-boolToFloat :: MonadEmbed m => Atom -> m Atom
-boolToFloat = boolToInt >=> intToFloat
-
 indexAsInt :: MonadEmbed m => Atom -> m Atom
 indexAsInt idx = emitOp $ IndexAsInt idx
-
-cast :: MonadEmbed m => Type -> Atom -> m Atom
-cast ty x = emitOp $ CastOp ty x
-
-boolCase :: MonadEmbed m => Atom -> m Atom -> m Atom -> m Atom
-boolCase baseBoolCond trueBlock falseBlock = do
-  preludeBoolCond <- cast PreludeBoolTy baseBoolCond
-  trueCase@(Abs _ trueBody) <- buildNAbs Empty $ \[] -> trueBlock
-  falseCase <- buildNAbs Empty $ \[] -> falseBlock
-  let ty = getType trueBody
-  emit $ Case preludeBoolCond [falseCase, trueCase] ty
 
 instance MonadTrans EmbedT where
   lift m = EmbedT $ lift $ lift m
@@ -721,7 +695,6 @@ clampPositive x = do
 indexToIntE :: MonadEmbed m => Type -> Atom -> m Atom
 indexToIntE ty idx = case ty of
   UnitTy  -> return $ asIntVal 0
-  BoolTy  -> boolToInt idx
   PairTy lType rType -> do
     (lVal, rVal) <- fromPair idx
     lIdx  <- indexToIntE lType lVal
@@ -783,21 +756,19 @@ intToIndexE (VariantTy types) i = do
     -- TODO: is there a better way than generating a case statement? Select
     -- doesn't work because variants aren't primitive types
     go prev ((label, repeatNum), ty, offset) = do
+      shifted <- isub i offset
+      -- TODO: This might run intToIndex on negative indices. Fix this!
+      index   <- intToIndexE ty shifted
       beforeThis <- ilt i offset
-      boolCase beforeThis (return prev) $ do
-        shifted <- isub i offset
-        index <- intToIndexE ty shifted
-        return $ Variant types label repeatNum index
-    ((l0, 0), ty0, _):zs =
-      zip3 (toList reflect) (toList types) (toList offsets)
+      select beforeThis prev $ Variant types label repeatNum index
+    ((l0, 0), ty0, _):zs = zip3 (toList reflect) (toList types) (toList offsets)
   start <- Variant types l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
 anyValue :: Type -> Atom
 anyValue (TC FloatType) = asFloatVal 1.0
-anyValue (TC IntType)  = asIntVal  1
-anyValue (TC BoolType) = asBoolVal False
+anyValue (TC IntType)   = asIntVal  1
 -- TODO: Base types!
 -- XXX: This is not strictly correct, because those types might not have any
 --      inhabitants. We might want to consider emitting some run-time code that

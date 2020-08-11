@@ -63,7 +63,7 @@ help make the errors more local.
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
-   i2r (sum for i. x.i) + i2r (sum for j. y.j)
+   IToF (sum for i. x.i) + IToF (sum for j. y.j)
 > Float
 
 :t
@@ -81,7 +81,7 @@ Narr = Fin 10
 
 arr  = iota Narr
 
-xr = map i2r arr
+xr = map IToF arr
 
 :t arr
 > ((Fin 10) => Int)

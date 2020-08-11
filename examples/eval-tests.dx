@@ -23,14 +23,14 @@
    vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map i2r x
+   y = map IToF x
    vdot' y y
 > 10.0
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. i2r x.i * i2r y.j
+   z = for i j. IToF x.i * IToF y.j
    sum (for i. sum z.i)
 > 18.0
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map i2r arr) + y
+fun = \y. sum (map IToF arr) + y
 
 :p fun 3.0
 > 24.0
@@ -113,13 +113,13 @@ fun = \y. sum (map i2r arr) + y
 :p tan 1.57079
 > 158057.9
 
-:p floor 3.6
+:p FToI $ floor 3.6
 > 3
 
-:p ceil 3.6
+:p FToI $ ceil 3.6
 > 4
 
-:p round 3.6
+:p FToI $ round 3.6
 > 4
 
 s = 1.0
@@ -234,7 +234,7 @@ litArr = [10, 5, 3]
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i2r (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
 > [0.0, 2.0, 4.0]
 
 :p
@@ -518,7 +518,7 @@ litArr = [10, 5, 3]
 
 def eitherFloor (x:(Int|Float)) : Int = case x of
   Left i  -> i
-  Right f -> floor f
+  Right f -> FToI $ floor f
 
 :p eitherFloor (Right 1.2)
 > 1
@@ -533,8 +533,8 @@ def Weights (n:Type) (m:Type) : Type = n=>m=>Float
 def Biases  (n:Type)          : Type = n=>Float
 def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (i2r (ordinal i)) * 3.0 + (i2r (ordinal j))
-b = for j:(Fin 2). neg (i2r (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
+b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
 
 def flatten ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
@@ -616,8 +616,8 @@ for i:(Fin 2 & Fin 2). 1.0
 > (0@(Fin 2), 1@(Fin 2))
 
 for i:(Fin 5). for j:(..i).
-  ir = i2r $ ordinal i
-  jr = i2r $ ordinal j
+  ir = IToF $ ordinal i
+  jr = IToF $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
 > [ [0.0]@(..(0@Fin 5))
 > , [1.0, 2.0]@(..(1@Fin 5))
@@ -657,7 +657,7 @@ def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
 -- :p
 --   x = for i:(Fin 3). for j:(Fin 200). 1.0
 --   -- Last dimension split to allow for vector loads
---   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). i2r $ (iota _).(i,j,h)
+--   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
 --   z = snd $ withAccum \acc.
 --         for l.
 --           for i.

@@ -33,7 +33,7 @@ def reverse (n:Type) ?-> (a:Type) ?-> (x:n=>a) : n=>a =
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
   snd $ withState zero \total.
     for i:(Fin n).
-      total := get total + sample (ixkey k i) / i2r n
+      total := get total + sample (ixkey k i) / IToF n
 
 def positiveProjection (x:n=>Float) (y:n=>Float) : Bool = dot x y > 0.0
 
@@ -300,7 +300,7 @@ Camera = (Position & Float & Float)
 def cameraRays (n:Int) (camera:Camera) : Fin n => Fin n => (Key -> Ray) =
   -- images indexed from top-left
   (pos, halfWidth, sensorDist) = camera
-  pixHalfWidth = halfWidth / i2r n
+  pixHalfWidth = halfWidth / IToF n
   ys = reverse $ linspace (Fin n) (neg halfWidth) halfWidth
   xs =           linspace (Fin n) (neg halfWidth) halfWidth
   for i j. \key.

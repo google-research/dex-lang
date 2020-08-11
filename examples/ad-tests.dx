@@ -193,12 +193,12 @@ myOtherSquare : Float -> Float =
   jvp f 1.0 3.0
 > 6.0
 
-:p
-  f : Float -> Float = \x.
-    x * i2r (1 + 1)
-
-  jvp f 1.0 2.0
-> 4.0
+--:p
+--  f : Float -> Float = \x.
+--    x * IToF (1 + 1)
+--
+--  jvp f 1.0 2.0
+--> 4.0
 
 :p
   f : (Fin 2)=>Float -> Float =
