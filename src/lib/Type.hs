@@ -526,8 +526,16 @@ checkValidOpCoercion :: Type -> Type -> TypeM ()
 checkValidOpCoercion sourceTy destTy = case (sourceTy, destTy) of
   (BoolTy, PreludeBoolTy) -> return ()
   (PreludeBoolTy, BoolTy) -> return ()
-  (BaseTy (Scalar Int64Type  ), IntTy ) -> return ()
+  (BaseTy (Scalar Int64Type  ), IntTy  ) -> return ()
+  (BaseTy (Scalar Int32Type  ), IntTy  ) -> return ()
+  (BaseTy (Scalar Int8Type   ), IntTy  ) -> return ()
   (BaseTy (Scalar Float64Type), FloatTy) -> return ()
+  (BaseTy (Scalar Float32Type), FloatTy) -> return ()
+  (IntTy,   BaseTy (Scalar Int64Type  )) -> return ()
+  (IntTy,   BaseTy (Scalar Int32Type  )) -> return ()
+  (IntTy,   BaseTy (Scalar Int8Type   )) -> return ()
+  (FloatTy, BaseTy (Scalar Float64Type)) -> return ()
+  (FloatTy, BaseTy (Scalar Float32Type)) -> return ()
   _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
@@ -560,8 +568,12 @@ typeCheckOp op = case op of
   IndexAsInt i -> typeCheck i $> IntTy
   IdxSetSize i -> typeCheck i $> IntTy
   FFICall _ ansTy args -> do
-    -- We have no signatures for FFI functions so we just assume that the types are ok
-    mapM_ typeCheck args
+    forM_ args $ \arg -> do
+      argTy <- typeCheck arg
+      case argTy of
+        BaseTy _ -> return ()
+        _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
+                                    "fixed-width base types, but got: " ++ pprint argTy
     return $ BaseTy ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i

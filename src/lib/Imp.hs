@@ -226,8 +226,9 @@ toImpOp (maybeDest, op) = case op of
         ans <- emitInstr $ IPrimOp $ ScalarUnOp UnsafeIntToBool $ fromScalarAtom tag
         returnVal $ toScalarAtom BoolTy ans
       _ -> error $ "Not a prelude bool: " ++ pprint x
-    (BaseTy (Scalar Int64Type  ), IntTy ) -> castTo $ Scalar Int64Type
-    (BaseTy (Scalar Float64Type), FloatTy) -> castTo $ Scalar Float64Type
+    (_, BaseTy bt) -> castTo bt
+    (_, IntTy    ) -> castTo $ Scalar Int64Type
+    (_, FloatTy  ) -> castTo $ Scalar Float64Type
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
     where
       castTo bt = do

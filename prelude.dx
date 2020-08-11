@@ -12,7 +12,10 @@ Type = %TyKind
 Effects = %EffKind
 
 Int64 = %Int64
+Int32 = %Int32
+Int8  = %Int8
 Float64 = %Float64
+Float32 = %Float32
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
@@ -25,6 +28,19 @@ def ipow (x:Int) (y:Int) : Int = %ipow x y
 
 def fdiv (x:Float) (y:Float) : Float = %fdiv x y
 
+def internalCast (b:Type) (x:a) : b = %cast b x
+
+def FP64ToFP (x : Float64) : Float   = internalCast _ x
+def FP32ToFP (x : Float32) : Float   = internalCast _ x
+def FPToFP64 (x : Float)   : Float64 = internalCast _ x
+def FPToFP32 (x : Float)   : Float32 = internalCast _ x
+def I64ToI   (x : Int64)   : Int     = internalCast _ x
+def I32ToI   (x : Int32)   : Int     = internalCast _ x
+def I8ToI    (x : Int8 )   : Int     = internalCast _ x
+def IToI64   (x : Int)     : Int64   = internalCast _ x
+def IToI32   (x : Int)     : Int32   = internalCast _ x
+def IToI8    (x : Int)     : Int8    = internalCast _ x
+
 data Add a:Type =
   MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
 
@@ -32,9 +48,14 @@ def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
 def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
 def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
-@instance floatAdd : Add Float = MkAdd (\x:Float y:Float. %fadd x y) (\x y. %fsub x y) 0.0
-@instance intAdd  : Add Int  = MkAdd (\x:Int y:Int. %iadd x y)   (\x y. %isub x y) 0
-@instance unitAdd : Add Unit = MkAdd (\x y. ())                  (\x y. ())        ()
+@instance floatAdd   : Add Float   = MkAdd (\x:Float   y:Float.   %fadd x y) (\x y. %fsub x y) 0.0
+@instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FPToFP64 0.0)
+@instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FPToFP32 0.0)
+@instance intAdd     : Add Int     = MkAdd (\x:Int     y:Int.     %iadd x y) (\x y. %isub x y) 0
+@instance int64Add   : Add Int64   = MkAdd (\x:Int64   y:Int64.   %iadd x y) (\x y. %isub x y) (IToI64 0)
+@instance int32Add   : Add Int32   = MkAdd (\x:Int32   y:Int32.   %iadd x y) (\x y. %isub x y) (IToI32 0)
+@instance int8Add    : Add Int8    = MkAdd (\x:Int8    y:Int8.    %iadd x y) (\x y. %isub x y) (IToI8  0)
+@instance unitAdd    : Add Unit    = MkAdd (\x y. ())                        (\x y. ())        ()
 
 @instance tabAdd : Add a ?=> Add (n=>a) =
   (MkAdd ( \xs ys. for i. xs.i + ys.i )
@@ -76,8 +97,6 @@ data Bool =
   False
   True
 
-def internalCast (b:Type) (x:a) : b = %cast b x
-
 def (&&) (x:Bool) (y:Bool) : Bool =
   x' = internalCast InternalBool x
   y' = internalCast InternalBool y
@@ -117,9 +136,6 @@ def b2i (x:Bool) : Int  =
 def i2r (x:Int ) : Float = %inttofloat x
 def b2r (x:Bool) : Float = i2r (b2i x)
 def todo (a:Type) ?-> : a = %throwError a
-
-def fp64ToFp (x : Float64) : Float = internalCast _ x
-def i64ToI (x : Int64) : Int      = internalCast _ x
 
 'Effects
 
@@ -218,8 +234,12 @@ def round (x:Float) : Int = %round x
 def sqrt (x:Float) : Float = %sqrt x
 def pow (x:Float) (y:Float) : Float = %fpow x y
 
-def lgamma (x:Float) : Float = fp64ToFp $ %ffi lgamma Float64 x
-def log1p  (x:Float) : Float = fp64ToFp $ %ffi log1p  Float64 x
+def lgamma (x:Float) : Float =
+  x64 = FPToFP64 x
+  FP64ToFP $ %ffi lgamma Float64 x64
+def log1p  (x:Float) : Float =
+  x64 = FPToFP64 x
+  FP64ToFP $ %ffi log1p  Float64 x64
 def lbeta (x:Float) (y:Float) : Float = lgamma x + lgamma y - lgamma (x + y)
 
 'Working with index sets
@@ -314,10 +334,12 @@ def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
 'Functions for working with the pseudorandom number generator
 
 -- TODO: newtype
-Key = Int
+Key = Int64
 
-def hash (x:Key) (y:Int) : Key = i64ToI $ %ffi threefry2x32 Int64 x y
-def newKey (x:Int) : Key = hash 0 x
+def hash (x:Key) (y:Int) : Key =
+  y64 = IToI64 y
+  %ffi threefry2x32 Int64 x y64
+def newKey (x:Int) : Key = hash (IToI64 0) x
 def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
 def splitKey3 (k:Key) : (Key & Key & Key) =
   (k1, k') = splitKey k
@@ -327,7 +349,7 @@ def splitKey3 (k:Key) : (Key & Key & Key) =
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def rand (k:Key) : Float = fp64ToFp $ %ffi randunif Float64 k
+def rand (k:Key) : Float = FP64ToFP $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
