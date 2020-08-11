@@ -43,7 +43,7 @@ regress : (Float -> d=>Float) -> n=>Float -> n=>Float -> d=>Float =
 'Fit a third-order polynomial
 
 poly : Float -> d=>Float =
-  \x. for i. pow x (i2r (ordinal i))
+  \x. for i. pow x (IToF (ordinal i))
 
 params : (Fin 4)=>Float = regress poly xs ys
 

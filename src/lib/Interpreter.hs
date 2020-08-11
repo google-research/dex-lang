@@ -117,7 +117,7 @@ getFloat (FloatLit l) = getFloatLit l
 getFloat x = error $ "Expected a float atom, got: " ++ pprint x
 
 getBool :: Atom -> Bool
-getBool (BoolLit l) = getBoolLit l
+getBool (Con (Lit (Int8Lit p))) = p /= 0
 getBool x = error $ "Expected a bool atom, got: " ++ pprint x
 
 indexSetSize :: Type -> Int

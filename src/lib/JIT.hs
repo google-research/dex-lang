@@ -179,9 +179,6 @@ compilePrimOp pop = case pop of
 
 compileUnOp :: Monad m => UnOp -> Operand -> CompileT m Operand
 compileUnOp op x = case op of
-  BoolToInt       -> x `asIntWidth` longTy
-  UnsafeIntToBool -> x `asIntWidth` boolTy
-  IntToFloat       -> emitInstr floatTy $ L.SIToFP x floatTy []
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
   FNeg            -> emitInstr floatTy $ L.FSub mathFlags (litVal $ Float64Lit 0.0) x []
   BNot            -> emitInstr boolTy $ L.Xor x (1 `withWidth` 8) []
@@ -482,15 +479,9 @@ gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
       Cos   -> callFloatIntrinsic "__nv_cos"
       Tan   -> callFloatIntrinsic "__nv_tan"
       Sqrt  -> callFloatIntrinsic "__nv_sqrt"
-      Floor -> do
-        x' <- callFloatIntrinsic "__nv_floor"
-        emitInstr longTy $ L.FPToSI x' longTy []
-      Ceil  -> do
-        x' <- callFloatIntrinsic "__nv_ceil"
-        emitInstr longTy $ L.FPToSI x' longTy []
-      Round -> do
-        x' <- callFloatIntrinsic "__nv_round"
-        emitInstr longTy $ L.FPToSI x' longTy []
+      Floor -> callFloatIntrinsic "__nv_floor"
+      Ceil  -> callFloatIntrinsic "__nv_ceil"
+      Round -> callFloatIntrinsic "__nv_round"
       _   -> error $ "Unsupported GPU operation: " ++ show op
       where
         floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
@@ -580,6 +571,8 @@ compileGenericInstr compileBlock instr = case instr of
         LT -> emitInstr dt $ L.FPExt x dt []
         EQ -> return x
         GT -> emitInstr dt $ L.FPTrunc x dt []
+      (L.FloatingPointType _, L.IntegerType _) -> emitInstr dt $ L.FPToSI x dt []
+      (L.IntegerType _, L.FloatingPointType _) -> emitInstr dt $ L.SIToFP x dt []
       _ -> error $ "Unsupported cast"
   If p cons alt -> do
     p' <- compileExpr p >>= (`asIntWidth` i1)
@@ -750,15 +743,9 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
       Cos             -> callFloatIntrinsic "llvm.cos.f64"
       Tan             -> callFloatIntrinsic "tan"
       Sqrt            -> callFloatIntrinsic "llvm.sqrt.f64"
-      Floor           -> do
-        x' <- callFloatIntrinsic "llvm.floor.f64"
-        emitInstr longTy $ L.FPToSI x' longTy []
-      Ceil            -> do
-        x' <- callFloatIntrinsic "llvm.ceil.f64"
-        emitInstr longTy $ L.FPToSI x' longTy []
-      Round           -> do
-        x' <- callFloatIntrinsic "llvm.round.f64"
-        emitInstr longTy $ L.FPToSI x' longTy []
+      Floor           -> callFloatIntrinsic "llvm.floor.f64"
+      Ceil            -> callFloatIntrinsic "llvm.ceil.f64"
+      Round           -> callFloatIntrinsic "llvm.round.f64"
       _ -> error $ "Unsupported CPU operation: " ++ show op
       where
         floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]

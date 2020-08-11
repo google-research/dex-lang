@@ -30,16 +30,16 @@ def fdiv (x:Float) (y:Float) : Float = %fdiv x y
 
 def internalCast (b:Type) (x:a) : b = %cast b x
 
-def FP64ToFP (x : Float64) : Float   = internalCast _ x
-def FP32ToFP (x : Float32) : Float   = internalCast _ x
-def FPToFP64 (x : Float)   : Float64 = internalCast _ x
-def FPToFP32 (x : Float)   : Float32 = internalCast _ x
-def I64ToI   (x : Int64)   : Int     = internalCast _ x
-def I32ToI   (x : Int32)   : Int     = internalCast _ x
-def I8ToI    (x : Int8 )   : Int     = internalCast _ x
-def IToI64   (x : Int)     : Int64   = internalCast _ x
-def IToI32   (x : Int)     : Int32   = internalCast _ x
-def IToI8    (x : Int)     : Int8    = internalCast _ x
+def F64ToF (x : Float64) : Float   = internalCast _ x
+def F32ToF (x : Float32) : Float   = internalCast _ x
+def FToF64 (x : Float)   : Float64 = internalCast _ x
+def FToF32 (x : Float)   : Float32 = internalCast _ x
+def I64ToI (x : Int64)   : Int     = internalCast _ x
+def I32ToI (x : Int32)   : Int     = internalCast _ x
+def I8ToI  (x : Int8 )   : Int     = internalCast _ x
+def IToI64 (x : Int)     : Int64   = internalCast _ x
+def IToI32 (x : Int)     : Int32   = internalCast _ x
+def IToI8  (x : Int)     : Int8    = internalCast _ x
 
 data Add a:Type =
   MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
@@ -49,8 +49,8 @@ def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
 def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
 @instance floatAdd   : Add Float   = MkAdd (\x:Float   y:Float.   %fadd x y) (\x y. %fsub x y) 0.0
-@instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FPToFP64 0.0)
-@instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FPToFP32 0.0)
+@instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FToF64 0.0)
+@instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FToF32 0.0)
 @instance intAdd     : Add Int     = MkAdd (\x:Int     y:Int.     %iadd x y) (\x y. %isub x y) 0
 @instance int64Add   : Add Int64   = MkAdd (\x:Int64   y:Int64.   %iadd x y) (\x y. %isub x y) (IToI64 0)
 @instance int32Add   : Add Int32   = MkAdd (\x:Int32   y:Int32.   %iadd x y) (\x y. %isub x y) (IToI32 0)
@@ -89,27 +89,33 @@ def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
-
-InternalBool = %Bool
-
--- XXX: False must come before True for the later coercions to be correct.
 data Bool =
   False
   True
 
+def BToI8 (x : Bool) : Int8 =
+  case x of
+    False -> (IToI8 0)
+    True  -> (IToI8 1)
+
+def I8ToB (x : Int8) : Bool =
+  t = True
+  f = False
+  %select x t f
+
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = internalCast InternalBool x
-  y' = internalCast InternalBool y
-  internalCast _ $ %and x' y'
+  x' = BToI8 x
+  y' = BToI8 y
+  I8ToB $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = internalCast InternalBool x
-  y' = internalCast InternalBool y
-  internalCast _ $ %or x' y'
+  x' = BToI8 x
+  y' = BToI8 y
+  I8ToB $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = internalCast InternalBool x
-  internalCast _ $ %not x'
+  x' = BToI8 x
+  I8ToB $ %not x'
 
 'Sum types
 
@@ -130,11 +136,13 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   False -> y
 
 def b2i (x:Bool) : Int  =
-  x' = internalCast InternalBool x
-  %booltoint x'
+  case x of
+    False -> 0
+    True  -> 1
 
-def i2r (x:Int ) : Float = %inttofloat x
-def b2r (x:Bool) : Float = i2r (b2i x)
+def IToF (x:Int) : Float = internalCast _ x
+def FToI (x:Float) : Int = internalCast _ x
+def b2r (x:Bool) : Float = IToF (b2i x)
 def todo (a:Type) ?-> : a = %throwError a
 
 'Effects
@@ -186,14 +194,14 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance intEq  : Eq Int  = MkEq \x:Int y:Int.   internalCast _ $ %ieq x y
-@instance floatEq : Eq Float = MkEq \x:Float y:Float. internalCast _ $ %feq x y
-@instance unitEq : Eq Unit = MkEq \x y. True
+@instance intEq   : Eq Int   = MkEq \x:Int   y:Int.   I8ToB $ %ieq x y
+@instance floatEq : Eq Float = MkEq \x:Float y:Float. I8ToB $ %feq x y
+@instance unitEq  : Eq Unit  = MkEq \x y. True
 
-@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. internalCast _ $ %igt x y)
-                                             (\x y. internalCast _ $ %ilt x y))
-@instance floatOrd : Ord Float = (MkOrd floatEq (\x y. internalCast _ $ %fgt x y)
-                                             (\x y. internalCast _ $ %flt x y))
+@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. I8ToB $ %igt x y)
+                                             (\x y. I8ToB $ %ilt x y))
+@instance floatOrd : Ord Float = (MkOrd floatEq (\x y. I8ToB $ %fgt x y)
+                                                (\x y. I8ToB $ %flt x y))
 @instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False) (\x y. False)
 
 @instance
@@ -212,7 +220,7 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
   \xs ys.
     numDifferent : Float =
       snd $ withAccum \ref. for i.
-        ref += (i2r (b2i (xs.i /= ys.i)))
+        ref += (IToF (b2i (xs.i /= ys.i)))
     numDifferent == 0.0
 
 'Wrappers around C library functions
@@ -227,19 +235,19 @@ def sin (x:Float) : Float = %sin x
 def cos (x:Float) : Float = %cos x
 def tan (x:Float) : Float = %tan x
 
-def floor (x:Float) : Int = %floor x
-def ceil (x:Float) : Int = %ceil x
-def round (x:Float) : Int = %round x
+def floor (x:Float) : Float = %floor x
+def ceil  (x:Float) : Float = %ceil x
+def round (x:Float) : Float = %round x
 
 def sqrt (x:Float) : Float = %sqrt x
 def pow (x:Float) (y:Float) : Float = %fpow x y
 
 def lgamma (x:Float) : Float =
-  x64 = FPToFP64 x
-  FP64ToFP $ %ffi lgamma Float64 x64
+  x64 = FToF64 x
+  F64ToF $ %ffi lgamma Float64 x64
 def log1p  (x:Float) : Float =
-  x64 = FPToFP64 x
-  FP64ToFP $ %ffi log1p  Float64 x64
+  x64 = FToF64 x
+  F64ToF $ %ffi log1p  Float64 x64
 def lbeta (x:Float) (y:Float) : Float = lgamma x + lgamma y - lgamma (x + y)
 
 'Working with index sets
@@ -303,7 +311,7 @@ def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 def fsum (xs:n->Float) : Float = snd $ withAccum \ref. for i. ref += xs i
 def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
 def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
-def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / i2r (size n)
+def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
 def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
@@ -314,8 +322,8 @@ def applyN (n:Int) (x:a) (f:a -> a) : a =
     ref := f (get ref)
 
 def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
-  dx = (high - low) / i2r (size n)
-  for i:n. low + i2r (ordinal i) * dx
+  dx = (high - low) / IToF (size n)
+  for i:n. low + IToF (ordinal i) * dx
 
 def transpose (x:n=>m=>Float) : m=>n=>Float = for i j. x.j.i
 def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
@@ -349,7 +357,7 @@ def splitKey3 (k:Key) : (Key & Key & Key) =
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def rand (k:Key) : Float = FP64ToFP $ %ffi randunif Float64 k
+def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
@@ -361,7 +369,7 @@ def randn (k:Key) : Float =
 
 def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ floor $ unif * i2r (size n)
+  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
 
 def bern (p:Float) (k:Key) : Bool = rand k < p
 
@@ -426,7 +434,7 @@ def while
     (cond: Unit -> {|eff} Bool)
     (body: Unit -> {|eff} Unit)
     : {|eff} Unit =
-  cond' : Unit -> {|eff} InternalBool = \_. internalCast _ $ cond ()
+  cond' : Unit -> {|eff} Int8 = \_. BToI8 $ cond ()
   %while cond' body
 
 'Vector support

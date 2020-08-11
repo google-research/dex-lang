@@ -102,7 +102,7 @@ def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
 
 def randIdxNoZero (n:Type) -> (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ (1 + floor ( unif * i2r ((size n) - 1)))
+  fromOrdinal n $ (1 + (FToI (floor ( unif * IToF ((size n) - 1)))))
 
 vocab = Fin 6
 position = Fin 3

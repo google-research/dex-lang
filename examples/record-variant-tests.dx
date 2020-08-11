@@ -172,9 +172,9 @@ x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
 :p
   x : {a:Int | a:Float | b:Int} = {| a#1 = 3.0 |}
   case x of
-    {| a#0 = x |} -> i2r x
+    {| a#0 = x |} -> IToF x
     {| a#1 = x |} -> x
-    {| b = x |} -> i2r x
+    {| b = x |}   -> IToF x
 > 3.0
 
 'Table values and imp lowering
@@ -193,7 +193,7 @@ myRecordTable : (Fin 2)=>{a:Int & b:Float} =
 myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Float}
 :p myVariantTable
 > [{| a = 1 |}, {| b = 2.0 |}]
- 
+
 :p for i:(Fin 2).
     case myVariantTable.i of
       {| a=a |} -> {| b=a |}:{a:Float | b:Int}

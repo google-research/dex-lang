@@ -38,14 +38,14 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
-    getIntLit, asIntVal, getFloatLit, asFloatVal, getBoolLit, asBoolVal,
+    getIntLit, asIntVal, getFloatLit, asFloatVal, asBoolVal,
     pattern CharLit,
-    pattern IntLitExpr, pattern FloatLitExpr, pattern PreludeBoolTy,
+    pattern IntLitExpr, pattern FloatLitExpr,
     pattern IntLit, pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
+    pattern FixedIntRange, pattern RefTy, pattern IntTy,
     pattern FloatTy, pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow, pattern ArrayVal,
-    pattern FloatLit, pattern BoolLit, pattern TyKind, pattern LamVal,
+    pattern FloatLit, pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
@@ -234,7 +234,6 @@ data PrimExpr e =
 
 data PrimTC e =
         BaseType  BaseType
-      | BoolType
       | CharType
       | IntType
       | FloatType
@@ -256,7 +255,6 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | BoolCon e         -- Lifts a fixed-precision integer literal into the generic bool type
       | CharCon e
       | IntCon  e         -- Lifts a fixed-precision integer literal into the generic integer type
       | FloatCon e         -- Lifts a fixed-precision floating-point literal into the generic float type
@@ -318,8 +316,7 @@ data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
            | BAnd | BOr | IRem
              deriving (Show, Eq, Generic)
 
-data UnOp = IntToFloat | BoolToInt | UnsafeIntToBool
-          | Exp | Exp2
+data UnOp = Exp | Exp2
           | Log | Log2 | Log10
           | Sin | Cos | Tan | Sqrt
           | Floor | Ceil| Round
@@ -1149,17 +1146,11 @@ getFloatLit l = case l of
 asFloatVal :: Double -> Atom
 asFloatVal x = FloatLit $ Float64Lit x
 
-pattern BoolLit :: LitVal -> Atom
-pattern BoolLit x = Con (BoolCon (Con (Lit x)))
-
-getBoolLit :: LitVal -> Bool
-getBoolLit l = toEnum $ getIntLit l
-
-asBoolVal :: Bool -> Atom
-asBoolVal x = BoolLit $ Int8Lit $ fromIntegral $ fromEnum x
-
 pattern CharLit :: LitVal -> Atom
 pattern CharLit x = Con (CharCon (Con (Lit x)))
+
+asBoolVal :: Bool -> Atom
+asBoolVal x = Con $ Lit $ Int8Lit $ fromIntegral $ fromEnum x
 
 pattern ArrayVal :: Type -> Array -> Atom
 pattern ArrayVal t arr = Con (ArrayLit t arr)
@@ -1188,20 +1179,11 @@ pattern RefTy r a = TC (RefType r a)
 pattern IntTy :: Type
 pattern IntTy = TC IntType
 
-pattern BoolTy :: Type
-pattern BoolTy = TC BoolType
-
 pattern FloatTy :: Type
 pattern FloatTy = TC FloatType
 
 pattern CharTy :: Type
 pattern CharTy = TC CharType
-
-pattern PreludeBoolTy :: Type
-pattern PreludeBoolTy =
-  TypeCon (DataDef (GlobalName "Bool") Empty
-    [ DataConDef (GlobalName "False") Empty
-    , DataConDef (GlobalName "True") Empty]) []
 
 pattern TyKind :: Kind
 pattern TyKind = TC TypeKind
@@ -1293,8 +1275,6 @@ builtinNames = M.fromList
   , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("inttofloat", unOp IntToFloat)
-  , ("booltoint", unOp BoolToInt)
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("asidx"       , OpExpr $ IntAsIndex () ())
@@ -1305,6 +1285,7 @@ builtinNames = M.fromList
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
+  , ("select"     , OpExpr $ Select () () ())
   , ("while"           , HofExpr $ While () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
@@ -1315,7 +1296,6 @@ builtinNames = M.fromList
   , ("tiledd"          , HofExpr $ Tile 1 () ())
   , ("Int"     , TCExpr $ IntType)
   , ("Float"    , TCExpr $ FloatType)
-  , ("Bool"    , TCExpr $ BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("Float64" , TCExpr $ BaseType $ Scalar Float64Type)
   , ("Float32" , TCExpr $ BaseType $ Scalar Float32Type)

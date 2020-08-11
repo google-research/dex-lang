@@ -175,7 +175,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
     IntType        -> atPrec ArgPrec "Int"
-    BoolType       -> atPrec ArgPrec "Bool"
     CharType       -> atPrec ArgPrec "Char"
     FloatType       -> atPrec ArgPrec "Float"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
@@ -205,16 +204,14 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 
 instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
   prettyPrec con = case (Con con) of
-    IntLit  l | i <- getIntLit  l -> atPrec ArgPrec $ p i
+    IntLit   l | i <- getIntLit  l -> atPrec ArgPrec $ p i
     FloatLit l | r <- getFloatLit l -> atPrec ArgPrec $ printDouble r
-    BoolLit l | b <- getBoolLit l -> atPrec ArgPrec $ if b then "True" else "False"
-    CharLit l | c <- getIntLit  l -> atPrec ArgPrec $ p $ show $ toEnum @Char c
+    CharLit  l | c <- getIntLit  l -> atPrec ArgPrec $ p $ show $ toEnum @Char c
     _                             -> prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
-  BoolCon e   -> atPrec LowestPrec $ "Bool" <+> pApp e
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
   IntCon  e   -> atPrec LowestPrec $ "Int"  <+> pApp e
   FloatCon e   -> atPrec LowestPrec $ "Float" <+> pApp e
