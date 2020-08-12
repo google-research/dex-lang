@@ -180,7 +180,6 @@ linearizedDiv x y tx ty = do
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
   Lit _      -> LinA $ return $ withZeroTangent $ Con con
-  FloatCon _  -> LinA $ return $ withZeroTangent $ Con con
   PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
   _ -> error $ "not implemented: " ++ pprint con
 
@@ -210,12 +209,10 @@ withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))
 tangentType :: Type -> Type
 tangentType (TabTy n a) = TabTy n (tangentType a)
 tangentType (TC con) = case con of
-  FloatType                      -> TC con
   BaseType (Scalar Float64Type) -> TC con
   BaseType (Scalar Float32Type) -> TC con
   BaseType (Vector Float64Type) -> TC con
   BaseType (Vector Float32Type) -> TC con
-  IntType                       -> UnitTy
   BaseType   _                  -> UnitTy
   IntRange   _ _                -> UnitTy
   IndexRange _ _ _              -> UnitTy

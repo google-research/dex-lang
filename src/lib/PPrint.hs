@@ -174,9 +174,7 @@ instance PrettyPrec e => Pretty (PrimTC e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
-    IntType        -> atPrec ArgPrec "Int"
     CharType       -> atPrec ArgPrec "Char"
-    FloatType       -> atPrec ArgPrec "Float"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
@@ -204,17 +202,13 @@ instance PrettyPrec e => PrettyPrec (PrimCon e) where
 
 instance {-# OVERLAPPING #-} PrettyPrec (PrimCon Atom) where
   prettyPrec con = case (Con con) of
-    IntLit   l | i <- getIntLit  l -> atPrec ArgPrec $ p i
-    FloatLit l | r <- getFloatLit l -> atPrec ArgPrec $ printDouble r
-    CharLit  l | c <- getIntLit  l -> atPrec ArgPrec $ p $ show $ toEnum @Char c
-    _                             -> prettyPrecPrimCon con
+    CharLit c -> atPrec ArgPrec $ p $ show $ toEnum @Char $ fromIntegral c
+    _         -> prettyPrecPrimCon con
 
 prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
-  IntCon  e   -> atPrec LowestPrec $ "Int"  <+> pApp e
-  FloatCon e   -> atPrec LowestPrec $ "Float" <+> pApp e
   ArrayLit _ array -> atPrec ArgPrec $ p array
   PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"

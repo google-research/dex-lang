@@ -139,7 +139,7 @@ toImpOp (maybeDest, op) = case op of
   TabCon (TabTy b _) rows -> do
     dest <- allocDest maybeDest resultTy
     forM_ (zip [0..] rows) $ \(i, row) -> do
-      ithDest <- destGet dest =<< intToIndex (binderType b) (asImpInt i)
+      ithDest <- destGet dest =<< intToIndex (binderType b) (fromScalarAtom $ IdxRepVal i)
       copyAtom ithDest row
     destToAtom dest
   Fst ~(PairVal x _) -> returnVal x
@@ -162,7 +162,7 @@ toImpOp (maybeDest, op) = case op of
     ans <- emitInstr $ IPrimOp $
              FFICall "int_to_index_set" (Scalar Int64Type) [i', n']
     returnVal =<< intToIndex resultTy ans
-  IdxSetSize n -> returnVal . toScalarAtom resultTy =<< indexSetSize n
+  IdxSetSize n -> returnVal . toScalarAtom IdxRepTy =<< indexSetSize n
   IndexAsInt idx -> asInt $ case idx of
       Con (AnyValue t) -> anyValue t
       _                -> idx
@@ -170,13 +170,13 @@ toImpOp (maybeDest, op) = case op of
       asInt a = case a of
         Con (Coerce (TC (IntRange   _ _  )) i) -> returnVal $ i
         Con (Coerce (TC (IndexRange _ _ _)) i) -> returnVal $ i
-        _ -> returnVal . toScalarAtom IntTy =<< indexToInt (getType idx) idx
+        _ -> returnVal . toScalarAtom IdxRepTy =<< indexToInt (getType idx) idx
   Inject e -> do
     let rt@(TC (IndexRange t low _)) = getType e
     offset <- case low of
       InclusiveLim a -> indexToInt t a
-      ExclusiveLim a -> indexToInt t a >>= iaddI (asImpInt 1)
-      Unlimited      -> return (asImpInt 0)
+      ExclusiveLim a -> indexToInt t a >>= iaddI (fromScalarAtom $ IdxRepVal 1)
+      Unlimited      -> return (fromScalarAtom $ IdxRepVal 0)
     restrictIdx <- indexToInt rt e
     idx <- iaddI restrictIdx offset
     returnVal =<< intToIndex t idx
@@ -208,7 +208,7 @@ toImpOp (maybeDest, op) = case op of
     i <- iaddI (fromScalarAtom tileOffset) i'
     returnVal =<< intToIndex n i
   SliceCurry ~(Con (Coerce (TC (IndexSlice _ (PairTy u v))) tileOffset)) idx -> do
-    vz <- intToIndex v $ asImpInt 0
+    vz <- intToIndex v $ fromScalarAtom $ IdxRepVal 0
     extraOffset <- indexToInt (PairTy u v) (PairVal idx vz)
     tileOffset' <- iaddI (fromScalarAtom tileOffset) extraOffset
     returnVal $ toScalarAtom resultTy tileOffset'
@@ -216,19 +216,14 @@ toImpOp (maybeDest, op) = case op of
     emitStatement (IDo, IThrowError)
     return $ Con $ AnyValue ty
   CastOp destTy x -> case (getType x, destTy) of
-    (_, BaseTy bt) -> castTo bt
-    (_, IntTy    ) -> castTo $ Scalar Int64Type
-    (_, FloatTy  ) -> castTo $ Scalar Float64Type
+    (BaseTy _, BaseTy bt) -> returnVal =<< toScalarAtom destTy <$> cast (fromScalarAtom x) bt
     _ -> error $ "Invalid cast: " ++ pprint (getType x) ++ " -> " ++ pprint destTy
-    where
-      castTo bt = do
-        result <- cast (fromScalarAtom x) bt
-        returnVal $ toScalarAtom destTy result
   Select p x y -> do
     dest <- allocDest maybeDest resultTy
-    p' <- cast (fromScalarAtom p) $ Scalar Int64Type
+    p' <- cast (fromScalarAtom p) tagBT
     emitSwitch p' [copyAtom dest y, copyAtom dest x]
     destToAtom dest
+    where (BaseTy tagBT) = TagRepTy
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -262,7 +257,7 @@ toImpHof env (maybeDest, hof) = do
       epilogueOff <- nTiles `imulI` tileLen
       nEpilogue   <- n `isubI` epilogueOff
       emitLoop (binderNameHint tb) Fwd nTiles $ \iTile -> do
-        tileOffset <- toScalarAtom IntTy <$> iTile `imulI` tileLen
+        tileOffset <- toScalarAtom IdxRepTy <$> iTile `imulI` tileLen
         let tileAtom = Con $ Coerce tileTy tileOffset
         tileDest <- destSliceDim dest d tileOffset tileIdxTy
         void $ toImpBlock (env <> tb @> tileAtom) (Just tileDest, tBody)
@@ -409,11 +404,9 @@ destToAtom' fScalar scalar (Dest destAtom) = case destAtom of
   Con destCon -> Con <$> case destCon of
     PairCon dl dr              -> PairCon <$> rec dl <*> rec dr
     UnitCon                    -> return $ UnitCon
-    Coerce (ArrayTy IntTy ) d  -> IntCon   <$> rec d
-    Coerce (ArrayTy FloatTy) d -> FloatCon  <$> rec d
     Coerce (ArrayTy CharTy) d  -> CharCon  <$> rec d
     Coerce (ArrayTy t     ) d  -> Coerce t <$> rec d
-    SumAsProd ty tag xs -> SumAsProd ty <$> rec tag <*> mapM (mapM rec) xs
+    SumAsProd ty tag xs        -> SumAsProd ty <$> rec tag <*> mapM (mapM rec) xs
     _ -> unreachable
   _ -> unreachable
   where
@@ -459,15 +452,7 @@ splitDest (maybeDest, (Block decls ans)) = do
         (PairCon ld rd , PairCon lr rr ) -> gatherVarDests (Dest ld) lr >>
                                             gatherVarDests (Dest rd) rr
         (UnitCon       , UnitCon       ) -> return ()
-        (Coerce (ArrayTy IntTy ) d, IntCon a ) -> case getType a of
-          BaseTy (Scalar Int64Type)   -> gatherVarDests (Dest d) a
-          _                           -> tell [(dest, result)]
-        (Coerce (ArrayTy FloatTy) d, FloatCon a) -> case getType a of
-          BaseTy (Scalar Float64Type) -> gatherVarDests (Dest d) a
-          _                           -> tell [(dest, result)]
-        (Coerce (ArrayTy CharTy) d, CharCon a) -> case getType a of
-          BaseTy (Scalar Int8Type)    -> gatherVarDests (Dest d) a
-          _                           -> tell [(dest, result)]
+        (Coerce (ArrayTy CharTy) d, CharCon a) -> gatherVarDests (Dest d) a
         (Coerce _ db   , Coerce _ rb   ) -> gatherVarDests (Dest db) rb
         _ -> unreachable
       _ -> unreachable
@@ -506,13 +491,13 @@ makeDest nameHint destType = do
               dests <- mapM (rec . binderType) $ toList bs
               return $ DataCon def params 0 dests
             _ -> do
-              tag <- rec IntTy
+              tag <- rec TagRepTy
               let dcs' = applyDataDefParams def params
               contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
         RecordTy types -> Record <$> forM types rec
         VariantTy types -> do
-          tag <- rec IntTy
+          tag <- rec TagRepTy
           contents <- forM (toList types) rec
           return $ Con $ SumAsProd ty tag $ map (\x->[x]) contents
         TabTy v bt ->
@@ -528,13 +513,11 @@ makeDest nameHint destType = do
                 let (ArrayTy tabTy) = getType arr
                 offset <- tabTy `offsetToE` ordinal
                 arrOffset arr idx offset
-          IntType          -> scalarCoerce Int64Type
-          FloatType        -> scalarCoerce Float64Type
           CharType         -> scalarCoerce Int8Type
           PairType a b     -> PairVal <$> rec a <*> rec b
           UnitType         -> return UnitVal
-          IntRange   _ _   -> recCoerce IntTy
-          IndexRange _ _ _ -> recCoerce IntTy
+          IntRange   _ _   -> recCoerce IdxRepTy
+          IndexRange _ _ _ -> recCoerce IdxRepTy
           _ -> unreachable
         _ -> unreachable
       where
@@ -551,13 +534,9 @@ fromScalarAtom atom = case atom of
   Con (Lit x)       -> ILit x
   Con (Coerce _ x)  -> fromScalarAtom x
   Con (AnyValue ty) -> fromScalarAtom $ anyValue ty
-  -- TODO: Handle AnyValue inside the constructors?
-  Con (IntCon  (Con (Lit l)))  -> ILit $ Int64Lit   $ fromIntegral $ getIntLit l
-  Con (FloatCon (Con (Lit l)))  -> ILit $ Float64Lit $ getFloatLit l
-  Con (CharCon (Con (Lit l)))  -> ILit $ Int8Lit    $ fromIntegral $ getIntLit l
-  Con (IntCon  (Var (v :> (BaseTy (Scalar Int64Type)))))   -> IVar (v :> IValType (Scalar Int64Type))
-  Con (FloatCon (Var (v :> (BaseTy (Scalar Float64Type))))) -> IVar (v :> IValType (Scalar Float64Type))
-  Con (CharCon (Var (v :> (BaseTy (Scalar Int8Type)))))    -> IVar (v :> IValType (Scalar Int8Type))
+  -- TODO: Handle AnyValue inside the constructor?
+  Con (CharCon (Con (Lit l)))                           -> ILit $ Int8Lit    $ fromIntegral $ getIntLit l
+  Con (CharCon (Var (v :> (BaseTy (Scalar Int8Type))))) -> IVar (v :> IValType (Scalar Int8Type))
   _ -> error $ "Expected scalar, got: " ++ pprint atom
 
 toScalarAtom :: Type -> IExpr -> Atom
@@ -566,12 +545,10 @@ toScalarAtom ty ie = case ty of
     ILit l                            -> Con $ Lit l
     IVar (v :> IValType b') | b == b' -> Var (v :> ty)
     _ -> unreachable
-  IntTy   -> Con $ IntCon   $ toScalarAtom (BaseTy $ Scalar Int64Type  ) ie
-  FloatTy -> Con $ FloatCon $ toScalarAtom (BaseTy $ Scalar Float64Type) ie
-  CharTy  -> Con $ CharCon  $ toScalarAtom (BaseTy $ Scalar Int8Type   ) ie
-  TC (IntRange _ _)     -> Con $ Coerce ty $ toScalarAtom IntTy ie
-  TC (IndexRange _ _ _) -> Con $ Coerce ty $ toScalarAtom IntTy ie
-  TC (IndexSlice _ _)   -> Con $ Coerce ty $ toScalarAtom IntTy ie
+  CharTy -> Con $ CharCon  $ toScalarAtom (BaseTy $ Scalar Int8Type) ie
+  TC (IntRange _ _)     -> Con $ Coerce ty $ toScalarAtom IdxRepTy ie
+  TC (IndexRange _ _ _) -> Con $ Coerce ty $ toScalarAtom IdxRepTy ie
+  TC (IndexSlice _ _)   -> Con $ Coerce ty $ toScalarAtom IdxRepTy ie
   _ -> unreachable
   where
     unreachable = error $ "Cannot convert " ++ show ie ++ " to " ++ show ty
@@ -594,7 +571,7 @@ fromEmbed m = do
   toImpBlock mempty (Nothing, fst $ runEmbed (buildScoped m) scope)
 
 intToIndex :: Type -> IExpr -> ImpM Atom
-intToIndex ty i   = fromEmbed (intToIndexE ty (toScalarAtom IntTy i))
+intToIndex ty i   = fromEmbed (intToIndexE ty (toScalarAtom IdxRepTy i))
 
 indexToInt :: Type -> Atom -> ImpM IExpr
 indexToInt ty idx = fromScalarAtom <$> fromEmbed (indexToIntE ty idx)
@@ -606,11 +583,11 @@ elemCount :: ScalarTableType -> ImpM IExpr
 elemCount ty      = fromScalarAtom <$> fromEmbed (elemCountE ty)
 
 offsetTo :: ScalarTableType -> IExpr -> ImpM IExpr
-offsetTo ty i     = fromScalarAtom <$> fromEmbed (offsetToE ty (toScalarAtom IntTy i))
+offsetTo ty i     = fromScalarAtom <$> fromEmbed (offsetToE ty (toScalarAtom IdxRepTy i))
 
 elemCountE :: MonadEmbed m => ScalarTableType -> m Atom
 elemCountE ty = case ty of
-  BaseTy _  -> return $ IntLit $ Int64Lit 1
+  BaseTy _  -> return $ IdxRepVal 1
   TabTy b _ -> offsetToE ty =<< indexSetSizeE (binderType b)
   _ -> error $ "Not a scalar table type: " ++ pprint ty
 
@@ -644,19 +621,17 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   (Var d, Var a)           | varType d == ArrayTy (varType a)    -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Var d, Con (Lit _))     | varType d == ArrayTy (getType atom) -> f (fromArrayAtom destAtom) (fromScalarAtom atom)
   (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
-    recDest tag (IntLit $ Int64Lit $ fromIntegral con)
+    recDest tag (TagRepVal $ fromIntegral con)
     zipWithM_ recDest (payload !! con) x
   (Con (SumAsProd _ tag payload), Variant types label i x) -> do
     let LabeledItems ixtypes = enumerate types
     let index = fst $ (ixtypes M.! label) !! i
-    recDest tag (IntLit $ Int64Lit $ fromIntegral index)
+    recDest tag (TagRepVal $ fromIntegral index)
     zipWithM_ recDest (payload !! index) [x]
   (Con dcon, Con acon) -> case (dcon, acon) of
     (PairCon ld rd, PairCon la ra) -> rec (Dest ld) la >> rec (Dest rd) ra
     (UnitCon      , UnitCon      ) -> return ()
-    (Coerce (ArrayTy IntTy ) d, IntCon _ )   -> f (fromArrayAtom d) (fromScalarAtom atom)
-    (Coerce (ArrayTy FloatTy) d, FloatCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
-    (Coerce (ArrayTy CharTy) d, CharCon _)   -> f (fromArrayAtom d) (fromScalarAtom atom)
+    (Coerce (ArrayTy CharTy) d, CharCon _) -> f (fromArrayAtom d) (fromScalarAtom atom)
     (Coerce _ d   , Coerce _ a   ) -> rec (Dest d) a
     (SumAsProd _ tag xs, SumAsProd _ tag' xs') -> do
       recDest tag tag'
@@ -699,20 +674,22 @@ addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar
 
 -- === Imp embedding ===
 
-embedBinOp :: (Atom -> Atom -> Embed Atom) -> Type -> Type -> (IExpr -> IExpr -> ImpM IExpr)
-embedBinOp f xt yt x y = fromScalarAtom <$> fromEmbed (f (toScalarAtom xt x) (toScalarAtom yt y))
+embedBinOp :: (Atom -> Atom -> Embed Atom) -> (IExpr -> IExpr -> ImpM IExpr)
+embedBinOp f x y =
+  fromScalarAtom <$> fromEmbed (f (toScalarAtom (BaseTy bt) x) (toScalarAtom (BaseTy bt) y))
+  where (IValType bt) = impExprType x
 
 iaddI :: IExpr -> IExpr -> ImpM IExpr
-iaddI = embedBinOp iadd IntTy IntTy
+iaddI = embedBinOp iadd
 
 isubI :: IExpr -> IExpr -> ImpM IExpr
-isubI = embedBinOp isub IntTy IntTy
+isubI = embedBinOp isub
 
 imulI :: IExpr -> IExpr -> ImpM IExpr
-imulI = embedBinOp imul IntTy IntTy
+imulI = embedBinOp imul
 
 idivI :: IExpr -> IExpr -> ImpM IExpr
-idivI = embedBinOp idiv IntTy IntTy
+idivI = embedBinOp idiv
 
 impGet :: IExpr -> IExpr -> ImpM IExpr
 impGet ref i = case ref of
@@ -772,7 +749,8 @@ emitSwitch testIdx = rec 0
     rec _ [] = error "Shouldn't have an empty list of alternatives"
     rec _ [body] = body
     rec curIdx (body:rest) = do
-      cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx (asImpInt curIdx)
+      let curTag = fromScalarAtom $ TagRepVal $ fromIntegral curIdx
+      cond <- emitInstr $ IPrimOp $ ScalarBinOp (ICmp Equal) testIdx curTag
       thisCase   <- liftM snd $ scopedBlock $ body
       otherCases <- liftM snd $ scopedBlock $ rec (curIdx + 1) rest
       emitStatement (IDo, If cond thisCase otherCases)
@@ -780,7 +758,7 @@ emitSwitch testIdx = rec 0
 emitLoop :: Name -> Direction -> IExpr -> (IExpr -> ImpM ()) -> ImpM ()
 emitLoop hint d n body = do
   (i, loopBody) <- scopedBlock $ do
-    i <- freshVar (hint:>IIntTy)
+    i <- freshVar (hint:>impExprType n)
     body $ IVar i
     return i
   emitStatement (IDo, Loop d (Bind i) n loopBody)
@@ -854,7 +832,7 @@ instrTypeChecked instr = case instr of
     checkInt size
     checkBinder i
     assertEq (binderAnn i) (impExprType size) $ "Mismatch between the loop iterator and upper bound type"
-    extendR (i @> IIntTy) $ checkProg block
+    extendR (i @> impExprType size) $ checkProg block
     return IVoidType
   IWhile cond (ImpProg body) -> do
     condRefTy <- checkIExpr cond
@@ -863,7 +841,7 @@ instrTypeChecked instr = case instr of
     return IVoidType
   If predicate (ImpProg consequent) (ImpProg alternative) -> do
     predTy <- checkIExpr predicate
-    assertEq IBoolTy predTy "Type mismatch in predicate"
+    assertEq (IValType $ Scalar Int8Type) predTy "Type mismatch in predicate"
     checkProg consequent
     checkProg alternative
     return IVoidType
@@ -971,15 +949,6 @@ impOpType pop = case pop of
     where (IValType (Vector ty)) = impExprType x
   _ -> unreachable
   where unreachable = error $ "Not allowed in Imp IR: " ++ pprint pop
-
-pattern IIntTy :: IType
-pattern IIntTy = IValType (Scalar Int64Type)
-
-pattern IBoolTy :: IType
-pattern IBoolTy = IValType (Scalar Int8Type)
-
-asImpInt :: Int -> IExpr
-asImpInt x = ILit (Int64Lit (fromIntegral x))
 
 instance Pretty Dest where
   pretty (Dest atom) = "Dest" <+> pretty atom
