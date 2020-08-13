@@ -17,4 +17,3 @@ scratch/
 test-scratch/
 dist-newstyle/
 *.cache
-*.bc

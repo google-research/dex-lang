@@ -27,26 +27,20 @@ endif
 
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = --flag dex:cuda
-CFLAGS = -std=c11 -I/usr/local/cuda/include -DDEX_CUDA -O3
 endif
 
 .PHONY: all
 all: build
 
 # type-check only
-tc: dexrt-llvm
+tc:
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
-build: dexrt-llvm
+build:
 	$(STACK) build $(STACK_FLAGS)
 
-build-prof: dexrt-llvm
+build-prof:
 	$(STACK) build $(PROF)
-
-dexrt-llvm: src/lib/dexrt.bc
-
-%.bc: %.c
-	clang $(CFLAGS) -c -emit-llvm $^ -o $@
 
 # --- running tets ---
 
