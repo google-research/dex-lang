@@ -235,12 +235,10 @@ g1 : (a -> Int) -> (a -> Int) = \x. x
 > ((a:Type) ?-> (a -> Int64) -> a -> Int64)
 
 g2 : a -> a = \x. idiv x x
-> Type error:
-> Expected: Int64
->   Actual: a
+> Type error:Couldn't synthesize a class dictionary for: (Integral a)
 >
 > g2 : a -> a = \x. idiv x x
->                        ^^
+>                   ^^^^^
 
 h : (a -> b) -> (a -> b) = \x. x
 
@@ -248,12 +246,10 @@ h : (a -> b) -> (a -> b) = \x. x
 > ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
 fun : a -> a = \x. sin x
-> Type error:
-> Expected: Float64
->   Actual: a
+> Type error:Couldn't synthesize a class dictionary for: (Floating a)
 >
 > fun : a -> a = \x. sin x
->                        ^
+>                    ^^^^
 
 data NewPair a:Type b:Type = MkNewPair a b
 

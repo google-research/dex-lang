@@ -5,7 +5,7 @@ estimatePiArea : Key -> Float = \key.
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0
-  4.0 * b2r inBounds
+  4.0 * BToF inBounds
 
 estimatePiAvgVal : Key -> Float = \key.
   x = rand key
