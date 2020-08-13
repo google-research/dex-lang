@@ -799,7 +799,7 @@ checkBinOp op x y = do
     (argTy, retTy) = case op of
       IAdd   -> (ia, sr);  ISub   -> (ia, sr)
       IMul   -> (ia, sr);  IDiv   -> (ia, sr)
-      IRem   -> (ia, sr);  IPow   -> (ia, sr)
+      IRem   -> (ia, sr);
       ICmp _ -> (ia, br)
       FAdd   -> (fa, sr);  FSub   -> (fa, sr)
       FMul   -> (fa, sr);  FDiv   -> (fa, sr);
@@ -823,6 +823,7 @@ checkUnOp op x = do
       Log              -> (f, sr)
       Log2             -> (f, sr)
       Log10            -> (f, sr)
+      Log1p            -> (f, sr)
       Sin              -> (f, sr)
       Cos              -> (f, sr)
       Tan              -> (f, sr)
@@ -830,6 +831,7 @@ checkUnOp op x = do
       Floor            -> (f, sr)
       Ceil             -> (f, sr)
       Round            -> (f, sr)
+      LGamma           -> (f, sr)
       FNeg             -> (f, sr)
       BNot             -> (b, sr)
       where

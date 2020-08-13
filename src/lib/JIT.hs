@@ -188,7 +188,6 @@ compileBinOp op x y = case op of
   IMul   -> emitInstr longTy $ L.Mul False False x y []
   IDiv   -> emitInstr longTy $ L.SDiv False x y []
   IRem   -> emitInstr longTy $ L.SRem x y []
-  IPow   -> binaryIntrinsic IPow x y
   FPow   -> binaryIntrinsic FPow x y
   FAdd   -> emitInstr floatTy $ L.FAdd mathFlags x y []
   FSub   -> emitInstr floatTy $ L.FSub mathFlags x y []
@@ -411,18 +410,20 @@ gpuInitCompileEnv :: Monad m => CompileEnv m
 gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
   where
     gpuUnaryIntrinsics op x = case op of
-      Exp   -> callFloatIntrinsic "__nv_exp"
-      Exp2  -> callFloatIntrinsic "__nv_exp2"
-      Log   -> callFloatIntrinsic "__nv_log"
-      Log2  -> callFloatIntrinsic "__nv_log2"
-      Log10 -> callFloatIntrinsic "__nv_log10"
-      Sin   -> callFloatIntrinsic "__nv_sin"
-      Cos   -> callFloatIntrinsic "__nv_cos"
-      Tan   -> callFloatIntrinsic "__nv_tan"
-      Sqrt  -> callFloatIntrinsic "__nv_sqrt"
-      Floor -> callFloatIntrinsic "__nv_floor"
-      Ceil  -> callFloatIntrinsic "__nv_ceil"
-      Round -> callFloatIntrinsic "__nv_round"
+      Exp    -> callFloatIntrinsic "__nv_exp"
+      Exp2   -> callFloatIntrinsic "__nv_exp2"
+      Log    -> callFloatIntrinsic "__nv_log"
+      Log2   -> callFloatIntrinsic "__nv_log2"
+      Log10  -> callFloatIntrinsic "__nv_log10"
+      Log1p  -> callFloatIntrinsic "__nv_log1p"
+      Sin    -> callFloatIntrinsic "__nv_sin"
+      Cos    -> callFloatIntrinsic "__nv_cos"
+      Tan    -> callFloatIntrinsic "__nv_tan"
+      Sqrt   -> callFloatIntrinsic "__nv_sqrt"
+      Floor  -> callFloatIntrinsic "__nv_floor"
+      Ceil   -> callFloatIntrinsic "__nv_ceil"
+      Round  -> callFloatIntrinsic "__nv_round"
+      LGamma -> callFloatIntrinsic "__nv_lgamma"
       _   -> error $ "Unsupported GPU operation: " ++ show op
       where
         floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
@@ -701,6 +702,7 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
       Log             -> callFloatIntrinsic "llvm.log.f64"
       Log2            -> callFloatIntrinsic "llvm.log2.f64"
       Log10           -> callFloatIntrinsic "llvm.log10.f64"
+      Log1p           -> callFloatIntrinsic "log1p"
       Sin             -> callFloatIntrinsic "llvm.sin.f64"
       Cos             -> callFloatIntrinsic "llvm.cos.f64"
       Tan             -> callFloatIntrinsic "tan"
@@ -708,6 +710,7 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
       Floor           -> callFloatIntrinsic "llvm.floor.f64"
       Ceil            -> callFloatIntrinsic "llvm.ceil.f64"
       Round           -> callFloatIntrinsic "llvm.round.f64"
+      LGamma          -> callFloatIntrinsic "lgamma"
       _ -> error $ "Unsupported CPU operation: " ++ show op
       where
         floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]

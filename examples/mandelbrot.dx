@@ -27,7 +27,7 @@ inBounds : Complex -> Bool =
 escapeTime : Complex -> Float =
   \c. fst $ fold (0.0, czero) $ \i:(Fin 1000) (n, z).
      z' = update c z
-     (n + b2r (inBounds z'), z')
+     (n + BToF (inBounds z'), z')
 
 'Evaluate on a grid and plot the results
 

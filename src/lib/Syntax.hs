@@ -353,15 +353,16 @@ data PrimHof e =
 data PrimEffect e = MAsk | MTell e | MGet | MPut e
     deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
-data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
+data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp
            | FAdd | FSub | FMul | FDiv | FCmp CmpOp | FPow
            | BAnd | BOr | IRem
              deriving (Show, Eq, Generic)
 
 data UnOp = Exp | Exp2
-          | Log | Log2 | Log10
+          | Log | Log2 | Log10 | Log1p
           | Sin | Cos | Tan | Sqrt
-          | Floor | Ceil| Round
+          | Floor | Ceil | Round
+          | LGamma
           | FNeg | BNot
             deriving (Show, Eq, Generic)
 
@@ -1403,7 +1404,7 @@ builtinNames = M.fromList
   , ("imul", binOp IMul), ("fdiv", binOp FDiv)
   , ("fadd", binOp FAdd), ("fsub", binOp FSub)
   , ("fmul", binOp FMul), ("idiv", binOp IDiv)
-  , ("ipow", binOp IPow), ("irem", binOp IRem)
+  , ("irem", binOp IRem)
   , ("fpow", binOp FPow)
   , ("and" , binOp BAnd), ("or"  , binOp BOr ), ("not" , unOp BNot)
   , ("ieq" , binOp (ICmp Equal  )), ("feq", binOp (FCmp Equal  ))
@@ -1415,6 +1416,7 @@ builtinNames = M.fromList
   , ("sin" , unOp  Sin), ("cos" , unOp Cos)
   , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
+  , ("log1p", unOp Log1p), ("lgamma", unOp LGamma)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
