@@ -4,7 +4,12 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
+{-# LANGUAGE Rank2Types #-}
+
 module Interpreter (evalBlock, indices, indexSetSize, evalEmbed) where
+
+import Data.Foldable
+import Data.Int
 
 import Array
 import Cat
@@ -13,12 +18,11 @@ import Env
 import PPrint
 import Embed
 import Type
-import Data.Foldable
 import Util (restructure)
 
 -- TODO: can we make this as dynamic as the compiled version?
-foreign import ccall "randunif"      c_unif     :: Int -> Double
-foreign import ccall "threefry2x32"  c_threefry :: Int -> Int -> Int
+foreign import ccall "randunif"      c_unif     :: Int64 -> Double
+foreign import ccall "threefry2x32"  c_threefry :: Int64 -> Int64 -> Int64
 
 evalBlock :: SubstEnv -> Block -> Atom
 evalBlock env (Block decls result) = do
@@ -54,32 +58,31 @@ evalOp expr = case expr of
 evalOpDefined :: Op -> Atom
 evalOpDefined expr = case expr of
   ScalarBinOp op x y -> case op of
-    IAdd -> asIntVal  $ x' + y'       where x' = getInt x ; y' = getInt y
-    ISub -> asIntVal  $ x' - y'       where x' = getInt x ; y' = getInt y
-    IMul -> asIntVal  $ x' * y'       where x' = getInt x ; y' = getInt y
-    IDiv -> asIntVal  $ x' `div` y'   where x' = getInt x ; y' = getInt y
-    IRem -> asIntVal  $ x' `rem` y'   where x' = getInt x ; y' = getInt y
-    FAdd -> asFloatVal $ x' + y'       where x' = getFloat x; y' = getFloat y
-    FSub -> asFloatVal $ x' - y'       where x' = getFloat x; y' = getFloat y
-    FMul -> asFloatVal $ x' * y'       where x' = getFloat x; y' = getFloat y
-    FDiv -> asFloatVal $ x' / y'       where x' = getFloat x; y' = getFloat y
-    ICmp cmp -> asBoolVal $ case cmp of
-      Less         -> x' <  y'
-      Greater      -> x' >  y'
-      Equal        -> x' == y'
-      LessEqual    -> x' <= y'
-      GreaterEqual -> x' >= y'
-      where x' = getInt x; y' = getInt y
+    IAdd -> applyIntBinOp   (+) x y
+    ISub -> applyIntBinOp   (-) x y
+    IMul -> applyIntBinOp   (*) x y
+    IDiv -> applyIntBinOp   div x y
+    IRem -> applyIntBinOp   rem x y
+    FAdd -> applyFloatBinOp (+) x y
+    FSub -> applyFloatBinOp (-) x y
+    FMul -> applyFloatBinOp (*) x y
+    FDiv -> applyFloatBinOp (/) x y
+    ICmp cmp -> case cmp of
+      Less         -> applyIntCmpOp (<)  x y
+      Greater      -> applyIntCmpOp (>)  x y
+      Equal        -> applyIntCmpOp (==) x y
+      LessEqual    -> applyIntCmpOp (<=) x y
+      GreaterEqual -> applyIntCmpOp (>=) x y
     _ -> error $ "Not implemented: " ++ pprint expr
   ScalarUnOp op x -> case op of
-    FNeg -> asFloatVal (-x')  where x' = getFloat x
+    FNeg -> applyFloatUnOp (0-) x
     _ -> error $ "Not implemented: " ++ pprint expr
   FFICall name _ args -> case name of
-    "randunif"     -> asFloatVal $ c_unif x         where [x]    = getInt <$> args
-    "threefry2x32" -> asIntVal  $ c_threefry x y   where [x, y] = getInt <$> args
+    "randunif"     -> Float64Val $ c_unif x         where [Int64Val x]  = args
+    "threefry2x32" -> Int64Val   $ c_threefry x y    where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
-  ArrayOffset arrArg _ offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr off)
-    where (ArrayVal (ArrayTy (TabTy _ b)) arr, off) = (arrArg, getInt offArg)
+  ArrayOffset arrArg _ offArg -> Con $ ArrayLit (ArrayTy b) (arrayOffset arr $ fromIntegral off)
+    where (ArrayVal (ArrayTy (TabTy _ b)) arr, IdxRepVal off) = (arrArg, offArg)
   ArrayLoad arrArg -> Con $ Lit $ arrayHead arr where (ArrayVal (ArrayTy (BaseTy _)) arr) = arrArg
   IndexAsInt idxArg -> case idxArg of
     Con (Coerce (TC (IntRange   _ _  )) i) -> i
@@ -92,8 +95,8 @@ evalOpDefined expr = case expr of
 
 indices :: Type -> [Atom]
 indices ty = case ty of
-  TC (IntRange _ _)      -> fmap (Con . Coerce ty . asIntVal) [0..n - 1]
-  TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . asIntVal) [0..n - 1]
+  TC (IntRange _ _)      -> fmap (Con . Coerce ty . IdxRepVal) [0..(fromIntegral $ n - 1)]
+  TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . IdxRepVal) [0..(fromIntegral $ n - 1)]
   TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
   TC (UnitType)          -> [UnitVal]
   RecordTy types         -> let
@@ -108,22 +111,20 @@ indices ty = case ty of
   _ -> error $ "Not implemented: " ++ pprint ty
   where n = indexSetSize ty
 
-getInt :: Atom -> Int
-getInt (IntLit l) = getIntLit l
-getInt x = error $ "Expected an integer atom, got: " ++ pprint x
-
-getFloat :: Atom -> Double
-getFloat (FloatLit l) = getFloatLit l
-getFloat x = error $ "Expected a float atom, got: " ++ pprint x
-
 getBool :: Atom -> Bool
 getBool (Con (Lit (Int8Lit p))) = p /= 0
 getBool x = error $ "Expected a bool atom, got: " ++ pprint x
 
 indexSetSize :: Type -> Int
-indexSetSize ty = getIntLit l
-  where (IntLit l) = evalEmbed (indexSetSizeE ty)
+indexSetSize ty = fromIntegral l
+  where (IdxRepVal l) = evalEmbed (indexSetSizeE ty)
 
 evalEmbed :: Embed Atom -> Atom
 evalEmbed embed = evalBlock mempty $ Block decls (Atom atom)
   where (atom, (_, decls)) = runEmbed embed mempty
+
+pattern Int64Val :: Int64 -> Atom
+pattern Int64Val x = Con (Lit (Int64Lit x))
+
+pattern Float64Val :: Double -> Atom
+pattern Float64Val x = Con (Lit (Float64Lit x))

@@ -448,11 +448,9 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
-  IntType          -> return TyKind
   CharType         -> return TyKind
-  FloatType         -> return TyKind
   ArrayType t      -> t|:TyKind >> return TyKind
-  IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
+  IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
@@ -465,9 +463,7 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
-  CharCon v -> checkIntBaseType   False (getType v) $> CharTy
-  IntCon  v -> checkIntBaseType   False (getType v) $> IntTy
-  FloatCon v -> checkFloatBaseType False (getType v) $> FloatTy
+  CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
   ArrayLit ty _ -> return $ ArrayTy ty
   AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
@@ -510,13 +506,11 @@ checkFloatBaseType allowVector t = case t of
 
 checkValidCoercion :: Type -> Type -> TypeM ()
 checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
-  (ArrayTy st, ArrayTy IntTy)    -> checkIntBaseType   False st
-  (ArrayTy st, ArrayTy FloatTy)  -> checkFloatBaseType False st
   (ArrayTy st, ArrayTy CharTy)   -> checkIntBaseType   False st
   (ArrayTy st, ArrayTy dt)       -> checkValidCoercion st dt
-  (IntTy, TC (IntRange   _ _  )) -> return () -- from ordinal
-  (IntTy, TC (IndexRange _ _ _)) -> return () -- from ordinal
-  (IntTy, TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
+  (IdxRepTy  , TC (IntRange   _ _  )) -> return () -- from ordinal
+  (IdxRepTy  , TC (IndexRange _ _ _)) -> return () -- from ordinal
+  (IdxRepTy  , TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
   _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 checkValidCast :: Type -> Type -> TypeM ()
@@ -528,8 +522,6 @@ checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType des
       BaseTy (Scalar Int8Type   ) -> return ()
       BaseTy (Scalar Float64Type) -> return ()
       BaseTy (Scalar Float32Type) -> return ()
-      IntTy                       -> return ()
-      FloatTy                     -> return ()
       _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
@@ -551,9 +543,9 @@ typeCheckOp op = case op of
     ty <- typeCheck x
     y |: ty
     return ty
-  IntAsIndex ty i -> ty|:TyKind >> i|:IntTy $> ty
-  IndexAsInt i -> typeCheck i $> IntTy
-  IdxSetSize i -> typeCheck i $> IntTy
+  IntAsIndex ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
+  IndexAsInt i -> typeCheck i $> IdxRepTy
+  IdxSetSize i -> typeCheck i $> IdxRepTy
   FFICall _ ansTy args -> do
     forM_ args $ \arg -> do
       argTy <- typeCheck arg
@@ -583,9 +575,8 @@ typeCheckOp op = case op of
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
   ArrayOffset arr idx off -> do
-    -- TODO: b should be applied!!
     ArrayTy (TabTyAbs a) <- typeCheck arr
-    off |: IntTy
+    off |: IdxRepTy
     idx |: absArgType a
     return $ ArrayTy $ snd $ applyAbs a idx
   ArrayLoad arr -> do
@@ -611,7 +602,7 @@ typeCheckOp op = case op of
                       " elements: " ++ pprint op
   VectorIndex x i -> do
     BaseTy (Vector sb) <- typeCheck x
-    i |: TC (IntRange (asIntVal 0) (asIntVal vectorWidth))
+    i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
   CastOp t@(Var _) _ -> t |: TyKind $> t
@@ -708,12 +699,8 @@ data ReturnType   = SameReturn | Int8Return
 checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
 checkOpArgType argTy x =
   case argTy of
-    SomeIntArg   -> case x of
-      IntTy   -> return ()
-      _       -> checkIntBaseType   True x
-    SomeFloatArg -> case x of
-      FloatTy -> return ()
-      _       -> checkFloatBaseType True x
+    SomeIntArg   -> checkIntBaseType   True x
+    SomeFloatArg -> checkFloatBaseType True x
     Int8Arg      -> case x of
       BaseTy (Scalar Int8Type) -> return ()
       BaseTy (Vector Int8Type) -> return ()
@@ -768,9 +755,8 @@ checkUnOp op x = do
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
-  FixedIntRange l h -> Just $ high - low
-    where low = getIntLit l; high = getIntLit h
-  _                 -> Nothing
+  FixedIntRange low high -> Just $ fromIntegral $ high - low
+  _                      -> Nothing
 
 checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
@@ -780,8 +766,6 @@ checkDataLike msg env ty = case ty of
   TypeCon _ _ -> return ()
   TC con -> case con of
     BaseType _       -> return ()
-    IntType          -> return ()
-    FloatType        -> return ()
     CharType         -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()

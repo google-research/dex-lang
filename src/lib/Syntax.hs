@@ -4,7 +4,7 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 {-# LANGUAGE StrictData #-}
 {-# LANGUAGE DeriveFunctor #-}
-{-# LANGUAGE PatternSynonyms #-}
+{-# LANGUAGE Rank2Types #-}
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -38,14 +38,15 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
-    getIntLit, asIntVal, getFloatLit, asFloatVal, asBoolVal,
-    pattern CharLit,
+    applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
+    getIntLit, getFloatLit, pattern CharLit,
+    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
     pattern IntLitExpr, pattern FloatLitExpr,
-    pattern IntLit, pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy, pattern IntTy,
-    pattern FloatTy, pattern BaseTy, pattern UnitVal,
+    pattern UnitTy, pattern PairTy, pattern FunTy,
+    pattern FixedIntRange, pattern RefTy,
+    pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow, pattern ArrayVal,
-    pattern FloatLit, pattern TyKind, pattern LamVal,
+    pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
@@ -62,10 +63,12 @@ import Data.List (sort)
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
+import Data.Int
 import GHC.Generics
 
 import Env
 import Array
+import Util ((...))
 
 -- === core IR ===
 
@@ -235,8 +238,6 @@ data PrimExpr e =
 data PrimTC e =
         BaseType  BaseType
       | CharType
-      | IntType
-      | FloatType
       | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
@@ -255,9 +256,7 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
-      | CharCon e
-      | IntCon  e         -- Lifts a fixed-precision integer literal into the generic integer type
-      | FloatCon e         -- Lifts a fixed-precision floating-point literal into the generic float type
+      | CharCon e         -- Wraps an Int8 value
       | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
       | PairCon e e
@@ -1094,6 +1093,30 @@ instance Monoid (Nest a) where
   mempty = Empty
   mappend xs ys = toNest $ toList xs ++ toList ys
 
+-- === Helpers for function evaluation over fixed-width types ===
+
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a) => (a -> Atom) -> a -> a -> Atom) -> Atom -> Atom -> Atom
+applyIntBinOp' f x y = case (x, y) of
+  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
+  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Int8Lit xv)) , Con (Lit (Int8Lit  yv))) -> f (Con . Lit . Int8Lit ) xv yv
+  _ -> error "Expected integer atoms"
+
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
+
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom -> Atom -> Atom
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Int8Lit . fromIntegral . fromEnum) ... f) x y
+
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyFloatBinOp f x y = case (x, y) of
+  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
+  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
+  _ -> error "Expected float atoms"
+
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
+applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
+
 -- === Synonyms ===
 
 varType :: Var -> Type
@@ -1121,9 +1144,6 @@ pattern IntLitExpr x = UIntLit x
 pattern FloatLitExpr :: Double -> UExpr'
 pattern FloatLitExpr x = UFloatLit x
 
-pattern IntLit :: LitVal -> Atom
-pattern IntLit x = Con (IntCon (Con (Lit x)))
-
 getIntLit :: LitVal -> Int
 getIntLit l = case l of
   Int64Lit i -> fromIntegral i
@@ -1131,26 +1151,28 @@ getIntLit l = case l of
   Int8Lit  i -> fromIntegral i
   _ -> error $ "Expected an integer literal"
 
-asIntVal :: Int -> Atom
-asIntVal x = IntLit $ Int64Lit $ fromIntegral x
-
-pattern FloatLit :: LitVal -> Atom
-pattern FloatLit x = Con (FloatCon (Con (Lit x)))
-
 getFloatLit :: LitVal -> Double
 getFloatLit l = case l of
   Float64Lit f -> f
   Float32Lit f -> realToFrac f
   _ -> error $ "Expected a floating-point literal"
 
-asFloatVal :: Double -> Atom
-asFloatVal x = FloatLit $ Float64Lit x
+pattern CharLit :: Int8 -> Atom
+pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
 
-pattern CharLit :: LitVal -> Atom
-pattern CharLit x = Con (CharCon (Con (Lit x)))
+-- Type used to represent indices at run-time
+pattern IdxRepTy :: Type
+pattern IdxRepTy = TC (BaseType (Scalar Int64Type))
 
-asBoolVal :: Bool -> Atom
-asBoolVal x = Con $ Lit $ Int8Lit $ fromIntegral $ fromEnum x
+pattern IdxRepVal :: Int64 -> Atom
+pattern IdxRepVal x = Con (Lit (Int64Lit x))
+
+-- Type used to represent sum type tags at run-time
+pattern TagRepTy :: Type
+pattern TagRepTy = TC (BaseType (Scalar Int64Type))
+
+pattern TagRepVal :: Int64 -> Atom
+pattern TagRepVal x = Con (Lit (Int64Lit x))
 
 pattern ArrayVal :: Type -> Array -> Atom
 pattern ArrayVal t arr = Con (ArrayLit t arr)
@@ -1176,12 +1198,6 @@ pattern BaseTy b = TC (BaseType b)
 pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
 
-pattern IntTy :: Type
-pattern IntTy = TC IntType
-
-pattern FloatTy :: Type
-pattern FloatTy = TC FloatType
-
 pattern CharTy :: Type
 pattern CharTy = TC CharType
 
@@ -1191,8 +1207,8 @@ pattern TyKind = TC TypeKind
 pattern EffKind :: Kind
 pattern EffKind = TC EffectRowKind
 
-pattern FixedIntRange :: LitVal -> LitVal -> Type
-pattern FixedIntRange low high = TC (IntRange (IntLit low) (IntLit high))
+pattern FixedIntRange :: Int64 -> Int64 -> Type
+pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
 pattern PureArrow :: Arrow
 pattern PureArrow = PlainArrow Pure
@@ -1294,8 +1310,6 @@ builtinNames = M.fromList
   , ("runState"        , HofExpr $ RunState  () ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
-  , ("Int"     , TCExpr $ IntType)
-  , ("Float"    , TCExpr $ FloatType)
   , ("TyKind"  , TCExpr $ TypeKind)
   , ("Float64" , TCExpr $ BaseType $ Scalar Float64Type)
   , ("Float32" , TCExpr $ BaseType $ Scalar Float32Type)

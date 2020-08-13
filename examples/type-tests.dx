@@ -53,18 +53,18 @@ help make the errors more local.
 :t
    myid : a:Type ?-> a -> a = \x. x
    myid (myid) (myid 1)
-> Int
+> Int64
 
 :t
    x = iota (Fin 10)
    sum x
-> Int
+> Int64
 
 :t
    x = iota (Fin 10)
    y = iota (Fin 3)
    IToF (sum for i. x.i) + IToF (sum for j. y.j)
-> Float
+> Float64
 
 :t
    x = iota (Fin 10)
@@ -84,19 +84,19 @@ arr  = iota Narr
 xr = map IToF arr
 
 :t arr
-> ((Fin 10) => Int)
+> ((Fin 10) => Int64)
 
 :t (\(x, y). x + y) (1.0, 2.0)
-> Float
+> Float64
 
 :t
    f = \(x, y). x + 2.0 * y
    z = for i. (xr.i, xr.i * xr.i)
    sum (for i. f z.i)
-> Float
+> Float64
 
 :t [1, 2, 3]
-> ((Fin 3) => Int)
+> ((Fin 3) => Int64)
 
 :t []
 > Type error:Empty table constructor must have type annotation
@@ -106,19 +106,19 @@ xr = map IToF arr
 
 :t [1, [2]]
 > Type error:
-> Expected: Int
->   Actual: ((Fin 1) => Int)
+> Expected: Int64
+>   Actual: ((Fin 1) => Int64)
 >
 > :t [1, [2]]
 >        ^^^
 
 :t [[1, 2], [3, 4]]
-> ((Fin 2) => (Fin 2) => Int)
+> ((Fin 2) => (Fin 2) => Int64)
 
 :t [[1, 2], [3]]
 > Type error:
-> Expected: ((Fin 2) => Int)
->   Actual: ((Fin 1) => Int)
+> Expected: ((Fin 2) => Int64)
+>   Actual: ((Fin 1) => Int64)
 >
 > :t [[1, 2], [3]]
 >             ^^^
@@ -128,8 +128,8 @@ f : Int -> Float =
    z = x + 1.0
    x
 > Type error:
-> Expected: Int
->   Actual: Float
+> Expected: Int64
+>   Actual: Float64
 >
 >    z = x + 1.0
 >            ^^^
@@ -217,14 +217,14 @@ g : a -> a = \x. x
 :t
   f = \x:Int. x
   f 1
-> Int
+> Int64
 
 :t
    f = \x:Float. x
    f 1
 > Type error:
-> Expected: Float
->   Actual: Int
+> Expected: Float64
+>   Actual: Int64
 >
 >    f 1
 >      ^
@@ -232,11 +232,11 @@ g : a -> a = \x. x
 g1 : (a -> Int) -> (a -> Int) = \x. x
 
 :t g1
-> ((a:Type) ?-> (a -> Int) -> a -> Int)
+> ((a:Type) ?-> (a -> Int64) -> a -> Int64)
 
 g2 : a -> a = \x. idiv x x
 > Type error:
-> Expected: Int
+> Expected: Int64
 >   Actual: a
 >
 > g2 : a -> a = \x. idiv x x
@@ -249,7 +249,7 @@ h : (a -> b) -> (a -> b) = \x. x
 
 fun : a -> a = \x. sin x
 > Type error:
-> Expected: Float
+> Expected: Float64
 >   Actual: a
 >
 > fun : a -> a = \x. sin x
@@ -264,7 +264,7 @@ newPair : NewPair Int Float = MkNewPair 1 2.0
 :p fst newPair
 > Type error:
 > Expected: (a & b)
->   Actual: (NewPair Int Float)
+>   Actual: (NewPair Int64 Float64)
 > (Solving for: [a:Type, b:Type])
 >
 > :p fst newPair
@@ -298,7 +298,7 @@ good_range : Type = (1@Fin 3)..(2@_)
 
 bad_range : Int = (1@Fin 3)..(2@_)
 > Type error:
-> Expected: Int
+> Expected: Int64
 >   Actual: Type
 >
 > bad_range : Int = (1@Fin 3)..(2@_)
@@ -329,7 +329,7 @@ bad_range : Int = (1@Fin 3)..(2@_)
 > ()
 
 :p (\x:Int. x) == (\x:Int. x)
-> Type error:Couldn't synthesize a class dictionary for: (Eq (Int -> Int))
+> Type error:Couldn't synthesize a class dictionary for: (Eq (Int64 -> Int64))
 >
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^

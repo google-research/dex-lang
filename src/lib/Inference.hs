@@ -211,10 +211,10 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   UVariantTy (LabeledItems items) -> do
     items' <- mapM (mapM checkUType) items
     matchRequirement $ VariantTy $ LabeledItems items'
-  UIntLit  x -> matchRequirement $ IntLit  $ Int64Lit $ fromIntegral x
+  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int64Lit $ fromIntegral x
+  UFloatLit x -> matchRequirement $ Con $ Lit  $ Float64Lit x
   -- TODO: Make sure that this conversion is not lossy!
-  UCharLit x -> matchRequirement $ CharLit $ Int8Lit  $ fromIntegral $ fromEnum x
-  UFloatLit x -> matchRequirement $ FloatLit $ Float64Lit x
+  UCharLit x  -> matchRequirement $ CharLit $ fromIntegral $ fromEnum x
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -496,7 +496,7 @@ inferTabTy xs ann = case ann of
    [] -> throw TypeErr $ "Empty table constructor must have type annotation"
    (x:_) -> do
     ty <- getType <$> inferRho x
-    return (FixedIntRange (Int64Lit 0) (Int64Lit $ fromIntegral $ length xs), ty)
+    return (FixedIntRange 0 (fromIntegral $ length xs), ty)
 
 -- Bool flag is just to tweak the reported error message
 fromPiType :: Bool -> UArrow -> Type -> UInferM PiType

@@ -7,7 +7,7 @@
 {-# LANGUAGE CPP #-}
 
 module Serialize (DBOHeader (..), dumpDataFile, loadDataFile, pprintVal,
-                 valToHeatmap, valToScatter, reStructureArrays, flattenType,
+                 valToHeatmap, valToScatter,
                  typeToArrayType, memoizeFileEval) where
 
 import Prelude hiding (pi, abs)
@@ -67,6 +67,7 @@ loadDataFile fname = do
   -- TODO: typecheck result
   valFromPtrs ty ptrs
   where
+    valFromPtrs = undefined
     liftExceptIO :: Except a -> IO a
     liftExceptIO (Left e ) = throwIO e
     liftExceptIO (Right x) = return x
@@ -137,6 +138,7 @@ validateFile headerLength fileLength header@(DBOHeader ty sizes) =
      zipWithM_ checkBufferSize minSizes sizes
      when (claimedLength /= fileLength) $ throw DataIOErr $ "wrong file size\n"
   where
+    flattenType = undefined
     claimedLength = headerLength + sum sizes
     ctx =   "Validation error\n"
          <> "Claimed header length: " <> show headerLength <> "\n"
@@ -148,17 +150,6 @@ checkBufferSize :: Int -> Int -> Except ()
 checkBufferSize minSize size = when (size < minSize) $ throw DataIOErr $
    "buffer too small: " <> show size <> " < " <> show minSize
 
-reStructureArrays :: Type -> [Val] -> Val
-reStructureArrays _ _ = undefined
-
-valFromPtrs :: Type -> [Ptr ()] -> IO Val
-valFromPtrs ty ptrs = do
-  arrays <- forM (zip ptrs litTys) $ \(ptr, litTy) -> do
-              x <- loadArray $ ArrayRef (typeToArrayType litTy) ptr
-              return $ Con $ ArrayLit litTy x
-  return $ reStructureArrays ty arrays
-  where litTys = flattenType ty
-
 -- TODO: Optimize this!
 -- Turns a fully evaluated table value into a bunch of arrays
 materializeScalarTables :: Atom -> [Array]
@@ -167,28 +158,29 @@ materializeScalarTables atom = case atom of
   Con (Lit l)          -> [arrayFromScalar l]
   Con (PairCon l r)    -> materializeScalarTables l ++ materializeScalarTables r
   Con (UnitCon)        -> []
-  Con (IntCon  (Con (Lit l))) | i <- getIntLit l  -> [arrayFromScalar $ Int64Lit (fromIntegral i)]
-  Con (FloatCon (Con (Lit l))) | f <- getFloatLit l -> [arrayFromScalar $ Float64Lit f]
   Lam a@(Abs b (TabArrow, _)) ->
     fmap arrayConcat $ transpose $ fmap evalBody $ indices $ binderType b
     where evalBody idx = materializeScalarTables $ evalBlock mempty $ snd $ applyAbs a idx
   _ -> error $ "Not a scalar table: " ++ pprint atom
 
+pattern Float64Ty :: Type
+pattern Float64Ty = BaseTy (Scalar Float64Type)
+
 -- TODO: Support fp32 outputs too!
 valToScatter :: Val -> Output
 valToScatter val = case getType val of
-  TabTy _ (PairTy FloatTy FloatTy) -> ScatterOut xs ys
+  TabTy _ (PairTy Float64Ty Float64Ty) -> ScatterOut xs ys
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
   where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
 
 valToHeatmap :: Bool -> Val -> Output
 valToHeatmap color val = case color of
   False -> case getType val of
-    TabTy hv (TabTy wv FloatTy) ->
+    TabTy hv (TabTy wv Float64Ty) ->
        HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
     _ -> error $ "Heatmap expects a 2D array of floats, but got: " ++ pprint (getType val)
   True -> case getType val of
-    TabTy hv (TabTy wv (TabTy _ FloatTy)) ->
+    TabTy hv (TabTy wv (TabTy _ Float64Ty)) ->
        HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
     _ -> error $ "Color Heatmap expects a 3D array of floats, but got: " ++ pprint (getType val)
   where [(Array _ (Float64Vec xs))] = materializeScalarTables val
@@ -202,26 +194,25 @@ prettyVal val = case val of
     where idxSet = binderType b
           elems = flip fmap (indices idxSet) $ \idx ->
             asStr $ prettyVal $ evalBlock mempty $ snd $ applyAbs abs idx
-          idxSetStr = case idxSet of FixedIntRange l _ | getIntLit l == 0 -> mempty
-                                     _                                    -> "@" <> pretty idxSet
+          idxSetStr = case idxSet of FixedIntRange l _ | l == 0 -> mempty
+                                     _                          -> "@" <> pretty idxSet
   Con con -> case con of
     PairCon x y -> pretty (asStr $ prettyVal x, asStr $ prettyVal y)
     Coerce t i  -> pretty i <> "@" <> pretty t
-    SumAsProd ty (IntLit l) payload ->
+    SumAsProd ty (TagRepVal trep) payload -> do
+      let t = fromIntegral trep
       case ty of
         TypeCon (DataDef _ _ dataCons) _ ->
           case args of
             [] -> pretty conName
             _  -> parens $ pretty conName <+> hsep (map prettyVal args)
           where
-            i = getIntLit l
-            DataConDef conName _ = dataCons !! i
-            args = payload !! i
+            DataConDef conName _ = dataCons !! t
+            args = payload !! t
         VariantTy types -> pretty variant
           where
-            i = getIntLit l
-            [value] = payload !! i
-            (theLabel, repeatNum) = toList (reflectLabels types) !! i
+            [value] = payload !! t
+            (theLabel, repeatNum) = toList (reflectLabels types) !! t
             variant = Variant types theLabel repeatNum value
         _ -> error "SumAsProd with an unsupported type"
     _ -> pretty con
@@ -230,20 +221,11 @@ prettyVal val = case val of
 getValArrays :: Val -> [Array]
 getValArrays = undefined
 
-flattenType :: Type -> [Type]
-flattenType (TabTy n a) = TabTy n <$> flattenType a
-flattenType (TC con) = case con of
-  BaseType b       -> [BaseTy b]
-  IntRange _ _     -> [IntTy]
-  IndexRange _ _ _ -> [IntTy]
-  _ -> error $ "Unexpected type: " ++ show con
-flattenType ty = error $ "Unexpected type: " ++ show ty
-
 typeToArrayType :: ScalarTableType -> ArrayType
 typeToArrayType t = case t of
   BaseTy b  -> (1, b)
-  TabTy _ _ -> (getIntLit sizeLit, scalarTableBaseType t)
-    where (IntLit sizeLit) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
+  TabTy _ _ -> (fromIntegral sizeLit, scalarTableBaseType t)
+    where (IdxRepVal sizeLit) = evalEmbed $ A.evalClampPolynomial (A.elemCount t)
   _ -> error $ "Not a scalar table type: " ++ pprint t
 
 -- TODO: this isn't enough, since this module's compilation might be cached

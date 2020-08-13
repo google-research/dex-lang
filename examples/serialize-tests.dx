@@ -22,7 +22,7 @@
 'Values without a pretty-printer (currently shows warning message):
 
 :p Int
-> Int
+> Int64
 
 :p Fin 10
 > Fin 10

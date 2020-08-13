@@ -5,8 +5,6 @@
 
 'Wrappers around primitives
 
-Int  = %Int
-Float = %Float
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
@@ -16,6 +14,9 @@ Int32 = %Int32
 Int8  = %Int8
 Float64 = %Float64
 Float32 = %Float32
+
+Int = Int64
+Float = Float64
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
@@ -48,10 +49,8 @@ def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
 def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
 def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
-@instance floatAdd   : Add Float   = MkAdd (\x:Float   y:Float.   %fadd x y) (\x y. %fsub x y) 0.0
 @instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FToF64 0.0)
 @instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FToF32 0.0)
-@instance intAdd     : Add Int     = MkAdd (\x:Int     y:Int.     %iadd x y) (\x y. %isub x y) 0
 @instance int64Add   : Add Int64   = MkAdd (\x:Int64   y:Int64.   %iadd x y) (\x y. %isub x y) (IToI64 0)
 @instance int32Add   : Add Int32   = MkAdd (\x:Int32   y:Int32.   %iadd x y) (\x y. %isub x y) (IToI32 0)
 @instance int8Add    : Add Int8    = MkAdd (\x:Int8    y:Int8.    %iadd x y) (\x y. %isub x y) (IToI8  0)
@@ -68,8 +67,8 @@ def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
 def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
 
 @instance floatMul : Mul Float = MkMul (\x:Float y:Float. %fmul x y) 1.0
-@instance intMul  : Mul Int  = MkMul (\x:Int y:Int.   %imul x y) 1
-@instance unitMul : Mul Unit = MkMul (\x y. ()) ()
+@instance intMul   : Mul Int   = MkMul (\x:Int   y:Int.   %imul x y) 1
+@instance unitMul  : Mul Unit  = MkMul (\x y. ()) ()
 
 data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
 
@@ -85,7 +84,7 @@ def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> sca
 def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (fdiv 1.0 s) .* v
 def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 
-@instance floatVS : VSpace Float = MkVSpace floatAdd (*)
+@instance floatVS : VSpace Float = MkVSpace float64Add (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 

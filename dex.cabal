@@ -35,7 +35,7 @@ library
   c-sources:           src/lib/dexrt.c
   cc-options:          -std=c11
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
-                       TupleSections, ScopedTypeVariables, LambdaCase
+                       TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
   if flag(cuda)
     include-dirs:      /usr/local/cuda/include
     extra-libraries:   cuda

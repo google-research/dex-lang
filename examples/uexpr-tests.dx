@@ -43,24 +43,24 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 
 :p 1.0 + 1
 > Type error:
-> Expected: Float
->   Actual: Int
+> Expected: Float64
+>   Actual: Int64
 >
 > :p 1.0 + 1
 >          ^
 
 :p 1 + (1.0 + 2.0)
 > Type error:
-> Expected: Int
->   Actual: Float
+> Expected: Int64
+>   Actual: Float64
 >
 > :p 1 + (1.0 + 2.0)
 >         ^^^^^^^^^
 
 :p 1.0 + (2 + 3)
 > Type error:
-> Expected: Float
->   Actual: Int
+> Expected: Float64
+>   Actual: Int64
 >
 > :p 1.0 + (2 + 3)
 >           ^^^^^
@@ -141,7 +141,7 @@ myPair = (1, 2.3)
   ((x,y),z)
 > Type error:
 > Expected: (a & b)
->   Actual: Int
+>   Actual: Int64
 > (Solving for: [a:Type, b:Type])
 >
 >   ((x,y),z) = (1,2,3)
@@ -157,7 +157,7 @@ myPair = (1, 2.3)
   (x,y)
 > Type error:
 > Expected: (a & b)
->   Actual: Int
+>   Actual: Int64
 > (Solving for: [a:Type, b:Type])
 >
 >   (x,y) = 1
