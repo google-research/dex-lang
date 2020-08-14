@@ -59,6 +59,7 @@ import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
 import qualified Data.Vector.Storable as V
 import Data.List (sort)
+import qualified Data.List.NonEmpty as NE
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
@@ -66,6 +67,7 @@ import GHC.Generics
 
 import Env
 import Array
+import Util (enumerate)
 
 -- === core IR ===
 
@@ -156,15 +158,15 @@ scalarTableBaseType t = case t of
 
 
 type Label = String
-newtype LabeledItems a = LabeledItems (M.Map Label [a])
+newtype LabeledItems a = LabeledItems (M.Map Label (NE.NonEmpty a))
   deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
 labeledSingleton :: Label -> a -> LabeledItems a
-labeledSingleton label value = LabeledItems $ M.singleton label [value]
+labeledSingleton label value = LabeledItems $ M.singleton label (value NE.:|[])
 
 reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
 reflectLabels (LabeledItems items) = LabeledItems $
-  flip M.mapWithKey items $ \k xs -> map (k,) [0..length xs - 1]
+  flip M.mapWithKey items $ \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
 
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
@@ -596,6 +598,9 @@ class BindsUVars a where
   boundUVars :: a -> UVars
 
 instance HasUVars a => HasUVars [a] where
+  freeUVars xs = foldMap freeUVars xs
+
+instance HasUVars a => HasUVars (NE.NonEmpty a) where
   freeUVars xs = foldMap freeUVars xs
 
 instance (BindsUVars a, HasUVars a) => HasUVars (Nest a) where
@@ -1081,6 +1086,9 @@ instance Subst a => Subst (Env a) where subst env x = fmap (subst env) x
 instance HasVars a => HasVars [a] where freeVars x = foldMap freeVars x
 instance Subst a => Subst [a] where subst env x = fmap (subst env) x
 
+instance HasVars a => HasVars (NE.NonEmpty a) where freeVars x = foldMap freeVars x
+instance Subst a => Subst (NE.NonEmpty a) where subst env x = fmap (subst env) x
+
 instance Eq SourceBlock where
   x == y = sbText x == sbText y
 
@@ -1281,7 +1289,7 @@ pattern IDo :: BinderP IType
 pattern IDo = Ignore IVoidType
 
 pattern NoLabeledItems :: LabeledItems a
-pattern NoLabeledItems <- (\(LabeledItems items) -> M.null items -> True)
+pattern NoLabeledItems <- ((\(LabeledItems items) -> M.null items) -> True)
   where NoLabeledItems = LabeledItems M.empty
 
 pattern NoExt :: LabeledItems a -> ExtLabeledItems a b
@@ -1294,12 +1302,12 @@ pattern NoExt a = Ext a Nothing
 pattern InternalSingletonLabel :: Label
 pattern InternalSingletonLabel = "%UNLABELED%"
 
-_getUnlabeled :: LabeledItems a -> Maybe [a]
+_getUnlabeled :: LabeledItems a -> Maybe (NE.NonEmpty a)
 _getUnlabeled (LabeledItems items) = do
   guard $ length items == 1
   M.lookup InternalSingletonLabel items
 
-pattern Unlabeled :: [a] -> LabeledItems a
+pattern Unlabeled :: (NE.NonEmpty a) -> LabeledItems a
 pattern Unlabeled as <- (_getUnlabeled -> Just as)
   where Unlabeled as = LabeledItems (M.singleton InternalSingletonLabel as)
 

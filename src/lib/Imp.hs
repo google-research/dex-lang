@@ -24,6 +24,7 @@ import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Foldable (toList)
 import Data.Coerce
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Embed
@@ -116,7 +117,7 @@ toImpExpr env (maybeDest, expr) = case expr of
         toImpBlock (env <> newEnv bs args) (maybeDest, body)
       Variant (NoExt types) label i x -> do
         let LabeledItems ixtypes = enumerate types
-        let index = fst $ ixtypes M.! label !! i
+        let index = fst $ ixtypes M.! label NE.!! i
         let Abs bs body = alts !! index
         toImpBlock (env <> newEnv bs [x]) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
@@ -616,7 +617,7 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
     zipWithM_ recDest (payload !! con) x
   (Con (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
     let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) !! i
+    let index = fst $ (ixtypes M.! label) NE.!! i
     recDest tag (IntVal index)
     zipWithM_ recDest (payload !! index) [x]
   (Con dcon, Con acon) -> case (dcon, acon) of

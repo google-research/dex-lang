@@ -15,6 +15,7 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Foldable (fold, toList, asum)
 import Data.Functor
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
@@ -381,7 +382,7 @@ checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
     let (LabeledItems enumTypes) = enumerate items
     case M.lookup label enumTypes of
       Just types -> if i < length types
-        then let (index, argty) = types !! i
+        then let (index, argty) = types NE.!! i
           in return (index, [(subpat, argty)])
         else throw TypeErr $
           "Label " <> show label <> " appears fewer than "
@@ -751,11 +752,9 @@ unifyExtLabeledItems r1 r2 = do
     (Ext NoLabeledItems (Just v), r) | v `isin` vs ->
       bindQ (v:>LabeledRowKind) (LabeledRow r)
     (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
-      let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ zip tys1 tys2
+      let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ NE.zip tys1 tys2
       sequence_ $ M.intersectionWith unifyPrefixes items1 items2
-      let diffDrop xs ys = case drop (length ys) xs of
-                              [] -> Nothing
-                              zs -> Just zs
+      let diffDrop xs ys = NE.nonEmpty $ NE.drop (length ys) xs
       let extras1 = M.differenceWith diffDrop items1 items2
       let extras2 = M.differenceWith diffDrop items2 items1
       newTail <- freshInferenceName LabeledRowKind

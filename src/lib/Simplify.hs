@@ -14,6 +14,7 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Autodiff
@@ -176,7 +177,7 @@ simplifyExpr expr = case expr of
         extendR (newEnv bs args) $ simplifyBlock body
       Variant (NoExt types) label i value -> do
         let LabeledItems ixtypes = enumerate types
-        let index = fst $ (ixtypes M.! label) !! i
+        let index = fst $ (ixtypes M.! label) NE.!! i
         let Abs bs body = alts !! index
         extendR (newEnv bs [value]) $ simplifyBlock body
       _ -> do

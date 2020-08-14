@@ -17,6 +17,7 @@ import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
 import Data.Foldable (toList)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -270,7 +271,9 @@ instance PrettyPrec Atom where
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
-      ls = LabeledItems $ M.singleton label $ map (const ()) [1..i]
+      ls = LabeledItems $ case i of
+            0 -> M.empty
+            _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
 
@@ -279,7 +282,7 @@ prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
 prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
   atPrec ArgPrec $ align $ group $ innerDoc
   where
-    elems = concatMap (\(k, vs) -> map (k,) vs) (M.toAscList row)
+    elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
     fmtElem (label, v) = p label <> bindwith <+> pLowest v
     docs = map fmtElem elems
     final = case rest of

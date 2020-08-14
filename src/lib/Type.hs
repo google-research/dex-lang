@@ -20,6 +20,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
@@ -121,7 +122,7 @@ instance HasType Atom where
       return $ RecordTy (NoExt types)
     RecordTy row -> checkLabeledRow row $> TyKind
     Variant vtys@(Ext (LabeledItems types) _) label i value -> do
-      value |: ((types M.! label) !! i)
+      value |: ((types M.! label) NE.!! i)
       let ty = VariantTy vtys
       ty |: TyKind
       return ty
@@ -176,7 +177,7 @@ instance HasType Expr where
       RecordTy full <- typeCheck record
       diff <- labeledRowDifference full (NoExt types)
       return $ RecordTy $ NoExt $
-        Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
+        Unlabeled $ NE.fromList [ RecordTy $ NoExt types, RecordTy diff ]
     VariantLift types record -> do
       mapM_ (|: TyKind) types
       VariantTy rest <- typeCheck record
@@ -186,7 +187,7 @@ instance HasType Expr where
       VariantTy full <- typeCheck variant
       diff <- labeledRowDifference full (NoExt types)
       return $ VariantTy $ NoExt $
-        Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
+        Unlabeled $ NE.fromList [ VariantTy $ NoExt types, VariantTy diff ]
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -465,15 +466,14 @@ labeledRowDifference (Ext (LabeledItems items) rest)
   -- Check types in the right.
   _ <- flip M.traverseWithKey subitems $ \label subtypes ->
     case M.lookup label items of
-      Just types -> assertEq subtypes (take (length subtypes) types) $
+      Just types -> assertEq subtypes
+          (NE.fromList $ NE.take (length subtypes) types) $
           "Row types for label " ++ show LabeledRowKind
       Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
   -- Extract remaining types from the left.
   let
-    diffitems = flip M.mapWithKey items $ \label types ->
-      case M.lookup label subitems of
-        Just subtypes -> drop (length subtypes) types
-        Nothing -> types
+    neDiff xs ys = NE.nonEmpty $ NE.drop (length ys) xs
+    diffitems = M.differenceWith neDiff items subitems
   -- Check tail.
   diffrest <- case (subrest, rest) of
     (Nothing, _) -> return rest
