@@ -200,6 +200,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     TypeKind -> atPrec ArgPrec "Type"
     EffectRowKind -> atPrec ArgPrec "EffKind"
+    LabeledRowKindTC -> atPrec ArgPrec "Types"
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec

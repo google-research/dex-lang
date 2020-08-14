@@ -17,6 +17,7 @@ import Data.Foldable (fold, toList, asum)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.Map.Merge.Strict as MMerge
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
@@ -252,13 +253,36 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
-  UPatRecord (NoExt items) -> do
+  UPatRecord (Ext items Nothing) -> do
     RecordTy (NoExt types) <- pure $ getType expr
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
       "Labels in record pattern do not match record type. Expected structure "
       ++ pprint (RecordTy $ NoExt types)
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
+  UPatRecord (Ext pats@(LabeledItems patItems) (Just tailPat)) -> do
+    -- Unpacks at the top level should always be monomorphic in type.
+    RecordTy (Ext (LabeledItems types) Nothing) <- pure $ getType expr
+    -- Note: length items /= length types in general; items is what the user
+    -- wants but types is what we know.
+    -- First, split off the types the user wants.
+    let leftOnly = MMerge.traverseMissing $ \k _ ->
+          throw TypeErr $ "Label " <> show k <> " in record pattern does not "
+                                   <> "exist in record to be matched."
+    let rightOnly = MMerge.dropMissing
+    let both = MMerge.zipWithAMatched $ \k wanted have ->
+          if length wanted > length have
+          then throw TypeErr $ "Label " <> show k <> " in record pattern "
+                                        <> "appears too many times."
+          else return $ NE.fromList $ NE.take (length wanted) have
+    wantedTypes <- MMerge.mergeA leftOnly rightOnly both patItems types
+    -- Split the record.
+    val <- emit =<< zonk expr
+    split <- emit $ RecordSplit (LabeledItems wantedTypes) val
+    [left, right] <- getUnpacked split
+    leftVals <- getUnpacked left
+    zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList pats) leftVals
+    unpackTopPat letAnn tailPat (Atom right)
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
 
 inferUDecl :: Bool -> UDecl -> UInferM SubstEnv
@@ -433,13 +457,35 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
   UPatLit _ -> throw NotImplementedErr "literal patterns"
-  UPatRecord (NoExt items) -> do
+  UPatRecord (Ext items Nothing) -> do
     RecordTy (NoExt types) <- pure $ getType val
     when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
       "Labels in record pattern do not match record type. Expected structure "
       ++ pprint (RecordTy $ NoExt types)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList items) xs
+  UPatRecord (Ext pats@(LabeledItems patItems) (Just tailPat)) -> do
+    RecordTy (Ext (LabeledItems types) _) <- pure $ getType val
+    -- Note: length items /= length types in general; items is what the user
+    -- wants but types is what we know.
+    -- First, split off the types the user wants.
+    let leftOnly = MMerge.traverseMissing $ \k _ ->
+          throw TypeErr $ "Label " <> show k <> " in record pattern does not "
+                                   <> "exist in record to be matched."
+    let rightOnly = MMerge.dropMissing
+    let both = MMerge.zipWithAMatched $ \k wanted have ->
+          if length wanted > length have
+          then throw TypeErr $ "Label " <> show k <> " in record pattern "
+                                        <> "appears too many times."
+          else return $ NE.fromList $ NE.take (length wanted) have
+    wantedTypes <- MMerge.mergeA leftOnly rightOnly both patItems types
+    -- Split the record.
+    split <- lift $ emit $ RecordSplit (LabeledItems wantedTypes) val
+    [left, right] <- lift $ getUnpacked split
+    leftVals <- lift $ getUnpacked left
+    env1 <- fold <$> zipWithM bindPat' (toList pats) leftVals
+    env2 <- bindPat' tailPat right
+    return $ env1 <> env2
   UPatVariant _ _ _ -> throw TypeErr "Variant not allowed in can't-fail pattern"
 
 -- TODO (BUG!): this should just be a hint but something goes wrong if we don't have it

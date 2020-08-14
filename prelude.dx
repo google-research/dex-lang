@@ -10,6 +10,7 @@ Real = %Real
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
+Types = %LabeledRowKind
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y

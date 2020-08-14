@@ -115,6 +115,30 @@ Syntax for records, variants, and their types.
 > (1, (3, 2))
 
 :p
+  ({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+  foo
+> 1
+
+({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+:p foo
+> 1
+
+def getFoo (rest : Types)?-> (x : {foo:a & ...rest}) : a =
+  ({foo=foo, ..._}) = x
+  foo
+
+:p getFoo {foo=1, foo=0.0, bar=2, baz=3}
+> 1
+
+def getTwoFoosAndABar (rest : Types)?->
+                      (x : {foo:a & foo:b & bar:c & ...rest}) : (a&b&c) =
+  ({foo=f1, foo=f2, bar=b, ..._}) = x
+  (f1, f2, b)
+
+:p getTwoFoosAndABar {foo=1, bar=2, foo=0.0, foo=4, baz=3.0, bar=7}
+> (1, (0.0, 2))
+
+:p
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
   (a1, a2, b)
 > Type error:Labels in record pattern do not match record type. Expected structure {a: Int & b: Int}
