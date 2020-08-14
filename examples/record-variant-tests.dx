@@ -169,12 +169,13 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
 :p myVariantTable
 > [{| a = 1 |}, {| b = 2.0 |}]
 
--- :p for i:(Fin 2).
---     v : {a:_ | b:_} = case myVariantTable.i of
---       {| a=a |} -> {| b=a |}
---       {| b=b |} -> {| a=b |}
---     v
--- > [{| b = 1 |}, {| a = 2.0 |}]
+%passes
+:p for i:(Fin 2).
+    v : {a:_ | b:_} = case myVariantTable.i of
+      {| a=a |} -> {| b=a |}
+      {| b=b |} -> {| a=b |}
+    v
+> [{| b = 1 |}, {| a = 2.0 |}]
 
 'As index sets
 

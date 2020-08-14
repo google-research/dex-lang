@@ -675,6 +675,7 @@ reduceBlock scope (Block decls result) = do
 
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
   Var v -> case snd (scope ! v) of
     -- TODO: worry about effects!
     LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr

@@ -677,32 +677,19 @@ checkLeaks tvs m = do
 unsolved :: SolverEnv -> Env Kind
 unsolved (SolverEnv vs sub) = vs `envDiff` sub
 
-freshType :: Kind -> UInferM Type
-freshType EffKind = Eff <$> freshEff
-freshType k = do
-  tv <- freshVar k
-  extend $ SolverEnv (tv@>k) mempty
-  extendScope $ tv@>(k, UnknownBinder)
-  return $ Var tv
-
-freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
-freshEff = do
-  v <- freshVar ()
-  extend $ SolverEnv (v@>EffKind) mempty
-  return $ EffectRow [] $ Just $ varName v
-
--- TODO: deduplicate this with the above?
-freshLabeledRow :: (MonadError Err m, MonadCat SolverEnv m) => m Name
-freshLabeledRow = do
-  v <- freshVar ()
-  extend $ SolverEnv (v@>LabeledRowKind) mempty
-  return $ varName v
-
-freshVar :: MonadCat SolverEnv m => ann -> m (VarP ann)
-freshVar ann = do
+freshInferenceName :: (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Name
+freshInferenceName k = do
   env <- look
   let v = genFresh (rawName InferenceName "?") $ solverVars env
-  return $ v :> ann
+  extend $ SolverEnv (v@>k) mempty
+  return v
+
+freshType ::  (MonadError Err m, MonadCat SolverEnv m) => Kind -> m Type
+freshType EffKind = Eff <$> freshEff
+freshType k = Var . (:>k) <$> freshInferenceName k
+
+freshEff :: (MonadError Err m, MonadCat SolverEnv m) => m EffectRow
+freshEff = EffectRow [] . Just <$> freshInferenceName EffKind
 
 constrainEq :: (MonadCat SolverEnv m, MonadError Err m)
              => Type -> Type -> m ()
@@ -771,7 +758,7 @@ unifyExtLabeledItems r1 r2 = do
                               zs -> Just zs
       let extras1 = M.differenceWith diffDrop items1 items2
       let extras2 = M.differenceWith diffDrop items2 items1
-      newTail <- freshLabeledRow
+      newTail <- freshInferenceName LabeledRowKind
       unifyExtLabeledItems (Ext NoLabeledItems t1)
                            (Ext (LabeledItems extras2) (Just newTail))
       unifyExtLabeledItems (Ext NoLabeledItems t2)
