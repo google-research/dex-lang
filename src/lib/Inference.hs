@@ -746,7 +746,7 @@ unifyExtLabeledItems r1 r2 = do
   r2' <- zonk r2
   vs <- looks solverVars
   case (r1', r2') of
-    _ | r1 == r2 -> return ()
+    _ | r1' == r2' -> return ()
     (r, Ext NoLabeledItems (Just v)) | v `isin` vs ->
       bindQ (v:>LabeledRowKind) (LabeledRow r)
     (Ext NoLabeledItems (Just v), r) | v `isin` vs ->
@@ -770,7 +770,7 @@ unifyEff r1 r2 = do
   r2' <- zonk r2
   vs <- looks solverVars
   case (r1', r2') of
-    _ | r1 == r2 -> return ()
+    _ | r1' == r2' -> return ()
     (r, EffectRow [] (Just v)) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
     (EffectRow [] (Just v), r) | v `isin` vs -> bindQ (v:>EffKind) (Eff r)
     (EffectRow effs1@(_:_) t1, EffectRow effs2@(_:_) t2) -> do
