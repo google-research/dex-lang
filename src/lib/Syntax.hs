@@ -48,6 +48,7 @@ module Syntax (
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern Unlabeled,
     pattern NoExt, pattern LabeledRowKind, pattern NoLabeledItems,
+    pattern InternalSingletonLabel,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
   where
 

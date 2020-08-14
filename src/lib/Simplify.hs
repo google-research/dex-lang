@@ -104,6 +104,7 @@ simplifyAtom atom = case atom of
   Variant types label i value -> Variant <$>
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
   VariantTy items -> VariantTy <$> substEmbedR items
+  LabeledRow items -> LabeledRow <$> substEmbedR items
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
@@ -185,6 +186,60 @@ simplifyExpr expr = case expr of
           bs' <-  mapM (mapM substEmbedR) bs
           buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
         emit $ Case e' alts' resultTy'
+  RecordCons left right -> case getType right of
+    RecordTy (NoExt rightTys) -> do
+      -- Unpack, then repack with new arguments (possibly in the middle).
+      rightList <- getUnpacked =<< simplifyAtom right
+      let rightItems = restructure rightList rightTys
+      simplifyAtom $ Record $ left <> rightItems
+    _ -> emit =<< RecordCons <$> mapM simplifyAtom left <*> simplifyAtom right
+  RecordSplit leftTys@(LabeledItems litems) full -> case getType full of
+    RecordTy (NoExt fullTys) -> do
+      -- Unpack, then repack into two pieces.
+      fullList <- getUnpacked =<< simplifyAtom full
+      let LabeledItems fullItems = restructure fullList fullTys
+          splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+          left = M.intersectionWith splitLeft fullItems litems
+          splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
+          right = M.differenceWith splitRight fullItems litems
+      return $ Record $ Unlabeled $ NE.fromList
+        [Record (LabeledItems left), Record (LabeledItems right)]
+    _ -> emit =<< RecordSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
+  VariantLift leftTys@(LabeledItems litems) right -> case getType right of
+    VariantTy (NoExt rightTys) -> do
+      -- Emit a case statement (ordered by the arg type) that lifts the type.
+      let fullRow = NoExt $ leftTys <> rightTys
+          buildAlt label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant fullRow label i x
+          liftAlt ((label, i), vty) = case M.lookup label litems of
+            Just tys -> buildAlt label (i + length tys) vty
+            Nothing -> buildAlt label i vty
+          reflected = toList $ reflectLabels rightTys
+      alts <- mapM liftAlt $ zip reflected $ toList rightTys
+      simplifyExpr $ Case right alts $ VariantTy fullRow
+    _ -> emit =<< VariantLift <$> mapM substEmbedR leftTys <*> simplifyAtom right
+  VariantSplit leftTys@(LabeledItems litems) full -> case getType full of
+    VariantTy (NoExt (LabeledItems fullTys)) -> do
+      -- Emit a case statement (ordered by the arg type) that splits into the
+      -- appropriate piece, changing indices as needed.
+      let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
+          rightTys = LabeledItems $ M.differenceWith splitRight fullTys litems
+          VariantTy resultRow = getType expr
+          asLeft label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant resultRow InternalSingletonLabel 0
+                                $ Variant (NoExt leftTys) label i x
+          asRight label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant resultRow InternalSingletonLabel 1
+                                $ Variant (NoExt rightTys) label i x
+          splitAlt ((label, i), vty) = case M.lookup label litems of
+            Just tys -> if i < length tys
+                        then asLeft label i vty
+                        else asRight label (i - length tys) vty
+            Nothing -> asRight label i vty
+          reflected = toList $ reflectLabels rightTys
+      alts <- mapM splitAlt $ zip reflected $ toList rightTys
+      simplifyExpr $ Case full alts $ VariantTy resultRow
+    _ -> emit =<< VariantSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
 
 -- TODO: come up with a coherent strategy for ordering these various reductions
 simplifyOp :: Op -> SimplifyM Atom

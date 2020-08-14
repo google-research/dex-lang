@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', andE, iadd, imul, isub, idiv, reduceScoped,
-              select, substEmbed, substEmbedR, emitUnpack,
+              select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -103,7 +103,7 @@ emitUnpack expr = do
       return bs
     RecordTy (NoExt types) -> do
       -- TODO: is using Ignore here appropriate? We don't have any existing
-      -- binders to bind, but we still plan to use the results.
+      -- binders to bind, but we still plan to use the resulgetUnpackedts.
       let bs = toNest $ map Ignore $ toList types
       return bs
     ty -> error $ "Can't unpack value of type " <> pprint ty
