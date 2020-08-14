@@ -177,12 +177,10 @@ instance HasType Expr where
       diff <- labeledRowDifference full (NoExt types)
       return $ RecordTy $ NoExt $
         Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
-    VariantLift liftedType variant -> do
-      VariantTy rest <- typeCheck variant
-      _ <- labeledRowDifference liftedType rest
-      let ty = VariantTy liftedType
-      ty |: TyKind
-      return ty
+    VariantLift types record -> do
+      mapM_ (|: TyKind) types
+      VariantTy rest <- typeCheck record
+      return $ VariantTy $ joinExtLabeledItems types rest
     VariantSplit types variant -> do
       mapM_ (|: TyKind) types
       VariantTy full <- typeCheck variant
@@ -525,7 +523,7 @@ typeCheckTyCon tc = case tc of
   RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
-  LabeledRowKind_  -> return TyKind
+  LabeledRowKindTC -> return TyKind
   JArrayType _ _   -> undefined
 
 typeCheckCon :: Con -> TypeM Type

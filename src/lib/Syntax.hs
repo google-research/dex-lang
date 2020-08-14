@@ -21,7 +21,7 @@ module Syntax (
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
-    noLabeledItems, reflectLabels, ExtLabeledItems (..), joinExtLabeledItems,
+    reflectLabels, ExtLabeledItems (..), joinExtLabeledItems,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
@@ -47,7 +47,7 @@ module Syntax (
     pattern RealVal, pattern BoolVal, pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern Unlabeled,
-    pattern NoExt, pattern LabeledRowKind,
+    pattern NoExt, pattern LabeledRowKind, pattern NoLabeledItems,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
   where
 
@@ -89,9 +89,10 @@ data Expr = App Atom Atom
           | Atom Atom
           | Op  Op
           | Hof Hof
-          | RecordCons (LabeledItems Atom) Atom     -- Add values to a record.
-          | RecordSplit (LabeledItems Type) Atom    -- Extract subset of fields.
-          | VariantLift (ExtLabeledItems Type Name) Atom -- Extend a variant.
+          -- Add/remove fields from a record/variant, always to/from the left.
+          | RecordCons   (LabeledItems Atom) Atom   -- Add a value to a record.
+          | RecordSplit  (LabeledItems Type) Atom   -- Extract subset of fields.
+          | VariantLift  (LabeledItems Type) Atom   -- Extend a variant.
           | VariantSplit (LabeledItems Type) Atom   -- Partition a variant.
             deriving (Show, Generic)
 
@@ -161,9 +162,6 @@ newtype LabeledItems a = LabeledItems (M.Map Label [a])
 labeledSingleton :: Label -> a -> LabeledItems a
 labeledSingleton label value = LabeledItems $ M.singleton label [value]
 
-noLabeledItems :: LabeledItems a
-noLabeledItems = LabeledItems M.empty
-
 reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
 reflectLabels (LabeledItems items) = LabeledItems $
   flip M.mapWithKey items $ \k xs -> map (k,) [0..length xs - 1]
@@ -193,7 +191,8 @@ data UExpr' = UVar UVar
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
             | URecord (ExtLabeledItems UExpr UExpr)
-            | UVariant (Maybe UExpr) Label Int UExpr
+            | UVariant (LabeledItems ()) Label UExpr
+            | UVariantLift (LabeledItems ()) UExpr
             | URecordTy (ExtLabeledItems UExpr UExpr)
             | UVariantTy (ExtLabeledItems UExpr UExpr)
               deriving (Show, Generic)
@@ -223,7 +222,8 @@ data UPat' = UPatBinder UBinder
            | UPatPair UPat UPat
            | UPatUnit
            | UPatRecord (ExtLabeledItems UPat UPat)
-           | UPatVariant Label Int UPat
+           | UPatVariant (LabeledItems ()) Label UPat
+           | UPatVariantLift (LabeledItems ()) UPat
              deriving (Show)
 
 data WithSrc a = WithSrc SrcPos a
@@ -252,7 +252,7 @@ data PrimTC e =
       | RefType e e
       | TypeKind
       | EffectRowKind
-      | LabeledRowKind_
+      | LabeledRowKindTC
         -- NOTE: This is just a hack so that we can construct an Atom from an Imp or Jax expression.
         --       In the future it might make sense to parametrize Atoms by the types
         --       of values they can hold.
@@ -628,9 +628,10 @@ instance HasUVars UExpr' where
     UPrimExpr _ -> mempty
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
     URecord ulr -> freeUVars ulr
-    UVariant types _ _ val -> freeUVars types <> freeUVars val
+    UVariant skip _ val -> freeUVars skip <> freeUVars val
     URecordTy ulr -> freeUVars ulr
     UVariantTy ulr -> freeUVars ulr
+    UVariantLift skip val -> freeUVars skip <> freeUVars val
 
 instance HasUVars UAlt where
   freeUVars (UAlt p body) = freeUVars $ Abs p body
@@ -647,6 +648,7 @@ instance HasUVars UPat' where
     UPatUnit       -> mempty
     UPatRecord items -> freeUVars items
     UPatVariant _ _ p -> freeUVars p
+    UPatVariantLift _ p -> freeUVars p
 
 instance BindsUVars UPat' where
   boundUVars pat = case pat of
@@ -657,6 +659,7 @@ instance BindsUVars UPat' where
     UPatUnit       -> mempty
     UPatRecord items -> boundUVars items
     UPatVariant _ _ p -> boundUVars p
+    UPatVariantLift _ p -> boundUVars p
 
 instance HasUVars UDecl where
   freeUVars (ULet _ p expr) = freeUVars p <> freeUVars expr
@@ -922,10 +925,10 @@ instance Subst Expr where
     Hof e   -> Hof $ fmap (subst env) e
     Case e alts resultTy ->
       Case (subst env e) (subst env alts) (subst env resultTy)
-    RecordCons    items a -> RecordCons   (subst env items) (subst env a)
-    RecordSplit   items a -> RecordSplit  (subst env items) (subst env a)
-    VariantLift   items a -> VariantLift  (subst env items) (subst env a)
-    VariantSplit  items a -> VariantSplit (subst env items) (subst env a)
+    RecordCons    items a -> RecordCons    (subst env items) (subst env a)
+    RecordSplit   items a -> RecordSplit   (subst env items) (subst env a)
+    VariantLift   items a -> VariantLift   (subst env items) (subst env a)
+    VariantSplit  items a -> VariantSplit  (subst env items) (subst env a)
 
 instance HasVars Decl where
   freeVars decl = case decl of
@@ -1054,10 +1057,10 @@ extendEffRow :: [Effect] -> EffectRow -> EffectRow
 extendEffRow effs (EffectRow effs' t) = EffectRow (effs <> effs') t
 
 substExtLabeledItemsTail :: SubstEnv -> Maybe Name -> ExtLabeledItems Type Name
-substExtLabeledItemsTail _ Nothing = NoExt noLabeledItems
+substExtLabeledItemsTail _ Nothing = NoExt NoLabeledItems
 substExtLabeledItemsTail env (Just v) = case envLookup env (v:>()) of
-  Nothing -> NoExt noLabeledItems
-  Just (Var (v':>_)) -> Ext noLabeledItems $ Just v'
+  Nothing -> Ext NoLabeledItems $ Just v
+  Just (Var (v':>_)) -> Ext NoLabeledItems $ Just v'
   Just (LabeledRow row) -> row
   _ -> error "Not a valid labeled row substitution"
 
@@ -1215,7 +1218,7 @@ pattern EffKind :: Kind
 pattern EffKind = TC EffectRowKind
 
 pattern LabeledRowKind :: Kind
-pattern LabeledRowKind = TC LabeledRowKind_
+pattern LabeledRowKind = TC LabeledRowKindTC
 
 pattern FixedIntRange :: Int -> Int -> Type
 pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))
@@ -1276,6 +1279,10 @@ pattern BinaryFunVal b1 b2 eff body =
 
 pattern IDo :: BinderP IType
 pattern IDo = Ignore IVoidType
+
+pattern NoLabeledItems :: LabeledItems a
+pattern NoLabeledItems <- (\(LabeledItems items) -> M.null items -> True)
+  where NoLabeledItems = LabeledItems M.empty
 
 pattern NoExt :: LabeledItems a -> ExtLabeledItems a b
 pattern NoExt a = Ext a Nothing
@@ -1351,6 +1358,7 @@ builtinNames = M.fromList
   , ("PairType", TCExpr $ PairType () ())
   , ("UnitType", TCExpr $ UnitType)
   , ("EffKind" , TCExpr $ EffectRowKind)
+  , ("LabeledRowKind", TCExpr $ LabeledRowKindTC)
   , ("IndexSlice", TCExpr $ IndexSlice () ())
   , ("pair", ConExpr $ PairCon () ())
   , ("fst", OpExpr $ Fst ())

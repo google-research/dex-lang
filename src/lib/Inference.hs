@@ -178,39 +178,30 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       HofExpr e -> emitZonked $ Hof e
     matchRequirement val
     where lookupName v = asks (! (v:>()))
-  URecord (NoExt (LabeledItems items)) -> do
-    items' <- mapM (mapM inferRho) items
-    matchRequirement $ Record $ LabeledItems items'
-  UVariant ann label i value -> do
-    varTy <- case (reqTy, ann) of
-      (Check ty, Just uty') -> do
-        ty' <- checkUType uty'
-        constrainEq ty ty'
-        zonk ty
-      (Check ty, Nothing) -> return ty
-      (Infer, Just uty') -> checkUType uty'
-      (Infer, Nothing) -> throw MiscErr $
-        "Can't infer type of a variant expression, try using "
-        <> "an explicit annotation"
-    case varTy of
-      VariantTy vt@(NoExt (LabeledItems items)) ->
-        case M.lookup label items of
-          Just types -> if i < length types
-            then do
-              value' <- checkRho value $ types !! i
-              return $ Variant vt label i value'
-            else throw TypeErr $
-              "Label " <> show label <> " appears fewer than "
-                      <> show i <> " times in variant type annotation"
-          Nothing -> throw TypeErr $
-            "Label " <> show label <> " not in variant type annotation"
-      _ -> throw TypeErr "Variant expression has incorrect type annotation"
-  URecordTy (NoExt items) -> do
-    items' <- mapM checkUType items
-    matchRequirement $ RecordTy $ NoExt items'
-  UVariantTy (NoExt items) -> do
-    items' <- mapM checkUType items
-    matchRequirement $ VariantTy $ NoExt items'
+  URecord (Ext items Nothing) -> do
+    items' <- mapM inferRho items
+    matchRequirement $ Record items'
+  URecord (Ext items (Just ext)) -> do
+    items' <- mapM inferRho items
+    ext' <- inferRho ext
+    matchRequirement =<< emit (RecordCons items' ext')
+  UVariant labels@(LabeledItems lmap) label value -> do
+    value' <- inferRho value
+    prevTys <- mapM (const $ freshType TyKind) labels
+    Var (rest:>_) <- freshType LabeledRowKind
+    let items = prevTys <> labeledSingleton label (getType value')
+    let extItems = Ext items $ Just rest
+    let i = case M.lookup label lmap of
+              Just prev -> length prev
+              Nothing -> 0
+    matchRequirement $ Variant extItems label i value'
+  URecordTy row -> matchRequirement =<< RecordTy <$> checkExtLabeledRow row
+  UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
+  UVariantLift labels value -> do
+    Var (row:>_) <- freshType LabeledRowKind
+    value' <- checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row
+    prev <- mapM (\() -> freshType TyKind) labels
+    matchRequirement =<< emit (VariantLift prev value')
   where
     matchRequirement :: Atom -> UInferM Atom
     matchRequirement x = return x <*
@@ -343,7 +334,7 @@ checkUEff (EffectRow effs t) = do
 
 checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Int, Alt)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
-  (conIdx, patTys) <- checkPat pat scrutineeTy
+  (conIdx, patTys) <- checkCasePat pat scrutineeTy
   let (subPats, subPatTys) = unzip patTys
   let bs = zipWith (\p ty -> Bind $ patNameHint p :> ty) subPats subPatTys
   alt <- buildNAbs (toNest bs) $ \xs ->
@@ -359,8 +350,8 @@ lookupDataCon conName = do
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
 
-checkPat :: UPat -> Type -> UInferM (Int, [(UPat, Type)])
-checkPat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
+checkCasePat :: UPat -> Type -> UInferM (Int, [(UPat, Type)])
+checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
     let (DataConDef _ argBs) = cons !! con
@@ -371,14 +362,22 @@ checkPat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
     let argTys = applyNaryAbs (Abs paramBs $ map binderType $ toList argBs) params
     constrainEq scrutineeTy (TypeCon def params)
     return (con, zip (toList ps) argTys)
-  UPatVariant label i subpat -> do
-    -- We need to know the labels already to check variant patterns
+  UPatVariant labels@(LabeledItems lmap) label subpat -> do
+    -- Make sure the labels we have are consistent with the requested type.
+    subty <- freshType TyKind
+    prevTys <- mapM (const $ freshType TyKind) labels
+    Var (rest:>_) <- freshType LabeledRowKind
+    let patTypes = prevTys <> labeledSingleton label subty
+    let extPatTypes = Ext patTypes $ Just rest
+    constrainEq scrutineeTy $ VariantTy extPatTypes
+    -- TODO: inference of variant patterns; for now needs requested type.
     ty <- zonk scrutineeTy
     items <- case ty of
       VariantTy (NoExt items) -> return items
-      -- TODO: it might be possible to infer this by looking at all alternatives
-      -- in the case statement first?
       _ -> throw MiscErr "Can't infer labels of variant expression in case statement"
+    let i = case M.lookup label lmap of
+              Just prev -> length prev
+              Nothing -> 0
     let (LabeledItems enumTypes) = enumerate items
     case M.lookup label enumTypes of
       Just types -> if i < length types
@@ -472,6 +471,16 @@ checkArrow ahReq ahOff = case (ahReq, ahOff) of
   _ -> throw TypeErr $  " Wrong arrow type:" ++
                        "\nExpected: " ++ pprint ahReq ++
                        "\nActual:   " ++ pprint (fmap (const Pure) ahOff)
+
+checkExtLabeledRow :: ExtLabeledItems UExpr UExpr -> UInferM (ExtLabeledItems Type Name)
+checkExtLabeledRow (Ext types Nothing) = do
+  types' <- mapM checkUType types
+  return $ Ext types' Nothing
+checkExtLabeledRow (Ext types (Just ext)) = do
+  types' <- mapM checkUType types
+  -- Only variables can have kind LabeledRowKind at the moment.
+  Var (ext':>_) <- checkRho ext LabeledRowKind
+  return $ Ext types' $ Just ext'
 
 inferTabCon :: [UExpr] -> Maybe UType -> UInferM Atom
 inferTabCon xs ann = do
@@ -682,6 +691,13 @@ freshEff = do
   extend $ SolverEnv (v@>EffKind) mempty
   return $ EffectRow [] $ Just $ varName v
 
+-- TODO: deduplicate this with the above?
+freshLabeledRow :: (MonadError Err m, MonadCat SolverEnv m) => m Name
+freshLabeledRow = do
+  v <- freshVar ()
+  extend $ SolverEnv (v@>LabeledRowKind) mempty
+  return $ varName v
+
 freshVar :: MonadCat SolverEnv m => ann -> m (VarP ann)
 freshVar ann = do
   env <- look
@@ -724,10 +740,10 @@ unify t1 t2 = do
        when (void arr /= void arr') $ throw TypeErr ""
        unify resultTy resultTy'
        unifyEff (arrowEff arr) (arrowEff arr')
-    (RecordTy  (NoExt items), RecordTy  (NoExt items')) ->
-      unifyLabeledItems items items'
-    (VariantTy (NoExt items), VariantTy (NoExt items')) ->
-      unifyLabeledItems items items'
+    (RecordTy  items, RecordTy  items') ->
+      unifyExtLabeledItems items items'
+    (VariantTy items, VariantTy items') ->
+      unifyExtLabeledItems items items'
     (TypeCon f xs, TypeCon f' xs')
       | f == f' && length xs == length xs' -> zipWithM_ unify xs xs'
     (TC con, TC con') | void con == void con' ->
@@ -735,11 +751,31 @@ unify t1 t2 = do
     (Eff eff, Eff eff') -> unifyEff eff eff'
     _ -> throw TypeErr ""
 
-unifyLabeledItems :: (MonadCat SolverEnv m, MonadError Err m)
-                  => LabeledItems Type -> LabeledItems Type -> m ()
-unifyLabeledItems m m' = do
-  when (reflectLabels m /= reflectLabels m') $ throw TypeErr ""
-  zipWithM_ unify (toList m) (toList m')
+unifyExtLabeledItems :: (MonadCat SolverEnv m, MonadError Err m)
+  => ExtLabeledItems Type Name -> ExtLabeledItems Type Name -> m ()
+unifyExtLabeledItems r1 r2 = do
+  r1' <- zonk r1
+  r2' <- zonk r2
+  vs <- looks solverVars
+  case (r1', r2') of
+    _ | r1 == r2 -> return ()
+    (r, Ext NoLabeledItems (Just v)) | v `isin` vs ->
+      bindQ (v:>LabeledRowKind) (LabeledRow r)
+    (Ext NoLabeledItems (Just v), r) | v `isin` vs ->
+      bindQ (v:>LabeledRowKind) (LabeledRow r)
+    (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
+      let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ zip tys1 tys2
+      sequence_ $ M.intersectionWith unifyPrefixes items1 items2
+      let diffDrop xs ys = case drop (length ys) xs of
+                              [] -> Nothing
+                              zs -> Just zs
+      let extras1 = M.differenceWith diffDrop items1 items2
+      let extras2 = M.differenceWith diffDrop items2 items1
+      newTail <- freshLabeledRow
+      unifyExtLabeledItems (Ext NoLabeledItems t1)
+                           (Ext (LabeledItems extras2) (Just newTail))
+      unifyExtLabeledItems (Ext NoLabeledItems t2)
+                           (Ext (LabeledItems extras1) (Just newTail))
 
 unifyEff :: (MonadCat SolverEnv m, MonadError Err m)
          => EffectRow -> EffectRow -> m ()

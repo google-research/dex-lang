@@ -106,6 +106,7 @@ emitUnpack expr = do
       -- binders to bind, but we still plan to use the results.
       let bs = toNest $ map Ignore $ toList types
       return bs
+    ty -> error $ "Can't unpack value of type " <> pprint ty
   expr' <- deShadow expr <$> getScope
   vs <- freshNestedBinders bs
   embedExtend $ asSnd $ Nest (Unpack (fmap Bind vs) expr') Empty
@@ -568,10 +569,10 @@ traverseExpr def@(_, fAtom) expr = case expr of
     Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
   RecordCons    items a -> RecordCons   <$> traverse fAtom items <*> fAtom a
   RecordSplit   items a -> RecordSplit  <$> traverse fAtom items <*> fAtom a
-  VariantLift   (Ext items rest) a -> do
-    items' <- traverse fAtom items
-    VariantLift (Ext items' rest) <$> fAtom a
-  VariantSplit  items a -> VariantSplit <$> traverse fAtom items <*> fAtom a
+  VariantLift types a -> do
+    items' <- traverse fAtom types
+    VariantLift items' <$> fAtom a
+  VariantSplit items a -> VariantSplit <$> traverse fAtom items <*> fAtom a
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Alt -> m Alt
