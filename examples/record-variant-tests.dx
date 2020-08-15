@@ -99,7 +99,25 @@ Syntax for records, variants, and their types.
 > 95 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
-> expecting "..", "..<", expression, or negation
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', '.', '}', arrow, backquoted name, expression, or infix operator
+
+:p {a:Int,}
+
+> Parse error:104:10:
+>     |
+> 104 | :p {a:Int,}
+>     |          ^
+> unexpected ','
+> expecting "..", "..<", "<..", "<..<", "=>", "{|", '$', '&', ''', '.', '_', '|', '}', alphanumeric character, arrow, backquoted name, expression, or infix operator
+
+:p {|3}
+
+> Parse error:113:6:
+>     |
+> 113 | :p {|3}
+>     |      ^
+> unexpected '3'
+> expecting "...", '}', or field label
 
 
 'Unpacking

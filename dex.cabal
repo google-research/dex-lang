@@ -31,7 +31,7 @@ library
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
-                       aeson, megaparsec, warp, wai,
+                       aeson, megaparsec >=8.0, warp, wai,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
                        diagrams-rasterific, JuicyPixels, transformers,

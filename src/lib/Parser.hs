@@ -187,8 +187,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> caseExpr
          <|> uPrim
          <|> unitCon
-         <|> uLabeledExprs
-         <|> uVariantExpr
+         <|> (uLabeledExprs `fallBackTo` uVariantExpr)
          <?> "expression"
 
 containedExpr :: Parser UExpr
@@ -433,11 +432,13 @@ leafPat =
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
       <|> (UPatCon    <$> upperName <*> manyNested pat)
-      <|> parseVariant leafPat UPatVariant UPatVariantLift
-      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat (Just pun) (Just def))
+      <|> (variantPat `fallBackTo` recordPat)
   )
   where pun pos l = WithSrc pos $ UPatBinder $ Bind (mkName l:>())
         def pos = WithSrc pos $ UPatBinder $ Ignore ()
+        variantPat = parseVariant leafPat UPatVariant UPatVariantLift
+        recordPat = UPatRecord <$> parseLabeledItems "," "=" leafPat
+                                                     (Just pun) (Just def)
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
@@ -482,15 +483,11 @@ parseVariant subparser buildLabeled buildExt =
                       buildExt inactiveItems <$> subparser
     parseLabeled <|> parseExt
 
--- Note: this does a bit more backtracking than necessary to make the code
--- simpler. Theoretically it should be possible to parse all of these at once
--- without using try.
 uLabeledExprs :: Parser UExpr
-uLabeledExprs = withSrc $ do
-    notFollowedBy uVariantExpr
-    URecord <$> build "," "=" (Just varPun) Nothing
-      <|> URecordTy <$> build "&" ":" Nothing Nothing
-      <|> UVariantTy <$> build "|" ":" Nothing Nothing
+uLabeledExprs = withSrc $
+    (URecord <$> build "," "=" (Just varPun) Nothing)
+    `fallBackTo` (URecordTy <$> build "&" ":" Nothing Nothing)
+    `fallBackTo` (UVariantTy <$> build "|" ":" Nothing Nothing)
   where build sep bindwith = parseLabeledItems sep bindwith expr
 
 varPun :: SrcPos -> Label -> UExpr
@@ -501,7 +498,7 @@ parseLabeledItems
   -> Maybe (SrcPos -> Label -> a) -> Maybe (SrcPos -> a)
   -> Parser (ExtLabeledItems a a)
 parseLabeledItems sep bindwith itemparser punner tailDefault =
-  try $ bracketed lBrace rBrace $ atBeginning
+  bracketed lBrace rBrace $ atBeginning
   where
     atBeginning = someItems
                   <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
@@ -523,6 +520,37 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
         Nothing -> explicitBound
       rest <- beforeSep
       return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
+
+-- Combine two parsers such that if the first fails, we try the second one.
+-- If both fail, consume the same amount of input as the parser that
+-- consumed the most input, and use its error message. Useful if you want
+-- to parse multiple things, but they share some common starting symbol, and
+-- you don't want the first one failing to prevent the second from succeeding.
+-- Unlike using `try` and/or (<|>), if both parsers fail and either one consumes
+-- input, parsing is aborted. Also, if both parsers consume the same amount of
+-- input, we combine the symbols each was expecting.
+fallBackTo :: Parser a -> Parser a -> Parser a
+fallBackTo optionA optionB = do
+  startState <- getParserState
+  resA <- observing $ optionA
+  case resA of
+    Right val -> return val
+    Left errA -> do
+      stateA <- getParserState
+      updateParserState $ const startState
+      resB <- observing $ optionB
+      case resB of
+        Right val -> return val
+        Left errB -> case compare (errorOffset errA) (errorOffset errB) of
+          LT -> parseError errB
+          GT -> updateParserState (const stateA) >> parseError errA
+          EQ -> case (errA, errB) of
+            -- Combine what each was expecting.
+            (TrivialError offset unexpA expA, TrivialError _ unexpB expB)
+                -> parseError $ TrivialError offset (unexpA <|> unexpB)
+                                                    (expA <> expB)
+            _ -> fail $ "Multiple failed parse attempts:\n"
+                  <> parseErrorPretty errA <> "\n" <> parseErrorPretty errB
 
 -- === infix ops ===
 
