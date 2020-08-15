@@ -159,6 +159,19 @@ x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
 ({| a | a = a |}) = x
 > Type error:Variant not allowed in can't-fail pattern
 
+'Record puns
+
+:p
+  foo = 1
+  bar = 2.0
+  {foo, bar}
+> {bar = 2.0, foo = 1}
+
+:p
+  ({foo, ...}) = {foo=1, bar=2.0}
+  foo
+> 1
+
 
 'Pattern matching
 

@@ -435,8 +435,10 @@ leafPat =
       <|> (UPatLit    <$> litVal)
       <|> (UPatCon    <$> upperName <*> manyNested pat)
       <|> parseVariant leafPat UPatVariant UPatVariantLift
-      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat)
+      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat (Just pun) (Just def))
   )
+  where pun pos l = WithSrc pos $ UPatBinder $ Bind (mkName l:>())
+        def pos = WithSrc pos $ UPatBinder $ Ignore ()
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
@@ -488,13 +490,19 @@ parseVariant subparser buildLabeled buildExt =
 uLabeledExprs :: Parser UExpr
 uLabeledExprs = withSrc $ do
     notFollowedBy uVariantExpr
-    URecord <$> build "," "="
-      <|> URecordTy <$> build "&" ":"
-      <|> UVariantTy <$> build "|" ":"
+    URecord <$> build "," "=" (Just varPun) Nothing
+      <|> URecordTy <$> build "&" ":" Nothing Nothing
+      <|> UVariantTy <$> build "|" ":" Nothing Nothing
   where build sep bindwith = parseLabeledItems sep bindwith expr
 
-parseLabeledItems :: String -> String -> Parser a -> Parser (ExtLabeledItems a a)
-parseLabeledItems sep bindwith itemparser =
+varPun :: SrcPos -> Label -> UExpr
+varPun pos str = WithSrc pos $ UVar (mkName str :> ())
+
+parseLabeledItems
+  :: String -> String -> Parser a
+  -> Maybe (SrcPos -> Label -> a) -> Maybe (SrcPos -> a)
+  -> Parser (ExtLabeledItems a a)
+parseLabeledItems sep bindwith itemparser punner tailDefault =
   try $ bracketed lBrace rBrace $ atBeginning
   where
     atBeginning = someItems
@@ -502,15 +510,19 @@ parseLabeledItems sep bindwith itemparser =
                   <|> stopWithoutExtend
     stopWithoutExtend = return $ NoExt NoLabeledItems
     stopAndExtend = do
-      symbol "..."
-      rest <- itemparser
+      WithSrc pos _ <- withSrc $ symbol "..."
+      rest <- case tailDefault of
+        Just def -> itemparser <|> pure (def pos)
+        Nothing -> itemparser
       return $ Ext NoLabeledItems (Just rest)
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      l <- fieldLabel
-      symbol bindwith
-      itemVal <- itemparser
+      WithSrc pos l <- withSrc $ fieldLabel
+      let explicitBound = symbol bindwith *> itemparser 
+      itemVal <- case punner of
+        Just punFn -> explicitBound <|> pure (punFn pos l)
+        Nothing -> explicitBound
       rest <- beforeSep
       return $ joinExtLabeledItems (labeledSingleton l itemVal) rest
 
