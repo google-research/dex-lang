@@ -20,17 +20,17 @@
 > 6
 
 :p
-   vdot' : n:Type ?-> n=>Real -> n=>Real -> Real =
+   vdot' : n:Type ?-> n=>Float -> n=>Float -> Float =
      \x y. sum (for i. x.i * y.i * 2.0)
    x = iota (Fin 3)
-   y = map i2r x
+   y = map IToF x
    vdot' y y
 > 10.0
 
 :p
    x = iota $ Fin 3
    y = iota $ Fin 4
-   z = for i j. i2r x.i * i2r y.j
+   z = for i j. IToF x.i * IToF y.j
    sum (for i. sum z.i)
 > 18.0
 
@@ -48,7 +48,7 @@ arr = iota NArr
 :p sum for i:NArr. 1
 > 7
 
-fun = \y. sum (map i2r arr) + y
+fun = \y. sum (map IToF arr) + y
 
 :p fun 3.0
 > 24.0
@@ -113,13 +113,13 @@ fun = \y. sum (map i2r arr) + y
 :p tan 1.57079
 > 158057.9
 
-:p floor 3.6
+:p FToI $ floor 3.6
 > 3
 
-:p ceil 3.6
+:p FToI $ ceil 3.6
 > 4
 
-:p round 3.6
+:p FToI $ round 3.6
 > 4
 
 s = 1.0
@@ -135,7 +135,7 @@ s = 1.0
    for i. xs.i + 10
 > [12, 11, 10]
 
-cumsumplus : n=>Real -> n=>Real =
+cumsumplus : n=>Float -> n=>Float =
  \xs. snd $ scan 0.0 \i c.
    ans = c + xs.i
    (ans, 1.0 + ans)
@@ -234,7 +234,7 @@ litArr = [10, 5, 3]
    x
 > [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]
 
-:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + i2r (ordinal j))
+:p fold (for i:(Fin 3). 0.0) $ \i:(Fin 2) c. (for j. c.j + IToF (ordinal j))
 > [0.0, 2.0, 4.0]
 
 :p
@@ -396,7 +396,7 @@ litArr = [10, 5, 3]
 
 -- TODO: test file specifically for parse errors (including testing error messages)
 :p
-   f : Real->Real = \x.
+   f : Float->Float = \x.
      -- line comment should be ok here
      2.0 * x
    f 1.0
@@ -516,25 +516,25 @@ litArr = [10, 5, 3]
       c
 > ([3.0, 2.0, 1.0, 0.0], 4.0)
 
-def eitherFloor (x:(Int|Real)) : Int = case x of
+def eitherFloor (x:(Int|Float)) : Int = case x of
   Left i  -> i
-  Right f -> floor f
+  Right f -> FToI $ floor f
 
 :p eitherFloor (Right 1.2)
 > 1
 
 :p
-  x : (Int|Real) = Right 1.2
+  x : (Int|Float) = Right 1.2
   x
 > Right 1.2
 
 -- Sum types as flattened index sets!
-def Weights (n:Type) (m:Type) : Type = n=>m=>Real
-def Biases  (n:Type)          : Type = n=>Real
-def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Real
+def Weights (n:Type) (m:Type) : Type = n=>m=>Float
+def Biases  (n:Type)          : Type = n=>Float
+def Params  (n:Type) (m:Type) : Type = {weights:(n&m) | biases:n}=>Float
 
-w = for i:(Fin 2). for j:(Fin 3). (i2r (ordinal i)) * 3.0 + (i2r (ordinal j))
-b = for j:(Fin 2). neg (i2r (ordinal j) + 1.0)
+w = for i:(Fin 2). for j:(Fin 3). (IToF (ordinal i)) * 3.0 + (IToF (ordinal j))
+b = for j:(Fin 2). neg (IToF (ordinal j) + 1.0)
 
 def flatten ((w,b):(Weights n m & Biases n)): Params n m =
   for idx. case idx of
@@ -616,8 +616,8 @@ for i:(Fin 2 & Fin 2). 1.0
 > (0@(Fin 2), 1@(Fin 2))
 
 for i:(Fin 5). for j:(..i).
-  ir = i2r $ ordinal i
-  jr = i2r $ ordinal j
+  ir = IToF $ ordinal i
+  jr = IToF $ ordinal j
   ir * (ir + 1.0) / 2.0 + jr
 > [ [0.0]@(..(0@Fin 5))
 > , [1.0, 2.0]@(..(1@Fin 5))
@@ -643,10 +643,10 @@ for i:(Fin 5). for j:(..i).
 :p 2.0 .* [[1.0, 2.0], [3.0, 4.0]]
 > [[2.0, 4.0], [6.0, 8.0]]
 
-def newtonIter (f: Real -> Real) (x:Real) : Real =
+def newtonIter (f: Float -> Float) (x:Float) : Float =
   x - (f x / deriv f x)
 
-def newtonSolve (tol:Real) (f : Real -> Real) (x0:Real) : Real =
+def newtonSolve (tol:Float) (f : Float -> Float) (x0:Float) : Float =
   snd $ withState x0 \x.
     while (\(). abs (f $ get x) > tol) \().
       x := newtonIter f $ get x
@@ -654,29 +654,29 @@ def newtonSolve (tol:Real) (f : Real -> Real) (x0:Real) : Real =
 :p newtonSolve 0.001 (\x. sq x - 2.0) 1.0
 > 1.4142157
 
-:p
-  x = for i:(Fin 3). for j:(Fin 200). 1.0
-  -- Last dimension split to allow for vector loads
-  y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). i2r $ (iota _).(i,j,h)
-  z = snd $ withAccum \acc.
-        for l.
-          for i.
-            xil = (broadcastVector x.i.l)
-            for j.
-              acc!i!j += xil * (loadVector y.l.j)
-  for i:(Fin 3). for j:(Fin 4). storeVector z.i.j
-> [ [ [318400.0, 318600.0, 318800.0, 319000.0]
-> , [319200.0, 319400.0, 319600.0, 319800.0]
-> , [320000.0, 320200.0, 320400.0, 320600.0]
-> , [320800.0, 321000.0, 321200.0, 321400.0] ]
-> , [ [318400.0, 318600.0, 318800.0, 319000.0]
-> , [319200.0, 319400.0, 319600.0, 319800.0]
-> , [320000.0, 320200.0, 320400.0, 320600.0]
-> , [320800.0, 321000.0, 321200.0, 321400.0] ]
-> , [ [318400.0, 318600.0, 318800.0, 319000.0]
-> , [319200.0, 319400.0, 319600.0, 319800.0]
-> , [320000.0, 320200.0, 320400.0, 320600.0]
-> , [320800.0, 321000.0, 321200.0, 321400.0] ] ]
+-- :p
+--   x = for i:(Fin 3). for j:(Fin 200). 1.0
+--   -- Last dimension split to allow for vector loads
+--   y = for i:(Fin 200). for j:(Fin 4). for h:(Fin VectorWidth). IToF $ (iota _).(i,j,h)
+--   z = snd $ withAccum \acc.
+--         for l.
+--           for i.
+--             xil = (broadcastVector x.i.l)
+--             for j.
+--               acc!i!j += xil * (loadVector y.l.j)
+--   for i:(Fin 3). for j:(Fin 4). storeVector z.i.j
+-- > [ [ [318400.0, 318600.0, 318800.0, 319000.0]
+-- > , [319200.0, 319400.0, 319600.0, 319800.0]
+-- > , [320000.0, 320200.0, 320400.0, 320600.0]
+-- > , [320800.0, 321000.0, 321200.0, 321400.0] ]
+-- > , [ [318400.0, 318600.0, 318800.0, 319000.0]
+-- > , [319200.0, 319400.0, 319600.0, 319800.0]
+-- > , [320000.0, 320200.0, 320400.0, 320600.0]
+-- > , [320800.0, 321000.0, 321200.0, 321400.0] ]
+-- > , [ [318400.0, 318600.0, 318800.0, 319000.0]
+-- > , [319200.0, 319400.0, 319600.0, 319800.0]
+-- > , [320000.0, 320200.0, 320400.0, 320600.0]
+-- > , [320800.0, 321000.0, 321200.0, 321400.0] ] ]
 
 :p
   fs = for i:(Fin 4).
@@ -702,12 +702,12 @@ def newtonSolve (tol:Real) (f : Real -> Real) (x0:Real) : Real =
   (f 5, w)
 > (7, 2.0)
 
-def add (n : Type) ?-> (a : n=>Real) (b : n=>Real) : n=>Real =
-  (tile (\t:(Tile n (Fin VectorWidth)). storeVector $ loadTile t a + loadTile t b)
-        (\i:n. a.i + b.i))
-toAdd = for _:(Fin 10). 1.0
-add toAdd toAdd
-> [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+-- def add (n : Type) ?-> (a : n=>Float) (b : n=>Float) : n=>Float =
+--   (tile (\t:(Tile n (Fin VectorWidth)). storeVector $ loadTile t a + loadTile t b)
+--         (\i:n. a.i + b.i))
+-- toAdd = for _:(Fin 10). 1.0
+-- add toAdd toAdd
+-- > [2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
 
 arr2d = for i:(Fin 2). for j:(Fin 2). (iota _).(i,j)
 arr2d.(1@_)

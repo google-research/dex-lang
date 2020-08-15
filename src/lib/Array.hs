@@ -17,30 +17,31 @@ import Control.Monad
 import qualified Data.Vector.Storable as V
 import Data.Maybe (fromJust)
 import Data.Store (Store)
-import Data.Word
 import Foreign.Marshal.Array
 import Foreign.Ptr
 import Foreign.Storable  hiding (sizeOf)
 import GHC.Generics
+import Data.Int
 
 data Array    = Array    BaseType  Vec       deriving (Show, Eq, Generic)
 data ArrayRef = ArrayRef ArrayType (Ptr ())  deriving (Show, Eq, Generic)
 
-data LitVal = IntLit  Int
-            | CharLit Char
-            | RealLit Double
-            | BoolLit Bool
-            | StrLit  String
-            | VecLit [LitVal]  -- Only one level of nesting allowed!
+data LitVal = Int64Lit   Int64
+            | Int32Lit   Int32
+            | Int8Lit    Int8
+            | Float64Lit Double
+            | Float32Lit Float
+            | VecLit     [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Generic)
 
-data Vec = CharVec   (V.Vector Word8)
-         | IntVec    (V.Vector Int)
-         | BoolVec   (V.Vector Int)
-         | RealVec   (V.Vector Double)
+data Vec = Int64Vec   (V.Vector Int64)
+         | Int32Vec   (V.Vector Int32)
+         | Int8Vec    (V.Vector Int8)
+         | Float64Vec (V.Vector Double)
+         | Float32Vec (V.Vector Float)
            deriving (Show, Eq, Generic)
 
-data ScalarBaseType = IntType | BoolType | RealType | StrType | CharType
+data ScalarBaseType = Int64Type | Int32Type | Int8Type | Float64Type | Float32Type
                       deriving (Show, Eq, Generic)
 data BaseType = Scalar ScalarBaseType
               | Vector ScalarBaseType
@@ -63,7 +64,13 @@ vecEntriesFor t = case t of
   Vector _ -> vectorWidth
 
 sizeOf :: BaseType -> Int
-sizeOf t = vecEntriesFor t * 8
+sizeOf t = case t of
+  Scalar Int64Type   -> 8
+  Scalar Int32Type   -> 4
+  Scalar Int8Type    -> 1
+  Scalar Float64Type -> 8
+  Scalar Float32Type -> 4
+  Vector st          -> vectorWidth * sizeOf (Scalar st)
 
 scalarFromArray :: Array -> Maybe LitVal
 scalarFromArray arr@(Array b vec) = case arrayLength arr of
@@ -74,10 +81,11 @@ scalarFromArray arr@(Array b vec) = case arrayLength arr of
   where
     scalarFromVec :: Vec -> LitVal
     scalarFromVec v = case v of
-      CharVec   xs -> CharLit $ toEnum $ fromIntegral $ xs V.! 0
-      IntVec    xs -> IntLit  $ xs V.! 0
-      BoolVec   xs -> BoolLit $ xs V.! 0 /= 0
-      RealVec   xs -> RealLit $ xs V.! 0
+      Int64Vec   xs -> Int64Lit   $ xs V.! 0
+      Int32Vec   xs -> Int32Lit   $ xs V.! 0
+      Int8Vec    xs -> Int8Lit    $ xs V.! 0
+      Float64Vec xs -> Float64Lit $ xs V.! 0
+      Float32Vec xs -> Float32Lit $ xs V.! 0
 
 arrayOffset :: Array -> Int -> Array
 arrayOffset (Array b vec) off = Array b $ modifyVec vec $ V.drop (off * vecEntriesFor b)
@@ -87,26 +95,30 @@ arrayHead (Array b vec) = fromJust $ scalarFromArray $ Array b $ modifyVec vec $
 
 arrayFromScalar :: LitVal -> Array
 arrayFromScalar val = case val of
-  IntLit  x -> Array (Scalar IntType)  $ IntVec $ V.fromList [x]
-  BoolLit x -> Array (Scalar BoolType) $ BoolVec $ V.fromList [x']
-    where x' = case x of False -> 0
-                         True  -> 1
-  RealLit x -> Array (Scalar RealType) $ RealVec $ V.fromList [x]
+  Int64Lit   x -> Array (Scalar Int64Type  ) $ Int64Vec   $ V.fromList [x]
+  Int32Lit   x -> Array (Scalar Int32Type  ) $ Int32Vec   $ V.fromList [x]
+  Int8Lit    x -> Array (Scalar Int8Type   ) $ Int8Vec    $ V.fromList [x]
+  Float64Lit x -> Array (Scalar Float64Type) $ Float64Vec $ V.fromList [x]
+  Float32Lit x -> Array (Scalar Float32Type) $ Float32Vec $ V.fromList [x]
   _ -> error "Not implemented"
 
 arrayConcat :: [Array] -> Array
-arrayConcat arrs = Array b $ choose intVecs boolVecs doubleVecs
+arrayConcat arrs = Array b $ choose i64v i32v i8v fp64v fp32v
   where
     (Array b _) = head arrs
 
-    intVecs    = [v | (Array _ (IntVec v )) <- arrs]
-    boolVecs   = [v | (Array _ (BoolVec v)) <- arrs]
-    doubleVecs = [v | (Array _ (RealVec v)) <- arrs]
+    i64v  = [v | (Array _ (Int64Vec   v)) <- arrs]
+    i32v  = [v | (Array _ (Int32Vec   v)) <- arrs]
+    i8v   = [v | (Array _ (Int8Vec    v)) <- arrs]
+    fp64v = [v | (Array _ (Float64Vec v)) <- arrs]
+    fp32v = [v | (Array _ (Float32Vec v)) <- arrs]
 
-    choose l [] [] = IntVec  $ V.concat l
-    choose [] l [] = BoolVec $ V.concat l
-    choose [] [] l = RealVec $ V.concat l
-    choose _  _  _ = error "Can't concatenate heterogenous vectors!"
+    choose l [] [] [] [] = Int64Vec   $ V.concat l
+    choose [] l [] [] [] = Int32Vec   $ V.concat l
+    choose [] [] l [] [] = Int8Vec    $ V.concat l
+    choose [] [] [] l [] = Float64Vec $ V.concat l
+    choose [] [] [] [] l = Float32Vec $ V.concat l
+    choose _  _  _  _  _ = error "Can't concatenate heterogenous vectors!"
 
 loadArray :: ArrayRef -> IO Array
 loadArray (ArrayRef (size, b) ptr) = Array b <$> case b of
@@ -115,11 +127,11 @@ loadArray (ArrayRef (size, b) ptr) = Array b <$> case b of
   where
     loadVec :: ScalarBaseType -> Int -> IO Vec
     loadVec sb width = case sb of
-      CharType -> liftM CharVec $ peekVec (size * width) $ castPtr ptr
-      IntType  -> liftM IntVec  $ peekVec (size * width) $ castPtr ptr
-      BoolType -> liftM BoolVec $ peekVec (size * width) $ castPtr ptr
-      RealType -> liftM RealVec $ peekVec (size * width) $ castPtr ptr
-      StrType  -> error "Not implemented"
+      Int64Type   -> liftM Int64Vec   $ peekVec (size * width) $ castPtr ptr
+      Int32Type   -> liftM Int32Vec   $ peekVec (size * width) $ castPtr ptr
+      Int8Type    -> liftM Int8Vec    $ peekVec (size * width) $ castPtr ptr
+      Float64Type -> liftM Float64Vec $ peekVec (size * width) $ castPtr ptr
+      Float32Type -> liftM Float32Vec $ peekVec (size * width) $ castPtr ptr
 
 storeArray :: ArrayRef -> Array -> IO ()
 storeArray (ArrayRef _ ptr) arr = applyVec arr (pokeVec (castPtr ptr))
@@ -137,17 +149,19 @@ unsafeWithArrayPointer arr f = applyVec arr (\v -> V.unsafeWith v (f. castPtr))
 
 modifyVec :: Vec -> (forall a. Storable a => V.Vector a -> V.Vector a) -> Vec
 modifyVec vec f = case vec of
-  CharVec v -> CharVec $ f v
-  IntVec  v -> IntVec  $ f v
-  BoolVec v -> BoolVec $ f v
-  RealVec v -> RealVec $ f v
+  Int64Vec   v -> Int64Vec   $ f v
+  Int32Vec   v -> Int32Vec   $ f v
+  Int8Vec    v -> Int8Vec    $ f v
+  Float64Vec v -> Float64Vec $ f v
+  Float32Vec v -> Float32Vec $ f v
 
 applyVec :: Array -> (forall a. Storable a => V.Vector a -> b) -> b
 applyVec (Array _ vec) f = case vec of
-  CharVec v -> f v
-  IntVec  v -> f v
-  BoolVec v -> f v
-  RealVec v -> f v
+  Int64Vec   v -> f v
+  Int32Vec   v -> f v
+  Int8Vec    v -> f v
+  Float64Vec v -> f v
+  Float32Vec v -> f v
 
 instance Store Array
 instance Store Vec

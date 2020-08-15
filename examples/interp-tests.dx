@@ -15,4 +15,4 @@ for i. x, N2 = unpack xs.i  -- TODO: underscore type binder
 > [0, 0, 1, 3]
 
 :p filter (lam x. x > 2.0) [4.0, 0.0, 10.0, 2.0]
-> pack [4.0, 10.0], 2, (Ea.(a=>Real))
+> pack [4.0, 10.0], 2, (Ea.(a=>Float))

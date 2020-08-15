@@ -6,6 +6,7 @@
 {-# LANGUAGE DeriveFunctor #-}
 {-# LANGUAGE PatternSynonyms #-}
 {-# LANGUAGE ViewPatterns #-}
+{-# LANGUAGE Rank2Types #-}
 
 module Syntax (
     Type, Kind, BaseType (..), ScalarBaseType (..),
@@ -39,16 +40,19 @@ module Syntax (
     applyNaryAbs, applyDataDefParams, freshSkolemVar,
     mkConsList, mkConsListTy, fromConsList, fromConsListTy, extendEffRow,
     scalarTableBaseType, varType, binderType, isTabTy, LogLevel (..), IRVariant (..),
-    pattern IntLitExpr, pattern RealLitExpr, pattern PreludeBoolTy,
-    pattern IntVal, pattern UnitTy, pattern PairTy, pattern FunTy,
-    pattern FixedIntRange, pattern RefTy, pattern BoolTy, pattern IntTy,
-    pattern RealTy, pattern BaseTy, pattern UnitVal,
+    applyIntBinOp, applyIntCmpOp, applyFloatBinOp, applyFloatUnOp,
+    getIntLit, getFloatLit, pattern CharLit,
+    pattern IdxRepTy, pattern IdxRepVal, pattern TagRepTy, pattern TagRepVal,
+    pattern IntLitExpr, pattern FloatLitExpr,
+    pattern UnitTy, pattern PairTy, pattern FunTy,
+    pattern FixedIntRange, pattern RefTy,
+    pattern BaseTy, pattern UnitVal,
     pattern PairVal, pattern PureArrow, pattern ArrayVal,
-    pattern RealVal, pattern BoolVal, pattern TyKind, pattern LamVal,
+    pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
-    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern Unlabeled,
-    pattern NoExt, pattern LabeledRowKind, pattern NoLabeledItems,
-    pattern InternalSingletonLabel,
+    pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
+    pattern Unlabeled, pattern NoExt, pattern LabeledRowKind, 
+    pattern NoLabeledItems, pattern InternalSingletonLabel,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
   where
 
@@ -64,11 +68,12 @@ import qualified Data.List.NonEmpty as NE
 import Data.Store (Store)
 import Data.Tuple (swap)
 import Data.Foldable (toList)
+import Data.Int
 import GHC.Generics
 
 import Env
 import Array
-import Util (enumerate)
+import Util (enumerate, (...))
 
 -- === core IR ===
 
@@ -202,6 +207,9 @@ data UExpr' = UVar UVar
             | UVariantLift (LabeledItems ()) UExpr
             | URecordTy (ExtLabeledItems UExpr UExpr)
             | UVariantTy (ExtLabeledItems UExpr UExpr)
+            | UIntLit  Int
+            | UCharLit Char
+            | UFloatLit Double
               deriving (Show, Generic)
 
 data UConDef = UConDef Name (Nest UAnnBinder)  deriving (Show, Generic)
@@ -225,7 +233,6 @@ type SrcPos = (Int, Int)
 type UPat  = WithSrc UPat'
 data UPat' = UPatBinder UBinder
            | UPatCon Name (Nest UPat)
-           | UPatLit LitVal
            | UPatPair UPat UPat
            | UPatUnit
            | UPatRecord (ExtLabeledItems UPat UPat)
@@ -250,6 +257,7 @@ data PrimExpr e =
 
 data PrimTC e =
         BaseType  BaseType
+      | CharType
       | ArrayType e         -- A pointer to memory storing a ScalarTableType value
       | IntRange e e
       | IndexRange e (Limit e) (Limit e)
@@ -269,11 +277,11 @@ data PrimTC e =
 
 data PrimCon e =
         Lit LitVal
+      | CharCon e         -- Wraps an Int8 value
       | ArrayLit e Array  -- Used to store results of module evaluation
       | AnyValue e        -- Produces an arbitrary value of a given type
       | PairCon e e
       | UnitCon
-      | RefCon e e
       | Coerce e e        -- Type, then value. See Type.hs for valid coercions.
       | ClassDictHole SrcCtx e   -- Only used during type inference
       | SumAsProd e e [[e]] -- type, tag, payload (only used during Imp lowering)
@@ -306,7 +314,7 @@ data PrimOp e =
       | IndexAsInt e
       | IdxSetSize e
       | ThrowError e
-      | CoerceOp e e                 -- Type, then value. See Type.hs for valid coercions.
+      | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -328,8 +336,7 @@ data BinOp = IAdd | ISub | IMul | IDiv | ICmp CmpOp | IPow
            | BAnd | BOr | IRem
              deriving (Show, Eq, Generic)
 
-data UnOp = IntToReal | BoolToInt | UnsafeIntToBool
-          | Exp | Exp2
+data UnOp = Exp | Exp2
           | Log | Log2 | Log10
           | Sin | Cos | Tan | Sqrt
           | Floor | Ceil| Round
@@ -435,6 +442,7 @@ data ImpInstr = Load  IExpr
               | IWhile IExpr ImpProg
               | If IExpr ImpProg ImpProg
               | IThrowError  -- TODO: parameterize by a run-time string
+              | ICastOp IType IExpr
               | IPrimOp IPrimOp
                 deriving (Show)
 
@@ -525,14 +533,15 @@ type SrcCtx = Maybe SrcPos
 data Result = Result [Output] (Except ())  deriving (Show, Eq)
 
 data Output = TextOut String
-            | HeatmapOut Int Int (V.Vector Double)
+            | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
             | EvalTime Double
             | MiscLog String
               deriving (Show, Eq, Generic)
 
-data OutFormat = Printed | Heatmap | Scatter   deriving (Show, Eq, Generic)
+data OutFormat = Printed | Heatmap Bool | ColorHeatmap | Scatter
+                 deriving (Show, Eq, Generic)
 data DataFormat = DexObject | DexBinaryObject  deriving (Show, Eq, Generic)
 
 data Err = Err ErrType SrcCtx String  deriving (Show, Eq)
@@ -642,6 +651,9 @@ instance HasUVars UExpr' where
     URecordTy ulr -> freeUVars ulr
     UVariantTy ulr -> freeUVars ulr
     UVariantLift skip val -> freeUVars skip <> freeUVars val
+    UIntLit  _ -> mempty
+    UCharLit _ -> mempty
+    UFloatLit _ -> mempty
 
 instance HasUVars UAlt where
   freeUVars (UAlt p body) = freeUVars $ Abs p body
@@ -653,7 +665,6 @@ instance HasUVars UPat' where
   freeUVars pat = case pat of
     UPatBinder _   -> mempty
     UPatCon con ps -> con @> () <> foldMap freeUVars ps
-    UPatLit _      -> mempty
     UPatPair p1 p2 -> freeUVars p1 <> freeUVars p2
     UPatUnit       -> mempty
     UPatRecord items -> freeUVars items
@@ -664,7 +675,6 @@ instance BindsUVars UPat' where
   boundUVars pat = case pat of
     UPatBinder v   -> v @> ()
     UPatCon _ ps   -> foldMap boundUVars ps
-    UPatLit _      -> mempty
     UPatPair p1 p2 -> boundUVars p1 <> boundUVars p2
     UPatUnit       -> mempty
     UPatRecord items -> boundUVars items
@@ -1132,6 +1142,7 @@ instance HasIVars ImpInstr where
     IOffset a o t -> freeIVars a <> freeIVars o <> freeIVars t
     Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
     IWhile c p    -> freeIVars c <> freeIVars p
+    ICastOp t x   -> freeIVars t <> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     If p l r      -> freeIVars p <> freeIVars l <> freeIVars r
     IThrowError   -> mempty
@@ -1148,6 +1159,30 @@ instance Semigroup (Nest a) where
 instance Monoid (Nest a) where
   mempty = Empty
   mappend xs ys = toNest $ toList xs ++ toList ys
+
+-- === Helpers for function evaluation over fixed-width types ===
+
+applyIntBinOp' :: (forall a. (Eq a, Ord a, Num a, Integral a) => (a -> Atom) -> a -> a -> Atom) -> Atom -> Atom -> Atom
+applyIntBinOp' f x y = case (x, y) of
+  (Con (Lit (Int64Lit xv)), Con (Lit (Int64Lit yv))) -> f (Con . Lit . Int64Lit) xv yv
+  (Con (Lit (Int32Lit xv)), Con (Lit (Int32Lit yv))) -> f (Con . Lit . Int32Lit) xv yv
+  (Con (Lit (Int8Lit xv)) , Con (Lit (Int8Lit  yv))) -> f (Con . Lit . Int8Lit ) xv yv
+  _ -> error "Expected integer atoms"
+
+applyIntBinOp :: (forall a. (Num a, Integral a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyIntBinOp f x y = applyIntBinOp' (\w -> w ... f) x y
+
+applyIntCmpOp :: (forall a. (Eq a, Ord a) => a -> a -> Bool) -> Atom -> Atom -> Atom
+applyIntCmpOp f x y = applyIntBinOp' (\_ -> (Con . Lit . Int8Lit . fromIntegral . fromEnum) ... f) x y
+
+applyFloatBinOp :: (forall a. (Num a, Fractional a) => a -> a -> a) -> Atom -> Atom -> Atom
+applyFloatBinOp f x y = case (x, y) of
+  (Con (Lit (Float64Lit xv)), Con (Lit (Float64Lit yv))) -> Con $ Lit $ Float64Lit $ f xv yv
+  (Con (Lit (Float32Lit xv)), Con (Lit (Float32Lit yv))) -> Con $ Lit $ Float32Lit $ f xv yv
+  _ -> error "Expected float atoms"
+
+applyFloatUnOp :: (forall a. (Num a, Fractional a) => a -> a) -> Atom -> Atom
+applyFloatUnOp f x = applyFloatBinOp (\_ -> f) undefined x
 
 -- === Synonyms ===
 
@@ -1171,19 +1206,40 @@ a --@ b = Pi (Abs (Ignore a) (LinArrow, b))
 a ==> b = Pi (Abs (Ignore a) (TabArrow, b))
 
 pattern IntLitExpr :: Int -> UExpr'
-pattern IntLitExpr x = UPrimExpr (ConExpr (Lit (IntLit x)))
+pattern IntLitExpr x = UIntLit x
 
-pattern RealLitExpr :: Double -> UExpr'
-pattern RealLitExpr x = UPrimExpr (ConExpr (Lit (RealLit x)))
+pattern FloatLitExpr :: Double -> UExpr'
+pattern FloatLitExpr x = UFloatLit x
 
-pattern IntVal :: Int -> Atom
-pattern IntVal x = Con (Lit (IntLit x))
+getIntLit :: LitVal -> Int
+getIntLit l = case l of
+  Int64Lit i -> fromIntegral i
+  Int32Lit i -> fromIntegral i
+  Int8Lit  i -> fromIntegral i
+  _ -> error $ "Expected an integer literal"
 
-pattern RealVal :: Double -> Atom
-pattern RealVal x = Con (Lit (RealLit x))
+getFloatLit :: LitVal -> Double
+getFloatLit l = case l of
+  Float64Lit f -> f
+  Float32Lit f -> realToFrac f
+  _ -> error $ "Expected a floating-point literal"
 
-pattern BoolVal :: Bool -> Atom
-pattern BoolVal x = Con (Lit (BoolLit x))
+pattern CharLit :: Int8 -> Atom
+pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
+
+-- Type used to represent indices at run-time
+pattern IdxRepTy :: Type
+pattern IdxRepTy = TC (BaseType (Scalar Int64Type))
+
+pattern IdxRepVal :: Int64 -> Atom
+pattern IdxRepVal x = Con (Lit (Int64Lit x))
+
+-- Type used to represent sum type tags at run-time
+pattern TagRepTy :: Type
+pattern TagRepTy = TC (BaseType (Scalar Int64Type))
+
+pattern TagRepVal :: Int64 -> Atom
+pattern TagRepVal x = Con (Lit (Int64Lit x))
 
 pattern ArrayVal :: Type -> Array -> Atom
 pattern ArrayVal t arr = Con (ArrayLit t arr)
@@ -1209,20 +1265,8 @@ pattern BaseTy b = TC (BaseType b)
 pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
 
-pattern IntTy :: Type
-pattern IntTy = TC (BaseType (Scalar IntType))
-
-pattern BoolTy :: Type
-pattern BoolTy = TC (BaseType (Scalar BoolType))
-
-pattern PreludeBoolTy :: Type
-pattern PreludeBoolTy =
-  TypeCon (DataDef (GlobalName "Bool") Empty
-    [ DataConDef (GlobalName "False") Empty
-    , DataConDef (GlobalName "True") Empty]) []
-
-pattern RealTy :: Type
-pattern RealTy = TC (BaseType (Scalar RealType))
+pattern CharTy :: Type
+pattern CharTy = TC CharType
 
 pattern TyKind :: Kind
 pattern TyKind = TC TypeKind
@@ -1233,8 +1277,8 @@ pattern EffKind = TC EffectRowKind
 pattern LabeledRowKind :: Kind
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FixedIntRange :: Int -> Int -> Type
-pattern FixedIntRange low high = TC (IntRange (IntVal low) (IntVal high))
+pattern FixedIntRange :: Int64 -> Int64 -> Type
+pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
 pattern PureArrow :: Arrow
 pattern PureArrow = PlainArrow Pure
@@ -1340,10 +1384,6 @@ builtinNames = M.fromList
   , ("tan" , unOp  Tan), ("sqrt", unOp Sqrt)
   , ("floor", unOp Floor), ("ceil", unOp Ceil), ("round", unOp Round)
   , ("vfadd", vbinOp FAdd), ("vfsub", vbinOp FSub), ("vfmul", vbinOp FMul)
-  , ("True" , ConExpr $ Lit $ BoolLit True)
-  , ("False", ConExpr $ Lit $ BoolLit False)
-  , ("inttoreal", unOp IntToReal)
-  , ("booltoint", unOp BoolToInt)
   , ("asint"       , OpExpr $ IndexAsInt ())
   , ("idxSetSize"  , OpExpr $ IdxSetSize ())
   , ("asidx"       , OpExpr $ IntAsIndex () ())
@@ -1354,6 +1394,7 @@ builtinNames = M.fromList
   , ("put"        , OpExpr $ PrimEffect () $ MPut  ())
   , ("indexRef"   , OpExpr $ IndexRef () ())
   , ("inject"     , OpExpr $ Inject ())
+  , ("select"     , OpExpr $ Select () () ())
   , ("while"           , HofExpr $ While () ())
   , ("linearize"       , HofExpr $ Linearize ())
   , ("linearTranspose" , HofExpr $ Transpose ())
@@ -1362,10 +1403,12 @@ builtinNames = M.fromList
   , ("runState"        , HofExpr $ RunState  () ())
   , ("tiled"           , HofExpr $ Tile 0 () ())
   , ("tiledd"          , HofExpr $ Tile 1 () ())
-  , ("Int"     , TCExpr $ BaseType $ Scalar IntType)
-  , ("Real"    , TCExpr $ BaseType $ Scalar RealType)
-  , ("Bool"    , TCExpr $ BaseType $ Scalar BoolType)
   , ("TyKind"  , TCExpr $ TypeKind)
+  , ("Float64" , TCExpr $ BaseType $ Scalar Float64Type)
+  , ("Float32" , TCExpr $ BaseType $ Scalar Float32Type)
+  , ("Int64"   , TCExpr $ BaseType $ Scalar Int64Type)
+  , ("Int32"   , TCExpr $ BaseType $ Scalar Int32Type)
+  , ("Int8"    , TCExpr $ BaseType $ Scalar Int8Type)
   , ("IntRange", TCExpr $ IntRange () ())
   , ("Ref"     , TCExpr $ RefType () ())
   , ("PairType", TCExpr $ PairType () ())
@@ -1379,11 +1422,12 @@ builtinNames = M.fromList
   , ("fstRef", OpExpr $ FstRef ())
   , ("sndRef", OpExpr $ SndRef ())
   , ("anyVal", ConExpr $ AnyValue ())
-  , ("VectorRealType",  TCExpr $ BaseType $ Vector RealType)
+  -- TODO: Lift vectors to constructors
+  --, ("VectorFloatType",  TCExpr $ BaseType $ Vector FloatType)
   , ("vectorPack", OpExpr $ VectorPack $ replicate vectorWidth ())
   , ("vectorIndex", OpExpr $ VectorIndex () ())
   , ("unsafeAsIndex", ConExpr $ Coerce   () ())
-  , ("unsafeCoerce" , OpExpr  $ CoerceOp () ())
+  , ("cast", OpExpr  $ CastOp () ())
   , ("sliceOffset", OpExpr $ SliceOffset () ())
   , ("sliceCurry", OpExpr $ SliceCurry () ())
   ]

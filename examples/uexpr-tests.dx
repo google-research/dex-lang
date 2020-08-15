@@ -9,13 +9,13 @@ def depId (a:Type) (x:a) : a = x
 
 def returnFirstArg (a:Type) (b:Type) (x:a) (y:b) : a = x
 
-:p returnFirstArg Int Real 1 2.0
+:p returnFirstArg Int Float 1 2.0
 > 1
 
 :p 1.0 + 2.0
 > 3.0
 
-def triple (x:Real) : Real = x + x + x
+def triple (x:Float) : Float = x + x + x
 
 :p triple 1.0
 > 3.0
@@ -43,24 +43,24 @@ idImplicit2 : (a:Type ?-> a -> a) = \x. x
 
 :p 1.0 + 1
 > Type error:
-> Expected: Real
->   Actual: Int
+> Expected: Float64
+>   Actual: Int64
 >
 > :p 1.0 + 1
 >          ^
 
 :p 1 + (1.0 + 2.0)
 > Type error:
-> Expected: Int
->   Actual: Real
+> Expected: Int64
+>   Actual: Float64
 >
 > :p 1 + (1.0 + 2.0)
 >         ^^^^^^^^^
 
 :p 1.0 + (2 + 3)
 > Type error:
-> Expected: Real
->   Actual: Int
+> Expected: Float64
+>   Actual: Int64
 >
 > :p 1.0 + (2 + 3)
 >           ^^^^^
@@ -141,7 +141,7 @@ myPair = (1, 2.3)
   ((x,y),z)
 > Type error:
 > Expected: (a & b)
->   Actual: Int
+>   Actual: Int64
 > (Solving for: [a:Type, b:Type])
 >
 >   ((x,y),z) = (1,2,3)
@@ -157,7 +157,7 @@ myPair = (1, 2.3)
   (x,y)
 > Type error:
 > Expected: (a & b)
->   Actual: Int
+>   Actual: Int64
 > (Solving for: [a:Type, b:Type])
 >
 >   (x,y) = 1
@@ -219,28 +219,28 @@ def myOtherFst ((x, _):(a&b)) : a = x
 > 18.0
 
 :p
-   f : Real --o Real =
+   f : Float --o Float =
      \x. 2.0 * (x + x)
    transposeLinear f 1.0
 > 4.0
 
 -- FIXME: This fails due to shadowing!
---def transpose' (x:n=>m=>Real) --o : m=>n=>Real = for i j. x.j.i
+--def transpose' (x:n=>m=>Float) --o : m=>n=>Float = for i j. x.j.i
 --
 --:p transposeLinear transpose' [[1.0, 2.0, 3.0]]
 --> [[1.0], [2.0], [3.0]]
 
 :p
-   f : Real --o (Fin 3=>Real) =
+   f : Float --o (Fin 3=>Float) =
      \x. for i. x * 2.0
    transposeLinear f [1.0, 2.0, 3.0]
 > 12.0
 
 id'' : b -> b = id
 
-def eitherFloor (x:(Int|Real)) : Int = case x of
+def eitherFloor (x:(Int|Float)) : Int = case x of
   Left  i -> i
-  Right f -> floor f
+  Right f -> FToI f
 
 :p (eitherFloor (Left 1), eitherFloor (Right 2.3))
 > (1, 2)

@@ -1,6 +1,6 @@
 
 
-addReals :: Real -> Real -> Real
-addReals x y = x + y
+addFloats :: Float -> Float -> Float
+addFloats x y = x + y
 
 

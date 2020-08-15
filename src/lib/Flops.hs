@@ -38,6 +38,7 @@ statementFlops (_, instr) = case instr of
   IPrimOp op -> do
     n <- ask
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]
+  ICastOp _ _   -> return ()
   Load _        -> return ()
   Store _ _     -> return ()
   Alloc _ _     -> return ()
@@ -51,7 +52,6 @@ statementFlops (_, instr) = case instr of
     local (mulTerm n) $ flops block
 
 evalSizeExpr :: IExpr -> Term
-evalSizeExpr (ILit (IntLit n)) = litTerm n
 evalSizeExpr (IVar (v:>_)) = varTerm v
 evalSizeExpr expr = error $ "Not implemented: " ++ pprint expr
 

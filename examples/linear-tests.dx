@@ -1,69 +1,69 @@
 :p
-   f : Real --o Real
+   f : Float --o Float
    f = llam x. x
    f 1.0
 > 1.0
 
-:t llam x:Real. x * x
+:t llam x:Float. x * x
 > Linearity error: pattern spent twice: [x]
 >
-> :t llam x:Real. x * x
+> :t llam x:Float. x * x
 >                   ^^
 
-:t llam x:Real. x * 2.0
-> (Real --o Real)
+:t llam x:Float. x * 2.0
+> (Float --o Float)
 
-:t llam x:Real. 2.0 * x
-> (Real --o Real)
+:t llam x:Float. 2.0 * x
+> (Float --o Float)
 
-:t llam x:Real. llam y:Real. x * y
-> (Real --o (Real --o Real))
+:t llam x:Float. llam y:Float. x * y
+> (Float --o (Float --o Float))
 
-:t llam x:Real. (llam y. y) x
-> (Real --o Real)
+:t llam x:Float. (llam y. y) x
+> (Float --o Float)
 
-:t llam x:Real. (\y. y) x
+:t llam x:Float. (\y. y) x
 > Linearity error: nonlinear function consumed linear data: [x]
 >
-> :t llam x:Real. (\y. y) x
+> :t llam x:Float. (\y. y) x
 >    ^^^^^^^^^^^^^^^^^^^^^^
 
-:t llam x:Real. (1.0, x)
-> (Real --o (Real, Real))
+:t llam x:Float. (1.0, x)
+> (Float --o (Float, Float))
 
-:t llam x:Real. (x, 1.0)
-> (Real --o (Real, Real))
+:t llam x:Float. (x, 1.0)
+> (Float --o (Float, Float))
 
-:t llam x:Real. (x, x)
-> (Real --o (Real, Real))
+:t llam x:Float. (x, x)
+> (Float --o (Float, Float))
 
-:t llam x:Real. 1.0 + x
-> (Real --o Real)
+:t llam x:Float. 1.0 + x
+> (Float --o Float)
 
-:t llam x:Real. x + 1.0
-> (Real --o Real)
+:t llam x:Float. x + 1.0
+> (Float --o Float)
 
-:t llam x:Real. x + x
-> (Real --o Real)
+:t llam x:Float. x + x
+> (Float --o Float)
 
-:t llam x:Real. 1.0 * x
-> (Real --o Real)
+:t llam x:Float. 1.0 * x
+> (Float --o Float)
 
-:t llam x:Real. x * 1.0
-> (Real --o Real)
+:t llam x:Float. x * 1.0
+> (Float --o Float)
 
-:t llam x:Real. x * x
+:t llam x:Float. x * x
 > Linearity error: pattern spent twice: [x]
 >
-> :t llam x:Real. x * x
+> :t llam x:Float. x * x
 >                   ^^
 
-:t llam x:Real.
+:t llam x:Float.
      y = x
      x + y
-> (Real --o Real)
+> (Float --o Float)
 
-:t llam x:Real.
+:t llam x:Float.
      y = x; y * x
 > Linearity error: pattern spent twice: [x]
 >
@@ -71,7 +71,7 @@
 >               ^^
 
 :t llam (x, y). x + y
-> ((Real, Real) --o Real)
+> ((Float, Float) --o Float)
 
 :t llam (x, y). x * y
 > Linearity error: pattern spent twice: [x]
@@ -86,51 +86,51 @@
 > 3.0
 
 :t llam x. x * 0.0
-> (Real --o Real)
+> (Float --o Float)
 
 :t llam x. 0.0 * x
-> (Real --o Real)
+> (Float --o Float)
 
-:t llam x:Real. 0.0 * 0.0
-> (Real --o Real)
+:t llam x:Float. 0.0 * 0.0
+> (Float --o Float)
 
 :t llam x. x + 0.0
-> (Real --o Real)
+> (Float --o Float)
 
 :t llam x. 0.0 + x
-> (Real --o Real)
+> (Float --o Float)
 
-:t llam x:Real. 0.0 + 0.0
-> (Real --o Real)
+:t llam x:Float. 0.0 + 0.0
+> (Float --o Float)
 
 :t llam x. (0.0 + x) + 0.0
-> (Real --o Real)
+> (Float --o Float)
 
 :t llam x. (0.0 + x) + 1.0
-> (Real --o Real)
+> (Float --o Float)
 
 :t llam x. 0.0 + (x + 1.0)
-> (Real --o Real)
+> (Float --o Float)
 
 :t llam y. llam x. (x + 0.0) + (y + 0.0)
-> (Real --o (Real --o Real))
+> (Float --o (Float --o Float))
 
 :t llam y. llam x. (x * 0.0) + y
-> (Real --o (Real --o Real))
+> (Float --o (Float --o Float))
 
-:t llam x:Real. ()
-> (Real --o ())
+:t llam x:Float. ()
+> (Float --o ())
 
-nonLinFun : Real -> Real
+nonLinFun : Float -> Float
 nonLinFun x = x
 
-linFun : Real --o Real
+linFun : Float --o Float
 linFun x = x
 
-eatsLin : (Real --o Real) -> Bool
+eatsLin : (Float --o Float) -> Bool
 eatsLin f = True
 
-eatsNonLin : (Real -> Real) -> Bool
+eatsNonLin : (Float -> Float) -> Bool
 eatsNonLin f = True
 
 :t eatsLin linFun
@@ -138,8 +138,8 @@ eatsNonLin f = True
 
 :t eatsLin nonLinFun
 > Type error:
-> Expected: (Real --o Real)
->   Actual: (Real -> Real)
+> Expected: (Float --o Float)
+>   Actual: (Float -> Float)
 > In: nonLinFun
 >
 > :t eatsLin nonLinFun
@@ -147,8 +147,8 @@ eatsNonLin f = True
 
 :t eatsNonLin linFun
 > Type error:
-> Expected: (Real -> Real)
->   Actual: (Real --o Real)
+> Expected: (Float -> Float)
+>   Actual: (Float --o Float)
 > In: linFun
 >
 > :t eatsNonLin linFun
@@ -174,32 +174,32 @@ eatsNonLin f = True
 
 :t \f. (eatsLin f, eatsNonLin f)
 > Type error:
-> Expected: (Real -> Real)
->   Actual: (Real --o Real)
+> Expected: (Float -> Float)
+>   Actual: (Float --o Float)
 > In: f
 >
 > :t \f. (eatsLin f, eatsNonLin f)
 >                               ^
 
-linFstArg : Real --o Real -> Real
+linFstArg : Float --o Float -> Float
 linFstArg x y = x / y
 
-linUnary : Real --o Real
+linUnary : Float --o Float
 linUnary x = linFstArg x 1.0
 
 -- Nonlinear because of defaulting rules
 :t
    f x = x + x
    f
-> (Real -> Real)
+> (Float -> Float)
 
-f1 : Real --o Real
+f1 : Float --o Float
 f1 x = %runReader(x, \r.
    y = %ask(r)
    z = %ask(r)
    y + z)
 
-f2 : Real --o Real
+f2 : Float --o Float
 f2 x = %runReader(x, \r.
    y = %ask(r)
    z = %ask(r)
@@ -209,7 +209,7 @@ f2 x = %runReader(x, \r.
 >    y * z)
 >      ^^
 
-f3 : Real --o Real
+f3 : Float --o Float
 f3 x =
   y = snd $ %runWriter(\w.
         _ = %tell(w, x)
@@ -217,7 +217,7 @@ f3 x =
         ())
   y + x
 
-f2 : Real --o Real
+f2 : Float --o Float
 f2 x =
   y = snd $ %runWriter(\w.
         _ = %tell(w, x)

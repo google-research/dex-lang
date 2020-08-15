@@ -83,7 +83,7 @@ evalSourceBlockM env block = case sbContents block of
       case fmt of
         Printed -> do
           logTop $ TextOut $ pprintVal val
-        Heatmap -> logTop $ valToHeatmap val
+        Heatmap color -> logTop $ valToHeatmap color val
         Scatter -> logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m

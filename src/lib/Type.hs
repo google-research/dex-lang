@@ -11,7 +11,8 @@
 
 module Type (
   getType, checkType, HasType (..), Checkable (..), litType,
-  isPure, exprEffs, blockEffs, extendEffect, binOpType, unOpType, isData,
+  isPure, exprEffs, blockEffs, extendEffect, isData, checkBinOp, checkUnOp,
+  checkIntBaseType, checkFloatBaseType,
   indexSetConcreteSize, checkNoShadow) where
 
 import Prelude hiding (pi)
@@ -29,6 +30,7 @@ import Syntax
 import Env
 import PPrint
 import Cat
+import Util (bindM2)
 
 type TypeEnv = Bindings  -- Only care about type payload
 
@@ -166,7 +168,7 @@ instance HasType Expr where
               checkEq resultTy resultTy'
           VariantTy _ -> throw CompilerErr
             "Can't pattern-match partially-known variants"
-          _ -> throw CompilerErr $ "Unexpected scrutinee: " <> pprint ety
+          _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
       return resultTy
     RecordCons items record -> do
       types <- mapM typeCheck items
@@ -225,7 +227,7 @@ exprEffs expr = case expr of
     RunWriter _   -> SomeEffects
     RunState _ _  -> SomeEffects
     Tile _ _ _ -> error "not implemented"
-  Case _ _ _ -> error "not implemented"
+  Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
   RecordCons _ _    -> NoEffects
   RecordSplit _ _   -> NoEffects
   VariantLift _ _   -> NoEffects
@@ -270,7 +272,7 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
       RecordTy (NoExt types) ->
         return $ toNest $ map Ignore $ toList types
       RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
-      _ -> throw CompilerErr $ "Can't unpack " ++ pprint ty
+      _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
     checkEq bs bs'
     return $ foldMap binderBinding bs
   where ctxStr = "checking decl:\n" ++ pprint decl
@@ -382,7 +384,6 @@ instance CoreVariant (PrimOp a) where
 instance CoreVariant (PrimCon a) where
   checkVariant e = case e of
     ClassDictHole _ _ -> goneBy Core
-    RefCon _ _ -> neverAllowed
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimHof a) where
@@ -514,8 +515,9 @@ withAllowedEff eff m = updateAllowedEff (const eff) m
 typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
+  CharType         -> return TyKind
   ArrayType t      -> t|:TyKind >> return TyKind
-  IntRange a b     -> a|:IntTy >> b|:IntTy >> return TyKind
+  IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
   PairType a b     -> a|:TyKind >> b|:TyKind >> return TyKind
@@ -529,11 +531,11 @@ typeCheckTyCon tc = case tc of
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
+  CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
   ArrayLit ty _ -> return $ ArrayTy ty
   AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
-  RefCon r x -> r|:TyKind >> RefTy r <$> typeCheck x
   Coerce t@(Var _) _ -> t |: TyKind $> t
   Coerce destTy e -> do
     sourceTy <- typeCheck e
@@ -543,19 +545,52 @@ typeCheckCon con = case con of
   SumAsProd ty _ _ -> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
 
+checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
+checkIntBaseType allowVector t = case t of
+  BaseTy (Scalar sbt)               -> checkSBT sbt
+  BaseTy (Vector sbt) | allowVector -> checkSBT sbt
+  _ -> notInt
+  where
+    checkSBT sbt = case sbt of
+      Int64Type -> return ()
+      Int32Type -> return ()
+      Int8Type  -> return ()
+      _         -> notInt
+    notInt = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
+                             "integer type, but found: " ++ pprint t
+
+checkFloatBaseType :: MonadError Err m => Bool -> Type -> m ()
+checkFloatBaseType allowVector t = case t of
+  BaseTy (Scalar sbt)               -> checkSBT sbt
+  BaseTy (Vector sbt) | allowVector -> checkSBT sbt
+  _ -> notFloat
+  where
+    checkSBT sbt = case sbt of
+      Float64Type -> return ()
+      Float32Type -> return ()
+      _           -> notFloat
+    notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
+                               "floating-point type, but found: " ++ pprint t
+
 checkValidCoercion :: Type -> Type -> TypeM ()
 checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
- (ArrayTy st, ArrayTy dt) -> checkValidCoercion st dt
- (IntTy, TC (IntRange   _ _  )) -> return () -- from ordinal
- (IntTy, TC (IndexRange _ _ _)) -> return () -- from ordinal
- (IntTy, TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
- _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
+  (ArrayTy st, ArrayTy CharTy)   -> checkIntBaseType   False st
+  (ArrayTy st, ArrayTy dt)       -> checkValidCoercion st dt
+  (IdxRepTy  , TC (IntRange   _ _  )) -> return () -- from ordinal
+  (IdxRepTy  , TC (IndexRange _ _ _)) -> return () -- from ordinal
+  (IdxRepTy  , TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
+  _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
-checkValidOpCoercion :: Type -> Type -> TypeM ()
-checkValidOpCoercion sourceTy destTy = case (sourceTy, destTy) of
- (BoolTy, PreludeBoolTy) -> return ()
- (PreludeBoolTy, BoolTy) -> return ()
- _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
+checkValidCast :: Type -> Type -> TypeM ()
+checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType destTy
+  where
+    checkScalarType ty = case ty of
+      BaseTy (Scalar Int64Type  ) -> return ()
+      BaseTy (Scalar Int32Type  ) -> return ()
+      BaseTy (Scalar Int8Type   ) -> return ()
+      BaseTy (Scalar Float64Type) -> return ()
+      BaseTy (Scalar Float32Type) -> return ()
+      _ -> throw TypeErr $ "Can't cast " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 typeCheckOp :: Op -> TypeM Type
 typeCheckOp op = case op of
@@ -569,22 +604,23 @@ typeCheckOp op = case op of
     return ty
   Fst p -> do { PairTy x _ <- typeCheck p; return x}
   Snd p -> do { PairTy _ y <- typeCheck p; return y}
-  ScalarBinOp binop x1 x2 ->
-    x1 |: BaseTy (Scalar t1) >> x2 |: BaseTy (Scalar t2) $> BaseTy (Scalar tOut)
-    where (t1, t2, tOut) = binOpType binop
-  ScalarUnOp unop x -> x |: BaseTy (Scalar ty) $> BaseTy (Scalar outTy)
-    where (ty, outTy) = unOpType unop
+  ScalarBinOp binop x y -> bindM2 (checkBinOp binop) (typeCheck x) (typeCheck y)
+  ScalarUnOp  unop  x   -> checkUnOp unop =<< typeCheck x
   Select p x y -> do
-    p|:BoolTy
-    ty@(BaseTy _) <- typeCheck x
-    y |:ty
+    p |: (BaseTy $ Scalar Int8Type)
+    ty <- typeCheck x
+    y |: ty
     return ty
-  IntAsIndex ty i -> ty|:TyKind >> i|:IntTy $> ty
-  IndexAsInt i -> typeCheck i $> IntTy
-  IdxSetSize i -> typeCheck i $> IntTy
+  IntAsIndex ty i -> ty|:TyKind >> i|:IdxRepTy $> ty
+  IndexAsInt i -> typeCheck i $> IdxRepTy
+  IdxSetSize i -> typeCheck i $> IdxRepTy
   FFICall _ ansTy args -> do
-    -- We have no signatures for FFI functions so we just assume that the types are ok
-    mapM_ typeCheck args
+    forM_ args $ \arg -> do
+      argTy <- typeCheck arg
+      case argTy of
+        BaseTy _ -> return ()
+        _        -> throw TypeErr $ "All arguments of FFI calls have to be " ++
+                                    "fixed-width base types, but got: " ++ pprint argTy
     return $ BaseTy ansTy
   Inject i -> do
     TC (IndexRange ty _ _) <- typeCheck i
@@ -607,9 +643,8 @@ typeCheckOp op = case op of
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
   ArrayOffset arr idx off -> do
-    -- TODO: b should be applied!!
     ArrayTy (TabTyAbs a) <- typeCheck arr
-    off |: IntTy
+    off |: IdxRepTy
     idx |: absArgType a
     return $ ArrayTy $ snd $ applyAbs a idx
   ArrayLoad arr -> do
@@ -625,9 +660,7 @@ typeCheckOp op = case op of
     u' <- typeCheck i
     checkEq u u'
     return $ TC $ IndexSlice n v
-  VectorBinOp binop x1 x2 ->
-    x1 |: BaseTy (Vector t1) >> x2 |: BaseTy (Vector t2) $> BaseTy (Vector tOut)
-    where (t1, t2, tOut) = binOpType binop
+  VectorBinOp _ _ _ -> throw CompilerErr "Vector operations are not supported at the moment"
   VectorPack xs -> do
     unless (length xs == vectorWidth) $ throw TypeErr lengthMsg
     BaseTy (Scalar sb) <- typeCheck $ head xs
@@ -637,14 +670,14 @@ typeCheckOp op = case op of
                       " elements: " ++ pprint op
   VectorIndex x i -> do
     BaseTy (Vector sb) <- typeCheck x
-    i |: TC (IntRange (IntVal 0) (IntVal vectorWidth))
+    i |: TC (IntRange (IdxRepVal 0) (IdxRepVal $ fromIntegral vectorWidth))
     return $ BaseTy $ Scalar sb
   ThrowError ty -> ty|:TyKind $> ty
-  CoerceOp t@(Var _) _ -> t |: TyKind $> t
-  CoerceOp destTy e -> do
+  CastOp t@(Var _) _ -> t |: TyKind $> t
+  CastOp destTy e -> do
     sourceTy <- typeCheck e
     destTy  |: TyKind
-    checkValidOpCoercion sourceTy destTy
+    checkValidCast sourceTy destTy
     return destTy
 
 typeCheckHof :: Hof -> TypeM Type
@@ -688,7 +721,7 @@ typeCheckHof hof = case hof of
     Pi (Abs (Ignore UnitTy) (arr', bodyTy)) <- typeCheck body
     declareEffs $ arrowEff arr
     declareEffs $ arrowEff arr'
-    checkEq BoolTy condTy
+    checkEq (BaseTy $ Scalar Int8Type) condTy
     checkEq UnitTy bodyTy
     return UnitTy
   Linearize f -> do
@@ -720,54 +753,78 @@ checkAction effName f = do
 
 litType :: LitVal -> BaseType
 litType v = case v of
-  CharLit _ -> Scalar CharType
-  IntLit  _ -> Scalar IntType
-  RealLit _ -> Scalar RealType
-  StrLit  _ -> Scalar StrType
-  BoolLit _ -> Scalar BoolType
+  Int64Lit   _ -> Scalar Int64Type
+  Int32Lit   _ -> Scalar Int32Type
+  Int8Lit    _ -> Scalar Int8Type
+  Float64Lit _ -> Scalar Float64Type
+  Float32Lit _ -> Scalar Float32Type
   VecLit  l -> Vector sb
     where (Scalar sb) = litType $ head l
 
-binOpType :: BinOp -> (ScalarBaseType, ScalarBaseType, ScalarBaseType)
-binOpType op = case op of
-  IAdd   -> (i, i, i);  ISub   -> (i, i, i)
-  IMul   -> (i, i, i);  IDiv   -> (i, i, i)
-  IRem   -> (i, i, i);  IPow   -> (i, i, i)
-  ICmp _ -> (i, i, b)
-  FAdd   -> (r, r, r);  FSub   -> (r, r, r)
-  FMul   -> (r, r, r);  FDiv   -> (r, r, r);
-  FPow   -> (r, r, r)
-  FCmp _ -> (r, r, b)
-  BAnd   -> (b, b, b);  BOr    -> (b, b, b)
-  where b = BoolType
-        i = IntType
-        r = RealType
+data ArgumentType = SomeFloatArg | SomeIntArg | Int8Arg
+data ReturnType   = SameReturn | Int8Return
 
-unOpType :: UnOp -> (ScalarBaseType, ScalarBaseType)
-unOpType op = case op of
-  IntToReal       -> (IntType , RealType)
-  BoolToInt       -> (BoolType, IntType)
-  UnsafeIntToBool -> (IntType , BoolType)
-  Exp             -> (RealType, RealType)
-  Exp2            -> (RealType, RealType)
-  Log             -> (RealType, RealType)
-  Log2            -> (RealType, RealType)
-  Log10           -> (RealType, RealType)
-  Sin             -> (RealType, RealType)
-  Cos             -> (RealType, RealType)
-  Tan             -> (RealType, RealType)
-  Sqrt            -> (RealType, RealType)
-  Floor           -> (RealType, IntType )
-  Ceil            -> (RealType, IntType )
-  Round           -> (RealType, IntType )
-  FNeg            -> (RealType, RealType)
-  BNot            -> (BoolType, BoolType)
+checkOpArgType :: MonadError Err m => ArgumentType -> Type -> m ()
+checkOpArgType argTy x =
+  case argTy of
+    SomeIntArg   -> checkIntBaseType   True x
+    SomeFloatArg -> checkFloatBaseType True x
+    Int8Arg      -> case x of
+      BaseTy (Scalar Int8Type) -> return ()
+      BaseTy (Vector Int8Type) -> return ()
+      _ -> throw TypeErr "Expected an Int8 argument"
+
+checkBinOp :: MonadError Err m => BinOp -> Type -> Type -> m Type
+checkBinOp op x y = do
+  checkOpArgType argTy x
+  assertEq x y ""
+  return $ case retTy of
+    SameReturn -> x
+    Int8Return -> BaseTy $ Scalar Int8Type
+  where
+    (argTy, retTy) = case op of
+      IAdd   -> (ia, sr);  ISub   -> (ia, sr)
+      IMul   -> (ia, sr);  IDiv   -> (ia, sr)
+      IRem   -> (ia, sr);  IPow   -> (ia, sr)
+      ICmp _ -> (ia, br)
+      FAdd   -> (fa, sr);  FSub   -> (fa, sr)
+      FMul   -> (fa, sr);  FDiv   -> (fa, sr);
+      FPow   -> (fa, sr)
+      FCmp _ -> (fa, br)
+      BAnd   -> (ba, br);  BOr    -> (ba, br)
+      where
+        ba = Int8Arg; ia = SomeIntArg; fa = SomeFloatArg
+        br = Int8Return; sr = SameReturn
+
+checkUnOp :: MonadError Err m => UnOp -> Type -> m Type
+checkUnOp op x = do
+  checkOpArgType argTy x
+  return $ case retTy of
+    SameReturn -> x
+    Int8Return -> BaseTy $ Scalar Int8Type
+  where
+    (argTy, retTy) = case op of
+      Exp              -> (f, sr)
+      Exp2             -> (f, sr)
+      Log              -> (f, sr)
+      Log2             -> (f, sr)
+      Log10            -> (f, sr)
+      Sin              -> (f, sr)
+      Cos              -> (f, sr)
+      Tan              -> (f, sr)
+      Sqrt             -> (f, sr)
+      Floor            -> (f, sr)
+      Ceil             -> (f, sr)
+      Round            -> (f, sr)
+      FNeg             -> (f, sr)
+      BNot             -> (b, sr)
+      where
+        b = Int8Arg; f = SomeFloatArg; sr = SameReturn
 
 indexSetConcreteSize :: Type -> Maybe Int
 indexSetConcreteSize ty = case ty of
-  FixedIntRange low high -> Just $ high - low
-  BoolTy  -> Just 2
-  _ -> Nothing
+  FixedIntRange low high -> Just $ fromIntegral $ high - low
+  _                      -> Nothing
 
 checkDataLike :: MonadError Err m => String -> Bindings -> Type -> m ()
 checkDataLike msg env ty = case ty of
@@ -777,6 +834,7 @@ checkDataLike msg env ty = case ty of
   TypeCon _ _ -> return ()
   TC con -> case con of
     BaseType _       -> return ()
+    CharType         -> return ()
     PairType a b     -> recur a >> recur b
     UnitType         -> return ()
     IntRange _ _     -> return ()

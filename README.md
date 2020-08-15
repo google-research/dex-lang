@@ -13,6 +13,7 @@ or these example programs:
 
   * [Dex prelude](https://google-research.github.io/dex-lang/prelude.html)
   * [Mandelbrot set](https://google-research.github.io/dex-lang/mandelbrot.html)
+  * [Ray tracer](https://google-research.github.io/dex-lang/raytrace.html)
   * [Estimating pi](https://google-research.github.io/dex-lang/pi.html)
   * [Hamiltonian Monte Carlo](https://google-research.github.io/dex-lang/mcmc.html)
   * [ODE integrator](https://google-research.github.io/dex-lang/ode-integrator.html)

@@ -1,17 +1,17 @@
 '# Monte Carlo estimates of pi
 
-estimatePiArea : Key -> Real = \key.
+estimatePiArea : Key -> Float = \key.
   (k1, k2) = splitKey key
   x = rand k1
   y = rand k2
   inBounds = (sq x + sq y) < 1.0
   4.0 * b2r inBounds
 
-estimatePiAvgVal : Key -> Real = \key.
+estimatePiAvgVal : Key -> Float = \key.
   x = rand key
   4.0 * sqrt (1.0 - sq x)
 
-meanAndStdDev :  Int -> (Key -> Real) -> Key -> (Real & Real) =
+meanAndStdDev :  Int -> (Key -> Float) -> Key -> (Float & Float) =
   \n f key.
     samps = for i:(Fin n). many f key i
     (mean samps, std samps)

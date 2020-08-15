@@ -154,7 +154,8 @@ explicitCommand = do
     "p"       -> return $ EvalExpr Printed
     "t"       -> return $ GetType
     "plot"    -> return $ EvalExpr Scatter
-    "plotmat" -> return $ EvalExpr Heatmap
+    "plotmat"      -> return $ EvalExpr (Heatmap False)
+    "plotmatcolor" -> return $ EvalExpr (Heatmap True)
     _ -> fail $ "unrecognized command: " ++ show cmdName
   e <- blockOrExpr <* eolf
   return $ case (e, cmd) of
@@ -201,17 +202,15 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc pos . UPrimExpr . ConExpr . Lit . CharLit) s
+  let cs = map (WithSrc pos . UCharLit) s
   return $ WithSrc pos $ UTabCon cs Nothing
 
 uLit :: Parser UExpr
-uLit = withSrc $ liftM (UPrimExpr . ConExpr . Lit) litVal
-
-litVal :: Parser LitVal
-litVal =   (CharLit <$> charLit)
-       <|> (IntLit  <$> intLit)
-       <|> (RealLit <$> doubleLit)
-       <?> "literal"
+uLit = withSrc $ uLitParser
+  where uLitParser = UCharLit <$> charLit
+                 <|> UIntLit  <$> intLit
+                 <|> UFloatLit <$> doubleLit
+                 <?> "literal"
 
 uVarOcc :: Parser UExpr
 uVarOcc = withSrc $ try $ (UVar . (:>())) <$> (occName <* notFollowedBy (sym ":"))
@@ -432,7 +431,6 @@ leafPat =
   <|> parens pat <|> (withSrc $
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
-      <|> (UPatLit    <$> litVal)
       <|> (UPatCon    <$> upperName <*> manyNested pat)
       <|> parseVariant leafPat UPatVariant UPatVariantLift
       <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat (Just pun) (Just def))
@@ -464,9 +462,8 @@ uPrim = withSrc $ do
       Nothing -> fail $ "Unrecognized primitive: " ++ s
 
 baseType :: Parser BaseType
-baseType =   (symbol "Int"  $> Scalar IntType)
-         <|> (symbol "Real" $> Scalar RealType)
-         <|> (symbol "Bool" $> Scalar BoolType)
+baseType =   (symbol "Int64"   $> Scalar Int64Type)
+         <|> (symbol "Float64" $> Scalar Float64Type)
 
 uVariantExpr :: Parser UExpr
 uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift
@@ -584,8 +581,8 @@ prefixNegOp = Prefix $ label "negation" $ do
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)
       -> WithSrc (joinPos pos litpos) (IntLitExpr (-i))
-    WithSrc litpos (RealLitExpr i)
-      -> WithSrc (joinPos pos litpos) (RealLitExpr (-i))
+    WithSrc litpos (FloatLitExpr i)
+      -> WithSrc (joinPos pos litpos) (FloatLitExpr (-i))
     x -> mkApp f x
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr

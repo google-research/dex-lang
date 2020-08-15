@@ -7,16 +7,16 @@ def rejectionSample (try: Key -> Maybe a) (k:Key) : a =
         sample := try $ hash k (get i)
   case ans of Just sample -> sample
 
-Prob    = Real
-LogProb = Real
+Prob    = Float
+LogProb = Float
 
 def binomialSample (n:Int) (p:Prob) (k:Key) : Int = todo
 
 def logBinomialProb (n:Int) (p:Prob) (counts:Int) : LogProb =
-  pSuccess = log p * i2r counts
-  pFailure = log1p (-p) * i2r (n - counts)
-  normConst = (lbeta (1. + i2r counts) (1. + i2r n - i2r counts) +
-               log (1. + i2r n))
+  pSuccess = log p * IToF counts
+  pFailure = log1p (-p) * IToF (n - counts)
+  normConst = (lbeta (1. + IToF counts) (1. + IToF n - IToF counts) +
+               log (1. + IToF n))
   pSuccess + pFailure - normConst
 
 def binomialProb (n:Int) (p:Prob) (count:Int) : Prob =
@@ -24,7 +24,7 @@ def binomialProb (n:Int) (p:Prob) (count:Int) : Prob =
 
 def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
   (k1, k2) = splitKey k
-  proposal = floor $ rand k1 * i2r (n + 1)
+  proposal = floor $ rand k1 * IToF (n + 1)
   acceptance = rand k2 < binomialProb n p proposal
   case proposal < (n + 1) && acceptance of
     True -> Just proposal

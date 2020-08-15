@@ -7,14 +7,14 @@ Syntax for records, variants, and their types.
 :p {&}
 > { &}
 
-:p {a:Int & b:Real}
-> {a: Int & b: Real}
+:p {a:Int & b:Float}
+> {a: Int64 & b: Float64}
 
-:p {a:Int & b:Real &}
-> {a: Int & b: Real}
+:p {a:Int & b:Float &}
+> {a: Int64 & b: Float64}
 
-:p {a:Int & a:Real}
-> {a: Int & a: Real}
+:p {a:Int & a:Float}
+> {a: Int64 & a: Float64}
 
 
 'Records
@@ -32,17 +32,17 @@ Syntax for records, variants, and their types.
 :p {a=3, b=4}
 > {a = 3, b = 4}
 :t {a=3, b=4}
-> {a: Int & b: Int}
+> {a: Int64 & b: Int64}
 
 :p {a=3, b=4,}
 > {a = 3, b = 4}
 :t {a=3, b=4,}
-> {a: Int & b: Int}
+> {a: Int64 & b: Int64}
 
 :p {a=3, a=4}
 > {a = 3, a = 4}
 :t {a=3, a=4}
-> {a: Int & a: Int}
+> {a: Int64 & a: Int64}
 
 :p
   x = {a=5.0, b=2}
@@ -55,48 +55,48 @@ Syntax for records, variants, and their types.
 :p {|}
 > { |}
 
-:p {a:Int | b:Real}
-> {a: Int | b: Real}
+:p {a:Int | b:Float}
+> {a: Int64 | b: Float64}
 
-:p {a:Int | b:Real |}
-> {a: Int | b: Real}
+:p {a:Int | b:Float |}
+> {a: Int64 | b: Float64}
 
-:p {a:Int | a:Real}
-> {a: Int | a: Real}
+:p {a:Int | a:Float}
+> {a: Int64 | a: Float64}
 
 
 'Variants (enums)
 
 
 :p
-  x : {a:Int | b:Real} = {| a=3 |}
+  x : {a:Int | b:Float} = {| a=3 |}
   x
 > {| a = 3 |}
 
 :p
-  x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   x
 > {|a| a = 3.0 |}
 
 :t
-  x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   x
-> {a: Int | a: Real | a: Int}
+> {a: Int64 | a: Float64 | a: Int64}
 
 :p
-  x : {a:Int | b:Real} = {| a=3 |}
-  y : {a:Real | a:Int | ..._} = {| a | ...x |}
+  x : {a:Int | b:Float} = {| a=3 |}
+  y : {a:Float | a:Int | ..._} = {| a | ...x |}
   y
 > {|a| a = 3 |}
 
 
 'Parse errors
 
-:p {a:Int & b:Real | c:Int }
+:p {a:Int & b:Float | c:Int }
 
 > Parse error:95:20:
 >    |
-> 95 | :p {a:Int & b:Real | c:Int }
+> 95 | :p {a:Int & b:Float | c:Int }
 >    |                    ^
 > unexpected '|'
 > expecting "..", "..<", expression, or negation
@@ -141,13 +141,13 @@ def getTwoFoosAndABar (rest : Types)?->
 :p
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
   (a1, a2, b)
-> Type error:Labels in record pattern do not match record type. Expected structure {a: Int & b: Int}
+> Type error:Labels in record pattern do not match record type. Expected structure {a: Int64 & b: Int64}
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^
 
 :p
-  x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   ({| a | a = a |}) = x
   x
 > Type error:Variant not allowed in can't-fail pattern
@@ -155,7 +155,7 @@ def getTwoFoosAndABar (rest : Types)?->
 >   ({| a | a = a |}) = x
 >    ^^^^^^^^^^^^^^^
 
-x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
+x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 ({| a | a = a |}) = x
 > Type error:Variant not allowed in can't-fail pattern
 
@@ -184,7 +184,7 @@ x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
 >   ^^^^^^^^^^^^^^^^^^
 
 :p
-  x : {a:Int | a:Real | b:Int} = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
   case x of
     {| a = x |} -> i2r x
     {| a | a = x |} -> x
@@ -193,7 +193,7 @@ x : {a:Int | a:Real | a:Int} = {| a | a = 3.0 |}
 
 'Table values and imp lowering
 
-myRecordTable : (Fin 2)=>{a:Int & b:Real} =
+myRecordTable : (Fin 2)=>{a:Int & b:Float} =
   [{a=1, b=2.0}, {a=3, b=4.0}]
 
 :p myRecordTable
@@ -204,7 +204,7 @@ myRecordTable : (Fin 2)=>{a:Int & b:Real} =
     {a=b, b=a}
 > [{a = 2.0, b = 1}, {a = 4.0, b = 3}]
 
-myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
+myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Float}
 :p myVariantTable
 > [{| a = 1 |}, {| b = 2.0 |}]
 
@@ -217,7 +217,7 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
 
 -- Known variant, unused tail pattern
 :p
-  x : {a:Int | a:Real | b:Int | c:Int } = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
   case x of
     {| a = x |} -> 1.0
     {| a | a = x |} -> x
@@ -226,7 +226,7 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
 
 -- Known variant, missing pattern
 :p
-  x : {a:Int | a:Real | b:Int | c:Int } = {| a | a = 3.0 |}
+  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
   case x of
     {| a = x |} -> 1.0
     {| a | a = x |} -> x
@@ -234,7 +234,7 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
 
 -- Known variant, used tail pattern
 myVal =
-  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
   case x of
     {| a = x |} -> todo
     {|a| ...rest |} -> rest
@@ -242,11 +242,11 @@ myVal =
 :p myVal
 > {| b = 4 |}
 :t myVal
-> {a: Real | b: Int | c: Int}
+> {a: Float | b: Int | c: Int}
 
 -- Badly written tail pattern
 :p
-  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
   case x of
     {| a = x |} -> 1
     {| ...rest |} -> 2
@@ -257,7 +257,7 @@ myVal =
 
 -- Too many tail patterns
 :p
-  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
   case x of
     {| a = x |} -> 1
     {|a| ...rest |} -> 2

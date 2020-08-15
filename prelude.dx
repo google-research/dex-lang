@@ -5,12 +5,19 @@
 
 'Wrappers around primitives
 
-Int  = %Int
-Real = %Real
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
 Types = %LabeledRowKind
+
+Int64 = %Int64
+Int32 = %Int32
+Int8  = %Int8
+Float64 = %Float64
+Float32 = %Float32
+
+Int = Int64
+Float = Float64
 
 def (&) (a:Type) (b:Type) : Type = %PairType a b
 def (,) (x:a) (y:b) : (a & b) = %pair x y
@@ -21,8 +28,20 @@ def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %irem x y
 def ipow (x:Int) (y:Int) : Int = %ipow x y
 
-def neg  (x:Real)          : Real = %fneg x
-def fdiv (x:Real) (y:Real) : Real = %fdiv x y
+def fdiv (x:Float) (y:Float) : Float = %fdiv x y
+
+def internalCast (b:Type) (x:a) : b = %cast b x
+
+def F64ToF (x : Float64) : Float   = internalCast _ x
+def F32ToF (x : Float32) : Float   = internalCast _ x
+def FToF64 (x : Float)   : Float64 = internalCast _ x
+def FToF32 (x : Float)   : Float32 = internalCast _ x
+def I64ToI (x : Int64)   : Int     = internalCast _ x
+def I32ToI (x : Int32)   : Int     = internalCast _ x
+def I8ToI  (x : Int8 )   : Int     = internalCast _ x
+def IToI64 (x : Int)     : Int64   = internalCast _ x
+def IToI32 (x : Int)     : Int32   = internalCast _ x
+def IToI8  (x : Int)     : Int8    = internalCast _ x
 
 data Add a:Type =
   MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
@@ -31,9 +50,12 @@ def (+)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd add _   _    -> add
 def (-)  (d:Add a) ?=> : a -> a -> a = case d of MkAdd _   sub _    -> sub
 def zero (d:Add a) ?=> : a           = case d of MkAdd _   _   zero -> zero
 
-@instance realAdd : Add Real = MkAdd (\x y. %fadd x y) (\x y. %fsub x y) 0.0
-@instance intAdd  : Add Int  = MkAdd (\x y. %iadd x y) (\x y. %isub x y) 0
-@instance unitAdd : Add Unit = MkAdd (\x y. ())        (\x y. ())        ()
+@instance float64Add : Add Float64 = MkAdd (\x:Float64 y:Float64. %fadd x y) (\x y. %fsub x y) (FToF64 0.0)
+@instance float32Add : Add Float32 = MkAdd (\x:Float32 y:Float32. %fadd x y) (\x y. %fsub x y) (FToF32 0.0)
+@instance int64Add   : Add Int64   = MkAdd (\x:Int64   y:Int64.   %iadd x y) (\x y. %isub x y) (IToI64 0)
+@instance int32Add   : Add Int32   = MkAdd (\x:Int32   y:Int32.   %iadd x y) (\x y. %isub x y) (IToI32 0)
+@instance int8Add    : Add Int8    = MkAdd (\x:Int8    y:Int8.    %iadd x y) (\x y. %isub x y) (IToI8  0)
+@instance unitAdd    : Add Unit    = MkAdd (\x y. ())                        (\x y. ())        ()
 
 @instance tabAdd : Add a ?=> Add (n=>a) =
   (MkAdd ( \xs ys. for i. xs.i + ys.i )
@@ -45,11 +67,11 @@ data Mul a:Type = MkMul (a->a->a) a  -- multiply, one
 def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
 def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
 
-@instance realMul : Mul Real = MkMul (\x y. %fmul x y) 1.0
-@instance intMul  : Mul Int  = MkMul (\x y. %imul x y) 1
-@instance unitMul : Mul Unit = MkMul (\x y. ()) ()
+@instance floatMul : Mul Float = MkMul (\x:Float y:Float. %fmul x y) 1.0
+@instance intMul   : Mul Int   = MkMul (\x:Int   y:Int.   %imul x y) 1
+@instance unitMul  : Mul Unit  = MkMul (\x y. ()) ()
 
-data VSpace a:Type = MkVSpace (Add a) (Real -> a -> a)
+data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
 
 @superclass
 def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
@@ -58,37 +80,42 @@ flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
 uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
 const : a -> b -> a = \x _. x
 
-def (.*)  (d:VSpace a) ?=> : Real -> a -> a = case d of MkVSpace _ scale -> scale
-(*.)  : VSpace a ?=> a -> Real -> a = flip (.*)
-def (/) (_:VSpace a) ?=> (v:a) (s:Real) : a = (fdiv 1.0 s) .* v
+def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
+(*.)  : VSpace a ?=> a -> Float -> a = flip (.*)
+def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (fdiv 1.0 s) .* v
+def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 
-@instance realVS : VSpace Real = MkVSpace realAdd (*)
+@instance floatVS : VSpace Float = MkVSpace float64Add (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
-
-InternalBool = %Bool
-
--- XXX: False must come before True for the later coercions to be correct.
 data Bool =
   False
   True
 
-def unsafeCoerce (b:Type) (x:a) : b = %unsafeCoerce b x
+def BToI8 (x : Bool) : Int8 =
+  case x of
+    False -> (IToI8 0)
+    True  -> (IToI8 1)
+
+def I8ToB (x : Int8) : Bool =
+  t = True
+  f = False
+  %select x t f
 
 def (&&) (x:Bool) (y:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  y' = unsafeCoerce InternalBool y
-  unsafeCoerce _ $ %and x' y'
+  x' = BToI8 x
+  y' = BToI8 y
+  I8ToB $ %and x' y'
 
 def (||) (x:Bool) (y:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  y' = unsafeCoerce InternalBool y
-  unsafeCoerce _ $ %or x' y'
+  x' = BToI8 x
+  y' = BToI8 y
+  I8ToB $ %or x' y'
 
 def not  (x:Bool) : Bool =
-  x' = unsafeCoerce InternalBool x
-  unsafeCoerce _ $ %not x'
+  x' = BToI8 x
+  I8ToB $ %not x'
 
 'Sum types
 
@@ -109,11 +136,13 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   False -> y
 
 def b2i (x:Bool) : Int  =
-  x' = unsafeCoerce InternalBool x
-  %booltoint x'
+  case x of
+    False -> 0
+    True  -> 1
 
-def i2r (x:Int ) : Real = %inttoreal x
-def b2r (x:Bool) : Real = i2r (b2i x)
+def IToF (x:Int) : Float = internalCast _ x
+def FToI (x:Float) : Int = internalCast _ x
+def b2r (x:Bool) : Float = IToF (b2i x)
 def todo (a:Type) ?-> : a = %throwError a
 
 'Effects
@@ -165,14 +194,14 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance intEq  : Eq Int  = MkEq \x y. unsafeCoerce _ $ %ieq x y
-@instance realEq : Eq Real = MkEq \x y. unsafeCoerce _ $ %feq x y
-@instance unitEq : Eq Unit = MkEq \x y. True
+@instance intEq   : Eq Int   = MkEq \x:Int   y:Int.   I8ToB $ %ieq x y
+@instance floatEq : Eq Float = MkEq \x:Float y:Float. I8ToB $ %feq x y
+@instance unitEq  : Eq Unit  = MkEq \x y. True
 
-@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. unsafeCoerce _ $ %igt x y)
-                                             (\x y. unsafeCoerce _ $ %ilt x y))
-@instance realOrd : Ord Real = (MkOrd realEq (\x y. unsafeCoerce _ $ %fgt x y)
-                                             (\x y. unsafeCoerce _ $ %flt x y))
+@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. I8ToB $ %igt x y)
+                                             (\x y. I8ToB $ %ilt x y))
+@instance floatOrd : Ord Float = (MkOrd floatEq (\x y. I8ToB $ %fgt x y)
+                                                (\x y. I8ToB $ %flt x y))
 @instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False) (\x y. False)
 
 @instance
@@ -189,33 +218,37 @@ def pairOrd (ordA: Ord a)?=> (ordB: Ord b)?=> : Ord (a & b) =
 @instance
 def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
   \xs ys.
-    numDifferent : Real =
+    numDifferent : Float =
       snd $ withAccum \ref. for i.
-        ref += (i2r (b2i (xs.i /= ys.i)))
+        ref += (IToF (b2i (xs.i /= ys.i)))
     numDifferent == 0.0
 
 'Wrappers around C library functions
 
-def exp (x:Real) : Real = %exp x
-def exp2 (x:Real) : Real = %exp2 x
-def log (x:Real) : Real = %log x
-def log2 (x:Real) : Real = %log2 x
-def log10 (x:Real) : Real = %log10 x
+def exp (x:Float) : Float = %exp x
+def exp2 (x:Float) : Float = %exp2 x
+def log (x:Float) : Float = %log x
+def log2 (x:Float) : Float = %log2 x
+def log10 (x:Float) : Float = %log10 x
 
-def sin (x:Real) : Real = %sin x
-def cos (x:Real) : Real = %cos x
-def tan (x:Real) : Real = %tan x
+def sin (x:Float) : Float = %sin x
+def cos (x:Float) : Float = %cos x
+def tan (x:Float) : Float = %tan x
 
-def floor (x:Real) : Int = %floor x
-def ceil (x:Real) : Int = %ceil x
-def round (x:Real) : Int = %round x
+def floor (x:Float) : Float = %floor x
+def ceil  (x:Float) : Float = %ceil x
+def round (x:Float) : Float = %round x
 
-def sqrt (x:Real) : Real = %sqrt x
-def pow (x:Real) (y:Real) : Real = %fpow x y
+def sqrt (x:Float) : Float = %sqrt x
+def pow (x:Float) (y:Float) : Float = %fpow x y
 
-def lgamma (x:Real) : Real = %ffi lgamma Real x
-def log1p  (x:Real) : Real = %ffi log1p  Real x
-def lbeta (x:Real) (y:Real) : Real = lgamma x + lgamma y - lgamma (x + y)
+def lgamma (x:Float) : Float =
+  x64 = FToF64 x
+  F64ToF $ %ffi lgamma Float64 x64
+def log1p  (x:Float) : Float =
+  x64 = FToF64 x
+  F64ToF $ %ffi log1p  Float64 x64
+def lbeta (x:Float) (y:Float) : Float = lgamma x + lgamma y - lgamma (x + y)
 
 'Working with index sets
 
@@ -240,7 +273,7 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
 
 'Misc
 
-pi : Real = 3.141592653589793
+pi : Float = 3.141592653589793
 
 def id (x:a) : a = x
 def dup (x:a) : (a & a) = (x, x)
@@ -251,7 +284,7 @@ def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
 def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (d:Mul a) ?=> (x:a) : a = x * x
-def abs (x:Real) : Real = select (x > 0.0) x (-x)
+def abs (x:Float) : Float = select (x > 0.0) x (-x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
@@ -275,11 +308,11 @@ def reduce (identity:a) (binop:(a->a->a)) (xs:n=>a) : a =
 -- TODO: call this `scan` and call the current `scan` something else
 def scan' (init:a) (body:n->a->a) : n=>a = snd $ scan init \i x. dup (body i x)
 -- TODO: allow tables-via-lambda and get rid of this
-def fsum (xs:n->Real) : Real = snd $ withAccum \ref. for i. ref += xs i
+def fsum (xs:n->Float) : Float = snd $ withAccum \ref. for i. ref += xs i
 def sum  (_: Add v) ?=> (xs:n=>v) : v = reduce zero (+) xs
 def prod (_: Mul v) ?=> (xs:n=>v) : v = reduce one  (*) xs
-def mean (n:Type) ?-> (xs:n=>Real) : Real = sum xs / i2r (size n)
-def std (xs:n=>Real) : Real = sqrt $ mean (map sq xs) - sq (mean xs)
+def mean (n:Type) ?-> (xs:n=>Float) : Float = sum xs / IToF (size n)
+def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
@@ -288,31 +321,33 @@ def applyN (n:Int) (x:a) (f:a -> a) : a =
   snd $ withState x \ref. for _:(Fin n).
     ref := f (get ref)
 
-def linspace (n:Type) (low:Real) (high:Real) : n=>Real =
-  dx = (high - low) / i2r (size n)
-  for i:n. low + i2r (ordinal i) * dx
+def linspace (n:Type) (low:Float) (high:Float) : n=>Float =
+  dx = (high - low) / IToF (size n)
+  for i:n. low + IToF (ordinal i) * dx
 
-def transpose (x:n=>m=>Real) : m=>n=>Real = for i j. x.j.i
-def vdot (x:n=>Real) (y:n=>Real) : Real = fsum \i. x.i * y.i
+def transpose (x:n=>m=>Float) : m=>n=>Float = for i j. x.j.i
+def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
 
 -- matmul. Better symbol to use? `@`?
-(**) : (l=>m=>Real) -> (m=>n=>Real) -> (l=>n=>Real) = \x y.
+(**) : (l=>m=>Float) -> (m=>n=>Float) -> (l=>n=>Float) = \x y.
   y' = transpose y
   for i k. fsum \j. x.i.j * y'.k.j
 
-(**.) : (n=>m=>Real) -> (m=>Real) -> (n=>Real) = \mat v. for i. vdot mat.i v
-(.**) : (m=>Real) -> (n=>m=>Real) -> (n=>Real) = flip (**.)
+(**.) : (n=>m=>Float) -> (m=>Float) -> (n=>Float) = \mat v. for i. vdot mat.i v
+(.**) : (m=>Float) -> (n=>m=>Float) -> (n=>Float) = flip (**.)
 
-def inner (x:n=>Real) (mat:n=>m=>Real) (y:m=>Real) : Real =
+def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum \(i,j). x.i * mat.i.j * y.j
 
 'Functions for working with the pseudorandom number generator
 
 -- TODO: newtype
-Key = Int
+Key = Int64
 
-def hash (x:Key) (y:Int) : Key = %ffi threefry2x32 Int x y
-def newKey (x:Int) : Key = hash 0 x
+def hash (x:Key) (y:Int) : Key =
+  y64 = IToI64 y
+  %ffi threefry2x32 Int64 x y64
+def newKey (x:Int) : Key = hash (IToI64 0) x
 def splitKey (k:Key) : (Key & Key) = (hash k 0, hash k 1)
 def splitKey3 (k:Key) : (Key & Key & Key) =
   (k1, k') = splitKey k
@@ -322,11 +357,11 @@ def splitKey3 (k:Key) : (Key & Key & Key) =
 def many (f:Key->a) (k:Key) (i:n) : a = f (hash k (ordinal i))
 def ixkey (k:Key) (i:n) : Key = hash k (ordinal i)
 def ixkey2 (k:Key) (i:n) (j:m) : Key = hash (hash k (ordinal i)) (ordinal j)
-def rand (k:Key) : Real = %ffi randunif Real k
+def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
-def randn (k:Key) : Real =
+def randn (k:Key) : Float =
   (k1, k2) = splitKey k
   u1 = rand k1
   u2 = rand k2
@@ -334,11 +369,11 @@ def randn (k:Key) : Real =
 
 def randIdx (n:Type) ?-> (k:Key) : n =
   unif = rand k
-  fromOrdinal n $ floor $ unif * i2r (size n)
+  fromOrdinal n $ FToI $ floor $ unif * IToF (size n)
 
-def bern (p:Real) (k:Key) : Bool = rand k < p
+def bern (p:Float) (k:Key) : Bool = rand k < p
 
-def randnVec (n:Type) ?-> (k:Key) : n=>Real =
+def randnVec (n:Type) ?-> (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
 'min / max etc
@@ -376,13 +411,13 @@ def vjp (f:a->b) (x:a) : (b & b --o a) =
   (y, df) = linearize f x
   (y, transposeLinear df)
 
-def grad (f:a->Real) (x:a) : a = snd (vjp f x) 1.0
+def grad (f:a->Float) (x:a) : a = snd (vjp f x) 1.0
 
-def deriv (f:Real->Real) (x:Real) : Real = jvp f x 1.0
+def deriv (f:Float->Float) (x:Float) : Float = jvp f x 1.0
 
-def derivRev (f:Real->Real) (x:Real) : Real = snd (vjp f x) 1.0
+def derivRev (f:Float->Float) (x:Float) : Float = snd (vjp f x) 1.0
 
-def checkDerivBase (f:Real->Real) (x:Real) : Bool =
+def checkDerivBase (f:Float->Float) (x:Float) : Bool =
   -- TODO: parse 1e-5
   eps = 0.00005
   ansFwd  = deriv    f x
@@ -391,7 +426,7 @@ def checkDerivBase (f:Real->Real) (x:Real) : Bool =
   isClose = \a b. abs (a - b) < 0.001
   isClose ansFwd ansNumeric && isClose ansRev ansNumeric
 
-def checkDeriv (f:Real->Real) (x:Real) : Bool =
+def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
 
 def while
@@ -399,43 +434,44 @@ def while
     (cond: Unit -> {|eff} Bool)
     (body: Unit -> {|eff} Unit)
     : {|eff} Unit =
-  cond' : Unit -> {|eff} InternalBool = \_. unsafeCoerce _ $ cond ()
+  cond' : Unit -> {|eff} Int8 = \_. BToI8 $ cond ()
   %while cond' body
 
 'Vector support
 
-def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
-
-VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
-VectorReal  = %VectorRealType
-
-def packVector (a : Real) (b : Real) (c : Real) (d : Real) : VectorReal = %vectorPack a b c d
-def indexVector (v : VectorReal) (i : Fin VectorWidth) : Real = %vectorIndex v i
-
--- NB: Backends should be smart enough to optimize this to a vector load from v
-def loadVector (v : (Fin VectorWidth)=>Real) : VectorReal =
-  idx = Fin VectorWidth
-  (packVector v.(UNSAFEFromOrdinal idx 0)
-              v.(UNSAFEFromOrdinal idx 1)
-              v.(UNSAFEFromOrdinal idx 2)
-              v.(UNSAFEFromOrdinal idx 3))
-def storeVector (v : VectorReal) : (Fin VectorWidth)=>Real =
-  idx = Fin VectorWidth
-  [ indexVector v (UNSAFEFromOrdinal idx 0)
-  , indexVector v (UNSAFEFromOrdinal idx 1)
-  , indexVector v (UNSAFEFromOrdinal idx 2)
-  , indexVector v (UNSAFEFromOrdinal idx 3) ]
-
-def broadcastVector (v : Real) : VectorReal = packVector v v v v
-
-@instance vectorRealAdd : Add VectorReal =
-  (MkAdd ( \x y. %vfadd x y )
-         ( \x y. %vfsub x y )
-         ( broadcastVector zero ))
-@instance vectorRealMul : Mul VectorReal =
-  MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
-@instance vectorRealVSpace : VSpace VectorReal =
-  MkVSpace vectorRealAdd \x v. broadcastVector x * v
+-- TODO: Reenable vector suport once fixed-width types are supported.
+-- def UNSAFEFromOrdinal (n : Type) (i : Int) : n = %unsafeAsIndex n i
+--
+-- VectorWidth = 4  -- XXX: Keep this synced with the constant defined in Array.hs
+-- VectorFloat  = todo
+--
+-- def packVector (a : Float) (b : Float) (c : Float) (d : Float) : VectorFloat = %vectorPack a b c d
+-- def indexVector (v : VectorFloat) (i : Fin VectorWidth) : Float = %vectorIndex v i
+--
+-- -- NB: Backends should be smart enough to optimize this to a vector load from v
+-- def loadVector (v : (Fin VectorWidth)=>Float) : VectorFloat =
+--   idx = Fin VectorWidth
+--   (packVector v.(UNSAFEFromOrdinal idx 0)
+--               v.(UNSAFEFromOrdinal idx 1)
+--               v.(UNSAFEFromOrdinal idx 2)
+--               v.(UNSAFEFromOrdinal idx 3))
+-- def storeVector (v : VectorFloat) : (Fin VectorWidth)=>Float =
+--   idx = Fin VectorWidth
+--   [ indexVector v (UNSAFEFromOrdinal idx 0)
+--   , indexVector v (UNSAFEFromOrdinal idx 1)
+--   , indexVector v (UNSAFEFromOrdinal idx 2)
+--   , indexVector v (UNSAFEFromOrdinal idx 3) ]
+--
+-- def broadcastVector (v : Float) : VectorFloat = packVector v v v v
+--
+-- @instance vectorFloatAdd : Add VectorFloat =
+--   (MkAdd ( \x y. %vfadd x y )
+--          ( \x y. %vfsub x y )
+--          ( broadcastVector zero ))
+-- @instance vectorFloatMul : Mul VectorFloat =
+--   MkMul (\x y. %vfmul x y) $ packVector 1.0 1.0 1.0 1.0
+-- @instance vectorFloatVSpace : VSpace VectorFloat =
+--   MkVSpace vectorFloatAdd \x v. broadcastVector x * v
 
 'Tiling
 
@@ -458,30 +494,30 @@ def tile1 (n : Type) ?-> (l : Type) ?-> (m : Type) ?->
 
 -- TODO: This should become just `loadVector $ for i. arr.(t +> i)`
 --       once we are able to eliminate temporary arrays. Until then, we inline for performance...
-def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Real) : VectorReal =
-  idx = Fin VectorWidth
-  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
-              arr.(t +> UNSAFEFromOrdinal idx 1)
-              arr.(t +> UNSAFEFromOrdinal idx 2)
-              arr.(t +> UNSAFEFromOrdinal idx 3))
+--def loadTile (t : Tile n (Fin VectorWidth)) (arr : n=>Float) : VectorFloat =
+--  idx = Fin VectorWidth
+--  (packVector arr.(t +> UNSAFEFromOrdinal idx 0)
+--              arr.(t +> UNSAFEFromOrdinal idx 1)
+--              arr.(t +> UNSAFEFromOrdinal idx 2)
+--              arr.(t +> UNSAFEFromOrdinal idx 3))
 
 'Numerical utilities
 
-def logsumexp (x: n=>Real) : Real =
+def logsumexp (x: n=>Float) : Float =
   m = maximum x
   m + (log $ sum for i. exp (x.i - m))
 
-def logsoftmax (x: n=>Real) : n=>Real =
+def logsoftmax (x: n=>Float) : n=>Float =
   lse = logsumexp x
   for i. x.i - lse
 
-def softmax (x: n=>Real) : n=>Real =
+def softmax (x: n=>Float) : n=>Float =
   m = maximum x
   e =  for i. exp (x.i - m)
   s = sum e
   for i. e.i / s
 
-def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Real) : v =
+def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
 

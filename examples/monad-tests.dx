@@ -15,7 +15,7 @@
 > 5
 
 :p
-  def stateAction (h:Type) ?-> (ref:Ref h Real) : {State h} Unit =
+  def stateAction (h:Type) ?-> (ref:Ref h Float) : {State h} Unit =
      x = get ref
      ref := (x + 2.0)
      z = get ref
@@ -27,7 +27,7 @@
 :p
   def rwsAction
         (rh:Type) ?-> (wh:Type) ?-> (sh:Type) ?->
-        (r:Ref rh Int) (w:Ref wh Real) (s:Ref sh Bool)
+        (r:Ref rh Int) (w:Ref wh Float) (s:Ref sh Bool)
         : {Read rh, Accum wh, State sh} Int =
     x = get s
     w += 2.0
@@ -56,14 +56,14 @@
 
 :p
   def m (wh:Type) ?-> (sh:Type) ?->
-        (w:Ref wh Real) (s:Ref sh Real)
+        (w:Ref wh Float) (s:Ref sh Float)
         : {Accum wh, State sh} Unit =
     x = get s
     w += x
   withState 1.0 \s. withAccum \w . m w s
 > (((), 1.0), 1.0)
 
-def myAction  (w:Ref hw Real) (r:Ref hr Real) : {Read hr, Accum hw} Unit =
+def myAction  (w:Ref hw Float) (r:Ref hr Float) : {Read hr, Accum hw} Unit =
   x = ask r
   w += x
   w += 2.0
@@ -73,7 +73,7 @@ def myAction  (w:Ref hw Real) (r:Ref hr Real) : {Read hr, Accum hw} Unit =
 
 :p
   def m (h1:Type) ?-> (h2:Type) ?->
-        (w1:Ref h1 Real) (w2:Ref h2 Real)
+        (w1:Ref h1 Float) (w2:Ref h2 Float)
         : {Accum h1, Accum h2} Unit =
     w1 += 1.0
     w2 += 3.0
@@ -90,7 +90,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 
 -- TODO: handle effects returning functions
 -- :p
---   def foo (x:Real) : Real =
+--   def foo (x:Float) : Float =
 --      f = withReader x \r.
 --            y = ask r
 --            \z. 100.0 * x + 10.0 * y + z
@@ -100,7 +100,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- > 331.0
 
 -- :p
---   foo : Real -> (Real, Real)
+--   foo : Float -> (Float, Float)
 --   foo x =
 --      (f, ans) = withState x \s.
 --          y = get s
@@ -111,7 +111,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
 -- > (331.0, 3.0)
 
 -- :p
---   foo : Real -> (Real, Real)
+--   foo : Float -> (Float, Float)
 --   foo x =
 --      (f, ans) = withAccumulator \s.
 --         s += x
@@ -136,7 +136,7 @@ def foom (h:Type) ?-> (s:Ref h ((Fin 3)=>Int)) : {State h} Unit =
           (x, y)
 > ((((2.0, 3), 4), 4.0), 2.0)
 
-def symmetrizeInPlace (mat:n=>n=>Real) : n=>n=>Real =
+def symmetrizeInPlace (mat:n=>n=>Float) : n=>n=>Float =
   snd $ withState mat \ref.
     for i j.
        x = get ref!i!j

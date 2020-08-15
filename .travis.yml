@@ -20,28 +20,17 @@ addons:
       - haskell-stack
 jobs:
   include:
-    - stage: Upgrade Stack
+    - stage: Install and build dependencies
       script:
         - export DIR=~/.local/bin
+        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
         - if [ ! -d "$DIR" ]; then mkdir -p ~/.local/bin; fi
-        - export PATH=$HOME/.local/bin:$PATH
         - stack upgrade
         - hash -r
         - stack setup
-    - stage: Install Python dependencies
-      script:
         - pip install --upgrade jax jaxlib
-    - stage: Build dependencies
-      script:
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
         - stack build --only-dependencies
-    - stage: Build
+    - stage: Build and test
       script:
         - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
-        - make
-    - stage: Test
-      script:
-        - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
-        - make libdex
-        - stack install
         - make tests

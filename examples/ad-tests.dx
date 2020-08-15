@@ -1,9 +1,9 @@
 
 -- TODO: use prelude sum instead once we can differentiate state effect
-def sum'  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
+def sum'  (xs:n=>Float) : Float = snd $ withAccum \ref. for i. ref += xs.i
 
 :p
-   f : Real -> Real = \x. x
+   f : Float -> Float = \x. x
    jvp f 3.0 2.0
 > 2.0
 
@@ -23,27 +23,27 @@ def sum'  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
 > 18.0
 
 :p
-   f : Real --o Real = \x. x
+   f : Float --o Float = \x. x
    transposeLinear f 2.0
 > 2.0
 
 :p
-   f : Real --o Real = \x. x + x
+   f : Float --o Float = \x. x + x
    transposeLinear f 1.0
 > 2.0
 
 :p
-   f : Real --o Real = \x. x + (x + x) * 2.0
+   f : Float --o Float = \x. x + (x + x) * 2.0
    transposeLinear f 1.0
 > 5.0
 
 :p
-   f : Real --o Real = \x. x * 2.0
+   f : Float --o Float = \x. x * 2.0
    transposeLinear f 1.0
 > 2.0
 
 :p
-   f : Real --o Real = \x. 2.0 * x
+   f : Float --o Float = \x. 2.0 * x
    transposeLinear f 1.0
 > 2.0
 
@@ -57,7 +57,7 @@ def sum'  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
 > 0.5
 
 :p
-  f : n:Type ?-> n=>Real -> n=>Real =
+  f : n:Type ?-> n=>Float -> n=>Float =
    \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
@@ -69,7 +69,7 @@ def sum'  (xs:n=>Real) : Real = snd $ withAccum \ref. for i. ref += xs.i
 :p jvp sum' [1., 2.] [10.0, 20.0]
 > 30.0
 
-f : Real -> Real = \x. snd $ withAccum \ref. ref += x
+f : Float -> Float = \x. snd $ withAccum \ref. ref += x
 :p jvp f 1.0 1.0
 > 1.0
 
@@ -85,13 +85,13 @@ f : Real -> Real = \x. snd $ withAccum \ref. ref += x
 
 -- TODO: handle pairs and re-enable
 :p
-   f : Real --o (Real & Real) = \x. (x, 2.0 * x)
+   f : Float --o (Float & Float) = \x. (x, 2.0 * x)
    transposeLinear f (1.0, 3.0)
 > 7.0
 
 -- TODO: handle pairs and re-enable
 :p
-   f : (Real & Real) --o Real = \(x,y). x + 2.0 * y
+   f : (Float & Float) --o Float = \(x,y). x + 2.0 * y
    transposeLinear f 1.0
 > (1.0, 2.0)
 
@@ -133,10 +133,10 @@ f : Real -> Real = \x. snd $ withAccum \ref. ref += x
 -- :p checkDeriv (deriv cos) 1.0
 -- > True
 
--- badDerivFun : Real -> Real
+-- badDerivFun : Float -> Float
 -- badDerivFun x = x
 
--- badDerivFun#lin : Real -> (Real, Real --o Real)
+-- badDerivFun#lin : Float -> (Float, Float --o Float)
 -- badDerivFun#lin x = (x, llam t. 2. * t)
 
 -- :p checkDeriv badDerivFun 1.0
@@ -147,11 +147,11 @@ f : Real -> Real = \x. snd $ withAccum \ref. ref += x
 :p deriv (\x. x * deriv (\y. x * y) 2.0) 1.0
 > 2.0
 
--- sinn#lin : Real -> Real
+-- sinn#lin : Float -> Float
 -- sinn#lin x = x
 -- > Error: variable not in scope: sinn
 
-tripleit : Real --o Real = \x. x + x + x
+tripleit : Float --o Float = \x. x + x + x
 
 :p tripleit 1.0
 > 3.0
@@ -163,18 +163,18 @@ tripleit : Real --o Real = \x. x + x + x
 > 3.0
 
 :p
-  f : n:Type ?->  Real --o n=>Real = \x. for i. x
+  f : n:Type ?->  Float --o n=>Float = \x. for i. x
 
   transposeLinear f [1.0, 2.0]
 > 3.0
 
 :p
-  f : n:Type ?-> n=>Real --o n=>Real = \x. for i. x.i * 2.0
+  f : n:Type ?-> n=>Float --o n=>Float = \x. for i. x.i * 2.0
 
   transposeLinear f [1.0, 2.0]
 > [2.0, 4.0]
 
-myOtherSquare : Real -> Real =
+myOtherSquare : Float -> Float =
   \x. snd $ withAccum \w. w += x * x
 
 :p myOtherSquare 3.0
@@ -187,35 +187,35 @@ myOtherSquare : Real -> Real =
 > 6.0
 
 :p
-  f : Real -> Real =
+  f : Float -> Float =
     \x. fst (x * x, 2 + 1)
 
   jvp f 1.0 3.0
 > 6.0
 
-:p
-  f : Real -> Real = \x.
-    x * i2r (1 + 1)
+--:p
+--  f : Float -> Float = \x.
+--    x * IToF (1 + 1)
+--
+--  jvp f 1.0 2.0
+--> 4.0
 
-  jvp f 1.0 2.0
-> 4.0
-
 :p
-  f : (Fin 2)=>Real -> Real =
+  f : (Fin 2)=>Float -> Float =
     \xs. xs.(0 @ Fin 2) * xs.(1 @ Fin 2)
 
   jvp f [1., 2.] [3.0, 4.0]
 > 10.0
 
 :p
-  f : (Real & Real) -> Real =
+  f : (Float & Float) -> Float =
     \(x,y). x * y
 
   jvp f (1., 2.) (3.0, 4.0)
 > 10.0
 
 :p
-  f : n:Type ?-> n=>Real -> n=>Real =
+  f : n:Type ?-> n=>Float -> n=>Float =
     \xs. for i. xs.i * xs.i
 
   jvp f [1.,2.] [3.,4.]
@@ -237,7 +237,7 @@ vec = [1.]
 > ([3.0, 4.0], [1.0, 2.0])
 
 :p
-  f : Real -> Real = \x.
+  f : Float -> Float = \x.
     y = x * 2.0
     snd $ withAccum \a.
       a += x * 2.0
