@@ -211,19 +211,18 @@ simplifyExpr expr = case expr of
       let fullRow = NoExt $ leftTys <> rightTys
           buildAlt label i vty = buildNAbs (toNest [Ignore vty]) $
             \[x] -> return $ Variant fullRow label i x
-          liftAlt ((label, i), vty) = case M.lookup label litems of
+          liftAlt (label, i, vty) = case M.lookup label litems of
             Just tys -> buildAlt label (i + length tys) vty
             Nothing -> buildAlt label i vty
-          reflected = toList $ reflectLabels rightTys
-      alts <- mapM liftAlt $ zip reflected $ toList rightTys
+      alts <- mapM liftAlt $ toList $ withLabels rightTys
       simplifyExpr $ Case right alts $ VariantTy fullRow
     _ -> emit =<< VariantLift <$> mapM substEmbedR leftTys <*> simplifyAtom right
   VariantSplit leftTys@(LabeledItems litems) full -> case getType full of
-    VariantTy (NoExt (LabeledItems fullTys)) -> do
+    VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
       -- Emit a case statement (ordered by the arg type) that splits into the
       -- appropriate piece, changing indices as needed.
       let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
-          rightTys = LabeledItems $ M.differenceWith splitRight fullTys litems
+          rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
           VariantTy resultRow = getType expr
           asLeft label i vty = buildNAbs (toNest [Ignore vty]) $
             \[x] -> return $ Variant resultRow InternalSingletonLabel 0
@@ -231,13 +230,12 @@ simplifyExpr expr = case expr of
           asRight label i vty = buildNAbs (toNest [Ignore vty]) $
             \[x] -> return $ Variant resultRow InternalSingletonLabel 1
                                 $ Variant (NoExt rightTys) label i x
-          splitAlt ((label, i), vty) = case M.lookup label litems of
+          splitAlt (label, i, vty) = case M.lookup label litems of
             Just tys -> if i < length tys
                         then asLeft label i vty
                         else asRight label (i - length tys) vty
             Nothing -> asRight label i vty
-          reflected = toList $ reflectLabels rightTys
-      alts <- mapM splitAlt $ zip reflected $ toList rightTys
+      alts <- mapM splitAlt $ toList $ withLabels fullTys
       simplifyExpr $ Case full alts $ VariantTy resultRow
     _ -> emit =<< VariantSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
 

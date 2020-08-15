@@ -202,6 +202,81 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Real}
     v
 > [{| b = 1 |}, {| a = 2.0 |}]
 
+-- Known variant, unused tail pattern
+:p
+  x : {a:Int | a:Real | b:Int | c:Int } = {| a | a = 3.0 |}
+  case x of
+    {| a = x |} -> 1.0
+    {| a | a = x |} -> x
+    {|a|a| ..._ |} -> 5.0
+> 3.0
+
+-- Known variant, missing pattern
+:p
+  x : {a:Int | a:Real | b:Int | c:Int } = {| a | a = 3.0 |}
+  case x of
+    {| a = x |} -> 1.0
+    {| a | a = x |} -> x
+> 3.0
+
+-- Known variant, used tail pattern
+myVal =
+  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> todo
+    {|a| ...rest |} -> rest
+
+:p myVal
+> {| b = 4 |}
+:t myVal
+> {a: Real | b: Int | c: Int}
+
+-- Badly written tail pattern
+:p
+  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> 1
+    {| ...rest |} -> 2
+> Type error:Variant explicit alternatives overlap with tail pattern.
+>
+>   case x of
+>   ^^^^^^^^^^
+
+-- Too many tail patterns
+:p
+  x : {a:Int | a:Real | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> 1
+    {|a| ...rest |} -> 2
+    {| ...rest2 |} -> 3
+> Type error:Can't specify more than one variant tail pattern.
+>
+>   case x of
+>   ^^^^^^^^^^
+
+def splitTwoFoosOrABar (rest:Types)?-> 
+                       (x : {foo:a | foo:b | bar:c | ...rest})
+                       : ({x:a | y:b | z:c} | {|...rest}) =
+  case x of
+    {| foo=x |}                 -> Left {| x=x |}
+    {| foo | foo=y |}           -> Left {| y=y |}
+    {| bar=z |}                 -> Left {| z=z |}
+    {|foo|foo|bar| ...other |}  -> Right other
+
+myStuff = [ {| foo=1 |},
+            {| bar=2 |},
+            {| foo | foo=3 |},
+            {| baz=4 |},
+            {| foo | foo | foo=5 |}
+          ]:(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_})
+
+:p for i. splitTwoFoosOrABar myStuff.i
+> [ (Left {| x = 1 |})
+> , (Left {| z = 2 |})
+> , (Left {| y = 3 |})
+> , (Right {| baz = 4 |})
+> , (Right {| foo = 5 |}) ]
+
 'As index sets
 
 :p size {a:Fin 10 & b:Fin 3}

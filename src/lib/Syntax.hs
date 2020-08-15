@@ -21,7 +21,7 @@ module Syntax (
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
-    reflectLabels, ExtLabeledItems (..), joinExtLabeledItems,
+    reflectLabels, withLabels, ExtLabeledItems (..), joinExtLabeledItems,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
@@ -168,6 +168,10 @@ labeledSingleton label value = LabeledItems $ M.singleton label (value NE.:|[])
 reflectLabels :: LabeledItems a -> LabeledItems (Label, Int)
 reflectLabels (LabeledItems items) = LabeledItems $
   flip M.mapWithKey items $ \k xs -> fmap (\(i,_) -> (k,i)) (enumerate xs)
+
+withLabels :: LabeledItems a -> LabeledItems (Label, Int, a)
+withLabels (LabeledItems items) = LabeledItems $
+  flip M.mapWithKey items $ \k xs -> fmap (\(i,a) -> (k,i,a)) (enumerate xs)
 
 instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =

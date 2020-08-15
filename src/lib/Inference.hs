@@ -149,18 +149,63 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       TypeCon def params -> do
         let conDefs = applyDataDefParams def params
         altsSorted <- forM (enumerate conDefs) $ \(i, DataConDef _ bs) -> do
-          case lookup i alts' of
+          case lookup (ConAlt i) alts' of
             Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                   Block Empty $ Op $ ThrowError reqTy'
             Just alt -> return alt
         emit $ Case scrut' altsSorted reqTy'
-      VariantTy (NoExt types) -> do
-        altsSorted <- forM (toList (enumerate types)) $ \(i, ty) -> do
-          case lookup i alts' of
-            Nothing  -> return $ Abs (toNest [Ignore ty]) $
-                                  Block Empty $ Op $ ThrowError reqTy'
-            Just alt -> return alt
-        emit $ Case scrut' altsSorted reqTy'
+      VariantTy (Ext types@(LabeledItems tyItems) tailName) -> do
+        let unhandledCase :: Type -> Alt
+            unhandledCase ty = Abs (toNest [Ignore ty]) $
+                              Block Empty $ Op $ ThrowError reqTy'
+        let buildMonomorphicCase :: LabeledItems Type -> Atom -> UInferM Atom
+            buildMonomorphicCase monoTypes monoScrut = do
+              altsSorted <- forM (toList (withLabels monoTypes)) $
+                \(l, i, ty) -> case lookup (VariantAlt l i) alts' of
+                    Nothing  -> return $ unhandledCase ty
+                    Just alt -> return alt
+              emit $ Case monoScrut altsSorted reqTy'
+        let isVariantTailAlt (VariantTailAlt _) = True
+            isVariantTailAlt _ = False
+        case filter (isVariantTailAlt . fst) alts' of
+          [] -> case tailName of
+            Nothing ->
+              -- We already know the type exactly, so just emit a case.
+              buildMonomorphicCase types scrut'
+            Just _ -> do
+              -- Split off the types we don't know about, mapping them to a
+              -- runtime error.
+              split <- emit $ VariantSplit types scrut'
+              VariantTy (NoExt (Unlabeled (leftTy NE.:| [rightTy]))) <-
+                return $ getType split
+              leftCase <- buildNAbs (toNest [Ignore leftTy])
+                                    (\[v] -> buildMonomorphicCase types v)
+              emit $ Case split [leftCase, unhandledCase rightTy] reqTy'
+          [(VariantTailAlt (LabeledItems skippedItems), tailAlt)] -> do
+            -- Split off the types skipped by the tail pattern.
+            let splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+                left = M.intersectionWith splitLeft tyItems skippedItems
+            -- Make sure all of the alternatives are exclusive with the tail
+            -- pattern (could technically allow overlap but this is simpler).
+            let overlapErr = throw TypeErr
+                  "Variant explicit alternatives overlap with tail pattern."
+            let checkAltAgainstTail :: CaseAltIndex -> UInferM ()
+                checkAltAgainstTail (VariantAlt label i) =
+                  case M.lookup label left of
+                    Just tys -> if i <= length tys
+                                then return ()
+                                else overlapErr
+                    Nothing -> overlapErr
+                checkAltAgainstTail _ = return ()
+            mapM_ (checkAltAgainstTail . fst) alts'
+            -- Split based on the tail pattern's skipped types.
+            split <- emit $ VariantSplit (LabeledItems left) scrut'
+            let leftTy = VariantTy $ NoExt $ LabeledItems left
+            leftCase <-
+              buildNAbs (toNest [Ignore leftTy])
+                (\[v] -> buildMonomorphicCase (LabeledItems left) v)
+            emit $ Case split [leftCase, tailAlt] reqTy'
+          _ -> throw TypeErr "Can't specify more than one variant tail pattern."
       _ -> fail $ "Unexpected case expression type: " <> pprint scrutTy'
   UTabCon xs ann -> inferTabCon xs ann >>= matchRequirement
   UIndexRange low high -> do
@@ -357,7 +402,12 @@ checkUEff (EffectRow effs t) = do
        constrainEq ty ty'
        return v'
 
-checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (Int, Alt)
+data CaseAltIndex = ConAlt Int
+                  | VariantAlt Label Int
+                  | VariantTailAlt (LabeledItems ())
+  deriving (Eq, Show)
+
+checkCaseAlt :: RhoType -> Type -> UAlt -> UInferM (CaseAltIndex, Alt)
 checkCaseAlt reqTy scrutineeTy (UAlt pat body) = do
   (conIdx, patTys) <- checkCasePat pat scrutineeTy
   let (subPats, subPatTys) = unzip patTys
@@ -375,7 +425,7 @@ lookupDataCon conName = do
     Just _  -> throw TypeErr $ "Not a data constructor: " ++ pprint conName'
     Nothing -> throw UnboundVarErr $ pprint conName'
 
-checkCasePat :: UPat -> Type -> UInferM (Int, [(UPat, Type)])
+checkCasePat :: UPat -> Type -> UInferM (CaseAltIndex, [(UPat, Type)])
 checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
   UPatCon conName ps -> do
     (def@(DataDef _ paramBs cons), con) <- lookupDataCon conName
@@ -386,33 +436,25 @@ checkCasePat (WithSrc pos pat) scrutineeTy = addSrcPos pos $ case pat of
     params <- mapM (freshType . binderType) $ toList paramBs
     let argTys = applyNaryAbs (Abs paramBs $ map binderType $ toList argBs) params
     constrainEq scrutineeTy (TypeCon def params)
-    return (con, zip (toList ps) argTys)
+    return (ConAlt con, zip (toList ps) argTys)
   UPatVariant labels@(LabeledItems lmap) label subpat -> do
-    -- Make sure the labels we have are consistent with the requested type.
     subty <- freshType TyKind
     prevTys <- mapM (const $ freshType TyKind) labels
     Var (rest:>_) <- freshType LabeledRowKind
     let patTypes = prevTys <> labeledSingleton label subty
     let extPatTypes = Ext patTypes $ Just rest
     constrainEq scrutineeTy $ VariantTy extPatTypes
-    -- TODO: inference of variant patterns; for now needs requested type.
-    ty <- zonk scrutineeTy
-    items <- case ty of
-      VariantTy (NoExt items) -> return items
-      _ -> throw MiscErr "Can't infer labels of variant expression in case statement"
     let i = case M.lookup label lmap of
               Just prev -> length prev
               Nothing -> 0
-    let (LabeledItems enumTypes) = enumerate items
-    case M.lookup label enumTypes of
-      Just types -> if i < length types
-        then let (index, argty) = types NE.!! i
-          in return (index, [(subpat, argty)])
-        else throw TypeErr $
-          "Label " <> show label <> " appears fewer than "
-                   <> show i <> " times in variant type annotation"
-      Nothing -> throw TypeErr $
-        "Label " <> show label <> " not in variant type annotation"
+    return (VariantAlt label i, [(subpat, subty)])
+  UPatVariantLift labels subpat -> do
+    prevTys <- mapM (const $ freshType TyKind) labels
+    Var (rest:>_) <- freshType LabeledRowKind
+    let extPatTypes = Ext prevTys $ Just rest
+    constrainEq scrutineeTy $ VariantTy extPatTypes
+    let subty = VariantTy $ Ext NoLabeledItems $ Just rest
+    return (VariantTailAlt labels, [(subpat, subty)])
   _ -> throw TypeErr $ "Case patterns must start with a data constructor or variant pattern"
 
 withBindPats :: [(UPat, Atom)] -> UInferM a -> UInferM a
