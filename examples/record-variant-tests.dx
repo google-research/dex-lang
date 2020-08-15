@@ -94,10 +94,10 @@ Syntax for records, variants, and their types.
 
 :p {a:Int & b:Float | c:Int }
 
-> Parse error:95:20:
+> Parse error:95:21:
 >    |
 > 95 | :p {a:Int & b:Float | c:Int }
->    |                    ^
+>    |                     ^
 > unexpected '|'
 > expecting "..", "..<", expression, or negation
 
@@ -186,9 +186,9 @@ x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
 :p
   x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
   case x of
-    {| a = x |} -> i2r x
+    {| a = x |} -> IToF x
     {| a | a = x |} -> x
-    {| b = x |} -> i2r x
+    {| b = x |} -> IToF x
 > 3.0
 
 'Table values and imp lowering
@@ -242,7 +242,7 @@ myVal =
 :p myVal
 > {| b = 4 |}
 :t myVal
-> {a: Float | b: Int | c: Int}
+> {a: Float64 | b: Int64 | c: Int64}
 
 -- Badly written tail pattern
 :p
