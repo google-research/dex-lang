@@ -647,7 +647,7 @@ instance HasUVars UExpr' where
     UPrimExpr _ -> mempty
     UCase e alts -> freeUVars e <> foldMap freeUVars alts
     URecord ulr -> freeUVars ulr
-    UVariant skip _ val -> freeUVars skip <> freeUVars val
+    UVariant types _ val -> freeUVars types <> freeUVars val
     URecordTy ulr -> freeUVars ulr
     UVariantTy ulr -> freeUVars ulr
     UVariantLift skip val -> freeUVars skip <> freeUVars val

@@ -103,7 +103,7 @@ emitUnpack expr = do
       return bs
     RecordTy (NoExt types) -> do
       -- TODO: is using Ignore here appropriate? We don't have any existing
-      -- binders to bind, but we still plan to use the resulgetUnpackedts.
+      -- binders to bind, but we still plan to use the results.
       let bs = toNest $ map Ignore $ toList types
       return bs
     _ -> error $ "Unpacking a type that doesn't support unpacking: " ++ pprint (getType expr)
