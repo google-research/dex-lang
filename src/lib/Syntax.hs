@@ -398,7 +398,8 @@ data SourceBlock' = RunModule UModule
 data CmdName = GetType | EvalExpr OutFormat | Dump DataFormat String
                 deriving  (Show, Generic)
 
-data LogLevel = LogNothing | PrintEvalTime | LogPasses [PassName] | LogAll
+data LogLevel = LogNothing | PrintEvalTime | PrintBench String
+              | LogPasses [PassName] | LogAll
                 deriving  (Show, Generic)
 
 -- === imperative IR ===
@@ -515,7 +516,9 @@ data Output = TextOut String
             | HeatmapOut Bool Int Int (V.Vector Double)  -- Bool indicates if color
             | ScatterOut (V.Vector Double) (V.Vector Double)
             | PassInfo PassName String
-            | EvalTime Double
+            | EvalTime  Double
+            | TotalTime Double
+            | BenchResult String Double Double  -- name, eval time, total time
             | MiscLog String
               deriving (Show, Eq, Generic)
 

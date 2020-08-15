@@ -17,7 +17,9 @@ import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
 import Foreign.Ptr
-import Data.Maybe (fromJust, fromMaybe, mapMaybe)
+import Data.List (partition)
+import Data.Maybe (fromJust, fromMaybe)
+import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
 import Array
 import Syntax
@@ -63,8 +65,9 @@ type TopPassM a = ReaderT EvalConfig IO a
 -- TODO: handle errors due to upstream modules failing
 evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
 evalSourceBlock opts env block = do
-  (ans, outs) <- runTopPassM opts $ evalSourceBlockM env block
-  let outs' = mapMaybe (filterOutput block) outs
+  (ans, outs) <- runTopPassM opts $ withCompileTime $ evalSourceBlockM env block
+  let (logOuts, requiredOuts) = partition isLogInfo outs
+  let outs' = requiredOuts ++ processLogs (sbLogLevel block) logOuts
   case ans of
     Left err   -> return (mempty, Result outs' (Left (addCtx block err)))
     Right env' -> return (env'  , Result outs' (Right ()))
@@ -113,22 +116,42 @@ evalSourceBlockM env block = case sbContents block of
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
-filterOutput :: SourceBlock -> Output -> Maybe Output
-filterOutput block output = case (output, sbLogLevel block) of
-  -- Everything goes under LogAll
-  (_              , LogAll          )                      -> Just output
-  -- Filter out all logs under LogNothing
-  (PassInfo _    _, LogNothing      )                      -> Nothing
-  (MiscLog  _     , LogNothing      )                      -> Nothing
-  (EvalTime _     , LogNothing      )                      -> Nothing
-  -- PrintEvalTime removes all output and converts EvalTime into text
-  (EvalTime t     , PrintEvalTime   )                      -> Just $ TextOut $ show t
-  (_              , PrintEvalTime   )                      -> Nothing
-  -- LogPasses filters out pass info
-  (PassInfo pass _, LogPasses passes) | pass `elem` passes -> Just output
-  (PassInfo _    _, LogPasses _     )                      -> Nothing
-  (MiscLog  _     , LogPasses _     )                      -> Nothing
-  (_              , _               )                      -> Just output
+processLogs :: LogLevel -> [Output] -> [Output]
+processLogs logLevel logs = case logLevel of
+  LogAll -> logs
+  LogNothing -> []
+  LogPasses passes -> flip filter logs $ \l -> case l of
+                        PassInfo pass _ | pass `elem` passes -> True
+                                        | otherwise          -> False
+
+  PrintEvalTime -> [TextOut $   "Compile: " ++ show compileTime ++ " s" ++
+                              "\nEval: "    ++ show runTime     ++ " s"]
+    where (compileTime, runTime) = timesFromLogs logs
+  PrintBench benchName ->
+    [TextOut $ "{ \"bench_name\" : "   ++ show benchName   ++
+               ", \"compile_time\" : " ++ show compileTime ++
+               ", \"run_time\" : "     ++ show runTime     ++ "}"]
+    where (compileTime, runTime) = timesFromLogs logs
+
+timesFromLogs :: [Output] -> (Double, Double)
+timesFromLogs logs = (totalTime - evalTime, evalTime)
+  where
+    evalTime  = case [tEval | EvalTime tEval <- logs] of
+                  []  -> 0.0
+                  [t] -> t
+                  _   -> error "Expect at most one result"
+    totalTime = case [tTotal | TotalTime tTotal <- logs] of
+                  []  -> 0.0
+                  [t] -> t
+                  _   -> error "Expect at most one result"
+
+isLogInfo :: Output -> Bool
+isLogInfo out = case out of
+  PassInfo _ _ -> True
+  MiscLog  _   -> True
+  EvalTime _   -> True
+  TotalTime _  -> True
+  _ -> False
 
 evalSourceBlocks :: TopEnv -> [SourceBlock] -> TopPassM TopEnv
 evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
@@ -276,6 +299,14 @@ substArrayLiterals' backend vs x = do
   arrays <- requestArrays backend vs
   let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]
   return $ subst (newEnv vs arrayAtoms, mempty) x
+
+withCompileTime :: TopPassM a -> TopPassM a
+withCompileTime m = do
+  t1 <- liftIO $ getCurrentTime
+  ans <- m
+  t2 <- liftIO $ getCurrentTime
+  logTop $ TotalTime $ realToFrac $ t2 `diffUTCTime` t1
+  return ans
 
 checkPass :: (Pretty a, Checkable a) => PassName -> a -> TopPassM ()
 checkPass name x = do

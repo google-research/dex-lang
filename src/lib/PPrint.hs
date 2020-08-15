@@ -362,7 +362,8 @@ instance Pretty Output where
   pretty (HeatmapOut _ _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
-  pretty (EvalTime t) = "=== Eval time: " <+> p t <> "s ==="
+  pretty (EvalTime    t) = "Eval (s):  " <+> p t
+  pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
 
 instance Pretty PassName where

@@ -62,7 +62,7 @@ sourceBlock = do
   offset <- getOffset
   pos <- getSourcePos
   (src, (level, b)) <- withSource $ withRecovery recover $ do
-    level <- logLevel <|> logTime <|> return LogNothing
+    level <- logLevel <|> logTime <|> logBench <|> return LogNothing
     b <- sourceBlock'
     return (level, b)
   return $ SourceBlock (unPos (sourceLine pos)) offset level src b Nothing
@@ -93,6 +93,13 @@ logTime = do
   void $ try $ lexeme $ char '%' >> string "time"
   void eol
   return PrintEvalTime
+
+logBench :: Parser LogLevel
+logBench = do
+  void $ try $ lexeme $ char '%' >> string "bench"
+  benchName <- stringLiteral
+  void eol
+  return $ PrintBench benchName
 
 passName :: Parser PassName
 passName = choice [thisNameString s $> x | (s, x) <- passNames]

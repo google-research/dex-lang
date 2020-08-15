@@ -1,0 +1,10 @@
+
+
+xs = for i:(Fin 20000). 1.0
+
+%bench "sum elements"
+zs = snd $ withAccum \ref. for i. for j. ref += xs.i + xs.j
+
+%bench "sample gaussian"
+ws = for i:(Fin 1000000). randn (newKey (ordinal i))
+

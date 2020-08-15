@@ -92,6 +92,18 @@ repl-test:
 	  examples/repl-multiline-test-expected-output \
 	  <($(dex) repl < examples/repl-multiline-test.dx)
 
+# --- running and querying benchmarks ---
+
+bench-set-standard:
+	python3 dexbench.py adhoc --name standard
+
+bench-compare:
+	python3 dexbench.py adhoc --name proposed
+	cat <(  echo ".parameter set :old_version standard" \
+             && echo ".parameter set :new_version proposed" \
+             && cat queries/compare-versions.sql )          \
+          | sqlite3 bench_results.db
+
 # --- building docs ---
 
 slow-docs = doc/mnist-nearest-neighbors.html
