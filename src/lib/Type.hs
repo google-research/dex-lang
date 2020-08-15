@@ -172,21 +172,38 @@ instance HasType Expr where
       return resultTy
     RecordCons items record -> do
       types <- mapM typeCheck items
-      RecordTy rest <- typeCheck record
+      rty <- typeCheck record
+      rest <- case rty of
+        RecordTy rest -> return rest
+        _ -> throw TypeErr $ "Can't add fields to a non-record object "
+                          <> pprint record <> " (of type " <> pprint rty <> ")"
       return $ RecordTy $ joinExtLabeledItems types rest
     RecordSplit types record -> do
       mapM_ (|: TyKind) types
-      RecordTy full <- typeCheck record
+      fullty <- typeCheck record
+      full <- case fullty of
+        RecordTy full -> return full
+        _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
+                          <> " (of type " <> pprint fullty <> ")"
       diff <- labeledRowDifference full (NoExt types)
       return $ RecordTy $ NoExt $
         Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
-    VariantLift types record -> do
+    VariantLift types variant -> do
       mapM_ (|: TyKind) types
-      VariantTy rest <- typeCheck record
+      rty <- typeCheck variant
+      rest <- case rty of
+        VariantTy rest -> return rest
+        _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
+                          <> pprint variant <> " (of type " <> pprint rty <> ")"
       return $ VariantTy $ joinExtLabeledItems types rest
     VariantSplit types variant -> do
       mapM_ (|: TyKind) types
-      VariantTy full <- typeCheck variant
+      fullty <- typeCheck variant
+      full <- case fullty of
+        VariantTy full -> return full
+        _ -> throw TypeErr $ "Can't split a non-variant object "
+                           <> pprint variant <> " (of type " <> pprint fullty
+                           <> ")"
       diff <- labeledRowDifference full (NoExt types)
       return $ VariantTy $ NoExt $
         Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
@@ -469,7 +486,7 @@ labeledRowDifference (Ext (LabeledItems items) rest)
     case M.lookup label items of
       Just types -> assertEq subtypes
           (NE.fromList $ NE.take (length subtypes) types) $
-          "Row types for label " ++ show LabeledRowKind
+          "Row types for label " ++ show label
       Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
   -- Extract remaining types from the left.
   let

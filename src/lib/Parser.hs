@@ -194,6 +194,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
 containedExpr :: Parser UExpr
 containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
               <|> uVarOcc
+              <|> uLabeledExprs
               <?> "contained expression"
 
 uType :: Parser UType

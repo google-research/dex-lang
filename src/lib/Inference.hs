@@ -17,7 +17,6 @@ import Data.Foldable (fold, toList, asum)
 import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
-import qualified Data.Map.Merge.Strict as MMerge
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc
 
@@ -145,6 +144,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
       Check req -> return req
     alts' <- mapM (checkCaseAlt reqTy' scrutTy) alts
     scrutTy' <- zonk scrutTy
+    scrut'' <- zonk scrut'
     case scrutTy' of
       TypeCon def params -> do
         let conDefs = applyDataDefParams def params
@@ -153,7 +153,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
             Nothing  -> return $ Abs (fmap (Ignore . binderType) bs) $
                                   Block Empty $ Op $ ThrowError reqTy'
             Just alt -> return alt
-        emit $ Case scrut' altsSorted reqTy'
+        emit $ Case scrut'' altsSorted reqTy'
       VariantTy (Ext types@(LabeledItems tyItems) tailName) -> do
         let unhandledCase :: Type -> Alt
             unhandledCase ty = Abs (toNest [Ignore ty]) $
@@ -171,11 +171,11 @@ checkOrInferRho (WithSrc pos expr) reqTy =
           [] -> case tailName of
             Nothing ->
               -- We already know the type exactly, so just emit a case.
-              buildMonomorphicCase types scrut'
+              buildMonomorphicCase types scrut''
             Just _ -> do
               -- Split off the types we don't know about, mapping them to a
               -- runtime error.
-              split <- emit $ VariantSplit types scrut'
+              split <- emit $ VariantSplit types scrut''
               VariantTy (NoExt (Unlabeled [leftTy, rightTy])) <-
                 return $ getType split
               leftCase <- buildNAbs (toNest [Ignore leftTy])
@@ -199,7 +199,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
                 checkAltAgainstTail _ = return ()
             mapM_ (checkAltAgainstTail . fst) alts'
             -- Split based on the tail pattern's skipped types.
-            split <- emit $ VariantSplit (LabeledItems left) scrut'
+            split <- emit $ VariantSplit (LabeledItems left) scrut''
             let leftTy = VariantTy $ NoExt $ LabeledItems left
             leftCase <-
               buildNAbs (toNest [Ignore leftTy])
@@ -230,12 +230,13 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     matchRequirement $ Record items'
   URecord (Ext items (Just ext)) -> do
     items' <- mapM inferRho items
-    ext' <- inferRho ext
+    restTy <- freshInferenceName LabeledRowKind
+    ext' <- zonk =<< (checkRho ext $ RecordTy $ Ext NoLabeledItems $ Just restTy)
     matchRequirement =<< emit (RecordCons items' ext')
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels
-    Var (rest:>_) <- freshType LabeledRowKind
+    rest <- freshInferenceName LabeledRowKind
     let items = prevTys <> labeledSingleton label (getType value')
     let extItems = Ext items $ Just rest
     let i = case M.lookup label lmap of
@@ -245,8 +246,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
   URecordTy row -> matchRequirement =<< RecordTy <$> checkExtLabeledRow row
   UVariantTy row -> matchRequirement =<< VariantTy <$> checkExtLabeledRow row
   UVariantLift labels value -> do
-    Var (row:>_) <- freshType LabeledRowKind
-    value' <- checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row
+    row <- freshInferenceName LabeledRowKind
+    value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emit (VariantLift prev value')
   UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int64Lit $ fromIntegral x
@@ -308,25 +309,15 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
       ++ pprint (RecordTy $ NoExt types)
     xs <- zonk expr >>= emitUnpack
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList items) xs
-  UPatRecord (Ext pats@(LabeledItems patItems) (Just tailPat)) -> do
-    -- Unpacks at the top level should always be monomorphic in type.
-    RecordTy (Ext (LabeledItems types) Nothing) <- pure $ getType expr
-    -- Note: length items /= length types in general; items is what the user
-    -- wants but types is what we know.
-    -- First, split off the types the user wants.
-    let leftOnly = MMerge.traverseMissing $ \k _ ->
-          throw TypeErr $ "Label " <> show k <> " in record pattern does not "
-                                   <> "exist in record to be matched."
-    let rightOnly = MMerge.dropMissing
-    let both = MMerge.zipWithAMatched $ \k wanted have ->
-          if length wanted > length have
-          then throw TypeErr $ "Label " <> show k <> " in record pattern "
-                                        <> "appears too many times."
-          else return $ NE.fromList $ NE.take (length wanted) have
-    wantedTypes <- MMerge.mergeA leftOnly rightOnly both patItems types
+  UPatRecord (Ext pats (Just tailPat)) -> do
+    wantedTypes <- lift $ mapM (const $ freshType TyKind) pats
+    restType <- lift $ freshInferenceName LabeledRowKind
+    let vty = getType expr
+    lift $ constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
     -- Split the record.
+    wantedTypes' <- lift $ zonk wantedTypes
     val <- emit =<< zonk expr
-    split <- emit $ RecordSplit (LabeledItems wantedTypes) val
+    split <- emit $ RecordSplit wantedTypes' val
     [left, right] <- getUnpacked split
     leftVals <- getUnpacked left
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList pats) leftVals
@@ -502,30 +493,20 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     lift $ constrainEq (TypeCon def params) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
     fold <$> zipWithM bindPat' (toList ps) xs
-  UPatRecord (Ext items Nothing) -> do
-    RecordTy (NoExt types) <- pure $ getType val
-    when (fmap (const ()) items /= fmap (const ()) types) $ throw TypeErr $
-      "Labels in record pattern do not match record type. Expected structure "
-      ++ pprint (RecordTy $ NoExt types)
+  UPatRecord (Ext pats Nothing) -> do
+    expectedTypes <- lift $ mapM (const $ freshType TyKind) pats
+    lift $ constrainEq (RecordTy (NoExt expectedTypes)) (getType val)
     xs <- lift $ zonk (Atom val) >>= emitUnpack
-    fold <$> zipWithM bindPat' (toList items) xs
-  UPatRecord (Ext pats@(LabeledItems patItems) (Just tailPat)) -> do
-    RecordTy (Ext (LabeledItems types) _) <- pure $ getType val
-    -- Note: length items /= length types in general; items is what the user
-    -- wants but types is what we know.
-    -- First, split off the types the user wants.
-    let leftOnly = MMerge.traverseMissing $ \k _ ->
-          throw TypeErr $ "Label " <> show k <> " in record pattern does not "
-                                   <> "exist in record to be matched."
-    let rightOnly = MMerge.dropMissing
-    let both = MMerge.zipWithAMatched $ \k wanted have ->
-          if length wanted > length have
-          then throw TypeErr $ "Label " <> show k <> " in record pattern "
-                                        <> "appears too many times."
-          else return $ NE.fromList $ NE.take (length wanted) have
-    wantedTypes <- MMerge.mergeA leftOnly rightOnly both patItems types
+    fold <$> zipWithM bindPat' (toList pats) xs
+  UPatRecord (Ext pats (Just tailPat)) -> do
+    wantedTypes <- lift $ mapM (const $ freshType TyKind) pats
+    restType <- lift $ freshInferenceName LabeledRowKind
+    let vty = getType val
+    lift $ constrainEq (RecordTy $ Ext wantedTypes $ Just restType) vty
     -- Split the record.
-    split <- lift $ emit $ RecordSplit (LabeledItems wantedTypes) val
+    wantedTypes' <- lift $ zonk wantedTypes
+    val' <- lift $ zonk val
+    split <- lift $ emit $ RecordSplit wantedTypes' val'
     [left, right] <- lift $ getUnpacked split
     leftVals <- lift $ getUnpacked left
     env1 <- fold <$> zipWithM bindPat' (toList pats) leftVals
@@ -843,6 +824,8 @@ unifyExtLabeledItems r1 r2 = do
       bindQ (v:>LabeledRowKind) (LabeledRow r)
     (Ext NoLabeledItems (Just v), r) | v `isin` vs ->
       bindQ (v:>LabeledRowKind) (LabeledRow r)
+    (_, Ext NoLabeledItems _) -> throw TypeErr ""
+    (Ext NoLabeledItems _, _) -> throw TypeErr ""
     (Ext (LabeledItems items1) t1, Ext (LabeledItems items2) t2) -> do
       let unifyPrefixes tys1 tys2 = mapM (uncurry unify) $ NE.zip tys1 tys2
       sequence_ $ M.intersectionWith unifyPrefixes items1 items2

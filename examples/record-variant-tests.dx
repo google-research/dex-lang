@@ -141,7 +141,10 @@ def getTwoFoosAndABar (rest : Types)?->
 :p
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
   (a1, a2, b)
-> Type error:Labels in record pattern do not match record type. Expected structure {a: Int64 & b: Int64}
+> Type error:
+> Expected: {a: a & a: b & b: c}
+>   Actual: {a: Int64 & b: Int64}
+> (Solving for: [a:Type, b:Type, c:Type])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^
