@@ -179,7 +179,7 @@ instance HasType Expr where
       RecordTy full <- typeCheck record
       diff <- labeledRowDifference full (NoExt types)
       return $ RecordTy $ NoExt $
-        Unlabeled $ NE.fromList [ RecordTy $ NoExt types, RecordTy diff ]
+        Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
     VariantLift types record -> do
       mapM_ (|: TyKind) types
       VariantTy rest <- typeCheck record
@@ -189,7 +189,7 @@ instance HasType Expr where
       VariantTy full <- typeCheck variant
       diff <- labeledRowDifference full (NoExt types)
       return $ VariantTy $ NoExt $
-        Unlabeled $ NE.fromList [ VariantTy $ NoExt types, VariantTy diff ]
+        Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do

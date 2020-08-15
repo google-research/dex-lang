@@ -176,7 +176,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
               -- Split off the types we don't know about, mapping them to a
               -- runtime error.
               split <- emit $ VariantSplit types scrut'
-              VariantTy (NoExt (Unlabeled (leftTy NE.:| [rightTy]))) <-
+              VariantTy (NoExt (Unlabeled [leftTy, rightTy])) <-
                 return $ getType split
               leftCase <- buildNAbs (toNest [Ignore leftTy])
                                     (\[v] -> buildMonomorphicCase types v)

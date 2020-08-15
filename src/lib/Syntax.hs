@@ -1351,14 +1351,17 @@ pattern NoExt a = Ext a Nothing
 pattern InternalSingletonLabel :: Label
 pattern InternalSingletonLabel = "%UNLABELED%"
 
-_getUnlabeled :: LabeledItems a -> Maybe (NE.NonEmpty a)
-_getUnlabeled (LabeledItems items) = do
-  guard $ length items == 1
-  M.lookup InternalSingletonLabel items
+_getUnlabeled :: LabeledItems a -> Maybe [a]
+_getUnlabeled (LabeledItems items) = case (length items) of
+  0 -> Just []
+  1 -> NE.toList <$> M.lookup InternalSingletonLabel items
+  _ -> Nothing
 
-pattern Unlabeled :: (NE.NonEmpty a) -> LabeledItems a
+pattern Unlabeled :: [a] -> LabeledItems a
 pattern Unlabeled as <- (_getUnlabeled -> Just as)
-  where Unlabeled as = LabeledItems (M.singleton InternalSingletonLabel as)
+  where Unlabeled as = case NE.nonEmpty as of
+          Just ne -> LabeledItems (M.singleton InternalSingletonLabel ne)
+          Nothing -> NoLabeledItems
 
   -- TODO: Enable once https://gitlab.haskell.org//ghc/ghc/issues/13363 is fixed...
 -- {-# COMPLETE TypeVar, ArrowType, TabTy, Forall, TypeAlias, Effect, NoAnn, TC #-}

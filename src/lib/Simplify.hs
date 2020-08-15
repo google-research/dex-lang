@@ -202,7 +202,7 @@ simplifyExpr expr = case expr of
           left = M.intersectionWith splitLeft fullItems litems
           splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
           right = M.differenceWith splitRight fullItems litems
-      return $ Record $ Unlabeled $ NE.fromList
+      return $ Record $ Unlabeled $
         [Record (LabeledItems left), Record (LabeledItems right)]
     _ -> emit =<< RecordSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
   VariantLift leftTys@(LabeledItems litems) right -> case getType right of
