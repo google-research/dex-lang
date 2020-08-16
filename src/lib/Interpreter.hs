@@ -121,8 +121,13 @@ indices ty = case ty of
   TC (UnitType)          -> [UnitVal]
   RecordTy (NoExt types) -> let
     subindices = map indices (toList types)
-    products = foldl (\prevs curs -> [cur:prev | cur <- curs, prev <- prevs]) [[]] subindices
-    in map (\idxs -> Record $ restructure idxs types) products
+    -- Earlier indices change faster than later ones, so we need to first
+    -- iterate over the current index and then over all previous ones. For
+    -- efficiency we build the indices in reverse order and then reassign them
+    -- at the end with `reverse`.
+    addAxisInReverse prevs curs = [cur:prev | cur <- curs, prev <- prevs]
+    products = foldl addAxisInReverse [[]] subindices
+    in map (\idxs -> Record $ restructure (reverse idxs) types) products
   VariantTy (NoExt types) -> let
     subindices = fmap indices types
     reflect = reflectLabels types
