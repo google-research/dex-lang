@@ -189,9 +189,10 @@ simplifyExpr expr = case expr of
   RecordCons left right -> case getType right of
     RecordTy (NoExt rightTys) -> do
       -- Unpack, then repack with new arguments (possibly in the middle).
+      left' <- mapM simplifyAtom left
       rightList <- getUnpacked =<< simplifyAtom right
       let rightItems = restructure rightList rightTys
-      simplifyAtom $ Record $ left <> rightItems
+      return $ Record $ left' <> rightItems
     _ -> emit =<< RecordCons <$> mapM simplifyAtom left <*> simplifyAtom right
   RecordSplit leftTys@(LabeledItems litems) full -> case getType full of
     RecordTy (NoExt fullTys) -> do
