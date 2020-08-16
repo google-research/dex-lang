@@ -26,15 +26,38 @@ def build (optic : DataOptic focus full ignore alt) : ((focus & ignore) | alt) -
 
 'We don't actually use these definitions, but they correspond to what people often use:
 
+-- Isomorphism lenses/prisms with first-class remainder types
 def DataLens  (focus:Type) (full:Type) (ignore:Type) : Type = DataOptic focus full ignore Void
 def DataPrism (focus:Type) (full:Type) (alt:Type)    : Type = DataOptic focus full Unit   alt
 
+-- Standard interface to lenses/prisms hides the remainder.
 data SomeLens  focus:Type full:Type = KnownLens  ignore:Type (DataLens focus full ignore)
 data SomePrism focus:Type full:Type = KnownPrism alt:Type    (DataPrism focus full alt)
 
+' Our `DataOptic` can technically be seen as an "affine traversal", providing a
+view of a component that can appear zero or one times in the structure. But
+because we don't hide the `ignore` and `alt` types, we can do more poweful
+things than normal optics let you do, as we will see later!
+
+' Some related reading:
+- ["Profunctor Optics"](http://www.cs.ox.ac.uk/people/jeremy.gibbons/publications/poptics.pdf)
+gives an overview of optics as they are often implemented in libraries like
+Haskell. Notably, these implementations tend to define optics in terms of
+higher-order quantified types, i.e. "for any profunctor `p` this is a
+transformation `p focus focus' -> p full full'`". But this is awkward from the perspective of
+finite index sets, and also we don't support higher-order types like this yet.
+Interesting note: my `DataOptic` can be thought of as a concrete representation
+of a profunctor optic constrained over Cartesian and Cocartesian profunctors
+(I think).
+- ["Understanding Profunctor Optics: a representation theorem"](https://ui.adsabs.harvard.edu/abs/2020arXiv200111816B/abstract)
+describes a correspondence between profunctor optics and isomorphism optics,
+which are the existentially-quantified types I define above (`SomeLens` and
+`SomePrism`).
+
 '## Specific optics.
 
-' Eventually the compiler should autogenerate these.
+' Eventually the compiler should autogenerate these. Perhaps `#foo` would be
+desugared into `fieldFoo` below, and `#|foo` or `?foo` into `altFoo`.
 
 def fieldFoo (types : Types)?-> (a : Type)?->
   : DataOptic a {foo:a & ...types} {&...types} Void
@@ -87,20 +110,29 @@ def match (optic : DataOptic focus full ignore alt) (x : full) : Maybe focus =
 def use (optic : DataOptic focus full {&} alt) (y : focus) : full =
   build optic $ Left (y, {})
 
+'Sidenote: we could generalize `use` to work on any "Unital" type instead of
+just `{&}` but I haven't seen a need yet.
+
 '## Using it
 
 :p extract fieldFoo {foo=1, bar=2}
+> 1
 
 :p update fieldFoo {foo=1, bar=2} 3
+> {bar = 2, foo = 3}
 
 :p match altFoo $ astype {foo:Int | bar:Int} {|foo=1|}
+> Just 1
 
 :p match altFoo $ astype {foo:Int | bar:Int} {|bar=1|}
+> Nothing
 
 :p astype {foo:Int | bar:Int} $ use altFoo 3
+> {| foo = 3 |}
 
 '## Optic combinators
 
+-- Compose two optics by applying the second to the result of the first.
 def at (o1 : DataOptic focus1 full ignore1 alt1)
        (o2 : DataOptic focus2 focus1 ignore2 alt2)
        : DataOptic focus2 full (ignore1 & ignore2) (alt1 | (alt2 & ignore1)) =
@@ -121,7 +153,10 @@ def at (o1 : DataOptic focus1 full ignore1 alt1)
   MkDataOptic {split=atSplit, build=atBuild}
 
 :p extract (fieldFoo `at` fieldFoo) {foo={foo=1, bar=2}, bar=3}
+> 1
 
+-- Flip an optic to focus on what the previous optic ignored.
+-- Note that this requires surfacing the remainder type!
 def except (o : DataOptic focus full ignore alt)
            : DataOptic ignore full focus alt =
   exceptSplit = \v. case (split o v) of
@@ -133,23 +168,28 @@ def except (o : DataOptic focus full ignore alt)
   MkDataOptic {split=exceptSplit, build=exceptBuild}
 
 :p extract (except fieldFoo) {foo=1, bar=2, baz=3}
+> {bar = 2, baz = 3}
 
-
+-- Build an optic that focuses *both* pieces, by applying the second to what
+-- the first ignores.
 def and (o1 : DataOptic focus1 full ignore1 alt1)
         (o2 : DataOptic focus2 ignore1 ignore2 alt2)
         : DataOptic (focus1 & focus2) full ignore2 (alt1 | (alt2 & focus1)) =
   except $ except o1 `at` except o2
 
 :p extract (fieldFoo `and` fieldFoo) {foo=1, foo=2, baz=3}
+> (1, 2)
 
 '
-Interestingly, `and` and `at` seem to be inverses in a sense, but `or`
+Interestingly, `and` and `at` seem to be inverses in a sense, but `or` below
 doesn't seem as reasonable. But I think there's something fundamental about
 this one needing to have Unit. Without them being Unit you can still `split`,
 but there's no way to `build` again, because if you try plugging the other
 option in you'd need to create a different `ignore`. Perhaps it has
 something to do with | distributing over & but not vice versa?
 
+-- Build an optic that tries to match the first and then tries the second if
+-- the first fails. Similar to `and` but for variants.
 def or  (o1 : DataOptic focus1 full {&} alt1)
         (o2 : DataOptic focus2 alt1 {&} alt2)
         : DataOptic (focus1 | focus2) full {&} alt2 =
@@ -167,10 +207,31 @@ def or  (o1 : DataOptic focus1 full {&} alt1)
   MkDataOptic {split=orSplit, build=orBuild}
 
 :p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo=1|})
+> Just (Left 1)
 
 :p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo|foo=1|})
+> Just (Right 1)
 
 :p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo|foo|foo=1|})
+> Nothing
+
+-- Build an optic that fails whenever the input optic succeeds. Similar to
+-- `except` but for variants.
+def drop (o : DataOptic focus full {&} alt)
+         : DataOptic alt full {&} focus =
+  dropSplit = \v. case (split o v) of
+                      Left (v, {}) -> Right v
+                      Right a -> Left (a, {})
+  dropBuild = \v. case v of
+                      Left (a, {}) -> build o $ Right a
+                      Right v -> build o $ Left (v, {})
+  MkDataOptic {split=dropSplit, build=dropBuild}
+
+:p match (drop altFoo) $ astype {foo:Int | bar:Int} {|foo=1|}
+> Nothing
+
+:p match (drop altFoo) $ astype {foo:Int | bar:Int} {|bar=1|}
+> Just {| bar = 1 |}
 
 ' Special case: Extracting all fields or matching all variants produces
 something that is both a lens and a prism, so we can mix and match methods
@@ -180,9 +241,11 @@ asIso : DataOptic focus full {&} {|} -> DataOptic focus full {&} {|} = \x.x
 
 -- Swap fields!
 :p use (fieldFoo `and` fieldBar) $ extract (fieldBar `and` fieldFoo) {foo=1, bar=2}
+> {bar = 1, foo = 2}
 
 -- Swap variants!
 :p use (asIso (altFoo `or` altBar)) $ extract (altBar `or` altFoo) $ astype {foo:Int|bar:Int} {|foo=1|}
+> {| bar = 1 |}
 
 'Aside: Note that although the `altFoo`/`fieldFoo` primitives appear multiple
 times, they have different types, and in particular get different implicit
@@ -198,6 +261,8 @@ problem is big enough to warrant it.
 
 
 '## Working with arrays
+One of the cool properties of the combinators is that they seem like a plausible
+replacement for numpy-style advanced indexing and axis specifications.
 
 def frontAxes (_:Uninhabited alt)?=>
               (optic : DataOptic focus full rest alt)
@@ -214,3 +279,64 @@ def sumOver (_:Uninhabited alt)?=> (_:Add val)?=>
   arr = iota {foo:Fin 2 & bar:Fin 5}
   arr' = sumOver fieldFoo arr
   for i. arr'.(use fieldBar i)
+> [5, 7, 9, 11, 13]
+
+def normalizeAcross (_:Uninhabited alt)?=>
+                    (optic : DataOptic focus full rest alt)
+                    (x : full=>Float) : full=>Float =
+  y = frontAxes optic x
+  total = sum y
+  z = for i j. y.i.j `fdiv` total.j
+  for k. case (split optic k) of Left (i, j) -> z.i.j
+
+:p
+  x = iota {foo:Fin 2 & bar:Fin 5}
+  y = for i. IToF x.i
+  z = normalizeAcross fieldFoo y
+  for i. z.(use (fieldFoo `and` fieldBar) i)
+> [ 0.0
+> , 0.14285715
+> , 0.22222222
+> , 0.27272728
+> , 0.30769232
+> , 1.0
+> , 0.85714287
+> , 0.7777778
+> , 0.72727275
+> , 0.6923077 ]@(Fin 2 & Fin 5)
+
+def sliceWith (optic : DataOptic focus full {&} alt)
+              (x : full=>val) : focus=>val =
+  for i. x.(use optic i)
+
+:p
+  x = iota {bar:Fin 2 | foo:Fin 5}
+  y = sliceWith altFoo x
+  for i. y.i
+> [2, 3, 4, 5, 6]
+
+:p
+  x = iota {bar:Fin 2 | foo:Fin 5}
+  y = sliceWith (drop altFoo) x
+  for i. y.(use altBar i)
+> [0, 1]
+
+def sliceUpdate (optic : DataOptic focus full {&} alt)
+                (x : full=>val) (y : focus=>val) : full=>val =
+  for i. case (split optic i) of
+            Left (j, {}) -> y.j
+            Right k -> x.i
+
+:p
+  x = iota {bar:Fin 2 | foo:Fin 5}
+  y = sliceUpdate altFoo x [100, 101, 102, 103, 104]
+  for i:(Fin 7). y.((ordinal i)@_)
+> [0, 1, 100, 101, 102, 103, 104]
+
+:p
+  x = iota {bar:Fin 2 | foo:Fin 5}
+  up = for i. [100, 101].((ordinal i) @ _)
+  y = sliceUpdate (drop altFoo) x up
+  for i:(Fin 7). y.((ordinal i)@_)
+> [100, 101, 2, 3, 4, 5, 6]
+
