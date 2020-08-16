@@ -323,11 +323,11 @@ myStuff = [ {| foo=1 |},
 recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 :p recordsAsIndices
 > [ {a = 0@Fin 2, b = 0@Fin 3}
-> , {a = 0@Fin 2, b = 1@Fin 3}
 > , {a = 1@Fin 2, b = 0@Fin 3}
-> , {a = 1@Fin 2, b = 1@Fin 3}
 > , {a = 0@Fin 2, b = 1@Fin 3}
-> , {a = 0@Fin 2, b = 2@Fin 3} ]@{a: Fin 2 & b: Fin 3}
+> , {a = 1@Fin 2, b = 1@Fin 3}
+> , {a = 0@Fin 2, b = 2@Fin 3}
+> , {a = 1@Fin 2, b = 2@Fin 3} ]@{a: Fin 2 & b: Fin 3}
 
 -- TODO: this still causes an error
 -- :p for i:(Fin 6). recordsAsIndices.((ordinal i) @ _)
