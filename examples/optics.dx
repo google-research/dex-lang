@@ -1,0 +1,216 @@
+
+include "examples/optics-helper.dx"
+
+'## Basic definitions
+
+data DataOptic focus:Type full:Type ignore:Type alt:Type =
+  MkDataOptic { split : full -> ((focus & ignore) | alt)
+              & build : ((focus & ignore) | alt) -> full
+              }
+
+data DataBiOptic ignore:Type alt:Type focus:Type full:Type focus':Type full':Type =
+  MkDataBiOptic { split : full -> ((focus & ignore) | alt)
+                & build : ((focus' & ignore) | alt) -> full'
+                }
+
+def split (optic : DataOptic focus full ignore alt) : full -> ((focus & ignore) | alt) =
+  (MkDataOptic {split, ...}) = optic
+  split
+
+def build (optic : DataOptic focus full ignore alt) : ((focus & ignore) | alt) -> full =
+  (MkDataOptic {build, ...}) = optic
+  build
+
+
+'## Some equivalences.
+
+'We don't actually use these definitions, but they correspond to what people often use:
+
+def DataLens  (focus:Type) (full:Type) (ignore:Type) : Type = DataOptic focus full ignore Void
+def DataPrism (focus:Type) (full:Type) (alt:Type)    : Type = DataOptic focus full Unit   alt
+
+data SomeLens  focus:Type full:Type = KnownLens  ignore:Type (DataLens focus full ignore)
+data SomePrism focus:Type full:Type = KnownPrism alt:Type    (DataPrism focus full alt)
+
+'## Specific optics.
+
+' Eventually the compiler should autogenerate these.
+
+def fieldFoo (types : Types)?-> (a : Type)?->
+  : DataOptic a {foo:a & ...types} {&...types} Void
+  = MkDataOptic { split = \{foo, ...tail}. Left (foo, tail)
+                , build = \v. case v of Left (foo, tail) -> {foo, ...tail}
+                }
+
+def altFoo (types : Types)?-> (a : Type)?->
+      : DataOptic a {foo:a | ...types} {&} {|...types} =
+  split = \v. case v of
+                {|foo=foo|} -> Left (foo, {})
+                {|foo|...tail|} -> Right tail
+  build = \v. case v of
+                Left (foo, {}) -> {|foo=foo|}
+                Right tail -> {| foo | ...tail|}
+  MkDataOptic {split, build}
+
+def fieldBar (types : Types)?-> (a : Type)?->
+  : DataOptic a {bar:a & ...types} {&...types} Void
+  = MkDataOptic { split = \{bar, ...tail}. Left (bar, tail)
+                , build = \v. case v of Left (bar, tail) -> {bar, ...tail}
+                }
+
+def altBar (types : Types)?-> (a : Type)?->
+      : DataOptic a {bar:a | ...types} {&} {|...types} =
+  split = \v. case v of
+                {|bar=bar|} -> Left (bar, {})
+                {|bar|...tail|} -> Right tail
+  build = \v. case v of
+                Left (bar, {}) -> {|bar=bar|}
+                Right tail -> {| bar | ...tail|}
+  MkDataOptic {split, build}
+
+'## Conventional lens and prism functions
+
+-- Lenses
+def extract (_:Uninhabited alt)?=> (optic : DataOptic focus full ignore alt) (x : full) : focus =
+  case (split optic x) of Left (y, _) -> y
+
+def update (optic : DataOptic focus full ignore alt) (x : full) (y : focus) : full =
+  rest = case (split optic x) of Left (_, rest) -> rest
+  build optic $ Left (y, rest)
+
+-- Prisms
+def match (optic : DataOptic focus full ignore alt) (x : full) : Maybe focus =
+  case (split optic x) of
+    Left (y, _) -> Just y
+    Right _ -> Nothing
+
+def use (optic : DataOptic focus full {&} alt) (y : focus) : full =
+  build optic $ Left (y, {})
+
+'## Using it
+
+:p extract fieldFoo {foo=1, bar=2}
+
+:p update fieldFoo {foo=1, bar=2} 3
+
+:p match altFoo $ astype {foo:Int | bar:Int} {|foo=1|}
+
+:p match altFoo $ astype {foo:Int | bar:Int} {|bar=1|}
+
+:p astype {foo:Int | bar:Int} $ use altFoo 3
+
+'## Optic combinators
+
+def at (o1 : DataOptic focus1 full ignore1 alt1)
+       (o2 : DataOptic focus2 focus1 ignore2 alt2)
+       : DataOptic focus2 full (ignore1 & ignore2) (alt1 | (alt2 & ignore1)) =
+  atSplit = \v. case (split o1 v) of
+                  Left (v1, i1) ->
+                    case (split o2 v1) of
+                      Left (v2, i2) -> Left (v2, (i1, i2))
+                      Right a2 -> Right $ Right (a2, i1)
+                  Right a1 -> Right $ Left a1
+  atBuild = \v. case v of
+                  Left (v2, (i1, i2)) ->
+                    v1 = build o2 $ Left (v2, i2)
+                    build o1 $ Left (v1, i1)
+                  Right a ->
+                    case a of
+                      Left a1 -> build o1 $ Right a1
+                      Right (a2, i1) -> build o1 $ Left (build o2 (Right a2), i1)
+  MkDataOptic {split=atSplit, build=atBuild}
+
+:p extract (fieldFoo `at` fieldFoo) {foo={foo=1, bar=2}, bar=3}
+
+def except (o : DataOptic focus full ignore alt)
+           : DataOptic ignore full focus alt =
+  exceptSplit = \v. case (split o v) of
+                      Left (v, i) -> Left (i, v)
+                      Right a -> Right a
+  exceptBuild = \v. case v of
+                      Left (i, v) -> build o $ Left (v, i)
+                      Right a -> build o $ Right a
+  MkDataOptic {split=exceptSplit, build=exceptBuild}
+
+:p extract (except fieldFoo) {foo=1, bar=2, baz=3}
+
+
+def and (o1 : DataOptic focus1 full ignore1 alt1)
+        (o2 : DataOptic focus2 ignore1 ignore2 alt2)
+        : DataOptic (focus1 & focus2) full ignore2 (alt1 | (alt2 & focus1)) =
+  except $ except o1 `at` except o2
+
+:p extract (fieldFoo `and` fieldFoo) {foo=1, foo=2, baz=3}
+
+'
+Interestingly, `and` and `at` seem to be inverses in a sense, but `or`
+doesn't seem as reasonable. But I think there's something fundamental about
+this one needing to have Unit. Without them being Unit you can still `split`,
+but there's no way to `build` again, because if you try plugging the other
+option in you'd need to create a different `ignore`. Perhaps it has
+something to do with | distributing over & but not vice versa?
+
+def or  (o1 : DataOptic focus1 full {&} alt1)
+        (o2 : DataOptic focus2 alt1 {&} alt2)
+        : DataOptic (focus1 | focus2) full {&} alt2 =
+  orSplit = \v. case (split o1 v) of
+                  Left (f1, {}) -> Left (Left f1, {})
+                  Right a1 ->
+                    case (split o2 a1) of
+                      Left (f2, {}) -> Left (Right f2, {})
+                      Right a2 -> Right a2
+  orBuild = \v. case v of
+                  Left (x, {}) -> case x of
+                    Left f1 -> build o1 $ Left (f1, {})
+                    Right f2 -> build o1 $ Right $ build o2 $ Left (f2, {})
+                  Right a2 -> build o1 $ Right $ build o2 $ Right a2
+  MkDataOptic {split=orSplit, build=orBuild}
+
+:p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo=1|})
+
+:p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo|foo=1|})
+
+:p match (altFoo `or` altFoo) (astype {foo:Int|foo:Int|foo:Int} {|foo|foo|foo=1|})
+
+' Special case: Extracting all fields or matching all variants produces
+something that is both a lens and a prism, so we can mix and match methods
+(although sometimes we have to convince the compiler we know what we are doing)
+
+asIso : DataOptic focus full {&} {|} -> DataOptic focus full {&} {|} = \x.x
+
+-- Swap fields!
+:p use (fieldFoo `and` fieldBar) $ extract (fieldBar `and` fieldFoo) {foo=1, bar=2}
+
+-- Swap variants!
+:p use (asIso (altFoo `or` altBar)) $ extract (altBar `or` altFoo) $ astype {foo:Int|bar:Int} {|foo=1|}
+
+'Aside: Note that although the `altFoo`/`fieldFoo` primitives appear multiple
+times, they have different types, and in particular get different implicit
+arguments. So it wouldn't be possible to write a generic "swap fields" operation
+because there's no way to provide an argument that can be instantiated to two
+different types. Is this an argument for having some sort of untyped macro
+language? Or for enabling passing implicit arguments un-expanded into functions,
+somehow, so that a function could take another function with implict arguments
+as an argument? Or perhaps passing some sort of local higher-kinded types
+machinery so that an optic object would carry a mapping from focused types to
+full types? It's unclear what the right solution would be, or whether the
+problem is big enough to warrant it.
+
+
+'## Working with arrays
+
+def frontAxes (_:Uninhabited alt)?=>
+              (optic : DataOptic focus full rest alt)
+              (x : full=>val) : focus => rest => val =
+  for f. for i. x.(build optic $ Left (f, i))
+
+def sumOver (_:Uninhabited alt)?=> (_:Add val)?=>
+            (optic : DataOptic focus full rest alt)
+            (x : full=>val) : rest=>val =
+  sum $ frontAxes optic x
+
+-- Still can't print record-indexed arrays :(
+:p
+  arr = iota {foo:Fin 2 & bar:Fin 5}
+  arr' = sumOver fieldFoo arr
+  for i. arr'.(use fieldBar i)

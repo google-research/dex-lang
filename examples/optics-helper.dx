@@ -1,0 +1,20 @@
+
+Void = {|}
+
+data Uninhabited a:Type = MkUninhabited (a -> b:Type -> b)
+
+def absurd (res : Type)?-> (a : Type)?-> (proof: Uninhabited a)?=> (contradiction: a) : res =
+  (MkUninhabited doit) = proof
+  doit contradiction res
+
+def promiseUninhabited (a:Type)?-> : Uninhabited a = MkUninhabited (\v. todo)
+
+@instance
+voidUninhabited : Uninhabited Void = promiseUninhabited
+
+@instance
+def sumUninhabited (_:Uninhabited a)?=> (_:Uninhabited b)?=> : Uninhabited (a|b) = promiseUninhabited
+
+-- note: can't define instance for both left and right!
+@instance
+def pairLeftUninhabited (_:Uninhabited a)?=> : Uninhabited (a&b) = promiseUninhabited

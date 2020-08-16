@@ -24,6 +24,8 @@ def (,) (x:a) (y:b) : (a & b) = %pair x y
 def fst (p: (a & b)) : a = %fst p
 def snd (p: (a & b)) : b = %snd p
 
+def astype (t:Type) (x:t) : t = x  -- to give hints to type inference
+
 def idiv (x:Int) (y:Int) : Int = %idiv x y
 def rem  (x:Int) (y:Int) : Int = %irem x y
 def ipow (x:Int) (y:Int) : Int = %ipow x y
