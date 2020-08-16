@@ -280,11 +280,11 @@ instance PrettyPrec Atom where
     Eff e -> atPrec ArgPrec $ p e
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      _ ->  atPrec LowestPrec $ p name <+> hsep (map p xs)
+      _ ->  atPrec LowestPrec $ pAppArg (p name) xs
       where (DataConDef name _) = cons !! con
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
-      _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+      _  -> atPrec LowestPrec $ pAppArg (p name) params
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
