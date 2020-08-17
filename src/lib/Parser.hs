@@ -522,7 +522,7 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
         Just punFn -> explicitBound <|> pure (punFn pos l)
         Nothing -> explicitBound
       rest <- beforeSep
-      return $ joinExtLabeledItems (labeledSingleton l itemVal) rest
+      return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
 
 -- === infix ops ===
 

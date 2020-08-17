@@ -22,7 +22,7 @@ module Syntax (
     ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
     IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
-    reflectLabels, withLabels, ExtLabeledItems (..), joinExtLabeledItems,
+    reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
     ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
@@ -158,7 +158,15 @@ scalarTableBaseType t = case t of
   _         -> error $ "Not a scalar table: " ++ show t
 
 
+-- The label for a field in a record or variant.
 type Label = String
+
+-- Collection of labeled values of type `a`. Each value has a field label, and
+-- multiple values can share the same label. This is the canonical form for
+-- the item types in record and variant types as well as for the values in
+-- record objects; the order in the concrete syntax of items with different
+-- fields is discarded (so both `{b:Z & a:X & a:Y}` and `{a:X & b:Z & a:Y}` map
+-- to `M.fromList [("a", NE.fromList [X, Y]), ("b", NE.fromList [Z])]` )
 newtype LabeledItems a = LabeledItems (M.Map Label (NE.NonEmpty a))
   deriving (Eq, Show, Generic, Functor, Foldable, Traversable)
 
@@ -177,11 +185,17 @@ instance Semigroup (LabeledItems a) where
   LabeledItems items <> LabeledItems items' =
     LabeledItems $ M.unionWith (<>) items items'
 
+-- Extensible version of LabeledItems, which allows an optional object in tail
+-- position. The items of the tail object will always be interpreted as a
+-- "suffix" in the sense that for any field label, the object represented by
+-- an ExtLabeledItems contains first the values in the (LabeledItems a) for that
+-- field, followed by the values in the (Maybe b) for that field if they exist.
 data ExtLabeledItems a b = Ext (LabeledItems a) (Maybe b)
   deriving (Eq, Show, Generic)
 
-joinExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b
-joinExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
+-- Adds more items to the front of an ExtLabeledItems.
+prefixExtLabeledItems :: LabeledItems a -> ExtLabeledItems a b -> ExtLabeledItems a b
+prefixExtLabeledItems items (Ext items' rest) = Ext (items <> items') rest
 
 -- === front-end language AST ===
 
@@ -197,11 +211,11 @@ data UExpr' = UVar UVar
             | UTabCon [UExpr] (Maybe UExpr)
             | UIndexRange (Limit UExpr) (Limit UExpr)
             | UPrimExpr (PrimExpr Name)
-            | URecord (ExtLabeledItems UExpr UExpr)
-            | UVariant (LabeledItems ()) Label UExpr
-            | UVariantLift (LabeledItems ()) UExpr
-            | URecordTy (ExtLabeledItems UExpr UExpr)
-            | UVariantTy (ExtLabeledItems UExpr UExpr)
+            | URecord (ExtLabeledItems UExpr UExpr)     -- {a=x, b=y, ...rest}
+            | UVariant (LabeledItems ()) Label UExpr    -- {|a|b| a=x |}
+            | UVariantLift (LabeledItems ()) UExpr      -- {|a|b| ...rest |}
+            | URecordTy (ExtLabeledItems UExpr UExpr)   -- {a:X & b:Y & ...rest}
+            | UVariantTy (ExtLabeledItems UExpr UExpr)  -- {a:X | b:Y | ...rest}
             | UIntLit  Int
             | UCharLit Char
             | UFloatLit Double
@@ -230,9 +244,9 @@ data UPat' = UPatBinder UBinder
            | UPatCon Name (Nest UPat)
            | UPatPair UPat UPat
            | UPatUnit
-           | UPatRecord (ExtLabeledItems UPat UPat)
-           | UPatVariant (LabeledItems ()) Label UPat
-           | UPatVariantLift (LabeledItems ()) UPat
+           | UPatRecord (ExtLabeledItems UPat UPat)     -- {a=x, b=y, ...rest}
+           | UPatVariant (LabeledItems ()) Label UPat   -- {|a|b| a=x |}
+           | UPatVariantLift (LabeledItems ()) UPat     -- {|a|b| ...rest |}
              deriving (Show)
 
 data WithSrc a = WithSrc SrcPos a
@@ -1050,7 +1064,7 @@ instance HasVars a => HasVars (ExtLabeledItems a Name) where
 
 instance Subst (ExtLabeledItems Type Name) where
   subst env@(env', _) (Ext items rest) =
-    joinExtLabeledItems (subst env items) (substExtLabeledItemsTail env' rest)
+    prefixExtLabeledItems (subst env items) (substExtLabeledItemsTail env' rest)
 
 substEffTail :: SubstEnv -> Maybe Name -> EffectRow
 substEffTail _ Nothing = EffectRow [] Nothing

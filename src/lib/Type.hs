@@ -656,7 +656,7 @@ typeCheckOp op = case op of
       RecordTy rest -> return rest
       _ -> throw TypeErr $ "Can't add fields to a non-record object "
                         <> pprint record <> " (of type " <> pprint rty <> ")"
-    return $ RecordTy $ joinExtLabeledItems types rest
+    return $ RecordTy $ prefixExtLabeledItems types rest
   RecordSplit types record -> do
     mapM_ (|: TyKind) types
     fullty <- typeCheck record
@@ -674,7 +674,7 @@ typeCheckOp op = case op of
       VariantTy rest -> return rest
       _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
                         <> pprint variant <> " (of type " <> pprint rty <> ")"
-    return $ VariantTy $ joinExtLabeledItems types rest
+    return $ VariantTy $ prefixExtLabeledItems types rest
   VariantSplit types variant -> do
     mapM_ (|: TyKind) types
     fullty <- typeCheck variant
