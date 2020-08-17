@@ -97,11 +97,6 @@ data Expr = App Atom Atom
           | Atom Atom
           | Op  Op
           | Hof Hof
-          -- Add/remove fields from a record/variant, always to/from the left.
-          | RecordCons   (LabeledItems Atom) Atom   -- Add a value to a record.
-          | RecordSplit  (LabeledItems Type) Atom   -- Extract subset of fields.
-          | VariantLift  (LabeledItems Type) Atom   -- Extend a variant.
-          | VariantSplit (LabeledItems Type) Atom   -- Partition a variant.
             deriving (Show, Generic)
 
 data Decl = Let LetAnn Binder Expr
@@ -315,6 +310,12 @@ data PrimOp e =
       | IdxSetSize e
       | ThrowError e
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
+      -- Add/remove fields from a record/variant, always to/from the left.
+      -- (RecordCons expects labeled values, the others expect labeled types.)
+      | RecordCons   (LabeledItems e) e   -- Add fields to a record.
+      | RecordSplit  (LabeledItems e) e   -- Extract subset of fields.
+      | VariantLift  (LabeledItems e) e   -- Extend a variant.
+      | VariantSplit (LabeledItems e) e   -- Partition a variant.
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
@@ -932,10 +933,6 @@ instance HasVars Expr where
     Hof e   -> foldMap freeVars e
     Case e alts resultTy ->
       freeVars e <> freeVars alts <> freeVars resultTy
-    RecordCons    items a -> freeVars items <> freeVars a
-    RecordSplit   items a -> freeVars items <> freeVars a
-    VariantLift   items a -> freeVars items <> freeVars a
-    VariantSplit  items a -> freeVars items <> freeVars a
 
 instance Subst Expr where
   subst env expr = case expr of
@@ -945,10 +942,6 @@ instance Subst Expr where
     Hof e   -> Hof $ fmap (subst env) e
     Case e alts resultTy ->
       Case (subst env e) (subst env alts) (subst env resultTy)
-    RecordCons    items a -> RecordCons    (subst env items) (subst env a)
-    RecordSplit   items a -> RecordSplit   (subst env items) (subst env a)
-    VariantLift   items a -> VariantLift   (subst env items) (subst env a)
-    VariantSplit  items a -> VariantSplit  (subst env items) (subst env a)
 
 instance HasVars Decl where
   freeVars decl = case decl of

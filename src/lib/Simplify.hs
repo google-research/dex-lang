@@ -186,18 +186,23 @@ simplifyExpr expr = case expr of
           bs' <-  mapM (mapM substEmbedR) bs
           buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ simplifyBlock body
         emit $ Case e' alts' resultTy'
+
+-- TODO: come up with a coherent strategy for ordering these various reductions
+simplifyOp :: Op -> SimplifyM Atom
+simplifyOp op = case op of
+  Fst (PairVal x _) -> return x
+  Snd (PairVal _ y) -> return y
   RecordCons left right -> case getType right of
     RecordTy (NoExt rightTys) -> do
       -- Unpack, then repack with new arguments (possibly in the middle).
-      left' <- mapM simplifyAtom left
-      rightList <- getUnpacked =<< simplifyAtom right
+      rightList <- getUnpacked right
       let rightItems = restructure rightList rightTys
-      return $ Record $ left' <> rightItems
-    _ -> emit =<< RecordCons <$> mapM simplifyAtom left <*> simplifyAtom right
-  RecordSplit leftTys@(LabeledItems litems) full -> case getType full of
+      return $ Record $ left <> rightItems
+    _ -> emitOp op
+  RecordSplit (LabeledItems litems) full -> case getType full of
     RecordTy (NoExt fullTys) -> do
       -- Unpack, then repack into two pieces.
-      fullList <- getUnpacked =<< simplifyAtom full
+      fullList <- getUnpacked full
       let LabeledItems fullItems = restructure fullList fullTys
           splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
           left = M.intersectionWith splitLeft fullItems litems
@@ -205,7 +210,7 @@ simplifyExpr expr = case expr of
           right = M.differenceWith splitRight fullItems litems
       return $ Record $ Unlabeled $
         [Record (LabeledItems left), Record (LabeledItems right)]
-    _ -> emit =<< RecordSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
+    _ -> emitOp op
   VariantLift leftTys@(LabeledItems litems) right -> case getType right of
     VariantTy (NoExt rightTys) -> do
       -- Emit a case statement (ordered by the arg type) that lifts the type.
@@ -216,15 +221,16 @@ simplifyExpr expr = case expr of
             Just tys -> buildAlt label (i + length tys) vty
             Nothing -> buildAlt label i vty
       alts <- mapM liftAlt $ toList $ withLabels rightTys
-      simplifyExpr $ Case right alts $ VariantTy fullRow
-    _ -> emit =<< VariantLift <$> mapM substEmbedR leftTys <*> simplifyAtom right
+      -- Simplify the case away if we can.
+      dropSub $ simplifyExpr $ Case right alts $ VariantTy fullRow
+    _ -> emitOp op
   VariantSplit leftTys@(LabeledItems litems) full -> case getType full of
     VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
       -- Emit a case statement (ordered by the arg type) that splits into the
       -- appropriate piece, changing indices as needed.
       let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
           rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
-          VariantTy resultRow = getType expr
+          VariantTy resultRow = getType $ Op op
           asLeft label i vty = buildNAbs (toNest [Ignore vty]) $
             \[x] -> return $ Variant resultRow InternalSingletonLabel 0
                                 $ Variant (NoExt leftTys) label i x
@@ -237,14 +243,9 @@ simplifyExpr expr = case expr of
                         else asRight label (i - length tys) vty
             Nothing -> asRight label i vty
       alts <- mapM splitAlt $ toList $ withLabels fullTys
-      simplifyExpr $ Case full alts $ VariantTy resultRow
-    _ -> emit =<< VariantSplit <$> mapM substEmbedR leftTys <*> simplifyAtom full
-
--- TODO: come up with a coherent strategy for ordering these various reductions
-simplifyOp :: Op -> SimplifyM Atom
-simplifyOp op = case op of
-  Fst (PairVal x _) -> return x
-  Snd (PairVal _ y) -> return y
+      -- Simplify the case away if we can.
+      dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
+    _ -> emitOp op
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom

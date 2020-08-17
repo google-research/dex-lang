@@ -175,7 +175,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
             Just _ -> do
               -- Split off the types we don't know about, mapping them to a
               -- runtime error.
-              split <- emit $ VariantSplit types scrut''
+              split <- emit $ Op $ VariantSplit types scrut''
               VariantTy (NoExt (Unlabeled [leftTy, rightTy])) <-
                 return $ getType split
               leftCase <- buildNAbs (toNest [Ignore leftTy])
@@ -199,7 +199,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
                 checkAltAgainstTail _ = return ()
             mapM_ (checkAltAgainstTail . fst) alts'
             -- Split based on the tail pattern's skipped types.
-            split <- emit $ VariantSplit (LabeledItems left) scrut''
+            split <- emit $ Op $ VariantSplit (LabeledItems left) scrut''
             let leftTy = VariantTy $ NoExt $ LabeledItems left
             leftCase <-
               buildNAbs (toNest [Ignore leftTy])
@@ -232,7 +232,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     items' <- mapM inferRho items
     restTy <- freshInferenceName LabeledRowKind
     ext' <- zonk =<< (checkRho ext $ RecordTy $ Ext NoLabeledItems $ Just restTy)
-    matchRequirement =<< emit (RecordCons items' ext')
+    matchRequirement =<< emit (Op $ RecordCons items' ext')
   UVariant labels@(LabeledItems lmap) label value -> do
     value' <- inferRho value
     prevTys <- mapM (const $ freshType TyKind) labels
@@ -249,7 +249,7 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     row <- freshInferenceName LabeledRowKind
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
-    matchRequirement =<< emit (VariantLift prev value')
+    matchRequirement =<< emit (Op $ VariantLift prev value')
   UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int64Lit $ fromIntegral x
   UFloatLit x -> matchRequirement $ Con $ Lit  $ Float64Lit x
   -- TODO: Make sure that this conversion is not lossy!
@@ -317,7 +317,7 @@ unpackTopPat letAnn (WithSrc _ pat) expr = case pat of
     -- Split the record.
     wantedTypes' <- lift $ zonk wantedTypes
     val <- emit =<< zonk expr
-    split <- emit $ RecordSplit wantedTypes' val
+    split <- emit $ Op $ RecordSplit wantedTypes' val
     [left, right] <- getUnpacked split
     leftVals <- getUnpacked left
     zipWithM_ (\p x -> unpackTopPat letAnn p (Atom x)) (toList pats) leftVals
@@ -506,7 +506,7 @@ bindPat' (WithSrc pos pat) val = addSrcContext (Just pos) $ case pat of
     -- Split the record.
     wantedTypes' <- lift $ zonk wantedTypes
     val' <- lift $ zonk val
-    split <- lift $ emit $ RecordSplit wantedTypes' val'
+    split <- lift $ emit $ Op $ RecordSplit wantedTypes' val'
     [left, right] <- lift $ getUnpacked split
     leftVals <- lift $ getUnpacked left
     env1 <- fold <$> zipWithM bindPat' (toList pats) leftVals

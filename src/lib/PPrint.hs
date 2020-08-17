@@ -143,15 +143,6 @@ instance PrettyPrec Expr where
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = atPrec LowestPrec $ "case" <+> p e <+> "of" <>
     nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
-  prettyPrec (RecordCons items rest) =
-    prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
-  prettyPrec (RecordSplit types val) = atPrec AppPrec $
-    "RecordSplit" <+> pArg (RecordTy $ Ext types Nothing) <+> pArg val
-  prettyPrec (VariantLift types val) =
-    prettyVariantLift (fmap (const ()) types) val
-  prettyPrec (VariantSplit types val) = atPrec AppPrec $
-    "VariantSplit" <+> pArg (VariantTy $ Ext types Nothing) <+> pArg val
-
 
 prettyAlt :: Alt -> Doc ann
 prettyAlt (Abs bs body) =
@@ -236,6 +227,16 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
     ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
     ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
+    RecordCons items rest ->
+      prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
+    RecordSplit types val -> atPrec AppPrec $
+      "RecordSplit" <+> prettyLabeledItems types (line <> "&") ":" ArgPrec
+                    <+> pArg val
+    VariantLift types val ->
+      prettyVariantLift (fmap (const ()) types) val
+    VariantSplit types val -> atPrec AppPrec $
+      "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
+                     <+> pArg val
     _ -> prettyExprDefault $ OpExpr op
 
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec

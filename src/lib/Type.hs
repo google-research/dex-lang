@@ -170,43 +170,6 @@ instance HasType Expr where
             "Can't pattern-match partially-known variants"
           _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
       return resultTy
-    RecordCons items record -> do
-      types <- mapM typeCheck items
-      rty <- typeCheck record
-      rest <- case rty of
-        RecordTy rest -> return rest
-        _ -> throw TypeErr $ "Can't add fields to a non-record object "
-                          <> pprint record <> " (of type " <> pprint rty <> ")"
-      return $ RecordTy $ joinExtLabeledItems types rest
-    RecordSplit types record -> do
-      mapM_ (|: TyKind) types
-      fullty <- typeCheck record
-      full <- case fullty of
-        RecordTy full -> return full
-        _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
-                          <> " (of type " <> pprint fullty <> ")"
-      diff <- labeledRowDifference full (NoExt types)
-      return $ RecordTy $ NoExt $
-        Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
-    VariantLift types variant -> do
-      mapM_ (|: TyKind) types
-      rty <- typeCheck variant
-      rest <- case rty of
-        VariantTy rest -> return rest
-        _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
-                          <> pprint variant <> " (of type " <> pprint rty <> ")"
-      return $ VariantTy $ joinExtLabeledItems types rest
-    VariantSplit types variant -> do
-      mapM_ (|: TyKind) types
-      fullty <- typeCheck variant
-      full <- case fullty of
-        VariantTy full -> return full
-        _ -> throw TypeErr $ "Can't split a non-variant object "
-                           <> pprint variant <> " (of type " <> pprint fullty
-                           <> ")"
-      diff <- labeledRowDifference full (NoExt types)
-      return $ VariantTy $ NoExt $
-        Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
 
 checkApp :: Type -> Atom -> TypeM Type
 checkApp fTy x = do
@@ -245,10 +208,6 @@ exprEffs expr = case expr of
     RunState _ _  -> SomeEffects
     Tile _ _ _ -> error "not implemented"
   Case _ alts _ -> foldMap (\(Abs _ block) -> blockEffs block) alts
-  RecordCons _ _    -> NoEffects
-  RecordSplit _ _   -> NoEffects
-  VariantLift _ _   -> NoEffects
-  VariantSplit _ _  -> NoEffects
 
 functionEffs :: Atom -> EffectSummary
 functionEffs f = case getType f of
@@ -366,12 +325,6 @@ instance CoreVariant Expr where
     Case e alts _ -> do
       checkVariant e
       forM_ alts $ \(Abs _ body) -> checkVariant body
-    -- TODO: is there a way to express "this will go away once types are
-    -- monomorphic"?
-    RecordCons _ _ -> alwaysAllowed
-    RecordSplit _ _ -> alwaysAllowed
-    VariantLift _ _ -> alwaysAllowed
-    VariantSplit _ _ -> alwaysAllowed
 
 instance CoreVariant Decl where
   -- let annotation restrictions?
@@ -696,6 +649,43 @@ typeCheckOp op = case op of
     destTy  |: TyKind
     checkValidCast sourceTy destTy
     return destTy
+  RecordCons items record -> do
+    types <- mapM typeCheck items
+    rty <- typeCheck record
+    rest <- case rty of
+      RecordTy rest -> return rest
+      _ -> throw TypeErr $ "Can't add fields to a non-record object "
+                        <> pprint record <> " (of type " <> pprint rty <> ")"
+    return $ RecordTy $ joinExtLabeledItems types rest
+  RecordSplit types record -> do
+    mapM_ (|: TyKind) types
+    fullty <- typeCheck record
+    full <- case fullty of
+      RecordTy full -> return full
+      _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
+                        <> " (of type " <> pprint fullty <> ")"
+    diff <- labeledRowDifference full (NoExt types)
+    return $ RecordTy $ NoExt $
+      Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
+  VariantLift types variant -> do
+    mapM_ (|: TyKind) types
+    rty <- typeCheck variant
+    rest <- case rty of
+      VariantTy rest -> return rest
+      _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
+                        <> pprint variant <> " (of type " <> pprint rty <> ")"
+    return $ VariantTy $ joinExtLabeledItems types rest
+  VariantSplit types variant -> do
+    mapM_ (|: TyKind) types
+    fullty <- typeCheck variant
+    full <- case fullty of
+      VariantTy full -> return full
+      _ -> throw TypeErr $ "Can't split a non-variant object "
+                          <> pprint variant <> " (of type " <> pprint fullty
+                          <> ")"
+    diff <- labeledRowDifference full (NoExt types)
+    return $ VariantTy $ NoExt $
+      Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

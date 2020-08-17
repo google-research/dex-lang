@@ -129,10 +129,6 @@ toImpExpr env (maybeDest, expr) = case expr of
              void $ toImpBlock (env <> newEnv bs xs) (Just dest, body)
         destToAtom dest
       _ -> error $ "Unexpected scrutinee: " ++ pprint e'
-  RecordCons   _ _ -> error "Unreachable: should have simplified away"
-  RecordSplit  _ _ -> error "Unreachable: should have simplified away"
-  VariantLift  _ _ -> error "Unreachable: should have simplified away"
-  VariantSplit _ _ -> error "Unreachable: should have simplified away"
 
 impSubst :: Subst a => SubstEnv -> a -> ImpM a
 impSubst env x = do
@@ -229,6 +225,10 @@ toImpOp (maybeDest, op) = case op of
     emitSwitch p' [copyAtom dest y, copyAtom dest x]
     destToAtom dest
     where (BaseTy tagBT) = TagRepTy
+  RecordCons   _ _ -> error "Unreachable: should have simplified away"
+  RecordSplit  _ _ -> error "Unreachable: should have simplified away"
+  VariantLift  _ _ -> error "Unreachable: should have simplified away"
+  VariantSplit _ _ -> error "Unreachable: should have simplified away"
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where

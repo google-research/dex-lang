@@ -541,12 +541,6 @@ traverseExpr def@(_, fAtom) expr = case expr of
   Hof hof -> Hof  <$> traverse fAtom hof
   Case e alts ty ->
     Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
-  RecordCons    items a -> RecordCons   <$> traverse fAtom items <*> fAtom a
-  RecordSplit   items a -> RecordSplit  <$> traverse fAtom items <*> fAtom a
-  VariantLift types a -> do
-    items' <- traverse fAtom types
-    VariantLift items' <$> fAtom a
-  VariantSplit items a -> VariantSplit <$> traverse fAtom items <*> fAtom a
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Alt -> m Alt
