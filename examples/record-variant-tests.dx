@@ -123,14 +123,14 @@ Syntax for records, variants, and their types.
 :p foo
 > 1
 
-def getFoo (rest : Types)?-> (x : {foo:a & ...rest}) : a =
+def getFoo (rest : Fields)?-> (x : {foo:a & ...rest}) : a =
   ({foo=foo, ..._}) = x
   foo
 
 :p getFoo {foo=1, foo=0.0, bar=2, baz=3}
 > 1
 
-def getTwoFoosAndABar (rest : Types)?->
+def getTwoFoosAndABar (rest : Fields)?->
                       (x : {foo:a & foo:b & bar:c & ...rest}) : (a&b&c) =
   ({foo=f1, foo=f2, bar=b, ..._}) = x
   (f1, f2, b)
@@ -270,7 +270,7 @@ myVal =
 >   case x of
 >   ^^^^^^^^^^
 
-def splitTwoFoosOrABar (rest:Types)?-> 
+def splitTwoFoosOrABar (rest:Fields)?->
                        (x : {foo:a | foo:b | bar:c | ...rest})
                        : ({x:a | y:b | z:c} | {|...rest}) =
   case x of
