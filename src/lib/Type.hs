@@ -123,9 +123,16 @@ instance HasType Atom where
       types <- mapM typeCheck items
       return $ RecordTy (NoExt types)
     RecordTy row -> checkLabeledRow row $> TyKind
-    Variant vtys@(Ext (LabeledItems types) _) label i value -> do
-      value |: ((types M.! label) NE.!! i)
+    Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
       let ty = VariantTy vtys
+      let argTy = do
+            labelTys <- M.lookup label types
+            guard $ i < length labelTys
+            return $ labelTys NE.!! i
+      case argTy of
+        Just argType -> arg |: argType
+        Nothing -> throw TypeErr $ "Bad variant: " <> pprint atom
+                                   <> " with type " <> pprint ty
       ty |: TyKind
       return ty
     VariantTy row -> checkLabeledRow row $> TyKind
@@ -303,7 +310,7 @@ instance CoreVariant Atom where
     Eff _ -> alwaysAllowed
     DataCon _ _ _ _ -> alwaysAllowed
     TypeCon _ _     -> alwaysAllowed
-    LabeledRow _ -> alwaysAllowed
+    LabeledRow _ -> goneBy Simp
     Record _ -> alwaysAllowed
     RecordTy _ -> alwaysAllowed
     Variant _ _ _ _ -> alwaysAllowed
