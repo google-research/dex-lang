@@ -241,8 +241,8 @@ compileMDImpInstr isLocal instrExt = do
         kernelArgs <- traverse lookupImpVar args
         let blockSizeX = 256
         sizeOp <- compileExpr size
-        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidth` 32)
-        gridSizeX <- sizeOp' `div'` (blockSizeX `withWidth` 32)
+        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidthOf` sizeOp)
+        gridSizeX <- (`asIntWidth` i32) =<< sizeOp' `div'` (blockSizeX `withWidthOf` sizeOp)
         cuLaunchKernel kernel
                       (gridSizeX                , 1 `withWidth` 32, 1 `withWidth` 32)
                       (blockSizeX `withWidth` 32, 1 `withWidth` 32, 1 `withWidth` 32)
