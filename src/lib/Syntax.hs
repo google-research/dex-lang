@@ -324,12 +324,19 @@ data PrimOp e =
       | IdxSetSize e
       | ThrowError e
       | CastOp e e                   -- Type, then value. See Type.hs for valid coercions.
-      -- Add/remove fields from a record/variant, always to/from the left.
-      -- (RecordCons expects labeled values, the others expect labeled types.)
-      | RecordCons   (LabeledItems e) e   -- Add fields to a record.
-      | RecordSplit  (LabeledItems e) e   -- Extract subset of fields.
-      | VariantLift  (LabeledItems e) e   -- Extend a variant.
-      | VariantSplit (LabeledItems e) e   -- Partition a variant.
+      -- Extensible record and variant operations:
+      -- Add fields to a record (on the left). Left arg contains values to add.
+      | RecordCons   (LabeledItems e) e
+      -- Split {a:A & b:B & ...rest} into (effectively) {a:A & b:B} & {&...rest}.
+      -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
+      | RecordSplit  (LabeledItems e) e
+      -- Extend a variant with empty alternatives (on the left).
+      -- Left arg contains the types of the empty alternatives to add.
+      | VariantLift  (LabeledItems e) e
+      -- Split {a:A | b:B | ...rest} into (effectively) {a:A & b:B} | {|...rest}
+      -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
+      -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
+      | VariantSplit (LabeledItems e) e
         deriving (Show, Eq, Generic, Functor, Foldable, Traversable)
 
 data PrimHof e =
