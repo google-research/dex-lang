@@ -333,7 +333,7 @@ data PrimOp e =
       -- Extend a variant with empty alternatives (on the left).
       -- Left arg contains the types of the empty alternatives to add.
       | VariantLift  (LabeledItems e) e
-      -- Split {a:A | b:B | ...rest} into (effectively) {a:A & b:B} | {|...rest}
+      -- Split {a:A | b:B | ...rest} into (effectively) {a:A | b:B} | {|...rest}.
       -- Left arg contains the types of the fields to extract (e.g. a:A, b:B).
       -- (see https://github.com/google-research/dex-lang/pull/201#discussion_r471591972)
       | VariantSplit (LabeledItems e) e
