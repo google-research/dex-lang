@@ -39,7 +39,7 @@ import Parser
 import Util (highlightRegion)
 import CUDA
 
-data Backend = LLVM | LLVMCUDA | Interp | JAX  deriving (Show, Eq)
+data Backend = LLVM | LLVMCUDA | LLVMMC | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
@@ -47,8 +47,8 @@ data EvalConfig = EvalConfig
   , evalEngine  :: BackendEngine
   , logService  :: Logger [Output] }
 
-type IsCuda = Bool
-data BackendEngine = LLVMEngine IsCuda LLVMEngine
+data LLVMEngineKind = Serial | Multicore | CUDA
+data BackendEngine = LLVMEngine LLVMEngineKind LLVMEngine
                    -- | JaxServer JaxServer
                    | InterpEngine
 
@@ -171,9 +171,10 @@ evalModule bindings normalized = do
 
 initializeBackend :: Backend -> IO BackendEngine
 initializeBackend backend = case backend of
-  LLVM     -> LLVMEngine False <$> newMVar mempty
+  LLVM     -> LLVMEngine Serial    <$> newMVar mempty
+  LLVMMC   -> LLVMEngine Multicore <$> newMVar mempty
   LLVMCUDA -> if hasCUDA
-                then LLVMEngine True  <$> newMVar mempty
+                then LLVMEngine CUDA <$> newMVar mempty
                 else error "Dex built without CUDA support"
   -- JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
@@ -190,19 +191,19 @@ evalBackend bindings block = do
   logger  <- asks logService
   let inVars = arrayVars block
   case backend of
-    LLVMEngine isCuda llvmEnv -> do
+    LLVMEngine kind llvmEnv -> do
       let (impFunction, impAtom) = toImpFunction bindings (map Bind inVars, block)
       checkPass ImpPass impFunction
-      logPass ImpPass (pprint impAtom)
       -- logPass Flops $ impFunctionFlops impFunction
       resultAtom <- liftIO $ modifyMVar llvmEnv $ \env -> do
         let inPtrs = fmap (env !) inVars
-        llvmFunc <- if isCuda
-          then do
+        llvmFunc <- case kind of
+          Serial    -> return $ impToLLVM impFunction
+          Multicore -> return $ mdImpToMulticore $ impToMDImp impFunction
+          CUDA      -> do
             let mdImpFunction = impToMDImp impFunction
             ptxFunction <- traverse compileKernel mdImpFunction
-            return $ mdImpToLLVM ptxFunction
-          else return $ impToLLVM impFunction
+            return $ mdImpToCUDA ptxFunction
         outPtrs <- callLLVM logger llvmFunc inPtrs
         let (ImpFunction impOutVars _ _) = impFunction
         let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
@@ -246,16 +247,18 @@ evalBackend bindings block = do
 requestArrays :: BackendEngine -> [Var] -> IO [Array]
 requestArrays _ [] = return []
 requestArrays backend vs = case backend of
-  LLVMEngine isCuda env -> do
+  LLVMEngine kind env -> do
     env' <- readMVar env
     forM vs $ \v@(_ :> ArrayTy ty) -> do
       let arrTy@(size, _) = typeToArrayType ty
       case envLookup env' v of
         Just ref -> do
-          hostRef <- case (isCuda, ty) of
-            (True , BaseTy _) -> return ref  -- Scalar references are stored on the host
-            (True , _       ) -> loadCUDAArray ref (fromIntegral $ size * 8)
-            (False, _       ) -> return ref
+          hostRef <- case (kind, ty) of
+            (CUDA     , BaseTy _) -> return ref  -- Scalar references are stored on the host
+            (CUDA     , _       ) -> loadCUDAArray ref (fromIntegral $ size * sizeOf b)
+              where b = scalarTableBaseType ty
+            (Multicore, _       ) -> return ref
+            (Serial   , _       ) -> return ref
           loadArray (ArrayRef arrTy hostRef)
         Nothing  -> error "Array lookup failed"
   -- JaxServer server -> do
