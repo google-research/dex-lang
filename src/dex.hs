@@ -138,6 +138,7 @@ parseEvalOpts = EvalConfig
   <$> (option
          (optionList [ ("LLVM", LLVM)
                      , ("LLVM-CUDA", LLVMCUDA)
+                     , ("LLVM-MC", LLVMMC)
                      , ("JAX", JAX)
                      , ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM|LLVM-CUDA|JAX|interp)"))

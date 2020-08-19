@@ -25,22 +25,33 @@ endif
 
 # --- building Dex ---
 
+CFLAGS := -fPIC
+
 ifneq (,$(wildcard /usr/local/cuda/include/cuda.h))
 STACK_FLAGS = --flag dex:cuda
+CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
+
+CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
+CFLAGS := $(CFLAGS) -std=c11
 
 .PHONY: all
 all: build
 
 # type-check only
-tc:
+tc: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS) --ghc-options -fno-code
 
-build:
+build: dexrt-llvm
 	$(STACK) build $(STACK_FLAGS)
 
-build-prof:
+build-prof: dexrt-llvm
 	$(STACK) build $(PROF)
+
+dexrt-llvm: src/lib/dexrt.bc
+
+%.bc: %.cpp
+	clang++ $(CXXFLAGS) -c -emit-llvm $^ -o $@
 
 # --- running tets ---
 
@@ -107,3 +118,4 @@ doc/%.css: static/%.css
 
 clean:
 	$(STACK) clean
+	rm -rf src/lib/dexrt.bc

@@ -9,7 +9,7 @@
 {-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
-module JIT (impToLLVM, mdImpToLLVM, impKernelToLLVM,
+module JIT (impToLLVM, mdImpToMulticore, mdImpToCUDA, impKernelToLLVM,
             LLVMFunction (..), LLVMKernel (..),
             ptxTargetTriple, ptxDataLayout) where
 
@@ -60,9 +60,9 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  -- TODO: Make progOutputs part of an extra reader monad
                                  --       that's specific to CPU codegen
                                  , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
+                                 , allocas     :: S.Set L.Name
                                  , funSpecs    :: S.Set ExternFunSpec
                                  , globalDefs  :: [L.Definition]
-                                 , allocas     :: S.Set L.Name
                                  }
 data CompileEnv m = CompileEnv { operandEnv :: OperandEnv
                                , uiFunc     :: UIFunc m
@@ -108,9 +108,8 @@ compileImpInstr isLocal instr = case instr of
   _ -> compileGenericInstr compileBlock instr
   where compileBlock (ImpProg stmts) = compileProg compileImpInstr stmts
 
-compileLoop :: Direction -> IBinder -> IExpr -> Compile () -> Compile ()
-compileLoop d iBinder n' compileBody = do
-  n <- compileExpr n'
+compileLoop :: Direction -> IBinder -> Operand -> Compile () -> Compile ()
+compileLoop d iBinder n compileBody = do
   let loopName = "loop_" ++ (showName $ binderNameHint iBinder)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
@@ -218,19 +217,76 @@ compileBinOp op x y = case op of
       GreaterEqual -> IP.SGE
       Equal        -> IP.EQ
 
--- === MDImp to LLVM ===
+-- === MDImp to multicore LLVM ===
+
+mdImpToMulticore :: MDImpFunction ImpKernel -> LLVMFunction
+mdImpToMulticore (MDImpFunction outVars inVars (MDImpProg prog)) =
+  runIdentity $ compileFunction [] compileMDImpInstrMC outVars inVars prog
+
+compileMDImpInstrMC :: Bool -> MDImpInstr ImpKernel -> Compile (Maybe Operand)
+compileMDImpInstrMC isLocal instr =
+  case instr of
+    MDLaunch size args kernel -> do
+      -- Generate the kernel
+      kernelFuncName <- freshName "kernel"
+      let (kernelFunSpecs, kernelDefs) = impKernelToMC kernelFuncName kernel
+      modify $ (\s -> s { globalDefs = kernelDefs ++ (globalDefs s) })
+      modify $ (\s -> s { funSpecs = kernelFunSpecs <> (funSpecs s) })
+      -- Run the kernel using the dex_parallel_for runtime function
+      kernelParams <- packArgs =<< traverse lookupImpVar args
+      s <- (`asIntWidth` i64) =<< compileExpr size
+      emitVoidExternCall runKernelSpec [
+          L.ConstantOperand $ C.BitCast (C.GlobalReference kernelPtrType kernelFuncName) (L.ptr L.VoidType),
+          s,
+          kernelParams
+        ]
+      return Nothing
+      where
+        runKernelSpec = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [L.ptr L.VoidType, i64, L.ptr $ L.ptr L.VoidType]
+        kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ L.ptr L.VoidType] False
+    MDAlloc  t s           -> compileImpInstr isLocal (Alloc t s)
+    MDFree   v             -> compileImpInstr isLocal (Free v)
+    MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
+
+impKernelToMC :: L.Name -> ImpKernel -> (S.Set ExternFunSpec, [L.Definition])
+impKernelToMC funcName (ImpKernel argBinders idxBinder (ImpProg prog)) = runCompile cpuInitCompileEnv $ do
+  (startIdxParam, startIdx) <- freshParamOpPair [] i64
+  (endIdxParam, endIdx) <- freshParamOpPair [] i64
+  -- TODO: Preserve pointer attributes??
+  (argArrayParam, argArray) <- freshParamOpPair [] (L.ptr $ L.ptr $ L.VoidType)
+  args <- unpackArgs argArray argTypes
+  let argEnv = foldMap (uncurry (@>)) $ zip argBinders args
+
+  niter <- endIdx `sub` startIdx
+  compileLoop Fwd idxBinder niter $ do
+    idxEnv <- case idxBinder of
+      Ignore _ -> return mempty
+      Bind v -> do
+        innerIdx <- lookupImpVar v
+        idx64 <- add startIdx =<< (innerIdx `asIntWidth` i64)
+        idx <- idx64 `asIntWidth` (L.typeOf innerIdx)
+        return $ idxBinder @> idx
+    extendOperands (argEnv <> idxEnv) $ compileProg compileImpInstr prog
+  kernel <- makeFunction funcName [startIdxParam, endIdxParam, argArrayParam] Nothing
+  extraSpecs <- gets funSpecs
+  extraDefs <- gets globalDefs
+  return $ (extraSpecs, L.GlobalDefinition kernel : extraDefs)
+  where
+    argTypes = fmap ((fromIType $ L.AddrSpace 0) . binderAnn) argBinders
+
+-- === MDImp to LLVM CUDA ===
 
 type MDHostCompile   = Compile
 data MDImpInstrCG    = EnsureHasContext -- code generation specific instructions
 type MDImpInstrExt k = Either MDImpInstrCG (MDImpInstr k)
 
-mdImpToLLVM :: MDImpFunction PTXKernel -> LLVMFunction
-mdImpToLLVM (MDImpFunction outVars inVars (MDImpProg prog)) =
-  runIdentity $ compileFunction [] compileMDImpInstr outVars inVars prog'
+mdImpToCUDA :: MDImpFunction PTXKernel -> LLVMFunction
+mdImpToCUDA (MDImpFunction outVars inVars (MDImpProg prog)) =
+  runIdentity $ compileFunction [] compileMDImpInstrCUDA outVars inVars prog'
   where prog' = (IDo, Left EnsureHasContext) : [(d, Right i) | (d, i) <- prog]
 
-compileMDImpInstr :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
-compileMDImpInstr isLocal instrExt = do
+compileMDImpInstrCUDA :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
+compileMDImpInstrCUDA isLocal instrExt = do
   case instrExt of
     Left ext -> case ext of
       EnsureHasContext -> ensureHasContext >> return Nothing
@@ -241,8 +297,8 @@ compileMDImpInstr isLocal instrExt = do
         kernelArgs <- traverse lookupImpVar args
         let blockSizeX = 256
         sizeOp <- compileExpr size
-        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidth` 32)
-        gridSizeX <- sizeOp' `div'` (blockSizeX `withWidth` 32)
+        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidthOf` sizeOp)
+        gridSizeX <- (`asIntWidth` i32) =<< sizeOp' `div'` (blockSizeX `withWidthOf` sizeOp)
         cuLaunchKernel kernel
                       (gridSizeX                , 1 `withWidth` 32, 1 `withWidth` 32)
                       (blockSizeX `withWidth` 32, 1 `withWidth` 32, 1 `withWidth` 32)
@@ -342,7 +398,7 @@ cuModuleGetFunction cuMod name = do
 
 cuLaunchKernel :: Operand -> (Operand, Operand, Operand) -> (Operand, Operand, Operand) -> [Operand] -> MDHostCompile ()
 cuLaunchKernel fun grid block args = do
-  kernelParams <- packArray args
+  kernelParams <- packArgs args
   gridI32  <- makeDimArgs grid
   blockI32 <- makeDimArgs block
   checkCuResult "cuLaunchKernel" =<< emitExternCall spec
@@ -365,16 +421,6 @@ cuLaunchKernel fun grid block args = do
              , L.ptr $ L.ptr L.VoidType ]
 
     makeDimArgs (x, y, z) = mapM (`asIntWidth` i32) [x, y, z]
-
-    packArray :: Monad m => [Operand] -> CompileT m Operand
-    packArray elems = do
-      arr <- alloca (length elems) (L.ptr $ L.VoidType)
-      forM_ (zip [0..] elems) $ \(i, e) -> do
-        eptr <- alloca 1 $ L.typeOf e
-        store eptr e
-        earr <- gep arr $ i `withWidth` 32
-        store earr =<< castLPtr L.VoidType eptr
-      return arr
 
 cuMemAlloc :: L.Type -> Operand -> MDHostCompile Operand
 cuMemAlloc ty bytes = do
@@ -427,7 +473,7 @@ impKernelToLLVM (ImpKernel args lvar (ImpProg prog)) = runCompile gpuInitCompile
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
-    argTypes = fmap ((fromIType $ L.AddrSpace 1). binderAnn) args
+    argTypes = fmap ((fromIType $ L.AddrSpace 1) . binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
       [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (longTy : argTypes)) "kernel"
@@ -561,7 +607,9 @@ compileGenericInstr compileBlock instr = case instr of
   Store dest val   -> Nothing <$  bindM2 store (compileExpr dest) (compileExpr val)
   IOffset x off _  -> Just    <$> bindM2 gep   (compileExpr x)    (compileExpr off)
   IWhile cond body -> Nothing <$  compileWhile cond (compileBlock body)
-  Loop d i n body  -> Nothing <$  compileLoop d i n (compileBlock body)
+  Loop d i n body  -> Nothing <$  do
+    n' <- compileExpr n
+    compileLoop d i n' (compileBlock body)
   ICastOp idt ix   -> Just    <$> do
     x <- compileExpr ix
     let (xt, dt) = (L.typeOf x, fromIType undefined idt)
@@ -580,6 +628,23 @@ compileGenericInstr compileBlock instr = case instr of
                  (compileBlock alt)
     return Nothing
   _ -> error $ "Not a generic instruction: " ++ pprint instr
+
+packArgs :: Monad m => [Operand] -> CompileT m Operand
+packArgs elems = do
+  arr <- alloca (length elems) (L.ptr $ L.VoidType)
+  forM_ (zip [0..] elems) $ \(i, e) -> do
+    eptr <- alloca 1 $ L.typeOf e
+    store eptr e
+    earr <- gep arr $ i `withWidth` 32
+    store earr =<< castLPtr L.VoidType eptr
+  return arr
+
+unpackArgs :: Monad m => Operand -> [L.Type] -> CompileT m [Operand]
+unpackArgs argArrayPtr types =
+  forM (zip [0..] types) $ \(i, ty) -> do
+    argVoidPtr <- gep argArrayPtr $ i `withWidth` 64
+    argPtr <- castLPtr (L.ptr ty) argVoidPtr
+    load =<< load argPtr
 
 -- === LLVM embedding ===
 
@@ -898,10 +963,11 @@ makeModule defs = do
 
 makeModuleEx :: Monad m => L.DataLayout -> ShortByteString -> [L.Definition] -> CompileT m L.Module
 makeModuleEx dataLayout triple defs = do
-  specs <- gets funSpecs
+  specs     <- gets funSpecs
+  extraDefs <- gets globalDefs
   return $ L.defaultModule
       { L.moduleName = "dexModule"
-      , L.moduleDefinitions = defs ++ fmap externDecl (toList specs)
+      , L.moduleDefinitions = extraDefs ++ defs ++ fmap externDecl (toList specs)
       , L.moduleDataLayout = Just dataLayout
       , L.moduleTargetTriple = Just triple }
 
