@@ -21,6 +21,7 @@ import Control.Monad.Except hiding (Except)
 import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
@@ -117,20 +118,24 @@ instance HasType Atom where
       zipWithM_ (|:) params paramTys
       let paramTysRemaining = drop (length params) paramTys
       return $ foldr (-->) TyKind paramTysRemaining
+    LabeledRow row -> checkLabeledRow row $> LabeledRowKind
     Record items -> do
       types <- mapM typeCheck items
-      return $ RecordTy types
-    RecordTy items -> do
-      mapM_ (|: TyKind) items
-      return TyKind
-    Variant vtys@(LabeledItems types) label i value -> do
-      value |: ((types M.! label) !! i)
+      return $ RecordTy (NoExt types)
+    RecordTy row -> checkLabeledRow row $> TyKind
+    Variant vtys@(Ext (LabeledItems types) _) label i arg -> do
       let ty = VariantTy vtys
+      let argTy = do
+            labelTys <- M.lookup label types
+            guard $ i < length labelTys
+            return $ labelTys NE.!! i
+      case argTy of
+        Just argType -> arg |: argType
+        Nothing -> throw TypeErr $ "Bad variant: " <> pprint atom
+                                   <> " with type " <> pprint ty
       ty |: TyKind
       return ty
-    VariantTy items -> do
-      mapM_ (|: TyKind) items
-      return TyKind
+    VariantTy row -> checkLabeledRow row $> TyKind
 
 typeCheckVar :: Var -> TypeM Type
 typeCheckVar v@(name:>annTy) = do
@@ -161,13 +166,15 @@ instance HasType Expr where
               checkEq bs' bs
               resultTy' <- flip (foldr withBinder) bs $ typeCheck body
               checkEq resultTy resultTy'
-          VariantTy types -> do
+          VariantTy (NoExt types) -> do
             checkEq (length types) (length alts)
             forM_ (zip (toList types) alts) $ \(ty, (Abs bs body)) -> do
               [b] <- pure $ toList bs
               checkEq (getType b) ty
               resultTy' <- flip (foldr withBinder) bs $ typeCheck body
               checkEq resultTy resultTy'
+          VariantTy _ -> throw CompilerErr
+            "Can't pattern-match partially-known variants"
           _ -> throw TypeErr $ "Case analysis only supported on ADTs and variants, not on " ++ pprint ety
       return resultTy
 
@@ -245,7 +252,9 @@ checkDecl env decl = withTypeEnv env $ addContext ctxStr $ case decl of
       TypeCon def params -> do
         [DataConDef _ bs'] <- return $ applyDataDefParams def params
         return bs'
-      RecordTy types -> return $ toNest $ map Ignore $ toList types
+      RecordTy (NoExt types) ->
+        return $ toNest $ map Ignore $ toList types
+      RecordTy _ -> throw CompilerErr "Can't unpack partially-known records"
       _ -> throw TypeErr $ "Only single-member ADTs and record types can be unpacked in let bindings"
     checkEq bs bs'
     return $ foldMap binderBinding bs
@@ -301,6 +310,7 @@ instance CoreVariant Atom where
     Eff _ -> alwaysAllowed
     DataCon _ _ _ _ -> alwaysAllowed
     TypeCon _ _     -> alwaysAllowed
+    LabeledRow _ -> goneBy Simp
     Record _ -> alwaysAllowed
     RecordTy _ -> alwaysAllowed
     Variant _ _ _ _ -> alwaysAllowed
@@ -416,6 +426,40 @@ checkExtends allowed (EffectRow effs effTail) = do
 extendEffect :: Effect -> EffectRow -> EffectRow
 extendEffect eff (EffectRow effs t) = EffectRow (eff:effs) t
 
+-- === labeled row types ===
+
+checkLabeledRow :: ExtLabeledItems Type Name -> TypeM ()
+checkLabeledRow (Ext items rest) = do
+  mapM_ (|: TyKind) items
+  forM_ rest $ \v -> do
+    checkWithEnv $ \(env, _) -> case envLookup env (v:>()) of
+      Nothing -> throw CompilerErr $ "Lookup failed: " ++ pprint v
+      Just (ty, _) -> assertEq LabeledRowKind ty "Labeled row var"
+
+labeledRowDifference :: ExtLabeledItems Type Name
+                     -> ExtLabeledItems Type Name
+                     -> TypeM (ExtLabeledItems Type Name)
+labeledRowDifference (Ext (LabeledItems items) rest)
+                     (Ext (LabeledItems subitems) subrest) = do
+  -- Check types in the right.
+  _ <- flip M.traverseWithKey subitems $ \label subtypes ->
+    case M.lookup label items of
+      Just types -> assertEq subtypes
+          (NE.fromList $ NE.take (length subtypes) types) $
+          "Row types for label " ++ show label
+      Nothing -> throw TypeErr $ "Extracting missing label " ++ show label
+  -- Extract remaining types from the left.
+  let
+    neDiff xs ys = NE.nonEmpty $ NE.drop (length ys) xs
+    diffitems = M.differenceWith neDiff items subitems
+  -- Check tail.
+  diffrest <- case (subrest, rest) of
+    (Nothing, _) -> return rest
+    (Just v, Just v') | v == v' -> return Nothing
+    _ -> throw TypeErr $ "Row tail " ++ pprint subrest
+      ++ " is not known to be a subset of " ++ pprint rest
+  return $ Ext (LabeledItems diffitems) diffrest
+
 -- === type checker monad combinators ===
 
 checkWithEnv :: ((TypeEnv, EffectRow) -> TypeM ()) -> TypeM ()
@@ -458,6 +502,7 @@ typeCheckTyCon tc = case tc of
   RefType r a      -> r|:TyKind >> a|:TyKind >> return TyKind
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
+  LabeledRowKindTC -> return TyKind
   JArrayType _ _   -> undefined
 
 typeCheckCon :: Con -> TypeM Type
@@ -611,6 +656,43 @@ typeCheckOp op = case op of
     destTy  |: TyKind
     checkValidCast sourceTy destTy
     return destTy
+  RecordCons items record -> do
+    types <- mapM typeCheck items
+    rty <- typeCheck record
+    rest <- case rty of
+      RecordTy rest -> return rest
+      _ -> throw TypeErr $ "Can't add fields to a non-record object "
+                        <> pprint record <> " (of type " <> pprint rty <> ")"
+    return $ RecordTy $ prefixExtLabeledItems types rest
+  RecordSplit types record -> do
+    mapM_ (|: TyKind) types
+    fullty <- typeCheck record
+    full <- case fullty of
+      RecordTy full -> return full
+      _ -> throw TypeErr $ "Can't split a non-record object " <> pprint record
+                        <> " (of type " <> pprint fullty <> ")"
+    diff <- labeledRowDifference full (NoExt types)
+    return $ RecordTy $ NoExt $
+      Unlabeled [ RecordTy $ NoExt types, RecordTy diff ]
+  VariantLift types variant -> do
+    mapM_ (|: TyKind) types
+    rty <- typeCheck variant
+    rest <- case rty of
+      VariantTy rest -> return rest
+      _ -> throw TypeErr $ "Can't add alternatives to a non-variant object "
+                        <> pprint variant <> " (of type " <> pprint rty <> ")"
+    return $ VariantTy $ prefixExtLabeledItems types rest
+  VariantSplit types variant -> do
+    mapM_ (|: TyKind) types
+    fullty <- typeCheck variant
+    full <- case fullty of
+      VariantTy full -> return full
+      _ -> throw TypeErr $ "Can't split a non-variant object "
+                          <> pprint variant <> " (of type " <> pprint fullty
+                          <> ")"
+    diff <- labeledRowDifference full (NoExt types)
+    return $ VariantTy $ NoExt $
+      Unlabeled [ VariantTy $ NoExt types, VariantTy diff ]
 
 typeCheckHof :: Hof -> TypeM Type
 typeCheckHof hof = case hof of

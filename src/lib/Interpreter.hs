@@ -99,15 +99,16 @@ indices ty = case ty of
   TC (IndexRange _ _ _)  -> fmap (Con . Coerce ty . IdxRepVal) [0..(fromIntegral $ n - 1)]
   TC (PairType lt rt)    -> [PairVal l r | l <- indices lt, r <- indices rt]
   TC (UnitType)          -> [UnitVal]
-  RecordTy types         -> let
+  RecordTy (NoExt types) -> let
     subindices = map indices (toList types)
     products = foldl (\prevs curs -> [cur:prev | cur <- curs, prev <- prevs]) [[]] subindices
     in map (\idxs -> Record $ restructure idxs types) products
-  VariantTy types        -> let
+  VariantTy (NoExt types) -> let
     subindices = fmap indices types
     reflect = reflectLabels types
     zipped = zip (toList reflect) (toList subindices)
-    in concatMap (\((label, i), args) -> Variant types label i <$> args) zipped
+    in concatMap (\((label, i), args) ->
+      Variant (NoExt types) label i <$> args) zipped
   _ -> error $ "Not implemented: " ++ pprint ty
   where n = indexSetSize ty
 

@@ -8,6 +8,7 @@
 Unit = %UnitType
 Type = %TyKind
 Effects = %EffKind
+Fields = %LabeledRowKind
 
 Int64 = %Int64
 Int32 = %Int32

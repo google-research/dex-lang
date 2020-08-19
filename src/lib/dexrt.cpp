@@ -4,18 +4,25 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-#include "stdio.h"
-#include "stdint.h"
-#include "stdlib.h"
-#include "string.h"
-#include "inttypes.h"
+#include <cstdio>
+#include <cstdint>
+#include <cstdlib>
+#include <cstring>
+#include <thread>
+#include <vector>
+
+#ifdef DEX_CUDA
+#include <cuda.h>
+#endif
+
+extern "C" {
 
 char* malloc_dex(int64_t nbytes) {
   // XXX: Changes to this value might require additional changes to parameter attributes in LLVM
   static const int64_t alignment = 64;
   // Round nbytes up to the nearest multiple of alignment, as required by the C11 standard.
   nbytes = ((nbytes + alignment - 1) / alignment) * alignment;
-  char* result = aligned_alloc(alignment, nbytes);
+  char* result = reinterpret_cast<char*>(aligned_alloc(alignment, nbytes));
   return result;
 }
 
@@ -137,17 +144,27 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-int testit() {
-  printf("%" PRIx64 "\n", threefry2x32(0,0));   // expected: 0x6b2001590x99ba4efe
-  printf("%" PRIx64 "\n", threefry2x32(-1,-1)); // expected: 0x1cb996fc0xbb002be7
-  printf("%" PRIx64 "\n", threefry2x32(
-     0x13198a2e03707344,  0x243f6a8885a308d3)); // expected: 0xc4923a9c0x483df7a0
-  return 0;
+void dex_parallel_for(void *function_ptr, uint64_t size, void **args) {
+  auto function = reinterpret_cast<void (*)(uint64_t, uint64_t, void**)>(function_ptr);
+  uint64_t nthreads = std::thread::hardware_concurrency();
+  if (size < nthreads) {
+    nthreads = size;
+  }
+  std::vector<std::thread> threads(nthreads);
+  auto chunk_size = size / nthreads;
+  for (uint64_t t = 0; t < nthreads; ++t) {
+    auto start = t * chunk_size;
+    auto end = t == nthreads - 1 ? size : (t + 1) * chunk_size;
+    threads[t] = std::thread([function, args, start, end]() {
+      function(start, end, args);
+    });
+  }
+  for (auto& thread : threads) {
+    thread.join();
+  }
 }
 
 #ifdef DEX_CUDA
-#include <cuda.h>
-
 void check_result(const char *msg, int result) {
   if (result != 0) {
     printf("CUDA API error at %s: %d\n", msg, result);
@@ -160,3 +177,5 @@ void* load_cuda_array(void* device_ptr, int64_t bytes) {
   return host_ptr;
 }
 #endif
+
+} // end extern "C"

@@ -44,6 +44,11 @@ Syntax for records, variants, and their types.
 :t {a=3, a=4}
 > {a: Int64 & a: Int64}
 
+:p
+  x = {a=5.0, b=2}
+  y : {a:Int & b:Int & ..._} = {a=3, a=4, ...x}
+  y
+> {a = 3, a = 4, a = 5.0, b = 2}
 
 'Variant (enum) types
 
@@ -69,61 +74,33 @@ Syntax for records, variants, and their types.
 > {| a = 3 |}
 
 :p
-  x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   x
-> {| a#1 = 3.0 |}
+> {|a| a = 3.0 |}
 
 :t
-  x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   x
 > {a: Int64 | a: Float64 | a: Int64}
+
+:p
+  x : {a:Int | b:Float} = {| a=3 |}
+  y : {a:Float | a:Int | ..._} = {| a | ...x |}
+  y
+> {|a| a = 3 |}
 
 
 'Parse errors
 
 :p {a:Int & b:Float | c:Int }
 
-> Parse error:84:21:
+> Parse error:95:21:
 >    |
-> 84 | :p {a:Int & b:Float | c:Int }
+> 95 | :p {a:Int & b:Float | c:Int }
 >    |                     ^
 > unexpected '|'
 > expecting "..", "..<", expression, or negation
-:p {a:Int & b:Float & ...c}
 
-> Parse error:92:27:
->    |
-> 92 | :p {a:Int & b:Float & ...c}
->    |                           ^
-> Extensible records and variants not implemented
-:p {&...c}
-
-> Parse error:99:10:
->    |
-> 99 | :p {&...c}
->    |          ^
-> Extensible records and variants not implemented
-:p {a=3, b=4, ...c}
-
-> Parse error:106:19:
->     |
-> 106 | :p {a=3, b=4, ...c}
->     |                   ^
-> Extensible records and variants not implemented
-:p {a:Int | b:Float | ...c}
-
-> Parse error:113:27:
->     |
-> 113 | :p {a:Int | b:Float | ...c}
->     |                           ^
-> Extensible records and variants not implemented
-:p {|...c}
-
-> Parse error:120:10:
->     |
-> 120 | :p {|...c}
->     |          ^
-> Extensible records and variants not implemented
 
 'Unpacking
 
@@ -138,25 +115,65 @@ Syntax for records, variants, and their types.
 > (1, (3, 2))
 
 :p
+  ({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+  foo
+> 1
+
+({foo=foo, ..._}) = {foo=1, bar=2, baz=3}
+:p foo
+> 1
+
+def getFoo (rest : Fields)?-> (x : {foo:a & ...rest}) : a =
+  ({foo=foo, ..._}) = x
+  foo
+
+:p getFoo {foo=1, foo=0.0, bar=2, baz=3}
+> 1
+
+def getTwoFoosAndABar (rest : Fields)?->
+                      (x : {foo:a & foo:b & bar:c & ...rest}) : (a&b&c) =
+  ({foo=f1, foo=f2, bar=b, ..._}) = x
+  (f1, f2, b)
+
+:p getTwoFoosAndABar {foo=1, bar=2, foo=0.0, foo=4, baz=3.0, bar=7}
+> (1, (0.0, 2))
+
+:p
   ({b=b, a=a1, a=a2}) = {a=1, b=2}
   (a1, a2, b)
-> Type error:Labels in record pattern do not match record type. Expected structure {a: Int64 & b: Int64}
+> Type error:
+> Expected: {a: a & a: b & b: c}
+>   Actual: {a: Int64 & b: Int64}
+> (Solving for: [a:Type, b:Type, c:Type])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
 >    ^^^^^^^^^^^^^^^^^
 
 :p
-  x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
-  ({| a#1 = a |}) = x
+  x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
+  ({| a | a = a |}) = x
   x
 > Type error:Variant not allowed in can't-fail pattern
 >
->   ({| a#1 = a |}) = x
->    ^^^^^^^^^^^^^
+>   ({| a | a = a |}) = x
+>    ^^^^^^^^^^^^^^^
 
-x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
-({| a#1 = a |}) = x
+x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
+({| a | a = a |}) = x
 > Type error:Variant not allowed in can't-fail pattern
+
+'Record puns
+
+:p
+  foo = 1
+  bar = 2.0
+  {foo, bar}
+> {bar = 2.0, foo = 1}
+
+:p
+  ({foo, ...}) = {foo=1, bar=2.0}
+  foo
+> 1
 
 
 'Pattern matching
@@ -170,11 +187,11 @@ x : {a:Int | a:Float | a:Int} = {| a#1 = 3.0 |}
 >   ^^^^^^^^^^^^^^^^^^
 
 :p
-  x : {a:Int | a:Float | b:Int} = {| a#1 = 3.0 |}
+  x : {a:Int | a:Float | b:Int} = {| a | a = 3.0 |}
   case x of
-    {| a#0 = x |} -> IToF x
-    {| a#1 = x |} -> x
-    {| b = x |}   -> IToF x
+    {| a = x |} -> IToF x
+    {| a | a = x |} -> x
+    {| b = x |} -> IToF x
 > 3.0
 
 'Table values and imp lowering
@@ -195,10 +212,86 @@ myVariantTable = [{| a=1 |}, {| b=2.0 |}]: (Fin 2)=>{a:Int | b:Float}
 > [{| a = 1 |}, {| b = 2.0 |}]
 
 :p for i:(Fin 2).
-    case myVariantTable.i of
-      {| a=a |} -> {| b=a |}:{a:Float | b:Int}
-      {| b=b |} -> {| a=b |}:{a:Float | b:Int}
+    v : {a:_ | b:_} = case myVariantTable.i of
+      {| a=a |} -> {| b=a |}
+      {| b=b |} -> {| a=b |}
+    v
 > [{| b = 1 |}, {| a = 2.0 |}]
+
+-- Known variant, unused tail pattern
+:p
+  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
+  case x of
+    {| a = x |} -> 1.0
+    {| a | a = x |} -> x
+    {|a|a| ..._ |} -> 5.0
+> 3.0
+
+-- Known variant, missing pattern
+:p
+  x : {a:Int | a:Float | b:Int | c:Int } = {| a | a = 3.0 |}
+  case x of
+    {| a = x |} -> 1.0
+    {| a | a = x |} -> x
+> 3.0
+
+-- Known variant, used tail pattern
+myVal =
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> todo
+    {|a| ...rest |} -> rest
+
+:p myVal
+> {| b = 4 |}
+:t myVal
+> {a: Float64 | b: Int64 | c: Int64}
+
+-- Badly written tail pattern
+:p
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> 1
+    {| ...rest |} -> 2
+> Type error:Variant explicit alternatives overlap with tail pattern.
+>
+>   case x of
+>   ^^^^^^^^^^
+
+-- Too many tail patterns
+:p
+  x : {a:Int | a:Float | b:Int | c:Int } = {| b = 4 |}
+  case x of
+    {| a = x |} -> 1
+    {|a| ...rest |} -> 2
+    {| ...rest2 |} -> 3
+> Type error:Can't specify more than one variant tail pattern.
+>
+>   case x of
+>   ^^^^^^^^^^
+
+def splitTwoFoosOrABar (rest:Fields)?->
+                       (x : {foo:a | foo:b | bar:c | ...rest})
+                       : ({x:a | y:b | z:c} | {|...rest}) =
+  case x of
+    {| foo=x |}                 -> Left {| x=x |}
+    {| foo | foo=y |}           -> Left {| y=y |}
+    {| bar=z |}                 -> Left {| z=z |}
+    {|foo|foo|bar| ...other |}  -> Right other
+
+myStuff = [ {| foo=1 |},
+            {| bar=2 |},
+            {| foo | foo=3 |},
+            {| baz=4 |},
+            {| foo | foo | foo=5 |}
+          ]:(Fin 5 => {foo:_ | foo:_ | foo:_ | bar:_ | baz:_})
+
+:p for i. splitTwoFoosOrABar myStuff.i
+> [ (Left {| x = 1 |})
+> , (Left {| z = 2 |})
+> , (Left {| y = 3 |})
+> , (Right {| baz = 4 |})
+> , (Right {| foo = 5 |}) ]
 
 'As index sets
 
@@ -215,10 +308,15 @@ recordsAsIndices : {a:Fin 2 & b:Fin 3}=>{a:Fin 2 & b:Fin 3} = for i. i
 
 :p size {a:Fin 10 | b:Fin 3}
 > 13
-:p ordinal {| b=(2@_) |}:{a:Fin 10 | b:Fin 3}
+
+:p
+  x : {a:Fin 10 | b:Fin 3} = {| b=(2@_) |}
+  ordinal x
 > 12
+
 :p fromOrdinal {a:Fin 10 | b:Fin 3} 4
 > {| a = 4@Fin 10 |}
+
 :p fromOrdinal {a:Fin 10 | b:Fin 3} 11
 > {| b = 1@Fin 3 |}
 

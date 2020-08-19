@@ -14,6 +14,7 @@ import Control.Monad.Reader
 import Data.Foldable (toList)
 import Data.Functor
 import Data.List (partition)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Autodiff
@@ -103,6 +104,7 @@ simplifyAtom atom = case atom of
   Variant types label i value -> Variant <$>
     substEmbedR types <*> pure label <*> pure i <*> simplifyAtom value
   VariantTy items -> VariantTy <$> substEmbedR items
+  LabeledRow items -> LabeledRow <$> substEmbedR items
   where mkAny t = Con . AnyValue <$> substEmbedR t >>= simplifyAtom
 
 -- `Nothing` is equivalent to `Just return` but we can pattern-match on it
@@ -174,9 +176,9 @@ simplifyExpr expr = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         extendR (newEnv bs args) $ simplifyBlock body
-      Variant types label i value -> do
+      Variant (NoExt types) label i value -> do
         let LabeledItems ixtypes = enumerate types
-        let index = fst $ (ixtypes M.! label) !! i
+        let index = fst $ (ixtypes M.! label) NE.!! i
         let Abs bs body = alts !! index
         extendR (newEnv bs [value]) $ simplifyBlock body
       _ -> do
@@ -190,6 +192,60 @@ simplifyOp :: Op -> SimplifyM Atom
 simplifyOp op = case op of
   Fst (PairVal x _) -> return x
   Snd (PairVal _ y) -> return y
+  RecordCons left right -> case getType right of
+    RecordTy (NoExt rightTys) -> do
+      -- Unpack, then repack with new arguments (possibly in the middle).
+      rightList <- getUnpacked right
+      let rightItems = restructure rightList rightTys
+      return $ Record $ left <> rightItems
+    _ -> emitOp op
+  RecordSplit (LabeledItems litems) full -> case getType full of
+    RecordTy (NoExt fullTys) -> do
+      -- Unpack, then repack into two pieces.
+      fullList <- getUnpacked full
+      let LabeledItems fullItems = restructure fullList fullTys
+          splitLeft fvs ltys = NE.fromList $ NE.take (length ltys) fvs
+          left = M.intersectionWith splitLeft fullItems litems
+          splitRight fvs ltys = NE.nonEmpty $ NE.drop (length ltys) fvs
+          right = M.differenceWith splitRight fullItems litems
+      return $ Record $ Unlabeled $
+        [Record (LabeledItems left), Record (LabeledItems right)]
+    _ -> emitOp op
+  VariantLift leftTys@(LabeledItems litems) right -> case getType right of
+    VariantTy (NoExt rightTys) -> do
+      -- Emit a case statement (ordered by the arg type) that lifts the type.
+      let fullRow = NoExt $ leftTys <> rightTys
+          buildAlt label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant fullRow label i x
+          liftAlt (label, i, vty) = case M.lookup label litems of
+            Just tys -> buildAlt label (i + length tys) vty
+            Nothing -> buildAlt label i vty
+      alts <- mapM liftAlt $ toList $ withLabels rightTys
+      -- Simplify the case away if we can.
+      dropSub $ simplifyExpr $ Case right alts $ VariantTy fullRow
+    _ -> emitOp op
+  VariantSplit leftTys@(LabeledItems litems) full -> case getType full of
+    VariantTy (NoExt fullTys@(LabeledItems fullItems)) -> do
+      -- Emit a case statement (ordered by the arg type) that splits into the
+      -- appropriate piece, changing indices as needed.
+      let splitRight ftys ltys = NE.nonEmpty $ NE.drop (length ltys) ftys
+          rightTys = LabeledItems $ M.differenceWith splitRight fullItems litems
+          VariantTy resultRow = getType $ Op op
+          asLeft label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant resultRow InternalSingletonLabel 0
+                                $ Variant (NoExt leftTys) label i x
+          asRight label i vty = buildNAbs (toNest [Ignore vty]) $
+            \[x] -> return $ Variant resultRow InternalSingletonLabel 1
+                                $ Variant (NoExt rightTys) label i x
+          splitAlt (label, i, vty) = case M.lookup label litems of
+            Just tys -> if i < length tys
+                        then asLeft label i vty
+                        else asRight label (i - length tys) vty
+            Nothing -> asRight label i vty
+      alts <- mapM splitAlt $ toList $ withLabels fullTys
+      -- Simplify the case away if we can.
+      dropSub $ simplifyExpr $ Case full alts $ VariantTy resultRow
+    _ -> emitOp op
   _ -> emitOp op
 
 simplifyHof :: Hof -> SimplifyM Atom

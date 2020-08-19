@@ -17,6 +17,7 @@ import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
 import Data.Foldable (toList)
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
@@ -192,6 +193,7 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     RefType h a -> atPrec AppPrec $ pAppArg "Ref" [h, a]
     TypeKind -> atPrec ArgPrec "Type"
     EffectRowKind -> atPrec ArgPrec "EffKind"
+    LabeledRowKindTC -> atPrec ArgPrec "Fields"
     _ -> prettyExprDefault $ TCExpr con
 
 instance PrettyPrec e => Pretty (PrimCon e) where pretty = prettyFromPrettyPrec
@@ -225,6 +227,16 @@ instance PrettyPrec e => PrettyPrec (PrimOp e) where
     PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
     ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
     ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
+    RecordCons items rest ->
+      prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
+    RecordSplit types val -> atPrec AppPrec $
+      "RecordSplit" <+> prettyLabeledItems types (line <> "&") ":" ArgPrec
+                    <+> pArg val
+    VariantLift types val ->
+      prettyVariantLift (fmap (const ()) types) val
+    VariantSplit types val -> atPrec AppPrec $
+      "VariantSplit" <+> prettyLabeledItems types (line <> "|") ":" ArgPrec
+                     <+> pArg val
     _ -> prettyExprDefault $ OpExpr op
 
 instance PrettyPrec e => Pretty (PrimHof e) where pretty = prettyFromPrettyPrec
@@ -270,18 +282,21 @@ instance PrettyPrec Atom where
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
       _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+    LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
-    Variant _ label i value -> prettyVariant label i value
-    RecordTy items -> prettyLabeledItems items (line <> "&") ":"
-    VariantTy items -> prettyLabeledItems items (line <> "|") ":"
+    Variant _ label i value -> prettyVariant ls label value where
+      ls = LabeledItems $ case i of
+            0 -> M.empty
+            _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
+    RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
+    VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
 
--- Helper has support for extensible rows, although this is unused for now.
-prettyRowHelper :: (PrettyPrec a, PrettyPrec b)
-  => M.Map Label [a] -> Maybe b -> Doc ann -> Doc ann -> DocPrec ann
-prettyRowHelper row rest separator bindwith =
+prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
+  => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
+prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
   atPrec ArgPrec $ align $ group $ innerDoc
   where
-    elems = concatMap (\(k, vs) -> map (k,) vs) (M.toAscList row)
+    elems = concatMap (\(k, vs) -> map (k,) (toList vs)) (M.toAscList row)
     fmtElem (label, v) = p label <> bindwith <+> pLowest v
     docs = map fmtElem elems
     final = case rest of
@@ -296,14 +311,22 @@ prettyRowHelper row rest separator bindwith =
 
 prettyLabeledItems :: PrettyPrec a
   => LabeledItems a -> Doc ann -> Doc ann -> DocPrec ann
-prettyLabeledItems (LabeledItems row) =
-  prettyRowHelper row (Nothing :: Maybe ())
+prettyLabeledItems items =
+  prettyExtLabeledItems $ Ext items (Nothing :: Maybe ())
 
 prettyVariant :: PrettyPrec a
-  => Label -> Int -> a -> DocPrec ann
-prettyVariant label i value = atPrec ArgPrec $
-      "{| " <> p label <> suffix <> " = " <> pLowest value <> " |}"
-      where suffix = if i == 0 then "" else "#" <> p i
+  => LabeledItems () -> Label -> a -> DocPrec ann
+prettyVariant labels label value = atPrec ArgPrec $
+      "{|" <> left <+> p label <+> "=" <+> pLowest value <+> "|}"
+      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
+            plabel (l, _) = p l <> "|"
+
+prettyVariantLift :: PrettyPrec a
+  => LabeledItems () -> a -> DocPrec ann
+prettyVariantLift labels value = atPrec ArgPrec $
+      "{|" <> left <+> "..." <> pLowest value <+> "|}"
+      where left = foldl (<>) mempty $ fmap plabel $ reflectLabels labels
+            plabel (l, _) = p l <> "|"
 
 instance Pretty IExpr where
   pretty (ILit v) = p v
@@ -439,12 +462,11 @@ instance PrettyPrec UExpr' where
     UPrimExpr prim -> prettyPrec prim
     UCase e alts -> atPrec LowestPrec $ "case" <+> p e <>
       nest 2 (hardline <> prettyLines alts)
-    URecord items -> prettyLabeledItems items (line' <> ",") " ="
-    URecordTy items -> prettyLabeledItems items (line <> "&") ":"
-    UVariant Nothing label i value -> prettyVariant label i value
-    UVariant (Just ann) label i value -> atPrec ArgPrec $
-      prettyVariant label i value AppPrec <> prettyAnn (pApp ann)
-    UVariantTy items -> prettyLabeledItems items (line <> "|") ":"
+    URecord items -> prettyExtLabeledItems items (line' <> ",") " ="
+    URecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
+    UVariant labels label value -> prettyVariant labels label value
+    UVariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+    UVariantLift labels value -> prettyVariantLift labels value
     UIntLit  v -> atPrec ArgPrec $ p v
     UCharLit v -> atPrec ArgPrec $ p v
     UFloatLit v -> atPrec ArgPrec $ p v
@@ -476,8 +498,9 @@ instance PrettyPrec UPat' where
     UPatPair x y -> atPrec ArgPrec $ parens $ p x <> ", " <> p y
     UPatUnit -> atPrec ArgPrec $ "()"
     UPatCon con pats -> atPrec AppPrec $ parens $ p con <+> spaced pats
-    UPatRecord pats -> prettyLabeledItems pats (line <> "&") ":"
-    UPatVariant label i value -> prettyVariant label i value
+    UPatRecord pats -> prettyExtLabeledItems pats (line <> "&") ":"
+    UPatVariant labels label value -> prettyVariant labels label value
+    UPatVariantLift labels value -> prettyVariantLift labels value
 
 prettyUBinder :: UPatAnn -> Doc ann
 prettyUBinder (pat, ann) = p pat <> annDoc where

@@ -5,12 +5,13 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module LLVMExec (LLVMFunction (..), LLVMKernel (..),
-                 callLLVM, compilePTX, linking_hack) where
+                 callLLVM, compilePTX) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -40,15 +41,13 @@ import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef
+import Data.FileEmbed
 import qualified Data.ByteString as BS
 import qualified Data.Map as M
 
 import Logging
 import Syntax
 import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
-
--- This forces the linker to link libdex.so. TODO: something better
-foreign import ccall "threefry2x32"  linking_hack :: Int -> Int -> Int
 
 type ExitCode = Int
 
@@ -61,8 +60,10 @@ compilePTX logger (LLVMKernel ast) = do
   withContext $ \ctx ->
     Mod.withModuleFromAST ctx ast $ \m -> do
       withGPUTargetMachine "sm_60" $ \tm -> do
-        linkLibdevice ctx m
-        compileModule logger tm m
+        linkLibdevice ctx        m
+        linkDexrt     ctx        m
+        internalize   ["kernel"] m
+        compileModule logger tm  m
         PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
 
 callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
@@ -96,7 +97,9 @@ evalLLVM logger ast argPtr = do
       -- TODO: Consider changing the linking layer, as suggested in:
       --       http://llvm.1065342.n5.nabble.com/llvm-dev-ORC-JIT-Weekly-5-td135203.html
       T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
-        compileModule logger tm m
+        linkDexrt     c            m
+        internalize   ["entryFun"] m
+        compileModule logger tm    m
         JIT.withExecutionSession $ \exe ->
           JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
             JIT.withIRCompileLayer linkLayer tm $ \compileLayer -> do
@@ -154,7 +157,8 @@ runDefaultPasses t m = do
   P.withPassManager defaultPasses $ \pm -> void $ P.runPassManager pm m
   where
     defaultPasses = P.defaultCuratedPassSetSpec {P.optLevel = Just 3}
-    extraPasses = [ P.SuperwordLevelParallelismVectorize ]
+    extraPasses = [ P.SuperwordLevelParallelismVectorize
+                  , P.FunctionInlining 0 ]
 
 
 runPasses :: [P.Pass] -> Maybe T.TargetMachine -> Mod.Module -> IO ()
@@ -170,6 +174,9 @@ showAsm t m = do
   -- Uncomment this to dump assembly to a file that can be linked to a C benchmark suite:
   -- Mod.writeObjectToFile t (Mod.File "asm.o") m
   liftM unpack $ Mod.moduleTargetAssembly t m
+
+internalize :: [String] -> Mod.Module -> IO ()
+internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeElimination] Nothing m
 
 instance Show LLVMKernel where
   show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule
@@ -188,6 +195,33 @@ withGPUTargetMachine computeCapability next = do
       CM.Default
       CGO.Aggressive
       next
+
+-- === dex runtime ===
+
+dexrtAST :: L.Module
+dexrtAST = unsafePerformIO $ do
+  withContext $ \ctx -> do
+    let dexrtBC = $(embedFile "src/lib/dexrt.bc")
+    Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) $ \m ->
+      stripFunctionAnnotations <$> Mod.moduleAST m
+  where
+    -- We strip the function annotations for dexrt functions, because clang
+    -- usually assumes that it's compiling for some generic CPU instead of the
+    -- target that we select here. That creates a lot of confusion, making
+    -- optimizations much less effective.
+    stripFunctionAnnotations ast =
+      ast { L.moduleDefinitions = stripDef <$> L.moduleDefinitions ast }
+    stripDef def@(L.GlobalDefinition f@L.Function{..}) = case basicBlocks of
+      [] -> def
+      _  -> L.GlobalDefinition $ f { L.functionAttributes = [] }
+    stripDef def = def
+
+linkDexrt :: Context -> Mod.Module -> IO ()
+linkDexrt ctx m = do
+    Mod.withModuleFromAST ctx dexrtAST $ \dexrtm -> do
+      Mod.linkModules m dexrtm
+      runPasses [P.AlwaysInline True] Nothing m
+
 
 -- === libdevice support ===
 
@@ -210,8 +244,7 @@ linkLibdevice ctx m =
     Mod.withModuleFromAST ctx libdevice $ \ldm -> do
       Mod.linkModules m ldm
       Mod.linkModules m reflectm
-      -- Inline libdevice functions and internalize the module to only export our kernel
-      runPasses [P.AlwaysInline True, P.InternalizeFunctions ["kernel"]] Nothing m
+      runPasses [P.AlwaysInline True] Nothing m
 
 -- llvm-hs does not expose the NVVM reflect pass, so we have to eliminate all calls to
 -- __nvvm_reflect by ourselves. Since we aren't really interested in setting any reflection

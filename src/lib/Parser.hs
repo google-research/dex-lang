@@ -201,6 +201,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
 containedExpr :: Parser UExpr
 containedExpr =   parens (mayPair $ makeExprParser leafExpr ops)
               <|> uVarOcc
+              <|> uLabeledExprs
               <?> "contained expression"
 
 uType :: Parser UType
@@ -439,9 +440,11 @@ leafPat =
           (UPatBinder <$>  (   (Bind <$> (:>()) <$> lowerName)
                            <|> (underscore $> Ignore ())))
       <|> (UPatCon    <$> upperName <*> manyNested pat)
-      <|> parseVariant leafPat UPatVariant
-      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat)
+      <|> parseVariant leafPat UPatVariant UPatVariantLift
+      <|> (UPatRecord <$> parseLabeledItems "," "=" leafPat (Just pun) (Just def))
   )
+  where pun pos l = WithSrc pos $ UPatBinder $ Bind (mkName l:>())
+        def pos = WithSrc pos $ UPatBinder $ Ignore ()
 
 -- TODO: add user-defined patterns
 patOps :: [[Operator Parser UPat]]
@@ -471,18 +474,20 @@ baseType =   (symbol "Int64"   $> Scalar Int64Type)
          <|> (symbol "Float64" $> Scalar Float64Type)
 
 uVariantExpr :: Parser UExpr
-uVariantExpr = withSrc $ do
-  (thelabel, i, value) <- parseVariant expr (,,)
-  ty <- optional (annot uType)
-  return $ UVariant ty thelabel i value
+uVariantExpr = withSrc $ parseVariant expr UVariant UVariantLift
 
-parseVariant :: Parser a -> (Label -> Int -> a -> b) -> Parser b
-parseVariant subparser f = bracketed (symbol "{|") (symbol "|}") $ do
-  itemLabel <- lexeme $ some rowLabelChar
-  i <- (symbol "#" >> uint) <|> return 0
-  symbol "="
-  itemVal <- subparser
-  return $ f itemLabel i itemVal
+parseVariant :: Parser a -> (LabeledItems () -> Label -> a -> b) -> (LabeledItems () -> a -> b) -> Parser b
+parseVariant subparser buildLabeled buildExt =
+  bracketed (symbol "{|") (symbol "|}") $ do
+    let parseInactive = try $ fieldLabel <* notFollowedBy (symbol "=")
+    inactiveLabels <- parseInactive `endBy1` (symbol "|") <|> pure []
+    let inactiveItems = foldr (<>) NoLabeledItems $ map (flip labeledSingleton ()) inactiveLabels
+    let parseLabeled = do l <- fieldLabel
+                          symbol "="
+                          buildLabeled inactiveItems l <$> subparser
+    let parseExt = do symbol "..."
+                      buildExt inactiveItems <$> subparser
+    parseLabeled <|> parseExt
 
 -- Note: this does a bit more backtracking than necessary to make the code
 -- simpler. Theoretically it should be possible to parse all of these at once
@@ -490,31 +495,41 @@ parseVariant subparser f = bracketed (symbol "{|") (symbol "|}") $ do
 uLabeledExprs :: Parser UExpr
 uLabeledExprs = withSrc $ do
     notFollowedBy uVariantExpr
-    URecord <$> build "," "="
-      <|> URecordTy <$> build "&" ":"
-      <|> UVariantTy <$> build "|" ":"
+    URecord <$> build "," "=" (Just varPun) Nothing
+      <|> URecordTy <$> build "&" ":" Nothing Nothing
+      <|> UVariantTy <$> build "|" ":" Nothing Nothing
   where build sep bindwith = parseLabeledItems sep bindwith expr
 
-parseLabeledItems :: String -> String -> Parser a -> Parser (LabeledItems a)
-parseLabeledItems sep bindwith itemparser =
+varPun :: SrcPos -> Label -> UExpr
+varPun pos str = WithSrc pos $ UVar (mkName str :> ())
+
+parseLabeledItems
+  :: String -> String -> Parser a
+  -> Maybe (SrcPos -> Label -> a) -> Maybe (SrcPos -> a)
+  -> Parser (ExtLabeledItems a a)
+parseLabeledItems sep bindwith itemparser punner tailDefault =
   try $ bracketed lBrace rBrace $ atBeginning
   where
     atBeginning = someItems
                   <|> (symbol sep >> (stopAndExtend <|> stopWithoutExtend))
                   <|> stopWithoutExtend
-    stopWithoutExtend = pure noLabeledItems
+    stopWithoutExtend = return $ NoExt NoLabeledItems
     stopAndExtend = do
-      symbol "..."
-      _ <- itemparser
-      fail "Extensible records and variants not implemented"
+      WithSrc pos _ <- withSrc $ symbol "..."
+      rest <- case tailDefault of
+        Just def -> itemparser <|> pure (def pos)
+        Nothing -> itemparser
+      return $ Ext NoLabeledItems (Just rest)
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      itemLabel <- some rowLabelChar
-      symbol bindwith
-      itemVal <- itemparser
-      items <- beforeSep
-      return $ labeledSingleton itemLabel itemVal <> items
+      WithSrc pos l <- withSrc $ fieldLabel
+      let explicitBound = symbol bindwith *> itemparser 
+      itemVal <- case punner of
+        Just punFn -> explicitBound <|> pure (punFn pos l)
+        Nothing -> explicitBound
+      rest <- beforeSep
+      return $ prefixExtLabeledItems (labeledSingleton l itemVal) rest
 
 -- === infix ops ===
 
@@ -677,6 +692,10 @@ keyWordStrs :: [String]
 keyWordStrs = ["def", "for", "rof", "case", "of", "llam",
                "Read", "Write", "Accum", "data", "where"]
 
+fieldLabel :: Lexer Label
+fieldLabel = label "field label" $ lexeme $
+  checkNotKeyword $ (:) <$> (lowerChar <|> upperChar) <*> many nameTailChar
+
 primName :: Lexer String
 primName = lexeme $ try $ char '%' >> some alphaNumChar
 
@@ -737,9 +756,6 @@ charLexeme c = void $ lexeme $ char c
 
 nameTailChar :: Parser Char
 nameTailChar = alphaNumChar <|> char '\'' <|> char '_'
-
-rowLabelChar :: Parser Char
-rowLabelChar = alphaNumChar <|> char '\'' <|> char '_'
 
 symChar :: Parser Char
 symChar = choice $ map char symChars

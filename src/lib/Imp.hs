@@ -24,6 +24,7 @@ import Control.Monad.Writer hiding (Alt)
 import Data.Text.Prettyprint.Doc
 import Data.Foldable (toList)
 import Data.Coerce
+import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 
 import Embed
@@ -115,9 +116,9 @@ toImpExpr env (maybeDest, expr) = case expr of
       DataCon _ _ con args -> do
         let Abs bs body = alts !! con
         toImpBlock (env <> newEnv bs args) (maybeDest, body)
-      Variant types label i x -> do
+      Variant (NoExt types) label i x -> do
         let LabeledItems ixtypes = enumerate types
-        let index = fst $ ixtypes M.! label !! i
+        let index = fst $ ixtypes M.! label NE.!! i
         let Abs bs body = alts !! index
         toImpBlock (env <> newEnv bs [x]) (maybeDest, body)
       Con (SumAsProd _ tag xss) -> do
@@ -224,6 +225,10 @@ toImpOp (maybeDest, op) = case op of
     emitSwitch p' [copyAtom dest y, copyAtom dest x]
     destToAtom dest
     where (BaseTy tagBT) = TagRepTy
+  RecordCons   _ _ -> error "Unreachable: should have simplified away"
+  RecordSplit  _ _ -> error "Unreachable: should have simplified away"
+  VariantLift  _ _ -> error "Unreachable: should have simplified away"
+  VariantSplit _ _ -> error "Unreachable: should have simplified away"
   _ -> do
     returnVal . toScalarAtom resultTy =<< emitInstr (IPrimOp $ fmap fromScalarAtom op)
   where
@@ -495,8 +500,8 @@ makeDest nameHint destType = do
               let dcs' = applyDataDefParams def params
               contents <- forM dcs' $ \(DataConDef _ bs) -> forM (toList bs) (rec . binderType)
               return $ Con $ SumAsProd ty tag contents
-        RecordTy types -> Record <$> forM types rec
-        VariantTy types -> do
+        RecordTy (NoExt types) -> Record <$> forM types rec
+        VariantTy (NoExt types) -> do
           tag <- rec TagRepTy
           contents <- forM (toList types) rec
           return $ Con $ SumAsProd ty tag $ map (\x->[x]) contents
@@ -623,9 +628,9 @@ zipWithDest dest@(Dest destAtom) atom f = case (destAtom, atom) of
   (Con (SumAsProd _ tag payload), DataCon _ _ con x) -> do
     recDest tag (TagRepVal $ fromIntegral con)
     zipWithM_ recDest (payload !! con) x
-  (Con (SumAsProd _ tag payload), Variant types label i x) -> do
+  (Con (SumAsProd _ tag payload), Variant (NoExt types) label i x) -> do
     let LabeledItems ixtypes = enumerate types
-    let index = fst $ (ixtypes M.! label) !! i
+    let index = fst $ (ixtypes M.! label) NE.!! i
     recDest tag (TagRepVal $ fromIntegral index)
     zipWithM_ recDest (payload !! index) [x]
   (Con dcon, Con acon) -> case (dcon, acon) of

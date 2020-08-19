@@ -15,7 +15,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
               runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
               app, add, mul, sub, neg, div', iadd, imul, isub, idiv, reduceScoped,
-              select, substEmbed, substEmbedR, emitUnpack,
+              select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -101,7 +101,7 @@ emitUnpack expr = do
     TypeCon def params -> do
       let [DataConDef _ bs] = applyDataDefParams def params
       return bs
-    RecordTy types -> do
+    RecordTy (NoExt types) -> do
       -- TODO: is using Ignore here appropriate? We don't have any existing
       -- binders to bind, but we still plan to use the results.
       let bs = toNest $ map Ignore $ toList types
@@ -564,11 +564,19 @@ traverseAtom def@(_, fAtom) atom = case atom of
   DataCon dataDef params con args -> DataCon dataDef <$>
     traverse fAtom params <*> pure con <*> traverse fAtom args
   TypeCon dataDef params -> TypeCon dataDef <$> traverse fAtom params
+  LabeledRow (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ LabeledRow $ Ext items' rest
   Record items -> Record <$> traverse fAtom items
-  RecordTy items -> RecordTy <$> traverse fAtom items
-  Variant types label i value -> Variant <$>
-    traverse fAtom types <*> pure label <*> pure i <*> fAtom value
-  VariantTy items -> VariantTy <$> traverse fAtom items
+  RecordTy (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ RecordTy $ Ext items' rest
+  Variant (Ext types rest) label i value -> do
+    types' <- traverse fAtom types
+    Variant (Ext types' rest) label i <$> fAtom value
+  VariantTy (Ext items rest) -> do
+    items' <- traverse fAtom items
+    return $ VariantTy $ Ext items' rest
 
 -- === DCE ===
 
@@ -635,6 +643,7 @@ reduceBlock scope (Block decls result) = do
 
 reduceAtom :: Scope -> Atom -> Atom
 reduceAtom scope x = case x of
+  Var (Name InferenceName _ _ :> _) -> x
   Var v -> case snd (scope ! v) of
     -- TODO: worry about effects!
     LetBound PlainLet expr -> fromMaybe x $ reduceExpr scope expr
@@ -672,10 +681,10 @@ indexSetSizeE (TC con) = case con of
   PairType a b -> bindM2 imul (indexSetSizeE a) (indexSetSizeE b)
   _ -> error $ "Not implemented " ++ pprint con
   where
-indexSetSizeE (RecordTy types) = do
+indexSetSizeE (RecordTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM imul (IdxRepVal 1) sizes
-indexSetSizeE (VariantTy types) = do
+indexSetSizeE (VariantTy (NoExt types)) = do
   sizes <- traverse indexSetSizeE types
   foldM iadd (IdxRepVal 0) sizes
 indexSetSizeE ty = error $ "Not implemented " ++ pprint ty
@@ -700,19 +709,17 @@ indexToIntE ty idx = case ty of
     imul rSize lIdx >>= iadd rIdx
   TC (IntRange _ _)     -> indexAsInt idx
   TC (IndexRange _ _ _) -> indexAsInt idx
-  RecordTy types -> do
+  RecordTy (NoExt types) -> do
     sizes <- traverse indexSetSizeE types
-    (strides, _) <- scanM
-      (\sz prev -> do {v <- imul sz prev; return (prev, v)}) sizes (IdxRepVal 1)
+    (strides, _) <- scanM (\sz prev -> (prev,) <$> imul sz prev) sizes (IdxRepVal 1)
     -- Unpack and sum the strided contributions
     subindices <- getUnpacked idx
     subints <- traverse (uncurry indexToIntE) (zip (toList types) subindices)
     scaled <- mapM (uncurry imul) $ zip (toList strides) subints
     foldM iadd (IdxRepVal 0) scaled
-  VariantTy types -> do
+  VariantTy (NoExt types) -> do
     sizes <- traverse indexSetSizeE types
-    (offsets, _) <- scanM
-      (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IdxRepVal 0)
+    (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
     -- Build and apply a case expression
     alts <- flip mapM (zip (toList offsets) (toList types)) $
       \(offset, subty) -> buildNAbs (toNest [Ignore subty]) $ \[subix] -> do
@@ -733,7 +740,7 @@ intToIndexE ty@(TC con) i = case con of
     return $ PairVal iA iB
   _ -> error $ "Unexpected type " ++ pprint con
   where iAsIdx = return $ Con $ Coerce ty i
-intToIndexE (RecordTy types) i = do
+intToIndexE (RecordTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types
   (strides, _) <- scanM
     (\sz prev -> do {v <- imul sz prev; return ((prev, v), v)}) sizes (IdxRepVal 1)
@@ -743,23 +750,20 @@ intToIndexE (RecordTy types) i = do
       y <- idiv x s1
       intToIndexE ty y
   return $ Record (restructure offsets types)
-intToIndexE (VariantTy types) i = do
+intToIndexE (VariantTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types
-  (offsets, _) <- scanM
-    (\sz prev -> do {v <- iadd sz prev; return (prev, v)}) sizes (IdxRepVal 0)
+  (offsets, _) <- scanM (\sz prev -> (prev,) <$> iadd sz prev) sizes (IdxRepVal 0)
   let
     reflect = reflectLabels types
     -- Find the right index by looping through the possible offsets
-    -- TODO: is there a better way than generating a case statement? Select
-    -- doesn't work because variants aren't primitive types
     go prev ((label, repeatNum), ty, offset) = do
       shifted <- isub i offset
       -- TODO: This might run intToIndex on negative indices. Fix this!
       index   <- intToIndexE ty shifted
       beforeThis <- ilt i offset
-      select beforeThis prev $ Variant types label repeatNum index
+      select beforeThis prev $ Variant (NoExt types) label repeatNum index
     ((l0, 0), ty0, _):zs = zip3 (toList reflect) (toList types) (toList offsets)
-  start <- Variant types l0 0 <$> intToIndexE ty0 i
+  start <- Variant (NoExt types) l0 0 <$> intToIndexE ty0 i
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 

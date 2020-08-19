@@ -18,3 +18,4 @@ test-scratch/
 dist-newstyle/
 *.cache
 bench_results.db
+*.bc

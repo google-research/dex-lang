@@ -87,11 +87,11 @@ indexSetSize (TC con) = case con of
         Unlimited      -> undefined
   PairType l r -> mulC (indexSetSize l) (indexSetSize r)
   _ -> error $ "Not implemented " ++ pprint con
-indexSetSize (RecordTy types) = let
+indexSetSize (RecordTy (NoExt types)) = let
   sizes = map indexSetSize (F.toList types)
   one = liftC $ toPolynomial $ IdxRepVal 1
   in foldl mulC one sizes
-indexSetSize (VariantTy types) = let
+indexSetSize (VariantTy (NoExt types)) = let
   sizes = map indexSetSize (F.toList types)
   zero = liftC $ toPolynomial $ IdxRepVal 0
   in foldl add zero sizes
