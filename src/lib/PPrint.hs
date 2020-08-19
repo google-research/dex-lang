@@ -4,25 +4,28 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE FlexibleInstances #-}
 {-# LANGUAGE FlexibleContexts #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module PPrint (pprint, pprintList, printLitBlock, asStr,
                assertEq, ignoreExcept, PrecedenceLevel(..), DocPrec,
-               PrettyPrec(..), atPrec) where
+               PrettyPrec(..), atPrec, toJSONStr) where
 
+import Data.Aeson hiding (Result, Null, Value, Array)
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
 import Data.Foldable (toList)
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
+import qualified Data.ByteString.Lazy.Char8 as B
+import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
 import Data.Text (unpack)
 import System.Console.ANSI
+import Numeric
 
 import Env
 import Array
@@ -382,12 +385,19 @@ instance Pretty a => Pretty (SetVal a) where
 
 instance Pretty Output where
   pretty (TextOut s) = pretty s
+  pretty (BenchResult name compileTime runTime) =
+    benchName <>
+    "\nCompile time: " <> p (showFFloat (Just 3) compileTime "") <+> "s" <>
+    "\nRun time:     " <> p (showFFloat (Just 3) runTime     "") <+> "s"
+    where benchName = case name of "" -> ""
+                                   _  -> "\n" <> p name
   pretty (HeatmapOut _ _ _ _) = "<graphical output>"
   pretty (ScatterOut _ _  ) = "<graphical output>"
   pretty (PassInfo name s) = "===" <+> p name <+> "===" <> hardline <> p s
   pretty (EvalTime    t) = "Eval (s):  " <+> p t
   pretty (TotalTime t)   = "Total (s): " <+> p t <+> "  (eval + compile)"
   pretty (MiscLog s) = "===" <+> p s <+> "==="
+
 
 instance Pretty PassName where
   pretty x = p $ show x
@@ -587,3 +597,19 @@ assertEq x y s = if x == y then return ()
 ignoreExcept :: HasCallStack => Except a -> a
 ignoreExcept (Left e) = error $ pprint e
 ignoreExcept (Right x) = x
+
+toJSONStr :: ToJSON a => a -> String
+toJSONStr = B.unpack . encode
+
+instance ToJSON Result where
+  toJSON (Result outs err) = object (outMaps <> errMaps)
+    where
+      errMaps = case err of
+        Left e   -> ["error" .= String (fromString $ pprint e)]
+        Right () -> []
+      outMaps = flip foldMap outs $ \case
+        BenchResult name compileTime runTime ->
+          [ "bench_name"   .= toJSON name
+          , "compile_time" .= toJSON compileTime
+          , "run_time"     .= toJSON runTime ]
+        out -> ["result" .= String (fromString $ pprint out)]

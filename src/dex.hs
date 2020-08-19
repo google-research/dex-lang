@@ -24,7 +24,7 @@ import Parser  hiding (Parser)
 import LiveOutput
 
 data ErrorHandling = HaltOnErr | ContinueOnErr
-data DocFmt = ResultOnly | TextDoc | HtmlDoc
+data DocFmt = ResultOnly | TextDoc | HTMLDoc | JSONDoc
 data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
@@ -103,10 +103,14 @@ printLitProg ResultOnly prog = putStr $ foldMap (nonEmptyNewline . pprint . snd)
   where
     nonEmptyNewline [] = []
     nonEmptyNewline l  = l ++ ['\n']
-printLitProg HtmlDoc    prog = putStr $ progHtml prog
-printLitProg TextDoc    prog = do
+printLitProg HTMLDoc prog = putStr $ progHtml prog
+printLitProg TextDoc prog = do
   isatty <- queryTerminal stdOutput
   putStr $ foldMap (uncurry (printLitBlock isatty)) prog
+printLitProg JSONDoc prog =
+  forM_ prog $ \(_, result) -> case toJSONStr result of
+    "{}" -> return ()
+    s -> putStrLn s
 
 parseOpts :: ParserInfo CmdOpts
 parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
@@ -119,9 +123,13 @@ parseMode = subparser $
   <> (command "web"    $ simpleInfo (WebMode    <$> sourceFileInfo ))
   <> (command "watch"  $ simpleInfo (WatchMode  <$> sourceFileInfo ))
   <> (command "script" $ simpleInfo (ScriptMode <$> sourceFileInfo
-    <*> (   flag' HtmlDoc (long "html" <> help "HTML literate program output")
-        <|> flag' ResultOnly (long "result-only" <> help "Only output program results")
-        <|> pure TextDoc )
+    <*> (option
+            (optionList [ ("literate"   , TextDoc)
+                        , ("result-only", ResultOnly)
+                        , ("HTML"       , HTMLDoc)
+                        , ("JSON"       , JSONDoc)])
+            (long "outfmt" <> value TextDoc
+             <> help "Output format (literate(default)|result-only|HTML|JSON"))
     <*> flag HaltOnErr ContinueOnErr (
                   long "allow-errors"
                <> help "Evaluate programs containing non-fatal type errors")))
@@ -141,7 +149,7 @@ parseEvalOpts = EvalConfig
                      , ("LLVM-MC", LLVMMC)
                      , ("JAX", JAX)
                      , ("interp", Interp)])
-         (long "backend" <> value LLVM <> help "Backend (LLVM|LLVM-CUDA|JAX|interp)"))
+         (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|JAX|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"

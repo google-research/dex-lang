@@ -123,14 +123,9 @@ processLogs logLevel logs = case logLevel of
   LogPasses passes -> flip filter logs $ \l -> case l of
                         PassInfo pass _ | pass `elem` passes -> True
                                         | otherwise          -> False
-
-  PrintEvalTime -> [TextOut $   "Compile: " ++ show compileTime ++ " s" ++
-                              "\nEval: "    ++ show runTime     ++ " s"]
+  PrintEvalTime -> [BenchResult "" compileTime runTime]
     where (compileTime, runTime) = timesFromLogs logs
-  PrintBench benchName ->
-    [TextOut $ "{ \"bench_name\" : "   ++ show benchName   ++
-               ", \"compile_time\" : " ++ show compileTime ++
-               ", \"run_time\" : "     ++ show runTime     ++ "}"]
+  PrintBench benchName -> [BenchResult benchName compileTime runTime]
     where (compileTime, runTime) = timesFromLogs logs
 
 timesFromLogs :: [Output] -> (Double, Double)

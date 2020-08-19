@@ -561,7 +561,7 @@ data Output = TextOut String
             | PassInfo PassName String
             | EvalTime  Double
             | TotalTime Double
-            | BenchResult String Double Double  -- name, eval time, total time
+            | BenchResult String Double Double  -- name, compile time, eval time
             | MiscLog String
               deriving (Show, Eq, Generic)
 

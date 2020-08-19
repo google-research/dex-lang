@@ -105,15 +105,21 @@ repl-test:
 
 # --- running and querying benchmarks ---
 
-bench-set-standard:
-	python3 dexbench.py adhoc --name standard
+bench-db-init:
+	sqlite3 bench_results.db < benchmarks/queries/init.sql
 
-bench-compare:
-	python3 dexbench.py adhoc --name proposed
-	cat <(  echo ".parameter set :old_version standard" \
-             && echo ".parameter set :new_version proposed" \
-             && cat queries/compare-versions.sql )          \
-          | sqlite3 bench_results.db
+bench-summary:
+	sqlite3 bench_results.db < benchmarks/queries/result-summary.sql
+
+# bench-set-standard:
+# 	python3 dexbench.py adhoc --name standard
+
+# bench-compare:
+# 	python3 dexbench.py adhoc --name proposed
+# 	cat <(  echo ".parameter set :old_version standard" \
+#              && echo ".parameter set :new_version proposed" \
+#              && cat queries/compare-versions.sql )          \
+#           | sqlite3 bench_results.db
 
 # --- building docs ---
 
@@ -123,7 +129,7 @@ docs: doc/style.css $(doc-names) $(slow-docs)
 	$(dex) --prelude /dev/null script prelude.dx --html > doc/prelude.html
 
 doc/%.html: examples/%.dx
-	$(dex) script $^ --html > $@
+	$(dex) script $^ --outfmt HTML > $@
 
 doc/%.css: static/%.css
 	cp $^ $@
