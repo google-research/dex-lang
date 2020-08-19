@@ -60,15 +60,15 @@ stmtToMDInstr (d, instr) = case instr of
     where args = envAsVars $ (freeIVars p `envDiff` (v @> ()))
   Load  ~(IVar v)    -> assertRef True v >> keep
   Store ~(IVar v) _  -> assertRef True v >> keep
-  IOffset _ _ _      -> notAllowed -- Shouldn't need to offset pointers on the host.
-  IWhile _ _         -> notAllowed -- TODO: Allow while loops? Those are not paralellizable anyway.
-  If _ _ _           -> notAllowed
-  Loop _ _ _ _       -> notAllowed
-  IThrowError        -> notAllowed
+  IOffset _ _ _      -> keep
+  IWhile _ _         -> keep
+  If _ _ _           -> keep
+  Loop _ _ _ _       -> keep
+  IThrowError        -> keep
   where
     keep :: Translate (MDImpInstr ImpKernel)
     keep = return $ MDHostInstr instr
-    assertRef onHost v = do
-      isHost <- isHostPtr v
-      if isHost == onHost then return () else error "Dereferencing a device pointer on the host!"
+    assertRef onHost v = return ()
+      --isHost <- isHostPtr v
+      --if isHost == onHost then return () else error "Dereferencing a device pointer on the host!"
     notAllowed = error $ "Not allowed in multi-device program: " ++ pprint instr

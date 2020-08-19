@@ -95,7 +95,7 @@ impToLLVM (ImpFunction outVars inVars (ImpProg stmts)) =
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpInstr isLocal instr = case instr of
-  IThrowError   -> Nothing <$  throwRuntimeError
+  IThrowError   -> return Nothing -- Nothing <$  throwRuntimeError
   Alloc t numel -> Just    <$> case numel of
     ILit l | n <- getIntLit l, isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
