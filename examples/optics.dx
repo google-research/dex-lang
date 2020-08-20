@@ -8,11 +8,6 @@ data DataOptic focus:Type full:Type ignore:Type alt:Type =
               & build : ((focus & ignore) | alt) -> full
               }
 
-data DataBiOptic ignore:Type alt:Type focus:Type full:Type focus':Type full':Type =
-  MkDataBiOptic { split : full -> ((focus & ignore) | alt)
-                & build : ((focus' & ignore) | alt) -> full'
-                }
-
 def split (optic : DataOptic focus full ignore alt) : full -> ((focus & ignore) | alt) =
   (MkDataOptic {split, ...}) = optic
   split
@@ -59,13 +54,13 @@ which are the existentially-quantified types I define above (`SomeLens` and
 ' Eventually the compiler should autogenerate these. Perhaps `#foo` would be
 desugared into `fieldFoo` below, and `#|foo` or `?foo` into `altFoo`.
 
-def fieldFoo (types : Types)?-> (a : Type)?->
+def fieldFoo (types : Fields)?-> (a : Type)?->
   : DataOptic a {foo:a & ...types} {&...types} Void
   = MkDataOptic { split = \{foo, ...tail}. Left (foo, tail)
                 , build = \v. case v of Left (foo, tail) -> {foo, ...tail}
                 }
 
-def altFoo (types : Types)?-> (a : Type)?->
+def altFoo (types : Fields)?-> (a : Type)?->
       : DataOptic a {foo:a | ...types} {&} {|...types} =
   split = \v. case v of
                 {|foo=foo|} -> Left (foo, {})
@@ -75,13 +70,13 @@ def altFoo (types : Types)?-> (a : Type)?->
                 Right tail -> {| foo | ...tail|}
   MkDataOptic {split, build}
 
-def fieldBar (types : Types)?-> (a : Type)?->
+def fieldBar (types : Fields)?-> (a : Type)?->
   : DataOptic a {bar:a & ...types} {&...types} Void
   = MkDataOptic { split = \{bar, ...tail}. Left (bar, tail)
                 , build = \v. case v of Left (bar, tail) -> {bar, ...tail}
                 }
 
-def altBar (types : Types)?-> (a : Type)?->
+def altBar (types : Fields)?-> (a : Type)?->
       : DataOptic a {bar:a | ...types} {&} {|...types} =
   split = \v. case v of
                 {|bar=bar|} -> Left (bar, {})
@@ -274,7 +269,6 @@ def sumOver (_:Uninhabited alt)?=> (_:Add val)?=>
             (x : full=>val) : rest=>val =
   sum $ frontAxes optic x
 
--- Still can't print record-indexed arrays :(
 :p
   arr = iota {foo:Fin 2 & bar:Fin 5}
   arr' = sumOver fieldFoo arr
