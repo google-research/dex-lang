@@ -22,6 +22,7 @@ import qualified LLVM.Relocation as R
 import qualified LLVM.CodeModel as CM
 import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
+import qualified LLVM.Internal.Module as Mod
 import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
@@ -216,9 +217,13 @@ dexrtAST = unsafePerformIO $ do
 
 linkDexrt :: Context -> Mod.Module -> IO ()
 linkDexrt ctx m = do
-    Mod.withModuleFromAST ctx dexrtAST $ \dexrtm -> do
-      Mod.linkModules m dexrtm
-      runPasses [P.AlwaysInline True] Nothing m
+  dataLayout <- Mod.getDataLayout =<< Mod.readModule m
+  targetTriple <- Mod.getTargetTriple =<< Mod.readModule m
+  let dexrtTargetAST = dexrtAST { L.moduleDataLayout = dataLayout
+                                , L.moduleTargetTriple = targetTriple }
+  Mod.withModuleFromAST ctx dexrtTargetAST $ \dexrtm -> do
+    Mod.linkModules m dexrtm
+    runPasses [P.AlwaysInline True] Nothing m
 
 
 -- === libdevice support ===

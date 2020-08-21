@@ -29,7 +29,6 @@ import Inference
 import Simplify
 import Serialize
 import Imp
-import MDImp
 import Interpreter
 import JIT
 import Logging
@@ -164,7 +163,7 @@ evalModule :: TopEnv -> Module -> TopPassM TopEnv
 evalModule bindings normalized = do
   let defunctionalized = simplifyModule bindings normalized
   checkPass SimpPass defunctionalized
-  evaluated <- evalSimplified defunctionalized (evalBackend bindings)
+  evaluated <- evalSimplified defunctionalized evalBackend
   checkPass ResultPass evaluated
   Module Evaluated Empty newBindings <- return evaluated
   return newBindings
@@ -185,27 +184,32 @@ arrayVars x = foldMap go $ envPairs (freeVars x)
         go (v@(GlobalArrayName _), (ty, _)) = [v :> ty]
         go _ = []
 
-evalBackend :: Bindings -> Block -> TopPassM Atom
-evalBackend bindings block = do
+evalBackend :: Block -> TopPassM Atom
+evalBackend block = do
   backend <- asks evalEngine
   logger  <- asks logService
   let inVars = arrayVars block
   case backend of
     LLVMEngine kind llvmEnv -> do
-      let (impFunction, impAtom) = toImpFunction bindings (map Bind inVars, block)
-      checkPass ImpPass impFunction
-      -- logPass Flops $ impFunctionFlops impFunction
+      (llvmFunc, impAtom, impOutVars) <- case kind of
+        Serial -> do
+          let (impFunction, impAtom) = toImpFunction (map Bind inVars, block)
+          let (ImpFunction outVars _ _) = impFunction
+          checkPass ImpPass impFunction
+          return $ (impToLLVM impFunction, impAtom, outVars)
+        Multicore -> do
+          let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)
+          let (MDImpFunction outVars _ _) = mdImpFunction
+          return $ (mdImpToMulticore mdImpFunction, impAtom, outVars)
+        CUDA      -> do
+          let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)
+          logPass ImpPass mdImpFunction
+          let (MDImpFunction outVars _ _) = mdImpFunction
+          ptxFunction <- liftIO $ traverse compileKernel mdImpFunction
+          return $ (mdImpToCUDA ptxFunction, impAtom, outVars)
       resultAtom <- liftIO $ modifyMVar llvmEnv $ \env -> do
         let inPtrs = fmap (env !) inVars
-        llvmFunc <- case kind of
-          Serial    -> return $ impToLLVM impFunction
-          Multicore -> return $ mdImpToMulticore $ impToMDImp impFunction
-          CUDA      -> do
-            let mdImpFunction = impToMDImp impFunction
-            ptxFunction <- traverse compileKernel mdImpFunction
-            return $ mdImpToCUDA ptxFunction
         outPtrs <- callLLVM logger llvmFunc inPtrs
-        let (ImpFunction impOutVars _ _) = impFunction
         let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
         let outNames = GlobalArrayName <$> [i+1..]
         let env' = foldMap varAsEnv $ zipWith (:>) outNames outPtrs
@@ -254,7 +258,6 @@ requestArrays backend vs = case backend of
       case envLookup env' v of
         Just ref -> do
           hostRef <- case (kind, ty) of
-            (CUDA     , BaseTy _) -> return ref  -- Scalar references are stored on the host
             (CUDA     , _       ) -> loadCUDAArray ref (fromIntegral $ size * sizeOf b)
               where b = scalarTableBaseType ty
             (Multicore, _       ) -> return ref

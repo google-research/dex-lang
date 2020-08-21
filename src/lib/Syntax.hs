@@ -17,14 +17,14 @@ module Syntax (
     PrimEffect (..), PrimOp (..), EffectSummary (..),
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
-    ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), Statement,
-    ImpProg (..), ImpStatement, ImpInstr (..), IExpr (..), IVal, IPrimOp,
-    IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
+    ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), IStmt (..),
+    IProg, IProgVal, ImpProgram, ImpStatement, ImpInstr (..), IExpr (..), IVal,
+    IPrimOp, IVar, IBinder, IType (..), ArrayType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    MDImpFunction (..), MDImpProg (..), MDImpInstr (..), MDImpStatement,
-    ImpKernel (..), PTXKernel (..), HasIVars (..), IScope,
+    MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
+    ImpKernel (..), PTXKernel (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -51,7 +51,7 @@ module Syntax (
     pattern TyKind, pattern LamVal,
     pattern TabTy, pattern TabTyAbs, pattern TabVal, pattern TabValA,
     pattern Pure, pattern BinaryFunTy, pattern BinaryFunVal, pattern CharTy,
-    pattern Unlabeled, pattern NoExt, pattern LabeledRowKind, 
+    pattern Unlabeled, pattern NoExt, pattern LabeledRowKind,
     pattern NoLabeledItems, pattern InternalSingletonLabel,
     pattern EffKind, pattern JArrayTy, pattern ArrayTy, pattern IDo)
   where
@@ -446,27 +446,13 @@ data LogLevel = LogNothing | PrintEvalTime | LogPasses [PassName] | LogAll
 
 -- === imperative IR ===
 
-data ImpFunction = ImpFunction [ScalarTableBinder] [ScalarTableBinder] ImpProg  -- destinations first
-                   deriving (Show)
-newtype ImpProg = ImpProg [ImpStatement]
-                  deriving (Show, Generic, Semigroup, Monoid)
-type Statement instr = (IBinder, instr)
-type ImpStatement = (IBinder, ImpInstr)
-
-data ImpInstr = Load  IExpr
-              | Store IExpr IExpr           -- Destination first
-              | Alloc ScalarTableType Size  -- Second argument is the size of the table
-              | Free IVar
-                                            -- Second argument is the linear offset for code generation
-                                            -- Third argument is the result type for type checking
-              | IOffset IExpr IExpr ScalarTableType
-              | Loop Direction IBinder Size ImpProg
-              | IWhile IExpr ImpProg
-              | If IExpr ImpProg ImpProg
-              | IThrowError  -- TODO: parameterize by a run-time string
-              | ICastOp IType IExpr
-              | IPrimOp IPrimOp
-                deriving (Show)
+type IProg instr = Nest (IStmt instr)
+type IProgVal instr = (IProg instr, Maybe IExpr)
+data IStmt instr = IInstr (IBinder, instr)
+                 | IFor Direction IBinder Size (IProg instr)
+                 | IWhile (IProgVal instr) (IProg instr)  -- cond block, body block
+                 | ICond IExpr (IProg instr) (IProg instr)
+                 deriving (Show, Functor, Foldable, Traversable)
 
 data IExpr = ILit LitVal
            | IVar IVar
@@ -483,28 +469,42 @@ data IType = IValType BaseType
 
 type Size  = IExpr
 
+-- Destinations first, arguments second
+data ImpFunction = ImpFunction [ScalarTableBinder] [ScalarTableBinder] ImpProgram
+                   deriving (Show)
+type ImpProgram   = IProg ImpInstr
+type ImpStatement = IStmt ImpInstr
+
+data ImpInstr = Load  IExpr
+              | Store IExpr IExpr           -- Destination first
+              | Alloc ScalarTableType Size  -- Second argument is the size of the table
+              | Free IVar
+                                            -- Second argument is the linear offset for code generation
+                                            -- Third argument is the result type for type checking
+              | IOffset IExpr IExpr ScalarTableType
+              | IThrowError  -- TODO: parameterize by a run-time string
+              | ICastOp IType IExpr
+              | IPrimOp IPrimOp
+                deriving (Show)
+
 -- === multi-device imperative IR ===
 
--- destinations first
-data MDImpFunction k = MDImpFunction [ScalarTableBinder] [ScalarTableBinder] (MDImpProg k)
+-- Destinations first, arguments second
+data MDImpFunction k = MDImpFunction [ScalarTableBinder] [ScalarTableBinder] (MDImpProgram k)
                        deriving (Show, Functor, Foldable, Traversable)
-data MDImpProg k = MDImpProg [MDImpStatement k]
-                   deriving (Show, Functor, Foldable, Traversable)
-type MDImpStatement k = Statement (MDImpInstr k)
+type MDImpProgram k   = IProg (MDImpInstr k)
+type MDImpStatement k = IStmt (MDImpInstr k)
 
--- NB: No loads/stores since we're dealing with device pointers.
---     No loops, because loops are kernels!
--- TODO: Maybe scalar loads actually do make sense? What if someone wants to
---       index a single element to print a table?
 data MDImpInstr k = MDLaunch Size [IVar] k
                   | MDAlloc ScalarTableType Size
                   | MDFree IVar
+                  | MDLoadScalar  IVar
+                  | MDStoreScalar IVar IExpr
                   | MDHostInstr ImpInstr
                     deriving (Show, Functor, Foldable, Traversable)
 
--- The kernel program can only contain Alloc instructions of statically known size
--- (and they are expected to be small!).
-data ImpKernel = ImpKernel [IBinder] IBinder ImpProg -- parameters, linear thread index, kernel body
+-- Parameters, linear thread index, kernel body
+data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram
                  deriving (Show)
 newtype PTXKernel = PTXKernel String deriving (Show)
 
@@ -1147,6 +1147,16 @@ instance HasIVars IType where
     IRefType rt -> freeIVars rt
     IVoidType   -> mempty
 
+instance HasIVars instr => HasIVars (IProg instr) where
+  freeIVars Empty = mempty
+  freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` stmtBinders)
+    where
+      (stmtBinders, stmtFree) = case stmt of
+        IInstr (b, instr) -> (b @> (), freeIVars instr)
+        IFor _ b n p      -> (mempty , freeIVars n <> (freeIVars p `envDiff` (b @> ())))
+        IWhile c p        -> (mempty , freeIVars c <> freeIVars p)
+        ICond  c t f      -> (mempty , freeIVars c <> freeIVars t <> freeIVars f)
+
 instance HasIVars ImpInstr where
   freeIVars i = case i of
     Load  e       -> freeIVars e
@@ -1154,17 +1164,12 @@ instance HasIVars ImpInstr where
     Alloc t s     -> freeIVars t <> freeIVars s
     Free  v       -> varAsEnv v
     IOffset a o t -> freeIVars a <> freeIVars o <> freeIVars t
-    Loop _ b s p  -> freeIVars s <> (freeIVars p `envDiff` (b @> ()))
-    IWhile c p    -> freeIVars c <> freeIVars p
     ICastOp t x   -> freeIVars t <> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
-    If p l r      -> freeIVars p <> freeIVars l <> freeIVars r
     IThrowError   -> mempty
 
-instance HasIVars ImpProg where
-  freeIVars (ImpProg stmts) = case stmts of
-    [] -> mempty
-    (b, expr):cont -> freeIVars expr <> (freeIVars (ImpProg cont) `envDiff` (b @> ()))
+instance HasIVars instr => HasIVars (IProgVal instr) where
+  freeIVars (prog, val) = freeIVars prog <> (maybe mempty freeIVars val)
 
 instance Semigroup (Nest a) where
   (<>) = mappend
