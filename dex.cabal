@@ -18,7 +18,7 @@ flag cuda
 
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, MDImp, PPrint, Array, Algebra,
+                       Parser, Util, Imp, PPrint, Array, Algebra,
                        Actor, Cat, Flops, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA

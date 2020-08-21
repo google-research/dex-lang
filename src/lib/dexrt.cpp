@@ -176,6 +176,14 @@ void* load_cuda_array(void* device_ptr, int64_t bytes) {
   check_result("cuMemcpyDtoH", cuMemcpyDtoH(host_ptr, (CUdeviceptr)device_ptr, bytes));
   return host_ptr;
 }
+
+void dex_load_cuda_scalar(int64_t bytes, void* device_ptr, void* host_ptr) {
+  check_result("cuMemcpyDtoH", cuMemcpyDtoH(host_ptr, (CUdeviceptr)device_ptr, bytes));
+}
+
+void dex_store_cuda_scalar(int64_t bytes, void* device_ptr, void* host_ptr) {
+  check_result("cuMemcpyHtoD", cuMemcpyHtoD((CUdeviceptr)device_ptr, host_ptr, bytes));
+}
 #endif
 
 } // end extern "C"
