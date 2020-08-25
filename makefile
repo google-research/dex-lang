@@ -32,7 +32,7 @@ STACK_FLAGS = --flag dex:cuda
 CFLAGS := $(CFLAGS) -I/usr/local/cuda/include -DDEX_CUDA
 endif
 
-CXXFLAGS := $(CFLAGS) -std=c++11 -fno-exceptions -fno-rtti
+CXXFLAGS := $(CFLAGS) -std=c++17 -fno-exceptions -fno-rtti
 CFLAGS := $(CFLAGS) -std=c11
 
 .PHONY: all
