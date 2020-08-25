@@ -23,7 +23,7 @@ import qualified Data.ByteString.Lazy.Char8 as B
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
-import Data.Text (unpack)
+import Data.Text (Text, unpack, uncons, unsnoc)
 import System.Console.ANSI
 import Numeric
 
@@ -182,7 +182,8 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b     -> prettyPrec b
     CharType       -> atPrec ArgPrec "Char"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
-    PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
+    PairType a b  -> atPrec ArgPrec $ align $ group $
+      parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
@@ -217,7 +218,8 @@ prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
   ArrayLit _ array -> atPrec ArgPrec $ p array
-  PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
+  PairCon x y -> atPrec ArgPrec $ align $ group $
+    parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
   Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
   AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
@@ -315,10 +317,14 @@ instance PrettyPrec Atom where
     Eff e -> atPrec ArgPrec $ p e
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
+      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _ ->  atPrec LowestPrec $ pAppArg (p name) xs
       where (DataConDef name _) = cons !! con
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
+      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
       _  -> atPrec LowestPrec $ pAppArg (p name) params
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
@@ -328,6 +334,12 @@ instance PrettyPrec Atom where
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+
+fromInfix :: Text -> Maybe Text
+fromInfix t = do
+  ('(', t') <- uncons t
+  (t'', ')') <- unsnoc t'
+  return t''
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -342,8 +354,7 @@ prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
       Nothing -> case length docs of
         0 -> separator
         _ -> mempty
-    innerDoc = "{"
-      <> line'
+    innerDoc = "{" <> flatAlt " " ""
       <> concatWith (surround (separator <> " ")) docs
       <> final <> "}"
 
