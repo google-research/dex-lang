@@ -5,7 +5,6 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -41,13 +40,13 @@ import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef
-import Data.FileEmbed
 import qualified Data.ByteString as BS
 import qualified Data.Map as M
 
 import Logging
 import Syntax
 import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
+import Resources
 
 type ExitCode = Int
 
@@ -201,7 +200,6 @@ withGPUTargetMachine computeCapability next = do
 dexrtAST :: L.Module
 dexrtAST = unsafePerformIO $ do
   withContext $ \ctx -> do
-    let dexrtBC = $(embedFile "src/lib/dexrt.bc")
     Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) $ \m ->
       stripFunctionAnnotations <$> Mod.moduleAST m
   where

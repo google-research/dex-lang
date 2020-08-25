@@ -713,8 +713,7 @@ alloca elems ty = do
 malloc :: Monad m => L.Type -> Operand -> CompileT m Operand
 malloc ty bytes = do
   bytes64 <- asIntWidth bytes i64
-  voidPtr <- emitExternCall mallocFun [bytes64]
-  castLPtr ty voidPtr
+  castLPtr ty =<< emitExternCall mallocFun [bytes64]
 
 free :: Monad m => Operand -> CompileT m ()
 free ptr = do
@@ -902,7 +901,7 @@ mathFlags :: L.FastMathFlags
 mathFlags = L.noFastMathFlags { L.allowContract = True }
 
 mallocFun :: ExternFunSpec
-mallocFun = ExternFunSpec "malloc_dex" (L.ptr i8) [L.NoAlias] [] [i64]
+mallocFun = ExternFunSpec "malloc_dex" (L.ptr L.VoidType) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
