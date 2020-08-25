@@ -44,59 +44,27 @@ def clipidx (n:Type) -> (i:Int) : n =
   -- to Fin that just clips the index at its bounds.
   fromOrdinal n (select (i < 0) 0 i)
 
-def logaddexp (x:Float) (y:Float) : Float =
-  m = max x y
-  m + ( log ( (exp (x - m) + exp (y - m))))
-
 def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
         (dict: Eq vocab) ?=> (dict2: Eq position) ?=> (dict3: Eq time) ?=> (blank: vocab)
         (logits: time=>vocab=>Float) (labels: position=>vocab) : Float =
-  -- Computes log p(labels | logits), marginalizing over possible alignments.
-  -- Todo: remove unnecessary implicit type annotations once
-  -- Dex starts putting implicit types in scope.
-
   ilabels = prepend_and_interleave blank labels
+  n = {head: Unit | tail: (position & Fin 2)}
 
   normalized_logits = for t. logsoftmax logits.t
 
-  -- Initialization rules
-  logprob_start_with_blank = normalized_logits.(0@_).blank
-  logprob_of_first_label   = normalized_logits.(0@_).(labels.(0@_))
-  log_prob_seq_t0 = for pos.
-    -- TODO: allow pattern-matching on integer literals
-    case ordinal pos == 0 of
-      True -> logprob_start_with_blank
-      False -> case ordinal pos == 1 of
-        True  -> logprob_of_first_label
-        False -> log 0.000001
+  log_prob_seq_t0 = for pos:n. 0.01
 
-  same_as_last = \ilabels s.
-    o = ordinal s
-    select (o >= 2) (ilabels.s == ilabels.(clipidx _ (o - 2))) False
+  same_as_last = \ilabels s. False
+  safe_idx = \prev s. select (s >= 0) prev.(clipidx n s) 0.0
 
-  safe_idx = \prev s.
-    select (s >= 0) prev.(clipidx _ s) (log 0.0)
-
-  -- Todo: As suggested by Adam Paske, we could get rid of these
-  -- logaddexp calls with a newtype that overloads + and *
-  update = \t prev.
-    case ordinal t == 0 of
-      True -> log_prob_seq_t0
-      False -> for s.
-        cond = ilabels.s == blank || same_as_last ilabels s
-        labar = logaddexp prev.s (safe_idx prev ((ordinal s) - 1))
-        other = logaddexp labar  (safe_idx prev ((ordinal s) - 2))
-        ans = select cond labar other
-        ans + normalized_logits.t.(ilabels.s)
+  update = \t:time prev:(n=>Float).
+    for s:n.
+      same_as_last ilabels s
+      labar = max prev.s (safe_idx prev ((ordinal s) - 1))
+      labar + normalized_logits.t.(ilabels.s)
 
   log_prob_seq_final = fold log_prob_seq_t0 update
-
-  -- Todo: nicer way to get last two elements of log_prob_seq_final.
-  seq_length = 1 + size (position & (Fin 2))
-  endlabel = log_prob_seq_final.((seq_length - 2)@_)
-  endspace = log_prob_seq_final.((seq_length - 1)@_)
-  logaddexp endlabel endspace
-
+  log_prob_seq_final.(1@_)
 
 '### Demo
 
@@ -131,14 +99,16 @@ labels = for i:position. randIdxNoZero vocab (newKey (ordinal i))
 -- e.g. the summed-over labels should include blanks.
 
 
-:p sum for i:vocab.
-  exp $ ctc blank logits [i]
-> 0.14146832
+sums = for i:vocab. ctc blank logits [i]
+sums
 
-:p sum for (i, j):(vocab & vocab).
-  exp $ ctc blank logits [i, j]
-> 0.7091231
+sum sums
 
-:p sum for (i, j, k):(vocab & vocab & vocab).
-  exp $ ctc blank logits [i, j, k]
-> 0.9251014
+--%passes
+sum $ for i:vocab. ctc blank logits [i]
+
+:p
+  tmp = for i:vocab. ctc blank logits [i]
+  withState 0.0 \s.
+    for i:vocab.
+      s := get s + tmp.i
