@@ -289,175 +289,58 @@ compileMDImpInstrCUDA :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe
 compileMDImpInstrCUDA isLocal instrExt = do
   case instrExt of
     Left ext -> case ext of
-      EnsureHasContext -> ensureHasContext >> return Nothing
+      EnsureHasContext -> ensureHasCUDAContext >> return Nothing
     Right instr -> case instr of
       MDLaunch size args (PTXKernel ptx) -> do
-        m      <- cuModuleLoadData ptx
-        kernel <- cuModuleGetFunction m "kernel"
-        kernelArgs <- traverse lookupImpVar args
-        let blockSizeX = 256
+        argOps <- traverse lookupImpVar args
         sizeOp <- compileExpr size
-        sizeOp' <- sizeOp `add` ((blockSizeX - 1) `withWidthOf` sizeOp)
-        gridSizeX <- (`asIntWidth` i32) =<< sizeOp' `div'` (blockSizeX `withWidthOf` sizeOp)
-        cuLaunchKernel kernel
-                      (gridSizeX                , 1 `withWidth` 32, 1 `withWidth` 32)
-                      (blockSizeX `withWidth` 32, 1 `withWidth` 32, 1 `withWidth` 32)
-                      (sizeOp : kernelArgs)
-        -- TODO: cuModuleUnload
+        kernelParams <- packArgs $ sizeOp : argOps
+        ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" ptx
+        launchCUDAKernel ptxConst sizeOp kernelParams
         return Nothing
       MDAlloc  t s           -> Just <$> (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< compileExpr s)
         where elemTy = scalarTy $ scalarTableBaseType t
       MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing
       MDLoadScalar  v        -> do
-        refPtr <- castLPtr L.VoidType =<< lookupImpVar v
+        refPtr <- castVoidPtr =<< lookupImpVar v
         ~(L.PointerType refValType _) <- L.typeOf <$> lookupImpVar v
         valPtr <- alloca 1 refValType
-        loadCudaScalar (sizeof refValType) refPtr =<< castLPtr L.VoidType valPtr
+        cuMemcpyDToH (sizeof refValType) refPtr =<< castVoidPtr valPtr
         Just <$> load valPtr
       MDStoreScalar v val    -> do
-        refPtr <- castLPtr L.VoidType =<< lookupImpVar v
+        refPtr <- castVoidPtr =<< lookupImpVar v
         ~(L.PointerType refValType _) <- L.typeOf <$> lookupImpVar v
         valPtr <- alloca 1 refValType
         store valPtr =<< compileExpr val
-        storeCudaScalar (sizeof refValType) refPtr =<< castLPtr L.VoidType valPtr
+        cuMemcpyHToD (sizeof refValType) refPtr =<< castVoidPtr valPtr
         return Nothing
       MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
 
-loadCudaScalar :: Operand -> Operand -> Operand -> MDHostCompile ()
-loadCudaScalar bytes refPtr valPtr = emitVoidExternCall spec [bytes, refPtr, valPtr]
-  where spec = ExternFunSpec "dex_load_cuda_scalar" L.VoidType [] [] [i64, L.ptr L.VoidType, L.ptr L.VoidType]
+ensureHasCUDAContext :: MDHostCompile ()
+ensureHasCUDAContext = emitVoidExternCall spec []
+  where spec = ExternFunSpec "dex_ensure_has_cuda_context" L.VoidType [] [] []
 
-storeCudaScalar :: Operand -> Operand -> Operand -> MDHostCompile ()
-storeCudaScalar bytes refPtr valPtr = emitVoidExternCall spec [bytes, refPtr, valPtr]
-  where spec = ExternFunSpec "dex_store_cuda_scalar" L.VoidType [] [] [i64, L.ptr L.VoidType, L.ptr L.VoidType]
+launchCUDAKernel :: Operand -> Operand -> Operand -> MDHostCompile()
+launchCUDAKernel ptx size args = emitVoidExternCall spec [ptx, size, args]
+  where spec = ExternFunSpec "dex_cuLaunchKernel" L.VoidType [] [] [voidp, i64, L.ptr $ voidp]
 
-cuContextType :: L.Type
-cuContextType = L.ptr L.VoidType
+cuMemcpyDToH :: Operand -> Operand -> Operand -> MDHostCompile ()
+cuMemcpyDToH bytes refPtr valPtr = emitVoidExternCall spec [bytes, refPtr, valPtr]
+  where spec = ExternFunSpec "dex_cuMemcpyDtoH" L.VoidType [] [] [i64, voidp, voidp]
 
-cuModuleType :: L.Type
-cuModuleType = L.ptr L.VoidType
-
-cuFunctionType :: L.Type
-cuFunctionType = L.ptr L.VoidType
-
-cuResultBitWidth :: Word32
-cuResultBitWidth = 32  -- I guess? This is an enum, so the size might be compiler specific?
-
-cuResultType :: L.Type
-cuResultType = L.IntegerType cuResultBitWidth
-
-cuDeviceType :: L.Type
-cuDeviceType = L.IntegerType 32
-
-cuStreamType :: L.Type
-cuStreamType = L.ptr L.VoidType
-
--- CU_STREAM_LEGACY
-cuDefaultStream :: Operand
-cuDefaultStream = L.ConstantOperand $ C.IntToPtr (C.Int 64 1) cuStreamType
-
-ensureHasContext :: MDHostCompile ()
-ensureHasContext = do
-  cuInit
-  hasCtx <- threadHasCUDAContext
-  compileIf hasCtx (return ()) $ do
-    dev <- cuDeviceGet (L.ConstantOperand $ C.Int 32 0)
-    ctx <- cuDevicePrimaryCtxRetain dev
-    cuCtxPushCurrent ctx
-
-threadHasCUDAContext :: MDHostCompile Operand
-threadHasCUDAContext = do
-  currentCtx <- cuCtxGetCurrent
-  currentCtxInt <- emitInstr i64 $ L.PtrToInt currentCtx i64 []
-  emitInstr i1 $ L.ICmp IP.UGT currentCtxInt (0 `withWidth` 64) []
-
-cuInit :: MDHostCompile ()
-cuInit = checkCuResult "cuInit" =<< emitExternCall spec [L.ConstantOperand $ C.Int 32 0]
-  where spec = ExternFunSpec "cuInit" cuResultType [] [] [i32]
-
-cuCtxPushCurrent :: Operand -> MDHostCompile ()
-cuCtxPushCurrent ctx = checkCuResult "cuCtxPushCurrent" =<< emitExternCall spec [ctx]
-  where spec = ExternFunSpec "cuCtxPushCurrent" cuResultType [] [] [cuContextType]
-
-cuCtxGetCurrent :: MDHostCompile Operand
-cuCtxGetCurrent = do
-  ctxPtr <- alloca 1 cuContextType
-  checkCuResult "cuCtxGetCurrent" =<< emitExternCall spec [ctxPtr]
-  load ctxPtr
-  where spec = ExternFunSpec "cuCtxGetCurrent" cuResultType [] [] [L.ptr cuContextType]
-
-cuDeviceGet :: Operand -> MDHostCompile Operand
-cuDeviceGet ord = do
-  devPtr <- alloca 1 cuDeviceType
-  checkCuResult "cuDeviceGet" =<< emitExternCall spec [devPtr, ord]
-  load devPtr
-  where spec = ExternFunSpec "cuDeviceGet" cuResultType [] [] [L.ptr cuDeviceType, i32]
-
-cuDevicePrimaryCtxRetain :: Operand -> MDHostCompile Operand
-cuDevicePrimaryCtxRetain device = do
-  ctxptr <- alloca 1 cuContextType
-  checkCuResult "cuDevicePrimaryCtxRetain" =<< emitExternCall spec [ctxptr, device]
-  load ctxptr
-  where spec = ExternFunSpec "cuDevicePrimaryCtxRetain" cuResultType [] [] [L.ptr cuContextType, cuDeviceType]
-
-cuModuleLoadData :: String -> MDHostCompile Operand
-cuModuleLoadData ptx = do
-  mptr <- alloca 1 cuModuleType
-  ptxConst <- declareStringConst "ptxKernel" ptx
-  ptxConstVoid <- castLPtr L.VoidType ptxConst
-  checkCuResult "cuModuleLoadData" =<< emitExternCall spec [mptr, ptxConstVoid]
-  load mptr
-  where spec = ExternFunSpec "cuModuleLoadData" cuResultType [] [] [L.ptr cuModuleType, L.ptr L.VoidType]
-
-cuModuleGetFunction :: Operand -> String -> MDHostCompile Operand
-cuModuleGetFunction cuMod name = do
-  fptr <- alloca 1 cuFunctionType
-  nameConst <- declareStringConst "kernelName" name
-  checkCuResult "cuModuleGetFunction" =<< emitExternCall spec [fptr, cuMod, nameConst]
-  load fptr
-  where spec = ExternFunSpec "cuModuleGetFunction" cuResultType [] [] [L.ptr cuFunctionType, cuModuleType, L.ptr i8]
-
-cuLaunchKernel :: Operand -> (Operand, Operand, Operand) -> (Operand, Operand, Operand) -> [Operand] -> MDHostCompile ()
-cuLaunchKernel fun grid block args = do
-  kernelParams <- packArgs args
-  gridI32  <- makeDimArgs grid
-  blockI32 <- makeDimArgs block
-  checkCuResult "cuLaunchKernel" =<< emitExternCall spec
-    (  [fun]
-    ++ gridI32
-    ++ blockI32
-    ++ [L.ConstantOperand $ C.Int 32 0]       -- shared memory bytes per block
-    ++ [cuDefaultStream]                      -- stream
-    ++ [kernelParams]
-    ++ [L.ConstantOperand $ C.Null $ L.ptr $ L.ptr L.VoidType] -- extra
-    )
-  where
-    spec = ExternFunSpec "cuLaunchKernel" cuResultType [] []
-             [ cuFunctionType
-             , i32, i32, i32
-             , i32, i32, i32
-             , i32
-             , cuStreamType
-             , L.ptr $ L.ptr L.VoidType
-             , L.ptr $ L.ptr L.VoidType ]
-
-    makeDimArgs (x, y, z) = mapM (`asIntWidth` i32) [x, y, z]
+cuMemcpyHToD :: Operand -> Operand -> Operand -> MDHostCompile ()
+cuMemcpyHToD bytes refPtr valPtr = emitVoidExternCall spec [bytes, refPtr, valPtr]
+  where spec = ExternFunSpec "dex_cuMemcpyHtoD" L.VoidType [] [] [i64, voidp, voidp]
 
 cuMemAlloc :: L.Type -> Operand -> MDHostCompile Operand
-cuMemAlloc ty bytes = do
-  -- <sigh>, calling cuMemAlloc with a zero size is an error...
-  bytesIsNonZero <- bytes `ige` (1 `withWidth` 64)
-  bytesNonZero <- emitInstr i64 $ L.Select bytesIsNonZero bytes (1 `withWidth` 64) []
-  ptrptr <- alloca 1 $ L.ptr $ L.VoidType
-  checkCuResult "cuMemAlloc" =<< emitExternCall spec [ptrptr, bytesNonZero]
-  castLPtr ty =<< load ptrptr
-  where spec = ExternFunSpec "cuMemAlloc_v2" cuResultType [] [] [L.ptr $ L.ptr L.VoidType, i64]
+cuMemAlloc ty bytes = castLPtr ty =<< emitExternCall spec [bytes]
+  where spec = ExternFunSpec "dex_cuMemAlloc" voidp [] [] [i64]
 
 cuMemFree :: Operand -> MDHostCompile ()
 cuMemFree ptr = do
-  voidPtr <- castLPtr L.VoidType ptr
-  checkCuResult "cuMemFree" =<< emitExternCall spec [voidPtr]
-  where spec = ExternFunSpec "cuMemFree_v2" cuResultType [] [] [L.ptr L.VoidType]
+  voidPtr <- castVoidPtr ptr
+  emitVoidExternCall spec [voidPtr]
+  where spec = ExternFunSpec "dex_cuMemFree" L.VoidType [] [] [voidp]
 
 declareStringConst :: Monad m => Name -> String -> CompileT m Operand
 declareStringConst nameHint str = do
@@ -465,18 +348,6 @@ declareStringConst nameHint str = do
   let (ptr, [def]) = runModuleBuilder (ModuleBuilderState (SnocList []) mempty) $ globalStringPtr str name
   modify $ (\s -> s { globalDefs = def : (globalDefs s) })
   return $ L.ConstantOperand ptr
-
-checkCuResult :: String -> Operand -> MDHostCompile ()
-checkCuResult msg result = do
-  isOk <- emitInstr i1 $ L.ICmp IP.EQ result okResult []
-  compileIf isOk (return ()) $ do
-    msgConst <- declareStringConst "checkFailMsg" msg
-    _ <- emitExternCall putsSpec [msgConst]
-    emitVoidExternCall abortSpec []
-  where
-    okResult = L.ConstantOperand $ C.Int cuResultBitWidth 0
-    abortSpec = ExternFunSpec "abort" L.VoidType [] [] []
-    putsSpec = ExternFunSpec "puts" i32 [] [] [L.ptr i8]
 
 -- === GPU Kernel compilation ===
 
@@ -658,12 +529,12 @@ compileGenericInstr instr = case instr of
 
 packArgs :: Monad m => [Operand] -> CompileT m Operand
 packArgs elems = do
-  arr <- alloca (length elems) (L.ptr $ L.VoidType)
+  arr <- alloca (length elems) voidp
   forM_ (zip [0..] elems) $ \(i, e) -> do
     eptr <- alloca 1 $ L.typeOf e
     store eptr e
     earr <- gep arr $ i `withWidth` 32
-    store earr =<< castLPtr L.VoidType eptr
+    store earr =<< castVoidPtr eptr
   return arr
 
 unpackArgs :: Monad m => Operand -> [L.Type] -> CompileT m [Operand]
@@ -720,9 +591,6 @@ sub x y = emitInstr longTy $ L.Sub False False x y []
 mul :: Monad m => Operand -> Operand -> CompileT m Operand
 mul x y = emitInstr longTy $ L.Mul False False x y []
 
-div' :: Monad m => Operand -> Operand -> CompileT m Operand
-div' x y = emitInstr longTy $ L.SDiv False x y []
-
 gep :: Monad m => Operand -> Operand -> CompileT m Operand
 gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
 
@@ -749,6 +617,9 @@ free ptr = do
 
 castLPtr :: Monad m => L.Type -> Operand -> CompileT m Operand
 castLPtr ty ptr = emitInstr (L.ptr ty) $ L.BitCast ptr (L.ptr ty) []
+
+castVoidPtr :: Monad m => Operand -> CompileT m Operand
+castVoidPtr = castLPtr i8
 
 zeroExtendTo :: Monad m => Operand -> L.Type -> CompileT m Operand
 zeroExtendTo x t = emitInstr t $ L.ZExt x t []
@@ -959,6 +830,9 @@ i8 = L.IntegerType 8
 
 i1 :: L.Type
 i1 = L.IntegerType 1
+
+voidp :: L.Type
+voidp = L.ptr i8
 
 funTy :: L.Type -> [L.Type] -> L.Type
 funTy retTy argTys = L.ptr $ L.FunctionType retTy argTys False

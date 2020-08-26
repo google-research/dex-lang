@@ -372,19 +372,22 @@ instance Pretty ImpInstr where
   pretty (Free (v:>_))           = "free"  <+> p v
   pretty IThrowError = "throwError"
 
-instance Pretty (MDImpFunction k) where
+instance Pretty k => Pretty (MDImpFunction k) where
   pretty (MDImpFunction vsOut vsIn body) =
                    "in:        " <> p vsIn
     <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
 
-instance Pretty (MDImpInstr k) where
-  pretty (MDLaunch _ _ _) = "launch_kernel"
+instance Pretty k => Pretty (MDImpInstr k) where
+  pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
   pretty (MDAlloc t s)    = "device_alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
   pretty (MDFree v)       = "free" <+> p v
   pretty (MDLoadScalar v) = "device_load" <+> p v
   pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x
   pretty (MDHostInstr instr) = pretty instr
+
+instance Pretty ImpKernel where
+  pretty (ImpKernel args idxVar kernel) = parens (p idxVar <+> p args) <> nest 2 (hardline <> p kernel)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"

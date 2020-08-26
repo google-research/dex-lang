@@ -167,25 +167,88 @@ void dex_parallel_for(void *function_ptr, uint64_t size, void **args) {
 }
 
 #ifdef DEX_CUDA
-void check_result(const char *msg, int result) {
+
+} // extern "C"
+
+template<typename ...Args>
+using driver_func = CUresult(*)(Args...);
+
+template<typename ...Args1, typename ...Args2>
+void dex_check(const char* fname, driver_func<Args1...> f, Args2... args) {
+  auto result = f(args...);
   if (result != 0) {
-    printf("CUDA API error at %s: %d\n", msg, result);
+    const char* error_name = nullptr;
+    const char* error_msg = nullptr;
+    cuGetErrorName(result, &error_name);
+    cuGetErrorString(result, &error_msg);
+    if (!error_name) error_name = "unknown error";
+    if (!error_msg) error_msg = "Unknown error";
+    printf("CUDA driver error at %s (%s): %s\n", fname, error_name, error_msg);
+    std::abort();
   }
 }
 
+#define CHECK(f, ...) dex_check(#f, f, __VA_ARGS__)
+
+extern "C" {
+
 void* load_cuda_array(void* device_ptr, int64_t bytes) {
   void* host_ptr = malloc_dex(bytes);
-  check_result("cuMemcpyDtoH", cuMemcpyDtoH(host_ptr, (CUdeviceptr)device_ptr, bytes));
+  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
   return host_ptr;
 }
 
-void dex_load_cuda_scalar(int64_t bytes, void* device_ptr, void* host_ptr) {
-  check_result("cuMemcpyDtoH", cuMemcpyDtoH(host_ptr, (CUdeviceptr)device_ptr, bytes));
+void dex_cuMemcpyDtoH(int64_t bytes, char* device_ptr, char* host_ptr) {
+  CHECK(cuMemcpyDtoH, host_ptr, reinterpret_cast<CUdeviceptr>(device_ptr), bytes);
 }
 
-void dex_store_cuda_scalar(int64_t bytes, void* device_ptr, void* host_ptr) {
-  check_result("cuMemcpyHtoD", cuMemcpyHtoD((CUdeviceptr)device_ptr, host_ptr, bytes));
+void dex_cuMemcpyHtoD(int64_t bytes, char* device_ptr, char* host_ptr) {
+  CHECK(cuMemcpyHtoD, reinterpret_cast<CUdeviceptr>(device_ptr), host_ptr, bytes);
 }
+
+void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
+  CUmodule module;
+  CHECK(cuModuleLoadData, &module, kernel_text);
+  CUfunction kernel;
+  CHECK(cuModuleGetFunction, &kernel, module, "kernel");
+  const int64_t block_dim_x = 256;
+  const int64_t grid_dim_x = (iters + block_dim_x - 1) / block_dim_x;
+  CHECK(cuLaunchKernel, kernel,
+                        grid_dim_x, 1, 1,               // grid size
+                        block_dim_x, 1, 1,              // block size
+                        0,                              // shared memory
+                        CU_STREAM_LEGACY,               // stream
+                        reinterpret_cast<void**>(args), // kernel arguments
+                        nullptr);
+  CHECK(cuModuleUnload, module);
+}
+
+char* dex_cuMemAlloc(int64_t size) {
+  if (size == 0) return nullptr;
+  CUdeviceptr ptr;
+  CHECK(cuMemAlloc, &ptr, size);
+  return reinterpret_cast<char*>(ptr);
+}
+
+void dex_cuMemFree(char* ptr) {
+  if (!ptr) return;
+  CHECK(cuMemFree, reinterpret_cast<CUdeviceptr>(ptr));
+}
+
+void dex_ensure_has_cuda_context() {
+  CHECK(cuInit, 0);
+  CUcontext ctx;
+  CHECK(cuCtxGetCurrent, &ctx);
+  if (!ctx) {
+    CUdevice dev;
+    CHECK(cuDeviceGet, &dev, 0);
+    CHECK(cuDevicePrimaryCtxRetain, &ctx, dev);
+    CHECK(cuCtxPushCurrent, ctx);
+  }
+}
+
+#undef CHECK
+
 #endif
 
 } // end extern "C"
