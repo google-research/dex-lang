@@ -1129,12 +1129,12 @@ type IScope = Env IType
 class HasIVars a where
   freeIVars :: a -> IScope
 
+class BindsIVars a where
+  boundIVars :: a -> IScope
+
 -- XXX: Only for ScalarTableType!
 instance HasIVars Type where
-  freeIVars t = do
-    if null $ freeVars t
-      then mempty
-      else error "Not implemented!" -- TODO need fromScalarAtom here!
+  freeIVars t = fmap (\(BaseTy bt, _) -> IValType bt) $ freeVars t
 
 instance HasIVars IExpr where
   freeIVars e = case e of
@@ -1149,13 +1149,23 @@ instance HasIVars IType where
 
 instance HasIVars instr => HasIVars (IProg instr) where
   freeIVars Empty = mempty
-  freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` stmtBinders)
+  freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` boundIVars stmt)
     where
-      (stmtBinders, stmtFree) = case stmt of
-        IInstr (b, instr) -> (b @> (), freeIVars instr)
-        IFor _ b n p      -> (mempty , freeIVars n <> (freeIVars p `envDiff` (b @> ())))
-        IWhile c p        -> (mempty , freeIVars c <> freeIVars p)
-        ICond  c t f      -> (mempty , freeIVars c <> freeIVars t <> freeIVars f)
+      stmtFree = case stmt of
+        IInstr (_, instr) -> freeIVars instr
+        IFor _ b n p      -> freeIVars n <> (freeIVars p `envDiff` (b @> ()))
+        IWhile c p        -> freeIVars c <> freeIVars p
+        ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
+
+instance BindsIVars (IStmt instr) where
+  boundIVars stmt = case stmt of
+    IInstr (b, _) -> binderAsEnv b
+    IFor _ _ _ _  -> mempty
+    IWhile _ _    -> mempty
+    ICond _ _ _   -> mempty
+
+instance BindsIVars (IProg instr) where
+  boundIVars prog = foldMap boundIVars prog
 
 instance HasIVars ImpInstr where
   freeIVars i = case i of
@@ -1169,7 +1179,7 @@ instance HasIVars ImpInstr where
     IThrowError   -> mempty
 
 instance HasIVars instr => HasIVars (IProgVal instr) where
-  freeIVars (prog, val) = freeIVars prog <> (maybe mempty freeIVars val)
+  freeIVars (prog, val) = freeIVars prog <> (maybe mempty freeIVars val `envDiff` boundIVars prog)
 
 instance Semigroup (Nest a) where
   (<>) = mappend
