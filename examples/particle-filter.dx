@@ -1,0 +1,65 @@
+def Distribution (range:Type) : Type =
+  ( Key -> range
+  & range -> Float)
+
+def Model (state:Type) (observation:Type) : Type =
+  ( Distribution state                   -- initial state
+  & state -> Distribution state          -- dynamics
+  & state -> Distribution observation)   -- observations
+
+def sample (d: Distribution a) (k: Key) : a =
+  (sampler, _) = d
+  sampler k
+
+def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
+  (init, dynamics, observe) = model
+  (key, subkey) = splitKey key
+  s0 = sample init subkey
+  fst $ withState s0 \s_ref .
+    for i.
+      (k1, k2) = splitKey (ixkey key i)
+      s = get s_ref
+      s_next = sample (dynamics s) k1
+      v = sample (observe s) k2
+      s_ref := s_next
+      (s, v)
+
+def categorical (ps: n=>Float) (key: Key) : n = todo
+
+def filter (model: Model s v) (num_particles: Int) (num_timesteps: Int)
+    (obs: Fin num_timesteps=>v) (key: Key) : Fin num_timesteps => Fin num_particles => s =
+  (init, dynamics, observe) = model
+  (key, init_key) = splitKey key
+  particles = for i: (Fin num_particles). sample init (ixkey init_key i)
+  fst $ withState particles \p_ref .
+    for t: (Fin num_timesteps).
+      p: (Fin num_particles)=>s = get p_ref
+      likelihoods = for i. (snd (observe p.i)) obs.t
+      (resample_key, dynamics_key) = splitKey (ixkey key t)
+      p_resampled = for i. particles.(categorical likelihoods (ixkey resample_key i))
+      p_next = for i. (fst (dynamics p_resampled.i)) (ixkey dynamics_key i)
+      p_ref := p_next
+      p_resampled
+
+
+def normalDistn (mean: Float) (var: Float) : Distribution Float =
+  ( \k. (randn k) * (sqrt var) + mean
+  , \v. -0.5 * (sq (v - mean)) / var - 0.5 * log (2.0 * pi * var)
+  )
+
+gaussModel : Model Float Float =
+  ( normalDistn 0.1 0.1
+  , \s. normalDistn s 1.0
+  , \s. normalDistn s 0.1
+  )
+
+timesteps = 5
+num_particles = 3
+
+truth = simulate gaussModel timesteps (newKey 0)
+:p truth
+
+obs = for i. snd truth.i
+-- samples = filter gaussModel num_particles obs (newKey 0)
+-- estimated = for i. mean samples.i
+-- :p estimated
