@@ -177,9 +177,11 @@ toImpOp (maybeDest, op) = case op of
   IntAsIndex n i -> do
     let i' = fromScalarAtom i
     n' <- indexSetSize n
-    ans <- emitInstr $ liftInstr $ IPrimOp $
-             FFICall "int_to_index_set" (Scalar Int64Type) [i', n']
-    returnVal =<< intToIndex resultTy ans
+    cond <- emitInstr $ liftInstr $ IPrimOp $ ScalarBinOp (ICmp Less) i' n'
+    cond' <- cast cond tagBT
+    emitSwitch cond' [emitStatement $ IInstr (IDo, liftInstr $ IThrowError), return ()]
+    returnVal =<< intToIndex resultTy i'
+    where (BaseTy tagBT) = TagRepTy
   IdxSetSize n -> returnVal . toScalarAtom IdxRepTy =<< indexSetSize n
   IndexAsInt idx -> asInt $ case idx of
       Con (AnyValue t) -> anyValue t
@@ -862,6 +864,8 @@ instance MonadImp MDImpM (MDImpInstr ImpKernel) where
 
   translateExpr env (maybeDest, expr) = case expr of
       -- TODO: Add support for reductions
+      -- TODO: Not every parallel for can be made a kernel, since we don't
+      --       lift large allocations just yet.
       Hof (For _ (LamVal b body)) | isPure expr -> do
         idxTy <- impSubst env $ binderType b
         n     <- indexSetSize idxTy

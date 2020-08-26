@@ -32,14 +32,6 @@ void free_dex(char* ptr) {
   free(ptr);
 }
 
-long int_to_index_set(long i, long n) {
-  if (i < 0 || i >= n) {
-    printf("Index out of bounds. %ld not in [0, %ld)\n", i, n);
-    exit(1);
-  }
-  return i;
-}
-
 uint32_t rotate_left(uint32_t x, uint32_t d) {
   return (x << d) | (x >> (32 - d));
 }
@@ -207,6 +199,7 @@ void dex_cuMemcpyHtoD(int64_t bytes, char* device_ptr, char* host_ptr) {
 }
 
 void dex_cuLaunchKernel(const void* kernel_text, int64_t iters, char** args) {
+  if (iters == 0) return;
   CUmodule module;
   CHECK(cuModuleLoadData, &module, kernel_text);
   CUfunction kernel;

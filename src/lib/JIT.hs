@@ -437,7 +437,7 @@ gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
 
 compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpKernelInstr _ instr = case instr of
-  IThrowError      -> error $ "Throwing exceptions from GPU kernels is not supported yet"
+  IThrowError      -> return Nothing
   Free  _          -> return Nothing  -- Can only alloca inside a kernel
   Alloc t numel    -> Just    <$> case numel of
     ILit l | n <- getIntLit l, n <= 256 -> alloca n elemTy
