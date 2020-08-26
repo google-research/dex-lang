@@ -230,20 +230,24 @@ topLet :: Parser UDecl
 topLet = do
   lAnn <- (char '@' >> letAnnStr <* (void eol <|> sc)) <|> return PlainLet
   ~(ULet _ (p, ann) rhs, pos) <- withPos decl
-  let ann' = fmap (addImplicitImplicitArgs pos) ann
-  return $ ULet lAnn (p, ann') rhs
+  let (ann', rhs') = addImplicitImplicitArgs pos ann rhs
+  return $ ULet lAnn (p, ann') rhs'
   where
-    addImplicitImplicitArgs :: SrcPos -> UType -> UType
-    addImplicitImplicitArgs pos ty = foldr (addImplicitArg pos) ty implicitVars
+    addImplicitImplicitArgs :: SrcPos -> Maybe UType -> UExpr -> (Maybe UType, UExpr)
+    addImplicitImplicitArgs _ Nothing e = (Nothing, e)
+    addImplicitImplicitArgs pos (Just ty) e =
+      let (ty', e') = foldr (addImplicitArg pos) (ty,e) implicitVars
+      in (Just ty', e')
       where
         implicitVars = filter isLowerCaseName $ envNames $ freeUVars ty
         isLowerCaseName :: Name -> Bool
         isLowerCaseName (Name _ tag _) = isLower $ head $ tagToStr tag
         isLowerCaseName _ = False
 
-    addImplicitArg :: SrcPos -> Name -> UType -> UType
-    addImplicitArg pos v ty =
-      WithSrc pos $ UPi (Bind (v:>uTyKind)) ImplicitArrow ty
+    addImplicitArg :: SrcPos -> Name -> (UType, UExpr) -> (UType, UExpr)
+    addImplicitArg pos v (ty, e) =
+      ( WithSrc pos $ UPi  (Bind (v:>uTyKind)) ImplicitArrow ty
+      , WithSrc pos $ ULam (WithSrc pos (UPatBinder (Bind (v:>()))), Just uTyKind) ImplicitArrow e)
       where
         k = if v == mkName "eff" then EffectRowKind else TypeKind
         uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k

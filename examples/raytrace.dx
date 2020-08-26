@@ -25,8 +25,7 @@ def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
--- TODO: put `n` and `a` in scope in body
-def reverse (n:Type) ?-> (a:Type) ?-> (x:n=>a) : n=>a =
+def reverse (x:n=>a) : n=>a =
   s = size n
   for i. x.((s - 1 - ordinal i)@_)
 
