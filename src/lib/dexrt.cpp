@@ -20,10 +20,12 @@ extern "C" {
 char* malloc_dex(int64_t nbytes) {
   // XXX: Changes to this value might require additional changes to parameter attributes in LLVM
   static const int64_t alignment = 64;
-  // Round nbytes up to the nearest multiple of alignment, as required by the C11 standard.
-  nbytes = ((nbytes + alignment - 1) / alignment) * alignment;
-  char* result = reinterpret_cast<char*>(aligned_alloc(alignment, nbytes));
-  return result;
+  char *ptr;
+  if (posix_memalign(reinterpret_cast<void**>(&ptr), alignment, nbytes)) {
+    fprintf(stderr, "Failed to allocate %ld bytes", (long)nbytes);
+    std::abort();
+  }
+  return ptr;
 }
 
 void free_dex(char* ptr) {
