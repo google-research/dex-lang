@@ -928,7 +928,7 @@ mathFlags :: L.FastMathFlags
 mathFlags = L.noFastMathFlags { L.allowContract = True }
 
 mallocFun :: ExternFunSpec
-mallocFun = ExternFunSpec "malloc_dex" (L.ptr L.VoidType) [L.NoAlias] [] [i64]
+mallocFun = ExternFunSpec "malloc_dex" (L.ptr i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]

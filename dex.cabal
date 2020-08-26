@@ -47,7 +47,7 @@ library
   hs-source-dirs:      src/lib
   ghc-options:         -Wall -O0
   cxx-sources:         src/lib/dexrt.cpp
-  cxx-options:         -std=c++17
+  cxx-options:         -std=c++11
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
   if flag(cuda)
