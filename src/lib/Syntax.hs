@@ -1262,10 +1262,10 @@ pattern CharLit x = Con (CharCon (Con (Lit (Int8Lit x))))
 
 -- Type used to represent indices at run-time
 pattern IdxRepTy :: Type
-pattern IdxRepTy = TC (BaseType (Scalar Int64Type))
+pattern IdxRepTy = TC (BaseType (Scalar Int32Type))
 
-pattern IdxRepVal :: Int64 -> Atom
-pattern IdxRepVal x = Con (Lit (Int64Lit x))
+pattern IdxRepVal :: Int32 -> Atom
+pattern IdxRepVal x = Con (Lit (Int32Lit x))
 
 -- Type used to represent sum type tags at run-time
 pattern TagRepTy :: Type
@@ -1310,7 +1310,7 @@ pattern EffKind = TC EffectRowKind
 pattern LabeledRowKind :: Kind
 pattern LabeledRowKind = TC LabeledRowKindTC
 
-pattern FixedIntRange :: Int64 -> Int64 -> Type
+pattern FixedIntRange :: Int32 -> Int32 -> Type
 pattern FixedIntRange low high = TC (IntRange (IdxRepVal low) (IdxRepVal high))
 
 pattern PureArrow :: Arrow

@@ -98,7 +98,7 @@ compileImpInstr isLocal instr = case instr of
   IThrowError   -> Nothing <$  throwRuntimeError
   Alloc t numel -> Just    <$> case numel of
     ILit l | n <- getIntLit l, isLocal && n <= 256 -> alloca n elemTy
-    _ -> malloc elemTy =<< mul (sizeof elemTy) =<< compileExpr numel
+    _ -> malloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr numel
     where elemTy = scalarTy $ scalarTableBaseType t
   Free v' -> do
     ~v@(L.LocalReference _ vn) <- lookupImpVar v'
@@ -177,24 +177,24 @@ compilePrimOp pop = case pop of
 compileUnOp :: Monad m => UnOp -> Operand -> CompileT m Operand
 compileUnOp op x = case op of
   -- LLVM has "fneg" but it doesn't seem to be exposed by llvm-hs-pure
-  FNeg            -> emitInstr floatTy $ L.FSub mathFlags (litVal $ Float64Lit 0.0) x []
+  FNeg            -> emitInstr (L.typeOf x) $ L.FSub mathFlags (0.0 `withWidthOfFP` x) x []
   BNot            -> emitInstr boolTy $ L.Xor x (1 `withWidth` 8) []
   _               -> unaryIntrinsic op x
 
 compileBinOp :: Monad m => BinOp -> Operand -> Operand -> CompileT m Operand
 compileBinOp op x y = case op of
-  IAdd   -> emitInstr longTy $ L.Add False False x y []
-  ISub   -> emitInstr longTy $ L.Sub False False x y []
-  IMul   -> emitInstr longTy $ L.Mul False False x y []
-  IDiv   -> emitInstr longTy $ L.SDiv False x y []
-  IRem   -> emitInstr longTy $ L.SRem x y []
+  IAdd   -> emitInstr (L.typeOf x) $ L.Add False False x y []
+  ISub   -> emitInstr (L.typeOf x) $ L.Sub False False x y []
+  IMul   -> emitInstr (L.typeOf x) $ L.Mul False False x y []
+  IDiv   -> emitInstr (L.typeOf x) $ L.SDiv False x y []
+  IRem   -> emitInstr (L.typeOf x) $ L.SRem x y []
   FPow   -> binaryIntrinsic FPow x y
-  FAdd   -> emitInstr floatTy $ L.FAdd mathFlags x y []
-  FSub   -> emitInstr floatTy $ L.FSub mathFlags x y []
-  FMul   -> emitInstr floatTy $ L.FMul mathFlags x y []
-  FDiv   -> emitInstr floatTy $ L.FDiv mathFlags x y []
-  BAnd   -> emitInstr boolTy $ L.And x y []
-  BOr    -> emitInstr boolTy $ L.Or  x y []
+  FAdd   -> emitInstr (L.typeOf x) $ L.FAdd mathFlags x y []
+  FSub   -> emitInstr (L.typeOf x) $ L.FSub mathFlags x y []
+  FMul   -> emitInstr (L.typeOf x) $ L.FMul mathFlags x y []
+  FDiv   -> emitInstr (L.typeOf x) $ L.FDiv mathFlags x y []
+  BAnd   -> emitInstr (L.typeOf x) $ L.And x y []
+  BOr    -> emitInstr (L.typeOf x) $ L.Or  x y []
   ICmp c -> emitInstr i1 (L.ICmp (intCmpOp   c) x y []) >>= (`zeroExtendTo` boolTy)
   FCmp c -> emitInstr i1 (L.FCmp (floatCmpOp c) x y []) >>= (`zeroExtendTo` boolTy)
   where
@@ -292,12 +292,13 @@ compileMDImpInstrCUDA isLocal instrExt = do
     Right instr -> case instr of
       MDLaunch size args (PTXKernel ptx) -> do
         argOps <- traverse lookupImpVar args
-        sizeOp <- compileExpr size
+        sizeOp <- (`asIntWidth` i64) =<< compileExpr size
         kernelParams <- packArgs $ sizeOp : argOps
         ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" ptx
         launchCUDAKernel ptxConst sizeOp kernelParams
         return Nothing
-      MDAlloc  t s           -> Just <$> (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< compileExpr s)
+      MDAlloc  t s           -> Just <$>
+        (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s)
         where elemTy = scalarTy $ scalarTableBaseType t
       MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing
       MDLoadScalar  v        -> do
@@ -353,11 +354,11 @@ declareStringConst nameHint str = do
 impKernelToLLVM :: ImpKernel -> LLVMKernel
 impKernelToLLVM (ImpKernel args lvar prog) = runCompile gpuInitCompileEnv $ do
   (argParams, argOperands) <- unzip <$> mapM (freshParamOpPair ptrParamAttrs) argTypes
-  (sizeParam, sizeOperand) <- freshParamOpPair [] longTy
+  (sizeParam, sizeOperand) <- freshParamOpPair [] lidxType
   tidx <- threadIdxX
   bidx <- blockIdxX
   bsz  <- blockDimX
-  lidx <- mul bidx bsz >>= (add tidx)
+  lidx <- mul bidx bsz >>= (add tidx) >>= (`asIntWidth` lidxType)
   outOfBounds <- emitInstr i1 $ L.ICmp IP.UGE lidx sizeOperand []
   compileIf outOfBounds (return ()) $ do
     let paramEnv = foldMap (uncurry (@>)) $ zip args argOperands
@@ -366,11 +367,12 @@ impKernelToLLVM (ImpKernel args lvar prog) = runCompile gpuInitCompileEnv $ do
   kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
+    lidxType = fromIValType $ binderAnn lvar
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
     argTypes = fmap ((fromIType $ L.AddrSpace 1) . binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
-      [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (longTy : argTypes)) "kernel"
+      [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (lidxType : argTypes)) "kernel"
       , Just $ L.MDString "kernel"
       , Just $ L.MDValue $ L.ConstantOperand $ C.Int 32 1
       ]
@@ -392,15 +394,15 @@ ptxDataLayout = (L.defaultDataLayout L.LittleEndian)
     }
 
 threadIdxX :: Compile Operand
-threadIdxX = emitExternCall spec [] >>= (`zeroExtendTo` longTy)
+threadIdxX = emitExternCall spec []
   where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.tid.x"
 
 blockIdxX :: Compile Operand
-blockIdxX = emitExternCall spec [] >>= (`zeroExtendTo` longTy)
+blockIdxX = emitExternCall spec []
   where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.ctaid.x"
 
 blockDimX :: Compile Operand
-blockDimX = emitExternCall spec [] >>= (`zeroExtendTo` longTy)
+blockDimX = emitExternCall spec []
   where spec = ptxSpecialReg "llvm.nvvm.read.ptx.sreg.ntid.x"
 
 ptxSpecialReg :: L.Name -> ExternFunSpec
@@ -409,32 +411,40 @@ ptxSpecialReg name = ExternFunSpec name i32 [] [FA.ReadNone, FA.NoUnwind] []
 gpuInitCompileEnv :: Monad m => CompileEnv m
 gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
   where
-    gpuUnaryIntrinsics op x = case op of
-      Exp    -> callFloatIntrinsic "__nv_exp"
-      Exp2   -> callFloatIntrinsic "__nv_exp2"
-      Log    -> callFloatIntrinsic "__nv_log"
-      Log2   -> callFloatIntrinsic "__nv_log2"
-      Log10  -> callFloatIntrinsic "__nv_log10"
-      Log1p  -> callFloatIntrinsic "__nv_log1p"
-      Sin    -> callFloatIntrinsic "__nv_sin"
-      Cos    -> callFloatIntrinsic "__nv_cos"
-      Tan    -> callFloatIntrinsic "__nv_tan"
-      Sqrt   -> callFloatIntrinsic "__nv_sqrt"
-      Floor  -> callFloatIntrinsic "__nv_floor"
-      Ceil   -> callFloatIntrinsic "__nv_ceil"
-      Round  -> callFloatIntrinsic "__nv_round"
-      LGamma -> callFloatIntrinsic "__nv_lgamma"
-      _   -> error $ "Unsupported GPU operation: " ++ show op
+    gpuUnaryIntrinsics op x = case L.typeOf x of
+      L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ""
+      L.FloatingPointType L.FloatFP  -> dispatchOp fp32 "f"
+      _ -> error $ "Unsupported GPU floating point type: " ++ show (L.typeOf x)
       where
-        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
-        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x]
+        dispatchOp ty suffix = case op of
+          Exp    -> callFloatIntrinsic ty $ "__nv_exp"    ++ suffix
+          Exp2   -> callFloatIntrinsic ty $ "__nv_exp2"   ++ suffix
+          Log    -> callFloatIntrinsic ty $ "__nv_log"    ++ suffix
+          Log2   -> callFloatIntrinsic ty $ "__nv_log2"   ++ suffix
+          Log10  -> callFloatIntrinsic ty $ "__nv_log10"  ++ suffix
+          Log1p  -> callFloatIntrinsic ty $ "__nv_log1p"  ++ suffix
+          Sin    -> callFloatIntrinsic ty $ "__nv_sin"    ++ suffix
+          Cos    -> callFloatIntrinsic ty $ "__nv_cos"    ++ suffix
+          Tan    -> callFloatIntrinsic ty $ "__nv_tan"    ++ suffix
+          Sqrt   -> callFloatIntrinsic ty $ "__nv_sqrt"   ++ suffix
+          Floor  -> callFloatIntrinsic ty $ "__nv_floor"  ++ suffix
+          Ceil   -> callFloatIntrinsic ty $ "__nv_ceil"   ++ suffix
+          Round  -> callFloatIntrinsic ty $ "__nv_round"  ++ suffix
+          LGamma -> callFloatIntrinsic ty $ "__nv_lgamma" ++ suffix
+          _   -> error $ "Unsupported GPU operation: " ++ show op
+        floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty]
+        callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]
 
-    gpuBinaryIntrinsics op x y = case op of
-      FPow -> callFloatIntrinsic "__nv_pow"
-      _    -> error $ "Unsupported GPU operation: " ++ show op
+    gpuBinaryIntrinsics op x y = case L.typeOf x of
+      L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ""
+      L.FloatingPointType L.FloatFP  -> dispatchOp fp32 "f"
+      _ -> error $ "Unsupported GPU floating point type: " ++ show (L.typeOf x)
       where
-        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy, floatTy]
-        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x, y]
+        dispatchOp ty suffix = case op of
+          FPow -> callFloatIntrinsic ty $ "__nv_pow" ++ suffix
+          _    -> error $ "Unsupported GPU operation: " ++ show op
+        floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
+        callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
 
 compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpKernelInstr _ instr = case instr of
@@ -467,7 +477,7 @@ compileFunction attrs compileInstr outBinders inBinders stmts = runCompileT cpuI
   let params = outParams ++ inParams
   let paramTypes = fmap L.typeOf params
   mainFun <- makeFunction "mainFun" params (Just $ 0 `withWidth` 64)
-  let mainFunOp = callableOperand (funTy longTy paramTypes) "mainFun"
+  let mainFunOp = callableOperand (funTy i64 paramTypes) "mainFun"
   let entryFun = makeEntryPoint "entryFun" paramTypes mainFunOp
   LLVMFunction numOutputs <$> makeModule [L.GlobalDefinition mainFun,
                                           L.GlobalDefinition entryFun]
@@ -516,7 +526,7 @@ compileGenericInstr instr = case instr of
   IOffset x off _  -> Just    <$> bindM2 gep   (compileExpr x)    (compileExpr off)
   ICastOp idt ix   -> Just    <$> do
     x <- compileExpr ix
-    let (xt, dt) = (L.typeOf x, fromIType undefined idt)
+    let (xt, dt) = (L.typeOf x, fromIValType idt)
     case (xt, dt) of
       (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
       (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
@@ -570,6 +580,12 @@ withWidthOf x template = case L.typeOf template of
   L.IntegerType bits -> x `withWidth` (fromIntegral bits)
   _ -> error $ "Expected an integer: " ++ show template
 
+withWidthOfFP :: Double -> Operand -> Operand
+withWidthOfFP x template = case L.typeOf template of
+  L.FloatingPointType L.DoubleFP -> litVal $ Float64Lit x
+  L.FloatingPointType L.FloatFP  -> litVal $ Float32Lit $ realToFrac x
+  _ -> error $ "Unsupported floating point type: " ++ show (L.typeOf template)
+
 store :: Monad m => Operand -> Operand -> CompileT m ()
 store ptr x =  addInstr $ L.Do $ L.Store False ptr x Nothing 0 []
 
@@ -584,19 +600,19 @@ ige :: Monad m => Operand -> Operand -> CompileT m Operand
 ige x y = emitInstr i1 $ L.ICmp IP.SGE x y []
 
 add :: Monad m => Operand -> Operand -> CompileT m Operand
-add x y = emitInstr longTy $ L.Add False False x y []
+add x y = emitInstr (L.typeOf x) $ L.Add False False x y []
 
 sub :: Monad m => Operand -> Operand -> CompileT m Operand
-sub x y = emitInstr longTy $ L.Sub False False x y []
+sub x y = emitInstr (L.typeOf x) $ L.Sub False False x y []
 
 mul :: Monad m => Operand -> Operand -> CompileT m Operand
-mul x y = emitInstr longTy $ L.Mul False False x y []
+mul x y = emitInstr (L.typeOf x) $ L.Mul False False x y []
 
 gep :: Monad m => Operand -> Operand -> CompileT m Operand
 gep ptr i = emitInstr (L.typeOf ptr) $ L.GetElementPtr False ptr [i] []
 
 sizeof :: L.Type -> Operand
-sizeof t = (L.ConstantOperand $ C.ZExt (C.sizeof t) longTy)
+sizeof t = (L.ConstantOperand $ C.ZExt (C.sizeof t) i64)
 
 alloca :: Monad m => Int -> L.Type -> CompileT m Operand
 alloca elems ty = do
@@ -659,6 +675,11 @@ fromIType addrSpace it = case it of
   IRefType t -> L.PointerType (scalarTy $ scalarTableBaseType t) addrSpace
   IVoidType  -> L.VoidType
 
+fromIValType :: IType -> L.Type
+fromIValType ty = case ty of
+  IValType b -> scalarTy b
+  _ -> error $ "Not an IValType: " ++ pprint ty
+
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
 
@@ -696,32 +717,40 @@ externDecl (ExternFunSpec fname retTy retAttrs funAttrs argTys) =
 cpuInitCompileEnv :: Monad m => CompileEnv m
 cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
   where
-    cpuUnaryIntrinsics op x = case op of
-      Exp             -> callFloatIntrinsic "llvm.exp.f64"
-      Exp2            -> callFloatIntrinsic "llvm.exp2.f64"
-      Log             -> callFloatIntrinsic "llvm.log.f64"
-      Log2            -> callFloatIntrinsic "llvm.log2.f64"
-      Log10           -> callFloatIntrinsic "llvm.log10.f64"
-      Log1p           -> callFloatIntrinsic "log1p"
-      Sin             -> callFloatIntrinsic "llvm.sin.f64"
-      Cos             -> callFloatIntrinsic "llvm.cos.f64"
-      Tan             -> callFloatIntrinsic "tan"
-      Sqrt            -> callFloatIntrinsic "llvm.sqrt.f64"
-      Floor           -> callFloatIntrinsic "llvm.floor.f64"
-      Ceil            -> callFloatIntrinsic "llvm.ceil.f64"
-      Round           -> callFloatIntrinsic "llvm.round.f64"
-      LGamma          -> callFloatIntrinsic "lgamma"
-      _ -> error $ "Unsupported CPU operation: " ++ show op
+    cpuUnaryIntrinsics op x = case L.typeOf x of
+      L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64" ""
+      L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32" "f"
+      _ -> error $ "Unsupported CPU floating point type: " ++ show (L.typeOf x)
       where
-        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy]
-        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x]
+        dispatchOp ty llvmSuffix libmSuffix = case op of
+          Exp             -> callFloatIntrinsic ty $ "llvm.exp"   ++ llvmSuffix
+          Exp2            -> callFloatIntrinsic ty $ "llvm.exp2"  ++ llvmSuffix
+          Log             -> callFloatIntrinsic ty $ "llvm.log"   ++ llvmSuffix
+          Log2            -> callFloatIntrinsic ty $ "llvm.log2"  ++ llvmSuffix
+          Log10           -> callFloatIntrinsic ty $ "llvm.log10" ++ llvmSuffix
+          Log1p           -> callFloatIntrinsic ty $ "log1p"      ++ libmSuffix
+          Sin             -> callFloatIntrinsic ty $ "llvm.sin"   ++ llvmSuffix
+          Cos             -> callFloatIntrinsic ty $ "llvm.cos"   ++ llvmSuffix
+          Tan             -> callFloatIntrinsic ty $ "tan"        ++ libmSuffix
+          Sqrt            -> callFloatIntrinsic ty $ "llvm.sqrt"  ++ llvmSuffix
+          Floor           -> callFloatIntrinsic ty $ "llvm.floor" ++ llvmSuffix
+          Ceil            -> callFloatIntrinsic ty $ "llvm.ceil"  ++ llvmSuffix
+          Round           -> callFloatIntrinsic ty $ "llvm.round" ++ llvmSuffix
+          LGamma          -> callFloatIntrinsic ty $ "lgamma"     ++ libmSuffix
+          _ -> error $ "Unsupported CPU operation: " ++ show op
+        floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty]
+        callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x]
 
-    cpuBinaryIntrinsics op x y = case op of
-      FPow -> callFloatIntrinsic "llvm.pow.f64"
-      _ -> error $ "Unsupported CPU operation: " ++ show op
+    cpuBinaryIntrinsics op x y = case L.typeOf x of
+      L.FloatingPointType L.DoubleFP -> dispatchOp fp64 ".f64"
+      L.FloatingPointType L.FloatFP  -> dispatchOp fp32 ".f32"
+      _ -> error $ "Unsupported CPU floating point type: " ++ show (L.typeOf x)
       where
-        floatIntrinsic name = ExternFunSpec name floatTy [] [] [floatTy, floatTy]
-        callFloatIntrinsic name = emitExternCall (floatIntrinsic name) [x, y]
+        dispatchOp ty llvmSuffix = case op of
+          FPow -> callFloatIntrinsic ty $ "llvm.pow" ++ llvmSuffix
+          _ -> error $ "Unsupported CPU operation: " ++ show op
+        floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
+        callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
 
 -- === Compile monad utilities ===
 
@@ -806,12 +835,6 @@ mallocFun = ExternFunSpec "malloc_dex" (L.ptr i8) [L.NoAlias] [] [i64]
 
 freeFun :: ExternFunSpec
 freeFun = ExternFunSpec "free_dex" L.VoidType [] [] [L.ptr i8]
-
-longTy :: L.Type
-longTy = i64
-
-floatTy :: L.Type
-floatTy = fp64
 
 boolTy :: L.Type
 boolTy = i8

@@ -661,12 +661,17 @@ zeroDest :: MonadImp m instr => Dest -> m ()
 zeroDest dest = mapM_ (initializeZero . IVar) (destArrays dest)
   where
     initializeZero ref = case impExprType ref of
-      IRefType (BaseTy (Scalar Float64Type)) -> store ref (ILit $ Float64Lit 0.0)
-      IRefType (BaseTy (Vector Float64Type)) -> store ref (ILit $ VecLit $ replicate vectorWidth $ Float64Lit 0.0)
+      IRefType (BaseTy bt) -> store ref $ ILit $ zero bt
       IRefType (TabTy b _) -> do
         n <- indexSetSize $ binderType b
         emitLoop "i" Fwd n $ \i -> impGet ref i >>= initializeZero
-      ty -> error $ "Zeros not implemented for type: " ++ pprint ty
+      ty -> unreachable ty
+    zero bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector t           -> VecLit $ replicate vectorWidth $ zero (Scalar t)
+      _ -> unreachable $ BaseTy bt
+    unreachable ty = error $ "Zeros not implemented for type: " ++ pprint ty
 
 addToAtom :: MonadImp m instr => Dest -> Atom -> m ()
 addToAtom topDest topSrc = zipWithDest topDest topSrc addToDestScalar

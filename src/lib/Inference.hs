@@ -250,8 +250,8 @@ checkOrInferRho (WithSrc pos expr) reqTy =
     value' <- zonk =<< (checkRho value $ VariantTy $ Ext NoLabeledItems $ Just row)
     prev <- mapM (\() -> freshType TyKind) labels
     matchRequirement =<< emit (Op $ VariantLift prev value')
-  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int64Lit $ fromIntegral x
-  UFloatLit x -> matchRequirement $ Con $ Lit  $ Float64Lit x
+  UIntLit  x  -> matchRequirement $ Con $ Lit  $ Int32Lit $ fromIntegral x
+  UFloatLit x -> matchRequirement $ Con $ Lit  $ Float32Lit $ realToFrac x
   -- TODO: Make sure that this conversion is not lossy!
   UCharLit x  -> matchRequirement $ CharLit $ fromIntegral $ fromEnum x
   where

@@ -16,8 +16,8 @@ Int8  = %Int8
 Float64 = %Float64
 Float32 = %Float32
 
-Int = Int64
-Float = Float64
+Int = Int32
+Float = Float32
 
 def internalCast (b:Type) (x:a) : b = %cast b x
 
@@ -107,7 +107,7 @@ def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> sca
 def (/) (_:VSpace a) ?=> (v:a) (s:Float) : a = (fdiv 1.0 s) .* v
 def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 
-@instance floatVS : VSpace Float = MkVSpace float64Add (*)
+@instance floatVS : VSpace Float = MkVSpace float32Add (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
 
@@ -161,8 +161,8 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
 
 def BToI (x:Bool) : Int  =
   case x of
-    False -> (I64ToI 0)
-    True  -> (I64ToI 1)
+    False -> 0
+    True  -> 1
 
 def BToF (x:Bool) : Float = IToF (BToI x)
 def todo (a:Type) ?-> : a = %throwError a
@@ -317,7 +317,7 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
 
 'Misc
 
-pi : Float = (F64ToF 3.141592653589793)
+pi : Float = 3.141592653589793
 
 def id (x:a) : a = x
 def dup (x:a) : (a & a) = (x, x)

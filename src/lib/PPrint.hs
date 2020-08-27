@@ -127,7 +127,7 @@ instance PrettyPrec LitVal where
   prettyPrec (Int32Lit   x) = atPrec ArgPrec $ p x
   prettyPrec (Int8Lit    x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
-  prettyPrec (Float32Lit x) = atPrec ArgPrec $ printDouble $ realToFrac x
+  prettyPrec (Float32Lit x) = atPrec ArgPrec $ p x
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty Block where

@@ -22,4 +22,4 @@ numSamps = 1000000
 > (3.143452, 1.6408893)
 
 :p meanAndStdDev numSamps estimatePiAvgVal (newKey 0)
-> (3.1412401, 0.89244914)
+> (3.1437902, 0.8864992)

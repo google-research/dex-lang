@@ -105,13 +105,13 @@ fun = \y. sum (map IToF arr) + y
 > 1.4142135
 
 :p sin 3.14159
-> 2.6535897e-6
+> 2.5351817e-6
 
 :p cos 0.0
 > 1.0
 
 :p tan 1.57079
-> 158057.9
+> 159378.27
 
 :p FToI $ floor 3.6
 > 3
@@ -214,12 +214,12 @@ litArr = [10, 5, 3]
 :p
    k = newKey 0
    mean for i:(Fin 100). randn (ixkey k i)
-> -0.115799494
+> -0.1157995
 
 :p
    k = newKey 0
    mean for i:(Fin 100). sq $ randn (ixkey k i)
-> 1.2581897
+> 1.2581898
 
 :p for i:(Fin 3) j:(Fin 2). rand $ ixkey2 (newKey 11) i j
 > [[0.47415292, 0.9145164], [0.7944602, 0.27679908], [0.58958626, 0.7116251]]
@@ -754,9 +754,9 @@ hard = [(-1000.0), 1000.0, 1000.0, 0.1, 0.0]
 > True
 
 :p sum for i. exp $ (logsoftmax hard).i
-> 1.0
+> 0.9999709
 
-:p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0000001
+:p all for i. abs ((softmax hard).i - exp (logsoftmax hard).i) < 0.0001
 > True
 
 :p evalpoly [2.0, 3.0, 4.0] 10.0
