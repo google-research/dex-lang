@@ -4,8 +4,6 @@
 [JAX implementation](https://github.com/ericjang/pt-jax/blob/master/jaxpt_vmap.ipynb),
 described
 [here](https://blog.evjang.com/2019/11/jaxpt.html).
-Specifically, it's based on his unrolled ```lax.scan``` version.
-
 
 ' ### Generic Helper Functions
 Some of these should probably go in prelude.
@@ -25,10 +23,6 @@ def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
-def reverse (x:n=>a) : n=>a =
-  s = size n
-  for i. x.((s - 1 - ordinal i)@_)
-
 def sampleAveraged (_:VSpace a) ?=> (sample:Key -> a) (n:Int) (k:Key) : a =
   snd $ withState zero \total.
     for i:(Fin n).
@@ -44,27 +38,6 @@ def addAt (_:Eq n) ?=> (_:VSpace a) ?=> (xs:n=>a) (i:n) (x:a) : n=>a =
 def gradNumerical (n:Int) ?-> (f:Vec n -> Float) (xs:Vec n) : Vec n =
   eps = 0.0001
   for i. (f (addAt xs i eps) - f (addAt xs i (neg eps))) / (2.0 * eps)
-
-data IterResult a:Type b:Type =
-  Continue a
-  Done b
-
--- A little iteration combinator
--- TODO: allow effects (currently there's some type inference bug preventing it)
-def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
-  result = snd $ withState Nothing \resultRef.
-    withState init \carryRef.
-      withState 0 \i.
-        while (\(). isNothing (get resultRef)) \().
-          case body (get i) (get carryRef) of
-            Continue carry ->
-              i := get i + 1
-              carryRef := carry
-            Done result ->
-              resultRef := Just result
-  case result of
-    Just ans -> ans
-    Nothing -> todo  -- should be unreachable
 
 ' ### 3D Helper Functions
 

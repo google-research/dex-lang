@@ -1,6 +1,6 @@
 def Distribution (range:Type) : Type =
   ( Key -> range
-  & range -> Float)
+  & range -> Float)  -- log prob
 
 def Model (state:Type) (observation:Type) : Type =
   ( Distribution state                   -- initial state
@@ -24,23 +24,26 @@ def simulate (model: Model s v) (t: Int) (key: Key) : Fin t=>(s & v) =
       s_ref := s_next
       (s, v)
 
-def categorical (ps: n=>Float) (key: Key) : n = todo
-
-def filter (model: Model s v) (num_particles: Int) (num_timesteps: Int)
-    (obs: Fin num_timesteps=>v) (key: Key) : Fin num_timesteps => Fin num_particles => s =
+def filter
+    (num_particles: Int) (num_timesteps: Int)
+    (model: Model s v)
+    (summarize: (Fin num_particles => s) -> a)
+    (obs: Fin num_timesteps=>v)
+    (key: Key)
+    : Fin num_timesteps => a =
   (init, dynamics, observe) = model
   (key, init_key) = splitKey key
-  particles = for i: (Fin num_particles). sample init (ixkey init_key i)
-  fst $ withState particles \p_ref .
+  init_particles = for i: (Fin num_particles). sample init (ixkey init_key i)
+  fst $ withState init_particles \p_ref .
     for t: (Fin num_timesteps).
-      p: (Fin num_particles)=>s = get p_ref
-      likelihoods = for i. (snd (observe p.i)) obs.t
+      p_prev = get p_ref
+      logLikelihoods = for i. snd (observe p_prev.i) obs.t
       (resample_key, dynamics_key) = splitKey (ixkey key t)
-      p_resampled = for i. particles.(categorical likelihoods (ixkey resample_key i))
-      p_next = for i. (fst (dynamics p_resampled.i)) (ixkey dynamics_key i)
+      resampled_idxs = categoricalBatch logLikelihoods resample_key
+      p_resampled = for i. p_prev.(resampled_idxs.i)
+      p_next = for i. fst (dynamics p_resampled.i) (ixkey dynamics_key i)
       p_ref := p_next
-      p_resampled
-
+      summarize p_resampled
 
 def normalDistn (mean: Float) (var: Float) : Distribution Float =
   ( \k. (randn k) * (sqrt var) + mean
@@ -50,16 +53,26 @@ def normalDistn (mean: Float) (var: Float) : Distribution Float =
 gaussModel : Model Float Float =
   ( normalDistn 0.1 0.1
   , \s. normalDistn s 1.0
-  , \s. normalDistn s 0.1
+  , \s. normalDistn s 1.0
   )
 
-timesteps = 5
-num_particles = 3
+timesteps = 10
+num_particles = 10000
 
-truth = simulate gaussModel timesteps (newKey 0)
-:p truth
+truth = for i:(Fin timesteps).
+  s = IToF (ordinal i)
+  (s, sample (normalDistn s 1.0) $ ixkey (newKey 0) i)
 
-obs = for i. snd truth.i
--- samples = filter gaussModel num_particles obs (newKey 0)
--- estimated = for i. mean samples.i
--- :p estimated
+filtered = filter num_particles _ gaussModel mean (map snd truth) (newKey 0)
+
+:p for i. (truth.i, filtered.i)
+> [ ((0.0, -0.27877414), 5.959407e-2)
+> , ((1.0, -0.55018175), -0.2716055)
+> , ((2.0, 2.4248328), 1.3502709)
+> , ((3.0, 4.800973), 3.4571552)
+> , ((4.0, 3.747046), 3.633845)
+> , ((5.0, 5.4751964), 4.754587)
+> , ((6.0, 5.0827684), 4.9687166)
+> , ((7.0, 5.6351852), 5.3734612)
+> , ((8.0, 8.845968), 7.475342)
+> , ((9.0, 8.416575), 8.059247) ]

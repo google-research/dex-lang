@@ -288,6 +288,10 @@ def abs (x:Float) : Float = select (x > 0.0) x (-x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
 def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
+def reverse (x:n=>a) : n=>a =
+  s = size n
+  for i. x.((s - 1 - ordinal i)@_)
+
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
   for i. xs.(fromOrdinal _ (ordinal i + start))
 
@@ -316,6 +320,51 @@ def std (xs:n=>Float) : Float = sqrt $ mean (map sq xs) - sq (mean xs)
 def any (xs:n=>Bool) : Bool = reduce False (||) xs
 def all (xs:n=>Bool) : Bool = reduce True  (&&) xs
 
+def while
+    (eff:Effects) ?->
+    (cond: Unit -> {|eff} Bool)
+    (body: Unit -> {|eff} Unit)
+    : {|eff} Unit =
+  cond' : Unit -> {|eff} Int8 = \_. BToI8 $ cond ()
+  %while cond' body
+
+data IterResult a:Type b:Type =
+  Continue a
+  Done b
+
+-- A little iteration combinator
+-- TODO: allow effects (currently there's some type inference bug preventing it)
+def iter (init:a) (body: Int -> a -> IterResult a b) : b  =
+  result = snd $ withState Nothing \resultRef.
+    withState init \carryRef.
+      withState 0 \i.
+        while (\(). isNothing (get resultRef)) \().
+          case body (get i) (get carryRef) of
+            Continue carry ->
+              i := get i + 1
+              carryRef := carry
+            Done result ->
+              resultRef := Just result
+  case result of
+    Just ans -> ans
+    Nothing -> todo  -- should be unreachable
+
+-- returns the highest index `i` such that `xs.i <= x`
+def searchSorted (_:Ord a) ?=> (xs:n=>a) (x:a) : Maybe n =
+  case size n == 0 of
+    True -> Nothing
+    False -> case x < xs.(fromOrdinal _ 0) of
+      True -> Nothing
+      False ->
+        iter (0, size n) \_ (low, high).
+          numLeft = high - low
+          case numLeft == 1 of
+            True -> Done $ Just $ fromOrdinal _ low
+            False ->
+              centerIx = low + idiv (high - low) 2
+              case x < xs.(fromOrdinal _ centerIx) of
+                True  -> Continue (low, centerIx)
+                False -> Continue (centerIx, high)
 
 def applyN (n:Int) (x:a) (f:a -> a) : a =
   snd $ withState x \ref. for _:(Fin n).
@@ -338,6 +387,29 @@ def vdot (x:n=>Float) (y:n=>Float) : Float = fsum \i. x.i * y.i
 
 def inner (x:n=>Float) (mat:n=>m=>Float) (y:m=>Float) : Float =
   fsum \(i,j). x.i * mat.i.j * y.j
+
+'min / max etc
+
+def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
+def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+
+def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
+def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
+
+def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (minBy f) xs
+def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
+  reduce xs.(0@_) (maxBy f) xs
+
+def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
+def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
+
+def argmin (_:Ord o) ?=> (xs:n=>o) : n =
+  zeroth = (0@_, xs.(0@_))
+  compare = \(idx1, x1) (idx2, x2).
+    select (x1 < x2) (idx1, x1) (idx2, x2)
+  zipped = for i. (i, xs.i)
+  fst $ reduce zeroth compare zipped
 
 'Functions for working with the pseudorandom number generator
 
@@ -376,29 +448,40 @@ def bern (p:Float) (k:Key) : Bool = rand k < p
 def randnVec (n:Type) ?-> (k:Key) : n=>Float =
   for i. randn (ixkey k i)
 
-'min / max etc
+def cumSum (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      newTotal = get total + xs.i
+      total := newTotal
+      newTotal
 
-def minBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x < f y) x y
-def maxBy (_:Ord o) ?=> (f:a->o) (x:a) (y:a) : a = select (f x > f y) x y
+def cumSumLow (xs: n=>Float) : n=>Float =
+  fst $ withState 0.0 \total.
+    for i.
+      oldTotal = get total
+      total := oldTotal + xs.i
+      oldTotal
 
-def min (_:Ord o) ?=> (x1: o) -> (x2: o) : o = minBy id x1 x2
-def max (_:Ord o) ?=> (x1: o) -> (x2: o) : o = maxBy id x1 x2
+-- cdf should include 0.0 but not 1.0
+def categoricalFromCDF (cdf: n=>Float) (key: Key) : n =
+  r = rand key
+  case searchSorted cdf r of
+    Just i -> i
 
-def minimumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (minBy f) xs
-def maximumBy (_:Ord o) ?=> (f:a->o) (xs:n=>a) : a =
-  reduce xs.(0@_) (maxBy f) xs
+def normalizePdf (xs: d=>Float) : d=>Float = xs / sum xs
 
-def minimum (_:Ord o) ?=> (xs:n=>o) : o = minimumBy id xs
-def maximum (_:Ord o) ?=> (xs:n=>o) : o = maximumBy id xs
+def cdfForCategorical (logprobs: n=>Float) : n=>Float =
+  maxLogProb = maximum logprobs
+  cumSumLow $ normalizePdf $ map exp $ for i. logprobs.i - maxLogProb
 
-def argmin (_:Ord o) ?=> (xs:n=>o) : n =
-  zeroth = (0@_, xs.(0@_))
-  compare = \(idx1, x1) (idx2, x2).
-    select (x1 < x2) (idx1, x1) (idx2, x2)
-  zipped = for i. (i, xs.i)
-  fst $ reduce zeroth compare zipped
+def categorical (logprobs: n=>Float) (key: Key) : n =
+  categoricalFromCDF (cdfForCategorical logprobs) key
 
+-- batch variant to share the work of forming the cumsum
+-- (alternatively we could rely on hoisting of loop constants)
+def categoricalBatch (logprobs: n=>Float) (key: Key) : m=>n =
+  cdf = cdfForCategorical logprobs
+  for i. categoricalFromCDF cdf $ ixkey key i
 
 'Automatic differentiation
 
@@ -428,14 +511,6 @@ def checkDerivBase (f:Float->Float) (x:Float) : Bool =
 
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
-
-def while
-    (eff:Effects) ?->
-    (cond: Unit -> {|eff} Bool)
-    (body: Unit -> {|eff} Unit)
-    : {|eff} Unit =
-  cond' : Unit -> {|eff} Int8 = \_. BToI8 $ cond ()
-  %while cond' body
 
 'Vector support
 
