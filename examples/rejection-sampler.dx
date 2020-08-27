@@ -24,7 +24,7 @@ def binomialProb (n:Int) (p:Prob) (count:Int) : Prob =
 
 def trySampleBinomial (n:Int) (p:Prob) (k:Key) : Maybe Int =
   (k1, k2) = splitKey k
-  proposal = floor $ rand k1 * IToF (n + 1)
+  proposal = FToI $ floor $ rand k1 * IToF (n + 1)
   acceptance = rand k2 < binomialProb n p proposal
   case proposal < (n + 1) && acceptance of
     True -> Just proposal
