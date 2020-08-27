@@ -16,6 +16,7 @@ import Control.Exception (throwIO)
 import Foreign.Ptr
 import qualified Data.ByteString       as BS
 import qualified Data.ByteString.Char8 as B
+import qualified Data.Vector.Storable as V
 import System.Directory
 import System.IO
 import System.IO.Error
@@ -166,24 +167,35 @@ materializeScalarTables atom = case atom of
 pattern Float64Ty :: Type
 pattern Float64Ty = BaseTy (Scalar Float64Type)
 
--- TODO: Support fp32 outputs too!
+pattern Float32Ty :: Type
+pattern Float32Ty = BaseTy (Scalar Float32Type)
+
 valToScatter :: Val -> Output
 valToScatter val = case getType val of
   TabTy _ (PairTy Float64Ty Float64Ty) -> ScatterOut xs ys
+    where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
+  TabTy _ (PairTy Float32Ty Float32Ty) -> ScatterOut (V.map realToFrac xs) (V.map realToFrac ys)
+    where [Array _ (Float32Vec xs), Array _ (Float32Vec ys)] = materializeScalarTables val
   _ -> error $ "Scatter expects a 1D array of tuples, but got: " ++ pprint (getType val)
-  where [Array _ (Float64Vec xs), Array _ (Float64Vec ys)] = materializeScalarTables val
 
 valToHeatmap :: Bool -> Val -> Output
 valToHeatmap color val = case color of
   False -> case getType val of
     TabTy hv (TabTy wv Float64Ty) ->
-       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+      HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+      where [(Array _ (Float64Vec xs))] = materializeScalarTables val
+    TabTy hv (TabTy wv Float32Ty) ->
+      HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) (V.map realToFrac xs)
+      where [(Array _ (Float32Vec xs))] = materializeScalarTables val
     _ -> error $ "Heatmap expects a 2D array of floats, but got: " ++ pprint (getType val)
   True -> case getType val of
     TabTy hv (TabTy wv (TabTy _ Float64Ty)) ->
-       HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+      HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) xs
+      where [(Array _ (Float64Vec xs))] = materializeScalarTables val
+    TabTy hv (TabTy wv (TabTy _ Float32Ty)) ->
+      HeatmapOut color (indexSetSize $ binderType hv) (indexSetSize $ binderType wv) (V.map realToFrac xs)
+      where [(Array _ (Float32Vec xs))] = materializeScalarTables val
     _ -> error $ "Color Heatmap expects a 3D array of floats, but got: " ++ pprint (getType val)
-  where [(Array _ (Float64Vec xs))] = materializeScalarTables val
 
 pprintVal :: Val -> String
 pprintVal val = asStr $ prettyVal val

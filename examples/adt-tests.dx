@@ -16,7 +16,7 @@ z = MkMyPair 1 2.3
 > MkMyPair 1 2.3
 
 :t z
-> (MyPair Int64 Float64)
+> (MyPair Int32 Float32)
 
 :p
   case z of

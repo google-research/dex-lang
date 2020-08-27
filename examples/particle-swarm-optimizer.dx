@@ -22,10 +22,10 @@ rosenbrock2 : ((Fin 2)=>Float) -> Float =
 > 0.0
 
 :p rosenbrock 1.0 1.02
-> 3.2e-2
+> 3.199994e-2
 
 :p rosenbrock2 [1.0, 1.02]
-> 3.2e-2
+> 3.199994e-2
 
 
 ' ## Helper functions
@@ -43,7 +43,7 @@ randBounded : Key -> (d=>Float)->(d=>Float)->(d=>Float) =
     for i. lb.i + ((rand $ ixkey key i) * (ub.i - lb.i))
 
 :p randBounded (newKey 4) [1.0,  -2.0] [-1.0,  2.0]
-> [-0.3510105, 1.4935503]
+> [-0.35101044, 1.4935503]
 
 ' ## The Optimizer itself.
 We have **arguments**:
@@ -103,13 +103,13 @@ Run it for more iterations and result should improve.
 Which it indeed does.
 
 :p optimize 50 10 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [3.7902775, 14.911414]
+> [3.7902741, 14.911411]
 
 :p optimize 50 20 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.737736, 3.1227164]
+> [1.737732, 3.1227102]
 
 :p optimize 50 100 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.0062338, 1.0128839]
+> [1.0062308, 1.0128763]
 
 :p optimize 50 1000 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.0, 1.0]

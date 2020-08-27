@@ -30,8 +30,8 @@ f = \x. x + 10.
 
 :p f -1.0   -- parses as (-) f (-1.0)
 > Type error:
-> Expected: (Float64 -> Float64)
->   Actual: Float64
+> Expected: (Float32 -> Float32)
+>   Actual: Float32
 >
 > :p f -1.0   -- parses as (-) f (-1.0)
 >       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

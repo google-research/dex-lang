@@ -50,7 +50,7 @@ t1 = [1.0]
 dt = 0.001
 
 :p odeint myDyn z0 t0 t1 dt
-> [[2.716924]]
+> [[2.7170746]]
 
 :plot
   xs = linspace (Fin 100) 0.0 1.0

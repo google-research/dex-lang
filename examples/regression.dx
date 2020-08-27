@@ -61,4 +61,4 @@ rmsErr : n=>Float -> n=>Float -> Float =
   \truth pred. sqrt $ mean for i. sq (pred.i - truth.i)
 
 :p rmsErr ys (map predict xs)
-> 9.46494e-2
+> 0.25608182

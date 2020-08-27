@@ -8,13 +8,13 @@ Syntax for records, variants, and their types.
 > { &}
 
 :p {a:Int & b:Float}
-> {a: Int64 & b: Float64}
+> {a: Int32 & b: Float32}
 
 :p {a:Int & b:Float &}
-> {a: Int64 & b: Float64}
+> {a: Int32 & b: Float32}
 
 :p {a:Int & a:Float}
-> {a: Int64 & a: Float64}
+> {a: Int32 & a: Float32}
 
 
 'Records
@@ -32,17 +32,17 @@ Syntax for records, variants, and their types.
 :p {a=3, b=4}
 > {a = 3, b = 4}
 :t {a=3, b=4}
-> {a: Int64 & b: Int64}
+> {a: Int32 & b: Int32}
 
 :p {a=3, b=4,}
 > {a = 3, b = 4}
 :t {a=3, b=4,}
-> {a: Int64 & b: Int64}
+> {a: Int32 & b: Int32}
 
 :p {a=3, a=4}
 > {a = 3, a = 4}
 :t {a=3, a=4}
-> {a: Int64 & a: Int64}
+> {a: Int32 & a: Int32}
 
 :p
   x = {a=5.0, b=2}
@@ -56,13 +56,13 @@ Syntax for records, variants, and their types.
 > { |}
 
 :p {a:Int | b:Float}
-> {a: Int64 | b: Float64}
+> {a: Int32 | b: Float32}
 
 :p {a:Int | b:Float |}
-> {a: Int64 | b: Float64}
+> {a: Int32 | b: Float32}
 
 :p {a:Int | a:Float}
-> {a: Int64 | a: Float64}
+> {a: Int32 | a: Float32}
 
 
 'Variants (enums)
@@ -81,7 +81,7 @@ Syntax for records, variants, and their types.
 :t
   x : {a:Int | a:Float | a:Int} = {| a | a = 3.0 |}
   x
-> {a: Int64 | a: Float64 | a: Int64}
+> {a: Int32 | a: Float32 | a: Int32}
 
 :p
   x : {a:Int | b:Float} = {| a=3 |}
@@ -161,7 +161,7 @@ def getTwoFoosAndABar (rest : Fields)?->
   (a1, a2, b)
 > Type error:
 > Expected: {a: a & a: b & b: c}
->   Actual: {a: Int64 & b: Int64}
+>   Actual: {a: Int32 & b: Int32}
 > (Solving for: [a:Type, b:Type, c:Type])
 >
 >   ({b=b, a=a1, a=a2}) = {a=1, b=2}
@@ -263,7 +263,7 @@ myVal =
 :p myVal
 > {| b = 4 |}
 :t myVal
-> {a: Float64 | b: Int64 | c: Int64}
+> {a: Float32 | b: Int32 | c: Int32}
 
 -- Badly written tail pattern
 :p
