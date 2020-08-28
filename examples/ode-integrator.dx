@@ -3,13 +3,13 @@ stepsize calculation.
 This version is a port of the [Jax implementation](https://github.com/google/jax/blob/4236eb2b5929b9643977553f7f988ca518b7df4e/jax/experimental/ode.py).
 A notable algorithmic difference is that it avoids zero-padding the butcher tableaux when computing the Runge-Kutta stages.
 
-Time = Real
+Time = Float
 
 -- Should these go in the prelude?
-def length (x: d=>Real) : Real = sqrt $ sum for i. sq x.i
-def (./) (x: d=>Real) (y: d=>Real) : d=>Real = for i. x.i / y.i
+def length (x: d=>Float) : Float = sqrt $ sum for i. sq x.i
+def (./) (x: d=>Float) (y: d=>Float) : d=>Float = for i. x.i / y.i
 
-def dot (_:VSpace v) ?=> (s:d=>Real) (vs:d=>v) : v = sum for j. s.j .* vs.j
+def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 
 def fit_4th_order_polynomial (_:VSpace v) ?=>
     (z0:v) (z1:v) (z_mid:v) (dz0:v) (dz1:v) (dt:Time) : (Fin 5)=>v =
@@ -31,8 +31,8 @@ def interp_fit_dopri (_:VSpace v) ?=>
   z_mid = z0 + dt .* (dot dps_c_mid k)
   fit_4th_order_polynomial z0 z1 z_mid k.(0@_) k.(1@_) dt
 
-def initial_step_size (fun:d=>Real -> Time -> d=>Real) (t0:Time) (z0:d=>Real)
-                      (order:Int) (rtol:Real) (atol:Real) (f0:d=>Real) : Time =
+def initial_step_size (fun:d=>Float -> Time -> d=>Float) (t0:Time) (z0:d=>Float)
+                      (order:Int) (rtol:Float) (atol:Float) (f0:d=>Float) : Time =
   -- Algorithm from: E. Hairer, S. P. Norsett G. Wanner,
   -- Solving Ordinary Differential Equations I: Nonstiff Problems, Sec. II.4.
   scale = for i. atol + ((abs z0.i) * rtol)
@@ -43,7 +43,7 @@ def initial_step_size (fun:d=>Real -> Time -> d=>Real) (t0:Time) (z0:d=>Real)
   f1 = fun z1 (t0 + h0)
   d2 = (length ((f1 - f0) ./ scale)) / h0
   left = max 1.0e-6 (h0 * 1.0e-3)
-  right = pow (0.01 / (d1 + d2)) (1. / ((i2r order) + 1.))
+  right = pow (0.01 / (d1 + d2)) (1. / ((IToF order) + 1.))
   h1 = select ((d1 <= 1.0e-15) && (d2 <= 1.0e-15)) left right
   min (100. * h0) h1
 
@@ -57,7 +57,7 @@ beta' = [[1. / 5., 0., 0., 0., 0., 0.],
        [19372. / 6561., -25360. / 2187., 64448. / 6561., -212. / 729., 0., 0.],
        [9017./3168., -355./33., 46732./5247., 49./176., -5103./18656., 0.],
        [35. / 384., 0., 500. / 1113., 125./192., -2187./6784., 11./84.]]
--- Convert to triangular array.
+-- Convert to triangular array type.
 beta = for i. for j:(..i). beta'.i.((ordinal j)@(Fin 6))
 
 c_sol = [35. /384., 0., 500. /1113., 125. /192., -2187. /6784., 11. / 84., 0.]
@@ -85,13 +85,13 @@ def runge_kutta_step (_:VSpace v) ?=> (func:v->Time->v)
   f_last = evals_filled.(6@_)
   (z_last, f_last, z_last_error, evals_filled)
 
-def error_ratio (error_estimates:d=>Real) (rtol:Real) (atol:Real)
-                (z0:d=>Real) (z1:d=>Real) : Real =
+def error_ratio (error_estimates:d=>Float) (rtol:Float) (atol:Float)
+                (z0:d=>Float) (z1:d=>Float) : Float =
   err_tols = for i. atol + rtol * (max (abs z0.i) (abs z1.i))
   err_ratios = error_estimates ./ err_tols
   mean for i. sq err_ratios.i
 
-def optimal_step_size (last_step:Time) (mean_error_ratio:Real) : Time =
+def optimal_step_size (last_step:Time) (mean_error_ratio:Float) : Time =
   safety = 0.9
   ifactor = 10.
   dfactor = 0.2
@@ -103,8 +103,8 @@ def optimal_step_size (last_step:Time) (mean_error_ratio:Real) : Time =
   select (mean_error_ratio == 0.) (last_step * ifactor) (last_step / factor)
 
 
-def odeint (func: d=>Real -> Time -> d=>Real)
-           (z0: d=>Real) (t0: Time) (times: n=>Time) : n=>d=>Real =
+def odeint (func: d=>Float -> Time -> d=>Float)
+           (z0: d=>Float) (t0: Time) (times: n=>Time) : n=>d=>Float =
   -- Adaptive stepsize (Dormand-Prince) Runge-Kutta odeint implementation.
   --  Args:
   --    func: time derivative of the solution z at time t.
