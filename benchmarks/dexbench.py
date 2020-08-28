@@ -19,6 +19,7 @@ backends = ["CPU", "GPU"]
 # TODO: allow macro benchmarks too (probably one-per file, run selectively)
 repo_url = "https://github.com/google-research/dex-lang.git"
 dex_microbench_file = os.path.abspath("benchmarks/microbench.dx")
+jax_microbench_file = os.path.abspath("benchmarks/python/microbench.py")
 db_name             = os.path.abspath("results.db")
 db_init_fname       = os.path.abspath("benchmarks/queries/init.sql")
 build_dir           = os.path.abspath(".benchmarks")
@@ -55,16 +56,26 @@ def run_benches(lang, backend):
   if lang == "dex":
     if backend == "CPU":
       backend_args = ["--backend", "LLVM-MC"]
+      env = {}
     elif backend == "GPU":
       backend_args = ["--backend", "LLVM-CUDA"]
+      env = {"CUDA_LAUNCH_BLOCKING":"1"}
     else:
       raise Exception
     command = (["stack", "exec", "dex", "--"] + backend_args +
                ["script", "--outfmt", "JSON", dex_microbench_file])
+  elif lang == "jax":
+    if backend == "CPU":
+      env = {"CUDA_VISIBLE_DEVICES":""}
+    elif backend == "GPU":
+      env = {}
+    else:
+      raise Exception
+    command = (["python3", jax_microbench_file])
   else:
     raise Exception("Unrecognized language: {}".format(lang))
   try:
-    proc_result = run_capture(command, extra_env={"CUDA_LAUNCH_BLOCKING":"1"})
+    proc_result = run_capture(command, extra_env=env)
     return map(parse_result_str, proc_result.splitlines())
   except:
     print("=== benchmark failed ===")
@@ -137,7 +148,7 @@ def run_commit_history(args):
     print("Running {} commits".format(len(commits_to_run)))
   else:
     print("Up to date. Nothing to run")
-  for commit, in commits_to_run:
+  for commit, in commits_to_run[::-1]:
     print("Running {}".format(commit))
     run(["git", "checkout", commit])
     run(["make"])
