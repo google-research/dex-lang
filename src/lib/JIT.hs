@@ -233,14 +233,14 @@ compileMDImpInstrMC isLocal instr =
       kernelParams <- packArgs =<< traverse lookupImpVar args
       s <- (`asIntWidth` i64) =<< compileExpr size
       emitVoidExternCall runKernelSpec [
-          L.ConstantOperand $ C.BitCast (C.GlobalReference kernelPtrType kernelFuncName) (L.ptr L.VoidType),
+          L.ConstantOperand $ C.BitCast (C.GlobalReference kernelPtrType kernelFuncName) voidp,
           s,
           kernelParams
         ]
       return Nothing
       where
-        runKernelSpec = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [L.ptr L.VoidType, i64, L.ptr $ L.ptr L.VoidType]
-        kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ L.ptr L.VoidType] False
+        runKernelSpec = ExternFunSpec "dex_parallel_for" L.VoidType [] [] [voidp, i64, L.ptr voidp]
+        kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ voidp] False
     MDLoadScalar v         -> Just    <$> (load =<< lookupImpVar v)
     MDStoreScalar v val    -> Nothing <$  bindM2 store (lookupImpVar v) (compileExpr val)
     MDAlloc  t s           -> compileImpInstr isLocal (Alloc t s)
@@ -252,18 +252,18 @@ impKernelToMC funcName (ImpKernel argBinders idxBinder prog) = runCompile cpuIni
   (startIdxParam, startIdx) <- freshParamOpPair [] i64
   (endIdxParam, endIdx) <- freshParamOpPair [] i64
   -- TODO: Preserve pointer attributes??
-  (argArrayParam, argArray) <- freshParamOpPair [] (L.ptr $ L.ptr $ L.VoidType)
+  (argArrayParam, argArray) <- freshParamOpPair [] $ L.ptr voidp
   args <- unpackArgs argArray argTypes
   let argEnv = foldMap (uncurry (@>)) $ zip argBinders args
 
-  niter <- endIdx `sub` startIdx
+  niter <- (`asIntWidth` idxType) =<< endIdx `sub` startIdx
   compileLoop Fwd idxBinder niter $ do
     idxEnv <- case idxBinder of
       Ignore _ -> return mempty
       Bind v -> do
         innerIdx <- lookupImpVar v
         idx64 <- add startIdx =<< (innerIdx `asIntWidth` i64)
-        idx <- idx64 `asIntWidth` (L.typeOf innerIdx)
+        idx <- idx64 `asIntWidth` idxType
         return $ idxBinder @> idx
     extendOperands (argEnv <> idxEnv) $ compileProg compileImpInstr prog
   kernel <- makeFunction funcName [startIdxParam, endIdxParam, argArrayParam] Nothing
@@ -271,6 +271,7 @@ impKernelToMC funcName (ImpKernel argBinders idxBinder prog) = runCompile cpuIni
   extraDefs <- gets globalDefs
   return $ (extraSpecs, L.GlobalDefinition kernel : extraDefs)
   where
+    idxType = fromIValType $ binderAnn idxBinder
     argTypes = fmap ((fromIType $ L.AddrSpace 0) . binderAnn) argBinders
 
 -- === MDImp to LLVM CUDA ===

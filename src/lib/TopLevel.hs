@@ -218,6 +218,7 @@ evalBackend block = do
         Multicore -> do
           let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)
           let (MDImpFunction outVars _ _) = mdImpFunction
+          logPass ImpPass mdImpFunction
           return $ (mdImpToMulticore mdImpFunction, impAtom, outVars)
         CUDA      -> do
           let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)

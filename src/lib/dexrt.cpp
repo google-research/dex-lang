@@ -138,17 +138,17 @@ double randunif(uint64_t keypair) {
   return out - 1;
 }
 
-void dex_parallel_for(void *function_ptr, uint64_t size, void **args) {
-  auto function = reinterpret_cast<void (*)(uint64_t, uint64_t, void**)>(function_ptr);
-  uint64_t nthreads = std::thread::hardware_concurrency();
+void dex_parallel_for(char *function_ptr, int64_t size, char **args) {
+  auto function = reinterpret_cast<void (*)(int64_t, int64_t, char**)>(function_ptr);
+  int64_t nthreads = std::thread::hardware_concurrency();
   if (size < nthreads) {
     nthreads = size;
   }
   std::vector<std::thread> threads(nthreads);
-  auto chunk_size = size / nthreads;
-  for (uint64_t t = 0; t < nthreads; ++t) {
-    auto start = t * chunk_size;
-    auto end = t == nthreads - 1 ? size : (t + 1) * chunk_size;
+  int64_t chunk_size = size / nthreads;
+  for (int64_t t = 0; t < nthreads; ++t) {
+    int64_t start = t * chunk_size;
+    int64_t end = t == nthreads - 1 ? size : (t + 1) * chunk_size;
     threads[t] = std::thread([function, args, start, end]() {
       function(start, end, args);
     });
