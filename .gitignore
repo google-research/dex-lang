@@ -17,5 +17,6 @@ scratch/
 test-scratch/
 dist-newstyle/
 *.cache
-bench_results.db
+*.db
 *.bc
+.benchmarks

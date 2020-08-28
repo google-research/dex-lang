@@ -105,11 +105,8 @@ repl-test:
 
 # --- running and querying benchmarks ---
 
-bench-db-init:
-	sqlite3 bench_results.db < benchmarks/queries/init.sql
-
 bench-summary:
-	sqlite3 bench_results.db < benchmarks/queries/result-summary.sql
+	sqlite3 results.db < benchmarks/queries/result-summary.sql
 
 # bench-set-standard:
 # 	python3 dexbench.py adhoc --name standard

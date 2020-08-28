@@ -15,17 +15,15 @@ create table results (
 
 create table runs (
   run            text  not null primary key,
-  run_timestamp  text,  -- YYYY-MM-DD HH:MM:SS
+  run_timestamp  integer,
   hostname       text
 );
 
 create table commits (
   commit_hash       text  primary key,  -- 14 characters
-  commit_timestamp  text,               -- YYYY-MM-DD HH:MM:SS
-  commit_msg        text
+  commit_timestamp  integer
 );
 
 create table ci_runs (
-  commit_hash       text  primary key,
-  run               text
+  commit_hash       text  primary key
 );
