@@ -15,7 +15,7 @@ import time
 from functools import partial
 from contextlib import contextmanager
 
-backends = ["CPU", "Multicore-CPU", "GPU"]
+backends = ["CPU", "GPU"]
 # TODO: allow macro benchmarks too (probably one-per file, run selectively)
 repo_url = "https://github.com/google-research/dex-lang.git"
 dex_microbench_file = os.path.abspath("benchmarks/microbench.dx")
@@ -26,8 +26,10 @@ build_dir           = os.path.abspath(".benchmarks")
 silly_map = map
 def map(*args): return list(silly_map(*args))
 
-def run_capture(command):
-  result = subprocess.run(command, capture_output=True)
+def run_capture(command, extra_env = {}):
+  env = os.environ.copy()
+  env.update(**extra_env)
+  result = subprocess.run(command, capture_output=True, env=env)
   if result.returncode == 0:
     return result.stdout.decode("utf-8")
   else:
@@ -52,8 +54,6 @@ def restore_machine():
 def run_benches(lang, backend):
   if lang == "dex":
     if backend == "CPU":
-      backend_args = []
-    elif backend == "Multicore-CPU":
       backend_args = ["--backend", "LLVM-MC"]
     elif backend == "GPU":
       backend_args = ["--backend", "LLVM-CUDA"]
@@ -64,7 +64,7 @@ def run_benches(lang, backend):
   else:
     raise Exception("Unrecognized language: {}".format(lang))
   try:
-    proc_result = run_capture(command)
+    proc_result = run_capture(command, extra_env={"CUDA_LAUNCH_BLOCKING":"1"})
     return map(parse_result_str, proc_result.splitlines())
   except:
     print("=== benchmark failed ===")

@@ -361,6 +361,9 @@ def rand (k:Key) : Float = F64ToF $ %ffi randunif Float64 k
 def randVec (n:Int) (f: Key -> a) (k: Key) : Fin n => a =
   for i:(Fin n). f (ixkey k i)
 
+def randMat (n:Int) (m:Int) (f: Key -> a) (k: Key) : Fin n => Fin m => a =
+  for i j. f (ixkey2 k i j)
+
 def randn (k:Key) : Float =
   (k1, k2) = splitKey k
   u1 = rand k1

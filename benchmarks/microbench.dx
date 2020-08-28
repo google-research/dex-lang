@@ -1,10 +1,12 @@
 
 
-xs = for i:(Fin 20000). 1.0
-
+xs = randVec 10000 randn (newKey 0)
 %bench "sum"
-zs = snd $ withAccum \ref. for i. for j. ref += xs.i + xs.j
+zs = for i. snd $ withState  0.0 \ref. for j. ref := get ref + xs.i + xs.j
 
 %bench "gaussian"
-ws = for i:(Fin 1000000). randn (newKey (ordinal i))
+ws = randVec 100000000 randn (newKey 0)
 
+mat = randMat 1000 1000 randn (newKey 0)
+%bench "matmul"
+ans = mat ** mat
