@@ -27,29 +27,22 @@ impFunctionFlops :: ImpFunction -> Profile
 impFunctionFlops (ImpFunction _ _ prog) =
   snd $ runWriter (runReaderT (flops prog) (litTerm 1))
 
-flops :: ImpProg -> FlopM ()
-flops (ImpProg []) = return ()
-flops (ImpProg (statement:rest)) = do
-  statementFlops statement
-  flops (ImpProg rest)
+flops :: ImpProgram -> FlopM ()
+flops prog = void $ traverse statementFlops prog
 
 statementFlops :: ImpStatement -> FlopM ()
-statementFlops (_, instr) = case instr of
+statementFlops stmt = case stmt of
+  IInstr (_, instr)   -> instrFlops instr
+  IFor _ _ size block -> local (mulTerm $ evalSizeExpr size) $ flops block
+  ICond _ _ _         -> return () -- TODO: Implement
+  IWhile _ _          -> return () -- TODO: Implement
+
+instrFlops :: ImpInstr -> FlopM ()
+instrFlops instr = case instr of
   IPrimOp op -> do
     n <- ask
     tell $ Profile $ M.singleton (showPrimName $ OpExpr op) [n]
-  ICastOp _ _   -> return ()
-  Load _        -> return ()
-  Store _ _     -> return ()
-  Alloc _ _     -> return ()
-  Free _        -> return ()
-  IOffset _ _ _ -> return ()
-  IThrowError   -> return ()
-  IWhile _ _    -> return () -- TODO: Implement
-  If _ _ _      -> return () -- TODO: Implement
-  Loop _ _ size block -> do
-    let n = evalSizeExpr size
-    local (mulTerm n) $ flops block
+  _ -> return ()
 
 evalSizeExpr :: IExpr -> Term
 evalSizeExpr (IVar (v:>_)) = varTerm v

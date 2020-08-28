@@ -25,8 +25,7 @@ def dot (_:VSpace v) ?=> (s:d=>Float) (vs:d=>v) : v = sum for j. s.j .* vs.j
 def randuniform (lower:Float) (upper:Float) (k:Key) : Float =
   lower + (rand k) * (upper - lower)
 
--- TODO: put `n` and `a` in scope in body
-def reverse (n:Type) ?-> (a:Type) ?-> (x:n=>a) : n=>a =
+def reverse (x:n=>a) : n=>a =
   s = size n
   for i. x.((s - 1 - ordinal i)@_)
 
@@ -196,9 +195,8 @@ def sdObject (pos:Position) (obj:Object) : Distance =
 
 def sdScene (scene:Scene n) (pos:Position) : (Object & Distance) =
   (MkScene objs) = scene
-  minimumBy snd for i.
-    obj = objs.i
-    (obj, sdObject pos obj)
+  (i, d) = minimumBy snd $ for i. (i, sdObject pos objs.i)
+  (objs.i, d)
 
 -- TODO: use AD!
 def calcNormal (scene:Scene n) (pos:Position) : Direction =

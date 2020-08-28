@@ -19,17 +19,6 @@ Float32 = %Float32
 Int = Int64
 Float = Float64
 
-def (&) (a:Type) (b:Type) : Type = %PairType a b
-def (,) (x:a) (y:b) : (a & b) = %pair x y
-def fst (p: (a & b)) : a = %fst p
-def snd (p: (a & b)) : b = %snd p
-
-def idiv (x:Int) (y:Int) : Int = %idiv x y
-def rem  (x:Int) (y:Int) : Int = %irem x y
-def ipow (x:Int) (y:Int) : Int = %ipow x y
-
-def fdiv (x:Float) (y:Float) : Float = %fdiv x y
-
 def internalCast (b:Type) (x:a) : b = %cast b x
 
 def F64ToF (x : Float64) : Float   = internalCast _ x
@@ -42,6 +31,8 @@ def I8ToI  (x : Int8 )   : Int     = internalCast _ x
 def IToI64 (x : Int)     : Int64   = internalCast _ x
 def IToI32 (x : Int)     : Int32   = internalCast _ x
 def IToI8  (x : Int)     : Int8    = internalCast _ x
+def IToF (x:Int) : Float = internalCast _ x
+def FToI (x:Float) : Int = internalCast _ x
 
 data Add a:Type =
   MkAdd (a->a->a) (a->a->a) a  -- add, sub, zero
@@ -67,18 +58,49 @@ data Mul a:Type = MkMul (a->a->a) a  -- multiply, one
 def (*) (d:Mul a) ?=> : a -> a -> a = case d of MkMul mul _   -> mul
 def one (d:Mul a) ?=> : a           = case d of MkMul _   one -> one
 
-@instance floatMul : Mul Float = MkMul (\x:Float y:Float. %fmul x y) 1.0
-@instance intMul   : Mul Int   = MkMul (\x:Int   y:Int.   %imul x y) 1
-@instance unitMul  : Mul Unit  = MkMul (\x y. ()) ()
+@instance float64Mul : Mul Float64 = MkMul (\x:Float64 y:Float64. %fmul x y) (FToF64 1.0)
+@instance float32Mul : Mul Float32 = MkMul (\x:Float32 y:Float32. %fmul x y) (FToF32 1.0)
+@instance int64Mul   : Mul Int64   = MkMul (\x:Int64   y:Int64.   %imul x y) (IToI64 1)
+@instance int32Mul   : Mul Int32   = MkMul (\x:Int32   y:Int32.   %imul x y) (IToI32 1)
+@instance int8Mul    : Mul Int8    = MkMul (\x:Int8    y:Int8.    %imul x y) (IToI8  1)
+@instance unitMul    : Mul Unit    = MkMul (\x y. ()) ()
+
+data Integral a:Type =
+  MkIntegral (a->a->a) (a->a->a) -- idiv, rem
+
+def idiv (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral div _ -> div
+def rem  (d:Integral a) ?=> : a -> a -> a = case d of MkIntegral _  rm -> rm
+
+@instance int64Integral : Integral Int64 = MkIntegral (\x:Int64 y:Int64. %idiv x y) (\x y. %irem x y)
+@instance int32Integral : Integral Int32 = MkIntegral (\x:Int32 y:Int32. %idiv x y) (\x y. %irem x y)
+@instance int8Integral  : Integral Int8  = MkIntegral (\x:Int8  y:Int8.  %idiv x y) (\x y. %irem x y)
+
+data Fractional a:Type =
+  MkFractional (a->a->a) -- fdiv
+
+def fdiv (d:Fractional a) ?=> : a -> a -> a = case d of MkFractional div -> div
+
+@instance float64Fractional : Fractional Float64 = MkFractional (\x:Float64 y:Float64. %fdiv x y)
+@instance float32Fractional : Fractional Float32 = MkFractional (\x:Float32 y:Float32. %fdiv x y)
+
+'Basic polymorphic functions and types
+
+def (&) (a:Type) (b:Type) : Type = %PairType a b
+def (,) (x:a) (y:b) : (a & b) = %pair x y
+def fst (p: (a & b)) : a = %fst p
+def snd (p: (a & b)) : b = %snd p
+def swap (p:(a&b)) : (b&a) = (snd p, fst p)
+
+flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
+uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
+const : a -> b -> a = \x _. x
+
+'Vector spaces
 
 data VSpace a:Type = MkVSpace (Add a) (Float -> a -> a)
 
 @superclass
 def addFromVSpace (d:VSpace a) : Add a = case d of MkVSpace addDict _ -> addDict
-
-flip : (a -> b -> c) -> (b -> a -> c) = \f x y. f y x
-uncurry : (a -> b -> c) -> (a & b) -> c = \f (x,y). f x y
-const : a -> b -> a = \x _. x
 
 def (.*)  (d:VSpace a) ?=> : Float -> a -> a = case d of MkVSpace _ scale -> scale
 (*.)  : VSpace a ?=> a -> Float -> a = flip (.*)
@@ -88,6 +110,8 @@ def neg (_:VSpace a) ?=> (v:a) : a = (-1.0) .* v
 @instance floatVS : VSpace Float = MkVSpace float64Add (*)
 @instance tabVS  : VSpace a ?=> VSpace (n=>a) = MkVSpace tabAdd \s xs. for i. s .* xs.i
 @instance unitVS : VSpace Unit = MkVSpace unitAdd \s u. ()
+
+'Bool type
 
 data Bool =
   False
@@ -135,14 +159,12 @@ def select (p:Bool) (x:a) (y:a) : a = case p of
   True  -> x
   False -> y
 
-def b2i (x:Bool) : Int  =
+def BToI (x:Bool) : Int  =
   case x of
-    False -> 0
-    True  -> 1
+    False -> (I64ToI 0)
+    True  -> (I64ToI 1)
 
-def IToF (x:Int) : Float = internalCast _ x
-def FToI (x:Float) : Int = internalCast _ x
-def b2r (x:Bool) : Float = IToF (b2i x)
+def BToF (x:Bool) : Float = IToF (BToI x)
 def todo (a:Type) ?-> : a = %throwError a
 
 'Effects
@@ -194,15 +216,24 @@ def (<)  (d:Ord a) ?=> (x:a) (y:a) : Bool = case d of MkOrd _ _  lt -> lt x y
 def (<=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x<y || x==y
 def (>=) (d:Ord a) ?=> (x:a) (y:a) : Bool = x>y || x==y
 
-@instance intEq   : Eq Int   = MkEq \x:Int   y:Int.   I8ToB $ %ieq x y
-@instance floatEq : Eq Float = MkEq \x:Float y:Float. I8ToB $ %feq x y
-@instance unitEq  : Eq Unit  = MkEq \x y. True
+@instance float64Eq : Eq Float64 = MkEq \x:Float64 y:Float64. I8ToB $ %feq x y
+@instance float32Eq : Eq Float32 = MkEq \x:Float32 y:Float32. I8ToB $ %feq x y
+@instance int64Eq   : Eq Int64   = MkEq \x:Int64   y:Int64.   I8ToB $ %ieq x y
+@instance int32Eq   : Eq Int32   = MkEq \x:Int32   y:Int32.   I8ToB $ %ieq x y
+@instance int8Eq    : Eq Int8    = MkEq \x:Int8    y:Int8.    I8ToB $ %ieq x y
+@instance unitEq    : Eq Unit    = MkEq \x y. True
 
-@instance intOrd  : Ord Int  = (MkOrd intEq  (\x y. I8ToB $ %igt x y)
-                                             (\x y. I8ToB $ %ilt x y))
-@instance floatOrd : Ord Float = (MkOrd floatEq (\x y. I8ToB $ %fgt x y)
-                                                (\x y. I8ToB $ %flt x y))
-@instance unitOrd : Ord Unit = MkOrd unitEq (\x y. False) (\x y. False)
+@instance float64Ord : Ord Float64 = (MkOrd float64Eq (\x y. I8ToB $ %fgt x y)
+                                                      (\x y. I8ToB $ %flt x y))
+@instance float32Ord : Ord Float32 = (MkOrd float32Eq (\x y. I8ToB $ %fgt x y)
+                                                      (\x y. I8ToB $ %flt x y))
+@instance int64Ord   : Ord Int64   = (MkOrd int64Eq   (\x y. I8ToB $ %igt x y)
+                                                      (\x y. I8ToB $ %ilt x y))
+@instance int32Ord   : Ord Int32   = (MkOrd int32Eq   (\x y. I8ToB $ %igt x y)
+                                                      (\x y. I8ToB $ %ilt x y))
+@instance int8Ord    : Ord Int8    = (MkOrd int8Eq    (\x y. I8ToB $ %igt x y)
+                                                      (\x y. I8ToB $ %ilt x y))
+@instance unitOrd    : Ord Unit    = (MkOrd unitEq (\x y. False) (\x y. False))
 
 @instance
 def pairEq (eqA: Eq a)?=> (eqB: Eq b)?=> : Eq (a & b) = MkEq $
@@ -220,35 +251,50 @@ def tabEq (n:Type) ?-> (eqA: Eq a) ?=> : Eq (n=>a) = MkEq $
   \xs ys.
     numDifferent : Float =
       snd $ withAccum \ref. for i.
-        ref += (IToF (b2i (xs.i /= ys.i)))
+        ref += (IToF (BToI (xs.i /= ys.i)))
     numDifferent == 0.0
 
-'Wrappers around C library functions
+'Transcencendental functions
 
-def exp (x:Float) : Float = %exp x
-def exp2 (x:Float) : Float = %exp2 x
-def log (x:Float) : Float = %log x
-def log2 (x:Float) : Float = %log2 x
-def log10 (x:Float) : Float = %log10 x
+data Floating a:Type =
+  MkFloating (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a) (a->a->a) (a->a)
 
-def sin (x:Float) : Float = %sin x
-def cos (x:Float) : Float = %cos x
-def tan (x:Float) : Float = %tan x
+def exp    (d:Floating a) ?=> : a -> a = case d of MkFloating f _ _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
+def exp2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ f _ _ _ _ _ _ _ _ _ _ _ _ _ -> f
+def log    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ f _ _ _ _ _ _ _ _ _ _ _ _ -> f
+def log2   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ f _ _ _ _ _ _ _ _ _ _ _ -> f
+def log10  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ f _ _ _ _ _ _ _ _ _ _ -> f
+def log1p  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ f _ _ _ _ _ _ _ _ _ -> f
 
-def floor (x:Float) : Float = %floor x
-def ceil  (x:Float) : Float = %ceil x
-def round (x:Float) : Float = %round x
+def sin    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ f _ _ _ _ _ _ _ _ -> f
+def cos    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ f _ _ _ _ _ _ _ -> f
+def tan    (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ f _ _ _ _ _ _ -> f
 
-def sqrt (x:Float) : Float = %sqrt x
-def pow (x:Float) (y:Float) : Float = %fpow x y
+def floor  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ f _ _ _ _ _ -> f
+def ceil   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ f _ _ _ _ -> f
+def round  (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ f _ _ _ -> f
 
-def lgamma (x:Float) : Float =
-  x64 = FToF64 x
-  F64ToF $ %ffi lgamma Float64 x64
-def log1p  (x:Float) : Float =
-  x64 = FToF64 x
-  F64ToF $ %ffi log1p  Float64 x64
-def lbeta (x:Float) (y:Float) : Float = lgamma x + lgamma y - lgamma (x + y)
+def sqrt   (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ f _ _ -> f
+def pow    (d:Floating a) ?=> : a -> a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ f _ -> f
+
+def lgamma (d:Floating a) ?=> : a -> a = case d of MkFloating _ _ _ _ _ _ _ _ _ _ _ _ _ _ f -> f
+
+def lbeta (_ : Add a) ?=> (_ : Floating a) ?=> : a -> a -> a = \x y. lgamma x + lgamma y - lgamma (x + y)
+
+@instance
+float64Floating : Floating Float64 =
+  (MkFloating (\x:Float64. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
+              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
+              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
+              (\x. %sqrt   x) (\x y. %fpow x y)
+              (\x. %lgamma x))
+@instance
+float32Floating : Floating Float32 =
+  (MkFloating (\x:Float32. %exp x) (\x. %exp2 x) (\x. %log x) (\x. %log2 x) (\x. %log10 x) (\x. %log1p x)
+              (\x. %sin    x) (\x. %cos   x) (\x. %tan   x)
+              (\x. %floor  x) (\x. %ceil  x) (\x. %round x)
+              (\x. %sqrt   x) (\x y. %fpow x y)
+              (\x. %lgamma x))
 
 'Working with index sets
 
@@ -259,8 +305,6 @@ def size (n:Type) : Int = %idxSetSize n
 def fromOrdinal (n:Type) (i:Int) : n = %asidx n i
 def asidx (n:Type) ?-> (i:Int) : n = fromOrdinal n i
 def (@) (i:Int) (n:Type) : n = fromOrdinal n i
-def ixadd (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i + x
-def ixsub (n:Type) ?-> (i:n) (x:Int) : n = fromOrdinal n $ ordinal i - x
 def iota (n:Type) : n=>Int = for i. ordinal i
 
 -- TODO: we want Eq and Ord for all index sets, not just `Fin n`
@@ -273,12 +317,10 @@ def finOrd (n:Int) ?-> : Ord (Fin n) =
 
 'Misc
 
-pi : Float = 3.141592653589793
+pi : Float = (F64ToF 3.141592653589793)
 
 def id (x:a) : a = x
 def dup (x:a) : (a & a) = (x, x)
--- TODO: unpack pair in args once we fix the bug
-def swap (p:(a&b)) : (b&a) = (snd p, fst p)
 def map (f:a->{|eff} b) (xs: n=>a) : {|eff} (n=>b) = for i. f xs.i
 def zip (xs:n=>a) (ys:n=>b) : (n=>(a&b)) = for i. (xs.i, ys.i)
 def unzip (xys:n=>(a&b)) : (n=>a & n=>b) = (map fst xys, map snd xys)
@@ -286,7 +328,6 @@ def fanout (n:Type) (x:a) : n=>a = for i. x
 def sq (d:Mul a) ?=> (x:a) : a = x * x
 def abs (x:Float) : Float = select (x > 0.0) x (-x)
 def mod (x:Int) (y:Int) : Int = rem (y + rem x y) y
-def compose (f:b->c) (g:a->b) (x:a) : c = f (g x)
 
 def slice (xs:n=>a) (start:Int) (m:Type) : m=>a =
   for i. xs.(fromOrdinal _ (ordinal i + start))
@@ -432,6 +473,8 @@ def checkDerivBase (f:Float->Float) (x:Float) : Bool =
 def checkDeriv (f:Float->Float) (x:Float) : Bool =
   checkDerivBase f x && checkDerivBase (deriv f) x
 
+'Control flow
+
 def while
     (eff:Effects) ?->
     (cond: Unit -> {|eff} Bool)
@@ -523,6 +566,8 @@ def softmax (x: n=>Float) : n=>Float =
 def evalpoly (_:VSpace v) ?=> (coefficients:n=>v) (x:Float) : v =
   -- Evaluate a polynomial at x.  Same as Numpy's polyval.
   fold zero \i c. coefficients.i + x .* c
+
+'Length-erased lists
 
 data List a:Type =
   AsList n:Int foo:(Fin n => a)

@@ -5,7 +5,6 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -23,6 +22,7 @@ import qualified LLVM.Relocation as R
 import qualified LLVM.CodeModel as CM
 import qualified LLVM.CodeGenOpt as CGO
 import qualified LLVM.Module as Mod
+import qualified LLVM.Internal.Module as Mod
 import qualified LLVM.PassManager as P
 import qualified LLVM.Transforms as P
 import qualified LLVM.Target as T
@@ -41,13 +41,13 @@ import Control.Monad
 import Control.Exception hiding (throw)
 import Data.ByteString.Char8 (unpack)
 import Data.IORef
-import Data.FileEmbed
 import qualified Data.ByteString as BS
 import qualified Data.Map as M
 
 import Logging
 import Syntax
 import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
+import Resources
 
 type ExitCode = Int
 
@@ -60,10 +60,10 @@ compilePTX logger (LLVMKernel ast) = do
   withContext $ \ctx ->
     Mod.withModuleFromAST ctx ast $ \m -> do
       withGPUTargetMachine "sm_60" $ \tm -> do
-        linkLibdevice ctx        m
-        linkDexrt     ctx        m
-        internalize   ["kernel"] m
-        compileModule logger tm  m
+        linkLibdevice ctx           m
+        linkDexrt     ctx           m
+        internalize   ["kernel"]    m
+        compileModule ctx logger tm m
         PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
 
 callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
@@ -99,7 +99,7 @@ evalLLVM logger ast argPtr = do
       T.withHostTargetMachine R.PIC CM.Large CGO.Aggressive $ \tm -> do
         linkDexrt     c            m
         internalize   ["entryFun"] m
-        compileModule logger tm    m
+        compileModule c logger tm  m
         JIT.withExecutionSession $ \exe ->
           JIT.withObjectLinkingLayer exe (\k -> (M.! k) <$> readIORef resolvers) $ \linkLayer ->
             JIT.withIRCompileLayer linkLayer tm $ \compileLayer -> do
@@ -133,13 +133,19 @@ evalLLVM logger ast argPtr = do
                     , JIT.jitSymbolFlags = JIT.defaultJITSymbolFlags { JIT.jitSymbolExported = True, JIT.jitSymbolAbsolute = True }
                     }
 
-compileModule :: Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
-compileModule logger tm m = do
+compileModule :: Context -> Logger [Output] -> T.TargetMachine -> Mod.Module -> IO ()
+compileModule ctx logger tm m = do
   showModule          m >>= logPass logger JitPass
   L.verify            m
   runDefaultPasses tm m
   showModule          m >>= logPass logger LLVMOpt
-  showAsm          tm m >>= logPass logger AsmPass
+  showAsm      ctx tm m >>= logPass logger AsmPass
+
+withModuleClone :: Context -> Mod.Module -> (Mod.Module -> IO a) -> IO a
+withModuleClone ctx m f = do
+  -- It would be better to go through bitcode, but apparently that doesn't work...
+  bc <- Mod.moduleLLVMAssembly m
+  Mod.withModuleFromLLVMAssembly ctx (("<string>" :: String), bc) f
 
 logPass :: Logger [Output] -> PassName -> String -> IO ()
 logPass logger passName s = logThis logger [PassInfo passName s]
@@ -169,11 +175,11 @@ runPasses passes mt m = do
   let passSpec = P.PassSetSpec passes dl Nothing mt
   P.withPassManager passSpec $ \pm -> void $ P.runPassManager pm m
 
-showAsm :: T.TargetMachine -> Mod.Module -> IO String
-showAsm t m = do
+showAsm :: Context -> T.TargetMachine -> Mod.Module -> IO String
+showAsm ctx t m' = do
   -- Uncomment this to dump assembly to a file that can be linked to a C benchmark suite:
-  -- Mod.writeObjectToFile t (Mod.File "asm.o") m
-  liftM unpack $ Mod.moduleTargetAssembly t m
+  -- withModuleClone ctx m' $ \m -> Mod.writeObjectToFile t (Mod.File "asm.o") m
+  withModuleClone ctx m' $ \m -> unpack <$> Mod.moduleTargetAssembly t m
 
 internalize :: [String] -> Mod.Module -> IO ()
 internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeElimination] Nothing m
@@ -201,7 +207,6 @@ withGPUTargetMachine computeCapability next = do
 dexrtAST :: L.Module
 dexrtAST = unsafePerformIO $ do
   withContext $ \ctx -> do
-    let dexrtBC = $(embedFile "src/lib/dexrt.bc")
     Mod.withModuleFromBitcode ctx (("dexrt.c" :: String), dexrtBC) $ \m ->
       stripFunctionAnnotations <$> Mod.moduleAST m
   where
@@ -218,9 +223,13 @@ dexrtAST = unsafePerformIO $ do
 
 linkDexrt :: Context -> Mod.Module -> IO ()
 linkDexrt ctx m = do
-    Mod.withModuleFromAST ctx dexrtAST $ \dexrtm -> do
-      Mod.linkModules m dexrtm
-      runPasses [P.AlwaysInline True] Nothing m
+  dataLayout <- Mod.getDataLayout =<< Mod.readModule m
+  targetTriple <- Mod.getTargetTriple =<< Mod.readModule m
+  let dexrtTargetAST = dexrtAST { L.moduleDataLayout = dataLayout
+                                , L.moduleTargetTriple = targetTriple }
+  Mod.withModuleFromAST ctx dexrtTargetAST $ \dexrtm -> do
+    Mod.linkModules m dexrtm
+    runPasses [P.AlwaysInline True] Nothing m
 
 
 -- === libdevice support ===

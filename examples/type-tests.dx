@@ -235,25 +235,21 @@ g1 : (a -> Int) -> (a -> Int) = \x. x
 > ((a:Type) ?-> (a -> Int64) -> a -> Int64)
 
 g2 : a -> a = \x. idiv x x
-> Type error:
-> Expected: Int64
->   Actual: a
+> Type error:Couldn't synthesize a class dictionary for: (Integral a)
 >
 > g2 : a -> a = \x. idiv x x
->                        ^^
+>                   ^^^^^
 
 h : (a -> b) -> (a -> b) = \x. x
 
 :t h
-> ((a:Type) ?-> (a1:Type) ?-> (a -> a1) -> a -> a1)
+> ((a:Type) ?-> (b:Type) ?-> (a -> b) -> a -> b)
 
 fun : a -> a = \x. sin x
-> Type error:
-> Expected: Float64
->   Actual: a
+> Type error:Couldn't synthesize a class dictionary for: (Floating a)
 >
 > fun : a -> a = \x. sin x
->                        ^
+>                    ^^^^
 
 data NewPair a:Type b:Type = MkNewPair a b
 
@@ -333,3 +329,21 @@ bad_range : Int = (1@Fin 3)..(2@_)
 >
 > :p (\x:Int. x) == (\x:Int. x)
 >                ^^^
+
+def getFst1 (n:Type) ?-> (xs:n=>b) : b =
+  xs.(fromOrdinal n 0)
+
+:p getFst1 [1,2,3]
+> 1
+
+def getFst2 (xs:n=>b) : b =
+  xs.(fromOrdinal n 0)
+
+:p getFst2 [1,2,3]
+> 1
+
+def getFst3 (b:Type) ?-> (n:Type) ?-> (xs:n=>b) : b =
+  xs.(fromOrdinal n 0)
+
+:p getFst3 [1,2,3]
+> 1

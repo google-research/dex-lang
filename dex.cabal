@@ -16,20 +16,33 @@ flag cuda
   description:         Enables building with CUDA support
   default:             False
 
+library dex-resources
+  if os(darwin)
+    exposed-modules:   Resources
+  build-depends:       base, bytestring, file-embed
+  hs-source-dirs:      src/resources
+  default-language:    Haskell2010
+
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
-                       Parser, Util, Imp, MDImp, PPrint, Array, Algebra,
+                       Parser, Util, Imp, PPrint, Array, Algebra,
                        Actor, Cat, Flops, Embed, Serialize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
                        time, tf-random, llvm-hs-pure ==9.*, llvm-hs ==9.*,
-                       aeson, megaparsec, warp, wai,
+                       aeson, megaparsec >=8.0, warp, wai,
                        parser-combinators, http-types, prettyprinter, text,
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
                        diagrams-rasterific, JuicyPixels, transformers,
                        base64-bytestring, vector, directory, mmap, unix,
-                       process, primitive, store, file-embed
+                       process, primitive, store, dex-resources
+  if !os(darwin)
+    exposed-modules:   Resources
+    hs-source-dirs:    src/resources
+    build-depends:     file-embed
+  else
+    build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
   ghc-options:         -Wall -O0

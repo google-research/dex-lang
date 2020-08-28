@@ -48,8 +48,7 @@ def logaddexp (x:Float) (y:Float) : Float =
   m = max x y
   m + ( log ( (exp (x - m) + exp (y - m))))
 
-def ctc (time : Type) ?-> (vocab : Type) ?-> (position : Type) ?->
-        (dict: Eq vocab) ?=> (dict2: Eq position) ?=> (dict3: Eq time) ?=> (blank: vocab)
+def ctc (dict: Eq vocab) ?=> (dict2: Eq position) ?=> (dict3: Eq time) ?=> (blank: vocab)
         (logits: time=>vocab=>Float) (labels: position=>vocab) : Float =
   -- Computes log p(labels | logits), marginalizing over possible alignments.
   -- Todo: remove unnecessary implicit type annotations once

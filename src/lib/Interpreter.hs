@@ -10,6 +10,8 @@ module Interpreter (evalBlock, indices, indexSetSize, evalEmbed) where
 
 import Data.Foldable
 import Data.Int
+import qualified Data.List.NonEmpty as NE
+import qualified Data.Map.Strict as M
 
 import Array
 import Cat
@@ -18,7 +20,7 @@ import Env
 import PPrint
 import Embed
 import Type
-import Util (restructure)
+import Util (enumerate, restructure)
 
 -- TODO: can we make this as dynamic as the compiled version?
 foreign import ccall "randunif"      c_unif     :: Int64 -> Double
@@ -32,7 +34,13 @@ evalBlock env (Block decls result) = do
 evalDecl :: SubstEnv -> Decl -> SubstEnv
 evalDecl env (Let _ v rhs) = v @> evalExpr env rhs'
   where rhs' = subst (env, mempty) rhs
-evalDecl _ (Unpack _ _) = error "Not implemented"
+evalDecl env (Unpack vs rhs) = let
+  rhs' = subst (env, mempty) rhs
+  atoms = case evalExpr env rhs' of
+    DataCon _ _ _ atoms' -> atoms'
+    Record atoms' -> toList atoms'
+    _ -> error $ "Can't unpack: " <> pprint rhs'
+  in fold $ map (uncurry (@>)) $ zip (toList vs) atoms
 
 evalExpr :: SubstEnv -> Expr -> Atom
 evalExpr env expr = case expr of
@@ -41,7 +49,19 @@ evalExpr env expr = case expr of
     _     -> error $ "Expected a fully evaluated function value: " ++ pprint f
   Atom atom -> atom
   Op op     -> evalOp op
-  _         -> error $ "Not implemented: " ++ pprint expr
+  Case e alts _ -> case e of
+    DataCon _ _ con args ->
+      evalBlock env $ applyNaryAbs (alts !! con) args
+    Variant (NoExt types) label i x -> do
+      let LabeledItems ixtypes = enumerate types
+      let index = fst $ ixtypes M.! label NE.!! i
+      evalBlock env $ applyNaryAbs (alts !! index) [x]
+    Con (SumAsProd _ tag xss) -> case tag of
+      Con (Lit x) -> let i = getIntLit x in
+        evalBlock env $ applyNaryAbs (alts !! i) (xss !! i)
+      _ -> error $ "Not implemented: SumAsProd with tag " ++ pprint expr
+    _ -> error $ "Unexpected scrutinee: " ++ pprint e
+  _ -> error $ "Not implemented: " ++ pprint expr
 
 evalOp :: Op -> Atom
 evalOp expr = case expr of
@@ -101,8 +121,13 @@ indices ty = case ty of
   TC (UnitType)          -> [UnitVal]
   RecordTy (NoExt types) -> let
     subindices = map indices (toList types)
-    products = foldl (\prevs curs -> [cur:prev | cur <- curs, prev <- prevs]) [[]] subindices
-    in map (\idxs -> Record $ restructure idxs types) products
+    -- Earlier indices change faster than later ones, so we need to first
+    -- iterate over the current index and then over all previous ones. For
+    -- efficiency we build the indices in reverse order and then reassign them
+    -- at the end with `reverse`.
+    addAxisInReverse prevs curs = [cur:prev | cur <- curs, prev <- prevs]
+    products = foldl addAxisInReverse [[]] subindices
+    in map (\idxs -> Record $ restructure (reverse idxs) types) products
   VariantTy (NoExt types) -> let
     subindices = fmap indices types
     reflect = reflectLabels types

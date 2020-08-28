@@ -344,8 +344,20 @@ instance Pretty IType where
 
 instance PrettyPrec IType where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty ImpProg where
-  pretty (ImpProg block) = vcat (map prettyStatement block)
+instance Pretty instr => Pretty (IStmt instr) where
+  pretty (IInstr (Ignore _, instr)) = p instr
+  pretty (IInstr (b       , instr)) = p b <+> "=" <+> p instr
+  pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
+                                      nest 4 (hardline <> p block)
+  pretty (IWhile (cond, mcExpr) body) = "while" <+>
+                                        nest 2 condDoc <+> "do" <>
+                                        nest 4 (hardline <> p body)
+    where condDoc = case mcExpr of
+                      Just cExpr -> hardline <> p cond <> line <> p cExpr
+                      Nothing    -> "??"
+  pretty (ICond predicate cons alt) =
+    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
+    hardline <> "else" <> nest 2 (hardline <> p alt)
 
 instance Pretty ImpFunction where
   pretty (ImpFunction vsOut vsIn body) =
@@ -353,27 +365,32 @@ instance Pretty ImpFunction where
     <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
 
-prettyStatement :: (IBinder, ImpInstr) -> Doc ann
-prettyStatement (Ignore _, instr) = p instr
-prettyStatement (b       , instr) = p b <+> "=" <+> p instr
-
 instance Pretty ImpInstr where
   pretty (IPrimOp op)            = pLowest op
   pretty (ICastOp t x)           = "cast"  <+> p x <+> "to" <+> p t
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
   pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr lidx t)   = p expr <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
+  pretty (IOffset expr lidx t)   = p expr  <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
   pretty (Free (v:>_))           = "free"  <+> p v
-  pretty (Loop d i n block)      = dirStr d <+> p i <+> "<" <+> p n <>
-                                   nest 4 (hardline <> p block)
-  pretty (IWhile cond body)      = "while" <+>
-                                     nest 2 (hardline <> p cond) <> "do" <>
-                                     nest 2 (hardline <> p body)
   pretty IThrowError = "throwError"
-  pretty (If predicate cons alt) =
-    "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
-    hardline <> "else" <> nest 2 (hardline <> p alt)
+
+instance Pretty k => Pretty (MDImpFunction k) where
+  pretty (MDImpFunction vsOut vsIn body) =
+                   "in:        " <> p vsIn
+    <> hardline <> "out:       " <> p vsOut
+    <> hardline <> p body
+
+instance Pretty k => Pretty (MDImpInstr k) where
+  pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
+  pretty (MDAlloc t s)    = "device_alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (MDFree v)       = "free" <+> p v
+  pretty (MDLoadScalar v) = "device_load" <+> p v
+  pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x
+  pretty (MDHostInstr instr) = pretty instr
+
+instance Pretty ImpKernel where
+  pretty (ImpKernel args idxVar kernel) = parens (p idxVar <+> p args) <> nest 2 (hardline <> p kernel)
 
 dirStr :: Direction -> Doc ann
 dirStr Fwd = "for"
@@ -564,6 +581,9 @@ instance PrettyPrec a => PrettyPrec [a] where
 
 instance Pretty a => Pretty (Nest a) where
   pretty xs = pretty $ toList xs
+
+instance {-# OVERLAPPING #-} Pretty instr => Pretty (IProg instr) where
+  pretty prog = vcat $ toList $ pretty <$> prog
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String
 printLitBlock isatty block (Result outs result) =
