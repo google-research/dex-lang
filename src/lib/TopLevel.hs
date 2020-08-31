@@ -38,6 +38,7 @@ import LLVMExec
 import PPrint
 import Parser
 import Util (highlightRegion)
+import Optimize
 import CUDA
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp | JAX  deriving (Show, Eq)
@@ -81,7 +82,6 @@ evalSourceBlockM env block = case sbContents block of
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal env v m
-      logPass ImpPass (pprint val)
       case fmt of
         Printed -> do
           logTop $ TextOut $ pprintVal val
@@ -181,7 +181,9 @@ evalModule :: TopEnv -> Module -> TopPassM TopEnv
 evalModule bindings normalized = do
   let defunctionalized = simplifyModule bindings normalized
   checkPass SimpPass defunctionalized
-  evaluated <- evalSimplified defunctionalized evalBackend
+  let optimized = optimizeModule defunctionalized
+  checkPass OptimPass optimized
+  evaluated <- evalSimplified optimized evalBackend
   checkPass ResultPass evaluated
   Module Evaluated Empty newBindings <- return evaluated
   return newBindings
