@@ -22,7 +22,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               embedExtend, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT,
-              TraversalDef, traverseDecls, traverseBlock, traverseExpr,
+              TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               clampPositive, buildNAbs,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
@@ -505,10 +505,12 @@ scopedDecls m = do
 
 -- === generic traversal ===
 
-type TraversalDef m = (Expr -> m Expr, Atom -> m Atom)
+type TraversalDef m = (Decl -> m SubstEnv, Expr -> m Expr, Atom -> m Atom)
 
 substTraversalDef :: (MonadEmbed m, MonadReader SubstEnv m) => TraversalDef m
-substTraversalDef = (traverseExpr substTraversalDef, traverseAtom substTraversalDef)
+substTraversalDef = ( traverseDecl substTraversalDef
+                    , traverseExpr substTraversalDef
+                    , traverseAtom substTraversalDef)
 
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
@@ -518,18 +520,19 @@ traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
                   => TraversalDef m -> Nest Decl -> m SubstEnv
 traverseDeclsOpen _ Empty = return mempty
-traverseDeclsOpen def (Nest decl decls) = do
-  env <- traverseDecl def decl
+traverseDeclsOpen def@(fDecl, _, _) (Nest decl decls) = do
+  env <- fDecl decl
   env' <- extendR env $ traverseDeclsOpen def decls
   return (env <> env')
 
 traverseDecl :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Decl -> m SubstEnv
-traverseDecl (fExpr, _) decl = case decl of
+traverseDecl (_, fExpr, _) decl = case decl of
   Let letAnn b expr -> do
     expr' <- fExpr expr
     case expr' of
       Atom a | not (isGlobalBinder b) -> return $ b @> a
+      -- TODO: Do we need to use the name hint here?
       _ -> (b@>) <$> emitTo (binderNameHint b) letAnn expr'
   Unpack bs expr -> do
     expr' <- fExpr expr
@@ -542,7 +545,7 @@ traverseBlock def block = buildScoped $ evalBlockE def block
 
 evalBlockE :: (MonadEmbed m, MonadReader SubstEnv m)
               => TraversalDef m -> Block -> m Atom
-evalBlockE def@(fExpr, _) (Block decls result) = do
+evalBlockE def@(_, fExpr, _) (Block decls result) = do
   env <- traverseDeclsOpen def decls
   resultExpr <- extendR env $ fExpr result
   case resultExpr of
@@ -551,7 +554,7 @@ evalBlockE def@(fExpr, _) (Block decls result) = do
 
 traverseExpr :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Expr -> m Expr
-traverseExpr def@(_, fAtom) expr = case expr of
+traverseExpr def@(_, _, fAtom) expr = case expr of
   App g x -> App  <$> fAtom g <*> fAtom x
   Atom x  -> Atom <$> fAtom x
   Op  op  -> Op   <$> traverse fAtom op
@@ -561,13 +564,13 @@ traverseExpr def@(_, fAtom) expr = case expr of
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
             => TraversalDef m -> Alt -> m Alt
-traverseAlt def@(_, fAtom) (Abs bs body) = do
+traverseAlt def@(_, _, fAtom) (Abs bs body) = do
   bs' <- mapM (mapM fAtom) bs
   buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
 
 traverseAtom :: (MonadEmbed m, MonadReader SubstEnv m)
              => TraversalDef m -> Atom -> m Atom
-traverseAtom def@(_, fAtom) atom = case atom of
+traverseAtom def@(_, _, fAtom) atom = case atom of
   Var _ -> substEmbedR atom
   Lam (Abs b (arr, body)) -> do
     b' <- mapM fAtom b

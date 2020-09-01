@@ -12,7 +12,7 @@
 
 module Cat (CatT, MonadCat, runCatT, look, extend, scoped, looks, extendLocal,
             extendR, captureW, asFst, asSnd, capture, asCat, evalCatT, evalCat,
-            Cat, runCat, newCatT, catTraverse, evalScoped,
+            Cat, runCat, newCatT, catTraverse, evalScoped, execCat, execCatT,
             catFold, catFoldM, catMap, catMapM) where
 
 -- Monad for tracking monoidal state
@@ -95,7 +95,10 @@ runCatT (CatT m) initEnv = do
   return (ans, newEnv)
 
 evalCatT :: (Monoid env, Monad m) => CatT env m a -> m a
-evalCatT m = liftM fst $ runCatT m mempty
+evalCatT m = fst <$> runCatT m mempty
+
+execCatT :: (Monoid env, Monad m) => CatT env m a -> m env
+execCatT m = snd <$> runCatT m mempty
 
 newCatT :: (Monoid env, Monad m) => (env -> m (a, env)) -> CatT env m a
 newCatT  f = do
@@ -109,6 +112,9 @@ runCat m env = runIdentity $ runCatT m env
 
 evalCat :: Monoid env => Cat env a -> a
 evalCat m = runIdentity $ evalCatT m
+
+execCat :: Monoid env => Cat env a -> env
+execCat m = runIdentity $ execCatT m
 
 looks :: (Monoid env, MonadCat env m) => (env -> a) -> m a
 looks getter = liftM getter look

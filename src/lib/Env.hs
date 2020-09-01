@@ -51,8 +51,8 @@ nameSpace :: Name -> Maybe NameSpace
 nameSpace (Name s _ _) = Just s
 nameSpace _ = Nothing
 
-newEnv :: (Foldable f, HasName a) => f a -> [b] -> Env b
-newEnv bs xs = fold $ zipWith (@>) (toList bs) xs
+newEnv :: (Foldable f, Foldable h, HasName a) => f a -> h b -> Env b
+newEnv bs xs = fold $ zipWith (@>) (toList bs) (toList xs)
 
 varAnn :: VarP a -> a
 varAnn (_:>ann) = ann

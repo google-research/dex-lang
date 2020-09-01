@@ -650,7 +650,7 @@ synthDictTop ctx ty = do
 
 traverseHoles :: (MonadReader SubstEnv m, MonadEmbed m)
               => (SrcCtx -> Type -> m Atom) -> TraversalDef m
-traverseHoles fillHole = (traverseExpr recur, synthPassAtom)
+traverseHoles fillHole = (traverseDecl recur, traverseExpr recur, synthPassAtom)
   where
     synthPassAtom atom = case atom of
       Con (ClassDictHole ctx ty) -> fillHole ctx ty
