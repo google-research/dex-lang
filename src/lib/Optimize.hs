@@ -9,6 +9,7 @@
 module Optimize (optimizeModule, dceModule, inlineModule) where
 
 import Control.Monad.Reader
+import Control.Monad.State.Strict
 import Data.Foldable
 import Data.Maybe
 
@@ -17,7 +18,7 @@ import Embed
 import Cat
 import Env
 import Type
-import PPrint (ignoreExcept)
+import PPrint
 
 optimizeModule :: Module -> Module
 optimizeModule = dceModule . inlineModule . dceModule
@@ -84,18 +85,38 @@ dceAtom atom = case atom of
 
 -- === For inlining ===
 
-inlineTraversalDef :: TraversalDef SubstEmbed
-inlineTraversalDef = (inlineTraverseExpr, traverseAtom inlineTraversalDef)
+type InlineM = SubstEmbedT (Reader (Env BinderUses))
+
+data BinderUses = LocalOnly Int | InBindings
+
+inlineTraversalDef :: TraversalDef InlineM
+inlineTraversalDef = (inlineTraverseDecl, inlineTraverseExpr, traverseAtom inlineTraversalDef)
 
 inlineModule :: Module -> Module
-inlineModule (Module ir decls bindings) = do
-  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-  let block = Block decls $ Atom $ mkConsList $ map Var localVars
-  let (Block newDecls (Atom newResult)) = fst $ runSubstEmbed (traverseBlock inlineTraversalDef block) mempty
-  let newLocalVals = ignoreExcept $ fromConsList newResult
-  Module ir newDecls $ scopelessSubst (newEnv localVars newLocalVals) bindings
+inlineModule m@(Module _ _ bindings) = transformModuleAsBlock inlineBlock m
+  where
+    usedInBindings = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+    inlineBlock block = do
+      let useCounts = countUses block
+      let useCountsExports = (fmap LocalOnly useCounts) <> (newEnv usedInBindings (repeat InBindings))
+      fst $ runReader (runSubstEmbedT (traverseBlock inlineTraversalDef block) mempty) useCountsExports
 
-inlineTraverseExpr :: Expr -> SubstEmbed Expr
+inlineTraverseDecl :: Decl -> InlineM SubstEnv
+inlineTraverseDecl decl = case decl of
+  Let _ b expr@(Hof (For _ body)) | isPure expr -> do
+    uses <- lift $ lift $ asks (`envLookup` b)
+    -- This is not a super safe condition for inlining, because it might still duplicate work
+    -- unexpectedly (consider an `arr` that's only used as `for i. 2.0 .* arr`). Still, this is not
+    -- the way arrays are usually used, so it should be good enough for now. In the future we should
+    -- strengthen this check to better ensure that each element of the array is used at most once.
+    case uses of
+      Just (LocalOnly 1) -> do
+        ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
+        return $ b @> TabVal ib block
+      _ -> traverseDecl inlineTraversalDef decl
+  _ -> traverseDecl inlineTraversalDef decl
+
+inlineTraverseExpr :: Expr -> InlineM Expr
 inlineTraverseExpr expr = case expr of
   Hof (For d body) -> do
     newBody <- traverseAtom inlineTraversalDef body
@@ -116,5 +137,34 @@ inlineTraverseExpr expr = case expr of
   _ -> nope
   where nope = traverseExpr inlineTraversalDef expr
 
-dropSub :: SubstEmbed a -> SubstEmbed a
+dropSub :: InlineM a -> InlineM a
 dropSub m = local mempty m
+
+type UseCountM = SubstEmbedT (Cat (Env Int))
+
+countUses :: Block -> Env Int
+countUses block = execCat $ runSubstEmbedT (traverseBlock useCountTraversalDef block) mempty
+
+useCountTraversalDef :: TraversalDef UseCountM
+useCountTraversalDef = (traverseDecl useCountTraversalDef, traverseExpr useCountTraversalDef, useCountAtom)
+
+useCountAtom :: Atom -> UseCountM Atom
+useCountAtom atom = case atom of
+  Var v -> use v >> cont atom
+  _ -> cont atom
+  where cont = traverseAtom useCountTraversalDef
+
+use :: VarP a -> UseCountM ()
+use n = do
+  c <- fromMaybe 0 <$> (looks (`envLookup` n))
+  extend (n @> (c + 1))
+
+-- === Helpers ===
+
+transformModuleAsBlock :: (Block -> Block) -> Module -> Module
+transformModuleAsBlock transform (Module ir decls bindings) = do
+  let localVars = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+  let block = Block decls $ Atom $ mkConsList $ map Var localVars
+  let (Block newDecls (Atom newResult)) = transform block
+  let newLocalVals = ignoreExcept $ fromConsList newResult
+  Module ir newDecls $ scopelessSubst (newEnv localVars newLocalVals) bindings
