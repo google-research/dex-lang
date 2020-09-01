@@ -9,8 +9,8 @@
 module Optimize (optimizeModule, dceModule, inlineModule) where
 
 import Control.Monad.Reader
-import Control.Monad.Writer hiding (Alt)
 import Data.Foldable
+import Data.Maybe
 
 import Syntax
 import Embed
@@ -24,32 +24,63 @@ optimizeModule = dceModule . inlineModule . dceModule
 
 -- === DCE ===
 
-type DceM = WriterT [Decl] (Cat Scope)
+-- TODO: Track liveness more accurately. Right now we don't mark declared
+--       variables as dead.
+type DceM = Cat Scope
 
 dceModule :: Module -> Module
-dceModule (Module ir decls bindings) =
-  Module ir (dceDecls (freeVars bindings) decls) bindings
+dceModule (Module ir decls bindings) = evalCat $ do
+  newBindings <- traverse dceBinding bindings
+  extend (freeVars newBindings)
+  newDecls <- dceDecls decls
+  return $ Module ir newDecls newBindings
+  where
+    dceBinding (ty, LetBound ann expr) = (ty,) . LetBound ann <$> dceExpr expr
+    dceBinding b = return b
 
-dceDecls :: Scope -> Nest Decl -> Nest Decl
-dceDecls varsNeeded decls = toNest $ reverse $ fst $ flip runCat varsNeeded $
-  execWriterT $ mapM dceDecl $ reverse $ toList decls
+dceBlock :: Block -> DceM Block
+dceBlock (Block decls result) = do
+  newResult <- dceExpr result
+  extend (freeVars newResult)
+  newDecls <- dceDecls decls
+  return $ Block newDecls newResult
 
-dceDecl :: Decl -> DceM ()
+dceDecls :: Nest Decl -> DceM (Nest Decl)
+dceDecls decls = do
+  let revDecls = reverse $ toList decls
+  revNewDecls <- catMaybes <$> mapM dceDecl revDecls
+  return $ toNest $ reverse $ revNewDecls
+
+dceDecl :: Decl -> DceM (Maybe Decl)
 dceDecl decl = do
   varsNeeded <- look
-  case decl of
+  newDecl <- case decl of
     Let ann b expr -> do
-      if b `isin` varsNeeded
-        then tell [decl] >> extend (freeVars expr)
-        else case exprEffs expr of
-          NoEffects   -> return ()
-          SomeEffects -> do
-            tell [Let ann (Ignore (binderType b)) expr]
-            extend (freeVars expr)
+      if b `isin` varsNeeded || (not $ isPure expr)
+        then Just . Let ann b <$> dceExpr expr
+        else return Nothing
     Unpack bs expr -> do
       if any (`isin` varsNeeded) bs || (not $ isPure expr)
-        then tell [decl] >> extend (freeVars expr)
-        else return ()
+        then Just . Unpack bs <$> dceExpr expr
+        else return Nothing
+  extend (freeVars newDecl)
+  return newDecl
+
+dceExpr :: Expr -> DceM Expr
+dceExpr expr = case expr of
+  App g x        -> App  <$> dceAtom g <*> dceAtom x
+  Atom x         -> Atom <$> dceAtom x
+  Op  op         -> Op   <$> traverse dceAtom op
+  Hof hof        -> Hof  <$> traverse dceAtom hof
+  Case e alts ty -> Case <$> dceAtom e <*> mapM dceAlt alts <*> dceAtom ty
+
+dceAlt :: Alt -> DceM Alt
+dceAlt (Abs bs block) = Abs bs <$> dceBlock block
+
+dceAtom :: Atom -> DceM Atom
+dceAtom atom = case atom of
+  Lam (Abs v (arr, block)) -> Lam . (Abs v) . (arr,) <$> dceBlock block
+  _ -> return atom
 
 -- === For inlining ===
 

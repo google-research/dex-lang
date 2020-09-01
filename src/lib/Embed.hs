@@ -371,11 +371,14 @@ substEmbed env x = do
   scope <- getScope
   return $ subst (env, scope) x
 
-checkEmbed :: (HasCallStack, MonadEmbed m, HasType a) => a -> m a
-checkEmbed  x = do
+checkEmbed :: (HasCallStack, MonadEmbed m, HasVars a, HasType a) => a -> m a
+checkEmbed x = do
   scope <- getScope
+  let globals = freeVars x `envDiff` scope
+  unless (all (isGlobal . (:>())) $ envNames globals) $
+    error $ "Found a non-global free variable in " ++ pprint x
   eff <- getAllowedEffects
-  case checkType scope eff x of
+  case checkType (scope <> globals) eff x of
     Left e   -> error $ pprint e
     Right () -> return x
 
@@ -557,7 +560,7 @@ traverseExpr def@(_, fAtom) expr = case expr of
     Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
-             => TraversalDef m -> Alt -> m Alt
+            => TraversalDef m -> Alt -> m Alt
 traverseAlt def@(_, fAtom) (Abs bs body) = do
   bs' <- mapM (mapM fAtom) bs
   buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
