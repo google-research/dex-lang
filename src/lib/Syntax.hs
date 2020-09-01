@@ -539,7 +539,7 @@ monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
 
 data PassName = Parse | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | Flops | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
-              | ResultPass | JaxprAndHLO
+              | ResultPass | JaxprAndHLO | OptimPass
                 deriving (Ord, Eq, Bounded, Enum)
 
 instance Show PassName where
@@ -548,7 +548,7 @@ instance Show PassName where
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass   -> "llvm"
     Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
-    LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
+    LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo"; OptimPass -> "optimized"
 
 -- === outputs ===
 

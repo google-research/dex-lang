@@ -21,7 +21,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, reduceAtom,
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
-              SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
+              SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               clampPositive, buildNAbs,
@@ -182,7 +182,20 @@ buildScoped m = do
   return $ wrapDecls decls ans
 
 wrapDecls :: Nest Decl -> Atom -> Block
-wrapDecls decls atom = dceBlock $ Block decls $ Atom atom
+wrapDecls decls atom = inlineLastDecl $ Block decls $ Atom atom
+
+inlineLastDecl :: Block -> Block
+inlineLastDecl block@(Block decls result) =
+  case (reverse (toList decls), result) of
+    (Let _ (Bind v) expr:rest, Atom atom)
+      | atom == Var v || sameSingletonVal (varType v) (getType atom) ->
+          Block (toNest (reverse rest)) expr
+    _ -> block
+  where
+    sameSingletonVal t1 t2 =
+      case (singletonTypeVal t1, singletonTypeVal t2) of
+        (Just x1, Just x2) | x1 == x2 -> True
+        _ -> False
 
 zeroAt :: Type -> Atom
 zeroAt ty = case ty of
@@ -358,11 +371,14 @@ substEmbed env x = do
   scope <- getScope
   return $ subst (env, scope) x
 
-checkEmbed :: (HasCallStack, MonadEmbed m, HasType a) => a -> m a
-checkEmbed  x = do
+checkEmbed :: (HasCallStack, MonadEmbed m, HasVars a, HasType a) => a -> m a
+checkEmbed x = do
   scope <- getScope
+  let globals = freeVars x `envDiff` scope
+  unless (all (isGlobal . (:>())) $ envNames globals) $
+    error $ "Found a non-global free variable in " ++ pprint x
   eff <- getAllowedEffects
-  case checkType scope eff x of
+  case checkType (scope <> globals) eff x of
     Left e   -> error $ pprint e
     Right () -> return x
 
@@ -496,7 +512,7 @@ substTraversalDef = (traverseExpr substTraversalDef, traverseAtom substTraversal
 
 -- With `def = (traverseExpr def, traverseAtom def)` this should be a no-op
 traverseDecls :: (MonadEmbed m, MonadReader SubstEnv m)
-               => TraversalDef m -> Nest Decl -> m (Nest Decl)
+              => TraversalDef m -> Nest Decl -> m (Nest Decl)
 traverseDecls def decls = liftM snd $ scopedDecls $ traverseDeclsOpen def decls
 
 traverseDeclsOpen :: (MonadEmbed m, MonadReader SubstEnv m)
@@ -512,8 +528,9 @@ traverseDecl :: (MonadEmbed m, MonadReader SubstEnv m)
 traverseDecl (fExpr, _) decl = case decl of
   Let letAnn b expr -> do
     expr' <- fExpr expr
-    x <- emitTo (binderNameHint b) letAnn expr'
-    return $ b @> x
+    case expr' of
+      Atom a | not (isGlobalBinder b) -> return $ b @> a
+      _ -> (b@>) <$> emitTo (binderNameHint b) letAnn expr'
   Unpack bs expr -> do
     expr' <- fExpr expr
     xs <- emitUnpack expr'
@@ -543,7 +560,7 @@ traverseExpr def@(_, fAtom) expr = case expr of
     Case <$> fAtom e <*> mapM (traverseAlt def) alts <*> fAtom ty
 
 traverseAlt :: (MonadEmbed m, MonadReader SubstEnv m)
-             => TraversalDef m -> Alt -> m Alt
+            => TraversalDef m -> Alt -> m Alt
 traverseAlt def@(_, fAtom) (Abs bs body) = do
   bs' <- mapM (mapM fAtom) bs
   buildNAbs bs' $ \xs -> extendR (newEnv bs' xs) $ evalBlockE def body
@@ -577,54 +594,6 @@ traverseAtom def@(_, fAtom) atom = case atom of
   VariantTy (Ext items rest) -> do
     items' <- traverse fAtom items
     return $ VariantTy $ Ext items' rest
-
--- === DCE ===
-
-type DceM = WriterT [Decl] (Cat Scope)
-
-dceModule :: Module -> Module
-dceModule (Module ir decls bindings) =
-  Module ir (dceDecls (freeVars bindings) decls) bindings
-
-dceBlock :: Block -> Block
-dceBlock (Block decls result) =
-  inlineLastDecl $ Block (dceDecls (freeVars result) decls) result
-
-dceDecls :: Scope -> Nest Decl -> Nest Decl
-dceDecls varsNeeded decls = toNest $ reverse $ fst $ flip runCat varsNeeded $
-  execWriterT $ mapM dceDecl $ reverse $ toList decls
-
-inlineLastDecl :: Block -> Block
-inlineLastDecl block@(Block decls result) =
-  case (reverse (toList decls), result) of
-    (Let _ (Bind v) expr:rest, Atom atom)
-      | atom == Var v || sameSingletonVal (varType v) (getType atom) ->
-          Block (toNest (reverse rest)) expr
-    _ -> block
-
-dceDecl :: Decl -> DceM ()
-dceDecl decl = do
-  varsNeeded <- look
-  case decl of
-    Let ann b expr -> do
-      if b `isin` varsNeeded
-        then tell [decl] >> extend (freeVars expr)
-        else case exprEffs expr of
-          NoEffects   -> return ()
-          SomeEffects -> do
-            tell [Let ann (Ignore (binderType b)) expr]
-            extend (freeVars expr)
-    Unpack bs expr -> do
-      if any (`isin` varsNeeded) bs || (not $ isPure expr)
-        then tell [decl] >> extend (freeVars expr)
-        else return ()
-
-sameSingletonVal :: Type -> Type -> Bool
-sameSingletonVal t1 t2 = case singletonTypeVal t1 of
-  Just x1 -> case singletonTypeVal t2 of
-    Just x2 | x1 == x2 -> True
-    _ -> False
-  _ -> False
 
 -- === partial evaluation using definitions in scope ===
 
