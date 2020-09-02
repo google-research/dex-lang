@@ -8,8 +8,8 @@
 
 module Optimize (optimizeModule, dceModule, inlineModule) where
 
-import Control.Monad.Reader
 import Control.Monad.State.Strict
+import Control.Monad.Reader
 import Data.Foldable
 import Data.Maybe
 
@@ -25,14 +25,12 @@ optimizeModule = dceModule . inlineModule . dceModule
 
 -- === DCE ===
 
--- TODO: Track liveness more accurately. Right now we don't mark declared
---       variables as dead.
-type DceM = Cat Scope
+type DceM = State Scope
 
 dceModule :: Module -> Module
-dceModule (Module ir decls bindings) = evalCat $ do
+dceModule (Module ir decls bindings) = flip evalState mempty $ do
   newBindings <- traverse dceBinding bindings
-  extend (freeVars newBindings)
+  modify (<> freeVars newBindings)
   newDecls <- dceDecls decls
   return $ Module ir newDecls newBindings
   where
@@ -42,7 +40,7 @@ dceModule (Module ir decls bindings) = evalCat $ do
 dceBlock :: Block -> DceM Block
 dceBlock (Block decls result) = do
   newResult <- dceExpr result
-  extend (freeVars newResult)
+  modify (<> freeVars newResult)
   newDecls <- dceDecls decls
   return $ Block newDecls newResult
 
@@ -54,18 +52,18 @@ dceDecls decls = do
 
 dceDecl :: Decl -> DceM (Maybe Decl)
 dceDecl decl = do
-  varsNeeded <- look
   newDecl <- case decl of
-    Let ann b expr -> do
-      if b `isin` varsNeeded || (not $ isPure expr)
-        then Just . Let ann b <$> dceExpr expr
-        else return Nothing
-    Unpack bs expr -> do
-      if any (`isin` varsNeeded) bs || (not $ isPure expr)
-        then Just . Unpack bs <$> dceExpr expr
-        else return Nothing
-  extend (freeVars newDecl)
+    Let ann b expr -> go [b] expr $ Let ann b
+    Unpack bs expr -> go bs  expr $ Unpack bs
+  modify (<> freeVars newDecl)
   return newDecl
+  where
+    go bs expr mkDecl = do
+      varsNeeded <- get
+      forM_ bs $ modify . envDelete
+      if any (`isin` varsNeeded) bs || (not $ isPure expr)
+        then Just . mkDecl <$> dceExpr expr
+        else return Nothing
 
 dceExpr :: Expr -> DceM Expr
 dceExpr expr = case expr of
@@ -76,11 +74,14 @@ dceExpr expr = case expr of
   Case e alts ty -> Case <$> dceAtom e <*> mapM dceAlt alts <*> dceAtom ty
 
 dceAlt :: Alt -> DceM Alt
-dceAlt (Abs bs block) = Abs bs <$> dceBlock block
+dceAlt (Abs bs block) = Abs <$> traverse dceAbsBinder bs <*> dceBlock block
+
+dceAbsBinder :: Binder -> DceM Binder
+dceAbsBinder b = modify (envDelete b) >> return b
 
 dceAtom :: Atom -> DceM Atom
 dceAtom atom = case atom of
-  Lam (Abs v (arr, block)) -> Lam . (Abs v) . (arr,) <$> dceBlock block
+  Lam (Abs b (arr, block)) -> Lam <$> (Abs <$> dceAbsBinder b <*> ((arr,) <$> dceBlock block))
   _ -> return atom
 
 -- === For inlining ===
