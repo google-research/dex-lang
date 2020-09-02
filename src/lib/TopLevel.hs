@@ -122,6 +122,7 @@ processLogs logLevel logs = case logLevel of
   LogPasses passes -> flip filter logs $ \l -> case l of
                         PassInfo pass _ | pass `elem` passes -> True
                                         | otherwise          -> False
+                        _ -> False
   PrintEvalTime -> [BenchResult "" compileTime runTime]
     where (compileTime, runTime) = timesFromLogs logs
   PrintBench benchName -> [BenchResult benchName compileTime runTime]
