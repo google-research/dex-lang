@@ -86,35 +86,25 @@ dceAtom atom = case atom of
 
 -- === For inlining ===
 
-type InlineM = SubstEmbedT (Reader (Env BinderUses))
-
-data BinderUses = LocalOnly Int | InBindings
+type InlineM = SubstEmbed
 
 inlineTraversalDef :: TraversalDef InlineM
 inlineTraversalDef = (inlineTraverseDecl, inlineTraverseExpr, traverseAtom inlineTraversalDef)
 
 inlineModule :: Module -> Module
-inlineModule m@(Module _ _ bindings) = transformModuleAsBlock inlineBlock m
+inlineModule m = transformModuleAsBlock inlineBlock (computeInlineHints m)
   where
-    usedInBindings = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
-    inlineBlock block = do
-      let useCounts = countUses block
-      let useCountsExports = (fmap LocalOnly useCounts) <> (newEnv usedInBindings (repeat InBindings))
-      fst $ runReader (runSubstEmbedT (traverseBlock inlineTraversalDef block) mempty) useCountsExports
+    inlineBlock block = fst $ runSubstEmbed (traverseBlock inlineTraversalDef block) mempty
 
 inlineTraverseDecl :: Decl -> InlineM SubstEnv
 inlineTraverseDecl decl = case decl of
-  Let _ b expr@(Hof (For _ body)) | isPure expr -> do
-    uses <- lift $ lift $ asks (`envLookup` b)
-    -- This is not a super safe condition for inlining, because it might still duplicate work
-    -- unexpectedly (consider an `arr` that's only used as `for i. 2.0 .* arr`). Still, this is not
-    -- the way arrays are usually used, so it should be good enough for now. In the future we should
-    -- strengthen this check to better ensure that each element of the array is used at most once.
-    case uses of
-      Just (LocalOnly 1) -> do
-        ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
-        return $ b @> TabVal ib block
-      _ -> traverseDecl inlineTraversalDef decl
+  -- This is not a super safe condition for inlining, because it might still duplicate work
+  -- unexpectedly (consider an `arr` that's only used as `for i. 2.0 .* arr`). Still, this is not
+  -- the way arrays are usually used, so it should be good enough for now. In the future we should
+  -- strengthen this check to better ensure that each element of the array is used at most once.
+  Let _ b@(BindWithHint CanInline _) expr@(Hof (For _ body)) | isPure expr -> do
+    ~(LamVal ib block) <- traverseAtom inlineTraversalDef body
+    return $ b @> TabVal ib block
   _ -> traverseDecl inlineTraversalDef decl
 
 inlineTraverseExpr :: Expr -> InlineM Expr
@@ -141,24 +131,75 @@ inlineTraverseExpr expr = case expr of
 dropSub :: InlineM a -> InlineM a
 dropSub m = local mempty m
 
-type UseCountM = SubstEmbedT (Cat (Env Int))
+type InlineHintM = State (Env InlineHint)
 
-countUses :: Block -> Env Int
-countUses block = execCat $ runSubstEmbedT (traverseBlock useCountTraversalDef block) mempty
+computeInlineHints :: Module -> Module
+computeInlineHints m@(Module _ _ bindings) =
+    transformModuleAsBlock (flip evalState bindingsNoInline . hintBlock) m
+  where
+    usedInBindings = filter (not . isGlobal) $ bindingsAsVars $ freeVars bindings
+    bindingsNoInline = newEnv usedInBindings (repeat NoInline)
 
-useCountTraversalDef :: TraversalDef UseCountM
-useCountTraversalDef = (traverseDecl useCountTraversalDef, traverseExpr useCountTraversalDef, useCountAtom)
+    hintBlock (Block decls result) = do
+      result' <- hintExpr result  -- Traverse result before decls!
+      Block <$> hintDecls decls <*> pure result'
 
-useCountAtom :: Atom -> UseCountM Atom
-useCountAtom atom = case atom of
-  Var v -> use v >> cont atom
-  _ -> cont atom
-  where cont = traverseAtom useCountTraversalDef
+    hintDecls decls = do
+      let revDecls = reverse $ toList decls
+      revNewDecls <- mapM hintDecl revDecls
+      return $ toNest $ reverse $ revNewDecls
 
-use :: VarP a -> UseCountM ()
-use n = do
-  c <- fromMaybe 0 <$> (looks (`envLookup` n))
-  extend (n @> (c + 1))
+    hintDecl decl = case decl of
+      Let ann b expr -> go [b] expr $ Let ann . head
+      Unpack bs expr -> go bs  expr $ Unpack
+      where
+        go bs expr mkDecl = do
+          void $ noInlineFree bs
+          bs' <- traverse hintBinder bs
+          forM_ bs $ modify . envDelete
+          mkDecl bs' <$> hintExpr expr
+
+    hintExpr :: Expr -> InlineHintM Expr
+    hintExpr expr = case expr of
+      App (Var v) x  -> App  <$> (Var v <$ use v) <*> hintAtom x
+      App g x        -> App  <$> hintAtom g       <*> hintAtom x
+      Atom x         -> Atom <$> hintAtom x
+      Op  op         -> Op   <$> traverse hintAtom op
+      Hof hof        -> Hof  <$> traverse hintAtom hof
+      Case e alts ty -> Case <$> hintAtom e <*> traverse hintAlt alts <*> hintAtom ty
+
+    hintAlt (Abs bs block) = Abs <$> traverse hintAbsBinder bs <*> hintBlock block
+
+    hintAtom :: Atom -> InlineHintM Atom
+    hintAtom atom = case atom of
+      -- TODO: Is it always ok to inline e.g. into a table lambda? Even if the
+      --       lambda indicates that the access pattern would be injective, its
+      --       body can still get instantiated multiple times!
+      Lam (Abs b (arr, block)) -> Lam <$> (Abs <$> hintAbsBinder b <*> ((arr,) <$> hintBlock block))
+      _ -> noInlineFree atom
+
+    use n = do
+      maybeHint <- gets $ (`envLookup` n)
+      let newHint = case maybeHint of
+                      Nothing -> CanInline
+                      Just _  -> NoInline
+      modify (<> (n @> newHint))
+
+    hintBinder :: Binder -> InlineHintM Binder
+    hintBinder b = do
+      maybeHint <- gets $ (`envLookup` b)
+      case (b, maybeHint) of
+        (Bind v  , Just hint) -> return $ BindWithHint hint   v
+        (Bind v  , Nothing  ) -> return $ BindWithHint NoHint v -- TODO: Change to Ignore?
+        (Ignore _, Nothing  ) -> return b
+        (Ignore _, Just _   ) -> error "Ignore binder is not supposed to have any uses"
+
+    hintAbsBinder :: Binder -> InlineHintM Binder
+    hintAbsBinder b = modify (envDelete b) >> traverse hintAtom b
+
+    noInlineFree :: HasVars a => a -> InlineHintM a
+    noInlineFree a = modify (<> (fmap (const NoInline) (freeVars a))) >> return a
+
 
 -- === Helpers ===
 
