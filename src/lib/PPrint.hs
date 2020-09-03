@@ -380,7 +380,7 @@ instance Pretty k => Pretty (MDImpFunction k) where
 
 instance Pretty k => Pretty (MDImpInstr k) where
   pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
-  pretty (MDAlloc _ t s)  = "device_alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (MDAlloc t s)    = "device_alloc" <+> p t <> "[" <> p s <> "]"
   pretty (MDFree v)       = "free" <+> p v
   pretty (MDLoadScalar v) = "device_load" <+> p v
   pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x

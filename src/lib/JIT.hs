@@ -237,7 +237,7 @@ compileMDImpInstrMC isLocal instr =
         kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ voidp] False
     MDLoadScalar v         -> Just    <$> (load =<< lookupImpVar v)
     MDStoreScalar v val    -> Nothing <$  bindM2 store (lookupImpVar v) (compileExpr val)
-    MDAlloc a t s          -> compileImpInstr isLocal (Alloc a t s)
+    MDAlloc t s            -> compileImpInstr isLocal (Alloc DeviceMem t s)
     MDFree   v             -> compileImpInstr isLocal (Free v)
     MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
 
@@ -292,7 +292,7 @@ compileMDImpInstrCUDA isLocal instrExt = do
         ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" ptx
         launchCUDAKernel ptxConst sizeOp kernelParams
         return Nothing
-      MDAlloc _ t s -> Just <$>
+      MDAlloc t s -> Just <$>
         (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s)
         where elemTy = scalarTy t
       MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing

@@ -766,7 +766,7 @@ instance ImpSuperset (MDImpInstr k) where
   liftInstr instr = case instr of
     Load  ref     -> MDLoadScalar  (fromIVar ref)
     Store ref val -> MDStoreScalar (fromIVar ref) val
-    Alloc a ty n  -> MDAlloc a ty n
+    Alloc _ ty n  -> MDAlloc ty n
     Free  ref     -> MDFree ref
     _             -> MDHostInstr instr
 
@@ -780,7 +780,7 @@ mdImpInstrType instr = case instr of
   MDLaunch _ _ _    -> Nothing
   MDFree _          -> Nothing
   MDStoreScalar _ _ -> Nothing
-  MDAlloc a ty _    -> Just $ PtrType a ty
+  MDAlloc ty _      -> Just $ PtrType DeviceMem ty
   MDLoadScalar ref  -> Just t  where PtrType _ t = varAnn ref
   MDHostInstr i     -> impInstrType i
 
@@ -792,7 +792,7 @@ instance MonadImp MDImpM (MDImpInstr ImpKernel) where
       Unmanaged -> return ()
     return dest
 
-  emitAlloc v ty n = emitStatement $ IInstr (Just (Bind v), MDAlloc DeviceMem ty n)
+  emitAlloc v ty n = emitStatement $ IInstr (Just (Bind v), MDAlloc ty n)
 
   scopedBlock body = do
     (ans, ((_, allocs), (scope', prog))) <- scoped body

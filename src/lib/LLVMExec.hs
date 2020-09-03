@@ -217,14 +217,6 @@ loadLitVal ptr (Scalar ty) = case ty of
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
 loadLitVal ptr (PtrType a t) = PtrLit a t <$> peek (castPtr ptr)
 
-sizeOf :: BaseType -> Int
-sizeOf t = case t of
-  Scalar Int64Type   -> 8
-  Scalar Int32Type   -> 4
-  Scalar Int8Type    -> 1
-  Scalar Float64Type -> 8
-  Scalar Float32Type -> 4
-
 storeLitVal :: Ptr () -> LitVal -> IO ()
 storeLitVal ptr val = case val of
   Int64Lit   x -> poke (castPtr ptr) x

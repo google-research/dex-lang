@@ -479,7 +479,7 @@ type MDImpProgram k   = IProg (MDImpInstr k)
 type MDImpStatement k = IStmt (MDImpInstr k)
 
 data MDImpInstr k = MDLaunch Size [IVar] k
-                  | MDAlloc AddressSpace IType Size
+                  | MDAlloc IType Size
                   | MDFree IVar
                   | MDLoadScalar  IVar
                   | MDStoreScalar IVar IExpr
@@ -1171,7 +1171,9 @@ instance HasIVars instr => HasIVars (IProg instr) where
 instance BindsIVars (IStmt instr) where
   boundIVars stmt = case stmt of
     IInstr (Just b, _) -> binderAsEnv b
-    _ -> mempty
+    IFor _ _ _ _ -> mempty
+    IWhile _ _   -> mempty
+    ICond  _ _ _ -> mempty
 
 instance BindsIVars (IProg instr) where
   boundIVars prog = foldMap boundIVars prog
