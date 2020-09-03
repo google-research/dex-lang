@@ -38,7 +38,7 @@ import Control.Monad.Reader
 import Control.Monad.Identity
 import Data.Maybe (fromJust)
 import Data.ByteString.Short (toShort)
-import Data.ByteString.Char8 (pack)
+import Data.ByteString.Char8 (unpack, pack)
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
@@ -280,22 +280,22 @@ type MDHostCompile   = Compile
 data MDImpInstrCG    = EnsureHasContext -- code generation specific instructions
 type MDImpInstrExt k = Either MDImpInstrCG (MDImpInstr k)
 
-mdImpToCUDA :: MDImpFunction PTXKernel -> LLVMFunction
+mdImpToCUDA :: MDImpFunction CUDAKernel -> LLVMFunction
 mdImpToCUDA (MDImpFunction outVars inVars prog) =
   runIdentity $ compileFunction [] compileMDImpInstrCUDA outVars inVars prog'
   where prog' = IInstr (IDo, Left EnsureHasContext) `Nest` fmap (fmap Right) prog
 
-compileMDImpInstrCUDA :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
+compileMDImpInstrCUDA :: Bool -> MDImpInstrExt CUDAKernel -> MDHostCompile (Maybe Operand)
 compileMDImpInstrCUDA isLocal instrExt = do
   case instrExt of
     Left ext -> case ext of
       EnsureHasContext -> ensureHasCUDAContext >> return Nothing
     Right instr -> case instr of
-      MDLaunch size args (PTXKernel ptx) -> do
+      MDLaunch size args (CUDAKernel kernel) -> do
         argOps <- traverse lookupImpVar args
         sizeOp <- (`asIntWidth` i64) =<< compileExpr size
         kernelParams <- packArgs $ sizeOp : argOps
-        ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" ptx
+        ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" (unpack kernel)
         launchCUDAKernel ptxConst sizeOp kernelParams
         return Nothing
       MDAlloc  t s           -> Just <$>

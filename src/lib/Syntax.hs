@@ -24,7 +24,7 @@ module Syntax (
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
-    ImpKernel (..), PTXKernel (..), IScope,
+    ImpKernel (..), CUDAKernel (..), IScope,
     ScalarTableType, ScalarTableBinder, BinderInfo (..),Bindings,
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -62,7 +62,8 @@ import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
-import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable  as V
+import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
 import Data.Store (Store)
@@ -508,7 +509,7 @@ data MDImpInstr k = MDLaunch Size [IVar] k
 -- Parameters, linear thread index, kernel body
 data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram
                  deriving (Show)
-newtype PTXKernel = PTXKernel String deriving (Show)
+newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 -- === some handy monoids ===
 
