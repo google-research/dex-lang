@@ -93,7 +93,7 @@ mhSamples  = runChain randnVec (mhStep  mhParams  myLogProb) numSamples k0
 
 :p meanAndCovariance hmcSamples
 > ( [1.4468338, 2.4944727]
-> , [[1.0656759, 2.0475952e-2], [2.0475952e-2, 5.2884985e-2]] )
+> , [[1.0656759, 2.0475952e-2], [2.0475952e-2, 5.288498e-2]] )
 
 :plot for i. (IToF (ordinal i), hmcSamples.i.(0@_))
 > <graphical output>

@@ -103,13 +103,13 @@ Run it for more iterations and result should improve.
 Which it indeed does.
 
 :p optimize 50 10 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [3.7902741, 14.911411]
+> [3.7902741, 14.911415]
 
 :p optimize 50 20 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.737732, 3.1227102]
+> [1.7377326, 3.1227152]
 
 :p optimize 50 100 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
-> [1.0062308, 1.0128763]
+> [1.0062307, 1.012882]
 
 :p optimize 50 1000 (newKey 0) rosenbrock2 ([-10.0, -10.0],[20.0, 20.0]) (0.5,0.3,0.4)
 > [1.0, 1.0]

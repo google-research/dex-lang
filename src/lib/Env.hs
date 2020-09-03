@@ -12,7 +12,7 @@ module Env (Name (..), Tag, Env (..), NameSpace (..), envLookup, isin, envNames,
             envIntersect, varAsEnv, envDiff, envMapMaybe, fmapNames, envAsVars,
             rawName, nameSpace, nameTag, envMaxName, genFresh,
             tagToStr, isGlobal, isGlobalBinder, asGlobal, envFilter, binderAsEnv,
-            fromBind, newEnv, HasName, getName) where
+            fromBind, newEnv, HasName, getName, InlineHint (..), pattern Bind) where
 
 import Data.Store
 import Data.String
@@ -36,8 +36,17 @@ data NameSpace = GenName | SourceName | JaxIdx | Skolem | InferenceName | SumNam
 
 type Tag = T.Text
 data VarP a = (:>) Name a  deriving (Show, Ord, Generic, Functor, Foldable, Traversable)
-data BinderP a = Ignore a | Bind (VarP a)
+data BinderP a = Ignore a | BindWithHint InlineHint (VarP a)
                  deriving (Show, Generic, Functor, Foldable, Traversable)
+
+data InlineHint = NoHint | CanInline | NoInline
+                  deriving (Show, Generic)
+
+pattern Bind :: VarP a -> BinderP a
+pattern Bind v <- BindWithHint _ v
+  where Bind v = BindWithHint NoHint v
+
+{-# COMPLETE Ignore, Bind #-}
 
 rawName :: NameSpace -> Tag -> Name
 rawName s t = Name s t 0
@@ -104,8 +113,10 @@ envPairs (Env m) = M.toAscList m
 fmapNames :: (Name -> a -> b) -> Env a -> Env b
 fmapNames f (Env m) = Env $ M.mapWithKey f m
 
-envDelete :: Name -> Env a -> Env a
-envDelete v (Env m) = Env (M.delete v m)
+envDelete :: HasName a => a -> Env b -> Env b
+envDelete x (Env m) = Env $ case getName x of
+  Nothing -> m
+  Just n  -> M.delete n m
 
 envSubset :: [Name] -> Env a -> Env a
 envSubset vs (Env m) = Env $ M.intersection m (M.fromList [(v,()) | v <- vs])
@@ -215,6 +226,7 @@ tagToStr s = T.unpack s
 
 instance Store Name
 instance Store NameSpace
+instance Store InlineHint
 instance Store a => Store (VarP a)
 instance Store a => Store (Env a)
 instance Store a => Store (BinderP a)
