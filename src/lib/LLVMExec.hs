@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module LLVMExec (LLVMFunction (..), LLVMKernel (..),
-                 callLLVM, compilePTX) where
+                 callLLVM, compilePTX, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -52,7 +52,7 @@ import Resources
 type ExitCode = Int
 
 foreign import ccall "dynamic"
-  callFunPtr :: FunPtr (Ptr () -> IO ExitCode) -> Ptr () -> IO ExitCode
+  callFunPtr :: FunPtr (Ptr () -> Ptr () -> IO ExitCode) -> Ptr () -> Ptr () -> IO ExitCode
 
 compilePTX :: Logger [Output] -> LLVMKernel -> IO PTXKernel
 compilePTX logger (LLVMKernel ast) = do
@@ -66,24 +66,22 @@ compilePTX logger (LLVMKernel ast) = do
         compileModule ctx logger tm m
         PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
 
-callLLVM :: Logger [Output] -> LLVMFunction -> [Ptr ()] -> IO [Ptr ()]
-callLLVM logger (LLVMFunction numOutputs ast) inArrays = do
-  argsPtr <- mallocBytes $ (numOutputs + numInputs) * ptrSize
-  forM_ (zip [numOutputs..] inArrays) $ \(i, p) -> do
-    poke (argsPtr `plusPtr` (i * ptrSize)) p
-  exitCode <- evalLLVM logger ast argsPtr
+callLLVM :: Logger [Output] -> LLVMFunction -> [LitVal] -> IO [LitVal]
+callLLVM logger (LLVMFunction argTypes resultTypes ast) args = do
+  argsPtr   <- mallocBytes $ length argTypes    * cellSize
+  resultPtr <- mallocBytes $ length resultTypes * cellSize
+  storeLitVals argsPtr args
+  exitCode <- evalLLVM logger ast argsPtr resultPtr
   case exitCode of
     0 -> do
-      outputPtrs <- forM [0..numOutputs - 1] $ \i -> peek (argsPtr `plusPtr` (i * ptrSize))
+      results <- loadLitVals resultPtr resultTypes
       free argsPtr
-      return outputPtrs
+      free resultPtr
+      return results
     _ -> throwIO $ Err RuntimeErr Nothing ""
-  where
-    numInputs = length inArrays
-    ptrSize = 8 -- TODO: Get this from LLVM instead of hardcoding!
 
-evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> IO ExitCode
-evalLLVM logger ast argPtr = do
+evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> Ptr () -> IO ExitCode
+evalLLVM logger ast argPtr resultPtr = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
     void $ Linking.loadLibraryPermanently Nothing
@@ -110,7 +108,7 @@ evalLLVM logger ast argPtr = do
                     entryFunSymbol <- JIT.mangleSymbol compileLayer "entryFun"
                     Right (JIT.JITSymbol f _) <- JIT.findSymbol compileLayer entryFunSymbol False
                     t1 <- getCurrentTime
-                    exitCode <- callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr
+                    exitCode <- callFunPtr (castPtrToFunPtr (wordPtrToPtr f)) argPtr resultPtr
                     t2 <- getCurrentTime
                     logThis logger [EvalTime $ realToFrac $ t2 `diffUTCTime` t1]
                     return exitCode
@@ -201,6 +199,46 @@ withGPUTargetMachine computeCapability next = do
       CM.Default
       CGO.Aggressive
       next
+
+-- === serializing scalars ===
+
+loadLitVals :: Ptr () -> [BaseType] -> IO [LitVal]
+loadLitVals p types = zipWithM loadLitVal (ptrArray p) types
+
+storeLitVals :: Ptr () -> [LitVal] -> IO ()
+storeLitVals p xs = zipWithM_ storeLitVal (ptrArray p) xs
+
+loadLitVal :: Ptr () -> BaseType -> IO LitVal
+loadLitVal ptr (Scalar ty) = case ty of
+  Int64Type   -> Int64Lit   <$> peek (castPtr ptr)
+  Int32Type   -> Int32Lit   <$> peek (castPtr ptr)
+  Int8Type    -> Int8Lit    <$> peek (castPtr ptr)
+  Float64Type -> Float64Lit <$> peek (castPtr ptr)
+  Float32Type -> Float32Lit <$> peek (castPtr ptr)
+loadLitVal ptr (PtrType a t) = PtrLit a t <$> peek (castPtr ptr)
+
+sizeOf :: BaseType -> Int
+sizeOf t = case t of
+  Scalar Int64Type   -> 8
+  Scalar Int32Type   -> 4
+  Scalar Int8Type    -> 1
+  Scalar Float64Type -> 8
+  Scalar Float32Type -> 4
+
+storeLitVal :: Ptr () -> LitVal -> IO ()
+storeLitVal ptr val = case val of
+  Int64Lit   x -> poke (castPtr ptr) x
+  Int32Lit   x -> poke (castPtr ptr) x
+  Int8Lit    x -> poke (castPtr ptr) x
+  Float64Lit x -> poke (castPtr ptr) x
+  Float32Lit x -> poke (castPtr ptr) x
+  PtrLit _ _ x -> poke (castPtr ptr) x
+
+cellSize :: Int
+cellSize = 8
+
+ptrArray :: Ptr () -> [Ptr ()]
+ptrArray p = map (\i -> p `plusPtr` (i * cellSize)) [0..]
 
 -- === dex runtime ===
 

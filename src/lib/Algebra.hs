@@ -51,13 +51,13 @@ type ClampPolynomial  = PolynomialP ClampMonomial
 data SumPolynomial      = SumPolynomial Polynomial Var           deriving (Show, Eq)
 data SumClampPolynomial = SumClampPolynomial ClampPolynomial Var deriving (Show, Eq)
 
-elemCount :: ScalarTableType -> ClampPolynomial
+elemCount :: Type -> ClampPolynomial
 elemCount t = case t of
   BaseTy _  -> liftC $ poly [(1, mono [])]
   TabTy b _ -> (offsets t) `psubstSumVar` (indexSetSize $ binderType b)
   _ -> error $ "Not a ScalarTableType: " ++ pprint t
 
-offsets :: ScalarTableType -> SumClampPolynomial
+offsets :: Type -> SumClampPolynomial
 offsets t = case t of
   -- TODO: not sure about `fromBind` here`
   TabTy b body -> sumC (fromBind "_" b) $ elemCount body

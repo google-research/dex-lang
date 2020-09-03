@@ -25,7 +25,6 @@ import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
 
-import Array
 import Syntax
 import Env
 import PPrint
@@ -350,7 +349,6 @@ instance CoreVariant (PrimTC a) where
     -- distinct tyep for those, so we can rule out this case.
     TypeKind -> alwaysAllowed
     EffectRowKind  -> alwaysAllowed
-    JArrayType _ _ -> neverAllowed
     _ -> alwaysAllowed
 
 instance CoreVariant (PrimOp a) where
@@ -493,7 +491,6 @@ typeCheckTyCon :: TC -> TypeM Type
 typeCheckTyCon tc = case tc of
   BaseType _       -> return TyKind
   CharType         -> return TyKind
-  ArrayType t      -> t|:TyKind >> return TyKind
   IntRange a b     -> a|:IdxRepTy >> b|:IdxRepTy >> return TyKind
   IndexRange t a b -> t|:TyKind >> mapM_ (|:t) a >> mapM_ (|:t) b >> return TyKind
   IndexSlice n l   -> n|:TyKind >> l|:TyKind >> return TyKind
@@ -503,24 +500,20 @@ typeCheckTyCon tc = case tc of
   TypeKind         -> return TyKind
   EffectRowKind    -> return TyKind
   LabeledRowKindTC -> return TyKind
-  JArrayType _ _   -> undefined
 
 typeCheckCon :: Con -> TypeM Type
 typeCheckCon con = case con of
   Lit l -> return $ BaseTy $ litType l
   CharCon v -> v |: (BaseTy $ Scalar Int8Type) $> CharTy
-  ArrayLit ty _ -> return $ ArrayTy ty
+  -- BufferLit buffer -> return $ BaseTy $ snd $ arrayType buffer
   AnyValue t -> t|:TyKind $> t
   PairCon x y -> PairTy <$> typeCheck x <*> typeCheck y
   UnitCon -> return UnitTy
-  Coerce t@(Var _) _ -> t |: TyKind $> t
-  Coerce destTy e -> do
-    sourceTy <- typeCheck e
-    destTy  |: TyKind
-    checkValidCoercion sourceTy destTy
-    return destTy
-  SumAsProd ty _ _ -> return ty  -- TODO: check!
+  SumAsProd ty tag _ -> tag |:TagRepTy >> return ty  -- TODO: check!
   ClassDictHole _ ty -> ty |: TyKind >> return ty
+  IntRangeVal     l h i -> i|:IdxRepTy >> return (TC $ IntRange     l h)
+  IndexRangeVal t l h i -> i|:IdxRepTy >> return (TC $ IndexRange t l h)
+
 
 checkIntBaseType :: MonadError Err m => Bool -> Type -> m ()
 checkIntBaseType allowVector t = case t of
@@ -548,15 +541,6 @@ checkFloatBaseType allowVector t = case t of
       _           -> notFloat
     notFloat = throw TypeErr $ "Expected a fixed-width " ++ (if allowVector then "" else "scalar ") ++
                                "floating-point type, but found: " ++ pprint t
-
-checkValidCoercion :: Type -> Type -> TypeM ()
-checkValidCoercion sourceTy destTy = case (sourceTy, destTy) of
-  (ArrayTy st, ArrayTy CharTy)   -> checkIntBaseType   False st
-  (ArrayTy st, ArrayTy dt)       -> checkValidCoercion st dt
-  (IdxRepTy  , TC (IntRange   _ _  )) -> return () -- from ordinal
-  (IdxRepTy  , TC (IndexRange _ _ _)) -> return () -- from ordinal
-  (IdxRepTy  , TC (IndexSlice _ _  )) -> return () -- from ordinal of the first slice element
-  _ -> throw TypeErr $ "Can't coerce " ++ pprint sourceTy ++ " to " ++ pprint destTy
 
 checkValidCast :: Type -> Type -> TypeM ()
 checkValidCast sourceTy destTy = checkScalarType sourceTy >> checkScalarType destTy
@@ -619,14 +603,13 @@ typeCheckOp op = case op of
   SndRef ref -> do
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
-  ArrayOffset arr idx off -> do
-    ArrayTy (TabTyAbs a) <- typeCheck arr
+  PtrOffset arr off -> do
+    PtrTy s a <- typeCheck arr
     off |: IdxRepTy
-    idx |: absArgType a
-    return $ ArrayTy $ snd $ applyAbs a idx
-  ArrayLoad arr -> do
-    ArrayTy (BaseTy b)  <- typeCheck arr
-    return $ BaseTy b
+    return $ PtrTy s a
+  PtrLoad arr -> do
+    PtrTy _ a  <- typeCheck arr
+    return $ BaseTy a
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -772,8 +755,9 @@ litType v = case v of
   Int8Lit    _ -> Scalar Int8Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
+  PtrLit a t _ -> PtrType a t
   VecLit  l -> Vector sb
-    where (Scalar sb) = litType $ head l
+    where Scalar sb = litType $ head l
 
 data ArgumentType = SomeFloatArg | SomeIntArg | Int8Arg
 data ReturnType   = SameReturn | Int8Return

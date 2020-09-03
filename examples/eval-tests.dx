@@ -255,16 +255,16 @@ litArr = [10, 5, 3]
 > (1, (2, 3))
 
 :p for i:(Fin 3). i
-> [0@(Fin 3), 1@(Fin 3), 2@(Fin 3)]
+> [(0@Fin 3), (1@Fin 3), (2@Fin 3)]
 
 :p for i:(Fin 3). i
-> [0@(Fin 3), 1@(Fin 3), 2@(Fin 3)]
+> [(0@Fin 3), (1@Fin 3), (2@Fin 3)]
 
 :p fromOrdinal (Fin 1) 0
-> 0@(Fin 1)
+> (0@Fin 1)
 
 :p 0@(Fin 1)
-> 0@(Fin 1)
+> (0@Fin 1)
 
 :p [1, 2, 3].(0@_)
 > 1
@@ -483,10 +483,10 @@ litArr = [10, 5, 3]
 > [[1, 3], [2, 4]]
 
 :p argmin [1.0, 2.0, 0.4, 5.0]
-> 2@(Fin 4)
+> (2@Fin 4)
 
 :p select True (fromOrdinal (Fin 2) 0) (fromOrdinal (Fin 2) 1)
-> 0@(Fin 2)
+> (0@Fin 2)
 
 -- TODO: printing (also parsing) tables with alternative index sets
 -- :p
@@ -613,7 +613,7 @@ for i:(Fin 2 & Fin 2). 1.0
 > [1.0, 1.0, 1.0, 1.0]@(Fin 2 & Fin 2)
 
 1@(Fin 2 & Fin 2)
-> (0@(Fin 2), 1@(Fin 2))
+> ((0@Fin 2), (1@Fin 2))
 
 for i:(Fin 5). for j:(..i).
   ir = IToF $ ordinal i

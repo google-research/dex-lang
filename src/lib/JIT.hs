@@ -4,7 +4,6 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE Rank2Types #-}
 {-# OPTIONS_GHC -Wno-orphans #-}
@@ -36,20 +35,20 @@ import Control.Monad
 import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Identity
-import Data.Maybe (fromJust)
 import Data.ByteString.Short (toShort)
 import Data.ByteString.Char8 (pack)
 import Data.String
 import Data.Foldable
 import Data.Text.Prettyprint.Doc
+import Foreign.Ptr (ptrToWordPtr)
 import qualified Data.Set as S
 import qualified Data.Map as M
 
-import Array (vectorWidth)
 import Syntax
 import Env
 import PPrint
 import Util
+import Imp
 
 type OperandEnv = Env Operand
 data CompileState = CompileState { curBlocks   :: [BasicBlock]
@@ -57,9 +56,6 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , scalarDecls :: [Named Instruction]
                                  , blockName   :: L.Name
                                  , usedNames   :: Env ()
-                                 -- TODO: Make progOutputs part of an extra reader monad
-                                 --       that's specific to CPU codegen
-                                 , progOutputs :: Env Operand  -- Maps Imp values to the output pointer operands
                                  , allocas     :: S.Set L.Name
                                  , funSpecs    :: S.Set ExternFunSpec
                                  , globalDefs  :: [L.Definition]
@@ -81,25 +77,24 @@ data ExternFunSpec = ExternFunSpec L.Name L.Type [L.ParameterAttribute] [FA.Func
 
 type Function = L.Global
 
-type NumOutputs   = Int
-data LLVMFunction = LLVMFunction NumOutputs L.Module
+data LLVMFunction = LLVMFunction [BaseType] [BaseType] L.Module
 data LLVMKernel   = LLVMKernel L.Module
 
 -- === Imp to LLVM ===
 
 impToLLVM :: ImpFunction -> LLVMFunction
-impToLLVM (ImpFunction outVars inVars prog) =
-  runIdentity $ compileFunction paramAttrs compileImpInstr outVars inVars prog
+impToLLVM (ImpFunction bs prog result) =
+  runIdentity $ compileFunction paramAttrs compileImpInstr bs (prog, result)
   -- Alignment and dereferenceable attributes are guaranteed by malloc_dex
   where paramAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
 
 compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpInstr isLocal instr = case instr of
   IThrowError   -> Nothing <$  throwRuntimeError
-  Alloc t numel -> Just    <$> case numel of
+  Alloc _ t numel -> Just    <$> case numel of
     ILit l | n <- getIntLit l, isLocal && n <= 256 -> alloca n elemTy
     _ -> malloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr numel
-    where elemTy = scalarTy $ scalarTableBaseType t
+    where elemTy = scalarTy t
   Free v' -> do
     ~v@(L.LocalReference _ vn) <- lookupImpVar v'
     stackAllocated             <- gets allocas
@@ -112,7 +107,7 @@ compileLoop d iBinder n compileBody = do
   let loopName = "loop_" ++ (showName $ binderNameHint iBinder)
   loopBlock <- freshName $ fromString $ loopName
   nextBlock <- freshName $ fromString $ "cont_" ++ loopName
-  i <- alloca 1 $ scalarTy iType
+  i <- alloca 1 $ scalarTy $ binderAnn iBinder
   i0 <- case d of Fwd -> return $ (0 `withWidthOf` n)
                   Rev -> n `sub` (1 `withWidthOf` n)
   store i i0
@@ -126,7 +121,6 @@ compileLoop d iBinder n compileBody = do
   loopCond <- case d of Fwd -> iValNew `ilt` n
                         Rev -> iValNew `ige` (0 `withWidthOf` iValNew)
   finishBlock (L.CondBr loopCond loopBlock nextBlock []) nextBlock
-  where (IValType iType) = (binderAnn iBinder)
 
 compileIf :: Monad m => Operand -> CompileT m () -> CompileT m () -> CompileT m ()
 compileIf cond tb fb = do
@@ -217,8 +211,8 @@ compileBinOp op x y = case op of
 -- === MDImp to multicore LLVM ===
 
 mdImpToMulticore :: MDImpFunction ImpKernel -> LLVMFunction
-mdImpToMulticore (MDImpFunction outVars inVars prog) =
-  runIdentity $ compileFunction [] compileMDImpInstrMC outVars inVars prog
+mdImpToMulticore (MDImpFunction bs prog result) =
+ runIdentity $ compileFunction [] compileMDImpInstrMC bs (prog, result)
 
 compileMDImpInstrMC :: Bool -> MDImpInstr ImpKernel -> Compile (Maybe Operand)
 compileMDImpInstrMC isLocal instr =
@@ -243,7 +237,7 @@ compileMDImpInstrMC isLocal instr =
         kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ voidp] False
     MDLoadScalar v         -> Just    <$> (load =<< lookupImpVar v)
     MDStoreScalar v val    -> Nothing <$  bindM2 store (lookupImpVar v) (compileExpr val)
-    MDAlloc  t s           -> compileImpInstr isLocal (Alloc t s)
+    MDAlloc a t s          -> compileImpInstr isLocal (Alloc a t s)
     MDFree   v             -> compileImpInstr isLocal (Free v)
     MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
 
@@ -271,8 +265,8 @@ impKernelToMC funcName (ImpKernel argBinders idxBinder prog) = runCompile cpuIni
   extraDefs <- gets globalDefs
   return $ (extraSpecs, L.GlobalDefinition kernel : extraDefs)
   where
-    idxType = fromIValType $ binderAnn idxBinder
-    argTypes = fmap ((fromIType $ L.AddrSpace 0) . binderAnn) argBinders
+    idxType = scalarTy $ binderAnn idxBinder
+    argTypes = fmap (scalarTy . binderAnn) argBinders
 
 -- === MDImp to LLVM CUDA ===
 
@@ -281,9 +275,9 @@ data MDImpInstrCG    = EnsureHasContext -- code generation specific instructions
 type MDImpInstrExt k = Either MDImpInstrCG (MDImpInstr k)
 
 mdImpToCUDA :: MDImpFunction PTXKernel -> LLVMFunction
-mdImpToCUDA (MDImpFunction outVars inVars prog) =
-  runIdentity $ compileFunction [] compileMDImpInstrCUDA outVars inVars prog'
-  where prog' = IInstr (IDo, Left EnsureHasContext) `Nest` fmap (fmap Right) prog
+mdImpToCUDA (MDImpFunction bs prog result) =
+  runIdentity $ compileFunction [] compileMDImpInstrCUDA bs (prog', result)
+  where prog' = IInstr (Nothing, Left EnsureHasContext) `Nest` fmap (fmap Right) prog
 
 compileMDImpInstrCUDA :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
 compileMDImpInstrCUDA isLocal instrExt = do
@@ -298,9 +292,9 @@ compileMDImpInstrCUDA isLocal instrExt = do
         ptxConst <- castVoidPtr =<< declareStringConst "ptxKernel" ptx
         launchCUDAKernel ptxConst sizeOp kernelParams
         return Nothing
-      MDAlloc  t s           -> Just <$>
+      MDAlloc _ t s -> Just <$>
         (cuMemAlloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr s)
-        where elemTy = scalarTy $ scalarTableBaseType t
+        where elemTy = scalarTy t
       MDFree   v             -> lookupImpVar v >>= cuMemFree >> return Nothing
       MDLoadScalar  v        -> do
         refPtr <- castVoidPtr =<< lookupImpVar v
@@ -368,9 +362,9 @@ impKernelToLLVM (ImpKernel args lvar prog) = runCompile gpuInitCompileEnv $ do
   kernel <- makeFunction "kernel" (sizeParam : argParams) Nothing
   LLVMKernel <$> makeModuleEx ptxDataLayout ptxTargetTriple [L.GlobalDefinition kernel, kernelMeta, nvvmAnnotations]
   where
-    lidxType = fromIValType $ binderAnn lvar
+    lidxType = scalarTy $ binderAnn lvar
     ptrParamAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 256]
-    argTypes = fmap ((fromIType $ L.AddrSpace 1) . binderAnn) args
+    argTypes = fmap (scalarTy . binderAnn) args
     kernelMetaId = L.MetadataNodeID 0
     kernelMeta = L.MetadataNodeDefinition kernelMetaId $ L.MDTuple
       [ Just $ L.MDValue $ L.ConstantOperand $ C.GlobalReference (funTy L.VoidType (lidxType : argTypes)) "kernel"
@@ -451,10 +445,9 @@ compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
 compileImpKernelInstr _ instr = case instr of
   IThrowError      -> return Nothing
   Free  _          -> return Nothing  -- Can only alloca inside a kernel
-  Alloc t numel    -> Just    <$> case numel of
-    ILit l | n <- getIntLit l, n <= 256 -> alloca n elemTy
+  Alloc _ t numel  -> Just <$> case numel of
+    ILit l | n <- getIntLit l, n <= 256 -> alloca n (scalarTy t)
     _ -> error $ "GPU kernels can only allocate statically known amounts of memory"
-    where elemTy = scalarTy $ scalarTableBaseType t
   _ -> compileGenericInstr instr
 
 -- === Helpers for Imp and MDImp programs ===
@@ -462,50 +455,42 @@ compileImpKernelInstr _ instr = case instr of
 compileFunction :: Monad m
                 => [L.ParameterAttribute]
                 -> (Bool -> instr -> CompileT m (Maybe Operand))
-                -> [ScalarTableBinder] -> [ScalarTableBinder] -> IProg instr -> m LLVMFunction
-compileFunction attrs compileInstr outBinders inBinders stmts = runCompileT cpuInitCompileEnv $ do
-  -- Set up the argument list. Note that all outputs are pointers to pointers.
-  let inVarTypes  = map (        fromArrType . binderAnn) inBinders
-  let outVarTypes = map (L.ptr . fromArrType . binderAnn) outBinders
-  (inParams, inOperands)   <- unzip <$> mapM (freshParamOpPair attrs) inVarTypes
-  (outParams, outOperands) <- unzip <$> mapM (freshParamOpPair attrs) outVarTypes
-
-  -- Emit the program
-  let paramEnv = newEnv inBinders inOperands
-  modify (\s -> s { progOutputs = newEnv outBinders outOperands })
-  extendOperands paramEnv $ compileProg compileInstr stmts
-
-  let params = outParams ++ inParams
-  let paramTypes = fmap L.typeOf params
-  mainFun <- makeFunction "mainFun" params (Just $ 0 `withWidth` 64)
-  let mainFunOp = callableOperand (funTy i64 paramTypes) "mainFun"
-  let entryFun = makeEntryPoint "entryFun" paramTypes mainFunOp
-  LLVMFunction numOutputs <$> makeModule [L.GlobalDefinition mainFun,
-                                          L.GlobalDefinition entryFun]
+                -> [IBinder] -> IProgVal instr -> m LLVMFunction
+compileFunction attrs compileInstr inBinders prog = runCompileT cpuInitCompileEnv $ do
+  (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ L.ptr i64
+  (resultPtrParam, resultPtrOperand) <- freshParamOpPair attrs $ L.ptr i64
+  argOperands <- forM (zip [0..] argTypes) $ \(i, ty) ->
+    gep argPtrOperand (i `withWidth` 64) >>= castLPtr (scalarTy ty) >>= load
+  results <- extendOperands (newEnv inBinders argOperands) $
+               compileProgVal compileInstr prog
+  forM_ (zip [0..] results) $ \(i, x) ->
+    gep resultPtrOperand (i `withWidth` 64) >>= castLPtr (L.typeOf x) >>= flip store x
+  mainFun <- makeFunction "entryFun" [argPtrParam, resultPtrParam] (Just $ 0 `withWidth` 64)
+  LLVMFunction argTypes resultTypes <$> makeModule [L.GlobalDefinition mainFun]
   where
-    dropArray t = case t of ArrayTy t' -> t'; _ -> t
-    fromArrType = (fromIType $ L.AddrSpace 0) . IRefType . dropArray
-    numOutputs = length outBinders
+    argTypes    = map binderAnn inBinders
+    resultTypes = map getIType  (snd prog)
 
-compileProg :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand)) -> IProg instr -> CompileT m ()
-compileProg compileInstr prog = () <$ compileProgVal compileInstr (prog, Nothing)
+compileProg :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand))
+            -> IProg instr -> CompileT m ()
+compileProg compileInstr prog = () <$ compileProgVal compileInstr (prog, [])
 
-compileProgVal :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand)) -> IProgVal instr -> CompileT m (Maybe Operand)
+compileProgVal :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand))
+               -> IProgVal instr -> CompileT m [Operand]
 compileProgVal _ (Empty, val) = traverse compileExpr val
 compileProgVal compileInstr ((Nest stmt prog), val) = do
   env <- case stmt of
-    IInstr (b, instr) -> do
-      outputs <- gets progOutputs
-      let isOutput = b `isin` outputs
-      maybeAns <- compileInstr (not isOutput) instr
-      if isOutput
-        then let Bind name = b in store (outputs ! name) (fromJust maybeAns)
-        else return ()
-      return $ foldMap (b@>) maybeAns
+    IInstr (Just b, instr) -> do
+      -- TODO: allow alloca here, and copy at the end if needed
+      ans <- compileInstr False instr
+      return $ foldMap (b@>) ans
+    IInstr (Nothing, instr) -> do
+      void $ compileInstr False instr
+      return mempty
     IFor d i n body  -> mempty <$ do
       n' <- compileExpr n
       compileLoop d i n' (rec body)
-    IWhile cond body -> mempty <$ compileWhile (fromJust <$> recVal cond) (rec body)
+    IWhile cond body -> mempty <$ compileWhile (head <$> recVal cond) (rec body)
     ICond p cons alt -> do
       p' <- compileExpr p >>= (`asIntWidth` i1)
       compileIf p' (rec cons)
@@ -524,10 +509,10 @@ compileGenericInstr instr = case instr of
   IPrimOp op       -> Just    <$> (traverse compileExpr op >>= compilePrimOp)
   Load ref         -> Just    <$> (load =<< compileExpr ref)
   Store dest val   -> Nothing <$  bindM2 store (compileExpr dest) (compileExpr val)
-  IOffset x off _  -> Just    <$> bindM2 gep   (compileExpr x)    (compileExpr off)
+  IOffset x off    -> Just    <$> bindM2 gep   (compileExpr x)    (compileExpr off)
   ICastOp idt ix   -> Just    <$> do
     x <- compileExpr ix
-    let (xt, dt) = (L.typeOf x, fromIValType idt)
+    let (xt, dt) = (L.typeOf x, scalarTy idt)
     case (xt, dt) of
       (L.IntegerType _, L.IntegerType _) -> x `asIntWidth` dt
       (L.FloatingPointType fpt, L.FloatingPointType fpt') -> case compare fpt fpt' of
@@ -571,6 +556,9 @@ litVal lit = case lit of
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
+  PtrLit _ ty ptr ->
+    L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
+    where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
 
 -- TODO: Assert that the integer can be represented in that number of bits!
 withWidth :: Integer -> Word32 -> Operand
@@ -669,17 +657,12 @@ scalarTy b = case b of
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
+  PtrType s t -> L.PointerType (scalarTy t) (lAddress s)
 
-fromIType :: L.AddrSpace -> IType -> L.Type
-fromIType addrSpace it = case it of
-  IValType b -> scalarTy b
-  IRefType t -> L.PointerType (scalarTy $ scalarTableBaseType t) addrSpace
-  IVoidType  -> L.VoidType
-
-fromIValType :: IType -> L.Type
-fromIValType ty = case ty of
-  IValType b -> scalarTy b
-  _ -> error $ "Not an IValType: " ++ pprint ty
+lAddress :: AddressSpace -> L.AddrSpace
+lAddress s = case s of
+  HostMem   -> L.AddrSpace 0
+  DeviceMem -> L.AddrSpace 1
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
@@ -757,7 +740,7 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
 
 runCompileT :: Monad m => CompileEnv m -> CompileT m a -> m a
 runCompileT env m = evalStateT (runReaderT m env) initState
-  where initState = CompileState [] [] [] "start_block" mempty mempty mempty mempty mempty
+  where initState = CompileState [] [] [] "start_block" mempty mempty mempty mempty
 
 runCompile :: CompileEnv Identity -> Compile a -> a
 runCompile env m = runIdentity $ runCompileT env m
@@ -897,19 +880,6 @@ makeModuleEx dataLayout triple defs = do
       , L.moduleDefinitions = extraDefs ++ defs ++ fmap externDecl (toList specs)
       , L.moduleDataLayout = Just dataLayout
       , L.moduleTargetTriple = Just triple }
-
-makeEntryPoint :: L.Name -> [L.Type] -> L.CallableOperand -> Function
-makeEntryPoint wrapperName argTypes f = runCompile cpuInitCompileEnv $ do
-  (argParam, argOperand) <- freshParamOpPair [] (L.ptr $ L.ptr i8)
-  args <- forM (zip [0..] argTypes) $ \(i, ty) -> do
-    curPtr <- gep argOperand $ i `withWidth` 64
-    arg <- case ty of
-      L.PointerType (L.PointerType _ _) _ -> return curPtr
-      L.PointerType _ _                   -> load curPtr
-      _                                   -> error "Expected a pointer type"
-    emitInstr ty $ L.BitCast arg ty []
-  exitCode <- emitInstr i64 $ callInstr f args
-  makeFunction wrapperName [argParam] (Just exitCode)
 
 instance Pretty L.Operand where
   pretty x = pretty (show x)

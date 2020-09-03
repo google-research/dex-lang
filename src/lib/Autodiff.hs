@@ -122,8 +122,8 @@ linearizeOp op = case op of
          _       -> error "Not implemented") `bindLin` emitOp
   Fst x -> liftA Fst (la x) `bindLin` emitOp
   Snd x -> liftA Snd (la x) `bindLin` emitOp
-  ArrayOffset _ _ _      -> emitWithZero
-  ArrayLoad _            -> emitWithZero
+  PtrOffset _ _ -> emitWithZero
+  PtrLoad _     -> emitWithZero
   TabCon ty xs -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
   _ | hasDiscreteType (Op op) -> emitWithZero
   _ -> error $ "not implemented: " ++ pprint op
@@ -218,8 +218,6 @@ tangentType (TC con) = case con of
   IndexRange _ _ _              -> UnitTy
   UnitType                      -> UnitTy
   PairType a b                  -> PairTy (tangentType a) (tangentType b)
-  -- XXX: This assumes that arrays are always constants.
-  ArrayType _ -> UnitTy
   ty -> error $ "Can't differentiate wrt type " ++ pprint ty
 tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
 

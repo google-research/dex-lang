@@ -12,7 +12,7 @@ module PPrint (pprint, pprintList, printLitBlock, asStr,
                assertEq, ignoreExcept, PrecedenceLevel(..), DocPrec,
                PrettyPrec(..), atPrec, toJSONStr) where
 
-import Data.Aeson hiding (Result, Null, Value, Array)
+import Data.Aeson hiding (Result, Null, Value)
 import Control.Monad.Except hiding (Except)
 import GHC.Float
 import GHC.Stack
@@ -28,7 +28,6 @@ import System.Console.ANSI
 import Numeric
 
 import Env
-import Array
 import Syntax
 
 -- Specifies what kinds of operations are allowed to be printed at this point.
@@ -108,6 +107,11 @@ instance PrettyPrec BaseType where
   prettyPrec b = case b of
     Scalar sb -> prettyPrec sb
     Vector sb -> atPrec ArgPrec $ "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
+    PtrType a ty -> atPrec AppPrec $ "Ptr" <+> p a <+> p ty
+
+instance Pretty AddressSpace where
+  pretty HostMem   = "host"
+  pretty DeviceMem = "device"
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -128,6 +132,7 @@ instance PrettyPrec LitVal where
   prettyPrec (Int8Lit    x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ p x
+  prettyPrec (PtrLit _ ty x) = atPrec ArgPrec $ "Ptr[" <> p ty <> "]" <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty Block where
@@ -179,7 +184,6 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
   prettyPrec con = case con of
     BaseType b     -> prettyPrec b
     CharType       -> atPrec ArgPrec "Char"
-    ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
     PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
@@ -214,22 +218,22 @@ prettyPrecPrimCon :: PrettyPrec e => PrimCon e -> DocPrec ann
 prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
-  ArrayLit _ array -> atPrec ArgPrec $ p array
   PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
-  Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
   AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
   SumAsProd ty tag payload -> atPrec LowestPrec $
     "SumAsProd" <+> pApp ty <+> pApp tag <+> pApp payload
   ClassDictHole _ _ -> atPrec ArgPrec "_"
+  IntRangeVal     l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IntRange     l h)
+  IndexRangeVal t l h i -> atPrec LowestPrec $ pApp i <> "@" <> pApp (IndexRange t l h)
 
 instance PrettyPrec e => Pretty (PrimOp e) where pretty = prettyFromPrettyPrec
 instance PrettyPrec e => PrettyPrec (PrimOp e) where
   prettyPrec op = case op of
     PrimEffect ref (MPut val ) -> atPrec LowestPrec $ pApp ref <+> ":=" <+> pApp val
     PrimEffect ref (MTell val) -> atPrec LowestPrec $ pApp ref <+> "+=" <+> pApp val
-    ArrayOffset arr idx off -> atPrec LowestPrec $ pApp arr <+> "+>" <+> pApp off <+> (parens $ "index:" <+> pLowest idx)
-    ArrayLoad arr       -> atPrec AppPrec $ pAppArg "load" [arr]
+    PtrOffset ptr idx -> atPrec LowestPrec $ pApp ptr <+> "+>" <+> pApp idx
+    PtrLoad   ptr     -> atPrec AppPrec $ pAppArg "load" [ptr]
     RecordCons items rest ->
       prettyExtLabeledItems (Ext items $ Just rest) (line' <> ",") " ="
     RecordSplit types val -> atPrec AppPrec $
@@ -337,24 +341,17 @@ instance Pretty IExpr where
 
 instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty IType where
-  pretty (IRefType t) = "Ref" <+> (parens $ p t)
-  pretty (IValType t) = p t
-  pretty IVoidType = "Void"
-
-instance PrettyPrec IType where prettyPrec = atPrec ArgPrec . pretty
-
 instance Pretty instr => Pretty (IStmt instr) where
-  pretty (IInstr (Ignore _, instr)) = p instr
-  pretty (IInstr (b       , instr)) = p b <+> "=" <+> p instr
+  pretty (IInstr (Nothing, instr)) = p instr
+  pretty (IInstr (Just b , instr)) = p b <+> "=" <+> p instr
   pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
                                       nest 4 (hardline <> p block)
   pretty (IWhile (cond, mcExpr) body) = "while" <+>
                                         nest 2 condDoc <+> "do" <>
                                         nest 4 (hardline <> p body)
     where condDoc = case mcExpr of
-                      Just cExpr -> hardline <> p cond <> line <> p cExpr
-                      Nothing    -> "??"
+                      [cExpr] -> hardline <> p cond <> line <> p cExpr
+                      _ -> "??"
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
@@ -370,8 +367,8 @@ instance Pretty ImpInstr where
   pretty (ICastOp t x)           = "cast"  <+> p x <+> "to" <+> p t
   pretty (Load ref)              = "load"  <+> p ref
   pretty (Store dest val)        = "store" <+> p dest <+> p val
-  pretty (Alloc t s)             = "alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
-  pretty (IOffset expr lidx t)   = p expr  <+> "++" <+> p lidx <+> (parens $ "coerced to:" <+> p t)
+  pretty (Alloc _ t s)           = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (IOffset expr lidx)     = p expr  <+> "+>" <+> p lidx
   pretty (Free (v:>_))           = "free"  <+> p v
   pretty IThrowError = "throwError"
 
@@ -383,7 +380,7 @@ instance Pretty k => Pretty (MDImpFunction k) where
 
 instance Pretty k => Pretty (MDImpInstr k) where
   pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
-  pretty (MDAlloc t s)    = "device_alloc" <+> p (scalarTableBaseType t) <> "[" <> p s <> "]" <+> "@" <> p t
+  pretty (MDAlloc _ t s)  = "device_alloc" <+> p t <> "[" <> p s <> "]"
   pretty (MDFree v)       = "free" <+> p v
   pretty (MDLoadScalar v) = "device_load" <+> p v
   pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x
@@ -565,13 +562,6 @@ instance Pretty eff => Pretty (ArrowP eff) where
     LinArrow       -> "--o"
     ImplicitArrow  -> "?->"
     ClassArrow     -> "?=>"
-
-instance Pretty Array where
-  pretty a = p b <> "[" <> p size <> "]"
-    where (size, b) = arrayType a
-
-instance Pretty ArrayRef where
-  pretty (ArrayRef (size, b) ptr) = p b <> "[" <> p size <> "]@" <> (pretty $ show ptr)
 
 instance PrettyPrec () where prettyPrec = atPrec ArgPrec . pretty
 instance PrettyPrec Name where prettyPrec = atPrec ArgPrec . pretty

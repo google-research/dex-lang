@@ -4,9 +4,7 @@
 -- license that can be found in the LICENSE file or at
 -- https://developers.google.com/open-source/licenses/bsd
 
-{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE OverloadedStrings #-}
 
 module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
                  Backend (..)) where
@@ -16,12 +14,9 @@ import Control.Monad.State
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
-import Foreign.Ptr
 import Data.List (partition)
-import Data.Maybe (fromJust, fromMaybe)
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
 
-import Array
 import Syntax
 import Cat
 import Env
@@ -31,7 +26,6 @@ import Inference
 import Simplify
 import Serialize
 import Imp
-import Interpreter
 import JIT
 import Logging
 import LLVMExec
@@ -49,15 +43,7 @@ data EvalConfig = EvalConfig
   , logService  :: Logger [Output] }
 
 data LLVMEngineKind = Serial | Multicore | CUDA
-data BackendEngine = LLVMEngine LLVMEngineKind LLVMEngine
-                   -- | JaxServer JaxServer
-                   | InterpEngine
-
-type LLVMEngine = MVar (Env (Ptr ()))
--- type JaxServer = PipeServer ( (JaxFunction, [JVar]) -> ([JVar], String)
---                            ,( [JVar] -> [Array]
---                            ,( Array -> ()  -- for debugging
---                            ,())))
+data BackendEngine = LLVMEngine LLVMEngineKind | InterpEngine
 
 type TopPassM a = ReaderT EvalConfig IO a
 
@@ -84,34 +70,19 @@ evalSourceBlockM env block = case sbContents block of
       logPass ImpPass (pprint val)
       case fmt of
         Printed -> do
-          logTop $ TextOut $ pprintVal val
-        Heatmap color -> logTop $ valToHeatmap color val
-        Scatter -> logTop $ valToScatter val
+          s <- liftIO $ pprintVal val
+          logTop $ TextOut s
+        Heatmap color -> return mempty -- logTop $ valToHeatmap color val
+        Scatter       -> return mempty -- logTop $ valToScatter val
     GetType -> do  -- TODO: don't actually evaluate it
       val <- evalUModuleVal env v m
       logTop $ TextOut $ pprint $ getType val
-    Dump DexObject fname -> do
-      val <- evalUModuleVal env v m
-      liftIO $ writeFile fname $ pprintVal val
-    Dump DexBinaryObject fname -> do
-      val <- evalUModuleVal env v m
-      liftIO $ dumpDataFile fname val
   GetNameType v -> case envLookup env (v:>()) of
     Just (ty, _) -> logTop (TextOut $ pprint ty) >> return mempty
     _            -> liftEitherIO $ throw UnboundVarErr $ pprint v
   IncludeSourceFile fname -> do
     source <- liftIO $ readFile fname
     evalSourceBlocks env $ parseProg source
-  LoadData pat DexObject fname -> do
-    source <- liftIO $ readFile fname
-    let val = ignoreExcept $ parseData source
-    evalUModule env $ UModule $ toNest [ULet PlainLet pat val]
-  -- LoadData pat DexBinaryObject fname -> do
-  --   val <- liftIO $ loadDataFile fname
-  --   -- TODO: handle patterns and type annotations in binder
-  --   let (WithSrc _ (PatBind b), _) = pat
-  --   let outEnv = b @> val
-  --   return $ TopEnv mempty outEnv
   UnParseable _ s -> liftEitherIO $ throw ParseErr s
   _               -> return mempty
 
@@ -121,7 +92,7 @@ processLogs logLevel logs = case logLevel of
   LogNothing -> []
   LogPasses passes -> flip filter logs $ \l -> case l of
                         PassInfo pass _ | pass `elem` passes -> True
-                                        | otherwise          -> False
+                        _ -> False
   PrintEvalTime -> [BenchResult "" compileTime runTime]
     where (compileTime, runTime) = timesFromLogs logs
   PrintBench benchName -> [BenchResult benchName compileTime runTime]
@@ -153,9 +124,7 @@ evalSourceBlocks env blocks = catFoldM evalSourceBlockM env blocks
 evalUModuleVal :: TopEnv -> Name -> UModule -> TopPassM Val
 evalUModuleVal env v m = do
   env' <- evalUModule env m
-  let val = lookupBindings (env <> env') (v:>())
-  backend <- asks evalEngine
-  liftIO $ substArrayLiterals backend val
+  return $ lookupBindings (env <> env') (v:>())
 
 lookupBindings :: Scope -> VarP ann -> Atom
 lookupBindings scope v = reduceAtom scope x
@@ -168,7 +137,6 @@ evalUModule :: TopEnv -> UModule -> TopPassM TopEnv
 evalUModule env untyped = do
   -- TODO: it's handy to log the env, but we need to filter out just the
   --       relevant part (transitive closure of free vars)
-  -- logTop $ MiscLog $ "\n" ++ pprint env
   logPass Parse untyped
   typed <- liftEitherIO $ inferModule env untyped
   checkPass TypePass typed
@@ -187,13 +155,12 @@ evalModule bindings normalized = do
   return newBindings
 
 initializeBackend :: Backend -> IO BackendEngine
-initializeBackend backend = case backend of
-  LLVM     -> LLVMEngine Serial    <$> newMVar mempty
-  LLVMMC   -> LLVMEngine Multicore <$> newMVar mempty
+initializeBackend backend = return $ case backend of
+  LLVM     -> LLVMEngine Serial
+  LLVMMC   -> LLVMEngine Multicore
   LLVMCUDA -> if hasCUDA
-                then LLVMEngine CUDA <$> newMVar mempty
+                then LLVMEngine CUDA
                 else error "Dex built without CUDA support"
-  -- JAX      -> JaxServer  <$> startPipeServer "python3" ["misc/py/jax_call.py"]
   _ -> error "Not implemented"
 
 arrayVars :: Subst a => a -> [Var]
@@ -206,101 +173,29 @@ evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
   backend <- asks evalEngine
   logger  <- asks logService
-  let inVars = arrayVars block
   case backend of
-    LLVMEngine kind llvmEnv -> do
-      (llvmFunc, impAtom, impOutVars) <- case kind of
+    LLVMEngine kind -> do
+      (llvmFunc, reconAtom) <- case kind of
         Serial -> do
-          let (impFunction, impAtom) = toImpFunction (map Bind inVars, block)
-          let (ImpFunction outVars _ _) = impFunction
+          let (impFunction, reconAtom) = toImpFunction ([], block)
           checkPass ImpPass impFunction
-          return $ (impToLLVM impFunction, impAtom, outVars)
+          return (impToLLVM impFunction, reconAtom)
         Multicore -> do
-          let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)
-          let (MDImpFunction outVars _ _) = mdImpFunction
+          let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
           logPass ImpPass mdImpFunction
-          return $ (mdImpToMulticore mdImpFunction, impAtom, outVars)
+          return $ (mdImpToMulticore mdImpFunction, reconAtom)
         CUDA      -> do
-          let (mdImpFunction, impAtom) = toMDImpFunction (map Bind inVars, block)
+          let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
           logPass ImpPass mdImpFunction
-          let (MDImpFunction outVars _ _) = mdImpFunction
           ptxFunction <- liftIO $ traverse compileKernel mdImpFunction
-          return $ (mdImpToCUDA ptxFunction, impAtom, outVars)
-      resultAtom <- liftIO $ modifyMVar llvmEnv $ \env -> do
-        let inPtrs = fmap (env !) inVars
-        outPtrs <- callLLVM logger llvmFunc inPtrs
-        let (GlobalArrayName i) = fromMaybe (GlobalArrayName 0) $ envMaxName env
-        let outNames = GlobalArrayName <$> [i+1..]
-        let env' = foldMap varAsEnv $ zipWith (:>) outNames outPtrs
-        let substEnv = foldMap mkSubstEnv $ zip outNames impOutVars
-        return (env <> env', subst (substEnv, mempty) impAtom)
-      -- resultAtom is ill typed because it might contain pointers to scalar arrays
-      -- in place of scalars. We fix it up by loading from each of those arrays in here.
-      let scalarVars = filter isScalarRef $ envAsVars $ fmap fst $ freeVars resultAtom
-      scalarArrs <- liftIO $ requestArrays backend scalarVars
-      let scalarVals = fmap (Con . Lit . fromJust . scalarFromArray) scalarArrs
-      let scalarSubstEnv = foldMap (uncurry (@>)) $ zip scalarVars scalarVals
-      return $ subst (scalarSubstEnv, mempty) resultAtom
+          return $ (mdImpToCUDA ptxFunction, reconAtom)
+      resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmFunc []
+      return $ applyNaryAbs reconAtom resultVals
       where
-        mkSubstEnv :: (Name, Binder) -> SubstEnv
-        mkSubstEnv (outName, impVar) = impVar @> (Var $ (outName :> binderType impVar))
-
-        isScalarRef (_ :> ArrayTy (BaseTy _)) = True
-        isScalarRef _ = False
-
         compileKernel :: ImpKernel -> IO PTXKernel
         compileKernel k = do
           let llvmKernel = impKernelToLLVM k
           compilePTX logger llvmKernel
-    -- JaxServer server -> do
-    --   -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
-    --   let jfun = toJaxFunction (inVars, block)
-    --   checkPass JAXPass jfun
-    --   let jfunSimp = simplifyJaxFunction jfun
-    --   checkPass JAXSimpPass jfunSimp
-    --   let jfunDCE = dceJaxFunction jfunSimp
-    --   checkPass JAXSimpPass jfunDCE
-    --   let inVars' = map (fmap typeToJType) inVars
-    --   (outVars, jaxprDump) <- callPipeServer server (jfunDCE, inVars')
-    --   logPass JaxprAndHLO jaxprDump
-    --   let outVars' = map (fmap jTypeToType) outVars
-    --   return $ reStructureArrays (getType block) $ map Var outVars'
-    InterpEngine -> return $ evalBlock mempty block
-
-requestArrays :: BackendEngine -> [Var] -> IO [Array]
-requestArrays _ [] = return []
-requestArrays backend vs = case backend of
-  LLVMEngine kind env -> do
-    env' <- readMVar env
-    forM vs $ \v@(_ :> ArrayTy ty) -> do
-      let arrTy@(size, _) = typeToArrayType ty
-      case envLookup env' v of
-        Just ref -> do
-          hostRef <- case (kind, ty) of
-            (CUDA     , _       ) -> loadCUDAArray ref (fromIntegral $ size * sizeOf b)
-              where b = scalarTableBaseType ty
-            (Multicore, _       ) -> return ref
-            (Serial   , _       ) -> return ref
-          loadArray (ArrayRef arrTy hostRef)
-        Nothing  -> error "Array lookup failed"
-  -- JaxServer server -> do
-  --   let vs' = map (fmap typeToJType) vs
-  --   callPipeServer (psPop server) vs'
-  _ -> error "Not implemented"
-
-substArrayLiterals :: (Subst a, HasType a) => BackendEngine -> a -> IO a
-substArrayLiterals backend x = do
-  -- We first need to substitute the arrays used in the types. Our atom types
-  -- are monotonic, so it's enough to ask for the arrays used in the type of the
-  -- atom as a whole, without worrying about types hidden within the atom.
-  x' <- substArrayLiterals' backend (arrayVars (getType x)) x
-  substArrayLiterals' backend (arrayVars x') x'
-
-substArrayLiterals' :: Subst a => BackendEngine -> [Var] -> a -> IO a
-substArrayLiterals' backend vs x = do
-  arrays <- requestArrays backend vs
-  let arrayAtoms = [Con $ ArrayLit ty arr | (_:>ty, arr) <- zip vs arrays]
-  return $ subst (newEnv vs arrayAtoms, mempty) x
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do

@@ -23,7 +23,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               unpackConsList, emitRunWriter, emitRunReader, tabGet,
               SubstEmbedT, SubstEmbed, runSubstEmbedT, dceBlock, dceModule,
               TraversalDef, traverseDecls, traverseBlock, traverseExpr,
-              traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
+              traverseAtom, ptrOffset, ptrLoad, evalBlockE, substTraversalDef,
               clampPositive, buildNAbs,
               indexSetSizeE, indexToIntE, intToIndexE, anyValue) where
 
@@ -277,11 +277,11 @@ appReduce (Lam (Abs v (_, b))) a =
   runReaderT (evalBlockE substTraversalDef b) (v @> a)
 appReduce _ _ = error "appReduce expected a lambda as the first argument"
 
-arrOffset :: MonadEmbed m => Atom -> Atom -> Atom -> m Atom
-arrOffset x idx off = emitOp $ ArrayOffset x idx off
+ptrOffset :: MonadEmbed m => Atom -> Atom -> m Atom
+ptrOffset x i = emitOp $ PtrOffset x i
 
-arrLoad :: MonadEmbed m => Atom -> m Atom
-arrLoad x = emitOp $ ArrayLoad x
+ptrLoad :: MonadEmbed m => Atom -> m Atom
+ptrLoad x = emitOp $ PtrLoad x
 
 fromPair :: MonadEmbed m => Atom -> m (Atom, Atom)
 fromPair pair = (,) <$> getFst pair <*> getSnd pair
@@ -729,9 +729,9 @@ indexToIntE ty idx = case ty of
   _ -> error $ "Unexpected type " ++ pprint ty
 
 intToIndexE :: MonadEmbed m => Type -> Atom -> m Atom
-intToIndexE ty@(TC con) i = case con of
-  IntRange   _ _             -> iAsIdx
-  IndexRange _ _ _           -> iAsIdx
+intToIndexE (TC con) i = case con of
+  IntRange        low high   -> return $ Con $ IntRangeVal        low high i
+  IndexRange from low high   -> return $ Con $ IndexRangeVal from low high i
   UnitType                   -> return $ UnitVal
   PairType a b -> do
     bSize <- indexSetSizeE b
@@ -739,7 +739,6 @@ intToIndexE ty@(TC con) i = case con of
     iB <- intToIndexE b =<< irem i bSize
     return $ PairVal iA iB
   _ -> error $ "Unexpected type " ++ pprint con
-  where iAsIdx = return $ Con $ Coerce ty i
 intToIndexE (RecordTy (NoExt types)) i = do
   sizes <- traverse indexSetSizeE types
   (strides, _) <- scanM
@@ -767,16 +766,12 @@ intToIndexE (VariantTy (NoExt types)) i = do
   foldM go start zs
 intToIndexE ty _ = error $ "Unexpected type " ++ pprint ty
 
+
+
 anyValue :: Type -> Atom
 anyValue (BaseTy (Scalar Int64Type  )) = Con $ Lit $ Int64Lit    0
 anyValue (BaseTy (Scalar Int32Type  )) = Con $ Lit $ Int32Lit    0
 anyValue (BaseTy (Scalar Int8Type   )) = Con $ Lit $ Int8Lit     0
 anyValue (BaseTy (Scalar Float64Type)) = Con $ Lit $ Float64Lit  0
 anyValue (BaseTy (Scalar Float32Type)) = Con $ Lit $ Float32Lit  0
--- TODO: Base types!
--- XXX: This is not strictly correct, because those types might not have any
---      inhabitants. We might want to consider emitting some run-time code that
---      aborts the program if this really ends up being the case.
-anyValue t@(TC (IntRange _ _))             = Con $ Coerce t $ IdxRepVal 0
-anyValue t@(TC (IndexRange _ _ _))         = Con $ Coerce t $ IdxRepVal 0
 anyValue t = error $ "Expected a scalar type in anyValue, got: " ++ pprint t
