@@ -7,12 +7,12 @@
 {-# LANGUAGE DeriveGeneric #-}
 
 import System.Console.Haskeline
-import System.Exit
 import Control.Monad
 import Control.Monad.State.Strict
 import Options.Applicative
 import System.Posix.Terminal (queryTerminal)
 import System.Posix.IO (stdOutput)
+import System.Exit
 
 import Syntax
 import PPrint
@@ -29,15 +29,12 @@ data EvalMode = ReplMode String
               | WebMode    FilePath
               | WatchMode  FilePath
               | ScriptMode FilePath DocFmt ErrorHandling
-data CmdOpts = CmdOpts EvalMode EvalConfig
+data CmdOpts = CmdOpts EvalMode FilePath EvalConfig Backend
 
-type BlockCounter = Int
-type EvalState = (BlockCounter, TopEnv)
-
-runMode :: EvalMode -> EvalConfig -> IO ()
-runMode evalMode opts = do
-  (n, env) <- memoizeFileEval "prelude.cache" (evalPrelude opts) (preludeFile opts)
-  let runEnv m = evalStateT m (n, env)
+runMode :: EvalMode -> FilePath -> EvalConfig -> IO ()
+runMode evalMode preludeFile opts = do
+  env <- memoizeFileEval "prelude.cache" (evalPrelude opts) preludeFile
+  let runEnv m = evalStateT m env
   case evalMode of
     ReplMode prompt ->
       runEnv $ runInputT defaultSettings $ forever (replLoop prompt opts)
@@ -49,26 +46,16 @@ runMode evalMode opts = do
     WebMode   fname -> runWeb      fname opts env
     WatchMode fname -> runTerminal fname opts env
 
-evalDecl :: EvalConfig -> SourceBlock -> StateT EvalState IO Result
-evalDecl opts block = do
-  (n, env) <- get
-  (env', ans) <- liftIO $ evalSourceBlock opts env $ block
-  put (n+1, env <> env')
-  return ans
-
-evalFile :: EvalConfig -> FilePath -> StateT EvalState IO [(SourceBlock, Result)]
-evalFile opts fname = do
-  source <- liftIO $ readFile fname
-  let sourceBlocks = parseProg source
-  results <- mapM (evalDecl opts) sourceBlocks
-  return $ zip sourceBlocks results
-
-evalPrelude ::EvalConfig-> FilePath -> IO EvalState
-evalPrelude opts fname = flip execStateT (0, mempty) $ do
+evalPrelude :: EvalConfig -> FilePath -> IO TopEnv
+evalPrelude opts fname = flip execStateT mempty $ do
   result <- evalFile opts fname
   void $ liftErrIO $ mapM (\(_, Result _ r) -> r) result
 
-replLoop :: String -> EvalConfig -> InputT (StateT EvalState IO) ()
+liftErrIO :: MonadIO m => Except a -> m a
+liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
+liftErrIO (Right x) = return x
+
+replLoop :: String -> EvalConfig -> InputT (StateT TopEnv IO) ()
 replLoop prompt opts = do
   sourceBlock <- readMultiline prompt parseTopDeclRepl
   env <- lift get
@@ -76,10 +63,6 @@ replLoop prompt opts = do
   case result of Result _ (Left _) -> lift $ put env
                  _ -> return ()
   liftIO $ putStrLn $ pprint result
-
-liftErrIO :: MonadIO m => Except a -> m a
-liftErrIO (Left err) = liftIO $ putStrLn (pprint err) >> exitFailure
-liftErrIO (Right x) = return x
 
 readMultiline :: (MonadException m, MonadIO m) =>
                    String -> (String -> Maybe a) -> InputT m a
@@ -113,7 +96,7 @@ printLitProg JSONDoc prog =
     s -> putStrLn s
 
 parseOpts :: ParserInfo CmdOpts
-parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parseEvalOpts
+parseOpts = simpleInfo $ CmdOpts <$> parseMode <*> parsePreludeFile <*> parseEvalOpts <*> parseBackend
 
 parseMode :: Parser EvalMode
 parseMode = subparser $
@@ -143,23 +126,28 @@ optionList opts = eitherReader $ \s -> case lookup s opts of
 
 parseEvalOpts :: Parser EvalConfig
 parseEvalOpts = EvalConfig
-  <$> (option
+  <$> (optional $ strOption $ long "logto"
+                    <> metavar "FILE"
+                    <> help "File to log to" <> showDefault)
+  <*> pure (error "Backend not initialized")
+  <*> pure (error "Logging not initialized")
+
+parsePreludeFile :: Parser FilePath
+parsePreludeFile = (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
+                                               <> help "Prelude file" <> showDefault)
+
+parseBackend :: Parser Backend
+parseBackend =
+  (option
          (optionList [ ("LLVM", LLVM)
                      , ("LLVM-CUDA", LLVMCUDA)
                      , ("LLVM-MC", LLVMMC)
                      , ("JAX", JAX)
                      , ("interp", Interp)])
          (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|JAX|interp)"))
-  <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
-                                  <> help "Prelude file" <> showDefault)
-  <*> (optional $ strOption $ long "logto"
-                    <> metavar "FILE"
-                    <> help "File to log to" <> showDefault)
-  <*> pure (error "Backend not initialized")
-  <*> pure (error "Logging not initialized")
 
 main :: IO ()
 main = do
-  CmdOpts evalMode opts <- execParser parseOpts
-  engine <- initializeBackend $ backendName opts
-  runMode evalMode $ opts { evalEngine = engine }
+  CmdOpts evalMode preludeFile opts backendName <- execParser parseOpts
+  engine <- initializeBackend backendName
+  runMode evalMode preludeFile $ opts { evalEngine = engine }

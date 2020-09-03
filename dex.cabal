@@ -45,9 +45,9 @@ library
     build-depends:     dex-resources
   default-language:    Haskell2010
   hs-source-dirs:      src/lib
-  ghc-options:         -Wall -O0
+  ghc-options:         -Wall -O0 -fPIC
   cxx-sources:         src/lib/dexrt.cpp
-  cxx-options:         -std=c++11
+  cxx-options:         -std=c++11 -fPIC
   default-extensions:  CPP, DeriveTraversable, TypeApplications, OverloadedStrings,
                        TupleSections, ScopedTypeVariables, LambdaCase, PatternSynonyms
   if flag(cuda)
@@ -65,6 +65,15 @@ executable dex
   hs-source-dirs:      src
   default-extensions:  CPP
 
+foreign-library Dex
+  type:                native-shared
+  other-modules:       API
+  build-depends:       base, dex, file-embed, bytestring, mtl
+  hs-source-dirs:      src/foreign
+  c-sources:           src/foreign/rts.c
+  default-language:    Haskell2010
+  default-extensions:  TypeApplications, ScopedTypeVariables, LambdaCase
+
 Test-Suite test-dex
   type:                exitcode-stdio-1.0
   main-is:             PropTests.hs
@@ -75,11 +84,3 @@ Test-Suite test-dex
   hs-source-dirs:      tests
   ghc-options:         cbits/libdex.so
                        -Wall
-
--- executable dex2jax.so
---   main-is:             Dex2Jax.hs
---   build-depends:       dex, base, aeson, bytestring, mtl
---   ghc-options:         -no-hs-main -fPIC -shared -dynamic
---   hs-source-dirs:      src/ffi
---   extra-libraries:     HSrts-ghc8.6.5
---   ghc-options:         -Wall
