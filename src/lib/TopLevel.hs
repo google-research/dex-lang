@@ -8,11 +8,11 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
-                 Backend (..)) where
+module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
+                 EvalConfig (..), Backend (..), initializeBackend) where
 
 import Control.Concurrent.MVar
-import Control.Monad.State
+import Control.Monad.State.Strict
 import Control.Monad.Reader
 import Control.Monad.Except hiding (Except)
 import Data.Text.Prettyprint.Doc
@@ -43,11 +43,9 @@ import CUDA
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
-  { backendName :: Backend
-  , preludeFile :: FilePath
-  , logFile     :: Maybe FilePath
+  { logFile     :: Maybe FilePath
   , evalEngine  :: BackendEngine
-  , logService  :: Logger [Output] }
+  , logService  :: Logger [Output] }  -- TODO: Move this to TopPassM
 
 data LLVMEngineKind = Serial | Multicore | CUDA
 data BackendEngine = LLVMEngine LLVMEngineKind LLVMEngine
@@ -61,6 +59,23 @@ type LLVMEngine = MVar (Env (Ptr ()))
 --                            ,())))
 
 type TopPassM a = ReaderT EvalConfig IO a
+
+evalDecl :: EvalConfig -> SourceBlock -> StateT TopEnv IO Result
+evalDecl opts block = do
+  env <- get
+  (env', ans) <- liftIO $ evalSourceBlock opts env $ block
+  put $ env <> env'
+  return ans
+
+evalFile :: EvalConfig -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
+evalFile opts fname = do
+  evalSource opts =<< (liftIO $ readFile fname)
+
+evalSource :: EvalConfig -> FilePath -> StateT TopEnv IO [(SourceBlock, Result)]
+evalSource opts source = do
+  let sourceBlocks = parseProg source
+  results <- mapM (evalDecl opts) sourceBlocks
+  return $ zip sourceBlocks results
 
 -- TODO: handle errors due to upstream modules failing
 evalSourceBlock :: EvalConfig -> TopEnv -> SourceBlock -> IO (TopEnv, Result)
