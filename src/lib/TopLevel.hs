@@ -251,10 +251,7 @@ evalBackend block = do
         isScalarRef (_ :> ArrayTy (BaseTy _)) = True
         isScalarRef _ = False
 
-        compileKernel :: ImpKernel -> IO PTXKernel
-        compileKernel k = do
-          let llvmKernel = impKernelToLLVM k
-          compilePTX logger llvmKernel
+        compileKernel = compileCUDAKernel logger . impKernelToLLVM
     -- JaxServer server -> do
     --   -- callPipeServer (psPop (psPop server)) $ arrayFromScalar (IntLit 123)
     --   let jfun = toJaxFunction (inVars, block)
