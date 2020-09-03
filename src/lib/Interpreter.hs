@@ -106,9 +106,9 @@ evalOpDefined expr = case expr of
     "randunif"     -> Float64Val $ c_unif x        where [Int64Val x]  = args
     "threefry2x32" -> Int64Val   $ c_threefry x y  where [Int64Val x, Int64Val y] = args
     _ -> error $ "FFI function not recognized: " ++ name
-  PtrOffset (Con (Lit (PtrLit a t p))) (IdxRepVal i) ->
-    return $ Con $ Lit $ PtrLit a t $ p `plusPtr` (sizeOf t * fromIntegral i)
-  PtrLoad (Con (Lit (PtrLit _ t p))) -> (Con . Lit) <$> loadLitVal p t
+  PtrOffset (Con (Lit (PtrLit (_, a, t) p))) (IdxRepVal i) ->
+    return $ Con $ Lit $ PtrLit (DerivedPtr, a, t) $ p `plusPtr` (sizeOf t * fromIntegral i)
+  PtrLoad (Con (Lit (PtrLit (_, _, t) p))) -> (Con . Lit) <$> loadLitVal p t
   IndexAsInt idxArg -> case idxArg of
     Con (IntRangeVal   _ _   i) -> return i
     Con (IndexRangeVal _ _ _ i) -> return i

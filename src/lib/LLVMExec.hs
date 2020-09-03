@@ -215,7 +215,7 @@ loadLitVal ptr (Scalar ty) = case ty of
   Int8Type    -> Int8Lit    <$> peek (castPtr ptr)
   Float64Type -> Float64Lit <$> peek (castPtr ptr)
   Float32Type -> Float32Lit <$> peek (castPtr ptr)
-loadLitVal ptr (PtrType a t) = PtrLit a t <$> peek (castPtr ptr)
+loadLitVal ptr (PtrType t) = PtrLit t <$> peek (castPtr ptr)
 
 storeLitVal :: Ptr () -> LitVal -> IO ()
 storeLitVal ptr val = case val of
@@ -224,7 +224,7 @@ storeLitVal ptr val = case val of
   Int8Lit    x -> poke (castPtr ptr) x
   Float64Lit x -> poke (castPtr ptr) x
   Float32Lit x -> poke (castPtr ptr) x
-  PtrLit _ _ x -> poke (castPtr ptr) x
+  PtrLit _   x -> poke (castPtr ptr) x
 
 cellSize :: Int
 cellSize = 8

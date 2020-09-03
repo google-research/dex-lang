@@ -107,11 +107,16 @@ instance PrettyPrec BaseType where
   prettyPrec b = case b of
     Scalar sb -> prettyPrec sb
     Vector sb -> atPrec ArgPrec $ "<" <> p vectorWidth <+> "x" <+> p sb <> ">"
-    PtrType a ty -> atPrec AppPrec $ "Ptr" <+> p a <+> p ty
+    PtrType ty -> atPrec AppPrec $ "Ptr" <+> p ty
+
+instance Pretty PtrOrigin where
+  pretty AllocatedPtr = "allocated"
+  pretty DerivedPtr   = "derived"
 
 instance Pretty AddressSpace where
-  pretty HostMem   = "host"
-  pretty DeviceMem = "device"
+  pretty Stack      = "stack"
+  pretty HostHeap   = "host"
+  pretty DeviceHeap = "device"
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -132,7 +137,7 @@ instance PrettyPrec LitVal where
   prettyPrec (Int8Lit    x) = atPrec ArgPrec $ p x
   prettyPrec (Float64Lit x) = atPrec ArgPrec $ printDouble x
   prettyPrec (Float32Lit x) = atPrec ArgPrec $ p x
-  prettyPrec (PtrLit _ ty x) = atPrec ArgPrec $ "Ptr[" <> p ty <> "]" <+> p (show x)
+  prettyPrec (PtrLit ty x) = atPrec ArgPrec $ "Ptr" <+> p ty <+> p (show x)
   prettyPrec (VecLit  l) = atPrec ArgPrec $ encloseSep "<" ">" ", " $ fmap p l
 
 instance Pretty Block where

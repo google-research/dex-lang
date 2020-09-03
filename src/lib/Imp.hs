@@ -347,10 +347,6 @@ destPairUnpack :: Dest -> (Dest, Dest)
 destPairUnpack (Dest (PairVal l r)) = (Dest l, Dest r)
 destPairUnpack (Dest a) = error $ "Not a pair destination: " ++ pprint a
 
-destArrays :: Dest -> [IVar]
-destArrays dest = [fromIVar (fromScalarAtom (Var v)) | v@(_ :> PtrTy _ _) <- free]
-  where free = envAsVars $ fmap fst $ freeVars dest
-
 fromIVar :: IExpr -> IVar
 fromIVar ~(IVar v) = v
 
@@ -478,8 +474,8 @@ allocDest maybeDest t = case maybeDest of
   Nothing   -> alloc t
   Just dest -> return dest
 
-makeAllocDest :: MonadImp m instr => Name -> Type -> m Dest
-makeAllocDest nameHint destType = do
+makeAllocDest :: MonadImp m instr => AllocType -> Name -> Type -> m Dest
+makeAllocDest allocTy nameHint destType = do
   scope <- variableScope
   (destAtom, (_, decls)) <- runEmbedT (go id [] destType) scope
   unless (null decls) $ error $ "Unexpected decls: " ++ pprint decls
@@ -508,10 +504,9 @@ makeAllocDest nameHint destType = do
           buildLam v TabArrow $ \v' -> go (\t -> mkTy $ TabTy v t) (v':idxVars) bt
         TC con    -> case con of
           BaseType b -> do
-            buffer <- lift $ freshVar (nameHint :> (PtrType HostMem b))
             let tabTy = mkTy $ BaseTy b
             numel <- lift $ elemCount tabTy
-            lift $ emitAlloc buffer b numel
+            buffer <- lift $ allocateBuffer nameHint allocTy b numel
             fst <$> (foldM bufIndex (toScalarAtom (IVar buffer), tabTy) $ reverse idxVars)
             where
               bufIndex :: MonadEmbed m => (Atom, Type) -> Atom -> m (Atom, Type)
@@ -530,6 +525,23 @@ makeAllocDest nameHint destType = do
       where
         rec = go mkTy idxVars
         unreachable = error $ "Can't lower type to imp: " ++ pprint destType
+
+allocateBuffer :: MonadImp m instr
+               => Name -> AllocType -> BaseType -> IExpr -> m IVar
+allocateBuffer nameHint allocTy b numel = do
+  buffer <- freshVar (nameHint :> PtrType (AllocatedPtr, addrSpace, b))
+  when mustFree $ extendAlloc buffer
+  emitAlloc buffer numel
+  return buffer
+  where
+    (addrSpace, mustFree) =
+      case allocTy of
+        Unmanaged -> (HostHeap, False)
+        Managed -> case numel of
+          ILit l | n <= 256  -> (Stack   , False)
+                 | otherwise -> (HostHeap, True)
+            where n = getIntLit l
+          IVar _ -> (HostHeap, True )
 
 -- === Atom <-> IExpr conversions ===
 
@@ -717,7 +729,7 @@ instance ImpSuperset ImpInstr where
 
 class (Monad m, HasIType instr, ImpSuperset instr) => MonadImp m instr | m -> instr where
   allocKind :: AllocType -> Type -> m Dest
-  emitAlloc :: IVar -> IType -> IExpr -> m ()
+  emitAlloc :: IVar -> IExpr -> m ()
   scopedBlock :: m a -> m (a, IProg instr)
   emitStatement :: IStmt instr -> m ()
   variableScope :: m Scope
@@ -726,21 +738,20 @@ class (Monad m, HasIType instr, ImpSuperset instr) => MonadImp m instr | m -> in
   withRefScope :: m a -> m a
   getRef :: Var -> m Dest
   putRef :: Var -> Dest -> m ()
+  extendAlloc :: IVar -> m ()
 
 instance MonadImp ImpM ImpInstr where
-  allocKind allocTy ty = do
-    dest <- makeAllocDest "v" ty
-    case allocTy of
-      Managed   -> extend $ asFst $ asSnd $ destArrays dest
-      Unmanaged -> return ()
-    return dest
+  allocKind allocTy ty = makeAllocDest allocTy "v" ty
 
-  emitAlloc v ty n = emitStatement $ IInstr (Just (Bind v), Alloc HostMem ty n)
+  extendAlloc v = extend $ asFst $ asSnd [v]
+
+  emitAlloc v n = emitStatement $ IInstr (Just (Bind v), Alloc addr ty n)
+    where PtrType (_, addr, ty) = varAnn v
 
   scopedBlock body = do
     (ans, ((_, allocs), (scope', prog))) <- scoped body
     extend (mempty, (scope', mempty))  -- Keep the scope extension to avoid reusing variable names
-    let frees = toNest [IInstr (Nothing, Free v) | v <- allocs]
+    let frees = toNest [ IInstr (Nothing, Free v) | v@(_:>PtrType (_, addr, _)) <- allocs]
     return (ans, prog <> frees)
 
   emitStatement statement = extend $ asSnd $ asSnd $ toNest [statement]
@@ -780,19 +791,17 @@ mdImpInstrType instr = case instr of
   MDLaunch _ _ _    -> Nothing
   MDFree _          -> Nothing
   MDStoreScalar _ _ -> Nothing
-  MDAlloc ty _      -> Just $ PtrType DeviceMem ty
-  MDLoadScalar ref  -> Just t  where PtrType _ t = varAnn ref
+  MDAlloc ty _      -> Just $ PtrType (AllocatedPtr, DeviceHeap, ty)
+  MDLoadScalar ref  -> Just t  where PtrType (_, _, t) = varAnn ref
   MDHostInstr i     -> impInstrType i
 
 instance MonadImp MDImpM (MDImpInstr ImpKernel) where
-  allocKind allocTy ty = do
-    dest <- makeAllocDest "v" ty
-    case allocTy of
-      Managed   -> extend $ asFst $ asSnd $ destArrays dest
-      Unmanaged -> return ()
-    return dest
+  allocKind allocTy ty = makeAllocDest allocTy "v" ty
 
-  emitAlloc v ty n = emitStatement $ IInstr (Just (Bind v), MDAlloc ty n)
+  extendAlloc v = extend $ asFst $ asSnd [v]
+
+  emitAlloc v n = emitStatement $ IInstr (Just (Bind v), MDAlloc ty n)
+    where PtrType (_, _, ty) = varAnn v
 
   scopedBlock body = do
     (ans, ((_, allocs), (scope', prog))) <- scoped body
@@ -898,15 +907,15 @@ instrTypeChecked instr = case instr of
       _ -> throw CompilerErr $ "Invalid cast destination type: " ++ pprint dt
     return $ Just dt
   Load ptr -> do
-    PtrType _ ty <- checkIExpr ptr
+    PtrType (_, _, ty) <- checkIExpr ptr
     return $ Just ty
-  Alloc a ty _ -> return $ Just $ PtrType a ty
+  Alloc a ty _ -> return $ Just $ PtrType (AllocatedPtr, a, ty)
   IOffset e i -> do
-    ty@(PtrType _ _) <- checkIExpr e
+    ty@(PtrType _) <- checkIExpr e
     checkInt i
     return $ Just ty
   Store dest val -> do
-    PtrType _ ty <- checkIExpr dest
+    PtrType (_, _, ty) <- checkIExpr dest
     valTy <- checkIExpr val
     assertEq ty valTy "Type mismatch in store"
     return Nothing
@@ -967,9 +976,9 @@ impInstrType :: ImpInstr -> Maybe IType
 impInstrType instr = case instr of
   IPrimOp op      -> Just $ impOpType op
   ICastOp t _     -> Just $ t
-  Load ref        -> Just $ t  where PtrType _ t = getIType ref
+  Load ref        -> Just $ t  where PtrType (_, _, t) = getIType ref
   IOffset ptr _   -> Just $ getIType ptr
-  Alloc a ty _    -> Just $ PtrType a ty
+  Alloc a ty _    -> Just $ PtrType (AllocatedPtr, a, ty)
   Store _ _       -> Nothing
   Free _          -> Nothing
   IThrowError     -> Nothing

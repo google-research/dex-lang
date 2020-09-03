@@ -56,7 +56,6 @@ data CompileState = CompileState { curBlocks   :: [BasicBlock]
                                  , scalarDecls :: [Named Instruction]
                                  , blockName   :: L.Name
                                  , usedNames   :: Env ()
-                                 , allocas     :: S.Set L.Name
                                  , funSpecs    :: S.Set ExternFunSpec
                                  , globalDefs  :: [L.Definition]
                                  }
@@ -88,17 +87,17 @@ impToLLVM (ImpFunction bs prog result) =
   -- Alignment and dereferenceable attributes are guaranteed by malloc_dex
   where paramAttrs = [L.NoAlias, L.NoCapture, L.NonNull, L.Alignment 64, L.Dereferenceable 64]
 
-compileImpInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
-compileImpInstr isLocal instr = case instr of
+compileImpInstr :: ImpInstr -> Compile (Maybe Operand)
+compileImpInstr instr = case instr of
   IThrowError   -> Nothing <$  throwRuntimeError
-  Alloc _ t numel -> Just    <$> case numel of
-    ILit l | n <- getIntLit l, isLocal && n <= 256 -> alloca n elemTy
-    _ -> malloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr numel
+  Alloc a t numel -> Just <$> case a of
+    Stack -> alloca (getIntLit l) elemTy  where ILit l = numel
+    HostHeap ->
+      malloc elemTy =<< mul (sizeof elemTy) =<< (`asIntWidth` i64) =<< compileExpr numel
+    DeviceHeap -> error "not implemented"
     where elemTy = scalarTy t
   Free v' -> do
-    ~v@(L.LocalReference _ vn) <- lookupImpVar v'
-    stackAllocated             <- gets allocas
-    if vn `S.member` stackAllocated then return () else free v
+    lookupImpVar v' >>= free
     return Nothing
   _ -> compileGenericInstr instr
 
@@ -214,8 +213,8 @@ mdImpToMulticore :: MDImpFunction ImpKernel -> LLVMFunction
 mdImpToMulticore (MDImpFunction bs prog result) =
  runIdentity $ compileFunction [] compileMDImpInstrMC bs (prog, result)
 
-compileMDImpInstrMC :: Bool -> MDImpInstr ImpKernel -> Compile (Maybe Operand)
-compileMDImpInstrMC isLocal instr =
+compileMDImpInstrMC :: MDImpInstr ImpKernel -> Compile (Maybe Operand)
+compileMDImpInstrMC instr =
   case instr of
     MDLaunch size args kernel -> do
       -- Generate the kernel
@@ -237,9 +236,9 @@ compileMDImpInstrMC isLocal instr =
         kernelPtrType = L.ptr $ L.FunctionType L.VoidType [i64, i64, L.ptr $ voidp] False
     MDLoadScalar v         -> Just    <$> (load =<< lookupImpVar v)
     MDStoreScalar v val    -> Nothing <$  bindM2 store (lookupImpVar v) (compileExpr val)
-    MDAlloc t s            -> compileImpInstr isLocal (Alloc DeviceMem t s)
-    MDFree   v             -> compileImpInstr isLocal (Free v)
-    MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
+    MDAlloc t s            -> compileImpInstr (Alloc DeviceHeap t s)
+    MDFree   v             -> compileImpInstr (Free v)
+    MDHostInstr impInstr   -> compileImpInstr impInstr
 
 impKernelToMC :: L.Name -> ImpKernel -> (S.Set ExternFunSpec, [L.Definition])
 impKernelToMC funcName (ImpKernel argBinders idxBinder prog) = runCompile cpuInitCompileEnv $ do
@@ -279,8 +278,8 @@ mdImpToCUDA (MDImpFunction bs prog result) =
   runIdentity $ compileFunction [] compileMDImpInstrCUDA bs (prog', result)
   where prog' = IInstr (Nothing, Left EnsureHasContext) `Nest` fmap (fmap Right) prog
 
-compileMDImpInstrCUDA :: Bool -> MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
-compileMDImpInstrCUDA isLocal instrExt = do
+compileMDImpInstrCUDA :: MDImpInstrExt PTXKernel -> MDHostCompile (Maybe Operand)
+compileMDImpInstrCUDA instrExt = do
   case instrExt of
     Left ext -> case ext of
       EnsureHasContext -> ensureHasCUDAContext >> return Nothing
@@ -309,7 +308,7 @@ compileMDImpInstrCUDA isLocal instrExt = do
         store valPtr =<< compileExpr val
         cuMemcpyHToD (sizeof refValType) refPtr =<< castVoidPtr valPtr
         return Nothing
-      MDHostInstr impInstr   -> compileImpInstr isLocal impInstr
+      MDHostInstr impInstr   -> compileImpInstr impInstr
 
 ensureHasCUDAContext :: MDHostCompile ()
 ensureHasCUDAContext = emitVoidExternCall spec []
@@ -441,8 +440,8 @@ gpuInitCompileEnv = CompileEnv mempty gpuUnaryIntrinsics gpuBinaryIntrinsics
         floatIntrinsic ty name = ExternFunSpec (L.mkName name) ty [] [] [ty, ty]
         callFloatIntrinsic ty name = emitExternCall (floatIntrinsic ty name) [x, y]
 
-compileImpKernelInstr :: Bool -> ImpInstr -> Compile (Maybe Operand)
-compileImpKernelInstr _ instr = case instr of
+compileImpKernelInstr :: ImpInstr -> Compile (Maybe Operand)
+compileImpKernelInstr instr = case instr of
   IThrowError      -> return Nothing
   Free  _          -> return Nothing  -- Can only alloca inside a kernel
   Alloc _ t numel  -> Just <$> case numel of
@@ -454,7 +453,7 @@ compileImpKernelInstr _ instr = case instr of
 
 compileFunction :: Monad m
                 => [L.ParameterAttribute]
-                -> (Bool -> instr -> CompileT m (Maybe Operand))
+                -> (instr -> CompileT m (Maybe Operand))
                 -> [IBinder] -> IProgVal instr -> m LLVMFunction
 compileFunction attrs compileInstr inBinders prog = runCompileT cpuInitCompileEnv $ do
   (argPtrParam   , argPtrOperand   ) <- freshParamOpPair attrs $ L.ptr i64
@@ -471,21 +470,20 @@ compileFunction attrs compileInstr inBinders prog = runCompileT cpuInitCompileEn
     argTypes    = map binderAnn inBinders
     resultTypes = map getIType  (snd prog)
 
-compileProg :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand))
+compileProg :: Monad m => (instr -> CompileT m (Maybe Operand))
             -> IProg instr -> CompileT m ()
 compileProg compileInstr prog = () <$ compileProgVal compileInstr (prog, [])
 
-compileProgVal :: Monad m => (Bool -> instr -> CompileT m (Maybe Operand))
+compileProgVal :: Monad m => (instr -> CompileT m (Maybe Operand))
                -> IProgVal instr -> CompileT m [Operand]
 compileProgVal _ (Empty, val) = traverse compileExpr val
 compileProgVal compileInstr ((Nest stmt prog), val) = do
   env <- case stmt of
     IInstr (Just b, instr) -> do
-      -- TODO: allow alloca here, and copy at the end if needed
-      ans <- compileInstr False instr
+      ans <- compileInstr instr
       return $ foldMap (b@>) ans
     IInstr (Nothing, instr) -> do
-      void $ compileInstr False instr
+      void $ compileInstr instr
       return mempty
     IFor d i n body  -> mempty <$ do
       n' <- compileExpr n
@@ -556,7 +554,7 @@ litVal lit = case lit of
       undef = C.Undef $ L.VectorType (fromIntegral $ length l) $ L.typeOf $ head consts
       fillElem v (c, i) = C.InsertElement v c (C.Int 32 (fromIntegral i))
       operandToConst ~(L.ConstantOperand c) = c
-  PtrLit _ ty ptr ->
+  PtrLit (_, _, ty) ptr ->
     L.ConstantOperand $ C.IntToPtr (C.Int 64 ptrAsInt) (L.ptr (scalarTy ty))
     where ptrAsInt = fromIntegral $ ptrToWordPtr ptr
 
@@ -607,7 +605,6 @@ alloca :: Monad m => Int -> L.Type -> CompileT m Operand
 alloca elems ty = do
   v <- freshName "v"
   modify $ setScalarDecls ((v L.:= instr):)
-  modify $ setAllocas (S.insert v)
   return $ L.LocalReference (L.ptr ty) v
   where instr = L.Alloca ty (Just $ (fromIntegral elems) `withWidth` 32) 0 []
 
@@ -657,12 +654,13 @@ scalarTy b = case b of
     Float64Type -> fp64
     Float32Type -> fp32
   Vector sb -> L.VectorType (fromIntegral vectorWidth) $ scalarTy $ Scalar sb
-  PtrType s t -> L.PointerType (scalarTy t) (lAddress s)
+  PtrType (_, s, t) -> L.PointerType (scalarTy t) (lAddress s)
 
 lAddress :: AddressSpace -> L.AddrSpace
 lAddress s = case s of
-  HostMem   -> L.AddrSpace 0
-  DeviceMem -> L.AddrSpace 1
+  Stack -> error "Stack memory should be allocated with alloca"
+  HostHeap   -> L.AddrSpace 0
+  DeviceHeap -> L.AddrSpace 1
 
 callableOperand :: L.Type -> L.Name -> L.CallableOperand
 callableOperand ty name = Right $ L.ConstantOperand $ C.GlobalReference ty name
@@ -740,7 +738,7 @@ cpuInitCompileEnv = CompileEnv mempty cpuUnaryIntrinsics cpuBinaryIntrinsics
 
 runCompileT :: Monad m => CompileEnv m -> CompileT m a -> m a
 runCompileT env m = evalStateT (runReaderT m env) initState
-  where initState = CompileState [] [] [] "start_block" mempty mempty mempty mempty
+  where initState = CompileState [] [] [] "start_block" mempty mempty mempty
 
 runCompile :: CompileEnv Identity -> Compile a -> a
 runCompile env m = runIdentity $ runCompileT env m
@@ -782,9 +780,6 @@ addInstr instr = modify $ setCurInstrs (instr:)
 
 setScalarDecls :: ([Named Instruction] -> [Named Instruction]) -> CompileState -> CompileState
 setScalarDecls update s = s { scalarDecls = update (scalarDecls s) }
-
-setAllocas :: (S.Set L.Name -> S.Set L.Name) -> CompileState -> CompileState
-setAllocas update s = s { allocas = update (allocas s) }
 
 setCurInstrs :: ([Named Instruction] -> [Named Instruction]) -> CompileState -> CompileState
 setCurInstrs update s = s { curInstrs = update (curInstrs s) }

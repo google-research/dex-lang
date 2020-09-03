@@ -35,8 +35,8 @@ module Syntax (
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
     boundUVars, PassName (..), boundVars, bindingsAsVars,
-    freeVars, freeUVars, Subst, HasVars, BindsVars, AddressSpace (..),
-    strToName, nameToStr, showPrimName,
+    freeVars, freeUVars, Subst, HasVars, BindsVars,
+    AddressSpace (..), PtrOrigin (..), strToName, nameToStr, showPrimName,
     monMapSingle, monMapLookup, Direction (..), Limit (..),
     UExpr, UExpr' (..), UType, UPatAnn, UAnnBinder, UVar,
     UPat, UPat' (..), UModule (..), UDecl (..), UArrow, arrowEff,
@@ -299,6 +299,7 @@ data PrimOp e =
       | Inject e
       | PtrOffset e e
       | PtrLoad e
+      | PtrAllocSize e
       | SliceOffset e e              -- Index slice first, inner index second
       | SliceCurry  e e              -- Index slice first, curried index second
       -- SIMD operations
@@ -467,6 +468,7 @@ data ImpInstr = Load  IExpr
               | IOffset IExpr IExpr
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
+              | MemCopy IExpr IExpr IExpr -- dest, source, numel
               | IPrimOp IPrimOp
                 deriving (Show)
 
@@ -498,7 +500,7 @@ data LitVal = Int64Lit   Int64
             | Int8Lit    Int8
             | Float64Lit Double
             | Float32Lit Float
-            | PtrLit AddressSpace BaseType (Ptr ())
+            | PtrLit PtrType (Ptr ())
             | VecLit [LitVal]  -- Only one level of nesting allowed!
               deriving (Show, Eq, Generic)
 
@@ -506,10 +508,12 @@ data ScalarBaseType = Int64Type | Int32Type | Int8Type | Float64Type | Float32Ty
                       deriving (Show, Eq, Generic)
 data BaseType = Scalar  ScalarBaseType
               | Vector  ScalarBaseType
-              | PtrType AddressSpace BaseType
+              | PtrType PtrType
                 deriving (Show, Eq, Generic)
 
-data AddressSpace = HostMem | DeviceMem  deriving (Show, Eq, Generic)
+type PtrType = (PtrOrigin, AddressSpace, BaseType)
+data AddressSpace = Stack | HostHeap | DeviceHeap  deriving (Show, Eq, Generic)
+data PtrOrigin = DerivedPtr | AllocatedPtr         deriving (Show, Eq, Generic)
 
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
@@ -518,7 +522,7 @@ sizeOf t = case t of
   Scalar Int8Type    -> 1
   Scalar Float64Type -> 8
   Scalar Float32Type -> 4
-  PtrType _ _        -> 8
+  PtrType _          -> 8
   Vector st          -> vectorWidth * sizeOf (Scalar st)
 
 vectorWidth :: Int
@@ -1170,7 +1174,8 @@ instance HasIVars instr => HasIVars (IProg instr) where
 
 instance BindsIVars (IStmt instr) where
   boundIVars stmt = case stmt of
-    IInstr (Just b, _) -> binderAsEnv b
+    IInstr (Just b , _) -> binderAsEnv b
+    IInstr (Nothing, _) -> mempty
     IFor _ _ _ _ -> mempty
     IWhile _ _   -> mempty
     ICond  _ _ _ -> mempty
@@ -1297,8 +1302,8 @@ pattern UnitTy = TC UnitType
 pattern BaseTy :: BaseType -> Type
 pattern BaseTy b = TC (BaseType b)
 
-pattern PtrTy :: AddressSpace -> BaseType -> Type
-pattern PtrTy s b = BaseTy (PtrType s b)
+pattern PtrTy :: PtrType -> Type
+pattern PtrTy ty = BaseTy (PtrType ty)
 
 pattern RefTy :: Atom -> Type -> Type
 pattern RefTy r a = TC (RefType r a)
@@ -1500,3 +1505,4 @@ instance Store LitVal
 instance Store ScalarBaseType
 instance Store BaseType
 instance Store AddressSpace
+instance Store PtrOrigin

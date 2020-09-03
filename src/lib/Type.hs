@@ -604,12 +604,15 @@ typeCheckOp op = case op of
     RefTy h (PairTy _ b) <- typeCheck ref
     return $ RefTy h b
   PtrOffset arr off -> do
-    PtrTy s a <- typeCheck arr
+    PtrTy (_, a, b) <- typeCheck arr
     off |: IdxRepTy
-    return $ PtrTy s a
-  PtrLoad arr -> do
-    PtrTy _ a  <- typeCheck arr
-    return $ BaseTy a
+    return $ PtrTy (DerivedPtr, a, b)
+  PtrLoad ptr -> do
+    PtrTy (_, _, t)  <- typeCheck ptr
+    return $ BaseTy t
+  PtrAllocSize ptr -> do
+    PtrTy (AllocatedPtr, _, _) <- typeCheck ptr
+    return $ IdxRepTy
   SliceOffset s i -> do
     TC (IndexSlice n l) <- typeCheck s
     l' <- typeCheck i
@@ -755,7 +758,7 @@ litType v = case v of
   Int8Lit    _ -> Scalar Int8Type
   Float64Lit _ -> Scalar Float64Type
   Float32Lit _ -> Scalar Float32Type
-  PtrLit a t _ -> PtrType a t
+  PtrLit t _   -> PtrType t
   VecLit  l -> Vector sb
     where Scalar sb = litType $ head l
 
