@@ -214,7 +214,7 @@ litArr = [10, 5, 3]
 :p
    k = newKey 0
    mean for i:(Fin 100). randn (ixkey k i)
-> -0.1157995
+> -0.115799494
 
 :p
    k = newKey 0

@@ -280,7 +280,7 @@ instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
   prettyPrec atom = case atom of
     Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "for " <> p b <> "." <+> p body
+    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "\\for " <> p b <> "." <+> p body
     Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
     Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
     Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b

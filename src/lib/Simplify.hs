@@ -31,10 +31,12 @@ type SimplifyM = SubstEmbedT Identity
 simplifyModule :: TopEnv -> Module -> Module
 simplifyModule scope (Module Core decls bindings) = do
   let simpDecls = snd $ snd $ runSubstEmbed (simplifyDecls decls) scope
+  -- We don't have to check that the binders are global here, since all local
+  -- Atom binders have been inlined as part of the simplification.
   let isAtomDecl decl = case decl of Let _ _ (Atom _) -> True; _ -> False
   let (declsDone, declsNotDone) = partition isAtomDecl $ toList simpDecls
   let bindings' = foldMap boundVars declsDone
-  dceModule $ Module Simp (toNest declsNotDone) (bindings <> bindings')
+  Module Simp (toNest declsNotDone) (bindings <> bindings')
 simplifyModule _ (Module ir _ _) = error $ "Expected Core, got: " ++ show ir
 
 evalSimplified :: Monad m => Module -> (Block -> m Atom) -> m Module
@@ -60,7 +62,7 @@ simplifyDecl :: Decl -> SimplifyM SubstEnv
 simplifyDecl (Let ann b expr) = do
   x <- simplifyExpr expr
   let name = binderNameHint b
-  if isGlobal (name:>())
+  if isGlobalBinder b
     then emitTo name ann (Atom x) $> mempty
     else return $ b @> x
 simplifyDecl (Unpack bs expr) = do

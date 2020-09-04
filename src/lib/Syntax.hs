@@ -30,7 +30,7 @@ module Syntax (
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
     MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
-    ImpKernel (..), PTXKernel (..), IScope, BinderInfo (..), Bindings,
+    IScope, BinderInfo (..), Bindings, ImpKernel (..), CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
     addSrcContext, catchIOExcept, liftEitherIO, (-->), (--@), (==>),
@@ -66,7 +66,8 @@ import Control.Monad.Fail
 import Control.Monad.Identity
 import Control.Monad.Writer hiding (Alt)
 import Control.Monad.Except hiding (Except)
-import qualified Data.Vector.Storable as V
+import qualified Data.Vector.Storable  as V
+import qualified Data.ByteString.Char8 as B
 import Data.List (sort)
 import qualified Data.List.NonEmpty as NE
 import Data.Store (Store)
@@ -491,7 +492,7 @@ data MDImpInstr k = MDLaunch Size [IVar] k
 -- Parameters, linear thread index, kernel body
 data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram
                  deriving (Show)
-newtype PTXKernel = PTXKernel String deriving (Show)
+newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 -- === base types ===
 
@@ -557,7 +558,7 @@ monMapLookup (MonMap m) k = case M.lookup k m of Nothing -> mempty
 
 data PassName = Parse | TypePass | SynthPass | SimpPass | ImpPass | JitPass
               | Flops | LLVMOpt | AsmPass | JAXPass | JAXSimpPass | LLVMEval
-              | ResultPass | JaxprAndHLO
+              | ResultPass | JaxprAndHLO | OptimPass
                 deriving (Ord, Eq, Bounded, Enum)
 
 instance Show PassName where
@@ -566,7 +567,7 @@ instance Show PassName where
     SimpPass -> "simp"  ; ImpPass  -> "imp"     ; JitPass   -> "llvm"
     Flops    -> "flops" ; LLVMOpt  -> "llvmopt" ; AsmPass   -> "asm"
     JAXPass  -> "jax"   ; JAXSimpPass -> "jsimp"; ResultPass -> "result"
-    LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo";
+    LLVMEval -> "llvmeval" ; JaxprAndHLO -> "jaxprhlo"; OptimPass -> "optimized"
 
 -- === outputs ===
 

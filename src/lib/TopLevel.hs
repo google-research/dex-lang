@@ -32,6 +32,7 @@ import LLVMExec
 import PPrint
 import Parser
 import Util (highlightRegion)
+import Optimize
 import CUDA
 
 data Backend = LLVM | LLVMCUDA | LLVMMC | Interp | JAX  deriving (Show, Eq)
@@ -67,7 +68,6 @@ evalSourceBlockM env block = case sbContents block of
   Command cmd (v, m) -> mempty <$ case cmd of
     EvalExpr fmt -> do
       val <- evalUModuleVal env v m
-      logPass ImpPass (pprint val)
       case fmt of
         Printed -> do
           s <- liftIO $ pprintVal val
@@ -92,6 +92,7 @@ processLogs logLevel logs = case logLevel of
   LogNothing -> []
   LogPasses passes -> flip filter logs $ \l -> case l of
                         PassInfo pass _ | pass `elem` passes -> True
+                                        | otherwise          -> False
                         _ -> False
   PrintEvalTime -> [BenchResult "" compileTime runTime]
     where (compileTime, runTime) = timesFromLogs logs
@@ -149,7 +150,9 @@ evalModule :: TopEnv -> Module -> TopPassM TopEnv
 evalModule bindings normalized = do
   let defunctionalized = simplifyModule bindings normalized
   checkPass SimpPass defunctionalized
-  evaluated <- evalSimplified defunctionalized evalBackend
+  let optimized = optimizeModule defunctionalized
+  checkPass OptimPass optimized
+  evaluated <- evalSimplified optimized evalBackend
   checkPass ResultPass evaluated
   Module Evaluated Empty newBindings <- return evaluated
   return newBindings
@@ -184,18 +187,13 @@ evalBackend block = do
           let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
           logPass ImpPass mdImpFunction
           return $ (mdImpToMulticore mdImpFunction, reconAtom)
-        CUDA      -> do
-          let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
-          logPass ImpPass mdImpFunction
-          ptxFunction <- liftIO $ traverse compileKernel mdImpFunction
-          return $ (mdImpToCUDA ptxFunction, reconAtom)
+        -- CUDA      -> do
+        --   let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
+        --   logPass ImpPass mdImpFunction
+        --   ptxFunction <- liftIO $ traverse compileKernel mdImpFunction
+        --   return $ (mdImpToCUDA ptxFunction, reconAtom)
       resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmFunc []
       return $ applyNaryAbs reconAtom resultVals
-      where
-        compileKernel :: ImpKernel -> IO PTXKernel
-        compileKernel k = do
-          let llvmKernel = impKernelToLLVM k
-          compilePTX logger llvmKernel
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do

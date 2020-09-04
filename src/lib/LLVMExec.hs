@@ -10,7 +10,7 @@
 {-# OPTIONS_GHC -Wno-orphans #-}
 
 module LLVMExec (LLVMFunction (..), LLVMKernel (..),
-                 callLLVM, compilePTX, loadLitVal) where
+                 callLLVM, compileCUDAKernel, loadLitVal) where
 
 import qualified LLVM.Analysis as L
 import qualified LLVM.AST as L
@@ -31,17 +31,22 @@ import qualified LLVM.OrcJIT as JIT
 import LLVM.Internal.OrcJIT.CompileLayer as JIT
 import LLVM.Context
 import Data.Time.Clock (getCurrentTime, diffUTCTime)
+import System.IO
 import System.IO.Unsafe
+import System.IO.Temp
 import System.Directory (listDirectory)
+import System.Process
+import System.Environment
+import System.Exit
 
 import Foreign.Marshal.Alloc
 import Foreign.Ptr
 import Foreign.Storable hiding (alignment)
 import Control.Monad
 import Control.Exception hiding (throw)
-import Data.ByteString.Char8 (unpack)
+import Data.ByteString.Char8 (unpack, pack)
 import Data.IORef
-import qualified Data.ByteString as BS
+import qualified Data.ByteString.Char8 as B
 import qualified Data.Map as M
 
 import Logging
@@ -49,22 +54,43 @@ import Syntax
 import JIT (LLVMFunction (..), LLVMKernel (..), ptxTargetTriple, ptxDataLayout)
 import Resources
 
-type ExitCode = Int
+type DexExitCode = Int
 
 foreign import ccall "dynamic"
-  callFunPtr :: FunPtr (Ptr () -> Ptr () -> IO ExitCode) -> Ptr () -> Ptr () -> IO ExitCode
+  callFunPtr :: FunPtr (Ptr () -> Ptr () -> IO DexExitCode)
+             -> Ptr () -> Ptr () -> IO DexExitCode
 
-compilePTX :: Logger [Output] -> LLVMKernel -> IO PTXKernel
-compilePTX logger (LLVMKernel ast) = do
+compileCUDAKernel :: Logger [Output] -> LLVMKernel -> IO CUDAKernel
+compileCUDAKernel logger (LLVMKernel ast) = do
   T.initializeAllTargets
   withContext $ \ctx ->
     Mod.withModuleFromAST ctx ast $ \m -> do
-      withGPUTargetMachine "sm_60" $ \tm -> do
+      withGPUTargetMachine (pack arch) $ \tm -> do
         linkLibdevice ctx           m
         linkDexrt     ctx           m
         internalize   ["kernel"]    m
         compileModule ctx logger tm m
-        PTXKernel . unpack <$> Mod.moduleTargetAssembly tm m
+        ptx <- Mod.moduleTargetAssembly tm m
+        usePTXAS <- maybe False (=="1") <$> lookupEnv "DEX_USE_PTXAS"
+        if usePTXAS
+          then do
+            withSystemTempFile "kernel.ptx" $ \ptxPath ptxH -> do
+              B.hPut ptxH ptx
+              hClose ptxH
+              withSystemTempFile "kernel.sass" $ \sassPath sassH -> do
+                let cmd = proc ptxasPath [ptxPath, "-o", sassPath, "-arch=" ++ arch, "-O3"]
+                withCreateProcess cmd $ \_ _ _ ptxas -> do
+                  code <- waitForProcess ptxas
+                  case code of
+                    ExitSuccess   -> return ()
+                    ExitFailure _ -> error "ptxas invocation failed"
+                -- TODO: B.readFile might be faster, but withSystemTempFile seems to lock the file...
+                CUDAKernel <$> B.hGetContents sassH
+          else return $ CUDAKernel ptx
+  where
+    ptxasPath = "/usr/local/cuda/bin/ptxas"
+    arch = "sm_60"
+
 
 callLLVM :: Logger [Output] -> LLVMFunction -> [LitVal] -> IO [LitVal]
 callLLVM logger (LLVMFunction argTypes resultTypes ast) args = do
@@ -80,7 +106,7 @@ callLLVM logger (LLVMFunction argTypes resultTypes ast) args = do
       return results
     _ -> throwIO $ Err RuntimeErr Nothing ""
 
-evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> Ptr () -> IO ExitCode
+evalLLVM :: Logger [Output] -> L.Module -> Ptr () -> Ptr () -> IO DexExitCode
 evalLLVM logger ast argPtr resultPtr = do
   resolvers <- newIORef M.empty
   withContext $ \c -> do
@@ -185,7 +211,7 @@ internalize names m = runPasses [P.InternalizeFunctions names, P.GlobalDeadCodeE
 instance Show LLVMKernel where
   show (LLVMKernel ast) = unsafePerformIO $ withContext $ \c -> Mod.withModuleFromAST c ast showModule
 
-withGPUTargetMachine :: BS.ByteString -> (T.TargetMachine -> IO a) -> IO a
+withGPUTargetMachine :: B.ByteString -> (T.TargetMachine -> IO a) -> IO a
 withGPUTargetMachine computeCapability next = do
   (tripleTarget, _) <- T.lookupTarget Nothing ptxTargetTriple
   T.withTargetOptions $ \topt ->
@@ -271,7 +297,7 @@ libdevice = unsafePerformIO $ do
     let libdeviceDirectory = "/usr/local/cuda/nvvm/libdevice"
     [libdeviceFileName] <- listDirectory libdeviceDirectory
     let libdevicePath = libdeviceDirectory ++ "/" ++ libdeviceFileName
-    libdeviceBC <- BS.readFile libdevicePath
+    libdeviceBC <- B.readFile libdevicePath
     m <- Mod.withModuleFromBitcode ctx (libdevicePath, libdeviceBC) Mod.moduleAST
     -- Override the data layout and target triple to avoid warnings when linking
     return $ m { L.moduleDataLayout = Just ptxDataLayout

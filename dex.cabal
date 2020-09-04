@@ -26,7 +26,7 @@ library dex-resources
 library
   exposed-modules:     Env, Syntax, Type, Inference, JIT, LLVMExec,
                        Parser, Util, Imp, PPrint, Algebra,
-                       Actor, Cat, Flops, Embed, Serialize,
+                       Actor, Cat, Flops, Embed, Serialize, Optimize,
                        RenderHtml, Plot, LiveOutput, Simplify, TopLevel,
                        Autodiff, Interpreter, Logging, PipeRPC, CUDA
   build-depends:       base, containers, mtl, binary, bytestring,
@@ -36,7 +36,7 @@ library
                        blaze-html, cmark, diagrams-lib, ansi-terminal,
                        diagrams-rasterific, JuicyPixels, transformers,
                        base64-bytestring, vector, directory, mmap, unix,
-                       process, primitive, store, dex-resources
+                       process, primitive, store, dex-resources, temporary
   if !os(darwin)
     exposed-modules:   Resources
     hs-source-dirs:    src/resources
