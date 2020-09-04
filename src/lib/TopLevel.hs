@@ -6,8 +6,7 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 
-module TopLevel (evalSourceBlock, EvalConfig (..), initializeBackend,
-                 Backend (..)) where
+module TopLevel (evalSourceBlock, EvalConfig (..), Backend (..)) where
 
 import Control.Concurrent.MVar
 import Control.Monad.State
@@ -35,16 +34,11 @@ import Util (highlightRegion)
 import Optimize
 import CUDA
 
-data Backend = LLVM | LLVMCUDA | LLVMMC | Interp | JAX  deriving (Show, Eq)
 data EvalConfig = EvalConfig
   { backendName :: Backend
   , preludeFile :: FilePath
   , logFile     :: Maybe FilePath
-  , evalEngine  :: BackendEngine
   , logService  :: Logger [Output] }
-
-data LLVMEngineKind = Serial | Multicore | CUDA
-data BackendEngine = LLVMEngine LLVMEngineKind | InterpEngine
 
 type TopPassM a = ReaderT EvalConfig IO a
 
@@ -157,15 +151,6 @@ evalModule bindings normalized = do
   Module Evaluated Empty newBindings <- return evaluated
   return newBindings
 
-initializeBackend :: Backend -> IO BackendEngine
-initializeBackend backend = return $ case backend of
-  LLVM     -> LLVMEngine Serial
-  LLVMMC   -> LLVMEngine Multicore
-  LLVMCUDA -> if hasCUDA
-                then LLVMEngine CUDA
-                else error "Dex built without CUDA support"
-  _ -> error "Not implemented"
-
 arrayVars :: Subst a => a -> [Var]
 arrayVars x = foldMap go $ envPairs (freeVars x)
   where go :: (Name, (Type, BinderInfo)) -> [Var]
@@ -174,26 +159,13 @@ arrayVars x = foldMap go $ envPairs (freeVars x)
 
 evalBackend :: Block -> TopPassM Atom
 evalBackend block = do
-  backend <- asks evalEngine
+  backend <- asks backendName
   logger  <- asks logService
-  case backend of
-    LLVMEngine kind -> do
-      (llvmFunc, reconAtom) <- case kind of
-        Serial -> do
-          let (impFunction, reconAtom) = toImpFunction ([], block)
-          checkPass ImpPass impFunction
-          return (impToLLVM impFunction, reconAtom)
-        Multicore -> do
-          let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
-          logPass ImpPass mdImpFunction
-          return $ (mdImpToMulticore mdImpFunction, reconAtom)
-        -- CUDA      -> do
-        --   let (mdImpFunction, reconAtom) = toMDImpFunction ([], block)
-        --   logPass ImpPass mdImpFunction
-        --   ptxFunction <- liftIO $ traverse compileKernel mdImpFunction
-        --   return $ (mdImpToCUDA ptxFunction, reconAtom)
-      resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmFunc []
-      return $ applyNaryAbs reconAtom resultVals
+  let (impFunction, reconAtom) = toImpFunction backend ([], block)
+  checkPass ImpPass impFunction
+  let llvmFunc = impToLLVM impFunction
+  resultVals <- liftM (map (Con . Lit)) $ liftIO $ callLLVM logger llvmFunc []
+  return $ applyNaryAbs reconAtom resultVals
 
 withCompileTime :: TopPassM a -> TopPassM a
 withCompileTime m = do

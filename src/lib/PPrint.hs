@@ -114,9 +114,8 @@ instance Pretty PtrOrigin where
   pretty DerivedPtr   = "derived"
 
 instance Pretty AddressSpace where
-  pretty Stack      = "stack"
-  pretty HostHeap   = "host"
-  pretty DeviceHeap = "device"
+  pretty Stack    = "stack"
+  pretty (Heap d) = p (show d)
 
 instance Pretty ScalarBaseType where pretty = prettyFromPrettyPrec
 instance PrettyPrec ScalarBaseType where
@@ -346,7 +345,7 @@ instance Pretty IExpr where
 
 instance PrettyPrec IExpr where prettyPrec = atPrec ArgPrec . pretty
 
-instance Pretty instr => Pretty (IStmt instr) where
+instance Pretty ImpStatement where
   pretty (IInstr (Nothing, instr)) = p instr
   pretty (IInstr (Just b , instr)) = p b <+> "=" <+> p instr
   pretty (IFor d i n block)         = dirStr d <+> p i <+> "<" <+> p n <>
@@ -360,36 +359,22 @@ instance Pretty instr => Pretty (IStmt instr) where
   pretty (ICond predicate cons alt) =
     "if" <+> p predicate <+> "then" <> nest 2 (hardline <> p cons) <>
     hardline <> "else" <> nest 2 (hardline <> p alt)
+  pretty (ILaunch device size args kernel) = "launch_kernel" <+> p (show device)
+    <+> p size <+> p args <> nest 2 (hardline <> p kernel)
 
 instance Pretty ImpFunction where
-  pretty (ImpFunction vsOut vsIn body) =
+  pretty (ImpFunction vsOut body vsIn) =
                    "in:        " <> p vsIn
-    <> hardline <> "out:       " <> p vsOut
     <> hardline <> p body
+    <> hardline <> "out:       " <> p vsOut
 
 instance Pretty ImpInstr where
-  pretty (IPrimOp op)            = pLowest op
-  pretty (ICastOp t x)           = "cast"  <+> p x <+> "to" <+> p t
-  pretty (Load ref)              = "load"  <+> p ref
-  pretty (Store dest val)        = "store" <+> p dest <+> p val
-  pretty (Alloc _ t s)           = "alloc" <+> p t <> "[" <> p s <> "]"
-  pretty (IOffset expr lidx)     = p expr  <+> "+>" <+> p lidx
-  pretty (Free (v:>_))           = "free"  <+> p v
+  pretty (IPrimOp op)     = pLowest op
+  pretty (ICastOp t x)    = "cast"  <+> p x <+> "to" <+> p t
+  pretty (Store dest val) = "store" <+> p dest <+> p val
+  pretty (Alloc _ t s)    = "alloc" <+> p t <> "[" <> p s <> "]"
+  pretty (Free ptr)       = "free"  <+> p ptr
   pretty IThrowError = "throwError"
-
-instance Pretty k => Pretty (MDImpFunction k) where
-  pretty (MDImpFunction vsOut vsIn body) =
-                   "in:        " <> p vsIn
-    <> hardline <> "out:       " <> p vsOut
-    <> hardline <> p body
-
-instance Pretty k => Pretty (MDImpInstr k) where
-  pretty (MDLaunch size args kernel) = "launch_kernel" <+> p size <+> p args <> nest 2 (hardline <> p kernel)
-  pretty (MDAlloc t s)    = "device_alloc" <+> p t <> "[" <> p s <> "]"
-  pretty (MDFree v)       = "free" <+> p v
-  pretty (MDLoadScalar v) = "device_load" <+> p v
-  pretty (MDStoreScalar v x) = "device_store" <+> p v <+> p x
-  pretty (MDHostInstr instr) = pretty instr
 
 instance Pretty ImpKernel where
   pretty (ImpKernel args idxVar kernel) = parens (p idxVar <+> p args) <> nest 2 (hardline <> p kernel)
@@ -577,7 +562,7 @@ instance PrettyPrec a => PrettyPrec [a] where
 instance Pretty a => Pretty (Nest a) where
   pretty xs = pretty $ toList xs
 
-instance {-# OVERLAPPING #-} Pretty instr => Pretty (IProg instr) where
+instance {-# OVERLAPPING #-} Pretty ImpProgram where
   pretty prog = vcat $ toList $ pretty <$> prog
 
 printLitBlock :: Bool -> SourceBlock -> Result -> String

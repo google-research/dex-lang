@@ -147,19 +147,16 @@ parseEvalOpts = EvalConfig
          (optionList [ ("LLVM", LLVM)
                      , ("LLVM-CUDA", LLVMCUDA)
                      , ("LLVM-MC", LLVMMC)
-                     , ("JAX", JAX)
                      , ("interp", Interp)])
-         (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|JAX|interp)"))
+         (long "backend" <> value LLVM <> help "Backend (LLVM(default)|LLVM-CUDA|interp)"))
   <*> (strOption $ long "prelude" <> value "prelude.dx" <> metavar "FILE"
                                   <> help "Prelude file" <> showDefault)
   <*> (optional $ strOption $ long "logto"
                     <> metavar "FILE"
                     <> help "File to log to" <> showDefault)
-  <*> pure (error "Backend not initialized")
   <*> pure (error "Logging not initialized")
 
 main :: IO ()
 main = do
   CmdOpts evalMode opts <- execParser parseOpts
-  engine <- initializeBackend $ backendName opts
-  runMode evalMode $ opts { evalEngine = engine }
+  runMode evalMode opts

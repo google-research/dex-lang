@@ -24,12 +24,12 @@ module Syntax (
     PrimHof (..), LamExpr, PiType, WithSrc (..), srcPos, LetAnn (..),
     BinOp (..), UnOp (..), CmpOp (..), SourceBlock (..),
     ReachedEOF, SourceBlock' (..), SubstEnv, Scope, CmdName (..), HasIVars (..),
-    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..), IStmt (..),
-    IProg, IProgVal, ImpProgram, ImpStatement, ImpInstr (..), IExpr (..), IVal,
+    Val, TopEnv, Op, Con, Hof, TC, Module (..), ImpFunction (..),
+    ImpProgramVal, ImpProgram, ImpStatement (..),
+    IExpr (..), IVal, ImpInstr (..), Backend (..), Device (..),
     IPrimOp, IVar, IBinder, IType, SetVal (..), MonMap (..), LitProg,
     UAlt (..), Alt, binderBinding, Label, LabeledItems (..), labeledSingleton,
     reflectLabels, withLabels, ExtLabeledItems (..), prefixExtLabeledItems,
-    MDImpFunction (..), MDImpProgram, MDImpInstr (..), MDImpStatement,
     IScope, BinderInfo (..), Bindings, ImpKernel (..), CUDAKernel (..),
     SrcCtx, Result (..), Output (..), OutFormat (..), DataFormat (..),
     Err (..), ErrType (..), Except, throw, throwIf, modifyErr, addContext,
@@ -437,14 +437,6 @@ data LogLevel = LogNothing | PrintEvalTime | PrintBench String
 
 -- === imperative IR ===
 
-type IProg instr = Nest (IStmt instr)
-type IProgVal instr = (IProg instr, [IExpr])
-data IStmt instr = IInstr (Maybe IBinder, instr)
-                 | IFor Direction IBinder Size (IProg instr)
-                 | IWhile (IProgVal instr) (IProg instr)  -- cond block, body block
-                 | ICond IExpr (IProg instr) (IProg instr)
-                 deriving (Show, Functor, Foldable, Traversable)
-
 data IExpr = ILit LitVal
            | IVar IVar
              deriving (Show)
@@ -459,39 +451,29 @@ type Size = IExpr
 
 -- Destinations first, arguments second
 data ImpFunction = ImpFunction [IBinder] ImpProgram [IExpr]  deriving (Show)
-type ImpProgram   = IProg ImpInstr
-type ImpStatement = IStmt ImpInstr
+type ImpProgram = Nest ImpStatement
+type ImpProgramVal = (ImpProgram, [IExpr])
 
-data ImpInstr = Load  IExpr
-              | Store IExpr IExpr           -- Destination first
+data ImpStatement = IInstr (Maybe IBinder, ImpInstr)
+                  | IFor Direction IBinder Size ImpProgram
+                  | IWhile ImpProgramVal ImpProgram  -- cond block, body block
+                  | ICond IExpr ImpProgram ImpProgram
+                  | ILaunch Device Size [IExpr] ImpKernel
+                    deriving (Show)
+
+data ImpInstr = Store IExpr IExpr           -- dest, val
               | Alloc AddressSpace IType Size
-              | Free IVar
-              | IOffset IExpr IExpr
+              | MemCopy IExpr IExpr IExpr   -- dest, source, numel
+              | Free IExpr
               | IThrowError  -- TODO: parameterize by a run-time string
               | ICastOp IType IExpr
-              | MemCopy IExpr IExpr IExpr -- dest, source, numel
               | IPrimOp IPrimOp
                 deriving (Show)
 
--- === multi-device imperative IR ===
-
--- Destinations first, arguments second
-data MDImpFunction k = MDImpFunction [IBinder] (MDImpProgram k) [IExpr]
-                       deriving (Show, Functor, Foldable, Traversable)
-type MDImpProgram k   = IProg (MDImpInstr k)
-type MDImpStatement k = IStmt (MDImpInstr k)
-
-data MDImpInstr k = MDLaunch Size [IVar] k
-                  | MDAlloc IType Size
-                  | MDFree IVar
-                  | MDLoadScalar  IVar
-                  | MDStoreScalar IVar IExpr
-                  | MDHostInstr ImpInstr
-                    deriving (Show, Functor, Foldable, Traversable)
-
 -- Parameters, linear thread index, kernel body
-data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram
-                 deriving (Show)
+-- TODO: just use ImpFunction instead?
+data ImpKernel = ImpKernel [IBinder] IBinder ImpProgram deriving (Show)
+data Backend = LLVM | LLVMCUDA | LLVMMC | Interp  deriving (Show, Eq)
 newtype CUDAKernel = CUDAKernel B.ByteString deriving (Show)
 
 -- === base types ===
@@ -512,9 +494,10 @@ data BaseType = Scalar  ScalarBaseType
               | PtrType PtrType
                 deriving (Show, Eq, Generic)
 
+data Device = CPU | GPU  deriving (Show, Eq, Generic)
+data AddressSpace = Stack | Heap Device     deriving (Show, Eq, Generic)
+data PtrOrigin = DerivedPtr | AllocatedPtr  deriving (Show, Eq, Generic)
 type PtrType = (PtrOrigin, AddressSpace, BaseType)
-data AddressSpace = Stack | HostHeap | DeviceHeap  deriving (Show, Eq, Generic)
-data PtrOrigin = DerivedPtr | AllocatedPtr         deriving (Show, Eq, Generic)
 
 sizeOf :: BaseType -> Int
 sizeOf t = case t of
@@ -1163,7 +1146,7 @@ instance HasIVars IExpr where
 instance HasIVars IType where
   freeIVars _ = mempty
 
-instance HasIVars instr => HasIVars (IProg instr) where
+instance HasIVars ImpProgram where
   freeIVars Empty = mempty
   freeIVars (Nest stmt cont) = stmtFree <> (freeIVars cont `envDiff` boundIVars stmt)
     where
@@ -1173,7 +1156,7 @@ instance HasIVars instr => HasIVars (IProg instr) where
         IWhile c p        -> freeIVars c <> freeIVars p
         ICond  c t f      -> freeIVars c <> freeIVars t <> freeIVars f
 
-instance BindsIVars (IStmt instr) where
+instance BindsIVars ImpStatement where
   boundIVars stmt = case stmt of
     IInstr (Just b , _) -> binderAsEnv b
     IInstr (Nothing, _) -> mempty
@@ -1181,21 +1164,18 @@ instance BindsIVars (IStmt instr) where
     IWhile _ _   -> mempty
     ICond  _ _ _ -> mempty
 
-instance BindsIVars (IProg instr) where
+instance BindsIVars ImpProgram where
   boundIVars prog = foldMap boundIVars prog
 
 instance HasIVars ImpInstr where
   freeIVars i = case i of
-    Load  e       -> freeIVars e
     Store d e     -> freeIVars d <> freeIVars e
     Alloc _ t s   -> freeIVars t <> freeIVars s
-    Free  v       -> varAsEnv v
-    IOffset a o   -> freeIVars a <> freeIVars o
-    ICastOp t x   -> freeIVars t <> freeIVars x
+    Free x        -> freeIVars x
     IPrimOp op    -> foldMap freeIVars op
     IThrowError   -> mempty
 
-instance HasIVars instr => HasIVars (IProgVal instr) where
+instance HasIVars ImpProgramVal where
   freeIVars (prog, results) =
     freeIVars prog <> (foldMap freeIVars results `envDiff` boundIVars prog)
 
@@ -1507,3 +1487,4 @@ instance Store ScalarBaseType
 instance Store BaseType
 instance Store AddressSpace
 instance Store PtrOrigin
+instance Store Device
