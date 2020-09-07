@@ -20,7 +20,7 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, reduceAtom,
-              unpackConsList, emitRunWriter, emitRunReader, tabGet,
+              unpackConsList, emitRunWriter, emitRunReader, tabGet, buildNestedLam,
               SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
@@ -328,6 +328,11 @@ buildFor d i body = do
   eff <- getAllowedEffects
   lam <- buildLam i (PlainArrow eff) body
   emit $ Hof $ For d lam
+
+buildNestedLam :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m Atom
+buildNestedLam [] f = f []
+buildNestedLam (b:bs) f =
+  buildLam b PureArrow $ \x -> buildNestedLam bs $ \xs -> f (x:xs)
 
 tabGet :: MonadEmbed m => Atom -> Atom -> m Atom
 tabGet x i = emit $ App x i
