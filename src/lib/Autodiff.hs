@@ -5,6 +5,7 @@
 -- https://developers.google.com/open-source/licenses/bsd
 
 {-# LANGUAGE FlexibleContexts #-}
+{-# LANGUAGE RecordWildCards #-}
 {-# OPTIONS_GHC -w #-} -- XXX: Disable once fixed
 
 module Autodiff (linearize, transposeMap) where
@@ -28,22 +29,22 @@ import Data.Text.Prettyprint.Doc
 -- === linearization ===
 
 -- `DerivWrt` holds the (out-expr) variables that we're differentiating with
--- respect to (including refs but not regions). `Tangents` holds the tangent
--- values and the region variables that are arguments to the linearized
--- function.
-type DerivWrt = (Env Type, EffectRow)
-type Tangents = (SubstEnv, [Name])
+-- respect to (including refs but not regions).
+data DerivWrt = DerivWrt { activeVars :: Env Type, activeEffs :: [Effect] }
+-- `Tangents` holds the tangent values and the region variables that are
+-- arguments to the linearized function.
+data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name] }
 
-type PrimalM  = ReaderT DerivWrt Embed
-type TangentM = ReaderT Tangents Embed
+type PrimalM  = ReaderT DerivWrt   Embed
+type TangentM = ReaderT TangentEnv Embed
 newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
 linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
   buildLam b PureArrow $ \x@(Var v) -> do
-    (y, yt) <- flip runReaderT (varAsEnv v, Pure) $ runLinA $ linearizeBlock (b@>x) block
+    (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
-    fLin <- buildLam b LinArrow $ \xt -> runReaderT yt (v @> xt, [])
+    fLin <- buildLam b LinArrow $ \xt -> runReaderT yt $ TangentEnv (v @> xt) []
     fLinChecked <- checkEmbed fLin
     return $ PairVal y fLinChecked
 
@@ -54,8 +55,8 @@ linearizeBlock env (Block decls result) = case decls of
     -- TODO: Handle the discrete and inactive case specially.
     (x, boundLin) <- runLinA $ linearizeExpr env bound
     ~x'@(Var v) <- emit $ Atom x
-    (ans, bodyLin) <- extendWrt v Pure $ runLinA $ linearizeBlock (env <> b@>x') body
-    return (ans, do t <- boundLin; extendR (v @> t, []) bodyLin)
+    (ans, bodyLin) <- extendWrt v [] $ runLinA $ linearizeBlock (env <> b@>x') body
+    return (ans, do t <- boundLin; extendTangentEnv (v @> t) [] bodyLin)
     where body = Block rest result
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
@@ -143,7 +144,7 @@ linearizeHof env hof = case hof of
                       let RefTy _ wTy = binderType b
                       return $ emitter wTy
                   valEmitter $ \ref'@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                      extendR (ref @> ref', [h]) $ applyLinToTangents linBody
+                      extendTangentEnv (ref @> ref') [h] $ applyLinToTangents linBody
       return (ans, lin)
 
     -- Abstract the tangent action as a lambda.
@@ -151,7 +152,7 @@ linearizeHof env hof = case hof of
     tangentFunAsLambda :: LinA Atom -> PrimalM Atom
     tangentFunAsLambda m = do
       (ans, tanFun) <- runLinA m
-      (activeVars, EffectRow effs _) <- ask
+      DerivWrt activeVars effs <- ask
       let hs = map (Bind . (:>TyKind) . snd) effs
       liftM (PairVal ans) $ lift $ do
         buildNestedLam hs $ \hVals -> do
@@ -163,7 +164,7 @@ linearizeHof env hof = case hof of
           let activeVarBinders = map (Bind . fmap (tangentRefRegion regionMap)) $ envAsVars activeVars
           buildNestedLam activeVarBinders $ \activeVarArgs ->
             buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-              runReaderT tanFun (newEnv (envNames activeVars) activeVarArgs, hVarNames)
+              runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
       where fromVar ~(Var v) = v
 
     -- This doesn't work if we have references inside pairs, tables etc.
@@ -176,9 +177,9 @@ linearizeHof env hof = case hof of
     -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
     applyLinToTangents :: Atom -> TangentM Atom
     applyLinToTangents f = do
-      (tangentEnv, hs) <- ask
-      let hs' = map (Var . (:>TyKind)) hs
-      let tangents = fmap snd $ envPairs $ tangentEnv
+      TangentEnv{..} <- ask
+      let hs' = map (Var . (:>TyKind)) activeRefs
+      let tangents = fmap snd $ envPairs $ tangentVals
       let args = hs' ++ tangents ++ [UnitVal]
       naryApp f args
 
@@ -190,7 +191,7 @@ linearizeHof env hof = case hof of
         eff' <- substEmbed env' eff
         ref' <- mapM (substEmbed env') ref
         buildLamAux ref' (const $ return $ PlainArrow eff') $ \ref''@(Var refVar) ->
-          extendWrt refVar (EffectRow [(effName, varName hVar)] Nothing) $
+          extendWrt refVar [(effName, varName hVar)] $
             (,refVar) <$> (tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body)
 
 linearizePrimCon :: Con -> LinA Atom
@@ -202,9 +203,9 @@ linearizePrimCon con = case con of
 linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom = case atom of
   Var v -> LinA $ do
-    isActive <- asks ((v `isin`) . fst)
+    isActive <- asks ((v `isin`) . activeVars)
     if isActive
-      then return $ (atom, asks $ (!v) . fst)
+      then return $ (atom, asks $ (!v) . tangentVals)
       else return $ withZeroTangent atom
   Con con -> linearizePrimCon con
   Lam (Abs i (TabArrow, body)) -> LinA $ do
@@ -273,11 +274,13 @@ instance Applicative LinA where
     (x2, t2) <- m2
     return (f x1 x2, liftM2 f t1 t2)
 
-extendWrt :: Var -> EffectRow -> PrimalM a -> PrimalM a
-extendWrt v (EffectRow effs Nothing) m = local update m
-  where update (scope, (EffectRow effs' Nothing)) =
-          (scope <> varAsEnv v, EffectRow (effs' <> effs) Nothing)
-extendWrt _ _ _ = error "not implemented"
+extendWrt :: Var -> [Effect] -> PrimalM a -> PrimalM a
+extendWrt v effs m = local update m
+  where update (DerivWrt scope effs') = DerivWrt (scope <> varAsEnv v) (effs' <> effs)
+
+extendTangentEnv :: SubstEnv -> [Name] -> TangentM a -> TangentM a
+extendTangentEnv tv effs m = local update m
+  where update (TangentEnv tv' effs') = TangentEnv (tv' <> tv) (effs' <> effs)
 
 -- -- === transposition ===
 
