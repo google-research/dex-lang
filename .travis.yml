@@ -16,6 +16,11 @@ addons:
       - python3-pip
       - python3-setuptools
       - haskell-stack
+  homebrew:
+    update: true
+    package:
+      - llvm@9
+      - haskell-stack
 
 os:
   - linux
@@ -26,7 +31,6 @@ dist: bionic
 script:
   - export DIR=~/.local/bin
   - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:/usr/local/opt/llvm/bin:$PATH
-  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then HOMEBREW_NO_AUTO_UPDATE=1 brew install llvm@9 haskell-stack ; fi
   - if [ ! -d "$DIR" ]; then mkdir -p $DIR; fi
   - stack upgrade
   - hash -r
