@@ -13,6 +13,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 import Data.List (elemIndex)
+import Debug.Trace
 
 import Type
 import Env
@@ -89,7 +90,8 @@ linearizeOp op = case op of
       (case m of
          MAsk    -> pure MAsk
          MTell x -> liftA MTell $ la x
-         _       -> error "Not implemented") `bindLin` emitOp
+         MGet    -> pure MGet
+         MPut  x -> liftA MPut $ la x) `bindLin` emitOp
   Fst x -> liftA Fst (la x) `bindLin` emitOp
   Snd x -> liftA Snd (la x) `bindLin` emitOp
   ArrayOffset _ _ _      -> emitWithZero
@@ -109,37 +111,44 @@ linearizeOp op = case op of
       ty'' <- div' ty' ySq >>= neg
       add tx' ty''
 
+-- Here, we want to take advantage of simplification's automatic desugaring of
+-- Hofs that return functions into Hofs that return residual values, so the where
+-- part implements functions that convert the TangentM actions into lambdas that
+-- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
   For d (Lam (Abs i (_, body))) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i'' ->
        tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
-    return (ans, buildFor d i' $ \i'' -> do
-                   lin <- app linTab i''
-                   applyLinToTangents lin)
-  RunWriter lam -> LinA $ do
-    lam' <- linearizeEffectFun Writer env lam
-    (ansLin, w) <- fromPair =<< emit (Hof $ RunWriter lam')
-    (ans, lin) <- fromPair ansLin
-    let (BinaryFunTy _ b _ _) = getType lam'
-    let RefTy _ wTy = binderType b
-    let lin' = emitRunWriter "w" wTy $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                 extendR ([ref], [h]) $ applyLinToTangents lin
-    return (PairVal ans w, lin')
-  RunReader val lam -> LinA $ do
-    (val', linVal) <- runLinA <$> linearizeAtom =<< substEmbed env val
-    lam' <- linearizeEffectFun Reader env lam
-    (ans, linBody) <- fromPair =<< emit (Hof $ RunReader val' lam')
-    return (ans, do
-                   tval <- linVal
-                   emitRunReader "r" tval $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
-                       extendR ([ref], [h]) $ applyLinToTangents linBody)
+    return (ans, buildFor d i' $ app linTab >=> applyLinToTangents)
+  RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
+  RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
+  RunState  val lam -> linearizeEff (Just val) lam True  RunState          (emitRunState  "r") State
   where
-    -- Here, we want to take advantage of simplification's automatic desugaring of
-    -- Hofs that return functions into Hofs that return residual values, so below
-    -- we implement functions that convert the TangentM actions into lambdas that
-    -- abstract over the whole tangent state.
+    linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
+      (valHofMaker, maybeLinInit) <- case maybeInit of
+          Just val -> do
+            (val', linVal) <- runLinA <$> linearizeAtom =<< substEmbed env val
+            return (hofMaker val', Just linVal)
+          Nothing -> return (hofMaker undefined, Nothing)
+      lam'           <- linearizeEffectFun eff env lam
+      (ans, linBody) <- case hasResult of
+          True -> do
+            (ansLin, w)    <- fromPair =<< emit (Hof $ valHofMaker lam')
+            (ans, linBody) <- fromPair ansLin
+            return (PairVal ans w, linBody)
+          False -> fromPair =<< emit (Hof $ valHofMaker lam')
+      let lin = do
+                  valEmitter <- case maybeLinInit of
+                    Just linVal -> emitter <$> linVal
+                    Nothing     -> do
+                      let (BinaryFunTy _ b _ _) = getType lam'
+                      let RefTy _ wTy = binderType b
+                      return $ emitter wTy
+                  valEmitter $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
+                      extendR ([ref], [h]) $ applyLinToTangents linBody
+      return (ans, lin)
 
     -- Abstract the tangent action as a lambda.
     -- TODO: curried linear functions somehow?

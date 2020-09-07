@@ -24,6 +24,7 @@ import Data.Functor
 import qualified Data.List.NonEmpty as NE
 import qualified Data.Map.Strict as M
 import Data.Text.Prettyprint.Doc
+import GHC.Stack
 
 import Array
 import Syntax
@@ -41,7 +42,7 @@ type TypeM = ReaderT TypeCheckEnv Except
 class Pretty a => HasType a where
   typeCheck :: a -> TypeM Type
 
-getType :: HasType a => a -> Type
+getType :: (HasCallStack, HasType a) => a -> Type
 getType x = ignoreExcept $ ctx $ runTypeCheck SkipChecks $ typeCheck x
   where ctx = addContext $ "Querying:\n" ++ pprint x
 

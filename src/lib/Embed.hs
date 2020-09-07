@@ -20,8 +20,8 @@ module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildP
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
               embedExtend, reduceAtom,
-              unpackConsList, emitRunWriter, emitRunReader, tabGet, buildNestedLam,
-              SubstEmbedT, SubstEmbed, runSubstEmbedT,
+              unpackConsList, emitRunWriter, emitRunReader, emitRunState, tabGet,
+              buildNestedLam, SubstEmbedT, SubstEmbed, runSubstEmbedT,
               TraversalDef, traverseDecls, traverseDecl, traverseBlock, traverseExpr,
               traverseAtom, arrOffset, arrLoad, evalBlockE, substTraversalDef,
               clampPositive, buildNAbs,
@@ -308,19 +308,22 @@ unpackConsList xs = case getType xs of
 
 emitRunWriter :: MonadEmbed m => Name -> Type -> (Atom -> m Atom) -> m Atom
 emitRunWriter v ty body = do
-  eff <- getAllowedEffects
-  lam <- buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
-    let arr = PlainArrow $ extendEffect (Writer, rName) eff
-    buildLam (Bind (v:> RefTy r ty)) arr body
-  emit $ Hof $ RunWriter lam
+  emit . Hof . RunWriter =<< mkBinaryEffFun Writer v ty body
 
 emitRunReader :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
 emitRunReader v x0 body = do
+  emit . Hof . RunReader x0 =<< mkBinaryEffFun Reader v (getType x0) body
+
+emitRunState :: MonadEmbed m => Name -> Atom -> (Atom -> m Atom) -> m Atom
+emitRunState v x0 body = do
+  emit . Hof . RunState x0 =<< mkBinaryEffFun State v (getType x0) body
+
+mkBinaryEffFun :: MonadEmbed m => EffectName -> Name -> Type -> (Atom -> m Atom) -> m Atom
+mkBinaryEffFun newEff v ty body = do
   eff <- getAllowedEffects
-  lam <- buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
-    let arr = PlainArrow $ extendEffect (Reader, rName) eff
-    buildLam (Bind (v:> RefTy r (getType x0))) arr body
-  emit $ Hof $ RunReader x0 lam
+  buildLam (Bind ("r":>TyKind)) PureArrow $ \r@(Var (rName:>_)) -> do
+    let arr = PlainArrow $ extendEffect (newEff, rName) eff
+    buildLam (Bind (v:> RefTy r ty)) arr body
 
 buildFor :: MonadEmbed m => Direction -> Binder -> (Atom -> m Atom) -> m Atom
 buildFor d i body = do

@@ -254,3 +254,12 @@ vec = [1.]
   (r, lin) = linearize f 2.0
   (r, lin 4.0)
 > (30.0, 96.0)
+
+:p
+  f : Float -> Float = \x.
+    snd $ withState x \xr.
+      for i:(Fin 4).
+        xr := get xr * get xr
+  (r, lin) = linearize f 2.0
+  (r, lin 1.0)
+> (65536.0, 524288.0)
