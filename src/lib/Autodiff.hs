@@ -13,8 +13,6 @@ module Autodiff (linearize, transposeMap) where
 import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
-import Data.List (elemIndex)
-import Debug.Trace
 
 import Type
 import Env
@@ -24,13 +22,11 @@ import PPrint
 import Embed
 import Util (bindM2)
 
-import Data.Text.Prettyprint.Doc
-
 -- === linearization ===
 
 -- `DerivWrt` holds the (out-expr) variables that we're differentiating with
 -- respect to (including refs but not regions).
-data DerivWrt = DerivWrt { activeVars :: Env Type, activeEffs :: [Effect] }
+data DerivWrt = DerivWrt { activeVars :: Env Type, _activeEffs :: [Effect] }
 -- `Tangents` holds the tangent values and the region variables that are
 -- arguments to the linearized function.
 data TangentEnv = TangentEnv { tangentVals :: SubstEnv, activeRefs :: [Name] }
@@ -40,7 +36,7 @@ type TangentM = ReaderT TangentEnv Embed
 newtype LinA a = LinA { runLinA :: PrimalM (a, TangentM a) }
 
 linearize :: Scope -> Atom -> Atom
-linearize scope (Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
+linearize scope ~(Lam (Abs b (_, block))) = fst $ flip runEmbed scope $ do
   buildLam b PureArrow $ \x@(Var v) -> do
     (y, yt) <- flip runReaderT (DerivWrt (varAsEnv v) []) $ runLinA $ linearizeBlock (b@>x) block
     -- TODO: check linearity
@@ -58,6 +54,7 @@ linearizeBlock env (Block decls result) = case decls of
     (ans, bodyLin) <- extendWrt v [] $ runLinA $ linearizeBlock (env <> b@>x') body
     return (ans, do t <- boundLin; extendTangentEnv (v @> t) [] bodyLin)
     where body = Block rest result
+  Nest (Unpack _ _) _ -> error "Not implemented"
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
@@ -114,7 +111,7 @@ linearizeOp op = case op of
 -- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
-  For d (Lam (Abs i (_, body))) -> LinA $ do
+  For d (LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i'' ->
        tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
@@ -122,6 +119,7 @@ linearizeHof env hof = case hof of
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
   RunState  val lam -> linearizeEff (Just val) lam True  RunState          (emitRunState  "r") State
+  _ -> error $ "not implemented: " ++ pprint hof
   where
     linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
       (valHofMaker, maybeLinInit) <- case maybeInit of
@@ -165,13 +163,12 @@ linearizeHof env hof = case hof of
           buildNestedLam activeVarBinders $ \activeVarArgs ->
             buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
               runReaderT tanFun $ TangentEnv (newEnv (envNames activeVars) activeVarArgs) hVarNames
-      where fromVar ~(Var v) = v
 
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
     tangentRefRegion :: Env Atom -> Type -> Type
-    tangentRefRegion subst ty = case ty of
-      RefTy ~(Var h) a -> RefTy (subst ! h) $ tangentType a
+    tangentRefRegion sub ty = case ty of
+      RefTy ~(Var h) a -> RefTy (sub ! h) $ tangentType a
       _ -> tangentType ty
 
     -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
@@ -184,7 +181,7 @@ linearizeHof env hof = case hof of
       naryApp f args
 
     linearizeEffectFun :: EffectName -> SubstEnv -> Atom -> PrimalM (Atom, Var)
-    linearizeEffectFun effName env (BinaryFunVal h ref eff body) = do
+    linearizeEffectFun effName env ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substEmbed env) h
       buildLamAux h' (const $ return PureArrow) $ \h''@(Var hVar) -> do
         let env' = env <> h@>h''
