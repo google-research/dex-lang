@@ -20,6 +20,7 @@ import Syntax
 import Cat
 import PPrint
 import Embed
+import Util (bindM2)
 
 import Data.Text.Prettyprint.Doc
 
@@ -50,7 +51,7 @@ linearizeBlock :: SubstEnv -> Block -> LinA Atom
 linearizeBlock env (Block decls result) = case decls of
   Empty -> linearizeExpr env result
   Nest (Let _ b bound) rest -> LinA $ do
-    -- TODO: handle discrete case specially.
+    -- TODO: Handle the discrete and independent case specially.
     (x, boundLin) <- runLinA $ linearizeExpr env bound
     ~x'@(Var v) <- emit $ Atom x
     (ans, bodyLin) <- extendWrt ([v], Pure) $ runLinA $
@@ -58,35 +59,6 @@ linearizeBlock env (Block decls result) = case decls of
     return (ans, do t <- boundLin
                     extendR ([t], []) bodyLin)
     where body = Block rest result
-
--- TODO: curried linear functions somehow?
-tangentFunAsLambda :: LinA Atom -> PrimalM Atom
-tangentFunAsLambda m = do
-  (ans, tanFun) <- runLinA m
-  (vs, EffectRow effs _) <- ask
-  let hs = map (Bind . (:>TyKind) . snd) effs
-  liftM (PairVal ans) $ lift $ do
-    buildNestedLam hs $ \hVals -> do
-      let hVarNames = map (\(Var (v:>_)) -> v) hVals
-      let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
-      -- want to use tangents here, not the original binders
-      let regionMap = newEnv (map ((:>()) . snd) effs) hVals
-      let vs' = map (Bind . fmap (tangentRefRegion regionMap)) vs
-      buildNestedLam vs' $ \xs ->
-        buildLam (Bind ("dummy":>UnitTy)) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
-          runReaderT tanFun (xs, hVarNames)
-
--- This doesn't work if we have references inside pairs, tables etc.
--- TODO: something more general and cleaner.
-tangentRefRegion :: Env Atom -> Type -> Type
-tangentRefRegion subst ty = case ty of
-  RefTy ~(Var h) a -> RefTy (subst ! h) $ tangentType a
-  _ -> tangentType ty
-
-buildNestedLam :: MonadEmbed m => [Binder] -> ([Atom] -> m Atom) -> m Atom
-buildNestedLam [] f = f []
-buildNestedLam (b:bs) f =
-  buildLam b PureArrow $ \x -> buildNestedLam bs $ \xs -> f (x:xs)
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
@@ -111,9 +83,7 @@ linearizeOp op = case op of
     (x', tx) <- runLinA $ la x
     (y', ty) <- runLinA $ la y
     ans <- div' x' y'
-    return (ans, do tx' <- tx
-                    ty' <- ty
-                    linearizedDiv x' y' tx' ty')
+    return (ans, bindM2 (linearizedDiv x' y') tx ty)
   PrimEffect refArg m ->
     liftA2 PrimEffect (la refArg)
       (case m of
@@ -131,6 +101,13 @@ linearizeOp op = case op of
     la = linearizeAtom
     emitWithZero :: LinA Atom
     emitWithZero = LinA $ withZeroTangent <$> emitOp op
+
+    linearizedDiv x y tx ty = do
+      tx'  <- div' tx y
+      ty'  <- mul ty x
+      ySq  <- mul y y
+      ty'' <- div' ty' ySq >>= neg
+      add tx' ty''
 
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
@@ -150,37 +127,68 @@ linearizeHof env hof = case hof of
     let lin' = emitRunWriter "w" wTy $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
                  extendR ([ref], [h]) $ applyLinToTangents lin
     return (PairVal ans w, lin')
+  RunReader val lam -> LinA $ do
+    (val', linVal) <- runLinA <$> linearizeAtom =<< substEmbed env val
+    lam' <- linearizeEffectFun Reader env lam
+    (ans, linBody) <- fromPair =<< emit (Hof $ RunReader val' lam')
+    return (ans, do
+                   tval <- linVal
+                   emitRunReader "r" tval $ \ref@(Var (_:> RefTy (Var (h:>_)) _)) -> do
+                       extendR ([ref], [h]) $ applyLinToTangents linBody)
+  where
+    -- Here, we want to take advantage of simplification's automatic desugaring of
+    -- Hofs that return functions into Hofs that return residual values, so below
+    -- we implement functions that convert the TangentM actions into lambdas that
+    -- abstract over the whole tangent state.
 
-applyLinToTangents :: Atom -> TangentM Atom
-applyLinToTangents f = do
-  (tangents, hs) <- ask
-  let hs' = map (Var . (:>TyKind)) hs
-  let args = hs' ++ tangents ++ [UnitVal]
-  naryApp f args
+    -- Abstract the tangent action as a lambda.
+    -- TODO: curried linear functions somehow?
+    tangentFunAsLambda :: LinA Atom -> PrimalM Atom
+    tangentFunAsLambda m = do
+      (ans, tanFun) <- runLinA m
+      (vs, EffectRow effs _) <- ask
+      let hs = map (Bind . (:>TyKind) . snd) effs
+      liftM (PairVal ans) $ lift $ do
+        buildNestedLam hs $ \hVals -> do
+          let hVarNames = map (\(Var (v:>_)) -> v) hVals
+          let effs' = zipWith (\(effName, _) v -> (effName, v)) effs hVarNames
+          -- want to use tangents here, not the original binders
+          let regionMap = newEnv (map ((:>()) . snd) effs) hVals
+          let vs' = map (Bind . fmap (tangentRefRegion regionMap)) vs
+          buildNestedLam vs' $ \xs ->
+            buildLam (Ignore UnitTy) (PlainArrow $ EffectRow effs' Nothing) $ \_ ->
+              runReaderT tanFun (xs, hVarNames)
 
-linearizeEffectFun :: EffectName -> SubstEnv -> Atom -> PrimalM Atom
-linearizeEffectFun effName env (BinaryFunVal h ref eff body) = do
-  h' <- mapM (substEmbed env) h
-  buildLam h' PureArrow $ \h''@(Var hVar) -> do
-    let env' = env <> h@>h''
-    eff' <- substEmbed env' eff
-    ref' <- mapM (substEmbed env') ref
-    buildLam ref' (PlainArrow eff') $ \ref''@(Var refVar) ->
-      extendWrt ([refVar], EffectRow [(effName, varName hVar)] Nothing) $
-        tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body
+    -- This doesn't work if we have references inside pairs, tables etc.
+    -- TODO: something more general and cleaner.
+    tangentRefRegion :: Env Atom -> Type -> Type
+    tangentRefRegion subst ty = case ty of
+      RefTy ~(Var h) a -> RefTy (subst ! h) $ tangentType a
+      _ -> tangentType ty
 
-linearizedDiv :: Atom -> Atom -> Atom -> Atom -> TangentM Atom
-linearizedDiv x y tx ty = do
-  tx'  <- div' tx y
-  ty'  <- mul ty x
-  ySq  <- mul y y
-  ty'' <- div' ty' ySq >>= neg
-  add tx' ty''
+    -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
+    applyLinToTangents :: Atom -> TangentM Atom
+    applyLinToTangents f = do
+      (tangents, hs) <- ask
+      let hs' = map (Var . (:>TyKind)) hs
+      let args = hs' ++ tangents ++ [UnitVal]
+      naryApp f args
+
+    linearizeEffectFun :: EffectName -> SubstEnv -> Atom -> PrimalM Atom
+    linearizeEffectFun effName env (BinaryFunVal h ref eff body) = do
+      h' <- mapM (substEmbed env) h
+      buildLam h' PureArrow $ \h''@(Var hVar) -> do
+        let env' = env <> h@>h''
+        eff' <- substEmbed env' eff
+        ref' <- mapM (substEmbed env') ref
+        buildLam ref' (PlainArrow eff') $ \ref''@(Var refVar) ->
+          extendWrt ([refVar], EffectRow [(effName, varName hVar)] Nothing) $
+            tangentFunAsLambda $ linearizeBlock (env' <> ref@>ref'') body
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
-  Lit _      -> LinA $ return $ withZeroTangent $ Con con
-  PairCon x y -> liftA2 PairVal (linearizeAtom x) (linearizeAtom y)
+  Lit _       -> LinA $ return $ withZeroTangent $ Con con
+  PairCon x y -> PairVal <$> linearizeAtom x <*> linearizeAtom y
   _ -> error $ "not implemented: " ++ pprint con
 
 linearizeAtom :: Atom -> LinA Atom
@@ -197,11 +205,11 @@ linearizeAtom atom = case atom of
                     rematPrimal wrt $ linearizeBlock (i@>i') body)
   _ | hasDiscreteType atom -> LinA $ return $ withZeroTangent atom
   _ -> error $ "Not implemented: " ++ pprint atom
-
-rematPrimal :: DerivWrt -> LinA a -> TangentM a
-rematPrimal wrt m = do
-  (_, lin) <- lift $ runReaderT (runLinA m) wrt
-  lin
+  where
+    rematPrimal :: DerivWrt -> LinA a -> TangentM a
+    rematPrimal wrt m = do
+      (_, lin) <- lift $ runReaderT (runLinA m) wrt
+      lin
 
 withZeroTangent :: Atom -> (Atom, TangentM Atom)
 withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))

@@ -244,3 +244,13 @@ vec = [1.]
       a += y
   grad f 1.0
 > 4.0
+
+:p
+  f : Float -> Float = \x.
+    x2 = x * x
+    withReader x \xr.
+      withReader x2 \x2r.
+        5.0 * (ask x2r) + 4.0 * (ask xr) + 2.0
+  (r, lin) = linearize f 2.0
+  (r, lin 4.0)
+> (30.0, 96.0)
