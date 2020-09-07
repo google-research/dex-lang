@@ -23,7 +23,7 @@ import qualified Data.ByteString.Lazy.Char8 as B
 import Data.String (fromString)
 import Data.Text.Prettyprint.Doc.Render.Text
 import Data.Text.Prettyprint.Doc
-import Data.Text (unpack)
+import Data.Text (Text, unpack, uncons, unsnoc)
 import System.Console.ANSI
 import Numeric
 
@@ -143,6 +143,8 @@ instance PrettyPrec Expr where
     atPrec AppPrec $ pApp f <+> pArg x
   prettyPrec (Atom x ) = prettyPrec x
   prettyPrec (Op  op ) = prettyPrec op
+  prettyPrec (Hof (For dir (Lam lamExpr))) =
+    atPrec LowestPrec $ dirStr dir <+> prettyLamHelper lamExpr (PrettyFor dir)
   prettyPrec (Hof hof) = prettyPrec hof
   prettyPrec (Case e alts _) = atPrec LowestPrec $ "case" <+> p e <+> "of" <>
     nest 2 (hardline <> foldMap (\alt -> prettyAlt alt <> hardline) alts)
@@ -180,7 +182,8 @@ instance PrettyPrec e => PrettyPrec (PrimTC e) where
     BaseType b     -> prettyPrec b
     CharType       -> atPrec ArgPrec "Char"
     ArrayType ty   -> atPrec ArgPrec $ "Arr[" <> pLowest ty <> "]"
-    PairType a b   -> atPrec ArgPrec $ parens $ pApp a <+> "&" <+> pApp b
+    PairType a b  -> atPrec ArgPrec $ align $ group $
+      parens $ flatAlt " " "" <> pApp a <> line <> "&" <+> pApp b
     UnitType       -> atPrec ArgPrec "Unit"
     IntRange a b -> if asStr (pArg a) == "0"
       then atPrec AppPrec ("Fin" <+> pArg b)
@@ -215,7 +218,8 @@ prettyPrecPrimCon con = case con of
   Lit l       -> prettyPrec l
   CharCon e   -> atPrec LowestPrec $ "Char" <+> pApp e
   ArrayLit _ array -> atPrec ArgPrec $ p array
-  PairCon x y -> atPrec ArgPrec $ parens $ pApp x <> "," <+> pApp y
+  PairCon x y -> atPrec ArgPrec $ align $ group $
+    parens $ flatAlt " " "" <> pApp x <> line' <> "," <+> pApp y
   UnitCon     -> atPrec ArgPrec "()"
   Coerce t i  -> atPrec LowestPrec $ pApp i <> "@" <> pApp t
   AnyValue t  -> atPrec AppPrec $ pAppArg "%anyVal" [t]
@@ -267,24 +271,61 @@ instance Pretty Decl where
     Let _  b  rhs -> align $ p b  <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
     Unpack bs rhs -> align $ p (toList bs) <+> "=" <> (nest 2 $ group $ line <> pLowest rhs)
 
+prettyPiTypeHelper :: PiType -> Doc ann
+prettyPiTypeHelper (Abs binder (arr, body)) = let
+  prettyBinder = case binder of
+    Ignore a -> pArg a
+    _ -> parens $ p binder
+  prettyBody = case body of
+    Pi subpi -> prettyPiTypeHelper subpi
+    _ -> pLowest body
+  in prettyBinder <> (group $ line <> p arr <+> prettyBody)
+
+data PrettyLamType = PrettyLam Arrow | PrettyFor Direction deriving (Eq)
+
+prettyLamHelper :: LamExpr -> PrettyLamType -> Doc ann
+prettyLamHelper lamExpr lamType = let
+  rec :: LamExpr -> Bool -> (Doc ann, Block)
+  rec (Abs binder (_, body')) first =
+    let thisOne = (if first then "" else line) <> p binder
+    in case body' of
+      Block Empty (Atom (Lam next@(Abs _ (arr', _))))
+        | lamType == PrettyLam arr' ->
+            let (binders', block) = rec next False
+            in (thisOne <> binders', block)
+      Block Empty (Hof (For dir (Lam next)))
+        | lamType == PrettyFor dir ->
+            let (binders', block) = rec next False
+            in (thisOne <> binders', block)
+      _ -> (thisOne <> ".", body')
+  (binders, body) = rec lamExpr True
+  in align (group $ nest 4 $ binders) <> (group $ nest 2 $ p body)
+
 instance Pretty Atom where pretty = prettyFromPrettyPrec
 instance PrettyPrec Atom where
   prettyPrec atom = case atom of
     Var (x:>_)  -> atPrec ArgPrec $ p x
-    Lam (Abs b (TabArrow, body))   -> atPrec LowestPrec $ align $ nest 2 $ "\\for " <> p b <> "." <+> p body
-    Lam (Abs b (_, body)) -> atPrec LowestPrec $ align $ nest 2 $ "\\" <> p b <> "." <+> p body
-    Pi  (Abs (Ignore a) (arr, b)) -> atPrec LowestPrec $ pArg a <+> p arr <+> pLowest b
-    Pi  (Abs a           (arr, b)) -> atPrec LowestPrec $ parens (p a) <+> p arr <+> pLowest b
+    Lam lamExpr@(Abs _ (TabArrow, _)) ->
+      atPrec LowestPrec $ "\\for"
+      <+> prettyLamHelper lamExpr (PrettyLam TabArrow)
+    Lam lamExpr@(Abs _ (arr, _)) ->
+      atPrec LowestPrec $ "\\"
+      <> prettyLamHelper lamExpr (PrettyLam arr)
+    Pi piType -> atPrec LowestPrec $ align $ prettyPiTypeHelper piType
     TC  e -> prettyPrec e
     Con e -> prettyPrec e
     Eff e -> atPrec ArgPrec $ p e
     DataCon (DataDef _ _ cons) _ con xs -> case xs of
       [] -> atPrec ArgPrec $ p name
-      _ ->  atPrec LowestPrec $ p name <+> hsep (map p xs)
+      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
+      _ ->  atPrec LowestPrec $ pAppArg (p name) xs
       where (DataConDef name _) = cons !! con
     TypeCon (DataDef name _ _) params -> case params of
       [] -> atPrec ArgPrec $ p name
-      _  -> atPrec LowestPrec $ p name <+> hsep (map p params)
+      [l, r] | Just sym <- fromInfix (nameTag name) -> atPrec ArgPrec $ align $ group $
+        parens $ flatAlt " " "" <> pApp l <> line <> p sym <+> pApp r
+      _  -> atPrec LowestPrec $ pAppArg (p name) params
     LabeledRow items -> prettyExtLabeledItems items (line <> "?") ":"
     Record items -> prettyLabeledItems items (line' <> ",") " ="
     Variant _ label i value -> prettyVariant ls label value where
@@ -293,6 +334,12 @@ instance PrettyPrec Atom where
             _ -> M.singleton label $ NE.fromList $ fmap (const ()) [1..i]
     RecordTy items -> prettyExtLabeledItems items (line <> "&") ":"
     VariantTy items -> prettyExtLabeledItems items (line <> "|") ":"
+
+fromInfix :: Text -> Maybe Text
+fromInfix t = do
+  ('(', t') <- uncons t
+  (t'', ')') <- unsnoc t'
+  return t''
 
 prettyExtLabeledItems :: (PrettyPrec a, PrettyPrec b)
   => ExtLabeledItems a b -> Doc ann -> Doc ann -> DocPrec ann
@@ -307,8 +354,7 @@ prettyExtLabeledItems (Ext (LabeledItems row) rest) separator bindwith =
       Nothing -> case length docs of
         0 -> separator
         _ -> mempty
-    innerDoc = "{"
-      <> line'
+    innerDoc = "{" <> flatAlt " " ""
       <> concatWith (surround (separator <> " ")) docs
       <> final <> "}"
 
