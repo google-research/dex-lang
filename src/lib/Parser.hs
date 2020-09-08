@@ -209,8 +209,8 @@ uType = expr
 uString :: Lexer UExpr
 uString = do
   (s, pos) <- withPos $ strLit
-  let cs = map (WithSrc pos . UCharLit) s
-  return $ WithSrc pos $ UTabCon cs Nothing
+  let cs = map (WithSrc (Just pos) . UCharLit) s
+  return $ WithSrc (Just pos) $ UTabCon cs Nothing
 
 uLit :: Parser UExpr
 uLit = withSrc $ uLitParser
@@ -253,11 +253,11 @@ topLet = do
 
     addImplicitArg :: SrcPos -> Name -> (UType, UExpr) -> (UType, UExpr)
     addImplicitArg pos v (ty, e) =
-      ( WithSrc pos $ UPi  (Bind (v:>uTyKind)) ImplicitArrow ty
-      , WithSrc pos $ ULam (WithSrc pos (UPatBinder (Bind (v:>()))), Just uTyKind) ImplicitArrow e)
+      ( WithSrc (Just pos) $ UPi  (Bind (v:>uTyKind)) ImplicitArrow ty
+      , WithSrc (Just pos) $ ULam (WithSrc (Just pos) (UPatBinder (Bind (v:>()))), Just uTyKind) ImplicitArrow e)
       where
         k = if v == mkName "eff" then EffectRowKind else TypeKind
-        uTyKind = WithSrc pos $ UPrimExpr $ TCExpr k
+        uTyKind = WithSrc (Just pos) $ UPrimExpr $ TCExpr k
 
 dataDef :: Parser UDecl
 dataDef = do
@@ -359,7 +359,7 @@ buildLam binders body@(WithSrc pos _) = case binders of
 buildFor :: SrcPos -> Direction -> [UPatAnn] -> UExpr -> UExpr
 buildFor pos dir binders body = case binders of
   [] -> body
-  b:bs -> WithSrc pos $ UFor dir b $ buildFor pos dir bs body
+  b:bs -> WithSrc (Just pos) $ UFor dir b $ buildFor pos dir bs body
 
 uForExpr :: Parser UExpr
 uForExpr = do
@@ -391,10 +391,10 @@ block = withIndent $ do
 wrapUStatements :: [UStatement] -> UExpr
 wrapUStatements statements = case statements of
   [(Right e, _)] -> e
-  (s, pos):rest -> WithSrc pos $ case s of
+  (s, pos):rest -> WithSrc (Just pos) $ case s of
     Left  d -> UDecl d $ wrapUStatements rest
     Right e -> UDecl d $ wrapUStatements rest
-      where d = ULet PlainLet (WithSrc pos (UPatBinder (Ignore ())), Nothing) e
+      where d = ULet PlainLet (WithSrc (Just pos) (UPatBinder (Ignore ())), Nothing) e
   [] -> error "Shouldn't be reachable"
 
 uStatement :: Parser UStatement
@@ -445,8 +445,8 @@ leafPat =
       <|> (UPatCon    <$> upperName <*> manyNested pat)
       <|> (variantPat `fallBackTo` recordPat)
   )
-  where pun pos l = WithSrc pos $ UPatBinder $ Bind (mkName l:>())
-        def pos = WithSrc pos $ UPatBinder $ Ignore ()
+  where pun pos l = WithSrc (Just pos) $ UPatBinder $ Bind (mkName l:>())
+        def pos = WithSrc (Just pos) $ UPatBinder $ Ignore ()
         variantPat = parseVariant leafPat UPatVariant UPatVariantLift
         recordPat = UPatRecord <$> parseLabeledItems "," "=" leafPat
                                                      (Just pun) (Just def)
@@ -502,7 +502,7 @@ uLabeledExprs = withSrc $
   where build sep bindwith = parseLabeledItems sep bindwith expr
 
 varPun :: SrcPos -> Label -> UExpr
-varPun pos str = WithSrc pos $ UVar (mkName str :> ())
+varPun pos str = WithSrc (Just pos) $ UVar (mkName str :> ())
 
 parseLabeledItems
   :: String -> String -> Parser a
@@ -516,7 +516,7 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
                   <|> stopWithoutExtend
     stopWithoutExtend = return $ NoExt NoLabeledItems
     stopAndExtend = do
-      WithSrc pos _ <- withSrc $ symbol "..."
+      ((), pos) <- withPos $ symbol "..."
       rest <- case tailDefault of
         Just def -> itemparser <|> pure (def pos)
         Nothing -> itemparser
@@ -524,7 +524,7 @@ parseLabeledItems sep bindwith itemparser punner tailDefault =
     beforeSep = (symbol sep >> afterSep) <|> stopWithoutExtend
     afterSep = someItems <|> stopAndExtend <|> stopWithoutExtend
     someItems = do
-      WithSrc pos l <- withSrc $ fieldLabel
+      (l, pos) <- withPos $ fieldLabel
       let explicitBound = symbol bindwith *> itemparser 
       itemVal <- case punner of
         Just punFn -> explicitBound <|> pure (punFn pos l)
@@ -616,18 +616,18 @@ mkSymName s = mkName $ "(" <> s <> ")"
 prefixNegOp :: Operator Parser UExpr
 prefixNegOp = Prefix $ label "negation" $ do
   ((), pos) <- withPos $ sym "-"
-  let f = WithSrc pos $ UVar $ mkName "neg" :> ()
+  let f = WithSrc (Just pos) $ UVar $ mkName "neg" :> ()
   return $ \case
     -- Special case: negate literals directly
     WithSrc litpos (IntLitExpr i)
-      -> WithSrc (joinPos pos litpos) (IntLitExpr (-i))
+      -> WithSrc (joinPos (Just pos) litpos) (IntLitExpr (-i))
     WithSrc litpos (FloatLitExpr i)
-      -> WithSrc (joinPos pos litpos) (FloatLitExpr (-i))
+      -> WithSrc (joinPos (Just pos) litpos) (FloatLitExpr (-i))
     x -> mkApp f x
 
 binApp :: Name -> SrcPos -> UExpr -> UExpr -> UExpr
 binApp f pos x y = (f' `mkApp` x) `mkApp` y
-  where f' = WithSrc pos $ UVar (f:>())
+  where f' = WithSrc (Just pos) $ UVar (f:>())
 
 mkGenApp :: UArrow -> UExpr -> UExpr -> UExpr
 mkGenApp arr f x = joinSrc f x $ UApp arr f x
@@ -639,7 +639,7 @@ infixArrow :: Parser (UType -> UType -> UType)
 infixArrow = do
   notFollowedBy (sym "=>")  -- table arrows have special fixity
   (arr, pos) <- withPos $ arrow effects
-  return $ \a b -> WithSrc pos $ UPi (Ignore a) arr b
+  return $ \a b -> WithSrc (Just pos) $ UPi (Ignore a) arr b
 
 mkArrow :: Arrow -> UExpr -> UExpr -> UExpr
 mkArrow arr a b = joinSrc a b $ UPi (Ignore a) arr b
@@ -647,13 +647,15 @@ mkArrow arr a b = joinSrc a b $ UPi (Ignore a) arr b
 withSrc :: Parser a -> Parser (WithSrc a)
 withSrc p = do
   (x, pos) <- withPos p
-  return $ WithSrc pos x
+  return $ WithSrc (Just pos) x
 
 joinSrc :: WithSrc a -> WithSrc b -> c -> WithSrc c
 joinSrc (WithSrc p1 _) (WithSrc p2 _) x = WithSrc (joinPos p1 p2) x
 
-joinPos :: SrcPos -> SrcPos -> SrcPos
-joinPos (l, h) (l', h') =(min l l', max h h')
+joinPos :: Maybe SrcPos -> Maybe SrcPos -> Maybe SrcPos
+joinPos Nothing p = p
+joinPos p Nothing = p
+joinPos (Just (l, h)) (Just (l', h')) = Just (min l l', max h h')
 
 indexRangeOps :: [Operator Parser UExpr]
 indexRangeOps =
@@ -664,7 +666,7 @@ indexRangeOps =
   , InfixL    $ symPos "..<"  <&> \pos l h -> range pos (InclusiveLim l) (ExclusiveLim h)
   , InfixL    $ symPos "<..<" <&> \pos l h -> range pos (ExclusiveLim l) (ExclusiveLim h) ]
   where
-    range pos l h = WithSrc pos $ UIndexRange l h
+    range pos l h = WithSrc (Just pos) $ UIndexRange l h
     symPos s = snd <$> withPos (sym s)
 
 limFromMaybe :: Maybe a -> Limit a
