@@ -9,7 +9,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 
 module TopLevel (evalSourceBlock, evalDecl, evalSource, evalFile,
-                 EvalConfig (..), Backend (..), initializeBackend) where
+                 EvalConfig (..), Backend (..), initializeBackend,
+                 substArrayLiterals) where
 
 import Control.Concurrent.MVar
 import Control.Monad.State.Strict

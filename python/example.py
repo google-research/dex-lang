@@ -6,5 +6,11 @@
 
 import dex
 
-dex.execute("1 + 1")
-dex.execute("2.0 .* [2.0, 3.0, 4.0]")
+m = dex.Module("""
+x = 2.5
+y = [2, 3, 4]
+""")
+
+print(m.x)
+print(m.y)
+print(int(m.x))
