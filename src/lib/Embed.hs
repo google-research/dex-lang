@@ -13,9 +13,9 @@
 module Embed (emit, emitTo, emitAnn, emitOp, buildDepEffLam, buildLamAux, buildPi,
               getAllowedEffects, withEffects, modifyAllowedEffects,
               buildLam, EmbedT, Embed, MonadEmbed, buildScoped, runEmbedT,
-              runSubstEmbed, runEmbed, zeroAt, addAt, sumAt, getScope, reduceBlock,
-              app, add, mul, sub, neg, div', iadd, imul, isub, idiv, reduceScoped,
-              select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
+              runSubstEmbed, runEmbed, getScope, reduceBlock,
+              app, add, mul, sub, neg, div', iadd, imul, isub, idiv, fpow, flog, fLitLike,
+              reduceScoped, select, substEmbed, substEmbedR, emitUnpack, getUnpacked,
               fromPair, getFst, getSnd, naryApp, appReduce,
               emitBlock, unzipTab, buildFor, isSingletonType, emitDecl, withNameHint,
               singletonTypeVal, scopedDecls, embedScoped, extendScope, checkEmbed,
@@ -197,25 +197,11 @@ inlineLastDecl block@(Block decls result) =
         (Just x1, Just x2) | x1 == x2 -> True
         _ -> False
 
-zeroAt :: Type -> Atom
-zeroAt ty = case ty of
-  BaseTy (Scalar Float64Type) -> Con $ Lit $ Float64Lit 0.0
-  BaseTy (Scalar Float32Type) -> Con $ Lit $ Float32Lit  0.0
-  TabTy (Ignore n) a ->
-    Lam $ Abs (Ignore n) (TabArrow,  Block Empty $ Atom $ zeroAt a)
-  UnitTy -> UnitVal
-  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
-  _ -> error $ "Not implemented: " ++ pprint ty
-
-addAt :: MonadEmbed m => Type -> Atom -> Atom -> m Atom
-addAt ty xs ys = mapScalars (\_ [x, y] -> add x y) ty [xs, ys]
-
-sumAt :: MonadEmbed m => Type -> [Atom] -> m Atom
-sumAt ty [] = return $ zeroAt ty
-sumAt _ [x] = return x
-sumAt ty (x:xs) = do
-  xsSum <- sumAt ty xs
-  addAt ty xsSum x
+fLitLike :: Double -> Atom -> Atom
+fLitLike x t = case getType t of
+  BaseTy (Scalar Float64Type) -> Con $ Lit $ Float64Lit x
+  BaseTy (Scalar Float32Type) -> Con $ Lit $ Float32Lit $ realToFrac x
+  _ -> error "Expected a floating point scalar"
 
 neg :: MonadEmbed m => Atom -> m Atom
 neg x = emitOp $ ScalarUnOp FNeg x
@@ -261,6 +247,12 @@ idiv x y = emitOp $ ScalarBinOp IDiv x y
 
 irem :: MonadEmbed m => Atom -> Atom -> m Atom
 irem x y = emitOp $ ScalarBinOp IRem x y
+
+fpow :: MonadEmbed m => Atom -> Atom -> m Atom
+fpow x y = emitOp $ ScalarBinOp FPow x y
+
+flog :: MonadEmbed m => Atom -> m Atom
+flog x = emitOp $ ScalarUnOp Log x
 
 ilt :: MonadEmbed m => Atom -> Atom -> m Atom
 ilt x@(Con (Lit _)) y@(Con (Lit _)) = return $ applyIntCmpOp (<) x y
@@ -348,24 +340,6 @@ unzipTab tab = do
             liftM snd $ app tab i >>= fromPair
   return (fsts, snds)
   where TabTy v _ = getType tab
-
-mapScalars :: HasCallStack => MonadEmbed m => (Type -> [Atom] -> m Atom) -> Type -> [Atom] -> m Atom
-mapScalars f ty xs = case ty of
-  TabTy b a -> do
-    buildFor Fwd (Bind ("i":>binderType b)) $ \i -> do
-      xs' <- mapM (flip app i) xs
-      mapScalars f a xs'
-  BaseTy _           -> f ty xs
-  UnitTy -> return UnitVal
-  PairTy a b -> do
-    (ys, zs) <- unzip <$> mapM fromPair xs
-    PairVal <$> mapScalars f a ys <*> mapScalars f b zs
-  TC con -> case con of
-    -- NOTE: Sum types not implemented, because they don't have a total zipping function!
-    IntRange _ _     -> f ty xs
-    IndexRange _ _ _ -> f ty xs
-    _ -> error $ "Not implemented " ++ pprint ty
-  _ -> error $ "Not implemented " ++ pprint ty
 
 substEmbedR :: (MonadEmbed m, MonadReader SubstEnv m, Subst a)
            => a -> m a
