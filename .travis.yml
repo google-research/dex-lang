@@ -30,7 +30,8 @@ dist: bionic
 
 script:
   - export DIR=~/.local/bin
-  - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:/usr/local/opt/llvm/bin:$PATH
+  - export PATH=$HOME/.local/bin:/usr/lib/llvm-9/bin:$PATH
+  - if [ "$TRAVIS_OS_NAME" = "osx" ]; then export PATH=$(brew --prefix llvm@9)/bin:$PATH; fi
   - if [ ! -d "$DIR" ]; then mkdir -p $DIR; fi
   - stack upgrade
   - hash -r
