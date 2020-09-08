@@ -6,7 +6,6 @@
 
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE RecordWildCards #-}
-{-# OPTIONS_GHC -w #-} -- XXX: Disable once fixed
 
 module Autodiff (linearize, transposeMap) where
 
@@ -391,7 +390,7 @@ type LinVars = Env Atom
 type TransposeM a = ReaderT (LinVars, SubstEnv) Embed a
 
 transposeMap :: Scope -> Atom -> Atom
-transposeMap scope (Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
+transposeMap scope ~(Lam (Abs b (_, expr))) = fst $ flip runEmbed scope $ do
   buildLam (Bind $ "ct" :> getType expr) LinArrow $ \ct -> do
     flip runReaderT mempty $ withLinVar b $ transposeBlock expr ct
 
@@ -412,20 +411,21 @@ transposeBlock (Block decls result) ct = case decls of
         x <- withNameHint b $ emit bound'
         extendR (asSnd (b@>x)) $ transposeBlock body ct
     where body = Block rest result
+  Nest (Unpack _ _) _ -> notImplemented
 
 transposeExpr :: Expr -> Atom -> TransposeM ()
 transposeExpr expr ct = case expr of
   App x i -> case getType x of
     TabTy _ _ -> do
       i' <- substTranspose i
-      linVars <- asks fst
       ref <- linAtomRef x
       ref' <- emitOp $ IndexRef ref i'
       emitCTToRef ref' ct
     _ -> error $ "shouldn't have non-table app left"
-  Hof hof -> transposeHof hof ct
-  Op op -> transposeOp op ct
-  Atom atom -> transposeAtom atom ct
+  Hof hof    -> transposeHof hof ct
+  Op op      -> transposeOp op ct
+  Atom atom  -> transposeAtom atom ct
+  Case _ _ _ -> notImplemented
 
 transposeOp :: Op -> Atom -> TransposeM ()
 transposeOp op ct = case op of
@@ -497,6 +497,12 @@ transposeHof hof ct = case hof of
     void $ emitRunReader "r" ctEff $ \ref -> do
       extendR (asSnd (b@>ref)) $ transposeBlock body ctBody
       return UnitVal
+  RunState _ _ -> notImplemented
+  Tile   _ _ _ -> notImplemented
+  While    _ _ -> notImplemented
+  Linearize  _ -> error "Unexpected linearization"
+  Transpose  _ -> error "Unexpected transposition"
+
 
 transposeCon :: Con -> Atom -> TransposeM ()
 transposeCon con _ | isSingletonType (getType (Con con)) = return ()
@@ -522,8 +528,8 @@ isLin :: HasVars a => a -> TransposeM Bool
 isLin x = liftM (not . null) $ freeLinVars x
 
 -- TODO: allow nonlinear effects
-isLinEff :: EffectRow -> TransposeM Bool
-isLinEff = undefined
+_isLinEff :: EffectRow -> TransposeM Bool
+_isLinEff = undefined
 -- isLinEff ~(Effect row _) = return $ not $ null $ toList row
 
 emitCT :: Var -> Atom -> TransposeM ()
