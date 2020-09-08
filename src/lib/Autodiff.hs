@@ -14,6 +14,7 @@ import Control.Applicative
 import Control.Monad
 import Control.Monad.Reader
 
+import Array
 import Type
 import Env
 import Syntax
@@ -21,6 +22,7 @@ import Cat
 import PPrint
 import Embed
 import Util (bindM2)
+import GHC.Stack
 
 -- === linearization ===
 
@@ -54,7 +56,7 @@ linearizeBlock env (Block decls result) = case decls of
     (ans, bodyLin) <- extendWrt v [] $ runLinA $ linearizeBlock (env <> b@>x') body
     return (ans, do t <- boundLin; extendTangentEnv (v @> t) [] bodyLin)
     where body = Block rest result
-  Nest (Unpack _ _) _ -> error "Not implemented"
+  Nest (Unpack _ _) _ -> notImplemented
 
 linearizeExpr :: SubstEnv -> Expr -> LinA Atom
 linearizeExpr env expr = case expr of
@@ -62,23 +64,17 @@ linearizeExpr env expr = case expr of
   _ -> LinA $ do
     expr' <- substEmbed env expr
     runLinA $ case expr' of
-      App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x)
-                                         `bindLin` emit
-      Op   e -> linearizeOp   e
-      Atom e -> linearizeAtom e
-      _ -> error $ "Not implemented: " ++ pprint expr
+      App x i | isTabTy (getType x) -> liftA (flip App i) (linearizeAtom x) `bindLin` emit
+      Op   e     -> linearizeOp   e
+      Atom e     -> linearizeAtom e
+      Case _ _ _ -> notImplemented
+      App _ _    -> error "Unexpected non-table application"
+      Hof _      -> error "Hofs should be handled above"
 
 linearizeOp :: Op -> LinA Atom
 linearizeOp op = case op of
-  ScalarUnOp  FNeg x     -> liftA  (ScalarUnOp  FNeg) (la x)          `bindLin` emitOp
-  ScalarBinOp FAdd x1 x2 -> liftA2 (ScalarBinOp FAdd) (la x1) (la x2) `bindLin` emitOp
-  ScalarBinOp FSub x1 x2 -> liftA2 (ScalarBinOp FSub) (la x1) (la x2) `bindLin` emitOp
-  ScalarBinOp FMul x1 x2 -> tensLiftA2 (ScalarBinOp FMul) (la x1) (la x2)
-  ScalarBinOp FDiv x y -> LinA $ do
-    (x', tx) <- runLinA $ la x
-    (y', ty) <- runLinA $ la y
-    ans <- div' x' y'
-    return (ans, bindM2 (linearizedDiv x' y') tx ty)
+  ScalarUnOp  uop x       -> linearizeUnOp  uop x
+  ScalarBinOp bop x y     -> linearizeBinOp bop x y
   PrimEffect refArg m ->
     liftA2 PrimEffect (la refArg)
       (case m of
@@ -86,24 +82,101 @@ linearizeOp op = case op of
          MTell x -> liftA MTell $ la x
          MGet    -> pure MGet
          MPut  x -> liftA MPut $ la x) `bindLin` emitOp
-  Fst x -> liftA Fst (la x) `bindLin` emitOp
-  Snd x -> liftA Snd (la x) `bindLin` emitOp
-  ArrayOffset _ _ _      -> emitWithZero
-  ArrayLoad _            -> emitWithZero
-  TabCon ty xs -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
-  _ | hasDiscreteType (Op op) -> emitWithZero
-  _ -> error $ "not implemented: " ++ pprint op
+  Fst x                  -> (Fst <$> la x) `bindLin` emitOp
+  Snd x                  -> (Snd <$> la x) `bindLin` emitOp
+  IndexRef ref i         -> (IndexRef <$> la ref <*> pure i) `bindLin` emitOp
+  FstRef   ref           -> (FstRef   <$> la ref           ) `bindLin` emitOp
+  SndRef   ref           -> (SndRef   <$> la ref           ) `bindLin` emitOp
+  Select p t f           -> (Select p <$> la t   <*> la f  ) `bindLin` emitOp
+  ArrayLoad _            -> emitWithZero -- XXX: This assumes that arrays are always constants
+  TabCon ty xs           -> liftA (TabCon ty) (traverse la xs) `bindLin` emitOp
+  ArrayOffset _ _ _      -> emitDiscrete
+  Inject _               -> emitDiscrete
+  SliceOffset _ _        -> emitDiscrete
+  SliceCurry  _ _        -> emitDiscrete
+  VectorBinOp _ _ _      -> notImplemented
+  VectorPack  vals       -> (VectorPack  <$> traverse la vals) `bindLin` emitOp
+  VectorIndex v i        -> (VectorIndex <$> la v <*> pure i ) `bindLin` emitOp
+  IntAsIndex _ _         -> emitDiscrete
+  IndexAsInt _           -> emitDiscrete
+  IdxSetSize _           -> emitDiscrete
+  ThrowError _           -> emitWithZero
+  CastOp t v             -> (CastOp t <$> la v) `bindLin` emitOp
+  RecordCons   vs r      -> (RecordCons      <$> traverse la vs <*> la r) `bindLin` emitOp
+  RecordSplit  vs r      -> (RecordSplit     <$> traverse la vs <*> la r) `bindLin` emitOp
+  VariantLift  ts v      -> (VariantLift  ts <$> la v) `bindLin` emitOp
+  VariantSplit ts v      -> (VariantSplit ts <$> la v) `bindLin` emitOp
+  FFICall _ _ _          -> error $ "Can't differentiate through an FFI call"
   where
+    emitDiscrete = if hasDiscreteType (Op op)
+      then LinA $ withZeroTangent <$> emitOp op
+      else error $ "Op expected to have a discrete result: " ++ pprint op
     la = linearizeAtom
     emitWithZero :: LinA Atom
     emitWithZero = LinA $ withZeroTangent <$> emitOp op
 
-    linearizedDiv x y tx ty = do
-      tx'  <- div' tx y
-      ty'  <- mul ty x
-      ySq  <- mul y y
-      ty'' <- div' ty' ySq >>= neg
-      add tx' ty''
+emitUnOp :: MonadEmbed m => UnOp -> Atom -> m Atom
+emitUnOp op x = emitOp $ ScalarUnOp op x
+
+linearizeUnOp :: UnOp -> Atom -> LinA Atom
+linearizeUnOp op x' = LinA $ do
+  (x, tx) <- runLinA $ linearizeAtom x'
+  case op of
+    Exp    -> notImplemented
+    Exp2   -> notImplemented
+    Log    -> notImplemented
+    Log2   -> notImplemented
+    Log10  -> notImplemented
+    Log1p  -> notImplemented
+    Sin    -> emitUnOp Sin x <$$> (,emitUnOp Cos =<< tx)
+    Cos    -> emitUnOp Cos x <$$> (,neg =<< emitUnOp Sin =<< tx)
+    Tan    -> notImplemented
+    Sqrt   -> notImplemented
+    Floor  -> withZeroTangent <$> emitUnOp Floor x
+    Ceil   -> withZeroTangent <$> emitUnOp Ceil  x
+    Round  -> withZeroTangent <$> emitUnOp Round x
+    LGamma -> notImplemented
+    FNeg   -> neg x <$$> (,neg =<< tx)
+    BNot   -> emitDiscrete
+  where
+    (<$$>) = flip (<$>)
+    emitDiscrete = if hasDiscreteType (Op $ ScalarUnOp op x')
+      then withZeroTangent <$> emitOp (ScalarUnOp op x')
+      else error $ "Op expected to have a discrete result: " ++ show op
+
+linearizeBinOp :: BinOp -> Atom -> Atom -> LinA Atom
+linearizeBinOp op x' y' = LinA $ do
+  (x, tx) <- runLinA $ linearizeAtom x'
+  (y, ty) <- runLinA $ linearizeAtom y'
+  case op of
+    IAdd   -> emitDiscrete
+    ISub   -> emitDiscrete
+    IMul   -> emitDiscrete
+    IDiv   -> emitDiscrete
+    IRem   -> emitDiscrete
+    ICmp _ -> emitDiscrete
+    FAdd   -> add x y  <$$> (,bindM2 add tx ty)
+    FSub   -> sub x y  <$$> (,bindM2 sub tx ty)
+    FMul   -> mul x y  <$$> (,bindM2 add (bindM2 mul (pure x) ty) (bindM2 mul tx (pure y)))
+    FDiv   -> div' x y <$$>
+        (,do
+             tx' <- bindM2 div' tx (pure y)
+             ty' <- bindM2 div' (bindM2 mul (pure x) ty) (mul y y)
+             sub tx' ty')
+    FPow   -> (emitOp $ ScalarBinOp FPow x y) <$$>
+        (,do
+             c <- fpow x =<< sub y (1.0 `fLitLike` y)
+             tx' <- bindM2 mul tx (pure y)
+             ty' <- bindM2 mul (bindM2 mul (pure x) ty) (flog x)
+             mul c =<< add tx' ty')
+    FCmp _ -> emitDiscrete
+    BAnd   -> emitDiscrete
+    BOr    -> emitDiscrete
+  where
+    (<$$>) = flip (<$>)
+    emitDiscrete = if hasDiscreteType (Op $ ScalarBinOp op x' y')
+      then withZeroTangent <$> emitOp (ScalarBinOp op x' y')
+      else error $ "Op expected to have a discrete result: " ++ show op
 
 -- Here, we want to take advantage of simplification's automatic desugaring of
 -- Hofs that return functions into Hofs that return residual values, so the where
@@ -111,15 +184,21 @@ linearizeOp op = case op of
 -- abstract over the whole tangent state.
 linearizeHof :: SubstEnv -> Hof -> LinA Atom
 linearizeHof env hof = case hof of
-  For d (LamVal i body) -> LinA $ do
+  For d ~(LamVal i body) -> LinA $ do
     i' <- mapM (substEmbed env) i
     (ans, linTab) <- (unzipTab =<<) $ buildFor d i' $ \i'' ->
        tangentFunAsLambda $ linearizeBlock (env <> i@>i'') body
     return (ans, buildFor d i' $ app linTab >=> applyLinToTangents)
+  Tile _ _ _        -> notImplemented
   RunWriter     lam -> linearizeEff Nothing    lam True  (const RunWriter) (emitRunWriter "r") Writer
   RunReader val lam -> linearizeEff (Just val) lam False RunReader         (emitRunReader "r") Reader
   RunState  val lam -> linearizeEff (Just val) lam True  RunState          (emitRunState  "r") State
-  _ -> error $ "not implemented: " ++ pprint hof
+  -- TODO: Consider providing an upper bound for the number of while iterations as a hint.
+  --       In the current form the best we can do is try to use some dynamically growing lists,
+  --       but that won't work on the GPU.
+  While _ _   -> notImplemented
+  Linearize _ -> error "Unexpected linearization"
+  Transpose _ -> error "Unexpected transposition"
   where
     linearizeEff maybeInit lam hasResult hofMaker emitter eff = LinA $ do
       (valHofMaker, maybeLinInit) <- case maybeInit of
@@ -127,7 +206,7 @@ linearizeHof env hof = case hof of
             (val', linVal) <- runLinA <$> linearizeAtom =<< substEmbed env val
             return (hofMaker val', Just linVal)
           Nothing -> return (hofMaker undefined, Nothing)
-      (lam', ref)    <- linearizeEffectFun eff env lam
+      (lam', ref)    <- linearizeEffectFun eff lam
       (ans, linBody) <- case hasResult of
           True -> do
             (ansLin, w)    <- fromPair =<< emit (Hof $ valHofMaker lam')
@@ -167,8 +246,8 @@ linearizeHof env hof = case hof of
     -- This doesn't work if we have references inside pairs, tables etc.
     -- TODO: something more general and cleaner.
     tangentRefRegion :: Env Atom -> Type -> Type
-    tangentRefRegion sub ty = case ty of
-      RefTy ~(Var h) a -> RefTy (sub ! h) $ tangentType a
+    tangentRefRegion regEnv ty = case ty of
+      RefTy ~(Var h) a -> RefTy (regEnv ! h) $ tangentType a
       _ -> tangentType ty
 
     -- Inverse of tangentFunAsLambda. Should be used inside a returned tangent action.
@@ -180,8 +259,8 @@ linearizeHof env hof = case hof of
       let args = hs' ++ tangents ++ [UnitVal]
       naryApp f args
 
-    linearizeEffectFun :: EffectName -> SubstEnv -> Atom -> PrimalM (Atom, Var)
-    linearizeEffectFun effName env ~(BinaryFunVal h ref eff body) = do
+    linearizeEffectFun :: EffectName -> Atom -> PrimalM (Atom, Var)
+    linearizeEffectFun effName ~(BinaryFunVal h ref eff body) = do
       h' <- mapM (substEmbed env) h
       buildLamAux h' (const $ return PureArrow) $ \h''@(Var hVar) -> do
         let env' = env <> h@>h''
@@ -193,9 +272,16 @@ linearizeHof env hof = case hof of
 
 linearizePrimCon :: Con -> LinA Atom
 linearizePrimCon con = case con of
-  Lit _       -> LinA $ return $ withZeroTangent $ Con con
-  PairCon x y -> PairVal <$> linearizeAtom x <*> linearizeAtom y
-  _ -> error $ "not implemented: " ++ pprint con
+  Lit _                 -> emitWithZero
+  CharCon _             -> emitWithZero
+  ArrayLit _ _          -> emitWithZero
+  AnyValue _            -> emitWithZero
+  PairCon x y           -> PairVal <$> linearizeAtom x <*> linearizeAtom y
+  UnitCon               -> emitWithZero
+  Coerce _ _            -> emitWithZero -- XXX: This assumes that coercions are only used for discrete types
+  SumAsProd ty tg elems -> Con . SumAsProd ty tg <$> traverse (traverse linearizeAtom) elems
+  ClassDictHole _ _ -> error "Unexpected ClassDictHole"
+  where emitWithZero = LinA $ return $ withZeroTangent $ Con con
 
 linearizeAtom :: Atom -> LinA Atom
 linearizeAtom atom = case atom of
@@ -209,10 +295,19 @@ linearizeAtom atom = case atom of
     wrt <- ask
     return (atom, buildLam i TabArrow $ \i' ->
                     rematPrimal wrt $ linearizeBlock (i@>i') body)
-  _ | hasDiscreteType atom -> LinA $ return $ withZeroTangent atom
-  _ -> error $ "Not implemented: " ++ pprint atom
+  Lam _ -> error "Unexpected non-table lambda"
+  DataCon ty params t elems -> DataCon ty params t <$> traverse linearizeAtom elems
+  Record elems    -> Record <$> traverse linearizeAtom elems
+  Variant t l i e -> Variant t l i <$> linearizeAtom e
+  TypeCon _ _     -> emitWithZero
+  LabeledRow _    -> emitWithZero
+  RecordTy _      -> emitWithZero
+  VariantTy _     -> emitWithZero
+  Pi _            -> emitWithZero
+  TC _            -> emitWithZero
+  Eff _           -> emitWithZero
   where
-    rematPrimal :: DerivWrt -> LinA a -> TangentM a
+    emitWithZero = LinA $ return $ withZeroTangent atom
     rematPrimal wrt m = do
       (_, lin) <- lift $ runReaderT (runLinA m) wrt
       lin
@@ -220,40 +315,48 @@ linearizeAtom atom = case atom of
 withZeroTangent :: Atom -> (Atom, TangentM Atom)
 withZeroTangent x = (x, return $ zeroAt (tangentType (getType x)))
 
+zeroAt :: Type -> Atom
+zeroAt ty = case ty of
+  BaseTy bt  -> Con $ Lit $ zeroLit bt
+  TabTy i a  -> TabValA i $ zeroAt a
+  UnitTy     -> UnitVal
+  PairTy a b -> PairVal (zeroAt a) (zeroAt b)
+  _          -> unreachable
+  where
+    unreachable = error $ "Missing zero case for a tangent type: " ++ pprint ty
+    zeroLit bt = case bt of
+      Scalar Float64Type -> Float64Lit 0.0
+      Scalar Float32Type -> Float32Lit 0.0
+      Vector st          -> VecLit $ replicate vectorWidth $ zeroLit $ Scalar st
+      _                  -> unreachable
+
 tangentType :: Type -> Type
-tangentType (TabTy n a) = TabTy n (tangentType a)
-tangentType (TC con) = case con of
-  BaseType (Scalar Float64Type) -> TC con
-  BaseType (Scalar Float32Type) -> TC con
-  BaseType (Vector Float64Type) -> TC con
-  BaseType (Vector Float32Type) -> TC con
-  BaseType   _                  -> UnitTy
-  IntRange   _ _                -> UnitTy
-  IndexRange _ _ _              -> UnitTy
-  UnitType                      -> UnitTy
-  PairType a b                  -> PairTy (tangentType a) (tangentType b)
-  -- XXX: This assumes that arrays are always constants.
-  ArrayType _ -> UnitTy
-  ty -> error $ "Can't differentiate wrt type " ++ pprint ty
-tangentType ty = error $ "Can't differentiate wrt type " ++ pprint ty
+tangentType ty = case ty of
+  RecordTy _   -> notImplemented
+  TypeCon  _ _ -> notImplemented
+  TabTy n a -> TabTy n (tangentType a)
+  TC con    -> case con of
+    BaseType (Scalar Float64Type) -> TC con
+    BaseType (Scalar Float32Type) -> TC con
+    BaseType (Vector Float64Type) -> TC con
+    BaseType (Vector Float32Type) -> TC con
+    BaseType   _                  -> UnitTy
+    CharType                      -> UnitTy
+    IntRange   _ _                -> UnitTy
+    IndexRange _ _ _              -> UnitTy
+    IndexSlice _ _                -> UnitTy
+    UnitType                      -> UnitTy
+    PairType a b                  -> PairTy (tangentType a) (tangentType b)
+    -- XXX: This assumes that arrays are always constants.
+    ArrayType _                   -> UnitTy
+    _ -> unsupported
+  _ -> unsupported
+  where unsupported = error $ "Can't differentiate wrt type " ++ pprint ty
 
 -- TODO: consider effects!
 hasDiscreteType :: HasType e => e -> Bool
 hasDiscreteType expr = isSingletonType tangentTy
   where tangentTy = tangentType $ getType expr
-
-tensLiftA2 :: (HasVars a, HasVars b)
-           => (a -> b -> Op) -> LinA a -> LinA b -> LinA Atom
-tensLiftA2 f (LinA m1) (LinA m2) = LinA $ do
-  (x1, mt1) <- m1
-  (x2, mt2) <- m2
-  ans <- emitOp $ f x1 x2
-  return ( ans
-         , do t1 <- mt1
-              t2 <- mt2
-              tOut1 <- emitOp $ f x1 t2
-              tOut2 <- emitOp $ f t1 x2
-              add tOut1 tOut2)
 
 bindLin :: LinA a -> (a -> Embed b) -> LinA b
 bindLin (LinA m) f = LinA $ do
@@ -278,6 +381,9 @@ extendWrt v effs m = local update m
 extendTangentEnv :: SubstEnv -> [Name] -> TangentM a -> TangentM a
 extendTangentEnv tv effs m = local update m
   where update (TangentEnv tv' effs') = TangentEnv (tv' <> tv) (effs' <> effs)
+
+notImplemented :: HasCallStack => a
+notImplemented = error "Not implemented"
 
 -- -- === transposition ===
 
