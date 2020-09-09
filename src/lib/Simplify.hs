@@ -167,6 +167,8 @@ simplifyExpr expr = case expr of
       DataCon def params con xs -> return $ DataCon def params' con xs'
          where DataDef _ paramBs _ = def
                (params', xs') = splitAt (length paramBs) $ params ++ xs ++ [x']
+      TypeCon def params -> return $ TypeCon def params'
+         where params' = params ++ [x']
       _ -> emit $ App f' x'
   Op  op  -> mapM simplifyAtom op >>= simplifyOp
   Hof hof -> simplifyHof hof

@@ -195,6 +195,7 @@ leafExpr = parens (mayPair $ makeExprParser leafExpr ops)
          <|> uPrim
          <|> unitCon
          <|> (uLabeledExprs `fallBackTo` uVariantExpr)
+         <|> uIsoSugar
          <?> "expression"
 
 containedExpr :: Parser UExpr
@@ -503,6 +504,104 @@ uLabeledExprs = withSrc $
 
 varPun :: SrcPos -> Label -> UExpr
 varPun pos str = WithSrc (Just pos) $ UVar (mkName str :> ())
+
+uIsoSugar :: Parser UExpr
+uIsoSugar = withSrc (char '#' *> options) where
+  options = (recordFieldIso <$> fieldLabel)
+            <|> char '?' *> (variantFieldIso <$> fieldLabel)
+            <|> char '&' *> (recordZipIso <$> fieldLabel)
+            <|> char '|' *> (variantZipIso <$> fieldLabel)
+  ns = WithSrc Nothing
+  var s = ns $ UVar $ mkName s :> ()
+  patb s = ns $ UPatBinder $ Bind $ mkName s :> ()
+  plain = PlainArrow ()
+  lam p b = ns $ ULam (p, Nothing) plain b
+  recordFieldIso field =
+    UApp plain (var "MkIso") $
+      ns $ URecord $ NoExt $
+        labeledSingleton "fwd" (lam
+          (ns $ UPatRecord $ Ext (labeledSingleton field (patb "x"))
+                                       (Just $ patb "r"))
+          $ (var "(,)") `mkApp` (var "x") `mkApp` (var "r")
+        )
+        <> labeledSingleton "bwd" (lam
+          (ns $ UPatPair (patb "x") (patb "r"))
+          $ ns $ URecord $ Ext (labeledSingleton field $ var "x")
+                               $ Just $ var "r"
+        )
+  variantFieldIso field =
+    UApp plain (var "MkIso") $
+      ns $ URecord $ NoExt $
+        labeledSingleton "fwd" (lam (patb "v") $ ns $ UCase (var "v")
+            [ UAlt (ns $ UPatVariant NoLabeledItems field (patb "x"))
+                $ var "Left" `mkApp` var "x"
+            , UAlt (ns $ UPatVariantLift (labeledSingleton field ()) (patb "r"))
+                $ var "Right" `mkApp` var "r"
+            ]
+        )
+        <> labeledSingleton "bwd" (lam (patb "v") $ ns $ UCase (var "v")
+            [ UAlt (ns $ UPatCon (mkName "Left") (toNest [patb "x"]))
+                $ ns $ UVariant NoLabeledItems field $ var "x"
+            , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "r"]))
+                $ ns $ UVariantLift (labeledSingleton field ()) $ var "r"
+            ]
+        )
+  recordZipIso field =
+    UApp plain (var "MkIso") $
+      ns $ URecord $ NoExt $
+        labeledSingleton "fwd" (lam
+          (ns $ UPatPair
+            (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "l")
+            (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
+                                   $ Just $ patb "r"))
+          $ (var "(,)") 
+            `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
+                                        $ Just $ var "l")
+            `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "r")
+        )
+        <> labeledSingleton "bwd" (lam
+          (ns $ UPatPair
+            (ns $ UPatRecord $ Ext (labeledSingleton field $ patb "x")
+                                   $ Just $ patb "l")
+            (ns $ UPatRecord $ Ext NoLabeledItems $ Just $ patb "r"))
+          $ (var "(,)") 
+            `mkApp` (ns $ URecord $ Ext NoLabeledItems $ Just $ var "l")
+            `mkApp` (ns $ URecord $ Ext (labeledSingleton field $ var "x")
+                                        $ Just $ var "r")
+        )
+  variantZipIso field =
+    UApp plain (var "MkIso") $
+      ns $ URecord $ NoExt $
+        labeledSingleton "fwd" (lam (patb "v") $ ns $ UCase (var "v")
+            [ UAlt (ns $ UPatCon (mkName "Left") (toNest [patb "l"]))
+                $ var "Left" `mkApp` (ns $ 
+                    UVariantLift (labeledSingleton field ()) $ var "l")
+            , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "w"]))
+                $ ns $ UCase (var "w")
+                [ UAlt (ns $ UPatVariant NoLabeledItems field (patb "x"))
+                    $ var "Left" `mkApp` (ns $
+                        UVariant NoLabeledItems field $ var "x")
+                , UAlt (ns $ UPatVariantLift (labeledSingleton field ())
+                                             (patb "r"))
+                    $ var "Right" `mkApp` var "r"
+                ]
+            ]
+        )
+        <> labeledSingleton "bwd" (lam (patb "v") $ ns $ UCase (var "v")
+            [ UAlt (ns $ UPatCon (mkName "Left") (toNest [patb "w"]))
+                $ ns $ UCase (var "w")
+                [ UAlt (ns $ UPatVariant NoLabeledItems field (patb "x"))
+                    $ var "Right" `mkApp` (ns $
+                        UVariant NoLabeledItems field $ var "x")
+                , UAlt (ns $ UPatVariantLift (labeledSingleton field ())
+                                             (patb "r"))
+                    $ var "Left" `mkApp` var "r"
+                ]
+            , UAlt (ns $ UPatCon (mkName "Right") (toNest [patb "l"]))
+                $ var "Right" `mkApp` (ns $ 
+                    UVariantLift (labeledSingleton field ()) $ var "l")
+            ]
+        )
 
 parseLabeledItems
   :: String -> String -> Parser a

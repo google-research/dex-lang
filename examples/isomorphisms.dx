@@ -1,0 +1,253 @@
+'# Isomorphisms in Dex
+
+'`Iso a b` is the type of an isomorphism between `a` and `b`.
+
+:t MkIso
+> ((a:Type) ?-> (b:Type) ?-> {bwd: b -> a & fwd: a -> b} -> Iso a b)
+
+'This is a normal ADT, and you can construct your own isomorphisms. Note that
+we assume but do not check that the isomorphism is lawful (i.e.
+`appIso iso $ revIso iso x == x` for all `x`, or equivalently
+`iso `chainIsos` (flipIso iso) == idIso`).
+
+cycleThree : Iso (a & b & c) (b & c & a) =
+  MkIso { fwd = \(a, b, c). (b, c, a)
+        , bwd = \(b, c, a). (a, b, c)
+        }
+
+:p appIso cycleThree (1, 2.0, 3)
+> (2.0, (3, 1))
+
+:p appIso (flipIso cycleThree) (1, 2.0, 3)
+> (3, (1, 2.0))
+
+'In addition, Dex will automatically write some useful isomorphisms for you
+to extract fields from records and variants. There are four syntactic forms
+that produce isos. We will start with the first two:
+- `#x` produces a "lens-like" record accessor `Iso {x:a & ...r} (a & {&...r})`
+- `#?x` produces a "prism-like" variant matcher `Iso {x:a | ...r} (a | {|...r})`
+
+%passes parse
+:t astype (Iso {a:Int & b:Float & c:Unit} _) #b
+> (Iso {a: Int32 & b: Float32 & c: Unit} (Float32 & {a: Int32 & c: Unit}))
+> === parse ===
+> _ans_:() =
+>   astype (Iso {a: Int & b: Float & c: Unit} _)
+>     (MkIso
+>        { bwd = \(x:(), r:()). {b = x, ...r}
+>        , fwd = \{b = x:(), ...r:()}. (,) x r})
+
+%passes parse
+:t astype (Iso {a:Int | b:Float | c:Unit} _) #?b
+> (Iso {a: Int32 | b: Float32 | c: Unit} (Float32 | {a: Int32 | c: Unit}))
+> === parse ===
+> _ans_:() =
+>   astype (Iso {a: Int | b: Float | c: Unit} _)
+>     (MkIso
+>        { bwd = \v:(). case v
+>                    ((Left x:())) -> {| b = x |}
+>                    ((Right r:())) -> {|b| ...r |}
+>                    
+>        , fwd = \v:(). case v
+>                    {| b = x:() |} -> (Left x)
+>                    {|b| ...r:() |} -> (Right r)
+>                    })
+
+'There are also two "zipper" forms, described later on this page:
+- `#&x` produces a "lens-zipper" record isomorphism
+  ```
+  Iso ({&...l} & {x:a & ...r}) ({x:a & ...l} & {&...r})
+  ```
+- `#|x` produces a "prism-zipper" variant isomorphism
+  ```
+  Iso ({|...l} | {x:a | ...r}) ({x:a | ...l} | {|...r})
+  ```
+
+'## Record accessors
+Record accessor isomorphisms can be passed into the helper function `getAt`:
+
+:t getAt
+> ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> a -> b)
+
+:p getAt #foo {foo=1, bar=2.0}
+> 1
+
+'We can also do other types of things:
+
+:p popAt #foo {foo=1, bar=2.0}
+> {bar = 2.0}
+
+:p pushAt #foo 3.0 {foo=1, bar=2.0}
+> {bar = 2.0, foo = 3.0, foo = 1}
+
+:p setAt #foo 2 {foo=1, bar=2.0}
+> {bar = 2.0, foo = 2}
+
+'These helper functions work with any "lens-like" isomorphism. For instance,
+we can select everything except for a particular field:
+
+:t exceptLens
+> ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b & c)) -> Iso a (c & b))
+
+:p getAt (exceptLens #foo) {foo=1, bar=2.0, baz=3}
+> {bar = 2.0, baz = 3}
+
+
+'## Variant prisms
+Similarly, there are prism-like helpers
+
+:t matchWith
+> ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> a -> Maybe b)
+
+:t buildWith
+> ((a:Type) ?-> (b:Type) ?-> (c:Type) ?-> (Iso a (b | c)) -> b -> a)
+
+'which can be used with variant accessors or any other prism-like isomorphism:
+
+:p matchWith #?foo $ astype {foo:Int | bar:Float} {|foo = 1|}
+> Just 1
+
+:p matchWith #?foo $ astype {foo:Int | bar:Float} {|bar = 1.0|}
+> Nothing
+
+:p astype {foo:Int | bar:Float} $ buildWith #?foo 3
+> {| foo = 3 |}
+
+:p matchWith (exceptPrism #?foo) $ astype {foo:Int | bar:Float} {|bar = 1.0|}
+> Just {| bar = 1.0 |}
+
+'## Zipper lens isomorphisms
+The isomorphisms shown above are specialized for removing a single field from
+an object. As such, they don't compose well when trying to work with more than
+one field at a time. When using multiple fields, a better choice is to use
+a "zipper isomorphism", which moves a subset of fields from one place to
+another. For instance:
+
+%passes parse
+:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) #&a
+> (Iso
+>    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({a: Int32} & {b: Float32 & c: Unit}))
+> === parse ===
+> _ans_:() =
+>   astype (Iso ((&) { &} {a: Int & b: Float & c: Unit}) _)
+>     (MkIso
+>        { bwd = \({a = x:(), ...l:()}, {, ...r:()}). (,) {, ...l} {a = x, ...r}
+>        , fwd = \({, ...l:()}, {a = x:(), ...r:()}). (,) {a = x, ...l} {, ...r}})
+
+:t astype (Iso ({&} & {a:Int & b:Float & c:Unit}) _) $
+      #&a `chainIsos` #&b
+> (Iso
+>    ({ &} & {a: Int32 & b: Float32 & c: Unit})
+>    ({a: Int32 & b: Float32} & {c: Unit}))
+
+'`#&a` and `#&b` are isomorphisms that move a given field from the record on the
+right to the record on the left; when composed, they move both fields.
+
+'The main use for zipper isomorphisms is to specify multiple named axes when
+using a record type as an index set:
+
+:t overFields
+> ((a:Type)
+>  ?-> (b:Type)
+>  ?-> (c:Type)
+>  ?-> (v:Type) ?-> (Iso ({ &} & a) (b & c)) -> (a => v) -> b => c => v)
+
+:p
+  x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
+    ordinal a * 100 + ordinal b * 10 + ordinal c
+  v1 = x
+  v2 = sum $ overFields (#&b) x
+  v3 = sum $ overFields (#&b `chainIsos` #&c) x
+  v4 = sum $ overFields (#&a `chainIsos` #&b `chainIsos` #&c) x
+  (v1, v2, v3, v4)
+> ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
+> , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
+
+'Note that `overFields` is just a simple wrapper combining `lensFields` and
+`over`:
+
+:t lensFields
+> ((a:Type)
+>  ?-> (b:Type) ?-> (c:Type) ?-> (Iso ({ &} & a) (b & c)) -> Iso a (b & c))
+
+:t over
+> ((a:Type)
+>  ?-> (b:Type)
+>  ?-> (c:Type) ?-> (v:Type) ?-> (Iso a (b & c)) -> (a => v) -> b => c => v)
+
+'`over` alone can be used with any lens-like isomorphism, for instance an
+ordinary record accessor lens.
+
+:p
+  x = for {a, b, c}:{a:Fin 2 & b:Fin 2 & c:Fin 2}.
+    ordinal a * 100 + ordinal b * 10 + ordinal c
+  over #a x
+> [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
+> , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
+
+'`lensFields` can be used if you want to process multiple fields at once:
+
+:p pushAt (lensFields (#&a `chainIsos` #&b)) {a=1, b=2.0} {c=3, d=4.0}
+> {a = 1, b = 2.0, c = 3, d = 4.0}
+
+'Equivalently, you can use `startLZip`:
+
+:p pushAt (startLZip `chainIsos` #&a `chainIsos` #&b) {a=1, b=2.0} {c=3, d=4.0}
+> {a = 1, b = 2.0, c = 3, d = 4.0}
+
+'## Zipper prism isomorphisms
+Just as there are lens-like zipper isomorphisms, there are also prism-like
+zipper isomorphisms:
+
+%passes parse
+:t astype (Iso ({|} | {a:Int | b:Float | c:Unit}) _) #|a
+> (Iso
+>    ({ |} | {a: Int32 | b: Float32 | c: Unit})
+>    ({a: Int32} | {b: Float32 | c: Unit}))
+> === parse ===
+> _ans_:() =
+>   astype (Iso ((|) { |} {a: Int | b: Float | c: Unit}) _)
+>     (MkIso
+>        { bwd = \v:(). case v
+>                    ((Left w:())) -> (case w
+>                                        {| a = x:() |} -> (Right {| a = x |})
+>                                        {|a| ...r:() |} -> (Left r)
+>                                        )
+>                    ((Right l:())) -> (Right {|a| ...l |})
+>                    
+>        , fwd = \v:(). case v
+>                    ((Left l:())) -> (Left {|a| ...l |})
+>                    ((Right w:())) -> (case w
+>                                         {| a = x:() |} -> (Left {| a = x |})
+>                                         {|a| ...r:() |} -> (Right r)
+>                                         )
+>                    })
+
+'`prismFields` makes a prism zipper into an ordinary prism isomorphism:
+
+:p
+  vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
+  for i. matchWith (prismFields (#|a `chainIsos` #|b)) vals.i
+> [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
+
+'or equivalently
+
+:p
+  vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
+  for i. matchWith (startPZip `chainIsos` #|a `chainIsos` #|b) vals.i
+> [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
+
+'`sliceFields` extracts specific named variants from a variant-indexed table:
+
+:p
+  x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
+  v1 = x
+  v2 = sliceFields (#|b) x
+  v3 = sliceFields (#|a `chainIsos` #|c) x
+  v4 = sliceFields (#|a `chainIsos` #|b `chainIsos` #|c) x
+  (v1, v2, v3, v4)
+> ( [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2}
+> , ( [2, 3]@{b: Fin 2}
+> , ( [0, 1, 4, 5]@{a: Fin 2 | c: Fin 2}
+> , [0, 1, 2, 3, 4, 5]@{a: Fin 2 | b: Fin 2 | c: Fin 2} ) ) )
