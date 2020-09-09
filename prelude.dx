@@ -613,7 +613,7 @@ def (<>>) (iso1: Iso a b) (iso2: Iso b c) : Iso a c =
 def (<<>) (iso2: Iso b c) (iso1: Iso a b) : Iso a c = iso1 <>> iso2
 
 -- Lens-like accessors
--- (note: #foo is an Iso {foo: a, ...b} (a & {...b}))
+-- (note: #foo is an Iso {foo: a & ...b} (a & {&...b}))
 def getAt  (iso: Iso a (b & c)) : a -> b = fst <<< appIso iso
 def popAt  (iso: Iso a (b & c)) : a -> c = snd <<< appIso iso
 def pushAt (iso: Iso a (b & c)) (x:b) (r:c) : a = revIso iso (x, r)
@@ -621,6 +621,7 @@ def setAt  (iso: Iso a (b & c)) (x:b) (r:a) : a =
   pushAt iso x $ popAt iso r
 
 -- Prism-like accessors
+-- (note: #?foo is an Iso {foo: a | ...b} (a | {|...b}))
 def matchWith (iso: Iso a (b | c)) (x: a) : Maybe b =
   case appIso iso x of
     Left x -> Just x
@@ -649,20 +650,21 @@ exceptPrism : Iso a (b | c) -> Iso a (c | b) = \iso. iso <>> swapEitherIso
 def over (iso: Iso a (b & c)) (tab: a=>v) : (b=>c=>v) =
   for i j. tab.(revIso iso (i, j))
 
--- Zipper isomorphisms to easily specify many record/variant fields
--- Convert a lens zipper isomorphism to a normal lens-like isomorphism
-startLZip : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
-def lensFields (iso: Iso ({&} & a) (b & c)) : Iso a (b & c) =
-  startLZip <>> iso
+-- Zipper isomorphisms to easily specify many record/variant fields:
+-- #&foo is an Iso ({&...l} & {foo:a & ...r}) ({foo:a & ...l} & {&...r})
+-- #|foo is an Iso ({|...l} | {foo:a | ...r}) ({foo:a | ...l} | {|...r})
+
+-- Convert a record zipper isomorphism to a normal lens-like isomorphism
+-- by using splitR <>> iso
+splitR : Iso a ({&} & a) = MkIso {fwd=\x. ({}, x), bwd=\({}, x). x}
 
 def overFields (iso: Iso ({&} & a) (b & c)) (tab: a=>v) : b=>c=>v =
-  over (lensFields iso) tab
+  over (splitR <>> iso) tab
 
--- Convert a prism zipper isomorphism to a normal prism-like isomorphism
-startPZip : Iso a ({|} | a) =
+-- Convert a variant zipper isomorphism to a normal prism-like isomorphism
+-- by using splitV <>> iso
+splitV : Iso a ({|} | a) =
   MkIso {fwd=\x. Right x, bwd=\v. case v of Right x -> x}
-def prismFields (iso: Iso ({|} | a) (b | c)) : Iso a (b | c) =
-  startPZip <>> iso
 
 def sliceFields (iso: Iso ({|} | a) (b | c)) (tab: a=>v) : b=>v =
-  reindex (buildWith $ prismFields iso) tab
+  reindex (buildWith $ splitV <>> iso) tab

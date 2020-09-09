@@ -69,16 +69,16 @@ that produce isos. We will start with the first two:
 >                    })
 
 'There are also two "zipper" forms, described later on this page:
-- `#&x` produces a "lens-zipper" record isomorphism
+- `#&x` produces a "record-zipper" isomorphism
   ```
   Iso ({&...l} & {x:a & ...r}) ({x:a & ...l} & {&...r})
   ```
-- `#|x` produces a "prism-zipper" variant isomorphism
+- `#|x` produces a "variant-zipper" isomorphism
   ```
   Iso ({|...l} | {x:a | ...r}) ({x:a | ...l} | {|...r})
   ```
 
-'## Record accessors
+'## Record accessors and lens-like helpers
 Record accessor isomorphisms can be passed into the helper function `getAt`:
 
 :t getAt
@@ -108,7 +108,7 @@ we can select everything except for a particular field:
 > {bar = 2.0, baz = 3}
 
 
-'## Variant prisms
+'## Variant accessors and prism-like helpers
 Similarly, there are prism-like helpers
 
 :t matchWith
@@ -131,7 +131,7 @@ Similarly, there are prism-like helpers
 :p matchWith (exceptPrism #?foo) $ astype {foo:Int | bar:Float} {|bar = 1.0|}
 > Just {| bar = 1.0 |}
 
-'## Zipper lens isomorphisms
+'## Record zipper isomorphisms
 The isomorphisms shown above are specialized for removing a single field from
 an object. As such, they don't compose well when trying to work with more than
 one field at a time. When using multiple fields, a better choice is to use
@@ -158,8 +158,8 @@ another. For instance:
 '`#&a` and `#&b` are isomorphisms that move a given field from the record on the
 right to the record on the left; when composed, they move both fields.
 
-'The main use for zipper isomorphisms is to specify multiple named axes when
-using a record type as an index set:
+'The main use for record zipper isomorphisms is to specify multiple named axes
+when using a record type as an index set:
 
 :t overFields
 > ((a:Type)
@@ -178,12 +178,11 @@ using a record type as an index set:
 > ( [0, 100, 10, 110, 1, 101, 11, 111]@{a: Fin 2 & b: Fin 2 & c: Fin 2}
 > , ([10, 210, 12, 212]@{a: Fin 2 & c: Fin 2}, ([22, 422]@{a: Fin 2}, [444]@{ &})) )
 
-'Note that `overFields` is just a simple wrapper combining `lensFields` and
+'Note that `overFields` is just a simple wrapper combining `splitR` and
 `over`:
 
-:t lensFields
-> ((a:Type)
->  ?-> (b:Type) ?-> (c:Type) ?-> (Iso ({ &} & a) (b & c)) -> Iso a (b & c))
+:t splitR
+> ((a:Type) ?-> Iso a ({ &} & a))
 
 :t over
 > ((a:Type)
@@ -200,18 +199,13 @@ ordinary record accessor lens.
 > [ [0, 10, 1, 11]@{b: Fin 2 & c: Fin 2}
 > , [100, 110, 101, 111]@{b: Fin 2 & c: Fin 2} ]
 
-'`lensFields` can be used if you want to process multiple fields at once:
+'`splitR` can be used if you want to process multiple fields at once:
 
-:p pushAt (lensFields (#&a <>> #&b)) {a=1, b=2.0} {c=3, d=4.0}
+:p pushAt (splitR <>> #&a <>> #&b) {a=1, b=2.0} {c=3, d=4.0}
 > {a = 1, b = 2.0, c = 3, d = 4.0}
 
-'Equivalently, you can use `startLZip`:
-
-:p pushAt (startLZip <>> #&a <>> #&b) {a=1, b=2.0} {c=3, d=4.0}
-> {a = 1, b = 2.0, c = 3, d = 4.0}
-
-'## Zipper prism isomorphisms
-Just as there are lens-like zipper isomorphisms, there are also prism-like
+'## Variant zipper isomorphisms
+Just as there are record zipper isomorphisms, there are also variant
 zipper isomorphisms:
 
 %passes parse
@@ -238,21 +232,18 @@ zipper isomorphisms:
 >                                         )
 >                    })
 
-'`prismFields` makes a prism zipper into an ordinary prism isomorphism:
+'`splitV` makes a prism zipper into an ordinary prism isomorphism:
+
+:t splitV
+> ((a:Type) ?-> Iso a ({ |} | a))
 
 :p
   vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
-  for i. matchWith (prismFields (#|a <>> #|b)) vals.i
+  for i. matchWith (splitV <>> #|a <>> #|b) vals.i
 > [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
 
-'or equivalently
-
-:p
-  vals = [{|a = 1|}, {|b = 2|}, {|c = 3|}]:(Fin 3 => {a:_ | b:_ | c:_})
-  for i. matchWith (startPZip <>> #|a <>> #|b) vals.i
-> [(Just {| a = 1 |}), (Just {| b = 2 |}), Nothing]
-
-'`sliceFields` extracts specific named variants from a variant-indexed table:
+'`sliceFields` uses this to specific named variants from a variant-indexed
+table:
 
 :p
   x = iota {a:Fin 2 | b:Fin 2 | c:Fin 2}
