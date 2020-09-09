@@ -84,10 +84,12 @@ syntaxSpan s c = H.span (toHtml s) ! class_ (stringValue className)
       CommandStr  -> "command"
       SymbolStr   -> "symbol"
       TypeNameStr -> "type-name"
+      IsoSugarStr -> "iso-sugar"
       NormalStr -> error "Should have been matched already"
 
 data StrClass = NormalStr
               | CommentStr | KeywordStr | CommandStr | SymbolStr | TypeNameStr
+              | IsoSugarStr
 
 classify :: Parser StrClass
 classify =
@@ -96,6 +98,8 @@ classify =
    <|> (do s <- lowerWord
            return $ if s `elem` keyWordStrs then KeywordStr else NormalStr)
    <|> (upperWord >> return TypeNameStr)
+   <|> (char '#' >> (char '?' <|> char '&' <|> char '|' <|> pure ' ')
+        >> lowerWord >> return IsoSugarStr)
    <|> (some symChar >> return SymbolStr)
    <|> (anySingle >> return NormalStr)
 
